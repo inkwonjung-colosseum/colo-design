@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ConfluenceReview, DocSummary, DrafthouseScreen, SessionSummary, Workspace } from "@drafthouse/protocol";
+import type {
+  ConfluenceReview,
+  DocSummary,
+  DrafthouseScreen,
+  HandoffStatus,
+  SessionSummary,
+  Workspace,
+} from "@drafthouse/protocol";
 import { markTurn } from "@drafthouse/protocol";
 import type { Daemon } from "./daemon-client";
 import { useSessions, type Sessions } from "./useSessions";
@@ -9,8 +16,10 @@ import { PageTree } from "./PageTree";
 import { ScreenPanel } from "./ScreenPanel";
 import { DocEditor, type DocQuote } from "./DocEditor";
 import { PublishDialog } from "./PublishDialog";
+import { StageBar, type StageMenuItem } from "./StageBar";
+import { deriveStage, type StageAction } from "./stage";
 import type { Attachment } from "./Composer";
-import type { SendKey } from "./settings";
+import type { ChatSettings, Settings } from "./settings";
 
 /**
  * The whole workspace, on the page axis (PLAN D1).
@@ -30,14 +39,15 @@ import type { SendKey } from "./settings";
  */
 export function PageWorkspace({
   daemon,
-  sendKey,
-  confirmBeforeDelete,
+  settings,
+  onChatChange,
   onOpenSettings,
   onOpenOnboarding,
 }: {
   daemon: Daemon;
-  sendKey: SendKey;
-  confirmBeforeDelete: boolean;
+  settings: Settings;
+  /** 설정 owns how Claude answers; both halves start their threads on it. */
+  onChatChange: (patch: Partial<ChatSettings>) => void;
   onOpenSettings: () => void;
   /** Opens the first-run wizard — the only place a project gets created. */
   onOpenOnboarding: () => void;
@@ -57,7 +67,7 @@ export function PageWorkspace({
   const [review, setReview] = useState<ConfluenceReview | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   /** Which side of the page the planner is looking at: the 기획서 or the screen. */
-  const [segment, setSegment] = useState<"doc" | "screen">("doc");
+  const [segment, setSegment] = useState<"doc" | "screen" | "both">("doc");
   /**
    * What the connected repo declared it can render (PLAN D7). It arrives from
    * the preview app itself, so it is empty until the 화면 segment has been
@@ -66,16 +76,50 @@ export function PageWorkspace({
    */
   const [screens, setScreens] = useState<DrafthouseScreen[]>([]);
   const [active, setActive] = useState<{ workspace: Workspace; sessionId: string } | null>(null);
+  /** The two dialogs of the cycle. The stepper opens them; ScreenPanel draws them. */
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
+  /**
+   * The handed-off state as last read on demand. Nothing polls it — a timer
+   * would ask GitHub every minute about something that only moves when a
+   * developer acts — so pressing 상태 다시 확인 is the planner's refresh.
+   */
+  const [readHandoff, setReadHandoff] = useState<HandoffStatus | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  /**
+   * Whether there is room to put the 기획서 and its screen side by side. Below
+   * this the two columns are each too narrow to read, so the option is not
+   * offered rather than offered and disappointing.
+   */
+  const [wideEnough, setWideEnough] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 1440,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1440px)");
+    const onChange = () => setWideEnough(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  // A window that narrows while 나란히 is open falls back to the document,
+  // rather than leaving a segment selected that no longer has a button.
+  useEffect(() => {
+    if (!wideEnough) setSegment((current) => (current === "both" ? "doc" : current));
+  }, [wideEnough]);
 
   const planning = useSessions(daemon, "planning", {
     ready: mirrored,
-    confirmBeforeDelete,
+    confirmBeforeDelete: settings.confirmBeforeDelete,
     pageId,
+    chat: settings.chat,
+    onChatChange,
   });
   const design = useSessions(daemon, "design", {
     ready: daemon.repo?.phase === "ready",
-    confirmBeforeDelete,
+    confirmBeforeDelete: settings.confirmBeforeDelete,
     pageId,
+    chat: settings.chat,
+    onChatChange,
   });
 
   // A finished pull rewrites files without a doc.changed for each one, so the
@@ -274,7 +318,7 @@ export function PageWorkspace({
    */
   const [draft, setDraft] = useState<{ text: string; nonce: number } | null>(null);
   const [brief, setBrief] = useState<{ title: string; path: string } | null>(null);
-  const handoff = () => {
+  const handoffToScreen = () => {
     if (!docPath) return;
     const title = docs.find((page) => page.path === docPath)?.title ?? docPath;
     setBrief({ title, path: docPath });
@@ -292,10 +336,15 @@ export function PageWorkspace({
    */
   const forwardComments = useCallback(
     async (turn: string) => {
-      if (!design.activeId) await design.create();
+      // A thread the tool opens is named by the tool (the M5 lesson): the first
+      // turn here is a bundle of pins this app composed, and letting it name
+      // the tab writes machine text into the strip the planner navigates by.
+      if (!design.activeId) {
+        await design.create(docs.find((page) => page.path === docPath)?.title);
+      }
       await design.sendTurn(turn);
     },
-    [design],
+    [design, docs, docPath],
   );
 
   /**
@@ -340,20 +389,136 @@ export function PageWorkspace({
     );
   }, [docPath, docs, screens, forwardComments]);
 
+  // A `repo.status` broadcast is newer than anything read by hand, so it drops
+  // the hand-read copy on its way in — otherwise a stale 넘김 would outlive the
+  // 반영됨 the daemon just reported.
+  useEffect(() => {
+    setReadHandoff(null);
+  }, [daemon.repo?.handoff]);
+
+  const handoff = readHandoff ?? daemon.repo?.handoff ?? null;
+
+  /**
+   * Where this 기획서 is, and therefore the one button (PLAN D8). Everything it
+   * reads is already on screen somewhere — the tree's marks, the preview's
+   * screens, the developer's pull request — so the stepper is a reading of the
+   * page rather than a state of its own.
+   */
+  const openPage = docPath ? (docs.find((page) => page.path === docPath) ?? null) : null;
+  const stage = deriveStage({
+    page: openPage,
+    screens,
+    pendingChanges: daemon.repo?.pendingChanges ?? 0,
+    branch: daemon.repo?.branch ?? null,
+    handoff,
+  });
+
+  /**
+   * The clone is checked out and installed, whatever the dev server is doing.
+   * 저장 and 넘기기 act on the worktree and the remote, so gating them on a
+   * preview that cannot bind a port would strand work that is already done.
+   */
+  const repoPhase = daemon.repo?.phase ?? null;
+  const workable = repoPhase === "ready" || repoPhase === "error";
+
+  const refreshHandoff = () => {
+    setHandoffBusy(true);
+    void api
+      .handoffStatus()
+      .then(setReadHandoff)
+      .catch((e: Error) => setNotice({ level: "error", text: e.message }))
+      .finally(() => setHandoffBusy(false));
+  };
+
+  const act = (action: StageAction | "precheck" | "openInConfluence") => {
+    switch (action) {
+      case "publishDoc":
+        void openReview();
+        return;
+      case "buildScreen":
+        handoffToScreen();
+        return;
+      case "viewScreen":
+        setSegment("screen");
+        return;
+      case "save":
+        setSegment("screen");
+        setSaveOpen(true);
+        return;
+      case "handoff":
+        setSegment("screen");
+        setHandoffOpen(true);
+        return;
+      case "refreshHandoff":
+        refreshHandoff();
+        return;
+      case "precheck":
+        precheck();
+        return;
+      case "openInConfluence": {
+        const site = daemon.confluenceSettings?.siteUrl;
+        if (site && openPage && !openPage.isNew) {
+          window.open(`${site}/wiki/spaces/${openPage.path.split("/")[0]}/pages/${openPage.pageId}`, "_blank");
+        }
+        return;
+      }
+      case null:
+        return;
+    }
+  };
+
+  /**
+   * Everything a cycle can do, always. The rail says what is usual; a planner
+   * who wants to publish a document while the stepper is asking them to save a
+   * screen should not have to satisfy the stepper first.
+   */
+  const menu: StageMenuItem[] = [
+    {
+      label: pendingPages.length > 0 ? `기획서 게시 (${pendingPages.length})` : "기획서 게시",
+      action: "publishDoc",
+      disabled: !mirrored || !space || pendingPages.length === 0 || pushing,
+      title: space ? "무엇이 올라갈지 확인하고 게시합니다" : "게시할 스페이스를 문서에서 선택해 주세요",
+    },
+    { label: "이 문서로 화면 만들기", action: "buildScreen", disabled: !docPath || docDirty },
+    { label: "저장", action: "save", disabled: !workable },
+    {
+      label: "개발자에게 넘기기",
+      action: "handoff",
+      disabled: !workable || !daemon.repo?.branch,
+      title: daemon.repo?.branch ? undefined : "아직 저장한 변경이 없습니다. 먼저 저장해 주세요",
+    },
+    { label: "넘긴 뒤 상태 다시 확인", action: "refreshHandoff", disabled: !handoff },
+    {
+      label: "Confluence에서 보기",
+      action: "openInConfluence",
+      disabled: !openPage || openPage.isNew || !daemon.confluenceSettings?.siteUrl,
+    },
+  ];
+
+  /**
+   * A project whose 기획서 subtree is empty (PLAN D14).
+   *
+   * Every column had its own empty sentence, and none of them was a way
+   * forward: the tab strip said to pick a 기획서, the tree said there were
+   * none, and + 새 기획 was disabled until one was picked. A planner on their
+   * first day met three statements of the same dead end. One button instead.
+   */
+  const emptyProject = mirrored && docs.length === 0 && !docPath;
+
+  const startFirstDoc = () => {
+    setSegment("doc");
+    setDraft({
+      text: "새 기획서를 하나 만들어 주세요. 어떤 화면을 만들지 함께 정리하고 싶습니다.",
+      nonce: Date.now(),
+    });
+    void createTab("planning");
+  };
+
   return (
     <>
       <aside className="planner__sessions">
         <div className="sidebar__heading">
           <span className="sidebar__heading-label">기획 문서</span>
-          <button
-            type="button"
-            className={pendingPages.length > 0 ? "ghost ghost--count" : "ghost"}
-            disabled={!mirrored || !space || pendingPages.length === 0 || pushing}
-            title={space ? "무엇이 올라갈지 확인하고 게시합니다" : "게시할 스페이스를 문서에서 선택해 주세요"}
-            onClick={() => void openReview()}
-          >
-            {pendingPages.length > 0 ? `기획서 게시 (${pendingPages.length})` : "기획서 게시"}
-          </button>
         </div>
         <PageTree
           daemon={daemon}
@@ -373,19 +538,19 @@ export function PageWorkspace({
           onSelect={openTab}
           onCreate={(workspace) => void createTab(workspace)}
           onClose={(workspace, session) => void sessionsOf(workspace).remove(session)}
-          disabled={!docPath}
+          disabled={!docPath && !emptyProject}
         />
         <ChatColumn
           daemon={daemon}
           sessions={activeSessions ? { ...activeSessions, submit } : planning}
-          sendKey={sendKey}
+          sendKey={settings.sendKey}
           workspace={active?.workspace ?? "planning"}
           placeholder={
             active?.workspace === "design"
               ? "만들고 싶은 화면을 말해 주세요"
               : "기획서를 새로 쓰거나 고칠 내용을 말해 주세요"
           }
-          disabled={!docPath || (active?.workspace === "planning" && docDirty)}
+          disabled={(!docPath && !emptyProject) || (active?.workspace === "planning" && docDirty)}
           quote={quote}
           onDismissQuote={() => setQuote(null)}
           brief={brief}
@@ -393,7 +558,7 @@ export function PageWorkspace({
           draft={draft}
           onDraftConsumed={() => setDraft(null)}
           emptyHint={
-            docPath
+            docPath || emptyProject
               ? undefined
               : "왼쪽에서 기획서를 고르면 그 문서의 대화가 여기에 열립니다."
           }
@@ -401,6 +566,14 @@ export function PageWorkspace({
       </div>
 
       <section className="planner__doc">
+        <StageBar
+          stage={stage}
+          busy={pushing || handoffBusy}
+          menu={menu}
+          onAct={act}
+          {...(stage.id === "revise" || stage.id === "save" ? { onPrecheck: precheck } : {})}
+        />
+
         <div className="segment" role="tablist" aria-label="문서·화면 전환">
           <button
             type="button"
@@ -420,6 +593,21 @@ export function PageWorkspace({
           >
             화면
           </button>
+          {/* Reviewing means reading the 기획서 and the screen against each
+              other; at narrower widths there is not room for both, and a
+              button that produces two unreadable columns is worse than no
+              button (PLAN D13). */}
+          {wideEnough && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={segment === "both"}
+              className={segment === "both" ? "segment__on" : ""}
+              onClick={() => setSegment("both")}
+            >
+              나란히
+            </button>
+          )}
         </div>
 
         {notice && (
@@ -450,16 +638,29 @@ export function PageWorkspace({
         {/* Both halves stay mounted. The editor holds unsaved text and the
             preview holds a running app; unmounting either on a segment flip
             would throw away work the planner cannot see they are losing. */}
-        <div className="planner__segment" hidden={segment !== "doc"}>
-          <DocEditor
-            daemon={daemon}
-            path={docPath}
-            onDirty={setDocDirty}
-            onQuote={setQuote}
-            onHandoff={docPath ? handoff : undefined}
-          />
+        <div className={segment === "both" ? "planner__split" : "planner__panes"}>
+        <div className="planner__segment" hidden={segment === "screen"}>
+          {emptyProject ? (
+            <div className="firstdoc">
+              <h2>첫 기획서를 만들어 볼까요?</h2>
+              <p>
+                기획 대화에 무엇을 만들고 싶은지 말하면 기획서를 함께 씁니다. 다 쓰면 게시해서
+                Confluence에 올리고, 그 기획서로 화면을 만듭니다.
+              </p>
+              <button type="button" className="primary" onClick={startFirstDoc}>
+                첫 기획서 만들기
+              </button>
+            </div>
+          ) : (
+            <DocEditor
+              daemon={daemon}
+              path={docPath}
+              onDirty={setDocDirty}
+              onQuote={setQuote}
+            />
+          )}
         </div>
-        <div className="planner__segment" hidden={segment !== "screen"}>
+        <div className="planner__segment" hidden={segment === "doc"}>
           <ScreenPanel
             daemon={daemon}
             onOpenSettings={onOpenSettings}
@@ -470,7 +671,12 @@ export function PageWorkspace({
             onScreens={setScreens}
             pageIdOf={pageIdOf}
             onPrecheck={precheck}
+            saveOpen={saveOpen}
+            handoffOpen={handoffOpen}
+            onCloseSave={() => setSaveOpen(false)}
+            onCloseHandoff={() => setHandoffOpen(false)}
           />
+        </div>
         </div>
       </section>
     </>

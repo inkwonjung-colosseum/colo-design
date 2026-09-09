@@ -124,6 +124,7 @@ export default function App() {
     <SettingsDialog
       settings={settings}
       onChange={updateSettings}
+      onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}
       daemonUrl={url}
       status={daemon.status}
       connection={daemon.connection}
@@ -155,8 +156,8 @@ export default function App() {
     <>
       <Shell
         daemon={daemon}
-        sendKey={settings.sendKey}
-        confirmBeforeDelete={settings.confirmBeforeDelete}
+        settings={settings}
+        onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}
         onOpenSettings={() => setSettingsOpen(true)}
         onboardingOpen={onboardingOpen}
         onOpenOnboarding={() => setOnboardingOpen(true)}

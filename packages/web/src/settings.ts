@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import type { EffortLevel, SessionModelInfo, Workspace } from "@drafthouse/protocol";
+import type {
+  EffortLevel,
+  PermissionMode,
+  SessionModelInfo,
+  Workspace,
+} from "@drafthouse/protocol";
+import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 
 /**
  * Client-side preferences. Everything here belongs to the browser, not the
@@ -13,23 +19,52 @@ export type ResolvedTheme = "dark" | "light";
 /** Which keypress sends a message. The other one inserts a newline. */
 export type SendKey = "enter" | "modEnter";
 
+/**
+ * How Claude answers in this planner's conversations (PLAN D10).
+ *
+ * These used to be three chips in the composer, stored per workspace. They are
+ * one shared preference now: 설정 is a single dialog, and a planner asked to
+ * choose "어떤 Claude를 쓸지" twice — once for 기획, once for 화면 — is being
+ * asked a question they have no way to answer differently.
+ */
+export interface ChatSettings {
+  model: string | null;
+  effort: EffortLevel | null;
+  permissionMode: PermissionMode;
+}
+
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
   confirmBeforeDelete: boolean;
+  chat: ChatSettings;
 }
 
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+  model: null,
+  effort: null,
+  permissionMode: DEFAULT_PERMISSION_MODE,
+};
+
 export const DEFAULT_SETTINGS: Settings = {
-  // Dark, not "system", on purpose: the console palette is what this app has
-  // always looked like, and a preference nobody set should not repaint it.
-  theme: "dark",
+  /**
+   * Light, not dark (PLAN D13). This tool used to look like a session log and
+   * defaulted to the palette that suited one. What a planner does here is read
+   * and write a document beside a rendered screen — both of which they will
+   * see on paper and in a browser, on white. A planner who prefers dark still
+   * has it one choice away; the default is now the one that matches the work.
+   */
+  theme: "light",
   sendKey: "enter",
   confirmBeforeDelete: true,
+  chat: DEFAULT_CHAT_SETTINGS,
 };
 
 export const THEMES: ThemeChoice[] = ["system", "dark", "light"];
 
 const KEY = "drafthouse.settings";
+
+const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback: T): T {
   return typeof value === "string" && (allowed as readonly string[]).includes(value)
@@ -59,7 +94,56 @@ export function loadSettings(): Settings {
       typeof stored.confirmBeforeDelete === "boolean"
         ? stored.confirmBeforeDelete
         : DEFAULT_SETTINGS.confirmBeforeDelete,
+    chat: loadChat(stored.chat),
   };
+}
+
+/**
+ * The conversation settings, with one value deliberately not restored.
+ *
+ * 전부 맡기기 (`bypassPermissions`) lets Claude act on the repo clone without
+ * asking. Turning it on is a decision about one afternoon's work; finding it
+ * still on next Tuesday, because a stored blob outlived the reason, is not a
+ * decision anybody made. Every other mode is safe to remember — the daemon's
+ * own write policy already bounds what an edit may touch.
+ */
+function loadChat(raw: unknown): ChatSettings {
+  const legacy = legacyComposerDefaults();
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_CHAT_SETTINGS, ...legacy };
+  const stored = raw as Record<string, unknown>;
+  const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
+  return {
+    model:
+      typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
+    effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
+      ? (stored.effort as EffortLevel)
+      : (legacy.effort ?? null),
+    permissionMode: mode === "bypassPermissions" ? DEFAULT_PERMISSION_MODE : mode,
+  };
+}
+
+/**
+ * What an earlier build stored per workspace. Read once, so a planner who had
+ * pinned a model does not silently lose it the day the two collapse into one;
+ * 기획's copy wins because that is where a thread usually starts.
+ */
+function legacyComposerDefaults(): Partial<ChatSettings> {
+  for (const workspace of ["planning", "design"] as Workspace[]) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(localStorage.getItem(`drafthouse.composer.${workspace}`) ?? "null");
+    } catch {
+      continue;
+    }
+    if (!raw || typeof raw !== "object") continue;
+    const stored = raw as Record<string, unknown>;
+    const model = typeof stored.model === "string" && stored.model ? stored.model : null;
+    const effort = EFFORT_LEVELS.includes(stored.effort as EffortLevel)
+      ? (stored.effort as EffortLevel)
+      : null;
+    if (model || effort) return { model, effort };
+  }
+  return {};
 }
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -133,50 +217,6 @@ export function useSettings(): {
   }, [theme]);
 
   return { settings, update, theme };
-}
-
-// ---------------------------------------------------------------------------
-// Composer chips
-// ---------------------------------------------------------------------------
-
-/**
- * What the 모델·추론 chips are set to. This is a client preference, not
- * session state: the daemon starts every session on the CLI's own defaults,
- * so without remembering the choice here a planner would re-pick it for every
- * new 기획. Kept per workspace — 기획 and 디자인 are different jobs.
- */
-export interface ComposerDefaults {
-  model: string | null;
-  effort: EffortLevel | null;
-}
-
-export const NO_COMPOSER_DEFAULTS: ComposerDefaults = { model: null, effort: null };
-
-const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
-
-export function loadComposerDefaults(workspace: Workspace): ComposerDefaults {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(localStorage.getItem(`drafthouse.composer.${workspace}`) ?? "null");
-  } catch {
-    return NO_COMPOSER_DEFAULTS;
-  }
-  if (!raw || typeof raw !== "object") return NO_COMPOSER_DEFAULTS;
-  const stored = raw as Record<string, unknown>;
-  return {
-    model: typeof stored.model === "string" && stored.model ? stored.model : null,
-    effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
-      ? (stored.effort as EffortLevel)
-      : null,
-  };
-}
-
-export function saveComposerDefaults(workspace: Workspace, next: ComposerDefaults): void {
-  try {
-    localStorage.setItem(`drafthouse.composer.${workspace}`, JSON.stringify(next));
-  } catch {
-    // Same quota case as settings: the choice still holds for this tab.
-  }
 }
 
 const MODELS_KEY = "drafthouse.models";

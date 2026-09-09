@@ -12,13 +12,7 @@ import type {
 import { EMPTY_SESSION, type Daemon, type SessionView } from "./daemon-client";
 import type { Attachment } from "./Composer";
 import { settleTransitions } from "./session-activity";
-import {
-  loadComposerDefaults,
-  loadModelCatalog,
-  saveComposerDefaults,
-  saveModelCatalog,
-  type ComposerDefaults,
-} from "./settings";
+import { loadModelCatalog, saveModelCatalog, type ChatSettings } from "./settings";
 
 /** One workspace's chat state, as its views consume it. */
 export interface Sessions {
@@ -84,25 +78,28 @@ export interface Sessions {
 export function useSessions(
   daemon: Daemon,
   workspace: Workspace,
-  opts: { ready: boolean; confirmBeforeDelete: boolean; pageId?: string | null },
+  opts: {
+    ready: boolean;
+    confirmBeforeDelete: boolean;
+    pageId?: string | null;
+    /**
+     * How Claude answers, as 설정 holds it (PLAN D10). Owned above this hook
+     * now: the same three values drive the settings dialog, and two copies of
+     * "which model" would disagree the first time one of them was edited.
+     */
+    chat: ChatSettings;
+    onChatChange: (patch: Partial<ChatSettings>) => void;
+  },
 ): Sessions {
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
-  const { ready, confirmBeforeDelete, pageId = null } = opts;
+  const { ready, confirmBeforeDelete, pageId = null, chat, onChatChange } = opts;
 
   const [list, setList] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [selector, setSelector] = useState<SessionSelectors | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
-  const [defaults, setDefaults] = useState<ComposerDefaults>(() => loadComposerDefaults(workspace));
   const [catalog, setCatalog] = useState<SessionModelInfo[]>(loadModelCatalog);
-  /**
-   * Permission mode is the one chip that is not persisted. The daemon opens
-   * every session on `default` on purpose (session.ts), and a 전체 허용 that
-   * survived a reload would widen sessions nobody meant to widen. It sticks
-   * for this tab's workspace only.
-   */
-  const [mode, setMode] = useState<PermissionMode>("default");
   const [error, setError] = useState<string | null>(null);
 
   const active = activeId ? (sessions[activeId] ?? EMPTY_SESSION) : null;
@@ -142,12 +139,12 @@ export function useSessions(
    * another page) while the first session is still being created would run the
    * create effect again and open a second thread.
    */
-  const startRef = useRef({ defaults, mode, pageId });
-  startRef.current = { defaults, mode, pageId };
+  const startRef = useRef({ chat, pageId });
+  startRef.current = { chat, pageId };
 
   const startSession = useCallback(
     async (resume?: string, title?: string): Promise<string> => {
-      const { defaults: picked, mode: pickedMode, pageId: pickedPage } = startRef.current;
+      const { chat: picked, pageId: pickedPage } = startRef.current;
       const { sessionId } = await api.createSession(workspace, {
         ...(resume ? { resume } : {}),
         ...(picked.model ? { model: picked.model } : {}),
@@ -159,7 +156,9 @@ export function useSessions(
       markLive(sessionId);
       setActiveId(sessionId);
       // Not a create option — the mode has to be applied to the live session.
-      if (pickedMode !== "default") await api.setPermissionMode(sessionId, pickedMode);
+      if (picked.permissionMode !== "default") {
+        await api.setPermissionMode(sessionId, picked.permissionMode);
+      }
       return sessionId;
     },
     [api, workspace, ensureSession, markLive],
@@ -342,9 +341,7 @@ export function useSessions(
    * will be created with.
    */
   const switchModel = async (model: string | null) => {
-    const next = { ...defaults, model };
-    setDefaults(next);
-    saveComposerDefaults(workspace, next);
+    onChatChange({ model });
     setSelector((prev) => (prev ? { ...prev, model } : prev));
     if (!activeId) return;
     try {
@@ -355,9 +352,7 @@ export function useSessions(
   };
 
   const switchEffort = async (effort: EffortLevel | null) => {
-    const next = { ...defaults, effort };
-    setDefaults(next);
-    saveComposerDefaults(workspace, next);
+    onChatChange({ effort });
     setSelector((prev) => (prev ? { ...prev, effort } : prev));
     if (!activeId) return;
     try {
@@ -367,8 +362,30 @@ export function useSessions(
     }
   };
 
+  /**
+   * 설정 can change these while a thread is open, and the daemon keeps a copy
+   * per session — so a choice made in the dialog has to reach the live thread
+   * too. Without this a planner sets 화면 수정은 바로 and keeps getting cards
+   * in the very conversation they set it for.
+   *
+   * Keyed on the VALUES, not on the session: opening another thread must not
+   * re-push settings `startSession` already carried at create time.
+   */
+  const pushed = useRef<ChatSettings | null>(null);
+  useEffect(() => {
+    const last = pushed.current;
+    pushed.current = chat;
+    if (!activeId || !last) return;
+    const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
+    if (last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
+    if (last.effort !== chat.effort) void api.setEffort(activeId, chat.effort).catch(fail);
+    if (last.permissionMode !== chat.permissionMode) {
+      void api.setPermissionMode(activeId, chat.permissionMode).catch(fail);
+    }
+  }, [activeId, chat, api]);
+
   const switchPermissionMode = async (permissionMode: PermissionMode) => {
-    setMode(permissionMode);
+    onChatChange({ permissionMode });
     setSelector((prev) => (prev ? { ...prev, permissionMode } : prev));
     if (!activeId) return;
     try {
@@ -391,9 +408,9 @@ export function useSessions(
     open,
     create,
     selector: selector ?? {
-      model: defaults.model,
-      effort: defaults.effort,
-      permissionMode: mode,
+      model: chat.model,
+      effort: chat.effort,
+      permissionMode: chat.permissionMode,
       // Local cache first (it matches what this planner last saw), then the
       // daemon's own copy so a fresh browser still gets a real picker.
       models: catalog.length > 0 ? catalog : (daemon.status?.models ?? []),

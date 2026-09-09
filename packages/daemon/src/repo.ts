@@ -22,6 +22,7 @@ import type {
   RepoPhase,
   RepoStatus,
 } from "@drafthouse/protocol";
+import { markTurn } from "@drafthouse/protocol";
 import {
   currentPlatform,
   detectsRegistryAuthFailure,
@@ -66,6 +67,19 @@ const GATE_BRIEF: Record<"check" | "build" | "commit" | "push" | "pr", string> =
   commit: "저장할 변경을 커밋하지 못했습니다.",
   push: "저장한 변경을 올리지 못했습니다.",
   pr: "개발자에게 넘기지 못했습니다.",
+};
+
+/**
+ * The same five failures, named for the button the planner pressed rather than
+ * for the step that ran. This is what the transcript CARD says (PLAN D9); the
+ * brief above is what Claude reads, command output and all.
+ */
+const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
+  check: "저장 전 검사",
+  build: "넘기기 전 빌드",
+  commit: "저장",
+  push: "저장한 내용 올리기",
+  pr: "개발자에게 넘기기",
 };
 
 /**
@@ -319,6 +333,12 @@ export class RepoWorkspace {
    * not be able to end up on a branch the tool did not create.
    */
   private branch: string | null;
+  /**
+   * Files in the clone that a 저장 would carry, as of the last count. Zero
+   * until something asks — a fresh clone is clean, and the stepper's own
+   * mount is what triggers the first real count.
+   */
+  private pendingChanges = 0;
   private openHandoff: HandoffStatus | null;
   private readonly onCycleChange:
     | ((cycle: { branch: string | null; handoff: HandoffStatus | null }) => void)
@@ -579,6 +599,8 @@ export class RepoWorkspace {
     }
 
     const commit = (await this.git(["rev-parse", "HEAD"])).trim();
+    // The worktree is clean now; the stepper moves off 검토·수정 on this.
+    await this.refreshPendingChanges();
     return this.setDiff({ stage: "published", commit });
   }
 
@@ -790,7 +812,10 @@ export class RepoWorkspace {
     // the same wire a typed message uses, output tail included. The step is
     // named the way the planner's button is, not the way git is.
     onSessionTurn?.(
-      `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
+      markTurn(
+        { kind: "gate", step: GATE_STEP[gate] },
+        `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
+      ),
     );
     return this.setDiff({ stage: "failed", gate, detail });
   }
@@ -843,6 +868,14 @@ export class RepoWorkspace {
       const config = readDrafthouseConfig(this.root);
       this.config = config;
       const installed = await this.installIfNeeded(config);
+
+      /**
+       * Count once the clone is on disk and checked out. Without this the
+       * stepper reads zero after every restart — the count only moves on a
+       * 화면 turn otherwise, and a planner who closed the app mid-cycle would
+       * come back to a rail that says there is nothing to save.
+       */
+      await this.refreshPendingChanges();
 
       // Up to date and still serving: restarting the preview would only flip
       // the UI out of `ready` for no gain.
@@ -1142,7 +1175,31 @@ export class RepoWorkspace {
       branch: this.branch,
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
+      pendingChanges: this.pendingChanges,
     };
+  }
+
+  /**
+   * Recount what a 저장 would carry, then tell everyone (PLAN D8).
+   *
+   * Called where the number can actually have moved: a 화면 turn that finished
+   * writing files, and a save that just cleaned the worktree. `git status` on
+   * a clone this size is milliseconds, and a failure here must never take down
+   * the caller — a stale count is a wrong button, a thrown error is a dead
+   * session.
+   */
+  async refreshPendingChanges(): Promise<void> {
+    if (!this.isCloned()) return;
+    let next = 0;
+    try {
+      const out = await this.git(["status", "--porcelain"]);
+      next = out.split("\n").filter((line) => line.trim().length > 0).length;
+    } catch {
+      return;
+    }
+    if (next === this.pendingChanges) return;
+    this.pendingChanges = next;
+    this.emit();
   }
 
   private setPhase(phase: RepoPhase, detail: string | null): void {

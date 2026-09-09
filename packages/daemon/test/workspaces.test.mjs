@@ -96,6 +96,19 @@ test("the planning rules name the frontmatter fields a session must not touch", 
   }
 });
 
+test("the planning rules forbid answering in mirror paths (PLAN D9)", () => {
+  // A planner knows a 기획서 by its Confluence title. Every path in an answer
+  // is a string they cannot search for, click, or correct — and the tool now
+  // renders the paths it sends as cards, so an answer that quotes one back is
+  // the only place they would still meet one.
+  const rules = planningRules(null);
+  assert.match(rules, /파일 경로를 쓰지 않는다/);
+  assert.match(rules, /페이지 제목으로만 문서를 안다/);
+  // The card markers are ours; a session that echoes them would render a
+  // second card out of Claude's own answer.
+  assert.ok(rules.includes("drafthouse:"), "the rules name the marker to ignore");
+});
+
 test("the repo's own 기획 rules ride below the tool's invariants", () => {
   const withRepo = planningRules("모든 기획서는 '배경' 절로 시작한다.");
   const invariantsEnd = withRepo.indexOf("게시는 기획자가 누른다");

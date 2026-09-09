@@ -18,6 +18,7 @@ packages/web/test/ui-editor-e2e.png
 packages/web/test/ui-publish-e2e.png
 packages/web/test/ui-comments-e2e.png
 packages/web/test/ui-onboarding-done.png
+packages/web/test/ui-editor-1280.png
 packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/

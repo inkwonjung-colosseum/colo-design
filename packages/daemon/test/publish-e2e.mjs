@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
+import { readTurn } from "../../protocol/dist/index.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const run = promisify(execFile);
@@ -184,7 +185,22 @@ async function main() {
     check(
       "the failure lands in the session as a fixable brief",
       brief.event.text.includes("테스트용 실패"),
-      `${brief.event.text.split("\n")[0]}…`,
+      `${brief.event.text.split("\n").slice(0, 2).join(" ")}…`,
+    );
+    // The planner reads a card, not the command output (PLAN D9). The marker
+    // is what the transcript turns into one, and it names the step by the
+    // button that was pressed rather than by the gate that ran.
+    const marked = readTurn(brief.event.text);
+    check(
+      "and it is marked so the planner sees a card instead of the output",
+      marked.marker?.kind === "gate" && marked.marker.step === "저장 전 검사",
+      JSON.stringify(marked.marker),
+    );
+    check(
+      "the marker does not disturb what Claude reads",
+      marked.body.startsWith("저장 전 검사(check)가 실패했습니다.") &&
+        marked.body.includes("테스트용 실패"),
+      marked.body.split("\n")[0] ?? "",
     );
     await request({ id: "5", type: "session.close", sessionId });
 
@@ -195,6 +211,20 @@ async function main() {
 
     // --- 4. a fixed repo saves onto its OWN branch, never onto main -------
     writeFileSync(join(ROOT, "scripts", "check.mjs"), PASSING_CHECK);
+
+    /**
+     * What a 저장 would carry, as the stepper reads it (PLAN D8). The number
+     * moves when the clone is prepared, when a 화면 turn settles, and when a
+     * save cleans the worktree — never on a timer, because it only changes
+     * when somebody does something.
+     */
+    const dirty = await request({ id: "6a", type: "repo.sync" });
+    check(
+      "uncommitted work is counted, so the stepper can say 저장",
+      dirty.pendingChanges > 0,
+      `pendingChanges=${dirty.pendingChanges}`,
+    );
+
     const saved = await request({ id: "6", type: "repo.save", message: "회원 관리 화면 추가" });
     check(
       "a fixed repo saves",
@@ -229,6 +259,11 @@ async function main() {
     );
 
     const status = await request({ id: "6b", type: "repo.status" });
+    check(
+      "and the save clears it, so the stepper moves on to 넘기기",
+      status.pendingChanges === 0,
+      `pendingChanges=${status.pendingChanges}`,
+    );
     check(
       "the status names the branch the cycle is on",
       status.branch === cycleBranch && status.handoff === null,

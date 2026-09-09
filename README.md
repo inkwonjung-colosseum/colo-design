@@ -107,6 +107,17 @@ a bug.
   `data-screen`/`data-state`, CSS path, own text, rect), which forwards it as a
   structured Korean turn. Pins stay while the turn runs, clear when it
   settles. v1 is click, comment, send — screenshots and arrows are out.
+- **Turns the planner did not type.** A comment bundle, the brief that opens a
+  화면 thread, a 기획서 comparison, a failed gate: all four are written for
+  Claude, in Claude's vocabulary, and all four used to land in the planner's own
+  chat as CSS paths and command output. They now carry a marker on their first
+  line (`<!-- drafthouse:<kind> {…} -->`, an HTML comment Claude reads past) and
+  the transcript renders them as a card — what was asked, in the planner's
+  words, with the text Claude actually received one fold away. The marker is a
+  prefix on the same string the SDK already stores, so a resumed thread replays
+  the same card with no sidecar to keep in sync, and a marked turn never names
+  the thread it lands in. Both halves are told to answer the same way: no file
+  paths, no component or prop names, screens and 기획서 by their titles.
 - **The screen axis.** The connected repo declares what it can render — route,
   title, `states`, and the mirror-relative path of the 기획서 it was built from
   — and its overlay posts that list to the tool. Picking a 기획서 in the tree
@@ -313,7 +324,7 @@ Confluence REST pairs, stub CLI) except the two suites marked real-Claude,
 which spend subscription usage.
 
 ```bash
-pnpm test:unit            # offline — platform branches, security/containment regressions, workspace write policies + 기획 rules, repo workspace units, the editor's markdown grammar
+pnpm test:unit            # offline — platform branches, security/containment regressions, workspace write policies + 기획 rules, repo workspace units, the editor's markdown grammar, the turn-marker parser
 pnpm test:onboard-unit    # offline — onboarding gates and the OS credential store (migration, keychain, npmrc merge)
 pnpm test:confluence-unit # offline — storage↔markdown lossless round-trips, REST golden pass, engine pull/push/conflict/deferral
 pnpm test:projects        # offline — two projects on two subtrees of one space, overlap refused, activation re-points the tree, registry survives a restart
@@ -353,7 +364,7 @@ the Claude CLI is a stub script wherever no model turn is the subject.
 
 | Package | What it does |
 | --- | --- |
-| `packages/protocol` | v5 wire contract (zod-validated client messages), plus the shared manual-update-check logic. |
+| `packages/protocol` | v5 wire contract (zod-validated client messages), the shared manual-update-check logic, and the turn markers that let the UI render a machine-authored turn as a card. |
 | `packages/daemon` | The project registry, sessions, the repo workspace (clone/pull/publish/gates), the Confluence mirror engine with the storage↔markdown converter, onboarding checks, credential storage, static web serving for the desktop. |
 | `packages/web` | The planner UI: project switcher, page tree, session tab strip, chat, the 문서/화면 segment (TipTap editor + repo preview), diff review, conflict chooser, onboarding wizard, settings. |
 | `packages/desktop` | Electron main (daemon in-process, safeStorage store, bundled runtimes, update bridge) + electron-builder config. |

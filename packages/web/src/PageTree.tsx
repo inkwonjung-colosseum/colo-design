@@ -6,6 +6,7 @@ import type {
   DocSummary,
 } from "@drafthouse/protocol";
 import type { Daemon } from "./daemon-client";
+import { pageMark } from "./stage";
 import { timeAgo } from "./format";
 
 const COLLAPSED_KEY = "drafthouse.pagetree.collapsed";
@@ -23,16 +24,6 @@ const COLLAPSED_KEY = "drafthouse.pagetree.collapsed";
  * declared, a pull request GitHub itself reports — never from an opinion
  * about whether the work is "done".
  */
-
-/** How far a 기획서 has come. The order here is the order it moves through. */
-type Stage = "planning" | "built" | "handed" | "merged";
-
-const STAGE: Record<Stage, { mark: string; title: string }> = {
-  planning: { mark: "○", title: "기획 중 — 아직 이 기획서로 만든 화면이 없습니다" },
-  built: { mark: "◐", title: "화면 있음 — 이 기획서로 만든 화면이 레포에 있습니다" },
-  handed: { mark: "✓", title: "넘김 — 개발자가 보고 있습니다" },
-  merged: { mark: "●", title: "반영됨 — 개발자가 받아 갔습니다" },
-};
 
 export function PageTree({
   daemon,
@@ -90,24 +81,15 @@ export function PageTree({
   }, [refresh, refreshKey, selected]);
 
   /**
-   * A page's stage, from the two mechanical signals the tool actually has:
-   * a screen the repo declared as built from this 기획서, and the pull request
-   * a developer is holding. Nothing here is a judgement about quality.
+   * A page's mark comes from the same function as the stepper above the
+   * document (PLAN D8). Before that function existed this file had its own
+   * copy of the rules, and a badge that disagreed with the button was only a
+   * matter of time.
    */
-  const built = useMemo(
-    () => new Set(screens.map((screen) => screen.spec).filter((spec): spec is string => spec !== null)),
-    [screens],
-  );
   const handoff = daemon.repo?.handoff ?? null;
-  const handedIds = useMemo(() => new Set(handoff?.pageIds ?? []), [handoff]);
-  const stageOf = useCallback(
-    (page: DocSummary): Stage => {
-      if (handoff && handedIds.has(page.pageId)) {
-        return handoff.state === "merged" ? "merged" : "handed";
-      }
-      return built.has(page.path) ? "built" : "planning";
-    },
-    [built, handoff, handedIds],
+  const markOf = useCallback(
+    (page: DocSummary) => pageMark(page, screens, handoff),
+    [screens, handoff],
   );
 
   const siteUrl = daemon.confluenceSettings?.siteUrl ?? null;
@@ -224,7 +206,7 @@ export function PageTree({
                       onSelect={onSelect}
                       siteUrl={siteUrl}
                       space={space}
-                      stageOf={stageOf}
+                      markOf={markOf}
                     />
                   ))}
                 </ul>
@@ -428,7 +410,7 @@ function TreeRow({
   onSelect,
   siteUrl,
   space,
-  stageOf,
+  markOf,
 }: {
   node: TreeNode;
   depth: number;
@@ -437,10 +419,10 @@ function TreeRow({
   siteUrl: string | null;
   /** The Confluence space key - not always the path's folder name. */
   space: string;
-  stageOf: (page: DocSummary) => Stage;
+  markOf: (page: DocSummary) => { mark: string; title: string };
 }) {
   const { page } = node;
-  const stage = stageOf(page);
+  const stage = markOf(page);
   const webUrl =
     siteUrl && page.pageId
       ? `${siteUrl}/wiki/spaces/${encodeURIComponent(space)}/pages/${page.pageId}`
@@ -458,8 +440,8 @@ function TreeRow({
         {/* Before the title, not after: the planner scans this column to find
             what still needs work, and a mark that trails a variable-length
             title cannot be scanned. */}
-        <span className={`pagetree__stage pagetree__stage--${stage}`} title={STAGE[stage].title}>
-          {STAGE[stage].mark}
+        <span className="pagetree__stage" title={stage.title}>
+          {stage.mark}
         </span>
         <button type="button" className="pagetree__title" onClick={() => onSelect(page.path)}>
           {page.title}
@@ -490,7 +472,7 @@ function TreeRow({
               onSelect={onSelect}
               siteUrl={siteUrl}
               space={space}
-              stageOf={stageOf}
+              markOf={markOf}
             />
           ))}
         </ul>

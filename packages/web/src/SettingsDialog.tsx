@@ -1,9 +1,28 @@
 import { useEffect, useRef, useState } from "react";
-import type { DaemonStatus } from "@drafthouse/protocol";
+import type { DaemonStatus, EffortLevel, PermissionMode } from "@drafthouse/protocol";
 import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@drafthouse/protocol";
 import type { Daemon } from "./daemon-client";
 import { CloseIcon } from "./icons";
-import { THEMES, type SendKey, type Settings, type ThemeChoice } from "./settings";
+import {
+  EFFORT_HINT,
+  EFFORT_LABEL,
+  MODE_HINT,
+  MODE_LABEL,
+  SETTINGS_MODES,
+  modelOptions,
+  modelRowOf,
+} from "./chat-options";
+import {
+  THEMES,
+  loadModelCatalog,
+  type ChatSettings,
+  type SendKey,
+  type Settings,
+  type ThemeChoice,
+} from "./settings";
+
+/** Slowest last, so the picker reads as a dial rather than a set. */
+const EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 const THEME_LABEL: Record<ThemeChoice, string> = {
   system: "시스템 설정을 따름",
@@ -94,6 +113,7 @@ function Switch({
 export function SettingsDialog({
   settings,
   onChange,
+  onChatChange,
   daemonUrl,
   status,
   connection,
@@ -105,6 +125,8 @@ export function SettingsDialog({
 }: {
   settings: Settings;
   onChange: (patch: Partial<Settings>) => void;
+  /** The 대화 group edits these; they reach the live thread too (PLAN D10). */
+  onChatChange: (patch: Partial<ChatSettings>) => void;
   daemonUrl: string | null;
   status: DaemonStatus | null;
   connection: string;
@@ -117,6 +139,12 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const [url, setUrl] = useState(daemonUrl ?? "");
+  /**
+   * Only a live session can be asked for the model list, so the cache is what
+   * lets 설정 offer real names before a thread is open — the daemon's own copy
+   * is the fallback for a browser that has never had one.
+   */
+  const models = loadModelCatalog().length > 0 ? loadModelCatalog() : (status?.models ?? []);
   const panel = useRef<HTMLDivElement>(null);
   const [update, setUpdate] = useState<UpdateCheckResult | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -219,6 +247,64 @@ export function SettingsDialog({
             />
           </section>
 
+          {/* Where the three composer chips went (PLAN D10). A planner
+              describing a screen should not be choosing a model to do it with;
+              the choice is real, so it is kept, but it is kept here. */}
+          <section className="settings__group">
+            <h3 className="settings__groupTitle">대화</h3>
+            <Choice<string>
+              label="답변 방식"
+              hint={
+                models.length > 0
+                  ? "어떤 Claude가 답할지 고릅니다"
+                  : "대화를 한 번 시작하면 고를 수 있는 목록이 채워집니다"
+              }
+              value={settings.chat.model ?? ""}
+              options={[
+                { value: "", label: "자동 (Claude Code 기본값)" },
+                ...modelOptions(models, modelRowOf(models, settings.chat.model)).map((option) => ({
+                  value: option.value ?? "",
+                  label: option.hint ? `${option.label} — ${option.hint}` : option.label,
+                })),
+              ]}
+              onChange={(model) => onChatChange({ model: model || null })}
+            />
+            <Choice<string>
+              label="생각 시간"
+              hint="오래 생각할수록 꼼꼼하고, 그만큼 느립니다"
+              value={settings.chat.effort ?? ""}
+              options={[
+                { value: "", label: "자동" },
+                ...EFFORT_ORDER.map((level) => ({
+                  value: level,
+                  label: `${EFFORT_LABEL[level]} — ${EFFORT_HINT[level]}`,
+                })),
+              ]}
+              onChange={(effort) =>
+                onChatChange({ effort: (effort as EffortLevel) || null })
+              }
+            />
+            <Choice<PermissionMode>
+              label="확인 방식"
+              hint="Claude가 화면을 바꾸기 전에 물어볼지 정합니다"
+              value={settings.chat.permissionMode}
+              options={SETTINGS_MODES.map((mode) => ({
+                value: mode,
+                label: `${MODE_LABEL[mode]} — ${MODE_HINT[mode]}`,
+              }))}
+              onChange={(permissionMode) => onChatChange({ permissionMode })}
+            />
+            {settings.chat.permissionMode === "bypassPermissions" && (
+              <div className="notice notice--warn">
+                <span className="notice__text">
+                  전부 맡기기는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이
+                  바뀔 수 있으니, 필요한 동안만 켜 두세요. 창을 다시 열면 물어보고 진행으로
+                  돌아갑니다.
+                </span>
+              </div>
+            )}
+          </section>
+
           <section className="settings__group">
             <h3 className="settings__groupTitle">동작</h3>
             <Choice<SendKey>
@@ -295,71 +381,14 @@ export function SettingsDialog({
             )}
           </section>
 
+          {/* Everything a planner only ever needs when something is broken
+              (PLAN D13). It used to sit open under the heading 데몬, which is
+              a word for the program, not for the problem. */}
           <section className="settings__group">
-            <h3 className="settings__groupTitle">데몬</h3>
-            <Field
-              wide
-              label="접속 주소"
-              hint={`연결 상태: ${connection}. 데몬을 켜면 이 주소를 출력합니다.`}
-            >
-              <span className="settings__url">
-                <input
-                  value={url}
-                  spellCheck={false}
-                  placeholder="ws://127.0.0.1:7823?token=…"
-                  aria-label="데몬 접속 주소"
-                  onChange={(e) => setUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && urlChanged && onReconnect(url.trim())}
-                />
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!urlChanged}
-                  onClick={() => onReconnect(url.trim())}
-                >
-                  다시 연결
-                </button>
-              </span>
-            </Field>
-
-            {status && (
-              <dl className="settings__facts">
-                <div>
-                  <dt>운영체제</dt>
-                  <dd>{status.platform}</dd>
-                </div>
-                <div>
-                  <dt>Claude Code</dt>
-                  <dd>{status.claudeVersion ?? "찾지 못함"}</dd>
-                </div>
-                <div>
-                  <dt>로그인</dt>
-                  <dd>
-                    {status.loggedIn
-                      ? [status.email, status.subscriptionType ?? status.authMethod]
-                          .filter(Boolean)
-                          .join(" · ") || "로그인됨"
-                      : "로그인 안 됨"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>pnpm</dt>
-                  <dd>{status.pnpmAvailable ? "사용 가능" : "없음"}</dd>
-                </div>
-                <div>
-                  <dt>실행 중인 기획</dt>
-                  <dd>{status.liveSessions}</dd>
-                </div>
-                <div>
-                  <dt>프로토콜</dt>
-                  <dd>v{status.protocolVersion}</dd>
-                </div>
-              </dl>
-            )}
-
+            <h3 className="settings__groupTitle">문제 해결</h3>
             <div className="settings__row">
               <button type="button" onClick={onOpenOnboarding}>
-                온보딩 다시 보기
+                처음 설정 다시 보기
               </button>
               <button type="button" disabled={checkingUpdate} onClick={() => void checkUpdate()}>
                 {checkingUpdate ? "확인 중…" : "업데이트 확인"}
@@ -372,23 +401,89 @@ export function SettingsDialog({
                 </span>
               )}
               {updateError && <span className="setting__hint">{updateError}</span>}
-              <button
-                type="button"
-                className="danger"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      "저장된 접속 주소를 지울까요? 이 컴퓨터의 기획은 그대로 남지만, 데몬이 출력한 주소를 다시 붙여 넣어야 합니다.",
-                    )
-                  )
-                    return;
-                  onForgetUrl();
-                }}
-              >
-                접속 주소 지우기
-              </button>
-              <span className="setting__hint">연결 화면으로 돌아갑니다. 기획은 삭제되지 않습니다.</span>
             </div>
+
+            <details className="settings__fold">
+              <summary>고급 · 연결 정보</summary>
+              <Field
+                wide
+                label="접속 주소"
+                hint={`연결 상태: ${connection}. 데몬을 켜면 이 주소를 출력합니다.`}
+              >
+                <span className="settings__url">
+                  <input
+                    value={url}
+                    spellCheck={false}
+                    placeholder="ws://127.0.0.1:7823?token=…"
+                    aria-label="데몬 접속 주소"
+                    onChange={(e) => setUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && urlChanged && onReconnect(url.trim())}
+                  />
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={!urlChanged}
+                    onClick={() => onReconnect(url.trim())}
+                  >
+                    다시 연결
+                  </button>
+                </span>
+              </Field>
+
+              {status && (
+                <dl className="settings__facts">
+                  <div>
+                    <dt>운영체제</dt>
+                    <dd>{status.platform}</dd>
+                  </div>
+                  <div>
+                    <dt>Claude Code</dt>
+                    <dd>{status.claudeVersion ?? "찾지 못함"}</dd>
+                  </div>
+                  <div>
+                    <dt>로그인</dt>
+                    <dd>
+                      {status.loggedIn
+                        ? [status.email, status.subscriptionType ?? status.authMethod]
+                            .filter(Boolean)
+                            .join(" · ") || "로그인됨"
+                        : "로그인 안 됨"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>pnpm</dt>
+                    <dd>{status.pnpmAvailable ? "사용 가능" : "없음"}</dd>
+                  </div>
+                  <div>
+                    <dt>실행 중인 기획</dt>
+                    <dd>{status.liveSessions}</dd>
+                  </div>
+                  <div>
+                    <dt>프로토콜</dt>
+                    <dd>v{status.protocolVersion}</dd>
+                  </div>
+                </dl>
+              )}
+
+              <div className="settings__row">
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "저장된 접속 주소를 지울까요? 이 컴퓨터의 기획은 그대로 남지만, 데몬이 출력한 주소를 다시 붙여 넣어야 합니다.",
+                      )
+                    )
+                      return;
+                    onForgetUrl();
+                  }}
+                >
+                  접속 주소 지우기
+                </button>
+                <span className="setting__hint">연결 화면으로 돌아갑니다. 기획은 삭제되지 않습니다.</span>
+              </div>
+            </details>
           </section>
         </div>
       </div>

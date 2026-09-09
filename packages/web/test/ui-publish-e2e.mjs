@@ -61,6 +61,17 @@ async function cycleBranch(remote) {
   return stdout.split("\n").map((line) => line.trim()).find((name) => name.startsWith("drafthouse/")) ?? null;
 }
 
+
+/**
+ * Every cycle action lives in 더 보기 whatever the stepper is suggesting
+ * (PLAN D8) — the rail is advice, not a gate. This suite has no 기획서 open,
+ * so the stepper has no primary to press and the menu is the only way in.
+ */
+async function viaMenu(page, label) {
+  await page.getByRole("button", { name: "더 보기" }).click();
+  await page.getByRole("menuitem", { name: label }).click();
+}
+
 async function main() {
   if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @drafthouse/web build");
   if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @drafthouse/daemon build");
@@ -132,7 +143,7 @@ async function main() {
     check("the planner connects and the 화면 segment shows the repo preview", true);
 
     // --- the panel --------------------------------------------------------
-    await page.getByRole("button", { name: "저장", exact: true }).click();
+    await viaMenu(page, "저장");
     await page.waitForSelector('[role="dialog"][aria-label="저장 검토"]', { timeout: 5000 });
     check("the empty panel says there is nothing to save", (await page.locator(".diff__files").count()) === 0);
     await page.keyboard.press("Escape");
@@ -147,7 +158,7 @@ async function main() {
     const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
     writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
 
-    await page.getByRole("button", { name: "저장", exact: true }).first().click();
+    await viaMenu(page, "저장");
     await page.waitForSelector(".diff__file", { timeout: 10000 });
     const rows = page.locator(".diff__file");
     check(

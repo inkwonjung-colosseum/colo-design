@@ -665,6 +665,15 @@ export interface RepoStatus {
   baseBranch: string;
   /** The open (or just-merged) pull request, once 넘기기 has run. */
   handoff: HandoffStatus | null;
+  /**
+   * How many files in the clone differ from the last 저장 (PLAN D8).
+   *
+   * Counted with one `git status --porcelain` when a 화면 turn settles and when
+   * a save finishes — never on a timer. It is what tells the planner's stepper
+   * that there is something to save, so a number that only moved on a poll
+   * would leave the button lying for up to a minute.
+   */
+  pendingChanges: number;
 }
 
 // ---------------------------------------------------------------------------

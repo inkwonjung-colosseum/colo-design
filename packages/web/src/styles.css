@@ -1,8 +1,9 @@
 /* ==========================================================================
    Drafthouse — design system
-   A quiet, mono-first console. Neutral graphite surfaces, hairline borders,
-   one restrained steel accent for state. No gradients, no glows, no bubbles —
-   the transcript reads like a session log, the chrome like an editor.
+   A document tool. Light paper by default, sans-serif, generous spacing.
+   Monospace is for code and diffs only — the places that really are machine
+   text. The console palette it started as is still here as the dark theme
+   (PLAN D13).
    ========================================================================== */
 
 :root {
@@ -25,7 +26,7 @@
   /* text */
   --text: #e4e4e7;
   --text-2: #b6b6bc;
-  --muted: #7e7e87;
+  --muted: #9a9aa4;
 
   /* semantics — accent is steel, used only for state and links */
   --accent: #9db1c7;
@@ -73,7 +74,7 @@
 
   --text: #17171a;
   --text-2: #45454d;
-  --muted: #71717a;
+  --muted: #5f5f68;
 
   --accent: #4a6b8f;
   --accent-soft: rgba(74, 107, 143, 0.1);
@@ -103,15 +104,17 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.55 var(--sans);
+  font: 15px/1.6 var(--sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 ::selection { background: var(--select-bg); }
 
+/* Buttons are words a planner reads, so they are set in the reading face.
+   Monospace on a button was a console affectation. */
 button {
-  font: 500 12.5px var(--mono);
+  font: 500 13.5px var(--sans);
   cursor: pointer;
   color: inherit;
 }
@@ -917,33 +920,118 @@ input:focus, textarea:focus, select:focus {
   opacity: 1;
 }
 
-/* context ring + plan limits ------------------------------------------------*/
+/* usage ---------------------------------------------------------------------*/
 
-.ring { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font: 500 10.5px var(--mono); margin-right: 6px; }
-.ring__text { font-variant-numeric: tabular-nums; }
-/* Pinned as its own row at the top of the composer card: the limits are
-   status, not a control, so they sit above the input instead of wrapping in
-   among the toolbar chips. */
-.limits { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.limits__label { color: var(--muted); font: 500 10.5px var(--mono); margin-right: 3px; }
-.limit {
+/* One chip for everything the planner spends (PLAN D10). The dot is the only
+   part that interrupts: it carries whichever window is closest to running out,
+   and the numbers behind it are one click away. */
+.usage__chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
+  gap: 6px;
+  padding: 3px 9px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
+  background: transparent;
   color: var(--muted);
-  font: 500 10.5px var(--mono);
-  font-variant-numeric: tabular-nums;
+  font: 500 11px var(--sans);
 }
-.limit__dot { width: 5px; height: 5px; border-radius: 999px; background: var(--accent); }
-.limit__left { color: var(--muted); font-weight: 400; }
-.limit__left:empty { display: none; }
-.limit--warn { color: var(--warn); border-color: var(--warn-line); }
-.limit--warn .limit__dot { background: var(--warn); }
-.limit--danger { color: var(--danger); border-color: var(--danger-line); }
-.limit--danger .limit__dot { background: var(--danger); }
+.usage__chip:hover, .usage__chip[aria-expanded="true"] {
+  border-color: var(--line-hover);
+  color: var(--text-2);
+}
+.usage__chip--warn { color: var(--warn); border-color: var(--warn-line); }
+.usage__chip--danger { color: var(--danger); border-color: var(--danger-line); }
+.usage__dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
+.usage__dot--warn { background: var(--warn); }
+.usage__dot--danger { background: var(--danger); }
+
+.usage__menu { min-width: 268px; padding: 10px; gap: 9px; }
+.usage__row {
+  display: grid;
+  grid-template-columns: 58px 1fr 38px;
+  align-items: center;
+  gap: 8px;
+}
+.usage__label { color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.usage__bar { height: 5px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
+.usage__fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.usage__fill--warn { background: var(--warn); }
+.usage__fill--danger { background: var(--danger); }
+.usage__pct {
+  color: var(--muted);
+  font: 500 11px var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* The note explains a number that has gone high, so it spans the whole row
+   rather than squeezing into the column the bar already fills. */
+.usage__note { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+/* this conversation is off the defaults ------------------------------------ */
+
+.selector__chip--off { color: var(--warn); border-color: var(--warn-line); }
+.advanced { min-width: 300px; padding: 10px; gap: 9px; }
+.advanced__lead { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.advanced__row { display: grid; gap: 4px; }
+.advanced__label { color: var(--text-2); font-size: 12px; }
+.advanced__row select { width: 100%; font-size: 12px; padding: 5px 8px; }
+
+/* machine-authored turns ---------------------------------------------------- */
+
+/* A turn the planner started but did not type (PLAN D9). It is their own side
+   of the conversation, so it sits where their bubbles sit — but it is a
+   summary of an action, not a sentence, so it is a card rather than a bubble. */
+.machine {
+  align-self: flex-end;
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel-2);
+}
+.machine--gate { border-color: var(--warn-line); background: var(--warn-soft); }
+.machine__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.machine__title { color: var(--text); font-size: 13px; font-weight: 600; }
+.machine__lead { color: var(--muted); font-size: 12px; }
+.machine__rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine__rows li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 9px;
+  border-left: 2px solid var(--line-strong);
+}
+.machine__label { color: var(--text-2); font-size: 12px; }
+.machine__text { color: var(--text); font-size: 13px; line-height: 1.5; }
+.machine__more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 11px var(--sans);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.machine__more:hover { color: var(--text-2); }
+/* The text Claude actually received. Monospace here is right: this is the one
+   place in the transcript that is deliberately showing machine input. */
+.machine__body {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 9px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font: 11.5px/1.55 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* autocomplete ---------------------------------------------------------------*/
 
@@ -1078,6 +1166,21 @@ input:focus, textarea:focus, select:focus {
   font-family: var(--mono);
   font-size: 12px;
 }
+
+/* Diagnostics stay reachable and stop being the first thing in the group
+   (PLAN D13): a planner opens 문제 해결 for the two buttons above this fold. */
+.settings__fold { margin-top: 10px; }
+.settings__fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font: 500 12px var(--sans);
+  padding: 4px 0;
+  list-style: none;
+}
+.settings__fold > summary::-webkit-details-marker { display: none; }
+.settings__fold > summary::before { content: "▸ "; }
+.settings__fold[open] > summary::before { content: "▾ "; }
+.settings__fold > summary:hover { color: var(--text-2); }
 
 .settings__facts {
   margin: 8px 0 12px;
@@ -1735,8 +1838,10 @@ input:focus, textarea:focus, select:focus {
   z-index: 5;
 }
 
-.chip--quote { gap: 6px; }
-.chip--quote .chip__dismiss {
+.chip--quote, .chip--brief { gap: 6px; }
+.chip--brief { border-color: var(--accent-soft); }
+.chip--quote .chip__dismiss,
+.chip--brief .chip__dismiss {
   margin-left: 2px;
   background: transparent;
   border: 0;
@@ -1946,6 +2051,122 @@ input:focus, textarea:focus, select:focus {
 .sessiontab__close:hover { color: var(--danger); background: var(--danger-soft); }
 
 /* ---------------------------------------------------------------- responsive */
+
+/* first 기획서 -----------------------------------------------------------------*/
+
+/* A project with an empty subtree used to show three different sentences
+   about the same dead end. One invitation instead (PLAN D14). */
+.firstdoc {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin: auto;
+  max-width: 420px;
+  padding: 28px;
+}
+.firstdoc h2 { margin: 0; font-size: 17px; font-weight: 650; }
+.firstdoc p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+.firstdoc .primary { padding: 8px 18px; }
+
+/* stage bar ------------------------------------------------------------------*/
+
+/* One rail, one button (PLAN D8). It sits above the 문서 | 화면 segment so the
+   answer to "what now" is the first thing in the column a planner is working
+   in, not something they find by scanning four other places. */
+.stagebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+
+.stagerail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.stagerail__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 2px 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.stagerail__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line-strong);
+  flex: none;
+}
+/* Steps already behind us are filled, the current one is the accent, the rest
+   are outlines. Three states, no colour-only distinction: the current step is
+   also the only bold one. */
+.stagerail__step--done .stagerail__dot { background: var(--line-hover); border-color: var(--line-hover); }
+.stagerail__step--done { color: var(--text-2); }
+.stagerail__step--on .stagerail__dot { background: var(--accent); border-color: var(--accent); }
+.stagerail__step--on { color: var(--text); font-weight: 650; }
+.stagerail__step:not(:last-child)::after {
+  content: "";
+  width: 14px;
+  height: 1px;
+  background: var(--line);
+  margin-left: 6px;
+}
+
+.stagebar__act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stagebar__reason { color: var(--muted); font-size: 12.5px; }
+.stagebar__spacer { flex: 1; }
+.stagebar__primary { padding: 7px 16px; font-weight: 600; }
+/* The composer's menus open upward because they sit at the bottom of their
+   column; this one sits at the top of its own, where upward is off-screen. */
+.stagebar__more .selector__menu { right: 0; left: auto; top: calc(100% + 8px); bottom: auto; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* document beside screen -----------------------------------------------------*/
+
+.planner__panes { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+/* Reviewing is reading the 기획서 against the thing it produced, so at width
+   they sit side by side rather than a toggle apart (PLAN D13). */
+.planner__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1px;
+  background: var(--line-soft);
+  flex: 1;
+  min-height: 0;
+}
+.planner__split > .planner__segment { background: var(--bg); min-width: 0; }
+.planner__split > .planner__segment[hidden] { display: flex; }
+
+/* Below 1280 the three columns stop being three columns: the tree gives up
+   its width first, because it is a list of titles and they truncate
+   gracefully. The chat and the document do not. */
+@media (max-width: 1280px) {
+  .planner__body { grid-template-columns: 172px minmax(0, 1fr) minmax(340px, 40%); }
+  .stagerail__step { font-size: 12px; }
+  .stagerail__step:not(:last-child)::after { width: 8px; }
+}
 
 @media (max-width: 880px) {
   .scroll { padding: 16px 16px 10px; }

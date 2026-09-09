@@ -216,6 +216,13 @@ export class DaemonServer {
       onState: (sessionId, state, detail) => {
         this.broadcast({ type: "session.state", sessionId, state, ...(detail ? { detail } : {}) });
         this.refreshSessionLock();
+        // A 화면 turn that just finished is the one moment the clone can have
+        // gained files nobody has saved (PLAN D8). Counting here — rather than
+        // on a timer — is what lets the stepper say 저장 the instant Claude
+        // stops, and say nothing at all while it is still writing.
+        if (state !== "running" && this.manager.get(sessionId)?.workspace === "design") {
+          void this.repo.refreshPendingChanges();
+        }
       },
       onPermissionRequest: (payload) =>
         this.broadcast({ type: "permission.request", ...payload }),

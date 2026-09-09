@@ -237,7 +237,7 @@ async function main() {
     );
 
     // --- a state chip shows the 기획서's other state ------------------------
-    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "empty" }).click();
+    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "비어 있음" }).click();
     await frame.locator('[data-screen="member/MemberList"][data-state="empty"]').waitFor({ timeout: 60_000 });
     check("a state chip renders the screen in that state", true);
 
@@ -257,7 +257,7 @@ async function main() {
     await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "데스크톱" }).click();
 
     // Back to the default state for the comment story below.
-    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "default" }).click();
+    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
     await frame.locator('[data-screen="member/MemberList"][data-state="default"]').waitFor({ timeout: 60_000 });
 
     // The screen is already open — the tool navigated there above, which is
@@ -328,9 +328,61 @@ async function main() {
       JSON.stringify(envelope?.items?.[0]?.element ?? null),
     );
 
-    // The planner sees their own turn in the transcript.
-    await page.locator(".bubble--user", { hasText: "화면 수정 요청 2건" }).waitFor({ timeout: 15_000 });
-    check("the planner's transcript shows the structured turn", true);
+    // The planner sees a card, not the turn (PLAN D9). The text above is what
+    // Claude reads; what lands in the chat is what they asked for.
+    const card = page.locator(".machine--comments");
+    await card.waitFor({ timeout: 15_000 });
+    const cardText = await card.innerText();
+    check(
+      "the transcript shows a 수정 요청 card naming the screen by its title",
+      cardText.includes("수정 요청 2건") && cardText.includes("회원 목록"),
+      cardText.split("\n").slice(0, 2).join(" / "),
+    );
+    check(
+      "the card lists what was asked, element by element",
+      cardText.includes("이름 열을 가입일 역순으로") && cardText.includes("보조 스타일"),
+    );
+    // The whole point of the card: none of Claude's half reaches the planner.
+    check(
+      "no CSS path, rect or json reaches the planner",
+      !cardText.includes("data-screen") &&
+        !cardText.includes("nth-of-type") &&
+        !cardText.includes("rect ") &&
+        !cardText.includes("drafthouse.comments"),
+      cardText.slice(0, 120),
+    );
+    check(
+      "the raw turn is not rendered as a message bubble",
+      (await page.locator(".bubble--user", { hasText: "화면 수정 요청 2건" }).count()) === 0,
+    );
+
+    // …and it is one fold away, for the turn that got a strange answer.
+    await card.getByRole("button", { name: "자세히" }).click();
+    const folded = await card.locator(".machine__body").innerText();
+    check(
+      "자세히 shows the text Claude actually received",
+      folded.includes("data-screen") && folded.includes("drafthouse.comments"),
+      folded.slice(0, 80),
+    );
+    check("the marker itself is not shown", !folded.includes("<!-- drafthouse:"));
+    // Fold it back: the screenshot below is the artifact this milestone is
+    // judged on, and it should show what a planner sees, not the fold.
+    await card.getByRole("button", { name: "접기" }).click();
+
+    // The strip is the one place a planner navigates by reading, so a thread
+    // the TOOL opened is named after their 기획서 — never after the bundle this
+    // app composed, and never after its card marker.
+    // (A thread the tool OPENS is named at create time — ui-editor-e2e covers
+    // that. Here the pins landed in a thread that already existed, so what
+    // matters is that the bundle did not rename it.)
+    const commentTab = await page.locator(".sessiontab--on").innerText();
+    check(
+      "a machine-authored turn never names the thread it lands in",
+      !commentTab.includes("drafthouse:") &&
+        !commentTab.includes("화면 수정 요청") &&
+        !commentTab.includes("member/MemberList"),
+      commentTab.split("\n").join(" "),
+    );
 
     // Pins stay while the turn runs (the slow stub keeps the session live)…
     await page.waitForTimeout(1500);

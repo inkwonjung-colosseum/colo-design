@@ -3,7 +3,7 @@ import type { Daemon } from "./daemon-client";
 import { PageWorkspace } from "./PageWorkspace";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { Onboarding } from "./Onboarding";
-import type { SendKey } from "./settings";
+import type { ChatSettings, Settings } from "./settings";
 import { GearIcon } from "./icons";
 
 /**
@@ -17,17 +17,17 @@ import { GearIcon } from "./icons";
  */
 export function Shell({
   daemon,
-  sendKey,
-  confirmBeforeDelete,
+  settings,
+  onChatChange,
   onOpenSettings,
   onboardingOpen,
   onOpenOnboarding,
   onOnboardingClose,
 }: {
   daemon: Daemon;
-  sendKey: SendKey;
-  /** Ask before a delete removes the transcript for good. */
-  confirmBeforeDelete: boolean;
+  settings: Settings;
+  /** 설정 owns how Claude answers (PLAN D10); the workspace starts threads on it. */
+  onChatChange: (patch: Partial<ChatSettings>) => void;
   onOpenSettings: () => void;
   /** Forces the first-run wizard open (SettingsDialog's 다시 보기). */
   onboardingOpen: boolean;
@@ -35,7 +35,7 @@ export function Shell({
   onOpenOnboarding: () => void;
   onOnboardingClose: () => void;
 }) {
-  const { connection, repo, status, api } = daemon;
+  const { connection, status, api } = daemon;
 
   useEffect(() => {
     if (connection !== "open") return;
@@ -68,10 +68,16 @@ export function Shell({
         <span className="brand-name">Drafthouse</span>
         <ProjectSwitcher daemon={daemon} onNewProject={onOpenOnboarding} />
         <span className="planner__spacer" />
-        <span className="hint">
-          데몬: {connection === "open" ? "연결됨" : connection}
-          {repo?.url ? ` · ${repo.url}` : ""}
-        </span>
+        {/* The header used to read "데몬: 연결됨 · https://github.com/…" — the
+            name of a program the planner never starts, beside a git url they
+            never type (PLAN D13). What is left is the only part that changes
+            what they should do: whether the tool can work right now. Both the
+            address and the repo live in 설정 → 문제 해결. */}
+        {connection !== "open" && (
+          <span className="hint" title="연결이 끊기면 대화와 저장이 잠시 멈춥니다">
+            연결하는 중…
+          </span>
+        )}
         <button
           type="button"
           className="ghost"
@@ -96,8 +102,8 @@ export function Shell({
       <div className="planner__body">
         <PageWorkspace
           daemon={daemon}
-          sendKey={sendKey}
-          confirmBeforeDelete={confirmBeforeDelete}
+          settings={settings}
+          onChatChange={onChatChange}
           onOpenSettings={onOpenSettings}
           onOpenOnboarding={onOpenOnboarding}
         />

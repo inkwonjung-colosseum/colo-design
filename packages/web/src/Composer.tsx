@@ -4,9 +4,7 @@ import type {
   EffortLevel,
   PermissionMode,
   PlanUsage,
-  PlanWindow,
   SessionCommand,
-  SessionModelInfo,
   SessionSelectors,
 } from "@drafthouse/protocol";
 import {
@@ -18,6 +16,17 @@ import {
   PaperclipIcon,
   StopIcon,
 } from "./icons";
+import {
+  COMPOSER_MODES,
+  DEFAULT_PERMISSION_MODE,
+  EFFORT_HINT,
+  EFFORT_LABEL,
+  MODE_HINT,
+  MODE_LABEL,
+  modelOptions,
+  modelRowOf,
+  modelWords,
+} from "./chat-options";
 import type { SendKey } from "./settings";
 
 export interface Attachment {
@@ -50,49 +59,6 @@ function fileSize(bytes: number): string {
 }
 
 /**
- * How much of the conversation Claude can still hold. A planning thread that
- * runs long starts losing its own beginning, and the honest fix is to start a
- * new 기획 — so the number is shown before that happens, not after.
- */
-function ContextRing({ usage }: { usage: ContextUsage }) {
-  const pct = Math.max(0, Math.min(100, usage.percentage));
-  const radius = 8;
-  const circumference = 2 * Math.PI * radius;
-  const tone = pct >= 85 ? "var(--danger)" : pct >= 60 ? "var(--warn)" : "var(--accent)";
-  const hint =
-    pct >= 85
-      ? " — 곧 앞부분을 잊습니다. 새 기획으로 나누는 편이 좋습니다."
-      : pct >= 60
-        ? " — 대화가 길어지고 있습니다."
-        : "";
-
-  return (
-    <span
-      className="ring"
-      title={`대화 길이 ${pct}% 사용${hint}`}
-      aria-label={`대화 길이 ${pct} 퍼센트 사용`}
-    >
-      <svg width="20" height="20" viewBox="0 0 20 20">
-        <circle cx="10" cy="10" r={radius} fill="none" stroke="var(--line)" strokeWidth="2.5" />
-        <circle
-          cx="10"
-          cy="10"
-          r={radius}
-          fill="none"
-          stroke={tone}
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - pct / 100)}
-          transform="rotate(-90 10 10)"
-        />
-      </svg>
-      <span className="ring__text">{pct}%</span>
-    </span>
-  );
-}
-
-/**
  * "언제 끝나나" reads best as time left, and one unit is enough on a chip —
  * the exact clock time stays in the tooltip.
  */
@@ -106,128 +72,106 @@ function timeLeft(at: string | null): string | null {
   return `${Math.round(hours / 24)}일 남음`;
 }
 
+const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
+function tone(pct: number): "" | "warn" | "danger" {
+  return pct >= 85 ? "danger" : pct >= 60 ? "warn" : "";
+}
+
 /**
- * The signed-in plan's rolling limits, straight from the claude.ai usage
- * endpoint: the five-hour window renews fastest, the weekly one is the real
- * ceiling. API-key sessions have no plan, and the pills simply do not render.
+ * Everything the planner spends, behind one chip (PLAN D10).
+ *
+ * Three numbers used to sit in the composer at once: two plan windows as their
+ * own row, and the context ring beside the send button. All three answer the
+ * same question — "얼마나 더 쓸 수 있나" — and none of them changes what a
+ * planner does next, so they belong one click away rather than on the surface.
+ * The dot carries the only part worth interrupting for: whichever of them is
+ * closest to running out.
  */
-function PlanLimits({ plan }: { plan: PlanUsage }) {
-  // The countdown is computed from `now`, so a pill rendered once goes stale;
-  // re-render on the half-minute while any window is showing.
+function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsage | null }) {
+  const [open, setOpen] = useState(false);
+  // Time left is computed from `now`, so a rendered countdown goes stale;
+  // re-render on the half-minute while the popover is showing one.
   const [, setTick] = useState(0);
   useEffect(() => {
+    if (!open) return;
     const timer = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [open]);
 
-  const windows: Array<{ label: string; limit: PlanWindow }> = [];
-  if (plan.fiveHour) windows.push({ label: "5시간", limit: plan.fiveHour });
-  if (plan.sevenDay) windows.push({ label: "이번 주", limit: plan.sevenDay });
+  const rows: Array<{ label: string; pct: number; note: string }> = [];
+  if (plan?.fiveHour) {
+    rows.push({
+      label: "5시간",
+      pct: clamp(plan.fiveHour.utilization ?? 0),
+      note: timeLeft(plan.fiveHour.resetsAt) ?? "",
+    });
+  }
+  if (plan?.sevenDay) {
+    rows.push({
+      label: "이번 주",
+      pct: clamp(plan.sevenDay.utilization ?? 0),
+      note: timeLeft(plan.sevenDay.resetsAt) ?? "",
+    });
+  }
+  if (usage) {
+    const pct = clamp(usage.percentage);
+    rows.push({
+      label: "대화 길이",
+      pct,
+      note:
+        pct >= 85
+          ? "곧 앞부분을 잊습니다. 새 대화로 나누는 편이 좋아요"
+          : pct >= 60
+            ? "대화가 길어지고 있어요"
+            : "",
+    });
+  }
+  if (rows.length === 0) return null;
 
-  const reset = (at: string | null) =>
-    at
-      ? ` · ${new Date(at).toLocaleString("ko-KR", {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}에 다시 채워져요`
-      : "";
+  const worst = Math.max(...rows.map((row) => row.pct));
+  const badge = tone(worst);
 
   return (
-    <span className="limits">
-      {/* Without a label the pills read as random percentages; naming the
-          account they belong to is the one word the tooltip cannot carry. */}
-      <span className="limits__label">Claude 사용량</span>
-      {windows.map(({ label, limit }) => {
-        const pct = Math.max(0, Math.min(100, limit.utilization ?? 0));
-        const tone = pct >= 85 ? " limit--danger" : pct >= 60 ? " limit--warn" : "";
-        return (
-          <span
-            key={label}
-            className={`limit${tone}`}
-            title={`${label} 동안 쓸 수 있는 양의 ${pct}%를 썼어요${reset(limit.resetsAt)}`}
-          >
-            <span className="limit__dot" />
-            {label} {pct}%
-            <span className="limit__left">{timeLeft(limit.resetsAt) ?? ""}</span>
-          </span>
-        );
-      })}
+    <span className="selector">
+      {open && (
+        <button
+          type="button"
+          className="selector__backdrop"
+          aria-label="사용량 닫기"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <button
+        type="button"
+        className={badge ? `usage__chip usage__chip--${badge}` : "usage__chip"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="Claude를 얼마나 썼는지 봅니다"
+        onClick={() => setOpen(!open)}
+      >
+        <span className={badge ? `usage__dot usage__dot--${badge}` : "usage__dot"} />
+        사용량
+      </button>
+      {open && (
+        <span className="selector__menu usage__menu" role="dialog" aria-label="사용량">
+          {rows.map((row) => (
+            <span key={row.label} className="usage__row">
+              <span className="usage__label">{row.label}</span>
+              <span className="usage__bar">
+                <span
+                  className={tone(row.pct) ? `usage__fill usage__fill--${tone(row.pct)}` : "usage__fill"}
+                  style={{ width: `${row.pct}%` }}
+                />
+              </span>
+              <span className="usage__pct">{row.pct}%</span>
+              {row.note && <span className="usage__note">{row.note}</span>}
+            </span>
+          ))}
+        </span>
+      )}
     </span>
   );
-}
-
-/** Every label here is read by a planner, not a developer: plain Korean only. */
-const EFFORT_LABEL: Record<EffortLevel, string> = {
-  low: "짧게",
-  medium: "보통",
-  high: "길게",
-  xhigh: "더 길게",
-  max: "가장 길게",
-};
-
-const EFFORT_HINT: Record<EffortLevel, string> = {
-  low: "빨리 답해요",
-  medium: "무난하게 생각해요",
-  high: "좀 더 생각하고 답해요",
-  xhigh: "오래 생각해서 꼼꼼히 답해요",
-  max: "가장 오래 생각해요. 그만큼 느려요",
-};
-
-const MODE_LABEL: Record<PermissionMode, string> = {
-  default: "물어보고 진행",
-  plan: "계획만 세우기",
-  acceptEdits: "화면 수정은 바로",
-  dontAsk: "묻지 않기",
-  bypassPermissions: "전부 맡기기",
-};
-
-const MODE_HINT: Record<PermissionMode, string> = {
-  default: "바꾸기 전에 먼저 확인해요",
-  plan: "실제로 바꾸지 않고 무엇을 할지만 알려줘요",
-  acceptEdits: "화면 파일 수정은 확인 없이, 나머지는 물어봐요",
-  dontAsk: "확인 없이 진행해요",
-  bypassPermissions: "확인 없이 알아서 진행해요. 빠른 대신 조심해야 해요",
-};
-
-/** dontAsk stays reachable through the API but off the menu: 전부 맡기기 covers it. */
-const MODES: PermissionMode[] = ["default", "plan", "acceptEdits", "bypassPermissions"];
-
-/**
- * Planners asked to see which Claude they are choosing, by name. The CLI hands
- * over a short label ("Sonnet") plus a description whose head carries the
- * version the planner also sees in Claude Code ("Sonnet 5 · Efficient for
- * routine tasks"), so the name leads the row and the Korean guidance — the part
- * that tells a non-developer when to reach for it — rides along as the hint.
- */
-const MODEL_HINT: Array<{ match: (id: string) => boolean; hint: string }> = [
-  { match: (id) => id.includes("fable"), hint: "제일 어려운 작업용. 그만큼 느려요" },
-  { match: (id) => id.includes("opus"), hint: "복잡하거나 긴 기획서에 좋아요" },
-  { match: (id) => id.includes("sonnet"), hint: "속도와 결과가 균형 잡혀 있어요" },
-  { match: (id) => id.includes("haiku"), hint: "간단한 수정에 좋아요" },
-];
-
-/** `Sonnet 5 · Efficient…` → `Sonnet 5`; `Opus 5 with 1M context` → `Opus 5 (1M)`. */
-function modelName(model: SessionModelInfo): string {
-  const head = model.description.split("·")[0]?.trim().replace(/\s+with 1M context$/i, " (1M)");
-  return head || model.displayName;
-}
-
-function modelWords(model: SessionModelInfo): { label: string; hint: string } {
-  const name = modelName(model);
-  // Alias rows ("sonnet") and id rows ("claude-sonnet-5") both have to find
-  // their family, so whichever the CLI sent is what gets matched.
-  const guide = MODEL_HINT.find((entry) =>
-    entry.match(`${model.value} ${model.resolvedModel ?? ""}`.toLowerCase()),
-  )?.hint;
-  // `default` is the CLI's own recommendation, so that is what the row says;
-  // the model it resolves to today rides in the hint, where it can change
-  // without the chip ever lying about what was picked.
-  if (model.value === "default") {
-    return { label: "자동 (추천)", hint: `${name} · 대부분의 화면 작업에 알맞아요` };
-  }
-  return { label: name, hint: guide ?? "" };
 }
 
 /**
@@ -352,6 +296,101 @@ function SelectorChip({
   );
 }
 
+interface OptionGroup {
+  key: "model" | "effort" | "mode";
+  label: string;
+  title: string;
+  disabled: boolean;
+  options: Array<{ value: string | null; label: string; hint?: string; picked: boolean }>;
+}
+
+/**
+ * The way back to the defaults, shown only when this conversation has left
+ * them (PLAN D10).
+ *
+ * Three plain selects rather than three nested dropdowns: a popover whose rows
+ * open more popovers has to arbitrate two backdrops and two Escape handlers,
+ * and this is a panel a planner opens twice a month. Native selects also give
+ * the keyboard and the screen reader behaviour for free.
+ */
+function AdvancedChip({
+  label,
+  groups,
+  open,
+  onOpen,
+  onPick,
+}: {
+  label: string;
+  groups: OptionGroup[];
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  onPick: (key: "model" | "effort" | "mode", value: string | null) => void;
+}) {
+  const chip = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      onOpen(false);
+      chip.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onOpen]);
+
+  return (
+    <span className="selector" data-testid="off-default">
+      {open && (
+        <button
+          type="button"
+          className="selector__backdrop"
+          aria-label="대화 설정 닫기"
+          onClick={() => onOpen(false)}
+        />
+      )}
+      <button
+        ref={chip}
+        type="button"
+        className="selector__chip selector__chip--off"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={`이 대화는 기본 설정이 아닙니다 · ${groups
+          .map((group) => `${group.title}: ${group.label}`)
+          .join(" · ")}`}
+        onClick={() => onOpen(!open)}
+      >
+        ⋯ {label}
+      </button>
+      {open && (
+        <span className="selector__menu advanced" role="dialog" aria-label="이 대화의 설정">
+          <span className="advanced__lead">
+            이 대화에만 적용됩니다. 늘 쓸 값은 설정에서 정합니다.
+          </span>
+          {groups.map((group) => (
+            <label key={group.key} className="advanced__row">
+              <span className="advanced__label">{group.title}</span>
+              <select
+                value={group.options.find((option) => option.picked)?.value ?? ""}
+                disabled={group.disabled}
+                onChange={(event) => onPick(group.key, event.target.value || null)}
+              >
+                {group.options.map((option) => (
+                  <option key={String(option.value)} value={option.value ?? ""}>
+                    {option.label}
+                    {option.hint ? ` — ${option.hint}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Autocomplete for @files
 // ---------------------------------------------------------------------------
@@ -409,6 +448,8 @@ export function Composer({
   onSetEffort,
   onSetPermissionMode,
   onDismissQuote,
+  brief,
+  onDismissBrief,
   onSend,
   onInterrupt,
   onFindFiles,
@@ -437,6 +478,13 @@ export function Composer({
   /** A quote dragged out of the planning editor rides along as a chip. */
   quote?: ComposerQuote | null;
   onDismissQuote?: () => void;
+  /**
+   * The 기획서 this thread was opened on. Shown as a chip and attached to the
+   * turn by the shell on send — the planner never types, reads or edits the
+   * mirror path it stands for (PLAN D9).
+   */
+  brief?: { title: string; path: string } | null;
+  onDismissBrief?: () => void;
   onSend: (text: string, attachments: Attachment[]) => void;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
@@ -451,7 +499,7 @@ export function Composer({
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [menu, setMenu] = useState<"model" | "effort" | "mode" | null>(null);
+  const [menu, setMenu] = useState(false);
   const [tokenSpan, setTokenSpan] = useState<{ from: number; to: number } | null>(null);
   /** Bumped when a pick moves the caret, so the token is read after the move. */
   const [caretTick, setCaretTick] = useState(0);
@@ -662,9 +710,7 @@ export function Composer({
   };
 
   // Chip labels come from the current row, so an aliased id still names the model.
-  const modelRow = selector.models.find(
-    (model) => model.value === selector.model || model.resolvedModel === selector.model,
-  );
+  const modelRow = modelRowOf(selector.models, selector.model);
   // A model that ignores 노력 must not offer it; one whose row does not say
   // which levels it takes gets the full set.
   const effortLevels =
@@ -684,20 +730,7 @@ export function Composer({
           hint: "Claude Code 기본값을 그대로 써요",
           picked: selector.model == null,
         },
-        // The CLI lists an alias row and the pinned id it resolves to as two
-        // rows with the same name; the planner would see "Opus 5 (1M)" twice
-        // with nothing to choose between. First one wins.
-        ...selector.models
-          .map((model) => {
-            const words = modelWords(model);
-            return {
-              value: model.value,
-              label: words.label,
-              ...(words.hint ? { hint: words.hint } : {}),
-              picked: model === modelRow,
-            };
-          })
-          .filter((row, index, all) => all.findIndex((other) => other.label === row.label) === index),
+        ...modelOptions(selector.models, modelRow),
       ],
     },
     {
@@ -720,7 +753,10 @@ export function Composer({
       label: MODE_LABEL[selector.permissionMode],
       title: "확인 방식",
       disabled: false,
-      options: MODES.map((mode) => ({
+      // 전부 맡기기 is 설정's to offer, not the composer's — see COMPOSER_MODES.
+      // A mode already set to it still shows as this chip's label, so the
+      // planner can read what they are on and step back down.
+      options: COMPOSER_MODES.map((mode) => ({
         value: mode,
         label: MODE_LABEL[mode],
         hint: MODE_HINT[mode],
@@ -730,11 +766,35 @@ export function Composer({
   ];
 
   const pickChip = (key: "model" | "effort" | "mode", value: string | null) => {
-    setMenu(null);
     if (key === "model") onSetModel(value);
     else if (key === "effort") onSetEffort((value as EffortLevel | null) ?? null);
     else if (value) onSetPermissionMode(value as PermissionMode);
   };
+
+  /**
+   * Whether this conversation is running on anything other than the defaults
+   * (PLAN D10).
+   *
+   * The three chips used to sit in the composer permanently, which put a model
+   * picker in front of someone whose job is to describe a screen. They live in
+   * 설정 now. What survives here is the honest half: when a conversation is NOT
+   * on the defaults, say so and offer the way back — a planner who set 전부
+   * 맡기기 last week should not have to guess why Claude stopped asking.
+   */
+  const offDefault =
+    selector.model !== null ||
+    selector.effort !== null ||
+    selector.permissionMode !== DEFAULT_PERMISSION_MODE;
+  // Which deviation to name, riskiest first: how much Claude may do without
+  // asking matters more than which model is answering.
+  const offDefaultLabel =
+    selector.permissionMode !== DEFAULT_PERMISSION_MODE
+      ? MODE_LABEL[selector.permissionMode]
+      : modelRow && selector.model !== null
+        ? modelWords(modelRow).label
+        : selector.effort
+          ? `생각 ${EFFORT_LABEL[selector.effort]}`
+          : "기본값 아님";
 
   return (
     <footer
@@ -745,8 +805,6 @@ export function Composer({
         void readAttachments(e.dataTransfer.files);
       }}
     >
-      {plan && <PlanLimits plan={plan} />}
-
       {suggestions.length > 0 && (
         <div className="autocomplete" role="listbox">
           {suggestions.map((suggestion, index) => (
@@ -785,21 +843,38 @@ export function Composer({
         </div>
       )}
 
-      {quote && (
+      {(quote || brief) && (
         <div className="chips">
-          <span className="chip chip--quote" data-testid="quote-chip">
-            <span className="chip__doc">인용</span>
-            {quote.title}
-            {quote.heading ? ` · ${quote.heading}` : ""}
-            <button
-              type="button"
-              aria-label="인용 지우기"
-              className="chip__dismiss"
-              onClick={() => onDismissQuote?.()}
-            >
-              ×
-            </button>
-          </span>
+          {brief && (
+            <span className="chip chip--brief" data-testid="brief-chip">
+              <span className="chip__doc">기획서</span>
+              {brief.title}
+              <button
+                type="button"
+                aria-label="기획서 떼기"
+                title="이 기획서를 참고하지 않고 보냅니다"
+                className="chip__dismiss"
+                onClick={() => onDismissBrief?.()}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {quote && (
+            <span className="chip chip--quote" data-testid="quote-chip">
+              <span className="chip__doc">인용</span>
+              {quote.title}
+              {quote.heading ? ` · ${quote.heading}` : ""}
+              <button
+                type="button"
+                aria-label="인용 지우기"
+                className="chip__dismiss"
+                onClick={() => onDismissQuote?.()}
+              >
+                ×
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -869,25 +944,19 @@ export function Composer({
         >
           <PaperclipIcon />
         </button>
-        <span className="selectors">
-          {chips.map((chip) => (
-            <SelectorChip
-              key={chip.key}
-              label={chip.label}
-              title={chip.title}
-              open={menu === chip.key}
-              disabled={chip.disabled}
-              onToggle={() => setMenu(menu === chip.key ? null : chip.key)}
-              onClose={() => setMenu(null)}
-              onPick={(value) => pickChip(chip.key, value)}
-              options={chip.options}
-            />
-          ))}
-        </span>
+        {offDefault && (
+          <AdvancedChip
+            label={offDefaultLabel}
+            groups={chips}
+            open={menu}
+            onOpen={setMenu}
+            onPick={pickChip}
+          />
+        )}
 
         <span className="toolbar__spacer" />
 
-        {usage && <ContextRing usage={usage} />}
+        <UsageChip plan={plan} usage={usage} />
 
         {running ? (
           <button

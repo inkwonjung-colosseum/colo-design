@@ -6,6 +6,7 @@ import type {
   DrafthouseScreensEnvelope,
   DrafthouseScreensRequestEnvelope,
 } from "@drafthouse/protocol";
+import { stateLabel } from "./format";
 
 /** Which screen, in which state, the planner asked to see. */
 export interface PreviewTarget {
@@ -183,14 +184,15 @@ export function Preview({
                   state === activeState ? "preview__state preview__state--on" : "preview__state"
                 }
                 aria-pressed={state === activeState}
+                title={`이 화면의 ${stateLabel(state)} 상태를 봅니다`}
                 onClick={() => onNavigate(current.route, state)}
               >
-                {state}
+                {stateLabel(state)}
               </button>
             ))}
           </div>
         )}
-        <span className="hint preview__origin preview__spacer">{url}</span>
+        <span className="preview__spacer" />
         <div className="preview__width" role="group" aria-label="폭">
           <button
             type="button"

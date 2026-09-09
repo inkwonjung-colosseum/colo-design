@@ -17,7 +17,7 @@
     "test:settings": "node packages/web/test/ui-settings-e2e.mjs",
     "test:unit": "node --test packages/daemon/test/platform.test.mjs packages/daemon/test/security.test.mjs packages/daemon/test/workspaces.test.mjs && pnpm test:repo-unit && pnpm test:web-unit",
     "test:repo-unit": "node --test packages/daemon/test/repo.test.mjs packages/daemon/test/github.test.mjs packages/daemon/test/translate.test.mjs",
-    "test:web-unit": "node --experimental-transform-types --disable-warning=ExperimentalWarning --test packages/web/test/markdown-view.test.mts packages/web/test/handoff-draft.test.mts packages/web/test/session-activity.test.mts packages/web/test/turn-marker.test.mts",
+    "test:web-unit": "node --experimental-transform-types --disable-warning=ExperimentalWarning --test packages/web/test/markdown-view.test.mts packages/web/test/handoff-draft.test.mts packages/web/test/session-activity.test.mts packages/web/test/turn-marker.test.mts packages/web/test/stage.test.mts",
     "test:onboard-unit": "node --test packages/daemon/test/onboarding.test.mjs packages/daemon/test/credentials.test.mjs",
     "test:confluence-unit": "node --test packages/daemon/test/storage-markdown.test.mjs packages/daemon/test/confluence-client.test.mjs packages/daemon/test/sync-engine.test.mjs",
     "test:projects": "node packages/daemon/test/projects-e2e.mjs",

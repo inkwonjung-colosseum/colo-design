@@ -22,6 +22,7 @@ import type {
   SessionState,
   Workspace,
 } from "@drafthouse/protocol";
+import { readTurn } from "@drafthouse/protocol";
 import { saveSpecFiles, type SpecFile } from "./repo.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { MessageTranslator } from "./translate.js";
@@ -496,9 +497,18 @@ export class Session {
           ]
         : prompt;
 
+    /**
+     * A thread names itself after its first turn — unless the tool wrote that
+     * turn. A marked turn (PLAN D9) is a bundle of pins, a brief, a gate
+     * failure: text composed for Claude, in Claude's vocabulary. The tab strip
+     * is the one place a planner navigates by reading, so it keeps its
+     * placeholder rather than taking a machine's words. A thread the tool
+     * opens on purpose is named at `session.create` instead.
+     */
+    const machine = readTurn(text).marker !== null;
     const title = text.trim() || saved.join(", ");
     const unnamed = this.title === NEW_PLANNING_TITLE || this.title === NEW_DESIGN_TITLE;
-    if (unnamed && title) {
+    if (unnamed && title && !machine) {
       this.title = title.slice(0, 80);
     }
 

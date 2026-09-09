@@ -173,6 +173,10 @@ export function ScreenPanel({
   onScreens,
   pageIdOf,
   onPrecheck,
+  saveOpen,
+  handoffOpen,
+  onCloseSave,
+  onCloseHandoff,
 }: {
   daemon: Daemon;
   onOpenSettings: () => void;
@@ -211,23 +215,20 @@ export function ScreenPanel({
    * asking; the shell composes the turn and owns the thread.
    */
   onPrecheck?: () => void;
+  /**
+   * The two dialogs of the cycle, opened by the stepper above the document
+   * (PLAN D8). They render here because this is where the declared screens
+   * are, and the 넘기기 proposal is composed from them — but WHEN they open is
+   * the stepper's decision, not the preview's.
+   */
+  saveOpen: boolean;
+  handoffOpen: boolean;
+  onCloseSave: () => void;
+  onCloseHandoff: () => void;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
   const ready = phase === "ready";
-  /** Something was saved this cycle, so there is something to hand over. */
-  const saved = Boolean(repo?.branch);
-
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [handoffOpen, setHandoffOpen] = useState(false);
-  /**
-   * The handed-off state as last read on demand. Nothing polls it — a timer
-   * would ask GitHub every minute about something that only moves when a
-   * developer acts — so the chip's own click is the planner's refresh.
-   */
-  const [readHandoff, setReadHandoff] = useState<HandoffStatus | null>(null);
-  const [handoffError, setHandoffError] = useState<string | null>(null);
-  const handoff = readHandoff ?? repo?.handoff ?? null;
   /**
    * A failed repo.sync used to be shown in the chat column's error banner.
    * The panel no longer reaches the chat, so it answers its own failure in
@@ -260,14 +261,6 @@ export function ScreenPanel({
     setSyncError(null);
     void api.repoSync().catch((e: Error) => setSyncError(e.message));
   }, [api]);
-
-  const refreshHandoff = () => {
-    setHandoffError(null);
-    void api
-      .handoffStatus()
-      .then(setReadHandoff)
-      .catch((e: Error) => setHandoffError(e.message));
-  };
 
   /**
    * Mounting the 화면 segment is what readies the repo. `repoSync` is
@@ -326,13 +319,6 @@ export function ScreenPanel({
       setCommentTurnRan(false);
     }
   }, [commentPins, commentTurnRan, turnState]);
-  // A `repo.status` broadcast is newer than anything read by hand, so it drops
-  // the hand-read copy on its way in — otherwise a stale 넘김 would outlive the
-  // 반영됨 the daemon just reported.
-  useEffect(() => {
-    setReadHandoff(null);
-  }, [repo?.handoff]);
-
   /**
    * A comment batch from the preview overlay: shown as pins and forwarded as
    * one structured Korean turn — the same wire a typed message uses, so Claude
@@ -355,13 +341,6 @@ export function ScreenPanel({
   // preview may still be alive and worth looking at.
   const previewStopped = phase === "error" && errorKind === "preview";
   const showProgress = !repo || (!ready && !previewStopped);
-  /**
-   * The clone is checked out and installed, whatever the dev server is doing.
-   * 저장 and 넘기기 act on the worktree and the remote, so gating them on a
-   * preview that cannot bind a port would strand work that is already done.
-   */
-  const workable = ready || previewStopped;
-
   // Progress renders inside this column, not over the whole planner: the tree
   // and the chat stay usable while the clone runs.
   if (showProgress) {
@@ -383,48 +362,7 @@ export function ScreenPanel({
 
   return (
     <div className="planner__previewcol">
-      <div className="planner__previewbar">
-        {/* The cycle of PLAN D5 in the order the planner lives it: 저장 as
-            often as they like, 넘기기 once there is something saved, and the
-            chip reading back whatever the developer did with it. 게시 stays
-            with the mirror over the page tree — that one publishes 기획서. */}
-        {handoff && (
-          <a
-            className={`handoff__chip handoff__chip--${handoff.state}`}
-            href={handoff.url}
-            target="_blank"
-            rel="noreferrer"
-            title="개발자가 보고 있는 상태입니다. 누르면 지금 상태를 다시 확인합니다"
-            onClick={refreshHandoff}
-          >
-            {HANDOFF_STATE_LABEL[handoff.state]}
-          </a>
-        )}
-        <button
-          type="button"
-          className="ghost"
-          disabled={!workable}
-          title="화면 변경을 검토하고 저장합니다"
-          onClick={() => setDiffOpen(true)}
-        >
-          저장
-        </button>
-        <button
-          type="button"
-          className="ghost"
-          disabled={!workable || !saved}
-          title={
-            saved
-              ? "저장한 화면을 개발자에게 넘깁니다"
-              : "아직 저장한 변경이 없습니다. 먼저 저장해 주세요"
-          }
-          onClick={() => setHandoffOpen(true)}
-        >
-          개발자에게 넘기기
-        </button>
-      </div>
       {syncError && <p className="hint">{syncError}</p>}
-      {handoffError && <p className="hint">{handoffError}</p>}
       {commentPins && <CommentPinsSummary envelope={commentPins} />}
       <Preview
         url={repo?.previewUrl ?? null}
@@ -437,12 +375,8 @@ export function ScreenPanel({
         onNavigate={(route, state) => setTarget({ route, state })}
         onScreens={receiveScreens}
       />
-      {diffOpen && (
-        <DiffPanel
-          daemon={daemon}
-          sessionId={publishSessionId}
-          onClose={() => setDiffOpen(false)}
-        />
+      {saveOpen && (
+        <DiffPanel daemon={daemon} sessionId={publishSessionId} onClose={onCloseSave} />
       )}
       {handoffOpen && (
         <HandoffPanel
@@ -450,8 +384,15 @@ export function ScreenPanel({
           proposedTitle={proposedTitle}
           proposedBody={proposedBody}
           sessionId={publishSessionId}
-          {...(onPrecheck ? { onPrecheck: () => { setHandoffOpen(false); onPrecheck(); } } : {})}
-          onClose={() => setHandoffOpen(false)}
+          {...(onPrecheck
+            ? {
+                onPrecheck: () => {
+                  onCloseHandoff();
+                  onPrecheck();
+                },
+              }
+            : {})}
+          onClose={onCloseHandoff}
         />
       )}
     </div>

@@ -28,18 +28,11 @@ export function DocEditor({
   path,
   onDirty,
   onQuote,
-  onHandoff,
 }: {
   daemon: Daemon;
   path: string | null;
   onDirty: (dirty: boolean) => void;
   onQuote: (quote: DocQuote | null) => void;
-  /**
-   * Hand this page to 디자인 as the brief for a new screen. Absent while no
-   * page is open; the button waits for the autosave to settle, because the
-   * screen session reads the file, not the editor.
-   */
-  onHandoff?: () => void;
 }) {
   const [frontmatter, setFrontmatter] = useState<Frontmatter>({});
   const [rawMode, setRawMode] = useState(false);
@@ -319,21 +312,6 @@ export function DocEditor({
           }}
         />
         <span className="hint">v{frontmatter.version ?? "?"}{dirty ? " · 저장 중…" : " · 저장됨"}</span>
-        {onHandoff && (
-          <button
-            type="button"
-            className="ghost"
-            disabled={locked || dirty}
-            title={
-              dirty
-                ? "저장이 끝나면 화면을 만들 수 있습니다"
-                : "이 기획서로 화면 대화를 시작합니다"
-            }
-            onClick={onHandoff}
-          >
-            이 문서로 화면 만들기
-          </button>
-        )}
         <button
           type="button"
           className={rawMode ? "preview__toggle preview__toggle--on" : "preview__toggle"}

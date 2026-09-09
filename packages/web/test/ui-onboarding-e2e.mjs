@@ -194,6 +194,35 @@ async function main() {
       (await page.locator(".selector__row", { hasText: "새 프로젝트" }).count()) === 1,
     );
     await page.keyboard.press("Escape");
+
+    // A brand new project has an empty subtree, and every column used to say
+    // so in its own words while offering no way forward (PLAN D14). One
+    // invitation now, and the composer opens ready to answer it.
+    const firstDoc = page.locator(".firstdoc");
+    await firstDoc.waitFor({ timeout: 15000 });
+    check(
+      "an empty project offers one way in, not three dead ends",
+      (await firstDoc.getByRole("button", { name: "첫 기획서 만들기" }).count()) === 1,
+      (await firstDoc.innerText()).split("\n")[0] ?? "",
+    );
+    await firstDoc.getByRole("button", { name: "첫 기획서 만들기" }).click();
+    const composer = page.locator(".composer textarea");
+    await composer.waitFor({ timeout: 15000 });
+    // Creating the thread is a round trip to the daemon, which has to start a
+    // Claude session before the strip has a tab to show.
+    await page
+      .locator(".sessiontab--on")
+      .waitFor({ timeout: 30000 })
+      .catch(() => undefined);
+    check(
+      "it opens a 기획 thread with the first turn written but not sent",
+      (await composer.inputValue()).includes("새 기획서를 하나 만들어 주세요") &&
+        (await page.locator(".bubble--user").count()) === 0,
+      `draft=${JSON.stringify(await composer.inputValue())} tabs=${await page
+        .locator(".sessiontab")
+        .count()} on=${await page.locator(".sessiontab--on").count()}`,
+    );
+
     check(
       "the secrets never reached the browser",
       !JSON.stringify(await page.evaluate(() => localStorage)).includes(REPO_PAT) &&
