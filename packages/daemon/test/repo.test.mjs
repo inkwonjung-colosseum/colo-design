@@ -20,9 +20,13 @@ import { join } from "node:path";
 import {
   authenticatedUrl,
   extraPathPrefix,
+  fallbackGroup,
+  fallbackSummary,
   parseCdsDesignConfig,
   parseUnifiedDiff,
   readCdsDesignConfig,
+  restorePlan,
+  safeRepoPath,
   saveSpecFiles,
   specFileName,
   trustWorkspace,
@@ -30,6 +34,7 @@ import {
   RepoWorkspace,
 } from "../dist/repo.js";
 import { MemoryCredentialStore, REPO_PAT_ITEM } from "../dist/credentials.js";
+import { readComments, recordComments, resolveComment } from "../dist/comments.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 import { detectsRegistryAuthFailure, pnpmCandidates } from "../dist/environment.js";
 
@@ -105,6 +110,26 @@ test("a repo without cds-design.json says so instead of guessing", () => {
   }
 });
 
+test("quickActions and shots ride the same parser — typed when declared, Korean-rejected when not", () => {
+  const config = parseCdsDesignConfig(
+    JSON.stringify({
+      preview: { command: "node server.mjs", port: 3000 },
+      quickActions: ["온보딩 상태 추가", "결제 완료 화면"],
+      shots: false,
+    }),
+  );
+  assert.deepEqual(config.quickActions, ["온보딩 상태 추가", "결제 완료 화면"]);
+  assert.equal(config.shots, false);
+  assert.equal(parseCdsDesignConfig('{"preview":{"command":"n","port":1}}').quickActions, undefined);
+  for (const bad of ['{"preview":{"command":"n","port":1},"quickActions":"기본"}', '{"preview":{"command":"n","port":1},"quickActions":["기본",3]}']) {
+    assert.throws(() => parseCdsDesignConfig(bad), /quickActions는 빈 문자열이 아닌 문자열 배열/);
+  }
+  assert.throws(
+    () => parseCdsDesignConfig('{"preview":{"command":"n","port":1},"shots":"no"}'),
+    /shots는 true 또는 false여야 합니다/,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // PAT handling
 // ---------------------------------------------------------------------------
@@ -163,7 +188,7 @@ test("a clone from nowhere lands in error with the git output", async () => {
   });
   const status = await workspace.sync();
   assert.equal(status.phase, "error");
-  assert.match(status.detail, /git clone 실패/);
+  assert.match(status.detail, /git clone에 실패했습니다/);
 });
 
 test("a seeded repo walks cloning → installing → starting, and a dead preview names itself", async () => {
@@ -743,6 +768,221 @@ const promisifiedRun = async (command, args) => (await promisify(execFileCb)(com
 
 
 // ---------------------------------------------------------------------------
+// 코멘트 저장소 (PLAN D57)
+// ---------------------------------------------------------------------------
+
+test("comments.record replaces a screen·state's unresolved rows and keeps resolved history", () => {
+  const dir = workdir("hub-comments-");
+  const file = join(dir, "comments.json");
+  try {
+    recordComments(file, "/member/MemberList", "default", [{ text: "첫 코멘트", elementText: "목록" }]);
+    // The overlay re-sends what is still pinned: one row becomes a reworded two.
+    const written = recordComments(file, "/member/MemberList", "default", [
+      { text: "다시 쓴 코멘트", elementText: "목록" },
+      { text: "하나 더", elementText: "페이지 제목" },
+    ]);
+    assert.equal(written, 2);
+    let rows = readComments(file);
+    assert.equal(rows.length, 2, "the re-send replaced the pair's unresolved row");
+    assert.ok(rows.every((row) => row.text !== "첫 코멘트"), JSON.stringify(rows));
+    // A resolved row is history: the same screen·state's re-send cannot touch
+    // it — but the pair's other unresolved row still goes.
+    resolveComment(file, rows[0].id, true);
+    recordComments(file, "/member/MemberList", "default", [{ text: "새 코멘트", elementText: "목록" }]);
+    rows = readComments(file);
+    assert.equal(rows.length, 2, "resolved history stayed, the unresolved one was replaced");
+    assert.deepEqual(
+      rows.map((row) => [row.resolved, row.text]),
+      [
+        [true, "다시 쓴 코멘트"],
+        [false, "새 코멘트"],
+      ],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("one pair's re-send never touches another screen·state's rows", () => {
+  const file = join(workdir("hub-comments-pair-"), "comments.json");
+  recordComments(file, "/member/MemberList", "default", [{ text: "회원", elementText: "목록" }]);
+  recordComments(file, "/pay/PayFailed", "error", [{ text: "결제", elementText: "실패" }]);
+  const rows = readComments(file);
+  assert.equal(rows.length, 2, JSON.stringify(rows));
+});
+
+test("resolveComment answers false for an id the store never had", () => {
+  const file = join(workdir("hub-comments-miss-"), "comments.json");
+  recordComments(file, "/a/A", "default", [{ text: "x", elementText: "y" }]);
+  assert.equal(resolveComment(file, "no-such-id", true), false);
+  assert.equal(readComments(file).length, 1, "a failed resolve moved nothing");
+});
+
+test("a comments.json a hand mangled reads as whatever survives", () => {
+  const dir = workdir("hub-comments-mangled-");
+  const file = join(dir, "comments.json");
+  try {
+    writeFileSync(file, "{not json");
+    assert.deepEqual(readComments(file), []);
+    writeFileSync(file, JSON.stringify({ comments: [] }));
+    assert.deepEqual(readComments(file), [], "an object is not a store");
+    writeFileSync(
+      file,
+      JSON.stringify([
+        { id: "1", screen: "s", state: "t", text: "x", elementText: "y", at: "2026-09-11T00:00:00Z", resolved: false },
+        { junk: true },
+      ]),
+    );
+    const rows = readComments(file);
+    assert.equal(rows.length, 1, "the malformed row dropped, the well-formed one stayed");
+    assert.equal(rows[0].id, "1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 넘기기의 화면 캡처 (PLAN D56) — offline: a stub GitHub client records the
+// pull request it is asked for, and the remote is the fixture's bare clone.
+// ---------------------------------------------------------------------------
+
+const stubPullRequestClient = (requests) => ({
+  async createPullRequest(input) {
+    requests.push(input);
+    return { number: 7, url: "https://github.com/colosseumcoinckr/cds-design-e2e/pull/7", title: input.title, state: "open" };
+  },
+  async updatePullRequest(input) {
+    requests.push(input);
+    return { number: 7, url: "https://github.com/colosseumcoinckr/cds-design-e2e/pull/7", title: input.title, state: "open" };
+  },
+});
+
+test("넘기기 commits the captures under .cds-design/shots and links them at the end of the body", async () => {
+  const dir = workdir("hub-handoff-shots-");
+  const previousSlug = process.env.CDS_DESIGN_GITHUB_SLUG;
+  process.env.CDS_DESIGN_GITHUB_SLUG = "colosseumcoinckr/cds-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+      previewCommand: 'node -e "process.exit(0)"',
+    });
+    const requests = [];
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      gitHubClient: () => stubPullRequestClient(requests),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>캡처 실어 넘기기</p>\n");
+    const saved = await workspace.save({ message: "캡처 실어 넘기기" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    const handed = await workspace.handoff({
+      title: "결제 화면",
+      shots: [
+        { route: "/member/MemberList", state: "default", png: Buffer.from("png-기본") },
+        { route: "/결제 완료", state: "빈 상태", png: Buffer.from("png-빈 상태") },
+      ],
+    });
+    assert.equal(handed.stage, "handed-off", handed.detail ?? handed.stage);
+
+    // The captures are files of the cycle branch now, pushed with it.
+    const branch = requests[0].head;
+    // `core.quotepath=false`: git would otherwise escape the Korean paths and
+    // the assertion would compare against octal noise, not what is on disk.
+    const committed = (
+      await promisifiedRun("git", [
+        "-c",
+        "core.quotepath=false",
+        "-C",
+        join(dir, "work"),
+        "show",
+        "--name-only",
+        "--pretty=",
+        "HEAD",
+      ])
+    )
+      .split("\n")
+      .filter(Boolean);
+    assert.ok(committed.includes(".cds-design/shots/-member-MemberList--default.png"), committed.join(", "));
+    assert.ok(committed.includes(".cds-design/shots/-결제 완료--빈 상태.png"), committed.join(", "));
+    const remoteTree = await promisifiedRun("git", [
+      "-c",
+      "core.quotepath=false",
+      "-C",
+      fixture.remote,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      branch,
+    ]);
+    assert.ok(remoteTree.includes(".cds-design/shots/-결제 완료--빈 상태.png"), "the captures reached the remote");
+
+    // The section rides at the END of the body; Korean reads as itself, only
+    // the url's spaces escape.
+    const body = requests[0].body;
+    assert.ok(body.indexOf("### 화면 미리보기") > 0, "appended, not prepended");
+    const section = body.slice(body.indexOf("### 화면 미리보기"));
+    assert.ok(section.includes(`blob/${branch}/.cds-design/shots/-결제%20완료--빈%20상태.png`), section);
+    assert.ok(section.includes("`/member/MemberList · default`"), section);
+    assert.ok(section.trimEnd().endsWith(".png)"), section);
+  } finally {
+    if (previousSlug === undefined) delete process.env.CDS_DESIGN_GITHUB_SLUG;
+    else process.env.CDS_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("cds-design.json#shots: false refuses the captures — no files, no section", async () => {
+  const dir = workdir("hub-handoff-noshots-");
+  const previousSlug = process.env.CDS_DESIGN_GITHUB_SLUG;
+  process.env.CDS_DESIGN_GITHUB_SLUG = "colosseumcoinckr/cds-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+      previewCommand: 'node -e "process.exit(0)"',
+    });
+    const requests = [];
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      gitHubClient: () => stubPullRequestClient(requests),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    // The repo's refusal, written after the clone brought its config here.
+    const config = JSON.parse(readFileSync(join(dir, "work", "cds-design.json"), "utf8"));
+    config.shots = false;
+    writeFileSync(join(dir, "work", "cds-design.json"), `${JSON.stringify(config, null, 2)}\n`);
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>캡처 없이 넘기기</p>\n");
+    const saved = await workspace.save({ message: "캡처 없이 넘기기" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    const handed = await workspace.handoff({
+      title: "결제 화면",
+      shots: [{ route: "/member/MemberList", state: "default", png: Buffer.from("png") }],
+    });
+    assert.equal(handed.stage, "handed-off", handed.detail ?? handed.stage);
+    assert.ok(!existsSync(join(dir, "work", ".cds-design")), "the refused captures never landed");
+    assert.equal(requests[0].body, "", JSON.stringify(requests[0].body));
+  } finally {
+    if (previousSlug === undefined) delete process.env.CDS_DESIGN_GITHUB_SLUG;
+    else process.env.CDS_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 레포 최신화: pull the developer's side without reading git
 // ---------------------------------------------------------------------------
 
@@ -955,6 +1195,122 @@ test("a base branch that diverged is named, never rewritten", async () => {
     assert.match(status.detail ?? "", /갈라진/, `the reason is Korean: ${status.detail ?? ""}`);
     const head = (await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "HEAD"])).trim();
     assert.equal(head, localHead, "local history is untouched");
+
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 되돌리기와 요약 (PLAN D51 · D52 · D53) — offline: the fallback path and the
+// snapshot mechanics. The summarizer's Claude turn is test:daemon's stub case.
+// ---------------------------------------------------------------------------
+
+test("폴백 요약은 경로를 화면 폴더로 묶어 `폴더: 수정 N · 추가 M` 로 쓴다", () => {
+  // `src/screens/<기능>/<화면>` — the folder above the file names the group,
+  // exactly as D51's own example (`member: 수정 2 · 추가 1`) reads.
+  assert.equal(fallbackGroup("src/screens/member/MemberList.screen.tsx"), "member");
+  assert.equal(fallbackGroup("src/screens/pay/PayFailed.screen.tsx"), "pay");
+  // A file with no folder above it has no group to borrow.
+  assert.equal(fallbackGroup("index.html"), "기타");
+
+  const lines = fallbackSummary([
+    { path: "src/screens/member/MemberList.screen.tsx", status: "modified" },
+    { path: "src/screens/member/PayFailed.screen.tsx", status: "added" },
+    { path: "src/screens/pay/Pay.screen.tsx", status: "modified" },
+    { path: "index.html", status: "modified" },
+  ]);
+  assert.deepEqual(lines, [
+    "member: 수정 1 · 추가 1",
+    "pay: 수정 1",
+    "기타: 수정 1",
+  ]);
+});
+
+test("복원 계획은 허용 경로 밖의 파일을 손대지 않는다", () => {
+  const plan = restorePlan(
+    [
+      "M\tindex.html",
+      "A\tsrc/screens/new/New.screen.tsx",
+      // A snapshot tree is git's own output — but the plan is what executes,
+      // and both of these are escapes, not paths inside a worktree.
+      "D\t../outside/secret.txt",
+      "A\t/etc/evil",
+    ].join("\n"),
+  );
+  assert.ok(safeRepoPath("src/screens/new/New.screen.tsx") !== null);
+  assert.equal(safeRepoPath("../outside/secret.txt"), null);
+  assert.equal(safeRepoPath("/etc/evil"), null);
+  assert.deepEqual(plan.checkout, ["index.html"]);
+  assert.deepEqual(plan.remove, ["src/screens/new/New.screen.tsx"]);
+});
+
+test("체크포인트는 추적 안 된 새 파일을 담고 HEAD · 인덱스를 안 건드린다", async () => {
+  const dir = workdir("hub-checkpoint-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+    const work = join(dir, "work");
+    const git = (args) => promisifiedRun("git", ["-C", work, ...args]);
+
+    // The planner's unsaved half, the exact shape a turn starts with: a
+    // tracked edit staged in the real index, and a brand-new screen file
+    // git has never heard of.
+    const html = readFileSync(join(work, "index.html"), "utf8");
+    writeFileSync(join(work, "index.html"), `${html}<p>저장 전 마지막 모습</p>\n`);
+    await git(["add", "index.html"]);
+    mkdirSync(join(work, "src", "screens", "new"), { recursive: true });
+    writeFileSync(join(work, "src", "screens", "new", "New.screen.tsx"), "export const New = () => null;\n");
+
+    const headBefore = (await git(["rev-parse", "HEAD"])).trim();
+    const checkpoint = await workspace.checkpoint("session-a", 1);
+    assert.equal(checkpoint.id, "session-a/1");
+    assert.equal(checkpoint.sessionId, "session-a");
+    assert.equal(checkpoint.turn, 1);
+    assert.ok(checkpoint.at !== "", "the snapshot is dated");
+
+    assert.equal((await git(["rev-parse", "HEAD"])).trim(), headBefore, "HEAD never moved");
+    const status = await git(["status", "--porcelain"]);
+    assert.match(status, /^M  index\.html/m, "the real index kept its staged edit");
+    // git collapses a fully-untracked directory to `?? src/`; the invariant
+    // is that the real index never absorbed the new screen.
+    assert.match(status, /^\?\? src\//m, "the new screen stayed untracked");
+    assert.equal((await git(["ls-files", "src/screens/new/New.screen.tsx"])).trim(), "", "the real index never absorbed the new screen");
+
+    // `stash create` could not have done this: the snapshot holds the file
+    // too, which is the whole point for a first screen before its first 저장.
+    const tree = await git(["ls-tree", "-r", "--name-only", "refs/cds-design/checkpoints/session-a/1"]);
+    assert.match(tree, /src\/screens\/new\/New\.screen\.tsx/, "the snapshot holds the untracked screen");
+    assert.match(tree, /index\.html/, "and the tracked file");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("summarize without a Claude path falls back to folder grouping — once per diff", async () => {
+  const dir = workdir("hub-summarize-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    // No claudeExecutable option: the fallback is the only path (PLAN D51).
+    const workspace = await bringUp(dir, fixture);
+
+    const html = readFileSync(join(dir, "work", "index.html"), "utf8");
+    writeFileSync(join(dir, "work", "index.html"), `${html}<p>회원 목록 줄</p>\n`);
+    mkdirSync(join(dir, "work", "src", "screens", "member"), { recursive: true });
+    writeFileSync(
+      join(dir, "work", "src", "screens", "member", "PayFailed.screen.tsx"),
+      "export const PayFailed = () => null;\n",
+    );
+
+    const summary = await workspace.summarize();
+    assert.equal(summary.source, "fallback");
+    assert.deepEqual(summary.lines, ["member: 추가 1", "기타: 수정 1"]);
+
+    // Same diff, same answer — from the one-entry cache, without another look.
+    const again = await workspace.summarize();
+    assert.deepEqual(again, summary);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

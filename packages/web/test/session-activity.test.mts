@@ -31,6 +31,23 @@ test("the thread the planner is watching is never marked", () => {
   assert.deepEqual(settleTransitions({ b: true }, { b: "error" }, null).settled, ["b"]);
 });
 
+test("a thread that stops to ask is awaiting, not finished (PLAN D50)", () => {
+  // Permission and question waits are the orange dot in the tree, not the
+  // finished mark: the turn is not over, it wants an answer.
+  const permission = settleTransitions({ b: true }, { b: "waiting_permission" }, "a");
+  assert.deepEqual(permission.awaiting, ["b"]);
+  assert.deepEqual(permission.settled, []);
+
+  const question = settleTransitions({ b: true }, { b: "waiting_question" }, null);
+  assert.deepEqual(question.awaiting, ["b"]);
+  assert.deepEqual(question.settled, []);
+
+  // The thread on screen stops to ask where they can see it: never marked.
+  const watched = settleTransitions({ b: true }, { b: "waiting_permission" }, "b");
+  assert.deepEqual(watched.awaiting, []);
+  assert.deepEqual(watched.settled, []);
+});
+
 test("a thread that vanished cannot be marked", () => {
   // Deleted between passes: it is not in the states map, so it contributes
   // nothing and drops out of the running record instead of leaking forever.

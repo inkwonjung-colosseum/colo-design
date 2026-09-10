@@ -40,7 +40,7 @@ export const PREVIEW_WIDTH_BOUNDS = { min: 340, max: 1100 } as const;
 export const SIDEBAR_WIDTH_BOUNDS = { min: 200, max: 360 } as const;
 
 /**
- * How Claude answers in this planner's conversations (PLAN D10).
+ * How Claude answers in this planner's conversations (PLAN D10[설정 이동]).
  *
  * These used to be three chips in the composer, stored per workspace. They are
  * one shared preference now: 설정 is a single dialog, and a planner asked to
@@ -51,23 +51,55 @@ export interface ChatSettings {
   model: string | null;
   effort: EffortLevel | null;
   permissionMode: PermissionMode;
+  /**
+   * Claude 가 화면을 직접 볼지(PLAN D61). A session.create choice, not a
+   * live-session switch: 새 세션부터 적용되고, 열려 있는 대화는 그대로다 —
+   * a running thread's tool set is not renegotiated underneath it.
+   */
+  previewTools: boolean;
+  /**
+   * Claude 가 보는 화면을 PiP 로 표시할지(PLAN D63). 브라우저 경로에는
+   * 프레임이 아예 없으므로 이 값은 데스크톱에서만 무언가를 가린다.
+   */
+  showPip: boolean;
 }
 
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
+  /**
+   * Kept, unread (PLAN D54): 대화는 보관으로 바뀌었고 삭제 확인은 없어졌다.
+   * External compatibility requirement — SettingsDialog, owned outside this
+   * change, still binds this field; dropping it here breaks that file. No
+   * code path in this app reads it any more.
+   */
   confirmBeforeDelete: boolean;
   chat: ChatSettings;
   layout: LayoutSettings;
   /** The planner's own names for threads, by session id. The daemon's
       summary stays the fallback; an entry the planner emptied is dropped. */
   sessionTitles: Record<string, string>;
+  /**
+   * Conversations kept out of the list (PLAN D54), by project slug. 보관 is
+   * not 삭제 — the transcript survives; the list, the tabs, and the tree
+   * just stop showing the thread. The 팔레트 is the way back.
+   */
+  archivedSessions: Record<string, string[]>;
+  /**
+   * Which project's tree is folded (PLAN D59), by slug. Written by the
+   * sidebar outside this hook's state (the archivedSessions precedent), so
+   * `update` carries the stored copy over and nothing can silently unfold a
+   * project the planner folded.
+   */
+  treeFolded?: Record<string, boolean>;
 };
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   model: null,
   effort: null,
   permissionMode: DEFAULT_PERMISSION_MODE,
+  previewTools: true,
+  showPip: true,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -84,6 +116,8 @@ export const DEFAULT_SETTINGS: Settings = {
   chat: DEFAULT_CHAT_SETTINGS,
   layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
   sessionTitles: {},
+  archivedSessions: {},
+  treeFolded: {},
 };
 
 export const THEMES: ThemeChoice[] = ["system", "dark", "light"];
@@ -123,7 +157,52 @@ export function loadSettings(): Settings {
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
+    archivedSessions: loadArchivedSessions(stored.archivedSessions),
+    treeFolded: loadTreeFolded(stored.treeFolded),
   };
+}
+
+/** Project slug → whether its tree is folded (PLAN D59). Slugs and booleans
+    only; anything else in a hand-edited blob is dropped. */
+function loadTreeFolded(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, boolean> = {};
+  for (const [slug, folded] of Object.entries(raw)) {
+    if (!slug || typeof folded !== "boolean") continue;
+    out[slug] = folded;
+  }
+  return out;
+}
+
+/** The stored fold of one project's tree, read fresh — the sidebar writes
+    this key outside any settings dialog, so no component may hold a stale
+    copy. Unfolded until this planner says otherwise. */
+export function loadTreeFoldedFor(slug: string | null): boolean {
+  if (!slug) return false;
+  return loadSettings().treeFolded?.[slug] ?? false;
+}
+
+/**
+ * Persist one project's tree fold. Same read-modify-write as the archive:
+ * the stored blob is read whole and rewritten, so a stale React copy can
+ * never undo another key's newer write.
+ */
+export function saveTreeFolded(slug: string | null, folded: boolean): void {
+  if (!slug) return;
+  let base: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
+    if (raw && typeof raw === "object") base = raw as Record<string, unknown>;
+  } catch {
+    // An unreadable blob starts a fresh one; the fold below is what matters.
+  }
+  const treeFolded = { ...loadSettings().treeFolded, [slug]: folded };
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...base, treeFolded }));
+  } catch {
+    // Private-browsing quotas can refuse the write; the fold still applies
+    // to this tab's state.
+  }
 }
 
 /** Session-id → the planner's name for it. Anything that is not a non-empty
@@ -136,6 +215,55 @@ function loadSessionTitles(raw: unknown): Record<string, string> {
     if (id && name) out[id] = name;
   }
   return out;
+}
+
+/** Project slug → the session ids kept out of its list (PLAN D54). Slugs and
+    id arrays only; anything else in a hand-edited blob is dropped. */
+function loadArchivedSessions(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, string[]> = {};
+  for (const [slug, ids] of Object.entries(raw)) {
+    if (!slug || !Array.isArray(ids)) continue;
+    const clean = ids.filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (clean.length > 0) out[slug] = clean;
+  }
+  return out;
+}
+
+/** The archived ids of one project, read fresh — the thread list writes this
+    key outside any settings dialog, so no component may hold a stale copy. */
+export function loadArchivedSessionIds(slug: string | null): string[] {
+  if (!slug) return [];
+  return loadSettings().archivedSessions[slug] ?? [];
+}
+
+/**
+ * Persist one project's archived ids. Reads the stored blob first and rewrites
+ * it whole: `useSettings` holds settings state that can be older than the last
+ * 보관, and writing this key from that stale copy would silently un-archive
+ * conversations the planner hid minutes ago.
+ */
+export function saveArchivedSessionIds(slug: string | null, ids: string[]): void {
+  if (!slug) return;
+  let base: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
+    if (raw && typeof raw === "object") base = raw as Record<string, unknown>;
+  } catch {
+    // An unreadable blob starts a fresh one; the validated archive map below
+    // is what matters.
+  }
+  const archived = { ...loadSettings().archivedSessions, [slug]: ids };
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...base, archivedSessions: archived }));
+  } catch {
+    // Private-browsing quotas can refuse the write; the hide still applies
+    // to this tab's state.
+  }
+  // Every archive write funnels through here — 보관, 되살리기, 영구 삭제 —
+  // so this one ping is how the sidebar tree (which reads the stored ids
+  // fresh, project by project) learns to redraw (PLAN D59).
+  window.dispatchEvent(new Event("cds-design:archived"));
 }
 
 /**
@@ -159,6 +287,10 @@ function loadChat(raw: unknown): ChatSettings {
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
     permissionMode: mode === "bypassPermissions" ? DEFAULT_PERMISSION_MODE : mode,
+    // 기본 켬(PLAN D61·D63): an older blob that predates the toggles — or a
+    // hand-edited one that wrote anything but a boolean — reads as on.
+    previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,
+    showPip: stored.showPip === undefined ? true : stored.showPip === true,
   };
 }
 
@@ -240,7 +372,18 @@ export function useSettings(): {
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => {
-      const next = { ...prev, ...patch };
+      // 보관 (PLAN D54) and the tree fold (PLAN D59) write their keys from
+      // the sidebar, outside this hook's state — carry the stored copies
+      // over, or a settings save made later in the same sitting would
+      // restore conversations the planner archived, and unfold the project
+      // they folded, minutes ago.
+      const stored = loadSettings();
+      const next = {
+        ...prev,
+        ...patch,
+        archivedSessions: stored.archivedSessions,
+        treeFolded: stored.treeFolded,
+      };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {

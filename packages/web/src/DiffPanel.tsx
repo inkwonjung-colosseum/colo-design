@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DiffFile, DiffStatus } from "@cds-design/protocol";
-import type { Daemon } from "./daemon-client";
+import type { Daemon, DiffSummary } from "./daemon-client";
 import { CloseIcon } from "./icons";
 
 const STATUS_LABEL: Record<DiffFile["status"], string> = {
@@ -86,27 +86,90 @@ function FileRow({ file }: { file: DiffFile }) {
 }
 
 /**
- * The 저장 review: what changed, the repo's own gates, then a save the planner
- * explicitly approves. Nothing leaves the machine without a person clicking
- * 저장 here.
+ * Fallback summary (PLAN D51): paths grouped by their second folder, with
+ * counts. It cuts strings — it does not pretend to read the repo's layout.
+ */
+function fallbackLines(files: DiffFile[]): string[] {
+  const counts = new Map<string, Record<DiffFile["status"], number>>();
+  for (const file of files) {
+    const segment = file.path.split("/");
+    // `src/screens/Pay.tsx` groups under `screens`; a file sitting directly
+    // in a top folder groups under that folder, not under its own name.
+    const folder = segment.length > 2 ? (segment[1] ?? "(루트)") : segment.length === 2 ? (segment[0] ?? "(루트)") : "(루트)";
+    const bucket = counts.get(folder) ?? { added: 0, modified: 0, deleted: 0, renamed: 0 };
+    bucket[file.status] += 1;
+    counts.set(folder, bucket);
+  }
+  return [...counts.entries()].map(([folder, bucket]) => {
+    const parts = (["modified", "added", "deleted", "renamed"] as const)
+      .filter((status) => bucket[status] > 0)
+      .map((status) => `${STATUS_LABEL[status]} ${bucket[status]}`);
+    return `${folder}: ${parts.join(" · ")}`;
+  });
+}
+
+/** What a diff was when its summary was written — path, kind, and how much moved. */
+function diffKey(files: DiffFile[]): string {
+  return files
+    .map((file) => {
+      const added = file.hunks.reduce(
+        (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+        0,
+      );
+      const removed = file.hunks.reduce(
+        (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+        0,
+      );
+      return `${file.status}:${file.path}:+${added}:-${removed}`;
+    })
+    .join("|");
+}
+
+/**
+ * The summary is asked once per diff, not once per open of the panel (PLAN
+ * D51) — each mount is a fresh component, so the cache outlives it here.
+ * Claude-sourced answers only: the fallback is a local count, never worth
+ * remembering over a real summary.
+ */
+const summaryCache = new Map<string, DiffSummary & { source: "claude" }>();
+
+/**
+ * The 저장 review (PLAN D51): a summary to read first, a save note prefilled
+ * from it, and the raw files · hunks folded away under `자세히 보기`. Nothing
+ * leaves the machine without a person clicking 저장 here.
  */
 export function DiffPanel({
   daemon,
   sessionId,
   onClose,
+  summaryLines,
 }: {
   daemon: Daemon;
   /** The live planning thread; a failed gate lands in it as Claude's next task. */
   sessionId: string | null;
   onClose: () => void;
+  /**
+   * The screen turns' own end-of-turn summaries (`<!-- cds-design:summary -->`),
+   * when the caller has them. Present, they are the whole summary — no daemon
+   * round trip. Absent (the usual mount), the panel asks `repo.summarize`.
+   */
+  summaryLines?: string[];
 }) {
   const [files, setFiles] = useState<DiffFile[] | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<DiffSummary | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+  /** Once the planner edits the note, the summary stops filling it. */
+  const memoTouched = useRef(false);
   const diffStatus = daemon.diffStatus;
   const running = diffStatus !== null && RUNNING.includes(diffStatus.stage);
   const published = diffStatus?.stage === "published";
   const failed = diffStatus?.stage === "failed";
+
+  // The turn-end summary and the asked-for one differ only in provenance; key
+  // the effect on the joined text so a caller-side array identity cannot loop it.
+  const turnSummaryText = summaryLines && summaryLines.length > 0 ? summaryLines.join("\n") : null;
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
@@ -129,6 +192,69 @@ export function DiffPanel({
       cancelled = true;
     };
   }, [daemon, running]);
+
+  // The summary follows the diff: turn-end lines when the caller has them,
+  // else one `repo.summarize` ask, cached by what the diff was. Three seconds
+  // in, the planner reads the local fallback — a slow answer still replaces
+  // it when it lands (PLAN D51's 폴백 is a display floor, not a cancel).
+  useEffect(() => {
+    if (turnSummaryText !== null) {
+      setSummary({ lines: turnSummaryText.split("\n"), source: "claude" });
+      setSummarizing(false);
+      return;
+    }
+    if (!files || files.length === 0) {
+      setSummary(null);
+      setSummarizing(false);
+      return;
+    }
+    const key = diffKey(files);
+    const cached = summaryCache.get(key);
+    if (cached) {
+      setSummary(cached);
+      setSummarizing(false);
+      return;
+    }
+    let cancelled = false;
+    setSummary(null);
+    setSummarizing(true);
+    const fallbackTimer = window.setTimeout(() => {
+      if (!cancelled) setSummary({ lines: fallbackLines(files), source: "fallback" });
+    }, 3_000);
+    daemon.api
+      .summarizeDiff()
+      .then((next) => {
+        if (cancelled) return;
+        setSummary(next);
+        if (next.source === "claude") {
+          summaryCache.set(key, { lines: next.lines, source: "claude" });
+          // A save review is opened, not surfed; a bounded cache is enough.
+          if (summaryCache.size > 16) {
+            const oldest = summaryCache.keys().next().value;
+            if (oldest !== undefined) summaryCache.delete(oldest);
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSummary({ lines: fallbackLines(files), source: "fallback" });
+      })
+      .finally(() => {
+        clearTimeout(fallbackTimer);
+        if (!cancelled) setSummarizing(false);
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(fallbackTimer);
+    };
+  }, [daemon, files, turnSummaryText]);
+
+  // The note opens filled with the summary's first line (PLAN D51) — the one
+  // the planner would have typed anyway. Their own keystrokes win from then on.
+  useEffect(() => {
+    if (memoTouched.current) return;
+    const first = summary?.lines[0];
+    if (first) setMessage(first);
+  }, [summary]);
 
   const save = async () => {
     setError(null);
@@ -164,22 +290,44 @@ export function DiffPanel({
               {running && <span className="spinner" />}
             </div>
           )}
+          {/* The gate's own output is a developer's text (PLAN D51): the stage
+              line above already says what failed, the raw transcript waits. */}
           {failed && diffStatus?.detail && (
-            <pre className="diff__fail">
-              <code>{diffStatus.detail}</code>
-            </pre>
+            <details className="settings__fold">
+              <summary>자세히</summary>
+              <pre className="diff__fail">
+                <code>{diffStatus.detail}</code>
+              </pre>
+            </details>
+          )}
+
+          {summarizing && <p className="hint">요약을 만드는 중…</p>}
+          {summary && summary.lines.length > 0 && (
+            <div>
+              {summary.lines.map((line, index) => (
+                <p className="hint" key={index}>
+                  · {line}
+                </p>
+              ))}
+              {summary.source === "claude" && <p className="hint">요약은 Claude가 썼습니다</p>}
+            </div>
           )}
 
           {files === null && !error && <p className="hint">변경사항을 읽어 오는 중…</p>}
           {files !== null && files.length === 0 && !published && (
             <p className="hint">저장할 변경사항이 없습니다. 먼저 화면을 만들거나 고쳐 주세요.</p>
           )}
+          {/* Paths and +/- lines live behind the fold — the first screen of
+              the review reads as sentences, not as a diff (PLAN D51). */}
           {files !== null && files.length > 0 && (
-            <ul className="diff__files">
-              {files.map((file) => (
-                <FileRow key={file.path} file={file} />
-              ))}
-            </ul>
+            <details className="settings__fold">
+              <summary>자세히 보기 (파일 {files.length}개)</summary>
+              <ul className="diff__files">
+                {files.map((file) => (
+                  <FileRow key={file.path} file={file} />
+                ))}
+              </ul>
+            </details>
           )}
 
           {error && (
@@ -191,7 +339,7 @@ export function DiffPanel({
           <label className="setting setting--wide">
             <span className="setting__text">
               <span className="setting__label">저장 메모</span>
-              <span className="setting__hint">비워 두면 자동으로 채워집니다</span>
+              <span className="setting__hint">요약의 첫 줄이 채워져 있습니다 — 고칠 수 있습니다</span>
             </span>
             <span className="setting__control">
               <input
@@ -199,7 +347,10 @@ export function DiffPanel({
                 placeholder="예: 회원 관리 화면 추가"
                 aria-label="저장 메모"
                 disabled={running}
-                onChange={(e) => setMessage(e.target.value)}
+                onChange={(e) => {
+                  memoTouched.current = true;
+                  setMessage(e.target.value);
+                }}
               />
             </span>
           </label>

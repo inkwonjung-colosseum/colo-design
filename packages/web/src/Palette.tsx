@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectSummary, SessionSummary } from "@cds-design/protocol";
+import type { ProjectSummary, SessionSummary, ThreadSummary } from "@cds-design/protocol";
 import { FolderIcon, GearIcon, PlusIcon } from "./icons";
+import { loadArchivedSessionIds } from "./settings";
 
 /** The walk is grouped 대화 → 프로젝트 → 명령; a header prints on each turn. */
 type Group = "대화" | "프로젝트" | "명령";
@@ -11,6 +12,10 @@ type Row =
       group: Group;
       key: string;
       label: string;
+      /** Which project the conversation belongs to — the cross-project
+          row's hint, and what its run jumps through. */
+      slug: string;
+      projectName: string;
       live: boolean;
       now: boolean;
       run: () => void | Promise<void>;
@@ -30,44 +35,78 @@ type Row =
       hint: string;
       icon: typeof PlusIcon;
       run: () => void | Promise<void>;
+    }
+  /** The `보관된 대화 N` entry (PLAN D54); clicking folds the hidden threads open. */
+  | {
+      kind: "archivetoggle";
+      group: Group;
+      key: string;
+      label: string;
+      hint: string;
+      run: () => void | Promise<void>;
+    }
+  /** One hidden thread: a click 되살리기s it, the row's 삭제 button purges it. */
+  | {
+      kind: "archived";
+      group: Group;
+      key: string;
+      label: string;
+      run: () => void | Promise<void>;
+      purge: () => void | Promise<void>;
     };
 
 /**
- * One overlay the frame's every jump lives behind (⌘K): the threads of this
- * workspace, the other projects, and the three actions a planner reaches for
- * most. The modal's bones — the scrim, the panel, the self-dismissing
- * backdrop — one level above it, because it may open over a dialog.
+ * One overlay the frame's every jump lives behind (⌘K): every project's
+ * conversations (the daemon's threads, PLAN D59), the other projects, and
+ * the few commands that exist. 보관's hidden threads (PLAN D54) stay here —
+ * the one list that folds them open.
  */
 export function Palette({
-  sessions,
-  titleFor,
+  titleForThread,
   activeSessionId,
   projects,
   activeSlug,
-  onOpenSession,
+  archivedSessions,
+  onRestoreSession,
+  onDeleteSession,
+  onOpenThread,
   onCreateSession,
   onActivateProject,
   onAddProject,
   onOpenSettings,
+  openArchived,
   onClose,
 }: {
-  sessions: SessionSummary[];
-  /** The name a thread wears: the planner's rename, else the daemon's summary. */
-  titleFor: (session: SessionSummary) => string;
+  /** The name a thread wears: the planner's rename, else the daemon's title. */
+  titleForThread: (thread: ThreadSummary) => string;
   activeSessionId: string | null;
   projects: ProjectSummary[];
   activeSlug: string | null;
-  onOpenSession: (session: SessionSummary) => void;
+  /**
+   * 보관 (PLAN D54). Optional until the shell above wires them: without both
+   * callbacks the palette cannot restore or purge, so it stays silent about
+   * the archive instead of showing rows that can do neither.
+   */
+  archivedSessions?: SessionSummary[];
+  onRestoreSession?: (session: SessionSummary) => void | Promise<void>;
+  onDeleteSession?: (session: SessionSummary) => void | Promise<void>;
+  /** Opens a conversation — switching projects first when it is not this
+      one's (PLAN D59 rule 1). */
+  onOpenThread: (slug: string, thread: ThreadSummary) => void;
   onCreateSession: () => void;
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
   onAddProject: () => void;
   onOpenSettings: () => void;
+  /** Opened from the tree's `보관된 대화 N` — the section starts unfolded. */
+  openArchived?: boolean;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /** Whether the 보관된 대화 section is unfolded (PLAN D54). */
+  const [archivedOpen, setArchivedOpen] = useState(openArchived ?? false);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -96,21 +135,30 @@ export function Palette({
     };
 
     const out: Row[] = [];
-    for (const session of sessions) {
-      const label = titleFor(session);
-      if (rank(label) < 0) continue;
-      out.push({
-        kind: "session",
-        group: "대화",
-        key: session.sessionId,
-        label,
-        live: session.live,
-        now: session.sessionId === activeSessionId,
-        run: async () => {
-          onOpenSession(session);
-          onClose();
-        },
-      });
+    // Every project's conversations (PLAN D59) — 보관's hidden ones excepted
+    // (the archive section below is where those live). The daemon owns the
+    // project's own archive for the ACTIVE project.
+    for (const project of projects) {
+      const hidden = loadArchivedSessionIds(project.slug);
+      for (const thread of project.threads ?? []) {
+        if (hidden.includes(thread.id)) continue;
+        const label = titleForThread(thread);
+        if (rank(label) < 0) continue;
+        out.push({
+          kind: "session",
+          group: "대화",
+          key: `${project.slug}:${thread.id}`,
+          slug: project.slug,
+          projectName: project.name,
+          label,
+          live: thread.state === "running",
+          now: project.slug === activeSlug && thread.id === activeSessionId,
+          run: async () => {
+            onOpenThread(project.slug, thread);
+            onClose();
+          },
+        });
+      }
     }
     for (const project of projects) {
       if (project.slug === activeSlug || rank(project.name) < 0) continue;
@@ -150,8 +198,52 @@ export function Palette({
         },
       });
     }
+    // 보관된 대화 (PLAN D54): one folding entry at the end of the 대화 group;
+    // inside it, a hidden thread per row — click brings it back, 삭제 ends it.
+    // Both actions come from above; without the pair the section stays quiet.
+    const archive = archivedSessions ?? [];
+    if (onRestoreSession && onDeleteSession && archive.length > 0 && rank("보관된 대화") >= 0) {
+      out.push({
+        kind: "archivetoggle",
+        group: "대화",
+        key: "archived",
+        label: `보관된 대화 ${archive.length}`,
+        hint: archivedOpen ? "접기" : "되살리기 · 영구 삭제",
+        run: () => setArchivedOpen((open) => !open),
+      });
+      if (archivedOpen) {
+        for (const session of archive) {
+          // The archive holds summaries; the tree-shaped name answers the
+          // same way (planner's rename first).
+          const label = titleForThread({
+            id: session.sessionId,
+            title: session.title,
+            state: "idle",
+            updatedAt: new Date(session.lastModified).toISOString(),
+          });
+          if (rank(label) < 0) continue;
+          out.push({
+            kind: "archived",
+            group: "대화",
+            key: `archived:${session.sessionId}`,
+            label,
+            run: async () => {
+              await onRestoreSession(session);
+              onOpenThread(activeSlug ?? "", {
+                id: session.sessionId,
+                title: label,
+                state: "idle",
+                updatedAt: new Date(session.lastModified).toISOString(),
+              });
+              onClose();
+            },
+            purge: () => onDeleteSession(session),
+          });
+        }
+      }
+    }
     return out;
-  }, [sessions, projects, activeSlug, activeSessionId, query, titleFor, onOpenSession, onCreateSession, onActivateProject, onAddProject, onOpenSettings, onClose]);
+  }, [projects, activeSlug, activeSessionId, query, titleForThread, archivedSessions, onRestoreSession, onDeleteSession, archivedOpen, onOpenThread, onCreateSession, onActivateProject, onAddProject, onOpenSettings, onClose]);
 
   // A shrinking list must not keep a highlight past its end.
   const index = Math.min(highlight, Math.max(0, rows.length - 1));
@@ -231,8 +323,30 @@ export function Palette({
                   )}
                   <span className="palette__label">{row.label}</span>
                   {row.kind === "session" && row.now && <span className="palette__hint">지금 열림</span>}
+                  {row.kind === "session" && !row.now && row.slug !== activeSlug && (
+                    <span className="palette__hint">{row.projectName}</span>
+                  )}
                   {row.kind === "project" && <span className="palette__hint">프로젝트</span>}
                   {row.kind === "action" && <span className="palette__hint">{row.hint}</span>}
+                  {row.kind === "archivetoggle" && <span className="palette__hint">{row.hint}</span>}
+                  {row.kind === "archived" && (
+                    <>
+                      {/* 삭제 stops the row's own 되살리기 click — it is the one
+                          destructive act here and acts alone (PLAN D54). */}
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setError(null);
+                          void row.purge();
+                        }}
+                      >
+                        영구 삭제
+                      </button>
+                      <span className="palette__hint">보관됨</span>
+                    </>
+                  )}
                 </li>
               </Fragment>
             );

@@ -73,7 +73,7 @@ async function doctor(): Promise<number> {
   const onboarding = await runOnboardingChecks({
     gitHubClient: pat ? () => new GitHubClient(pat, createGitHubTransport().transport) : undefined,
   });
-  // The project is not a gate any more (PLAN D12): its bring-up state is what
+  // The project is not a gate any more (PLAN D12[게이트 아님]): its bring-up state is what
   // a planner would see in the workspace, so doctor prints that instead.
   const project =
     active && paths

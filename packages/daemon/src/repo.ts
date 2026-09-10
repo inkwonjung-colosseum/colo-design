@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -18,11 +19,22 @@ import type {
   DiffFile,
   DiffHunk,
   DiffStatus,
+  HandoffShot,
   HandoffStatus,
+  RepoCheckpoint,
+  RepoCheckpointRestore,
+  RepoCheckpoints,
+  RepoDiscard,
+  RepoErrorKind,
+  RepoHistory,
   RepoPhase,
   RepoStatus,
+  RepoSummary,
 } from "@cds-design/protocol";
 import { markTurn } from "@cds-design/protocol";
+// The summarizer's one Claude turn (PLAN D51) rides the same SDK the
+// sessions use — one login, one code path, no `-p` process to spawn.
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import {
   currentPlatform,
   detectsRegistryAuthFailure,
@@ -49,6 +61,10 @@ const DETAIL_THROTTLE_MS = 200;
 const DEFAULT_COMMIT_MESSAGE = "CDS Design 화면 변경";
 /** PR title when the planner sends the handoff without editing it. */
 const DEFAULT_HANDOFF_TITLE = "CDS Design 화면 전달";
+/** D56: where a handoff's screen captures are committed, relative to the root. */
+const SHOTS_DIR = ".cds-design/shots";
+/** D56: the captures ride their own commit — the reviewed diff stays the planner's. */
+const SHOTS_COMMIT_MESSAGE = "CDS Design 화면 미리보기 캡처";
 /**
  * Every branch this tool creates lives under one prefix, so a developer can
  * tell at a glance which branches a planner made and which are theirs.
@@ -56,6 +72,22 @@ const DEFAULT_HANDOFF_TITLE = "CDS Design 화면 전달";
 const BRANCH_PREFIX = "cds-design";
 /** How many output lines a failed gate quotes back to people and Claude. */
 const GATE_OUTPUT_TAIL_LINES = 30;
+/**
+ * Where every turn-start snapshot lives (PLAN D52). A namespace of its own
+ * under `refs/`, so a developer's `git for-each-ref` never trips over it by
+ * accident and one `refs/cds-design/checkpoints` listing sweeps it.
+ */
+const CHECKPOINT_REF_PREFIX = "refs/cds-design/checkpoints";
+/** D52: a session keeps its most recent snapshots; older ones are deleted. */
+const CHECKPOINTS_PER_SESSION = 20;
+/** D51: how long the summary's one Claude turn may take before the fallback. */
+const SUMMARY_TIMEOUT_MS = 3_000;
+/** D51: "3줄 이내" — and that is all the save review shows first, anyway. */
+const SUMMARY_MAX_LINES = 3;
+/** D51: per-file diff fed to the summarizer — a refactor's full diff is noise. */
+const SUMMARY_HUNK_CHAR_LIMIT = 4_096;
+/** The fallback bucket for a changed file with no folder above it. */
+const FALLBACK_ROOT_GROUP = "기타";
 
 /**
  * What Claude is told when a step fails, named the way the planner's own
@@ -123,6 +155,10 @@ export interface CdsDesignConfig {
   build?: string;
   preview: { command: string; port: number };
   registry?: CdsDesignRegistry;
+  /** D55: rows the composer appends to its own built-in quick actions. */
+  quickActions?: string[];
+  /** D56: `false` refuses the handoff's screen captures — no files, no PR section. */
+  shots?: boolean;
 }
 
 /**
@@ -165,11 +201,25 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
     );
   }
 
+  const rawQuickActions = config.quickActions;
+  if (
+    rawQuickActions !== undefined &&
+    (!Array.isArray(rawQuickActions) ||
+      rawQuickActions.some((row) => typeof row !== "string" || row.trim() === ""))
+  ) {
+    throw new Error("cds-design.json의 quickActions는 빈 문자열이 아닌 문자열 배열이어야 합니다");
+  }
+
+  if (config.shots !== undefined && typeof config.shots !== "boolean") {
+    throw new Error("cds-design.json의 shots는 true 또는 false여야 합니다");
+  }
 
   const common = {
     ...(typeof config.install === "string" ? { install: config.install } : {}),
     ...(typeof config.check === "string" ? { check: config.check } : {}),
     ...(typeof config.build === "string" ? { build: config.build } : {}),
+    ...(rawQuickActions !== undefined ? { quickActions: rawQuickActions as string[] } : {}),
+    ...(config.shots !== undefined ? { shots: config.shots } : {}),
     preview: { command, port: port as number },
   };
 
@@ -280,13 +330,146 @@ function untrackedAsAdded(root: string, rel: string): DiffFile {
 }
 
 // ---------------------------------------------------------------------------
+// 요약 폴백 · 되돌리기 경로 규칙 (PLAN D51 · D52 · D53 — pure, unit tested)
+// ---------------------------------------------------------------------------
+
+/**
+ * The folder a changed path is read as, for the summary's fallback (PLAN
+ * D51): `src/screens/member/PayFailed.screen.tsx` → `member`. The folder
+ * directly above the file is the one the repo's own convention names a
+ * screen group with; a file with no folder above it lands in `기타`. This is
+ * string cutting, not repo-convention reading — the daemon never decides
+ * what a "screens" folder means.
+ */
+export function fallbackGroup(path: string): string {
+  const segments = path.split("/");
+  return segments.length >= 2 ? (segments[segments.length - 2] ?? FALLBACK_ROOT_GROUP) : FALLBACK_ROOT_GROUP;
+}
+
+/**
+ * The summary when Claude's turn cannot land (PLAN D51): the changed paths
+ * grouped by their folder, `폴더: 수정 N · 추가 M` per group. Deterministic —
+ * same diff, same lines — because this is what the planner reads when the
+ * fancy version failed.
+ */
+export function fallbackSummary(files: Array<Pick<DiffFile, "path" | "status">>): string[] {
+  const groups = new Map<string, { modified: number; added: number }>();
+  for (const file of files) {
+    const group = fallbackGroup(file.path);
+    const counts = groups.get(group) ?? { modified: 0, added: 0 };
+    if (file.status === "added") counts.added += 1;
+    else counts.modified += 1;
+    groups.set(group, counts);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([group, counts]) => {
+      const parts: string[] = [];
+      if (counts.modified > 0) parts.push(`수정 ${counts.modified}`);
+      if (counts.added > 0) parts.push(`추가 ${counts.added}`);
+      return `${group}: ${parts.join(" · ")}`;
+    });
+}
+
+/**
+ * The diff as the summarizer reads it: `git diff`-shaped lines, each file
+ * capped at SUMMARY_HUNK_CHAR_LIMIT so one wholesale rewrite cannot crowd
+ * the rest out of the prompt. The cap is on what Claude is handed — the
+ * planner's `자세히 보기` still gets every hunk.
+ */
+function renderSummaryFile(file: DiffFile): string {
+  if (file.binary) return `파일: ${file.path} (바이너리 — 내용 생략)`;
+  const lines: string[] = [`파일: ${file.path}`];
+  let size = 0;
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      const piece = line.length > SUMMARY_HUNK_CHAR_LIMIT
+        ? `${line.slice(0, SUMMARY_HUNK_CHAR_LIMIT)}…`
+        : line;
+      if (size + piece.length > SUMMARY_HUNK_CHAR_LIMIT) {
+        lines.push("(이 파일의 나머지는 생략했습니다)");
+        return lines.join("\n");
+      }
+      size += piece.length;
+      lines.push(piece);
+    }
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The summarizer's whole instruction (PLAN D51): the changed screens, the
+ * diff, and the ask — planner's words, three lines, no file names. The
+ * diff is the only thing this turn may read, so it rides in the prompt.
+ */
+function summaryPrompt(files: DiffFile[]): string {
+  return [
+    "아래는 저장 전에 검토할 변경 내용입니다. 바뀐 화면과 바뀐 점을 기획자 말로 3줄 이내, 파일 이름 없이 적어 주세요. 한 줄에 한 가지 바뀐 점을 적습니다.",
+    "",
+    `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
+    "",
+    files.map(renderSummaryFile).join("\n"),
+  ].join("\n");
+}
+
+/**
+ * The one path rule every write here obeys — the same rule a save's
+ * reviewed diff already follows: a repo-relative, forward-slash path that
+ * stays inside the clone. Absolute paths and `..` are not paths inside a
+ * worktree; they are an escape attempt, and an escape is refused with null.
+ * Returns the normalized path otherwise.
+ */
+export function safeRepoPath(path: string): string | null {
+  const normalized = path.replaceAll("\\", "/");
+  if (normalized === "" || normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return null;
+  const segments: string[] = [];
+  for (const segment of normalized.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") return null;
+    segments.push(segment);
+  }
+  return segments.length > 0 ? segments.join("/") : null;
+}
+
+/**
+ * A checkpoint restore's plan (PLAN D52): `git diff --name-status <tree>`
+ * splits into the paths to check out (present in the snapshot, changed
+ * since) and the paths to delete (created after the snapshot). Only paths
+ * the allow rule passes survive — a snapshot tree is git's own output, but
+ * the plan is what gets executed, and the plan never reaches outside.
+ */
+export function restorePlan(
+  nameStatus: string,
+  allowed: (path: string) => boolean = (path) => safeRepoPath(path) !== null,
+): { checkout: string[]; remove: string[] } {
+  const checkout = new Set<string>();
+  const remove = new Set<string>();
+  for (const line of nameStatus.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const tab = trimmed.indexOf("\t");
+    if (trimmed === "" || tab < 0) continue;
+    const status = trimmed.slice(0, tab).trim();
+    const path = trimmed.slice(tab + 1).trim();
+    if (!allowed(path)) continue;
+    // `--no-renames` keeps this to A/M/D/T; anything else (U, X) is a state
+    // a mid-merge worktree is in, and a restore must not touch it.
+    if (status === "A") remove.add(path);
+    else if (status === "M" || status === "D" || status === "T") checkout.add(path);
+  }
+  return {
+    checkout: [...checkout].sort(),
+    remove: [...remove].sort(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
 
 export class RepoWorkspace {
   readonly root: string;
   /**
-   * The branch a handoff PR will target (PLAN D5). Nothing reads it in M1; it
+   * The branch a handoff PR will target (PLAN D5[넘기기]). Nothing reads it in M1; it
    * lives beside the url because the same project decision fixes both.
    */
   readonly baseBranch: string;
@@ -295,20 +478,35 @@ export class RepoWorkspace {
   private pat: string | null;
   private phase: RepoPhase = "missing";
   private detail: string | null = null;
+  /** Set at the failure site, never sniffed back out of `detail` (PLAN D41). */
+  private errorKind: RepoErrorKind | null = null;
   private config: CdsDesignConfig | null = null;
   private preview: ChildProcess | null = null;
   private inFlight: Promise<RepoStatus> | null = null;
   private publishing: Promise<DiffStatus> | null = null;
   /** The session-start/button refresh while it runs — saves wait it out. */
   private refreshing: Promise<unknown> | null = null;
+  /**
+   * The summary's memory (PLAN D51): the diff hash its lines answer for.
+   * One entry, in daemon memory on purpose — reopening the save review on
+   * an unchanged diff must not pay for another Claude turn, and a moved
+   * diff must not show yesterday's words.
+   */
+  private summaryCache: { hash: string; lines: string[]; source: RepoSummary["source"] } | null = null;
   private lastEmit = 0;
+  /**
+   * The Claude Code CLI, resolved once by the server from the same source
+   * the sessions get theirs (PLAN D51). The summarizer's one turn rides it;
+   * null means the fallback path is the only path.
+   */
+  private readonly claudeExecutable: string | null;
 
   private readonly onStatus: (status: RepoStatus) => void;
   private readonly onDiffStatus: ((status: DiffStatus) => void) | null;
   private readonly onUrlChange: ((url: string | null) => void) | null;
   /**
    * The work-in-progress cycle: the branch this project's saves land on, and
-   * the pull request a developer received (PLAN D5).
+   * the pull request a developer received (PLAN D5[넘기기]).
    *
    * Both are handed in by the owner and handed back through `onCycleChange`,
    * because they have to survive a daemon restart and the project registry is
@@ -351,6 +549,8 @@ export class RepoWorkspace {
       onCycleChange?: (cycle: { branch: string | null; handoff: HandoffStatus | null }) => void;
       /** Built per call so a PAT changed mid-run reaches the next request. */
       gitHubClient?: () => GitHubClient | null;
+      /** Claude Code CLI executable for the summarizer's one turn (D51). */
+      claudeExecutable?: string | null;
     },
   ) {
     this.root = options.root;
@@ -364,6 +564,7 @@ export class RepoWorkspace {
     this.openHandoff = options.cycle?.handoff ?? null;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
+    this.claudeExecutable = options.claudeExecutable ?? null;
   }
 
   get remoteUrl(): string | null {
@@ -483,7 +684,7 @@ export class RepoWorkspace {
   }
 
   // -------------------------------------------------------------------------
-  // The handoff cycle (PLAN D5): 저장 → 개발자에게 넘기기 → 반영됨
+  // The handoff cycle (PLAN D5[넘기기]): 저장 → 개발자에게 넘기기 → 반영됨
   // -------------------------------------------------------------------------
 
   /**
@@ -639,6 +840,8 @@ export class RepoWorkspace {
   handoff(options: {
     title?: string;
     body?: string;
+    /** The server's preview-driver captures (PLAN D56), already taken. */
+    shots?: HandoffShot[];
     onSessionTurn?: (brief: string) => void;
   } = {}): Promise<DiffStatus> {
     if (!this.publishing) {
@@ -652,6 +855,7 @@ export class RepoWorkspace {
   private async runHandoff(options: {
     title?: string;
     body?: string;
+    shots?: HandoffShot[];
     onSessionTurn?: (brief: string) => void;
   }): Promise<DiffStatus> {
     const branch = this.branch;
@@ -699,8 +903,11 @@ export class RepoWorkspace {
 
     this.setDiff({ stage: "handing-off" });
     const title = options.title?.trim() || DEFAULT_HANDOFF_TITLE;
-    const body = options.body ?? "";
+    let body = options.body ?? "";
     try {
+      // D56: the captures join the branch first, so the body can link files
+      // the developer will really find in it.
+      body = await this.attachShots(body, options.shots, branch);
       const pull = this.openHandoff
         ? await client.updatePullRequest({ ...slug, number: this.openHandoff.number, title, body })
         : await client.createPullRequest({ ...slug, head: branch, base: this.baseBranch, title, body });
@@ -710,6 +917,52 @@ export class RepoWorkspace {
     } catch (error) {
       return this.failGate("pr", error, options.onSessionTurn);
     }
+  }
+
+  /**
+   * D56: writes the server's captures under `.cds-design/shots/`, commits and
+   * pushes them on this cycle's branch, and returns the body with a
+   * `### 화면 미리보기` section linking each one. Nothing here can fail the
+   * handoff: the work is already saved — a set the repo refused
+   * (`shots: false`) or a commit that would not land quietly leaves the body
+   * without the section.
+   */
+  private async attachShots(
+    body: string,
+    shots: HandoffShot[] | undefined,
+    branch: string,
+  ): Promise<string> {
+    if (!shots || shots.length === 0) return body;
+    const slug = this.repoSlug();
+    if (!slug || this.cdsDesign()?.shots === false) return body;
+    const links: string[] = [];
+    try {
+      // The captures must join the branch the pull request is from — a
+      // worktree sitting anywhere else would bury them in the wrong history
+      // and every link in the body would dangle.
+      await this.git(["checkout", branch]);
+      mkdirSync(join(this.root, SHOTS_DIR), { recursive: true });
+      for (const shot of shots) {
+        // A route keeps its Korean; only its path separators become dashes.
+        const name = `${shot.route.replaceAll("/", "-")}--${shot.state}.png`;
+        writeFileSync(join(this.root, SHOTS_DIR, name), shot.png);
+        await this.git(["add", "--", `${SHOTS_DIR}/${name}`]);
+        // Only the url's spaces are escaped — a Korean route reads as itself.
+        const url =
+          `https://github.com/${slug.owner}/${slug.repo}/blob/${branch}/` +
+          `${SHOTS_DIR}/${name.replaceAll(" ", "%20")}`;
+        links.push(`- [\`${shot.route} · ${shot.state}\`](${url})`);
+      }
+      // An identical set is a no-op: a re-handoff after a mere retitle must
+      // not invent an empty commit.
+      if ((await this.git(["diff", "--cached", "--name-only"])).trim() !== "") {
+        await this.git([...(await this.identityArgs()), "commit", "-m", SHOTS_COMMIT_MESSAGE]);
+        await this.git(["push", "origin", branch]);
+      }
+    } catch {
+      return body;
+    }
+    return `${body.replace(/\n*$/, "")}\n\n### 화면 미리보기\n\n${links.join("\n")}\n`;
   }
 
   /**
@@ -746,11 +999,347 @@ export class RepoWorkspace {
       this.setDetail(detailOf(error, this.pat));
     }
     this.setCycle(null, handoff);
+    // 반영됨 (PLAN D52): the cycle's checkpoints snapshot a worktree the
+    // developer has already absorbed — restoring them now would move the
+    // work backwards past a merge. Their refs go, quietly.
+    await this.clearCheckpoints().catch(() => undefined);
     return handoff;
   }
 
   // -------------------------------------------------------------------------
-  // 레포 최신화: bring the developer's side in without reading git (PLAN D5)
+  // 되돌리기와 요약 (PLAN D51 · D52 · D53)
+  // -------------------------------------------------------------------------
+
+  /**
+   * 저장 검토의 요약 (PLAN D51): what changed, in the planner's words. One
+   * Claude turn — `maxTurns: 1`, no tools, three seconds — over the diff
+   * itself; anywhere it cannot land (no CLI, timeout, refusal, empty answer)
+   * falls back to grouping the changed paths. Answered from memory when the
+   * diff has not moved since the last ask, so re-opening the review is free.
+   */
+  async summarize(): Promise<RepoSummary> {
+    if (!this.isCloned()) return { lines: [], source: "fallback" };
+    const files = await this.diff();
+    if (files.length === 0) return { lines: [], source: "fallback" };
+    const hash = createHash("sha256").update(files.map(renderSummaryFile).join("\n")).digest("hex");
+    if (this.summaryCache?.hash === hash) {
+      return { lines: this.summaryCache.lines, source: this.summaryCache.source };
+    }
+    const summary = (await this.claudeSummary(files).catch(() => null)) ?? {
+      lines: fallbackSummary(files),
+      source: "fallback" as const,
+    };
+    this.summaryCache = { hash, lines: summary.lines, source: summary.source };
+    return summary;
+  }
+
+  /** The summarizer's one turn; null means "use the fallback". */
+  private async claudeSummary(files: DiffFile[]): Promise<RepoSummary | null> {
+    if (!this.claudeExecutable) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
+    try {
+      // The same SDK entry the sessions use, aimed at a single
+      // answer-nothing-else turn: no tools to run, no settings to load — the
+      // diff in the prompt is everything this call may read.
+      const conversation = query({
+        prompt: summaryPrompt(files),
+        options: {
+          cwd: this.root,
+          pathToClaudeCodeExecutable: this.claudeExecutable,
+          maxTurns: 1,
+          tools: [],
+          settingSources: [],
+          abortController: controller,
+        },
+      });
+      let answer: string | null = null;
+      for await (const message of conversation) {
+        if (message.type === "result" && message.subtype === "success" && !message.is_error) {
+          answer = message.result;
+        }
+      }
+      const lines = (answer ?? "")
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^[-·•*]\s*/, "").trim())
+        .filter(Boolean)
+        .slice(0, SUMMARY_MAX_LINES);
+      return lines.length > 0 ? { lines, source: "claude" } : null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * 저장 기록 (PLAN D53): the cycle's saves, newest first, as the `저장
+   * 기록` drawer lists them — the planner's own memos and times, no git.
+   */
+  async history(): Promise<RepoHistory> {
+    if (!this.isCloned()) return { base: `origin/${this.baseBranch}`, entries: [] };
+    const base = `origin/${this.baseBranch}`;
+    // A clone that never fetched the base reads as an empty history, not as
+    // an error: the drawer opens, it just has nothing to list yet.
+    const output = await this.git([
+      "log",
+      "--pretty=format:%x1e%H%x1f%s%x1f%cI",
+      "--name-only",
+      `${base}..HEAD`,
+    ]).catch(() => "");
+    const entries = output
+      .split("\x1e")
+      .map((chunk) => chunk.replace(/^\r?\n/, ""))
+      .filter((chunk) => chunk.trim() !== "")
+      .map((chunk) => {
+        const [head = "", ...fileLines] = chunk.split(/\r?\n/);
+        const [sha = "", message = "", at = ""] = head.split("\x1f");
+        return { sha, message, at, files: fileLines.map((line) => line.trim()).filter(Boolean) };
+      })
+      .filter((entry) => entry.sha !== "");
+    return { base, entries };
+  }
+
+  /**
+   * 되돌리기 (PLAN D53): bring the worktree back to a saved point as a NEW
+   * commit on the cycle branch, pushed like any save. A developer may be
+   * reading that branch right now, so reset · revert · force-push do not
+   * exist here — the history only grows, and the commit says 되돌리기.
+   */
+  async restore(sha: string): Promise<DiffStatus> {
+    if (!this.isCloned()) {
+      return this.setDiff({
+        stage: "failed",
+        gate: "diff",
+        detail: "연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.",
+      });
+    }
+    // The same worktree contract as a save: a refresh settling underneath a
+    // restore would half-undo two different moments at once.
+    await this.refreshing?.catch(() => undefined);
+    const dirty = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
+    if (dirty.trim() !== "") {
+      return this.setDiff({
+        stage: "failed",
+        gate: "diff",
+        detail: "저장하지 않은 변경이 있습니다 — 먼저 저장하거나 되돌려 주세요.",
+      });
+    }
+    if (!this.branch) {
+      return this.setDiff({
+        stage: "failed",
+        gate: "diff",
+        detail: "되돌릴 저장 기록이 없습니다 — 먼저 저장해 주세요.",
+      });
+    }
+    let subject: string;
+    try {
+      subject = (await this.git(["log", "-1", "--pretty=%s", sha])).trim();
+    } catch {
+      return this.setDiff({
+        stage: "failed",
+        gate: "diff",
+        detail: "되돌릴 기록을 찾지 못했습니다 — 저장 기록을 다시 열어 확인해 주세요.",
+      });
+    }
+    this.setDiff({ stage: "pushing" });
+    try {
+      // The branch name lives in the registry; git's HEAD may have been left
+      // anywhere by a restart. ensureCycleBranch checks it out when named.
+      const branch = await this.ensureCycleBranch();
+      await this.git(["checkout", sha, "--", "."]);
+      await this.git([...(await this.identityArgs()), "commit", "-m", `되돌리기: ${subject}`]);
+      await this.git(["push", "--set-upstream", "origin", branch]);
+    } catch (error) {
+      return this.setDiff({ stage: "failed", gate: "commit", detail: detailOf(error, this.pat) });
+    }
+    const commit = (await this.git(["rev-parse", "HEAD"])).trim();
+    await this.refreshPendingChanges();
+    return this.setDiff({ stage: "published", commit });
+  }
+
+  /**
+   * 변경 버리기 (PLAN D53): every unsaved worktree change, gone — the same
+   * path set a save would have carried, restored or deleted per file, and
+   * only through the one path rule (inside the clone). The confirmation
+   * dialog is the UI's half; this half cannot reach outside the repo.
+   */
+  async discard(): Promise<RepoDiscard> {
+    if (!this.isCloned()) return { removed: [] };
+    await this.refreshing?.catch(() => undefined);
+    const changed = await this.changedPaths();
+    const allowed = changed
+      .map((path) => safeRepoPath(path))
+      .filter((path): path is string => path !== null);
+    if (allowed.length === 0) return { removed: [] };
+
+    // Tracked paths go back to HEAD (bringing a deleted file back included);
+    // paths HEAD never knew are un-staged and deleted from the worktree.
+    const inHead = new Set(
+      (await this.git(["ls-tree", "-r", "--name-only", "HEAD"]))
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+    const tracked = allowed.filter((path) => inHead.has(path));
+    if (tracked.length > 0) await this.git(["checkout", "HEAD", "--", ...tracked]);
+    for (const path of allowed) {
+      if (inHead.has(path)) continue;
+      await this.git(["rm", "--force", "--cached", "--", path]).catch(() => undefined);
+      rmSync(join(this.root, path), { force: true });
+    }
+    await this.refreshPendingChanges();
+    return { removed: allowed };
+  }
+
+  /** Every path with an unsaved change, renames split into both sides. */
+  private async changedPaths(): Promise<string[]> {
+    const out = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
+    const paths: string[] = [];
+    for (const line of out.split(/\r?\n/)) {
+      if (line.length < 4) continue;
+      const body = line.slice(3);
+      const rename = body.match(/^(.*) -> (.*)$/);
+      if (rename) paths.push((rename[1] ?? "").trim(), (rename[2] ?? "").trim());
+      else paths.push(body.trim());
+    }
+    return paths.filter(Boolean);
+  }
+
+  /**
+   * One 화면 turn's snapshot (PLAN D52), taken by the server the moment the
+   * turn is handed to the session: the whole worktree — untracked screens
+   * included — into a throwaway index, a tree, a parented commit, and a ref
+   * under `refs/cds-design/checkpoints/<sessionId>/<turn>`. HEAD, the real
+   * index and the worktree itself are never touched, which is exactly why
+   * this is not a stash: a stash cannot carry untracked files and a first
+   * screen is untracked by definition.
+   */
+  async checkpoint(sessionId: string, turn: number): Promise<RepoCheckpoint> {
+    const ref = `${CHECKPOINT_REF_PREFIX}/${sessionId}/${turn}`;
+    // Inside `.git/` so it can never surface as an untracked file of its own.
+    const temporaryIndex = join(this.root, ".git", `cds-design-checkpoint-${randomUUID()}`);
+    const indexEnv = { GIT_INDEX_FILE: temporaryIndex };
+    try {
+      await this.git(["add", "-A"], this.root, indexEnv);
+      const tree = (await this.git(["write-tree"], this.root, indexEnv)).trim();
+      const head = (await this.git(["rev-parse", "HEAD"])).trim();
+      const commit = (
+        await this.git(
+          [
+            ...(await this.identityArgs()),
+            "commit-tree",
+            tree,
+            "-p",
+            head,
+            "-m",
+            `CDS Design 체크포인트 · 대화 ${sessionId} · 턴 ${turn}`,
+          ],
+          this.root,
+          indexEnv,
+        )
+      ).trim();
+      await this.git(["update-ref", ref, commit]);
+    } finally {
+      rmSync(temporaryIndex, { force: true });
+    }
+    await this.pruneCheckpoints(sessionId);
+    return { id: `${sessionId}/${turn}`, sessionId, turn, at: new Date().toISOString() };
+  }
+
+  /** D52: a session keeps its newest snapshots; older refs are deleted. */
+  private async pruneCheckpoints(sessionId: string): Promise<void> {
+    const refs = await this.checkpointRefs(`${CHECKPOINT_REF_PREFIX}/${sessionId}`);
+    for (const ref of refs.slice(0, Math.max(0, refs.length - CHECKPOINTS_PER_SESSION))) {
+      await this.git(["update-ref", "-d", ref]).catch(() => undefined);
+    }
+  }
+
+  /** 반영됨 (PLAN D52): a merged cycle's snapshots are history, not exits. */
+  private async clearCheckpoints(): Promise<void> {
+    for (const ref of await this.checkpointRefs(CHECKPOINT_REF_PREFIX)) {
+      await this.git(["update-ref", "-d", ref]).catch(() => undefined);
+    }
+  }
+
+  /** Snapshot refs under `prefix`, oldest first. */
+  private async checkpointRefs(prefix: string): Promise<string[]> {
+    if (!this.isCloned()) return [];
+    return (await this.git(["for-each-ref", "--sort=committerdate", "--format=%(refname)", prefix]))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  /** Every snapshot the planner can still step back to (PLAN D52). */
+  async checkpoints(): Promise<RepoCheckpoints> {
+    const prefix = `${CHECKPOINT_REF_PREFIX}/`;
+    const out = await this.git([
+      "for-each-ref",
+      "--sort=committerdate",
+      "--format=%(refname)%09%(committerdate:iso8601-strict)",
+      CHECKPOINT_REF_PREFIX,
+    ]).catch(() => "");
+    const entries: RepoCheckpoint[] = [];
+    for (const line of out.split(/\r?\n/)) {
+      if (line.trim() === "") continue;
+      const [refname = "", at = ""] = line.split("\t");
+      const id = refname.startsWith(prefix) ? refname.slice(prefix.length) : "";
+      const slash = id.lastIndexOf("/");
+      if (id === "" || slash <= 0) continue;
+      entries.push({ id, sessionId: id.slice(0, slash), turn: Number(id.slice(slash + 1)) || 0, at });
+    }
+    return { entries };
+  }
+
+  /**
+   * Put the worktree back the way it stood when a turn started (PLAN D52).
+   * The move list is `git diff --name-status <tree>` filtered through the
+   * one path rule: allowed paths that the snapshot has are checked out,
+   * allowed paths it never had are deleted. Merge-conflicted paths (U) are
+   * left for Claude, exactly like a refresh leaves them.
+   */
+  async checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
+    if (!this.isCloned()) return { restored: [] };
+    // `id` is `<sessionId>/<turn>`, handed back verbatim from checkpoints().
+    const ref = `${CHECKPOINT_REF_PREFIX}/${id}`;
+    const tree = (await this.git(["rev-parse", `${ref}^{tree}`]).catch(() => "")).trim();
+    if (tree === "") {
+      throw new Error("되돌릴 체크포인트를 찾지 못했습니다 — 목록을 다시 불러와 주세요.");
+    }
+    const raw = await this.git(["-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", tree]);
+    const plan = restorePlan(raw);
+    // Untracked files the snapshot predates never appear in `git diff` —
+    // and they are exactly what "스냅샷에 없던 파일은 삭제" is about: the
+    // first screen a turn just made existed nowhere when the turn began.
+    const inSnapshot = new Set(
+      (await this.git(["ls-tree", "-r", "--name-only", tree]))
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+    const bornAfter = (await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((path) => path !== "" && !inSnapshot.has(path) && safeRepoPath(path) !== null);
+    if (plan.checkout.length > 0) await this.git(["checkout", tree, "--", ...plan.checkout]);
+    for (const path of [...plan.remove, ...bornAfter]) {
+      rmSync(join(this.root, path), { force: true });
+      // Folders the snapshot predates close behind it, quietly.
+      let dir = dirname(join(this.root, path));
+      while (dir.startsWith(this.root) && dir !== this.root) {
+        try {
+          rmdirSync(dir);
+        } catch {
+          break; // not empty — the snapshot era had company here
+        }
+        dir = dirname(dir);
+      }
+    }
+    await this.refreshPendingChanges();
+    return { restored: [...plan.checkout, ...plan.remove, ...bornAfter].sort() };
+  }
+
+  // -------------------------------------------------------------------------
+  // 레포 최신화: bring the developer's side in without reading git (PLAN D5[넘기기])
   // -------------------------------------------------------------------------
 
   /**
@@ -1058,7 +1647,7 @@ export class RepoWorkspace {
       await this.startPreview(config);
       this.setPhase("ready", null);
     } catch (error) {
-      this.setPhase("error", detailOf(error, this.pat));
+      this.setPhase("error", detailOf(error, this.pat), this.bringUpErrorKind(error));
     }
     return this.snapshot();
   }
@@ -1204,6 +1793,7 @@ export class RepoWorkspace {
         // The command's own last line is what says WHY; an exit code alone
         // sends the planner to a terminal they were promised they would not need.
         lastLine ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}` : `미리보기 서버가 종료되었습니다 (${how})`,
+        "preview",
       );
     });
 
@@ -1274,7 +1864,12 @@ export class RepoWorkspace {
   // Process capture
   // -------------------------------------------------------------------------
 
-  private async git(args: string[], cwd = this.root): Promise<string> {
+  private async git(
+    args: string[],
+    cwd = this.root,
+    /** Per-call environment — the checkpoint's temporary GIT_INDEX_FILE. */
+    env: NodeJS.ProcessEnv = {},
+  ): Promise<string> {
     const windows = currentPlatform() === "win32";
     // The same binary the onboarding gate judged: on a Finder-launched app
     // whose PATH stops at /usr/bin, a Homebrew-only git is exactly the one
@@ -1287,11 +1882,16 @@ export class RepoWorkspace {
       shell: windows && git === "git",
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ANTHROPIC_API_KEY: undefined },
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined, ...env },
     }, args);
     if (result.code === 0) return result.stdout;
+    // PLAN D36: a Korean lead, then git's own words — the throw may reach a
+    // notice verbatim, and `exit` was never a word the planner wrote.
     throw new Error(
-      redact(`git ${args[0]} 실패 (exit ${result.code}): ${result.lastLine || result.output}`.trim(), this.pat),
+      redact(
+        `git ${args[0]}에 실패했습니다 (${result.code}) — ${result.lastLine || result.output}`.trim(),
+        this.pat,
+      ),
     );
   }
 
@@ -1362,7 +1962,30 @@ export class RepoWorkspace {
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       pendingChanges: this.pendingChanges,
+      errorKind: this.errorKind,
+      commands: this.config
+        ? {
+            install: this.config.install,
+            check: this.config.check,
+            build: this.config.build,
+            preview: this.config.preview.command,
+          }
+        : undefined,
     };
+  }
+
+  /**
+   * Why a bring-up failed, from the constants this class itself threw (PLAN
+   * D41) — the same words `classifyError` used to substring-match on the web
+   * side, now decided where the throw happened.
+   */
+  private bringUpErrorKind(error: unknown): RepoErrorKind {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === PNPM_MISSING_DETAIL) return "pnpm-missing";
+    if (message === REGISTRY_AUTH_DETAIL) return "registry-auth";
+    if (message.includes("충돌한 파일")) return "conflict";
+    if (message.includes("미리보기 서버") || message.includes("preview.port")) return "preview";
+    return this.isCloned() ? "install" : "clone";
   }
 
   /**
@@ -1388,9 +2011,10 @@ export class RepoWorkspace {
     this.emit();
   }
 
-  private setPhase(phase: RepoPhase, detail: string | null): void {
+  private setPhase(phase: RepoPhase, detail: string | null, kind: RepoErrorKind | null = null): void {
     this.phase = phase;
     this.detail = detail;
+    this.errorKind = phase === "error" ? kind : null;
     this.emit();
   }
 

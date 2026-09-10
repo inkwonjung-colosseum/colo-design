@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { SessionSummary } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import type { Sessions } from "./useSessions";
 import { PermissionCard, QuestionCard, Transcript } from "./components";
@@ -16,12 +17,21 @@ export function ChatColumn({
   sendKey,
   placeholder,
   disabled,
+  titleFor,
+  onRenameSession,
+  onArchiveSession,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   sendKey: SendKey;
   placeholder: string;
   disabled: boolean;
+  /** The name a thread wears: the planner's rename, else the daemon's summary. */
+  titleFor: (session: SessionSummary) => string;
+  /** 더블클릭 · F2 이름 바꾸기 (PLAN D59) — 설정's store keeps it. */
+  onRenameSession: (sessionId: string, title: string) => void;
+  /** The head's `···` → 보관 (PLAN D54): the thread leaves the list. */
+  onArchiveSession: (session: SessionSummary) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
   const bottom = useRef<HTMLDivElement>(null);
@@ -32,6 +42,27 @@ export function ChatColumn({
   const pinned = useRef(true);
   /** Mirror of `pinned` for rendering — the pill is the scrolled-up reader's way back. */
   const [unpinned, setUnpinned] = useState(false);
+  /** The head's `···` menu, and the rename it can open (PLAN D59). */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState("");
+  /** The open thread's summary — the head renders only when one is open. */
+  const activeSummary = activeId
+    ? (sessions.list.find((session) => session.sessionId === activeId) ?? null)
+    : null;
+  const beginRename = () => {
+    if (!activeSummary) return;
+    setMenuOpen(false);
+    setDraft(titleFor(activeSummary));
+    setRenaming(true);
+  };
+  const commitRename = () => {
+    setRenaming(false);
+    if (!activeSummary) return;
+    const name = draft.trim();
+    if (!name || titleFor(activeSummary) === name) return;
+    onRenameSession(activeSummary.sessionId, name);
+  };
 
   // Within one row of the bottom counts as watching the stream come in.
   const rememberPin = () => {
@@ -67,6 +98,70 @@ export function ChatColumn({
   };
   return (
     <main className="planner__chat">
+      {activeSummary && (
+        <header className="thread">
+          {renaming ? (
+            <input
+              className="thread__rename"
+              value={draft}
+              autoFocus
+              aria-label="대화 이름"
+              onChange={(event) => setDraft(event.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitRename();
+                if (event.key === "Escape") setRenaming(false);
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="thread__title"
+              title={titleFor(activeSummary)}
+              onDoubleClick={beginRename}
+              onKeyDown={(event) => {
+                if (event.key === "F2") {
+                  event.preventDefault();
+                  beginRename();
+                }
+              }}
+            >
+              {titleFor(activeSummary)}
+            </button>
+          )}
+          {/* 이 대화가 만든 화면 칩 (D59) waits for the data: nothing on the
+              wire says which screens a thread made. Title and menu ship. */}
+          <span className="thread__spacer" />
+          <button
+            type="button"
+            className="ghost thread__more"
+            aria-label="대화 메뉴"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            ···
+          </button>
+          {menuOpen && (
+            <span className="selector__menu thread__menu" role="menu">
+              <button type="button" role="menuitem" className="selector__row" onClick={beginRename}>
+                <span className="selector__label">이름 바꾸기</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="selector__row"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onArchiveSession(activeSummary);
+                }}
+              >
+                <span className="selector__label">보관</span>
+              </button>
+            </span>
+          )}
+        </header>
+      )}
       <div className="chatstack">
         <section className="scroll" ref={scroll} onScroll={rememberPin}>
           {error && (
@@ -82,7 +177,12 @@ export function ChatColumn({
               </button>
             </div>
           )}
-          <Transcript blocks={active?.blocks ?? []} live={sessions.running} />
+          <Transcript
+            blocks={active?.blocks ?? []}
+            live={sessions.running}
+            commands={daemon.repo?.commands}
+            onRetry={(text) => void sessions.submit(text, [])}
+          />
         {/* A turn's first seconds: the tape holds only the planner's words,
             so the start says itself — spinner + shimmer until blocks land.
             The tape speaks for itself the moment any Claude block exists. */}
@@ -137,6 +237,7 @@ export function ChatColumn({
         placeholder={placeholder}
         usage={sessions.usage}
         plan={daemon.status?.planUsage ?? null}
+        quickActions={daemon.status?.quickActions ?? null}
         selector={sessions.selector}
         commands={sessions.commands}
         onSetModel={(model) => void sessions.setModel(model)}
@@ -144,7 +245,7 @@ export function ChatColumn({
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
         sendKey={sendKey}
-        onSend={(text, attachments) => void sessions.submit(text, attachments)}
+        onSend={(text, attachments) => sessions.submit(text, attachments)}
         onInterrupt={() => activeId && void api.interrupt(activeId)}
         onFindFiles={(query) => api.findFiles(query)}
       />

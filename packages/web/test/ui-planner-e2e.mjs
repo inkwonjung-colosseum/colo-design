@@ -218,10 +218,21 @@ async function main() {
   const devLeftovers = await page.locator(".modeswitch, .picker, .header__actions").count();
   check("no developer chrome survives anywhere in the app", devLeftovers === 0);
 
-  // Threads live in the tab strip now; closing a thread is learned there.
-  const tab = page.locator(".sessiontab-wrap").first();
-  await tab.hover();
-  check("a thread can be deleted from its tab", await tab.locator(".sessiontab__close").isVisible());
+  // Threads live in the tree now; a row's ··· carries rename and 보관.
+  const leafRow = page.locator(".leafwrap").first();
+  await leafRow.hover();
+  check(
+    "a thread can be renamed or archived from its tree row",
+    (await leafRow.locator(".leaf__menu-btn").isVisible()) &&
+      (await leafRow.locator(".leaf__menu").count()) === 0,
+  );
+  await leafRow.locator(".leaf__menu-btn").click();
+  check(
+    "the row menu offers 이름 바꾸기 and 보관",
+    (await leafRow.getByRole("menuitem", { name: "이름 바꾸기" }).isVisible()) &&
+      (await leafRow.getByRole("menuitem", { name: "보관" }).isVisible()),
+  );
+  await leafRow.locator(".leaf__menu-btn").click();
   // The ring only appears once a settled turn has reported usage, which is
   // exactly where step 7 left the session.
   check("the composer shows how long the conversation has grown", await page.locator(`${VISIBLE}.ring`).isVisible());

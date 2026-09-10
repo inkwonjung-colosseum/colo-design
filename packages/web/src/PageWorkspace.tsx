@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { SessionSummary, ThreadSummary } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
-import type { SessionSummary } from "@cds-design/protocol";
 import { useSessions } from "./useSessions";
-import { SessionTabs } from "./SessionTabs";
 import { ChatColumn } from "./ChatColumn";
 import { ScreenPanel } from "./ScreenPanel";
 import { Palette } from "./Palette";
-import { PREVIEW_WIDTH_BOUNDS, type ChatSettings, type LayoutSettings, type Settings } from "./settings";
+import {
+  loadArchivedSessionIds,
+  saveArchivedSessionIds,
+  PREVIEW_WIDTH_BOUNDS,
+  type ChatSettings,
+  type LayoutSettings,
+  type Settings,
+} from "./settings";
 import { Splitter } from "./Splitter";
 
 /** The chat column's floor, in px. The preview's drag may squeeze the chat;
@@ -35,15 +41,29 @@ function clampWidth(value: number, bodyWidth: number): number {
 }
 
 /**
+ * What the sidebar tree may ask of the workspace (PLAN D59): the open, the
+ * new, the archive. Shell holds the handle and hands the tree its callbacks;
+ * the flows live here because only this hook knows which thread is open.
+ */
+export interface WorkspaceHandle {
+  openThread: (slug: string, thread: ThreadSummary) => void;
+  newThread: (slug: string) => void;
+  /** `보관된 대화 N` — the palette, archive section open. */
+  openArchive: (slug: string) => void;
+  archiveThread: (slug: string, thread: ThreadSummary) => void;
+}
+
+/**
  * The workspace, all of it (PLAN D1). The 기획/디자인 split is gone — so are
  * the page tree, the 문서|화면 segment, and the screen rail: the preview is
- * the screens' only door, and its toolbar is where a planner picks one. What
- * is left is the tab strip holding the threads about the screens, and the
- * preview filling the rest of the window all the time. The boundary they
- * share is draggable (Splitter); the width lives in 설정's store and
- * survives a reload.
+ * the screens' only door, and its toolbar is where a planner picks one. The
+ * conversations the screens live in are chosen in the sidebar's tree now;
+ * this column is one transcript under one `.thread` head. The boundary the
+ * preview shares with it is draggable (Splitter); the width lives in 설정's
+ * store and survives a reload.
  */
 export function PageWorkspace({
+  ref,
   daemon,
   settings,
   onChatChange,
@@ -51,7 +71,9 @@ export function PageWorkspace({
   onOpenSettings,
   onAddProject,
   onRenameSession,
+  onActiveThreadChange,
 }: {
+  ref?: React.Ref<WorkspaceHandle>;
   daemon: Daemon;
   settings: Settings;
   /** 설정 owns how Claude answers; threads start on it. */
@@ -63,6 +85,8 @@ export function PageWorkspace({
   onAddProject: () => void;
   /** The planner renames threads; 설정's store keeps them by session id. */
   onRenameSession: (sessionId: string, title: string) => void;
+  /** The tree's active mark — the hook's state, reported up. */
+  onActiveThreadChange: (activeThreadId: string | null) => void;
 }) {
   /**
    * One session list (PLAN D1): every thread is about screens, so there is
@@ -75,10 +99,16 @@ export function PageWorkspace({
     chat: settings.chat,
     onChatChange,
   });
-
-  /** The name a thread wears: the planner's rename, else the daemon's summary. */
+  /** The name a stored thread wears, for the chat head: the planner's
+      rename, else the daemon's summary. */
   const titleFor = useCallback(
     (session: SessionSummary) => settings.sessionTitles[session.sessionId] ?? session.title,
+    [settings.sessionTitles],
+  );
+
+  /** The same name for daemon thread rows, for the tree and the palette. */
+  const titleForThread = useCallback(
+    (thread: ThreadSummary) => settings.sessionTitles[thread.id] ?? thread.title,
     [settings.sessionTitles],
   );
 
@@ -88,13 +118,106 @@ export function PageWorkspace({
    * without resubscribing on every render. These are the app's own chords —
    * they carry a modifier, so typing in the composer never meets them.
    */
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [palette, setPalette] = useState<{ archived?: boolean } | null>(null);
   const shortcuts = useRef({ palette: () => {}, newSession: () => {}, settings: () => {} });
   shortcuts.current = {
-    palette: () => setPaletteOpen((open) => !open),
+    palette: () => setPalette((open) => (open ? null : {})),
     newSession: () => void sessions.create(),
     settings: onOpenSettings,
   };
+
+  /** The active thread, reported up for the tree's active mark. */
+  useEffect(() => {
+    onActiveThreadChange(sessions.activeId);
+  }, [sessions.activeId, onActiveThreadChange]);
+
+  /**
+   * A jump across projects (PLAN D59 rule 1): the click landed while another
+   * project was active. The switch runs first; when the registry moves, the
+   * stashed ask — open a thread, start one, open the archive — lands in its
+   * own project. One click for the planner, two hops here.
+   */
+  const jump = useRef<{ slug: string; threadId?: string; fresh?: boolean; archive?: boolean } | null>(null);
+  useEffect(() => {
+    const pending = jump.current;
+    if (!pending || daemon.activeSlug !== pending.slug) return;
+    jump.current = null;
+    if (pending.threadId) void openThreadById(pending.threadId);
+    else if (pending.fresh) void sessions.create();
+    else if (pending.archive) setPalette({ archived: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daemon.activeSlug]);
+
+  /**
+   * Open one of THIS project's conversations by id. The list is the fast
+   * path (the old open, hydrate included); a live thread the list has not
+   * caught up with is focused; anything else — a row the switch just cleared
+   * the list of — resumes straight into a live session
+   * (`session.create { resume }`).
+   */
+  const openThreadById = async (threadId: string) => {
+    const listed = sessions.list.find((session) => session.sessionId === threadId);
+    if (listed) {
+      await sessions.open(listed);
+      return;
+    }
+    const view = daemon.sessions[threadId];
+    if (view?.live) {
+      await sessions.open({
+        sessionId: threadId,
+        title: threadId,
+        lastModified: Date.now(),
+        live: true,
+        state: view.state,
+      });
+      return;
+    }
+    await sessions.resume(threadId);
+  };
+
+  const jumpTo = (pending: { slug: string; threadId?: string; fresh?: boolean; archive?: boolean }) => {
+    if (jump.current) return;
+    jump.current = pending;
+    void daemon.api.projectActivate(pending.slug).catch(() => {
+      jump.current = null;
+    });
+  };
+
+  // Rebuilt without a dep array on purpose: every render hands the tree the
+  // newest closures, so a click never runs against a stale session list.
+  useImperativeHandle(ref, () => ({
+    openThread: (slug, thread) => {
+      if (slug === daemon.activeSlug) void openThreadById(thread.id);
+      else jumpTo({ slug, threadId: thread.id });
+    },
+    newThread: (slug) => {
+      if (slug === daemon.activeSlug) void sessions.create();
+      else jumpTo({ slug, fresh: true });
+    },
+    openArchive: (slug) => {
+      if (slug === daemon.activeSlug) setPalette({ archived: true });
+      else jumpTo({ slug, archive: true });
+    },
+    archiveThread: (slug, thread) => {
+      if (slug === daemon.activeSlug) {
+        const listed = sessions.list.find((session) => session.sessionId === thread.id);
+        void sessions.remove(
+          listed ?? {
+            sessionId: thread.id,
+            title: thread.title,
+            lastModified: Date.parse(thread.updatedAt) || 0,
+            live: false,
+            state: "closed",
+          },
+        );
+        return;
+      }
+      // An inactive project's archive is a settings-store hide; no live
+      // thread of it can be open here.
+      saveArchivedSessionIds(slug, [...loadArchivedSessionIds(slug), thread.id]);
+    },
+  }));
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
@@ -210,20 +333,15 @@ export function PageWorkspace({
       style={{ gridTemplateColumns: `minmax(0, 1fr) ${previewWidth}px` }}
     >
       <div className="planner__chatcol">
-        <SessionTabs
-          sessions={sessions}
-          titleFor={titleFor}
-          onRename={onRenameSession}
-          onSelect={(session) => void sessions.open(session)}
-          onCreate={() => void sessions.create()}
-          onClose={(session) => void sessions.remove(session)}
-        />
         <ChatColumn
           daemon={daemon}
           sessions={sessions}
           sendKey={settings.sendKey}
           placeholder="만들고 싶은 화면을 말해 주세요"
           disabled={false}
+          titleFor={titleFor}
+          onRenameSession={onRenameSession}
+          onArchiveSession={(session) => void sessions.remove(session)}
         />
       </div>
       <Splitter
@@ -246,21 +364,29 @@ export function PageWorkspace({
         turnState={sessions.active?.state ?? "idle"}
         sessionId={sessions.activeId}
         onPrecheck={(turn) => void sessions.sendTurn(turn)}
+        onNewSession={() => void sessions.create()}
+        showPip={settings.chat.showPip}
       />
 
-      {paletteOpen && (
+      {palette && (
         <Palette
-          sessions={sessions.list}
-          titleFor={titleFor}
+          titleForThread={titleForThread}
           activeSessionId={sessions.activeId}
           projects={daemon.projects}
           activeSlug={daemon.activeSlug}
-          onOpenSession={(session) => void sessions.open(session)}
+          openArchived={palette.archived ?? false}
+          onOpenThread={(slug, thread) => {
+            if (slug === daemon.activeSlug) void openThreadById(thread.id);
+            else jumpTo({ slug, threadId: thread.id });
+          }}
           onCreateSession={() => void sessions.create()}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
           onAddProject={onAddProject}
           onOpenSettings={onOpenSettings}
-          onClose={() => setPaletteOpen(false)}
+          archivedSessions={sessions.archived}
+          onRestoreSession={(session) => sessions.restore(session)}
+          onDeleteSession={(session) => void sessions.purge(session)}
+          onClose={() => setPalette(null)}
         />
       )}
     </div>

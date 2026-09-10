@@ -7,14 +7,18 @@
  * a publish with a failing `check` reports failed{gate:"check"} without moving
  * the remote, and hands the failure to the live session as a user turn; after
  * the fix the commit lands locally and on the remote; a publish with nothing
- * to commit is rejected. The session is real (it is the same wire a typed
- * message uses) but is closed the moment its failure turn is observed, so no
- * model turn is spent.
+ * to commit is rejected. From PLAN D51–D53 on: `repo.history` reads the two
+ * saves, `repo.restore` lands a 되돌리기 commit instead of rewriting, a dirty
+ * worktree refuses it, `repo.discard` throws away exactly the unsaved work,
+ * and two turn starts leave two checkpoint refs — the first of which puts the
+ * worktree back — until the merge clears them all. The session is real (it is
+ * the same wire a typed message uses) but is closed the moment its failure
+ * turn is observed, so no model turn is spent.
  *
  * Usage: node packages/daemon/test/publish-e2e.mjs
  */
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -62,7 +66,7 @@ function check(name, passed, detail = "") {
 async function waitFor(predicate, timeoutMs, label) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const hit = predicate();
+    const hit = await predicate();
     if (hit) return hit;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -266,7 +270,7 @@ async function main() {
       `${localHead.trim().slice(0, 10)}`,
     );
 
-    // The whole point of PLAN D5: a developer receives this as a branch to
+    // The whole point of PLAN D5[넘기기]: a developer receives this as a branch to
     // review, and the base they work on is untouched until they merge it.
     const branches = await remoteBranches(fixture.remote);
     const cycleBranch = branches.find((name) => name.startsWith("cds-design/"));
@@ -333,6 +337,142 @@ async function main() {
       rejected.detail ?? "",
     );
 
+    // --- 6.5 저장 기록 · 되돌리기 · 변경 버리기 (PLAN D53) -----------------
+    const history = await request({ id: "u1", type: "repo.history" });
+    check(
+      "two saves read as two entries over origin/main",
+      history.base === "origin/main" &&
+        history.entries.length === 2 &&
+        history.entries[0].message === "문구 수정" &&
+        history.entries[1].message === "회원 관리 화면 추가",
+      JSON.stringify(history.entries.map((entry) => entry.message)),
+    );
+    check(
+      "each entry names the files it carried",
+      history.entries[0].files.join(",") === "index.html" &&
+        history.entries[1].files.includes("index.html") &&
+        history.entries[1].files.includes("src/screens/member/MemberList.screen.tsx"),
+      JSON.stringify(history.entries.map((entry) => entry.files)),
+    );
+
+    const firstSha = history.entries[1].sha;
+    const undone = await request({ id: "u2", type: "repo.restore", sha: firstSha });
+    check(
+      "되돌리기 lands as a new published commit",
+      undone.stage === "published" && /^[0-9a-f]{40}$/.test(undone.commit ?? ""),
+      `${undone.stage} · ${undone.commit ?? undone.detail ?? ""}`,
+    );
+    const cycleCommits = await run("git", ["-C", ROOT, "rev-list", "--count", "origin/main..HEAD"]);
+    check(
+      "the cycle carries three commits now — nothing was rewritten",
+      cycleCommits.stdout.trim() === "3",
+      cycleCommits.stdout.trim(),
+    );
+    const revertSubject = await run("git", ["-C", ROOT, "log", "-1", "--pretty=%s"]);
+    check(
+      "the new commit announces itself as 되돌리기",
+      revertSubject.stdout.trim() === "되돌리기: 회원 관리 화면 추가",
+      revertSubject.stdout.trim(),
+    );
+    const restoredHtml = await run("git", ["-C", ROOT, "show", "HEAD:index.html"]);
+    check(
+      "the worktree reads the first save again",
+      restoredHtml.stdout.includes("회원 관리 목록 추가") && !restoredHtml.stdout.includes("두 번째 저장"),
+      restoredHtml.stdout.trim().split("\n").pop() ?? "",
+    );
+
+    writeFileSync(join(ROOT, "index.html"), "<p>아직 저장하지 않은 문장</p>\n");
+    const refused = await request({ id: "u3", type: "repo.restore", sha: firstSha });
+    check(
+      "a dirty worktree refuses 되돌리기 and names the way out",
+      refused.stage === "failed" && (refused.detail ?? "").includes("먼저 저장하거나 되돌려 주세요"),
+      refused.detail ?? "",
+    );
+
+    mkdirSync(join(ROOT, "src", "screens", "member"), { recursive: true });
+    writeFileSync(
+      join(ROOT, "src", "screens", "member", "Throwaway.screen.tsx"),
+      "export default function Throwaway() { return null; }\n",
+    );
+    const discarded = await request({ id: "u4", type: "repo.discard" });
+    check(
+      "변경 버리기 throws away exactly the unsaved work",
+      discarded.removed.length === 2 &&
+        discarded.removed.includes("index.html") &&
+        discarded.removed.includes("src/screens/member/Throwaway.screen.tsx"),
+      JSON.stringify(discarded.removed),
+    );
+    check(
+      "the thrown-away screen is gone",
+      !existsSync(join(ROOT, "src", "screens", "member", "Throwaway.screen.tsx")),
+    );
+    const headHtml = await run("git", ["-C", ROOT, "show", "HEAD:index.html"]);
+    check(
+      "index.html is back to what HEAD saved",
+      readFileSync(join(ROOT, "index.html"), "utf8") === headHtml.stdout,
+    );
+    const cleanAfterDiscard = await run("git", ["-C", ROOT, "status", "--porcelain"]);
+    check("and the worktree is clean", cleanAfterDiscard.stdout.trim() === "", cleanAfterDiscard.stdout);
+
+    // --- 6.6 체크포인트: every turn start is a snapshot (PLAN D52) ---------
+    const cpSession = await request({ id: "u5", type: "session.create" });
+    await request({
+      id: "u6",
+      type: "session.send",
+      sessionId: cpSession.sessionId,
+      text: "파일을 만지지 말고 한 문장으로만 답해 주세요.",
+    });
+    let pollId = 0;
+    const myCheckpoints = async () => {
+      pollId += 1;
+      const listed = await request({ id: `u6-${pollId}`, type: "repo.checkpoints" });
+      return listed.entries.filter((entry) => entry.sessionId === cpSession.sessionId);
+    };
+    await waitFor(async () => (await myCheckpoints()).length >= 1, 30_000, "the first turn's checkpoint");
+
+    // The turn's own unsaved half: a screen born after the snapshot, and a
+    // file that existed before it, deleted. Restoring must do both halves.
+    writeFileSync(
+      join(ROOT, "src", "screens", "member", "UndoMe.screen.tsx"),
+      "export default function UndoMe() { return null; }\n",
+    );
+    rmSync(join(ROOT, "scripts", "check.mjs"));
+    await request({
+      id: "u7",
+      type: "session.send",
+      sessionId: cpSession.sessionId,
+      text: "여전히 파일을 만지지 말고 짧게만 답해 주세요.",
+    });
+    await waitFor(async () => (await myCheckpoints()).length >= 2, 60_000, "the second turn's checkpoint");
+    await request({ id: "u8", type: "session.close", sessionId: cpSession.sessionId });
+
+    const mine = await myCheckpoints();
+    check(
+      "two turns read as two snapshots, turns numbered from one",
+      mine.length === 2 && mine.map((entry) => entry.turn).sort().join(",") === "1,2" && mine[0].at !== "",
+      JSON.stringify(mine),
+    );
+    const firstCheckpoint = mine.find((entry) => entry.turn === 1);
+    const rewound = await request({
+      id: "u9",
+      type: "repo.checkpoint.restore",
+      id: firstCheckpoint.id,
+    });
+    check(
+      "the screen born after the snapshot is gone",
+      !existsSync(join(ROOT, "src", "screens", "member", "UndoMe.screen.tsx")),
+    );
+    check(
+      "the file deleted after the snapshot is back",
+      existsSync(join(ROOT, "scripts", "check.mjs")),
+    );
+    const rewoundStatus = await run("git", ["-C", ROOT, "status", "--porcelain"]);
+    check(
+      "and the worktree stands at the turn's first instant",
+      rewoundStatus.stdout.trim() === "",
+      rewoundStatus.stdout,
+    );
+
     // --- 7. `build` gates 넘기기, never 저장 -------------------------------
     // A save that paid for a full build every time would teach the planner to
     // save rarely; being wrong at 넘기기 costs a developer's attention, so the
@@ -382,6 +522,10 @@ async function main() {
       JSON.parse(readFileSync(join(DIR, "projects.json"), "utf8")).projects[0].repo.handoff
         ?.number === 12,
     );
+    check(
+      "a handoff without a driver commits no captures (PLAN D56)",
+      !existsSync(join(ROOT, ".cds-design", "shots")),
+    );
 
     // --- 9. 반영됨: the merge ends the cycle -------------------------------
     const stillOpen = await request({ id: "12", type: "repo.handoffStatus" });
@@ -397,6 +541,76 @@ async function main() {
     );
     const { stdout: head } = await run("git", ["-C", ROOT, "rev-parse", "--abbrev-ref", "HEAD"]);
     check("and the clone is back on the developer's base branch", head.trim() === "main", head.trim());
+    const leftoverRefs = await run("git", ["-C", ROOT, "for-each-ref", "refs/cds-design/checkpoints"]);
+    check(
+      "반영됨 clears the cycle's checkpoint refs (PLAN D52)",
+      leftoverRefs.stdout.trim() === "",
+      leftoverRefs.stdout.trim(),
+    );
+
+    // --- 9.5 코멘트 저장소 · 빠른 동작 (PLAN D55 · D57) ----------------------
+    // The repo's own quick actions ride hello·status; the tool's built-in
+    // five are the web's, so the daemon sends exactly what cds-design.json
+    // declared — nothing when it declared nothing.
+    const chipsManifest = join(ROOT, "cds-design.json");
+    const withChips = JSON.parse(readFileSync(chipsManifest, "utf8"));
+    withChips.quickActions = ["온보딩 상태 추가", "결제 완료 화면"];
+    writeFileSync(chipsManifest, `${JSON.stringify(withChips, null, 2)}\n`);
+
+    const second = new WebSocket(`ws://127.0.0.1:${daemonPort}?token=publish-e2e`);
+    const secondInbox = [];
+    second.on("message", (raw) => secondInbox.push(JSON.parse(String(raw))));
+    await new Promise((resolve, reject) => {
+      second.once("open", resolve);
+      second.once("error", reject);
+    });
+    const hello = await waitFor(() => secondInbox.find((m) => m.type === "hello"), 10_000, "hello");
+    check("hello speaks protocol v10", hello.protocolVersion === 10, `${hello.protocolVersion}`);
+    check(
+      "hello.status.quickActions carries the repo's own rows",
+      JSON.stringify(hello.status.quickActions) === JSON.stringify(["온보딩 상태 추가", "결제 완료 화면"]),
+      JSON.stringify(hello.status.quickActions),
+    );
+    second.close();
+
+    const statusChips = await request({ id: "q1", type: "daemon.status" });
+    check(
+      "daemon.status carries the same quick actions",
+      JSON.stringify(statusChips.quickActions) === JSON.stringify(["온보딩 상태 추가", "결제 완료 화면"]),
+      JSON.stringify(statusChips.quickActions),
+    );
+
+    // The overlay's pins land in the project's comments.json — the planner
+    // is looking at the ACTIVE project, so no slug rides the message.
+    await request({
+      id: "c1",
+      type: "comments.record",
+      screen: "/member/MemberList",
+      state: "default",
+      items: [{ text: "여백이 좁아요", elementText: "회원 목록" }],
+    });
+    await request({
+      id: "c2",
+      type: "comments.record",
+      screen: "/pay/PayFailed",
+      state: "error",
+      items: [{ text: "문구를 다시", elementText: "결제 실패" }],
+    });
+    const listed = await request({ id: "c3", type: "comments.list" });
+    check(
+      "two recorded screens read as two stored comments",
+      listed.items.length === 2 && listed.items.every((item) => item.id !== "" && item.at !== ""),
+      JSON.stringify(listed.items),
+    );
+    const pinned = listed.items.find((item) => item.screen === "/member/MemberList");
+    await request({ id: "c4", type: "comments.resolve", id: pinned.id, resolved: true });
+    const relisted = await request({ id: "c5", type: "comments.list" });
+    check(
+      "the resolved mark moved without removing the row",
+      relisted.items.find((item) => item.id === pinned.id)?.resolved === true &&
+        relisted.items.find((item) => item.screen === "/pay/PayFailed")?.resolved === false,
+      JSON.stringify(relisted.items),
+    );
 
     writeFileSync(join(ROOT, "index.html"), "<p>다음 주기</p>\n");
     const nextCycle = await request({ id: "15", type: "repo.save", message: "다음 주기" });

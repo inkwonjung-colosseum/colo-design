@@ -1,9 +1,13 @@
 import { useState } from "react";
-import type { AskQuestion, TurnMarker } from "@cds-design/protocol";
+import type { AskQuestion, RepoStatus, TurnMarker } from "@cds-design/protocol";
 import { readTurn } from "@cds-design/protocol";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
 import { Markdown } from "./Markdown";
 import { CheckIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon, ChevronRightIcon } from "./icons";
+import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
+
+/** The repo's own cds-design.json commands, as RepoStatus carries them. */
+type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
 // ---------------------------------------------------------------------------
 // Transcript blocks
@@ -24,6 +28,63 @@ function toolHeadline(name: string, input: unknown): string {
     if (typeof value === "string" && value.trim()) return value;
   }
   return "";
+}
+
+/**
+ * The cds-preview 도구 이름은 `mcp__cds-preview__screen_*` 로 온다(PLAN
+ * D61): the server prefix is plumbing, so the recognisers key on the tool's
+ * own name.
+ */
+const SCREEN_SHOT_TOOL = /screen_screenshot$/;
+const SCREEN_LOOK_TOOL = /screen_(?:read|click|open)$/;
+
+/**
+ * The image a finished screen_screenshot carries, read defensively out of
+ * the tool result: an MCP image content item (`{ type: "image", data,
+ * mimeType }`) inside an array, or alone. Anything else — a running call, a
+ * failure, a plain string — is not a capture.
+ */
+function screenshotImage(result: unknown): { data: string; mimeType: string } | null {
+  const items = Array.isArray(result) ? result : [result];
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.type === "image" && typeof record.data === "string" && record.data) {
+      return {
+        data: record.data,
+        mimeType:
+          typeof record.mimeType === "string" && record.mimeType ? record.mimeType : "image/jpeg",
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * 캡처 카드(PLAN D56): a screen turn leaves its evidence behind. What Claude
+ * saw through the D61 driver renders as the picture it is, under one tag —
+ * not as a folded tool row a planner would have to open.
+ */
+function CaptureCard({ block }: { block: Extract<Block, { type: "tool" }> }) {
+  const image = block.done && !block.isError ? screenshotImage(block.result) : null;
+  if (!image) return <ToolBlock block={block} />;
+  return (
+    <div className="card">
+      <div className="card__title">
+        <span className="card__badge">
+          <SparkIcon />
+        </span>
+        <span>
+          <strong>Claude가 본 화면</strong>
+        </span>
+      </div>
+      <img
+        className="card__shot"
+        src={`data:${image.mimeType};base64,${image.data}`}
+        alt="Claude가 본 화면"
+      />
+    </div>
+  );
 }
 
 type ToolStatus = "running" | "done" | "error";
@@ -48,7 +109,7 @@ function ToolBlock({ block }: { block: Extract<Block, { type: "tool" }> }) {
             <CheckIcon size={11} />
           )}
         </span>
-        <span className="tool__name">{block.name}</span>
+        <span className="tool__name">{toolLabel(block.name)}</span>
         {headline && <span className="tool__headline">{headline}</span>}
         {block.agentId && <span className="tag">하위 작업</span>}
         <span className={`tool__status tool__status--${status}`}>
@@ -91,13 +152,19 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
   let file = 0;
   let command = 0;
   let read = 0;
+  let screen = 0;
   let other = 0;
   for (const tool of tools) {
-    const bucket = ACTIVITY_BUCKET[tool.name];
-    if (bucket === "file") file += 1;
-    else if (bucket === "command") command += 1;
-    else if (bucket === "read") read += 1;
-    else other += 1;
+    // 화면 세션의 읽기·이동·클릭(PLAN D63): the driver's look-arounds fold
+    // into one phrase instead of reading as file work.
+    if (SCREEN_LOOK_TOOL.test(tool.name)) screen += 1;
+    else {
+      const bucket = ACTIVITY_BUCKET[tool.name];
+      if (bucket === "file") file += 1;
+      else if (bucket === "command") command += 1;
+      else if (bucket === "read") read += 1;
+      else other += 1;
+    }
   }
   // A planner is watching someone work on their screen, not a process table.
   // "파일 3개 생성" is true of a Write call and says nothing about what was
@@ -106,6 +173,7 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
   if (file) parts.push(`화면 파일 ${file}개 작업`);
   if (command) parts.push(`검사 ${command}회 실행`);
   if (read) parts.push(`${read}곳 확인`);
+  if (screen) parts.push(`화면 ${screen}곳 확인`);
   if (other) parts.push(`그 밖에 ${other}가지`);
   return parts.join(" · ");
 }
@@ -160,17 +228,26 @@ function ActivitySummary({ steps }: { steps: ActivityStep[] }) {
 
 type ActivityStep = Extract<Block, { type: "tool" }> | Extract<Block, { type: "thinking" }>;
 
+type TodoToolBlock = Extract<Block, { type: "tool" }>;
+
 type Row =
   | { kind: "block"; block: Block }
-  | { kind: "activity"; id: string; steps: ActivityStep[] };
+  | { kind: "activity"; id: string; steps: ActivityStep[] }
+  | { kind: "todo"; id: string; block: TodoToolBlock };
 
 /**
  * A run ends where the planner's attention ends: a user bubble, assistant
  * text, a turn end, or a notice. Thinking alone never starts a run of one.
+ *
+ * A TodoWrite is pulled OUT of the run and becomes its own card row (PLAN
+ * D48), and within one run the next write refreshes that card instead of
+ * stacking another — the plan is one thing that changes, not a log of plans.
  */
 function groupActivity(blocks: Block[]): Row[] {
   const rows: Row[] = [];
   let run: ActivityStep[] | null = null;
+  /** The card the current run opened; null again at every run boundary. */
+  let todo: Extract<Row, { kind: "todo" }> | null = null;
   const flush = () => {
     if (!run) return;
     if (run.every((step) => step.type === "thinking")) {
@@ -180,17 +257,123 @@ function groupActivity(blocks: Block[]): Row[] {
     }
     run = null;
   };
+  const endRun = () => {
+    flush();
+    todo = null;
+  };
   for (const block of blocks) {
+    if (block.type === "tool" && block.name === "TodoWrite") {
+      flush();
+      if (todo) {
+        todo.block = block;
+      } else {
+        todo = { kind: "todo", id: `todo-${block.id}`, block };
+        rows.push(todo);
+      }
+      continue;
+    }
+    // 캡처는 활동 줄에 접지 않는다(PLAN D56): each screenshot is its own
+    // card row, the way the todo card is — a picture folded into "그 밖에
+    // 1가지" would be invisible where it matters.
+    if (block.type === "tool" && SCREEN_SHOT_TOOL.test(block.name)) {
+      flush();
+      rows.push({ kind: "block", block });
+      continue;
+    }
     if (block.type === "tool" || block.type === "thinking") {
       run = run ?? [];
       run.push(block);
       continue;
     }
-    flush();
+    endRun();
     rows.push({ kind: "block", block });
   }
-  flush();
+  endRun();
   return rows;
+}
+
+interface TodoItem {
+  text: string;
+  status: "completed" | "in_progress" | "pending";
+}
+
+/**
+ * Claude's plan, read defensively out of a TodoWrite input: `content` is the
+ * CLI's current shape, `activeForm` and `subject` are shapes other senders
+ * used. Something that is not a todo list at all gets no card.
+ */
+function todoItems(block: TodoToolBlock): TodoItem[] | null {
+  const input = block.input as { todos?: unknown } | null;
+  if (!input || !Array.isArray(input.todos)) return null;
+  return input.todos.map((entry): TodoItem => {
+    const item = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
+    const text = [item.content, item.activeForm, item.subject].find(
+      (value): value is string => typeof value === "string" && value.trim() !== "",
+    );
+    const status =
+      item.status === "completed" || item.status === "in_progress" ? item.status : "pending";
+    return { text: text ?? "", status };
+  });
+}
+
+function TodoList({ todos }: { todos: TodoItem[] }) {
+  return (
+    <ul className="todo__list">
+      {todos.map((todo, index) => (
+        <li
+          key={index}
+          className={todo.status === "in_progress" ? "todo__item todo__item--current" : "todo__item"}
+        >
+          <span className="todo__sign" aria-hidden>
+            {todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "●" : "○"}
+          </span>
+          <span className="todo__text">{todo.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Claude's own plan as a card (PLAN D48): `진행 N/M`, items ✓ · ● · ○ with
+ * the current one bold. Once the turn has ended it folds to a single line —
+ * the plan was followed; the reading is over. A write we cannot parse falls
+ * back to the plain tool row, which is the honest rendering of noise.
+ */
+function TodoCard({ block, ended }: { block: TodoToolBlock; ended: boolean }) {
+  const [open, setOpen] = useState(false);
+  const todos = todoItems(block);
+  if (!todos || todos.length === 0) return <ToolBlock block={block} />;
+
+  if (ended) {
+    return (
+      <div className="machine todo todo--done">
+        <button
+          type="button"
+          className="todo__done"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          할 일 {todos.length}개 끝
+        </button>
+        {open && <TodoList todos={todos} />}
+      </div>
+    );
+  }
+
+  const done = todos.filter((todo) => todo.status === "completed").length;
+  const current = todos.find((todo) => todo.status === "in_progress") ?? null;
+  return (
+    <div className="machine todo">
+      <div className="machine__head">
+        <span className="machine__title">
+          진행 {done + (current ? 1 : 0)}/{todos.length}
+        </span>
+        {current && <span className="machine__lead">{current.text}</span>}
+      </div>
+      <TodoList todos={todos} />
+    </div>
+  );
 }
 
 /**
@@ -239,6 +422,10 @@ function MachineTurn({ marker, body }: { marker: TurnMarker; body: string }) {
     case "gate":
       title = `${marker.step}에서 멈췄습니다`;
       lead = "무엇이 잘못됐는지 Claude에게 넘겼습니다. 고치는 동안 기다려 주세요.";
+      break;
+    case "error":
+      title = "화면 오류 고치기";
+      lead = [marker.route, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
       break;
   }
 
@@ -304,13 +491,96 @@ function AssistantBubble({ block }: { block: Extract<Block, { type: "text" }> })
   );
 }
 
-export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: boolean }) {
+const TURN_SUBTYPE_WORDS: Record<string, string> = {
+  error_max_turns: "정한 대화 길이를 채웠습니다 — 새 대화에서 이어 가면 됩니다",
+  error_during_execution: "잠시 문제가 있었습니다 — 다시 보내 주세요",
+  interrupted: "멈추었습니다 — 이어서 말하면 됩니다",
+};
+
+/**
+ * The card a failed turn renders as (PLAN D35). A planner whose last words
+ * got no answer must see WHY the silence, and have the cheapest recovery —
+ * sending the very same words again — one click away.
+ */
+function FailedTurn({
+  subtype,
+  retryText,
+  onRetry,
+}: {
+  subtype: string;
+  retryText: string | null;
+  onRetry?: (text: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const reason = TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요";
+  return (
+    <div className="machine turnfail">
+      <div className="machine__head">
+        <span className="machine__title">답을 마치지 못했습니다</span>
+        <span className="machine__lead">{reason}</span>
+      </div>
+      <div className="turnfail__actions">
+        {onRetry && retryText && (
+          <button type="button" className="primary" onClick={() => onRetry(retryText)}>
+            다시 보내기
+          </button>
+        )}
+        <button
+          type="button"
+          className="machine__more"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "접기" : "자세히"}
+        </button>
+      </div>
+      {open && <pre className="machine__body">{subtype || "turn"}</pre>}
+    </div>
+  );
+}
+
+/** The planner's last own words — what `다시 보내기` resends (PLAN D35). */
+function lastUserText(blocks: Block[]): string | null {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block?.type === "user") {
+      const { marker } = readTurn(block.text);
+      if (!marker) return block.text;
+    }
+  }
+  return null;
+}
+
+export function Transcript({
+  blocks,
+  live = true,
+  commands,
+  onRetry,
+}: {
+  blocks: Block[];
+  live?: boolean;
+  /** The repo's cds-design.json commands, for naming Bash calls (PLAN D37). */
+  commands?: RepoCommands;
+  /** Offered on a failed turn's card: send the same words again (PLAN D35). */
+  onRetry?: (text: string) => void;
+}) {
   if (blocks.length === 0) {
     return <p className="empty">메시지를 보내면 대화가 여기에 이어집니다.</p>;
   }
   // A reloaded history replays its events without a guarantee that the last
   // turn's end marker is in the tape, so a finished session's trailing fold
   // would keep claiming to think. Not live → nothing is thinking.
+  // A todo card folds the same way (PLAN D48): a turn-end block is what ends
+  // its turn, so every write seen before one is over; not live folds all.
+  const endedTodos = new Set<string>();
+  let todosSoFar: string[] = [];
+  for (const block of blocks) {
+    if (block.type === "tool" && block.name === "TodoWrite") todosSoFar.push(block.id);
+    else if (block.type === "turn") {
+      for (const id of todosSoFar) endedTodos.add(id);
+      todosSoFar = [];
+    }
+  }
   const rows = groupActivity(
     live
       ? blocks
@@ -322,6 +592,15 @@ export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: bo
     <div className="transcript">
       {rows.map((row) => {
         if (row.kind === "activity") return <ActivitySummary key={row.id} steps={row.steps} />;
+        if (row.kind === "todo") {
+          return (
+            <TodoCard
+              key={row.id}
+              block={row.block}
+              ended={!live || endedTodos.has(row.block.id)}
+            />
+          );
+        }
         const block = row.block;
         switch (block.type) {
           case "user": {
@@ -347,10 +626,23 @@ export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: bo
           case "thinking":
             return <ThinkingBlock key={block.id} block={block} />;
           case "tool":
-            return <ToolBlock key={block.id} block={block} />;
-          // Cost and duration are a developer's accounting, not a planner's.
+            return SCREEN_SHOT_TOOL.test(block.name) ? (
+              <CaptureCard key={block.id} block={block} />
+            ) : (
+              <ToolBlock key={block.id} block={block} />
+            );
+          // A failed turn is the one turn end a planner must SEE (PLAN D35):
+          // their words would otherwise just hang there, unanswered. Cost and
+          // duration stay invisible — that accounting is not theirs.
           case "turn":
-            return null;
+            return block.isError || (block.subtype !== "" && block.subtype !== "success") ? (
+              <FailedTurn
+                key={block.id}
+                subtype={block.subtype}
+                retryText={lastUserText(blocks)}
+                onRetry={onRetry}
+              />
+            ) : null;
           case "notice":
             return (
               <div key={block.id} className={`notice notice--${block.level}`}>
@@ -370,13 +662,18 @@ export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: bo
 export function PermissionCard({
   request,
   onRespond,
+  commands,
 }: {
   request: PendingPermission;
   onRespond: (decision: "allow" | "allowAlways" | "deny", message?: string) => void;
+  /** The repo's cds-design.json commands, for naming Bash calls (PLAN D37). */
+  commands?: RepoCommands;
 }) {
   const [reason, setReason] = useState("");
   const [showReason, setShowReason] = useState(false);
-  const headline = toolHeadline(request.toolName, request.input);
+  const raw = toolHeadline(request.toolName, request.input);
+  const headline = request.toolName === "Bash" ? bashHeadline(raw, commands) : raw;
+  const action = toolLabel(request.toolName);
   const suggestion = request.suggestions[0];
 
   return (
@@ -386,7 +683,8 @@ export function PermissionCard({
           <ShieldIcon />
         </span>
         <span>
-          <strong>{request.toolName}</strong> 실행을 허용할까요?
+          <strong>{action}</strong>
+          {objectParticle(action)} 허용할까요?
         </span>
       </div>
       {headline && <pre className="card__headline">{headline}</pre>}

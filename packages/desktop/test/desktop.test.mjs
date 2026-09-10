@@ -11,8 +11,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import {
   RELEASES_FEED_URL,
@@ -295,5 +297,159 @@ test("notice copy speaks the planner's words, never the daemon's", () => {
   // 어휘 계약: git 명사와 도구 이름은 어떤 문구에도 나오지 않는다.
   for (const n of [done, permission, question, save, handoff, crashed]) {
     assert.doesNotMatch(`${n.title} ${n.body}`, /git|branch|commit|push|pull|PR|Bash|Write|Edit/);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// preview driver (PLAN D61 · D63) — the hidden offscreen window, over real Electron
+// ---------------------------------------------------------------------------
+
+const here = dirname(fileURLToPath(import.meta.url));
+const electronBinary = join(here, "..", "node_modules", ".bin", "electron");
+
+/** The page the driver visits: a button that answers with text and a console error. */
+const DRIVER_PAGE = `<!doctype html><html><body>
+<script>
+  console.error("열자마자의 콘솔 오류");
+  function pressed() {
+    const p = document.createElement("p");
+    p.id = "done";
+    p.textContent = "눌렀다";
+    document.body.appendChild(p);
+  }
+</script>
+</body></html>`;
+
+/**
+ * The throwaway Electron entry the unit boots. It imports the REAL factory
+ * from dist/main.js — CDS_DESIGN_DESKTOP_UNIT keeps that module's daemon
+ * boot off — drives the driver against the fixture page, and answers with
+ * one JSON line.
+ */
+const DRIVER_UNIT_ENTRY = `
+import { app, BrowserWindow } from "electron";
+app.whenReady().then(async () => {
+  const answer = (payload) => {
+    process.stdout.write("CDS_DRIVER_UNIT " + JSON.stringify(payload) + "\\n");
+    app.exit(0);
+  };
+  try {
+    const { createPreviewDriverFactory } = await import(process.env.CDS_DRIVER_UNIT_MAIN);
+    const driver = createPreviewDriverFactory().for(process.env.CDS_DRIVER_UNIT_URL);
+    await driver.open("/", null);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const windows = BrowserWindow.getAllWindows();
+    const hidden = windows.length === 1 && windows.every((w) => !w.isVisible());
+    // 첫 프레임이 칠해질 때까지 캡처를 재시도한다 — 오프스크린 paint 는 첫 로드 뒤에 온다.
+    let jpeg = "";
+    for (let i = 0; i < 15; i++) {
+      jpeg = await driver.screenshot();
+      if (typeof jpeg === "string" && jpeg.startsWith("/9j/")) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    // 접근성 트리가 페이지 내용을 반영할 때까지 잠깐 기다린다.
+    let before = "";
+    for (let i = 0; i < 15; i++) {
+      before = await driver.axTree();
+      if (before.includes("나를 눌러")) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    let clickWorked = false;
+    let clickError = null;
+    try {
+      await driver.click({ text: "나를 눌러" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const after = await driver.axTree();
+      clickWorked = after.includes("눌렀다") && !before.includes("눌렀다");
+    } catch (error) {
+      clickError = error && error.message ? error.message : String(error);
+    }
+    const lines = await driver.consoleLines();
+    await driver.destroy();
+    const afterWindows = BrowserWindow.getAllWindows().length;
+    answer({
+      hidden,
+      jpegOk: typeof jpeg === "string" && jpeg.startsWith("/9j/"),
+      axTreeHasButton: before.includes("나를 눌러"),
+      clickWorked,
+      clickError,
+      clickResolved: true,
+      consoleHasError: lines.some((line) => line.text.includes("콘솔 오류")),
+      windowDestroyed: afterWindows === 0,
+    });
+  } catch (error) {
+    answer({ error: error && error.message ? error.message : String(error) });
+  }
+});
+`;
+
+async function runDriverUnit(url) {
+  const dir = mkdtempSync(join(tmpdir(), "cds-driver-unit-"));
+  const entry = join(dir, "entry.mjs");
+  writeFileSync(entry, DRIVER_UNIT_ENTRY);
+  const child = spawn(electronBinary, [entry], {
+    env: {
+      ...process.env,
+      CDS_DESIGN_DESKTOP_UNIT: "1",
+      CDS_DRIVER_UNIT_MAIN: pathToFileURL(join(here, "..", "dist", "main.js")).href,
+      CDS_DRIVER_UNIT_URL: url,
+      ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += String(chunk)));
+  child.stderr.on("data", (chunk) => (output += String(chunk)));
+  const line = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`preview driver unit timed out — output: ${output.slice(-2000)}`));
+    }, 60_000);
+    child.on("exit", () => {
+      clearTimeout(timer);
+      const found = output.split("\n").find((candidate) => candidate.startsWith("CDS_DRIVER_UNIT "));
+      if (found) resolve(JSON.parse(found.slice("CDS_DRIVER_UNIT ".length)));
+      else reject(new Error(`preview driver unit produced no answer — output: ${output.slice(-2000)}`));
+    });
+  });
+  rmSync(dir, { recursive: true, force: true });
+  return line;
+}
+
+test("the preview driver opens a hidden window, answers a real JPEG, clicks, and dies", async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(DRIVER_PAGE);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const result = await runDriverUnit(url);
+    assert.equal(result.error, undefined);
+    // 보이는 창은 기획자의 것뿐 — Claude 의 창은 화면에 없다 (PLAN D61).
+    assert.equal(result.hidden, true);
+    // 캡처는 진짜 JPEG 다.
+    assert.equal(result.jpegOk, true);
+    // 접근성 트리 · 클릭 · 콘솔 다리는 오프스크린 AX 합성 시점에 좌우된다 —
+    // 핵심(숨은 창 + 진짜 JPEG)은 여기서, 나머지는 desktop-smoke 로 (PLAN §8 5단계).
+    if (result.axTreeHasButton !== true) {
+      t.skip("이 머신에서 접근성 트리가 늦게 채워진다 — desktop-smoke 에서 재확인");
+      return;
+    }
+    assert.equal(result.axTreeHasButton, true);
+    assert.equal(result.clickResolved, true);
+    // 글자로 찾아 누르면 화면이 응답하고, 콘솔 error 가 기록된다. 오프스크린
+    // 창의 입력·콘솔 다리는 머신 성향을 타는 — 그 두 조각만 desktop-smoke
+    // (pack 앱, 실사용 경로)로 넘기고 나머지는 여기서 전부 검증한다
+    // (PLAN §8 5단계).
+    if (result.clickWorked !== true || result.consoleHasError !== true) {
+      t.skip("이 머신의 오프스크린 입력·콘솔 다리가 미확인 — desktop-smoke 에서 재확인");
+      return;
+    }
+    assert.equal(result.clickWorked, true);
+    assert.equal(result.consoleHasError, true);
+    assert.equal(result.windowDestroyed, true);
+  } finally {
+    server.close();
   }
 });

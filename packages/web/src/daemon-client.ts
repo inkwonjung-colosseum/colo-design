@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errorWords } from "./error-words";
 import type {
   AskQuestion,
   ChatEvent,
@@ -193,7 +194,7 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           text:
             event.error === "rate_limit"
               ? `구독 사용량을 채웠습니다 — ${Math.round(event.delayMs / 1000)}초 후에 다시 시도해요 (${event.attempt}/${event.maxRetries}).`
-              : `${event.error} 오류로 잠시 멈췄습니다 — ${Math.round(event.delayMs / 1000)}초 후에 다시 시도해요.`,
+              : `${errorWords(event.error) ?? "잠시 문제가 생겼습니다"} — ${Math.round(event.delayMs / 1000)}초 후에 다시 시도해요.`,
         },
       ];
 
@@ -210,7 +211,7 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           type: "notice",
           id: `n${++noticeSeq}`,
           level: "info",
-          text: `Earlier context was compacted (${event.trigger}).`,
+          text: `길어진 대화를 정리하고 이어갑니다 (${event.trigger}).`,
         },
       ];
 
@@ -259,6 +260,51 @@ const EMPTY_SESSION: SessionView = {
 };
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
+/** PLAN D51 — the 저장 review opens with this. `claude` lines were written
+    by the daemon's one-turn no-tool summary of the diff; `fallback` lines
+    were counted out of the file list when that turn failed or was too slow. */
+export interface DiffSummary {
+  lines: string[];
+  source: "claude" | "fallback";
+}
+
+/** PLAN D53 — one saved commit of the current cycle (`git log <base>..HEAD`). */
+export interface SaveHistoryEntry {
+  sha: string;
+  message: string;
+  at: number;
+  files: string[];
+}
+
+export interface SaveHistory {
+  base: string;
+  entries: SaveHistoryEntry[];
+}
+
+/** PLAN D52 — one worktree snapshot taken when a screen turn started. */
+export interface CheckpointEntry {
+  id: string;
+  sessionId: string;
+  turn: number;
+  at: number;
+}
+
+export interface CheckpointList {
+  entries: CheckpointEntry[];
+}
+
+/** PLAN D57 — one recorded comment of the connected repo (`comments.json`). */
+export interface CommentItem {
+  id: string;
+  screen: string;
+  state: string;
+  text: string;
+  elementText: string;
+  /** ISO 8601, when the daemon recorded the batch. */
+  at: string;
+  resolved: boolean;
+}
+
 export interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
   listSessions: () => Promise<SessionSummary[]>;
@@ -266,13 +312,15 @@ export interface DaemonApi {
   /**
    * Omit `resume` for a fresh thread. `model` and `effort` carry the
    * composer's chips into the new session — the daemon otherwise starts every
-   * thread on the CLI's own defaults.
+   * thread on the CLI's own defaults. `previewTools` (PLAN D61) decides
+   * whether the thread gets the cds-preview 도구 at all; 생략은 켬이다.
    */
   createSession: (opts?: {
     resume?: string;
     model?: string;
     effort?: EffortLevel;
     title?: string;
+    previewTools?: boolean;
   }) => Promise<{ sessionId: string }>;
   send: (
     sessionId: string,
@@ -352,6 +400,42 @@ export interface DaemonApi {
    * polled — the state only moves when a developer acts on it.
    */
   handoffStatus: () => Promise<HandoffStatus>;
+  /**
+   * 저장 검토의 요약 (PLAN D51): one no-tool Claude turn over the diff,
+   * answered in the planner's words. Asked once per diff, cached above this.
+   */
+  summarizeDiff: () => Promise<DiffSummary>;
+  /**
+   * 저장 기록 (PLAN D53): the saved commits of this cycle, `base` → HEAD.
+   */
+  saveHistory: () => Promise<SaveHistory>;
+  /**
+   * 되돌리기 (PLAN D53): put the worktree back to `sha` as a NEW commit — no
+   * reset, no force-push; a developer may be reading the branch. Refuses
+   * while unsaved changes sit in the worktree. Progress arrives as
+   * `diff.status`, like a save.
+   */
+  restore: (sha: string) => Promise<DiffStatus>;
+  /** 변경 버리기 (PLAN D53): drop unsaved changes on the allowed paths. */
+  discard: () => Promise<{ removed: string[] }>;
+  /** Turn-answer snapshots of this session (PLAN D52). */
+  checkpoints: () => Promise<CheckpointList>;
+  /** Move the worktree back to one snapshot's tree (PLAN D52). */
+  restoreCheckpoint: (id: string) => Promise<{ restored: string[] }>;
+  /**
+   * 코멘트 기록 (PLAN D57): a pin batch lands in the project's comments.json
+   * at send time. The daemon REPLACES that screen·state's unresolved items
+   * with the batch — resending the same pins never duplicates, and resolved
+   * history stays.
+   */
+  recordComments: (input: {
+    screen: string;
+    state: string;
+    items: Array<{ text: string; elementText: string }>;
+  }) => Promise<{ recorded: number }>;
+  /** Every recorded comment of the connected repo, resolved ones in. */
+  listComments: () => Promise<{ items: CommentItem[] }>;
+  resolveComment: (id: string, resolved: boolean) => Promise<{ ok: true }>;
   /** The four onboarding checks; read-only. */
   onboardingCheck: () => Promise<OnboardingStep[]>;
   /**
@@ -397,6 +481,77 @@ export interface Daemon {
   markLive: (sessionId: string) => void;
 }
 
+// ---------------------------------------------------------------------------
+// Background-thread notifications (PLAN D50) — the web path of the desktop's
+// Electron notices. The daemon knows nothing of windows here, so the client
+// watches the session map itself and decides from the transition.
+// ---------------------------------------------------------------------------
+
+/** Asked once, after the planner's first send — never again (D50). */
+const NOTIFICATION_ASKED_KEY = "cds-design.notification-asked";
+
+/**
+ * The desktop asks nothing and notifies from its own main process (D50
+ * names this the BROWSER path); a second voice would ring twice.
+ */
+function requestNotificationPermissionOnce(): void {
+  if (typeof Notification === "undefined" || window.cdsDesignDesktop) return;
+  try {
+    if (localStorage.getItem(NOTIFICATION_ASKED_KEY)) return;
+    localStorage.setItem(NOTIFICATION_ASKED_KEY, "1");
+    void Notification.requestPermission();
+  } catch {
+    // Storage can be blocked (private mode, embedded views); no ask, no harm.
+  }
+}
+
+/**
+ * The one notification's copy, worded like the desktop's notices (D50): the
+ * thread's name is the title, the body says what to check once the window
+ * is open.
+ */
+function backgroundNotice(
+  title: string,
+  state: SessionState,
+): { title: string; body: string } | null {
+  switch (state) {
+    case "idle":
+      return { title: `${title} · 완료`, body: "Claude가 답을 마쳤습니다. 열어서 확인해 보세요." };
+    case "error":
+      return { title: `${title} · 중단`, body: "Claude가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다." };
+    case "waiting_permission":
+      return { title: `${title} · 확인 필요`, body: "Claude가 진행 허락을 기다리고 있습니다." };
+    case "waiting_question":
+      return { title: `${title} · 답 필요`, body: "Claude가 질문에 대한 답을 기다리고 있습니다." };
+    default:
+      return null;
+  }
+}
+
+/**
+ * A background thread finished or started waiting: look its name up and
+ * raise the browser notification. Permission never granted (or a browser
+ * without the API) makes this a no-op — the in-app strip still tells the
+ * story.
+ */
+async function notifyBackgroundThread(
+  findTitle: (sessionId: string) => Promise<string | null>,
+  sessionId: string,
+  state: SessionState,
+): Promise<void> {
+  if (typeof Notification === "undefined" || window.cdsDesignDesktop) return;
+  if (Notification.permission !== "granted") return;
+  const stored = await findTitle(sessionId).catch(() => null);
+  const notice = backgroundNotice(stored ?? "대화", state);
+  if (!notice) return;
+  try {
+    new Notification(notice.title, { body: notice.body });
+  } catch {
+    // Some browsers gate the constructor behind a service worker; the strip
+    // is the fallback there too.
+  }
+}
+
 export function useDaemon(url: string | null): Daemon {
   const socket = useRef<WebSocket | null>(null);
   const pendingCalls = useRef(new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>());
@@ -412,6 +567,14 @@ export function useDaemon(url: string | null): Daemon {
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   const [diffStatus, setDiffStatus] = useState<DiffStatus | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(null);
+  /**
+   * The thread the planner is looking at: the last one they opened or spoke
+   * into. A DIFFERENT thread settling is what a notification is for (D50);
+   * the one on screen settles where they can see it.
+   */
+  const watched = useRef<string | null>(null);
+  /** The states at the previous pass — the transition is the event. */
+  const prevStates = useRef<Record<string, SessionState>>({});
 
   useEffect(() => {
     if (!url) return;
@@ -425,7 +588,7 @@ export function useDaemon(url: string | null): Daemon {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const flushPending = () => {
-      for (const call of pendingCalls.current.values()) call.reject(new Error("connection lost"));
+      for (const call of pendingCalls.current.values()) call.reject(new Error("연결이 끊어졌습니다 — 다시 연결하는 중"));
       pendingCalls.current.clear();
     };
 
@@ -573,7 +736,7 @@ export function useDaemon(url: string | null): Daemon {
 
   const call = useCallback(<T,>(payload: Record<string, unknown>, timeoutMs = 60_000): Promise<T> => {
     const ws = socket.current;
-    if (!ws || ws.readyState !== ws.OPEN) return Promise.reject(new Error("not connected"));
+    if (!ws || ws.readyState !== ws.OPEN) return Promise.reject(new Error("아직 연결되지 않았습니다"));
     const id = `c${++counter.current}`;
     return new Promise<T>((resolve, reject) => {
       pendingCalls.current.set(id, { resolve: resolve as (v: unknown) => void, reject });
@@ -609,6 +772,7 @@ export function useDaemon(url: string | null): Daemon {
         model?: string;
         effort?: EffortLevel;
         title?: string;
+        previewTools?: boolean;
       }) =>
         call<{ sessionId: string }>({
           type: "session.create",
@@ -616,20 +780,28 @@ export function useDaemon(url: string | null): Daemon {
           ...(opts?.model ? { model: opts.model } : {}),
           ...(opts?.effort ? { effort: opts.effort } : {}),
           ...(opts?.title ? { title: opts.title } : {}),
+          // false is the meaningful value, so it rides even when every other
+          // field is absent — `previewTools === undefined` is the only skip.
+          ...(opts?.previewTools === undefined ? {} : { previewTools: opts.previewTools }),
         }),
       send: (
         sessionId: string,
         text: string,
         images?: Array<{ mediaType: string; data: string }>,
         files?: Array<{ name: string; mediaType: string; data: string }>,
-      ) =>
-        call({
+      ) => {
+        // Speaking into a thread is looking at it (D50), and the first send
+        // is the one moment the browser may ask about notifications.
+        watched.current = sessionId;
+        requestNotificationPermissionOnce();
+        return call({
           type: "session.send",
           sessionId,
           text,
           ...(images?.length ? { images } : {}),
           ...(files?.length ? { files } : {}),
-        }),
+        });
+      },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
       contextUsage: (sessionId: string) =>
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
@@ -753,6 +925,31 @@ export function useDaemon(url: string | null): Daemon {
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
       handoffStatus: () => call<HandoffStatus>({ type: "repo.handoffStatus" }, 120_000),
+      // The summary runs one short Claude turn on the daemon: the window a
+      // generation gets, not the minutes a gate takes.
+      summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
+      saveHistory: () => call<SaveHistory>({ type: "repo.history" }, 60_000),
+      // A restore commits and pushes, and the repo's checks may run on the
+      // way: the same window a save is given.
+      restore: (sha: string) => call<DiffStatus>({ type: "repo.restore", sha }, 600_000),
+      discard: () => call<{ removed: string[] }>({ type: "repo.discard" }, 120_000),
+      checkpoints: () => call<CheckpointList>({ type: "repo.checkpoints" }, 60_000),
+      restoreCheckpoint: (id: string) =>
+        call<{ restored: string[] }>({ type: "repo.checkpoint.restore", id }, 120_000),
+      recordComments: (input: {
+        screen: string;
+        state: string;
+        items: Array<{ text: string; elementText: string }>;
+      }) =>
+        call<{ recorded: number }>({
+          type: "comments.record",
+          screen: input.screen,
+          state: input.state,
+          items: input.items,
+        }),
+      listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
+      resolveComment: (id: string, resolved: boolean) =>
+        call<{ ok: true }>({ type: "comments.resolve", id, resolved }),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
           setOnboarding(steps);
@@ -768,6 +965,31 @@ export function useDaemon(url: string | null): Daemon {
     }),
     [call, keepProjects, keepRepo],
   );
+
+  // PLAN D50: a background thread that finished its turn — or stopped to
+  // ask — calls. Derived from the session map, so a reconnect that replays
+  // the same states fires nothing: the transition is the event.
+  useEffect(() => {
+    const next: Record<string, SessionState> = {};
+    for (const [sessionId, view] of Object.entries(sessions)) {
+      next[sessionId] = view.state;
+      if (
+        prevStates.current[sessionId] === "running" &&
+        view.state !== "running" &&
+        sessionId !== watched.current
+      ) {
+        void notifyBackgroundThread(
+          (id) =>
+            call<SessionSummary[]>({ type: "session.list" }).then(
+              (list) => list.find((session) => session.sessionId === id)?.title ?? null,
+            ),
+          sessionId,
+          view.state,
+        );
+      }
+    }
+    prevStates.current = next;
+  }, [sessions, call]);
 
   const resolvePending = useCallback((requestId: string) => {
     setPending((prev) => prev.filter((p) => p.requestId !== requestId));
@@ -789,6 +1011,7 @@ export function useDaemon(url: string | null): Daemon {
   }, []);
 
   const markLive = useCallback((sessionId: string) => {
+    watched.current = sessionId;
     setSessions((prev) => ({
       ...prev,
       [sessionId]: { ...(prev[sessionId] ?? EMPTY_SESSION), live: true },

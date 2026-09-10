@@ -330,6 +330,21 @@ export function SettingsDialog({
                 </span>
               </div>
             )}
+            {/* Claude 가 화면을 보는 일(PLAN D61·D63). previewTools 는
+                session.create 의 선택이라 열려 있는 대화에는 적용되지
+                않는다 — 새 대화부터다. */}
+            <Switch
+              label="Claude가 화면을 직접 확인"
+              hint="새로 시작하는 대화부터 적용됩니다. 열려 있는 대화는 그대로입니다"
+              checked={settings.chat.previewTools}
+              onChange={(previewTools) => onChatChange({ previewTools })}
+            />
+            <Switch
+              label="Claude가 보는 화면 표시"
+              hint="Claude가 화면을 확인하는 동안 미리보기 구석에 작게 보여 줍니다"
+              checked={settings.chat.showPip}
+              onChange={(showPip) => onChatChange({ showPip })}
+            />
           </section>
 
           <section className="settings__group">
@@ -358,7 +373,7 @@ export function SettingsDialog({
               <Field
                 wide
                 label="계정"
-                hint="토큰은 데몬에만 저장되고 다시 보여지지 않습니다"
+                hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
               >
                 <span className="settings__url">
                   <span className="settings__account">
@@ -388,7 +403,7 @@ export function SettingsDialog({
             <Field
               wide
               label="레포 주소"
-              hint={connected ? "git clone 주소(https://…)" : "데몬에 연결된 뒤 저장할 수 있습니다"}
+              hint={connected ? "git clone 주소(https://…)" : "연결된 뒤 저장할 수 있습니다"}
             >
               <span className="settings__url">
                 <input
@@ -453,14 +468,14 @@ export function SettingsDialog({
               <Field
                 wide
                 label="접속 주소"
-                hint={`연결 상태: ${connection}. 데몬을 켜면 이 주소를 출력합니다.`}
+                hint={`연결 상태: ${connection}. 앱을 다시 열면 이 주소가 채워집니다.`}
               >
                 <span className="settings__url">
                   <input
                     value={url}
                     spellCheck={false}
                     placeholder="ws://127.0.0.1:7823?token=…"
-                    aria-label="데몬 접속 주소"
+                    aria-label="접속 주소"
                     onChange={(e) => setUrl(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && urlChanged && onReconnect(url.trim())}
                   />
@@ -517,7 +532,7 @@ export function SettingsDialog({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        "저장된 접속 주소를 지울까요? 이 컴퓨터의 기획은 그대로 남지만, 데몬이 출력한 주소를 다시 붙여 넣어야 합니다.",
+                        "저장된 접속 주소를 지울까요? 이 컴퓨터의 기획은 그대로 남지만, 앱이 만든 접속 주소를 다시 붙여 넣어야 합니다.",
                       )
                     )
                       return;

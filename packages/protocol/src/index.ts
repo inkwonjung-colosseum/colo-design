@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -77,6 +77,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
      * path inside it.
      */
     title: z.string().min(1).max(80).optional(),
+    /** Preview tools (PLAN D61) for this session. Omitted means on. */
+    previewTools: z.boolean().optional(),
     /** Continue an existing thread by id. */
     resume: z.string().optional(),
   }),
@@ -246,7 +248,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     kind: z.enum(["install-claude", "login-claude", "install-git", "install-node", "install-pnpm"]),
   }),
   /**
-   * 저장 (PLAN D5): gate, commit and push the reviewed worktree diff onto the
+   * 저장 (PLAN D5[넘기기]): gate, commit and push the reviewed worktree diff onto the
    * project's own `cds-design/…` branch, created on the first save of a cycle.
    * The base branch is never written to — a developer receives this work as a
    * pull request, not as a push past them.
@@ -282,6 +284,53 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    */
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
+   * 저장 검토의 요약 한 번 (PLAN D51). The daemon asks Claude one turn — no
+   * tools, a 3-second leash — to say what changed in planner's words, and
+   * falls back to grouping the changed paths when that cannot land. Cached
+   * per diff hash on the daemon, so reopening the review is free.
+   */
+  z.object({ ...withId, type: z.literal("repo.summarize") }),
+  /**
+   * 저장 기록 (PLAN D53): the cycle's commits, `git log <base>..HEAD`. This
+   * is what the `저장 기록` drawer lists — messages and times, no git words.
+   */
+  z.object({ ...withId, type: z.literal("repo.history") }),
+  /**
+   * 되돌리기 (PLAN D53): bring the worktree back to a saved point as a NEW
+   * commit on the cycle branch — never reset · revert · force-push, because
+   * a developer may be reading that branch right now. Progress rides the
+   * same `diff.status` stream a 저장 uses (`pushing → published`).
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.restore"),
+    /** A sha from `repo.history`. */
+    sha: z.string().min(1),
+  }),
+  /**
+   * 변경 버리기 (PLAN D53): throw away every unsaved worktree change — the
+   * paths a 저장 would have carried, and only paths inside the clone. The
+   * confirmation dialog is the UI's job; this side just refuses to reach
+   * outside the repo.
+   */
+  z.object({ ...withId, type: z.literal("repo.discard") }),
+  /**
+   * The turn-start snapshots (PLAN D52): one per 화면 turn, oldest last.
+   * The planner sees these as `이 답변 이전으로 되돌리기` on a turn card.
+   */
+  z.object({ ...withId, type: z.literal("repo.checkpoints") }),
+  /**
+   * Put the worktree back the way it stood when a turn started (PLAN D52).
+   * Only paths the write policy allows move; files the snapshot never had
+   * are removed.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.checkpoint.restore"),
+    /** The `id` of one `repo.checkpoints` entry. */
+    id: z.string().min(1),
+  }),
+  /**
    * Store (or clear) the machine-wide GitHub token — the one gate of the
    * onboarding list the planner answers with a value rather than an install.
    * The daemon saves it to the OS credential store and never echoes it back;
@@ -314,7 +363,80 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     owner: z.string().min(1),
     repo: z.string().min(1),
   }),
+  /**
+   * 코멘트 기록 (PLAN D57): the pins the planner sent from the preview land
+   * in the project's own `comments.json`. The set REPLACES that screen·state
+   * pair's unresolved rows — the overlay re-sends what is still pinned, so a
+   * re-send must not double a comment — while resolved rows stay as history.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("comments.record"),
+    screen: z.string().min(1),
+    state: z.string().min(1),
+    items: z
+      .array(
+        z.object({
+          /** What the planner wrote. */
+          text: z.string().min(1),
+          /** The commented element's own text, as the overlay captured it. */
+          elementText: z.string(),
+        }),
+      )
+      .min(1),
+  }),
+  /**
+   * The active project's whole comment store (PLAN D57) — the `💬 코멘트`
+   * popover's list, resolved entries included: they are the history the
+   * turn's pins leave behind.
+   */
+  z.object({ ...withId, type: z.literal("comments.list") }),
+  /**
+   * Toggle one comment's resolved mark (PLAN D57). The row never leaves the
+   * store; this only moves it out of the 미해결 count.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("comments.resolve"),
+    id: z.string().min(1),
+    resolved: z.boolean(),
+  }),
 ]);
+
+// ---------------------------------------------------------------------------
+// 코멘트 저장소 (PLAN D57)
+// ---------------------------------------------------------------------------
+
+/** One row of the project's `comments.json`, verbatim over the wire. */
+export interface CommentItem {
+  id: string;
+  /** The screen the pin sat on, as the overlay's envelope named it. */
+  screen: string;
+  /** The screen state the pin sat on. */
+  state: string;
+  /** What the planner wrote. */
+  text: string;
+  /** The commented element's own text, as the overlay captured it. */
+  elementText: string;
+  /** When the row was written, ISO 8601. */
+  at: string;
+  resolved: boolean;
+}
+
+/** `comments.record` — how many rows the store now holds for the pair. */
+export interface CommentsRecorded {
+  recorded: number;
+}
+
+/** `comments.list` — every row, resolved included, oldest first. */
+export interface CommentsList {
+  items: CommentItem[];
+}
+
+/** `comments.resolve` — the mark moved; the row stayed. */
+export interface CommentResolved {
+  ok: true;
+}
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -377,6 +499,20 @@ export type ChatEvent =
 // ---------------------------------------------------------------------------
 
 /**
+ * One conversation of one project, as the sidebar tree's child row shows it
+ * (PLAN D59). The daemon maps the session state onto the four words the tree
+ * draws; the planner's own rename rides the client's 설정, not this wire.
+ */
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  /** `running` a turn is on; `awaiting` a permission or question; `finished`
+      a turn ended and nothing has followed it; `idle` everything else. */
+  state: "running" | "awaiting" | "finished" | "idle";
+  updatedAt: string;
+}
+
+/**
  * A project as the client sees it: identity, what it builds, and — for the
  * sidebar (PLAN D16) — where its clone stands right now. The per-project
  * state rides `project.changed` because `repo.status` means THE ACTIVE
@@ -396,6 +532,12 @@ export interface ProjectSummary {
   working: boolean;
   /** The open (or merged) pull request of this project's save cycle. */
   handoff: HandoffStatus | null;
+  /**
+   * The project's conversations, newest first (PLAN D59) — the sidebar
+   * tree's children. Optional: a daemon that has not scanned this clone
+   * yet omits it, and an absent key means "unknown", not "none".
+   */
+  threads?: ThreadSummary[];
 }
 
 export interface ProjectList {
@@ -453,6 +595,14 @@ export interface DaemonStatus {
    * offer a choice before any thread exists. Empty until a session reports.
    */
   models: SessionModelInfo[];
+  /**
+   * The connected repo's own quick actions (PLAN D55), read from
+   * `cds-design.json#quickActions`. The composer appends them to its built-in
+   * five — which live in the web, not here: the repo talks to the tool, and
+   * the daemon only carries what the repo said. Absent when the active
+   * project declares none.
+   */
+  quickActions?: string[];
 }
 
 /** One claude.ai plan-limit window, as the usage endpoint reports it. */
@@ -550,12 +700,52 @@ export interface HandoffStatus {
   branch: string;
 }
 
+/**
+ * One screen capture riding a 넘기기 (PLAN D56). The daemon's server opens
+ * each declared screen·state in the preview driver — a desktop host injects
+ * one; the browser dev path has none — and hands the captures to the
+ * workspace, which commits them under `.cds-design/shots/` and links them
+ * from the pull request body's `### 화면 미리보기` section.
+ */
+export interface HandoffShot {
+  /** Route the screen is served at, as `cds-design.screens` declared it. */
+  route: string;
+  /** The state the screen was captured in, as the repo declared it. */
+  state: string;
+  /** The capture's bytes; `Buffer` on the daemon side, `Uint8Array` here. */
+  png: Uint8Array;
+}
+
+export type RepoErrorKind =
+  | "clone"
+  | "install"
+  | "registry-auth"
+  | "pnpm-missing"
+  | "preview"
+  | "conflict";
+
 export interface RepoStatus {
   /** Absolute path of the clone on this machine. */
   root: string;
   phase: RepoPhase;
   /** Last progress line while working, or the reason for `error`. */
   detail: string | null;
+  /**
+   * Why the clone is in `phase: "error"` — decided at the failure site by the
+   * daemon, so the UI routes a fix without sniffing `detail` text (PLAN D41).
+   */
+  errorKind?: RepoErrorKind | null;
+  /**
+   * The repo's own cds-design.json commands, once read (PLAN D37): the
+   * transcript matches a Bash call against these to say `검사 실행` instead of
+   * printing the command line.
+   */
+  commands?: {
+    install?: string;
+    check?: string;
+    build?: string;
+    preview?: string;
+  };
   /** Preview origin once the declared preview port accepts connections. */
   previewUrl: string | null;
   /** Port declared in the repo's `cds-design.json`. */
@@ -589,7 +779,7 @@ export interface RepoStatus {
 /**
  * One pinned element in the repo's preview app. The overlay runs INSIDE the
  * repo's dev server (dev only), so the repo carries a hand-synced duplicate
- * of this shape (connected-repo/src/preview-bridge/types.ts) — the two repos
+ * of this shape (reference-repo/src/preview-bridge/types.ts) — the two repos
  * are kept in sync by hand, and both files say so.
  */
 export interface CdsDesignCommentTarget {
@@ -626,6 +816,25 @@ export interface CdsDesignCommentsEnvelope {
   screen: string;
   state: string;
   items: Array<{ element: CdsDesignCommentTarget; comment: string }>;
+}
+
+/**
+ * What the preview app posts when the screen it is showing fails (PLAN D49):
+ * a runtime exception (`window.onerror` · `unhandledrejection`) or the dev
+ * server's build error, reported by the repo's preview-bridge. The banner
+ * above the frame offers it to Claude as one marker turn. The hub accepts it
+ * only from the preview iframe (source + origin checked), like the pins.
+ */
+export interface CdsDesignErrorEnvelope {
+  type: "cds-design.error";
+  /** A crash inside the page, or the build that serves it. */
+  kind: "runtime" | "build";
+  /** The error text, as the browser or the dev overlay reported it. */
+  message: string;
+  /** The route that was up when it failed. */
+  route: string;
+  /** The state the screen was showing. */
+  state: string;
 }
 
 /**
@@ -787,6 +996,56 @@ export interface DiffStatus {
   handoff?: HandoffStatus | null;
 }
 
+/** `repo.summarize` — the save review's opening lines (PLAN D51). */
+export interface RepoSummary {
+  /** Up to three Korean sentences, no file names. Empty when nothing changed. */
+  lines: string[];
+  /** Who wrote them: the one Claude turn, or the path-grouping fallback. */
+  source: "claude" | "fallback";
+}
+
+/** One saved point in `repo.history` (PLAN D53). */
+export interface RepoHistoryEntry {
+  sha: string;
+  /** The planner's own 저장 memo, verbatim. */
+  message: string;
+  /** Committer time, ISO 8601. */
+  at: string;
+  /** Files the save carried, relative to the repo root. */
+  files: string[];
+}
+
+/** `repo.history` — the cycle's saves, newest first (PLAN D53). */
+export interface RepoHistory {
+  /** What the entries are counted against, e.g. `origin/main`. */
+  base: string;
+  entries: RepoHistoryEntry[];
+}
+
+/** One turn-start snapshot (PLAN D52). */
+export interface RepoCheckpoint {
+  /** Opaque to clients; passed back to `repo.checkpoint.restore`. */
+  id: string;
+  sessionId: string;
+  /** The 화면 turn this snapshot was taken before, counted from 1. */
+  turn: number;
+  at: string;
+}
+
+export interface RepoCheckpoints {
+  entries: RepoCheckpoint[];
+}
+
+export interface RepoCheckpointRestore {
+  /** Paths the restore touched, relative to the repo root. */
+  restored: string[];
+}
+
+export interface RepoDiscard {
+  /** Unsaved changes that were thrown away, relative to the repo root. */
+  removed: string[];
+}
+
 export interface PermissionSuggestion {
   destination: string;
   label: string;
@@ -860,4 +1119,5 @@ export function parseClientMessage(raw: string):
   return { ok: true, value: parsed.data };
 }
 export * from "./update.js";
+export * from "./tool-names.js";
 export * from "./turn-marker.js";

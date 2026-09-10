@@ -36,10 +36,36 @@ test("every kind survives the round trip", () => {
     { kind: "brief", title: "회원 관리 기획서" },
     { kind: "precheck", title: "회원 관리 기획서", screens: ["회원 목록", "회원 상세"] },
     { kind: "gate", step: "저장 전 검사" },
+    { kind: "error", route: "/member/MemberList", state: "오류", errorKind: "runtime" },
+    { kind: "error", route: "/member/MemberList", state: "기본", errorKind: "build" },
   ];
   for (const marker of markers) {
     assert.deepEqual(readTurn(markTurn(marker, "본문")).marker, marker, marker.kind);
   }
+});
+
+test("the plan's literal error marker parses — its kind is the failure, not the card", () => {
+  // D49 writes the payload as {"route","state","kind"}: the tag already said
+  // "error", so the payload's kind is free to mean runtime vs build.
+  const text =
+    '<!-- cds-design:error {"route":"/member/MemberList","state":"오류","kind":"build"} -->\n' +
+    "Module build failed: …";
+  assert.deepEqual(readTurn(text).marker, {
+    kind: "error",
+    route: "/member/MemberList",
+    state: "오류",
+    errorKind: "build",
+  });
+});
+
+test("an error marker without a usable kind degrades to runtime", () => {
+  const text = '<!-- cds-design:error {"route":"/a","state":"default"} -->\nTypeError: …';
+  assert.deepEqual(readTurn(text).marker, {
+    kind: "error",
+    route: "/a",
+    state: "default",
+    errorKind: "runtime",
+  });
 });
 
 test("a typed message passes through with no marker", () => {

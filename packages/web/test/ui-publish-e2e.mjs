@@ -11,7 +11,7 @@
  */
 import { spawn, execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,12 +60,49 @@ async function cycleBranch(remote) {
   const { stdout } = await run("git", ["--git-dir", remote, "for-each-ref", "--format=%(refname:short)", "refs/heads"]);
   return stdout.split("\n").map((line) => line.trim()).find((name) => name.startsWith("cds-design/")) ?? null;
 }
+
 /**
- * Every cycle action lives in the panel's own action bar (PLAN D4) — one
- * 저장 button, one 넘기기 button, no menu to hunt through.
+ * A claude that answers the gates, then fails EVERY turn on the stream-json
+ * wire (PLAN D35): the offline stand-in for a turn that ends wrong, so the
+ * browser can prove the silence is gone.
+ */
+function writeErrorStubClaude(dir) {
+  const path = writeStubClaude(dir);
+  // The gates read --version and `auth status`; the SDK's stream-json run
+  // falls through the stub's case and used to exit silently. Now it answers
+  // with a failed result (PLAN D35), so the browser can prove the silence is
+  // gone. Single-quoted sh echoes: the JSON carries no single quotes.
+  const script = readFileSync(path, "utf8").replace(
+    "esac\nexit 0",
+    [
+      "esac",
+      `echo '{"type":"system","subtype":"init","session_id":"stub","tools":[],"mcp_servers":[],"model":"stub","permissionMode":"default","slash_commands":[],"agents":[]}'`,
+      `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["의도된 스텁 실패"],"result":"의도된 스텁 실패","session_id":"stub","total_cost_usd":0,"duration_ms":10,"num_turns":1}'`,
+      "exit 0",
+    ].join("\n"),
+  );
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+/**
+ * The stepper owns the cycle's primary button (PLAN D44): one at every
+ * moment, its label the stage table's — 검토·수정 offers 저장, a saved
+ * branch offers 개발자에게 넘기기.
  */
 async function viaActionBar(page, label) {
-  await page.locator(".screenpanel__bar").getByRole("button", { name: label }).click();
+  await page.locator(".stepper").getByRole("button", { name: label, exact: true }).click();
+}
+
+/**
+ * The always-there route (PLAN D44): 더 보기 ▾ carries every cycle action.
+ * An empty cycle's primary button is 새 대화, so "there is nothing to save"
+ * is proven through the menu rather than the stepper.
+ */
+async function viaMoreMenu(page, label) {
+  await page.locator(".screenpanel__bar").getByRole("button", { name: "더 보기" }).click();
+  await page.getByRole("menuitem", { name: label, exact: true }).click();
 }
 async function main() {
   if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
@@ -89,7 +126,7 @@ async function main() {
     CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
     CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
-    CDS_DESIGN_CLAUDE_BIN: writeStubClaude(join(DIR, "bin")),
+    CDS_DESIGN_CLAUDE_BIN: writeErrorStubClaude(join(DIR, "bin")),
     CDS_DESIGN_CREDENTIAL_STORE: "memory",
   };
   delete env.ANTHROPIC_API_KEY;
@@ -120,13 +157,18 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".planner__body", { timeout: 60000 });
+    try {
+      await page.waitForSelector(".planner__body", { timeout: 60000 });
+    } catch {
+      console.error("CONNECT DUMP:", (await page.locator("body").innerText()).slice(0, 800).replace(/\n+/g, " | "));
+      throw new Error("planner body never appeared");
+    }
     await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
     await page.waitForSelector(".preview", { timeout: 600000 });
     check("the planner connects and the workspace shows the repo preview", true);
 
     // --- the panel --------------------------------------------------------
-    await viaActionBar(page, "저장");
+    await viaMoreMenu(page, "저장");
     await page.waitForSelector('[role="dialog"][aria-label="저장 검토"]', { timeout: 5000 });
     check("the empty panel says there is nothing to save", (await page.locator(".diff__files").count()) === 0);
     await page.keyboard.press("Escape");
@@ -141,8 +183,21 @@ async function main() {
     const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
     writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
 
+    // The stepper's number is event-driven (PLAN D8): a turn finishing or a
+    // save recounts it, and these raw writes are neither — so one 레포 최신화
+    // is what moves the primary button from 새 대화 to 저장.
+    await page.locator(".screenpanel__bar").getByRole("button", { name: "최신화" }).click();
+    await page.locator(".stepper").getByRole("button", { name: "저장", exact: true }).waitFor({ timeout: 20000 });
     await viaActionBar(page, "저장");
-    await page.waitForSelector(".diff__file", { timeout: 10000 });
+    // PLAN D51: the summary is the first thing; the raw files live behind
+    await page.getByText("자세히 보기 (파일 2개)").waitFor({ timeout: 10000 });
+    check(
+      "the summary is on top and the raw diff waits behind a fold",
+      (await page.getByText("자세히 보기 (파일 2개)").isVisible()) === true &&
+        (await page.locator(".diff__file").first().isVisible()) === false,
+    );
+    await page.getByText("자세히 보기 (파일 2개)").click();
+    await page.locator(".diff__file").first().waitFor({ state: "visible", timeout: 10000 });
     const rows = page.locator(".diff__file");
     check(
       "every changed file is listed with its status",
@@ -186,6 +241,33 @@ async function main() {
 
     await page.getByRole("button", { name: "닫기", exact: true }).click();
     check("closing the review returns to the planner", (await page.locator('[role="dialog"]').count()) === 0);
+
+    // --- a failed turn is a card, not a silence (PLAN D35) ----------------
+    await page.getByRole("button", { name: "새 대화" }).click();
+    const field = page.getByPlaceholder("만들고 싶은 화면을 말해 주세요");
+    await field.fill("화면을 만들어 줘");
+    await field.press("Enter");
+    await page.waitForSelector(".turnfail", { timeout: 30000 });
+    check(
+      "a failed turn is a card that says what happened",
+      (await page.locator(".turnfail").innerText()).includes("답을 마치지 못했습니다"),
+    );
+    const retry = page.locator(".turnfail").getByRole("button", { name: "다시 보내기" });
+    check("the card offers the same words back", (await retry.count()) === 1);
+    await retry.click();
+    // A failed turn closes the CLI run; resuming may continue the same thread
+    // or open a fresh one on the same words. What must hold either way: the
+    // words went out again (the field emptied) and a failed-turn card stands.
+    await page.waitForFunction(
+      () => {
+        const area = document.querySelector(".composer textarea");
+        return area instanceof HTMLTextAreaElement && area.value === "";
+      },
+      undefined,
+      { timeout: 30000 },
+    );
+    await page.waitForSelector(".turnfail", { timeout: 30000 });
+    check("retrying sends the same words again", true);
 
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({ path: join(here, "ui-publish-e2e.png"), fullPage: true });

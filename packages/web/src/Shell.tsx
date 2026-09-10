@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ThreadSummary } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { AddProjectDialog } from "./AddProjectDialog";
-import { PageWorkspace } from "./PageWorkspace";
+import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
 import { Sidebar } from "./Sidebar";
 import { Splitter } from "./Splitter";
 import { Onboarding } from "./Onboarding";
@@ -101,9 +102,22 @@ export function Shell({
     if (!media) return;
     const onChange = () => setNarrow(media.matches);
     media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    return () => window.removeEventListener("change", onChange);
   }, []);
   const folded = collapsed || narrow;
+
+  /**
+   * The sidebar tree and the workspace are siblings here; the tree's clicks
+   * (open · new · archive, PLAN D59) cross this ref, and the workspace
+   * reports the open thread back for the tree's active mark. No state of its
+   * own beyond that one string — the session flows stay the workspace's.
+   */
+  const workspace = useRef<WorkspaceHandle>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const openThread = (slug: string, thread: ThreadSummary) => workspace.current?.openThread(slug, thread);
+  const newThread = (slug: string) => workspace.current?.newThread(slug);
+  const openArchive = (slug: string) => workspace.current?.openArchive(slug);
+  const archiveThread = (slug: string, thread: ThreadSummary) => workspace.current?.archiveThread(slug, thread);
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
@@ -147,6 +161,13 @@ export function Shell({
         }}
         onAddProject={() => setAddOpen(true)}
         onOpenSettings={onOpenSettings}
+        sessionTitles={settings.sessionTitles}
+        activeThreadId={activeThreadId}
+        onOpenThread={openThread}
+        onNewThread={newThread}
+        onOpenArchive={openArchive}
+        onArchiveThread={archiveThread}
+        onRenameThread={onRenameSession}
         boundary={
           !folded && (
             <Splitter
@@ -244,12 +265,14 @@ export function Shell({
           /* The workspace owns its own .planner__body — the three columns and
              their draggable boundaries are its business, not the frame's. */
           <PageWorkspace
+            ref={workspace}
             daemon={daemon}
             settings={settings}
             onChatChange={onChatChange}
             onLayoutChange={onLayoutChange}
             onOpenSettings={onOpenSettings}
             onRenameSession={onRenameSession}
+            onActiveThreadChange={setActiveThreadId}
             onAddProject={() => setAddOpen(true)}
           />
         )}

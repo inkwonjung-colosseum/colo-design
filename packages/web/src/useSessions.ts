@@ -10,8 +10,13 @@ import type {
 } from "@cds-design/protocol";
 import { EMPTY_SESSION, type Daemon, type SessionView } from "./daemon-client";
 import type { Attachment } from "./Composer";
-import { settleTransitions } from "./session-activity";
-import { loadModelCatalog, saveModelCatalog, type ChatSettings } from "./settings";
+import {
+  loadModelCatalog,
+  saveModelCatalog,
+  loadArchivedSessionIds,
+  saveArchivedSessionIds,
+  type ChatSettings,
+} from "./settings";
 
 /** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
@@ -21,12 +26,6 @@ export interface Sessions {
   /** Transcript of the active thread; null when none is open. */
   active: SessionView | null;
   running: boolean;
-  /**
-   * Threads whose turn ended while this one was not the open tab. The strip
-   * marks them until the planner looks; a live dot that simply vanishes says
-   * "finished" and "never ran" with the same pixel.
-   */
-  finished: string[];
   usage: ContextUsage | null;
   /**
    * 모델·추론·권한 chips. Always present: until a session can answer, the
@@ -44,17 +43,35 @@ export interface Sessions {
   /** Open a thread from the list, hydrating its stored transcript. */
   open: (summary: SessionSummary) => Promise<void>;
   /**
+   * Open a thread by id alone, resuming it into a live session
+   * (`session.create { resume }`, PLAN D59) — the tree's jump into a row
+   * this project's list has not fetched, and the landing after a switch
+   * across projects.
+   */
+  resume: (sessionId: string) => Promise<void>;
+  /**
    * Start a thread and open it. Resolves with its id — the shell needs it to
-   * make the new tab the selected one, and React state cannot be read back
+   * make the new thread the open one, and React state cannot be read back
    * the instant after this returns.
-   *
    * `title` names a thread the TOOL is opening (the 화면 handoff): its first
    * turn is a sentence this app wrote, so letting that turn name the thread
-   * puts a file path in the tab strip.
+   * puts a file path in the conversation.
    */
   create: (title?: string) => Promise<string | null>;
-  /** Delete a stored thread for good. */
+  /**
+   * 보관 (PLAN D54): keep a thread out of this project's list. The stored
+   * transcript survives — `restore` brings it back, `purge` alone deletes for
+   * good. The tree row's ··· and the chat head's menu are this, not a
+   * deletion.
+   */
   remove: (session: SessionSummary) => Promise<void>;
+  /** Bring an archived thread back to the list. */
+  restore: (session: SessionSummary) => void;
+  /** Delete an archived thread's transcript for good. No confirm: it is two
+      deliberate steps from the list, and PLAN D54 retires the dialog. */
+  purge: (session: SessionSummary) => Promise<void>;
+  /** Threads 보관 hid from `list`, ready to be restored or purged. */
+  archived: SessionSummary[];
   submit: (text: string, attachments: Attachment[]) => Promise<void>;
   /** Machine-authored turn: no composer, no attachments. */
   sendTurn: (text: string) => Promise<void>;
@@ -73,7 +90,12 @@ export function useSessions(
   daemon: Daemon,
   opts: {
     ready: boolean;
-    confirmBeforeDelete: boolean;
+    /**
+     * Kept, unread (PLAN D54): conversations are archived, so there is no
+     * delete confirmation left. External compatibility requirement — the
+     * caller above this hook still passes it; nothing here reads it.
+     */
+    confirmBeforeDelete?: boolean;
     /**
      * How Claude answers, as 설정 holds it (PLAN D10). Owned above this hook:
      * the same three values drive the settings dialog, and two copies of
@@ -83,11 +105,19 @@ export function useSessions(
     onChatChange: (patch: Partial<ChatSettings>) => void;
   },
 ): Sessions {
+  const { ready, chat, onChatChange } = opts;
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
-  const { ready, confirmBeforeDelete, chat, onChatChange } = opts;
-
   const [list, setList] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** The 보관 book (PLAN D54): ids this project's list hides. Seeded from the
+      stored settings; every change is written straight back. */
+  const [archivedIds, setArchivedIds] = useState<string[]>(() => loadArchivedSessionIds(daemon.activeSlug));
+
+  // `list` is the daemon's stored list for this project; the archive (PLAN
+  // D54) is a client-side hide on top of it, so both halves come from the
+  // same read and a restore needs no round trip.
+  const visibleList = list.filter((session) => !archivedIds.includes(session.sessionId));
+  const archived = list.filter((session) => archivedIds.includes(session.sessionId));
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [selector, setSelector] = useState<SessionSelectors | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
@@ -96,28 +126,6 @@ export function useSessions(
 
   const active = activeId ? (sessions[activeId] ?? EMPTY_SESSION) : null;
   const running = active?.state === "running";
-
-  /**
-   * A turn that ended somewhere the planner was not looking. Tracked over the
-   * whole session map rather than this page's list, so a thread that settles
-   * while another page is open is still marked when the planner comes back.
-   * Opening the thread is what clears it — that is what "seen" means here.
-   */
-  const [finished, setFinished] = useState<string[]>([]);
-  const wasRunning = useRef<Record<string, boolean>>({});
-  useEffect(() => {
-    const states = Object.fromEntries(
-      Object.entries(sessions).map(([sessionId, view]) => [sessionId, view.state]),
-    );
-    const { running: next, settled } = settleTransitions(wasRunning.current, states, activeId);
-    wasRunning.current = next;
-    if (settled.length === 0) return;
-    setFinished((prev) => [...new Set([...prev, ...settled])]);
-  }, [sessions, activeId]);
-  useEffect(() => {
-    if (!activeId) return;
-    setFinished((prev) => (prev.includes(activeId) ? prev.filter((id) => id !== activeId) : prev));
-  }, [activeId]);
 
   const refresh = useCallback(async () => {
     setList(await api.listSessions().catch(() => [] as SessionSummary[]));
@@ -140,6 +148,10 @@ export function useSessions(
         ...(resume ? { resume } : {}),
         ...(picked.model ? { model: picked.model } : {}),
         ...(picked.effort ? { effort: picked.effort } : {}),
+        // 화면 도구는 세션이 태어날 때 정해진다(PLAN D61): 설정값을 그대로
+        // 실어 보낸다. 이후 설정을 바꿔도 진행 중인 세션은 무관하다 — 도구
+        // 목록은 실행 중인 query 에 되돌려 꽂지 않는다. 새 세션부터 적용이다.
+        previewTools: picked.previewTools,
         ...(title ? { title } : {}),
       });
       ensureSession(sessionId);
@@ -160,7 +172,7 @@ export function useSessions(
   }, [connection, ready, refresh]);
 
   // The thread list is the active project's, so a switch that kept the old
-  // project's tabs left a clickable conversation the daemon would answer in
+  // project's rows left a clickable conversation the daemon would answer in
   // the wrong clone. Clear both the list and the open thread; `ready` rarely
   // flips on a switch between two prepared repos, so this is the only
   // reliable trigger.
@@ -168,9 +180,9 @@ export function useSessions(
   const listedSlug = useRef(activeSlug);
   useEffect(() => {
     if (listedSlug.current === activeSlug) return;
-    listedSlug.current = activeSlug;
-    setActiveId(null);
     setList([]);
+    setArchivedIds(loadArchivedSessionIds(activeSlug));
+    setActiveId(null);
     if (connection === "open") void refresh();
   }, [activeSlug, connection, refresh]);
 
@@ -246,6 +258,22 @@ export function useSessions(
     }
   };
 
+  /**
+   * The tree's open-by-id (PLAN D59): `session.create { resume }` makes the
+   * stored conversation live again in one message — no list fetch first, no
+   * hydrate-then-wait. A live id is the caller's to focus through `open`;
+   * resuming one would fork it.
+   */
+  const resume = async (sessionId: string) => {
+    discardIfUnused(activeId);
+    try {
+      await startSession(sessionId);
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const create = async (title?: string): Promise<string | null> => {
     discardIfUnused(activeId);
     try {
@@ -258,13 +286,33 @@ export function useSessions(
     }
   };
 
-  /** Permanently delete a stored thread. Confirms first unless turned off. */
+  /**
+   * 보관 (PLAN D54): the thread leaves this project's list; its transcript
+   * stays on disk. The 팔레트 lists what is hidden here and is the only way
+   * back (`restore`) or out (`purge`). An open thread closes as it goes —
+   * the strip must not keep a row the list has forgotten.
+   */
   const remove = async (session: SessionSummary) => {
-    if (
-      confirmBeforeDelete &&
-      !window.confirm(`"${session.title}" 대화를 삭제할까요? 대화 기록이 영구히 사라집니다.`)
-    )
-      return;
+    if (archivedIds.includes(session.sessionId)) return;
+    const next = [...archivedIds, session.sessionId];
+    setArchivedIds(next);
+    saveArchivedSessionIds(activeSlug, next);
+    if (activeId === session.sessionId) setActiveId(null);
+  };
+
+  const restore = (session: SessionSummary) => {
+    const next = archivedIds.filter((id) => id !== session.sessionId);
+    setArchivedIds(next);
+    saveArchivedSessionIds(activeSlug, next);
+    // The stored list already carries the thread; the filter above is what
+    // hid it. A refresh would not add information — skip it.
+  };
+
+  /** 영구 삭제: the one path that really deletes, from the archive only. */
+  const purge = async (session: SessionSummary) => {
+    const next = archivedIds.filter((id) => id !== session.sessionId);
+    setArchivedIds(next);
+    saveArchivedSessionIds(activeSlug, next);
     if (activeId === session.sessionId) setActiveId(null);
     try {
       await api.deleteSession(session.sessionId);
@@ -381,15 +429,16 @@ export function useSessions(
 
 
   return {
-    list,
     activeId,
+    list: visibleList,
+    archived,
     active,
     running,
-    finished,
+    open,
+    resume,
     usage,
     error,
     setError,
-    open,
     create,
     selector: selector ?? {
       model: chat.model,
@@ -405,6 +454,8 @@ export function useSessions(
     setPermissionMode: switchPermissionMode,
     remove,
     submit,
+    restore,
+    purge,
     sendTurn,
     refresh,
   };

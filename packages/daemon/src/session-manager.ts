@@ -1,12 +1,43 @@
-import { deleteSession, getSessionInfo, getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatEvent, SessionSummary } from "@cds-design/protocol";
+import { deleteSession, getSessionInfo, getSessionMessages, listSessions, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import type { ChatEvent, SessionSummary, ThreadSummary } from "@cds-design/protocol";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 import { replayHistory } from "./translate.js";
 
 export class SessionManager {
   private readonly live = new Map<string, Session>();
+  /**
+   * Session ids whose last state change was a turn ending (PLAN D59): the
+   * tree's `답이 왔습니다`. A send clears the mark, a turn's end sets it —
+   * so a live thread sitting idle after its answer reads as finished while
+   * one nobody has spoken to since launch reads as idle. Closing a thread
+   * takes the mark with it: the planner ended that conversation on purpose.
+   */
+  private readonly settledTurns = new Set<string>();
+  /**
+   * The per-clone thread cache (PLAN D59). The sidebar tree shows every
+   * project's conversations at once, but `projectSummaries()` is a
+   * synchronous read — so the answers of the SDK scan (`listSessions`) are
+   * kept per clone and re-served until a session event marks the clone
+   * stale. `disk` is the scan itself (shared with `list`), `threads` the
+   * merged, tree-shaped result a summary can read synchronously.
+   */
+  private readonly disk = new Map<string, SDKSessionInfo[]>();
+  private readonly diskStale = new Set<string>();
+  private readonly threadCache = new Map<string, ThreadSummary[]>();
+  private readonly events: SessionEvents;
 
-  constructor(private readonly events: SessionEvents) {}
+  constructor(events: SessionEvents) {
+    this.events = {
+      ...events,
+      onState: (sessionId, state, detail) => {
+        if (state === "running" || state === "starting") this.settledTurns.delete(sessionId);
+        else if (state !== "waiting_permission" && state !== "waiting_question") {
+          this.settledTurns.add(sessionId);
+        }
+        events.onState(sessionId, state, detail);
+      },
+    };
+  }
 
   create(options: SessionOptions): Session {
     const session = new Session(options, this.events);
@@ -61,6 +92,7 @@ export class SessionManager {
     if (!session) return;
     await session.close();
     this.live.delete(sessionId);
+    this.settledTurns.delete(sessionId);
   }
 
   /**
@@ -118,10 +150,19 @@ export class SessionManager {
    * Merge sessions this daemon is running with transcripts already on disk, so
    * conversations started in the terminal show up in the UI and can be resumed.
    * The SDK stores transcripts per directory, so the active project's repo
-   * clone is exactly the session list.
+   * clone is exactly the session list. The disk half is the per-clone cache
+   * (PLAN D59) — the scan is what `projectSummaries` cannot afford per
+   * announce, so it runs once and again only after a session event marks the
+   * clone stale. The live half merges fresh on every read, so states and
+   * titles are never served stale.
    */
   async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
-    const onDisk = await listSessions({ dir: cwd, limit }).catch(() => []);
+    let onDisk = this.disk.get(cwd);
+    if (!onDisk || this.diskStale.has(cwd)) {
+      onDisk = await listSessions({ dir: cwd, limit }).catch(() => []);
+      this.disk.set(cwd, onDisk);
+      this.diskStale.delete(cwd);
+    }
     const summaries = new Map<string, SessionSummary>();
     const untitled = "제목 없는 대화";
 
@@ -155,6 +196,50 @@ export class SessionManager {
     }
 
     return [...summaries.values()].sort((a, b) => b.lastModified - a.lastModified);
+  }
+
+  /**
+   * One clone's conversations, tree-shaped (PLAN D59). The session state maps
+   * onto the four words a child row draws: a turn on → `running`; a permission
+   * or question up → `awaiting`; a turn that ended with nothing after it →
+   * `finished`; everything else — old stored threads mostly — `idle`.
+   */
+  async refreshThreads(cwd: string, limit = 50): Promise<ThreadSummary[]> {
+    const threads = (await this.list(cwd, limit)).map((summary): ThreadSummary => {
+      const state: ThreadSummary["state"] =
+        summary.state === "running" || summary.state === "starting"
+          ? "running"
+          : summary.state === "waiting_permission" || summary.state === "waiting_question"
+            ? "awaiting"
+            : summary.live && this.settledTurns.has(summary.sessionId)
+              ? "finished"
+              : "idle";
+      return {
+        id: summary.sessionId,
+        title: summary.title,
+        state,
+        updatedAt: new Date(summary.lastModified).toISOString(),
+      };
+    });
+    this.threadCache.set(cwd, threads);
+    return threads;
+  }
+
+  /** The last computed threads of a clone, for the synchronous summaries.
+   * Null until the first scan ran; the field stays omitted on the wire so
+   * "never looked" cannot read as "no conversations". */
+  cachedThreads(cwd: string): ThreadSummary[] | null {
+    return this.threadCache.get(cwd) ?? null;
+  }
+
+  /**
+   * A session event landed in this clone (created, closed, deleted, or a
+   * turn changed state) — the next refresh rescans it. What is already
+   * computed keeps flowing: dropping it would blink the tree blank between
+   * the event and the rescan.
+   */
+  invalidateThreads(cwd: string): void {
+    this.diskStale.add(cwd);
   }
 
   /** Stored transcript, already shaped as the events the UI renders. */

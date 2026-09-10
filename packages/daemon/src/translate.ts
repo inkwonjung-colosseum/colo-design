@@ -1,4 +1,5 @@
 import type { ChatEvent, PermissionMode } from "@cds-design/protocol";
+import { toolLabel } from "@cds-design/protocol";
 
 /**
  * Turns raw SDKMessage values into the small, UI-shaped ChatEvent union.
@@ -82,11 +83,14 @@ export class MessageTranslator {
       return [{ kind: "compact", trigger: String(m.compact_metadata?.trigger ?? "auto") }];
     }
     if (m.subtype === "permission_denied") {
+      // PLAN D36/D37: the planner reads an action name, not a tool name — the
+      // same dictionary the transcript uses, or the two surfaces drift.
+      const label = toolLabel(String(m.tool_name ?? ""));
       return [
         {
           kind: "notice",
           level: "warn",
-          text: `Permission denied for ${String(m.tool_name ?? "a tool")}`,
+          text: `${label} 요청이 허용되지 않았습니다`,
         },
       ];
     }

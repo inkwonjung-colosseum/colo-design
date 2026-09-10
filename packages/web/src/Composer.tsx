@@ -93,7 +93,7 @@ function tone(pct: number): "" | "warn" | "danger" {
 }
 
 /**
- * Everything the planner spends, behind one chip (PLAN D10).
+ * Everything the planner spends, behind one chip (PLAN D10[설정 이동]).
  *
  * Two plan windows and the conversation length answer "얼마나 더 쓸 수 있나"
  * one click away, in the popover. The exception the planner asked for: the
@@ -430,7 +430,9 @@ interface Editor {
 
 const EMPTY_EDITOR: Editor = { text: "", attachments: [] };
 
-/** sessionStorage keys. Per-tab on purpose: a second window is a second desk. */
+/** localStorage keys (PLAN D43): a closed or crashed window no longer eats
+ *  what the planner was mid-sentence writing. Per-origin, shared across
+ *  tabs — a second window picking up the same draft is the desk it belongs to. */
 const DRAFT_PREFIX = "cds-design.draft.";
 const HISTORY_KEY = "cds-design.history";
 /** A walk back through sent turns stops somewhere; 25 rows of peeking is plenty. */
@@ -438,7 +440,7 @@ const HISTORY_MAX = 25;
 
 function storedDraft(key: string): string {
   try {
-    return sessionStorage.getItem(DRAFT_PREFIX + key) ?? "";
+    return localStorage.getItem(DRAFT_PREFIX + key) ?? "";
   } catch {
     return "";
   }
@@ -446,8 +448,8 @@ function storedDraft(key: string): string {
 
 function saveDraft(key: string, text: string): void {
   try {
-    if (text) sessionStorage.setItem(DRAFT_PREFIX + key, text);
-    else sessionStorage.removeItem(DRAFT_PREFIX + key);
+    if (text) localStorage.setItem(DRAFT_PREFIX + key, text);
+    else localStorage.removeItem(DRAFT_PREFIX + key);
   } catch {
     // Quota or private mode: the in-memory map still covers tab switches.
   }
@@ -471,6 +473,27 @@ function saveHistory(rows: string[]): void {
   }
 }
 
+/**
+ * 빠른 동작 칩(PLAN D55): a screen conversation's five starting sentences.
+ * The list is a tool constant on purpose — the repo does not get to write
+ * the planner's words. A click is 문장 삽입, never a send: the sentences
+ * land in the field and the planner reads, edits, and sends them themselves.
+ */
+const QUICK_ACTIONS: ReadonlyArray<{ label: string; sentence: string }> = [
+  { label: "빈 상태 추가", sentence: "이 화면에 비어 있음 상태를 추가해 줘." },
+  { label: "로딩 상태 추가", sentence: "이 화면에 로딩 중 상태를 추가해 줘." },
+  { label: "오류 상태 추가", sentence: "이 화면에 오류 상태를 추가해 줘." },
+  {
+    label: "기획서와 대조",
+    sentence:
+      "이 화면을 근거 기획서(specs/ 첨부)와 대조해서 다른 점과 비어 있는 점을 목록으로 알려 줘.",
+  },
+  {
+    label: "이 화면 설명해 줘",
+    sentence: "이 화면이 어떤 화면인지 구성과 동작을 설명해 줘.",
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
@@ -491,6 +514,7 @@ export function Composer({
   onSend,
   onInterrupt,
   onFindFiles,
+  quickActions,
 }: {
   disabled: boolean;
   /** Which conversation this field is the draft for; swapping keys swaps drafts. */
@@ -513,9 +537,16 @@ export function Composer({
   onSetPermissionMode: (mode: PermissionMode) => void;
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
-  onSend: (text: string, attachments: Attachment[]) => void;
+  onSend: (text: string, attachments: Attachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
+  /**
+   * 활성 레포가 `cds-design.json#quickActions` 으로 말하는 문장들(PLAN D55) —
+   * 도구 상수 뒤에 붙는다. 문자열 하나가 칩의 이름이자 넣을 문장이다; 도구
+   * 칩과 같은 이름은 거르고, 목록 안의 거듭도 거른다. 없거나 비었으면 칩이
+   * 늘지 않는다.
+   */
+  quickActions?: string[] | null;
 }) {
   const [editor, setEditor] = useState<Editor>(() => ({
     text: storedDraft(draftKey),
@@ -737,6 +768,38 @@ export function Composer({
     setEditor((prev) => ({ text: prev.text, attachments: [...prev.attachments, ...read] }));
   };
 
+  /**
+   * A quick action chip (PLAN D55): the sentence joins the field — on its
+   * own line when something is already written — and the caret lands at the
+   * end. `onSend` is nowhere in this path: a chip never sends. The planner
+   * reads what they are about to ask, edits it if they like, and sends.
+   */
+  const insertQuickAction = (sentence: string) => {
+    setEditor((prev) => {
+      const base = prev.text.replace(/\s+$/, "");
+      return { text: base ? `${base}\n${sentence}` : sentence, attachments: prev.attachments };
+    });
+    requestAnimationFrame(() => {
+      const element = area.current;
+      if (!element) return;
+      const end = element.value.length;
+      element.setSelectionRange(end, end);
+      element.focus();
+    });
+  };
+
+  /**
+   * The repo's own sentences (PLAN D55), behind the tool constants: a chip
+   * named like a tool chip is the tool chip, and the repo listing a sentence
+   * twice must not buy it a second chip. Each string is both the label and
+   * the sentence — the repo speaks for itself, the tool does not dress it up.
+   */
+  const repoQuickActions = (quickActions ?? []).filter(
+    (sentence, index) =>
+      !QUICK_ACTIONS.some((action) => action.label === sentence) &&
+      (quickActions ?? []).indexOf(sentence) === index,
+  );
+
   const submit = () => {
     const text = editor.text.trim();
     if (!text && editor.attachments.length === 0) return;
@@ -749,10 +812,18 @@ export function Composer({
       saveHistory(rows);
     }
     historyAt.current = null;
-    onSend(text, editor.attachments);
-    setEditor(EMPTY_EDITOR);
-    setSuggestions([]);
-    setRejected(null);
+    // PLAN D35: the field empties when the daemon has ACCEPTED the turn, not
+    // when the button fired — a failed send leaves the words and attachments
+    // in place, with the reason in the warning strip.
+    void Promise.resolve(onSend(text, editor.attachments))
+      .then(() => {
+        setEditor(EMPTY_EDITOR);
+        setSuggestions([]);
+        setRejected(null);
+      })
+      .catch(() => {
+        setRejected("보내지지 못했습니다 — 잠시 뒤 다시 시도해 주세요");
+      });
   };
 
   /** Swap the field's text for a recalled row, keeping the attachments, caret parked at the end. */
@@ -873,8 +944,8 @@ export function Composer({
     },
     {
       key: "effort" as const,
-      label: selector.effort ? `생각 ${EFFORT_LABEL[selector.effort]}` : "생각 시간",
-      title: "얼마나 오래 생각할지",
+      label: selector.effort ? EFFORT_LABEL[selector.effort] : "자동",
+      title: "생각 시간",
       disabled: modelRow ? !modelRow.supportsEffort : false,
       options: [
         { value: null, label: "자동", picked: selector.effort == null },
@@ -937,6 +1008,36 @@ export function Composer({
               )}
               <span className="autocomplete__label">{suggestion.label}</span>
               {suggestion.hint && <span className="autocomplete__hint">{suggestion.hint}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 빠른 동작 칩(PLAN D55): 대화가 비었거나 마지막 턴이 끝났을 때만 —
+          a running turn hides them, its settle brings them back. 클릭은
+          문장을 입력란에 넣을 뿐, 보내지는 않는다. */}
+      {!running && !disabled && (
+        <div className="chips composer__quick" role="group" aria-label="빠른 동작">
+          {QUICK_ACTIONS.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              className="chip chip--quick"
+              title={action.sentence}
+              onClick={() => insertQuickAction(action.sentence)}
+            >
+              {action.label}
+            </button>
+          ))}
+          {repoQuickActions.map((sentence) => (
+            <button
+              key={sentence}
+              type="button"
+              className="chip chip--quick"
+              title={sentence}
+              onClick={() => insertQuickAction(sentence)}
+            >
+              {sentence}
             </button>
           ))}
         </div>

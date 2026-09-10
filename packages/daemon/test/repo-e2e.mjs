@@ -185,7 +185,7 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
 
   try {
     const hello = await waitFor(() => inbox.find((m) => m.type === "hello"), 10_000, "hello");
-    check("hello speaks protocol v9", hello.protocolVersion === 9, String(hello.protocolVersion));
+    check("hello speaks protocol v10", hello.protocolVersion === 10, String(hello.protocolVersion));
 
     // The server owns its own workspace state; the preview this test process
     // started is foreign to it, so step aside before asking it to serve.

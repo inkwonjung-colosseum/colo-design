@@ -1,5 +1,5 @@
 /**
- * REST golden pass for 개발자에게 넘기기 (PLAN D5): the client's request shapes
+ * REST golden pass for 개발자에게 넘기기 (PLAN D5[넘기기]): the client's request shapes
  * and its state mapping are checked against the recorded fixtures in
  * fixtures/github/. The fixture transport deep-equals POST/PATCH JSON bodies,
  * so consuming the whole pair set in order is also the assertion that the
@@ -95,7 +95,7 @@ test("the golden pass runs end to end, in order", async () => {
   await assert.rejects(
     () => client.getPullRequest({ ...REPO, number: 99 }),
     (error) => {
-      assert.match(error.message, /\(exit 403\)/);
+      assert.match(error.message, /GitHub 403/);
       assert.match(error.message, /Resource not accessible by personal access token/);
       assert.ok(!error.message.includes(TOKEN), "the token never reaches an error message");
       return true;
@@ -188,7 +188,7 @@ test("a 422 names the field GitHub complained about", async () => {
         title: "회원 관리 기획서",
         body: "본문",
       }),
-    /개발자에게 넘기기 실패 \(exit 422\): Validation Failed — A pull request already exists/,
+    /개발자에게 넘기기에 실패했습니다 — GitHub 422: Validation Failed — A pull request already exists/,
   );
 });
 

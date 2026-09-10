@@ -349,19 +349,19 @@ async function main() {
     // judged on, and it should show what a planner sees, not the fold.
     await card.getByRole("button", { name: "접기" }).click();
 
-    // The strip is the one place a planner navigates by reading, so a thread
+    // The tree is the one place a planner navigates by reading, so a thread
     // the TOOL opened is named after their 기획서 — never after the bundle this
     // app composed, and never after its card marker.
     // (A thread the tool OPENS is named at create time — ui-editor-e2e covers
     // that. Here the pins landed in a thread that already existed, so what
     // matters is that the bundle did not rename it.)
-    const commentTab = await page.locator(".sessiontab--on").innerText();
+    const commentLeaf = await page.locator(".leaf--active").innerText();
     check(
       "a machine-authored turn never names the thread it lands in",
-      !commentTab.includes("cds-design:") &&
-        !commentTab.includes("화면 수정 요청") &&
-        !commentTab.includes("member/MemberList"),
-      commentTab.split("\n").join(" "),
+      !commentLeaf.includes("cds-design:") &&
+        !commentLeaf.includes("화면 수정 요청") &&
+        !commentLeaf.includes("member/MemberList"),
+      commentLeaf.split("\n").join(" "),
     );
 
     // Pins stay while the turn runs (the slow stub keeps the session live)…
@@ -378,7 +378,7 @@ async function main() {
     // --- 넘기기 전 점검 (PLAN D5): one plain Korean turn into the CURRENT
     // thread — the tool never judges spec coverage itself, and the 기획서 is
     // already in the thread's specs/, so Claude is the one who reads it.
-    await page.locator(".screenpanel__bar").getByRole("button", { name: "넘기기 전 점검" }).click();
+    await page.locator(".stepper").getByRole("button", { name: "넘기기 전 점검" }).click();
     await waitFor(() => {
       echo = inbox.find(
         (m) =>
@@ -407,11 +407,12 @@ async function main() {
     );
 
     // The finished mark is for a turn that ended somewhere the planner was
-    // NOT looking (PLAN D2). These settled in the open tab, under their
-    // eyes, so marking them would be telling them what they just watched.
+    // NOT looking (PLAN D2). These settled in the open conversation, under
+    // their eyes, so marking them would be telling them what they just
+    // watched.
     check(
-      "the tab the planner is reading gets no finished mark",
-      (await page.locator(".sessiontab .dot--done").count()) === 0,
+      "the conversation the planner is reading gets no finished mark",
+      (await page.locator(".leaf .leaf__dot--done").count()) === 0,
     );
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({ path: join(here, "ui-comments-e2e.png"), fullPage: true });

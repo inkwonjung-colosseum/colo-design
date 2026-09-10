@@ -1,11 +1,11 @@
 /**
  * Onboarding (DESIGN §8, reshaped by PLAN M1, D6, and the GitHub-token pass):
- * the three machine-wide gates a first run answers once — Claude Code, git,
- * and the GitHub token whose repo list the project picker shows.
+ * the four machine-wide gates a first run answers once — Claude Code, git,
+ * Node·pnpm, and the GitHub token whose repo list the project picker shows.
  *
- * Which repo a planner works on is deliberately NOT here (PLAN D12): a
- * project is added from the workspace itself, and the clone's own
- * `repo.status` says where a bring-up stands. The wizard ends at the third
+ * Which repo a planner works on is deliberately NOT here (PLAN D12[게이트 아님]):
+ * a project is added from the workspace itself, and the clone's own
+ * `repo.status` says where a bring-up stands. The wizard ends at the GitHub
  * gate.
  *
  * Gate semantics: `fail` blocks the workspace; `warn` (an API key shadowing
@@ -126,7 +126,7 @@ function gitMissing(): OnboardingStep {
 const MIN_NODE_MAJOR = 22;
 
 /**
- * The runtime gate (PLAN D5). It reads the same PATH the repo's install ·
+ * The runtime gate (PLAN D5[런타임 게이트]). It reads the same PATH the repo's install ·
  * preview · build children get — `CDS_DESIGN_EXTRA_PATH`, the desktop app's
  * bundled runtime, first — because that is the node that will actually run,
  * and a pass here names it ("앱에 포함됨"). pnpm resolves through the same
@@ -210,7 +210,7 @@ async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
   return pass("github", `GitHub @${me.login} 로 연결됨`);
 }
 
-// The project is NOT a gate (PLAN D12): which repo a planner works on is
+// The project is NOT a gate (PLAN D12[게이트 아님]): which repo a planner works on is
 // picked in the workspace, and its clone reports its own progress through
 // `repo.status` — a second judgement here would say the same thing twice
 // and hold the whole product behind it.

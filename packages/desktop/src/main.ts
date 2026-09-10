@@ -2,14 +2,23 @@ import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  nativeImage,
+  Notification,
+  safeStorage,
+  screen,
+  shell,
+} from "electron";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer } from "@cds-design/daemon/server";
 import { RELEASES_FEED_URL, checkForUpdate } from "@cds-design/protocol";
 import { CDS_DESIGN_DIR } from "@cds-design/daemon/environment";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 import { planSelfUpdate, verifyDownload } from "./mac-self-update.js";
-import type { DaemonNotice } from "@cds-design/daemon/server";
+import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@cds-design/daemon/server";
 import { noticeCopy } from "./notices.js";
 
 /**
@@ -21,6 +30,9 @@ import { noticeCopy } from "./notices.js";
  * - 자격 증명은 safeStorage 저장소를 데몬에 주입한다.
  * - 번들 런타임(포터블 node·pnpm, win 은 MinGit)이 resources 에 있으면
  *   CDS_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo.ts 가 PATH 앞에 붙인다).
+ * - Claude 의 미리보기 창(PLAN D61 · D63)도 여기서 산다 — 숨은 오프스크린
+ *   `BrowserWindow` 가 데몬의 `previewDriverFactory` 로 들어가고, paint 는
+ *   PiP 프레임으로 렌더러에 흐른다.
  */
 
 let mainWindow: BrowserWindow | null = null;
@@ -32,7 +44,212 @@ let appUrl: string | null = null;
  */
 let unreadNotices = 0;
 
-app.whenReady().then(async () => {
+// ---------------------------------------------------------------------------
+// Claude 의 미리보기 드라이버 (PLAN D61 · D63)
+// ---------------------------------------------------------------------------
+
+/** 캡처의 원본 해상도 — 도구가 긴 변 900px 로 줄여 준다. */
+const PREVIEW_WINDOW_SIZE = { width: 1280, height: 800 };
+/** PiP 프레임 스로틀 (PLAN D63): 8fps. */
+const PIP_FRAME_INTERVAL_MS = 125;
+const PIP_LONG_EDGE = 640;
+
+/**
+ * 숨은 오프스크린 `BrowserWindow` 하나가 Claude 전용 브라우저다. 그리기는
+ * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`,
+ * 접근성 트리는 `Accessibility.getFullAXTree`, 클릭은 `Runtime.evaluate` 로
+ * 찾은 rect 위에 `Input.dispatchMouseEvent`. 창은 화면에 뜨지 않는다 —
+ * 보이는 창은 기획자의 것뿐이다.
+ */
+class ElectronPreviewDriver implements PreviewDriver {
+  private window: BrowserWindow | null = null;
+  private readonly consoleHistory: Array<{ level: string; text: string }> = [];
+  private lastFrameSent = 0;
+
+  constructor(private readonly baseUrl: string) {}
+
+  private async ensureWindow(): Promise<BrowserWindow> {
+    if (this.window && !this.window.isDestroyed()) return this.window;
+    if (this.window && !this.window.isDestroyed()) return this.window;
+    const window = new BrowserWindow({
+      show: false,
+      ...PREVIEW_WINDOW_SIZE,
+      webPreferences: {
+        offscreen: true,
+        partition: "preview-claude",
+        sandbox: true,
+        contextIsolation: true,
+      },
+    });
+    const contents = window.webContents;
+    contents.debugger.attach("1.3");
+    // consoleAPICalled 은 Runtime 도메인을 켜야 흐른다.
+    contents.debugger.sendCommand("Runtime.enable", {});
+    // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다 — level 2=warn, 3=error.
+    contents.on(
+      "console-message",
+      (_event, level: number | string, message: string) => {
+        const name =
+          typeof level === "number" ? (["verbose", "info", "warn", "error"][level] ?? "log") : String(level);
+        this.consoleHistory.push({ level: name, text: String(message) });
+      },
+    );
+    contents.on("paint", (_details, _rect, image) => {
+      const now = Date.now();
+      if (now - this.lastFrameSent < PIP_FRAME_INTERVAL_MS) return;
+      this.lastFrameSent = now;
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const size = image.getSize();
+      const scale = Math.min(1, PIP_LONG_EDGE / Math.max(size.width, size.height));
+      const shrunk =
+        scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
+      mainWindow.webContents.send("cds-preview:frame", shrunk.toJPEG(60).toString("base64"));
+    });
+    this.window = window;
+    return window;
+  }
+
+  async open(route: string, state: string | null): Promise<void> {
+    const url = new URL(route, this.baseUrl);
+    if (state) url.searchParams.set("state", state);
+    // 콘솔 기록은 화면 이동과 함께 리셋 — screen_console 의 기준점이다.
+    this.consoleHistory.length = 0;
+    const window = await this.ensureWindow();
+    await window.webContents.loadURL(url.toString());
+  }
+
+  async screenshot(): Promise<string> {
+    const window = await this.ensureWindow();
+    const result = (await window.webContents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 70,
+    })) as { data?: string };
+    if (!result?.data) throw new Error("미리보기 화면을 캡처하지 못했습니다");
+    const image = nativeImage.createFromBuffer(Buffer.from(result.data, "base64"));
+    const size = image.getSize();
+    const scale = 900 / Math.max(size.width, size.height);
+    if (scale >= 1) return result.data;
+    const longEdge = Math.round(900);
+    const shortEdge = Math.round(
+      (size.width < size.height ? size.width : size.height) * scale,
+    );
+    const resized =
+      size.width < size.height
+        ? image.resize({ width: shortEdge, height: longEdge })
+        : image.resize({ width: longEdge, height: shortEdge });
+    return resized.toJPEG(70).toString("base64");
+  }
+
+  async axTree(): Promise<string> {
+    const window = await this.ensureWindow();
+    const result = (await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree", {})) as {
+      nodes?: Array<{ role?: { type?: string }; name?: { value?: unknown } }>;
+    };
+    const lines = (result.nodes ?? [])
+      .map((node) => [node.role?.type, node.name?.value].filter(Boolean).map(String).join(" "))
+      .filter((line) => line.trim() !== "");
+    return lines.slice(0, 200).join("\n");
+  }
+
+  async click(target: { text?: string; selector?: string }): Promise<void> {
+    const window = await this.ensureWindow();
+    // 오프스크린 창은 포커스가 없어 입력이 무시될 수 있다 — 먼저 창을 살린다.
+    window.webContents.focus();
+    // 요소를 찾아(CSS 거나 보이는 글자거나 — 글자면 가장 안쪽 것) 화면 한가운데로
+    // 굴려 올린 뒤, 그 시점의 뷰포트 rect 를 돌려 받는다.
+    const find = target.selector
+      ? `(function () {
+          const el = document.querySelector(${JSON.stringify(target.selector)});
+          if (!el) return null;
+          el.scrollIntoView({ block: "center", inline: "center" });
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        })()`
+      : `(function () {
+          const needle = ${JSON.stringify(target.text ?? "")};
+          const all = Array.from(document.querySelectorAll("body *")).filter((el) =>
+            (el.textContent || "").includes(needle));
+          const el = all.find((candidate) =>
+            !all.some((other) => other !== candidate && candidate.contains(other))) || null;
+          if (!el) return null;
+          el.scrollIntoView({ block: "center", inline: "center" });
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        })()`;
+    const evaluate = () =>
+      window.webContents.debugger.sendCommand("Runtime.evaluate", {
+        expression: find,
+        returnByValue: true,
+      }) as Promise<{ result?: { value?: { x: number; y: number; width: number; height: number } } }>;
+    // 캡처 직후 등 컨텍스트가 갈아엎어지는 순간이 있다 — 한 번 더 물어본다.
+    let result = await evaluate();
+    if (!result?.result?.value) {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      result = await evaluate();
+    }
+    const rect = result?.result?.value;
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`화면에서 찾지 못했습니다: ${target.text ?? target.selector}`);
+    }
+    const x = rect.x + rect.width / 2;
+    const y = rect.y + rect.height / 2;
+    // 오프스크린 페이지는 태어나자마자 뒷전이다 — 먼저 앞으로 끌어 올린다.
+    await window.webContents.debugger.sendCommand("Page.bringToFront", {});
+    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+      button: "none",
+    });
+    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+  }
+
+  async consoleLines(): Promise<Array<{ level: string; text: string }>> {
+    return [...this.consoleHistory];
+  }
+
+  async destroy(): Promise<void> {
+    const window = this.window;
+    this.window = null;
+    if (!window || window.isDestroyed()) return;
+    try {
+      window.webContents.debugger.detach();
+    } catch {
+      // 이미 떨어져 나갔거나 창이 닫히는 중이다 — 지울 게 없을 뿐이다.
+    }
+    window.destroy();
+  }
+}
+
+/**
+ * 데몬에 주입되는 드라이버 공장. 데몬은 Electron 을 모른다 — 이 모듈만이
+ * 창을 만들고, 세션마다 하나의 숨은 창이 생긴다(PLAN D61).
+ */
+export function createPreviewDriverFactory(): PreviewDriverFactory {
+  return { for: (baseUrl) => new ElectronPreviewDriver(baseUrl) };
+}
+
+// The preview-driver unit imports this module inside its own Electron to
+// reach createPreviewDriverFactory() — the daemon boot below belongs to the
+// app entry only (PLAN D61).
+if (process.env.CDS_DESIGN_DESKTOP_UNIT !== "1") {
+  void app.whenReady().then(() => bootApp());
+}
+
+async function bootApp(): Promise<void> {
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
     safeStorage as never,
@@ -56,6 +273,8 @@ app.whenReady().then(async () => {
     token,
     webDist,
     credentialStore: credentials,
+    // Claude 의 미리보기 창 (PLAN D61): 세션에 cds-preview 도구를 단다.
+    previewDriverFactory: createPreviewDriverFactory(),
     onNotice: notifyPlanner,
   });
   await server.start();
@@ -81,7 +300,7 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void reopen(url);
   });
-});
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
@@ -138,7 +357,7 @@ function paintBadge(): void {
 }
 
 /**
- * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2). 숨긴
+ * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2[폴더 열기]). 숨긴
  * `~/.cds-design` 을 기획자가 찾아 헤매지 않게 앱이 열어 준다. 자격
  * 증명·토큰은 결코 건너가지 않는다.
  */

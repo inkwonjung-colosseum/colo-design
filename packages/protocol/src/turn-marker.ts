@@ -4,7 +4,8 @@
  *
  * Some turns in a planner's chat are not typed by the planner: a bundle of
  * comment pins, the brief that opens a 화면 thread, a 기획서 comparison, a
- * failed gate handed back to Claude. Their text is written for Claude — CSS
+ * failed gate handed back to Claude, a preview error the planner asked
+ * Claude to fix. Their text is written for Claude — CSS
  * paths, file paths, command output — and a planner reading their own chat
  * should not meet any of it.
  *
@@ -24,9 +25,12 @@
  * not a data structure.
  */
 
-export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate";
+export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error";
 
-const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "precheck", "gate"];
+/** How the preview failed: the page threw, or the dev build serving it did. */
+export type ErrorMarkerKind = "runtime" | "build";
+
+const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "precheck", "gate", "error"];
 
 /** One pinned element, as the card lists it. */
 export interface CommentMarkerItem {
@@ -61,7 +65,21 @@ export interface GateMarker {
   step: string;
 }
 
-export type TurnMarker = CommentsMarker | BriefMarker | PrecheckMarker | GateMarker;
+export interface ErrorMarker {
+  kind: "error";
+  /** The route that was up when the preview failed. */
+  route: string;
+  /** The state the screen was showing. */
+  state: string;
+  /**
+   * Runtime exception or dev build failure. The PLAN writes this payload key
+   * as `kind` — which is the marker's own discriminant here — so `hydrate`
+   * reads both spellings; `markTurn` emits `errorKind`.
+   */
+  errorKind: ErrorMarkerKind;
+}
+
+export type TurnMarker = CommentsMarker | BriefMarker | PrecheckMarker | GateMarker | ErrorMarker;
 
 export interface MarkedTurn {
   /** Null when this is an ordinary typed message. */
@@ -130,6 +148,19 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       };
     case "gate":
       return { kind, step: str(data.step) };
+    case "error": {
+      // The PLAN's literal spelling names the failure `kind` — the tag
+      // already said "error", so the payload key is free to mean runtime vs
+      // build. An unknown or missing one degrades to runtime: a card with a
+      // plausible failure beats no card at all.
+      const errorKind = str(data.errorKind) || str(data.kind);
+      return {
+        kind,
+        route: str(data.route),
+        state: str(data.state),
+        errorKind: errorKind === "build" ? "build" : "runtime",
+      };
+    }
   }
 }
 

@@ -743,6 +743,14 @@ input:focus, textarea:focus, select:focus {
 .card__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .card__reason { display: flex; gap: 8px; }
 .card__reason input { flex: 1; }
+/* 캡처 카드(PLAN D56): the picture fills the card like the preview does;
+   only the frame is shared with the permission cards. */
+.card__shot {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
 
 .question { display: flex; flex-direction: column; gap: 6px; }
 .question__header {
@@ -830,6 +838,23 @@ input:focus, textarea:focus, select:focus {
 }
 .chip .ghost { padding: 0 4px; font-size: 13px; line-height: 1; color: var(--muted); }
 .chip .ghost:hover { color: var(--danger); }
+
+/* 빠른 동작 칩(PLAN D55): a chip is a sentence waiting in the field, not a
+   send. The `.chip` frame carries over; these are buttons, so they take the
+   pointer affordance and the sans face the composer's controls use. */
+.composer__quick { padding: 2px 2px 0; }
+.composer .chip--quick {
+  cursor: pointer;
+  font: 500 11.5px var(--sans);
+  padding: 4px 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.composer .chip--quick:hover {
+  color: var(--text);
+  border-color: var(--line-hover);
+  background: var(--panel-3);
+}
 
 
 /* selector chips — model · effort · permission mode ----------------------------------*/
@@ -1127,6 +1152,22 @@ input:focus, textarea:focus, select:focus {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Claude's plan as a card (PLAN D48). The signs ✓ ● ○ do the state work, so
+   the rows stay quiet; the current item is the loud one. */
+.todo__list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.todo__item { display: flex; align-items: baseline; gap: 7px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
+.todo__item--current { color: var(--text); font-weight: 600; }
+.todo__sign { flex: none; width: 13px; text-align: center; }
+.todo--done { padding: 8px 12px; }
+.todo__done {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 12.5px var(--sans);
+  text-align: left;
+}
+.todo__done:hover { color: var(--text); }
 
 /* autocomplete ---------------------------------------------------------------*/
 
@@ -1454,6 +1495,19 @@ input:focus, textarea:focus, select:focus {
   overflow: hidden;
 }
 .sidebar--collapsed { align-items: center; }
+/* The rail (PLAN D59 rule 4): the row collapses to its dot, and a click
+   opens the conversation popover instead of activating — what the rail is
+   for survives the fold, only narrower. */
+.sidebar--collapsed .node__chev,
+.sidebar--collapsed .node__name,
+.sidebar--collapsed .node__badge,
+.sidebar--collapsed .node__add,
+.sidebar--collapsed .node__menu-btn,
+.sidebar--collapsed .node__kids,
+.sidebar--collapsed .leafwrap,
+.sidebar--collapsed .leaf--more,
+.sidebar--collapsed .leaf--empty { display: none; }
+.sidebar--collapsed .node__row { justify-content: center; padding: 9px 0; width: auto; }
 .sidebar__brand {
   display: flex;
   align-items: center;
@@ -1463,50 +1517,60 @@ input:focus, textarea:focus, select:focus {
   min-height: 40px;
 }
 .sidebar__fold { flex: none; padding: 2px 8px; font-size: 13px; }
-.sidebar__list {
+/* The tree (PLAN D59): project rows that unfold into their conversations.
+   Ported from ui-proposal.html's .tree/.node/.leaf onto this app's tokens —
+   the child rows are one 13px line of indent, and the marks are the
+   conversation's state, not the file system's. */
+.tree {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 2px 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
-.sidebar__rowwrap { position: relative; }
-.sidebar__row { display: flex; align-items: stretch; gap: 2px; }
-.sidebar__row--active .sidebar__main { background: var(--select-bg); }
-.sidebar__main {
+.node { display: flex; flex-direction: column; }
+.node__rowwrap { position: relative; display: flex; align-items: center; }
+.node__row {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 7px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
+  align-items: center;
+  gap: 7px;
+  padding: 7px 4px 7px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
   background: none;
   text-align: left;
+  width: 100%;
   cursor: pointer;
 }
-.sidebar__main:hover:not(:disabled) { background: var(--panel-3); }
-.sidebar__name {
+.node__row:hover:not(:disabled) { background: var(--panel-3); }
+.node--active .node__row { background: var(--select-bg); }
+.node__chev {
+  width: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  flex: none;
+  transition: transform 0.15s;
+}
+.node--folded .node__chev { transform: rotate(-90deg); }
+.node__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid transparent; }
+.node--active .node__dot { background: var(--accent); }
+.node__name {
+  flex: 1;
+  min-width: 0;
   font: 500 12.5px var(--sans);
   color: var(--text);
-  max-width: 100%;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.sidebar__badge { font: 500 11.5px var(--sans); color: var(--muted); }
-.sidebar__badge--working {
-  color: var(--accent);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-/* The rail's only moving part: the badge says 작업 중, the dot says live.
-   Reuses the base spinner's keyframes at badge size. */
-.sidebar__badge--working::before {
+.node__badge { font: 500 11px var(--sans); color: var(--muted); flex: none; }
+.node__badge--working { color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
+.node__badge--working::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -1517,19 +1581,26 @@ input:focus, textarea:focus, select:focus {
   border-right-color: currentColor;
   animation: spin 0.7s linear infinite;
 }
-.sidebar__badge--progress { color: var(--text-2); }
-.sidebar__menu-btn {
+.node__badge--merged { color: var(--ok); }
+.node__badge--progress { color: var(--text-2); }
+/* Hover reveals the row's two small moves: another conversation, and the
+   row menu. Focus keeps them, the way the fold button does. */
+.node__add,
+.node__menu-btn {
   flex: none;
   align-self: center;
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: 2px 5px;
+  font-size: 12px;
   color: var(--muted);
   opacity: 0;
 }
-.sidebar__row:hover .sidebar__menu-btn,
-.sidebar__menu-btn:focus-visible { opacity: 1; }
-.sidebar__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
-.sidebar__rename {
+.node__rowwrap:hover .node__add,
+.node__rowwrap:hover .node__menu-btn,
+.node__add:focus-visible,
+.node__menu-btn:focus-visible { opacity: 1; }
+.node__add:hover, .node__menu-btn:hover { color: var(--text); background: var(--panel-3); }
+.node__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
+.node__rename {
   width: 100%;
   padding: 7px 8px;
   font: 500 12.5px var(--sans);
@@ -1539,6 +1610,87 @@ input:focus, textarea:focus, select:focus {
   border-radius: var(--r-md);
   outline: none;
 }
+/* The children: one 13px indent line, a leaf per conversation. */
+.node__kids {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 3px 13px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line-soft);
+}
+.leafwrap { position: relative; display: flex; align-items: center; }
+.leaf {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  text-align: left;
+  width: 100%;
+  font: 400 12.5px var(--sans);
+  cursor: pointer;
+}
+.leaf:hover { background: var(--panel-3); color: var(--text); }
+.leaf--active { background: var(--panel-3); color: var(--text); font-weight: 600; }
+.leaf__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--line-strong); }
+.leaf--active .leaf__dot { background: var(--accent); }
+.leaf__dot--live {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  animation: spin 1.1s linear infinite;
+}
+.leaf__dot--ask { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.leaf__dot--done { width: 7px; height: 7px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.leaf__title {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.leaf__meta { font: 400 11px var(--sans); color: var(--muted); flex: none; }
+.leaf__meta--ask { color: var(--warn); font-weight: 600; }
+.leaf__meta--live { color: var(--accent); }
+.leaf--more { color: var(--muted); font-size: 12px; padding-left: 22px; flex: none; }
+.leaf--more:hover { color: var(--text); }
+.leaf--empty { margin: 2px 0 4px; padding-left: 20px; font-size: 12px; }
+.leaf__rename {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font: 500 12px var(--sans);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-hover);
+  border-radius: var(--r-sm);
+  outline: none;
+}
+.leaf__menu-btn {
+  flex: none;
+  padding: 2px 5px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0;
+}
+.leafwrap:hover .leaf__menu-btn,
+.leaf__menu-btn:focus-visible { opacity: 1; }
+.leaf__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
+.selector__row--on { background: var(--panel-2); }
+/* The rail's conversation popover (PLAN D59 rule 4): opens beside the icon,
+   floats over the workspace, closes on its own row clicks. */
+.node__pop { top: 0; left: 44px; bottom: auto; right: auto; }
 .sidebar__new {
   flex: none;
   margin: 8px;
@@ -1822,6 +1974,8 @@ input:focus, textarea:focus, select:focus {
   border-bottom: 1px solid var(--line-soft);
 }
 .preview__link {
+  cursor: pointer;
+  background: none;
   color: var(--muted);
   font: 500 11.5px var(--mono);
   text-decoration: none;
@@ -1852,6 +2006,32 @@ input:focus, textarea:focus, select:focus {
   padding: 28px;
 }
 .preview__blank h2 { margin: 0; font: 600 14px var(--sans); color: var(--text); }
+/* The error banner above the frame (PLAN D49): the title says what happened,
+   the message is clamped until 자세히 opens it. */
+.preview__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+}
+.preview__error__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.preview__error__text strong { font: 600 12.5px var(--sans); color: var(--text); }
+.preview__error__message {
+  margin: 0;
+  color: var(--text-2);
+  font: 11.5px/1.5 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.preview__error__message--open { display: block; max-height: 200px; overflow: auto; }
+.preview__error__actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 
 /* 저장 검토 -------------------------------------------------------------------*/
 
@@ -2072,69 +2252,49 @@ input:focus, textarea:focus, select:focus {
 }
 .pins__comment { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* session tab strip --------------------------------------------------------*/
-
-/* The open 기획서's threads, above the transcript. Reads as the chat column's
-   own header row: one hairline under it, the tabs themselves in the header's
-   기획/디자인 vocabulary. */
-.sessiontabs {
+/* the thread head (PLAN D59) ------------------------------------------------
+   The chat column's one header line: the conversation's name, the menu that
+   renames or archives it. Replaces the tab strip — the tree owns navigation
+   now, so the column reads as one conversation, not a row of them. */
+.thread {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 10px;
+  gap: 10px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--line-soft);
+  min-height: 44px;
   background: var(--panel);
 }
-/* Threads scroll, the two + actions never do: they must stay reachable on a
-   page that collected a dozen of them. */
-.sessiontabs__strip {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.thread__title {
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  font: 700 13.5px var(--sans);
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
 }
-.sessiontabs__strip::-webkit-scrollbar { display: none; }
-.sessiontabs__spacer { flex: 1; }
-
-.sessiontab-wrap { position: relative; flex: none; }
-.sessiontab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 210px;
-  /* right padding leaves room for the × that sits over the tab */
-  padding: 4px 24px 4px 9px;
-  font: 500 12px var(--sans);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--muted);
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
-}
-.sessiontab:hover { background: var(--panel-2); color: var(--text-2); }
-.sessiontab--on { background: var(--panel-3); color: var(--text); border-color: var(--line-hover); }
-.sessiontab__kind {
-  flex: none;
-  font: 500 10px var(--mono);
-  color: var(--muted);
-  letter-spacing: 0.04em;
-}
-.sessiontab--on .sessiontab__kind { color: var(--accent); }
-/* A tab being renamed trades its button for this field, the sidebar's
-   rename input at tab scale. Enter or blur commits, Escape walks back. */
-.sessiontab__rename {
-  width: 150px;
+.thread__spacer { flex: 1; }
+.thread__more { color: var(--muted); font-size: 12px; padding: 4px 8px; }
+.thread__more:hover { color: var(--text); background: var(--panel-3); }
+.thread__menu { top: calc(100% - 6px); bottom: auto; right: 12px; left: auto; }
+.thread__rename {
+  flex: 1;
+  min-width: 0;
+  max-width: 360px;
   padding: 4px 8px;
-  font: 500 12px var(--sans);
+  font: 600 13px var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line-hover);
   border-radius: var(--r-sm);
   outline: none;
 }
-
 /* A passed wizard step collapses to this one row: glyph · title · detail,
    with at most one inline next move on the right. */
 .onboarding__step--line {
@@ -2205,29 +2365,6 @@ input:focus, textarea:focus, select:focus {
   padding: 28px 20px;
 }
 .planner__emptyTitle { margin: 0; font: 600 17px var(--sans); color: var(--text); }
-
-/* Same affordance as a sidebar row's delete, so closing a thread is learned
-   once: hidden until the tab is hovered or the × itself takes focus. */
-.sessiontab__close {
-  position: absolute;
-  top: 50%;
-  right: 3px;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--muted);
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s, background 0.1s;
-}
-.sessiontab-wrap:hover .sessiontab__close,
-.sessiontab__close:focus-visible { opacity: 1; }
-.sessiontab__close:hover { color: var(--danger); background: var(--danger-soft); }
 
 /* ---------------------------------------------------------------- responsive */
 
@@ -2321,14 +2458,178 @@ input:focus, textarea:focus, select:focus {
   justify-content: center;
   min-height: 0;
 }
-.preview__stage--mobile {
+.preview__stage--mobile,
+.preview__stage--tablet {
   padding: 14px 0;
   background: var(--bg-2);
 }
-.preview__stage--mobile .preview__frame {
-  width: 390px;
+/* The device wrapper is what 폭 narrows (PLAN D47 — names, not emulation);
+   the frame chrome rides inside it, so the rounded frame stays whole. */
+.preview__stage--mobile .preview__device { width: 390px; }
+.preview__stage--tablet .preview__device { width: 768px; }
+.preview__stage--mobile .preview__device,
+.preview__stage--tablet .preview__device {
   flex: none;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   overflow: hidden;
+  background: #fff;
+}
+
+/* 프레임 머리 (PLAN D44 · D47): 주소가 아니라 화면 이름 · 상태. The device
+   wrapper carries the 폭 classes; the chrome rides inside it. */
+.preview__device {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+.frame__chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+  flex: none;
+}
+.frame__name {
+  flex: 1;
+  font: 500 12px var(--sans);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.frame__name b { color: var(--text-2); font-weight: 600; }
+
+/* 화면 선언이 없을 때의 선택기 자리 (PLAN D46) — 숨기지 않는다. */
+.preview__unlisted {
+  font: 500 12px var(--sans);
+  color: var(--muted);
+}
+
+/* 더 보기 ▾ (PLAN D44) — 사이클 동작이 항상 있는 자리. */
+.screenpanel__more { position: relative; display: inline-flex; }
+.screenpanel__menu { top: calc(100% - 4px); bottom: auto; right: 0; left: auto; }
+.selector__row:disabled { opacity: 0.45; cursor: default; }
+.selector__row:disabled:hover { background: transparent; }
+
+/* Claude 시점 보기(PLAN D63): the PiP rides the preview column's stage —
+   a thumbnail in the iframe's corner while Claude's driver is at work, a
+   click spreads it over the planner's iframe, and the turn's settle folds
+   it back. The browser path has no frames and renders none of this. */
+.previewcol__stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pip {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  max-width: min(300px, 62%);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.pip--large {
+  inset: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+}
+.pip__view { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.pip--large .pip__view { flex: 1; min-height: 0; display: flex; cursor: zoom-out; }
+.pip__frame { display: block; width: 100%; height: auto; }
+.pip--large .pip__frame { height: 100%; object-fit: contain; }
+.pip__label {
+  padding: 4px 8px;
+  border-top: 1px solid var(--line-soft);
+  font: 500 10.5px var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pip--large .pip__label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  border: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  max-width: calc(100% - 16px);
+}
+
+/* 스테퍼 — 주 버튼은 여기 하나 (PLAN D44 · D45). 판정은 stage.ts 의 순수
+   함수가 내리고 여기는 그릴 뿐이다. */
+.stepper {
+  border-top: 1px solid var(--line-soft);
+  padding: 13px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  background: var(--panel);
+  flex: none;
+}
+.stepper__rail { display: flex; align-items: center; }
+.step { display: flex; align-items: center; flex: 1; min-width: 0; }
+.step:last-child { flex: 0 0 auto; }
+.step__mark {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 11px var(--sans);
+  border: 1.5px solid var(--line-strong);
+  color: var(--muted);
+  background: var(--panel);
+  position: relative;
+  z-index: 1;
+}
+.step--done .step__mark { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.step--now .step__mark { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.step__label { margin-left: 8px; font: 500 12px var(--sans); color: var(--muted); white-space: nowrap; }
+.step--now .step__label { color: var(--text); font-weight: 700; }
+.step--done .step__label { color: var(--text-2); }
+.step__line { flex: 1; height: 1.5px; margin: 0 10px; background: var(--line); border-radius: 999px; position: relative; }
+.step__line::after { content: ""; position: absolute; inset: 0; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+.step--done .step__line::after { width: 100%; }
+.stepper__foot { display: flex; align-items: center; gap: 10px; }
+.stepper__foot > button { flex: none; white-space: nowrap; }
+.stepper__why {
+  font: 500 12px var(--sans);
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 1280 에서 다섯 단계가 한 줄 (목업 기준) — 여백과 글자만 조인다. */
+@media (max-width: 1280px) {
+  .stepper { padding: 10px 12px 11px; gap: 9px; }
+  .step__line { margin: 0 7px; }
+  .step__label { font-size: 11px; margin-left: 6px; }
+  .stepper__why { font-size: 11.5px; }
+}
+/* 1100 미만은 라벨을 숨기고 번호만 (PLAN D44). */
+@media (max-width: 1100px) {
+  .step__label { display: none; }
 }

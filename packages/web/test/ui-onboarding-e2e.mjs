@@ -205,9 +205,9 @@ async function main() {
       (await page.locator(".planner__project").innerText()).includes("remote"),
     );
     check(
-      "the sidebar lists the project and marks it active",
-      (await page.locator(".sidebar__row").count()) === 1 &&
-        (await page.locator(".sidebar__row--active").innerText()).includes("remote"),
+      "the tree lists the project and marks it active",
+      (await page.locator(".node").count()) === 1 &&
+        (await page.locator(".node--active").innerText()).includes("remote"),
     );
 
     // --- 5. a second project comes from the same picker, in a dialog ------
@@ -236,21 +236,22 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { state: "detached", timeout: 90000 });
     check("만들기 closes the dialog", (await page.locator('[role="dialog"]').count()) === 0);
     check(
-      "the sidebar now holds both projects, the new one active",
-      (await page.locator(".sidebar__row").count()) === 2 &&
-        (await page.locator(".sidebar__row--active").count()) === 1,
-      (await page.locator(".sidebar__name").allInnerTexts()).join(", "),
+      "the tree now holds both projects, the new one active",
+      (await page.locator(".node").count()) === 2 &&
+        (await page.locator(".node--active").count()) === 1,
+      (await page.locator(".node__name").allInnerTexts()).join(", "),
     );
 
-    // A brand new project starts with no threads: the strip says where to
-    // begin and offers the way (PLAN D3) — attach a 기획서 in the chat below.
-    const tabs = page.locator(".sessiontabs");
-    await tabs.waitFor({ timeout: 15000 });
-    const startButtons = await tabs.getByRole("button", { name: "새 대화" }).count();
+    // A brand new project starts with no threads: the tree row says where to
+    // begin and offers the way (PLAN D3/D59) — attach a 기획서 in the chat
+    // below, or press the row's ＋.
+    const tree = page.locator(".tree");
+    await tree.waitFor({ timeout: 15000 });
+    const startButtons = await tree.getByRole("button", { name: "새 대화" }).count();
     check(
       "an empty project points at the chat, with a way to start",
-      (await tabs.innerText()).includes("아래에서 새 대화를 시작해 주세요.") && startButtons >= 1,
-      `${(await tabs.innerText()).split("\n")[0] ?? ""} · ${startButtons} start button(s)`,
+      (await tree.innerText()).includes("아래에서 새 대화를 시작해 주세요.") && startButtons >= 1,
+      `${(await tree.innerText()).split("\n")[0] ?? ""} · ${startButtons} start button(s)`,
     );
 
     check(

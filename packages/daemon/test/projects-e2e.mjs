@@ -1,5 +1,5 @@
 /**
- * Projects end-to-end check, fully offline (PLAN D2).
+ * Projects end-to-end check, fully offline (PLAN D2[프로젝트]).
  *
  * This is the product claim of D2, driven over the same WebSocket the browser
  * uses, against local fixture remotes:
@@ -243,6 +243,21 @@ async function main() {
       `결제 list: ${ownList.map((entry) => entry.sessionId).join(",")}`,
     );
 
+    // --- 3.4 the tree's data rides project.changed (D59) --------------------
+    // The sidebar tree reads every project's conversations off the broadcast,
+    // so a created session must reach `project.changed.threads` — in its own
+    // project's row, in the state a fresh untitled thread earns (idle).
+    const threadRow = await waitFor(() => {
+      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+      const row = changed?.projects?.find((p) => p.slug === payments.slug);
+      return row?.threads?.some((t) => t.id === sessionId) ? row : null;
+    }, 15_000, "the session in project.changed.threads");
+    check(
+      "a created session reaches its project's threads as idle",
+      threadRow.threads.some((t) => t.id === sessionId && t.state === "idle"),
+      JSON.stringify(threadRow.threads.map((t) => [t.title, t.state])),
+    );
+
     // --- 3.5 a turn finishing OFF-SCREEN counts its OWN project (D14) -------
     // The 결제 thread runs; the planner moves to 환불 mid-turn. The stub
     // drops a file into 결제's clone, and when the turn ends the recount
@@ -273,10 +288,36 @@ async function main() {
       offscreenChanged?.pendingChanges > 0,
       `결제 pendingChanges=${offscreenChanged?.pendingChanges}`,
     );
+
+    // The tree's state follows (D59): the turn ended and nothing followed it
+    // — exactly what a child row's `답이 왔습니다` ring means.
+    const settledRow = await waitFor(() => {
+      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+      const row = changed?.projects?.find((p) => p.slug === payments.slug);
+      return row?.threads?.some((t) => t.id === sessionId && t.state === "finished") ? row : null;
+    }, 30_000, "the finished thread state");
+    check(
+      "a turn that ended off-screen settles its thread to finished",
+      settledRow.threads.every((t) => t.id !== sessionId || t.state === "finished"),
+      JSON.stringify(settledRow.threads.map((t) => [t.title, t.state])),
+    );
     await turnPromise;
+
 
     // --- 3.6 a removal closes the clone's live threads (D21) ----------------
     const refundSession = await request({ type: "session.create" });
+    // 환불's own thread must show in 환불's threads — and 결제's must not
+    // bleed across (D59: the tree shows every project, each with its own).
+    const refundThreadsRow = await waitFor(() => {
+      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+      const row = changed?.projects?.find((p) => p.slug === refunds.slug);
+      return row?.threads?.some((t) => t.id === refundSession.sessionId) ? row : null;
+    }, 15_000, "the 환불 thread in its project's threads");
+    check(
+      "each project's threads list only its own conversations",
+      refundThreadsRow.threads.every((t) => t.id !== sessionId),
+      JSON.stringify(refundThreadsRow.threads.map((t) => t.id)),
+    );
     const closedEvents = [];
     const onStateMessage = (raw) => {
       const message = JSON.parse(String(raw));

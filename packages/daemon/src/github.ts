@@ -1,5 +1,5 @@
 /**
- * GitHub REST client: 개발자에게 넘기기 (PLAN D5), the onboarding `github`
+ * GitHub REST client: 개발자에게 넘기기 (PLAN D5[넘기기]), the onboarding `github`
  * gate, and the project picker's repo list. Credentials plus an injected
  * RestTransport: no code path here talks to anything but the transport it
  * was given, so the offline suites drive the real client against recorded
@@ -556,5 +556,7 @@ function httpError(label: string, status: number, body: Uint8Array): string {
   } catch {
     // Not JSON (a proxy's html error page); the first line is the best we have.
   }
-  return `${label} 실패 (exit ${status}): ${message}`;
+  // PLAN D36: the lead is the planner's sentence; GitHub's own words ride
+  // after the dash for whoever debugs it.
+  return `${label}에 실패했습니다 — GitHub ${status}: ${message}`;
 }

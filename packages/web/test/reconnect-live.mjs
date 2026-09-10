@@ -60,7 +60,7 @@ await page.goto("http://127.0.0.1:5273/");
 await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(url);
 await page.getByRole("button", { name: "연결" }).click();
 await page.waitForSelector(".planner", { timeout: 15000 });
-await page.waitForSelector(".sessiontab", { timeout: 30000 });
+await page.waitForSelector(".leaf", { timeout: 30000 });
 check("connected and sessions listed", true);
 
 // --- kill the daemon under the live tab -----------------------------------
@@ -98,17 +98,21 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 check("connection returns to open without a reload", true);
-await page.waitForSelector(".sessiontab", { timeout: 20000 });
-check("session list repopulates after reconnect", true);
+await page.waitForSelector(".tree", { timeout: 20000 });
+await page.waitForSelector(".leaf", { timeout: 20000 });
 
-// --- RPCs work again: delete through the UI ------------------------------
-const tabWrap = page.locator(".sessiontab-wrap").first();
-await tabWrap.hover();
-await tabWrap.locator(".sessiontab__close").click();
-await page.waitForFunction(() => !document.querySelector(".sessiontab"), undefined, {
-  timeout: 15000,
-});
-check("session delete works after reconnect", true);
+// --- RPCs work again: archive through the tree ----------------------------
+const leafRow = page.locator(".leafwrap").first();
+const leavesBefore = await page.locator(".leafwrap").count();
+await leafRow.hover();
+await leafRow.locator(".leaf__menu-btn").click();
+await leafRow.getByRole("menuitem", { name: "보관" }).click();
+await page.waitForFunction(
+  (before) => document.querySelectorAll(".leafwrap").length === before - 1,
+  leavesBefore,
+  { timeout: 15000 },
+);
+check("session archive works after reconnect", true);
 
 check("no console or page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
 

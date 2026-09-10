@@ -23,6 +23,7 @@ import type {
 } from "@cds-design/protocol";
 import { readTurn } from "@cds-design/protocol";
 import { saveSpecFiles, type SpecFile } from "./repo.js";
+import type { PreviewTools } from "./preview-tools.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { MessageTranslator } from "./translate.js";
 
@@ -154,6 +155,14 @@ export interface SessionOptions {
   model?: string;
   /** Reasoning effort the query starts on; omitted = CLI default. */
   effort?: EffortLevel;
+  /**
+   * The `cds-preview` in-process MCP server (PLAN D61), or null when the
+   * daemon runs without a preview driver or the planner turned the tools
+   * off. The session only carries it: the capture quota resets here at turn
+   * starts, and its lifetime (destroy) belongs to whoever injected the
+   * driver.
+   */
+  previewTools?: PreviewTools | null;
 }
 
 /**
@@ -183,6 +192,7 @@ export class Session {
   title: string;
 
   private readonly writePolicy: WritePolicy;
+  private readonly previewTools: PreviewTools | null;
 
   private readonly queue = new PushQueue();
   private readonly alwaysAllowed = new PermissionMemory();
@@ -208,6 +218,7 @@ export class Session {
       options.writePolicy ?? ((path) => (containsPath(this.cwd, path) ? "allow" : "ask"));
     this.selectedModel = options.model ?? null;
     this.selectedEffort = options.effort ?? null;
+    this.previewTools = options.previewTools ?? null;
 
     // `sessionId` lets us name the session up front. Without it the id only
     // arrives with the init event, which the CLI does not emit until the first
@@ -240,6 +251,11 @@ export class Session {
         // Load the same user/project configuration the terminal would, so
         // CLAUDE.md, skills, and permission rules behave identically.
         settingSources: ["user", "project", "local"],
+        // The preview tools ride the query as an in-process MCP server
+        // (PLAN D61), keyed by the server's own name.
+        ...(this.previewTools
+          ? { mcpServers: { [this.previewTools.name]: this.previewTools.config } }
+          : {}),
         // A fresh query starts on the chips' choices; mid-session switches
         // go through the control methods below instead.
         ...(options.model ? { model: options.model } : {}),
@@ -306,6 +322,12 @@ export class Session {
     input: Record<string, unknown>,
     opts: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
   ): Promise<PermissionResult> {
+    // The preview tools are the daemon's own in-process server (PLAN D61):
+    // they only look at the hidden preview window, so they never surface as
+    // cards — and they must not fall through to the edit-tool branch either.
+    if (toolName.startsWith("mcp__cds-preview__")) {
+      return Promise.resolve({ behavior: "allow", updatedInput: input });
+    }
     if (EDIT_TOOLS.has(toolName)) {
       const paths = [input.file_path, input.notebook_path].filter(
         (value): value is string => typeof value === "string" && value.length > 0,
@@ -465,6 +487,8 @@ export class Session {
     files?: SpecFile[],
   ): void {
     if (this.closed) throw new Error("session is closed");
+    // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
+    this.previewTools?.resetTurnQuota();
     // Documents go to disk and reach Claude as `@specs/…` mentions: its Read
     // tool handles PDF page ranges and image downscaling, and the clone keeps
     // the source document for later sessions.

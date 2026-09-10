@@ -356,7 +356,7 @@ test("the git candidate list covers the installers per platform", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Node · pnpm — the runtime gate (PLAN D5)
+// Node · pnpm — the runtime gate (PLAN D5[런타임 게이트])
 // ---------------------------------------------------------------------------
 
 /** A fake node that answers `--version` with the given line. */

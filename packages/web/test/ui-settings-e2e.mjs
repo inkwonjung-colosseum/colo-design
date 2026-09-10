@@ -75,6 +75,12 @@ async function main() {
         groups.length === 6,
       groups.join(", "),
     );
+    // PLAN D39: the word belongs to the program, not the planner's settings —
+    // the diagnostics fold (where a developer debugs) is the only home left.
+    check(
+      "the planner's settings never say 데몬",
+      !(await page.locator('[role="dialog"][aria-label="설정"]').innerText()).includes("데몬"),
+    );
     // No daemon yet, so the repo fields wait for one instead of pretending.
     // No daemon yet: the GitHub token form and the repo url field wait for
     // one instead of pretending.
@@ -184,12 +190,12 @@ async function main() {
     check(
       "connection details sit behind a fold",
       (await page.locator(".settings__fold").count()) === 1 &&
-        (await page.getByLabel("데몬 접속 주소").isVisible()) === false,
+        (await page.getByLabel("접속 주소").isVisible()) === false,
     );
     await page.locator(".settings__fold > summary").click();
     check(
       "opening the fold reveals them",
-      (await page.getByLabel("데몬 접속 주소").isVisible()) === true,
+      (await page.getByLabel("접속 주소").isVisible()) === true,
     );
 
     // 8. a stored blob that is not a legal Settings must not brick the app.

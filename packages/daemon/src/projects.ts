@@ -1,5 +1,5 @@
 /**
- * Projects (PLAN D2): one project is one connected repo. It is the unit
+ * Projects (PLAN D2[프로젝트]): one project is one connected repo. It is the unit
  * everything else is scoped to — the clone Claude edits, the preview server
  * that runs, and (because the Agent SDK stores transcripts per directory) the
  * session list.
@@ -17,10 +17,10 @@ import { CONFIG_DIR, CDS_DESIGN_DIR } from "./environment.js";
 
 export interface ProjectRepo {
   url: string | null;
-  /** What a handoff PR targets (PLAN D5). `main` unless the repo says otherwise. */
+  /** What a handoff PR targets (PLAN D5[넘기기]). `main` unless the repo says otherwise. */
   baseBranch: string;
   /**
-   * The open work cycle (PLAN D5): the branch 저장 pushes to and the pull
+   * The open work cycle (PLAN D5[넘기기]): the branch 저장 pushes to and the pull
    * request a developer received. It lives in the registry rather than in the
    * clone because a re-clone must not lose track of a PR somebody is already
    * reviewing, and because the UI has to show 넘김/반영됨 before the repo

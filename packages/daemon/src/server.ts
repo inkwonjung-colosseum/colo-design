@@ -8,6 +8,7 @@ import {
   parseClientMessage,
   type ClientMessage,
   type GitHubRepoList,
+  type HandoffShot,
   type PlanUsage,
   type ProjectSummary,
   type SessionModelInfo,
@@ -18,6 +19,7 @@ import { SessionManager } from "./session-manager.js";
 import { NEW_SESSION_TITLE } from "./session.js";
 import { repoWritePolicy } from "./workspaces.js";
 import { RepoWorkspace, trustWorkspace } from "./repo.js";
+import { readComments, recordComments, resolveComment } from "./comments.js";
 import { GitHubClient, createGitHubTransport } from "./github.js";
 import { ProjectRegistry, type ProjectPaths } from "./projects.js";
 import {
@@ -45,6 +47,18 @@ import {
   migrateHomeDir,
   CONFIG_DIR,
 } from "./environment.js";
+import {
+  createPreviewTools,
+  type PreviewDriver,
+  type PreviewDriverFactory,
+  type PreviewScreenDeclaration,
+  type PreviewTools,
+} from "./preview-tools.js";
+
+// The desktop builds its driver against these (PLAN D61) — exported here so
+// `@cds-design/daemon/server` stays the one import a host needs.
+export type { PreviewDriver, PreviewDriverFactory } from "./preview-tools.js";
+
 interface ProjectWorkspaces {
   slug: string;
   paths: ProjectPaths;
@@ -135,6 +149,13 @@ export interface DaemonConfig {
    * either way.
    */
   onMigrationWarning?: (warning: string) => void;
+  /**
+   * The desktop's offscreen-window driver (PLAN D61). When a host injects
+   * it, sessions of a project whose preview server is up get the
+   * `cds-preview` tools; without it — the browser dev path — sessions run
+   * exactly as before, with no preview tools at all.
+   */
+  previewDriverFactory?: PreviewDriverFactory;
 }
 
 export class DaemonServer {
@@ -164,8 +185,28 @@ export class DaemonServer {
   private models: SessionModelInfo[] = this.loadModels();
   private wss: WebSocketServer | null = null;
   private claudeExecutable: string | null = null;
+  /**
+   * How many 화면 turns each session has started (PLAN D52). The number is
+   * the checkpoint ref's `<turn>` — a turn's snapshot is the worktree as it
+   * stood the moment that turn was handed over. Daemon memory is the right
+   * home: the refs themselves survive in git, and a restart only means the
+   * count starts over on an unused number.
+   */
+  private readonly checkpointTurns = new Map<string, number>();
   /** Account-wide plan limits: last reading, restored across restarts. */
   private planUsage: PlanUsage | null = this.loadPlanUsage();
+  /**
+   * The preview driver each session received (PLAN D61), so its window can
+   * die with the session, the project switch, or the daemon itself.
+   */
+  private readonly previewDrivers = new Map<string, PreviewDriver>();
+  /**
+   * The connected repo's declared screens (the `cds-design.screens`
+   * envelope's cache, PLAN D7) — the list `screen_list` serves. The web UI
+   * holds the same list today; the daemon's copy fills when the overlay
+   * bridge lands. Read on every call, never snapshotted into the tools.
+   */
+  private previewScreens: PreviewScreenDeclaration[] = [];
 
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
@@ -183,12 +224,22 @@ export class DaemonServer {
         if (state !== "running") {
           void this.workspaceOfSession(sessionId)?.repo.refreshPendingChanges();
         }
+        // The tree's child row reads this session's state (PLAN D59): the
+        // clone's threads are stale the moment it moves.
+        const sessionWorkspaces = this.workspaceOfSession(sessionId);
+        if (sessionWorkspaces) {
+          this.manager.invalidateThreads(realpathBestEffort(sessionWorkspaces.paths.repoRoot));
+          this.refreshThreads();
+        }
         const notice = noticeForState(
           sessionId,
           state,
           this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
         );
         if (notice) this.config.onNotice?.(notice);
+        // The driver a session received dies with the session (PLAN D61):
+        // close, delete, remove, and daemon stop all land here as `closed`.
+        if (state === "closed") this.destroyPreviewDriver(sessionId);
       },
       onPermissionRequest: (payload) =>
         this.broadcast({ type: "permission.request", ...payload }),
@@ -239,14 +290,20 @@ export class DaemonServer {
     // activation above already did. Clones re-arm their trust entry too: the
     // ~/.cds-design migration renamed every clone path, and trust is keyed
     // by path.
+    const sweeps: Array<Promise<unknown>> = [];
     for (const project of this.registry.list()) {
       const workspaces = this.workspacesFor(project.slug);
       workspaces.repo.setPat(this.pat);
       if (workspaces.repo.isCloned()) {
         trustWorkspace(workspaces.paths.repoRoot);
-        void workspaces.repo.refreshPendingChanges().catch(() => undefined);
+        // Awaited, not fired-and-forgotten: the first announce and every
+        // client's first status read must see the counted clone, or a
+        // restart blanks the counts for exactly the moment the tree also
+        // starts scanning (PLAN D18/D59).
+        sweeps.push(workspaces.repo.refreshPendingChanges().catch(() => undefined));
       }
     }
+    await Promise.all(sweeps);
     if (this.registry.list().length > 0) this.announceProjects();
 
     this.http = createServer((req, res) => {
@@ -325,7 +382,7 @@ export class DaemonServer {
   }
 
   // -------------------------------------------------------------------------
-  // Projects (PLAN D2): what "the repo" currently means
+  // Projects (PLAN D2[프로젝트]): what "the repo" currently means
   // -------------------------------------------------------------------------
 
   /**
@@ -351,9 +408,11 @@ export class DaemonServer {
         cycle: { branch: repo.branch, handoff: repo.handoff },
         onCycleChange: (cycle) => this.registry.setCycle(slug, cycle),
         gitHubClient: () => this.gitHubClient(),
+        // The summarizer's one turn rides the same CLI the sessions do
+        // (PLAN D51) — one login, one resolution, no second source of truth.
+        claudeExecutable: this.claudeExecutable,
         onUrlChange: (url) => this.registry.update(slug, { repoUrl: url }),
         onStatus: (status) => {
-          // The sidebar badge (PLAN D16/D17) lives on `project.changed`, so
           // ANY workspace's phase or count movement re-announces the whole
           // registry, throttled. The typed `repo.status` stream stays the
           // active project's only — a background clone finishing must not
@@ -406,6 +465,11 @@ export class DaemonServer {
     return (this.registry?.list() ?? []).map((project) => {
       const workspaces = this.workspaces.get(project.slug);
       const repo = workspaces?.repo;
+      // The tree's children come from the per-clone cache (PLAN D59); a clone
+      // the daemon has not scanned yet omits the field rather than claiming
+      // an empty conversation list.
+      const cwd = workspaces?.repo.isCloned() ? realpathBestEffort(workspaces.paths.repoRoot) : null;
+      const threads = cwd ? this.manager.cachedThreads(cwd) : null;
       return {
         slug: project.slug,
         name: project.name,
@@ -417,6 +481,7 @@ export class DaemonServer {
         pendingChanges: repo?.pendingChangeCount ?? 0,
         working: repo ? this.manager.anyRunning(realpathBestEffort(workspaces.paths.repoRoot)) : false,
         handoff: repo?.currentHandoff ?? project.repo.handoff,
+        ...(threads ? { threads } : {}),
       };
     });
   }
@@ -444,6 +509,136 @@ export class DaemonServer {
       projects: this.projectSummaries(),
       activeSlug: this.registry.activeSlug(),
     });
+    // The tree rides the same message (PLAN D59); a scan that lands something
+    // new announces once more and the key compare below stops the loop.
+    this.refreshThreads();
+  }
+
+  /** The last threads each project announced with, as JSON — the guard that
+   * keeps refreshThreads from announcing unchanged pictures forever. */
+  private readonly announcedThreads = new Map<string, string>();
+  /**
+   * Scan every cloned project's threads off the announce path. A clone whose
+   * cache a session event just marked stale rescans here; the rest re-merge
+   * live state only. The result goes out through the throttled announce, so
+   * bursts land as one `project.changed` (PLAN D17).
+   */
+  private refreshThreads(): void {
+    for (const project of this.registry?.list() ?? []) {
+      const workspaces = this.workspaces.get(project.slug);
+      if (!workspaces?.repo.isCloned()) continue;
+      const cwd = realpathBestEffort(workspaces.paths.repoRoot);
+      void this.manager
+        .refreshThreads(cwd)
+        .then((threads) => {
+          const key = JSON.stringify(threads);
+          if (this.announcedThreads.get(project.slug) === key) return;
+          this.announcedThreads.set(project.slug, key);
+          this.announceProjectsThrottled();
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  /**
+   * A session lifecycle message (close · delete) touched one clone's
+   * conversations (PLAN D59). The session is already gone from the live map
+   * by the time this runs, so the caller hands the cwd it resolved first.
+   */
+  private touchThreadsCwd(cwd: string | null | undefined): void {
+    if (!cwd) return;
+    this.manager.invalidateThreads(cwd);
+    this.refreshThreads();
+  }
+
+  // -------------------------------------------------------------------------
+  // Preview tools (PLAN D61) — the desktop's driver, one per session
+  // -------------------------------------------------------------------------
+
+  /**
+   * The session options' preview half: a `cds-preview` tool set bound to the
+   * active project's preview url, when a driver is injected, the preview
+   * server is up, and the planner has not turned the tools off. Everything
+   * else — no desktop, no preview yet, `previewTools: false` — is a session
+   * without them.
+   */
+  private async previewToolsFor(
+    enabled: boolean,
+  ): Promise<{ tools: PreviewTools; driver: PreviewDriver } | null> {
+    const factory = this.config.previewDriverFactory;
+    if (!factory || !enabled) return null;
+    const active = this.activeOrNull();
+    if (!active?.repo.isCloned()) return null;
+    const status = await active.repo.status().catch(() => null);
+    if (!status?.previewUrl) return null;
+    const driver = factory.for(status.previewUrl);
+    const tools = createPreviewTools(driver, () => this.previewScreens);
+    if (!tools) {
+      // A driver that never got tools must not leave a window behind.
+      await driver.destroy().catch(() => undefined);
+      return null;
+    }
+    return { tools, driver };
+  }
+
+  /** The session's driver dies with the session (PLAN D61). */
+  private destroyPreviewDriver(sessionId: string): void {
+    const driver = this.previewDrivers.get(sessionId);
+    if (!driver) return;
+    this.previewDrivers.delete(sessionId);
+    void driver.destroy().catch(() => undefined);
+  }
+
+  /**
+   * 넘기기의 화면 캡처 (PLAN D56): each declared screen·state, opened in the
+   * preview driver and captured. Desktop only — the browser dev path has no
+   * driver — and every failure is quiet: a capture that will not come back
+   * simply is not in the set, and an empty set means the pull request body
+   * carries no `### 화면 미리보기` section at all.
+   */
+  private async captureHandoffShots(): Promise<HandoffShot[]> {
+    const factory = this.config.previewDriverFactory;
+    const active = this.activeOrNull();
+    if (!factory || !active?.repo.isCloned()) return [];
+    // The repo's refusal is also read at commit time (repo.ts); checking here
+    // spares the window the drive through every screen.
+    if (active.repo.cdsDesign()?.shots === false) return [];
+    const status = await active.repo.status().catch(() => null);
+    if (!status?.previewUrl || this.previewScreens.length === 0) return [];
+    const driver = factory.for(status.previewUrl);
+    const shots: HandoffShot[] = [];
+    try {
+      for (const screen of this.previewScreens) {
+        // A screen that declares no states still has its default look.
+        const states = screen.states.length > 0 ? screen.states : ["default"];
+        for (const state of states) {
+          try {
+            await driver.open(screen.route, state);
+            shots.push({
+              route: screen.route,
+              state,
+              png: Buffer.from(await driver.screenshot(), "base64"),
+            });
+          } catch {
+            // One screen failing must not sink the rest of the set.
+          }
+        }
+      }
+    } finally {
+      await driver.destroy().catch(() => undefined);
+    }
+    return shots;
+  }
+
+  /**
+   * Every driver rooted at a clone dies when that clone's preview does — a
+   * project switch stops the outgoing server, and the sessions left behind
+   * would otherwise point their windows at a dead port.
+   */
+  private destroyPreviewDriversWhere(cwd: string): void {
+    for (const session of this.manager.all()) {
+      if (session.cwd === cwd) this.destroyPreviewDriver(session.id);
+    }
   }
 
   /**
@@ -480,7 +675,12 @@ export class DaemonServer {
     const switching = current?.slug !== slug;
 
     if (switching) {
-      if (current) await current.repo.stop();
+      if (current) {
+        await current.repo.stop();
+        // The outgoing clone's preview just went down — its sessions'
+        // drivers would point their windows at a dead port (PLAN D61).
+        this.destroyPreviewDriversWhere(realpathBestEffort(current.paths.repoRoot));
+      }
       // Before the workspaces are built: `paths()` resolves the environment
       // overrides against the ACTIVE project, so a workspace built a moment
       // too early would cache the wrong roots for the rest of the run.
@@ -611,6 +811,10 @@ export class DaemonServer {
 
   private async status() {
     const active = this.activeOrNull();
+    // D55: the repo's own rows ride hello·status; the tool's built-in five
+    // are the web's, so an undeclaring repo sends nothing at all — not an
+    // empty list the composer would have to know means "ignore me".
+    const quickActions = active?.repo.cdsDesign()?.quickActions;
     return {
       ...(await buildStatus({
         executable: this.claudeExecutable,
@@ -621,6 +825,7 @@ export class DaemonServer {
       })),
       planUsage: this.planUsage,
       models: this.models,
+      ...(quickActions && quickActions.length > 0 ? { quickActions } : {}),
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,
     };
@@ -758,6 +963,11 @@ export class DaemonServer {
         if (!existsSync(this.repo.root)) {
           throw new Error("연결 레포가 아직 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
         }
+        // The preview tools ride the session when a driver is injected and
+        // the active preview is up (PLAN D61); `previewTools: false` opts
+        // out. The driver is remembered under the session's own id so the
+        // lifecycle hooks above can destroy it.
+        const preview = await this.previewToolsFor(message.previewTools !== false);
         const session = this.manager.create({
           cwd: this.workspaceCwd(),
           claudeExecutable: this.claudeExecutable,
@@ -766,12 +976,17 @@ export class DaemonServer {
           ...(message.resume ? { resume: message.resume } : {}),
           ...(message.model ? { model: message.model } : {}),
           ...(message.effort ? { effort: message.effort } : {}),
+          ...(preview ? { previewTools: preview.tools } : {}),
         });
+        if (preview) this.previewDrivers.set(session.id, preview.driver);
         // A session start is the moment the 화면 half goes back to the remote.
         // Mid-cycle that is a merge of the developer's base branch, and a
         // conflict lands as this session's first task — which is why it runs
         // after the session exists, and without blocking on it.
         void this.repo.pull((brief) => this.manager.get(session.id)?.send(brief));
+        // The tree gains a child row (PLAN D59).
+        this.manager.invalidateThreads(session.cwd);
+        this.refreshThreads();
         return { sessionId: session.id, state: session.state };
       }
 
@@ -783,6 +998,14 @@ export class DaemonServer {
         if (target.cwd !== this.workspaceCwd()) {
           throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 보내 주세요.");
         }
+        // 화면 턴의 시작점 (PLAN D52): the turn is what a planner may want
+        // to step back from, so the worktree is snapshotted the moment this
+        // turn is handed over. The snapshot must never hold the turn
+        // hostage — a failed checkpoint only means one fewer 되돌리기, so
+        // it runs alongside and keeps its failure to itself.
+        const turn = (this.checkpointTurns.get(message.sessionId) ?? 0) + 1;
+        this.checkpointTurns.set(message.sessionId, turn);
+        void this.repo.checkpoint(message.sessionId, turn).catch(() => undefined);
         target.send(message.text, message.images, message.files);
         return { ok: true };
       }
@@ -791,13 +1014,18 @@ export class DaemonServer {
         await this.manager.require(message.sessionId).interrupt();
         return { ok: true };
 
-      case "session.close":
+      case "session.close": {
+        const cwd = this.manager.get(message.sessionId)?.cwd;
         await this.manager.close(message.sessionId);
+        this.touchThreadsCwd(cwd);
         return { ok: true };
-
-      case "session.delete":
-        await this.manager.remove(message.sessionId, await this.resolveSessionCwd(message.sessionId));
+      }
+      case "session.delete": {
+        const cwd = await this.resolveSessionCwd(message.sessionId);
+        await this.manager.remove(message.sessionId, cwd);
+        this.touchThreadsCwd(cwd);
         return { ok: true };
+      }
 
       case "session.contextUsage": {
         const usage = await this.manager.require(message.sessionId).contextUsage();
@@ -988,15 +1216,66 @@ export class DaemonServer {
 
       case "repo.handoff": {
         const active = this.requireActive();
+        // The captures come first, while the preview server is still the one
+        // serving — the build gate inside the handoff may not leave it up.
+        const shots = await this.captureHandoffShots();
         return await active.repo.handoff({
           title: message.title ?? this.registry.get(active.slug)?.name ?? undefined,
           body: message.body ?? DEFAULT_HANDOFF_BODY,
+          ...(shots.length > 0 ? { shots } : {}),
           ...this.briefTo(message.sessionId, "handoff"),
         });
       }
 
       case "repo.handoffStatus":
         return await this.repo.refreshHandoff();
+
+      // --- 되돌리기와 요약 (PLAN D51 · D52 · D53) --------------------------
+      case "repo.summarize":
+        return await this.repo.summarize();
+
+      case "repo.history":
+        return await this.repo.history();
+
+      case "repo.restore":
+        return await this.repo.restore(message.sha);
+
+      case "repo.discard":
+        return await this.repo.discard();
+
+      case "repo.checkpoints":
+        return await this.repo.checkpoints();
+
+      case "repo.checkpoint.restore":
+        return await this.repo.checkpointRestore(message.id);
+
+      // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
+      // The pins belong to the ACTIVE project: the messages carry no slug,
+      // exactly because the planner is looking at one project's preview.
+      case "comments.record":
+        return {
+          recorded: recordComments(
+            join(this.requireActive().paths.root, "comments.json"),
+            message.screen,
+            message.state,
+            message.items,
+          ),
+        };
+
+      case "comments.list":
+        return { items: readComments(join(this.requireActive().paths.root, "comments.json")) };
+
+      case "comments.resolve": {
+        const resolved = resolveComment(
+          join(this.requireActive().paths.root, "comments.json"),
+          message.id,
+          message.resolved,
+        );
+        if (!resolved) {
+          throw new Error("이미 없어진 코멘트입니다 — 코멘트 목록을 다시 열어 주세요.");
+        }
+        return { ok: true };
+      }
     }
   }
 

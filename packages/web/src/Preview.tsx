@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   CdsDesignCommentsEnvelope,
+  CdsDesignErrorEnvelope,
   CdsDesignNavigateEnvelope,
   CdsDesignScreen,
   CdsDesignScreensEnvelope,
@@ -17,14 +18,39 @@ export interface PreviewTarget {
 }
 
 /**
- * 모바일 constrains the frame to 390px — the logical viewport of the current
- * baseline iPhone, and the number lives in `.preview__stage--mobile` because
- * the app is never told which width is selected; it only ever sees its own
- * viewport, exactly as it would on a phone. One narrow width rather than a
- * device menu: the phones a planner would check span 360–430 and a layout that
- * only works wide breaks at all of them, so a second one buys nothing.
+ * An error the planner can hand to Claude (PLAN D49). The frame's version
+ * comes from the overlay's `cds-design.error` envelope; the stopped server's
+ * is built from the daemon's `stoppedDetail`. ScreenPanel turns either into
+ * one marker turn.
  */
-type PreviewWidth = "mobile" | "desktop";
+export interface PreviewError {
+  route: string;
+  state: string;
+  kind: "runtime" | "build";
+  message: string;
+}
+
+/**
+ * PLAN D58's toolbar toggle speaks this to the overlay — the same addressed
+ * channel the navigate envelope rides, so only the framed app ever reads
+ * what the planner is doing. The overlay turns pin mode on or off and keeps
+ * its own toggle in step with this one; the overlay side of the shape lives
+ * hand-synced in the repo's preview-bridge, like the comment target's.
+ */
+export interface CdsDesignCommentsModeEnvelope {
+  type: "cds-design.comments.mode";
+  on: boolean;
+}
+
+/**
+ * 모바일 constrains the frame to 390px — the logical viewport of the current
+ * baseline iPhone — and 태블릿 to 768px (PLAN D47). The numbers live in the
+ * `.preview__stage--<name>` rules because the app is never told which width
+ * is selected; it only ever sees its own viewport, exactly as it would on the
+ * device. These are names, not emulation (D62 holds that back): a layout that
+ * only works wide still shows its break at the narrow one.
+ */
+type PreviewWidth = "mobile" | "tablet" | "desktop";
 
 /**
  * The picker's groups: screens bucketed by the feature their routes name
@@ -72,10 +98,14 @@ export function Preview({
   stoppedDetail,
   onRestart,
   onComments,
+  onFixError,
   screens,
   target,
   onNavigate,
   onScreens,
+  commentsOn,
+  onCommentsMode,
+  unresolvedComments = 0,
 }: {
   url: string | null;
   /** The preview server died after being ready; the iframe would show nothing. */
@@ -88,6 +118,11 @@ export function Preview({
   onRestart: () => void;
   /** Validated `cds-design.comments` envelope from the preview app. */
   onComments: (envelope: CdsDesignCommentsEnvelope) => void;
+  /**
+   * The banner's `Claude에게 고쳐 달라고 하기` (PLAN D49): ScreenPanel turns
+   * the error into one marker turn on the working thread.
+   */
+  onFixError: (error: PreviewError) => void;
   /** Screens the repo declared. Empty until the app speaks — see the toolbar. */
   screens: CdsDesignScreen[];
   /** The screen and state to show, or null while nothing has been asked for. */
@@ -96,6 +131,13 @@ export function Preview({
   onNavigate: (route: string, state: string | null) => void;
   /** Validated `cds-design.screens` payload from the preview app. */
   onScreens: (screens: CdsDesignScreen[]) => void;
+  /** 코멘트 모드(PLAN D58) — the truth lives with the caller; this pane only
+      draws the toggle and re-tells the frame. */
+  commentsOn: boolean;
+  /** The toggle flipped; the caller answers by handing the state back. */
+  onCommentsMode: (on: boolean) => void;
+  /** 미해결 코멘트 수(PLAN D57) — the toggle's badge; 0 shows the label bare. */
+  unresolvedComments?: number;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [width, setWidth] = useState<PreviewWidth>("desktop");
@@ -107,6 +149,13 @@ export function Preview({
    * listener. Re-sending on load is what keeps that from looking broken.
    */
   const [loads, setLoads] = useState(0);
+  /**
+   * The last `cds-design.error` the frame reported (PLAN D49). One at a
+   * time — a newer failure is the one worth looking at.
+   */
+  const [error, setError] = useState<PreviewError | null>(null);
+  /** The banner's `자세히`: the message starts clamped to one line. */
+  const [detail, setDetail] = useState(false);
 
   useEffect(() => {
     if (!url) return;
@@ -115,14 +164,39 @@ export function Preview({
       // Only this iframe may speak; anything else in the page is noise.
       if (event.source !== frame.current?.contentWindow) return;
       if (event.origin !== expectedOrigin) return;
-      const data = event.data as CdsDesignCommentsEnvelope | CdsDesignScreensEnvelope | null;
+      const data = event.data as
+        | CdsDesignCommentsEnvelope
+        | CdsDesignErrorEnvelope
+        | CdsDesignScreensEnvelope
+        | null;
       if (!data) return;
       if (data.type === "cds-design.comments" && Array.isArray(data.items)) onComments(data);
       if (data.type === "cds-design.screens" && Array.isArray(data.screens)) onScreens(data.screens);
+      // PLAN D49: the overlay's error hooks (window.onerror,
+      // unhandledrejection, the dev overlay) post through the same checked
+      // channel. Anything without a message string is not ours to show.
+      if (data.type === "cds-design.error" && typeof data.message === "string") {
+        setError({
+          route: typeof data.route === "string" ? data.route : "",
+          state: typeof data.state === "string" ? data.state : "",
+          kind: data.kind === "build" ? "build" : "runtime",
+          message: data.message,
+        });
+        setDetail(false);
+      }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [url, onComments, onScreens]);
+
+  // A new screen — or a server that came back on a new origin — is innocent
+  // until it reports again. Reloads are NOT in this list: the frame's own
+  // load event clears the banner synchronously below, before any post from
+  // the new page can arrive, so a hot reload never wipes a just-reported
+  // error the way an effect that also runs on `loads` would.
+  useEffect(() => {
+    setError(null);
+  }, [url, target]);
 
   useEffect(() => {
     if (!url || !target || loads === 0) return;
@@ -139,6 +213,21 @@ export function Preview({
     contentWindow.postMessage(envelope, new URL(url).origin);
   }, [url, target, loads]);
 
+  // PLAN D58: the mode rides the same addressed channel as navigate, and a
+  // fresh page load is told the mode it is opening into — the overlay never
+  // announces its own state, so the toolbar keeps the truth and re-sends it
+  // whenever the frame (or the toggle) changes underneath it.
+  useEffect(() => {
+    if (!url || loads === 0) return;
+    const contentWindow = frame.current?.contentWindow;
+    if (!contentWindow) return;
+    const envelope: CdsDesignCommentsModeEnvelope = {
+      type: "cds-design.comments.mode",
+      on: commentsOn,
+    };
+    contentWindow.postMessage(envelope, new URL(url).origin);
+  }, [url, commentsOn, loads]);
+
   if (stopped) {
     return (
       <div className="preview">
@@ -148,6 +237,19 @@ export function Preview({
           <button type="button" className="primary" onClick={onRestart}>
             <RestartIcon />
             다시 시작
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onFixError({
+                route: target?.route ?? "",
+                state: target?.state ?? "",
+                kind: "build",
+                message: stoppedDetail || "화면을 그리는 서버가 멈췄습니다.",
+              })
+            }
+          >
+            Claude에게 고쳐 달라고 하기
           </button>
         </div>
       </div>
@@ -179,7 +281,7 @@ export function Preview({
             screens" when the truth is usually "the app has not loaded yet".
             This select is the screens' only door, so it carries the rail's
             old grouping: the planner's features lead, reference sinks. */}
-        {screens.length > 0 && (
+        {screens.length > 0 ? (
           <select
             className="preview__screens"
             aria-label="화면"
@@ -209,6 +311,10 @@ export function Preview({
               ),
             )}
           </select>
+        ) : (
+          <span className="preview__unlisted">
+            이 레포는 아직 화면을 선언하지 않았습니다 — 첫 화면을 만들면 여기에 목록이 생깁니다.
+          </span>
         )}
         {/* A screen with one state has nothing to switch between, so a lone
             chip would be furniture that reads like a choice. */}
@@ -231,6 +337,19 @@ export function Preview({
           </div>
         )}
         <span className="preview__spacer" />
+        {/* 코멘트 토글(PLAN D58): a click only flips the mode and is re-told
+            to the frame — nothing is sent anywhere, and the overlay does its
+            own pinning once it is on. The count is how many recorded
+            comments still want a fix (PLAN D57). */}
+        <button
+          type="button"
+          className={commentsOn ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
+          aria-pressed={commentsOn}
+          title={commentsOn ? "코멘트 모드를 끕니다" : "미리보기에서 요소를 찍어 코멘트를 달 수 있습니다"}
+          onClick={() => onCommentsMode(!commentsOn)}
+        >
+          💬 코멘트{unresolvedComments > 0 ? ` ${unresolvedComments}` : ""}
+        </button>
         <div className="preview__width" role="group" aria-label="폭">
           <button
             type="button"
@@ -244,6 +363,15 @@ export function Preview({
           </button>
           <button
             type="button"
+            className={width === "tablet" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
+            aria-pressed={width === "tablet"}
+            title="태블릿 폭(768px)으로 봅니다"
+            onClick={() => setWidth("tablet")}
+          >
+            태블릿
+          </button>
+          <button
+            type="button"
             className={width === "desktop" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
             aria-pressed={width === "desktop"}
             title="화면 전체 폭으로 봅니다"
@@ -253,30 +381,93 @@ export function Preview({
             데스크톱
           </button>
         </div>
-        <a className="preview__link" href={url} target="_blank" rel="noreferrer">
+        <button
+          type="button"
+          className="preview__link"
+          title="미리보기를 브라우저로"
+          onClick={() => window.open(url, "_blank", "noopener")}
+        >
           <ExternalLinkIcon />
           새 창
-        </a>
+        </button>
       </div>
+      {error && (
+        <div className="preview__error" role="alert" data-testid="error-banner">
+          <div className="preview__error__text">
+            <strong>화면에 오류가 났습니다</strong>
+            <pre
+              className={
+                detail
+                  ? "preview__error__message preview__error__message--open"
+                  : "preview__error__message"
+              }
+            >
+              {error.message}
+            </pre>
+          </div>
+          <div className="preview__error__actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                onFixError(error);
+                setError(null);
+              }}
+            >
+              Claude에게 고쳐 달라고 하기
+            </button>
+            <button
+              type="button"
+              className="machine__more"
+              aria-expanded={detail}
+              onClick={() => setDetail((v) => !v)}
+            >
+              {detail ? "접기" : "자세히"}
+            </button>
+          </div>
+        </div>
+      )}
       {/* Width is CSS on this wrapper only. Reloading the frame or telling the
           app about it would throw away whatever the planner had typed into the
           screen just to make it narrower. */}
-      <div className={width === "mobile" ? "preview__stage preview__stage--mobile" : "preview__stage"}>
-        <iframe
-          ref={frame}
-          className="preview__frame"
-          title="미리보기"
-          src={url}
-          onLoad={() => {
-            setLoads((count) => count + 1);
-            // The overlay posts its list once on its own mount and never
-            // retries, so the two orderings cover each other: its post lands
-            // at a hub that is already listening, and this request catches the
-            // case where the app was up before we were.
-            const request: CdsDesignScreensRequestEnvelope = { type: "cds-design.screens?" };
-            frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
-          }}
-        />
+      <div
+        className={
+          width === "mobile"
+            ? "preview__stage preview__stage--mobile"
+            : width === "tablet"
+              ? "preview__stage preview__stage--tablet"
+              : "preview__stage"
+        }
+      >
+        {/* 프레임 머리 (PLAN D44 · D47): 주소가 아니라 화면 이름과 상태. The
+            device wrapper is what 폭 narrows, so the chrome rides the frame. */}
+        <div className="preview__device">
+          {current && (
+            <div className="frame__chrome">
+              <span className="frame__name">
+                <b>{current.title}</b> · {stateLabel(activeState)}
+              </span>
+            </div>
+          )}
+          <iframe
+            ref={frame}
+            className="preview__frame"
+            title="미리보기"
+            src={url}
+            onLoad={() => {
+              // This runs before any post from the new page can arrive, so
+              // clearing here cannot race a freshly reported error.
+              setError(null);
+              setLoads((count) => count + 1);
+              // The overlay posts its list once on its own mount and never
+              // retries, so the two orderings cover each other: its post lands
+              // at a hub that is already listening, and this request catches the
+              // case where the app was up before we were.
+              const request: CdsDesignScreensRequestEnvelope = { type: "cds-design.screens?" };
+              frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
+            }}
+          />
+        </div>
       </div>
     </div>
   );
