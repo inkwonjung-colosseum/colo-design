@@ -26,29 +26,29 @@ import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const run = promisify(execFile);
 
-const DIR = join(tmpdir(), "drafthouse-publish-e2e");
+const DIR = join(tmpdir(), "cds-design-publish-e2e");
 const ROOT = join(DIR, "work");
 
 // The session and the PAT store must never touch the real home during the run,
 // and neither may the project registry: on the default path the daemon writes
-// ~/drafthouse/config/projects.json, and the next run would start from this
+// ~/cds-design/config/projects.json, and the next run would start from this
 // run's project — a repo url pointing at a fixture remote that no longer exists.
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
-process.env.DRAFTHOUSE_REPO_SETTINGS = join(DIR, "settings.json");
-process.env.DRAFTHOUSE_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.DRAFTHOUSE_PROJECTS_DIR = join(DIR, "projects");
-process.env.DRAFTHOUSE_CREDENTIAL_STORE = "memory";
+process.env.CDS_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
+process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
 // The handoff half talks to GitHub. The remote here is a local bare
 // repository, so nothing in its url could name a GitHub project — the slug is
 // pinned, and the REST calls replay recorded pairs in order.
-process.env.DRAFTHOUSE_GITHUB_FIXTURE = join(
+process.env.CDS_DESIGN_GITHUB_FIXTURE = join(
   fileURLToPath(new URL(".", import.meta.url)),
   "fixtures",
   "github",
   "handoff",
 );
-process.env.DRAFTHOUSE_GITHUB_SLUG = "colosseumcoinckr/drafthouse-e2e";
-process.env.DRAFTHOUSE_REPO_PAT = "ghp_handoff_e2e";
+process.env.CDS_DESIGN_GITHUB_SLUG = "colosseumcoinckr/cds-design-e2e";
+process.env.CDS_DESIGN_REPO_PAT = "ghp_handoff_e2e";
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -94,10 +94,18 @@ async function main() {
   const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port });
   const remoteBefore = await remoteHead(fixture.remote);
 
-  process.env.DRAFTHOUSE_REPO_DIR = ROOT;
-  process.env.DRAFTHOUSE_REPO_URL = fixture.remote;
+  process.env.CDS_DESIGN_REPO_DIR = ROOT;
+  process.env.CDS_DESIGN_REPO_URL = fixture.remote;
   const daemonPort = await freePort();
-  const server = new DaemonServer({ host: "127.0.0.1", port: daemonPort, token: "publish-e2e" });
+  const notices = [];
+  const server = new DaemonServer({
+    host: "127.0.0.1",
+    port: daemonPort,
+    token: "publish-e2e",
+    // The desktop app paints these as OS notifications; the test reads the
+    // meaning straight off the hook.
+    onNotice: (notice) => notices.push(notice),
+  });
   await server.start();
 
   const ws = new WebSocket(`ws://127.0.0.1:${daemonPort}?token=publish-e2e`);
@@ -149,7 +157,7 @@ async function main() {
 
     // --- 3. a failing check stops the save, and tells the session ---------
     writeFileSync(join(ROOT, "scripts", "check.mjs"), FAILING_CHECK);
-    const created = await request({ id: "3", type: "session.create", workspace: "design" });
+    const created = await request({ id: "3", type: "session.create" });
     const sessionId = created.sessionId;
 
     const failed = await request({
@@ -202,7 +210,26 @@ async function main() {
         marked.body.includes("테스트용 실패"),
       marked.body.split("\n")[0] ?? "",
     );
+    check(
+      "the gate failure fired the planner notice for the unnamed thread",
+      notices.some(
+        (n) =>
+          n.kind === "gate" &&
+          n.stage === "save" &&
+          n.sessionId === sessionId &&
+          n.title === "새 화면",
+      ),
+      JSON.stringify(notices),
+    );
     await request({ id: "5", type: "session.close", sessionId });
+    check(
+      "closing the thread calls back nothing — the planner just did it themselves",
+      notices.filter((n) => n.sessionId === sessionId).length === 1 &&
+        !notices.some(
+          (n) => n.sessionId === sessionId && (n.kind === "done" || n.kind === "crashed" || n.kind === "ask"),
+        ),
+      JSON.stringify(notices),
+    );
 
     check(
       "the check gate failure was broadcast",
@@ -242,10 +269,10 @@ async function main() {
     // The whole point of PLAN D5: a developer receives this as a branch to
     // review, and the base they work on is untouched until they merge it.
     const branches = await remoteBranches(fixture.remote);
-    const cycleBranch = branches.find((name) => name.startsWith("drafthouse/"));
+    const cycleBranch = branches.find((name) => name.startsWith("cds-design/"));
     check(
       "the save created its own branch on the remote",
-      cycleBranch !== undefined && /^drafthouse\/\d{8}-\d+$/.test(cycleBranch),
+      cycleBranch !== undefined && /^cds-design\/\d{8}-\d+$/.test(cycleBranch),
       branches.join(", "),
     );
     check(
@@ -310,7 +337,7 @@ async function main() {
     // A save that paid for a full build every time would teach the planner to
     // save rarely; being wrong at 넘기기 costs a developer's attention, so the
     // build belongs there. Both halves of that decision are checked here.
-    const manifest = join(ROOT, "drafthouse.json");
+    const manifest = join(ROOT, "cds-design.json");
     const config = JSON.parse(readFileSync(manifest, "utf8"));
     config.build = 'node -e "console.error(\'build: 테스트용 실패\'); process.exit(1)"';
     writeFileSync(manifest, `${JSON.stringify(config, null, 2)}\n`);
@@ -377,7 +404,7 @@ async function main() {
     const finalBranches = await remoteBranches(fixture.remote);
     check(
       "on a branch of its own, leaving the handed-over one alone",
-      finalBranches.filter((name) => name.startsWith("drafthouse/")).length === 2,
+      finalBranches.filter((name) => name.startsWith("cds-design/")).length === 2,
       finalBranches.join(", "),
     );
   } finally {

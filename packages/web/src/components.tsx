@@ -1,9 +1,9 @@
 import { useState } from "react";
-import type { AskQuestion, TurnMarker } from "@drafthouse/protocol";
-import { readTurn } from "@drafthouse/protocol";
+import type { AskQuestion, TurnMarker } from "@cds-design/protocol";
+import { readTurn } from "@cds-design/protocol";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
 import { Markdown } from "./Markdown";
-import { CheckIcon, CloseIcon, ShieldIcon, SparkIcon, ChevronRightIcon } from "./icons";
+import { CheckIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon, ChevronRightIcon } from "./icons";
 
 // ---------------------------------------------------------------------------
 // Transcript blocks
@@ -271,6 +271,39 @@ function MachineTurn({ marker, body }: { marker: TurnMarker; body: string }) {
   );
 }
 
+/**
+ * The planner lifts Claude's wording into a 기획 doc or a chat, so the
+ * answer's hover carries a one-click copy. It copies the markdown source —
+ * the text Claude wrote, not the rendered reading of it.
+ */
+function AssistantBubble({ block }: { block: Extract<Block, { type: "text" }> }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(block.text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard can be blocked; the answer stays selectable text regardless.
+    }
+  };
+  return (
+    <div className="bubble bubble--assistant">
+      <Markdown text={block.text} />
+      {block.streaming && <span className="caret" />}
+      <button
+        type="button"
+        className={copied ? "bubble__copy bubble__copy--done" : "bubble__copy"}
+        aria-label={copied ? "복사됨" : "답변 복사"}
+        title="복사"
+        onClick={() => void copy()}
+      >
+        {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+      </button>
+    </div>
+  );
+}
+
 export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: boolean }) {
   if (blocks.length === 0) {
     return <p className="empty">메시지를 보내면 대화가 여기에 이어집니다.</p>;
@@ -310,12 +343,7 @@ export function Transcript({ blocks, live = true }: { blocks: Block[]; live?: bo
             );
           }
           case "text":
-            return (
-              <div key={block.id} className="bubble bubble--assistant">
-                <Markdown text={block.text} />
-                {block.streaming && <span className="caret" />}
-              </div>
-            );
+            return <AssistantBubble key={block.id} block={block} />;
           case "thinking":
             return <ThinkingBlock key={block.id} block={block} />;
           case "tool":
@@ -374,7 +402,13 @@ export function PermissionCard({
             value={reason}
             placeholder="왜 안 되는지, 대신 무엇을 할지 알려 주세요"
             onChange={(e) => setReason(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onRespond("deny", reason || undefined)}
+            onKeyDown={(e) => {
+              // An IME owns every keydown until its composition ends — Enter
+              // commits the hangul (isComposing, legacy keyCode 229). Sending
+              // the refusal on it would hand Claude half a sentence.
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              if (e.key === "Enter") onRespond("deny", reason || undefined);
+            }}
           />
           <button type="button" onClick={() => onRespond("deny", reason || undefined)}>
             거절 보내기

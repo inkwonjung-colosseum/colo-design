@@ -1,4 +1,4 @@
-import type { ChatEvent, PermissionMode } from "@drafthouse/protocol";
+import type { ChatEvent, PermissionMode } from "@cds-design/protocol";
 
 /**
  * Turns raw SDKMessage values into the small, UI-shaped ChatEvent union.

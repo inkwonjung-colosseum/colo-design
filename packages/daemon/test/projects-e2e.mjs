@@ -1,49 +1,37 @@
 /**
- * Projects end-to-end check, fully offline (PLAN M1).
+ * Projects end-to-end check, fully offline (PLAN D2).
  *
- * This is the product claim of M1, driven over the same WebSocket the browser
- * uses, against the recorded fixtures in fixtures/confluence/projects/:
+ * This is the product claim of D2, driven over the same WebSocket the browser
+ * uses, against local fixture remotes:
  *
- *   - two projects can own two different SUBTREES of one Confluence space,
- *     and each mirror holds only its own pages;
- *   - a third project that would share pages with one of them is refused,
- *     and the refusal costs nothing on disk;
- *   - switching the active project switches what every other message means.
+ *   - a project is one connected repo, cloned into its own folder;
+ *   - switching the active project switches what every other message means —
+ *     the clone, the preview, the session cwd;
+ *   - the registry survives a restart.
  *
- * The repo half is deliberately absent: these projects declare no repo url, so
- * nothing clones and no preview port is taken. Cloning and publishing are what
- * repo-e2e and publish-e2e already prove; what is new here is the scoping.
+ * Cloning mechanics and publishing are what repo-e2e and publish-e2e already
+ * prove; what is new here is the scoping.
  *
  * Usage: node packages/daemon/test/projects-e2e.mjs
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
-import { freePort, writeStubClaude } from "./fixture-repo.mjs";
+import { createFixtureRepo, freePort, writeStubClaude } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DIR = join(tmpdir(), "drafthouse-projects-e2e");
-const FIXTURES = join(here, "fixtures", "confluence", "projects");
+const DIR = join(tmpdir(), "cds-design-projects-e2e");
 
-process.env.DRAFTHOUSE_CONFLUENCE_FIXTURE = FIXTURES;
-process.env.DRAFTHOUSE_CONFLUENCE_SETTINGS = join(DIR, "confluence.json");
-process.env.DRAFTHOUSE_CONFLUENCE_SITE = "https://example.atlassian.net";
-process.env.DRAFTHOUSE_CONFLUENCE_EMAIL = "dev@example.com";
-process.env.DRAFTHOUSE_CONFLUENCE_TOKEN = "projects_e2e_token";
-process.env.DRAFTHOUSE_CREDENTIAL_STORE = "memory";
+process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
 // Every registry path in the temp dir. This suite deliberately does NOT set
-// DRAFTHOUSE_REPO_DIR or DRAFTHOUSE_CONFLUENCE_DIR: those override the ACTIVE
-// project's roots, which is exactly the per-project separation under test.
-process.env.DRAFTHOUSE_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.DRAFTHOUSE_PROJECTS_DIR = join(DIR, "projects");
-// A background tick mid-story would eat fixture pairs the assertions expect.
-process.env.DRAFTHOUSE_BACKGROUND_PULL_MS = "3600000";
-// A thread has to be creatable for the page-attachment story; no model turn is
-// run, so a stub that answers --version and `auth status` is the whole need.
-process.env.DRAFTHOUSE_CLAUDE_BIN = writeStubClaude(join(DIR, "bin"));
+// CDS_DESIGN_REPO_DIR or CDS_DESIGN_REPO_URL: those override the ACTIVE
+// project's clone, which would erase exactly the per-project separation
+// under test.
+process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -57,29 +45,65 @@ function check(name, passed, detail = "") {
 async function waitFor(predicate, timeoutMs, label) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const hit = predicate();
+    const hit = await predicate();
     if (hit) return hit;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`timeout waiting for ${label}`);
 }
-
-/** Page titles a project's mirror actually holds, from its own folder. */
-function mirroredTitles(slug) {
-  const dir = join(DIR, "projects", slug, "confluence", "ENG");
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((entry) => entry.endsWith(".md"))
-    .map((entry) => entry.slice(0, -3))
-    .sort();
+/**
+ * Like writeStubClaude, but a real invocation answers by dropping a file
+ * into the session cwd and stalling a moment — a turn whose product and
+ * timing the sidebar checks can observe.
+ */
+function writeTurnStubClaude(dir) {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "claude");
+  writeFileSync(
+    path,
+    [
+      "#!/bin/sh",
+      'case "$1" in',
+      '  --version) echo "1.0.0-stub"; exit 0;;',
+      "  auth)",
+      '    echo \'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\'',
+      "    exit 0;;",
+      "esac",
+      'touch "$PWD/스텁-산출물.txt"',
+      "sleep 2",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(path, 0o755);
+  return path;
 }
-
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
 
+  // Two repos, two ports: two projects that have nothing to do with each
+  // other, which is the whole point of a project being one repo.
+  const paymentsFixture = await createFixtureRepo({
+    dir: join(DIR, "fixture-payments"),
+    port: await freePort(),
+  });
+  const refundsFixture = await createFixtureRepo({
+    dir: join(DIR, "fixture-refunds"),
+    port: await freePort(),
+  });
+
   const port = await freePort();
-  const server = new DaemonServer({ host: "127.0.0.1", port, token: "projects-e2e" });
+  const server = new DaemonServer({
+    host: "127.0.0.1",
+    port,
+    token: "projects-e2e",
+    // A session thread is per project; the stub keeps this offline while the
+    // scoping checks below create one. This stub WRITES A FILE into the cwd
+    // when a turn runs and takes a moment doing it — that is how the D14
+    // check produces a count in one project while another one is on screen.
+    claudeExecutable: writeTurnStubClaude(join(DIR, "bin")),
+  });
   await server.start();
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}?token=projects-e2e`);
@@ -107,6 +131,19 @@ async function main() {
       return error.message;
     }
   };
+  /** The clone the wizard just registered is brought up in the background. */
+  const waitReady = async (label) => {
+    const status = await waitFor(
+      async () => {
+        const current = await request({ type: "repo.status" });
+        return current.phase === "ready" || current.phase === "error" ? current : null;
+      },
+      60_000,
+      label,
+    );
+    if (status.phase !== "ready") throw new Error(`${label}: ${status.detail ?? status.phase}`);
+    return status;
+  };
 
   try {
     // --- 1. a fresh machine has no project ---------------------------------
@@ -115,82 +152,63 @@ async function main() {
       "a machine with nothing configured reports no project",
       empty.projects.length === 0 && empty.activeSlug === null,
     );
-    const noProject = await refusal({ type: "doc.list", space: "ENG" });
+    const noProject = await refusal({ type: "repo.status" });
     check(
-      "a mirror message without a project refuses in Korean",
+      "a repo message without a project refuses in Korean",
       noProject !== null && noProject.includes("프로젝트"),
       noProject ?? "(accepted)",
     );
 
-    // --- 2. the wizard's root picker sees the whole space -------------------
-    const tree = await request({ type: "confluence.pageTree", space: "ENG" });
-    check(
-      "the root picker lists every page with its parent, nothing taken yet",
-      tree.pages.length === 5 &&
-        tree.pages.find((page) => page.id === "111")?.parentId === "101" &&
-        tree.taken.length === 0,
-      `${tree.pages.length} pages`,
-    );
-
-    // --- 3. two projects, two subtrees of one space -------------------------
+    // --- 2. two projects, two repos -----------------------------------------
     const payments = await request({
       type: "project.create",
       name: "결제",
-      roots: [{ space: "ENG", rootPageId: "101" }],
-      repoUrl: null,
+      repoUrl: paymentsFixture.remote,
     });
     const refunds = await request({
       type: "project.create",
       name: "환불",
-      roots: [{ space: "ENG", rootPageId: "201" }],
-      repoUrl: null,
+      repoUrl: refundsFixture.remote,
     });
     check(
-      "each project mirrors only its own subtree",
-      JSON.stringify(mirroredTitles(payments.slug)) ===
-        JSON.stringify(["결제 서비스", "결제수단 등록", "결제 실패 처리"].sort()) &&
-        JSON.stringify(mirroredTitles(refunds.slug)) === JSON.stringify(["부분 환불", "환불"].sort()),
-      `${mirroredTitles(payments.slug).join("·")} | ${mirroredTitles(refunds.slug).join("·")}`,
-    );
-    check(
-      "the two mirrors are separate folders, so their sync state cannot merge",
-      existsSync(join(DIR, "projects", payments.slug, "confluence", "ENG", ".confluence-sync.json")) &&
-        existsSync(join(DIR, "projects", refunds.slug, "confluence", "ENG", ".confluence-sync.json")),
+      "each project carries its own repo url",
+      payments.repoUrl === paymentsFixture.remote && refunds.repoUrl === refundsFixture.remote,
+      `${payments.repoUrl} | ${refunds.repoUrl}`,
     );
 
-    // --- 4. overlap is refused before anything exists -----------------------
-    const before = readdirSync(join(DIR, "projects")).sort();
-    const overlap = await refusal({
-      type: "project.create",
-      name: "결제수단",
-      roots: [{ space: "ENG", rootPageId: "111" }],
-      repoUrl: null,
-    });
+    // Creating the second project made it active; its clone comes up.
+    const refundsStatus = await waitReady("the 환불 clone");
     check(
-      "a project inside another project's subtree is refused by name",
-      overlap !== null && overlap.includes("결제") && overlap.includes("결제 서비스"),
-      overlap ?? "(accepted)",
+      "the newest project is the active one and its clone is its own folder",
+      refundsStatus.root === join(DIR, "projects", refunds.slug, "repo") &&
+        refundsStatus.url === refundsFixture.remote &&
+        existsSync(join(DIR, "projects", refunds.slug, "repo", "cds-design.json")),
+      `${refundsStatus.root}`,
     );
     check(
-      "the refusal left no folder and no registry entry behind",
-      JSON.stringify(readdirSync(join(DIR, "projects")).sort()) === JSON.stringify(before) &&
-        JSON.parse(readFileSync(join(DIR, "projects.json"), "utf8")).projects.length === 2,
+      "each project's clone lives only in its own folder",
+      existsSync(join(DIR, "projects", payments.slug, "repo", "cds-design.json")) &&
+        join(DIR, "projects", payments.slug, "repo") !==
+          join(DIR, "projects", refunds.slug, "repo"),
+      `${payments.slug} | ${refunds.slug}`,
     );
 
-    // --- 5. the active project is what every other message means ------------
-    const refundDocs = await request({ type: "doc.list", space: "ENG" });
-    check(
-      "the newest project is the active one and owns the document tree",
-      refundDocs.map((doc) => doc.title).sort().join("·") === "부분 환불·환불",
-      refundDocs.map((doc) => doc.title).join("·"),
-    );
+    // --- 3. the active project is what every other message means ------------
+    const previewPort = refundsStatus.previewUrl ? new URL(refundsStatus.previewUrl).port : null;
     await request({ type: "project.activate", slug: payments.slug });
-    const paymentDocs = await request({ type: "doc.list", space: "ENG" });
+    const paymentsStatus = await waitReady("the 결제 clone after the switch");
     check(
-      "switching the project switches the tree under the same message",
-      paymentDocs.map((doc) => doc.title).sort().join("·") ===
-        ["결제 서비스", "결제수단 등록", "결제 실패 처리"].sort().join("·"),
-      paymentDocs.map((doc) => doc.title).join("·"),
+      "switching the project switches the clone under the same message",
+      paymentsStatus.root === join(DIR, "projects", payments.slug, "repo") &&
+        paymentsStatus.url === paymentsFixture.remote,
+      `${paymentsStatus.root}`,
+    );
+    check(
+      "the two projects never share one preview port",
+      previewPort === null ||
+        paymentsStatus.previewUrl === null ||
+        new URL(paymentsStatus.previewUrl).port !== previewPort,
+      `${previewPort} vs ${paymentsStatus.previewUrl}`,
     );
     const announced = inbox.filter((m) => m.type === "project.changed").at(-1);
     check(
@@ -199,43 +217,122 @@ async function main() {
       announced?.activeSlug ?? "(no broadcast)",
     );
 
-    // --- 6. a thread belongs to its 기획서 (PLAN D2) -------------------------
-    // The whole point of the page axis. A stub CLI is enough: the thread is
-    // live the moment it is created, so it lists without any model turn.
-    const thread = await request({
-      type: "session.create",
-      workspace: "planning",
-      pageId: "111",
-    });
-    const onItsPage = await request({ type: "session.list", workspace: "planning", pageId: "111" });
-    const onAnother = await request({ type: "session.list", workspace: "planning", pageId: "112" });
-    const everything = await request({ type: "session.list", workspace: "planning" });
+    // A thread opened in 결제 belongs to 결제: listing 환불's threads must
+    // not carry it over, and sending into it from the wrong project is
+    // refused instead of writing into the other clone.
+    const { sessionId } = await request({ type: "session.create" });
+    await request({ type: "project.activate", slug: refunds.slug });
+    await waitReady("the 환불 clone after the session check");
+    const otherList = await request({ type: "session.list" });
     check(
-      "a thread created on a page lists under that page and nowhere else",
-      onItsPage.some((session) => session.sessionId === thread.sessionId) &&
-        onItsPage.every((session) => session.pageId === "111") &&
-        !onAnother.some((session) => session.sessionId === thread.sessionId),
-      `${onItsPage.length} on 111 · ${onAnother.length} on 112`,
+      "another project's live thread is not in this project's list",
+      !otherList.some((entry) => entry.sessionId === sessionId),
+      `결제 session ${sessionId} leaked into 환불`,
     );
+    const crossTurn = await refusal({ type: "session.send", sessionId, text: "엉뚱한 프로젝트에서 보낸 턴" });
     check(
-      "an unfiltered list still returns it, stamped with its page",
-      everything.find((session) => session.sessionId === thread.sessionId)?.pageId === "111",
+      "a turn aimed across projects refuses in Korean",
+      crossTurn !== null && crossTurn.includes("다른 프로젝트"),
+      crossTurn ?? "(accepted)",
     );
+    await request({ type: "project.activate", slug: payments.slug });
+    const ownList = await request({ type: "session.list" });
     check(
-      "the attachment is on disk, so it survives the daemon",
-      JSON.parse(readFileSync(join(DIR, "projects", payments.slug, "sessions.json"), "utf8"))[
-        thread.sessionId
-      ] === "111",
-    );
-    await request({ type: "session.delete", sessionId: thread.sessionId });
-    check(
-      "deleting the thread takes its attachment with it",
-      Object.keys(
-        JSON.parse(readFileSync(join(DIR, "projects", payments.slug, "sessions.json"), "utf8")),
-      ).length === 0,
+      "back in its own project the thread is listed again",
+      ownList.some((entry) => entry.sessionId === sessionId),
+      `결제 list: ${ownList.map((entry) => entry.sessionId).join(",")}`,
     );
 
-    // --- 7. the registry survives a restart ---------------------------------
+    // --- 3.5 a turn finishing OFF-SCREEN counts its OWN project (D14) -------
+    // The 결제 thread runs; the planner moves to 환불 mid-turn. The stub
+    // drops a file into 결제's clone, and when the turn ends the recount
+    // must land on 결제's row of `project.changed` — not on the active one.
+    await request({ type: "project.activate", slug: payments.slug });
+    await waitReady("the 결제 clone for the off-screen turn");
+    const turnPromise = request({
+      type: "session.send",
+      sessionId,
+      text: "스텁이 파일 하나를 남기는 턴",
+    }).catch(() => undefined);
+    await request({ type: "project.activate", slug: refunds.slug });
+    const offscreenChanged = await waitFor(
+      () => {
+        const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+        const paymentsRow = changed?.projects?.find((p) => p.slug === payments.slug);
+        return changed?.activeSlug === refunds.slug &&
+          paymentsRow?.pendingChanges > 0 &&
+          paymentsRow?.working === false
+          ? paymentsRow
+          : null;
+      },
+      30_000,
+      "the off-screen project's count",
+    );
+    check(
+      "a turn finishing off-screen counts its own project, not the active one",
+      offscreenChanged?.pendingChanges > 0,
+      `결제 pendingChanges=${offscreenChanged?.pendingChanges}`,
+    );
+    await turnPromise;
+
+    // --- 3.6 a removal closes the clone's live threads (D21) ----------------
+    const refundSession = await request({ type: "session.create" });
+    const closedEvents = [];
+    const onStateMessage = (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === "session.state" && message.sessionId === refundSession.sessionId) {
+        closedEvents.push(message.state);
+      }
+    };
+    ws.on("message", onStateMessage);
+    const removeReply = await request({
+      type: "project.remove",
+      slug: refunds.slug,
+      deleteFiles: true,
+    });
+    ws.off("message", onStateMessage);
+    check(
+      "removing a project closes its live thread",
+      closedEvents.includes("closed"),
+      `states: ${closedEvents.join(",") || "(none)"}`,
+    );
+    check(
+      "removing with deleteFiles takes the folder",
+      !existsSync(join(DIR, "projects", refunds.slug)) &&
+        removeReply.projects.every((p) => p.slug !== refunds.slug),
+    );
+    // The survivor is what everything means again.
+    check(
+      "the surviving project is the active one after a removal",
+      removeReply.activeSlug === payments.slug,
+      `${removeReply.activeSlug}`,
+    );
+
+    // --- 3.7 overlapping switches serialize; the last request wins (D34) ----
+    // 환불 is gone, so the duel is 결제 against the emptied registry: create
+    // a fresh second project and fire two activations without awaiting.
+    const third = await request({
+      type: "project.create",
+      name: "정산",
+      repoUrl: refundsFixture.remote,
+    });
+    await new Promise((resolve) => {
+      ws.send(JSON.stringify({ type: "project.activate", slug: payments.slug, id: "d34a" }));
+      ws.send(JSON.stringify({ type: "project.activate", slug: third.slug, id: "d34b" }));
+      const settle = () => {
+        if (inbox.find((m) => m.id === "d34a") && inbox.find((m) => m.id === "d34b")) resolve();
+        else setTimeout(settle, 100);
+      };
+      setTimeout(settle, 100);
+    });
+    const afterRace = await request({ type: "project.list" });
+    check(
+      "overlapping activations settle on the last request",
+      afterRace.activeSlug === third.slug,
+      `${afterRace.activeSlug}`,
+    );
+
+    // --- 4. the registry survives a restart ---------------------------------
     await server.stop();
     ws.close();
     const restartPort = await freePort();
@@ -250,9 +347,19 @@ async function main() {
     });
     const hello = await waitFor(() => inbox2.find((m) => m.type === "hello"), 20_000, "hello");
     check(
-      "a restart reports both projects and remembers which one was active",
-      hello.status.projects.length === 2 && hello.status.activeProject === payments.slug,
+      "a restart reports the surviving projects and remembers which one was active",
+      hello.status.projects.length === 2 &&
+        hello.status.activeProject === third.slug &&
+        !hello.status.projects.some((p) => p.slug === refunds.slug),
       `${hello.status.projects.map((p) => p.name).join("·")} → ${hello.status.activeProject}`,
+    );
+    // D18: the sidebar's numbers exist before anyone clicks — the off-screen
+    // turn's file in 결제 is counted by the start sweep, not by the first UI.
+    const paymentsAfterRestart = hello.status.projects.find((p) => p.slug === payments.slug);
+    check(
+      "a restart restores every project's unsaved-change count",
+      paymentsAfterRestart?.pendingChanges > 0,
+      `결제 pendingChanges=${paymentsAfterRestart?.pendingChanges}`,
     );
     ws2.close();
     await restarted.stop();
@@ -271,9 +378,10 @@ async function main() {
     console.error(`Failed: ${failed.map((entry) => entry.name).join(", ")}`);
     process.exit(1);
   }
+  process.exit(0);
 }
 
 main().catch((error) => {
   console.error(error);
-  process.exit(1);
+  process.exit(2);
 });

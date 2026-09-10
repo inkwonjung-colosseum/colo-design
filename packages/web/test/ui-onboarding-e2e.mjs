@@ -1,13 +1,11 @@
 /**
- * Browser-level check of the first-run wizard (DESIGN §8, PLAN M1), fully
+ * Browser-level check of the first-run wizard (DESIGN §8, PLAN D6), fully
  * offline.
  *
- * The daemon boots with no project at all, against a local fixture repo and
- * the recorded onboarding Confluence fixtures, so the wizard blocks the
- * workspace and the test drives the exact sequence a 기획자 would: connect
- * Confluence, then name a project, point it at a Confluence location and a
- * repo, and start. The project step is the one that used to be "연결 레포" —
- * a repo only means something once a project says which.
+ * The daemon boots with no project at all, against a local fixture repo, so
+ * the wizard blocks the workspace and the test drives the exact sequence a
+ * 기획자 would: name a project, point it at a repo, and start. The machine
+ * gates (Claude Code, git) are the ones this machine already passes.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
@@ -24,11 +22,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
-const DIR = join(tmpdir(), "drafthouse-onboard-ui-e2e");
+const DIR = join(tmpdir(), "cds-design-onboard-ui-e2e");
 const PORT = 5401;
 
 const REPO_PAT = "onboard_ui_pat";
-const API_TOKEN = "onboard_ui_token";
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -53,37 +50,30 @@ function serveDist() {
 }
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @drafthouse/web build");
-  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @drafthouse/daemon build");
+  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
+  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @cds-design/daemon build");
 
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
   const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: await freePort() });
+  const fixture2 = await createFixtureRepo({ dir: join(DIR, "fixture2"), port: await freePort() });
 
   const env = {
     ...process.env,
-    DRAFTHOUSE_PORT: String(await freePort()),
-    DRAFTHOUSE_REPO_DIR: join(DIR, "work"),
-    DRAFTHOUSE_REPO_SETTINGS: join(DIR, "repo.json"),
-    // The registry decides what "the repo" and "the mirror" mean, so it has to
-    // live in the throwaway directory too: a previous run's projects.json
-    // would otherwise hand this daemon a deleted fixture remote.
-    DRAFTHOUSE_PROJECTS_SETTINGS: join(DIR, "projects.json"),
-    DRAFTHOUSE_PROJECTS_DIR: join(DIR, "projects"),
-    // Deliberately NO repo url and NO confluence credentials: the wizard must
-    // block, then unblock through its own inputs.
-    DRAFTHOUSE_CONFLUENCE_DIR: join(DIR, "mirror"),
-    DRAFTHOUSE_CONFLUENCE_SETTINGS: join(DIR, "confluence.json"),
-    DRAFTHOUSE_CONFLUENCE_FIXTURE: join(
-      repoRoot,
-      "packages",
-      "daemon",
-      "test",
-      "fixtures",
-      "confluence",
-      "onboarding",
-    ),
-    DRAFTHOUSE_CREDENTIAL_STORE: "memory",
+    CDS_DESIGN_PORT: String(await freePort()),
+    CDS_DESIGN_REPO_DIR: join(DIR, "work"),
+    CDS_DESIGN_REPO_SETTINGS: join(DIR, "repo.json"),
+    // The registry decides what "the repo" means, so it has to live in the
+    // throwaway directory too: a previous run's projects.json would otherwise
+    // hand this daemon a deleted fixture remote.
+    CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
+    CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
+    // Deliberately NO repo url: the wizard must block, then unblock through
+    // its own project form.
+    CDS_DESIGN_CREDENTIAL_STORE: "memory",
+    // The github gate and the picker's list answer from the recorded pairs,
+    // never from api.github.com.
+    CDS_DESIGN_GITHUB_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "github"),
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -109,17 +99,15 @@ async function main() {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
-  const stepStatus = (id) =>
-    page.locator(`.onboarding__step:has(h2:text-is("${id === "repo" ? "연결 레포" : id === "confluence" ? "Confluence" : id}")) .onboarding__status`).innerText();
 
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`);
+    // --- 1. the wizard is the first run, and it is three gates long -------
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
 
-    // --- 1. the wizard blocks the first run --------------------------------
     await page.waitForSelector(".onboarding", { timeout: 20000 });
-    check("the first run opens the wizard, not the tabs", true);
+    check("the first run opens the wizard, not the workspace", true);
     await page
       .waitForFunction(
         () => document.querySelectorAll(".onboarding__step").length === 4,
@@ -129,104 +117,145 @@ async function main() {
       .catch(() => undefined);
     const stepTitles = await page.locator(".onboarding__stephead h2").allInnerTexts();
     check(
-      "the four gates are listed in order, with the project last",
-      JSON.stringify(stepTitles) === JSON.stringify(["Claude Code", "git", "Confluence", "프로젝트"]),
+      "the four machine gates are listed in order, GitHub last",
+      JSON.stringify(stepTitles) ===
+        JSON.stringify(["Claude Code", "git", "Node · pnpm", "GitHub"]),
       stepTitles.join(" · "),
     );
     check(
-      "the workspace stays closed while a step fails",
-      (await page.locator(".planner__body").count()) === 0,
+      "the answered gates are lines and the github gate holds the token form",
+      (await page.locator(".onboarding__step--line").count()) === 3 &&
+        (await page.locator(".ghtoken").count()) === 1,
+      `lines=${await page.locator(".onboarding__step--line").count()}`,
+    );
+    check(
+      "no project step remains — picking a repo is not a gate",
+      !stepTitles.includes("프로젝트"),
+      stepTitles.join(" · "),
     );
 
-    // --- 2. Confluence is machine-wide: the credentials are the whole gate --
-    // Mirroring moved to the project, so this step passes on authentication
-    // alone and never warns about an empty mirror.
-    await page.getByLabel("Confluence 사이트 주소").fill("https://example.atlassian.net");
-    await page.getByLabel("Confluence 이메일").fill("dev@example.com");
-    await page.getByLabel("Confluence API 토큰").fill(API_TOKEN);
-    await page.getByRole("button", { name: "연결 확인" }).click();
+    // --- 2. the token turns the last gate green, and the wizard ends ------
+    await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
+    await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
     await page
       .waitForFunction(
-        () =>
-          [...document.querySelectorAll(".onboarding__step")].some(
-            (step) =>
-              step.querySelector("h2")?.textContent === "Confluence" &&
-              step.classList.contains("onboarding__step--pass"),
-          ),
+        () => document.querySelectorAll(".onboarding__step--line").length === 4,
         undefined,
-        { timeout: 30000 },
+        { timeout: 15000 },
+      )
+      .catch(() => undefined);
+    const githubLine = await page
+      .locator(".onboarding__step--line", { hasText: "GitHub" })
+      .innerText();
+    check(
+      "the github line passes, naming the login the token acts as",
+      githubLine.includes("GitHub @jik-dev 로 연결됨"),
+      githubLine.replace(/\n+/g, " · "),
+    );
+    await page.getByRole("button", { name: "시작하기" }).click();
+
+    // --- 3. no project yet: the workspace IS the picker --------------------
+    await page.waitForSelector(".planner__empty", { timeout: 20000 });
+    check(
+      "the empty workspace asks for a repo instead of an address",
+      (await page.locator(".planner__emptyTitle").innerText()).includes("프로젝트 추가") &&
+        (await page.locator(".repopicker").count()) === 1,
+    );
+    await page
+      .waitForFunction(
+        () => document.querySelectorAll(".repopicker__row").length === 2,
+        undefined,
+        { timeout: 15000 },
       )
       .catch(() => undefined);
     check(
-      "authenticating Confluence passes its gate without mirroring anything",
-      (await stepStatus("confluence")) === "통과",
-      await stepStatus("confluence"),
-    );
-    check(
-      "the workspace is still closed — there is no project yet",
-      (await page.locator(".planner__body").count()) === 0,
+      "the picker lists only the repos the token can push to — read-only and archived dropped",
+      (await page.locator(".repopicker__row").count()) === 2,
+      (await page.locator(".repopicker__name").allInnerTexts()).join(", "),
     );
 
-    // --- 3. the project: a name, a Confluence location, a repo -------------
-    await page.getByLabel("프로젝트 이름").fill("결제");
-    await page.getByLabel("기획서가 있는 스페이스").selectOption("ENG");
-    // The root picker reads the space's pages straight from Confluence. The
-    // fixture space is empty, so 스페이스 전체 is the only choice and this
-    // project owns the whole space — the subtree path is covered daemon-side.
-    await page.getByLabel("기획서가 있는 상위 페이지").waitFor({ timeout: 20000 });
-    await page.getByLabel("연결 레포 주소").fill(fixture.remote);
-    await page.getByLabel("연결 레포 개인 액세스 토큰").fill(REPO_PAT);
-    await page.getByRole("button", { name: "프로젝트 만들기" }).click();
-
-    // The wizard is replaced by the one workspace; the page tree is the first
-    // thing in it, so its presence is what "opened" means now.
-    await page.waitForSelector(".planner__body .pagetree", { timeout: 90000 });
-    check("creating the project opens the workspace", true);
-    check(
-      "the switcher names the project the planner just made",
-      (await page.locator(".project .selector__chip").innerText()).includes("결제"),
-    );
-    // The switcher is also the only way to reach a second project, so it has
-    // to be a real menu even with one — a bare label was a dead end.
-    await page.locator(".project .selector__chip").click();
-    check(
-      "and offers a way to start another one",
-      (await page.locator(".selector__row", { hasText: "새 프로젝트" }).count()) === 1,
-    );
-    await page.keyboard.press("Escape");
-
-    // A brand new project has an empty subtree, and every column used to say
-    // so in its own words while offering no way forward (PLAN D14). One
-    // invitation now, and the composer opens ready to answer it.
-    const firstDoc = page.locator(".firstdoc");
-    await firstDoc.waitFor({ timeout: 15000 });
-    check(
-      "an empty project offers one way in, not three dead ends",
-      (await firstDoc.getByRole("button", { name: "첫 기획서 만들기" }).count()) === 1,
-      (await firstDoc.innerText()).split("\n")[0] ?? "",
-    );
-    await firstDoc.getByRole("button", { name: "첫 기획서 만들기" }).click();
-    const composer = page.locator(".composer textarea");
-    await composer.waitFor({ timeout: 15000 });
-    // Creating the thread is a round trip to the daemon, which has to start a
-    // Claude session before the strip has a tab to show.
+    const search = page.getByLabel("레포 이름으로 찾기");
+    await search.fill("pay");
+    await page.locator(".repopicker__row", { hasText: "payments-web" }).click();
     await page
-      .locator(".sessiontab--on")
-      .waitFor({ timeout: 30000 })
+      .waitForFunction(
+        () =>
+          document.querySelector(".repopicker__confirm")?.textContent?.includes("cds-design.json 있음"),
+        undefined,
+        { timeout: 15000 },
+      )
       .catch(() => undefined);
     check(
-      "it opens a 기획 thread with the first turn written but not sent",
-      (await composer.inputValue()).includes("새 기획서를 하나 만들어 주세요") &&
-        (await page.locator(".bubble--user").count()) === 0,
-      `draft=${JSON.stringify(await composer.inputValue())} tabs=${await page
-        .locator(".sessiontab")
-        .count()} on=${await page.locator(".sessiontab--on").count()}`,
+      "picking a repo judges it before any clone, and pre-fills the name",
+      (await page.getByLabel("프로젝트 이름").inputValue()) === "payments-web",
+      (await page.locator(".repopicker__confirm .onboarding__detail").innerText()).slice(0, 60),
+    );
+    await page.screenshot({ path: join(here, "ui-onboarding-picker.png") });
+
+    // --- 4. the manual url is the fallback for what the list cannot see ---
+    await page.getByRole("button", { name: "목록에 없나요? 주소로 추가" }).click();
+    await page.getByLabel("연결 레포 주소").fill(fixture.remote);
+    await page.getByRole("button", { name: "추가", exact: true }).click();
+
+    // The picker gives way to the workspace as soon as the registry answers;
+    // the clone that follows draws itself in the preview column.
+    await page.waitForSelector(".planner__body:not(.planner__empty)", { timeout: 90000 });
+    check(
+      "the header names the project the planner just made",
+      (await page.locator(".planner__project").innerText()).includes("remote"),
+    );
+    check(
+      "the sidebar lists the project and marks it active",
+      (await page.locator(".sidebar__row").count()) === 1 &&
+        (await page.locator(".sidebar__row--active").innerText()).includes("remote"),
+    );
+
+    // --- 5. a second project comes from the same picker, in a dialog ------
+    await page.locator(".sidebar__new").click();
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { timeout: 15000 });
+    check(
+      "+ 새 프로젝트 opens the same picker as a dialog",
+      (await page.locator('[role="dialog"][aria-label="프로젝트 추가"] .repopicker').count()) === 1,
+    );
+    await page.keyboard.press("Escape");
+    check(
+      "escape closes the dialog",
+      (await page.locator('[role="dialog"][aria-label="프로젝트 추가"]').count()) === 0,
+    );
+
+    // The dialog is not just for show: the same manual-address path that
+    // made the first project makes the second one inside it.
+    await page.locator(".sidebar__new").click();
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { timeout: 15000 });
+    await page.getByRole("button", { name: "목록에 없나요? 주소로 추가" }).click();
+    await page.getByLabel("연결 레포 주소").fill(fixture2.remote);
+    await page
+      .locator('[role="dialog"][aria-label="프로젝트 추가"]')
+      .getByRole("button", { name: "추가", exact: true })
+      .click();
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { state: "detached", timeout: 90000 });
+    check("만들기 closes the dialog", (await page.locator('[role="dialog"]').count()) === 0);
+    check(
+      "the sidebar now holds both projects, the new one active",
+      (await page.locator(".sidebar__row").count()) === 2 &&
+        (await page.locator(".sidebar__row--active").count()) === 1,
+      (await page.locator(".sidebar__name").allInnerTexts()).join(", "),
+    );
+
+    // A brand new project starts with no threads: the strip says where to
+    // begin and offers the way (PLAN D3) — attach a 기획서 in the chat below.
+    const tabs = page.locator(".sessiontabs");
+    await tabs.waitFor({ timeout: 15000 });
+    const startButtons = await tabs.getByRole("button", { name: "새 대화" }).count();
+    check(
+      "an empty project points at the chat, with a way to start",
+      (await tabs.innerText()).includes("아래에서 새 대화를 시작해 주세요.") && startButtons >= 1,
+      `${(await tabs.innerText()).split("\n")[0] ?? ""} · ${startButtons} start button(s)`,
     );
 
     check(
       "the secrets never reached the browser",
-      !JSON.stringify(await page.evaluate(() => localStorage)).includes(REPO_PAT) &&
-        !JSON.stringify(await page.evaluate(() => localStorage)).includes(API_TOKEN),
+      !JSON.stringify(await page.evaluate(() => localStorage)).includes(REPO_PAT),
     );
     await page.screenshot({ path: join(here, "ui-onboarding-done.png") });
   } finally {

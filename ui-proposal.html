@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CDS Design — UI 제안 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+/* ==========================================================================
+   CDS Design — UI 제안 목업 (작업 화면)
+   실제 제품의 구조를 그대로: 사이드바(표식) · 세션 탭 · 턴 마커 카드 ·
+   미리보기 툴바(상태 배지 · 최신화 · 저장 · 넘기기) · 화면 선택 · 상태 칩 ·
+   스테퍼. 변수 이름도 styles.css 와 같게 — 채택 시 그대로 이동한다.
+   ========================================================================== */
+:root {
+  /* surfaces — Linear 식 4단 명도 사다리 (경계가 아니라 명도로 깊이를 만든다) */
+  --bg: #0c0c0e;
+  --bg-2: #101013;
+  --panel: #131316;
+  --panel-2: #19191d;
+  --panel-3: #1f1f24;
+
+  --line: #26262c;
+  --line-soft: #1d1d22;
+  --line-strong: #34343c;
+
+  --text: #ececee;
+  --text-2: #b8b8c0;
+  --muted: #8f8f9a;
+
+  /* accent — 집의 스틸을 유지하되, 뜨는 것에만 쓴다 */
+  --accent: #a9bed6;
+  --accent-soft: rgba(169, 190, 214, 0.10);
+  --accent-glow: rgba(169, 190, 214, 0.35);
+  --warn: #d4a55f;
+  --danger: #e07a7a;
+  --ok: #7fc27a;
+
+  /* 뜨는 것 전용 */
+  --float: #1a1a1f;
+  --shadow-frame:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 24px 60px -18px rgba(0, 0, 0, 0.75),
+    0 8px 20px -8px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.07);
+
+  --brand-grad: linear-gradient(135deg, #a9bed6 0%, #8ea6c4 45%, #b8a6d9 100%);
+
+  --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* 뜨는 것만 큰 radius — 평면은 6, 공은 10/14 */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-float: 12px;
+
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #fbfbfc;
+  --bg-2: #f4f4f7;
+  --panel: #f7f7f9;
+  --panel-2: #eff0f3;
+  --panel-3: #e6e7ec;
+
+  --line: #dedee5;
+  --line-soft: #e8e8ee;
+  --line-strong: #c6c7d1;
+
+  --text: #1a1a1f;
+  --text-2: #4c4d57;
+  --muted: #787a86;
+
+  --accent: #4a6b8f;
+  --accent-soft: rgba(74, 107, 143, 0.10);
+  --accent-glow: rgba(74, 107, 143, 0.28);
+  --warn: #8a5a17;
+  --danger: #b04545;
+  --ok: #2f7a35;
+
+  --float: #ffffff;
+  --shadow-frame:
+    0 0 0 1px rgba(20, 20, 40, 0.08),
+    0 24px 60px -20px rgba(30, 32, 48, 0.28),
+    0 8px 20px -10px rgba(30, 32, 48, 0.18);
+  --shadow-pop: 0 16px 40px -12px rgba(30, 32, 48, 0.22), 0 0 0 1px rgba(20,20,40,0.07);
+
+  --brand-grad: linear-gradient(135deg, #4a6b8f 0%, #5d7ca6 50%, #8a6bb8 100%);
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14.5px/1.6 var(--sans);
+  letter-spacing: -0.006em; /* 화면 텍스트의 밀도 — 한글에도 -1% 트래킹 */
+  -webkit-font-smoothing: antialiased;
+}
+button { font: 500 13px var(--sans); letter-spacing: -0.006em; color: inherit; cursor: pointer; border: none; background: none; padding: 0; }
+
+.app {
+  display: grid;
+  grid-template-columns: 232px minmax(320px, 1fr) 620px;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ─────────────────────────────── 사이드바 ─────────────────────────────── */
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--line-soft);
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.sidebar__brand {
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 14px;
+}
+.brand__glyph {
+  width: 22px; height: 22px; border-radius: 7px;
+  background: var(--brand-grad);
+  position: relative; flex: none;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.12) inset, 0 2px 8px -2px var(--accent-glow);
+}
+.brand__glyph::after {
+  content: ""; position: absolute; inset: 7px;
+  border-radius: 50%; border: 1.6px solid rgba(255,255,255,0.9);
+  border-right-color: transparent; transform: rotate(-45deg);
+}
+.brand__name { font-weight: 700; font-size: 13.5px; letter-spacing: -0.015em; }
+.sidebar__section {
+  padding: 14px 14px 6px;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.sidebar__list { flex: 1; overflow-y: auto; padding: 2px 8px; display: flex; flex-direction: column; gap: 1px; }
+.row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  text-align: left; width: 100%;
+  transition: background 0.12s;
+}
+.row:hover { background: var(--panel-2); }
+.row--active { background: var(--accent-soft); }
+.row__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: transparent; border: 1px solid transparent; }
+.row--active .row__dot { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+.row__dot--working { background: transparent; border: 1.5px solid var(--accent); border-top-color: transparent; animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.row__meta { min-width: 0; flex: 1; }
+.row__name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row__badge { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.row__badge--working { color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
+.row__badge--merged { color: var(--ok); }
+.pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.sidebar__foot { padding: 10px; }
+.btn-new {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px; border-radius: var(--r-sm);
+  border: 1px dashed var(--line-strong); color: var(--text-2);
+  transition: border-color 0.12s, color 0.12s;
+}
+.btn-new:hover { border-color: var(--accent); color: var(--text); }
+
+/* ─────────────────────────────── 채팅 열 ─────────────────────────────── */
+.chatcol { display: flex; flex-direction: column; min-width: 0; background: var(--bg); border-right: 1px solid var(--line-soft); }
+.tabs {
+  display: flex; align-items: center; gap: 2px;
+  padding: 8px 10px 0;
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px; border-radius: 7px 7px 0 0;
+  font-size: 12.5px; font-weight: 500; color: var(--muted);
+}
+.tab--active { background: var(--panel-2); color: var(--text); box-shadow: 0 1px 0 var(--bg); }
+.tab__x { opacity: 0.5; font-size: 11px; }
+.tab-add { color: var(--muted); padding: 6px 8px; font-size: 13px; }
+.chat { flex: 1; overflow-y: auto; padding: 18px 18px 10px; display: flex; flex-direction: column; gap: 16px; }
+
+.msg { display: flex; flex-direction: column; gap: 8px; }
+.msg--user { align-items: flex-end; }
+.bubble {
+  max-width: 88%;
+  padding: 9px 13px; border-radius: 12px;
+  font-size: 13.5px;
+}
+.msg--user .bubble { background: var(--panel-3); border-bottom-right-radius: 4px; }
+.msg--ai .bubble { background: none; padding: 0; max-width: 100%; }
+
+/* 기획서 첨부 칩 */
+.attach {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 12px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.attach__icon { color: var(--warn); }
+.attach__name { font-weight: 600; }
+
+/* 턴 마커 카드 — 무엇을 물었는지는 기획자의 말로, 본문은 한 겹 접혀 */
+.marker {
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: var(--panel);
+  overflow: hidden;
+  max-width: 100%;
+}
+.marker__head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 13px; width: 100%; text-align: left;
+}
+.marker__tag {
+  font-size: 11px; font-weight: 700; color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px; border-radius: 999px; flex: none;
+}
+.marker__q { font-size: 13px; font-weight: 600; color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marker__chev { color: var(--muted); font-size: 11px; transition: transform 0.15s; }
+.marker__body { padding: 0 13px 12px; font-size: 12.5px; color: var(--muted); line-height: 1.65; }
+.marker__body code { font-family: var(--mono); font-size: 11px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+.reply { font-size: 13.5px; color: var(--text-2); }
+.reply strong { color: var(--text); }
+
+/* 만드는 중 카드 — 턴의 살아 있음 */
+.making {
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: var(--panel);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  position: relative; overflow: hidden;
+}
+.making::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--accent-soft) 50%, transparent 70%);
+  transform: translateX(-100%); animation: shimmer 1.8s ease-in-out infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+.making__row { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; }
+.making__step { font-size: 12px; color: var(--muted); font-weight: 500; }
+.making__bar { height: 3px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
+.making__bar i { display: block; height: 100%; width: 40%; border-radius: 999px; background: var(--accent); animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+/* 작곡가 */
+.composer { padding: 10px 14px 14px; }
+.composer__card {
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 24px -12px rgba(0,0,0,0.5);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer__card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 8px 24px -12px rgba(0,0,0,0.5);
+}
+.composer__input { padding: 13px 15px 6px; font-size: 13.5px; color: var(--text); }
+.composer__input .ph { color: var(--muted); }
+.composer__row { display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 12px; color: var(--text-2);
+  transition: border-color 0.12s;
+}
+.chip:hover { border-color: var(--line-strong); color: var(--text); }
+.chip--usage { margin-left: auto; color: var(--muted); font-size: 11.5px; }
+.send {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--text); color: var(--bg);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; flex: none;
+  transition: transform 0.12s;
+}
+.send:hover { transform: scale(1.05); }
+
+/* ──────────────────────────── 미리보기 열: 무대 ──────────────────────────── */
+.previewcol { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+.bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.status {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  background: var(--warn-soft, rgba(212,165,95,0.1)); color: var(--warn);
+}
+.status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.spacer { flex: 1; }
+.ghost {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: var(--r-sm);
+  font-size: 12.5px; color: var(--text-2);
+  border: 1px solid transparent;
+  transition: background 0.12s, color 0.12s;
+}
+.ghost:hover { background: var(--panel-2); color: var(--text); }
+.primary {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border-radius: var(--r-sm);
+  background: var(--text); color: var(--bg);
+  font-weight: 600;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -6px rgba(0,0,0,0.45); }
+
+/* 화면 툴바: 화면 선택 · 상태 칩 · 코멘트 */
+.screenbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+}
+.picker {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 11px; border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12.5px; font-weight: 600;
+}
+.picker__crumb { color: var(--muted); font-weight: 500; }
+.seg { display: inline-flex; background: var(--panel-2); border-radius: 8px; padding: 2px; border: 1px solid var(--line-soft); }
+.seg button {
+  padding: 4px 12px; border-radius: 6px;
+  font-size: 12px; color: var(--muted);
+  transition: background 0.12s, color 0.12s;
+}
+.seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.3); font-weight: 600; }
+:root[data-theme="light"] .seg button.on { box-shadow: 0 1px 2px rgba(30,32,48,0.15); }
+.comments-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--accent); color: var(--accent);
+  font-size: 12px; font-weight: 600; background: var(--accent-soft);
+}
+
+/* 무대: 캔버스 도트 그리드 + 스포트라이트, 화면 프레임은 뜬다 */
+.stage {
+  flex: 1; min-height: 0;
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  padding: 26px;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 38%, var(--accent-soft), transparent 70%),
+    radial-gradient(circle at 1px 1px, var(--line) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    var(--bg-2);
+  overflow: hidden;
+}
+.frame {
+  width: min(100%, 470px);
+  border-radius: 16px;
+  background: var(--float);
+  box-shadow: var(--shadow-frame);
+  overflow: hidden;
+  animation: arrive 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes arrive { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
+.frame__chrome {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.frame__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--panel-3); border: 1px solid var(--line-soft); }
+.frame__url {
+  flex: 1; margin-left: 8px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+  background: var(--panel); border-radius: 5px; padding: 3px 9px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mock { background: var(--float); padding: 34px 30px 30px; display: flex; flex-direction: column; align-items: center; gap: 0; }
+.mock[hidden] { display: none; }
+.mock__failring {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: rgba(224,122,122,0.12); color: var(--danger);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; font-weight: 700;
+}
+.mock__title { margin: 15px 0 4px; font-size: 16.5px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
+.mock__sub { font-size: 12.5px; color: var(--muted); }
+.mock__card {
+  width: 100%; margin-top: 20px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel);
+  padding: 4px 15px;
+  position: relative;
+}
+.mock__row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; font-size: 12.5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.mock__row:last-child { border-bottom: none; }
+.mock__row dt { color: var(--muted); margin: 0; }
+.mock__row dd { margin: 0; font-weight: 600; color: var(--text); }
+.mock__row dd.decline { color: var(--danger); }
+.mock__pin {
+  position: absolute; top: -11px; right: -11px;
+  width: 23px; height: 23px; border-radius: 50%;
+  background: var(--accent); color: var(--bg);
+  font-size: 11.5px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 3px 10px -2px var(--accent-glow), 0 0 0 2.5px var(--float);
+}
+.mock__btns { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 20px; }
+.mock__retry {
+  padding: 10px; border-radius: 9px; text-align: center;
+  background: var(--text); color: var(--bg);
+  font-size: 13px; font-weight: 700;
+}
+.mock__alt {
+  padding: 10px; border-radius: 9px; text-align: center;
+  border: 1px solid var(--line);
+  font-size: 13px; font-weight: 600; color: var(--text-2);
+}
+
+/* 핀 요약 — 검토 중임을 미리보기 위에 한 줄로 */
+.pins {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 2;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 13px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.pins i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* 스테퍼 — 제품의 서사: 5단계 진행 레일 */
+.stepper {
+  border-top: 1px solid var(--line-soft);
+  padding: 13px 16px 14px;
+  display: flex; flex-direction: column; gap: 11px;
+  background: var(--panel);
+}
+.stepper__rail { display: flex; align-items: center; }
+.step { display: flex; align-items: center; flex: 1; min-width: 0; }
+.step:last-child { flex: 0 0 auto; }
+.step__mark {
+  width: 21px; height: 21px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  border: 1.5px solid var(--line-strong); color: var(--muted);
+  background: var(--panel);
+  position: relative; z-index: 1;
+}
+.step--done .step__mark { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.step--now .step__mark { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.step__label { margin-left: 8px; font-size: 12px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+.step--now .step__label { color: var(--text); font-weight: 700; }
+.step--done .step__label { color: var(--text-2); }
+.step__line { flex: 1; height: 1.5px; margin: 0 10px; background: var(--line); border-radius: 999px; position: relative; }
+.step__line::after { content: ""; position: absolute; inset: 0; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+.step--done .step__line::after { width: 100%; }
+.stepper__foot { display: flex; align-items: center; gap: 12px; }
+.stepper__why { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+.stepper__why strong { color: var(--text-2); font-weight: 600; }
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--panel-3); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media (max-width: 1420px) {
+  .app { grid-template-columns: 200px minmax(300px, 1fr) minmax(480px, 46%); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════════════ 사이드바 ═══════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <span class="brand__glyph" aria-hidden="true"></span>
+      <span class="brand__name">CDS Design</span>
+    </div>
+    <div class="sidebar__section">프로젝트</div>
+    <div class="sidebar__list">
+      <button class="row row--active">
+        <span class="row__dot"></span>
+        <span class="row__meta">
+          <span class="row__name">payments-web</span><br />
+          <span class="row__badge">변경 3</span>
+        </span>
+      </button>
+      <button class="row">
+        <span class="row__dot row__dot--working"></span>
+        <span class="row__meta">
+          <span class="row__name">member-admin</span><br />
+          <span class="row__badge row__badge--working"><span class="pulse"></span>작업 중</span>
+        </span>
+      </button>
+      <button class="row">
+        <span class="row__dot"></span>
+        <span class="row__meta">
+          <span class="row__name">design-system</span><br />
+          <span class="row__badge row__badge--merged">반영됨</span>
+        </span>
+      </button>
+    </div>
+    <div class="sidebar__foot">
+      <button class="btn-new">＋ 새 프로젝트</button>
+    </div>
+  </aside>
+
+  <!-- ═══════════════ 채팅 열 ═══════════════ -->
+  <section class="chatcol">
+    <div class="tabs">
+      <button class="tab tab--active">결제 실패 화면 <span class="tab__x">✕</span></button>
+      <button class="tab">회원 가입 화면</button>
+      <button class="tab-add" title="새 대화">＋</button>
+    </div>
+
+    <div class="chat">
+      <div class="msg msg--user">
+        <span class="attach">
+          <span class="attach__icon">📄</span>
+          <span class="attach__name">결제실패_v2.pdf</span>
+          <span style="color: var(--muted)">2.1 MB</span>
+        </span>
+        <span class="bubble">첨부한 기획서대로 결제 실패 화면의 세 상태를 만들어 줘.</span>
+      </div>
+
+      <div class="msg msg--ai">
+        <button class="marker">
+          <span class="marker__head">
+            <span class="marker__tag">코멘트 묶음</span>
+            <span class="marker__q">결제/PayFailed 화면의 핀 2곳을 수정해 주세요</span>
+            <span class="marker__chev">▾</span>
+          </span>
+          <span class="marker__body">
+            Claude 가 받은 본문 — 요소 <code>RetryButton</code>, 상태 <code>error</code>, CSS 경로와 기획자의 말이 구조화된 한국어 턴으로 한 통.
+          </span>
+        </button>
+      </div>
+
+      <div class="msg msg--ai">
+        <div class="reply">
+          기획서의 세 상태를 모두 만들었습니다. <strong>미리보기의 상태 칩</strong>에서 기본 · empty · error 를
+          바꿔 가며 확인해 보세요. 화면 오른쪽 위 <strong>상태 배지</strong>에 저장하지 않은 변경 3건이 있습니다 —
+          검토 후 <strong>저장</strong>해 주세요.
+        </div>
+      </div>
+
+      <div class="msg msg--ai">
+        <div class="making">
+          <div class="making__row">🖥️ 회원 가입 화면을 만드는 중</div>
+          <div class="making__step">기존 결제 화면의 폼 규칙을 같이 씁니다…</div>
+          <div class="making__bar"><i></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer__card">
+        <div class="composer__input"><span class="ph">메시지, @files, /commands</span></div>
+        <div class="composer__row">
+          <button class="chip">📎</button>
+          <button class="chip">Opus ▾</button>
+          <button class="chip">보통 ▾</button>
+          <button class="chip">기본 ▾</button>
+          <button class="chip chip--usage" title="5시간 창의 4% 사용 — 0시 20분에 리셋">◐ 5시간 4%</button>
+          <button class="send" aria-label="보내기">↑</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ 미리보기 열 ═══════════════ -->
+  <section class="previewcol">
+    <div class="bar">
+      <span class="status"><i></i>변경 있음 3</span>
+      <span class="spacer"></span>
+      <button class="ghost">⟳ 최신화</button>
+      <button class="ghost">☑ 넘기기 전 점검</button>
+      <button class="ghost">저장</button>
+      <button class="primary">개발자에게 넘기기 →</button>
+    </div>
+
+    <div class="screenbar">
+      <button class="picker">
+        <span class="picker__crumb">결제</span> / PayFailed <span style="color: var(--muted)">▾</span>
+      </button>
+      <div class="seg" role="tablist">
+        <button class="on" data-state="default" onclick="pick(this)">기본</button>
+        <button data-state="empty" onclick="pick(this)">empty</button>
+        <button data-state="error" onclick="pick(this)">error</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="comments-toggle">💬 코멘트</button>
+    </div>
+
+    <div class="stage">
+      <div class="pins"><i></i>수정 요청 2건 — Claude 가 일하는 동안 남아 있습니다</div>
+
+      <div class="frame">
+        <div class="frame__chrome">
+          <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+          <span class="frame__url">localhost:5274/payment/pay-failed?state=default</span>
+        </div>
+        <div class="mock" id="mock-default">
+          <div class="mock__failring">✕</div>
+          <div class="mock__title">결제에 실패했어요</div>
+          <div class="mock__sub">카드사 승인이 거절됐습니다. 다른 카드로 시도해 주세요.</div>
+          <dl class="mock__card">
+            <span class="mock__pin">2</span>
+            <div class="mock__row"><dt>주문</dt><dd>프리미엄 연간 구독</dd></div>
+            <div class="mock__row"><dt>결제 금액</dt><dd>₩189,000</dd></div>
+            <div class="mock__row"><dt>사유</dt><dd class="decline">승인 거절 (IC-01)</dd></div>
+          </dl>
+          <div class="mock__btns">
+            <div class="mock__retry">다시 시도</div>
+            <div class="mock__alt">다른 카드로 결제</div>
+          </div>
+        </div>
+        <div class="mock" id="mock-empty" hidden>
+          <div class="mock__failring" style="background: var(--accent-soft); color: var(--accent)">⌀</div>
+          <div class="mock__title">결제 내역이 없어요</div>
+          <div class="mock__sub">아직 시도한 결제가 없습니다. 첫 결제를 진행해 보세요.</div>
+          <div class="mock__btns">
+            <div class="mock__retry">결제 시작하기</div>
+          </div>
+        </div>
+        <div class="mock" id="mock-error" hidden>
+          <div class="mock__failring">⚠</div>
+          <div class="mock__title">일시적인 오류예요</div>
+          <div class="mock__sub">결제 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.</div>
+          <dl class="mock__card">
+            <div class="mock__row"><dt>오류 코드</dt><dd class="decline">NW-TIMEOUT</dd></div>
+            <div class="mock__row"><dt>발생 시각</dt><dd>오후 2:41</dd></div>
+          </dl>
+          <div class="mock__btns">
+            <div class="mock__retry">다시 시도</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stepper">
+      <div class="stepper__rail">
+        <div class="step step--done">
+          <span class="step__mark">✓</span><span class="step__label">화면 만들기</span>
+          <span class="step__line"></span>
+        </div>
+        <div class="step step--now">
+          <span class="step__mark">2</span><span class="step__label">검토·수정</span>
+          <span class="step__line"></span>
+        </div>
+        <div class="step">
+          <span class="step__mark">3</span><span class="step__label">저장</span>
+          <span class="step__line"></span>
+        </div>
+        <div class="step">
+          <span class="step__mark">4</span><span class="step__label">넘기기</span>
+          <span class="step__line"></span>
+        </div>
+        <div class="step">
+          <span class="step__mark">5</span><span class="step__label">반영됨</span>
+        </div>
+      </div>
+      <div class="stepper__foot">
+        <span class="stepper__why"><strong>저장하지 않은 변경 3건</strong> — 미리보기에서 검토하고 저장하면 이 사이클의 브랜치에 올라갑니다.</span>
+        <button class="primary">저장</button>
+      </div>
+  </section>
+</div>
+
+<script>
+function pick(btn) {
+  document.querySelectorAll(".seg button").forEach((b) => b.classList.remove("on"));
+  btn.classList.add("on");
+  ["default", "empty", "error"].forEach((s) => {
+    document.getElementById("mock-" + s).hidden = s !== btn.dataset.state;
+  });
+  document.querySelector(".frame__url").textContent =
+    "localhost:5274/payment/pay-failed?state=" + btn.dataset.state;
+  const frame = document.querySelector(".frame");
+  frame.style.animation = "none";
+  void frame.offsetWidth;
+  frame.style.animation = "";
+}
+/* 테마 토글: T 키 */
+addEventListener("keydown", (e) => {
+  if (e.key === "t" || e.key === "T") {
+    const el = document.documentElement;
+    el.dataset.theme = el.dataset.theme === "dark" ? "light" : "dark";
+  }
+});
+</script>
+</body>
+</html>

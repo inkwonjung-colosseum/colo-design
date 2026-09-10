@@ -6,7 +6,7 @@ import type {
   PlanUsage,
   SessionCommand,
   SessionSelectors,
-} from "@drafthouse/protocol";
+} from "@cds-design/protocol";
 import {
   ArrowUpIcon,
   CheckIcon,
@@ -17,12 +17,11 @@ import {
   StopIcon,
 } from "./icons";
 import {
-  COMPOSER_MODES,
-  DEFAULT_PERMISSION_MODE,
   EFFORT_HINT,
   EFFORT_LABEL,
   MODE_HINT,
   MODE_LABEL,
+  SETTINGS_MODES,
   modelOptions,
   modelRowOf,
   modelWords,
@@ -72,6 +71,21 @@ function timeLeft(at: string | null): string | null {
   return `${Math.round(hours / 24)}일 남음`;
 }
 
+/**
+ * The exact moment a spent window comes back, in the planner's own clock.
+ * `timeLeft` answers "얼마나"; this answers "언제".
+ */
+function clockTime(at: string): string {
+  return new Date(at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+}
+
+/** Popover note: how long is left, and when the window refills — one line. */
+function resetNote(at: string | null | undefined): string {
+  if (!at) return "";
+  const left = timeLeft(at);
+  return left ? `${left} · ${clockTime(at)}에 초기화` : `${clockTime(at)}에 초기화`;
+}
+
 const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 function tone(pct: number): "" | "warn" | "danger" {
@@ -81,22 +95,46 @@ function tone(pct: number): "" | "warn" | "danger" {
 /**
  * Everything the planner spends, behind one chip (PLAN D10).
  *
- * Three numbers used to sit in the composer at once: two plan windows as their
- * own row, and the context ring beside the send button. All three answer the
- * same question — "얼마나 더 쓸 수 있나" — and none of them changes what a
- * planner does next, so they belong one click away rather than on the surface.
- * The dot carries the only part worth interrupting for: whichever of them is
- * closest to running out.
+ * Two plan windows and the conversation length answer "얼마나 더 쓸 수 있나"
+ * one click away, in the popover. The exception the planner asked for: the
+ * 5-hour window also sits on the chip itself — percentage and countdown —
+ * because that is the budget they check before sending one more turn. The
+ * dot still interrupts for whichever number is closest to running out.
  */
 function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsage | null }) {
   const [open, setOpen] = useState(false);
+  const fiveHour = plan?.fiveHour ?? null;
+  const counting = Boolean(fiveHour?.resetsAt);
+  // The chip leads with the 5-hour window: percentage and countdown, no click
+  // needed. 주간 한도와 대화 길이 stay in the popover; the exact reset moment
+  // goes to the tooltip.
+  const reading = [
+    fiveHour?.utilization != null ? `${clamp(fiveHour.utilization)}%` : "",
+    timeLeft(fiveHour?.resetsAt ?? null) ?? "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   // Time left is computed from `now`, so a rendered countdown goes stale;
-  // re-render on the half-minute while the popover is showing one.
+  // re-render on the half-minute while one is on screen.
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!open) return;
+    if (!open && !counting) return;
     const timer = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(timer);
+  }, [open, counting]);
+
+  // Escape closes — the one dismissal a keyboard-only planner will try first,
+  // and the one every chip next to this one already answers.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
   const rows: Array<{ label: string; pct: number; note: string }> = [];
@@ -104,14 +142,14 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
     rows.push({
       label: "5시간",
       pct: clamp(plan.fiveHour.utilization ?? 0),
-      note: timeLeft(plan.fiveHour.resetsAt) ?? "",
+      note: resetNote(plan.fiveHour.resetsAt),
     });
   }
   if (plan?.sevenDay) {
     rows.push({
       label: "이번 주",
       pct: clamp(plan.sevenDay.utilization ?? 0),
-      note: timeLeft(plan.sevenDay.resetsAt) ?? "",
+      note: resetNote(plan.sevenDay.resetsAt),
     });
   }
   if (usage) {
@@ -131,6 +169,10 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
 
   const worst = Math.max(...rows.map((row) => row.pct));
   const badge = tone(worst);
+  // The ring beside the send side answers one question — how full this
+  // conversation is. Plan windows stay in the popover and on the reading.
+  const contextPct = usage ? clamp(usage.percentage) : null;
+  const ringLength = 2 * Math.PI * 7.5;
 
   return (
     <span className="selector">
@@ -147,24 +189,70 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
         className={badge ? `usage__chip usage__chip--${badge}` : "usage__chip"}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Claude를 얼마나 썼는지 봅니다"
+        title={
+          fiveHour?.resetsAt
+            ? `5시간 한도는 ${clockTime(fiveHour.resetsAt)}에 다시 채워집니다`
+            : "Claude를 얼마나 썼는지 봅니다"
+        }
         onClick={() => setOpen(!open)}
       >
-        <span className={badge ? `usage__dot usage__dot--${badge}` : "usage__dot"} />
-        사용량
+        <span className="usage__ring" aria-hidden>
+          <svg viewBox="0 0 20 20" width={18} height={18}>
+            <circle className="usage__ringtrack" cx="10" cy="10" r="7.5" />
+            {contextPct !== null && (
+              <circle
+                className={
+                  tone(contextPct) ? `usage__ringarc usage__ringarc--${tone(contextPct)}` : "usage__ringarc"
+                }
+                cx="10"
+                cy="10"
+                r="7.5"
+                strokeDasharray={`${(contextPct / 100) * ringLength} ${ringLength}`}
+                transform="rotate(-90 10 10)"
+              />
+            )}
+          </svg>
+        </span>
+        {reading ? (
+          <>
+            5시간
+            <span className="usage__reading">{reading}</span>
+          </>
+        ) : (
+          "사용량"
+        )}
       </button>
       {open && (
         <span className="selector__menu usage__menu" role="dialog" aria-label="사용량">
+          <span className="usage__head">
+            <span className="usage__title">사용량</span>
+            <span className={badge ? `usage__state usage__state--${badge}` : "usage__state"}>
+              <i className="usage__statedot" aria-hidden />
+              {worst >= 85 ? "거의 찼어요" : worst >= 60 ? "차오르는 중" : "여유로워요"}
+            </span>
+          </span>
           {rows.map((row) => (
-            <span key={row.label} className="usage__row">
-              <span className="usage__label">{row.label}</span>
-              <span className="usage__bar">
+            <span key={row.label} className="usage__metric">
+              <span className="usage__metric-head">
+                <span className="usage__label">{row.label}</span>
+                <span
+                  className={
+                    tone(row.pct) ? `usage__pct usage__pct--${tone(row.pct)}` : "usage__pct"
+                  }
+                >
+                  {row.pct}%
+                </span>
+              </span>
+              <span className="usage__track">
                 <span
                   className={tone(row.pct) ? `usage__fill usage__fill--${tone(row.pct)}` : "usage__fill"}
                   style={{ width: `${row.pct}%` }}
                 />
+                {/* A threshold the gauge has already passed is told by the
+                    colour itself; only the ones still ahead earn a tick. */}
+                {row.pct < 60 && <i className="usage__tick usage__tick--warn" aria-hidden />}
+                {row.pct < 85 && <i className="usage__tick usage__tick--danger" aria-hidden />}
               </span>
-              <span className="usage__pct">{row.pct}%</span>
               {row.note && <span className="usage__note">{row.note}</span>}
             </span>
           ))}
@@ -296,100 +384,6 @@ function SelectorChip({
   );
 }
 
-interface OptionGroup {
-  key: "model" | "effort" | "mode";
-  label: string;
-  title: string;
-  disabled: boolean;
-  options: Array<{ value: string | null; label: string; hint?: string; picked: boolean }>;
-}
-
-/**
- * The way back to the defaults, shown only when this conversation has left
- * them (PLAN D10).
- *
- * Three plain selects rather than three nested dropdowns: a popover whose rows
- * open more popovers has to arbitrate two backdrops and two Escape handlers,
- * and this is a panel a planner opens twice a month. Native selects also give
- * the keyboard and the screen reader behaviour for free.
- */
-function AdvancedChip({
-  label,
-  groups,
-  open,
-  onOpen,
-  onPick,
-}: {
-  label: string;
-  groups: OptionGroup[];
-  open: boolean;
-  onOpen: (open: boolean) => void;
-  onPick: (key: "model" | "effort" | "mode", value: string | null) => void;
-}) {
-  const chip = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.stopPropagation();
-      onOpen(false);
-      chip.current?.focus();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onOpen]);
-
-  return (
-    <span className="selector" data-testid="off-default">
-      {open && (
-        <button
-          type="button"
-          className="selector__backdrop"
-          aria-label="대화 설정 닫기"
-          onClick={() => onOpen(false)}
-        />
-      )}
-      <button
-        ref={chip}
-        type="button"
-        className="selector__chip selector__chip--off"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title={`이 대화는 기본 설정이 아닙니다 · ${groups
-          .map((group) => `${group.title}: ${group.label}`)
-          .join(" · ")}`}
-        onClick={() => onOpen(!open)}
-      >
-        ⋯ {label}
-      </button>
-      {open && (
-        <span className="selector__menu advanced" role="dialog" aria-label="이 대화의 설정">
-          <span className="advanced__lead">
-            이 대화에만 적용됩니다. 늘 쓸 값은 설정에서 정합니다.
-          </span>
-          {groups.map((group) => (
-            <label key={group.key} className="advanced__row">
-              <span className="advanced__label">{group.title}</span>
-              <select
-                value={group.options.find((option) => option.picked)?.value ?? ""}
-                disabled={group.disabled}
-                onChange={(event) => onPick(group.key, event.target.value || null)}
-              >
-                {group.options.map((option) => (
-                  <option key={String(option.value)} value={option.value ?? ""}>
-                    {option.label}
-                    {option.hint ? ` — ${option.hint}` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </span>
-      )}
-    </span>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Autocomplete for @files
@@ -425,38 +419,82 @@ function activeToken(
 }
 
 // ---------------------------------------------------------------------------
-// Composer
+// Per-conversation drafts and send history
 // ---------------------------------------------------------------------------
 
-export interface ComposerQuote {
-  title: string;
-  heading: string | null;
+/** What the field holds for one conversation: the words and what is pinned to them. */
+interface Editor {
   text: string;
+  attachments: Attachment[];
 }
+
+const EMPTY_EDITOR: Editor = { text: "", attachments: [] };
+
+/** sessionStorage keys. Per-tab on purpose: a second window is a second desk. */
+const DRAFT_PREFIX = "cds-design.draft.";
+const HISTORY_KEY = "cds-design.history";
+/** A walk back through sent turns stops somewhere; 25 rows of peeking is plenty. */
+const HISTORY_MAX = 25;
+
+function storedDraft(key: string): string {
+  try {
+    return sessionStorage.getItem(DRAFT_PREFIX + key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function saveDraft(key: string, text: string): void {
+  try {
+    if (text) sessionStorage.setItem(DRAFT_PREFIX + key, text);
+    else sessionStorage.removeItem(DRAFT_PREFIX + key);
+  } catch {
+    // Quota or private mode: the in-memory map still covers tab switches.
+  }
+}
+
+function loadHistory(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((row): row is string => typeof row === "string").slice(-HISTORY_MAX);
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(rows: string[]): void {
+  try {
+    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(rows.slice(-HISTORY_MAX)));
+  } catch {
+    // Same story as the draft: losing the walk on a reload is tolerable.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Composer
+// ---------------------------------------------------------------------------
 
 export function Composer({
   commands,
   disabled,
+  draftKey,
   placeholder,
   usage,
   plan,
   running,
   sendKey,
-  quote,
   selector,
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
-  onDismissQuote,
-  brief,
-  onDismissBrief,
   onSend,
   onInterrupt,
   onFindFiles,
-  initialText,
-  onInitialTextConsumed,
 }: {
   disabled: boolean;
+  /** Which conversation this field is the draft for; swapping keys swaps drafts. */
+  draftKey: string;
   /** /command palette rows, straight from the CLI. */
   commands: SessionCommand[];
   placeholder: string;
@@ -475,57 +513,48 @@ export function Composer({
   onSetPermissionMode: (mode: PermissionMode) => void;
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
-  /** A quote dragged out of the planning editor rides along as a chip. */
-  quote?: ComposerQuote | null;
-  onDismissQuote?: () => void;
-  /**
-   * The 기획서 this thread was opened on. Shown as a chip and attached to the
-   * turn by the shell on send — the planner never types, reads or edits the
-   * mirror path it stands for (PLAN D9).
-   */
-  brief?: { title: string; path: string } | null;
-  onDismissBrief?: () => void;
   onSend: (text: string, attachments: Attachment[]) => void;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
-  /**
-   * A draft handed in from outside — the 기획→디자인 handoff writes the first
-   * turn for the planner to read and send themselves. Never sends on its own;
-   * `nonce` is what makes a repeat of the same text land again.
-   */
-  initialText?: { text: string; nonce: number } | null;
-  onInitialTextConsumed?: () => void;
 }) {
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [editor, setEditor] = useState<Editor>(() => ({
+    text: storedDraft(draftKey),
+    attachments: [],
+  }));
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [menu, setMenu] = useState(false);
+  const [menu, setMenu] = useState<null | "model" | "effort" | "mode">(null);
   const [tokenSpan, setTokenSpan] = useState<{ from: number; to: number } | null>(null);
   /** Bumped when a pick moves the caret, so the token is read after the move. */
   const [caretTick, setCaretTick] = useState(0);
   const area = useRef<HTMLTextAreaElement>(null);
+  const palette = useRef<HTMLDivElement>(null);
   const [highlight, setHighlight] = useState(0);
   const filePicker = useRef<HTMLInputElement>(null);
   const [rejected, setRejected] = useState<string | null>(null);
-  /** The last handed-in draft this composer took, so a re-render never re-takes it. */
-  const takenNonce = useRef<number | null>(null);
 
-  // A handed-in draft fills the box and takes focus; the planner reads it and
-  // presses send. Anything already typed is replaced, which is what a fresh
-  // handoff means.
+  /**
+   * A draft belongs to the conversation it was typed in, not to the field
+   * (Paseo-style): leave a thread mid-sentence and the words are waiting when
+   * the tab comes back, instead of sitting under a different thread.
+   * sessionStorage keeps the text across a reload; attachments are
+   * base64-heavy and stay session-local — a reload asks to re-pick them.
+   */
+  const drafts = useRef(new Map<string, Editor>());
+  const draftKeyRef = useRef(draftKey);
+  /** Sent turns, oldest first, for the shell-style ↑ walk. */
+  const history = useRef<string[]>(loadHistory());
+  /** Position in the walk; null while the planner writes their own words. */
+  const historyAt = useRef<number | null>(null);
+  /** What the walk stepped aside for — restored when ↓ walks off the newest row. */
+  const recallDraft = useRef("");
+
+  // One sync point: every field change lands in the map (for tab switches)
+  // and sessionStorage (for a reload). The tab-switch effect below re-fires
+  // this with a restored draft, which writes it back where it came from.
   useEffect(() => {
-    if (!initialText || takenNonce.current === initialText.nonce) return;
-    takenNonce.current = initialText.nonce;
-    setDraft(initialText.text);
-    const caret = initialText.text.length;
-    requestAnimationFrame(() => {
-      const element = area.current;
-      if (!element) return;
-      element.focus();
-      element.setSelectionRange(caret, caret);
-    });
-    onInitialTextConsumed?.();
-  }, [initialText, onInitialTextConsumed]);
+    drafts.current.set(draftKeyRef.current, editor);
+    saveDraft(draftKeyRef.current, editor.text);
+  }, [editor]);
 
   // Grow the textarea with its content, up to the CSS max-height.
   useEffect(() => {
@@ -533,29 +562,65 @@ export function Composer({
     if (!element) return;
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 220)}px`;
-  }, [draft]);
+  }, [editor.text]);
+
+  // A tab click is intent to type: the field takes that thread's draft and
+  // the caret. The map already holds every word — swapping is one read.
+  // Words typed before a thread exists (the new:* bucket) belong to the
+  // conversation being started, so the first thread opened from there
+  // inherits them instead of blanking the field. A thread already holding
+  // its own words never takes them.
+  useEffect(() => {
+    if (draftKeyRef.current === draftKey) return;
+    const previous = draftKeyRef.current;
+    const previousEditor = drafts.current.get(previous) ?? EMPTY_EDITOR;
+    const incoming = drafts.current.get(draftKey);
+    const pristine =
+      (incoming?.text ?? storedDraft(draftKey)) === "" && (incoming?.attachments.length ?? 0) === 0;
+    const carry =
+      previous.startsWith("new:") && previousEditor.text !== "" && pristine ? previousEditor : null;
+    if (carry) {
+      drafts.current.delete(previous);
+      saveDraft(previous, "");
+    }
+    draftKeyRef.current = draftKey;
+    historyAt.current = null;
+    setEditor(carry ?? incoming ?? { text: storedDraft(draftKey), attachments: [] });
+    requestAnimationFrame(() => {
+      const element = area.current;
+      if (!element) return;
+      element.focus();
+      const end = element.value.length;
+      element.setSelectionRange(end, end);
+    });
+  }, [draftKey]);
 
   // Recompute suggestions whenever the caret lands in an @ or / token.
   useEffect(() => {
     const element = area.current;
     if (!element) return;
-    const caret = element.selectionStart ?? draft.length;
+    const caret = element.selectionStart ?? editor.text.length;
 
-    const command = activeToken(draft, caret, COMMAND_TOKEN);
+    const command = activeToken(editor.text, caret, COMMAND_TOKEN);
     if (command) {
       setTokenSpan({ from: command.from, to: caret });
       setHighlight(0);
-      const typed = command.query;
+      // `/` alone lists every command the CLI offers — the palette scrolls.
+      // Typing narrows to commands containing the text, matched against the
+      // name, an alias, or the Korean label a planner knows a built-in by.
+      const query = command.query.toLowerCase();
       setSuggestions(
         commands
-          .filter(
-            ({ name, aliases }) =>
-              !COMMAND_HIDDEN[name] &&
-              (!typed ||
-                name.startsWith(typed) ||
-                aliases.some((alias) => alias.startsWith(typed))),
-          )
-          .slice(0, 10)
+          .filter(({ name, aliases }) => {
+            if (COMMAND_HIDDEN[name]) return false;
+            if (!query) return true;
+            const label = COMMAND_LABEL[name]?.label.toLowerCase();
+            return (
+              name.toLowerCase().includes(query) ||
+              aliases.some((alias) => alias.toLowerCase().includes(query)) ||
+              (label !== undefined && label.includes(query))
+            );
+          })
           .map((entry) => {
             // Built-ins get a planner's words; a team's own skill keeps its own.
             const known = COMMAND_LABEL[entry.name];
@@ -570,7 +635,7 @@ export function Composer({
       return;
     }
 
-    const mention = activeToken(draft, caret, MENTION_TOKEN);
+    const mention = activeToken(editor.text, caret, MENTION_TOKEN);
     if (!mention) {
       setSuggestions([]);
       setTokenSpan(null);
@@ -602,12 +667,18 @@ export function Composer({
     return () => {
       cancelled = true;
     };
-  }, [draft, onFindFiles, commands, caretTick]);
+  }, [editor.text, onFindFiles, commands, caretTick]);
+
+  // The palette now lists every command, so the keyboard walk has to bring
+  // its row into view instead of running off the bottom of the scroll.
+  useEffect(() => {
+    palette.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [highlight, suggestions]);
 
   const applySuggestion = (suggestion: Suggestion) => {
     if (!tokenSpan) return;
-    const next = draft.slice(0, tokenSpan.from) + suggestion.insert + draft.slice(tokenSpan.to);
-    setDraft(next);
+    const next = editor.text.slice(0, tokenSpan.from) + suggestion.insert + editor.text.slice(tokenSpan.to);
+    setEditor((prev) => ({ text: next, attachments: prev.attachments }));
     if (suggestion.kind !== "dir") {
       setSuggestions([]);
       setTokenSpan(null);
@@ -663,20 +734,44 @@ export function Composer({
           }),
       ),
     );
-    setAttachments((prev) => [...prev, ...read]);
+    setEditor((prev) => ({ text: prev.text, attachments: [...prev.attachments, ...read] }));
   };
 
   const submit = () => {
-    const text = draft.trim();
-    if (!text && attachments.length === 0) return;
-    onSend(text, attachments);
-    setDraft("");
-    setAttachments([]);
+    const text = editor.text.trim();
+    if (!text && editor.attachments.length === 0) return;
+    if (text) {
+      // Consecutive duplicates collapse: retrying with Enter must not fill
+      // the walk with a wall of identical rows.
+      const rows = history.current;
+      if (rows[rows.length - 1] !== text) rows.push(text);
+      if (rows.length > HISTORY_MAX) rows.splice(0, rows.length - HISTORY_MAX);
+      saveHistory(rows);
+    }
+    historyAt.current = null;
+    onSend(text, editor.attachments);
+    setEditor(EMPTY_EDITOR);
     setSuggestions([]);
     setRejected(null);
   };
 
+  /** Swap the field's text for a recalled row, keeping the attachments, caret parked at the end. */
+  const recall = (text: string) => {
+    setEditor((prev) => ({ text, attachments: prev.attachments }));
+    requestAnimationFrame(() => {
+      const element = area.current;
+      if (!element) return;
+      const end = element.value.length;
+      element.setSelectionRange(end, end);
+    });
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // An IME owns every keydown until its composition ends — Enter commits
+    // the hangul (isComposing, legacy keyCode 229), the arrows walk the
+    // candidate window. Reacting to any of them would send half a word or
+    // yank the candidate list, so composition keys pass straight through.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -699,6 +794,49 @@ export function Composer({
         setSuggestions([]);
         return;
       }
+    }
+    // Shell-style history on the bare arrows: from the very top of the field
+    // — an empty one, or the caret parked at its first character — ↑ recalls
+    // the last turn, and further ↑/↓ walk the rows while the message being
+    // written steps aside until the walk passes it again. Anywhere else the
+    // arrows belong to the caret, not the history. Editing exits the walk
+    // with the recalled text in place — a starting point, not a fixture.
+    if (event.key === "ArrowUp") {
+      const rows = history.current;
+      const at = historyAt.current;
+      const atTop = area.current === null || area.current.selectionStart === 0;
+      if (at === null && !atTop) return;
+      if (rows.length === 0) return;
+      event.preventDefault();
+      const to = at === null ? rows.length - 1 : Math.max(0, at - 1);
+      if (at === null) recallDraft.current = editor.text;
+      historyAt.current = to;
+      // In-bounds by construction — the length check and the clamp above —
+      // so the guard is the array type's demand, not the logic's.
+      const row = rows[to];
+      if (row !== undefined) recall(row);
+      return;
+    }
+    if (event.key === "ArrowDown" && historyAt.current !== null) {
+      const rows = history.current;
+      const next = historyAt.current + 1;
+      event.preventDefault();
+      if (next >= rows.length) {
+        historyAt.current = null;
+        recall(recallDraft.current);
+      } else {
+        historyAt.current = next;
+        const row = rows[next];
+        if (row !== undefined) recall(row);
+      }
+      return;
+    }
+    // Escape while peeking puts the half-typed message back.
+    if (event.key === "Escape" && historyAt.current !== null) {
+      event.preventDefault();
+      historyAt.current = null;
+      recall(recallDraft.current);
+      return;
     }
     if (event.key !== "Enter") return;
     // With "enter", a bare Enter sends and Shift+Enter is a newline. With
@@ -753,10 +891,9 @@ export function Composer({
       label: MODE_LABEL[selector.permissionMode],
       title: "확인 방식",
       disabled: false,
-      // 전부 맡기기 is 설정's to offer, not the composer's — see COMPOSER_MODES.
-      // A mode already set to it still shows as this chip's label, so the
-      // planner can read what they are on and step back down.
-      options: COMPOSER_MODES.map((mode) => ({
+      // A mode already set to 전부 맡기기 still shows as this chip's label,
+      // so the planner can read what they are on and step back down.
+      options: SETTINGS_MODES.map((mode) => ({
         value: mode,
         label: MODE_LABEL[mode],
         hint: MODE_HINT[mode],
@@ -771,30 +908,6 @@ export function Composer({
     else if (value) onSetPermissionMode(value as PermissionMode);
   };
 
-  /**
-   * Whether this conversation is running on anything other than the defaults
-   * (PLAN D10).
-   *
-   * The three chips used to sit in the composer permanently, which put a model
-   * picker in front of someone whose job is to describe a screen. They live in
-   * 설정 now. What survives here is the honest half: when a conversation is NOT
-   * on the defaults, say so and offer the way back — a planner who set 전부
-   * 맡기기 last week should not have to guess why Claude stopped asking.
-   */
-  const offDefault =
-    selector.model !== null ||
-    selector.effort !== null ||
-    selector.permissionMode !== DEFAULT_PERMISSION_MODE;
-  // Which deviation to name, riskiest first: how much Claude may do without
-  // asking matters more than which model is answering.
-  const offDefaultLabel =
-    selector.permissionMode !== DEFAULT_PERMISSION_MODE
-      ? MODE_LABEL[selector.permissionMode]
-      : modelRow && selector.model !== null
-        ? modelWords(modelRow).label
-        : selector.effort
-          ? `생각 ${EFFORT_LABEL[selector.effort]}`
-          : "기본값 아님";
 
   return (
     <footer
@@ -806,7 +919,7 @@ export function Composer({
       }}
     >
       {suggestions.length > 0 && (
-        <div className="autocomplete" role="listbox">
+        <div className="autocomplete" role="listbox" ref={palette}>
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion.insert}
@@ -843,44 +956,9 @@ export function Composer({
         </div>
       )}
 
-      {(quote || brief) && (
+      {editor.attachments.length > 0 && (
         <div className="chips">
-          {brief && (
-            <span className="chip chip--brief" data-testid="brief-chip">
-              <span className="chip__doc">기획서</span>
-              {brief.title}
-              <button
-                type="button"
-                aria-label="기획서 떼기"
-                title="이 기획서를 참고하지 않고 보냅니다"
-                className="chip__dismiss"
-                onClick={() => onDismissBrief?.()}
-              >
-                ×
-              </button>
-            </span>
-          )}
-          {quote && (
-            <span className="chip chip--quote" data-testid="quote-chip">
-              <span className="chip__doc">인용</span>
-              {quote.title}
-              {quote.heading ? ` · ${quote.heading}` : ""}
-              <button
-                type="button"
-                aria-label="인용 지우기"
-                className="chip__dismiss"
-                onClick={() => onDismissQuote?.()}
-              >
-                ×
-              </button>
-            </span>
-          )}
-        </div>
-      )}
-
-      {attachments.length > 0 && (
-        <div className="chips">
-          {attachments.map((attachment, index) => (
+          {editor.attachments.map((attachment, index) => (
             <span key={`${attachment.name}-${index}`} className="chip">
               {attachment.kind === "image" ? (
                 <img
@@ -899,7 +977,12 @@ export function Composer({
                 type="button"
                 className="ghost"
                 aria-label={`${attachment.name} 첨부 취소`}
-                onClick={() => setAttachments((prev) => prev.filter((_, i) => i !== index))}
+                onClick={() =>
+                  setEditor((prev) => ({
+                    text: prev.text,
+                    attachments: prev.attachments.filter((_, i) => i !== index),
+                  }))
+                }
               >
                 ×
               </button>
@@ -910,11 +993,17 @@ export function Composer({
 
       <textarea
         ref={area}
-        value={draft}
+        value={editor.text}
         placeholder={placeholder}
         disabled={disabled}
         rows={1}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          // Typing is a decision: whatever row the walk sat on, these are
+          // the planner's own words now.
+          historyAt.current = null;
+          const text = e.target.value;
+          setEditor((prev) => ({ text, attachments: prev.attachments }));
+        }}
         onPaste={(e) => {
           const files = [...e.clipboardData.files];
           if (files.length) void readAttachments(files);
@@ -944,42 +1033,47 @@ export function Composer({
         >
           <PaperclipIcon />
         </button>
-        {offDefault && (
-          <AdvancedChip
-            label={offDefaultLabel}
-            groups={chips}
-            open={menu}
-            onOpen={setMenu}
-            onPick={pickChip}
+        {chips.map((chip) => (
+          <SelectorChip
+            key={chip.key}
+            label={chip.label}
+            title={chip.title}
+            disabled={chip.disabled}
+            open={menu === chip.key}
+            onToggle={() => setMenu(menu === chip.key ? null : chip.key)}
+            onClose={() => setMenu(null)}
+            onPick={(value) => {
+              pickChip(chip.key, value);
+              setMenu(null);
+            }}
+            options={chip.options}
           />
-        )}
-
-        <span className="toolbar__spacer" />
-
-        <UsageChip plan={plan} usage={usage} />
-
-        {running ? (
-          <button
-            type="button"
-            className="toolbar__stop"
-            aria-label="중지"
-            title="중지"
-            onClick={onInterrupt}
-          >
-            <StopIcon size={11} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="composer__send"
-            aria-label="보내기"
-            disabled={disabled || (!draft.trim() && attachments.length === 0)}
-            onClick={submit}
-            title={sendKey === "enter" ? "보내기 · Enter" : "보내기 · ⌘/Ctrl+Enter"}
-          >
-            <ArrowUpIcon size={15} />
-          </button>
-        )}
+        ))}
+        <div className="toolbar__end">
+          <UsageChip plan={plan} usage={usage} />
+          {running ? (
+            <button
+              type="button"
+              className="toolbar__stop"
+              aria-label="중지"
+              title="중지"
+              onClick={onInterrupt}
+            >
+              <StopIcon size={11} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composer__send"
+              aria-label="보내기"
+              disabled={disabled || (!editor.text.trim() && editor.attachments.length === 0)}
+              onClick={submit}
+              title={sendKey === "enter" ? "보내기 · Enter" : "보내기 · ⌘/Ctrl+Enter"}
+            >
+              <ArrowUpIcon size={15} />
+            </button>
+          )}
+        </div>
       </div>
     </footer>
   );

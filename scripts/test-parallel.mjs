@@ -4,10 +4,10 @@
  *   L1 unit          — pure `node --test`, no ports, no daemons
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
- *                      port (5397 settings, 5398 publish, 5399 editor,
+ *                      port (5397 settings, 5398 publish,
  *                      5400 comments, 5401 onboarding) — all distinct
- *   L4 real Claude   — planner (fixed web 5396 + daemon 7834) and daemon
- *                      status suites; they spend subscription turns
+ *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
+ *                      daemon status suites; they spend subscription turns
  * A lane fails if ANY of its suites fails; the runner exits non-zero and
  * prints the failing lanes' tails. Logs land in .test-logs/ (gitignored).
  *
@@ -28,18 +28,18 @@ const LOG_DIR = join(
 const LANES = {
   L1: {
     name: "unit",
-    suites: ["test:unit", "test:onboard-unit", "test:confluence-unit", "test:desktop-unit"],
+    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit"],
   },
   L2: {
     name: "daemon-e2e",
-    suites: ["test:projects", "test:repo", "test:confluence", "test:publish", "test:onboarding"],
+    suites: ["test:projects", "test:repo", "test:publish", "test:onboarding"],
   },
   L3: {
     name: "browser-e2e",
     suites: [
       "test:publish-ui",
-      "test:editor-ui",
       "test:settings",
+      "test:sidebar-ui",
       "test:onboarding-ui",
       "test:comments-ui",
     ],

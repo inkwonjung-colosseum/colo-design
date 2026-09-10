@@ -1,4 +1,4 @@
-import type { SessionState } from "@drafthouse/protocol";
+import type { SessionState } from "@cds-design/protocol";
 
 /**
  * Which threads finished a turn while the planner was looking somewhere else

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type {
-  DrafthouseCommentsEnvelope,
-  DrafthouseNavigateEnvelope,
-  DrafthouseScreen,
-  DrafthouseScreensEnvelope,
-  DrafthouseScreensRequestEnvelope,
-} from "@drafthouse/protocol";
+  CdsDesignCommentsEnvelope,
+  CdsDesignNavigateEnvelope,
+  CdsDesignScreen,
+  CdsDesignScreensEnvelope,
+  CdsDesignScreensRequestEnvelope,
+} from "@cds-design/protocol";
 import { stateLabel } from "./format";
+import { DesktopIcon, ExternalLinkIcon, MobileIcon, RestartIcon } from "./icons";
 
 /** Which screen, in which state, the planner asked to see. */
 export interface PreviewTarget {
@@ -26,13 +27,35 @@ export interface PreviewTarget {
 type PreviewWidth = "mobile" | "desktop";
 
 /**
+ * The picker's groups: screens bucketed by the feature their routes name
+ * (`/member/MemberList` → `member`, a bare route under no group at all), the
+ * planner's own features first and the repo's reference material — the
+ * `_example` teaching folder a connected repo ships for its own rules —
+ * last. The screen rail's old grouping, kept where the picking happens.
+ */
+function groupedScreens(screens: CdsDesignScreen[]): [string, CdsDesignScreen[]][] {
+  const byFeature = new Map<string, CdsDesignScreen[]>();
+  for (const screen of screens) {
+    const segments = screen.route.split("/").filter(Boolean);
+    const feature = segments.length > 1 ? (segments[0] ?? "") : "";
+    const bucket = byFeature.get(feature) ?? [];
+    bucket.push(screen);
+    byFeature.set(feature, bucket);
+  }
+  const isReference = (feature: string) => feature.startsWith("_") || feature === "example";
+  return [...byFeature.entries()].sort(
+    ([a], [b]) => Number(isReference(a)) - Number(isReference(b)) || a.localeCompare(b),
+  );
+}
+
+/**
  * The preview pane: the connected repo's own preview server, framed as-is.
  * What renders inside is the repo's business — the tool only waits for the
  * daemon to report a serving URL, and never parses the repo's code (PLAN D6).
  *
  * This is also the postMessage hub for both directions of PLAN D7. Envelopes
  * are accepted strictly from this iframe (source and origin both checked,
- * DESIGN §6) and `drafthouse.navigate` is posted back at the preview's own
+ * DESIGN §6) and `cds-design.navigate` is posted back at the preview's own
  * origin.
  *
  * NAVIGATION IS A PROP, NOT A HANDLE. `target` comes down and `onNavigate`
@@ -63,16 +86,16 @@ export function Preview({
    */
   stoppedDetail?: string | null;
   onRestart: () => void;
-  /** Validated `drafthouse.comments` envelope from the preview app. */
-  onComments: (envelope: DrafthouseCommentsEnvelope) => void;
+  /** Validated `cds-design.comments` envelope from the preview app. */
+  onComments: (envelope: CdsDesignCommentsEnvelope) => void;
   /** Screens the repo declared. Empty until the app speaks — see the toolbar. */
-  screens: DrafthouseScreen[];
+  screens: CdsDesignScreen[];
   /** The screen and state to show, or null while nothing has been asked for. */
   target: PreviewTarget | null;
   /** A toolbar control was used; the caller answers by handing back `target`. */
   onNavigate: (route: string, state: string | null) => void;
-  /** Validated `drafthouse.screens` payload from the preview app. */
-  onScreens: (screens: DrafthouseScreen[]) => void;
+  /** Validated `cds-design.screens` payload from the preview app. */
+  onScreens: (screens: CdsDesignScreen[]) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [width, setWidth] = useState<PreviewWidth>("desktop");
@@ -92,10 +115,10 @@ export function Preview({
       // Only this iframe may speak; anything else in the page is noise.
       if (event.source !== frame.current?.contentWindow) return;
       if (event.origin !== expectedOrigin) return;
-      const data = event.data as DrafthouseCommentsEnvelope | DrafthouseScreensEnvelope | null;
+      const data = event.data as CdsDesignCommentsEnvelope | CdsDesignScreensEnvelope | null;
       if (!data) return;
-      if (data.type === "drafthouse.comments" && Array.isArray(data.items)) onComments(data);
-      if (data.type === "drafthouse.screens" && Array.isArray(data.screens)) onScreens(data.screens);
+      if (data.type === "cds-design.comments" && Array.isArray(data.items)) onComments(data);
+      if (data.type === "cds-design.screens" && Array.isArray(data.screens)) onScreens(data.screens);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -105,8 +128,8 @@ export function Preview({
     if (!url || !target || loads === 0) return;
     const contentWindow = frame.current?.contentWindow;
     if (!contentWindow) return;
-    const envelope: DrafthouseNavigateEnvelope = {
-      type: "drafthouse.navigate",
+    const envelope: CdsDesignNavigateEnvelope = {
+      type: "cds-design.navigate",
       route: target.route,
       state: target.state,
     };
@@ -123,6 +146,7 @@ export function Preview({
           <h2>미리보기 서버 중단</h2>
           <p className="hint">{stoppedDetail || "화면을 그리는 서버가 멈췄습니다."} 대화 내용은 그대로입니다.</p>
           <button type="button" className="primary" onClick={onRestart}>
+            <RestartIcon />
             다시 시작
           </button>
         </div>
@@ -152,7 +176,9 @@ export function Preview({
       <div className="preview__toolbar">
         {/* The repo declares its screens or it does not; there is no empty
             picker, because an empty dropdown reads as "this repo has no
-            screens" when the truth is usually "the app has not loaded yet". */}
+            screens" when the truth is usually "the app has not loaded yet".
+            This select is the screens' only door, so it carries the rail's
+            old grouping: the planner's features lead, reference sinks. */}
         {screens.length > 0 && (
           <select
             className="preview__screens"
@@ -165,11 +191,23 @@ export function Preview({
                 화면 선택
               </option>
             )}
-            {screens.map((screen) => (
-              <option key={screen.route} value={screen.route}>
-                {screen.title}
-              </option>
-            ))}
+            {groupedScreens(screens).map(([feature, groupScreens]) =>
+              feature ? (
+                <optgroup key={feature} label={feature}>
+                  {groupScreens.map((screen) => (
+                    <option key={screen.route} value={screen.route}>
+                      {screen.title}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : (
+                groupScreens.map((screen) => (
+                  <option key={screen.route} value={screen.route}>
+                    {screen.title}
+                  </option>
+                ))
+              ),
+            )}
           </select>
         )}
         {/* A screen with one state has nothing to switch between, so a lone
@@ -201,6 +239,7 @@ export function Preview({
             title="휴대폰 폭으로 좁혀서 봅니다"
             onClick={() => setWidth("mobile")}
           >
+            <MobileIcon />
             모바일
           </button>
           <button
@@ -210,10 +249,12 @@ export function Preview({
             title="화면 전체 폭으로 봅니다"
             onClick={() => setWidth("desktop")}
           >
+            <DesktopIcon />
             데스크톱
           </button>
         </div>
         <a className="preview__link" href={url} target="_blank" rel="noreferrer">
+          <ExternalLinkIcon />
           새 창
         </a>
       </div>
@@ -232,7 +273,7 @@ export function Preview({
             // retries, so the two orderings cover each other: its post lands
             // at a hub that is already listening, and this request catches the
             // case where the app was up before we were.
-            const request: DrafthouseScreensRequestEnvelope = { type: "drafthouse.screens?" };
+            const request: CdsDesignScreensRequestEnvelope = { type: "cds-design.screens?" };
             frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
           }}
         />

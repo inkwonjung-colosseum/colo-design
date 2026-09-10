@@ -16,14 +16,17 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { CONFIG_DIR } from "./environment.js";
-import { repoPatItem } from "./projects.js";
 
 const run = promisify(execFile);
 
-export const CREDENTIAL_SERVICE = "Drafthouse";
-/** The pre-projects PAT item; a project's own is `repoPatItem(slug)`. */
+export const CREDENTIAL_SERVICE = "CDS Design";
+/** The credential-store item holding the machine-wide GitHub token. */
 export const REPO_PAT_ITEM = "pat";
-export const CONFLUENCE_TOKEN_ITEM = "confluence-token";
+
+/** The per-project item an installation before the machine-wide token filed its PAT under. */
+export function repoPatItem(slug: string): string {
+  return `pat:${slug}`;
+}
 
 /** Thrown when the platform has no store yet (Windows before the desktop story). */
 export class CredentialStoreUnavailable extends Error {
@@ -34,7 +37,7 @@ export class CredentialStoreUnavailable extends Error {
 }
 
 export interface CredentialStore {
-  /** Stores (or replaces) a secret under the Drafthouse service. */
+  /** Stores (or replaces) a secret under the CDS Design service. */
   save(item: string, secret: string): Promise<void>;
   load(item: string): Promise<string | null>;
   delete(item: string): Promise<void>;
@@ -121,11 +124,11 @@ export class DpapiCredentialStore implements CredentialStore {
 }
 
 /**
- * DRAFTHOUSE_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
+ * CDS_DESIGN_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
  * macOS → Keychain, Windows → the DPAPI stub, everything else → memory.
  */
 export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): CredentialStore {
-  const forced = env.DRAFTHOUSE_CREDENTIAL_STORE;
+  const forced = env.CDS_DESIGN_CREDENTIAL_STORE;
   if (forced === "memory") return new MemoryCredentialStore();
   if (forced === "keychain") return new KeychainCredentialStore();
   if (process.platform === "darwin") return new KeychainCredentialStore();
@@ -138,26 +141,54 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
 // ---------------------------------------------------------------------------
 
 /**
- * The repo PAT: DRAFTHOUSE_REPO_PAT wins over the store. A slug reads that
- * project's own item, so two projects' PATs never collide; without one this
- * is the single-repo installation that has not been migrated yet.
+ * The machine-wide GitHub token: CDS_DESIGN_REPO_PAT wins over the store. One
+ * token answers for every project on this machine — the `github` onboarding
+ * gate stores it, repo clones authenticate with it, and the project picker's
+ * repo list is what it can see.
  */
 export async function loadRepoPat(
   store: CredentialStore,
-  slug?: string | null,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
-  return (
-    env.DRAFTHOUSE_REPO_PAT ?? (await safeLoad(store, slug ? repoPatItem(slug) : REPO_PAT_ITEM))
-  );
+  return env.CDS_DESIGN_REPO_PAT ?? (await safeLoad(store, REPO_PAT_ITEM));
 }
 
-/** The Confluence API token: DRAFTHOUSE_CONFLUENCE_TOKEN wins over the store. */
-export async function loadConfluenceToken(
+/**
+ * One machine-wide token replaces the per-project `pat:<slug>` items. While
+ * the machine item is empty, the active project's token (else the first
+ * project's) is promoted — nobody re-enters a working token because the
+ * storage layout moved — and every per-project item is then deleted whether
+ * or not anything was promoted, so a stale token can never quietly answer
+ * for a repo it was not meant for. Returns whether anything moved.
+ */
+export async function migrateProjectPats(
   store: CredentialStore,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
-  return env.DRAFTHOUSE_CONFLUENCE_TOKEN ?? (await safeLoad(store, CONFLUENCE_TOKEN_ITEM));
+  slugs: string[],
+  preferred: string | null,
+): Promise<boolean> {
+  const existing = await safeLoad(store, REPO_PAT_ITEM);
+  let promoted: string | null = null;
+  if (!existing) {
+    for (const slug of [preferred, ...slugs]) {
+      if (!slug) continue;
+      const token = await safeLoad(store, repoPatItem(slug));
+      if (!token) continue;
+      promoted = token;
+      break;
+    }
+    if (promoted) {
+      try {
+        await store.save(REPO_PAT_ITEM, promoted);
+      } catch {
+        return false; // store unavailable: leave every item as it was
+      }
+    }
+  }
+  for (const slug of [preferred, ...slugs]) {
+    if (!slug) continue;
+    await store.delete(repoPatItem(slug)).catch(() => undefined);
+  }
+  return Boolean(promoted);
 }
 
 async function safeLoad(store: CredentialStore, item: string): Promise<string | null> {
@@ -175,7 +206,7 @@ async function safeLoad(store: CredentialStore, item: string): Promise<string | 
 
 interface PlainTextSettings {
   file: string;
-  secretKey: "pat" | "apiToken";
+  secretKey: "pat";
   item: string;
 }
 
@@ -183,16 +214,11 @@ function plaintextTargets(env: NodeJS.ProcessEnv): PlainTextSettings[] {
   return [
     {
       // The pre-projects shape: one repo.json holding one PAT, which lands
-      // under the legacy item. Projects file theirs under `pat:<slug>`
-      // instead, and projects.ts reads this same file once to migrate the url.
-      file: env.DRAFTHOUSE_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
+      // under the machine-wide item. Projects file theirs under `pat:<slug>`,
+      // and projects.ts reads this same file once to migrate the url.
+      file: env.CDS_DESIGN_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
       secretKey: "pat",
       item: REPO_PAT_ITEM,
-    },
-    {
-      file: env.DRAFTHOUSE_CONFLUENCE_SETTINGS ?? join(CONFIG_DIR, "confluence.json"),
-      secretKey: "apiToken",
-      item: CONFLUENCE_TOKEN_ITEM,
     },
   ];
 }
@@ -234,14 +260,14 @@ export async function migratePlaintextSecrets(
 
 function writeAtomic(file: string, contents: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  const temporary = `${file}.drafthouse-${process.pid}`;
+  const temporary = `${file}.cds-design-${process.pid}`;
   writeFileSync(temporary, contents, { mode: 0o600 });
   renameSync(temporary, file);
 }
 
-/** Where the user-level npmrc lives — DRAFTHOUSE_NPMRC overrides HOME (tests). */
+/** Where the user-level npmrc lives — CDS_DESIGN_NPMRC overrides HOME (tests). */
 export function npmrcPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.DRAFTHOUSE_NPMRC) return env.DRAFTHOUSE_NPMRC;
+  if (env.CDS_DESIGN_NPMRC) return env.CDS_DESIGN_NPMRC;
   const home = env.HOME ?? homedir();
   return join(home, ".npmrc");
 }

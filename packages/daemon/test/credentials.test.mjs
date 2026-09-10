@@ -12,19 +12,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CREDENTIAL_SERVICE,
-  CONFLUENCE_TOKEN_ITEM,
   DpapiCredentialStore,
   KeychainCredentialStore,
   MemoryCredentialStore,
   REPO_PAT_ITEM,
   createCredentialStore,
-  loadConfluenceToken,
   loadRepoPat,
   mergeNpmrc,
   migratePlaintextSecrets,
   npmrcPath,
+  migrateProjectPats,
+  repoPatItem,
 } from "../dist/credentials.js";
-import { repoPatItem } from "../dist/projects.js";
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -48,39 +47,31 @@ test("the DPAPI store refuses with the desktop Korean message", async () => {
   await assert.rejects(() => store.delete("pat"), /desktop 버전에서 제공됩니다/);
 });
 
-test("the factory honors DRAFTHOUSE_CREDENTIAL_STORE", () => {
-  assert.equal(createCredentialStore({ DRAFTHOUSE_CREDENTIAL_STORE: "memory" }).kind, "memory");
-  assert.equal(createCredentialStore({ DRAFTHOUSE_CREDENTIAL_STORE: "keychain" }).kind, "keychain");
+test("the factory honors CDS_DESIGN_CREDENTIAL_STORE", () => {
+  assert.equal(createCredentialStore({ CDS_DESIGN_CREDENTIAL_STORE: "memory" }).kind, "memory");
+  assert.equal(createCredentialStore({ CDS_DESIGN_CREDENTIAL_STORE: "keychain" }).kind, "keychain");
 });
 
 test("migration moves plaintext secrets out of the settings files", async () => {
   const dir = workdir("hub-cred-migrate-");
   try {
     const repoFile = join(dir, "repo.json");
-    const confluenceFile = join(dir, "confluence.json");
     writeFileSync(repoFile, `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" }, null, 2)}\n`);
-    writeFileSync(confluenceFile, `${JSON.stringify({ siteUrl: "https://x.atlassian.net", email: "a@b.c", apiToken: "tok_plain" }, null, 2)}\n`);
 
     const store = new MemoryCredentialStore();
     const report = await migratePlaintextSecrets(store, {
-      DRAFTHOUSE_REPO_SETTINGS: repoFile,
-      DRAFTHOUSE_CONFLUENCE_SETTINGS: confluenceFile,
+      CDS_DESIGN_REPO_SETTINGS: repoFile,
     });
 
-    assert.deepEqual(report.migrated.sort(), [CONFLUENCE_TOKEN_ITEM, REPO_PAT_ITEM]);
+    assert.deepEqual(report.migrated, [REPO_PAT_ITEM]);
     assert.equal(await store.load(REPO_PAT_ITEM), "ghp_plain");
-    assert.equal(await store.load(CONFLUENCE_TOKEN_ITEM), "tok_plain");
     const repo = JSON.parse(readFileSync(repoFile, "utf8"));
     assert.deepEqual(repo, { url: "https://github.com/org/repo.git" }, "the file keeps only the url");
-    const confluence = JSON.parse(readFileSync(confluenceFile, "utf8"));
-    assert.deepEqual(confluence, { siteUrl: "https://x.atlassian.net", email: "a@b.c" });
     assert.ok(!readFileSync(repoFile, "utf8").includes("ghp_plain"));
-    assert.ok(!readFileSync(confluenceFile, "utf8").includes("tok_plain"));
 
     // Idempotent: a second run has nothing to move.
     const again = await migratePlaintextSecrets(store, {
-      DRAFTHOUSE_REPO_SETTINGS: repoFile,
-      DRAFTHOUSE_CONFLUENCE_SETTINGS: confluenceFile,
+      CDS_DESIGN_REPO_SETTINGS: repoFile,
     });
     assert.deepEqual(again, { migrated: [], kept: [] });
   } finally {
@@ -94,7 +85,7 @@ test("migration keeps plaintext when the store cannot take it", async () => {
     const repoFile = join(dir, "repo.json");
     writeFileSync(repoFile, `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" })}\n`);
     const report = await migratePlaintextSecrets(new DpapiCredentialStore(), {
-      DRAFTHOUSE_REPO_SETTINGS: repoFile,
+      CDS_DESIGN_REPO_SETTINGS: repoFile,
     });
     assert.deepEqual(report, { migrated: [], kept: [REPO_PAT_ITEM] });
     assert.ok(readFileSync(repoFile, "utf8").includes("ghp_plain"), "nothing is lost");
@@ -106,23 +97,34 @@ test("migration keeps plaintext when the store cannot take it", async () => {
 test("env overrides win over the store; absent env falls through", async () => {
   const store = new MemoryCredentialStore();
   await store.save(REPO_PAT_ITEM, "from-store");
-  assert.equal(await loadRepoPat(store, null, {}), "from-store");
-  assert.equal(await loadRepoPat(store, null, { DRAFTHOUSE_REPO_PAT: "from-env" }), "from-env");
-  await store.save(CONFLUENCE_TOKEN_ITEM, "token-store");
-  assert.equal(await loadConfluenceToken(store, { DRAFTHOUSE_CONFLUENCE_TOKEN: "token-env" }), "token-env");
+  assert.equal(await loadRepoPat(store, {}), "from-store");
+  assert.equal(await loadRepoPat(store, { CDS_DESIGN_REPO_PAT: "from-env" }), "from-env");
 });
 
-test("a slug reads that project's PAT; no slug reads the pre-projects one", async () => {
+test("migrateProjectPats promotes the active project's token once, then clears the per-project items", async () => {
   const store = new MemoryCredentialStore();
-  await store.save(REPO_PAT_ITEM, "legacy-pat");
   await store.save(repoPatItem("alpha"), "alpha-pat");
+  await store.save(repoPatItem("beta"), "beta-pat");
 
-  assert.equal(await loadRepoPat(store, "alpha", {}), "alpha-pat");
-  assert.equal(await loadRepoPat(store, undefined, {}), "legacy-pat");
-  assert.equal(await loadRepoPat(store, "beta", {}), null, "a project without a PAT is not handed another's");
-  // Headless deploys and the e2e suites configure the PAT by environment; that
-  // has to keep winning whichever project is active.
-  assert.equal(await loadRepoPat(store, "alpha", { DRAFTHOUSE_REPO_PAT: "from-env" }), "from-env");
+  // The active project's token wins; the others are not handed the job.
+  await migrateProjectPats(store, ["alpha", "beta"], "beta");
+  assert.equal(await loadRepoPat(store, {}), "beta-pat");
+  assert.equal(await store.load(repoPatItem("alpha")), null);
+  assert.equal(await store.load(repoPatItem("beta")), null);
+
+  // A machine token already in place is never disturbed.
+  await store.save(repoPatItem("alpha"), "stale-pat");
+  assert.equal(await migrateProjectPats(store, ["alpha"], "alpha"), false);
+  assert.equal(await loadRepoPat(store, {}), "beta-pat");
+  assert.equal(await store.load(repoPatItem("alpha")), null, "a stale per-project item still goes");
+});
+
+test("migrateProjectPats falls back to the first project when there is no active one", async () => {
+  const store = new MemoryCredentialStore();
+  await store.save(repoPatItem("solo"), "solo-pat");
+  await migrateProjectPats(store, ["solo"], null);
+  assert.equal(await loadRepoPat(store, {}), "solo-pat");
+  assert.equal(await store.load(repoPatItem("solo")), null);
 });
 
 test("npmrc merging replaces its own keys and keeps everything else", () => {
@@ -171,3 +173,4 @@ test("the macOS Keychain round-trips under a run-unique service", async (t) => {
     await store.delete(REPO_PAT_ITEM).catch(() => undefined);
   }
 });
+

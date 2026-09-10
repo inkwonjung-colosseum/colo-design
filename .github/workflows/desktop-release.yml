@@ -1,4 +1,4 @@
-# Drafthouse 데스크톱 릴리스(DESIGN §7) — 태그 푸시(v*) 하나로 mac·win
+# CDS Design 데스크톱 릴리스(DESIGN §7) — 태그 푸시(v*) 하나로 mac·win
 # 설치 파일을 모두 빌드해 이 레포의 릴리스 페이지에 올린다.
 #
 # 흐름: build(macOS arm64 + Windows x64 행렬, --publish never 로 로컬 빌드)
@@ -8,9 +8,9 @@
 # 나타나는 것이 이 워크플로우의 목표다.
 #
 # 에셋(이름은 electron-builder.yml 의 artifactName 에 고정):
-#   Drafthouse-<v>-mac-arm64.dmg        macOS 설치 파일
-#   Drafthouse-<v>-mac-arm64.zip        mac 자가 업데이트가 내려받는 형태
-#   Drafthouse-Setup-<v>-win-x64.exe    Windows NSIS 설치 파일
+#   cds-design-<v>-mac-arm64.dmg        macOS 설치 파일
+#   cds-design-<v>-mac-arm64.zip        mac 자가 업데이트가 내려받는 형태
+#   cds-design-Setup-<v>-win-x64.exe    Windows NSIS 설치 파일
 #   latest.json                         앱의 업데이트 확인 피드(version/notes/
 #                                       sha256/url — mac zip sha256 검증용)
 #
@@ -112,7 +112,7 @@ jobs:
       # 대상(target)·아키텍처는 electron-builder.yml 이 정한다: mac dmg+zip
       # (arm64), win nsis(x64). 릴리스 업로드는 publish 잡이 단독으로 한다.
       - name: 설치 파일 빌드
-        run: pnpm --filter @drafthouse/desktop exec electron-builder --publish never
+        run: pnpm --filter @cds-design/desktop exec electron-builder --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -151,9 +151,9 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
           BASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          DMG="Drafthouse-${VERSION}-mac-arm64.dmg"
-          ZIP="Drafthouse-${VERSION}-mac-arm64.zip"
-          EXE="Drafthouse-Setup-${VERSION}-win-x64.exe"
+          DMG="cds-design-${VERSION}-mac-arm64.dmg"
+          ZIP="cds-design-${VERSION}-mac-arm64.zip"
+          EXE="cds-design-Setup-${VERSION}-win-x64.exe"
 
           # 산출물이 전부 있는지 — 없으면 릴리스를 반쪽으로 만들지 않는다.
           for f in "$DMG" "$ZIP" "$EXE"; do
@@ -193,7 +193,7 @@ jobs:
             gh release upload "$TAG" -R "$GITHUB_REPOSITORY" dist/* --clobber
           else
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --title "Drafthouse ${VERSION}" --notes-file release-notes.md dist/*
+              --title "CDS Design ${VERSION}" --notes-file release-notes.md dist/*
           fi
 
           # 게시 확인: 네 에셋이 아니면 실패 — "릴리스 페이지에 win·mac 모두
@@ -205,7 +205,7 @@ jobs:
               || { echo "::error::릴리스에 에셋이 없습니다: $f"; exit 1; }
           done
           {
-            echo "## 릴리스 완료: Drafthouse ${VERSION}"
+            echo "## 릴리스 완료: CDS Design ${VERSION}"
             echo
             gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json url --jq '.url'
           } >> "$GITHUB_STEP_SUMMARY"

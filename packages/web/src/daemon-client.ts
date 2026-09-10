@@ -2,21 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AskQuestion,
   ChatEvent,
-  ConfluenceSettings,
-  ConfluencePageTree,
-  ConfluenceSpaceList,
-  ConfluenceReview,
-  ConfluenceStatus,
   ContextUsage,
   EffortLevel,
   PermissionMode,
   DaemonStatus,
   DiffFile,
   DiffStatus,
-  DocLock,
-  DocSaved,
-  DocState,
-  DocSummary,
+  GitHubRepoInspection,
+  GitHubRepoList,
   HandoffStatus,
   OnboardingFixKind,
   OnboardingStep,
@@ -29,8 +22,7 @@ import type {
   SessionState,
   SessionSelectors,
   SessionSummary,
-  Workspace,
-} from "@drafthouse/protocol";
+} from "@cds-design/protocol";
 
 // ---------------------------------------------------------------------------
 // Transcript model: ChatEvents folded into renderable blocks
@@ -249,10 +241,6 @@ export interface PendingQuestion {
 
 export type Pending = PendingPermission | PendingQuestion;
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
 export type ConnectionState = "idle" | "connecting" | "open" | "closed" | "error";
 
 interface SessionView {
@@ -272,23 +260,20 @@ const EMPTY_SESSION: SessionView = {
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
 export interface DaemonApi {
-  /**
-   * `pageId` narrows the list to the threads attached to one 기획서 page;
-   * omit it for every thread of the workspace, which is what a caller with no
-   * page open (설정 dialog) wants.
-   */
-  listSessions: (workspace: Workspace, pageId?: string) => Promise<SessionSummary[]>;
+  /** Every thread of the one workspace, newest first. */
+  listSessions: () => Promise<SessionSummary[]>;
   history: (sessionId: string) => Promise<ChatEvent[]>;
   /**
-   * Omit `resume` for a fresh thread in that workspace. `model` and `effort`
-   * carry the composer's chips into the new session — the daemon otherwise
-   * starts every thread on the CLI's own defaults. `pageId` attaches the
-   * thread to the page it was started from, so it comes back with that page.
+   * Omit `resume` for a fresh thread. `model` and `effort` carry the
+   * composer's chips into the new session — the daemon otherwise starts every
+   * thread on the CLI's own defaults.
    */
-  createSession: (
-    workspace: Workspace,
-    opts?: { resume?: string; model?: string; effort?: EffortLevel; pageId?: string; title?: string },
-  ) => Promise<{ sessionId: string }>;
+  createSession: (opts?: {
+    resume?: string;
+    model?: string;
+    effort?: EffortLevel;
+    title?: string;
+  }) => Promise<{ sessionId: string }>;
   send: (
     sessionId: string,
     text: string,
@@ -304,8 +289,8 @@ export interface DaemonApi {
   setModel: (sessionId: string, model: string | null) => Promise<unknown>;
   setEffort: (sessionId: string, effort: EffortLevel | null) => Promise<unknown>;
   setPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<unknown>;
-  /** @-mention autocomplete, over the file set the workspace can see. */
-  findFiles: (workspace: Workspace, query: string, limit?: number) => Promise<string[]>;
+  /** @-mention autocomplete, over the connected repo's files. */
+  findFiles: (query: string, limit?: number) => Promise<string[]>;
   closeSession: (sessionId: string) => Promise<unknown>;
   deleteSession: (sessionId: string) => Promise<unknown>;
   respondPermission: (
@@ -321,36 +306,40 @@ export interface DaemonApi {
    */
   projectList: () => Promise<ProjectList>;
   /**
-   * Register a project and bring it up: clone the repo, mirror the subtrees.
-   * Resolves with the created project; progress arrives as `repo.status` and
-   * `confluence.status`.
+   * Register a project and bring it up: clone the repo, install when needed,
+   * start the preview. Resolves with the created project; progress arrives
+   * as `repo.status`.
    */
   projectCreate: (input: {
     name: string;
-    roots: Array<{ space: string; rootPageId: string | null }>;
     repoUrl: string | null;
-    repoPat?: string | null;
     baseBranch?: string;
   }) => Promise<ProjectSummary>;
   /** Switch which project everything else means. */
   projectActivate: (slug: string) => Promise<ProjectList>;
-  /** Rename, or re-point the repo url/PAT/base branch (write-only PAT). */
+  /** Rename, or re-point the repo url/base branch. */
   projectUpdate: (
     slug: string,
-    changes: { name?: string; repoUrl?: string | null; repoPat?: string | null; baseBranch?: string },
+    changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
   ) => Promise<ProjectList>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
   repoStatus: () => Promise<RepoStatus>;
   /** Clone when missing, pull, install when needed, start the preview. */
   repoSync: () => Promise<RepoStatus>;
-  /** Change the connected repo's url and/or PAT (write-only). */
-  repoUpdate: (url: string | null, pat?: string | null) => Promise<RepoStatus>;
+  /**
+   * 레포 최신화: pull the developer's merged work into the clone, with
+   * unsaved changes riding along. A conflict goes to the named thread as
+   * Claude's next turn.
+   */
+  repoRefresh: (sessionId?: string | null) => Promise<RepoStatus>;
+  /** Change the connected repo's url. */
+  repoUpdate: (url: string | null) => Promise<RepoStatus>;
   /** Worktree changes not saved yet, for the 저장 review panel. */
   diff: () => Promise<DiffFile[]>;
   /**
    * 저장 (PLAN D5): run the gates, then commit and push onto this cycle's own
-   * `drafthouse/…` branch. Progress arrives as `diff.status`.
+   * `cds-design/…` branch. Progress arrives as `diff.status`.
    */
   save: (message?: string, sessionId?: string | null) => Promise<DiffStatus>;
   /**
@@ -363,47 +352,19 @@ export interface DaemonApi {
    * polled — the state only moves when a developer acts on it.
    */
   handoffStatus: () => Promise<HandoffStatus>;
-  confluenceStatus: () => Promise<{
-    settings: ConfluenceSettings;
-    spaces: ConfluenceStatus[];
-  }>;
-  /** Credentials go daemon-side (OS store); the reply carries presence only. */
-  confluenceUpdate: (
-    siteUrl: string | null,
-    email: string | null,
-    apiToken?: string | null,
-  ) => Promise<ConfluenceSettings>;
-  /** Remote spaces plus the keys already mirrored, for the clone picker. */
-  confluenceSpaces: () => Promise<ConfluenceSpaceList>;
-  /**
-   * The remote page tree of a space, for the project wizard's root picker.
-   * Nothing is mirrored at that point — this reads Confluence directly.
-   */
-  confluencePageTree: (space: string) => Promise<ConfluencePageTree>;
-  /**
-   * Clone a whole space into the mirror. Not a first-run-only action: the
-   * + 스페이스 flow and a re-take of a clone that died halfway both land here.
-   */
-  confluenceSync: (space: string) => Promise<ConfluenceStatus>;
-  /** What 게시 would send, for the confirm dialog — computed, nothing written. */
-  confluenceReview: (space: string) => Promise<ConfluenceReview>;
-  /** Pull one mirrored space now; progress arrives as `confluence.status`. */
-  confluencePull: (space: string) => Promise<ConfluenceStatus>;
-  /** Push a mirrored space's local edits back to Confluence. */
-  confluencePush: (space: string) => Promise<ConfluenceStatus>;
-  docList: (space: string) => Promise<DocSummary[]>;
-  docOpen: (path: string) => Promise<DocState>;
-  /** The single save path — the daemon normalizes and writes. */
-  docSave: (path: string, markdown: string) => Promise<DocSaved>;
-  docResolve: (path: string, choice: "mine" | "theirs") => Promise<DocSaved>;
-  docAttachmentSave: (path: string, filename: string, mediaType: string, data: string) => Promise<{ filename: string; reference: string; mediaType: string }>;
-  docLock: (locked: boolean, reason?: string) => Promise<DocLock>;
-  /** Hold/release a background-pull deferral for unsaved editor work. */
-  docEditing: (path: string, editing: boolean) => Promise<unknown>;
   /** The four onboarding checks; read-only. */
   onboardingCheck: () => Promise<OnboardingStep[]>;
+  /**
+   * Store (or clear) the machine-wide GitHub token; resolves with the
+   * recomputed `github` step.
+   */
+  githubTokenSet: (token: string | null) => Promise<OnboardingStep>;
+  /** Repos the token can reach — the project picker's list. */
+  githubReposList: (refresh?: boolean) => Promise<GitHubRepoList>;
+  /** Judge one repo before any clone. */
+  githubRepoInspect: (owner: string, repo: string) => Promise<GitHubRepoInspection>;
   /** Run a fix; resolves with whatever the fix returns (status/guidance). */
-  onboardingFix: (kind: OnboardingFixKind, space?: string) => Promise<unknown>;
+  onboardingFix: (kind: OnboardingFixKind) => Promise<unknown>;
 }
 
 /** One connection to one daemon, as the views consume it. */
@@ -428,13 +389,6 @@ export interface Daemon {
    * one channel — the daemon runs one at a time against one clone.
    */
   diffStatus: DiffStatus | null;
-  /** Mirror state; spaces appear as they are cloned. */
-  confluenceStatuses: ConfluenceStatus[];
-  confluenceSettings: ConfluenceSettings | null;
-  /** Last mirror-file change broadcast; editors reload on their own path. */
-  docChanged: { path: string; at: number } | null;
-  /** Editor lock: true while a Claude turn runs or a client holds doc.lock. */
-  docLock: DocLock | null;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
   resolvePending: (requestId: string) => void;
@@ -457,10 +411,6 @@ export function useDaemon(url: string | null): Daemon {
   const [pending, setPending] = useState<Pending[]>([]);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   const [diffStatus, setDiffStatus] = useState<DiffStatus | null>(null);
-  const [confluenceStatuses, setConfluenceStatuses] = useState<ConfluenceStatus[]>([]);
-  const [confluenceSettings, setConfluenceSettings] = useState<ConfluenceSettings | null>(null);
-  const [docChanged, setDocChanged] = useState<{ path: string; at: number } | null>(null);
-  const [docLock, setDocLock] = useState<DocLock | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(null);
 
   useEffect(() => {
@@ -563,24 +513,6 @@ export function useDaemon(url: string | null): Daemon {
         return;
       }
 
-      if (message.type === "confluence.status") {
-        setConfluenceStatuses((prev) => {
-          const next = prev.filter((status) => status.space !== message.status.space);
-          return message.status.space ? [...next, message.status] : next;
-        });
-        return;
-      }
-
-      if (message.type === "doc.changed") {
-        setDocChanged({ path: message.path, at: Date.now() });
-        return;
-      }
-
-      if (message.type === "doc.locked") {
-        setDocLock(message.lock);
-        return;
-      }
-
       if (message.type === "session.event") {
         setSessions((prev) => {
           const view = prev[message.sessionId] ?? EMPTY_SESSION;
@@ -670,20 +602,19 @@ export function useDaemon(url: string | null): Daemon {
 
   const api = useMemo<DaemonApi>(
     () => ({
-      listSessions: (workspace: Workspace, pageId?: string) =>
-        call<SessionSummary[]>({ type: "session.list", workspace, ...(pageId ? { pageId } : {}) }),
+      listSessions: () => call<SessionSummary[]>({ type: "session.list" }),
       history: (sessionId: string) => call<ChatEvent[]>({ type: "session.history", sessionId }),
-      createSession: (
-        workspace: Workspace,
-        opts?: { resume?: string; model?: string; effort?: EffortLevel; pageId?: string; title?: string },
-      ) =>
+      createSession: (opts?: {
+        resume?: string;
+        model?: string;
+        effort?: EffortLevel;
+        title?: string;
+      }) =>
         call<{ sessionId: string }>({
           type: "session.create",
-          workspace,
           ...(opts?.resume ? { resume: opts.resume } : {}),
           ...(opts?.model ? { model: opts.model } : {}),
           ...(opts?.effort ? { effort: opts.effort } : {}),
-          ...(opts?.pageId ? { pageId: opts.pageId } : {}),
           ...(opts?.title ? { title: opts.title } : {}),
         }),
       send: (
@@ -704,38 +635,38 @@ export function useDaemon(url: string | null): Daemon {
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
       selectors: (sessionId: string) => call<SessionSelectors>({ type: "session.selectors", sessionId }),
       commands: (sessionId: string) => call<SessionCommand[]>({ type: "session.commands", sessionId }),
+      findFiles: (query: string, limit = 40) => call<string[]>({ type: "repo.files", query, limit }),
       setModel: (sessionId: string, model: string | null) =>
         call({ type: "session.setModel", sessionId, model }),
       setEffort: (sessionId: string, effort: EffortLevel | null) =>
         call({ type: "session.setEffort", sessionId, effort }),
       setPermissionMode: (sessionId: string, mode: PermissionMode) =>
         call({ type: "session.setPermissionMode", sessionId, mode }),
-      findFiles: (workspace: Workspace, query: string, limit = 40) =>
-        call<string[]>({ type: "repo.files", workspace, query, limit }),
-      closeSession: (sessionId: string) => call({ type: "session.close", sessionId }),
-      deleteSession: (sessionId: string) => call({ type: "session.delete", sessionId }),
       respondPermission: (requestId: string, decision: "allow" | "allowAlways" | "deny", message?: string) =>
         call({ type: "permission.respond", requestId, decision, message }),
+      closeSession: (sessionId: string) => call({ type: "session.close", sessionId }),
+      deleteSession: (sessionId: string) =>
+        call(
+          { type: "session.delete", sessionId },
+          // A stored transcript is removed with the session.
+          120_000,
+        ),
       respondQuestion: (requestId: string, answers: Record<string, string | string[]>) =>
         call({ type: "question.respond", requestId, answers }),
       refreshStatus: () => call<DaemonStatus>({ type: "daemon.status" }).then(setStatus),
       projectList: () => call<ProjectList>({ type: "project.list" }).then(keepProjects),
-      // Creating clones the repo AND mirrors every root: a first run downloads
-      // two trees, so it gets more than the minutes a single clone does.
+      // Creating clones the repo and installs when needed: a first run is
+      // minutes, not the minute a normal request gets.
       projectCreate: (input: {
         name: string;
-        roots: Array<{ space: string; rootPageId: string | null }>;
         repoUrl: string | null;
-        repoPat?: string | null;
         baseBranch?: string;
       }) =>
         call<ProjectSummary>(
           {
             type: "project.create",
             name: input.name,
-            roots: input.roots,
             repoUrl: input.repoUrl,
-            ...(input.repoPat !== undefined ? { repoPat: input.repoPat } : {}),
             ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
           },
           900_000,
@@ -746,7 +677,7 @@ export function useDaemon(url: string | null): Daemon {
         call<ProjectList>({ type: "project.activate", slug }, 600_000).then(keepProjects),
       projectUpdate: (
         slug: string,
-        changes: { name?: string; repoUrl?: string | null; repoPat?: string | null; baseBranch?: string },
+        changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
       ) =>
         call<ProjectList>(
           {
@@ -754,7 +685,6 @@ export function useDaemon(url: string | null): Daemon {
             slug,
             ...(changes.name !== undefined ? { name: changes.name } : {}),
             ...(changes.repoUrl !== undefined ? { repoUrl: changes.repoUrl } : {}),
-            ...(changes.repoPat !== undefined ? { repoPat: changes.repoPat } : {}),
             ...(changes.baseBranch !== undefined ? { baseBranch: changes.baseBranch } : {}),
           },
           // A moved url re-clones.
@@ -769,15 +699,15 @@ export function useDaemon(url: string | null): Daemon {
       // A first run clones and installs the connected repo: minutes, not the
       // minute a normal request is given before it is declared lost.
       repoSync: () => call<RepoStatus>({ type: "repo.sync" }, 600_000).then(keepRepo),
-      repoUpdate: (url: string | null, pat?: string | null) =>
+      // A refresh is one fetch-and-merge on the clone: the window a network
+      // read gets, not the minutes a first clone or install takes.
+      repoRefresh: (sessionId?: string | null) =>
         call<RepoStatus>(
-          {
-            type: "repo.update",
-            ...(url !== undefined ? { url } : {}),
-            ...(pat !== undefined ? { pat } : {}),
-          },
-          600_000,
+          { type: "repo.refresh", ...(sessionId ? { sessionId } : {}) },
+          120_000,
         ).then(keepRepo),
+      repoUpdate: (url: string | null) =>
+        call<RepoStatus>({ type: "repo.update", url }, 600_000).then(keepRepo),
       diff: () => call<DiffFile[]>({ type: "diff.get" }, 120_000),
       // A save runs the repo's own check and build before pushing: the
       // same minutes a first sync is given.
@@ -803,88 +733,38 @@ export function useDaemon(url: string | null): Daemon {
           },
           600_000,
         ),
+      githubTokenSet: (token: string | null) =>
+        call<OnboardingStep>({ type: "github.token.set", token }, 60_000).then((step) => {
+          // The reply is one gate; fold it into the wizard's list in place.
+          setOnboarding((prev) =>
+            prev ? prev.map((entry) => (entry.id === step.id ? step : entry)) : [step],
+          );
+          return step;
+        }),
+      // Listing walks up to five pages of GitHub: the window a few network
+      // reads get, not the one a local request does.
+      githubReposList: (refresh?: boolean) =>
+        call<GitHubRepoList>(
+          { type: "github.repos.list", ...(refresh ? { refresh } : {}) },
+          120_000,
+        ),
+      githubRepoInspect: (owner: string, repo: string) =>
+        call<GitHubRepoInspection>({ type: "github.repo.inspect", owner, repo }, 60_000),
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
       handoffStatus: () => call<HandoffStatus>({ type: "repo.handoffStatus" }, 120_000),
-      confluenceStatus: () =>
-        call<{ settings: ConfluenceSettings; spaces: ConfluenceStatus[] }>({ type: "confluence.status" }).then(
-          (data) => {
-            setConfluenceSettings(data.settings);
-            // The reply is the mirror's snapshot; `confluence.status`
-            // broadcasts only report CHANGES. Dropping it left an already
-            // mirrored space invisible after every app start — an empty page
-            // tree until some space happened to move.
-            setConfluenceStatuses(data.spaces);
-            return data;
-          },
-        ),
-      confluenceUpdate: (siteUrl: string | null, email: string | null, apiToken?: string | null) =>
-        call<ConfluenceSettings>(
-          {
-            type: "confluence.update",
-            ...(siteUrl !== undefined ? { siteUrl } : {}),
-            ...(email !== undefined ? { email } : {}),
-            ...(apiToken !== undefined ? { apiToken } : {}),
-          },
-          120_000,
-        ).then((settings) => {
-          setConfluenceSettings(settings);
-          return settings;
-        }),
-      // Listing spaces walks the site's cursor pages; a large site is slower
-      // than a status call, well short of a transfer.
-      confluenceSpaces: () => call<ConfluenceSpaceList>({ type: "confluence.spaces" }, 120_000),
-      // Listing a whole space's pages is one paginated read; the picker cannot
-      // open until it lands, so it gets the same window as the space list.
-      confluencePageTree: (space: string) =>
-        call<ConfluencePageTree>({ type: "confluence.pageTree", space }, 120_000),
-      // A clone downloads every page and attachment of a space: the same
-      // minutes a push gets, not the minute a normal request does.
-      confluenceSync: (space: string) =>
-        call<ConfluenceStatus>({ type: "confluence.sync", space }, 600_000),
-      confluencePull: (space: string) =>
-        call<ConfluenceStatus>({ type: "confluence.pull", space }, 300_000),
-      confluenceReview: (space: string) => call<ConfluenceReview>({ type: "confluence.review", space }),
-      // A push creates pages and uploads attachments one page at a time; a
-      // large space takes minutes, not the minute a normal request gets.
-      confluencePush: (space: string) =>
-        call<ConfluenceStatus>({ type: "confluence.push", space }, 600_000),
-      docList: (space: string) => call<DocSummary[]>({ type: "doc.list", space }),
-      docOpen: (path: string) => call<DocState>({ type: "doc.open", path }),
-      docSave: (path: string, markdown: string) =>
-        call<DocSaved>({ type: "doc.save", path, markdown }, 120_000),
-      docResolve: (path: string, choice: "mine" | "theirs") =>
-        call<DocSaved>({ type: "doc.resolve", path, choice }),
-      docAttachmentSave: (path: string, filename: string, mediaType: string, data: string) =>
-        call<{ filename: string; reference: string; mediaType: string }>({
-          type: "doc.attachment.save",
-          path,
-          filename,
-          mediaType,
-          data,
-        }),
-      docLock: (locked: boolean, reason?: string) =>
-        call<DocLock>({ type: "doc.lock", locked, ...(reason ? { reason } : {}) }),
-      docEditing: (path: string, editing: boolean) =>
-        call({ type: "doc.editing", path, editing }),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
           setOnboarding(steps);
           return steps;
         }),
-      onboardingFix: (kind: OnboardingFixKind, space?: string) =>
+      onboardingFix: (kind: OnboardingFixKind) =>
         call(
-          { type: "onboarding.fix", kind, ...(space ? { space } : {}) },
-          // repo-install and confluence-sync clone and install.
+          { type: "onboarding.fix", kind },
+          // install-pnpm runs corepack to completion; the others only
+          // launch an installer or a login window.
           600_000,
-        ).then(async (data) => {
-          try {
-            setOnboarding(await call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000));
-          } catch {
-            // the wizard re-checks on its own
-          }
-          return data;
-        }),
+        ),
     }),
     [call, keepProjects, keepRepo],
   );
@@ -930,10 +810,6 @@ export function useDaemon(url: string | null): Daemon {
     markLive,
     repo,
     diffStatus,
-    confluenceStatuses,
-    confluenceSettings,
-    docChanged,
-    docLock,
     onboarding,
   };
 }

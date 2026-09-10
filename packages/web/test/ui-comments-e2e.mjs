@@ -1,18 +1,18 @@
 /**
- * Comment-overlay e2e (DESIGN §6 v1): the REAL connected-repo dev preview in
+ * Comment-overlay e2e (DESIGN §6 v1): the REAL reference-repo dev preview in
  * the tool's iframe, the real overlay, the real wire. No model turn — the
  * daemon runs a stub CLI, and the structured turn is observed on the socket
  * the way publish-e2e observes onSessionTurn.
  *
- * Story: the repo (a local clone of connected-repo with a free preview port)
+ * Story: the repo (a local clone of reference-repo with a free preview port)
  * boots under the daemon; the web connects; inside the iframe the planner
  * enters comment mode, pins two real elements, sends — the tool renders the
  * pins summary, the active session receives one structured Korean turn whose
  * json fence carries the exact envelope, and the pins clear when the turn
- * settles. Finally: `pnpm check` and `pnpm build` in connected-repo stay
+ * settles. Finally: `pnpm check` and `pnpm build` in reference-repo stay
  * green and the production output contains no trace of the overlay.
  *
- * Prerequisites: `pnpm build` (hub), connected-repo/node_modules installed.
+ * Prerequisites: `pnpm build` (hub), reference-repo/node_modules installed.
  */
 import { spawn, execFile } from "node:child_process";
 import { createServer } from "node:http";
@@ -65,8 +65,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
-const source = join(repoRoot, "connected-repo");
-const DIR = join(tmpdir(), "drafthouse-comments-e2e");
+const source = join(repoRoot, "reference-repo");
+const DIR = join(tmpdir(), "cds-design-comments-e2e");
 const CLONE = join(DIR, "clone");
 const PORT = 5400;
 
@@ -102,10 +102,10 @@ async function waitFor(predicate, timeoutMs, label) {
 }
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @drafthouse/web build");
-  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @drafthouse/daemon build");
+  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
+  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @cds-design/daemon build");
   if (!existsSync(join(source, "node_modules"))) {
-    throw new Error("connected-repo dependencies missing. Run: cd connected-repo && pnpm install");
+    throw new Error("reference-repo dependencies missing. Run: cd reference-repo && pnpm install");
   }
 
   // --- a local clone of the tool's own repo, on a free preview port ---------
@@ -113,34 +113,27 @@ async function main() {
   mkdirSync(DIR, { recursive: true });
   await run("git", ["clone", "--quiet", source, CLONE]);
   const previewPort = await freePort();
-  const drafthouse = JSON.parse(readFileSync(join(CLONE, "drafthouse.json"), "utf8"));
-  drafthouse.install = "true"; // deps are shared; the suite is about the overlay
-  drafthouse.preview = {
+  const config = JSON.parse(readFileSync(join(CLONE, "cds-design.json"), "utf8"));
+  config.install = "true"; // deps are shared; the suite is about the overlay
+  config.preview = {
     command: `./node_modules/.bin/next dev -p ${previewPort}`,
     port: previewPort,
   };
-  writeFileSync(join(CLONE, "drafthouse.json"), `${JSON.stringify(drafthouse, null, 2)}\n`);
+  writeFileSync(join(CLONE, "cds-design.json"), `${JSON.stringify(config, null, 2)}\n`);
   symlinkSync(join(source, "node_modules"), join(CLONE, "node_modules"));
+  // registry.gen.ts is gitignored, so a fresh clone cannot compile until the
+  // repo's own generator runs — the same step its dev/build scripts do first.
+  await run("node", ["scripts/gen-registry.mjs", "--quiet"], { cwd: CLONE });
 
   const env = {
     ...process.env,
-    DRAFTHOUSE_PORT: String(await freePort()),
-    DRAFTHOUSE_REPO_DIR: CLONE,
-    DRAFTHOUSE_REPO_URL: source,
-    // Same isolation as every other suite: the registry belongs to this run.
-    DRAFTHOUSE_PROJECTS_SETTINGS: join(DIR, "projects.json"),
-    DRAFTHOUSE_PROJECTS_DIR: join(DIR, "projects"),
-    DRAFTHOUSE_CLAUDE_BIN: writeSlowStubClaude(join(DIR, "bin")),
-    DRAFTHOUSE_CREDENTIAL_STORE: "memory",
-    DRAFTHOUSE_CONFLUENCE_SITE: "https://example.atlassian.net",
-    DRAFTHOUSE_CONFLUENCE_EMAIL: "dev@example.com",
-    DRAFTHOUSE_CONFLUENCE_TOKEN: "comments-e2e",
-    DRAFTHOUSE_CONFLUENCE_DIR: join(DIR, "mirror"),
-    DRAFTHOUSE_CONFLUENCE_SETTINGS: join(DIR, "confluence.json"),
-    // A mirror whose page path is exactly the `meta.spec` the reference repo's
-    // member screens declare: that equality is what the stage badge and the
-    // auto-navigate are made of, so the suite has to hold both ends of it.
-    DRAFTHOUSE_CONFLUENCE_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "confluence", "screens"),
+    CDS_DESIGN_PORT: String(await freePort()),
+    CDS_DESIGN_REPO_DIR: CLONE,
+    CDS_DESIGN_REPO_URL: source,
+    CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
+    CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
+    CDS_DESIGN_CLAUDE_BIN: writeSlowStubClaude(join(DIR, "bin")),
+    CDS_DESIGN_CREDENTIAL_STORE: "memory",
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], { cwd: CLONE, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -165,22 +158,6 @@ async function main() {
   observer.on("message", (raw) => inbox.push(JSON.parse(String(raw))));
   await new Promise((resolve) => observer.once("open", resolve));
 
-  /** The observer doubles as a control socket for the mirror this suite needs. */
-  const controlCall = async (message) => {
-    observer.send(JSON.stringify(message));
-    const started = Date.now();
-    while (Date.now() - started < 60_000) {
-      const reply = inbox.find((entry) => entry.id === message.id);
-      if (reply) {
-        if (reply.type === "error") throw new Error(`${message.type}: ${reply.message}`);
-        return reply.data;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`timeout waiting for ${message.type}`);
-  };
-  await controlCall({ id: "mirror", type: "confluence.sync", space: "ENG" });
-
   const server = await serveDist();
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1720, height: 1000 } });
@@ -193,7 +170,6 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });
-    await page.getByRole("tab", { name: "화면" }).click();
     await page.waitForSelector(".preview__frame", { timeout: 180_000 });
 
     // --- inside the repo's own preview app --------------------------------
@@ -203,7 +179,7 @@ async function main() {
     await frame.getByRole("button", { name: "댓글", exact: true }).waitFor({ timeout: 120_000 });
     check("the dev-only overlay mounts inside the preview", true);
 
-    // --- the repo declares its screens, the tool offers them (PLAN D7) ----
+    // --- the repo declares its screens, both surfaces offer them (PLAN D7) --
     const picker = page.getByRole("combobox", { name: "화면" });
     await picker.waitFor({ timeout: 60_000 });
     // textContent, not innerText: options inside a collapsed <select> have no
@@ -215,26 +191,30 @@ async function main() {
       offered.join(" · "),
     );
 
-    // --- picking the 기획서 shows the screen it specifies -------------------
-    // The two member screens both name ENG/회원 관리 기획서.md as their spec,
-    // so the first declared one is what the planner lands on.
-    await page.locator(".pagetree__title", { hasText: "회원 관리 기획서" }).click();
-    await frame.locator('[data-screen="member/MemberList"]').waitFor({ timeout: 60_000 });
-    check("selecting its 기획서 navigates the preview to that screen", true);
-
-    // --- and the tree says how far that page has come ----------------------
-    const stage = page
-      .locator(".pagetree__row", { hasText: "회원 관리 기획서" })
-      .locator(".pagetree__stage");
+    // The picker is the screens' only door now, and it keeps the old rail's
+    // grouping (PLAN D3): the planner's own feature leads, the repo's
+    // _example teaching material sinks.
+    const groups = await picker
+      .locator("optgroup")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => [
+          node.label,
+          [...node.querySelectorAll("option")].map((option) => option.textContent),
+        ]),
+      );
     check(
-      "a page with a screen reads 화면 있음, one without stays 기획 중",
-      (await stage.getAttribute("title"))?.startsWith("화면 있음") === true &&
-        (await page
-          .locator(".pagetree__row", { hasText: "주문 정책" })
-          .locator(".pagetree__stage")
-          .getAttribute("title"))?.startsWith("기획 중") === true,
-      `${await stage.innerText()} / ${await page.locator(".pagetree__row", { hasText: "주문 정책" }).locator(".pagetree__stage").innerText()}`,
+      "the picker groups the declared screens by feature, member first",
+      groups[0]?.[0] === "member" &&
+        groups[0]?.[1].includes("회원 목록") &&
+        groups[0]?.[1].includes("회원 상세") &&
+        groups.at(-1)?.[1].includes("예시 목록"),
+      groups.map(([name, titles]) => `${name}: ${titles.join(",")}`).join(" · "),
     );
+
+    // --- picking a screen in the picker navigates the preview ---------------
+    await picker.selectOption({ label: "회원 목록" });
+    await frame.locator('[data-screen="member/MemberList"]').waitFor({ timeout: 60_000 });
+    check("picking a screen in the picker navigates the preview to it", true);
 
     // --- a state chip shows the 기획서's other state ------------------------
     await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "비어 있음" }).click();
@@ -317,7 +297,7 @@ async function main() {
     const envelope = fence ? JSON.parse(fence) : null;
     check(
       "the envelope carries the §6 element identity",
-      envelope?.type === "drafthouse.comments" &&
+      envelope?.type === "cds-design.comments" &&
         envelope.screen === "member/MemberList" &&
         envelope.state === "default" &&
         envelope.items.length === 2 &&
@@ -348,7 +328,7 @@ async function main() {
       !cardText.includes("data-screen") &&
         !cardText.includes("nth-of-type") &&
         !cardText.includes("rect ") &&
-        !cardText.includes("drafthouse.comments"),
+        !cardText.includes("cds-design.comments"),
       cardText.slice(0, 120),
     );
     check(
@@ -361,10 +341,10 @@ async function main() {
     const folded = await card.locator(".machine__body").innerText();
     check(
       "자세히 shows the text Claude actually received",
-      folded.includes("data-screen") && folded.includes("drafthouse.comments"),
+      folded.includes("data-screen") && folded.includes("cds-design.comments"),
       folded.slice(0, 80),
     );
-    check("the marker itself is not shown", !folded.includes("<!-- drafthouse:"));
+    check("the marker itself is not shown", !folded.includes("<!-- cds-design:"));
     // Fold it back: the screenshot below is the artifact this milestone is
     // judged on, and it should show what a planner sees, not the fold.
     await card.getByRole("button", { name: "접기" }).click();
@@ -378,7 +358,7 @@ async function main() {
     const commentTab = await page.locator(".sessiontab--on").innerText();
     check(
       "a machine-authored turn never names the thread it lands in",
-      !commentTab.includes("drafthouse:") &&
+      !commentTab.includes("cds-design:") &&
         !commentTab.includes("화면 수정 요청") &&
         !commentTab.includes("member/MemberList"),
       commentTab.split("\n").join(" "),
@@ -395,14 +375,44 @@ async function main() {
     await page.locator('[data-testid="pins-summary"]').waitFor({ state: "detached", timeout: 30_000 });
     check("pins clear once the turn settles", true);
 
+    // --- 넘기기 전 점검 (PLAN D5): one plain Korean turn into the CURRENT
+    // thread — the tool never judges spec coverage itself, and the 기획서 is
+    // already in the thread's specs/, so Claude is the one who reads it.
+    await page.locator(".screenpanel__bar").getByRole("button", { name: "넘기기 전 점검" }).click();
+    await waitFor(() => {
+      echo = inbox.find(
+        (m) =>
+          m.type === "session.event" &&
+          m.event?.kind === "user.echo" &&
+          typeof m.event.text === "string" &&
+          m.event.text.includes("넘기기 전 점검") &&
+          m.event.text.includes("specs/"),
+      );
+      return echo !== null && echo !== undefined;
+    }, 30_000, "the precheck turn on the socket").catch(() => {
+      echo = null;
+    });
+    check("점검 asks Claude in one plain turn, naming the specs/ 근거", echo !== null);
+    // The echo lands on this socket before the browser's own socket delivers
+    // it, so give the render one grace window before judging the shape.
+    await page
+      .locator(".bubble--user", { hasText: "넘기기 전 점검" })
+      .first()
+      .waitFor({ timeout: 30_000 })
+      .catch(() => undefined);
+    check(
+      "the precheck turn is a plain user turn, not a marker card",
+      (await page.locator(".bubble--user", { hasText: "넘기기 전 점검" }).count()) === 1 &&
+        (await page.locator(".machine", { hasText: "넘기기 전 점검" }).count()) === 0,
+    );
+
     // The finished mark is for a turn that ended somewhere the planner was
-    // NOT looking (PLAN D2). This one settled in the open tab, under their
-    // eyes, so marking it would be telling them what they just watched.
+    // NOT looking (PLAN D2). These settled in the open tab, under their
+    // eyes, so marking them would be telling them what they just watched.
     check(
       "the tab the planner is reading gets no finished mark",
       (await page.locator(".sessiontab .dot--done").count()) === 0,
     );
-
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({ path: join(here, "ui-comments-e2e.png"), fullPage: true });
   } finally {
@@ -424,7 +434,7 @@ async function main() {
 
   // --- the repo stays clean: check + build, and no overlay in production ----
   const checkRun = await run("pnpm", ["check"], { cwd: source }).catch((e) => e);
-  check("connected-repo pnpm check passes with the overlay", !(checkRun instanceof Error), String(checkRun).split("\n")[0] ?? "");
+  check("reference-repo pnpm check passes with the overlay", !(checkRun instanceof Error), String(checkRun).split("\n")[0] ?? "");
   rmSync(join(source, ".next"), { recursive: true, force: true });
   await run("pnpm", ["build"], { cwd: source });
   const leaking = [];
@@ -435,7 +445,7 @@ async function main() {
         if (entry.name === "cache") continue;
         walk(path);
       } else if (entry.name.endsWith(".js")) {
-        if (readFileSync(path, "utf8").includes("drafthouse.comments")) leaking.push(path);
+        if (readFileSync(path, "utf8").includes("cds-design.comments")) leaking.push(path);
       }
     }
   };

@@ -5,7 +5,7 @@
  * browser preference and should not need a daemon to change — so the whole
  * thing can be driven against the built app served from disk.
  *
- * Prerequisite: `pnpm --filter @drafthouse/web build`
+ * Prerequisite: `pnpm --filter @cds-design/web build`
  */
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync } from "node:fs";
@@ -41,10 +41,10 @@ function serveDist() {
 
 const theme = (page) => page.evaluate(() => document.documentElement.dataset.theme);
 const stored = (page) =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("drafthouse.settings") ?? "null"));
+  page.evaluate(() => JSON.parse(localStorage.getItem("cds-design.settings") ?? "null"));
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @drafthouse/web build");
+  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
 
   const server = await serveDist();
   const browser = await chromium.launch();
@@ -71,15 +71,17 @@ async function main() {
     const groups = await page.locator(".settings__groupTitle").allInnerTexts();
     check(
       "the panel offers only what a planner sets",
-      ["화면", "대화", "동작", "연결 레포", "문제 해결"].every((g) => groups.includes(g)) &&
-        groups.length === 5,
+      ["화면", "대화", "동작", "GITHUB", "연결 레포", "문제 해결"].every((g) => groups.includes(g)) &&
+        groups.length === 6,
       groups.join(", "),
     );
     // No daemon yet, so the repo fields wait for one instead of pretending.
+    // No daemon yet: the GitHub token form and the repo url field wait for
+    // one instead of pretending.
     check(
-      "repo url and PAT inputs wait for a daemon",
-      (await page.getByLabel("연결 레포 주소").isDisabled()) === true &&
-        (await page.getByLabel("연결 레포 개인 액세스 토큰").isDisabled()) === true,
+      "the token input and repo url wait for a daemon",
+      (await page.getByLabel("GitHub 개인 액세스 토큰").isDisabled()) === true &&
+        (await page.getByLabel("연결 레포 주소").isDisabled()) === true,
     );
 
     // 3. theme applies live and persists.
@@ -193,7 +195,7 @@ async function main() {
     // 8. a stored blob that is not a legal Settings must not brick the app.
     await page.evaluate(() =>
       localStorage.setItem(
-        "drafthouse.settings",
+        "cds-design.settings",
         JSON.stringify({ theme: "neon", sendKey: 7, confirmBeforeDelete: "yes" }),
       ),
     );

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { DaemonStatus, EffortLevel, PermissionMode } from "@drafthouse/protocol";
-import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@drafthouse/protocol";
+import type { DaemonStatus, EffortLevel, PermissionMode } from "@cds-design/protocol";
+import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
+import { GitHubTokenForm } from "./GitHubTokenForm";
 import { CloseIcon } from "./icons";
 import {
   EFFORT_HINT,
@@ -72,11 +73,14 @@ function Choice<T extends string>({
   label: string;
   hint?: string;
   value: T;
-  options: Array<{ value: T; label: string }>;
+  options: Array<{ value: T; label: string; hint?: string }>;
   onChange: (value: T) => void;
 }) {
+  /** The menu carries the choice's name; the description reads below the
+      row, where a full sentence fits and nothing truncates mid-thought. */
+  const activeHint = options.find((option) => option.value === value)?.hint ?? hint;
   return (
-    <Field label={label} {...(hint ? { hint } : {})}>
+    <Field label={label} {...(activeHint ? { hint: activeHint } : {})}>
       <select value={value} onChange={(e) => onChange(e.target.value as T)}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -101,7 +105,12 @@ function Switch({
 }) {
   return (
     <Field label={label} {...(hint ? { hint } : {})}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span className="switch">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span className="switch__track" aria-hidden="true">
+          <span className="switch__knob" />
+        </span>
+      </span>
     </Field>
   );
 }
@@ -151,16 +160,25 @@ export function SettingsDialog({
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   /**
+   * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.cds-design in the OS
+   * file manager; the browser path has no bridge and shows the path instead.
+   * The preload script is the boundary that decides the shape, so reading it
+   * once through a named accessor with an `in` guard is the checked route.
+   */
+  const bridgeOpenHome =
+    window.cdsDesignDesktop && "openHome" in window.cdsDesignDesktop
+      ? window.cdsDesignDesktop.openHome
+      : undefined;
+  /**
    * 수동 업데이트 확인(DESIGN §7): 데스크톱 다리가 있으면 그것으로,
    * 브라우저에서는 같은 공유 로직을 window.fetch 로 돌린다 — 로직은
-   * @drafthouse/protocol 의 update 모듈 하나다.
+   * @cds-design/protocol 의 update 모듈 하나다.
    */
   const checkUpdate = async () => {
     setCheckingUpdate(true);
     setUpdateError(null);
     try {
-      const bridge = (window as { drafthouseDesktop?: { updateCheck: () => Promise<UpdateCheckResult> } })
-        .drafthouseDesktop;
+      const bridge = window.cdsDesignDesktop;
       if (bridge) {
         const result = await bridge.updateCheck();
         if ("error" in result && result.error) throw new Error(String(result.error));
@@ -174,7 +192,14 @@ export function SettingsDialog({
         );
       }
     } catch (e) {
-      setUpdateError(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      // The browser's network failure lands here verbatim; a planner cannot
+      // act on "Failed to fetch" but can on what to check.
+      setUpdateError(
+        /failed to fetch|networkerror|load failed/i.test(raw)
+          ? "업데이트 서버에 연결하지 못했습니다 — 인터넷 연결을 확인하고 다시 시도해 주세요."
+          : raw,
+      );
     } finally {
       setCheckingUpdate(false);
     }
@@ -183,9 +208,10 @@ export function SettingsDialog({
   // The repo url arrives asynchronously (repo.status); adopt it until the
   // planner edits the field, so reopening the dialog shows what is stored.
   const [repoUrlDraft, setRepoUrlDraft] = useState<string | null>(null);
-  const [patDraft, setPatDraft] = useState("");
   const [repoError, setRepoError] = useState<string | null>(null);
   const [savingRepo, setSavingRepo] = useState(false);
+  /** The GitHub group's 토큰 바꾸기 toggle: detail row ↔ the form. */
+  const [editingToken, setEditingToken] = useState(false);
   const connected = daemon.connection === "open";
   const repoUrl = repoUrlDraft ?? daemon.repo?.url ?? "";
 
@@ -204,14 +230,12 @@ export function SettingsDialog({
   }, []);
 
   const urlChanged = url.trim().length > 0 && url.trim() !== (daemonUrl ?? "");
-
-  /** The PAT is write-only: it goes to the daemon and never comes back. */
+  /** The url is the only repo-side secret-free field; the token lives in the GitHub group. */
   const saveRepo = async () => {
     setSavingRepo(true);
     setRepoError(null);
     try {
-      await daemon.api.repoUpdate(repoUrl.trim() || null, patDraft.trim() || undefined);
-      setPatDraft("");
+      await daemon.api.repoUpdate(repoUrl.trim() || null);
     } catch (e) {
       setRepoError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -264,7 +288,8 @@ export function SettingsDialog({
                 { value: "", label: "자동 (Claude Code 기본값)" },
                 ...modelOptions(models, modelRowOf(models, settings.chat.model)).map((option) => ({
                   value: option.value ?? "",
-                  label: option.hint ? `${option.label} — ${option.hint}` : option.label,
+                  label: option.label,
+                  ...(option.hint ? { hint: option.hint } : {}),
                 })),
               ]}
               onChange={(model) => onChatChange({ model: model || null })}
@@ -277,7 +302,8 @@ export function SettingsDialog({
                 { value: "", label: "자동" },
                 ...EFFORT_ORDER.map((level) => ({
                   value: level,
-                  label: `${EFFORT_LABEL[level]} — ${EFFORT_HINT[level]}`,
+                  label: EFFORT_LABEL[level],
+                  hint: EFFORT_HINT[level],
                 })),
               ]}
               onChange={(effort) =>
@@ -290,7 +316,8 @@ export function SettingsDialog({
               value={settings.chat.permissionMode}
               options={SETTINGS_MODES.map((mode) => ({
                 value: mode,
-                label: `${MODE_LABEL[mode]} — ${MODE_HINT[mode]}`,
+                label: MODE_LABEL[mode],
+                hint: MODE_HINT[mode],
               }))}
               onChange={(permissionMode) => onChatChange({ permissionMode })}
             />
@@ -325,17 +352,43 @@ export function SettingsDialog({
           </section>
 
           <section className="settings__group">
+            <h3 className="settings__groupTitle">GitHub</h3>
+            {daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
+            !editingToken ? (
+              <Field
+                wide
+                label="계정"
+                hint="토큰은 데몬에만 저장되고 다시 보여지지 않습니다"
+              >
+                <span className="settings__url">
+                  <span className="settings__account">
+                    {daemon.onboarding?.find((step) => step.id === "github")?.detail}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={!connected}
+                    onClick={() => setEditingToken(true)}
+                  >
+                    토큰 바꾸기
+                  </button>
+                </span>
+              </Field>
+            ) : (
+              <GitHubTokenForm
+                daemon={daemon}
+                onDone={() => setEditingToken(false)}
+                disabled={!connected}
+              />
+            )}
+          </section>
+
+          <section className="settings__group">
             <h3 className="settings__groupTitle">연결 레포</h3>
             <Field
               wide
               label="레포 주소"
-              hint={
-                connected
-                  ? daemon.repo?.patConfigured
-                    ? "개인 액세스 토큰 설정됨"
-                    : "git clone 주소(https://…). 비공개 레포면 토큰도 넣어 주세요"
-                  : "데몬에 연결된 뒤 저장할 수 있습니다"
-              }
+              hint={connected ? "git clone 주소(https://…)" : "데몬에 연결된 뒤 저장할 수 있습니다"}
             >
               <span className="settings__url">
                 <input
@@ -356,24 +409,6 @@ export function SettingsDialog({
                 </button>
               </span>
             </Field>
-            <Field
-              wide
-              label="개인 액세스 토큰(PAT)"
-              hint={
-                daemon.repo?.patConfigured
-                  ? "설정됨 — 다시 입력하면 교체됩니다. 값은 데몬에만 저장됩니다"
-                  : "값은 데몬에만 저장되고 다시 보여지지 않습니다"
-              }
-            >
-              <input
-                type="password"
-                value={patDraft}
-                placeholder={daemon.repo?.patConfigured ? "••••••••" : "ghp_…"}
-                aria-label="연결 레포 개인 액세스 토큰"
-                disabled={!connected}
-                onChange={(e) => setPatDraft(e.target.value)}
-              />
-            </Field>
             {repoError && (
               <div className="notice notice--error">
                 <span className="notice__text">{repoError}</span>
@@ -390,6 +425,16 @@ export function SettingsDialog({
               <button type="button" onClick={onOpenOnboarding}>
                 처음 설정 다시 보기
               </button>
+              {typeof bridgeOpenHome === "function" && (
+                <button type="button" onClick={() => void bridgeOpenHome()}>
+                  폴더 열기
+                </button>
+              )}
+              <span className="setting__hint">
+                {bridgeOpenHome
+                  ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
+                  : "~/.cds-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."}
+              </span>
               <button type="button" disabled={checkingUpdate} onClick={() => void checkUpdate()}>
                 {checkingUpdate ? "확인 중…" : "업데이트 확인"}
               </button>

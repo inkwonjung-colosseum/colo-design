@@ -50,12 +50,12 @@ test("a typed message passes through with no marker", () => {
 test("broken JSON leaves the original text alone", () => {
   // The whole text comes back, marker line included: hiding a line we failed
   // to understand would silently drop something the planner might need.
-  const text = '<!-- drafthouse:comments {"screen": -->\n화면 수정 요청';
+  const text = '<!-- cds-design:comments {"screen": -->\n화면 수정 요청';
   assert.deepEqual(readTurn(text), { marker: null, body: text });
 });
 
 test("an unknown kind is not a marker", () => {
-  const text = '<!-- drafthouse:sparkle {"a":1} -->\n본문';
+  const text = '<!-- cds-design:sparkle {"a":1} -->\n본문';
   assert.equal(readTurn(text).marker, null);
   assert.equal(readTurn(text).body, text);
 });
@@ -63,26 +63,26 @@ test("an unknown kind is not a marker", () => {
 test("the wrong shape for a known kind is not a marker", () => {
   // `items` missing entirely: a comments card with nothing to list is a lie
   // about what the planner sent.
-  const text = '<!-- drafthouse:comments {"screen":"a","state":"b"} -->\n본문';
+  const text = '<!-- cds-design:comments {"screen":"a","state":"b"} -->\n본문';
   assert.equal(readTurn(text).marker, null);
 });
 
 test("a marker in the middle of a turn is body, not a marker", () => {
-  const text = `기획서를 봐 주세요.\n<!-- drafthouse:brief {"title":"회원"} -->`;
+  const text = `기획서를 봐 주세요.\n<!-- cds-design:brief {"title":"회원"} -->`;
   assert.deepEqual(readTurn(text), { marker: null, body: text });
 });
 
 test("an older build's extra fields are ignored, missing ones blank out", () => {
-  const text = '<!-- drafthouse:brief {"title":"회원 관리 기획서","path":"ENG/회원.md"} -->\n본문';
+  const text = '<!-- cds-design:brief {"title":"회원 관리 기획서","path":"ENG/회원.md"} -->\n본문';
   assert.deepEqual(readTurn(text).marker, { kind: "brief", title: "회원 관리 기획서" });
 
-  const bare = '<!-- drafthouse:gate {} -->\n본문';
+  const bare = '<!-- cds-design:gate {} -->\n본문';
   assert.deepEqual(readTurn(bare).marker, { kind: "gate", step: "" });
 });
 
 test("a comment item that is not an object is dropped, not fatal", () => {
   const text =
-    '<!-- drafthouse:comments {"screen":"s","state":"default","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
+    '<!-- cds-design:comments {"screen":"s","state":"default","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
   const marker = readTurn(text).marker;
   assert.equal(marker?.kind, "comments");
   assert.deepEqual(marker?.kind === "comments" ? marker.items : null, [
@@ -93,7 +93,7 @@ test("a comment item that is not an object is dropped, not fatal", () => {
 test("a body that itself contains a marker line is not re-split", () => {
   // Claude quoting our own marker back at us must not turn its answer into a
   // second card.
-  const body = '앞줄\n<!-- drafthouse:gate {"step":"x"} -->';
+  const body = '앞줄\n<!-- cds-design:gate {"step":"x"} -->';
   const read = readTurn(markTurn({ kind: "brief", title: "회원" }, body));
   assert.equal(read.marker?.kind, "brief");
   assert.equal(read.body, body);

@@ -1,12 +1,6 @@
 import { deleteSession, getSessionInfo, getSessionMessages, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatEvent, SessionState, SessionSummary, Workspace } from "@drafthouse/protocol";
-import {
-  NEW_DESIGN_TITLE,
-  NEW_PLANNING_TITLE,
-  Session,
-  type SessionEvents,
-  type SessionOptions,
-} from "./session.js";
+import type { ChatEvent, SessionSummary } from "@cds-design/protocol";
+import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 import { replayHistory } from "./translate.js";
 
 export class SessionManager {
@@ -25,8 +19,7 @@ export class SessionManager {
       void getSessionInfo(options.resume, { dir: options.cwd })
         .then((info) => {
           const inherited = info?.customTitle || info?.summary;
-          const untouched =
-            session.title === NEW_PLANNING_TITLE || session.title === NEW_DESIGN_TITLE;
+          const untouched = session.title === NEW_SESSION_TITLE;
           if (inherited && untouched) session.title = inherited;
         })
         .catch(() => undefined);
@@ -101,18 +94,18 @@ export class SessionManager {
     return this.live.size;
   }
 
-  /**
-   * How many live sessions of one workspace sit in a given state. The editor
-   * lock reads this: a design turn must not freeze the 기획 editor, because
-   * it never touches the mirror.
-   */
-  countState(state: SessionState, workspace?: Workspace): number {
-    let count = 0;
+  /** A Claude turn is running in this clone right now — the sidebar's 작업 중 (PLAN D15). */
+  anyRunning(cwd: string): boolean {
     for (const session of this.live.values()) {
-      if (workspace && session.workspace !== workspace) continue;
-      if (session.state === state) count += 1;
+      if (session.cwd === cwd && session.state === "running") return true;
     }
-    return count;
+    return false;
+  }
+
+  /** Closes every live session rooted at a clone — a removed project's threads (PLAN D21). */
+  async closeWhere(cwd: string): Promise<void> {
+    const ids = [...this.live.values()].filter((session) => session.cwd === cwd).map((s) => s.id);
+    await Promise.all(ids.map((id) => this.close(id)));
   }
 
   get pendingCount(): number {
@@ -124,17 +117,13 @@ export class SessionManager {
   /**
    * Merge sessions this daemon is running with transcripts already on disk, so
    * conversations started in the terminal show up in the UI and can be resumed.
-   * The SDK stores transcripts per directory, so one workspace's `cwd` is
-   * exactly its session list — the two halves never see each other's threads.
-   *
-   * Every row leaves here with `pageId: null`. Which 기획서 a thread is about
-   * is the project's business, not the transcript store's, and the server
-   * stamps it from that project's sidecar on the way out.
+   * The SDK stores transcripts per directory, so the active project's repo
+   * clone is exactly the session list.
    */
-  async list(cwd: string, workspace: Workspace, limit = 50): Promise<SessionSummary[]> {
+  async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
     const onDisk = await listSessions({ dir: cwd, limit }).catch(() => []);
     const summaries = new Map<string, SessionSummary>();
-    const untitled = "제목 없는 기획";
+    const untitled = "제목 없는 대화";
 
     for (const info of onDisk) {
       summaries.set(info.sessionId, {
@@ -143,13 +132,14 @@ export class SessionManager {
         lastModified: info.lastModified,
         live: false,
         state: "closed",
-        workspace,
-        pageId: null,
       });
     }
 
     for (const session of this.live.values()) {
-      if (session.workspace !== workspace) continue;
+      // A session of another project must not surface here: its transcript
+      // and its turns belong to a different clone, and listing it let a tab
+      // from the previous project survive a project switch.
+      if (session.cwd !== cwd) continue;
       const stored = summaries.get(session.id);
       // Prefer the transcript's own summary. Claude Code keeps it current as the
       // conversation moves, so using it for live and stored sessions alike stops
@@ -161,8 +151,6 @@ export class SessionManager {
         lastModified: session.lastActivity,
         live: true,
         state: session.state,
-        workspace,
-        pageId: null,
       });
     }
 

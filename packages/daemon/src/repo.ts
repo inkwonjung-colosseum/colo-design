@@ -21,38 +21,39 @@ import type {
   HandoffStatus,
   RepoPhase,
   RepoStatus,
-} from "@drafthouse/protocol";
-import { markTurn } from "@drafthouse/protocol";
+} from "@cds-design/protocol";
+import { markTurn } from "@cds-design/protocol";
 import {
   currentPlatform,
   detectsRegistryAuthFailure,
+  resolveGitExecutable,
   resolvePnpmExecutable,
 } from "./environment.js";
 import { GitHubClient, parseRepoSlug } from "./github.js";
-import { REPO_PAT_ITEM, mergeNpmrc, npmrcPath, type CredentialStore } from "./credentials.js";
+import { mergeNpmrc, npmrcPath } from "./credentials.js";
 
 /**
  * The connected repo workspace: a clone of the repo the planner pointed the
- * daemon at, driven by that repo's own `drafthouse.json` (install/check/build
+ * daemon at, driven by that repo's own `cds-design.json` (install/check/build
  * commands, preview command + port, optional private registry). The daemon
  * clones and pulls it, runs its commands, and frames its preview server —
  * what the preview renders is entirely the repo's business.
  */
 
-const CONFIG_FILE = "drafthouse.json";
+const CONFIG_FILE = "cds-design.json";
 /** Reinstall marker, kept inside `.git/` so it travels with the clone only. */
-const INSTALL_MARKER = "drafthouse-install-hash";
+const INSTALL_MARKER = "cds-design-install-hash";
 const READY_TIMEOUT_MS = 30_000;
 const DETAIL_THROTTLE_MS = 200;
 /** Commit message when the planner approves without writing one. */
-const DEFAULT_COMMIT_MESSAGE = "Drafthouse 화면 변경";
+const DEFAULT_COMMIT_MESSAGE = "CDS Design 화면 변경";
 /** PR title when the planner sends the handoff without editing it. */
-const DEFAULT_HANDOFF_TITLE = "Drafthouse 화면 전달";
+const DEFAULT_HANDOFF_TITLE = "CDS Design 화면 전달";
 /**
  * Every branch this tool creates lives under one prefix, so a developer can
  * tell at a glance which branches a planner made and which are theirs.
  */
-const BRANCH_PREFIX = "drafthouse";
+const BRANCH_PREFIX = "cds-design";
 /** How many output lines a failed gate quotes back to people and Claude. */
 const GATE_OUTPUT_TAIL_LINES = 30;
 
@@ -81,20 +82,24 @@ const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = 
   push: "저장한 내용 올리기",
   pr: "개발자에게 넘기기",
 };
+/**
+ * The stash this tool parks unsaved work in while 최신화 moves the branch.
+ * Named for the button, so `git stash list` reads like the product, not git.
+ */
+const STASH_MESSAGE = "CDS Design: 최신화 임시 보관";
+
+/** What the planner reads when a conflict needs Claude and no thread is open. */
+const REFRESH_CONFLICT_DETAIL =
+  "최신 변경을 받아 오다 저장하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
 /**
- * The 기획서 ids a handoff body names, so the page tree can badge them.
- * The body is composed by the daemon from `@confluence/<space>/<page>.md`
- * mentions and the frontmatter behind them; anything that looks like a
- * Confluence page id in a `pageId:` position counts.
+ * The one refresh this tool refuses to do alone: the base branch carries
+ * commits the clone does not know. Rewriting history a planner cannot read
+ * is not 자동 병합, so it stays a named failure.
  */
-function pageIdsIn(body: string): string[] {
-  const found = new Set<string>();
-  for (const match of body.matchAll(/pageId[:=]\s*"?([A-Za-z0-9-]+)"?/g)) {
-    if (match[1]) found.add(match[1]);
-  }
-  return [...found];
-}
+const REFRESH_DIVERGED_DETAIL =
+  "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 Claude가 확인합니다.";
+
 
 export const PNPM_MISSING_DETAIL =
   "pnpm이 없습니다 — corepack enable 또는 npm i -g pnpm 으로 설치해 주세요.";
@@ -104,88 +109,68 @@ export const REPO_URL_MISSING_DETAIL =
   "연결 레포 주소가 설정되지 않았습니다 — 설정에서 레포 주소를 넣어 주세요.";
 
 // ---------------------------------------------------------------------------
-// drafthouse.json contract
+// cds-design.json contract
 // ---------------------------------------------------------------------------
 
-export interface DrafthouseRegistry {
+export interface CdsDesignRegistry {
   host: string;
   scope: string;
 }
 
-export interface DrafthouseConfig {
+export interface CdsDesignConfig {
   install?: string;
   check?: string;
   build?: string;
   preview: { command: string; port: number };
-  registry?: DrafthouseRegistry;
-  /**
-   * What the repo wants a 기획 session to know — document conventions,
-   * vocabulary, the shape a 기획서 takes on this team. The daemon appends it
-   * to the mirror's generated CLAUDE.md, below the format invariants it owns.
-   * Domain rules stay the repo's decision; only the mirror format is ours.
-   */
-  planning?: { rules: string };
+  registry?: CdsDesignRegistry;
 }
 
 /**
- * Parses and validates a repo's `drafthouse.json`. Every rejection names the
+ * Parses and validates a repo's `cds-design.json`. Every rejection names the
  * field and what it should be, in Korean: the planner is the one who has to
  * act on it, and "invalid config" is not actionable.
  */
-export function parseDrafthouseConfig(source: string): DrafthouseConfig {
+export function parseCdsDesignConfig(source: string): CdsDesignConfig {
   let raw: unknown;
   try {
     raw = JSON.parse(source);
   } catch (error) {
     throw new Error(
-      `drafthouse.json을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
+      `cds-design.json을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("drafthouse.json은 객체여야 합니다");
+    throw new Error("cds-design.json은 객체여야 합니다");
   }
   const config = raw as Record<string, unknown>;
 
   for (const key of ["install", "check", "build"] as const) {
     const value = config[key];
     if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
-      throw new Error(`drafthouse.json의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
+      throw new Error(`cds-design.json의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
     }
   }
 
   const preview = config.preview;
   if (!preview || typeof preview !== "object" || Array.isArray(preview)) {
-    throw new Error('drafthouse.json에 preview가 없습니다 — { "command", "port" }를 적어야 합니다');
+    throw new Error('cds-design.json에 preview가 없습니다 — { "command", "port" }를 적어야 합니다');
   }
   const { command, port } = preview as Record<string, unknown>;
   if (typeof command !== "string" || command.trim() === "") {
-    throw new Error("drafthouse.json의 preview.command가 없습니다 — 미리보기를 띄울 명령입니다");
+    throw new Error("cds-design.json의 preview.command가 없습니다 — 미리보기를 띄울 명령입니다");
   }
   if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
     throw new Error(
-      "drafthouse.json의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다",
+      "cds-design.json의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다",
     );
   }
 
-  const rawPlanning = config.planning;
-  let planning: { rules: string } | undefined;
-  if (rawPlanning !== undefined) {
-    if (!rawPlanning || typeof rawPlanning !== "object" || Array.isArray(rawPlanning)) {
-      throw new Error('drafthouse.json의 planning은 { "rules" } 형태여야 합니다');
-    }
-    const rules = (rawPlanning as Record<string, unknown>).rules;
-    if (typeof rules !== "string" || rules.trim() === "") {
-      throw new Error("drafthouse.json의 planning.rules는 기획 세션에 줄 규칙을 문자열로 적어야 합니다");
-    }
-    planning = { rules };
-  }
 
   const common = {
     ...(typeof config.install === "string" ? { install: config.install } : {}),
     ...(typeof config.check === "string" ? { check: config.check } : {}),
     ...(typeof config.build === "string" ? { build: config.build } : {}),
     preview: { command, port: port as number },
-    ...(planning ? { planning } : {}),
   };
 
   const rawRegistry = config.registry;
@@ -198,18 +183,18 @@ export function parseDrafthouseConfig(source: string): DrafthouseConfig {
     typeof registry.scope !== "string" ||
     registry.scope.trim() === ""
   ) {
-    throw new Error('drafthouse.json의 registry는 { "host", "scope" } 형태여야 합니다');
+    throw new Error('cds-design.json의 registry는 { "host", "scope" } 형태여야 합니다');
   }
 
   return { ...common, registry: { host: registry.host, scope: registry.scope } };
 }
 
-export function readDrafthouseConfig(root: string): DrafthouseConfig {
+export function readCdsDesignConfig(root: string): CdsDesignConfig {
   const file = join(root, CONFIG_FILE);
   if (!existsSync(file)) {
-    throw new Error(`drafthouse.json이 없습니다 — 연결 레포 루트에 ${CONFIG_FILE}가 있어야 합니다`);
+    throw new Error(`cds-design.json이 없습니다 — 연결 레포 루트에 ${CONFIG_FILE}가 있어야 합니다`);
   }
-  return parseDrafthouseConfig(readFileSync(file, "utf8"));
+  return parseCdsDesignConfig(readFileSync(file, "utf8"));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,17 +295,17 @@ export class RepoWorkspace {
   private pat: string | null;
   private phase: RepoPhase = "missing";
   private detail: string | null = null;
-  private config: DrafthouseConfig | null = null;
+  private config: CdsDesignConfig | null = null;
   private preview: ChildProcess | null = null;
   private inFlight: Promise<RepoStatus> | null = null;
   private publishing: Promise<DiffStatus> | null = null;
+  /** The session-start/button refresh while it runs — saves wait it out. */
+  private refreshing: Promise<unknown> | null = null;
   private lastEmit = 0;
 
   private readonly onStatus: (status: RepoStatus) => void;
   private readonly onDiffStatus: ((status: DiffStatus) => void) | null;
   private readonly onUrlChange: ((url: string | null) => void) | null;
-  private readonly store: CredentialStore | null;
-  private readonly patItem: string;
   /**
    * The work-in-progress cycle: the branch this project's saves land on, and
    * the pull request a developer received (PLAN D5).
@@ -354,12 +339,8 @@ export class RepoWorkspace {
       onStatus: (status: RepoStatus) => void;
       /** Publish progress; optional because not every host shows it. */
       onDiffStatus?: (status: DiffStatus) => void;
-      /** PAT from the credential store. */
+      /** The machine-wide GitHub token — see `loadRepoPat` in credentials. */
       pat?: string | null;
-      /** Where update() files the PAT; plaintext settings never hold it. */
-      store?: CredentialStore | null;
-      /** The store item holding it: a project's own, or the pre-projects one. */
-      patItem?: string;
       /** Defaults to "main"; a project that forks elsewhere says so. */
       baseBranch?: string;
       /** Persistence hook for a moved url — see onUrlChange in update(). */
@@ -378,8 +359,6 @@ export class RepoWorkspace {
     this.onStatus = options.onStatus;
     this.onDiffStatus = options.onDiffStatus ?? null;
     this.onUrlChange = options.onUrlChange ?? null;
-    this.store = options.store ?? null;
-    this.patItem = options.patItem ?? REPO_PAT_ITEM;
     this.baseBranch = options.baseBranch ?? "main";
     this.branch = options.cycle?.branch ?? null;
     this.openHandoff = options.cycle?.handoff ?? null;
@@ -391,28 +370,18 @@ export class RepoWorkspace {
     return this.url;
   }
 
-  get patConfigured(): boolean {
-    return this.pat !== null;
-  }
-
-  /** The current PAT, for authenticated one-off checks (ls-remote). */
-  currentPat(): string | null {
-    return this.pat;
-  }
-
   /**
-   * Hands over a PAT that was already stored: the workspace for a project is
-   * built synchronously, while reading its PAT out of the credential store is
-   * not. This is a load, not a change — nothing is persisted and origin is
-   * left alone; the next clone or pull picks the PAT up from here, and a
-   * planner who actually edits the PAT goes through update().
+   * The machine-wide GitHub token, injected by the server: the workspace is
+   * built synchronously, while reading the store is not. This is a load, not
+   * a change — nothing is persisted here; the token lives in exactly one
+   * credential item and the server is what points every workspace at it.
    */
   setPat(pat: string | null): void {
     this.pat = pat;
   }
 
-  /** The repo's declared private registry, once its drafthouse.json was read. */
-  registry(): DrafthouseRegistry | null {
+  /** The repo's declared private registry, once its cds-design.json was read. */
+  registry(): CdsDesignRegistry | null {
     return this.config?.registry ?? null;
   }
 
@@ -420,7 +389,7 @@ export class RepoWorkspace {
   async status(): Promise<RepoStatus> {
     if (this.isCloned()) {
       try {
-        this.config = readDrafthouseConfig(this.root);
+        this.config = readCdsDesignConfig(this.root);
       } catch {
         // Keep the last known config; the working phases surface parse errors.
       }
@@ -438,23 +407,15 @@ export class RepoWorkspace {
   }
 
   /**
-   * Set the url and/or PAT and bring the workspace to the resulting state: a
-   * moved url means a different repository, so the old clone is discarded and
-   * re-cloned. Persistence is the owner's: the PAT goes to the credential
-   * store under this workspace's item, and a moved url is handed to
+   * Set the url and bring the workspace to the resulting state: a moved url
+   * means a different repository, so the old clone is discarded and
+   * re-cloned. Persistence is the owner's: a moved url is handed to
    * `onUrlChange` — the project registry is the only place it is written.
    */
-  async update(changes: { url?: string | null; pat?: string | null }): Promise<RepoStatus> {
+  async update(changes: { url?: string | null }): Promise<RepoStatus> {
     // Absent keys stay unchanged; `null` clears.
     const urlChanged = changes.url !== undefined && changes.url !== this.url;
     if (changes.url !== undefined) this.url = changes.url;
-    if (changes.pat !== undefined) {
-      this.pat = changes.pat;
-      if (this.store) {
-        if (changes.pat === null) await this.store.delete(this.patItem);
-        else await this.store.save(this.patItem, changes.pat);
-      }
-    }
     // Only a real move is announced: a re-submitted identical url must not
     // make the registry rewrite (and broadcast) a project that did not change.
     if (urlChanged) this.onUrlChange?.(this.url);
@@ -475,30 +436,50 @@ export class RepoWorkspace {
     return await this.sync();
   }
 
-  /**
-   * Session start: bring the clone current without tearing its preview down.
-   *
-   * Off-cycle that is a fast-forward pull, as it always was. Mid-cycle the
-   * clone sits on this project's own branch, and what matters is the base
-   * branch a developer has been merging into meanwhile — so the base comes in
-   * here, and a conflict becomes Claude's first task instead of a surprise at
-   * 넘기기 time. A failed pull stays a `detail`: hiding a live preview
-   * mid-conversation is worse than being a commit behind until the next
-   * sync() reports the failure properly.
-   */
-  async pull(onSessionTurn?: (brief: string) => void): Promise<void> {
-    if (this.phase !== "ready" || !this.isCloned()) return;
-    try {
-      if (this.branch) await this.mergeBase(onSessionTurn);
-      else await this.git(["pull", "--ff-only"]);
-      if (this.dependenciesMoved()) await this.sync();
-    } catch (error) {
-      this.setDetail(detailOf(error, this.pat));
-    }
-  }
 
   async stop(): Promise<void> {
     await this.killPreview();
+  }
+
+
+  /**
+   * Session start · 레포 최신화: bring the clone current without tearing its
+   * preview down, and without asking the planner to read git. Off-cycle that
+   * is a fast-forward of the base branch; mid-cycle it is a merge of the
+   * developer's base into this cycle's work. Unsaved work rides along (see
+   * refreshFromRemote), a conflict becomes the session's first task, and a
+   * plain failure stays a `detail`: hiding a live preview mid-conversation
+   * is worse than being a commit behind until the next sync() reports the
+   * failure properly.
+   */
+  async pull(onSessionTurn?: (brief: string) => void): Promise<void> {
+    if (this.phase !== "ready" || !this.isCloned()) return;
+    // One worktree, two writers: a save or handoff in flight owns it, so
+    // the refresh waits — and a save below waits for a refresh the same
+    // way. Without this, the stash-move-replay window races `git diff` and
+    // the planner's save can read a worktree that is momentarily parked.
+    if (this.publishing) await this.publishing.catch(() => undefined);
+    const run = this.refreshFromRemote(onSessionTurn)
+      .then(async (outcome) => {
+        // A conflict brief leaves the worktree mid-resolution: the stepper's
+        // count must show it (the unmerged files are changes awaiting 저장),
+        // and an install or preview restart would only bury the brief in
+        // noise — so no sync runs on that path. A clean refresh ends with
+        // the worktree exactly the planner's edits on the new HEAD:
+        // recount, or let the dependency-driven sync recount at its end.
+        if (outcome === "conflict") await this.refreshPendingChanges();
+        else if (this.dependenciesMoved()) await this.sync();
+        else await this.refreshPendingChanges();
+        return outcome;
+      })
+      .catch((error) => {
+        this.setDetail(detailOf(error, this.pat));
+      })
+      .finally(() => {
+        this.refreshing = null;
+      });
+    this.refreshing = run;
+    await run;
   }
 
   // -------------------------------------------------------------------------
@@ -528,6 +509,11 @@ export class RepoWorkspace {
 
   get currentHandoff(): HandoffStatus | null {
     return this.openHandoff;
+  }
+
+  /** Last counted unsaved-change files — the sidebar badge's number (PLAN D16). */
+  get pendingChangeCount(): number {
+    return this.pendingChanges;
   }
 
   /**
@@ -563,6 +549,9 @@ export class RepoWorkspace {
         detail: "연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.",
       });
     }
+    // The worktree is the review's subject: a session-start refresh still
+    // stashing and replaying must settle before the diff is computed.
+    await this.refreshing?.catch(() => undefined);
 
     this.setDiff({ stage: "computing" });
     const approved = (await this.diff()).map((file) => file.path);
@@ -574,11 +563,11 @@ export class RepoWorkspace {
       });
     }
 
-    // Gates can change drafthouse.json or write files between here and the
+    // Gates can change cds-design.json or write files between here and the
     // commit: read the config fresh, and commit exactly the paths the planner
     // approved — never `git add -A`, so a gate's unreviewed output cannot ride
     // along in the save.
-    const config = readDrafthouseConfig(this.root);
+    const config = readCdsDesignConfig(this.root);
     this.config = config;
     if (config.check) {
       this.setDiff({ stage: "gating", gate: "check" });
@@ -609,9 +598,9 @@ export class RepoWorkspace {
    * first save since the last handoff was merged.
    *
    * `<YYYYMMDD>-<n>` rather than a name derived from the work: the planner
-   * never reads it, and a title that came from a 기획서 would be one more
-   * place a rename could break. `n` walks up until the remote has no such
-   * branch, so two machines on one project cannot collide.
+   * never reads it, and a title mined from the diff would be one more place a
+   * rename could break. `n` walks up until the remote has no such branch, so
+   * two machines on one project cannot collide.
    */
   private async ensureCycleBranch(): Promise<string> {
     if (this.branch) {
@@ -673,6 +662,10 @@ export class RepoWorkspace {
         detail: "넘길 변경사항이 없습니다 — 먼저 저장해 주세요.",
       });
     }
+    // The same worktree contract as a save: wait out a refresh before
+    // reading and writing the cycle.
+    await this.refreshing?.catch(() => undefined);
+
     // Two different problems with two different fixes: a repo that is not on
     // GitHub needs a different url, a repo with no token needs a token. One
     // sentence covering both leaves the planner guessing which.
@@ -693,7 +686,7 @@ export class RepoWorkspace {
       });
     }
 
-    const config = readDrafthouseConfig(this.root);
+    const config = readCdsDesignConfig(this.root);
     this.config = config;
     if (config.build) {
       this.setDiff({ stage: "gating", gate: "build" });
@@ -711,7 +704,7 @@ export class RepoWorkspace {
       const pull = this.openHandoff
         ? await client.updatePullRequest({ ...slug, number: this.openHandoff.number, title, body })
         : await client.createPullRequest({ ...slug, head: branch, base: this.baseBranch, title, body });
-      const handoff: HandoffStatus = { ...pull, pageIds: pageIdsIn(body) };
+      const handoff: HandoffStatus = pull;
       this.setCycle(branch, handoff);
       return this.setDiff({ stage: "handed-off", handoff });
     } catch (error) {
@@ -735,7 +728,7 @@ export class RepoWorkspace {
       .catch(() => null);
     if (!pull) return current;
 
-    const handoff: HandoffStatus = { ...pull, pageIds: current.pageIds };
+    const handoff: HandoffStatus = pull;
     if (pull.state !== "merged") {
       this.setCycle(this.branch, handoff);
       return handoff;
@@ -756,38 +749,224 @@ export class RepoWorkspace {
     return handoff;
   }
 
+  // -------------------------------------------------------------------------
+  // 레포 최신화: bring the developer's side in without reading git (PLAN D5)
+  // -------------------------------------------------------------------------
+
   /**
-   * Session start, once a cycle is open: bring the developer's base branch
-   * into this cycle's work so Claude builds on what was merged since. A
-   * conflict is Claude's to resolve — the planner cannot read one — so the
-   * merge is left in progress and the brief goes to the session.
+   * The whole refresh, in the planner's interest: unsaved work is the
+   * precious half, so it is stashed first (untracked screens included), the
+   * branch moves onto what the developer merged, and the work comes back on
+   * top — git's mechanical merge does the combining. What git cannot finish
+   * alone is a genuine conflict, and a conflict is Claude's task: the brief
+   * rides the same wire a typed message does. With no thread to brief (a
+   * bare bring-up), the throw names the state in Korean where the retry
+   * panel reads it.
+   *
+   * Returns `"conflict"` when a conflict was left for Claude — the caller
+   * must not pile an install or preview restart onto a mid-resolution tree.
    */
-  private async mergeBase(onSessionTurn?: (brief: string) => void): Promise<void> {
-    if (!this.branch) return;
-    try {
-      await this.git(["fetch", "origin", this.baseBranch]);
-      await this.git(["merge", "--no-edit", `origin/${this.baseBranch}`]);
-    } catch (error) {
-      const detail = detailOf(error, this.pat);
-      this.setDetail(detail);
-      onSessionTurn?.(
-        "다른 사람이 올린 변경과 겹쳐서 자동으로 합치지 못했습니다. 충돌한 파일을 정리하고 " +
-          `커밋 메시지 앞에 [conflict] 를 붙여 마무리해 주세요.\n\n${detail}`,
+  private async refreshFromRemote(
+    onSessionTurn?: (brief: string) => void,
+  ): Promise<"clean" | "conflict"> {
+    // A refresh that finds a conflict left over from an earlier run briefs
+    // again instead of piling on: until Claude resolves it, that state IS
+    // the current one.
+    if (await this.mergeInProgress()) {
+      return await this.briefOrThrow(
+        this.mergeConflictBrief(
+          await this.conflictedFiles(),
+          // The stash from the run that left this merge open — Claude must
+          // know it is still parked once the merge commit lands.
+          (await this.git(["stash", "list"])).trim() !== "",
+        ),
+        onSessionTurn,
       );
     }
+    const leftover = await this.conflictedFiles();
+    if (leftover.length > 0) {
+      return await this.briefOrThrow(this.popConflictBrief(leftover), onSessionTurn);
+    }
+
+    // Mid-cycle, merging the developer's base needs Claude within reach — a
+    // conflict has to land as a first task, not as an error nobody can read.
+    // A bare bring-up mid-cycle stays put; the merge is a session start's
+    // (or 최신화 button's) job, and those name a thread.
+    if (this.branch && !onSessionTurn) return "clean";
+
+    const stashed = await this.stashUnsavedWork();
+    try {
+      await this.git(["fetch", "origin", this.baseBranch]);
+      if (this.branch) {
+        await this.git([
+          ...(await this.identityArgs()),
+          "merge",
+          "--no-edit",
+          `origin/${this.baseBranch}`,
+        ]);
+      } else {
+        const [ahead, behind] = await this.aheadBehindBase();
+        if (behind > 0) {
+          if (ahead > 0) throw new Error(REFRESH_DIVERGED_DETAIL);
+          await this.git(["merge", "--ff-only", `origin/${this.baseBranch}`]);
+        }
+      }
+    } catch (error) {
+      // A conflicted merge stays open on purpose (the brief is Claude's
+      // recovery path); popping the stash onto a conflicted tree would pile
+      // one conflict on another, so it waits. Any other failure never moved
+      // the branch: the work goes straight back where it was.
+      if (await this.mergeInProgress()) {
+        return await this.briefOrThrow(
+          this.mergeConflictBrief(await this.conflictedFiles(), stashed),
+          onSessionTurn,
+        );
+      }
+      if (stashed) await this.git(["stash", "pop"]).catch(() => undefined);
+      throw error;
+    }
+
+    if (stashed) {
+      const conflicted = await this.popStash();
+      if (conflicted) {
+        return await this.briefOrThrow(this.popConflictBrief(conflicted), onSessionTurn);
+      }
+    }
+    return "clean";
+  }
+
+  /**
+   * A conflict is news for Claude when a thread is open and for the planner
+   * when one is not: the brief rides the session wire, the throw surfaces a
+   * Korean one-liner where the retry panel reads it.
+   */
+  private async briefOrThrow(
+    brief: string,
+    onSessionTurn: ((brief: string) => void) | undefined,
+  ): Promise<"conflict"> {
+    if (onSessionTurn) onSessionTurn(brief);
+    else throw new Error(REFRESH_CONFLICT_DETAIL);
+    return "conflict";
+  }
+
+  /**
+   * Claude's instructions, as a gate card: what collided and the exact
+   * recovery, named for the planner's words (최신 변경 받아오기), never git's.
+   */
+  private mergeConflictBrief(files: string[], stashed: boolean): string {
+    return markTurn(
+      { kind: "gate", step: "최신 변경 받아오기" },
+      "개발자가 반영한 최신 변경과 이번 작업이 겹쳐 자동으로 합치지 못했습니다." +
+        (files.length > 0 ? `\n충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}` : "") +
+        "\n충돌을 정리하고 커밋 메시지 앞에 [conflict] 를 붙여 병합을 마무리해 주세요." +
+        (stashed
+          ? "\n병합을 마친 뒤 임시 보관해 둔 저장하지 않은 변경을 git stash pop 으로 돌려놓고, " +
+            "여기서 충돌하면 정리한 뒤 git add 하고 git stash drop 으로 임시 보관을 치워 주세요."
+          : ""),
+    );
+  }
+
+  private popConflictBrief(files: string[]): string {
+    return markTurn(
+      { kind: "gate", step: "최신 변경 받아오기" },
+      "최신 변경을 받아 온 뒤 저장하지 않은 변경을 돌려놓는 중에 겹치는 부분이 생겼습니다.\n" +
+        `충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}\n` +
+        "충돌 표식을 정리한 뒤 git add 로 해결을 표시하고, git stash drop 으로 임시 보관을 치워 주세요. " +
+        "그러면 변경은 저장 전 상태로 돌아옵니다.",
+    );
+  }
+
+  /** True while a merge waits for its conflict resolution (MERGE_HEAD). */
+  private async mergeInProgress(): Promise<boolean> {
+    try {
+      await this.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Paths git could not combine by itself — the only real conflict here. */
+  private async conflictedFiles(): Promise<string[]> {
+    const out = await this.git(["diff", "--name-only", "--diff-filter=U"]);
+    return out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+
+  /**
+   * A planner's machine may have no git identity; the commits this tool
+   * makes on the planner's behalf (saves, cycle merges, stashes) invent one
+   * rather than fail over a name nobody reads.
+   */
+  private async identityArgs(): Promise<string[]> {
+    try {
+      return (await this.git(["config", "user.email"])).trim()
+        ? []
+        : ["-c", "user.name=CDS Design", "-c", "user.email=cds-design@localhost"];
+    } catch {
+      return ["-c", "user.name=CDS Design", "-c", "user.email=cds-design@localhost"];
+    }
+  }
+
+  /**
+   * Parks unsaved work (tracked and untracked alike) so the branch can
+   * move; false when there was nothing to park.
+   */
+  private async stashUnsavedWork(): Promise<boolean> {
+    const status = await this.git(["status", "--porcelain"]);
+    if (status.trim() === "") return false;
+    await this.git([
+      ...(await this.identityArgs()),
+      "stash",
+      "push",
+      "--include-untracked",
+      "-m",
+      STASH_MESSAGE,
+    ]);
+    return true;
+  }
+
+  /**
+   * Replays the parked work onto the moved branch. Returns the unmerged
+   * paths when git could not finish the combine alone; anything else throws.
+   */
+  private async popStash(): Promise<string[] | null> {
+    try {
+      await this.git(["stash", "pop"]);
+      return null;
+    } catch (error) {
+      const conflicted = await this.conflictedFiles();
+      if (conflicted.length === 0) throw error;
+      return conflicted;
+    }
+  }
+
+  /** `ahead behind` vs the base branch, once the fetch has named it. */
+  private async aheadBehindBase(): Promise<[number, number]> {
+    const out = await this.git([
+      "rev-list",
+      "--left-right",
+      "--count",
+      `HEAD...origin/${this.baseBranch}`,
+    ]);
+    const [ahead, behind] = out.trim().split(/\s+/);
+    return [Number(ahead) || 0, Number(behind) || 0];
   }
 
   /**
    * Which GitHub repository the handoff opens a pull request against.
    *
-   * Normally the remote url says so. `DRAFTHOUSE_GITHUB_SLUG` (`owner/repo`)
+   * Normally the remote url says so. `CDS_DESIGN_GITHUB_SLUG` (`owner/repo`)
    * pins it instead, which is what lets the offline suites drive the real
    * handoff path: their remote is a local bare repository, so nothing in the
    * url could name a GitHub project. Same test-seam rule as
-   * `DRAFTHOUSE_REPO_URL` — it exists for tests and is documented as such.
+   * `CDS_DESIGN_REPO_URL` — it exists for tests and is documented as such.
    */
   private repoSlug(): { owner: string; repo: string } | null {
-    const pinned = process.env.DRAFTHOUSE_GITHUB_SLUG;
+    const pinned = process.env.CDS_DESIGN_GITHUB_SLUG;
     if (pinned) {
       const [owner, repo] = pinned.split("/");
       if (owner && repo) return { owner, repo };
@@ -823,17 +1002,7 @@ export class RepoWorkspace {
   /** Stages and commits exactly the approved paths — the reviewed diff. */
   private async commitApproved(message: string, paths: string[]): Promise<void> {
     await this.git(["add", "--", ...paths]);
-    // A planner's machine may have no git identity; invent one rather than
-    // fail a publish over a name nobody will read.
-    let identity: string[] = [];
-    try {
-      identity = (await this.git(["config", "user.email"])).trim()
-        ? []
-        : ["-c", "user.name=Drafthouse", "-c", "user.email=drafthouse@localhost"];
-    } catch {
-      identity = ["-c", "user.name=Drafthouse", "-c", "user.email=drafthouse@localhost"];
-    }
-    await this.git([...identity, "commit", "-m", message]);
+    await this.git([...(await this.identityArgs()), "commit", "-m", message]);
   }
 
   private setDiff(status: DiffStatus): DiffStatus {
@@ -862,10 +1031,13 @@ export class RepoWorkspace {
         trustWorkspace(this.root);
       } else {
         this.setPhase("pulling", null);
-        await this.git(["pull", "--ff-only"]);
+        // Already cloned: 최신화, not a blind ff. Unsaved work survives the
+        // move off-cycle, and a conflict left by an earlier run resurfaces
+        // with its Korean reason instead of a raw git error.
+        await this.refreshFromRemote();
       }
 
-      const config = readDrafthouseConfig(this.root);
+      const config = readCdsDesignConfig(this.root);
       this.config = config;
       const installed = await this.installIfNeeded(config);
 
@@ -895,10 +1067,20 @@ export class RepoWorkspace {
     return existsSync(join(this.root, ".git"));
   }
 
-  /** The repo's drafthouse.json, when the clone has one (onboarding check). */
-  drafthouse(): DrafthouseConfig | null {
+  /**
+   * Where a bring-up (clone · install · preview) stands right now, for callers
+   * that race it — the onboarding wizard's check runs while the create it
+   * just fired is still cloning, and has to read that as progress, not as a
+   * broken manifest.
+   */
+  syncState(): { running: boolean; phase: RepoPhase; detail: string | null } {
+    return { running: this.inFlight !== null, phase: this.phase, detail: this.detail };
+  }
+
+  /** The repo's cds-design.json, when the clone has one (onboarding check). */
+  cdsDesign(): CdsDesignConfig | null {
     try {
-      return readDrafthouseConfig(this.root);
+      return readCdsDesignConfig(this.root);
     } catch {
       return null;
     }
@@ -906,7 +1088,7 @@ export class RepoWorkspace {
 
   /** True when the declared install already ran for the current lockfiles. */
   installUpToDate(): boolean {
-    const config = this.drafthouse();
+    const config = this.cdsDesign();
     if (!config?.install) return true;
     if (!existsSync(join(this.root, "node_modules"))) return false;
     return !this.dependenciesMoved();
@@ -921,7 +1103,7 @@ export class RepoWorkspace {
    * The identity is a content hash of the manifest and lockfiles, recorded
    * inside `.git/` so it belongs to this clone alone.
    */
-  private async installIfNeeded(config: DrafthouseConfig): Promise<boolean> {
+  private async installIfNeeded(config: CdsDesignConfig): Promise<boolean> {
     if (!config.install) return false;
     if (!this.dependenciesMoved()) return false;
 
@@ -971,7 +1153,7 @@ export class RepoWorkspace {
     );
   }
 
-  /** A drafthouse command may or may not need pnpm; only demand it when it does. */
+  /** A cds-design command may or may not need pnpm; only demand it when it does. */
   private async requirePnpmIfReferenced(command: string): Promise<void> {
     if (!/\bpnpm\b/.test(command)) return;
     if (!(await resolvePnpmExecutable())) throw new Error(PNPM_MISSING_DETAIL);
@@ -981,7 +1163,7 @@ export class RepoWorkspace {
   // Preview server
   // -------------------------------------------------------------------------
 
-  private async startPreview(config: DrafthouseConfig): Promise<void> {
+  private async startPreview(config: CdsDesignConfig): Promise<void> {
     await this.killPreview();
     this.setPhase("starting", null);
     const { command, port } = config.preview;
@@ -996,7 +1178,7 @@ export class RepoWorkspace {
     if (await portAccepts(port)) {
       throw new Error(
         `포트 ${port}를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
-          `그 프로그램을 끄거나 연결 레포의 drafthouse.json에서 preview.port를 바꿔 주세요.`,
+          `그 프로그램을 끄거나 연결 레포의 cds-design.json에서 preview.port를 바꿔 주세요.`,
       );
     }
 
@@ -1032,7 +1214,7 @@ export class RepoWorkspace {
     const windows = currentPlatform() === "win32";
     return {
       cwd: this.root,
-      // drafthouse.json commands are strings ("pnpm dev"), so a shell parses
+      // cds-design.json commands are strings ("pnpm dev"), so a shell parses
       // them. `detached` on POSIX puts the tree in one process group we can
       // signal together when the preview must stop.
       shell: true,
@@ -1045,7 +1227,7 @@ export class RepoWorkspace {
         // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
         // in its resources; those binaries win over whatever the planner's
         // machine happens to have — or not have — on PATH.
-        PATH: extraPathPrefix(process.env.DRAFTHOUSE_EXTRA_PATH),
+        PATH: extraPathPrefix(process.env.CDS_DESIGN_EXTRA_PATH),
       },
     };
   }
@@ -1094,10 +1276,15 @@ export class RepoWorkspace {
 
   private async git(args: string[], cwd = this.root): Promise<string> {
     const windows = currentPlatform() === "win32";
-    const result = await this.capture("git", {
+    // The same binary the onboarding gate judged: on a Finder-launched app
+    // whose PATH stops at /usr/bin, a Homebrew-only git is exactly the one
+    // the resolver found and the one the clone below needs.
+    const git = (await resolveGitExecutable()) ?? "git";
+    const result = await this.capture(git, {
       cwd,
-      // `.cmd` shims are not executables on Windows.
-      shell: windows,
+      // `.cmd` shims are not executables on Windows; the resolver returns a
+      // real git.exe, so the shell is only for the unresolved fallback.
+      shell: windows && git === "git",
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ANTHROPIC_API_KEY: undefined },
@@ -1171,7 +1358,6 @@ export class RepoWorkspace {
       previewUrl: port === null ? null : `http://127.0.0.1:${port}`,
       previewPort: port,
       url: this.url,
-      patConfigured: this.pat !== null,
       branch: this.branch,
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
@@ -1224,7 +1410,7 @@ export class RepoWorkspace {
 export const GIT_MISSING_DETAIL =
   "git을 찾을 수 없습니다 — git을 설치한 뒤 다시 시도해 주세요.";
 
-/** PATH with DRAFTHOUSE_EXTRA_PATH prepended when the desktop app sets it. */
+/** PATH with CDS_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
 export function extraPathPrefix(
   extra: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -1240,7 +1426,7 @@ export function extraPathPrefix(
 }
 
 /** The npm scope form with a leading @, whatever the repo wrote. */
-function scopeOf(registry: DrafthouseRegistry): string {
+function scopeOf(registry: CdsDesignRegistry): string {
   return registry.scope.startsWith("@") ? registry.scope : `@${registry.scope}`;
 }
 
@@ -1249,7 +1435,7 @@ function detailOf(error: unknown, pat: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Planning document attachments
+// Spec attachments
 // ---------------------------------------------------------------------------
 
 export interface SpecFile {
@@ -1372,7 +1558,7 @@ export function trustWorkspace(root: string, home = homedir()): void {
 
   // The CLI rewrites this file whenever a session ends, so replace it in one
   // step rather than leaving a window where it is half written.
-  const temporary = `${configFile}.drafthouse-${process.pid}`;
+  const temporary = `${configFile}.cds-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   renameSync(temporary, configFile);
 }

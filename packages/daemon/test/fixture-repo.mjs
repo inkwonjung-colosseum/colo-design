@@ -1,8 +1,8 @@
 /**
  * A local fixture "connected repo": a bare git remote plus a seed commit
- * carrying a minimal but valid drafthouse app — package.json with no-op
+ * carrying a minimal but valid cds-design app — package.json with no-op
  * install/check scripts, a tiny node static server as the preview, and a
- * drafthouse.json that declares the preview command and a free port picked at
+ * cds-design.json that declares the preview command and a free port picked at
  * seed time. Everything runs offline: git remotes are local paths, commands
  * are node/npm, and no registry is contacted.
  *
@@ -20,7 +20,7 @@ const run = promisify(execFile);
 /**
  * A fake `claude` CLI for tests that must not touch the real login: answers
  * --version and `auth status` (logged in, team plan) and exits for anything
- * else. Point DRAFTHOUSE_CLAUDE_BIN at it.
+ * else. Point CDS_DESIGN_CLAUDE_BIN at it.
  */
 export function writeStubClaude(dir) {
   mkdirSync(dir, { recursive: true });
@@ -60,7 +60,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const { preview } = JSON.parse(readFileSync(join(root, "drafthouse.json"), "utf8"));
+const { preview } = JSON.parse(readFileSync(join(root, "cds-design.json"), "utf8"));
 
 createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -89,7 +89,7 @@ const CHECK_MJS = `console.log("check: 통과");
 
 const PACKAGE_JSON = JSON.stringify(
   {
-    name: "fixture-drafthouse-app",
+    name: "fixture-cds-design-app",
     private: true,
     version: "0.0.0",
     scripts: {
@@ -103,7 +103,7 @@ const PACKAGE_JSON = JSON.stringify(
 
 // The repo's own convention for where screens live. The daemon does not know
 // this; the browser planner e2e relies on it, the daemon e2e does not.
-const CLAUDE_MD = `# fixture drafthouse 레포
+const CLAUDE_MD = `# fixture cds-design 레포
 
 **대화 상대는 기획자다.** 모든 문장은 한국어로 쓴다.
 
@@ -142,7 +142,7 @@ export async function createFixtureRepo({
   mkdirSync(join(seed, "src", "screens"), { recursive: true });
 
   writeFileSync(
-    join(seed, "drafthouse.json"),
+    join(seed, "cds-design.json"),
     JSON.stringify(
       {
         install: installCommand,
@@ -184,7 +184,7 @@ async function commitAll(seed, message) {
   await run("git", ["add", "."], { cwd: seed });
   await run(
     "git",
-    ["-c", "user.name=drafthouse", "-c", "user.email=fixture@drafthouse.test", "commit", "-m", message],
+    ["-c", "user.name=cds-design", "-c", "user.email=fixture@cds-design.test", "commit", "-m", message],
     { cwd: seed },
   );
 }

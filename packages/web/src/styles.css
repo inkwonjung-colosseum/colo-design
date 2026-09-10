@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Drafthouse — design system
+   CDS Design — design system
    A document tool. Light paper by default, sans-serif, generous spacing.
    Monospace is for code and diffs only — the places that really are machine
    text. The console palette it started as is still here as the dark theme
@@ -31,6 +31,7 @@
   /* semantics — accent is steel, used only for state and links */
   --accent: #9db1c7;
   --accent-soft: rgba(157, 177, 199, 0.09);
+  --accent-glow: rgba(157, 177, 199, 0.35);
   --warn: #d4a55f;
   --warn-soft: rgba(212, 165, 95, 0.08);
   --danger: #e07a7a;
@@ -43,13 +44,16 @@
   --select-bg: rgba(157, 177, 199, 0.25);
 
   --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", sans-serif;
+  --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
   --r-sm: 4px;
   --r-md: 6px;
   --r-lg: 8px;
+  /* things that float: menus, dialogs, the composer. Flat work stays at 4–8. */
+  --r-float: 12px;
 
-  --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.66), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --brand-grad: linear-gradient(135deg, #9db1c7 0%, #7e97b5 55%, #a493c4 100%);
   --scrim: rgba(0, 0, 0, 0.5);
 
   color-scheme: dark;
@@ -78,6 +82,7 @@
 
   --accent: #4a6b8f;
   --accent-soft: rgba(74, 107, 143, 0.1);
+  --accent-glow: rgba(74, 107, 143, 0.28);
   --warn: #855312;
   --warn-soft: rgba(133, 83, 18, 0.08);
   --danger: #a93b3b;
@@ -88,7 +93,8 @@
   --danger-line: rgba(169, 59, 59, 0.35);
   --select-bg: rgba(74, 107, 143, 0.2);
 
-  --shadow-pop: 0 10px 28px rgba(24, 24, 32, 0.14);
+  --shadow-pop: 0 16px 40px -12px rgba(24, 24, 32, 0.16), 0 4px 12px -4px rgba(24, 24, 32, 0.1);
+  --brand-grad: linear-gradient(135deg, #4a6b8f 0%, #3d5a7a 55%, #6d5b96 100%);
   --scrim: rgba(24, 24, 32, 0.32);
 
   color-scheme: light;
@@ -105,6 +111,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.6 var(--sans);
+  letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -139,14 +146,16 @@ input:focus, textarea:focus, select:focus {
 :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 .primary {
-  background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--line);
+  /* The one ink button: the reading colour itself as the surface. Every
+     other control is quieter; this is where the next step lives. */
+  background: var(--text);
+  color: var(--bg);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   padding: 7px 14px;
-  transition: border-color 0.12s, background 0.12s;
+  transition: filter 0.12s;
 }
-.primary:hover:not(:disabled) { border-color: var(--line-hover-strong); background: var(--panel-3); }
+.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 .danger {
   background: transparent;
@@ -169,6 +178,22 @@ input:focus, textarea:focus, select:focus {
 .ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 /* A ghost button carrying a count of work waiting on it (기획's 게시). */
 .ghost--count:not(:disabled) { color: var(--accent); }
+/* Icon + word controls: the icons.tsx glyphs are decoration — the word
+   carries the accessible name that tests and screen readers read. Flex
+   pins each glyph to its word's left without baseline juggling. */
+.primary,
+.danger,
+.ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.primary svg,
+.danger svg,
+.ghost svg {
+  flex: none;
+}
 
 .card__actions button:not(.primary):not(.danger) {
   background: var(--panel-2);
@@ -223,8 +248,8 @@ input:focus, textarea:focus, select:focus {
 
 .connect {
   max-width: 500px;
-  margin: 18vh auto 0;
-  padding: 0 24px 40px;
+  margin: 0 auto;
+  padding: 18vh 24px 40px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -274,76 +299,28 @@ input:focus, textarea:focus, select:focus {
 
 /* ---------------------------------------------------------------- layout */
 
-.brand-name { font: 600 13px var(--mono); color: var(--text); }
-
-.sidebar__heading {
-  display: flex;
-  justify-content: space-between;
+.brand-name {
+  display: inline-flex;
   align-items: center;
-  font: 500 10px var(--mono);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--muted);
-  margin-bottom: 6px;
-  padding: 0 4px;
-}
-.sidebar__heading .ghost { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
-.sidebar__heading-label { display: inline-flex; align-items: center; gap: 6px; }
-.sidebar__heading-label svg { opacity: 0.6; }
-
-.row {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
-  padding: 6px 8px;
-  color: var(--text-2);
-  transition: background 0.1s, color 0.1s;
-}
-.row:hover { background: var(--panel-2); color: var(--text); }
-.row--active {
-  background: var(--panel-2);
-  box-shadow: inset 2px 0 0 var(--text-2);
+  gap: 8px;
+  font: 700 13.5px var(--sans);
+  letter-spacing: -0.01em;
   color: var(--text);
 }
-.row__title {
-  font: 500 12.5px var(--sans);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.row__meta {
-  font: 500 10.5px var(--mono);
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.row-wrap { position: relative; }
-.row-delete {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
+/* The mark: a gradient tile with a ring — the rail's one chromatic moment,
+   earned by being the only place the product signs its name. */
+.brand-name::before {
+  content: "";
   width: 20px;
   height: 20px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--muted);
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s, background 0.1s;
+  border-radius: 6px;
+  flex: none;
+  background:
+    radial-gradient(closest-side, transparent 52%, rgba(255, 255, 255, 0.85) 54% 68%, transparent 70%),
+    var(--brand-grad);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 2px 8px -2px var(--accent-glow);
 }
-.row-wrap:hover .row-delete,
-.row-delete:focus-visible { opacity: 1; }
-.row-delete:hover { color: var(--danger); background: var(--danger-soft); }
+
 .dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; flex: none; }
 .dot--live { background: var(--ok); }
 /* Finished-unseen, not running: a hollow ring so the two never read alike at
@@ -377,6 +354,7 @@ input:focus, textarea:focus, select:focus {
 /* one readable column; cards and notices line up with the transcript */
 .transcript,
 .scroll > .card,
+.scroll > .turnlive,
 .scroll > .notice {
   width: 100%;
   max-width: 860px;
@@ -385,6 +363,34 @@ input:focus, textarea:focus, select:focus {
 }
 
 .transcript { display: flex; flex-direction: column; gap: 10px; }
+/* A turn's first seconds: the tape has nothing on it yet, so the start says
+   so itself — one live line, a shimmer across the card until blocks land. */
+.turnlive {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: var(--panel);
+  font: 600 12.5px var(--sans);
+  color: var(--text-2);
+}
+.turnlive .spinner { color: var(--accent); }
+.turnlive::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--accent-soft) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: sweep 1.8s ease-in-out infinite;
+}
+@keyframes sweep { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .turnlive::after { animation: none; }
+}
 
 .empty {
   margin: 0;
@@ -434,6 +440,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 .bubble--assistant {
+  position: relative;
   align-self: stretch;
   max-width: none;
   background: transparent;
@@ -442,6 +449,29 @@ input:focus, textarea:focus, select:focus {
   font-size: 14px;
   line-height: 1.65;
 }
+/* The answer's lift-out: a one-click copy on hover, icon-only, the same
+   1.6s check the other copy buttons keep. Focus reveals it too — a keyboard
+   planner must be able to find what the mouse found. */
+.bubble__copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.bubble--assistant:hover .bubble__copy,
+.bubble--assistant:focus-within .bubble__copy { opacity: 1; }
+.bubble__copy:hover { color: var(--text); background: var(--panel-2); }
+.bubble__copy--done { color: var(--ok); }
+.bubble__copy--done:hover { color: var(--ok); background: var(--panel-2); }
 
 /* markdown ---------------------------------------------------------------- */
 
@@ -759,7 +789,10 @@ input:focus, textarea:focus, select:focus {
   box-shadow: var(--shadow-pop);
   transition: border-color 0.12s;
 }
-.composer:focus-within { border-color: var(--line-hover); }
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+}
 .composer textarea {
   resize: none;
   min-height: 24px;
@@ -840,7 +873,7 @@ input:focus, textarea:focus, select:focus {
   overflow-y: auto;
   background: var(--panel-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border-radius: var(--r-float);
   padding: 4px;
   box-shadow: var(--shadow-pop);
 }
@@ -868,9 +901,11 @@ input:focus, textarea:focus, select:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 4px; }
-/* The spacer only pushes when everything fits on one line. */
-.toolbar__spacer { flex: 1 1 0; min-width: 0; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px; }
+/* The usage·send pair wraps as one unit and rides the right edge, so the
+   send button stays bottom-right whether the toolbar fits one line or
+   three — never orphaned alone on its own left-aligned row. */
+.toolbar__end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
 
 .toolbar__icon {
   display: inline-flex;
@@ -935,6 +970,7 @@ input:focus, textarea:focus, select:focus {
   background: transparent;
   color: var(--muted);
   font: 500 11px var(--sans);
+  white-space: nowrap;
 }
 .usage__chip:hover, .usage__chip[aria-expanded="true"] {
   border-color: var(--line-hover);
@@ -945,38 +981,97 @@ input:focus, textarea:focus, select:focus {
 .usage__dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
 .usage__dot--warn { background: var(--warn); }
 .usage__dot--danger { background: var(--danger); }
+.usage__reading {
+  color: var(--muted);
+  font: 500 12px var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The ring shows one number — how full this conversation is. warn/danger
+   recolor the arc; an unknown conversation draws the bare track. */
+.usage__ring { flex: none; display: inline-flex; }
+.usage__ringtrack { fill: none; stroke: var(--panel-3); stroke-width: 3; }
+.usage__ringarc {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.usage__ringarc--warn { stroke: var(--warn); }
+.usage__ringarc--danger { stroke: var(--danger); }
 
-.usage__menu { min-width: 268px; padding: 10px; gap: 9px; }
-.usage__row {
-  display: grid;
-  grid-template-columns: 58px 1fr 38px;
+/* The popover answers "얼마나 더 쓸 수 있나" as one small panel: a headline
+   state up top, then a recessed gauge per budget. The ticks sit at 60% and
+   85% — the exact points `tone()` recolors the gauge itself. */
+.usage__menu { min-width: 280px; padding: 12px 14px 13px; }
+.usage__head {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.usage__title { font: 600 11px var(--sans); letter-spacing: 0.02em; color: var(--muted); }
+.usage__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 11px var(--sans);
+  color: var(--muted);
+}
+.usage__statedot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.usage__state--warn .usage__statedot { background: var(--warn); }
+.usage__state--danger { color: var(--danger); }
+.usage__state--danger .usage__statedot { background: var(--danger); }
+.usage__metric { display: block; }
+.usage__metric + .usage__metric {
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line-soft);
+}
+.usage__metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
 }
 .usage__label { color: var(--text-2); font-size: 12px; white-space: nowrap; }
-.usage__bar { height: 5px; border-radius: 999px; background: var(--panel-3); overflow: hidden; }
-.usage__fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
-.usage__fill--warn { background: var(--warn); }
-.usage__fill--danger { background: var(--danger); }
-.usage__pct {
-  color: var(--muted);
-  font: 500 11px var(--mono);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
+.usage__pct { color: var(--text); font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
+.usage__pct--warn { color: var(--warn); }
+.usage__pct--danger { color: var(--danger); }
+.usage__track {
+  display: block;
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  overflow: hidden;
 }
-/* The note explains a number that has gone high, so it spans the whole row
-   rather than squeezing into the column the bar already fills. */
-.usage__note { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.4; }
-
-/* this conversation is off the defaults ------------------------------------ */
-
-.selector__chip--off { color: var(--warn); border-color: var(--warn-line); }
-.advanced { min-width: 300px; padding: 10px; gap: 9px; }
-.advanced__lead { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.advanced__row { display: grid; gap: 4px; }
-.advanced__label { color: var(--text-2); font-size: 12px; }
-.advanced__row select { width: 100%; font-size: 12px; padding: 5px 8px; }
-
+.usage__fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 999px;
+  background-color: var(--accent);
+  animation: usage-fill-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+.usage__fill--warn { background-color: var(--warn); }
+.usage__fill--danger { background-color: var(--danger); }
+/* Gauges fill in sequence, one beat apart. */
+.usage__metric + .usage__metric .usage__fill { animation-delay: 70ms; }
+.usage__metric + .usage__metric + .usage__metric .usage__fill { animation-delay: 140ms; }
+@keyframes usage-fill-in {
+  from { width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage__fill { animation: none; }
+}
+.usage__tick { position: absolute; top: 0; bottom: 0; width: 1px; }
+.usage__tick--warn { left: 60%; background: var(--warn-line); }
+.usage__tick--danger { left: 85%; background: var(--danger-line); }
+/* The note carries the countdown and reset time, full width under its gauge. */
+.usage__note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 /* machine-authored turns ---------------------------------------------------- */
 
 /* A turn the planner started but did not type (PLAN D9). It is their own side
@@ -1045,7 +1140,7 @@ input:focus, textarea:focus, select:focus {
   overflow-y: auto;
   background: var(--panel-3);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
+  border-radius: var(--r-float);
   padding: 4px;
   box-shadow: var(--shadow-pop);
 }
@@ -1098,7 +1193,7 @@ input:focus, textarea:focus, select:focus {
   max-width: 560px;
   background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-float);
   box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
@@ -1113,7 +1208,7 @@ input:focus, textarea:focus, select:focus {
   padding: 12px 14px;
   border-bottom: 1px solid var(--line-soft);
 }
-.modal__title { margin: 0; font: 600 12.5px var(--mono); letter-spacing: 0.02em; }
+.modal__title { margin: 0; font: 600 13px var(--sans); letter-spacing: -0.01em; }
 .modal__head .ghost { display: inline-flex; padding: 5px; }
 .modal__body {
   overflow-y: auto;
@@ -1122,12 +1217,66 @@ input:focus, textarea:focus, select:focus {
   flex-direction: column;
 }
 
-.settings__group { padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+/* The ⌘K palette: the frame's every jump behind one overlay — threads,
+   projects, and the three common actions. The modal's bones (scrim, panel,
+   self-dismissing backdrop) one level above: it may open over a dialog,
+   never under one. */
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: var(--scrim);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh 20px 24px;
+}
+.palette__panel {
+  width: 100%;
+  max-width: 520px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.palette__panel:focus { outline: none; }
+.palette__search {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+}
+.palette__search:focus { background: transparent; border-color: var(--line-soft); box-shadow: none; }
+.palette__list { margin: 0; padding: 6px; list-style: none; max-height: 320px; overflow-y: auto; }
+.palette__group { padding: 8px 8px 2px; color: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.02em; }
+.palette__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.palette__row--on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.palette__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette__icon { display: inline-flex; flex: none; color: var(--muted); }
+.palette__hint { flex: none; color: var(--muted); font-size: 11px; }
+.palette__empty { padding: 14px 10px; color: var(--muted); font-size: 12.5px; }
+.palette__error { margin: 0 6px; }
+
+.settings__group { padding: 14px 0; border-bottom: 1px solid var(--line-soft); }
 .settings__group:last-child { border-bottom: 0; padding-bottom: 4px; }
 .settings__groupTitle {
-  margin: 0 0 8px;
-  font: 500 10px var(--mono);
-  letter-spacing: 0.09em;
+  margin: 0 0 10px;
+  /* Korean words, not machine text — the reading face, and 10px hangul was
+     the hardest text on the panel to actually read. */
+  font: 600 11px var(--sans);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -1136,7 +1285,7 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 7px 0;
+  padding: 8px 0;
 }
 .setting__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .setting__label { font-size: 13px; color: var(--text); }
@@ -1149,13 +1298,47 @@ input:focus, textarea:focus, select:focus {
   min-width: 230px;
   max-width: 280px;
 }
-.setting__control input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  accent-color: var(--accent);
+/* A switch, not a bare 15px checkbox: a behaviour toggle reads as on/off.
+   The real input stays on top of the track — invisible, full-size — so
+   clicks, the wrapping label, and keyboard focus all land on it. */
+.switch { position: relative; display: inline-flex; flex: none; }
+.switch input {
+  /* A checked knob carries a transform, and a transform is a stacking
+     context — without this the knob would paint over, and eat clicks
+     meant for, the invisible input. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
+  z-index: 1;
 }
+.switch__track {
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--line-strong);
+  transition: background 0.15s;
+}
+.switch__knob {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s;
+}
+.switch input:checked + .switch__track { background: var(--accent); }
+.switch input:checked + .switch__track .switch__knob { transform: translateX(12px); }
+.switch input:focus-visible + .switch__track {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch input:disabled + .switch__track { opacity: 0.4; }
 
 /* a wide row drops its control below the label instead of beside it */
 .setting--wide { flex-direction: column; align-items: stretch; gap: 8px; }
@@ -1202,16 +1385,45 @@ input:focus, textarea:focus, select:focus {
 
 .settings__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
+/* Classless buttons in a settings row (문제 해결) read like every other
+   panel button instead of the browser's native bevel. */
+.settings__row button:not(.primary):not(.danger) {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 7px 14px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.settings__row button:not(.primary):not(.danger):hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: var(--line-hover);
+  color: var(--text);
+}
+
+/* Below this width a label and a 230px picker no longer share a row; drop
+   the control under the text, the way .setting--wide already does. */
+@media (max-width: 480px) {
+  .setting { flex-direction: column; align-items: stretch; gap: 6px; }
+  .setting__control select { min-width: 0; max-width: none; width: 100%; }
+}
+
 /* ------------------------------------------------------------ planner mode */
 
-/* Column, not a two-row grid: the warning banner between the header and the
-   body is conditional, and a fixed row template would collapse the body on the
-   runs where it appears. */
+/* The shell (PLAN D12/D22): the project rail on the left, everything else in
+   the right column. The grid template itself is inline — the width is a
+   dragged, stored number — so the CSS only names the shape. */
 .planner {
+  display: grid;
+  height: 100vh;
+  position: relative;
+  background: var(--bg);
+}
+.planner__main {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   height: 100vh;
-  background: var(--bg);
 }
 
 .planner__header {
@@ -1223,13 +1435,125 @@ input:focus, textarea:focus, select:focus {
   background: var(--panel);
 }
 .planner__spacer { flex: 1; }
+.planner__project {
+  font: 600 13px var(--sans);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-/* Active-project switcher: the composer's selector chip, in the header. Only
-   the menu differs — it drops, where the composer's rises off the bottom of
-   the window. */
-.project { flex: none; align-items: center; gap: 8px; }
-.project__name { font: 500 12px var(--sans); color: var(--muted); }
-.project .selector__menu { top: calc(100% + 8px); bottom: auto; }
+/* The project rail (PLAN D14/D15). Collapsed, it is a 44px icon column — the
+   fold button and nothing else. */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--panel);
+  border-right: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.sidebar--collapsed { align-items: center; }
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  min-height: 40px;
+}
+.sidebar__fold { flex: none; padding: 2px 8px; font-size: 13px; }
+.sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar__rowwrap { position: relative; }
+.sidebar__row { display: flex; align-items: stretch; gap: 2px; }
+.sidebar__row--active .sidebar__main { background: var(--select-bg); }
+.sidebar__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar__main:hover:not(:disabled) { background: var(--panel-3); }
+.sidebar__name {
+  font: 500 12.5px var(--sans);
+  color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar__badge { font: 500 11.5px var(--sans); color: var(--muted); }
+.sidebar__badge--working {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* The rail's only moving part: the badge says 작업 중, the dot says live.
+   Reuses the base spinner's keyframes at badge size. */
+.sidebar__badge--working::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  animation: spin 0.7s linear infinite;
+}
+.sidebar__badge--progress { color: var(--text-2); }
+.sidebar__menu-btn {
+  flex: none;
+  align-self: center;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0;
+}
+.sidebar__row:hover .sidebar__menu-btn,
+.sidebar__menu-btn:focus-visible { opacity: 1; }
+.sidebar__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
+.sidebar__rename {
+  width: 100%;
+  padding: 7px 8px;
+  font: 500 12.5px var(--sans);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-hover);
+  border-radius: var(--r-md);
+  outline: none;
+}
+.sidebar__new {
+  flex: none;
+  margin: 8px;
+  justify-content: center;
+}
+.sidebar__error { padding: 0 12px 10px; }
+.sidebar__remove { max-width: 420px; }
+.sidebar__removetext { margin: 4px 0 14px; font: 400 13px/1.6 var(--sans); color: var(--text); }
+.sidebar__removebtns { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Narrow windows fold the rail by themselves (PLAN D19): three columns
+   cannot fit, so the fold is the window's decision, not a setting. */
+@media (max-width: 1100px) {
+  .planner { grid-template-columns: 44px minmax(0, 1fr) !important; }
+}
 
 /* What the daemon knows is wrong — no CLI, not signed in, no pnpm. A planner
    has no terminal to read it off, so it sits above the work. */
@@ -1241,13 +1565,53 @@ input:focus, textarea:focus, select:focus {
   border-bottom: 1px solid var(--line-soft);
   flex: none;
 }
+.planner__split--sidebar::after { left: 0; }
+/* The sidebar's boundary hangs off the frame itself: the rail column ends at
+   the grid line, and the handle sits over that border. */
+.planner--resizing { cursor: col-resize; user-select: none; }
+.planner--resizing iframe { pointer-events: none; }
 
+/* The workspace's two columns. The template comes in inline now — the
+   preview's width is the planner's to drag (PageWorkspace) — so what is left
+   here is the shape: chat taking what remains. position:relative anchors
+   the splitter handle that sits on the column border. */
 .planner__body {
+  position: relative;
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr) minmax(380px, 42%);
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 50%);
   flex: 1;
   min-height: 0;
 }
+
+/* The draggable boundaries (Splitter). A 9px hit area over the 1px border the
+   columns already paint; the border is the resting look and a line appears on
+   hover or drag only, so the frame reads the same until it is used. */
+.planner__split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 10;
+  cursor: col-resize;
+  touch-action: none;
+}
+.planner__split::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: transparent;
+}
+.planner__split--preview::after { right: 0; }
+.planner__split:hover::after { background: var(--line-hover); }
+.planner__split--drag::after { background: var(--accent); }
+
+/* While a boundary drags: the resize cursor owns the frame, text selection
+   stops following the pointer, and the preview iframe stops eating
+   pointermove — a drag crossing an iframe would otherwise stall. */
+.planner__body--resizing { cursor: col-resize; user-select: none; }
+.planner__body--resizing iframe { pointer-events: none; }
 
 /* The chat column: the session strip sits above the transcript and neither
    scrolls the other. */
@@ -1258,15 +1622,8 @@ input:focus, textarea:focus, select:focus {
   min-height: 0;
 }
 
-.planner__sessions {
-  border-right: 1px solid var(--line-soft);
-  background: var(--panel);
-  padding: 10px;
-  overflow-y: auto;
-}
-.planner__sessions .row { padding-right: 8px; }
-
 .planner__chat {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1274,41 +1631,98 @@ input:focus, textarea:focus, select:focus {
 }
 .planner__chat .scroll { padding: 18px 22px 12px; }
 
-/* The 화면 segment's own header, holding 저장 · 개발자에게 넘기기 and the state
-   the developer left behind. The mirror's 게시 lives over the page tree — each
-   half publishes to its own place, so neither button belongs in the shared
-   header. */
+/* The scroll area and its one overlay: the pill that brings a scrolled-up
+   reader back to the arriving answer. A wrapper because a pill positioned
+   inside the scrolling element would drift away with the content it covers. */
+.chatstack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chatstack__pill {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30; /* over the transcript; under autocomplete(35) · selector(40) · modal(60) */
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  font-size: 12px;
+  box-shadow: var(--shadow-pop);
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.chatstack__pill:hover { background: var(--panel-2); border-color: var(--line-hover-strong); color: var(--text); }
+/* While a turn streams, the pill names what keeps arriving below the fold. */
+.chatstack__pill--live { color: var(--accent); }
+.chatstack__pill--live:hover { color: var(--accent); }
+
+/* The workspace's right column, full-time now: the action bar with 저장 ·
+   개발자에게 넘기기 and the cycle's status, then the preview itself. */
 .planner__previewcol {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line-soft);
 }
-.planner__previewbar {
+
+/* The cycle's status, read off the repo (PLAN D4): the same three words the
+   tab strip and the 넘기기 dialog use, so one state never has two names. */
+.screenpanel__bar {
   display: flex;
-  justify-content: flex-end;
-  padding: 5px 10px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
   flex: none;
 }
-
-/* progress panel ------------------------------------------------------------*/
-
-.progress {
-  max-width: 560px;
-  padding: 26px 28px;
+.screenpanel__spacer { flex: 1; }
+.screenpanel__status {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--panel);
+  border-radius: var(--r-sm);
+  font: 500 11.5px var(--sans);
+  color: var(--muted);
+}
+.screenpanel__status--pending { color: var(--text-2); border-color: var(--line-hover); }
+.screenpanel__status--handed { color: var(--accent); border-color: var(--accent); }
+.screenpanel__status--merged { color: var(--ok); border-color: var(--ok); }
+
+/* 준비 중(내려받기·설치·서버 부팅)과 실패 상태는 미리보기 열 전체를 쓴다:
+   고정 폭 카드가 구석에 붙어 있으면 화면이 텅 빈 것처럼 읽힌다. 내용은
+   한가운데에 오고, safe는 안내 문이 길어질 때 위쪽 잘림 대신 스크롤로
+   흐르게 한다. */
+.progress {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  justify-content: safe center;
+  align-items: center;
+  text-align: center;
   gap: 12px;
+  padding: 26px 28px;
 }
-.progress--error { border-color: var(--danger-line); }
+.progress--error .progress__head h2 { color: var(--danger); }
 .progress__head { display: flex; align-items: center; gap: 10px; }
 .progress__head h2 { margin: 0; font: 600 15px var(--sans); color: var(--text); }
-.progress__body { margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.progress__body { margin: 0; max-width: 400px; color: var(--text-2); font-size: 13px; line-height: 1.6; }
 .progress__cmd {
+  width: 100%;
+  max-width: 480px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1319,17 +1733,20 @@ input:focus, textarea:focus, select:focus {
   border-radius: var(--r-md);
   font: 500 11.5px var(--mono);
   color: var(--text-2);
+  text-align: left;
   overflow-x: auto;
 }
 .progress__cmd code { flex: 1; white-space: nowrap; }
 .progress__detail {
+  max-width: 100%;
   font: 500 11px var(--mono);
   color: var(--muted);
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.progress .primary { align-self: flex-start; }
+.progress .primary { align-self: center; }
 
 /* activity summary ----------------------------------------------------------*/
 
@@ -1409,6 +1826,9 @@ input:focus, textarea:focus, select:focus {
   font: 500 11.5px var(--mono);
   text-decoration: none;
   padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
@@ -1546,7 +1966,9 @@ input:focus, textarea:focus, select:focus {
 }
 .handoff__state { font: 500 11px var(--mono); color: var(--muted); }
 
-/* The state chip in the 화면 header: the only place the developer's answer
+
+
+/* The state chip in the 넘기기 dialog: the only place the developer's answer
    surfaces, and — since nothing polls it — the click that re-reads it. */
 .handoff__chip {
   display: inline-flex;
@@ -1564,339 +1986,6 @@ input:focus, textarea:focus, select:focus {
 .handoff__chip--changes_requested { color: var(--warn); border-color: var(--warn-line); }
 .handoff__chip--merged { color: var(--ok); }
 
-/* page tree -------------------------------------------------------------------*/
-
-.pagetree { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px; overflow-y: auto; }
-.pagetree__list { margin: 0; padding: 0 0 0 10px; list-style: none; }
-.pagetree__space > .pagetree__list { padding-left: 0; }
-.pagetree__row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: var(--r-sm); }
-.pagetree__row--active { background: var(--panel-3); }
-/* The pipeline stage (PLAN §2.4). Fixed width so the marks line up into a
-   scannable column — a mark that shifts with the title cannot be scanned. */
-.pagetree__stage {
-  flex: none;
-  width: 12px;
-  text-align: center;
-  font: 400 10px var(--sans);
-  color: var(--muted);
-  cursor: default;
-}
-.pagetree__stage--built { color: var(--text); }
-.pagetree__stage--handed { color: var(--accent); }
-.pagetree__stage--merged { color: var(--ok); }
-
-.pagetree__title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: 3px 2px;
-  font: 500 12px var(--sans);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.pagetree__row--active .pagetree__title { color: var(--text); }
-.pagetree__flag {
-  flex: none;
-  font: 500 10px var(--sans);
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 0 5px;
-}
-.pagetree__flag--conflict { color: var(--danger); border-color: var(--danger-line); }
-/* A page that exists only in the mirror: 게시 will create it in Confluence. */
-.pagetree__flag--new { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
-.pagetree__link { flex: none; color: var(--muted); text-decoration: none; font-size: 11px; }
-.pagetree__link:hover { color: var(--text); }
-
-.pagetree__empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.pagetree__filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 2px 0 6px; }
-/* Open in the toolbar, the space picker takes its own row under the search. */
-.pagetree__cloner { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.pagetree__filter .pagetree__cloner { flex: 1 1 100%; }
-.pagetree__cloner select { flex: 1; min-width: 140px; }
-.pagetree__cloner-error { flex: 1 1 100%; margin: 0; color: var(--danger); font-size: 11.5px; }
-.pagetree__search {
-  flex: 1;
-  min-width: 0;
-  padding: 3px 7px;
-  font: 400 11.5px var(--sans);
-  border-radius: var(--r-sm);
-}
-.pagetree__search::-webkit-search-cancel-button { filter: grayscale(1); opacity: 0.5; }
-.pagetree__toggle {
-  flex: none;
-  padding: 3px 7px;
-  font: 500 10.5px var(--sans);
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-.pagetree__toggle--on { color: var(--text); background: var(--panel-3); border-color: var(--line-hover); }
-
-.pagetree__space { display: flex; flex-direction: column; gap: 2px; }
-.pagetree__space + .pagetree__space { margin-top: 6px; }
-.pagetree__space-head { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
-.pagetree__space-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  font: 600 10.5px var(--sans);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  cursor: pointer;
-}
-.pagetree__space-name:hover { color: var(--text-2); }
-.pagetree__caret { font-size: 9px; opacity: 0.7; }
-.pagetree__space-meta {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font: 500 10px var(--mono);
-  color: var(--muted);
-}
-.pagetree__space-meta--error { color: var(--danger); }
-.dot--busy { background: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.25; } }
-.pagetree__sync {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  font-size: 11px;
-  color: var(--muted);
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-sm);
-  opacity: 0;
-  cursor: pointer;
-}
-.pagetree__space-head:hover .pagetree__sync,
-.pagetree__sync:focus-visible { opacity: 1; }
-.pagetree__sync:hover:not(:disabled) { color: var(--text); background: var(--panel-3); }
-.pagetree__sync:disabled { cursor: default; }
-.pagetree__row--dim .pagetree__title { color: var(--muted); }
-
-.planner__doc {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--line-soft);
-}
-/* Both halves stay mounted — the editor holds unsaved text, the preview holds
-   a running app — so only one is shown and [hidden] has to beat the flex. */
-.planner__segment { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-.planner__segment[hidden] { display: none; }
-
-/* 문서 | 화면. Two mutually exclusive views of the SAME page, which is why
-   this is a segmented control and not a pair of tabs: tabs would read as two
-   places to be, and there is only one — the page the tree has open. */
-.segment {
-  display: flex;
-  gap: 2px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line-soft);
-  flex: none;
-}
-.segment button {
-  padding: 4px 14px;
-  font: 500 12px var(--sans);
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-}
-.segment button:hover { color: var(--text); }
-.segment .segment__on {
-  color: var(--text);
-  background: var(--panel-3);
-  border-color: var(--line);
-}
-
-.doc-editor { display: flex; flex-direction: column; flex: 1; min-width: 0; position: relative; }
-.doc-editor--empty { justify-content: center; padding: 28px; }
-.doc-editor__bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--line-soft);
-}
-.doc-editor__title {
-  flex: 1;
-  min-width: 0;
-  font: 600 14px var(--sans);
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  padding: 2px 0;
-}
-.doc-editor__title:focus { border-bottom-color: var(--line); outline: none; }
-
-.doc-editor__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 7px 14px;
-  border-bottom: 1px solid var(--line-soft);
-}
-.doc-tool {
-  padding: 3px 9px;
-  font: 500 11.5px var(--sans);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
-.doc-tool--on { background: var(--panel-3); color: var(--text); border-color: var(--line-hover); }
-.doc-tool--file { display: inline-flex; align-items: center; }
-
-.doc-editor__content { flex: 1; overflow-y: auto; }
-.doc-editor__content .tiptap { padding: 18px 22px 40px; outline: none; }
-.doc-editor__content .tiptap p { margin: 0 0 0.7em; line-height: 1.65; }
-.doc-editor__content .tiptap h1, .doc-editor__content .tiptap h2, .doc-editor__content .tiptap h3 { margin: 1.1em 0 0.5em; }
-.doc-editor__content .tiptap ul, .doc-editor__content .tiptap ol { margin: 0 0 0.7em; padding-left: 1.4em; }
-.doc-editor__content .tiptap pre {
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  padding: 10px 12px;
-  font: 400 12px/1.55 var(--mono);
-  overflow-x: auto;
-}
-.doc-editor__content .tiptap img { max-width: 100%; border-radius: var(--r-sm); }
-.doc-editor__content .tiptap table { border-collapse: collapse; margin: 0 0 0.8em; }
-.doc-editor__content .tiptap th, .doc-editor__content .tiptap td {
-  border: 1px solid var(--line);
-  padding: 5px 9px;
-  font-size: 12.5px;
-  min-width: 60px;
-}
-.doc-editor__content .tiptap th { background: var(--bg-2); }
-
-.doc-atom {
-  margin: 0.4em 0 0.9em;
-  border: 1px dashed var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg-2);
-  padding: 8px 12px;
-  position: relative;
-}
-.doc-atom__head { font: 500 10px var(--sans); letter-spacing: 0.05em; color: var(--muted); }
-.doc-atom__label { font: 500 11.5px var(--sans); color: var(--text-2); margin-top: 2px; }
-.doc-atom__xml {
-  margin: 6px 0 0;
-  max-height: 72px;
-  overflow: hidden;
-  font: 400 10.5px/1.5 var(--mono);
-  color: var(--muted);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.doc-editor__content .tiptap .doc-atom.ProseMirror-selectednode { border-color: var(--accent); }
-
-.doc-editor__raw {
-  flex: 1;
-  resize: none;
-  border: 0;
-  outline: none;
-  padding: 18px 22px 40px;
-  background: var(--bg);
-  color: var(--text);
-  font: 400 12.5px/1.7 var(--mono);
-}
-.doc-editor__lock { margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
-
-.doc-editor__quotefloat {
-  position: absolute;
-  top: 96px;
-  right: 26px;
-  z-index: 5;
-}
-
-.chip--quote, .chip--brief { gap: 6px; }
-.chip--brief { border-color: var(--accent-soft); }
-.chip--quote .chip__dismiss,
-.chip--brief .chip__dismiss {
-  margin-left: 2px;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  font-size: 13px;
-  line-height: 1;
-  padding: 0 2px;
-  cursor: pointer;
-}
-
-.modal__panel--conflict { max-width: 860px; }
-
-/* The 게시 confirm dialog: one row per pending page — flag, title, version
-   bump, ± line counts — with the diff one click away, so consent is about
-   something the planner actually saw. */
-.modal__panel--publish { max-width: 720px; }
-.publish__list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.publish__page { border: 1px solid var(--line-soft); border-radius: var(--r-lg, 8px); padding: 8px 10px; }
-.publish__page-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.publish__title { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.publish__ver { color: var(--muted); font: 500 10.5px var(--mono); font-variant-numeric: tabular-nums; }
-.publish__delta { color: var(--accent); font: 500 10.5px var(--mono); font-variant-numeric: tabular-nums; }
-.publish__delta--minus { color: var(--danger); }
-.publish__page-head .ghost { margin-left: auto; }
-.publish__conflict { margin: 6px 0 0; color: var(--danger); font-size: 11.5px; }
-.publish__diff {
-  margin: 8px 0 0;
-  max-height: 280px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm, 6px);
-  background: var(--panel-2);
-  font: 11px/1.5 var(--mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.conflict__sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.conflict__side {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-md);
-  background: var(--bg-2);
-  padding: 10px 12px;
-  min-width: 0;
-}
-.conflict__side h3 { margin: 0 0 8px; font: 600 12px var(--sans); color: var(--text-2); }
-.conflict__side pre {
-  margin: 0;
-  max-height: 320px;
-  overflow: auto;
-  font: 400 11px/1.55 var(--mono);
-  color: var(--text-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
 /* onboarding --------------------------------------------------------------------*/
 
@@ -1910,8 +1999,13 @@ input:focus, textarea:focus, select:focus {
   margin: 0 auto;
   width: 100%;
   padding: 32px 24px;
+  /* 시작 화면이므로 창을 통째로 쓴다: 내용은 화면 한가운데에 오고, 남는
+     공간은 위아래로 균등하게 남는다. safe는 내용이 창보다 길어질 때(토큰
+     폼 펼침 등) 중앙정렬이 윗부분을 잘라버리는 것을 막는다. */
+  justify-content: safe center;
 }
 .planner--onboarding { display: flex; }
+.onboarding__titlerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .onboarding__head h1 { margin: 0 0 6px; font: 600 20px var(--sans); color: var(--text); }
 .onboarding__steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .onboarding__step {
@@ -1943,12 +2037,15 @@ input:focus, textarea:focus, select:focus {
 .onboarding__glyph--pass { color: var(--ok); }
 .onboarding__glyph--warn { color: var(--warn); }
 .onboarding__glyph--fail { color: var(--danger); }
+.onboarding__glyph svg { vertical-align: -2px; }
+.onboarding__detail svg, .hint svg { vertical-align: -2px; }
 .onboarding__status { font: 500 11px var(--sans); color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 1px 7px; }
 .onboarding__detail { margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
 .onboarding__inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .onboarding__inputs input { flex: 1; min-width: 180px; }
-.onboarding__picker select { flex: 1; min-width: 200px; }
 .onboarding__fixrow { display: flex; }
+.onboarding__note { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 12px; color: var(--text-2); line-height: 1.6; }
+.onboarding__note code { font: 500 11.5px var(--mono); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 3px 7px; }
 .onboarding__done { display: flex; justify-content: center; padding-top: 4px; }
 
 /* preview comment pins -----------------------------------------------------------*/
@@ -2025,7 +2122,89 @@ input:focus, textarea:focus, select:focus {
   letter-spacing: 0.04em;
 }
 .sessiontab--on .sessiontab__kind { color: var(--accent); }
-.sessiontab__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A tab being renamed trades its button for this field, the sidebar's
+   rename input at tab scale. Enter or blur commits, Escape walks back. */
+.sessiontab__rename {
+  width: 150px;
+  padding: 4px 8px;
+  font: 500 12px var(--sans);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-hover);
+  border-radius: var(--r-sm);
+  outline: none;
+}
+
+/* A passed wizard step collapses to this one row: glyph · title · detail,
+   with at most one inline next move on the right. */
+.onboarding__step--line {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.onboarding__step--line .onboarding__stephead { flex: none; }
+.onboarding__step--line .onboarding__detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The glyph already says 통과; the chip beside it is one word of noise on a
+   row whose whole job is to be scanned past. */
+.onboarding__step--line .onboarding__status { display: none; }
+.onboarding__step--line .onboarding__fixrow { flex: none; }
+
+/* The machine-wide GitHub token form, shared by the wizard and 설정. */
+.ghtoken { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.ghtoken__row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ghtoken__row input { flex: 1; min-width: 200px; }
+.ghlink { font: 500 12px var(--sans); color: var(--accent); text-underline-offset: 2px; white-space: nowrap; }
+
+/* The project picker: search, listbox, and the confirm row under the choice. */
+.repopicker { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.repopicker__search { width: 100%; }
+.repopicker__list {
+  margin: 0; padding: 0; list-style: none;
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--panel);
+}
+.repopicker__row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; font-size: 12.5px; cursor: pointer;
+}
+.repopicker__row--on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.repopicker__row--off { opacity: 0.55; cursor: default; }
+.repopicker__row--ghost { height: 36px; background: var(--panel-2); margin: 4px 6px; border-radius: var(--r-sm); opacity: 0.6; }
+.repopicker__owner { color: var(--muted); font: 500 12px var(--mono); flex: none; }
+.repopicker__name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repopicker__time { margin-left: auto; flex: none; color: var(--muted); font: 400 11px var(--mono); }
+.repopicker__badge {
+  flex: none; font: 500 10.5px var(--sans); color: var(--muted);
+  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0 6px;
+}
+.repopicker__badge--muted { color: var(--muted); }
+.repopicker__empty { display: flex; flex-direction: column; gap: 6px; padding: 14px 12px; font-size: 12.5px; color: var(--text-2); }
+.repopicker__listerror { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.repopicker__confirm { border-top: 1px solid var(--line-soft); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.repopicker__confirmrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.repopicker__confirmrow input { flex: 1; min-width: 180px; }
+.repopicker__warnline { display: block; margin-top: 4px; color: var(--warn); }
+.repopicker__manualtoggle { align-self: flex-start; }
+.settings__account { font: 500 12.5px var(--sans); color: var(--text-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repopicker__settingslink { display: inline; padding: 0; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+/* The workspace before any project exists: the picker, centred, nothing else
+   — no rail, no chat, no preview, because none of them have a repo yet. */
+.planner__empty {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 20px;
+}
+.planner__emptyTitle { margin: 0; font: 600 17px var(--sans); color: var(--text); }
 
 /* Same affordance as a sidebar row's delete, so closing a thread is learned
    once: hidden until the tab is hovered or the × itself takes focus. */
@@ -2052,84 +2231,6 @@ input:focus, textarea:focus, select:focus {
 
 /* ---------------------------------------------------------------- responsive */
 
-/* first 기획서 -----------------------------------------------------------------*/
-
-/* A project with an empty subtree used to show three different sentences
-   about the same dead end. One invitation instead (PLAN D14). */
-.firstdoc {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  margin: auto;
-  max-width: 420px;
-  padding: 28px;
-}
-.firstdoc h2 { margin: 0; font-size: 17px; font-weight: 650; }
-.firstdoc p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
-.firstdoc .primary { padding: 8px 18px; }
-
-/* stage bar ------------------------------------------------------------------*/
-
-/* One rail, one button (PLAN D8). It sits above the 문서 | 화면 segment so the
-   answer to "what now" is the first thing in the column a planner is working
-   in, not something they find by scanning four other places. */
-.stagebar {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--panel);
-}
-
-.stagerail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.stagerail__step {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 10px 2px 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-.stagerail__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  border: 1.5px solid var(--line-strong);
-  flex: none;
-}
-/* Steps already behind us are filled, the current one is the accent, the rest
-   are outlines. Three states, no colour-only distinction: the current step is
-   also the only bold one. */
-.stagerail__step--done .stagerail__dot { background: var(--line-hover); border-color: var(--line-hover); }
-.stagerail__step--done { color: var(--text-2); }
-.stagerail__step--on .stagerail__dot { background: var(--accent); border-color: var(--accent); }
-.stagerail__step--on { color: var(--text); font-weight: 650; }
-.stagerail__step:not(:last-child)::after {
-  content: "";
-  width: 14px;
-  height: 1px;
-  background: var(--line);
-  margin-left: 6px;
-}
-
-.stagebar__act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.stagebar__reason { color: var(--muted); font-size: 12.5px; }
-.stagebar__spacer { flex: 1; }
-.stagebar__primary { padding: 7px 16px; font-weight: 600; }
-/* The composer's menus open upward because they sit at the bottom of their
-   column; this one sits at the top of its own, where upward is off-screen. */
-.stagebar__more .selector__menu { right: 0; left: auto; top: calc(100% + 8px); bottom: auto; }
 
 .sr-only {
   position: absolute;
@@ -2141,31 +2242,6 @@ input:focus, textarea:focus, select:focus {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
-}
-
-/* document beside screen -----------------------------------------------------*/
-
-.planner__panes { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-/* Reviewing is reading the 기획서 against the thing it produced, so at width
-   they sit side by side rather than a toggle apart (PLAN D13). */
-.planner__split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1px;
-  background: var(--line-soft);
-  flex: 1;
-  min-height: 0;
-}
-.planner__split > .planner__segment { background: var(--bg); min-width: 0; }
-.planner__split > .planner__segment[hidden] { display: flex; }
-
-/* Below 1280 the three columns stop being three columns: the tree gives up
-   its width first, because it is a list of titles and they truncate
-   gracefully. The chat and the document do not. */
-@media (max-width: 1280px) {
-  .planner__body { grid-template-columns: 172px minmax(0, 1fr) minmax(340px, 40%); }
-  .stagerail__step { font-size: 12px; }
-  .stagerail__step:not(:last-child)::after { width: 8px; }
 }
 
 @media (max-width: 880px) {
@@ -2213,8 +2289,8 @@ input:focus, textarea:focus, select:focus {
   cursor: pointer;
 }
 .preview__state:hover { color: var(--text); }
-/* Same selected affordance as the 문서 | 화면 segment: two things in one column
-   that both mean "this is the one you are looking at" must not read
+/* Same selected affordance as the rail's screen rows: two things in one
+   column that both mean "this is the one you are looking at" must not read
    differently. */
 .preview__state--on { color: var(--text); background: var(--panel-3); border-color: var(--line); }
 
@@ -2227,6 +2303,9 @@ input:focus, textarea:focus, select:focus {
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .preview__widthbtn:hover { color: var(--text); }
 .preview__widthbtn--on { color: var(--text); background: var(--panel-3); border-color: var(--line); }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DiffFile, DiffStatus } from "@drafthouse/protocol";
+import type { DiffFile, DiffStatus } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { CloseIcon } from "./icons";
 

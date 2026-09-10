@@ -1,7 +1,7 @@
 /**
  * Connected-repo end-to-end check. Uses no Claude session and therefore no
  * subscription usage; the remote is a local bare git repository seeded with a
- * minimal drafthouse app (see fixture-repo.mjs), so everything runs offline.
+ * minimal cds-design app (see fixture-repo.mjs), so everything runs offline.
  *
  * Covers what a planner's first minute depends on: the workspace clones,
  * installs once, reaches `ready` with a serving preview; a second sync pulls
@@ -21,18 +21,18 @@ import { DaemonServer } from "../dist/server.js";
 import { RepoWorkspace } from "../dist/repo.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
-const DIR = join(tmpdir(), "drafthouse-repo-e2e");
+const DIR = join(tmpdir(), "cds-design-repo-e2e");
 const ROOT = join(DIR, "work");
 
 // Trust and PAT storage must never touch the real home during the run. The
 // project registry is part of that: left on the default path the daemon would
-// write ~/drafthouse/config/projects.json, and the NEXT run would load this
+// write ~/cds-design/config/projects.json, and the NEXT run would load this
 // run's stale project — a repo url pointing at a fixture remote that is gone.
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
-process.env.DRAFTHOUSE_REPO_SETTINGS = join(DIR, "settings.json");
-process.env.DRAFTHOUSE_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.DRAFTHOUSE_PROJECTS_DIR = join(DIR, "projects");
-process.env.DRAFTHOUSE_CREDENTIAL_STORE = "memory";
+process.env.CDS_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
+process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -104,7 +104,7 @@ async function main() {
     first.previewUrl === `http://127.0.0.1:${port}` && first.previewPort === port,
     String(first.previewUrl),
   );
-  check("the clone exists and drafthouse.json came with it", existsSync(join(ROOT, "drafthouse.json")));
+  check("the clone exists and cds-design.json came with it", existsSync(join(ROOT, "cds-design.json")));
   const response = await fetch(first.previewUrl);
   const body = await response.text();
   check("the preview serves the repo's app", response.status === 200 && body.includes("회원 관리"), `${response.status}, ${body.length} bytes`);
@@ -162,8 +162,8 @@ async function main() {
  * and every client must see the phase broadcasts.
  */
 async function checkWireProtocol(previewPort, remoteUrl, workspace) {
-  process.env.DRAFTHOUSE_REPO_DIR = ROOT;
-  process.env.DRAFTHOUSE_REPO_URL = remoteUrl;
+  process.env.CDS_DESIGN_REPO_DIR = ROOT;
+  process.env.CDS_DESIGN_REPO_URL = remoteUrl;
   const port = await freePort();
   const server = new DaemonServer({ host: "127.0.0.1", port, token: "repo-e2e" });
   await server.start();
@@ -185,7 +185,7 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
 
   try {
     const hello = await waitFor(() => inbox.find((m) => m.type === "hello"), 10_000, "hello");
-    check("hello speaks protocol v5", hello.protocolVersion === 5, String(hello.protocolVersion));
+    check("hello speaks protocol v9", hello.protocolVersion === 9, String(hello.protocolVersion));
 
     // The server owns its own workspace state; the preview this test process
     // started is foreign to it, so step aside before asking it to serve.
@@ -198,12 +198,14 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       `${before.data.phase}, url=${before.data.url}`,
     );
 
+    // PAT storage went machine-wide (github.token.set); a repo.update that
+    // still carries one has the field stripped by the protocol, not stored.
     const PAT = "ghp_repo_e2e_secret";
     const updated = await request({ id: "2", type: "repo.update", pat: PAT });
     check(
-      "repo.update settles the workspace and reports PAT presence only",
-      updated.data.phase === "ready" && updated.data.patConfigured === true,
-      `${updated.data.phase}${updated.data.detail ? `: ${updated.data.detail}` : ""}`,
+      "repo.update ignores a stray pat field and reports no per-project PAT",
+      updated.data.phase === "ready" && !("patConfigured" in updated.data),
+      `${updated.data.phase}`,
     );
     check(
       "the PAT never crosses the wire back",
@@ -214,7 +216,7 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       // The repo url moved into the project registry when M1 landed; that file
       // is now the only thing the daemon writes for a connected repo, so it is
       // where a leaked PAT would show up.
-      "the PAT is persisted daemon-side (OS store, not the project registry)",
+      "the PAT is not persisted anywhere in the project registry",
       !readFileSync(join(DIR, "projects.json"), "utf8").includes(PAT),
     );
     check(

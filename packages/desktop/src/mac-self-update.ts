@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 /**
  * macOS 자가 교체(DESIGN §7): electron-updater 는 미서명 앱을 갱신하지
  * 못하므로(Squirrel.Mac 제약) 앱이 직접 — zip 다운로드 → sha256 검증 →
- * 종료 시 /Applications/Drafthouse.app 교체 → 재실행 — 을 수행한다.
+ * 종료 시 /Applications/CDS Design.app 교체 → 재실행 — 을 수행한다.
  * 앱이 내려받은 파일엔 quarantine 이 붙지 않아 Gatekeeper 재승인이 없다.
  *
  * 이 모듈은 계획(plan)과 검증(sha256)만 갖고, 실제 교체는 패키징된 앱
@@ -34,17 +34,17 @@ export function planSelfUpdate(input: {
   version: string;
   targetApp?: string;
 }): SelfUpdatePlan {
-  const filename = `Drafthouse-${input.version}.zip`;
+  const filename = `cds-design-${input.version}.zip`;
   return {
     zipUrl: input.url,
     expectedSha256: input.sha256,
     downloadPath: join(input.downloadsDir, filename),
-    targetApp: input.targetApp ?? "/Applications/Drafthouse.app",
+    targetApp: input.targetApp ?? "/Applications/CDS Design.app",
     steps: [
       `${filename} 내려받기`,
       "sha256 검증",
       "앱 종료",
-      "/Applications/Drafthouse.app 교체",
+      "/Applications/CDS Design.app 교체",
       "다시 실행",
     ],
   };

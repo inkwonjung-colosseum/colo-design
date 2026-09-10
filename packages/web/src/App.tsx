@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDaemon } from "./daemon-client";
 import { Shell } from "./Shell";
 import { SettingsDialog } from "./SettingsDialog";
 import { useSettings } from "./settings";
-import { GearIcon } from "./icons";
+import { CheckIcon, CopyIcon, GearIcon } from "./icons";
 
-const URL_KEY = "drafthouse.daemon-url";
+const URL_KEY = "cds-design.daemon-url";
 
 /**
  * The desktop app loads this page from the daemon itself with the pairing
@@ -52,7 +52,7 @@ function ConnectScreen({
       >
         <GearIcon size={15} />
       </button>
-      <h1>Drafthouse</h1>
+      <h1>CDS Design</h1>
       <p>
         이 컴퓨터에서 데몬을 켠 다음, 데몬이 출력한 주소를 붙여 넣어 주세요. 데몬은 이미 로그인해 둔
         Claude Code를 그대로 사용하므로, 본인 구독으로 실행됩니다.
@@ -63,7 +63,15 @@ function ConnectScreen({
         <pre className="connect__cmd">
           <code>pnpm dev:daemon</code>
           <button type="button" className="ghost" onClick={() => void copy()}>
-            {copied ? "복사됨 ✓" : "복사"}
+            {copied ? (
+              <>
+                <CheckIcon size={11} /> 복사됨
+              </>
+            ) : (
+              <>
+                <CopyIcon size={12} /> 복사
+              </>
+            )}
           </button>
         </pre>
       </div>
@@ -106,6 +114,20 @@ export default function App() {
   const daemon = useDaemon(url);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { settings, update: updateSettings } = useSettings();
+
+  // A 기획서 dropped outside the composer has no handler, and the browser
+  // answers a dropped file by navigating this window to the file — the whole
+  // tool reads as gone. The drop is refused app-wide; the composer keeps its
+  // own handler, which runs first on the way down and attaches the file.
+  useEffect(() => {
+    const refuse = (event: DragEvent) => event.preventDefault();
+    window.addEventListener("dragover", refuse);
+    window.addEventListener("drop", refuse);
+    return () => {
+      window.removeEventListener("dragover", refuse);
+      window.removeEventListener("drop", refuse);
+    };
+  }, []);
 
   const connect = (next: string) => {
     localStorage.setItem(URL_KEY, next);
@@ -158,9 +180,12 @@ export default function App() {
         daemon={daemon}
         settings={settings}
         onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}
+        onLayoutChange={(patch) => updateSettings({ layout: { ...settings.layout, ...patch } })}
+        onRenameSession={(sessionId, title) =>
+          updateSettings({ sessionTitles: { ...settings.sessionTitles, [sessionId]: title } })
+        }
         onOpenSettings={() => setSettingsOpen(true)}
         onboardingOpen={onboardingOpen}
-        onOpenOnboarding={() => setOnboardingOpen(true)}
         onOnboardingClose={() => setOnboardingOpen(false)}
       />
       {settingsDialog}

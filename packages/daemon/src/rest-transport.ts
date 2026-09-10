@@ -2,11 +2,11 @@
  * The transport every REST client in the daemon speaks, plus the
  * recorded-fixture implementation of it.
  *
- * Confluence and GitHub both need "one request in, one structured response
- * out" and both need offline suites that are real — a DaemonServer driven end
- * to end against recorded pairs rather than a hand-written mock. That is one
- * mechanism, so it lives in one place; the site-specific pieces (base url,
- * which env var selects fixtures) stay with each client's transport factory.
+ * The GitHub client needs "one request in, one structured response out" and
+ * an offline suite that is real — a DaemonServer driven end to end against
+ * recorded pairs rather than a hand-written mock. That mechanism lives here;
+ * the site-specific pieces (base url, which env var selects fixtures) stay
+ * with the client's transport factory.
  *
  * A fixture directory holds `fixtures.json`: an array of
  * `{ name, cite, request, response }` pairs. `cite` names the REST endpoint

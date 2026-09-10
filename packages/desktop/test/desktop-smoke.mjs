@@ -6,7 +6,7 @@
  * unpackaged electron-builder output instead (the packaged smoke).
  *
  * Usage: node packages/desktop/test/desktop-smoke.mjs [appPath]
- * Run: node packages/desktop/test/desktop-smoke.mjs release/mac-arm64/Drafthouse.app/Contents/MacOS/Drafthouse
+ * Run: node packages/desktop/test/desktop-smoke.mjs release/mac-arm64/CDS Design.app/Contents/MacOS/CDS Design
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -38,10 +38,10 @@ async function main() {
   let appPath = packagedApp;
 
   if (!packagedApp) {
-    run("pnpm", ["--filter", "@drafthouse/protocol", "build"], repo);
-    run("pnpm", ["--filter", "@drafthouse/daemon", "build"], repo);
-    run("pnpm", ["--filter", "@drafthouse/web", "build"], repo);
-    run("pnpm", ["--filter", "@drafthouse/desktop", "build"], repo);
+    run("pnpm", ["--filter", "@cds-design/protocol", "build"], repo);
+    run("pnpm", ["--filter", "@cds-design/daemon", "build"], repo);
+    run("pnpm", ["--filter", "@cds-design/web", "build"], repo);
+    run("pnpm", ["--filter", "@cds-design/desktop", "build"], repo);
     const webDist = join(desktop, "web-dist");
     rmSync(webDist, { recursive: true, force: true });
     mkdirSync(webDist, { recursive: true });
@@ -52,7 +52,7 @@ async function main() {
   }
 
   // 데스크톱은 자기 userData 아래에서만 흔적을 남긴다(키체인·설정 오염 방지).
-  const userData = join(tmpdir(), `drafthouse-desktop-smoke-${Date.now()}`);
+  const userData = join(tmpdir(), `cds-design-desktop-smoke-${Date.now()}`);
   const electronBinary = packagedApp
     ? undefined
     : join(desktop, "node_modules", ".bin", "electron");
@@ -62,15 +62,26 @@ async function main() {
     env: {
       ...process.env,
       // 온보딩 게이트를 통과시킬 stub — 실제 로그인/네트워크 없이.
-      DRAFTHOUSE_CLAUDE_BIN: stubClaude(join(userData, "bin")),
-      DRAFTHOUSE_CREDENTIAL_STORE: undefined,
-      DRAFTHOUSE_DESKTOP_SMOKE: "1",
+      CDS_DESIGN_CLAUDE_BIN: stubClaude(join(userData, "bin")),
+      CDS_DESIGN_CREDENTIAL_STORE: undefined,
+      CDS_DESIGN_DESKTOP_SMOKE: "1",
     },
   });
 
   try {
     const window = await app.firstWindow();
     check("a window opens", Boolean(window));
+
+    // 첫 창은 화면 작업 영역을 채운다 — 고정 크기는 큰 모니터에서 조그맣다.
+    const [bounds, workArea] = await app.evaluate(({ BrowserWindow, screen }) => {
+      const display = screen.getPrimaryDisplay();
+      return [BrowserWindow.getAllWindows()[0]?.getBounds(), display.workArea];
+    });
+    check(
+      "the first window fills the display work area",
+      Boolean(bounds) && bounds.width === workArea.width && workArea.height - bounds.height <= 1,
+      bounds ? `${bounds.width}x${bounds.height} vs ${workArea.width}x${workArea.height}` : "no window",
+    );
 
     // The renderer loaded from the daemon itself with a token — no connect screen.
     const url = window.url();
@@ -91,7 +102,42 @@ async function main() {
     await window.waitForSelector(".onboarding", { timeout: 30000 });
     check("a fresh machine lands on the onboarding wizard", (await window.locator(".onboarding").count()) === 1);
 
-    const bridge = await window.evaluate(() => Boolean(window.drafthouseDesktop));
+    // The wizard's gates run against the daemon the app hosts; the same
+    // check answers over the WebSocket the renderer itself uses. The
+    // runtime gate resolves node through the app's bundled runtime first,
+    // so its detail names what the repo's commands would actually run —
+    // "(앱에 포함됨)" when the bundle is present, the system node when not.
+    const runtimeStep = await window.evaluate(
+      (pageUrl) =>
+        new Promise((ok, fail) => {
+          const ws = new WebSocket(
+            pageUrl.replace(/^http/, "ws").replace(/\?token=/, "?token="),
+          );
+          const id = `smoke-${Date.now()}`;
+          const timer = setTimeout(() => fail(new Error("onboarding.check timed out")), 60000);
+          ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "onboarding.check", id })));
+          ws.addEventListener("message", (event) => {
+            const reply = JSON.parse(String(event.data));
+            if (reply.id !== id) return;
+            clearTimeout(timer);
+            ws.close();
+            reply.type === "ok"
+              ? ok(reply.data.find((step) => step.id === "runtime") ?? null)
+              : fail(new Error(reply.message));
+          });
+          ws.addEventListener("error", () => fail(new Error("socket refused")));
+        }),
+      window.url(),
+    );
+    check(
+      "onboarding.check reports a passing runtime gate naming its node",
+      runtimeStep !== null &&
+        runtimeStep.status === "pass" &&
+        runtimeStep.detail.startsWith("Node.js "),
+      runtimeStep ? runtimeStep.detail : "(no runtime step)",
+    );
+
+    const bridge = await window.evaluate(() => Boolean(window.cdsDesignDesktop));
     check("the desktop update bridge is exposed to the renderer", bridge);
 
     const errors = [];

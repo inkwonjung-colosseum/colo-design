@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { HandoffStatus } from "@drafthouse/protocol";
+import type { HandoffStatus } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
-import { CloseIcon } from "./icons";
+import { CheckIcon, CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
 import { RUNNING, stageLine } from "./DiffPanel";
 
 /**
@@ -27,7 +27,6 @@ export function HandoffPanel({
   proposedTitle,
   proposedBody,
   sessionId,
-  onPrecheck,
   onClose,
 }: {
   daemon: Daemon;
@@ -35,12 +34,6 @@ export function HandoffPanel({
   proposedBody: string;
   /** The live 화면 thread; a failing gate lands in it as Claude's next task. */
   sessionId: string | null;
-  /**
-   * Asks the 화면 thread to compare the 기획서 against what the screens
-   * actually implement, and closes so the planner can read the answer. Absent
-   * when the page has no 화면 thread to ask.
-   */
-  onPrecheck?: () => void;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(proposedTitle);
@@ -136,6 +129,7 @@ export function HandoffPanel({
             handoff && (
               <div className="handoff__done">
                 <a className="preview__link" href={handoff.url} target="_blank" rel="noreferrer">
+                  <ExternalLinkIcon />
                   넘긴 내용 열기
                 </a>
                 <button
@@ -144,7 +138,15 @@ export function HandoffPanel({
                   aria-label="개발자 링크 복사"
                   onClick={() => void copy(handoff.url)}
                 >
-                  {copied ? "복사됨 ✓" : "링크 복사"}
+                  {copied ? (
+                    <>
+                      <CheckIcon size={11} /> 복사됨
+                    </>
+                  ) : (
+                    <>
+                      <LinkIcon size={12} /> 링크 복사
+                    </>
+                  )}
                 </button>
                 <span className="handoff__state">{HANDOFF_STATE_LABEL[handoff.state]}</span>
               </div>
@@ -198,21 +200,6 @@ export function HandoffPanel({
                 <button type="button" className="primary" disabled={running} onClick={() => void hand()}>
                   {running ? "넘기는 중…" : "개발자에게 넘기기"}
                 </button>
-                {/* The tool cannot judge whether a screen matches its 기획서 —
-                    that would mean parsing the 기획서, which is the repo's
-                    domain, not ours. Claude can, so this asks it and gets out
-                    of the way; the answer lands in the chat behind the dialog. */}
-                {onPrecheck && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={running}
-                    title="기획서에 적힌 항목과 상태가 화면에 다 있는지 물어봅니다"
-                    onClick={onPrecheck}
-                  >
-                    넘기기 전 점검
-                  </button>
-                )}
                 <button type="button" className="ghost" disabled={running} onClick={onClose}>
                   취소
                 </button>

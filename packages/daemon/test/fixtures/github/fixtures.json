@@ -7,8 +7,8 @@
       "url": "/repos/colosseumcoinckr/cds-open-design/pulls",
       "bodyJson": {
         "title": "회원 관리 기획서",
-        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n\n## 화면\n- `src/screens/member/MemberList.screen.tsx` — default · empty · loading · error\n\n<!-- drafthouse:pages 101 -->",
-        "head": "drafthouse/cds/20260909-1",
+        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n\n## 화면\n- `src/screens/member/MemberList.screen.tsx` — default · empty · loading · error\n\n<!-- cds-design:pages 101 -->",
+        "head": "cds-design/cds/20260909-1",
         "base": "main"
       }
     },
@@ -21,7 +21,7 @@
         "state": "open",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -42,7 +42,7 @@
         "state": "open",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -75,7 +75,7 @@
         "state": "open",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -127,7 +127,7 @@
         "state": "open",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -179,7 +179,7 @@
         "state": "closed",
         "merged": true,
         "merged_at": "2026-09-10T04:20:00Z",
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -200,7 +200,7 @@
         "state": "closed",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -213,7 +213,7 @@
       "url": "/repos/colosseumcoinckr/cds-open-design/pulls/7",
       "bodyJson": {
         "title": "회원 관리 기획서 · 주문 정책 기획서",
-        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n- 주문 정책 기획서 (102)\n\n<!-- drafthouse:pages 101,102 -->"
+        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n- 주문 정책 기획서 (102)\n\n<!-- cds-design:pages 101,102 -->"
       }
     },
     "response": {
@@ -225,7 +225,7 @@
         "state": "open",
         "merged": false,
         "merged_at": null,
-        "head": { "ref": "drafthouse/cds/20260909-1" },
+        "head": { "ref": "cds-design/cds/20260909-1" },
         "base": { "ref": "main" }
       }
     }
@@ -357,6 +357,248 @@
         "message": "Not Found",
         "documentation_url": "https://docs.github.com/rest/repos/repos#get-a-repository",
         "status": "404"
+      }
+    }
+  },
+  {
+    "name": "user",
+    "cite": "GET /user — https://docs.github.com/rest/users/users#get-the-authenticated-user",
+    "request": { "method": "GET", "url": "/user" },
+    "response": { "status": 200, "json": { "login": "jik-dev" } }
+  },
+  {
+    "name": "user-repos-1",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=2>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/payments-web",
+          "name": "payments-web",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/payments-web.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-08T09:00:00Z"
+        },
+        {
+          "full_name": "cds-org/legacy-docs",
+          "name": "legacy-docs",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/legacy-docs.git",
+          "default_branch": "main",
+          "permissions": { "push": false },
+          "pushed_at": "2026-06-01T09:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-2",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=2"
+    },
+    "response": {
+      "status": 200,
+      "json": [
+        {
+          "full_name": "cds-org/archive",
+          "name": "archive",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/archive.git",
+          "default_branch": "main",
+          "archived": true,
+          "permissions": { "push": true },
+          "pushed_at": "2026-01-01T09:00:00Z"
+        },
+        {
+          "full_name": "jik-dev/sandbox",
+          "name": "sandbox",
+          "owner": { "login": "jik-dev" },
+          "clone_url": "https://github.com/jik-dev/sandbox.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-03-01T09:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-cap-1",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=2>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/big-1",
+          "name": "big-1",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/big-1.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-cap-2",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=2"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=3>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/big-2",
+          "name": "big-2",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/big-2.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-cap-3",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=3"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=4>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/big-3",
+          "name": "big-3",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/big-3.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-cap-4",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=4"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=5>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/big-4",
+          "name": "big-4",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/big-4.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "user-repos-cap-5",
+    "cite": "GET /user/repos — https://docs.github.com/rest/repos/repos#list-repositories-for-the-authenticated-user",
+    "request": {
+      "method": "GET",
+      "url": "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=5"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "link": "</user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100&page=6>; rel=\"next\""
+      },
+      "json": [
+        {
+          "full_name": "cds-org/big-5",
+          "name": "big-5",
+          "owner": { "login": "cds-org" },
+          "clone_url": "https://github.com/cds-org/big-5.git",
+          "default_branch": "main",
+          "permissions": { "push": true },
+          "pushed_at": "2026-09-01T00:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "contents-cds-design",
+    "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
+    "request": {
+      "method": "GET",
+      "url": "/repos/cds-org/payments-web/contents/cds-design.json"
+    },
+    "response": { "status": 200, "json": { "name": "cds-design.json", "path": "cds-design.json" } }
+  },
+  {
+    "name": "contents-missing",
+    "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
+    "request": {
+      "method": "GET",
+      "url": "/repos/cds-org/payments-web/contents/cds-design.json"
+    },
+    "response": { "status": 404, "json": { "message": "Not Found" } }
+  }
+  ,
+  {
+    "name": "user-again",
+    "cite": "GET /user — https://docs.github.com/rest/users/users#get-the-authenticated-user",
+    "request": { "method": "GET", "url": "/user" },
+    "response": { "status": 200, "json": { "login": "jik-dev" } }
+  },
+  {
+    "name": "user-401",
+    "cite": "GET /user — https://docs.github.com/rest/users/users#get-the-authenticated-user",
+    "request": { "method": "GET", "url": "/user" },
+    "response": { "status": 401, "json": { "message": "Bad credentials" } }
+  }
+  ,
+  {
+    "name": "repo-payments-web",
+    "cite": "GET /repos/{owner}/{repo} — https://docs.github.com/rest/repos/repos#get-a-repository",
+    "request": { "method": "GET", "url": "/repos/cds-org/payments-web" },
+    "response": {
+      "status": 200,
+      "json": {
+        "full_name": "cds-org/payments-web",
+        "default_branch": "main",
+        "permissions": { "push": true }
       }
     }
   }

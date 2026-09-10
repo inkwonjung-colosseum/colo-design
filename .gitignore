@@ -3,7 +3,7 @@ node_modules/
 .gjc/
 # The connected repo is its own git repository (authored in-tree, pushed to
 # GitHub separately); the hub clones it like any other remote.
-/connected-repo/
+/reference-repo/
 dist/
 *.log
 .DS_Store
@@ -19,6 +19,8 @@ packages/web/test/ui-publish-e2e.png
 packages/web/test/ui-comments-e2e.png
 packages/web/test/ui-onboarding-done.png
 packages/web/test/ui-editor-1280.png
+packages/web/test/ui-onboarding-picker.png
+packages/web/test/ui-sidebar-e2e.png
 packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/

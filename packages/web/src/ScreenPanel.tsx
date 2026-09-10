@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
-  DrafthouseCommentsEnvelope,
-  DrafthouseScreen,
-  HandoffStatus,
+  CdsDesignCommentsEnvelope,
+  CdsDesignScreen,
   RepoPhase,
   SessionState,
   TurnMarker,
-} from "@drafthouse/protocol";
-import { markTurn } from "@drafthouse/protocol";
+} from "@cds-design/protocol";
+import { markTurn } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { stateLabel } from "./format";
 import { Preview, type PreviewTarget } from "./Preview";
 import { DiffPanel } from "./DiffPanel";
-import { HANDOFF_STATE_LABEL, HandoffPanel } from "./HandoffPanel";
+import { HandoffPanel } from "./HandoffPanel";
 import { handoffDraft } from "./handoff-draft";
+import {
+  CheckIcon,
+  ClipboardCheckIcon,
+  CopyIcon,
+  HandoffIcon,
+  RefreshIcon,
+  RestartIcon,
+  SaveIcon,
+} from "./icons";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
   missing: "연결 레포를 연결해 주세요",
@@ -130,13 +138,22 @@ function ProgressPanel({
         <pre className="progress__cmd">
           <code>{guidance.command}</code>
           <button type="button" className="ghost" onClick={() => void copy(guidance.command!)}>
-            {copied ? "복사됨 ✓" : "복사"}
+            {copied ? (
+              <>
+                <CheckIcon size={11} /> 복사됨
+              </>
+            ) : (
+              <>
+                <CopyIcon size={12} /> 복사
+              </>
+            )}
           </button>
         </pre>
       )}
       {!failed && progressLine && <div className="progress__detail">{progressLine}</div>}
       {failed && (
         <button type="button" className="primary" onClick={onRetry}>
+          <RestartIcon />
           다시 시도
         </button>
       )}
@@ -150,93 +167,60 @@ function ProgressPanel({
 }
 
 /**
- * The 화면 segment: the connected repo clone rendered by its own preview
- * server, plus the three words of PLAN D5 over it — 저장, 개발자에게 넘기기,
- * and the state the developer left behind. It owns repo readiness, both
+ * The workspace's right column: the connected repo clone rendered by its own
+ * preview server, plus the three words of PLAN D5 over it — 저장, 개발자에게
+ * 넘기기, and the status the cycle has reached (변경 있음 / 넘김 / 반영됨,
+ * read mechanically off the repo — PLAN D4). It owns repo readiness, both
  * dialogs and the comment pins, and knows nothing about sessions — a comment
- * bundle is handed up to the shell, which decides which screen thread of the
- * open page it belongs to (PLAN D1/D2).
+ * bundle is handed up to the shell, which decides which thread it lands in.
  *
- * It is also where PLAN D7's two envelopes meet: the screens the repo declared
- * come up through `Preview` and land here, and the screen the planner should
- * be looking at goes back down as `target`. This panel is the only side that
- * can decide that, because it is the only one that knows both the declared
- * screens and the 기획서 the shell has open.
+ * It is also where PLAN D7's envelopes land: the screens the repo declared
+ * come up through `Preview` and stay here — feeding the picker, the state
+ * chips and the 넘기기 proposal — and the screen the planner should be
+ * looking at lives here too, as `target`, set by the toolbar alone.
  */
 export function ScreenPanel({
   daemon,
   onOpenSettings,
   onComments,
   turnState,
-  publishSessionId = null,
-  specPath = null,
-  onScreens,
-  pageIdOf,
+  sessionId = null,
   onPrecheck,
-  saveOpen,
-  handoffOpen,
-  onCloseSave,
-  onCloseHandoff,
 }: {
   daemon: Daemon;
   onOpenSettings: () => void;
   /**
-   * Forward a comment bundle as a turn in the page's screen thread. The panel
-   * does not know which thread that is; the shell resolves it, creating one if
-   * the page has none yet.
+   * Forward a comment bundle as a turn in the working screen thread. The panel
+   * does not know which thread that is; the shell resolves it, creating one
+   * named after the screen if there is none yet.
    */
-  onComments: (turn: string) => Promise<void>;
+  onComments: (turn: string, name?: string) => Promise<void>;
   /** State of the thread the comments went to, so pins clear when it settles. */
   turnState: SessionState;
   /**
-   * The 화면 thread a failing gate briefs, resolved by the shell: a failed
-   * check or build hands its output to Claude as the next Korean turn, so a
-   * failed 저장 or 넘기기 is not a dead end. Null when the page has no screen
-   * thread yet — there is simply nobody to brief.
+   * The live thread a failing gate briefs: a failed check or build hands its
+   * output to Claude as the next Korean turn, so a failed 저장 or 넘기기 is
+   * not a dead end. Null when no thread is open — there is nobody to brief.
    */
-  publishSessionId?: string | null;
+  sessionId?: string | null;
   /**
-   * The mirror-relative path of the 기획서 the shell has open, e.g.
-   * `ENG/회원 관리 기획서.md`. This is the whole of PLAN D1 on this side: pick
-   * a 기획서 on the left, see its screen on the right.
+   * Sends one Korean turn into the CURRENT thread (PLAN D5): whether the
+   * screens cover their 기획서 is a judgement the tool refuses to make —
+   * the 기획서 lives in the thread's specs/, so Claude is the one who can
+   * read it. The shell supplies the sender; the panel composes the words.
    */
-  specPath?: string | null;
-  /** The repo's declared screens, so the shell can badge the page tree (§2.4). */
-  onScreens: (screens: DrafthouseScreen[]) => void;
-  /**
-   * The page behind a `spec` path, or null when the project does not carry
-   * that 기획서. The panel holds mirror paths and the shell holds pageIds; only
-   * the shell can join them, and the 넘기기 proposal needs the ids.
-   */
-  pageIdOf: (specPath: string) => string | null;
-  /**
-   * Asks the 화면 thread whether these screens cover their 기획서. Offered in
-   * the 넘기기 dialog, because that is the moment the question is worth
-   * asking; the shell composes the turn and owns the thread.
-   */
-  onPrecheck?: () => void;
-  /**
-   * The two dialogs of the cycle, opened by the stepper above the document
-   * (PLAN D8). They render here because this is where the declared screens
-   * are, and the 넘기기 proposal is composed from them — but WHEN they open is
-   * the stepper's decision, not the preview's.
-   */
-  saveOpen: boolean;
-  handoffOpen: boolean;
-  onCloseSave: () => void;
-  onCloseHandoff: () => void;
+  onPrecheck: (turn: string) => void;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
   const ready = phase === "ready";
   /**
-   * A failed repo.sync used to be shown in the chat column's error banner.
-   * The panel no longer reaches the chat, so it answers its own failure in
-   * its own column — right above the preview it could not bring up.
+   * A failed repo.sync is answered in this column, right above the preview
+   * it could not bring up — the rail and the chat stay usable while it runs.
    */
   const [syncError, setSyncError] = useState<string | null>(null);
   /** Preview comment pins waiting for Claude's turn to settle (DESIGN §6). */
-  const [commentPins, setCommentPins] = useState<DrafthouseCommentsEnvelope | null>(null);
+  const [commentPins, setCommentPins] = useState<CdsDesignCommentsEnvelope | null>(null);
   /** True once the carrying turn actually ran; pins clear when it settles. */
   const [commentTurnRan, setCommentTurnRan] = useState(false);
   /**
@@ -245,17 +229,16 @@ export function ScreenPanel({
    * old repo that declares nothing and an app that has not booted yet look
    * identical from here.
    */
-  const [screens, setScreens] = useState<DrafthouseScreen[]>([]);
-  /** The screen and state the preview has been asked to show, or null. */
-  const [target, setTarget] = useState<PreviewTarget | null>(null);
+  const [screens, setScreens] = useState<CdsDesignScreen[]>([]);
+
   /**
-   * The 기획서 the last automatic navigation answered. Without it every
-   * re-post of the screen list — one lands on each hot reload — would yank the
-   * planner back to the page's screen after they had picked another from the
-   * toolbar. Selecting a different 기획서 changes this and moves them again,
-   * which is the only time they asked to be moved.
+   * Which screen and state the preview shows. The toolbar is the screens'
+   * only door now, so the target lives here, beside it.
    */
-  const autoNavigatedFor = useRef<string | null>(null);
+  const [target, setTarget] = useState<PreviewTarget | null>(null);
+  /** The two dialogs of the cycle: 저장 and 개발자에게 넘기기. */
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [handoffOpen, setHandoffOpen] = useState(false);
 
   const sync = useCallback(() => {
     setSyncError(null);
@@ -263,49 +246,29 @@ export function ScreenPanel({
   }, [api]);
 
   /**
-   * Mounting the 화면 segment is what readies the repo. `repoSync` is
-   * idempotent daemon-side, so flipping between 문서 and 화면 re-runs it at
-   * most once per mount — never per render — and unmounting deliberately does
-   * nothing: the preview server keeps running so coming back is instant.
+   * 레포 최신화: the planner's pull of the developer's side, pressed from
+   * this bar. Unsaved changes are the daemon's to carry; a conflict is
+   * Claude's, briefed into the open thread like a failing gate.
+   */
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void api
+      .repoRefresh(sessionId)
+      .catch((e: Error) => setSyncError(e.message))
+      .finally(() => setRefreshing(false));
+  }, [api, sessionId]);
+
+  /**
+   * Mounting the panel is what readies the repo. `repoSync` is idempotent
+   * daemon-side, so it runs at most once per mount — never per render — and
+   * unmounting deliberately does nothing: the preview server keeps running
+   * so coming back is instant.
    */
   useEffect(() => {
     if (connection !== "open") return;
     sync();
   }, [connection, sync]);
-
-  /**
-   * PLAN D1, the whole of it on this side: the 기획서 on the left decides the
-   * screen on the right. Runs when the list arrives (the planner can pick a
-   * page while the repo is still cloning) and when the page changes.
-   *
-   * FIRST declared match wins. A 기획서 that specifies 목록 + 상세 is the normal
-   * shape, not an edge case, so a rule that goes blank whenever a page has
-   * more than one screen would go blank on the common case. Registry order is
-   * the repo's own declared order, so "first" is a choice the repo made rather
-   * than one made here, and the 화면 picker carries the rest. No match at all
-   * navigates nowhere: whatever the planner was looking at is better than an
-   * empty frame.
-   */
-  useEffect(() => {
-    if (!specPath || autoNavigatedFor.current === specPath) return;
-    const match = screens.find((screen) => screen.spec === specPath);
-    if (!match) return;
-    autoNavigatedFor.current = specPath;
-    setTarget({ route: match.route, state: null });
-  }, [specPath, screens]);
-
-  /**
-   * The list is needed in two places at once: here, for the picker and the
-   * 넘기기 proposal, and up in the shell, which badges a page ◐ 화면 있음 the
-   * moment some screen names it (§2.4).
-   */
-  const receiveScreens = useCallback(
-    (next: DrafthouseScreen[]) => {
-      setScreens(next);
-      onScreens(next);
-    },
-    [onScreens],
-  );
 
   // The pins live until the turn that carries them settles — including the
   // case where the session had already settled before the bundle arrived.
@@ -325,14 +288,17 @@ export function ScreenPanel({
    * sees it as the planner's own words (DESIGN §6). Pins stay while the turn
    * runs and clear when it settles.
    */
-  const forwardComments = async (envelope: DrafthouseCommentsEnvelope) => {
+  const forwardComments = async (envelope: CdsDesignCommentsEnvelope) => {
     setCommentPins(envelope);
     setCommentTurnRan(false);
     // The envelope names the screen the way the app routes to it; the card
     // wants the title the repo gave it. Falling back to the raw id keeps a
     // screen the registry no longer declares from losing its card entirely.
     const named = screens.find((screen) => screen.route === `/${envelope.screen}`);
-    await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen));
+    // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
+    // after the screen the pins came from is the honest one-line answer to
+    // "where did this tab come from".
+    await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen), named?.title);
   };
 
   const errorKind = classifyError(repo?.detail ?? null);
@@ -341,7 +307,7 @@ export function ScreenPanel({
   // preview may still be alive and worth looking at.
   const previewStopped = phase === "error" && errorKind === "preview";
   const showProgress = !repo || (!ready && !previewStopped);
-  // Progress renders inside this column, not over the whole planner: the tree
+  // Progress renders inside this column, not over the whole planner: the rail
   // and the chat stay usable while the clone runs.
   if (showProgress) {
     return (
@@ -358,10 +324,84 @@ export function ScreenPanel({
   }
 
   const projectName = projects.find((project) => project.slug === activeSlug)?.name ?? "";
-  const { title: proposedTitle, body: proposedBody } = handoffDraft(projectName, screens, pageIdOf);
+  const { title: proposedTitle, body: proposedBody } = handoffDraft(projectName, screens);
+  /**
+   * Where the cycle stands, read off the repo alone (PLAN D4): a merged pull
+   * request is 반영됨, an open one is 넘김, worktree changes are 변경 있음.
+   * Clicking it is the planner's refresh of the developer's answer — nothing
+   * polls a state that only moves when a human acts.
+   */
+  const handoff = repo?.handoff ?? null;
+  const status =
+    handoff?.state === "merged"
+      ? { label: "반영됨", tone: "merged" }
+      : handoff
+        ? { label: "넘김", tone: "handed" }
+        : (repo?.pendingChanges ?? 0) > 0
+          ? { label: "변경 있음", tone: "pending" }
+          : null;
+
+  // The clone is checked out and installed, whatever the dev server is doing.
+  // 저장 and 넘기기 act on the worktree and the remote, so gating them on a
+  // preview that cannot bind a port would strand work that is already done.
+  const workable = phase === "ready" || phase === "error";
 
   return (
     <div className="planner__previewcol">
+      <div className="screenpanel__bar">
+        {status ? (
+          <span className={`screenpanel__status screenpanel__status--${status.tone}`}>
+            {status.label}
+          </span>
+        ) : (
+          <span className="screenpanel__status screenpanel__status--none">화면 대기 중</span>
+        )}
+        <span className="screenpanel__spacer" />
+        <button
+          type="button"
+          className="ghost"
+          disabled={refreshing || phase !== "ready"}
+          title="개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
+          onClick={refresh}
+        >
+          <RefreshIcon />
+          {refreshing ? "받아 오는 중…" : "최신화"}
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={!sessionId}
+          title={sessionId ? "열려 있는 대화에서 기획서와 화면을 맞춰 봅니다" : "먼저 대화를 열어 주세요"}
+          onClick={() =>
+            onPrecheck(
+              "넘기기 전 점검: 이 화면이 근거 기획서(specs/ 첨부)와 맞는지 확인하고, 다른 점·비어 있는 점을 목록으로 답해 주세요.",
+            )
+          }
+        >
+          <ClipboardCheckIcon />
+          넘기기 전 점검
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={!workable}
+          title="검토한 변경을 이 프로젝트의 작업 위치에 저장합니다"
+          onClick={() => setSaveOpen(true)}
+        >
+          <SaveIcon />
+          저장
+        </button>
+        <button
+          type="button"
+          className="primary"
+          disabled={!workable || !repo?.branch}
+          title={repo?.branch ? undefined : "아직 저장한 변경이 없습니다. 먼저 저장해 주세요"}
+          onClick={() => setHandoffOpen(true)}
+        >
+          <HandoffIcon />
+          개발자에게 넘기기
+        </button>
+      </div>
       {syncError && <p className="hint">{syncError}</p>}
       {commentPins && <CommentPinsSummary envelope={commentPins} />}
       <Preview
@@ -373,26 +413,16 @@ export function ScreenPanel({
         screens={screens}
         target={target}
         onNavigate={(route, state) => setTarget({ route, state })}
-        onScreens={receiveScreens}
+        onScreens={setScreens}
       />
-      {saveOpen && (
-        <DiffPanel daemon={daemon} sessionId={publishSessionId} onClose={onCloseSave} />
-      )}
+      {saveOpen && <DiffPanel daemon={daemon} sessionId={sessionId} onClose={() => setSaveOpen(false)} />}
       {handoffOpen && (
         <HandoffPanel
           daemon={daemon}
           proposedTitle={proposedTitle}
           proposedBody={proposedBody}
-          sessionId={publishSessionId}
-          {...(onPrecheck
-            ? {
-                onPrecheck: () => {
-                  onCloseHandoff();
-                  onPrecheck();
-                },
-              }
-            : {})}
-          onClose={onCloseHandoff}
+          sessionId={sessionId}
+          onClose={() => setHandoffOpen(false)}
         />
       )}
     </div>
@@ -400,7 +430,7 @@ export function ScreenPanel({
 }
 
 /** Pins summary shown above the preview until the turn settles. */
-function CommentPinsSummary({ envelope }: { envelope: DrafthouseCommentsEnvelope }) {
+function CommentPinsSummary({ envelope }: { envelope: CdsDesignCommentsEnvelope }) {
   return (
     <div className="pins" data-testid="pins-summary">
       <div className="pins__head">
@@ -429,7 +459,7 @@ function CommentPinsSummary({ envelope }: { envelope: DrafthouseCommentsEnvelope
  * `screenTitle` is what the repo called the screen; the envelope only carries
  * its route-shaped id, and a card is the wrong place to meet one.
  */
-function commentsToTurn(envelope: DrafthouseCommentsEnvelope, screenTitle: string): string {
+function commentsToTurn(envelope: CdsDesignCommentsEnvelope, screenTitle: string): string {
   const marker: TurnMarker = {
     kind: "comments",
     screen: screenTitle,

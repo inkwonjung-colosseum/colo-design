@@ -1,13 +1,10 @@
-import type { EffortLevel, PermissionMode, SessionModelInfo } from "@drafthouse/protocol";
+import type { EffortLevel, PermissionMode, SessionModelInfo } from "@cds-design/protocol";
 
 /**
  * How the three conversation settings are worded.
  *
- * They live here rather than in the composer because two places now offer
- * them: 설정, where they are chosen (PLAN D10), and the composer's own
- * popover, which exists only to show that this conversation is not on the
- * defaults. One copy of the words, so the two can never disagree about what
- * "전부 맡기기" means.
+ * Two places offer them — 설정 and the composer's own popover — from one
+ * list, so the two can never disagree about what "전부 맡기기" means.
  *
  * Every label is read by a planner, not a developer: plain Korean only.
  */
@@ -45,8 +42,9 @@ export const MODE_HINT: Record<PermissionMode, string> = {
 };
 
 /**
- * What 설정 offers. `dontAsk` stays reachable through the API but off the
- * menu: 전부 맡기기 covers it.
+ * The 확인 방식 choices both menus offer — 설정 and the composer popover
+ * alike. `dontAsk` stays reachable through the API but off the menus:
+ * 전부 맡기기 covers it.
  */
 export const SETTINGS_MODES: PermissionMode[] = [
   "default",
@@ -54,18 +52,6 @@ export const SETTINGS_MODES: PermissionMode[] = [
   "acceptEdits",
   "bypassPermissions",
 ];
-
-/**
- * What the composer's popover offers — the same list without 전부 맡기기.
- *
- * Handing every permission over is a decision about how much a planner trusts
- * an unattended agent with their repo clone, not a knob to reach for mid
- * sentence because a card got in the way. It stays in 설정, next to the
- * sentence explaining it.
- */
-export const COMPOSER_MODES: PermissionMode[] = SETTINGS_MODES.filter(
-  (mode) => mode !== "bypassPermissions",
-);
 
 /** What the conversation starts on when nobody has chosen (PLAN D10). */
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";

@@ -7,14 +7,13 @@ import type {
   SessionModelInfo,
   SessionSelectors,
   SessionSummary,
-  Workspace,
-} from "@drafthouse/protocol";
+} from "@cds-design/protocol";
 import { EMPTY_SESSION, type Daemon, type SessionView } from "./daemon-client";
 import type { Attachment } from "./Composer";
 import { settleTransitions } from "./session-activity";
 import { loadModelCatalog, saveModelCatalog, type ChatSettings } from "./settings";
 
-/** One workspace's chat state, as its views consume it. */
+/** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
   /** Stored + live threads of this workspace, newest first. */
   list: SessionSummary[];
@@ -63,28 +62,21 @@ export interface Sessions {
 }
 
 /**
- * One workspace's chat state: its own thread list, its own active thread, its
- * own error line. 기획 and 디자인 each hold one of these, so switching tabs
- * never lands a planning turn in a screen session (or the other way round).
+ * The chat state of the one workspace: its thread list, its active thread,
+ * its error line. There is a single session axis now (PLAN D1) — every thread
+ * is about screens — so there is exactly one of these per connection.
  *
- * `ready` is whatever that workspace needs before Claude can be given a cwd:
- * a mirrored Confluence space for 기획, a prepared repo clone for 디자인.
- *
- * `pageId` scopes the whole hook to one 기획서 page: the list holds only that
- * page's threads and a thread started here is attached to it. Null or omitted
- * is the unscoped view — every thread of the workspace, which is what the
- * 설정 dialog and any caller without a page open still needs.
+ * `ready` is the connected repo being prepared: the daemon needs a clone
+ * before it can give Claude a cwd to write screens into.
  */
 export function useSessions(
   daemon: Daemon,
-  workspace: Workspace,
   opts: {
     ready: boolean;
     confirmBeforeDelete: boolean;
-    pageId?: string | null;
     /**
-     * How Claude answers, as 설정 holds it (PLAN D10). Owned above this hook
-     * now: the same three values drive the settings dialog, and two copies of
+     * How Claude answers, as 설정 holds it (PLAN D10). Owned above this hook:
+     * the same three values drive the settings dialog, and two copies of
      * "which model" would disagree the first time one of them was edited.
      */
     chat: ChatSettings;
@@ -92,7 +84,7 @@ export function useSessions(
   },
 ): Sessions {
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
-  const { ready, confirmBeforeDelete, pageId = null, chat, onChatChange } = opts;
+  const { ready, confirmBeforeDelete, chat, onChatChange } = opts;
 
   const [list, setList] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -128,28 +120,26 @@ export function useSessions(
   }, [activeId]);
 
   const refresh = useCallback(async () => {
-    setList(await api.listSessions(workspace, pageId ?? undefined).catch(() => [] as SessionSummary[]));
-  }, [api, workspace, pageId]);
+    setList(await api.listSessions().catch(() => [] as SessionSummary[]));
+  }, [api]);
 
   /**
    * Every path that opens a thread goes through here, so a new session starts
-   * on the chips the planner has set rather than the CLI's defaults, attached
-   * to the page it was started from. Those values are read from a ref: this
-   * callback must keep a stable identity, or changing a chip (or opening
-   * another page) while the first session is still being created would run the
-   * create effect again and open a second thread.
+   * on the chips the planner has set rather than the CLI's defaults. Those
+   * values are read from a ref: this callback must keep a stable identity, or
+   * changing a chip while the first session is still being created would run
+   * the create effect again and open a second thread.
    */
-  const startRef = useRef({ chat, pageId });
-  startRef.current = { chat, pageId };
+  const startRef = useRef({ chat });
+  startRef.current = { chat };
 
   const startSession = useCallback(
     async (resume?: string, title?: string): Promise<string> => {
-      const { chat: picked, pageId: pickedPage } = startRef.current;
-      const { sessionId } = await api.createSession(workspace, {
+      const { chat: picked } = startRef.current;
+      const { sessionId } = await api.createSession({
         ...(resume ? { resume } : {}),
         ...(picked.model ? { model: picked.model } : {}),
         ...(picked.effort ? { effort: picked.effort } : {}),
-        ...(pickedPage ? { pageId: pickedPage } : {}),
         ...(title ? { title } : {}),
       });
       ensureSession(sessionId);
@@ -161,13 +151,28 @@ export function useSessions(
       }
       return sessionId;
     },
-    [api, workspace, ensureSession, markLive],
+    [api, ensureSession, markLive],
   );
 
   useEffect(() => {
     if (connection !== "open" || !ready) return;
     void refresh();
   }, [connection, ready, refresh]);
+
+  // The thread list is the active project's, so a switch that kept the old
+  // project's tabs left a clickable conversation the daemon would answer in
+  // the wrong clone. Clear both the list and the open thread; `ready` rarely
+  // flips on a switch between two prepared repos, so this is the only
+  // reliable trigger.
+  const activeSlug = daemon.activeSlug;
+  const listedSlug = useRef(activeSlug);
+  useEffect(() => {
+    if (listedSlug.current === activeSlug) return;
+    listedSlug.current = activeSlug;
+    setActiveId(null);
+    setList([]);
+    if (connection === "open") void refresh();
+  }, [activeSlug, connection, refresh]);
 
   // Nothing is created just because the app opened: an empty thread the
   // planner never typed into is noise in their list. The first message (or
@@ -229,26 +234,6 @@ export function useSessions(
     [api, sessions],
   );
 
-  /**
-   * The open page is the axis of the shell, so it owns the selection too: a
-   * thread picked under the previous page would keep rendering its transcript
-   * under the new page's heading. The list itself re-fetches on its own —
-   * `refresh`'s identity carries `pageId` — so this only drops the selection,
-   * discarding an untyped thread the way switching away from one does.
-   *
-   * Both values are read from a ref for the same reason the chips are: a new
-   * `sessions` map (every streamed block makes one) must not re-run this and
-   * wipe a selection the planner just made on the page that is still open.
-   */
-  const switchRef = useRef({ activeId, discardIfUnused });
-  switchRef.current = { activeId, discardIfUnused };
-
-  useEffect(() => {
-    const { activeId: previous, discardIfUnused: discard } = switchRef.current;
-    discard(previous);
-    setActiveId(null);
-  }, [pageId]);
-
   const open = async (summary: SessionSummary) => {
     if (summary.sessionId !== activeId) discardIfUnused(activeId);
     ensureSession(summary.sessionId);
@@ -275,10 +260,9 @@ export function useSessions(
 
   /** Permanently delete a stored thread. Confirms first unless turned off. */
   const remove = async (session: SessionSummary) => {
-    const noun = workspace === "planning" ? "기획" : "화면 작업";
     if (
       confirmBeforeDelete &&
-      !window.confirm(`"${session.title}" ${noun}을 삭제할까요? 대화 기록이 영구히 사라집니다.`)
+      !window.confirm(`"${session.title}" 대화를 삭제할까요? 대화 기록이 영구히 사라집니다.`)
     )
       return;
     if (activeId === session.sessionId) setActiveId(null);

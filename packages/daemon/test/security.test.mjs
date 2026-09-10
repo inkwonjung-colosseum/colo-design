@@ -1,13 +1,11 @@
 /**
- * Security / containment regressions — the boundary cohort's F1, F6+F10, F7.
+ * Security / containment regressions — the boundary cohort's F6+F10, F7.
  *
- * F1: attachment filenames are client input; a traversal name must be
- * refused in Korean and can never steer the write outside
- * attachments/<pageId>/. F6/F10: containment is decided through the
- * filesystem (realpath), so the /private spelling of a tmp workspace
- * auto-allows legitimate writes while a symlink planted inside and pointing
- * out is refused. F7: 항상 허용 remembers the exact call; an identical call
- * never prompts again, a different one still does.
+ * F6/F10: containment is decided through the filesystem (realpath), so the
+ * /private spelling of a tmp workspace auto-allows legitimate writes while a
+ * symlink planted inside and pointing out is refused. F7: 항상 허용 remembers
+ * the exact call; an identical call never prompts again, a different one
+ * still does.
  *
  * Run: node --test packages/daemon/test/security.test.mjs
  */
@@ -16,7 +14,6 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeAttachmentFilename } from "../dist/sync/sync-engine.js";
 import { containsPath, realpathBestEffort } from "../dist/paths.js";
 import { PermissionMemory, permissionSignature } from "../dist/session.js";
 
@@ -24,34 +21,6 @@ function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-// ---------------------------------------------------------------------------
-// F1 — attachment filename sanitization
-// ---------------------------------------------------------------------------
-
-test("traversal attachment names are refused in Korean", () => {
-  for (const name of [
-    "../../../../x.png",
-    "..\\..\\..\\x.png",
-    "/etc/passwd.png",
-    "a/b.png",
-    "a\\b.png",
-    "..",
-    ".",
-    "",
-    "C:\\tmp\\x.png",
-    "con:nul.png",
-    "x<n>.png",
-  ]) {
-    assert.throws(() => sanitizeAttachmentFilename(name), /첨부 파일 이름/, name);
-  }
-});
-
-test("a clean filename survives untouched", () => {
-  assert.equal(sanitizeAttachmentFilename("구성도.png"), "구성도.png");
-  assert.equal(sanitizeAttachmentFilename("스크린샷 2026-09-09.png"), "스크린샷 2026-09-09.png");
-  assert.equal(sanitizeAttachmentFilename("weird-but-ok_1.tar.gz"), "weird-but-ok_1.tar.gz");
-  assert.equal(sanitizeAttachmentFilename("2-구성도.png"), "2-구성도.png", "dedupe prefixes collide not here");
-});
 
 // ---------------------------------------------------------------------------
 // F6 + F10 — realpath containment

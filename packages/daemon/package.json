@@ -1,15 +1,16 @@
 {
-  "name": "@drafthouse/daemon",
+  "name": "@cds-design/daemon",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./credentials": { "types": "./dist/credentials.d.ts", "default": "./dist/credentials.js" },
+    "./environment": { "types": "./dist/environment.d.ts", "default": "./dist/environment.js" },
     "./server": { "types": "./dist/server.d.ts", "default": "./dist/server.js" }
   },
   "bin": {
-    "drafthouse-daemon": "./dist/index.js"
+    "cds-design-daemon": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -19,7 +20,7 @@
     "doctor": "node dist/index.js doctor"
   },
   "dependencies": {
-    "@drafthouse/protocol": "workspace:*",
+    "@cds-design/protocol": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "0.3.263",
     "ws": "^8.18.3"
   },

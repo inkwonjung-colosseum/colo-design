@@ -4,7 +4,7 @@
  * offline.
  *
  * These cover the parts that decide what the planner ends up with: what a
- * repo's drafthouse.json may declare, how the workspace moves through its
+ * repo's cds-design.json may declare, how the workspace moves through its
  * phases, how an attached document is named on disk, how the PAT is kept out
  * of urls and errors, how workspace trust is recorded, and how the two
  * failure modes a planner cannot debug (no pnpm, no registry token) are
@@ -20,9 +20,9 @@ import { join } from "node:path";
 import {
   authenticatedUrl,
   extraPathPrefix,
-  parseDrafthouseConfig,
+  parseCdsDesignConfig,
   parseUnifiedDiff,
-  readDrafthouseConfig,
+  readCdsDesignConfig,
   saveSpecFiles,
   specFileName,
   trustWorkspace,
@@ -30,9 +30,8 @@ import {
   RepoWorkspace,
 } from "../dist/repo.js";
 import { MemoryCredentialStore, REPO_PAT_ITEM } from "../dist/credentials.js";
-import { repoPatItem } from "../dist/projects.js";
+import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 import { detectsRegistryAuthFailure, pnpmCandidates } from "../dist/environment.js";
-import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const never = () => false;
 
@@ -41,11 +40,11 @@ function workdir(prefix) {
 }
 
 // ---------------------------------------------------------------------------
-// drafthouse.json contract
+// cds-design.json contract
 // ---------------------------------------------------------------------------
 
-test("a full drafthouse.json parses into its typed shape", () => {
-  const config = parseDrafthouseConfig(
+test("a full cds-design.json parses into its typed shape", () => {
+  const config = parseCdsDesignConfig(
     JSON.stringify({
       install: "pnpm install",
       check: "pnpm check",
@@ -61,46 +60,46 @@ test("a full drafthouse.json parses into its typed shape", () => {
   assert.deepEqual(config.registry, { host: "npm.pkg.github.com", scope: "@colosseumcoinckr" });
 });
 
-test("a minimal drafthouse.json needs only preview", () => {
-  const config = parseDrafthouseConfig('{"preview":{"command":"node server.mjs","port":3000}}');
+test("a minimal cds-design.json needs only preview", () => {
+  const config = parseCdsDesignConfig('{"preview":{"command":"node server.mjs","port":3000}}');
   assert.equal(config.install, undefined);
   assert.equal(config.registry, undefined);
   assert.deepEqual(config.preview, { command: "node server.mjs", port: 3000 });
 });
 
 test("validation errors are Korean, name the field, and say what it should be", () => {
-  assert.throws(() => parseDrafthouseConfig("{}"), /preview가 없습니다/);
+  assert.throws(() => parseCdsDesignConfig("{}"), /preview가 없습니다/);
   assert.throws(
-    () => parseDrafthouseConfig('{"preview":{"port":5274}}'),
+    () => parseCdsDesignConfig('{"preview":{"port":5274}}'),
     /preview\.command가 없습니다/,
   );
   assert.throws(
-    () => parseDrafthouseConfig('{"preview":{"command":"pnpm dev"}}'),
+    () => parseCdsDesignConfig('{"preview":{"command":"pnpm dev"}}'),
     /preview\.port가 잘못되었습니다.*1~65535/s,
   );
   for (const port of [0, 65536, "5274", 5274.5]) {
     assert.throws(
-      () => parseDrafthouseConfig(JSON.stringify({ preview: { command: "x", port } })),
+      () => parseCdsDesignConfig(JSON.stringify({ preview: { command: "x", port } })),
       /preview\.port가 잘못되었습니다/,
       `port ${JSON.stringify(port)} must be rejected`,
     );
   }
   assert.throws(
-    () => parseDrafthouseConfig('{"install":3,"preview":{"command":"x","port":1}}'),
+    () => parseCdsDesignConfig('{"install":3,"preview":{"command":"x","port":1}}'),
     /install는 실행할 명령을 문자열로 적어야 합니다/,
   );
   assert.throws(
-    () => parseDrafthouseConfig('{"registry":{},"preview":{"command":"x","port":1}}'),
+    () => parseCdsDesignConfig('{"registry":{},"preview":{"command":"x","port":1}}'),
     /registry는 \{ "host", "scope" \} 형태여야 합니다/,
   );
-  assert.throws(() => parseDrafthouseConfig("{not json"), /drafthouse\.json을 해석할 수 없습니다/);
-  assert.throws(() => parseDrafthouseConfig("[]"), /drafthouse\.json은 객체여야 합니다/);
+  assert.throws(() => parseCdsDesignConfig("{not json"), /cds-design\.json을 해석할 수 없습니다/);
+  assert.throws(() => parseCdsDesignConfig("[]"), /cds-design\.json은 객체여야 합니다/);
 });
 
-test("a repo without drafthouse.json says so instead of guessing", () => {
+test("a repo without cds-design.json says so instead of guessing", () => {
   const root = workdir("hub-repo-empty-");
   try {
-    assert.throws(() => readDrafthouseConfig(root), /drafthouse\.json이 없습니다/);
+    assert.throws(() => readCdsDesignConfig(root), /cds-design\.json이 없습니다/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -134,7 +133,6 @@ test("a failed clone never repeats the PAT in its detail", async () => {
   try {
     const status = await workspace.sync();
     assert.equal(status.phase, "error");
-    assert.equal(status.patConfigured, true);
     assert.ok(!JSON.stringify(broadcasts).includes("ghp_super_secret"), "the PAT must stay daemon-side");
   } finally {
     delete process.env.CLAUDE_CONFIG_DIR;
@@ -202,6 +200,52 @@ test("a seeded repo walks cloning → installing → starting, and a dead previe
   }
 });
 
+test("a bring-up in flight reads as running, so the onboarding check can tell progress from a broken manifest", async () => {
+  const dir = workdir("hub-repo-syncstate-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const port = await freePort();
+    // A slow install stretches the working window, so the wizard's check —
+    // which fires while `project.create` is still cloning — reliably lands
+    // inside it instead of racing the whole bootstrap.
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port,
+      installCommand: "sleep 0.5",
+    });
+
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+    });
+    const settling = workspace.sync();
+
+    let during = workspace.syncState();
+    const WORKING = ["cloning", "pulling", "installing", "starting"];
+    const deadline = Date.now() + 10_000;
+    while (!WORKING.includes(during.phase) && during.phase !== "ready" && Date.now() < deadline) {
+      await new Promise((ok) => setTimeout(ok, 10));
+      during = workspace.syncState();
+    }
+    assert.ok(
+      WORKING.includes(during.phase),
+      `expected a working phase mid-bring-up, saw ${during.phase}`,
+    );
+    assert.equal(during.running, true);
+
+    const done = await settling;
+    const settled = workspace.syncState();
+    assert.equal(settled.running, false);
+    assert.equal(done.phase, "ready", done.detail ?? "");
+    assert.equal(settled.phase, "ready");
+    await workspace.stop();
+  } finally {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("changing the url discards the old clone, re-clones, and reports the move once", async () => {
   const dir = workdir("hub-repo-reclone-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -240,35 +284,6 @@ test("changing the url discards the old clone, re-clones, and reports the move o
   }
 });
 
-test("a PAT saved through update() lands under the owning project's item", async () => {
-  const store = new MemoryCredentialStore();
-  // No url: update() settles in `missing` without cloning, which is all this
-  // check needs — where the secret is filed, not what git does with it.
-  const alpha = new RepoWorkspace({
-    root: join(workdir("hub-repo-pat-alpha-"), "work"),
-    url: null,
-    store,
-    patItem: repoPatItem("alpha"),
-    onStatus: () => undefined,
-  });
-  const beta = new RepoWorkspace({
-    root: join(workdir("hub-repo-pat-beta-"), "work"),
-    url: null,
-    store,
-    patItem: repoPatItem("beta"),
-    onStatus: () => undefined,
-  });
-
-  await alpha.update({ pat: "ghp_alpha" });
-  await beta.update({ pat: "ghp_beta" });
-  assert.equal(await store.load(repoPatItem("alpha")), "ghp_alpha");
-  assert.equal(await store.load(repoPatItem("beta")), "ghp_beta", "a second project never overwrites the first");
-  assert.equal(await store.load(REPO_PAT_ITEM), null, "the pre-projects item is left alone");
-
-  await alpha.update({ pat: null });
-  assert.equal(await store.load(repoPatItem("alpha")), null, "clearing removes only that project's PAT");
-  assert.equal(await store.load(repoPatItem("beta")), "ghp_beta");
-});
 
 // ---------------------------------------------------------------------------
 // Unified diff parsing
@@ -391,11 +406,11 @@ test("a rename reports the new path and no phantom trailing line", () => {
 // Bundled-runtime PATH prefix (desktop app)
 // ---------------------------------------------------------------------------
 
-test("DRAFTHOUSE_EXTRA_PATH is prepended to PATH, deduplicated, on both separators", () => {
+test("CDS_DESIGN_EXTRA_PATH is prepended to PATH, deduplicated, on both separators", () => {
   const env = { PATH: "/usr/bin:/bin:/usr/local/bin" };
   assert.equal(
-    extraPathPrefix("/Applications/Drafthouse.app/Contents/Resources/bin", env),
-    ["/Applications/Drafthouse.app/Contents/Resources/bin", "/usr/bin", "/bin", "/usr/local/bin"].join(":"),
+    extraPathPrefix("/Applications/CDS Design.app/Contents/Resources/bin", env),
+    ["/Applications/CDS Design.app/Contents/Resources/bin", "/usr/bin", "/bin", "/usr/local/bin"].join(":"),
     "the bundled runtime wins over whatever the machine has",
   );
   assert.equal(extraPathPrefix("/usr/bin", env), "/usr/bin:/bin:/usr/local/bin", "no duplicates");
@@ -551,7 +566,7 @@ test("a private-registry rejection is told apart from an ordinary install failur
 
 test("trusting the repo clone keeps the rest of ~/.claude.json intact", () => {
   const home = workdir("hub-trust-");
-  const root = join(home, "drafthouse", "repo");
+  const root = join(home, "cds-design", "repo");
   mkdirSync(root, { recursive: true });
   writeFileSync(
     join(home, ".claude.json"),
@@ -574,17 +589,17 @@ test("trusting the repo clone keeps the rest of ~/.claude.json intact", () => {
 
 test("trust survives a missing config and never rewrites a corrupt one", () => {
   const fresh = workdir("hub-trust-fresh-");
-  trustWorkspace(join(fresh, "drafthouse", "repo"), fresh);
+  trustWorkspace(join(fresh, "cds-design", "repo"), fresh);
   assert.equal(
     JSON.parse(readFileSync(join(fresh, ".claude.json"), "utf8")).projects[
-      join(fresh, "drafthouse", "repo")
+      join(fresh, "cds-design", "repo")
     ].hasTrustDialogAccepted,
     true,
   );
 
   const broken = workdir("hub-trust-broken-");
   writeFileSync(join(broken, ".claude.json"), "{ not json");
-  trustWorkspace(join(broken, "drafthouse", "repo"), broken);
+  trustWorkspace(join(broken, "cds-design", "repo"), broken);
   assert.equal(readFileSync(join(broken, ".claude.json"), "utf8"), "{ not json");
   rmSync(fresh, { recursive: true, force: true });
   rmSync(broken, { recursive: true, force: true });
@@ -611,7 +626,7 @@ async function registryFixture(dir, home) {
     registry: { host: "npm.pkg.github.test", scope: "@leaktest" },
   });
   const npmrc = join(home, ".npmrc");
-  process.env.DRAFTHOUSE_NPMRC = npmrc;
+  process.env.CDS_DESIGN_NPMRC = npmrc;
   writeFileSync(npmrc, "registry=https://registry.npmjs.org/\n");
   return { fixture, npmrc };
 }
@@ -647,7 +662,7 @@ test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-le
     const localTree = await promisifiedRun("git", ["-C", join(dir, "work"), "ls-tree", "-r", "--name-only", "HEAD"]);
     assert.ok(!localTree.split("\n").includes(".npmrc"));
   } finally {
-    delete process.env.DRAFTHOUSE_NPMRC;
+    delete process.env.CDS_DESIGN_NPMRC;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -690,7 +705,7 @@ test("F4: a save commits exactly the reviewed paths — gate-written files stay 
   }
 });
 
-test("F5: a save re-reads drafthouse.json — a freshly edited gate is the one that runs", async () => {
+test("F5: a save re-reads cds-design.json — a freshly edited gate is the one that runs", async () => {
   const dir = workdir("hub-publish-config-");
   try {
     const fixture = await createFixtureRepo({
@@ -708,9 +723,9 @@ test("F5: a save re-reads drafthouse.json — a freshly edited gate is the one t
 
     // Swap the clone's gate AFTER sync cached the config: publish must run
     // what is on disk now, not the cached copy.
-    const drafthouse = JSON.parse(readFileSync(join(dir, "work", "drafthouse.json"), "utf8"));
-    drafthouse.check = "node -e \"console.error('NEWGATE-RAN'); process.exit(7)\"";
-    writeFileSync(join(dir, "work", "drafthouse.json"), `${JSON.stringify(drafthouse, null, 2)}\n`);
+    const config = JSON.parse(readFileSync(join(dir, "work", "cds-design.json"), "utf8"));
+    config.check = "node -e \"console.error('NEWGATE-RAN'); process.exit(7)\"";
+    writeFileSync(join(dir, "work", "cds-design.json"), `${JSON.stringify(config, null, 2)}\n`);
 
     writeFileSync(join(dir, "work", "index.html"), "<p>게이트 확인</p>\n");
     const status = await workspace.save({ message: "게이트" });
@@ -725,3 +740,222 @@ test("F5: a save re-reads drafthouse.json — a freshly edited gate is the one t
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 const promisifiedRun = async (command, args) => (await promisify(execFileCb)(command, args)).stdout;
+
+
+// ---------------------------------------------------------------------------
+// 레포 최신화: pull the developer's side without reading git
+// ---------------------------------------------------------------------------
+
+const clone = (dir, fixture) =>
+  new RepoWorkspace({
+    root: join(dir, "work"),
+    url: fixture.remote,
+    onStatus: () => undefined,
+  });
+
+const bringUp = async (dir, fixture) => {
+  const workspace = clone(dir, fixture);
+  await workspace.sync();
+  await workspace.stop();
+  return workspace;
+};
+
+test("최신화 carries unsaved work across a moved base — tracked and untracked alike", async () => {
+  const dir = workdir("hub-refresh-dirty-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    // The planner's unsaved half: a tracked edit at the top of CLAUDE.md
+    // (nine lines from the developer's edit below, so git can truly combine
+    // them) plus a brand-new screen.
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      claude.replace("# fixture cds-design 레포", "# 기획자의 저장하지 않은 제목"),
+    );
+    mkdirSync(join(dir, "work", "src", "screens", "new"), { recursive: true });
+    writeFileSync(join(dir, "work", "src", "screens", "new", "New.screen.tsx"), "export const New = () => null;\n");
+
+    // The developer's side moved the same file's last rule meanwhile.
+    const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "CLAUDE.md": seedClaude.replace(
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다.",
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다 — 개발자가 다듬은 문장.",
+      ),
+    });
+
+    const briefs = [];
+    await workspace.pull((brief) => briefs.push(brief));
+
+    const merged = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    assert.ok(merged.includes("개발자가 다듬은 문장"), "the developer's change landed");
+    assert.ok(merged.includes("기획자의 저장하지 않은 제목"), "the planner's unsaved edit survived");
+    assert.ok(existsSync(join(dir, "work", "src", "screens", "new", "New.screen.tsx")), "untracked screens ride along");
+    assert.deepEqual(briefs, [], "a clean combine briefs nobody");
+    const status = await workspace.status();
+    assert.equal(status.phase, "ready");
+    assert.ok(status.pendingChanges >= 2, `the work is back, awaiting 저장: ${status.pendingChanges}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a bare bring-up carries unsaved work across a moved base too", async () => {
+  const dir = workdir("hub-refresh-bootstrap-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    // The planner left unsaved work at the top of CLAUDE.md; the developer
+    // merged an edit into the same file's end. A blind `git pull --ff-only`
+    // refused this exact shape.
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      claude.replace("# fixture cds-design 레포", "# 기획자의 저장하지 않은 제목"),
+    );
+    const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "CLAUDE.md": seedClaude.replace(
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다.",
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다 — 개발자가 다듬은 문장.",
+      ),
+    });
+
+    const status = await workspace.sync();
+    assert.equal(status.phase, "ready", status.detail ?? "");
+    const merged = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    assert.ok(merged.includes("개발자가 다듬은 문장"), "the developer's change landed");
+    assert.ok(merged.includes("기획자의 저장하지 않은 제목"), "the planner's unsaved edit survived");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("최신화 hands a genuine conflict to Claude, work parked and named", async () => {
+  const dir = workdir("hub-refresh-conflict-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const html = readFileSync(join(dir, "work", "index.html"), "utf8");
+    writeFileSync(
+      join(dir, "work", "index.html"),
+      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>기획자의 줄</p>"),
+    );
+    // The developer changed the very same line: git cannot combine this.
+    const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "index.html": seedHtml.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>개발자의 줄</p>"),
+    });
+
+    const briefs = [];
+    await workspace.pull((brief) => briefs.push(brief));
+
+    assert.equal(briefs.length, 1, `exactly one brief: ${briefs.length}`);
+    assert.match(briefs[0], /<!-- cds-design:gate .*최신 변경 받아오기/);
+    assert.match(briefs[0], /index\.html/);
+    assert.match(briefs[0], /stash drop/);
+
+    const status = await promisifiedRun("git", ["-C", join(dir, "work"), "status", "--porcelain"]);
+    assert.match(status, /^UU index\.html/m, "the conflicted file sits unmerged, awaiting Claude");
+    const stashes = await promisifiedRun("git", ["-C", join(dir, "work"), "stash", "list"]);
+    assert.match(stashes, /최신화 임시 보관/, "the parked work is not dropped");
+
+    // Claude's recovery, exactly as the brief describes: resolve, add, drop.
+    writeFileSync(join(dir, "work", "index.html"), "<p>합쳐진 줄</p>\n");
+    await promisifiedRun("git", ["-C", join(dir, "work"), "add", "index.html"]);
+    await promisifiedRun("git", ["-C", join(dir, "work"), "stash", "drop"]);
+    const after = await workspace.status();
+    assert.equal(after.phase, "ready");
+    assert.ok(after.pendingChanges >= 1, "the resolved work is back, awaiting 저장");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("mid-cycle, the developer's base merges into the cycle — conflict included", async () => {
+  const dir = workdir("hub-refresh-cycle-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    // The first 저장 opens the cycle branch and pushes it.
+    const html = readFileSync(join(dir, "work", "index.html"), "utf8");
+    writeFileSync(
+      join(dir, "work", "index.html"),
+      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>화면 1</p>"),
+    );
+    const saved = await workspace.save({ message: "화면 1" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    assert.match(workspace.currentBranch ?? "", /^cds-design\//);
+
+    // The developer changes the same line on the base branch meanwhile.
+    const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "index.html": seedHtml.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>개발자가 고친 줄</p>"),
+    });
+
+    // Unsaved work on another file parks while the merge runs.
+    writeFileSync(join(dir, "work", "CLAUDE.md"), "# 기획자의 메모\n");
+
+    const briefs = [];
+    await workspace.pull((brief) => briefs.push(brief));
+
+    assert.equal(briefs.length, 1, `one brief: ${briefs.join(" | ")}`);
+    assert.match(briefs[0], /\[conflict\]/);
+    assert.match(briefs[0], /git stash pop/);
+    const verify = await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+    assert.ok(verify.trim().length > 0, "the merge stays open for Claude");
+
+    // Claude finishes the merge, then replays the parked work.
+    writeFileSync(join(dir, "work", "index.html"), "<p>합친 화면</p>\n");
+    await promisifiedRun("git", ["-C", join(dir, "work"), "add", "index.html"]);
+    await promisifiedRun(
+      "git",
+      ["-C", join(dir, "work"), "-c", "user.name=T", "-c", "user.email=t@t", "commit", "-m", "[conflict] 병합 정리"],
+    );
+    await promisifiedRun("git", ["-C", join(dir, "work"), "stash", "pop"]);
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    assert.ok(claude.includes("기획자의 메모"), "the parked edit came back after the merge");
+
+    const parents = await promisifiedRun("git", ["-C", join(dir, "work"), "rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert.equal(parents.trim().split(" ").length, 3, "the cycle carries a real merge commit");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a base branch that diverged is named, never rewritten", async () => {
+  const dir = workdir("hub-refresh-diverged-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    // A local commit on the base branch (a session could make one) plus a
+    // fresh upstream commit: 자동 병합 must not rewrite either side.
+    writeFileSync(join(dir, "work", "CLAUDE.md"), "# 로컬 커밋\n");
+    await promisifiedRun("git", ["-C", join(dir, "work"), "add", "CLAUDE.md"]);
+    await promisifiedRun(
+      "git",
+      ["-C", join(dir, "work"), "-c", "user.name=T", "-c", "user.email=t@t", "commit", "-m", "local"],
+    );
+    const localHead = (await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "HEAD"])).trim();
+    await pushFixtureChange(fixture.seed, fixture.remote, { "업스트림.md": "원격에서만 있는 커밋\n" });
+
+    await workspace.pull();
+    const status = await workspace.status();
+    assert.match(status.detail ?? "", /갈라진/, `the reason is Korean: ${status.detail ?? ""}`);
+    const head = (await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "HEAD"])).trim();
+    assert.equal(head, localHead, "local history is untouched");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

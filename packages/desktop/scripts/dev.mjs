@@ -18,10 +18,10 @@ function run(command, args, cwd) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-run("pnpm", ["--filter", "@drafthouse/protocol", "build"], repo);
-run("pnpm", ["--filter", "@drafthouse/daemon", "build"], repo);
-run("pnpm", ["--filter", "@drafthouse/web", "build"], repo);
-run("pnpm", ["--filter", "@drafthouse/desktop", "build"], repo);
+run("pnpm", ["--filter", "@cds-design/protocol", "build"], repo);
+run("pnpm", ["--filter", "@cds-design/daemon", "build"], repo);
+run("pnpm", ["--filter", "@cds-design/web", "build"], repo);
+run("pnpm", ["--filter", "@cds-design/desktop", "build"], repo);
 
 // 메인이 찾는 경로(app.getAppPath()/web-dist)에 웹 산출물을 둔다 —
 // 릴리스 빌드와 같은 스테이징 스크립트를 쓴다.

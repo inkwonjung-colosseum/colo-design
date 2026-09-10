@@ -121,7 +121,17 @@ test("the daemon still reports a usable status when git is missing", async () =>
   // PATH is the closest we can get to that from here, and it proves the file
   // listing and the status check both degrade instead of failing.
   const daemonEntry = new URL("../dist/index.js", import.meta.url).pathname;
-  const env = { ...process.env, PATH: "", Path: "" };
+  // A stock Windows machine has no git until the user installs it. Stripping
+  // PATH is the closest we can get to that from here — but the resolver's
+  // absolute fallbacks (/usr/bin/git ships with the macOS CLT) would still
+  // find one, so the pin points at a file that cannot work, which is the
+  // knob the resolver itself offers for "no git anywhere".
+  const env = {
+    ...process.env,
+    PATH: "",
+    Path: "",
+    CDS_DESIGN_GIT_BIN: "/nonexistent/cds-design-no-git",
+  };
   delete env.ANTHROPIC_API_KEY;
 
   const { stdout } = await new Promise((resolve, reject) => {
@@ -139,5 +149,6 @@ test("the daemon still reports a usable status when git is missing", async () =>
     `expected a git warning, got: ${status.warnings.join(" | ")}`,
   );
   assert.equal(typeof status.platform, "string");
-  assert.equal(status.protocolVersion, 5);
+  assert.equal(status.protocolVersion, 9);
 });
+

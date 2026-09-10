@@ -1,9 +1,9 @@
 {
-  "name": "@drafthouse/desktop",
-  "productName": "Drafthouse",
+  "name": "@cds-design/desktop",
+  "productName": "CDS Design",
   "version": "0.1.0",
   "private": true,
-  "description": "Drafthouse 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
+  "description": "CDS Design 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
@@ -14,8 +14,8 @@
     "dist": "electron-builder"
   },
   "dependencies": {
-    "@drafthouse/daemon": "workspace:*",
-    "@drafthouse/protocol": "workspace:*"
+    "@cds-design/daemon": "workspace:*",
+    "@cds-design/protocol": "workspace:*"
   },
   "devDependencies": {
     "electron": "^44.2.0",

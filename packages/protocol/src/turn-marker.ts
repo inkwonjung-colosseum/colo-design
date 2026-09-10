@@ -5,12 +5,12 @@
  * Some turns in a planner's chat are not typed by the planner: a bundle of
  * comment pins, the brief that opens a 화면 thread, a 기획서 comparison, a
  * failed gate handed back to Claude. Their text is written for Claude — CSS
- * paths, mirror paths, command output — and a planner reading their own chat
+ * paths, file paths, command output — and a planner reading their own chat
  * should not meet any of it.
  *
  * The turn carries a marker on its first line:
  *
- *     <!-- drafthouse:comments {"screen":"member/MemberList",…} -->
+ *     <!-- cds-design:comments {"screen":"member/MemberList",…} -->
  *     화면 수정 요청 2건 — …
  *
  * An HTML comment, because it has to survive three trips without a sidecar to
@@ -75,7 +75,7 @@ export interface MarkedTurn {
  * line or it is not a marker. A turn whose BODY happens to contain the string
  * must not be reinterpreted from the middle.
  */
-const MARKER = /^<!--\s*drafthouse:([a-z]+)\s+(\{[^\n]*\})\s*-->\n?/;
+const MARKER = /^<!--\s*cds-design:([a-z]+)\s+(\{[^\n]*\})\s*-->\n?/;
 
 function isKind(value: string): value is TurnMarkerKind {
   return (KINDS as readonly string[]).includes(value);
@@ -87,7 +87,7 @@ function isKind(value: string): value is TurnMarkerKind {
  */
 export function markTurn(marker: TurnMarker, body: string): string {
   const { kind, ...data } = marker;
-  return `<!-- drafthouse:${kind} ${JSON.stringify(data)} -->\n${body}`;
+  return `<!-- cds-design:${kind} ${JSON.stringify(data)} -->\n${body}`;
 }
 
 function str(value: unknown, fallback = ""): string {

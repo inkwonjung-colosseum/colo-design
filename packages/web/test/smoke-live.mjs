@@ -20,13 +20,13 @@ await page.goto("http://127.0.0.1:5273/");
 await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(url);
 await page.getByRole("button", { name: "연결" }).click();
 await page.waitForSelector(".planner", { timeout: 15000 });
-await page.getByRole("tab", { name: "디자인" }).click();
 await page.waitForTimeout(2500);
 
 // Either the repo is still syncing or it is ready; both are a healthy answer,
 // and which one it is says more than a pass/fail would.
 const progress = await page.locator(".progress__head h2").first().innerText().catch(() => null);
-const sessions = await page.locator(".planner__sessions .row__title").allInnerTexts();
+const sessions = await page.locator(".sessiontab__title").allInnerTexts();
+
 const warnings = await page.locator(".planner__warnings .notice__text").allInnerTexts();
 console.log("header:", await page.locator(".planner__header .hint").innerText());
 console.log("repo:", progress ?? "ready (preview shown)");

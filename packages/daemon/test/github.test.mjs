@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { GitHubClient, createGitHubTransport, parseRepoSlug } from "../dist/github.js";
 import { FixtureTransport, loadFixturePairs } from "../dist/rest-transport.js";
-import { handoffBodyFor } from "../dist/server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(here, "fixtures", "github");
@@ -35,19 +34,23 @@ const byName = (name) => {
 test("every fixture pair cites its endpoint", () => {
   for (const pair of pairs) {
     assert.ok(pair.name, "a human name");
-    assert.match(pair.cite, /^(GET|POST|PATCH) \/repos\//, `cite for ${pair.name}`);
-    assert.match(pair.request.url, /^\/repos\//, "site-relative path");
+    assert.match(pair.cite, /^(GET|POST|PATCH) \/(repos|user)/, `cite for ${pair.name}`);
+    assert.match(pair.request.url, /^\//, "site-relative path");
   }
 });
 
 test("the golden pass runs end to end, in order", async () => {
-  const transport = new FixtureTransport(pairs);
+  // Only the handoff pairs: the picker/gate fixtures (user, repos, contents)
+  // have their own tests below.
+  const transport = new FixtureTransport(
+    pairs.filter((pair) => pair.request.url.includes("colosseumcoinckr")),
+  );
   const client = new GitHubClient(TOKEN, transport);
 
   // 개발자에게 넘기기 — the create body is deep-equalled by the fixture.
   const created = await client.createPullRequest({
     ...REPO,
-    head: "drafthouse/cds/20260909-1",
+    head: "cds-design/cds/20260909-1",
     base: "main",
     title: "회원 관리 기획서",
     body: byName("pr-create").request.bodyJson.body,
@@ -57,7 +60,7 @@ test("the golden pass runs end to end, in order", async () => {
     url: "https://github.com/colosseumcoinckr/cds-open-design/pull/7",
     title: "회원 관리 기획서",
     state: "open",
-    branch: "drafthouse/cds/20260909-1",
+    branch: "cds-design/cds/20260909-1",
   });
 
   // 열림 — no review yet.
@@ -169,7 +172,7 @@ test("a 422 names the field GitHub complained about", async () => {
         status: 422,
         json: {
           message: "Validation Failed",
-          errors: [{ message: "A pull request already exists for colosseumcoinckr:drafthouse/cds/20260909-1." }],
+          errors: [{ message: "A pull request already exists for colosseumcoinckr:cds-design/cds/20260909-1." }],
         },
       },
     },
@@ -180,7 +183,7 @@ test("a 422 names the field GitHub complained about", async () => {
     () =>
       client.createPullRequest({
         ...REPO,
-        head: "drafthouse/cds/20260909-1",
+        head: "cds-design/cds/20260909-1",
         base: "main",
         title: "회원 관리 기획서",
         body: "본문",
@@ -205,8 +208,8 @@ test("parseRepoSlug reads every remote form the planner can paste", () => {
   assert.equal(parseRepoSlug(""), null);
 });
 
-test("DRAFTHOUSE_GITHUB_FIXTURE picks the recorded transport", () => {
-  const chosen = createGitHubTransport({ DRAFTHOUSE_GITHUB_FIXTURE: fixtureDir });
+test("CDS_DESIGN_GITHUB_FIXTURE picks the recorded transport", () => {
+  const chosen = createGitHubTransport({ CDS_DESIGN_GITHUB_FIXTURE: fixtureDir });
   assert.ok(chosen.transport instanceof FixtureTransport);
   assert.equal(chosen.fixtureDir, fixtureDir);
 
@@ -218,59 +221,136 @@ test("DRAFTHOUSE_GITHUB_FIXTURE picks the recorded transport", () => {
 
   // An unloadable directory still reports what was asked for, so a caller
   // cannot mistake a broken fixture set for "no fixtures configured".
-  const broken = createGitHubTransport({ DRAFTHOUSE_GITHUB_FIXTURE: join(fixtureDir, "nope") });
+  const broken = createGitHubTransport({ CDS_DESIGN_GITHUB_FIXTURE: join(fixtureDir, "nope") });
   assert.equal(broken.fixtureDir, join(fixtureDir, "nope"));
   assert.ok(!(broken.transport instanceof FixtureTransport));
 });
 
-// ---------------------------------------------------------------------------
-// The body a developer actually reads
-// ---------------------------------------------------------------------------
+test("whoAmI reads the token's login, and answers a refused token in Korean", async () => {
+  const client = new GitHubClient(TOKEN, new FixtureTransport([byName("user")]));
+  assert.deepEqual(await client.whoAmI(), { ok: true, login: "jik-dev" });
 
-const page = (over) => ({
-  path: "ENG/x.md",
-  title: "재고 실사 목록",
-  pageId: "770412",
-  parentPageId: null,
-  version: 1,
-  modified: false,
-  conflict: false,
-  isNew: false,
-  ...over,
+  const refused = await new GitHubClient(TOKEN, new FixtureTransport([byName("user-401")])).whoAmI();
+  assert.equal(refused.ok, false);
+  assert.match(refused.detail, /유효하지 않거나 만료/);
+  assert.ok(!refused.detail.includes(TOKEN));
 });
 
-test("the handoff body hands the developer a 기획서 they can open", () => {
-  const body = handoffBodyFor(
-    [{ space: "~5f1c0d9a4b2e8c3d7a06f412", pages: [page({})] }],
-    "https://example.atlassian.net/",
-  );
-
-  // The whole point of the pull request: a link, not an id to go hunt with.
-  assert.ok(
-    body.includes(
-      "[재고 실사 목록](https://example.atlassian.net/wiki/spaces/~5f1c0d9a4b2e8c3d7a06f412/pages/770412)",
-    ),
-    body,
-  );
-  // The url spells the SPACE KEY, not the mirror's folder — a personal space
-  // mirrors under `_…` and that address does not exist in Confluence.
-  assert.ok(!body.includes("_5f1c0d9a4b2e8c3d7a06f412"), body);
-  // `pageId: <id>` survives beside the link: it is the token the daemon scans
-  // this body for to badge those pages ✓ 넘김.
-  assert.match(body, /\(pageId: 770412\)/);
+test("an unreachable GitHub answers whoAmI instead of breaking the gate", async () => {
+  const client = new GitHubClient(TOKEN, {
+    request: async () => {
+      throw new Error("fetch failed");
+    },
+  });
+  const answer = await client.whoAmI();
+  assert.equal(answer.ok, false);
+  assert.match(answer.detail, /GitHub에 연결하지 못했습니다/);
 });
 
-test("the handoff body links nothing it cannot link", () => {
-  // A draft that 게시 has never created carries a `new-…` id and no page.
-  const draft = handoffBodyFor(
-    [{ space: "ENG", pages: [page({ isNew: true, pageId: "new-재고실사" })] }],
-    "https://example.atlassian.net",
-  );
-  assert.ok(!draft.includes("]("), draft);
-  assert.match(draft, /아직 Confluence에 게시되지 않음 \(pageId: new-재고실사\)/);
+test("listRepos follows Link pages, drops archived repos, maps the picker's fields", async () => {
+  const client = new GitHubClient(TOKEN, new FixtureTransport([byName("user-repos-1"), byName("user-repos-2")]));
+  const { repos, truncated } = await client.listRepos();
 
-  // No site configured: the tool has no address to build, so it invents none.
-  const siteless = handoffBodyFor([{ space: "ENG", pages: [page({})] }], null);
-  assert.ok(!siteless.includes("]("), siteless);
-  assert.match(siteless, /- 재고 실사 목록 \(pageId: 770412\)/);
+  assert.equal(truncated, false);
+  assert.deepEqual(
+    repos.map((repo) => repo.fullName),
+    ["cds-org/payments-web", "cds-org/legacy-docs", "jik-dev/sandbox"],
+  );
+  assert.deepEqual(repos[0], {
+    fullName: "cds-org/payments-web",
+    owner: "cds-org",
+    name: "payments-web",
+    cloneUrl: "https://github.com/cds-org/payments-web.git",
+    defaultBranch: "main",
+    canPush: true,
+    pushedAt: "2026-09-08T09:00:00Z",
+  });
+  // permissions.push drives the picker's pushable-only filter — read, never re-fetched.
+  assert.equal(repos[1].canPush, false);
+});
+
+test("listRepos marks the list truncated when the page cap stops it", async () => {
+  const transport = new FixtureTransport([
+    byName("user-repos-cap-1"),
+    byName("user-repos-cap-2"),
+    byName("user-repos-cap-3"),
+    byName("user-repos-cap-4"),
+    byName("user-repos-cap-5"),
+  ]);
+  const { repos, truncated } = await new GitHubClient(TOKEN, transport).listRepos();
+
+  assert.equal(truncated, true);
+  assert.equal(repos.length, 5);
+  // The sixth page's pair is still there: the cap is what stopped the walk.
+  assert.equal(transport.pending, 0);
+});
+
+test("listRepos throws with the picker's line when a page fails", async () => {
+  const unauthorized = new GitHubClient(TOKEN, {
+    request: async () => ({
+      status: 401,
+      body: new TextEncoder().encode(JSON.stringify({ message: "Bad credentials" })),
+    }),
+  });
+  await assert.rejects(unauthorized.listRepos(), /토큰이 유효하지 않거나 만료/);
+});
+
+test("hasCdsDesign reads presence off one request, before any clone", async () => {
+  const withIt = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-cds-design")]));
+  assert.equal(await withIt.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }), true);
+
+  const without = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-missing")]));
+  assert.equal(await without.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }), false);
+});
+
+test("hasCdsDesign refuses to answer a non-200/404 with a guess", async () => {
+  const serverError = new GitHubClient(TOKEN, {
+    request: async () => ({
+      status: 500,
+      body: new TextEncoder().encode(JSON.stringify({ message: "boom" })),
+    }),
+  });
+  await assert.rejects(
+    serverError.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }),
+    /cds-design.json 확인/,
+  );
+
+  const unauthorized = new GitHubClient(TOKEN, {
+    request: async () => ({
+      status: 401,
+      body: new TextEncoder().encode(JSON.stringify({ message: "Bad credentials" })),
+    }),
+  });
+  await assert.rejects(
+    unauthorized.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }),
+    /토큰이 유효하지 않거나 만료/,
+  );
+});
+
+test("inspectRepo judges one repo from the two calls the picker needs", async () => {
+  const calls = [];
+  const client = new GitHubClient(TOKEN, {
+    request: async (input) => {
+      calls.push(input.url);
+      if (input.url === "/repos/cds-org/payments-web") {
+        return {
+          status: 200,
+          body: new TextEncoder().encode(
+            JSON.stringify({ default_branch: "develop", permissions: { push: false } }),
+          ),
+        };
+      }
+      return {
+        status: 200,
+        body: new TextEncoder().encode(JSON.stringify({ name: "cds-design.json" })),
+      };
+    },
+  });
+
+  const inspection = await client.inspectRepo({ owner: "cds-org", repo: "payments-web" });
+  assert.deepEqual(inspection, { hasCdsDesign: true, canPush: false, defaultBranch: "develop" });
+  assert.deepEqual(calls, [
+    "/repos/cds-org/payments-web",
+    "/repos/cds-org/payments-web/contents/cds-design.json",
+  ]);
 });

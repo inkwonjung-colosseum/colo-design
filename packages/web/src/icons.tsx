@@ -1,26 +1,80 @@
-// Inline SVG icon set. All icons are decorative (aria-hidden) — interactive
-// elements carry their own aria-labels, and buttons that tests select by
-// accessible name keep visible text labels instead of icon-only names.
+// The icon gate: every glyph in the app comes from lucide-react through this
+// module, so one stroke weight (1.8, heavier on the tiny utilities) and one
+// size vocabulary (12–16px) hold wherever the next designer adds another.
+// All icons are decorative (aria-hidden) — interactive elements carry their
+// own aria-labels, and buttons that tests select by accessible name keep
+// visible text labels instead of icon-only names.
+
+import {
+  ArrowUp,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  Copy,
+  ExternalLink,
+  File,
+  Folder,
+  GitPullRequest,
+  Link,
+  Monitor,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Settings,
+  ShieldCheck,
+  Smartphone,
+  TriangleAlert,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 
 interface IconProps {
   size?: number;
 }
 
-const stroke = {
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.8,
-  strokeLinecap: "round" as const,
-  strokeLinejoin: "round" as const,
-};
-
-export function ArrowUpIcon({ size = 14 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 19V5m0 0-6 6m6-6 6 6" {...stroke} />
-    </svg>
-  );
+/** Wraps a lucide glyph at the house stroke and the glyph's own default size. */
+function make(Glyph: LucideIcon, defaultSize: number, strokeWidth = 1.8) {
+  return function Icon({ size = defaultSize }: IconProps) {
+    return <Glyph size={size} strokeWidth={strokeWidth} aria-hidden="true" />;
+  };
 }
+
+// --- transcript & composer ------------------------------------------------
+
+export const ArrowUpIcon = make(ArrowUp, 14);
+export const PaperclipIcon = make(Paperclip, 15);
+export const ChevronRightIcon = make(ChevronRight, 12, 2);
+export const ChevronDownIcon = make(ChevronDown, 12, 2);
+export const FileIcon = make(File, 13);
+export const FolderIcon = make(Folder, 13);
+export const CheckIcon = make(Check, 12, 2.2);
+export const CloseIcon = make(X, 12, 2.2);
+export const ShieldIcon = make(ShieldCheck, 16);
+
+// --- workspace chrome -------------------------------------------------------
+
+export const GearIcon = make(Settings, 14);
+export const PlusIcon = make(Plus, 12);
+export const RefreshIcon = make(RefreshCw, 13);
+export const ClipboardCheckIcon = make(ClipboardCheck, 13);
+export const SaveIcon = make(Save, 13);
+/** 개발자에게 넘기기: the cycle ends in the developer's pull request. */
+export const HandoffIcon = make(GitPullRequest, 13);
+export const MobileIcon = make(Smartphone, 12);
+export const DesktopIcon = make(Monitor, 12);
+export const ExternalLinkIcon = make(ExternalLink, 12);
+export const RestartIcon = make(RotateCcw, 13);
+export const CopyIcon = make(Copy, 12);
+export const LinkIcon = make(Link, 12);
+export const WarnIcon = make(TriangleAlert, 12);
+
+// --- the two glyphs lucide does not own -------------------------------------
+// The filled stop square and the tool's eight-ray spark are drawn by hand so
+// they stay exactly as drawn: a stop button reads filled, and the spark is
+// the mark the tool asks permission with.
 
 export function StopIcon({ size = 12 }: IconProps) {
   return (
@@ -30,96 +84,15 @@ export function StopIcon({ size = 12 }: IconProps) {
   );
 }
 
-export function PaperclipIcon({ size = 15 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="m20 11.5-7.6 7.6a5 5 0 0 1-7-7l8-8a3.4 3.4 0 0 1 4.8 4.8l-7.9 7.9a1.8 1.8 0 0 1-2.5-2.5l7.3-7.3"
-        {...stroke}
-      />
-    </svg>
-  );
-}
-
-export function ChevronRightIcon({ size = 12 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m9 6 6 6-6 6" {...stroke} strokeWidth={2} />
-    </svg>
-  );
-}
-
-export function ChevronDownIcon({ size = 12 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m6 9 6 6 6-6" {...stroke} strokeWidth={2} />
-    </svg>
-  );
-}
-
-export function FileIcon({ size = 13 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5" {...stroke} />
-    </svg>
-  );
-}
-
-export function FolderIcon({ size = 13 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" {...stroke} />
-    </svg>
-  );
-}
-
-export function CheckIcon({ size = 12 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m5 12.5 4.5 4.5L19 7.5" {...stroke} strokeWidth={2.2} />
-    </svg>
-  );
-}
-
-export function CloseIcon({ size = 12 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 6l12 12M18 6 6 18" {...stroke} strokeWidth={2.2} />
-    </svg>
-  );
-}
-
-export function ShieldIcon({ size = 16 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M12 3 5 5.8v5.4c0 4.4 3 8.1 7 9.3 4-1.2 7-4.9 7-9.3V5.8L12 3Z"
-        {...stroke}
-      />
-      <path d="m9 12 2.2 2.2L15.4 10" {...stroke} />
-    </svg>
-  );
-}
-
 export function SparkIcon({ size = 15 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
         d="M12 4v16M4 12h16M6.8 6.8l10.4 10.4M17.2 6.8 6.8 17.2"
-        {...stroke}
+        fill="none"
+        stroke="currentColor"
         strokeWidth={1.7}
-      />
-    </svg>
-  );
-}
-
-export function GearIcon({ size = 14 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="3.1" {...stroke} />
-      <path
-        d="M12 3.2v2.1M12 18.7v2.1M4.8 12H2.7M21.3 12h-2.1M6.9 6.9 5.4 5.4M18.6 18.6l-1.5-1.5M17.1 6.9l1.5-1.5M5.4 18.6l1.5-1.5"
-        {...stroke}
+        strokeLinecap="round"
       />
     </svg>
   );

@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type {
-  EffortLevel,
-  PermissionMode,
-  SessionModelInfo,
-  Workspace,
-} from "@drafthouse/protocol";
+import type { EffortLevel, PermissionMode, SessionModelInfo } from "@cds-design/protocol";
 import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 
 /**
@@ -18,6 +13,31 @@ export type ThemeChoice = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
 /** Which keypress sends a message. The other one inserts a newline. */
 export type SendKey = "enter" | "modEnter";
+
+/**
+ * The column width the planner may drag in the workspace — the preview's —
+ * in px. `null` means "never touched": the preview keeps its fluid share, so
+ * an untouched window still re-fractions with the window size the way the
+ * old fixed grid did.
+ */
+export interface LayoutSettings {
+  previewWidth: number | null;
+  /** The project list's width; null = never dragged (CSS default wins). */
+  sidebarWidth: number | null;
+  /** Folded to a 44px rail — narrow windows, or a planner who wants the room. */
+  sidebarCollapsed: boolean;
+}
+
+/**
+ * Hard bounds for that drag (px). PageWorkspace clamps the pointer to these
+ * (and to the chat column's own minimum); loadLayout clamps whatever an
+ * older or hand-edited blob stored, so a stored 5000px preview can never
+ * come back and eat the window.
+ */
+export const PREVIEW_WIDTH_BOUNDS = { min: 340, max: 1100 } as const;
+
+/** The sidebar's drag bounds (PLAN D19). */
+export const SIDEBAR_WIDTH_BOUNDS = { min: 200, max: 360 } as const;
 
 /**
  * How Claude answers in this planner's conversations (PLAN D10).
@@ -38,7 +58,11 @@ export interface Settings {
   sendKey: SendKey;
   confirmBeforeDelete: boolean;
   chat: ChatSettings;
-}
+  layout: LayoutSettings;
+  /** The planner's own names for threads, by session id. The daemon's
+      summary stays the fallback; an entry the planner emptied is dropped. */
+  sessionTitles: Record<string, string>;
+};
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   model: null,
@@ -58,11 +82,13 @@ export const DEFAULT_SETTINGS: Settings = {
   sendKey: "enter",
   confirmBeforeDelete: true,
   chat: DEFAULT_CHAT_SETTINGS,
+  layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
+  sessionTitles: {},
 };
 
 export const THEMES: ThemeChoice[] = ["system", "dark", "light"];
 
-const KEY = "drafthouse.settings";
+const KEY = "cds-design.settings";
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -95,7 +121,21 @@ export function loadSettings(): Settings {
         ? stored.confirmBeforeDelete
         : DEFAULT_SETTINGS.confirmBeforeDelete,
     chat: loadChat(stored.chat),
+    layout: loadLayout(stored.layout),
+    sessionTitles: loadSessionTitles(stored.sessionTitles),
   };
+}
+
+/** Session-id → the planner's name for it. Anything that is not a non-empty
+    string is dropped, so a hand-edited blob cannot rename a tab to nothing. */
+function loadSessionTitles(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [id, title] of Object.entries(raw)) {
+    const name = typeof title === "string" ? title.trim() : "";
+    if (id && name) out[id] = name;
+  }
+  return out;
 }
 
 /**
@@ -123,15 +163,36 @@ function loadChat(raw: unknown): ChatSettings {
 }
 
 /**
+ * The workspace column. Numbers are clamped into the drag bounds — a blob
+ * from an older build, or a hand-edited one, must not open a window with the
+ * preview filling all of it. Anything else means "never dragged".
+ */
+function loadLayout(raw: unknown): LayoutSettings {
+  if (!raw || typeof raw !== "object") {
+    return { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false };
+  }
+  const stored = raw as Record<string, unknown>;
+  return {
+    previewWidth: loadWidth(stored.previewWidth, PREVIEW_WIDTH_BOUNDS),
+    sidebarWidth: loadWidth(stored.sidebarWidth, SIDEBAR_WIDTH_BOUNDS),
+    sidebarCollapsed: stored.sidebarCollapsed === true,
+  };
+}
+
+function loadWidth(value: unknown, bounds: { min: number; max: number }): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(value)));
+}
+/**
  * What an earlier build stored per workspace. Read once, so a planner who had
- * pinned a model does not silently lose it the day the two collapse into one;
- * 기획's copy wins because that is where a thread usually starts.
+ * pinned a model does not silently lose it the day the two collapsed into one;
+ * 기획's copy wins because that is where a thread usually started.
  */
 function legacyComposerDefaults(): Partial<ChatSettings> {
-  for (const workspace of ["planning", "design"] as Workspace[]) {
+  for (const workspace of ["planning", "design"]) {
     let raw: unknown;
     try {
-      raw = JSON.parse(localStorage.getItem(`drafthouse.composer.${workspace}`) ?? "null");
+      raw = JSON.parse(localStorage.getItem(`cds-design.composer.${workspace}`) ?? "null");
     } catch {
       continue;
     }
@@ -219,7 +280,7 @@ export function useSettings(): {
   return { settings, update, theme };
 }
 
-const MODELS_KEY = "drafthouse.models";
+const MODELS_KEY = "cds-design.models";
 
 /**
  * The model rows the daemon last served. Only a live session can be asked for

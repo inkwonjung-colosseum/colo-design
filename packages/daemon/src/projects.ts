@@ -1,56 +1,19 @@
 /**
- * Projects (PLAN D3/D4): one project is a Confluence subtree set plus one
- * connected repo. It is the unit everything else is scoped to — the mirror
- * that gets cloned, the clone Claude edits, the preview server that runs, and
- * (because the Agent SDK stores transcripts per directory) the session list.
+ * Projects (PLAN D2): one project is one connected repo. It is the unit
+ * everything else is scoped to — the clone Claude edits, the preview server
+ * that runs, and (because the Agent SDK stores transcripts per directory) the
+ * session list.
  *
  * Layout, one folder per project:
  *
- *   ~/drafthouse/config/projects.json
- *   ~/drafthouse/projects/<slug>/confluence/<space>/   the mirrored subtree
- *   ~/drafthouse/projects/<slug>/repo/                 the clone
- *
- * The mirror lives inside the project rather than in one shared folder on
- * purpose: a project owns a SUBTREE of a space, the mirror is flat
- * (`<space>/<title>.md`, hierarchy in frontmatter), and a subtree cannot be
- * carved out of a flat folder by a symlink. Giving each project its own mirror
- * is what keeps a planning session's cwd free of other products' 기획서 — and
- * the containment-based write policy honest.
- *
- * The price is that one page must never live in two mirrors, or the optimistic
- * lock (`.confluence-sync.json` per mirror) splits in two and conflict
- * detection silently stops working. `findOverlap` is the rule that prevents
- * it, and it is the only invariant this module enforces.
+ *   ~/.cds-design/config/projects.json
+ *   ~/.cds-design/projects/<slug>/repo/   the clone
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { HandoffStatus } from "@drafthouse/protocol";
-import { CONFIG_DIR, DRAFTHOUSE_DIR } from "./environment.js";
-
-/**
- * One Confluence subtree a project owns.
- *
- * `rootPageId: null` means the whole space. That is what a mirror cloned
- * before projects existed becomes on migration, and it stays a legitimate
- * choice for a team whose space holds exactly one product.
- *
- * `ancestorIds` is the root page's ancestor chain as Confluence reported it
- * when the project was created. It is stored rather than re-fetched because
- * overlap has to be decidable offline, in both directions, without walking a
- * remote tree: two subtrees collide exactly when one root is the other's
- * ancestor, and each side already knows its own ancestors.
- */
-export interface ProjectRoot {
-  /** Space key, e.g. `PROD`. */
-  space: string;
-  /** Root page id, or `null` for the whole space. */
-  rootPageId: string | null;
-  /** The root page's title (the space name when the root is the space). */
-  title: string;
-  /** Ancestor page ids of `rootPageId`, outermost first. Empty for a space. */
-  ancestorIds: string[];
-}
+import type { HandoffStatus } from "@cds-design/protocol";
+import { CONFIG_DIR, CDS_DESIGN_DIR } from "./environment.js";
 
 export interface ProjectRepo {
   url: string | null;
@@ -72,18 +35,15 @@ export interface Project {
   slug: string;
   /** What the planner named it. Korean is normal here. */
   name: string;
-  roots: ProjectRoot[];
   repo: ProjectRepo;
 }
 
 /** Every path a project owns. */
 export interface ProjectPaths {
-  /** `~/drafthouse/projects/<slug>` */
+  /** `~/.cds-design/projects/<slug>` */
   root: string;
   /** The connected repo's clone. */
   repoRoot: string;
-  /** The mirror root; spaces are folders under it. */
-  mirrorRoot: string;
 }
 
 interface ProjectsFile {
@@ -96,20 +56,14 @@ export const DEFAULT_BASE_BRANCH = "main";
 /** The slug a pre-projects installation migrates into. */
 export const LEGACY_SLUG = "default";
 
-/** `DRAFTHOUSE_PROJECTS_SETTINGS` points a test at a throwaway registry. */
+/** `CDS_DESIGN_PROJECTS_SETTINGS` points a test at a throwaway registry. */
 export function projectsFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DRAFTHOUSE_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
+  return env.CDS_DESIGN_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
 }
 
 export function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.DRAFTHOUSE_PROJECTS_DIR ?? join(DRAFTHOUSE_DIR, "projects");
+  return env.CDS_DESIGN_PROJECTS_DIR ?? join(CDS_DESIGN_DIR, "projects");
 }
-
-/** The credential-store item holding a project's repo PAT. */
-export function repoPatItem(slug: string): string {
-  return `pat:${slug}`;
-}
-
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -117,11 +71,10 @@ export function repoPatItem(slug: string): string {
 /**
  * A folder- and item-safe id derived from the name.
  *
- * Only path-hostile characters are removed — the same set the mirror's own
- * page filenames drop — because the slug becomes a directory a human will one
- * day stare at, and `~/drafthouse/projects/결제/` is findable where
- * `project-2` is not. Every filesystem this ships on stores UTF-8 names, and
- * the mirror already writes `회원 관리 기획서.md` next door.
+ * Only path-hostile characters are removed — the same set page filenames
+ * drop — because the slug becomes a directory a human will one day stare at,
+ * and `~/.cds-design/projects/결제/` is findable where `project-2` is not.
+ * Every filesystem this ships on stores UTF-8 names.
  *
  * Uniqueness is the caller's set of taken slugs.
  */
@@ -141,73 +94,10 @@ export function slugify(name: string, taken: ReadonlySet<string>): string {
   }
 }
 
-/**
- * The project whose subtree would share pages with `candidate`, or null.
- *
- * Collision in the same space is any of: the same root page, a whole-space
- * root on either side, or one root sitting in the other's ancestor chain.
- * `ignoreSlug` lets a project be edited without colliding with itself.
- */
-export function findOverlap(
-  projects: readonly Project[],
-  candidate: Pick<ProjectRoot, "space" | "rootPageId" | "ancestorIds">,
-  ignoreSlug?: string,
-): { slug: string; name: string; title: string } | null {
-  for (const project of projects) {
-    if (project.slug === ignoreSlug) continue;
-    for (const root of project.roots) {
-      if (root.space !== candidate.space) continue;
-      // A whole-space root contains every page in it, in either direction.
-      const collides =
-        root.rootPageId === null ||
-        candidate.rootPageId === null ||
-        root.rootPageId === candidate.rootPageId ||
-        candidate.ancestorIds.includes(root.rootPageId) ||
-        root.ancestorIds.includes(candidate.rootPageId);
-      if (collides) return { slug: project.slug, name: project.name, title: root.title };
-    }
-  }
-  return null;
-}
-
-/**
- * Refuses a set of roots that would share pages with an existing project.
- * Every root is checked before anything is created, so a rejected project has
- * touched neither disk nor Confluence.
- */
-export function assertNoOverlap(
-  projects: readonly Project[],
-  roots: readonly ProjectRoot[],
-  ignoreSlug?: string,
-): void {
-  for (const root of roots) {
-    const hit = findOverlap(projects, root, ignoreSlug);
-    if (!hit) continue;
-    throw new Error(
-      `'${hit.name}' 프로젝트가 이미 이 페이지를 포함합니다 (${hit.title}) — 겹치지 않는 상위 페이지를 골라 주세요.`,
-    );
-  }
-}
-
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
-}
-
-function parseRoot(raw: unknown): ProjectRoot | null {
-  if (!raw || typeof raw !== "object") return null;
-  const value = raw as Record<string, unknown>;
-  const space = cleanString(value.space);
-  if (!space) return null;
-  return {
-    space,
-    rootPageId: cleanString(value.rootPageId),
-    title: cleanString(value.title) ?? space,
-    ancestorIds: Array.isArray(value.ancestorIds)
-      ? value.ancestorIds.filter((id): id is string => typeof id === "string")
-      : [],
-  };
 }
 
 const HANDOFF_STATES: Record<string, true> = {
@@ -232,9 +122,6 @@ function parseHandoff(raw: unknown): HandoffStatus | null {
     branch,
     state: state as HandoffStatus["state"],
     title: cleanString(value.title) ?? "",
-    pageIds: Array.isArray(value.pageIds)
-      ? value.pageIds.filter((id): id is string => typeof id === "string")
-      : [],
   };
 }
 
@@ -244,13 +131,9 @@ function parseProject(raw: unknown): Project | null {
   const slug = cleanString(value.slug);
   if (!slug) return null;
   const repo = (value.repo ?? {}) as Record<string, unknown>;
-  const roots = Array.isArray(value.roots)
-    ? value.roots.map(parseRoot).filter((root): root is ProjectRoot => root !== null)
-    : [];
   return {
     slug,
     name: cleanString(value.name) ?? slug,
-    roots,
     repo: {
       url: cleanString(repo.url),
       baseBranch: cleanString(repo.baseBranch) ?? DEFAULT_BASE_BRANCH,
@@ -286,7 +169,7 @@ function saveProjectsFile(file: ProjectsFile, env: NodeJS.ProcessEnv = process.e
   // No secrets live here (the PAT is in the OS store), but the repo urls are
   // still the user's business: same private mode, same atomic replace as the
   // other settings files.
-  const temporary = `${path}.drafthouse-${process.pid}`;
+  const temporary = `${path}.cds-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
   renameSync(temporary, path);
 }
@@ -312,13 +195,11 @@ export class ProjectRegistry {
 
   /**
    * Loads the registry, migrating a pre-projects installation on the way in.
-   * `mirroredSpaces` is what the legacy mirror root actually holds; passing it
-   * keeps this module free of the sync engine.
    */
-  static load(env: NodeJS.ProcessEnv = process.env, mirroredSpaces: readonly string[] = []): ProjectRegistry {
+  static load(env: NodeJS.ProcessEnv = process.env): ProjectRegistry {
     const loaded = loadProjectsFile(env);
     if (loaded.projects.length > 0) return new ProjectRegistry(env, loaded);
-    const migrated = migrateLegacyLayout(env, mirroredSpaces);
+    const migrated = migrateLegacyLayout(env);
     if (migrated) {
       saveProjectsFile(migrated, env);
       return new ProjectRegistry(env, migrated);
@@ -350,20 +231,14 @@ export class ProjectRegistry {
     return project;
   }
 
-  /**
-   * Registers a new project. Every root is checked against every existing one
-   * first, so a rejected creation has touched neither disk nor Confluence.
-   */
-  create(input: { name: string; roots: ProjectRoot[]; repoUrl: string | null; baseBranch?: string }): Project {
+  /** Registers a new project. */
+  create(input: { name: string; repoUrl: string | null; baseBranch?: string }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
-    if (input.roots.length === 0) throw new Error("기획서가 있는 Confluence 위치를 하나 이상 골라 주세요");
-    assertNoOverlap(this.file.projects, input.roots);
     const slug = slugify(name, new Set(this.file.projects.map((project) => project.slug)));
     const project: Project = {
       slug,
       name,
-      roots: input.roots,
       repo: {
         url: input.repoUrl,
         baseBranch: input.baseBranch?.trim() || DEFAULT_BASE_BRANCH,
@@ -378,17 +253,13 @@ export class ProjectRegistry {
     return project;
   }
 
-  /** Changes what a project points at. Roots are replaced wholesale when given. */
+  /** Changes what a project points at. */
   update(
     slug: string,
-    changes: { name?: string; roots?: ProjectRoot[]; repoUrl?: string | null; baseBranch?: string },
+    changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
   ): Project {
     const project = this.get(slug);
     if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${slug}`);
-    if (changes.roots) {
-      assertNoOverlap(this.file.projects, changes.roots, slug);
-      project.roots = changes.roots;
-    }
     if (changes.name !== undefined) {
       const name = changes.name.trim();
       if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
@@ -404,7 +275,7 @@ export class ProjectRegistry {
 
   /**
    * Forgets a project. Its folder stays on disk unless asked otherwise — a
-   * mis-click must not take a mirror with unpushed 기획서 with it.
+   * mis-click must not take saved screen work with it.
    */
   remove(slug: string): void {
     const index = this.file.projects.findIndex((project) => project.slug === slug);
@@ -417,36 +288,34 @@ export class ProjectRegistry {
   /**
    * Where a project's files live.
    *
-   * `DRAFTHOUSE_REPO_DIR` / `DRAFTHOUSE_CONFLUENCE_DIR` override the ACTIVE
-   * project's two roots and nothing else. That is how the offline suites keep
-   * driving fixture remotes and fixture mirrors: they run one project, it is
-   * the active one, and the paths they prepared are the paths it uses.
+   * `CDS_DESIGN_REPO_DIR` overrides the ACTIVE project's clone root and
+   * nothing else. That is how the offline suites keep driving fixture
+   * remotes: they run one project, it is the active one, and the path they
+   * prepared is the path it uses.
    */
   paths(slug: string): ProjectPaths {
     const root = join(projectsRoot(this.env), slug);
     const activeOverride = slug === this.file.active;
-    const repoOverride = activeOverride ? this.env.DRAFTHOUSE_REPO_DIR : undefined;
-    const mirrorOverride = activeOverride ? this.env.DRAFTHOUSE_CONFLUENCE_DIR : undefined;
+    const repoOverride = activeOverride ? this.env.CDS_DESIGN_REPO_DIR : undefined;
     return {
       root,
       repoRoot: repoOverride ?? join(root, "repo"),
-      mirrorRoot: mirrorOverride ?? join(root, "confluence"),
     };
   }
 
   /**
    * The remote the active project's workspace should actually talk to.
    *
-   * `DRAFTHOUSE_REPO_URL` wins over the registry for the ACTIVE project, the
-   * same rule the two path overrides follow. It is how the offline suites
-   * point a project at a fixture remote — and it has to be applied HERE rather
-   * than written into the registry, because the registry is what `update()`
+   * `CDS_DESIGN_REPO_URL` wins over the registry for the ACTIVE project, the
+   * same rule the path override follows. It is how the offline suites point a
+   * project at a fixture remote — and it has to be applied HERE rather than
+   * written into the registry, because the registry is what `update()`
    * persists and a test's fixture url must never survive into a real config.
    */
   resolvedRepo(slug: string): ProjectRepo {
     const project = this.get(slug);
     if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${slug}`);
-    const override = slug === this.file.active ? cleanString(this.env.DRAFTHOUSE_REPO_URL) : null;
+    const override = slug === this.file.active ? cleanString(this.env.CDS_DESIGN_REPO_URL) : null;
     return override ? { ...project.repo, url: override } : project.repo;
   }
 
@@ -467,7 +336,6 @@ export class ProjectRegistry {
   /** Creates the project's folders; callers clone into them. */
   ensureDirs(slug: string): ProjectPaths {
     const paths = this.paths(slug);
-    mkdirSync(paths.mirrorRoot, { recursive: true });
     mkdirSync(dirname(paths.repoRoot), { recursive: true });
     return paths;
   }
@@ -484,45 +352,34 @@ export class ProjectRegistry {
 /**
  * Turns a pre-projects installation into the single project it always was.
  *
- * Two shapes arrive here. A real installation has `~/drafthouse/repo` and
- * `~/drafthouse/confluence`, and those folders MOVE into
- * `projects/default/`. A test (or a dev pointing the daemon at scratch dirs)
- * has `DRAFTHOUSE_REPO_DIR` / `DRAFTHOUSE_CONFLUENCE_DIR` set, and nothing
- * moves at all: `paths()` keeps handing the active project exactly those
- * directories.
+ * Two shapes arrive here. A real installation has `~/.cds-design/repo`, and
+ * that folder MOVES into `projects/default/`. A test (or a dev pointing the
+ * daemon at scratch dirs) has `CDS_DESIGN_REPO_DIR` set, and nothing moves at
+ * all: `paths()` keeps handing the active project exactly that directory.
  *
  * Migration reads only sources in the SAME configuration scope as the
  * registry it is filling. A run that redirected the registry
- * (`DRAFTHOUSE_PROJECTS_SETTINGS`, which every offline suite sets) must not
- * inherit the developer's real `~/drafthouse` — that once produced a scratch
+ * (`CDS_DESIGN_PROJECTS_SETTINGS`, which every offline suite sets) must not
+ * inherit the developer's real `~/.cds-design` — that once produced a scratch
  * daemon that warm-started a clone of the developer's own remote and reported
  * a project nobody in that run had created.
  *
  * Returns null when there is nothing to migrate, which is what a genuinely
  * first run looks like.
  */
-export function migrateLegacyLayout(
-  env: NodeJS.ProcessEnv,
-  mirroredSpaces: readonly string[],
-): ProjectsFile | null {
-  const scoped = env.DRAFTHOUSE_PROJECTS_SETTINGS !== undefined || env.DRAFTHOUSE_PROJECTS_DIR !== undefined;
-  const legacyRepo = env.DRAFTHOUSE_REPO_DIR ?? (scoped ? null : join(DRAFTHOUSE_DIR, "repo"));
-  const legacyMirror = env.DRAFTHOUSE_CONFLUENCE_DIR ?? (scoped ? null : join(DRAFTHOUSE_DIR, "confluence"));
-  const repoUrl = env.DRAFTHOUSE_REPO_URL ?? legacyRepoUrl(env, scoped);
-  const spaces =
-    mirroredSpaces.length > 0 ? mirroredSpaces : legacyMirror ? readMirroredSpaces(legacyMirror) : [];
+export function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
+  const scoped = env.CDS_DESIGN_PROJECTS_SETTINGS !== undefined || env.CDS_DESIGN_PROJECTS_DIR !== undefined;
+  const legacyRepo = env.CDS_DESIGN_REPO_DIR ?? (scoped ? null : join(CDS_DESIGN_DIR, "repo"));
+  const repoUrl = env.CDS_DESIGN_REPO_URL ?? legacyRepoUrl(env, scoped);
 
   const hasRepo = (legacyRepo !== null && existsSync(legacyRepo)) || repoUrl !== null;
-  if (!hasRepo && spaces.length === 0) return null;
+  if (!hasRepo) return null;
 
   const target = join(projectsRoot(env), LEGACY_SLUG);
-  // With the env overrides in play the legacy paths ARE the project's paths;
-  // moving them would break the very run that set them.
-  if (!env.DRAFTHOUSE_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
+  // With the env override in play the legacy path IS the project's path;
+  // moving it would break the very run that set it.
+  if (!env.CDS_DESIGN_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
     moveInto(legacyRepo, join(target, "repo"));
-  }
-  if (!env.DRAFTHOUSE_CONFLUENCE_DIR && legacyMirror && existsSync(legacyMirror)) {
-    moveInto(legacyMirror, join(target, "confluence"));
   }
 
   return {
@@ -531,9 +388,6 @@ export function migrateLegacyLayout(
       {
         slug: LEGACY_SLUG,
         name: "내 프로젝트",
-        // A pre-projects mirror is whole-space by construction: there was no
-        // way to mirror less. `rootPageId: null` says exactly that.
-        roots: spaces.map((space) => ({ space, rootPageId: null, title: space, ancestorIds: [] })),
         repo: { url: repoUrl, baseBranch: DEFAULT_BASE_BRANCH, branch: null, handoff: null },
       },
     ],
@@ -542,7 +396,7 @@ export function migrateLegacyLayout(
 
 /** The url the old single-repo settings file held, if it still exists. */
 function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
-  const file = env.DRAFTHOUSE_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
+  const file = env.CDS_DESIGN_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
   if (!file) return null;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -552,24 +406,12 @@ function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
   }
 }
 
-/** Space folders in a mirror root: a folder holding the sync sidecar. */
-function readMirroredSpaces(mirrorRoot: string): string[] {
-  if (!existsSync(mirrorRoot)) return [];
-  try {
-    return readdirSync(mirrorRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && existsSync(join(mirrorRoot, entry.name, ".confluence-sync.json")))
-      .map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Moves a legacy folder under the project. A rename across devices fails on
  * some setups (a home directory on a different volume than a symlinked
- * `~/drafthouse`); there the migration is skipped rather than half-copied, and
- * the project starts empty — a re-clone, not a loss, because both folders are
- * reproducible from their remotes.
+ * `~/.cds-design`); there the migration is skipped rather than half-copied, and
+ * the project starts empty — a re-clone, not a loss, because the folder is
+ * reproducible from its remote.
  */
 function moveInto(from: string, to: string): void {
   if (existsSync(to)) return;

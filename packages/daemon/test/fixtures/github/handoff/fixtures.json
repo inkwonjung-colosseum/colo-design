@@ -4,18 +4,18 @@
     "cite": "POST /repos/{owner}/{repo}/pulls — open a pull request",
     "request": {
       "method": "POST",
-      "url": "/repos/colosseumcoinckr/drafthouse-e2e/pulls"
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls"
     },
     "response": {
       "status": 201,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/drafthouse-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
         "title": "결제",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "drafthouse-branch"
+          "ref": "cds-design-branch"
         }
       }
     }
@@ -25,18 +25,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/drafthouse-e2e/pulls/12"
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/drafthouse-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
         "title": "결제",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "drafthouse-branch"
+          "ref": "cds-design-branch"
         }
       }
     }
@@ -46,7 +46,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews — latest verdict per reviewer",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/drafthouse-e2e/pulls/12/reviews?per_page=100"
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12/reviews?per_page=100"
     },
     "response": {
       "status": 200,
@@ -58,18 +58,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/drafthouse-e2e/pulls/12"
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/drafthouse-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
         "title": "결제",
         "state": "closed",
         "merged": true,
         "head": {
-          "ref": "drafthouse-branch"
+          "ref": "cds-design-branch"
         }
       }
     }

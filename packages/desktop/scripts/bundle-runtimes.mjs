@@ -4,7 +4,7 @@
  * 모은다. Windows 빌드에서는 MinGit 도 같은 폴더에 둔다(config — 이 머신
  * 에서는 실행하지 않는다).
  *
- * 앱은 resources/bin 을 DRAFTHOUSE_EXTRA_PATH 로 데몬에 넘기고, 데몬은
+ * 앱은 resources/bin 을 CDS_DESIGN_EXTRA_PATH 로 데몬에 넘기고, 데몬은
  * repo.ts 에서 PATH 앞에 붙인다 — 사용자 머신의 Node/pnpm 과 무관하다.
  *
  * 실행: node packages/desktop/scripts/bundle-runtimes.mjs [--with-mingit]

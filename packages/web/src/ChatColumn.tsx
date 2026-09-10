@@ -1,115 +1,139 @@
-import { useEffect, useRef } from "react";
-import type { Workspace } from "@drafthouse/protocol";
+import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import type { Sessions } from "./useSessions";
 import { PermissionCard, QuestionCard, Transcript } from "./components";
+import { ChevronDownIcon } from "./icons";
 import { Composer } from "./Composer";
-import type { DocQuote } from "./DocEditor";
 import type { SendKey } from "./settings";
 
 /**
- * The middle column both workspaces share: one transcript, the cards that
- * interrupt it, and the composer under it. Everything workspace-specific
- * arrives as props — the column itself never asks which half it is in.
+ * The middle column: one transcript, the cards that interrupt it, and the
+ * composer under it. Everything about the session arrives as one `Sessions`.
  */
 export function ChatColumn({
   daemon,
   sessions,
   sendKey,
-  workspace,
   placeholder,
   disabled,
-  quote,
-  onDismissQuote,
-  brief,
-  onDismissBrief,
-  draft,
-  onDraftConsumed,
-  emptyHint,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   sendKey: SendKey;
-  /** Which file set @-mentions draw from. */
-  workspace: Workspace;
   placeholder: string;
   disabled: boolean;
-  /** A passage dragged out of the planning editor, shown as a chip. */
-  quote?: DocQuote | null;
-  onDismissQuote?: () => void;
-  /**
-   * The 기획서 a 화면 thread was opened on, shown as a chip. The mirror path
-   * it carries is attached to the turn on send, never typed (PLAN D9).
-   */
-  brief?: { title: string; path: string } | null;
-  onDismissBrief?: () => void;
-  /** Prefilled first turn from the 기획→디자인 handoff; never sent for them. */
-  draft?: { text: string; nonce: number } | null;
-  onDraftConsumed?: () => void;
-  /**
-   * What an empty transcript says instead of the default invitation — used
-   * when the workspace is not ready and the chat cannot be started yet.
-   */
-  emptyHint?: string;
 }) {
   const { api, pending, resolvePending } = daemon;
   const bottom = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
   const visiblePending = pending.filter((request) => request.sessionId === activeId);
+  /** Whether the newest message is what the planner is looking at. */
+  const pinned = useRef(true);
+  /** Mirror of `pinned` for rendering — the pill is the scrolled-up reader's way back. */
+  const [unpinned, setUnpinned] = useState(false);
 
-  // Follow the conversation as it grows, so a long answer does not scroll off
-  // under the composer while Claude is still writing it.
+  // Within one row of the bottom counts as watching the stream come in.
+  const rememberPin = () => {
+    const el = scroll.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    pinned.current = atBottom;
+    setUnpinned(!atBottom);
+  };
+
+  // Deltas fold into the last block without changing its count, so keying on
+  // the length lets a long answer stream in below the fold — the exact case
+  // this follow exists for. The blocks array itself changes on every event;
+  // the scroll is instant because a tail that animates keeps losing the
+  // race against its own deltas.
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.blocks.length]);
+    if (pinned.current) bottom.current?.scrollIntoView();
+  }, [active?.blocks]);
 
+  // A reader who scrolled up owns the scroll position; the transcript takes
+  // it back only when they return to the bottom. Opening another thread is
+  // a fresh look — its newest message is where a reader starts.
+  useEffect(() => {
+    pinned.current = true;
+    setUnpinned(false);
+  }, [activeId]);
+  // The pill jumps instantly, like the follow: an animated tail would race
+  // the very deltas it is trying to catch up on.
+  const jumpToLatest = () => {
+    pinned.current = true;
+    setUnpinned(false);
+    bottom.current?.scrollIntoView();
+  };
   return (
     <main className="planner__chat">
-      <section className="scroll">
-        {error && (
-          <div className="notice notice--error">
-            <span className="notice__text">{error}</span>
-            <button
-              type="button"
-              className="notice__close"
-              aria-label="오류 닫기"
-              onClick={() => setError(null)}
-            >
-              ×
-            </button>
+      <div className="chatstack">
+        <section className="scroll" ref={scroll} onScroll={rememberPin}>
+          {error && (
+            <div className="notice notice--error">
+              <span className="notice__text">{error}</span>
+              <button
+                type="button"
+                className="notice__close"
+                aria-label="오류 닫기"
+                onClick={() => setError(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <Transcript blocks={active?.blocks ?? []} live={sessions.running} />
+        {/* A turn's first seconds: the tape holds only the planner's words,
+            so the start says itself — spinner + shimmer until blocks land.
+            The tape speaks for itself the moment any Claude block exists. */}
+        {sessions.running && !(active?.blocks ?? []).some((block) => block.type !== "user") && (
+          <div className="turnlive">
+            <span className="spinner" />
+            작업 중…
           </div>
         )}
-        {emptyHint && (active?.blocks.length ?? 0) === 0 ? (
-          <p className="empty">{emptyHint}</p>
-        ) : (
-          <Transcript blocks={active?.blocks ?? []} live={sessions.running} />
+          {visiblePending.map((request) =>
+            request.kind === "permission" ? (
+              <PermissionCard
+                key={request.requestId}
+                request={request}
+                onRespond={(decision, message) => {
+                  void api.respondPermission(request.requestId, decision, message);
+                  resolvePending(request.requestId);
+                }}
+              />
+            ) : (
+              <QuestionCard
+                key={request.requestId}
+                request={request}
+                onRespond={(answers) => {
+                  void api.respondQuestion(request.requestId, answers);
+                  resolvePending(request.requestId);
+                }}
+              />
+            ),
+          )}
+          <div ref={bottom} />
+        </section>
+        {/* The scrolled-up reader's way back. It floats here, outside the
+            scrolling element — inside it, it would drift away with the very
+            content it covers. While a turn streams, the pill names what keeps
+            landing below the fold instead of pointing at a place. */}
+        {unpinned && (
+          <button
+            type="button"
+            className={sessions.running ? "chatstack__pill chatstack__pill--live" : "chatstack__pill"}
+            onClick={jumpToLatest}
+          >
+            {sessions.running ? "새 내용" : "맨 아래로"}
+            <ChevronDownIcon />
+          </button>
         )}
-        {visiblePending.map((request) =>
-          request.kind === "permission" ? (
-            <PermissionCard
-              key={request.requestId}
-              request={request}
-              onRespond={(decision, message) => {
-                void api.respondPermission(request.requestId, decision, message);
-                resolvePending(request.requestId);
-              }}
-            />
-          ) : (
-            <QuestionCard
-              key={request.requestId}
-              request={request}
-              onRespond={(answers) => {
-                void api.respondQuestion(request.requestId, answers);
-                resolvePending(request.requestId);
-              }}
-            />
-          ),
-        )}
-        <div ref={bottom} />
-      </section>
+      </div>
 
       <Composer
         disabled={disabled}
+        draftKey={sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`}
         placeholder={placeholder}
         usage={sessions.usage}
         plan={daemon.status?.planUsage ?? null}
@@ -120,19 +144,11 @@ export function ChatColumn({
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
         sendKey={sendKey}
-        quote={quote}
-        onDismissQuote={onDismissQuote}
-        brief={brief}
-        onDismissBrief={onDismissBrief}
-        initialText={draft}
-        onInitialTextConsumed={onDraftConsumed}
-        onSend={(text, attachments) => {
-          void sessions.submit(text, attachments);
-          onDismissQuote?.();
-        }}
+        onSend={(text, attachments) => void sessions.submit(text, attachments)}
         onInterrupt={() => activeId && void api.interrupt(activeId)}
-        onFindFiles={(query) => api.findFiles(workspace, query)}
+        onFindFiles={(query) => api.findFiles(query)}
       />
     </main>
   );
 }
+

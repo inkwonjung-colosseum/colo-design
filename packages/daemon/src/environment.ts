@@ -1,23 +1,53 @@
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, renameSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { promisify } from "node:util";
-import type { DaemonStatus } from "@drafthouse/protocol";
-import { PROTOCOL_VERSION } from "@drafthouse/protocol";
+import type { DaemonStatus } from "@cds-design/protocol";
+import { PROTOCOL_VERSION } from "@cds-design/protocol";
 
 const run = promisify(execFile);
 
 /**
- * Everything Drafthouse writes lives under one folder in the user's home: the
- * repo clone, the Confluence mirror, and this daemon's own settings. One root
- * is one thing to back up, explain, or delete.
+ * Everything CDS Design writes lives under one hidden folder in the user's
+ * home: the repo clones and this daemon's own settings (PLAN D1). One root is
+ * one thing to back up, explain, or delete — and the dot keeps a planner out
+ * of files only the tool should write.
  */
-export const DRAFTHOUSE_DIR = join(homedir(), "drafthouse");
+export const CDS_DESIGN_DIR = join(homedir(), ".cds-design");
 
-/** Daemon settings: `daemon.json`, `repo.json`, `confluence.json`. */
-export const CONFIG_DIR = join(DRAFTHOUSE_DIR, "config");
+/** The pre-dot home folder name an early installation may still carry. */
+const LEGACY_HOME_DIR = "cds-design";
+
+/**
+ * Moves an old `~/cds-design` onto the dot-prefixed root, once. Same home,
+ * so a rename is instant and atomic; a symlink moves as the link, its target
+ * untouched. Both existing means somebody already made a choice — report it
+ * instead of picking for them. Pure in `home` so the branch for a machine
+ * this daemon is not running on can still be tested.
+ */
+export function migrateHomeDir(home: string = homedir()): string | null {
+  const from = join(home, LEGACY_HOME_DIR);
+  const to = join(home, ".cds-design");
+  if (!existsSync(from) || existsSync(to)) {
+    // Nothing to move — or both present: the settings live in `to`, the old
+    // folder is somebody's to delete, and the warning says where each is.
+    return existsSync(from) && existsSync(to)
+      ? `옛 폴더 ${from} 이 남아 있습니다 — 설정은 ${to} 를 씁니다. 옛 폴더는 직접 지워도 됩니다.`
+      : null;
+  }
+  try {
+    renameSync(from, to);
+    return null;
+  } catch (error) {
+    // Cross-device homes cannot rename; say so and keep running on `to`.
+    return `옛 폴더 ${from} 을 옮기지 못했습니다 (${error instanceof Error ? error.message : String(error)}) — 새 폴더 ${to} 를 그대로 씁니다.`;
+  }
+}
+
+/** Daemon settings: `daemon.json`, `repo.json`, `projects.json`. */
+export const CONFIG_DIR = join(CDS_DESIGN_DIR, "config");
 
 export type Platform = "win32" | "darwin" | "linux";
 
@@ -59,6 +89,87 @@ export function lookupCommand(platform: Platform): { command: string; args: stri
   return platform === "win32"
     ? { command: "where", args: ["claude.exe"] }
     : { command: "which", args: ["claude"] };
+}
+
+/**
+ * Where git's own installers put it, in the order we trust them. Only a
+ * fallback: a git on PATH wins, because the PATH stub is what the offline
+ * suites drive and the binary the user's own shell would run. `/usr/bin/git`
+ * is deliberate and last — on a mac without the command-line tools it is a
+ * shim whose only act is opening the CLT installer, and the `git --version`
+ * probe below reads that as missing, not as an install. Pure so the branch
+ * for the platform this daemon is not running on can still be tested.
+ */
+export function gitCandidates(
+  platform: Platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (platform === "win32") {
+    const programFiles = env["ProgramFiles"] ?? "C:\\Program Files";
+    const localAppData = env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    return [
+      join(programFiles, "Git", "cmd", "git.exe"),
+      join(localAppData, "Programs", "Git", "cmd", "git.exe"),
+    ];
+  }
+  return ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"];
+}
+
+/** A candidate only counts if it answers `git --version` — an install that
+ *  cannot run is a missing install as far as every caller is concerned. */
+async function gitWorks(candidate: string): Promise<boolean> {
+  try {
+    const { stdout } = await run(candidate, ["--version"]);
+    return /^git version/.test(stdout.trim());
+  } catch {
+    return false;
+  }
+}
+
+let gitResolution: { key: string; path: string | null } | null = null;
+
+/**
+ * The git this daemon drives — and the one every git child spawns, so the
+ * gate's verdict and the clone it clears share one binary. A pinned
+ * `CDS_DESIGN_GIT_BIN` replaces discovery outright: the suites point it at a
+ * stub (or at nothing) and no machine-local install may answer instead.
+ * Otherwise PATH wins and the installer locations fill its gaps — the
+ * Finder-launched desktop app inherits `/usr/bin:/bin`, where a Homebrew-only
+ * git never appears. Memoized on the discovery inputs: the suites that swap
+ * them re-resolve, one long-lived daemon does not re-probe per git call.
+ */
+export async function resolveGitExecutable(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const platform = currentPlatform();
+  const pin = env.CDS_DESIGN_GIT_BIN;
+  const key = `${pin ?? ""}\u0000${env.PATH ?? ""}`;
+  if (gitResolution?.key === key) return gitResolution.path;
+
+  let path: string | null = null;
+  if (pin) {
+    path = (await gitWorks(pin)) ? pin : null;
+  } else if (platform !== "win32") {
+    if (await gitWorks("git")) path = "git";
+  } else {
+    try {
+      const { stdout } = await run("where", ["git.exe"]);
+      const found = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+      if (found && (await gitWorks(found))) path = found;
+    } catch {
+      // `where` exits non-zero when nothing matches.
+    }
+  }
+  if (!path && !pin) {
+    for (const candidate of gitCandidates(platform, env)) {
+      if (await gitWorks(candidate)) {
+        path = candidate;
+        break;
+      }
+    }
+  }
+  gitResolution = { key, path };
+  return path;
 }
 
 /**
@@ -121,16 +232,38 @@ export async function resolvePnpmExecutable(): Promise<string | null> {
 }
 
 /**
- * pnpm reports a private-registry rejection as a 401/403 fetch error. A bare
- * `401` is not enough: install progress lines count packages ("resolved 401").
+ * Node as the repo's own commands would see it. `CDS_DESIGN_EXTRA_PATH` — the
+ * desktop app's bundled runtime — is searched FIRST, because that is the PATH
+ * prefix `repo.ts` puts ahead of every install · preview · build child: a
+ * version the repo commands would not use is a wrong answer here, however
+ * healthy the system node is. `bundled` is true when the resolved binary
+ * lives under that extra prefix.
  */
-export function detectsRegistryAuthFailure(output: string): boolean {
-  return /ERR_PNPM_FETCH_40[13]|\bunauthorized\b|\bforbidden\b|authentication token|status(?: code)? 40[13]\b/i.test(
-    output,
-  );
+export async function resolveNodeVersion(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: Platform = currentPlatform(),
+): Promise<{ version: string; bundled: boolean } | null> {
+  const extra = env.CDS_DESIGN_EXTRA_PATH;
+  const extraDirs = extra ? extra.split(platform === "win32" ? ";" : ":").filter(Boolean) : [];
+  const binary = platform === "win32" ? "node.exe" : "node";
+  for (const dir of extraDirs) {
+    const candidate = join(dir, binary);
+    if (existsSync(candidate)) {
+      try {
+        const { stdout } = await run(candidate, ["--version"]);
+        return { version: stdout.trim(), bundled: true };
+      } catch {
+        // Present but broken — keep looking, the system node may still work.
+      }
+    }
+  }
+  try {
+    const { stdout } = await run(binary, ["--version"]);
+    return { version: stdout.trim(), bundled: false };
+  } catch {
+    return null;
+  }
 }
-
-type RegistryAuth = "ok" | "unauthenticated" | "unknown";
 
 /**
  * The PATH a child needs. pnpm and the Claude CLI ship as scripts whose shebang
@@ -149,6 +282,18 @@ export function childPath(env: NodeJS.ProcessEnv = process.env, nodeDir = dirnam
 const registryAuthCache = new Map<string, { value: RegistryAuth; readAt: number }>();
 const REGISTRY_AUTH_TTL_MS = 5 * 60_000;
 
+
+type RegistryAuth = "ok" | "unauthenticated" | "unknown";
+
+/**
+ * pnpm reports a private-registry rejection as a 401/403 fetch error. A bare
+ * `401` is not enough: install progress lines count packages ("resolved 401").
+ */
+export function detectsRegistryAuthFailure(output: string): boolean {
+  return /ERR_PNPM_FETCH_40[13]|\bunauthorized\b|\bforbidden\b|authentication token|status(?: code)? 40[13]\b/i.test(
+    output,
+  );
+}
 /**
  * Whether this machine can read the CDS packages from GitHub Packages. Run in
  * the connected repo's clone so its `.npmrc` (registry mapping) is in scope;
@@ -192,7 +337,7 @@ export async function resolveClaudeExecutable(override?: string): Promise<string
   const platform = currentPlatform();
   const candidates = [
     override,
-    process.env.DRAFTHOUSE_CLAUDE_BIN,
+    process.env.CDS_DESIGN_CLAUDE_BIN,
     ...claudeCandidates(platform, homedir()),
   ].filter((value): value is string => Boolean(value));
 
@@ -258,12 +403,9 @@ export async function readAuthStatus(executable: string): Promise<AuthStatus> {
 }
 
 export async function isGitAvailable(): Promise<boolean> {
-  try {
-    await run("git", ["--version"]);
-    return true;
-  } catch {
-    return false;
-  }
+  // The same resolution the onboarding gate and every git child use: a git
+  // the daemon's PATH cannot see but the machine has, is available.
+  return (await resolveGitExecutable()) !== null;
 }
 
 export async function buildStatus(input: {
@@ -307,12 +449,9 @@ export async function buildStatus(input: {
     );
   }
 
+  // pnpm's absence is the runtime onboarding gate's news, in Korean — an
+  // English header warning here would say the same thing twice (PLAN D6).
   const pnpm = await resolvePnpmExecutable();
-  if (!pnpm) {
-    warnings.push(
-      "pnpm was not found. The connected repo's install and preview commands cannot run if they need it. Run `corepack enable` or `npm i -g pnpm`.",
-    );
-  }
   const cdsRegistryAuth = await readCdsRegistryAuth(pnpm, input.registryProbeDir);
   if (cdsRegistryAuth === "unauthenticated") {
     warnings.push(

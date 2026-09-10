@@ -20,9 +20,8 @@ import type {
   SessionModelInfo,
   SessionSelectors,
   SessionState,
-  Workspace,
-} from "@drafthouse/protocol";
-import { readTurn } from "@drafthouse/protocol";
+} from "@cds-design/protocol";
+import { readTurn } from "@cds-design/protocol";
 import { saveSpecFiles, type SpecFile } from "./repo.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { MessageTranslator } from "./translate.js";
@@ -126,30 +125,19 @@ export interface SessionEvents {
  * What a session may do to a file its edit tools name, decided by whoever
  * created it:
  *
- * - `allow` — write it without asking (the workspace's own working set).
+ * - `allow` — write it without asking (the repo's own working set).
  * - `ask`   — surface a permission card, as any non-edit tool would.
  * - `deny`  — refuse outright, with a Korean reason Claude can read. Used for
- *   files the tool owns and a session must never rewrite (mirror sync state,
- *   the generated CLAUDE.md).
+ *   files the tool owns and a session must never rewrite.
  */
 export type WriteDecision = "allow" | "ask" | "deny";
 export type WritePolicy = (absolutePath: string) => WriteDecision;
 
 export interface SessionOptions {
-  /** Which half of the product this session belongs to. */
-  workspace: Workspace;
   cwd: string;
   claudeExecutable: string;
   /** Resume an existing transcript. */
   resume?: string;
-  /**
-   * Workspace instructions layered onto Claude Code's own system prompt.
-   * Used where the rules belong to the session type rather than to a folder
-   * a second workspace can also see.
-   */
-  systemPromptAppend?: string;
-  /** Extra roots the session may read, e.g. the mirror under a design session. */
-  additionalDirectories?: string[];
   /**
    * Verdict for every edit-class tool call. Defaults to the historical rule:
    * silent inside cwd, a card everywhere else.
@@ -171,21 +159,19 @@ export interface SessionOptions {
 /**
  * File-edit tools that `acceptEdits` mode used to silence. Under the pinned
  * `default` mode the CLI asks about them like anything else, so the daemon
- * answers here instead, through the workspace's own `writePolicy`.
+ * answers here instead, through the session's own `writePolicy`.
  */
 const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-
 /**
  * The name a session carries until its first turn supplies one. Also the
  * sentinel for "nobody has named this yet" — a resumed thread inherits its
  * stored title only while the placeholder is still in place.
  */
-export const NEW_PLANNING_TITLE = "새 기획";
-export const NEW_DESIGN_TITLE = "새 화면";
+export const NEW_SESSION_TITLE = "새 화면";
+
 export class Session {
   readonly id: string;
   readonly cwd: string;
-  readonly workspace: Workspace;
   state: SessionState = "idle";
   permissionMode: PermissionMode = "default";
   model: string | null = null;
@@ -209,17 +195,15 @@ export class Session {
 
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
-    this.workspace = options.workspace;
     this.title =
-      options.title?.trim().slice(0, 80) ||
-      (options.workspace === "planning" ? NEW_PLANNING_TITLE : NEW_DESIGN_TITLE);
+      options.title?.trim().slice(0, 80) || NEW_SESSION_TITLE;
     // /tmp vs /private/tmp: the resolved spelling, so workspace containment
     // and the SDK's own cwd agree with what the filesystem calls the folder.
     // The CLI reports tool paths already resolved, so an unresolved cwd makes
     // it read its own workspace as foreign and card every Read in it.
     this.cwd = realpathBestEffort(options.cwd);
-    // Containment is the floor, not the whole rule: a workspace may refuse
-    // files inside its own cwd (the mirror's sync state).
+    // Containment is the floor, not the whole rule: a policy may refuse files
+    // inside the cwd itself.
     this.writePolicy =
       options.writePolicy ?? ((path) => (containsPath(this.cwd, path) ? "allow" : "ask"));
     this.selectedModel = options.model ?? null;
@@ -242,6 +226,12 @@ export class Session {
         // (see canUse), so the UX stays "edits are silent, everything else
         // surfaces".
         permissionMode: "default",
+        // The launch flag — not the mode — is what the CLI checks before it
+        // accepts a later `setPermissionMode("bypassPermissions")`; without
+        // it every 전부 맡기기 switch dies with "was not launched with
+        // --dangerously-skip-permissions". The starting mode above stays
+        // `default`, so nothing widens until the planner picks it themselves.
+        allowDangerouslySkipPermissions: true,
         // Policy tier beats a user's own `defaultMode` (e.g. `"auto"`) in
         // ~/.claude/settings.json — without it that setting silently widens
         // every hub session.
@@ -254,20 +244,6 @@ export class Session {
         // go through the control methods below instead.
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
-        // Omitting `systemPrompt` already renders the claude_code preset, so
-        // naming it here only adds the workspace's own rules on top.
-        ...(options.systemPromptAppend
-          ? {
-              systemPrompt: {
-                type: "preset" as const,
-                preset: "claude_code" as const,
-                append: options.systemPromptAppend,
-              },
-            }
-          : {}),
-        ...(options.additionalDirectories && options.additionalDirectories.length > 0
-          ? { additionalDirectories: options.additionalDirectories }
-          : {}),
         ...(options.resume ? { resume: options.resume } : { sessionId: this.id }),
         canUseTool: (toolName, input, opts) => this.canUse(toolName, input, opts),
       },
@@ -294,8 +270,12 @@ export class Session {
       this.setState("closed");
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      this.events.onEvent(this.id, { kind: "notice", level: "error", text: detail });
-      this.setState("error", detail);
+      // The deliberate shutdown in close() aborts the in-flight query; that
+      // abort must not read as a crash — no error card, no error state.
+      if (!this.closed) {
+        this.events.onEvent(this.id, { kind: "notice", level: "error", text: detail });
+        this.setState("error", detail);
+      }
     } finally {
       // A crashed or finished query can never answer a pending prompt.
       for (const request of this.pending.values()) {
@@ -306,6 +286,10 @@ export class Session {
   }
 
   private setState(state: SessionState, detail?: string): void {
+    // A closing session is quiet: the planner closed it themselves, so
+    // neither the aborted turn's end nor the shutdown's aftermath is news.
+    // `closed` itself still goes out — it is what takes the thread down.
+    if (this.closed && state !== "closed") return;
     if (this.state === state) return;
     this.state = state;
     this.events.onState(this.id, state, detail);
@@ -313,9 +297,9 @@ export class Session {
 
   /**
    * The hub's single permission choke point. Edit-class tools are answered by
-   * the workspace's `writePolicy`: silent for its own working set, a card for
-   * anything ambiguous, a refusal for the files the tool owns. Everything
-   * else goes to the planner as a permission (or question) card.
+   * the session's `writePolicy`: silent for the repo's own working set, a
+   * card for anything ambiguous, a refusal for the files the tool owns.
+   * Everything else goes to the planner as a permission (or question) card.
    */
   private canUse(
     toolName: string,
@@ -482,8 +466,8 @@ export class Session {
   ): void {
     if (this.closed) throw new Error("session is closed");
     // Documents go to disk and reach Claude as `@specs/…` mentions: its Read
-    // tool handles PDF page ranges and image downscaling, and the workspace
-    // keeps the source document for HANDOFF.md and later sessions.
+    // tool handles PDF page ranges and image downscaling, and the clone keeps
+    // the source document for later sessions.
     const saved = files && files.length > 0 ? saveSpecFiles(this.cwd, files) : [];
     const prompt = saved.reduce((acc, path) => `${acc}\n\n첨부 기획서: @${path}`, text);
     const content =
@@ -507,7 +491,7 @@ export class Session {
      */
     const machine = readTurn(text).marker !== null;
     const title = text.trim() || saved.join(", ");
-    const unnamed = this.title === NEW_PLANNING_TITLE || this.title === NEW_DESIGN_TITLE;
+    const unnamed = this.title === NEW_SESSION_TITLE;
     if (unnamed && title && !machine) {
       this.title = title.slice(0, 80);
     }
