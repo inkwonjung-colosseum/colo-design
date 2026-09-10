@@ -137,6 +137,13 @@ jobs:
         with:
           fetch-depth: 0  # 태그 주석(릴리스 노트 원문)을 읽기 위해
 
+      # actions/checkout 은 태그 ref 를 커밋을 가리키는 얇은 ref 로만 채운다 —
+      # 어노테이션 오브젝트가 없으면 노트 추출이 태그가 아니라 가리킨 커밋 본문을
+      # 읽어버린다. 어노테이션이 붙은 태그 오브젝트를 강제로 다시 내려받는다.
+      - name: 어노테이션 달린 태그 오브젝트 회수
+        if: runner.os == 'Linux'
+        run: git fetch origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" --force --no-tags
+
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -162,7 +169,7 @@ jobs:
 
           # 앱 업데이트 확인 피드: mac zip sha256 은 자가 교체가 검증에 쓴다.
           SHA=$(sha256sum "dist/$ZIP" | cut -d' ' -f1)
-          NOTES=$(git tag -l --format='%(contents:body)' "$TAG")
+          NOTES=$(git cat-file tag "$TAG" | sed '1,/^$/d')
           jq -n --arg version "$VERSION" --arg notes "$NOTES" --arg sha256 "$SHA" \
             --arg url "${BASE_URL}/${ZIP}" \
             '{version: $version, notes: $notes, sha256: $sha256, url: $url}' > dist/latest.json
@@ -188,9 +195,10 @@ jobs:
             if [ -n "$NOTES" ]; then printf '%s\n' "$NOTES"; else echo "${VERSION} 릴리스"; fi
           } > release-notes.md
 
-          # 릴리스 생성(있으면 에셋만 교체 — 같은 태그 재실행 대비).
+          # 릴리스 생성(있으면 에셋·본문을 모두 교체 — 같은 태그 재실행 대비).
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" -R "$GITHUB_REPOSITORY" dist/* --clobber
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notes.md
           else
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
               --title "CDS Design ${VERSION}" --notes-file release-notes.md dist/*
