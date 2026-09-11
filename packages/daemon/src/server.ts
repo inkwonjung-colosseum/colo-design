@@ -1434,6 +1434,50 @@ export class DaemonServer {
 
       // 답하기 (PLAN D88): the planner's words to one developer comment —
       // the daemon picks the endpoint by the id's kind.
+      // 되감기 (PLAN D95): files (the turn's checkpoint) go back first, then
+      // the daemon forks the conversation's memory before that answer and
+      // sends the words again. A refused fork falls back inside the manager.
+      case "session.rewind": {
+        const target = this.manager.require(message.sessionId);
+        if (target.cwd !== this.workspaceCwd()) {
+          throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 시도해 주세요.");
+        }
+        const checkpoints = await this.repo.checkpoints();
+        const entry = checkpoints.entries.find(
+          (candidate) => candidate.sessionId === message.sessionId && candidate.turn === message.turn,
+        );
+        if (entry) await this.repo.checkpointRestore(entry.id);
+        const openSink: { current: ((route: string, state: string | null) => void) | null } = {
+          current: null,
+        };
+        const preview = await this.previewToolsFor(true, (route, state) => openSink.current?.(route, state));
+        const result = await this.manager.rewind({
+          sessionId: message.sessionId,
+          cwd: this.workspaceCwd(),
+          turn: message.turn,
+          text: message.text,
+          images: message.images,
+          base: {
+            cwd: this.workspaceCwd(),
+            claudeExecutable: this.claudeExecutable ?? "",
+            writePolicy: repoWritePolicy(this.workspaceCwd()),
+            ...(preview ? { previewTools: preview.tools } : {}),
+          },
+        });
+        if (preview) {
+          this.previewDrivers.set(result.sessionId, preview.driver);
+          openSink.current = (route, state) =>
+            this.broadcast({
+              type: "session.event",
+              sessionId: result.sessionId,
+              event: { kind: "preview.opened", route, state },
+            });
+        }
+        this.manager.invalidateThreads(target.cwd);
+        this.refreshThreads();
+        return result;
+      }
+
       case "comments.reply": {
         const activeWs = this.requireActive();
         await activeWs.repo.replyToReview(message.reviewId, message.body);

@@ -234,7 +234,9 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
 
   try {
     const hello = await waitFor(() => inbox.find((m) => m.type === "hello"), 10_000, "hello");
-    check("hello speaks protocol v10", hello.protocolVersion === 10, String(hello.protocolVersion));
+    // 선로 버전은 살아 있는 값을 읽는다 — 승격이 테스트를 깨지 않는다.
+    const { PROTOCOL_VERSION } = await import("../../protocol/dist/index.js");
+    check("hello speaks the pinned protocol", hello.protocolVersion === PROTOCOL_VERSION, String(hello.protocolVersion));
 
     // The server owns its own workspace state; the preview this test process
     // started is foreign to it, so step aside before asking it to serve.

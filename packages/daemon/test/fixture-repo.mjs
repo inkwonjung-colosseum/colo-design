@@ -171,6 +171,10 @@ export async function createFixtureRepo({
   // Swaps index.html — a suite that needs a DIFFERENT bridge (an old
   // `drafthouse.*` one for the stale message, say) seeds its own page.
   indexHtml = INDEX_HTML,
+  // D94: seeds the repo WITHOUT cds-design.json — the connection-preparation
+  // flow's starting line. The preview server reads the config at ITS startup,
+  // which only happens after the config exists.
+  omitConfig = false,
 }) {
   const seed = join(dir, "seed");
   const remote = join(dir, "remote.git");
@@ -178,19 +182,20 @@ export async function createFixtureRepo({
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(seed, "src", "screens"), { recursive: true });
 
-  writeFileSync(
-    join(seed, "cds-design.json"),
+  if (!omitConfig)
+    writeFileSync(
+      join(seed, "cds-design.json"),
     JSON.stringify(
-      {
-        install: installCommand,
-        check: checkCommand,
-        preview: { command: previewCommand, port },
-        ...(registry ? { registry } : {}),
-      },
-      null,
-      2,
-    ),
-  );
+        {
+          install: installCommand,
+          check: checkCommand,
+          preview: { command: previewCommand, port },
+          ...(registry ? { registry } : {}),
+        },
+        null,
+        2,
+      ),
+    );
   writeFileSync(join(seed, "package.json"), PACKAGE_JSON);
   mkdirSync(join(seed, "scripts"), { recursive: true });
   writeFileSync(join(seed, "scripts", "check.mjs"), checkMjs);

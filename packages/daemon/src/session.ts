@@ -140,6 +140,13 @@ export interface SessionOptions {
   /** Resume an existing transcript. */
   resume?: string;
   /**
+   * A custom session id — with `resume` + `forkSession` it names the FORK
+   * (PLAN D95); without a resume it is what a new session is born as.
+   */
+  sessionId?: string;
+  /** D95: truncating resume → a new session instead of rewriting history. */
+  forkSession?: boolean;
+  /**
    * Verdict for every edit-class tool call. Defaults to the historical rule:
    * silent inside cwd, a card everywhere else.
    */
@@ -155,6 +162,10 @@ export interface SessionOptions {
   model?: string;
   /** Reasoning effort the query starts on; omitted = CLI default. */
   effort?: EffortLevel;
+  /** D95: with `resume` — the chain uuid the truncated resume keeps up to. */
+  resumeSessionAt?: string;
+  /** D95: with `resumeSessionAt` — the discarded turn's prompt uuid. */
+  resumeDropsTurn?: string;
   /**
    * The `cds-preview` in-process MCP server (PLAN D61), or null when the
    * daemon runs without a preview driver or the planner turned the tools
@@ -229,7 +240,7 @@ export class Session {
     // `sessionId` lets us name the session up front. Without it the id only
     // arrives with the init event, which the CLI does not emit until the first
     // user turn is pushed.
-    this.id = options.resume ?? randomUUID();
+    this.id = options.sessionId ?? options.resume ?? randomUUID();
 
     this.run = query({
       prompt: this.queue,
@@ -266,7 +277,15 @@ export class Session {
         // go through the control methods below instead.
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.resume ? { resume: options.resume } : { sessionId: this.id }),
+        ...(options.resume
+          ? {
+              resume: options.resume,
+              // D95: a fork keeps the old transcript and continues as OUR id.
+              ...(options.sessionId ? { sessionId: options.sessionId, forkSession: true } : {}),
+              ...(options.resumeSessionAt ? { resumeSessionAt: options.resumeSessionAt } : {}),
+              ...(options.resumeDropsTurn ? { resumeDropsTurn: options.resumeDropsTurn } : {}),
+            }
+          : { sessionId: this.id }),
         canUseTool: (toolName, input, opts) => this.canUse(toolName, input, opts),
       },
     });

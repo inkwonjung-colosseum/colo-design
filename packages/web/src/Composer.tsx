@@ -505,6 +505,7 @@ export function Composer({
   onRefreshUsage,
   running,
   queued = 0,
+  seed,
   sendKey,
   selector,
   onSetModel,
@@ -532,6 +533,11 @@ export function Composer({
    * 턴이 끝나면 0 — the one-line `다음 턴에 보냅니다` above the field.
    */
   queued?: number;
+  /**
+   * 고쳐서 다시 보내기 (PLAN D95): the planner's own words re-enter the
+   * field for an edit. The nonce re-applies the same text on repeat clicks.
+   */
+  seed?: { text: string; nonce: number };
   /**
    * 모델·노력·권한 chips. Before a session exists these carry what the next
    * one will start with, so the planner can set the run up while the
@@ -600,6 +606,17 @@ export function Composer({
       // Same story as the words: private mode keeps the in-memory map only.
     }
   }, [editor]);
+
+  // 되감기의 씨앗 (PLAN D95): every click re-writes the field — the planner
+  // edits there and sends by the usual key.
+  const seedNonce = useRef(-1);
+  useEffect(() => {
+    if (!seed || seed.nonce === seedNonce.current) return;
+    seedNonce.current = seed.nonce;
+    if (seed.text.trim() === "") return;
+    setEditor((prev) => ({ text: seed.text, attachments: prev.attachments }));
+    area.current?.focus();
+  }, [seed]);
 
   // Grow the textarea with its content, up to the CSS max-height.
   useEffect(() => {

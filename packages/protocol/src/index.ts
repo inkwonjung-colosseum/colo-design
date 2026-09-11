@@ -109,6 +109,23 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({ ...withId, type: z.literal("session.interrupt"), sessionId: z.string().min(1) }),
   z.object({ ...withId, type: z.literal("session.close"), sessionId: z.string().min(1) }),
+  /**
+   * 되감기 (PLAN D95): discard the k-th answer and receive it again — files
+   * (the turn's checkpoint) and memory (a truncating fork) go back together.
+   * `turn` is the 1-based answer index; `text` is what goes out again (the
+   * same words for 다시 요청, edited words for 고쳐서 다시 보내기). The reply
+   * carries the NEW session id.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.rewind"),
+    sessionId: z.string().min(1),
+    turn: z.number().int().positive(),
+    text: z.string().min(1),
+    images: z
+      .array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) }))
+      .optional(),
+  }),
   z.object({ ...withId, type: z.literal("session.delete"), sessionId: z.string().min(1) }),
   z.object({
     ...withId,
@@ -1005,6 +1022,13 @@ export interface HandoffStatusReport extends HandoffStatus {
 /** `comments.reply` — the answer went out under the planner's own name. */
 export interface DeveloperReviewReplied {
   ok: true;
+}
+
+/** `session.rewind` — the forked (or fresh) conversation to carry on in. */
+export interface SessionRewound {
+  sessionId: string;
+  /** True when the fork was refused and only the FILES went back (D95). */
+  memoryKept: boolean;
 }
 
 /**

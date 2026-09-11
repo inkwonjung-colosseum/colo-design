@@ -470,6 +470,16 @@ export interface DaemonApi {
   resolveComment: (id: string, resolved: boolean) => Promise<{ ok: true }>;
   /** 답하기 (PLAN D88): the planner's answer to one developer comment. */
   replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
+  /**
+   * 되감기 (PLAN D95): discard the k-th answer — files AND memory — and send
+   * `text` again. The reply is the NEW session id to carry on in.
+   */
+  rewind: (
+    sessionId: string,
+    turn: number,
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+  ) => Promise<{ sessionId: string; memoryKept: boolean }>;
   /** The four onboarding checks; read-only. */
   onboardingCheck: () => Promise<OnboardingStep[]>;
   /**
@@ -1004,6 +1014,11 @@ export function useDaemon(url: string | null): Daemon {
         call<{ ok: true }>({ type: "comments.resolve", commentId: id, resolved }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
+      rewind: (sessionId, turn, text, images) =>
+        call<{ sessionId: string; memoryKept: boolean }>(
+          { type: "session.rewind", sessionId, turn, text, ...(images ? { images } : {}) },
+          300_000,
+        ),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
           setOnboarding(steps);

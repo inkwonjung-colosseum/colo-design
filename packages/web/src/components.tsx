@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { AskQuestion, RepoStatus, TurnMarker } from "@cds-design/protocol";
 import { readTurn } from "@cds-design/protocol";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
@@ -610,6 +611,8 @@ export function Transcript({
   live = true,
   commands,
   onRetry,
+  onRewind,
+  onResendEdit,
   checkpoints,
   onRestoreCheckpoint,
 }: {
@@ -619,6 +622,13 @@ export function Transcript({
   commands?: RepoCommands;
   /** Offered on a failed turn's card: send the same words again (PLAN D35). */
   onRetry?: (text: string) => void;
+  /**
+   * 다시 요청 (PLAN D95): discard the k-th answer — files and memory — and
+   * receive it again. The k is this transcript's answer order.
+   */
+  onRewind?: (turn: number, text: string) => void;
+  /** 고쳐서 다시 보내기 (PLAN D95): the planner's words return to the composer. */
+  onResendEdit?: (text: string) => void;
   /** This session's turn-start snapshots (PLAN D52), oldest first. */
   checkpoints?: Array<{ id: string; turn: number }>;
   /** Puts the worktree back the way it stood before that answer (PLAN D52). */
@@ -658,8 +668,33 @@ export function Transcript({
           block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
         ),
   );
+  // D95: 되감기 확인 — k 가 마지막 답이 아니면 뒤의 답들도 함께 사라진다는
+  // 말을 한 번 묻는다. 마지막 답이면 곧장.
+  const [rewindAsk, setRewindAsk] = useState<{ turn: number; text: string; after: number } | null>(
+    null,
+  );
+  const totalAnswers = blocks.filter((block) => block.type === "text").length;
+  const askRewind = (turn: number, text: string) => {
+    if (!onRewind) return;
+    const after = totalAnswers - turn;
+    if (after > 0) setRewindAsk({ turn, text, after });
+    else onRewind(turn, text);
+  };
   return (
     <div className="transcript">
+      {rewindAsk && onRewind && (
+        <ConfirmDialog
+          title="답 되감기"
+          body={<>이 답을 버릴까요? <strong>이 답 이후의 답 {rewindAsk.after}개</strong>도 함께 사라집니다.</>}
+          hint="파일도 이 답 이전으로 돌아갑니다."
+          confirmLabel="버리고 다시 받기"
+          onConfirm={() => {
+            onRewind(rewindAsk.turn, rewindAsk.text);
+            setRewindAsk(null);
+          }}
+          onClose={() => setRewindAsk(null)}
+        />
+      )}
       {rows.map((row) => {
         if (row.kind === "activity") return <ActivitySummary key={row.id} steps={row.steps} />;
         if (row.kind === "todo") {
@@ -691,6 +726,16 @@ export function Transcript({
                     {file.split("/").pop()}
                   </span>
                 ))}
+                {onResendEdit && block.text.trim() !== "" && (
+                  <button
+                    type="button"
+                    className="bubble__resend"
+                    title="이 문장을 고쳐서 다시 보냅니다"
+                    onClick={() => onResendEdit(block.text)}
+                  >
+                    고쳐서 다시 보내기
+                  </button>
+                )}
               </div>
             );
           }
@@ -704,17 +749,29 @@ export function Transcript({
             return (
               <div key={block.id}>
                 <AssistantBubble block={block} />
-                {checkpoint && onRestoreCheckpoint && (
-                  <button
-                    type="button"
-                    className="revert"
-                    disabled={live}
-                    title="이 답변이 바꾼 화면 파일을, 이 답변이 시작하기 전 모습으로 되돌립니다"
-                    onClick={() => onRestoreCheckpoint(checkpoint.id)}
-                  >
-                    이 답변 이전으로 되돌리기
-                  </button>
-                )}
+                <div className="answer__actions">
+                  {checkpoint && onRestoreCheckpoint && (
+                    <button
+                      type="button"
+                      className="revert"
+                      disabled={live}
+                      title="이 답변이 바꾼 화면 파일을, 이 답변이 시작하기 전 모습으로 되돌립니다"
+                      onClick={() => onRestoreCheckpoint(checkpoint.id)}
+                    >
+                      이 답변 이전으로 되돌리기
+                    </button>
+                  )}
+                  {onRewind && !live && (
+                    <button
+                      type="button"
+                      className="revert"
+                      title="이 답을 버리고 파일·대화를 그 전으로 돌려 같은 말로 다시 받습니다"
+                      onClick={() => askRewind(assistantCount, lastUserText(blocks) ?? block.text)}
+                    >
+                      다시 요청
+                    </button>
+                  )}
+                </div>
               </div>
             );
           }

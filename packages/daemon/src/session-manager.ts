@@ -1,5 +1,6 @@
 import { deleteSession, getSessionInfo, getSessionMessages, listSessions, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { ChatEvent, SessionSummary, ThreadSummary } from "@cds-design/protocol";
+import { randomUUID } from "node:crypto";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 import { replayHistory } from "./translate.js";
 
@@ -281,4 +282,168 @@ export class SessionManager {
     const messages = await getSessionMessages(sessionId, { dir: cwd, limit: 1000 }).catch(() => []);
     return replayHistory(messages);
   }
+
+  /**
+   * 되감기 (PLAN D95): discard the k-th answer — files are ALREADY restored
+   * by the caller — and carry on in a forked session whose memory stops
+   * before that answer, re-sending `text`. When the CLI refuses the
+   * truncating fork (a deterministic refusal — never retried), the fallback
+   * is a fresh conversation on the restored files, and `memoryKept` comes
+   * back false so the card can say `Claude 의 기억은 그대로입니다`.
+   */
+  async rewind(input: {
+    sessionId: string;
+    cwd: string;
+    turn: number;
+    text: string;
+    images?: Array<{ mediaType: string; data: string }>;
+    /** The new session's construction options (cwd · CLI · policy · title). */
+    base: SessionOptions;
+  }): Promise<{ sessionId: string; memoryKept: boolean }> {
+    const old = this.live.get(input.sessionId);
+    const title = old?.title ?? input.base.title ?? NEW_SESSION_TITLE;
+    const raw = await getSessionMessages(input.sessionId, { dir: input.cwd, limit: 1000 }).catch(() => []);
+    const cutoff = resolveRewindCutoff(raw as Array<Record<string, unknown>>, input.turn);
+    if (cutoff === null && raw.length > 0) {
+      // 존재하는 대화에서 k 가 넘친다 — 호출자 오류.
+      throw new Error(`되돌릴 ${input.turn}번째 답이 이 대화에 없습니다.`);
+    }
+    if (cutoff === null) {
+      // 대화록이 비어 있어 어디를 남길지 모른다 — 기억을 못 찾은 것이니
+      // 폴백이 정직한 답이다: 새 대화로 문장만 다시 보낸다(파일은 이미
+      // 돌아갔다).
+      await old?.close();
+      this.live.delete(input.sessionId);
+      this.settledTurns.delete(input.sessionId);
+      const fresh = new Session({ ...input.base, title }, this.events);
+      this.live.set(fresh.id, fresh);
+      fresh.send(input.text, input.images);
+      return { sessionId: fresh.id, memoryKept: false };
+    }
+
+    await old?.close();
+    this.live.delete(input.sessionId);
+    this.settledTurns.delete(input.sessionId);
+
+    if (cutoff.cut === null) {
+      // k = 1: nothing to keep — a fresh conversation carries the title on.
+      const fresh = new Session({ ...input.base, title }, this.events);
+      this.live.set(fresh.id, fresh);
+      fresh.send(input.text, input.images);
+      return { sessionId: fresh.id, memoryKept: false };
+    }
+
+    // The fork: keep the transcript up to `cut`, drop the turn whose prompt
+    // is `drops`. The CLI validates the range and refuses deterministically —
+    // that refusal (or any first-turn failure) falls back, it never retries.
+    const outcomeBox: {
+      value: { type: "end"; subtype: string; resultText: string | null } | { type: "error" } | null;
+    } = { value: null };
+    const shim: SessionEvents = {
+      ...this.events,
+      onEvent: (id, event) => {
+        if (event.kind === "turn.end" && outcomeBox.value === null) {
+          outcomeBox.value = { type: "end", subtype: event.subtype, resultText: event.resultText };
+        }
+        this.events.onEvent(id, event);
+      },
+      onState: (id, state, detail) => {
+        if (state === "error" && outcomeBox.value === null) outcomeBox.value = { type: "error" };
+        this.events.onState(id, state, detail);
+      },
+    };
+    const forkId = randomUUID();
+    const fork = new Session(
+      {
+        ...input.base,
+        title,
+        resume: input.sessionId,
+        sessionId: forkId,
+        resumeSessionAt: cutoff.cut,
+        resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+        forkSession: true,
+      },
+      shim,
+    );
+    this.live.set(fork.id, fork);
+    // The refusal surfaces within the first exchange; a healthy fork sits
+    // idle waiting for input. Either way the wait is bounded.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (outcomeBox.value !== null) break;
+      if (fork.state === "idle" || fork.state === "closed") break;
+      await new Promise((ok) => setTimeout(ok, 250));
+    }
+    const outcome = outcomeBox.value;
+    const rejected =
+      outcome !== null &&
+      (outcome.type === "error" ||
+        (outcome.type === "end" &&
+          outcome.subtype !== "success" &&
+          (outcome.resultText ?? "").startsWith("Resume rejected")));
+    if (outcome !== null && rejected) {
+      // Deterministic refusal: close the failed fork, go fresh, keep the
+      // evidence — the files are already back.
+      await fork.close().catch(() => undefined);
+      this.live.delete(fork.id);
+      const fresh = new Session({ ...input.base, title }, this.events);
+      this.live.set(fresh.id, fresh);
+      fresh.send(input.text, input.images);
+      return { sessionId: fresh.id, memoryKept: false };
+    }
+
+    fork.send(input.text, input.images);
+    // The fork won: the old transcript goes (D76's path) — the planner just
+    // decided that answer never happened.
+    await this.remove(input.sessionId, input.cwd).catch(() => undefined);
+    return { sessionId: fork.id, memoryKept: true };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 되감기의 절단점 (PLAN D95 §9) — 순수 함수, 단위 테스트가 케이스를 박는다.
+// ---------------------------------------------------------------------------
+
+export interface RewindCutoff {
+  /** The chain uuid the truncated resume keeps up to; null when k = 1. */
+  cut: string | null;
+  /** The discarded turn's prompt uuid, per `resumeDropsTurn`. */
+  drops: string | null;
+  answerCount: number;
+}
+
+/** A user message that STARTED a turn: not a tool-result carrier, not synthetic. */
+function isPrompt(message: Record<string, unknown>): boolean {
+  if (message.type !== "user") return false;
+  if (message.isSynthetic === true) return false;
+  const content = message.message as { content?: unknown } | undefined;
+  const value = content?.content;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) {
+    return !value.some((block) => (block as { type?: unknown })?.type === "tool_result");
+  }
+  return false;
+}
+
+/**
+ * k 번째 답을 버리는 절단점: kept = prompt[k] 바로 앞의 마지막 체인 항목
+ * (도구 결과 캐리어가 뒤에 있으면 그것 — SDK 문서의 규칙), drops = prompt[k].
+ */
+export function resolveRewindCutoff(
+  raw: Array<Record<string, unknown>>,
+  turn: number,
+): RewindCutoff | null {
+  const promptIndexes: number[] = [];
+  raw.forEach((message, index) => {
+    if (isPrompt(message)) promptIndexes.push(index);
+  });
+  if (turn < 1 || turn > promptIndexes.length) return null;
+  const start = promptIndexes[turn - 1]!;
+  const kept = start > 0 ? raw[start - 1] : null;
+  const keptUuid = typeof kept?.uuid === "string" ? kept.uuid : null;
+  const dropsUuid = typeof raw[start]?.uuid === "string" ? (raw[start]!.uuid as string) : null;
+  return {
+    cut: turn === 1 ? null : keptUuid,
+    drops: dropsUuid,
+    answerCount: promptIndexes.length,
+  };
 }

@@ -81,7 +81,13 @@ export function Onboarding({
     <div className="onboarding">
       <header className="onboarding__head">
         <div className="onboarding__brand" aria-hidden="true">
-          <span className="onboarding__mark" />
+          <img
+            className="onboarding__mark"
+            src="/colonova-icon.svg"
+            alt=""
+            width={36}
+            height={36}
+          />
         </div>
         <h1>CDS Design 시작하기</h1>
         <p className="hint">이 컴퓨터에서 한 번만 확인하는 네 단계입니다.</p>

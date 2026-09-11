@@ -27,6 +27,7 @@ export function HandoffPanel({
   proposedTitle,
   proposedBody,
   sessionId,
+  onOpenSettings,
   onClose,
 }: {
   daemon: Daemon;
@@ -34,6 +35,8 @@ export function HandoffPanel({
   proposedBody: string;
   /** The live 화면 thread; a failing gate lands in it as Claude's next task. */
   sessionId: string | null;
+  /** D90 ⓑ: pr 실패는 Claude 이 아닌 설정의 문제다 — 여기서 바로 연다. */
+  onOpenSettings: () => void;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(proposedTitle);
@@ -113,7 +116,17 @@ export function HandoffPanel({
               {running && <span className="spinner" />}
             </div>
           )}
-          {failed && diffStatus?.detail && (
+          {failed && diffStatus?.gate === "pr" && (
+            <div className="notice notice--error" data-testid="pr-failure">
+              <span className="notice__text">
+                넘기지 못했습니다 — Claude 가 고칠 수 없는 문제입니다. 설정에서 토큰과 레포 주소를 확인해 주세요.
+              </span>
+              <button type="button" className="ghost" onClick={onOpenSettings}>
+                설정 열기
+              </button>
+            </div>
+          )}
+          {failed && diffStatus?.gate !== "pr" && diffStatus?.detail && (
             <pre className="diff__fail">
               <code>{diffStatus.detail}</code>
             </pre>

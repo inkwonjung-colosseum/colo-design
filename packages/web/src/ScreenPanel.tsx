@@ -310,7 +310,7 @@ export function ScreenPanel({
   const [handoffOpen, setHandoffOpen] = useState(false);
   /** 저장 기록 드로어 (PLAN D53) — 더 보기 ▾ 메뉴에서 연다. */
   const [historyOpen, setHistoryOpen] = useState(false);
-  /** 더 보기 ▾ 메뉴 — 사이클 동작이 항상 있는 자리 (PLAN D44). */
+  /** 더 보기 ▾ 메뉴 — 점검·기록·버리기·목록의 자리 (PLAN D82). */
   const [menuOpen, setMenuOpen] = useState(false);
   /** 변경 버리기 확인 — this app's dialog (결함③), with the file list it names. */
   const [discardConfirm, setDiscardConfirm] = useState(false);
@@ -318,13 +318,13 @@ export function ScreenPanel({
   const [discardFiles, setDiscardFiles] = useState<DiffFile[] | null>(null);
 
   /**
-   * 코멘트 모드(PLAN D58) — the truth the preview toolbar's 💬 toggle draws
+   * 코멘트 모드(PLAN D58 → D79) — 핀만 찍는 좁은 뜻의 토글; the preview toolbar's 💬 toggle draws
    * and the frame is re-told. ScreenPanel owns it because the popover and
    * the badge below read the same comments story.
    */
   const [commentsOn, setCommentsOn] = useState(false);
   /**
-   * 코멘트 기록(PLAN D57): every comment the pins left behind, resolved ones
+   * 코멘트 기록(PLAN D57 → D78): every comment the pins left behind, resolved ones
    * in. Null until the first read returns; the badge, the popover and
    * the popover all count from this one list.
    */
@@ -792,6 +792,59 @@ export function ScreenPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnState, followClaude]);
 
+  // --- 게이트 뒤의 자동 재시도 (D90 ⓐ) ---------------------------------------
+  // 검사·빌드가 실패하면 Claude 에게 넘어가고, 그 고침 턴이 끝나면 같은
+  // 동작을 한 번 다시 부른다 — 기획자가 저장을 다시 눌러야 한다는 말을 아무도
+  // 해 주지 않기 때문. 두 번 실패하면 멈춘다(무한 루프 없음). 중지 로 끊긴
+  // 턴이면 재시도도 취소한다.
+  const [gateRetryNote, setGateRetryNote] = useState<string | null>(null);
+  const [gateFailed2, setGateFailed2] = useState(false);
+  const gateAction = useRef<"save" | "handoff">("save");
+  const gateRetried = useRef(false);
+  const gateFixRan = useRef(false);
+  const diffStatus = daemon.diffStatus;
+
+  useEffect(() => {
+    const status = daemon.diffStatus;
+    if (!status) return;
+    if (status.stage === "handing-off") gateAction.current = "handoff";
+    else if (status.stage === "computing" || status.stage === "gating" || status.stage === "pushing") {
+      gateAction.current = "save";
+    }
+    if (status.stage === "published" || status.stage === "handed-off") {
+      setGateRetryNote(null);
+      setGateFailed2(false);
+      gateRetried.current = false;
+      return;
+    }
+    if (status.stage !== "failed") return;
+    if (status.gate !== "check" && status.gate !== "build") return;
+    if (gateFailed2 || gateRetried.current || !sessionId) return;
+    setGateRetryNote(gateAction.current === "handoff" ? "다시 넘기는 중…" : "다시 저장하는 중…");
+  }, [daemon.diffStatus, sessionId, gateFailed2]);
+
+  useEffect(() => {
+    if (turnState === "running") {
+      gateFixRan.current = true;
+      return;
+    }
+    if (!gateFixRan.current || !gateRetryNote) return;
+    gateFixRan.current = false;
+    // 중지로 끊긴 턴: the transcript's last block says interrupted — the
+    // planner stopped the fix, so the retry must not fire behind their back.
+    const blocks = sessionId ? (daemon.sessions[sessionId]?.blocks ?? []) : [];
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "turn" && last.subtype === "interrupted") {
+      setGateRetryNote(null);
+      return;
+    }
+    const action = gateAction.current;
+    setGateRetryNote(null);
+    gateRetried.current = true;
+    if (action === "handoff") void api.handoff({ sessionId: sessionId ?? undefined });
+    else void api.save(undefined, sessionId);
+  }, [turnState, gateRetryNote, sessionId]);
+
   const errorKind = errorKindOf(repo);
   // Only a named preview death takes over the preview frame; anything else
   // (a failed clone or pull, say) is answered by the retry panel, because the
@@ -1045,6 +1098,16 @@ export function ScreenPanel({
           <span className="notice__text">{lookBlocked}</span>
         </div>
       )}
+      {gateRetryNote && (
+        <div className="notice notice--info" role="status" data-testid="gate-retry">
+          <span className="notice__text">{gateRetryNote}</span>
+        </div>
+      )}
+      {gateFailed2 && (
+        <div className="notice notice--error" role="status" data-testid="gate-failed2">
+          <span className="notice__text">두 번 실패했습니다 — 대화에서 이어 가세요.</span>
+        </div>
+      )}
       {/* The stage wrapper gives the PiP (PLAN D63) its coordinates: the
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
@@ -1098,6 +1161,7 @@ export function ScreenPanel({
           proposedTitle={proposedTitle}
           proposedBody={proposedBody}
           sessionId={sessionId}
+          onOpenSettings={onOpenSettings}
           onClose={() => setHandoffOpen(false)}
         />
       )}

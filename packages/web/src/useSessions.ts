@@ -76,6 +76,16 @@ export interface Sessions {
   acceptRemove: () => Promise<void>;
   submit: (text: string, attachments: Attachment[]) => Promise<void>;
   /**
+   * 되감기 (PLAN D95): discard the k-th answer — files and memory go back —
+   * and send `text` again. The daemon forks the conversation; this side
+   * adopts the new id (제목은 데몬이 물려준다) and refreshes the list.
+   */
+  rewindAnswer: (
+    turn: number,
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+  ) => Promise<void>;
+  /**
    * Machine-authored turn: no composer, no attachments. `images` rides the
    * same wire a composer attachment does (PLAN D87) — the pin crops, the
    * 화면 보여 주기 frame.
@@ -387,6 +397,25 @@ export function useSessions(
     }
   };
 
+  const rewindAnswer = async (
+    turn: number,
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+  ) => {
+    if (!activeId) return;
+    try {
+      const { sessionId } = await api.rewind(activeId, turn, text, images);
+      if (sessionId !== activeId) {
+        ensureSession(sessionId);
+        markLive(sessionId);
+        setActiveId(sessionId);
+      }
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   /**
    * A machine-authored turn (the comment envelope): the same wire a typed
    * message uses, minus the composer. `images` rides along (D87).
@@ -492,6 +521,7 @@ export function useSessions(
     cancelRemove,
     acceptRemove,
     submit,
+    rewindAnswer,
     sendTurn,
     queued,
     refresh,

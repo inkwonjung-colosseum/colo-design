@@ -38,6 +38,9 @@ export function ChatColumn({
   /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
   const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
   const [restoring, setRestoring] = useState(false);
+  // 고쳐서 다시 보내기 (PLAN D95): the planner's own words return to the
+  // composer for an edit; the nonce re-fires the seed on every click.
+  const [seed, setSeed] = useState<{ text: string; nonce: number }>({ text: "", nonce: 0 });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
@@ -239,6 +242,8 @@ export function ChatColumn({
             live={sessions.running || restoring}
             commands={daemon.repo?.commands}
             onRetry={(text) => void sessions.submit(text, [])}
+            onRewind={(turn, text) => void sessions.rewindAnswer(turn, text)}
+            onResendEdit={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
           />
@@ -304,6 +309,7 @@ export function ChatColumn({
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
         queued={sessions.queued}
+        seed={seed}
         sendKey={sendKey}
         onSend={(text, attachments) => sessions.submit(text, attachments)}
         onInterrupt={() => activeId && void api.interrupt(activeId)}

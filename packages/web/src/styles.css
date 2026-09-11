@@ -3100,6 +3100,25 @@ input:focus, textarea:focus, select:focus {
    not work to do. */
 .diff__file--resolved .diff__path, .diff__file--resolved .hint { color: var(--muted); }
 
+/* 되감기 (PLAN D95): the answer's action row and the planner bubble's
+   고쳐서 다시 보내기. */
+.answer__actions { display: flex; gap: 10px; align-items: center; }
+.bubble--user { position: relative; }
+.bubble__resend {
+  display: block;
+  margin-top: 6px;
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: 500 11px var(--sans);
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.bubble__resend:hover { color: var(--text); }
+
 /* 코치 마크 (PLAN D92) — one sentence + 알겠어요, once each. */
 .coach {
   display: inline-flex;
@@ -3627,7 +3646,7 @@ input:focus, textarea:focus, select:focus {
 .preview__stage--mobile .preview__device { width: 390px; flex: none; }
 .preview__stage--tablet .preview__device { width: 768px; flex: none; }
 
-/* 프레임 머리 (PLAN D44 → D66): 브라우저 줄 — 이동 · 새로 고침 · 주소(네이티브)
+/* 프레임 머리 (PLAN D66): 브라우저 줄 — 이동 · 새로 고침 · 주소(네이티브)
    또는 화면 이름(iframe 경로). 항상 그린다: 화면을 고르기 전에도 머리가 있어야
    미리보기 칸이 무언가를 감추는 것처럼 보이지 않는다. */
 .preview__device {
@@ -3810,7 +3829,7 @@ input:focus, textarea:focus, select:focus {
   color: var(--muted);
 }
 
-/* 더 보기 ▾ (PLAN D44) — 사이클 동작이 항상 있는 자리. */
+/* 더 보기 ▾ (PLAN D82) — 점검·기록·버리기·목록의 자리. */
 .screenpanel__more { position: relative; display: inline-flex; }
 .screenpanel__menu { top: calc(100% - 4px); bottom: auto; right: 0; left: auto; }
 .selector__row:disabled { opacity: 0.45; cursor: default; }
@@ -3917,23 +3936,9 @@ input:focus, textarea:focus, select:focus {
 
 .onboarding__brand { display: flex; justify-content: center; margin-bottom: 10px; }
 .onboarding__mark {
-  position: relative;
   width: 36px;
   height: 36px;
-  border-radius: var(--r-lg);
-  background: var(--brand-grad);
-  box-shadow: 0 10px 26px -10px var(--accent-glow);
-}
-.onboarding__mark::after {
-  /* an abstract screen inside the mark */
-  content: "";
-  position: absolute;
-  left: 9px;
-  right: 9px;
-  top: 11px;
-  bottom: 9px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.88);
+  filter: drop-shadow(0 10px 26px var(--accent-glow));
 }
 .onboarding__meter {
   position: relative;
