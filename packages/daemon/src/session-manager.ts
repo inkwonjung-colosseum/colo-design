@@ -156,6 +156,24 @@ export class SessionManager {
     await Promise.all(ids.map((id) => this.close(id)));
   }
 
+  /**
+   * A removed project's conversations go with its folder (PLAN D77). The
+   * transcript store is keyed by the clone's path, so once the folder is
+   * gone nothing can render these again — and a same-named re-add of the
+   * repo would resurrect dead threads against an empty worktree. A session
+   * that never sent a message wrote no transcript, and a store that has
+   * already forgotten an id is a no-op, not a failure.
+   */
+  async removeWhere(cwd: string): Promise<void> {
+    await this.closeWhere(cwd);
+    const stored = await listSessions({ dir: cwd, limit: 200 }).catch(() => []);
+    await Promise.all(
+      stored.map((info) => deleteSession(info.sessionId, { dir: cwd }).catch(() => undefined)),
+    );
+    this.disk.delete(cwd);
+    this.diskStale.delete(cwd);
+  }
+
   get pendingCount(): number {
     let total = 0;
     for (const session of this.live.values()) total += session.pendingCount;

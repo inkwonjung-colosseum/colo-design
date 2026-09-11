@@ -19,7 +19,7 @@ export function ChatColumn({
   disabled,
   titleFor,
   onRenameSession,
-  onArchiveSession,
+  onDeleteSession,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -30,8 +30,9 @@ export function ChatColumn({
   titleFor: (session: SessionSummary) => string;
   /** 더블클릭 · F2 이름 바꾸기 (PLAN D59) — 설정's store keeps it. */
   onRenameSession: (sessionId: string, title: string) => void;
-  /** The head's `···` → 보관 (PLAN D54): the thread leaves the list. */
-  onArchiveSession: (session: SessionSummary) => void;
+  /** The head's `···` → 지우기 (PLAN D76): the transcript goes for good, one
+      unconditional confirm on the way. */
+  onDeleteSession: (session: SessionSummary) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
   /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
@@ -93,6 +94,18 @@ export function ChatColumn({
     setUnpinned(false);
   }, [activeId]);
 
+  // The head's menu answers Escape like every menu in the app, and the
+  // backdrop under it takes any click that misses the menu — the same rules
+  // the composer's selector chips already keep.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   // Checkpoints exist per completed turn (PLAN D52): refetch when a turn
   // settles or the thread changes, and offer the matching snapshot on each
   // answer. A failed fetch just leaves the buttons off.
@@ -138,6 +151,9 @@ export function ChatColumn({
     <main className="planner__chat">
       {activeSummary && (
         <header className="thread">
+          {/* A turn in flight announces itself as light, not words: the lamp
+              exists only while the daemon is streaming this thread's turn. */}
+          {sessions.running && <span className="thread__lamp" aria-hidden />}
           {renaming ? (
             <input
               className="thread__rename"
@@ -181,7 +197,9 @@ export function ChatColumn({
             ···
           </button>
           {menuOpen && (
-            <span className="selector__menu thread__menu" role="menu">
+            <>
+              <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} />
+              <span className="selector__menu thread__menu" role="menu">
               <button type="button" role="menuitem" className="selector__row" onClick={beginRename}>
                 <span className="selector__label">이름 바꾸기</span>
               </button>
@@ -191,12 +209,13 @@ export function ChatColumn({
                 className="selector__row"
                 onClick={() => {
                   setMenuOpen(false);
-                  onArchiveSession(activeSummary);
+                  onDeleteSession(activeSummary);
                 }}
               >
-                <span className="selector__label">보관</span>
+                <span className="selector__label">지우기</span>
               </button>
-            </span>
+              </span>
+            </>
           )}
         </header>
       )}
@@ -277,7 +296,7 @@ export function ChatColumn({
         placeholder={placeholder}
         usage={sessions.usage}
         plan={daemon.status?.planUsage ?? null}
-        quickActions={daemon.status?.quickActions ?? null}
+        onRefreshUsage={sessions.refreshUsage}
         selector={sessions.selector}
         commands={sessions.commands}
         onSetModel={(model) => void sessions.setModel(model)}

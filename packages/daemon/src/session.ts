@@ -202,6 +202,12 @@ export class Session {
   private run: Query;
   private consumer: Promise<void>;
   private closed = false;
+  /**
+   * 결함① (PLAN 0단계): set by `interrupt()` so the abort the SDK throws in
+   * the consume loop reads as the planner's own 중지 — a turn end, not a
+   * crash. Cleared on the next `send()`, so a later real error still surfaces.
+   */
+  private interrupting = false;
 
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
@@ -288,7 +294,21 @@ export class Session {
       const detail = error instanceof Error ? error.message : String(error);
       // The deliberate shutdown in close() aborts the in-flight query; that
       // abort must not read as a crash — no error card, no error state.
-      if (!this.closed) {
+      // Same for the planner's own 중지 (결함①): the SDK surfaces it as an
+      // abort exception, and the card vocabulary already has the word.
+      if (this.interrupting && !this.closed) {
+        this.interrupting = false;
+        this.events.onEvent(this.id, {
+          kind: "turn.end",
+          subtype: "interrupted",
+          isError: false,
+          costUsd: null,
+          numTurns: null,
+          durationMs: null,
+          resultText: null,
+        });
+        this.setState("idle");
+      } else if (!this.closed) {
         this.events.onEvent(this.id, { kind: "notice", level: "error", text: detail });
         this.setState("error", detail);
       }
@@ -489,6 +509,9 @@ export class Session {
     if (this.closed) throw new Error("session is closed");
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
     this.previewTools?.resetTurnQuota();
+    // A fresh send is a fresh failure domain: an old interrupt's flag must
+    // not swallow this turn's real error (결함①).
+    this.interrupting = false;
     // Documents go to disk and reach Claude as `@specs/…` mentions: its Read
     // tool handles PDF page ranges and image downscaling, and the clone keeps
     // the source document for later sessions.
@@ -540,7 +563,16 @@ export class Session {
   }
 
   async interrupt(): Promise<void> {
-    await this.run.interrupt();
+    // Mark first: the abort the CLI throws back in the consume loop is THIS
+    // planner action, and the catch must turn it into `멈추었습니다` (결함①).
+    this.interrupting = true;
+    try {
+      await this.run.interrupt();
+    } catch {
+      // Interrupt itself refused — nothing is being aborted, so the flag
+      // would only mask the next genuine error.
+      this.interrupting = false;
+    }
     this.setState("idle");
   }
   async contextUsage(): Promise<ContextUsage | null> {
@@ -654,6 +686,44 @@ export class Session {
     }
     await this.consumer.catch(() => undefined);
     this.setState("closed");
+  }
+}
+
+/**
+ * The `/` palette before any thread exists. A live session answers from its
+ * own CLI (`Session.commands`); this boots the CLI just far enough to ask the
+ * same question — the init handshake, no model turn, no transcript — so an
+ * empty workspace still reads like the terminal's `/`. The prompt stream
+ * never yields; `close` tears the process down.
+ */
+export async function probeCommands(options: {
+  cwd: string;
+  executable: string | null;
+}): Promise<SessionCommand[]> {
+  if (!options.executable) return [];
+  const never: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
+  };
+  const run = query({
+    prompt: never,
+    options: {
+      cwd: realpathBestEffort(options.cwd),
+      pathToClaudeCodeExecutable: options.executable,
+      // The same user/project configuration a session loads, so the probe's
+      // list is the one the first session will actually answer to.
+      settingSources: ["user", "project", "local"],
+    },
+  });
+  try {
+    const commands = await run.supportedCommands();
+    return commands.map((command) => ({
+      name: command.name,
+      description: command.description,
+      argumentHint: command.argumentHint ?? "",
+      aliases: command.aliases ?? [],
+    }));
+  } finally {
+    run.close();
   }
 }
 

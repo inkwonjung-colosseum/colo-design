@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { OnboardingStep, OnboardingStepId } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
@@ -80,9 +80,23 @@ export function Onboarding({
   return (
     <div className="onboarding">
       <header className="onboarding__head">
+        <div className="onboarding__brand" aria-hidden="true">
+          <span className="onboarding__mark" />
+        </div>
         <h1>CDS Design 시작하기</h1>
         <p className="hint">이 컴퓨터에서 한 번만 확인하는 네 단계입니다.</p>
       </header>
+
+      {/* The gates answered so far, as one quiet fill — motion makes the
+          machine's progress legible without a word. */}
+      {steps.length > 0 && (
+        <div className="onboarding__meter" aria-hidden="true">
+          <span
+            className="onboarding__meterfill"
+            style={{ width: `${(steps.filter((step) => step.status === "pass").length / steps.length) * 100}%` }}
+          />
+        </div>
+      )}
 
       {steps.length === 0 && !error && <p className="hint">단계를 확인하는 중…</p>}
       {error && (
@@ -100,6 +114,7 @@ export function Onboarding({
             <li
               key={id}
               className={`onboarding__step onboarding__step--${step.status}${open ? "" : " onboarding__step--line"}`}
+              style={{ "--i": STEP_ORDER.indexOf(id) } as CSSProperties}
             >
               <div className="onboarding__stephead">
                 <span className={`onboarding__glyph onboarding__glyph--${step.status}`}>
@@ -164,7 +179,7 @@ export function Onboarding({
 
       {!blocked && steps.length > 0 && (
         <div className="onboarding__done">
-          <button type="button" className="primary" onClick={onDone}>
+          <button type="button" className="primary onboarding__cta" onClick={onDone}>
             시작하기
           </button>
         </div>

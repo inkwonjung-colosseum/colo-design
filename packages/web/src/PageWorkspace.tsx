@@ -5,9 +5,8 @@ import { useSessions } from "./useSessions";
 import { ChatColumn } from "./ChatColumn";
 import { ScreenPanel } from "./ScreenPanel";
 import { Palette } from "./Palette";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
-  loadArchivedSessionIds,
-  saveArchivedSessionIds,
   PREVIEW_WIDTH_BOUNDS,
   type ChatSettings,
   type LayoutSettings,
@@ -42,15 +41,14 @@ function clampWidth(value: number, bodyWidth: number): number {
 
 /**
  * What the sidebar tree may ask of the workspace (PLAN D59): the open, the
- * new, the archive. Shell holds the handle and hands the tree its callbacks;
+ * new, the delete. Shell holds the handle and hands the tree its callbacks;
  * the flows live here because only this hook knows which thread is open.
  */
 export interface WorkspaceHandle {
   openThread: (slug: string, thread: ThreadSummary) => void;
   newThread: (slug: string) => void;
-  /** `보관된 대화 N` — the palette, archive section open. */
-  openArchive: (slug: string) => void;
-  archiveThread: (slug: string, thread: ThreadSummary) => void;
+  /** 지우기, from a leaf's `···` (PLAN D76). */
+  deleteThread: (slug: string, thread: ThreadSummary) => void;
 }
 
 /**
@@ -95,7 +93,6 @@ export function PageWorkspace({
    */
   const sessions = useSessions(daemon, {
     ready: daemon.repo?.phase === "ready",
-    confirmBeforeDelete: settings.confirmBeforeDelete,
     chat: settings.chat,
     onChatChange,
   });
@@ -118,10 +115,10 @@ export function PageWorkspace({
    * without resubscribing on every render. These are the app's own chords —
    * they carry a modifier, so typing in the composer never meets them.
    */
-  const [palette, setPalette] = useState<{ archived?: boolean } | null>(null);
+  const [palette, setPalette] = useState(false);
   const shortcuts = useRef({ palette: () => {}, newSession: () => {}, settings: () => {} });
   shortcuts.current = {
-    palette: () => setPalette((open) => (open ? null : {})),
+    palette: () => setPalette((open) => !open),
     newSession: () => void sessions.create(),
     settings: onOpenSettings,
   };
@@ -134,17 +131,16 @@ export function PageWorkspace({
   /**
    * A jump across projects (PLAN D59 rule 1): the click landed while another
    * project was active. The switch runs first; when the registry moves, the
-   * stashed ask — open a thread, start one, open the archive — lands in its
-   * own project. One click for the planner, two hops here.
+   * stashed ask — open a thread, start one — lands in its own project. One
+   * click for the planner, two hops here.
    */
-  const jump = useRef<{ slug: string; threadId?: string; fresh?: boolean; archive?: boolean } | null>(null);
+  const jump = useRef<{ slug: string; threadId?: string; fresh?: boolean } | null>(null);
   useEffect(() => {
     const pending = jump.current;
     if (!pending || daemon.activeSlug !== pending.slug) return;
     jump.current = null;
     if (pending.threadId) void openThreadById(pending.threadId);
     else if (pending.fresh) void sessions.create();
-    else if (pending.archive) setPalette({ archived: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [daemon.activeSlug]);
 
@@ -175,7 +171,7 @@ export function PageWorkspace({
     await sessions.resume(threadId);
   };
 
-  const jumpTo = (pending: { slug: string; threadId?: string; fresh?: boolean; archive?: boolean }) => {
+  const jumpTo = (pending: { slug: string; threadId?: string; fresh?: boolean }) => {
     if (jump.current) return;
     jump.current = pending;
     void daemon.api.projectActivate(pending.slug).catch(() => {
@@ -194,27 +190,20 @@ export function PageWorkspace({
       if (slug === daemon.activeSlug) void sessions.create();
       else jumpTo({ slug, fresh: true });
     },
-    openArchive: (slug) => {
-      if (slug === daemon.activeSlug) setPalette({ archived: true });
-      else jumpTo({ slug, archive: true });
-    },
-    archiveThread: (slug, thread) => {
-      if (slug === daemon.activeSlug) {
-        const listed = sessions.list.find((session) => session.sessionId === thread.id);
-        void sessions.remove(
-          listed ?? {
-            sessionId: thread.id,
-            title: thread.title,
-            lastModified: Date.parse(thread.updatedAt) || 0,
-            live: false,
-            state: "closed",
-          },
-        );
-        return;
-      }
-      // An inactive project's archive is a settings-store hide; no live
-      // thread of it can be open here.
-      saveArchivedSessionIds(slug, [...loadArchivedSessionIds(slug), thread.id]);
+    deleteThread: (slug, thread) => {
+      // 지우기 is the active leaf's item alone (PLAN D76): the daemon
+      // resolves a delete inside the active clone's transcript store.
+      if (slug !== daemon.activeSlug) return;
+      const listed = sessions.list.find((session) => session.sessionId === thread.id);
+      void sessions.remove(
+        listed ?? {
+          sessionId: thread.id,
+          title: thread.title,
+          lastModified: Date.parse(thread.updatedAt) || 0,
+          live: false,
+          state: "closed",
+        },
+      );
     },
   }));
 
@@ -341,7 +330,7 @@ export function PageWorkspace({
           disabled={false}
           titleFor={titleFor}
           onRenameSession={onRenameSession}
-          onArchiveSession={(session) => void sessions.remove(session)}
+          onDeleteSession={(session) => void sessions.remove(session)}
         />
       </div>
       <Splitter
@@ -374,7 +363,6 @@ export function PageWorkspace({
           activeSessionId={sessions.activeId}
           projects={daemon.projects}
           activeSlug={daemon.activeSlug}
-          openArchived={palette.archived ?? false}
           onOpenThread={(slug, thread) => {
             if (slug === daemon.activeSlug) void openThreadById(thread.id);
             else jumpTo({ slug, threadId: thread.id });
@@ -383,10 +371,22 @@ export function PageWorkspace({
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
           onAddProject={onAddProject}
           onOpenSettings={onOpenSettings}
-          archivedSessions={sessions.archived}
-          onRestoreSession={(session) => sessions.restore(session)}
-          onDeleteSession={(session) => void sessions.purge(session)}
-          onClose={() => setPalette(null)}
+          onClose={() => setPalette(false)}
+        />
+      )}
+
+      {sessions.confirmRemove && (
+        <ConfirmDialog
+          title="대화 삭제"
+          body={
+            <>
+              <strong>{titleFor(sessions.confirmRemove)}</strong> 대화를 삭제할까요?
+            </>
+          }
+          hint="대화 기록이 영구히 사라집니다."
+          confirmLabel="삭제"
+          onConfirm={() => void sessions.acceptRemove()}
+          onClose={sessions.cancelRemove}
         />
       )}
     </div>

@@ -52,7 +52,9 @@ function ConnectScreen({
       >
         <GearIcon size={15} />
       </button>
-      <h1>CDS Design</h1>
+      <h1>
+        <span className="brand-name">CDS Design</span>
+      </h1>
       <p>
         이 컴퓨터에서 데몬을 켠 다음, 데몬이 출력한 주소를 붙여 넣어 주세요. 데몬은 이미 로그인해 둔
         Claude Code를 그대로 사용하므로, 본인 구독으로 실행됩니다.

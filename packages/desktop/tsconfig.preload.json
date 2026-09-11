@@ -3,12 +3,11 @@
   "compilerOptions": {
     "module": "CommonJS",
     "moduleResolution": "node10",
-    "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["src/preload.ts"]
+  "include": ["src/preload.ts", "src/preview-preload.ts"]
 }

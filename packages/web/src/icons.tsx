@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Save,
   Settings,
+  ServerOff,
   ShieldCheck,
   Smartphone,
   TriangleAlert,
@@ -70,6 +71,8 @@ export const RestartIcon = make(RotateCcw, 13);
 export const CopyIcon = make(Copy, 12);
 export const LinkIcon = make(Link, 12);
 export const WarnIcon = make(TriangleAlert, 12);
+/** 미리보기 서버 중단: the server itself is down — distinct from 재시작's rotate. */
+export const ServerOffIcon = make(ServerOff, 15);
 
 // --- the two glyphs lucide does not own -------------------------------------
 // The filled stop square and the tool's eight-ray spark are drawn by hand so

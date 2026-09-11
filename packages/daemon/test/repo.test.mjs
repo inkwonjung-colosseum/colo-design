@@ -110,20 +110,15 @@ test("a repo without cds-design.json says so instead of guessing", () => {
   }
 });
 
-test("quickActions and shots ride the same parser — typed when declared, Korean-rejected when not", () => {
+test("shots rides the parser — typed when declared, Korean-rejected when not", () => {
   const config = parseCdsDesignConfig(
     JSON.stringify({
       preview: { command: "node server.mjs", port: 3000 },
-      quickActions: ["온보딩 상태 추가", "결제 완료 화면"],
       shots: false,
     }),
   );
-  assert.deepEqual(config.quickActions, ["온보딩 상태 추가", "결제 완료 화면"]);
   assert.equal(config.shots, false);
-  assert.equal(parseCdsDesignConfig('{"preview":{"command":"n","port":1}}').quickActions, undefined);
-  for (const bad of ['{"preview":{"command":"n","port":1},"quickActions":"기본"}', '{"preview":{"command":"n","port":1},"quickActions":["기본",3]}']) {
-    assert.throws(() => parseCdsDesignConfig(bad), /quickActions는 빈 문자열이 아닌 문자열 배열/);
-  }
+  assert.equal(parseCdsDesignConfig('{"preview":{"command":"n","port":1}}').shots, undefined);
   assert.throws(
     () => parseCdsDesignConfig('{"preview":{"command":"n","port":1},"shots":"no"}'),
     /shots는 true 또는 false여야 합니다/,

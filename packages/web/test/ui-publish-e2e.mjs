@@ -243,7 +243,9 @@ async function main() {
     check("closing the review returns to the planner", (await page.locator('[role="dialog"]').count()) === 0);
 
     // --- a failed turn is a card, not a silence (PLAN D35) ----------------
-    await page.getByRole("button", { name: "새 대화" }).click();
+    // The tree offers two ways to start one (the row's ＋ and, for a project
+    // with no conversations, its own row); this drives the row's ＋.
+    await page.locator(".node__add").first().click();
     const field = page.getByPlaceholder("만들고 싶은 화면을 말해 주세요");
     await field.fill("화면을 만들어 줘");
     await field.press("Enter");

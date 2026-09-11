@@ -175,7 +175,9 @@ async function main() {
   // --- 5. Claude works, and the planner sees a folded activity line -------
   await page.waitForSelector(".activity", { timeout: 240000 });
   const activity = await page.locator(".activity__text").first().innerText();
-  check("tool work folds into one Korean activity line", /개/.test(activity), activity);
+  // The first snapshot can be command-only ("검사 1회 실행") before file work
+  // lands in the fold, so any folded Korean counter counts — not just 개.
+  check("tool work folds into one Korean activity line", /(개|회 실행|곳 확인|가지)/.test(activity), activity);
 
   // --- 6. answering questions, then screens on disk ----------------------
   // Claude asks about what the document leaves open and then waits — nothing
@@ -218,19 +220,19 @@ async function main() {
   const devLeftovers = await page.locator(".modeswitch, .picker, .header__actions").count();
   check("no developer chrome survives anywhere in the app", devLeftovers === 0);
 
-  // Threads live in the tree now; a row's ··· carries rename and 보관.
+  // Threads live in the tree now; a row's ··· carries rename and 지우기.
   const leafRow = page.locator(".leafwrap").first();
   await leafRow.hover();
   check(
-    "a thread can be renamed or archived from its tree row",
+    "a thread can be renamed or deleted from its tree row",
     (await leafRow.locator(".leaf__menu-btn").isVisible()) &&
       (await leafRow.locator(".leaf__menu").count()) === 0,
   );
   await leafRow.locator(".leaf__menu-btn").click();
   check(
-    "the row menu offers 이름 바꾸기 and 보관",
+    "the row menu offers 이름 바꾸기 and 지우기",
     (await leafRow.getByRole("menuitem", { name: "이름 바꾸기" }).isVisible()) &&
-      (await leafRow.getByRole("menuitem", { name: "보관" }).isVisible()),
+      (await leafRow.getByRole("menuitem", { name: "지우기" }).isVisible()),
   );
   await leafRow.locator(".leaf__menu-btn").click();
   // The ring only appears once a settled turn has reported usage, which is

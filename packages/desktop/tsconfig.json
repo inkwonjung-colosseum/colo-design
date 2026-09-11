@@ -11,5 +11,5 @@
     "noEmit": false
   },
   "include": ["src"],
-  "exclude": ["src/preload.ts"]
+  "exclude": ["src/preload.ts", "src/preview-preload.ts"]
 }

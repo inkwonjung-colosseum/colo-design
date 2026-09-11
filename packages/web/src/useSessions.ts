@@ -13,8 +13,6 @@ import type { Attachment } from "./Composer";
 import {
   loadModelCatalog,
   saveModelCatalog,
-  loadArchivedSessionIds,
-  saveArchivedSessionIds,
   type ChatSettings,
 } from "./settings";
 
@@ -59,23 +57,29 @@ export interface Sessions {
    */
   create: (title?: string) => Promise<string | null>;
   /**
-   * 보관 (PLAN D54): keep a thread out of this project's list. The stored
-   * transcript survives — `restore` brings it back, `purge` alone deletes for
-   * good. The tree row's ··· and the chat head's menu are this, not a
-   * deletion.
+   * Delete a stored thread for good (PLAN D76). The 4판's 보관 used to stand
+   * between a click and this; with it gone the confirm is the only thing
+   * that does, so it asks unconditionally — an irreversible act asks. The
+   * list refresh is what takes the row out of the tree and the head.
+   *
+   * 결함③ (PLAN 0단계): the ask is this app's ConfirmDialog now, so `remove`
+   * only NOMINATES a thread (`confirmRemove`) and the dialog's own buttons
+   * close or commit. The dialog renders where the rest of the workspace
+   * renders — PageWorkspace.
    */
-  remove: (session: SessionSummary) => Promise<void>;
-  /** Bring an archived thread back to the list. */
-  restore: (session: SessionSummary) => void;
-  /** Delete an archived thread's transcript for good. No confirm: it is two
-      deliberate steps from the list, and PLAN D54 retires the dialog. */
-  purge: (session: SessionSummary) => Promise<void>;
-  /** Threads 보관 hid from `list`, ready to be restored or purged. */
-  archived: SessionSummary[];
+  remove: (session: SessionSummary) => void;
+  /** The thread a click nominated for deletion; null when none is pending. */
+  confirmRemove: SessionSummary | null;
+  /** The dialog's 닫기 — clears the nomination. */
+  cancelRemove: () => void;
+  /** The dialog's 지우기 — actually deletes and refreshes. */
+  acceptRemove: () => Promise<void>;
   submit: (text: string, attachments: Attachment[]) => Promise<void>;
   /** Machine-authored turn: no composer, no attachments. */
   sendTurn: (text: string) => Promise<void>;
   refresh: () => Promise<void>;
+  /** A fresh usage reading on demand — the usage popover refreshes on open. */
+  refreshUsage: () => void;
 }
 
 /**
@@ -91,12 +95,6 @@ export function useSessions(
   opts: {
     ready: boolean;
     /**
-     * Kept, unread (PLAN D54): conversations are archived, so there is no
-     * delete confirmation left. External compatibility requirement — the
-     * caller above this hook still passes it; nothing here reads it.
-     */
-    confirmBeforeDelete?: boolean;
-    /**
      * How Claude answers, as 설정 holds it (PLAN D10). Owned above this hook:
      * the same three values drive the settings dialog, and two copies of
      * "which model" would disagree the first time one of them was edited.
@@ -109,15 +107,6 @@ export function useSessions(
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
   const [list, setList] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  /** The 보관 book (PLAN D54): ids this project's list hides. Seeded from the
-      stored settings; every change is written straight back. */
-  const [archivedIds, setArchivedIds] = useState<string[]>(() => loadArchivedSessionIds(daemon.activeSlug));
-
-  // `list` is the daemon's stored list for this project; the archive (PLAN
-  // D54) is a client-side hide on top of it, so both halves come from the
-  // same read and a restore needs no round trip.
-  const visibleList = list.filter((session) => !archivedIds.includes(session.sessionId));
-  const archived = list.filter((session) => archivedIds.includes(session.sessionId));
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [selector, setSelector] = useState<SessionSelectors | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
@@ -181,7 +170,6 @@ export function useSessions(
   useEffect(() => {
     if (listedSlug.current === activeSlug) return;
     setList([]);
-    setArchivedIds(loadArchivedSessionIds(activeSlug));
     setActiveId(null);
     if (connection === "open") void refresh();
   }, [activeSlug, connection, refresh]);
@@ -217,6 +205,16 @@ export function useSessions(
       });
     // The palette comes from the session's own CLI, which answers only once
     // its query is up; one retry covers that boot window without polling.
+    // With no thread open, the daemon's own CLI probe fills the same list —
+    // opening a thread cancels a still-in-flight probe, so a session's own
+    // answer can never be overwritten by the standalone one.
+    if (!activeId) {
+      void api
+        .cliCommands()
+        .then((next) => !cancelled && setCommands(next))
+        .catch(() => undefined);
+      return;
+    }
     const loadCommands = (attempt: number) => {
       void api
         .commands(activeId)
@@ -230,6 +228,21 @@ export function useSessions(
       cancelled = true;
     };
   }, [activeId, running, api, active?.blocks.length]);
+
+  /**
+   * The settle-time read above only fires when a turn lands, so a 5-hour
+   * window that reset while the app sat idle would leave the popover with
+   * nothing until the next turn. Opening the popover is a question about
+   * right now — this answers it. The daemon remembers whatever comes back,
+   * so every screen's chip catches up through the status broadcast too.
+   */
+  const refreshUsage = useCallback(() => {
+    if (!activeId) return;
+    void api
+      .contextUsage(activeId)
+      .then((next) => setUsage(next))
+      .catch(() => undefined);
+  }, [activeId, api]);
 
   /**
    * A session nobody typed into wrote no transcript. Close it on the way out,
@@ -287,32 +300,20 @@ export function useSessions(
   };
 
   /**
-   * 보관 (PLAN D54): the thread leaves this project's list; its transcript
-   * stays on disk. The 팔레트 lists what is hidden here and is the only way
-   * back (`restore`) or out (`purge`). An open thread closes as it goes —
-   * the strip must not keep a row the list has forgotten.
+   * 지우기 (PLAN D76): the confirm is unconditional — a transcript that
+   * cannot come back deserves the question, and there is no archive step
+   * left to soften the click. 결함③ (PLAN 0단계): the question is the app's
+   * ConfirmDialog, so this only nominates; `acceptRemove` commits.
    */
-  const remove = async (session: SessionSummary) => {
-    if (archivedIds.includes(session.sessionId)) return;
-    const next = [...archivedIds, session.sessionId];
-    setArchivedIds(next);
-    saveArchivedSessionIds(activeSlug, next);
-    if (activeId === session.sessionId) setActiveId(null);
+  const [confirmRemove, setConfirmRemove] = useState<SessionSummary | null>(null);
+  const remove = (session: SessionSummary) => {
+    setConfirmRemove(session);
   };
-
-  const restore = (session: SessionSummary) => {
-    const next = archivedIds.filter((id) => id !== session.sessionId);
-    setArchivedIds(next);
-    saveArchivedSessionIds(activeSlug, next);
-    // The stored list already carries the thread; the filter above is what
-    // hid it. A refresh would not add information — skip it.
-  };
-
-  /** 영구 삭제: the one path that really deletes, from the archive only. */
-  const purge = async (session: SessionSummary) => {
-    const next = archivedIds.filter((id) => id !== session.sessionId);
-    setArchivedIds(next);
-    saveArchivedSessionIds(activeSlug, next);
+  const cancelRemove = useCallback(() => setConfirmRemove(null), []);
+  const acceptRemove = useCallback(async () => {
+    const session = confirmRemove;
+    setConfirmRemove(null);
+    if (!session) return;
     if (activeId === session.sessionId) setActiveId(null);
     try {
       await api.deleteSession(session.sessionId);
@@ -320,7 +321,7 @@ export function useSessions(
       setError(e instanceof Error ? e.message : String(e));
     }
     void refresh();
-  };
+  }, [activeId, api, confirmRemove, refresh]);
 
   /** Resolve the session a turn should land in, creating or resuming as needed. */
   const targetSession = async (): Promise<string> => {
@@ -430,8 +431,7 @@ export function useSessions(
 
   return {
     activeId,
-    list: visibleList,
-    archived,
+    list,
     active,
     running,
     open,
@@ -453,10 +453,12 @@ export function useSessions(
     setEffort: switchEffort,
     setPermissionMode: switchPermissionMode,
     remove,
+    confirmRemove,
+    cancelRemove,
+    acceptRemove,
     submit,
-    restore,
-    purge,
     sendTurn,
     refresh,
+    refreshUsage,
   };
 }

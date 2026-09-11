@@ -72,15 +72,23 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
   답하라고 배운다: 파일 경로 없이, 컴포넌트·prop 이름 없이, 화면과 기획서는
   제목으로.
 - **화면 축.** 연결 레포는 자기가 그릴 수 있는 것을 선언한다 — 라우트, 제목,
-  `states`, 그리고 근거가 된 기획서의 `specs/` 파일 이름(`spec`) — 고, 오버레이가
-  그 목록을 postMessage 엔벨로프(`cds-design.screens`)로 도구에 올린다. 미리보기
-  툴바의 선택기가 이 목록 그 자체다 — 기능별로 묶여, 화면을 고르면 미리보기가 그 화면으로 이동하고, 상태
-  칩은 `empty` 나 `error` 를 실제 목 데이터로 그리며, 폭 토글은 앱에게 말하지
-  않고 프레임만 좁힌다. 화면의 상태(`변경 있음` / 넘김 / 반영됨)는 diff 와 풀
+  `states`, 그리고 근거가 된 기획서의 `specs/` 파일 이름(`spec`) — 고, 미리보기
+  브리지가 그 목록을 `cds-design.screens` 봉투로 도구에 올린다(데스크톱에서는
+  도구의 preload 가 내놓은 `window.cdsDesign.post` 문으로, 브라우저 개발 경로에서는
+  postMessage 로). 미리보기 툴바의 선택기가 이 목록 그 자체다 — 기능별로 묶여,
+  화면을 고르면 미리보기가 그 화면으로 이동하고, 상태 칩은 `empty` 나 `error` 를
+  실제 목 데이터로 그린다. 화면의 상태(`변경 있음` / 넘김 / 반영됨)는 diff 와 풀
   리퀘스트에서 기계적으로 파생된다 — 일이 좋은지에 대한 의견은 없다. 화면이
   기획서를 실제로 덮는지가 이 도구가 하지 않는 유일한 판단이다: 넘기기 전 점검은
   화면 스레드에게 물어 답을 채팅에 남긴다 — 기획서를 어떻게 쓰는지는 레포의
   결정이고, 읽는 것은 이 도구의 일이 아니기 때문.
+- **내장 브라우저(PLAN D64–D69).** 데스크톱의 미리보기 칸은 iframe 이 아니라 앱의
+  뷰(`WebContentsView`)다: 주소창(미리보기 서버 안의 경로만), 뒤로 · 앞으로, 새로
+  고침(보고 있는 자리 그대로), 오류 배너(뷰 이벤트에서), 모바일 · 태블릿 실제
+  에뮬레이션. 코멘트 핀 오버레이도 도구의 preload 가 주입한다 — 어떤 연결 레포에서나
+  동작하고, 레포가 그 코드를 지울 수 없다. 모달이 열리면 뷰는 마지막 그림을 남기고
+  숨는다. 브라우저 개발 경로는 iframe 을 유지하며 화면 목록 · 이동만 있다(개발자
+  전용).
 - **온보딩.** 기계 전체에 대해 한 번 답하는 게이트 넷이다 — Claude Code, git,
   Node·pnpm, GitHub 토큰. 각 실패는 한국어로 이유를 말하고 고치기 버튼이나 필요한 입력을
   제시한다. Node 는 링크로만 제시한다 — 도구가 기획자의 기계에 설치를 실행하지는
@@ -100,7 +108,7 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
 - **데스크톱.** 메인 프로세스가 데몬을 in-process 로 호스팅하는 Electron 앱이다:
   임시 포트, 실행마다 바뀌는 토큰, 데몬이 스스로 서빙하는 웹 UI, 페어링 화면
   없음. 포터블 node + corepack 이 extra resource 로 실려 repo 명령의 PATH 앞에
-  붙으므로, 기획자의 기계에는 둘 다 필요 없다. 업데이트 확인은 수동뿐. 화면
+  붙으므로, 기획자의 기계에는 둘 다 필요 없다. 업데이트 확인은 수동뿐.
   대화가 멈췄을 때(작업 완료 · Claude 가 확인 대기 · 게이트 실패) 데몬이
   의미를 건네면 앱이 OS 알림으로 부른다 — 창이 앞에 있을 때는 조용히 하고,
   알림을 누르면 창이 앞으로 온다. 창이 뒤에 있는 동안 도착한 것은 dock 배지가
@@ -260,7 +268,7 @@ git push origin v0.1.0
   `sha256`/`url`)은 앱의 업데이트 확인이 읽는 피드다(mac zip sha256 = 자가
   교체 검증값).
 - 앱의 업데이트 확인(`packages/protocol/src/update.ts`)은
-  `inkwonjung-colosseum/cds-open-design` 의 릴리스를 읽는다. 확인 요청은 무인증
+  `inkwonjung-colosseum/cds-design` 의 릴리스를 읽는다. 확인 요청은 무인증
   fetch 라 **소스가 private 인 것은 상관없지만 설치 파일을 올린 릴리스는
   공개**여야 읽힌다. 공개 릴리스가 아직 없는 동안 확인 버튼은 "아직 공개된
   릴리스가 없습니다"라고 답한다 — 고장이 아니라 배포 전 상태다.
@@ -324,3 +332,29 @@ Agent SDK 문서는 사전 승인 없이 서드파티 앱이 자기 앱에서 cl
 제공하지 말라고 한다. 그 문장은 외부 고객에게 제공되는 제품을 겨눈 것이고 이건
 내부 도구지만, 그 구분은 롤아웃 전에 Anthropic 담당자와 서면으로 확인해야
 한다.
+
+## 번호 대응표 — 코드 주석이 부르는 앞 판의 결정
+
+코드 주석의 `PLAN D<n>` 은 판이 지날며 쌓였고 같은 번호가 다른 뜻으로 두 번 쓰인
+자리가 있다. 이 표가 그 번호를 푼다. 각 판의 PLAN.md 는 구현 완료로 삭제된다 —
+D35–D63 판(2026-09-11)과 내장 브라우저 판(D64–D75)이 그랬다.
+
+| 번호 | 뜻 | 어디서 부르나 |
+|---|---|---|
+| D1 | 홈 폴더 `~/.cds-design` + 이주 | `environment.ts` · `index.ts` · `server.ts` · `home-dir.test.mjs` |
+| D2 | **충돌.** ⓐ 프로젝트 = 연결 레포 하나 (Drafthouse 판 D3 의 뜻) — `projects.ts` · `server.ts:328` · `projects-e2e.mjs`; ⓑ `폴더 열기` — `main.ts` · `preload.ts` | |
+| D4 | 게이트 넷, `project` 게이트 삭제 | `onboarding.ts` |
+| D5 | **충돌.** ⓐ 저장 · 개발자에게 넘기기 · 반영됨(git 어휘 셋) — `github.ts` · `repo.ts` · `protocol` · `projects.ts` · `github.test.mjs` · `publish-e2e.mjs`; ⓑ `runtime` 게이트 판정 — `onboarding.ts:129` · `onboarding.test.mjs:359` | |
+| D6 | pnpm 영어 경고 삭제 | `environment.ts:453` |
+| D7 | 레포가 선언하는 화면(`cds-design.screens` 엔벨로프) | `protocol:632` |
+| D8 | `pendingChanges` — 스테퍼의 숫자, 폴링 없음 | `repo.ts` · `server.ts` · `protocol:575` · `publish-e2e.mjs` |
+| D9 | 기계 텍스트는 마커 카드로 | `repo.ts:75` · `session.ts:486` · `turn-marker.ts` · `publish-e2e.mjs` |
+| D10 | **충돌.** ⓐ 모델 · 생각 시간 · 권한을 설정으로, 컴포저는 `⋯` — `Composer.tsx:96` · `settings.ts:43` (이 판 D42 가 칩 표시를 되살린다; 저장 위치 규칙은 유지); ⓑ `github` 게이트 판정(warn 비차단) — 직접 부르는 주석 없음 | |
+| D12 | **어긋남.** 주석은 "프로젝트는 게이트가 아니다"(= 앞 판 D4)의 뜻으로 쓴다 — `onboarding.ts:6,213` · `index.ts:76`. 앞 판 표의 D12 는 어휘(`프로젝트`) | |
+| D15 | 사이드바 행 `작업 중` | `session-manager.ts:97` |
+| D16 · D17 · D18 | 비활성 프로젝트 상태는 `project.changed` 로 · 200ms 스로틀 · 시작 시 전 프로젝트 워크스페이스 | `server.ts` · `protocol:13,381` · `repo.ts:514` · `AddProjectDialog.tsx:7` |
+| D19 · D21 · D25 · D28 · D31 | 사이드바 폭 · 지우기 순서 · 피커 자리 · `cds-design.json` 없는 레포 차단 · 주소로 추가 | `Shell.tsx` · `Sidebar.tsx` · `RepoPicker.tsx` · `settings.ts` |
+| M1 · M5.5 | 첫 판의 단계 번호(프로젝트 모델 토대 · 배포 파이프라인) | `index.ts:61` · `electron-builder.yml:11` |
+| DESIGN §5–§8 | 이 트리에 없는 문서(`DESIGN.md`)의 절 — 미리보기 origin 검사 · 데스크톱 패키징 · 온보딩 | `Preview.tsx` · `onboarding.ts` · `electron-builder.yml` · `preload.ts` |
+| D76 | 세션 보관 철회 — 지우기 하나와 확인 하나 | `useSessions.ts` · `Sidebar.tsx` · `ChatColumn.tsx` · `PageWorkspace.tsx` · `Shell.tsx` · `settings.ts` |
+| D77 | 프로젝트 삭제가 대화록까지 | `session-manager.ts` · `server.ts` · `Sidebar.tsx` · `projects-e2e.mjs` |

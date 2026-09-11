@@ -28,7 +28,7 @@ const LOG_DIR = join(
 const LANES = {
   L1: {
     name: "unit",
-    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit"],
+    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit", "test:comments-ui"],
   },
   L2: {
     name: "daemon-e2e",
@@ -41,7 +41,6 @@ const LANES = {
       "test:settings",
       "test:sidebar-ui",
       "test:onboarding-ui",
-      "test:comments-ui",
     ],
   },
   L4: {

@@ -136,6 +136,14 @@ async function main() {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
+  // 결함③ (PLAN 0단계): the browser's own confirm must never enter the
+  // picture — every dangerous ask is the app's dialog.
+  await page.addInitScript(() => {
+    window.confirm = () => {
+      window.__nativeConfirmUsed = true;
+      return true;
+    };
+  });
 
   /** A second socket from the page: setup, session wiring, and status polls. */
   const call = (message, timeoutMs = 60000) =>
@@ -332,6 +340,10 @@ async function main() {
       "the row disappears and the list shrinks by one",
       afterRemove.projects.length === workRootsBefore - 1,
       `${workRootsBefore} → ${afterRemove.projects.length}`,
+    );
+    check(
+      "no dangerous ask fell back to the browser's confirm (결함③)",
+      (await page.evaluate(() => window.__nativeConfirmUsed ?? false)) === false,
     );
 
     // --- j. the folded rail opens a conversation popover -------------------

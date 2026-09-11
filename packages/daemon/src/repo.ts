@@ -155,8 +155,6 @@ export interface CdsDesignConfig {
   build?: string;
   preview: { command: string; port: number };
   registry?: CdsDesignRegistry;
-  /** D55: rows the composer appends to its own built-in quick actions. */
-  quickActions?: string[];
   /** D56: `false` refuses the handoff's screen captures — no files, no PR section. */
   shots?: boolean;
 }
@@ -201,15 +199,6 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
     );
   }
 
-  const rawQuickActions = config.quickActions;
-  if (
-    rawQuickActions !== undefined &&
-    (!Array.isArray(rawQuickActions) ||
-      rawQuickActions.some((row) => typeof row !== "string" || row.trim() === ""))
-  ) {
-    throw new Error("cds-design.json의 quickActions는 빈 문자열이 아닌 문자열 배열이어야 합니다");
-  }
-
   if (config.shots !== undefined && typeof config.shots !== "boolean") {
     throw new Error("cds-design.json의 shots는 true 또는 false여야 합니다");
   }
@@ -218,7 +207,6 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
     ...(typeof config.install === "string" ? { install: config.install } : {}),
     ...(typeof config.check === "string" ? { check: config.check } : {}),
     ...(typeof config.build === "string" ? { build: config.build } : {}),
-    ...(rawQuickActions !== undefined ? { quickActions: rawQuickActions as string[] } : {}),
     ...(config.shots !== undefined ? { shots: config.shots } : {}),
     preview: { command, port: port as number },
   };
@@ -1036,6 +1024,22 @@ export class RepoWorkspace {
     return summary;
   }
 
+  /**
+   * The summarizer's working directory — deliberately NOT the clone. The CLI
+   * files every transcript under the project folder of its cwd, and the
+   * session list offers every transcript in the clone's folder as a
+   * resumable conversation: a batch turn's one machine prompt surfaced in the
+   * tree as a thread, and opening it read as if the planner had typed a wall
+   * of file paths. The prompt carries its own diff and runs with no tools,
+   * so the summary never reads the clone; a scratch folder beside it keeps
+   * the transcript out of the conversation store.
+   */
+  private summaryCwd(): string {
+    const dir = join(dirname(this.root), "summary");
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
   /** The summarizer's one turn; null means "use the fallback". */
   private async claudeSummary(files: DiffFile[]): Promise<RepoSummary | null> {
     if (!this.claudeExecutable) return null;
@@ -1048,7 +1052,7 @@ export class RepoWorkspace {
       const conversation = query({
         prompt: summaryPrompt(files),
         options: {
-          cwd: this.root,
+          cwd: this.summaryCwd(),
           pathToClaudeCodeExecutable: this.claudeExecutable,
           maxTurns: 1,
           tools: [],

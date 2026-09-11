@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, join } from "node:path";
 import { realpathBestEffort } from "./paths.js";
@@ -10,13 +11,15 @@ import {
   type GitHubRepoList,
   type HandoffShot,
   type PlanUsage,
+  type PlanWindow,
   type ProjectSummary,
+  type SessionCommand,
   type SessionModelInfo,
   type ServerMessage,
   type SessionState,
 } from "@cds-design/protocol";
 import { SessionManager } from "./session-manager.js";
-import { NEW_SESSION_TITLE } from "./session.js";
+import { NEW_SESSION_TITLE, probeCommands } from "./session.js";
 import { repoWritePolicy } from "./workspaces.js";
 import { RepoWorkspace, trustWorkspace } from "./repo.js";
 import { readComments, recordComments, resolveComment } from "./comments.js";
@@ -193,6 +196,10 @@ export class DaemonServer {
    * count starts over on an unused number.
    */
   private readonly checkpointTurns = new Map<string, number>();
+  /** Minimum spacing between re-reads of a plan whose 5-hour window went stale. */
+  private static readonly PLAN_REFRESH_BACKOFF_MS = 120_000;
+  /** Last time `refreshPlanUsage` actually asked a session, epoch ms. */
+  private lastPlanRefresh = 0;
   /** Account-wide plan limits: last reading, restored across restarts. */
   private planUsage: PlanUsage | null = this.loadPlanUsage();
   /**
@@ -207,6 +214,13 @@ export class DaemonServer {
    * bridge lands. Read on every call, never snapshotted into the tools.
    */
   private previewScreens: PreviewScreenDeclaration[] = [];
+  /**
+   * The `/` palette with no thread open (PLAN — cli.commands): one CLI boot
+   * per repo, cached, so an empty workspace still lists every command the
+   * terminal would. A live session's own answer always wins over this.
+   */
+  private readonly cliCommandsCache = new Map<string, SessionCommand[]>();
+  private cliCommandsProbe: Promise<SessionCommand[]> | null = null;
 
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
@@ -447,6 +461,32 @@ export class DaemonServer {
   private activeOrNull(): ProjectWorkspaces | null {
     const slug = this.registry?.activeSlug();
     return slug ? this.workspacesFor(slug) : null;
+  }
+
+  /**
+   * The palette's rows before a session exists: the CLI probed once per repo
+   * and cached for the run. A failed probe answers empty and lets the next
+   * ask retry — a CLI that was mid-install should not be remembered broken.
+   */
+  private async cliCommands(): Promise<SessionCommand[]> {
+    if (!this.claudeExecutable) return [];
+    const active = this.activeOrNull();
+    // Project skills ride the clone's cwd; with no clone yet the user-level
+    // set is still worth having, and the home dir is a cwd that exists.
+    const cwd =
+      active && active.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
+    const cached = this.cliCommandsCache.get(cwd);
+    if (cached) return cached;
+    this.cliCommandsProbe ??= probeCommands({ cwd, executable: this.claudeExecutable })
+      .then((commands) => {
+        this.cliCommandsCache.set(cwd, commands);
+        return commands;
+      })
+      .catch(() => {
+        this.cliCommandsProbe = null;
+        return [] as SessionCommand[];
+      });
+    return await this.cliCommandsProbe;
   }
 
   /**
@@ -815,10 +855,6 @@ export class DaemonServer {
 
   private async status() {
     const active = this.activeOrNull();
-    // D55: the repo's own rows ride hello·status; the tool's built-in five
-    // are the web's, so an undeclaring repo sends nothing at all — not an
-    // empty list the composer would have to know means "ignore me".
-    const quickActions = active?.repo.cdsDesign()?.quickActions;
     return {
       ...(await buildStatus({
         executable: this.claudeExecutable,
@@ -827,9 +863,8 @@ export class DaemonServer {
         // The registry probe only makes sense inside a repo that declares one.
         registryProbeDir: active?.repo.registry() ? active.repo.root : null,
       })),
-      planUsage: this.planUsage,
+      planUsage: this.currentPlanUsage(),
       models: this.models,
-      ...(quickActions && quickActions.length > 0 ? { quickActions } : {}),
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,
     };
@@ -852,6 +887,60 @@ export class DaemonServer {
       // A cache that cannot be written just means the next start shows nothing.
     }
     void this.status().then((status) => this.broadcast({ type: "status", status }));
+  }
+
+  /**
+   * The cached reading as the composer may see it now. A window whose reset
+   * has passed is dropped here too, not just on load — a daemon that sits
+   * for hours would otherwise keep saying 43% about a window that no longer
+   * exists. Dropping the 5-hour window also asks a live session for a fresh
+   * reading, because a reset is exactly when that number matters again and
+   * the next turn is not the only moment one can land.
+   */
+  private currentPlanUsage(): PlanUsage | null {
+    const plan = this.planUsage;
+    if (!plan) return null;
+    const now = Date.now();
+    // A window with no reset time cannot expire; one whose reset has passed
+    // describes the previous window, so it goes.
+    const fiveHour =
+      plan.fiveHour && (!plan.fiveHour.resetsAt || Date.parse(plan.fiveHour.resetsAt) > now)
+        ? plan.fiveHour
+        : null;
+    const sevenDay =
+      plan.sevenDay && (!plan.sevenDay.resetsAt || Date.parse(plan.sevenDay.resetsAt) > now)
+        ? plan.sevenDay
+        : null;
+    if (
+      plan.sevenDay &&
+      !fiveHour &&
+      now - this.lastPlanRefresh > DaemonServer.PLAN_REFRESH_BACKOFF_MS
+    ) {
+      this.refreshPlanUsage();
+    }
+    if (fiveHour === plan.fiveHour && sevenDay === plan.sevenDay) return plan;
+    return { ...plan, fiveHour, sevenDay };
+  }
+
+  /**
+   * Re-read the plan's limits through the most recently active idle session.
+   * Failures stay silent — the cache keeps serving whatever it still has,
+   * and the settle-time reads keep working as before. Spaced out because
+   * status() runs on every broadcast, and a session that cannot answer (its
+   * CLI gone) must not turn those broadcasts into a request storm.
+   */
+  private refreshPlanUsage(): void {
+    const now = Date.now();
+    if (now - this.lastPlanRefresh < DaemonServer.PLAN_REFRESH_BACKOFF_MS) return;
+    this.lastPlanRefresh = now;
+    const session = [...this.manager.all()]
+      .filter((candidate) => candidate.state === "idle")
+      .sort((a, b) => b.lastActivity - a.lastActivity)[0];
+    if (!session) return;
+    void session
+      .contextUsage()
+      .then((usage) => this.rememberPlanUsage(usage?.plan ?? null))
+      .catch(() => undefined);
   }
 
   /** The last reading from disk, with every window that has since reset dropped. */
@@ -1063,6 +1152,9 @@ export class DaemonServer {
       case "session.commands":
         return await this.manager.require(message.sessionId).commands();
 
+      case "cli.commands":
+        return await this.cliCommands();
+
       case "permission.respond": {
         const session = this.manager.findByRequest(message.requestId);
         if (!session) throw new Error("permission request is no longer pending");
@@ -1110,20 +1202,30 @@ export class DaemonServer {
       }
 
       case "project.remove": {
+        const paths = this.registry.paths(message.slug);
+        // Transcripts are keyed by the clone's realpath (see workspaceCwd) —
+        // every lookup below must use that same spelling.
+        const repoRoot = realpathBestEffort(paths.repoRoot);
         const workspaces = this.workspaces.get(message.slug);
         if (workspaces) {
           // The clone's live threads die with it (D21): a session left
           // running would keep writing into a folder the planner just
           // disowned — or one `deleteFiles` is about to remove.
-          await this.manager.closeWhere(realpathBestEffort(workspaces.paths.repoRoot));
+          await this.manager.closeWhere(repoRoot);
           await workspaces.repo.stop();
           this.workspaces.delete(message.slug);
         }
-        const paths = this.registry.paths(message.slug);
         this.registry.remove(message.slug);
         // Files survive a forget: the clone holds screen work that was saved
         // but never merged, and nothing else on the machine has it.
-        if (message.deleteFiles) rmSync(paths.root, { recursive: true, force: true });
+        if (message.deleteFiles) {
+          // The conversations go with the folder (PLAN D77): the transcript
+          // store lives outside the project folder, keyed by this clone's
+          // path — leaving it behind would orphan every thread and let a
+          // same-named re-add resurrect them against an empty worktree.
+          await this.manager.removeWhere(repoRoot);
+          rmSync(paths.root, { recursive: true, force: true });
+        }
         const next = this.registry.activeSlug();
         if (next) await this.activateProject(next);
         this.announceProjects();
@@ -1272,7 +1374,7 @@ export class DaemonServer {
       case "comments.resolve": {
         const resolved = resolveComment(
           join(this.requireActive().paths.root, "comments.json"),
-          message.id,
+          message.commentId,
           message.resolved,
         );
         if (!resolved) {

@@ -26,3 +26,20 @@ const STATE_LABEL: Record<string, string> = {
 export function stateLabel(state: string): string {
   return STATE_LABEL[state] ?? state;
 }
+
+/**
+ * The daemon streams the raw output of whatever it is running. A planner
+ * should never meet terminal colour codes or the command line itself, so
+ * only the last human-readable line survives.
+ */
+export function daemonLine(detail: string | null | undefined): string {
+  return (
+    (detail ?? "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\u001b\[[0-9;]*m/g, "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("$"))
+      .at(-1) ?? ""
+  );
+}

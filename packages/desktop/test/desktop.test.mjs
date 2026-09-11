@@ -23,6 +23,7 @@ import {
   fetchLatest,
 } from "../../protocol/dist/update.js";
 import {
+  buildSwapScript,
   planSelfUpdate,
   sha256OfFile,
   verifyDownload,
@@ -48,7 +49,12 @@ test("semver comparison orders major, minor, patch", () => {
 });
 
 test("checkForUpdate reads the feed and compares against the current version", async () => {
-  const feed = { version: "0.3.0", notes: "화면 코멘트 지원", url: "https://example/cds-design-0.3.0.zip" };
+  const feed = {
+    version: "0.3.0",
+    notes: "화면 코멘트 지원",
+    url: "https://example/cds-design-0.3.0.zip",
+    sha256: "ab".repeat(32),
+  };
   const fetchLike = async (url) => {
     assert.equal(url, "https://example.test/latest.json");
     return { ok: true, status: 200, json: feed };
@@ -60,6 +66,7 @@ test("checkForUpdate reads the feed and compares against the current version", a
     version: "0.3.0",
     notes: "화면 코멘트 지원",
     url: "https://example/cds-design-0.3.0.zip",
+    sha256: "ab".repeat(32),
   });
 
   const current = await checkForUpdate("0.3.0", "https://example.test/latest.json", fetchLike);
@@ -68,6 +75,16 @@ test("checkForUpdate reads the feed and compares against the current version", a
 
   const newer = await checkForUpdate("0.4.0", "https://example.test/latest.json", fetchLike);
   assert.equal(newer.updateAvailable, false, "a local build ahead of the feed is not an update");
+});
+
+test("a feed without a checksum still checks, but offers nothing to install", async () => {
+  const result = await checkForUpdate("0.2.0", "https://example.test/latest.json", async () => ({
+    ok: true,
+    status: 200,
+    json: { version: "0.3.0" },
+  }));
+  assert.equal(result.updateAvailable, true);
+  assert.equal(result.sha256, null, "the install button needs url + sha256, null means hint only");
 });
 
 test("feed errors are Korean and shaped for the settings row", async () => {
@@ -156,6 +173,25 @@ test("sha256 verification accepts a good file and refuses a bad one", async () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the swap script waits for the app to die, swaps the bundle, relaunches", () => {
+  const plan = planSelfUpdate({
+    url: "https://example.test/cds-design-0.5.0.zip",
+    sha256: "ab".repeat(32),
+    downloadsDir: "/tmp/down loads",
+    version: "0.5.0",
+    targetApp: "/Applications/CDS Design.app",
+  });
+  const script = buildSwapScript({ plan, pid: 4242, logPath: "/tmp/swap.log" });
+  assert.match(script, /^#!\/bin\/bash/m);
+  assert.match(script, /kill -0 4242/, "waits on the electron main pid");
+  assert.match(script, /seq 1 150/, "the wait is bounded — 30s, not forever");
+  assert.match(script, /ditto -x -k '\/tmp\/down loads\/cds-design-0\.5\.0\.zip'/, "paths with spaces survive");
+  assert.match(script, /rm -rf '\/Applications\/CDS Design\.app'/);
+  assert.match(script, /mv "\$SRC" '\/Applications\/CDS Design\.app'/);
+  assert.match(script, /\/usr\/bin\/open '\/Applications\/CDS Design\.app'/);
+  assert.match(script, /exec >> '\/tmp\/swap\.log'/, "every failure leaves a trace in the log");
 });
 
 // ---------------------------------------------------------------------------

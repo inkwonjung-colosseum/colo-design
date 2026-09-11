@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { DaemonStatus, EffortLevel, PermissionMode } from "@cds-design/protocol";
-import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@cds-design/protocol";
+import {
+  RELEASES_FEED_URL,
+  RELEASES_REPO,
+  checkForUpdate,
+  type UpdateCheckResult,
+} from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { CloseIcon } from "./icons";
 import {
   EFFORT_HINT,
@@ -29,7 +35,25 @@ const THEME_LABEL: Record<ThemeChoice, string> = {
   system: "시스템 설정을 따름",
   dark: "어둡게",
   light: "밝게",
+  sepia: "세피아",
+  midnight: "미드나잇",
+  contrast: "고대비",
+  dracula: "드라큘라",
+  solarized: "솔라라이즈드",
+  catppuccin: "캣푸친",
+  nord: "노르드",
+  gruvbox: "그럽박스",
+  tokyonight: "도쿄나이트",
+  rosepine: "로즈파인",
+  everforest: "에버포레스트",
+  onedark: "원다크",
+  github: "깃허브",
+  monokai: "모노카이",
+  latte: "캣푸친 라떼",
 };
+
+/** What "follow the OS" actually tracks, in one sentence at the picker. */
+const SYSTEM_HINT = "OS 밝기를 따르고, 고대비를 요청하면 고대비 팔레트를 씁니다.";
 
 const SEND_LABEL: Record<SendKey, string> = {
   enter: "Enter로 보내기, Shift+Enter는 줄바꿈",
@@ -158,6 +182,9 @@ export function SettingsDialog({
   const [update, setUpdate] = useState<UpdateCheckResult | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
+  /** 내려받기·검증이 끝나 종료 직전임을 알리는 안내 — 성공 경로의 한 줄. */
+  const [updateStarted, setUpdateStarted] = useState<string | null>(null);
 
   /**
    * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.cds-design in the OS
@@ -205,11 +232,39 @@ export function SettingsDialog({
     }
   };
 
+  /**
+   * mac 자가 교체(DESIGN §7): 새 버전이 확인되면 내려받고 sha256 검증한 뒤
+   * 앱이 스스로 종료·교체·재실행한다. 브라우저는 다리가 없어 릴리스 페이지로
+   * 안내한다 — 설치는 데스크톱의 특권.
+   */
+  const installUpdate = async () => {
+    if (!update?.url || !update.sha256) return;
+    setInstallingUpdate(true);
+    setUpdateError(null);
+    setUpdateStarted(null);
+    try {
+      const result = await window.cdsDesignDesktop?.macSelfUpdate({
+        url: update.url,
+        sha256: update.sha256,
+      });
+      if (result && typeof result === "object" && "error" in result && result.error) {
+        throw new Error(String(result.error));
+      }
+      setUpdateStarted("검증이 끝났습니다 — 앱이 저절로 닫히고 새 버전으로 다시 열립니다.");
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInstallingUpdate(false);
+    }
+  };
+
   // The repo url arrives asynchronously (repo.status); adopt it until the
   // planner edits the field, so reopening the dialog shows what is stored.
   const [repoUrlDraft, setRepoUrlDraft] = useState<string | null>(null);
   const [repoError, setRepoError] = useState<string | null>(null);
   const [savingRepo, setSavingRepo] = useState(false);
+  /** 접속 주소 지우기의 확인 — this app's dialog, not window.confirm (결함③). */
+  const [forgetConfirm, setForgetConfirm] = useState(false);
   /** The GitHub group's 토큰 바꾸기 toggle: detail row ↔ the form. */
   const [editingToken, setEditingToken] = useState(false);
   const connected = daemon.connection === "open";
@@ -266,7 +321,11 @@ export function SettingsDialog({
             <Choice<ThemeChoice>
               label="테마"
               value={settings.theme}
-              options={THEMES.map((theme) => ({ value: theme, label: THEME_LABEL[theme] }))}
+              options={THEMES.map((theme) => ({
+                value: theme,
+                label: THEME_LABEL[theme],
+                ...(theme === "system" ? { hint: SYSTEM_HINT } : {}),
+              }))}
               onChange={(theme) => onChange({ theme })}
             />
           </section>
@@ -447,12 +506,37 @@ export function SettingsDialog({
                 {checkingUpdate ? "확인 중…" : "업데이트 확인"}
               </button>
               {update && (
-                <span className="setting__hint">
-                  {update.updateAvailable
-                    ? `새 버전 ${update.version}${update.notes ? ` — ${update.notes}` : ""}`
-                    : `최신 버전입니다 (${update.version})`}
-                </span>
+                <>
+                  <span className="setting__hint">
+                    {update.updateAvailable
+                      ? `새 버전 ${update.version}${update.notes ? ` — ${update.notes}` : ""}`
+                      : `최신 버전입니다 (${update.version})`}
+                  </span>
+                  {update.updateAvailable &&
+                    (window.cdsDesignDesktop ? (
+                      update.url &&
+                      update.sha256 && (
+                        <button
+                          type="button"
+                          disabled={installingUpdate}
+                          onClick={() => void installUpdate()}
+                        >
+                          {installingUpdate ? "준비 중…" : "업데이트 설치"}
+                        </button>
+                      )
+                    ) : (
+                      <a
+                        className="setting__hint"
+                        href={`https://github.com/${RELEASES_REPO}/releases`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        릴리스 페이지에서 내려받기
+                      </a>
+                    ))}
+                </>
               )}
+              {updateStarted && <span className="setting__hint">{updateStarted}</span>}
               {updateError && <span className="setting__hint">{updateError}</span>}
             </div>
 
@@ -522,15 +606,7 @@ export function SettingsDialog({
                 <button
                   type="button"
                   className="danger"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "저장된 접속 주소를 지울까요? 이 컴퓨터의 기획은 그대로 남지만, 앱이 만든 접속 주소를 다시 붙여 넣어야 합니다.",
-                      )
-                    )
-                      return;
-                    onForgetUrl();
-                  }}
+                  onClick={() => setForgetConfirm(true)}
                 >
                   접속 주소 지우기
                 </button>
@@ -540,6 +616,19 @@ export function SettingsDialog({
           </section>
         </div>
       </div>
+      {forgetConfirm && (
+        <ConfirmDialog
+          title="접속 주소 지우기"
+          body={<>저장된 접속 주소를 지울까요?</>}
+          hint="이 컴퓨터의 기획은 그대로 남지만, 앱이 만든 접속 주소를 다시 붙여 넣어야 합니다."
+          confirmLabel="지우기"
+          onConfirm={() => {
+            setForgetConfirm(false);
+            onForgetUrl();
+          }}
+          onClose={() => setForgetConfirm(false)}
+        />
+      )}
     </div>
   );
 }

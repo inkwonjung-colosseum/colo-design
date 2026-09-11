@@ -242,16 +242,17 @@ async function main() {
       (await page.locator(".node__name").allInnerTexts()).join(", "),
     );
 
-    // A brand new project starts with no threads: the tree row says where to
-    // begin and offers the way (PLAN D3/D59) — attach a 기획서 in the chat
-    // below, or press the row's ＋.
+    // A brand new project starts with no threads: the tree row where the eye
+    // lands IS the way to begin (PLAN D3/D59), next to the row's own ＋.
     const tree = page.locator(".tree");
     await tree.waitFor({ timeout: 15000 });
     const startButtons = await tree.getByRole("button", { name: "새 대화" }).count();
+    const startRows = await tree.locator(".leaf--start").count();
     check(
-      "an empty project points at the chat, with a way to start",
-      (await tree.innerText()).includes("아래에서 새 대화를 시작해 주세요.") && startButtons >= 1,
-      `${(await tree.innerText()).split("\n")[0] ?? ""} · ${startButtons} start button(s)`,
+      "an empty project offers the way to start, in the tree",
+      // Both fixture projects are brand new, so both carry the row.
+      startRows === 2 && startButtons >= 2,
+      `${startRows} start row(s) · ${startButtons} start button(s)`,
     );
 
     check(

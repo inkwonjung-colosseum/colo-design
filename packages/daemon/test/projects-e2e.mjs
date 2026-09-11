@@ -14,7 +14,7 @@
  *
  * Usage: node packages/daemon/test/projects-e2e.mjs
  */
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -32,6 +32,7 @@ process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
 // under test.
 process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -326,6 +327,26 @@ async function main() {
       }
     };
     ws.on("message", onStateMessage);
+    // A stored transcript from an earlier sitting: the folder-gone removal
+    // must take the clone's transcript store with it (PLAN D77). The store
+    // lives under CLAUDE_CONFIG_DIR, keyed by the clone's REALPATH with
+    // every non-alphanumeric folded into `-` — sessions run against the
+    // realpath spelling (server workspaceCwd), so the fabrication must use
+    // it too, and the line must parse as a transcript or the SDK's scan
+    // skips the file as if it were not there.
+    const refundRepoCwd = realpathSync(join(DIR, "projects", refunds.slug, "repo"));
+    const refundStore = join(
+      DIR,
+      "claude-config",
+      "projects",
+      refundRepoCwd.replace(/[^a-zA-Z0-9]/g, "-"),
+    );
+    mkdirSync(refundStore, { recursive: true });
+    const orphanTranscript = join(refundStore, "77777777-7777-7777-7777-777777777777.jsonl");
+    writeFileSync(
+      orphanTranscript,
+      JSON.stringify({ type: "user", message: { role: "user", content: "옛 대화" }, timestamp: new Date().toISOString() }) + "\n",
+    );
     const removeReply = await request({
       type: "project.remove",
       slug: refunds.slug,
@@ -341,6 +362,10 @@ async function main() {
       "removing with deleteFiles takes the folder",
       !existsSync(join(DIR, "projects", refunds.slug)) &&
         removeReply.projects.every((p) => p.slug !== refunds.slug),
+    );
+    check(
+      "removing with deleteFiles takes the clone's stored transcripts too",
+      !existsSync(orphanTranscript),
     );
     // The survivor is what everything means again.
     check(

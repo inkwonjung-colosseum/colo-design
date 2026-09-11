@@ -136,6 +136,12 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
   }),
   z.object({ ...withId, type: z.literal("session.commands"), sessionId: z.string().min(1) }),
+  /**
+   * The palette with no thread open. The daemon answers from its own CLI
+   * probe (one boot, cached), so an empty workspace still reads like the
+   * terminal's `/`.
+   */
+  z.object({ ...withId, type: z.literal("cli.commands") }),
   z.object({ ...withId, type: z.literal("session.contextUsage"), sessionId: z.string().min(1) }),
   z.object({
     ...withId,
@@ -403,11 +409,16 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   /**
    * Toggle one comment's resolved mark (PLAN D57). The row never leaves the
    * store; this only moves it out of the 미해결 count.
+   *
+   * `commentId`, never `id`: the wire's `id` is the CORRELATION id every
+   * reply echoes, and the client's `call` spreads the payload over its own —
+   * a field named `id` here would overwrite it and the reply would land on
+   * nobody (found by the desktop comments suite).
    */
   z.object({
     ...withId,
     type: z.literal("comments.resolve"),
-    id: z.string().min(1),
+    commentId: z.string().min(1),
     resolved: z.boolean(),
   }),
 ]);
@@ -604,14 +615,6 @@ export interface DaemonStatus {
    * offer a choice before any thread exists. Empty until a session reports.
    */
   models: SessionModelInfo[];
-  /**
-   * The connected repo's own quick actions (PLAN D55), read from
-   * `cds-design.json#quickActions`. The composer appends them to its built-in
-   * five — which live in the web, not here: the repo talks to the tool, and
-   * the daemon only carries what the repo said. Absent when the active
-   * project declares none.
-   */
-  quickActions?: string[];
 }
 
 /** One claude.ai plan-limit window, as the usage endpoint reports it. */
@@ -782,17 +785,28 @@ export interface RepoStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Comment overlay → tool contract (DESIGN §6)
+// Preview envelopes (PLAN D64–D69) — two contracts live here.
+//
+// 1. 레포 브리지 계약 (D68): `cds-design.screens`(+ `screens?`) and
+//    `cds-design.navigate` are ALL a connected repo owes the tool. The repo
+//    carries a hand-synced duplicate of these shapes
+//    (reference clone `src/preview-bridge/types.ts`); on the desktop the
+//    envelopes ride the preview preload's `window.cdsDesign.post` → IPC, in a
+//    plain browser they ride postMessage with the iframe.
+// 2. 도구 내부 (D67 · D69): the comments bundle, the error report and the
+//    comments-mode switch are the TOOL talking to itself — the desktop's
+//    preview preload makes them, the main process relays them verbatim, and
+//    the web consumes them. No repo code is involved, which is the point: the
+//    overlay died the day it lived in the repo.
 // ---------------------------------------------------------------------------
-
 /**
- * One pinned element in the repo's preview app. The overlay runs INSIDE the
- * repo's dev server (dev only), so the repo carries a hand-synced duplicate
- * of this shape (reference-repo/src/preview-bridge/types.ts) — the two repos
- * are kept in sync by hand, and both files say so.
+ * One pinned element in the repo's preview app, described by the tool's own
+ * overlay (D67) from the DOM it shares with the page: a `data-component`
+ * name or the tag, the element's own text, a CSS path from the
+ * `[data-screen]` wrapper, and the viewport rect at pin time.
  */
 export interface CdsDesignCommentTarget {
-  /** React component display name, falling back to the tag name. */
+  /** `data-component` when the repo sets one, else the tag name. */
   component: string;
   /** The element's own text (direct text nodes), trimmed and capped. */
   text: string;
@@ -812,13 +826,14 @@ export interface CdsDesignComment {
 }
 
 /**
- * What the preview app posts to window.parent when the planner sends the
- * batch: one envelope for all pins, then the overlay clears them.
+ * What the tool's preview overlay (D67) hands the main process when the
+ * planner sends the batch: one envelope for all pins, then the overlay
+ * clears them. The main process relays it verbatim to the web
+ * (`cds-preview:comments`); nothing validates it in between because both
+ * ends are the tool.
  *
  *     { type: "cds-design.comments", screen, state,
  *       items: [{ element, comment }, …] }
- *
- * The hub accepts it only from the preview iframe (source + origin checked).
  */
 export interface CdsDesignCommentsEnvelope {
   type: "cds-design.comments";
@@ -828,22 +843,34 @@ export interface CdsDesignCommentsEnvelope {
 }
 
 /**
- * What the preview app posts when the screen it is showing fails (PLAN D49):
- * a runtime exception (`window.onerror` · `unhandledrejection`) or the dev
- * server's build error, reported by the repo's preview-bridge. The banner
- * above the frame offers it to Claude as one marker turn. The hub accepts it
- * only from the preview iframe (source + origin checked), like the pins.
+ * What the desktop reports when the screen it is showing fails (PLAN D49 →
+ * D69): `console-message` errors and a crashed renderer are `runtime`, a
+ * failed main-frame load is `build`. Built from the preview view's own
+ * events — no repo hook involved — and sent to the web as
+ * `cds-preview:error`, where the banner above the frame offers it to Claude
+ * as one marker turn.
  */
 export interface CdsDesignErrorEnvelope {
   type: "cds-design.error";
   /** A crash inside the page, or the build that serves it. */
   kind: "runtime" | "build";
-  /** The error text, as the browser or the dev overlay reported it. */
+  /** The error text, as the browser or the loader reported it. */
   message: string;
   /** The route that was up when it failed. */
   route: string;
   /** The state the screen was showing. */
   state: string;
+}
+
+/**
+ * The 💬 코멘트 toggle's word to the overlay (PLAN D58 → D67): the web keeps
+ * the truth and the main process re-tells the preview preload
+ * (`cds-overlay:mode`). Tool-internal — the repo never sees it; the overlay
+ * has no toggle of its own, so the two can never disagree.
+ */
+export interface CdsDesignCommentsModeEnvelope {
+  type: "cds-design.comments.mode";
+  on: boolean;
 }
 
 /**

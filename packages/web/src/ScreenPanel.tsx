@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CdsDesignCommentsEnvelope,
   CdsDesignScreen,
+  DiffFile,
   RepoPhase,
   RepoStatus,
   SessionState,
@@ -9,17 +10,19 @@ import type {
 } from "@cds-design/protocol";
 import { markTurn } from "@cds-design/protocol";
 import type { CommentItem, Daemon } from "./daemon-client";
-import { stateLabel } from "./format";
-import { Preview, type PreviewError, type PreviewTarget } from "./Preview";
+import { daemonLine, stateLabel } from "./format";
+import { PreviewHost, type PreviewError, type PreviewLocation, type PreviewTarget } from "./PreviewHost";
 import { StageBar } from "./StageBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { deriveStage } from "./stage";
 import { DiffPanel } from "./DiffPanel";
 import { CommentsPopover } from "./CommentsPopover";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { HandoffPanel } from "./HandoffPanel";
 import { handoffDraft } from "./handoff-draft";
 import {
   CheckIcon,
+  CloseIcon,
   CopyIcon,
   RefreshIcon,
   RestartIcon,
@@ -34,6 +37,12 @@ const PHASE_LABEL: Record<RepoPhase, string> = {
   ready: "준비 완료",
   error: "준비하지 못했습니다",
 };
+/** The three steps a first clone walks through, in the order a planner waits. */
+const PROGRESS_RAIL: Array<{ id: string; label: string; phases: RepoPhase[] }> = [
+  { id: "download", label: "내려받기", phases: ["cloning", "pulling"] },
+  { id: "install", label: "설치", phases: ["installing"] },
+  { id: "preview", label: "미리보기", phases: ["starting"] },
+];
 
 interface Guidance {
   title: string;
@@ -103,20 +112,10 @@ function ProgressPanel({
   const [copied, setCopied] = useState(false);
   const failed = phase === "error";
   const guidance = failed ? guidanceFor(errorKind, detail) : null;
-  /**
-   * The daemon streams the raw output of whatever it is running. A planner
-   * should never meet terminal colour codes or the command line itself, so
-   * only the last human-readable line survives.
-   */
-  const progressLine =
-    (detail ?? "")
-      // eslint-disable-next-line no-control-regex
-      .replace(/\u001b\[[0-9;]*m/g, "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith("$"))
-      .at(-1) ?? "";
+  const progressLine = daemonLine(detail);
   const needsSetup = phase === "missing";
+  /** Where the wait sits on the rail; -1 for the setup and failure states. */
+  const railIndex = PROGRESS_RAIL.findIndex((entry) => entry.phases.includes(phase));
 
   const copy = async (command: string) => {
     try {
@@ -135,6 +134,21 @@ function ProgressPanel({
           {!failed && <span className="spinner" />}
           <h2>{guidance ? guidance.title : PHASE_LABEL[phase]}</h2>
         </div>
+        {!failed && railIndex >= 0 && (
+          <div className="progress__rail" aria-hidden="true">
+            {PROGRESS_RAIL.map((entry, index) => (
+              <span
+                key={entry.id}
+                className={`progress__step${
+                  index < railIndex ? " progress__step--done" : index === railIndex ? " progress__step--now" : ""
+                }`}
+              >
+                <span className="progress__dot">{index < railIndex ? "✓" : ""}</span>
+                {entry.label}
+              </span>
+            ))}
+          </div>
+        )}
         <p className="progress__body">
           {guidance
             ? guidance.body
@@ -234,6 +248,24 @@ export function ScreenPanel({
    * it could not bring up — the rail and the chat stay usable while it runs.
    */
   const [syncError, setSyncError] = useState<string | null>(null);
+  /**
+   * The turn's echo on the preview: while Claude works the column
+   * wears a live hairline and the bar says 다시 그리는 중; the moment the turn
+   * settles the stage pulses once — an answer's arrival is an event, not a
+   * silent repaint.
+   */
+  const working = ready && turnState === "running";
+  const [settleFlash, setSettleFlash] = useState(false);
+  const wasWorking = useRef(false);
+  useEffect(() => {
+    if (wasWorking.current && !working) {
+      setSettleFlash(true);
+      const timer = setTimeout(() => setSettleFlash(false), 1100);
+      wasWorking.current = working;
+      return () => clearTimeout(timer);
+    }
+    wasWorking.current = working;
+  }, [working]);
   /** Preview comment pins waiting for Claude's turn to settle (DESIGN §6). */
   const [commentPins, setCommentPins] = useState<CdsDesignCommentsEnvelope | null>(null);
   /** True once the carrying turn actually ran; pins clear when it settles. */
@@ -248,9 +280,16 @@ export function ScreenPanel({
 
   /**
    * Which screen and state the preview shows. The toolbar is the screens'
-   * only door now, so the target lives here, beside it.
+   * only door, so the ask lives here beside it; the address bar's free paths
+   * are asks too (D66).
    */
   const [target, setTarget] = useState<PreviewTarget | null>(null);
+  /**
+   * Where the native view actually is (D66) — its own reports, not the ask.
+   * The picker and the chips follow this, so an in-app link click moves them
+   * too. Null on the browser path (the iframe cannot be asked).
+   */
+  const [location, setLocation] = useState<PreviewLocation | null>(null);
   /** The two dialogs of the cycle: 저장 and 개발자에게 넘기기. */
   const [saveOpen, setSaveOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -258,6 +297,10 @@ export function ScreenPanel({
   const [historyOpen, setHistoryOpen] = useState(false);
   /** 더 보기 ▾ 메뉴 — 사이클 동작이 항상 있는 자리 (PLAN D44). */
   const [menuOpen, setMenuOpen] = useState(false);
+  /** 변경 버리기 확인 — this app's dialog (결함③), with the file list it names. */
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  /** Paths the discard would throw away, read when the dialog opens. */
+  const [discardFiles, setDiscardFiles] = useState<DiffFile[] | null>(null);
 
   /**
    * 코멘트 모드(PLAN D58) — the truth the preview toolbar's 💬 toggle draws
@@ -275,6 +318,8 @@ export function ScreenPanel({
   const [commentsError, setCommentsError] = useState<string | null>(null);
   /** The row whose resolve toggle is in flight. */
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  /** Lists answered out of order must not paint over a newer one. */
+  const listNonce = useRef(0);
 
   /**
    * 코멘트 기록 다시 읽기: asked on connect, when a pin batch lands (the
@@ -283,19 +328,34 @@ export function ScreenPanel({
    * moves when this planner acts.
    */
   const refreshComments = useCallback(() => {
+    const nonce = ++listNonce.current;
     return api
       .listComments()
       .then((list) => {
+        if (nonce !== listNonce.current) return;
         setCommentItems(list.items);
         setCommentsError(null);
       })
-      .catch((e: Error) => setCommentsError(e.message));
+      .catch((e: Error) => {
+        if (nonce !== listNonce.current) return;
+        setCommentsError(e.message);
+      });
   }, [api]);
 
   useEffect(() => {
     if (connection !== "open") return;
     refreshComments();
   }, [connection, refreshComments]);
+
+  // The 더 보기 menu answers Escape; the backdrop under it takes missed clicks.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   const sync = useCallback(() => {
     setSyncError(null);
@@ -332,6 +392,29 @@ export function ScreenPanel({
       .handoffStatus()
       .then(() => api.repoStatus())
       .catch((e: Error) => setSyncError(e.message));
+  }, [api]);
+
+  /** 버리기: the confirm dialog's only action — the menu item only opens it. */
+  const discard = useCallback(() => {
+    setDiscardConfirm(false);
+    void api
+      .discard()
+      .then(() => api.repoStatus())
+      .catch((e: Error) => setSyncError(e.message));
+  }, [api]);
+
+  /**
+   * The menu item: opens the dialog and reads the diff beside it, so the
+   * planner sees the list of files the 버리기 would throw away (결함③) —
+   * not just a count.
+   */
+  const askDiscard = useCallback(() => {
+    setDiscardFiles(null);
+    setDiscardConfirm(true);
+    void api
+      .diff()
+      .then((files) => setDiscardFiles(files))
+      .catch(() => setDiscardFiles(null));
   }, [api]);
 
   /**
@@ -409,14 +492,6 @@ export function ScreenPanel({
     // "where did this tab come from".
     await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen), named?.title);
   };
-  /**
-   * The error banner's button (PLAN D49): the same channel the pins use, so
-   * the shell resolves the thread — the panel never learns which one is
-   * open. Claude gets the message itself as the turn body.
-   */
-  const forwardError = (error: PreviewError) => {
-    void onComments(errorToTurn(error));
-  };
 
   /** The popover's 해결 toggle: one daemon write, then the list re-reads. */
   const resolveComment = (id: string, resolved: boolean) => {
@@ -426,6 +501,15 @@ export function ScreenPanel({
       .then(() => refreshComments())
       .catch((e: Error) => setCommentsError(e.message))
       .finally(() => setResolvingId(null));
+  };
+
+  /**
+   * The error banner's button (PLAN D49): the same channel the pins use, so
+   * the shell resolves the thread — the panel never learns which one is
+   * open. Claude gets the message itself as the turn body.
+   */
+  const forwardError = (error: PreviewError) => {
+    void onComments(errorToTurn(error));
   };
   /**
    * 다시 보내기 (PLAN D57): one recorded comment rides the same channel the
@@ -496,15 +580,24 @@ export function ScreenPanel({
   });
 
   /**
-   * PiP 라벨(PLAN D63): `Claude가 보는 중 · <화면> · <상태>`. The panel
-   * names what it actually knows — the planner's own target and its state —
-   * and drops the segments it does not; before a screen is picked the label
-   * is the first words alone.
+   * PiP 라벨(PLAN D63): `Claude가 보는 중 · <화면> · <상태>` — read off where
+   * the view is (D66), falling back to the ask before the first report.
    */
-  const pipScreen = target
-    ? (screens.find((screen) => screen.route === target.route)?.title ?? target.route)
+  const pipActive =
+    location?.path ??
+    (target?.kind === "screen"
+      ? target.state
+        ? `${target.route}?state=${target.state}`
+        : target.route
+      : target?.kind === "path"
+        ? target.path
+        : null);
+  const pipRoute = pipActive ? pipActive.split("?")[0] : null;
+  const pipState = pipActive ? new URLSearchParams(pipActive.split("?")[1] ?? "").get("state") : null;
+  const pipScreen = pipRoute
+    ? (screens.find((screen) => screen.route === pipRoute)?.title ?? pipRoute)
     : null;
-  const pipLabel = ["Claude가 보는 중", pipScreen, target?.state ?? null]
+  const pipLabel = ["Claude가 보는 중", pipScreen, pipState]
     .filter(Boolean)
     .join(" · ");
 
@@ -512,7 +605,7 @@ export function ScreenPanel({
   const unresolvedComments = (commentItems ?? []).filter((item) => !item.resolved).length;
 
   return (
-    <div className="planner__previewcol">
+    <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
       <div className="screenpanel__bar">
         {status ? (
           <span className={`screenpanel__status screenpanel__status--${status.tone}`}>
@@ -520,6 +613,12 @@ export function ScreenPanel({
           </span>
         ) : (
           <span className="screenpanel__status screenpanel__status--none">화면 대기 중</span>
+        )}
+        {working && (
+          <span className="screenpanel__working">
+            <span className="spinner" />
+            다시 그리는 중
+          </span>
         )}
         <span className="screenpanel__spacer" />
         <button
@@ -543,7 +642,9 @@ export function ScreenPanel({
             더 보기 ▾
           </button>
           {menuOpen && (
-            <span className="selector__menu screenpanel__menu" role="menu">
+            <>
+              <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} />
+              <span className="selector__menu screenpanel__menu" role="menu">
               <button
                 type="button"
                 role="menuitem"
@@ -609,16 +710,7 @@ export function ScreenPanel({
                 }
                 onClick={() => {
                   setMenuOpen(false);
-                  if (
-                    !window.confirm(
-                      `저장하지 않은 변경 ${repo?.pendingChanges ?? 0}개를 모두 버릴까요? 되돌릴 수 없습니다.`,
-                    )
-                  )
-                    return;
-                  void api
-                    .discard()
-                    .then(() => api.repoStatus())
-                    .catch((e: Error) => setSyncError(e.message));
+                  askDiscard();
                 }}
               >
                 <span className="selector__label">변경 버리기</span>
@@ -636,16 +728,24 @@ export function ScreenPanel({
                 <span className="selector__label">코멘트 목록</span>
               </button>
             </span>
+            </>
           )}
         </span>
       </div>
-      {syncError && <p className="hint">{syncError}</p>}
+      {syncError && (
+        <div className="notice notice--error">
+          <span className="notice__text">{syncError}</span>
+          <button type="button" className="notice__close" aria-label="오류 닫기" onClick={() => setSyncError(null)}>
+            ×
+          </button>
+        </div>
+      )}
       {commentPins && <CommentPinsSummary envelope={commentPins} />}
       {/* The stage wrapper gives the PiP (PLAN D63) its coordinates: the
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
-      <div className="previewcol__stage">
-        <Preview
+      <div className={`previewcol__stage${settleFlash ? " previewcol__stage--settled" : ""}`}>
+        <PreviewHost
           url={repo?.previewUrl ?? null}
           stopped={previewStopped}
           stoppedDetail={repo?.detail ?? null}
@@ -654,20 +754,25 @@ export function ScreenPanel({
           onFixError={forwardError}
           screens={screens}
           target={target}
-          onNavigate={(route, state) => setTarget({ route, state })}
+          onNavigate={setTarget}
           onScreens={setScreens}
+          onLocation={setLocation}
+          location={location}
           commentsOn={commentsOn}
           onCommentsMode={setCommentsOn}
           unresolvedComments={unresolvedComments}
+          pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
+          pipLarge={pipLarge}
+          onPipToggle={() => setPipLarge((open) => !open)}
         />
-        {showPip && pipFrame && (
-          <div className={`pip${pipLarge ? " pip--large" : ""}`}>
+        {showPip && pipFrame && pipLarge && (
+          <div className="pip pip--large">
             <button
               type="button"
               className="pip__view"
-              aria-expanded={pipLarge}
-              title={pipLarge ? "접기" : "크게 보기"}
-              onClick={() => setPipLarge((open) => !open)}
+              aria-expanded
+              title="접기"
+              onClick={() => setPipLarge(false)}
             >
               <img
                 className="pip__frame"
@@ -704,6 +809,28 @@ export function ScreenPanel({
         />
       )}
       {historyOpen && <HistoryDrawer open onClose={() => setHistoryOpen(false)} daemon={daemon} />}
+      {discardConfirm && (
+        <ConfirmDialog
+          title="변경 버리기"
+          body={
+            <>
+              저장하지 않은 변경 <strong>{repo?.pendingChanges ?? 0}개</strong>를 모두 버릴까요?
+            </>
+          }
+          hint="버린 변경은 되돌릴 수 없습니다."
+          confirmLabel="버리기"
+          onConfirm={discard}
+          onClose={() => setDiscardConfirm(false)}
+        >
+          {discardFiles && discardFiles.length > 0 && (
+            <ul className="discard__files">
+              {discardFiles.map((file) => (
+                <li key={file.path}>{file.path}</li>
+              ))}
+            </ul>
+          )}
+        </ConfirmDialog>
+      )}
       <CommentsPopover
         open={commentsOpen}
         items={commentItems}

@@ -7,13 +7,13 @@ import { Sidebar } from "./Sidebar";
 import { Splitter } from "./Splitter";
 import { Onboarding } from "./Onboarding";
 import { RepoPicker } from "./RepoPicker";
+import { usePreviewCover } from "./use-preview-cover";
 import {
   SIDEBAR_WIDTH_BOUNDS,
   type ChatSettings,
   type LayoutSettings,
   type Settings,
 } from "./settings";
-import { GearIcon } from "./icons";
 
 /** The folded rail's width — an icon column, not a hidden panel. */
 const SIDEBAR_COLLAPSED_WIDTH = 44;
@@ -56,6 +56,9 @@ export function Shell({
   const { connection, status, api } = daemon;
   /** 프로젝트 추가 (PLAN D25) — the sidebar's `+ 새 프로젝트` opens it. */
   const [addOpen, setAddOpen] = useState(false);
+  // D65: the native preview view hides behind a freeze frame whenever a
+  // modal-like layer opens — one watcher for the whole frame, mounted here.
+  usePreviewCover();
   /** 시작하기 was pressed this session — warns stop re-opening the wizard. */
   const [wizardDismissed, setWizardDismissed] = useState(false);
 
@@ -108,7 +111,7 @@ export function Shell({
 
   /**
    * The sidebar tree and the workspace are siblings here; the tree's clicks
-   * (open · new · archive, PLAN D59) cross this ref, and the workspace
+   * (open · new · delete, PLAN D59) cross this ref, and the workspace
    * reports the open thread back for the tree's active mark. No state of its
    * own beyond that one string — the session flows stay the workspace's.
    */
@@ -116,8 +119,7 @@ export function Shell({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const openThread = (slug: string, thread: ThreadSummary) => workspace.current?.openThread(slug, thread);
   const newThread = (slug: string) => workspace.current?.newThread(slug);
-  const openArchive = (slug: string) => workspace.current?.openArchive(slug);
-  const archiveThread = (slug: string, thread: ThreadSummary) => workspace.current?.archiveThread(slug, thread);
+  const deleteThread = (slug: string, thread: ThreadSummary) => workspace.current?.deleteThread(slug, thread);
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
@@ -165,8 +167,7 @@ export function Shell({
         activeThreadId={activeThreadId}
         onOpenThread={openThread}
         onNewThread={newThread}
-        onOpenArchive={openArchive}
-        onArchiveThread={archiveThread}
+        onDeleteThread={deleteThread}
         onRenameThread={onRenameSession}
         boundary={
           !folded && (
@@ -230,15 +231,8 @@ export function Shell({
               연결하는 중…
             </span>
           )}
-          <button
-            type="button"
-            className="ghost"
-            aria-label="설정"
-            title="설정"
-            onClick={onOpenSettings}
-          >
-            <GearIcon />
-          </button>
+          {/* 설정 used to live here as a header gear — it moved to the rail's
+              foot (Sidebar) so the whole frame's controls sit in one room. */}
         </header>
 
         {warnings.length > 0 && (
@@ -257,6 +251,34 @@ export function Shell({
             `repo.*`, which refuses without an active project. */}
         {daemon.projects.length === 0 ? (
           <section className="planner__body planner__empty">
+            {/* The product's whole story, told once in miniature: an ask with
+                a 기획서 attached, and the screen that comes back.
+                Decorative — the picker below is the actual task. */}
+            <div className="emptyhero" aria-hidden="true">
+              <div className="emptyhero__ask">
+                <span className="emptyhero__attach">기획서.pdf</span>
+                <span className="emptyhero__prompt">❯</span>
+                결제 실패 화면의 세 상태를 만들어 줘
+              </div>
+              <span className="emptyhero__link" />
+              <div className="emptyhero__screen">
+                <span className="emptyhero__dots">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <span className="emptyhero__line" />
+                <span className="emptyhero__line emptyhero__line--short" />
+                <span className="emptyhero__chips">
+                  <i>기본</i>
+                  <i>비어 있음</i>
+                  <i>오류</i>
+                </span>
+              </div>
+              <p className="emptyhero__caption">
+                기획서를 첨부하면, 회사 디자인 시스템으로 짜인 화면이 이 자리에 뜹니다
+              </p>
+            </div>
             <h2 className="planner__emptyTitle">프로젝트 추가</h2>
             <p className="hint">화면을 만들 레포를 고르세요.</p>
             <RepoPicker daemon={daemon} onOpenSettings={onOpenSettings} />

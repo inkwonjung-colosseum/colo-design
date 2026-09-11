@@ -95,27 +95,82 @@ function tone(pct: number): "" | "warn" | "danger" {
 /**
  * Everything the planner spends, behind one chip (PLAN D10[설정 이동]).
  *
- * Two plan windows and the conversation length answer "얼마나 더 쓸 수 있나"
- * one click away, in the popover. The exception the planner asked for: the
- * 5-hour window also sits on the chip itself — percentage and countdown —
- * because that is the budget they check before sending one more turn. The
- * dot still interrupts for whichever number is closest to running out.
+ * The chip's face reads the 5-hour window alone — percentage and countdown —
+ * the budget that decides whether one more turn is a good idea. The weekly
+ * window and the conversation length answer "얼마나 더 쓸 수 있나" one click
+ * away, in the popover, whose state badge still reads the worst of them all.
  */
-function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsage | null }) {
+function UsageChip({
+  plan,
+  usage,
+  onRefresh,
+}: {
+  plan: PlanUsage | null;
+  usage: ContextUsage | null;
+  onRefresh?: () => void;
+}) {
   const [open, setOpen] = useState(false);
-  const fiveHour = plan?.fiveHour ?? null;
-  const counting = Boolean(fiveHour?.resetsAt);
-  // The chip leads with the 5-hour window: percentage and countdown, no click
-  // needed. 주간 한도와 대화 길이 stay in the popover; the exact reset moment
-  // goes to the tooltip.
-  const reading = [
-    fiveHour?.utilization != null ? `${clamp(fiveHour.utilization)}%` : "",
-    timeLeft(fiveHour?.resetsAt ?? null) ?? "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+
+  /**
+   * One entry per budget. `raw` stays unclamped so "no reading yet" (null)
+   * can keep saying nothing instead of claiming 0%.
+   */
+  const entries: Array<{
+    label: string;
+    raw: number | null;
+    pct: number;
+    resetsAt: string | null;
+    note: string;
+  }> = [];
+  if (plan?.fiveHour) {
+    entries.push({
+      label: "5시간",
+      raw: plan.fiveHour.utilization ?? null,
+      pct: clamp(plan.fiveHour.utilization ?? 0),
+      resetsAt: plan.fiveHour.resetsAt ?? null,
+      note: resetNote(plan.fiveHour.resetsAt),
+    });
+  }
+  if (plan?.sevenDay) {
+    entries.push({
+      label: "이번 주",
+      raw: plan.sevenDay.utilization ?? null,
+      pct: clamp(plan.sevenDay.utilization ?? 0),
+      resetsAt: plan.sevenDay.resetsAt ?? null,
+      note: resetNote(plan.sevenDay.resetsAt),
+    });
+  }
+  if (usage) {
+    const pct = clamp(usage.percentage);
+    entries.push({
+      label: "대화 길이",
+      raw: usage.percentage,
+      pct,
+      resetsAt: null,
+      note:
+        pct >= 85
+          ? "곧 앞부분을 잊습니다. 새 대화로 나누는 편이 좋아요"
+          : pct >= 60
+            ? "대화가 길어지고 있어요"
+            : "",
+    });
+  }
+
+  // The chip's face belongs to the 5-hour window — the one a planner checks
+  // before one more turn — whatever the weekly number is doing. Its colour
+  // follows that same number, so the arc and the reading never disagree.
+  // The overall state ("거의 찼어요") keeps reading the worst budget, where
+  // the full picture lives.
+  const worst = entries.length > 0 ? entries.reduce((a, b) => (b.pct > a.pct ? b : a)) : null;
+  const lead = entries.find((entry) => entry.label === "5시간") ?? entries[0] ?? null;
+  const badge = lead ? tone(lead.pct) : "";
+  const overall = worst ? tone(worst.pct) : "";
+  const reading = lead
+    ? [lead.raw != null ? `${lead.pct}%` : "", timeLeft(lead.resetsAt) ?? ""].filter(Boolean).join(" · ")
+    : "";
   // Time left is computed from `now`, so a rendered countdown goes stale;
   // re-render on the half-minute while one is on screen.
+  const counting = Boolean(lead?.resetsAt);
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!open && !counting) return;
@@ -137,42 +192,12 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  const rows: Array<{ label: string; pct: number; note: string }> = [];
-  if (plan?.fiveHour) {
-    rows.push({
-      label: "5시간",
-      pct: clamp(plan.fiveHour.utilization ?? 0),
-      note: resetNote(plan.fiveHour.resetsAt),
-    });
-  }
-  if (plan?.sevenDay) {
-    rows.push({
-      label: "이번 주",
-      pct: clamp(plan.sevenDay.utilization ?? 0),
-      note: resetNote(plan.sevenDay.resetsAt),
-    });
-  }
-  if (usage) {
-    const pct = clamp(usage.percentage);
-    rows.push({
-      label: "대화 길이",
-      pct,
-      note:
-        pct >= 85
-          ? "곧 앞부분을 잊습니다. 새 대화로 나누는 편이 좋아요"
-          : pct >= 60
-            ? "대화가 길어지고 있어요"
-            : "",
-    });
-  }
-  if (rows.length === 0) return null;
+  if (!lead || !worst) return null;
 
-  const worst = Math.max(...rows.map((row) => row.pct));
-  const badge = tone(worst);
-  // The ring is the gauge of the chip's lead number — the 5-hour window the
-  // planner checks before sending one more turn — so the arc and the "5시간
-  // 0%"` reading can never disagree. 대화 길이 keeps its row in the popover.
-  const ringPct = plan?.fiveHour ? clamp(plan.fiveHour.utilization ?? 0) : null;
+  // The ring gauges whatever the chip is reading, so the arc and the number
+  // beside it can never disagree. The budgets it is not showing keep their
+  // rows in the popover.
+  const ringPct = lead.raw != null ? lead.pct : null;
   const ringLength = 2 * Math.PI * 7.5;
 
   return (
@@ -191,13 +216,19 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
         aria-haspopup="dialog"
         aria-expanded={open}
         title={
-          fiveHour?.resetsAt
-            ? `5시간 한도는 ${clockTime(fiveHour.resetsAt)}에 다시 채워집니다`
+          lead.resetsAt
+            ? `${lead.label} 한도는 ${clockTime(lead.resetsAt)}에 다시 채워집니다`
             : "Claude를 얼마나 썼는지 봅니다"
         }
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          // Opening asks about right now: a 5-hour window that reset since
+          // the last turn deserves its fresh number, not the stale one.
+          if (next) onRefresh?.();
+        }}
       >
-        <span className="usage__ring" aria-hidden>
+        <span className="usage__ring ring" aria-hidden>
           <svg viewBox="0 0 20 20" width={18} height={18}>
             <circle className="usage__ringtrack" cx="10" cy="10" r="7.5" />
             {ringPct !== null && (
@@ -216,7 +247,7 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
         </span>
         {reading ? (
           <>
-            5시간
+            {lead.label}
             <span className="usage__reading">{reading}</span>
           </>
         ) : (
@@ -227,12 +258,12 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
         <span className="selector__menu usage__menu" role="dialog" aria-label="사용량">
           <span className="usage__head">
             <span className="usage__title">사용량</span>
-            <span className={badge ? `usage__state usage__state--${badge}` : "usage__state"}>
+            <span className={overall ? `usage__state usage__state--${overall}` : "usage__state"}>
               <i className="usage__statedot" aria-hidden />
-              {worst >= 85 ? "거의 찼어요" : worst >= 60 ? "차오르는 중" : "여유로워요"}
+              {worst.pct >= 85 ? "거의 찼어요" : worst.pct >= 60 ? "차오르는 중" : "여유로워요"}
             </span>
           </span>
-          {rows.map((row) => (
+          {entries.map((row) => (
             <span key={row.label} className="usage__metric">
               <span className="usage__metric-head">
                 <span className="usage__label">{row.label}</span>
@@ -264,8 +295,9 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
 }
 
 /**
- * `/`-commands worth offering, in a planner's words. Everything else the CLI
- * advertises is developer or terminal plumbing and stays hidden.
+ * The few commands a planner meets often enough to deserve Korean names.
+ * Every command the CLI advertises shows — the terminal's `/`, translated
+ * only where the translation earns its place.
  */
 const COMMAND_LABEL: Record<string, { label: string; hint: string }> = {
   clear: { label: "대화 새로 시작", hint: "지금까지 대화를 지우고 처음부터 이야기해요" },
@@ -274,38 +306,18 @@ const COMMAND_LABEL: Record<string, { label: string; hint: string }> = {
   context: { label: "대화 길이 보기", hint: "지금 대화가 얼마나 찼는지 알려줘요" },
 };
 
-/** Built-ins that only mean something at a terminal. */
-const COMMAND_HIDDEN: Record<string, true> = {
-  agents: true,
-  bug: true,
-  config: true,
-  "connect-ide": true,
-  doctor: true,
-  export: true,
-  feedback: true,
-  hooks: true,
-  ide: true,
-  init: true,
-  "install-github-app": true,
-  login: true,
-  logout: true,
-  mcp: true,
-  memory: true,
-  model: true,
-  "output-style": true,
-  permissions: true,
-  "pr-comments": true,
-  "privacy-settings": true,
-  "release-notes": true,
-  resume: true,
-  review: true,
-  statusline: true,
-  status: true,
-  "terminal-setup": true,
-  todos: true,
-  upgrade: true,
-  vim: true,
-};
+/**
+ * The palette reads the CLI, which answers only once a thread exists — and an
+ * empty thread is exactly where a planner reaches for `/`. These four stand
+ * in until a real answer lands, so the first keystroke still offers something
+ * true.
+ */
+const COMMAND_FALLBACK: SessionCommand[] = Object.keys(COMMAND_LABEL).map((name) => ({
+  name,
+  description: "",
+  argumentHint: "",
+  aliases: [],
+}));
 
 /**
  * One Paseo-style selector chip with its dropdown. Options arrive pre-shaped;
@@ -479,27 +491,6 @@ function saveHistory(rows: string[]): void {
   }
 }
 
-/**
- * 빠른 동작 칩(PLAN D55): a screen conversation's five starting sentences.
- * The list is a tool constant on purpose — the repo does not get to write
- * the planner's words. A click is 문장 삽입, never a send: the sentences
- * land in the field and the planner reads, edits, and sends them themselves.
- */
-const QUICK_ACTIONS: ReadonlyArray<{ label: string; sentence: string }> = [
-  { label: "빈 상태 추가", sentence: "이 화면에 비어 있음 상태를 추가해 줘." },
-  { label: "로딩 상태 추가", sentence: "이 화면에 로딩 중 상태를 추가해 줘." },
-  { label: "오류 상태 추가", sentence: "이 화면에 오류 상태를 추가해 줘." },
-  {
-    label: "기획서와 대조",
-    sentence:
-      "이 화면을 근거 기획서(specs/ 첨부)와 대조해서 다른 점과 비어 있는 점을 목록으로 알려 줘.",
-  },
-  {
-    label: "이 화면 설명해 줘",
-    sentence: "이 화면이 어떤 화면인지 구성과 동작을 설명해 줘.",
-  },
-];
-
 // ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
@@ -511,6 +502,7 @@ export function Composer({
   placeholder,
   usage,
   plan,
+  onRefreshUsage,
   running,
   sendKey,
   selector,
@@ -520,7 +512,6 @@ export function Composer({
   onSend,
   onInterrupt,
   onFindFiles,
-  quickActions,
 }: {
   disabled: boolean;
   /** Which conversation this field is the draft for; swapping keys swaps drafts. */
@@ -531,6 +522,9 @@ export function Composer({
   usage: ContextUsage | null;
   /** Account-wide limits from the daemon; shown even with no thread open. */
   plan: PlanUsage | null;
+  /** Called when the usage popover opens, so the numbers are read now, not
+      whenever the last turn happened to land. */
+  onRefreshUsage?: () => void;
   running: boolean;
   /**
    * 모델·노력·권한 chips. Before a session exists these carry what the next
@@ -546,13 +540,6 @@ export function Composer({
   onSend: (text: string, attachments: Attachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
-  /**
-   * 활성 레포가 `cds-design.json#quickActions` 으로 말하는 문장들(PLAN D55) —
-   * 도구 상수 뒤에 붙는다. 문자열 하나가 칩의 이름이자 넣을 문장이다; 도구
-   * 칩과 같은 이름은 거르고, 목록 안의 거듭도 거른다. 없거나 비었으면 칩이
-   * 늘지 않는다.
-   */
-  quickActions?: string[] | null;
 }) {
   const [editor, setEditor] = useState<Editor>(() => ({
     text: storedDraft(draftKey),
@@ -565,6 +552,14 @@ export function Composer({
   const [caretTick, setCaretTick] = useState(0);
   const area = useRef<HTMLTextAreaElement>(null);
   const palette = useRef<HTMLDivElement>(null);
+  /** The live CLI's list, or the built-in stand-in while there is none. */
+  const knownCommands = commands.length > 0 ? commands : COMMAND_FALLBACK;
+  // Read through a ref: ChatColumn passes a fresh arrow every render, and a
+  // dep on it would re-run the token effect after Escape's own clear —
+  // re-detecting the `/` still under the caret and instantly reopening the
+  // palette it was meant to dismiss.
+  const findFiles = useRef(onFindFiles);
+  findFiles.current = onFindFiles;
   const [highlight, setHighlight] = useState(0);
   const filePicker = useRef<HTMLInputElement>(null);
   const [rejected, setRejected] = useState<string | null>(null);
@@ -664,9 +659,8 @@ export function Composer({
       // name, an alias, or the Korean label a planner knows a built-in by.
       const query = command.query.toLowerCase();
       setSuggestions(
-        commands
+        knownCommands
           .filter(({ name, aliases }) => {
-            if (COMMAND_HIDDEN[name]) return false;
             if (!query) return true;
             const label = COMMAND_LABEL[name]?.label.toLowerCase();
             return (
@@ -676,7 +670,8 @@ export function Composer({
             );
           })
           .map((entry) => {
-            // Built-ins get a planner's words; a team's own skill keeps its own.
+            // The few known built-ins get a planner's words; everything else —
+            // a skill, a plugin, the rest of the CLI — keeps its own name.
             const known = COMMAND_LABEL[entry.name];
             return {
               insert: `/${entry.name} `,
@@ -700,7 +695,7 @@ export function Composer({
     setHighlight(0);
 
     let cancelled = false;
-    void onFindFiles(mention.query).then((entries) => {
+    void findFiles.current(mention.query).then((entries) => {
       if (cancelled) return;
       setSuggestions(
         entries.slice(0, 10).map((entry) => {
@@ -721,7 +716,7 @@ export function Composer({
     return () => {
       cancelled = true;
     };
-  }, [editor.text, onFindFiles, commands, caretTick]);
+  }, [editor.text, knownCommands, caretTick]);
 
   // The palette now lists every command, so the keyboard walk has to bring
   // its row into view instead of running off the bottom of the scroll.
@@ -790,38 +785,6 @@ export function Composer({
     );
     setEditor((prev) => ({ text: prev.text, attachments: [...prev.attachments, ...read] }));
   };
-
-  /**
-   * A quick action chip (PLAN D55): the sentence joins the field — on its
-   * own line when something is already written — and the caret lands at the
-   * end. `onSend` is nowhere in this path: a chip never sends. The planner
-   * reads what they are about to ask, edits it if they like, and sends.
-   */
-  const insertQuickAction = (sentence: string) => {
-    setEditor((prev) => {
-      const base = prev.text.replace(/\s+$/, "");
-      return { text: base ? `${base}\n${sentence}` : sentence, attachments: prev.attachments };
-    });
-    requestAnimationFrame(() => {
-      const element = area.current;
-      if (!element) return;
-      const end = element.value.length;
-      element.setSelectionRange(end, end);
-      element.focus();
-    });
-  };
-
-  /**
-   * The repo's own sentences (PLAN D55), behind the tool constants: a chip
-   * named like a tool chip is the tool chip, and the repo listing a sentence
-   * twice must not buy it a second chip. Each string is both the label and
-   * the sentence — the repo speaks for itself, the tool does not dress it up.
-   */
-  const repoQuickActions = (quickActions ?? []).filter(
-    (sentence, index) =>
-      !QUICK_ACTIONS.some((action) => action.label === sentence) &&
-      (quickActions ?? []).indexOf(sentence) === index,
-  );
 
   const submit = () => {
     const text = editor.text.trim();
@@ -1039,36 +1002,6 @@ export function Composer({
         </div>
       )}
 
-      {/* 빠른 동작 칩(PLAN D55): 대화가 비었거나 마지막 턴이 끝났을 때만 —
-          a running turn hides them, its settle brings them back. 클릭은
-          문장을 입력란에 넣을 뿐, 보내지는 않는다. */}
-      {!running && !disabled && (
-        <div className="chips composer__quick" role="group" aria-label="빠른 동작">
-          {QUICK_ACTIONS.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              className="chip chip--quick"
-              title={action.sentence}
-              onClick={() => insertQuickAction(action.sentence)}
-            >
-              {action.label}
-            </button>
-          ))}
-          {repoQuickActions.map((sentence) => (
-            <button
-              key={sentence}
-              type="button"
-              className="chip chip--quick"
-              title={sentence}
-              onClick={() => insertQuickAction(sentence)}
-            >
-              {sentence}
-            </button>
-          ))}
-        </div>
-      )}
-
       {rejected && (
         <div className="notice notice--warn">
           <span className="notice__text">{rejected}</span>
@@ -1178,7 +1111,7 @@ export function Composer({
           />
         ))}
         <div className="toolbar__end">
-          <UsageChip plan={plan} usage={usage} />
+          <UsageChip plan={plan} usage={usage} onRefresh={onRefreshUsage} />
           {running ? (
             <button
               type="button"

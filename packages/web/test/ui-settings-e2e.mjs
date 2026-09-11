@@ -52,6 +52,14 @@ async function main() {
   const failures = [];
   page.on("pageerror", (e) => failures.push(e.message));
   page.on("console", (m) => m.type() === "error" && failures.push(m.text()));
+  // 결함③ (PLAN 0단계): the browser's own confirm must never enter the
+  // picture — every dangerous ask is the app's dialog.
+  await page.addInitScript(() => {
+    window.confirm = () => {
+      window.__nativeConfirmUsed = true;
+      return true;
+    };
+  });
 
   try {
     // 1. an unconfigured client opens on paper, whatever the OS says (PLAN
@@ -61,6 +69,11 @@ async function main() {
     await page.goto(APP);
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("no stored settings means the light palette stands", (await theme(page)) === "light");
+    check(
+      "the browser chrome tint lands on the palette",
+      (await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content)) ===
+        "#ffffff",
+    );
     await page.emulateMedia({ colorScheme: "light" });
     check("nothing is written to storage until something is changed", (await stored(page)) === null);
 
@@ -114,8 +127,54 @@ async function main() {
     check("light theme actually swaps the surface colour", bodyBg === "rgb(255, 255, 255)", bodyBg);
     check("the choice is stored", (await stored(page))?.theme === "light");
 
+    // 3b. The extra palettes are full themes: each applies live, persists,
+    // and really swaps the page surface, not just the attribute.
+    const palettes = [
+      ["sepia", "rgb(247, 241, 228)"],
+      ["midnight", "rgb(13, 18, 32)"],
+      ["contrast", "rgb(0, 0, 0)"],
+      ["dracula", "rgb(40, 42, 54)"],
+      ["solarized", "rgb(0, 43, 54)"],
+      ["catppuccin", "rgb(30, 30, 46)"],
+      ["nord", "rgb(46, 52, 64)"],
+      ["gruvbox", "rgb(40, 40, 40)"],
+      ["tokyonight", "rgb(26, 27, 38)"],
+      ["rosepine", "rgb(25, 23, 36)"],
+      ["everforest", "rgb(45, 53, 59)"],
+      ["onedark", "rgb(40, 44, 52)"],
+      ["github", "rgb(13, 17, 23)"],
+      ["monokai", "rgb(39, 40, 34)"],
+      ["latte", "rgb(239, 241, 245)"],
+    ];
+    for (const [id, surface] of palettes) {
+      await page.getByLabel("테마").selectOption(id);
+      await page
+        .waitForFunction((want) => document.documentElement.dataset.theme === want, id, {
+          timeout: 3000,
+        })
+        .catch(() => undefined);
+      check(`the ${id} palette applies live`, (await theme(page)) === id);
+      await page.waitForTimeout(300); // let the surface transition settle
+      const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      check(`the ${id} palette swaps the surface colour`, bg === surface, bg);
+      check(`the ${id} choice is stored`, (await stored(page))?.theme === id);
+      await page.screenshot({ path: join(here, `ui-settings-${id}.png`) });
+    }
+
+    const chrome = await page.evaluate(
+      () => document.querySelector('meta[name="theme-color"]')?.content,
+    );
+    check("the chrome tint follows the last palette onto paper", chrome === "#eff1f5", chrome);
+
     // 4. "system" follows the OS, in both directions, without a reload.
     await page.getByLabel("테마").selectOption("system");
+    // The palettes loop leaves a non-light palette on <html>, so the attribute
+    // genuinely has to move — wait for the commit, as the dark direction below.
+    await page
+      .waitForFunction(() => document.documentElement.dataset.theme === "light", undefined, {
+        timeout: 3000,
+      })
+      .catch(() => undefined);
     check("system resolves to the OS light mode", (await theme(page)) === "light");
     await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark", undefined, {
@@ -123,6 +182,22 @@ async function main() {
     });
     check("switching the OS to dark moves the app with it", (await theme(page)) === "dark");
     await page.emulateMedia({ colorScheme: "light" });
+
+    // A request for more contrast outranks light/dark, both ways, live.
+    await page.emulateMedia({ contrast: "more" });
+    await page.waitForFunction(
+      () => document.documentElement.dataset.theme === "contrast",
+      undefined,
+      { timeout: 3000 },
+    );
+    check("a high-contrast request pulls in the contrast palette", (await theme(page)) === "contrast");
+    await page.emulateMedia({ contrast: null });
+    await page.waitForFunction(
+      () => document.documentElement.dataset.theme === "light",
+      undefined,
+      { timeout: 3000 },
+    );
+    check("dropping the request hands control back to light/dark", (await theme(page)) === "light");
 
     // 5. behaviour choices survive a reload.
     await page.getByLabel("보내기 키").selectOption("modEnter");
@@ -198,11 +273,27 @@ async function main() {
       (await page.getByLabel("접속 주소").isVisible()) === true,
     );
 
+    // 7b. the one dangerous action on this panel asks in the app's dialog
+    //     (결함③) — the native confirm stays silent, cancelling keeps all.
+    await page.getByRole("button", { name: "접속 주소 지우기" }).click();
+    const forgetDialog = page.locator('[role="dialog"][aria-label="접속 주소 지우기"]');
+    await forgetDialog.waitFor({ timeout: 5000 });
+    check(
+      "주소 지우기 asks in the app's dialog, never window.confirm",
+      (await page.evaluate(() => window.__nativeConfirmUsed ?? false)) === false,
+    );
+    await forgetDialog.getByRole("button", { name: "취소" }).click();
+    await forgetDialog.waitFor({ state: "detached", timeout: 5000 });
+    check(
+      "cancelling keeps the panel and the address",
+      (await page.locator('[role="dialog"][aria-label="설정"]').count()) === 1,
+    );
+
     // 8. a stored blob that is not a legal Settings must not brick the app.
     await page.evaluate(() =>
       localStorage.setItem(
         "cds-design.settings",
-        JSON.stringify({ theme: "neon", sendKey: 7, confirmBeforeDelete: "yes" }),
+        JSON.stringify({ theme: "neon", sendKey: 7 }),
       ),
     );
     await page.reload();

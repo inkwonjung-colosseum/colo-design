@@ -49,12 +49,26 @@
   --r-sm: 4px;
   --r-md: 6px;
   --r-lg: 8px;
-  /* things that float: menus, dialogs, the composer. Flat work stays at 4–8. */
+  /* things that float: menus. Dialogs and the composer use --r-dialog. Flat work stays at 4–8. */
   --r-float: 12px;
+  --r-dialog: 16px;
 
   --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.66), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
   --brand-grad: linear-gradient(135deg, #9db1c7 0%, #7e97b5 55%, #a493c4 100%);
   --scrim: rgba(0, 0, 0, 0.5);
+
+  /* atmosphere — the canvas is lit, never dead flat. Derived from the accent,
+     so every palette gets its own tint of the same light. */
+  --wash-1: color-mix(in srgb, var(--accent) 7%, transparent);
+  --wash-2: color-mix(in srgb, var(--accent) 4%, transparent);
+  --glass: color-mix(in srgb, var(--panel) 78%, transparent);
+  --grid-dot: color-mix(in srgb, var(--text) 7%, transparent);
+  /* elevation — layered so a surface sits in light, not on a line. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 12px 32px -16px rgba(0, 0, 0, 0.5);
+  --shadow-float: 0 2px 6px -2px rgba(0, 0, 0, 0.4), 0 24px 56px -20px rgba(0, 0, 0, 0.55);
+  /* one spring for things that pop, one ease for things that drift */
+  --spring: cubic-bezier(0.34, 1.3, 0.42, 1);
+  --drift: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   color-scheme: dark;
 }
@@ -97,9 +111,619 @@
   --brand-grad: linear-gradient(135deg, #4a6b8f 0%, #3d5a7a 55%, #6d5b96 100%);
   --scrim: rgba(24, 24, 32, 0.32);
 
+  /* the same lit studio, on paper: weaker keys of the same washes */
+  --shadow-card: 0 1px 2px rgba(24, 24, 32, 0.05), 0 12px 32px -16px rgba(24, 24, 32, 0.16);
+  --shadow-float: 0 2px 6px -2px rgba(24, 24, 32, 0.08), 0 24px 56px -20px rgba(24, 24, 32, 0.2);
+
   color-scheme: light;
 }
 
+
+/* ------------------------------------------------------------------ palettes */
+
+/* Beyond the native pair: whole-palette swaps of the same variable set.
+   Each is chosen explicitly — "system" never resolves to these. */
+:root[data-theme="sepia"] {
+  --bg: #f7f1e4;
+  --bg-2: #efe6d2;
+  --panel: #f2eadb;
+  --panel-2: #e9dfc9;
+  --panel-3: #ded0b4;
+
+  --line: #d6c6a4;
+  --line-soft: #e3d8bd;
+  --line-strong: #c3b28d;
+  --line-hover: #ad9a72;
+  --line-hover-strong: #9c8a62;
+  --scroll-thumb: #cbbc99;
+
+  --text: #362a1c;
+  --text-2: #5f503a;
+  --muted: #74644a;
+
+  --accent: #8a6a35;
+  --accent-soft: rgba(138, 106, 53, 0.12);
+  --accent-glow: rgba(138, 106, 53, 0.3);
+  --warn: #8f5f14;
+  --warn-soft: rgba(143, 95, 20, 0.09);
+  --danger: #a3402e;
+  --danger-soft: rgba(163, 64, 46, 0.08);
+  --ok: #4f7031;
+
+  --warn-line: rgba(143, 95, 20, 0.38);
+  --danger-line: rgba(163, 64, 46, 0.4);
+  --select-bg: rgba(138, 106, 53, 0.24);
+
+  --shadow-pop: 0 16px 40px -12px rgba(64, 48, 26, 0.22), 0 4px 12px -4px rgba(64, 48, 26, 0.14);
+  --brand-grad: linear-gradient(135deg, #8a6a35 0%, #6f5426 55%, #9a6a52 100%);
+  --scrim: rgba(64, 48, 26, 0.35);
+  --shadow-card: 0 1px 2px rgba(64, 48, 26, 0.08), 0 12px 32px -16px rgba(64, 48, 26, 0.22);
+  --shadow-float: 0 2px 6px -2px rgba(64, 48, 26, 0.1), 0 24px 56px -20px rgba(64, 48, 26, 0.28);
+
+  color-scheme: light;
+}
+
+:root[data-theme="midnight"] {
+  --bg: #0d1220;
+  --bg-2: #101728;
+  --panel: #121a2c;
+  --panel-2: #172134;
+  --panel-3: #1d2940;
+
+  --line: #2b3a52;
+  --line-soft: #1c2739;
+  --line-strong: #33445f;
+  --line-hover: #3b4e6c;
+  --line-hover-strong: #425878;
+  --scroll-thumb: #2a3850;
+
+  --text: #dde5f2;
+  --text-2: #a9b7cd;
+  --muted: #93a2bc;
+
+  --accent: #8fb3de;
+  --accent-soft: rgba(143, 179, 222, 0.1);
+  --accent-glow: rgba(143, 179, 222, 0.35);
+  --warn: #d8ab68;
+  --warn-soft: rgba(216, 171, 104, 0.09);
+  --danger: #e07f80;
+  --danger-soft: rgba(224, 127, 128, 0.09);
+  --ok: #7cb982;
+
+  --warn-line: rgba(216, 171, 104, 0.4);
+  --danger-line: rgba(224, 127, 128, 0.44);
+  --select-bg: rgba(143, 179, 222, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.68), 0 4px 12px -4px rgba(0, 0, 0, 0.52);
+  --brand-grad: linear-gradient(135deg, #8fb3de 0%, #6e94c6 55%, #8f9fd8 100%);
+  --scrim: rgba(0, 0, 0, 0.52);
+
+  color-scheme: dark;
+}
+
+:root[data-theme="contrast"] {
+  --bg: #000000;
+  --bg-2: #0a0a0a;
+  --panel: #0f0f0f;
+  --panel-2: #161616;
+  --panel-3: #202020;
+
+  --line: #4d4d4d;
+  --line-soft: #262626;
+  --line-strong: #616161;
+  --line-hover: #7a7a7a;
+  --line-hover-strong: #909090;
+  --scroll-thumb: #595959;
+
+  --text: #ffffff;
+  --text-2: #d9d9d9;
+  --muted: #c0c0c0;
+
+  --accent: #8ab8ff;
+  --accent-soft: rgba(138, 184, 255, 0.14);
+  --accent-glow: rgba(138, 184, 255, 0.5);
+  --warn: #f2c14e;
+  --warn-soft: rgba(242, 193, 78, 0.12);
+  --danger: #ff8a80;
+  --danger-soft: rgba(255, 138, 128, 0.12);
+  --ok: #6fdd82;
+
+  --warn-line: rgba(242, 193, 78, 0.5);
+  --danger-line: rgba(255, 138, 128, 0.52);
+  --select-bg: rgba(138, 184, 255, 0.35);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.85), 0 4px 12px -4px rgba(0, 0, 0, 0.65);
+  --brand-grad: linear-gradient(135deg, #8ab8ff 0%, #5f92e8 55%, #a98ef0 100%);
+  --scrim: rgba(0, 0, 0, 0.7);
+
+  color-scheme: dark;
+}
+
+/* Dracula — draculatheme.com. bg #282a36, selection #44475a as hairlines,
+   comment #6272a4 for muted, purple #bd93f9 accent, official fg/accents. */
+:root[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-2: #21222c;
+  --panel: #2d2f3f;
+  --panel-2: #34374a;
+  --panel-3: #44475a;
+
+  --line: #44475a;
+  --line-soft: #34374a;
+  --line-strong: #525572;
+  --line-hover: #6272a4;
+  --line-hover-strong: #7381b0;
+  --scroll-thumb: #44475a;
+
+  --text: #f8f8f2;
+  --text-2: #c5c6d4;
+  --muted: #6272a4;
+
+  --accent: #bd93f9;
+  --accent-soft: rgba(189, 147, 249, 0.12);
+  --accent-glow: rgba(189, 147, 249, 0.4);
+  --warn: #f1fa8c;
+  --warn-soft: rgba(241, 250, 140, 0.08);
+  --danger: #ff5555;
+  --danger-soft: rgba(255, 85, 85, 0.1);
+  --ok: #50fa7b;
+
+  --warn-line: rgba(241, 250, 140, 0.4);
+  --danger-line: rgba(255, 85, 85, 0.45);
+  --select-bg: rgba(189, 147, 249, 0.28);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.7), 0 4px 12px -4px rgba(0, 0, 0, 0.55);
+  --brand-grad: linear-gradient(135deg, #bd93f9 0%, #9a72e0 55%, #ff79c6 100%);
+  --scrim: rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
+}
+
+/* Solarized dark — ethanschoonover.com/solarized. The official dark rebase:
+   base03 surface, base1/base0/base00 text ladder, blue accent, the eight
+   accent colours verbatim. */
+:root[data-theme="solarized"] {
+  --bg: #002b36;
+  --bg-2: #012129;
+  --panel: #022c37;
+  --panel-2: #073642;
+  --panel-3: #0b4351;
+
+  --line: #073642;
+  --line-soft: #042e38;
+  --line-strong: #0e4a58;
+  --line-hover: #586e75;
+  --line-hover-strong: #6b8290;
+  --scroll-thumb: #0f4653;
+
+  --text: #93a1a1;
+  --text-2: #839496;
+  --muted: #657b83;
+
+  --accent: #268bd2;
+  --accent-soft: rgba(38, 139, 210, 0.12);
+  --accent-glow: rgba(38, 139, 210, 0.4);
+  --warn: #b58900;
+  --warn-soft: rgba(181, 137, 0, 0.1);
+  --danger: #dc322f;
+  --danger-soft: rgba(220, 50, 47, 0.1);
+  --ok: #859900;
+
+  --warn-line: rgba(181, 137, 0, 0.45);
+  --danger-line: rgba(220, 50, 47, 0.45);
+  --select-bg: rgba(38, 139, 210, 0.3);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.65), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --brand-grad: linear-gradient(135deg, #2aa198 0%, #268bd2 55%, #6c71c4 100%);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+/* Catppuccin Mocha — catppuccin.com/palette. Base surface ladder, subtext/overlay
+   text ladder, lavender accent, the pastel accents verbatim. */
+:root[data-theme="catppuccin"] {
+  --bg: #1e1e2e;
+  --bg-2: #181825;
+  --panel: #272739;
+  --panel-2: #313244;
+  --panel-3: #45475a;
+
+  --line: #313244;
+  --line-soft: #26263a;
+  --line-strong: #45475a;
+  --line-hover: #585b70;
+  --line-hover-strong: #6c7086;
+  --scroll-thumb: #45475a;
+
+  --text: #cdd6f4;
+  --text-2: #a6adc8;
+  --muted: #7f849c;
+
+  --accent: #b4befe;
+  --accent-soft: rgba(180, 190, 254, 0.1);
+  --accent-glow: rgba(180, 190, 254, 0.35);
+  --warn: #f9e2af;
+  --warn-soft: rgba(249, 226, 175, 0.08);
+  --danger: #f38ba8;
+  --danger-soft: rgba(243, 139, 168, 0.08);
+  --ok: #a6e3a1;
+
+  --warn-line: rgba(249, 226, 175, 0.35);
+  --danger-line: rgba(243, 139, 168, 0.4);
+  --select-bg: rgba(180, 190, 254, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.62), 0 4px 12px -4px rgba(0, 0, 0, 0.48);
+  --brand-grad: linear-gradient(135deg, #b4befe 0%, #cba6f7 55%, #f5c2e7 100%);
+  --scrim: rgba(17, 17, 27, 0.55);
+
+  color-scheme: dark;
+}
+
+/* Nord — nordtheme.com. Polar Night surfaces, Snow Storm text, nord8 frost
+   accent, Aurora accents verbatim. */
+:root[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-2: #292e39;
+  --panel: #333a47;
+  --panel-2: #3b4252;
+  --panel-3: #434c5e;
+
+  --line: #434c5e;
+  --line-soft: #363d4b;
+  --line-strong: #4c566a;
+  --line-hover: #5a6580;
+  --line-hover-strong: #6a7794;
+  --scroll-thumb: #434c5e;
+
+  --text: #eceff4;
+  --text-2: #d8dee9;
+  --muted: #7b88a1;
+
+  --accent: #88c0d0;
+  --accent-soft: rgba(136, 192, 208, 0.1);
+  --accent-glow: rgba(136, 192, 208, 0.35);
+  --warn: #ebcb8b;
+  --warn-soft: rgba(235, 203, 139, 0.08);
+  --danger: #bf616a;
+  --danger-soft: rgba(191, 97, 106, 0.1);
+  --ok: #a3be8c;
+
+  --warn-line: rgba(235, 203, 139, 0.38);
+  --danger-line: rgba(191, 97, 106, 0.42);
+  --select-bg: rgba(136, 192, 208, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.68), 0 4px 12px -4px rgba(0, 0, 0, 0.52);
+  --brand-grad: linear-gradient(135deg, #88c0d0 0%, #5e81ac 55%, #b48ead 100%);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+/* Gruvbox dark — colors/gruvbox.vim. dark0 surface ladder, Normal text fg1,
+   gray comments, the bright accents verbatim. */
+:root[data-theme="gruvbox"] {
+  --bg: #282828;
+  --bg-2: #1d2021;
+  --panel: #2c2c28;
+  --panel-2: #3c3836;
+  --panel-3: #504945;
+
+  --line: #3c3836;
+  --line-soft: #302f2c;
+  --line-strong: #504945;
+  --line-hover: #665c54;
+  --line-hover-strong: #7c6f64;
+  --scroll-thumb: #504945;
+
+  --text: #ebdbb2;
+  --text-2: #d5c4a1;
+  --muted: #928374;
+
+  --accent: #83a598;
+  --accent-soft: rgba(131, 165, 152, 0.12);
+  --accent-glow: rgba(131, 165, 152, 0.35);
+  --warn: #fabd2f;
+  --warn-soft: rgba(250, 189, 47, 0.1);
+  --danger: #fb4934;
+  --danger-soft: rgba(251, 73, 52, 0.1);
+  --ok: #b8bb26;
+
+  --warn-line: rgba(250, 189, 47, 0.4);
+  --danger-line: rgba(251, 73, 52, 0.45);
+  --select-bg: rgba(131, 165, 152, 0.28);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.66), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --brand-grad: linear-gradient(135deg, #fabd2f 0%, #fe8019 55%, #d3869b 100%);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+/* Tokyo Night (night) — folke/tokyonight.nvim: night bg over the storm.lua
+   token table; bg_highlight hairlines, fg/comment ladders, the accent set. */
+:root[data-theme="tokyonight"] {
+  --bg: #1a1b26;
+  --bg-2: #16161e;
+  --panel: #1f2030;
+  --panel-2: #292e42;
+  --panel-3: #2f3552;
+
+  --line: #292e42;
+  --line-soft: #20222f;
+  --line-strong: #3b4261;
+  --line-hover: #454e75;
+  --line-hover-strong: #545c7e;
+  --scroll-thumb: #3b4261;
+
+  --text: #c0caf5;
+  --text-2: #a9b1d6;
+  --muted: #565f89;
+
+  --accent: #7aa2f7;
+  --accent-soft: rgba(122, 162, 247, 0.1);
+  --accent-glow: rgba(122, 162, 247, 0.35);
+  --warn: #e0af68;
+  --warn-soft: rgba(224, 175, 104, 0.09);
+  --danger: #f7768e;
+  --danger-soft: rgba(247, 118, 142, 0.09);
+  --ok: #9ece6a;
+
+  --warn-line: rgba(224, 175, 104, 0.4);
+  --danger-line: rgba(247, 118, 142, 0.42);
+  --select-bg: rgba(122, 162, 247, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.66), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --brand-grad: linear-gradient(135deg, #7aa2f7 0%, #bb9af7 55%, #ff9e64 100%);
+  --scrim: rgba(0, 0, 0, 0.52);
+
+  color-scheme: dark;
+}
+
+/* Rosé Pine (main) — rose-pine/palette palette.json. base/surface/overlay
+   surfaces, muted/subtle/text ladder, iris accent. Pine stands in for ok —
+   the scheme ships no green. */
+:root[data-theme="rosepine"] {
+  --bg: #191724;
+  --bg-2: #1f1d2e;
+  --panel: #232135;
+  --panel-2: #26233a;
+  --panel-3: #2f2b47;
+
+  --line: #26233a;
+  --line-soft: #1f1d2e;
+  --line-strong: #2f2b47;
+  --line-hover: #6e6a86;
+  --line-hover-strong: #908caa;
+  --scroll-thumb: #403d52;
+
+  --text: #e0def4;
+  --text-2: #908caa;
+  --muted: #6e6a86;
+
+  --accent: #c4a7e7;
+  --accent-soft: rgba(196, 167, 231, 0.1);
+  --accent-glow: rgba(196, 167, 231, 0.35);
+  --warn: #f6c177;
+  --warn-soft: rgba(246, 193, 119, 0.09);
+  --danger: #eb6f92;
+  --danger-soft: rgba(235, 111, 146, 0.09);
+  --ok: #31748f;
+
+  --warn-line: rgba(246, 193, 119, 0.4);
+  --danger-line: rgba(235, 111, 146, 0.42);
+  --select-bg: rgba(196, 167, 231, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.45);
+  --brand-grad: linear-gradient(135deg, #c4a7e7 0%, #ebbcba 55%, #9ccfd8 100%);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+/* Everforest (dark medium) — sainnhe/everforest palette.md. bg0–bg3 surface
+   ladder, fg/grey ladder, green accent, the accent set verbatim. */
+:root[data-theme="everforest"] {
+  --bg: #2d353b;
+  --bg-2: #232a2e;
+  --panel: #343f44;
+  --panel-2: #3d484d;
+  --panel-3: #475258;
+
+  --line: #3d484d;
+  --line-soft: #343f44;
+  --line-strong: #4f585e;
+  --line-hover: #56635f;
+  --line-hover-strong: #66757b;
+  --scroll-thumb: #4f585e;
+
+  --text: #d3c6aa;
+  --text-2: #9da9a0;
+  --muted: #859289;
+
+  --accent: #a7c080;
+  --accent-soft: rgba(167, 192, 128, 0.12);
+  --accent-glow: rgba(167, 192, 128, 0.35);
+  --warn: #dbbc7f;
+  --warn-soft: rgba(219, 188, 127, 0.09);
+  --danger: #e67e80;
+  --danger-soft: rgba(230, 126, 128, 0.09);
+  --ok: #83c092;
+
+  --warn-line: rgba(219, 188, 127, 0.4);
+  --danger-line: rgba(230, 126, 128, 0.42);
+  --select-bg: rgba(167, 192, 128, 0.26);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.6), 0 4px 12px -4px rgba(0, 0, 0, 0.45);
+  --brand-grad: linear-gradient(135deg, #a7c080 0%, #83c092 55%, #7fbbb3 100%);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
+}
+
+/* One Dark — atom/one-dark-syntax colors.less (mono/hue ladders, bg
+   hsl(220 13% 18%)); the familiar one-dark-ui surface steps between. */
+:root[data-theme="onedark"] {
+  --bg: #282c34;
+  --bg-2: #21252b;
+  --panel: #2c313a;
+  --panel-2: #353b45;
+  --panel-3: #3e4451;
+
+  --line: #3e4451;
+  --line-soft: #333846;
+  --line-strong: #454c58;
+  --line-hover: #4b5263;
+  --line-hover-strong: #565d6b;
+  --scroll-thumb: #3e4451;
+
+  --text: #abb2bf;
+  --text-2: #828997;
+  --muted: #5c6370;
+
+  --accent: #61afef;
+  --accent-soft: rgba(97, 175, 239, 0.12);
+  --accent-glow: rgba(97, 175, 239, 0.35);
+  --warn: #e5c07b;
+  --warn-soft: rgba(229, 192, 123, 0.09);
+  --danger: #e06c75;
+  --danger-soft: rgba(224, 108, 117, 0.09);
+  --ok: #98c379;
+
+  --warn-line: rgba(229, 192, 123, 0.4);
+  --danger-line: rgba(224, 108, 117, 0.42);
+  --select-bg: rgba(97, 175, 239, 0.28);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.66), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --brand-grad: linear-gradient(135deg, #61afef 0%, #c678dd 55%, #56b6c2 100%);
+  --scrim: rgba(0, 0, 0, 0.52);
+
+  color-scheme: dark;
+}
+
+/* GitHub dark — Primer anchors: canvas #0d1117, canvas.subtle #161b22,
+   border #30363d, accent #58a6ff, success #3fb950, danger #f85149. The
+   intermediate neutrals and status shades between them are derived. */
+:root[data-theme="github"] {
+  --bg: #0d1117;
+  --bg-2: #0a0e14;
+  --panel: #11161d;
+  --panel-2: #161b22;
+  --panel-3: #21262d;
+
+  --line: #30363d;
+  --line-soft: #1c2129;
+  --line-strong: #3d444d;
+  --line-hover: #444c56;
+  --line-hover-strong: #545d68;
+  --scroll-thumb: #30363d;
+
+  --text: #dce3eb;
+  --text-2: #9ea7b3;
+  --muted: #6f7a86;
+
+  --accent: #58a6ff;
+  --accent-soft: rgba(88, 166, 255, 0.12);
+  --accent-glow: rgba(88, 166, 255, 0.4);
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, 0.1);
+  --danger: #f85149;
+  --danger-soft: rgba(248, 81, 73, 0.1);
+  --ok: #3fb950;
+
+  --warn-line: rgba(210, 153, 34, 0.45);
+  --danger-line: rgba(248, 81, 73, 0.45);
+  --select-bg: rgba(88, 166, 255, 0.3);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.75), 0 4px 12px -4px rgba(0, 0, 0, 0.6);
+  --brand-grad: linear-gradient(135deg, #58a6ff 0%, #4c8ee0 55%, #3fb950 100%);
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}
+
+/* Monokai — the canonical palette as shipped by VS Code's built-in theme:
+   #272822 editor, #1e1f1c well, #3e3d32 line, #75715e focus, #88846f
+   comment, the five token colours verbatim. */
+:root[data-theme="monokai"] {
+  --bg: #272822;
+  --bg-2: #1e1f1c;
+  --panel: #2b2c26;
+  --panel-2: #34352f;
+  --panel-3: #3e3d32;
+
+  --line: #3e3d32;
+  --line-soft: #34352f;
+  --line-strong: #414339;
+  --line-hover: #575b61;
+  --line-hover-strong: #75715e;
+  --scroll-thumb: #414339;
+
+  --text: #f8f8f2;
+  --text-2: #ccccc7;
+  --muted: #88846f;
+
+  --accent: #66d9ef;
+  --accent-soft: rgba(102, 217, 239, 0.12);
+  --accent-glow: rgba(102, 217, 239, 0.35);
+  --warn: #e6db74;
+  --warn-soft: rgba(230, 219, 116, 0.09);
+  --danger: #f92672;
+  --danger-soft: rgba(249, 38, 114, 0.09);
+  --ok: #a6e22e;
+
+  --warn-line: rgba(230, 219, 116, 0.4);
+  --danger-line: rgba(249, 38, 114, 0.42);
+  --select-bg: rgba(102, 217, 239, 0.28);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.68), 0 4px 12px -4px rgba(0, 0, 0, 0.52);
+  --brand-grad: linear-gradient(135deg, #a6e22e 0%, #66d9ef 55%, #ae81ff 100%);
+  --scrim: rgba(0, 0, 0, 0.52);
+
+  color-scheme: dark;
+}
+
+/* Catppuccin Latte — catppuccin.com/palette. The light flavour: base/mantle
+   surfaces, text/subtext/overlay ladder, lavender accent, pastel accents. */
+:root[data-theme="latte"] {
+  --bg: #eff1f5;
+  --bg-2: #e6e9ef;
+  --panel: #e9ecf1;
+  --panel-2: #ccd0da;
+  --panel-3: #bcc0cc;
+
+  --line: #ccd0da;
+  --line-soft: #dce0e8;
+  --line-strong: #bcc0cc;
+  --line-hover: #acb0be;
+  --line-hover-strong: #9ca0b0;
+  --scroll-thumb: #bcc0cc;
+
+  --text: #4c4f69;
+  --text-2: #6c6f85;
+  --muted: #8c8fa1;
+
+  --accent: #7287fd;
+  --accent-soft: rgba(114, 135, 253, 0.12);
+  --accent-glow: rgba(114, 135, 253, 0.3);
+  --warn: #df8e1d;
+  --warn-soft: rgba(223, 142, 29, 0.1);
+  --danger: #d20f39;
+  --danger-soft: rgba(210, 15, 57, 0.08);
+  --ok: #40a02b;
+
+  --warn-line: rgba(223, 142, 29, 0.35);
+  --danger-line: rgba(210, 15, 57, 0.38);
+  --select-bg: rgba(114, 135, 253, 0.2);
+
+  --shadow-pop: 0 16px 40px -12px rgba(23, 23, 42, 0.14), 0 4px 12px -4px rgba(23, 23, 42, 0.09);
+  --brand-grad: linear-gradient(135deg, #7287fd 0%, #8839ef 55%, #ea76cb 100%);
+  --scrim: rgba(23, 23, 42, 0.3);
+  --shadow-card: 0 1px 2px rgba(23, 23, 42, 0.05), 0 12px 32px -16px rgba(23, 23, 42, 0.14);
+  --shadow-float: 0 2px 6px -2px rgba(23, 23, 42, 0.08), 0 24px 56px -20px rgba(23, 23, 42, 0.18);
+
+  color-scheme: light;
+}
 /* ------------------------------------------------------------------ base */
 
 * { box-sizing: border-box; }
@@ -143,19 +767,33 @@ input:focus, textarea:focus, select:focus {
   background: var(--panel-3);
 }
 
-:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
 
 .primary {
   /* The one ink button: the reading colour itself as the surface. Every
-     other control is quieter; this is where the next step lives. */
-  background: var(--text);
+     other control is quieter; this is where the next step lives. The sheen
+     and the press are what make it feel like a key, not a label. */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 90%, #fff 10%), var(--text));
   color: var(--bg);
   border: 1px solid transparent;
   border-radius: var(--r-md);
   padding: 7px 14px;
-  transition: filter 0.12s;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  transition: filter 0.15s var(--drift), transform 0.15s var(--spring), box-shadow 0.15s var(--drift);
 }
-.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 12px -4px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+.primary:active:not(:disabled) { transform: translateY(0) scale(0.985); }
 
 .danger {
   background: transparent;
@@ -171,8 +809,8 @@ input:focus, textarea:focus, select:focus {
   background: transparent;
   color: var(--muted);
   border: 0;
-  padding: 2px 6px;
-  border-radius: var(--r-sm);
+  padding: 2px 7px;
+  border-radius: var(--r-md);
   transition: background 0.12s, color 0.12s;
 }
 .ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
@@ -257,25 +895,19 @@ input:focus, textarea:focus, select:focus {
 }
 .connect h1 {
   margin: 0;
-  font: 600 14px var(--mono);
+  font: 600 17px var(--sans);
   color: var(--text);
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
 }
-.connect h1::after {
-  content: " — local daemon";
-  color: var(--muted);
-  font-weight: 500;
-}
+.connect h1 .brand-name { font: 700 17px var(--sans); letter-spacing: -0.01em; }
 .connect p { color: var(--muted); margin: 0; max-width: 52ch; line-height: 1.6; }
 
 .connect__step { display: flex; align-items: center; gap: 10px; }
 .connect__stepnum {
   flex: none;
   color: var(--muted);
-  font: 500 12px var(--mono);
+  font: 500 12px var(--sans);
 }
-.connect__stepnum::before { content: "["; }
-.connect__stepnum::after { content: "]"; }
 .connect__cmd {
   flex: 1;
   display: flex;
@@ -313,7 +945,7 @@ input:focus, textarea:focus, select:focus {
   content: "";
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--r-md);
   flex: none;
   background:
     radial-gradient(closest-side, transparent 52%, rgba(255, 255, 255, 0.85) 54% 68%, transparent 70%),
@@ -345,10 +977,10 @@ input:focus, textarea:focus, select:focus {
 .scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 28px 14px;
+  padding: 24px 28px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 /* one readable column; cards and notices line up with the transcript */
@@ -363,57 +995,110 @@ input:focus, textarea:focus, select:focus {
   margin-right: auto;
 }
 
-.transcript { display: flex; flex-direction: column; gap: 10px; }
+.transcript { display: flex; flex-direction: column; gap: 12px; }
 /* A turn's first seconds: the tape has nothing on it yet, so the start says
-   so itself — one live line, a shimmer across the card until blocks land. */
+   so itself — one live line riding the same rail the activity cards use,
+   breathing its accent until blocks land. */
 .turnlive {
   position: relative;
-  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 11px 13px;
-  border: 1px solid var(--line);
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
   border-radius: var(--r-float);
-  background: var(--panel);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft), var(--panel) 94%), var(--panel));
+  box-shadow: var(--shadow-card);
+  animation: livebreathe 2.4s ease-in-out infinite;
   font: 600 12.5px var(--sans);
   color: var(--text-2);
 }
 .turnlive .spinner { color: var(--accent); }
-.turnlive::after {
+/* The tape's rail: one hairline joining the working cards, with the state
+   worn as a light on the line — a node the colour of whatever is happening. */
+.turnlive::before,
+.activity::before {
   content: "";
   position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 30%, var(--accent-soft) 50%, transparent 70%);
-  transform: translateX(-100%);
-  animation: sweep 1.8s ease-in-out infinite;
+  left: -15px;
+  top: -12px;
+  bottom: -12px;
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--line-strong) 24%,
+    var(--line-strong) 76%,
+    transparent
+  );
+  pointer-events: none;
 }
-@keyframes sweep { to { transform: translateX(100%); } }
+.turnlive::after,
+.activity::after {
+  content: "";
+  position: absolute;
+  left: -19px;
+  top: 15px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 0 0 4px color-mix(in srgb, var(--line-strong) 40%, transparent);
+  pointer-events: none;
+}
+@keyframes livebreathe {
+  50% { box-shadow: var(--shadow-card), 0 0 24px -6px var(--accent-glow); }
+}
+/* The start-of-turn card is always live, so its node carries the pulse. */
+.turnlive::after {
+  background: var(--accent);
+  animation: nodepulse 1.7s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .turnlive::after { animation: none; }
+  .turnlive { animation: none; }
 }
 
 .empty {
-  margin: 0;
-  padding: 34px 0 8px;
+  /* The only thing on screen for a new conversation: the product signs its
+     name once (the same gradient mark the brand row and onboarding wear),
+     then gets out of the way. Auto margins center it in the scroll's flex
+     column; once blocks exist this node is gone. */
+  margin: auto;
+  padding: 24px 0;
+  text-align: center;
+}
+.empty::before {
+  content: "";
+  display: block;
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 16px;
+  border-radius: var(--r-float);
+  background:
+    radial-gradient(closest-side, transparent 52%, rgba(255, 255, 255, 0.85) 54% 68%, transparent 70%),
+    var(--brand-grad);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 16px 36px -14px var(--accent-glow);
 }
 .empty__lead {
   margin: 0;
-  font: 500 13.5px/1.6 var(--sans);
-  color: var(--text-2);
-}
-.empty__lead::before {
-  content: "❯ ";
-  font-family: var(--mono);
-  color: var(--text-2);
+  font: 600 15px/1.6 var(--sans);
+  color: var(--text);
+  letter-spacing: -0.01em;
 }
 .empty__sub {
-  margin: 2px 0 0 18px;
-  font: 400 12.5px/1.6 var(--sans);
+  max-width: 44ch;
+  margin: 6px auto 0;
+  font: 400 13px/1.65 var(--sans);
   color: var(--muted);
 }
 
-/* messages read as a session log, not chat bubbles */
+/* messages read as a session log, not chat bubbles — except the planner's
+   own words, which sit in a lit card of their own: the one surface in the
+   tape that is unambiguously theirs. */
 .bubble {
   padding: 2px 0 2px 20px;
   border-radius: 0;
@@ -431,21 +1116,83 @@ input:focus, textarea:focus, select:focus {
   position: relative;
   color: var(--text);
   font-size: 13.5px;
+  line-height: 1.62;
+  /* The planner typed the line breaks; the tape keeps them. */
+  white-space: pre-wrap;
+  padding: 11px 14px 11px 37px;
+  border-radius: var(--r-float);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 11%, transparent),
+    color-mix(in srgb, var(--accent) 3%, transparent) 68%
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .bubble--user::before {
   content: "❯";
   position: absolute;
-  left: 0;
-  top: 3px;
-  font: 500 12px var(--mono);
-  color: var(--muted);
+  left: 13px;
+  top: 12px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  font: 600 9.5px var(--mono);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 6px;
 }
 .bubble--user .tag {
   background: transparent;
-  border-color: var(--line);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--muted);
   margin-left: 8px;
 }
+/* A user row opens a turn — the one voice that steers everything after it —
+   so it earns the extra beat of air that says a new turn is starting. */
+.bubble--user:not(:first-child) { margin-top: 16px; }
+
+/* The tape's own housekeeping lines, translated and dimmed: real but not
+   somebody's words, so they sit below the voice of either side. */
+.sysline {
+  margin: 0;
+  padding: 2px 0 2px 20px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* 되돌리기 (PLAN D52): a real action on the worktree, offered under the
+   answer that changed it — so it reads as a control, not as the fold link
+   it used to borrow its styling from. Quiet until it is wanted. */
+.revert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 11px 4px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 11.5px var(--sans);
+  transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.18s var(--spring);
+}
+.revert::before {
+  content: "↺";
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1;
+}
+.revert:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.revert:active:not(:disabled) { transform: scale(0.97); }
+/* Live turn: the snapshot it would restore is still being written. */
+.revert:disabled { opacity: 0.45; }
 
 .bubble--assistant {
   position: relative;
@@ -455,28 +1202,33 @@ input:focus, textarea:focus, select:focus {
   border: 0;
   color: var(--text-2);
   font-size: 14px;
-  line-height: 1.65;
+  line-height: 1.72;
 }
 /* The answer's lift-out: a one-click copy on hover, icon-only, the same
    1.6s check the other copy buttons keep. Focus reveals it too — a keyboard
-   planner must be able to find what the mouse found. */
+   planner must be able to find what the mouse found. The pill wears glass so
+   it keeps its own surface where it clears the text beneath. */
 .bubble__copy {
   position: absolute;
-  top: 0;
+  top: 2px;
   right: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
-  background: transparent;
+  padding: 5px;
+  background: var(--glass);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--line-soft), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
   color: var(--muted);
   opacity: 0;
-  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  transform: translateY(-2px);
+  transition: opacity 0.14s, transform 0.18s var(--spring), color 0.12s, background 0.12s;
 }
 .bubble--assistant:hover .bubble__copy,
-.bubble--assistant:focus-within .bubble__copy { opacity: 1; }
+.bubble--assistant:focus-within .bubble__copy { opacity: 1; transform: none; }
 .bubble__copy:hover { color: var(--text); background: var(--panel-2); }
 .bubble__copy--done { color: var(--ok); }
 .bubble__copy--done:hover { color: var(--ok); background: var(--panel-2); }
@@ -538,33 +1290,68 @@ input:focus, textarea:focus, select:focus {
 .thinking {
   margin-left: 20px;
   color: var(--muted);
-  border: 0;
-  border-left: 1px solid var(--line);
-  border-radius: 0;
-  padding: 2px 0 2px 12px;
-  background: none;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  padding: 7px 11px 8px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
   font-size: 12px;
 }
 .thinking summary {
   cursor: pointer;
-  font: 500 11.5px var(--mono);
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font: 500 11.5px var(--sans);
+  color: var(--muted);
   list-style: none;
   user-select: none;
 }
 .thinking summary::-webkit-details-marker { display: none; }
-.thinking summary::before { content: "▸"; color: var(--muted); font-size: 10px; }
-.thinking[open] summary::before { content: "▾"; }
+.thinking summary::before {
+  content: "▸";
+  flex: none;
+  color: var(--muted);
+  font-size: 9px;
+  transition: transform 0.15s var(--drift);
+}
+.thinking[open] summary::before { transform: rotate(90deg); }
 .thinking summary:hover { color: var(--text-2); }
-.thinking[open] summary { margin-bottom: 6px; }
+.thinking summary:hover::before { color: var(--text-2); }
+.thinking[open] summary { margin-bottom: 2px; }
+/* The fold's label; while the thought is arriving it shines. */
+.thinking__label { flex: none; }
+.thinking--live { border-color: color-mix(in srgb, var(--accent) 26%, var(--line-soft)); }
+.thinking--live .thinking__label {
+  background: linear-gradient(90deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: thinkshine 2.1s linear infinite;
+}
+@keyframes thinkshine { to { background-position: -200% 0; } }
+/* The closed fold carries the thought's first line — the shape of the
+   reasoning without opening it. Gone once the fold is open. */
+.thinking__peek {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+}
+.thinking[open] .thinking__peek { display: none; }
 .thinking pre {
   white-space: pre-wrap;
   font-family: var(--mono);
   font-size: 11.5px;
-  line-height: 1.55;
-  margin: 0;
+  line-height: 1.6;
+  margin: 8px 0 2px;
+  padding: 9px 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
   color: var(--muted);
   max-height: 300px;
   overflow-y: auto;
@@ -575,7 +1362,7 @@ input:focus, textarea:focus, select:focus {
 .tool {
   margin-left: 20px;
   border: 1px solid var(--line-soft);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--bg-2);
   overflow: hidden;
 }
@@ -662,7 +1449,7 @@ input:focus, textarea:focus, select:focus {
 /* notices ------------------------------------------------------------------*/
 
 .notice {
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   padding: 8px 12px;
   font-size: 12.5px;
   border: 1px solid var(--line);
@@ -700,8 +1487,9 @@ input:focus, textarea:focus, select:focus {
 
 .card {
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-float);
   background: var(--panel);
+  box-shadow: var(--shadow-card);
   padding: 13px 14px;
   display: flex;
   flex-direction: column;
@@ -796,19 +1584,44 @@ input:focus, textarea:focus, select:focus {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 4px 18px 14px;
-  padding: 11px 13px 9px;
-  background: var(--panel);
+  gap: 7px;
+  margin: 8px 22px 18px;
+  padding: 14px 16px 11px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 38%, var(--panel)), var(--panel));
   border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: var(--shadow-pop);
-  transition: border-color 0.12s;
+  border-radius: var(--r-dialog);
+  box-shadow: var(--shadow-float);
+  transition: border-color 0.2s var(--drift), box-shadow 0.25s var(--drift);
+}
+/* The focus ring is a gradient hairline drawn over the border — the one place
+   the chat column answers "I'm listening" with its brand light. Masked to a
+   1px frame so it crossfades over the resting border, no layout shift. */
+.composer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 62%, transparent),
+    color-mix(in srgb, var(--accent) 16%, transparent) 34%,
+    color-mix(in srgb, var(--accent) 14%, transparent) 62%,
+    color-mix(in srgb, var(--accent) 44%, transparent)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.25s var(--drift);
+  pointer-events: none;
 }
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-pop), 0 0 0 3px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line-strong));
+  box-shadow: var(--shadow-float), 0 0 0 4px var(--accent-soft);
 }
+.composer:focus-within::after { opacity: 1; }
 .composer textarea {
   resize: none;
   min-height: 24px;
@@ -821,6 +1634,7 @@ input:focus, textarea:focus, select:focus {
   line-height: 1.55;
   color: var(--text);
 }
+.composer textarea::placeholder { color: color-mix(in srgb, var(--muted) 68%, transparent); }
 .composer textarea:focus { outline: none; box-shadow: none; border: 0; background: transparent; }
 .composer textarea:disabled { opacity: 0.5; }
 
@@ -846,24 +1660,6 @@ input:focus, textarea:focus, select:focus {
 }
 .chip .ghost { padding: 0 4px; font-size: 13px; line-height: 1; color: var(--muted); }
 .chip .ghost:hover { color: var(--danger); }
-
-/* 빠른 동작 칩(PLAN D55): a chip is a sentence waiting in the field, not a
-   send. The `.chip` frame carries over; these are buttons, so they take the
-   pointer affordance and the sans face the composer's controls use. */
-.composer__quick { padding: 2px 2px 0; }
-.composer .chip--quick {
-  cursor: pointer;
-  font: 500 11.5px var(--sans);
-  padding: 4px 10px;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-.composer .chip--quick:hover {
-  color: var(--text);
-  border-color: var(--line-hover);
-  background: var(--panel-3);
-}
-
 
 /* selector chips — model · effort · permission mode ----------------------------------*/
 
@@ -912,8 +1708,8 @@ input:focus, textarea:focus, select:focus {
   background: var(--panel-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-float);
-  padding: 4px;
-  box-shadow: var(--shadow-pop);
+  padding: 5px;
+  box-shadow: var(--shadow-float);
 }
 .selector__row {
   display: flex;
@@ -969,28 +1765,44 @@ input:focus, textarea:focus, select:focus {
   border: 1px solid var(--danger-line);
   border-radius: 999px;
   transition: background 0.12s;
+  animation: stopbreathe 2.2s ease-in-out infinite;
 }
 .toolbar__stop:hover:not(:disabled) { background: var(--danger-soft); }
+@keyframes stopbreathe {
+  50% { box-shadow: 0 0 0 4px var(--danger-soft); }
+}
 
 .composer__send {
+  /* the one chromatic control in the chat column: the send is where a turn
+     starts, so it wears the brand gradient — the same light as the mark */
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   border: 0;
-  background: var(--text);
+  background: var(--brand-grad);
   color: var(--bg);
   cursor: pointer;
-  transition: opacity 0.12s;
+  box-shadow:
+    0 6px 16px -6px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: transform 0.18s var(--spring), box-shadow 0.18s var(--drift), opacity 0.15s;
 }
-.composer__send:hover:not(:disabled) { opacity: 0.85; }
+.composer__send:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.05);
+  box-shadow:
+    0 10px 22px -8px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.composer__send:active:not(:disabled) { transform: scale(0.94); }
 .composer__send:disabled {
   background: var(--panel-3);
   color: var(--muted);
   cursor: default;
   opacity: 1;
+  box-shadow: none;
 }
 
 /* usage ---------------------------------------------------------------------*/
@@ -1151,6 +1963,10 @@ input:focus, textarea:focus, select:focus {
   text-underline-offset: 2px;
 }
 .machine__more:hover { color: var(--text-2); }
+/* 결함② (PLAN 0단계): the failed-turn card's action row — without it
+   다시 보내기 stacked over 자세히 and hid it. */
+.turnfail__actions { display: flex; gap: 10px; align-items: center; }
+.turnfail__actions .primary { align-self: auto; }
 /* The text Claude actually received. Monospace here is right: this is the one
    place in the transcript that is deliberately showing machine input. */
 .machine__body {
@@ -1186,17 +2002,27 @@ input:focus, textarea:focus, select:focus {
 
 .autocomplete {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + 10px);
   left: 28px;
   right: 28px;
   z-index: 35;
   max-height: 280px;
   overflow-y: auto;
-  background: var(--panel-3);
+  background: color-mix(in srgb, var(--panel-3) 90%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-float);
-  padding: 4px;
+  padding: 5px;
   box-shadow: var(--shadow-pop);
+  transform-origin: 50% 100%;
+  animation: paletterise 0.16s var(--spring);
+}
+@keyframes paletterise {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .autocomplete { animation: none; }
 }
 .autocomplete__row {
   display: flex;
@@ -1236,6 +2062,8 @@ input:focus, textarea:focus, select:focus {
   inset: 0;
   z-index: 60;
   background: var(--scrim);
+  backdrop-filter: blur(5px) saturate(1.1);
+  -webkit-backdrop-filter: blur(5px) saturate(1.1);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1247,8 +2075,8 @@ input:focus, textarea:focus, select:focus {
   max-width: 560px;
   background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-float);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--shadow-float);
   display: flex;
   flex-direction: column;
   max-height: 84vh;
@@ -1290,8 +2118,8 @@ input:focus, textarea:focus, select:focus {
   max-width: 520px;
   background: var(--panel);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--shadow-float);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1471,7 +2299,14 @@ input:focus, textarea:focus, select:focus {
   display: grid;
   height: 100vh;
   position: relative;
-  background: var(--bg);
+  /* the lit studio: one soft key from the top right, one fainter fill from
+     the lower left, both cut from the accent so every palette casts its own
+     light. Dead flat behind three columns of panels read as unrendered. */
+  background:
+    radial-gradient(1100px 480px at 78% -12%, var(--wash-1), transparent 62%),
+    radial-gradient(900px 440px at -6% 110%, var(--wash-2), transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
 }
 .planner__main {
   display: flex;
@@ -1484,9 +2319,11 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(1.25);
+  -webkit-backdrop-filter: blur(12px) saturate(1.25);
 }
 .planner__spacer { flex: 1; }
 .planner__project {
@@ -1503,7 +2340,9 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--panel);
+  /* the rail is the darkest room in the studio: light falls from the brand
+     row down, and the tree sits on the falloff */
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-2) 100%);
   border-right: 1px solid var(--line);
   overflow: hidden;
 }
@@ -1518,16 +2357,15 @@ input:focus, textarea:focus, select:focus {
 .sidebar--collapsed .node__menu-btn,
 .sidebar--collapsed .node__kids,
 .sidebar--collapsed .leafwrap,
-.sidebar--collapsed .leaf--more,
-.sidebar--collapsed .leaf--empty { display: none; }
+.sidebar--collapsed .leaf--start { display: none; }
 .sidebar--collapsed .node__row { justify-content: center; padding: 9px 0; width: auto; }
 .sidebar__brand {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 12px;
+  padding: 11px 12px 10px;
   border-bottom: 1px solid var(--line-soft);
-  min-height: 40px;
+  min-height: 44px;
 }
 .sidebar__fold { flex: none; padding: 2px 8px; font-size: 13px; }
 /* The tree (PLAN D59): project rows that unfold into their conversations.
@@ -1558,7 +2396,7 @@ input:focus, textarea:focus, select:focus {
   width: 100%;
   cursor: pointer;
 }
-.node__row:hover:not(:disabled) { background: var(--panel-3); }
+.node__row:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 6%, var(--panel-2)); }
 .node--active .node__row { background: var(--select-bg); }
 .node__chev {
   width: 14px;
@@ -1570,8 +2408,8 @@ input:focus, textarea:focus, select:focus {
   transition: transform 0.15s;
 }
 .node--folded .node__chev { transform: rotate(-90deg); }
-.node__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid transparent; }
-.node--active .node__dot { background: var(--accent); }
+.node__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid transparent; transition: box-shadow 0.2s; }
+.node--active .node__dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .node__name {
   flex: 1;
   min-width: 0;
@@ -1596,6 +2434,8 @@ input:focus, textarea:focus, select:focus {
 }
 .node__badge--merged { color: var(--ok); }
 .node__badge--progress { color: var(--text-2); }
+.node__badge--handoff { color: var(--accent); }
+.node__badge--changes { color: var(--text-2); }
 /* Hover reveals the row's two small moves: another conversation, and the
    row menu. Focus keeps them, the way the fold button does. */
 .node__add,
@@ -1641,7 +2481,7 @@ input:focus, textarea:focus, select:focus {
   gap: 8px;
   padding: 6px 8px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: none;
   color: var(--muted);
   text-align: left;
@@ -1649,10 +2489,17 @@ input:focus, textarea:focus, select:focus {
   font: 400 12.5px var(--sans);
   cursor: pointer;
 }
-.leaf:hover { background: var(--panel-3); color: var(--text); }
-.leaf--active { background: var(--panel-3); color: var(--text); font-weight: 600; }
-.leaf__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--line-strong); }
-.leaf--active .leaf__dot { background: var(--accent); }
+.leaf:hover { background: var(--panel-2); color: var(--text); }
+.leaf--active {
+  /* the open conversation: a lit pill, not a gray slab — the accent tint and
+     the hairline ring say "this is where you are" at scan distance */
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+.leaf__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--line-strong); transition: background 0.2s, box-shadow 0.2s; }
+.leaf--active .leaf__dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .leaf__dot--live {
   width: 8px;
   height: 8px;
@@ -1660,9 +2507,13 @@ input:focus, textarea:focus, select:focus {
   border: 1.5px solid var(--accent);
   border-top-color: transparent;
   animation: spin 1.1s linear infinite;
+  filter: drop-shadow(0 0 3px var(--accent-glow));
 }
-.leaf__dot--ask { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.leaf__dot--ask { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); animation: askpulse 2s ease-in-out infinite; }
 .leaf__dot--done { width: 7px; height: 7px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
+@keyframes askpulse {
+  50% { box-shadow: 0 0 0 6px var(--warn-soft); }
+}
 .leaf__title {
   flex: 1;
   min-width: 0;
@@ -1676,9 +2527,16 @@ input:focus, textarea:focus, select:focus {
 .leaf__meta { font: 400 11px var(--sans); color: var(--muted); flex: none; }
 .leaf__meta--ask { color: var(--warn); font-weight: 600; }
 .leaf__meta--live { color: var(--accent); }
-.leaf--more { color: var(--muted); font-size: 12px; padding-left: 22px; flex: none; }
-.leaf--more:hover { color: var(--text); }
-.leaf--empty { margin: 2px 0 4px; padding-left: 20px; font-size: 12px; }
+/* An empty project's way in: a row, not a remark — quiet until hovered, so a
+   tree full of projects does not read as a column of calls to action. */
+.leaf--start {
+  flex: none;
+  margin: 2px 0 4px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.leaf--start:hover { color: var(--text); }
 .leaf__rename {
   flex: 1;
   min-width: 0;
@@ -1704,15 +2562,66 @@ input:focus, textarea:focus, select:focus {
 /* The rail's conversation popover (PLAN D59 rule 4): opens beside the icon,
    floats over the workspace, closes on its own row clicks. */
 .node__pop { top: 0; left: 44px; bottom: auto; right: auto; }
-.sidebar__new {
+/* The rail's foot: 새 프로젝트 stretches, 설정's gear sits beside it — the
+   header lost its gear when this row took over. The narrow fold keeps the
+   gear alone, centered by the rail. */
+.sidebar__foot {
   flex: none;
-  margin: 8px;
-  justify-content: center;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 10px 12px 12px;
 }
+.sidebar__new {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  justify-content: center;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-weight: 500;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.sidebar__new:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.sidebar__gear { flex: none; padding: 7px 8px; }
+/* The folded rail (44px) keeps the gear alone; the foot's side margins would
+   strangle a 20px row, so the rail centers the icon itself. */
+.sidebar--collapsed .sidebar__foot { margin: 10px 0 12px; }
 .sidebar__error { padding: 0 12px 10px; }
 .sidebar__remove { max-width: 420px; }
-.sidebar__removetext { margin: 4px 0 14px; font: 400 13px/1.6 var(--sans); color: var(--text); }
-.sidebar__removebtns { display: flex; gap: 8px; justify-content: flex-end; }
+.sidebar__removetext { margin: 0; padding: 12px 14px 0; font: 400 13px/1.6 var(--sans); color: var(--text); overflow-wrap: anywhere; }
+.sidebar__removetext strong { font-weight: 600; }
+.sidebar__removewarn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 14px 0;
+  font: 500 12.5px/1.5 var(--sans);
+  color: var(--warn);
+}
+.sidebar__removewarn svg { flex: none; }
+.sidebar__removehint { margin: 8px 14px 0; font: 400 12px/1.55 var(--sans); color: var(--muted); }
+.sidebar__removebtns { display: flex; gap: 8px; justify-content: flex-end; padding: 14px; }
+/* 결함③: the discard dialog's file list — what 버리기 would throw away. */
+.discard__files {
+  margin: 8px 14px 0;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  list-style: none;
+  font: 400 12px/1.6 var(--mono);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
 
 /* Narrow windows fold the rail by themselves (PLAN D19): three columns
    cannot fit, so the fold is the window's decision, not a setting. */
@@ -1794,7 +2703,7 @@ input:focus, textarea:focus, select:focus {
   min-width: 0;
   min-height: 0;
 }
-.planner__chat .scroll { padding: 18px 22px 12px; }
+.planner__chat .scroll { padding: 22px 26px 14px; }
 
 /* The scroll area and its one overlay: the pill that brings a scrolled-up
    reader back to the arriving answer. A wrapper because a pill positioned
@@ -1811,22 +2720,36 @@ input:focus, textarea:focus, select:focus {
   bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30; /* over the transcript; under autocomplete(35) · selector(40) · modal(60) */
+  z-index: 30; /* over the transcript; under autocomplete(35) · selector(40) · modal(60) — 무대 위에 그리는 새 층은 .modal · .palette · .selector__backdrop · .pip--large 계열을 쓴다(usePreviewCover, PLAN D65) */
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
+  padding: 6px 13px;
   border-radius: 999px;
-  background: var(--panel-3);
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--line-strong);
   color: var(--text-2);
   font-size: 12px;
-  box-shadow: var(--shadow-pop);
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  box-shadow: var(--shadow-card);
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.18s var(--spring), box-shadow 0.18s;
 }
-.chatstack__pill:hover { background: var(--panel-2); border-color: var(--line-hover-strong); color: var(--text); }
-/* While a turn streams, the pill names what keeps arriving below the fold. */
-.chatstack__pill--live { color: var(--accent); }
+.chatstack__pill:hover { background: var(--panel-2); border-color: var(--line-hover-strong); color: var(--text); transform: translateX(-50%) translateY(-1px); }
+/* While a turn streams, the pill names what keeps arriving below the fold —
+   and carries the live lamp so it reads as a signal, not a link. */
+.chatstack__pill--live {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line-strong));
+}
+.chatstack__pill--live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: lampbreathe 2s ease-in-out infinite;
+}
 .chatstack__pill--live:hover { color: var(--accent); }
 
 /* The workspace's right column, full-time now: the action bar with 저장 ·
@@ -1848,22 +2771,40 @@ input:focus, textarea:focus, select:focus {
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line-soft);
-  background: var(--panel);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
   flex: none;
+  /* same rule as .thread: the glass stacks this bar, so keep it — and the
+     더 보기 ▾ menu it hosts — above the stage that follows it */
+  position: relative;
+  z-index: 31;
 }
 .screenpanel__spacer { flex: 1; }
 .screenpanel__status {
   display: inline-flex;
   align-items: center;
-  padding: 3px 9px;
+  gap: 6px;
+  padding: 3px 10px;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
   font: 500 11.5px var(--sans);
   color: var(--muted);
 }
+/* every state wears its own little lamp — the state is a light, not a word */
+.screenpanel__status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+  flex: none;
+}
 .screenpanel__status--pending { color: var(--text-2); border-color: var(--line-hover); }
-.screenpanel__status--handed { color: var(--accent); border-color: var(--accent); }
-.screenpanel__status--merged { color: var(--ok); border-color: var(--ok); }
+.screenpanel__status--handed { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.screenpanel__status--merged { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 
 /* 준비 중(내려받기·설치·서버 부팅)과 실패 상태는 미리보기 열 전체를 쓴다:
    고정 폭 카드가 구석에 붙어 있으면 화면이 텅 빈 것처럼 읽힌다. 내용은
@@ -1894,8 +2835,8 @@ input:focus, textarea:focus, select:focus {
   padding: 30px 32px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--r-float);
-  box-shadow: var(--shadow-pop);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--shadow-card);
 }
 .progress--error .progress__card { border-color: var(--danger-line); }
 .progress .spinner { width: 15px; height: 15px; border-width: 2px; color: var(--accent); }
@@ -1933,26 +2874,56 @@ input:focus, textarea:focus, select:focus {
 
 /* activity summary ----------------------------------------------------------*/
 
+/* One run of tool calls folds into a single card on the tape's rail: the rail
+   joins consecutive runs into a timeline, and the node on it — check, pulse,
+   or red — is the state, worn as a light. The line deliberately reaches 12px
+   into the flex gap on both ends, so back-to-back runs read as one wire. */
 .activity {
+  position: relative;
   border: 1px solid var(--line-soft);
-  border-radius: var(--r-md);
-  background: var(--panel);
-  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 40%, var(--panel)), var(--panel));
+  transition: border-color 0.15s;
 }
+.activity:hover { border-color: var(--line); }
 .activity--error { border-color: var(--danger-line); }
+.activity--error::after {
+  background: var(--danger);
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 0 0 4px color-mix(in srgb, var(--danger) 36%, transparent);
+}
+.activity--running::after {
+  animation: nodepulse 1.7s ease-in-out infinite;
+}
+@keyframes nodepulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px var(--bg),
+      0 0 0 4px color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px var(--bg),
+      0 0 0 7px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+}
 .activity__head {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 11px;
+  padding: 8px 11px;
   background: transparent;
   border: 0;
+  border-radius: var(--r-lg);
   text-align: left;
-  color: var(--muted);
+  color: var(--text-2);
+  transition: background 0.12s;
 }
-.activity__head:hover { background: var(--panel-2); }
-.activity__text { font: 500 11.5px var(--mono); flex: 1; }
+.activity__head:hover { background: color-mix(in srgb, var(--panel-2) 72%, transparent); }
+.activity--error .activity__head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.activity__text { font: 500 12px var(--sans); letter-spacing: -0.003em; flex: 1; }
 .activity__flag { font: 500 10.5px var(--mono); color: var(--danger); }
 .activity__body {
   border-top: 1px solid var(--line-soft);
@@ -1961,6 +2932,7 @@ input:focus, textarea:focus, select:focus {
   flex-direction: column;
   gap: 6px;
   background: var(--bg-2);
+  border-radius: 0 0 9px 9px;
 }
 
 /* document chips ------------------------------------------------------------*/
@@ -1997,12 +2969,13 @@ input:focus, textarea:focus, select:focus {
 }
 
 .preview__toolbar {
+  /* no bottom hairline and no fill: this row belongs to the canvas below,
+     not to the header stack above — three gray bars read as three apps */
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 8px 14px;
 }
 .preview__link {
   cursor: pointer;
@@ -2031,12 +3004,16 @@ input:focus, textarea:focus, select:focus {
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
+  justify-content: safe center;
+  align-items: center;
+  text-align: center;
   gap: 10px;
   padding: 28px;
 }
-.preview__blank h2 { margin: 0; font: 600 14px var(--sans); color: var(--text); }
+/* The stopped card borrows the 준비/실패 card (progress__card) and tints its
+   head glyph; the daemon's last log line sits under the sentence in mono. */
+.preview__stopglyph { display: inline-flex; color: var(--danger); }
+.preview__stopactions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 /* The error banner above the frame (PLAN D49): the title says what happened,
    the message is clamped until 자세히 opens it. */
 .preview__error {
@@ -2217,6 +3194,10 @@ input:focus, textarea:focus, select:focus {
 }
 .planner--onboarding { display: flex; }
 .onboarding__titlerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* 시작 화면은 스플래시다: 마크·제목·부제·확인 중 문구를 한 축에 세운다.
+   스텝 카드가 차는 본문은 그대로 왼쪽 정렬을 유지한다. */
+.onboarding__head { text-align: center; }
+.onboarding > .hint { text-align: center; }
 .onboarding__head h1 { margin: 0 0 6px; font: 600 20px var(--sans); color: var(--text); }
 .onboarding__steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .onboarding__step {
@@ -2285,16 +3266,39 @@ input:focus, textarea:focus, select:focus {
 
 /* the thread head (PLAN D59) ------------------------------------------------
    The chat column's one header line: the conversation's name, the menu that
-   renames or archives it. Replaces the tab strip — the tree owns navigation
+   renames or deletes it. Replaces the tab strip — the tree owns navigation
    now, so the column reads as one conversation, not a row of them. */
 .thread {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line-soft);
   min-height: 44px;
-  background: var(--panel);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  /* the glass makes this bar its own stacking context, so the row's menu
+     would paint under the transcript that follows it in the DOM — the bar
+     rides above its column instead */
+  position: relative;
+  z-index: 31;
+}
+/* The thread's live lamp: a turn in flight is told by light, not by another
+   word in the header — it only exists while something is running. */
+.thread__lamp {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: lampbreathe 2s ease-in-out infinite;
+}
+@keyframes lampbreathe {
+  50% { box-shadow: 0 0 0 4px var(--accent-soft); opacity: 0.72; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread__lamp, .chatstack__pill--live::before, .activity--running::after, .turnlive::after { animation: none; }
 }
 .thread__title {
   min-width: 0;
@@ -2302,8 +3306,8 @@ input:focus, textarea:focus, select:focus {
   padding: 2px 4px;
   border: 0;
   background: none;
-  font: 700 13.5px var(--sans);
-  letter-spacing: -0.01em;
+  font: 700 14px var(--sans);
+  letter-spacing: -0.012em;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -2412,6 +3416,12 @@ input:focus, textarea:focus, select:focus {
   border: 0;
 }
 
+/* 빈 작업 화면은 한 줄로 읽힌다: 히어로 · 제목 · 픽커가 하나의 좁은 컬럼.
+   (픽커가 컨테이너 폭 전체를 쓰면 히어로와 어긋난다) */
+.planner__empty { align-items: center; }
+.planner__empty > * { width: 100%; max-width: 480px; }
+.planner__empty .emptyhero { max-width: none; }
+
 @media (max-width: 880px) {
   .scroll { padding: 16px 16px 10px; }
   .composer { padding: 10px 16px; }
@@ -2446,37 +3456,55 @@ input:focus, textarea:focus, select:focus {
   border-radius: var(--r-sm);
 }
 
-.preview__states { display: flex; gap: 2px; flex: none; }
+.preview__states { display: flex; gap: 2px; flex: none; padding: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
 .preview__state {
-  padding: 3px 8px;
+  padding: 2px 8px;
   font: 500 10.5px var(--mono);
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  border-radius: 6px;
   cursor: pointer;
 }
 .preview__state:hover { color: var(--text); }
 /* Same selected affordance as the rail's screen rows: two things in one
    column that both mean "this is the one you are looking at" must not read
    differently. */
-.preview__state--on { color: var(--text); background: var(--panel-3); border-color: var(--line); }
+.preview__state--on {
+  color: var(--text);
+  background: var(--panel-3);
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
 
-.preview__width { display: flex; gap: 2px; flex: none; }
+.preview__width {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
 .preview__widthbtn {
-  padding: 3px 7px;
+  padding: 2px 8px;
   font: 500 10.5px var(--sans);
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  border-radius: 6px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 .preview__widthbtn:hover { color: var(--text); }
-.preview__widthbtn--on { color: var(--text); background: var(--panel-3); border-color: var(--line); }
+.preview__widthbtn--on {
+  color: var(--text);
+  background: var(--panel-3);
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
 
 /* The frame's container, and the only thing 폭 touches. The app is never told
    which width is selected — it just sees its own viewport, as it would on a
@@ -2484,37 +3512,47 @@ input:focus, textarea:focus, select:focus {
    and the centring are what make a narrow frame read as a device rather than
    as a layout that broke. */
 .preview__stage {
+  /* the artboard's canvas: a faint dot grid on a quiet falloff, the way a
+     design tool says "what sits here is the work, not the chrome" */
   flex: 1;
   display: flex;
   justify-content: center;
   min-height: 0;
+  padding: 18px 20px 20px;
+  background:
+    radial-gradient(var(--grid-dot) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, var(--bg-2)), var(--bg-2));
 }
 .preview__stage--mobile,
 .preview__stage--tablet {
-  padding: 14px 0;
-  background: var(--bg-2);
+  background:
+    radial-gradient(var(--grid-dot) 1px, transparent 1.4px) 0 0 / 22px 22px,
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, var(--bg-2)), var(--bg-2));
 }
 /* The device wrapper is what 폭 narrows (PLAN D47 — names, not emulation);
-   the frame chrome rides inside it, so the rounded frame stays whole. */
-.preview__stage--mobile .preview__device { width: 390px; }
-.preview__stage--tablet .preview__device { width: 768px; }
-.preview__stage--mobile .preview__device,
-.preview__stage--tablet .preview__device {
-  flex: none;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  overflow: hidden;
-  background: #fff;
-}
+   the frame chrome rides inside it, so the rounded frame stays whole.
+   Every width reads as an artboard: rounded, hairline, floating on a real
+   shadow — never as a layout that broke. */
+.preview__stage--mobile .preview__device { width: 390px; flex: none; }
+.preview__stage--tablet .preview__device { width: 768px; flex: none; }
 
-/* 프레임 머리 (PLAN D44 · D47): 주소가 아니라 화면 이름 · 상태. The device
-   wrapper carries the 폭 classes; the chrome rides inside it. */
+/* 프레임 머리 (PLAN D44 → D66): 브라우저 줄 — 이동 · 새로 고침 · 주소(네이티브)
+   또는 화면 이름(iframe 경로). 항상 그린다: 화면을 고르기 전에도 머리가 있어야
+   미리보기 칸이 무언가를 감추는 것처럼 보이지 않는다. */
 .preview__device {
-  flex: 1;
+  /* 폭 토글이 뚝 끊기지 않고 좁혀진다: 데스크톱 상태도 width 에서 렌더해야
+     양방향으로 부드럽다 — basis 0 이면 데스크톱 복귀가 스냅한다. */
+  flex: 1 1 auto;
+  transition: width 0.35s ease, flex-grow 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
   display: flex;
   flex-direction: column;
   min-height: 0;
   width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: #fff;
+  overflow: hidden;
+  box-shadow: var(--shadow-float);
 }
 .frame__chrome {
   display: flex;
@@ -2525,6 +3563,43 @@ input:focus, textarea:focus, select:focus {
   background: var(--panel);
   flex: none;
 }
+.frame__nav { display: flex; gap: 2px; flex: none; }
+.frame__toolsbtn {
+  flex: none;
+  padding: 2px 7px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.frame__toolsbtn:hover { color: var(--text); background: var(--panel-3); }
+.frame__navbtn {
+  padding: 2px 7px;
+  font: 500 10px var(--mono);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.frame__navbtn:hover:not(:disabled) { color: var(--text); background: var(--panel-3); }
+.frame__navbtn:disabled { opacity: 0.35; cursor: default; }
+.frame__addresswrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.frame__address {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  font: 500 11.5px var(--mono);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.frame__address:focus { outline: none; border-color: var(--accent); }
+.frame__addrerror { flex: none; font: 500 11px var(--sans); color: var(--danger); white-space: nowrap; }
 .frame__name {
   flex: 1;
   font: 500 12px var(--sans);
@@ -2534,6 +3609,49 @@ input:focus, textarea:focus, select:focus {
   text-overflow: ellipsis;
 }
 .frame__name b { color: var(--text-2); font-weight: 600; }
+/* 주소창이 경로를 말하는 동안 화면 이름은 오른쪽 라벨로 남는다 (D66). */
+.frame__name--beside { flex: none; margin-left: auto; padding-left: 8px; }
+
+/* 네이티브 뷰가 얹히는 슬롯 (D64) — 뷰는 항상 DOM 위다(D65). 무언가를 무대 위에
+   그리는 층은 .modal · .palette · .selector__backdrop · .pip--large 계열을 써야
+   usePreviewCover 가 덮는다. 슬롯 자체는 언제나 아래 깔린다. */
+.preview__slot {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #fff;
+}
+.preview__freeze {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+
+/* Claude 시점 썸네일의 자리 (D63 → D65): 무대 구석은 뷰 밑이므로 프레임 머리
+   끝에 도킹한다. 크게 보기(.pip--large)는 cover 규칙을 탄다. */
+.pip--docked {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  cursor: zoom-in;
+}
+.pip--docked img { display: block; height: 30px; width: auto; border-radius: 2px; }
+.pip--docked__label {
+  font: 500 10px var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* 화면 선언이 없을 때의 선택기 자리 (PLAN D46) — 숨기지 않는다. */
 .preview__unlisted {
@@ -2606,19 +3724,21 @@ input:focus, textarea:focus, select:focus {
    함수가 내리고 여기는 그릴 뿐이다. */
 .stepper {
   border-top: 1px solid var(--line-soft);
-  padding: 13px 16px 14px;
+  padding: 13px 18px 15px;
   display: flex;
   flex-direction: column;
   gap: 11px;
-  background: var(--panel);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
   flex: none;
 }
 .stepper__rail { display: flex; align-items: center; }
 .step { display: flex; align-items: center; flex: 1; min-width: 0; }
 .step:last-child { flex: 0 0 auto; }
 .step__mark {
-  width: 21px;
-  height: 21px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   flex: none;
   display: flex;
@@ -2630,17 +3750,53 @@ input:focus, textarea:focus, select:focus {
   background: var(--panel);
   position: relative;
   z-index: 1;
+  transition: background 0.25s var(--drift), border-color 0.25s var(--drift), box-shadow 0.25s var(--drift), color 0.25s;
 }
-.step--done .step__mark { background: var(--accent); border-color: var(--accent); color: var(--bg); }
-.step--now .step__mark { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+/* finished steps wear the brand gradient — the rail remembers where the
+   light has already been */
+.step--done .step__mark {
+  background: var(--brand-grad);
+  border-color: transparent;
+  color: var(--bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 2px 8px -3px var(--accent-glow);
+}
+.step--now .step__mark {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 0 14px -3px var(--accent-glow);
+}
 .step__label { margin-left: 8px; font: 500 12px var(--sans); color: var(--muted); white-space: nowrap; }
 .step--now .step__label { color: var(--text); font-weight: 700; }
 .step--done .step__label { color: var(--text-2); }
-.step__line { flex: 1; height: 1.5px; margin: 0 10px; background: var(--line); border-radius: 999px; position: relative; }
-.step__line::after { content: ""; position: absolute; inset: 0; width: 0; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+.step__line { flex: 1; height: 1.5px; margin: 0 10px; background: var(--line); border-radius: 999px; position: relative; overflow: hidden; }
+.step__line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: var(--brand-grad);
+  border-radius: 999px;
+  transition: width 0.4s var(--drift);
+}
 .step--done .step__line::after { width: 100%; }
 .stepper__foot { display: flex; align-items: center; gap: 10px; }
 .stepper__foot > button { flex: none; white-space: nowrap; }
+/* the workspace's one gradient button: the step's go action is the loudest
+   "next" on the screen, and it earns the brand's light */
+.stepper__foot .primary {
+  background-image: var(--brand-grad);
+  color: var(--bg);
+  box-shadow:
+    0 8px 20px -8px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+.stepper__foot .primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  box-shadow:
+    0 12px 26px -10px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
 .stepper__why {
   font: 500 12px var(--sans);
   color: var(--muted);
@@ -2663,4 +3819,285 @@ input:focus, textarea:focus, select:focus {
 /* 1100 미만은 라벨을 숨기고 번호만 (PLAN D44). */
 @media (max-width: 1100px) {
   .step__label { display: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * 첫 만남과 마법 순간의 연출
+ * 기존 어휘 그대로: hairline, panel, accent-for-state, brand-grad 는 시그니처
+ * 자리에만. 모든 모션은 prefers-reduced-motion 에서 끈다.
+ * ------------------------------------------------------------------------ */
+
+@keyframes risefade {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 온보딩 마법사 — 브랜드, 게이트 순차 점등, 통과 팝, 시작 CTA ------------- */
+
+.onboarding__brand { display: flex; justify-content: center; margin-bottom: 10px; }
+.onboarding__mark {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-lg);
+  background: var(--brand-grad);
+  box-shadow: 0 10px 26px -10px var(--accent-glow);
+}
+.onboarding__mark::after {
+  /* an abstract screen inside the mark */
+  content: "";
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  top: 11px;
+  bottom: 9px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.88);
+}
+.onboarding__meter {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+.onboarding__meterfill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--brand-grad);
+  transition: width 0.5s ease;
+}
+.onboarding__step {
+  animation: risefade 0.4s ease-out backwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.onboarding__glyph { display: inline-block; }
+.onboarding__glyph--pass { animation: gatepop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes gatepop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.onboarding__cta {
+  background: var(--brand-grad);
+  color: var(--bg);
+  font-weight: 600;
+  padding: 9px 28px;
+  border-radius: var(--r-float);
+  box-shadow: 0 12px 28px -12px var(--accent-glow);
+  animation: risefade 0.4s ease-out backwards 0.15s;
+}
+.onboarding__cta:hover:not(:disabled) { filter: brightness(1.06); }
+
+/* 빈 작업 화면 — 제품의 이야기 한 번, 축으로 -------------------------------- */
+
+.emptyhero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 0 16px;
+  animation: risefade 0.5s ease-out backwards;
+}
+.emptyhero__ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 88%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: var(--panel);
+  padding: 8px 13px;
+  font: 500 12.5px var(--sans);
+  color: var(--text-2);
+}
+.emptyhero__attach {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+.emptyhero__prompt { font-family: var(--mono); color: var(--muted); }
+.emptyhero__link { width: 1px; height: 14px; background: var(--line-strong); }
+.emptyhero__screen {
+  position: relative;
+  overflow: hidden;
+  width: min(320px, 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.emptyhero__screen::after {
+  /* the screen is being made — one slow sweep, on repeat */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 32%, var(--accent-soft) 50%, transparent 68%);
+  transform: translateX(-100%);
+  animation: sweep 3.2s ease-in-out infinite;
+}
+.emptyhero__dots { display: flex; gap: 5px; margin-bottom: 2px; }
+.emptyhero__dots i { width: 6px; height: 6px; border-radius: 999px; background: var(--panel-3); }
+.emptyhero__line { display: block; height: 8px; border-radius: 4px; background: var(--panel-3); }
+.emptyhero__line--short { width: 42%; }
+.emptyhero__chips { display: flex; gap: 5px; margin-top: 3px; }
+.emptyhero__chips i {
+  font: 500 10px var(--sans);
+  font-style: normal;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.emptyhero__chips i:first-child {
+  color: var(--accent);
+  border-color: var(--accent-glow);
+  background: var(--accent-soft);
+}
+.emptyhero__caption { margin: 2px 0 0; font: 400 12px var(--sans); color: var(--muted); }
+
+/* 클론 준비 레일 — 내려받기 → 설치 → 미리보기 ------------------------------ */
+
+.progress__rail { display: flex; align-items: center; gap: 6px; }
+.progress__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 11.5px var(--sans);
+  color: var(--muted);
+}
+.progress__step:not(:first-child)::before {
+  content: "";
+  width: 12px;
+  height: 1px;
+  background: var(--line);
+}
+.progress__dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 9px var(--sans);
+}
+.progress__step--done { color: var(--ok); }
+.progress__step--done .progress__dot {
+  border-color: transparent;
+  background: var(--panel-3);
+  color: var(--ok);
+}
+.progress__step--now { color: var(--text); }
+.progress__step--now .progress__dot {
+  border-color: var(--accent-glow);
+  background: var(--accent-soft);
+  animation: dotpulse 1.4s ease-in-out infinite;
+}
+@keyframes dotpulse {
+  50% { box-shadow: 0 0 0 3px var(--accent-soft); }
+}
+
+/* 턴의 잔향 — 다시 그리는 중, 그리고 도착 ---------------------------------- */
+
+.planner__previewcol { position: relative; }
+.planner__previewcol--live::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 5;
+  background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: liveslide 1.6s ease-in-out infinite;
+}
+@keyframes liveslide {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
+}
+.screenpanel__working {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 11.5px var(--sans);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  padding: 2px 10px 2px 8px;
+}
+.screenpanel__working .spinner { width: 10px; height: 10px; border-width: 1.5px; color: var(--accent); }
+.previewcol__stage--settled { animation: settlepulse 1s ease-out; }
+@keyframes settlepulse {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  60% { box-shadow: 0 0 0 3px var(--accent-soft); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.previewcol__stage--settled::after {
+  /* the answer arrived — one quiet pass across the screen (browser path;
+     the native view rides above DOM, its ring pulse stays visible) */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent 35%, var(--accent-soft) 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: sweep 0.9s ease-out;
+}
+
+/* 미세 모션 — 떠오르는 층과 눌리는 자리 ------------------------------------ */
+
+/* 떠오르는 층: 대화상자는 한 번 피어오르고, 메뉴는 제자리에서 튀어나온다. */
+.modal { animation: fadein 0.18s ease-out; }
+.modal__panel { animation: risefade 0.28s var(--spring); }
+.selector__menu { animation: poprise 0.18s var(--spring); }
+.autocomplete { animation: poprise 0.16s var(--spring); }
+@keyframes poprise {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 눌리는 자리: 이미 색 전환이 있는 버튼들에 걸맞은 이웃들. */
+.node__row,
+.leaf { transition: background-color 0.12s, color 0.12s; }
+.node__add,
+.node__menu-btn,
+.leaf__menu-btn { transition: opacity 0.12s; }
+.preview__widthbtn,
+.frame__navbtn,
+.frame__toolsbtn { transition: color 0.12s, background-color 0.12s, border-color 0.12s; }
+.usage__chip,
+.chip { transition: color 0.12s, background-color 0.12s, border-color 0.12s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding__step,
+  .onboarding__cta,
+  .onboarding__glyph--pass,
+  .emptyhero,
+  .planner__previewcol--live::before,
+  .previewcol__stage--settled { animation: none; }
+  .emptyhero__screen::after { animation: none; content: none; }
+  .previewcol__stage--settled::after { content: none; }
+  .progress__step--now .progress__dot { animation: none; }
+  .leaf__dot--ask,
+  .toolbar__stop { animation: none; }
+  .modal,
+  .modal__panel,
+  .selector__menu,
+  .autocomplete { animation: none; }
+  .primary,
+  .composer__send,
+  .chatstack__pill { transition: none; }
+  .preview__device { transition: none; }
 }

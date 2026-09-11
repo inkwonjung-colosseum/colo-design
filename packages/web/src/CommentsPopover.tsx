@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { CommentItem } from "./daemon-client";
 import { stateLabel, timeAgo } from "./format";
 import { CloseIcon } from "./icons";
@@ -45,13 +45,26 @@ export function CommentsPopover({
     return () => document.removeEventListener("keydown", escape);
   }, [open, onClose]);
 
+  /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) panelRef.current?.focus();
+  }, [open]);
+
   if (!open) return null;
 
   const unresolved = (items ?? []).filter((item) => !item.resolved).length;
 
   return (
     <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal__panel" role="dialog" aria-modal="true" aria-label="코멘트 기록">
+      <div
+        className="modal__panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="코멘트 기록"
+        tabIndex={-1}
+        ref={panelRef}
+      >
         <header className="modal__head">
           <h2 className="modal__title">코멘트 기록</h2>
           <button type="button" className="ghost" aria-label="코멘트 기록 닫기" onClick={onClose}>

@@ -101,18 +101,19 @@ check("connection returns to open without a reload", true);
 await page.waitForSelector(".tree", { timeout: 20000 });
 await page.waitForSelector(".leaf", { timeout: 20000 });
 
-// --- RPCs work again: archive through the tree ----------------------------
+// --- RPCs work again: delete through the tree ------------------------------
 const leafRow = page.locator(".leafwrap").first();
 const leavesBefore = await page.locator(".leafwrap").count();
+page.on("dialog", (dialog) => dialog.accept());
 await leafRow.hover();
 await leafRow.locator(".leaf__menu-btn").click();
-await leafRow.getByRole("menuitem", { name: "보관" }).click();
+await leafRow.getByRole("menuitem", { name: "지우기" }).click();
 await page.waitForFunction(
   (before) => document.querySelectorAll(".leafwrap").length === before - 1,
   leavesBefore,
   { timeout: 15000 },
 );
-check("session archive works after reconnect", true);
+check("session delete works after reconnect", true);
 
 check("no console or page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
 

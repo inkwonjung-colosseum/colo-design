@@ -1,14 +1,20 @@
 import { randomBytes } from "node:crypto";
-import { dirname, join } from "node:path";
+import { spawn } from "node:child_process";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
+import { createWriteStream, existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import {
   app,
   BrowserWindow,
   ipcMain,
-  nativeImage,
   Notification,
+  nativeImage,
   safeStorage,
+  net,
   screen,
   shell,
 } from "electron";
@@ -16,8 +22,9 @@ import {
 import { DaemonServer } from "@cds-design/daemon/server";
 import { RELEASES_FEED_URL, checkForUpdate } from "@cds-design/protocol";
 import { CDS_DESIGN_DIR } from "@cds-design/daemon/environment";
+import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
-import { planSelfUpdate, verifyDownload } from "./mac-self-update.js";
+import { buildSwapScript, planSelfUpdate, verifyDownload } from "./mac-self-update.js";
 import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@cds-design/daemon/server";
 import { noticeCopy } from "./notices.js";
 
@@ -85,15 +92,11 @@ class ElectronPreviewDriver implements PreviewDriver {
     contents.debugger.attach("1.3");
     // consoleAPICalled 은 Runtime 도메인을 켜야 흐른다.
     contents.debugger.sendCommand("Runtime.enable", {});
-    // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다 — level 2=warn, 3=error.
-    contents.on(
-      "console-message",
-      (_event, level: number | string, message: string) => {
-        const name =
-          typeof level === "number" ? (["verbose", "info", "warn", "error"][level] ?? "log") : String(level);
-        this.consoleHistory.push({ level: name, text: String(message) });
-      },
-    );
+    // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다(PLAN D69 와 같은
+    // 형태) — 44 부터 첫 인자가 details { level: "info"|"warning"|"error"|"debug" }.
+    contents.on("console-message", (details) => {
+      this.consoleHistory.push({ level: details.level, text: details.message });
+    });
     contents.on("paint", (_details, _rect, image) => {
       const now = Date.now();
       if (now - this.lastFrameSent < PIP_FRAME_INTERVAL_MS) return;
@@ -291,6 +294,13 @@ async function bootApp(): Promise<void> {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
     },
   });
+  // 기획자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
+  const plannerPreview = new PlannerPreviewView(() => mainWindow);
+  registerPreviewIpc(plannerPreview);
+  // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
+  // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
+  const suiteHandle = globalThis as Record<string, unknown>;
+  suiteHandle.cdsDesignPlannerPreview = plannerPreview;
   await mainWindow.loadURL(url);
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -387,13 +397,37 @@ function registerDesktopBridge(): void {
         guarded: "개발 실행에서는 교체를 실행하지 않습니다",
       };
     }
+    if (process.platform !== "darwin") {
+      return {
+        error: "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
+      };
+    }
+    if (!input?.url || !input?.sha256) {
+      return { error: "업데이트 정보가 비어 있습니다 — 업데이트 확인을 다시 눌러 주세요." };
+    }
+    // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
+    // 어디에서 실행했든 그 자리를 바꾼다.
+    const bundle = dirname(dirname(dirname(process.execPath)));
     const plan = planSelfUpdate({
       url: input.url,
       sha256: input.sha256,
       downloadsDir: app.getPath("downloads"),
-      version: String(app.getVersion()),
+      version: app.getVersion(),
+      targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
     });
-    void verifyDownload; // 실행 경로는 아래 자가교체 이야기에서 잇는다.
+    try {
+      await downloadFile(input.url, plan.downloadPath);
+      await verifyDownload(plan.downloadPath, plan.expectedSha256);
+      const logPath = join(app.getPath("temp"), "cds-design-update.log");
+      const scriptPath = join(app.getPath("temp"), `cds-design-update-${app.getVersion()}.sh`);
+      await writeFile(scriptPath, buildSwapScript({ plan, pid: process.pid, logPath }), { mode: 0o755 });
+      // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
+      spawn("/bin/bash", [scriptPath], { detached: true, stdio: "ignore" }).unref();
+      setTimeout(() => app.quit(), 500);
+      return { started: true, downloadPath: plan.downloadPath, steps: plan.steps };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle("desktop:open-home", async () => {
@@ -404,7 +438,6 @@ function registerDesktopBridge(): void {
 
 /** Electron net 모듈을 fetch 처럼 쓴다(프록시·인증서 정책을 앱이 따른다). */
 async function netFetch(feedUrl: string): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
-  const { net } = await import("electron");
   const request = net.request(feedUrl);
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
     let body = "";
@@ -421,4 +454,15 @@ async function netFetch(feedUrl: string): Promise<{ ok: boolean; status: number;
     status: statusCode,
     json: async () => JSON.parse(response.body),
   };
+}
+/** zip 내려받기 — net.fetch 로 받아 파일로 흘려보낸다(큰 zip 도 메모리에 올리지 않는다). */
+async function downloadFile(url: string, destPath: string): Promise<void> {
+  // 릴리스 에셋 → CDN 넘겨주기는 net 이 기본으로 따라간다.
+  const response = await net.fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error(`업데이트 파일을 내려받지 못했습니다 (HTTP ${response.status})`);
+  }
+  // Electron 의 body 는 DOM 계열 ReadableStream — Node 스트림으로 다리를 놓는다.
+  const body = Readable.fromWeb(response.body as unknown as NodeWebReadableStream);
+  await pipeline(body, createWriteStream(destPath));
 }

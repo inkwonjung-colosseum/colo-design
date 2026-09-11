@@ -548,37 +548,7 @@ async function main() {
       leftoverRefs.stdout.trim(),
     );
 
-    // --- 9.5 코멘트 저장소 · 빠른 동작 (PLAN D55 · D57) ----------------------
-    // The repo's own quick actions ride hello·status; the tool's built-in
-    // five are the web's, so the daemon sends exactly what cds-design.json
-    // declared — nothing when it declared nothing.
-    const chipsManifest = join(ROOT, "cds-design.json");
-    const withChips = JSON.parse(readFileSync(chipsManifest, "utf8"));
-    withChips.quickActions = ["온보딩 상태 추가", "결제 완료 화면"];
-    writeFileSync(chipsManifest, `${JSON.stringify(withChips, null, 2)}\n`);
-
-    const second = new WebSocket(`ws://127.0.0.1:${daemonPort}?token=publish-e2e`);
-    const secondInbox = [];
-    second.on("message", (raw) => secondInbox.push(JSON.parse(String(raw))));
-    await new Promise((resolve, reject) => {
-      second.once("open", resolve);
-      second.once("error", reject);
-    });
-    const hello = await waitFor(() => secondInbox.find((m) => m.type === "hello"), 10_000, "hello");
-    check("hello speaks protocol v10", hello.protocolVersion === 10, `${hello.protocolVersion}`);
-    check(
-      "hello.status.quickActions carries the repo's own rows",
-      JSON.stringify(hello.status.quickActions) === JSON.stringify(["온보딩 상태 추가", "결제 완료 화면"]),
-      JSON.stringify(hello.status.quickActions),
-    );
-    second.close();
-
-    const statusChips = await request({ id: "q1", type: "daemon.status" });
-    check(
-      "daemon.status carries the same quick actions",
-      JSON.stringify(statusChips.quickActions) === JSON.stringify(["온보딩 상태 추가", "결제 완료 화면"]),
-      JSON.stringify(statusChips.quickActions),
-    );
+    // --- 9.5 코멘트 저장소 (PLAN D57) ----------------------------------------
 
     // The overlay's pins land in the project's comments.json — the planner
     // is looking at the ACTIVE project, so no slug rides the message.
@@ -603,7 +573,7 @@ async function main() {
       JSON.stringify(listed.items),
     );
     const pinned = listed.items.find((item) => item.screen === "/member/MemberList");
-    await request({ id: "c4", type: "comments.resolve", id: pinned.id, resolved: true });
+    await request({ id: "c4", type: "comments.resolve", commentId: pinned.id, resolved: true });
     const relisted = await request({ id: "c5", type: "comments.list" });
     check(
       "the resolved mark moved without removing the row",

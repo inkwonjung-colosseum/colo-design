@@ -334,6 +334,8 @@ export interface DaemonApi {
   selectors: (sessionId: string) => Promise<SessionSelectors>;
   /** The /command palette rows. */
   commands: (sessionId: string) => Promise<SessionCommand[]>;
+  /** The same palette with no thread open: the daemon's own CLI probe. */
+  cliCommands: () => Promise<SessionCommand[]>;
   setModel: (sessionId: string, model: string | null) => Promise<unknown>;
   setEffort: (sessionId: string, effort: EffortLevel | null) => Promise<unknown>;
   setPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<unknown>;
@@ -811,6 +813,12 @@ export function useDaemon(url: string | null): Daemon {
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
       selectors: (sessionId: string) => call<SessionSelectors>({ type: "session.selectors", sessionId }),
       commands: (sessionId: string) => call<SessionCommand[]>({ type: "session.commands", sessionId }),
+      cliCommands: () =>
+        call<SessionCommand[]>(
+          { type: "cli.commands" },
+          // The probe boots the CLI once — seconds, not the usual round trip.
+          60_000,
+        ),
       findFiles: (query: string, limit = 40) => call<string[]>({ type: "repo.files", query, limit }),
       setModel: (sessionId: string, model: string | null) =>
         call({ type: "session.setModel", sessionId, model }),
@@ -955,7 +963,7 @@ export function useDaemon(url: string | null): Daemon {
         }),
       listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
       resolveComment: (id: string, resolved: boolean) =>
-        call<{ ok: true }>({ type: "comments.resolve", id, resolved }),
+        call<{ ok: true }>({ type: "comments.resolve", commentId: id, resolved }),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
           setOnboarding(steps);

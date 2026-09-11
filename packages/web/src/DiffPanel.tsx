@@ -256,6 +256,12 @@ export function DiffPanel({
     if (first) setMessage(first);
   }, [summary]);
 
+  /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+
   const save = async () => {
     setError(null);
     try {
@@ -267,7 +273,14 @@ export function DiffPanel({
 
   return (
     <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal__panel modal__panel--diff" role="dialog" aria-modal="true" aria-label="저장 검토">
+      <div
+        className="modal__panel modal__panel--diff"
+        role="dialog"
+        aria-modal="true"
+        aria-label="저장 검토"
+        tabIndex={-1}
+        ref={panelRef}
+      >
         <header className="modal__head">
           <h2 className="modal__title">저장 검토</h2>
           <button type="button" className="ghost" aria-label="저장 검토 닫기" onClick={onClose}>

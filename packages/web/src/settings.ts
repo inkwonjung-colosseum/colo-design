@@ -9,8 +9,12 @@ import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
  * the daemon owns it.
  */
 
-export type ThemeChoice = "system" | "dark" | "light";
-export type ResolvedTheme = "dark" | "light";
+/** A paintable palette. dark/light/contrast are the native set "system"
+    chooses between — contrast when the OS asks for more contrast; the rest
+    are full palettes in their own right. */
+export type ThemeId = "dark" | "light" | "sepia" | "midnight" | "contrast" | "dracula" | "solarized" | "catppuccin" | "nord" | "gruvbox" | "tokyonight" | "rosepine" | "everforest" | "onedark" | "github" | "monokai" | "latte";
+/** What the picker stores: a palette, or "follow the OS". */
+export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
 export type SendKey = "enter" | "modEnter";
 
@@ -67,29 +71,15 @@ export interface ChatSettings {
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
-  /**
-   * Kept, unread (PLAN D54): 대화는 보관으로 바뀌었고 삭제 확인은 없어졌다.
-   * External compatibility requirement — SettingsDialog, owned outside this
-   * change, still binds this field; dropping it here breaks that file. No
-   * code path in this app reads it any more.
-   */
-  confirmBeforeDelete: boolean;
   chat: ChatSettings;
   layout: LayoutSettings;
   /** The planner's own names for threads, by session id. The daemon's
       summary stays the fallback; an entry the planner emptied is dropped. */
   sessionTitles: Record<string, string>;
   /**
-   * Conversations kept out of the list (PLAN D54), by project slug. 보관 is
-   * not 삭제 — the transcript survives; the list, the tabs, and the tree
-   * just stop showing the thread. The 팔레트 is the way back.
-   */
-  archivedSessions: Record<string, string[]>;
-  /**
    * Which project's tree is folded (PLAN D59), by slug. Written by the
-   * sidebar outside this hook's state (the archivedSessions precedent), so
-   * `update` carries the stored copy over and nothing can silently unfold a
-   * project the planner folded.
+   * sidebar outside this hook's state, so `update` carries the stored copy
+   * over and nothing can silently unfold a project the planner folded.
    */
   treeFolded?: Record<string, boolean>;
 };
@@ -112,15 +102,32 @@ export const DEFAULT_SETTINGS: Settings = {
    */
   theme: "light",
   sendKey: "enter",
-  confirmBeforeDelete: true,
   chat: DEFAULT_CHAT_SETTINGS,
   layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
   sessionTitles: {},
-  archivedSessions: {},
   treeFolded: {},
 };
 
-export const THEMES: ThemeChoice[] = ["system", "dark", "light"];
+export const THEMES: ThemeChoice[] = [
+  "system",
+  "dark",
+  "light",
+  "sepia",
+  "midnight",
+  "contrast",
+  "dracula",
+  "solarized",
+  "catppuccin",
+  "nord",
+  "gruvbox",
+  "tokyonight",
+  "rosepine",
+  "everforest",
+  "onedark",
+  "github",
+  "monokai",
+  "latte",
+];
 
 const KEY = "cds-design.settings";
 
@@ -150,14 +157,9 @@ export function loadSettings(): Settings {
   return {
     theme: oneOf(THEMES, stored.theme, DEFAULT_SETTINGS.theme),
     sendKey: oneOf(["enter", "modEnter"] as const, stored.sendKey, DEFAULT_SETTINGS.sendKey),
-    confirmBeforeDelete:
-      typeof stored.confirmBeforeDelete === "boolean"
-        ? stored.confirmBeforeDelete
-        : DEFAULT_SETTINGS.confirmBeforeDelete,
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
-    archivedSessions: loadArchivedSessions(stored.archivedSessions),
     treeFolded: loadTreeFolded(stored.treeFolded),
   };
 }
@@ -183,9 +185,8 @@ export function loadTreeFoldedFor(slug: string | null): boolean {
 }
 
 /**
- * Persist one project's tree fold. Same read-modify-write as the archive:
- * the stored blob is read whole and rewritten, so a stale React copy can
- * never undo another key's newer write.
+ * Persist one project's tree fold. The stored blob is read whole and
+ * rewritten, so a stale React copy can never undo another key's newer write.
  */
 export function saveTreeFolded(slug: string | null, folded: boolean): void {
   if (!slug) return;
@@ -215,55 +216,6 @@ function loadSessionTitles(raw: unknown): Record<string, string> {
     if (id && name) out[id] = name;
   }
   return out;
-}
-
-/** Project slug → the session ids kept out of its list (PLAN D54). Slugs and
-    id arrays only; anything else in a hand-edited blob is dropped. */
-function loadArchivedSessions(raw: unknown): Record<string, string[]> {
-  if (!raw || typeof raw !== "object") return {};
-  const out: Record<string, string[]> = {};
-  for (const [slug, ids] of Object.entries(raw)) {
-    if (!slug || !Array.isArray(ids)) continue;
-    const clean = ids.filter((id): id is string => typeof id === "string" && id.length > 0);
-    if (clean.length > 0) out[slug] = clean;
-  }
-  return out;
-}
-
-/** The archived ids of one project, read fresh — the thread list writes this
-    key outside any settings dialog, so no component may hold a stale copy. */
-export function loadArchivedSessionIds(slug: string | null): string[] {
-  if (!slug) return [];
-  return loadSettings().archivedSessions[slug] ?? [];
-}
-
-/**
- * Persist one project's archived ids. Reads the stored blob first and rewrites
- * it whole: `useSettings` holds settings state that can be older than the last
- * 보관, and writing this key from that stale copy would silently un-archive
- * conversations the planner hid minutes ago.
- */
-export function saveArchivedSessionIds(slug: string | null, ids: string[]): void {
-  if (!slug) return;
-  let base: Record<string, unknown> = {};
-  try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (raw && typeof raw === "object") base = raw as Record<string, unknown>;
-  } catch {
-    // An unreadable blob starts a fresh one; the validated archive map below
-    // is what matters.
-  }
-  const archived = { ...loadSettings().archivedSessions, [slug]: ids };
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ ...base, archivedSessions: archived }));
-  } catch {
-    // Private-browsing quotas can refuse the write; the hide still applies
-    // to this tab's state.
-  }
-  // Every archive write funnels through here — 보관, 되살리기, 영구 삭제 —
-  // so this one ping is how the sidebar tree (which reads the stored ids
-  // fresh, project by project) learns to redraw (PLAN D59).
-  window.dispatchEvent(new Event("cds-design:archived"));
 }
 
 /**
@@ -340,15 +292,19 @@ function legacyComposerDefaults(): Partial<ChatSettings> {
 }
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
+const CONTRAST_QUERY = "(prefers-contrast: more)";
 
-function systemTheme(): ResolvedTheme {
+function systemTheme(): ThemeId {
   const media = window.matchMedia?.(DARK_QUERY);
   // No matchMedia at all (an old embedded webview): keep the native palette.
   if (!media) return "dark";
+  // A request for more contrast outranks the light/dark preference — the
+  // contrast palette exists precisely for that request.
+  if (window.matchMedia(CONTRAST_QUERY).matches) return "contrast";
   return media.matches ? "dark" : "light";
 }
 
-export function resolveTheme(choice: ThemeChoice): ResolvedTheme {
+export function resolveTheme(choice: ThemeChoice): ThemeId {
   return choice === "system" ? systemTheme() : choice;
 }
 
@@ -359,29 +315,42 @@ export function resolveTheme(choice: ThemeChoice): ResolvedTheme {
  */
 export function applyStoredTheme(): void {
   document.documentElement.dataset.theme = resolveTheme(loadSettings().theme);
+  syncThemeColor();
+}
+
+/** The browser chrome (mobile Safari toolbar, installed-window frame) tints
+    from this tag, not from CSS — keep it on the live palette's background. */
+function syncThemeColor(): void {
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  if (!bg) return;
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.appendChild(meta);
+  }
+  meta.content = bg;
 }
 
 /** Settings plus a patch function that persists. */
 export function useSettings(): {
   settings: Settings;
   update: (patch: Partial<Settings>) => void;
-  theme: ResolvedTheme;
+  theme: ThemeId;
 } {
   const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [theme, setTheme] = useState<ResolvedTheme>(() => resolveTheme(settings.theme));
+  const [theme, setTheme] = useState<ThemeId>(() => resolveTheme(settings.theme));
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => {
-      // 보관 (PLAN D54) and the tree fold (PLAN D59) write their keys from
-      // the sidebar, outside this hook's state — carry the stored copies
-      // over, or a settings save made later in the same sitting would
-      // restore conversations the planner archived, and unfold the project
-      // they folded, minutes ago.
+      // The tree fold (PLAN D59) writes its key from the sidebar, outside
+      // this hook's state — carry the stored copy over, or a settings save
+      // made later in the same sitting would unfold the project the planner
+      // folded minutes ago.
       const stored = loadSettings();
       const next = {
         ...prev,
         ...patch,
-        archivedSessions: stored.archivedSessions,
         treeFolded: stored.treeFolded,
       };
       try {
@@ -394,19 +363,23 @@ export function useSettings(): {
     });
   }, []);
 
-  // Follow the OS while the choice is "system", so switching appearance in
-  // macOS or Windows moves the app without a reload.
+  // Follow the OS while the choice is "system": appearance switches move the
+  // app without a reload, and a request for more contrast pulls in the
+  // contrast palette ahead of the light/dark preference.
   useEffect(() => {
     setTheme(resolveTheme(settings.theme));
     if (settings.theme !== "system") return;
-    const media = window.matchMedia?.(DARK_QUERY);
-    if (!media) return;
+    const queries = [DARK_QUERY, CONTRAST_QUERY]
+      .map((query) => window.matchMedia?.(query))
+      .filter((media): media is MediaQueryList => Boolean(media));
     const onChange = () => setTheme(systemTheme());
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    for (const media of queries) media.addEventListener("change", onChange);
+    return () => {
+      for (const media of queries) media.removeEventListener("change", onChange);
+    };
   }, [settings.theme]);
 
-  // The stylesheet keys its light palette off this attribute; `color-scheme`
+  // The stylesheet keys each palette off this attribute; `color-scheme`
   // comes along with it so form controls and scrollbars match.
   useEffect(() => {
     const root = document.documentElement;
@@ -415,6 +388,7 @@ export function useSettings(): {
     const swapping = root.dataset.theme !== undefined && root.dataset.theme !== theme;
     if (swapping) root.classList.add("theme-swap");
     root.dataset.theme = theme;
+    syncThemeColor();
     if (!swapping) return;
     const timer = setTimeout(() => root.classList.remove("theme-swap"), 50);
     return () => clearTimeout(timer);

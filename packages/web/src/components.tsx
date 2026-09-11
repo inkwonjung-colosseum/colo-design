@@ -6,6 +6,17 @@ import { Markdown } from "./Markdown";
 import { CheckIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon, ChevronRightIcon } from "./icons";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
 
+/**
+ * The CLI's own housekeeping lines. They arrive dressed as ordinary user or
+ * assistant blocks, but they are the tape talking, not a person — a stopped
+ * request, a turn that needed no answer. They render as quiet system lines
+ * in the app's one voice instead of posing as somebody's words.
+ */
+const TAPE_LINES: Record<string, string> = {
+  "[Request interrupted by user]": "요청을 중단했습니다",
+  "No response requested.": "응답이 필요 없는 차례였습니다",
+};
+
 /** The repo's own cds-design.json commands, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
@@ -182,12 +193,18 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
  * Claude's private reasoning, folded by default. While the turn is running it
  * reads as live ("생각 중…"); once the turn ends the same fold reads as a
  * record ("생각 과정") — a finished transcript must not look like it is still
- * thinking.
+ * thinking. The closed fold carries the thought's first line as a peek, so a
+ * planner scanning the tape reads the shape of the reasoning without opening
+ * it.
  */
 function ThinkingBlock({ block }: { block: Extract<Block, { type: "thinking" }> }) {
+  const peek = block.text.trimStart().split("\n", 1)[0] ?? "";
   return (
-    <details className="thinking">
-      <summary>{block.streaming ? "생각 중…" : "생각 과정"}</summary>
+    <details className={block.streaming ? "thinking thinking--live" : "thinking"}>
+      <summary>
+        <span className="thinking__label">{block.streaming ? "생각 중…" : "생각 과정"}</span>
+        {!block.streaming && peek && <span className="thinking__peek">{peek}</span>}
+      </summary>
       <pre>{block.text}</pre>
     </details>
   );
@@ -206,7 +223,11 @@ function ActivitySummary({ steps }: { steps: ActivityStep[] }) {
   const failed = tools.some((tool) => tool.isError);
 
   return (
-    <div className={failed ? "activity activity--error" : "activity"}>
+    <div
+      className={
+        failed ? "activity activity--error" : running ? "activity activity--running" : "activity"
+      }
+    >
       <button type="button" className="activity__head" onClick={() => setOpen((v) => !v)}>
         <span className={`tool__chevron${open ? " tool__chevron--open" : ""}`}>
           <ChevronRightIcon />
@@ -625,6 +646,8 @@ export function Transcript({
             // a quoted marker in an answer render as a second card.
             const { marker, body } = readTurn(block.text);
             if (marker) return <MachineTurn key={block.id} marker={marker} body={body} />;
+            const halted = TAPE_LINES[block.text.trim()];
+            if (halted) return <p key={block.id} className="sysline">{halted}</p>;
             return (
               <div key={block.id} className="bubble bubble--user">
                 {block.text}
@@ -639,6 +662,10 @@ export function Transcript({
           }
           case "text": {
             assistantCount += 1;
+            // The checkpoint count stays aligned even for a block that only
+            // poses as an answer; the k-th turn is the k-th turn regardless.
+            const tape = TAPE_LINES[block.text.trim()];
+            if (tape) return <p key={block.id} className="sysline">{tape}</p>;
             const checkpoint = checkpoints?.find((entry) => entry.turn === assistantCount);
             return (
               <div key={block.id}>
@@ -646,7 +673,7 @@ export function Transcript({
                 {checkpoint && onRestoreCheckpoint && (
                   <button
                     type="button"
-                    className="machine__more"
+                    className="revert"
                     disabled={live}
                     title="이 답변이 바꾼 화면 파일을, 이 답변이 시작하기 전 모습으로 되돌립니다"
                     onClick={() => onRestoreCheckpoint(checkpoint.id)}

@@ -74,17 +74,46 @@ const INDEX_HTML = `<!doctype html>
 <html lang="ko">
 <head><meta charset="utf-8"><title>연결 레포 미리보기</title></head>
 <body>
-  <main id="app">
+  <!-- 레포 브리지 계약의 참조 구현 (PLAN D72): 화면 선언 + 이동. 도구의 핀
+       오버레이는 preload 가 주입하므로 여기 없다. -->
+  <main id="app"><div data-screen="member/MemberList" data-state="default">
     <h1>회원 관리</h1>
     <p>연결 레포가 렌더하는 미리보기입니다.</p>
-  </main>
+    <table><tbody>
+      <tr><td data-component="MemberNameCell">홍길동</td><td><button data-component="DetailButton">상세</button></td></tr>
+      <tr><td data-component="MemberNameCell">김철수</td><td><button data-component="DetailButton">상세</button></td></tr>
+    </tbody></table>
+  </div></main>
+  <script>
+    (function () {
+      if (!window.cdsDesign && window.parent === window) return; // 받을 도구가 없다
+      var SCREENS = [
+        { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"], spec: null },
+      ];
+      var post = function (envelope) {
+        if (window.cdsDesign && window.cdsDesign.post) window.cdsDesign.post(envelope);
+        else window.parent.postMessage(envelope, "*");
+      };
+      post({ type: "cds-design.screens", screens: SCREENS });
+      window.addEventListener("message", function (event) {
+        if (event.source !== window.parent && event.source !== window) return;
+        var data = event.data || {};
+        if (data.type === "cds-design.screens?") post({ type: "cds-design.screens", screens: SCREENS });
+        if (data.type !== "cds-design.navigate" || typeof data.route !== "string") return;
+        if (data.route !== "/member/MemberList") return;
+        var state = typeof data.state === "string" && data.state ? data.state : "default";
+        // 실제 브리지는 클라이언트 라우팅을 한다 — 도구의 뷰는
+        // did-navigate-in-page 로 그 자리를 따라간다.
+        history.pushState(null, "", data.route + (state !== "default" ? "?state=" + state : ""));
+        var wrapper = document.querySelector("[data-screen]");
+        wrapper.setAttribute("data-state", state);
+        var rows = wrapper.querySelectorAll("tbody tr");
+        for (var i = 0; i < rows.length; i++) rows[i].style.display = state === "empty" ? "none" : "";
+      });
+    })();
+  </script>
 </body>
 </html>
-`;
-
-// The repo's own publish gate. The seed ships the passing version; a test
-// overwrites the clone's copy to make a publish fail on purpose.
-const CHECK_MJS = `console.log("check: 통과");
 `;
 
 const PACKAGE_JSON = JSON.stringify(
@@ -100,6 +129,11 @@ const PACKAGE_JSON = JSON.stringify(
   null,
   2,
 );
+
+// The repo's own publish gate. The seed ships the passing version; a test
+// overwrites the clone's copy to make a publish fail on purpose.
+const CHECK_MJS = `console.log("check: 통과");
+`;
 
 // The repo's own convention for where screens live. The daemon does not know
 // this; the browser planner e2e relies on it, the daemon e2e does not.
@@ -134,6 +168,9 @@ export async function createFixtureRepo({
   checkMjs = CHECK_MJS,
   // { host, scope } — a private-registry-declaring repo (npmrc leak checks).
   registry = null,
+  // Swaps index.html — a suite that needs a DIFFERENT bridge (an old
+  // `drafthouse.*` one for the stale message, say) seeds its own page.
+  indexHtml = INDEX_HTML,
 }) {
   const seed = join(dir, "seed");
   const remote = join(dir, "remote.git");
@@ -158,7 +195,7 @@ export async function createFixtureRepo({
   mkdirSync(join(seed, "scripts"), { recursive: true });
   writeFileSync(join(seed, "scripts", "check.mjs"), checkMjs);
   writeFileSync(join(seed, "server.mjs"), SERVER_MJS);
-  writeFileSync(join(seed, "index.html"), INDEX_HTML);
+  writeFileSync(join(seed, "index.html"), indexHtml);
   writeFileSync(join(seed, "CLAUDE.md"), CLAUDE_MD);
 
   await run("git", ["init", "--initial-branch=main", seed]);
