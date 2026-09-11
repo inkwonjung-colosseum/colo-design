@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProjectSummary, RepoPhase, ThreadSummary } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
-import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "./stage";
+import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "./delivery";
 import { loadTreeFoldedFor, saveTreeFolded } from "./settings";
 import { CloseIcon, GearIcon, WarnIcon } from "./icons";
 
@@ -633,7 +633,7 @@ function leafMetaText(
   return timeAgo(thread.updatedAt);
 }
 
-/** One badge per row, decided once (PLAN D15 · D45 — the stepper's words).
+/** One badge per row, decided once (PLAN D15 · D45 — the chip's words).
  * Null means a quiet row. */
 function badgeFor(project: ProjectSummary): { kind: string; label: string } | null {
   const progress: RepoPhase[] = ["cloning", "pulling", "installing", "starting"];

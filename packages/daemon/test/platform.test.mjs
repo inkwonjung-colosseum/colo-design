@@ -149,6 +149,10 @@ test("the daemon still reports a usable status when git is missing", async () =>
     `expected a git warning, got: ${status.warnings.join(" | ")}`,
   );
   assert.equal(typeof status.platform, "string");
-  assert.equal(status.protocolVersion, 10);
+  // The version the protocol dist pins — this test reads it live rather than
+  // copying a number, so a bump (D33's rule: once, at the stage's end) lands
+  // here without a manual edit.
+  const { PROTOCOL_VERSION } = await import("../../protocol/dist/index.js");
+  assert.equal(status.protocolVersion, PROTOCOL_VERSION);
 });
 

@@ -12,6 +12,8 @@ import type {
   GitHubRepoInspection,
   GitHubRepoList,
   HandoffStatus,
+  HandoffStatusReport,
+  DeveloperReview,
   OnboardingFixKind,
   OnboardingStep,
   PermissionSuggestion,
@@ -424,7 +426,8 @@ export interface DaemonApi {
    * Re-read the handed-off request from GitHub. Asked for by the planner, never
    * polled — the state only moves when a developer acts on it.
    */
-  handoffStatus: () => Promise<HandoffStatus>;
+  /** 상태 확인 (PLAN D88) — the pull request plus the developer's comments. */
+  handoffStatus: () => Promise<HandoffStatusReport>;
   /**
    * 저장 검토의 요약 (PLAN D51): one no-tool Claude turn over the diff,
    * answered in the planner's words. Asked once per diff, cached above this.
@@ -465,6 +468,8 @@ export interface DaemonApi {
   /** Every recorded comment of the connected repo, resolved ones in. */
   listComments: () => Promise<{ items: CommentItem[] }>;
   resolveComment: (id: string, resolved: boolean) => Promise<{ ok: true }>;
+  /** 답하기 (PLAN D88): the planner's answer to one developer comment. */
+  replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
   /** The four onboarding checks; read-only. */
   onboardingCheck: () => Promise<OnboardingStep[]>;
   /**
@@ -965,7 +970,7 @@ export function useDaemon(url: string | null): Daemon {
         call<GitHubRepoInspection>({ type: "github.repo.inspect", owner, repo }, 60_000),
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
-      handoffStatus: () => call<HandoffStatus>({ type: "repo.handoffStatus" }, 120_000),
+      handoffStatus: () => call<HandoffStatusReport>({ type: "repo.handoffStatus" }, 120_000),
       // The summary runs one short Claude turn on the daemon: the window a
       // generation gets, not the minutes a gate takes.
       summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
@@ -995,6 +1000,8 @@ export function useDaemon(url: string | null): Daemon {
       listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
       resolveComment: (id: string, resolved: boolean) =>
         call<{ ok: true }>({ type: "comments.resolve", commentId: id, resolved }),
+      replyToReview: (id: number, body: string) =>
+        call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
           setOnboarding(steps);

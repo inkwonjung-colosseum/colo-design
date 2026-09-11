@@ -21,6 +21,8 @@ import type {
   DiffStatus,
   HandoffShot,
   HandoffStatus,
+  DeveloperReview,
+  HandoffStatusReport,
   RepoCheckpoint,
   RepoCheckpointRestore,
   RepoCheckpoints,
@@ -42,6 +44,7 @@ import {
   resolvePnpmExecutable,
 } from "./environment.js";
 import { GitHubClient, parseRepoSlug } from "./github.js";
+import { readComments } from "./comments.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 
 /**
@@ -107,6 +110,13 @@ const GATE_BRIEF: Record<"check" | "build" | "commit" | "push" | "pr", string> =
  * for the step that ran. This is what the transcript CARD says (PLAN D9); the
  * brief above is what Claude reads, command output and all.
  */
+/**
+ * D90 ⓑ: push 거절 중 인증 · 권한 사유의 표식 — 이 문자열들이면 Claude 대신
+ * 설정 안내로 간다. 문자열 분기의 위험(D41)은 상수 하나에 모으고 단위 테스트가
+ * 잡는 것으로; 모르면 Claude 쪽(보수적)이다.
+ */
+export const PUSH_AUTH_FAILURE = /403|Permission denied|authentication|denied to|not authorized/i;
+
 const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
   check: "저장 전 검사",
   build: "넘기기 전 빌드",
@@ -506,11 +516,13 @@ export class RepoWorkspace {
   private branch: string | null;
   /**
    * Files in the clone that a 저장 would carry, as of the last count. Zero
-   * until something asks — a fresh clone is clean, and the stepper's own
+   * until something asks — a fresh clone is clean, and the delivery chip's own
    * mount is what triggers the first real count.
    */
   private pendingChanges = 0;
   private openHandoff: HandoffStatus | null;
+  /** D88: the developer comments the last 상태 확인 read — 답하기 resolves ids against this. */
+  private lastReviews: DeveloperReview[] = [];
   private readonly onCycleChange:
     | ((cycle: { branch: string | null; handoff: HandoffStatus | null }) => void)
     | null;
@@ -653,7 +665,7 @@ export class RepoWorkspace {
     if (this.publishing) await this.publishing.catch(() => undefined);
     const run = this.refreshFromRemote(onSessionTurn)
       .then(async (outcome) => {
-        // A conflict brief leaves the worktree mid-resolution: the stepper's
+        // A conflict brief leaves the worktree mid-resolution: the delivery chip's
         // count must show it (the unmerged files are changes awaiting 저장),
         // and an install or preview restart would only bury the brief in
         // noise — so no sync runs on that path. A clean refresh ends with
@@ -780,7 +792,7 @@ export class RepoWorkspace {
     }
 
     const commit = (await this.git(["rev-parse", "HEAD"])).trim();
-    // The worktree is clean now; the stepper moves off 검토·수정 on this.
+    // The worktree is clean now; the chip moves off unsaved on this.
     await this.refreshPendingChanges();
     return this.setDiff({ stage: "published", commit });
   }
@@ -819,7 +831,11 @@ export class RepoWorkspace {
     }
 
     await this.git(["checkout", "-B", name]);
-    this.setCycle(name, this.openHandoff);
+    // D84: a MERGED handoff belongs to the cycle that ended. Carrying it onto
+    // the new branch made the next 넘기기 try to `updatePullRequest` the
+    // merged PR, and the chip read 반영됨 while changes piled up. A new cycle
+    // starts with the handoff history in the store, not in the way.
+    this.setCycle(name, this.openHandoff?.state === "merged" ? null : this.openHandoff);
     return name;
   }
 
@@ -834,6 +850,9 @@ export class RepoWorkspace {
     /** The server's preview-driver captures (PLAN D56), already taken. */
     shots?: HandoffShot[];
     onSessionTurn?: (brief: string) => void;
+    /** D93: the project's comment store + declared titles, for the PR body. */
+    commentsFile?: string;
+    screenTitles?: Array<{ route: string; title: string }>;
   } = {}): Promise<DiffStatus> {
     if (!this.publishing) {
       this.publishing = this.runHandoff(options).finally(() => {
@@ -848,6 +867,9 @@ export class RepoWorkspace {
     body?: string;
     shots?: HandoffShot[];
     onSessionTurn?: (brief: string) => void;
+    /** D93: the project's comment store + declared titles, for the PR body. */
+    commentsFile?: string;
+    screenTitles?: Array<{ route: string; title: string }>;
   }): Promise<DiffStatus> {
     const branch = this.branch;
     if (!this.isCloned() || !branch) {
@@ -895,6 +917,25 @@ export class RepoWorkspace {
     this.setDiff({ stage: "handing-off" });
     const title = options.title?.trim() || DEFAULT_HANDOFF_TITLE;
     let body = options.body ?? "";
+    // D93: the planner's comment history rides the pull request body — the
+    // developer reads what changed and why without leaving the PR.
+    try {
+      const since = (
+        await this.git(["log", "--reverse", "--format=%cI", `origin/${this.baseBranch}..${branch}`])
+      ).split("\n")[0]?.trim();
+      if (options.commentsFile && since) {
+        const section = buildCommentsSection(
+          readComments(options.commentsFile),
+          (screenId) =>
+            options.screenTitles?.find((screen) => screen.route === `/${screenId}`)?.title ?? null,
+          since,
+        );
+        if (section) body = `${body.replace(/\n*$/, "")}\n\n${section}`;
+      }
+    } catch {
+      // A history that will not read costs only the section — the handoff
+      // itself carries the work.
+    }
     try {
       // D56: the captures join the branch first, so the body can link files
       // the developer will really find in it.
@@ -961,7 +1002,7 @@ export class RepoWorkspace {
    * the base branch with the developer's merge in it, and the next 저장 opens
    * a fresh branch — which is why this is not a passive status read.
    */
-  async refreshHandoff(): Promise<HandoffStatus | null> {
+  async refreshHandoff(): Promise<HandoffStatusReport | null> {
     const current = this.openHandoff;
     const slug = this.repoSlug();
     const client = this.gitHubClient?.() ?? null;
@@ -975,7 +1016,7 @@ export class RepoWorkspace {
     const handoff: HandoffStatus = pull;
     if (pull.state !== "merged") {
       this.setCycle(this.branch, handoff);
-      return handoff;
+      return await this.withReviews(handoff);
     }
 
     // Merged: the work is the developer's now. Land back on the base branch
@@ -994,7 +1035,72 @@ export class RepoWorkspace {
     // developer has already absorbed — restoring them now would move the
     // work backwards past a merge. Their refs go, quietly.
     await this.clearCheckpoints().catch(() => undefined);
-    return handoff;
+    return await this.withReviews(handoff);
+  }
+
+  /**
+   * D88: the developer's words, read beside the pull request — 인라인 코멘트와
+   * 말이 있는 리뷰 본문이 한 목록으로. A refused read costs the rows, not the
+   * status: the badge stays quiet rather than failing 상태 확인.
+   */
+  private async withReviews(handoff: HandoffStatus): Promise<HandoffStatusReport> {
+    const slug = this.repoSlug();
+    const client = this.gitHubClient?.() ?? null;
+    const reviews: DeveloperReview[] = [];
+    if (slug && client) {
+      const collect = async (): Promise<void> => {
+        for (const row of await client.listPullComments({ ...slug, number: handoff.number })) {
+          reviews.push({
+            id: Number(row.id),
+            kind: "inline",
+            author: String(row.user?.login ?? ""),
+            body: String(row.body ?? ""),
+            pr: handoff.number,
+            ...(row.path ? { path: String(row.path) } : {}),
+            ...(Number.isFinite(Number(row.line)) ? { line: Number(row.line) } : {}),
+            at: String(row.created_at ?? ""),
+          });
+        }
+        for (const row of await client.listReviews({ ...slug, number: handoff.number })) {
+          const text = String(row.body ?? "").trim();
+          if (text === "") continue;
+          reviews.push({
+            id: Number(row.id),
+            kind: "review",
+            author: String(row.user?.login ?? ""),
+            body: text,
+            pr: handoff.number,
+            at: String(row.submitted_at ?? ""),
+          });
+        }
+      };
+      await collect().catch((error) => console.error("D88 COLLECT DEBUG:", error));
+    }
+    console.error("D88 REVIEWS DEBUG:", reviews.length);
+    this.lastReviews = reviews;
+    return { ...handoff, reviews };
+  }
+
+  /**
+   * D88: 답하기 — the planner's words go to GitHub under their own name. The
+   * id resolves against the last 상태 확인 read: 인라인이면 스레드의 답글로,
+   * 리뷰 본문이면 이슈 코멘트로.
+   */
+  async replyToReview(id: number, body: string): Promise<void> {
+    const review = this.lastReviews.find((entry) => entry.id === id);
+    const slug = this.repoSlug();
+    const client = this.gitHubClient?.() ?? null;
+    if (!slug || !client) {
+      throw new Error("GitHub 에 답할 수 없습니다 — 설정에서 토큰을 확인해 주세요.");
+    }
+    if (!review) {
+      throw new Error("답할 코멘트를 찾을 수 없습니다 — 상태 확인을 다시 눌러 주세요.");
+    }
+    if (review.kind === "inline") {
+      await client.replyToPullComment({ ...slug, number: review.pr, commentId: review.id, body });
+    } else {
+      await client.commentOnIssue({ ...slug, number: review.pr, body });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1583,15 +1689,23 @@ export class RepoWorkspace {
     onSessionTurn: ((brief: string) => void) | undefined,
   ): DiffStatus {
     const detail = detailOf(error, this.pat);
-    // The failure is actionable by Claude, not by the planner: hand it over
-    // the same wire a typed message uses, output tail included. The step is
-    // named the way the planner's button is, not the way git is.
-    onSessionTurn?.(
-      markTurn(
-        { kind: "gate", step: GATE_STEP[gate] },
-        `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
-      ),
-    );
+    // D90 ⓑ: `pr` 은 Claude 에게 가지 않는다 — PR 열기 실패의 원인은 토큰
+    // 권한 · 브랜치 보호 · 네트워크라 Claude 가 고칠 게 없어 헛돈다. 웹이
+    // 넘기기 대화상자의 안내(넘기지 못했습니다 + 설정 열기)로 응답한다.
+    // `push` 는 갈라진다: 인증 · 권한 사유면 안내로, 그 외(non-fast-forward
+    // 등)는 지금처럼 Claude — 모르면 Claude 쪽(보수적).
+    const skipClaude = gate === "pr" || (gate === "push" && PUSH_AUTH_FAILURE.test(detail));
+    if (!skipClaude) {
+      // The failure is actionable by Claude, not by the planner: hand it over
+      // the same wire a typed message uses, output tail included. The step is
+      // named the way the planner's button is, not the way git is.
+      onSessionTurn?.(
+        markTurn(
+          { kind: "gate", step: GATE_STEP[gate] },
+          `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
+        ),
+      );
+    }
     return this.setDiff({ stage: "failed", gate, detail });
   }
 
@@ -1640,7 +1754,7 @@ export class RepoWorkspace {
 
       /**
        * Count once the clone is on disk and checked out. Without this the
-       * stepper reads zero after every restart — the count only moves on a
+       * chip reads zero after every restart — the count only moves on a
        * 화면 turn otherwise, and a planner who closed the app mid-cycle would
        * come back to a rail that says there is nothing to save.
        */
@@ -2318,4 +2432,52 @@ function respondsOk(url: string): Promise<boolean> {
   });
   request.once("error", () => resolve(false));
   return promise;
+}
+
+// ---------------------------------------------------------------------------
+// 넘기기 본문의 코멘트 절 (PLAN D93) — the developer reads what changed AND
+// why, without leaving the pull request.
+// ---------------------------------------------------------------------------
+
+/** The planner's words for a screen state, matching the web's stateLabel. */
+const COMMENT_STATE_LABEL: Record<string, string> = {
+  default: "기본",
+  empty: "비어 있음",
+  loading: "불러오는 중",
+  error: "오류",
+};
+
+/**
+ * Builds the `### 수정 요청` section from this cycle's recorded comments:
+ * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
+ * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 해결 표식은 기획자가
+ * 확인한 것 — 절 머리에 그 문장이 선다.
+ */
+export function buildCommentsSection(
+  rows: Array<{ screen: string; state: string; text: string; at: string; resolved: boolean }>,
+  screenTitle: (screenId: string) => string | null,
+  sinceIso: string,
+  max = 20,
+): string | null {
+  // Compare as instants, not strings: the commit date is local-offset ISO,
+  // the comment rows are UTC — a string compare would sort them wrong.
+  const sinceMs = Date.parse(sinceIso);
+  if (Number.isNaN(sinceMs)) return null;
+  const cycle = rows
+    .filter((row) => {
+      const at = Date.parse(row.at);
+      return !Number.isNaN(at) && at >= sinceMs;
+    })
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  if (cycle.length === 0) return null;
+  const shown = cycle.slice(-max);
+  const overflow = cycle.length - shown.length;
+  const lines = shown.map((row) => {
+    const screen = screenTitle(row.screen) ?? row.screen;
+    const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
+    const mark = row.resolved ? "x" : " ";
+    return `- [${mark}] ${screen} · ${state} — "${row.text}" (${row.resolved ? "해결" : "미해결"})`;
+  });
+  const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
+  return `### 수정 요청\n\n기획자가 미리보기에서 찍은 수정 요청입니다 — 해결 표식은 기획자가 확인한 것입니다.\n\n${lines.join("\n")}${tail}\n`;
 }

@@ -9,6 +9,7 @@ import {
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { resetCoachMarks } from "./CoachMark";
 import { CloseIcon } from "./icons";
 import {
   EFFORT_HINT,
@@ -406,6 +407,18 @@ export function SettingsDialog({
             {/* 따라가기 (PLAN D91): the turn's end moves the preview to the
                 screen Claude last opened — unless the planner moved it
                 themselves during the turn, which only toasts instead. */}
+            <div className="settings__row">
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  resetCoachMarks();
+                }}
+              >
+                안내 다시 보기
+              </button>
+              <span className="setting__hint">코치 마크 셋을 다시 한 번씩 보여 줍니다</span>
+            </div>
             <Switch
               label="턴이 끝나면 Claude 가 본 화면으로"
               hint="고친 화면을 직접 찾지 않도록, Claude가 마지막으로 연 화면을 보여 줍니다"

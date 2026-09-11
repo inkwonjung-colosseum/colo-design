@@ -309,6 +309,8 @@ async function bootApp(): Promise<void> {
           mainWindow?.webContents.send("cds-preview:key", { key: "l", meta: true }),
         openSettings: () =>
           mainWindow?.webContents.send("cds-preview:key", { key: ",", meta: true }),
+        newSession: () =>
+          mainWindow?.webContents.send("cds-preview:key", { key: "t", meta: true }),
         packaged: app.isPackaged,
       }),
     ),

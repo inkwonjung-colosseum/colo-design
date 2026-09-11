@@ -248,6 +248,76 @@ export class GitHubClient {
     return await this.withVerdict(input.owner, input.repo, data);
   }
 
+  /**
+   * D88: 개발자의 인라인 코멘트 — the 상태 확인 panel's rows beside the
+   * review verdicts. A refused call degrades to an empty list: the panel is
+   * a reading surface, and an unreachable comments API must not fail the
+   * whole status read.
+   */
+  async listPullComments(input: {
+    owner: string;
+    repo: string;
+    number: number;
+  }): Promise<Array<Record<string, any>>> {
+    try {
+      const data = await this.getJson(
+        `/repos/${input.owner}/${input.repo}/pulls/${input.number}/comments?per_page=50`,
+        "개발자 코멘트 읽기",
+      );
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** D88: 리뷰 본문 행 — verdict 이 아니라 말이 있는 리뷰가 패널의 행이 된다. */
+  async listReviews(input: {
+    owner: string;
+    repo: string;
+    number: number;
+  }): Promise<Array<Record<string, any>>> {
+    try {
+      const data = await this.getJson(
+        `/repos/${input.owner}/${input.repo}/pulls/${input.number}/reviews?per_page=50`,
+        "리뷰 읽기",
+      );
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** D88: 인라인 코멘트의 답글 — GitHub 의 스레드 안으로 들어간다. */
+  async replyToPullComment(input: {
+    owner: string;
+    repo: string;
+    number: number;
+    commentId: number;
+    body: string;
+  }): Promise<void> {
+    await this.sendJson(
+      "POST",
+      `/repos/${input.owner}/${input.repo}/pulls/${input.number}/comments/${input.commentId}/replies`,
+      { body: input.body },
+      "코멘트 답하기",
+    );
+  }
+
+  /** D88: 리뷰 본문에 대한 답 — an issue comment on the pull request. */
+  async commentOnIssue(input: {
+    owner: string;
+    repo: string;
+    number: number;
+    body: string;
+  }): Promise<void> {
+    await this.sendJson(
+      "POST",
+      `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments`,
+      { body: input.body },
+      "코멘트 답하기",
+    );
+  }
+
   async getPullRequest(input: {
     owner: string;
     repo: string;

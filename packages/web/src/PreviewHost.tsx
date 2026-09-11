@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CdsDesignCommentsEnvelope, CdsDesignScreen } from "@cds-design/protocol";
 import { daemonLine, stateLabel } from "./format";
 import { DesktopIcon, ExternalLinkIcon, MobileIcon, RefreshIcon, RestartIcon, ServerOffIcon } from "./icons";
+import { CoachMark } from "./CoachMark";
 import { IframeHost } from "./IframeHost";
 import { NativeHost } from "./NativeHost";
 import { parseAddress } from "./preview-address";
@@ -364,6 +365,12 @@ export function PreviewHost({
           >
             💬 코멘트{unresolvedComments > 0 ? ` ${unresolvedComments}` : ""}
           </button>
+        )}
+        {native && (
+          <CoachMark
+            id="pin"
+            text="⌥ 를 누른 채 요소를 클릭하면 코멘트를 달 수 있어요"
+          />
         )}
         <div className="preview__width" role="group" aria-label="폭">
           <button

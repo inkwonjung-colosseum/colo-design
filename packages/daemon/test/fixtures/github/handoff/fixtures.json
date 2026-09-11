@@ -73,5 +73,197 @@
         }
       }
     }
+  },
+  {
+    "name": "handoff: the second cycle opens its own pull request (PLAN D84)",
+    "cite": "POST /repos/{owner}/{repo}/pulls — open a pull request",
+    "request": {
+      "method": "POST",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls",
+      "bodyContains": [
+        "### 수정 요청",
+        "- [x] member/MemberList · 기본 — ",
+        "코멘트 하나",
+        "(해결)",
+        "- [ ] pay/PayFailed · 오류 — ",
+        "코멘트 둘",
+        "(미해결)",
+        "코멘트 셋",
+        "기획자가 미리보기에서 찍은 수정 요청입니다"
+      ]
+    },
+    "response": {
+      "status": 201,
+      "json": {
+        "number": 13,
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "title": "결제 후속",
+        "state": "open",
+        "merged": false,
+        "head": {
+          "ref": "cds-design-branch-2"
+        }
+      }
+    }
+  },
+  {
+    "name": "handoff status: the second pull request is open",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13"
+    },
+    "response": {
+      "status": 200,
+      "json": {
+        "number": 13,
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "title": "결제 후속",
+        "state": "open",
+        "merged": false,
+        "head": {
+          "ref": "cds-design-branch-2"
+        }
+      }
+    }
+  },
+  {
+    "name": "dev comments: the second pull request carries inline comments (PLAN D88)",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number}/comments",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments?per_page=50"
+    },
+    "response": {
+      "status": 200,
+      "json": [
+        {
+          "id": 21,
+          "user": {
+            "login": "devkim"
+          },
+          "body": "빈 목록일 때 문구가 뭐예요?",
+          "path": "src/screens/member/MemberList.screen.tsx",
+          "line": 12,
+          "created_at": "2026-09-11T13:00:00Z"
+        },
+        {
+          "id": 22,
+          "user": {
+            "login": "devhan"
+          },
+          "body": "여기 간격이 좁아요",
+          "created_at": "2026-09-11T13:05:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dev comments: a review body with words (PLAN D88)",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/reviews?per_page=50"
+    },
+    "response": {
+      "status": 200,
+      "json": [
+        {
+          "id": 31,
+          "user": {
+            "login": "devkim"
+          },
+          "body": "전체적으로 좋아요 — 다음엔 상태 칩도 부탁해요",
+          "submitted_at": "2026-09-11T13:10:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dev comments: the planner's reply lands in the thread (PLAN D88)",
+    "cite": "POST /repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies",
+    "request": {
+      "method": "POST",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments/21/replies"
+    },
+    "response": {
+      "status": 201,
+      "json": {
+        "id": 33
+      }
+    }
+  },
+  {
+    "name": "handoff status: the second pull request is open (replay)",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13"
+    },
+    "response": {
+      "status": 200,
+      "json": {
+        "number": 13,
+        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "title": "결제 후속",
+        "state": "open",
+        "merged": false,
+        "head": {
+          "ref": "cds-design-branch-2"
+        }
+      }
+    }
+  },
+  {
+    "name": "dev comments: the second pull request carries inline comments (PLAN D88) (replay)",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number}/comments",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments?per_page=50"
+    },
+    "response": {
+      "status": 200,
+      "json": [
+        {
+          "id": 21,
+          "user": {
+            "login": "devkim"
+          },
+          "body": "빈 목록일 때 문구가 뭐예요?",
+          "path": "src/screens/member/MemberList.screen.tsx",
+          "line": 12,
+          "created_at": "2026-09-11T13:00:00Z"
+        },
+        {
+          "id": 22,
+          "user": {
+            "login": "devhan"
+          },
+          "body": "여기 간격이 좁아요",
+          "created_at": "2026-09-11T13:05:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "name": "dev comments: a review body with words (PLAN D88) (replay)",
+    "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/reviews?per_page=50"
+    },
+    "response": {
+      "status": 200,
+      "json": [
+        {
+          "id": 31,
+          "user": {
+            "login": "devkim"
+          },
+          "body": "전체적으로 좋아요 — 다음엔 상태 칩도 부탁해요",
+          "submitted_at": "2026-09-11T13:10:00Z"
+        }
+      ]
+    }
   }
 ]

@@ -1,4 +1,5 @@
 import type { MenuItemConstructorOptions } from "electron";
+import { APP_SHORTCUTS } from "@cds-design/protocol";
 
 /**
  * 애플리케이션 메뉴 (PLAN D85 ⓒ). Electron 기본 메뉴의 reload · zoom ·
@@ -30,51 +31,42 @@ export interface MenuTargets {
   gotoAddress(): void;
   /** 설정 ⌘, — the web's own chord, replayed so focus does not matter. */
   openSettings(): void;
+  /** 새 대화 ⌘T — the web's own chord, replayed so focus does not matter. */
+  newSession(): void;
   /** 개발자 도구는 dev 에서만 — 기획자에게 필요 없고, 문제 해결은 설정에. */
   packaged: boolean;
 }
 
 export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOptions[] {
   const { preview, packaged } = targets;
+  // D92: the menu and the ⌘/ sheet read ONE constant — the accelerators and
+  // labels here are the array's, so the two surfaces cannot drift.
+  const clickFor: Record<string, () => void> = {
+    reload: () => preview?.reload(),
+    back: () => preview?.history(-1),
+    forward: () => preview?.history(1),
+    address: () => targets.gotoAddress(),
+    "zoom-in": () => preview?.zoomIn(),
+    "zoom-out": () => preview?.zoomOut(),
+    "zoom-reset": () => preview?.zoomReset(),
+    settings: () => targets.openSettings(),
+    "new-session": () => targets.newSession(),
+  };
+  const item = (id: string): MenuItemConstructorOptions => {
+    const shortcut = APP_SHORTCUTS.find((entry) => entry.id === id);
+    if (!shortcut || !shortcut.accelerator) throw new Error(`unknown shortcut: ${id}`);
+    return { label: shortcut.label, accelerator: shortcut.accelerator, click: clickFor[id] };
+  };
   const viewMenu: MenuItemConstructorOptions[] = [
-    {
-      label: "미리보기 새로 고침",
-      id: "preview-reload",
-      accelerator: "CmdOrCtrl+R",
-      click: () => preview?.reload(),
-    },
+    { ...item("reload"), id: "preview-reload" },
     { type: "separator" },
-    {
-      label: "뒤로",
-      accelerator: "CmdOrCtrl+[",
-      click: () => preview?.history(-1),
-    },
-    {
-      label: "앞으로",
-      accelerator: "CmdOrCtrl+]",
-      click: () => preview?.history(1),
-    },
-    {
-      label: "주소로 이동",
-      accelerator: "CmdOrCtrl+L",
-      click: () => targets.gotoAddress(),
-    },
+    item("back"),
+    item("forward"),
+    item("address"),
     { type: "separator" },
-    {
-      label: "확대",
-      accelerator: "CmdOrCtrl+=",
-      click: () => preview?.zoomIn(),
-    },
-    {
-      label: "축소",
-      accelerator: "CmdOrCtrl+-",
-      click: () => preview?.zoomOut(),
-    },
-    {
-      label: "실제 크기",
-      accelerator: "CmdOrCtrl+0",
-      click: () => preview?.zoomReset(),
-    },
+    item("zoom-in"),
+    item("zoom-out"),
+    item("zoom-reset"),
   ];
   // 개발자 도구는 도구 UI 대상 그대로(개발자 것) — dev 에서만.
   if (!packaged) {
@@ -92,6 +84,8 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     label: "CDS Design",
     submenu: [
       { role: "about" },
+      item("new-session"),
+      item("settings"),
       { type: "separator" },
       { role: "hide" },
       { role: "hideOthers" },
@@ -117,13 +111,6 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     label: "보기",
     submenu: viewMenu,
   };
-  // 설정 ⌘, — the web's own chord, replayed so it works from any focus.
-  // It lives in the app menu, the place a setting is looked for.
-  (appMenu.submenu as MenuItemConstructorOptions[]).splice(2, 0, {
-    label: "설정",
-    accelerator: "CmdOrCtrl+,",
-    click: () => targets.openSettings(),
-  });
   const windowMenu: MenuItemConstructorOptions = { label: "창", role: "windowMenu" };
   return [appMenu, editMenu, viewItem, windowMenu];
 }

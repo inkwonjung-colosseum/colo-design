@@ -572,13 +572,15 @@ async function main() {
       listed.items.length === 2 && listed.items.every((item) => item.id !== "" && item.at !== ""),
       JSON.stringify(listed.items),
     );
-    const pinned = listed.items.find((item) => item.screen === "/member/MemberList");
+    // D78: the store normalizes the screen to the [data-screen] spelling —
+    // no leading slash, whatever spelling the client used.
+    const pinned = listed.items.find((item) => item.screen === "member/MemberList");
     await request({ id: "c4", type: "comments.resolve", commentId: pinned.id, resolved: true });
     const relisted = await request({ id: "c5", type: "comments.list" });
     check(
       "the resolved mark moved without removing the row",
       relisted.items.find((item) => item.id === pinned.id)?.resolved === true &&
-        relisted.items.find((item) => item.screen === "/pay/PayFailed")?.resolved === false,
+        relisted.items.find((item) => item.screen === "pay/PayFailed")?.resolved === false,
       JSON.stringify(relisted.items),
     );
 
@@ -591,6 +593,106 @@ async function main() {
       finalBranches.filter((name) => name.startsWith("cds-design/")).length === 2,
       finalBranches.join(", "),
     );
+
+    // --- 10. 두 번째 사이클 (PLAN D84): the merged PR stays history --------
+    const secondStatus = await request({ id: "16", type: "repo.status" });
+    check(
+      "D84 the merged handoff does not ride into the new cycle",
+      secondStatus.handoff === null && secondStatus.branch !== null,
+      `handoff:${secondStatus.handoff?.number ?? "null"} branch:${secondStatus.branch}`,
+    );
+    // D93: comments recorded after the branch's first commit ride the PR body.
+    // The fixture's second POST /pulls recording demands the section — a body
+    // without it would not match and the handoff would fail loudly.
+    await request({
+      id: "16a",
+      type: "comments.record",
+      screen: "member/MemberList",
+      state: "default",
+      items: [{ text: "코멘트 하나", elementText: "제목" }],
+    });
+    // Both pay/PayFailed comments ride ONE record — a second record for the
+    // same pair would REPLACE the first (the store's replace semantics).
+    await request({
+      id: "16b",
+      type: "comments.record",
+      screen: "pay/PayFailed",
+      state: "error",
+      items: [
+        { text: "코멘트 둘", elementText: "문구" },
+        { text: "코멘트 셋", elementText: "문구" },
+      ],
+    });
+    const listedForPr = await request({ id: "16c", type: "comments.list" });
+    const firstRow = listedForPr.items.find((item) => item.text === "코멘트 하나");
+    await request({ id: "16d", type: "comments.resolve", commentId: firstRow.id, resolved: true });
+    const secondHanded = await request({ id: "17", type: "repo.handoff", title: "결제 후속" });
+    check(
+      "D84 the second 넘기기 opens a NEW pull request",
+      secondHanded.stage === "handed-off" && secondHanded.handoff?.number === 13,
+      `${secondHanded.stage} · ${secondHanded.handoff?.number ?? secondHanded.detail ?? ""}`,
+    );
+    const secondCheck = await request({ id: "18", type: "repo.handoffStatus" });
+    check(
+      "D84 the second cycle's status reads its own open pull request",
+      secondCheck.state === "open" && secondCheck.number === 13,
+      `${secondCheck.state} · ${secondCheck.number}`,
+    );
+
+    // --- D90: pr 게이트는 Claude 에게 가지 않는다 ---------------------------
+    // A third handoff with no recording left fails at the pr gate. A session
+    // rides along so the test can prove NO fixable brief was composed — the
+    // inbox is the whole wire.
+    const createdForGate = await request({ id: "19a", type: "session.create" });
+    const gateSessionId = createdForGate.sessionId;
+    const inboxMark = inbox.length;
+    const prFailed = await request({
+      id: "19b",
+      type: "repo.handoff",
+      title: "또 넘기기",
+      sessionId: gateSessionId,
+    });
+    check(
+      "D90 a failed pr gate reports failed at pr",
+      prFailed.stage === "failed" && prFailed.gate === "pr",
+      `${prFailed.stage}/${prFailed.gate ?? ""}`,
+    );
+    await new Promise((ok) => setTimeout(ok, 1200));
+    const gateBriefs = inbox
+      .slice(inboxMark)
+      .filter((m) => m.type === "session.event" && m.sessionId === gateSessionId)
+      .filter((m) => m.event.kind === "user.echo");
+    check(
+      "D90 the pr gate composes no fixable brief for Claude",
+      gateBriefs.length === 0,
+      `${gateBriefs.length} brief(s)`,
+    );
+    await request({ id: "19c", type: "session.close", sessionId: gateSessionId });
+
+    // --- D88: 개발자 코멘트가 도구 안으로 -----------------------------------
+    const report = await request({ id: "20", type: "repo.handoffStatus" });
+    const reviews = report.reviews ?? [];
+    check(
+      "D88 상태 확인 carries the developer's comments",
+      reviews.length === 3 &&
+        reviews.some((r) => r.kind === "inline" && r.path === "src/screens/member/MemberList.screen.tsx" && r.line === 12) &&
+        reviews.some((r) => r.kind === "review"),
+      JSON.stringify(reviews.map((r) => [r.kind, r.author, r.path ?? ""])),
+    );
+    const replied = await request({
+      id: "21",
+      type: "comments.reply",
+      reviewId: 21,
+      body: "기본 문구입니다 — 다음 넘기기에 반영해 두겠습니다.",
+    });
+    check("D88 답하기 goes out under the planner's name", replied.ok === true);
+    let unknownRefused = false;
+    try {
+      await request({ id: "22", type: "comments.reply", reviewId: 999, body: "없는 코멘트" });
+    } catch {
+      unknownRefused = true;
+    }
+    check("D88 an unknown review id is refused, not guessed", unknownRefused === true);
   } finally {
     ws.close();
     await server.stop();

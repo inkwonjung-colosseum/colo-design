@@ -448,3 +448,52 @@ export function saveModelCatalog(models: SessionModelInfo[]): void {
     // A cache that cannot be written just means the next reload asks again.
   }
 }
+
+// ---------------------------------------------------------------------------
+// 개발자 코멘트의 처리 표식 (PLAN D88)
+// ---------------------------------------------------------------------------
+
+const HANDLED_KEY = "cds-design.handled-reviews";
+const REPLY_CONFIRMED_KEY = "cds-design.reply-confirmed";
+
+/**
+ * 처리한 개발자 코멘트 id, PR 번호별로. 사이클이 짧으니 기계를 바꾸면 다시
+ * 보여도 받아들인다 — 이 표식은 배지를 조용히 하기 위한 것이라 반응형 저장소
+ * 대신 자기 열쇠 하나로 산다.
+ */
+export function loadHandledReviews(pr: number): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HANDLED_KEY) ?? "{}") as Record<string, string[]>;
+    return Array.isArray(raw[String(pr)]) ? (raw[String(pr)] as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveHandledReview(pr: number, id: number): void {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HANDLED_KEY) ?? "{}") as Record<string, string[]>;
+    const stored: string[] = Array.isArray(raw[String(pr)]) ? (raw[String(pr)] as string[]) : [];
+    const list = new Set([...stored, String(id)]);
+    localStorage.setItem(HANDLED_KEY, JSON.stringify({ ...raw, [String(pr)]: [...list] }));
+  } catch {
+    // 사적 모드 등에서 저장이 막혀도 표식은 메모리의 몫으로 끝난다.
+  }
+}
+
+/** 첫 답하기의 확인 — 도구가 기획자 이름으로 GitHub 에 쓰는 첫 자리라 한 번. */
+export function isReplyConfirmed(): boolean {
+  try {
+    return localStorage.getItem(REPLY_CONFIRMED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markReplyConfirmed(): void {
+  try {
+    localStorage.setItem(REPLY_CONFIRMED_KEY, "1");
+  } catch {
+    // 다음 답하기가 다시 물어볼 뿐이다.
+  }
+}

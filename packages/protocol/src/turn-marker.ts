@@ -25,7 +25,13 @@
  * not a data structure.
  */
 
-export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error";
+export type TurnMarkerKind =
+  | "comments"
+  | "brief"
+  | "precheck"
+  | "gate"
+  | "error"
+  | "review";
 
 /**
  * How the preview failed: the page threw, or the dev build serving it did.
@@ -35,7 +41,14 @@ export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error
  */
 export type ErrorMarkerKind = "runtime" | "build" | "look";
 
-const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "precheck", "gate", "error"];
+const KINDS: readonly TurnMarkerKind[] = [
+  "comments",
+  "brief",
+  "precheck",
+  "gate",
+  "error",
+  "review",
+];
 
 /** One pinned element, as the card lists it. */
 export interface CommentMarkerItem {
@@ -92,7 +105,25 @@ export interface ErrorMarker {
   count?: number;
 }
 
-export type TurnMarker = CommentsMarker | BriefMarker | PrecheckMarker | GateMarker | ErrorMarker;
+/**
+ * D88: one bundled bundle of developer comments handed to Claude (고치기).
+ * `path` is the developer's own location word — the card keeps it out of the
+ * first line and behind 자세히 (D37·D38).
+ */
+export interface ReviewMarker {
+  kind: "review";
+  pr: number;
+  author: string;
+  path?: string;
+}
+
+export type TurnMarker =
+  | CommentsMarker
+  | BriefMarker
+  | PrecheckMarker
+  | GateMarker
+  | ErrorMarker
+  | ReviewMarker;
 
 export interface MarkedTurn {
   /** Null when this is an ordinary typed message. */
@@ -161,6 +192,16 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       };
     case "gate":
       return { kind, step: str(data.step) };
+    case "review": {
+      const pr = Number(data.pr);
+      const marker: ReviewMarker = {
+        kind,
+        pr: Number.isFinite(pr) ? pr : 0,
+        author: str(data.author),
+        ...(data.path ? { path: str(data.path) } : {}),
+      };
+      return marker;
+    }
     case "error": {
       // The PLAN's literal spelling names the failure `kind` — the tag
       // already said "error", so the payload key is free to mean the failure

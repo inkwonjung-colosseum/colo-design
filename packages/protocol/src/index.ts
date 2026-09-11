@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -440,6 +440,19 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     commentId: z.string().min(1),
     resolved: z.boolean(),
   }),
+  /**
+   * 답하기 (PLAN D88): the planner's answer to ONE developer comment, from
+   * inside the tool. The daemon picks the endpoint by the id's cached kind —
+   * an inline thread's replies, or an issue comment on the pull request.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("comments.reply"),
+    /** `reviewId`, never `id`: the wire's `id` is the CORRELATION id (the
+        comments.resolve lesson). The developer comment's numeric id rides here. */
+    reviewId: z.number(),
+    body: z.string().min(1),
+  }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -586,7 +599,7 @@ export interface ProjectSummary {
   baseBranch: string;
   /** Disk/process state. Only the active project climbs past `ready`; an inactive cloned one reports `ready` from disk alone. */
   phase: RepoPhase;
-  /** Last counted unsaved-change files — the stepper's number, per project. */
+  /** Last counted unsaved-change files — the delivery chip's number, per project. */
   pendingChanges: number;
   /** A live Claude session is running in this project's clone right now. */
   working: boolean;
@@ -817,7 +830,7 @@ export interface RepoStatus {
    * How many files in the clone differ from the last 저장 (PLAN D8).
    *
    * Counted with one `git status --porcelain` when a 화면 turn settles and when
-   * a save finishes — never on a timer. It is what tells the planner's stepper
+   * a save finishes — never on a timer. It is what tells the planner's chip
    * that there is something to save, so a number that only moved on a poll
    * would leave the button lying for up to a minute.
    */
@@ -956,6 +969,33 @@ export interface CdsDesignErrorEnvelope {
 export interface CdsDesignCommentsModeEnvelope {
   type: "cds-design.comments.mode";
   on: boolean;
+}
+
+/**
+ * One developer comment (PLAN D88), as 상태 확인 lists it: an inline code
+ * comment or a review body — the 답하기 endpoint differs, so the kind rides
+ * along. `path`·`line` are the developer's own location words; the card's
+ * 자세히 is where they show (D37·D38).
+ */
+export interface DeveloperReview {
+  id: number;
+  kind: "inline" | "review";
+  author: string;
+  body: string;
+  pr: number;
+  path?: string;
+  line?: number;
+  at: string;
+}
+
+/** `repo.handoffStatus` — the pull request plus the developer's comments. */
+export interface HandoffStatusReport extends HandoffStatus {
+  reviews?: DeveloperReview[];
+}
+
+/** `comments.reply` — the answer went out under the planner's own name. */
+export interface DeveloperReviewReplied {
+  ok: true;
 }
 
 /**
@@ -1239,6 +1279,7 @@ export function parseClientMessage(raw: string):
   }
   return { ok: true, value: parsed.data };
 }
+export * from "./shortcuts.js";
 export * from "./update.js";
 export * from "./tool-names.js";
 export * from "./turn-marker.js";

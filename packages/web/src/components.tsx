@@ -466,6 +466,13 @@ function MachineTurn({
             : "화면 오류 고치기";
       lead = [marker.route, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
       break;
+    case "review":
+      // D88: the planner pressed 고치기 on a developer comment — the card
+      // names the conversation, the author sits beside it, the developer's
+      // own file path waits behind 자세히 (D37·D38).
+      title = "개발자 코멘트에 답하기";
+      lead = [marker.author, marker.path].filter(Boolean).join(" · ");
+      break;
   }
 
   return (

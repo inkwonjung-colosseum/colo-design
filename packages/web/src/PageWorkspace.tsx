@@ -6,6 +6,7 @@ import { ChatColumn } from "./ChatColumn";
 import { ScreenPanel } from "./ScreenPanel";
 import { Palette } from "./Palette";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ShortcutsSheet } from "./ShortcutsSheet";
 import {
   PREVIEW_WIDTH_BOUNDS,
   type ChatSettings,
@@ -116,11 +117,18 @@ export function PageWorkspace({
    * they carry a modifier, so typing in the composer never meets them.
    */
   const [palette, setPalette] = useState(false);
-  const shortcuts = useRef({ palette: () => {}, newSession: () => {}, settings: () => {} });
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const shortcuts = useRef({
+    palette: () => {},
+    newSession: () => {},
+    settings: () => {},
+    sheet: () => {},
+  });
   shortcuts.current = {
     palette: () => setPalette((open) => !open),
     newSession: () => void sessions.create(),
     settings: onOpenSettings,
+    sheet: () => setSheetOpen((open) => !open),
   };
 
   /** The active thread, reported up for the tree's active mark. */
@@ -210,7 +218,10 @@ export function PageWorkspace({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
-      if (event.key === "k" || event.key === "K") {
+      if (event.key === "/") {
+        event.preventDefault();
+        shortcuts.current.sheet();
+      } else if (event.key === "k" || event.key === "K") {
         event.preventDefault();
         shortcuts.current.palette();
       } else if (event.key === "t" || event.key === "T") {
@@ -327,7 +338,9 @@ export function PageWorkspace({
           daemon={daemon}
           sessions={sessions}
           sendKey={settings.sendKey}
-          placeholder="만들고 싶은 화면을 말해 주세요"
+          // D83: 빈 대화의 placeholder 가 가르친다 — 화면 만들기는 단계가
+          // 아니라 아무 대화에서나 하는 한 턴이다.
+          placeholder={sessions.activeId ? "만들고 싶은 화면을 말해 주세요" : "기획서를 첨부하고 화면을 시켜 보세요."}
           disabled={false}
           titleFor={titleFor}
           onRenameSession={onRenameSession}
@@ -354,7 +367,6 @@ export function PageWorkspace({
         turnState={sessions.active?.state ?? "idle"}
         sessionId={sessions.activeId}
         onPrecheck={(turn) => void sessions.sendTurn(turn)}
-        onNewSession={() => void sessions.create()}
         showPip={settings.chat.showPip}
         followClaude={settings.chat.followClaude}
       />
@@ -376,6 +388,8 @@ export function PageWorkspace({
           onClose={() => setPalette(false)}
         />
       )}
+
+      <ShortcutsSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
 
       {sessions.confirmRemove && (
         <ConfirmDialog

@@ -12,11 +12,11 @@ import { markTurn } from "@cds-design/protocol";
 import type { CommentItem, Daemon } from "./daemon-client";
 import { daemonLine, stateLabel } from "./format";
 import { PreviewHost, type PreviewError, type PreviewLocation, type PreviewTarget } from "./PreviewHost";
-import { StageBar } from "./StageBar";
 import { HistoryDrawer } from "./HistoryDrawer";
-import { deriveStage } from "./stage";
+import { deriveDelivery } from "./delivery";
 import { DiffPanel } from "./DiffPanel";
 import { CommentsPopover } from "./CommentsPopover";
+import { CoachMark } from "./CoachMark";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HandoffPanel } from "./HandoffPanel";
 import { handoffDraft } from "./handoff-draft";
@@ -27,6 +27,13 @@ import {
   RefreshIcon,
   RestartIcon,
 } from "./icons";
+import type { DeveloperReview } from "@cds-design/protocol";
+import {
+  isReplyConfirmed,
+  loadHandledReviews,
+  markReplyConfirmed,
+  saveHandledReview,
+} from "./settings";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
   missing: "연결 레포를 연결해 주세요",
@@ -209,7 +216,6 @@ export function ScreenPanel({
   turnState,
   sessionId = null,
   onPrecheck,
-  onNewSession,
   showPip,
   followClaude,
 }: {
@@ -237,8 +243,6 @@ export function ScreenPanel({
    * read it. The shell supplies the sender; the panel composes the words.
    */
   onPrecheck: (turn: string) => void;
-  /** 화면 만들기 단계의 주 버튼 — 새 대화를 열어 컴포저로 보낸다. */
-  onNewSession: () => void;
   /** Claude 시점 보기(PLAN D63) — 설정의 `Claude가 보는 화면 표시`. */
   showPip: boolean;
   /** 턴이 끝나면 Claude 가 본 화면으로 (PLAN D91) — 설정의 따라가기. */
@@ -320,7 +324,7 @@ export function ScreenPanel({
   const [commentsOn, setCommentsOn] = useState(false);
   /**
    * 코멘트 기록(PLAN D57): every comment the pins left behind, resolved ones
-   * in. Null until the first read returns; the badge, the stepper's why and
+   * in. Null until the first read returns; the badge, the popover and
    * the popover all count from this one list.
    */
   const [commentItems, setCommentItems] = useState<CommentItem[] | null>(null);
@@ -328,6 +332,25 @@ export function ScreenPanel({
   const [commentsError, setCommentsError] = useState<string | null>(null);
   /** The row whose resolve toggle is in flight. */
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  // --- 개발자 코멘트 (PLAN D88): 상태 확인 이 읽어 온 개발자의 말 ----------
+  const [devReviews, setDevReviews] = useState<DeveloperReview[] | null>(null);
+  const [devPanelOpen, setDevPanelOpen] = useState(false);
+  /** The row with an open 답하기 input. */
+  const [devReplyFor, setDevReplyFor] = useState<number | null>(null);
+  const [devReplyText, setDevReplyText] = useState("");
+  /** The 답하기 that still owes the planner the GitHub-writes confirmation. */
+  const [replyConfirmFor, setReplyConfirmFor] = useState<number | null>(null);
+  const [devBusy, setDevBusy] = useState(false);
+  const devPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!devPanelOpen) return;
+    devPanelRef.current?.focus();
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDevPanelOpen(false);
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [devPanelOpen]);
   /** Lists answered out of order must not paint over a newer one. */
   const listNonce = useRef(0);
 
@@ -400,9 +423,49 @@ export function ScreenPanel({
   const checkHandoffState = useCallback(() => {
     void api
       .handoffStatus()
-      .then(() => api.repoStatus())
+      .then(async (report) => {
+        setDevReviews(report.reviews ?? []);
+        setHandledTick((tick) => tick + 1);
+        setDevPanelOpen(true);
+        await api.repoStatus();
+      })
       .catch((e: Error) => setSyncError(e.message));
   }, [api]);
+
+  // --- 개발자 코멘트의 동작 (PLAN D88) ---------------------------------------
+  // 고치기 는 마커 턴(리뷰 카드)으로, 답하기 는 GitHub 의 스레드/이슈로.
+  // 처리한 것은 표식이 남어 배지가 조용해진다.
+  const [handledTick, setHandledTick] = useState(0);
+  const handledIds = new Set(
+    devReviews && devReviews.length > 0 && devReviews[0]
+      ? loadHandledReviews(devReviews[0].pr).map((id) => Number(id))
+      : [],
+  );
+  void handledTick;
+  const unhandledDevReviews = (devReviews ?? []).filter((review) => !handledIds.has(review.id));
+
+  const handleReview = (reviews: DeveloperReview[]) => {
+    for (const review of reviews) saveHandledReview(review.pr, review.id);
+    setHandledTick((tick) => tick + 1);
+    void onComments(reviewToTurn(reviews));
+  };
+
+  const sendDevReply = async (review: DeveloperReview) => {
+    const text = devReplyText.trim();
+    if (!text || devBusy) return;
+    setDevBusy(true);
+    try {
+      await api.replyToReview(review.id, text);
+      saveHandledReview(review.pr, review.id);
+      setHandledTick((tick) => tick + 1);
+      setDevReplyFor(null);
+      setDevReplyText("");
+    } catch (e) {
+      setCommentsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDevBusy(false);
+    }
+  };
 
   /** 버리기: the confirm dialog's only action — the menu item only opens it. */
   const discard = useCallback(() => {
@@ -753,37 +816,22 @@ export function ScreenPanel({
   const projectName = projects.find((project) => project.slug === activeSlug)?.name ?? "";
   const { title: proposedTitle, body: proposedBody } = handoffDraft(projectName, screens);
   /**
-   * Where the cycle stands, read off the repo alone (PLAN D4): a merged pull
-   * request is 반영됨, an open one is 넘김, worktree changes are 변경 있음.
-   * Clicking it is the planner's refresh of the developer's answer — nothing
-   * polls a state that only moves when a human acts.
+   * Where the cycle stands, read mechanically off the repo (PLAN D81 · D82):
+   * one chip, one action set. 저장과 넘기기는 언제나 그려지고 조건으로만
+   * 잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만 그린다.
    */
   const handoff = repo?.handoff ?? null;
-  const status =
-    handoff?.state === "merged"
-      ? { label: "반영됨", tone: "merged" }
-      : handoff
-        ? { label: "넘김", tone: "handed" }
-        : (repo?.pendingChanges ?? 0) > 0
-          ? { label: "변경 있음", tone: "pending" }
-          : null;
-
-  // The clone is checked out and installed, whatever the dev server is doing.
-  // 저장 and 넘기기 act on the worktree and the remote, so gating them on a
-  // preview that cannot bind a port would strand work that is already done.
-  const workable = phase === "ready" || phase === "error";
-  /**
-   * The stepper's judgement (PLAN D45): read mechanically off the repo and
-   * the open thread, the same words a sidebar row badge borrows.
-   */
-  const stage = deriveStage({
-    screens,
+  const delivery = deriveDelivery({
     pendingChanges: repo?.pendingChanges ?? 0,
     branch: repo?.branch ?? null,
     handoff,
     running: turnState === "running",
     phase,
   });
+  // The clone is checked out and installed, whatever the dev server is doing.
+  // 저장 and 넘기기 act on the worktree and the remote, so gating them on a
+  // preview that cannot bind a port would strand work that is already done.
+  const workable = phase === "ready" || phase === "error";
 
   /**
    * PiP 라벨(PLAN D63 → D91): `Claude가 보는 중 · <화면> · <상태>` — read off
@@ -816,9 +864,12 @@ export function ScreenPanel({
   return (
     <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
       <div className="screenpanel__bar">
-        {status ? (
-          <span className={`screenpanel__status screenpanel__status--${status.tone}`}>
-            {status.label}
+        {delivery ? (
+          <span
+            className={`screenpanel__status screenpanel__status--${delivery.chip.tone}`}
+            title={delivery.chip.title}
+          >
+            {delivery.chip.label}
           </span>
         ) : (
           <span className="screenpanel__status screenpanel__status--none">화면 대기 중</span>
@@ -827,6 +878,54 @@ export function ScreenPanel({
           <span className="screenpanel__working">
             <span className="spinner" />
             다시 그리는 중
+          </span>
+        )}
+        <span className="screenpanel__spacer" />
+        {/* 동작은 상수다 (PLAN D82): 저장 · 넘기기는 언제나 그려지고 조건으로만
+            잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만.
+            강조는 그 순간 가장 자연스러운 하나에만. */}
+        {delivery && (
+          <span className="screenpanel__actions">
+            <button
+              type="button"
+              className={
+                delivery.actions.save.enabled ? "primary screenpanel__action" : "ghost screenpanel__action"
+              }
+              disabled={!delivery.actions.save.enabled}
+              title={delivery.actions.save.reason}
+              onClick={() => setSaveOpen(true)}
+            >
+              저장
+            </button>
+            <button
+              type="button"
+              className={
+                !delivery.actions.save.enabled && delivery.actions.handoff.enabled
+                  ? "primary screenpanel__action"
+                  : "ghost screenpanel__action"
+              }
+              disabled={!delivery.actions.handoff.enabled}
+              title={delivery.actions.handoff.reason}
+              onClick={() => setHandoffOpen(true)}
+            >
+              개발자에게 넘기기
+            </button>
+            {delivery.actions.check && (
+              <button
+                type="button"
+                className="ghost screenpanel__action"
+                data-testid="check-state"
+                title="개발자의 판정과 코멘트를 GitHub 에서 다시 읽어 옵니다"
+                onClick={checkHandoffState}
+              >
+                상태 확인
+                {unhandledDevReviews.length > 0 ? ` · 개발자 코멘트 ${unhandledDevReviews.length}` : ""}
+              </button>
+            )}
+            <CoachMark id="save" text="저장은 언제든 — 잠겨 있으면 마우스를 올려 이유를 보세요" />
+            {delivery.actions.check && (
+              <CoachMark id="review" text="개발자의 답은 여기로 들어옵니다" />
+            )}
           </span>
         )}
         <span className="screenpanel__spacer" />
@@ -854,31 +953,9 @@ export function ScreenPanel({
             <>
               <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} />
               <span className="selector__menu screenpanel__menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                disabled={!workable}
-                onClick={() => {
-                  setMenuOpen(false);
-                  setSaveOpen(true);
-                }}
-              >
-                <span className="selector__label">저장</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                disabled={!workable || !repo?.branch}
-                title={repo?.branch ? undefined : "아직 저장한 변경이 없습니다. 먼저 저장해 주세요"}
-                onClick={() => {
-                  setMenuOpen(false);
-                  setHandoffOpen(true);
-                }}
-              >
-                <span className="selector__label">개발자에게 넘기기</span>
-              </button>
+              {/* D82: 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
+                  그 자리를 갖는다. 넘기기 전 점검 · 저장 기록 · 변경 버리기 ·
+                  코멘트 목록만 남는다. */}
               <button
                 type="button"
                 role="menuitem"
@@ -1013,20 +1090,6 @@ export function ScreenPanel({
           </div>
         )}
       </div>
-      <StageBar
-        stage={stage}
-        onNewSession={onNewSession}
-        onSave={() => setSaveOpen(true)}
-        onHandoff={() => setHandoffOpen(true)}
-        onCheckState={checkHandoffState}
-        onPrecheck={() =>
-          onPrecheck(
-            "넘기기 전 점검: 이 화면이 근거 기획서(specs/ 첨부)와 맞는지 확인하고, 다른 점·비어 있는 점을 목록으로 답해 주세요.",
-          )
-        }
-        precheckDisabled={!sessionId}
-        unresolvedComments={unresolvedComments}
-      />
       {saveOpen && <DiffPanel daemon={daemon} sessionId={sessionId} onClose={() => setSaveOpen(false)} />}
       {handoffOpen && (
         <HandoffPanel
@@ -1069,8 +1132,158 @@ export function ScreenPanel({
         onResolve={resolveComment}
         onResend={resendComment}
       />
+      {devPanelOpen && (
+        <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}>
+          <div
+            className="modal__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="개발자 코멘트"
+            tabIndex={-1}
+            ref={devPanelRef}
+          >
+            <header className="modal__head">
+              <h2 className="modal__title">개발자 코멘트</h2>
+              <button type="button" className="ghost" aria-label="개발자 코멘트 닫기" onClick={() => setDevPanelOpen(false)}>
+                <CloseIcon />
+              </button>
+            </header>
+            <div className="modal__body">
+              <p className="hint">
+                {devReviews === null
+                  ? "개발자의 말을 읽어 오는 중…"
+                  : unhandledDevReviews.length > 0
+                    ? "읽지 않아도 되는 버튼은 둘 — 고치기 는 Claude 에게, 답하기 는 개발자에게."
+                    : "모두 처리한 목록입니다."}
+              </p>
+              {devReviews !== null && unhandledDevReviews.length > 0 && (
+                <button
+                  type="button"
+                  className="primary dev__all"
+                  disabled={devBusy}
+                  onClick={() => {
+                    handleReview(unhandledDevReviews);
+                    setDevPanelOpen(false);
+                  }}
+                >
+                  모두 Claude 에게 ({unhandledDevReviews.length})
+                </button>
+              )}
+              <ul className="diff__files">
+                {(devReviews ?? []).map((review) => {
+                  const handled = handledIds.has(review.id);
+                  return (
+                    <li key={review.id} className={`diff__file${handled ? " diff__file--resolved" : ""}`}>
+                      <div className="diff__filerow">
+                        <span className="diff__path">
+                          {review.author}
+                          {review.path ? ` · ${review.path}${review.line ? `:${review.line}` : ""}` : ""}
+                        </span>
+                        {!handled && (
+                          <>
+                            <button
+                              type="button"
+                              className="primary"
+                              disabled={devBusy}
+                              title="이 코멘트를 Claude 에게 넘겨 화면을 고칩니다"
+                              onClick={() => {
+                                handleReview([review]);
+                                setDevPanelOpen(false);
+                              }}
+                            >
+                              고치기
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost"
+                              onClick={() => {
+                                if (!isReplyConfirmed()) {
+                                  setReplyConfirmFor(review.id);
+                                  return;
+                                }
+                                setDevReplyFor(devReplyFor === review.id ? null : review.id);
+                              }}
+                            >
+                              답하기
+                            </button>
+                          </>
+                        )}
+                        {handled && <span className="hint">처리함</span>}
+                      </div>
+                      <p className="hint">{review.body}</p>
+                      {devReplyFor === review.id && (
+                        <form
+                          className="dev__reply"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void sendDevReply(review);
+                          }}
+                        >
+                          <input
+                            type="text"
+                            aria-label="답변"
+                            placeholder="개발자에게 남길 말을 한 줄 적어 주세요"
+                            value={devReplyText}
+                            autoFocus
+                            onChange={(event) => setDevReplyText(event.target.value)}
+                          />
+                          <button type="submit" className="primary" disabled={devBusy || devReplyText.trim() === ""}>
+                            보내기
+                          </button>
+                        </form>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {devReviews !== null && devReviews.length === 0 && (
+                <p className="hint">아직 개발자 코멘트가 없습니다.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {replyConfirmFor !== null && (
+        <ConfirmDialog
+          title="GitHub 에 답하기"
+          body={<>이 도구가 <strong>기획자의 이름</strong>으로 GitHub 에 답을 남깁니다.</>}
+          hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."
+          confirmLabel="확인했어요"
+          onConfirm={() => {
+            markReplyConfirmed();
+            const review = (devReviews ?? []).find((entry) => entry.id === replyConfirmFor);
+            setReplyConfirmFor(null);
+            if (review) setDevReplyFor(review.id);
+          }}
+          onClose={() => setReplyConfirmFor(null)}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * 고치기 의 턴 (PLAN D88): the bundled developer comments, as Claude should
+ * read them. The marker keeps one author and one path for the card; the body
+ * carries every comment's words.
+ */
+function reviewToTurn(reviews: DeveloperReview[]): string {
+  const first = reviews[0];
+  const marker: TurnMarker = {
+    kind: "review",
+    pr: first?.pr ?? 0,
+    author: first?.author ?? "",
+    ...(first?.path ? { path: first.path } : {}),
+  };
+  const lines = [
+    `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
+    "",
+    ...reviews.map((review, index) => {
+      const at = review.path ? `${review.path}${review.line ? `:${review.line}` : ""}` : "";
+      return `${index + 1}. ${review.author}${at ? ` (${at})` : ""}: ${review.body}`;
+    }),
+  ];
+  return markTurn(marker, lines.join("\n"));
 }
 
 /**

@@ -503,6 +503,7 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
     preview: { reload: noop, history: noop, zoomIn: noop, zoomOut: noop, zoomReset: noop },
     gotoAddress: noop,
     openSettings: noop,
+    newSession: noop,
     packaged: false,
   });
   const view = template.find((item) => item.label === "보기");
@@ -545,6 +546,35 @@ test("buildMenuTemplate drops 개발자 도구 in a packaged app", () => {
     !packagedView.submenu.some((item) => item.role === "toggleDevTools"),
     "packaged drops the tools — 문제 해결은 설정의 몫",
   );
+});
+
+test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ sheet (PLAN D92)", async () => {
+  const { APP_SHORTCUTS } = await import("../../protocol/dist/shortcuts.js");
+  const template = buildMenuTemplate({
+    preview: { reload: noop, history: noop, zoomIn: noop, zoomOut: noop, zoomReset: noop },
+    gotoAddress: noop,
+    openSettings: noop,
+    newSession: noop,
+    packaged: false,
+  });
+  const menuAccelerators = [];
+  for (const item of template) {
+    for (const entry of item.submenu ?? []) {
+      if (entry.accelerator) menuAccelerators.push(entry.accelerator);
+    }
+  }
+  // The plan's rule: the MENU's set ⊆ the constant — every menu accelerator
+  // must come from the sheet's list, so the two surfaces cannot disagree.
+  // (⌘K lives in the constant but not the menu: the chat owns it.)
+  const constantAccelerators = new Set(
+    APP_SHORTCUTS.filter((s) => s.accelerator).map((s) => s.accelerator),
+  );
+  for (const accelerator of menuAccelerators) {
+    // 개발자 도구(⌥⌘I) is the developer's own item, not a planner shortcut —
+    // it deliberately stays out of the planner's constant.
+    if (accelerator === "Alt+CmdOrCtrl+I") continue;
+    assert.ok(constantAccelerators.has(accelerator), `${accelerator} comes from the constant`);
+  }
 });
 
 test("buildMenuTemplate puts 설정 ⌘, in the app menu", () => {

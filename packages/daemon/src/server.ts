@@ -230,7 +230,7 @@ export class DaemonServer {
         this.broadcast({ type: "session.state", sessionId, state, ...(detail ? { detail } : {}) });
         // A turn that just finished is the one moment the clone can have
         // gained files nobody has saved (PLAN D8). Counting here — rather
-        // than on a timer — is what lets the stepper say 저장 the instant
+        // than on a timer — is what lets the top bar say 저장 the instant
         // Claude stops, and say nothing at all while it is still writing.
         // The count belongs to the session's OWN project, not the active
         // one: a turn finishing in B while the planner reads A must move
@@ -1346,12 +1346,27 @@ export class DaemonServer {
           title: message.title ?? this.registry.get(active.slug)?.name ?? undefined,
           body: message.body ?? DEFAULT_HANDOFF_BODY,
           ...(shots.length > 0 ? { shots } : {}),
+          // D93: the comment store and the declared titles — the PR body's
+          // ### 수정 요청 section is the daemon's to build.
+          commentsFile: join(active.paths.root, "comments.json"),
+          screenTitles: this.previewScreens.map((screen) => ({
+            route: screen.route,
+            title: screen.title,
+          })),
           ...this.briefTo(message.sessionId, "handoff"),
         });
       }
 
       case "repo.handoffStatus":
         return await this.repo.refreshHandoff();
+
+      // 답하기 (PLAN D88): the planner's words to one developer comment —
+      // the daemon picks the endpoint by the id's kind.
+      case "comments.reply": {
+        const activeWs = this.requireActive();
+        await activeWs.repo.replyToReview(message.reviewId, message.body);
+        return { ok: true as const };
+      }
 
       // --- 되돌리기와 요약 (PLAN D51 · D52 · D53) --------------------------
       case "repo.summarize":

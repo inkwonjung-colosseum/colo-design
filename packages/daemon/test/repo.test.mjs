@@ -1375,3 +1375,47 @@ test("summarize without a Claude path falls back to folder grouping — once per
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("buildCommentsSection: 선언된 제목·해결 표식·20건 넘김 (PLAN D93)", async () => {
+  const { buildCommentsSection } = await import("../dist/repo.js");
+  const rows = [
+    { screen: "member/MemberList", state: "default", text: "제목을 줄여", at: "2026-09-11T09:00:00.000Z", resolved: true },
+    { screen: "pay/PayFailed", state: "error", text: "문구를 다시", at: "2026-09-11T09:05:00.000Z", resolved: false },
+    // 이전 사이클(브랜치 이전)의 항목은 절에 들지 않는다.
+    { screen: "pay/PayFailed", state: "error", text: "옛것", at: "2026-09-10T09:00:00.000Z", resolved: false },
+  ];
+  const section = buildCommentsSection(
+    rows,
+    (screen) => (screen === "member/MemberList" ? "회원 목록" : null),
+    "2026-09-11T00:00:00Z",
+  );
+  assert.ok(section.includes("### 수정 요청"));
+  assert.ok(section.includes("- [x] 회원 목록 · 기본"), section);
+  assert.ok(section.includes("(해결)"), section);
+  assert.ok(section.includes("- [ ] pay/PayFailed · 오류"), "선언 없는 화면은 id 로 남는다");
+  assert.ok(!section.includes("옛것"), "브랜치 이전 항목은 제외");
+  assert.ok(!section.includes("data-component") && !section.includes(".css"), "경로·컴포넌트명은 쓰지 않는다");
+
+  const overflow = buildCommentsSection(
+    Array.from({ length: 25 }, (_, index) => ({
+      screen: "s",
+      state: "default",
+      text: `코멘트 ${index + 1}`,
+      at: `2026-09-11T10:${String(index).padStart(2, "0")}:00.000Z`,
+      resolved: false,
+    })),
+    () => null,
+    "2026-09-11T00:00:00Z",
+  );
+  assert.ok(overflow.includes("외 5건"), overflow.slice(-120));
+});
+
+test("PUSH_AUTH_FAILURE: 인증·권한 사유만 골라내고 나머지는 Claude 로 (PLAN D90)", async () => {
+  const { PUSH_AUTH_FAILURE } = await import("../dist/repo.js");
+  for (const reason of ["remote: 403 denied to install-token", "Permission denied (publickey)", "Authentication failed", "403 not authorized"]) {
+    assert.ok(PUSH_AUTH_FAILURE.test(reason), reason);
+  }
+  for (const reason of ["! [rejected] main -> main (non-fast-forward)", "failed to push some refs", "Could not resolve host"]) {
+    assert.ok(!PUSH_AUTH_FAILURE.test(reason), reason);
+  }
+});

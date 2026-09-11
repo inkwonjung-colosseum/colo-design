@@ -87,22 +87,12 @@ function writeErrorStubClaude(dir) {
 }
 
 /**
- * The stepper owns the cycle's primary button (PLAN D44): one at every
- * moment, its label the stage table's — 검토·수정 offers 저장, a saved
- * branch offers 개발자에게 넘기기.
+ * The action set lives in the top bar (PLAN D82): 저장 · 개발자에게 넘기기 ·
+ * 상태 확인 are always drawn and locked by condition — the label is the
+ * button's, the reason is its title.
  */
 async function viaActionBar(page, label) {
-  await page.locator(".stepper").getByRole("button", { name: label, exact: true }).click();
-}
-
-/**
- * The always-there route (PLAN D44): 더 보기 ▾ carries every cycle action.
- * An empty cycle's primary button is 새 대화, so "there is nothing to save"
- * is proven through the menu rather than the stepper.
- */
-async function viaMoreMenu(page, label) {
-  await page.locator(".screenpanel__bar").getByRole("button", { name: "더 보기" }).click();
-  await page.getByRole("menuitem", { name: label, exact: true }).click();
+  await page.locator(".screenpanel__bar").getByRole("button", { name: label, exact: true }).click();
 }
 async function main() {
   if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
@@ -167,12 +157,22 @@ async function main() {
     await page.waitForSelector(".preview", { timeout: 600000 });
     check("the planner connects and the workspace shows the repo preview", true);
 
-    // --- the panel --------------------------------------------------------
-    await viaMoreMenu(page, "저장");
-    await page.waitForSelector('[role="dialog"][aria-label="저장 검토"]', { timeout: 5000 });
-    check("the empty panel says there is nothing to save", (await page.locator(".diff__files").count()) === 0);
-    await page.keyboard.press("Escape");
-    check("escape closes the review", (await page.locator('[role="dialog"][aria-label="저장 검토"]').count()) === 0);
+    // --- the empty cycle --------------------------------------------------
+    // "저장할 것이 없다"는 잠긴 버튼의 title 로 증명한다 (PLAN D82) — 잠긴
+    // 저장은 패널을 열 수도 없다.
+    const emptySave = page.locator(".screenpanel__bar").getByRole("button", { name: "저장", exact: true });
+    await emptySave.waitFor({ timeout: 20000 });
+    check(
+      "an empty cycle locks 저장 with its reason in the title",
+      (await emptySave.isDisabled()) === true &&
+        (await emptySave.getAttribute("title")) === "저장할 변경이 없습니다",
+      (await emptySave.getAttribute("title")) ?? "(no title)",
+    );
+    check(
+      "and 넘기기 is locked with 먼저 저장해 주세요",
+      (await page.locator(".screenpanel__bar").getByRole("button", { name: "개발자에게 넘기기" }).getAttribute("title")) ===
+        "먼저 저장해 주세요",
+    );
 
     // --- work appears, the review shows it --------------------------------
     mkdirSync(join(WORK_ROOT, "src", "screens", "member"), { recursive: true });
@@ -183,11 +183,15 @@ async function main() {
     const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
     writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
 
-    // The stepper's number is event-driven (PLAN D8): a turn finishing or a
-    // save recounts it, and these raw writes are neither — so one 레포 최신화
-    // is what moves the primary button from 새 대화 to 저장.
+    // The change count is event-driven (PLAN D8): a turn finishing or a save
+    // recounts it, and these raw writes are neither — so one 레포 최신화 is
+    // what unlocks 저장 in the top bar.
     await page.locator(".screenpanel__bar").getByRole("button", { name: "최신화" }).click();
-    await page.locator(".stepper").getByRole("button", { name: "저장", exact: true }).waitFor({ timeout: 20000 });
+    await page.waitForFunction(() => {
+      const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
+      const save = buttons.find((b) => b.textContent?.trim() === "저장");
+      return save ? !save.disabled : false;
+    }, undefined, { timeout: 20000 });
     await viaActionBar(page, "저장");
     // PLAN D51: the summary is the first thing; the raw files live behind
     await page.getByText("자세히 보기 (파일 2개)").waitFor({ timeout: 10000 });
@@ -242,6 +246,25 @@ async function main() {
     await page.getByRole("button", { name: "닫기", exact: true }).click();
     check("closing the review returns to the planner", (await page.locator('[role="dialog"]').count()) === 0);
 
+    // --- D92: 코치 마크 셋과 ⌘/ 시트 ---------------------------------------
+    // ① (핀) is anchored on the native toolbar; the browser path still gets
+    // ② (저장) — the mark that lives on this path.
+    const saveCoach = page.locator('[data-testid="coach-save"]');
+    await saveCoach.waitFor({ timeout: 20000 });
+    await saveCoach.getByRole("button", { name: "알겠어요" }).click();
+    check("D92 the save coach mark answers 알겠어요 and leaves", (await saveCoach.count()) === 0);
+    await page.keyboard.press("Meta+/");
+    const sheet = page.locator('[role="dialog"][aria-label="단축키"]');
+    await sheet.waitFor({ timeout: 5000 });
+    const sheetText = await sheet.innerText();
+    check(
+      "D92 the ⌘/ sheet lists the pin and the reload rows",
+      sheetText.includes("⌥+클릭") && sheetText.includes("⌘R"),
+      sheetText.split("\n").slice(0, 3).join(" / "),
+    );
+    await sheet.getByRole("button", { name: "단축키 닫기" }).click();
+    check("D92 the sheet closes", (await sheet.count()) === 0);
+
     // --- a failed turn is a card, not a silence (PLAN D35) ----------------
     // The tree offers two ways to start one (the row's ＋ and, for a project
     // with no conversations, its own row); this drives the row's ＋.
@@ -255,6 +278,7 @@ async function main() {
       (await page.locator(".turnfail").innerText()).includes("답을 마치지 못했습니다"),
     );
     const retry = page.locator(".turnfail").getByRole("button", { name: "다시 보내기" });
+    await retry.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
     check("the card offers the same words back", (await retry.count()) === 1);
     await retry.click();
     // A failed turn closes the CLI run; resuming may continue the same thread
