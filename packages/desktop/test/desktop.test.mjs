@@ -489,3 +489,67 @@ test("the preview driver opens a hidden window, answers a real JPEG, clicks, and
     server.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 애플리케이션 메뉴 (PLAN D85 ⓒ) — the pure template
+// ---------------------------------------------------------------------------
+
+import { buildMenuTemplate } from "../dist/menu.js";
+
+const noop = () => {};
+
+test("buildMenuTemplate aims the view items at the preview, with the plan's accelerators", () => {
+  const template = buildMenuTemplate({
+    preview: { reload: noop, history: noop, zoomIn: noop, zoomOut: noop, zoomReset: noop },
+    gotoAddress: noop,
+    openSettings: noop,
+    packaged: false,
+  });
+  const view = template.find((item) => item.label === "보기");
+  assert.ok(view, "a 보기 menu exists");
+  const items = view.submenu;
+  const byAccelerator = (accelerator) => items.find((item) => item.accelerator === accelerator);
+  assert.equal(byAccelerator("CmdOrCtrl+R").label, "미리보기 새로 고침");
+  assert.equal(byAccelerator("CmdOrCtrl+[").label, "뒤로");
+  assert.equal(byAccelerator("CmdOrCtrl+]").label, "앞으로");
+  assert.equal(byAccelerator("CmdOrCtrl+L").label, "주소로 이동");
+  assert.equal(byAccelerator("CmdOrCtrl+=").label, "확대");
+  assert.equal(byAccelerator("CmdOrCtrl+-").label, "축소");
+  assert.equal(byAccelerator("CmdOrCtrl+0").label, "실제 크기");
+  // The Electron roles that once aimed at the TOOL UI are gone — the menu
+  // owns the keys now, and none of them may hit the chat.
+  const roles = items.map((item) => item.role);
+  assert.ok(!roles.includes("reload"), "no role:reload");
+  assert.ok(!roles.includes("forceReload"), "no role:forceReload");
+  assert.ok(!roles.includes("zoomIn"), "no role:zoomIn");
+  assert.ok(!roles.includes("zoomOut"), "no role:zoomOut");
+  assert.ok(!roles.includes("resetZoom"), "no role:resetZoom");
+});
+
+test("buildMenuTemplate keeps the edit roles the composer lives on", () => {
+  const template = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  const edit = template.find((item) => item.label === "편집");
+  const roles = edit.submenu.map((item) => item.role);
+  for (const role of ["undo", "redo", "cut", "copy", "paste", "selectAll"]) {
+    assert.ok(roles.includes(role), `${role} survives`);
+  }
+});
+
+test("buildMenuTemplate drops 개발자 도구 in a packaged app", () => {
+  const dev = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: false });
+  const devView = dev.find((item) => item.label === "보기");
+  assert.ok(devView.submenu.some((item) => item.role === "toggleDevTools"), "dev keeps the tools");
+  const packaged = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  const packagedView = packaged.find((item) => item.label === "보기");
+  assert.ok(
+    !packagedView.submenu.some((item) => item.role === "toggleDevTools"),
+    "packaged drops the tools — 문제 해결은 설정의 몫",
+  );
+});
+
+test("buildMenuTemplate puts 설정 ⌘, in the app menu", () => {
+  const template = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  const app = template[0];
+  const settings = app.submenu.find((item) => item.accelerator === "CmdOrCtrl+,");
+  assert.equal(settings.label, "설정");
+});

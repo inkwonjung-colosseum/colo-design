@@ -507,6 +507,66 @@ async function main() {
 
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
 
+    // --- D85 브라우저 손질 --------------------------------------------------
+    // ⓝ ⌘R 은 미리보기만 다시 읽는다 — 도구 UI 의 전역은 살아 있다.
+    await page.evaluate(() => { window.__uiMarker = "alive"; });
+    await inView(app, `window.__viewMarker = "set"; true`);
+    // The view is reloaded the way the planner does it (the menu item and
+    // this button share view.reload()); the menu template's unit checks pin
+    // the accelerator wiring itself.
+    await page.getByRole("button", { name: "미리보기 새로 고침" }).click();
+    await page.waitForTimeout(900);
+    const uiMarker = await page.evaluate(() => window.__uiMarker);
+    const viewAfterKey = await inView(app, `window.__viewMarker ?? "(gone)"`);
+    check(
+      "ⓝ ⌘R spares the tool UI",
+      uiMarker === "alive" && viewAfterKey !== "set",
+      `ui:${uiMarker} view:${viewAfterKey}`,
+    );
+    // ⓞ the address bar proposes the declared routes (D85 ⓓ).
+    const options = await page.evaluate(() =>
+      [...document.querySelectorAll('#cds-frame-routes option')].map((o) => o.getAttribute('value')));
+    check(
+      "ⓞ the address datalist offers the declared route",
+      options.includes("/member/MemberList"),
+      options.join(", "),
+    );
+    // ⓟ 배율: 두 번 확대 → 칩 140%, 모바일 폭 → 100% 복귀 (D85 ⓔ).
+    await page.evaluate(() => void window.cdsDesignDesktop.preview.zoom("in"));
+    await page.waitForTimeout(400);
+    const zoomChip = await page.getByTestId("preview-zoom").innerText().catch(() => "(none)");
+    check("ⓟ zooming shows the percent chip", zoomChip === "120%", zoomChip);
+    await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "모바일" }).click();
+    await page.waitForTimeout(400);
+    const chipGone = (await page.getByTestId("preview-zoom").count()) === 0;
+    await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "데스크톱" }).click();
+    check("ⓟ a width change resets the zoom to 100%", chipGone === true);
+    // ⓠ 새 창은 보던 곳을 OS 브라우저에 (D85 ⓑ) — shell.openExternal 을 엿본다.
+    await app.evaluate((electronModule) => {
+      const sh = electronModule.shell;
+      sh.__lastExternal = null;
+      const original = sh.openExternal.bind(sh);
+      sh.openExternal = (url) => {
+        sh.__lastExternal = url;
+        return original(url).catch(() => undefined);
+      };
+    });
+    await page.getByRole("button", { name: "새 창" }).click();
+    await page.waitForTimeout(500);
+    const external = await app.evaluate((electronModule) => electronModule.shell.__lastExternal);
+    check(
+      "ⓠ the new-window button opens the CURRENT path externally",
+      typeof external === "string" && external.includes("/member/MemberList"),
+      String(external),
+    );
+    // ⓡ 로딩 중 버튼이 돌고 클릭이 중단이 되는 것은 채널이 이어 주고 있다 —
+    // fixture 의 응답이 즉답이라 상태를 눈으로 담기 어려워 채널로 검증한다.
+    const stopWired = await page.evaluate(async () => {
+      await window.cdsDesignDesktop.preview.stop();
+      return true;
+    });
+    check("ⓡ the stop channel is wired", stopWired === true);
+
     // --- the address bar's line (D66) — kept from the previous suite --------
     const foreign = page.locator('[data-testid="preview-address"]');
     await foreign.fill("https://example.com");

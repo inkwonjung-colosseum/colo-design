@@ -24,6 +24,8 @@ export function NativeHost({
   onScreens,
   onComments,
   onError,
+  onLoading,
+  onZoom,
 }: {
   url: string;
   /** The last ask — a screen rides the bridge, a path rides `open` (D66). */
@@ -36,6 +38,10 @@ export function NativeHost({
   onScreens: (screens: CdsDesignScreen[]) => void;
   onComments: (envelope: CdsDesignCommentsEnvelope) => void;
   onError: (error: { kind: "runtime" | "build"; message: string; route: string; state: string }) => void;
+  /** D85 ⓐ: the view is loading — the frame's reload button spins. */
+  onLoading: (on: boolean) => void;
+  /** D85 ⓔ: the zoom moved (the menu can move it) — the chip follows. */
+  onZoom: (factor: number) => void;
 }) {
   const slot = useRef<HTMLDivElement>(null);
   const [freeze, setFreeze] = useState<string | null>(null);
@@ -96,6 +102,8 @@ export function NativeHost({
       }),
       bridge.onError?.(onError),
       bridge.onFreeze?.((jpeg) => setFreeze(jpeg)),
+      bridge.onLoading?.((payload) => onLoading(payload.on)),
+      bridge.onZoom?.((payload) => onZoom(payload.factor)),
       // D71: the view holds the keys while focused — replayed here so the
       // window's own listeners (⌘K, ⌘,) fire as if the planner never left.
       bridge.onKey?.((payload) => {
@@ -106,7 +114,7 @@ export function NativeHost({
       }),
     ].filter((off): off is () => void => typeof off === "function");
     return () => offs.forEach((off) => off());
-  }, [onLocation, onBridge, onScreens, onComments, onError]);
+  }, [onLocation, onBridge, onScreens, onComments, onError, onLoading, onZoom]);
 
   return (
     <div className="preview__slot" ref={slot} data-testid="preview-slot">

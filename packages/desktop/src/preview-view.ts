@@ -97,6 +97,8 @@ export class PlannerPreviewView {
   private readonly consoleLog: string[] = [];
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
+  /** The zoom the view is at (D85 ⓔ) — steps clamp into [0.5, 2]. */
+  private zoomFactor = 1;
 
   constructor(private readonly window: () => BrowserWindow | null) {}
   /**
@@ -128,6 +130,7 @@ export class PlannerPreviewView {
     this.bridge = "unknown";
     this.covered = false;
     this.mountedUrl = null;
+    this.zoomFactor = 1;
     if (!view) return;
     this.window()?.contentView.removeChildView(view);
     if (!view.webContents.isDestroyed()) view.webContents.close();
@@ -205,6 +208,41 @@ export class PlannerPreviewView {
 
   reload(): void {
     this.webContents()?.reload();
+  }
+
+  /** D85 ⓐ: 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단. */
+  stop(): void {
+    this.webContents()?.stop();
+  }
+
+  /**
+   * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`cds-preview:zoom`)
+   * 이 필요한 건 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
+   */
+  zoomIn(): void {
+    this.setZoom(this.zoomFactor + 0.2);
+  }
+
+  zoomOut(): void {
+    this.setZoom(this.zoomFactor - 0.2);
+  }
+
+  zoomReset(): void {
+    this.setZoom(1);
+  }
+
+  private setZoom(factor: number): void {
+    const clamped = Math.min(2, Math.max(0.5, factor));
+    const contents = this.webContents();
+    if (!contents) return;
+    contents.setZoomFactor(clamped);
+    this.zoomFactor = clamped;
+    this.send("cds-preview:zoom", { factor: clamped });
+  }
+
+  /** The preview origin the view is parked on — the main window's popup gate. */
+  getOrigin(): string | null {
+    return this.origin;
   }
 
   commentsMode(on: boolean): void {
@@ -549,6 +587,16 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
   });
   ipcMain.handle("preview:reload", () => {
     view.reload();
+    return { ok: true };
+  });
+  ipcMain.handle("preview:stop", () => {
+    view.stop();
+    return { ok: true };
+  });
+  ipcMain.handle("preview:zoom", (_event, input: { kind?: string }) => {
+    if (input?.kind === "in") view.zoomIn();
+    else if (input?.kind === "out") view.zoomOut();
+    else view.zoomReset();
     return { ok: true };
   });
   ipcMain.handle("preview:comments-mode", (_event, input: { on?: boolean }) => {

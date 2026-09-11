@@ -3640,6 +3640,31 @@ input:focus, textarea:focus, select:focus {
 .frame__lookform input:focus { outline: none; border-color: var(--accent); }
 .frame__lookform .primary { padding: 4px 12px; font-size: 12px; }
 .frame__lookform .ghost { padding: 4px 8px; font-size: 12px; }
+/* D85 ⓐ: 로딩 중 새로 고침 버튼이 돌고, 그때 클릭은 중단이다. */
+.frame__toolsbtn--busy { color: var(--accent); }
+.frame__spin {
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: framespin 0.8s linear infinite;
+}
+@keyframes framespin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .frame__spin { animation-duration: 2s; }
+}
+/* D85 ⓔ: 100% 이 아니면 눈에 보이는 배율 칩 — 클릭이 실제 크기. */
+.frame__zoom {
+  flex: none;
+  padding: 1px 8px;
+  font: 600 11px var(--mono);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  cursor: pointer;
+}
 .frame__navbtn {
   padding: 2px 7px;
   font: 500 10px var(--mono);

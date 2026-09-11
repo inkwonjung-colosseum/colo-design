@@ -45,6 +45,10 @@ declare global {
         navigate?: (route: string, state: string | null) => Promise<unknown>;
         history?: (delta: -1 | 1) => Promise<unknown>;
         reload?: () => Promise<unknown>;
+        /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
+        stop?: () => Promise<unknown>;
+        /** 배율 (PLAN D85 ⓔ). */
+        zoom?: (kind: "in" | "out" | "reset") => Promise<unknown>;
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
         /** 기록된 핀 (PLAN D78): the whole list, pushed down into the view. */
@@ -63,6 +67,8 @@ declare global {
         onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
         onKey?: (callback: (payload: { key: string; meta: boolean }) => void) => Unsubscribe;
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
+        /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
+        onZoom?: (callback: (payload: { factor: number }) => void) => Unsubscribe;
         /** D78: the overlay bubble's 해결, relayed verbatim from the view. */
         onCommentResolve?: (callback: (payload: { id: string; resolved: boolean }) => void) => Unsubscribe;
         /** D78: the attention bubble's 다시 요청. */

@@ -143,6 +143,11 @@ export function PreviewHost({
   /** D89: the 보여 주기 form — the button opens it, the note rides along. */
   const [lookOpen, setLookOpen] = useState(false);
   const [lookNote, setLookNote] = useState("");
+  /** D85 ⓐ: the view is loading — the reload button spins; clicking = 중단. */
+  const [loading, setLoading] = useState(false);
+  /** D85 ⓔ: the view's zoom — 100% hides the chip; the menu can move it. */
+  const [zoom, setZoom] = useState(1);
+  const addressInput = useRef<HTMLInputElement>(null);
 
   // The address bar (D66): local while focused, the view's truth otherwise.
   const [address, setAddress] = useState("");
@@ -174,6 +179,29 @@ export function PreviewHost({
       if (addressTimer.current !== null) window.clearTimeout(addressTimer.current);
     };
   }, []);
+
+  // D85 ⓒ: 주소로 이동 ⌘L — replayed by the menu through the key channel,
+  // so it works whether the focus sits in the chat or in the view.
+  useEffect(() => {
+    if (!native) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey && (event.key === "l" || event.key === "L")) {
+        event.preventDefault();
+        addressInput.current?.focus();
+        addressInput.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [native]);
+
+  // D85 ⓔ: 폭 is the device, 배율 is the eye — a width change resets the
+  // eye to 100% (모바일 에뮬레이션 + 150% 는 가로 스크롤을 만든다).
+  const zoomBridge = window.cdsDesignDesktop?.preview;
+  useEffect(() => {
+    setZoom(1);
+    void zoomBridge?.zoom?.("reset");
+  }, [width]);
 
   const submitAddress = (raw: string) => {
     if (!url) return;
@@ -372,7 +400,18 @@ export function PreviewHost({
           type="button"
           className="preview__link"
           title="미리보기를 브라우저로"
-          onClick={() => window.open(url, "_blank", "noopener")}
+          onClick={() => {
+            // D85 ⓑ: the OS browser opens WHERE THE PLANNER IS — the current
+            // path rides along, not just the bare origin.
+            const path = location?.path ?? address ?? "/";
+            let full = url;
+            try {
+              full = new URL(path, url).toString();
+            } catch {
+              // a malformed path falls back to the bare origin
+            }
+            window.open(full, "_blank", "noopener");
+          }}
         >
           <ExternalLinkIcon />
           새 창
@@ -457,11 +496,19 @@ export function PreviewHost({
             )}
             <button
               type="button"
-              className="frame__toolsbtn"
-              title="미리보기 새로 고침"
-              onClick={() => setReloadNonce((n) => n + 1)}
+              className={loading ? "frame__toolsbtn frame__toolsbtn--busy" : "frame__toolsbtn"}
+              aria-busy={loading || undefined}
+              title={loading ? "불러오는 중 — 누르면 중단합니다" : "미리보기 새로 고침"}
+              onClick={() => {
+                if (!native) {
+                  setReloadNonce((n) => n + 1);
+                  return;
+                }
+                if (loading) void window.cdsDesignDesktop?.preview?.stop?.();
+                else setReloadNonce((n) => n + 1);
+              }}
             >
-              <RefreshIcon />
+              {loading ? <span className="frame__spin" /> : <RefreshIcon />}
             </button>
             {native ? (
               <form
@@ -478,10 +525,28 @@ export function PreviewHost({
                   data-testid="preview-address"
                   spellCheck={false}
                   value={address}
+                  list="cds-frame-routes"
+                  ref={addressInput}
                   onFocus={() => setAddressFocused(true)}
                   onBlur={() => setAddressFocused(false)}
                   onChange={(event) => setAddress(event.target.value)}
                 />
+                {/* D85 ⓓ: the address bar proposes — declared routes, and the
+                    route·state pairs when a screen declares more than one. */}
+                <datalist id="cds-frame-routes">
+                  {screens.flatMap((screen) => [
+                    <option key={screen.route} value={screen.route}>
+                      {screen.title}
+                    </option>,
+                    ...screen.states
+                      .filter((state) => state !== "default")
+                      .map((state) => (
+                        <option key={`${screen.route}?state=${state}`} value={`${screen.route}?state=${state}`}>
+                          {`${screen.title} · ${stateLabel(state)}`}
+                        </option>
+                      )),
+                  ])}
+                </datalist>
                 {addressError && <span className="frame__addrerror">{addressError}</span>}
               </form>
             ) : (
@@ -499,6 +564,18 @@ export function PreviewHost({
               <span className="frame__name frame__name--beside">
                 <b>{current.title}</b> · {stateLabel(activeState)}
               </span>
+            )}
+            {/* D85 ⓔ: 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
+            {native && zoom !== 1 && (
+              <button
+                type="button"
+                className="frame__zoom"
+                data-testid="preview-zoom"
+                title="실제 크기로 돌아갑니다"
+                onClick={() => void window.cdsDesignDesktop?.preview?.zoom?.("reset")}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
             )}
             {native && onLook && (
               <button
@@ -562,6 +639,8 @@ export function PreviewHost({
               onScreens={onScreens}
               onComments={onComments}
               onError={(payload) => setError({ ...payload, kind: payload.kind === "build" ? "build" : "runtime" })}
+              onLoading={setLoading}
+              onZoom={setZoom}
             />
           ) : (
             <IframeHost url={url} target={target} reloadKey={reloadNonce} onScreens={onScreens} />

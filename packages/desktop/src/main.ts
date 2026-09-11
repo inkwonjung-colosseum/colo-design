@@ -11,6 +11,7 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  Menu,
   Notification,
   nativeImage,
   safeStorage,
@@ -23,6 +24,7 @@ import { DaemonServer } from "@cds-design/daemon/server";
 import { RELEASES_FEED_URL, checkForUpdate } from "@cds-design/protocol";
 import { CDS_DESIGN_DIR } from "@cds-design/daemon/environment";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
+import { buildMenuTemplate } from "./menu.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 import { buildSwapScript, planSelfUpdate, verifyDownload } from "./mac-self-update.js";
 import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@cds-design/daemon/server";
@@ -297,6 +299,37 @@ async function bootApp(): Promise<void> {
   // 기획자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
   const plannerPreview = new PlannerPreviewView(() => mainWindow);
   registerPreviewIpc(plannerPreview);
+  // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
+  // 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 를 건드리던 시절은 끝난다.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildMenuTemplate({
+        preview: plannerPreview,
+        gotoAddress: () =>
+          mainWindow?.webContents.send("cds-preview:key", { key: "l", meta: true }),
+        openSettings: () =>
+          mainWindow?.webContents.send("cds-preview:key", { key: ",", meta: true }),
+        packaged: app.isPackaged,
+      }),
+    ),
+  );
+  // 새 창은 보던 곳을 OS 브라우저에 연다 (PLAN D85 ⓑ): 미리보기 origin 의
+  // window.open 은 shell.openExternal 로, 나머지는 deny — 빈 Electron 자식
+  // 창이 뜨고, 도구의 preload 를 물려받는 일은 없다.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const origin = plannerPreview.getOrigin();
+    if (origin) {
+      try {
+        if (new URL(url).origin === new URL(origin).origin) {
+          void shell.openExternal(url);
+          return { action: "deny" };
+        }
+      } catch {
+        // a url that will not parse has no origin to match — denied below
+      }
+    }
+    return { action: "deny" };
+  });
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
   const suiteHandle = globalThis as Record<string, unknown>;

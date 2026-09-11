@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
       ipcRenderer.invoke("preview:navigate", { route, state }),
     history: (delta: -1 | 1) => ipcRenderer.invoke("preview:history", { delta }),
     reload: () => ipcRenderer.invoke("preview:reload"),
+    /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
+    stop: () => ipcRenderer.invoke("preview:stop"),
+    /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 cds-preview:zoom 으로 되알린다. */
+    zoom: (kind: "in" | "out" | "reset") => ipcRenderer.invoke("preview:zoom", { kind }),
     commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
     emulate: (width: "mobile" | "tablet" | null) => ipcRenderer.invoke("preview:emulate", { width }),
     /**
@@ -63,6 +67,8 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
     onFreeze: subscribe<string>("cds-preview:freeze"),
     onKey: subscribe<{ key: string; meta: boolean }>("cds-preview:key"),
     onLoading: subscribe<{ on: boolean }>("cds-preview:loading"),
+    /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
+    onZoom: subscribe<{ factor: number }>("cds-preview:zoom"),
     onCommentResolve: subscribe<{ id: string; resolved: boolean }>("cds-preview:comment-resolve"),
     onCommentResend: subscribe<{ id: string }>("cds-preview:comment-resend"),
   },
