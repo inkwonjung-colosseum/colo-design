@@ -356,7 +356,10 @@ D35–D63 판(2026-09-11)과 내장 브라우저 판(D64–D75)이 그랬다.
 | D12 | **어긋남.** 주석은 "프로젝트는 게이트가 아니다"(= 앞 판 D4)의 뜻으로 쓴다 — `onboarding.ts:6,213` · `index.ts:76`. 앞 판 표의 D12 는 어휘(`프로젝트`) | |
 | D15 | 사이드바 행 `작업 중` | `session-manager.ts:97` |
 | D16 · D17 · D18 | 비활성 프로젝트 상태는 `project.changed` 로 · 200ms 스로틀 · 시작 시 전 프로젝트 워크스페이스 | `server.ts` · `protocol:13,381` · `repo.ts:514` · `AddProjectDialog.tsx:7` |
-| D19 · D21 · D25 · D28 · D31 | 사이드바 폭 · 지우기 순서 · 피커 자리 · `cds-design.json` 없는 레포 차단 · 주소로 추가 | `Shell.tsx` · `Sidebar.tsx` · `RepoPicker.tsx` · `settings.ts` |
+| D19 · D21 · D25 · D31 | 사이드바 폭 · 지우기 순서 · 피커 자리 · 주소로 추가 | `Shell.tsx` · `Sidebar.tsx` · `RepoPicker.tsx` · `settings.ts` |
+| D28 → D94 | `cds-design.json` 없는 레포 차단은 선택지로 바뀌었다 — Claude 가 연결 준비하기(준비 턴 · 기계 검증 · 첫 PR 가 수용 게이트) | `RepoPicker.tsx` · `bootstrap-brief.ts` · `repo.ts#validateBootstrapConfig` |
+| D44 · D45 → D81 · D82 | 스테퍼 · `deriveStage` 는 지워지고, 배치 상태는 칩 하나·동작은 상수(`deriveDelivery`)로 | `delivery.ts` · `ScreenPanel.tsx` |
+| D57 · D58 · D67 → D78 · D79 · D80 | 코멘트 저장소 · 모드 토글 · 화면 바뀌면 핀 지움 은 확장됐다 — 기록 핀은 화면 위에 살고, ⌥+클릭은 모드 없이 찍는다, 해결된 핀은 사라진다 | `preview-preload.ts` · `preview-view.ts` · `ScreenPanel.tsx` |
 | M1 · M5.5 | 첫 판의 단계 번호(프로젝트 모델 토대 · 배포 파이프라인) | `index.ts:61` · `electron-builder.yml:11` |
 | DESIGN §5–§8 | 이 트리에 없는 문서(`DESIGN.md`)의 절 — 미리보기 origin 검사 · 데스크톱 패키징 · 온보딩 | `Preview.tsx` · `onboarding.ts` · `electron-builder.yml` · `preload.ts` |
 | D76 | 세션 보관 철회 — 지우기 하나와 확인 하나 | `useSessions.ts` · `Sidebar.tsx` · `ChatColumn.tsx` · `PageWorkspace.tsx` · `Shell.tsx` · `settings.ts` |
