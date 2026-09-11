@@ -1,7 +1,7 @@
 {
   "name": "@cds-design/desktop",
   "productName": "CDS Design",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "CDS Design 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
   "type": "module",
