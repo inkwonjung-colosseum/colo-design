@@ -8,7 +8,7 @@ import type {
   CdsDesignScreensRequestEnvelope,
 } from "@cds-design/protocol";
 import { stateLabel } from "./format";
-import { DesktopIcon, ExternalLinkIcon, MobileIcon, RestartIcon } from "./icons";
+import { DesktopIcon, ExternalLinkIcon, MobileIcon, RefreshIcon, RestartIcon } from "./icons";
 
 /** Which screen, in which state, the planner asked to see. */
 export interface PreviewTarget {
@@ -149,6 +149,8 @@ export function Preview({
    * listener. Re-sending on load is what keeps that from looking broken.
    */
   const [loads, setLoads] = useState(0);
+  /** Bumped by 새로 고침: remounts the iframe for a clean reload (PLAN D47). */
+  const [reloadNonce, setReloadNonce] = useState(0);
   /**
    * The last `cds-design.error` the frame reported (PLAN D49). One at a
    * time — a newer failure is the one worth looking at.
@@ -447,12 +449,21 @@ export function Preview({
               <span className="frame__name">
                 <b>{current.title}</b> · {stateLabel(activeState)}
               </span>
+              <button
+                type="button"
+                className="frame__toolsbtn"
+                title="미리보기 새로 고침"
+                onClick={() => setReloadNonce((n) => n + 1)}
+              >
+                <RefreshIcon />
+              </button>
             </div>
           )}
           <iframe
-            ref={frame}
+            key={reloadNonce}
             className="preview__frame"
             title="미리보기"
+            ref={frame}
             src={url}
             onLoad={() => {
               // This runs before any post from the new page can arrive, so

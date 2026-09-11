@@ -357,7 +357,6 @@ export class DaemonServer {
     }
     for (const client of this.clients) client.close();
     this.wss?.close();
-    await new Promise<void>((resolve) => this.http?.close(() => resolve()));
   }
 
   private attach(ws: WebSocket): void {

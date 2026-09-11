@@ -1,3 +1,4 @@
+import { CheckIcon } from "./icons";
 import { STAGES, type Stage } from "./stage";
 
 /**
@@ -68,7 +69,7 @@ export function StageBar({
             title={precheckDisabled ? "먼저 대화를 열어 주세요" : "열려 있는 대화에서 기획서와 화면을 맞춰 봅니다"}
             onClick={onPrecheck}
           >
-            ☑ 넘기기 전 점검
+            <CheckIcon size={12} /> 넘기기 전 점검
           </button>
         )}
         {primary && (

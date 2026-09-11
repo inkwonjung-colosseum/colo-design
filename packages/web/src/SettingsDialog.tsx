@@ -325,8 +325,7 @@ export function SettingsDialog({
               <div className="notice notice--warn">
                 <span className="notice__text">
                   전부 맡기기는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이
-                  바뀔 수 있으니, 필요한 동안만 켜 두세요. 창을 다시 열면 물어보고 진행으로
-                  돌아갑니다.
+                  바뀔 수 있으니, 물어보고 진행이 필요하면 확인 방식을 바꾸세요.
                 </span>
               </div>
             )}
@@ -357,12 +356,6 @@ export function SettingsDialog({
                 label: SEND_LABEL[key],
               }))}
               onChange={(sendKey) => onChange({ sendKey })}
-            />
-            <Switch
-              label="기획을 삭제하기 전에 확인"
-              hint="삭제하면 대화 기록이 이 컴퓨터에서 영구히 사라집니다"
-              checked={settings.confirmBeforeDelete}
-              onChange={(confirmBeforeDelete) => onChange({ confirmBeforeDelete })}
             />
           </section>
 

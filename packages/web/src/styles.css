@@ -15,7 +15,7 @@
   --panel-3: #212126;
 
   /* hairlines */
-  --line: #26262b;
+  --line: #2e2e35;
   --line-soft: #1e1e22;
   /* borders that only appear on hover, focus, or above a popover */
   --line-strong: #34343b;
@@ -26,7 +26,7 @@
   /* text */
   --text: #e4e4e7;
   --text-2: #b6b6bc;
-  --muted: #9a9aa4;
+  --muted: #a4a4b0;
 
   /* semantics — accent is steel, used only for state and links */
   --accent: #9db1c7;
@@ -78,7 +78,7 @@
 
   --text: #17171a;
   --text-2: #45454d;
-  --muted: #5f5f68;
+  --muted: #54545e;
 
   --accent: #4a6b8f;
   --accent-soft: rgba(74, 107, 143, 0.1);
@@ -355,7 +355,8 @@ input:focus, textarea:focus, select:focus {
 .transcript,
 .scroll > .card,
 .scroll > .turnlive,
-.scroll > .notice {
+.scroll > .notice,
+.scroll > .empty {
   width: 100%;
   max-width: 860px;
   margin-left: auto;
@@ -394,15 +395,22 @@ input:focus, textarea:focus, select:focus {
 
 .empty {
   margin: 0;
-  padding: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
+  padding: 34px 0 8px;
 }
-.empty::before {
+.empty__lead {
+  margin: 0;
+  font: 500 13.5px/1.6 var(--sans);
+  color: var(--text-2);
+}
+.empty__lead::before {
   content: "❯ ";
   font-family: var(--mono);
   color: var(--text-2);
+}
+.empty__sub {
+  margin: 2px 0 0 18px;
+  font: 400 12.5px/1.6 var(--sans);
+  color: var(--muted);
 }
 
 /* messages read as a session log, not chat bubbles */
@@ -887,6 +895,11 @@ input:focus, textarea:focus, select:focus {
   color: var(--text);
 }
 .selector__chip:disabled { opacity: 0.45; cursor: default; }
+/* The chip's domain word ("모델 ·", "생각 ·", "확인 ·") stays muted even on
+   hover, so the value — 자동, Sonnet 5, 보통 — keeps the weight. */
+.selector__chipprefix { color: var(--muted); }
+.selector__chip:hover:not(:disabled) .selector__chipprefix,
+.selector__chip[aria-expanded="true"] .selector__chipprefix { color: var(--muted); }
 .selector__menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1007,7 +1020,7 @@ input:focus, textarea:focus, select:focus {
 .usage__dot--warn { background: var(--warn); }
 .usage__dot--danger { background: var(--danger); }
 .usage__reading {
-  color: var(--muted);
+  color: var(--text-2);
   font: 500 12px var(--mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1472,7 +1485,7 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
   gap: 12px;
   padding: 9px 16px;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 .planner__spacer { flex: 1; }
@@ -1491,7 +1504,7 @@ input:focus, textarea:focus, select:focus {
   flex-direction: column;
   height: 100vh;
   background: var(--panel);
-  border-right: 1px solid var(--line-soft);
+  border-right: 1px solid var(--line);
   overflow: hidden;
 }
 .sidebar--collapsed { align-items: center; }
@@ -1824,7 +1837,7 @@ input:focus, textarea:focus, select:focus {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  border-left: 1px solid var(--line-soft);
+  border-left: 1px solid var(--line);
 }
 
 /* The cycle's status, read off the repo (PLAN D4): the same three words the
@@ -1868,6 +1881,24 @@ input:focus, textarea:focus, select:focus {
   gap: 12px;
   padding: 26px 28px;
 }
+/* The wait's card: the column's one framed surface, so 내려받기 · 설치 ·
+   서버 부팅 · 실패 all read as an intentional state sitting in a quiet
+   room — never as content lost in a void. */
+.progress__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 460px;
+  padding: 30px 32px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-float);
+  box-shadow: var(--shadow-pop);
+}
+.progress--error .progress__card { border-color: var(--danger-line); }
+.progress .spinner { width: 15px; height: 15px; border-width: 2px; color: var(--accent); }
 .progress--error .progress__head h2 { color: var(--danger); }
 .progress__head { display: flex; align-items: center; gap: 10px; }
 .progress__head h2 { margin: 0; font: 600 15px var(--sans); color: var(--text); }
@@ -1891,8 +1922,8 @@ input:focus, textarea:focus, select:focus {
 .progress__cmd code { flex: 1; white-space: nowrap; }
 .progress__detail {
   max-width: 100%;
-  font: 500 11px var(--mono);
-  color: var(--muted);
+  font: 500 11.5px var(--mono);
+  color: var(--text-2);
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;

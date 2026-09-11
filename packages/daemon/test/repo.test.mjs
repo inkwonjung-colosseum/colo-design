@@ -191,6 +191,31 @@ test("a clone from nowhere lands in error with the git output", async () => {
   assert.match(status.detail, /git clone에 실패했습니다/);
 });
 
+test("a half-finished clone's leftover folder is cleared and re-cloned, not a 128 loop", async () => {
+  const dir = workdir("hub-repo-debris-");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    // What a killed bring-up leaves behind: a `repo` folder with copied
+    // files but no `.git`, which `git clone` refuses until it is gone.
+    const root = join(dir, "work");
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "partial-download.tmp"), "debris from the dead run");
+
+    const workspace = new RepoWorkspace({
+      root,
+      url: fixture.remote,
+      onStatus: () => undefined,
+    });
+    const status = await workspace.sync();
+    assert.equal(status.phase, "ready", status.detail ?? "");
+    assert.ok(!existsSync(join(root, "partial-download.tmp")), "the debris must not survive the re-clone");
+    assert.ok(existsSync(join(root, ".git")), "a real clone is in place");
+    await workspace.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a seeded repo walks cloning → installing → starting, and a dead preview names itself", async () => {
   const dir = workdir("hub-repo-phases-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");

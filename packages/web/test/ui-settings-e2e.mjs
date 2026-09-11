@@ -126,11 +126,11 @@ async function main() {
 
     // 5. behaviour choices survive a reload.
     await page.getByLabel("보내기 키").selectOption("modEnter");
-    await page.getByLabel("기획을 삭제하기 전에 확인").uncheck();
     const before = await stored(page);
     check(
-      "behaviour choices are stored together",
-      before?.sendKey === "modEnter" && before?.confirmBeforeDelete === false,
+      "behaviour choices are stored together and the delete-confirm row is gone",
+      before?.sendKey === "modEnter" &&
+        (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
       JSON.stringify(before),
     );
 

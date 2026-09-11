@@ -169,9 +169,10 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
 
   const worst = Math.max(...rows.map((row) => row.pct));
   const badge = tone(worst);
-  // The ring beside the send side answers one question — how full this
-  // conversation is. Plan windows stay in the popover and on the reading.
-  const contextPct = usage ? clamp(usage.percentage) : null;
+  // The ring is the gauge of the chip's lead number — the 5-hour window the
+  // planner checks before sending one more turn — so the arc and the "5시간
+  // 0%"` reading can never disagree. 대화 길이 keeps its row in the popover.
+  const ringPct = plan?.fiveHour ? clamp(plan.fiveHour.utilization ?? 0) : null;
   const ringLength = 2 * Math.PI * 7.5;
 
   return (
@@ -199,15 +200,15 @@ function UsageChip({ plan, usage }: { plan: PlanUsage | null; usage: ContextUsag
         <span className="usage__ring" aria-hidden>
           <svg viewBox="0 0 20 20" width={18} height={18}>
             <circle className="usage__ringtrack" cx="10" cy="10" r="7.5" />
-            {contextPct !== null && (
+            {ringPct !== null && (
               <circle
                 className={
-                  tone(contextPct) ? `usage__ringarc usage__ringarc--${tone(contextPct)}` : "usage__ringarc"
+                  tone(ringPct) ? `usage__ringarc usage__ringarc--${tone(ringPct)}` : "usage__ringarc"
                 }
                 cx="10"
                 cy="10"
                 r="7.5"
-                strokeDasharray={`${(contextPct / 100) * ringLength} ${ringLength}`}
+                strokeDasharray={`${(ringPct / 100) * ringLength} ${ringLength}`}
                 transform="rotate(-90 10 10)"
               />
             )}
@@ -312,6 +313,7 @@ const COMMAND_HIDDEN: Record<string, true> = {
  */
 function SelectorChip({
   label,
+  prefix,
   open,
   disabled,
   title,
@@ -321,6 +323,9 @@ function SelectorChip({
   options,
 }: {
   label: string;
+  /** The chip's domain in one word ("모델"), so two chips that both default
+      to 자동 never read as one control drawn twice. */
+  prefix?: string;
   open: boolean;
   disabled?: boolean;
   title?: string;
@@ -359,6 +364,7 @@ function SelectorChip({
         title={title}
         onClick={onToggle}
       >
+        {prefix && <span className="selector__chipprefix">{prefix} ·</span>}
         {label}
         <ChevronDownIcon size={10} />
       </button>
@@ -585,6 +591,13 @@ export function Composer({
   useEffect(() => {
     drafts.current.set(draftKeyRef.current, editor);
     saveDraft(draftKeyRef.current, editor.text);
+    // PLAN D43: the count rides along so a window that died mid-attach can
+    // be told what to re-pick instead of silently losing them.
+    try {
+      localStorage.setItem(`${DRAFT_PREFIX}${draftKeyRef.current}.attach`, String(editor.attachments.length));
+    } catch {
+      // Same story as the words: private mode keeps the in-memory map only.
+    }
   }, [editor]);
 
   // Grow the textarea with its content, up to the CSS max-height.
@@ -616,7 +629,17 @@ export function Composer({
     }
     draftKeyRef.current = draftKey;
     historyAt.current = null;
-    setEditor(carry ?? incoming ?? { text: storedDraft(draftKey), attachments: [] });
+    const restored = carry ?? incoming ?? { text: storedDraft(draftKey), attachments: [] };
+    let lostAttachments = 0;
+    try {
+      lostAttachments = Number(localStorage.getItem(`${DRAFT_PREFIX}${draftKey}.attach`) ?? 0);
+    } catch {
+      lostAttachments = 0;
+    }
+    if (restored.attachments.length === 0 && lostAttachments > 0) {
+      setRejected(`첨부 ${lostAttachments}개는 다시 붙여 주세요`);
+    }
+    setEditor(restored);
     requestAnimationFrame(() => {
       const element = area.current;
       if (!element) return;
@@ -928,6 +951,7 @@ export function Composer({
     {
       key: "model" as const,
       label: modelRow ? modelWords(modelRow).label : "자동",
+      prefix: "모델",
       title: "답변 방식",
       // The list is the CLI's, and only a session (or an earlier one, cached)
       // can supply it. Until then the chip states the default and stays shut.
@@ -945,6 +969,7 @@ export function Composer({
     {
       key: "effort" as const,
       label: selector.effort ? EFFORT_LABEL[selector.effort] : "자동",
+      prefix: "생각",
       title: "생각 시간",
       disabled: modelRow ? !modelRow.supportsEffort : false,
       options: [
@@ -960,6 +985,7 @@ export function Composer({
     {
       key: "mode" as const,
       label: MODE_LABEL[selector.permissionMode],
+      prefix: "확인",
       title: "확인 방식",
       disabled: false,
       // A mode already set to 전부 맡기기 still shows as this chip's label,
@@ -1138,6 +1164,7 @@ export function Composer({
           <SelectorChip
             key={chip.key}
             label={chip.label}
+            prefix={chip.prefix}
             title={chip.title}
             disabled={chip.disabled}
             open={menu === chip.key}

@@ -3,6 +3,22 @@ import type { ChatEvent, SessionSummary, ThreadSummary } from "@cds-design/proto
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 import { replayHistory } from "./translate.js";
 
+/**
+ * A transcript's summary can be the conversation's own first line — and the
+ * tool's machine-authored turns open with the `<!-- cds-design:… -->` marker
+ * (protocol turn-marker), so without this the raw marker leaks into the tree
+ * and the palette as a conversation name. Marker lines are dropped, the first
+ * human line wins, and whatever survives is collapsed to one clean line.
+ */
+function presentableTitle(summary: string | undefined | null): string {
+  if (!summary) return "";
+  const human = summary
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !line.startsWith("<!--"));
+  return (human ?? "").replace(/\s+/g, " ").trim();
+}
+
 export class SessionManager {
   private readonly live = new Map<string, Session>();
   /**
@@ -49,7 +65,7 @@ export class SessionManager {
     if (options.resume) {
       void getSessionInfo(options.resume, { dir: options.cwd })
         .then((info) => {
-          const inherited = info?.customTitle || info?.summary;
+          const inherited = info?.customTitle || presentableTitle(info?.summary);
           const untouched = session.title === NEW_SESSION_TITLE;
           if (inherited && untouched) session.title = inherited;
         })
@@ -169,7 +185,7 @@ export class SessionManager {
     for (const info of onDisk) {
       summaries.set(info.sessionId, {
         sessionId: info.sessionId,
-        title: info.customTitle || info.summary || untitled,
+        title: info.customTitle || presentableTitle(info.summary) || untitled,
         lastModified: info.lastModified,
         live: false,
         state: "closed",

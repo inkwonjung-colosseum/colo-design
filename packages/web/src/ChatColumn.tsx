@@ -34,6 +34,9 @@ export function ChatColumn({
   onArchiveSession: (session: SessionSummary) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
+  /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
+  const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
+  const [restoring, setRestoring] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
@@ -89,6 +92,41 @@ export function ChatColumn({
     pinned.current = true;
     setUnpinned(false);
   }, [activeId]);
+
+  // Checkpoints exist per completed turn (PLAN D52): refetch when a turn
+  // settles or the thread changes, and offer the matching snapshot on each
+  // answer. A failed fetch just leaves the buttons off.
+  useEffect(() => {
+    if (!activeId || sessions.running) return;
+    let cancelled = false;
+    void api
+      .checkpoints()
+      .then((list) => {
+        if (!cancelled) {
+          setCheckpoints(list.entries.filter((entry) => entry.sessionId === activeId));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeId, sessions.running, api]);
+
+  const restoreCheckpoint = (id: string) => {
+    if (restoring) return;
+    setRestoring(true);
+    void api
+      .restoreCheckpoint(id)
+      .then(() => api.checkpoints())
+      .then((list) => {
+        setCheckpoints(list.entries.filter((entry) => entry.sessionId === activeId));
+        setRestoring(false);
+      })
+      .catch((e: Error) => {
+        setRestoring(false);
+        setError(e.message);
+      });
+  };
   // The pill jumps instantly, like the follow: an animated tail would race
   // the very deltas it is trying to catch up on.
   const jumpToLatest = () => {
@@ -179,9 +217,11 @@ export function ChatColumn({
           )}
           <Transcript
             blocks={active?.blocks ?? []}
-            live={sessions.running}
+            live={sessions.running || restoring}
             commands={daemon.repo?.commands}
             onRetry={(text) => void sessions.submit(text, [])}
+            checkpoints={checkpoints}
+            onRestoreCheckpoint={restoreCheckpoint}
           />
         {/* A turn's first seconds: the tape holds only the planner's words,
             so the start says itself — spinner + shimmer until blocks land.

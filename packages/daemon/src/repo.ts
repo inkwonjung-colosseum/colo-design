@@ -1613,6 +1613,7 @@ export class RepoWorkspace {
       if (!this.isCloned()) {
         await this.killPreview();
         this.setPhase("cloning", null);
+        this.clearBringUpDebris();
         await this.git(
           ["clone", authenticatedUrl(this.url, this.pat), this.root],
           dirname(this.root),
@@ -1654,6 +1655,19 @@ export class RepoWorkspace {
 
   isCloned(): boolean {
     return existsSync(join(this.root, ".git"));
+  }
+
+  /**
+   * A bring-up that died between creating the folder and finishing the clone
+   * leaves the root with files but no `.git` — every later sync reads it as
+   * uncloned, and `git clone` refuses a non-empty destination (128) until a
+   * human deletes the folder by hand. Everything in it is a partial copy of
+   * the remote, so clearing it is a re-clone, not a loss (the same trade the
+   * url move already makes). A real clone has `.git` and is never touched.
+   */
+  private clearBringUpDebris(): void {
+    if (this.isCloned() || !existsSync(this.root)) return;
+    rmSync(this.root, { recursive: true, force: true });
   }
 
   /**
@@ -2001,7 +2015,7 @@ export class RepoWorkspace {
     if (!this.isCloned()) return;
     let next = 0;
     try {
-      const out = await this.git(["status", "--porcelain"]);
+      const out = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
       next = out.split("\n").filter((line) => line.trim().length > 0).length;
     } catch {
       return;

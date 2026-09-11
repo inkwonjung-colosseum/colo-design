@@ -556,6 +556,8 @@ export function Transcript({
   live = true,
   commands,
   onRetry,
+  checkpoints,
+  onRestoreCheckpoint,
 }: {
   blocks: Block[];
   live?: boolean;
@@ -563,9 +565,20 @@ export function Transcript({
   commands?: RepoCommands;
   /** Offered on a failed turn's card: send the same words again (PLAN D35). */
   onRetry?: (text: string) => void;
+  /** This session's turn-start snapshots (PLAN D52), oldest first. */
+  checkpoints?: Array<{ id: string; turn: number }>;
+  /** Puts the worktree back the way it stood before that answer (PLAN D52). */
+  onRestoreCheckpoint?: (id: string) => void;
 }) {
   if (blocks.length === 0) {
-    return <p className="empty">메시지를 보내면 대화가 여기에 이어집니다.</p>;
+    return (
+      <div className="empty">
+        <p className="empty__lead">메시지를 보내면 대화가 여기에 이어집니다.</p>
+        <p className="empty__sub">
+          만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로 들어옵니다.
+        </p>
+      </div>
+    );
   }
   // A reloaded history replays its events without a guarantee that the last
   // turn's end marker is in the tape, so a finished session's trailing fold
@@ -581,6 +594,9 @@ export function Transcript({
       todosSoFar = [];
     }
   }
+  // The k-th assistant answer maps to the k-th turn-start snapshot (PLAN
+  // D52): every send takes one, so the counts line up even when a turn failed.
+  let assistantCount = 0;
   const rows = groupActivity(
     live
       ? blocks
@@ -621,8 +637,26 @@ export function Transcript({
               </div>
             );
           }
-          case "text":
-            return <AssistantBubble key={block.id} block={block} />;
+          case "text": {
+            assistantCount += 1;
+            const checkpoint = checkpoints?.find((entry) => entry.turn === assistantCount);
+            return (
+              <div key={block.id}>
+                <AssistantBubble block={block} />
+                {checkpoint && onRestoreCheckpoint && (
+                  <button
+                    type="button"
+                    className="machine__more"
+                    disabled={live}
+                    title="이 답변이 바꾼 화면 파일을, 이 답변이 시작하기 전 모습으로 되돌립니다"
+                    onClick={() => onRestoreCheckpoint(checkpoint.id)}
+                  >
+                    이 답변 이전으로 되돌리기
+                  </button>
+                )}
+              </div>
+            );
+          }
           case "thinking":
             return <ThinkingBlock key={block.id} block={block} />;
           case "tool":

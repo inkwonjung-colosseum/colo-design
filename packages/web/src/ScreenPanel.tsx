@@ -130,45 +130,47 @@ function ProgressPanel({
 
   return (
     <div className={failed ? "progress progress--error" : "progress"}>
-      <div className="progress__head">
-        {!failed && <span className="spinner" />}
-        <h2>{guidance ? guidance.title : PHASE_LABEL[phase]}</h2>
-      </div>
-      <p className="progress__body">
-        {guidance
-          ? guidance.body
-          : needsSetup
-            ? "설정에서 연결 레포 주소와 개인 액세스 토큰을 입력해 주세요."
-            : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
-      </p>
-      {guidance?.command && (
-        <pre className="progress__cmd">
-          <code>{guidance.command}</code>
-          <button type="button" className="ghost" onClick={() => void copy(guidance.command!)}>
-            {copied ? (
-              <>
-                <CheckIcon size={11} /> 복사됨
-              </>
-            ) : (
-              <>
-                <CopyIcon size={12} /> 복사
-              </>
-            )}
+      <div className="progress__card">
+        <div className="progress__head">
+          {!failed && <span className="spinner" />}
+          <h2>{guidance ? guidance.title : PHASE_LABEL[phase]}</h2>
+        </div>
+        <p className="progress__body">
+          {guidance
+            ? guidance.body
+            : needsSetup
+              ? "설정에서 연결 레포 주소와 개인 액세스 토큰을 입력해 주세요."
+              : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
+        </p>
+        {guidance?.command && (
+          <pre className="progress__cmd">
+            <code>{guidance.command}</code>
+            <button type="button" className="ghost" onClick={() => void copy(guidance.command!)}>
+              {copied ? (
+                <>
+                  <CheckIcon size={11} /> 복사됨
+                </>
+              ) : (
+                <>
+                  <CopyIcon size={12} /> 복사
+                </>
+              )}
+            </button>
+          </pre>
+        )}
+        {!failed && progressLine && <div className="progress__detail">{progressLine}</div>}
+        {failed && (
+          <button type="button" className="primary" onClick={onRetry}>
+            <RestartIcon />
+            다시 시도
           </button>
-        </pre>
-      )}
-      {!failed && progressLine && <div className="progress__detail">{progressLine}</div>}
-      {failed && (
-        <button type="button" className="primary" onClick={onRetry}>
-          <RestartIcon />
-          다시 시도
-        </button>
-      )}
-      {!failed && needsSetup && (
-        <button type="button" className="primary" onClick={onOpenSettings}>
-          설정 열기
-        </button>
-      )}
+        )}
+        {!failed && needsSetup && (
+          <button type="button" className="primary" onClick={onOpenSettings}>
+            설정 열기
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -583,6 +585,32 @@ export function ScreenPanel({
                 }}
               >
                 <span className="selector__label">저장 기록</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="selector__row"
+                disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
+                title={
+                  (repo?.pendingChanges ?? 0) > 0
+                    ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
+                    : "버릴 저장하지 않은 변경이 없습니다"
+                }
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (
+                    !window.confirm(
+                      `저장하지 않은 변경 ${repo?.pendingChanges ?? 0}개를 모두 버릴까요? 되돌릴 수 없습니다.`,
+                    )
+                  )
+                    return;
+                  void api
+                    .discard()
+                    .then(() => api.repoStatus())
+                    .catch((e: Error) => setSyncError(e.message));
+                }}
+              >
+                <span className="selector__label">변경 버리기</span>
               </button>
               <button
                 type="button"

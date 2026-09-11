@@ -592,6 +592,10 @@ function leafMetaText(
 function badgeFor(project: ProjectSummary): { kind: string; label: string } | null {
   const progress: RepoPhase[] = ["cloning", "pulling", "installing", "starting"];
   if (progress.includes(project.phase)) return { kind: "progress", label: "내려받는 중…" };
+  // 확인 대기 is louder than 작업 중: a thread paused for the planner's own
+  // answer outranks one that is merely working (PLAN D50).
+  const awaiting = (project.threads ?? []).some((thread) => thread.state === "awaiting");
+  if (awaiting) return { kind: "working", label: "확인 대기" };
   if (project.working) return { kind: "working", label: WORKING_LABEL };
   if (project.handoff?.state === "merged") return { kind: "merged", label: MERGED_BADGE };
   if (project.handoff) return { kind: "handoff", label: HANDOFF_BADGE };
