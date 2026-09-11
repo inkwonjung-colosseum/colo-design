@@ -350,7 +350,11 @@ async function main() {
     await page.setViewportSize({ width: 960, height: 720 });
     await page.locator(".sidebar--collapsed").waitFor({ timeout: 10000 });
     check("a 960px window auto-folds the rail", (await page.locator(".sidebar--collapsed").count()) === 1);
-    await page.locator(".node", { hasText: "환불" }).locator(".node__row").click();
+    // The rail's tile keeps the project's accessible name; the badge's words
+    // ride along when there is state to say (변경 N · 확인 대기 · 넘김…).
+    const refundsTile = page.getByRole("button", { name: /환불 대화/ });
+    await refundsTile.waitFor({ timeout: 10000 });
+    await refundsTile.click();
     const popover = page.locator(".node__pop");
     await popover.waitFor({ timeout: 10000 });
     check(
@@ -359,6 +363,21 @@ async function main() {
         (await popover.getByRole("menuitem", { name: "＋ 새 대화" }).count()) === 1,
       `${(await popover.innerText()).split("\n").slice(0, 3).join(" · ")}`,
     );
+    const geom = await popover.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        verdict:
+          r.left >= 44 &&
+          r.right <= window.innerWidth &&
+          r.top >= 0 &&
+          r.bottom <= window.innerHeight &&
+          r.width > 100,
+        detail:
+          `l:${Math.round(r.left)} r:${Math.round(r.right)} t:${Math.round(r.top)} ` +
+          `b:${Math.round(r.bottom)} w:${Math.round(r.width)} ih:${window.innerHeight}`,
+      };
+    });
+    check("the popover opens beside the rail, whole inside the window", geom.verdict, geom.detail);
     // Picking a conversation from the popover opens it.
     await popover.getByRole("menuitem").first().click();
     await popover.waitFor({ state: "detached", timeout: 10000 });

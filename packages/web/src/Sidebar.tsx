@@ -72,6 +72,10 @@ export function Sidebar({
   const [leafMenuFor, setLeafMenuFor] = useState<string | null>(null);
   /** The project whose conversation popover is open (the folded rail). */
   const [popoverFor, setPopoverFor] = useState<string | null>(null);
+  /** Where that popover opens, in window coordinates: the rail's overflow
+      clipping eats an absolutely positioned menu, so the popover pins itself
+      beside its tile with position:fixed instead. */
+  const [popAt, setPopAt] = useState<{ top: number; left: number } | null>(null);
   /** A removal (or rename) that the daemon refused, in its own words. */
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   /** The project row being renamed, and the draft while it is. */
@@ -195,6 +199,7 @@ export function Sidebar({
         setMenuFor(null);
         setLeafMenuFor(null);
         setPopoverFor(null);
+        setPopAt(null);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -255,20 +260,24 @@ export function Sidebar({
   return (
     <>
       <nav className={`sidebar${rail ? " sidebar--collapsed" : ""}`} aria-label="프로젝트">
-        <div className="sidebar__brand">
-          {!rail && <span className="brand-name">CDS Design</span>}
-          {!collapsedByViewport && (
-            <button
-              type="button"
-              className="ghost sidebar__fold"
-              aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
-              aria-expanded={!collapsed}
-              onClick={onToggleCollapsed}
-            >
-              {collapsed ? "›" : "‹"}
-            </button>
-          )}
-        </div>
+        {/* A viewport-forced rail has nothing to say in the brand row and no
+            fold to offer — the empty strip goes away entirely. */}
+        {(!rail || !collapsedByViewport) && (
+          <div className="sidebar__brand">
+            {!rail && <span className="brand-name">CDS Design</span>}
+            {!collapsedByViewport && (
+              <button
+                type="button"
+                className="ghost sidebar__fold"
+                aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
+                aria-expanded={!collapsed}
+                onClick={onToggleCollapsed}
+              >
+                {collapsed ? "›" : "‹"}
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="tree" role="tree" aria-label="프로젝트와 대화" ref={listRef}>
           {projects.map((project) => {
@@ -276,6 +285,9 @@ export function Sidebar({
             const badge = badgeFor(project);
             const isFolded = folded(project.slug);
             const threads = project.threads ?? [];
+            /* The rail tile's pip wears the badge's kind — the fold keeps the
+               state, drops the words (the tooltip says them). */
+            const pipKind = switching === project.slug ? "working" : (badge?.kind ?? null);
             return (
               <div
                 key={project.slug}
@@ -304,63 +316,101 @@ export function Sidebar({
                       className="node__row"
                       disabled={switching !== null}
                       title={
-                        switching === project.slug
-                          ? "전환 중…"
-                          : rail
-                            ? `${project.name} 대화`
+                        rail
+                          ? `${project.name} 대화${badge ? ` · ${badge.label}` : ""}`
+                          : switching === project.slug
+                            ? "전환 중…"
                             : project.name
                       }
-                      onClick={() =>
+                      aria-label={
                         rail
-                          ? setPopoverFor(popoverFor === project.slug ? null : project.slug)
-                          : void activate(project.slug)
+                          ? `${project.name} 대화${badge ? `, ${badge.label}` : ""}`
+                          : undefined
                       }
+                      onClick={(event) => {
+                        if (!rail) {
+                          void activate(project.slug);
+                          return;
+                        }
+                        if (popoverFor === project.slug) {
+                          setPopoverFor(null);
+                          setPopAt(null);
+                          return;
+                        }
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        // The menu caps at 70vh — anchoring it no lower than
+                        // 28vh keeps the whole thing inside the window. The
+                        // left edge is the RAIL's right side, not the tile's.
+                        const railRect =
+                          event.currentTarget.closest(".sidebar")?.getBoundingClientRect();
+                        const maxTop = window.innerHeight * 0.28;
+                        setPopAt({
+                          top: Math.min(rect.top, maxTop),
+                          left: railRect ? railRect.right : rect.right + 8,
+                        });
+                        setPopoverFor(project.slug);
+                      }}
                       onKeyDown={(event) => onKeyDown(event, project.slug)}
                     >
-                      <span
-                        className="node__chev"
-                        aria-hidden="true"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleFold(project.slug);
-                        }}
-                      >
-                        ▾
-                      </span>
-                      <span className="node__dot" aria-hidden="true" />
-                      <span className="node__name">{project.name}</span>
-                      {badge && (
-                        <span className={`node__badge node__badge--${badge.kind}`}>
-                          {switching === project.slug ? "전환 중…" : badge.label}
-                        </span>
+                      {rail ? (
+                        <>
+                          <span className="node__letter" aria-hidden="true">
+                            {monogram(project.name)}
+                          </span>
+                          {pipKind && (
+                            <span className={`node__pip node__pip--${pipKind}`} aria-hidden="true" />
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span
+                            className="node__chev"
+                            aria-hidden="true"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleFold(project.slug);
+                            }}
+                          >
+                            ▾
+                          </span>
+                          <span className="node__dot" aria-hidden="true" />
+                          <span className="node__name">{project.name}</span>
+                          {badge && (
+                            <span className={`node__badge node__badge--${badge.kind}`}>
+                              {switching === project.slug ? "전환 중…" : badge.label}
+                            </span>
+                          )}
+                          {switching === project.slug && !badge && (
+                            <span className="node__badge">전환 중…</span>
+                          )}
+                        </>
                       )}
-                      {switching === project.slug && !badge && (
-                        <span className="node__badge">전환 중…</span>
-                      )}
                     </button>
-                    <button
-                      type="button"
-                      className="ghost node__add"
-                      aria-label={`${project.name} 에 새 대화`}
-                      title="새 대화"
-                      onClick={() => {
-                        setPopoverFor(null);
-                        onNewThread(project.slug);
-                      }}
-                    >
-                      ＋
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost node__menu-btn"
-                      aria-label={`${project.name} 프로젝트 메뉴`}
-                      aria-haspopup="menu"
-                      aria-expanded={menuFor === project.slug}
-                      onClick={() => setMenuFor(menuFor === project.slug ? null : project.slug)}
-                    >
-                      ···
-                    </button>
-                    {menuFor === project.slug && (
+                    {!rail && (
+                      <>
+                        <button
+                          type="button"
+                          className="ghost node__add"
+                          aria-label={`${project.name} 에 새 대화`}
+                          title="새 대화"
+                          onClick={() => {
+                            setPopoverFor(null);
+                            onNewThread(project.slug);
+                          }}
+                        >
+                          ＋
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost node__menu-btn"
+                          aria-label={`${project.name} 프로젝트 메뉴`}
+                          aria-haspopup="menu"
+                          aria-expanded={menuFor === project.slug}
+                          onClick={() => setMenuFor(menuFor === project.slug ? null : project.slug)}
+                        >
+                          ···
+                        </button>
+                        {menuFor === project.slug && (
                       <>
                         <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuFor(null)} />
                         <span className="selector__menu node__menu" role="menu">
@@ -408,10 +458,17 @@ export function Sidebar({
                       </span>
                       </>
                     )}
+                      </>
+                    )}
                     {rail && popoverFor === project.slug && (
                       <>
                         <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setPopoverFor(null)} />
-                        <span className="selector__menu node__pop" role="menu" aria-label={`${project.name} 대화`}>
+                        <span
+                          className="selector__menu node__pop node__pop--fixed"
+                          role="menu"
+                          aria-label={`${project.name} 대화`}
+                          style={popAt ? { position: "fixed", top: popAt.top, left: popAt.left } : undefined}
+                        >
                         {threads.slice(0, RECENT_THREADS).map((thread) => (
                           <button
                             key={thread.id}
@@ -437,6 +494,32 @@ export function Sidebar({
                           }}
                         >
                           <span className="selector__label">＋ 새 대화</span>
+                        </button>
+                        {/* The row menu's tail: a rail has no ··· button, so the
+                            project's own moves ride here. 이름 바꾸기 stays out —
+                            its inline input cannot live in a 44px column. */}
+                        <span className="node__pop__sep" aria-hidden="true" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row"
+                          onClick={() => {
+                            setPopoverFor(null);
+                            onOpenSettings();
+                          }}
+                        >
+                          <span className="selector__label">설정</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row"
+                          onClick={() => {
+                            setPopoverFor(null);
+                            setRemoving(project);
+                          }}
+                        >
+                          <span className="selector__label">프로젝트 지우기</span>
                         </button>
                       </span>
                       </>
@@ -557,10 +640,20 @@ export function Sidebar({
 
         {/* The rail's foot: 새 프로젝트 on the left, 설정 on the right — the
             gear moved here from the header so every frame control lives in
-            one room. It survives the fold: a 44px rail still fits the icon,
-            and narrow windows would otherwise lose 설정 entirely. */}
+            one room. The fold keeps both: a 44px rail stacks the ＋ tile
+            over the gear, so narrow windows lose neither move. */}
         <div className="sidebar__foot">
-          {!rail && (
+          {rail ? (
+            <button
+              type="button"
+              className="ghost sidebar__plus"
+              aria-label="새 프로젝트"
+              title="새 프로젝트"
+              onClick={onAddProject}
+            >
+              ＋
+            </button>
+          ) : (
             <button type="button" className="ghost sidebar__new" onClick={onAddProject}>
               + 새 프로젝트
             </button>
@@ -620,6 +713,13 @@ export function Sidebar({
   );
 }
 
+/** The rail tile's one letter: the name's first grapheme, uppercased — the
+    project's face in a 44px column, where a full name has no room. */
+function monogram(name: string): string {
+  const first = [...name.trim()][0];
+  return first ? first.toUpperCase() : "·";
+}
+
 /** The popover's short state word — the same words the row's meta uses, minus
     the markup (a menu row has no room for the dot diagram). */
 function leafMetaText(
@@ -634,14 +734,14 @@ function leafMetaText(
 }
 
 /** One badge per row, decided once (PLAN D15 · D45 — the chip's words).
- * Null means a quiet row. */
+ * Null means a quiet row. 확인 대기 gets its own kind: a paused turn is the
+ * one state the planner must answer, and warn says so louder than the
+ * working accent (PLAN D50) — in the tree's words and on the rail's pip. */
 function badgeFor(project: ProjectSummary): { kind: string; label: string } | null {
   const progress: RepoPhase[] = ["cloning", "pulling", "installing", "starting"];
   if (progress.includes(project.phase)) return { kind: "progress", label: "내려받는 중…" };
-  // 확인 대기 is louder than 작업 중: a thread paused for the planner's own
-  // answer outranks one that is merely working (PLAN D50).
   const awaiting = (project.threads ?? []).some((thread) => thread.state === "awaiting");
-  if (awaiting) return { kind: "working", label: "확인 대기" };
+  if (awaiting) return { kind: "ask", label: "확인 대기" };
   if (project.working) return { kind: "working", label: WORKING_LABEL };
   if (project.handoff?.state === "merged") return { kind: "merged", label: MERGED_BADGE };
   if (project.handoff) return { kind: "handoff", label: HANDOFF_BADGE };
