@@ -23,6 +23,9 @@ import { NEW_SESSION_TITLE, probeCommands } from "./session.js";
 import { repoWritePolicy } from "./workspaces.js";
 import { RepoWorkspace, trustWorkspace } from "./repo.js";
 import { readComments, recordComments, resolveComment } from "./comments.js";
+import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE } from "./bootstrap-brief.js";
+import { markTurn } from "@cds-design/protocol";
+import { validateBootstrapConfig } from "./repo.js";
 import { GitHubClient, createGitHubTransport } from "./github.js";
 import { ProjectRegistry, type ProjectPaths } from "./projects.js";
 import {
@@ -214,6 +217,8 @@ export class DaemonServer {
    * bridge lands. Read on every call, never snapshotted into the tools.
    */
   private previewScreens: PreviewScreenDeclaration[] = [];
+  /** D94: slugs whose connection Claude prepares (the picker's 선택). */
+  private readonly bootstrapSlugs = new Set<string>();
   /**
    * The `/` palette with no thread open: one CLI boot per repo, cached, so an
    * empty workspace still lists every command the terminal would. A live
@@ -424,6 +429,11 @@ export class DaemonServer {
         url: repo.url,
         baseBranch: repo.baseBranch,
         cycle: { branch: repo.branch, handoff: repo.handoff },
+        // D94: 연결 준비 — the picker's Claude-prepare choice rides the
+        // workspace, and its callback opens the brief turn here.
+        ...(this.bootstrapSlugs.has(slug)
+          ? { bootstrap: true, prepareBootstrap: () => this.runBootstrapPrepare(paths.repoRoot) }
+          : {}),
         onCycleChange: (cycle) => this.registry.setCycle(slug, cycle),
         gitHubClient: () => this.gitHubClient(),
         // The summarizer's one turn rides the same CLI the sessions do
@@ -635,6 +645,64 @@ export class DaemonServer {
   }
 
   /**
+   * D94: 연결 준비 턴 — a daemon-opened conversation (the comment envelope's
+   * path, server-side) sends the brief, waits for the turn to settle, then
+   * machine-validates what Claude wrote. False means the gate refused; the
+   * sync turns into error{errorKind:"bootstrap"} and NOTHING outside the
+   * gate ever ran.
+   */
+  private async runBootstrapPrepare(repoRoot: string): Promise<boolean> {
+    if (!this.claudeExecutable) return false;
+    const cwd = realpathBestEffort(repoRoot);
+    const session = this.manager.create({
+      cwd,
+      claudeExecutable: this.claudeExecutable,
+      title: BOOTSTRAP_TITLE,
+    });
+    this.announceProjectsThrottled();
+    session.send(markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF));
+    // The turn ends when the session settles back to idle; a stalled CLI
+    // fails the prepare rather than hanging the sync forever.
+    const settled = await (async () => {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        const live = this.manager.get(session.id);
+        if (!live) return false;
+        if (live.state === "idle" || live.state === "closed") return true;
+        if (live.state === "error") return false;
+        await new Promise((ok) => setTimeout(ok, 500));
+      }
+      return false;
+    })();
+    if (!settled) return false;
+    try {
+      const config = JSON.parse(readFileSync(join(cwd, "cds-design.json"), "utf8")) as {
+        install?: string;
+        check?: string;
+        build?: string;
+        preview?: { command: string; port: number };
+      };
+      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      const lockfile = existsSync(join(cwd, "pnpm-lock.yaml"))
+        ? ("pnpm-lock.yaml" as const)
+        : existsSync(join(cwd, "package-lock.json"))
+          ? ("package-lock.json" as const)
+          : existsSync(join(cwd, "yarn.lock"))
+            ? ("yarn.lock" as const)
+            : null;
+      const problem = validateBootstrapConfig({
+        config,
+        packageScripts: pkg.scripts ?? {},
+        lockfile,
+      });
+      return problem === null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * 넘기기의 화면 캡처 (PLAN D56): each declared screen·state, opened in the
    * preview driver and captured. Desktop only — the browser dev path has no
    * driver — and every failure is quiet: a capture that will not come back
@@ -764,12 +832,16 @@ export class DaemonServer {
     name: string;
     repoUrl: string | null;
     baseBranch?: string;
+    bootstrap?: boolean;
   }): Promise<ProjectSummary> {
     const project = this.registry.create({
       name: message.name,
       repoUrl: message.repoUrl,
       ...(message.baseBranch ? { baseBranch: message.baseBranch } : {}),
     });
+    // The flag must be known before the first sync runs — the workspace reads
+    // it the moment workspacesFor builds it (activateProject below).
+    if (message.bootstrap) this.bootstrapSlugs.add(project.slug);
 
     await this.activateProject(project.slug);
     // The first project becomes active inside registry.create, so

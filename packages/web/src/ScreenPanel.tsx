@@ -36,6 +36,7 @@ import {
 } from "./settings";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
+  preparing: "Claude 가 레포를 살펴보고 연결을 준비하는 중",
   missing: "연결 레포를 연결해 주세요",
   cloning: "연결 레포를 내려받는 중",
   pulling: "연결 레포의 최신 변경사항을 받아 오는 중",

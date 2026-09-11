@@ -115,6 +115,9 @@ const GATE_BRIEF: Record<"check" | "build" | "commit" | "push" | "pr", string> =
  * 설정 안내로 간다. 문자열 분기의 위험(D41)은 상수 하나에 모으고 단위 테스트가
  * 잡는 것으로; 모르면 Claude 쪽(보수적)이다.
  */
+const BOOTSTRAP_FAILED_DETAIL =
+  "Claude 가 연결 준비를 마치지 못했습니다 — 설정의 문제 해결에서 자세히 본 뒤 대화에서 이어 가세요.";
+
 export const PUSH_AUTH_FAILURE = /403|Permission denied|authentication|denied to|not authorized/i;
 
 const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
@@ -521,6 +524,10 @@ export class RepoWorkspace {
    */
   private pendingChanges = 0;
   private openHandoff: HandoffStatus | null;
+  /** D94: this workspace was created with Claude-prepared connection. */
+  private bootstrapRequested = false;
+  /** The server's preparation turn: brief → Claude writes the contract → validate. */
+  private prepareBootstrap: (() => Promise<boolean>) | null = null;
   /** D88: the developer comments the last 상태 확인 read — 답하기 resolves ids against this. */
   private lastReviews: DeveloperReview[] = [];
   private readonly onCycleChange:
@@ -551,6 +558,10 @@ export class RepoWorkspace {
       gitHubClient?: () => GitHubClient | null;
       /** Claude Code CLI executable for the summarizer's one turn (D51). */
       claudeExecutable?: string | null;
+      /** D94: 연결 준비 — sync 가 설정 없음에서 막히면 Claude 가 계약을 쓴다. */
+      bootstrap?: boolean;
+      /** The preparation turn: brief → Claude writes the contract → validate. */
+      prepareBootstrap?: () => Promise<boolean>;
     },
   ) {
     this.root = options.root;
@@ -562,6 +573,8 @@ export class RepoWorkspace {
     this.baseBranch = options.baseBranch ?? "main";
     this.branch = options.cycle?.branch ?? null;
     this.openHandoff = options.cycle?.handoff ?? null;
+    this.bootstrapRequested = options.bootstrap ?? false;
+    this.prepareBootstrap = options.prepareBootstrap ?? null;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
     this.claudeExecutable = options.claudeExecutable ?? null;
@@ -1748,7 +1761,20 @@ export class RepoWorkspace {
         await this.refreshFromRemote();
       }
 
-      const config = readCdsDesignConfig(this.root);
+      let config: CdsDesignConfig;
+      try {
+        config = readCdsDesignConfig(this.root);
+      } catch (configError) {
+        // D94: 연결 준비가 요청된 레포 — 막지 말고 Claude 가 계약을 쓰게
+        // 한다. 검증은 validateBootstrapConfig 가 기계로 하고, 벗어나면
+        // 준비는 실패로 끝난다(실행 없음).
+        if (!this.bootstrapRequested || !this.prepareBootstrap) throw configError;
+        this.setPhase("preparing", "Claude 가 레포를 살펴보고 연결을 준비하는 중");
+        const ok = await this.prepareBootstrap().catch(() => false);
+        config = readCdsDesignConfig(this.root); // 실패면 여기서 다시 던진다
+        if (!ok) throw new BootstrapPrepareError(BOOTSTRAP_FAILED_DETAIL);
+        void configError;
+      }
       this.config = config;
       const installed = await this.installIfNeeded(config);
 
@@ -2174,6 +2200,9 @@ export class RepoWorkspace {
    */
   private bringUpErrorKind(error: unknown): RepoErrorKind {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof BootstrapPrepareError || message === BOOTSTRAP_FAILED_DETAIL) {
+      return "bootstrap";
+    }
     if (message === PNPM_MISSING_DETAIL) return "pnpm-missing";
     if (message === REGISTRY_AUTH_DETAIL) return "registry-auth";
     if (message.includes("충돌한 파일")) return "conflict";
@@ -2481,3 +2510,83 @@ export function buildCommentsSection(
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
   return `### 수정 요청\n\n기획자가 미리보기에서 찍은 수정 요청입니다 — 해결 표식은 기획자가 확인한 것입니다.\n\n${lines.join("\n")}${tail}\n`;
 }
+
+// ---------------------------------------------------------------------------
+// 연결 준비 (PLAN D94) — Claude 가 쓴 설정을 기계 검증하는 울타리. 벗어난
+// 명령은 한 번도 실행되지 않는다: "그래도 실행" 버튼은 없다.
+// ---------------------------------------------------------------------------
+
+/** Claude 가 쓴 연결 설정이 이 도구의 울타리 안에 있는지 판정하는 입력. */
+export interface BootstrapValidationInput {
+  config: {
+    install?: string;
+    check?: string;
+    build?: string;
+    preview?: { command: string; port: number };
+  };
+  /** package.json 의 scripts — 허용된 스크립트의 유일한 출처다. */
+  packageScripts: Record<string, unknown>;
+  /** 락파일이 정하는 설치 명령 — 없으면 pnpm 이 기본이다. */
+  lockfile: "pnpm-lock.yaml" | "package-lock.json" | "yarn.lock" | null;
+}
+
+const LOCKFILE_INSTALL: Record<string, string> = {
+  "pnpm-lock.yaml": "pnpm install",
+  "package-lock.json": "npm ci",
+  "yarn.lock": "yarn install",
+};
+
+/**
+ * `pnpm run dev` · `pnpm dev` · `npm run dev` 꼴만 허용한다 — scripts 에 있는
+ * 스크립트 이름만 뒤에 붙을 수 있고, 그 외의 문자는 전부 거부다.
+ */
+export function validateBootstrapConfig(input: BootstrapValidationInput): string | null {
+  const { config, packageScripts, lockfile } = input;
+  const expectedInstall = LOCKFILE_INSTALL[lockfile ?? "pnpm-lock.yaml"];
+  if (config.install !== expectedInstall) {
+    return `install 명령이 락파일과 맞지 않습니다 — "${expectedInstall}" 이어야 합니다.`;
+  }
+  const scriptGate = (label: string, raw: string | undefined): string | null => {
+    if (!raw) return null;
+    const words = raw.trim().split(/\s+/);
+    if (words.length === 0 || words.length > 3) {
+      return `${label} 명령이 허용된 꼴이 아닙니다 — "<pm> [run] <script>" 만 허용됩니다.`;
+    }
+    const [pm, second, third] = words;
+    if (!pm || !["pnpm", "npm", "yarn", "bun"].includes(pm)) {
+      return `${label} 명령의 실행 도구(${pm ?? "(없음)"})는 허용되지 않습니다 — pnpm · npm · yarn · bun 만 됩니다.`;
+    }
+    let scriptName: string | undefined;
+    if (words.length === 3) {
+      if (second !== "run") {
+        return `${label} 명령이 허용된 꼴이 아닙니다 — "<pm> run <script>" 이어야 합니다.`;
+      }
+      scriptName = third;
+    } else {
+      scriptName = second;
+    }
+    if (typeof scriptName !== "string" || !(scriptName in packageScripts)) {
+      return `${label} 명령의 스크립트(${String(scriptName)})가 package.json 의 scripts 에 없습니다.`;
+    }
+    return null;
+  };
+  for (const [label, raw] of [
+    ["check", config.check],
+    ["build", config.build],
+  ] as const) {
+    const problem = scriptGate(label, raw);
+    if (problem) return problem;
+  }
+  if (config.preview) {
+    const problem = scriptGate("preview", config.preview.command);
+    if (problem) return problem;
+    const port = config.preview.port;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return "preview.port 는 1~65535 사이의 포트여야 합니다.";
+    }
+  }
+  return null;
+}
+
+/** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */
+export class BootstrapPrepareError extends Error {}

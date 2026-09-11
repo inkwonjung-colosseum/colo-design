@@ -186,6 +186,13 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     repoUrl: z.string().min(1).nullable(),
     /** What a handoff PR will target. Defaults to `main`. */
     baseBranch: z.string().min(1).max(128).optional(),
+    /**
+     * D94: the repo has no `cds-design.json` — instead of blocking on a
+     * developer, Claude prepares the connection (brief turn → JSON · bridge ·
+     * CLAUDE.md → machine validation) and the developer receives it as the
+     * first PR.
+     */
+    bootstrap: z.boolean().optional(),
   }),
   /**
    * Switches which project everything else means. The outgoing project's
@@ -743,6 +750,7 @@ export type RepoPhase =
   | "missing"
   | "cloning"
   | "pulling"
+  | "preparing"
   | "installing"
   | "starting"
   | "ready"
@@ -787,7 +795,8 @@ export type RepoErrorKind =
   | "registry-auth"
   | "pnpm-missing"
   | "preview"
-  | "conflict";
+  | "conflict"
+  | "bootstrap";
 
 export interface RepoStatus {
   /** Absolute path of the clone on this machine. */

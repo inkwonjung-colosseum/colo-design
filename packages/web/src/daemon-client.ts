@@ -877,6 +877,7 @@ export function useDaemon(url: string | null): Daemon {
         name: string;
         repoUrl: string | null;
         baseBranch?: string;
+        bootstrap?: boolean;
       }) =>
         call<ProjectSummary>(
           {
@@ -884,6 +885,7 @@ export function useDaemon(url: string | null): Daemon {
             name: input.name,
             repoUrl: input.repoUrl,
             ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
+            ...(input.bootstrap ? { bootstrap: true } : {}),
           },
           900_000,
         ),

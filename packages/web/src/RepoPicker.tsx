@@ -190,6 +190,7 @@ export function RepoPicker({
         name: name.trim(),
         repoUrl: selected.cloneUrl,
         ...(inspection?.phase === "ready" ? { baseBranch: inspection.result.defaultBranch } : {}),
+        ...(bootstrapCreate ? { bootstrap: true } : {}),
       });
       onCreated?.();
     } catch (e) {
@@ -201,11 +202,16 @@ export function RepoPicker({
 
 
   /**
-   * The 만들기 gate (PLAN D28): the inspection must have answered, and the
-   * answer must be a repo this tool can work in.
+   * The 만들기 gate (PLAN D28 → D94): the inspection must have answered, and
+   * the answer must be a repo this tool can work in — OR one Claude can
+   * prepare, which is a choice now, not a wall.
    */
+  const needsBootstrap = inspection !== null && inspection.phase === "ready" && !inspection.result.hasCdsDesign;
+  const [bootstrapCreate, setBootstrapCreate] = useState(false);
   const blocked =
-    inspection === null || inspection.phase !== "ready" || !inspection.result.hasCdsDesign;
+    inspection === null ||
+    inspection.phase !== "ready" ||
+    (!inspection.result.hasCdsDesign && !bootstrapCreate);
 
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -357,7 +363,7 @@ export function RepoPicker({
             <p className="onboarding__detail">
               {inspection.result.hasCdsDesign
                 ? `✓ cds-design.json 있음 · 기본 브랜치 ${inspection.result.defaultBranch}`
-                : "✗ 이 레포에는 cds-design.json이 없습니다 — 개발자에게 CDS 설정을 요청해 주세요."}
+                : "✗ 이 레포에는 cds-design.json이 없습니다 — Claude 가 연결을 준비할 수 있어요."}
               {!inspection.result.canPush && (
                 <span className="repopicker__warnline">
                   ! 이 토큰으로는 이 레포에 넘길 수 없습니다 — 화면 작업은 되지만 PR은 열지 못합니다.
@@ -373,16 +379,42 @@ export function RepoPicker({
               disabled={creating}
               onChange={(e) => setName(e.target.value)}
             />
+            {bootstrapCreate && (
+              <button
+                type="button"
+                className="primary"
+                disabled={Boolean(blocked)}
+                onClick={() => void create()}
+              >
+                {creating ? "준비하는 중…" : "Claude 가 연결 준비하기"}
+              </button>
+            )}
+            {!bootstrapCreate && (
+              <button
+                type="button"
+                className="primary"
+                disabled={Boolean(blocked)}
+                onClick={() => void create()}
+              >
+                {creating ? "만드는 중…" : "프로젝트 만들기"}
+              </button>
+            )}
+          </div>
+          {needsBootstrap && !bootstrapCreate && (
             <button
               type="button"
-              className="primary"
-              disabled={Boolean(blocked)}
-              onClick={() => void create()}
+              className="ghost"
+              data-testid="bootstrap-choice"
+              onClick={() => setBootstrapCreate(true)}
             >
-              {creating ? "만드는 중…" : "프로젝트 만들기"}
+              Claude 가 연결 준비하기
             </button>
-          </div>
-          <p className="hint">레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다.</p>
+          )}
+          <p className="hint">
+            {bootstrapCreate
+              ? "Claude 가 레포에 연결 파일을 쓰고, 개발자는 첫 넘기기 PR 로 받아 봅니다."
+              : "레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다."}
+          </p>
           {createError && (
             <div className="notice notice--error">
               <span className="notice__text">{createError}</span>

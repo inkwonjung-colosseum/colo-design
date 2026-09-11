@@ -434,7 +434,8 @@ function MachineTurn({
       }));
       break;
     case "brief":
-      title = "이 기획서로 화면 만들기";
+      // D94: the connection-preparation brief reads as its own thing.
+      title = marker.purpose === "bootstrap" ? "연결 준비" : "이 기획서로 화면 만들기";
       lead = marker.title;
       break;
     case "precheck":

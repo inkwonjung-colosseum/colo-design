@@ -68,6 +68,11 @@ export interface BriefMarker {
   kind: "brief";
   /** The 기획서 title, as the tree shows it. */
   title: string;
+  /**
+   * D94: the connection-preparation brief — the card reads 연결 준비 instead
+   * of the 기획서 wording.
+   */
+  purpose?: "bootstrap";
 }
 
 export interface PrecheckMarker {
@@ -183,7 +188,11 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       };
     }
     case "brief":
-      return { kind, title: str(data.title) };
+      return {
+        kind,
+        title: str(data.title),
+        ...(data.purpose === "bootstrap" ? { purpose: "bootstrap" as const } : {}),
+      };
     case "precheck":
       return {
         kind,
