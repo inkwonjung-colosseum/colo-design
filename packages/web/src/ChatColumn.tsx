@@ -303,6 +303,7 @@ export function ChatColumn({
         onSetEffort={(effort) => void sessions.setEffort(effort)}
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
+        queued={sessions.queued}
         sendKey={sendKey}
         onSend={(text, attachments) => sessions.submit(text, attachments)}
         onInterrupt={() => activeId && void api.interrupt(activeId)}

@@ -27,8 +27,13 @@
 
 export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error";
 
-/** How the preview failed: the page threw, or the dev build serving it did. */
-export type ErrorMarkerKind = "runtime" | "build";
+/**
+ * How the preview failed: the page threw, or the dev build serving it did.
+ * D89 adds `look` — no error at all, just a screen the planner cannot
+ * describe in words (흰 화면 · 무한 로딩 · 통째로 깨진 레이아웃), shown to
+ * Claude whole (`이 화면 Claude 에게 보여 주기`).
+ */
+export type ErrorMarkerKind = "runtime" | "build" | "look";
 
 const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "precheck", "gate", "error"];
 
@@ -72,11 +77,19 @@ export interface ErrorMarker {
   /** The state the screen was showing. */
   state: string;
   /**
-   * Runtime exception or dev build failure. The PLAN writes this payload key
+   * Runtime exception, dev build failure, or the D89 `look` (a screen with
+   * nothing wrong the console can name). The PLAN writes this payload key
    * as `kind` — which is the marker's own discriminant here — so `hydrate`
    * reads both spellings; `markTurn` emits `errorKind`.
    */
   errorKind: ErrorMarkerKind;
+  /**
+   * D89: how many times the SAME ask has gone up — the same route·state
+   * (`look`) or the same banner message (runtime/build). 2 이상이면 카드가
+   * `두 번째 요청` / `아직 같은 오류 · N번째` 를 말해 같은 버튼 연타를
+   * 가린다. The count lives with the web (화면이 바뀌면 0).
+   */
+  count?: number;
 }
 
 export type TurnMarker = CommentsMarker | BriefMarker | PrecheckMarker | GateMarker | ErrorMarker;
@@ -150,15 +163,16 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return { kind, step: str(data.step) };
     case "error": {
       // The PLAN's literal spelling names the failure `kind` — the tag
-      // already said "error", so the payload key is free to mean runtime vs
-      // build. An unknown or missing one degrades to runtime: a card with a
+      // already said "error", so the payload key is free to mean the failure
+      // sort. An unknown or missing one degrades to runtime: a card with a
       // plausible failure beats no card at all.
       const errorKind = str(data.errorKind) || str(data.kind);
       return {
         kind,
         route: str(data.route),
         state: str(data.state),
-        errorKind: errorKind === "build" ? "build" : "runtime",
+        errorKind: errorKind === "build" ? "build" : errorKind === "look" ? "look" : "runtime",
+        ...(typeof data.count === "number" && data.count > 1 ? { count: data.count } : {}),
       };
     }
   }

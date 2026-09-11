@@ -16,6 +16,10 @@ import type { CommentItem } from "@cds-design/protocol";
 function isCommentItem(value: unknown): value is CommentItem {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
+  // PLAN D78: `element` is optional — old rows read as 자리 없는 코멘트 — but
+  // a row that CARRIES one must carry it whole, or the overlay would try to
+  // anchor a pin on a half identity.
+  if (!elementOk(row.element)) return false;
   return (
     typeof row.id === "string" &&
     typeof row.screen === "string" &&
@@ -24,6 +28,19 @@ function isCommentItem(value: unknown): value is CommentItem {
     typeof row.elementText === "string" &&
     typeof row.at === "string" &&
     typeof row.resolved === "boolean"
+  );
+}
+
+function elementOk(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "object") return false;
+  const element = value as Record<string, unknown>;
+  if (typeof element.component !== "string" || typeof element.path !== "string") return false;
+  const rect = element.rect as Record<string, unknown> | undefined;
+  return (
+    typeof rect === "object" &&
+    rect !== null &&
+    ["x", "y", "width", "height"].every((key) => typeof rect[key] === "number")
   );
 }
 
@@ -43,24 +60,35 @@ export function readComments(file: string): CommentItem[] {
  * Writes one screen·state's comment set: that pair's unresolved rows go, the
  * new rows (and every other row — resolved ones included) stay. Returns how
  * many rows it wrote.
+ *
+ * `screen` is normalized to the `[data-screen]` spelling — no leading slash
+ * (PLAN §9 틀리기 쉬운 자리): the recorded pin is matched literally against
+ * what the overlay reads off the DOM, so a route-shaped spelling here would
+ * strand the pin on every screen.
  */
 export function recordComments(
   file: string,
   screen: string,
   state: string,
-  items: Array<{ text: string; elementText: string }>,
+  items: Array<{
+    text: string;
+    elementText: string;
+    element?: CommentItem["element"];
+  }>,
   now = new Date(),
 ): number {
+  const id = screen.startsWith("/") ? screen.slice(1) : screen;
   const kept = readComments(file).filter(
-    (row) => row.resolved || row.screen !== screen || row.state !== state,
+    (row) => row.resolved || row.screen !== id || row.state !== state,
   );
   const at = now.toISOString();
   const written = items.map((item) => ({
     id: randomUUID(),
-    screen,
+    screen: id,
     state,
     text: item.text,
     elementText: item.elementText,
+    ...(item.element ? { element: item.element } : {}),
     at,
     resolved: false,
   }));

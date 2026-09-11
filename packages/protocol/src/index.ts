@@ -396,6 +396,25 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
           text: z.string().min(1),
           /** The commented element's own text, as the overlay captured it. */
           elementText: z.string(),
+          /**
+           * Where the pin sat (PLAN D78): the identity the overlay resolved
+           * for the element, recorded so the pin can be drawn again — the
+           * comment lives on the screen, not only in this list. `text` stays
+           * top-level as `elementText`; old rows without it read as
+           * 자리 없는 코멘트.
+           */
+          element: z
+            .object({
+              component: z.string(),
+              path: z.string(),
+              rect: z.object({
+                x: z.number(),
+                y: z.number(),
+                width: z.number(),
+                height: z.number(),
+              }),
+            })
+            .optional(),
         }),
       )
       .min(1),
@@ -438,6 +457,15 @@ export interface CommentItem {
   text: string;
   /** The commented element's own text, as the overlay captured it. */
   elementText: string;
+  /**
+   * Where the pin sat (PLAN D78) — the recorded pin's anchor. Old rows and
+   * anchorless comments have no `element`; they read as 자리 없는 코멘트.
+   */
+  element?: {
+    component: string;
+    path: string;
+    rect: { x: number; y: number; width: number; height: number };
+  };
   /** When the row was written, ISO 8601. */
   at: string;
   resolved: boolean;
@@ -492,8 +520,13 @@ export type ChatEvent =
       content: unknown;
       agentId: string | null;
     }
-  /** `files` holds `specs/` paths of documents that rode along with the turn. */
-  | { kind: "user.echo"; text: string; images: number; files: string[] }
+  /**
+   * `files` holds `specs/` paths of documents that rode along with the turn.
+   * `thumbs` (D87) holds the JPEG crops the view took of the pinned elements,
+   * capped at six — live-only echoes the chat card draws as thumbnails; a
+   * replayed transcript keeps the words, not the bytes.
+   */
+  | { kind: "user.echo"; text: string; images: number; files: string[]; thumbs?: string[] }
   | {
       kind: "turn.end";
       subtype: string;
@@ -512,7 +545,14 @@ export type ChatEvent =
       error: string;
     }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
-  | { kind: "compact"; trigger: string };
+  | { kind: "compact"; trigger: string }
+  /**
+   * Claude opened a screen in the hidden preview (`screen_open`, PLAN D91).
+   * Not a transcript event — `foldEvent` must NOT build a chat block from
+   * it; the web keeps it as the session's `lastOpened` and follows at
+   * turn end.
+   */
+  | { kind: "preview.opened"; route: string; state: string | null };
 
 // ---------------------------------------------------------------------------
 // Daemon -> client
@@ -839,7 +879,52 @@ export interface CdsDesignCommentsEnvelope {
   type: "cds-design.comments";
   screen: string;
   state: string;
-  items: Array<{ element: CdsDesignCommentTarget; comment: string }>;
+  items: Array<{
+    element: CdsDesignCommentTarget;
+    comment: string;
+    /**
+     * What the planner was looking at (PLAN D87): the view crops the element
+     * (`element.rect`) out of the page before handing the envelope to the
+     * web, which sends it on as the turn's images. Filled by the VIEW — the
+     * overlay does not know it exists; absent when the capture could not run.
+     */
+    shot?: { mediaType: string; data: string };
+  }>;
+}
+
+/**
+ * One recorded pin's 해결 toggle, from the overlay's own bubble (PLAN D78).
+ * Tool-internal like the pin bundle: the overlay makes it, the view relays it
+ * verbatim as `cds-preview:comment-resolve`, and the web calls
+ * `comments.resolve` — the daemon never learns the overlay exists.
+ */
+export interface CdsDesignCommentsResolveEnvelope {
+  type: "cds-design.comments.resolve";
+  id: string;
+  resolved: boolean;
+}
+
+/**
+ * One recorded pin's 다시 요청, from the attention bubble (PLAN D78): the
+ * overlay asks, the view relays it verbatim as `cds-preview:comment-resend`,
+ * and the web composes the turn with its own `commentToTurn` — the popover's
+ * 다시 보내기 on the same line.
+ */
+export interface CdsDesignCommentsResendEnvelope {
+  type: "cds-design.comments.resend";
+  id: string;
+}
+
+/**
+ * The whole recorded list the web pushes DOWN into the view (PLAN D78) —
+ * `preview.pins(items)` → `cds-overlay:pins`. The overlay filters it against
+ * the page's own `[data-screen]`·`[data-state]`, so a screen switch needs no
+ * round trip. `attention` names the ids a just-finished turn owes a look at
+ * (확인해 주세요).
+ */
+export interface CdsDesignPinsPayload {
+  items: CommentItem[];
+  attention?: string[];
 }
 
 /**

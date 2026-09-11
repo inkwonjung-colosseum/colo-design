@@ -407,7 +407,16 @@ function TodoCard({ block, ended }: { block: TodoToolBlock; ended: boolean }) {
  * not decoration; a turn Claude answered oddly is only diagnosable against the
  * text it actually received.
  */
-function MachineTurn({ marker, body }: { marker: TurnMarker; body: string }) {
+function MachineTurn({
+  marker,
+  body,
+  thumbs,
+}: {
+  marker: TurnMarker;
+  body: string;
+  /** D87: the pin crops, when the live echo carried them. */
+  thumbs?: string[];
+}) {
   const [open, setOpen] = useState(false);
 
   let title: string;
@@ -445,7 +454,16 @@ function MachineTurn({ marker, body }: { marker: TurnMarker; body: string }) {
       lead = "무엇이 잘못됐는지 Claude에게 넘겼습니다. 고치는 동안 기다려 주세요.";
       break;
     case "error":
-      title = "화면 오류 고치기";
+      // D89: `look` is the 화면 보여 주기 ask (no error the console can
+      // name); `count` marks a repeat so the planner sees the loop.
+      title =
+        marker.errorKind === "look"
+          ? marker.count && marker.count > 1
+            ? `화면 보여 주기 · ${marker.count}번째 요청`
+            : "화면 보여 주기"
+          : marker.count && marker.count > 1
+            ? `아직 같은 오류 · ${marker.count}번째`
+            : "화면 오류 고치기";
       lead = [marker.route, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
       break;
   }
@@ -458,8 +476,15 @@ function MachineTurn({ marker, body }: { marker: TurnMarker; body: string }) {
       </div>
       {rows.length > 0 && (
         <ul className="machine__rows">
-          {rows.map((row) => (
+          {rows.map((row, index) => (
             <li key={row.key}>
+              {marker.kind === "comments" && thumbs?.[index] && (
+                <img
+                  className="machine__thumb"
+                  src={`data:image/jpeg;base64,${thumbs[index]}`}
+                  alt=""
+                />
+              )}
               <span className="machine__label">{row.label}</span>
               {row.text && <span className="machine__text">{row.text}</span>}
             </li>
@@ -645,7 +670,8 @@ export function Transcript({
             // them, Claude does not. Reading them off assistant text would let
             // a quoted marker in an answer render as a second card.
             const { marker, body } = readTurn(block.text);
-            if (marker) return <MachineTurn key={block.id} marker={marker} body={body} />;
+            if (marker)
+              return <MachineTurn key={block.id} marker={marker} body={body} thumbs={block.thumbs} />;
             const halted = TAPE_LINES[block.text.trim()];
             if (halted) return <p key={block.id} className="sysline">{halted}</p>;
             return (

@@ -504,6 +504,7 @@ export function Composer({
   plan,
   onRefreshUsage,
   running,
+  queued = 0,
   sendKey,
   selector,
   onSetModel,
@@ -526,6 +527,11 @@ export function Composer({
       whenever the last turn happened to land. */
   onRefreshUsage?: () => void;
   running: boolean;
+  /**
+   * 다음 턴에 밀려 있는 건수 (PLAN D86). Running 중 보낸 send 가 세어 있고,
+   * 턴이 끝나면 0 — the one-line `다음 턴에 보냅니다` above the field.
+   */
+  queued?: number;
   /**
    * 모델·노력·권한 chips. Before a session exists these carry what the next
    * one will start with, so the planner can set the run up while the
@@ -896,6 +902,14 @@ export function Composer({
       return;
     }
     if (event.key !== "Enter") return;
+    // ⌥Enter (PLAN D86): 끊고 보내기 — interrupt the running turn, then send
+    // what was typed. The plain send paths are untouched.
+    if (event.altKey) {
+      event.preventDefault();
+      if (running) onInterrupt();
+      submit();
+      return;
+    }
     // With "enter", a bare Enter sends and Shift+Enter is a newline. With
     // "modEnter" it is the other way round, and the modifier is what sends.
     const sends = sendKey === "enter" ? !event.shiftKey : event.metaKey || event.ctrlKey;
@@ -1048,6 +1062,14 @@ export function Composer({
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {/* 대기 줄 (PLAN D86): what a mid-turn send means — one line above the
+          field, gone the moment the turn settles. */}
+      {running && queued > 0 && (
+        <div className="composer__queued" role="status">
+          다음 턴에 보냅니다 · {queued}건 대기
         </div>
       )}
 

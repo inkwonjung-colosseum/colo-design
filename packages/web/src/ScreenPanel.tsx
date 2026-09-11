@@ -211,15 +211,17 @@ export function ScreenPanel({
   onPrecheck,
   onNewSession,
   showPip,
+  followClaude,
 }: {
   daemon: Daemon;
   onOpenSettings: () => void;
   /**
    * Forward a comment bundle as a turn in the working screen thread. The panel
    * does not know which thread that is; the shell resolves it, creating one
-   * named after the screen if there is none yet.
+   * named after the screen if there is none yet. `images` rides along (D87):
+   * the crops the view took of the pinned elements.
    */
-  onComments: (turn: string, name?: string) => Promise<void>;
+  onComments: (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => Promise<void>;
   /** State of the thread the comments went to, so pins clear when it settles. */
   turnState: SessionState;
   /**
@@ -239,6 +241,8 @@ export function ScreenPanel({
   onNewSession: () => void;
   /** Claude 시점 보기(PLAN D63) — 설정의 `Claude가 보는 화면 표시`. */
   showPip: boolean;
+  /** 턴이 끝나면 Claude 가 본 화면으로 (PLAN D91) — 설정의 따라가기. */
+  followClaude: boolean;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
@@ -266,10 +270,16 @@ export function ScreenPanel({
     }
     wasWorking.current = working;
   }, [working]);
-  /** Preview comment pins waiting for Claude's turn to settle (DESIGN §6). */
-  const [commentPins, setCommentPins] = useState<CdsDesignCommentsEnvelope | null>(null);
-  /** True once the carrying turn actually ran; pins clear when it settles. */
-  const [commentTurnRan, setCommentTurnRan] = useState(false);
+  /**
+   * 확인해 주세요 (D78): the ids of recorded pins a finished turn carried.
+   * The overlay draws them orange with the bubble open; 해결 retires each
+   * one. Computed when the carrying turn settles, from what the batch sent.
+   */
+  const [attention, setAttention] = useState<string[]>([]);
+  /** What the last pin batch sent — turned into `attention` at turn end. */
+  const sentPins = useRef<{ screen: string; state: string; texts: string[] } | null>(null);
+  /** Whether the carrying turn actually ran (a stale session settles at once). */
+  const pinsTurnRan = useRef(false);
   /**
    * What the repo said it can render (PLAN D7). Empty until its overlay
    * speaks, which is why the toolbar's picker is absent rather than empty: an
@@ -428,18 +438,37 @@ export function ScreenPanel({
     sync();
   }, [connection, sync]);
 
-  // The pins live until the turn that carries them settles — including the
-  // case where the session had already settled before the bundle arrived.
+  /**
+   * 확인해 주세요 (D78): the turn carrying this batch ran and settled — the
+   * pins it left on the screen now owe the planner a look. They stay
+   * highlighted until 해결 (or until the same pins resolve elsewhere); the
+   * recorded pins themselves never clear (D78 — 지우는 효과는 없다).
+   */
   useEffect(() => {
-    if (commentPins && turnState === "running") setCommentTurnRan(true);
-  }, [commentPins, turnState]);
-  useEffect(() => {
-    // The turn ran, then settled: hot reload happened, the pins go.
-    if (commentPins && commentTurnRan && turnState !== "running") {
-      setCommentPins(null);
-      setCommentTurnRan(false);
+    if (turnState === "running") {
+      pinsTurnRan.current = true;
+      return;
     }
-  }, [commentPins, commentTurnRan, turnState]);
+    if (!pinsTurnRan.current) return;
+    pinsTurnRan.current = false;
+    const sent = sentPins.current;
+    sentPins.current = null;
+    if (!sent) return;
+    setAttention((prev) => {
+      const ids = new Set(prev);
+      for (const item of commentItems ?? []) {
+        if (
+          item.screen === sent.screen &&
+          item.state === sent.state &&
+          sent.texts.includes(item.text) &&
+          !item.resolved
+        ) {
+          ids.add(item.id);
+        }
+      }
+      return [...ids];
+    });
+  }, [turnState, commentItems]);
   /**
    * Claude 시점 보기(PLAN D63): the desktop bridge streams the offscreen
    * Claude window as 8fps JPEG frames. A plain browser has no bridge and
@@ -459,14 +488,19 @@ export function ScreenPanel({
     if (turnState !== "running") setPipLarge(false);
   }, [turnState]);
   /**
-   * A comment batch from the preview overlay: shown as pins and forwarded as
-   * one structured Korean turn — the same wire a typed message uses, so Claude
-   * sees it as the planner's own words (DESIGN §6). Pins stay while the turn
-   * runs and clear when it settles.
+   * A comment batch from the preview overlay: recorded with WHERE the pin
+   * sat (`element`, D78) and forwarded as one structured Korean turn — the
+   * same wire a typed message uses, so Claude sees it as the planner's own
+   * words (DESIGN §6). The list re-read replaces this screen·state's
+   * unresolved rows; the overlay redraws from it.
    */
   const forwardComments = async (envelope: CdsDesignCommentsEnvelope) => {
-    setCommentPins(envelope);
-    setCommentTurnRan(false);
+    // D87: the crops the view took of each pin ride the turn as images —
+    // what the planner SAW, Claude sees too.
+    const images = envelope.items
+      .map((item) => item.shot)
+      .filter((shot): shot is { mediaType: string; data: string } => Boolean(shot))
+      .map(({ mediaType, data }) => ({ mediaType, data }));
     // The envelope names the screen the way the app routes to it; the card
     // wants the title the repo gave it. Falling back to the raw id keeps a
     // screen the registry no longer declares from losing its card entirely.
@@ -483,19 +517,32 @@ export function ScreenPanel({
         items: envelope.items.map((item) => ({
           text: item.comment,
           elementText: item.element.text || item.element.component,
+          element: {
+            component: item.element.component,
+            path: item.element.path,
+            rect: item.element.rect,
+          },
         })),
       })
       .then(() => refreshComments())
       .catch(() => undefined);
+    // D78: the pins this batch carries become 확인해 주세요 when the turn
+    // settles — matched back to ids by screen·state·text.
+    sentPins.current = {
+      screen: envelope.screen,
+      state: envelope.state,
+      texts: envelope.items.map((item) => item.comment.trim()),
+    };
     // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
     // after the screen the pins came from is the honest one-line answer to
     // "where did this tab come from".
-    await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen), named?.title);
+    await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen), named?.title, images);
   };
 
   /** The popover's 해결 toggle: one daemon write, then the list re-reads. */
   const resolveComment = (id: string, resolved: boolean) => {
     setResolvingId(id);
+    if (resolved) setAttention((prev) => prev.filter((entry) => entry !== id));
     api
       .resolveComment(id, resolved)
       .then(() => refreshComments())
@@ -506,10 +553,78 @@ export function ScreenPanel({
   /**
    * The error banner's button (PLAN D49): the same channel the pins use, so
    * the shell resolves the thread — the panel never learns which one is
-   * open. Claude gets the message itself as the turn body.
+   * open. Claude gets the message itself as the turn body. D89: the same
+   * message twice in a row is marked on the card (아직 같은 오류 · N번째).
    */
   const forwardError = (error: PreviewError) => {
-    void onComments(errorToTurn(error));
+    const key = `${error.route}|${error.state}|${error.kind}|${error.message}`;
+    const count = lastErrorKey.current === key ? lastErrorCount.current + 1 : 1;
+    lastErrorKey.current = key;
+    lastErrorCount.current = count;
+    void onComments(errorToTurn(error, count));
+  };
+
+  // --- 화면 보여 주기 (D89) -------------------------------------------------
+  // 오류도 핀도 아닌 화면 — 흰 화면, 무한 로딩 — 를 Claude 에게 통째로 보여
+  // 준다: 프레임 캡처 한 장 + 콘솔 마지막 20줄 + 기획자의 한 줄(선택).
+  // 같은 라우트·상태의 연타는 `N번째 요청` 표식을 얹고, 턴이 도는 동안의
+  // 연타는 막는다(같은 턴이 겹치니까).
+  const [lookBusy, setLookBusy] = useState(false);
+  const [lookBlocked, setLookBlocked] = useState<string | null>(null);
+  const lookKey = useRef<string | null>(null);
+  const lookCount = useRef(0);
+  const lookSentThisTurn = useRef(false);
+  const lastErrorKey = useRef<string | null>(null);
+  const lastErrorCount = useRef(0);
+  useEffect(() => {
+    // The 연타 mark lives for ONE turn: armed when a look goes up, cleared
+    // when the turn settles. (Arming happens in sendLook; clearing here on
+    // settle — never on running, or the arm itself would be wiped by the
+    // state flip the send just caused.)
+    if (turnState !== "running") lookSentThisTurn.current = false;
+  }, [turnState]);
+
+  const sendLook = async (note: string) => {
+    if (lookBusy) return;
+    if (turnState === "running" && lookSentThisTurn.current) {
+      setLookBlocked("이미 보냈습니다 — 답을 기다려 주세요");
+      window.setTimeout(() => setLookBlocked(null), 2500);
+      return;
+    }
+    const where =
+      location?.path ??
+      (target?.kind === "path"
+        ? target.path
+        : target?.kind === "screen"
+          ? target.state
+            ? `${target.route}?state=${target.state}`
+            : target.route
+          : "/");
+    const [route = "/", query = ""] = where.split("?");
+    const state = new URLSearchParams(query).get("state");
+    setLookBusy(true);
+    try {
+      const snapshot = await window.cdsDesignDesktop?.preview?.snapshot?.();
+      const key = `${route}|${state ?? ""}`;
+      const count = lookKey.current === key ? lookCount.current + 1 : 1;
+      lookKey.current = key;
+      lookCount.current = count;
+      lookSentThisTurn.current = true;
+      const images =
+        snapshot?.jpeg
+          ? [{ mediaType: "image/jpeg", data: snapshot.jpeg }]
+          : undefined;
+      const lines = [
+        "이 화면이 이렇게 보입니다. 무엇이 잘못됐는지 보고 고쳐 주세요.",
+        note.trim() ? `기획자의 말: ${note.trim()}` : "",
+        snapshot && snapshot.console.length > 0
+          ? `콘솔 마지막 기록:\n${snapshot.console.join("\n")}`
+          : "",
+      ].filter(Boolean);
+      await onComments(lookToTurn(route, state ?? "default", lines.join("\n\n"), count), undefined, images);
+    } finally {
+      setLookBusy(false);
+    }
   };
   /**
    * 다시 보내기 (PLAN D57): one recorded comment rides the same channel the
@@ -521,6 +636,97 @@ export function ScreenPanel({
     const named = screens.find((screen) => screen.route === `/${item.screen}`);
     void onComments(commentToTurn(item, named?.title ?? item.screen), named?.title);
   };
+
+  // --- 기록된 핀 → 뷰 (D78) ------------------------------------------------
+  // The whole list goes down on every change; the view re-tells it on every
+  // load, so the pins live on the screen as long as the preview does. A view
+  // move (address · state chip → did-navigate-in-page) re-pushes too — the
+  // overlay re-filters against the new [data-screen]·[data-state] the moment
+  // the view reports being somewhere else.
+  useEffect(() => {
+    const bridge = window.cdsDesignDesktop?.preview;
+    if (!bridge?.pins) return;
+    void bridge.pins({ items: commentItems ?? [], attention });
+  }, [commentItems, attention, location]);
+
+  // --- 턴 실행 중 표식 (D86): the overlay's send-toast reads the room -----
+  useEffect(() => {
+    void window.cdsDesignDesktop?.preview?.busy?.(turnState === "running");
+  }, [turnState]);
+
+  // --- 오버레이의 해결 · 다시 요청 (D78): the bubble's word comes back -----
+  useEffect(() => {
+    const bridge = window.cdsDesignDesktop?.preview;
+    if (!bridge) return;
+    const offResolve = bridge.onCommentResolve?.((payload) => {
+      resolveComment(payload.id, payload.resolved);
+    });
+    const offResend = bridge.onCommentResend?.((payload) => {
+      const item = (commentItems ?? []).find((entry) => entry.id === payload.id);
+      if (item) resendComment(item);
+    });
+    return () => {
+      offResolve?.();
+      offResend?.();
+    };
+    // resolveComment/resendComment close over the freshest screens; the list
+    // identity is what the resend lookup reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commentItems, screens]);
+
+  // --- 따라가기 (D91): Claude 가 본 화면으로 --------------------------------
+  // The daemon reports every screen_open as `preview.opened`; the panel keeps
+  // the session's lastOpened and, when the carrying turn settles and the
+  // planner has not moved the preview themselves, follows it. Otherwise only
+  // a toast with a 보기 button — the planner's gaze is never stolen twice.
+  const [followToast, setFollowToast] = useState<string | null>(null);
+  const [followTarget, setFollowTarget] = useState<PreviewTarget | null>(null);
+  const plannerMoved = useRef(false);
+  const wasRunning = useRef(false);
+  const lastOpened = sessionId ? daemon.sessions[sessionId]?.lastOpened : undefined;
+  const lastOpenedRef = useRef(lastOpened);
+  lastOpenedRef.current = lastOpened;
+
+  const followNow = useCallback(() => {
+    if (followTarget) setTarget(followTarget);
+    setFollowToast(null);
+    setFollowTarget(null);
+  }, [followTarget]);
+
+  /** The planner's own moves are marked — a turn's end may not steal them. */
+  const handleNavigate = useCallback(
+    (ask: PreviewTarget) => {
+      if (turnState === "running") plannerMoved.current = true;
+      setTarget(ask);
+    },
+    [turnState],
+  );
+
+  useEffect(() => {
+    if (turnState === "running") {
+      wasRunning.current = true;
+      plannerMoved.current = false;
+      setFollowToast(null);
+      setFollowTarget(null);
+      return;
+    }
+    if (!wasRunning.current) return;
+    wasRunning.current = false;
+    const opened = lastOpenedRef.current;
+    if (!opened) return;
+    const ask: PreviewTarget = { kind: "screen", route: opened.route, state: opened.state };
+    if (plannerMoved.current || !followClaude) {
+      const title = screens.find((screen) => screen.route === opened.route)?.title ?? opened.route;
+      setFollowToast(
+        `Claude 는 ${title}${opened.state ? ` · ${stateLabel(opened.state)}` : ""} 를 고쳤습니다.`,
+      );
+      setFollowTarget(ask);
+    } else {
+      setTarget(ask);
+    }
+    // `screens` feeds the toast's title only; the follow itself reads refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState, followClaude]);
 
   const errorKind = errorKindOf(repo);
   // Only a named preview death takes over the preview frame; anything else
@@ -580,20 +786,23 @@ export function ScreenPanel({
   });
 
   /**
-   * PiP 라벨(PLAN D63): `Claude가 보는 중 · <화면> · <상태>` — read off where
-   * the view is (D66), falling back to the ask before the first report.
+   * PiP 라벨(PLAN D63 → D91): `Claude가 보는 중 · <화면> · <상태>` — read off
+   * what Claude ACTUALLY opened (`preview.opened`, D91), falling back to the
+   * view's position before the first report. The label was a lie before D91:
+   * it named the planner's own view.
    */
-  const pipActive =
-    location?.path ??
-    (target?.kind === "screen"
-      ? target.state
-        ? `${target.route}?state=${target.state}`
-        : target.route
-      : target?.kind === "path"
-        ? target.path
-        : null);
-  const pipRoute = pipActive ? pipActive.split("?")[0] : null;
-  const pipState = pipActive ? new URLSearchParams(pipActive.split("?")[1] ?? "").get("state") : null;
+  const claudeActive = lastOpened
+    ? `${lastOpened.route}${lastOpened.state ? `?state=${lastOpened.state}` : ""}`
+    : (location?.path ??
+      (target?.kind === "screen"
+        ? target.state
+          ? `${target.route}?state=${target.state}`
+          : target.route
+        : target?.kind === "path"
+          ? target.path
+          : null));
+  const pipRoute = claudeActive ? claudeActive.split("?")[0] : null;
+  const pipState = claudeActive ? new URLSearchParams(claudeActive.split("?")[1] ?? "").get("state") : null;
   const pipScreen = pipRoute
     ? (screens.find((screen) => screen.route === pipRoute)?.title ?? pipRoute)
     : null;
@@ -601,7 +810,7 @@ export function ScreenPanel({
     .filter(Boolean)
     .join(" · ");
 
-  /** The number the toolbar badge, the stepper's why and the popover share. */
+  /** The number the toolbar badge, the popover and the overlay dots share. */
   const unresolvedComments = (commentItems ?? []).filter((item) => !item.resolved).length;
 
   return (
@@ -740,7 +949,24 @@ export function ScreenPanel({
           </button>
         </div>
       )}
-      {commentPins && <CommentPinsSummary envelope={commentPins} />}
+      {followToast && (
+        <div className="notice notice--info" role="status">
+          <span className="notice__text">{followToast}</span>
+          {followTarget && (
+            <button type="button" className="ghost" onClick={followNow}>
+              보기
+            </button>
+          )}
+          <button type="button" className="notice__close" aria-label="알림 닫기" onClick={() => setFollowToast(null)}>
+            ×
+          </button>
+        </div>
+      )}
+      {lookBlocked && (
+        <div className="notice notice--info" role="status">
+          <span className="notice__text">{lookBlocked}</span>
+        </div>
+      )}
       {/* The stage wrapper gives the PiP (PLAN D63) its coordinates: the
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
@@ -754,13 +980,16 @@ export function ScreenPanel({
           onFixError={forwardError}
           screens={screens}
           target={target}
-          onNavigate={setTarget}
+          onNavigate={handleNavigate}
           onScreens={setScreens}
           onLocation={setLocation}
           location={location}
           commentsOn={commentsOn}
           onCommentsMode={setCommentsOn}
           unresolvedComments={unresolvedComments}
+          onLook={(note) => void sendLook(note)}
+          lookBusy={lookBusy}
+          lookBlocked={lookBlocked}
           pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
           pipLarge={pipLarge}
           onPipToggle={() => setPipLarge((open) => !open)}
@@ -844,27 +1073,6 @@ export function ScreenPanel({
   );
 }
 
-/** Pins summary shown above the preview until the turn settles. */
-function CommentPinsSummary({ envelope }: { envelope: CdsDesignCommentsEnvelope }) {
-  return (
-    <div className="pins" data-testid="pins-summary">
-      <div className="pins__head">
-        <strong>수정 요청 {envelope.items.length}건</strong>
-        <span className="hint">
-          {envelope.screen} · {envelope.state} — Claude 수정 중, 마치면 핀이 사라집니다.
-        </span>
-      </div>
-      <ol className="pins__list">
-        {envelope.items.map((item, index) => (
-          <li key={index}>
-            <span className="pins__component">{item.element.text || "화면의 요소"}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
 /**
  * The structured turn: readable Korean first, machine shape in a json fence,
  * and a marker so the planner's own chat shows what they asked for rather than
@@ -930,13 +1138,31 @@ function commentToTurn(item: CommentItem, screenTitle: string): string {
  * The error banner's structured turn (PLAN D49): the marker names where it
  * happened, and the body is the message itself — the stack or build output
  * is what Claude fixes from; prose around it would only be in the way.
+ * `count` marks the same message coming back after a fix turn (D89).
  */
-function errorToTurn(error: PreviewError): string {
+function errorToTurn(error: PreviewError, count = 1): string {
   const marker: TurnMarker = {
     kind: "error",
     route: error.route,
     state: error.state,
     errorKind: error.kind,
+    ...(count > 1 ? { count } : {}),
   };
   return markTurn(marker, error.message);
+}
+
+/**
+ * 화면 보여 주기 (D89): the screen Claude cannot be told about in words.
+ * The body carries the planner's sentence and the console tail; the picture
+ * rides as the turn's image, not in the text.
+ */
+function lookToTurn(route: string, state: string, body: string, count = 1): string {
+  const marker: TurnMarker = {
+    kind: "error",
+    route,
+    state,
+    errorKind: "look",
+    ...(count > 1 ? { count } : {}),
+  };
+  return markTurn(marker, body);
 }

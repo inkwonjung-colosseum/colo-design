@@ -831,6 +831,46 @@ test("one pair's re-send never touches another screen·state's rows", () => {
   assert.equal(rows.length, 2, JSON.stringify(rows));
 });
 
+test("recordComments keeps the pin's element and normalizes the screen spelling (PLAN D78)", () => {
+  const file = join(workdir("hub-comments-element-"), "comments.json");
+  const element = {
+    component: "button",
+    path: 'div[data-screen="pay/PayFailed"] > div > button:nth-of-type(1)',
+    rect: { x: 40, y: 120, width: 96, height: 32 },
+  };
+  // The fixture once wrote route-shaped spellings; the store keeps the
+  // `[data-screen]` one, or the recorded pin would strand on every screen.
+  recordComments(file, "/pay/PayFailed", "error", [{ text: "고쳐 주세요", elementText: "다시 시도", element }]);
+  const rows = readComments(file);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].screen, "pay/PayFailed", "no leading slash");
+  assert.deepEqual(rows[0].element, element, "the anchor rides the row verbatim");
+  // The recorded list is what the overlay draws from: element in, element out.
+  assert.equal(rows[0].elementText, "다시 시도");
+});
+
+test("an old row without element survives; a broken element row is dropped (PLAN D78)", () => {
+  const dir = workdir("hub-comments-legacy-");
+  const file = join(dir, "comments.json");
+  try {
+    writeFileSync(
+      file,
+      JSON.stringify([
+        // A pre-D78 row: no element, still a comment.
+        { id: "old", screen: "pay/PayFailed", state: "error", text: "옛 코멘트", elementText: "제목", at: "2026-09-01T00:00:00Z", resolved: false },
+        // A row whose element is half there would anchor a pin on a half
+        // identity — dropped rather than drawn.
+        { id: "broken", screen: "pay/PayFailed", state: "error", text: "깨진 위치", elementText: "제목", element: { component: "div" }, at: "2026-09-02T00:00:00Z", resolved: false },
+      ]),
+    );
+    const rows = readComments(file);
+    assert.deepEqual(rows.map((row) => row.id), ["old"], JSON.stringify(rows));
+    assert.equal(rows[0].element, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("resolveComment answers false for an id the store never had", () => {
   const file = join(workdir("hub-comments-miss-"), "comments.json");
   recordComments(file, "/a/A", "default", [{ text: "x", elementText: "y" }]);

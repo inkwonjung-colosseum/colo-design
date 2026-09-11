@@ -132,12 +132,15 @@ const SERVER_INSTRUCTIONS =
  * Builds the `cds-preview` in-process MCP server. `listScreens` is read on
  * every `screen_list` call — the declared-screen cache can fill (or move)
  * while the session lives, so the tools must not snapshot it at creation.
- * Returns null when there is no driver, or zod cannot be reached — preview
- * tools are an enhancement, and their absence must stay quiet.
+ * `onOpened` (PLAN D91) is what makes the web's 따라가기 true: every
+ * `screen_open` reports the screen Claude actually put up. Returns null when
+ * there is no driver, or zod cannot be reached — preview tools are an
+ * enhancement, and their absence must stay quiet.
  */
 export function createPreviewTools(
   driver: PreviewDriver | null,
   listScreens: () => PreviewScreenDeclaration[],
+  onOpened?: (route: string, state: string | null) => void,
 ): PreviewTools | null {
   const zod = loadZod();
   if (!driver || !zod) return null;
@@ -183,6 +186,8 @@ export function createPreviewTools(
           };
         }
         await driver.open(route, state);
+        // D91: the web follows the screen Claude actually looked at.
+        onOpened?.(route, state);
         return text(state ? `${route} · ${state} 상태를 열었습니다.` : `${route} 을(를) 열었습니다.`);
       },
     ),

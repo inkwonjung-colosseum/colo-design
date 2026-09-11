@@ -75,8 +75,17 @@ export interface Sessions {
   /** The dialog's 지우기 — actually deletes and refreshes. */
   acceptRemove: () => Promise<void>;
   submit: (text: string, attachments: Attachment[]) => Promise<void>;
-  /** Machine-authored turn: no composer, no attachments. */
-  sendTurn: (text: string) => Promise<void>;
+  /**
+   * Machine-authored turn: no composer, no attachments. `images` rides the
+   * same wire a composer attachment does (PLAN D87) — the pin crops, the
+   * 화면 보여 주기 frame.
+   */
+  sendTurn: (text: string, images?: Array<{ mediaType: string; data: string }>) => Promise<void>;
+  /**
+   * 다음 턴에 밀려 있는 것 (PLAN D86): running 중 보낸 send 마다 +1, 턴이
+   * 끝나면 0. The composer's one-line `다음 턴에 보냅니다 · N건 대기` reads it.
+   */
+  queued: number;
   refresh: () => Promise<void>;
   /** A fresh usage reading on demand — the usage popover refreshes on open. */
   refreshUsage: () => void;
@@ -179,10 +188,28 @@ export function useSessions(
   // the 새 대화 button) is what starts one.
 
   // Context usage only moves when a turn finishes, so read it on settle
-  // instead of polling.
+  // instead of polling. The effect also carries the empty-state palette (the
+  // daemon's CLI probe), so it runs with no thread open too — it only sits
+  // out while the open thread's turn is still streaming.
   useEffect(() => {
-    if (!activeId || running) return;
+    if (activeId && running) return;
     let cancelled = false;
+    // The palette comes from the session's own CLI, which answers only once
+    // its query is up; one retry covers that boot window without polling.
+    // With no thread open, the probe fills the same list — asked only once
+    // the wire is up (the effect re-runs on `connection`), and opening a
+    // thread cancels a still-in-flight probe, so a session's own answer can
+    // never be overwritten by the standalone one.
+    if (!activeId) {
+      if (connection !== "open") return;
+      void api
+        .cliCommands()
+        .then((next) => !cancelled && setCommands(next))
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
     void api
       .contextUsage(activeId)
       .then((next) => !cancelled && setUsage(next))
@@ -203,18 +230,6 @@ export function useSessions(
       .catch(() => {
         if (!cancelled) setSelector(null);
       });
-    // The palette comes from the session's own CLI, which answers only once
-    // its query is up; one retry covers that boot window without polling.
-    // With no thread open, the daemon's own CLI probe fills the same list —
-    // opening a thread cancels a still-in-flight probe, so a session's own
-    // answer can never be overwritten by the standalone one.
-    if (!activeId) {
-      void api
-        .cliCommands()
-        .then((next) => !cancelled && setCommands(next))
-        .catch(() => undefined);
-      return;
-    }
     const loadCommands = (attempt: number) => {
       void api
         .commands(activeId)
@@ -227,7 +242,7 @@ export function useSessions(
     return () => {
       cancelled = true;
     };
-  }, [activeId, running, api, active?.blocks.length]);
+  }, [activeId, running, api, connection, active?.blocks.length]);
 
   /**
    * The settle-time read above only fires when a turn lands, so a 5-hour
@@ -334,9 +349,28 @@ export function useSessions(
     return activeId;
   };
 
+  /**
+   * 대기 줄 (PLAN D86). The SDK queues a mid-turn send itself; what was
+   * missing is the SIGN. A send while the thread is running counts here, and
+   * the turn's end zeroes it — the composer's one line above the input is
+   * the whole UI.
+   */
+  const [queued, setQueued] = useState(0);
+  const wasRunningRef = useRef(false);
+  useEffect(() => {
+    if (active?.state === "running") {
+      wasRunningRef.current = true;
+      return;
+    }
+    if (!wasRunningRef.current) return;
+    wasRunningRef.current = false;
+    setQueued(0);
+  }, [active?.state]);
+
   const submit = async (text: string, attachments: Attachment[]) => {
     try {
       const target = await targetSession();
+      if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
       await api.send(
         target,
         text,
@@ -355,12 +389,13 @@ export function useSessions(
 
   /**
    * A machine-authored turn (the comment envelope): the same wire a typed
-   * message uses, minus the composer.
+   * message uses, minus the composer. `images` rides along (D87).
    */
-  const sendTurn = async (text: string) => {
+  const sendTurn = async (text: string, images?: Array<{ mediaType: string; data: string }>) => {
     try {
       const target = activeId ?? (await startSession());
-      await api.send(target, text);
+      if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
+      await api.send(target, text, images);
       void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -458,6 +493,7 @@ export function useSessions(
     acceptRemove,
     submit,
     sendTurn,
+    queued,
     refresh,
     refreshUsage,
   };

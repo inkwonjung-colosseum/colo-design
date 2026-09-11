@@ -554,11 +554,18 @@ export class Session {
     this.setState("running");
     // The echo carries the person's own words; the appended mentions are
     // plumbing, and the saved paths render as attachment chips instead.
+    // D87: the pin crops ride back (capped) so the chat card can draw its
+    // thumbnails — live only; a replayed transcript keeps the words.
+    const thumbs = (images ?? [])
+      .filter((image) => image.mediaType === "image/jpeg")
+      .slice(0, 6)
+      .map((image) => image.data);
     this.events.onEvent(this.id, {
       kind: "user.echo",
       text,
       images: images?.length ?? 0,
       files: saved,
+      ...(thumbs.length > 0 ? { thumbs } : {}),
     });
   }
 

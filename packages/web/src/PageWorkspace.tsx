@@ -230,12 +230,13 @@ export function PageWorkspace({
    * Comment pins from the preview land in the working thread, started on the
    * spot if there is none: a planner marking up a screen should not have to
    * open a conversation first. A thread the TOOL opens is named by the tool
-   * (the M5 lesson) — ScreenPanel names it after the screen.
+   * (the M5 lesson) — ScreenPanel names it after the screen. `images` ride
+   * the same wire as a composer attachment (D87): the crops the view took.
    */
   const forwardComments = useCallback(
-    async (turn: string, name?: string) => {
+    async (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => {
       if (!sessions.activeId) await sessions.create(name);
-      await sessions.sendTurn(turn);
+      await sessions.sendTurn(turn, images);
     },
     [sessions],
   );
@@ -355,6 +356,7 @@ export function PageWorkspace({
         onPrecheck={(turn) => void sessions.sendTurn(turn)}
         onNewSession={() => void sessions.create()}
         showPip={settings.chat.showPip}
+        followClaude={settings.chat.followClaude}
       />
 
       {palette && (

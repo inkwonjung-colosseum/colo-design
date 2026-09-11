@@ -1,5 +1,10 @@
 import type { UpdateCheckResult } from "@cds-design/protocol";
-import type { CdsDesignCommentsEnvelope, CdsDesignScreen } from "@cds-design/protocol";
+import type {
+  CdsDesignCommentsEnvelope,
+  CdsDesignPinsPayload,
+  CdsDesignScreen,
+  CommentItem,
+} from "@cds-design/protocol";
 
 /**
  * The desktop app's preload bridge (packages/desktop/src/preload.ts) — the
@@ -42,6 +47,12 @@ declare global {
         reload?: () => Promise<unknown>;
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
+        /** 기록된 핀 (PLAN D78): the whole list, pushed down into the view. */
+        pins?: (payload: CdsDesignPinsPayload) => Promise<unknown>;
+        /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
+        busy?: (on: boolean) => Promise<unknown>;
+        /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
+        snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
         onLocation?: (callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void) => Unsubscribe;
         onBridge?: (callback: (payload: { state: "unknown" | "present" | "stale" }) => void) => Unsubscribe;
         onScreens?: (callback: (payload: { screens: CdsDesignScreen[] }) => void) => Unsubscribe;
@@ -52,6 +63,10 @@ declare global {
         onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
         onKey?: (callback: (payload: { key: string; meta: boolean }) => void) => Unsubscribe;
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
+        /** D78: the overlay bubble's 해결, relayed verbatim from the view. */
+        onCommentResolve?: (callback: (payload: { id: string; resolved: boolean }) => void) => Unsubscribe;
+        /** D78: the attention bubble's 다시 요청. */
+        onCommentResend?: (callback: (payload: { id: string }) => void) => Unsubscribe;
       };
     };
   }

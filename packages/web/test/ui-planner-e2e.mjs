@@ -234,7 +234,9 @@ async function main() {
     (await leafRow.getByRole("menuitem", { name: "이름 바꾸기" }).isVisible()) &&
       (await leafRow.getByRole("menuitem", { name: "지우기" }).isVisible()),
   );
-  await leafRow.locator(".leaf__menu-btn").click();
+  // The menu covers the row with its own backdrop — closing is the
+  // backdrop's one job (the toggle sits underneath it).
+  await leafRow.locator('button[aria-label="메뉴 닫기"]').click();
   // The ring only appears once a settled turn has reported usage, which is
   // exactly where step 7 left the session.
   check("the composer shows how long the conversation has grown", await page.locator(`${VISIBLE}.ring`).isVisible());

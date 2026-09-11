@@ -30,7 +30,15 @@ import type {
 // ---------------------------------------------------------------------------
 
 export type Block =
-  | { type: "user"; id: string; text: string; images: number; files: string[] }
+  | {
+      type: "user";
+      id: string;
+      text: string;
+      images: number;
+      files: string[];
+      /** D87: the pin crops, live-echo only; a replayed transcript has none. */
+      thumbs?: string[];
+    }
   | { type: "text"; id: string; text: string; agentId: string | null; streaming: boolean }
   | { type: "thinking"; id: string; text: string; agentId: string | null; streaming: boolean }
   | {
@@ -66,6 +74,7 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           text: event.text,
           images: event.images,
           files: event.files,
+          ...(event.thumbs && event.thumbs.length > 0 ? { thumbs: event.thumbs } : {}),
         },
       ];
 
@@ -216,6 +225,10 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       ];
 
     case "init":
+    case "preview.opened":
+      // D91: `preview.opened` is not a transcript event — the session view
+      // keeps it as `lastOpened` (below), and no block is built. The
+      // exhaustive switch is why it cannot slip through unhandled.
       return blocks;
   }
 }
@@ -250,6 +263,12 @@ interface SessionView {
   model: string | null;
   /** True once this daemon holds a live query for the session. */
   live: boolean;
+  /**
+   * The screen Claude last opened in the hidden preview (PLAN D91) — the
+   * truth the 따라가기 and the PiP label read, where the planner's own view
+   * position used to be guessed.
+   */
+  lastOpened?: { route: string; state: string | null };
 }
 
 const EMPTY_SESSION: SessionView = {
@@ -437,7 +456,11 @@ export interface DaemonApi {
   recordComments: (input: {
     screen: string;
     state: string;
-    items: Array<{ text: string; elementText: string }>;
+    items: Array<{
+      text: string;
+      elementText: string;
+      element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
+    }>;
   }) => Promise<{ recorded: number }>;
   /** Every recorded comment of the connected repo, resolved ones in. */
   listComments: () => Promise<{ items: CommentItem[] }>;
@@ -688,7 +711,11 @@ export function useDaemon(url: string | null): Daemon {
           const next: SessionView =
             message.event.kind === "init"
               ? { ...view, model: message.event.model }
-              : { ...view, blocks: foldEvent(view.blocks, message.event) };
+              : message.event.kind === "preview.opened"
+                ? // D91: the screen Claude is actually looking at — kept
+                  // beside the view, not in the transcript.
+                  { ...view, lastOpened: { route: message.event.route, state: message.event.state } }
+                : { ...view, blocks: foldEvent(view.blocks, message.event) };
           return { ...prev, [message.sessionId]: next };
         });
         return;
@@ -953,7 +980,11 @@ export function useDaemon(url: string | null): Daemon {
       recordComments: (input: {
         screen: string;
         state: string;
-        items: Array<{ text: string; elementText: string }>;
+        items: Array<{
+          text: string;
+          elementText: string;
+          element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
+        }>;
       }) =>
         call<{ recorded: number }>({
           type: "comments.record",

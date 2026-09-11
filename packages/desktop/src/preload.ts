@@ -39,6 +39,15 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
     commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
     emulate: (width: "mobile" | "tablet" | null) => ipcRenderer.invoke("preview:emulate", { width }),
     /**
+     * 기록된 핀 (PLAN D78): the web pushes the project's whole comment list
+     * down into the view; the view re-tells it on every load.
+     */
+    pins: (payload: unknown) => ipcRenderer.invoke("preview:pins", payload),
+    /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
+    busy: (on: boolean) => ipcRenderer.invoke("preview:busy", { on }),
+    /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
+    snapshot: () => ipcRenderer.invoke("preview:snapshot"),
+    /**
      * Claude 시점 보기 (PLAN D63): Claude 가 보는 화면의 프레임 — 8fps 로
      * 스로틀된 JPEG(base64). 구독만 있고 해제는 없다; 프레임은 미리보기
      * 세션이 살아 있는 동안만 흐른다. 렌더러→메인은 따로 없다.
@@ -54,5 +63,7 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
     onFreeze: subscribe<string>("cds-preview:freeze"),
     onKey: subscribe<{ key: string; meta: boolean }>("cds-preview:key"),
     onLoading: subscribe<{ on: boolean }>("cds-preview:loading"),
+    onCommentResolve: subscribe<{ id: string; resolved: boolean }>("cds-preview:comment-resolve"),
+    onCommentResend: subscribe<{ id: string }>("cds-preview:comment-resend"),
   },
 });

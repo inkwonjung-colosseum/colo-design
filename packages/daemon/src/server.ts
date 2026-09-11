@@ -215,9 +215,9 @@ export class DaemonServer {
    */
   private previewScreens: PreviewScreenDeclaration[] = [];
   /**
-   * The `/` palette with no thread open (PLAN — cli.commands): one CLI boot
-   * per repo, cached, so an empty workspace still lists every command the
-   * terminal would. A live session's own answer always wins over this.
+   * The `/` palette with no thread open: one CLI boot per repo, cached, so an
+   * empty workspace still lists every command the terminal would. A live
+   * session's own answer always wins over this.
    */
   private readonly cliCommandsCache = new Map<string, SessionCommand[]>();
   private cliCommandsProbe: Promise<SessionCommand[]> | null = null;
@@ -608,6 +608,7 @@ export class DaemonServer {
    */
   private async previewToolsFor(
     enabled: boolean,
+    onOpened?: (route: string, state: string | null) => void,
   ): Promise<{ tools: PreviewTools; driver: PreviewDriver } | null> {
     const factory = this.config.previewDriverFactory;
     if (!factory || !enabled) return null;
@@ -616,7 +617,7 @@ export class DaemonServer {
     const status = await active.repo.status().catch(() => null);
     if (!status?.previewUrl) return null;
     const driver = factory.for(status.previewUrl);
-    const tools = createPreviewTools(driver, () => this.previewScreens);
+    const tools = createPreviewTools(driver, () => this.previewScreens, onOpened);
     if (!tools) {
       // A driver that never got tools must not leave a window behind.
       await driver.destroy().catch(() => undefined);
@@ -1059,8 +1060,16 @@ export class DaemonServer {
         // The preview tools ride the session when a driver is injected and
         // the active preview is up (PLAN D61); `previewTools: false` opts
         // out. The driver is remembered under the session's own id so the
-        // lifecycle hooks above can destroy it.
-        const preview = await this.previewToolsFor(message.previewTools !== false);
+        // lifecycle hooks above can destroy it. D91: the session id only
+        // exists after `create`, so the opened-report goes through a sink
+        // the code below points at the fresh id.
+        const openSink: { current: ((route: string, state: string | null) => void) | null } = {
+          current: null,
+        };
+        const preview = await this.previewToolsFor(
+          message.previewTools !== false,
+          (route, state) => openSink.current?.(route, state),
+        );
         const session = this.manager.create({
           cwd: this.workspaceCwd(),
           claudeExecutable: this.claudeExecutable,
@@ -1071,7 +1080,15 @@ export class DaemonServer {
           ...(message.effort ? { effort: message.effort } : {}),
           ...(preview ? { previewTools: preview.tools } : {}),
         });
-        if (preview) this.previewDrivers.set(session.id, preview.driver);
+        if (preview) {
+          this.previewDrivers.set(session.id, preview.driver);
+          openSink.current = (route, state) =>
+            this.broadcast({
+              type: "session.event",
+              sessionId: session.id,
+              event: { kind: "preview.opened", route, state },
+            });
+        }
         // A session start is the moment the 화면 half goes back to the remote.
         // Mid-cycle that is a merge of the developer's base branch, and a
         // conflict lands as this session's first task — which is why it runs

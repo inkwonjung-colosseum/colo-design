@@ -84,6 +84,9 @@ export function PreviewHost({
   commentsOn,
   onCommentsMode,
   unresolvedComments = 0,
+  onLook,
+  lookBusy = false,
+  lookBlocked = null,
   pip,
   pipLarge,
   onPipToggle,
@@ -112,6 +115,16 @@ export function PreviewHost({
   onCommentsMode: (on: boolean) => void;
   /** 미해결 코멘트 수(PLAN D57) — the toggle's badge. */
   unresolvedComments?: number;
+  /**
+   * 이 화면 Claude 에게 보여 주기 (PLAN D89): the whole frame, the route·
+   * state and the console tail go up as one turn. Native only — the iframe
+   * cannot be photographed from here.
+   */
+  onLook?: (note: string) => void;
+  /** True while the snapshot is being taken and the turn composed. */
+  lookBusy?: boolean;
+  /** The 연타 notice (D89): 이미 보냈습니다 — 답을 기다려 주세요. */
+  lookBlocked?: string | null;
   /** The docked Claude-view thumbnail (PLAN D63) — desktop only. */
   pip: { frame: string; label: string } | null;
   pipLarge: boolean;
@@ -127,6 +140,9 @@ export function PreviewHost({
   const [detail, setDetail] = useState(false);
   /** D68: what the repo bridge of THIS load spoke. */
   const [bridge, setBridge] = useState<"unknown" | "present" | "stale">("unknown");
+  /** D89: the 보여 주기 form — the button opens it, the note rides along. */
+  const [lookOpen, setLookOpen] = useState(false);
+  const [lookNote, setLookNote] = useState("");
 
   // The address bar (D66): local while focused, the view's truth otherwise.
   const [address, setAddress] = useState("");
@@ -311,7 +327,11 @@ export function PreviewHost({
             type="button"
             className={commentsOn ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
             aria-pressed={commentsOn}
-            title={commentsOn ? "코멘트 모드를 끕니다" : "미리보기에서 요소를 찍어 코멘트를 달 수 있습니다"}
+            title={
+              commentsOn
+                ? "핀만 찍는 모드를 끕니다"
+                : "핀만 찍는 모드 — 클릭이 화면에 전달되지 않습니다. ⌥+클릭은 언제든 핀을 찍습니다"
+            }
             onClick={() => onCommentsMode(!commentsOn)}
           >
             💬 코멘트{unresolvedComments > 0 ? ` ${unresolvedComments}` : ""}
@@ -480,6 +500,17 @@ export function PreviewHost({
                 <b>{current.title}</b> · {stateLabel(activeState)}
               </span>
             )}
+            {native && onLook && (
+              <button
+                type="button"
+                className="frame__look"
+                aria-expanded={lookOpen}
+                title="화면 전체와 콘솔 기록을 Claude 에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
+                onClick={() => setLookOpen((open) => !open)}
+              >
+                이 화면 Claude 에게 보여 주기
+              </button>
+            )}
             {native && pip && (
               <button
                 type="button"
@@ -493,6 +524,32 @@ export function PreviewHost({
               </button>
             )}
           </div>
+          {lookOpen && native && onLook && (
+            <form
+              className="frame__lookform"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setLookOpen(false);
+                onLook(lookNote);
+                setLookNote("");
+              }}
+            >
+              <input
+                type="text"
+                aria-label="화면 보여 주기에 덧붙이는 말"
+                placeholder="무엇이 어떻게 이상한지 한 줄 덧붙일 수 있어요 (선택)"
+                value={lookNote}
+                autoFocus
+                onChange={(event) => setLookNote(event.target.value)}
+              />
+              <button type="submit" className="primary" disabled={lookBusy}>
+                {lookBusy ? "보내는 중…" : "보내기"}
+              </button>
+              <button type="button" className="ghost" onClick={() => setLookOpen(false)}>
+                취소
+              </button>
+            </form>
+          )}
           {native ? (
             <NativeHost
               url={url}

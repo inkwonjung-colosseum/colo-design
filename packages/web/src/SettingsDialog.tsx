@@ -403,6 +403,15 @@ export function SettingsDialog({
               checked={settings.chat.showPip}
               onChange={(showPip) => onChatChange({ showPip })}
             />
+            {/* 따라가기 (PLAN D91): the turn's end moves the preview to the
+                screen Claude last opened — unless the planner moved it
+                themselves during the turn, which only toasts instead. */}
+            <Switch
+              label="턴이 끝나면 Claude 가 본 화면으로"
+              hint="고친 화면을 직접 찾지 않도록, Claude가 마지막으로 연 화면을 보여 줍니다"
+              checked={settings.chat.followClaude}
+              onChange={(followClaude) => onChatChange({ followClaude })}
+            />
           </section>
 
           <section className="settings__group">

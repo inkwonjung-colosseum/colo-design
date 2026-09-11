@@ -66,6 +66,11 @@ export interface ChatSettings {
    * 프레임이 아예 없으므로 이 값은 데스크톱에서만 무언가를 가린다.
    */
   showPip: boolean;
+  /**
+   * 턴이 끝나면 Claude 가 본 화면으로 따라갈지(PLAN D91). 기본은 따라감 —
+   * "고쳤습니다" 뒤 기획자가 화면을 찾아 헤매지 않도록. 끄면 토스트만 온다.
+   */
+  followClaude: boolean;
 }
 
 export interface Settings {
@@ -90,6 +95,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   permissionMode: DEFAULT_PERMISSION_MODE,
   previewTools: true,
   showPip: true,
+  followClaude: true,
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -239,10 +245,11 @@ function loadChat(raw: unknown): ChatSettings {
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
     permissionMode: mode === "bypassPermissions" ? DEFAULT_PERMISSION_MODE : mode,
-    // 기본 켬(PLAN D61·D63): an older blob that predates the toggles — or a
+    // 기본 켬(PLAN D61·D63·D91): an older blob that predates the toggles — or a
     // hand-edited one that wrote anything but a boolean — reads as on.
     previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,
     showPip: stored.showPip === undefined ? true : stored.showPip === true,
+    followClaude: stored.followClaude === undefined ? true : stored.followClaude === true,
   };
 }
 

@@ -1637,6 +1637,13 @@ input:focus, textarea:focus, select:focus {
 .composer textarea::placeholder { color: color-mix(in srgb, var(--muted) 68%, transparent); }
 .composer textarea:focus { outline: none; box-shadow: none; border: 0; background: transparent; }
 .composer textarea:disabled { opacity: 0.5; }
+/* 대기 줄 (PLAN D86): the one line above the field — running 중 보낸 것이
+   다음 턴에 밀려 있다는 말. 사라지는 것도 말이다. */
+.composer__queued {
+  padding: 0 2px 4px;
+  font: 500 11.5px var(--sans);
+  color: var(--muted);
+}
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
@@ -1952,6 +1959,15 @@ input:focus, textarea:focus, select:focus {
 }
 .machine__label { color: var(--text-2); font-size: 12px; }
 .machine__text { color: var(--text); font-size: 13px; line-height: 1.5; }
+/* 코멘트 카드의 썸네일 (PLAN D87): what the planner saw beside what they
+   wrote. Small, rounded, quiet. */
+.machine__thumb {
+  width: 72px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+}
 .machine__more {
   align-self: flex-start;
   padding: 0;
@@ -3078,6 +3094,19 @@ input:focus, textarea:focus, select:focus {
 }
 .diff__filerow:hover { background: var(--bg-2); }
 .diff__file:last-child .diff__filerow { border-bottom: 0; }
+/* 해결된 것 보기 (PLAN D78): a resolved comment row reads grey — history,
+   not work to do. */
+.diff__file--resolved .diff__path, .diff__file--resolved .hint { color: var(--muted); }
+
+.comments__showresolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+  font: 500 12px var(--sans);
+  color: var(--text-2);
+  cursor: pointer;
+}
 
 .diff__badge {
   flex: none;
@@ -3576,6 +3605,41 @@ input:focus, textarea:focus, select:focus {
   align-items: center;
 }
 .frame__toolsbtn:hover { color: var(--text); background: var(--panel-3); }
+/* 이 화면 Claude 에게 보여 주기 (PLAN D89) — the frame-head button and its
+   one-line form. Small on purpose: a quiet door, not a second composer. */
+.frame__look {
+  flex: none;
+  padding: 2px 8px;
+  font: 500 11px var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.frame__look:hover, .frame__look[aria-expanded="true"] { color: var(--text); background: var(--panel-3); }
+.frame__lookform {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+}
+.frame__lookform input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font: 400 12px var(--sans);
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.frame__lookform input:focus { outline: none; border-color: var(--accent); }
+.frame__lookform .primary { padding: 4px 12px; font-size: 12px; }
+.frame__lookform .ghost { padding: 4px 8px; font-size: 12px; }
 .frame__navbtn {
   padding: 2px 7px;
   font: 500 10px var(--mono);
