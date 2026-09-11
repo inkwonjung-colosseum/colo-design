@@ -357,6 +357,11 @@ export class DaemonServer {
     }
     for (const client of this.clients) client.close();
     this.wss?.close();
+    // The web/http listener refs the event loop for as long as it listens —
+    // the desktop in-process host and the test runner both stay alive until
+    // it is closed, so stop() must close it, not just the websocket.
+    await new Promise<void>((resolve) => this.http?.close(() => resolve()));
+    this.http = null;
   }
 
   private attach(ws: WebSocket): void {
