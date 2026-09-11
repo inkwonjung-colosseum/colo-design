@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -598,12 +598,15 @@ export class RepoWorkspace {
     return this.snapshot();
   }
 
-  sync(): Promise<RepoStatus> {
-    if (!this.inFlight) {
-      this.inFlight = this.bootstrap().finally(() => {
-        this.inFlight = null;
-      });
-    }
+  sync(force = false): Promise<RepoStatus> {
+    // A 다시 시작 pressed while a bootstrap crawls must not ride it: that run
+    // carries no kill-the-port mandate and would answer with the very
+    // busy-port error the button is answering. The forced run waits it out.
+    if (this.inFlight && force) return this.inFlight.then(() => this.sync(true));
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.bootstrap(force).finally(() => {
+      this.inFlight = null;
+    });
     return this.inFlight;
   }
 
@@ -1603,7 +1606,7 @@ export class RepoWorkspace {
   // Bootstrap
   // -------------------------------------------------------------------------
 
-  private async bootstrap(): Promise<RepoStatus> {
+  private async bootstrap(force = false): Promise<RepoStatus> {
     try {
       if (!this.url) {
         this.setPhase("missing", REPO_URL_MISSING_DETAIL);
@@ -1645,7 +1648,7 @@ export class RepoWorkspace {
         this.setPhase("ready", null);
         return this.snapshot();
       }
-      await this.startPreview(config);
+      await this.startPreview(config, force);
       this.setPhase("ready", null);
     } catch (error) {
       this.setPhase("error", detailOf(error, this.pat), this.bringUpErrorKind(error));
@@ -1766,7 +1769,7 @@ export class RepoWorkspace {
   // Preview server
   // -------------------------------------------------------------------------
 
-  private async startPreview(config: CdsDesignConfig): Promise<void> {
+  private async startPreview(config: CdsDesignConfig, force = false): Promise<void> {
     await this.killPreview();
     this.setPhase("starting", null);
     const { command, port } = config.preview;
@@ -1777,12 +1780,24 @@ export class RepoWorkspace {
     // A dev server that cannot bind usually exits 0, so without this the only
     // report was "미리보기 서버가 종료되었습니다 (exit 0)" — true, useless, and
     // it stays true through every retry. Left-over servers from a daemon that
-    // was killed rather than stopped are the usual culprit.
+    // was killed rather than stopped are the usual culprit. A plain sync
+    // reports — the port may hold work the planner never saw. 다시 시작 is
+    // the planner's explicit answer to exactly this error, and the button's
+    // promise is that the holder dies.
     if (await portAccepts(port)) {
-      throw new Error(
-        `포트 ${port}를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
-          `그 프로그램을 끄거나 연결 레포의 cds-design.json에서 preview.port를 바꿔 주세요.`,
-      );
+      if (!force)
+        throw new Error(
+          `포트 ${port}를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
+            `다시 시작을 누르면 그 프로그램을 종료하고 미리보기를 다시 켭니다.`,
+        );
+      // A failed kill points back at the manual escape hatches; pointing at
+      // the button again would promise a kill that just failed.
+      if (!(await this.killPortHolder(port)))
+        throw new Error(
+          `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
+            `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
+            `그 프로그램을 직접 끄거나 연결 레포의 cds-design.json에서 preview.port를 바꿔 주세요.`,
+        );
     }
 
     const child = spawn(command, this.spawnOptions());
@@ -1872,6 +1887,52 @@ export class RepoWorkspace {
     if (!port) return;
     const deadline = Date.now() + 3_000;
     while (Date.now() < deadline && (await portAccepts(port))) await sleep(100);
+  }
+
+  /**
+   * 다시 시작's mandate: whatever LISTENS on the declared preview port dies —
+   * and only the listener. lsof without the LISTEN filter also matches the
+   * port's clients (a browser tab on the old preview, this app's own iframe),
+   * and a restart that kill -9s the planner's browser is no fix. The lookup's
+   * exit status is not trusted — bind-ability is the verdict.
+   */
+  private async killPortHolder(port: number): Promise<boolean> {
+    this.setDetail(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
+    const windows = currentPlatform() === "win32";
+    const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
+    const stdout = await new Promise<string>((resolve, reject) =>
+      execFile(windows ? "netstat" : "lsof", args, { timeout: 10_000, shell: windows }, (error, out) =>
+        error ? reject(error) : resolve(String(out)),
+      ),
+    ).catch(() => "");
+    const pids = new Set<number>();
+    for (const line of stdout.split(/\r?\n/)) {
+      if (windows) {
+        // `TCP  0.0.0.0:3000  0.0.0.0:0  LISTENING  4321` — the local address
+        // names the port, the last column owns it.
+        const columns = line.trim().split(/\s+/);
+        const local = columns[1] ?? "";
+        if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`)) continue;
+        const pid = Number(columns[4] ?? NaN);
+        if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+      } else {
+        const pid = Number(line.trim());
+        if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+      }
+    }
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone, or not ours to signal — the verdict below says
+        // whether the port actually freed.
+      }
+    }
+    // The OS retires the listener asynchronously; a re-start before the port
+    // truly frees would fail on the very bind this kill was for.
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && (await portAccepts(port))) await sleep(100);
+    return !(await portAccepts(port));
   }
 
   // -------------------------------------------------------------------------

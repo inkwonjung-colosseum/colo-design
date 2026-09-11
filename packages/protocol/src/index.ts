@@ -213,7 +213,16 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    * declared in `cds-design.json`. Resolves when it settles; progress arrives
    * as `repo.status`.
    */
-  z.object({ ...withId, type: z.literal("repo.sync") }),
+  z.object({
+    ...withId,
+    type: z.literal("repo.sync"),
+    /**
+     * 다시 시작: when the declared preview port is already taken, kill the
+     * program holding it instead of reporting. Only the error screen's
+     * button sends this — a plain sync must never kill.
+     */
+    force: z.boolean().optional(),
+  }),
   /**
    * 레포 최신화: bring the clone current with the remote without the planner
    * reading git. Unsaved work rides along (stashed, moved onto, replayed);

@@ -303,6 +303,17 @@ export function ScreenPanel({
   }, [api]);
 
   /**
+   * The stopped screen's 다시 시작: the only caller that may kill. The busy
+   * port's error names a program holding it; this restart force-frees the
+   * declared port and boots the preview over it. Mounting keeps the plain
+   * sync — readying a repo must never kill a program the planner never named.
+   */
+  const restart = useCallback(() => {
+    setSyncError(null);
+    void api.repoSync(true).catch((e: Error) => setSyncError(e.message));
+  }, [api]);
+
+  /**
    * 레포 최신화: the planner's pull of the developer's side, pressed from
    * this bar. Unsaved changes are the daemon's to carry; a conflict is
    * Claude's, briefed into the open thread like a failing gate.
@@ -638,7 +649,7 @@ export function ScreenPanel({
           url={repo?.previewUrl ?? null}
           stopped={previewStopped}
           stoppedDetail={repo?.detail ?? null}
-          onRestart={sync}
+          onRestart={restart}
           onComments={(envelope) => void forwardComments(envelope)}
           onFixError={forwardError}
           screens={screens}

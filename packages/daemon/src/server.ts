@@ -1129,7 +1129,7 @@ export class DaemonServer {
         return await this.repo.status();
 
       case "repo.sync":
-        return await this.repo.sync();
+        return await this.repo.sync(message.force === true);
 
       case "repo.refresh": {
         // 레포 최신화: the planner's pull of the developer's side, pressed

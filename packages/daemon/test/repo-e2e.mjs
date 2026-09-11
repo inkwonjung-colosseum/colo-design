@@ -12,6 +12,7 @@
  *
  * Usage: node packages/daemon/test/repo-e2e.mjs
  */
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -23,6 +24,16 @@ import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.m
 
 const DIR = join(tmpdir(), "cds-design-repo-e2e");
 const ROOT = join(DIR, "work");
+
+/**
+ * A foreign process holding the preview port — the holder 다시 시작 must be
+ * able to kill. Its own process on purpose: port-killer kills the PID, and
+ * the holder must not be this suite.
+ */
+function spawnSquatter(port) {
+  const script = `require("node:http").createServer((_, res) => res.end("squatter")).listen(${port}, "127.0.0.1");`;
+  return spawn(process.execPath, ["-e", script], { stdio: "ignore" });
+}
 
 // Trust and PAT storage must never touch the real home during the run. The
 // project registry is part of that: left on the default path the daemon would
@@ -141,6 +152,44 @@ async function main() {
     [...new Set(broadcasts.map((s) => s.phase))].join(" → "),
   );
 
+  // --- 4. 다시 시작: the one button that may kill ---------------------------
+  // The busy-port error is the one a planner cannot fix alone — the holder is
+  // a foreign program. A plain sync reports it; the forced restart (what the
+  // error screen's 다시 시작 sends) kills the holder and serves over the port.
+  // The kill is listener-only: a blanket port kill also hits the port's
+  // clients — this suite's own fetch included (a naive port-killer killed
+  // this runner). Surviving to the next check is part of the assertion.
+  await workspace.stop();
+  const squatter = spawnSquatter(port);
+  await waitFor(() => portAccepts(port), 10_000, "the squatter to hold the port");
+
+  const blocked = await workspace.sync();
+  check(
+    "a plain sync reports a busy port instead of killing it",
+    blocked.phase === "error" && (blocked.detail ?? "").includes("이미 쓰고 있어"),
+    `${blocked.phase}: ${blocked.detail ?? ""}`,
+  );
+  check(
+    "the foreign holder survives a plain sync",
+    (await fetch(`http://127.0.0.1:${port}`).then((r) => r.text())) === "squatter",
+  );
+
+  const restarted = await workspace.sync(true);
+  check(
+    "the forced restart frees the port and reaches ready",
+    restarted.phase === "ready",
+    `${restarted.phase}: ${restarted.detail ?? ""}`,
+  );
+  check(
+    "what answers the port now is the preview, not the squatter",
+    (await fetch(`http://127.0.0.1:${port}`).then((r) => r.text())).includes("회원 관리"),
+  );
+  await waitFor(
+    () => squatter.exitCode !== null || squatter.signalCode !== null,
+    5_000,
+    "the foreign holder to die",
+  );
+  check("the foreign holder process is gone", squatter.signalCode === "SIGKILL");
   await checkWireProtocol(port, fixture.remote, workspace);
 
   rmSync(DIR, { recursive: true, force: true });

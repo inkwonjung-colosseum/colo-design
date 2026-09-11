@@ -373,8 +373,12 @@ export interface DaemonApi {
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
   repoStatus: () => Promise<RepoStatus>;
-  /** Clone when missing, pull, install when needed, start the preview. */
-  repoSync: () => Promise<RepoStatus>;
+  /**
+   * Clone when missing, pull, install when needed, start the preview. `force`
+   * is the error screen's 다시 시작: kill whatever holds the declared preview
+   * port before starting.
+   */
+  repoSync: (force?: boolean) => Promise<RepoStatus>;
   /**
    * 레포 최신화: pull the developer's merged work into the clone, with
    * unsaved changes riding along. A conflict goes to the named thread as
@@ -869,8 +873,10 @@ export function useDaemon(url: string | null): Daemon {
         ).then(keepProjects),
       repoStatus: () => call<RepoStatus>({ type: "repo.status" }).then(keepRepo),
       // A first run clones and installs the connected repo: minutes, not the
-      // minute a normal request is given before it is declared lost.
-      repoSync: () => call<RepoStatus>({ type: "repo.sync" }, 600_000).then(keepRepo),
+      // minute a normal request is given before it is declared lost. `force`
+      // rides only the stopped screen's 다시 시작.
+      repoSync: (force = false) =>
+        call<RepoStatus>({ type: "repo.sync", ...(force ? { force: true } : {}) }, 600_000).then(keepRepo),
       // A refresh is one fetch-and-merge on the clone: the window a network
       // read gets, not the minutes a first clone or install takes.
       repoRefresh: (sessionId?: string | null) =>
