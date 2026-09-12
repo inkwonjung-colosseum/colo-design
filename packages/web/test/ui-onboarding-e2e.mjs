@@ -10,8 +10,8 @@
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
-const DIR = join(tmpdir(), "cds-design-onboard-ui-e2e");
+const DIR = join(tmpdir(), "colo-design-onboard-ui-e2e");
 const PORT = 5401;
 
 const REPO_PAT = "onboard_ui_pat";
@@ -36,47 +36,64 @@ function check(name, passed, detail = "") {
   console.log(`${passed ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+const MIME = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+};
 
 function serveDist() {
   const server = createServer((req, res) => {
     const requested = (req.url ?? "/").split("?")[0];
     let file = join(webDist, requested === "/" ? "index.html" : requested);
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(webDist, "index.html");
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": MIME[extname(file)] ?? "application/octet-stream",
+    });
     res.end(readFileSync(file));
   });
   return new Promise((ok) => server.listen(PORT, "127.0.0.1", () => ok(server)));
 }
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
-  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @cds-design/daemon build");
+  if (!existsSync(webDist))
+    throw new Error("web dist missing. Run: pnpm --filter @colo-design/web build");
+  if (!existsSync(daemonEntry))
+    throw new Error("daemon dist missing. Run: pnpm --filter @colo-design/daemon build");
 
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
-  const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: await freePort() });
-  const fixture2 = await createFixtureRepo({ dir: join(DIR, "fixture2"), port: await freePort() });
+  const fixture = await createFixtureRepo({
+    dir: join(DIR, "fixture"),
+    port: await freePort(),
+  });
+  const fixture2 = await createFixtureRepo({
+    dir: join(DIR, "fixture2"),
+    port: await freePort(),
+  });
 
   const env = {
     ...process.env,
-    CDS_DESIGN_PORT: String(await freePort()),
-    CDS_DESIGN_REPO_DIR: join(DIR, "work"),
-    CDS_DESIGN_REPO_SETTINGS: join(DIR, "repo.json"),
+    COLO_DESIGN_PORT: String(await freePort()),
+    COLO_DESIGN_REPO_DIR: join(DIR, "work"),
+    COLO_DESIGN_REPO_SETTINGS: join(DIR, "repo.json"),
     // The registry decides what "the repo" means, so it has to live in the
     // throwaway directory too: a previous run's projects.json would otherwise
     // hand this daemon a deleted fixture remote.
-    CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
-    CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
+    COLO_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
+    COLO_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
     // Deliberately NO repo url: the wizard must block, then unblock through
     // its own project form.
-    CDS_DESIGN_CREDENTIAL_STORE: "memory",
+    COLO_DESIGN_CREDENTIAL_STORE: "memory",
     // The github gate and the picker's list answer from the recorded pairs,
     // never from api.github.com.
-    CDS_DESIGN_GITHUB_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "github"),
+    COLO_DESIGN_GITHUB_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "github"),
   };
   delete env.ANTHROPIC_API_KEY;
-  const daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const daemon = spawn(process.execPath, [daemonEntry], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   daemon.stderr.on("data", (d) => process.stderr.write(`[daemon] ${d}`));
   process.on("exit", () => daemon.kill("SIGKILL"));
   const daemonUrl = await new Promise((ok, fail) => {
@@ -94,11 +111,12 @@ async function main() {
 
   const server = await serveDist();
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
+  const page = await browser.newPage({
+    viewport: { width: 1680, height: 1000 },
+  });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-
 
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`);
@@ -180,7 +198,9 @@ async function main() {
     await page
       .waitForFunction(
         () =>
-          document.querySelector(".repopicker__confirm")?.textContent?.includes("cds-design.json 있음"),
+          document
+            .querySelector(".repopicker__confirm")
+            ?.textContent?.includes("colo-design.json 있음"),
         undefined,
         { timeout: 15000 },
       )
@@ -201,7 +221,9 @@ async function main() {
 
     // The picker gives way to the workspace as soon as the registry answers;
     // the clone that follows draws itself in the preview column.
-    await page.waitForSelector(".planner__body:not(.planner__empty)", { timeout: 90000 });
+    await page.waitForSelector(".planner__body:not(.planner__empty)", {
+      timeout: 90000,
+    });
     check(
       "the header names the project the planner just made",
       (await page.locator(".planner__project").innerText()).includes("remote"),
@@ -214,7 +236,9 @@ async function main() {
 
     // --- 5. a second project comes from the same picker, in a dialog ------
     await page.locator(".sidebar__new").click();
-    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { timeout: 15000 });
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', {
+      timeout: 15000,
+    });
     check(
       "+ 새 프로젝트 opens the same picker as a dialog",
       (await page.locator('[role="dialog"][aria-label="프로젝트 추가"] .repopicker').count()) === 1,
@@ -228,7 +252,9 @@ async function main() {
     // The dialog is not just for show: the same manual-address path that
     // made the first project makes the second one inside it.
     await page.locator(".sidebar__new").click();
-    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { timeout: 15000 });
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', {
+      timeout: 15000,
+    });
     await page.getByRole("button", { name: "목록에 없나요? 주소로 추가" }).click();
     await page.getByLabel("연결 레포 주소").fill(fixture2.remote);
     await page
@@ -239,7 +265,10 @@ async function main() {
       .locator('[role="dialog"][aria-label="프로젝트 추가"]')
       .getByRole("button", { name: "추가", exact: true })
       .click();
-    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { state: "detached", timeout: 90000 });
+    await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', {
+      state: "detached",
+      timeout: 90000,
+    });
     check("만들기 closes the dialog", (await page.locator('[role="dialog"]').count()) === 0);
     check(
       "the tree now holds both projects, the new one active",

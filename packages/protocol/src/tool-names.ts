@@ -20,8 +20,8 @@ const NAMES: Record<string, string> = {
   TodoWrite: "할 일 정리",
   Task: "보조 작업",
   AskUserQuestion: "질문",
-  // 화면 세션의 cds-preview 도구들(PLAN D61): 여섯 모두 대화에서는 하나의
-  // 동작으로 읽힌다 — "화면 보기". 실제 이름은 `mcp__cds-preview__screen_*`
+  // 화면 세션의 colo-preview 도구들(PLAN D61): 여섯 모두 대화에서는 하나의
+  // 동작으로 읽힌다 — "화면 보기". 실제 이름은 `mcp__colo-preview__screen_*`
   // 로 오므로 toolLabel 이 접두를 떼고 찾는다.
   screen_list: "화면 보기",
   screen_open: "화면 보기",

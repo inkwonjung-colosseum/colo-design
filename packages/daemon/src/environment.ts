@@ -1,59 +1,34 @@
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync, renameSync } from "node:fs";
+import { type Dirent, existsSync, realpathSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { DaemonStatus } from "@cds-design/protocol";
-import { PROTOCOL_VERSION } from "@cds-design/protocol";
+import type { DaemonStatus } from "@colo-design/protocol";
+import { PROTOCOL_VERSION } from "@colo-design/protocol";
 
 const run = promisify(execFile);
 
 /**
- * Everything CDS Design writes lives under one hidden folder in the user's
+ * Everything Colo Design writes lives under one hidden folder in the user's
  * home: the repo clones and this daemon's own settings (PLAN D1). One root is
  * one thing to back up, explain, or delete — and the dot keeps a planner out
  * of files only the tool should write.
  */
-export const CDS_DESIGN_DIR = join(homedir(), ".cds-design");
-
-/** The pre-dot home folder name an early installation may still carry. */
-const LEGACY_HOME_DIR = "cds-design";
-
-/**
- * Moves an old `~/cds-design` onto the dot-prefixed root, once. Same home,
- * so a rename is instant and atomic; a symlink moves as the link, its target
- * untouched. Both existing means somebody already made a choice — report it
- * instead of picking for them. Pure in `home` so the branch for a machine
- * this daemon is not running on can still be tested.
- */
-export function migrateHomeDir(home: string = homedir()): string | null {
-  const from = join(home, LEGACY_HOME_DIR);
-  const to = join(home, ".cds-design");
-  if (!existsSync(from) || existsSync(to)) {
-    // Nothing to move — or both present: the settings live in `to`, the old
-    // folder is somebody's to delete, and the warning says where each is.
-    return existsSync(from) && existsSync(to)
-      ? `옛 폴더 ${from} 이 남아 있습니다 — 설정은 ${to} 를 씁니다. 옛 폴더는 직접 지워도 됩니다.`
-      : null;
-  }
-  try {
-    renameSync(from, to);
-    return null;
-  } catch (error) {
-    // Cross-device homes cannot rename; say so and keep running on `to`.
-    return `옛 폴더 ${from} 을 옮기지 못했습니다 (${error instanceof Error ? error.message : String(error)}) — 새 폴더 ${to} 를 그대로 씁니다.`;
-  }
-}
+export const COLO_DESIGN_DIR = join(homedir(), ".colo-design");
 
 /** Daemon settings: `daemon.json`, `repo.json`, `projects.json`. */
-export const CONFIG_DIR = join(CDS_DESIGN_DIR, "config");
+export const CONFIG_DIR = join(COLO_DESIGN_DIR, "config");
 
 export type Platform = "win32" | "darwin" | "linux";
 
 /** `win32` is the only branch that matters; macOS and Linux install alike. */
 export function currentPlatform(): Platform {
-  return process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
+  return process.platform === "win32"
+    ? "win32"
+    : process.platform === "darwin"
+      ? "darwin"
+      : "linux";
 }
 
 /**
@@ -85,7 +60,10 @@ export function claudeCandidates(
 }
 
 /** The shell-free way to ask the OS where a command lives. */
-export function lookupCommand(platform: Platform): { command: string; args: string[] } {
+export function lookupCommand(platform: Platform): {
+  command: string;
+  args: string[];
+} {
   return platform === "win32"
     ? { command: "where", args: ["claude.exe"] }
     : { command: "which", args: ["claude"] };
@@ -100,10 +78,7 @@ export function lookupCommand(platform: Platform): { command: string; args: stri
  * probe below reads that as missing, not as an install. Pure so the branch
  * for the platform this daemon is not running on can still be tested.
  */
-export function gitCandidates(
-  platform: Platform,
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function gitCandidates(platform: Platform, env: NodeJS.ProcessEnv = process.env): string[] {
   if (platform === "win32") {
     const programFiles = env["ProgramFiles"] ?? "C:\\Program Files";
     const localAppData = env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
@@ -131,7 +106,7 @@ let gitResolution: { key: string; path: string | null } | null = null;
 /**
  * The git this daemon drives — and the one every git child spawns, so the
  * gate's verdict and the clone it clears share one binary. A pinned
- * `CDS_DESIGN_GIT_BIN` replaces discovery outright: the suites point it at a
+ * `COLO_DESIGN_GIT_BIN` replaces discovery outright: the suites point it at a
  * stub (or at nothing) and no machine-local install may answer instead.
  * Otherwise PATH wins and the installer locations fill its gaps — the
  * Finder-launched desktop app inherits `/usr/bin:/bin`, where a Homebrew-only
@@ -142,7 +117,7 @@ export async function resolveGitExecutable(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
   const platform = currentPlatform();
-  const pin = env.CDS_DESIGN_GIT_BIN;
+  const pin = env.COLO_DESIGN_GIT_BIN;
   const key = `${pin ?? ""}\u0000${env.PATH ?? ""}`;
   if (gitResolution?.key === key) return gitResolution.path;
 
@@ -154,7 +129,10 @@ export async function resolveGitExecutable(
   } else {
     try {
       const { stdout } = await run("where", ["git.exe"]);
-      const found = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+      const found = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
       if (found && (await gitWorks(found))) path = found;
     } catch {
       // `where` exits non-zero when nothing matches.
@@ -219,11 +197,13 @@ export async function resolvePnpmExecutable(): Promise<string | null> {
     if (existsSync(candidate)) return candidate;
   }
   try {
-    const { stdout } = await run(
-      platform === "win32" ? "where" : "which",
-      [platform === "win32" ? "pnpm.cmd" : "pnpm"],
-    );
-    const found = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    const { stdout } = await run(platform === "win32" ? "where" : "which", [
+      platform === "win32" ? "pnpm.cmd" : "pnpm",
+    ]);
+    const found = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
     if (found) return found;
   } catch {
     // Nothing on PATH; corepack has not been enabled either.
@@ -232,7 +212,7 @@ export async function resolvePnpmExecutable(): Promise<string | null> {
 }
 
 /**
- * Node as the repo's own commands would see it. `CDS_DESIGN_EXTRA_PATH` — the
+ * Node as the repo's own commands would see it. `COLO_DESIGN_EXTRA_PATH` — the
  * desktop app's bundled runtime — is searched FIRST, because that is the PATH
  * prefix `repo.ts` puts ahead of every install · preview · build child: a
  * version the repo commands would not use is a wrong answer here, however
@@ -243,7 +223,7 @@ export async function resolveNodeVersion(
   env: NodeJS.ProcessEnv = process.env,
   platform: Platform = currentPlatform(),
 ): Promise<{ version: string; bundled: boolean } | null> {
-  const extra = env.CDS_DESIGN_EXTRA_PATH;
+  const extra = env.COLO_DESIGN_EXTRA_PATH;
   const extraDirs = extra ? extra.split(platform === "win32" ? ";" : ":").filter(Boolean) : [];
   const binary = platform === "win32" ? "node.exe" : "node";
   for (const dir of extraDirs) {
@@ -272,7 +252,10 @@ export async function resolveNodeVersion(
  * The daemon widens its own PATH with this at startup, once, so every child
  * inherits it.
  */
-export function childPath(env: NodeJS.ProcessEnv = process.env, nodeDir = dirname(process.execPath)): string {
+export function childPath(
+  env: NodeJS.ProcessEnv = process.env,
+  nodeDir = dirname(process.execPath),
+): string {
   const separator = currentPlatform() === "win32" ? ";" : ":";
   const parts = (env.PATH ?? "").split(separator).filter(Boolean);
   return parts.includes(nodeDir) ? parts.join(separator) : [nodeDir, ...parts].join(separator);
@@ -281,7 +264,6 @@ export function childPath(env: NodeJS.ProcessEnv = process.env, nodeDir = dirnam
 /** A network round trip per status request would stall every client connect. */
 const registryAuthCache = new Map<string, { value: RegistryAuth; readAt: number }>();
 const REGISTRY_AUTH_TTL_MS = 5 * 60_000;
-
 
 type RegistryAuth = "ok" | "unauthenticated" | "unknown";
 
@@ -299,7 +281,10 @@ export function detectsRegistryAuthFailure(output: string): boolean {
  * the connected repo's clone so its `.npmrc` (registry mapping) is in scope;
  * repos that declare no registry are not probed at all.
  */
-export async function readCdsRegistryAuth(pnpm: string | null, cwd: string | null): Promise<RegistryAuth> {
+export async function readCdsRegistryAuth(
+  pnpm: string | null,
+  cwd: string | null,
+): Promise<RegistryAuth> {
   if (!pnpm || !cwd || !existsSync(cwd)) return "unknown";
   const cached = registryAuthCache.get(cwd);
   if (cached && Date.now() - cached.readAt < REGISTRY_AUTH_TTL_MS) return cached.value;
@@ -337,7 +322,7 @@ export async function resolveClaudeExecutable(override?: string): Promise<string
   const platform = currentPlatform();
   const candidates = [
     override,
-    process.env.CDS_DESIGN_CLAUDE_BIN,
+    process.env.COLO_DESIGN_CLAUDE_BIN,
     ...claudeCandidates(platform, homedir()),
   ].filter((value): value is string => Boolean(value));
 
@@ -349,7 +334,10 @@ export async function resolveClaudeExecutable(override?: string): Promise<string
     const { command, args } = lookupCommand(platform);
     const { stdout } = await run(command, args);
     // `where` can report several hits; the first is the one that would run.
-    const found = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+    const found = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
     if (found) return resolveRealPath(found);
   } catch {
     // Both `which` and `where` exit non-zero when nothing matches.
@@ -398,7 +386,12 @@ export async function readAuthStatus(executable: string): Promise<AuthStatus> {
       email: typeof parsed.email === "string" ? parsed.email : null,
     };
   } catch {
-    return { loggedIn: false, authMethod: null, subscriptionType: null, email: null };
+    return {
+      loggedIn: false,
+      authMethod: null,
+      subscriptionType: null,
+      email: null,
+    };
   }
 }
 
@@ -434,7 +427,12 @@ export async function buildStatus(input: {
   const version = input.executable ? await readClaudeVersion(input.executable) : null;
   const auth = input.executable
     ? await readAuthStatus(input.executable)
-    : { loggedIn: false, authMethod: null, subscriptionType: null, email: null };
+    : {
+        loggedIn: false,
+        authMethod: null,
+        subscriptionType: null,
+        email: null,
+      };
 
   if (input.executable && !auth.loggedIn) {
     warnings.push("Not signed in. Run `claude /login` in a terminal on this machine.");
@@ -511,7 +509,7 @@ async function walk(root: string): Promise<string[]> {
 
   while (queue.length > 0 && found.length < WALK_FILE_LIMIT) {
     const relative = queue.shift()!;
-    let entries;
+    let entries: Dirent[];
     try {
       entries = await readdir(join(root, relative), { withFileTypes: true });
     } catch {
@@ -589,7 +587,10 @@ export function filterFiles(files: string[], query: string, limit: number): stri
     if (index === -1) continue;
     const base = lower.slice(lower.lastIndexOf("/") + 1);
     const inName = base.includes(needle);
-    scored.push({ file, score: (inName ? 0 : 1000) + index + file.length / 1000 });
+    scored.push({
+      file,
+      score: (inName ? 0 : 1000) + index + file.length / 1000,
+    });
     if (scored.length > limit * 20) break;
   }
   scored.sort((a, b) => a.score - b.score);

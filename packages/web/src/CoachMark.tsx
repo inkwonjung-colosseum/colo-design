@@ -6,7 +6,7 @@ import { useState } from "react";
  * 조용해지고, 설정의 `안내 다시 보기` 가 되살린다. 순회형 튜토리얼은 만들지
  * 않는다 — 이것이 전부다.
  */
-const KEY = "cds-design.coach";
+const KEY = "colo-design.coach";
 
 export type CoachId = "pin" | "save" | "review";
 

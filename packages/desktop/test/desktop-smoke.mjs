@@ -6,7 +6,7 @@
  * unpackaged electron-builder output instead (the packaged smoke).
  *
  * Usage: node packages/desktop/test/desktop-smoke.mjs [appPath]
- * Run: node packages/desktop/test/desktop-smoke.mjs release/mac-arm64/CDS Design.app/Contents/MacOS/CDS Design
+ * Run: node packages/desktop/test/desktop-smoke.mjs release/mac-arm64/Colo Design.app/Contents/MacOS/Colo Design
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -39,10 +39,10 @@ async function main() {
   let appPath = packagedApp;
 
   if (!packagedApp) {
-    run("pnpm", ["--filter", "@cds-design/protocol", "build"], repo);
-    run("pnpm", ["--filter", "@cds-design/daemon", "build"], repo);
-    run("pnpm", ["--filter", "@cds-design/web", "build"], repo);
-    run("pnpm", ["--filter", "@cds-design/desktop", "build"], repo);
+    run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
+    run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
+    run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
+    run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
     const webDist = join(desktop, "web-dist");
     rmSync(webDist, { recursive: true, force: true });
     mkdirSync(webDist, { recursive: true });
@@ -53,19 +53,21 @@ async function main() {
   }
 
   // 데스크톱은 자기 userData 아래에서만 흔적을 남긴다(키체인·설정 오염 방지).
-  const userData = join(tmpdir(), `cds-design-desktop-smoke-${Date.now()}`);
+  const userData = join(tmpdir(), `colo-design-desktop-smoke-${Date.now()}`);
   const electronBinary = packagedApp
     ? undefined
     : join(desktop, "node_modules", ".bin", "electron");
 
   const app = await electron.launch({
-    ...(electronBinary ? { executablePath: electronBinary, args: [appPath] } : { executablePath: appPath }),
+    ...(electronBinary
+      ? { executablePath: electronBinary, args: [appPath] }
+      : { executablePath: appPath }),
     env: {
       ...process.env,
       // 온보딩 게이트를 통과시킬 stub — 실제 로그인/네트워크 없이.
-      CDS_DESIGN_CLAUDE_BIN: stubClaude(join(userData, "bin")),
-      CDS_DESIGN_CREDENTIAL_STORE: undefined,
-      CDS_DESIGN_DESKTOP_SMOKE: "1",
+      COLO_DESIGN_CLAUDE_BIN: stubClaude(join(userData, "bin")),
+      COLO_DESIGN_CREDENTIAL_STORE: undefined,
+      COLO_DESIGN_DESKTOP_SMOKE: "1",
     },
   });
 
@@ -84,7 +86,9 @@ async function main() {
       // 1280x1024). 여기서 보는 것은 '작업 영역을 채운다' 이지 픽셀 동일성이
       // 아니므로, 두 축에 같은 허용치를 준다.
       Boolean(bounds) && workArea.width - bounds.width <= 1 && workArea.height - bounds.height <= 1,
-      bounds ? `${bounds.width}x${bounds.height} vs ${workArea.width}x${workArea.height}` : "no window",
+      bounds
+        ? `${bounds.width}x${bounds.height} vs ${workArea.width}x${workArea.height}`
+        : "no window",
     );
 
     // The renderer loaded from the daemon itself with a token — no connect screen.
@@ -99,12 +103,19 @@ async function main() {
       const response = await fetch(new URL("/health", pageUrl).toString());
       return response.json();
     }, url);
-    check("the daemon /health answers on the internal port", health.ok === true, `protocol v${health.protocolVersion}`);
+    check(
+      "the daemon /health answers on the internal port",
+      health.ok === true,
+      `protocol v${health.protocolVersion}`,
+    );
 
     await window.waitForSelector(".planner", { timeout: 30000 });
     check("the planner shell renders", (await window.locator(".planner").count()) === 1);
     await window.waitForSelector(".onboarding", { timeout: 30000 });
-    check("a fresh machine lands on the onboarding wizard", (await window.locator(".onboarding").count()) === 1);
+    check(
+      "a fresh machine lands on the onboarding wizard",
+      (await window.locator(".onboarding").count()) === 1,
+    );
 
     // The wizard's gates run against the daemon the app hosts; the same
     // check answers over the WebSocket the renderer itself uses. The
@@ -114,12 +125,12 @@ async function main() {
     const runtimeStep = await window.evaluate(
       (pageUrl) =>
         new Promise((ok, fail) => {
-          const ws = new WebSocket(
-            pageUrl.replace(/^http/, "ws").replace(/\?token=/, "?token="),
-          );
+          const ws = new WebSocket(pageUrl.replace(/^http/, "ws").replace(/\?token=/, "?token="));
           const id = `smoke-${Date.now()}`;
           const timer = setTimeout(() => fail(new Error("onboarding.check timed out")), 60000);
-          ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "onboarding.check", id })));
+          ws.addEventListener("open", () =>
+            ws.send(JSON.stringify({ type: "onboarding.check", id })),
+          );
           ws.addEventListener("message", (event) => {
             const reply = JSON.parse(String(event.data));
             if (reply.id !== id) return;
@@ -141,7 +152,7 @@ async function main() {
       runtimeStep ? runtimeStep.detail : "(no runtime step)",
     );
 
-    const bridge = await window.evaluate(() => Boolean(window.cdsDesignDesktop));
+    const bridge = await window.evaluate(() => Boolean(window.coloDesignDesktop));
     check("the desktop update bridge is exposed to the renderer", bridge);
 
     const errors = [];

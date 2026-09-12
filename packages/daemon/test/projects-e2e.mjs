@@ -14,25 +14,26 @@
  *
  * Usage: node packages/daemon/test/projects-e2e.mjs
  */
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+
 import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort, writeStubClaude } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DIR = join(tmpdir(), "cds-design-projects-e2e");
+const DIR = join(tmpdir(), "colo-design-projects-e2e");
 
-process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
+process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 // Every registry path in the temp dir. This suite deliberately does NOT set
-// CDS_DESIGN_REPO_DIR or CDS_DESIGN_REPO_URL: those override the ACTIVE
+// COLO_DESIGN_REPO_DIR or COLO_DESIGN_REPO_URL: those override the ACTIVE
 // project's clone, which would erase exactly the per-project separation
 // under test.
-process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 
 const results = [];
@@ -118,7 +119,8 @@ async function main() {
 
   let nextId = 0;
   const request = async (message, timeoutMs = 60_000) => {
-    const id = `m${(nextId += 1)}`;
+    nextId += 1;
+    const id = `m${nextId}`;
     ws.send(JSON.stringify({ ...message, id }));
     const reply = await waitFor(() => inbox.find((m) => m.id === id), timeoutMs, message.type);
     if (reply.type === "ok") return reply.data;
@@ -186,12 +188,12 @@ async function main() {
       "the newest project is the active one and its clone is its own folder",
       refundsStatus.root === join(DIR, "projects", refunds.slug, "repo") &&
         refundsStatus.url === refundsFixture.remote &&
-        existsSync(join(DIR, "projects", refunds.slug, "repo", "cds-design.json")),
+        existsSync(join(DIR, "projects", refunds.slug, "repo", "colo-design.json")),
       `${refundsStatus.root}`,
     );
     check(
       "each project's clone lives only in its own folder",
-      existsSync(join(DIR, "projects", payments.slug, "repo", "cds-design.json")) &&
+      existsSync(join(DIR, "projects", payments.slug, "repo", "colo-design.json")) &&
         join(DIR, "projects", payments.slug, "repo") !==
           join(DIR, "projects", refunds.slug, "repo"),
       `${payments.slug} | ${refunds.slug}`,
@@ -233,7 +235,11 @@ async function main() {
       !otherList.some((entry) => entry.sessionId === sessionId),
       `결제 session ${sessionId} leaked into 환불`,
     );
-    const crossTurn = await refusal({ type: "session.send", sessionId, text: "엉뚱한 프로젝트에서 보낸 턴" });
+    const crossTurn = await refusal({
+      type: "session.send",
+      sessionId,
+      text: "엉뚱한 프로젝트에서 보낸 턴",
+    });
     check(
       "a turn aimed across projects refuses in Korean",
       crossTurn !== null && crossTurn.includes("다른 프로젝트"),
@@ -251,11 +257,15 @@ async function main() {
     // The sidebar tree reads every project's conversations off the broadcast,
     // so a created session must reach `project.changed.threads` — in its own
     // project's row, in the state a fresh untitled thread earns (idle).
-    const threadRow = await waitFor(() => {
-      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
-      const row = changed?.projects?.find((p) => p.slug === payments.slug);
-      return row?.threads?.some((t) => t.id === sessionId) ? row : null;
-    }, 15_000, "the session in project.changed.threads");
+    const threadRow = await waitFor(
+      () => {
+        const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+        const row = changed?.projects?.find((p) => p.slug === payments.slug);
+        return row?.threads?.some((t) => t.id === sessionId) ? row : null;
+      },
+      15_000,
+      "the session in project.changed.threads",
+    );
     check(
       "a created session reaches its project's threads as idle",
       threadRow.threads.some((t) => t.id === sessionId && t.state === "idle"),
@@ -298,11 +308,15 @@ async function main() {
 
     // The tree's state follows (D59): the turn ended and nothing followed it
     // — exactly what a child row's `답이 왔습니다` ring means.
-    const settledRow = await waitFor(() => {
-      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
-      const row = changed?.projects?.find((p) => p.slug === payments.slug);
-      return row?.threads?.some((t) => t.id === sessionId && t.state === "finished") ? row : null;
-    }, 90_000, "the finished thread state");
+    const settledRow = await waitFor(
+      () => {
+        const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+        const row = changed?.projects?.find((p) => p.slug === payments.slug);
+        return row?.threads?.some((t) => t.id === sessionId && t.state === "finished") ? row : null;
+      },
+      90_000,
+      "the finished thread state",
+    );
     check(
       "a turn that ended off-screen settles its thread to finished",
       settledRow.threads.every((t) => t.id !== sessionId || t.state === "finished"),
@@ -310,16 +324,19 @@ async function main() {
     );
     await turnPromise;
 
-
     // --- 3.6 a removal closes the clone's live threads (D21) ----------------
     const refundSession = await request({ type: "session.create" });
     // 환불's own thread must show in 환불's threads — and 결제's must not
     // bleed across (D59: the tree shows every project, each with its own).
-    const refundThreadsRow = await waitFor(() => {
-      const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
-      const row = changed?.projects?.find((p) => p.slug === refunds.slug);
-      return row?.threads?.some((t) => t.id === refundSession.sessionId) ? row : null;
-    }, 15_000, "the 환불 thread in its project's threads");
+    const refundThreadsRow = await waitFor(
+      () => {
+        const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
+        const row = changed?.projects?.find((p) => p.slug === refunds.slug);
+        return row?.threads?.some((t) => t.id === refundSession.sessionId) ? row : null;
+      },
+      15_000,
+      "the 환불 thread in its project's threads",
+    );
     check(
       "each project's threads list only its own conversations",
       refundThreadsRow.threads.every((t) => t.id !== sessionId),
@@ -351,7 +368,11 @@ async function main() {
     const orphanTranscript = join(refundStore, "77777777-7777-7777-7777-777777777777.jsonl");
     writeFileSync(
       orphanTranscript,
-      JSON.stringify({ type: "user", message: { role: "user", content: "옛 대화" }, timestamp: new Date().toISOString() }) + "\n",
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "옛 대화" },
+        timestamp: new Date().toISOString(),
+      }) + "\n",
     );
     const removeReply = await request({
       type: "project.remove",
@@ -384,11 +405,19 @@ async function main() {
     // The gate's claim: without the planner's yes, the clone happens but the
     // repo's install never does; one project.update is the yes. The fresh
     // second project then doubles as the 3.7 duel partner below (D34).
-    const third = await request({ type: "project.create", name: "정산", repoUrl: refundsFixture.remote });
-    const gated = await waitFor(async () => {
-      const current = await request({ type: "repo.status" });
-      return current.phase === "error" && current.errorKind === "commands" ? current : null;
-    }, 60_000, "the commands gate");
+    const third = await request({
+      type: "project.create",
+      name: "정산",
+      repoUrl: refundsFixture.remote,
+    });
+    const gated = await waitFor(
+      async () => {
+        const current = await request({ type: "repo.status" });
+        return current.phase === "error" && current.errorKind === "commands" ? current : null;
+      },
+      60_000,
+      "the commands gate",
+    );
     check(
       "an unapproved repo stops after the clone with the commands kind",
       gated.errorKind === "commands",
@@ -398,18 +427,38 @@ async function main() {
       "an unapproved repo's install command has not run",
       !existsSync(join(DIR, "projects", third.slug, "repo", "node_modules")),
     );
-    await request({ type: "project.update", slug: third.slug, approveCommands: true });
-    await waitFor(async () => {
-      const current = await request({ type: "repo.status" });
-      return current.phase === "ready" ? current : null;
-    }, 60_000, "정산 ready after the approval");
+    await request({
+      type: "project.update",
+      slug: third.slug,
+      approveCommands: true,
+    });
+    await waitFor(
+      async () => {
+        const current = await request({ type: "repo.status" });
+        return current.phase === "ready" ? current : null;
+      },
+      60_000,
+      "정산 ready after the approval",
+    );
     check(
       "the approval lets the install run",
       existsSync(join(DIR, "projects", third.slug, "repo", "node_modules")),
     );
     await new Promise((resolve) => {
-      ws.send(JSON.stringify({ type: "project.activate", slug: payments.slug, id: "d34a" }));
-      ws.send(JSON.stringify({ type: "project.activate", slug: third.slug, id: "d34b" }));
+      ws.send(
+        JSON.stringify({
+          type: "project.activate",
+          slug: payments.slug,
+          id: "d34a",
+        }),
+      );
+      ws.send(
+        JSON.stringify({
+          type: "project.activate",
+          slug: third.slug,
+          id: "d34b",
+        }),
+      );
       const settle = () => {
         if (inbox.find((m) => m.id === "d34a") && inbox.find((m) => m.id === "d34b")) resolve();
         else setTimeout(settle, 100);
@@ -427,7 +476,11 @@ async function main() {
     await server.stop();
     ws.close();
     const restartPort = await freePort();
-    const restarted = new DaemonServer({ host: "127.0.0.1", port: restartPort, token: "projects-e2e" });
+    const restarted = new DaemonServer({
+      host: "127.0.0.1",
+      port: restartPort,
+      token: "projects-e2e",
+    });
     await restarted.start();
     const ws2 = new WebSocket(`ws://127.0.0.1:${restartPort}?token=projects-e2e`);
     const inbox2 = [];
@@ -461,16 +514,24 @@ async function main() {
     // so only the start sweep's recovery can bring the work back.
     const parkedFile = join(DIR, "projects", payments.slug, "repo", "하드킬-산출물.txt");
     writeFileSync(parkedFile, "죽은 실행이 임시 보관한 작업\n");
-    execFileSync("git", ["stash", "push", "--include-untracked", "-m", "CDS Design: 최신화 임시 보관"], {
-      cwd: join(DIR, "projects", payments.slug, "repo"),
-    });
+    execFileSync(
+      "git",
+      ["stash", "push", "--include-untracked", "-m", "Colo Design: 최신화 임시 보관"],
+      {
+        cwd: join(DIR, "projects", payments.slug, "repo"),
+      },
+    );
     check(
       "a parked stash takes the file out of the worktree",
       !existsSync(parkedFile),
       `file still present=${existsSync(parkedFile)}`,
     );
     const revivePort = await freePort();
-    const revived = new DaemonServer({ host: "127.0.0.1", port: revivePort, token: "projects-e2e" });
+    const revived = new DaemonServer({
+      host: "127.0.0.1",
+      port: revivePort,
+      token: "projects-e2e",
+    });
     await revived.start();
     const ws3 = new WebSocket(`ws://127.0.0.1:${revivePort}?token=projects-e2e`);
     const inbox3 = [];
@@ -479,7 +540,11 @@ async function main() {
       ws3.once("open", resolve);
       ws3.once("error", reject);
     });
-    const hello3 = await waitFor(() => inbox3.find((m) => m.type === "hello"), 20_000, "hello after the hard kill");
+    const hello3 = await waitFor(
+      () => inbox3.find((m) => m.type === "hello"),
+      20_000,
+      "hello after the hard kill",
+    );
     const paymentsRevived = hello3.status.projects.find((p) => p.slug === payments.slug);
     check(
       "startup replays a dead run's parked work",

@@ -1,44 +1,43 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import { extname, join } from "node:path";
-import { realpathBestEffort } from "./paths.js";
-import { WebSocketServer, type WebSocket } from "ws";
 import {
-  PROTOCOL_VERSION,
-  parseClientMessage,
   type ClientMessage,
   type GitHubRepoList,
   type HandoffShot,
+  markTurn,
   type PlanUsage,
-  type PlanWindow,
+  PROTOCOL_VERSION,
   type ProjectSummary,
+  parseClientMessage,
+  type ServerMessage,
   type SessionCommand,
   type SessionModelInfo,
-  type ServerMessage,
   type SessionState,
-} from "@cds-design/protocol";
-import { SessionManager } from "./session-manager.js";
-import { NEW_SESSION_TITLE, probeCommands } from "./session.js";
-import { repoWritePolicy } from "./workspaces.js";
-import { RepoWorkspace, trustWorkspace } from "./repo.js";
-import { readComments, recordComments, resolveComment } from "./comments.js";
+} from "@colo-design/protocol";
+import { type WebSocket, WebSocketServer } from "ws";
 import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE } from "./bootstrap-brief.js";
-import { assertClonableRepoUrl, repoSettingsWarning, validateBootstrapConfig } from "./repo.js";
-import { markTurn } from "@cds-design/protocol";
-import { GitHubClient, createGitHubTransport } from "./github.js";
-import { ProjectRegistry, type ProjectPaths } from "./projects.js";
+import { readComments, recordComments, resolveComment } from "./comments.js";
 import {
+  type CredentialStore,
   createCredentialStore,
   loadRepoPat,
+  mergeNpmrc,
   migratePlaintextSecrets,
   migrateProjectPats,
-  mergeNpmrc,
   npmrcPath,
   REPO_PAT_ITEM,
-  type CredentialStore,
 } from "./credentials.js";
+import {
+  browseFiles,
+  buildStatus,
+  CONFIG_DIR,
+  listFiles,
+  resolveClaudeExecutable,
+} from "./environment.js";
+import { createGitHubTransport, GitHubClient } from "./github.js";
 import {
   gitInstallGuidance,
   runOnboardingChecks,
@@ -46,14 +45,7 @@ import {
   startClaudeInstall,
   startClaudeLogin,
 } from "./onboarding.js";
-import {
-  buildStatus,
-  browseFiles,
-  resolveClaudeExecutable,
-  listFiles,
-  migrateHomeDir,
-  CONFIG_DIR,
-} from "./environment.js";
+import { realpathBestEffort } from "./paths.js";
 import {
   createPreviewTools,
   type PreviewDriver,
@@ -61,9 +53,20 @@ import {
   type PreviewScreenDeclaration,
   type PreviewTools,
 } from "./preview-tools.js";
+import { type ProjectPaths, ProjectRegistry } from "./projects.js";
+import {
+  assertClonableRepoUrl,
+  RepoWorkspace,
+  repoSettingsWarning,
+  trustWorkspace,
+  validateBootstrapConfig,
+} from "./repo.js";
+import { NEW_SESSION_TITLE, probeCommands } from "./session.js";
+import { SessionManager } from "./session-manager.js";
+import { repoWritePolicy } from "./workspaces.js";
 
 // The desktop builds its driver against these (PLAN D61) — exported here so
-// `@cds-design/daemon/server` stays the one import a host needs.
+// `@colo-design/daemon/server` stays the one import a host needs.
 export type { PreviewDriver, PreviewDriverFactory } from "./preview-tools.js";
 
 interface ProjectWorkspaces {
@@ -101,8 +104,18 @@ const WEB_TYPES: Record<string, string> = {
 export type DaemonNotice =
   | { kind: "done"; sessionId: string; title: string }
   | { kind: "crashed"; sessionId: string; title: string }
-  | { kind: "ask"; sessionId: string; title: string; what: "permission" | "question" }
-  | { kind: "gate"; sessionId: string; title: string; stage: "save" | "handoff" | "refresh" };
+  | {
+      kind: "ask";
+      sessionId: string;
+      title: string;
+      what: "permission" | "question";
+    }
+  | {
+      kind: "gate";
+      sessionId: string;
+      title: string;
+      stage: "save" | "handoff" | "refresh";
+    };
 
 /**
  * 상태 전환 중 부르는 값이 되는 것: Claude 가 멈췄거나(idle), 중단됐거나
@@ -151,15 +164,9 @@ export interface DaemonConfig {
    */
   onNotice?: (notice: DaemonNotice) => void;
   /**
-   * The ~/.cds-design migration's warning line, when the desktop host wants
-   * to surface it (the CLI prints it itself). Optional — the daemon logs it
-   * either way.
-   */
-  onMigrationWarning?: (warning: string) => void;
-  /**
    * The desktop's offscreen-window driver (PLAN D61). When a host injects
    * it, sessions of a project whose preview server is up get the
-   * `cds-preview` tools; without it — the browser dev path — sessions run
+   * `colo-preview` tools; without it — the browser dev path — sessions run
    * exactly as before, with no preview tools at all.
    */
   previewDriverFactory?: PreviewDriverFactory;
@@ -212,7 +219,7 @@ export class DaemonServer {
    */
   private readonly previewDrivers = new Map<string, PreviewDriver>();
   /**
-   * The connected repo's declared screens (the `cds-design.screens`
+   * The connected repo's declared screens (the `colo-design.screens`
    * envelope's cache, PLAN D7) — the list `screen_list` serves. The web UI
    * holds the same list today; the daemon's copy fills when the overlay
    * bridge lands. Read on every call, never snapshotted into the tools.
@@ -233,7 +240,12 @@ export class DaemonServer {
     this.manager = new SessionManager({
       onEvent: (sessionId, event) => this.broadcast({ type: "session.event", sessionId, event }),
       onState: (sessionId, state, detail) => {
-        this.broadcast({ type: "session.state", sessionId, state, ...(detail ? { detail } : {}) });
+        this.broadcast({
+          type: "session.state",
+          sessionId,
+          state,
+          ...(detail ? { detail } : {}),
+        });
         // A turn that just finished is the one moment the clone can have
         // gained files nobody has saved (PLAN D8). Counting here — rather
         // than on a timer — is what lets the top bar say 저장 the instant
@@ -261,20 +273,12 @@ export class DaemonServer {
         // close, delete, remove, and daemon stop all land here as `closed`.
         if (state === "closed") this.destroyPreviewDriver(sessionId);
       },
-      onPermissionRequest: (payload) =>
-        this.broadcast({ type: "permission.request", ...payload }),
+      onPermissionRequest: (payload) => this.broadcast({ type: "permission.request", ...payload }),
       onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
     });
   }
 
   async start(): Promise<void> {
-    // The dot-prefixed root (PLAN D1), before the registry reads any path.
-    // The CLI entry does this too, before daemon.json; the desktop app's
-    // in-process host comes straight here, so this is its only choke point.
-    // Idempotent: a migrated home makes the second call a no-op.
-    const homeWarning = migrateHomeDir();
-    if (homeWarning) this.config.onMigrationWarning?.(homeWarning);
-
     this.claudeExecutable = await resolveClaudeExecutable(this.config.claudeExecutable);
 
     // Secrets move into the OS store on the way in; settings files keep only
@@ -308,7 +312,7 @@ export class DaemonServer {
     // one `git status` per cloned project so a restart does not blank the
     // counts. Only the ACTIVE project gets a preview server; that is what
     // activation above already did. Clones re-arm their trust entry too: the
-    // ~/.cds-design migration renamed every clone path, and trust is keyed
+    // ~/.colo-design migration renamed every clone path, and trust is keyed
     // by path.
     const sweeps: Array<Promise<unknown>> = [];
     for (const project of this.registry.list()) {
@@ -401,7 +405,11 @@ export class DaemonServer {
     ws.on("message", (raw) => void this.onMessage(ws, String(raw)));
 
     void this.status().then((status) =>
-      this.send(ws, { type: "hello", protocolVersion: PROTOCOL_VERSION, status }),
+      this.send(ws, {
+        type: "hello",
+        protocolVersion: PROTOCOL_VERSION,
+        status,
+      }),
     );
     void this.activeOrNull()
       ?.repo.status()
@@ -448,7 +456,10 @@ export class DaemonServer {
         // D94: 연결 준비 — the picker's Claude-prepare choice rides the
         // workspace, and its callback opens the brief turn here.
         ...(this.bootstrapSlugs.has(slug)
-          ? { bootstrap: true, prepareBootstrap: () => this.runBootstrapPrepare(paths.repoRoot) }
+          ? {
+              bootstrap: true,
+              prepareBootstrap: () => this.runBootstrapPrepare(paths.repoRoot),
+            }
           : {}),
         onCycleChange: (cycle) => this.registry.setCycle(slug, cycle),
         gitHubClient: () => this.gitHubClient(),
@@ -503,7 +514,10 @@ export class DaemonServer {
       active && active.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
     const cached = this.cliCommandsCache.get(cwd);
     if (cached) return cached;
-    this.cliCommandsProbe ??= probeCommands({ cwd, executable: this.claudeExecutable })
+    this.cliCommandsProbe ??= probeCommands({
+      cwd,
+      executable: this.claudeExecutable,
+    })
       .then((commands) => {
         this.cliCommandsCache.set(cwd, commands);
         return commands;
@@ -531,14 +545,15 @@ export class DaemonServer {
   }
 
   private projectSummaries(): ProjectSummary[] {
-    const activeSlug = this.registry?.activeSlug() ?? null;
     return (this.registry?.list() ?? []).map((project) => {
       const workspaces = this.workspaces.get(project.slug);
       const repo = workspaces?.repo;
       // The tree's children come from the per-clone cache (PLAN D59); a clone
       // the daemon has not scanned yet omits the field rather than claiming
       // an empty conversation list.
-      const cwd = workspaces?.repo.isCloned() ? realpathBestEffort(workspaces.paths.repoRoot) : null;
+      const cwd = workspaces?.repo.isCloned()
+        ? realpathBestEffort(workspaces.paths.repoRoot)
+        : null;
       const threads = cwd ? this.manager.cachedThreads(cwd) : null;
       return {
         slug: project.slug,
@@ -549,7 +564,9 @@ export class DaemonServer {
         // last restart: disk state is all a summary may claim.
         phase: repo ? repo.syncState().phase : "missing",
         pendingChanges: repo?.pendingChangeCount ?? 0,
-        working: repo ? this.manager.anyRunning(realpathBestEffort(workspaces.paths.repoRoot)) : false,
+        working: repo
+          ? this.manager.anyRunning(realpathBestEffort(workspaces.paths.repoRoot))
+          : false,
         handoff: repo?.currentHandoff ?? project.repo.handoff,
         ...(threads ? { threads } : {}),
       };
@@ -626,7 +643,7 @@ export class DaemonServer {
   // -------------------------------------------------------------------------
 
   /**
-   * The session options' preview half: a `cds-preview` tool set bound to the
+   * The session options' preview half: a `colo-preview` tool set bound to the
    * active project's preview url, when a driver is injected, the preview
    * server is up, and the planner has not turned the tools off. Everything
    * else — no desktop, no preview yet, `previewTools: false` — is a session
@@ -676,7 +693,9 @@ export class DaemonServer {
       title: BOOTSTRAP_TITLE,
     });
     this.announceProjectsThrottled();
-    session.send(markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF));
+    session.send(
+      markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF),
+    );
     // The turn ends when the session settles back to idle; a stalled CLI
     // fails the prepare rather than hanging the sync forever.
     const settled = await (async () => {
@@ -691,7 +710,7 @@ export class DaemonServer {
     })();
     if (!settled) return false;
     try {
-      const config = JSON.parse(readFileSync(join(cwd, "cds-design.json"), "utf8")) as {
+      const config = JSON.parse(readFileSync(join(cwd, "colo-design.json"), "utf8")) as {
         install?: string;
         check?: string;
         build?: string;
@@ -731,7 +750,7 @@ export class DaemonServer {
     if (!factory || !active?.repo.isCloned()) return [];
     // The repo's refusal is also read at commit time (repo.ts); checking here
     // spares the window the drive through every screen.
-    if (active.repo.cdsDesign()?.shots === false) return [];
+    if (active.repo.coloDesign()?.shots === false) return [];
     const status = await active.repo.status().catch(() => null);
     if (!status?.previewUrl || this.previewScreens.length === 0) return [];
     const driver = factory.for(status.previewUrl);
@@ -937,7 +956,7 @@ export class DaemonServer {
    * the bring-up just produced.
    */
   private mergeRegistryNpmrc(repo: RepoWorkspace): void {
-    const config = repo.cdsDesign();
+    const config = repo.coloDesign();
     const pat = this.pat;
     if (!config?.registry || !pat) return;
     const scope = config.registry.scope.startsWith("@")
@@ -1120,7 +1139,12 @@ export class DaemonServer {
   private async onMessage(ws: WebSocket, raw: string): Promise<void> {
     const parsed = parseClientMessage(raw);
     if (!parsed.ok) {
-      this.send(ws, { type: "error", id: parsed.id, message: parsed.error, code: "bad_request" });
+      this.send(ws, {
+        type: "error",
+        id: parsed.id,
+        message: parsed.error,
+        code: "bad_request",
+      });
       return;
     }
     const message = parsed.value;
@@ -1163,12 +1187,13 @@ export class DaemonServer {
         // lifecycle hooks above can destroy it. D91: the session id only
         // exists after `create`, so the opened-report goes through a sink
         // the code below points at the fresh id.
-        const openSink: { current: ((route: string, state: string | null) => void) | null } = {
+        const openSink: {
+          current: ((route: string, state: string | null) => void) | null;
+        } = {
           current: null,
         };
-        const preview = await this.previewToolsFor(
-          message.previewTools !== false,
-          (route, state) => openSink.current?.(route, state),
+        const preview = await this.previewToolsFor(message.previewTools !== false, (route, state) =>
+          openSink.current?.(route, state),
         );
         const session = this.manager.create({
           cwd: this.workspaceCwd(),
@@ -1292,14 +1317,20 @@ export class DaemonServer {
       }
 
       case "project.list":
-        return { projects: this.projectSummaries(), activeSlug: this.registry.activeSlug() };
+        return {
+          projects: this.projectSummaries(),
+          activeSlug: this.registry.activeSlug(),
+        };
 
       case "project.create":
         return await this.createProject(message);
 
       case "project.activate": {
         await this.activateProject(message.slug);
-        return { projects: this.projectSummaries(), activeSlug: this.registry.activeSlug() };
+        return {
+          projects: this.projectSummaries(),
+          activeSlug: this.registry.activeSlug(),
+        };
       }
 
       case "project.update": {
@@ -1309,7 +1340,9 @@ export class DaemonServer {
         // The error card's 실행 허용: the registry remembers, the workspace is
         // told, and the bring-up it was waiting on runs to ready.
         if (message.approveCommands !== undefined) {
-          this.registry.update(message.slug, { commandsApproved: message.approveCommands });
+          this.registry.update(message.slug, {
+            commandsApproved: message.approveCommands,
+          });
           const gate = this.workspacesFor(message.slug);
           gate.repo.setCommandsApproved(message.approveCommands);
           if (message.approveCommands) void gate.repo.sync().catch(() => undefined);
@@ -1326,9 +1359,11 @@ export class DaemonServer {
           await workspaces.repo.update({ url: message.repoUrl });
         }
         this.announceProjects();
-        return { projects: this.projectSummaries(), activeSlug: this.registry.activeSlug() };
+        return {
+          projects: this.projectSummaries(),
+          activeSlug: this.registry.activeSlug(),
+        };
       }
-
 
       case "project.remove": {
         const paths = this.registry.paths(message.slug);
@@ -1438,7 +1473,10 @@ export class DaemonServer {
         if (!client) {
           throw new Error("GitHub 토큰이 없습니다 — 먼저 토큰을 연결해 주세요.");
         }
-        return await client.inspectRepo({ owner: message.owner, repo: message.repo });
+        return await client.inspectRepo({
+          owner: message.owner,
+          repo: message.repo,
+        });
       }
 
       case "diff.get":
@@ -1485,13 +1523,18 @@ export class DaemonServer {
         }
         const checkpoints = await this.repo.checkpoints();
         const entry = checkpoints.entries.find(
-          (candidate) => candidate.sessionId === message.sessionId && candidate.turn === message.turn,
+          (candidate) =>
+            candidate.sessionId === message.sessionId && candidate.turn === message.turn,
         );
         if (entry) await this.repo.checkpointRestore(entry.id);
-        const openSink: { current: ((route: string, state: string | null) => void) | null } = {
+        const openSink: {
+          current: ((route: string, state: string | null) => void) | null;
+        } = {
           current: null,
         };
-        const preview = await this.previewToolsFor(true, (route, state) => openSink.current?.(route, state));
+        const preview = await this.previewToolsFor(true, (route, state) =>
+          openSink.current?.(route, state),
+        );
         const result = await this.manager.rewind({
           sessionId: message.sessionId,
           cwd: this.workspaceCwd(),
@@ -1558,7 +1601,9 @@ export class DaemonServer {
       }
 
       case "comments.list":
-        return { items: readComments(join(this.requireActive().paths.root, "comments.json")) };
+        return {
+          items: readComments(join(this.requireActive().paths.root, "comments.json")),
+        };
 
       case "comments.resolve": {
         const resolved = resolveComment(
@@ -1587,7 +1632,12 @@ export class DaemonServer {
       onSessionTurn: (brief: string) => {
         const session = this.manager.get(sessionId);
         if (session) {
-          this.config.onNotice?.({ kind: "gate", sessionId, title: session.title, stage });
+          this.config.onNotice?.({
+            kind: "gate",
+            sessionId,
+            title: session.title,
+            stage,
+          });
           session.send(brief);
         }
       },
@@ -1598,4 +1648,4 @@ export class DaemonServer {
 /** The PR body when the planner did not bring one. The screens a handoff
  * carries live in the repo — the client composes the per-screen list — so the
  * daemon's fallback says what the work is rather than inventing links. */
-const DEFAULT_HANDOFF_BODY = "CDS Design에서 만든 화면입니다. 로직만 붙이면 됩니다.";
+const DEFAULT_HANDOFF_BODY = "Colo Design에서 만든 화면입니다. 로직만 붙이면 됩니다.";

@@ -1,4 +1,4 @@
-import type { SessionState } from "@cds-design/protocol";
+import type { SessionState } from "@colo-design/protocol";
 
 /**
  * Which threads finished a turn — or stopped to ask — while the planner was

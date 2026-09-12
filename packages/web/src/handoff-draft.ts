@@ -1,4 +1,4 @@
-import type { CdsDesignScreen } from "@cds-design/protocol";
+import type { ColoDesignScreen } from "@colo-design/protocol";
 
 /**
  * What the 넘기기 dialog opens on (PLAN D5).
@@ -16,7 +16,7 @@ import type { CdsDesignScreen } from "@cds-design/protocol";
  */
 export function handoffDraft(
   projectName: string,
-  screens: CdsDesignScreen[],
+  screens: ColoDesignScreen[],
 ): { title: string; body: string } {
   return {
     // The project is usually already named for what it is ("재고 실사 화면");
@@ -26,7 +26,7 @@ export function handoffDraft(
   };
 }
 
-function bodyFor(screens: CdsDesignScreen[]): string {
+function bodyFor(screens: ColoDesignScreen[]): string {
   const lines: string[] = [];
   for (const screen of screens) {
     if (!screen.spec) continue;

@@ -3,8 +3,9 @@
  * ex `Composer` head. Pure presentation: numbers arrive as props, the face
  * reads the 5-hour window, the popover carries the whole budget picture.
  */
+
+import type { ContextUsage, PlanUsage } from "@colo-design/protocol";
 import { useEffect, useState } from "react";
-import type { ContextUsage, PlanUsage } from "@cds-design/protocol";
 
 /**
  * "언제 끝나나" reads best as time left, and one unit is enough on a chip —
@@ -25,7 +26,10 @@ function timeLeft(at: string | null): string | null {
  * `timeLeft` answers "얼마나"; this answers "언제".
  */
 function clockTime(at: string): string {
-  return new Date(at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+  return new Date(at).toLocaleTimeString("ko-KR", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /** Popover note: how long is left, and when the window refills — one line. */
@@ -107,7 +111,9 @@ export function UsageChip({
   const badge = lead ? tone(lead.pct) : "";
   const overall = worst ? tone(worst.pct) : "";
   const reading = lead
-    ? [lead.raw != null ? `${lead.pct}%` : "", timeLeft(lead.resetsAt) ?? ""].filter(Boolean).join(" · ")
+    ? [lead.raw != null ? `${lead.pct}%` : "", timeLeft(lead.resetsAt) ?? ""]
+        .filter(Boolean)
+        .join(" · ")
     : "";
   // Time left is computed from `now`, so a rendered countdown goes stale;
   // re-render on the half-minute while one is on screen.
@@ -175,7 +181,9 @@ export function UsageChip({
             {ringPct !== null && (
               <circle
                 className={
-                  tone(ringPct) ? `usage__ringarc usage__ringarc--${tone(ringPct)}` : "usage__ringarc"
+                  tone(ringPct)
+                    ? `usage__ringarc usage__ringarc--${tone(ringPct)}`
+                    : "usage__ringarc"
                 }
                 cx="10"
                 cy="10"
@@ -218,7 +226,9 @@ export function UsageChip({
               </span>
               <span className="usage__track">
                 <span
-                  className={tone(row.pct) ? `usage__fill usage__fill--${tone(row.pct)}` : "usage__fill"}
+                  className={
+                    tone(row.pct) ? `usage__fill usage__fill--${tone(row.pct)}` : "usage__fill"
+                  }
                   style={{ width: `${row.pct}%` }}
                 />
                 {/* A threshold the gauge has already passed is told by the

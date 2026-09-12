@@ -1,6 +1,7 @@
+import { APP_SHORTCUTS } from "@colo-design/protocol";
 import { useEffect, useRef } from "react";
-import { APP_SHORTCUTS } from "@cds-design/protocol";
 import { CloseIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * ⌘/ 단축키 시트 (PLAN D92) — 코치 마크 셋이 한 번으로 끝나는 만큼, 단축키의
@@ -10,14 +11,15 @@ import { CloseIcon } from "./icons";
 export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   useEffect(() => {
     if (!open) return;
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [open, onClose]);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef, open);
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);

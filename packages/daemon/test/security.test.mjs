@@ -9,18 +9,18 @@
  *
  * Run: node --test packages/daemon/test/security.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import { containsPath, realpathBestEffort } from "../dist/paths.js";
 import { PermissionMemory, permissionSignature } from "../dist/session.js";
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
-
 
 // ---------------------------------------------------------------------------
 // F6 + F10 — realpath containment
@@ -34,7 +34,10 @@ test("realpathBestEffort resolves what exists and appends what does not", () => 
     const real = realpathBestEffort(join(dir, "a", "b"));
     assert.ok(!real.startsWith("/var/folders") || true); // sanity: no assertion on host layout
     assert.equal(realpathBestEffort(join(dir, "a", "b", "not-yet.md")), join(real, "not-yet.md"));
-    assert.equal(realpathBestEffort(join(dir, "a", "b", "deep", "deeper", "file.md")), join(real, "deep", "deeper", "file.md"));
+    assert.equal(
+      realpathBestEffort(join(dir, "a", "b", "deep", "deeper", "file.md")),
+      join(real, "deep", "deeper", "file.md"),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -106,9 +109,21 @@ test("an identical approved call never prompts again; a different one does", () 
   memory.record("Bash", { command: "pnpm check", description: "gate" });
 
   assert.equal(memory.allows("Bash", { command: "pnpm check", description: "gate" }), true);
-  assert.equal(memory.allows("Bash", { command: "pnpm check" }), true, "extra fields do not change the command identity");
-  assert.equal(memory.allows("Bash", { command: "pnpm build" }), false, "a different command still prompts");
-  assert.equal(memory.allows("WebFetch", { url: "https://x" }), false, "a different tool still prompts");
+  assert.equal(
+    memory.allows("Bash", { command: "pnpm check" }),
+    true,
+    "extra fields do not change the command identity",
+  );
+  assert.equal(
+    memory.allows("Bash", { command: "pnpm build" }),
+    false,
+    "a different command still prompts",
+  );
+  assert.equal(
+    memory.allows("WebFetch", { url: "https://x" }),
+    false,
+    "a different tool still prompts",
+  );
 
   memory.record("WebFetch", { url: "https://x" });
   assert.equal(memory.allows("WebFetch", { url: "https://x" }), true);
@@ -118,7 +133,11 @@ test("an identical approved call never prompts again; a different one does", () 
 test("path-shaped tools key on tool+path; Bash keys on the command string", () => {
   assert.equal(permissionSignature("Bash", { command: "ls" }), "Bash:command:ls");
   assert.equal(permissionSignature("Edit", { file_path: "/w/a.md" }), "Edit:path:/w/a.md");
-  assert.equal(permissionSignature("Edit", { file_path: "/w/b.md" }) === permissionSignature("Edit", { file_path: "/w/a.md" }), false);
+  assert.equal(
+    permissionSignature("Edit", { file_path: "/w/b.md" }) ===
+      permissionSignature("Edit", { file_path: "/w/a.md" }),
+    false,
+  );
   // No command, no path: a stable JSON fallback still distinguishes calls.
   assert.notEqual(
     permissionSignature("Tool", { a: 1, b: 2 }),
@@ -173,7 +192,7 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
   for (const command of [
     "git commit -m 'ㅅㄴㅅ'",
     "git -C /repo push origin main",
-    "git push --set-upstream origin cds-design/20260911-1",
+    "git push --set-upstream origin colo-design/20260911-1",
   ]) {
     const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
     assert.equal(verdict.behavior, "deny", command);

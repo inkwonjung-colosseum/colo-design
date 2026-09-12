@@ -6,9 +6,9 @@
  */
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Block } from "./daemon-client";
-import { Transcript, PermissionCard, QuestionCard } from "./components";
 import { Composer } from "./Composer";
+import { PermissionCard, QuestionCard, Transcript } from "./components";
+import type { Block } from "./daemon-client";
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./styles.css";
 
@@ -85,7 +85,14 @@ const blocks: Block[] = [
     streaming: false,
     text: "목록 테이블의 상태 뱃지는 CDS Badge 색상 토큰을 그대로 쓰고, 정지 회원 안내는 Alert 컴포넌트로 상단에 배치한다.",
   },
-  { type: "turn", id: "end1", subtype: "success", isError: false, costUsd: null, durationMs: null },
+  {
+    type: "turn",
+    id: "end1",
+    subtype: "success",
+    isError: false,
+    costUsd: null,
+    durationMs: null,
+  },
 ];
 
 const runningBlocks: Block[] = [
@@ -124,7 +131,8 @@ function PlannerShell({ live }: { live: boolean }) {
         </button>
         <span className="thread__spacer" />
         <button type="button" className="ghost thread__more" aria-label="대화 메뉴">
-          ···<span />
+          ···
+          <span />
         </button>
       </header>
       <div className="chatstack">
@@ -139,7 +147,18 @@ function PlannerShell({ live }: { live: boolean }) {
         {live && (
           <button type="button" className="chatstack__pill chatstack__pill--live">
             새 내용
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m6 9 6 6 6-6" />
+            </svg>
           </button>
         )}
       </div>
@@ -183,7 +202,16 @@ function Preview() {
       <div className="planner__main">
         <div className="planner__body" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
           <div className="planner__chatcol">
-            <div className="previewbar" style={{ display: "flex", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--line-soft)", alignItems: "center" }}>
+            <div
+              className="previewbar"
+              style={{
+                display: "flex",
+                gap: 8,
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--line-soft)",
+                alignItems: "center",
+              }}
+            >
               <button onClick={() => setLive(!live)}>{live ? "정지 상태로" : "실행 중으로"}</button>
               <select value={theme} onChange={(e) => setTheme(e.target.value)}>
                 <option value="dark">dark</option>
@@ -220,7 +248,12 @@ function Preview() {
                   plan={null}
                   running={true}
                   sendKey="enter"
-                  selector={{ model: null, effort: null, permissionMode: "acceptEdits", models: [] }}
+                  selector={{
+                    model: null,
+                    effort: null,
+                    permissionMode: "acceptEdits",
+                    models: [],
+                  }}
                   commands={[]}
                   onSetModel={() => undefined}
                   onSetEffort={() => undefined}
@@ -241,7 +274,13 @@ function Preview() {
                       kind: "permission",
                       toolName: "Bash",
                       input: { command: "pnpm dlx shadcn@latest add dialog" },
-                      suggestions: [{ destination: "pnpm dlx", label: "pnpm dlx", raw: null }],
+                      suggestions: [
+                        {
+                          destination: "pnpm dlx",
+                          label: "pnpm dlx",
+                          raw: null,
+                        },
+                      ],
                     }}
                     onRespond={() => undefined}
                   />
@@ -262,7 +301,10 @@ function Preview() {
                           header: "정렬",
                           multiSelect: false,
                           options: [
-                            { label: "가입일 최신순", description: "새 회원이 위로" },
+                            {
+                              label: "가입일 최신순",
+                              description: "새 회원이 위로",
+                            },
                             { label: "이름순", description: "가나다 순" },
                           ],
                         },

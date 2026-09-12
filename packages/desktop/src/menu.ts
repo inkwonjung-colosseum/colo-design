@@ -1,5 +1,5 @@
+import { APP_SHORTCUTS } from "@colo-design/protocol";
 import type { MenuItemConstructorOptions } from "electron";
-import { APP_SHORTCUTS } from "@cds-design/protocol";
 
 /**
  * 애플리케이션 메뉴 (PLAN D85 ⓒ). Electron 기본 메뉴의 reload · zoom ·
@@ -14,7 +14,7 @@ import { APP_SHORTCUTS } from "@cds-design/protocol";
  */
 
 /** The slice of PlannerPreviewView the menu aims at. */
-export interface MenuPreviewTarget {
+interface MenuPreviewTarget {
   reload(): void;
   history(delta: -1 | 1): void;
   zoomIn(): void;
@@ -55,7 +55,11 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
   const item = (id: string): MenuItemConstructorOptions => {
     const shortcut = APP_SHORTCUTS.find((entry) => entry.id === id);
     if (!shortcut || !shortcut.accelerator) throw new Error(`unknown shortcut: ${id}`);
-    return { label: shortcut.label, accelerator: shortcut.accelerator, click: clickFor[id] };
+    return {
+      label: shortcut.label,
+      accelerator: shortcut.accelerator,
+      click: clickFor[id],
+    };
   };
   const viewMenu: MenuItemConstructorOptions[] = [
     { ...item("reload"), id: "preview-reload" },
@@ -81,7 +85,7 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
   }
 
   const appMenu: MenuItemConstructorOptions = {
-    label: "CDS Design",
+    label: "Colo Design",
     submenu: [
       { role: "about" },
       item("new-session"),
@@ -111,6 +115,9 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     label: "보기",
     submenu: viewMenu,
   };
-  const windowMenu: MenuItemConstructorOptions = { label: "창", role: "windowMenu" };
+  const windowMenu: MenuItemConstructorOptions = {
+    label: "창",
+    role: "windowMenu",
+  };
   return [appMenu, editMenu, viewItem, windowMenu];
 }

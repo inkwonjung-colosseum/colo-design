@@ -5,26 +5,27 @@
  * text, a real permission round-trip, a follow-up turn that proves context
  * carried over, session listing, and teardown.
  *
- * The daemon's one workspace is a throwaway directory (`CDS_DESIGN_REPO_DIR`)
+ * The daemon's one workspace is a throwaway directory (`COLO_DESIGN_REPO_DIR`)
  * rather than something registered over the wire, and the project registry the
  * daemon migrates it into is thrown away with it. Without that the spawned
- * daemon would write ~/cds-design/config/projects.json on the developer's own
+ * daemon would write ~/colo-design/config/projects.json on the developer's own
  * machine. Nothing is cloned there: sessions only need the directory to exist.
  *
  * Usage: node test/e2e.mjs            (starts its own daemon)
  *        node test/e2e.mjs <ws-url>   (uses an already running daemon)
  */
 import { spawn } from "node:child_process";
-import { readFileSync, rmSync, mkdirSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROTOCOL_VERSION } from "@colo-design/protocol";
 import { WebSocket } from "ws";
 import { freePort } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const daemonEntry = join(here, "..", "dist", "index.js");
-const WORK = join(tmpdir(), "cds-design-e2e");
+const WORK = join(tmpdir(), "colo-design-e2e");
 const TARGET = join(WORK, "greeting.txt");
 
 const results = [];
@@ -42,7 +43,8 @@ function waitFor(predicate, timeoutMs, label, inbox) {
     const tick = () => {
       const hit = inbox.find(predicate);
       if (hit) return resolve(hit);
-      if (Date.now() - started > timeoutMs) return reject(new Error(`timeout waiting for ${label}`));
+      if (Date.now() - started > timeoutMs)
+        return reject(new Error(`timeout waiting for ${label}`));
       setTimeout(tick, 50);
     };
     tick();
@@ -59,14 +61,17 @@ async function main() {
   if (!url) {
     const env = {
       ...process.env,
-      CDS_DESIGN_REPO_DIR: WORK,
-      CDS_DESIGN_PROJECTS_SETTINGS: join(WORK, "projects.json"),
-      CDS_DESIGN_PROJECTS_DIR: join(WORK, "projects"),
+      COLO_DESIGN_REPO_DIR: WORK,
+      COLO_DESIGN_PROJECTS_SETTINGS: join(WORK, "projects.json"),
+      COLO_DESIGN_PROJECTS_DIR: join(WORK, "projects"),
       // The user's own daemon may be running right now; never fight it for 7823.
-      CDS_DESIGN_PORT: String(await freePort()),
+      COLO_DESIGN_PORT: String(await freePort()),
     };
     delete env.ANTHROPIC_API_KEY;
-    daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
+    daemon = spawn(process.execPath, [daemonEntry], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     daemon.stderr.on("data", (d) => process.stderr.write(`[daemon] ${d}`));
     process.on("exit", () => daemon.kill("SIGKILL"));
     url = await new Promise((resolve, reject) => {
@@ -108,7 +113,7 @@ async function main() {
 
   // 1. hello + status
   const hello = await waitFor((m) => m.type === "hello", 10000, "hello", inbox);
-  check("hello carries daemon status", hello.status.protocolVersion === 8);
+  check("hello carries daemon status", hello.status.protocolVersion === PROTOCOL_VERSION);
   check(
     "signed in with a subscription, not an API key",
     hello.status.loggedIn === true &&
@@ -116,7 +121,7 @@ async function main() {
       hello.status.authMethod === "claude.ai",
     `authMethod=${hello.status.authMethod} plan=${hello.status.subscriptionType} apiKeyInEnv=${hello.status.apiKeyInEnv}`,
   );
-  // The throwaway root has no cds-design.json, so no registry is declared and
+  // The throwaway root has no colo-design.json, so no registry is declared and
   // the CDS registry probe stays out of the picture. That is repo-e2e's
   // subject, not this one's.
   const blocking = hello.status.warnings.filter((w) => !w.includes("@colosseumcoinckr/cds"));
@@ -160,7 +165,11 @@ async function main() {
   );
 
   // 4. approve without echoing the input back
-  await call({ type: "permission.respond", requestId: permission.requestId, decision: "allow" });
+  await call({
+    type: "permission.respond",
+    requestId: permission.requestId,
+    decision: "allow",
+  });
 
   // Claude may need more than one approval to finish the task. Keep answering
   // so the turn can complete; the request shape was asserted above.
@@ -169,9 +178,11 @@ async function main() {
     for (const m of inbox) {
       if (m.type !== "permission.request" || answered.has(m.requestId)) continue;
       answered.add(m.requestId);
-      call({ type: "permission.respond", requestId: m.requestId, decision: "allow" }).catch(
-        () => undefined,
-      );
+      call({
+        type: "permission.respond",
+        requestId: m.requestId,
+        decision: "allow",
+      }).catch(() => undefined);
     }
   }, 400);
 
@@ -223,9 +234,11 @@ async function main() {
     for (const m of inbox) {
       if (m.type !== "permission.request" || answered.has(m.requestId)) continue;
       answered.add(m.requestId);
-      call({ type: "permission.respond", requestId: m.requestId, decision: "allow" }).catch(
-        () => undefined,
-      );
+      call({
+        type: "permission.respond",
+        requestId: m.requestId,
+        decision: "allow",
+      }).catch(() => undefined);
     }
   }, 400);
   let secondTurn;
@@ -249,7 +262,10 @@ async function main() {
   const listed = await call({ type: "session.list" });
   const mine = listed.find((s) => s.sessionId === sessionId);
   check("session.list includes the live session", Boolean(mine?.live), `state=${mine?.state}`);
-  check("session title derived from the first prompt", Boolean(mine?.title && mine.title !== "새 화면"));
+  check(
+    "session title derived from the first prompt",
+    Boolean(mine?.title && mine.title !== "새 화면"),
+  );
 
   // 7. teardown
   await call({ type: "session.close", sessionId });

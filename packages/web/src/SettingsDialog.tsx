@@ -1,33 +1,34 @@
-import { useEffect, useRef, useState } from "react";
-import type { DaemonStatus, EffortLevel, PermissionMode } from "@cds-design/protocol";
+import type { DaemonStatus, EffortLevel, PermissionMode } from "@colo-design/protocol";
 import {
+  checkForUpdate,
   RELEASES_FEED_URL,
   RELEASES_REPO,
-  checkForUpdate,
   type UpdateCheckResult,
-} from "@cds-design/protocol";
-import type { Daemon } from "./daemon-client";
-import { GitHubTokenForm } from "./GitHubTokenForm";
-import { ConfirmDialog } from "./ConfirmDialog";
+} from "@colo-design/protocol";
+import { useEffect, useRef, useState } from "react";
 import { resetCoachMarks } from "./CoachMark";
-import { CheckIcon, CloseIcon } from "./icons";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   EFFORT_HINT,
   EFFORT_LABEL,
   MODE_HINT,
   MODE_LABEL,
-  SETTINGS_MODES,
   modelOptions,
   modelRowOf,
+  SETTINGS_MODES,
 } from "./chat-options";
+import type { Daemon } from "./daemon-client";
+import { GitHubTokenForm } from "./GitHubTokenForm";
+import { CheckIcon, CloseIcon } from "./icons";
 import {
-  THEMES,
-  loadModelCatalog,
   type ChatSettings,
+  loadModelCatalog,
   type SendKey,
   type Settings,
+  THEMES,
   type ThemeChoice,
 } from "./settings";
+import { useModalFocus } from "./use-modal-focus";
 
 /** Slowest last, so the picker reads as a dial rather than a set. */
 const EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
@@ -189,10 +190,7 @@ function ThemeGallery({
           data-testid={`theme-${theme}`}
           onClick={() => onChange(theme)}
         >
-          <span
-            className="themegrid__art"
-            {...(theme === "system" ? {} : { "data-theme": theme })}
-          >
+          <span className="themegrid__art" {...(theme === "system" ? {} : { "data-theme": theme })}>
             {theme === "system" ? (
               /* system 은 두 얼굴이 한 타일: 어두운 절과 밝은 절. */
               <>
@@ -257,6 +255,7 @@ export function SettingsDialog({
    */
   const models = loadModelCatalog().length > 0 ? loadModelCatalog() : (status?.models ?? []);
   const panel = useRef<HTMLDivElement>(null);
+  useModalFocus(panel);
   const [update, setUpdate] = useState<UpdateCheckResult | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -265,25 +264,25 @@ export function SettingsDialog({
   const [updateStarted, setUpdateStarted] = useState<string | null>(null);
 
   /**
-   * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.cds-design in the OS
+   * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.colo-design in the OS
    * file manager; the browser path has no bridge and shows the path instead.
    * The preload script is the boundary that decides the shape, so reading it
    * once through a named accessor with an `in` guard is the checked route.
    */
   const bridgeOpenHome =
-    window.cdsDesignDesktop && "openHome" in window.cdsDesignDesktop
-      ? window.cdsDesignDesktop.openHome
+    window.coloDesignDesktop && "openHome" in window.coloDesignDesktop
+      ? window.coloDesignDesktop.openHome
       : undefined;
   /**
    * 수동 업데이트 확인(DESIGN §7): 데스크톱 다리가 있으면 그것으로,
    * 브라우저에서는 같은 공유 로직을 window.fetch 로 돌린다 — 로직은
-   * @cds-design/protocol 의 update 모듈 하나다.
+   * @colo-design/protocol 의 update 모듈 하나다.
    */
   const checkUpdate = async () => {
     setCheckingUpdate(true);
     setUpdateError(null);
     try {
-      const bridge = window.cdsDesignDesktop;
+      const bridge = window.coloDesignDesktop;
       if (bridge) {
         const result = await bridge.updateCheck();
         if ("error" in result && result.error) throw new Error(String(result.error));
@@ -292,7 +291,11 @@ export function SettingsDialog({
         setUpdate(
           await checkForUpdate("0.1.0", RELEASES_FEED_URL, async (feedUrl) => {
             const response = await fetch(feedUrl);
-            return { ok: response.ok, status: response.status, json: await response.json() };
+            return {
+              ok: response.ok,
+              status: response.status,
+              json: await response.json(),
+            };
           }),
         );
       }
@@ -322,7 +325,7 @@ export function SettingsDialog({
     setUpdateError(null);
     setUpdateStarted(null);
     try {
-      const result = await window.cdsDesignDesktop?.macSelfUpdate();
+      const result = await window.coloDesignDesktop?.macSelfUpdate();
       if (result && typeof result === "object" && "error" in result && result.error) {
         throw new Error(String(result.error));
       }
@@ -347,11 +350,11 @@ export function SettingsDialog({
   const repoUrl = repoUrlDraft ?? daemon.repo?.url ?? "";
 
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [onClose]);
 
   // Move focus into the dialog so Escape and Tab act on it rather than on the
@@ -438,9 +441,7 @@ export function SettingsDialog({
                   hint: EFFORT_HINT[level],
                 })),
               ]}
-              onChange={(effort) =>
-                onChatChange({ effort: (effort as EffortLevel) || null })
-              }
+              onChange={(effort) => onChatChange({ effort: (effort as EffortLevel) || null })}
             />
             <Choice<PermissionMode>
               label="확인 방식"
@@ -456,8 +457,8 @@ export function SettingsDialog({
             {settings.chat.permissionMode === "bypassPermissions" && (
               <div className="notice notice--warn">
                 <span className="notice__text">
-                  전부 맡기기는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이
-                  바뀔 수 있으니, 물어보고 진행이 필요하면 확인 방식을 바꾸세요.
+                  전부 맡기기는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이 바뀔 수
+                  있으니, 물어보고 진행이 필요하면 확인 방식을 바꾸세요.
                 </span>
               </div>
             )}
@@ -516,11 +517,7 @@ export function SettingsDialog({
             <h3 className="settings__groupTitle">GitHub</h3>
             {daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
             !editingToken ? (
-              <Field
-                wide
-                label="계정"
-                hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
-              >
+              <Field wide label="계정" hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다">
                 <span className="settings__url">
                   <span className="settings__account">
                     {daemon.onboarding?.find((step) => step.id === "github")?.detail}
@@ -594,7 +591,7 @@ export function SettingsDialog({
               <span className="setting__hint">
                 {bridgeOpenHome
                   ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
-                  : "~/.cds-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."}
+                  : "~/.colo-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."}
               </span>
               <button type="button" disabled={checkingUpdate} onClick={() => void checkUpdate()}>
                 {checkingUpdate ? "확인 중…" : "업데이트 확인"}
@@ -607,7 +604,7 @@ export function SettingsDialog({
                       : `최신 버전입니다 (${update.version})`}
                   </span>
                   {update.updateAvailable &&
-                    (window.cdsDesignDesktop ? (
+                    (window.coloDesignDesktop ? (
                       update.url &&
                       update.sha256 && (
                         <button
@@ -697,14 +694,12 @@ export function SettingsDialog({
               )}
 
               <div className="settings__row">
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() => setForgetConfirm(true)}
-                >
+                <button type="button" className="danger" onClick={() => setForgetConfirm(true)}>
                   접속 주소 지우기
                 </button>
-                <span className="setting__hint">연결 화면으로 돌아갑니다. 기획은 삭제되지 않습니다.</span>
+                <span className="setting__hint">
+                  연결 화면으로 돌아갑니다. 기획은 삭제되지 않습니다.
+                </span>
               </div>
             </details>
           </section>

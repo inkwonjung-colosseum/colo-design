@@ -14,7 +14,7 @@ import { useEffect } from "react";
  */
 export function usePreviewCover(): void {
   useEffect(() => {
-    const bridge = window.cdsDesignDesktop?.preview;
+    const bridge = window.coloDesignDesktop?.preview;
     if (!bridge?.native || !bridge.cover) return;
     const LAYERS = ".modal, .palette, .selector__backdrop, .pip--large";
     let covering = false;

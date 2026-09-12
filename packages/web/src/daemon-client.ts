@@ -1,26 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { errorWords } from "./error-words";
 import type {
   AskQuestion,
   ChatEvent,
-  CommentItem as ProtocolCommentItem,
   ContextUsage,
-  EffortLevel,
-  PermissionMode,
   DaemonStatus,
   DiffFile,
   DiffStatus,
+  EffortLevel,
   GitHubRepoInspection,
   GitHubRepoList,
-  HandoffStatus,
   HandoffStatusReport,
-  DeveloperReview,
   OnboardingFixKind,
   OnboardingStep,
+  PermissionMode,
   PermissionSuggestion,
   ProjectList,
   ProjectSummary,
-  RepoCheckpoint,
+  CommentItem as ProtocolCommentItem,
   RepoCheckpoints,
   RepoHistory,
   RepoHistoryEntry,
@@ -28,10 +23,12 @@ import type {
   RepoSummary,
   ServerMessage,
   SessionCommand,
-  SessionState,
   SessionSelectors,
+  SessionState,
   SessionSummary,
-} from "@cds-design/protocol";
+} from "@colo-design/protocol";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { errorWords } from "./error-words";
 
 // ---------------------------------------------------------------------------
 // Transcript model: ChatEvents folded into renderable blocks
@@ -47,8 +44,20 @@ export type Block =
       /** D87: the pin crops, live-echo only; a replayed transcript has none. */
       thumbs?: string[];
     }
-  | { type: "text"; id: string; text: string; agentId: string | null; streaming: boolean }
-  | { type: "thinking"; id: string; text: string; agentId: string | null; streaming: boolean }
+  | {
+      type: "text";
+      id: string;
+      text: string;
+      agentId: string | null;
+      streaming: boolean;
+    }
+  | {
+      type: "thinking";
+      id: string;
+      text: string;
+      agentId: string | null;
+      streaming: boolean;
+    }
   | {
       type: "tool";
       id: string;
@@ -67,11 +76,16 @@ export type Block =
       costUsd: number | null;
       durationMs: number | null;
     }
-  | { type: "notice"; id: string; level: "info" | "warn" | "error"; text: string };
+  | {
+      type: "notice";
+      id: string;
+      level: "info" | "warn" | "error";
+      text: string;
+    };
 
 let noticeSeq = 0;
 
-export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
+function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
   switch (event.kind) {
     case "user.echo":
       return [
@@ -138,7 +152,13 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       if (!event.text.trim()) return blocks;
       return [
         ...blocks,
-        { type: "text", id: event.blockId, text: event.text, agentId: event.agentId, streaming: false },
+        {
+          type: "text",
+          id: event.blockId,
+          text: event.text,
+          agentId: event.agentId,
+          streaming: false,
+        },
       ];
     }
 
@@ -147,12 +167,22 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       if (index === -1) {
         return [
           ...blocks,
-          { type: "thinking", id: event.blockId, text: event.text, agentId: event.agentId, streaming: true },
+          {
+            type: "thinking",
+            id: event.blockId,
+            text: event.text,
+            agentId: event.agentId,
+            streaming: true,
+          },
         ];
       }
       const next = [...blocks];
       const current = next[index] as Extract<Block, { type: "thinking" }>;
-      next[index] = { ...current, text: current.text + event.text, streaming: true };
+      next[index] = {
+        ...current,
+        text: current.text + event.text,
+        streaming: true,
+      };
       return next;
     }
 
@@ -218,7 +248,12 @@ export function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
     case "notice":
       return [
         ...blocks,
-        { type: "notice", id: `n${++noticeSeq}`, level: event.level, text: event.text },
+        {
+          type: "notice",
+          id: `n${++noticeSeq}`,
+          level: event.level,
+          text: event.text,
+        },
       ];
 
     case "compact":
@@ -261,9 +296,9 @@ export interface PendingQuestion {
   questions: AskQuestion[];
 }
 
-export type Pending = PendingPermission | PendingQuestion;
+type Pending = PendingPermission | PendingQuestion;
 
-export type ConnectionState = "idle" | "connecting" | "open" | "closed" | "error";
+type ConnectionState = "idle" | "connecting" | "open" | "closed" | "error";
 
 interface SessionView {
   blocks: Block[];
@@ -293,16 +328,14 @@ const EMPTY_SESSION: SessionView = {
  * "Invalid Date". The web keeps its own names; the shape lives in one place.
  *   DiffSummary       ← RepoSummary      (PLAN D51 — the 저장 review's lines)
  *   SaveHistoryEntry  ← RepoHistoryEntry (PLAN D53 — one saved commit)
- *   CheckpointEntry   ← RepoCheckpoint   (PLAN D52 — one turn-start snapshot)
  *   CommentItem       ← CommentItem      (PLAN D57 — one recorded comment) */
 export type DiffSummary = RepoSummary;
 export type SaveHistoryEntry = RepoHistoryEntry;
-export type SaveHistory = RepoHistory;
-export type CheckpointEntry = RepoCheckpoint;
-export type CheckpointList = RepoCheckpoints;
+type SaveHistory = RepoHistory;
+type CheckpointList = RepoCheckpoints;
 export type CommentItem = ProtocolCommentItem;
 
-export interface DaemonApi {
+interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
   listSessions: () => Promise<SessionSummary[]>;
   history: (sessionId: string) => Promise<ChatEvent[]>;
@@ -310,7 +343,7 @@ export interface DaemonApi {
    * Omit `resume` for a fresh thread. `model` and `effort` carry the
    * composer's chips into the new session — the daemon otherwise starts every
    * thread on the CLI's own defaults. `previewTools` (PLAN D61) decides
-   * whether the thread gets the cds-preview 도구 at all; 생략은 켬이다.
+   * whether the thread gets the colo-preview 도구 at all; 생략은 켬이다.
    */
   createSession: (opts?: {
     resume?: string;
@@ -345,7 +378,10 @@ export interface DaemonApi {
     decision: "allow" | "allowAlways" | "deny",
     message?: string,
   ) => Promise<unknown>;
-  respondQuestion: (requestId: string, answers: Record<string, string | string[]>) => Promise<unknown>;
+  respondQuestion: (
+    requestId: string,
+    answers: Record<string, string | string[]>,
+  ) => Promise<unknown>;
   refreshStatus: () => Promise<void>;
   /**
    * The registry, asked for on connect. `hello` already carries it, so the
@@ -367,7 +403,12 @@ export interface DaemonApi {
   /** Rename, or re-point the repo url/base branch. */
   projectUpdate: (
     slug: string,
-    changes: { name?: string; repoUrl?: string | null; baseBranch?: string; approveCommands?: boolean },
+    changes: {
+      name?: string;
+      repoUrl?: string | null;
+      baseBranch?: string;
+      approveCommands?: boolean;
+    },
   ) => Promise<ProjectList>;
   /** Switch the active project; the outgoing preview stops first. */
   projectActivate: (slug: string) => Promise<ProjectList>;
@@ -392,14 +433,18 @@ export interface DaemonApi {
   diff: () => Promise<DiffFile[]>;
   /**
    * 저장 (PLAN D5): run the gates, then commit and push onto this cycle's own
-   * `cds-design/…` branch. Progress arrives as `diff.status`.
+   * `colo-design/…` branch. Progress arrives as `diff.status`.
    */
   save: (message?: string, sessionId?: string | null) => Promise<DiffStatus>;
   /**
    * 개발자에게 넘기기: the `build` gate, then open (or update) the pull request
    * for the saved branch. Progress arrives as `diff.status` like a save does.
    */
-  handoff: (input: { title?: string; body?: string; sessionId?: string | null }) => Promise<DiffStatus>;
+  handoff: (input: {
+    title?: string;
+    body?: string;
+    sessionId?: string | null;
+  }) => Promise<DiffStatus>;
   /**
    * Re-read the handed-off request from GitHub. Asked for by the planner, never
    * polled — the state only moves when a developer acts on it.
@@ -440,7 +485,11 @@ export interface DaemonApi {
     items: Array<{
       text: string;
       elementText: string;
-      element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
+      element?: {
+        component: string;
+        path: string;
+        rect: { x: number; y: number; width: number; height: number };
+      };
     }>;
   }) => Promise<{ recorded: number; ids: string[] }>;
   /** Every recorded comment of the connected repo, resolved ones in. */
@@ -510,14 +559,14 @@ export interface Daemon {
 // ---------------------------------------------------------------------------
 
 /** Asked once, after the planner's first send — never again (D50). */
-const NOTIFICATION_ASKED_KEY = "cds-design.notification-asked";
+const NOTIFICATION_ASKED_KEY = "colo-design.notification-asked";
 
 /**
  * The desktop asks nothing and notifies from its own main process (D50
  * names this the BROWSER path); a second voice would ring twice.
  */
 function requestNotificationPermissionOnce(): void {
-  if (typeof Notification === "undefined" || window.cdsDesignDesktop) return;
+  if (typeof Notification === "undefined" || window.coloDesignDesktop) return;
   try {
     if (localStorage.getItem(NOTIFICATION_ASKED_KEY)) return;
     localStorage.setItem(NOTIFICATION_ASKED_KEY, "1");
@@ -538,13 +587,25 @@ function backgroundNotice(
 ): { title: string; body: string } | null {
   switch (state) {
     case "idle":
-      return { title: `${title} · 완료`, body: "Claude가 답을 마쳤습니다. 열어서 확인해 보세요." };
+      return {
+        title: `${title} · 완료`,
+        body: "Claude가 답을 마쳤습니다. 열어서 확인해 보세요.",
+      };
     case "error":
-      return { title: `${title} · 중단`, body: "Claude가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다." };
+      return {
+        title: `${title} · 중단`,
+        body: "Claude가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다.",
+      };
     case "waiting_permission":
-      return { title: `${title} · 확인 필요`, body: "Claude가 진행 허락을 기다리고 있습니다." };
+      return {
+        title: `${title} · 확인 필요`,
+        body: "Claude가 진행 허락을 기다리고 있습니다.",
+      };
     case "waiting_question":
-      return { title: `${title} · 답 필요`, body: "Claude가 질문에 대한 답을 기다리고 있습니다." };
+      return {
+        title: `${title} · 답 필요`,
+        body: "Claude가 질문에 대한 답을 기다리고 있습니다.",
+      };
     default:
       return null;
   }
@@ -561,7 +622,7 @@ async function notifyBackgroundThread(
   sessionId: string,
   state: SessionState,
 ): Promise<void> {
-  if (typeof Notification === "undefined" || window.cdsDesignDesktop) return;
+  if (typeof Notification === "undefined" || window.coloDesignDesktop) return;
   if (Notification.permission !== "granted") return;
   const stored = await findTitle(sessionId).catch(() => null);
   const notice = backgroundNotice(stored ?? "대화", state);
@@ -578,7 +639,7 @@ async function notifyBackgroundThread(
  *  already passed every gate reloads into the wizard while the fresh check
  *  spawns real commands. The check still runs on every connect and
  *  overwrites this — a gate that broke since is caught a beat later. */
-const ONBOARDING_CACHE_KEY = "cds-design.onboarding";
+const ONBOARDING_CACHE_KEY = "colo-design.onboarding";
 
 function readOnboardingCache(): OnboardingStep[] | null {
   try {
@@ -591,7 +652,9 @@ function readOnboardingCache(): OnboardingStep[] | null {
 
 export function useDaemon(url: string | null): Daemon {
   const socket = useRef<WebSocket | null>(null);
-  const pendingCalls = useRef(new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>());
+  const pendingCalls = useRef(
+    new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
+  );
   const counter = useRef(0);
 
   const [connection, setConnection] = useState<ConnectionState>("idle");
@@ -625,7 +688,8 @@ export function useDaemon(url: string | null): Daemon {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const flushPending = () => {
-      for (const call of pendingCalls.current.values()) call.reject(new Error("연결이 끊어졌습니다 — 다시 연결하는 중"));
+      for (const call of pendingCalls.current.values())
+        call.reject(new Error("연결이 끊어졌습니다 — 다시 연결하는 중"));
       pendingCalls.current.clear();
     };
 
@@ -722,7 +786,13 @@ export function useDaemon(url: string | null): Daemon {
               : message.event.kind === "preview.opened"
                 ? // D91: the screen Claude is actually looking at — kept
                   // beside the view, not in the transcript.
-                  { ...view, lastOpened: { route: message.event.route, state: message.event.state } }
+                  {
+                    ...view,
+                    lastOpened: {
+                      route: message.event.route,
+                      state: message.event.state,
+                    },
+                  }
                 : { ...view, blocks: foldEvent(view.blocks, message.event) };
           return { ...prev, [message.sessionId]: next };
         });
@@ -732,7 +802,10 @@ export function useDaemon(url: string | null): Daemon {
       if (message.type === "session.state") {
         setSessions((prev) => ({
           ...prev,
-          [message.sessionId]: { ...(prev[message.sessionId] ?? EMPTY_SESSION), state: message.state },
+          [message.sessionId]: {
+            ...(prev[message.sessionId] ?? EMPTY_SESSION),
+            state: message.state,
+          },
         }));
         return;
       }
@@ -775,18 +848,25 @@ export function useDaemon(url: string | null): Daemon {
     };
   }, [url]);
 
-  const call = useCallback(<T,>(payload: Record<string, unknown>, timeoutMs = 60_000): Promise<T> => {
-    const ws = socket.current;
-    if (!ws || ws.readyState !== ws.OPEN) return Promise.reject(new Error("아직 연결되지 않았습니다"));
-    const id = `c${++counter.current}`;
-    return new Promise<T>((resolve, reject) => {
-      pendingCalls.current.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      ws.send(JSON.stringify({ id, ...payload }));
-      setTimeout(() => {
-        if (pendingCalls.current.delete(id)) reject(new Error("daemon did not respond"));
-      }, timeoutMs);
-    });
-  }, []);
+  const call = useCallback(
+    <T>(payload: Record<string, unknown>, timeoutMs = 60_000): Promise<T> => {
+      const ws = socket.current;
+      if (!ws || ws.readyState !== ws.OPEN)
+        return Promise.reject(new Error("아직 연결되지 않았습니다"));
+      const id = `c${++counter.current}`;
+      return new Promise<T>((resolve, reject) => {
+        pendingCalls.current.set(id, {
+          resolve: resolve as (v: unknown) => void,
+          reject,
+        });
+        ws.send(JSON.stringify({ id, ...payload }));
+        setTimeout(() => {
+          if (pendingCalls.current.delete(id)) reject(new Error("daemon did not respond"));
+        }, timeoutMs);
+      });
+    },
+    [],
+  );
 
   /** Keep the reply of a repo request as state, so a caller gets both. */
   const keepRepo = useCallback((next: RepoStatus) => {
@@ -846,23 +926,29 @@ export function useDaemon(url: string | null): Daemon {
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
       contextUsage: (sessionId: string) =>
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
-      selectors: (sessionId: string) => call<SessionSelectors>({ type: "session.selectors", sessionId }),
-      commands: (sessionId: string) => call<SessionCommand[]>({ type: "session.commands", sessionId }),
+      selectors: (sessionId: string) =>
+        call<SessionSelectors>({ type: "session.selectors", sessionId }),
+      commands: (sessionId: string) =>
+        call<SessionCommand[]>({ type: "session.commands", sessionId }),
       cliCommands: () =>
         call<SessionCommand[]>(
           { type: "cli.commands" },
           // The probe boots the CLI once — seconds, not the usual round trip.
           60_000,
         ),
-      findFiles: (query: string, limit = 40) => call<string[]>({ type: "repo.files", query, limit }),
+      findFiles: (query: string, limit = 40) =>
+        call<string[]>({ type: "repo.files", query, limit }),
       setModel: (sessionId: string, model: string | null) =>
         call({ type: "session.setModel", sessionId, model }),
       setEffort: (sessionId: string, effort: EffortLevel | null) =>
         call({ type: "session.setEffort", sessionId, effort }),
       setPermissionMode: (sessionId: string, mode: PermissionMode) =>
         call({ type: "session.setPermissionMode", sessionId, mode }),
-      respondPermission: (requestId: string, decision: "allow" | "allowAlways" | "deny", message?: string) =>
-        call({ type: "permission.respond", requestId, decision, message }),
+      respondPermission: (
+        requestId: string,
+        decision: "allow" | "allowAlways" | "deny",
+        message?: string,
+      ) => call({ type: "permission.respond", requestId, decision, message }),
       closeSession: (sessionId: string) => call({ type: "session.close", sessionId }),
       deleteSession: (sessionId: string) =>
         call(
@@ -925,7 +1011,11 @@ export function useDaemon(url: string | null): Daemon {
         ).then(keepProjects),
       projectRemove: (slug: string, deleteFiles?: boolean) =>
         call<ProjectList>(
-          { type: "project.remove", slug, ...(deleteFiles ? { deleteFiles } : {}) },
+          {
+            type: "project.remove",
+            slug,
+            ...(deleteFiles ? { deleteFiles } : {}),
+          },
           120_000,
         ).then(keepProjects),
       repoStatus: () => call<RepoStatus>({ type: "repo.status" }).then(keepRepo),
@@ -933,7 +1023,9 @@ export function useDaemon(url: string | null): Daemon {
       // minute a normal request is given before it is declared lost. `force`
       // rides only the stopped screen's 다시 시작.
       repoSync: (force = false) =>
-        call<RepoStatus>({ type: "repo.sync", ...(force ? { force: true } : {}) }, 600_000).then(keepRepo),
+        call<RepoStatus>({ type: "repo.sync", ...(force ? { force: true } : {}) }, 600_000).then(
+          keepRepo,
+        ),
       // A refresh is one fetch-and-merge on the clone: the window a network
       // read gets, not the minutes a first clone or install takes.
       repoRefresh: (sessionId?: string | null) =>
@@ -1005,7 +1097,11 @@ export function useDaemon(url: string | null): Daemon {
         items: Array<{
           text: string;
           elementText: string;
-          element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
+          element?: {
+            component: string;
+            path: string;
+            rect: { x: number; y: number; width: number; height: number };
+          };
         }>;
       }) =>
         call<{ recorded: number; ids: string[] }>({
@@ -1016,12 +1112,22 @@ export function useDaemon(url: string | null): Daemon {
         }),
       listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
       resolveComment: (id: string, resolved: boolean) =>
-        call<{ ok: true }>({ type: "comments.resolve", commentId: id, resolved }),
+        call<{ ok: true }>({
+          type: "comments.resolve",
+          commentId: id,
+          resolved,
+        }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
       rewind: (sessionId, turn, text, images) =>
         call<{ sessionId: string; memoryKept: boolean }>(
-          { type: "session.rewind", sessionId, turn, text, ...(images ? { images } : {}) },
+          {
+            type: "session.rewind",
+            sessionId,
+            turn,
+            text,
+            ...(images ? { images } : {}),
+          },
           300_000,
         ),
       onboardingCheck: () =>
@@ -1117,5 +1223,5 @@ export function useDaemon(url: string | null): Daemon {
   };
 }
 
-export { EMPTY_SESSION };
 export type { SessionView };
+export { EMPTY_SESSION };

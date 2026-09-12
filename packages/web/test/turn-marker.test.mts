@@ -9,8 +9,9 @@
  *
  * Run: node --experimental-transform-types --test packages/web/test/turn-marker.test.mts
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { markTurn, readTurn, type TurnMarker } from "../../protocol/src/turn-marker.ts";
 
 const COMMENTS: TurnMarker = {
@@ -34,10 +35,24 @@ test("every kind survives the round trip", () => {
   const markers: TurnMarker[] = [
     COMMENTS,
     { kind: "brief", title: "회원 관리 기획서" },
-    { kind: "precheck", title: "회원 관리 기획서", screens: ["회원 목록", "회원 상세"] },
+    {
+      kind: "precheck",
+      title: "회원 관리 기획서",
+      screens: ["회원 목록", "회원 상세"],
+    },
     { kind: "gate", step: "저장 전 검사" },
-    { kind: "error", route: "/member/MemberList", state: "오류", errorKind: "runtime" },
-    { kind: "error", route: "/member/MemberList", state: "기본", errorKind: "build" },
+    {
+      kind: "error",
+      route: "/member/MemberList",
+      state: "오류",
+      errorKind: "runtime",
+    },
+    {
+      kind: "error",
+      route: "/member/MemberList",
+      state: "기본",
+      errorKind: "build",
+    },
   ];
   for (const marker of markers) {
     assert.deepEqual(readTurn(markTurn(marker, "본문")).marker, marker, marker.kind);
@@ -48,7 +63,7 @@ test("the plan's literal error marker parses — its kind is the failure, not th
   // D49 writes the payload as {"route","state","kind"}: the tag already said
   // "error", so the payload's kind is free to mean runtime vs build.
   const text =
-    '<!-- cds-design:error {"route":"/member/MemberList","state":"오류","kind":"build"} -->\n' +
+    '<!-- colo-design:error {"route":"/member/MemberList","state":"오류","kind":"build"} -->\n' +
     "Module build failed: …";
   assert.deepEqual(readTurn(text).marker, {
     kind: "error",
@@ -59,7 +74,7 @@ test("the plan's literal error marker parses — its kind is the failure, not th
 });
 
 test("an error marker without a usable kind degrades to runtime", () => {
-  const text = '<!-- cds-design:error {"route":"/a","state":"default"} -->\nTypeError: …';
+  const text = '<!-- colo-design:error {"route":"/a","state":"default"} -->\nTypeError: …';
   assert.deepEqual(readTurn(text).marker, {
     kind: "error",
     route: "/a",
@@ -76,12 +91,12 @@ test("a typed message passes through with no marker", () => {
 test("broken JSON leaves the original text alone", () => {
   // The whole text comes back, marker line included: hiding a line we failed
   // to understand would silently drop something the planner might need.
-  const text = '<!-- cds-design:comments {"screen": -->\n화면 수정 요청';
+  const text = '<!-- colo-design:comments {"screen": -->\n화면 수정 요청';
   assert.deepEqual(readTurn(text), { marker: null, body: text });
 });
 
 test("an unknown kind is not a marker", () => {
-  const text = '<!-- cds-design:sparkle {"a":1} -->\n본문';
+  const text = '<!-- colo-design:sparkle {"a":1} -->\n본문';
   assert.equal(readTurn(text).marker, null);
   assert.equal(readTurn(text).body, text);
 });
@@ -89,26 +104,29 @@ test("an unknown kind is not a marker", () => {
 test("the wrong shape for a known kind is not a marker", () => {
   // `items` missing entirely: a comments card with nothing to list is a lie
   // about what the planner sent.
-  const text = '<!-- cds-design:comments {"screen":"a","state":"b"} -->\n본문';
+  const text = '<!-- colo-design:comments {"screen":"a","state":"b"} -->\n본문';
   assert.equal(readTurn(text).marker, null);
 });
 
 test("a marker in the middle of a turn is body, not a marker", () => {
-  const text = `기획서를 봐 주세요.\n<!-- cds-design:brief {"title":"회원"} -->`;
+  const text = `기획서를 봐 주세요.\n<!-- colo-design:brief {"title":"회원"} -->`;
   assert.deepEqual(readTurn(text), { marker: null, body: text });
 });
 
 test("an older build's extra fields are ignored, missing ones blank out", () => {
-  const text = '<!-- cds-design:brief {"title":"회원 관리 기획서","path":"ENG/회원.md"} -->\n본문';
-  assert.deepEqual(readTurn(text).marker, { kind: "brief", title: "회원 관리 기획서" });
+  const text = '<!-- colo-design:brief {"title":"회원 관리 기획서","path":"ENG/회원.md"} -->\n본문';
+  assert.deepEqual(readTurn(text).marker, {
+    kind: "brief",
+    title: "회원 관리 기획서",
+  });
 
-  const bare = '<!-- cds-design:gate {} -->\n본문';
+  const bare = "<!-- colo-design:gate {} -->\n본문";
   assert.deepEqual(readTurn(bare).marker, { kind: "gate", step: "" });
 });
 
 test("a comment item that is not an object is dropped, not fatal", () => {
   const text =
-    '<!-- cds-design:comments {"screen":"s","state":"default","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
+    '<!-- colo-design:comments {"screen":"s","state":"default","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
   const marker = readTurn(text).marker;
   assert.equal(marker?.kind, "comments");
   assert.deepEqual(marker?.kind === "comments" ? marker.items : null, [
@@ -119,7 +137,7 @@ test("a comment item that is not an object is dropped, not fatal", () => {
 test("a body that itself contains a marker line is not re-split", () => {
   // Claude quoting our own marker back at us must not turn its answer into a
   // second card.
-  const body = '앞줄\n<!-- cds-design:gate {"step":"x"} -->';
+  const body = '앞줄\n<!-- colo-design:gate {"step":"x"} -->';
   const read = readTurn(markTurn({ kind: "brief", title: "회원" }, body));
   assert.equal(read.marker?.kind, "brief");
   assert.equal(read.body, body);

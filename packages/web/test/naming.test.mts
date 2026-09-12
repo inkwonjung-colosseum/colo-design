@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { toolLabel } from "../../protocol/src/tool-names.ts";
-import { bashHeadline, objectParticle } from "../src/tool-names.ts";
 import { errorWords } from "../src/error-words.ts";
+import { bashHeadline, objectParticle } from "../src/tool-names.ts";
 
 // PLAN D37 — the dictionary, not the CLI, names a machine action.
 test("toolLabel names known tools in Korean", () => {
@@ -11,8 +11,8 @@ test("toolLabel names known tools in Korean", () => {
   assert.equal(toolLabel("MultiEdit"), "파일 고치기");
 });
 
-// PLAN D61·D63 — the cds-preview 도구는 하나의 동작으로 읽힌다. The names
-// arrive with the MCP server prefix on (`mcp__cds-preview__screen_*`), so the
+// PLAN D61·D63 — the colo-preview 도구는 하나의 동작으로 읽힌다. The names
+// arrive with the MCP server prefix on (`mcp__colo-preview__screen_*`), so the
 // dictionary is keyed on the tool's own name and the prefix is stripped.
 test("toolLabel folds the screen tools into 화면 보기", () => {
   for (const name of [
@@ -24,7 +24,7 @@ test("toolLabel folds the screen tools into 화면 보기", () => {
     "screen_console",
   ]) {
     assert.equal(toolLabel(name), "화면 보기");
-    assert.equal(toolLabel(`mcp__cds-preview__${name}`), "화면 보기");
+    assert.equal(toolLabel(`mcp__colo-preview__${name}`), "화면 보기");
   }
 });
 
@@ -39,9 +39,13 @@ test("objectParticle picks 을 after a final consonant", () => {
   assert.equal(objectParticle("SomeTool"), "를");
 });
 
-// A command that IS the repo's own cds-design.json command reads as the job.
+// A command that IS the repo's own colo-design.json command reads as the job.
 test("bashHeadline names a declared gate command", () => {
-  const commands = { install: "pnpm install", check: "pnpm check", build: "pnpm build" };
+  const commands = {
+    install: "pnpm install",
+    check: "pnpm check",
+    build: "pnpm build",
+  };
   assert.equal(bashHeadline("pnpm check", commands), "레포 검사");
   assert.equal(bashHeadline("  pnpm install ", commands), "설치 실행");
 });

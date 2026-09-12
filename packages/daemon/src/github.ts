@@ -4,7 +4,7 @@
  * RestTransport: no code path here talks to anything but the transport it
  * was given, so the offline suites drive the real client against recorded
  * pairs (packages/daemon/test/fixtures/github/) and the daemon selects that
- * same transport when CDS_DESIGN_GITHUB_FIXTURE points at a fixture directory.
+ * same transport when COLO_DESIGN_GITHUB_FIXTURE points at a fixture directory.
  *
  * Endpoints used (cite in every fixture):
  *   POST  /repos/{owner}/{repo}/pulls                          — open a pull request
@@ -14,14 +14,10 @@
  *   GET   /repos/{owner}/{repo}                                — permissions.push probe · repo inspection
  *   GET   /user                                                — token identity (github gate)
  *   GET   /user/repos                                          — the project picker's list
- *   GET   /repos/{owner}/{repo}/contents/cds-design.json       — can this repo become a project
+ *   GET   /repos/{owner}/{repo}/contents/colo-design.json       — can this repo become a project
  */
-import type { GitHubRepo, GitHubRepoInspection } from "@cds-design/protocol";
-import {
-  FixtureTransport,
-  loadFixturePairs,
-  type RestTransport,
-} from "./rest-transport.js";
+import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
+import { FixtureTransport, loadFixturePairs, type RestTransport } from "./rest-transport.js";
 
 export interface PullRequestRef {
   number: number;
@@ -66,7 +62,8 @@ export class GitHubClient {
 
   /** The login this token acts as, or why it cannot act at all. */
   async whoAmI(): Promise<
-    { ok: true; login: string } | { ok: false; reason: "unauthorized" | "unreachable"; detail: string }
+    | { ok: true; login: string }
+    | { ok: false; reason: "unauthorized" | "unreachable"; detail: string }
   > {
     let status: number;
     let body: Uint8Array;
@@ -92,7 +89,11 @@ export class GitHubClient {
       };
     }
     if (status < 200 || status >= 300) {
-      return { ok: false, reason: "unreachable", detail: httpError("GitHub 확인", status, body) };
+      return {
+        ok: false,
+        reason: "unreachable",
+        detail: httpError("GitHub 확인", status, body),
+      };
     }
     let data: { login?: string } = {};
     try {
@@ -101,7 +102,11 @@ export class GitHubClient {
       data = {}; // a proxy's html login page; the empty login reads as a failure below
     }
     if (!data.login) {
-      return { ok: false, reason: "unreachable", detail: "GitHub 응답을 읽지 못했습니다." };
+      return {
+        ok: false,
+        reason: "unreachable",
+        detail: "GitHub 응답을 읽지 못했습니다.",
+      };
     }
     return { ok: true, login: data.login };
   }
@@ -125,7 +130,7 @@ export class GitHubClient {
   }
 
   /**
-   * One repo, judged before any clone: whether it carries a `cds-design.json`
+   * One repo, judged before any clone: whether it carries a `colo-design.json`
    * at its root (a repo without one cannot become a project, and saying so
    * before the clone saves the planner minutes), whether this token may push
    * (넘기기 opens the pull request), and what branch a handoff PR targets.
@@ -133,22 +138,22 @@ export class GitHubClient {
   async inspectRepo(input: { owner: string; repo: string }): Promise<GitHubRepoInspection> {
     const data = await this.getJson(`/repos/${input.owner}/${input.repo}`, "레포 확인");
     return {
-      hasCdsDesign: await this.hasCdsDesign(input),
+      hasColoDesign: await this.hasColoDesign(input),
       canPush: data.permissions?.push === true,
       defaultBranch: String(data.default_branch ?? "main"),
     };
   }
 
   /**
-   * Whether the repo carries a `cds-design.json` at its root. 404 means
+   * Whether the repo carries a `colo-design.json` at its root. 404 means
    * "absent"; anything else is news the caller shows — to a token, a real
    * absence and a 404-for-a-hidden-repo read the same, and both mean a
    * project cannot be made from this repo.
    */
-  async hasCdsDesign(input: { owner: string; repo: string }): Promise<boolean> {
+  async hasColoDesign(input: { owner: string; repo: string }): Promise<boolean> {
     const { status, body } = await this.transport.request({
       method: "GET",
-      url: `/repos/${input.owner}/${input.repo}/contents/cds-design.json`,
+      url: `/repos/${input.owner}/${input.repo}/contents/colo-design.json`,
       headers: this.headers(),
     });
     if (status === 200) return true;
@@ -156,7 +161,7 @@ export class GitHubClient {
     if (status === 401) {
       throw new Error("토큰이 유효하지 않거나 만료됐습니다 — 새 토큰을 넣어 주세요.");
     }
-    throw new Error(httpError("cds-design.json 확인", status, body));
+    throw new Error(httpError("colo-design.json 확인", status, body));
   }
 
   /**
@@ -176,7 +181,9 @@ export class GitHubClient {
       }));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`레포 목록을 가져오지 못했습니다 — GitHub에 연결할 수 없습니다 (${firstLine(reason)})`);
+      throw new Error(
+        `레포 목록을 가져오지 못했습니다 — GitHub에 연결할 수 없습니다 (${firstLine(reason)})`,
+      );
     }
     if (status === 401) {
       throw new Error("레포 목록을 가져오지 못했습니다 — 토큰이 유효하지 않거나 만료됐습니다.");
@@ -222,7 +229,12 @@ export class GitHubClient {
     const data = await this.sendJson(
       "POST",
       `/repos/${input.owner}/${input.repo}/pulls`,
-      { title: input.title, body: input.body, head: input.head, base: input.base },
+      {
+        title: input.title,
+        body: input.body,
+        head: input.head,
+        base: input.base,
+      },
       "개발자에게 넘기기",
     );
     return { ...refOf(data), state: stateOf(data) };
@@ -352,11 +364,17 @@ export class GitHubClient {
       }));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      return { ok: false, detail: `GitHub에 연결하지 못해 권한을 확인하지 못했습니다 — ${reason}` };
+      return {
+        ok: false,
+        detail: `GitHub에 연결하지 못해 권한을 확인하지 못했습니다 — ${reason}`,
+      };
     }
 
     if (status === 401) {
-      return { ok: false, detail: "토큰이 유효하지 않습니다 — GitHub에서 토큰을 새로 만들어 다시 넣어 주세요." };
+      return {
+        ok: false,
+        detail: "토큰이 유효하지 않습니다 — GitHub에서 토큰을 새로 만들어 다시 넣어 주세요.",
+      };
     }
     if (status === 403 || status === 404) {
       // 404 is also what GitHub answers for a private repo a token cannot
@@ -404,7 +422,8 @@ export class GitHubClient {
     }
     return {
       ok: false,
-      detail: "토큰 권한이 부족합니다 — GitHub에서 토큰을 만들 때 repo 권한을 켜고 다시 넣어 주세요.",
+      detail:
+        "토큰 권한이 부족합니다 — GitHub에서 토큰을 만들 때 repo 권한을 켜고 다시 넣어 주세요.",
     };
   }
 
@@ -423,7 +442,10 @@ export class GitHubClient {
     const state = stateOf(data);
     if (state !== "open") return { ...refOf(data), state };
     const changesRequested = await this.changesRequested(owner, repo, Number(data.number));
-    return { ...refOf(data), state: changesRequested ? "changes_requested" : "open" };
+    return {
+      ...refOf(data),
+      state: changesRequested ? "changes_requested" : "open",
+    };
   }
 
   /**
@@ -495,20 +517,21 @@ export function parseRepoSlug(url: string): { owner: string; repo: string } | nu
   // scp-style ("git@github.com:org/repo.git") is not a url any parser takes,
   // and https remotes may carry a PAT as userinfo (authenticatedUrl builds
   // exactly that) — both are reduced to host + path here by hand.
-  const match =
-    /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]*@)?([^/:]+)[/:]+(.+)$/i.exec(trimmed);
+  const match = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/]*@)?([^/:]+)[/:]+(.+)$/i.exec(trimmed);
   if (!match) return null;
   const host = match[1]!.toLowerCase();
   if (host !== "github.com" && host !== "www.github.com") return null;
 
-  const segments = match[2]!.replace(/\.git$/i, "").replace(/\/+$/, "").split("/");
+  const segments = match[2]!
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "")
+    .split("/");
   if (segments.length !== 2) return null;
   const [owner, repo] = segments;
   // GitHub's own name charset; anything else is a path we misread, not a repo.
   if (!owner || !repo || !/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
   return { owner, repo };
 }
-
 
 /**
  * The `rel="next"` target of a GitHub `Link` header — a path+query the
@@ -526,9 +549,9 @@ function firstLine(text: string): string {
 }
 
 /**
- * Fixture transport when CDS_DESIGN_GITHUB_FIXTURE points at a loadable
+ * Fixture transport when COLO_DESIGN_GITHUB_FIXTURE points at a loadable
  * fixture directory; otherwise a fetch transport against api.github.com
- * (CDS_DESIGN_GITHUB_API repoints it at a local server).
+ * (COLO_DESIGN_GITHUB_API repoints it at a local server).
  *
  * A fixture directory that fails to load still returns the fetch transport,
  * because the api base is a constant rather than per-project settings: there
@@ -541,11 +564,14 @@ export function createGitHubTransport(env: NodeJS.ProcessEnv = process.env): {
   transport: RestTransport;
   fixtureDir: string | null;
 } {
-  const apiUrl = (env.CDS_DESIGN_GITHUB_API ?? "https://api.github.com").replace(/\/+$/, "");
-  const fixtureDir = env.CDS_DESIGN_GITHUB_FIXTURE ?? null;
+  const apiUrl = (env.COLO_DESIGN_GITHUB_API ?? "https://api.github.com").replace(/\/+$/, "");
+  const fixtureDir = env.COLO_DESIGN_GITHUB_FIXTURE ?? null;
   if (fixtureDir) {
     try {
-      return { transport: new FixtureTransport(loadFixturePairs(fixtureDir)), fixtureDir };
+      return {
+        transport: new FixtureTransport(loadFixturePairs(fixtureDir)),
+        fixtureDir,
+      };
     } catch {
       return { transport: new GitHubFetchTransport(apiUrl), fixtureDir };
     }
@@ -566,7 +592,11 @@ class GitHubFetchTransport implements RestTransport {
     url: string;
     headers: Record<string, string>;
     body?: Uint8Array;
-  }): Promise<{ status: number; body: Uint8Array; headers: Record<string, string> }> {
+  }): Promise<{
+    status: number;
+    body: Uint8Array;
+    headers: Record<string, string>;
+  }> {
     const response = await fetch(`${this.apiUrl}${input.url}`, {
       method: input.method,
       headers: input.headers,

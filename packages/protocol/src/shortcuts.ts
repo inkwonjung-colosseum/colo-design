@@ -17,15 +17,35 @@ export interface AppShortcut {
 
 export const APP_SHORTCUTS: AppShortcut[] = [
   { id: "find", label: "찾기", keys: "⌘K", accelerator: "CmdOrCtrl+K" },
-  { id: "new-session", label: "새 대화", keys: "⌘T", accelerator: "CmdOrCtrl+T" },
+  {
+    id: "new-session",
+    label: "새 대화",
+    keys: "⌘T",
+    accelerator: "CmdOrCtrl+T",
+  },
   { id: "settings", label: "설정", keys: "⌘,", accelerator: "CmdOrCtrl+," },
-  { id: "address", label: "주소로 이동", keys: "⌘L", accelerator: "CmdOrCtrl+L" },
-  { id: "reload", label: "미리보기 새로 고침", keys: "⌘R", accelerator: "CmdOrCtrl+R" },
+  {
+    id: "address",
+    label: "주소로 이동",
+    keys: "⌘L",
+    accelerator: "CmdOrCtrl+L",
+  },
+  {
+    id: "reload",
+    label: "미리보기 새로 고침",
+    keys: "⌘R",
+    accelerator: "CmdOrCtrl+R",
+  },
   { id: "back", label: "뒤로", keys: "⌘[", accelerator: "CmdOrCtrl+[" },
   { id: "forward", label: "앞으로", keys: "⌘]", accelerator: "CmdOrCtrl+]" },
   { id: "zoom-in", label: "확대", keys: "⌘=", accelerator: "CmdOrCtrl+=" },
   { id: "zoom-out", label: "축소", keys: "⌘-", accelerator: "CmdOrCtrl+-" },
-  { id: "zoom-reset", label: "실제 크기", keys: "⌘0", accelerator: "CmdOrCtrl+0" },
+  {
+    id: "zoom-reset",
+    label: "실제 크기",
+    keys: "⌘0",
+    accelerator: "CmdOrCtrl+0",
+  },
   { id: "pin", label: "핀 찍기", keys: "⌥+클릭" },
   { id: "interrupt-send", label: "끊고 보내기", keys: "⌥Enter" },
 ];

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { Daemon, SaveHistoryEntry } from "./daemon-client";
 import { RUNNING, stageLine } from "./DiffPanel";
+import type { Daemon, SaveHistoryEntry } from "./daemon-client";
 import { timeAgo } from "./format";
 import { CloseIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * 저장 기록 (PLAN D53): the saved commits of this cycle, and — per entry —
@@ -43,15 +44,16 @@ export function HistoryDrawer({
 
   useEffect(() => {
     if (!open) return;
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [open, onClose]);
 
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
   const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef, open);
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
@@ -92,7 +94,9 @@ export function HistoryDrawer({
 
         <div className="modal__body">
           {diffStatus && (
-            <div className={diffStatus?.stage === "failed" ? "notice notice--error" : "diff__stage"}>
+            <div
+              className={diffStatus?.stage === "failed" ? "notice notice--error" : "diff__stage"}
+            >
               <span className="notice__text">{stageLine(diffStatus)}</span>
               {busy && <span className="spinner" />}
             </div>
@@ -137,4 +141,3 @@ export function HistoryDrawer({
     </div>
   );
 }
-

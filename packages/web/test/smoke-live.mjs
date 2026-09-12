@@ -9,6 +9,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
+
 const url = process.argv[2];
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
@@ -24,7 +25,11 @@ await page.waitForTimeout(2500);
 
 // Either the repo is still syncing or it is ready; both are a healthy answer,
 // and which one it is says more than a pass/fail would.
-const progress = await page.locator(".progress__head h2").first().innerText().catch(() => null);
+const progress = await page
+  .locator(".progress__head h2")
+  .first()
+  .innerText()
+  .catch(() => null);
 const sessions = await page.locator(".leaf__title").allInnerTexts();
 
 const warnings = await page.locator(".planner__warnings .notice__text").allInnerTexts();

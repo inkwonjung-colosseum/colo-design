@@ -35,7 +35,7 @@ export function stateLabel(state: string): string {
 export function daemonLine(detail: string | null | undefined): string {
   return (
     (detail ?? "")
-      // eslint-disable-next-line no-control-regex
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI 이스케이프 시퀀스(\u001b[…m)를 벗기는 게 목적이다.
       .replace(/\u001b\[[0-9;]*m/g, "")
       .split("\n")
       .map((line) => line.trim())

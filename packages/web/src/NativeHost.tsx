@@ -1,5 +1,5 @@
+import type { ColoDesignCommentsEnvelope, ColoDesignScreen } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { CdsDesignCommentsEnvelope, CdsDesignScreen } from "@cds-design/protocol";
 import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 
 /**
@@ -20,7 +20,6 @@ export function NativeHost({
   width,
   commentsOn,
   onLocation,
-  onBridge,
   onScreens,
   onComments,
   onError,
@@ -34,10 +33,14 @@ export function NativeHost({
   width: "mobile" | "tablet" | "desktop";
   commentsOn: boolean;
   onLocation: (location: PreviewLocation) => void;
-  onBridge: (state: "unknown" | "present" | "stale") => void;
-  onScreens: (screens: CdsDesignScreen[]) => void;
-  onComments: (envelope: CdsDesignCommentsEnvelope) => void;
-  onError: (error: { kind: "runtime" | "build"; message: string; route: string; state: string }) => void;
+  onScreens: (screens: ColoDesignScreen[]) => void;
+  onComments: (envelope: ColoDesignCommentsEnvelope) => void;
+  onError: (error: {
+    kind: "runtime" | "build";
+    message: string;
+    route: string;
+    state: string;
+  }) => void;
   /** D85 ⓐ: the view is loading — the frame's reload button spins. */
   onLoading: (on: boolean) => void;
   /** D85 ⓔ: the zoom moved (the menu can move it) — the chip follows. */
@@ -50,11 +53,16 @@ export function NativeHost({
   // the ratio; one observer covers the sidebar drag and the window resize.
   useEffect(() => {
     const node = slot.current;
-    const bounds = window.cdsDesignDesktop?.preview?.bounds;
+    const bounds = window.coloDesignDesktop?.preview?.bounds;
     if (!node || !bounds) return;
     const send = () => {
       const rect = node.getBoundingClientRect();
-      void bounds({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      void bounds({
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      });
     };
     send();
     const observer = new ResizeObserver(send);
@@ -63,64 +71,68 @@ export function NativeHost({
   }, []);
   useEffect(() => {
     if (!url) return;
-    void window.cdsDesignDesktop?.preview?.mount?.(url);
-    return () => void window.cdsDesignDesktop?.preview?.unmount?.();
+    void window.coloDesignDesktop?.preview?.mount?.(url);
+    return () => void window.coloDesignDesktop?.preview?.unmount?.();
   }, [url]);
 
   // The last ask re-rides on every change — the prop IS the ask (D66).
   useEffect(() => {
     if (!url || !target) return;
     if (target.kind === "screen")
-      void window.cdsDesignDesktop?.preview?.navigate?.(target.route, target.state);
-    else void window.cdsDesignDesktop?.preview?.open?.(target.path);
+      void window.coloDesignDesktop?.preview?.navigate?.(target.route, target.state);
+    else void window.coloDesignDesktop?.preview?.open?.(target.path);
   }, [url, target]);
 
   useEffect(() => {
-    if (reloadKey > 0) void window.cdsDesignDesktop?.preview?.reload?.();
+    if (reloadKey > 0) void window.coloDesignDesktop?.preview?.reload?.();
   }, [reloadKey]);
 
   useEffect(() => {
-    void window.cdsDesignDesktop?.preview?.commentsMode?.(commentsOn);
+    void window.coloDesignDesktop?.preview?.commentsMode?.(commentsOn);
   }, [commentsOn]);
 
   // 폭 is emulation on the native side (D69), not CSS names.
   useEffect(() => {
-    void window.cdsDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
+    void window.coloDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
   }, [width]);
 
-  // The nine channels subscribe ONCE: PreviewHost passes fresh inline
+  // The eight channels subscribe ONCE: PreviewHost passes fresh inline
   // callbacks every render, so keying the effect on them re-subscribed per
   // render — and an event fired in an unsubscribe gap (a fast did-navigate
   // between renders) was lost. The ref always holds the latest handlers;
   // the subscription itself never churns.
   const handlers = useRef({
     onLocation,
-    onBridge,
     onScreens,
     onComments,
     onError,
     onLoading,
     onZoom,
   });
-  handlers.current = { onLocation, onBridge, onScreens, onComments, onError, onLoading, onZoom };
+  handlers.current = {
+    onLocation,
+    onScreens,
+    onComments,
+    onError,
+    onLoading,
+    onZoom,
+  };
   useEffect(() => {
-    const bridge = window.cdsDesignDesktop?.preview;
+    const bridge = window.coloDesignDesktop?.preview;
     if (!bridge) return;
     const offs = [
       bridge.onLocation?.((payload: { path: string; canGoBack: boolean; canGoForward: boolean }) =>
         handlers.current.onLocation(payload),
       ),
-      bridge.onBridge?.((payload: { state: "unknown" | "present" | "stale" }) =>
-        handlers.current.onBridge(payload.state),
-      ),
-      bridge.onScreens?.((payload: { screens: CdsDesignScreen[] }) => {
+      bridge.onScreens?.((payload: { screens: ColoDesignScreen[] }) => {
         if (Array.isArray(payload.screens)) handlers.current.onScreens(payload.screens);
       }),
-      bridge.onComments?.((payload: CdsDesignCommentsEnvelope) => {
+      bridge.onComments?.((payload: ColoDesignCommentsEnvelope) => {
         if (Array.isArray(payload.items)) handlers.current.onComments(payload);
       }),
-      bridge.onError?.((payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>
-        handlers.current.onError(payload),
+      bridge.onError?.(
+        (payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>
+          handlers.current.onError(payload),
       ),
       bridge.onFreeze?.((jpeg: string) => setFreeze(jpeg)),
       bridge.onLoading?.((payload: { on: boolean }) => handlers.current.onLoading(payload.on)),
@@ -130,16 +142,25 @@ export function NativeHost({
       bridge.onKey?.((payload: { key: string; meta: boolean }) => {
         if (payload.key === "Escape") return;
         window.dispatchEvent(
-          new KeyboardEvent("keydown", { key: payload.key, metaKey: payload.meta, bubbles: true }),
+          new KeyboardEvent("keydown", {
+            key: payload.key,
+            metaKey: payload.meta,
+            bubbles: true,
+          }),
         );
       }),
     ].filter((off): off is () => void => typeof off === "function");
-    return () => offs.forEach((off) => off());
+    return () =>
+      offs.forEach((off) => {
+        off();
+      });
   }, []);
 
   return (
     <div className="preview__slot" ref={slot} data-testid="preview-slot">
-      {freeze && <img className="preview__freeze" src={`data:image/jpeg;base64,${freeze}`} alt="" />}
+      {freeze && (
+        <img className="preview__freeze" src={`data:image/jpeg;base64,${freeze}`} alt="" />
+      )}
     </div>
   );
 }

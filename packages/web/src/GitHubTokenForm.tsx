@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Daemon } from "./daemon-client";
 
 /** GitHub's own form, with the name and `repo` scope this tool needs pre-filled. */
-const TOKEN_URL = "https://github.com/settings/tokens/new?description=CDS%20Design&scopes=repo";
+const TOKEN_URL = "https://github.com/settings/tokens/new?description=Colo%20Design&scopes=repo";
 
 /**
  * The machine-wide GitHub token, as the wizard's `github` gate and 설정 both

@@ -1,6 +1,7 @@
+import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectSummary, ThreadSummary } from "@cds-design/protocol";
 import { FolderIcon, GearIcon, PlusIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 /** The walk is grouped 대화 → 프로젝트 → 명령; a header prints on each turn. */
 type Group = "대화" | "프로젝트" | "명령";
@@ -46,6 +47,7 @@ export function Palette({
   activeSessionId,
   projects,
   activeSlug,
+  projectSlug = null,
   onOpenThread,
   onCreateSession,
   onActivateProject,
@@ -58,6 +60,10 @@ export function Palette({
   activeSessionId: string | null;
   projects: ProjectSummary[];
   activeSlug: string | null;
+  /** Opened for ONE project's conversations (the tree's 더 보기 row): the
+      session walk stays inside it, and the search says so. Null — the whole
+      frame's jumps, as ever. */
+  projectSlug?: string | null;
   /** Opens a conversation — switching projects first when it is not this
       one's (PLAN D59 rule 1). */
   onOpenThread: (slug: string, thread: ThreadSummary) => void;
@@ -73,6 +79,8 @@ export function Palette({
   const [error, setError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef);
 
   useEffect(() => {
     searchRef.current?.focus();
@@ -99,8 +107,10 @@ export function Palette({
     };
 
     const out: Row[] = [];
-    // Every project's conversations (PLAN D59).
-    for (const project of projects) {
+    // Every project's conversations (PLAN D59) — or, when the palette was
+    // opened for one project (the tree's 더 보기 row), that project's alone.
+    const scope = projectSlug ? projects.filter((entry) => entry.slug === projectSlug) : projects;
+    for (const project of scope) {
       for (const thread of project.threads ?? []) {
         const label = titleForThread(thread);
         if (rank(label) < 0) continue;
@@ -120,8 +130,10 @@ export function Palette({
         });
       }
     }
+    // A scoped palette already knows its project, so the switch rows would
+    // only repeat what the tree just said.
     for (const project of projects) {
-      if (project.slug === activeSlug || rank(project.name) < 0) continue;
+      if (projectSlug || project.slug === activeSlug || rank(project.name) < 0) continue;
       out.push({
         kind: "project",
         group: "프로젝트",
@@ -137,10 +149,30 @@ export function Palette({
         },
       });
     }
-    const actions: Array<{ label: string; hint: string; run: () => void; icon: typeof PlusIcon }> = [
-      { label: "새 대화", hint: "화면 대화를 시작합니다", run: onCreateSession, icon: PlusIcon },
-      { label: "새 프로젝트", hint: "레포를 하나 더 연결합니다", run: onAddProject, icon: FolderIcon },
-      { label: "설정", hint: "연결 · 대화 · 문제 해결", run: onOpenSettings, icon: GearIcon },
+    const actions: Array<{
+      label: string;
+      hint: string;
+      run: () => void;
+      icon: typeof PlusIcon;
+    }> = [
+      {
+        label: "새 대화",
+        hint: "화면 대화를 시작합니다",
+        run: onCreateSession,
+        icon: PlusIcon,
+      },
+      {
+        label: "새 프로젝트",
+        hint: "레포를 하나 더 연결합니다",
+        run: onAddProject,
+        icon: FolderIcon,
+      },
+      {
+        label: "설정",
+        hint: "연결 · 대화 · 문제 해결",
+        run: onOpenSettings,
+        icon: GearIcon,
+      },
     ];
     const q = query.trim().toLowerCase();
     for (const action of actions) {
@@ -159,7 +191,20 @@ export function Palette({
       });
     }
     return out;
-  }, [projects, activeSlug, activeSessionId, query, titleForThread, onOpenThread, onCreateSession, onActivateProject, onAddProject, onOpenSettings, onClose]);
+  }, [
+    projects,
+    activeSlug,
+    activeSessionId,
+    projectSlug,
+    query,
+    titleForThread,
+    onOpenThread,
+    onCreateSession,
+    onActivateProject,
+    onAddProject,
+    onOpenSettings,
+    onClose,
+  ]);
 
   // A shrinking list must not keep a highlight past its end.
   const index = Math.min(highlight, Math.max(0, rows.length - 1));
@@ -190,13 +235,13 @@ export function Palette({
 
   return (
     <div className="palette" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="palette__panel">
+      <div className="palette__panel" ref={panelRef}>
         <input
           ref={searchRef}
           className="palette__search"
           value={query}
-          placeholder="대화, 프로젝트, 명령 찾기"
-          aria-label="대화, 프로젝트, 명령 찾기"
+          placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트, 명령 찾기"}
+          aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트, 명령 찾기"}
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-list"
@@ -213,7 +258,7 @@ export function Palette({
             <li className="palette__empty">&apos;{query.trim()}&apos;와 맞는 것이 없습니다.</li>
           )}
           {rows.map((row, i) => {
-                const header = i === 0 || rows[i - 1]?.group !== row.group ? row.group : null;
+            const header = i === 0 || rows[i - 1]?.group !== row.group ? row.group : null;
             const Icon = row.kind === "action" ? row.icon : null;
             return (
               <Fragment key={row.kind + row.key}>
@@ -238,7 +283,9 @@ export function Palette({
                     </span>
                   )}
                   <span className="palette__label">{row.label}</span>
-                  {row.kind === "session" && row.now && <span className="palette__hint">지금 열림</span>}
+                  {row.kind === "session" && row.now && (
+                    <span className="palette__hint">지금 열림</span>
+                  )}
                   {row.kind === "session" && !row.now && row.slug !== activeSlug && (
                     <span className="palette__hint">{row.projectName}</span>
                   )}

@@ -1,10 +1,10 @@
-import { contextBridge, ipcRenderer } from "electron";
 import type {
-  CdsDesignCommentTarget,
-  CdsDesignCommentsEnvelope,
-  CdsDesignNavigateEnvelope,
+  ColoDesignCommentsEnvelope,
+  ColoDesignCommentTarget,
+  ColoDesignNavigateEnvelope,
   CommentItem,
-} from "@cds-design/protocol";
+} from "@colo-design/protocol";
+import { contextBridge, ipcRenderer } from "electron";
 
 /**
  * 미리보기 뷰의 preload (PLAN D67 · D68 → D78 · D79). Sandbox +
@@ -13,15 +13,14 @@ import type {
  * 안에 인라인이다.
  *
  * 네 몫:
- * 1. 레포 브리지의 문 (D68): `window.cdsDesign.post` — 브리지가
- *    `cds-design.screens` 를 올리는 길. `cds-overlay:navigate` 는 반대로
+ * 1. 레포 브리지의 문 (D68): `window.coloDesign.post` — 브리지가
+ *    `colo-design.screens` 를 올리는 길. `colo-overlay:navigate` 는 반대로
  *    메인이 주면 페이지의 window 로 돌려 보낸다(postMessage). DOM 이벤트는
  *    world 를 넘으므로 메인 월드의 브리지 리스너가 받는다.
  * 2. 코멘트 핀 오버레이 (D67 → D78): 기록된 핀은 웹이 내려 준 목록을
  *    `[data-screen]`·`[data-state]` 로 걸러 늘 그린다 — 루트는 DOMContentLoaded
  *    에 항상 붙고(D79), 모드는 이제 핀만 찍는 좁은 뜻이다. 해결 · 다시 요청은
  *    봉투로 올려 뷰가 웹에 건넨다.
- * 3. 옛 이름 감지: `drafthouse.*` 봉투가 window 에 흐르면 stale 을 올린다.
  */
 
 // ---------------------------------------------------------------------------
@@ -53,7 +52,12 @@ function cssPath(element: Element, root: Element): string {
   return [`div[data-screen="${root.getAttribute("data-screen")}"]`, ...parts].join(" > ");
 }
 
-function roundRect(rect: DOMRect): { x: number; y: number; width: number; height: number } {
+function roundRect(rect: DOMRect): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
   return {
     x: Math.round(rect.x),
     y: Math.round(rect.y),
@@ -62,7 +66,7 @@ function roundRect(rect: DOMRect): { x: number; y: number; width: number; height
   };
 }
 
-function describeElement(element: Element | null): CdsDesignCommentTarget | null {
+function describeElement(element: Element | null): ColoDesignCommentTarget | null {
   if (!element) return null;
   const screenRoot = element.closest("[data-screen]");
   if (!screenRoot) return null;
@@ -87,14 +91,14 @@ function screenContext(element: Element): { screen: string; state: string } | nu
 // 1. The repo bridge's door (D68)
 // ---------------------------------------------------------------------------
 
-contextBridge.exposeInMainWorld("cdsDesign", {
-  post: (envelope: unknown) => ipcRenderer.send("cds-overlay:post", envelope),
+contextBridge.exposeInMainWorld("coloDesign", {
+  post: (envelope: unknown) => ipcRenderer.send("colo-overlay:post", envelope),
 });
 
-ipcRenderer.on("cds-overlay:navigate", (_event, payload: { route?: unknown; state?: unknown }) => {
+ipcRenderer.on("colo-overlay:navigate", (_event, payload: { route?: unknown; state?: unknown }) => {
   if (typeof payload?.route !== "string") return;
-  const envelope: CdsDesignNavigateEnvelope = {
-    type: "cds-design.navigate",
+  const envelope: ColoDesignNavigateEnvelope = {
+    type: "colo-design.navigate",
     route: payload.route,
     state: typeof payload.state === "string" ? payload.state : null,
   };
@@ -103,25 +107,11 @@ ipcRenderer.on("cds-overlay:navigate", (_event, payload: { route?: unknown; stat
 });
 
 // ---------------------------------------------------------------------------
-// 3. Stale-bridge detection — an old `drafthouse.*` overlay still posts at
-// window.parent, which is this window; the messages stay visible here.
-// ---------------------------------------------------------------------------
-
-let staleReported = false;
-window.addEventListener("message", (event) => {
-  const type = (event.data as { type?: unknown } | null)?.type;
-  if (!staleReported && typeof type === "string" && type.startsWith("drafthouse.")) {
-    staleReported = true;
-    ipcRenderer.send("cds-overlay:post", { type: "cds-design.stale" });
-  }
-});
-
-// ---------------------------------------------------------------------------
 // 2. The comment-pin overlay (D67 → D78 · D79 · D80). All styling inline —
 // the repo's classes are the repo's; pointer-events none on the root so the
 // page stays live.
 //
-// D78: RECORDED pins come down from the web (`cds-overlay:pins`, the whole
+// D78: RECORDED pins come down from the web (`colo-overlay:pins`, the whole
 // project list) and are filtered against the page's own [data-screen] /
 // [data-state] — a screen switch needs no round trip. They anchor by `path`
 // each time they are drawn (no element reference survives a hot reload), and
@@ -138,7 +128,7 @@ interface DraftPin {
   id: number;
   /** Held only for DRAFTS: they die with the screen (D67), so they are short-lived. */
   anchor: Element;
-  element: CdsDesignCommentTarget;
+  element: ColoDesignCommentTarget;
   context: { screen: string; state: string };
   comment: string;
   editing: boolean;
@@ -152,11 +142,10 @@ interface RecordedPin {
 
 const Z = "2147483000";
 const root = document.createElement("div");
-root.setAttribute("data-cds-design-overlay", "");
+root.setAttribute("data-colo-design-overlay", "");
 root.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${Z};font-family:system-ui,-apple-system,sans-serif;`;
 
 const ACCENT = "#f59e0b";
-const RED = "#e05252";
 
 let mode = false;
 let altHeld = false;
@@ -283,8 +272,7 @@ function visibleRecorded(): RecordedPin[] {
   // 해결된 핀은 화면에서 사라진다 (D78 — 기본 숨김): the popover's
   // 해결된 것 보기 is where resolved history is read.
   return recorded.filter(
-    (entry) =>
-      !entry.item.resolved && entry.item.screen === screen && entry.item.state === state,
+    (entry) => !entry.item.resolved && entry.item.screen === screen && entry.item.state === state,
   );
 }
 
@@ -303,7 +291,9 @@ function anchorFor(item: CommentItem): Element | null {
   }
   const screenRoot = document.querySelector(`[data-screen="${cssEscape(item.screen)}"]`);
   if (!screenRoot) return null;
-  const candidates = screenRoot.querySelectorAll(`[data-component="${cssEscape(item.element.component)}"]`);
+  const candidates = screenRoot.querySelectorAll(
+    `[data-component="${cssEscape(item.element.component)}"]`,
+  );
   for (const candidate of candidates) {
     if (ownText(candidate) === item.elementText) return candidate;
   }
@@ -341,7 +331,7 @@ document.addEventListener(
     }
     if (!hover) {
       hover = document.createElement("div");
-      hover.setAttribute("data-cds-hover", "");
+      hover.setAttribute("data-colo-hover", "");
       hover.style.cssText =
         "position:fixed;outline:2px solid #e05252;outline-offset:1px;pointer-events:none;";
       root.appendChild(hover);
@@ -372,7 +362,17 @@ document.addEventListener(
     }
     event.preventDefault();
     event.stopPropagation();
-    drafts = [...drafts, { id: nextId++, anchor: element, element: target, context, comment: "", editing: true }];
+    drafts = [
+      ...drafts,
+      {
+        id: nextId++,
+        anchor: element,
+        element: target,
+        context,
+        comment: "",
+        editing: true,
+      },
+    ];
     renderOverlay();
   },
   true,
@@ -423,7 +423,10 @@ if (document.documentElement) {
 // a hot reload must drag the pins along, not strand them. No element refs.
 const anchorWatch = new MutationObserver(() => scheduleLayout());
 if (document.documentElement) {
-  anchorWatch.observe(document.documentElement, { childList: true, subtree: true });
+  anchorWatch.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 }
 document.addEventListener("scroll", scheduleLayout, true);
 window.addEventListener("resize", scheduleLayout);
@@ -514,7 +517,10 @@ function renderOverlay(): void {
   // --- drafts: the red pin, the editor with the D80 buttons ----------------
   for (const pin of drafts) {
     number += 1;
-    const wrap = el("div", "position:fixed;pointer-events:none;display:flex;flex-direction:column;align-items:flex-start;gap:4px;");
+    const wrap = el(
+      "div",
+      "position:fixed;pointer-events:none;display:flex;flex-direction:column;align-items:flex-start;gap:4px;",
+    );
     wrap.dataset.pin = String(pin.id);
 
     const chip = el(
@@ -522,8 +528,18 @@ function renderOverlay(): void {
       "pointer-events:auto;display:flex;align-items:center;gap:6px;background:#fff;color:#1a1a1a;border:1px solid #d4d4d4;border-radius:999px;padding:2px 6px 2px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.18);",
     );
     chip.appendChild(el("span", "font-weight:700;color:#b91c1c;", String(number)));
-    chip.appendChild(el("span", "max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:10px;color:#666;", pin.element.component));
-    const remove = el("button", `${BUTTON_BASE}background:none;color:#888;padding:0 4px;font-size:13px;`, "×");
+    chip.appendChild(
+      el(
+        "span",
+        "max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:10px;color:#666;",
+        pin.element.component,
+      ),
+    );
+    const remove = el(
+      "button",
+      `${BUTTON_BASE}background:none;color:#888;padding:0 4px;font-size:13px;`,
+      "×",
+    );
     remove.setAttribute("aria-label", `핀 ${number} 삭제`);
     remove.addEventListener("click", () => {
       drafts = drafts.filter((entry) => entry.id !== pin.id);
@@ -556,7 +572,11 @@ function renderOverlay(): void {
     "position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;align-items:flex-end;gap:8px;",
   );
   if (ready.length > 0) {
-    const send = el("button", `${BUTTON_BASE}background:#e05252;color:#fff;padding:8px 16px;box-shadow:0 6px 20px rgba(0,0,0,.25);`, `수정 요청 ${ready.length}건 보내기`);
+    const send = el(
+      "button",
+      `${BUTTON_BASE}background:#e05252;color:#fff;padding:8px 16px;box-shadow:0 6px 20px rgba(0,0,0,.25);`,
+      `수정 요청 ${ready.length}건 보내기`,
+    );
     send.addEventListener("click", () => {
       sendDrafts(ready);
     });
@@ -579,15 +599,23 @@ function renderOverlay(): void {
  * THIS pin alone at once, 담아 두기 parks it as a draft, 지우기 drops it.
  */
 function draftEditor(pin: DraftPin, number: number): HTMLElement {
-  const editor = el("div", "pointer-events:auto;display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:8px;width:288px;box-shadow:0 6px 20px rgba(0,0,0,.2);");
-  const head = el("div", "font-size:11px;font-weight:700;color:#b91c1c;", `${number} · ${pin.element.component}`);
+  const editor = el(
+    "div",
+    "pointer-events:auto;display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:8px;width:288px;box-shadow:0 6px 20px rgba(0,0,0,.2);",
+  );
+  const head = el(
+    "div",
+    "font-size:11px;font-weight:700;color:#b91c1c;",
+    `${number} · ${pin.element.component}`,
+  );
   editor.appendChild(head);
   const input = document.createElement("textarea");
   input.rows = 2;
   input.value = pin.comment;
   input.setAttribute("aria-label", `핀 ${number} 코멘트`);
   input.placeholder = "이 요소에 바라는 점을 적어 주세요";
-  input.style.cssText = "resize:none;border:1px solid #d4d4d4;border-radius:6px;padding:6px;font-size:13px;font-family:inherit;";
+  input.style.cssText =
+    "resize:none;border:1px solid #d4d4d4;border-radius:6px;padding:6px;font-size:13px;font-family:inherit;";
   input.addEventListener("input", () => {
     pin.comment = input.value;
   });
@@ -604,7 +632,11 @@ function draftEditor(pin: DraftPin, number: number): HTMLElement {
     drafts = drafts.filter((entry) => entry.id !== pin.id);
     renderOverlay();
   });
-  const park = el("button", `${BUTTON_BASE}background:none;color:#555;border:1px solid #d4d4d4;`, "담아 두기");
+  const park = el(
+    "button",
+    `${BUTTON_BASE}background:none;color:#555;border:1px solid #d4d4d4;`,
+    "담아 두기",
+  );
   park.addEventListener("click", () => {
     pin.comment = input.value;
     pin.editing = false;
@@ -627,13 +659,16 @@ function sendDrafts(pins: DraftPin[]): void {
   const ready = pins.filter((pin) => pin.comment.trim() !== "");
   if (ready.length === 0) return;
   const first = ready[0]!.context;
-  const envelope: CdsDesignCommentsEnvelope = {
-    type: "cds-design.comments",
+  const envelope: ColoDesignCommentsEnvelope = {
+    type: "colo-design.comments",
     screen: first.screen,
     state: first.state,
-    items: ready.map((pin) => ({ element: pin.element, comment: pin.comment.trim() })),
+    items: ready.map((pin) => ({
+      element: pin.element,
+      comment: pin.comment.trim(),
+    })),
   };
-  ipcRenderer.send("cds-overlay:post", envelope);
+  ipcRenderer.send("colo-overlay:post", envelope);
   toast(
     busy
       ? "보냈습니다 — Claude 가 일하는 중, 끝나면 이어서 봅니다"
@@ -649,7 +684,10 @@ function sendDrafts(pins: DraftPin[]): void {
  * up as envelopes; the view relays them to the web.
  */
 function recordedBubble(item: CommentItem): HTMLElement {
-  const bubble = el("div", "pointer-events:auto;margin-top:4px;max-width:288px;background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.2);display:flex;flex-direction:column;gap:6px;");
+  const bubble = el(
+    "div",
+    "pointer-events:auto;margin-top:4px;max-width:288px;background:#fff;border:1px solid #d4d4d4;border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.2);display:flex;flex-direction:column;gap:6px;",
+  );
   const title = el("div", "font-weight:700;color:#374151;", `${item.elementText || "화면의 요소"}`);
   bubble.appendChild(title);
   bubble.appendChild(el("div", "color:#1a1a1a;line-height:1.5;", item.text));
@@ -661,20 +699,28 @@ function recordedBubble(item: CommentItem): HTMLElement {
     item.resolved ? "미해결로" : "해결",
   );
   toggle.addEventListener("click", () => {
-    ipcRenderer.send("cds-overlay:post", {
-      type: "cds-design.comments.resolve",
+    ipcRenderer.send("colo-overlay:post", {
+      type: "colo-design.comments.resolve",
       id: item.id,
       resolved: !item.resolved,
-    } satisfies { type: "cds-design.comments.resolve"; id: string; resolved: boolean });
+    } satisfies {
+      type: "colo-design.comments.resolve";
+      id: string;
+      resolved: boolean;
+    });
     openBubbles.delete(item.id);
     renderOverlay();
   });
   row.appendChild(toggle);
   if (!item.resolved) {
-    const resend = el("button", `${BUTTON_BASE}background:none;color:#555;border:1px solid #d4d4d4;`, "다시 요청");
+    const resend = el(
+      "button",
+      `${BUTTON_BASE}background:none;color:#555;border:1px solid #d4d4d4;`,
+      "다시 요청",
+    );
     resend.addEventListener("click", () => {
-      ipcRenderer.send("cds-overlay:post", {
-        type: "cds-design.comments.resend",
+      ipcRenderer.send("colo-overlay:post", {
+        type: "colo-design.comments.resend",
         id: item.id,
       });
       openBubbles.delete(item.id);
@@ -707,17 +753,18 @@ function toast(text: string): void {
 // busy (D86), and the capture three-beat (D87: hide → the view shoots → back).
 // ---------------------------------------------------------------------------
 
-ipcRenderer.on("cds-overlay:mode", (_event, payload: { on?: boolean }) => {
+ipcRenderer.on("colo-overlay:mode", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
   const boot = () => {
     setMode(on);
     renderOverlay();
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();
 });
 
-ipcRenderer.on("cds-overlay:pins", (_event, payload: { items?: unknown; attention?: unknown }) => {
+ipcRenderer.on("colo-overlay:pins", (_event, payload: { items?: unknown; attention?: unknown }) => {
   const items = Array.isArray(payload?.items) ? (payload.items as CommentItem[]) : [];
   const attention = Array.isArray(payload?.attention) ? (payload.attention as string[]) : [];
   recorded = items
@@ -729,19 +776,22 @@ ipcRenderer.on("cds-overlay:pins", (_event, payload: { items?: unknown; attentio
   renderOverlay();
 });
 
-ipcRenderer.on("cds-overlay:busy", (_event, payload: { on?: boolean }) => {
+ipcRenderer.on("colo-overlay:busy", (_event, payload: { on?: boolean }) => {
   setBusy(Boolean(payload?.on));
 });
 
-ipcRenderer.on("cds-overlay:capture", (_event, payload: { on?: boolean }) => {
+ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
   const boot = () => {
     // Hidden FIRST, then two frames: the same tick would shoot the pins in
     // (PLAN §9 틀리기 쉬운 자리 — the capture waits for the paint).
     root.style.visibility = on ? "hidden" : "";
-    requestAnimationFrame(() => requestAnimationFrame(() => ipcRenderer.send("cds-overlay:capture-done")));
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => ipcRenderer.send("colo-overlay:capture-done")),
+    );
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();
 });
 
@@ -750,5 +800,6 @@ const boot = () => {
   if (!root.isConnected && document.body) document.body.appendChild(root);
   scheduleLayout();
 };
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, { once: true });
+if (document.readyState === "loading")
+  document.addEventListener("DOMContentLoaded", boot, { once: true });
 else boot();

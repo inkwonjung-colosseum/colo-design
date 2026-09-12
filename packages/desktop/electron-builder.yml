@@ -12,9 +12,9 @@
 # 실제로 실행해 본 적은 아직 없다.
 #
 # extraResources — 포터블 런타임(DESIGN §7 런타임 번들). resources/bin 을
-# PATH 앞에 붙이는 것은 메인 프로세스가 CDS_DESIGN_EXTRA_PATH 로 넘긴다.
-appId: org.cds-design.desktop
-productName: CDS Design
+# PATH 앞에 붙이는 것은 메인 프로세스가 COLO_DESIGN_EXTRA_PATH 로 넘긴다.
+appId: org.colo-design.desktop
+productName: Colo Design
 directories:
   output: release
   buildResources: build
@@ -42,7 +42,7 @@ mac:
   # artifactName 은 mac 플랫폼 설정이 dmg·zip 모두에 적용된다(${ext} 로
   # 구분). 릴리스 URL(latest.json)이 이 이름을 그대로 쓰므로 명시적으로
   # 고정한다 — 빌더 기본값 변경과 무관하게 URL 이 깨지지 않는다.
-  artifactName: cds-design-${version}-mac-${arch}.${ext}
+  artifactName: colo-design-${version}-mac-${arch}.${ext}
   target:
     - target: dmg
       arch: [arm64]
@@ -59,7 +59,7 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   # 릴리스 URL 이 이름을 그대로 쓴다 — mac artifactName 과 같은 이유로 고정.
-  artifactName: cds-design-Setup-${version}-win-${arch}.${ext}
+  artifactName: colo-design-Setup-${version}-win-${arch}.${ext}
   # SmartScreen "추가 정보 → 실행" 한 번은 설치 안내 페이지가 담당한다.
 # v1 업데이트 흐름:
 #   mac  — 앱이 직접 zip 다운로드·sha256 검증·교체(mac-self-update.ts).

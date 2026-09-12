@@ -1,10 +1,10 @@
+import type { AskQuestion, RepoStatus, TurnMarker } from "@colo-design/protocol";
+import { readTurn } from "@colo-design/protocol";
 import { useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
-import type { AskQuestion, RepoStatus, TurnMarker } from "@cds-design/protocol";
-import { readTurn } from "@cds-design/protocol";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
+import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
 import { Markdown } from "./Markdown";
-import { CheckIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon, ChevronRightIcon } from "./icons";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
 
 /**
@@ -18,7 +18,7 @@ const TAPE_LINES: Record<string, string> = {
   "No response requested.": "응답이 필요 없는 차례였습니다",
 };
 
-/** The repo's own cds-design.json commands, as RepoStatus carries them. */
+/** The repo's own colo-design.json commands, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ function preview(value: unknown, max = 240): string {
 }
 
 /** The one input field that best identifies what a tool call is about. */
-function toolHeadline(name: string, input: unknown): string {
+function toolHeadline(input: unknown): string {
   const i = input as Record<string, unknown> | null;
   if (!i || typeof i !== "object") return "";
   for (const key of ["command", "file_path", "path", "pattern", "url", "prompt", "description"]) {
@@ -43,7 +43,7 @@ function toolHeadline(name: string, input: unknown): string {
 }
 
 /**
- * The cds-preview 도구 이름은 `mcp__cds-preview__screen_*` 로 온다(PLAN
+ * The colo-preview 도구 이름은 `mcp__colo-preview__screen_*` 로 온다(PLAN
  * D61): the server prefix is plumbing, so the recognisers key on the tool's
  * own name.
  */
@@ -103,7 +103,7 @@ type ToolStatus = "running" | "done" | "error";
 
 function ToolBlock({ block }: { block: Extract<Block, { type: "tool" }> }) {
   const [open, setOpen] = useState(false);
-  const headline = toolHeadline(block.name, block.input);
+  const headline = toolHeadline(block.input);
   const status: ToolStatus = !block.done ? "running" : block.isError ? "error" : "done";
 
   return (
@@ -219,7 +219,9 @@ function ThinkingBlock({ block }: { block: Extract<Block, { type: "thinking" }> 
  */
 function ActivitySummary({ steps }: { steps: ActivityStep[] }) {
   const [open, setOpen] = useState(false);
-  const tools = steps.filter((step): step is Extract<Block, { type: "tool" }> => step.type === "tool");
+  const tools = steps.filter(
+    (step): step is Extract<Block, { type: "tool" }> => step.type === "tool",
+  );
   const running = tools.some((tool) => !tool.done);
   const failed = tools.some((tool) => tool.isError);
 
@@ -240,7 +242,11 @@ function ActivitySummary({ steps }: { steps: ActivityStep[] }) {
       {open && (
         <div className="activity__body">
           {steps.map((step) =>
-            step.type === "tool" ? <ToolBlock key={step.id} block={step} /> : <ThinkingBlock key={step.id} block={step} />,
+            step.type === "tool" ? (
+              <ToolBlock key={step.id} block={step} />
+            ) : (
+              <ThinkingBlock key={step.id} block={step} />
+            ),
           )}
         </div>
       )}
@@ -343,8 +349,11 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
     <ul className="todo__list">
       {todos.map((todo, index) => (
         <li
+          // biome-ignore lint/suspicious/noArrayIndexKey: 할 일의 정체성은 목록에서의 위치다 — 상태만 바뀔 뿐 재배치가 없다.
           key={index}
-          className={todo.status === "in_progress" ? "todo__item todo__item--current" : "todo__item"}
+          className={
+            todo.status === "in_progress" ? "todo__item todo__item--current" : "todo__item"
+          }
         >
           <span className="todo__sign" aria-hidden>
             {todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "●" : "○"}
@@ -449,7 +458,13 @@ function MachineTurn({
               label: screen,
               text: "",
             }))
-          : [{ key: "none", label: "아직 이 기획서로 만든 화면이 없습니다", text: "" }];
+          : [
+              {
+                key: "none",
+                label: "아직 이 기획서로 만든 화면이 없습니다",
+                text: "",
+              },
+            ];
       break;
     case "gate":
       title = `${marker.step}에서 멈췄습니다`;
@@ -617,7 +632,6 @@ const STARTERS = [
 export function Transcript({
   blocks,
   live = true,
-  commands,
   onRetry,
   onRewind,
   onResendEdit,
@@ -627,8 +641,6 @@ export function Transcript({
 }: {
   blocks: Block[];
   live?: boolean;
-  /** The repo's cds-design.json commands, for naming Bash calls (PLAN D37). */
-  commands?: RepoCommands;
   /** Offered on a failed turn's card: send the same words again (PLAN D35). */
   onRetry?: (text: string) => void;
   /**
@@ -645,12 +657,21 @@ export function Transcript({
   /** Puts the worktree back the way it stood before that answer (PLAN D52). */
   onRestoreCheckpoint?: (id: string) => void;
 }) {
+  // D95: 되감기 확인 — k 가 마지막 답이 아니면 뒤의 답들도 함께 사라진다는
+  // 말을 한 번 묻는다. 마지막 답이면 곧장. 훅은 빈 테이프 early return 보다
+  // 위에 있어야 한다 — 순서가 render 마다 같아야 하니까.
+  const [rewindAsk, setRewindAsk] = useState<{
+    turn: number;
+    text: string;
+    after: number;
+  } | null>(null);
   if (blocks.length === 0) {
     return (
       <div className="empty">
         <p className="empty__lead">메시지를 보내면 대화가 여기에 이어집니다.</p>
         <p className="empty__sub">
-          만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로 들어옵니다.
+          만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
+          들어옵니다.
         </p>
         {onStarter && (
           <div className="empty__starters">
@@ -693,11 +714,6 @@ export function Transcript({
           block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
         ),
   );
-  // D95: 되감기 확인 — k 가 마지막 답이 아니면 뒤의 답들도 함께 사라진다는
-  // 말을 한 번 묻는다. 마지막 답이면 곧장.
-  const [rewindAsk, setRewindAsk] = useState<{ turn: number; text: string; after: number } | null>(
-    null,
-  );
   const totalAnswers = blocks.filter((block) => block.type === "text").length;
   const askRewind = (turn: number, text: string) => {
     if (!onRewind) return;
@@ -710,7 +726,12 @@ export function Transcript({
       {rewindAsk && onRewind && (
         <ConfirmDialog
           title="답 되감기"
-          body={<>이 답을 버릴까요? <strong>이 답 이후의 답 {rewindAsk.after}개</strong>도 함께 사라집니다.</>}
+          body={
+            <>
+              이 답을 버릴까요? <strong>이 답 이후의 답 {rewindAsk.after}개</strong>도 함께
+              사라집니다.
+            </>
+          }
           hint="파일도 이 답 이전으로 돌아갑니다."
           confirmLabel="버리고 다시 받기"
           onConfirm={() => {
@@ -739,9 +760,16 @@ export function Transcript({
             // a quoted marker in an answer render as a second card.
             const { marker, body } = readTurn(block.text);
             if (marker)
-              return <MachineTurn key={block.id} marker={marker} body={body} thumbs={block.thumbs} />;
+              return (
+                <MachineTurn key={block.id} marker={marker} body={body} thumbs={block.thumbs} />
+              );
             const halted = TAPE_LINES[block.text.trim()];
-            if (halted) return <p key={block.id} className="sysline">{halted}</p>;
+            if (halted)
+              return (
+                <p key={block.id} className="sysline">
+                  {halted}
+                </p>
+              );
             return (
               <div key={block.id} className="bubble bubble--user">
                 {block.text}
@@ -769,7 +797,12 @@ export function Transcript({
             // The checkpoint count stays aligned even for a block that only
             // poses as an answer; the k-th turn is the k-th turn regardless.
             const tape = TAPE_LINES[block.text.trim()];
-            if (tape) return <p key={block.id} className="sysline">{tape}</p>;
+            if (tape)
+              return (
+                <p key={block.id} className="sysline">
+                  {tape}
+                </p>
+              );
             const checkpoint = checkpoints?.find((entry) => entry.turn === assistantCount);
             return (
               <div key={block.id}>
@@ -826,6 +859,8 @@ export function Transcript({
                 <span className="notice__text">{block.text}</span>
               </div>
             );
+          default:
+            return null;
         }
       })}
     </div>
@@ -843,12 +878,12 @@ export function PermissionCard({
 }: {
   request: PendingPermission;
   onRespond: (decision: "allow" | "allowAlways" | "deny", message?: string) => void;
-  /** The repo's cds-design.json commands, for naming Bash calls (PLAN D37). */
+  /** The repo's colo-design.json commands, for naming Bash calls (PLAN D37). */
   commands?: RepoCommands;
 }) {
   const [reason, setReason] = useState("");
   const [showReason, setShowReason] = useState(false);
-  const raw = toolHeadline(request.toolName, request.input);
+  const raw = toolHeadline(request.input);
   const headline = request.toolName === "Bash" ? bashHeadline(raw, commands) : raw;
   const action = toolLabel(request.toolName);
   const suggestion = request.suggestions[0];

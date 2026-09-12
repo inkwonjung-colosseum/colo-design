@@ -12,10 +12,11 @@
  *
  * Usage: node packages/web/test/reconnect-live.mjs "<client url>"
  */
-import { chromium } from "playwright";
+
 import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
 
 const url = process.argv[2];
 if (!url) throw new Error("pass the daemon client url");
@@ -32,7 +33,10 @@ const check = (name, ok, detail = "") => {
 function startDaemon() {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
-  const daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const daemon = spawn(process.execPath, [daemonEntry], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   daemon.stderr.on("data", (d) => process.stderr.write(`[daemon] ${d}`));
   process.on("exit", () => daemon.kill("SIGKILL"));
   return new Promise((ok, fail) => {

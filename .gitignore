@@ -25,3 +25,6 @@ packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/
 .test-logs/
+
+# ZCode 세션 디렉터리
+.zcode/

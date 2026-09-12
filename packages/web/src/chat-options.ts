@@ -1,4 +1,4 @@
-import type { EffortLevel, PermissionMode, SessionModelInfo } from "@cds-design/protocol";
+import type { EffortLevel, PermissionMode, SessionModelInfo } from "@colo-design/protocol";
 
 /**
  * How the three conversation settings are worded.
@@ -64,19 +64,31 @@ export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
  * that tells a non-developer when to reach for it — rides along as the hint.
  */
 const MODEL_HINT: Array<{ match: (id: string) => boolean; hint: string }> = [
-  { match: (id) => id.includes("fable"), hint: "제일 어려운 작업용. 그만큼 느려요" },
+  {
+    match: (id) => id.includes("fable"),
+    hint: "제일 어려운 작업용. 그만큼 느려요",
+  },
   { match: (id) => id.includes("opus"), hint: "복잡하거나 긴 기획서에 좋아요" },
-  { match: (id) => id.includes("sonnet"), hint: "속도와 결과가 균형 잡혀 있어요" },
+  {
+    match: (id) => id.includes("sonnet"),
+    hint: "속도와 결과가 균형 잡혀 있어요",
+  },
   { match: (id) => id.includes("haiku"), hint: "간단한 수정에 좋아요" },
 ];
 
 /** `Sonnet 5 · Efficient…` → `Sonnet 5`; `Opus 5 with 1M context` → `Opus 5 (1M)`. */
 function modelName(model: SessionModelInfo): string {
-  const head = model.description.split("·")[0]?.trim().replace(/\s+with 1M context$/i, " (1M)");
+  const head = model.description
+    .split("·")[0]
+    ?.trim()
+    .replace(/\s+with 1M context$/i, " (1M)");
   return head || model.displayName;
 }
 
-export function modelWords(model: SessionModelInfo): { label: string; hint: string } {
+export function modelWords(model: SessionModelInfo): {
+  label: string;
+  hint: string;
+} {
   const name = modelName(model);
   // Alias rows ("sonnet") and id rows ("claude-sonnet-5") both have to find
   // their family, so whichever the CLI sent is what gets matched.
@@ -87,7 +99,10 @@ export function modelWords(model: SessionModelInfo): { label: string; hint: stri
   // the model it resolves to today rides in the hint, where it can change
   // without the chip ever lying about what was picked.
   if (model.value === "default") {
-    return { label: "자동 (추천)", hint: `${name} · 대부분의 화면 작업에 알맞아요` };
+    return {
+      label: "자동 (추천)",
+      hint: `${name} · 대부분의 화면 작업에 알맞아요`,
+    };
   }
   return { label: name, hint: guide ?? "" };
 }
@@ -112,7 +127,12 @@ export function modelRowOf(
 export function modelOptions(
   models: SessionModelInfo[],
   current: SessionModelInfo | undefined,
-): Array<{ value: string | null; label: string; hint?: string; picked: boolean }> {
+): Array<{
+  value: string | null;
+  label: string;
+  hint?: string;
+  picked: boolean;
+}> {
   return models
     .map((model) => {
       const words = modelWords(model);

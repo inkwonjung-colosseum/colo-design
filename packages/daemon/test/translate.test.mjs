@@ -6,8 +6,9 @@
  *
  * Run: node --test packages/daemon/test/translate.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { MessageTranslator } from "../dist/translate.js";
 
 function textBlocks(events) {
@@ -23,11 +24,18 @@ test("deltas and the aggregated message describe one block, not two", () => {
     }),
     ...translator.translate({
       type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "안녕" } },
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "안녕" },
+      },
     }),
     ...translator.translate({
       type: "assistant",
-      message: { id: "msg_01", content: [{ type: "text", text: "안녕하세요" }] },
+      message: {
+        id: "msg_01",
+        content: [{ type: "text", text: "안녕하세요" }],
+      },
     }),
   ];
   const ids = new Set(textBlocks(events).map((event) => event.blockId));
@@ -39,7 +47,11 @@ test("a stream that never announced a message id still lines up", () => {
   const events = [
     ...translator.translate({
       type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "부분" } },
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "부분" },
+      },
     }),
     ...translator.translate({
       type: "assistant",
@@ -53,7 +65,10 @@ test("consecutive messages in one turn keep separate blocks", () => {
   const translator = new MessageTranslator();
   const ids = [];
   for (const id of ["msg_01", "msg_02"]) {
-    translator.translate({ type: "stream_event", event: { type: "message_start", message: { id } } });
+    translator.translate({
+      type: "stream_event",
+      event: { type: "message_start", message: { id } },
+    });
     ids.push(
       ...textBlocks(
         translator.translate({

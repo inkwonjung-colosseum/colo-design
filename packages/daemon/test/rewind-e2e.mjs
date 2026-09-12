@@ -14,13 +14,13 @@ import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
-const DIR = join(tmpdir(), "cds-design-rewind-e2e");
+const DIR = join(tmpdir(), "colo-design-rewind-e2e");
 
-process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
-process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
+process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
-process.env.CDS_PROMPT_LOG = join(DIR, "prompts.log");
+process.env.COLO_PROMPT_LOG = join(DIR, "prompts.log");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -53,7 +53,7 @@ function loggingStub(dir, logPath) {
       '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"p@x.com"}\');',
       "  process.exit(0);",
       "}",
-      'const log = process.env.CDS_PROMPT_LOG;',
+      "const log = process.env.COLO_PROMPT_LOG;",
       'let buf = "";',
       'process.stdin.setEncoding("utf8");',
       'process.stdin.on("data", (chunk) => {',
@@ -67,7 +67,7 @@ function loggingStub(dir, logPath) {
       "      process.stdout.write(JSON.stringify({",
       '        type: "result", subtype: "success", is_error: false,',
       '        session_id: sessionId, result: "넵", num_turns: 1, duration_ms: 5,',
-      "      }) + \"\\n\");",
+      '      }) + "\\n");',
       "      setTimeout(() => process.exit(0), 150);",
       "      return;",
       "    }",
@@ -84,8 +84,11 @@ function loggingStub(dir, logPath) {
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
-  const promptLog = process.env.CDS_PROMPT_LOG;
-  const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: await freePort() });
+  const promptLog = process.env.COLO_PROMPT_LOG;
+  const fixture = await createFixtureRepo({
+    dir: join(DIR, "fixture"),
+    port: await freePort(),
+  });
 
   const port = await freePort();
   const server = new DaemonServer({
@@ -105,7 +108,8 @@ async function main() {
   });
   let nextId = 0;
   const request = async (message, timeoutMs = 120_000) => {
-    const id = `m${(nextId += 1)}`;
+    nextId += 1;
+    const id = `m${nextId}`;
     ws.send(JSON.stringify({ ...message, id }));
     const reply = await waitFor(() => inbox.find((m) => m.id === id), timeoutMs, message.type);
     if (reply.type === "ok") return reply.data;
@@ -130,25 +134,43 @@ async function main() {
     check("the fixture repo is ready", ready.phase === "ready", ready.detail ?? "");
 
     const { sessionId: first } = await request({ type: "session.create" });
-    await request({ type: "session.send", sessionId: first, text: "첫 번째 화면" });
+    await request({
+      type: "session.send",
+      sessionId: first,
+      text: "첫 번째 화면",
+    });
     await waitFor(
-      () => inbox.some((m) => m.type === "session.state" && m.sessionId === first && m.state === "idle"),
+      () =>
+        inbox.some(
+          (m) => m.type === "session.state" && m.sessionId === first && m.state === "idle",
+        ),
       30_000,
       "turn 1 settle",
     );
-    await request({ type: "session.send", sessionId: first, text: "두 번째 화면" });
+    await request({
+      type: "session.send",
+      sessionId: first,
+      text: "두 번째 화면",
+    });
     await waitFor(
-      () => inbox.some((m) => m.type === "session.state" && m.sessionId === first && m.state === "idle"),
+      () =>
+        inbox.some(
+          (m) => m.type === "session.state" && m.sessionId === first && m.state === "idle",
+        ),
       30_000,
       "turn 2 settle",
     );
     check("two turns ran", true);
 
     // The checkpoint write rides the send asynchronously — poll for it.
-    const checkpoints = await waitFor(async () => {
-      const list = await request({ type: "repo.checkpoints" });
-      return list.entries.some((e) => e.turn === 2) ? list : null;
-    }, 10_000, "checkpoint 2");
+    const checkpoints = await waitFor(
+      async () => {
+        const list = await request({ type: "repo.checkpoints" });
+        return list.entries.some((e) => e.turn === 2) ? list : null;
+      },
+      10_000,
+      "checkpoint 2",
+    );
     check(
       "the turns left per-turn checkpoints",
       checkpoints.entries.some((e) => e.turn === 2),

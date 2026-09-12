@@ -1,17 +1,25 @@
 {
-  "name": "@cds-design/protocol",
-  "version": "0.2.0",
+  "name": "@colo-design/protocol",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./update": { "types": "./dist/update.d.ts", "default": "./dist/update.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./update": {
+      "types": "./dist/update.d.ts",
+      "default": "./dist/update.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": { "zod": "^4.1.5" }
+  "dependencies": {
+    "zod": "^4.1.5"
+  }
 }

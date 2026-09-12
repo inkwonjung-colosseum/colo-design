@@ -5,23 +5,24 @@
  *
  * Run: node --test packages/daemon/test/credentials.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import {
   CREDENTIAL_SERVICE,
+  createCredentialStore,
   DpapiCredentialStore,
   KeychainCredentialStore,
-  MemoryCredentialStore,
-  REPO_PAT_ITEM,
-  createCredentialStore,
   loadRepoPat,
+  MemoryCredentialStore,
   mergeNpmrc,
   migratePlaintextSecrets,
-  npmrcPath,
   migrateProjectPats,
+  npmrcPath,
+  REPO_PAT_ITEM,
   repoPatItem,
 } from "../dist/credentials.js";
 
@@ -47,31 +48,41 @@ test("the DPAPI store refuses with the desktop Korean message", async () => {
   await assert.rejects(() => store.delete("pat"), /desktop 버전에서 제공됩니다/);
 });
 
-test("the factory honors CDS_DESIGN_CREDENTIAL_STORE", () => {
-  assert.equal(createCredentialStore({ CDS_DESIGN_CREDENTIAL_STORE: "memory" }).kind, "memory");
-  assert.equal(createCredentialStore({ CDS_DESIGN_CREDENTIAL_STORE: "keychain" }).kind, "keychain");
+test("the factory honors COLO_DESIGN_CREDENTIAL_STORE", () => {
+  assert.equal(createCredentialStore({ COLO_DESIGN_CREDENTIAL_STORE: "memory" }).kind, "memory");
+  assert.equal(
+    createCredentialStore({ COLO_DESIGN_CREDENTIAL_STORE: "keychain" }).kind,
+    "keychain",
+  );
 });
 
 test("migration moves plaintext secrets out of the settings files", async () => {
   const dir = workdir("hub-cred-migrate-");
   try {
     const repoFile = join(dir, "repo.json");
-    writeFileSync(repoFile, `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" }, null, 2)}\n`);
+    writeFileSync(
+      repoFile,
+      `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" }, null, 2)}\n`,
+    );
 
     const store = new MemoryCredentialStore();
     const report = await migratePlaintextSecrets(store, {
-      CDS_DESIGN_REPO_SETTINGS: repoFile,
+      COLO_DESIGN_REPO_SETTINGS: repoFile,
     });
 
     assert.deepEqual(report.migrated, [REPO_PAT_ITEM]);
     assert.equal(await store.load(REPO_PAT_ITEM), "ghp_plain");
     const repo = JSON.parse(readFileSync(repoFile, "utf8"));
-    assert.deepEqual(repo, { url: "https://github.com/org/repo.git" }, "the file keeps only the url");
+    assert.deepEqual(
+      repo,
+      { url: "https://github.com/org/repo.git" },
+      "the file keeps only the url",
+    );
     assert.ok(!readFileSync(repoFile, "utf8").includes("ghp_plain"));
 
     // Idempotent: a second run has nothing to move.
     const again = await migratePlaintextSecrets(store, {
-      CDS_DESIGN_REPO_SETTINGS: repoFile,
+      COLO_DESIGN_REPO_SETTINGS: repoFile,
     });
     assert.deepEqual(again, { migrated: [], kept: [] });
   } finally {
@@ -83,9 +94,12 @@ test("migration keeps plaintext when the store cannot take it", async () => {
   const dir = workdir("hub-cred-keep-");
   try {
     const repoFile = join(dir, "repo.json");
-    writeFileSync(repoFile, `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" })}\n`);
+    writeFileSync(
+      repoFile,
+      `${JSON.stringify({ url: "https://github.com/org/repo.git", pat: "ghp_plain" })}\n`,
+    );
     const report = await migratePlaintextSecrets(new DpapiCredentialStore(), {
-      CDS_DESIGN_REPO_SETTINGS: repoFile,
+      COLO_DESIGN_REPO_SETTINGS: repoFile,
     });
     assert.deepEqual(report, { migrated: [], kept: [REPO_PAT_ITEM] });
     assert.ok(readFileSync(repoFile, "utf8").includes("ghp_plain"), "nothing is lost");
@@ -98,7 +112,7 @@ test("env overrides win over the store; absent env falls through", async () => {
   const store = new MemoryCredentialStore();
   await store.save(REPO_PAT_ITEM, "from-store");
   assert.equal(await loadRepoPat(store, {}), "from-store");
-  assert.equal(await loadRepoPat(store, { CDS_DESIGN_REPO_PAT: "from-env" }), "from-env");
+  assert.equal(await loadRepoPat(store, { COLO_DESIGN_REPO_PAT: "from-env" }), "from-env");
 });
 
 test("migrateProjectPats promotes the active project's token once, then clears the per-project items", async () => {
@@ -131,7 +145,10 @@ test("npmrc merging replaces its own keys and keeps everything else", () => {
   const dir = workdir("hub-cred-npmrc-");
   try {
     const file = join(dir, ".npmrc");
-    writeFileSync(file, "registry=https://registry.npmjs.org/\n@org:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=stale\nalways-auth=true\n");
+    writeFileSync(
+      file,
+      "registry=https://registry.npmjs.org/\n@org:registry=https://npm.pkg.github.com/\n//npm.pkg.github.com/:_authToken=stale\nalways-auth=true\n",
+    );
     mergeNpmrc(file, [
       { key: "@org:registry", value: "https://npm.pkg.github.com/" },
       { key: "//npm.pkg.github.com/:_authToken", value: "fresh-token" },
@@ -173,4 +190,3 @@ test("the macOS Keychain round-trips under a run-unique service", async (t) => {
     await store.delete(REPO_PAT_ITEM).catch(() => undefined);
   }
 });
-

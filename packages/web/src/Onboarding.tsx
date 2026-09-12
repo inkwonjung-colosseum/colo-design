@@ -1,5 +1,5 @@
-import { useState, type CSSProperties } from "react";
-import type { OnboardingStep, OnboardingStepId } from "@cds-design/protocol";
+import type { OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import { type CSSProperties, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 
@@ -22,7 +22,6 @@ const STEP_TITLE: Record<OnboardingStepId, string> = {
   runtime: "Node · pnpm",
   github: "GitHub",
 };
-
 
 const STATUS_GLYPH: Record<OnboardingStep["status"], string> = {
   pass: "✓",
@@ -89,7 +88,7 @@ export function Onboarding({
             height={36}
           />
         </div>
-        <h1>CDS Design 시작하기</h1>
+        <h1>Colo Design 시작하기</h1>
         <p className="hint">이 컴퓨터에서 한 번만 확인하는 네 단계입니다.</p>
       </header>
 
@@ -99,7 +98,9 @@ export function Onboarding({
         <div className="onboarding__meter" aria-hidden="true">
           <span
             className="onboarding__meterfill"
-            style={{ width: `${(steps.filter((step) => step.status === "pass").length / steps.length) * 100}%` }}
+            style={{
+              width: `${(steps.filter((step) => step.status === "pass").length / steps.length) * 100}%`,
+            }}
           />
         </div>
       )}
@@ -153,7 +154,12 @@ export function Onboarding({
               {step.fix && step.status !== "pass" && (
                 <div className="onboarding__fixrow">
                   {step.fix.href ? (
-                    <a className="primary ghlink" href={step.fix.href} target="_blank" rel="noreferrer">
+                    <a
+                      className="primary ghlink"
+                      href={step.fix.href}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       {step.fix.label}
                     </a>
                   ) : (
@@ -161,7 +167,9 @@ export function Onboarding({
                       type="button"
                       className="primary"
                       disabled={busyKind !== null}
-                      onClick={() => void run(step.fix!.kind, () => daemon.api.onboardingFix(step.fix!.kind))}
+                      onClick={() =>
+                        void run(step.fix!.kind, () => daemon.api.onboardingFix(step.fix!.kind))
+                      }
                     >
                       {busyKind === step.fix.kind ? "실행 중…" : step.fix.label}
                     </button>

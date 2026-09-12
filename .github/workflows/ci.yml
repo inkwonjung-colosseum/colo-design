@@ -1,4 +1,4 @@
-# CDS Design 지속 검증 — 푸시·PR 마다 오프라인 전체 스위트를 돈다.
+# Colo Design 지속 검증 — 푸시·PR 마다 오프라인 전체 스위트를 돈다.
 #
 # 무엇을 막는가: 릴리스 워크플로우(desktop-release.yml)는 태그에만 걸려
 # 있어, 깨진 테스트가 다음 릴리스 직전에야 발견되곤 했다(projects-e2e 의
@@ -28,6 +28,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 정적 검사 레인: 오프라인 스위트보다 수 분 빨리, 같은 푸시에서 빨간색을
+  # 본다. 포맷·린트(Biome), 죽은 코드(knip), 워크플로 문법(actionlint)은
+  # 브라우저·Electron 없이도 깨지므로 가벼운 러너에서 먼저 돌린다.
+  lint:
+    name: 정적 검사 (Biome·knip·actionlint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm 버전은 루트 package.json 의 packageManager 필드가 결정한다.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 설치
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome (린트·포맷)
+        run: pnpm exec biome check .
+
+      - name: knip (죽은 코드)
+        run: pnpm knip
+
+      - name: actionlint (워크플로 문법)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
   offline:
     name: 오프라인 스위트 (L1–L3)
     runs-on: ubuntu-latest
@@ -68,7 +100,7 @@ jobs:
           # 멈춘 레인은 잡의 45분을 다 태우고 취소되며, 취소는 로그 업로드
           # 조건을 타지 않아 원인까지 함께 사라진다(셋째 판이 그랬다).
           # 레인마다 상한을 두어 멈춤이 로그를 남기는 실패가 되게 한다.
-          CDS_TEST_LANE_TIMEOUT_MIN: "12"
+          COLO_TEST_LANE_TIMEOUT_MIN: "12"
         run: |
           # 순차 실행: 공유 러너의 코어 수에서 3레인 병렬은 스스로 과부하를
           # 만들어 부하에 민감한 대기(화면 밖 턴의 카운트, 마법사의 이동)를

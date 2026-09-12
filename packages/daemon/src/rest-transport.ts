@@ -14,7 +14,7 @@
  * consumed in order, so the same GET can be replayed with different responses
  * (the version-conflict simulation depends on that).
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Fetch-shaped: one request in, one structured response out. */
@@ -80,7 +80,11 @@ export class FixtureTransport implements RestTransport {
     url: string;
     headers: Record<string, string>;
     body?: Uint8Array;
-  }): Promise<{ status: number; body: Uint8Array; headers?: Record<string, string> }> {
+  }): Promise<{
+    status: number;
+    body: Uint8Array;
+    headers?: Record<string, string>;
+  }> {
     const text = input.body ? new TextDecoder().decode(input.body) : "";
     const parsed = text && looksLikeJson(text) ? safeJson(text) : undefined;
 
@@ -88,13 +92,21 @@ export class FixtureTransport implements RestTransport {
       if (this.used[index]) continue;
       const pair = this.pairs[index]!;
       if (pair.request.method !== input.method || pair.request.url !== input.url) continue;
-      if (pair.request.bodyJson !== undefined && !deepEqual(pair.request.bodyJson, parsed)) continue;
-      if (pair.request.bodyContains && !pair.request.bodyContains.every((part) => text.includes(part))) continue;
+      if (pair.request.bodyJson !== undefined && !deepEqual(pair.request.bodyJson, parsed))
+        continue;
+      if (
+        pair.request.bodyContains &&
+        !pair.request.bodyContains.every((part) => text.includes(part))
+      )
+        continue;
 
       this.used[index] = true;
       const bytes = pair.response.bodyBase64
         ? Buffer.from(pair.response.bodyBase64, "base64")
-        : Buffer.from(pair.response.json === undefined ? "" : JSON.stringify(pair.response.json), "utf8");
+        : Buffer.from(
+            pair.response.json === undefined ? "" : JSON.stringify(pair.response.json),
+            "utf8",
+          );
       return {
         status: pair.response.status,
         body: new Uint8Array(bytes),
@@ -103,14 +115,19 @@ export class FixtureTransport implements RestTransport {
     }
 
     const available = this.pairs
-      .map((pair, index) => (this.used[index] ? null : `${pair.request.method} ${pair.request.url}`))
+      .map((pair, index) =>
+        this.used[index] ? null : `${pair.request.method} ${pair.request.url}`,
+      )
       .filter(Boolean)
       .slice(0, 8)
       .join(", ");
     // A same-endpoint pair that failed only its body assertion is worth
     // saying apart from "no fixture at all".
     const mismatched = this.pairs.find(
-      (pair) => pair.request.method === input.method && pair.request.url === input.url && !this.used[this.pairs.indexOf(pair)],
+      (pair) =>
+        pair.request.method === input.method &&
+        pair.request.url === input.url &&
+        !this.used[this.pairs.indexOf(pair)],
     );
     const hint = mismatched ? ` (본문 불일치 — ${bodyMismatch(parsed, text, mismatched)})` : "";
     throw new Error(
@@ -143,7 +160,7 @@ function safeJson(text: string): unknown {
   }
 }
 
-export function deepEqual(a: unknown, b: unknown): boolean {
+function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b || a === null || b === null) return false;
   if (Array.isArray(a) && Array.isArray(b)) {
@@ -158,11 +175,4 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     );
   }
   return false;
-}
-
-/** Lists fixture directories (used by tests to keep fixtures honest). */
-export function fixtureDirectories(root: string): string[] {
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(root, entry.name));
 }

@@ -1,13 +1,13 @@
 import { createRequire } from "node:module";
 import {
   createSdkMcpServer,
-  tool,
   type McpSdkServerConfigWithInstance,
+  tool,
 } from "@anthropic-ai/claude-agent-sdk";
 
 /**
  * The preview tools Claude sees in a screen session (PLAN D61): an
- * in-process MCP server named `cds-preview` whose six `screen_*` tools drive
+ * in-process MCP server named `colo-preview` whose six `screen_*` tools drive
  * a hidden preview window through the `PreviewDriver` interface. The daemon
  * never learns what Electron is — the desktop injects a factory; the browser
  * dev path injects nothing and the tools simply do not exist.
@@ -50,7 +50,7 @@ export interface PreviewTools {
   resetTurnQuota(): void;
 }
 
-const PREVIEW_SERVER_NAME = "cds-preview";
+const PREVIEW_SERVER_NAME = "colo-preview";
 /** Screenshots are tokens (PLAN D61) — twelve per turn, then words. */
 const CAPTURE_LIMIT_PER_TURN = 12;
 const CAPTURE_LIMIT_TEXT = "이 턴의 캡처 한도에 닿았습니다";
@@ -95,8 +95,12 @@ function loadZod(): PreviewZod | null {
     const requireFromDaemon = createRequire(import.meta.url);
     // Resolves through the daemon's dependency and materializes the pnpm
     // store path, where the SDK's declared peers live as siblings.
-    const requireFromSdk = createRequire(requireFromDaemon.resolve("@anthropic-ai/claude-agent-sdk"));
-    const mod = requireFromSdk("zod") as Partial<PreviewZod> & { z?: PreviewZod };
+    const requireFromSdk = createRequire(
+      requireFromDaemon.resolve("@anthropic-ai/claude-agent-sdk"),
+    );
+    const mod = requireFromSdk("zod") as Partial<PreviewZod> & {
+      z?: PreviewZod;
+    };
     return mod.z ?? (mod as PreviewZod);
   } catch {
     return null;
@@ -129,7 +133,7 @@ const SERVER_INSTRUCTIONS =
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the `cds-preview` in-process MCP server. `listScreens` is read on
+ * Builds the `colo-preview` in-process MCP server. `listScreens` is read on
  * every `screen_list` call — the declared-screen cache can fill (or move)
  * while the session lives, so the tools must not snapshot it at creation.
  * `onOpened` (PLAN D91) is what makes the web's 따라가기 true: every
@@ -160,12 +164,15 @@ export function createPreviewTools(
       async () => {
         const screens = listScreens();
         if (screens.length === 0) {
-          return text("아직 선언된 화면이 없습니다 — 미리보기 앱이 화면을 알려 주면 목록이 채워집니다.");
+          return text(
+            "아직 선언된 화면이 없습니다 — 미리보기 앱이 화면을 알려 주면 목록이 채워집니다.",
+          );
         }
         return text(
           screens
             .map((screen) => {
-              const states = screen.states.length > 0 ? ` · states: ${screen.states.join(", ")}` : "";
+              const states =
+                screen.states.length > 0 ? ` · states: ${screen.states.join(", ")}` : "";
               return `${screen.route} · ${screen.title}${states}`;
             })
             .join("\n"),
@@ -181,14 +188,21 @@ export function createPreviewTools(
         const state = typeof args.state === "string" && args.state !== "" ? args.state : null;
         if (route === "") {
           return {
-            content: [{ type: "text", text: "route 가 필요합니다 — screen_list 의 값을 쓰십시오." }],
+            content: [
+              {
+                type: "text",
+                text: "route 가 필요합니다 — screen_list 의 값을 쓰십시오.",
+              },
+            ],
             isError: true,
           };
         }
         await driver.open(route, state);
         // D91: the web follows the screen Claude actually looked at.
         onOpened?.(route, state);
-        return text(state ? `${route} · ${state} 상태를 열었습니다.` : `${route} 을(를) 열었습니다.`);
+        return text(
+          state ? `${route} · ${state} 상태를 열었습니다.` : `${route} 을(를) 열었습니다.`,
+        );
       },
     ),
     defineTool(
@@ -201,7 +215,13 @@ export function createPreviewTools(
         }
         captures += 1;
         return {
-          content: [{ type: "image", data: await driver.screenshot(), mimeType: "image/jpeg" }],
+          content: [
+            {
+              type: "image",
+              data: await driver.screenshot(),
+              mimeType: "image/jpeg",
+            },
+          ],
         };
       },
     ),
@@ -216,7 +236,8 @@ export function createPreviewTools(
       "화면의 요소를 누른다. text(보이는 글자)나 selector(CSS) 중 하나를 준다.",
       { text: zod.string().optional(), selector: zod.string().optional() },
       async (args) => {
-        const textTarget = typeof args.text === "string" && args.text !== "" ? args.text : undefined;
+        const textTarget =
+          typeof args.text === "string" && args.text !== "" ? args.text : undefined;
         const selector =
           typeof args.selector === "string" && args.selector !== "" ? args.selector : undefined;
         if (!textTarget && !selector) {

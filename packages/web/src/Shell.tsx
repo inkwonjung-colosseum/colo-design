@@ -1,19 +1,19 @@
+import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { ThreadSummary } from "@cds-design/protocol";
-import type { Daemon } from "./daemon-client";
 import { AddProjectDialog } from "./AddProjectDialog";
+import type { Daemon } from "./daemon-client";
+import { Onboarding } from "./Onboarding";
 import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
+import { RepoPicker } from "./RepoPicker";
 import { Sidebar } from "./Sidebar";
 import { Splitter } from "./Splitter";
-import { Onboarding } from "./Onboarding";
-import { RepoPicker } from "./RepoPicker";
-import { usePreviewCover } from "./use-preview-cover";
 import {
-  SIDEBAR_WIDTH_BOUNDS,
   type ChatSettings,
   type LayoutSettings,
   type Settings,
+  SIDEBAR_WIDTH_BOUNDS,
 } from "./settings";
+import { usePreviewCover } from "./use-preview-cover";
 
 /** The folded rail's width — an icon column, not a hidden panel. */
 const SIDEBAR_COLLAPSED_WIDTH = 44;
@@ -95,9 +95,7 @@ export function Shell({
 
   // The rail's width and fold, seeded from the stored layout (already
   // clamped). Narrow windows fold it no matter what the setting says.
-  const [sidebarWidth, setSidebarWidth] = useState(
-    () => settings.layout.sidebarWidth ?? 240,
-  );
+  const [sidebarWidth, setSidebarWidth] = useState(() => settings.layout.sidebarWidth ?? 240);
   const [collapsed, setCollapsed] = useState(settings.layout.sidebarCollapsed);
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW_QUERY).matches ?? false);
   useEffect(() => {
@@ -117,13 +115,19 @@ export function Shell({
    */
   const workspace = useRef<WorkspaceHandle>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const openThread = (slug: string, thread: ThreadSummary) => workspace.current?.openThread(slug, thread);
+  const openThread = (slug: string, thread: ThreadSummary) =>
+    workspace.current?.openThread(slug, thread);
   const newThread = (slug: string) => workspace.current?.newThread(slug);
-  const deleteThread = (slug: string, thread: ThreadSummary) => workspace.current?.deleteThread(slug, thread);
+  const deleteThread = (slug: string, thread: ThreadSummary) =>
+    workspace.current?.deleteThread(slug, thread);
+  const browseThreads = (slug: string) => workspace.current?.browseThreads(slug);
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
-  const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null);
+  const [drag, setDrag] = useState<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const clampWidth = (value: number) =>
     Math.min(SIDEBAR_WIDTH_BOUNDS.max, Math.max(SIDEBAR_WIDTH_BOUNDS.min, Math.round(value)));
 
@@ -134,13 +138,7 @@ export function Shell({
   if (status === null) {
     return (
       <div className="planner planner--onboarding boot" aria-busy="true">
-        <img
-          className="onboarding__mark"
-          src="/colonova-icon.svg"
-          alt=""
-          width={36}
-          height={36}
-        />
+        <img className="onboarding__mark" src="/colonova-icon.svg" alt="" width={36} height={36} />
       </div>
     );
   }
@@ -187,6 +185,7 @@ export function Shell({
         onNewThread={newThread}
         onDeleteThread={deleteThread}
         onRenameThread={onRenameSession}
+        onBrowseThreads={browseThreads}
         boundary={
           !folded && (
             <Splitter
@@ -235,9 +234,9 @@ export function Shell({
 
       <div className="planner__main">
         <header className="planner__header">
-          <span className="planner__project">
-            {activeProject?.name ?? "CDS Design"}
-          </span>
+          {/* With no project the header stays empty — the brand already reads
+              in the rail beside it, and the picker below is the real content. */}
+          {activeProject && <span className="planner__project">{activeProject.name}</span>}
           <span className="planner__spacer" />
           {/* The header used to read "데몬: 연결됨 · https://github.com/…" — the
               name of a program the planner never starts, beside a git url they

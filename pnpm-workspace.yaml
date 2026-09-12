@@ -7,3 +7,5 @@ allowBuilds:
   electron-builder: true
   electron-winstaller: true
   esbuild: true
+  # lefthook 은 설치 스크립트가 git 훅 러너 바이너리를 링크한다.
+  lefthook: true

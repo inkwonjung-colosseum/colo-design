@@ -7,20 +7,22 @@
  *
  * Run: node --test packages/desktop/test/desktop.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { createServer } from "node:http";
+import { extraPathPrefix } from "../../daemon/dist/repo.js";
 import {
-  RELEASES_FEED_URL,
   checkForUpdate,
   compareSemver,
   fetchLatest,
+  RELEASES_FEED_URL,
 } from "../../protocol/dist/update.js";
 import {
   buildSwapScript,
@@ -28,9 +30,8 @@ import {
   sha256OfFile,
   verifyDownload,
 } from "../dist/mac-self-update.js";
-import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
 import { noticeCopy } from "../dist/notices.js";
-import { extraPathPrefix } from "../../daemon/dist/repo.js";
+import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -52,7 +53,7 @@ test("checkForUpdate reads the feed and compares against the current version", a
   const feed = {
     version: "0.3.0",
     notes: "화면 코멘트 지원",
-    url: "https://example/cds-design-0.3.0.zip",
+    url: "https://example/colo-design-0.3.0.zip",
     sha256: "ab".repeat(32),
   };
   const fetchLike = async (url) => {
@@ -65,7 +66,7 @@ test("checkForUpdate reads the feed and compares against the current version", a
     updateAvailable: true,
     version: "0.3.0",
     notes: "화면 코멘트 지원",
-    url: "https://example/cds-design-0.3.0.zip",
+    url: "https://example/colo-design-0.3.0.zip",
     sha256: "ab".repeat(32),
   });
 
@@ -103,7 +104,12 @@ test("feed errors are Korean and shaped for the settings row", async () => {
     /업데이트 정보를 가져오지 못했습니다 \(HTTP 500\)/,
   );
   await assert.rejects(
-    () => fetchLatest("https://x", async () => ({ ok: true, status: 200, json: { nope: 1 } })),
+    () =>
+      fetchLatest("https://x", async () => ({
+        ok: true,
+        status: 200,
+        json: { nope: 1 },
+      })),
     /업데이트 정보 형식이 올바르지 않습니다/,
   );
   // The constant has to name a real repo, or the feed is a placeholder that
@@ -122,10 +128,18 @@ test("the check flow works against a real local feed server", async () => {
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address();
-    const result = await checkForUpdate("0.4.0", `http://127.0.0.1:${port}/latest.json`, async (url) => {
-      const response = await fetch(url);
-      return { ok: response.ok, status: response.status, json: await response.json() };
-    });
+    const result = await checkForUpdate(
+      "0.4.0",
+      `http://127.0.0.1:${port}/latest.json`,
+      async (url) => {
+        const response = await fetch(url);
+        return {
+          ok: response.ok,
+          status: response.status,
+          json: await response.json(),
+        };
+      },
+    );
     assert.equal(result.updateAvailable, true);
     assert.equal(result.version, "0.5.0");
     server.close();
@@ -140,19 +154,19 @@ test("the check flow works against a real local feed server", async () => {
 
 test("the self-update plan names every step and the download target", () => {
   const plan = planSelfUpdate({
-    url: "https://example.test/cds-design-0.5.0.zip",
+    url: "https://example.test/colo-design-0.5.0.zip",
     sha256: "ab".repeat(32),
     downloadsDir: "/tmp/downloads",
     version: "0.5.0",
   });
-  assert.equal(plan.zipUrl, "https://example.test/cds-design-0.5.0.zip");
-  assert.equal(plan.downloadPath, "/tmp/downloads/cds-design-0.5.0.zip");
-  assert.equal(plan.targetApp, "/Applications/CDS Design.app");
+  assert.equal(plan.zipUrl, "https://example.test/colo-design-0.5.0.zip");
+  assert.equal(plan.downloadPath, "/tmp/downloads/colo-design-0.5.0.zip");
+  assert.equal(plan.targetApp, "/Applications/Colo Design.app");
   assert.deepEqual(plan.steps, [
-    "cds-design-0.5.0.zip 내려받기",
+    "colo-design-0.5.0.zip 내려받기",
     "sha256 검증",
     "앱 종료",
-    "/Applications/CDS Design.app 교체",
+    "/Applications/Colo Design.app 교체",
     "다시 실행",
   ]);
 });
@@ -161,11 +175,15 @@ test("sha256 verification accepts a good file and refuses a bad one", async () =
   const dir = workdir("hub-desktop-sha-");
   try {
     const good = join(dir, "good.zip");
-    const payload = Buffer.from("cds-design-update-zip-bytes");
+    const payload = Buffer.from("colo-design-update-zip-bytes");
     writeFileSync(good, payload);
     const digest = createHash("sha256").update(payload).digest("hex");
     assert.equal(await sha256OfFile(good), digest, "streamed hash matches node's one-shot");
-    assert.equal(await verifyDownload(good, digest.toUpperCase()), true, "upper-case digests normalize");
+    assert.equal(
+      await verifyDownload(good, digest.toUpperCase()),
+      true,
+      "upper-case digests normalize",
+    );
 
     const bad = join(dir, "bad.zip");
     writeFileSync(bad, Buffer.from("tampered"));
@@ -177,18 +195,26 @@ test("sha256 verification accepts a good file and refuses a bad one", async () =
 
 test("the swap script waits for the app to die, swaps the bundle, relaunches", () => {
   const plan = planSelfUpdate({
-    url: "https://example.test/cds-design-0.5.0.zip",
+    url: "https://example.test/colo-design-0.5.0.zip",
     sha256: "ab".repeat(32),
     downloadsDir: "/tmp/down loads",
     version: "0.5.0",
-    targetApp: "/Applications/CDS Design.app",
+    targetApp: "/Applications/Colo Design.app",
   });
   const script = buildSwapScript({ plan, pid: 4242, logPath: "/tmp/swap.log" });
   assert.match(script, /^#!\/bin\/bash/m);
   assert.match(script, /kill -0 4242/, "waits on the electron main pid");
   assert.match(script, /seq 1 150/, "the wait is bounded — 30s, not forever");
-  assert.match(script, /ditto -x -k '\/tmp\/down loads\/cds-design-0\.5\.0\.zip'/, "paths with spaces survive");
-  assert.match(script, /mv "\$TARGET" "\$BACKUP"/, "the old bundle steps aside, never rm-rf'd first");
+  assert.match(
+    script,
+    /ditto -x -k '\/tmp\/down loads\/colo-design-0\.5\.0\.zip'/,
+    "paths with spaces survive",
+  );
+  assert.match(
+    script,
+    /mv "\$TARGET" "\$BACKUP"/,
+    "the old bundle steps aside, never rm-rf'd first",
+  );
   assert.match(script, /mv "\$SRC" "\$TARGET"/, "the new bundle takes the place");
   assert.match(script, /mv "\$BACKUP" "\$TARGET"/, "a failed move restores the old bundle");
   assert.match(script, /\/usr\/bin\/open "\$TARGET"/);
@@ -264,20 +290,20 @@ test("an undecryptable blob reads as null — a changed keychain key loses nothi
 // bundled-runtime PATH prefix (daemon side, used by the desktop)
 // ---------------------------------------------------------------------------
 
-test("CDS_DESIGN_EXTRA_PATH is prepended to PATH without duplicates", () => {
+test("COLO_DESIGN_EXTRA_PATH is prepended to PATH without duplicates", () => {
   const env = { PATH: "/usr/bin:/bin:/usr/local/bin" };
-  assert.equal(extraPathPrefix("/Applications/CDS Design.app/Contents/Resources/bin", env), [
-    "/Applications/CDS Design.app/Contents/Resources/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/local/bin",
-  ].join(":"));
+  assert.equal(
+    extraPathPrefix("/Applications/Colo Design.app/Contents/Resources/bin", env),
+    [
+      "/Applications/Colo Design.app/Contents/Resources/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/local/bin",
+    ].join(":"),
+  );
 
   // 같은 경로가 이미 있으면 앞으로 옮기기만 한다(중복 없음).
-  assert.equal(
-    extraPathPrefix("/usr/bin", env),
-    ["/usr/bin", "/bin", "/usr/local/bin"].join(":"),
-  );
+  assert.equal(extraPathPrefix("/usr/bin", env), ["/usr/bin", "/bin", "/usr/local/bin"].join(":"));
 
   assert.equal(extraPathPrefix(undefined, env), "/usr/bin:/bin:/usr/local/bin");
   assert.equal(extraPathPrefix("   ", env), "/usr/bin:/bin:/usr/local/bin");
@@ -285,8 +311,8 @@ test("CDS_DESIGN_EXTRA_PATH is prepended to PATH without duplicates", () => {
   // Windows 구분자 — 플랫폼은 파라미터로(mac 에서 win32 분기 검증).
   const win = { PATH: "C:\\Windows;C:\\Program Files\\nodejs" };
   assert.equal(
-    extraPathPrefix("C:\\Apps\\CDS Design\\resources\\bin", win, "win32"),
-    ["C:\\Apps\\CDS Design\\resources\\bin", "C:\\Windows", "C:\\Program Files\\nodejs"].join(";"),
+    extraPathPrefix("C:\\Apps\\Colo Design\\resources\\bin", win, "win32"),
+    ["C:\\Apps\\Colo Design\\resources\\bin", "C:\\Windows", "C:\\Program Files\\nodejs"].join(";"),
   );
 });
 
@@ -296,7 +322,11 @@ test("CDS_DESIGN_EXTRA_PATH is prepended to PATH without duplicates", () => {
 
 test("notice copy speaks the planner's words, never the daemon's", () => {
   // 턴이 끝났을 때 — 돌아와서 미리보기를 보면 된다.
-  const done = noticeCopy({ kind: "done", sessionId: "s1", title: "로그인 화면" });
+  const done = noticeCopy({
+    kind: "done",
+    sessionId: "s1",
+    title: "로그인 화면",
+  });
   assert.equal(done.title, "로그인 화면 · 완료");
   assert.ok(done.body.includes("미리보기"));
 
@@ -318,7 +348,12 @@ test("notice copy speaks the planner's words, never the daemon's", () => {
   assert.equal(question.title, "로그인 화면 · 답 필요");
 
   // 게이트 실패 — 저장과 넘기기가 버튼 이름 그대로 나온다.
-  const save = noticeCopy({ kind: "gate", sessionId: "s1", title: "회원 목록", stage: "save" });
+  const save = noticeCopy({
+    kind: "gate",
+    sessionId: "s1",
+    title: "회원 목록",
+    stage: "save",
+  });
   assert.equal(save.title, "회원 목록 · 저장 실패");
   const handoff = noticeCopy({
     kind: "gate",
@@ -328,7 +363,11 @@ test("notice copy speaks the planner's words, never the daemon's", () => {
   });
   assert.equal(handoff.title, "회원 목록 · 넘기기 실패");
 
-  const crashed = noticeCopy({ kind: "crashed", sessionId: "s1", title: "로그인 화면" });
+  const crashed = noticeCopy({
+    kind: "crashed",
+    sessionId: "s1",
+    title: "로그인 화면",
+  });
   assert.equal(crashed.title, "로그인 화면 · 중단");
 
   // 어휘 계약: git 명사와 도구 이름은 어떤 문구에도 나오지 않는다.
@@ -359,7 +398,7 @@ const DRIVER_PAGE = `<!doctype html><html><body>
 
 /**
  * The throwaway Electron entry the unit boots. It imports the REAL factory
- * from dist/main.js — CDS_DESIGN_DESKTOP_UNIT keeps that module's daemon
+ * from dist/main.js — COLO_DESIGN_DESKTOP_UNIT keeps that module's daemon
  * boot off — drives the driver against the fixture page, and answers with
  * one JSON line.
  */
@@ -367,12 +406,12 @@ const DRIVER_UNIT_ENTRY = `
 import { app, BrowserWindow } from "electron";
 app.whenReady().then(async () => {
   const answer = (payload) => {
-    process.stdout.write("CDS_DRIVER_UNIT " + JSON.stringify(payload) + "\\n");
+    process.stdout.write("COLO_DRIVER_UNIT " + JSON.stringify(payload) + "\\n");
     app.exit(0);
   };
   try {
-    const { createPreviewDriverFactory } = await import(process.env.CDS_DRIVER_UNIT_MAIN);
-    const driver = createPreviewDriverFactory().for(process.env.CDS_DRIVER_UNIT_URL);
+    const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
+    const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
     await driver.open("/", null);
     await new Promise((resolve) => setTimeout(resolve, 700));
     const windows = BrowserWindow.getAllWindows();
@@ -421,15 +460,15 @@ app.whenReady().then(async () => {
 `;
 
 async function runDriverUnit(url) {
-  const dir = mkdtempSync(join(tmpdir(), "cds-driver-unit-"));
+  const dir = mkdtempSync(join(tmpdir(), "colo-driver-unit-"));
   const entry = join(dir, "entry.mjs");
   writeFileSync(entry, DRIVER_UNIT_ENTRY);
   const child = spawn(electronBinary, [entry], {
     env: {
       ...process.env,
-      CDS_DESIGN_DESKTOP_UNIT: "1",
-      CDS_DRIVER_UNIT_MAIN: pathToFileURL(join(here, "..", "dist", "main.js")).href,
-      CDS_DRIVER_UNIT_URL: url,
+      COLO_DESIGN_DESKTOP_UNIT: "1",
+      COLO_DRIVER_UNIT_MAIN: pathToFileURL(join(here, "..", "dist", "main.js")).href,
+      COLO_DRIVER_UNIT_URL: url,
       ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -444,9 +483,14 @@ async function runDriverUnit(url) {
     }, 60_000);
     child.on("exit", () => {
       clearTimeout(timer);
-      const found = output.split("\n").find((candidate) => candidate.startsWith("CDS_DRIVER_UNIT "));
-      if (found) resolve(JSON.parse(found.slice("CDS_DRIVER_UNIT ".length)));
-      else reject(new Error(`preview driver unit produced no answer — output: ${output.slice(-2000)}`));
+      const found = output
+        .split("\n")
+        .find((candidate) => candidate.startsWith("COLO_DRIVER_UNIT "));
+      if (found) resolve(JSON.parse(found.slice("COLO_DRIVER_UNIT ".length)));
+      else
+        reject(
+          new Error(`preview driver unit produced no answer — output: ${output.slice(-2000)}`),
+        );
     });
   });
   rmSync(dir, { recursive: true, force: true });
@@ -501,7 +545,13 @@ const noop = () => {};
 
 test("buildMenuTemplate aims the view items at the preview, with the plan's accelerators", () => {
   const template = buildMenuTemplate({
-    preview: { reload: noop, history: noop, zoomIn: noop, zoomOut: noop, zoomReset: noop },
+    preview: {
+      reload: noop,
+      history: noop,
+      zoomIn: noop,
+      zoomOut: noop,
+      zoomReset: noop,
+    },
     gotoAddress: noop,
     openSettings: noop,
     newSession: noop,
@@ -529,7 +579,12 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
 });
 
 test("buildMenuTemplate keeps the edit roles the composer lives on", () => {
-  const template = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  const template = buildMenuTemplate({
+    preview: null,
+    gotoAddress: noop,
+    openSettings: noop,
+    packaged: true,
+  });
   const edit = template.find((item) => item.label === "편집");
   const roles = edit.submenu.map((item) => item.role);
   for (const role of ["undo", "redo", "cut", "copy", "paste", "selectAll"]) {
@@ -538,10 +593,23 @@ test("buildMenuTemplate keeps the edit roles the composer lives on", () => {
 });
 
 test("buildMenuTemplate drops 개발자 도구 in a packaged app", () => {
-  const dev = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: false });
+  const dev = buildMenuTemplate({
+    preview: null,
+    gotoAddress: noop,
+    openSettings: noop,
+    packaged: false,
+  });
   const devView = dev.find((item) => item.label === "보기");
-  assert.ok(devView.submenu.some((item) => item.role === "toggleDevTools"), "dev keeps the tools");
-  const packaged = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  assert.ok(
+    devView.submenu.some((item) => item.role === "toggleDevTools"),
+    "dev keeps the tools",
+  );
+  const packaged = buildMenuTemplate({
+    preview: null,
+    gotoAddress: noop,
+    openSettings: noop,
+    packaged: true,
+  });
   const packagedView = packaged.find((item) => item.label === "보기");
   assert.ok(
     !packagedView.submenu.some((item) => item.role === "toggleDevTools"),
@@ -552,7 +620,13 @@ test("buildMenuTemplate drops 개발자 도구 in a packaged app", () => {
 test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ sheet (PLAN D92)", async () => {
   const { APP_SHORTCUTS } = await import("../../protocol/dist/shortcuts.js");
   const template = buildMenuTemplate({
-    preview: { reload: noop, history: noop, zoomIn: noop, zoomOut: noop, zoomReset: noop },
+    preview: {
+      reload: noop,
+      history: noop,
+      zoomIn: noop,
+      zoomOut: noop,
+      zoomReset: noop,
+    },
     gotoAddress: noop,
     openSettings: noop,
     newSession: noop,
@@ -579,7 +653,12 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
 });
 
 test("buildMenuTemplate puts 설정 ⌘, in the app menu", () => {
-  const template = buildMenuTemplate({ preview: null, gotoAddress: noop, openSettings: noop, packaged: true });
+  const template = buildMenuTemplate({
+    preview: null,
+    gotoAddress: noop,
+    openSettings: noop,
+    packaged: true,
+  });
   const app = template[0];
   const settings = app.submenu.find((item) => item.accelerator === "CmdOrCtrl+,");
   assert.equal(settings.label, "설정");

@@ -4,8 +4,9 @@
  *
  * Run: node --experimental-transform-types --test packages/web/test/session-activity.test.mts
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { settleTransitions } from "../src/session-activity.ts";
 
 test("a background turn that ends is what gets marked", () => {

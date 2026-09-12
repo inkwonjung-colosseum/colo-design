@@ -1,4 +1,4 @@
-# CDS Design
+# Colo Design
 
 기획자가 기획서를 채팅에 첨부하고, Claude Code 세션이 연결 레포 안에서 그것을
 화면으로 만들고, 기획자는 렌더링된 미리보기에서 검증한 뒤 코드를 개발자에게
@@ -6,7 +6,7 @@
 
 도구가 아는 일은 하나다: 로컬 폴더 하나를 원격과 동기 상태로 유지하고, 그 안에서
 Claude Code 세션을 돌린다. 도메인 모양의 것 — 스택, 디자인 시스템, 화면 규칙,
-검사, 미리보기 명령 — 은 전부 **연결 레포**가 자기의 `cds-design.json` 과
+검사, 미리보기 명령 — 은 전부 **연결 레포**가 자기의 `colo-design.json` 과
 `CLAUDE.md` 로 정한다. 기획자가 미리보기에서 보는 것은 그 레포의 앱을 있는
 그대로 띄운 것이다.
 
@@ -16,11 +16,13 @@ CLI를 몰아주는 자기만의 데몬을 돌린다. 자격 증명은 공유 �
 
 ## 이름
 
-CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는 기획서를
-그 시스템의 컴포넌트로 짜인 화면으로 바꾸니, 이름은 결국 하는 일 그 자체다.
-첫 빌드의 코드명은 `agent-hub`, 두 번째는 `Drafthouse` 였다 — 지금은 이 문단
+Colo Design 이 이 도구의 이름이다. 회사 디자인 시스템은 여전히 CDS(`@colosseumcoinckr/cds`)이고,
+이 도구는 기획서를 그 시스템의 컴포넌트로 짜인 화면으로 바꾼다. 첫 빌드의 코드명은
+`agent-hub`, 두 번째는 `Drafthouse`, 세 번째는 `CDS Design` 이었다 — 지금은 이 문단
 밖 어디에도 남지 않는다(패키지, 환경 변수, 경로, 문자열 모두). 하나라도 발견하면
-버그다.
+버그다. 이름은 매번 하드컷으로 바뀌었다: 옛 이름의 홈 폴더, 브랜치 접두사와
+검사점 ref, 연결 레포의 계약 파일, 키체인 서비스명, 대화록 표식은 새 이름에서
+읽지 않는다.
 
 ## 지금 담긴 것
 
@@ -35,7 +37,7 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
   클론 준비·화면 턴 종료·저장 완료 세 트리거로 갱신된다(폴링 없음).
 - **저장 · 개발자에게 넘기기 · 반영됨.** 세 단어가 git 명사 전부를 대신하고,
   기획자는 브랜치, 커밋, 푸시, PR, 머지를 읽지 않는다. **저장**은 이번 사이클
-  것의 `cds-design/<YYYYMMDD>-<n>` 브랜치를 첫 사용 때 만들고(번호는 원격에
+  것의 `colo-design/<YYYYMMDD>-<n>` 브랜치를 첫 사용 때 만들고(번호는 원격에
   없는 것을 찾아 올라간다), 레포의 `check` 를 돌리고, 검토한 diff 만 정확히
   커밋해 밀어 넣는다 — 베이스 브랜치에는 절대 쓰지 않는다. 개발자는 이 일을
   읽고, 돌려보고, 거절할 수 있는 풀 리퀘스트로 받는다. **개발자에게 넘기기**는
@@ -69,7 +71,7 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
 - **기획자가 치지 않은 턴.** 코멘트 묶음, 화면 스레드를 여는 브리프, 넘기기 전
   점검, 실패한 게이트 — 넷 다 Claude 를 위해 Claude 의 어휘로 쓰이고, 넷 다
   예전에는 기획자의 채팅에 CSS 경로와 명령 출력으로 내려앉았다. 이제 첫 줄에
-  표식(`<!-- cds-design:<kind> {…} -->`, Claude 가 지나쳐 읽는 HTML 주석 —
+  표식(`<!-- colo-design:<kind> {…} -->`, Claude 가 지나쳐 읽는 HTML 주석 —
   종류는 `comments` · `brief` · `precheck` · `gate`)을 달고, 대화록은 그것을
   카드로 그린다 — 무엇을 물었는지가 기획자의 말로, Claude 가 실제로 받은
   본문은 한 겹 접혀 있다. 표식은 SDK 가 이미 저장하는 문자열의 앞첨자라, 이어
@@ -79,8 +81,8 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
   제목으로.
 - **화면 축.** 연결 레포는 자기가 그릴 수 있는 것을 선언한다 — 라우트, 제목,
   `states`, 그리고 근거가 된 기획서의 `specs/` 파일 이름(`spec`) — 고, 미리보기
-  브리지가 그 목록을 `cds-design.screens` 봉투로 도구에 올린다(데스크톱에서는
-  도구의 preload 가 내놓은 `window.cdsDesign.post` 문으로, 브라우저 개발 경로에서는
+  브리지가 그 목록을 `colo-design.screens` 봉투로 도구에 올린다(데스크톱에서는
+  도구의 preload 가 내놓은 `window.coloDesign.post` 문으로, 브라우저 개발 경로에서는
   postMessage 로). 미리보기 툴바의 선택기가 이 목록 그 자체다 — 기능별로 묶여,
   화면을 고르면 미리보기가 그 화면으로 이동하고, 상태 칩은 `empty` 나 `error` 를
   실제 목 데이터로 그린다. 화면의 상태(`변경 있음` / 넘김 / 반영됨)는 diff 와 풀
@@ -125,12 +127,12 @@ CDS 는 회사 디자인 시스템(`@colosseumcoinckr/cds`)이다. 이 도구는
 
 ```mermaid
 flowchart LR
-    subgraph app["CDS Design (Electron · 브라우저 개발 경로 동일)"]
+    subgraph app["Colo Design (Electron · 브라우저 개발 경로 동일)"]
         design["화면 대화<br/>cwd = 레포 클론"]
         preview["미리보기<br/>레포의 앱 그대로"]
         daemon["daemon<br/>프로젝트 · 세션 · 자격 증명"]
     end
-    repo["연결 레포<br/>cds-design.json + CLAUDE.md"]
+    repo["연결 레포<br/>colo-design.json + CLAUDE.md"]
     daemon -->|"clone · pull<br/>저장 = check → commit·push"| repo
     repo -->|"preview.command"| preview
     preview -->|"코멘트 핀"| design
@@ -138,7 +140,7 @@ flowchart LR
 
 ## 연결 레포 만들기
 
-계약은 파일 하나다: 레포 루트의 `cds-design.json`. 없으면 Claude 가 만든다 —
+계약은 파일 하나다: 레포 루트의 `colo-design.json`. 없으면 Claude 가 만든다 —
 피커에서 `Claude 가 연결 준비하기` 를 고르면 준비 턴이 계약 넷(설정 · 화면
 브리지 · 래퍼 · CLAUDE.md)을 쓰고, 데몬이 기계 검증(락파일 · scripts
 화이트리스트 · 포트)을 통과시킨 뒤 미리보기를 띄운다. 준비 커밋은 첫 저장이
@@ -179,31 +181,30 @@ git · GitHub 토큰 셋을 지나 `시작하기` 를 누르면, 프로젝트가
 `registry` 를 선언하면 그것을 읽을 `read:packages` 인증이 기계에 필요하다
 (없으면 데몬 상태의 경고 줄이 한국어로 그렇게 말한다).
 
-도구가 쓰는 모든 것은 홈의 숨은 폴더 하나 `~/.cds-design/` 에 산다:
+도구가 쓰는 모든 것은 홈의 숨은 폴더 하나 `~/.colo-design/` 에 산다:
 
 | 경로 | 무엇이 있는가 |
 | --- | --- |
-| `~/.cds-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
-| `~/.cds-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
+| `~/.colo-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
+| `~/.colo-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
 
-점 없는 옛 설치(`~/cds-design`)와 프로젝트 도입 이전 설치(`~/cds-design/repo` 가
-클론이던 때)는 첫 시작에 스스로 이주한다: 폴더는 `~/.cds-design` 이 되고(둘 다
-있으면 아무것도 옮기지 않고 경고 한 줄을 남긴다), 옛 단일 클론은
-`projects/default/` 아래로 옮겨지고 옛 `config/repo.json` 의 url 이 그
-프로젝트의 것이 된다. 클론 경로가 바뀌었으므로 옛 세션 대화록은 목록에
-돌아오지 않는다. 설정 → 문제 해결의 `폴더 열기` 가 이 폴더를 연다.
+프로젝트 도입 이전 설치(`~/colo-design/repo` 가 클론이던 때)는 첫 시작에 스스로
+이주한다: 옛 단일 클론은 `projects/default/` 아래로 옮겨지고 옛 `config/repo.json`
+의 url 이 그 프로젝트의 것이 된다. 클론 경로가 바뀌었으므로 옛 세션 대화록은
+목록에 돌아오지 않는다. 이름이 바뀔 때의 옛 홈 폴더는 이주하지 않는다 — 직접
+지우면 된다. 설정 → 문제 해결의 `폴더 열기` 가 이 폴더를 연다.
 
 쓸 만한 환경 변수 오버라이드 (모두 선택, 모두 테스트로 검증됨):
 
-| `CDS_DESIGN_PROJECTS_SETTINGS` | `~/.cds-design/config/projects.json` | 프로젝트 레지스트리 파일 |
-| `CDS_DESIGN_PROJECTS_DIR` | `~/.cds-design/projects` | 프로젝트 폴더의 위치 |
-| `CDS_DESIGN_REPO_DIR` | `<project>/repo` | **활성** 프로젝트의 클론 디렉터리 |
-| `CDS_DESIGN_REPO_URL` | 레지스트리 | **활성** 프로젝트의 레포 url(테스트는 fixture 원격을 쓴다) |
-| `CDS_DESIGN_CLAUDE_BIN` | 자동 탐지 | 구동할 Claude Code 바이너리 |
-| `CDS_DESIGN_GITHUB_FIXTURE` | unset | 녹화된 GitHub REST 짝(오프라인 넘기기 테스트) |
-| `CDS_DESIGN_GITHUB_SLUG` | 레포 url 에서 | 넘기기가 겨눌 `owner/repo`; 테스트는 로컬 bare 원격을 클론하니 url 에 GitHub 프로젝트가 없다 |
-| `CDS_DESIGN_CREDENTIAL_STORE` | 플랫폼 기본 | `memory` (테스트) 또는 `keychain` |
-| `CDS_DESIGN_EXTRA_PATH` | unset | repo 명령의 PATH 접두어(데스크톱이 설정한다) |
+| `COLO_DESIGN_PROJECTS_SETTINGS` | `~/.colo-design/config/projects.json` | 프로젝트 레지스트리 파일 |
+| `COLO_DESIGN_PROJECTS_DIR` | `~/.colo-design/projects` | 프로젝트 폴더의 위치 |
+| `COLO_DESIGN_REPO_DIR` | `<project>/repo` | **활성** 프로젝트의 클론 디렉터리 |
+| `COLO_DESIGN_REPO_URL` | 레지스트리 | **활성** 프로젝트의 레포 url(테스트는 fixture 원격을 쓴다) |
+| `COLO_DESIGN_CLAUDE_BIN` | 자동 탐지 | 구동할 Claude Code 바이너리 |
+| `COLO_DESIGN_GITHUB_FIXTURE` | unset | 녹화된 GitHub REST 짝(오프라인 넘기기 테스트) |
+| `COLO_DESIGN_GITHUB_SLUG` | 레포 url 에서 | 넘기기가 겨눌 `owner/repo`; 테스트는 로컬 bare 원격을 클론하니 url 에 GitHub 프로젝트가 없다 |
+| `COLO_DESIGN_CREDENTIAL_STORE` | 플랫폼 기본 | `memory` (테스트) 또는 `keychain` |
+| `COLO_DESIGN_EXTRA_PATH` | unset | repo 명령의 PATH 접두어(데스크톱이 설정한다) |
 
 ## 연결 레포 만들기
 
@@ -245,21 +246,21 @@ fixture 원격으로 돌리는 것과 같은 코드 경로다.
 
 ```bash
 # 패키징된 코드 경로의 개발 실행
-pnpm --filter @cds-design/desktop dev
+pnpm --filter @colo-design/desktop dev
 
 # 포터블 런타임을 번들한 뒤 언팩 앱
 node packages/desktop/scripts/bundle-runtimes.mjs
-pnpm --filter @cds-design/desktop pack      # release/mac-arm64/CDS Design.app
+pnpm --filter @colo-design/desktop pack      # release/mac-arm64/Colo Design.app
 
 # 설치 파일: dmg + zip (mac, ad-hoc 서명), nsis (win)
-pnpm --filter @cds-design/desktop dist
+pnpm --filter @colo-design/desktop dist
 ```
 
-데스크톱 앱은 appId `org.cds-design.desktop`, 제품명 `CDS Design` 이다. mac
+데스크톱 앱은 appId `org.colo-design.desktop`, 제품명 `Colo Design` 이다. mac
 경로는 오늘날 실제로 돌려 봤다: ad-hoc 서명(`identity: "-"`, 인증서 없음),
 `codesign -v` 깨끗, 패키징된 바이너리가 dev 와 같은 스모크를 통과한다. Windows
 대상(NSIS, MinGit 동반)은 구성이 끝났고 CI 가 릴리스마다 빌드한다. mac 자가
-업데이트(zip 내려받기 → sha256 → `/Applications/CDS Design.app` 교체)는
+업데이트(zip 내려받기 → sha256 → `/Applications/Colo Design.app` 교체)는
 `app.isPackaged` 가드 안에 구현돼 있고, 확인 흐름은 로컬 피드 fixture 로
 증명됐다.
 
@@ -280,17 +281,19 @@ git push origin v0.1.0
 - 수동 실행(`workflow_dispatch`)은 빌드만 돌린다 — 릴리스는 만들지 않고,
   실행 페이지의 artifacts 에서 설치 파일을 검수한다.
 - 에셋 이름은 `electron-builder.yml` 의 `artifactName` 에 고정돼 있다:
-  `cds-design-<v>-mac-arm64.dmg`, `cds-design-<v>-mac-arm64.zip`,
-  `cds-design-Setup-<v>-win-x64.exe`. `latest.json`(`version`/`notes`/
+  `colo-design-<v>-mac-arm64.dmg`, `colo-design-<v>-mac-arm64.zip`,
+  `colo-design-Setup-<v>-win-x64.exe`. `latest.json`(`version`/`notes`/
   `sha256`/`url`)은 앱의 업데이트 확인이 읽는 피드다(mac zip sha256 = 자가
   교체 검증값).
 - 앱의 업데이트 확인(`packages/protocol/src/update.ts`)은
-  `inkwonjung-colosseum/cds-design` 의 릴리스를 읽는다. 확인 요청은 무인증
+  `inkwonjung-colosseum/colo-design` 의 릴리스를 읽는다. 확인 요청은 무인증
   fetch 라 **소스가 private 인 것은 상관없지만 설치 파일을 올린 릴리스는
   공개**여야 읽힌다. 공개 릴리스가 아직 없는 동안 확인 버튼은 "아직 공개된
   릴리스가 없습니다"라고 답한다 — 고장이 아니라 배포 전 상태다.
 - 미서명 배포: macOS 는 첫 실행을 우클릭 → 열기, Windows 는 SmartScreen
   추가 정보 → 실행. 이 안내는 워크플로우가 릴리스 노트에 자동으로 넣는다.
+- 옛 이름으로 설치한 앱은 자가 업데이트 경로가 보장되지 않는다 — 새 앱을
+  수동으로 설치하고 옛 앱은 지운다.
 
 ## 테스트
 
@@ -298,12 +301,12 @@ real-Claude 로 표시된 두 스위트(구독 사용량을 쓴다)만 빼고 �
 (bare git 원격, 스텁 CLI)로 돈다.
 
 ```bash
-pnpm test:unit            # 오프라인 — 플랫폼 분기, 보안/격리 회귀, 쓰기 정책, 레포 워크스페이스 단위, 홈 폴더 이관, 넘기기 본문 초안, 턴 마커 파서
+pnpm test:unit            # 오프라인 — 플랫폼 분기, 보안/격리 회귀, 쓰기 정책, 레포 워크스페이스 단위, 넘기기 본문 초안, 턴 마커 파서
 pnpm test:onboard-unit    # 오프라인 — 온보딩 게이트와 OS 자격 증명 저장소(이주, 키체인, npmrc 병합)
 pnpm test:projects        # 오프라인 — 두 레포에 두 프로젝트, 활성 전환, 화면 밖 턴의 변경 수, 지우기와 세션 닫기, 전환 직렬화, 레지스트리가 재시작을 살아남는다
 pnpm test:sidebar-ui      # 오프라인 — 브라우저: 사이드바 행과 표식, 전환(앞 포트 닫힘 · 뒤 ready), 이름 바꾸기, 지우기 대화상자, 960 폭 접힘
 pnpm test:repo            # 오프라인 — 로컬 bare 원격에 대한 clone/pull/install-skip/preview 수명 주기
-pnpm test:publish         # 오프라인 — 저장 게이트, check 실패 → 세션 브리프, main 을 건드리지 않는 자기 브랜치 cds-design/*, build 는 넘기기에만 게이트, PR → 병합 → 새 사이클
+pnpm test:publish         # 오프라인 — 저장 게이트, check 실패 → 세션 브리프, main 을 건드리지 않는 자기 브랜치 colo-design/*, build 는 넘기기에만 게이트, PR → 병합 → 새 사이클
 pnpm test:publish-ui      # 오프라인 — 브라우저: 저장 검토 → 저장 → 브랜치가 원격에 닿고 베이스는 닿지 않는다
 pnpm test:settings        # 오프라인 — 테마/환경설정; 데몬 없이도 열린다
 pnpm test:onboarding      # 오프라인 — 스텁 PATH/CLI · 녹화된 GitHub 픽스처로 진짜 소켓 위의 네 게이트, 토큰 저장 → 레포 목록 → 레포 검사 → 프로젝트 생성 → 클론 ready
@@ -322,9 +325,9 @@ pnpm test:smoke "<url>"   # 이미 도는 데몬에 대한 생존 검사; 아무
 고정 포트에서, 레인 안은 순서대로), L4 real-Claude 두 스위트. 레인별 로그는
 `.test-logs/` (gitignored)에 쌓이고, `pnpm test:sequential` 은 같은 스위트
 집합을 한 번에 하나씩 돌려 준다. 브라우저 스위트는 먼저
-`pnpm --filter @cds-design/web build`(또는 풀 `pnpm build`)이 필요하다.
+`pnpm --filter @colo-design/web build`(또는 풀 `pnpm build`)이 필요하다.
 
-fixture 설계를 한 문단으로: git 원격은 최소 `cds-design.json` 앱을 담은 bare
+fixture 설계를 한 문단으로: git 원격은 최소 `colo-design.json` 앱을 담은 bare
 레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude CLI 는 전부 스텁 스크립트다.
 
 ## 패키지
@@ -358,12 +361,12 @@ D35–D63 판(2026-09-11)과 내장 브라우저 판(D64–D75)이 그랬다.
 
 | 번호 | 뜻 | 어디서 부르나 |
 |---|---|---|
-| D1 | 홈 폴더 `~/.cds-design` + 이주 | `environment.ts` · `index.ts` · `server.ts` · `home-dir.test.mjs` |
-| D2 | **충돌.** ⓐ 프로젝트 = 연결 레포 하나 (Drafthouse 판 D3 의 뜻) — `projects.ts` · `server.ts:328` · `projects-e2e.mjs`; ⓑ `폴더 열기` — `main.ts` · `preload.ts` | |
+| D1 | 홈 폴더 `~/.colo-design` | `environment.ts` |
+| D2 | **충돌.** ⓐ 프로젝트 = 연결 레포 하나 (앞 판 D3 의 뜻) — `projects.ts` · `server.ts:328` · `projects-e2e.mjs`; ⓑ `폴더 열기` — `main.ts` · `preload.ts` | |
 | D4 | 게이트 넷, `project` 게이트 삭제 | `onboarding.ts` |
 | D5 | **충돌.** ⓐ 저장 · 개발자에게 넘기기 · 반영됨(git 어휘 셋) — `github.ts` · `repo.ts` · `protocol` · `projects.ts` · `github.test.mjs` · `publish-e2e.mjs`; ⓑ `runtime` 게이트 판정 — `onboarding.ts:129` · `onboarding.test.mjs:359` | |
 | D6 | pnpm 영어 경고 삭제 | `environment.ts:453` |
-| D7 | 레포가 선언하는 화면(`cds-design.screens` 엔벨로프) | `protocol:632` |
+| D7 | 레포가 선언하는 화면(`colo-design.screens` 엔벨로프) | `protocol:632` |
 | D8 | `pendingChanges` — 스테퍼의 숫자, 폴링 없음 | `repo.ts` · `server.ts` · `protocol:575` · `publish-e2e.mjs` |
 | D9 | 기계 텍스트는 마커 카드로 | `repo.ts:75` · `session.ts:486` · `turn-marker.ts` · `publish-e2e.mjs` |
 | D10 | **충돌.** ⓐ 모델 · 생각 시간 · 권한을 설정으로, 컴포저는 `⋯` — `Composer.tsx:96` · `settings.ts:43` (이 판 D42 가 칩 표시를 되살린다; 저장 위치 규칙은 유지); ⓑ `github` 게이트 판정(warn 비차단) — 직접 부르는 주석 없음 | |
@@ -371,7 +374,7 @@ D35–D63 판(2026-09-11)과 내장 브라우저 판(D64–D75)이 그랬다.
 | D15 | 사이드바 행 `작업 중` | `session-manager.ts:97` |
 | D16 · D17 · D18 | 비활성 프로젝트 상태는 `project.changed` 로 · 200ms 스로틀 · 시작 시 전 프로젝트 워크스페이스 | `server.ts` · `protocol:13,381` · `repo.ts:514` · `AddProjectDialog.tsx:7` |
 | D19 · D21 · D25 · D31 | 사이드바 폭 · 지우기 순서 · 피커 자리 · 주소로 추가 | `Shell.tsx` · `Sidebar.tsx` · `RepoPicker.tsx` · `settings.ts` |
-| D28 → D94 | `cds-design.json` 없는 레포 차단은 선택지로 바뀌었다 — Claude 가 연결 준비하기(준비 턴 · 기계 검증 · 첫 PR 가 수용 게이트) | `RepoPicker.tsx` · `bootstrap-brief.ts` · `repo.ts#validateBootstrapConfig` |
+| D28 → D94 | `colo-design.json` 없는 레포 차단은 선택지로 바뀌었다 — Claude 가 연결 준비하기(준비 턴 · 기계 검증 · 첫 PR 가 수용 게이트) | `RepoPicker.tsx` · `bootstrap-brief.ts` · `repo.ts#validateBootstrapConfig` |
 | D44 · D45 → D81 · D82 | 스테퍼 · `deriveStage` 는 지워지고, 배치 상태는 칩 하나·동작은 상수(`deriveDelivery`)로 | `delivery.ts` · `ScreenPanel.tsx` |
 | D57 · D58 · D67 → D78 · D79 · D80 | 코멘트 저장소 · 모드 토글 · 화면 바뀌면 핀 지움 은 확장됐다 — 기록 핀은 화면 위에 살고, ⌥+클릭은 모드 없이 찍는다, 해결된 핀은 사라진다 | `preview-preload.ts` · `preview-view.ts` · `ScreenPanel.tsx` |
 | M1 · M5.5 | 첫 판의 단계 번호(프로젝트 모델 토대 · 배포 파이프라인) | `index.ts:61` · `electron-builder.yml:11` |

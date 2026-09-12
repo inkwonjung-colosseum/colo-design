@@ -2,8 +2,9 @@
  * 되감기의 절단점 (PLAN D95): the pure function that picks where a
  * truncating fork keeps and drops. Everything runs offline.
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { resolveRewindCutoff } from "../dist/session-manager.js";
 
 /** A synthetic transcript: prompts and answers with tool-result carriers. */
@@ -11,17 +12,19 @@ const msg = (type, uuid, extra = {}) => ({ type, uuid, ...extra });
 const prompt = (uuid) => msg("user", uuid, { message: { content: "말" } });
 const assistant = (uuid) => msg("assistant", uuid);
 const carrier = (uuid) =>
-  msg("user", uuid, { message: { content: [{ type: "tool_result", tool_use_id: "t" }] } });
+  msg("user", uuid, {
+    message: { content: [{ type: "tool_result", tool_use_id: "t" }] },
+  });
 const synthetic = (uuid) => msg("user", uuid, { isSynthetic: true, message: { content: "알림" } });
 
 const TAPE = [
-  prompt("p1"),      // 1번째 턴 시작
+  prompt("p1"), // 1번째 턴 시작
   assistant("a1"),
-  carrier("c1"),     // 도구 결과 캐리어가 답 뒤에 붙는다
-  prompt("p2"),      // 2번째 턴
+  carrier("c1"), // 도구 결과 캐리어가 답 뒤에 붙는다
+  prompt("p2"), // 2번째 턴
   assistant("a2"),
-  synthetic("s1"),   // 합성 알림은 프롬프트가 아니다
-  prompt("p3"),      // 3번째 턴
+  synthetic("s1"), // 합성 알림은 프롬프트가 아니다
+  prompt("p3"), // 3번째 턴
   assistant("a3"),
 ];
 

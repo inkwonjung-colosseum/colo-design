@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CommentItem } from "./daemon-client";
 import { stateLabel, timeAgo } from "./format";
 import { CloseIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * 코멘트 기록 (PLAN D57 → D78): every comment the planner's pins left behind.
@@ -39,15 +40,16 @@ export function CommentsPopover({
   const [showResolved, setShowResolved] = useState(false);
   useEffect(() => {
     if (!open) return;
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [open, onClose]);
 
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
   const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef, open);
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
@@ -95,13 +97,17 @@ export function CommentsPopover({
           )}
           {items !== null && items.length === 0 && (
             <p className="hint">
-              아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에 쌓입니다.
+              아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에
+              쌓입니다.
             </p>
           )}
           {items !== null && shown.length > 0 && (
             <ul className="diff__files">
               {shown.map((item) => (
-                <li className={`diff__file${item.resolved ? " diff__file--resolved" : ""}`} key={item.id}>
+                <li
+                  className={`diff__file${item.resolved ? " diff__file--resolved" : ""}`}
+                  key={item.id}
+                >
                   <div className="diff__filerow">
                     <span className="diff__path" title={item.text}>
                       {item.screen} · {stateLabel(item.state)} · {item.elementText || "화면의 요소"}

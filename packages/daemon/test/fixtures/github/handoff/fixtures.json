@@ -4,18 +4,18 @@
     "cite": "POST /repos/{owner}/{repo}/pulls — open a pull request",
     "request": {
       "method": "POST",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls"
     },
     "response": {
       "status": 201,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/12",
         "title": "결제",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "cds-design-branch"
+          "ref": "colo-design-branch"
         }
       }
     }
@@ -25,18 +25,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/12"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/12",
         "title": "결제",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "cds-design-branch"
+          "ref": "colo-design-branch"
         }
       }
     }
@@ -46,7 +46,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews — latest verdict per reviewer",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12/reviews?per_page=100"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/12/reviews?per_page=100"
     },
     "response": {
       "status": 200,
@@ -58,18 +58,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/12"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/12"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 12,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/12",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/12",
         "title": "결제",
         "state": "closed",
         "merged": true,
         "head": {
-          "ref": "cds-design-branch"
+          "ref": "colo-design-branch"
         }
       }
     }
@@ -79,7 +79,7 @@
     "cite": "POST /repos/{owner}/{repo}/pulls — open a pull request",
     "request": {
       "method": "POST",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls",
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls",
       "bodyContains": [
         "### 수정 요청",
         "- [x] member/MemberList · 기본 — ",
@@ -96,12 +96,12 @@
       "status": 201,
       "json": {
         "number": 13,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/13",
         "title": "결제 후속",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "cds-design-branch-2"
+          "ref": "colo-design-branch-2"
         }
       }
     }
@@ -111,18 +111,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 13,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/13",
         "title": "결제 후속",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "cds-design-branch-2"
+          "ref": "colo-design-branch-2"
         }
       }
     }
@@ -132,7 +132,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/comments",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments?per_page=50"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13/comments?per_page=50"
     },
     "response": {
       "status": 200,
@@ -163,7 +163,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/reviews?per_page=50"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13/reviews?per_page=50"
     },
     "response": {
       "status": 200,
@@ -184,7 +184,7 @@
     "cite": "POST /repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies",
     "request": {
       "method": "POST",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments/21/replies"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13/comments/21/replies"
     },
     "response": {
       "status": 201,
@@ -198,18 +198,18 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number} — state + merged flag",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13"
     },
     "response": {
       "status": 200,
       "json": {
         "number": 13,
-        "html_url": "https://github.com/colosseumcoinckr/cds-design-e2e/pull/13",
+        "html_url": "https://github.com/colosseumcoinckr/colo-design-e2e/pull/13",
         "title": "결제 후속",
         "state": "open",
         "merged": false,
         "head": {
-          "ref": "cds-design-branch-2"
+          "ref": "colo-design-branch-2"
         }
       }
     }
@@ -219,7 +219,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/comments",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/comments?per_page=50"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13/comments?per_page=50"
     },
     "response": {
       "status": 200,
@@ -250,7 +250,7 @@
     "cite": "GET /repos/{owner}/{repo}/pulls/{number}/reviews",
     "request": {
       "method": "GET",
-      "url": "/repos/colosseumcoinckr/cds-design-e2e/pulls/13/reviews?per_page=50"
+      "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls/13/reviews?per_page=50"
     },
     "response": {
       "status": 200,

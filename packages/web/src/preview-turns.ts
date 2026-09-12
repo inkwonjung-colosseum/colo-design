@@ -4,11 +4,11 @@
  * transcript renders back as the marker card it carries (PLAN D9).
  */
 import type {
-  CdsDesignCommentsEnvelope,
+  ColoDesignCommentsEnvelope,
   DeveloperReview,
   TurnMarker,
-} from "@cds-design/protocol";
-import { markTurn } from "@cds-design/protocol";
+} from "@colo-design/protocol";
+import { markTurn } from "@colo-design/protocol";
 import type { CommentItem } from "./daemon-client";
 import { stateLabel } from "./format";
 import type { PreviewError } from "./PreviewHost";
@@ -45,7 +45,7 @@ export function reviewToTurn(reviews: DeveloperReview[]): string {
  * `screenTitle` is what the repo called the screen; the envelope only carries
  * its route-shaped id, and a card is the wrong place to meet one.
  */
-export function commentsToTurn(envelope: CdsDesignCommentsEnvelope, screenTitle: string): string {
+export function commentsToTurn(envelope: ColoDesignCommentsEnvelope, screenTitle: string): string {
   const marker: TurnMarker = {
     kind: "comments",
     screen: screenTitle,

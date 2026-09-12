@@ -1,15 +1,16 @@
 /**
  * Preview tools (PLAN D61) — the six `screen_*` tools of the in-process
- * `cds-preview` MCP server, driven through a fake driver: the wire-level
+ * `colo-preview` MCP server, driven through a fake driver: the wire-level
  * tool list, the declared-screen list provider (read per call, never
  * snapshotted), the per-turn 12-screenshot quota and its reset, the
  * console error·warn filter, and the null-driver absence.
  *
  * Run: node --test packages/daemon/test/preview-tools.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { test } from "node:test";
 import { createPreviewTools } from "../dist/preview-tools.js";
 
 // The in-memory MCP pair arrives through the Agent SDK's dependency graph —
@@ -19,7 +20,11 @@ const { Client } = requireFromSdk("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = requireFromSdk("@modelcontextprotocol/sdk/inMemory.js");
 
 const SCREENS = [
-  { route: "/pay/PayFailed", title: "결제 실패", states: ["기본", "비어 있음", "오류"] },
+  {
+    route: "/pay/PayFailed",
+    title: "결제 실패",
+    states: ["기본", "비어 있음", "오류"],
+  },
   { route: "/member/MemberList", title: "회원 목록", states: ["기본"] },
 ];
 
@@ -59,12 +64,15 @@ async function openTools(tools) {
 const textOf = (result) => result.content.map((block) => block.text).join("\n");
 
 test("a session without a driver gets no preview tools at all", () => {
-  assert.equal(createPreviewTools(null, () => SCREENS), null);
+  assert.equal(
+    createPreviewTools(null, () => SCREENS),
+    null,
+  );
 });
 
-test("the cds-preview server serves exactly the six screen tools", async () => {
+test("the colo-preview server serves exactly the six screen tools", async () => {
   const tools = createPreviewTools(fakeDriver(), () => SCREENS);
-  assert.equal(tools.name, "cds-preview");
+  assert.equal(tools.name, "colo-preview");
   const { client, close } = await openTools(tools);
   const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, [
@@ -109,7 +117,10 @@ test("screen_open hands route and state to the driver — state optional", async
     arguments: { route: "/pay/PayFailed", state: "오류" },
   });
   assert.match(textOf(named), /오류/);
-  const unnamed = await client.callTool({ name: "screen_open", arguments: { route: "/pay/PayFailed" } });
+  const unnamed = await client.callTool({
+    name: "screen_open",
+    arguments: { route: "/pay/PayFailed" },
+  });
   assert.ok(textOf(unnamed).length > 0);
   const missing = await client.callTool({ name: "screen_open", arguments: {} });
   assert.equal(missing.isError, true);
@@ -126,7 +137,10 @@ test("screen_screenshot returns the driver's JPEG — twelve per turn, then word
   const { client, close } = await openTools(tools);
 
   for (let i = 0; i < 12; i++) {
-    const result = await client.callTool({ name: "screen_screenshot", arguments: {} });
+    const result = await client.callTool({
+      name: "screen_screenshot",
+      arguments: {},
+    });
     assert.equal(result.isError, undefined);
     assert.deepEqual(result.content, [
       { type: "image", data: frame(i + 1), mimeType: "image/jpeg" },
@@ -134,18 +148,26 @@ test("screen_screenshot returns the driver's JPEG — twelve per turn, then word
   }
   // The thirteenth is a sentence, not an image — the turn keeps going
   // (PLAN D61: 스크린샷은 토큰이다).
-  const over = await client.callTool({ name: "screen_screenshot", arguments: {} });
+  const over = await client.callTool({
+    name: "screen_screenshot",
+    arguments: {},
+  });
   assert.deepEqual(over.content, [{ type: "text", text: "이 턴의 캡처 한도에 닿았습니다" }]);
 
   // The session resets the quota at turn boundaries.
   tools.resetTurnQuota();
-  const fresh = await client.callTool({ name: "screen_screenshot", arguments: {} });
+  const fresh = await client.callTool({
+    name: "screen_screenshot",
+    arguments: {},
+  });
   assert.deepEqual(fresh.content, [{ type: "image", data: frame(13), mimeType: "image/jpeg" }]);
   await close();
 });
 
 test("screen_read hands the accessibility outline through as text", async () => {
-  const driver = fakeDriver({ axTree: () => "heading 결제 실패\nbutton 다시 시도" });
+  const driver = fakeDriver({
+    axTree: () => "heading 결제 실패\nbutton 다시 시도",
+  });
   const { client, close } = await openTools(createPreviewTools(driver, () => SCREENS));
   const result = await client.callTool({ name: "screen_read", arguments: {} });
   assert.deepEqual(result.content, [{ type: "text", text: "heading 결제 실패\nbutton 다시 시도" }]);
@@ -157,14 +179,26 @@ test("screen_click needs a target and forwards exactly what it got", async () =>
   const driver = fakeDriver({ click: (target) => seen.push(target) });
   const { client, close } = await openTools(createPreviewTools(driver, () => SCREENS));
 
-  await client.callTool({ name: "screen_click", arguments: { text: "결제하기" } });
+  await client.callTool({
+    name: "screen_click",
+    arguments: { text: "결제하기" },
+  });
   assert.deepEqual(seen.at(-1), { text: "결제하기" });
-  await client.callTool({ name: "screen_click", arguments: { selector: "#pay-button" } });
+  await client.callTool({
+    name: "screen_click",
+    arguments: { selector: "#pay-button" },
+  });
   assert.deepEqual(seen.at(-1), { selector: "#pay-button" });
-  await client.callTool({ name: "screen_click", arguments: { text: "결제", selector: ".pay" } });
+  await client.callTool({
+    name: "screen_click",
+    arguments: { text: "결제", selector: ".pay" },
+  });
   assert.deepEqual(seen.at(-1), { text: "결제", selector: ".pay" });
 
-  const neither = await client.callTool({ name: "screen_click", arguments: {} });
+  const neither = await client.callTool({
+    name: "screen_click",
+    arguments: {},
+  });
   assert.equal(neither.isError, true);
   assert.match(textOf(neither), /text 나 selector/);
   await close();
@@ -180,7 +214,10 @@ test("screen_console keeps error and warn, drops the rest", async () => {
     ],
   });
   const { client, close } = await openTools(createPreviewTools(driver, () => SCREENS));
-  const result = await client.callTool({ name: "screen_console", arguments: {} });
+  const result = await client.callTool({
+    name: "screen_console",
+    arguments: {},
+  });
   const text = textOf(result);
   assert.match(text, /error: boom/);
   assert.match(text, /warn: meh/);
@@ -192,7 +229,10 @@ test("screen_console keeps error and warn, drops the rest", async () => {
     () => SCREENS,
   );
   const quiet = await openTools(quietTools);
-  assert.match(textOf(await quiet.client.callTool({ name: "screen_console", arguments: {} })), /error·warn 이 없습니다/);
+  assert.match(
+    textOf(await quiet.client.callTool({ name: "screen_console", arguments: {} })),
+    /error·warn 이 없습니다/,
+  );
   await quiet.close();
   await close();
 });

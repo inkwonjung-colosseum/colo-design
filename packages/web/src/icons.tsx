@@ -10,26 +10,23 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ClipboardCheck,
   Copy,
   ExternalLink,
   File,
   Folder,
-  GitPullRequest,
   Link,
+  type LucideIcon,
   Monitor,
   Paperclip,
   Plus,
   RefreshCw,
   RotateCcw,
-  Save,
-  Settings,
   ServerOff,
+  Settings,
   ShieldCheck,
   Smartphone,
   TriangleAlert,
   X,
-  type LucideIcon,
 } from "lucide-react";
 
 interface IconProps {
@@ -60,10 +57,6 @@ export const ShieldIcon = make(ShieldCheck, 16);
 export const GearIcon = make(Settings, 14);
 export const PlusIcon = make(Plus, 12);
 export const RefreshIcon = make(RefreshCw, 13);
-export const ClipboardCheckIcon = make(ClipboardCheck, 13);
-export const SaveIcon = make(Save, 13);
-/** 개발자에게 넘기기: the cycle ends in the developer's pull request. */
-export const HandoffIcon = make(GitPullRequest, 13);
 export const MobileIcon = make(Smartphone, 12);
 export const DesktopIcon = make(Monitor, 12);
 export const ExternalLinkIcon = make(ExternalLink, 12);

@@ -16,25 +16,21 @@
 
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
 import {
   currentPlatform,
+  type Platform,
   readAuthStatus,
   readClaudeVersion,
   resolveClaudeExecutable,
   resolveGitExecutable,
   resolveNodeVersion,
   resolvePnpmExecutable,
-  type Platform,
 } from "./environment.js";
-import { extraPathPrefix } from "./repo.js";
 import type { GitHubClient } from "./github.js";
-import type {
-  OnboardingFix,
-  OnboardingStep,
-  OnboardingStepId,
-} from "@cds-design/protocol";
+import { extraPathPrefix } from "./repo.js";
 
-export type { OnboardingFix, OnboardingStep, OnboardingStepId };
+export type { OnboardingStep };
 
 const run = promisify(execFile);
 
@@ -71,19 +67,17 @@ export async function runOnboardingChecks(deps: OnboardingDeps): Promise<Onboard
 async function checkClaude(deps: OnboardingDeps): Promise<OnboardingStep> {
   const executable = await resolveClaudeExecutable(deps.claudeExecutableOverride);
   if (!executable) {
-    return fail(
-      "claude",
-      "Claude Code CLI를 찾지 못했습니다.",
-      { kind: "install-claude", label: "Claude Code 설치" },
-    );
+    return fail("claude", "Claude Code CLI를 찾지 못했습니다.", {
+      kind: "install-claude",
+      label: "Claude Code 설치",
+    });
   }
   const auth = await readAuthStatus(executable);
   if (!auth.loggedIn) {
-    return fail(
-      "claude",
-      "Claude Code 로그인이 필요합니다 — 본인 구독으로 실행됩니다.",
-      { kind: "login-claude", label: "Claude Code 로그인" },
-    );
+    return fail("claude", "Claude Code 로그인이 필요합니다 — 본인 구독으로 실행됩니다.", {
+      kind: "login-claude",
+      label: "Claude Code 로그인",
+    });
   }
   if (process.env.ANTHROPIC_API_KEY) {
     return {
@@ -134,7 +128,7 @@ const MIN_NODE_MAJOR = 22;
 
 /**
  * The runtime gate (PLAN D5[런타임 게이트]). It reads the same PATH the repo's install ·
- * preview · build children get — `CDS_DESIGN_EXTRA_PATH`, the desktop app's
+ * preview · build children get — `COLO_DESIGN_EXTRA_PATH`, the desktop app's
  * bundled runtime, first — because that is the node that will actually run,
  * and a pass here names it ("앱에 포함됨"). pnpm resolves through the same
  * conventions `repo.ts` will use at install time.
@@ -255,14 +249,21 @@ export async function runPnpmInstall(
   const command = platform === "win32" ? "corepack.cmd" : "corepack";
   try {
     const { stdout } = await runLike(command, ["enable"], {
-      env: { ...env, PATH: extraPathPrefix(env.CDS_DESIGN_EXTRA_PATH, env) },
+      env: { ...env, PATH: extraPathPrefix(env.COLO_DESIGN_EXTRA_PATH, env) },
       shell: platform === "win32",
       timeout: 60_000,
     });
     const line = `${stdout}`.trim().split(/\r?\n/).find(Boolean);
-    return { ok: true, detail: line ? `corepack enable: ${line}` : "corepack enable 을 실행했습니다." };
+    return {
+      ok: true,
+      detail: line ? `corepack enable: ${line}` : "corepack enable 을 실행했습니다.",
+    };
   } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string; message?: string };
+    const failure = error as {
+      stdout?: string;
+      stderr?: string;
+      message?: string;
+    };
     const text = `${failure.stderr ?? ""}${failure.stdout ?? ""}${failure.message ?? ""}`.trim();
     return {
       ok: false,
@@ -294,15 +295,23 @@ export function startClaudeInstall(
     if (platform === "win32") {
       // No sh here: the native installer is a PowerShell one-liner, and the
       // console window it opens is the progress the planner sees.
-      detach(spawnLike("powershell", ["-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"], {
-        detached: true,
-        stdio: "ignore",
-      }));
+      detach(
+        spawnLike(
+          "powershell",
+          ["-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"],
+          {
+            detached: true,
+            stdio: "ignore",
+          },
+        ),
+      );
     } else {
-      detach(spawnLike("sh", ["-c", "curl -fsSL https://claude.ai/install.sh | bash"], {
-        detached: true,
-        stdio: "ignore",
-      }));
+      detach(
+        spawnLike("sh", ["-c", "curl -fsSL https://claude.ai/install.sh | bash"], {
+          detached: true,
+          stdio: "ignore",
+        }),
+      );
     }
     return {
       started: true,
@@ -314,18 +323,22 @@ export function startClaudeInstall(
 }
 
 /** Opens a Terminal window running `claude /login` (macOS), else spawns it. */
-export function startClaudeLogin(
-  spawnLike: SpawnLike = spawn,
-): { started: boolean; guidance: string } {
+export function startClaudeLogin(spawnLike: SpawnLike = spawn): {
+  started: boolean;
+  guidance: string;
+} {
   if (process.platform === "darwin") {
     try {
-      detach(spawnLike("osascript", ["-e", 'tell application "Terminal" to do script "claude /login"'], {
-        detached: true,
-        stdio: "ignore",
-      }));
+      detach(
+        spawnLike("osascript", ["-e", 'tell application "Terminal" to do script "claude /login"'], {
+          detached: true,
+          stdio: "ignore",
+        }),
+      );
       return {
         started: true,
-        guidance: "터미널 창을 열었습니다 — 브라우저 로그인을 마친 뒤 이 단계를 다시 확인해 주세요.",
+        guidance:
+          "터미널 창을 열었습니다 — 브라우저 로그인을 마친 뒤 이 단계를 다시 확인해 주세요.",
       };
     } catch {
       // fall through to the detached spawn
@@ -334,14 +347,17 @@ export function startClaudeLogin(
   try {
     // Windows: `claude` is a .cmd shim, which is not an executable — a shell
     // resolves it. Everywhere else the direct spawn is one process fewer.
-    detach(spawnLike("claude", ["/login"], {
-      detached: true,
-      stdio: "ignore",
-      shell: process.platform === "win32",
-    }));
+    detach(
+      spawnLike("claude", ["/login"], {
+        detached: true,
+        stdio: "ignore",
+        shell: process.platform === "win32",
+      }),
+    );
     return {
       started: true,
-      guidance: "로그인 절차를 시작했습니다 — 안내를 따라 로그인한 뒤 이 단계를 다시 확인해 주세요.",
+      guidance:
+        "로그인 절차를 시작했습니다 — 안내를 따라 로그인한 뒤 이 단계를 다시 확인해 주세요.",
     };
   } catch {
     return { started: false, guidance: LOGIN_FAILED };
@@ -353,13 +369,15 @@ export function startClaudeLogin(
  * planner can read and run themselves. Pure in the platform so the branches
  * for the platforms this daemon is not running on can still be tested.
  */
-export function gitInstallGuidance(
-  platform: Platform = currentPlatform(),
-): { command: string; guidance: string } {
+export function gitInstallGuidance(platform: Platform = currentPlatform()): {
+  command: string;
+  guidance: string;
+} {
   if (platform === "darwin") {
     return {
       command: "xcode-select --install",
-      guidance: "터미널에 위 명령을 실행하면 Xcode 명령줄 도구 설치 창이 열립니다. 설치 후 다시 확인해 주세요.",
+      guidance:
+        "터미널에 위 명령을 실행하면 Xcode 명령줄 도구 설치 창이 열립니다. 설치 후 다시 확인해 주세요.",
     };
   }
   if (platform === "win32") {
@@ -370,7 +388,8 @@ export function gitInstallGuidance(
   }
   return {
     command: "sudo apt install git",
-    guidance: "배포판의 패키지 매니저로 git을 설치해 주세요 — 위 명령은 데비안/우분투 기준입니다. 설치 후 다시 확인해 주세요.",
+    guidance:
+      "배포판의 패키지 매니저로 git을 설치해 주세요 — 위 명령은 데비안/우분투 기준입니다. 설치 후 다시 확인해 주세요.",
   };
 }
 

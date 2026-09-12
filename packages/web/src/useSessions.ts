@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ContextUsage,
   EffortLevel,
@@ -7,14 +6,11 @@ import type {
   SessionModelInfo,
   SessionSelectors,
   SessionSummary,
-} from "@cds-design/protocol";
-import { EMPTY_SESSION, type Daemon, type SessionView } from "./daemon-client";
+} from "@colo-design/protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Attachment } from "./Composer";
-import {
-  loadModelCatalog,
-  saveModelCatalog,
-  type ChatSettings,
-} from "./settings";
+import { type Daemon, EMPTY_SESSION, type SessionView } from "./daemon-client";
+import { type ChatSettings, loadModelCatalog, saveModelCatalog } from "./settings";
 
 /** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
@@ -500,7 +496,6 @@ export function useSessions(
       setSelector((current) => (current ? { ...current, permissionMode: prev } : current));
     }
   };
-
 
   return {
     activeId,

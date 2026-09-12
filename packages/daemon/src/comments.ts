@@ -1,16 +1,16 @@
 /**
  * 코멘트 저장소 (PLAN D57): the pins a planner sends from the preview land in
- * the project's own `comments.json` (`~/.cds-design/projects/<slug>/`), one
+ * the project's own `comments.json` (`~/.colo-design/projects/<slug>/`), one
  * row per comment. The turn ends and the pins disappear; the rows stay — and
  * a resolved row stays too, as history. A re-send of one screen·state
  * replaces that pair's UNRESOLVED rows only: the overlay sends what is still
  * pinned, so writing it verbatim twice must never double a comment.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
-import type { CommentItem } from "@cds-design/protocol";
+import type { CommentItem } from "@colo-design/protocol";
 
 /** A row is kept only when every field the wire promises is really there. */
 function isCommentItem(value: unknown): value is CommentItem {

@@ -11,11 +11,12 @@
  *
  * Run: node --test packages/daemon/test/github.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { GitHubClient, createGitHubTransport, parseRepoSlug } from "../dist/github.js";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createGitHubTransport, GitHubClient, parseRepoSlug } from "../dist/github.js";
 import { FixtureTransport, loadFixturePairs } from "../dist/rest-transport.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,7 +24,7 @@ const fixtureDir = join(here, "fixtures", "github");
 const pairs = loadFixturePairs(fixtureDir);
 
 const TOKEN = "ghp_never_in_any_message";
-const REPO = { owner: "colosseumcoinckr", repo: "cds-open-design" };
+const REPO = { owner: "colosseumcoinckr", repo: "colo-open-design" };
 
 const byName = (name) => {
   const pair = pairs.find((candidate) => candidate.name === name);
@@ -50,17 +51,17 @@ test("the golden pass runs end to end, in order", async () => {
   // 개발자에게 넘기기 — the create body is deep-equalled by the fixture.
   const created = await client.createPullRequest({
     ...REPO,
-    head: "cds-design/cds/20260909-1",
+    head: "colo-design/20260909-1",
     base: "main",
     title: "회원 관리 기획서",
     body: byName("pr-create").request.bodyJson.body,
   });
   assert.deepEqual(created, {
     number: 7,
-    url: "https://github.com/colosseumcoinckr/cds-open-design/pull/7",
+    url: "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
     title: "회원 관리 기획서",
     state: "open",
-    branch: "cds-design/cds/20260909-1",
+    branch: "colo-design/20260909-1",
   });
 
   // 열림 — no review yet.
@@ -103,12 +104,18 @@ test("the golden pass runs end to end, in order", async () => {
   );
 
   // The onboarding gate: permissions.push is the answer when GitHub gives one.
-  assert.deepEqual(await client.verifyPullRequestAccess(REPO), { ok: true, detail: null });
+  assert.deepEqual(await client.verifyPullRequestAccess(REPO), {
+    ok: true,
+    detail: null,
+  });
 
   const readOnly = await client.verifyPullRequestAccess(REPO);
   assert.equal(readOnly.ok, false);
   assert.match(readOnly.detail, /쓰기 권한이 있는 계정의 토큰/);
-  assert.ok(!/브랜치|커밋|푸시|PR|머지/.test(readOnly.detail), "no git vocabulary reaches the planner");
+  assert.ok(
+    !/브랜치|커밋|푸시|PR|머지/.test(readOnly.detail),
+    "no git vocabulary reaches the planner",
+  );
 
   // No permissions block: a classic token is judged by x-oauth-scopes.
   assert.equal((await client.verifyPullRequestAccess(REPO)).ok, true, "repo scope is enough");
@@ -117,7 +124,10 @@ test("the golden pass runs end to end, in order", async () => {
   assert.match(missingScope.detail, /repo 권한을 켜고/);
 
   // A fine-grained token sends no scopes header at all; absence is not a no.
-  assert.deepEqual(await client.verifyPullRequestAccess(REPO), { ok: true, detail: null });
+  assert.deepEqual(await client.verifyPullRequestAccess(REPO), {
+    ok: true,
+    detail: null,
+  });
 
   const notFound = await client.verifyPullRequestAccess(REPO);
   assert.equal(notFound.ok, false);
@@ -136,7 +146,7 @@ test("a refused reviews call leaves the pull request 열림 instead of failing",
       cite: "GET /repos/{owner}/{repo}/pulls/{number}/reviews",
       request: {
         method: "GET",
-        url: "/repos/colosseumcoinckr/cds-open-design/pulls/7/reviews?per_page=100",
+        url: "/repos/colosseumcoinckr/colo-open-design/pulls/7/reviews?per_page=100",
       },
       response: { status: 403, json: { message: "Resource not accessible" } },
     },
@@ -167,12 +177,19 @@ test("a 422 names the field GitHub complained about", async () => {
     {
       name: "duplicate pull request",
       cite: "POST /repos/{owner}/{repo}/pulls",
-      request: { method: "POST", url: "/repos/colosseumcoinckr/cds-open-design/pulls" },
+      request: {
+        method: "POST",
+        url: "/repos/colosseumcoinckr/colo-open-design/pulls",
+      },
       response: {
         status: 422,
         json: {
           message: "Validation Failed",
-          errors: [{ message: "A pull request already exists for colosseumcoinckr:cds-design/cds/20260909-1." }],
+          errors: [
+            {
+              message: "A pull request already exists for colosseumcoinckr:colo-design/20260909-1.",
+            },
+          ],
         },
       },
     },
@@ -183,7 +200,7 @@ test("a 422 names the field GitHub complained about", async () => {
     () =>
       client.createPullRequest({
         ...REPO,
-        head: "cds-design/cds/20260909-1",
+        head: "colo-design/20260909-1",
         base: "main",
         title: "회원 관리 기획서",
         body: "본문",
@@ -193,14 +210,23 @@ test("a 422 names the field GitHub complained about", async () => {
 });
 
 test("parseRepoSlug reads every remote form the planner can paste", () => {
-  const slug = { owner: "colosseumcoinckr", repo: "cds-open-design" };
-  assert.deepEqual(parseRepoSlug("https://github.com/colosseumcoinckr/cds-open-design"), slug);
-  assert.deepEqual(parseRepoSlug("https://github.com/colosseumcoinckr/cds-open-design.git"), slug);
-  assert.deepEqual(parseRepoSlug("git@github.com:colosseumcoinckr/cds-open-design.git"), slug);
-  assert.deepEqual(parseRepoSlug("ssh://git@github.com/colosseumcoinckr/cds-open-design.git"), slug);
+  const slug = { owner: "colosseumcoinckr", repo: "colo-open-design" };
+  assert.deepEqual(parseRepoSlug("https://github.com/colosseumcoinckr/colo-open-design"), slug);
+  assert.deepEqual(parseRepoSlug("https://github.com/colosseumcoinckr/colo-open-design.git"), slug);
+  assert.deepEqual(parseRepoSlug("git@github.com:colosseumcoinckr/colo-open-design.git"), slug);
+  assert.deepEqual(
+    parseRepoSlug("ssh://git@github.com/colosseumcoinckr/colo-open-design.git"),
+    slug,
+  );
   // authenticatedUrl() embeds the PAT as userinfo; the slug is still the slug.
-  assert.deepEqual(parseRepoSlug("https://ghp_token@github.com/colosseumcoinckr/cds-open-design.git"), slug);
-  assert.deepEqual(parseRepoSlug("  https://github.com/colosseumcoinckr/cds-open-design/  "), slug);
+  assert.deepEqual(
+    parseRepoSlug("https://ghp_token@github.com/colosseumcoinckr/colo-open-design.git"),
+    slug,
+  );
+  assert.deepEqual(
+    parseRepoSlug("  https://github.com/colosseumcoinckr/colo-open-design/  "),
+    slug,
+  );
 
   assert.equal(parseRepoSlug("https://gitlab.com/org/repo.git"), null, "not GitHub");
   assert.equal(parseRepoSlug("https://github.enterprise.io/org/repo.git"), null, "not github.com");
@@ -208,8 +234,10 @@ test("parseRepoSlug reads every remote form the planner can paste", () => {
   assert.equal(parseRepoSlug(""), null);
 });
 
-test("CDS_DESIGN_GITHUB_FIXTURE picks the recorded transport", () => {
-  const chosen = createGitHubTransport({ CDS_DESIGN_GITHUB_FIXTURE: fixtureDir });
+test("COLO_DESIGN_GITHUB_FIXTURE picks the recorded transport", () => {
+  const chosen = createGitHubTransport({
+    COLO_DESIGN_GITHUB_FIXTURE: fixtureDir,
+  });
   assert.ok(chosen.transport instanceof FixtureTransport);
   assert.equal(chosen.fixtureDir, fixtureDir);
 
@@ -221,7 +249,9 @@ test("CDS_DESIGN_GITHUB_FIXTURE picks the recorded transport", () => {
 
   // An unloadable directory still reports what was asked for, so a caller
   // cannot mistake a broken fixture set for "no fixtures configured".
-  const broken = createGitHubTransport({ CDS_DESIGN_GITHUB_FIXTURE: join(fixtureDir, "nope") });
+  const broken = createGitHubTransport({
+    COLO_DESIGN_GITHUB_FIXTURE: join(fixtureDir, "nope"),
+  });
   assert.equal(broken.fixtureDir, join(fixtureDir, "nope"));
   assert.ok(!(broken.transport instanceof FixtureTransport));
 });
@@ -230,7 +260,10 @@ test("whoAmI reads the token's login, and answers a refused token in Korean", as
   const client = new GitHubClient(TOKEN, new FixtureTransport([byName("user")]));
   assert.deepEqual(await client.whoAmI(), { ok: true, login: "jik-dev" });
 
-  const refused = await new GitHubClient(TOKEN, new FixtureTransport([byName("user-401")])).whoAmI();
+  const refused = await new GitHubClient(
+    TOKEN,
+    new FixtureTransport([byName("user-401")]),
+  ).whoAmI();
   assert.equal(refused.ok, false);
   assert.match(refused.detail, /유효하지 않거나 만료/);
   assert.ok(!refused.detail.includes(TOKEN));
@@ -248,19 +281,22 @@ test("an unreachable GitHub answers whoAmI instead of breaking the gate", async 
 });
 
 test("listRepos follows Link pages, drops archived repos, maps the picker's fields", async () => {
-  const client = new GitHubClient(TOKEN, new FixtureTransport([byName("user-repos-1"), byName("user-repos-2")]));
+  const client = new GitHubClient(
+    TOKEN,
+    new FixtureTransport([byName("user-repos-1"), byName("user-repos-2")]),
+  );
   const { repos, truncated } = await client.listRepos();
 
   assert.equal(truncated, false);
   assert.deepEqual(
     repos.map((repo) => repo.fullName),
-    ["cds-org/payments-web", "cds-org/legacy-docs", "jik-dev/sandbox"],
+    ["colo-org/payments-web", "colo-org/legacy-docs", "jik-dev/sandbox"],
   );
   assert.deepEqual(repos[0], {
-    fullName: "cds-org/payments-web",
-    owner: "cds-org",
+    fullName: "colo-org/payments-web",
+    owner: "colo-org",
     name: "payments-web",
-    cloneUrl: "https://github.com/cds-org/payments-web.git",
+    cloneUrl: "https://github.com/colo-org/payments-web.git",
     defaultBranch: "main",
     canPush: true,
     pushedAt: "2026-09-08T09:00:00Z",
@@ -295,15 +331,15 @@ test("listRepos throws with the picker's line when a page fails", async () => {
   await assert.rejects(unauthorized.listRepos(), /토큰이 유효하지 않거나 만료/);
 });
 
-test("hasCdsDesign reads presence off one request, before any clone", async () => {
-  const withIt = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-cds-design")]));
-  assert.equal(await withIt.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }), true);
+test("hasColoDesign reads presence off one request, before any clone", async () => {
+  const withIt = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-colo-design")]));
+  assert.equal(await withIt.hasColoDesign({ owner: "colo-org", repo: "payments-web" }), true);
 
   const without = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-missing")]));
-  assert.equal(await without.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }), false);
+  assert.equal(await without.hasColoDesign({ owner: "colo-org", repo: "payments-web" }), false);
 });
 
-test("hasCdsDesign refuses to answer a non-200/404 with a guess", async () => {
+test("hasColoDesign refuses to answer a non-200/404 with a guess", async () => {
   const serverError = new GitHubClient(TOKEN, {
     request: async () => ({
       status: 500,
@@ -311,8 +347,8 @@ test("hasCdsDesign refuses to answer a non-200/404 with a guess", async () => {
     }),
   });
   await assert.rejects(
-    serverError.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }),
-    /cds-design.json 확인/,
+    serverError.hasColoDesign({ owner: "colo-org", repo: "payments-web" }),
+    /colo-design.json 확인/,
   );
 
   const unauthorized = new GitHubClient(TOKEN, {
@@ -322,7 +358,7 @@ test("hasCdsDesign refuses to answer a non-200/404 with a guess", async () => {
     }),
   });
   await assert.rejects(
-    unauthorized.hasCdsDesign({ owner: "cds-org", repo: "payments-web" }),
+    unauthorized.hasColoDesign({ owner: "colo-org", repo: "payments-web" }),
     /토큰이 유효하지 않거나 만료/,
   );
 });
@@ -332,25 +368,35 @@ test("inspectRepo judges one repo from the two calls the picker needs", async ()
   const client = new GitHubClient(TOKEN, {
     request: async (input) => {
       calls.push(input.url);
-      if (input.url === "/repos/cds-org/payments-web") {
+      if (input.url === "/repos/colo-org/payments-web") {
         return {
           status: 200,
           body: new TextEncoder().encode(
-            JSON.stringify({ default_branch: "develop", permissions: { push: false } }),
+            JSON.stringify({
+              default_branch: "develop",
+              permissions: { push: false },
+            }),
           ),
         };
       }
       return {
         status: 200,
-        body: new TextEncoder().encode(JSON.stringify({ name: "cds-design.json" })),
+        body: new TextEncoder().encode(JSON.stringify({ name: "colo-design.json" })),
       };
     },
   });
 
-  const inspection = await client.inspectRepo({ owner: "cds-org", repo: "payments-web" });
-  assert.deepEqual(inspection, { hasCdsDesign: true, canPush: false, defaultBranch: "develop" });
+  const inspection = await client.inspectRepo({
+    owner: "colo-org",
+    repo: "payments-web",
+  });
+  assert.deepEqual(inspection, {
+    hasColoDesign: true,
+    canPush: false,
+    defaultBranch: "develop",
+  });
   assert.deepEqual(calls, [
-    "/repos/cds-org/payments-web",
-    "/repos/cds-org/payments-web/contents/cds-design.json",
+    "/repos/colo-org/payments-web",
+    "/repos/colo-org/payments-web/contents/colo-design.json",
   ]);
 });

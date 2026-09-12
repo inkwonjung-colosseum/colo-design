@@ -13,34 +13,38 @@
  * Usage: node scripts/test-parallel.mjs [lane ...]   (default: all lanes)
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const LOG_DIR = join(
-  process.cwd(),
-  ".test-logs",
-  new Date().toISOString().replace(/[:.]/g, "-"),
-);
+const LOG_DIR = join(process.cwd(), ".test-logs", new Date().toISOString().replace(/[:.]/g, "-"));
 // One directory per invocation: a complete multi-lane run's logs survive the
 // next (possibly single-lane) run instead of being wiped by it.
 
 const LANES = {
   L1: {
     name: "unit",
-    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit", "test:comments-ui", "test:desktop-smoke"],
+    suites: [
+      "test:unit",
+      "test:onboard-unit",
+      "test:desktop-unit",
+      "test:comments-ui",
+      "test:desktop-smoke",
+    ],
   },
   L2: {
     name: "daemon-e2e",
-    suites: ["test:projects", "test:rewind", "test:bootstrap", "test:repo", "test:publish", "test:onboarding"],
+    suites: [
+      "test:projects",
+      "test:rewind",
+      "test:bootstrap",
+      "test:repo",
+      "test:publish",
+      "test:onboarding",
+    ],
   },
   L3: {
     name: "browser-e2e",
-    suites: [
-      "test:publish-ui",
-      "test:settings",
-      "test:sidebar-ui",
-      "test:onboarding-ui",
-    ],
+    suites: ["test:publish-ui", "test:settings", "test:sidebar-ui", "test:onboarding-ui"],
   },
   L4: {
     name: "real-claude",
@@ -86,7 +90,7 @@ function killLaneGroup(child) {
  * hangs, never for slow-but-moving suites — the slowest lane on a cold runner
  * (Electron 내려받기 포함) is minutes, not tens of them.
  */
-const LANE_TIMEOUT_MS = Number(process.env.CDS_TEST_LANE_TIMEOUT_MIN ?? 15) * 60_000;
+const LANE_TIMEOUT_MS = Number(process.env.COLO_TEST_LANE_TIMEOUT_MIN ?? 15) * 60_000;
 
 /** SIGTERM first, then a hard kill for whatever ignored it. */
 function killLaneGroupHard(child) {
@@ -104,7 +108,10 @@ function runLane(id, lane) {
   return new Promise((resolve) => {
     const log = join(LOG_DIR, `${id}-${lane.name}.log`);
     const startedAt = new Date();
-    appendFileSync(log, `[${startedAt.toISOString()}] lane ${id} (${lane.name}): ${lane.suites.join(" && ")}\n`);
+    appendFileSync(
+      log,
+      `[${startedAt.toISOString()}] lane ${id} (${lane.name}): ${lane.suites.join(" && ")}\n`,
+    );
     const child = spawn(
       "bash",
       ["-lc", `set -o pipefail; ${lane.suites.map((suite) => `pnpm run ${suite}`).join(" && ")}`],
@@ -127,12 +134,26 @@ function runLane(id, lane) {
       running.delete(child);
       killLaneGroup(child);
       const seconds = ((Date.now() - startedAt.getTime()) / 1000).toFixed(0);
-      resolve({ id, name: lane.name, code: timedOut ? 124 : code ?? 1, seconds, log, timedOut });
+      resolve({
+        id,
+        name: lane.name,
+        code: timedOut ? 124 : (code ?? 1),
+        seconds,
+        log,
+        timedOut,
+      });
     });
     child.on("error", () => {
       clearTimeout(deadline);
       running.delete(child);
-      resolve({ id, name: lane.name, code: 1, seconds: "0", log, timedOut: false });
+      resolve({
+        id,
+        name: lane.name,
+        code: 1,
+        seconds: "0",
+        log,
+        timedOut: false,
+      });
     });
   });
 }
@@ -153,7 +174,9 @@ let failed = 0;
 for (const result of results) {
   const verdict = result.code === 0 ? "PASS" : result.timedOut ? "TIMEOUT" : "FAIL";
   if (result.code !== 0) failed += 1;
-  console.log(`${verdict}  lane ${result.id} (${result.name}) — ${result.seconds}s  log: ${result.log}`);
+  console.log(
+    `${verdict}  lane ${result.id} (${result.name}) — ${result.seconds}s  log: ${result.log}`,
+  );
   // Per-suite outcome lines from each log, so the summary reads like the
   // sequential chain did.
   const text = readFileSync(result.log, "utf8");
@@ -168,5 +191,7 @@ for (const result of results) {
   }
 }
 
-console.log(`\n${failed === 0 ? "ALL LANES GREEN" : `${failed} LANE(S) FAILED`} — ${elapsed}s total`);
+console.log(
+  `\n${failed === 0 ? "ALL LANES GREEN" : `${failed} LANE(S) FAILED`} — ${elapsed}s total`,
+);
 process.exit(failed === 0 ? 0 : 1);

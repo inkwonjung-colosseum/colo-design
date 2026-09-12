@@ -1,4 +1,4 @@
-import type { HandoffStatus, RepoPhase } from "@cds-design/protocol";
+import type { HandoffStatus, RepoPhase } from "@colo-design/protocol";
 
 /**
  * 배치 상태는 칩 하나, 동작은 상수 (PLAN D81 · D82). 스테퍼의 다섯 단계 레일은
@@ -16,19 +16,13 @@ export const MERGED_BADGE = "반영됨";
 export const changesBadge = (count: number): string => `변경 ${count}`;
 
 /** The six rows of the D82 table — mechanical, no screen list needed. */
-export type DeliveryState =
-  | "clean"
-  | "unsaved"
-  | "saved"
-  | "handed"
-  | "changes_requested"
-  | "merged";
+type DeliveryState = "clean" | "unsaved" | "saved" | "handed" | "changes_requested" | "merged";
 
 /** 칩의 색 — the tones styles.css knows. */
-export type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged";
+type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged";
 
 /** One button of the action set: 열림, or 잠깐 with its reason in a title. */
-export interface DeliveryAction {
+interface DeliveryAction {
   enabled: boolean;
   /** 잠긴 이유 한 문장 — the button's title, the planner's only why. */
   reason?: string;
@@ -53,7 +47,7 @@ export interface Delivery {
 export interface DeliveryInput {
   /** Unsaved-change files, the chip's number (PLAN D8). */
   pendingChanges: number;
-  /** This cycle's `cds-design/…` branch, or null before the first 저장. */
+  /** This cycle's `colo-design/…` branch, or null before the first 저장. */
   branch: string | null;
   handoff: HandoffStatus | null;
   /** A Claude turn is running in the open thread. */
@@ -82,9 +76,17 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
   if (handoff?.state === "merged") {
     return {
       state: "merged",
-      chip: { label: "반영됨", tone: "merged", title: "다음 저장은 새 사이클을 시작합니다" },
+      chip: {
+        label: "반영됨",
+        tone: "merged",
+        title: "다음 저장은 새 사이클을 시작합니다",
+      },
       actions: {
-        save: unsaved ? (running ? { enabled: false, reason: BUSY_SAVE } : { enabled: true }) : { enabled: false, reason: NOTHING_TO_SAVE },
+        save: unsaved
+          ? running
+            ? { enabled: false, reason: BUSY_SAVE }
+            : { enabled: true }
+          : { enabled: false, reason: NOTHING_TO_SAVE },
         handoff: { enabled: false, reason: "개발자가 이미 받아 갔습니다" },
         check: null,
       },
@@ -113,7 +115,10 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
       chip: { label: `개발자 검토 중 · #${handoff.number}`, tone: "handed" },
       actions: {
         save: { enabled: false, reason: NOTHING_TO_SAVE },
-        handoff: { enabled: false, reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다" },
+        handoff: {
+          enabled: false,
+          reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다",
+        },
         check: { enabled: true },
       },
     };
@@ -129,7 +134,10 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
       },
       actions: {
         save: { enabled: false, reason: NOTHING_TO_SAVE },
-        handoff: { enabled: false, reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다" },
+        handoff: {
+          enabled: false,
+          reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다",
+        },
         check: { enabled: true },
       },
     };

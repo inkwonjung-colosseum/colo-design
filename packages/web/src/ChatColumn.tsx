@@ -1,11 +1,11 @@
+import type { SessionSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { SessionSummary } from "@cds-design/protocol";
-import type { Daemon } from "./daemon-client";
-import type { Sessions } from "./useSessions";
-import { PermissionCard, QuestionCard, Transcript } from "./components";
-import { ChevronDownIcon } from "./icons";
 import { Composer } from "./Composer";
+import { PermissionCard, QuestionCard, Transcript } from "./components";
+import type { Daemon } from "./daemon-client";
+import { ChevronDownIcon } from "./icons";
 import type { SendKey } from "./settings";
+import type { Sessions } from "./useSessions";
 
 /**
  * The middle column: one transcript, the cards that interrupt it, and the
@@ -28,7 +28,7 @@ export function ChatColumn({
   disabled: boolean;
   /** The name a thread wears: the planner's rename, else the daemon's summary. */
   titleFor: (session: SessionSummary) => string;
-  /** 더블클릭 · F2 이름 바꾸기 (PLAN D59) — 설정's store keeps it. */
+  /** 클릭 · F2 이름 바꾸기 (PLAN D59) — 설정's store keeps it. */
   onRenameSession: (sessionId: string, title: string) => void;
   /** The head's `···` → 지우기 (PLAN D76): the transcript goes for good, one
       unconditional confirm on the way. */
@@ -40,7 +40,10 @@ export function ChatColumn({
   const [restoring, setRestoring] = useState(false);
   // 고쳐서 다시 보내기 (PLAN D95): the planner's own words return to the
   // composer for an edit; the nonce re-fires the seed on every click.
-  const [seed, setSeed] = useState<{ text: string; nonce: number }>({ text: "", nonce: 0 });
+  const [seed, setSeed] = useState<{ text: string; nonce: number }>({
+    text: "",
+    nonce: 0,
+  });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
@@ -174,8 +177,8 @@ export function ChatColumn({
             <button
               type="button"
               className="thread__title"
-              title={titleFor(activeSummary)}
-              onDoubleClick={beginRename}
+              title={`${titleFor(activeSummary)} — 클릭하면 이름을 바꿉니다`}
+              onClick={beginRename}
               onKeyDown={(event) => {
                 if (event.key === "F2") {
                   event.preventDefault();
@@ -201,22 +204,32 @@ export function ChatColumn({
           </button>
           {menuOpen && (
             <>
-              <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} />
-              <span className="selector__menu thread__menu" role="menu">
-              <button type="button" role="menuitem" className="selector__row" onClick={beginRename}>
-                <span className="selector__label">이름 바꾸기</span>
-              </button>
               <button
                 type="button"
-                role="menuitem"
-                className="selector__row"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onDeleteSession(activeSummary);
-                }}
-              >
-                <span className="selector__label">지우기</span>
-              </button>
+                className="selector__backdrop"
+                aria-label="메뉴 닫기"
+                onClick={() => setMenuOpen(false)}
+              />
+              <span className="selector__menu thread__menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  onClick={beginRename}
+                >
+                  <span className="selector__label">이름 바꾸기</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDeleteSession(activeSummary);
+                  }}
+                >
+                  <span className="selector__label">지우기</span>
+                </button>
               </span>
             </>
           )}
@@ -240,7 +253,6 @@ export function ChatColumn({
           <Transcript
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
-            commands={daemon.repo?.commands}
             onRetry={(text) => void sessions.submit(text, [])}
             onRewind={(turn, text) => void sessions.rewindAnswer(turn, text)}
             onResendEdit={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
@@ -248,15 +260,15 @@ export function ChatColumn({
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
           />
-        {/* A turn's first seconds: the tape holds only the planner's words,
+          {/* A turn's first seconds: the tape holds only the planner's words,
             so the start says itself — spinner + shimmer until blocks land.
             The tape speaks for itself the moment any Claude block exists. */}
-        {sessions.running && !(active?.blocks ?? []).some((block) => block.type !== "user") && (
-          <div className="turnlive">
-            <span className="spinner" />
-            작업 중…
-          </div>
-        )}
+          {sessions.running && !(active?.blocks ?? []).some((block) => block.type !== "user") && (
+            <div className="turnlive">
+              <span className="spinner" />
+              작업 중…
+            </div>
+          )}
           {visiblePending.map((request) =>
             request.kind === "permission" ? (
               <PermissionCard
@@ -287,7 +299,9 @@ export function ChatColumn({
         {unpinned && (
           <button
             type="button"
-            className={sessions.running ? "chatstack__pill chatstack__pill--live" : "chatstack__pill"}
+            className={
+              sessions.running ? "chatstack__pill chatstack__pill--live" : "chatstack__pill"
+            }
             onClick={jumpToLatest}
           >
             {sessions.running ? "새 내용" : "맨 아래로"}
@@ -319,4 +333,3 @@ export function ChatColumn({
     </main>
   );
 }
-

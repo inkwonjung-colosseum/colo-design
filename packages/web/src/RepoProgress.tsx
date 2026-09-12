@@ -6,8 +6,9 @@
  * reads — text sniffing the old UI did broke silently whenever a daemon
  * message was reworded, so the kind is the only thing consulted.
  */
+
+import type { RepoPhase, RepoStatus } from "@colo-design/protocol";
 import { useState } from "react";
-import type { RepoPhase, RepoStatus } from "@cds-design/protocol";
 import { daemonLine } from "./format";
 import { CheckIcon, CopyIcon, RestartIcon, SparkIcon } from "./icons";
 
@@ -153,7 +154,11 @@ export function ProgressPanel({
               <span
                 key={entry.id}
                 className={`progress__step${
-                  index < railIndex ? " progress__step--done" : index === railIndex ? " progress__step--now" : ""
+                  index < railIndex
+                    ? " progress__step--done"
+                    : index === railIndex
+                      ? " progress__step--now"
+                      : ""
                 }`}
               >
                 <span className="progress__dot">{index < railIndex ? "✓" : ""}</span>
@@ -203,7 +208,8 @@ export function ProgressPanel({
             <button
               type="button"
               className={
-                (errorKind === "conflict" && onAskClaude) || (errorKind === "commands" && onApproveCommands)
+                (errorKind === "conflict" && onAskClaude) ||
+                (errorKind === "commands" && onApproveCommands)
                   ? "ghost"
                   : "primary"
               }

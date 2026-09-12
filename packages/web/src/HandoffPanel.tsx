@@ -1,15 +1,16 @@
-import { useEffect, useState } from "react";
-import type { HandoffStatus } from "@cds-design/protocol";
+import type { HandoffStatus } from "@colo-design/protocol";
+import { useEffect, useRef, useState } from "react";
+import { RUNNING, stageLine } from "./DiffPanel";
 import type { Daemon } from "./daemon-client";
 import { CheckIcon, CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
-import { RUNNING, stageLine } from "./DiffPanel";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * The three words the planner is allowed to know (PLAN D5). GitHub reports a
  * review verdict alongside the request's own state, and both arrive here as
  * `state`; `closed` is the one outcome with no word of its own.
  */
-export const HANDOFF_STATE_LABEL: Record<HandoffStatus["state"], string> = {
+const HANDOFF_STATE_LABEL: Record<HandoffStatus["state"], string> = {
   open: "넘김",
   changes_requested: "변경 요청",
   merged: "반영됨",
@@ -50,12 +51,19 @@ export function HandoffPanel({
   const handoff = handedOff ? (diffStatus?.handoff ?? null) : null;
 
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [onClose]);
+
+  /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
+  const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef);
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
 
   const hand = async () => {
     setError(null);
@@ -89,27 +97,31 @@ export function HandoffPanel({
         role="dialog"
         aria-modal="true"
         aria-label="개발자에게 넘기기"
+        tabIndex={-1}
+        ref={panelRef}
       >
         <header className="modal__head">
           <h2 className="modal__title">개발자에게 넘기기</h2>
-          <button type="button" className="ghost" aria-label="개발자에게 넘기기 닫기" onClick={onClose}>
+          <button
+            type="button"
+            className="ghost"
+            aria-label="개발자에게 넘기기 닫기"
+            onClick={onClose}
+          >
             <CloseIcon />
           </button>
         </header>
 
         <div className="modal__body">
           <p className="hint">
-            저장한 화면을 개발자가 받아 검토합니다. 제목과 내용은 개발자가 가장 먼저 읽는 부분이니, 필요하면 고쳐 주세요.
+            저장한 화면을 개발자가 받아 검토합니다. 제목과 내용은 개발자가 가장 먼저 읽는 부분이니,
+            필요하면 고쳐 주세요.
           </p>
 
           {diffStatus && (
             <div
               className={
-                handedOff
-                  ? "notice notice--info"
-                  : failed
-                    ? "notice notice--error"
-                    : "diff__stage"
+                handedOff ? "notice notice--info" : failed ? "notice notice--error" : "diff__stage"
               }
             >
               <span className="notice__text">{stageLine(diffStatus)}</span>
@@ -119,7 +131,8 @@ export function HandoffPanel({
           {failed && diffStatus?.gate === "pr" && (
             <div className="notice notice--error" data-testid="pr-failure">
               <span className="notice__text">
-                넘기지 못했습니다 — Claude 가 고칠 수 없는 문제입니다. 설정에서 토큰과 레포 주소를 확인해 주세요.
+                넘기지 못했습니다 — Claude 가 고칠 수 없는 문제입니다. 설정에서 토큰과 레포 주소를
+                확인해 주세요.
               </span>
               <button type="button" className="ghost" onClick={onOpenSettings}>
                 설정 열기
@@ -210,7 +223,12 @@ export function HandoffPanel({
               </button>
             ) : (
               <>
-                <button type="button" className="primary" disabled={running} onClick={() => void hand()}>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={running}
+                  onClick={() => void hand()}
+                >
                   {running ? "넘기는 중…" : "개발자에게 넘기기"}
                 </button>
                 <button type="button" className="ghost" disabled={running} onClick={onClose}>

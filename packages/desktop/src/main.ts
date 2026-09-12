@@ -1,12 +1,17 @@
-import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { createWriteStream, existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import { createWriteStream, existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
+import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@colo-design/daemon/server";
+// 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
+import { DaemonServer } from "@colo-design/daemon/server";
+import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@colo-design/protocol";
 import {
   app,
   BrowserWindow,
@@ -14,31 +19,26 @@ import {
   Menu,
   Notification,
   nativeImage,
-  safeStorage,
   net,
+  safeStorage,
   screen,
   shell,
 } from "electron";
-// 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
-import { DaemonServer } from "@cds-design/daemon/server";
-import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@cds-design/protocol";
-import { CDS_DESIGN_DIR } from "@cds-design/daemon/environment";
-import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
-import { buildMenuTemplate } from "./menu.js";
-import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 import { buildSwapScript, planSelfUpdate, verifyDownload } from "./mac-self-update.js";
-import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@cds-design/daemon/server";
+import { buildMenuTemplate } from "./menu.js";
 import { noticeCopy } from "./notices.js";
+import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
+import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 
 /**
- * CDS Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
+ * Colo Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
  * - 데몬을 in-process 로 호스팅한다 — 별도 Node 사이드카가 없다. 포트는
  *   임시 포트, 페어링 토큰은 실행마다 새로 만들어 url 로만 전달한다.
  * - 웹 UI 는 데몬이 직접 정적 서빙한다(webDist). 렌더러는
  *   http://127.0.0.1:<port>/?token=<token> 을 연다 — 연결 화면 없음.
  * - 자격 증명은 safeStorage 저장소를 데몬에 주입한다.
  * - 번들 런타임(포터블 node·pnpm, win 은 MinGit)이 resources 에 있으면
- *   CDS_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo.ts 가 PATH 앞에 붙인다).
+ *   COLO_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo.ts 가 PATH 앞에 붙인다).
  * - Claude 의 미리보기 창(PLAN D61 · D63)도 여기서 산다 — 숨은 오프스크린
  *   `BrowserWindow` 가 데몬의 `previewDriverFactory` 로 들어가고, paint 는
  *   PiP 프레임으로 렌더러에 흐른다.
@@ -106,9 +106,8 @@ class ElectronPreviewDriver implements PreviewDriver {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       const size = image.getSize();
       const scale = Math.min(1, PIP_LONG_EDGE / Math.max(size.width, size.height));
-      const shrunk =
-        scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
-      mainWindow.webContents.send("cds-preview:frame", shrunk.toJPEG(60).toString("base64"));
+      const shrunk = scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
+      mainWindow.webContents.send("colo-preview:frame", shrunk.toJPEG(60).toString("base64"));
     });
     this.window = window;
     return window;
@@ -139,9 +138,7 @@ class ElectronPreviewDriver implements PreviewDriver {
     const scale = 900 / Math.max(size.width, size.height);
     if (scale >= 1) return result.data;
     const longEdge = Math.round(900);
-    const shortEdge = Math.round(
-      (size.width < size.height ? size.width : size.height) * scale,
-    );
+    const shortEdge = Math.round((size.width < size.height ? size.width : size.height) * scale);
     const resized =
       size.width < size.height
         ? image.resize({ width: shortEdge, height: longEdge })
@@ -151,7 +148,10 @@ class ElectronPreviewDriver implements PreviewDriver {
 
   async axTree(): Promise<string> {
     const window = await this.ensureWindow();
-    const result = (await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree", {})) as {
+    const result = (await window.webContents.debugger.sendCommand(
+      "Accessibility.getFullAXTree",
+      {},
+    )) as {
       nodes?: Array<{ role?: { type?: string }; name?: { value?: unknown } }>;
     };
     const lines = (result.nodes ?? [])
@@ -189,7 +189,11 @@ class ElectronPreviewDriver implements PreviewDriver {
       window.webContents.debugger.sendCommand("Runtime.evaluate", {
         expression: find,
         returnByValue: true,
-      }) as Promise<{ result?: { value?: { x: number; y: number; width: number; height: number } } }>;
+      }) as Promise<{
+        result?: {
+          value?: { x: number; y: number; width: number; height: number };
+        };
+      }>;
     // 캡처 직후 등 컨텍스트가 갈아엎어지는 순간이 있다 — 한 번 더 물어본다.
     let result = await evaluate();
     if (!result?.result?.value) {
@@ -254,7 +258,7 @@ export function createPreviewDriverFactory(): PreviewDriverFactory {
 // The preview-driver unit imports this module inside its own Electron to
 // reach createPreviewDriverFactory() — the daemon boot below belongs to the
 // app entry only (PLAN D61).
-if (process.env.CDS_DESIGN_DESKTOP_UNIT !== "1") {
+if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
   void app.whenReady().then(() => bootApp());
 }
 
@@ -267,7 +271,7 @@ async function bootApp(): Promise<void> {
 
   const resourcesBin = join(process.resourcesPath, "bin");
   const extraPath = existsSync(resourcesBin) ? resourcesBin : undefined;
-  if (extraPath) process.env.CDS_DESIGN_EXTRA_PATH = extraPath;
+  if (extraPath) process.env.COLO_DESIGN_EXTRA_PATH = extraPath;
   // 데스크톱 앱이 데몬을 감싸므로 데몬의 자식들도 이 프로세스의 PATH 를
   // 물려받는다 — 번들 런타임을 앞에 두고 시작한다.
   if (extraPath) process.env.PATH = `${extraPath}:${process.env.PATH}`;
@@ -282,7 +286,7 @@ async function bootApp(): Promise<void> {
     token,
     webDist,
     credentialStore: credentials,
-    // Claude 의 미리보기 창 (PLAN D61): 세션에 cds-preview 도구를 단다.
+    // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
     previewDriverFactory: createPreviewDriverFactory(),
     onNotice: notifyPlanner,
   });
@@ -293,7 +297,7 @@ async function bootApp(): Promise<void> {
   mainWindow = new BrowserWindow({
     // 화면 작업 영역에 맞춘다 — 고정 크기는 큰 모니터에서 조그맣게 보인다.
     ...workAreaSize(),
-    title: "CDS Design",
+    title: "Colo Design",
     autoHideMenuBar: true,
     webPreferences: {
       // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.
@@ -310,11 +314,20 @@ async function bootApp(): Promise<void> {
       buildMenuTemplate({
         preview: plannerPreview,
         gotoAddress: () =>
-          mainWindow?.webContents.send("cds-preview:key", { key: "l", meta: true }),
+          mainWindow?.webContents.send("colo-preview:key", {
+            key: "l",
+            meta: true,
+          }),
         openSettings: () =>
-          mainWindow?.webContents.send("cds-preview:key", { key: ",", meta: true }),
+          mainWindow?.webContents.send("colo-preview:key", {
+            key: ",",
+            meta: true,
+          }),
         newSession: () =>
-          mainWindow?.webContents.send("cds-preview:key", { key: "t", meta: true }),
+          mainWindow?.webContents.send("colo-preview:key", {
+            key: "t",
+            meta: true,
+          }),
         packaged: app.isPackaged,
       }),
     ),
@@ -325,7 +338,7 @@ async function bootApp(): Promise<void> {
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
   const suiteHandle = globalThis as Record<string, unknown>;
-  suiteHandle.cdsDesignPlannerPreview = plannerPreview;
+  suiteHandle.coloDesignPlannerPreview = plannerPreview;
   await mainWindow.loadURL(url);
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -432,14 +445,18 @@ function paintBadge(): void {
 
 /**
  * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2[폴더 열기]). 숨긴
- * `~/.cds-design` 을 기획자가 찾아 헤매지 않게 앱이 열어 준다. 자격
+ * `~/.colo-design` 을 기획자가 찾아 헤매지 않게 앱이 열어 준다. 자격
  * 증명·토큰은 결코 건너가지 않는다.
  */
 function registerDesktopBridge(): void {
   ipcMain.handle("desktop:update-check", async () => {
     const fetchLike = async (feedUrl: string) => {
       const response = await netFetch(feedUrl);
-      return { ok: response.ok, status: response.status, json: await response.json() };
+      return {
+        ok: response.ok,
+        status: response.status,
+        json: await response.json(),
+      };
     };
     try {
       return await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, fetchLike);
@@ -459,7 +476,9 @@ function registerDesktopBridge(): void {
       return { error: error instanceof Error ? error.message : String(error) };
     }
     if (!feed.updateAvailable || !feed.url || !feed.sha256) {
-      return { error: "설치할 업데이트가 확인되지 않았습니다 — 업데이트 확인을 다시 눌러 주세요." };
+      return {
+        error: "설치할 업데이트가 확인되지 않았습니다 — 업데이트 확인을 다시 눌러 주세요.",
+      };
     }
     // 실제 교체는 패키징된 앱에서만 — 개발 실행에서는 계획만 돌려준다.
     if (!app.isPackaged) {
@@ -475,7 +494,8 @@ function registerDesktopBridge(): void {
     }
     if (process.platform !== "darwin") {
       return {
-        error: "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
+        error:
+          "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
       };
     }
     // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
@@ -491,26 +511,37 @@ function registerDesktopBridge(): void {
     try {
       await downloadFile(feed.url, plan.downloadPath);
       await verifyDownload(plan.downloadPath, plan.expectedSha256);
-      const logPath = join(app.getPath("temp"), "cds-design-update.log");
-      const scriptPath = join(app.getPath("temp"), `cds-design-update-${app.getVersion()}.sh`);
-      await writeFile(scriptPath, buildSwapScript({ plan, pid: process.pid, logPath }), { mode: 0o755 });
+      const logPath = join(app.getPath("temp"), "colo-design-update.log");
+      const scriptPath = join(app.getPath("temp"), `colo-design-update-${app.getVersion()}.sh`);
+      await writeFile(scriptPath, buildSwapScript({ plan, pid: process.pid, logPath }), {
+        mode: 0o755,
+      });
       // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
-      spawn("/bin/bash", [scriptPath], { detached: true, stdio: "ignore" }).unref();
+      spawn("/bin/bash", [scriptPath], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
       setTimeout(() => app.quit(), 500);
-      return { started: true, downloadPath: plan.downloadPath, steps: plan.steps };
+      return {
+        started: true,
+        downloadPath: plan.downloadPath,
+        steps: plan.steps,
+      };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
   ipcMain.handle("desktop:open-home", async () => {
-    await shell.openPath(CDS_DESIGN_DIR);
-    return { opened: CDS_DESIGN_DIR };
+    await shell.openPath(COLO_DESIGN_DIR);
+    return { opened: COLO_DESIGN_DIR };
   });
 }
 
 /** Electron net 모듈을 fetch 처럼 쓴다(프록시·인증서 정책을 앱이 따른다). */
-async function netFetch(feedUrl: string): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
+async function netFetch(
+  feedUrl: string,
+): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
   const request = net.request(feedUrl);
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
     let body = "";

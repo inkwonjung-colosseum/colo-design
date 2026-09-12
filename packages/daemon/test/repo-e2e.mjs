@@ -1,7 +1,7 @@
 /**
  * Connected-repo end-to-end check. Uses no Claude session and therefore no
  * subscription usage; the remote is a local bare git repository seeded with a
- * minimal cds-design app (see fixture-repo.mjs), so everything runs offline.
+ * minimal colo-design app (see fixture-repo.mjs), so everything runs offline.
  *
  * Covers what a planner's first minute depends on: the workspace clones,
  * installs once, reaches `ready` with a serving preview; a second sync pulls
@@ -18,11 +18,11 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
-import { DaemonServer } from "../dist/server.js";
 import { RepoWorkspace } from "../dist/repo.js";
+import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
-const DIR = join(tmpdir(), "cds-design-repo-e2e");
+const DIR = join(tmpdir(), "colo-design-repo-e2e");
 const ROOT = join(DIR, "work");
 
 /**
@@ -37,13 +37,13 @@ function spawnSquatter(port) {
 
 // Trust and PAT storage must never touch the real home during the run. The
 // project registry is part of that: left on the default path the daemon would
-// write ~/cds-design/config/projects.json, and the NEXT run would load this
+// write ~/colo-design/config/projects.json, and the NEXT run would load this
 // run's stale project — a repo url pointing at a fixture remote that is gone.
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
-process.env.CDS_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
-process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
-process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
+process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
+process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -115,10 +115,17 @@ async function main() {
     first.previewUrl === `http://127.0.0.1:${port}` && first.previewPort === port,
     String(first.previewUrl),
   );
-  check("the clone exists and cds-design.json came with it", existsSync(join(ROOT, "cds-design.json")));
+  check(
+    "the clone exists and colo-design.json came with it",
+    existsSync(join(ROOT, "colo-design.json")),
+  );
   const response = await fetch(first.previewUrl);
   const body = await response.text();
-  check("the preview serves the repo's app", response.status === 200 && body.includes("회원 관리"), `${response.status}, ${body.length} bytes`);
+  check(
+    "the preview serves the repo's app",
+    response.status === 200 && body.includes("회원 관리"),
+    `${response.status}, ${body.length} bytes`,
+  );
 
   // --- 2. stop() and a second sync: pull, no reinstall --------------------
   await workspace.stop();
@@ -141,11 +148,15 @@ async function main() {
 
   // --- 3. a pushed commit arrives with the next sync ----------------------
   await pushFixtureChange(fixture.seed, fixture.remote, {
-    "src/screens/member/MemberList.screen.tsx": "export default function MemberListScreen() { return null; }\n",
+    "src/screens/member/MemberList.screen.tsx":
+      "export default function MemberListScreen() { return null; }\n",
   });
   broadcasts.length = 0;
   const pulled = await workspace.sync();
-  check("a pushed commit reaches the clone", existsSync(join(ROOT, "src", "screens", "member", "MemberList.screen.tsx")));
+  check(
+    "a pushed commit reaches the clone",
+    existsSync(join(ROOT, "src", "screens", "member", "MemberList.screen.tsx")),
+  );
   check(
     "the pull is reported and the preview stays up",
     pulled.phase === "ready" && broadcasts.some((s) => s.phase === "pulling"),
@@ -211,10 +222,14 @@ async function main() {
  * and every client must see the phase broadcasts.
  */
 async function checkWireProtocol(previewPort, remoteUrl, workspace) {
-  process.env.CDS_DESIGN_REPO_DIR = ROOT;
-  process.env.CDS_DESIGN_REPO_URL = remoteUrl;
+  process.env.COLO_DESIGN_REPO_DIR = ROOT;
+  process.env.COLO_DESIGN_REPO_URL = remoteUrl;
   const port = await freePort();
-  const server = new DaemonServer({ host: "127.0.0.1", port, token: "repo-e2e" });
+  const server = new DaemonServer({
+    host: "127.0.0.1",
+    port,
+    token: "repo-e2e",
+  });
   await server.start();
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}?token=repo-e2e`);
@@ -227,7 +242,11 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
 
   const request = async (message) => {
     ws.send(JSON.stringify(message));
-    const reply = await waitFor(() => inbox.find((m) => m.id === message.id), 120_000, message.type);
+    const reply = await waitFor(
+      () => inbox.find((m) => m.id === message.id),
+      120_000,
+      message.type,
+    );
     if (reply.type !== "ok") throw new Error(`${message.type} failed: ${reply.message}`);
     return reply;
   };
@@ -236,7 +255,11 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
     const hello = await waitFor(() => inbox.find((m) => m.type === "hello"), 10_000, "hello");
     // 선로 버전은 살아 있는 값을 읽는다 — 승격이 테스트를 깨지 않는다.
     const { PROTOCOL_VERSION } = await import("../../protocol/dist/index.js");
-    check("hello speaks the pinned protocol", hello.protocolVersion === PROTOCOL_VERSION, String(hello.protocolVersion));
+    check(
+      "hello speaks the pinned protocol",
+      hello.protocolVersion === PROTOCOL_VERSION,
+      String(hello.protocolVersion),
+    );
 
     // The server owns its own workspace state; the preview this test process
     // started is foreign to it, so step aside before asking it to serve.
@@ -292,7 +315,11 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
     await server.stop();
   }
 
-  check("daemon shutdown stops the preview", !(await portAccepts(previewPort)), `port ${previewPort}`);
+  check(
+    "daemon shutdown stops the preview",
+    !(await portAccepts(previewPort)),
+    `port ${previewPort}`,
+  );
 }
 
 main().catch((error) => {

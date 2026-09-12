@@ -1,5 +1,5 @@
+import type { EffortLevel, PermissionMode, SessionModelInfo } from "@colo-design/protocol";
 import { useCallback, useEffect, useState } from "react";
-import type { EffortLevel, PermissionMode, SessionModelInfo } from "@cds-design/protocol";
 import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 
 /**
@@ -12,7 +12,24 @@ import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 /** A paintable palette. dark/light/contrast are the native set "system"
     chooses between — contrast when the OS asks for more contrast; the rest
     are full palettes in their own right. */
-export type ThemeId = "dark" | "light" | "sepia" | "midnight" | "contrast" | "dracula" | "solarized" | "catppuccin" | "nord" | "gruvbox" | "tokyonight" | "rosepine" | "everforest" | "onedark" | "github" | "monokai" | "latte";
+export type ThemeId =
+  | "dark"
+  | "light"
+  | "sepia"
+  | "midnight"
+  | "contrast"
+  | "dracula"
+  | "solarized"
+  | "catppuccin"
+  | "nord"
+  | "gruvbox"
+  | "tokyonight"
+  | "rosepine"
+  | "everforest"
+  | "onedark"
+  | "github"
+  | "monokai"
+  | "latte";
 /** What the picker stores: a palette, or "follow the OS". */
 export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
@@ -87,9 +104,9 @@ export interface Settings {
    * over and nothing can silently unfold a project the planner folded.
    */
   treeFolded?: Record<string, boolean>;
-};
+}
 
-export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   model: null,
   effort: null,
   permissionMode: DEFAULT_PERMISSION_MODE,
@@ -98,7 +115,7 @@ export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   followClaude: true,
 };
 
-export const DEFAULT_SETTINGS: Settings = {
+const DEFAULT_SETTINGS: Settings = {
   /**
    * Light, not dark (PLAN D13). This tool used to look like a session log and
    * defaulted to the palette that suited one. What a planner does here is read
@@ -135,7 +152,7 @@ export const THEMES: ThemeChoice[] = [
   "latte",
 ];
 
-const KEY = "cds-design.settings";
+const KEY = "colo-design.settings";
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -150,7 +167,7 @@ function oneOf<T extends string>(allowed: readonly T[], value: unknown, fallback
  * default: a stored blob written by an older build, or hand-edited in devtools,
  * must not be able to leave the UI in a state it cannot render.
  */
-export function loadSettings(): Settings {
+function loadSettings(): Settings {
   let raw: unknown;
   try {
     raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
@@ -239,8 +256,7 @@ function loadChat(raw: unknown): ChatSettings {
   const stored = raw as Record<string, unknown>;
   const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
   return {
-    model:
-      typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
+    model: typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
@@ -283,7 +299,7 @@ function legacyComposerDefaults(): Partial<ChatSettings> {
   for (const workspace of ["planning", "design"]) {
     let raw: unknown;
     try {
-      raw = JSON.parse(localStorage.getItem(`cds-design.composer.${workspace}`) ?? "null");
+      raw = JSON.parse(localStorage.getItem(`colo-design.composer.${workspace}`) ?? "null");
     } catch {
       continue;
     }
@@ -311,7 +327,7 @@ function systemTheme(): ThemeId {
   return media.matches ? "dark" : "light";
 }
 
-export function resolveTheme(choice: ThemeChoice): ThemeId {
+function resolveTheme(choice: ThemeChoice): ThemeId {
   return choice === "system" ? systemTheme() : choice;
 }
 
@@ -404,7 +420,7 @@ export function useSettings(): {
   return { settings, update, theme };
 }
 
-const MODELS_KEY = "cds-design.models";
+const MODELS_KEY = "colo-design.models";
 
 /**
  * The model rows the daemon last served. Only a live session can be asked for
@@ -453,8 +469,8 @@ export function saveModelCatalog(models: SessionModelInfo[]): void {
 // 개발자 코멘트의 처리 표식 (PLAN D88)
 // ---------------------------------------------------------------------------
 
-const HANDLED_KEY = "cds-design.handled-reviews";
-const REPLY_CONFIRMED_KEY = "cds-design.reply-confirmed";
+const HANDLED_KEY = "colo-design.handled-reviews";
+const REPLY_CONFIRMED_KEY = "colo-design.reply-confirmed";
 
 /**
  * 처리한 개발자 코멘트 id, PR 번호별로. 사이클이 짧으니 기계를 바꾸면 다시

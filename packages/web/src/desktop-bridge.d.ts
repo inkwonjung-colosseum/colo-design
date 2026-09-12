@@ -1,10 +1,10 @@
-import type { UpdateCheckResult } from "@cds-design/protocol";
 import type {
-  CdsDesignCommentsEnvelope,
-  CdsDesignPinsPayload,
-  CdsDesignScreen,
+  ColoDesignCommentsEnvelope,
+  ColoDesignPinsPayload,
+  ColoDesignScreen,
   CommentItem,
-} from "@cds-design/protocol";
+  UpdateCheckResult,
+} from "@colo-design/protocol";
 
 /**
  * The desktop app's preload bridge (packages/desktop/src/preload.ts) — the
@@ -20,7 +20,7 @@ type Unsubscribe = () => void;
 
 declare global {
   interface Window {
-    cdsDesignDesktop?: {
+    coloDesignDesktop?: {
       updateCheck: () => Promise<UpdateCheckResult>;
       /** The feed — not the renderer — decides what gets downloaded; the
        * request takes no arguments by design (a compromised renderer must not
@@ -30,7 +30,7 @@ declare global {
         | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
         | { error: string }
       >;
-      /** Opens ~/.cds-design in the OS file manager (PLAN D2). */
+      /** Opens ~/.colo-design in the OS file manager (PLAN D2). */
       openHome?: () => Promise<unknown>;
       preview?: {
         /** Claude 시점 보기(PLAN D63) — 8fps JPEG(base64), 구독만. */
@@ -39,7 +39,12 @@ declare global {
         native?: boolean;
         mount?: (url: string) => Promise<unknown>;
         unmount?: () => Promise<unknown>;
-        bounds?: (rect: { x: number; y: number; width: number; height: number }) => Promise<unknown>;
+        bounds?: (rect: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        }) => Promise<unknown>;
         cover?: (on: boolean) => Promise<unknown>;
         open?: (path: string) => Promise<unknown>;
         navigate?: (route: string, state: string | null) => Promise<unknown>;
@@ -52,17 +57,23 @@ declare global {
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
         /** 기록된 핀 (PLAN D78): the whole list, pushed down into the view. */
-        pins?: (payload: CdsDesignPinsPayload) => Promise<unknown>;
+        pins?: (payload: ColoDesignPinsPayload) => Promise<unknown>;
         /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
         busy?: (on: boolean) => Promise<unknown>;
         /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
         snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
-        onLocation?: (callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void) => Unsubscribe;
-        onBridge?: (callback: (payload: { state: "unknown" | "present" | "stale" }) => void) => Unsubscribe;
-        onScreens?: (callback: (payload: { screens: CdsDesignScreen[] }) => void) => Unsubscribe;
-        onComments?: (callback: (payload: CdsDesignCommentsEnvelope) => void) => Unsubscribe;
+        onLocation?: (
+          callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void,
+        ) => Unsubscribe;
+        onScreens?: (callback: (payload: { screens: ColoDesignScreen[] }) => void) => Unsubscribe;
+        onComments?: (callback: (payload: ColoDesignCommentsEnvelope) => void) => Unsubscribe;
         onError?: (
-          callback: (payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) => void,
+          callback: (payload: {
+            kind: "runtime" | "build";
+            message: string;
+            route: string;
+            state: string;
+          }) => void,
         ) => Unsubscribe;
         onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
         onKey?: (callback: (payload: { key: string; meta: boolean }) => void) => Unsubscribe;
@@ -70,12 +81,12 @@ declare global {
         /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
         onZoom?: (callback: (payload: { factor: number }) => void) => Unsubscribe;
         /** D78: the overlay bubble's 해결, relayed verbatim from the view. */
-        onCommentResolve?: (callback: (payload: { id: string; resolved: boolean }) => void) => Unsubscribe;
+        onCommentResolve?: (
+          callback: (payload: { id: string; resolved: boolean }) => void,
+        ) => Unsubscribe;
         /** D78: the attention bubble's 다시 요청. */
         onCommentResend?: (callback: (payload: { id: string }) => void) => Unsubscribe;
       };
     };
   }
 }
-
-export {};

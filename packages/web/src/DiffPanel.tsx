@@ -1,7 +1,8 @@
+import type { DiffFile, DiffStatus } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { DiffFile, DiffStatus } from "@cds-design/protocol";
 import type { Daemon, DiffSummary } from "./daemon-client";
 import { CloseIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 const STATUS_LABEL: Record<DiffFile["status"], string> = {
   added: "추가",
@@ -55,26 +56,29 @@ export function stageLine(status: DiffStatus | null): string {
 function FileRow({ file }: { file: DiffFile }) {
   const [open, setOpen] = useState(file.hunks.length === 1);
   const added = file.hunks.reduce(
-    (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+    (total, hunk) =>
+      total + hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
     0,
   );
   const removed = file.hunks.reduce(
-    (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+    (total, hunk) =>
+      total + hunk.lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
     0,
   );
 
   return (
     <li className="diff__file">
       <button type="button" className="diff__filerow" onClick={() => setOpen((v) => !v)}>
-        <span className={`diff__badge diff__badge--${file.status}`}>{STATUS_LABEL[file.status]}</span>
-        <span className="diff__path">{file.path}</span>
-        <span className="diff__count">
-          {file.binary ? "바이너리" : `+${added} −${removed}`}
+        <span className={`diff__badge diff__badge--${file.status}`}>
+          {STATUS_LABEL[file.status]}
         </span>
+        <span className="diff__path">{file.path}</span>
+        <span className="diff__count">{file.binary ? "바이너리" : `+${added} −${removed}`}</span>
       </button>
       {open && !file.binary && (
         <div className="diff__hunks">
           {file.hunks.map((hunk, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: hunk 의 index 가 곧 문서 순서다 — 매 렌더 전체가 다시 그려진다.
             <pre key={index} className="diff__hunk">
               <code>{[hunk.header, ...hunk.lines].join("\n")}</code>
             </pre>
@@ -95,8 +99,18 @@ function fallbackLines(files: DiffFile[]): string[] {
     const segment = file.path.split("/");
     // `src/screens/Pay.tsx` groups under `screens`; a file sitting directly
     // in a top folder groups under that folder, not under its own name.
-    const folder = segment.length > 2 ? (segment[1] ?? "(루트)") : segment.length === 2 ? (segment[0] ?? "(루트)") : "(루트)";
-    const bucket = counts.get(folder) ?? { added: 0, modified: 0, deleted: 0, renamed: 0 };
+    const folder =
+      segment.length > 2
+        ? (segment[1] ?? "(루트)")
+        : segment.length === 2
+          ? (segment[0] ?? "(루트)")
+          : "(루트)";
+    const bucket = counts.get(folder) ?? {
+      added: 0,
+      modified: 0,
+      deleted: 0,
+      renamed: 0,
+    };
     bucket[file.status] += 1;
     counts.set(folder, bucket);
   }
@@ -113,11 +127,15 @@ function diffKey(files: DiffFile[]): string {
   return files
     .map((file) => {
       const added = file.hunks.reduce(
-        (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
+        (total, hunk) =>
+          total +
+          hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
         0,
       );
       const removed = file.hunks.reduce(
-        (total, hunk) => total + hunk.lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
+        (total, hunk) =>
+          total +
+          hunk.lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length,
         0,
       );
       return `${file.status}:${file.path}:+${added}:-${removed}`;
@@ -149,7 +167,7 @@ export function DiffPanel({
   sessionId: string | null;
   onClose: () => void;
   /**
-   * The screen turns' own end-of-turn summaries (`<!-- cds-design:summary -->`),
+   * The screen turns' own end-of-turn summaries (`<!-- colo-design:summary -->`),
    * when the caller has them. Present, they are the whole summary — no daemon
    * round trip. Absent (the usual mount), the panel asks `repo.summarize`.
    */
@@ -172,11 +190,11 @@ export function DiffPanel({
   const turnSummaryText = summaryLines && summaryLines.length > 0 ? summaryLines.join("\n") : null;
 
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [onClose]);
 
   // The list is a snapshot of what a 저장 would write; reload it whenever one
@@ -258,6 +276,7 @@ export function DiffPanel({
 
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
   const panelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(panelRef);
   useEffect(() => {
     panelRef.current?.focus();
   }, []);
@@ -292,11 +311,7 @@ export function DiffPanel({
           {diffStatus && (
             <div
               className={
-                published
-                  ? "notice notice--info"
-                  : failed
-                    ? "notice notice--error"
-                    : "diff__stage"
+                published ? "notice notice--info" : failed ? "notice notice--error" : "diff__stage"
               }
             >
               <span className="notice__text">{stageLine(diffStatus)}</span>
@@ -318,6 +333,7 @@ export function DiffPanel({
           {summary && summary.lines.length > 0 && (
             <div>
               {summary.lines.map((line, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: 렌더마다 전체를 다시 그리는 정적 줄 목록이다.
                 <p className="hint" key={index}>
                   · {line}
                 </p>
@@ -352,7 +368,9 @@ export function DiffPanel({
           <label className="setting setting--wide">
             <span className="setting__text">
               <span className="setting__label">저장 메모</span>
-              <span className="setting__hint">요약의 첫 줄이 채워져 있습니다 — 고칠 수 있습니다</span>
+              <span className="setting__hint">
+                요약의 첫 줄이 채워져 있습니다 — 고칠 수 있습니다
+              </span>
             </span>
             <span className="setting__control">
               <input

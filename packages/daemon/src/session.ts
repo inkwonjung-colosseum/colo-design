@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import {
-  query,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
+  query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -17,14 +17,13 @@ import type {
   PlanUsage,
   PlanWindow,
   SessionCommand,
-  SessionModelInfo,
   SessionSelectors,
   SessionState,
-} from "@cds-design/protocol";
-import { readTurn } from "@cds-design/protocol";
-import { saveSpecFiles, type SpecFile } from "./repo.js";
-import type { PreviewTools } from "./preview-tools.js";
+} from "@colo-design/protocol";
+import { readTurn } from "@colo-design/protocol";
 import { containsPath, realpathBestEffort } from "./paths.js";
+import type { PreviewTools } from "./preview-tools.js";
+import { type SpecFile, saveSpecFiles } from "./repo.js";
 import { MessageTranslator } from "./translate.js";
 
 /** An async iterable the daemon can push user turns into while the query runs. */
@@ -131,7 +130,7 @@ export interface SessionEvents {
  * - `deny`  — refuse outright, with a Korean reason Claude can read. Used for
  *   files the tool owns and a session must never rewrite.
  */
-export type WriteDecision = "allow" | "ask" | "deny";
+type WriteDecision = "allow" | "ask" | "deny";
 export type WritePolicy = (absolutePath: string) => WriteDecision;
 
 export interface SessionOptions {
@@ -167,7 +166,7 @@ export interface SessionOptions {
   /** D95: with `resumeSessionAt` — the discarded turn's prompt uuid. */
   resumeDropsTurn?: string;
   /**
-   * The `cds-preview` in-process MCP server (PLAN D61), or null when the
+   * The `colo-preview` in-process MCP server (PLAN D61), or null when the
    * daemon runs without a preview driver or the planner turned the tools
    * off. The session only carries it: the capture quota resets here at turn
    * starts, and its lifetime (destroy) belongs to whoever injected the
@@ -235,8 +234,7 @@ export class Session {
 
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
-    this.title =
-      options.title?.trim().slice(0, 80) || NEW_SESSION_TITLE;
+    this.title = options.title?.trim().slice(0, 80) || NEW_SESSION_TITLE;
     // /tmp vs /private/tmp: the resolved spelling, so workspace containment
     // and the SDK's own cwd agree with what the filesystem calls the folder.
     // The CLI reports tool paths already resolved, so an unresolved cwd makes
@@ -287,7 +285,11 @@ export class Session {
         // The preview tools ride the query as an in-process MCP server
         // (PLAN D61), keyed by the server's own name.
         ...(this.previewTools
-          ? { mcpServers: { [this.previewTools.name]: this.previewTools.config } }
+          ? {
+              mcpServers: {
+                [this.previewTools.name]: this.previewTools.config,
+              },
+            }
           : {}),
         // A fresh query starts on the chips' choices; mid-session switches
         // go through the control methods below instead.
@@ -344,13 +346,20 @@ export class Session {
         });
         this.setState("idle");
       } else if (!this.closed) {
-        this.events.onEvent(this.id, { kind: "notice", level: "error", text: detail });
+        this.events.onEvent(this.id, {
+          kind: "notice",
+          level: "error",
+          text: detail,
+        });
         this.setState("error", detail);
       }
     } finally {
       // A crashed or finished query can never answer a pending prompt.
       for (const request of this.pending.values()) {
-        request.resolve({ behavior: "deny", message: "Session ended before approval" });
+        request.resolve({
+          behavior: "deny",
+          message: "Session ended before approval",
+        });
       }
       this.pending.clear();
     }
@@ -380,7 +389,7 @@ export class Session {
     // The preview tools are the daemon's own in-process server (PLAN D61):
     // they only look at the hidden preview window, so they never surface as
     // cards — and they must not fall through to the edit-tool branch either.
-    if (toolName.startsWith("mcp__cds-preview__")) {
+    if (toolName.startsWith("mcp__colo-preview__")) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
     // The git nouns belong to the tool (README): a session committing or
@@ -397,9 +406,7 @@ export class Session {
         // Relative names resolve against cwd and symlinks resolve through,
         // so a policy compares prefixes without being talked past.
         const decisions = paths.map((value) =>
-          this.writePolicy(
-            realpathBestEffort(isAbsolute(value) ? value : join(this.cwd, value)),
-          ),
+          this.writePolicy(realpathBestEffort(isAbsolute(value) ? value : join(this.cwd, value))),
         );
         const denied = decisions.indexOf("deny");
         if (denied !== -1) {
@@ -482,7 +489,11 @@ export class Session {
     return this.pending.size;
   }
 
-  listPending(): Array<{ requestId: string; kind: "permission" | "question"; toolName: string }> {
+  listPending(): Array<{
+    requestId: string;
+    kind: "permission" | "question";
+    toolName: string;
+  }> {
     return [...this.pending.values()].map(({ requestId, kind, toolName }) => ({
       requestId,
       kind,
@@ -500,7 +511,10 @@ export class Session {
     if (!request) return false;
 
     if (decision === "deny") {
-      request.resolve({ behavior: "deny", message: message ?? "User denied this action" });
+      request.resolve({
+        behavior: "deny",
+        message: message ?? "User denied this action",
+      });
       return true;
     }
 
@@ -564,7 +578,11 @@ export class Session {
             { type: "text" as const, text: prompt },
             ...images.map((image) => ({
               type: "image" as const,
-              source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
+              source: {
+                type: "base64" as const,
+                media_type: image.mediaType,
+                data: image.data,
+              },
             })),
           ]
         : prompt;
@@ -785,7 +803,11 @@ function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggest
     const scope = persisted ? "다음에도 유지" : "이 세션 동안만";
 
     if (s?.type === "setMode" && s?.mode) {
-      return { destination, label: `${String(s.mode)} 모드로 전환 (${scope})`, raw };
+      return {
+        destination,
+        label: `${String(s.mode)} 모드로 전환 (${scope})`,
+        raw,
+      };
     }
     if (Array.isArray(s?.rules) && s.rules.length > 0) {
       const rules = s.rules
@@ -796,7 +818,11 @@ function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggest
         .join(", ");
       return { destination, label: `${rules} 허용 (${scope})`, raw };
     }
-    return { destination, label: `${String(s?.type ?? "update")} (${scope})`, raw };
+    return {
+      destination,
+      label: `${String(s?.type ?? "update")} (${scope})`,
+      raw,
+    };
   });
 }
 

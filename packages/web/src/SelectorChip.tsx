@@ -4,8 +4,9 @@
  * Options arrive pre-shaped; picked rows carry a check, hints ride on the
  * right.
  */
+
+import type { SessionCommand } from "@colo-design/protocol";
 import { useEffect, useRef } from "react";
-import type { SessionCommand } from "@cds-design/protocol";
 import { CheckIcon, ChevronDownIcon } from "./icons";
 
 /**
@@ -14,10 +15,19 @@ import { CheckIcon, ChevronDownIcon } from "./icons";
  * only where the translation earns its place.
  */
 export const COMMAND_LABEL: Record<string, { label: string; hint: string }> = {
-  clear: { label: "대화 새로 시작", hint: "지금까지 대화를 지우고 처음부터 이야기해요" },
+  clear: {
+    label: "대화 새로 시작",
+    hint: "지금까지 대화를 지우고 처음부터 이야기해요",
+  },
   compact: { label: "대화 정리", hint: "길어진 대화를 요약해서 이어가요" },
-  usage: { label: "사용량 보기", hint: "5시간·주간 한도를 얼마나 썼는지 알려줘요" },
-  context: { label: "대화 길이 보기", hint: "지금 대화가 얼마나 찼는지 알려줘요" },
+  usage: {
+    label: "사용량 보기",
+    hint: "5시간·주간 한도를 얼마나 썼는지 알려줘요",
+  },
+  context: {
+    label: "대화 길이 보기",
+    hint: "지금 대화가 얼마나 찼는지 알려줘요",
+  },
 };
 
 /**
@@ -54,7 +64,12 @@ export function SelectorChip({
   onToggle: () => void;
   onClose: () => void;
   onPick: (value: string | null) => void;
-  options: Array<{ value: string | null; label: string; hint?: string; picked: boolean }>;
+  options: Array<{
+    value: string | null;
+    label: string;
+    hint?: string;
+    picked: boolean;
+  }>;
 }) {
   const chip = useRef<HTMLButtonElement>(null);
 
@@ -75,7 +90,14 @@ export function SelectorChip({
 
   return (
     <span className="selector">
-      {open && <button type="button" className="selector__backdrop" aria-label="선택 닫기" onClick={onClose} />}
+      {open && (
+        <button
+          type="button"
+          className="selector__backdrop"
+          aria-label="선택 닫기"
+          onClick={onClose}
+        />
+      )}
       <button
         ref={chip}
         type="button"
@@ -101,7 +123,9 @@ export function SelectorChip({
               className="selector__row"
               onClick={() => onPick(option.value)}
             >
-              <span className="selector__check">{option.picked ? <CheckIcon size={11} /> : null}</span>
+              <span className="selector__check">
+                {option.picked ? <CheckIcon size={11} /> : null}
+              </span>
               <span className="selector__label">{option.label}</span>
               {option.hint && <span className="selector__hint">{option.hint}</span>}
             </button>

@@ -1,5 +1,5 @@
 /**
- * 연결 준비 end-to-end (PLAN D94), fully offline: `cds-design.json` 이 없는
+ * 연결 준비 end-to-end (PLAN D94), fully offline: `colo-design.json` 이 없는
  * 레포를 `project.create {bootstrap: true}` 로 추가하면 — 준비 턴(brief 마커)
  * 이 열리고, 스텁 Claude 가 계약을 쓰고(여기서는 유효한 JSON), 데몬의 기계
  * 검증이 통과시켜 미리보기까지 간다. 준비 커밋은 저장을 기다리는 미해결
@@ -14,11 +14,11 @@ import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
-const DIR = join(tmpdir(), "cds-design-bootstrap-e2e");
+const DIR = join(tmpdir(), "colo-design-bootstrap-e2e");
 
-process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
-process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
+process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 
 const results = [];
@@ -60,19 +60,19 @@ function bootstrapStub(dir, port) {
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
       "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
       '    if (line.includes(\'"type":"user"\') && line.includes("연결 준비")) {',
-      '      const port = process.env.CDS_BOOTSTRAP_PORT;',
+      "      const port = process.env.COLO_BOOTSTRAP_PORT;",
       '      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));',
-      '      pkg.scripts = pkg.scripts || {};',
+      "      pkg.scripts = pkg.scripts || {};",
       '      pkg.scripts.dev = "node server.mjs";',
       '      fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));',
-      '      fs.writeFileSync("cds-design.json", JSON.stringify({',
+      '      fs.writeFileSync("colo-design.json", JSON.stringify({',
       '        install: "pnpm install", check: "pnpm run check", build: "pnpm run check",',
       '        preview: { command: "pnpm run dev", port: Number(port) },',
       "      }, null, 2));",
       "      process.stdout.write(JSON.stringify({",
       '        type: "result", subtype: "success", is_error: false,',
       '        session_id: "stub", result: "연결 준비를 마쳤습니다", num_turns: 1, duration_ms: 5,',
-      "      }) + \"\\n\");",
+      '      }) + "\\n");',
       "      setTimeout(() => process.exit(0), 150);",
       "      return;",
       "    }",
@@ -90,13 +90,16 @@ async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
   const previewPort = await freePort();
-  process.env.CDS_BOOTSTRAP_PORT = String(previewPort);
+  process.env.COLO_BOOTSTRAP_PORT = String(previewPort);
   const fixture = await createFixtureRepo({
     dir: join(DIR, "fixture"),
     port: previewPort,
     omitConfig: true,
   });
-  check("the fixture seeds without cds-design.json", !existsSync(join(fixture.remote, "cds-design.json")));
+  check(
+    "the fixture seeds without colo-design.json",
+    !existsSync(join(fixture.remote, "colo-design.json")),
+  );
 
   const port = await freePort();
   const server = new DaemonServer({
@@ -116,7 +119,8 @@ async function main() {
   });
   let nextId = 0;
   const request = async (message, timeoutMs = 180_000) => {
-    const id = `m${(nextId += 1)}`;
+    nextId += 1;
+    const id = `m${nextId}`;
     ws.send(JSON.stringify({ ...message, id }));
     const reply = await waitFor(() => inbox.find((m) => m.id === id), timeoutMs, message.type);
     if (reply.type === "ok") return reply.data;
@@ -147,7 +151,7 @@ async function main() {
     );
     check(
       "the contract file exists in the clone",
-      existsSync(join(status.root, "cds-design.json")),
+      existsSync(join(status.root, "colo-design.json")),
     );
     check(
       "the preparation waits as unsaved changes — the first PR is the gate",
@@ -160,7 +164,11 @@ async function main() {
       status.previewUrl ?? "(none)",
     );
     for (const m of inbox) {
-      if (m.type === "session.event" && m.event.kind === "user.echo" && m.event.text.includes("연결 준비")) {
+      if (
+        m.type === "session.event" &&
+        m.event.kind === "user.echo" &&
+        m.event.text.includes("연결 준비")
+      ) {
         briefs.push(m.event.text);
       }
     }

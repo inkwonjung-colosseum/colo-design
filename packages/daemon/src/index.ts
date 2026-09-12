@@ -1,23 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DaemonServer } from "./server.js";
-import {
-  CONFIG_DIR,
-  buildStatus,
-  childPath,
-  migrateHomeDir,
-  resolveClaudeExecutable,
-} from "./environment.js";
-import {
-  createCredentialStore,
-  loadRepoPat,
-  migratePlaintextSecrets,
-} from "./credentials.js";
-import { GitHubClient, createGitHubTransport } from "./github.js";
+import { createCredentialStore, loadRepoPat, migratePlaintextSecrets } from "./credentials.js";
+import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./environment.js";
+import { createGitHubTransport, GitHubClient } from "./github.js";
 import { runOnboardingChecks } from "./onboarding.js";
-import { RepoWorkspace } from "./repo.js";
 import { ProjectRegistry } from "./projects.js";
+import { RepoWorkspace } from "./repo.js";
+import { DaemonServer } from "./server.js";
 
 const CONFIG_FILE = join(CONFIG_DIR, "daemon.json");
 
@@ -31,7 +21,7 @@ function loadConfig(): StoredConfig {
   mkdirSync(CONFIG_DIR, { recursive: true });
   // A second daemon on the same machine — an end-to-end suite while the user's
   // own daemon is running — needs a port of its own or it dies on bind.
-  const override = Number(process.env.CDS_DESIGN_PORT);
+  const override = Number(process.env.COLO_DESIGN_PORT);
   if (existsSync(CONFIG_FILE)) {
     try {
       const stored = JSON.parse(readFileSync(CONFIG_FILE, "utf8")) as StoredConfig;
@@ -101,13 +91,6 @@ async function main(): Promise<void> {
   // here so children inherit it instead of each spawn site remembering.
   process.env.PATH = childPath();
 
-  // The dot-prefixed root (PLAN D1): an old `~/cds-design` moves once, here,
-  // before anything reads or writes a settings file under it. The doctor's
-  // own config probe and the desktop's in-process host both come through
-  // this entry, so this is the single choke point.
-  const homeWarning = migrateHomeDir();
-  if (homeWarning) console.warn(homeWarning);
-
   const command = process.argv[2];
 
   if (command === "doctor") {
@@ -119,7 +102,7 @@ async function main(): Promise<void> {
   await server.start();
 
   const url = `ws://${config.host}:${config.port}?token=${config.token}`;
-  console.log(`cds-design daemon listening on http://${config.host}:${config.port}`);
+  console.log(`colo-design daemon listening on http://${config.host}:${config.port}`);
   console.log(`client url: ${url}`);
   console.log(`config: ${CONFIG_FILE}`);
 

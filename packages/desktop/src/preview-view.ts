@@ -1,11 +1,11 @@
-import { ipcMain, shell, WebContents, WebContentsView, BrowserWindow } from "electron";
-import type {
-  CdsDesignCommentsEnvelope,
-  CdsDesignErrorEnvelope,
-  CdsDesignPinsPayload,
-} from "@cds-design/protocol";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type {
+  ColoDesignCommentsEnvelope,
+  ColoDesignErrorEnvelope,
+  ColoDesignPinsPayload,
+} from "@colo-design/protocol";
+import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 
 /**
  * 기획자의 미리보기 뷰 (PLAN D64 — D60 개봉). The planner's preview pane is
@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
  * (`loadURL` and history steps never fire it — Electron docs), tool-initiated
  * `open()` by its own origin check.
  *
- * The repo bridge contract (D68) is `cds-design.screens` · `navigate`: when
+ * The repo bridge contract (D68) is `colo-design.screens` · `navigate`: when
  * the bridge is `present` a navigate rides the preload (no reload), otherwise
  * it falls back to `loadURL` — the screen still shows, only the list is empty.
  * `preview-claude` (D61, the offscreen Claude window) keeps its own partition.
@@ -36,10 +36,13 @@ import { fileURLToPath } from "node:url";
 const PREVIEW_PRELOAD = join(dirname(fileURLToPath(import.meta.url)), "preview-preload.cjs");
 
 /** Whether this load's repo bridge spoke (`unknown` until it does). */
-type BridgeState = "unknown" | "present" | "stale";
+type BridgeState = "unknown" | "present";
 
 /** What a 폭 toggle narrows to (PLAN D69 — real emulation, not CSS names). */
-const EMULATION: Record<"mobile" | "tablet", { size: [number, number]; mobile: boolean; userAgent?: string }> = {
+const EMULATION: Record<
+  "mobile" | "tablet",
+  { size: [number, number]; mobile: boolean; userAgent?: string }
+> = {
   mobile: {
     size: [390, 844],
     mobile: true,
@@ -58,16 +61,11 @@ const SNAPSHOT_LONG_SIDE = 1200;
 const CAPTURE_ACK_MS = 400;
 
 /** Downscale so the LONG side is `max`, keeping the aspect. No upscale. */
-function fitInside(
-  image: Electron.NativeImage,
-  max: number,
-): Electron.NativeImage {
+function fitInside(image: Electron.NativeImage, max: number): Electron.NativeImage {
   const { width, height } = image.getSize();
   const long = Math.max(width, height);
   if (long <= max || long === 0) return image;
-  return width >= height
-    ? image.resize({ width: max })
-    : image.resize({ height: max });
+  return width >= height ? image.resize({ width: max }) : image.resize({ height: max });
 }
 
 /** The screens a page must stay inside — the preview server's own origin. */
@@ -121,7 +119,7 @@ export class PlannerPreviewView {
   /** What this view is already showing — a repeat mount must not reload. */
   private mountedUrl: string | null = null;
   /** The last pin list the web pushed down (D78) — re-sent on every load. */
-  private lastPins: CdsDesignPinsPayload | null = null;
+  private lastPins: ColoDesignPinsPayload | null = null;
   /** Whether a turn is running (D86) — the overlay's toast words depend on it. */
   private busy = false;
   /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
@@ -152,7 +150,6 @@ export class PlannerPreviewView {
     const contents = this.view?.webContents;
     return contents && !contents.isDestroyed() ? contents : null;
   }
-
 
   /** Tears the view down — project switch, or the preview server died. */
   unmount(): void {
@@ -187,7 +184,7 @@ export class PlannerPreviewView {
     if (on && !this.covered) {
       try {
         const image = await view.webContents.capturePage();
-        if (!image.isEmpty()) this.send("cds-preview:freeze", image.toJPEG(70).toString("base64"));
+        if (!image.isEmpty()) this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
       } catch {
         // A paint that never happened; the slot just shows the pane background.
       }
@@ -221,7 +218,7 @@ export class PlannerPreviewView {
   navigate(route: string, state: string | null): void {
     const contents = this.ensureView().webContents;
     if (this.bridge === "present") {
-      contents.send("cds-overlay:navigate", { route, state });
+      contents.send("colo-overlay:navigate", { route, state });
       return;
     }
     if (!this.origin) return;
@@ -251,7 +248,7 @@ export class PlannerPreviewView {
   }
 
   /**
-   * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`cds-preview:zoom`)
+   * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`colo-preview:zoom`)
    * 이 필요한 건 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
    */
   zoomIn(): void {
@@ -272,7 +269,7 @@ export class PlannerPreviewView {
     if (!contents) return;
     contents.setZoomFactor(clamped);
     this.zoomFactor = clamped;
-    this.send("cds-preview:zoom", { factor: clamped });
+    this.send("colo-preview:zoom", { factor: clamped });
   }
 
   /** The preview origin the view is parked on — the main window's popup gate. */
@@ -282,22 +279,22 @@ export class PlannerPreviewView {
 
   commentsMode(on: boolean): void {
     this.commentsOn = on;
-    this.webContents()?.send("cds-overlay:mode", { on });
+    this.webContents()?.send("colo-overlay:mode", { on });
   }
 
   /**
    * D78: the web's whole recorded list, pushed down as-is. The overlay does
    * the screen filtering, so this is a fire-and-forget of the truth.
    */
-  pins(payload: CdsDesignPinsPayload): void {
+  pins(payload: ColoDesignPinsPayload): void {
     this.lastPins = payload;
-    this.webContents()?.send("cds-overlay:pins", payload);
+    this.webContents()?.send("colo-overlay:pins", payload);
   }
 
   /** D86: the overlay's send-toast reads the room — running or not. */
   setBusy(on: boolean): void {
     this.busy = on;
-    this.webContents()?.send("cds-overlay:busy", { on });
+    this.webContents()?.send("colo-overlay:busy", { on });
   }
 
   /**
@@ -308,7 +305,7 @@ export class PlannerPreviewView {
   private async withOverlayHidden(work: () => Promise<void>): Promise<void> {
     const contents = this.webContents();
     if (!contents) return;
-    this.send("cds-overlay:capture", { on: true });
+    this.send("colo-overlay:capture", { on: true });
     await new Promise<void>((ok) => {
       const timer = setTimeout(ok, CAPTURE_ACK_MS);
       this.captureAck = () => {
@@ -320,7 +317,7 @@ export class PlannerPreviewView {
     try {
       await work();
     } finally {
-      this.send("cds-overlay:capture", { on: false });
+      this.send("colo-overlay:capture", { on: false });
     }
   }
 
@@ -334,7 +331,7 @@ export class PlannerPreviewView {
    * 600px, JPEG q70 — before the envelope rides to the web. A failed crop
    * costs only that item's thumbnail; the words always get through.
    */
-  private async relayComments(payload: CdsDesignCommentsEnvelope): Promise<void> {
+  private async relayComments(payload: ColoDesignCommentsEnvelope): Promise<void> {
     try {
       await this.withOverlayHidden(async () => {
         const contents = this.webContents();
@@ -362,7 +359,7 @@ export class PlannerPreviewView {
         }
       });
     } finally {
-      this.send("cds-preview:comments", payload);
+      this.send("colo-preview:comments", payload);
     }
   }
 
@@ -449,21 +446,20 @@ export class PlannerPreviewView {
     contents.on("did-navigate", (_event, url) => {
       this.bridge = "unknown";
       this.mountedUrl = url;
-      this.send("cds-preview:bridge", { state: this.bridge });
       this.sendLocation(contents, url);
       // The overlay never announces itself; a fresh load is re-told
       // everything it needs — the mode (D67), the recorded pins (D78), the
       // busy flag (D86).
-      if (this.commentsOn) contents.send("cds-overlay:mode", { on: true });
-      if (this.lastPins) contents.send("cds-overlay:pins", this.lastPins);
-      contents.send("cds-overlay:busy", { on: this.busy });
+      if (this.commentsOn) contents.send("colo-overlay:mode", { on: true });
+      if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
+      contents.send("colo-overlay:busy", { on: this.busy });
     });
     contents.on("did-navigate-in-page", (_event, url) => {
       this.mountedUrl = url;
       this.sendLocation(contents, url);
     });
-    contents.on("did-start-loading", () => this.send("cds-preview:loading", { on: true }));
-    contents.on("did-stop-loading", () => this.send("cds-preview:loading", { on: false }));
+    contents.on("did-start-loading", () => this.send("colo-preview:loading", { on: true }));
+    contents.on("did-stop-loading", () => this.send("colo-preview:loading", { on: false }));
     // D69: the pane's own ears — no repo hook. 44 의 형태: 첫 인자가 details
     // 이벤트다(level 은 "info"|"warning"|"error"|"debug"). D89: every line
     // lands in the ring buffer first — the 화면 보여 주기 turn quotes it.
@@ -474,18 +470,25 @@ export class PlannerPreviewView {
       if (details.level !== "error") return;
       this.reportError(contents, "runtime", details.message);
     });
-    contents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      // -3 ERR_ABORTED is a navigation superseding itself, not a failure.
-      if (!isMainFrame || errorCode === -3) return;
+    contents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        // -3 ERR_ABORTED is a navigation superseding itself, not a failure.
+        if (!isMainFrame || errorCode === -3) return;
+        this.reportError(
+          contents,
+          "build",
+          `${errorDescription ?? "화면을 불러오지 못했습니다"} (${errorCode})`,
+          validatedURL,
+        );
+      },
+    );
+    contents.on("render-process-gone", (_event, details) => {
       this.reportError(
         contents,
-        "build",
-        `${errorDescription ?? "화면을 불러오지 못했습니다"} (${errorCode})`,
-        validatedURL,
+        "runtime",
+        `미리보기 프로세스가 죽었습니다 (${details?.reason ?? "unknown"})`,
       );
-    });
-    contents.on("render-process-gone", (_event, details) => {
-      this.reportError(contents, "runtime", `미리보기 프로세스가 죽었습니다 (${details?.reason ?? "unknown"})`);
     });
     // D71: while the view holds focus the renderer DOM hears no keys — the
     // two the whole UI hangs on are forwarded and replayed as synthetic
@@ -497,7 +500,7 @@ export class PlannerPreviewView {
         input.key === "Escape";
       if (!forward) return;
       event.preventDefault();
-      this.send("cds-preview:key", {
+      this.send("colo-preview:key", {
         key: input.key,
         meta: Boolean(input.meta),
         shift: Boolean(input.shift),
@@ -509,32 +512,32 @@ export class PlannerPreviewView {
 
   /**
    * One envelope from the preview preload (D68): screens (the repo bridge
-   * speaking — marks it `present`), the pin bundle (D67), or the stale marker
-   * an old `drafthouse.*` bridge trips. Registered once per app, not per
-   * view, so re-mounting never stacks listeners.
+   * speaking — marks it `present`) or the pin bundle (D67). Registered once
+   * per app, not per view, so re-mounting never stacks listeners.
    */
   onOverlayPost(payload: { type?: unknown }): void {
     const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "cds-design.screens") {
+    if (type === "colo-design.screens") {
       this.bridge = "present";
-      this.send("cds-preview:bridge", { state: this.bridge });
-      this.send("cds-preview:screens", payload);
-    } else if (type === "cds-design.comments") {
+      this.send("colo-preview:screens", payload);
+    } else if (type === "colo-design.comments") {
       // D87: the crops ride in before the web hears anything.
-      void this.relayComments(payload as CdsDesignCommentsEnvelope);
-    } else if (type === "cds-design.comments.resolve") {
+      void this.relayComments(payload as ColoDesignCommentsEnvelope);
+    } else if (type === "colo-design.comments.resolve") {
       // D78: the overlay bubble's 해결, relayed to the web verbatim.
-      this.send("cds-preview:comment-resolve", payload);
-    } else if (type === "cds-design.comments.resend") {
+      this.send("colo-preview:comment-resolve", payload);
+    } else if (type === "colo-design.comments.resend") {
       // D78: the attention bubble's 다시 요청 — the web composes the turn.
-      this.send("cds-preview:comment-resend", payload);
-    } else if (type === "cds-design.stale") {
-      this.bridge = "stale";
-      this.send("cds-preview:bridge", { state: this.bridge });
+      this.send("colo-preview:comment-resend", payload);
     }
   }
 
-  private reportError(contents: WebContents, kind: CdsDesignErrorEnvelope["kind"], message: string, at?: string): void {
+  private reportError(
+    contents: WebContents,
+    kind: ColoDesignErrorEnvelope["kind"],
+    message: string,
+    at?: string,
+  ): void {
     let route = "";
     let state = "default";
     try {
@@ -544,7 +547,13 @@ export class PlannerPreviewView {
     } catch {
       // A URL that will not parse has no screen to name; the message stands.
     }
-    this.send("cds-preview:error", { type: "cds-design.error", kind, message, route, state });
+    this.send("colo-preview:error", {
+      type: "colo-design.error",
+      kind,
+      message,
+      route,
+      state,
+    });
   }
 
   private sendLocation(contents: WebContents, url: string): void {
@@ -555,7 +564,7 @@ export class PlannerPreviewView {
     } catch {
       // Keep "/" — an unparseable url still deserves a back button state.
     }
-    this.send("cds-preview:location", {
+    this.send("colo-preview:location", {
       path,
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
@@ -576,16 +585,20 @@ export class PlannerPreviewView {
 // ---------------------------------------------------------------------------
 
 export function registerPreviewIpc(view: PlannerPreviewView): void {
-  ipcMain.on("cds-overlay:post", (event, payload: { type?: unknown }) => {
+  ipcMain.on("colo-overlay:post", (event, payload: { type?: unknown }) => {
     if (event.sender !== view.webContents()) return;
     view.onOverlayPost(payload);
   });
-  ipcMain.on("cds-overlay:capture-done", (event) => {
+  ipcMain.on("colo-overlay:capture-done", (event) => {
     if (event.sender !== view.webContents()) return;
     view.onCaptureDone();
   });
   ipcMain.handle("preview:mount", (_event, input: unknown) => {
-    if (input && typeof input === "object" && typeof (input as { url?: unknown }).url === "string") {
+    if (
+      input &&
+      typeof input === "object" &&
+      typeof (input as { url?: unknown }).url === "string"
+    ) {
       view.mount((input as { url: string }).url);
     }
     return { ok: true };
@@ -598,9 +611,16 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     if (
       input &&
       typeof input === "object" &&
-      ["x", "y", "width", "height"].every((key) => typeof input[key as keyof typeof input] === "number")
+      ["x", "y", "width", "height"].every(
+        (key) => typeof input[key as keyof typeof input] === "number",
+      )
     ) {
-      const rect = input as { x: number; y: number; width: number; height: number };
+      const rect = input as {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
       view.setBounds(rect);
     }
     return { ok: true };
@@ -638,7 +658,7 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     view.commentsMode(Boolean(input?.on));
     return { ok: true };
   });
-  ipcMain.handle("preview:pins", (_event, payload: CdsDesignPinsPayload) => {
+  ipcMain.handle("preview:pins", (_event, payload: ColoDesignPinsPayload) => {
     view.pins(payload);
     return { ok: true };
   });

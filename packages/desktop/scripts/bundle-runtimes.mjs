@@ -4,17 +4,18 @@
  * 모은다. Windows 빌드에서는 MinGit 도 같은 폴더에 둔다(config — 이 머신
  * 에서는 실행하지 않는다).
  *
- * 앱은 resources/bin 을 CDS_DESIGN_EXTRA_PATH 로 데몬에 넘기고, 데몬은
+ * 앱은 resources/bin 을 COLO_DESIGN_EXTRA_PATH 로 데몬에 넘기고, 데몬은
  * repo.ts 에서 PATH 앞에 붙인다 — 사용자 머신의 Node/pnpm 과 무관하다.
  *
  * 실행: node packages/desktop/scripts/bundle-runtimes.mjs [--with-mingit]
  * 소스는 이 머신의 node 실행파일(corepack 은 node 옆에 있다). CI 에서는
  * actions/setup-node 가 설치한 것을 같은 방식으로 복사한다.
  */
+
+import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -38,7 +39,7 @@ if (existsSync(corepack)) {
     join(bin, process.platform === "win32" ? "pnpm.cmd" : "pnpm"),
     process.platform === "win32"
       ? "@echo off\r\ncorepack pnpm %*\r\n"
-      : "#!/bin/sh\nexec \"$(dirname \"$0\")/corepack\" pnpm \"$@\"\n",
+      : '#!/bin/sh\nexec "$(dirname "$0")/corepack" pnpm "$@"\n',
     { mode: 0o755 },
   );
   console.log(`corepack: ${corepack} (+ pnpm shim)`);
@@ -64,6 +65,9 @@ if (withMinGit) {
 }
 
 // 무결성 기록: 앱이 시작할 때 존재만 확인한다(버전 고정은 하지 않는다).
-const { stdout } = await run(process.platform === "win32" ? join(bin, "node.exe") : join(bin, "node"), ["--version"]);
+const { stdout } = await run(
+  process.platform === "win32" ? join(bin, "node.exe") : join(bin, "node"),
+  ["--version"],
+);
 writeFileSync(join(bin, "RUNTIMES.txt"), `node ${stdout.trim()}\ncorepack via pnpm shim\n`);
 console.log(`bundled: ${stdout.trim()} → ${bin}`);

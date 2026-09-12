@@ -5,8 +5,9 @@
  *
  * Run: node --experimental-transform-types --test packages/web/test/handoff-draft.test.mts
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { handoffDraft } from "../src/handoff-draft.ts";
 
 const screen = (over: Partial<Parameters<typeof handoffDraft>[1][number]> = {}) => ({

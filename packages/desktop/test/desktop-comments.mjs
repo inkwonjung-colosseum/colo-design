@@ -10,10 +10,10 @@
  * 붙는다(ⓜ).
  *
  * The main window's page is the planner UI; the VIEW's page is reached
- * through the main process (`globalThis.cdsDesignPlannerPreview`) because a
+ * through the main process (`globalThis.coloDesignPlannerPreview`) because a
  * WebContentsView is not a window Playwright can adopt. What runs inside the
- * view is the real compiled preload — the overlay, the bridge door, the stale
- * detection — same as a packaged app.
+ * view is the real compiled preload — the overlay, the bridge door —
+ * same as a packaged app.
  *
  * Prerequisites: pnpm build (all four packages) — same as desktop-smoke.
  */
@@ -70,25 +70,25 @@ function slowStubClaude(dir, logPath) {
       '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\');',
       "  process.exit(0);",
       "}",
-      'const log = process.env.CDS_PROMPT_LOG;',
+      "const log = process.env.COLO_PROMPT_LOG;",
       'let buf = "";',
-      'const seen = () => {',
-      '  let idx;',
+      "const seen = () => {",
+      "  let idx;",
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
-      '    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);',
+      "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
       '    if (log) { try { fs.appendFileSync(log, line + "\\n"); } catch {} }',
       '    if (line.includes(\'"type":"user"\')) {',
       '      const sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || "stub";',
-      '      process.stdout.write(JSON.stringify({',
+      "      process.stdout.write(JSON.stringify({",
       '        type: "result", subtype: "success", is_error: false,',
       '        session_id: sessionId, result: "알겠습니다.", num_turns: 1, duration_ms: 10,',
       '      }) + "\\n");',
       '      const linger = line.includes("화면 수정 요청") ? 2000 : 700;',
-      '      setTimeout(() => process.exit(0), linger);',
-      '      return;',
-      '    }',
-      '  }',
-      '};',
+      "      setTimeout(() => process.exit(0), linger);",
+      "      return;",
+      "    }",
+      "  }",
+      "};",
       'process.stdin.setEncoding("utf8");',
       'process.stdin.on("data", (chunk) => { buf += chunk; seen(); });',
       'process.stdin.on("end", () => process.exit(0));',
@@ -106,15 +106,18 @@ function slowStubClaude(dir, logPath) {
  * this as an expression" — the script rides an object, after the module.
  */
 const inView = async (app, script) => {
-  const outcome = await app.evaluate(async (_electronModule, { script: expression }) => {
-    const contents = globalThis.cdsDesignPlannerPreview?.webContents();
-    if (!contents) return { error: "the preview view is gone" };
-    try {
-      return { value: await contents.executeJavaScript(expression) };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : String(e) };
-    }
-  }, { script });
+  const outcome = await app.evaluate(
+    async (_electronModule, { script: expression }) => {
+      const contents = globalThis.coloDesignPlannerPreview?.webContents();
+      if (!contents) return { error: "the preview view is gone" };
+      try {
+        return { value: await contents.executeJavaScript(expression) };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    { script },
+  );
   if (outcome && typeof outcome === "object" && "error" in outcome) {
     throw new Error(`in-view script failed: ${String(outcome.error)}`);
   }
@@ -136,10 +139,10 @@ const altClick = (app, selector) =>
   );
 
 const viewUrl = (app) =>
-  app.evaluate(() => globalThis.cdsDesignPlannerPreview?.webContents()?.getURL() ?? null);
+  app.evaluate(() => globalThis.coloDesignPlannerPreview?.webContents()?.getURL() ?? null);
 
 const recordedDot = (app) =>
-  inView(app, `Boolean(document.querySelector('[data-cds-design-overlay] [data-rpin]'))`);
+  inView(app, `Boolean(document.querySelector('[data-colo-design-overlay] [data-rpin]'))`);
 
 /** Waits for the recorded pin to (dis)appear — the overlay redraws on a 100ms cadence. */
 async function waitForDot(app, wanted, timeout = 10000) {
@@ -155,7 +158,10 @@ async function waitForDot(app, wanted, timeout = 10000) {
 async function waitForDraftGone(app, timeout = 8000) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
-    const there = await inView(app, `Boolean(document.querySelector('[data-cds-design-overlay] [data-pin]'))`);
+    const there = await inView(
+      app,
+      `Boolean(document.querySelector('[data-colo-design-overlay] [data-pin]'))`,
+    );
     if (!there) return true;
     await new Promise((ok) => setTimeout(ok, 200));
   }
@@ -163,19 +169,22 @@ async function waitForDraftGone(app, timeout = 8000) {
 }
 
 async function main() {
-  run("pnpm", ["--filter", "@cds-design/protocol", "build"], repo);
-  run("pnpm", ["--filter", "@cds-design/daemon", "build"], repo);
-  run("pnpm", ["--filter", "@cds-design/web", "build"], repo);
-  run("pnpm", ["--filter", "@cds-design/desktop", "build"], repo);
+  run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
+  run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
+  run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
+  run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
   const webDist = join(desktop, "web-dist");
   rmSync(webDist, { recursive: true, force: true });
   mkdirSync(webDist, { recursive: true });
   cpSync(join(repo, "packages", "web", "dist"), webDist, { recursive: true });
 
-  const dir = join(tmpdir(), `cds-design-desktop-comments-${Date.now()}`);
+  const dir = join(tmpdir(), `colo-design-desktop-comments-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
-  const promptLog = "/tmp/cds-prompts.log";
-  const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+  const promptLog = "/tmp/colo-prompts.log";
+  const fixture = await createFixtureRepo({
+    dir: join(dir, "fixture"),
+    port: await freePort(),
+  });
   // The daemon's active project points here — a clone of the fixture remote,
   // the same shape ui-publish-e2e boots.
   const workRoot = join(dir, "work");
@@ -188,16 +197,16 @@ async function main() {
     args: [desktop],
     env: {
       ...env,
-      CDS_DESIGN_PORT: String(await freePort()),
-      CDS_DESIGN_REPO_DIR: workRoot,
-      CDS_DESIGN_REPO_URL: fixture.remote,
-      CDS_DESIGN_REPO_SETTINGS: join(dir, "settings.json"),
-      CDS_DESIGN_PROJECTS_SETTINGS: join(dir, "projects.json"),
-      CDS_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      COLO_DESIGN_PORT: String(await freePort()),
+      COLO_DESIGN_REPO_DIR: workRoot,
+      COLO_DESIGN_REPO_URL: fixture.remote,
+      COLO_DESIGN_REPO_SETTINGS: join(dir, "settings.json"),
+      COLO_DESIGN_PROJECTS_SETTINGS: join(dir, "projects.json"),
+      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
       CLAUDE_CONFIG_DIR: join(dir, "claude-config"),
-      CDS_DESIGN_CLAUDE_BIN: slowStubClaude(join(dir, "bin"), promptLog),
-      CDS_PROMPT_LOG: promptLog,
-      CDS_DESIGN_CREDENTIAL_STORE: "memory",
+      COLO_DESIGN_CLAUDE_BIN: slowStubClaude(join(dir, "bin"), promptLog),
+      COLO_PROMPT_LOG: promptLog,
+      COLO_DESIGN_CREDENTIAL_STORE: "memory",
     },
   });
 
@@ -217,7 +226,8 @@ async function main() {
     await picker.waitFor({ timeout: 60000 });
     await picker.selectOption({ label: "회원 목록" });
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="preview-address"]')?.value === "/member/MemberList",
+      () =>
+        document.querySelector('[data-testid="preview-address"]')?.value === "/member/MemberList",
       { timeout: 30000 },
     );
     check("the view is on the fixture screen", true);
@@ -225,7 +235,7 @@ async function main() {
     // The overlay is ALWAYS there now (D79) — no mode needed to mount it.
     const overlayAlways = await inView(
       app,
-      `Boolean(document.querySelector("[data-cds-design-overlay]"))`,
+      `Boolean(document.querySelector("[data-colo-design-overlay]"))`,
     );
     check("the overlay mounts without the comment mode", overlayAlways === true);
 
@@ -237,7 +247,7 @@ async function main() {
     check("⌥+클릭 hit the element", (await altClick(app, "[data-screen] tbody td")) === true);
     const draftThere = await inView(
       app,
-      `Boolean(document.querySelector('[data-cds-design-overlay] textarea[aria-label="핀 1 코멘트"]'))`,
+      `Boolean(document.querySelector('[data-colo-design-overlay] textarea[aria-label="핀 1 코멘트"]'))`,
     );
     const pageClicks = await inView(app, `window.__pageClicks`);
     check(
@@ -253,13 +263,16 @@ async function main() {
         const input = document.querySelector('textarea[aria-label="핀 1 코멘트"]');
         input.value = "이름 열을 가입일 역순으로 정렬해 주세요.";
         input.dispatchEvent(new Event("input", { bubbles: true }));
-        const send = [...document.querySelectorAll("[data-cds-design-overlay] button")]
+        const send = [...document.querySelectorAll("[data-colo-design-overlay] button")]
           .find((b) => (b.textContent || "").includes("보내기"));
         send.click();
         return true;
       })()`,
     );
-    check("ⓑ the draft editor's ⏎ 보내기 cleared the draft", (await waitForDraftGone(app)) === true);
+    check(
+      "ⓑ the draft editor's ⏎ 보내기 cleared the draft",
+      (await waitForDraftGone(app)) === true,
+    );
     const card = page.locator(".machine--comments");
     await card.waitFor({ timeout: 30000 });
     const cardText = await card.innerText();
@@ -297,7 +310,10 @@ async function main() {
     // The turn settles when the composer's 중지 button goes back to 보내기.
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     check("the carrying turn settled", true);
-    check("ⓒ the recorded pin still stands after the turn ends", (await waitForDot(app, true)) === true);
+    check(
+      "ⓒ the recorded pin still stands after the turn ends",
+      (await waitForDot(app, true)) === true,
+    );
 
     // --- ⓓ 새로 고침 뒤 같은 요소에 다시 (D78 — did-navigate resend) --------
     await page.getByRole("button", { name: "미리보기 새로 고침" }).click();
@@ -324,11 +340,14 @@ async function main() {
     }
     check(
       "the recorded dot is clickable",
-      (await clickWhenThere(app, `document.querySelector('[data-cds-design-overlay] [data-rpin] > button')`)) === true,
+      (await clickWhenThere(
+        app,
+        `document.querySelector('[data-colo-design-overlay] [data-rpin] > button')`,
+      )) === true,
     );
     const bubble = await inView(
       app,
-      `Boolean([...document.querySelectorAll("[data-cds-design-overlay] button")]
+      `Boolean([...document.querySelectorAll("[data-colo-design-overlay] button")]
         .find((b) => b.textContent === "해결"))`,
     );
     check("the dot's bubble offers 해결", bubble === true);
@@ -336,7 +355,7 @@ async function main() {
       "해결 is clickable",
       (await clickWhenThere(
         app,
-        `[...document.querySelectorAll("[data-cds-design-overlay] button")]
+        `[...document.querySelectorAll("[data-colo-design-overlay] button")]
           .find((b) => b.textContent === "해결")`,
       )) === true,
     );
@@ -364,7 +383,7 @@ async function main() {
         const input = document.querySelector('textarea[aria-label^="핀"]');
         input.value = "제목을 두 줄로 줄여 주세요";
         input.dispatchEvent(new Event("input", { bubbles: true }));
-        const park = [...document.querySelectorAll("[data-cds-design-overlay] button")]
+        const park = [...document.querySelectorAll("[data-colo-design-overlay] button")]
           .find((b) => b.textContent === "담아 두기");
         park.click();
         return true;
@@ -374,7 +393,7 @@ async function main() {
     await inView(
       app,
       `(() => {
-        const send = [...document.querySelectorAll("[data-cds-design-overlay] button")]
+        const send = [...document.querySelectorAll("[data-colo-design-overlay] button")]
           .find((b) => (b.textContent || "").includes("수정 요청 1건 보내기"));
         if (!send) return false;
         send.click();
@@ -388,7 +407,10 @@ async function main() {
     check("ⓕ the default-state pin stands", (await waitForDot(app, true)) === true);
 
     // Switch the state — the pin belongs to default, so it leaves the screen.
-    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "비어 있음" }).click();
+    await page
+      .getByRole("group", { name: "상태" })
+      .getByRole("button", { name: "비어 있음" })
+      .click();
     check("ⓕ the empty state hides the default-state pin", (await waitForDot(app, false)) === true);
     await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
     check("ⓕ coming back reveals it again", (await waitForDot(app, true)) === true);
@@ -405,12 +427,12 @@ async function main() {
     await altClick(app, "h1");
     const told = await inView(
       app,
-      `Boolean([...document.querySelectorAll("[data-cds-design-overlay] div")]
+      `Boolean([...document.querySelectorAll("[data-colo-design-overlay] div")]
         .find((n) => (n.textContent || "").includes("이 화면에는 핀을 붙일 수 없습니다")))`,
     );
     const pinsWhileNaked = await inView(
       app,
-      `document.querySelectorAll("[data-cds-design-overlay] [data-pin]").length`,
+      `document.querySelectorAll("[data-colo-design-overlay] [data-pin]").length`,
     );
     check(
       "ⓚ a wrapper-less ⌥+클릭 toasts and pins nothing",
@@ -428,20 +450,23 @@ async function main() {
 
     // --- ⓛ 화면 보여 주기 (D89) ---------------------------------------------
     await page.getByRole("button", { name: "이 화면 Claude 에게 보여 주기" }).click();
-    await page
-      .getByLabel("화면 보여 주기에 덧붙이는 말")
-      .fill("가운데 정렬이 풀려 있어요");
+    await page.getByLabel("화면 보여 주기에 덧붙이는 말").fill("가운데 정렬이 풀려 있어요");
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const lookCard = page.locator(".machine--error").last();
     await lookCard.waitFor({ timeout: 30000 });
     const lookText = await lookCard.innerText();
-    check("ⓛ the look turn renders as 화면 보여 주기", lookText.includes("화면 보여 주기"), lookText.split("\n")[0]);
+    check(
+      "ⓛ the look turn renders as 화면 보여 주기",
+      lookText.includes("화면 보여 주기"),
+      lookText.split("\n")[0],
+    );
     // The card's 자세히 fold shows the turn body — the exact words Claude reads.
     await lookCard.getByRole("button", { name: "자세히" }).click();
     const lookBody = await lookCard.locator(".machine__body").innerText();
     check(
       "ⓛ the look body carries the sentence and the planner's line",
-      lookBody.includes("이 화면이 이렇게 보입니다") && lookBody.includes("가운데 정렬이 풀려 있어요"),
+      lookBody.includes("이 화면이 이렇게 보입니다") &&
+        lookBody.includes("가운데 정렬이 풀려 있어요"),
       lookBody.slice(0, 80),
     );
 
@@ -464,8 +489,11 @@ async function main() {
     // Settled: the real repeat carries the 두 번째 요청 mark.
     await page.getByRole("button", { name: "이 화면 Claude 에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
-    await page
-      .waitForFunction(() => document.querySelectorAll(".machine--error").length >= 2, undefined, { timeout: 30000 });
+    await page.waitForFunction(
+      () => document.querySelectorAll(".machine--error").length >= 2,
+      undefined,
+      { timeout: 30000 },
+    );
     const againText = await page.locator(".machine--error").last().innerText();
     check(
       "ⓜ the repeat after settle says 두 번째 요청",
@@ -475,7 +503,10 @@ async function main() {
 
     await page.locator(".machine--comments").last().waitFor({ timeout: 30000 });
     // While the turn runs, send one more pin — the wait-line must appear (D86).
-    check("ⓘ-setup second pin accepted mid-turn", (await altClick(app, "[data-screen] p")) === true);
+    check(
+      "ⓘ-setup second pin accepted mid-turn",
+      (await altClick(app, "[data-screen] p")) === true,
+    );
     await inView(
       app,
       `(() => {
@@ -483,7 +514,7 @@ async function main() {
         if (!input) return false;
         input.value = "설명 문장은 반영해 주세요";
         input.dispatchEvent(new Event("input", { bubbles: true }));
-        [...document.querySelectorAll("[data-cds-design-overlay] button")]
+        [...document.querySelectorAll("[data-colo-design-overlay] button")]
           .find((b) => (b.textContent || "").includes("보내기")).click();
         return true;
       })()`,
@@ -491,11 +522,7 @@ async function main() {
     const queuedLine = page.locator(".composer__queued");
     await queuedLine.waitFor({ timeout: 15000 });
     const queuedText = await queuedLine.innerText();
-    check(
-      "ⓘ a mid-turn send shows the wait-line",
-      queuedText.includes("대기"),
-      queuedText,
-    );
+    check("ⓘ a mid-turn send shows the wait-line", queuedText.includes("대기"), queuedText);
     // The stub CLI serves one turn per process, so the queued message cannot
     // complete here — 중지 is the planner's way out, and the wait-line must go
     // with it (D86), no error band left behind (결함①).
@@ -506,11 +533,16 @@ async function main() {
       (await page.locator(".notice--error").count()) === 0,
     );
 
-    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+    await page
+      .locator(".toolbar__stop")
+      .waitFor({ state: "detached", timeout: 30000 })
+      .catch(() => {});
 
     // --- D85 브라우저 손질 --------------------------------------------------
     // ⓝ ⌘R 은 미리보기만 다시 읽는다 — 도구 UI 의 전역은 살아 있다.
-    await page.evaluate(() => { window.__uiMarker = "alive"; });
+    await page.evaluate(() => {
+      window.__uiMarker = "alive";
+    });
     await inView(app, `window.__viewMarker = "set"; true`);
     // The view is reloaded the way the planner does it (the menu item and
     // this button share view.reload()); the menu template's unit checks pin
@@ -526,16 +558,22 @@ async function main() {
     );
     // ⓞ the address bar proposes the declared routes (D85 ⓓ).
     const options = await page.evaluate(() =>
-      [...document.querySelectorAll('#cds-frame-routes option')].map((o) => o.getAttribute('value')));
+      [...document.querySelectorAll("#colo-frame-routes option")].map((o) =>
+        o.getAttribute("value"),
+      ),
+    );
     check(
       "ⓞ the address datalist offers the declared route",
       options.includes("/member/MemberList"),
       options.join(", "),
     );
     // ⓟ 배율: 두 번 확대 → 칩 140%, 모바일 폭 → 100% 복귀 (D85 ⓔ).
-    await page.evaluate(() => void window.cdsDesignDesktop.preview.zoom("in"));
+    await page.evaluate(() => void window.coloDesignDesktop.preview.zoom("in"));
     await page.waitForTimeout(400);
-    const zoomChip = await page.getByTestId("preview-zoom").innerText().catch(() => "(none)");
+    const zoomChip = await page
+      .getByTestId("preview-zoom")
+      .innerText()
+      .catch(() => "(none)");
     check("ⓟ zooming shows the percent chip", zoomChip === "120%", zoomChip);
     await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "모바일" }).click();
     await page.waitForTimeout(400);
@@ -563,7 +601,7 @@ async function main() {
     // ⓡ 로딩 중 버튼이 돌고 클릭이 중단이 되는 것은 채널이 이어 주고 있다 —
     // fixture 의 응답이 즉답이라 상태를 눈으로 담기 어려워 채널로 검증한다.
     const stopWired = await page.evaluate(async () => {
-      await window.cdsDesignDesktop.preview.stop();
+      await window.coloDesignDesktop.preview.stop();
       return true;
     });
     check("ⓡ the stop channel is wired", stopWired === true);
@@ -584,7 +622,10 @@ async function main() {
     );
 
     check("no uncaught renderer errors", errors.length === 0, errors.slice(0, 2).join(" | "));
-    await page.screenshot({ path: join(here, "desktop-comments.png"), fullPage: true });
+    await page.screenshot({
+      path: join(here, "desktop-comments.png"),
+      fullPage: true,
+    });
   } finally {
     await closeApp(app);
     for (let attempt = 0; attempt < 5; attempt += 1) {

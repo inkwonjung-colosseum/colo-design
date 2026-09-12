@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs"]
+    },
+    "packages/daemon": {
+      "entry": ["test/**/*.mjs"],
+      "project": ["src/**/*.ts", "test/**/*.mjs"]
+    },
+    "packages/desktop": {
+      "entry": ["src/preload.ts", "src/preview-preload.ts", "test/**/*.mjs", "scripts/**/*.mjs"],
+      "project": ["src/**/*.ts", "test/**/*.mjs", "scripts/**/*.mjs"]
+    },
+    "packages/web": {
+      "entry": ["index.html", "chatpreview.html", "src/chat-preview.tsx", "test/**/*.{mjs,mts}"],
+      "project": ["src/**/*.{ts,tsx}", "test/**/*.{mjs,mts}"]
+    },
+    "packages/protocol": {
+      "project": ["src/**/*.ts"]
+    }
+  }
+}

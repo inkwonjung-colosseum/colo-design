@@ -34,23 +34,23 @@ export function planSelfUpdate(input: {
   version: string;
   targetApp?: string;
 }): SelfUpdatePlan {
-  const filename = `cds-design-${input.version}.zip`;
+  const filename = `colo-design-${input.version}.zip`;
   return {
     zipUrl: input.url,
     expectedSha256: input.sha256,
     downloadPath: join(input.downloadsDir, filename),
-    targetApp: input.targetApp ?? "/Applications/CDS Design.app",
+    targetApp: input.targetApp ?? "/Applications/Colo Design.app",
     steps: [
       `${filename} 내려받기`,
       "sha256 검증",
       "앱 종료",
-      "/Applications/CDS Design.app 교체",
+      "/Applications/Colo Design.app 교체",
       "다시 실행",
     ],
   };
 }
 
-/** bash 큰따옴표 없이 안전하게 — 경로에 공백(`CDS Design.app`)이 흔하다. */
+/** bash 큰따옴표 없이 안전하게 — 경로에 공백(`Colo Design.app`)이 흔하다. */
 function sh(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -63,11 +63,15 @@ function sh(value: string): string {
  * 로그 파일로 — 실패해도 흔적이 남는다. main.ts 가 detached 로 띄우고
  * 곧바로 종료한다.
  */
-export function buildSwapScript(input: { plan: SelfUpdatePlan; pid: number; logPath: string }): string {
+export function buildSwapScript(input: {
+  plan: SelfUpdatePlan;
+  pid: number;
+  logPath: string;
+}): string {
   const { plan, pid, logPath } = input;
   const target = sh(plan.targetApp);
   return `#!/bin/bash
-# CDS Design 자가 교체 — 종료 대기 → zip 풀기 → 백업 교체 → 재실행.
+# Colo Design 자가 교체 — 종료 대기 → zip 풀기 → 백업 교체 → 재실행.
 exec >> ${sh(logPath)} 2>&1
 echo "swap start $(date '+%F %T') pid=${pid}"
 for _ in $(seq 1 150); do

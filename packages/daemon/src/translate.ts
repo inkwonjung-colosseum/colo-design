@@ -1,5 +1,5 @@
-import type { ChatEvent, PermissionMode } from "@cds-design/protocol";
-import { toolLabel } from "@cds-design/protocol";
+import type { ChatEvent, PermissionMode } from "@colo-design/protocol";
+import { toolLabel } from "@colo-design/protocol";
 
 /**
  * Turns raw SDKMessage values into the small, UI-shaped ChatEvent union.
@@ -80,7 +80,12 @@ export class MessageTranslator {
       ];
     }
     if (m.subtype === "compact_boundary") {
-      return [{ kind: "compact", trigger: String(m.compact_metadata?.trigger ?? "auto") }];
+      return [
+        {
+          kind: "compact",
+          trigger: String(m.compact_metadata?.trigger ?? "auto"),
+        },
+      ];
     }
     if (m.subtype === "permission_denied") {
       // PLAN D36/D37: the planner reads an action name, not a tool name — the
@@ -121,7 +126,12 @@ export class MessageTranslator {
       const delta = ev.delta as Record<string, any> | undefined;
       if (delta?.type === "text_delta" && typeof delta.text === "string") {
         return [
-          { kind: "text.delta", blockId: this.blockId(agentId, index), text: delta.text, agentId },
+          {
+            kind: "text.delta",
+            blockId: this.blockId(agentId, index),
+            text: delta.text,
+            agentId,
+          },
         ];
       }
       if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
@@ -246,7 +256,11 @@ export function replayHistory(messages: unknown[]): ChatEvent[] {
       if (text.trim() || images > 0) {
         out.push(
           synthetic
-            ? { kind: "notice", level: "info", text: text || `${images} image(s)` }
+            ? {
+                kind: "notice",
+                level: "info",
+                text: text || `${images} image(s)`,
+              }
             : { kind: "user.echo", text, images, files: [] },
         );
       }
@@ -272,7 +286,12 @@ export function replayHistory(messages: unknown[]): ChatEvent[] {
         if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
           out.push({ kind: "text.done", blockId, text: block.text, agentId });
         } else if (block?.type === "thinking" && typeof block.thinking === "string") {
-          out.push({ kind: "thinking.delta", blockId, text: block.thinking, agentId });
+          out.push({
+            kind: "thinking.delta",
+            blockId,
+            text: block.thinking,
+            agentId,
+          });
         } else if (block?.type === "tool_use") {
           out.push({
             kind: "tool.start",

@@ -12,18 +12,14 @@
  *
  * Run: node --test packages/daemon/test/platform.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  claudeCandidates,
-  filterFiles,
-  listFiles,
-  lookupCommand,
-} from "../dist/environment.js";
+import { test } from "node:test";
+import { claudeCandidates, filterFiles, listFiles, lookupCommand } from "../dist/environment.js";
 
 test("Windows candidates point at .exe files", () => {
   const found = claudeCandidates("win32", "C:/Users/dev", {
@@ -42,10 +38,7 @@ test("Windows candidates point at .exe files", () => {
     found.some((p) => p.includes("WinGet")),
     "WinGet installs must be found",
   );
-  assert.ok(
-    !found.some((p) => p.includes("homebrew")),
-    "no macOS paths on the Windows branch",
-  );
+  assert.ok(!found.some((p) => p.includes("homebrew")), "no macOS paths on the Windows branch");
 });
 
 test("Windows candidates fall back when LOCALAPPDATA is unset", () => {
@@ -62,18 +55,30 @@ test("POSIX candidates cover the native installer and Homebrew", () => {
     found.every((p) => !p.endsWith(".exe")),
     "no .exe suffixes off Windows",
   );
-  assert.ok(found.some((p) => p.includes("/opt/homebrew/")), "Homebrew must be searched");
-  assert.ok(found.some((p) => p.includes("/usr/local/")), "the classic prefix must be searched");
   assert.ok(
-    !found.some((p) => p.includes("WinGet")),
-    "no Windows paths on the POSIX branch",
+    found.some((p) => p.includes("/opt/homebrew/")),
+    "Homebrew must be searched",
   );
+  assert.ok(
+    found.some((p) => p.includes("/usr/local/")),
+    "the classic prefix must be searched",
+  );
+  assert.ok(!found.some((p) => p.includes("WinGet")), "no Windows paths on the POSIX branch");
 });
 
 test("command lookup uses the tool that exists on each platform", () => {
-  assert.deepEqual(lookupCommand("win32"), { command: "where", args: ["claude.exe"] });
-  assert.deepEqual(lookupCommand("darwin"), { command: "which", args: ["claude"] });
-  assert.deepEqual(lookupCommand("linux"), { command: "which", args: ["claude"] });
+  assert.deepEqual(lookupCommand("win32"), {
+    command: "where",
+    args: ["claude.exe"],
+  });
+  assert.deepEqual(lookupCommand("darwin"), {
+    command: "which",
+    args: ["claude"],
+  });
+  assert.deepEqual(lookupCommand("linux"), {
+    command: "which",
+    args: ["claude"],
+  });
 });
 
 test("the file walk needs no shell utility and skips build output", async () => {
@@ -93,10 +98,7 @@ test("the file walk needs no shell utility and skips build output", async () => 
 
     assert.ok(files.includes("readme.md"), `expected readme.md in ${files.join(", ")}`);
     assert.ok(files.includes("src/index.ts"), "nested files use forward slashes");
-    assert.ok(
-      !files.some((f) => f.includes("node_modules")),
-      "node_modules must be skipped",
-    );
+    assert.ok(!files.some((f) => f.includes("node_modules")), "node_modules must be skipped");
     assert.ok(!files.some((f) => f.includes(".git")), "the git directory must be skipped");
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -130,7 +132,7 @@ test("the daemon still reports a usable status when git is missing", async () =>
     ...process.env,
     PATH: "",
     Path: "",
-    CDS_DESIGN_GIT_BIN: "/nonexistent/cds-design-no-git",
+    COLO_DESIGN_GIT_BIN: "/nonexistent/colo-design-no-git",
   };
   delete env.ANTHROPIC_API_KEY;
 
@@ -155,4 +157,3 @@ test("the daemon still reports a usable status when git is missing", async () =>
   const { PROTOCOL_VERSION } = await import("../../protocol/dist/index.js");
   assert.equal(status.protocolVersion, PROTOCOL_VERSION);
 });
-

@@ -5,10 +5,11 @@
  * browser preference and should not need a daemon to change — so the whole
  * thing can be driven against the built app served from disk.
  *
- * Prerequisite: `pnpm --filter @cds-design/web build`
+ * Prerequisite: `pnpm --filter @colo-design/web build`
  */
+
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
-import { readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -26,14 +27,21 @@ function check(name, passed, detail = "") {
   console.log(`${passed ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
+const MIME = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+};
 
 function serveDist() {
   const server = createServer((req, res) => {
     const requested = (req.url ?? "/").split("?")[0];
     let file = join(webDist, requested === "/" ? "index.html" : requested);
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(webDist, "index.html");
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": MIME[extname(file)] ?? "application/octet-stream",
+    });
     res.end(readFileSync(file));
   });
   return new Promise((ok) => server.listen(PORT, "127.0.0.1", () => ok(server)));
@@ -41,14 +49,17 @@ function serveDist() {
 
 const theme = (page) => page.evaluate(() => document.documentElement.dataset.theme);
 const stored = (page) =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("cds-design.settings") ?? "null"));
+  page.evaluate(() => JSON.parse(localStorage.getItem("colo-design.settings") ?? "null"));
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
+  if (!existsSync(webDist))
+    throw new Error("web dist missing. Run: pnpm --filter @colo-design/web build");
 
   const server = await serveDist();
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 900 },
+  });
   const failures = [];
   page.on("pageerror", (e) => failures.push(e.message));
   page.on("console", (m) => m.type() === "error" && failures.push(m.text()));
@@ -75,17 +86,23 @@ async function main() {
         "#ffffff",
     );
     await page.emulateMedia({ colorScheme: "light" });
-    check("nothing is written to storage until something is changed", (await stored(page)) === null);
+    check(
+      "nothing is written to storage until something is changed",
+      (await stored(page)) === null,
+    );
 
     // 2. settings open from the connect screen, before any daemon exists.
     await page.getByRole("button", { name: "설정" }).click();
-    await page.waitForSelector('[role="dialog"][aria-label="설정"]', { timeout: 5000 });
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
     await page.screenshot({ path: join(here, "ui-settings-dark.png") });
     const groups = await page.locator(".settings__groupTitle").allInnerTexts();
     check(
       "the panel offers only what a planner sets",
-      ["화면", "대화", "동작", "GITHUB", "연결 레포", "문제 해결"].every((g) => groups.includes(g)) &&
-        groups.length === 6,
+      ["화면", "대화", "동작", "GITHUB", "연결 레포", "문제 해결"].every((g) =>
+        groups.includes(g),
+      ) && groups.length === 6,
       groups.join(", "),
     );
     // PLAN D39: the word belongs to the program, not the planner's settings —
@@ -191,7 +208,10 @@ async function main() {
       undefined,
       { timeout: 3000 },
     );
-    check("a high-contrast request pulls in the contrast palette", (await theme(page)) === "contrast");
+    check(
+      "a high-contrast request pulls in the contrast palette",
+      (await theme(page)) === "contrast",
+    );
     await page.emulateMedia({ contrast: null });
     await page.waitForFunction(
       () => document.documentElement.dataset.theme === "light",
@@ -214,7 +234,9 @@ async function main() {
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("theme is applied on load, not after a click", (await theme(page)) === "light");
     await page.getByRole("button", { name: "설정" }).click();
-    await page.waitForSelector('[role="dialog"][aria-label="설정"]', { timeout: 5000 });
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
     check(
       "the panel reopens on the stored values",
       (await page.getByLabel("보내기 키").inputValue()) === "modEnter",
@@ -234,7 +256,9 @@ async function main() {
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     await page.getByRole("button", { name: "설정" }).click();
-    await page.waitForSelector('[role="dialog"][aria-label="설정"]', { timeout: 5000 });
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
     check(
       "they come back on the values that were chosen",
       (await page.getByLabel("생각 시간").inputValue()) === "high" &&
@@ -256,7 +280,9 @@ async function main() {
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     await page.getByRole("button", { name: "설정" }).click();
-    await page.waitForSelector('[role="dialog"][aria-label="설정"]', { timeout: 5000 });
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
     check(
       "but a reload lands back on 물어보고 진행",
       (await page.getByLabel("확인 방식").inputValue()) === "default",
@@ -290,12 +316,48 @@ async function main() {
       (await page.locator('[role="dialog"][aria-label="설정"]').count()) === 1,
     );
 
+    // 7c. the keyboard agrees with aria-modal: Tab wraps inside the panel no
+    //     matter how far it walks, and closing hands focus back to the gear
+    //     that opened the panel.
+    const focusableCount = await page.evaluate(() => {
+      const panel = document.querySelector('[role="dialog"][aria-label="설정"]');
+      return panel
+        ? panel.querySelectorAll(
+            "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+          ).length
+        : 0;
+    });
+    await page.getByLabel("보내기 키").focus();
+    let escaped = false;
+    for (let step = 0; step < focusableCount + 2 && !escaped; step += 1) {
+      await page.keyboard.press("Tab");
+      const inside = await page.evaluate(
+        () =>
+          document
+            .querySelector('[role="dialog"][aria-label="설정"]')
+            ?.contains(document.activeElement) === true,
+      );
+      if (!inside) escaped = true;
+    }
+    check(
+      "Tab stays inside the dialog however far it walks",
+      escaped === false,
+      `focusables: ${focusableCount}`,
+    );
+    await page.keyboard.press("Escape");
+    await page
+      .locator('[role="dialog"][aria-label="설정"]')
+      .waitFor({ state: "detached", timeout: 5000 });
+    check(
+      "closing the dialog hands focus back to the opener",
+      await page.evaluate(
+        () => document.activeElement?.classList?.contains("connect__settings") === true,
+      ),
+    );
+
     // 8. a stored blob that is not a legal Settings must not brick the app.
     await page.evaluate(() =>
-      localStorage.setItem(
-        "cds-design.settings",
-        JSON.stringify({ theme: "neon", sendKey: 7 }),
-      ),
+      localStorage.setItem("colo-design.settings", JSON.stringify({ theme: "neon", sendKey: 7 })),
     );
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });

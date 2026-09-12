@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useDaemon } from "./daemon-client";
-import { Shell } from "./Shell";
-import { SettingsDialog } from "./SettingsDialog";
-import { useSettings } from "./settings";
 import { CheckIcon, CopyIcon, GearIcon } from "./icons";
+import { SettingsDialog } from "./SettingsDialog";
+import { Shell } from "./Shell";
+import { useSettings } from "./settings";
 
-const URL_KEY = "cds-design.daemon-url";
+const URL_KEY = "colo-design.daemon-url";
 
 /**
  * The desktop app loads this page from the daemon itself with the pairing
@@ -53,7 +53,7 @@ function ConnectScreen({
         <GearIcon size={15} />
       </button>
       <h1>
-        <span className="brand-name">CDS Design</span>
+        <span className="brand-name">Colo Design</span>
       </h1>
       <p>
         이 컴퓨터에서 데몬을 켠 다음, 데몬이 출력한 주소를 붙여 넣어 주세요. 데몬은 이미 로그인해 둔
@@ -184,7 +184,9 @@ export default function App() {
         onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}
         onLayoutChange={(patch) => updateSettings({ layout: { ...settings.layout, ...patch } })}
         onRenameSession={(sessionId, title) =>
-          updateSettings({ sessionTitles: { ...settings.sessionTitles, [sessionId]: title } })
+          updateSettings({
+            sessionTitles: { ...settings.sessionTitles, [sessionId]: title },
+          })
         }
         onOpenSettings={() => setSettingsOpen(true)}
         onboardingOpen={onboardingOpen}

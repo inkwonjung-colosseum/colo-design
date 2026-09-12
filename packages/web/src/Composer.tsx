@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import type {
   ContextUsage,
   EffortLevel,
@@ -6,27 +5,22 @@ import type {
   PlanUsage,
   SessionCommand,
   SessionSelectors,
-} from "@cds-design/protocol";
-import {
-  ArrowUpIcon,
-  FileIcon,
-  FolderIcon,
-  PaperclipIcon,
-  StopIcon,
-} from "./icons";
+} from "@colo-design/protocol";
+import { useEffect, useRef, useState } from "react";
 import {
   EFFORT_HINT,
   EFFORT_LABEL,
   MODE_HINT,
   MODE_LABEL,
-  SETTINGS_MODES,
   modelOptions,
   modelRowOf,
   modelWords,
+  SETTINGS_MODES,
 } from "./chat-options";
+import { ArrowUpIcon, FileIcon, FolderIcon, PaperclipIcon, StopIcon } from "./icons";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
-import { UsageChip } from "./UsageChip";
 import type { SendKey } from "./settings";
+import { UsageChip } from "./UsageChip";
 
 export interface Attachment {
   /** Images ride inline with the turn; documents are saved to `specs/` by the daemon. */
@@ -56,7 +50,6 @@ function fileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
-
 
 // ---------------------------------------------------------------------------
 // Autocomplete for @files
@@ -106,8 +99,8 @@ const EMPTY_EDITOR: Editor = { text: "", attachments: [] };
 /** localStorage keys (PLAN D43): a closed or crashed window no longer eats
  *  what the planner was mid-sentence writing. Per-origin, shared across
  *  tabs — a second window picking up the same draft is the desk it belongs to. */
-const DRAFT_PREFIX = "cds-design.draft.";
-const HISTORY_KEY = "cds-design.history";
+const DRAFT_PREFIX = "colo-design.draft.";
+const HISTORY_KEY = "colo-design.history";
 /** A walk back through sent turns stops somewhere; 25 rows of peeking is plenty. */
 const HISTORY_MAX = 25;
 
@@ -214,7 +207,10 @@ export function Composer({
   }));
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [menu, setMenu] = useState<null | "model" | "effort" | "mode">(null);
-  const [tokenSpan, setTokenSpan] = useState<{ from: number; to: number } | null>(null);
+  const [tokenSpan, setTokenSpan] = useState<{
+    from: number;
+    to: number;
+  } | null>(null);
   /** Bumped when a pick moves the caret, so the token is read after the move. */
   const [caretTick, setCaretTick] = useState(0);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -256,7 +252,10 @@ export function Composer({
     // PLAN D43: the count rides along so a window that died mid-attach can
     // be told what to re-pick instead of silently losing them.
     try {
-      localStorage.setItem(`${DRAFT_PREFIX}${draftKeyRef.current}.attach`, String(editor.attachments.length));
+      localStorage.setItem(
+        `${DRAFT_PREFIX}${draftKeyRef.current}.attach`,
+        String(editor.attachments.length),
+      );
     } catch {
       // Same story as the words: private mode keeps the in-memory map only.
     }
@@ -353,7 +352,9 @@ export function Composer({
             const known = COMMAND_LABEL[entry.name];
             return {
               insert: `/${entry.name} `,
-              label: known ? known.label : `/${entry.name}${entry.argumentHint ? ` ${entry.argumentHint}` : ""}`,
+              label: known
+                ? known.label
+                : `/${entry.name}${entry.argumentHint ? ` ${entry.argumentHint}` : ""}`,
               hint: known ? known.hint : entry.description,
               kind: "command" as const,
             };
@@ -404,7 +405,8 @@ export function Composer({
 
   const applySuggestion = (suggestion: Suggestion) => {
     if (!tokenSpan) return;
-    const next = editor.text.slice(0, tokenSpan.from) + suggestion.insert + editor.text.slice(tokenSpan.to);
+    const next =
+      editor.text.slice(0, tokenSpan.from) + suggestion.insert + editor.text.slice(tokenSpan.to);
     setEditor((prev) => ({ text: next, attachments: prev.attachments }));
     if (suggestion.kind !== "dir") {
       setSuggestions([]);
@@ -423,7 +425,11 @@ export function Composer({
   };
 
   const readAttachments = async (files: FileList | File[]) => {
-    const accepted: Array<{ file: File; kind: Attachment["kind"]; mediaType: string }> = [];
+    const accepted: Array<{
+      file: File;
+      kind: Attachment["kind"];
+      mediaType: string;
+    }> = [];
     const refused: string[] = [];
     for (const file of [...files]) {
       const document = documentType(file.name);
@@ -461,7 +467,10 @@ export function Composer({
           }),
       ),
     );
-    setEditor((prev) => ({ text: prev.text, attachments: [...prev.attachments, ...read] }));
+    setEditor((prev) => ({
+      text: prev.text,
+      attachments: [...prev.attachments, ...read],
+    }));
   };
 
   const submit = () => {
@@ -654,7 +663,6 @@ export function Composer({
     else if (value) onSetPermissionMode(value as PermissionMode);
   };
 
-
   return (
     <footer
       className="composer"
@@ -672,7 +680,11 @@ export function Composer({
               type="button"
               role="option"
               aria-selected={index === highlight}
-              className={index === highlight ? "autocomplete__row autocomplete__row--on" : "autocomplete__row"}
+              className={
+                index === highlight
+                  ? "autocomplete__row autocomplete__row--on"
+                  : "autocomplete__row"
+              }
               onMouseEnter={() => setHighlight(index)}
               onClick={() => applySuggestion(suggestion)}
             >
@@ -705,6 +717,7 @@ export function Composer({
       {editor.attachments.length > 0 && (
         <div className="chips">
           {editor.attachments.map((attachment, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
             <span key={`${attachment.name}-${index}`} className="chip">
               {attachment.kind === "image" ? (
                 <img

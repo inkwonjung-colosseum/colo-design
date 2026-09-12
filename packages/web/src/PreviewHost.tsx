@@ -1,9 +1,16 @@
+import type { ColoDesignCommentsEnvelope, ColoDesignScreen } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { CdsDesignCommentsEnvelope, CdsDesignScreen } from "@cds-design/protocol";
-import { daemonLine, stateLabel } from "./format";
-import { DesktopIcon, ExternalLinkIcon, MobileIcon, RefreshIcon, RestartIcon, ServerOffIcon } from "./icons";
 import { CoachMark } from "./CoachMark";
+import { daemonLine, stateLabel } from "./format";
 import { IframeHost } from "./IframeHost";
+import {
+  DesktopIcon,
+  ExternalLinkIcon,
+  MobileIcon,
+  RefreshIcon,
+  RestartIcon,
+  ServerOffIcon,
+} from "./icons";
 import { NativeHost } from "./NativeHost";
 import { parseAddress } from "./preview-address";
 
@@ -46,8 +53,8 @@ type PreviewWidth = "mobile" | "tablet" | "desktop";
  * repo's reference material last (the old rail's rule, kept where the picking
  * happens).
  */
-function groupedScreens(screens: CdsDesignScreen[]): [string, CdsDesignScreen[]][] {
-  const byFeature = new Map<string, CdsDesignScreen[]>();
+function groupedScreens(screens: ColoDesignScreen[]): [string, ColoDesignScreen[]][] {
+  const byFeature = new Map<string, ColoDesignScreen[]>();
   for (const screen of screens) {
     const segments = screen.route.split("/").filter(Boolean);
     const feature = segments.length > 1 ? (segments[0] ?? "") : "";
@@ -87,7 +94,6 @@ export function PreviewHost({
   unresolvedComments = 0,
   onLook,
   lookBusy = false,
-  lookBlocked = null,
   pip,
   pipLarge,
   onPipToggle,
@@ -99,15 +105,15 @@ export function PreviewHost({
   stoppedDetail?: string | null;
   onRestart: () => void;
   /** A pin bundle from the tool's overlay (D67) — the native path only. */
-  onComments: (envelope: CdsDesignCommentsEnvelope) => void;
+  onComments: (envelope: ColoDesignCommentsEnvelope) => void;
   /** The banner's `Claude에게 고쳐 달라고 하기` (PLAN D49). */
   onFixError: (error: PreviewError) => void;
   /** Screens the repo declared — empty until the bridge speaks. */
-  screens: CdsDesignScreen[];
+  screens: ColoDesignScreen[];
   /** The last ask; the caller answers by handing a new one back. */
   target: PreviewTarget | null;
   onNavigate: (target: PreviewTarget) => void;
-  onScreens: (screens: CdsDesignScreen[]) => void;
+  onScreens: (screens: ColoDesignScreen[]) => void;
   /** The native view's location reports arrive here (D66). */
   onLocation: (location: PreviewLocation) => void;
   location: PreviewLocation | null;
@@ -124,23 +130,19 @@ export function PreviewHost({
   onLook?: (note: string) => void;
   /** True while the snapshot is being taken and the turn composed. */
   lookBusy?: boolean;
-  /** The 연타 notice (D89): 이미 보냈습니다 — 답을 기다려 주세요. */
-  lookBlocked?: string | null;
   /** The docked Claude-view thumbnail (PLAN D63) — desktop only. */
   pip: { frame: string; label: string } | null;
   pipLarge: boolean;
   onPipToggle: () => void;
 }) {
-  const native = Boolean(window.cdsDesignDesktop?.preview?.native);
+  const native = Boolean(window.coloDesignDesktop?.preview?.native);
   const [width, setWidth] = useState<PreviewWidth>("desktop");
   /** Bumped by 새로 고침: a clean reload on whichever host is mounted. */
   const [reloadNonce, setReloadNonce] = useState(0);
-  /** The last `cds-preview:error` (D69) — one at a time, the newest wins. */
+  /** The last `colo-preview:error` (D69) — one at a time, the newest wins. */
   const [error, setError] = useState<PreviewError | null>(null);
   /** The banner's `자세히`: the message starts clamped to one line. */
   const [detail, setDetail] = useState(false);
-  /** D68: what the repo bridge of THIS load spoke. */
-  const [bridge, setBridge] = useState<"unknown" | "present" | "stale">("unknown");
   /** D89: the 보여 주기 form — the button opens it, the note rides along. */
   const [lookOpen, setLookOpen] = useState(false);
   const [lookNote, setLookNote] = useState("");
@@ -160,9 +162,6 @@ export function PreviewHost({
   // banner lived by: a hot reload never wipes a just-reported error.
   useEffect(() => {
     setError(null);
-  }, [url]);
-  useEffect(() => {
-    setBridge("unknown");
   }, [url]);
 
   // What the bar shows when nobody is typing: where the view is, else the ask.
@@ -198,7 +197,7 @@ export function PreviewHost({
 
   // D85 ⓔ: 폭 is the device, 배율 is the eye — a width change resets the
   // eye to 100% (모바일 에뮬레이션 + 150% 는 가로 스크롤을 만든다).
-  const zoomBridge = window.cdsDesignDesktop?.preview;
+  const zoomBridge = window.coloDesignDesktop?.preview;
   useEffect(() => {
     setZoom(1);
     void zoomBridge?.zoom?.("reset");
@@ -218,7 +217,11 @@ export function PreviewHost({
       return;
     }
     setAddressError(null);
-    onNavigate(verdict.kind === "screen" ? { kind: "screen", route: verdict.route, state: verdict.state } : { kind: "path", path: verdict.path });
+    onNavigate(
+      verdict.kind === "screen"
+        ? { kind: "screen", route: verdict.route, state: verdict.state }
+        : { kind: "path", path: verdict.path },
+    );
   };
 
   if (stopped) {
@@ -236,7 +239,9 @@ export function PreviewHost({
               </span>
               <h2>미리보기 서버 중단</h2>
             </div>
-            <p className="progress__body">화면을 그리는 서버가 멈췄습니다. 대화 내용은 그대로입니다.</p>
+            <p className="progress__body">
+              화면을 그리는 서버가 멈췄습니다. 대화 내용은 그대로입니다.
+            </p>
             {stoppedLine && <div className="progress__detail">{stoppedLine}</div>}
             <div className="preview__stopactions">
               <button type="button" className="primary" onClick={onRestart}>
@@ -287,60 +292,64 @@ export function PreviewHost({
             return { route, state: state && state !== "" ? state : null };
           })()
         : null;
-  const current = activeRouteState ? (screens.find((screen) => screen.route === activeRouteState.route) ?? null) : null;
+  const current = activeRouteState
+    ? (screens.find((screen) => screen.route === activeRouteState.route) ?? null)
+    : null;
   const activeState = activeRouteState?.state ?? "default";
 
   return (
     <div className="preview">
       <div className="preview__toolbar">
-        {screens.length > 0 || bridge !== "stale" ? (
-          bridge === "stale" ? (
-            <span className="preview__unlisted" data-testid="bridge-stale">
-              이 레포의 미리보기 브리지가 옛 이름을 씁니다 — 브리지를 올려야 화면 목록이 동작합니다
-            </span>
-          ) : screens.length > 0 ? (
-            <select
-              className="preview__screens"
-              aria-label="화면"
-              value={current?.route ?? ""}
-              onChange={(event) => onNavigate({ kind: "screen", route: event.target.value, state: null })}
-            >
-              {!current && (
-                <option value="" disabled>
-                  화면 선택
-                </option>
-              )}
-              {groupedScreens(screens).map(([feature, groupScreens]) =>
-                feature ? (
-                  <optgroup key={feature} label={feature}>
-                    {groupScreens.map((screen) => (
-                      <option key={screen.route} value={screen.route}>
-                        {screen.title}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : (
-                  groupScreens.map((screen) => (
+        {screens.length > 0 ? (
+          <select
+            className="preview__screens"
+            aria-label="화면"
+            value={current?.route ?? ""}
+            onChange={(event) =>
+              onNavigate({
+                kind: "screen",
+                route: event.target.value,
+                state: null,
+              })
+            }
+          >
+            {!current && (
+              <option value="" disabled>
+                화면 선택
+              </option>
+            )}
+            {groupedScreens(screens).map(([feature, groupScreens]) =>
+              feature ? (
+                <optgroup key={feature} label={feature}>
+                  {groupScreens.map((screen) => (
                     <option key={screen.route} value={screen.route}>
                       {screen.title}
                     </option>
-                  ))
-                ),
-              )}
-            </select>
-          ) : (
-            <span className="preview__unlisted">
-              이 레포는 아직 화면을 선언하지 않았습니다 — 첫 화면을 만들면 여기에 목록이 생깁니다.
-            </span>
-          )
-        ) : null}
+                  ))}
+                </optgroup>
+              ) : (
+                groupScreens.map((screen) => (
+                  <option key={screen.route} value={screen.route}>
+                    {screen.title}
+                  </option>
+                ))
+              ),
+            )}
+          </select>
+        ) : (
+          <span className="preview__unlisted">
+            이 레포는 아직 화면을 선언하지 않았습니다 — 첫 화면을 만들면 여기에 목록이 생깁니다.
+          </span>
+        )}
         {current && current.states.length > 1 && (
           <div className="preview__states" role="group" aria-label="상태">
             {current.states.map((state) => (
               <button
                 key={state}
                 type="button"
-                className={state === activeState ? "preview__state preview__state--on" : "preview__state"}
+                className={
+                  state === activeState ? "preview__state preview__state--on" : "preview__state"
+                }
                 aria-pressed={state === activeState}
                 title={`이 화면의 ${stateLabel(state)} 상태를 봅니다`}
                 onClick={() => onNavigate({ kind: "screen", route: current.route, state })}
@@ -366,16 +375,13 @@ export function PreviewHost({
             💬 코멘트{unresolvedComments > 0 ? ` ${unresolvedComments}` : ""}
           </button>
         )}
-        {native && (
-          <CoachMark
-            id="pin"
-            text="⌥ 를 누른 채 요소를 클릭하면 코멘트를 달 수 있어요"
-          />
-        )}
+        {native && <CoachMark id="pin" text="⌥ 를 누른 채 요소를 클릭하면 코멘트를 달 수 있어요" />}
         <div className="preview__width" role="group" aria-label="폭">
           <button
             type="button"
-            className={width === "mobile" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
+            className={
+              width === "mobile" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"
+            }
             aria-pressed={width === "mobile"}
             title="휴대폰 폭으로 좁혀서 봅니다"
             onClick={() => setWidth("mobile")}
@@ -385,7 +391,9 @@ export function PreviewHost({
           </button>
           <button
             type="button"
-            className={width === "tablet" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
+            className={
+              width === "tablet" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"
+            }
             aria-pressed={width === "tablet"}
             title="태블릿 폭(768px)으로 봅니다"
             onClick={() => setWidth("tablet")}
@@ -394,7 +402,9 @@ export function PreviewHost({
           </button>
           <button
             type="button"
-            className={width === "desktop" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"}
+            className={
+              width === "desktop" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"
+            }
             aria-pressed={width === "desktop"}
             title="화면 전체 폭으로 봅니다"
             onClick={() => setWidth("desktop")}
@@ -420,8 +430,7 @@ export function PreviewHost({
             window.open(full, "_blank", "noopener");
           }}
         >
-          <ExternalLinkIcon />
-          새 창
+          <ExternalLinkIcon />새 창
         </button>
       </div>
       {error && (
@@ -430,7 +439,9 @@ export function PreviewHost({
             <strong>화면에 오류가 났습니다</strong>
             <pre
               className={
-                detail ? "preview__error__message preview__error__message--open" : "preview__error__message"
+                detail
+                  ? "preview__error__message preview__error__message--open"
+                  : "preview__error__message"
               }
             >
               {error.message}
@@ -485,7 +496,7 @@ export function PreviewHost({
                   aria-label="뒤로"
                   title="뒤로"
                   disabled={!location?.canGoBack}
-                  onClick={() => void window.cdsDesignDesktop?.preview?.history?.(-1)}
+                  onClick={() => void window.coloDesignDesktop?.preview?.history?.(-1)}
                 >
                   ◀
                 </button>
@@ -495,7 +506,7 @@ export function PreviewHost({
                   aria-label="앞으로"
                   title="앞으로"
                   disabled={!location?.canGoForward}
-                  onClick={() => void window.cdsDesignDesktop?.preview?.history?.(1)}
+                  onClick={() => void window.coloDesignDesktop?.preview?.history?.(1)}
                 >
                   ▶
                 </button>
@@ -511,7 +522,7 @@ export function PreviewHost({
                   setReloadNonce((n) => n + 1);
                   return;
                 }
-                if (loading) void window.cdsDesignDesktop?.preview?.stop?.();
+                if (loading) void window.coloDesignDesktop?.preview?.stop?.();
                 else setReloadNonce((n) => n + 1);
               }}
             >
@@ -532,7 +543,7 @@ export function PreviewHost({
                   data-testid="preview-address"
                   spellCheck={false}
                   value={address}
-                  list="cds-frame-routes"
+                  list="colo-frame-routes"
                   ref={addressInput}
                   onFocus={() => setAddressFocused(true)}
                   onBlur={() => setAddressFocused(false)}
@@ -540,7 +551,7 @@ export function PreviewHost({
                 />
                 {/* D85 ⓓ: the address bar proposes — declared routes, and the
                     route·state pairs when a screen declares more than one. */}
-                <datalist id="cds-frame-routes">
+                <datalist id="colo-frame-routes">
                   {screens.flatMap((screen) => [
                     <option key={screen.route} value={screen.route}>
                       {screen.title}
@@ -548,7 +559,10 @@ export function PreviewHost({
                     ...screen.states
                       .filter((state) => state !== "default")
                       .map((state) => (
-                        <option key={`${screen.route}?state=${state}`} value={`${screen.route}?state=${state}`}>
+                        <option
+                          key={`${screen.route}?state=${state}`}
+                          value={`${screen.route}?state=${state}`}
+                        >
                           {`${screen.title} · ${stateLabel(state)}`}
                         </option>
                       )),
@@ -583,7 +597,7 @@ export function PreviewHost({
                 className="frame__zoom"
                 data-testid="preview-zoom"
                 title="실제 크기로 돌아갑니다"
-                onClick={() => void window.cdsDesignDesktop?.preview?.zoom?.("reset")}
+                onClick={() => void window.coloDesignDesktop?.preview?.zoom?.("reset")}
               >
                 {Math.round(zoom * 100)}%
               </button>
@@ -646,10 +660,14 @@ export function PreviewHost({
               width={width}
               commentsOn={commentsOn}
               onLocation={onLocation}
-              onBridge={setBridge}
               onScreens={onScreens}
               onComments={onComments}
-              onError={(payload) => setError({ ...payload, kind: payload.kind === "build" ? "build" : "runtime" })}
+              onError={(payload) =>
+                setError({
+                  ...payload,
+                  kind: payload.kind === "build" ? "build" : "runtime",
+                })
+              }
               onLoading={setLoading}
               onZoom={setZoom}
             />

@@ -1,0 +1,16 @@
+# 커밋은 빠르게: 스테이징된 파일의 포맷·린트만 고쳐 되돌려 놓는다.
+# 무거운 검사(typecheck·knip)는 pre-push 로 넘긴다.
+pre-commit:
+  commands:
+    biome:
+      glob: "*.{js,mjs,cjs,ts,tsx,json,jsonc,css}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+
+# 푸시 직전, CI 와 같은 문을 한 번 더 로컬에서 지나간다.
+pre-push:
+  commands:
+    typecheck:
+      run: pnpm -r typecheck
+    knip:
+      run: pnpm knip

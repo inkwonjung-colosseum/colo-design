@@ -13,12 +13,12 @@
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
-import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
 import { fileURLToPath } from "node:url";
+import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
 
 /**
  * A fake `claude` CLI whose real invocation stalls two seconds — long enough
@@ -46,13 +46,14 @@ function writeTurnStubClaude(dir) {
   chmodSync(path, 0o755);
   return path;
 }
+
 import { chromium } from "playwright";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
-const DIR = join(tmpdir(), "cds-design-sidebar-ui-e2e");
+const DIR = join(tmpdir(), "colo-design-sidebar-ui-e2e");
 const PORT = 5402;
 
 const results = [];
@@ -64,12 +65,19 @@ function check(name, passed, detail = "") {
   console.log(`${passed ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
+const MIME = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".woff2": "font/woff2",
+};
 
 function serveDist() {
   const server = createServer((req, res) => {
     const path = req.url === "/" ? "/index.html" : (req.url ?? "/").split("?")[0];
-    const file = existsSync(join(webDist, path)) ? join(webDist, path) : join(webDist, "index.html");
+    const file = existsSync(join(webDist, path))
+      ? join(webDist, path)
+      : join(webDist, "index.html");
     res.setHeader("content-type", MIME[extname(file)] ?? "application/octet-stream");
     res.end(readFileSync(file));
   });
@@ -82,7 +90,9 @@ const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
 async function portClosed(port) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
-      await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) });
+      await fetch(`http://127.0.0.1:${port}/`, {
+        signal: AbortSignal.timeout(2000),
+      });
       await sleep(500);
     } catch {
       return true;
@@ -92,8 +102,10 @@ async function portClosed(port) {
 }
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
-  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @cds-design/daemon build");
+  if (!existsSync(webDist))
+    throw new Error("web dist missing. Run: pnpm --filter @colo-design/web build");
+  if (!existsSync(daemonEntry))
+    throw new Error("daemon dist missing. Run: pnpm --filter @colo-design/daemon build");
 
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(join(DIR, "claude-config"), { recursive: true });
@@ -101,20 +113,29 @@ async function main() {
   // each one's conversations beneath it, and only the active project's
   // preview port serving. The turn stub stalls two seconds, so a background
   // turn can be watched mid-flight (작업 중) before it settles.
-  const paymentsFixture = await createFixtureRepo({ dir: join(DIR, "fixture-payments"), port: await freePort() });
-  const refundsFixture = await createFixtureRepo({ dir: join(DIR, "fixture-refunds"), port: await freePort() });
+  const paymentsFixture = await createFixtureRepo({
+    dir: join(DIR, "fixture-payments"),
+    port: await freePort(),
+  });
+  const refundsFixture = await createFixtureRepo({
+    dir: join(DIR, "fixture-refunds"),
+    port: await freePort(),
+  });
 
   const env = {
     ...process.env,
-    CDS_DESIGN_PORT: String(await freePort()),
-    CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
-    CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
+    COLO_DESIGN_PORT: String(await freePort()),
+    COLO_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
+    COLO_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
-    CDS_DESIGN_CLAUDE_BIN: writeTurnStubClaude(join(DIR, "bin")),
-    CDS_DESIGN_CREDENTIAL_STORE: "memory",
+    COLO_DESIGN_CLAUDE_BIN: writeTurnStubClaude(join(DIR, "bin")),
+    COLO_DESIGN_CREDENTIAL_STORE: "memory",
   };
   delete env.ANTHROPIC_API_KEY;
-  const daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const daemon = spawn(process.execPath, [daemonEntry], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   daemon.stderr.on("data", (d) => process.stderr.write(`[daemon] ${d}`));
   process.on("exit", () => daemon.kill("SIGKILL"));
   const daemonUrl = await new Promise((ok, fail) => {
@@ -132,7 +153,9 @@ async function main() {
 
   const server = await serveDist();
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
+  const page = await browser.newPage({
+    viewport: { width: 1680, height: 1000 },
+  });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -157,22 +180,23 @@ async function main() {
         try {
           return await new Promise((ok, fail) => {
             const timer = setTimeout(() => fail(new Error(`${message.type} timed out`)), timeoutMs);
-            ws.addEventListener(
-              "message",
-              (event) => {
-                const reply = JSON.parse(String(event.data));
-                if (reply.id !== message.id) return;
-                clearTimeout(timer);
-                reply.type === "ok" ? ok(reply.data) : fail(new Error(reply.message));
-              },
-            );
+            ws.addEventListener("message", (event) => {
+              const reply = JSON.parse(String(event.data));
+              if (reply.id !== message.id) return;
+              clearTimeout(timer);
+              reply.type === "ok" ? ok(reply.data) : fail(new Error(reply.message));
+            });
             ws.send(JSON.stringify(message));
           });
         } finally {
           ws.close();
         }
       },
-      { url: daemonUrl, message: { ...message, id: `t${Math.random().toString(36).slice(2)}` }, timeoutMs },
+      {
+        url: daemonUrl,
+        message: { ...message, id: `t${Math.random().toString(36).slice(2)}` },
+        timeoutMs,
+      },
     );
 
   /** Poll until the active clone reports ready; refuse to pass on error. */
@@ -199,17 +223,25 @@ async function main() {
     await start.click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });
     // --- a. two projects, over the same socket the browser uses -----------
-    await call({ type: "project.create", name: "결제", repoUrl: paymentsFixture.remote, approveCommands: true });
-    await call({ type: "project.create", name: "환불", repoUrl: refundsFixture.remote, approveCommands: true });
+    await call({
+      type: "project.create",
+      name: "결제",
+      repoUrl: paymentsFixture.remote,
+      approveCommands: true,
+    });
+    await call({
+      type: "project.create",
+      name: "환불",
+      repoUrl: refundsFixture.remote,
+      approveCommands: true,
+    });
     await waitReady("the 환불 clone");
     check("two projects created over the socket, both cloning", true);
 
     // --- b. one node per project, the active one marked --------------------
-    await page.waitForFunction(
-      () => document.querySelectorAll(".node").length === 2,
-      undefined,
-      { timeout: 30000 },
-    );
+    await page.waitForFunction(() => document.querySelectorAll(".node").length === 2, undefined, {
+      timeout: 30000,
+    });
     check("the tree holds one node per project", (await page.locator(".node").count()) === 2);
     const activeNode = page.locator(".node--active");
     check(
@@ -219,7 +251,9 @@ async function main() {
     );
 
     // --- b2. a conversation shows up as its project's child row ------------
-    const { sessionId: refundsSession } = await call({ type: "session.create" });
+    const { sessionId: refundsSession } = await call({
+      type: "session.create",
+    });
     await leaf(refundsSession).waitFor({ timeout: 30000 });
     check(
       "a created session arrives as a child row of its project",
@@ -242,7 +276,9 @@ async function main() {
     check("the preview column serves the new project's fixture port", true, `port ${paymentsPort}`);
 
     // --- d. one conversation per project, both visible at once -------------
-    const { sessionId: paymentsSession } = await call({ type: "session.create" });
+    const { sessionId: paymentsSession } = await call({
+      type: "session.create",
+    });
     await leaf(paymentsSession).waitFor({ timeout: 30000 });
     // Back to 환불: the tree's point is that 결제's conversation stays visible
     // while nobody is looking at that project.
@@ -275,15 +311,23 @@ async function main() {
     );
 
     // --- f. a background turn reads 작업 중, then 답이 왔습니다 -------------
-    const { sessionId: paymentsSecond } = await call({ type: "session.create" });
+    const { sessionId: paymentsSecond } = await call({
+      type: "session.create",
+    });
     await leaf(paymentsSecond).waitFor({ timeout: 30000 });
-    await call({ type: "session.send", sessionId: paymentsSecond, text: "스텁 턴" });
+    await call({
+      type: "session.send",
+      sessionId: paymentsSecond,
+      text: "스텁 턴",
+    });
     await leaf(paymentsSecond).locator(".leaf__meta--live").waitFor({ timeout: 30000 });
     check(
       "a turn on a background row reads 작업 중",
       (await leaf(paymentsSecond).innerText()).includes("작업 중"),
     );
-    await leaf(paymentsSecond).locator(".leaf__meta", { hasText: "답이 왔습니다" }).waitFor({ timeout: 60000 });
+    await leaf(paymentsSecond)
+      .locator(".leaf__meta", { hasText: "답이 왔습니다" })
+      .waitFor({ timeout: 60000 });
     check(
       "the settled turn reads 답이 왔습니다 with a ring",
       (await leaf(paymentsSecond).locator(".leaf__dot--done").count()) === 1,
@@ -293,6 +337,15 @@ async function main() {
       "the open conversation's row shows no finished ring",
       (await leaf(paymentsSession).locator(".leaf__dot--done").count()) === 0,
     );
+
+    // --- f2. the head's title renames on a single click --------------------
+    await page.locator(".thread__title").click();
+    const titleInput = page.getByLabel("대화 이름");
+    await titleInput.waitFor({ timeout: 5000 });
+    await titleInput.fill("회원 화면 작업");
+    await page.keyboard.press("Enter");
+    await page.locator(".thread__title", { hasText: "회원 화면 작업" }).waitFor({ timeout: 5000 });
+    check("clicking the thread title renames it in place", true);
 
     // --- g. a fold survives a reload ---------------------------------------
     await page.locator(".node", { hasText: "환불" }).locator(".node__chev").click();
@@ -320,7 +373,37 @@ async function main() {
     await page.getByLabel("프로젝트 이름").fill("결제 시스템");
     await page.keyboard.press("Enter");
     await page.locator(".node", { hasText: "결제 시스템" }).waitFor({ timeout: 15000 });
-    check("이름 바꾸기 renames the row in place", true, (await page.locator(".node__name").allInnerTexts()).join(", "));
+    check(
+      "이름 바꾸기 renames the row in place",
+      true,
+      (await page.locator(".node__name").allInnerTexts()).join(", "),
+    );
+
+    // --- h2. a sixth conversation becomes a count row into the palette ----
+    // Five rows are all the tree holds (PLAN D59 rule 3); the sixth must not
+    // read as gone — the count row names it and opens the palette, already
+    // narrowed to this project's conversations.
+    for (let extra = 0; extra < 4; extra += 1) await call({ type: "session.create" });
+    const paymentsKids = page.locator(".node", { hasText: "결제 시스템" });
+    const moreRow = paymentsKids.locator(".leaf--more");
+    await moreRow.waitFor({ timeout: 30000 });
+    check(
+      "a sixth conversation turns into a count row, not silence",
+      (await paymentsKids.locator(".leaf[data-thread-id]").count()) === 5 &&
+        (await moreRow.innerText()).includes("이전 대화 1개 더 보기"),
+      await moreRow.innerText(),
+    );
+    await moreRow.click();
+    await page.locator(".palette__panel").waitFor({ timeout: 10000 });
+    check(
+      "the count row opens the palette scoped to this project",
+      (await page.locator(".palette__search").getAttribute("placeholder")) ===
+        "이 프로젝트의 대화 찾기" && (await page.locator(".palette__row").count()) >= 6,
+      `rows: ${await page.locator(".palette__row").count()}`,
+    );
+    await page.keyboard.press("Escape");
+    await page.locator(".palette__panel").waitFor({ state: "detached", timeout: 10000 });
+    check("the scoped palette answers Escape like every menu", true);
 
     // --- i. removing from the list keeps the folders -----------------------
     const workRootsBefore = (await call({ type: "project.list" }, 15000)).projects.length;
@@ -334,7 +417,9 @@ async function main() {
         (await removeDialog.getByRole("button", { name: "폴더까지 지우기" }).count()) === 1,
     );
     await removeDialog.getByRole("button", { name: "목록에서만 지우기" }).click();
-    await page.locator(".node", { hasText: "결제 시스템" }).waitFor({ state: "detached", timeout: 15000 });
+    await page
+      .locator(".node", { hasText: "결제 시스템" })
+      .waitFor({ state: "detached", timeout: 15000 });
     const afterRemove = await call({ type: "project.list" }, 15000);
     check(
       "the row disappears and the list shrinks by one",
@@ -349,7 +434,10 @@ async function main() {
     // --- j. the folded rail opens a conversation popover -------------------
     await page.setViewportSize({ width: 960, height: 720 });
     await page.locator(".sidebar--collapsed").waitFor({ timeout: 10000 });
-    check("a 960px window auto-folds the rail", (await page.locator(".sidebar--collapsed").count()) === 1);
+    check(
+      "a 960px window auto-folds the rail",
+      (await page.locator(".sidebar--collapsed").count()) === 1,
+    );
     // The rail's tile keeps the project's accessible name; the badge's words
     // ride along when there is state to say (변경 N · 확인 대기 · 넘김…).
     const refundsTile = page.getByRole("button", { name: /환불 대화/ });
@@ -387,7 +475,10 @@ async function main() {
     check("a popover row click closes the popover", true);
 
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
-    await page.screenshot({ path: join(here, "ui-sidebar-e2e.png"), fullPage: true });
+    await page.screenshot({
+      path: join(here, "ui-sidebar-e2e.png"),
+      fullPage: true,
+    });
   } finally {
     await browser.close();
     server.close();

@@ -2,8 +2,9 @@
  * 주소창 판정(PLAN D66)의 표 — preview-address.test 에서 node --test 로.
  * 순수 함수라 시뮬레이션 없이 표 그대로 단언한다.
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { parseAddress, splitPath } from "../src/preview-address.ts";
 
 const opts = {
@@ -42,7 +43,10 @@ test("a lone ?state= applies to the current path", () => {
 });
 
 test("any other path inside the origin is an open target", () => {
-  assert.deepEqual(parseAddress("/docs/guide", opts), { kind: "path", path: "/docs/guide" });
+  assert.deepEqual(parseAddress("/docs/guide", opts), {
+    kind: "path",
+    path: "/docs/guide",
+  });
   assert.deepEqual(parseAddress("docs/guide?page=2", opts), {
     kind: "path",
     path: "/docs/guide?page=2",
@@ -75,7 +79,10 @@ test("whitespace is trimmed; empty input says so", () => {
 });
 
 test("splitPath separates route and state", () => {
-  assert.deepEqual(splitPath("/a/B?state=x&other=1"), { route: "/a/B", state: "x" });
+  assert.deepEqual(splitPath("/a/B?state=x&other=1"), {
+    route: "/a/B",
+    state: "x",
+  });
   assert.deepEqual(splitPath("/a/B"), { route: "/a/B", state: null });
   assert.deepEqual(splitPath("/a/B?state="), { route: "/a/B", state: null });
 });

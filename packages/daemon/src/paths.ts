@@ -45,9 +45,8 @@ export function realpathBestEffort(path: string): string {
  */
 export function containsPath(root: string, target: string): boolean {
   const realRoot = realpathBestEffort(root);
-  const candidate = target.startsWith(sep) || /^[A-Za-z]:[\\/]/.test(target)
-    ? target
-    : resolve(root, target);
+  const candidate =
+    target.startsWith(sep) || /^[A-Za-z]:[\\/]/.test(target) ? target : resolve(root, target);
   const realTarget = realpathBestEffort(candidate);
   return realTarget === realRoot || realTarget.startsWith(realRoot + sep);
 }

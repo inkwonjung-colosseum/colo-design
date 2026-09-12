@@ -1,12 +1,18 @@
-import { deleteSession, getSessionInfo, getSessionMessages, listSessions, type SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatEvent, SessionSummary, ThreadSummary } from "@cds-design/protocol";
 import { randomUUID } from "node:crypto";
+import {
+  deleteSession,
+  getSessionInfo,
+  getSessionMessages,
+  listSessions,
+  type SDKSessionInfo,
+} from "@anthropic-ai/claude-agent-sdk";
+import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 import { replayHistory } from "./translate.js";
 
 /**
  * A transcript's summary can be the conversation's own first line — and the
- * tool's machine-authored turns open with the `<!-- cds-design:… -->` marker
+ * tool's machine-authored turns open with the `<!-- colo-design:… -->` marker
  * (protocol turn-marker), so without this the raw marker leaks into the tree
  * and the palette as a conversation name. Marker lines are dropped, the first
  * human line wins, and whatever survives is collapsed to one clean line.
@@ -279,7 +285,10 @@ export class SessionManager {
 
   /** Stored transcript, already shaped as the events the UI renders. */
   async history(sessionId: string, cwd: string): Promise<ChatEvent[]> {
-    const messages = await getSessionMessages(sessionId, { dir: cwd, limit: 1000 }).catch(() => []);
+    const messages = await getSessionMessages(sessionId, {
+      dir: cwd,
+      limit: 1000,
+    }).catch(() => []);
     return replayHistory(messages);
   }
 
@@ -302,7 +311,10 @@ export class SessionManager {
   }): Promise<{ sessionId: string; memoryKept: boolean }> {
     const old = this.live.get(input.sessionId);
     const title = old?.title ?? input.base.title ?? NEW_SESSION_TITLE;
-    const raw = await getSessionMessages(input.sessionId, { dir: input.cwd, limit: 1000 }).catch(() => []);
+    const raw = await getSessionMessages(input.sessionId, {
+      dir: input.cwd,
+      limit: 1000,
+    }).catch(() => []);
     const cutoff = resolveRewindCutoff(raw as Array<Record<string, unknown>>, input.turn);
     if (cutoff === null && raw.length > 0) {
       // 존재하는 대화에서 k 가 넘친다 — 호출자 오류.
@@ -343,7 +355,11 @@ export class SessionManager {
       ...this.events,
       onEvent: (id, event) => {
         if (event.kind === "turn.end" && outcomeBox.value === null) {
-          outcomeBox.value = { type: "end", subtype: event.subtype, resultText: event.resultText };
+          outcomeBox.value = {
+            type: "end",
+            subtype: event.subtype,
+            resultText: event.resultText,
+          };
         }
         this.events.onEvent(id, event);
       },

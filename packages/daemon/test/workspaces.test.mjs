@@ -7,17 +7,18 @@
  *
  * Run: node --test packages/daemon/test/workspaces.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import { realpathBestEffort } from "../dist/paths.js";
 import { repoWritePolicy } from "../dist/workspaces.js";
 
 /** A realpath'd clone root, as the daemon hands it over. */
 function repoRoot() {
-  const dir = mkdtempSync(join(tmpdir(), "cds-design-workspaces-"));
+  const dir = mkdtempSync(join(tmpdir(), "colo-design-workspaces-"));
   const root = join(dir, "repo");
   mkdirSync(join(root, "src", "screens"), { recursive: true });
   return { dir, root: realpathBestEffort(root) };

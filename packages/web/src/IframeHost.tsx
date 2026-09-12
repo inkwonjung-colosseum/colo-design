@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState } from "react";
 import type {
-  CdsDesignNavigateEnvelope,
-  CdsDesignScreen,
-  CdsDesignScreensEnvelope,
-  CdsDesignScreensRequestEnvelope,
-} from "@cds-design/protocol";
+  ColoDesignNavigateEnvelope,
+  ColoDesignScreen,
+  ColoDesignScreensEnvelope,
+  ColoDesignScreensRequestEnvelope,
+} from "@colo-design/protocol";
+import { useEffect, useRef, useState } from "react";
 import type { PreviewTarget } from "./PreviewHost";
 
 /**
  * 브라우저 개발 경로의 미리보기 (PLAN D70): the repo's dev server framed
- * as-is, speaking the repo bridge contract only — `cds-design.screens` in,
- * `cds-design.navigate` out. Comments, the address bar and the error banner
+ * as-is, speaking the repo bridge contract only — `colo-design.screens` in,
+ * `colo-design.navigate` out. Comments, the address bar and the error banner
  * are the native view's (D67 · D66 · D69) and are simply absent here; a plain
  * browser is the developer's path, and it is not told what it lacks.
  *
@@ -31,7 +31,7 @@ export function IframeHost({
   target: PreviewTarget | null;
   /** Bumped by 새로 고침 — remounts the iframe for a clean reload. */
   reloadKey: number;
-  onScreens: (screens: CdsDesignScreen[]) => void;
+  onScreens: (screens: ColoDesignScreen[]) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loads, setLoads] = useState(0);
@@ -43,8 +43,9 @@ export function IframeHost({
       // Only this iframe may speak; anything else in the page is noise.
       if (event.source !== frame.current?.contentWindow) return;
       if (event.origin !== expectedOrigin) return;
-      const data = event.data as CdsDesignScreensEnvelope | null;
-      if (data?.type === "cds-design.screens" && Array.isArray(data.screens)) onScreens(data.screens);
+      const data = event.data as ColoDesignScreensEnvelope | null;
+      if (data?.type === "colo-design.screens" && Array.isArray(data.screens))
+        onScreens(data.screens);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -56,8 +57,8 @@ export function IframeHost({
     if (!url || !screen || loads === 0) return;
     const contentWindow = frame.current?.contentWindow;
     if (!contentWindow) return;
-    const envelope: CdsDesignNavigateEnvelope = {
-      type: "cds-design.navigate",
+    const envelope: ColoDesignNavigateEnvelope = {
+      type: "colo-design.navigate",
       route: screen.route,
       state: screen.state,
     };
@@ -76,7 +77,9 @@ export function IframeHost({
         setLoads((count) => count + 1);
         // The bridge posts its list once on its own mount and never retries,
         // so the two orderings cover each other (D7).
-        const request: CdsDesignScreensRequestEnvelope = { type: "cds-design.screens?" };
+        const request: ColoDesignScreensRequestEnvelope = {
+          type: "colo-design.screens?",
+        };
         frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
       }}
     />

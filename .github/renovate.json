@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "Asia/Seoul",
+  "schedule": ["after 9am and before 7pm every weekday"],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "Electron 메이저는 번들·자가 갱신·packaging 과 충돌 여지가 커 수동 검토 대상. 마이너·패치는 자동 PR.",
+      "matchPackageNames": ["electron", "electron-builder", "electron-winstaller"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Playwright 버전은 CI(브라우저 바이너리) 와 함께 움직여야 한다 — 자동 PR 은 놔두되 한묶음으로.",
+      "matchPackageNames": ["playwright", "@playwright/test"],
+      "groupName": "playwright"
+    }
+  ]
+}

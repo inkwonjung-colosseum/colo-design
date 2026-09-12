@@ -1,4 +1,4 @@
-import type { CredentialStore } from "@cds-design/daemon/credentials";
+import type { CredentialStore } from "@colo-design/daemon/credentials";
 
 /**
  * safeStorage 기반 자격 증명 저장소(DESIGN §7: Keychain/DPAPI). Electron 의
@@ -57,8 +57,10 @@ export class SafeStorageCredentialStore implements CredentialStore {
 
   private write(entries: Record<string, string>): void {
     mkdirSync(dirname(this.file), { recursive: true });
-    const temporary = `${this.file}.cds-design-${process.pid}`;
-    writeFileSync(temporary, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
+    const temporary = `${this.file}.colo-design-${process.pid}`;
+    writeFileSync(temporary, `${JSON.stringify(entries, null, 2)}\n`, {
+      mode: 0o600,
+    });
     renameSync(temporary, this.file);
   }
 }

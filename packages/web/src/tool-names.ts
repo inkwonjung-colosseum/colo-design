@@ -1,7 +1,8 @@
-import type { RepoStatus } from "@cds-design/protocol";
-export { toolLabel } from "@cds-design/protocol";
+import type { RepoStatus } from "@colo-design/protocol";
 
-/** The repo's own cds-design.json commands, as RepoStatus carries them. */
+export { toolLabel } from "@colo-design/protocol";
+
+/** The repo's own colo-design.json commands, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
 /**
@@ -23,7 +24,7 @@ const GATE_LABEL: Record<keyof RepoCommands, string> = {
 
 /**
  * The headline a Bash row leads with (PLAN D37): a command that IS one of the
- * repo's own cds-design.json commands reads as that job; anything else keeps
+ * repo's own colo-design.json commands reads as that job; anything else keeps
  * the raw command, because `rm -rf` and `pnpm check` must never look alike.
  */
 export function bashHeadline(command: string, commands?: RepoCommands): string {

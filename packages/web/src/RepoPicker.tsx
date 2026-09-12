@@ -1,5 +1,5 @@
+import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GitHubRepo, GitHubRepoInspection } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 
 /** `https://github.com/o/r(.git)` → `o/r`, for matching a project's stored url. */
@@ -25,7 +25,7 @@ function relativeTime(iso: string | null): string {
 /**
  * A github.com url's owner/repo, or null for anything else. The manual path
  * uses it to run the same pre-clone inspection the list rows get (PLAN D31):
- * a url the token can inspect is a url whose `cds-design.json` we can check
+ * a url the token can inspect is a url whose `colo-design.json` we can check
  * before the download, and whose default branch we can name.
  */
 function githubSlugOf(url: string): { owner: string; repo: string } | null {
@@ -49,7 +49,7 @@ type Inspection =
  * Adding a project: not a url field but the list of repos the stored token
  * can push to — a read-only clone could start work but never hand it over,
  * so those rows never render. Picking one judges it before any
- * clone — `cds-design.json` presence is what separates a project from
+ * clone — `colo-design.json` presence is what separates a project from
  * minutes of downloading into a dead end — and a repo the list cannot see
  * still gets in through the folded manual url.
  *
@@ -201,13 +201,13 @@ export function RepoPicker({
     }
   };
 
-
   /**
    * The 만들기 gate (PLAN D28 → D94): the inspection must have answered, and
    * the answer must be a repo this tool can work in — OR one Claude can
    * prepare, which is a choice now, not a wall.
    */
-  const needsBootstrap = inspection !== null && inspection.phase === "ready" && !inspection.result.hasCdsDesign;
+  const needsBootstrap =
+    inspection !== null && inspection.phase === "ready" && !inspection.result.hasColoDesign;
   const [bootstrapCreate, setBootstrapCreate] = useState(false);
   /** The one explicit yes a new repo's install · preview commands need. */
   const [approveRun, setApproveRun] = useState(false);
@@ -216,7 +216,7 @@ export function RepoPicker({
   const blocked =
     inspection === null ||
     inspection.phase !== "ready" ||
-    (!inspection.result.hasCdsDesign && !bootstrapCreate) ||
+    (!inspection.result.hasColoDesign && !bootstrapCreate) ||
     !approveRun;
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -241,7 +241,7 @@ export function RepoPicker({
     const url = manualUrl.trim();
     try {
       // A GitHub url gets the list rows' inspection first (PLAN D31): the
-      // cds-design.json check and the default branch cost one request and
+      // colo-design.json check and the default branch cost one request and
       // save a planner from a download that could not have worked.
       const slug = githubSlugOf(url);
       const baseBranch = slug
@@ -268,7 +268,11 @@ export function RepoPicker({
         <p className="onboarding__detail">
           GitHub에 연결하면 목록에서 고를 수 있습니다 —{" "}
           {onOpenSettings ? (
-            <button type="button" className="ghost repopicker__settingslink" onClick={onOpenSettings}>
+            <button
+              type="button"
+              className="ghost repopicker__settingslink"
+              onClick={onOpenSettings}
+            >
               설정 → GitHub
             </button>
           ) : (
@@ -368,15 +372,16 @@ export function RepoPicker({
           ) : (
             <p
               className={`onboarding__detail repopicker__inspect repopicker__inspect--${
-                inspection.result.hasCdsDesign ? "ok" : "miss"
+                inspection.result.hasColoDesign ? "ok" : "miss"
               }`}
             >
-              {inspection.result.hasCdsDesign
-                ? `✓ cds-design.json 있음 · 기본 브랜치 ${inspection.result.defaultBranch}`
-                : "✗ 이 레포에는 cds-design.json이 없습니다 — Claude 가 연결을 준비할 수 있어요."}
+              {inspection.result.hasColoDesign
+                ? `✓ colo-design.json 있음 · 기본 브랜치 ${inspection.result.defaultBranch}`
+                : "✗ 이 레포에는 colo-design.json이 없습니다 — Claude 가 연결을 준비할 수 있어요."}
               {!inspection.result.canPush && (
                 <span className="repopicker__warnline">
-                  ! 이 토큰으로는 이 레포에 넘길 수 없습니다 — 화면 작업은 되지만 PR은 열지 못합니다.
+                  ! 이 토큰으로는 이 레포에 넘길 수 없습니다 — 화면 작업은 되지만 PR은 열지
+                  못합니다.
                 </span>
               )}
             </p>

@@ -6,14 +6,14 @@
  *
  * Layout, one folder per project:
  *
- *   ~/.cds-design/config/projects.json
- *   ~/.cds-design/projects/<slug>/repo/   the clone
+ *   ~/.colo-design/config/projects.json
+ *   ~/.colo-design/projects/<slug>/repo/   the clone
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { HandoffStatus } from "@cds-design/protocol";
-import { CONFIG_DIR, CDS_DESIGN_DIR } from "./environment.js";
+import type { HandoffStatus } from "@colo-design/protocol";
+import { COLO_DESIGN_DIR, CONFIG_DIR } from "./environment.js";
 
 export interface ProjectRepo {
   url: string | null;
@@ -46,7 +46,7 @@ export interface Project {
 
 /** Every path a project owns. */
 export interface ProjectPaths {
-  /** `~/.cds-design/projects/<slug>` */
+  /** `~/.colo-design/projects/<slug>` */
   root: string;
   /** The connected repo's clone. */
   repoRoot: string;
@@ -57,18 +57,18 @@ interface ProjectsFile {
   projects: Project[];
 }
 
-export const DEFAULT_BASE_BRANCH = "main";
+const DEFAULT_BASE_BRANCH = "main";
 
 /** The slug a pre-projects installation migrates into. */
-export const LEGACY_SLUG = "default";
+const LEGACY_SLUG = "default";
 
-/** `CDS_DESIGN_PROJECTS_SETTINGS` points a test at a throwaway registry. */
-export function projectsFile(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CDS_DESIGN_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
+/** `COLO_DESIGN_PROJECTS_SETTINGS` points a test at a throwaway registry. */
+function projectsFile(env: NodeJS.ProcessEnv = process.env): string {
+  return env.COLO_DESIGN_PROJECTS_SETTINGS ?? join(CONFIG_DIR, "projects.json");
 }
 
-export function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CDS_DESIGN_PROJECTS_DIR ?? join(CDS_DESIGN_DIR, "projects");
+function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return env.COLO_DESIGN_PROJECTS_DIR ?? join(COLO_DESIGN_DIR, "projects");
 }
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -79,14 +79,15 @@ export function projectsRoot(env: NodeJS.ProcessEnv = process.env): string {
  *
  * Only path-hostile characters are removed — the same set page filenames
  * drop — because the slug becomes a directory a human will one day stare at,
- * and `~/.cds-design/projects/결제/` is findable where `project-2` is not.
+ * and `~/.colo-design/projects/결제/` is findable where `project-2` is not.
  * Every filesystem this ships on stores UTF-8 names.
  *
  * Uniqueness is the caller's set of taken slugs.
  */
-export function slugify(name: string, taken: ReadonlySet<string>): string {
+function slugify(name: string, taken: ReadonlySet<string>): string {
   const base =
     name
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 제어 문자가 경로에 못 쓰이게 strip 하는 게 이 정규식의 목적이다.
       .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, "")
       .replace(/^\.+/, "")
       .trim()
@@ -156,7 +157,7 @@ function parseProject(raw: unknown): Project | null {
 }
 
 /** Reads the registry file, tolerating anything a hand edit could do to it. */
-export function loadProjectsFile(env: NodeJS.ProcessEnv = process.env): ProjectsFile {
+function loadProjectsFile(env: NodeJS.ProcessEnv = process.env): ProjectsFile {
   try {
     const parsed = JSON.parse(readFileSync(projectsFile(env), "utf8")) as Record<string, unknown>;
     const projects = Array.isArray(parsed.projects)
@@ -165,7 +166,10 @@ export function loadProjectsFile(env: NodeJS.ProcessEnv = process.env): Projects
     const active = cleanString(parsed.active);
     return {
       projects,
-      active: active && projects.some((project) => project.slug === active) ? active : (projects[0]?.slug ?? null),
+      active:
+        active && projects.some((project) => project.slug === active)
+          ? active
+          : (projects[0]?.slug ?? null),
     };
   } catch {
     return { active: null, projects: [] };
@@ -178,8 +182,10 @@ function saveProjectsFile(file: ProjectsFile, env: NodeJS.ProcessEnv = process.e
   // No secrets live here (the PAT is in the OS store), but the repo urls are
   // still the user's business: same private mode, same atomic replace as the
   // other settings files.
-  const temporary = `${path}.cds-design-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${path}.colo-design-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
+    mode: 0o600,
+  });
   renameSync(temporary, path);
 }
 
@@ -314,7 +320,7 @@ export class ProjectRegistry {
   /**
    * Where a project's files live.
    *
-   * `CDS_DESIGN_REPO_DIR` overrides the ACTIVE project's clone root and
+   * `COLO_DESIGN_REPO_DIR` overrides the ACTIVE project's clone root and
    * nothing else. That is how the offline suites keep driving fixture
    * remotes: they run one project, it is the active one, and the path they
    * prepared is the path it uses.
@@ -322,7 +328,7 @@ export class ProjectRegistry {
   paths(slug: string): ProjectPaths {
     const root = join(projectsRoot(this.env), slug);
     const activeOverride = slug === this.file.active;
-    const repoOverride = activeOverride ? this.env.CDS_DESIGN_REPO_DIR : undefined;
+    const repoOverride = activeOverride ? this.env.COLO_DESIGN_REPO_DIR : undefined;
     return {
       root,
       repoRoot: repoOverride ?? join(root, "repo"),
@@ -332,7 +338,7 @@ export class ProjectRegistry {
   /**
    * The remote the active project's workspace should actually talk to.
    *
-   * `CDS_DESIGN_REPO_URL` wins over the registry for the ACTIVE project, the
+   * `COLO_DESIGN_REPO_URL` wins over the registry for the ACTIVE project, the
    * same rule the path override follows. It is how the offline suites point a
    * project at a fixture remote — and it has to be applied HERE rather than
    * written into the registry, because the registry is what `update()`
@@ -341,7 +347,7 @@ export class ProjectRegistry {
   resolvedRepo(slug: string): ProjectRepo {
     const project = this.get(slug);
     if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${slug}`);
-    const override = slug === this.file.active ? cleanString(this.env.CDS_DESIGN_REPO_URL) : null;
+    const override = slug === this.file.active ? cleanString(this.env.COLO_DESIGN_REPO_URL) : null;
     return override ? { ...project.repo, url: override } : project.repo;
   }
 
@@ -378,25 +384,26 @@ export class ProjectRegistry {
 /**
  * Turns a pre-projects installation into the single project it always was.
  *
- * Two shapes arrive here. A real installation has `~/.cds-design/repo`, and
+ * Two shapes arrive here. A real installation has `~/.colo-design/repo`, and
  * that folder MOVES into `projects/default/`. A test (or a dev pointing the
- * daemon at scratch dirs) has `CDS_DESIGN_REPO_DIR` set, and nothing moves at
+ * daemon at scratch dirs) has `COLO_DESIGN_REPO_DIR` set, and nothing moves at
  * all: `paths()` keeps handing the active project exactly that directory.
  *
  * Migration reads only sources in the SAME configuration scope as the
  * registry it is filling. A run that redirected the registry
- * (`CDS_DESIGN_PROJECTS_SETTINGS`, which every offline suite sets) must not
- * inherit the developer's real `~/.cds-design` — that once produced a scratch
+ * (`COLO_DESIGN_PROJECTS_SETTINGS`, which every offline suite sets) must not
+ * inherit the developer's real `~/.colo-design` — that once produced a scratch
  * daemon that warm-started a clone of the developer's own remote and reported
  * a project nobody in that run had created.
  *
  * Returns null when there is nothing to migrate, which is what a genuinely
  * first run looks like.
  */
-export function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
-  const scoped = env.CDS_DESIGN_PROJECTS_SETTINGS !== undefined || env.CDS_DESIGN_PROJECTS_DIR !== undefined;
-  const legacyRepo = env.CDS_DESIGN_REPO_DIR ?? (scoped ? null : join(CDS_DESIGN_DIR, "repo"));
-  const repoUrl = env.CDS_DESIGN_REPO_URL ?? legacyRepoUrl(env, scoped);
+function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
+  const scoped =
+    env.COLO_DESIGN_PROJECTS_SETTINGS !== undefined || env.COLO_DESIGN_PROJECTS_DIR !== undefined;
+  const legacyRepo = env.COLO_DESIGN_REPO_DIR ?? (scoped ? null : join(COLO_DESIGN_DIR, "repo"));
+  const repoUrl = env.COLO_DESIGN_REPO_URL ?? legacyRepoUrl(env, scoped);
 
   const hasRepo = (legacyRepo !== null && existsSync(legacyRepo)) || repoUrl !== null;
   if (!hasRepo) return null;
@@ -404,7 +411,7 @@ export function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null
   const target = join(projectsRoot(env), LEGACY_SLUG);
   // With the env override in play the legacy path IS the project's path;
   // moving it would break the very run that set it.
-  if (!env.CDS_DESIGN_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
+  if (!env.COLO_DESIGN_REPO_DIR && legacyRepo && existsSync(legacyRepo)) {
     moveInto(legacyRepo, join(target, "repo"));
   }
 
@@ -414,7 +421,12 @@ export function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null
       {
         slug: LEGACY_SLUG,
         name: "내 프로젝트",
-        repo: { url: repoUrl, baseBranch: DEFAULT_BASE_BRANCH, branch: null, handoff: null },
+        repo: {
+          url: repoUrl,
+          baseBranch: DEFAULT_BASE_BRANCH,
+          branch: null,
+          handoff: null,
+        },
       },
     ],
   };
@@ -422,7 +434,7 @@ export function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null
 
 /** The url the old single-repo settings file held, if it still exists. */
 function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
-  const file = env.CDS_DESIGN_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
+  const file = env.COLO_DESIGN_REPO_SETTINGS ?? (scoped ? null : join(CONFIG_DIR, "repo.json"));
   if (!file) return null;
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -435,7 +447,7 @@ function legacyRepoUrl(env: NodeJS.ProcessEnv, scoped: boolean): string | null {
 /**
  * Moves a legacy folder under the project. A rename across devices fails on
  * some setups (a home directory on a different volume than a symlinked
- * `~/.cds-design`); there the migration is skipped rather than half-copied, and
+ * `~/.colo-design`); there the migration is skipped rather than half-copied, and
  * the project starts empty — a re-clone, not a loss, because the folder is
  * reproducible from its remote.
  */

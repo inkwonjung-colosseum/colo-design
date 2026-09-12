@@ -19,7 +19,7 @@ import { CONFIG_DIR } from "./environment.js";
 
 const run = promisify(execFile);
 
-export const CREDENTIAL_SERVICE = "CDS Design";
+export const CREDENTIAL_SERVICE = "Colo Design";
 /** The credential-store item holding the machine-wide GitHub token. */
 export const REPO_PAT_ITEM = "pat";
 
@@ -37,7 +37,7 @@ export class CredentialStoreUnavailable extends Error {
 }
 
 export interface CredentialStore {
-  /** Stores (or replaces) a secret under the CDS Design service. */
+  /** Stores (or replaces) a secret under the Colo Design service. */
   save(item: string, secret: string): Promise<void>;
   load(item: string): Promise<string | null>;
   delete(item: string): Promise<void>;
@@ -124,11 +124,11 @@ export class DpapiCredentialStore implements CredentialStore {
 }
 
 /**
- * CDS_DESIGN_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
+ * COLO_DESIGN_CREDENTIAL_STORE forces a backend (tests use memory); otherwise
  * macOS → Keychain, Windows → the DPAPI stub, everything else → memory.
  */
 export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): CredentialStore {
-  const forced = env.CDS_DESIGN_CREDENTIAL_STORE;
+  const forced = env.COLO_DESIGN_CREDENTIAL_STORE;
   if (forced === "memory") return new MemoryCredentialStore();
   if (forced === "keychain") return new KeychainCredentialStore();
   if (process.platform === "darwin") return new KeychainCredentialStore();
@@ -141,7 +141,7 @@ export function createCredentialStore(env: NodeJS.ProcessEnv = process.env): Cre
 // ---------------------------------------------------------------------------
 
 /**
- * The machine-wide GitHub token: CDS_DESIGN_REPO_PAT wins over the store. One
+ * The machine-wide GitHub token: COLO_DESIGN_REPO_PAT wins over the store. One
  * token answers for every project on this machine — the `github` onboarding
  * gate stores it, repo clones authenticate with it, and the project picker's
  * repo list is what it can see.
@@ -150,7 +150,7 @@ export async function loadRepoPat(
   store: CredentialStore,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
-  return env.CDS_DESIGN_REPO_PAT ?? (await safeLoad(store, REPO_PAT_ITEM));
+  return env.COLO_DESIGN_REPO_PAT ?? (await safeLoad(store, REPO_PAT_ITEM));
 }
 
 /**
@@ -216,7 +216,7 @@ function plaintextTargets(env: NodeJS.ProcessEnv): PlainTextSettings[] {
       // The pre-projects shape: one repo.json holding one PAT, which lands
       // under the machine-wide item. Projects file theirs under `pat:<slug>`,
       // and projects.ts reads this same file once to migrate the url.
-      file: env.CDS_DESIGN_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
+      file: env.COLO_DESIGN_REPO_SETTINGS ?? join(CONFIG_DIR, "repo.json"),
       secretKey: "pat",
       item: REPO_PAT_ITEM,
     },
@@ -260,14 +260,14 @@ export async function migratePlaintextSecrets(
 
 function writeAtomic(file: string, contents: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  const temporary = `${file}.cds-design-${process.pid}`;
+  const temporary = `${file}.colo-design-${process.pid}`;
   writeFileSync(temporary, contents, { mode: 0o600 });
   renameSync(temporary, file);
 }
 
-/** Where the user-level npmrc lives — CDS_DESIGN_NPMRC overrides HOME (tests). */
+/** Where the user-level npmrc lives — COLO_DESIGN_NPMRC overrides HOME (tests). */
 export function npmrcPath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.CDS_DESIGN_NPMRC) return env.CDS_DESIGN_NPMRC;
+  if (env.COLO_DESIGN_NPMRC) return env.COLO_DESIGN_NPMRC;
   const home = env.HOME ?? homedir();
   return join(home, ".npmrc");
 }
@@ -276,14 +276,13 @@ export function npmrcPath(env: NodeJS.ProcessEnv = process.env): string {
  * Merges registry lines into an npmrc without clobbering anything else:
  * same-key lines are replaced in place, new ones appended.
  */
-export function mergeNpmrc(
-  file: string,
-  lines: Array<{ key: string; value: string }>,
-): void {
+export function mergeNpmrc(file: string, lines: Array<{ key: string; value: string }>): void {
   const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
   const kept = existing
     .split("\n")
-    .filter((line) => line.trim() !== "" && !lines.some((entry) => line.startsWith(`${entry.key}=`)));
+    .filter(
+      (line) => line.trim() !== "" && !lines.some((entry) => line.startsWith(`${entry.key}=`)),
+    );
   const merged = [...kept, ...lines.map((entry) => `${entry.key}=${entry.value}`)];
   writeAtomic(file, `${merged.join("\n")}\n`);
 }

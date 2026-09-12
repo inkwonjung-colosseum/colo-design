@@ -1,19 +1,19 @@
+import type { SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { SessionSummary, ThreadSummary } from "@cds-design/protocol";
-import type { Daemon } from "./daemon-client";
-import { useSessions } from "./useSessions";
 import { ChatColumn } from "./ChatColumn";
-import { ScreenPanel } from "./ScreenPanel";
-import { Palette } from "./Palette";
 import { ConfirmDialog } from "./ConfirmDialog";
+import type { Daemon } from "./daemon-client";
+import { Palette } from "./Palette";
+import { ScreenPanel } from "./ScreenPanel";
 import { ShortcutsSheet } from "./ShortcutsSheet";
+import { Splitter } from "./Splitter";
 import {
-  PREVIEW_WIDTH_BOUNDS,
   type ChatSettings,
   type LayoutSettings,
+  PREVIEW_WIDTH_BOUNDS,
   type Settings,
 } from "./settings";
-import { Splitter } from "./Splitter";
+import { useSessions } from "./useSessions";
 
 /** The chat column's floor, in px. The preview's drag may squeeze the chat;
  * it may never squeeze the conversation the planner is reading. */
@@ -37,7 +37,9 @@ function defaultPreviewWidth(): number {
  */
 function clampWidth(value: number, bodyWidth: number): number {
   const max = Math.min(PREVIEW_WIDTH_BOUNDS.max, bodyWidth - CHAT_MIN);
-  return Math.round(Math.min(Math.max(value, PREVIEW_WIDTH_BOUNDS.min), Math.max(PREVIEW_WIDTH_BOUNDS.min, max)));
+  return Math.round(
+    Math.min(Math.max(value, PREVIEW_WIDTH_BOUNDS.min), Math.max(PREVIEW_WIDTH_BOUNDS.min, max)),
+  );
 }
 
 /**
@@ -50,6 +52,8 @@ export interface WorkspaceHandle {
   newThread: (slug: string) => void;
   /** 지우기, from a leaf's `···` (PLAN D76). */
   deleteThread: (slug: string, thread: ThreadSummary) => void;
+  /** The tree's `이전 대화 더 보기` — the palette, scoped to that project. */
+  browseThreads: (slug: string) => void;
 }
 
 /**
@@ -117,6 +121,9 @@ export function PageWorkspace({
    * they carry a modifier, so typing in the composer never meets them.
    */
   const [palette, setPalette] = useState(false);
+  /** The project the palette was opened for (the tree's 더 보기 row); null —
+      the palette answers to the whole frame. ⌘K always opens it unscoped. */
+  const [paletteSlug, setPaletteSlug] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const shortcuts = useRef({
     palette: () => {},
@@ -125,7 +132,10 @@ export function PageWorkspace({
     sheet: () => {},
   });
   shortcuts.current = {
-    palette: () => setPalette((open) => !open),
+    palette: () => {
+      setPaletteSlug(null);
+      setPalette((open) => !open);
+    },
     newSession: () => void sessions.create(),
     settings: onOpenSettings,
     sheet: () => setSheetOpen((open) => !open),
@@ -142,7 +152,11 @@ export function PageWorkspace({
    * stashed ask — open a thread, start one — lands in its own project. One
    * click for the planner, two hops here.
    */
-  const jump = useRef<{ slug: string; threadId?: string; fresh?: boolean } | null>(null);
+  const jump = useRef<{
+    slug: string;
+    threadId?: string;
+    fresh?: boolean;
+  } | null>(null);
   useEffect(() => {
     const pending = jump.current;
     if (!pending || daemon.activeSlug !== pending.slug) return;
@@ -213,6 +227,10 @@ export function PageWorkspace({
         },
       );
     },
+    browseThreads: (slug) => {
+      setPaletteSlug(slug);
+      setPalette(true);
+    },
   }));
 
   useEffect(() => {
@@ -235,7 +253,6 @@ export function PageWorkspace({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
 
   /**
    * Comment pins from the preview land in the working thread, started on the
@@ -263,7 +280,10 @@ export function PageWorkspace({
   );
   const bodyRef = useRef<HTMLDivElement>(null);
   /** The drag in flight: where the pointer started, how wide. */
-  const [drag, setDrag] = useState<{ startX: number; startWidth: number } | null>(null);
+  const [drag, setDrag] = useState<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   // A shrunken window must not keep overflowing widths: the chat column is
   // what gives, down to its floor.
@@ -298,7 +318,7 @@ export function PageWorkspace({
     const bodyWidth = bodyRef.current?.clientWidth;
     if (!bodyWidth) return;
     const delta = event.clientX - drag.startX;
-    setPreviewWidth((prev) => clampWidth(drag.startWidth - delta, bodyWidth));
+    setPreviewWidth(clampWidth(drag.startWidth - delta, bodyWidth));
   };
 
   // The last render before the pointer came up carries the final width, so
@@ -340,7 +360,11 @@ export function PageWorkspace({
           sendKey={settings.sendKey}
           // D83: 빈 대화의 placeholder 가 가르친다 — 화면 만들기는 단계가
           // 아니라 아무 대화에서나 하는 한 턴이다.
-          placeholder={sessions.activeId ? "만들고 싶은 화면을 말해 주세요" : "기획서를 첨부하고 화면을 시켜 보세요."}
+          placeholder={
+            sessions.activeId
+              ? "만들고 싶은 화면을 말해 주세요"
+              : "기획서를 첨부하고 화면을 시켜 보세요."
+          }
           disabled={false}
           titleFor={titleFor}
           onRenameSession={onRenameSession}
@@ -377,6 +401,7 @@ export function PageWorkspace({
           activeSessionId={sessions.activeId}
           projects={daemon.projects}
           activeSlug={daemon.activeSlug}
+          projectSlug={paletteSlug}
           onOpenThread={(slug, thread) => {
             if (slug === daemon.activeSlug) void openThreadById(thread.id);
             else jumpTo({ slug, threadId: thread.id });
@@ -408,4 +433,3 @@ export function PageWorkspace({
     </div>
   );
 }
-

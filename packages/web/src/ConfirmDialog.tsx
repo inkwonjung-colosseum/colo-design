@@ -1,5 +1,6 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { CloseIcon } from "./icons";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * 결함③ (PLAN 0단계) — the one confirm dialog. `window.confirm` 은 이 앱의
@@ -32,16 +33,20 @@ export function ConfirmDialog({
   children?: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  useModalFocus(panel);
   useEffect(() => {
     panel.current?.focus();
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [onClose]);
   return (
-    <div className="modal" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className="modal"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
       <div
         className="modal__panel sidebar__remove"
         role="dialog"

@@ -6,12 +6,16 @@
  *
  * Run: node --test packages/daemon/test/onboarding.test.mjs
  */
-import { test } from "node:test";
+
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { mergeNpmrc, npmrcPath } from "../dist/credentials.js";
+import { gitCandidates, resolveGitExecutable, resolveNodeVersion } from "../dist/environment.js";
+import { GitHubClient } from "../dist/github.js";
 import {
   checkRuntime,
   gitInstallGuidance,
@@ -20,13 +24,6 @@ import {
   startClaudeInstall,
   startClaudeLogin,
 } from "../dist/onboarding.js";
-import {
-  gitCandidates,
-  resolveGitExecutable,
-  resolveNodeVersion,
-} from "../dist/environment.js";
-import { GitHubClient } from "../dist/github.js";
-import { mergeNpmrc, npmrcPath } from "../dist/credentials.js";
 import { writeStubClaude } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -56,8 +53,8 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
   const dir = workdir("hub-onboard-empty-");
   const previousPath = process.env.PATH;
   const previousHome = process.env.HOME;
-  const previousClaudeBin = process.env.CDS_DESIGN_CLAUDE_BIN;
-  const previousGitBin = process.env.CDS_DESIGN_GIT_BIN;
+  const previousClaudeBin = process.env.COLO_DESIGN_CLAUDE_BIN;
+  const previousGitBin = process.env.COLO_DESIGN_GIT_BIN;
   try {
     // A genuinely empty machine: nothing on PATH, no HOME-owned installs,
     // and the git resolver pinned at nothing — its candidate list would
@@ -67,8 +64,8 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
     // claude's override plays the same role for its candidate list.
     process.env.HOME = dir;
     process.env.PATH = join(dir, "empty-bin");
-    process.env.CDS_DESIGN_GIT_BIN = join(dir, "no-git");
-    delete process.env.CDS_DESIGN_CLAUDE_BIN;
+    process.env.COLO_DESIGN_GIT_BIN = join(dir, "no-git");
+    delete process.env.COLO_DESIGN_CLAUDE_BIN;
     const steps = await runOnboardingChecks({
       claudeExecutableOverride: join(dir, "no-claude"),
       pnpmResolver: () => Promise.resolve(null),
@@ -77,7 +74,10 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
     const claude = find(steps, "claude");
     assert.equal(claude.status, "fail");
     assert.match(claude.detail, /Claude Code CLI를 찾지 못했습니다/);
-    assert.deepEqual(claude.fix, { kind: "install-claude", label: "Claude Code 설치" });
+    assert.deepEqual(claude.fix, {
+      kind: "install-claude",
+      label: "Claude Code 설치",
+    });
 
     const git = find(steps, "git");
     assert.equal(git.status, "fail");
@@ -89,7 +89,11 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
     assert.match(runtime.detail, /pnpm이 없습니다/);
     assert.deepEqual(
       runtime.fix,
-      { kind: "install-node", label: "Node.js 내려받기", href: "https://nodejs.org/ko/download" },
+      {
+        kind: "install-node",
+        label: "Node.js 내려받기",
+        href: "https://nodejs.org/ko/download",
+      },
       "node is a link, never an installer; pnpm carries the second fix",
     );
 
@@ -108,10 +112,10 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
     else process.env.PATH = previousPath;
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
-    if (previousClaudeBin === undefined) delete process.env.CDS_DESIGN_CLAUDE_BIN;
-    else process.env.CDS_DESIGN_CLAUDE_BIN = previousClaudeBin;
-    if (previousGitBin === undefined) delete process.env.CDS_DESIGN_GIT_BIN;
-    else process.env.CDS_DESIGN_GIT_BIN = previousGitBin;
+    if (previousClaudeBin === undefined) delete process.env.COLO_DESIGN_CLAUDE_BIN;
+    else process.env.COLO_DESIGN_CLAUDE_BIN = previousClaudeBin;
+    if (previousGitBin === undefined) delete process.env.COLO_DESIGN_GIT_BIN;
+    else process.env.COLO_DESIGN_GIT_BIN = previousGitBin;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -169,8 +173,8 @@ test("git passes through the stub and fails with CLT guidance when missing", asy
     const broken = stubPath(dir, { gitVersion: false });
     // The pin beats every discovery path: without it the candidate list
     // would find this machine's own git and pass a machine with none.
-    const previousPin = process.env.CDS_DESIGN_GIT_BIN;
-    process.env.CDS_DESIGN_GIT_BIN = join(dir, "no-git");
+    const previousPin = process.env.COLO_DESIGN_GIT_BIN;
+    process.env.COLO_DESIGN_GIT_BIN = join(dir, "no-git");
     process.env.PATH = `${broken}:/usr/bin:/bin`;
     try {
       const without = await runOnboardingChecks(deps);
@@ -185,8 +189,8 @@ test("git passes through the stub and fails with CLT guidance when missing", asy
       assert.match(step.detail, expectedGuidance);
       assert.equal(step.fix?.kind, "install-git");
     } finally {
-      if (previousPin === undefined) delete process.env.CDS_DESIGN_GIT_BIN;
-      else process.env.CDS_DESIGN_GIT_BIN = previousPin;
+      if (previousPin === undefined) delete process.env.COLO_DESIGN_GIT_BIN;
+      else process.env.COLO_DESIGN_GIT_BIN = previousPin;
       process.env.PATH = previousPath;
     }
   } finally {
@@ -200,7 +204,10 @@ test("a declared registry merges into the user's npmrc without clobbering", () =
     const file = npmrcPath({ HOME: home });
     writeFileSync(file, "registry=https://registry.npmjs.org/\n");
     mergeNpmrc(file, [
-      { key: "@colosseumcoinckr:registry", value: "https://npm.pkg.github.com/" },
+      {
+        key: "@colosseumcoinckr:registry",
+        value: "https://npm.pkg.github.com/",
+      },
       { key: "//npm.pkg.github.com/:_authToken", value: "ghp_registry" },
     ]);
     const merged = readFileSync(file, "utf8");
@@ -211,7 +218,6 @@ test("a declared registry merges into the user's npmrc without clobbering", () =
     rmSync(home, { recursive: true, force: true });
   }
 });
-
 
 // ---------------------------------------------------------------------------
 // The github gate
@@ -336,25 +342,25 @@ test("the claude installer speaks each platform's own one-liner", () => {
 
 test("the git resolver: the pin decides, PATH wins, candidates fill the gaps", async () => {
   const dir = workdir("hub-onboard-gitresolve-");
-  const previousPin = process.env.CDS_DESIGN_GIT_BIN;
+  const previousPin = process.env.COLO_DESIGN_GIT_BIN;
   const previousPath = process.env.PATH;
   try {
     // The pin replaces discovery: a working stub resolves to itself.
     const bin = stubPath(dir);
-    process.env.CDS_DESIGN_GIT_BIN = join(bin, "git");
+    process.env.COLO_DESIGN_GIT_BIN = join(bin, "git");
     assert.equal(await resolveGitExecutable(), join(bin, "git"));
 
     // A pinned but missing git stays missing — no candidate may rescue it.
-    process.env.CDS_DESIGN_GIT_BIN = join(dir, "no-git");
+    process.env.COLO_DESIGN_GIT_BIN = join(dir, "no-git");
     assert.equal(await resolveGitExecutable(), null);
 
     // Without a pin, PATH wins: the stub ahead of it is the binary that runs.
-    delete process.env.CDS_DESIGN_GIT_BIN;
+    delete process.env.COLO_DESIGN_GIT_BIN;
     process.env.PATH = `${bin}:${previousPath}`;
     assert.equal(await resolveGitExecutable(), "git");
   } finally {
-    if (previousPin === undefined) delete process.env.CDS_DESIGN_GIT_BIN;
-    else process.env.CDS_DESIGN_GIT_BIN = previousPin;
+    if (previousPin === undefined) delete process.env.COLO_DESIGN_GIT_BIN;
+    else process.env.COLO_DESIGN_GIT_BIN = previousPin;
     process.env.PATH = previousPath;
     rmSync(dir, { recursive: true, force: true });
   }
@@ -386,14 +392,14 @@ function writeStubNode(dir, version) {
 
 test("the runtime gate passes a healthy node 22 + pnpm and names the versions", async () => {
   const dir = workdir("hub-onboard-runtime-ok-");
-  const previousExtra = process.env.CDS_DESIGN_EXTRA_PATH;
+  const previousExtra = process.env.COLO_DESIGN_EXTRA_PATH;
   const previousPath = process.env.PATH;
   try {
     const nodeBin = writeStubNode(dir, "v22.12.0");
     const pnpm = join(nodeBin, "pnpm");
     writeFileSync(pnpm, "#!/bin/sh\necho 10.4.1\n");
     chmodSync(pnpm, 0o755);
-    process.env.CDS_DESIGN_EXTRA_PATH = "";
+    process.env.COLO_DESIGN_EXTRA_PATH = "";
     process.env.PATH = `${nodeBin}:${previousPath}`;
 
     const step = await checkRuntime(() => Promise.resolve(pnpm));
@@ -402,20 +408,20 @@ test("the runtime gate passes a healthy node 22 + pnpm and names the versions", 
     assert.match(step.detail, /pnpm 10\.4\.1/);
   } finally {
     process.env.PATH = previousPath;
-    if (previousExtra === undefined) delete process.env.CDS_DESIGN_EXTRA_PATH;
-    else process.env.CDS_DESIGN_EXTRA_PATH = previousExtra;
+    if (previousExtra === undefined) delete process.env.COLO_DESIGN_EXTRA_PATH;
+    else process.env.COLO_DESIGN_EXTRA_PATH = previousExtra;
   }
 });
 
 test("an old node fails with the version it found; the fix is a link, never an installer", async () => {
   const dir = workdir("hub-onboard-runtime-old-");
-  const previousExtra = process.env.CDS_DESIGN_EXTRA_PATH;
+  const previousExtra = process.env.COLO_DESIGN_EXTRA_PATH;
   try {
     const nodeBin = writeStubNode(dir, "v20.11.0");
     const pnpm = join(nodeBin, "pnpm");
     writeFileSync(pnpm, "#!/bin/sh\necho 10.4.1\n");
     chmodSync(pnpm, 0o755);
-    process.env.CDS_DESIGN_EXTRA_PATH = "";
+    process.env.COLO_DESIGN_EXTRA_PATH = "";
     const previousPath = process.env.PATH;
     process.env.PATH = `${nodeBin}:${previousPath}`;
 
@@ -428,17 +434,17 @@ test("an old node fails with the version it found; the fix is a link, never an i
       href: "https://nodejs.org/ko/download",
     });
   } finally {
-    if (previousExtra === undefined) delete process.env.CDS_DESIGN_EXTRA_PATH;
-    else process.env.CDS_DESIGN_EXTRA_PATH = previousExtra;
+    if (previousExtra === undefined) delete process.env.COLO_DESIGN_EXTRA_PATH;
+    else process.env.COLO_DESIGN_EXTRA_PATH = previousExtra;
   }
 });
 
-test("a node under CDS_DESIGN_EXTRA_PATH is the bundled runtime and wins over PATH", async () => {
+test("a node under COLO_DESIGN_EXTRA_PATH is the bundled runtime and wins over PATH", async () => {
   const dir = workdir("hub-onboard-runtime-bundled-");
-  const previousExtra = process.env.CDS_DESIGN_EXTRA_PATH;
+  const previousExtra = process.env.COLO_DESIGN_EXTRA_PATH;
   try {
     const bundledBin = writeStubNode(dir, "v22.20.0");
-    process.env.CDS_DESIGN_EXTRA_PATH = bundledBin;
+    process.env.COLO_DESIGN_EXTRA_PATH = bundledBin;
 
     const resolved = await resolveNodeVersion();
     assert.deepEqual(resolved, { version: "v22.20.0", bundled: true });
@@ -453,8 +459,8 @@ test("a node under CDS_DESIGN_EXTRA_PATH is the bundled runtime and wins over PA
     assert.equal(step.status, "pass");
     assert.match(step.detail, /앱에 포함됨/);
   } finally {
-    if (previousExtra === undefined) delete process.env.CDS_DESIGN_EXTRA_PATH;
-    else process.env.CDS_DESIGN_EXTRA_PATH = previousExtra;
+    if (previousExtra === undefined) delete process.env.COLO_DESIGN_EXTRA_PATH;
+    else process.env.COLO_DESIGN_EXTRA_PATH = previousExtra;
   }
 });
 

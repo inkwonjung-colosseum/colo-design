@@ -7,7 +7,7 @@
  * clone share), the repo list the token can see, `project.create`, the repo
  * fix, and the tab gate opening when every step passes.
  *
- * Nothing here points CDS_DESIGN_REPO_URL at the fixture remote: this suite
+ * Nothing here points COLO_DESIGN_REPO_URL at the fixture remote: this suite
  * is the one that must see a genuinely first run, so the registry migration
  * finds no legacy repo and no legacy url, and the daemon comes up with zero
  * projects.
@@ -16,29 +16,28 @@
  */
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 import { WebSocket } from "ws";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DIR = join(tmpdir(), "cds-design-onboard-e2e");
+const DIR = join(tmpdir(), "colo-design-onboard-e2e");
 const REPO_PAT = "onboard_e2e_pat";
 
-process.env.CDS_DESIGN_CREDENTIAL_STORE = "memory";
-process.env.CDS_DESIGN_REPO_DIR = join(DIR, "work");
-process.env.CDS_DESIGN_REPO_SETTINGS = join(DIR, "repo.json");
+process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
+process.env.COLO_DESIGN_REPO_DIR = join(DIR, "work");
+process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "repo.json");
 // The project registry decides whether this run has a project at all, so it
 // must be this run's own file: on the default path the daemon would write
-// ~/cds-design/config/projects.json and the next run would start already
+// ~/colo-design/config/projects.json and the next run would start already
 // migrated, from a fixture remote that no longer exists.
-process.env.CDS_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
-process.env.CDS_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
+process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 // The github gate and the repo list talk to the recorded pairs, never to
 // api.github.com — the suite stays offline like the rest of it.
-process.env.CDS_DESIGN_GITHUB_FIXTURE = join(here, "fixtures", "github");
+process.env.COLO_DESIGN_GITHUB_FIXTURE = join(here, "fixtures", "github");
 const results = [];
 function check(name, passed, detail = "") {
   if (typeof passed !== "boolean") {
@@ -65,10 +64,17 @@ function step(steps, id) {
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
-  const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: await freePort() });
+  const fixture = await createFixtureRepo({
+    dir: join(DIR, "fixture"),
+    port: await freePort(),
+  });
 
   const port = await freePort();
-  const server = new DaemonServer({ host: "127.0.0.1", port, token: "onboard-e2e" });
+  const server = new DaemonServer({
+    host: "127.0.0.1",
+    port,
+    token: "onboard-e2e",
+  });
   await server.start();
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}?token=onboard-e2e`);
@@ -81,7 +87,11 @@ async function main() {
 
   const request = async (message, timeoutMs = 120_000) => {
     ws.send(JSON.stringify(message));
-    const reply = await waitFor(() => inbox.find((m) => m.id === message.id), timeoutMs, message.type);
+    const reply = await waitFor(
+      () => inbox.find((m) => m.id === message.id),
+      timeoutMs,
+      message.type,
+    );
     if (reply.type === "ok") return reply.data;
     throw new Error(`${message.type} failed: ${reply.message}`);
   };
@@ -125,7 +135,11 @@ async function main() {
     );
 
     // --- 2. github.token.set is the fix for the github gate ----------------
-    const githubStep = await request({ id: "t1", type: "github.token.set", token: REPO_PAT });
+    const githubStep = await request({
+      id: "t1",
+      type: "github.token.set",
+      token: REPO_PAT,
+    });
     check(
       "the stored token names the login it acts as",
       githubStep.status === "pass" && /GitHub @jik-dev 로 연결됨/.test(githubStep.detail),
@@ -137,23 +151,23 @@ async function main() {
     check(
       "the picker's list names the repos the token can see",
       repos.truncated === false &&
-        repos.repos.some((repo) => repo.fullName === "cds-org/payments-web") &&
-        !repos.repos.some((repo) => repo.fullName === "cds-org/archive"),
+        repos.repos.some((repo) => repo.fullName === "colo-org/payments-web") &&
+        !repos.repos.some((repo) => repo.fullName === "colo-org/archive"),
       JSON.stringify(repos.repos.map((repo) => repo.fullName)),
     );
 
     // The picker judges one repo before any clone: a repo without a
-    // cds-design.json cannot become a project, and saying so here is what
+    // colo-design.json cannot become a project, and saying so here is what
     // saves the planner the download.
     const inspection = await request({
       id: "i1",
       type: "github.repo.inspect",
-      owner: "cds-org",
+      owner: "colo-org",
       repo: "payments-web",
     });
     check(
-      "inspect answers cds-design.json, push access and the base branch",
-      inspection.hasCdsDesign === true && inspection.defaultBranch === "main",
+      "inspect answers colo-design.json, push access and the base branch",
+      inspection.hasColoDesign === true && inspection.defaultBranch === "main",
       JSON.stringify(inspection),
     );
 
@@ -227,7 +241,6 @@ async function main() {
   // the parallel runner's lane.
   process.exit(0);
 }
-
 
 main().catch((error) => {
   console.error(error);

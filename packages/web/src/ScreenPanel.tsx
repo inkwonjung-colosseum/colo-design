@@ -1,39 +1,44 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  CdsDesignCommentsEnvelope,
-  CdsDesignScreen,
+  ColoDesignCommentsEnvelope,
+  ColoDesignScreen,
+  DeveloperReview,
   DiffFile,
-  RepoStatus,
   SessionState,
-} from "@cds-design/protocol";
-import { markTurn } from "@cds-design/protocol";
-import type { CommentItem, Daemon } from "./daemon-client";
-import { stateLabel } from "./format";
-import { PreviewHost, type PreviewError, type PreviewLocation, type PreviewTarget } from "./PreviewHost";
-import { HistoryDrawer } from "./HistoryDrawer";
-import { deriveDelivery } from "./delivery";
-import { DiffPanel } from "./DiffPanel";
-import { CommentsPopover } from "./CommentsPopover";
+} from "@colo-design/protocol";
+import { markTurn } from "@colo-design/protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CoachMark } from "./CoachMark";
+import { CommentsPopover } from "./CommentsPopover";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DiffPanel } from "./DiffPanel";
+import type { CommentItem, Daemon } from "./daemon-client";
+import { deriveDelivery } from "./delivery";
+import { stateLabel } from "./format";
 import { HandoffPanel } from "./HandoffPanel";
+import { HistoryDrawer } from "./HistoryDrawer";
 import { handoffDraft } from "./handoff-draft";
-import { ProgressPanel, errorKindOf } from "./RepoProgress";
+import { ChevronDownIcon, CloseIcon, RefreshIcon } from "./icons";
 import {
-  commentToTurn,
+  type PreviewError,
+  PreviewHost,
+  type PreviewLocation,
+  type PreviewTarget,
+} from "./PreviewHost";
+import {
   commentsToTurn,
+  commentToTurn,
   errorToTurn,
   lookToTurn,
   reviewToTurn,
 } from "./preview-turns";
-import { ChevronDownIcon, CloseIcon, RefreshIcon } from "./icons";
-import type { DeveloperReview } from "@cds-design/protocol";
+import { errorKindOf, ProgressPanel } from "./RepoProgress";
 import {
   isReplyConfirmed,
   loadHandledReviews,
   markReplyConfirmed,
   saveHandledReview,
 } from "./settings";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * 확인해 주세요 지속화 (D78): attention ids per project, so a reload or a
@@ -44,7 +49,9 @@ import {
 function loadAttention(slug: string | null): string[] {
   if (!slug) return [];
   try {
-    const raw = JSON.parse(localStorage.getItem(`cds-design.attention.${slug}`) ?? "[]") as unknown;
+    const raw = JSON.parse(
+      localStorage.getItem(`colo-design.attention.${slug}`) ?? "[]",
+    ) as unknown;
     return Array.isArray(raw) && raw.every((id) => typeof id === "string") ? (raw as string[]) : [];
   } catch {
     return [];
@@ -54,12 +61,11 @@ function loadAttention(slug: string | null): string[] {
 function saveAttention(slug: string | null, ids: string[]): void {
   if (!slug) return;
   try {
-    localStorage.setItem(`cds-design.attention.${slug}`, JSON.stringify(ids));
+    localStorage.setItem(`colo-design.attention.${slug}`, JSON.stringify(ids));
   } catch {
     // 저장이 막혀도 이번 실행의 하이라이트는 메모리의 몫으로 끝난다.
   }
 }
-
 
 /**
  * The workspace's right column: the connected repo clone rendered by its own
@@ -92,7 +98,11 @@ export function ScreenPanel({
    * named after the screen if there is none yet. `images` rides along (D87):
    * the crops the view took of the pinned elements.
    */
-  onComments: (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => Promise<void>;
+  onComments: (
+    turn: string,
+    name?: string,
+    images?: Array<{ mediaType: string; data: string }>,
+  ) => Promise<void>;
   /** State of the thread the comments went to, so pins clear when it settles. */
   turnState: SessionState;
   /**
@@ -149,7 +159,11 @@ export function ScreenPanel({
    */
   const [attention, setAttention] = useState<string[]>(() => loadAttention(activeSlug));
   /** What the last pin batch sent — turned into `attention` at turn end. */
-  const sentPins = useRef<{ screen: string; state: string; ids: string[] } | null>(null);
+  const sentPins = useRef<{
+    screen: string;
+    state: string;
+    ids: string[];
+  } | null>(null);
   /** Whether the carrying turn actually ran (a stale session settles at once). */
   const pinsTurnRan = useRef(false);
   // Switching projects switches the store's scope — the outgoing project's
@@ -164,7 +178,7 @@ export function ScreenPanel({
    * old repo that declares nothing and an app that has not booted yet look
    * identical from here.
    */
-  const [screens, setScreens] = useState<CdsDesignScreen[]>([]);
+  const [screens, setScreens] = useState<ColoDesignScreen[]>([]);
 
   /**
    * Which screen and state the preview shows. The toolbar is the screens'
@@ -216,14 +230,15 @@ export function ScreenPanel({
   const [replyConfirmFor, setReplyConfirmFor] = useState<number | null>(null);
   const [devBusy, setDevBusy] = useState(false);
   const devPanelRef = useRef<HTMLDivElement>(null);
+  useModalFocus(devPanelRef, devPanelOpen);
   useEffect(() => {
     if (!devPanelOpen) return;
     devPanelRef.current?.focus();
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setDevPanelOpen(false);
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [devPanelOpen]);
   /** Lists answered out of order must not paint over a newer one. */
   const listNonce = useRef(0);
@@ -471,7 +486,7 @@ export function ScreenPanel({
   /** 크게 보기 — 클릭하면 기획자 iframe 위에 겹치고, 턴이 끝나면 접힌다. */
   const [pipLarge, setPipLarge] = useState(false);
   useEffect(() => {
-    const subscribe = window.cdsDesignDesktop?.preview?.onFrame;
+    const subscribe = window.coloDesignDesktop?.preview?.onFrame;
     if (typeof subscribe !== "function") return;
     subscribe((jpeg: string) => setPipFrame(jpeg));
   }, []);
@@ -482,7 +497,7 @@ export function ScreenPanel({
    * words (DESIGN §6). The list re-read replaces this screen·state's
    * unresolved rows; the overlay redraws from it.
    */
-  const forwardComments = async (envelope: CdsDesignCommentsEnvelope) => {
+  const forwardComments = async (envelope: ColoDesignCommentsEnvelope) => {
     // D87: the crops the view took of each pin ride the turn as images —
     // what the planner SAW, Claude sees too.
     const images = envelope.items
@@ -527,7 +542,11 @@ export function ScreenPanel({
     // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
     // after the screen the pins came from is the honest one-line answer to
     // "where did this tab come from".
-    await onComments(commentsToTurn(envelope, named?.title ?? envelope.screen), named?.title, images);
+    await onComments(
+      commentsToTurn(envelope, named?.title ?? envelope.screen),
+      named?.title,
+      images,
+    );
   };
 
   /** The popover's 해결 toggle: one daemon write, then the list re-reads. */
@@ -535,7 +554,10 @@ export function ScreenPanel({
     setResolvingId(id);
     if (resolved) {
       setAttention((prev) => prev.filter((entry) => entry !== id));
-      saveAttention(activeSlug, attention.filter((entry) => entry !== id));
+      saveAttention(
+        activeSlug,
+        attention.filter((entry) => entry !== id),
+      );
     }
     api
       .resolveComment(id, resolved)
@@ -598,16 +620,15 @@ export function ScreenPanel({
     const state = new URLSearchParams(query).get("state");
     setLookBusy(true);
     try {
-      const snapshot = await window.cdsDesignDesktop?.preview?.snapshot?.();
+      const snapshot = await window.coloDesignDesktop?.preview?.snapshot?.();
       const key = `${route}|${state ?? ""}`;
       const count = lookKey.current === key ? lookCount.current + 1 : 1;
       lookKey.current = key;
       lookCount.current = count;
       lookSentThisTurn.current = true;
-      const images =
-        snapshot?.jpeg
-          ? [{ mediaType: "image/jpeg", data: snapshot.jpeg }]
-          : undefined;
+      const images = snapshot?.jpeg
+        ? [{ mediaType: "image/jpeg", data: snapshot.jpeg }]
+        : undefined;
       const lines = [
         "이 화면이 이렇게 보입니다. 무엇이 잘못됐는지 보고 고쳐 주세요.",
         note.trim() ? `기획자의 말: ${note.trim()}` : "",
@@ -615,7 +636,11 @@ export function ScreenPanel({
           ? `콘솔 마지막 기록:\n${snapshot.console.join("\n")}`
           : "",
       ].filter(Boolean);
-      await onComments(lookToTurn(route, state ?? "default", lines.join("\n\n"), count), undefined, images);
+      await onComments(
+        lookToTurn(route, state ?? "default", lines.join("\n\n"), count),
+        undefined,
+        images,
+      );
     } finally {
       setLookBusy(false);
     }
@@ -638,19 +663,19 @@ export function ScreenPanel({
   // overlay re-filters against the new [data-screen]·[data-state] the moment
   // the view reports being somewhere else.
   useEffect(() => {
-    const bridge = window.cdsDesignDesktop?.preview;
+    const bridge = window.coloDesignDesktop?.preview;
     if (!bridge?.pins) return;
     void bridge.pins({ items: commentItems ?? [], attention });
   }, [commentItems, attention, location]);
 
   // --- 턴 실행 중 표식 (D86): the overlay's send-toast reads the room -----
   useEffect(() => {
-    void window.cdsDesignDesktop?.preview?.busy?.(turnState === "running");
+    void window.coloDesignDesktop?.preview?.busy?.(turnState === "running");
   }, [turnState]);
 
   // --- 오버레이의 해결 · 다시 요청 (D78): the bubble's word comes back -----
   useEffect(() => {
-    const bridge = window.cdsDesignDesktop?.preview;
+    const bridge = window.coloDesignDesktop?.preview;
     if (!bridge) return;
     const offResolve = bridge.onCommentResolve?.((payload) => {
       resolveComment(payload.id, payload.resolved);
@@ -708,7 +733,11 @@ export function ScreenPanel({
     wasRunning.current = false;
     const opened = lastOpenedRef.current;
     if (!opened) return;
-    const ask: PreviewTarget = { kind: "screen", route: opened.route, state: opened.state };
+    const ask: PreviewTarget = {
+      kind: "screen",
+      route: opened.route,
+      state: opened.state,
+    };
     if (plannerMoved.current || !followClaude) {
       const title = screens.find((screen) => screen.route === opened.route)?.title ?? opened.route;
       setFollowToast(
@@ -732,13 +761,16 @@ export function ScreenPanel({
   const gateAction = useRef<"save" | "handoff">("save");
   const gateRetried = useRef(false);
   const gateFixRan = useRef(false);
-  const diffStatus = daemon.diffStatus;
 
   useEffect(() => {
     const status = daemon.diffStatus;
     if (!status) return;
     if (status.stage === "handing-off") gateAction.current = "handoff";
-    else if (status.stage === "computing" || status.stage === "gating" || status.stage === "pushing") {
+    else if (
+      status.stage === "computing" ||
+      status.stage === "gating" ||
+      status.stage === "pushing"
+    ) {
       gateAction.current = "save";
     }
     if (status.stage === "published" || status.stage === "handed-off") {
@@ -795,7 +827,10 @@ export function ScreenPanel({
           onAskClaude={() => void askClaude()}
           onApproveCommands={
             activeSlug
-              ? () => void api.projectUpdate(activeSlug, { approveCommands: true }).catch(() => undefined)
+              ? () =>
+                  void api
+                    .projectUpdate(activeSlug, { approveCommands: true })
+                    .catch(() => undefined)
               : undefined
           }
           onOpenSettings={onOpenSettings}
@@ -841,13 +876,13 @@ export function ScreenPanel({
           ? target.path
           : null));
   const pipRoute = claudeActive ? claudeActive.split("?")[0] : null;
-  const pipState = claudeActive ? new URLSearchParams(claudeActive.split("?")[1] ?? "").get("state") : null;
+  const pipState = claudeActive
+    ? new URLSearchParams(claudeActive.split("?")[1] ?? "").get("state")
+    : null;
   const pipScreen = pipRoute
     ? (screens.find((screen) => screen.route === pipRoute)?.title ?? pipRoute)
     : null;
-  const pipLabel = ["Claude가 보는 중", pipScreen, pipState]
-    .filter(Boolean)
-    .join(" · ");
+  const pipLabel = ["Claude가 보는 중", pipScreen, pipState].filter(Boolean).join(" · ");
 
   /** The number the toolbar badge, the popover and the overlay dots share. */
   const unresolvedComments = (commentItems ?? []).filter((item) => !item.resolved).length;
@@ -880,7 +915,9 @@ export function ScreenPanel({
             <button
               type="button"
               className={
-                delivery.actions.save.enabled ? "primary screenpanel__action" : "ghost screenpanel__action"
+                delivery.actions.save.enabled
+                  ? "primary screenpanel__action"
+                  : "ghost screenpanel__action"
               }
               disabled={!delivery.actions.save.enabled}
               title={delivery.actions.save.reason}
@@ -910,7 +947,9 @@ export function ScreenPanel({
                 onClick={checkHandoffState}
               >
                 상태 확인
-                {unhandledDevReviews.length > 0 ? ` · 개발자 코멘트 ${unhandledDevReviews.length}` : ""}
+                {unhandledDevReviews.length > 0
+                  ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
+                  : ""}
               </button>
             )}
             <CoachMark id="save" text="저장은 언제든 — 잠겨 있으면 마우스를 올려 이유를 보세요" />
@@ -946,69 +985,78 @@ export function ScreenPanel({
           </button>
           {menuOpen && (
             <>
-              <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuOpen(false)} />
+              <button
+                type="button"
+                className="selector__backdrop"
+                aria-label="메뉴 닫기"
+                onClick={() => setMenuOpen(false)}
+              />
               <span className="selector__menu screenpanel__menu" role="menu">
-              {/* D82: 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
+                {/* D82: 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
                   그 자리를 갖는다. 넘기기 전 점검 · 저장 기록 · 변경 버리기 ·
                   코멘트 목록만 남는다. */}
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                disabled={!sessionId}
-                title={sessionId ? "열려 있는 대화에서 기획서와 화면을 맞춰 봅니다" : "먼저 대화를 열어 주세요"}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onPrecheck(
-                    "넘기기 전 점검: 이 화면이 근거 기획서(specs/ 첨부)와 맞는지 확인하고, 다른 점·비어 있는 점을 목록으로 답해 주세요.",
-                  );
-                }}
-              >
-                <span className="selector__label">넘기기 전 점검</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                disabled={!workable}
-                title="이 사이클의 저장 차례를 보고 하나로 되돌립니다"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setHistoryOpen(true);
-                }}
-              >
-                <span className="selector__label">저장 기록</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
-                title={
-                  (repo?.pendingChanges ?? 0) > 0
-                    ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
-                    : "버릴 저장하지 않은 변경이 없습니다"
-                }
-                onClick={() => {
-                  setMenuOpen(false);
-                  askDiscard();
-                }}
-              >
-                <span className="selector__label">변경 버리기</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="selector__row"
-                onClick={() => {
-                  setMenuOpen(false);
-                  refreshComments();
-                  setCommentsOpen(true);
-                }}
-              >
-                <span className="selector__label">코멘트 목록</span>
-              </button>
-            </span>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  disabled={!sessionId}
+                  title={
+                    sessionId
+                      ? "열려 있는 대화에서 기획서와 화면을 맞춰 봅니다"
+                      : "먼저 대화를 열어 주세요"
+                  }
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onPrecheck(
+                      "넘기기 전 점검: 이 화면이 근거 기획서(specs/ 첨부)와 맞는지 확인하고, 다른 점·비어 있는 점을 목록으로 답해 주세요.",
+                    );
+                  }}
+                >
+                  <span className="selector__label">넘기기 전 점검</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  disabled={!workable}
+                  title="이 사이클의 저장 차례를 보고 하나로 되돌립니다"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setHistoryOpen(true);
+                  }}
+                >
+                  <span className="selector__label">저장 기록</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
+                  title={
+                    (repo?.pendingChanges ?? 0) > 0
+                      ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
+                      : "버릴 저장하지 않은 변경이 없습니다"
+                  }
+                  onClick={() => {
+                    setMenuOpen(false);
+                    askDiscard();
+                  }}
+                >
+                  <span className="selector__label">변경 버리기</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="selector__row"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    refreshComments();
+                    setCommentsOpen(true);
+                  }}
+                >
+                  <span className="selector__label">코멘트 목록</span>
+                </button>
+              </span>
             </>
           )}
         </span>
@@ -1016,7 +1064,12 @@ export function ScreenPanel({
       {syncError && (
         <div className="notice notice--error">
           <span className="notice__text">{syncError}</span>
-          <button type="button" className="notice__close" aria-label="오류 닫기" onClick={() => setSyncError(null)}>
+          <button
+            type="button"
+            className="notice__close"
+            aria-label="오류 닫기"
+            onClick={() => setSyncError(null)}
+          >
             ×
           </button>
         </div>
@@ -1029,7 +1082,12 @@ export function ScreenPanel({
               보기
             </button>
           )}
-          <button type="button" className="notice__close" aria-label="알림 닫기" onClick={() => setFollowToast(null)}>
+          <button
+            type="button"
+            className="notice__close"
+            aria-label="알림 닫기"
+            onClick={() => setFollowToast(null)}
+          >
             ×
           </button>
         </div>
@@ -1071,7 +1129,6 @@ export function ScreenPanel({
           unresolvedComments={unresolvedComments}
           onLook={(note) => void sendLook(note)}
           lookBusy={lookBusy}
-          lookBlocked={lookBlocked}
           pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
           pipLarge={pipLarge}
           onPipToggle={() => setPipLarge((open) => !open)}
@@ -1085,17 +1142,15 @@ export function ScreenPanel({
               title="접기"
               onClick={() => setPipLarge(false)}
             >
-              <img
-                className="pip__frame"
-                src={`data:image/jpeg;base64,${pipFrame}`}
-                alt=""
-              />
+              <img className="pip__frame" src={`data:image/jpeg;base64,${pipFrame}`} alt="" />
             </button>
             <span className="pip__label">{pipLabel}</span>
           </div>
         )}
       </div>
-      {saveOpen && <DiffPanel daemon={daemon} sessionId={sessionId} onClose={() => setSaveOpen(false)} />}
+      {saveOpen && (
+        <DiffPanel daemon={daemon} sessionId={sessionId} onClose={() => setSaveOpen(false)} />
+      )}
       {handoffOpen && (
         <HandoffPanel
           daemon={daemon}
@@ -1139,7 +1194,10 @@ export function ScreenPanel({
         onResend={resendComment}
       />
       {devPanelOpen && (
-        <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}>
+        <div
+          className="modal"
+          onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}
+        >
           <div
             className="modal__panel"
             role="dialog"
@@ -1150,7 +1208,12 @@ export function ScreenPanel({
           >
             <header className="modal__head">
               <h2 className="modal__title">개발자 코멘트</h2>
-              <button type="button" className="ghost" aria-label="개발자 코멘트 닫기" onClick={() => setDevPanelOpen(false)}>
+              <button
+                type="button"
+                className="ghost"
+                aria-label="개발자 코멘트 닫기"
+                onClick={() => setDevPanelOpen(false)}
+              >
                 <CloseIcon />
               </button>
             </header>
@@ -1179,11 +1242,16 @@ export function ScreenPanel({
                 {(devReviews ?? []).map((review) => {
                   const handled = handledIds.has(review.id);
                   return (
-                    <li key={review.id} className={`diff__file${handled ? " diff__file--resolved" : ""}`}>
+                    <li
+                      key={review.id}
+                      className={`diff__file${handled ? " diff__file--resolved" : ""}`}
+                    >
                       <div className="diff__filerow">
                         <span className="diff__path">
                           {review.author}
-                          {review.path ? ` · ${review.path}${review.line ? `:${review.line}` : ""}` : ""}
+                          {review.path
+                            ? ` · ${review.path}${review.line ? `:${review.line}` : ""}`
+                            : ""}
                         </span>
                         {!handled && (
                           <>
@@ -1233,7 +1301,11 @@ export function ScreenPanel({
                             autoFocus
                             onChange={(event) => setDevReplyText(event.target.value)}
                           />
-                          <button type="submit" className="primary" disabled={devBusy || devReplyText.trim() === ""}>
+                          <button
+                            type="submit"
+                            className="primary"
+                            disabled={devBusy || devReplyText.trim() === ""}
+                          >
                             보내기
                           </button>
                         </form>
@@ -1252,7 +1324,11 @@ export function ScreenPanel({
       {replyConfirmFor !== null && (
         <ConfirmDialog
           title="GitHub 에 답하기"
-          body={<>이 도구가 <strong>기획자의 이름</strong>으로 GitHub 에 답을 남깁니다.</>}
+          body={
+            <>
+              이 도구가 <strong>기획자의 이름</strong>으로 GitHub 에 답을 남깁니다.
+            </>
+          }
           hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."
           confirmLabel="확인했어요"
           onConfirm={() => {
@@ -1267,4 +1343,3 @@ export function ScreenPanel({
     </div>
   );
 }
-

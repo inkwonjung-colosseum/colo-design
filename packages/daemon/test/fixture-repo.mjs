@@ -1,8 +1,8 @@
 /**
  * A local fixture "connected repo": a bare git remote plus a seed commit
- * carrying a minimal but valid cds-design app — package.json with no-op
+ * carrying a minimal but valid colo-design app — package.json with no-op
  * install/check scripts, a tiny node static server as the preview, and a
- * cds-design.json that declares the preview command and a free port picked at
+ * colo-design.json that declares the preview command and a free port picked at
  * seed time. Everything runs offline: git remotes are local paths, commands
  * are node/npm, and no registry is contacted.
  *
@@ -20,7 +20,7 @@ const run = promisify(execFile);
 /**
  * A fake `claude` CLI for tests that must not touch the real login: answers
  * --version and `auth status` (logged in, team plan) and exits for anything
- * else. Point CDS_DESIGN_CLAUDE_BIN at it.
+ * else. Point COLO_DESIGN_CLAUDE_BIN at it.
  */
 export function writeStubClaude(dir) {
   mkdirSync(dir, { recursive: true });
@@ -60,7 +60,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const { preview } = JSON.parse(readFileSync(join(root, "cds-design.json"), "utf8"));
+const { preview } = JSON.parse(readFileSync(join(root, "colo-design.json"), "utf8"));
 
 createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -86,20 +86,20 @@ const INDEX_HTML = `<!doctype html>
   </div></main>
   <script>
     (function () {
-      if (!window.cdsDesign && window.parent === window) return; // 받을 도구가 없다
+      if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
       var SCREENS = [
         { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"], spec: null },
       ];
       var post = function (envelope) {
-        if (window.cdsDesign && window.cdsDesign.post) window.cdsDesign.post(envelope);
+        if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
         else window.parent.postMessage(envelope, "*");
       };
-      post({ type: "cds-design.screens", screens: SCREENS });
+      post({ type: "colo-design.screens", screens: SCREENS });
       window.addEventListener("message", function (event) {
         if (event.source !== window.parent && event.source !== window) return;
         var data = event.data || {};
-        if (data.type === "cds-design.screens?") post({ type: "cds-design.screens", screens: SCREENS });
-        if (data.type !== "cds-design.navigate" || typeof data.route !== "string") return;
+        if (data.type === "colo-design.screens?") post({ type: "colo-design.screens", screens: SCREENS });
+        if (data.type !== "colo-design.navigate" || typeof data.route !== "string") return;
         if (data.route !== "/member/MemberList") return;
         var state = typeof data.state === "string" && data.state ? data.state : "default";
         // 실제 브리지는 클라이언트 라우팅을 한다 — 도구의 뷰는
@@ -118,7 +118,7 @@ const INDEX_HTML = `<!doctype html>
 
 const PACKAGE_JSON = JSON.stringify(
   {
-    name: "fixture-cds-design-app",
+    name: "fixture-colo-design-app",
     private: true,
     version: "0.0.0",
     scripts: {
@@ -137,7 +137,7 @@ const CHECK_MJS = `console.log("check: 통과");
 
 // The repo's own convention for where screens live. The daemon does not know
 // this; the browser planner e2e relies on it, the daemon e2e does not.
-const CLAUDE_MD = `# fixture cds-design 레포
+const CLAUDE_MD = `# fixture colo-design 레포
 
 **대화 상대는 기획자다.** 모든 문장은 한국어로 쓴다.
 
@@ -168,10 +168,9 @@ export async function createFixtureRepo({
   checkMjs = CHECK_MJS,
   // { host, scope } — a private-registry-declaring repo (npmrc leak checks).
   registry = null,
-  // Swaps index.html — a suite that needs a DIFFERENT bridge (an old
-  // `drafthouse.*` one for the stale message, say) seeds its own page.
+  // Swaps index.html — a suite that needs a different bridge seeds its own page.
   indexHtml = INDEX_HTML,
-  // D94: seeds the repo WITHOUT cds-design.json — the connection-preparation
+  // D94: seeds the repo WITHOUT colo-design.json — the connection-preparation
   // flow's starting line. The preview server reads the config at ITS startup,
   // which only happens after the config exists.
   omitConfig = false,
@@ -184,8 +183,8 @@ export async function createFixtureRepo({
 
   if (!omitConfig)
     writeFileSync(
-      join(seed, "cds-design.json"),
-    JSON.stringify(
+      join(seed, "colo-design.json"),
+      JSON.stringify(
         {
           install: installCommand,
           check: checkCommand,
@@ -226,7 +225,15 @@ async function commitAll(seed, message) {
   await run("git", ["add", "."], { cwd: seed });
   await run(
     "git",
-    ["-c", "user.name=cds-design", "-c", "user.email=fixture@cds-design.test", "commit", "-m", message],
+    [
+      "-c",
+      "user.name=colo-design",
+      "-c",
+      "user.email=fixture@colo-design.test",
+      "commit",
+      "-m",
+      message,
+    ],
     { cwd: seed },
   );
 }

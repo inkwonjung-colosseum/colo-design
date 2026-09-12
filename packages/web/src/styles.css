@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CDS Design — design system
+   Colo Design — design system
    A document tool. Light paper by default, sans-serif, generous spacing.
    Monospace is for code and diffs only — the places that really are machine
    text. The console palette it started as is still here as the dark theme
@@ -48,7 +48,8 @@
   --select-bg: rgba(157, 177, 199, 0.25);
 
   --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
-  --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sans:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
   --r-sm: 4px;
   --r-md: 6px;
@@ -121,7 +122,6 @@
 
   color-scheme: light;
 }
-
 
 /* ------------------------------------------------------------------ palettes */
 
@@ -730,15 +730,20 @@
 }
 /* ------------------------------------------------------------------ base */
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body { height: 100%; }
+html,
+body {
+  height: 100%;
+}
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.6 var(--sans);
+  font: 15px / 1.6 var(--sans);
   letter-spacing: -0.006em;
   /* Korean reads in words, not syllables: lines break at word edges, and an
      unbreakable token (a long path, a url) still gives way instead of pushing
@@ -750,7 +755,9 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-::selection { background: var(--select-bg); }
+::selection {
+  background: var(--select-bg);
+}
 
 /* Buttons are words a planner reads, so they are set in the reading face.
    Monospace on a button was a console affectation. */
@@ -759,21 +766,33 @@ button {
   cursor: pointer;
   color: inherit;
 }
-button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
-input, textarea, select {
+input,
+textarea,
+select {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 8px 11px;
-  transition: border-color 0.12s, background 0.12s;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
-input::placeholder, textarea::placeholder { color: var(--muted); }
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
 /* background-color, not the shorthand: a shorthand here would wipe the
    picker's own arrow image on focus. */
-input:focus, textarea:focus, select:focus {
+input:focus,
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--line-hover);
   background-color: var(--panel-3);
@@ -806,7 +825,10 @@ select {
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
-  transition: filter 0.15s var(--drift), transform 0.15s var(--spring), box-shadow 0.15s var(--drift);
+  transition:
+    filter 0.15s var(--drift),
+    transform 0.15s var(--spring),
+    box-shadow 0.15s var(--drift);
 }
 .primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -815,7 +837,9 @@ select {
     0 4px 12px -4px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
-.primary:active:not(:disabled) { transform: translateY(0) scale(0.985); }
+.primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
 
 .danger {
   background: transparent;
@@ -825,7 +849,9 @@ select {
   padding: 7px 14px;
   transition: background 0.12s;
 }
-.danger:hover:not(:disabled) { background: var(--danger-soft); }
+.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
 
 .ghost {
   background: transparent;
@@ -833,12 +859,22 @@ select {
   border: 0;
   padding: 2px 7px;
   border-radius: var(--r-md);
-  transition: background 0.12s, color 0.12s, transform 0.12s var(--spring);
+  transition:
+    background 0.12s,
+    color 0.12s,
+    transform 0.12s var(--spring);
 }
-.ghost:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
-.ghost:active:not(:disabled) { transform: scale(0.94); }
+.ghost:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.ghost:active:not(:disabled) {
+  transform: scale(0.94);
+}
 /* A ghost button carrying a count of work waiting on it (기획's 게시). */
-.ghost--count:not(:disabled) { color: var(--accent); }
+.ghost--count:not(:disabled) {
+  color: var(--accent);
+}
 /* Icon + word controls: the icons.tsx glyphs are decoration — the word
    carries the accessible name that tests and screen readers read. Flex
    pins each glyph to its word's left without baseline juggling. */
@@ -862,22 +898,38 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 7px 14px;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
 }
-.card__actions button:not(.primary):not(.danger):hover:not(:disabled) { background: var(--panel-3); border-color: var(--line-hover); color: var(--text); }
+.card__actions button:not(.primary):not(.danger):hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: var(--line-hover);
+  color: var(--text);
+}
 
 /* scrollbars ------------------------------------------------------------ */
 
-* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
 *::-webkit-scrollbar-thumb {
   background: var(--scroll-thumb);
   border-radius: 8px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
-*::-webkit-scrollbar-thumb:hover { background-color: var(--line-hover); }
-*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--line-hover);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 /* motion primitives ------------------------------------------------------ */
 
@@ -892,7 +944,11 @@ select {
   animation: spin 0.7s linear infinite;
   display: inline-block;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .caret {
   display: inline-block;
@@ -903,7 +959,11 @@ select {
   vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;
 }
-@keyframes blink { 50% { opacity: 0; } }
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
 
 /* ------------------------------------------------------- connect screen */
 
@@ -922,10 +982,22 @@ select {
   color: var(--text);
   letter-spacing: -0.01em;
 }
-.connect h1 .brand-name { font: 700 17px var(--sans); letter-spacing: -0.01em; }
-.connect p { color: var(--muted); margin: 0; max-width: 52ch; line-height: 1.6; }
+.connect h1 .brand-name {
+  font: 700 17px var(--sans);
+  letter-spacing: -0.01em;
+}
+.connect p {
+  color: var(--muted);
+  margin: 0;
+  max-width: 52ch;
+  line-height: 1.6;
+}
 
-.connect__step { display: flex; align-items: center; gap: 10px; }
+.connect__step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .connect__stepnum {
   flex: none;
   color: var(--muted);
@@ -945,12 +1017,28 @@ select {
   margin: 0;
   color: var(--text-2);
 }
-.connect__cmd code { flex: 1; }
+.connect__cmd code {
+  flex: 1;
+}
 
-.connect__step--fill { display: flex; align-items: center; }
-.connect__inputrow { display: flex; gap: 8px; margin-top: 10px; }
-.connect__step .connect__inputrow { flex: 1; margin-top: 0; }
-.connect__inputrow input { flex: 1; font-family: var(--mono); font-size: 12.5px; }
+.connect__step--fill {
+  display: flex;
+  align-items: center;
+}
+.connect__inputrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.connect__step .connect__inputrow {
+  flex: 1;
+  margin-top: 0;
+}
+.connect__inputrow input {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
 
 /* ---------------------------------------------------------------- layout */
 
@@ -973,15 +1061,34 @@ select {
   filter: drop-shadow(0 2px 6px var(--accent-glow));
 }
 
-.dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; flex: none; }
-.dot--live { background: var(--ok); }
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+.dot--live {
+  background: var(--ok);
+}
 /* Finished-unseen, not running: a hollow ring so the two never read alike at
    a glance, which is the only job either of them has. */
-.dot--done { background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
-.hint { color: var(--muted); font-size: 12px; margin: 0; }
+.dot--done {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
 /* Counts and clocks read in columns: timestamps, badges and change numbers
    align digit under digit while the eye scans the rail. */
-.leaf__meta, .node__badge, .repopicker__time, .screenpanel__status, .frame__width {
+.leaf__meta,
+.node__badge,
+.repopicker__time,
+.screenpanel__status,
+.frame__width {
   font-variant-numeric: tabular-nums;
 }
 
@@ -1020,7 +1127,11 @@ select {
   margin-right: auto;
 }
 
-.transcript { display: flex; flex-direction: column; gap: 12px; }
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 /* A turn's first seconds: the tape has nothing on it yet, so the start says
    so itself — one live line riding the same rail the activity cards use,
    breathing its accent until blocks land. */
@@ -1032,13 +1143,19 @@ select {
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
   border-radius: var(--r-float);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-soft), var(--panel) 94%), var(--panel));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent-soft), var(--panel) 94%),
+    var(--panel)
+  );
   box-shadow: var(--shadow-card);
   animation: livebreathe 2.4s ease-in-out infinite;
   font: 600 12.5px var(--sans);
   color: var(--text-2);
 }
-.turnlive .spinner { color: var(--accent); }
+.turnlive .spinner {
+  color: var(--accent);
+}
 /* The tape's rail: one hairline joining the working cards, with the state
    worn as a light on the line — a node the colour of whatever is happening. */
 .turnlive::before,
@@ -1074,7 +1191,11 @@ select {
   pointer-events: none;
 }
 @keyframes livebreathe {
-  50% { box-shadow: var(--shadow-card), 0 0 24px -6px var(--accent-glow); }
+  50% {
+    box-shadow:
+      var(--shadow-card),
+      0 0 24px -6px var(--accent-glow);
+  }
 }
 /* The start-of-turn card is always live, so its node carries the pulse. */
 .turnlive::after {
@@ -1082,7 +1203,9 @@ select {
   animation: nodepulse 1.7s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .turnlive { animation: none; }
+  .turnlive {
+    animation: none;
+  }
 }
 
 .empty {
@@ -1105,28 +1228,40 @@ select {
   height: 56px;
   margin: 0 auto 20px;
   background:
-    radial-gradient(closest-side, color-mix(in srgb, var(--accent) 26%, transparent), transparent 78%) center 118% / 170px 54px no-repeat,
+    radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--accent) 26%, transparent),
+      transparent 78%
+    )
+    center 118% / 170px 54px no-repeat,
     url(/colonova-icon.svg) center / contain no-repeat;
   filter: drop-shadow(0 18px 30px var(--accent-glow));
   animation: markdrift 7s ease-in-out infinite;
 }
 @keyframes markdrift {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-7px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .empty::before { animation: none; }
+  .empty::before {
+    animation: none;
+  }
 }
 .empty__lead {
   margin: 0;
-  font: 600 16px/1.6 var(--sans);
+  font: 600 16px / 1.6 var(--sans);
   color: var(--text);
   letter-spacing: -0.012em;
 }
 .empty__sub {
   max-width: 44ch;
   margin: 7px auto 0;
-  font: 400 13px/1.65 var(--sans);
+  font: 400 13px / 1.65 var(--sans);
   color: var(--muted);
 }
 /* The one-click starts: three sentences that become the draft verbatim.
@@ -1152,8 +1287,11 @@ select {
   font: 500 12px var(--sans);
   letter-spacing: -0.005em;
   transition:
-    color 0.15s, border-color 0.15s, background 0.15s,
-    transform 0.2s var(--spring), box-shadow 0.2s var(--drift);
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s,
+    transform 0.2s var(--spring),
+    box-shadow 0.2s var(--drift);
 }
 .empty__starter::before {
   content: "❯";
@@ -1169,8 +1307,12 @@ select {
   transform: translateY(-1px);
   box-shadow: 0 8px 20px -10px var(--accent-glow);
 }
-.empty__starter:hover:not(:disabled)::before { color: var(--accent); }
-.empty__starter:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+.empty__starter:hover:not(:disabled)::before {
+  color: var(--accent);
+}
+.empty__starter:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
 
 /* messages read as a session log, not chat bubbles — except the planner's
    own words, which sit in a lit card of their own: the one surface in the
@@ -1182,8 +1324,12 @@ select {
   animation: fadein 0.15s ease-out;
 }
 @keyframes fadein {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .bubble--user {
@@ -1228,7 +1374,9 @@ select {
 }
 /* A user row opens a turn — the one voice that steers everything after it —
    so it earns the extra beat of air that says a new turn is starting. */
-.bubble--user:not(:first-child) { margin-top: 16px; }
+.bubble--user:not(:first-child) {
+  margin-top: 16px;
+}
 
 /* The tape's own housekeeping lines, translated and dimmed: real but not
    somebody's words, so they sit below the voice of either side. */
@@ -1253,7 +1401,11 @@ select {
   background: transparent;
   color: var(--muted);
   font: 500 11.5px var(--sans);
-  transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.18s var(--spring);
+  transition:
+    color 0.12s,
+    border-color 0.12s,
+    background 0.12s,
+    transform 0.18s var(--spring);
 }
 .revert::before {
   content: "↺";
@@ -1266,9 +1418,13 @@ select {
   background: var(--accent-soft);
   color: var(--text);
 }
-.revert:active:not(:disabled) { transform: scale(0.97); }
+.revert:active:not(:disabled) {
+  transform: scale(0.97);
+}
 /* Live turn: the snapshot it would restore is still being written. */
-.revert:disabled { opacity: 0.45; }
+.revert:disabled {
+  opacity: 0.45;
+}
 
 .bubble--assistant {
   position: relative;
@@ -1297,31 +1453,84 @@ select {
   -webkit-backdrop-filter: blur(8px);
   border: 0;
   border-radius: var(--r-lg);
-  box-shadow: inset 0 0 0 1px var(--line-soft), 0 2px 8px -2px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    inset 0 0 0 1px var(--line-soft),
+    0 2px 8px -2px rgba(0, 0, 0, 0.3);
   color: var(--muted);
   opacity: 0;
   transform: translateY(-2px);
-  transition: opacity 0.14s, transform 0.18s var(--spring), color 0.12s, background 0.12s;
+  transition:
+    opacity 0.14s,
+    transform 0.18s var(--spring),
+    color 0.12s,
+    background 0.12s;
 }
 .bubble--assistant:hover .bubble__copy,
-.bubble--assistant:focus-within .bubble__copy { opacity: 1; transform: none; }
-.bubble__copy:hover { color: var(--text); background: var(--panel-2); }
-.bubble__copy--done { color: var(--ok); }
-.bubble__copy--done:hover { color: var(--ok); background: var(--panel-2); }
+.bubble--assistant:focus-within .bubble__copy {
+  opacity: 1;
+  transform: none;
+}
+.bubble__copy:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.bubble__copy--done {
+  color: var(--ok);
+}
+.bubble__copy--done:hover {
+  color: var(--ok);
+  background: var(--panel-2);
+}
 
 /* markdown ---------------------------------------------------------------- */
 
-.md { display: flex; flex-direction: column; gap: 8px; }
-.md > :first-child { margin-top: 0; }
-.md > :last-child { margin-bottom: 0; }
-.md p { margin: 0; }
-.md h1, .md h2, .md h3, .md h4 { margin: 10px 0 2px; line-height: 1.35; color: var(--text); font-weight: 650; text-wrap: balance; }
-.md h1 { font-size: 1.2em; }
-.md h2 { font-size: 1.1em; }
-.md h3 { font-size: 1.02em; }
-.md h4 { font-size: 1em; }
-.md ul, .md ol { margin: 0; padding-left: 1.35em; display: flex; flex-direction: column; gap: 3px; }
-.md li::marker { color: var(--muted); }
+.md {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 10px 0 2px;
+  line-height: 1.35;
+  color: var(--text);
+  font-weight: 650;
+  text-wrap: balance;
+}
+.md h1 {
+  font-size: 1.2em;
+}
+.md h2 {
+  font-size: 1.1em;
+}
+.md h3 {
+  font-size: 1.02em;
+}
+.md h4 {
+  font-size: 1em;
+}
+.md ul,
+.md ol {
+  margin: 0;
+  padding-left: 1.35em;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.md li::marker {
+  color: var(--muted);
+}
 .md code {
   font-family: var(--mono);
   font-size: 0.87em;
@@ -1354,12 +1563,34 @@ select {
   border-left: 2px solid var(--line);
   color: var(--muted);
 }
-.md a { color: var(--accent); text-underline-offset: 2px; }
-.md hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
-.md table { border-collapse: collapse; font-size: 0.94em; }
-.md th, .md td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
-.md th { background: var(--panel-2); font-weight: 600; color: var(--text); }
-.md img { max-width: 100%; border-radius: var(--r-sm); }
+.md a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 6px 0;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  text-align: left;
+}
+.md th {
+  background: var(--panel-2);
+  font-weight: 600;
+  color: var(--text);
+}
+.md img {
+  max-width: 100%;
+  border-radius: var(--r-sm);
+}
 
 /* thinking ---------------------------------------------------------------- */
 
@@ -1383,7 +1614,9 @@ select {
   list-style: none;
   user-select: none;
 }
-.thinking summary::-webkit-details-marker { display: none; }
+.thinking summary::-webkit-details-marker {
+  display: none;
+}
 .thinking summary::before {
   content: "▸";
   flex: none;
@@ -1391,13 +1624,25 @@ select {
   font-size: 9px;
   transition: transform 0.15s var(--drift);
 }
-.thinking[open] summary::before { transform: rotate(90deg); }
-.thinking summary:hover { color: var(--text-2); }
-.thinking summary:hover::before { color: var(--text-2); }
-.thinking[open] summary { margin-bottom: 2px; }
+.thinking[open] summary::before {
+  transform: rotate(90deg);
+}
+.thinking summary:hover {
+  color: var(--text-2);
+}
+.thinking summary:hover::before {
+  color: var(--text-2);
+}
+.thinking[open] summary {
+  margin-bottom: 2px;
+}
 /* The fold's label; while the thought is arriving it shines. */
-.thinking__label { flex: none; }
-.thinking--live { border-color: color-mix(in srgb, var(--accent) 26%, var(--line-soft)); }
+.thinking__label {
+  flex: none;
+}
+.thinking--live {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line-soft));
+}
 .thinking--live .thinking__label {
   background: linear-gradient(90deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%);
   background-size: 200% 100%;
@@ -1406,7 +1651,11 @@ select {
   color: transparent;
   animation: thinkshine 2.1s linear infinite;
 }
-@keyframes thinkshine { to { background-position: -200% 0; } }
+@keyframes thinkshine {
+  to {
+    background-position: -200% 0;
+  }
+}
 /* The closed fold carries the thought's first line — the shape of the
    reasoning without opening it. Gone once the fold is open. */
 .thinking__peek {
@@ -1417,7 +1666,9 @@ select {
   white-space: nowrap;
   color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
-.thinking[open] .thinking__peek { display: none; }
+.thinking[open] .thinking__peek {
+  display: none;
+}
 .thinking pre {
   white-space: pre-wrap;
   font-family: var(--mono);
@@ -1442,9 +1693,15 @@ select {
   background: var(--bg-2);
   overflow: hidden;
 }
-.tool:hover { border-color: var(--line); }
-.tool--running { border-color: var(--line-strong); }
-.tool--error { border-color: var(--danger-line); }
+.tool:hover {
+  border-color: var(--line);
+}
+.tool--running {
+  border-color: var(--line-strong);
+}
+.tool--error {
+  border-color: var(--danger-line);
+}
 
 .tool__head {
   display: flex;
@@ -1458,7 +1715,9 @@ select {
   text-align: left;
   transition: background 0.1s;
 }
-.tool__head:hover { background: var(--panel-2); }
+.tool__head:hover {
+  background: var(--panel-2);
+}
 
 .tool__sign {
   flex: none;
@@ -1468,9 +1727,15 @@ select {
   place-items: center;
   font-size: 10px;
 }
-.tool__sign--running { color: var(--ok); }
-.tool__sign--done { color: var(--muted); }
-.tool__sign--error { color: var(--danger); }
+.tool__sign--running {
+  color: var(--ok);
+}
+.tool__sign--done {
+  color: var(--muted);
+}
+.tool__sign--error {
+  color: var(--danger);
+}
 
 .tool__chevron {
   color: var(--muted);
@@ -1479,7 +1744,9 @@ select {
   display: inline-flex;
   transition: transform 0.12s;
 }
-.tool__chevron--open { transform: rotate(90deg); }
+.tool__chevron--open {
+  transform: rotate(90deg);
+}
 
 .tool__name {
   font: 600 11.5px var(--mono);
@@ -1494,8 +1761,16 @@ select {
   white-space: nowrap;
   flex: 1;
 }
-.tool__status--running { color: var(--muted); font: 500 10.5px var(--mono); flex: none; }
-.tool__status--error { color: var(--danger); font: 500 10.5px var(--mono); flex: none; }
+.tool__status--running {
+  color: var(--muted);
+  font: 500 10.5px var(--mono);
+  flex: none;
+}
+.tool__status--error {
+  color: var(--danger);
+  font: 500 10.5px var(--mono);
+  flex: none;
+}
 
 .tool__body {
   border-top: 1px solid var(--line-soft);
@@ -1509,8 +1784,11 @@ select {
   color: var(--muted);
   margin: 8px 0 4px;
 }
-.tool__label:first-child { margin-top: 0; }
-.tool pre, .card pre {
+.tool__label:first-child {
+  margin-top: 0;
+}
+.tool pre,
+.card pre {
   font-family: var(--mono);
   font-size: 11.5px;
   line-height: 1.55;
@@ -1535,7 +1813,9 @@ select {
   gap: 10px;
   color: var(--text-2);
 }
-.notice--info { color: var(--muted); }
+.notice--info {
+  color: var(--muted);
+}
 .notice--warn {
   color: var(--warn);
   border-color: var(--warn-line);
@@ -1546,7 +1826,10 @@ select {
   border-color: var(--danger-line);
   background: var(--danger-soft);
 }
-.notice__text { flex: 1; word-break: break-word; }
+.notice__text {
+  flex: 1;
+  word-break: break-word;
+}
 .notice__close {
   flex: none;
   background: transparent;
@@ -1557,7 +1840,9 @@ select {
   font-size: 14px;
   line-height: 1;
 }
-.notice__close:hover { opacity: 1; }
+.notice__close:hover {
+  opacity: 1;
+}
 
 /* human-in-the-loop cards --------------------------------------------------*/
 
@@ -1571,7 +1856,9 @@ select {
   flex-direction: column;
   gap: 10px;
 }
-.card--question { border-color: var(--warn-line); }
+.card--question {
+  border-color: var(--warn-line);
+}
 
 .card__title {
   font: 600 13px var(--sans);
@@ -1580,14 +1867,22 @@ select {
   gap: 8px;
   color: var(--text);
 }
-.card__title strong { color: var(--accent); font-family: var(--mono); font-size: 12.5px; }
-.card--question .card__title strong { color: var(--warn); }
+.card__title strong {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.card--question .card__title strong {
+  color: var(--warn);
+}
 .card__badge {
   flex: none;
   display: inline-flex;
   color: var(--muted);
 }
-.card--question .card__badge { color: var(--warn); }
+.card--question .card__badge {
+  color: var(--warn);
+}
 
 .card__headline {
   font-family: var(--mono);
@@ -1610,11 +1905,24 @@ select {
   cursor: pointer;
   user-select: none;
 }
-.card__details summary:hover { color: var(--text-2); }
-.card__details pre { margin-top: 8px; }
-.card__actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.card__reason { display: flex; gap: 8px; }
-.card__reason input { flex: 1; }
+.card__details summary:hover {
+  color: var(--text-2);
+}
+.card__details pre {
+  margin-top: 8px;
+}
+.card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.card__reason {
+  display: flex;
+  gap: 8px;
+}
+.card__reason input {
+  flex: 1;
+}
 /* 캡처 카드(PLAN D56): the picture fills the card like the preview does;
    only the frame is shared with the permission cards. */
 .card__shot {
@@ -1624,15 +1932,27 @@ select {
   border-radius: var(--r-md);
 }
 
-.question { display: flex; flex-direction: column; gap: 6px; }
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .question__header {
   font: 500 10px var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--muted);
 }
-.question__text { font-size: 13.5px; font-weight: 550; color: var(--text); }
-.question__options { display: flex; flex-wrap: wrap; gap: 6px; }
+.question__text {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--text);
+}
+.question__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .option {
   display: flex;
   flex-direction: column;
@@ -1644,15 +1964,27 @@ select {
   padding: 8px 11px;
   color: var(--text);
   max-width: 32ch;
-  transition: border-color 0.1s, background 0.1s;
+  transition:
+    border-color 0.1s,
+    background 0.1s;
 }
-.option:hover:not(:disabled) { border-color: var(--line-hover); background: var(--panel-2); }
+.option:hover:not(:disabled) {
+  border-color: var(--line-hover);
+  background: var(--panel-2);
+}
 .option--picked {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.option__label { font-size: 12.5px; font-weight: 600; }
-.option__description { font-size: 11px; color: var(--muted); line-height: 1.45; }
+.option__label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.option__description {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
 
 /* composer — paseo-style floating card --------------------------------------*/
 
@@ -1663,11 +1995,17 @@ select {
   gap: 7px;
   margin: 8px 22px 18px;
   padding: 14px 16px 11px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 38%, var(--panel)), var(--panel));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-2) 38%, var(--panel)),
+    var(--panel)
+  );
   border: 1px solid var(--line);
   border-radius: var(--r-dialog);
   box-shadow: var(--shadow-float);
-  transition: border-color 0.2s var(--drift), box-shadow 0.25s var(--drift);
+  transition:
+    border-color 0.2s var(--drift),
+    box-shadow 0.25s var(--drift);
 }
 /* The focus ring is a gradient hairline drawn over the border — the one place
    the chat column answers "I'm listening" with its brand light. Masked to a
@@ -1685,19 +2023,27 @@ select {
     color-mix(in srgb, var(--accent) 14%, transparent) 62%,
     color-mix(in srgb, var(--accent) 44%, transparent)
   );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
-          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          mask-composite: exclude;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
   opacity: 0;
   transition: opacity 0.25s var(--drift);
   pointer-events: none;
 }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--line-strong));
-  box-shadow: var(--shadow-float), 0 0 0 4px var(--accent-soft);
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 4px var(--accent-soft);
 }
-.composer:focus-within::after { opacity: 1; }
+.composer:focus-within::after {
+  opacity: 1;
+}
 .composer textarea {
   resize: none;
   min-height: 24px;
@@ -1710,9 +2056,18 @@ select {
   line-height: 1.55;
   color: var(--text);
 }
-.composer textarea::placeholder { color: color-mix(in srgb, var(--muted) 68%, transparent); }
-.composer textarea:focus { outline: none; box-shadow: none; border: 0; background: transparent; }
-.composer textarea:disabled { opacity: 0.5; }
+.composer textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 68%, transparent);
+}
+.composer textarea:focus {
+  outline: none;
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+}
+.composer textarea:disabled {
+  opacity: 0.5;
+}
 /* 대기 줄 (PLAN D86): the one line above the field — running 중 보낸 것이
    다음 턴에 밀려 있다는 말. 사라지는 것도 말이다. */
 .composer__queued {
@@ -1721,7 +2076,11 @@ select {
   color: var(--muted);
 }
 
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .chip {
   display: inline-flex;
   align-items: center;
@@ -1741,16 +2100,40 @@ select {
   border: 1px solid var(--line);
   flex: none;
 }
-.chip .ghost { padding: 0 4px; font-size: 13px; line-height: 1; color: var(--muted); }
-.chip .ghost:hover { color: var(--danger); }
+.chip .ghost {
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+}
+.chip .ghost:hover {
+  color: var(--danger);
+}
 
 /* selector chips — model · effort · permission mode ----------------------------------*/
 
 /* Chips wrap as whole chips, never mid-label: a model name broken across two
    lines ("Sonnet" / "5") is what a narrow chat column used to do. */
-.selectors { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-left: 2px; }
-.selector { position: relative; display: inline-flex; }
-.selector__backdrop { position: fixed; inset: 0; z-index: 40; background: transparent; border: 0; padding: 0; cursor: default; }
+.selectors {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+.selector {
+  position: relative;
+  display: inline-flex;
+}
+.selector__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
 .selector__chip {
   display: inline-flex;
   align-items: center;
@@ -1763,22 +2146,34 @@ select {
   color: var(--text-2);
   font: 500 11.5px var(--sans);
   white-space: nowrap;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s,
+    border-color 0.1s;
 }
 .selector__chip span,
-.selector__chip svg { flex: none; }
+.selector__chip svg {
+  flex: none;
+}
 .selector__chip:hover:not(:disabled),
 .selector__chip[aria-expanded="true"] {
   background: var(--panel-2);
   border-color: var(--line);
   color: var(--text);
 }
-.selector__chip:disabled { opacity: 0.45; cursor: default; }
+.selector__chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 /* The chip's domain word ("모델 ·", "생각 ·", "확인 ·") stays muted even on
    hover, so the value — 자동, Sonnet 5, 보통 — keeps the weight. */
-.selector__chipprefix { color: var(--muted); }
+.selector__chipprefix {
+  color: var(--muted);
+}
 .selector__chip:hover:not(:disabled) .selector__chipprefix,
-.selector__chip[aria-expanded="true"] .selector__chipprefix { color: var(--muted); }
+.selector__chip[aria-expanded="true"] .selector__chipprefix {
+  color: var(--muted);
+}
 .selector__menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1807,10 +2202,22 @@ select {
   color: var(--text);
   font: 500 12px var(--sans);
 }
-.selector__row:hover { background: var(--accent-soft); }
-.selector__row[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--accent); }
-.selector__check { flex: none; width: 12px; color: var(--accent); align-self: center; }
-.selector__label { flex: none; white-space: nowrap; }
+.selector__row:hover {
+  background: var(--accent-soft);
+}
+.selector__row[aria-selected="true"] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.selector__check {
+  flex: none;
+  width: 12px;
+  color: var(--accent);
+  align-self: center;
+}
+.selector__label {
+  flex: none;
+  white-space: nowrap;
+}
 .selector__hint {
   color: var(--muted);
   font: 400 10.5px var(--sans);
@@ -1818,11 +2225,22 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 4px; }
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 4px;
+}
 /* The usage·send pair wraps as one unit and rides the right edge, so the
    send button stays bottom-right whether the toolbar fits one line or
    three — never orphaned alone on its own left-aligned row. */
-.toolbar__end { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
+.toolbar__end {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: none;
+}
 
 .toolbar__icon {
   display: inline-flex;
@@ -1834,9 +2252,14 @@ select {
   background: transparent;
   border: 1px solid transparent;
   color: var(--muted);
-  transition: background 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s;
 }
-.toolbar__icon:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
+.toolbar__icon:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
 .toolbar__stop {
   display: inline-flex;
   align-items: center;
@@ -1850,9 +2273,13 @@ select {
   transition: background 0.12s;
   animation: stopbreathe 2.2s ease-in-out infinite;
 }
-.toolbar__stop:hover:not(:disabled) { background: var(--danger-soft); }
+.toolbar__stop:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
 @keyframes stopbreathe {
-  50% { box-shadow: 0 0 0 4px var(--danger-soft); }
+  50% {
+    box-shadow: 0 0 0 4px var(--danger-soft);
+  }
 }
 
 .composer__send {
@@ -1871,7 +2298,10 @@ select {
   box-shadow:
     0 6px 16px -6px var(--accent-glow),
     inset 0 1px 0 rgba(255, 255, 255, 0.28);
-  transition: transform 0.18s var(--spring), box-shadow 0.18s var(--drift), opacity 0.15s;
+  transition:
+    transform 0.18s var(--spring),
+    box-shadow 0.18s var(--drift),
+    opacity 0.15s;
 }
 .composer__send:hover:not(:disabled) {
   transform: translateY(-1px) scale(1.05);
@@ -1879,7 +2309,9 @@ select {
     0 10px 22px -8px var(--accent-glow),
     inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
-.composer__send:active:not(:disabled) { transform: scale(0.94); }
+.composer__send:active:not(:disabled) {
+  transform: scale(0.94);
+}
 .composer__send:disabled {
   background: var(--panel-3);
   color: var(--muted);
@@ -1905,15 +2337,32 @@ select {
   font: 500 11px var(--sans);
   white-space: nowrap;
 }
-.usage__chip:hover, .usage__chip[aria-expanded="true"] {
+.usage__chip:hover,
+.usage__chip[aria-expanded="true"] {
   border-color: var(--line-hover);
   color: var(--text-2);
 }
-.usage__chip--warn { color: var(--warn); border-color: var(--warn-line); }
-.usage__chip--danger { color: var(--danger); border-color: var(--danger-line); }
-.usage__dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
-.usage__dot--warn { background: var(--warn); }
-.usage__dot--danger { background: var(--danger); }
+.usage__chip--warn {
+  color: var(--warn);
+  border-color: var(--warn-line);
+}
+.usage__chip--danger {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.usage__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ok);
+  flex: none;
+}
+.usage__dot--warn {
+  background: var(--warn);
+}
+.usage__dot--danger {
+  background: var(--danger);
+}
 .usage__reading {
   color: var(--text-2);
   font: 500 12px var(--mono);
@@ -1922,28 +2371,46 @@ select {
 }
 /* The ring shows one number — how full this conversation is. warn/danger
    recolor the arc; an unknown conversation draws the bare track. */
-.usage__ring { flex: none; display: inline-flex; }
-.usage__ringtrack { fill: none; stroke: var(--panel-3); stroke-width: 3; }
+.usage__ring {
+  flex: none;
+  display: inline-flex;
+}
+.usage__ringtrack {
+  fill: none;
+  stroke: var(--panel-3);
+  stroke-width: 3;
+}
 .usage__ringarc {
   fill: none;
   stroke: var(--text-2);
   stroke-width: 3;
   stroke-linecap: round;
 }
-.usage__ringarc--warn { stroke: var(--warn); }
-.usage__ringarc--danger { stroke: var(--danger); }
+.usage__ringarc--warn {
+  stroke: var(--warn);
+}
+.usage__ringarc--danger {
+  stroke: var(--danger);
+}
 
 /* The popover answers "얼마나 더 쓸 수 있나" as one small panel: a headline
    state up top, then a recessed gauge per budget. The ticks sit at 60% and
    85% — the exact points `tone()` recolors the gauge itself. */
-.usage__menu { min-width: 280px; padding: 12px 14px 13px; }
+.usage__menu {
+  min-width: 280px;
+  padding: 12px 14px 13px;
+}
 .usage__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.usage__title { font: 600 11px var(--sans); letter-spacing: 0.02em; color: var(--muted); }
+.usage__title {
+  font: 600 11px var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
 .usage__state {
   display: inline-flex;
   align-items: center;
@@ -1951,11 +2418,24 @@ select {
   font: 500 11px var(--sans);
   color: var(--muted);
 }
-.usage__statedot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.usage__state--warn .usage__statedot { background: var(--warn); }
-.usage__state--danger { color: var(--danger); }
-.usage__state--danger .usage__statedot { background: var(--danger); }
-.usage__metric { display: block; }
+.usage__statedot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.usage__state--warn .usage__statedot {
+  background: var(--warn);
+}
+.usage__state--danger {
+  color: var(--danger);
+}
+.usage__state--danger .usage__statedot {
+  background: var(--danger);
+}
+.usage__metric {
+  display: block;
+}
 .usage__metric + .usage__metric {
   margin-top: 11px;
   padding-top: 11px;
@@ -1968,10 +2448,22 @@ select {
   gap: 12px;
   margin-bottom: 6px;
 }
-.usage__label { color: var(--text-2); font-size: 12px; white-space: nowrap; }
-.usage__pct { color: var(--text); font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
-.usage__pct--warn { color: var(--warn); }
-.usage__pct--danger { color: var(--danger); }
+.usage__label {
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.usage__pct {
+  color: var(--text);
+  font: 600 12px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.usage__pct--warn {
+  color: var(--warn);
+}
+.usage__pct--danger {
+  color: var(--danger);
+}
 .usage__track {
   display: block;
   position: relative;
@@ -1989,22 +2481,51 @@ select {
   background-color: var(--accent);
   animation: usage-fill-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
-.usage__fill--warn { background-color: var(--warn); }
-.usage__fill--danger { background-color: var(--danger); }
+.usage__fill--warn {
+  background-color: var(--warn);
+}
+.usage__fill--danger {
+  background-color: var(--danger);
+}
 /* Gauges fill in sequence, one beat apart. */
-.usage__metric + .usage__metric .usage__fill { animation-delay: 70ms; }
-.usage__metric + .usage__metric + .usage__metric .usage__fill { animation-delay: 140ms; }
+.usage__metric + .usage__metric .usage__fill {
+  animation-delay: 70ms;
+}
+.usage__metric + .usage__metric + .usage__metric .usage__fill {
+  animation-delay: 140ms;
+}
 @keyframes usage-fill-in {
-  from { width: 0; }
+  from {
+    width: 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .usage__fill { animation: none; }
+  .usage__fill {
+    animation: none;
+  }
 }
-.usage__tick { position: absolute; top: 0; bottom: 0; width: 1px; }
-.usage__tick--warn { left: 60%; background: var(--warn-line); }
-.usage__tick--danger { left: 85%; background: var(--danger-line); }
+.usage__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.usage__tick--warn {
+  left: 60%;
+  background: var(--warn-line);
+}
+.usage__tick--danger {
+  left: 85%;
+  background: var(--danger-line);
+}
 /* The note carries the countdown and reset time, full width under its gauge. */
-.usage__note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.usage__note {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 /* machine-authored turns ---------------------------------------------------- */
 
 /* A turn the planner started but did not type (PLAN D9). It is their own side
@@ -2021,11 +2542,33 @@ select {
   border-radius: var(--r-lg);
   background: var(--panel-2);
 }
-.machine--gate { border-color: var(--warn-line); background: var(--warn-soft); }
-.machine__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.machine__title { color: var(--text); font-size: 13px; font-weight: 600; }
-.machine__lead { color: var(--muted); font-size: 12px; }
-.machine__rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.machine--gate {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+.machine__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.machine__title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.machine__lead {
+  color: var(--muted);
+  font-size: 12px;
+}
+.machine__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .machine__rows li {
   display: flex;
   flex-direction: column;
@@ -2033,8 +2576,15 @@ select {
   padding-left: 9px;
   border-left: 2px solid var(--line-strong);
 }
-.machine__label { color: var(--text-2); font-size: 12px; }
-.machine__text { color: var(--text); font-size: 13px; line-height: 1.5; }
+.machine__label {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.machine__text {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
 /* 코멘트 카드의 썸네일 (PLAN D87): what the planner saw beside what they
    wrote. Small, rounded, quiet. */
 .machine__thumb {
@@ -2054,11 +2604,19 @@ select {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.machine__more:hover { color: var(--text-2); }
+.machine__more:hover {
+  color: var(--text-2);
+}
 /* 결함② (PLAN 0단계): the failed-turn card's action row — without it
    다시 보내기 stacked over 자세히 and hid it. */
-.turnfail__actions { display: flex; gap: 10px; align-items: center; }
-.turnfail__actions .primary { align-self: auto; }
+.turnfail__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.turnfail__actions .primary {
+  align-self: auto;
+}
 /* The text Claude actually received. Monospace here is right: this is the one
    place in the transcript that is deliberately showing machine input. */
 .machine__body {
@@ -2069,17 +2627,40 @@ select {
   border-radius: var(--r-md);
   background: var(--bg-2);
   color: var(--text-2);
-  font: 11.5px/1.55 var(--mono);
+  font: 11.5px / 1.55 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
 /* Claude's plan as a card (PLAN D48). The signs ✓ ● ○ do the state work, so
    the rows stay quiet; the current item is the loud one. */
-.todo__list { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
-.todo__item { display: flex; align-items: baseline; gap: 7px; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
-.todo__item--current { color: var(--text); font-weight: 600; }
-.todo__sign { flex: none; width: 13px; text-align: center; }
-.todo--done { padding: 8px 12px; }
+.todo__list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.todo__item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.todo__item--current {
+  color: var(--text);
+  font-weight: 600;
+}
+.todo__sign {
+  flex: none;
+  width: 13px;
+  text-align: center;
+}
+.todo--done {
+  padding: 8px 12px;
+}
 .todo__done {
   padding: 0;
   border: 0;
@@ -2088,7 +2669,9 @@ select {
   font: 500 12.5px var(--sans);
   text-align: left;
 }
-.todo__done:hover { color: var(--text); }
+.todo__done:hover {
+  color: var(--text);
+}
 
 /* autocomplete ---------------------------------------------------------------*/
 
@@ -2111,10 +2694,15 @@ select {
   animation: paletterise 0.16s var(--spring);
 }
 @keyframes paletterise {
-  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .autocomplete { animation: none; }
+  .autocomplete {
+    animation: none;
+  }
 }
 .autocomplete__row {
   display: flex;
@@ -2128,9 +2716,20 @@ select {
   padding: 6px 9px;
   color: var(--text);
 }
-.autocomplete__row--on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
-.autocomplete__icon { flex: none; display: inline-flex; color: var(--muted); align-self: center; }
-.autocomplete__label { font: 500 12px var(--mono); flex-shrink: 0; }
+.autocomplete__row--on {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.autocomplete__icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--muted);
+  align-self: center;
+}
+.autocomplete__label {
+  font: 500 12px var(--mono);
+  flex-shrink: 0;
+}
 .autocomplete__hint {
   color: var(--muted);
   font: 400 11px var(--sans);
@@ -2175,8 +2774,12 @@ select {
 }
 /* 설정 carries the theme gallery and six groups — the one dialog that is a
    small room rather than a question, so it takes the wider frame. */
-.modal__panel--settings { max-width: 680px; }
-.modal__panel:focus { outline: none; }
+.modal__panel--settings {
+  max-width: 680px;
+}
+.modal__panel:focus {
+  outline: none;
+}
 .modal__head {
   position: relative;
   display: flex;
@@ -2204,8 +2807,15 @@ select {
   );
   pointer-events: none;
 }
-.modal__title { margin: 0; font: 650 15px var(--sans); letter-spacing: -0.012em; }
-.modal__head .ghost { display: inline-flex; padding: 5px; }
+.modal__title {
+  margin: 0;
+  font: 650 15px var(--sans);
+  letter-spacing: -0.012em;
+}
+.modal__head .ghost {
+  display: inline-flex;
+  padding: 5px;
+}
 .modal__body {
   overflow-y: auto;
   padding: 4px 20px 20px;
@@ -2238,7 +2848,9 @@ select {
   flex-direction: column;
   overflow: hidden;
 }
-.palette__panel:focus { outline: none; }
+.palette__panel:focus {
+  outline: none;
+}
 .palette__search {
   width: 100%;
   background: transparent;
@@ -2246,9 +2858,24 @@ select {
   border-bottom: 1px solid var(--line-soft);
   border-radius: 0;
 }
-.palette__search:focus { background: transparent; border-color: var(--line-soft); box-shadow: none; }
-.palette__list { margin: 0; padding: 6px; list-style: none; max-height: 320px; overflow-y: auto; }
-.palette__group { padding: 8px 8px 2px; color: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.02em; }
+.palette__search:focus {
+  background: transparent;
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+.palette__list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.palette__group {
+  padding: 8px 8px 2px;
+  color: var(--muted);
+  font: 600 11px var(--mono);
+  letter-spacing: 0.02em;
+}
 .palette__row {
   display: flex;
   align-items: center;
@@ -2258,15 +2885,43 @@ select {
   border-radius: var(--r-sm);
   cursor: pointer;
 }
-.palette__row--on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
-.palette__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.palette__icon { display: inline-flex; flex: none; color: var(--muted); }
-.palette__hint { flex: none; color: var(--muted); font-size: 11px; }
-.palette__empty { padding: 14px 10px; color: var(--muted); font-size: 12.5px; }
-.palette__error { margin: 0 6px; }
+.palette__row--on {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.palette__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
+}
+.palette__hint {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.palette__empty {
+  padding: 14px 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.palette__error {
+  margin: 0 6px;
+}
 
-.settings__group { padding: 16px 0 18px; border-bottom: 1px solid var(--line-soft); }
-.settings__group:last-child { border-bottom: 0; padding-bottom: 4px; }
+.settings__group {
+  padding: 16px 0 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.settings__group:last-child {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
 .settings__groupTitle {
   margin: 0 0 12px;
   display: flex;
@@ -2307,10 +2962,19 @@ select {
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
   text-align: left;
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s var(--spring);
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s,
+    transform 0.12s var(--spring);
 }
-.themegrid__tile:hover:not(:disabled) { border-color: var(--line-hover); background: var(--panel-2); }
-.themegrid__tile:active:not(:disabled) { transform: scale(0.97); }
+.themegrid__tile:hover:not(:disabled) {
+  border-color: var(--line-hover);
+  background: var(--panel-2);
+}
+.themegrid__tile:active:not(:disabled) {
+  transform: scale(0.97);
+}
 .themegrid__tile[aria-checked="true"] {
   border-color: var(--accent);
   background: var(--accent-soft);
@@ -2323,8 +2987,12 @@ select {
   overflow: hidden;
   background: var(--bg);
 }
-.themegrid__half { display: block; }
-.themegrid__half + .themegrid__half { border-top: 1px solid var(--line); }
+.themegrid__half {
+  display: block;
+}
+.themegrid__half + .themegrid__half {
+  border-top: 1px solid var(--line);
+}
 .themegrid__name {
   display: inline-flex;
   align-items: center;
@@ -2335,11 +3003,22 @@ select {
   color: var(--text-2);
   white-space: nowrap;
 }
-.themegrid__name svg { flex: none; }
-.themegrid__tile[aria-checked="true"] .themegrid__name { color: var(--text); font-weight: 600; }
+.themegrid__name svg {
+  flex: none;
+}
+.themegrid__tile[aria-checked="true"] .themegrid__name {
+  color: var(--text);
+  font-weight: 600;
+}
 /* 미리보기 아트: 레일 · 헤드 · 본문 줄 · 액센트 버튼 — 이 앱의 뼈대 네 조각. */
-.tg { display: flex; height: 64px; background: var(--bg-2); }
-.themegrid__half .tg { height: 32px; }
+.tg {
+  display: flex;
+  height: 64px;
+  background: var(--bg-2);
+}
+.themegrid__half .tg {
+  height: 32px;
+}
 .tg__rail {
   width: 15px;
   flex: none;
@@ -2350,15 +3029,51 @@ select {
   gap: 3px;
   padding: 4px 3px;
 }
-.tg__rail i { height: 3px; border-radius: 2px; background: var(--line-strong); }
-.tg__rail i:first-child { background: var(--accent); }
-.tg__main { flex: 1; min-width: 0; padding: 6px 7px 7px; display: flex; flex-direction: column; gap: 4px; }
-.themegrid__half .tg__main { padding: 4px 5px 5px; gap: 3px; }
-.tg__head { height: 4px; width: 58%; border-radius: 2px; background: var(--text-2); }
-.tg__line { height: 3px; border-radius: 2px; background: var(--line-strong); }
-.tg__line--short { width: 68%; }
-.tg__btn { margin-top: auto; height: 10px; width: 26px; border-radius: 4px; background: var(--brand-grad); }
-.themegrid__half .tg__btn { height: 7px; width: 20px; }
+.tg__rail i {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.tg__rail i:first-child {
+  background: var(--accent);
+}
+.tg__main {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 7px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.themegrid__half .tg__main {
+  padding: 4px 5px 5px;
+  gap: 3px;
+}
+.tg__head {
+  height: 4px;
+  width: 58%;
+  border-radius: 2px;
+  background: var(--text-2);
+}
+.tg__line {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+.tg__line--short {
+  width: 68%;
+}
+.tg__btn {
+  margin-top: auto;
+  height: 10px;
+  width: 26px;
+  border-radius: 4px;
+  background: var(--brand-grad);
+}
+.themegrid__half .tg__btn {
+  height: 7px;
+  width: 20px;
+}
 
 .setting {
   display: flex;
@@ -2366,10 +3081,28 @@ select {
   gap: 14px;
   padding: 9px 0;
 }
-.setting__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.setting__label { font-size: 13px; font-weight: 500; color: var(--text); }
-.setting__hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
-.setting__control { flex: none; display: flex; align-items: center; }
+.setting__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.setting__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.setting__hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.setting__control {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
 .setting__control select {
   font-size: 12.5px;
   padding: 6px 9px;
@@ -2380,7 +3113,11 @@ select {
 /* A switch, not a bare 15px checkbox: a behaviour toggle reads as on/off.
    The real input stays on top of the track — invisible, full-size — so
    clicks, the wrapping label, and keyboard focus all land on it. */
-.switch { position: relative; display: inline-flex; flex: none; }
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
 .switch input {
   /* A checked knob carries a transform, and a transform is a stacking
      context — without this the knob would paint over, and eat clicks
@@ -2411,17 +3148,31 @@ select {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: transform 0.18s var(--spring);
 }
-.switch input:checked + .switch__track { background: var(--accent); }
-.switch input:checked + .switch__track .switch__knob { transform: translateX(14px); }
+.switch input:checked + .switch__track {
+  background: var(--accent);
+}
+.switch input:checked + .switch__track .switch__knob {
+  transform: translateX(14px);
+}
 .switch input:focus-visible + .switch__track {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
-.switch input:disabled + .switch__track { opacity: 0.4; }
+.switch input:disabled + .switch__track {
+  opacity: 0.4;
+}
 
 /* a wide row drops its control below the label instead of beside it */
-.setting--wide { flex-direction: column; align-items: stretch; gap: 8px; }
-.settings__url { display: flex; gap: 8px; width: 100%; }
+.setting--wide {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.settings__url {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
 .settings__url input {
   flex: 1;
   min-width: 0;
@@ -2431,7 +3182,9 @@ select {
 
 /* Diagnostics stay reachable and stop being the first thing in the group
    (PLAN D13): a planner opens 문제 해결 for the two buttons above this fold. */
-.settings__fold { margin-top: 10px; }
+.settings__fold {
+  margin-top: 10px;
+}
 .settings__fold > summary {
   cursor: pointer;
   color: var(--muted);
@@ -2439,10 +3192,18 @@ select {
   padding: 4px 0;
   list-style: none;
 }
-.settings__fold > summary::-webkit-details-marker { display: none; }
-.settings__fold > summary::before { content: "▸ "; }
-.settings__fold[open] > summary::before { content: "▾ "; }
-.settings__fold > summary:hover { color: var(--text-2); }
+.settings__fold > summary::-webkit-details-marker {
+  display: none;
+}
+.settings__fold > summary::before {
+  content: "▸ ";
+}
+.settings__fold[open] > summary::before {
+  content: "▾ ";
+}
+.settings__fold > summary:hover {
+  color: var(--text-2);
+}
 
 .settings__facts {
   margin: 8px 0 12px;
@@ -2451,8 +3212,15 @@ select {
   gap: 6px 16px;
   font-size: 11.5px;
 }
-.settings__facts > div { display: flex; gap: 8px; min-width: 0; }
-.settings__facts dt { color: var(--muted); flex: none; }
+.settings__facts > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.settings__facts dt {
+  color: var(--muted);
+  flex: none;
+}
 .settings__facts dd {
   margin: 0;
   color: var(--text-2);
@@ -2462,7 +3230,12 @@ select {
   white-space: nowrap;
 }
 
-.settings__row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 
 /* Classless buttons in a settings row (문제 해결) read like every other
    panel button instead of the browser's native bevel. */
@@ -2472,7 +3245,9 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 7px 14px;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
 }
 .settings__row button:not(.primary):not(.danger):hover:not(:disabled) {
   background: var(--panel-3);
@@ -2483,8 +3258,16 @@ select {
 /* Below this width a label and a 230px picker no longer share a row; drop
    the control under the text, the way .setting--wide already does. */
 @media (max-width: 480px) {
-  .setting { flex-direction: column; align-items: stretch; gap: 6px; }
-  .setting__control select { min-width: 0; max-width: none; width: 100%; }
+  .setting {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .setting__control select {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
 }
 
 /* ------------------------------------------------------------ planner mode */
@@ -2504,8 +3287,7 @@ select {
      light. Dead flat behind three columns of panels read as unrendered. */
   background:
     radial-gradient(1100px 480px at 78% -12%, var(--wash-1), transparent 62%),
-    radial-gradient(900px 440px at -6% 110%, var(--wash-2), transparent 58%),
-    var(--bg);
+    radial-gradient(900px 440px at -6% 110%, var(--wash-2), transparent 58%), var(--bg);
   background-attachment: fixed;
 }
 .planner__main {
@@ -2525,7 +3307,9 @@ select {
   backdrop-filter: blur(12px) saturate(1.25);
   -webkit-backdrop-filter: blur(12px) saturate(1.25);
 }
-.planner__spacer { flex: 1; }
+.planner__spacer {
+  flex: 1;
+}
 .planner__project {
   font: 650 13.5px var(--sans);
   letter-spacing: -0.012em;
@@ -2547,13 +3331,18 @@ select {
   border-right: 1px solid var(--line);
   overflow: hidden;
 }
-.sidebar--collapsed { align-items: center; }
+.sidebar--collapsed {
+  align-items: center;
+}
 /* The rail's row IS the tile (PLAN D59 rule 4): the project's first letter on
    a 30px plate, the row's state riding one corner pip — the fold keeps the
    tree's whole vocabulary (who is active, what awaits an answer, how many
    changes) in 44px. A click opens the conversation popover beside the tile;
    the name and badge words live in the tooltip. */
-.sidebar--collapsed .tree { padding: 8px 7px; gap: 6px; }
+.sidebar--collapsed .tree {
+  padding: 8px 7px;
+  gap: 6px;
+}
 .sidebar--collapsed .node__row {
   position: relative;
   flex: none;
@@ -2565,7 +3354,7 @@ select {
   background: var(--panel-3);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-2);
-  font: 600 13px/1 var(--sans);
+  font: 600 13px / 1 var(--sans);
   animation: tilein 0.18s var(--spring) backwards;
 }
 .sidebar--collapsed .node__row:hover:not(:disabled) {
@@ -2582,7 +3371,10 @@ select {
   color: var(--accent);
 }
 @keyframes tilein {
-  from { opacity: 0; transform: scale(0.86); }
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
 }
 /* The corner pip: the badge's color at a glance. The 2px ring cuts the pip
    out of the plate, the way the tree's dots sit in their rows. */
@@ -2596,21 +3388,42 @@ select {
   background: var(--line-strong);
   box-shadow: 0 0 0 2px var(--bg-2);
 }
-.node__pip--ask { background: var(--warn); animation: pippulse 2s ease-in-out infinite; }
+.node__pip--ask {
+  background: var(--warn);
+  animation: pippulse 2s ease-in-out infinite;
+}
 .node__pip--working,
 .node__pip--handoff {
   background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg-2), 0 0 8px var(--accent-glow);
+  box-shadow:
+    0 0 0 2px var(--bg-2),
+    0 0 8px var(--accent-glow);
 }
-.node__pip--merged { background: var(--ok); }
-.node__pip--changes { background: var(--muted); }
-.node__pip--progress { background: var(--muted); animation: pipbreathe 1.2s ease-in-out infinite; }
+.node__pip--merged {
+  background: var(--ok);
+}
+.node__pip--changes {
+  background: var(--muted);
+}
+.node__pip--progress {
+  background: var(--muted);
+  animation: pipbreathe 1.2s ease-in-out infinite;
+}
 @keyframes pippulse {
-  0%, 100% { box-shadow: 0 0 0 2px var(--bg-2); }
-  50% { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 6px var(--warn-soft); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--bg-2);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--bg-2),
+      0 0 0 6px var(--warn-soft);
+  }
 }
 @keyframes pipbreathe {
-  50% { opacity: 0.35; }
+  50% {
+    opacity: 0.35;
+  }
 }
 .sidebar__brand {
   position: relative;
@@ -2639,7 +3452,10 @@ select {
   );
   pointer-events: none;
 }
-.sidebar--collapsed .sidebar__brand { justify-content: center; padding: 9px 0 8px; }
+.sidebar--collapsed .sidebar__brand {
+  justify-content: center;
+  padding: 9px 0 8px;
+}
 .sidebar__fold {
   flex: none;
   width: 26px;
@@ -2660,8 +3476,15 @@ select {
   flex-direction: column;
   gap: 2px;
 }
-.node { display: flex; flex-direction: column; }
-.node__rowwrap { position: relative; display: flex; align-items: center; }
+.node {
+  display: flex;
+  flex-direction: column;
+}
+.node__rowwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .node__row {
   flex: 1;
   min-width: 0;
@@ -2676,7 +3499,9 @@ select {
   width: 100%;
   cursor: pointer;
 }
-.node__row:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 6%, var(--panel-2)); }
+.node__row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-2));
+}
 /* The active project carries the tree's one bar: an accent edge on the left,
    so scanning the rail answers "which room am I in" peripherally. */
 .node--active .node__row {
@@ -2692,9 +3517,21 @@ select {
   flex: none;
   transition: transform 0.15s;
 }
-.node--folded .node__chev { transform: rotate(-90deg); }
-.node__dot { width: 7px; height: 7px; border-radius: 50%; flex: none; border: 1px solid transparent; transition: box-shadow 0.2s; }
-.node--active .node__dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.node--folded .node__chev {
+  transform: rotate(-90deg);
+}
+.node__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  border: 1px solid transparent;
+  transition: box-shadow 0.2s;
+}
+.node--active .node__dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .node__name {
   flex: 1;
   min-width: 0;
@@ -2717,7 +3554,12 @@ select {
   background: var(--panel-2);
   box-shadow: inset 0 0 0 1px var(--line-soft);
 }
-.node__badge--working { color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
+.node__badge--working {
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .node__badge--working::before {
   content: "";
   width: 6px;
@@ -2729,10 +3571,18 @@ select {
   border-right-color: currentColor;
   animation: spin 0.7s linear infinite;
 }
-.node__badge--merged { color: var(--ok); }
-.node__badge--progress { color: var(--text-2); }
-.node__badge--handoff { color: var(--accent); }
-.node__badge--changes { color: var(--text-2); }
+.node__badge--merged {
+  color: var(--ok);
+}
+.node__badge--progress {
+  color: var(--text-2);
+}
+.node__badge--handoff {
+  color: var(--accent);
+}
+.node__badge--changes {
+  color: var(--text-2);
+}
 /* 확인 대기: the one state that waits on the planner — a warn dot that
    pulses, not the working spinner. */
 .node__badge--ask {
@@ -2765,9 +3615,20 @@ select {
 .node__rowwrap:hover .node__add,
 .node__rowwrap:hover .node__menu-btn,
 .node__add:focus-visible,
-.node__menu-btn:focus-visible { opacity: 1; }
-.node__add:hover, .node__menu-btn:hover { color: var(--text); background: var(--panel-3); }
-.node__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
+.node__menu-btn:focus-visible {
+  opacity: 1;
+}
+.node__add:hover,
+.node__menu-btn:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.node__menu {
+  top: calc(100% - 4px);
+  bottom: auto;
+  right: 8px;
+  left: auto;
+}
 .node__rename {
   width: 100%;
   padding: 7px 8px;
@@ -2787,7 +3648,11 @@ select {
   padding-left: 8px;
   border-left: 1px solid var(--line-soft);
 }
-.leafwrap { position: relative; display: flex; align-items: center; }
+.leafwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .leaf {
   flex: 1;
   min-width: 0;
@@ -2804,7 +3669,10 @@ select {
   font: 400 12.5px var(--sans);
   cursor: pointer;
 }
-.leaf:hover { background: var(--panel-2); color: var(--text); }
+.leaf:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
 .leaf--active {
   /* the open conversation: a lit pill, not a gray slab — the accent tint and
      the hairline ring say "this is where you are" at scan distance */
@@ -2813,8 +3681,20 @@ select {
   color: var(--text);
   font-weight: 600;
 }
-.leaf__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--line-strong); transition: background 0.2s, box-shadow 0.2s; }
-.leaf--active .leaf__dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.leaf__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--line-strong);
+  transition:
+    background 0.2s,
+    box-shadow 0.2s;
+}
+.leaf--active .leaf__dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .leaf__dot--live {
   width: 8px;
   height: 8px;
@@ -2824,10 +3704,21 @@ select {
   animation: spin 1.1s linear infinite;
   filter: drop-shadow(0 0 3px var(--accent-glow));
 }
-.leaf__dot--ask { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); animation: askpulse 2s ease-in-out infinite; }
-.leaf__dot--done { width: 7px; height: 7px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.leaf__dot--ask {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+  animation: askpulse 2s ease-in-out infinite;
+}
+.leaf__dot--done {
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
 @keyframes askpulse {
-  50% { box-shadow: 0 0 0 6px var(--warn-soft); }
+  50% {
+    box-shadow: 0 0 0 6px var(--warn-soft);
+  }
 }
 .leaf__title {
   flex: 1;
@@ -2839,9 +3730,18 @@ select {
   text-overflow: ellipsis;
   text-align: left;
 }
-.leaf__meta { font: 400 11px var(--sans); color: var(--muted); flex: none; }
-.leaf__meta--ask { color: var(--warn); font-weight: 600; }
-.leaf__meta--live { color: var(--accent); }
+.leaf__meta {
+  font: 400 11px var(--sans);
+  color: var(--muted);
+  flex: none;
+}
+.leaf__meta--ask {
+  color: var(--warn);
+  font-weight: 600;
+}
+.leaf__meta--live {
+  color: var(--accent);
+}
 /* An empty project's way in: a row, not a remark — quiet until hovered, so a
    tree full of projects does not read as a column of calls to action. */
 .leaf--start {
@@ -2851,7 +3751,21 @@ select {
   color: var(--muted);
   font-size: 12px;
 }
-.leaf--start:hover { color: var(--text); }
+.leaf--start:hover {
+  color: var(--text);
+}
+/* The truncated conversation's way back — the same quiet register as the
+   start row, naming the count and pointing at the palette. */
+.leaf--more {
+  flex: none;
+  margin: 2px 0 4px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.leaf--more:hover {
+  color: var(--text);
+}
 .leaf__rename {
   flex: 1;
   min-width: 0;
@@ -2871,15 +3785,38 @@ select {
   opacity: 0;
 }
 .leafwrap:hover .leaf__menu-btn,
-.leaf__menu-btn:focus-visible { opacity: 1; }
-.leaf__menu { top: calc(100% - 4px); bottom: auto; right: 8px; left: auto; }
-.selector__row--on { background: var(--panel-2); }
+.leaf__menu-btn:focus-visible {
+  opacity: 1;
+}
+.leaf__menu {
+  top: calc(100% - 4px);
+  bottom: auto;
+  right: 8px;
+  left: auto;
+}
+.selector__row--on {
+  background: var(--panel-2);
+}
 /* The rail's conversation popover (PLAN D59 rule 4): opens beside the icon,
    floats over the workspace, closes on its own row clicks. */
-.node__pop { top: 0; left: 44px; bottom: auto; right: auto; }
+.node__pop {
+  top: 0;
+  left: 44px;
+  bottom: auto;
+  right: auto;
+}
 /* 레일의 overflow 클리핑이 absolute 메뉴를 먹는다 — fixed 로 타일 곁에 고정. */
-.node__pop--fixed { position: fixed; max-height: 70vh; overflow-y: auto; }
-.node__pop__sep { display: block; height: 1px; margin: 5px 4px; background: var(--line-soft); }
+.node__pop--fixed {
+  position: fixed;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.node__pop__sep {
+  display: block;
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line-soft);
+}
 /* The rail's foot: 새 프로젝트 stretches, 설정's gear sits beside it — the
    header lost its gear when this row took over. The narrow fold keeps the
    gear alone, centered by the rail. */
@@ -2899,7 +3836,10 @@ select {
   border-radius: var(--r-lg);
   color: var(--text-2);
   font-weight: 500;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
 }
 .sidebar__new:hover:not(:disabled) {
   border-style: solid;
@@ -2907,11 +3847,20 @@ select {
   background: var(--accent-soft);
   color: var(--text);
 }
-.sidebar__gear { flex: none; padding: 7px 8px; }
+.sidebar__gear {
+  flex: none;
+  padding: 7px 8px;
+}
 /* The folded rail (44px) stacks the ＋ tile over the gear; the foot's side
    margins would strangle a 30px row, so the rail centers the column. */
-.sidebar--collapsed .sidebar__foot { flex-direction: column; gap: 2px; margin: 10px 0 12px; }
-.sidebar--collapsed .sidebar__gear { padding: 8px; }
+.sidebar--collapsed .sidebar__foot {
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 12px;
+}
+.sidebar--collapsed .sidebar__gear {
+  padding: 8px;
+}
 .sidebar__plus {
   flex: none;
   width: 30px;
@@ -2921,7 +3870,10 @@ select {
   border-radius: 9px;
   color: var(--text-2);
   font-size: 14px;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
 }
 .sidebar__plus:hover:not(:disabled) {
   border-style: solid;
@@ -2929,21 +3881,44 @@ select {
   background: var(--accent-soft);
   color: var(--text);
 }
-.sidebar__error { padding: 0 12px 10px; }
-.sidebar__remove { max-width: 420px; }
-.sidebar__removetext { margin: 0; padding: 12px 14px 0; font: 400 13px/1.6 var(--sans); color: var(--text); overflow-wrap: anywhere; }
-.sidebar__removetext strong { font-weight: 600; }
+.sidebar__error {
+  padding: 0 12px 10px;
+}
+.sidebar__remove {
+  max-width: 420px;
+}
+.sidebar__removetext {
+  margin: 0;
+  padding: 12px 14px 0;
+  font: 400 13px / 1.6 var(--sans);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sidebar__removetext strong {
+  font-weight: 600;
+}
 .sidebar__removewarn {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 8px 14px 0;
-  font: 500 12.5px/1.5 var(--sans);
+  font: 500 12.5px / 1.5 var(--sans);
   color: var(--warn);
 }
-.sidebar__removewarn svg { flex: none; }
-.sidebar__removehint { margin: 8px 14px 0; font: 400 12px/1.55 var(--sans); color: var(--muted); }
-.sidebar__removebtns { display: flex; gap: 8px; justify-content: flex-end; padding: 14px; }
+.sidebar__removewarn svg {
+  flex: none;
+}
+.sidebar__removehint {
+  margin: 8px 14px 0;
+  font: 400 12px / 1.55 var(--sans);
+  color: var(--muted);
+}
+.sidebar__removebtns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 14px;
+}
 /* 결함③: the discard dialog's file list — what 버리기 would throw away. */
 .discard__files {
   margin: 8px 14px 0;
@@ -2954,7 +3929,7 @@ select {
   border-radius: var(--r-md);
   background: var(--bg-2);
   list-style: none;
-  font: 400 12px/1.6 var(--mono);
+  font: 400 12px / 1.6 var(--mono);
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
@@ -2962,7 +3937,9 @@ select {
 /* Narrow windows fold the rail by themselves (PLAN D19): three columns
    cannot fit, so the fold is the window's decision, not a setting. */
 @media (max-width: 1100px) {
-  .planner { grid-template-columns: 44px minmax(0, 1fr) !important; }
+  .planner {
+    grid-template-columns: 44px minmax(0, 1fr) !important;
+  }
 }
 
 /* What the daemon knows is wrong — no CLI, not signed in, no pnpm. A planner
@@ -2975,11 +3952,19 @@ select {
   border-bottom: 1px solid var(--line-soft);
   flex: none;
 }
-.planner__split--sidebar::after { left: 0; }
+.planner__split--sidebar::after {
+  left: 0;
+}
 /* The sidebar's boundary hangs off the frame itself: the rail column ends at
    the grid line, and the handle sits over that border. */
-.planner--resizing { cursor: col-resize; user-select: none; transition: none; }
-.planner--resizing iframe { pointer-events: none; }
+.planner--resizing {
+  cursor: col-resize;
+  user-select: none;
+  transition: none;
+}
+.planner--resizing iframe {
+  pointer-events: none;
+}
 
 /* The workspace's two columns. The template comes in inline now — the
    preview's width is the planner's to drag (PageWorkspace) — so what is left
@@ -3013,15 +3998,26 @@ select {
   width: 1px;
   background: transparent;
 }
-.planner__split--preview::after { right: 0; }
-.planner__split:hover::after { background: var(--line-hover); }
-.planner__split--drag::after { background: var(--accent); }
+.planner__split--preview::after {
+  right: 0;
+}
+.planner__split:hover::after {
+  background: var(--line-hover);
+}
+.planner__split--drag::after {
+  background: var(--accent);
+}
 
 /* While a boundary drags: the resize cursor owns the frame, text selection
    stops following the pointer, and the preview iframe stops eating
    pointermove — a drag crossing an iframe would otherwise stall. */
-.planner__body--resizing { cursor: col-resize; user-select: none; }
-.planner__body--resizing iframe { pointer-events: none; }
+.planner__body--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.planner__body--resizing iframe {
+  pointer-events: none;
+}
 
 /* The chat column: the session strip sits above the transcript and neither
    scrolls the other. */
@@ -3040,9 +4036,15 @@ select {
   min-height: 0;
   /* the studio's key light falls into the column the eye lives in — one
      breath of accent from the top, gone before it competes with content */
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 4.5%, transparent), transparent 320px);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 4.5%, transparent),
+    transparent 320px
+  );
 }
-.planner__chat .scroll { padding: 22px 26px 14px; }
+.planner__chat .scroll {
+  padding: 22px 26px 14px;
+}
 
 /* The scroll area and its one overlay: the pill that brings a scrolled-up
    reader back to the arriving answer. A wrapper because a pill positioned
@@ -3072,9 +4074,19 @@ select {
   color: var(--text-2);
   font-size: 12px;
   box-shadow: var(--shadow-card);
-  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.18s var(--spring), box-shadow 0.18s;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s,
+    transform 0.18s var(--spring),
+    box-shadow 0.18s;
 }
-.chatstack__pill:hover { background: var(--panel-2); border-color: var(--line-hover-strong); color: var(--text); transform: translateX(-50%) translateY(-1px); }
+.chatstack__pill:hover {
+  background: var(--panel-2);
+  border-color: var(--line-hover-strong);
+  color: var(--text);
+  transform: translateX(-50%) translateY(-1px);
+}
 /* While a turn streams, the pill names what keeps arriving below the fold —
    and carries the live lamp so it reads as a signal, not a link. */
 .chatstack__pill--live {
@@ -3089,7 +4101,9 @@ select {
   background: var(--accent);
   animation: lampbreathe 2s ease-in-out infinite;
 }
-.chatstack__pill--live:hover { color: var(--accent); }
+.chatstack__pill--live:hover {
+  color: var(--accent);
+}
 
 /* The workspace's right column, full-time now: the action bar with 저장 ·
    개발자에게 넘기기 and the cycle's status, then the preview itself. */
@@ -3119,7 +4133,9 @@ select {
   position: relative;
   z-index: 31;
 }
-.screenpanel__spacer { flex: 1; }
+.screenpanel__spacer {
+  flex: 1;
+}
 .screenpanel__status {
   display: inline-flex;
   align-items: center;
@@ -3146,11 +4162,26 @@ select {
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
   flex: none;
 }
-.screenpanel__status--pending { color: var(--text-2); border-color: var(--line-hover); }
-.screenpanel__status--saved { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-.screenpanel__status--handed { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-.screenpanel__status--changes { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
-.screenpanel__status--merged { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.screenpanel__status--pending {
+  color: var(--text-2);
+  border-color: var(--line-hover);
+}
+.screenpanel__status--saved {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+.screenpanel__status--handed {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.screenpanel__status--changes {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+}
+.screenpanel__status--merged {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
 
 /* 준비 중(내려받기·설치·서버 부팅)과 실패 상태는 미리보기 열 전체를 쓴다:
    고정 폭 카드가 구석에 붙어 있으면 화면이 텅 빈 것처럼 읽힌다. 내용은
@@ -3189,12 +4220,35 @@ select {
   border-radius: var(--r-dialog);
   box-shadow: var(--shadow-card);
 }
-.progress--error .progress__card { border-color: var(--danger-line); }
-.progress .spinner { width: 15px; height: 15px; border-width: 2px; color: var(--accent); }
-.progress--error .progress__head h2 { color: var(--danger); }
-.progress__head { display: flex; align-items: center; gap: 10px; }
-.progress__head h2 { margin: 0; font: 600 15px var(--sans); color: var(--text); }
-.progress__body { margin: 0; max-width: 400px; color: var(--text-2); font-size: 13px; line-height: 1.6; }
+.progress--error .progress__card {
+  border-color: var(--danger-line);
+}
+.progress .spinner {
+  width: 15px;
+  height: 15px;
+  border-width: 2px;
+  color: var(--accent);
+}
+.progress--error .progress__head h2 {
+  color: var(--danger);
+}
+.progress__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.progress__head h2 {
+  margin: 0;
+  font: 600 15px var(--sans);
+  color: var(--text);
+}
+.progress__body {
+  margin: 0;
+  max-width: 400px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .progress__cmd {
   width: 100%;
   max-width: 480px;
@@ -3211,7 +4265,10 @@ select {
   text-align: left;
   overflow-x: auto;
 }
-.progress__cmd code { flex: 1; white-space: nowrap; }
+.progress__cmd code {
+  flex: 1;
+  white-space: nowrap;
+}
 .progress__detail {
   max-width: 100%;
   font: 500 11.5px var(--mono);
@@ -3232,9 +4289,18 @@ select {
   gap: 8px;
   flex-wrap: wrap;
 }
-.progress__actions button { white-space: nowrap; }
-.progress__note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
-.progress .primary { align-self: center; }
+.progress__actions button {
+  white-space: nowrap;
+}
+.progress__note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.progress .primary {
+  align-self: center;
+}
 /* The wait's afterword: one quiet line under the card that names what the
    column becomes — the difference between an empty room and a stage. */
 .progress__after {
@@ -3253,11 +4319,19 @@ select {
   position: relative;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-2) 40%, var(--panel)), var(--panel));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-2) 40%, var(--panel)),
+    var(--panel)
+  );
   transition: border-color 0.15s;
 }
-.activity:hover { border-color: var(--line); }
-.activity--error { border-color: var(--danger-line); }
+.activity:hover {
+  border-color: var(--line);
+}
+.activity--error {
+  border-color: var(--danger-line);
+}
 .activity--error::after {
   background: var(--danger);
   box-shadow:
@@ -3268,7 +4342,8 @@ select {
   animation: nodepulse 1.7s ease-in-out infinite;
 }
 @keyframes nodepulse {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       0 0 0 3px var(--bg),
       0 0 0 4px color-mix(in srgb, var(--accent) 42%, transparent);
@@ -3292,10 +4367,22 @@ select {
   color: var(--text-2);
   transition: background 0.12s;
 }
-.activity__head:hover { background: color-mix(in srgb, var(--panel-2) 72%, transparent); }
-.activity--error .activity__head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.activity__text { font: 500 12px var(--sans); letter-spacing: -0.003em; flex: 1; }
-.activity__flag { font: 500 10.5px var(--mono); color: var(--danger); }
+.activity__head:hover {
+  background: color-mix(in srgb, var(--panel-2) 72%, transparent);
+}
+.activity--error .activity__head {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.activity__text {
+  font: 500 12px var(--sans);
+  letter-spacing: -0.003em;
+  flex: 1;
+}
+.activity__flag {
+  font: 500 10.5px var(--mono);
+  color: var(--danger);
+}
 .activity__body {
   border-top: 1px solid var(--line-soft);
   padding: 8px;
@@ -3328,7 +4415,10 @@ select {
   border-radius: var(--r-sm);
   padding: 1px 5px;
 }
-.chip__size { color: var(--muted); font: 500 10.5px var(--mono); }
+.chip__size {
+  color: var(--muted);
+  font: 500 10.5px var(--mono);
+}
 
 /* preview column ------------------------------------------------------------*/
 
@@ -3356,7 +4446,9 @@ select {
    a squeezed row must squeeze the paddings (see the ≤1100 rules below), not
    read a label down its own column. */
 .preview__toolbar button,
-.screenpanel__bar button { white-space: nowrap; }
+.screenpanel__bar button {
+  white-space: nowrap;
+}
 .preview__link {
   cursor: pointer;
   background: none;
@@ -3370,8 +4462,15 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.preview__link:hover { color: var(--text); border-color: var(--line-hover); }
-.preview__origin { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview__link:hover {
+  color: var(--text);
+  border-color: var(--line-hover);
+}
+.preview__origin {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .preview__frame {
   flex: 1;
@@ -3392,8 +4491,16 @@ select {
 }
 /* The stopped card borrows the 준비/실패 card (progress__card) and tints its
    head glyph; the daemon's last log line sits under the sentence in mono. */
-.preview__stopglyph { display: inline-flex; color: var(--danger); }
-.preview__stopactions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.preview__stopglyph {
+  display: inline-flex;
+  color: var(--danger);
+}
+.preview__stopactions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
 /* The error banner above the frame (PLAN D49): the title says what happened,
    the message is clamped until 자세히 opens it. */
 .preview__error {
@@ -3405,12 +4512,21 @@ select {
   border-radius: var(--r-md);
   background: var(--danger-soft);
 }
-.preview__error__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.preview__error__text strong { font: 600 12.5px var(--sans); color: var(--text); }
+.preview__error__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.preview__error__text strong {
+  font: 600 12.5px var(--sans);
+  color: var(--text);
+}
 .preview__error__message {
   margin: 0;
   color: var(--text-2);
-  font: 11.5px/1.5 var(--mono);
+  font: 11.5px / 1.5 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
   display: -webkit-box;
@@ -3418,12 +4534,23 @@ select {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.preview__error__message--open { display: block; max-height: 200px; overflow: auto; }
-.preview__error__actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.preview__error__message--open {
+  display: block;
+  max-height: 200px;
+  overflow: auto;
+}
+.preview__error__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
 
 /* 저장 검토 -------------------------------------------------------------------*/
 
-.modal__panel--diff { max-width: 720px; }
+.modal__panel--diff {
+  max-width: 720px;
+}
 
 .diff__stage {
   display: flex;
@@ -3456,16 +4583,29 @@ select {
   text-align: left;
   cursor: pointer;
 }
-.diff__filerow:hover { background: var(--bg-2); }
-.diff__file:last-child .diff__filerow { border-bottom: 0; }
+.diff__filerow:hover {
+  background: var(--bg-2);
+}
+.diff__file:last-child .diff__filerow {
+  border-bottom: 0;
+}
 /* 해결된 것 보기 (PLAN D78): a resolved comment row reads grey — history,
    not work to do. */
-.diff__file--resolved .diff__path, .diff__file--resolved .hint { color: var(--muted); }
+.diff__file--resolved .diff__path,
+.diff__file--resolved .hint {
+  color: var(--muted);
+}
 
 /* 되감기 (PLAN D95): the answer's action row and the planner bubble's
    고쳐서 다시 보내기. */
-.answer__actions { display: flex; gap: 10px; align-items: center; }
-.bubble--user { position: relative; }
+.answer__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.bubble--user {
+  position: relative;
+}
 .bubble__resend {
   display: block;
   margin-top: 6px;
@@ -3479,7 +4619,9 @@ select {
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.bubble__resend:hover { color: var(--text); }
+.bubble__resend:hover {
+  color: var(--text);
+}
 
 /* 코치 마크 (PLAN D92) — one sentence + 알겠어요, once each. In the bars it
    floats: a note hanging under its bar, never a citizen of the action row —
@@ -3521,24 +4663,39 @@ select {
   pointer-events: none;
 }
 .screenpanel__bar .coach .coach__ok,
-.preview__toolbar .coach .coach__ok { pointer-events: auto; }
+.preview__toolbar .coach .coach__ok {
+  pointer-events: auto;
+}
 /* The bar's note drops one row further, past the preview toolbar it would
    otherwise sit on — a hint must never wear the button it floats over. */
-.screenpanel__bar .coach { top: calc(100% + 44px); }
+.screenpanel__bar .coach {
+  top: calc(100% + 44px);
+}
 /* 두 마크가 같이 뜨면 계단으로 — 같은 자리에 겹치지 않는다. */
 .screenpanel__actions:has([data-testid="coach-save"]) [data-testid="coach-review"] {
   top: calc(100% + 92px);
 }
 @keyframes coachdrop {
-  from { opacity: 0; transform: translateY(-4px); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .screenpanel__bar .coach,
-  .preview__toolbar .coach { animation: none; }
+  .preview__toolbar .coach {
+    animation: none;
+  }
 }
 /* ⌘/ 단축키 시트 (PLAN D92) */
-.shortcuts { max-width: 380px; }
-.shortcuts__list { margin: 0; padding: 0 14px 14px; list-style: none; }
+.shortcuts {
+  max-width: 380px;
+}
+.shortcuts__list {
+  margin: 0;
+  padding: 0 14px 14px;
+  list-style: none;
+}
 .shortcuts__row {
   display: flex;
   align-items: center;
@@ -3549,7 +4706,9 @@ select {
   font: 400 12.5px var(--sans);
   color: var(--text-2);
 }
-.shortcuts__row:last-child { border-bottom: 0; }
+.shortcuts__row:last-child {
+  border-bottom: 0;
+}
 .shortcuts__keys {
   font: 600 11.5px var(--mono);
   color: var(--text);
@@ -3560,8 +4719,18 @@ select {
 }
 
 /* 개발자 코멘트 패널 (PLAN D88) */
-.dev__all { align-self: flex-start; margin-bottom: 10px; padding: 6px 14px; font-size: 12.5px; }
-.dev__reply { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.dev__all {
+  align-self: flex-start;
+  margin-bottom: 10px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+}
+.dev__reply {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+}
 .dev__reply input {
   flex: 1;
   min-width: 0;
@@ -3572,8 +4741,14 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.dev__reply input:focus { outline: none; border-color: var(--accent); }
-.dev__reply .primary { padding: 5px 12px; font-size: 12px; }
+.dev__reply input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.dev__reply .primary {
+  padding: 5px 12px;
+  font-size: 12px;
+}
 
 .comments__showresolved {
   display: inline-flex;
@@ -3594,10 +4769,20 @@ select {
   padding: 1px 6px;
   color: var(--muted);
 }
-.diff__badge--added { color: var(--ok, var(--text)); border-color: var(--line); }
-.diff__badge--deleted { color: var(--danger); border-color: var(--danger-line); }
-.diff__badge--modified { color: var(--text-2); }
-.diff__badge--renamed { color: var(--muted); }
+.diff__badge--added {
+  color: var(--ok, var(--text));
+  border-color: var(--line);
+}
+.diff__badge--deleted {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.diff__badge--modified {
+  color: var(--text-2);
+}
+.diff__badge--renamed {
+  color: var(--muted);
+}
 
 .diff__path {
   flex: 1;
@@ -3608,19 +4793,28 @@ select {
   font: 500 11.5px var(--mono);
   color: var(--text);
 }
-.diff__count { flex: none; font: 500 11px var(--mono); color: var(--muted); }
+.diff__count {
+  flex: none;
+  font: 500 11px var(--mono);
+  color: var(--muted);
+}
 
-.diff__hunks { border-top: 1px solid var(--line-soft); background: var(--bg-2); }
+.diff__hunks {
+  border-top: 1px solid var(--line-soft);
+  background: var(--bg-2);
+}
 .diff__hunk {
   margin: 0;
   padding: 8px 10px;
   overflow-x: auto;
   border-bottom: 1px solid var(--line-soft);
-  font: 400 11px/1.5 var(--mono);
+  font: 400 11px / 1.5 var(--mono);
   color: var(--text-2);
   white-space: pre;
 }
-.diff__file:last-child .diff__hunks .diff__hunk:last-child { border-bottom: 0; }
+.diff__file:last-child .diff__hunks .diff__hunk:last-child {
+  border-bottom: 0;
+}
 
 .diff__fail {
   margin: 0;
@@ -3630,7 +4824,7 @@ select {
   border: 1px solid var(--danger-line);
   border-radius: var(--r-sm);
   background: var(--bg-2);
-  font: 400 11px/1.5 var(--mono);
+  font: 400 11px / 1.5 var(--mono);
   color: var(--danger);
   white-space: pre-wrap;
   word-break: break-word;
@@ -3638,17 +4832,23 @@ select {
 
 /* 개발자에게 넘기기 -----------------------------------------------------------*/
 
-.modal__panel--handoff { max-width: 640px; }
+.modal__panel--handoff {
+  max-width: 640px;
+}
 
 /* Both fields carry the planner's own words and want the whole panel width;
    .setting--wide stretches the row but not the control inside it. */
-.handoff__field .setting__control { display: block; }
+.handoff__field .setting__control {
+  display: block;
+}
 .handoff__field input,
-.handoff__field textarea { width: 100%; }
+.handoff__field textarea {
+  width: 100%;
+}
 .handoff__body {
   min-height: 110px;
   resize: vertical;
-  font: 400 12.5px/1.6 var(--sans);
+  font: 400 12.5px / 1.6 var(--sans);
 }
 
 .handoff__done {
@@ -3658,9 +4858,10 @@ select {
   flex-wrap: wrap;
   padding: 6px 0 10px;
 }
-.handoff__state { font: 500 11px var(--mono); color: var(--muted); }
-
-
+.handoff__state {
+  font: 500 11px var(--mono);
+  color: var(--muted);
+}
 
 /* The state chip in the 넘기기 dialog: the only place the developer's answer
    surfaces, and — since nothing polls it — the click that re-reads it. */
@@ -3676,10 +4877,17 @@ select {
   color: var(--muted);
   text-decoration: none;
 }
-.handoff__chip:hover { color: var(--text); border-color: var(--line-hover); }
-.handoff__chip--changes_requested { color: var(--warn); border-color: var(--warn-line); }
-.handoff__chip--merged { color: var(--ok); }
-
+.handoff__chip:hover {
+  color: var(--text);
+  border-color: var(--line-hover);
+}
+.handoff__chip--changes_requested {
+  color: var(--warn);
+  border-color: var(--warn-line);
+}
+.handoff__chip--merged {
+  color: var(--ok);
+}
 
 /* onboarding --------------------------------------------------------------------*/
 
@@ -3698,17 +4906,43 @@ select {
      폼 펼침 등) 중앙정렬이 윗부분을 잘라버리는 것을 막는다. */
   justify-content: safe center;
 }
-.planner--onboarding { display: flex; }
+.planner--onboarding {
+  display: flex;
+}
 /* Boot: the beat between a reload and the daemon's first snapshot — the
    brand alone holds the stage so no wizard or picker flashes through. */
-.boot { align-items: center; justify-content: center; }
-.onboarding__titlerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.boot {
+  align-items: center;
+  justify-content: center;
+}
+.onboarding__titlerow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
 /* 시작 화면은 스플래시다: 마크·제목·부제·확인 중 문구를 한 축에 세운다.
    스텝 카드가 차는 본문은 그대로 왼쪽 정렬을 유지한다. */
-.onboarding__head { text-align: center; }
-.onboarding > .hint { text-align: center; }
-.onboarding__head h1 { margin: 0 0 6px; font: 600 20px var(--sans); color: var(--text); text-wrap: balance; }
-.onboarding__steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.onboarding__head {
+  text-align: center;
+}
+.onboarding > .hint {
+  text-align: center;
+}
+.onboarding__head h1 {
+  margin: 0 0 6px;
+  font: 600 20px var(--sans);
+  color: var(--text);
+  text-wrap: balance;
+}
+.onboarding__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .onboarding__step {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -3718,11 +4952,26 @@ select {
   flex-direction: column;
   gap: 9px;
 }
-.onboarding__step--fail { border-color: var(--danger-line); }
-.onboarding__step--warn { border-color: var(--warn-line); }
-.onboarding__step--pass { border-color: var(--line-soft); }
-.onboarding__stephead { display: flex; align-items: center; gap: 9px; }
-.onboarding__stephead h2 { margin: 0; font: 600 13.5px var(--sans); color: var(--text); flex: 1; }
+.onboarding__step--fail {
+  border-color: var(--danger-line);
+}
+.onboarding__step--warn {
+  border-color: var(--warn-line);
+}
+.onboarding__step--pass {
+  border-color: var(--line-soft);
+}
+.onboarding__stephead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.onboarding__stephead h2 {
+  margin: 0;
+  font: 600 13.5px var(--sans);
+  color: var(--text);
+  flex: 1;
+}
 .onboarding__stepnum {
   font: 600 11px var(--mono);
   color: var(--muted);
@@ -3734,20 +4983,75 @@ select {
   align-items: center;
   justify-content: center;
 }
-.onboarding__glyph { font: 600 13px var(--sans); width: 18px; text-align: center; }
-.onboarding__glyph--pass { color: var(--ok); }
-.onboarding__glyph--warn { color: var(--warn); }
-.onboarding__glyph--fail { color: var(--danger); }
-.onboarding__glyph svg { vertical-align: -2px; }
-.onboarding__detail svg, .hint svg { vertical-align: -2px; }
-.onboarding__status { font: 500 11px var(--sans); color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 1px 7px; }
-.onboarding__detail { margin: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
-.onboarding__inputs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.onboarding__inputs input { flex: 1; min-width: 180px; }
-.onboarding__fixrow { display: flex; }
-.onboarding__note { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 12px; color: var(--text-2); line-height: 1.6; }
-.onboarding__note code { font: 500 11.5px var(--mono); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 3px 7px; }
-.onboarding__done { display: flex; justify-content: center; padding-top: 4px; }
+.onboarding__glyph {
+  font: 600 13px var(--sans);
+  width: 18px;
+  text-align: center;
+}
+.onboarding__glyph--pass {
+  color: var(--ok);
+}
+.onboarding__glyph--warn {
+  color: var(--warn);
+}
+.onboarding__glyph--fail {
+  color: var(--danger);
+}
+.onboarding__glyph svg {
+  vertical-align: -2px;
+}
+.onboarding__detail svg,
+.hint svg {
+  vertical-align: -2px;
+}
+.onboarding__status {
+  font: 500 11px var(--sans);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+}
+.onboarding__detail {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.onboarding__inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.onboarding__inputs input {
+  flex: 1;
+  min-width: 180px;
+}
+.onboarding__fixrow {
+  display: flex;
+}
+.onboarding__note {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+.onboarding__note code {
+  font: 500 11.5px var(--mono);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 3px 7px;
+}
+.onboarding__done {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
 
 /* preview comment pins -----------------------------------------------------------*/
 
@@ -3759,10 +5063,29 @@ select {
   gap: 6px;
   background: var(--panel);
 }
-.pins__head { display: flex; align-items: baseline; gap: 10px; }
-.pins__head strong { font: 600 12.5px var(--sans); color: var(--text); }
-.pins__list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
-.pins__list li { font-size: 12px; color: var(--text-2); display: flex; gap: 8px; align-items: baseline; }
+.pins__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.pins__head strong {
+  font: 600 12.5px var(--sans);
+  color: var(--text);
+}
+.pins__list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pins__list li {
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
 .pins__component {
   flex: none;
   font: 500 10.5px var(--mono);
@@ -3771,7 +5094,12 @@ select {
   border-radius: var(--r-sm);
   padding: 0 5px;
 }
-.pins__comment { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pins__comment {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* the thread head (PLAN D59) ------------------------------------------------
    The chat column's one header line: the conversation's name, the menu that
@@ -3804,10 +5132,18 @@ select {
   animation: lampbreathe 2s ease-in-out infinite;
 }
 @keyframes lampbreathe {
-  50% { box-shadow: 0 0 0 4px var(--accent-soft); opacity: 0.72; }
+  50% {
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    opacity: 0.72;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .thread__lamp, .chatstack__pill--live::before, .activity--running::after, .turnlive::after { animation: none; }
+  .thread__lamp,
+  .chatstack__pill--live::before,
+  .activity--running::after,
+  .turnlive::after {
+    animation: none;
+  }
 }
 .thread__title {
   min-width: 0;
@@ -3823,10 +5159,24 @@ select {
   text-overflow: ellipsis;
   text-align: left;
 }
-.thread__spacer { flex: 1; }
-.thread__more { color: var(--muted); font-size: 12px; padding: 4px 8px; }
-.thread__more:hover { color: var(--text); background: var(--panel-3); }
-.thread__menu { top: calc(100% - 6px); bottom: auto; right: 12px; left: auto; }
+.thread__spacer {
+  flex: 1;
+}
+.thread__more {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.thread__more:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.thread__menu {
+  top: calc(100% - 6px);
+  bottom: auto;
+  right: 12px;
+  left: auto;
+}
 .thread__rename {
   flex: 1;
   min-width: 0;
@@ -3847,45 +5197,135 @@ select {
   gap: 10px;
   padding: 8px 12px;
 }
-.onboarding__step--line .onboarding__stephead { flex: none; }
-.onboarding__step--line .onboarding__detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding__step--line .onboarding__stephead {
+  flex: none;
+}
+.onboarding__step--line .onboarding__detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The glyph already says 통과; the chip beside it is one word of noise on a
    row whose whole job is to be scanned past. */
-.onboarding__step--line .onboarding__status { display: none; }
-.onboarding__step--line .onboarding__fixrow { flex: none; }
+.onboarding__step--line .onboarding__status {
+  display: none;
+}
+.onboarding__step--line .onboarding__fixrow {
+  flex: none;
+}
 
 /* The machine-wide GitHub token form, shared by the wizard and 설정. */
-.ghtoken { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.ghtoken__row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.ghtoken__row input { flex: 1; min-width: 200px; }
-.ghlink { font: 500 12px var(--sans); color: var(--accent); text-underline-offset: 2px; white-space: nowrap; }
+.ghtoken {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.ghtoken__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ghtoken__row input {
+  flex: 1;
+  min-width: 200px;
+}
+.ghlink {
+  font: 500 12px var(--sans);
+  color: var(--accent);
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
 
 /* The project picker: search, listbox, and the confirm row under the choice. */
-.repopicker { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.repopicker__search { width: 100%; }
+.repopicker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.repopicker__search {
+  width: 100%;
+}
 .repopicker__list {
-  margin: 0; padding: 0; list-style: none;
-  max-height: 320px; overflow-y: auto;
-  border: 1px solid var(--line); border-radius: var(--r-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   background: var(--panel);
 }
 .repopicker__row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 10px; font-size: 12.5px; cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
 }
-.repopicker__row--on { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
-.repopicker__row--off { opacity: 0.55; cursor: default; }
-.repopicker__row--ghost { height: 36px; background: var(--panel-2); margin: 4px 6px; border-radius: var(--r-sm); opacity: 0.6; }
-.repopicker__owner { color: var(--muted); font: 500 12px var(--mono); flex: none; }
-.repopicker__name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repopicker__time { margin-left: auto; flex: none; color: var(--muted); font: 400 11px var(--mono); }
+.repopicker__row--on {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.repopicker__row--off {
+  opacity: 0.55;
+  cursor: default;
+}
+.repopicker__row--ghost {
+  height: 36px;
+  background: var(--panel-2);
+  margin: 4px 6px;
+  border-radius: var(--r-sm);
+  opacity: 0.6;
+}
+.repopicker__owner {
+  color: var(--muted);
+  font: 500 12px var(--mono);
+  flex: none;
+}
+.repopicker__name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repopicker__time {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted);
+  font: 400 11px var(--mono);
+}
 .repopicker__badge {
-  flex: none; font: 500 10.5px var(--sans); color: var(--muted);
-  border: 1px solid var(--line); border-radius: var(--r-sm); padding: 0 6px;
+  flex: none;
+  font: 500 10.5px var(--sans);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0 6px;
 }
-.repopicker__badge--muted { color: var(--muted); }
-.repopicker__empty { display: flex; flex-direction: column; gap: 6px; padding: 14px 12px; font-size: 12.5px; color: var(--text-2); }
-.repopicker__listerror { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.repopicker__badge--muted {
+  color: var(--muted);
+}
+.repopicker__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.repopicker__listerror {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
 /* The commit zone: picking a repo hands the dialog from scan to decide, so
    the confirm block gets its own recessed well instead of riding the list's
    hairline — 두 단계가 한 판에서 순서대로 읽힌다. */
@@ -3899,19 +5339,65 @@ select {
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
 }
-.repopicker__confirm .ghost { align-self: flex-start; }
+.repopicker__confirm .ghost {
+  align-self: flex-start;
+}
 /* The inspection's verdict wears its semantics: ✓ 는 조용한 녹색, ✗ 는
    기다림의 호박색 — 지금이 막다른 길이 아니라 선택의 갈림길임을 색이 말한다. */
-.repopicker__inspect--ok { color: var(--ok); font-weight: 550; }
-.repopicker__inspect--miss { color: var(--warn); font-weight: 550; }
-.repopicker__confirmrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.repopicker__confirmrow input { flex: 1; min-width: 180px; }
-.repopicker__warnline { display: block; margin-top: 4px; color: var(--warn); }
-.repopicker__approve { display: flex; gap: 7px; align-items: flex-start; font: 500 12px var(--sans); color: var(--text-2); cursor: pointer; }
-.repopicker__approve input { margin-top: 1px; accent-color: var(--accent); }
-.repopicker__manualtoggle { align-self: flex-start; }
-.settings__account { font: 500 12.5px var(--sans); color: var(--text-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.repopicker__settingslink { display: inline; padding: 0; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.repopicker__inspect--ok {
+  color: var(--ok);
+  font-weight: 550;
+}
+.repopicker__inspect--miss {
+  color: var(--warn);
+  font-weight: 550;
+}
+.repopicker__confirmrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.repopicker__confirmrow input {
+  flex: 1;
+  min-width: 180px;
+}
+.repopicker__warnline {
+  display: block;
+  margin-top: 4px;
+  color: var(--warn);
+}
+.repopicker__approve {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  font: 500 12px var(--sans);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.repopicker__approve input {
+  margin-top: 1px;
+  accent-color: var(--accent);
+}
+.repopicker__manualtoggle {
+  align-self: flex-start;
+}
+.settings__account {
+  font: 500 12.5px var(--sans);
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repopicker__settingslink {
+  display: inline;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 
 /* The workspace before any project exists: the picker, centred, nothing else
    — no rail, no chat, no preview, because none of them have a repo yet. */
@@ -3927,10 +5413,14 @@ select {
   margin: 0 auto;
   padding: 28px 20px;
 }
-.planner__emptyTitle { margin: 0; font: 600 17px var(--sans); color: var(--text); text-wrap: balance; }
+.planner__emptyTitle {
+  margin: 0;
+  font: 600 17px var(--sans);
+  color: var(--text);
+  text-wrap: balance;
+}
 
 /* ---------------------------------------------------------------- responsive */
-
 
 .sr-only {
   position: absolute;
@@ -3946,24 +5436,46 @@ select {
 
 /* 빈 작업 화면은 한 줄로 읽힌다: 히어로 · 제목 · 픽커가 하나의 좁은 컬럼.
    (픽커가 컨테이너 폭 전체를 쓰면 히어로와 어긋난다) */
-.planner__empty { align-items: center; }
-.planner__empty > * { width: 100%; max-width: 480px; }
-.planner__empty .emptyhero { max-width: none; }
+.planner__empty {
+  align-items: center;
+}
+.planner__empty > * {
+  width: 100%;
+  max-width: 480px;
+}
+.planner__empty .emptyhero {
+  max-width: none;
+}
 
 @media (max-width: 880px) {
-  .scroll { padding: 16px 16px 10px; }
-  .composer { padding: 10px 16px; }
-  .autocomplete { left: 16px; right: 16px; }
-  .modal { padding: 4vh 12px 16px; }
+  .scroll {
+    padding: 16px 16px 10px;
+  }
+  .composer {
+    padding: 10px 16px;
+  }
+  .autocomplete {
+    left: 16px;
+    right: 16px;
+  }
+  .modal {
+    padding: 4vh 12px 16px;
+  }
 }
 
 /* the frame the palette changes on; see useSettings */
-:root.theme-swap *, :root.theme-swap *::before, :root.theme-swap *::after {
+:root.theme-swap *,
+:root.theme-swap *::before,
+:root.theme-swap *::after {
   transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* 프리뷰 툴바 ------------------------------------------------------------------*/
@@ -3971,7 +5483,10 @@ select {
 /* [화면 ▾] [default|empty] … [모바일|데스크톱] [새 창] (PLAN D7). The origin
    line is the flexible one, so the picker and the state chips stay left with
    the screen they describe and the viewing controls stay right. */
-.preview__spacer { flex: 1; min-width: 0; }
+.preview__spacer {
+  flex: 1;
+  min-width: 0;
+}
 
 .preview__screens {
   flex: none;
@@ -3984,7 +5499,15 @@ select {
   border-radius: var(--r-sm);
 }
 
-.preview__states { display: flex; gap: 2px; flex: none; padding: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+.preview__states {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
 .preview__state {
   padding: 2px 8px;
   font: 500 10.5px var(--mono);
@@ -3994,7 +5517,9 @@ select {
   border-radius: 6px;
   cursor: pointer;
 }
-.preview__state:hover { color: var(--text); }
+.preview__state:hover {
+  color: var(--text);
+}
 /* Same selected affordance as the rail's screen rows: two things in one
    column that both mean "this is the one you are looking at" must not read
    differently. */
@@ -4026,7 +5551,9 @@ select {
   align-items: center;
   gap: 4px;
 }
-.preview__widthbtn:hover { color: var(--text); }
+.preview__widthbtn:hover {
+  color: var(--text);
+}
 .preview__widthbtn--on {
   color: var(--text);
   background: var(--panel-3);
@@ -4061,8 +5588,14 @@ select {
    the frame chrome rides inside it, so the rounded frame stays whole.
    Every width reads as an artboard: rounded, hairline, floating on a real
    shadow — never as a layout that broke. */
-.preview__stage--mobile .preview__device { width: 390px; flex: none; }
-.preview__stage--tablet .preview__device { width: 768px; flex: none; }
+.preview__stage--mobile .preview__device {
+  width: 390px;
+  flex: none;
+}
+.preview__stage--tablet .preview__device {
+  width: 768px;
+  flex: none;
+}
 
 /* 프레임 머리 (PLAN D66): 브라우저 줄 — 이동 · 새로 고침 · 주소(네이티브)
    또는 화면 이름(iframe 경로). 항상 그린다: 화면을 고르기 전에도 머리가 있어야
@@ -4071,7 +5604,11 @@ select {
   /* 폭 토글이 뚝 끊기지 않고 좁혀진다: 데스크톱 상태도 width 에서 렌더해야
      양방향으로 부드럽다 — basis 0 이면 데스크톱 복귀가 스냅한다. */
   flex: 1 1 auto;
-  transition: width 0.35s ease, flex-grow 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+  transition:
+    width 0.35s ease,
+    flex-grow 0.35s ease,
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -4091,7 +5628,11 @@ select {
   background: var(--panel);
   flex: none;
 }
-.frame__nav { display: flex; gap: 2px; flex: none; }
+.frame__nav {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
 .frame__toolsbtn {
   flex: none;
   padding: 2px 7px;
@@ -4103,7 +5644,10 @@ select {
   display: inline-flex;
   align-items: center;
 }
-.frame__toolsbtn:hover { color: var(--text); background: var(--panel-3); }
+.frame__toolsbtn:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
 /* 이 화면 Claude 에게 보여 주기 (PLAN D89) — the frame-head button and its
    one-line form. Small on purpose: a quiet door, not a second composer. */
 .frame__look {
@@ -4117,7 +5661,11 @@ select {
   cursor: pointer;
   white-space: nowrap;
 }
-.frame__look:hover, .frame__look[aria-expanded="true"] { color: var(--text); background: var(--panel-3); }
+.frame__look:hover,
+.frame__look[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--panel-3);
+}
 .frame__lookform {
   display: flex;
   gap: 6px;
@@ -4136,11 +5684,22 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.frame__lookform input:focus { outline: none; border-color: var(--accent); }
-.frame__lookform .primary { padding: 4px 12px; font-size: 12px; }
-.frame__lookform .ghost { padding: 4px 8px; font-size: 12px; }
+.frame__lookform input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.frame__lookform .primary {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+.frame__lookform .ghost {
+  padding: 4px 8px;
+  font-size: 12px;
+}
 /* D85 ⓐ: 로딩 중 새로 고침 버튼이 돌고, 그때 클릭은 중단이다. */
-.frame__toolsbtn--busy { color: var(--accent); }
+.frame__toolsbtn--busy {
+  color: var(--accent);
+}
 .frame__spin {
   width: 11px;
   height: 11px;
@@ -4149,9 +5708,15 @@ select {
   border-radius: 999px;
   animation: framespin 0.8s linear infinite;
 }
-@keyframes framespin { to { transform: rotate(360deg); } }
+@keyframes framespin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .frame__spin { animation-duration: 2s; }
+  .frame__spin {
+    animation-duration: 2s;
+  }
 }
 /* D85 ⓔ: 100% 이 아니면 눈에 보이는 배율 칩 — 클릭이 실제 크기. */
 .frame__zoom {
@@ -4184,9 +5749,21 @@ select {
   border-radius: var(--r-sm);
   cursor: pointer;
 }
-.frame__navbtn:hover:not(:disabled) { color: var(--text); background: var(--panel-3); }
-.frame__navbtn:disabled { opacity: 0.35; cursor: default; }
-.frame__addresswrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.frame__navbtn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.frame__navbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.frame__addresswrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .frame__address {
   flex: 1;
   min-width: 0;
@@ -4197,8 +5774,16 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
 }
-.frame__address:focus { outline: none; border-color: var(--accent); }
-.frame__addrerror { flex: none; font: 500 11px var(--sans); color: var(--danger); white-space: nowrap; }
+.frame__address:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.frame__addrerror {
+  flex: none;
+  font: 500 11px var(--sans);
+  color: var(--danger);
+  white-space: nowrap;
+}
 .frame__name {
   flex: 1;
   font: 500 12px var(--sans);
@@ -4207,9 +5792,16 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.frame__name b { color: var(--text-2); font-weight: 600; }
+.frame__name b {
+  color: var(--text-2);
+  font-weight: 600;
+}
 /* 주소창이 경로를 말하는 동안 화면 이름은 오른쪽 라벨로 남는다 (D66). */
-.frame__name--beside { flex: none; margin-left: auto; padding-left: 8px; }
+.frame__name--beside {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+}
 
 /* 네이티브 뷰가 얹히는 슬롯 (D64) — 뷰는 항상 DOM 위다(D65). 무언가를 무대 위에
    그리는 층은 .modal · .palette · .selector__backdrop · .pip--large 계열을 써야
@@ -4243,7 +5835,12 @@ select {
   background: var(--panel-2);
   cursor: zoom-in;
 }
-.pip--docked img { display: block; height: 30px; width: auto; border-radius: 2px; }
+.pip--docked img {
+  display: block;
+  height: 30px;
+  width: auto;
+  border-radius: 2px;
+}
 .pip--docked__label {
   font: 500 10px var(--mono);
   color: var(--muted);
@@ -4259,10 +5856,23 @@ select {
 }
 
 /* 더 보기 ▾ (PLAN D82) — 점검·기록·버리기·목록의 자리. */
-.screenpanel__more { position: relative; display: inline-flex; }
-.screenpanel__menu { top: calc(100% - 4px); bottom: auto; right: 0; left: auto; }
-.selector__row:disabled { opacity: 0.45; cursor: default; }
-.selector__row:disabled:hover { background: transparent; }
+.screenpanel__more {
+  position: relative;
+  display: inline-flex;
+}
+.screenpanel__menu {
+  top: calc(100% - 4px);
+  bottom: auto;
+  right: 0;
+  left: auto;
+}
+.selector__row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.selector__row:disabled:hover {
+  background: transparent;
+}
 
 /* Claude 시점 보기(PLAN D63): the PiP rides the preview column's stage —
    a thumbnail in the iframe's corner while Claude's driver is at work, a
@@ -4295,10 +5905,28 @@ select {
   border: 0;
   border-radius: 0;
 }
-.pip__view { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
-.pip--large .pip__view { flex: 1; min-height: 0; display: flex; cursor: zoom-out; }
-.pip__frame { display: block; width: 100%; height: auto; }
-.pip--large .pip__frame { height: 100%; object-fit: contain; }
+.pip__view {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.pip--large .pip__view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  cursor: zoom-out;
+}
+.pip__frame {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.pip--large .pip__frame {
+  height: 100%;
+  object-fit: contain;
+}
 .pip__label {
   padding: 4px 8px;
   border-top: 1px solid var(--line-soft);
@@ -4322,8 +5950,17 @@ select {
 /* 상단 바의 동작 셋 (PLAN D82) — 스테퍼는 지워졌고(D81), 저장 · 넘기기 ·
    상태 확인은 이제 상단 바의 상수다. 강조는 그 순간 가장 자연스러운 하나에만
    (primary), 나머지는 ghost 로 남아 사라지지 않는다. */
-.screenpanel__actions { display: flex; align-items: center; gap: 8px; }
-.screenpanel__action { flex: none; white-space: nowrap; padding: 5px 14px; font-size: 12.5px; }
+.screenpanel__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.screenpanel__action {
+  flex: none;
+  white-space: nowrap;
+  padding: 5px 14px;
+  font-size: 12.5px;
+}
 .screenpanel__action.primary {
   background-image: var(--brand-grad);
   color: var(--bg);
@@ -4340,20 +5977,40 @@ select {
 
 /* 1280 에서 상단 바가 한 줄 (목업 기준) — 여백과 글자만 조인다. */
 @media (max-width: 1280px) {
-  .screenpanel__action { padding: 5px 10px; font-size: 12px; }
-  .screenpanel__bar { gap: 8px; }
+  .screenpanel__action {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .screenpanel__bar {
+    gap: 8px;
+  }
 }
 /* 1100 미만은 넘기기를 줄이고 상태 확인을 아이콘 폭으로 (PLAN D82). */
 @media (max-width: 1100px) {
-  .screenpanel__actions { gap: 6px; }
-  .screenpanel__action { padding: 5px 8px; font-size: 11.5px; }
-  .screenpanel__action[title] { overflow: hidden; text-overflow: ellipsis; max-width: 88px; }
-  .screenpanel__status { max-width: 40vw; }
+  .screenpanel__actions {
+    gap: 6px;
+  }
+  .screenpanel__action {
+    padding: 5px 8px;
+    font-size: 11.5px;
+  }
+  .screenpanel__action[title] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 88px;
+  }
+  .screenpanel__status {
+    max-width: 40vw;
+  }
   /* 최신화 · 더 보기 collapse to their icons: a 340px column cannot also
      carry four words. The labels stay for the reader that can't see —
      visually hidden, not display:none. */
-  .screenpanel__refresh { padding: 7px; }
-  .screenpanel__morebtn { padding: 7px 6px; }
+  .screenpanel__refresh {
+    padding: 7px;
+  }
+  .screenpanel__morebtn {
+    padding: 7px 6px;
+  }
   .screenpanel__refreshlabel,
   .screenpanel__morelabel {
     position: absolute;
@@ -4373,13 +6030,23 @@ select {
  * ------------------------------------------------------------------------ */
 
 @keyframes risefade {
-  from { opacity: 0; transform: translateY(7px); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 온보딩 마법사 — 브랜드, 게이트 순차 점등, 통과 팝, 시작 CTA ------------- */
 
-.onboarding__brand { display: flex; justify-content: center; margin-bottom: 10px; }
+.onboarding__brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
 .onboarding__mark {
   width: 36px;
   height: 36px;
@@ -4403,11 +6070,21 @@ select {
   animation: risefade 0.4s ease-out backwards;
   animation-delay: calc(var(--i, 0) * 70ms);
 }
-.onboarding__glyph { display: inline-block; }
-.onboarding__glyph--pass { animation: gatepop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1); }
+.onboarding__glyph {
+  display: inline-block;
+}
+.onboarding__glyph--pass {
+  animation: gatepop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
 @keyframes gatepop {
-  from { transform: scale(0.4); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 .onboarding__cta {
   background: var(--brand-grad);
@@ -4418,7 +6095,9 @@ select {
   box-shadow: 0 12px 28px -12px var(--accent-glow);
   animation: risefade 0.4s ease-out backwards 0.15s;
 }
-.onboarding__cta:hover:not(:disabled) { filter: brightness(1.06); }
+.onboarding__cta:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
 
 /* 빈 작업 화면 — 제품의 이야기 한 번, 축으로 -------------------------------- */
 
@@ -4450,8 +6129,15 @@ select {
   padding: 2px 8px;
   font-size: 11.5px;
 }
-.emptyhero__prompt { font-family: var(--mono); color: var(--muted); }
-.emptyhero__link { width: 1px; height: 14px; background: var(--line-strong); }
+.emptyhero__prompt {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.emptyhero__link {
+  width: 1px;
+  height: 14px;
+  background: var(--line-strong);
+}
 .emptyhero__screen {
   position: relative;
   overflow: hidden;
@@ -4474,11 +6160,31 @@ select {
   transform: translateX(-100%);
   animation: sweep 3.2s ease-in-out infinite;
 }
-.emptyhero__dots { display: flex; gap: 5px; margin-bottom: 2px; }
-.emptyhero__dots i { width: 6px; height: 6px; border-radius: 999px; background: var(--panel-3); }
-.emptyhero__line { display: block; height: 8px; border-radius: 4px; background: var(--panel-3); }
-.emptyhero__line--short { width: 42%; }
-.emptyhero__chips { display: flex; gap: 5px; margin-top: 3px; }
+.emptyhero__dots {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+.emptyhero__dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-3);
+}
+.emptyhero__line {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-3);
+}
+.emptyhero__line--short {
+  width: 42%;
+}
+.emptyhero__chips {
+  display: flex;
+  gap: 5px;
+  margin-top: 3px;
+}
 .emptyhero__chips i {
   font: 500 10px var(--sans);
   font-style: normal;
@@ -4492,11 +6198,19 @@ select {
   border-color: var(--accent-glow);
   background: var(--accent-soft);
 }
-.emptyhero__caption { margin: 2px 0 0; font: 400 12px var(--sans); color: var(--text-2); }
+.emptyhero__caption {
+  margin: 2px 0 0;
+  font: 400 12px var(--sans);
+  color: var(--text-2);
+}
 
 /* 클론 준비 레일 — 내려받기 → 설치 → 미리보기 ------------------------------ */
 
-.progress__rail { display: flex; align-items: center; gap: 6px; }
+.progress__rail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .progress__step {
   display: inline-flex;
   align-items: center;
@@ -4521,25 +6235,33 @@ select {
   justify-content: center;
   font: 600 9px var(--sans);
 }
-.progress__step--done { color: var(--ok); }
+.progress__step--done {
+  color: var(--ok);
+}
 .progress__step--done .progress__dot {
   border-color: transparent;
   background: var(--panel-3);
   color: var(--ok);
 }
-.progress__step--now { color: var(--text); }
+.progress__step--now {
+  color: var(--text);
+}
 .progress__step--now .progress__dot {
   border-color: var(--accent-glow);
   background: var(--accent-soft);
   animation: dotpulse 1.4s ease-in-out infinite;
 }
 @keyframes dotpulse {
-  50% { box-shadow: 0 0 0 3px var(--accent-soft); }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
 }
 
 /* 턴의 잔향 — 다시 그리는 중, 그리고 도착 ---------------------------------- */
 
-.planner__previewcol { position: relative; }
+.planner__previewcol {
+  position: relative;
+}
 .planner__previewcol--live::before {
   content: "";
   position: absolute;
@@ -4554,8 +6276,12 @@ select {
   animation: liveslide 1.6s ease-in-out infinite;
 }
 @keyframes liveslide {
-  from { background-position: -40% 0; }
-  to { background-position: 140% 0; }
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
 }
 .screenpanel__working {
   display: inline-flex;
@@ -4568,12 +6294,25 @@ select {
   background: var(--panel);
   padding: 2px 10px 2px 8px;
 }
-.screenpanel__working .spinner { width: 10px; height: 10px; border-width: 1.5px; color: var(--accent); }
-.previewcol__stage--settled { animation: settlepulse 1s ease-out; }
+.screenpanel__working .spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  color: var(--accent);
+}
+.previewcol__stage--settled {
+  animation: settlepulse 1s ease-out;
+}
 @keyframes settlepulse {
-  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
-  60% { box-shadow: 0 0 0 3px var(--accent-soft); }
-  100% { box-shadow: 0 0 0 0 transparent; }
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  60% {
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 .previewcol__stage--settled::after {
   /* the answer arrived — one quiet pass across the screen (browser path;
@@ -4591,26 +6330,56 @@ select {
 /* 미세 모션 — 떠오르는 층과 눌리는 자리 ------------------------------------ */
 
 /* 떠오르는 층: 대화상자는 한 번 피어오르고, 메뉴는 제자리에서 튀어나온다. */
-.modal { animation: fadein 0.18s ease-out; }
-.modal__panel { animation: risefade 0.28s var(--spring); }
-.selector__menu { animation: poprise 0.18s var(--spring); }
-.autocomplete { animation: poprise 0.16s var(--spring); }
+.modal {
+  animation: fadein 0.18s ease-out;
+}
+.modal__panel {
+  animation: risefade 0.28s var(--spring);
+}
+.selector__menu {
+  animation: poprise 0.18s var(--spring);
+}
+.autocomplete {
+  animation: poprise 0.16s var(--spring);
+}
 @keyframes poprise {
-  from { opacity: 0; transform: translateY(4px) scale(0.985); }
-  to { opacity: 1; transform: none; }
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 눌리는 자리: 이미 색 전환이 있는 버튼들에 걸맞은 이웃들. */
 .node__row,
-.leaf { transition: background-color 0.12s, color 0.12s; }
+.leaf {
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
 .node__add,
 .node__menu-btn,
-.leaf__menu-btn { transition: opacity 0.12s; }
+.leaf__menu-btn {
+  transition: opacity 0.12s;
+}
 .preview__widthbtn,
 .frame__navbtn,
-.frame__toolsbtn { transition: color 0.12s, background-color 0.12s, border-color 0.12s; }
+.frame__toolsbtn {
+  transition:
+    color 0.12s,
+    background-color 0.12s,
+    border-color 0.12s;
+}
 .usage__chip,
-.chip { transition: color 0.12s, background-color 0.12s, border-color 0.12s; }
+.chip {
+  transition:
+    color 0.12s,
+    background-color 0.12s,
+    border-color 0.12s;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .onboarding__step,
@@ -4618,23 +6387,46 @@ select {
   .onboarding__glyph--pass,
   .emptyhero,
   .planner__previewcol--live::before,
-  .previewcol__stage--settled { animation: none; }
-  .emptyhero__screen::after { animation: none; content: none; }
-  .previewcol__stage--settled::after { content: none; }
-  .progress__step--now .progress__dot { animation: none; }
+  .previewcol__stage--settled {
+    animation: none;
+  }
+  .emptyhero__screen::after {
+    animation: none;
+    content: none;
+  }
+  .previewcol__stage--settled::after {
+    content: none;
+  }
+  .progress__step--now .progress__dot {
+    animation: none;
+  }
   .leaf__dot--ask,
-  .toolbar__stop { animation: none; }
+  .toolbar__stop {
+    animation: none;
+  }
   .modal,
   .modal__panel,
   .selector__menu,
-  .autocomplete { animation: none; }
-  .sidebar--collapsed .node__row { animation: none; }
+  .autocomplete {
+    animation: none;
+  }
+  .sidebar--collapsed .node__row {
+    animation: none;
+  }
   .node__badge--ask::before,
   .node__pip--ask,
-  .node__pip--progress { animation: none; }
-  .planner { transition: none; }
+  .node__pip--progress {
+    animation: none;
+  }
+  .planner {
+    transition: none;
+  }
   .primary,
   .composer__send,
-  .chatstack__pill { transition: none; }
-  .preview__device { transition: none; }
+  .chatstack__pill {
+    transition: none;
+  }
+  .preview__device {
+    transition: none;
+  }
 }

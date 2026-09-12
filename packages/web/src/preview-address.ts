@@ -25,7 +25,10 @@ export type AddressTarget =
 const ONLY_PREVIEW = "미리보기 서버 안의 주소만 열 수 있습니다";
 
 /** `/a/b?state=x` → route + state, the shape the picker and chips speak. */
-export function splitPath(path: string): { route: string; state: string | null } {
+export function splitPath(path: string): {
+  route: string;
+  state: string | null;
+} {
   const query = path.split("?")[1] ?? "";
   const route = path.slice(0, path.length - (query ? query.length + 1 : 0));
   const state = new URLSearchParams(query).get("state");

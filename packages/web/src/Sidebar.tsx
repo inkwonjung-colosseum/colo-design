@@ -1,9 +1,10 @@
+import type { ProjectSummary, RepoPhase, ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { ProjectSummary, RepoPhase, ThreadSummary } from "@cds-design/protocol";
 import type { Daemon } from "./daemon-client";
 import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "./delivery";
-import { loadTreeFoldedFor, saveTreeFolded } from "./settings";
 import { CloseIcon, GearIcon, WarnIcon } from "./icons";
+import { loadTreeFoldedFor, saveTreeFolded } from "./settings";
+import { useModalFocus } from "./use-modal-focus";
 
 /** Recent children first (PLAN D59 rule 3): five rows — the palette is where
  * an older conversation stays reachable. */
@@ -35,6 +36,7 @@ export function Sidebar({
   onNewThread,
   onDeleteThread,
   onRenameThread,
+  onBrowseThreads,
 }: {
   daemon: Daemon;
   collapsed: boolean;
@@ -62,6 +64,8 @@ export function Sidebar({
   onDeleteThread: (slug: string, thread: ThreadSummary) => void;
   /** The planner renames threads; 설정's store keeps them by session id. */
   onRenameThread: (sessionId: string, title: string) => void;
+  /** `이전 대화 더 보기` — the palette, opened on this project's threads. */
+  onBrowseThreads: (slug: string) => void;
 }) {
   const { projects, activeSlug, api } = daemon;
   const [switching, setSwitching] = useState<string | null>(null);
@@ -77,12 +81,15 @@ export function Sidebar({
       beside its tile with position:fixed instead. */
   const [popAt, setPopAt] = useState<{ top: number; left: number } | null>(null);
   /** A removal (or rename) that the daemon refused, in its own words. */
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [, setErrorMessage] = useState<string | null>(null);
   /** The project row being renamed, and the draft while it is. */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
   /** The leaf being renamed, and the draft while it is. */
-  const [threadRenaming, setThreadRenaming] = useState<{ slug: string; id: string } | null>(null);
+  const [threadRenaming, setThreadRenaming] = useState<{
+    slug: string;
+    id: string;
+  } | null>(null);
   const [threadDraft, setThreadDraft] = useState("");
   /** The project row the removal dialog is open for. */
   const [removing, setRemoving] = useState<ProjectSummary | null>(null);
@@ -102,11 +109,9 @@ export function Sidebar({
   /** The rail (user-folded or a narrow window) shows icons and popovers. */
   const rail = collapsed || collapsedByViewport;
 
-  const threadTitle = (thread: ThreadSummary): string =>
-    sessionTitles[thread.id] ?? thread.title;
+  const threadTitle = (thread: ThreadSummary): string => sessionTitles[thread.id] ?? thread.title;
 
-  const folded = (slug: string): boolean =>
-    foldToggles[slug] ?? loadTreeFoldedFor(slug);
+  const folded = (slug: string): boolean => foldToggles[slug] ?? loadTreeFoldedFor(slug);
 
   const toggleFold = (slug: string) => {
     const next = !folded(slug);
@@ -176,13 +181,14 @@ export function Sidebar({
   /** The dialog answers Escape like every other one, and focus moves onto the
       panel so Tab and a screen reader start here, not in the tree behind it. */
   const removePanel = useRef<HTMLDivElement>(null);
+  useModalFocus(removePanel, removing !== null);
   useEffect(() => {
     if (!removing) return;
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setRemoving(null);
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [removing]);
   useEffect(() => {
     if (removing) removePanel.current?.focus();
@@ -209,7 +215,10 @@ export function Sidebar({
   /** Keyboard row-walking for the tree: focus moves in DOM order, a row's
       F2 renames it (project or conversation), Delete removes the project. */
   const onKeyDown = (event: React.KeyboardEvent, slug: string, threadId?: string) => {
-    const rows = [...listRef.current?.querySelectorAll<HTMLButtonElement>("button.node__row, button.leaf") ?? []];
+    const rows = [
+      ...(listRef.current?.querySelectorAll<HTMLButtonElement>("button.node__row, button.leaf") ??
+        []),
+    ];
     const at = rows.indexOf(event.currentTarget as HTMLButtonElement);
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       rows[at + (event.key === "ArrowDown" ? 1 : -1)]?.focus();
@@ -236,8 +245,10 @@ export function Sidebar({
   /** What a child row says about its conversation, right of the title. */
   const leafMeta = (project: ProjectSummary, thread: ThreadSummary) => {
     if (switching === project.slug) return <span className="leaf__meta">전환 중…</span>;
-    if (thread.state === "running") return <span className="leaf__meta leaf__meta--live">작업 중</span>;
-    if (thread.state === "awaiting") return <span className="leaf__meta leaf__meta--ask">확인 대기</span>;
+    if (thread.state === "running")
+      return <span className="leaf__meta leaf__meta--live">작업 중</span>;
+    if (thread.state === "awaiting")
+      return <span className="leaf__meta leaf__meta--ask">확인 대기</span>;
     if (thread.state === "finished" && thread.id !== activeThreadId) {
       return <span className="leaf__meta">답이 왔습니다</span>;
     }
@@ -264,7 +275,7 @@ export function Sidebar({
             fold to offer — the empty strip goes away entirely. */}
         {(!rail || !collapsedByViewport) && (
           <div className="sidebar__brand">
-            {!rail && <span className="brand-name">CDS Design</span>}
+            {!rail && <span className="brand-name">Colo Design</span>}
             {!collapsedByViewport && (
               <button
                 type="button"
@@ -323,9 +334,7 @@ export function Sidebar({
                             : project.name
                       }
                       aria-label={
-                        rail
-                          ? `${project.name} 대화${badge ? `, ${badge.label}` : ""}`
-                          : undefined
+                        rail ? `${project.name} 대화${badge ? `, ${badge.label}` : ""}` : undefined
                       }
                       onClick={(event) => {
                         if (!rail) {
@@ -341,8 +350,9 @@ export function Sidebar({
                         // The menu caps at 70vh — anchoring it no lower than
                         // 28vh keeps the whole thing inside the window. The
                         // left edge is the RAIL's right side, not the tile's.
-                        const railRect =
-                          event.currentTarget.closest(".sidebar")?.getBoundingClientRect();
+                        const railRect = event.currentTarget
+                          .closest(".sidebar")
+                          ?.getBoundingClientRect();
                         const maxTop = window.innerHeight * 0.28;
                         setPopAt({
                           top: Math.min(rect.top, maxTop),
@@ -358,7 +368,10 @@ export function Sidebar({
                             {monogram(project.name)}
                           </span>
                           {pipKind && (
-                            <span className={`node__pip node__pip--${pipKind}`} aria-hidden="true" />
+                            <span
+                              className={`node__pip node__pip--${pipKind}`}
+                              aria-hidden="true"
+                            />
                           )}
                         </>
                       ) : (
@@ -411,117 +424,152 @@ export function Sidebar({
                           ···
                         </button>
                         {menuFor === project.slug && (
-                      <>
-                        <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setMenuFor(null)} />
-                        <span className="selector__menu node__menu" role="menu">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setMenuFor(null);
-                            onNewThread(project.slug);
-                          }}
-                        >
-                          <span className="selector__label">새 대화</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => beginRename(project)}
-                        >
-                          <span className="selector__label">이름 바꾸기</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setMenuFor(null);
-                            onOpenSettings();
-                          }}
-                        >
-                          <span className="selector__label">설정</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setMenuFor(null);
-                            setRemoving(project);
-                          }}
-                        >
-                          <span className="selector__label">프로젝트 지우기</span>
-                        </button>
-                      </span>
-                      </>
-                    )}
+                          <>
+                            <button
+                              type="button"
+                              className="selector__backdrop"
+                              aria-label="메뉴 닫기"
+                              onClick={() => setMenuFor(null)}
+                            />
+                            <span className="selector__menu node__menu" role="menu">
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="selector__row"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  onNewThread(project.slug);
+                                }}
+                              >
+                                <span className="selector__label">새 대화</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="selector__row"
+                                onClick={() => beginRename(project)}
+                              >
+                                <span className="selector__label">이름 바꾸기</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="selector__row"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  onOpenSettings();
+                                }}
+                              >
+                                <span className="selector__label">설정</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="selector__row"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setRemoving(project);
+                                }}
+                              >
+                                <span className="selector__label">프로젝트 지우기</span>
+                              </button>
+                            </span>
+                          </>
+                        )}
                       </>
                     )}
                     {rail && popoverFor === project.slug && (
                       <>
-                        <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setPopoverFor(null)} />
+                        <button
+                          type="button"
+                          className="selector__backdrop"
+                          aria-label="메뉴 닫기"
+                          onClick={() => setPopoverFor(null)}
+                        />
                         <span
                           className="selector__menu node__pop node__pop--fixed"
                           role="menu"
                           aria-label={`${project.name} 대화`}
-                          style={popAt ? { position: "fixed", top: popAt.top, left: popAt.left } : undefined}
+                          style={
+                            popAt
+                              ? {
+                                  position: "fixed",
+                                  top: popAt.top,
+                                  left: popAt.left,
+                                }
+                              : undefined
+                          }
                         >
-                        {threads.slice(0, RECENT_THREADS).map((thread) => (
+                          {threads.slice(0, RECENT_THREADS).map((thread) => (
+                            <button
+                              key={thread.id}
+                              type="button"
+                              role="menuitem"
+                              className={`selector__row${thread.id === activeThreadId && active ? " selector__row--on" : ""}`}
+                              onClick={() => {
+                                setPopoverFor(null);
+                                onOpenThread(project.slug, thread);
+                              }}
+                            >
+                              <span className="selector__label">{threadTitle(thread)}</span>
+                              <span className="selector__hint">
+                                {leafMetaText(thread, activeThreadId)}
+                              </span>
+                            </button>
+                          ))}
+                          {threads.length > RECENT_THREADS && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="selector__row"
+                              onClick={() => {
+                                setPopoverFor(null);
+                                onBrowseThreads(project.slug);
+                              }}
+                            >
+                              <span className="selector__label">
+                                이전 대화 {threads.length - RECENT_THREADS}개 더 보기
+                              </span>
+                            </button>
+                          )}
                           <button
-                            key={thread.id}
                             type="button"
                             role="menuitem"
-                            className={`selector__row${thread.id === activeThreadId && active ? " selector__row--on" : ""}`}
+                            className="selector__row"
                             onClick={() => {
                               setPopoverFor(null);
-                              onOpenThread(project.slug, thread);
+                              onNewThread(project.slug);
                             }}
                           >
-                            <span className="selector__label">{threadTitle(thread)}</span>
-                            <span className="selector__hint">{leafMetaText(project, thread, activeThreadId)}</span>
+                            <span className="selector__label">＋ 새 대화</span>
                           </button>
-                        ))}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setPopoverFor(null);
-                            onNewThread(project.slug);
-                          }}
-                        >
-                          <span className="selector__label">＋ 새 대화</span>
-                        </button>
-                        {/* The row menu's tail: a rail has no ··· button, so the
+                          {/* The row menu's tail: a rail has no ··· button, so the
                             project's own moves ride here. 이름 바꾸기 stays out —
                             its inline input cannot live in a 44px column. */}
-                        <span className="node__pop__sep" aria-hidden="true" />
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setPopoverFor(null);
-                            onOpenSettings();
-                          }}
-                        >
-                          <span className="selector__label">설정</span>
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          onClick={() => {
-                            setPopoverFor(null);
-                            setRemoving(project);
-                          }}
-                        >
-                          <span className="selector__label">프로젝트 지우기</span>
-                        </button>
-                      </span>
+                          <span className="node__pop__sep" aria-hidden="true" />
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="selector__row"
+                            onClick={() => {
+                              setPopoverFor(null);
+                              onOpenSettings();
+                            }}
+                          >
+                            <span className="selector__label">설정</span>
+                          </button>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="selector__row"
+                            onClick={() => {
+                              setPopoverFor(null);
+                              setRemoving(project);
+                            }}
+                          >
+                            <span className="selector__label">프로젝트 지우기</span>
+                          </button>
+                        </span>
                       </>
                     )}
                   </div>
@@ -584,36 +632,58 @@ export function Sidebar({
                             </button>
                             {leafMenuFor === thread.id && (
                               <>
-                                <button type="button" className="selector__backdrop" aria-label="메뉴 닫기" onClick={() => setLeafMenuFor(null)} />
-                                <span className="selector__menu leaf__menu" role="menu">
                                 <button
                                   type="button"
-                                  role="menuitem"
-                                  className="selector__row"
-                                  onClick={() => beginThreadRename(project.slug, thread)}
-                                >
-                                  <span className="selector__label">이름 바꾸기</span>
-                                </button>
-                                {project.slug === activeSlug && (
+                                  className="selector__backdrop"
+                                  aria-label="메뉴 닫기"
+                                  onClick={() => setLeafMenuFor(null)}
+                                />
+                                <span className="selector__menu leaf__menu" role="menu">
                                   <button
                                     type="button"
                                     role="menuitem"
                                     className="selector__row"
-                                    onClick={() => {
-                                      setLeafMenuFor(null);
-                                      onDeleteThread(project.slug, thread);
-                                    }}
+                                    onClick={() => beginThreadRename(project.slug, thread)}
                                   >
-                                    <span className="selector__label">지우기</span>
+                                    <span className="selector__label">이름 바꾸기</span>
                                   </button>
-                                )}
-                              </span>
+                                  {project.slug === activeSlug && (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="selector__row"
+                                      onClick={() => {
+                                        setLeafMenuFor(null);
+                                        onDeleteThread(project.slug, thread);
+                                      }}
+                                    >
+                                      <span className="selector__label">지우기</span>
+                                    </button>
+                                  )}
+                                </span>
                               </>
                             )}
                           </>
                         )}
                       </div>
                     ))}
+                    {/* Five rows are all a tree holds (PLAN D59 rule 3); the
+                        rest must not read as gone — this row names the count
+                        and hands the search to the palette, already narrowed
+                        to this project's conversations. */}
+                    {threads.length > RECENT_THREADS && (
+                      <button
+                        type="button"
+                        className="leaf leaf--more"
+                        title="명령 팔레트에서 이 프로젝트의 대화를 찾습니다"
+                        onClick={() => {
+                          setPopoverFor(null);
+                          onBrowseThreads(project.slug);
+                        }}
+                      >
+                        이전 대화 {threads.length - RECENT_THREADS}개 더 보기
+                      </button>
+                    )}
                     {/* A project with nothing in it: the place the eye lands
                         is where the way in belongs, so this line IS the way
                         in (PLAN D3/D59) — not a sentence pointing elsewhere.
@@ -672,7 +742,10 @@ export function Sidebar({
       </nav>
       {boundary}
       {removing && (
-        <div className="modal" onMouseDown={(event) => event.target === event.currentTarget && setRemoving(null)}>
+        <div
+          className="modal"
+          onMouseDown={(event) => event.target === event.currentTarget && setRemoving(null)}
+        >
           <div
             className="modal__panel sidebar__remove"
             role="dialog"
@@ -683,7 +756,12 @@ export function Sidebar({
           >
             <header className="modal__head">
               <h2 className="modal__title">프로젝트 지우기</h2>
-              <button type="button" className="ghost" aria-label="프로젝트 지우기 닫기" onClick={() => setRemoving(null)}>
+              <button
+                type="button"
+                className="ghost"
+                aria-label="프로젝트 지우기 닫기"
+                onClick={() => setRemoving(null)}
+              >
                 <CloseIcon />
               </button>
             </header>
@@ -696,7 +774,8 @@ export function Sidebar({
               </p>
             )}
             <p className="sidebar__removehint">
-              목록에서만 지우면 폴더는 그대로 남습니다. 폴더까지 지우면 이 프로젝트의 대화 기록까지 되돌릴 수 없이 사라집니다.
+              목록에서만 지우면 폴더는 그대로 남습니다. 폴더까지 지우면 이 프로젝트의 대화 기록까지
+              되돌릴 수 없이 사라집니다.
             </p>
             <div className="sidebar__removebtns">
               <button type="button" className="ghost" onClick={() => void remove(removing, false)}>
@@ -722,11 +801,7 @@ function monogram(name: string): string {
 
 /** The popover's short state word — the same words the row's meta uses, minus
     the markup (a menu row has no room for the dot diagram). */
-function leafMetaText(
-  project: ProjectSummary,
-  thread: ThreadSummary,
-  activeThreadId: string | null,
-): string {
+function leafMetaText(thread: ThreadSummary, activeThreadId: string | null): string {
   if (thread.state === "running") return "작업 중";
   if (thread.state === "awaiting") return "확인 대기";
   if (thread.state === "finished" && thread.id !== activeThreadId) return "답이 왔습니다";
@@ -745,7 +820,8 @@ function badgeFor(project: ProjectSummary): { kind: string; label: string } | nu
   if (project.working) return { kind: "working", label: WORKING_LABEL };
   if (project.handoff?.state === "merged") return { kind: "merged", label: MERGED_BADGE };
   if (project.handoff) return { kind: "handoff", label: HANDOFF_BADGE };
-  if (project.pendingChanges > 0) return { kind: "changes", label: changesBadge(project.pendingChanges) };
+  if (project.pendingChanges > 0)
+    return { kind: "changes", label: changesBadge(project.pendingChanges) };
   return null;
 }
 

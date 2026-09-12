@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -88,9 +88,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     text: z.string(),
     /** Optional base64 image attachments. */
-    images: z
-      .array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) }))
-      .optional(),
+    images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
     /**
      * Planning documents. The daemon saves each one under `<cwd>/specs/` and
      * appends an `@specs/<name>` reference to the prompt, so Claude reads it
@@ -107,8 +105,16 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
       )
       .optional(),
   }),
-  z.object({ ...withId, type: z.literal("session.interrupt"), sessionId: z.string().min(1) }),
-  z.object({ ...withId, type: z.literal("session.close"), sessionId: z.string().min(1) }),
+  z.object({
+    ...withId,
+    type: z.literal("session.interrupt"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("session.close"),
+    sessionId: z.string().min(1),
+  }),
   /**
    * 되감기 (PLAN D95): discard the k-th answer and receive it again — files
    * (the turn's checkpoint) and memory (a truncating fork) go back together.
@@ -122,11 +128,13 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     turn: z.number().int().positive(),
     text: z.string().min(1),
-    images: z
-      .array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) }))
-      .optional(),
+    images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
   }),
-  z.object({ ...withId, type: z.literal("session.delete"), sessionId: z.string().min(1) }),
+  z.object({
+    ...withId,
+    type: z.literal("session.delete"),
+    sessionId: z.string().min(1),
+  }),
   z.object({
     ...withId,
     type: z.literal("session.setModel"),
@@ -152,14 +160,22 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.selectors"),
     sessionId: z.string().min(1),
   }),
-  z.object({ ...withId, type: z.literal("session.commands"), sessionId: z.string().min(1) }),
+  z.object({
+    ...withId,
+    type: z.literal("session.commands"),
+    sessionId: z.string().min(1),
+  }),
   /**
    * The palette with no thread open. The daemon answers from its own CLI
    * probe (one boot, cached), so an empty workspace still reads like the
    * terminal's `/`.
    */
   z.object({ ...withId, type: z.literal("cli.commands") }),
-  z.object({ ...withId, type: z.literal("session.contextUsage"), sessionId: z.string().min(1) }),
+  z.object({
+    ...withId,
+    type: z.literal("session.contextUsage"),
+    sessionId: z.string().min(1),
+  }),
   z.object({
     ...withId,
     type: z.literal("repo.files"),
@@ -204,7 +220,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     /** What a handoff PR will target. Defaults to `main`. */
     baseBranch: z.string().min(1).max(128).optional(),
     /**
-     * D94: the repo has no `cds-design.json` — instead of blocking on a
+     * D94: the repo has no `colo-design.json` — instead of blocking on a
      * developer, Claude prepares the connection (brief turn → JSON · bridge ·
      * CLAUDE.md → machine validation) and the developer receives it as the
      * first PR.
@@ -222,7 +238,11 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    * preview server stops before the incoming one starts — two repos may
    * declare the same `preview.port`, so they can never run at once.
    */
-  z.object({ ...withId, type: z.literal("project.activate"), slug: z.string().min(1).max(64) }),
+  z.object({
+    ...withId,
+    type: z.literal("project.activate"),
+    slug: z.string().min(1).max(64),
+  }),
   z.object({
     ...withId,
     type: z.literal("project.update"),
@@ -248,7 +268,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   /**
    * Idempotent bootstrap of the connected repo: clone when missing, pull,
    * install when the dependency hash moved, start the preview command
-   * declared in `cds-design.json`. Resolves when it settles; progress arrives
+   * declared in `colo-design.json`. Resolves when it settles; progress arrives
    * as `repo.status`.
    */
   z.object({
@@ -296,7 +316,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * 저장 (PLAN D5[넘기기]): gate, commit and push the reviewed worktree diff onto the
-   * project's own `cds-design/…` branch, created on the first save of a cycle.
+   * project's own `colo-design/…` branch, created on the first save of a cycle.
    * The base branch is never written to — a developer receives this work as a
    * pull request, not as a push past them.
    */
@@ -401,7 +421,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     refresh: z.boolean().optional(),
   }),
   /**
-   * One repo, judged before any clone: does it carry a `cds-design.json`, may
+   * One repo, judged before any clone: does it carry a `colo-design.json`, may
    * this token open pull requests against it, and what branch would it target.
    */
   z.object({
@@ -555,9 +575,19 @@ export type ChatEvent =
       /** Slash commands and agents available, for UI affordances. */
       permissionMode: PermissionMode;
     }
-  | { kind: "text.delta"; blockId: string; text: string; agentId: string | null }
+  | {
+      kind: "text.delta";
+      blockId: string;
+      text: string;
+      agentId: string | null;
+    }
   | { kind: "text.done"; blockId: string; text: string; agentId: string | null }
-  | { kind: "thinking.delta"; blockId: string; text: string; agentId: string | null }
+  | {
+      kind: "thinking.delta";
+      blockId: string;
+      text: string;
+      agentId: string | null;
+    }
   | {
       kind: "tool.start";
       toolUseId: string;
@@ -578,7 +608,13 @@ export type ChatEvent =
    * capped at six — live-only echoes the chat card draws as thumbnails; a
    * replayed transcript keeps the words, not the bytes.
    */
-  | { kind: "user.echo"; text: string; images: number; files: string[]; thumbs?: string[] }
+  | {
+      kind: "user.echo";
+      text: string;
+      images: number;
+      files: string[];
+      thumbs?: string[];
+    }
   | {
       kind: "turn.end";
       subtype: string;
@@ -809,11 +845,11 @@ export interface HandoffStatus {
  * One screen capture riding a 넘기기 (PLAN D56). The daemon's server opens
  * each declared screen·state in the preview driver — a desktop host injects
  * one; the browser dev path has none — and hands the captures to the
- * workspace, which commits them under `.cds-design/shots/` and links them
+ * workspace, which commits them under `.colo-design/shots/` and links them
  * from the pull request body's `### 화면 미리보기` section.
  */
 export interface HandoffShot {
-  /** Route the screen is served at, as `cds-design.screens` declared it. */
+  /** Route the screen is served at, as `colo-design.screens` declared it. */
   route: string;
   /** The state the screen was captured in, as the repo declared it. */
   state: string;
@@ -843,7 +879,7 @@ export interface RepoStatus {
    */
   errorKind?: RepoErrorKind | null;
   /**
-   * The repo's own cds-design.json commands, once read (PLAN D37): the
+   * The repo's own colo-design.json commands, once read (PLAN D37): the
    * transcript matches a Bash call against these to say `검사 실행` instead of
    * printing the command line.
    */
@@ -855,12 +891,12 @@ export interface RepoStatus {
   };
   /** Preview origin once the declared preview port accepts connections. */
   previewUrl: string | null;
-  /** Port declared in the repo's `cds-design.json`. */
+  /** Port declared in the repo's `colo-design.json`. */
   previewPort: number | null;
   /** Configured remote url, without any embedded credentials. */
   url: string | null;
   /**
-   * The `cds-design/…` branch this cycle's work lives on, or `null` before the
+   * The `colo-design/…` branch this cycle's work lives on, or `null` before the
    * first 저장 of a cycle. The base branch is never checked out for writing.
    */
   branch: string | null;
@@ -882,11 +918,11 @@ export interface RepoStatus {
 // ---------------------------------------------------------------------------
 // Preview envelopes (PLAN D64–D69) — two contracts live here.
 //
-// 1. 레포 브리지 계약 (D68): `cds-design.screens`(+ `screens?`) and
-//    `cds-design.navigate` are ALL a connected repo owes the tool. The repo
+// 1. 레포 브리지 계약 (D68): `colo-design.screens`(+ `screens?`) and
+//    `colo-design.navigate` are ALL a connected repo owes the tool. The repo
 //    carries a hand-synced duplicate of these shapes
 //    (reference clone `src/preview-bridge/types.ts`); on the desktop the
-//    envelopes ride the preview preload's `window.cdsDesign.post` → IPC, in a
+//    envelopes ride the preview preload's `window.coloDesign.post` → IPC, in a
 //    plain browser they ride postMessage with the iframe.
 // 2. 도구 내부 (D67 · D69): the comments bundle, the error report and the
 //    comments-mode switch are the TOOL talking to itself — the desktop's
@@ -900,7 +936,7 @@ export interface RepoStatus {
  * name or the tag, the element's own text, a CSS path from the
  * `[data-screen]` wrapper, and the viewport rect at pin time.
  */
-export interface CdsDesignCommentTarget {
+export interface ColoDesignCommentTarget {
   /** `data-component` when the repo sets one, else the tag name. */
   component: string;
   /** The element's own text (direct text nodes), trimmed and capped. */
@@ -912,11 +948,11 @@ export interface CdsDesignCommentTarget {
 }
 
 /** A single comment (DESIGN §6 v1: click, comment, send — nothing else). */
-export interface CdsDesignComment {
-  type: "cds-design.comment";
+export interface ColoDesignComment {
+  type: "colo-design.comment";
   screen: string;
   state: string;
-  element: CdsDesignCommentTarget;
+  element: ColoDesignCommentTarget;
   comment: string;
 }
 
@@ -924,18 +960,18 @@ export interface CdsDesignComment {
  * What the tool's preview overlay (D67) hands the main process when the
  * planner sends the batch: one envelope for all pins, then the overlay
  * clears them. The main process relays it verbatim to the web
- * (`cds-preview:comments`); nothing validates it in between because both
+ * (`colo-preview:comments`); nothing validates it in between because both
  * ends are the tool.
  *
- *     { type: "cds-design.comments", screen, state,
+ *     { type: "colo-design.comments", screen, state,
  *       items: [{ element, comment }, …] }
  */
-export interface CdsDesignCommentsEnvelope {
-  type: "cds-design.comments";
+export interface ColoDesignCommentsEnvelope {
+  type: "colo-design.comments";
   screen: string;
   state: string;
   items: Array<{
-    element: CdsDesignCommentTarget;
+    element: ColoDesignCommentTarget;
     comment: string;
     /**
      * What the planner was looking at (PLAN D87): the view crops the element
@@ -950,34 +986,34 @@ export interface CdsDesignCommentsEnvelope {
 /**
  * One recorded pin's 해결 toggle, from the overlay's own bubble (PLAN D78).
  * Tool-internal like the pin bundle: the overlay makes it, the view relays it
- * verbatim as `cds-preview:comment-resolve`, and the web calls
+ * verbatim as `colo-preview:comment-resolve`, and the web calls
  * `comments.resolve` — the daemon never learns the overlay exists.
  */
-export interface CdsDesignCommentsResolveEnvelope {
-  type: "cds-design.comments.resolve";
+export interface ColoDesignCommentsResolveEnvelope {
+  type: "colo-design.comments.resolve";
   id: string;
   resolved: boolean;
 }
 
 /**
  * One recorded pin's 다시 요청, from the attention bubble (PLAN D78): the
- * overlay asks, the view relays it verbatim as `cds-preview:comment-resend`,
+ * overlay asks, the view relays it verbatim as `colo-preview:comment-resend`,
  * and the web composes the turn with its own `commentToTurn` — the popover's
  * 다시 보내기 on the same line.
  */
-export interface CdsDesignCommentsResendEnvelope {
-  type: "cds-design.comments.resend";
+export interface ColoDesignCommentsResendEnvelope {
+  type: "colo-design.comments.resend";
   id: string;
 }
 
 /**
  * The whole recorded list the web pushes DOWN into the view (PLAN D78) —
- * `preview.pins(items)` → `cds-overlay:pins`. The overlay filters it against
+ * `preview.pins(items)` → `colo-overlay:pins`. The overlay filters it against
  * the page's own `[data-screen]`·`[data-state]`, so a screen switch needs no
  * round trip. `attention` names the ids a just-finished turn owes a look at
  * (확인해 주세요).
  */
-export interface CdsDesignPinsPayload {
+export interface ColoDesignPinsPayload {
   items: CommentItem[];
   attention?: string[];
 }
@@ -987,11 +1023,11 @@ export interface CdsDesignPinsPayload {
  * D69): `console-message` errors and a crashed renderer are `runtime`, a
  * failed main-frame load is `build`. Built from the preview view's own
  * events — no repo hook involved — and sent to the web as
- * `cds-preview:error`, where the banner above the frame offers it to Claude
+ * `colo-preview:error`, where the banner above the frame offers it to Claude
  * as one marker turn.
  */
-export interface CdsDesignErrorEnvelope {
-  type: "cds-design.error";
+export interface ColoDesignErrorEnvelope {
+  type: "colo-design.error";
   /** A crash inside the page, or the build that serves it. */
   kind: "runtime" | "build";
   /** The error text, as the browser or the loader reported it. */
@@ -1005,11 +1041,11 @@ export interface CdsDesignErrorEnvelope {
 /**
  * The 💬 코멘트 toggle's word to the overlay (PLAN D58 → D67): the web keeps
  * the truth and the main process re-tells the preview preload
- * (`cds-overlay:mode`). Tool-internal — the repo never sees it; the overlay
+ * (`colo-overlay:mode`). Tool-internal — the repo never sees it; the overlay
  * has no toggle of its own, so the two can never disagree.
  */
-export interface CdsDesignCommentsModeEnvelope {
-  type: "cds-design.comments.mode";
+export interface ColoDesignCommentsModeEnvelope {
+  type: "colo-design.comments.mode";
   on: boolean;
 }
 
@@ -1055,7 +1091,7 @@ export interface SessionRewound {
  * further. A repo that had to carry global document ids would break when the
  * documents move; a file name beside the screen cannot.
  */
-export interface CdsDesignScreen {
+export interface ColoDesignScreen {
   /** Route the preview app serves it at, e.g. `/member/MemberList`. */
   route: string;
   /** What the 기획서 calls it. */
@@ -1071,9 +1107,9 @@ export interface CdsDesignScreen {
  * parses the repo's code, so this is the only way it can offer a screen picker
  * — and the only reason the screen list can mark what was built from what.
  */
-export interface CdsDesignScreensEnvelope {
-  type: "cds-design.screens";
-  screens: CdsDesignScreen[];
+export interface ColoDesignScreensEnvelope {
+  type: "colo-design.screens";
+  screens: ColoDesignScreen[];
 }
 
 /**
@@ -1085,8 +1121,8 @@ export interface CdsDesignScreensEnvelope {
  * post then lands at a tool that is provably already listening. Every
  * ordering is covered and neither side waits on the other.
  */
-export interface CdsDesignScreensRequestEnvelope {
-  type: "cds-design.screens?";
+export interface ColoDesignScreensRequestEnvelope {
+  type: "colo-design.screens?";
 }
 
 /**
@@ -1094,8 +1130,8 @@ export interface CdsDesignScreensRequestEnvelope {
  * Sent when the planner picks a screen in the list, or taps a state chip.
  * The preview app routes; the tool does not touch its url.
  */
-export interface CdsDesignNavigateEnvelope {
-  type: "cds-design.navigate";
+export interface ColoDesignNavigateEnvelope {
+  type: "colo-design.navigate";
   route: string;
   /** Omitted or null means the screen's default. */
   state?: string | null;
@@ -1168,7 +1204,7 @@ export interface GitHubRepoList {
 
 /** What the picker shows about the one repo a planner chose, before cloning. */
 export interface GitHubRepoInspection {
-  hasCdsDesign: boolean;
+  hasColoDesign: boolean;
   canPush: boolean;
   defaultBranch: string;
 }
@@ -1280,7 +1316,12 @@ export type ServerMessage =
   | { type: "ok"; id: string; data: unknown }
   | { type: "error"; id: string | null; message: string; code?: string }
   | { type: "session.event"; sessionId: string; event: ChatEvent }
-  | { type: "session.state"; sessionId: string; state: SessionState; detail?: string }
+  | {
+      type: "session.state";
+      sessionId: string;
+      state: SessionState;
+      detail?: string;
+    }
   | {
       type: "permission.request";
       requestId: string;
@@ -1303,15 +1344,19 @@ export type ServerMessage =
    * Every open client re-points at once — two windows on one daemon must never
    * disagree about which project they are showing.
    */
-  | { type: "project.changed"; projects: ProjectSummary[]; activeSlug: string | null };
+  | {
+      type: "project.changed";
+      projects: ProjectSummary[];
+      activeSlug: string | null;
+    };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function parseClientMessage(raw: string):
-  | { ok: true; value: ClientMessage }
-  | { ok: false; error: string; id: string | null } {
+export function parseClientMessage(
+  raw: string,
+): { ok: true; value: ClientMessage } | { ok: false; error: string; id: string | null } {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -1324,11 +1369,15 @@ export function parseClientMessage(raw: string):
       : null;
   const parsed = clientMessageSchema.safeParse(json);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "), id };
+    return {
+      ok: false,
+      error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      id,
+    };
   }
   return { ok: true, value: parsed.data };
 }
 export * from "./shortcuts.js";
-export * from "./update.js";
 export * from "./tool-names.js";
 export * from "./turn-marker.js";
+export * from "./update.js";

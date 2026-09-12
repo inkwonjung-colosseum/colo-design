@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { Daemon } from "./daemon-client";
-import { RepoPicker } from "./RepoPicker";
 import { CloseIcon } from "./icons";
+import { RepoPicker } from "./RepoPicker";
+import { useModalFocus } from "./use-modal-focus";
 
 /**
  * 프로젝트 추가, for a planner who already has one (PLAN D16). The same
@@ -19,13 +20,14 @@ export function AddProjectDialog({
   onOpenSettings?: () => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  useModalFocus(panel);
 
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
+    const onKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
   }, [onClose]);
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -15,13 +15,16 @@ import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+// The summarizer's one Claude turn (PLAN D51) rides the same SDK the
+// sessions use — one login, one code path, no `-p` process to spawn.
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  DeveloperReview,
   DiffFile,
   DiffHunk,
   DiffStatus,
   HandoffShot,
   HandoffStatus,
-  DeveloperReview,
   HandoffStatusReport,
   RepoCheckpoint,
   RepoCheckpointRestore,
@@ -32,55 +35,52 @@ import type {
   RepoPhase,
   RepoStatus,
   RepoSummary,
-} from "@cds-design/protocol";
-import { markTurn } from "@cds-design/protocol";
-// The summarizer's one Claude turn (PLAN D51) rides the same SDK the
-// sessions use — one login, one code path, no `-p` process to spawn.
-import { query } from "@anthropic-ai/claude-agent-sdk";
+} from "@colo-design/protocol";
+import { markTurn } from "@colo-design/protocol";
+import { readComments } from "./comments.js";
+import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import {
   currentPlatform,
   detectsRegistryAuthFailure,
   resolveGitExecutable,
   resolvePnpmExecutable,
 } from "./environment.js";
-import { GitHubClient, parseRepoSlug } from "./github.js";
-import { readComments } from "./comments.js";
-import { mergeNpmrc, npmrcPath } from "./credentials.js";
+import { type GitHubClient, parseRepoSlug } from "./github.js";
 
 /**
  * The connected repo workspace: a clone of the repo the planner pointed the
- * daemon at, driven by that repo's own `cds-design.json` (install/check/build
+ * daemon at, driven by that repo's own `colo-design.json` (install/check/build
  * commands, preview command + port, optional private registry). The daemon
  * clones and pulls it, runs its commands, and frames its preview server —
  * what the preview renders is entirely the repo's business.
  */
 
-const CONFIG_FILE = "cds-design.json";
+const CONFIG_FILE = "colo-design.json";
 /** Reinstall marker, kept inside `.git/` so it travels with the clone only. */
-const INSTALL_MARKER = "cds-design-install-hash";
+const INSTALL_MARKER = "colo-design-install-hash";
 const READY_TIMEOUT_MS = 30_000;
 const DETAIL_THROTTLE_MS = 200;
 /** Commit message when the planner approves without writing one. */
-const DEFAULT_COMMIT_MESSAGE = "CDS Design 화면 변경";
+const DEFAULT_COMMIT_MESSAGE = "Colo Design 화면 변경";
 /** PR title when the planner sends the handoff without editing it. */
-const DEFAULT_HANDOFF_TITLE = "CDS Design 화면 전달";
+const DEFAULT_HANDOFF_TITLE = "Colo Design 화면 전달";
 /** D56: where a handoff's screen captures are committed, relative to the root. */
-const SHOTS_DIR = ".cds-design/shots";
+const SHOTS_DIR = ".colo-design/shots";
 /** D56: the captures ride their own commit — the reviewed diff stays the planner's. */
-const SHOTS_COMMIT_MESSAGE = "CDS Design 화면 미리보기 캡처";
+const SHOTS_COMMIT_MESSAGE = "Colo Design 화면 미리보기 캡처";
 /**
  * Every branch this tool creates lives under one prefix, so a developer can
  * tell at a glance which branches a planner made and which are theirs.
  */
-const BRANCH_PREFIX = "cds-design";
+const BRANCH_PREFIX = "colo-design";
 /** How many output lines a failed gate quotes back to people and Claude. */
 const GATE_OUTPUT_TAIL_LINES = 30;
 /**
  * Where every turn-start snapshot lives (PLAN D52). A namespace of its own
  * under `refs/`, so a developer's `git for-each-ref` never trips over it by
- * accident and one `refs/cds-design/checkpoints` listing sweeps it.
+ * accident and one `refs/colo-design/checkpoints` listing sweeps it.
  */
-const CHECKPOINT_REF_PREFIX = "refs/cds-design/checkpoints";
+const CHECKPOINT_REF_PREFIX = "refs/colo-design/checkpoints";
 /** D52: a session keeps its most recent snapshots; older ones are deleted. */
 const CHECKPOINTS_PER_SESSION = 20;
 /** D51: how long the summary's one Claude turn may take before the fallback. */
@@ -131,7 +131,7 @@ const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = 
  * The stash this tool parks unsaved work in while 최신화 moves the branch.
  * Named for the button, so `git stash list` reads like the product, not git.
  */
-const STASH_MESSAGE = "CDS Design: 최신화 임시 보관";
+const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
 
 /** What the planner reads when a conflict needs Claude and no thread is open. */
 const REFRESH_CONFLICT_DETAIL =
@@ -157,75 +157,76 @@ const COMMANDS_UNAPPROVED_DETAIL =
 const REFRESH_DIVERGED_DETAIL =
   "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 Claude가 확인합니다.";
 
-
-export const PNPM_MISSING_DETAIL =
+const PNPM_MISSING_DETAIL =
   "pnpm이 없습니다 — corepack enable 또는 npm i -g pnpm 으로 설치해 주세요.";
-export const REGISTRY_AUTH_DETAIL =
+const REGISTRY_AUTH_DETAIL =
   "GitHub 패키지 인증이 필요합니다 — pnpm config set //npm.pkg.github.com/:_authToken <read:packages 권한 PAT>";
 export const REPO_URL_MISSING_DETAIL =
   "연결 레포 주소가 설정되지 않았습니다 — 설정에서 레포 주소를 넣어 주세요.";
 
 // ---------------------------------------------------------------------------
-// cds-design.json contract
+// colo-design.json contract
 // ---------------------------------------------------------------------------
 
-export interface CdsDesignRegistry {
+export interface ColoDesignRegistry {
   host: string;
   scope: string;
 }
 
-export interface CdsDesignConfig {
+export interface ColoDesignConfig {
   install?: string;
   check?: string;
   build?: string;
   preview: { command: string; port: number };
-  registry?: CdsDesignRegistry;
+  registry?: ColoDesignRegistry;
   /** D56: `false` refuses the handoff's screen captures — no files, no PR section. */
   shots?: boolean;
 }
 
 /**
- * Parses and validates a repo's `cds-design.json`. Every rejection names the
+ * Parses and validates a repo's `colo-design.json`. Every rejection names the
  * field and what it should be, in Korean: the planner is the one who has to
  * act on it, and "invalid config" is not actionable.
  */
-export function parseCdsDesignConfig(source: string): CdsDesignConfig {
+export function parseColoDesignConfig(source: string): ColoDesignConfig {
   let raw: unknown;
   try {
     raw = JSON.parse(source);
   } catch (error) {
     throw new Error(
-      `cds-design.json을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
+      `colo-design.json을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("cds-design.json은 객체여야 합니다");
+    throw new Error("colo-design.json은 객체여야 합니다");
   }
   const config = raw as Record<string, unknown>;
 
   for (const key of ["install", "check", "build"] as const) {
     const value = config[key];
     if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
-      throw new Error(`cds-design.json의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
+      throw new Error(`colo-design.json의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
     }
   }
 
   const preview = config.preview;
   if (!preview || typeof preview !== "object" || Array.isArray(preview)) {
-    throw new Error('cds-design.json에 preview가 없습니다 — { "command", "port" }를 적어야 합니다');
+    throw new Error(
+      'colo-design.json에 preview가 없습니다 — { "command", "port" }를 적어야 합니다',
+    );
   }
   const { command, port } = preview as Record<string, unknown>;
   if (typeof command !== "string" || command.trim() === "") {
-    throw new Error("cds-design.json의 preview.command가 없습니다 — 미리보기를 띄울 명령입니다");
+    throw new Error("colo-design.json의 preview.command가 없습니다 — 미리보기를 띄울 명령입니다");
   }
   if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
     throw new Error(
-      "cds-design.json의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다",
+      "colo-design.json의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다",
     );
   }
 
   if (config.shots !== undefined && typeof config.shots !== "boolean") {
-    throw new Error("cds-design.json의 shots는 true 또는 false여야 합니다");
+    throw new Error("colo-design.json의 shots는 true 또는 false여야 합니다");
   }
 
   const common = {
@@ -246,7 +247,7 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
     typeof registry.scope !== "string" ||
     registry.scope.trim() === ""
   ) {
-    throw new Error('cds-design.json의 registry는 { "host", "scope" } 형태여야 합니다');
+    throw new Error('colo-design.json의 registry는 { "host", "scope" } 형태여야 합니다');
   }
   // The registry line is the one place a connected repo aims the machine's
   // GitHub PAT: its host lands in ~/.npmrc as `//<host>/:_authToken=<PAT>`.
@@ -255,19 +256,21 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
   const host = registry.host.trim().toLowerCase();
   if (host !== "npm.pkg.github.com" && !host.endsWith(".pkg.github.com")) {
     throw new Error(
-      'cds-design.json의 registry.host는 GitHub 패키지 호스트(npm.pkg.github.com)여야 합니다',
+      "colo-design.json의 registry.host는 GitHub 패키지 호스트(npm.pkg.github.com)여야 합니다",
     );
   }
 
   return { ...common, registry: { host, scope: registry.scope } };
 }
 
-export function readCdsDesignConfig(root: string): CdsDesignConfig {
+export function readColoDesignConfig(root: string): ColoDesignConfig {
   const file = join(root, CONFIG_FILE);
   if (!existsSync(file)) {
-    throw new Error(`cds-design.json이 없습니다 — 연결 레포 루트에 ${CONFIG_FILE}가 있어야 합니다`);
+    throw new Error(
+      `colo-design.json이 없습니다 — 연결 레포 루트에 ${CONFIG_FILE}가 있어야 합니다`,
+    );
   }
-  return parseCdsDesignConfig(readFileSync(file, "utf8"));
+  return parseColoDesignConfig(readFileSync(file, "utf8"));
 }
 
 /**
@@ -334,7 +337,7 @@ export function assertClonableRepoUrl(url: string): void {
 }
 
 /** git error output quotes the remote url; the PAT must never survive that. */
-export function redact(text: string, secret: string | null): string {
+function redact(text: string, secret: string | null): string {
   return secret ? text.split(secret).join("***") : text;
 }
 
@@ -376,7 +379,13 @@ export function parseUnifiedDiff(output: string): DiffFile[] {
     } else if (line.startsWith("@@")) {
       hunk = { header: line, lines: [] };
       current.hunks.push(hunk);
-    } else if (hunk && (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.startsWith("\\"))) {
+    } else if (
+      hunk &&
+      (line.startsWith("+") ||
+        line.startsWith("-") ||
+        line.startsWith(" ") ||
+        line.startsWith("\\"))
+    ) {
       hunk.lines.push(line);
     }
     // Everything else — index, mode, ---/+++ — is plumbing the panel does not show.
@@ -400,7 +409,10 @@ function untrackedAsAdded(root: string, rel: string): DiffFile {
   if (lines[lines.length - 1] === "") lines.pop();
   if (lines.length === 0) lines.push("");
   file.hunks = [
-    { header: `@@ -0,0 +1,${lines.length} @@`, lines: lines.map((line) => `+${line}`) },
+    {
+      header: `@@ -0,0 +1,${lines.length} @@`,
+      lines: lines.map((line) => `+${line}`),
+    },
   ];
   return file;
 }
@@ -419,7 +431,9 @@ function untrackedAsAdded(root: string, rel: string): DiffFile {
  */
 export function fallbackGroup(path: string): string {
   const segments = path.split("/");
-  return segments.length >= 2 ? (segments[segments.length - 2] ?? FALLBACK_ROOT_GROUP) : FALLBACK_ROOT_GROUP;
+  return segments.length >= 2
+    ? (segments[segments.length - 2] ?? FALLBACK_ROOT_GROUP)
+    : FALLBACK_ROOT_GROUP;
 }
 
 /**
@@ -459,9 +473,8 @@ function renderSummaryFile(file: DiffFile): string {
   let size = 0;
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      const piece = line.length > SUMMARY_HUNK_CHAR_LIMIT
-        ? `${line.slice(0, SUMMARY_HUNK_CHAR_LIMIT)}…`
-        : line;
+      const piece =
+        line.length > SUMMARY_HUNK_CHAR_LIMIT ? `${line.slice(0, SUMMARY_HUNK_CHAR_LIMIT)}…` : line;
       if (size + piece.length > SUMMARY_HUNK_CHAR_LIMIT) {
         lines.push("(이 파일의 나머지는 생략했습니다)");
         return lines.join("\n");
@@ -556,7 +569,7 @@ export class RepoWorkspace {
   private detail: string | null = null;
   /** Set at the failure site, never sniffed back out of `detail` (PLAN D41). */
   private errorKind: RepoErrorKind | null = null;
-  private config: CdsDesignConfig | null = null;
+  private config: ColoDesignConfig | null = null;
   private preview: ChildProcess | null = null;
   private inFlight: Promise<RepoStatus> | null = null;
   private publishing: Promise<DiffStatus> | null = null;
@@ -568,7 +581,11 @@ export class RepoWorkspace {
    * an unchanged diff must not pay for another Claude turn, and a moved
    * diff must not show yesterday's words.
    */
-  private summaryCache: { hash: string; lines: string[]; source: RepoSummary["source"] } | null = null;
+  private summaryCache: {
+    hash: string;
+    lines: string[];
+    source: RepoSummary["source"];
+  } | null = null;
   private lastEmit = 0;
   /**
    * The Claude Code CLI, resolved once by the server from the same source
@@ -612,41 +629,39 @@ export class RepoWorkspace {
     | null;
   private readonly gitHubClient: (() => GitHubClient | null) | null;
 
-  constructor(
-    options: {
-      /** Absolute path of the clone. */
-      root: string;
-      /** Remote url; the owning project decided it, this class never reads it back. */
-      url: string | null;
-      onStatus: (status: RepoStatus) => void;
-      /** Publish progress; optional because not every host shows it. */
-      onDiffStatus?: (status: DiffStatus) => void;
-      /** The machine-wide GitHub token — see `loadRepoPat` in credentials. */
-      pat?: string | null;
-      /** Defaults to "main"; a project that forks elsewhere says so. */
-      baseBranch?: string;
-      /** Persistence hook for a moved url — see onUrlChange in update(). */
-      onUrlChange?: (url: string | null) => void;
-      /** Cycle state restored from the project registry, if any. */
-      cycle?: { branch: string | null; handoff: HandoffStatus | null };
-      /** Where the cycle is written back; the registry is the only store. */
-      onCycleChange?: (cycle: { branch: string | null; handoff: HandoffStatus | null }) => void;
-      /** Built per call so a PAT changed mid-run reaches the next request. */
-      gitHubClient?: () => GitHubClient | null;
-      /** Claude Code CLI executable for the summarizer's one turn (D51). */
-      claudeExecutable?: string | null;
-      /** D94: 연결 준비 — sync 가 설정 없음에서 막히면 Claude 가 계약을 쓴다. */
-      bootstrap?: boolean;
-      /** The preparation turn: brief → Claude writes the contract → validate. */
-      prepareBootstrap?: () => Promise<boolean>;
-      /**
-       * Whether the planner said this repo's commands may run here. Absent
-       * (a direct construction, a pre-gate project) reads as approved — the
-       * gate is for repos nobody has vouched for yet.
-       */
-      commandsApproved?: boolean;
-    },
-  ) {
+  constructor(options: {
+    /** Absolute path of the clone. */
+    root: string;
+    /** Remote url; the owning project decided it, this class never reads it back. */
+    url: string | null;
+    onStatus: (status: RepoStatus) => void;
+    /** Publish progress; optional because not every host shows it. */
+    onDiffStatus?: (status: DiffStatus) => void;
+    /** The machine-wide GitHub token — see `loadRepoPat` in credentials. */
+    pat?: string | null;
+    /** Defaults to "main"; a project that forks elsewhere says so. */
+    baseBranch?: string;
+    /** Persistence hook for a moved url — see onUrlChange in update(). */
+    onUrlChange?: (url: string | null) => void;
+    /** Cycle state restored from the project registry, if any. */
+    cycle?: { branch: string | null; handoff: HandoffStatus | null };
+    /** Where the cycle is written back; the registry is the only store. */
+    onCycleChange?: (cycle: { branch: string | null; handoff: HandoffStatus | null }) => void;
+    /** Built per call so a PAT changed mid-run reaches the next request. */
+    gitHubClient?: () => GitHubClient | null;
+    /** Claude Code CLI executable for the summarizer's one turn (D51). */
+    claudeExecutable?: string | null;
+    /** D94: 연결 준비 — sync 가 설정 없음에서 막히면 Claude 가 계약을 쓴다. */
+    bootstrap?: boolean;
+    /** The preparation turn: brief → Claude writes the contract → validate. */
+    prepareBootstrap?: () => Promise<boolean>;
+    /**
+     * Whether the planner said this repo's commands may run here. Absent
+     * (a direct construction, a pre-gate project) reads as approved — the
+     * gate is for repos nobody has vouched for yet.
+     */
+    commandsApproved?: boolean;
+  }) {
     this.root = options.root;
     this.url = options.url;
     this.pat = options.pat ?? null;
@@ -683,8 +698,8 @@ export class RepoWorkspace {
     this.commandsApproved = approved;
   }
 
-  /** The repo's declared private registry, once its cds-design.json was read. */
-  registry(): CdsDesignRegistry | null {
+  /** The repo's declared private registry, once its colo-design.json was read. */
+  registry(): ColoDesignRegistry | null {
     return this.config?.registry ?? null;
   }
 
@@ -692,7 +707,7 @@ export class RepoWorkspace {
   async status(): Promise<RepoStatus> {
     if (this.isCloned()) {
       try {
-        this.config = readCdsDesignConfig(this.root);
+        this.config = readColoDesignConfig(this.root);
       } catch {
         // Keep the last known config; the working phases surface parse errors.
       }
@@ -744,7 +759,6 @@ export class RepoWorkspace {
     return await this.sync();
   }
 
-
   async stop(): Promise<void> {
     await this.killPreview();
   }
@@ -791,7 +805,6 @@ export class RepoWorkspace {
     await this.refreshing?.catch(() => undefined);
     await this.inFlight?.catch(() => undefined);
   }
-
 
   /**
    * Session start · 레포 최신화: bring the clone current without tearing its
@@ -885,7 +898,9 @@ export class RepoWorkspace {
    * would teach the planner to save rarely, which is the opposite of what a
    * reviewable history needs.
    */
-  save(options: { message?: string; onSessionTurn?: (brief: string) => void } = {}): Promise<DiffStatus> {
+  save(
+    options: { message?: string; onSessionTurn?: (brief: string) => void } = {},
+  ): Promise<DiffStatus> {
     if (!this.publishing) {
       this.publishing = this.runSave(options).finally(() => {
         this.publishing = null;
@@ -919,11 +934,11 @@ export class RepoWorkspace {
       });
     }
 
-    // Gates can change cds-design.json or write files between here and the
+    // Gates can change colo-design.json or write files between here and the
     // commit: read the config fresh, and commit exactly the paths the planner
     // approved — never `git add -A`, so a gate's unreviewed output cannot ride
     // along in the save.
-    const config = readCdsDesignConfig(this.root);
+    const config = readColoDesignConfig(this.root);
     this.config = config;
     if (config.check) {
       this.setDiff({ stage: "gating", gate: "check" });
@@ -973,12 +988,9 @@ export class RepoWorkspace {
       // An empty ls-remote line means nobody has taken it. A remote that
       // cannot be reached is not a reason to refuse the save: the push right
       // after this will report the real problem, with git's own words.
-      const taken = await this.git([
-        "ls-remote",
-        "--heads",
-        this.url ?? "origin",
-        name,
-      ]).catch(() => "");
+      const taken = await this.git(["ls-remote", "--heads", this.url ?? "origin", name]).catch(
+        () => "",
+      );
       if (taken.trim() === "") break;
     }
 
@@ -996,16 +1008,18 @@ export class RepoWorkspace {
    * this cycle already has, because later saves accumulate on the same branch
    * and a second PR for the same work is noise in a developer's queue.
    */
-  handoff(options: {
-    title?: string;
-    body?: string;
-    /** The server's preview-driver captures (PLAN D56), already taken. */
-    shots?: HandoffShot[];
-    onSessionTurn?: (brief: string) => void;
-    /** D93: the project's comment store + declared titles, for the PR body. */
-    commentsFile?: string;
-    screenTitles?: Array<{ route: string; title: string }>;
-  } = {}): Promise<DiffStatus> {
+  handoff(
+    options: {
+      title?: string;
+      body?: string;
+      /** The server's preview-driver captures (PLAN D56), already taken. */
+      shots?: HandoffShot[];
+      onSessionTurn?: (brief: string) => void;
+      /** D93: the project's comment store + declared titles, for the PR body. */
+      commentsFile?: string;
+      screenTitles?: Array<{ route: string; title: string }>;
+    } = {},
+  ): Promise<DiffStatus> {
     if (!this.publishing) {
       this.publishing = this.runHandoff(options).finally(() => {
         this.publishing = null;
@@ -1043,7 +1057,8 @@ export class RepoWorkspace {
       return this.setDiff({
         stage: "failed",
         gate: "pr",
-        detail: "GitHub 레포가 아니라 개발자에게 넘길 수 없습니다 — 설정에서 레포 주소를 확인해 주세요.",
+        detail:
+          "GitHub 레포가 아니라 개발자에게 넘길 수 없습니다 — 설정에서 레포 주소를 확인해 주세요.",
       });
     }
     const client = this.gitHubClient?.() ?? null;
@@ -1055,7 +1070,7 @@ export class RepoWorkspace {
       });
     }
 
-    const config = readCdsDesignConfig(this.root);
+    const config = readColoDesignConfig(this.root);
     this.config = config;
     if (config.build) {
       this.setDiff({ stage: "gating", gate: "build" });
@@ -1074,7 +1089,9 @@ export class RepoWorkspace {
     try {
       const since = (
         await this.git(["log", "--reverse", "--format=%cI", `origin/${this.baseBranch}..${branch}`])
-      ).split("\n")[0]?.trim();
+      )
+        .split("\n")[0]
+        ?.trim();
       if (options.commentsFile && since) {
         const section = buildCommentsSection(
           readComments(options.commentsFile),
@@ -1093,8 +1110,19 @@ export class RepoWorkspace {
       // the developer will really find in it.
       body = await this.attachShots(body, options.shots, branch);
       const pull = this.openHandoff
-        ? await client.updatePullRequest({ ...slug, number: this.openHandoff.number, title, body })
-        : await client.createPullRequest({ ...slug, head: branch, base: this.baseBranch, title, body });
+        ? await client.updatePullRequest({
+            ...slug,
+            number: this.openHandoff.number,
+            title,
+            body,
+          })
+        : await client.createPullRequest({
+            ...slug,
+            head: branch,
+            base: this.baseBranch,
+            title,
+            body,
+          });
       const handoff: HandoffStatus = pull;
       this.setCycle(branch, handoff);
       return this.setDiff({ stage: "handed-off", handoff });
@@ -1104,7 +1132,7 @@ export class RepoWorkspace {
   }
 
   /**
-   * D56: writes the server's captures under `.cds-design/shots/`, commits and
+   * D56: writes the server's captures under `.colo-design/shots/`, commits and
    * pushes them on this cycle's branch, and returns the body with a
    * `### 화면 미리보기` section linking each one. Nothing here can fail the
    * handoff: the work is already saved — a set the repo refused
@@ -1118,7 +1146,7 @@ export class RepoWorkspace {
   ): Promise<string> {
     if (!shots || shots.length === 0) return body;
     const slug = this.repoSlug();
-    if (!slug || this.cdsDesign()?.shots === false) return body;
+    if (!slug || this.coloDesign()?.shots === false) return body;
     const links: string[] = [];
     try {
       // The captures must join the branch the pull request is from — a
@@ -1160,9 +1188,7 @@ export class RepoWorkspace {
     const client = this.gitHubClient?.() ?? null;
     if (!current || !slug || !client) return current;
 
-    const pull = await client
-      .getPullRequest({ ...slug, number: current.number })
-      .catch(() => null);
+    const pull = await client.getPullRequest({ ...slug, number: current.number }).catch(() => null);
     if (!pull) return current;
 
     const handoff: HandoffStatus = pull;
@@ -1201,7 +1227,10 @@ export class RepoWorkspace {
     const reviews: DeveloperReview[] = [];
     if (slug && client) {
       const collect = async (): Promise<void> => {
-        for (const row of await client.listPullComments({ ...slug, number: handoff.number })) {
+        for (const row of await client.listPullComments({
+          ...slug,
+          number: handoff.number,
+        })) {
           reviews.push({
             id: Number(row.id),
             kind: "inline",
@@ -1213,7 +1242,10 @@ export class RepoWorkspace {
             at: String(row.created_at ?? ""),
           });
         }
-        for (const row of await client.listReviews({ ...slug, number: handoff.number })) {
+        for (const row of await client.listReviews({
+          ...slug,
+          number: handoff.number,
+        })) {
           const text = String(row.body ?? "").trim();
           if (text === "") continue;
           reviews.push({
@@ -1248,7 +1280,12 @@ export class RepoWorkspace {
       throw new Error("답할 코멘트를 찾을 수 없습니다 — 상태 확인을 다시 눌러 주세요.");
     }
     if (review.kind === "inline") {
-      await client.replyToPullComment({ ...slug, number: review.pr, commentId: review.id, body });
+      await client.replyToPullComment({
+        ...slug,
+        number: review.pr,
+        commentId: review.id,
+        body,
+      });
     } else {
       await client.commentOnIssue({ ...slug, number: review.pr, body });
     }
@@ -1271,7 +1308,10 @@ export class RepoWorkspace {
     if (files.length === 0) return { lines: [], source: "fallback" };
     const hash = createHash("sha256").update(files.map(renderSummaryFile).join("\n")).digest("hex");
     if (this.summaryCache?.hash === hash) {
-      return { lines: this.summaryCache.lines, source: this.summaryCache.source };
+      return {
+        lines: this.summaryCache.lines,
+        source: this.summaryCache.source,
+      };
     }
     const summary = (await this.claudeSummary(files).catch(() => null)) ?? {
       lines: fallbackSummary(files),
@@ -1356,7 +1396,12 @@ export class RepoWorkspace {
       .map((chunk) => {
         const [head = "", ...fileLines] = chunk.split(/\r?\n/);
         const [sha = "", message = "", at = ""] = head.split("\x1f");
-        return { sha, message, at, files: fileLines.map((line) => line.trim()).filter(Boolean) };
+        return {
+          sha,
+          message,
+          at,
+          files: fileLines.map((line) => line.trim()).filter(Boolean),
+        };
       })
       .filter((entry) => entry.sha !== "");
     return { base, entries };
@@ -1413,7 +1458,11 @@ export class RepoWorkspace {
       await this.git([...(await this.identityArgs()), "commit", "-m", `되돌리기: ${subject}`]);
       await this.git(["push", "--set-upstream", "origin", branch]);
     } catch (error) {
-      return this.setDiff({ stage: "failed", gate: "commit", detail: detailOf(error, this.pat) });
+      return this.setDiff({
+        stage: "failed",
+        gate: "commit",
+        detail: detailOf(error, this.pat),
+      });
     }
     const commit = (await this.git(["rev-parse", "HEAD"])).trim();
     await this.refreshPendingChanges();
@@ -1472,7 +1521,7 @@ export class RepoWorkspace {
    * One 화면 turn's snapshot (PLAN D52), taken by the server the moment the
    * turn is handed to the session: the whole worktree — untracked screens
    * included — into a throwaway index, a tree, a parented commit, and a ref
-   * under `refs/cds-design/checkpoints/<sessionId>/<turn>`. HEAD, the real
+   * under `refs/colo-design/checkpoints/<sessionId>/<turn>`. HEAD, the real
    * index and the worktree itself are never touched, which is exactly why
    * this is not a stash: a stash cannot carry untracked files and a first
    * screen is untracked by definition.
@@ -1480,7 +1529,7 @@ export class RepoWorkspace {
   async checkpoint(sessionId: string, turn: number): Promise<RepoCheckpoint> {
     const ref = `${CHECKPOINT_REF_PREFIX}/${sessionId}/${turn}`;
     // Inside `.git/` so it can never surface as an untracked file of its own.
-    const temporaryIndex = join(this.root, ".git", `cds-design-checkpoint-${randomUUID()}`);
+    const temporaryIndex = join(this.root, ".git", `colo-design-checkpoint-${randomUUID()}`);
     const indexEnv = { GIT_INDEX_FILE: temporaryIndex };
     try {
       await this.git(["add", "-A"], this.root, indexEnv);
@@ -1495,7 +1544,7 @@ export class RepoWorkspace {
             "-p",
             head,
             "-m",
-            `CDS Design 체크포인트 · 대화 ${sessionId} · 턴 ${turn}`,
+            `Colo Design 체크포인트 · 대화 ${sessionId} · 턴 ${turn}`,
           ],
           this.root,
           indexEnv,
@@ -1506,7 +1555,12 @@ export class RepoWorkspace {
       rmSync(temporaryIndex, { force: true });
     }
     await this.pruneCheckpoints(sessionId);
-    return { id: `${sessionId}/${turn}`, sessionId, turn, at: new Date().toISOString() };
+    return {
+      id: `${sessionId}/${turn}`,
+      sessionId,
+      turn,
+      at: new Date().toISOString(),
+    };
   }
 
   /** D52: a session keeps its newest snapshots; older refs are deleted. */
@@ -1549,7 +1603,12 @@ export class RepoWorkspace {
       const id = refname.startsWith(prefix) ? refname.slice(prefix.length) : "";
       const slash = id.lastIndexOf("/");
       if (id === "" || slash <= 0) continue;
-      entries.push({ id, sessionId: id.slice(0, slash), turn: Number(id.slice(slash + 1)) || 0, at });
+      entries.push({
+        id,
+        sessionId: id.slice(0, slash),
+        turn: Number(id.slice(slash + 1)) || 0,
+        at,
+      });
     }
     return { entries };
   }
@@ -1569,7 +1628,14 @@ export class RepoWorkspace {
     if (tree === "") {
       throw new Error("되돌릴 체크포인트를 찾지 못했습니다 — 목록을 다시 불러와 주세요.");
     }
-    const raw = await this.git(["-c", "core.quotepath=false", "diff", "--name-status", "--no-renames", tree]);
+    const raw = await this.git([
+      "-c",
+      "core.quotepath=false",
+      "diff",
+      "--name-status",
+      "--no-renames",
+      tree,
+    ]);
     const plan = restorePlan(raw);
     // Untracked files the snapshot predates never appear in `git diff` —
     // and they are exactly what "스냅샷에 없던 파일은 삭제" is about: the
@@ -1580,7 +1646,9 @@ export class RepoWorkspace {
         .map((line) => line.trim())
         .filter(Boolean),
     );
-    const bornAfter = (await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"]))
+    const bornAfter = (
+      await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"])
+    )
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((path) => path !== "" && !inSnapshot.has(path) && safeRepoPath(path) !== null);
@@ -1599,7 +1667,9 @@ export class RepoWorkspace {
       }
     }
     await this.refreshPendingChanges();
-    return { restored: [...plan.checkout, ...plan.remove, ...bornAfter].sort() };
+    return {
+      restored: [...plan.checkout, ...plan.remove, ...bornAfter].sort(),
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -1754,7 +1824,6 @@ export class RepoWorkspace {
       .filter(Boolean);
   }
 
-
   /**
    * A planner's machine may have no git identity; the commits this tool
    * makes on the planner's behalf (saves, cycle merges, stashes) invent one
@@ -1764,9 +1833,9 @@ export class RepoWorkspace {
     try {
       return (await this.git(["config", "user.email"])).trim()
         ? []
-        : ["-c", "user.name=CDS Design", "-c", "user.email=cds-design@localhost"];
+        : ["-c", "user.name=Colo Design", "-c", "user.email=colo-design@localhost"];
     } catch {
-      return ["-c", "user.name=CDS Design", "-c", "user.email=cds-design@localhost"];
+      return ["-c", "user.name=Colo Design", "-c", "user.email=colo-design@localhost"];
     }
   }
 
@@ -1849,14 +1918,14 @@ export class RepoWorkspace {
   /**
    * Which GitHub repository the handoff opens a pull request against.
    *
-   * Normally the remote url says so. `CDS_DESIGN_GITHUB_SLUG` (`owner/repo`)
+   * Normally the remote url says so. `COLO_DESIGN_GITHUB_SLUG` (`owner/repo`)
    * pins it instead, which is what lets the offline suites drive the real
    * handoff path: their remote is a local bare repository, so nothing in the
    * url could name a GitHub project. Same test-seam rule as
-   * `CDS_DESIGN_REPO_URL` — it exists for tests and is documented as such.
+   * `COLO_DESIGN_REPO_URL` — it exists for tests and is documented as such.
    */
   private repoSlug(): { owner: string; repo: string } | null {
-    const pinned = process.env.CDS_DESIGN_GITHUB_SLUG;
+    const pinned = process.env.COLO_DESIGN_GITHUB_SLUG;
     if (pinned) {
       const [owner, repo] = pinned.split("/");
       if (owner && repo) return { owner, repo };
@@ -1936,9 +2005,9 @@ export class RepoWorkspace {
         await this.refreshFromRemote();
       }
 
-      let config: CdsDesignConfig;
+      let config: ColoDesignConfig;
       try {
-        config = readCdsDesignConfig(this.root);
+        config = readColoDesignConfig(this.root);
       } catch (configError) {
         // D94: 연결 준비가 요청된 레포 — 막지 말고 Claude 가 계약을 쓰게
         // 한다. 검증은 validateBootstrapConfig 가 기계로 하고, 벗어나면
@@ -1946,7 +2015,7 @@ export class RepoWorkspace {
         if (!this.bootstrapRequested || !this.prepareBootstrap) throw configError;
         this.setPhase("preparing", "Claude 가 레포를 살펴보고 연결을 준비하는 중");
         const ok = await this.prepareBootstrap().catch(() => false);
-        config = readCdsDesignConfig(this.root); // 실패면 여기서 다시 던진다
+        config = readColoDesignConfig(this.root); // 실패면 여기서 다시 던진다
         if (!ok) throw new BootstrapPrepareError(BOOTSTRAP_FAILED_DETAIL);
         void configError;
       }
@@ -2011,13 +2080,17 @@ export class RepoWorkspace {
    * broken manifest.
    */
   syncState(): { running: boolean; phase: RepoPhase; detail: string | null } {
-    return { running: this.inFlight !== null, phase: this.phase, detail: this.detail };
+    return {
+      running: this.inFlight !== null,
+      phase: this.phase,
+      detail: this.detail,
+    };
   }
 
-  /** The repo's cds-design.json, when the clone has one (onboarding check). */
-  cdsDesign(): CdsDesignConfig | null {
+  /** The repo's colo-design.json, when the clone has one (onboarding check). */
+  coloDesign(): ColoDesignConfig | null {
     try {
-      return readCdsDesignConfig(this.root);
+      return readColoDesignConfig(this.root);
     } catch {
       return null;
     }
@@ -2025,7 +2098,7 @@ export class RepoWorkspace {
 
   /** True when the declared install already ran for the current lockfiles. */
   installUpToDate(): boolean {
-    const config = this.cdsDesign();
+    const config = this.coloDesign();
     if (!config?.install) return true;
     if (!existsSync(join(this.root, "node_modules"))) return false;
     return !this.dependenciesMoved();
@@ -2040,7 +2113,7 @@ export class RepoWorkspace {
    * The identity is a content hash of the manifest and lockfiles, recorded
    * inside `.git/` so it belongs to this clone alone.
    */
-  private async installIfNeeded(config: CdsDesignConfig): Promise<boolean> {
+  private async installIfNeeded(config: ColoDesignConfig): Promise<boolean> {
     if (!config.install) return false;
     if (!this.dependenciesMoved()) return false;
 
@@ -2050,7 +2123,10 @@ export class RepoWorkspace {
     // committed and pushed, so a clone-level .npmrc would publish the PAT.
     if (config.registry && this.pat) {
       mergeNpmrc(npmrcPath(), [
-        { key: `${scopeOf(config.registry)}:registry`, value: `https://${config.registry.host}/` },
+        {
+          key: `${scopeOf(config.registry)}:registry`,
+          value: `https://${config.registry.host}/`,
+        },
         { key: `//${config.registry.host}/:_authToken`, value: this.pat },
       ]);
     }
@@ -2090,7 +2166,7 @@ export class RepoWorkspace {
     );
   }
 
-  /** A cds-design command may or may not need pnpm; only demand it when it does. */
+  /** A colo-design command may or may not need pnpm; only demand it when it does. */
   private async requirePnpmIfReferenced(command: string): Promise<void> {
     if (!/\bpnpm\b/.test(command)) return;
     if (!(await resolvePnpmExecutable())) throw new Error(PNPM_MISSING_DETAIL);
@@ -2100,7 +2176,7 @@ export class RepoWorkspace {
   // Preview server
   // -------------------------------------------------------------------------
 
-  private async startPreview(config: CdsDesignConfig, force = false): Promise<void> {
+  private async startPreview(config: ColoDesignConfig, force = false): Promise<void> {
     await this.killPreview();
     this.setPhase("starting", null);
     const { command, port } = config.preview;
@@ -2127,7 +2203,7 @@ export class RepoWorkspace {
         throw new Error(
           `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
             `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
-            `그 프로그램을 직접 끄거나 연결 레포의 cds-design.json에서 preview.port를 바꿔 주세요.`,
+            `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
         );
     }
 
@@ -2136,7 +2212,11 @@ export class RepoWorkspace {
     /** Last output line, so an exit can quote what the command actually said. */
     let lastLine: string | null = null;
     const absorb = (chunk: Buffer) => {
-      const line = String(chunk).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
+      const line = String(chunk)
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .pop();
       if (!line) return;
       lastLine = line;
       this.setDetail(line);
@@ -2152,7 +2232,9 @@ export class RepoWorkspace {
         "error",
         // The command's own last line is what says WHY; an exit code alone
         // sends the planner to a terminal they were promised they would not need.
-        lastLine ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}` : `미리보기 서버가 종료되었습니다 (${how})`,
+        lastLine
+          ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}`
+          : `미리보기 서버가 종료되었습니다 (${how})`,
         "preview",
       );
     });
@@ -2164,7 +2246,7 @@ export class RepoWorkspace {
     const windows = currentPlatform() === "win32";
     return {
       cwd: this.root,
-      // cds-design.json commands are strings ("pnpm dev"), so a shell parses
+      // colo-design.json commands are strings ("pnpm dev"), so a shell parses
       // them. `detached` on POSIX puts the tree in one process group we can
       // signal together when the preview must stop.
       shell: true,
@@ -2177,7 +2259,7 @@ export class RepoWorkspace {
         // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
         // in its resources; those binaries win over whatever the planner's
         // machine happens to have — or not have — on PATH.
-        PATH: extraPathPrefix(process.env.CDS_DESIGN_EXTRA_PATH),
+        PATH: extraPathPrefix(process.env.COLO_DESIGN_EXTRA_PATH),
       },
     };
   }
@@ -2232,8 +2314,11 @@ export class RepoWorkspace {
     const windows = currentPlatform() === "win32";
     const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
     const stdout = await new Promise<string>((resolve, reject) =>
-      execFile(windows ? "netstat" : "lsof", args, { timeout: 10_000, shell: windows }, (error, out) =>
-        error ? reject(error) : resolve(String(out)),
+      execFile(
+        windows ? "netstat" : "lsof",
+        args,
+        { timeout: 10_000, shell: windows },
+        (error, out) => (error ? reject(error) : resolve(String(out))),
       ),
     ).catch(() => "");
     const pids = new Set<number>();
@@ -2243,7 +2328,8 @@ export class RepoWorkspace {
         // names the port, the last column owns it.
         const columns = line.trim().split(/\s+/);
         const local = columns[1] ?? "";
-        if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`)) continue;
+        if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`))
+          continue;
         const pid = Number(columns[4] ?? NaN);
         if (Number.isInteger(pid) && pid > 0) pids.add(pid);
       } else {
@@ -2281,15 +2367,24 @@ export class RepoWorkspace {
     // whose PATH stops at /usr/bin, a Homebrew-only git is exactly the one
     // the resolver found and the one the clone below needs.
     const git = (await resolveGitExecutable()) ?? "git";
-    const result = await this.capture(git, {
-      cwd,
-      // `.cmd` shims are not executables on Windows; the resolver returns a
-      // real git.exe, so the shell is only for the unresolved fallback.
-      shell: windows && git === "git",
-      detached: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ANTHROPIC_API_KEY: undefined, ...this.gitAuthEnv(), ...env },
-    }, args);
+    const result = await this.capture(
+      git,
+      {
+        cwd,
+        // `.cmd` shims are not executables on Windows; the resolver returns a
+        // real git.exe, so the shell is only for the unresolved fallback.
+        shell: windows && git === "git",
+        detached: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          ANTHROPIC_API_KEY: undefined,
+          ...this.gitAuthEnv(),
+          ...env,
+        },
+      },
+      args,
+    );
     if (result.code === 0) return result.stdout;
     // PLAN D36: a Korean lead, then git's own words — the throw may reach a
     // notice verbatim, and `exit` was never a word the planner wrote.
@@ -2305,7 +2400,12 @@ export class RepoWorkspace {
     command: string,
     options: SpawnOptions,
     args: string[] = [],
-  ): Promise<{ code: number | null; output: string; stdout: string; lastLine: string }> {
+  ): Promise<{
+    code: number | null;
+    output: string;
+    stdout: string;
+    lastLine: string;
+  }> {
     const { promise, resolve, reject } = Promise.withResolvers<{
       code: number | null;
       output: string;
@@ -2328,7 +2428,11 @@ export class RepoWorkspace {
       // The whole output is kept for the 401 check but only the tail is worth
       // holding: an install can print megabytes.
       output = (output + text).slice(-20_000);
-      const line = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
+      const line = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .pop();
       if (line) {
         lastLine = line;
         this.setDetail(line);
@@ -2431,7 +2535,11 @@ export class RepoWorkspace {
     this.emit();
   }
 
-  private setPhase(phase: RepoPhase, detail: string | null, kind: RepoErrorKind | null = null): void {
+  private setPhase(
+    phase: RepoPhase,
+    detail: string | null,
+    kind: RepoErrorKind | null = null,
+  ): void {
     this.phase = phase;
     this.detail = detail;
     this.errorKind = phase === "error" ? kind : null;
@@ -2451,10 +2559,9 @@ export class RepoWorkspace {
   }
 }
 
-export const GIT_MISSING_DETAIL =
-  "git을 찾을 수 없습니다 — git을 설치한 뒤 다시 시도해 주세요.";
+const GIT_MISSING_DETAIL = "git을 찾을 수 없습니다 — git을 설치한 뒤 다시 시도해 주세요.";
 
-/** PATH with CDS_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
+/** PATH with COLO_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
 export function extraPathPrefix(
   extra: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -2470,7 +2577,7 @@ export function extraPathPrefix(
 }
 
 /** The npm scope form with a leading @, whatever the repo wrote. */
-function scopeOf(registry: CdsDesignRegistry): string {
+function scopeOf(registry: ColoDesignRegistry): string {
   return registry.scope.startsWith("@") ? registry.scope : `@${registry.scope}`;
 }
 
@@ -2515,6 +2622,7 @@ export function specFileName(
 
   const cleaned =
     (dot > 0 ? original.slice(0, dot) : original)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 제어 문자 strip 이 목적이다.
       .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, "")
       .replace(/^\.+/, "")
       .trim() || "spec";
@@ -2522,7 +2630,8 @@ export function specFileName(
   // Planners date their filenames too, and `2026-09-08-2026-09-08-…` reads as
   // a bug to the person who attached it.
   const prefix = /^\d{4}-\d{2}-\d{2}-/.test(cleaned) ? "" : `${date}-`;
-  const base = prefix + cleaned.slice(0, Math.max(1, MAX_SPEC_NAME - prefix.length - extension.length));
+  const base =
+    prefix + cleaned.slice(0, Math.max(1, MAX_SPEC_NAME - prefix.length - extension.length));
 
   let candidate = base + extension;
   for (let n = 2; taken(candidate); n += 1) candidate = `${base}-${n}${extension}`;
@@ -2589,9 +2698,11 @@ export function trustWorkspace(root: string, home = homedir()): void {
     // Not created yet; the literal path is the best we can do.
   }
 
+  // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
   const projects = (config.projects ??= {});
   let changed = false;
   for (const key of keys) {
+    // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
     const project = (projects[key] ??= {});
     if (project.hasTrustDialogAccepted !== true) {
       project.hasTrustDialogAccepted = true;
@@ -2602,8 +2713,10 @@ export function trustWorkspace(root: string, home = homedir()): void {
 
   // The CLI rewrites this file whenever a session ends, so replace it in one
   // step rather than leaving a window where it is half written.
-  const temporary = `${configFile}.cds-design-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${configFile}.colo-design-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
+    mode: 0o600,
+  });
   renameSync(temporary, configFile);
 }
 
@@ -2681,7 +2794,13 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
  * 확인한 것 — 절 머리에 그 문장이 선다.
  */
 export function buildCommentsSection(
-  rows: Array<{ screen: string; state: string; text: string; at: string; resolved: boolean }>,
+  rows: Array<{
+    screen: string;
+    state: string;
+    text: string;
+    at: string;
+    resolved: boolean;
+  }>,
   screenTitle: (screenId: string) => string | null,
   sinceIso: string,
   max = 20,
@@ -2787,4 +2906,4 @@ export function validateBootstrapConfig(input: BootstrapValidationInput): string
 }
 
 /** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */
-export class BootstrapPrepareError extends Error {}
+class BootstrapPrepareError extends Error {}

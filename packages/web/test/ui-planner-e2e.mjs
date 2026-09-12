@@ -14,8 +14,16 @@
  * Prerequisites: `pnpm build`
  */
 import { spawn } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,7 +34,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
-const DIR = join(tmpdir(), "cds-design-planner-e2e");
+const DIR = join(tmpdir(), "colo-design-planner-e2e");
 const WORK_ROOT = join(DIR, "work");
 const SPEC = join(DIR, "2026-09-08-회원관리.md");
 const PORT = 5396;
@@ -53,14 +61,20 @@ function check(name, passed, detail = "") {
   console.log(`${passed ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+const MIME = {
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".css": "text/css",
+};
 
 function serveDist() {
   const server = createServer((req, res) => {
     const requested = (req.url ?? "/").split("?")[0];
     let file = join(webDist, requested === "/" ? "index.html" : requested);
     if (!existsSync(file) || statSync(file).isDirectory()) file = join(webDist, "index.html");
-    res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": MIME[extname(file)] ?? "application/octet-stream",
+    });
     res.end(readFileSync(file));
   });
   return new Promise((ok) => server.listen(PORT, "127.0.0.1", () => ok(server)));
@@ -76,28 +90,36 @@ function generatedScreens(root) {
 }
 
 async function main() {
-  if (!existsSync(webDist)) throw new Error("web dist missing. Run: pnpm --filter @cds-design/web build");
-  if (!existsSync(daemonEntry)) throw new Error("daemon dist missing. Run: pnpm --filter @cds-design/daemon build");
+  if (!existsSync(webDist))
+    throw new Error("web dist missing. Run: pnpm --filter @colo-design/web build");
+  if (!existsSync(daemonEntry))
+    throw new Error("daemon dist missing. Run: pnpm --filter @colo-design/daemon build");
 
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
   writeFileSync(SPEC, SPEC_MARKDOWN);
   const previewPort = await freePort();
-  const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: previewPort });
+  const fixture = await createFixtureRepo({
+    dir: join(DIR, "fixture"),
+    port: previewPort,
+  });
 
   const env = {
     ...process.env,
-    CDS_DESIGN_PORT: String(DAEMON_PORT),
-    CDS_DESIGN_REPO_DIR: WORK_ROOT,
-    CDS_DESIGN_REPO_URL: fixture.remote,
-    CDS_DESIGN_REPO_SETTINGS: join(DIR, "settings.json"),
+    COLO_DESIGN_PORT: String(DAEMON_PORT),
+    COLO_DESIGN_REPO_DIR: WORK_ROOT,
+    COLO_DESIGN_REPO_URL: fixture.remote,
+    COLO_DESIGN_REPO_SETTINGS: join(DIR, "settings.json"),
     // Same isolation as every other suite: the registry belongs to this run.
-    CDS_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
-    CDS_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
-    CDS_DESIGN_CREDENTIAL_STORE: "memory",
+    COLO_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
+    COLO_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
+    COLO_DESIGN_CREDENTIAL_STORE: "memory",
   };
   delete env.ANTHROPIC_API_KEY;
-  const daemon = spawn(process.execPath, [daemonEntry], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const daemon = spawn(process.execPath, [daemonEntry], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   daemon.stderr.on("data", (d) => process.stderr.write(`[daemon] ${d}`));
   process.on("exit", () => daemon.kill("SIGKILL"));
   const daemonUrl = await new Promise((ok, fail) => {
@@ -115,7 +137,9 @@ async function main() {
 
   const server = await serveDist();
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1680, height: 1000 } });
+  const page = await browser.newPage({
+    viewport: { width: 1680, height: 1000 },
+  });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
@@ -151,7 +175,11 @@ async function main() {
   const VISIBLE = ".planner__body:not([hidden]) ";
   await page.setInputFiles(`${VISIBLE}.composer input[type=file]`, SPEC);
   await page.waitForSelector(`${VISIBLE}.chip`, { timeout: 5000 });
-  check("a markdown document attaches as a document chip", true, await page.locator(`${VISIBLE}.chip`).innerText());
+  check(
+    "a markdown document attaches as a document chip",
+    true,
+    await page.locator(`${VISIBLE}.chip`).innerText(),
+  );
 
   const area = page.locator(`${VISIBLE}.composer textarea`);
   await area.pressSequentially(
@@ -160,11 +188,9 @@ async function main() {
   await page.getByRole("button", { name: "보내기" }).click();
 
   // --- 4. the document lands in the clone, not in the prompt -------------
-  await page.waitForFunction(
-    () => document.querySelector(".bubble__file") !== null,
-    undefined,
-    { timeout: 30000 },
-  );
+  await page.waitForFunction(() => document.querySelector(".bubble__file") !== null, undefined, {
+    timeout: 30000,
+  });
   const specs = existsSync(join(WORK_ROOT, "specs")) ? readdirSync(join(WORK_ROOT, "specs")) : [];
   check(
     "the attached document is saved under the repo's specs/",
@@ -177,7 +203,11 @@ async function main() {
   const activity = await page.locator(".activity__text").first().innerText();
   // The first snapshot can be command-only ("검사 1회 실행") before file work
   // lands in the fold, so any folded Korean counter counts — not just 개.
-  check("tool work folds into one Korean activity line", /(개|회 실행|곳 확인|가지)/.test(activity), activity);
+  check(
+    "tool work folds into one Korean activity line",
+    /(개|회 실행|곳 확인|가지)/.test(activity),
+    activity,
+  );
 
   // --- 6. answering questions, then screens on disk ----------------------
   // Claude asks about what the document leaves open and then waits — nothing
@@ -195,25 +225,42 @@ async function main() {
       }
       await page.getByRole("button", { name: "답변 보내기" }).click();
       answered += 1;
-      await page.waitForSelector(".card--question", { state: "detached", timeout: 30000 });
+      await page.waitForSelector(".card--question", {
+        state: "detached",
+        timeout: 30000,
+      });
     } else if (await page.locator(".card--permission").count()) {
       await page.getByRole("button", { name: "이번만 허용" }).click();
       approved += 1;
     }
     await page.waitForTimeout(5000);
   }
-  if (answered > 0) check("clarifying questions can be answered from the card", true, `${answered} card(s)`);
-  if (approved > 0) check("permission cards can be approved from the card", true, `${approved} card(s)`);
+  if (answered > 0)
+    check("clarifying questions can be answered from the card", true, `${answered} card(s)`);
+  if (approved > 0)
+    check("permission cards can be approved from the card", true, `${approved} card(s)`);
   const written = generatedScreens(WORK_ROOT);
-  check("Claude wrote screen files inside the connected repo", written.length >= 1, written.join(", "));
+  check(
+    "Claude wrote screen files inside the connected repo",
+    written.length >= 1,
+    written.join(", "),
+  );
 
   // --- 7. the turn settles, and the preview is still the repo's ----------
-  await page.waitForSelector(".toolbar__stop", { state: "detached", timeout: 900000 });
+  await page.waitForSelector(".toolbar__stop", {
+    state: "detached",
+    timeout: 900000,
+  });
   const settled = generatedScreens(WORK_ROOT);
-  check("the turn ends with every planned screen written", settled.length >= written.length, settled.join(", "));
+  check(
+    "the turn ends with every planned screen written",
+    settled.length >= written.length,
+    settled.join(", "),
+  );
   check(
     "the repo's preview still serves after the turn",
-    (await page.locator(".preview__frame").getAttribute("src")) === `http://127.0.0.1:${previewPort}`,
+    (await page.locator(".preview__frame").getAttribute("src")) ===
+      `http://127.0.0.1:${previewPort}`,
   );
 
   // --- 8. the developer surface is gone, and what it lent us is here -----
@@ -237,19 +284,41 @@ async function main() {
   // The menu covers the row with its own backdrop — closing is the
   // backdrop's one job (the toggle sits underneath it).
   await leafRow.locator('button[aria-label="메뉴 닫기"]').click();
+  // The head's title is the one rename affordance a click reaches (the ···
+  // menu and F2 open the same input); the words come back in the field.
+  await page.locator(".thread__title").click();
+  await page.getByLabel("대화 이름").fill("회원 관리 화면");
+  await page.keyboard.press("Enter");
+  check(
+    "clicking the thread title renames it in place",
+    (await page.locator(".thread__title").innerText()).includes("회원 관리 화면"),
+  );
+
   // The ring only appears once a settled turn has reported usage, which is
   // exactly where step 7 left the session.
-  check("the composer shows how long the conversation has grown", await page.locator(`${VISIBLE}.ring`).isVisible());
+  check(
+    "the composer shows how long the conversation has grown",
+    await page.locator(`${VISIBLE}.ring`).isVisible(),
+  );
 
   // Duplicate assistant text was a real regression: the streamed deltas and
   // the aggregated message have to describe the same block.
   const paragraphs = await page.locator(".planner__chat .md p").allInnerTexts();
-  const repeated = paragraphs.filter((text, index) => text.trim() && paragraphs[index + 1]?.trim() === text.trim());
-  check("assistant text is not rendered twice", repeated.length === 0, repeated[0]?.slice(0, 50) ?? "");
+  const repeated = paragraphs.filter(
+    (text, index) => text.trim() && paragraphs[index + 1]?.trim() === text.trim(),
+  );
+  check(
+    "assistant text is not rendered twice",
+    repeated.length === 0,
+    repeated[0]?.slice(0, 50) ?? "",
+  );
 
   check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
 
-  await page.screenshot({ path: join(here, "ui-planner-e2e.png"), fullPage: true });
+  await page.screenshot({
+    path: join(here, "ui-planner-e2e.png"),
+    fullPage: true,
+  });
   console.log(`\nscreenshot: ${join(here, "ui-planner-e2e.png")}`);
   console.log(`fixture workspace kept at: ${WORK_ROOT}`);
 

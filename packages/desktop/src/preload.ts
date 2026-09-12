@@ -19,7 +19,7 @@ function subscribe<T>(channel: string): (callback: (payload: T) => void) => Unsu
   };
 }
 
-contextBridge.exposeInMainWorld("cdsDesignDesktop", {
+contextBridge.exposeInMainWorld("coloDesignDesktop", {
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
   macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
   openHome: () => ipcRenderer.invoke("desktop:open-home"),
@@ -37,10 +37,11 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
     reload: () => ipcRenderer.invoke("preview:reload"),
     /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
     stop: () => ipcRenderer.invoke("preview:stop"),
-    /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 cds-preview:zoom 으로 되알린다. */
+    /** 배율 (PLAN D85 ⓔ) — in/out/reset; 뷰가 colo-preview:zoom 으로 되알린다. */
     zoom: (kind: "in" | "out" | "reset") => ipcRenderer.invoke("preview:zoom", { kind }),
     commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
-    emulate: (width: "mobile" | "tablet" | null) => ipcRenderer.invoke("preview:emulate", { width }),
+    emulate: (width: "mobile" | "tablet" | null) =>
+      ipcRenderer.invoke("preview:emulate", { width }),
     /**
      * 기록된 핀 (PLAN D78): the web pushes the project's whole comment list
      * down into the view; the view re-tells it on every load.
@@ -56,19 +57,27 @@ contextBridge.exposeInMainWorld("cdsDesignDesktop", {
      * 세션이 살아 있는 동안만 흐른다. 렌더러→메인은 따로 없다.
      */
     onFrame: (callback: (frame: string) => void) => {
-      ipcRenderer.on("cds-preview:frame", (_event, frame: string) => callback(frame));
+      ipcRenderer.on("colo-preview:frame", (_event, frame: string) => callback(frame));
     },
-    onLocation: subscribe<{ path: string; canGoBack: boolean; canGoForward: boolean }>("cds-preview:location"),
-    onBridge: subscribe<{ state: "unknown" | "present" | "stale" }>("cds-preview:bridge"),
-    onScreens: subscribe<{ screens: unknown[] }>("cds-preview:screens"),
-    onComments: subscribe<unknown>("cds-preview:comments"),
-    onError: subscribe<{ kind: string; message: string; route: string; state: string }>("cds-preview:error"),
-    onFreeze: subscribe<string>("cds-preview:freeze"),
-    onKey: subscribe<{ key: string; meta: boolean }>("cds-preview:key"),
-    onLoading: subscribe<{ on: boolean }>("cds-preview:loading"),
+    onLocation: subscribe<{
+      path: string;
+      canGoBack: boolean;
+      canGoForward: boolean;
+    }>("colo-preview:location"),
+    onScreens: subscribe<{ screens: unknown[] }>("colo-preview:screens"),
+    onComments: subscribe<unknown>("colo-preview:comments"),
+    onError: subscribe<{
+      kind: string;
+      message: string;
+      route: string;
+      state: string;
+    }>("colo-preview:error"),
+    onFreeze: subscribe<string>("colo-preview:freeze"),
+    onKey: subscribe<{ key: string; meta: boolean }>("colo-preview:key"),
+    onLoading: subscribe<{ on: boolean }>("colo-preview:loading"),
     /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
-    onZoom: subscribe<{ factor: number }>("cds-preview:zoom"),
-    onCommentResolve: subscribe<{ id: string; resolved: boolean }>("cds-preview:comment-resolve"),
-    onCommentResend: subscribe<{ id: string }>("cds-preview:comment-resend"),
+    onZoom: subscribe<{ factor: number }>("colo-preview:zoom"),
+    onCommentResolve: subscribe<{ id: string; resolved: boolean }>("colo-preview:comment-resolve"),
+    onCommentResend: subscribe<{ id: string }>("colo-preview:comment-resend"),
   },
 });
