@@ -47,6 +47,20 @@ export function ChatColumn({
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
+  /**
+   * 실사 결함: 중지를 눌러도 응답이 돌아올 때까지 아무 일도 일어나지 않는 것처럼
+   * 보였다. 클릭은 즉시 "정리 중…" 이 되고, 턴이 멈추면(데몬의 이행 보장이
+   * 유예 안에 끊는다) 제자리로 돌아온다.
+   */
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => {
+    if (!sessions.running) setStopping(false);
+  }, [sessions.running]);
+  const stop = () => {
+    if (!activeId) return;
+    setStopping(true);
+    void api.interrupt(activeId).catch(() => undefined);
+  };
   const visiblePending = pending.filter((request) => request.sessionId === activeId);
   /** Whether the newest message is what the planner is looking at. */
   const pinned = useRef(true);
@@ -250,6 +264,19 @@ export function ChatColumn({
               </button>
             </div>
           )}
+          {/* 실사 결함: 기록 있는 대화가 조용히 빈 대화로 열렸다 — 실패가
+              실패로 보이지 않았다. 카드가 그 사실을 말하고 다시 시도는 같은
+              열기를 다시 묻는다. */}
+          {sessions.historyFailed && !error && (
+            <div className="notice notice--error" role="alert">
+              <span className="notice__text">
+                대화 기록을 읽지 못했습니다 — 다시 시도로 다시 열어 주세요.
+              </span>
+              <button type="button" className="ghost" onClick={sessions.reopen}>
+                다시 시도
+              </button>
+            </div>
+          )}
           <Transcript
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
@@ -264,7 +291,7 @@ export function ChatColumn({
             so the start says itself — spinner + shimmer until blocks land.
             The tape speaks for itself the moment any Claude block exists. */}
           {sessions.running && !(active?.blocks ?? []).some((block) => block.type !== "user") && (
-            <div className="turnlive">
+            <div className="turnlive" role="status">
               <span className="spinner" />
               작업 중…
             </div>
@@ -323,11 +350,12 @@ export function ChatColumn({
         onSetEffort={(effort) => void sessions.setEffort(effort)}
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
+        stopping={stopping}
         queued={sessions.queued}
         seed={seed}
         sendKey={sendKey}
         onSend={(text, attachments) => sessions.submit(text, attachments)}
-        onInterrupt={() => activeId && void api.interrupt(activeId)}
+        onInterrupt={stop}
         onFindFiles={(query) => api.findFiles(query)}
       />
     </main>

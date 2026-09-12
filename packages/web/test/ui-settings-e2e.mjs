@@ -119,6 +119,12 @@ async function main() {
       (await page.getByLabel("GitHub 개인 액세스 토큰").isDisabled()) === true &&
         (await page.getByLabel("연결 레포 주소").isDisabled()) === true,
     );
+    // A fresh profile starts on 전부 맡기기 (--dangerously-skip-permissions):
+    // the first turn must not stall on a 확인 카드 nobody chose.
+    check(
+      "확인 방식 starts on 전부 맡기기",
+      (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
+    );
 
     // 3. theme applies live and persists. The picker is a gallery of live
     //    palette tiles now, not a select — a palette is chosen by its colour.
@@ -265,9 +271,8 @@ async function main() {
         (await page.getByLabel("확인 방식").inputValue()) === "acceptEdits",
     );
 
-    // 전부 맡기기 is the one choice that is deliberately not restored: it lets
-    // Claude act without asking, and a stored blob is not a decision anybody
-    // made this morning.
+    // 전부 맡기기 is the starting default now, so it restores like any other
+    // choice — the stored value is the planner's own decision either way.
     await page.getByLabel("확인 방식").selectOption("bypassPermissions");
     check(
       "전부 맡기기 says what it costs, right where it is chosen",
@@ -284,8 +289,8 @@ async function main() {
       timeout: 5000,
     });
     check(
-      "but a reload lands back on 물어보고 진행",
-      (await page.getByLabel("확인 방식").inputValue()) === "default",
+      "and a reload keeps it, like every other choice",
+      (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
 
     // 7. the diagnostics are reachable and no longer the first thing in view.

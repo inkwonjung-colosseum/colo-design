@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -24,7 +24,13 @@ import {
   screen,
   shell,
 } from "electron";
-import { buildSwapScript, planSelfUpdate, verifyDownload } from "./mac-self-update.js";
+import {
+  buildSwapScript,
+  parseSwapResult,
+  planSelfUpdate,
+  requireDiskSpace,
+  verifyDownload,
+} from "./mac-self-update.js";
 import { buildMenuTemplate } from "./menu.js";
 import { noticeCopy } from "./notices.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
@@ -52,6 +58,24 @@ let appUrl: string | null = null;
  * 개념이므로 다른 플랫폼은 paint 가 조용히 건너뛴다.
  */
 let unreadNotices = 0;
+
+// ---------------------------------------------------------------------------
+// 업데이트 (DESIGN §7) — 자동 확인 · 자가 교체 결과 보고
+// ---------------------------------------------------------------------------
+
+/** 자가 교체에 필요한 최소 여유 — zip + 풀린 번들 + 백업 사본의 상한. */
+const UPDATE_MIN_FREE_BYTES = 1024 ** 3;
+/** 자동 확인의 첫 시점 — 시작 작업(데몬·창)과 경합하지 않는다. */
+const UPDATE_FIRST_CHECK_DELAY_MS = 15_000;
+/** 자동 확인의 주기 — 하루 한 번. */
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** 이미 알림을 띄운 버전 — 같은 버전으로 하루마다 다시 띄우지 않는다. */
+let notifiedUpdateVersion: string | null = null;
+
+/** 교체 스크립트가 결과를 남기는 파일 — 다음 실행이 읽고 지운다. */
+function updateResultPath(): string {
+  return join(app.getPath("userData"), "update-result.json");
+}
 
 // ---------------------------------------------------------------------------
 // Claude 의 미리보기 드라이버 (PLAN D61 · D63)
@@ -345,6 +369,8 @@ async function bootApp(): Promise<void> {
   });
 
   registerDesktopBridge();
+  void reportSwapResult();
+  scheduleUpdateChecks();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void reopen(url);
   });
@@ -425,17 +451,86 @@ function notifyPlanner(notice: DaemonNotice): void {
   unreadNotices += 1;
   paintBadge();
   const { title, body } = noticeCopy(notice);
+  showAppNotification(title, body, focusMainWindow);
+}
+
+/** 알림 클릭의 공통 행동 — 창을 앞으로, 창이 없으면 다시 연다. */
+function focusMainWindow(): void {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else if (appUrl) {
+    void reopen(appUrl);
+  }
+}
+
+/** OS 알림 — 클릭 행동을 골라 단다(기획자 순간과 업데이트 알림이 함께 쓴다). */
+function showAppNotification(title: string, body: string, onClick: () => void): void {
   const notification = new Notification({ title, body });
-  notification.on("click", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
-    } else if (appUrl) {
-      void reopen(appUrl);
-    }
-  });
+  notification.on("click", onClick);
   notification.show();
+}
+
+/**
+ * 자동 업데이트 확인(DESIGN §7): 앱이 살아 있는 동안 하루 한 번 조용히 피드를
+ * 묻는다. 새 버전이 있으면 알림을 띄워 설정까지 찾아가게 하지 않는다 — 버전마다
+ * 한 번만. 실패는 언제나 조용히: 자동으로 떠드는 오류는 없고 다음 확인이 다시
+ * 온다. 개발 실행은 피드를 묻지 않는다.
+ */
+function scheduleUpdateChecks(): void {
+  if (!app.isPackaged) return;
+  const check = async () => {
+    try {
+      const feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
+      if (!feed.updateAvailable || feed.version === notifiedUpdateVersion) return;
+      notifiedUpdateVersion = feed.version;
+      showAppNotification(
+        "새 버전이 있습니다",
+        `Colo Design ${feed.version} — 설정 → 문제 해결의 업데이트 확인에서 설치할 수 있습니다.`,
+        focusMainWindow,
+      );
+    } catch {
+      // 자동 확인의 실패는 조용히 넘어간다 — 수동 확인 버튼이 오류를 보여준다.
+    }
+  };
+  setTimeout(() => void check(), UPDATE_FIRST_CHECK_DELAY_MS);
+  setInterval(() => void check(), UPDATE_CHECK_INTERVAL_MS);
+}
+
+/**
+ * 지난 번 자가 교체의 결과를 보고한다: 교체 스크립트는 앱이 죽은 뒤에 돌기
+ * 때문에 성공·실패를 말할 창이 없다. 다음 실행(=지금)이 결과 파일을 읽어
+ * 알림으로 대신 말하고 지운다. 성공은 현재 버전과 일치할 때만 — 어긋나면 오래
+ * 된 흔적이니 조용히 지운다. 실패의 클릭은 로그 파일을 연다.
+ */
+async function reportSwapResult(): Promise<void> {
+  const path = updateResultPath();
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return; // 결과 파일이 없으면 보고할 교체가 없었다
+  }
+  await rm(path, { force: true });
+  const result = parseSwapResult(raw);
+  if (!result) return;
+  if (result.outcome === "done") {
+    if (result.version !== app.getVersion()) return;
+    showAppNotification(
+      "업데이트 완료",
+      `Colo Design ${result.version}으로 갈아입었습니다.`,
+      focusMainWindow,
+    );
+    return;
+  }
+  showAppNotification(
+    "업데이트하지 못했습니다",
+    `${result.reason ?? "알 수 없는 실패"} — 클릭하면 기록을 보여줍니다.`,
+    () => {
+      void shell.openPath(result.logPath);
+    },
+  );
 }
 
 /** 배지는 읽지 않은 순간의 수. 알림 클릭이 창을 앞으로 하면 focus 이벤트가 지운다. */
@@ -498,6 +593,14 @@ function registerDesktopBridge(): void {
           "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
       };
     }
+    // DMG 안에서 실행 중이면 교체 대상이 읽기 전용 볼륨이다 — 헛돌고 롤백으로
+    // 끝나기 전에 막고 옮기라고 먼저 말한다.
+    if (process.execPath.startsWith("/Volumes/")) {
+      return {
+        error:
+          "앱이 디스크 이미지(DMG)에서 실행 중입니다 — 응용 프로그램 폴더로 옮긴 뒤 다시 시도해 주세요.",
+      };
+    }
     // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
     // 어디에서 실행했든 그 자리를 바꾼다.
     const bundle = dirname(dirname(dirname(process.execPath)));
@@ -509,13 +612,35 @@ function registerDesktopBridge(): void {
       targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
     });
     try {
+      // 만석은 sha256 이 잡지 못한다 — 내려받기 전에 두 볼륨(내려받기·교체
+      // 대상)의 여유를 먼저 본다.
+      await requireDiskSpace({
+        path: app.getPath("downloads"),
+        minBytes: UPDATE_MIN_FREE_BYTES,
+        statfs: (target) => statfs(target),
+      });
+      await requireDiskSpace({
+        path: dirname(plan.targetApp),
+        minBytes: UPDATE_MIN_FREE_BYTES,
+        statfs: (target) => statfs(target),
+      });
       await downloadFile(feed.url, plan.downloadPath);
       await verifyDownload(plan.downloadPath, plan.expectedSha256);
       const logPath = join(app.getPath("temp"), "colo-design-update.log");
       const scriptPath = join(app.getPath("temp"), `colo-design-update-${app.getVersion()}.sh`);
-      await writeFile(scriptPath, buildSwapScript({ plan, pid: process.pid, logPath }), {
-        mode: 0o755,
-      });
+      await writeFile(
+        scriptPath,
+        buildSwapScript({
+          plan,
+          pid: process.pid,
+          logPath,
+          resultPath: updateResultPath(),
+          version: app.getVersion(),
+        }),
+        {
+          mode: 0o755,
+        },
+      );
       // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
       spawn("/bin/bash", [scriptPath], {
         detached: true,

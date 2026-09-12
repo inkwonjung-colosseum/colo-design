@@ -55,14 +55,14 @@ test("unsaved + running: 저장이 잠기고 칩은 고치는 중으로 말한�
   const d = at({ pendingChanges: 3, running: true });
   assert.equal(d?.chip.label, "고치는 중 · 3건");
   assert.equal(d?.actions.save.enabled, false);
-  assert.equal(d?.actions.save.reason, "Claude 가 고치는 중 — 끝나면 저장할 수 있습니다");
+  assert.equal(d?.actions.save.reason, "Claude가 고치는 중 — 끝나면 저장할 수 있습니다");
 });
 
-test("unsaved 가 PR 상태보다 앞선다 — PR 은 칩 title 과 상태 확인으로 남는다", () => {
+test("unsaved 가 넘긴 요청보다 앞선다 — 요청은 칩 title 과 상태 확인으로 남는다", () => {
   const d = at({ pendingChanges: 2, handoff: pr("open") });
   assert.equal(d?.state, "unsaved", "칩은 하나고 지금 눌러야 할 것은 저장이다");
-  assert.equal(d?.chip.title, "저장하면 PR #12 에 쌓입니다");
-  assert.ok(d?.actions.check, "PR 이 있으니 상태 확인이 그려진다");
+  assert.equal(d?.chip.title, "저장하면 넘긴 요청에 함께 담깁니다");
+  assert.ok(d?.actions.check, "넘긴 요청이 있으니 상태 확인이 그려진다");
   assert.equal(d?.actions.handoff.enabled, false);
 });
 
@@ -70,7 +70,7 @@ test("saved: 넘기기가 열린다 — 이 표의 유일한 열린 넘기기 �
   const d = at({ branch: "colo-design/20260911-1" });
   assert.equal(d?.state, "saved");
   assert.equal(d?.chip.label, "저장됨");
-  assert.equal(d?.chip.title, "colo-design/20260911-1", "칩의 title 은 브랜치 이름");
+  assert.equal(d?.chip.title, "이번 저장은 아직 개발자에게 전달되지 않았습니다");
   assert.equal(d?.actions.handoff.enabled, true);
   assert.equal(d?.actions.save.enabled, false);
   assert.equal(d?.actions.check, null);
@@ -79,17 +79,21 @@ test("saved: 넘기기가 열린다 — 이 표의 유일한 열린 넘기기 �
 test("handed: 상태 확인이 열리고 넘기기는 잠긴다", () => {
   const d = at({ handoff: pr("open") });
   assert.equal(d?.state, "handed");
-  assert.equal(d?.chip.label, "개발자 검토 중 · #12");
+  assert.equal(d?.chip.label, "개발자 검토 중");
+  assert.equal(d?.chip.title, "넘긴 요청 12번을 개발자가 검토하는 중입니다");
   assert.ok(d?.actions.check?.enabled);
-  assert.equal(d?.actions.handoff.reason, "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다");
+  assert.equal(d?.actions.handoff.reason, "이미 넘겼습니다 — 새로 저장하면 같은 요청에 합쳐집니다");
   assert.equal(d?.actions.save.enabled, false);
 });
 
 test("changes_requested: 칩의 title 이 개발자 코멘트로 이어 준다", () => {
   const d = at({ handoff: pr("changes_requested") });
   assert.equal(d?.state, "changes_requested");
-  assert.equal(d?.chip.label, "변경 요청 · #12");
-  assert.equal(d?.chip.title, "개발자 코멘트가 왔습니다 — 상태 확인에서 이어 가세요");
+  assert.equal(d?.chip.label, "변경 요청");
+  assert.equal(
+    d?.chip.title,
+    "개발자가 넘긴 요청 12번에 코멘트를 남겼습니다 — 상태 확인에서 이어 가세요",
+  );
   assert.ok(d?.actions.check?.enabled);
 });
 

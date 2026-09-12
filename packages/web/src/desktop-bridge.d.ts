@@ -21,6 +21,9 @@ type Unsubscribe = () => void;
 declare global {
   interface Window {
     coloDesignDesktop?: {
+      /** The OS the app runs on — the install button is mac-only; win goes
+       * to the releases page. */
+      platform: string;
       updateCheck: () => Promise<UpdateCheckResult>;
       /** The feed — not the renderer — decides what gets downloaded; the
        * request takes no arguments by design (a compromised renderer must not

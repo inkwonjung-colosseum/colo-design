@@ -1,19 +1,18 @@
 /**
  * The repo bring-up column's failure and wait UI (ex `ScreenPanel` head).
  *
- * The daemon NAMES a failure at the throw site (`RepoStatus.errorKind`,
- * PLAN D41); this module maps that name to the words and actions a planner
- * reads — text sniffing the old UI did broke silently whenever a daemon
- * message was reworded, so the kind is the only thing consulted.
+ * Which failure this is and what it says live in `repo-guidance` (pure, unit
+ * tested); this module is the card that renders them.
  */
 
-import type { RepoPhase, RepoStatus } from "@colo-design/protocol";
+import type { RepoPhase } from "@colo-design/protocol";
 import { useState } from "react";
 import { daemonLine } from "./format";
 import { CheckIcon, CopyIcon, RestartIcon, SparkIcon } from "./icons";
+import { type ErrorKind, errorKindOf, guidanceFor } from "./repo-guidance";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
-  preparing: "Claude 가 레포를 살펴보고 연결을 준비하는 중",
+  preparing: "Claude가 레포를 살펴보고 연결을 준비하는 중",
   missing: "연결 레포를 연결해 주세요",
   cloning: "연결 레포를 내려받는 중",
   pulling: "최신 변경을 받아오는 중",
@@ -29,84 +28,13 @@ const PROGRESS_RAIL: Array<{ id: string; label: string; phases: RepoPhase[] }> =
   { id: "preview", label: "미리보기", phases: ["starting"] },
 ];
 
-interface Guidance {
-  title: string;
-  body: string;
-  /** A command the planner can paste into a terminal, if one would fix this. */
-  command?: string;
-}
-
-/**
- * Which failure this is. A dead preview server still leaves the screen worth
- * looking at, so it is answered inside the preview itself; everything else
- * takes over the 화면 column.
- */
-export type ErrorKind = "auth" | "pnpm" | "preview" | "conflict" | "commands" | "unknown";
-
-export function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
-  const kind = repo?.errorKind;
-  if (kind === "registry-auth") return "auth";
-  if (kind === "pnpm-missing") return "pnpm";
-  if (kind === "conflict") return "conflict";
-  if (kind === "commands") return "commands";
-  if (kind === "preview") return "preview";
-  if (!kind) {
-    const detail = repo?.detail ?? null;
-    if (detail?.includes("GitHub 패키지 인증")) return "auth";
-    if (detail?.includes("pnpm이 없습니다")) return "pnpm";
-    if (detail?.includes("미리보기")) return "preview";
-    // A daemon older than the conflict kind still names the conflict in the
-    // detail (D96); the diverged refusal says 갈라진 and must not match.
-    if (detail?.includes("충돌이 남았습니다")) return "conflict";
-  }
-  return "unknown";
-}
-
-function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
-  if (kind === "auth") {
-    return {
-      title: "GitHub 패키지 인증이 필요합니다",
-      body: "연결 레포의 의존성을 사내 GitHub 패키지에서 받아옵니다. 설정의 개인 액세스 토큰(read:packages 권한)을 확인한 뒤 다시 시도해 주세요.",
-      command: "pnpm config set //npm.pkg.github.com/:_authToken <PAT>",
-    };
-  }
-  if (kind === "pnpm") {
-    return {
-      title: "pnpm이 설치되어 있지 않습니다",
-      body: "연결 레포의 설치·미리보기에 pnpm이 필요합니다. 터미널에 아래 명령을 실행한 뒤 다시 시도해 주세요.",
-      command: "corepack enable",
-    };
-  }
-  if (kind === "conflict") {
-    // D96: 다시 시도로는 같은 충돌을 도는 것이므로, 카드의 첫 동작은
-    // Claude 요청이다. 본문은 데몬이 던진 그 상태의 말을 그대로 읽는다.
-    return {
-      title: "최신 변경과 충돌이 남았습니다",
-      body:
-        detail ??
-        "저장하지 않은 변경과 개발자의 최신 변경이 겹쳤습니다. Claude에게 정리를 요청하면 대화에서 충돌을 정리합니다.",
-    };
-  }
-  if (kind === "commands") {
-    // The repo's own install · preview commands wait on one explicit yes —
-    // the button below is the yes; the body is the daemon's own words.
-    return {
-      title: "명령 실행 승인이 필요합니다",
-      body: detail ?? "이 레포가 정의한 설치 · 미리보기 명령의 실행을 허용하면 준비를 계속합니다.",
-    };
-  }
-  return {
-    title: "준비하지 못했습니다",
-    body: detail ?? "원인을 알 수 없습니다. 다시 시도해 주세요.",
-  };
-}
-
 export function ProgressPanel({
   phase,
   detail,
   errorKind,
   note,
   onRetry,
+  onForceRestart,
   onAskClaude,
   onApproveCommands,
   onOpenSettings,
@@ -117,6 +45,12 @@ export function ProgressPanel({
   /** 진행 표식 한 줄 — Claude 요청 뒤의 기다림을 읽는다(D96). */
   note?: string | null;
   onRetry: () => void;
+  /**
+   * 포트 정리 실패 카드의 동작: 다시 시도는 정리를 한 번 더 시도한다 — 평범한
+   * 충돌은 활성 프로젝트가 이겨 자동 정리되므로(사용자 결정), 이 카드는 그
+   * 자동 정리가 실패한 경우만 만난다. 성공 경로는 사람 손이 필요 없다.
+   */
+  onForceRestart?: () => void;
   /** 충돌 오류의 첫 동작(D96): 정리를 Claude의 대화로 넘긴다. */
   onAskClaude?: () => void;
   /** 승인 오류의 첫 동작: 이 레포의 install · preview 명령 실행을 허용한다. */
@@ -130,6 +64,10 @@ export function ProgressPanel({
   const needsSetup = phase === "missing";
   /** Where the wait sits on the rail; -1 for the setup and failure states. */
   const railIndex = PROGRESS_RAIL.findIndex((entry) => entry.phases.includes(phase));
+  const primaryTaken =
+    (errorKind === "conflict" && onAskClaude) ||
+    (errorKind === "commands" && onApproveCommands) ||
+    (errorKind === "port-busy" && onForceRestart);
 
   const copy = async (command: string) => {
     try {
@@ -205,16 +143,13 @@ export function ProgressPanel({
                 실행 허용
               </button>
             )}
-            <button
-              type="button"
-              className={
-                (errorKind === "conflict" && onAskClaude) ||
-                (errorKind === "commands" && onApproveCommands)
-                  ? "ghost"
-                  : "primary"
-              }
-              onClick={onRetry}
-            >
+            {errorKind === "port-busy" && onForceRestart && (
+              <button type="button" className="primary" onClick={onForceRestart}>
+                <RestartIcon />
+                다시 정리
+              </button>
+            )}
+            <button type="button" className={primaryTaken ? "ghost" : "primary"} onClick={onRetry}>
               <RestartIcon />
               다시 시도
             </button>
@@ -232,3 +167,5 @@ export function ProgressPanel({
     </div>
   );
 }
+
+export { type ErrorKind, errorKindOf };

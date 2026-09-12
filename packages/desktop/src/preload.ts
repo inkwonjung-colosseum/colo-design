@@ -20,6 +20,8 @@ function subscribe<T>(channel: string): (callback: (payload: T) => void) => Unsu
 }
 
 contextBridge.exposeInMainWorld("coloDesignDesktop", {
+  /** 설치 문단은 플랫폼을 안다 — mac 만 설치 단추, win 은 릴리스 페이지로. */
+  platform: process.platform,
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
   macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
   openHome: () => ipcRenderer.invoke("desktop:open-home"),

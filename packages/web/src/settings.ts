@@ -242,13 +242,13 @@ function loadSessionTitles(raw: unknown): Record<string, string> {
 }
 
 /**
- * The conversation settings, with one value deliberately not restored.
+ * The conversation settings, restored like every other preference.
  *
- * 전부 맡기기 (`bypassPermissions`) lets Claude act on the repo clone without
- * asking. Turning it on is a decision about one afternoon's work; finding it
- * still on next Tuesday, because a stored blob outlived the reason, is not a
- * decision anybody made. Every other mode is safe to remember — the daemon's
- * own write policy already bounds what an edit may touch.
+ * 전부 맡기기 (`bypassPermissions`) used to be dropped on reload — a stored
+ * blob outliving the reason it was turned on. It is the starting default now
+ * (see DEFAULT_PERMISSION_MODE), so there is no quieter state to fall back to:
+ * the stored mode comes back exactly as chosen, and the daemon's own write
+ * policy still bounds what an edit may touch.
  */
 function loadChat(raw: unknown): ChatSettings {
   const legacy = legacyComposerDefaults();
@@ -260,7 +260,7 @@ function loadChat(raw: unknown): ChatSettings {
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
-    permissionMode: mode === "bypassPermissions" ? DEFAULT_PERMISSION_MODE : mode,
+    permissionMode: mode,
     // 기본 켬(PLAN D61·D63·D91): an older blob that predates the toggles — or a
     // hand-edited one that wrote anything but a boolean — reads as on.
     previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,

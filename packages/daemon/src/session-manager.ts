@@ -200,9 +200,19 @@ export class SessionManager {
   async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
     let onDisk = this.disk.get(cwd);
     if (!onDisk || this.diskStale.has(cwd)) {
-      onDisk = await listSessions({ dir: cwd, limit }).catch(() => []);
-      this.disk.set(cwd, onDisk);
-      this.diskStale.delete(cwd);
+      // A failed scan is not an empty machine: swallowing it here cached "no
+      // conversations" until some session event happened to invalidate it —
+      // the planner's sidebar went blank (or stale) for no visible reason.
+      // Failure keeps the previous answer and the staleness marker, so the
+      // next call rescans instead of trusting the accident.
+      const scanned = await listSessions({ dir: cwd, limit }).catch(() => null);
+      if (scanned) {
+        onDisk = scanned;
+        this.disk.set(cwd, scanned);
+        this.diskStale.delete(cwd);
+      } else {
+        onDisk = onDisk ?? [];
+      }
     }
     const summaries = new Map<string, SessionSummary>();
     const untitled = "제목 없는 대화";

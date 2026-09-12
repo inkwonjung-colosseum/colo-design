@@ -55,6 +55,11 @@ jobs:
       - name: knip (죽은 코드)
         run: pnpm knip
 
+      # 2026-09-12 리뷰: 테마 토큰의 WCAG AA 페어(306개) — 색을 고친 사람이
+      # 브라우저를 열기 전에 빨간색을 본다. styles.css 만 읽는 순수 노드 스크립트.
+      - name: 테마 대비 (WCAG AA 게이트)
+        run: node scripts/theme-contrast-gate.mjs
+
       - name: actionlint (워크플로 문법)
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)

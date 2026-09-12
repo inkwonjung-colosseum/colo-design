@@ -16,7 +16,7 @@ const blocks: Block[] = [
   {
     type: "user",
     id: "u1",
-    text: "admin 에 사용자 관리 페이지에 화면 구현해줘\nhttps://colosseum.atlassian.net/wiki/spaces/PROD/pages/1785659411/Platform+v1.2",
+    text: "admin에 사용자 관리 페이지에 화면 구현해줘\nhttps://colosseum.atlassian.net/wiki/spaces/PROD/pages/1785659411/Platform+v1.2",
     images: 0,
     files: [],
   },

@@ -181,10 +181,17 @@ export function PageWorkspace({
     }
     const view = daemon.sessions[threadId];
     if (view?.live) {
+      // 실사 결함: 이 요약의 lastModified 가 곧 행의 시각으로 새겨져, 방금
+      // 연 대화가 "방금" 이 되는 시간이 뒤바꿨다. 목록이 아는 그 시각을 쓰고,
+      // 모르면 0 — 행은 데몬의 다음 스캔이 바로잡는다.
+      const known = daemon.projects
+        .flatMap((project) => project.threads ?? [])
+        .find((thread) => thread.id === threadId);
+      const lastModified = known ? Date.parse(known.updatedAt) : 0;
       await sessions.open({
         sessionId: threadId,
-        title: threadId,
-        lastModified: Date.now(),
+        title: known?.title ?? threadId,
+        lastModified,
         live: true,
         state: view.state,
       });

@@ -449,7 +449,7 @@ async function main() {
     );
 
     // --- ⓛ 화면 보여 주기 (D89) ---------------------------------------------
-    await page.getByRole("button", { name: "이 화면 Claude 에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
     await page.getByLabel("화면 보여 주기에 덧붙이는 말").fill("가운데 정렬이 풀려 있어요");
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const lookCard = page.locator(".machine--error").last();
@@ -473,7 +473,7 @@ async function main() {
     // --- ⓜ 연타 가드, 그리고 두 번째 요청 (D89) -----------------------------
     // The first look's turn is still running — exactly the state the 연타
     // guard is for: the repeat must be BLOCKED with the toast, not doubled.
-    await page.getByRole("button", { name: "이 화면 Claude 에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const blocked = await page
       .locator(".notice--info")
@@ -487,7 +487,7 @@ async function main() {
     await page.locator(".toolbar__stop").click();
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     // Settled: the real repeat carries the 두 번째 요청 mark.
-    await page.getByRole("button", { name: "이 화면 Claude 에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     await page.waitForFunction(
       () => document.querySelectorAll(".machine--error").length >= 2,

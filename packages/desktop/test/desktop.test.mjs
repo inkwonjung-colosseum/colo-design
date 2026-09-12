@@ -26,7 +26,9 @@ import {
 } from "../../protocol/dist/update.js";
 import {
   buildSwapScript,
+  parseSwapResult,
   planSelfUpdate,
+  requireDiskSpace,
   sha256OfFile,
   verifyDownload,
 } from "../dist/mac-self-update.js";
@@ -201,7 +203,13 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
     version: "0.5.0",
     targetApp: "/Applications/Colo Design.app",
   });
-  const script = buildSwapScript({ plan, pid: 4242, logPath: "/tmp/swap.log" });
+  const script = buildSwapScript({
+    plan,
+    pid: 4242,
+    logPath: "/tmp/swap.log",
+    resultPath: "/Users/기획자/Library/Application Support/Colo Design/update-result.json",
+    version: "0.5.0",
+  });
   assert.match(script, /^#!\/bin\/bash/m);
   assert.match(script, /kill -0 4242/, "waits on the electron main pid");
   assert.match(script, /seq 1 150/, "the wait is bounded — 30s, not forever");
@@ -217,8 +225,83 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
   );
   assert.match(script, /mv "\$SRC" "\$TARGET"/, "the new bundle takes the place");
   assert.match(script, /mv "\$BACKUP" "\$TARGET"/, "a failed move restores the old bundle");
-  assert.match(script, /\/usr\/bin\/open "\$TARGET"/);
   assert.match(script, /exec >> '\/tmp\/swap\.log'/, "every failure leaves a trace in the log");
+  // 결과 기록 — 스크립트의 모든 끝(성공·실패)이 결과 파일로 말을 남긴다.
+  assert.match(
+    script,
+    /'\/Users\/기획자\/Library\/Application Support\/Colo Design\/update-result\.json'/,
+    "the result path survives its spaces",
+  );
+  const embeddedResults = [...script.matchAll(/'(\{"outcome":[^\n]*\})'/g)].map((m) => m[1]);
+  const parsed = embeddedResults.map((raw) => parseSwapResult(raw));
+  assert.ok(parsed.length >= 5, `every exit leaves a result line (found ${parsed.length})`);
+  assert.ok(
+    parsed.every((r) => r !== null),
+    "each embedded line parses as a swap result",
+  );
+  assert.ok(
+    parsed.some(
+      (r) => r?.outcome === "done" && r.version === "0.5.0" && r.logPath === "/tmp/swap.log",
+    ),
+    "the happy path records done + version + log",
+  );
+  assert.ok(
+    parsed.some(
+      (r) =>
+        r?.outcome === "failed" && r.reason === "새 앱 배치에 실패해 이전 버전으로 되돌렸습니다",
+    ),
+    "the rollback path records why",
+  );
+  // 재실행 — 성공 경로와 롤백 경로 모두에서 open: 어떤 끝도 앱 부재로 끝나지 않는다.
+  const opens = script.match(/\/usr\/bin\/open "\$TARGET"/g) ?? [];
+  assert.equal(opens.length, 2, "open runs on success AND after rollback");
+});
+
+test("parseSwapResult accepts the script's line and refuses anything doubtful", () => {
+  const done = parseSwapResult(
+    '{"outcome":"done","version":"0.5.0","logPath":"/tmp/colo-design-update.log"}',
+  );
+  assert.deepEqual(done, {
+    outcome: "done",
+    version: "0.5.0",
+    reason: undefined,
+    logPath: "/tmp/colo-design-update.log",
+  });
+  const failed = parseSwapResult(
+    '{"outcome":"failed","version":"0.5.0","reason":"앱이 끝나지 않아 교체를 포기했습니다","logPath":"/tmp/colo-design-update.log"}',
+  );
+  assert.equal(failed.outcome, "failed");
+  assert.equal(failed.reason, "앱이 끝나지 않아 교체를 포기했습니다");
+  assert.equal(parseSwapResult("not json"), null, "garbage is not a report");
+  assert.equal(parseSwapResult('{"outcome":"maybe"}'), null, "unknown outcomes are not a report");
+  assert.equal(
+    parseSwapResult('{"outcome":"done","version":1,"logPath":"/tmp/x"}'),
+    null,
+    "a non-string version is not a report",
+  );
+});
+
+test("requireDiskSpace refuses a full disk before anything is downloaded", async () => {
+  const snapshot = (freeBytes) => async (path) => {
+    assert.equal(path, "/tmp/down loads");
+    return { bsize: 1, bavail: freeBytes };
+  };
+  // 여유가 넉넉하면 그냥 지나간다.
+  await requireDiskSpace({
+    path: "/tmp/down loads",
+    minBytes: 1024 ** 3,
+    statfs: snapshot(2 * 1024 ** 3),
+  });
+  // 부족하면 한국어 오류 — 내려받기 전에, 교체 도중이 아니라.
+  await assert.rejects(
+    () =>
+      requireDiskSpace({
+        path: "/tmp/down loads",
+        minBytes: 1024 ** 3,
+        statfs: snapshot(512 * 1024 ** 2),
+      }),
+    /디스크 공간이 부족합니다/,
+  );
 });
 
 // ---------------------------------------------------------------------------

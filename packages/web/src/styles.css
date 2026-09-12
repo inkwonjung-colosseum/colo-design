@@ -143,16 +143,16 @@
 
   --text: #362a1c;
   --text-2: #5f503a;
-  --muted: #74644a;
+  --muted: #716148;
 
-  --accent: #8a6a35;
+  --accent: #836432;
   --accent-soft: rgba(138, 106, 53, 0.12);
   --accent-glow: rgba(138, 106, 53, 0.3);
-  --warn: #8f5f14;
+  --warn: #865913;
   --warn-soft: rgba(143, 95, 20, 0.09);
   --danger: #a3402e;
   --danger-soft: rgba(163, 64, 46, 0.08);
-  --ok: #4f7031;
+  --ok: #4c6c2f;
 
   --warn-line: rgba(143, 95, 20, 0.38);
   --danger-line: rgba(163, 64, 46, 0.4);
@@ -261,14 +261,14 @@
 
   --text: #f8f8f2;
   --text-2: #c5c6d4;
-  --muted: #6272a4;
+  --muted: #96a0c2;
 
   --accent: #bd93f9;
   --accent-soft: rgba(189, 147, 249, 0.12);
   --accent-glow: rgba(189, 147, 249, 0.4);
   --warn: #f1fa8c;
   --warn-soft: rgba(241, 250, 140, 0.08);
-  --danger: #ff5555;
+  --danger: #ff7979;
   --danger-soft: rgba(255, 85, 85, 0.1);
   --ok: #50fa7b;
 
@@ -300,18 +300,18 @@
   --line-hover-strong: #6b8290;
   --scroll-thumb: #0f4653;
 
-  --text: #93a1a1;
-  --text-2: #839496;
-  --muted: #657b83;
+  --text: #9eaaaa;
+  --text-2: #8b9b9d;
+  --muted: #879ca3;
 
-  --accent: #268bd2;
+  --accent: #3295da;
   --accent-soft: rgba(38, 139, 210, 0.12);
   --accent-glow: rgba(38, 139, 210, 0.4);
-  --warn: #b58900;
+  --warn: #c49500;
   --warn-soft: rgba(181, 137, 0, 0.1);
-  --danger: #dc322f;
+  --danger: #e87775;
   --danger-soft: rgba(220, 50, 47, 0.1);
-  --ok: #859900;
+  --ok: #8ea300;
 
   --warn-line: rgba(181, 137, 0, 0.45);
   --danger-line: rgba(220, 50, 47, 0.45);
@@ -342,7 +342,7 @@
 
   --text: #cdd6f4;
   --text-2: #a6adc8;
-  --muted: #7f849c;
+  --muted: #969aae;
 
   --accent: #b4befe;
   --accent-soft: rgba(180, 190, 254, 0.1);
@@ -382,14 +382,14 @@
 
   --text: #eceff4;
   --text-2: #d8dee9;
-  --muted: #7b88a1;
+  --muted: #a5aebf;
 
   --accent: #88c0d0;
   --accent-soft: rgba(136, 192, 208, 0.1);
   --accent-glow: rgba(136, 192, 208, 0.35);
   --warn: #ebcb8b;
   --warn-soft: rgba(235, 203, 139, 0.08);
-  --danger: #bf616a;
+  --danger: #d89fa4;
   --danger-soft: rgba(191, 97, 106, 0.1);
   --ok: #a3be8c;
 
@@ -422,14 +422,14 @@
 
   --text: #ebdbb2;
   --text-2: #d5c4a1;
-  --muted: #928374;
+  --muted: #ada296;
 
   --accent: #83a598;
   --accent-soft: rgba(131, 165, 152, 0.12);
   --accent-glow: rgba(131, 165, 152, 0.35);
   --warn: #fabd2f;
   --warn-soft: rgba(250, 189, 47, 0.1);
-  --danger: #fb4934;
+  --danger: #fc7f70;
   --danger-soft: rgba(251, 73, 52, 0.1);
   --ok: #b8bb26;
 
@@ -462,7 +462,7 @@
 
   --text: #c0caf5;
   --text-2: #a9b1d6;
-  --muted: #565f89;
+  --muted: #8d95b8;
 
   --accent: #7aa2f7;
   --accent-soft: rgba(122, 162, 247, 0.1);
@@ -503,7 +503,7 @@
 
   --text: #e0def4;
   --text-2: #908caa;
-  --muted: #6e6a86;
+  --muted: #8e8aa3;
 
   --accent: #c4a7e7;
   --accent-soft: rgba(196, 167, 231, 0.1);
@@ -512,7 +512,7 @@
   --warn-soft: rgba(246, 193, 119, 0.09);
   --danger: #eb6f92;
   --danger-soft: rgba(235, 111, 146, 0.09);
-  --ok: #31748f;
+  --ok: #3f96b9;
 
   --warn-line: rgba(246, 193, 119, 0.4);
   --danger-line: rgba(235, 111, 146, 0.42);
@@ -542,17 +542,17 @@
   --scroll-thumb: #4f585e;
 
   --text: #d3c6aa;
-  --text-2: #9da9a0;
-  --muted: #859289;
+  --text-2: #adb7b0;
+  --muted: #adb6b0;
 
   --accent: #a7c080;
   --accent-soft: rgba(167, 192, 128, 0.12);
   --accent-glow: rgba(167, 192, 128, 0.35);
   --warn: #dbbc7f;
   --warn-soft: rgba(219, 188, 127, 0.09);
-  --danger: #e67e80;
+  --danger: #eda0a2;
   --danger-soft: rgba(230, 126, 128, 0.09);
-  --ok: #83c092;
+  --ok: #86c295;
 
   --warn-line: rgba(219, 188, 127, 0.4);
   --danger-line: rgba(230, 126, 128, 0.42);
@@ -582,15 +582,15 @@
   --scroll-thumb: #3e4451;
 
   --text: #abb2bf;
-  --text-2: #828997;
-  --muted: #5c6370;
+  --text-2: #a1a6b0;
+  --muted: #a0a6b1;
 
   --accent: #61afef;
   --accent-soft: rgba(97, 175, 239, 0.12);
   --accent-glow: rgba(97, 175, 239, 0.35);
   --warn: #e5c07b;
   --warn-soft: rgba(229, 192, 123, 0.09);
-  --danger: #e06c75;
+  --danger: #e78e95;
   --danger-soft: rgba(224, 108, 117, 0.09);
   --ok: #98c379;
 
@@ -624,7 +624,7 @@
 
   --text: #dce3eb;
   --text-2: #9ea7b3;
-  --muted: #6f7a86;
+  --muted: #798490;
 
   --accent: #58a6ff;
   --accent-soft: rgba(88, 166, 255, 0.12);
@@ -665,14 +665,14 @@
 
   --text: #f8f8f2;
   --text-2: #ccccc7;
-  --muted: #88846f;
+  --muted: #a29f8d;
 
   --accent: #66d9ef;
   --accent-soft: rgba(102, 217, 239, 0.12);
   --accent-glow: rgba(102, 217, 239, 0.35);
   --warn: #e6db74;
   --warn-soft: rgba(230, 219, 116, 0.09);
-  --danger: #f92672;
+  --danger: #fb6b9f;
   --danger-soft: rgba(249, 38, 114, 0.09);
   --ok: #a6e22e;
 
@@ -703,18 +703,18 @@
   --line-hover-strong: #9ca0b0;
   --scroll-thumb: #bcc0cc;
 
-  --text: #4c4f69;
-  --text-2: #6c6f85;
-  --muted: #8c8fa1;
+  --text: #4a4d66;
+  --text-2: #555869;
+  --muted: #555868;
 
-  --accent: #7287fd;
+  --accent: #3654fc;
   --accent-soft: rgba(114, 135, 253, 0.12);
   --accent-glow: rgba(114, 135, 253, 0.3);
-  --warn: #df8e1d;
+  --warn: #7c4f10;
   --warn-soft: rgba(223, 142, 29, 0.1);
-  --danger: #d20f39;
+  --danger: #b10d30;
   --danger-soft: rgba(210, 15, 57, 0.08);
-  --ok: #40a02b;
+  --ok: #28641b;
 
   --warn-line: rgba(223, 142, 29, 0.35);
   --danger-line: rgba(210, 15, 57, 0.38);
@@ -793,9 +793,16 @@ textarea::placeholder {
 input:focus,
 textarea:focus,
 select:focus {
-  outline: none;
   border-color: var(--line-hover);
   background-color: var(--panel-3);
+}
+/* `outline: none` on bare :focus used to out-rank the :focus-visible ring
+   below (specificity (0,1,1) beats (0,1,0)), so keyboard users lost the ring
+   in every form. Suppressing the outline only off-keyboard keeps both. */
+input:focus:not(:focus-visible),
+textarea:focus:not(:focus-visible),
+select:focus:not(:focus-visible) {
+  outline: none;
 }
 /* The picker loses the browser's bevel and wears the app's own arrow: one
    quiet glyph, tuned to sit on every palette's panel-2. */
@@ -809,7 +816,9 @@ select {
 }
 
 :focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  /* opaque: the old 65% alpha fell under WCAG 1.4.11's 3:1 on light palettes
+     (light 2.73, latte 1.91) while dark passed anyway (4.31) */
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -4105,6 +4114,29 @@ select {
   color: var(--accent);
 }
 
+/* The spend chip (5시간 · 사용량) floats just above the input card's top-left
+   corner — a reading about the whole account, not a control of the message
+   being typed, so it does not sit in the toolbar with the send row. Over the
+   transcript, under autocomplete(35) · selector(40) · modal(60). */
+.composer__usage {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+}
+/* Glass, because transcript text can pass under it while it hovers there. */
+.composer__usage .usage__chip {
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card);
+}
+.composer__usage .usage__chip:hover,
+.composer__usage .usage__chip[aria-expanded="true"] {
+  background: var(--panel-2);
+}
+
 /* The workspace's right column, full-time now: the action bar with 저장 ·
    개발자에게 넘기기 and the cycle's status, then the preview itself. */
 .planner__previewcol {
@@ -4152,7 +4184,9 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* every state wears its own little lamp — the state is a light, not a word */
+/* every state wears its own little lamp — the state is a light, not a word.
+   저장 안 함 is the one state that begs for a move, so it alone borrows the
+   warning hue; a gray there read as "nothing to do" (the old mapping). */
 .screenpanel__status::before {
   content: "";
   width: 6px;
@@ -4163,12 +4197,15 @@ select {
   flex: none;
 }
 .screenpanel__status--pending {
-  color: var(--text-2);
-  border-color: var(--line-hover);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
 }
+/* 저장됨 sits mid-cycle (local only) and 반영됨 is the terminus: the same
+   green would erase the one moment worth celebrating, so 저장됨 dims toward
+   text-2 and 반영됨 keeps the full green — with a check instead of a dot. */
 .screenpanel__status--saved {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: color-mix(in srgb, var(--ok) 68%, var(--text-2));
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
 }
 .screenpanel__status--handed {
   color: var(--accent);
@@ -4181,6 +4218,16 @@ select {
 .screenpanel__status--merged {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+.screenpanel__status--merged::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  box-shadow: none;
+  background: currentColor;
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E")
+    center / contain no-repeat;
 }
 
 /* 준비 중(내려받기·설치·서버 부팅)과 실패 상태는 미리보기 열 전체를 쓴다:
@@ -5972,6 +6019,18 @@ select {
   filter: brightness(1.06);
   box-shadow:
     0 12px 26px -10px var(--accent-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+/* 잠긴 저장 · 넘기기는 aria-disabled — 진짜 disabled 는 hover 도 포커스도
+   막아 잠긴 이유(title)에 도달할 길이 없었다. 겉모양만 잠긴 것처럼. */
+.screenpanel__action[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.screenpanel__action.primary[aria-disabled="true"]:hover {
+  filter: none;
+  box-shadow:
+    0 8px 20px -8px var(--accent-glow),
     inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 

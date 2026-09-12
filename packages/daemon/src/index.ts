@@ -84,6 +84,22 @@ async function doctor(): Promise<number> {
   return 0;
 }
 
+/**
+ * The probe `doctor` and launchd use. A live daemon answers here — a stored
+ * `daemon.json` that names a healthy endpoint is another daemon's machine,
+ * not a stale file.
+ */
+async function daemonHealthy(host: string, port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://${host}:${port}/health`, {
+      signal: AbortSignal.timeout(1_500),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   // Started from a desktop app rather than a shell, this process inherits a
   // PATH with no node on it, and every tool we drive — the Claude CLI, pnpm,
@@ -97,9 +113,36 @@ async function main(): Promise<void> {
     process.exit(await doctor());
   }
 
+  const hadStoredConfig = existsSync(CONFIG_FILE);
   const config = loadConfig();
+  // 실사 결함: 고아 데몬이 쌓였다 — 두 번째 데몬은 같은 클론을 두 손으로 다룬다.
+  // 저장된 주소가 살아 있으면 그 데몬의 기계이므로 여기서 물러난다. 환경 변수로
+  // 포트를 정하는 e2e 스위트의 자기 데몬은 이 검사의 밖에 둔다.
+  if (
+    !process.env.COLO_DESIGN_PORT &&
+    hadStoredConfig &&
+    (await daemonHealthy(config.host, config.port))
+  ) {
+    console.log(
+      `colo-design daemon 이 이미 http://${config.host}:${config.port} 에서 돌고 있습니다 — 새 인스턴스를 시작하지 않습니다.`,
+    );
+    process.exit(0);
+  }
+
   const server = new DaemonServer(config);
-  await server.start();
+  try {
+    await server.start();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      console.error(
+        `포트 ${config.port}를 다른 프로그램이 이미 써서 데몬을 시작하지 못했습니다 — ` +
+          `daemon.json 이 오래된 주소를 가리키거나 다른 프로그램이 그 포트를 쓰고 있을 수 있습니다. ` +
+          `그 프로그램을 끊거나 COLO_DESIGN_PORT 로 다른 포트를 정해 시작해 주세요.`,
+      );
+      process.exit(1);
+    }
+    throw error;
+  }
 
   const url = `ws://${config.host}:${config.port}?token=${config.token}`;
   console.log(`colo-design daemon listening on http://${config.host}:${config.port}`);

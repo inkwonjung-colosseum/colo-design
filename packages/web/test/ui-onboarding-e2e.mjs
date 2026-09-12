@@ -200,7 +200,7 @@ async function main() {
         () =>
           document
             .querySelector(".repopicker__confirm")
-            ?.textContent?.includes("colo-design.json 있음"),
+            ?.textContent?.includes("화면 제작 준비가 된 레포"),
         undefined,
         { timeout: 15000 },
       )

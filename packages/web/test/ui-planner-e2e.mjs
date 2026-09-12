@@ -295,9 +295,10 @@ async function main() {
   );
 
   // The ring only appears once a settled turn has reported usage, which is
-  // exactly where step 7 left the session.
+  // exactly where step 7 left the session. The chip it lives in floats above
+  // the input's top-left corner now, not in the toolbar with the send row.
   check(
-    "the composer shows how long the conversation has grown",
+    "the chat shows how long the conversation has grown",
     await page.locator(`${VISIBLE}.ring`).isVisible(),
   );
 

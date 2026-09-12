@@ -6,7 +6,8 @@ import type { EffortLevel, PermissionMode, SessionModelInfo } from "@colo-design
  * Two places offer them — 설정 and the composer's own popover — from one
  * list, so the two can never disagree about what "전부 맡기기" means.
  *
- * Every label is read by a planner, not a developer: plain Korean only.
+ * Every label is read by a planner, not a developer: plain Korean only —
+ * except the model rows, which quote the CLI verbatim (see modelWords).
  */
 
 export const EFFORT_LABEL: Record<EffortLevel, string> = {
@@ -53,58 +54,26 @@ export const SETTINGS_MODES: PermissionMode[] = [
   "bypassPermissions",
 ];
 
-/** What the conversation starts on when nobody has chosen (PLAN D10). */
-export const DEFAULT_PERMISSION_MODE: PermissionMode = "default";
+/**
+ * What the conversation starts on when nobody has chosen (PLAN D10). 전부 맡기기
+ * (`--dangerously-skip-permissions`) is the owner's call: a planner's first
+ * turn must not stall on a 확인 카드 they never knew about. Anyone who wants
+ * the questions back picks 물어보고 진행, and that choice is remembered.
+ */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "bypassPermissions";
 
 /**
- * Planners asked to see which Claude they are choosing, by name. The CLI hands
- * over a short label ("Sonnet") plus a description whose head carries the
- * version the planner also sees in Claude Code ("Sonnet 5 · Efficient for
- * routine tasks"), so the name leads the row and the Korean guidance — the part
- * that tells a non-developer when to reach for it — rides along as the hint.
+ * What a model row says, exactly as the CLI said it: `displayName` leads the
+ * row, `description` rides along as the hint. This app rewrites neither — a
+ * hand-tuned label ("Sonnet 5", "자동 (추천)") or a hand-written hint goes
+ * stale the day the CLI's list changes, and says something the CLI never
+ * said; the raw strings cannot lie about what is on offer.
  */
-const MODEL_HINT: Array<{ match: (id: string) => boolean; hint: string }> = [
-  {
-    match: (id) => id.includes("fable"),
-    hint: "제일 어려운 작업용. 그만큼 느려요",
-  },
-  { match: (id) => id.includes("opus"), hint: "복잡하거나 긴 기획서에 좋아요" },
-  {
-    match: (id) => id.includes("sonnet"),
-    hint: "속도와 결과가 균형 잡혀 있어요",
-  },
-  { match: (id) => id.includes("haiku"), hint: "간단한 수정에 좋아요" },
-];
-
-/** `Sonnet 5 · Efficient…` → `Sonnet 5`; `Opus 5 with 1M context` → `Opus 5 (1M)`. */
-function modelName(model: SessionModelInfo): string {
-  const head = model.description
-    .split("·")[0]
-    ?.trim()
-    .replace(/\s+with 1M context$/i, " (1M)");
-  return head || model.displayName;
-}
-
 export function modelWords(model: SessionModelInfo): {
   label: string;
   hint: string;
 } {
-  const name = modelName(model);
-  // Alias rows ("sonnet") and id rows ("claude-sonnet-5") both have to find
-  // their family, so whichever the CLI sent is what gets matched.
-  const guide = MODEL_HINT.find((entry) =>
-    entry.match(`${model.value} ${model.resolvedModel ?? ""}`.toLowerCase()),
-  )?.hint;
-  // `default` is the CLI's own recommendation, so that is what the row says;
-  // the model it resolves to today rides in the hint, where it can change
-  // without the chip ever lying about what was picked.
-  if (model.value === "default") {
-    return {
-      label: "자동 (추천)",
-      hint: `${name} · 대부분의 화면 작업에 알맞아요`,
-    };
-  }
-  return { label: name, hint: guide ?? "" };
+  return { label: model.displayName, hint: model.description };
 }
 
 /**
@@ -121,7 +90,7 @@ export function modelRowOf(
 
 /**
  * The CLI lists an alias row and the pinned id it resolves to as two rows with
- * the same name; a planner would see "Opus 5 (1M)" twice with nothing to
+ * the same displayName; a planner would see "Opus" twice with nothing to
  * choose between. First one wins.
  */
 export function modelOptions(

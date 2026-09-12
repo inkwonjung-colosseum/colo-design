@@ -863,6 +863,7 @@ export type RepoErrorKind =
   | "registry-auth"
   | "pnpm-missing"
   | "preview"
+  | "port-busy"
   | "conflict"
   | "bootstrap"
   | "commands";

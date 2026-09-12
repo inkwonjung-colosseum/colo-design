@@ -56,7 +56,7 @@ export interface DeliveryInput {
   phase: RepoPhase | null;
 }
 
-const BUSY_SAVE = "Claude 가 고치는 중 — 끝나면 저장할 수 있습니다";
+const BUSY_SAVE = "Claude가 고치는 중 — 끝나면 저장할 수 있습니다";
 const NOTHING_TO_SAVE = "저장할 변경이 없습니다";
 
 /**
@@ -99,7 +99,7 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
       chip: {
         label: running ? `고치는 중 · ${pendingChanges}건` : `저장 안 함 ${pendingChanges}건`,
         tone: "pending",
-        ...(handoff ? { title: `저장하면 PR #${handoff.number} 에 쌓입니다` } : {}),
+        ...(handoff ? { title: "저장하면 넘긴 요청에 함께 담깁니다" } : {}),
       },
       actions: {
         save: saveLocked ? { enabled: false, reason: BUSY_SAVE } : { enabled: true },
@@ -112,12 +112,16 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
   if (handoff?.state === "open") {
     return {
       state: "handed",
-      chip: { label: `개발자 검토 중 · #${handoff.number}`, tone: "handed" },
+      chip: {
+        label: "개발자 검토 중",
+        tone: "handed",
+        title: `넘긴 요청 ${handoff.number}번을 개발자가 검토하는 중입니다`,
+      },
       actions: {
         save: { enabled: false, reason: NOTHING_TO_SAVE },
         handoff: {
           enabled: false,
-          reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다",
+          reason: "이미 넘겼습니다 — 새로 저장하면 같은 요청에 합쳐집니다",
         },
         check: { enabled: true },
       },
@@ -128,15 +132,15 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
     return {
       state: "changes_requested",
       chip: {
-        label: `변경 요청 · #${handoff.number}`,
+        label: "변경 요청",
         tone: "changes",
-        title: "개발자 코멘트가 왔습니다 — 상태 확인에서 이어 가세요",
+        title: `개발자가 넘긴 요청 ${handoff.number}번에 코멘트를 남겼습니다 — 상태 확인에서 이어 가세요`,
       },
       actions: {
         save: { enabled: false, reason: NOTHING_TO_SAVE },
         handoff: {
           enabled: false,
-          reason: "이미 넘겼습니다 — 저장하면 같은 PR 에 쌓입니다",
+          reason: "이미 넘겼습니다 — 새로 저장하면 같은 요청에 합쳐집니다",
         },
         check: { enabled: true },
       },
@@ -146,7 +150,11 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
   if (branch) {
     return {
       state: "saved",
-      chip: { label: "저장됨", tone: "saved", title: branch },
+      chip: {
+        label: "저장됨",
+        tone: "saved",
+        title: "이번 저장은 아직 개발자에게 전달되지 않았습니다",
+      },
       actions: {
         save: { enabled: false, reason: NOTHING_TO_SAVE },
         handoff: { enabled: true },
