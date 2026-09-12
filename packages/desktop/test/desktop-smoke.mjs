@@ -80,7 +80,10 @@ async function main() {
     });
     check(
       "the first window fills the display work area",
-      Boolean(bounds) && bounds.width === workArea.width && workArea.height - bounds.height <= 1,
+      // 창 관리자는 축마다 1px 을 떼어 간다(xvfb 러너: 1279x1023 vs
+      // 1280x1024). 여기서 보는 것은 '작업 영역을 채운다' 이지 픽셀 동일성이
+      // 아니므로, 두 축에 같은 허용치를 준다.
+      Boolean(bounds) && workArea.width - bounds.width <= 1 && workArea.height - bounds.height <= 1,
       bounds ? `${bounds.width}x${bounds.height} vs ${workArea.width}x${workArea.height}` : "no window",
     );
 
