@@ -41,6 +41,13 @@ const run = promisify(execFile);
 export interface OnboardingDeps {
   claudeExecutableOverride?: string;
   /**
+   * Test seam: the real pnpm hunt reads machine-fixed locations a test
+   * cannot scrub (PNPM_HOME, /usr/local/bin/pnpm) — a CI runner has pnpm
+   * installed exactly there, so the "empty machine" suite injects a
+   * resolver instead of the answer. See checkRuntime's own seam note.
+   */
+  pnpmResolver?: () => Promise<string | null>;
+  /**
    * A client on the machine-wide GitHub token, or null when no token is
    * stored (the github gate's own warning) or the caller does not care.
    * Absent means the gate reports "토큰을 연결해 주세요", never an error.
@@ -52,7 +59,7 @@ export async function runOnboardingChecks(deps: OnboardingDeps): Promise<Onboard
   return [
     await checkClaude(deps),
     await checkGit(),
-    await checkRuntime(),
+    await checkRuntime(deps.pnpmResolver),
     await checkGitHub(deps),
   ];
 }

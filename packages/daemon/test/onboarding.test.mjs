@@ -61,12 +61,18 @@ test("every step fails in Korean on an empty machine, with fixes where offered",
   try {
     // A genuinely empty machine: nothing on PATH, no HOME-owned installs,
     // and the git resolver pinned at nothing — its candidate list would
-    // otherwise find a real install under /opt/homebrew or /usr/bin.
+    // otherwise find a real install under /opt/homebrew or /usr/bin. The
+    // pnpm hunt reads machine-fixed locations (PNPM_HOME on a CI runner,
+    // /usr/local/bin/pnpm) no test can scrub, so its resolver is injected;
+    // claude's override plays the same role for its candidate list.
     process.env.HOME = dir;
     process.env.PATH = join(dir, "empty-bin");
     process.env.CDS_DESIGN_GIT_BIN = join(dir, "no-git");
     delete process.env.CDS_DESIGN_CLAUDE_BIN;
-    const steps = await runOnboardingChecks({});
+    const steps = await runOnboardingChecks({
+      claudeExecutableOverride: join(dir, "no-claude"),
+      pnpmResolver: () => Promise.resolve(null),
+    });
 
     const claude = find(steps, "claude");
     assert.equal(claude.status, "fail");
@@ -170,7 +176,13 @@ test("git passes through the stub and fails with CLT guidance when missing", asy
       const without = await runOnboardingChecks(deps);
       const step = find(without, "git");
       assert.equal(step.status, "fail");
-      assert.match(step.detail, /xcode-select --install/);
+      // gitMissing() speaks the current platform's installer — darwin's CLT
+      // one-liner, apt elsewhere. Expect the same branch the machine runs.
+      const expectedGuidance =
+        process.platform === "darwin"
+          ? /xcode-select --install/
+          : new RegExp(gitInstallGuidance().command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      assert.match(step.detail, expectedGuidance);
       assert.equal(step.fix?.kind, "install-git");
     } finally {
       if (previousPin === undefined) delete process.env.CDS_DESIGN_GIT_BIN;
