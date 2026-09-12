@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { closeApp } from "./close-app.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = join(here, "..");
@@ -585,7 +586,7 @@ async function main() {
     check("no uncaught renderer errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({ path: join(here, "desktop-comments.png"), fullPage: true });
   } finally {
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         rmSync(dir, { recursive: true, force: true });

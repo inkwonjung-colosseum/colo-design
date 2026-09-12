@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
+import { closeApp } from "./close-app.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = join(here, "..");
@@ -151,9 +152,9 @@ async function main() {
     );
     check("no console errors", meaningful.length === 0, meaningful.slice(0, 2).join(" | "));
 
-    await app.close();
+    await closeApp(app);
   } finally {
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     rmSync(userData, { recursive: true, force: true });
   }
 
