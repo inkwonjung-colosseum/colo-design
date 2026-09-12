@@ -368,9 +368,13 @@ export class DaemonServer {
       this.wss!.handleUpgrade(req, socket, head, (ws) => this.attach(ws));
     });
 
-    await new Promise<void>((resolve) =>
-      this.http!.listen(this.config.port, this.config.host, resolve),
-    );
+    await new Promise<void>((resolve, reject) => {
+      // A bind failure (the stored port is taken) must reach the caller as a
+      // rejection, not crash the process on an unhandled 'error' event — the
+      // daemon entry prints its Korean guidance from that rejection.
+      this.http!.once("error", reject);
+      this.http!.listen(this.config.port, this.config.host, () => resolve());
+    });
   }
 
   /** Where the HTTP server actually bound (port 0 = ephemeral in desktop). */
@@ -1405,9 +1409,39 @@ export class DaemonServer {
       case "repo.refresh": {
         // 레포 최신화: the planner's pull of the developer's side, pressed
         // from the screen bar. Progress is `repo.status` as always; a
-        // conflict briefs the named thread like a failing gate does.
+        // conflict briefs the named thread like a failing gate does. The
+        // button's failures report — the planner pressed it, so the reason
+        // lands as words on the screen instead of a silent no-op.
         const { onSessionTurn } = this.briefTo(message.sessionId, "refresh");
-        await this.repo.pull(onSessionTurn);
+        // 사이클 브랜치에서 대화 없이 눌린 최신화는 병합을 하지 않는다(충돌의
+        // 첫 과제는 Claude 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는
+        // 지 버튼을 누른 사람에게 말한다.
+        const behind = await this.repo.refreshNeedsThread();
+        if (behind !== null && !message.sessionId)
+          throw new Error(
+            `개발자의 최신 변경 ${behind}건이 원격에 있습니다 — 대화를 하나 연 뒤 최신화를 누르면 지금 화면 위로 받아 옵니다.`,
+          );
+        // 받아올 게 없으면 pull 도 부르지 않는다 — 새 커밋 0건의 병합은
+        // 아무도 모른 채 끝나는 일이고, 그것이 정직한 결과다.
+        if (behind === 0) return await this.repo.status();
+        const outcome = await this.repo.pull(onSessionTurn, { report: true });
+        // 실사 결함: 최신화가 사이클 브랜치에 merge 커밋을 묵시적으로 쌓는
+        // 사실을 아무도 말하지 않았다. 병합이 실제로 일어났으면 그 기록이
+        // 대화에 남는다 — 충돌 브리프와 같은 자리, 같은 어휘로.
+        if (behind !== null && behind > 0 && outcome === "clean" && message.sessionId) {
+          this.manager
+            .get(message.sessionId)
+            ?.send(
+              markTurn(
+                {
+                  kind: "brief",
+                  title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
+                  purpose: "refresh",
+                },
+                "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
+              ),
+            );
+        }
         return await this.repo.status();
       }
 

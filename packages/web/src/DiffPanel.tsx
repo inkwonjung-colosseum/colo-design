@@ -23,16 +23,18 @@ const STAGE_LABEL: Record<DiffStatus["stage"], string> = {
 
 /**
  * Gates arrive as the daemon's own identifiers — `commit`, `push`, `pr`. Read
- * out raw they put git's vocabulary back on the planner's screen one word at a
- * time, so each names the step it actually is instead (PLAN D5).
+ * out raw they put git's vocabulary back on the planner's screen one word at
+ * a time, so each names the step it actually is instead (PLAN D5). The words
+ * a repo's own command also goes by (`check`) come from tool-names.ts — the
+ * same job must not wear two names between the transcript and this line.
  */
 const GATE_LABEL: Record<NonNullable<DiffStatus["gate"]>, string> = {
-  check: "코드 검사",
+  check: "레포 검사",
   build: "빌드 검사",
   commit: "변경사항 정리",
   push: "변경사항 올리기",
   diff: "변경사항 확인",
-  pr: "개발자에게 전달",
+  pr: "개발자에게 넘기기",
 };
 
 /** In flight: neither a 저장 nor a 넘기기 can be started on top of this. */
@@ -41,10 +43,15 @@ export const RUNNING: DiffStatus["stage"][] = ["computing", "gating", "pushing",
 /**
  * The one progress line both panels read. 저장 and 넘기기 stream on the same
  * `diff.status` channel, so a second reading of it would only be a second
- * place to forget a stage.
+ * place to forget a stage. A failed stage names the step it stopped at —
+ * "끝내지 못했습니다 · 개발자에게 전달" 처럼 실패와 완료가 한 줄에 공존하는
+ * 문장이 아니라 (실사 결함), 어느 단계까지 갔는지가 그 자체로 읽힌다.
  */
 export function stageLine(status: DiffStatus | null): string {
   if (!status) return "";
+  if (status.stage === "failed") {
+    return `${GATE_LABEL[status.gate ?? "diff"]}에서 멈췄습니다`;
+  }
   const label = STAGE_LABEL[status.stage];
   // A settled stage names itself; which gate ran matters only while one is
   // running, or when it is the one that failed.
@@ -161,6 +168,7 @@ export function DiffPanel({
   sessionId,
   onClose,
   summaryLines,
+  branch,
 }: {
   daemon: Daemon;
   /** The live planning thread; a failed gate lands in it as Claude's next task. */
@@ -172,6 +180,11 @@ export function DiffPanel({
    * round trip. Absent (the usual mount), the panel asks `repo.summarize`.
    */
   summaryLines?: string[];
+  /**
+   * The cycle branch 저장 pushes to — shown on the settled line so the
+   * planner sees WHERE the work went, not just that it happened.
+   */
+  branch?: string | null;
 }) {
   const [files, setFiles] = useState<DiffFile[] | null>(null);
   const [message, setMessage] = useState("");
@@ -191,11 +204,13 @@ export function DiffPanel({
 
   useEffect(() => {
     const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      // A save in flight keeps its progress line: ESC only leaves when the
+      // daemon is done telling the story.
+      if (event.key === "Escape" && !running) onClose();
     };
     document.addEventListener("keydown", onKeydown);
     return () => document.removeEventListener("keydown", onKeydown);
-  }, [onClose]);
+  }, [onClose, running]);
 
   // The list is a snapshot of what a 저장 would write; reload it whenever one
   // settles, because a success means the worktree is clean now.
@@ -313,8 +328,14 @@ export function DiffPanel({
               className={
                 published ? "notice notice--info" : failed ? "notice notice--error" : "diff__stage"
               }
+              role={published || failed ? "status" : undefined}
             >
-              <span className="notice__text">{stageLine(diffStatus)}</span>
+              <span className="notice__text">
+                {stageLine(diffStatus)}
+                {/* 어디에 저장됐는지는 제품의 약속 그 자체다 (실사 결함):
+                    "저장했습니다" 만으로는 기획자가 근거를 볼 수 없었다. */}
+                {published && branch ? ` — ${branch}` : ""}
+              </span>
               {running && <span className="spinner" />}
             </div>
           )}

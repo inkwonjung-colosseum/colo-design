@@ -86,6 +86,16 @@ export function Palette({
     searchRef.current?.focus();
   }, []);
 
+  // Esc 닫기는 입력칸의 onKeyDown 에 갇혀 있지 않다 (실사 결함): 화살표로
+  // 목록을 걷다 포커스가 입력칸을 벗어나도 팔레트는 닫혀야 한다.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const rows: Row[] = useMemo(() => {
     /**
      * Substring beats subsequence: `결제` ranks an answer that starts with it

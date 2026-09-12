@@ -376,12 +376,11 @@ export function RepoPicker({
               }`}
             >
               {inspection.result.hasColoDesign
-                ? `✓ colo-design.json 있음 · 기본 브랜치 ${inspection.result.defaultBranch}`
-                : "✗ 이 레포에는 colo-design.json이 없습니다 — Claude 가 연결을 준비할 수 있어요."}
+                ? "✓ 화면 제작 준비가 된 레포입니다"
+                : "✗ 이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결을 준비할 수 있어요."}
               {!inspection.result.canPush && (
                 <span className="repopicker__warnline">
-                  ! 이 토큰으로는 이 레포에 넘길 수 없습니다 — 화면 작업은 되지만 PR은 열지
-                  못합니다.
+                  ! 이 토큰으로는 개발자에게 넘길 수 없습니다 — 화면 작업은 계속할 수 있습니다.
                 </span>
               )}
             </p>
@@ -413,7 +412,7 @@ export function RepoPicker({
                 disabled={Boolean(blocked)}
                 onClick={() => void create()}
               >
-                {creating ? "준비하는 중…" : "Claude 가 연결 준비하기"}
+                {creating ? "준비하는 중…" : "Claude가 연결 준비하기"}
               </button>
             )}
             {!bootstrapCreate && (
@@ -434,12 +433,12 @@ export function RepoPicker({
               data-testid="bootstrap-choice"
               onClick={() => setBootstrapCreate(true)}
             >
-              Claude 가 연결 준비하기
+              Claude가 연결 준비하기
             </button>
           )}
           <p className="hint">
             {bootstrapCreate
-              ? "Claude 가 레포에 연결 파일을 쓰고, 개발자는 첫 넘기기 PR 로 받아 봅니다."
+              ? "Claude가 레포에 연결 파일을 쓰고, 개발자는 첫 넘기기 요청으로 받아 봅니다."
               : "레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다."}
           </p>
           {createError && (
@@ -475,6 +474,16 @@ export function RepoPicker({
               {manualBusy ? "만드는 중…" : "추가"}
             </button>
           </div>
+          {/* 잠긴 '추가'의 이유를 여기서 말한다 — 실사 결함: 첫 클릭이 이유 없이
+              실패처럼 보여 신규 사용자가 주소를 의심했다. */}
+          {!manualBusy && manualUrl.trim() && !manualApprove && (
+            <p className="hint" data-testid="approve-needed-hint">
+              추가하려면 아래 명령 실행 동의에 먼저 체크해 주세요.
+            </p>
+          )}
+          {!manualBusy && !manualUrl.trim() && (
+            <p className="hint">연결 레포의 git 주소를 입력하면 추가 버튼이 켜집니다.</p>
+          )}
           <label className="repopicker__approve">
             <input
               type="checkbox"

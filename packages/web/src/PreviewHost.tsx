@@ -164,6 +164,16 @@ export function PreviewHost({
     setError(null);
   }, [url]);
 
+  // 서버가 돌아오면 지난 화면을 버린다 (실사 결함): bring-up 이 `stopped` 를
+  // 끄는 순간이 곧 재접속 신호고, iframe 이 브라우저 오류 페이지("웹페이지가
+  // 일시적으로 다운되었…")를 쥐고 있으면 앱 전체 reload 로만 빠져나올 수
+  // 없었다. 되돌아옴 = 한 번의 깨끗한 reload.
+  const wasStopped = useRef(stopped);
+  useEffect(() => {
+    if (wasStopped.current && !stopped) setReloadNonce((n) => n + 1);
+    wasStopped.current = stopped;
+  }, [stopped]);
+
   // What the bar shows when nobody is typing: where the view is, else the ask.
   useEffect(() => {
     if (addressFocused) return;
@@ -607,10 +617,10 @@ export function PreviewHost({
                 type="button"
                 className="frame__look"
                 aria-expanded={lookOpen}
-                title="화면 전체와 콘솔 기록을 Claude 에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
+                title="화면 전체와 콘솔 기록을 Claude에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
                 onClick={() => setLookOpen((open) => !open)}
               >
-                이 화면 Claude 에게 보여 주기
+                이 화면 Claude에게 보여 주기
               </button>
             )}
             {native && pip && (

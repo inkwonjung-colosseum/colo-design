@@ -163,33 +163,22 @@ async function main() {
     [...new Set(broadcasts.map((s) => s.phase))].join(" → "),
   );
 
-  // --- 4. 다시 시작: the one button that may kill ---------------------------
-  // The busy-port error is the one a planner cannot fix alone — the holder is
-  // a foreign program. A plain sync reports it; the forced restart (what the
-  // error screen's 다시 시작 sends) kills the holder and serves over the port.
-  // The kill is listener-only: a blanket port kill also hits the port's
-  // clients — this suite's own fetch included (a naive port-killer killed
-  // this runner). Surviving to the next check is part of the assertion.
+  // --- 4. 포트 충돌: 활성 프로젝트가 이긴다 ---------------------------------
+  // The active project owns its declared port. The usual culprit of a busy
+  // port is an orphan a killed daemon left behind, so a plain sync reclaims
+  // the port — kills the holder, serves in its place — without asking. The
+  // kill is listener-only: a blanket port kill also hits the port's clients
+  // (a naive port-killer killed this runner). Surviving to the next check is
+  // part of the assertion.
   await workspace.stop();
   const squatter = spawnSquatter(port);
   await waitFor(() => portAccepts(port), 10_000, "the squatter to hold the port");
 
-  const blocked = await workspace.sync();
+  const reclaimed = await workspace.sync();
   check(
-    "a plain sync reports a busy port instead of killing it",
-    blocked.phase === "error" && (blocked.detail ?? "").includes("이미 쓰고 있어"),
-    `${blocked.phase}: ${blocked.detail ?? ""}`,
-  );
-  check(
-    "the foreign holder survives a plain sync",
-    (await fetch(`http://127.0.0.1:${port}`).then((r) => r.text())) === "squatter",
-  );
-
-  const restarted = await workspace.sync(true);
-  check(
-    "the forced restart frees the port and reaches ready",
-    restarted.phase === "ready",
-    `${restarted.phase}: ${restarted.detail ?? ""}`,
+    "a plain sync reclaims the port from the holder and reaches ready",
+    reclaimed.phase === "ready",
+    `${reclaimed.phase}: ${reclaimed.detail ?? ""}`,
   );
   check(
     "what answers the port now is the preview, not the squatter",
@@ -202,6 +191,38 @@ async function main() {
   );
   check("the foreign holder process is gone", squatter.signalCode === "SIGKILL");
   await checkWireProtocol(port, fixture.remote, workspace);
+
+  // --- 5. 판정은 그 자리를 지킨다 ------------------------------------------
+  // 실사 결함: 포트 충돌로 실패한 뒤 뒤에서 돈 git fetch 의 진행 출력
+  // (`* branch main -> FETCH_HEAD`)이 에러 문구를 덮어 써, 기획자는 실패
+  // 이유로 git 의 말을 읽게 됐다. 진행 줄은 phase 가 다시 움직이는 순간부터
+  // 흐른다 — 여기서는 부팅하자마자 죽는 미리보기로 error 에 앉힌 뒤, 대화가
+  // 열릴 때 돌아가는 pull 로 그 자리를 확인한다.
+  const dyingPort = await freePort();
+  const dying = await createFixtureRepo({
+    dir: join(DIR, "fixture-dying"),
+    port: dyingPort,
+    previewCommand: 'node -e "setTimeout(() => process.exit(1), 300)"',
+  });
+  const dyingWorkspace = new RepoWorkspace({
+    root: join(DIR, "work-dying"),
+    url: dying.remote,
+    onStatus: () => undefined,
+  });
+  const died = await dyingWorkspace.sync();
+  check(
+    "a preview that dies on boot parks the clone in error",
+    died.phase === "error" && (died.detail ?? "").includes("미리보기 서버가 종료되었습니다"),
+    `${died.phase}: ${died.detail ?? ""}`,
+  );
+  await dyingWorkspace.pull();
+  const afterPull = await dyingWorkspace.status();
+  check(
+    "a background pull's git lines do not rewrite the verdict",
+    afterPull.phase === "error" && (afterPull.detail ?? "") === (died.detail ?? ""),
+    `${afterPull.phase}: ${afterPull.detail ?? ""}`,
+  );
+  await dyingWorkspace.stop();
 
   rmSync(DIR, { recursive: true, force: true });
 

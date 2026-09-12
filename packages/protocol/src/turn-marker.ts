@@ -64,9 +64,10 @@ export interface BriefMarker {
   title: string;
   /**
    * D94: the connection-preparation brief — the card reads 연결 준비 instead
-   * of the 기획서 wording.
+   * of the 기획서 wording. "refresh" reads 최신 변경 받아오기: the record a
+   * 최신화 leaves when it actually merged the developer's base.
    */
-  purpose?: "bootstrap";
+  purpose?: "bootstrap" | "refresh";
 }
 
 export interface PrecheckMarker {

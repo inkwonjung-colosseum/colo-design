@@ -58,7 +58,12 @@ import { type GitHubClient, parseRepoSlug } from "./github.js";
 const CONFIG_FILE = "colo-design.json";
 /** Reinstall marker, kept inside `.git/` so it travels with the clone only. */
 const INSTALL_MARKER = "colo-design-install-hash";
-const READY_TIMEOUT_MS = 30_000;
+/**
+ * 실사 결함: fresh clone 의 첫 미리보기 부팅(next dev cold compile)이 30 초를
+ * 넘겼다 — 시간 예산 안에 뜨는 fixture 로는 잡히지 않는다. 데드라인은 실제
+ * 레포의 첫 부팅이 들어올 만큼 넉넉해야 한다.
+ */
+const READY_TIMEOUT_MS = 120_000;
 const DETAIL_THROTTLE_MS = 200;
 /** Commit message when the planner approves without writing one. */
 const DEFAULT_COMMIT_MESSAGE = "Colo Design 화면 변경";
@@ -292,7 +297,9 @@ export function repoSettingsWarning(root: string): string | null {
   if (!parsed || typeof parsed !== "object") return null;
   const widening = (["permissions", "env", "hooks"] as const).filter((key) => key in parsed);
   if (widening.length === 0) return null;
-  return `The connected repo ships .claude/settings.json (${widening.join(", ")}) — its sessions may run pre-approved tools without a permission card.`;
+  // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 기획자는
+  // 한국어다. 무엇이 사전 승인되는지 그 자리에서 알려 준다.
+  return `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -716,12 +723,12 @@ export class RepoWorkspace {
   }
 
   sync(force = false): Promise<RepoStatus> {
-    // A 다시 시작 pressed while a bootstrap crawls must not ride it: that run
-    // carries no kill-the-port mandate and would answer with the very
-    // busy-port error the button is answering. The forced run waits it out.
+    // A 다시 시작 pressed while a bootstrap crawls waits that run out instead
+    // of riding it. The port itself needs no mandate any more: every bring-up
+    // reclaims the declared port for the active project (startPreview).
     if (this.inFlight && force) return this.inFlight.then(() => this.sync(true));
     if (this.inFlight) return this.inFlight;
-    this.inFlight = this.bootstrap(force).finally(() => {
+    this.inFlight = this.bootstrap().finally(() => {
       this.inFlight = null;
     });
     return this.inFlight;
@@ -816,7 +823,10 @@ export class RepoWorkspace {
    * is worse than being a commit behind until the next sync() reports the
    * failure properly.
    */
-  async pull(onSessionTurn?: (brief: string) => void): Promise<void> {
+  async pull(
+    onSessionTurn?: (brief: string) => void,
+    opts?: { report?: boolean },
+  ): Promise<"clean" | "conflict" | undefined> {
     if (!this.isCloned()) return;
     // 준비가 충돌로 멈춘 상태(phase error)에서도 문은 열려 있어야 한다(D96):
     // 오류 카드의 Claude 요청이 읽을 것은 바로 그 상태고, 새 대화가 태어날 때의
@@ -843,12 +853,33 @@ export class RepoWorkspace {
       })
       .catch((error) => {
         this.setDetail(detailOf(error, this.pat));
+        // The 최신화 button's caller reports: a failure the planner asked for
+        // by pressing a button must land as words on the screen, not only in
+        // the status detail no card renders while phase stays ready.
+        if (opts?.report) throw error;
       })
       .finally(() => {
         this.refreshing = null;
       });
     this.refreshing = run;
     await run;
+  }
+
+  /**
+   * 최신화 버튼이 열린 대화 없이 눌렸을 때의 사전 확인 (실사 P0 — 조용한
+   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 Claude 의 첫 과제가
+   * 되야 하므로 혼자 하지 않는다 — 대신 fetch 로 원격을 확인해 무엇이 기다리는
+   * 지 알려준다. null 이면 막을 이유가 없다: 베이스 브랜치 위의 fast-forward 는
+   * 혼자서도 안전하고, 새 커밋이 없으면 할 일 자체가 없다.
+   */
+  async refreshNeedsThread(): Promise<number | null> {
+    if (!this.isCloned()) return null;
+    if (this.phase !== "ready" && this.phase !== "error") return null;
+    if (!this.branch) return null;
+    if (this.publishing) await this.publishing.catch(() => undefined);
+    await this.git(["fetch", "origin", this.baseBranch]);
+    const [, behind] = await this.aheadBehindBase();
+    return behind > 0 ? behind : null;
   }
 
   // -------------------------------------------------------------------------
@@ -1719,8 +1750,9 @@ export class RepoWorkspace {
 
     // Mid-cycle, merging the developer's base needs Claude within reach — a
     // conflict has to land as a first task, not as an error nobody can read.
-    // A bare bring-up mid-cycle stays put; the merge is a session start's
-    // (or 최신화 button's) job, and those name a thread.
+    // A bare bring-up mid-cycle stays put on the merge, but the fetch still
+    // runs: the planner who pressed 최신화 deserves to learn that something
+    // is waiting instead of watching a silent no-op.
     if (this.branch && !onSessionTurn) return "clean";
 
     const stashed = await this.stashUnsavedWork();
@@ -1981,7 +2013,7 @@ export class RepoWorkspace {
   // Bootstrap
   // -------------------------------------------------------------------------
 
-  private async bootstrap(force = false): Promise<RepoStatus> {
+  private async bootstrap(): Promise<RepoStatus> {
     try {
       if (!this.url) {
         this.setPhase("missing", REPO_URL_MISSING_DETAIL);
@@ -2048,7 +2080,7 @@ export class RepoWorkspace {
         this.setPhase("ready", null);
         return this.snapshot();
       }
-      await this.startPreview(config, force);
+      await this.startPreview(config);
       this.setPhase("ready", null);
     } catch (error) {
       this.setPhase("error", detailOf(error, this.pat), this.bringUpErrorKind(error));
@@ -2176,31 +2208,21 @@ export class RepoWorkspace {
   // Preview server
   // -------------------------------------------------------------------------
 
-  private async startPreview(config: ColoDesignConfig, force = false): Promise<void> {
+  private async startPreview(config: ColoDesignConfig): Promise<void> {
     await this.killPreview();
     this.setPhase("starting", null);
     const { command, port } = config.preview;
     await this.requirePnpmIfReferenced(command);
 
-    // The commonest failure on a developer's machine, and the one the planner
-    // has no way to diagnose: something else already owns the declared port.
-    // A dev server that cannot bind usually exits 0, so without this the only
-    // report was "미리보기 서버가 종료되었습니다 (exit 0)" — true, useless, and
-    // it stays true through every retry. Left-over servers from a daemon that
-    // was killed rather than stopped are the usual culprit. A plain sync
-    // reports — the port may hold work the planner never saw. 다시 시작 is
-    // the planner's explicit answer to exactly this error, and the button's
-    // promise is that the holder dies.
+    // 활성 프로젝트가 선언한 포트의 주인은 활성 프로젝트다. 충돌의 보통 원인은
+    // 강제 종료된 데몬이 남긴 고아 서버고, 전환 때 이전 프로젝트의 잔여분은 이미
+    // 정리되므로 — 묻지 않고 점유자를 정리하고 이 자리에서 다시 띄운다. 명명된
+    // 실패는 정리가 실패했을 때만 남는다: 그때는 다시 시작도 소용이 없으니
+    // 직접 종료나 포트 변경이 다음 과제다. The kill is listener-only: a blanket
+    // port kill also hits the port's clients.
     if (await portAccepts(port)) {
-      if (!force)
-        throw new Error(
-          `포트 ${port}를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
-            `다시 시작을 누르면 그 프로그램을 종료하고 미리보기를 다시 켭니다.`,
-        );
-      // A failed kill points back at the manual escape hatches; pointing at
-      // the button again would promise a kill that just failed.
       if (!(await this.killPortHolder(port)))
-        throw new Error(
+        throw new PreviewPortBusyError(
           `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
             `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
             `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
@@ -2219,7 +2241,7 @@ export class RepoWorkspace {
         .pop();
       if (!line) return;
       lastLine = line;
-      this.setDetail(line);
+      this.setProgressLine(line);
     };
     child.stdout?.on("data", absorb);
     child.stderr?.on("data", absorb);
@@ -2239,7 +2261,14 @@ export class RepoWorkspace {
       );
     });
 
-    await this.waitReady(port);
+    try {
+      await this.waitReady(port);
+    } catch (error) {
+      // 늦게라도 뜰 예정이던 서버를 죽은 것으로 선고한 채 두면, 실제로는 살아
+      // 포트를 쥔 유령이 남는다 (실사 목격). 선고가 서면 서버도 내려야 한다.
+      await this.killPreview();
+      throw error;
+    }
   }
 
   private spawnOptions(): SpawnOptions {
@@ -2310,7 +2339,7 @@ export class RepoWorkspace {
    * exit status is not trusted — bind-ability is the verdict.
    */
   private async killPortHolder(port: number): Promise<boolean> {
-    this.setDetail(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
+    this.setProgressLine(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
     const windows = currentPlatform() === "win32";
     const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
     const stdout = await new Promise<string>((resolve, reject) =>
@@ -2435,7 +2464,7 @@ export class RepoWorkspace {
         .pop();
       if (line) {
         lastLine = line;
-        this.setDetail(line);
+        this.setProgressLine(line);
       }
     };
     const absorbStdout = (chunk: Buffer) => {
@@ -2494,6 +2523,7 @@ export class RepoWorkspace {
     // The refusal names the commands it blocks (the card shows the evidence),
     // so the sentence CONTINUES past the constant — prefix, not equality.
     if (message.startsWith(COMMANDS_UNAPPROVED_DETAIL)) return "commands";
+    if (error instanceof PreviewPortBusyError) return "port-busy";
     if (error instanceof BootstrapPrepareError || message === BOOTSTRAP_FAILED_DETAIL) {
       return "bootstrap";
     }
@@ -2551,6 +2581,18 @@ export class RepoWorkspace {
     // Progress lines arrive faster than any UI can use them.
     if (Date.now() - this.lastEmit < DETAIL_THROTTLE_MS) return;
     this.emit();
+  }
+
+  /**
+   * 진행 줄은 판정이 아니다: workspace 가 `error` 에 앉아 있는 동안에는 마지막
+   * 판정이 그 자리를 지킨다. 실사에서 발견한 결함: 포트 충돌로 실패한 뒤 뒤에서
+   * 돈 git fetch 의 진행 출력(`* branch main -> FETCH_HEAD`)이 에러 문구를
+   * 덮어 써, 기획자는 실패 이유로 git 의 말을 읽게 됐다. 진행은 phase 가
+   * 다시 움직이는 순간부터 흐른다.
+   */
+  private setProgressLine(line: string): void {
+    if (this.phase === "error") return;
+    this.setDetail(line);
   }
 
   private emit(): void {
@@ -2907,3 +2949,12 @@ export function validateBootstrapConfig(input: BootstrapValidationInput): string
 
 /** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */
 class BootstrapPrepareError extends Error {}
+
+/**
+ * 선언된 미리보기 포트를 정리하려 했지만 정리하지 못했을 때의 오류 — errorKind
+ * "port-busy". 평범한 충돌은 활성 프로젝트가 이겨 자동 정리되지만, 이 오류는
+ * 그 정리가 실패한 경우다(권한 부재 · 즉시 되살아남). 카드의 다음 과제는
+ * 직접 종료나 colo-design.json 의 포트 변경이다. 종류는 던지는 자리가 밝힌다
+ * (PLAN D41).
+ */
+class PreviewPortBusyError extends Error {}

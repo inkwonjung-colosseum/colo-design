@@ -26,6 +26,14 @@ import type { PreviewTools } from "./preview-tools.js";
 import { type SpecFile, saveSpecFiles } from "./repo.js";
 import { MessageTranslator } from "./translate.js";
 
+/**
+ * 중지가 답을 기다리는 유예. 이 안에 CLI 가 control 요청에 답하지 못하면 질의를
+ * 강제로 끊는다 — 영원히 매달린 중지 버튼은 버튼이 아니다 (실사 결함).
+ */
+const INTERRUPT_GRACE_MS = 5_000;
+/** close 의 짧은 관대함 — 여러 wedged 세션을 닫아도 종료가 늦어지지 않게. */
+const CLOSE_GRACE_MS = 1_000;
+
 /** An async iterable the daemon can push user turns into while the query runs. */
 class PushQueue implements AsyncIterable<SDKUserMessage> {
   private buffer: SDKUserMessage[] = [];
@@ -231,6 +239,14 @@ export class Session {
    * crash. Cleared on the next `send()`, so a later real error still surfaces.
    */
   private interrupting = false;
+  /**
+   * 중지가 유예 안에 답을 받지 못해 질의를 강제로 끊었다 — 그 CLI 는 죽었고,
+   * 이 세션은 더는 보낸 말을 삼키지 않는다. consume 루프가 대화를 닫는
+   * 표식으로 읽는다.
+   */
+  private aborted = false;
+  /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
+  private readonly abort = new AbortController();
 
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
@@ -258,6 +274,9 @@ export class Session {
       options: {
         cwd: this.cwd,
         pathToClaudeCodeExecutable: options.claudeExecutable,
+        // 중지의 이행 보장: 유예 안에 interrupt 가 답하지 못하는 질의는 이
+        // 컨트롤러로 끊는다 — SDK 가 자원을 정리하고 CLI 를 내린다.
+        abortController: this.abort,
         // `default` is pinned on purpose: current CLI builds auto-approve
         // safe Bash under acceptEdits/auto without ever consulting
         // `canUseTool`, which would let a session run shell commands with no
@@ -321,6 +340,26 @@ export class Session {
             this.permissionMode = event.permissionMode;
           }
           if (event.kind === "turn.end") {
+            // 결함① 의 두 번째 길: interrupt() 를 부른 뒤 SDK 가 abort 예외를
+            // 던지는 대신 에러 결과로 그 턴을 끝내면, 이 turn.end 는 그대로면
+            // "잠시 문제가 있었습니다" 카드로 내려간다 — 계획자가 누른 중지를
+            // 고장으로 읽히게 하는 것. 성공으로 끝난 턴은 건드리지 않고,
+            // 플래그는 어떤 턴 끝이든 소비해 다음 진짜 오류를 가리지 않는다.
+            if (event.isError && this.interrupting) {
+              this.interrupting = false;
+              this.events.onEvent(this.id, {
+                kind: "turn.end",
+                subtype: "interrupted",
+                isError: false,
+                costUsd: event.costUsd,
+                numTurns: event.numTurns,
+                durationMs: event.durationMs,
+                resultText: null,
+              });
+              this.setState(this.pending.size > 0 ? this.state : "idle");
+              continue;
+            }
+            if (event.isError) this.interrupting = false;
             this.setState(this.pending.size > 0 ? this.state : "idle");
           }
           this.events.onEvent(this.id, event);
@@ -344,7 +383,10 @@ export class Session {
           durationMs: null,
           resultText: null,
         });
-        this.setState("idle");
+        // A forced abort killed the CLI: record the 멈춤 above, then take the
+        // thread down — the next open resumes it with a fresh CLI instead of
+        // feeding sends to a dead query.
+        this.setState(this.aborted ? "closed" : "idle");
       } else if (!this.closed) {
         this.events.onEvent(this.id, {
           kind: "notice",
@@ -562,6 +604,8 @@ export class Session {
     files?: SpecFile[],
   ): void {
     if (this.closed) throw new Error("session is closed");
+    if (this.aborted)
+      throw new Error("중지 요청에 답하지 않은 CLI를 끊었습니다 — 대화를 다시 열면 이어갑니다");
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
     this.previewTools?.resetTurnQuota();
     // A fresh send is a fresh failure domain: an old interrupt's flag must
@@ -632,14 +676,49 @@ export class Session {
     // Mark first: the abort the CLI throws back in the consume loop is THIS
     // planner action, and the catch must turn it into `멈추었습니다` (결함①).
     this.interrupting = true;
-    try {
-      await this.run.interrupt();
-    } catch {
+    const outcome = await this.settleInterrupt();
+    if (outcome === "refused") {
       // Interrupt itself refused — nothing is being aborted, so the flag
       // would only mask the next genuine error.
       this.interrupting = false;
+      this.setState("idle");
+      return;
+    }
+    if (outcome === "timeout") {
+      // The CLI never answered the control request — 실사 결함: 네트워크 대기에
+      // 걸린 턴에서 중지를 두 번 눌러도 아무 일도 일어나지 않았다. 유예가 지났으면
+      // 질의를 끊는다. consume 루프가 같은 깃발을 읽어 멈춤으로 기록하고,
+      // `aborted` 로 대화를 닫는다 — 죽은 CLI 가 이후의 보낸 말을 조용히 삼키지
+      // 않게.
+      this.aborted = true;
+      this.abort.abort();
     }
     this.setState("idle");
+  }
+
+  /**
+   * A control request's grace. The CLI answers an interrupt quickly when it
+   * can, and a refusal is still an answer (it is alive enough to talk —
+   * nothing to abort). `timeout` is the wedged case: the caller must abort
+   * the query outright. `close` passes a shorter courtesy: a shutdown with
+   * several wedged sessions must not pay the full grace for each of them.
+   */
+  private settleInterrupt(
+    graceMs = INTERRUPT_GRACE_MS,
+  ): Promise<"answered" | "refused" | "timeout"> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), graceMs);
+      this.run.interrupt().then(
+        () => {
+          clearTimeout(timer);
+          resolve("answered");
+        },
+        () => {
+          clearTimeout(timer);
+          resolve("refused");
+        },
+      );
+    });
   }
   async contextUsage(): Promise<ContextUsage | null> {
     try {
@@ -745,11 +824,9 @@ export class Session {
     }
     this.pending.clear();
     this.queue.close();
-    try {
-      await this.run.interrupt();
-    } catch {
-      // Already finished; nothing to interrupt.
-    }
+    // The same grace as 중지, only shorter: a shutdown must not hang on a
+    // wedged CLI either — and it must not pay the full grace per session.
+    if ((await this.settleInterrupt(CLOSE_GRACE_MS)) === "timeout") this.abort.abort();
     await this.consumer.catch(() => undefined);
     this.setState("closed");
   }

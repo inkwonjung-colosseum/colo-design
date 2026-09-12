@@ -12,6 +12,9 @@ import type { Attachment } from "./Composer";
 import { type Daemon, EMPTY_SESSION, type SessionView } from "./daemon-client";
 import { type ChatSettings, loadModelCatalog, saveModelCatalog } from "./settings";
 
+/** Reload 후 마지막으로 연 대화를 프로젝트별로 되돌려 놓는 곳 (실사 결함). */
+const LAST_THREAD_KEY = "colo-design.last-thread";
+
 /** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
   /** Stored + live threads of this workspace, newest first. */
@@ -34,6 +37,14 @@ export interface Sessions {
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   error: string | null;
   setError: (error: string | null) => void;
+  /**
+   * 실사 결함: 목록이 아는 대화를 열었는데 기록이 비어 돌아왔다 — 조용한
+   * 실패였다(빈 대화가 진짜 빈 대화로 읽혔다). 이 깃발이 그 실패를 카드로
+   * 보이게 하고, `reopen` 이 다시 시도다.
+   */
+  historyFailed: boolean;
+  /** The history-failure card's 다시 시도 — the same open, asked again. */
+  reopen: () => void;
   /** Open a thread from the list, hydrating its stored transcript. */
   open: (summary: SessionSummary) => Promise<void>;
   /**
@@ -121,12 +132,16 @@ export function useSessions(
   const { ready, chat, onChatChange } = opts;
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
   const [list, setList] = useState<SessionSummary[]>([]);
+  /** `open` reads the list without inheriting its closure — a mirror ref. */
+  const listRef = useRef(list);
+  listRef.current = list;
   const [activeId, setActiveId] = useState<string | null>(null);
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [selector, setSelector] = useState<SessionSelectors | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
   const [catalog, setCatalog] = useState<SessionModelInfo[]>(loadModelCatalog);
   const [error, setError] = useState<string | null>(null);
+  const [historyFailed, setHistoryFailed] = useState(false);
 
   const active = activeId ? (sessions[activeId] ?? EMPTY_SESSION) : null;
   const running = active?.state === "running";
@@ -188,6 +203,35 @@ export function useSessions(
     setActiveId(null);
     if (connection === "open") void refresh();
   }, [activeSlug, connection, refresh]);
+
+  // Reload 가 대화를 잃게 두지 않는다 (실사 결함): 프로젝트별 마지막으로 연
+  // 스레드를 기억해 목록이 도착하면 되돌아간다. 없거나 사라진 스레드면 그대로
+  // null — "앱을 열었다고 스레드를 만들지 않는다"는 원칙은 그대로다.
+  useEffect(() => {
+    if (connection !== "open" || !ready || activeId !== null || list.length === 0) return;
+    try {
+      const saved = (
+        JSON.parse(localStorage.getItem(LAST_THREAD_KEY) ?? "{}") as Record<string, string>
+      )[activeSlug ?? ""];
+      if (saved && list.some((s) => s.sessionId === saved)) setActiveId(saved);
+    } catch {
+      // 손상된 기록은 버려진 것과 같다 — 조용히 건너뛴다.
+    }
+  }, [connection, ready, activeId, activeSlug, list]);
+
+  useEffect(() => {
+    if (!activeId || !activeSlug) return;
+    try {
+      const map = JSON.parse(localStorage.getItem(LAST_THREAD_KEY) ?? "{}") as Record<
+        string,
+        string
+      >;
+      map[activeSlug] = activeId;
+      localStorage.setItem(LAST_THREAD_KEY, JSON.stringify(map));
+    } catch {
+      // 저장 실패는 치명적이지 않다 — 다음 전환에 다시 쓴다.
+    }
+  }, [activeId, activeSlug]);
 
   // Nothing is created just because the app opened: an empty thread the
   // planner never typed into is noise in their list. The first message (or
@@ -285,11 +329,33 @@ export function useSessions(
     ensureSession(summary.sessionId);
     setActiveId(summary.sessionId);
     if (summary.live) markLive(summary.sessionId);
+    setHistoryFailed(false);
     try {
-      hydrate(summary.sessionId, await api.history(summary.sessionId));
+      const events = await api.history(summary.sessionId);
+      hydrate(summary.sessionId, events);
+      // 실사 결함: 기록이 디스크에 있는 대화가 열렸는데 돌아온 것이 없으면,
+      // 실패는 커녕 아무 말이 없었다 — 빈 대화가 진짜 빈 대화로 읽혔다. 목록이
+      // 아는 대화(기록이 있어 목록에 오른 것)의 빈 하이드레이션은 보이는 실패다.
+      if (
+        events.length === 0 &&
+        listRef.current.some((row) => row.sessionId === summary.sessionId)
+      ) {
+        setHistoryFailed(true);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  /**
+   * The history-failure card's 다시 시도: the same open, through the list's own
+   * copy of the summary — the daemon answering this time fills the tape.
+   */
+  const reopen = () => {
+    const summary = activeId
+      ? listRef.current.find((row) => row.sessionId === activeId)
+      : undefined;
+    if (summary) void open(summary);
   };
 
   /**
@@ -507,6 +573,8 @@ export function useSessions(
     usage,
     error,
     setError,
+    historyFailed,
+    reopen,
     create,
     selector: selector ?? {
       model: chat.model,

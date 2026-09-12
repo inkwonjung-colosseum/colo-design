@@ -38,6 +38,7 @@ import {
   markReplyConfirmed,
   saveHandledReview,
 } from "./settings";
+import { objectParticle } from "./tool-names";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -285,10 +286,10 @@ export function ScreenPanel({
   }, [api]);
 
   /**
-   * The stopped screen's 다시 시작: the only caller that may kill. The busy
-   * port's error names a program holding it; this restart force-frees the
-   * declared port and boots the preview over it. Mounting keeps the plain
-   * sync — readying a repo must never kill a program the planner never named.
+   * The stopped screen's 다시 시작. Every bring-up reclaims the declared port
+   * for the active project now, so a restart is a plain sync — the button
+   * remains because the planner's next move after a stopped screen should
+   * not depend on knowing that.
    */
   const restart = useCallback(() => {
     setSyncError(null);
@@ -740,9 +741,8 @@ export function ScreenPanel({
     };
     if (plannerMoved.current || !followClaude) {
       const title = screens.find((screen) => screen.route === opened.route)?.title ?? opened.route;
-      setFollowToast(
-        `Claude 는 ${title}${opened.state ? ` · ${stateLabel(opened.state)}` : ""} 를 고쳤습니다.`,
-      );
+      const subject = `${title}${opened.state ? ` · ${stateLabel(opened.state)}` : ""}`;
+      setFollowToast(`Claude가 ${subject}${objectParticle(subject)} 고쳤습니다.`);
       setFollowTarget(ask);
     } else {
       setTarget(ask);
@@ -812,7 +812,18 @@ export function ScreenPanel({
   // (a failed clone or pull, say) is answered by the retry panel, because the
   // preview may still be alive and worth looking at.
   const previewStopped = phase === "error" && errorKind === "preview";
-  const showProgress = !repo || (!ready && !previewStopped);
+  // 준비 실패가 worktree 까지 삼킨 경우만 컬럼 전체가 진행 판이 된다. 클론이
+  // 살아 있는 실패(포트 · 설치 · 충돌 · 승인)는 배송 바(칩 · 저장 · 넘기기)를
+  // 지킬 자격이 있다 — 저장과 넘기기는 worktree 와 원격의 일이지 미리보기의
+  // 일이 아니므로 (실사 결함: 포트 충돌 카드가 "변경 4" 채 넘길 길을 가렸다).
+  // 재시도 판은 그 경우 미리보기 자리만 대신한다.
+  const bringUpFailedWithoutWorktree =
+    !repo ||
+    phase === "missing" ||
+    phase === "cloning" ||
+    (phase === "error" && (errorKind === "clone" || errorKind === "unknown"));
+  const showProgress = bringUpFailedWithoutWorktree;
+  const bringUpCardInPreview = phase === "error" && !previewStopped && !showProgress;
   // Progress renders inside this column, not over the whole planner: the rail
   // and the chat stay usable while the clone runs.
   if (showProgress) {
@@ -824,6 +835,7 @@ export function ScreenPanel({
           errorKind={errorKind}
           note={askNote}
           onRetry={sync}
+          onForceRestart={restart}
           onAskClaude={() => void askClaude()}
           onApproveCommands={
             activeSlug
@@ -894,6 +906,7 @@ export function ScreenPanel({
           <span
             className={`screenpanel__status screenpanel__status--${delivery.chip.tone}`}
             title={delivery.chip.title}
+            role="status"
           >
             {delivery.chip.label}
           </span>
@@ -909,7 +922,9 @@ export function ScreenPanel({
         <span className="screenpanel__spacer" />
         {/* 동작은 상수다 (PLAN D82): 저장 · 넘기기는 언제나 그려지고 조건으로만
             잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만.
-            강조는 그 순간 가장 자연스러운 하나에만. */}
+            강조는 그 순간 가장 자연스러운 하나에만. 잠김은 aria-disabled: 진짜
+            disabled 는 hover 도 포커스도 막아 title 이 도달할 길이 없었다
+            (실사 결함 — "마우스를 올려 이유를 보세요" 가 거짓말이었다). */}
         {delivery && (
           <span className="screenpanel__actions">
             <button
@@ -919,9 +934,11 @@ export function ScreenPanel({
                   ? "primary screenpanel__action"
                   : "ghost screenpanel__action"
               }
-              disabled={!delivery.actions.save.enabled}
+              aria-disabled={!delivery.actions.save.enabled}
               title={delivery.actions.save.reason}
-              onClick={() => setSaveOpen(true)}
+              onClick={() => {
+                if (delivery.actions.save.enabled) setSaveOpen(true);
+              }}
             >
               저장
             </button>
@@ -932,9 +949,11 @@ export function ScreenPanel({
                   ? "primary screenpanel__action"
                   : "ghost screenpanel__action"
               }
-              disabled={!delivery.actions.handoff.enabled}
+              aria-disabled={!delivery.actions.handoff.enabled}
               title={delivery.actions.handoff.reason}
-              onClick={() => setHandoffOpen(true)}
+              onClick={() => {
+                if (delivery.actions.handoff.enabled) setHandoffOpen(true);
+              }}
             >
               개발자에게 넘기기
             </button>
@@ -943,7 +962,7 @@ export function ScreenPanel({
                 type="button"
                 className="ghost screenpanel__action"
                 data-testid="check-state"
-                title="개발자의 판정과 코멘트를 GitHub 에서 다시 읽어 옵니다"
+                title="개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
                 onClick={checkHandoffState}
               >
                 상태 확인
@@ -1111,28 +1130,49 @@ export function ScreenPanel({
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
       <div className={`previewcol__stage${settleFlash ? " previewcol__stage--settled" : ""}`}>
-        <PreviewHost
-          url={repo?.previewUrl ?? null}
-          stopped={previewStopped}
-          stoppedDetail={repo?.detail ?? null}
-          onRestart={restart}
-          onComments={(envelope) => void forwardComments(envelope)}
-          onFixError={forwardError}
-          screens={screens}
-          target={target}
-          onNavigate={handleNavigate}
-          onScreens={setScreens}
-          onLocation={setLocation}
-          location={location}
-          commentsOn={commentsOn}
-          onCommentsMode={setCommentsOn}
-          unresolvedComments={unresolvedComments}
-          onLook={(note) => void sendLook(note)}
-          lookBusy={lookBusy}
-          pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
-          pipLarge={pipLarge}
-          onPipToggle={() => setPipLarge((open) => !open)}
-        />
+        {bringUpCardInPreview ? (
+          <ProgressPanel
+            phase={phase ?? "missing"}
+            detail={repo?.detail ?? null}
+            errorKind={errorKind}
+            note={askNote}
+            onRetry={sync}
+            onForceRestart={restart}
+            onAskClaude={() => void askClaude()}
+            onApproveCommands={
+              activeSlug
+                ? () =>
+                    void api
+                      .projectUpdate(activeSlug, { approveCommands: true })
+                      .catch(() => undefined)
+                : undefined
+            }
+            onOpenSettings={onOpenSettings}
+          />
+        ) : (
+          <PreviewHost
+            url={repo?.previewUrl ?? null}
+            stopped={previewStopped}
+            stoppedDetail={repo?.detail ?? null}
+            onRestart={restart}
+            onComments={(envelope) => void forwardComments(envelope)}
+            onFixError={forwardError}
+            screens={screens}
+            target={target}
+            onNavigate={handleNavigate}
+            onScreens={setScreens}
+            onLocation={setLocation}
+            location={location}
+            commentsOn={commentsOn}
+            onCommentsMode={setCommentsOn}
+            unresolvedComments={unresolvedComments}
+            onLook={(note) => void sendLook(note)}
+            lookBusy={lookBusy}
+            pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
+            pipLarge={pipLarge}
+            onPipToggle={() => setPipLarge((open) => !open)}
+          />
+        )}
         {showPip && pipFrame && pipLarge && (
           <div className="pip pip--large">
             <button
@@ -1149,7 +1189,12 @@ export function ScreenPanel({
         )}
       </div>
       {saveOpen && (
-        <DiffPanel daemon={daemon} sessionId={sessionId} onClose={() => setSaveOpen(false)} />
+        <DiffPanel
+          daemon={daemon}
+          sessionId={sessionId}
+          branch={repo?.branch ?? null}
+          onClose={() => setSaveOpen(false)}
+        />
       )}
       {handoffOpen && (
         <HandoffPanel
@@ -1222,7 +1267,7 @@ export function ScreenPanel({
                 {devReviews === null
                   ? "개발자의 말을 읽어 오는 중…"
                   : unhandledDevReviews.length > 0
-                    ? "읽지 않아도 되는 버튼은 둘 — 고치기 는 Claude 에게, 답하기 는 개발자에게."
+                    ? "읽지 않아도 되는 버튼은 둘 — 고치기는 Claude에게, 답하기는 개발자에게."
                     : "모두 처리한 목록입니다."}
               </p>
               {devReviews !== null && unhandledDevReviews.length > 0 && (
@@ -1235,7 +1280,7 @@ export function ScreenPanel({
                     setDevPanelOpen(false);
                   }}
                 >
-                  모두 Claude 에게 ({unhandledDevReviews.length})
+                  모두 Claude에게 ({unhandledDevReviews.length})
                 </button>
               )}
               <ul className="diff__files">
@@ -1259,7 +1304,7 @@ export function ScreenPanel({
                               type="button"
                               className="primary"
                               disabled={devBusy}
-                              title="이 코멘트를 Claude 에게 넘겨 화면을 고칩니다"
+                              title="이 코멘트를 Claude에게 넘겨 화면을 고칩니다"
                               onClick={() => {
                                 handleReview([review]);
                                 setDevPanelOpen(false);
@@ -1323,10 +1368,10 @@ export function ScreenPanel({
       )}
       {replyConfirmFor !== null && (
         <ConfirmDialog
-          title="GitHub 에 답하기"
+          title="GitHub에 답하기"
           body={
             <>
-              이 도구가 <strong>기획자의 이름</strong>으로 GitHub 에 답을 남깁니다.
+              이 도구가 <strong>기획자의 이름</strong>으로 GitHub에 답을 남깁니다.
             </>
           }
           hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."

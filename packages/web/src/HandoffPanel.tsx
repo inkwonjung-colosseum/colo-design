@@ -52,11 +52,13 @@ export function HandoffPanel({
 
   useEffect(() => {
     const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      // A handoff in flight keeps its progress line: ESC only leaves when the
+      // daemon is done telling the story.
+      if (event.key === "Escape" && !running) onClose();
     };
     document.addEventListener("keydown", onKeydown);
     return () => document.removeEventListener("keydown", onKeydown);
-  }, [onClose]);
+  }, [onClose, running]);
 
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
   const panelRef = useRef<HTMLDivElement>(null);
@@ -123,6 +125,7 @@ export function HandoffPanel({
               className={
                 handedOff ? "notice notice--info" : failed ? "notice notice--error" : "diff__stage"
               }
+              role={handedOff || failed ? "status" : undefined}
             >
               <span className="notice__text">{stageLine(diffStatus)}</span>
               {running && <span className="spinner" />}
@@ -131,8 +134,8 @@ export function HandoffPanel({
           {failed && diffStatus?.gate === "pr" && (
             <div className="notice notice--error" data-testid="pr-failure">
               <span className="notice__text">
-                넘기지 못했습니다 — Claude 가 고칠 수 없는 문제입니다. 설정에서 토큰과 레포 주소를
-                확인해 주세요.
+                레포 검사와 저장까지는 끝냈고, GitHub 풀 리퀘스트 만들기에서 멈췄습니다. 설정에서
+                토큰과 레포 주소를 확인한 뒤 다시 넘길 수 있습니다.
               </span>
               <button type="button" className="ghost" onClick={onOpenSettings}>
                 설정 열기
@@ -140,9 +143,12 @@ export function HandoffPanel({
             </div>
           )}
           {failed && diffStatus?.gate !== "pr" && diffStatus?.detail && (
-            <pre className="diff__fail">
-              <code>{diffStatus.detail}</code>
-            </pre>
+            <details className="settings__fold">
+              <summary>자세히</summary>
+              <pre className="diff__fail">
+                <code>{diffStatus.detail}</code>
+              </pre>
+            </details>
           )}
 
           {error && (

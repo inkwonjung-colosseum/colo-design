@@ -445,7 +445,12 @@ function MachineTurn({
       break;
     case "brief":
       // D94: the connection-preparation brief reads as its own thing.
-      title = marker.purpose === "bootstrap" ? "연결 준비" : "이 기획서로 화면 만들기";
+      title =
+        marker.purpose === "bootstrap"
+          ? "연결 준비"
+          : marker.purpose === "refresh"
+            ? "최신 변경 받아오기"
+            : "이 기획서로 화면 만들기";
       lead = marker.title;
       break;
     case "precheck":
@@ -889,7 +894,7 @@ export function PermissionCard({
   const suggestion = request.suggestions[0];
 
   return (
-    <div className="card card--permission">
+    <div className="card card--permission" role="alert">
       <div className="card__title">
         <span className="card__badge">
           <ShieldIcon />

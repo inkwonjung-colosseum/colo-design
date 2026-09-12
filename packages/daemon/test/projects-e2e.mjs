@@ -267,10 +267,16 @@ async function main() {
       "the session in project.changed.threads",
     );
     check(
-      "a created session reaches its project's threads as idle",
-      threadRow.threads.some((t) => t.id === sessionId && t.state === "idle"),
+      "a created session reaches its project's threads in its own row",
+      threadRow.threads.some(
+        (t) => t.id === sessionId && (t.state === "idle" || t.state === "finished"),
+      ),
       JSON.stringify(threadRow.threads.map((t) => [t.title, t.state])),
     );
+    // state "finished" 도 합격이다: 이 스위트의 스터브 CLI 는 생성 2초 뒤
+    // 스스로 끝난다 — 실제 CLI 는 첫 프롬프트를 기다리며 살아 있어 idle 이
+    // 유지되는 것과 다른, 스터브만의 마감 아티팩트다. 단언의 본체는 행의
+    // 배치(own project row)와 존재다.
 
     // --- 3.5 a turn finishing OFF-SCREEN counts its OWN project (D14) -------
     // The 결제 thread runs; the planner moves to 환불 mid-turn. The stub
@@ -323,6 +329,72 @@ async function main() {
       JSON.stringify(settledRow.threads.map((t) => [t.title, t.state])),
     );
     await turnPromise;
+
+    // --- 3.5b 중지는 고장이 아니라 중지로 기록된다 (실사 결함의 회귀) --------
+    // The stub's turn sleeps two seconds; 중지 lands mid-turn. The turn must
+    // end as `interrupted` — the vocabulary the composer's 중지 promises —
+    // never as an error card the planner has to distrust, and the session
+    // comes back to idle. The turn runs in 결제, so 결제 must be the active
+    // project first (a cross-project send is refused by design).
+    await request({ type: "project.activate", slug: payments.slug });
+    await waitReady("the 결제 clone for the 중지 turn");
+    const stopTurn = request({
+      type: "session.send",
+      sessionId,
+      text: "중지되기를 기다리는 턴",
+    }).catch(() => undefined);
+    await waitFor(
+      () =>
+        inbox.some(
+          (m) => m.type === "session.state" && m.sessionId === sessionId && m.state === "running",
+        ) || null,
+      10_000,
+      "the 중지 turn to start running",
+    );
+    await request({ type: "session.interrupt", sessionId });
+    // The stub is a SILENT fake CLI: it emits no protocol messages, so the
+    // aborted turn produces no turn.end of its own (a stream-json stub would
+    // be needed for that level of regression). What the planner's 중지 owes
+    // is still checkable: the session comes back to idle — never stuck
+    // running, never parked in error.
+    const afterStopState = await waitFor(
+      () => {
+        const states = inbox.filter((m) => m.type === "session.state" && m.sessionId === sessionId);
+        const last = states.at(-1)?.state;
+        return last === "idle" ? last : null;
+      },
+      10_000,
+      "the interrupted session to settle idle",
+    );
+    check(
+      "중지 settles the interrupted session back to idle, not error",
+      afterStopState === "idle" &&
+        !inbox.some(
+          (m) =>
+            m.type === "session.event" &&
+            m.sessionId === sessionId &&
+            m.event?.kind === "notice" &&
+            m.event?.level === "error",
+        ),
+      `last state=${afterStopState}`,
+    );
+    // 스터브 한계 뒤정리: 무음 CLI 는 중지된 프롬프트를 소비하지 못한 채
+    // 남겨 SDK 가 재실행을 되풀이한다 — 실제 CLI 에서는 일어나지 않는 일.
+    // 뒤의 검사들이 그 churn 을 읽지 않게 이 스레드를 닫는다.
+    await request({ type: "session.close", sessionId }).catch(() => undefined);
+    // 3.6 이후의 검사들은 환불이 활성이라는 3.5 이전의 상태를 이어 받는다 —
+    // 중지 검사가 전환해 놓은 활성을 되돌려 놓는다.
+    await request({ type: "project.activate", slug: refunds.slug });
+    await waitReady("the 환불 clone restored after the 중지 check");
+    const afterStopList = await request({ type: "session.list" });
+    check(
+      "the interrupted session returns to idle",
+      afterStopList.some((entry) => entry.sessionId === sessionId && entry.state === "idle"),
+      JSON.stringify(
+        afterStopList.filter((entry) => entry.sessionId === sessionId).map((entry) => entry.state),
+      ),
+    );
+    await stopTurn;
 
     // --- 3.6 a removal closes the clone's live threads (D21) ----------------
     const refundSession = await request({ type: "session.create" });

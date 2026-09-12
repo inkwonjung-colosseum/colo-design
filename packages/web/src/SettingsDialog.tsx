@@ -1,10 +1,5 @@
 import type { DaemonStatus, EffortLevel, PermissionMode } from "@colo-design/protocol";
-import {
-  checkForUpdate,
-  RELEASES_FEED_URL,
-  RELEASES_REPO,
-  type UpdateCheckResult,
-} from "@colo-design/protocol";
+import { RELEASES_REPO, type UpdateCheckResult } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { resetCoachMarks } from "./CoachMark";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -264,6 +259,14 @@ export function SettingsDialog({
   const [updateStarted, setUpdateStarted] = useState<string | null>(null);
 
   /**
+   * 업데이트 문단은 데스크톱 앱 안에서만 산다 — 브라우저엔 '이 앱의 버전'이
+   * 없어 비교가 성립하지 않는다. 다리의 platform 이 설치 문단을 고른다: mac
+   * 은 자가 교체 단추, win 은 릴리스 페이지로 안내한다.
+   */
+  const desktop = window.coloDesignDesktop ?? null;
+  const canSelfUpdate = desktop?.platform === "darwin";
+
+  /**
    * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.colo-design in the OS
    * file manager; the browser path has no bridge and shows the path instead.
    * The preload script is the boundary that decides the shape, so reading it
@@ -274,40 +277,19 @@ export function SettingsDialog({
       ? window.coloDesignDesktop.openHome
       : undefined;
   /**
-   * 수동 업데이트 확인(DESIGN §7): 데스크톱 다리가 있으면 그것으로,
-   * 브라우저에서는 같은 공유 로직을 window.fetch 로 돌린다 — 로직은
-   * @colo-design/protocol 의 update 모듈 하나다.
+   * 수동 업데이트 확인(DESIGN §7): 데스크톱 다리로만 묻는다 — 확인은
+   * 메인 프로세스가 피드에서 읽고, 렌더러는 결과를 보여주기만 한다.
    */
   const checkUpdate = async () => {
     setCheckingUpdate(true);
     setUpdateError(null);
     try {
-      const bridge = window.coloDesignDesktop;
-      if (bridge) {
-        const result = await bridge.updateCheck();
-        if ("error" in result && result.error) throw new Error(String(result.error));
-        setUpdate(result);
-      } else {
-        setUpdate(
-          await checkForUpdate("0.1.0", RELEASES_FEED_URL, async (feedUrl) => {
-            const response = await fetch(feedUrl);
-            return {
-              ok: response.ok,
-              status: response.status,
-              json: await response.json(),
-            };
-          }),
-        );
-      }
+      const result = await desktop?.updateCheck();
+      if (!result) return;
+      if ("error" in result && result.error) throw new Error(String(result.error));
+      setUpdate(result);
     } catch (e) {
-      const raw = e instanceof Error ? e.message : String(e);
-      // The browser's network failure lands here verbatim; a planner cannot
-      // act on "Failed to fetch" but can on what to check.
-      setUpdateError(
-        /failed to fetch|networkerror|load failed/i.test(raw)
-          ? "업데이트 서버에 연결하지 못했습니다 — 인터넷 연결을 확인하고 다시 시도해 주세요."
-          : raw,
-      );
+      setUpdateError(e instanceof Error ? e.message : String(e));
     } finally {
       setCheckingUpdate(false);
     }
@@ -316,8 +298,7 @@ export function SettingsDialog({
   /**
    * mac 자가 교체(DESIGN §7): 새 버전이 확인되면 내려받고 sha256 검증한 뒤
    * 앱이 스스로 종료·교체·재실행한다. 무엇을 내려받을지는 메인이 피드에서
-   * 다시 읽는다 — 렌더러는 요청만 보낸다. 브라우저는 다리가 없어 릴리스
-   * 페이지로 안내한다 — 설치는 데스크톱의 특권.
+   * 다시 읽는다 — 렌더러는 요청만 보낸다. 이 단추는 mac 에서만 보인다.
    */
   const installUpdate = async () => {
     if (!update?.url || !update.sha256) return;
@@ -445,7 +426,7 @@ export function SettingsDialog({
             />
             <Choice<PermissionMode>
               label="확인 방식"
-              hint="Claude가 화면을 바꾸기 전에 물어볼지 정합니다"
+              hint="Claude가 화면을 바꾸기 전에 물어볼지 정합니다 — 화면 파일 편집은 확인 방식과 관계없이 자동으로 적용되고, 명령 실행만 물어봅니다"
               value={settings.chat.permissionMode}
               options={SETTINGS_MODES.map((mode) => ({
                 value: mode,
@@ -493,7 +474,7 @@ export function SettingsDialog({
               <span className="setting__hint">코치 마크 셋을 다시 한 번씩 보여 줍니다</span>
             </div>
             <Switch
-              label="턴이 끝나면 Claude 가 본 화면으로"
+              label="턴이 끝나면 Claude가 본 화면으로"
               hint="고친 화면을 직접 찾지 않도록, Claude가 마지막으로 연 화면을 보여 줍니다"
               checked={settings.chat.followClaude}
               onChange={(followClaude) => onChatChange({ followClaude })}
@@ -593,10 +574,12 @@ export function SettingsDialog({
                   ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
                   : "~/.colo-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."}
               </span>
-              <button type="button" disabled={checkingUpdate} onClick={() => void checkUpdate()}>
-                {checkingUpdate ? "확인 중…" : "업데이트 확인"}
-              </button>
-              {update && (
+              {desktop && (
+                <button type="button" disabled={checkingUpdate} onClick={() => void checkUpdate()}>
+                  {checkingUpdate ? "확인 중…" : "업데이트 확인"}
+                </button>
+              )}
+              {desktop && update && (
                 <>
                   <span className="setting__hint">
                     {update.updateAvailable
@@ -604,25 +587,24 @@ export function SettingsDialog({
                       : `최신 버전입니다 (${update.version})`}
                   </span>
                   {update.updateAvailable &&
-                    (window.coloDesignDesktop ? (
-                      update.url &&
-                      update.sha256 && (
-                        <button
-                          type="button"
-                          disabled={installingUpdate}
-                          onClick={() => void installUpdate()}
-                        >
-                          {installingUpdate ? "준비 중…" : "업데이트 설치"}
-                        </button>
-                      )
+                    update.url &&
+                    update.sha256 &&
+                    (canSelfUpdate ? (
+                      <button
+                        type="button"
+                        disabled={installingUpdate}
+                        onClick={() => void installUpdate()}
+                      >
+                        {installingUpdate ? "준비 중…" : "업데이트 설치"}
+                      </button>
                     ) : (
                       <a
                         className="setting__hint"
-                        href={`https://github.com/${RELEASES_REPO}/releases`}
+                        href={`https://github.com/${RELEASES_REPO}/releases/latest`}
                         target="_blank"
                         rel="noreferrer"
                       >
-                        릴리스 페이지에서 내려받기
+                        릴리스 페이지에서 설치 파일 내려받기
                       </a>
                     ))}
                 </>

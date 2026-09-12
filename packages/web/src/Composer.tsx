@@ -152,6 +152,7 @@ export function Composer({
   plan,
   onRefreshUsage,
   running,
+  stopping = false,
   queued = 0,
   seed,
   sendKey,
@@ -176,6 +177,11 @@ export function Composer({
       whenever the last turn happened to land. */
   onRefreshUsage?: () => void;
   running: boolean;
+  /**
+   * 중지를 누른 뒤 턴이 실제로 멈추기까지의 짧은 창 — 클릭이 무시된 것처럼
+   * 보이지 않게 버튼이 "정리 중…" 이 된다 (실사 결함).
+   */
+  stopping?: boolean;
   /**
    * 다음 턴에 밀려 있는 건수 (PLAN D86). Running 중 보낸 send 가 세어 있고,
    * 턴이 끝나면 0 — the one-line `다음 턴에 보냅니다` above the field.
@@ -644,7 +650,7 @@ export function Composer({
       key: "mode" as const,
       label: MODE_LABEL[selector.permissionMode],
       prefix: "확인",
-      title: "확인 방식",
+      title: "확인 방식 — 화면 파일 편집은 자동으로 적용되고, 명령 실행만 물어봅니다",
       disabled: false,
       // A mode already set to 전부 맡기기 still shows as this chip's label,
       // so the planner can read what they are on and step back down.
@@ -672,6 +678,12 @@ export function Composer({
         void readAttachments(e.dataTransfer.files);
       }}
     >
+      {/* The spend chip floats just off the input card's top-left corner —
+          out of the toolbar below, where it crowded the send controls. A
+          reading about the account, parked where the eye already sits. */}
+      <div className="composer__usage">
+        <UsageChip plan={plan} usage={usage} onRefresh={onRefreshUsage} />
+      </div>
       {suggestions.length > 0 && (
         <div className="autocomplete" role="listbox" ref={palette}>
           {suggestions.map((suggestion, index) => (
@@ -762,6 +774,7 @@ export function Composer({
         ref={area}
         value={editor.text}
         placeholder={placeholder}
+        aria-label="메시지"
         disabled={disabled}
         rows={1}
         onChange={(e) => {
@@ -818,16 +831,17 @@ export function Composer({
           />
         ))}
         <div className="toolbar__end">
-          <UsageChip plan={plan} usage={usage} onRefresh={onRefreshUsage} />
           {running ? (
             <button
               type="button"
               className="toolbar__stop"
-              aria-label="중지"
-              title="중지"
+              aria-label={stopping ? "정리 중…" : "중지"}
+              title={stopping ? "정리 중…" : "중지"}
+              disabled={stopping}
               onClick={onInterrupt}
             >
               <StopIcon size={11} />
+              {stopping ? "정리 중…" : null}
             </button>
           ) : (
             <button
