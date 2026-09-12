@@ -435,27 +435,34 @@ export function useSessions(
    * Composer chips. The local state flips immediately (a chip that waits a
    * round trip feels broken); the next settle re-reads the daemon's truth.
    * With no session open the pick is still real — it is what the next session
-   * will be created with.
+   * will be created with. A refused pick rolls the chip back to what the
+   * session actually runs — the strip must not advertise an adoption that
+   * never happened (the chat-level pick stays: the next session still wants
+   * it).
    */
   const switchModel = async (model: string | null) => {
+    const prev = selector?.model ?? null;
     onChatChange({ model });
-    setSelector((prev) => (prev ? { ...prev, model } : prev));
+    setSelector((current) => (current ? { ...current, model } : current));
     if (!activeId) return;
     try {
       await api.setModel(activeId, model);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setSelector((current) => (current ? { ...current, model: prev } : current));
     }
   };
 
   const switchEffort = async (effort: EffortLevel | null) => {
+    const prev = selector?.effort ?? null;
     onChatChange({ effort });
-    setSelector((prev) => (prev ? { ...prev, effort } : prev));
+    setSelector((current) => (current ? { ...current, effort } : current));
     if (!activeId) return;
     try {
       await api.setEffort(activeId, effort);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setSelector((current) => (current ? { ...current, effort: prev } : current));
     }
   };
 
@@ -482,13 +489,15 @@ export function useSessions(
   }, [activeId, chat, api]);
 
   const switchPermissionMode = async (permissionMode: PermissionMode) => {
+    const prev = selector?.permissionMode ?? "default";
     onChatChange({ permissionMode });
-    setSelector((prev) => (prev ? { ...prev, permissionMode } : prev));
+    setSelector((current) => (current ? { ...current, permissionMode } : current));
     if (!activeId) return;
     try {
       await api.setPermissionMode(activeId, permissionMode);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setSelector((current) => (current ? { ...current, permissionMode: prev } : current));
     }
   };
 

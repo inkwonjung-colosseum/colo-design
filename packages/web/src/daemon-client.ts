@@ -3,6 +3,7 @@ import { errorWords } from "./error-words";
 import type {
   AskQuestion,
   ChatEvent,
+  CommentItem as ProtocolCommentItem,
   ContextUsage,
   EffortLevel,
   PermissionMode,
@@ -19,7 +20,12 @@ import type {
   PermissionSuggestion,
   ProjectList,
   ProjectSummary,
+  RepoCheckpoint,
+  RepoCheckpoints,
+  RepoHistory,
+  RepoHistoryEntry,
   RepoStatus,
+  RepoSummary,
   ServerMessage,
   SessionCommand,
   SessionState,
@@ -281,50 +287,20 @@ const EMPTY_SESSION: SessionView = {
 };
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
-/** PLAN D51 — the 저장 review opens with this. `claude` lines were written
-    by the daemon's one-turn no-tool summary of the diff; `fallback` lines
-    were counted out of the file list when that turn failed or was too slow. */
-export interface DiffSummary {
-  lines: string[];
-  source: "claude" | "fallback";
-}
-
-/** PLAN D53 — one saved commit of the current cycle (`git log <base>..HEAD`). */
-export interface SaveHistoryEntry {
-  sha: string;
-  message: string;
-  at: number;
-  files: string[];
-}
-
-export interface SaveHistory {
-  base: string;
-  entries: SaveHistoryEntry[];
-}
-
-/** PLAN D52 — one worktree snapshot taken when a screen turn started. */
-export interface CheckpointEntry {
-  id: string;
-  sessionId: string;
-  turn: number;
-  at: number;
-}
-
-export interface CheckpointList {
-  entries: CheckpointEntry[];
-}
-
-/** PLAN D57 — one recorded comment of the connected repo (`comments.json`). */
-export interface CommentItem {
-  id: string;
-  screen: string;
-  state: string;
-  text: string;
-  elementText: string;
-  /** ISO 8601, when the daemon recorded the batch. */
-  at: string;
-  resolved: boolean;
-}
+/** The repo reply shapes are the protocol's, imported — this file once
+ * re-declared them by hand and the copies drifted: `at` was a number here
+ * while the daemon sends ISO 8601 strings, so the save history read
+ * "Invalid Date". The web keeps its own names; the shape lives in one place.
+ *   DiffSummary       ← RepoSummary      (PLAN D51 — the 저장 review's lines)
+ *   SaveHistoryEntry  ← RepoHistoryEntry (PLAN D53 — one saved commit)
+ *   CheckpointEntry   ← RepoCheckpoint   (PLAN D52 — one turn-start snapshot)
+ *   CommentItem       ← CommentItem      (PLAN D57 — one recorded comment) */
+export type DiffSummary = RepoSummary;
+export type SaveHistoryEntry = RepoHistoryEntry;
+export type SaveHistory = RepoHistory;
+export type CheckpointEntry = RepoCheckpoint;
+export type CheckpointList = RepoCheckpoints;
+export type CommentItem = ProtocolCommentItem;
 
 export interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
@@ -385,14 +361,16 @@ export interface DaemonApi {
     name: string;
     repoUrl: string | null;
     baseBranch?: string;
+    bootstrap?: boolean;
+    approveCommands?: boolean;
   }) => Promise<ProjectSummary>;
-  /** Switch which project everything else means. */
-  projectActivate: (slug: string) => Promise<ProjectList>;
   /** Rename, or re-point the repo url/base branch. */
   projectUpdate: (
     slug: string,
-    changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
+    changes: { name?: string; repoUrl?: string | null; baseBranch?: string; approveCommands?: boolean },
   ) => Promise<ProjectList>;
+  /** Switch the active project; the outgoing preview stops first. */
+  projectActivate: (slug: string) => Promise<ProjectList>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
   repoStatus: () => Promise<RepoStatus>;
@@ -464,7 +442,7 @@ export interface DaemonApi {
       elementText: string;
       element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
     }>;
-  }) => Promise<{ recorded: number }>;
+  }) => Promise<{ recorded: number; ids: string[] }>;
   /** Every recorded comment of the connected repo, resolved ones in. */
   listComments: () => Promise<{ items: CommentItem[] }>;
   resolveComment: (id: string, resolved: boolean) => Promise<{ ok: true }>;
@@ -596,6 +574,21 @@ async function notifyBackgroundThread(
   }
 }
 
+/** The last check's verdict, kept across reloads: without it a planner who
+ *  already passed every gate reloads into the wizard while the fresh check
+ *  spawns real commands. The check still runs on every connect and
+ *  overwrites this — a gate that broke since is caught a beat later. */
+const ONBOARDING_CACHE_KEY = "cds-design.onboarding";
+
+function readOnboardingCache(): OnboardingStep[] | null {
+  try {
+    const raw = localStorage.getItem(ONBOARDING_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as OnboardingStep[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useDaemon(url: string | null): Daemon {
   const socket = useRef<WebSocket | null>(null);
   const pendingCalls = useRef(new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>());
@@ -610,7 +603,7 @@ export function useDaemon(url: string | null): Daemon {
   const [pending, setPending] = useState<Pending[]>([]);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   const [diffStatus, setDiffStatus] = useState<DiffStatus | null>(null);
-  const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(readOnboardingCache);
   /**
    * The thread the planner is looking at: the last one they opened or spoke
    * into. A DIFFERENT thread settling is what a notification is for (D50);
@@ -888,6 +881,7 @@ export function useDaemon(url: string | null): Daemon {
         repoUrl: string | null;
         baseBranch?: string;
         bootstrap?: boolean;
+        approveCommands?: boolean;
       }) =>
         call<ProjectSummary>(
           {
@@ -896,6 +890,9 @@ export function useDaemon(url: string | null): Daemon {
             repoUrl: input.repoUrl,
             ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
             ...(input.bootstrap ? { bootstrap: true } : {}),
+            // Absent reads as not approved daemon-side — the gate's default
+            // is "nobody has vouched for these commands yet".
+            ...(input.approveCommands ? { approveCommands: true } : {}),
           },
           900_000,
         ),
@@ -905,7 +902,12 @@ export function useDaemon(url: string | null): Daemon {
         call<ProjectList>({ type: "project.activate", slug }, 600_000).then(keepProjects),
       projectUpdate: (
         slug: string,
-        changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
+        changes: {
+          name?: string;
+          repoUrl?: string | null;
+          baseBranch?: string;
+          approveCommands?: boolean;
+        },
       ) =>
         call<ProjectList>(
           {
@@ -914,6 +916,9 @@ export function useDaemon(url: string | null): Daemon {
             ...(changes.name !== undefined ? { name: changes.name } : {}),
             ...(changes.repoUrl !== undefined ? { repoUrl: changes.repoUrl } : {}),
             ...(changes.baseBranch !== undefined ? { baseBranch: changes.baseBranch } : {}),
+            ...(changes.approveCommands !== undefined
+              ? { approveCommands: changes.approveCommands }
+              : {}),
           },
           // A moved url re-clones.
           600_000,
@@ -1003,7 +1008,7 @@ export function useDaemon(url: string | null): Daemon {
           element?: { component: string; path: string; rect: { x: number; y: number; width: number; height: number } };
         }>;
       }) =>
-        call<{ recorded: number }>({
+        call<{ recorded: number; ids: string[] }>({
           type: "comments.record",
           screen: input.screen,
           state: input.state,
@@ -1021,6 +1026,12 @@ export function useDaemon(url: string | null): Daemon {
         ),
       onboardingCheck: () =>
         call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
+          try {
+            localStorage.setItem(ONBOARDING_CACHE_KEY, JSON.stringify(steps));
+          } catch {
+            // Storage can be unavailable (private mode); the session works
+            // without the cache — it only costs the reload a wizard beat.
+          }
           setOnboarding(steps);
           return steps;
         }),

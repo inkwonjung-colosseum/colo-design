@@ -125,7 +125,13 @@ async function main() {
 
   try {
     const briefs = [];
-    await request({ type: "project.create", name: "연결 준비", repoUrl: fixture.remote, bootstrap: true });
+    await request({
+      type: "project.create",
+      name: "연결 준비",
+      repoUrl: fixture.remote,
+      bootstrap: true,
+      approveCommands: true,
+    });
     const status = await waitFor(
       async () => {
         const current = await request({ type: "repo.status" });

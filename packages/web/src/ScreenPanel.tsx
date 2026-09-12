@@ -3,14 +3,12 @@ import type {
   CdsDesignCommentsEnvelope,
   CdsDesignScreen,
   DiffFile,
-  RepoPhase,
   RepoStatus,
   SessionState,
-  TurnMarker,
 } from "@cds-design/protocol";
 import { markTurn } from "@cds-design/protocol";
 import type { CommentItem, Daemon } from "./daemon-client";
-import { daemonLine, stateLabel } from "./format";
+import { stateLabel } from "./format";
 import { PreviewHost, type PreviewError, type PreviewLocation, type PreviewTarget } from "./PreviewHost";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { deriveDelivery } from "./delivery";
@@ -20,13 +18,15 @@ import { CoachMark } from "./CoachMark";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { HandoffPanel } from "./HandoffPanel";
 import { handoffDraft } from "./handoff-draft";
+import { ProgressPanel, errorKindOf } from "./RepoProgress";
 import {
-  CheckIcon,
-  CloseIcon,
-  CopyIcon,
-  RefreshIcon,
-  RestartIcon,
-} from "./icons";
+  commentToTurn,
+  commentsToTurn,
+  errorToTurn,
+  lookToTurn,
+  reviewToTurn,
+} from "./preview-turns";
+import { ChevronDownIcon, CloseIcon, RefreshIcon } from "./icons";
 import type { DeveloperReview } from "@cds-design/protocol";
 import {
   isReplyConfirmed,
@@ -35,167 +35,31 @@ import {
   saveHandledReview,
 } from "./settings";
 
-const PHASE_LABEL: Record<RepoPhase, string> = {
-  preparing: "Claude 가 레포를 살펴보고 연결을 준비하는 중",
-  missing: "연결 레포를 연결해 주세요",
-  cloning: "연결 레포를 내려받는 중",
-  pulling: "연결 레포의 최신 변경사항을 받아 오는 중",
-  installing: "의존성 설치 중 — 처음 한 번만, 1~2분 걸립니다",
-  starting: "미리보기 서버를 켜는 중",
-  ready: "준비 완료",
-  error: "준비하지 못했습니다",
-};
-/** The three steps a first clone walks through, in the order a planner waits. */
-const PROGRESS_RAIL: Array<{ id: string; label: string; phases: RepoPhase[] }> = [
-  { id: "download", label: "내려받기", phases: ["cloning", "pulling"] },
-  { id: "install", label: "설치", phases: ["installing"] },
-  { id: "preview", label: "미리보기", phases: ["starting"] },
-];
-
-interface Guidance {
-  title: string;
-  body: string;
-  /** A command the planner can paste into a terminal, if one would fix this. */
-  command?: string;
-}
-
 /**
- * Which failure this is. A dead preview server still leaves the screen worth
- * looking at, so it is answered inside the preview itself; everything else
- * takes over the 화면 column. The daemon NAMES the failure at the throw site
- * (`RepoStatus.errorKind`, PLAN D41) — the text sniffing this used to do broke
- * silently whenever a daemon message was reworded, so it only survives as a
- * fallback for a payload that predates the field.
+ * 확인해 주세요 지속화 (D78): attention ids per project, so a reload or a
+ * project round-trip during a turn cannot eat what still owes the planner a
+ * look. Same contract as the draft/composer keys — best effort, private mode
+ * keeps the in-memory set only.
  */
-type ErrorKind = "auth" | "pnpm" | "preview" | "unknown";
-
-function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
-  const kind = repo?.errorKind;
-  if (kind === "registry-auth") return "auth";
-  if (kind === "pnpm-missing") return "pnpm";
-  if (kind === "preview") return "preview";
-  if (!kind) {
-    const detail = repo?.detail ?? null;
-    if (detail?.includes("GitHub 패키지 인증")) return "auth";
-    if (detail?.includes("pnpm이 없습니다")) return "pnpm";
-    if (detail?.includes("미리보기")) return "preview";
+function loadAttention(slug: string | null): string[] {
+  if (!slug) return [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(`cds-design.attention.${slug}`) ?? "[]") as unknown;
+    return Array.isArray(raw) && raw.every((id) => typeof id === "string") ? (raw as string[]) : [];
+  } catch {
+    return [];
   }
-  return "unknown";
 }
 
-function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
-  if (kind === "auth") {
-    return {
-      title: "GitHub 패키지 인증이 필요합니다",
-      body: "연결 레포의 의존성을 사내 GitHub 패키지에서 받아옵니다. 설정의 개인 액세스 토큰(read:packages 권한)을 확인한 뒤 다시 시도해 주세요.",
-      command: "pnpm config set //npm.pkg.github.com/:_authToken <PAT>",
-    };
+function saveAttention(slug: string | null, ids: string[]): void {
+  if (!slug) return;
+  try {
+    localStorage.setItem(`cds-design.attention.${slug}`, JSON.stringify(ids));
+  } catch {
+    // 저장이 막혀도 이번 실행의 하이라이트는 메모리의 몫으로 끝난다.
   }
-  if (kind === "pnpm") {
-    return {
-      title: "pnpm이 설치되어 있지 않습니다",
-      body: "연결 레포의 설치·미리보기에 pnpm이 필요합니다. 터미널에 아래 명령을 실행한 뒤 다시 시도해 주세요.",
-      command: "corepack enable",
-    };
-  }
-  return {
-    title: "준비하지 못했습니다",
-    body: detail ?? "원인을 알 수 없습니다. 다시 시도해 주세요.",
-  };
 }
 
-function ProgressPanel({
-  phase,
-  detail,
-  errorKind,
-  onRetry,
-  onOpenSettings,
-}: {
-  phase: RepoPhase;
-  detail: string | null;
-  errorKind: ErrorKind;
-  onRetry: () => void;
-  onOpenSettings: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const failed = phase === "error";
-  const guidance = failed ? guidanceFor(errorKind, detail) : null;
-  const progressLine = daemonLine(detail);
-  const needsSetup = phase === "missing";
-  /** Where the wait sits on the rail; -1 for the setup and failure states. */
-  const railIndex = PROGRESS_RAIL.findIndex((entry) => entry.phases.includes(phase));
-
-  const copy = async (command: string) => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be blocked; the command is visible to retype anyway.
-    }
-  };
-
-  return (
-    <div className={failed ? "progress progress--error" : "progress"}>
-      <div className="progress__card">
-        <div className="progress__head">
-          {!failed && <span className="spinner" />}
-          <h2>{guidance ? guidance.title : PHASE_LABEL[phase]}</h2>
-        </div>
-        {!failed && railIndex >= 0 && (
-          <div className="progress__rail" aria-hidden="true">
-            {PROGRESS_RAIL.map((entry, index) => (
-              <span
-                key={entry.id}
-                className={`progress__step${
-                  index < railIndex ? " progress__step--done" : index === railIndex ? " progress__step--now" : ""
-                }`}
-              >
-                <span className="progress__dot">{index < railIndex ? "✓" : ""}</span>
-                {entry.label}
-              </span>
-            ))}
-          </div>
-        )}
-        <p className="progress__body">
-          {guidance
-            ? guidance.body
-            : needsSetup
-              ? "설정에서 연결 레포 주소와 개인 액세스 토큰을 입력해 주세요."
-              : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
-        </p>
-        {guidance?.command && (
-          <pre className="progress__cmd">
-            <code>{guidance.command}</code>
-            <button type="button" className="ghost" onClick={() => void copy(guidance.command!)}>
-              {copied ? (
-                <>
-                  <CheckIcon size={11} /> 복사됨
-                </>
-              ) : (
-                <>
-                  <CopyIcon size={12} /> 복사
-                </>
-              )}
-            </button>
-          </pre>
-        )}
-        {!failed && progressLine && <div className="progress__detail">{progressLine}</div>}
-        {failed && (
-          <button type="button" className="primary" onClick={onRetry}>
-            <RestartIcon />
-            다시 시도
-          </button>
-        )}
-        {!failed && needsSetup && (
-          <button type="button" className="primary" onClick={onOpenSettings}>
-            설정 열기
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The workspace's right column: the connected repo clone rendered by its own
@@ -278,13 +142,22 @@ export function ScreenPanel({
   /**
    * 확인해 주세요 (D78): the ids of recorded pins a finished turn carried.
    * The overlay draws them orange with the bubble open; 해결 retires each
-   * one. Computed when the carrying turn settles, from what the batch sent.
+   * one. Matched by the ids the daemon handed back at record time — same
+   * words on two pins stay two pins, and a reworded row never lights the
+   * wrong one. The set lives in localStorage per project: a reload or a
+   * project round-trip must not eat what still owes the planner a look.
    */
-  const [attention, setAttention] = useState<string[]>([]);
+  const [attention, setAttention] = useState<string[]>(() => loadAttention(activeSlug));
   /** What the last pin batch sent — turned into `attention` at turn end. */
-  const sentPins = useRef<{ screen: string; state: string; texts: string[] } | null>(null);
+  const sentPins = useRef<{ screen: string; state: string; ids: string[] } | null>(null);
   /** Whether the carrying turn actually ran (a stale session settles at once). */
   const pinsTurnRan = useRef(false);
+  // Switching projects switches the store's scope — the outgoing project's
+  // set keeps waiting for its planner (nothing is cleared), the incoming
+  // one re-reads its own.
+  useEffect(() => {
+    setAttention(loadAttention(activeSlug));
+  }, [activeSlug]);
   /**
    * What the repo said it can render (PLAN D7). Empty until its overlay
    * speaks, which is why the toolbar's picker is absent rather than empty: an
@@ -408,6 +281,63 @@ export function ScreenPanel({
   }, [api]);
 
   /**
+   * 충돌 오류 카드의 Claude 요청 (D96). 준비가 충돌로 멈춘 상태는 다시 시도로는
+   * 같은 자리를 도는 것이므로 해결의 문은 대화다: 열려 있는 대화에는
+   * repoRefresh 가 데몬의 충돌 브리프를 실어 보내고(최신화와 같은 회선),
+   * 없으면 새 대화를 만들어 요청을 보낸다 — 새 대화가 태어날 때의 준비 pull 이
+   * 충돌을 첫 과제로 넣는다. 정리 턴이 끝나면 준비를 한 번 다시 시도한다 —
+   * 게이트 뒤의 자동 재시도(D90 ⓐ)와 같은 형태로, 중지로 끊긴 턴 뒤에는
+   * 재시도가 없다.
+   */
+  const [askNote, setAskNote] = useState<string | null>(null);
+  const askArmed = useRef(false);
+  const askTurnRan = useRef(false);
+  const askClaude = async () => {
+    const live = sessionId ? (daemon.sessions[sessionId]?.live ?? false) : false;
+    setAskNote("Claude에게 정리를 요청했습니다 — 대화에서 정리합니다.");
+    if (live) {
+      void api.repoRefresh(sessionId).catch((e: Error) => setSyncError(e.message));
+    } else {
+      await onComments(
+        markTurn(
+          { kind: "gate", step: "최신 변경 받아오기" },
+          `준비가 최신화 충돌로 멈춰 있습니다. 충돌을 정리해 저장 전 상태로 돌려 놓고, 미리보기가 다시 뜨도록 준비를 마쳐 주세요.\n\n${repo?.detail ?? ""}`,
+        ),
+        "최신화 충돌 정리",
+      );
+    }
+    askArmed.current = true;
+  };
+  useEffect(() => {
+    if (phase === "ready") {
+      askArmed.current = false;
+      setAskNote(null);
+      return;
+    }
+    if (turnState === "running") {
+      askTurnRan.current = true;
+      return;
+    }
+    if (!askArmed.current || !askTurnRan.current) return;
+    askTurnRan.current = false;
+    askArmed.current = false;
+    const blocks = sessionId ? (daemon.sessions[sessionId]?.blocks ?? []) : [];
+    const last = blocks[blocks.length - 1];
+    if (last?.type === "turn" && last.subtype === "interrupted") {
+      setAskNote(null);
+      return;
+    }
+    setAskNote("정리가 끝났습니다 — 준비를 다시 시도합니다…");
+    void api
+      .repoSync()
+      .catch((e: Error) => setSyncError(e.message))
+      .finally(() => setAskNote(null));
+    // The gate retry's own shape: refs and the daemon's session views are
+    // read live; the settles this answers are what the deps carry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState, phase, sessionId]);
+
+  /**
    * 레포 최신화: the planner's pull of the developer's side, pressed from
    * this bar. Unsaved changes are the daemon's to carry; a conflict is
    * Claude's, briefed into the open thread like a failing gate.
@@ -506,7 +436,9 @@ export function ScreenPanel({
    * 확인해 주세요 (D78): the turn carrying this batch ran and settled — the
    * pins it left on the screen now owe the planner a look. They stay
    * highlighted until 해결 (or until the same pins resolve elsewhere); the
-   * recorded pins themselves never clear (D78 — 지우는 효과는 없다).
+   * recorded pins themselves never clear (D78 — 지우는 효과는 없다). The
+   * batch's ids came back from the record call, so resolution here is by id
+   * — two pins with the same words stay two pins.
    */
   useEffect(() => {
     if (turnState === "running") {
@@ -518,21 +450,16 @@ export function ScreenPanel({
     const sent = sentPins.current;
     sentPins.current = null;
     if (!sent) return;
-    setAttention((prev) => {
-      const ids = new Set(prev);
-      for (const item of commentItems ?? []) {
-        if (
-          item.screen === sent.screen &&
-          item.state === sent.state &&
-          sent.texts.includes(item.text) &&
-          !item.resolved
-        ) {
-          ids.add(item.id);
-        }
-      }
-      return [...ids];
-    });
-  }, [turnState, commentItems]);
+    const ids = new Set(attention);
+    for (const item of commentItems ?? []) {
+      if (sent.ids.includes(item.id) && !item.resolved) ids.add(item.id);
+    }
+    setAttention([...ids]);
+    saveAttention(activeSlug, [...ids]);
+    // attention: re-running this effect after the state lands is a no-op —
+    // pinsTurnRan already flipped back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState, commentItems, attention, activeSlug]);
   /**
    * Claude 시점 보기(PLAN D63): the desktop bridge streams the offscreen
    * Claude window as 8fps JPEG frames. A plain browser has no bridge and
@@ -548,9 +475,6 @@ export function ScreenPanel({
     if (typeof subscribe !== "function") return;
     subscribe((jpeg: string) => setPipFrame(jpeg));
   }, []);
-  useEffect(() => {
-    if (turnState !== "running") setPipLarge(false);
-  }, [turnState]);
   /**
    * A comment batch from the preview overlay: recorded with WHERE the pin
    * sat (`element`, D78) and forwarded as one structured Korean turn — the
@@ -574,6 +498,7 @@ export function ScreenPanel({
     // twice never duplicates, and the popover's list outlives the pins. A
     // failed record never blocks the planner's turn; the list just reads
     // stale until the next one.
+    let sentIds: string[] | null = null;
     await api
       .recordComments({
         screen: envelope.screen,
@@ -588,15 +513,17 @@ export function ScreenPanel({
           },
         })),
       })
-      .then(() => refreshComments())
+      .then((reply) => {
+        sentIds = reply.ids;
+        return refreshComments();
+      })
       .catch(() => undefined);
-    // D78: the pins this batch carries become 확인해 주세요 when the turn
-    // settles — matched back to ids by screen·state·text.
-    sentPins.current = {
-      screen: envelope.screen,
-      state: envelope.state,
-      texts: envelope.items.map((item) => item.comment.trim()),
-    };
+    // D78: the ids the daemon just wrote become 확인해 주세요 when the turn
+    // settles — matched by id, so same-worded pins stay two pins and a
+    // reworded row never lights the wrong one.
+    sentPins.current = sentIds
+      ? { screen: envelope.screen, state: envelope.state, ids: sentIds }
+      : null;
     // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
     // after the screen the pins came from is the honest one-line answer to
     // "where did this tab come from".
@@ -606,7 +533,10 @@ export function ScreenPanel({
   /** The popover's 해결 toggle: one daemon write, then the list re-reads. */
   const resolveComment = (id: string, resolved: boolean) => {
     setResolvingId(id);
-    if (resolved) setAttention((prev) => prev.filter((entry) => entry !== id));
+    if (resolved) {
+      setAttention((prev) => prev.filter((entry) => entry !== id));
+      saveAttention(activeSlug, attention.filter((entry) => entry !== id));
+    }
     api
       .resolveComment(id, resolved)
       .then(() => refreshComments())
@@ -860,7 +790,14 @@ export function ScreenPanel({
           phase={phase ?? "missing"}
           detail={repo?.detail ?? null}
           errorKind={errorKind}
+          note={askNote}
           onRetry={sync}
+          onAskClaude={() => void askClaude()}
+          onApproveCommands={
+            activeSlug
+              ? () => void api.projectUpdate(activeSlug, { approveCommands: true }).catch(() => undefined)
+              : undefined
+          }
           onOpenSettings={onOpenSettings}
         />
       </div>
@@ -985,23 +922,27 @@ export function ScreenPanel({
         <span className="screenpanel__spacer" />
         <button
           type="button"
-          className="ghost"
+          className="ghost screenpanel__refresh"
           disabled={refreshing || phase !== "ready"}
           title="개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
           onClick={refresh}
         >
           <RefreshIcon />
-          {refreshing ? "받아 오는 중…" : "최신화"}
+          <span className="screenpanel__refreshlabel">
+            {refreshing ? "받아 오는 중…" : "최신화"}
+          </span>
         </button>
         <span className="screenpanel__more">
           <button
             type="button"
-            className="ghost"
+            className="ghost screenpanel__morebtn"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            title="넘기기 전 점검 · 저장 기록 · 변경 버리기 · 코멘트 목록"
             onClick={() => setMenuOpen((open) => !open)}
           >
-            더 보기 ▾
+            <span className="screenpanel__morelabel">더 보기</span>
+            <ChevronDownIcon />
           </button>
           {menuOpen && (
             <>
@@ -1327,120 +1268,3 @@ export function ScreenPanel({
   );
 }
 
-/**
- * 고치기 의 턴 (PLAN D88): the bundled developer comments, as Claude should
- * read them. The marker keeps one author and one path for the card; the body
- * carries every comment's words.
- */
-function reviewToTurn(reviews: DeveloperReview[]): string {
-  const first = reviews[0];
-  const marker: TurnMarker = {
-    kind: "review",
-    pr: first?.pr ?? 0,
-    author: first?.author ?? "",
-    ...(first?.path ? { path: first.path } : {}),
-  };
-  const lines = [
-    `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
-    "",
-    ...reviews.map((review, index) => {
-      const at = review.path ? `${review.path}${review.line ? `:${review.line}` : ""}` : "";
-      return `${index + 1}. ${review.author}${at ? ` (${at})` : ""}: ${review.body}`;
-    }),
-  ];
-  return markTurn(marker, lines.join("\n"));
-}
-
-/**
- * The structured turn: readable Korean first, machine shape in a json fence,
- * and a marker so the planner's own chat shows what they asked for rather than
- * the CSS paths Claude needs (PLAN D9).
- *
- * `screenTitle` is what the repo called the screen; the envelope only carries
- * its route-shaped id, and a card is the wrong place to meet one.
- */
-function commentsToTurn(envelope: CdsDesignCommentsEnvelope, screenTitle: string): string {
-  const marker: TurnMarker = {
-    kind: "comments",
-    screen: screenTitle,
-    state: stateLabel(envelope.state),
-    items: envelope.items.map((item) => ({
-      // The element's own text is what the planner clicked and recognises;
-      // its component name is the fallback nobody should normally read.
-      label: item.element.text || item.element.component,
-      comment: item.comment,
-    })),
-  };
-  const lines = [
-    `화면 수정 요청 ${envelope.items.length}건 — ${envelope.screen} (${envelope.state} 상태)`,
-    "미리보기에서 핀으로 찍은 요소들입니다. 화면을 고친 뒤 다시 보여 주세요.",
-    "",
-  ];
-  envelope.items.forEach((item, index) => {
-    const target = item.element;
-    lines.push(
-      `${index + 1}. ${target.component}${target.text ? ` — "${target.text}"` : ""}`,
-      `   요청: ${item.comment}`,
-      `   위치: ${target.path} (rect ${target.rect.x},${target.rect.y} ${target.rect.width}×${target.rect.height})`,
-      "",
-    );
-  });
-  lines.push("```json", JSON.stringify(envelope, null, 2), "```");
-  return markTurn(marker, lines.join("\n"));
-}
-
-/**
- * One recorded comment, sent again (PLAN D57): the same comments marker the
- * pin batch uses, so the planner's chat shows it as the card it is. The
- * stored words and the element's text are what Claude gets — the pin's
- * position was never recorded, and a fabricated one in the json fence would
- * only misdirect the fix.
- */
-function commentToTurn(item: CommentItem, screenTitle: string): string {
-  const marker: TurnMarker = {
-    kind: "comments",
-    screen: screenTitle,
-    state: stateLabel(item.state),
-    items: [{ label: item.elementText || "화면의 요소", comment: item.text }],
-  };
-  return markTurn(
-    marker,
-    [
-      `코멘트를 다시 보냅니다 — ${screenTitle} (${item.state} 상태)`,
-      `${item.elementText ? `"${item.elementText}" 요소: ` : ""}${item.text}`,
-    ].join("\n"),
-  );
-}
-
-/**
- * The error banner's structured turn (PLAN D49): the marker names where it
- * happened, and the body is the message itself — the stack or build output
- * is what Claude fixes from; prose around it would only be in the way.
- * `count` marks the same message coming back after a fix turn (D89).
- */
-function errorToTurn(error: PreviewError, count = 1): string {
-  const marker: TurnMarker = {
-    kind: "error",
-    route: error.route,
-    state: error.state,
-    errorKind: error.kind,
-    ...(count > 1 ? { count } : {}),
-  };
-  return markTurn(marker, error.message);
-}
-
-/**
- * 화면 보여 주기 (D89): the screen Claude cannot be told about in words.
- * The body carries the planner's sentence and the console tail; the picture
- * rides as the turn's image, not in the text.
- */
-function lookToTurn(route: string, state: string, body: string, count = 1): string {
-  const marker: TurnMarker = {
-    kind: "error",
-    route,
-    state,
-    errorKind: "look",
-    ...(count > 1 ? { count } : {}),
-  };
-  return markTurn(marker, body);
-}

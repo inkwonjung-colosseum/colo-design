@@ -244,6 +244,7 @@ export function ChatColumn({
             onRetry={(text) => void sessions.submit(text, [])}
             onRewind={(turn, text) => void sessions.rewindAnswer(turn, text)}
             onResendEdit={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
+            onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
           />

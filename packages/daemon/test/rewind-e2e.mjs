@@ -113,7 +113,12 @@ async function main() {
   };
 
   try {
-    await request({ type: "project.create", name: "되감기", repoUrl: fixture.remote });
+    await request({
+      type: "project.create",
+      name: "되감기",
+      repoUrl: fixture.remote,
+      approveCommands: true,
+    });
     const ready = await waitFor(
       async () => {
         const status = await request({ type: "repo.status" });

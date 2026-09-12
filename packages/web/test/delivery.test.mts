@@ -13,9 +13,16 @@ const at = (patch: Partial<DeliveryInput>) => deriveDelivery({ ...base, ...patch
 const pr = (state: "open" | "changes_requested" | "merged", number = 12) =>
   ({ number, url: "", title: "", state, branch: "cds-design/1" }) as DeliveryInput["handoff"];
 
-test("phase !== ready 은 null — ProgressPanel 이 열을 갖는다", () => {
+test("phase 가 없거나 진행 중이면 null — ProgressPanel 이 열을 갖는다", () => {
   assert.equal(at({ phase: "installing" }), null);
   assert.equal(at({ phase: null }), null);
+});
+
+test("phase error 도 칩을 그린다 — 미리보기는 죽어도 워크트리는 살아 있다", () => {
+  const d = at({ phase: "error", pendingChanges: 3 });
+  assert.equal(d?.state, "unsaved");
+  assert.equal(d?.chip.label, "저장 안 함 3건");
+  assert.equal(d?.actions.save.enabled, true, "a dead preview must not strand done work");
 });
 
 test("clean: 변경 0 · 브랜치 없음 · PR 없음 — 둘 다 잠기고 이유가 있다", () => {

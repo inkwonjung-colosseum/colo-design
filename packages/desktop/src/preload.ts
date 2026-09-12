@@ -21,8 +21,7 @@ function subscribe<T>(channel: string): (callback: (payload: T) => void) => Unsu
 
 contextBridge.exposeInMainWorld("cdsDesignDesktop", {
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
-  macSelfUpdate: (input: { url: string; sha256: string }) =>
-    ipcRenderer.invoke("desktop:mac-self-update", input),
+  macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
   openHome: () => ipcRenderer.invoke("desktop:open-home"),
   preview: {
     native: true as const,

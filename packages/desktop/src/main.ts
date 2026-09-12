@@ -21,7 +21,7 @@ import {
 } from "electron";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer } from "@cds-design/daemon/server";
-import { RELEASES_FEED_URL, checkForUpdate } from "@cds-design/protocol";
+import { RELEASES_FEED_URL, checkForUpdate, type UpdateCheckResult } from "@cds-design/protocol";
 import { CDS_DESIGN_DIR } from "@cds-design/daemon/environment";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { buildMenuTemplate } from "./menu.js";
@@ -116,6 +116,10 @@ class ElectronPreviewDriver implements PreviewDriver {
 
   async open(route: string, state: string | null): Promise<void> {
     const url = new URL(route, this.baseUrl);
+    // A declared screen must stay inside the preview server — an absolute
+    // route would carry this hidden window (and its debugger) to an origin
+    // the repo picked. PlannerPreviewView.open checks the same thing.
+    if (url.origin !== new URL(this.baseUrl).origin) return;
     if (state) url.searchParams.set("state", state);
     // 콘솔 기록은 화면 이동과 함께 리셋 — screen_console 의 기준점이다.
     this.consoleHistory.length = 0;
@@ -315,23 +319,9 @@ async function bootApp(): Promise<void> {
       }),
     ),
   );
-  // 새 창은 보던 곳을 OS 브라우저에 연다 (PLAN D85 ⓑ): 미리보기 origin 의
-  // window.open 은 shell.openExternal 로, 나머지는 deny — 빈 Electron 자식
-  // 창이 뜨고, 도구의 preload 를 물려받는 일은 없다.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    const origin = plannerPreview.getOrigin();
-    if (origin) {
-      try {
-        if (new URL(url).origin === new URL(origin).origin) {
-          void shell.openExternal(url);
-          return { action: "deny" };
-        }
-      } catch {
-        // a url that will not parse has no origin to match — denied below
-      }
-    }
-    return { action: "deny" };
-  });
+  // 새 창과 같은 창 네비게이션을 전부 가둔다 — guardNavigations 가 두 잠금을
+  // 든다. 채팅의 링크도 window.open 을 지나 OS 브라우저로 나간다.
+  guardNavigations(mainWindow, new URL(url).origin);
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
   const suiteHandle = globalThis as Record<string, unknown>;
@@ -362,6 +352,44 @@ function workAreaSize(): { width: number; height: number } {
   return { width, height };
 }
 
+/**
+ * 창의 네비게이션을 도구 안에 가둔다 (PLAN D85 ⓑ의 잠금 연장): window.open
+ * 계열은 http(s) 를 OS 브라우저로 열고 그 외는 막는다 — 빈 Electron 자식
+ * 창이 뜨고 도구의 preload 를 물려받는 일은 없다. 같은 창 네비게이션은
+ * 도구 origin(데몬) 안의 이동만 허용한다: preload 는 네비게이션을 살아
+ * 남으므로, 이 문이 없으면 채팅의 링크 하나가 창을 통째로 다른 origin 으로
+ * 데려갈 수 있다.
+ */
+function guardNavigations(window: BrowserWindow, toolOrigin: string): void {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const { protocol } = new URL(url);
+      if (protocol === "http:" || protocol === "https:") {
+        void shell.openExternal(url);
+      }
+    } catch {
+      // a url that will not parse has no protocol to allow
+    }
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, target) => {
+    try {
+      if (new URL(target).origin === toolOrigin) return;
+    } catch {
+      // unparseable targets fall through to the block below
+    }
+    event.preventDefault();
+    try {
+      const { protocol } = new URL(target);
+      if (protocol === "http:" || protocol === "https:") {
+        void shell.openExternal(target);
+      }
+    } catch {
+      // nothing worth handing to the browser either
+    }
+  });
+}
+
 function daemonUrl(server: DaemonServer, token: string): string {
   // The daemon listens on an ephemeral port; ask it where it ended up.
   const address = server.address();
@@ -370,6 +398,7 @@ function daemonUrl(server: DaemonServer, token: string): string {
 
 async function reopen(url: string): Promise<void> {
   mainWindow = new BrowserWindow({ ...workAreaSize(), autoHideMenuBar: true });
+  guardNavigations(mainWindow, new URL(url).origin);
   await mainWindow.loadURL(url);
 }
 
@@ -419,13 +448,25 @@ function registerDesktopBridge(): void {
     }
   });
 
-  ipcMain.handle("desktop:mac-self-update", async (_event, input: { url: string; sha256: string }) => {
+  ipcMain.handle("desktop:mac-self-update", async () => {
+    // 무엇을 내려받고 무엇으로 검증할지는 피드가 정한다 — 렌더러가 건넨
+    // url·sha256 은 받지 않는다. 이 다리는 침해된 렌더러가 앱을 제 zip 으로
+    // 바꾸는 통로가 되어서는 안 된다: 요청은 요청일 뿐, 출처는 피드다.
+    let feed: UpdateCheckResult;
+    try {
+      feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+    if (!feed.updateAvailable || !feed.url || !feed.sha256) {
+      return { error: "설치할 업데이트가 확인되지 않았습니다 — 업데이트 확인을 다시 눌러 주세요." };
+    }
     // 실제 교체는 패키징된 앱에서만 — 개발 실행에서는 계획만 돌려준다.
     if (!app.isPackaged) {
       return {
         planned: planSelfUpdate({
-          url: input.url,
-          sha256: input.sha256,
+          url: feed.url,
+          sha256: feed.sha256,
           downloadsDir: app.getPath("downloads"),
           version: "0",
         }),
@@ -437,21 +478,18 @@ function registerDesktopBridge(): void {
         error: "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
       };
     }
-    if (!input?.url || !input?.sha256) {
-      return { error: "업데이트 정보가 비어 있습니다 — 업데이트 확인을 다시 눌러 주세요." };
-    }
     // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
     // 어디에서 실행했든 그 자리를 바꾼다.
     const bundle = dirname(dirname(dirname(process.execPath)));
     const plan = planSelfUpdate({
-      url: input.url,
-      sha256: input.sha256,
+      url: feed.url,
+      sha256: feed.sha256,
       downloadsDir: app.getPath("downloads"),
       version: app.getVersion(),
       targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
     });
     try {
-      await downloadFile(input.url, plan.downloadPath);
+      await downloadFile(feed.url, plan.downloadPath);
       await verifyDownload(plan.downloadPath, plan.expectedSha256);
       const logPath = join(app.getPath("temp"), "cds-design-update.log");
       const scriptPath = join(app.getPath("temp"), `cds-design-update-${app.getVersion()}.sh`);

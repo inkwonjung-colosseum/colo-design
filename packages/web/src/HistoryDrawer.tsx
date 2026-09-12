@@ -111,7 +111,7 @@ export function HistoryDrawer({
                       {entry.message.split("\n")[0]}
                     </span>
                     <span className="diff__count">
-                      {timeAgo(entry.at)} · 파일 {entry.files.length}개
+                      {timeAgo(Date.parse(entry.at))} · 파일 {entry.files.length}개
                     </span>
                     <button
                       type="button"

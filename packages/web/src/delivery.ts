@@ -69,12 +69,13 @@ const NOTHING_TO_SAVE = "저장할 변경이 없습니다";
  * 어느 행에 서는지는 전부 기계적으로 정해진다 (PLAN D82 표). `unsaved` 가 PR
  * 상태보다 앞선다 — 칩은 하나고 "지금 눌러야 할 것"은 저장이기 때문이다; PR 은
  * 상태 확인 버튼의 존재와 칩의 title 로 남는다. `phase !== "ready"` 면 null —
- * 지금처럼 ProgressPanel 이 열을 갖는다.
+ * 지금처럼 ProgressPanel 이 열을 갖는다. 단 `error` 는 예외: 미리보기 서버가
+ * 죽어도 워크트리와 원격은 살아 있어 저장·넘기기가 열려 있으니(ScreenPanel
+ * 의 `workable`), 칩이 "화면 대기 중" 으로 워크트리의 진실을 지우면 안 된다.
  */
 export function deriveDelivery(input: DeliveryInput): Delivery | null {
   const { pendingChanges, branch, handoff, running, phase } = input;
-  if (phase !== "ready") return null;
-
+  if (phase !== "ready" && phase !== "error") return null;
   const unsaved = pendingChanges > 0;
   const saveLocked = unsaved && running;
 

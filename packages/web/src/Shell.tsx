@@ -127,6 +127,24 @@ export function Shell({
   const clampWidth = (value: number) =>
     Math.min(SIDEBAR_WIDTH_BOUNDS.max, Math.max(SIDEBAR_WIDTH_BOUNDS.min, Math.round(value)));
 
+  // The first status snapshot carries the registry: until it lands, an empty
+  // `projects` means "not yet known", and painting the picker from it showed
+  // a decision screen for one round trip on every reload. The brand holds
+  // the stage until the snapshot says what this machine actually has.
+  if (status === null) {
+    return (
+      <div className="planner planner--onboarding boot" aria-busy="true">
+        <img
+          className="onboarding__mark"
+          src="/colonova-icon.svg"
+          alt=""
+          width={36}
+          height={36}
+        />
+      </div>
+    );
+  }
+
   if (onboardingBlocked || onboardingOpen || (wizardNeeded && !wizardDismissed)) {
     return (
       <div className="planner planner--onboarding">

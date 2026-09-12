@@ -163,6 +163,7 @@ async function main() {
       type: "project.create",
       name: "회원 관리 개편",
       repoUrl: fixture.remote,
+      approveCommands: true,
     });
     check(
       "project.create returns the project it registered",

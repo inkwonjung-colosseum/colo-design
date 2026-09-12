@@ -10,7 +10,7 @@ import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { resetCoachMarks } from "./CoachMark";
-import { CloseIcon } from "./icons";
+import { CheckIcon, CloseIcon } from "./icons";
 import {
   EFFORT_HINT,
   EFFORT_LABEL,
@@ -33,7 +33,9 @@ import {
 const EFFORT_ORDER: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 const THEME_LABEL: Record<ThemeChoice, string> = {
-  system: "시스템 설정을 따름",
+  /* "설정을 따름" is the picker's one sentence above the grid, so the tile
+     can wear the short word — 9글자 라벨은 ✓ 와 함께 타일을 넘어갔다. */
+  system: "시스템",
   dark: "어둡게",
   light: "밝게",
   sepia: "세피아",
@@ -141,6 +143,81 @@ function Switch({
 }
 
 // ---------------------------------------------------------------------------
+// Theme gallery — 18 palettes chosen by their colour, not by their name.
+// ---------------------------------------------------------------------------
+
+/**
+ * One tile's miniature: the app's four bones — rail, head, body, accent
+ * button — drawn from the palette variables. The tile's wrapper carries
+ * `data-theme`, so the same markup paints itself in whichever palette the
+ * tile sells; nothing here knows a colour.
+ */
+function ThemeArt() {
+  return (
+    <span className="tg" aria-hidden="true">
+      <span className="tg__rail">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="tg__main">
+        <span className="tg__head" />
+        <span className="tg__line" />
+        <span className="tg__line tg__line--short" />
+        <span className="tg__btn" />
+      </span>
+    </span>
+  );
+}
+
+function ThemeGallery({
+  value,
+  onChange,
+}: {
+  value: ThemeChoice;
+  onChange: (theme: ThemeChoice) => void;
+}) {
+  return (
+    <div className="themegrid" role="radiogroup" aria-label="테마">
+      {THEMES.map((theme) => (
+        <button
+          key={theme}
+          type="button"
+          role="radio"
+          aria-checked={theme === value}
+          className="themegrid__tile"
+          data-testid={`theme-${theme}`}
+          onClick={() => onChange(theme)}
+        >
+          <span
+            className="themegrid__art"
+            {...(theme === "system" ? {} : { "data-theme": theme })}
+          >
+            {theme === "system" ? (
+              /* system 은 두 얼굴이 한 타일: 어두운 절과 밝은 절. */
+              <>
+                <span className="themegrid__half" data-theme="dark">
+                  <ThemeArt />
+                </span>
+                <span className="themegrid__half" data-theme="light">
+                  <ThemeArt />
+                </span>
+              </>
+            ) : (
+              <ThemeArt />
+            )}
+          </span>
+          <span className="themegrid__name">
+            {THEME_LABEL[theme]}
+            {theme === value && <CheckIcon size={11} />}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Dialog
 // ---------------------------------------------------------------------------
 
@@ -235,8 +312,9 @@ export function SettingsDialog({
 
   /**
    * mac 자가 교체(DESIGN §7): 새 버전이 확인되면 내려받고 sha256 검증한 뒤
-   * 앱이 스스로 종료·교체·재실행한다. 브라우저는 다리가 없어 릴리스 페이지로
-   * 안내한다 — 설치는 데스크톱의 특권.
+   * 앱이 스스로 종료·교체·재실행한다. 무엇을 내려받을지는 메인이 피드에서
+   * 다시 읽는다 — 렌더러는 요청만 보낸다. 브라우저는 다리가 없어 릴리스
+   * 페이지로 안내한다 — 설치는 데스크톱의 특권.
    */
   const installUpdate = async () => {
     if (!update?.url || !update.sha256) return;
@@ -244,10 +322,7 @@ export function SettingsDialog({
     setUpdateError(null);
     setUpdateStarted(null);
     try {
-      const result = await window.cdsDesignDesktop?.macSelfUpdate({
-        url: update.url,
-        sha256: update.sha256,
-      });
+      const result = await window.cdsDesignDesktop?.macSelfUpdate();
       if (result && typeof result === "object" && "error" in result && result.error) {
         throw new Error(String(result.error));
       }
@@ -302,7 +377,7 @@ export function SettingsDialog({
   return (
     <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
-        className="modal__panel"
+        className="modal__panel modal__panel--settings"
         role="dialog"
         aria-modal="true"
         aria-label="설정"
@@ -319,16 +394,13 @@ export function SettingsDialog({
         <div className="modal__body">
           <section className="settings__group">
             <h3 className="settings__groupTitle">화면</h3>
-            <Choice<ThemeChoice>
-              label="테마"
-              value={settings.theme}
-              options={THEMES.map((theme) => ({
-                value: theme,
-                label: THEME_LABEL[theme],
-                ...(theme === "system" ? { hint: SYSTEM_HINT } : {}),
-              }))}
-              onChange={(theme) => onChange({ theme })}
-            />
+            <div className="setting setting--wide">
+              <span className="setting__text">
+                <span className="setting__label">테마</span>
+                <span className="setting__hint">{SYSTEM_HINT}</span>
+              </span>
+              <ThemeGallery value={settings.theme} onChange={(theme) => onChange({ theme })} />
+            </div>
           </section>
 
           {/* Where the three composer chips went (PLAN D10). A planner

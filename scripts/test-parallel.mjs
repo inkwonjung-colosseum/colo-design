@@ -1,15 +1,14 @@
 /**
  * Parallel test runner — the same suites as `test:sequential`, grouped into
  * four lanes that share no resources while running:
- *   L1 unit          — pure `node --test`, no ports, no daemons
+ *   L1 unit + app    — `node --test` suites and the two Electron app
+ *                      suites (comments, smoke); every port is a free port
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
- *                      port (5397 settings, 5398 publish,
- *                      5400 comments, 5401 onboarding) — all distinct
+ *                      port (5397 settings, 5398 publish, 5401 onboarding,
+ *                      5402 sidebar) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns
- * A lane fails if ANY of its suites fails; the runner exits non-zero and
- * prints the failing lanes' tails. Logs land in .test-logs/ (gitignored).
  *
  * Usage: node scripts/test-parallel.mjs [lane ...]   (default: all lanes)
  */
@@ -28,11 +27,11 @@ const LOG_DIR = join(
 const LANES = {
   L1: {
     name: "unit",
-    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit", "test:comments-ui"],
+    suites: ["test:unit", "test:onboard-unit", "test:desktop-unit", "test:comments-ui", "test:desktop-smoke"],
   },
   L2: {
     name: "daemon-e2e",
-    suites: ["test:projects", "test:repo", "test:publish", "test:onboarding"],
+    suites: ["test:projects", "test:rewind", "test:bootstrap", "test:repo", "test:publish", "test:onboarding"],
   },
   L3: {
     name: "browser-e2e",
@@ -60,6 +59,26 @@ for (const id of laneIds) {
 
 mkdirSync(LOG_DIR, { recursive: true });
 
+/** Lanes still running — killed with their groups on interrupt. */
+const running = new Set();
+
+/**
+ * A lane that failed (or a runner that was interrupted) can leave
+ * grandchildren behind: an Electron suite killed mid-flight holds the app's
+ * single-instance lock, and the NEXT run's smoke dies on it — exactly the
+ * contamination a failed lane once handed the run after it. Each lane runs
+ * in its own process group, and the group dies with the lane: on a normal
+ * close everything in it has already exited, so the kill is a no-op; what is
+ * left is by definition leaked.
+ */
+function killLaneGroup(child) {
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    // Already gone — the lane exited cleanly.
+  }
+}
+
 function runLane(id, lane) {
   return new Promise((resolve) => {
     const log = join(LOG_DIR, `${id}-${lane.name}.log`);
@@ -68,14 +87,29 @@ function runLane(id, lane) {
     const child = spawn(
       "bash",
       ["-lc", `set -o pipefail; ${lane.suites.map((suite) => `pnpm run ${suite}`).join(" && ")}`],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio: ["ignore", "pipe", "pipe"], detached: true },
     );
+    running.add(child);
     child.stdout.on("data", (chunk) => appendFileSync(log, chunk));
     child.stderr.on("data", (chunk) => appendFileSync(log, chunk));
     child.on("close", (code) => {
+      running.delete(child);
+      killLaneGroup(child);
       const seconds = ((Date.now() - startedAt.getTime()) / 1000).toFixed(0);
       resolve({ id, name: lane.name, code: code ?? 1, seconds, log });
     });
+    child.on("error", () => {
+      running.delete(child);
+      resolve({ id, name: lane.name, code: 1, seconds: "0", log });
+    });
+  });
+}
+
+// Ctrl-C on the runner must not leak the lanes it was running.
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    for (const child of running) killLaneGroup(child);
+    process.exit(130);
   });
 }
 

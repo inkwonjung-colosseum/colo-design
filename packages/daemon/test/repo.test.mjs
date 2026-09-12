@@ -18,13 +18,14 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  authenticatedUrl,
+  assertClonableRepoUrl,
   extraPathPrefix,
   fallbackGroup,
   fallbackSummary,
   parseCdsDesignConfig,
   parseUnifiedDiff,
   readCdsDesignConfig,
+  repoSettingsWarning,
   restorePlan,
   safeRepoPath,
   saveSpecFiles,
@@ -101,6 +102,59 @@ test("validation errors are Korean, name the field, and say what it should be", 
   assert.throws(() => parseCdsDesignConfig("[]"), /cds-design\.json은 객체여야 합니다/);
 });
 
+test("a registry host outside GitHub's package endpoints is refused", () => {
+  // The npmrc lines a registry writes carry the machine's GitHub PAT — a
+  // repo must not aim them at a server of its own choosing.
+  for (const host of ["evil.example.com", "npm.pkg.github.com.evil.example.com", "npm-pkg-github.com"]) {
+    assert.throws(
+      () =>
+        parseCdsDesignConfig(
+          JSON.stringify({ registry: { host, scope: "@x" }, preview: { command: "x", port: 1 } }),
+        ),
+      /registry\.host는 GitHub 패키지 호스트/,
+      `host ${host} must be refused`,
+    );
+  }
+  assert.deepEqual(
+    parseCdsDesignConfig(
+      JSON.stringify({
+        registry: { host: "NPM.PKG.GITHUB.COM", scope: "@colosseumcoinckr" },
+        preview: { command: "x", port: 1 },
+      }),
+    ).registry,
+    { host: "npm.pkg.github.com", scope: "@colosseumcoinckr" },
+  );
+});
+
+test("a repo that ships Claude Code project settings gets a header warning", () => {
+  const dir = workdir("repo-settings-warning-");
+  try {
+    // The normal repo: no .claude at all.
+    assert.equal(repoSettingsWarning(dir), null);
+    const claude = join(dir, ".claude");
+    mkdirSync(claude, { recursive: true });
+    const file = join(claude, "settings.json");
+    // Harmless keys are not news.
+    writeFileSync(file, JSON.stringify({ model: "opus" }));
+    assert.equal(repoSettingsWarning(dir), null);
+    // Pre-approved tools, env, and hooks each are — the warning names the
+    // file so the planner can go look.
+    for (const key of ["permissions", "env", "hooks"]) {
+      writeFileSync(file, JSON.stringify({ [key]: {} }));
+      const warning = repoSettingsWarning(dir);
+      assert.ok(
+        warning && warning.includes(key) && warning.includes(".claude/settings.json"),
+        `${key} must be named in the warning`,
+      );
+    }
+    // A broken file is the CLI's news, not ours.
+    writeFileSync(file, "{not json");
+    assert.equal(repoSettingsWarning(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a repo without cds-design.json says so instead of guessing", () => {
   const root = workdir("hub-repo-empty-");
   try {
@@ -129,13 +183,53 @@ test("shots rides the parser — typed when declared, Korean-rejected when not",
 // PAT handling
 // ---------------------------------------------------------------------------
 
-test("the PAT rides inside https urls only, and never other schemes", () => {
-  assert.equal(
-    authenticatedUrl("https://github.com/org/repo.git", "ghp_secret"),
-    "https://ghp_secret@github.com/org/repo.git",
-  );
-  assert.equal(authenticatedUrl("https://github.com/org/repo.git", null), "https://github.com/org/repo.git");
-  assert.equal(authenticatedUrl("git@github.com:org/repo.git", "ghp_secret"), "git@github.com:org/repo.git");
+test("a clone url names a transport git may run a command through, so only the known ones pass", () => {
+  // The forms a planner may legitimately aim at: the web's two, git/ssh
+  // remotes, scp-style, and a local path (the offline suites' bare remotes).
+  for (const url of [
+    "https://github.com/org/repo.git",
+    "http://gitea.internal/org/repo.git",
+    "ssh://git@github.com/org/repo.git",
+    "git://host/org/repo.git",
+    "git@github.com:org/repo.git",
+    "/var/folders/tmp/remote.git",
+  ]) {
+    assert.doesNotThrow(() => assertClonableRepoUrl(url), url);
+  }
+  // ext:: (and its helper cousins) is a command executor wearing a url; a
+  // leading dash is an option; an unknown scheme is not a transport we know;
+  // a bare word is not a path this tool will resolve for the planner.
+  for (const url of [
+    "ext::sh -c touch${Q}pwned",
+    "fdim::9",
+    "--upload-pack=evil",
+    "ftp://host/repo.git",
+    "relative-nope",
+  ]) {
+    assert.throws(() => assertClonableRepoUrl(url), /이 주소로는/, url);
+  }
+  // The one place `::` is an address, not a helper: an IPv6 literal passes.
+  assert.doesNotThrow(() => assertClonableRepoUrl("ssh://user@[2001:db8::1]/repo.git"));
+});
+
+test("git auth rides the environment, never the url — the PAT is absent from argv and .git/config", async () => {
+  process.env.CLAUDE_CONFIG_DIR = workdir("hub-repo-auth-env-");
+  const root = join(workdir("hub-repo-auth-clone-"), "work");
+  const broadcasts = [];
+  const workspace = new RepoWorkspace({
+    root,
+    url: "https://127.0.0.1:1/org/repo.git",
+    pat: "ghp_super_secret",
+    onStatus: (status) => broadcasts.push(status),
+  });
+  try {
+    const status = await workspace.sync();
+    assert.equal(status.phase, "error");
+    // The failure detail quotes what git saw — the clean url, never the PAT.
+    assert.ok(!JSON.stringify(broadcasts).includes("ghp_super_secret"), "the PAT must stay daemon-side");
+  } finally {
+    delete process.env.CLAUDE_CONFIG_DIR;
+  }
 });
 
 test("a failed clone never repeats the PAT in its detail", async () => {
@@ -661,14 +755,16 @@ writeFileSync("sneaky-unreviewed.txt", "the gate wrote this");
 console.log("check: 통과");
 `;
 
-/** A local-registry fixture + a PAT, for the npmrc-leak checks. */
+/** A private-registry fixture + a PAT, for the npmrc-leak checks. The host
+ * is the real GitHub endpoint — parseCdsDesignConfig now refuses anything a
+ * repo could aim at a server of its own choosing. */
 async function registryFixture(dir, home) {
   const fixture = await createFixtureRepo({
     dir: join(dir, "fixture"),
     port: await freePort(),
     previewCommand: 'node -e "process.exit(0)"',
     checkMjs: SNEAKY_CHECK,
-    registry: { host: "npm.pkg.github.test", scope: "@leaktest" },
+    registry: { host: "npm.pkg.github.com", scope: "@leaktest" },
   });
   const npmrc = join(home, ".npmrc");
   process.env.CDS_DESIGN_NPMRC = npmrc;
@@ -693,8 +789,8 @@ test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-le
 
     assert.ok(!existsSync(join(dir, "work", ".npmrc")), "the clone must not carry an npmrc");
     const user = readFileSync(npmrc, "utf8");
-    assert.ok(user.includes("@leaktest:registry=https://npm.pkg.github.test/"), "scope mapping merged");
-    assert.ok(user.includes("//npm.pkg.github.test/:_authToken=ghp_npmrc_leak_probe"), "token merged user-level");
+    assert.ok(user.includes("@leaktest:registry=https://npm.pkg.github.com/"), "scope mapping merged");
+    assert.ok(user.includes("//npm.pkg.github.com/:_authToken=ghp_npmrc_leak_probe"), "token merged user-level");
     assert.ok(user.includes("registry=https://registry.npmjs.org/"), "existing lines survive the merge");
 
     writeFileSync(join(dir, "work", "index.html"), "<p>게시 검증</p>\n");
@@ -801,7 +897,8 @@ test("comments.record replaces a screen·state's unresolved rows and keeps resol
       { text: "다시 쓴 코멘트", elementText: "목록" },
       { text: "하나 더", elementText: "페이지 제목" },
     ]);
-    assert.equal(written, 2);
+    assert.equal(written.length, 2);
+    assert.equal(new Set(written).size, 2, "each written row carries its own id");
     let rows = readComments(file);
     assert.equal(rows.length, 2, "the re-send replaced the pair's unresolved row");
     assert.ok(rows.every((row) => row.text !== "첫 코멘트"), JSON.stringify(rows));
@@ -1174,6 +1271,53 @@ test("최신화 hands a genuine conflict to Claude, work parked and named", asyn
     const after = await workspace.status();
     assert.equal(after.phase, "ready");
     assert.ok(after.pendingChanges >= 1, "the resolved work is back, awaiting 저장");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("준비가 충돌로 멈춘 뒤에도 pull 은 열려 있다 — 오류 카드의 Claude 요청이 브리프를 실어 나른다 (D96)", async () => {
+  const dir = workdir("hub-refresh-error-brief-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    // The same-line collision parks the worktree mid-recovery; a BARE
+    // bring-up has no thread to brief, so the throw is what the planner's
+    // error card answers.
+    const html = readFileSync(join(dir, "work", "index.html"), "utf8");
+    writeFileSync(
+      join(dir, "work", "index.html"),
+      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>기획자의 줄</p>"),
+    );
+    const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "index.html": seedHtml.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>개발자의 줄</p>"),
+    });
+
+    const stopped = await workspace.sync();
+    assert.equal(stopped.phase, "error", stopped.detail ?? "");
+    assert.match(stopped.detail ?? "", /충돌/, `the card reads Korean: ${stopped.detail ?? ""}`);
+    assert.equal(stopped.errorKind, "conflict", "the card must name the failure a Claude ask can fix");
+
+    // D96: pull runs from the error phase now — the ask rides the same wire
+    // a typed message would, and the leftover conflict briefs exactly as it
+    // would have from ready.
+    const briefs = [];
+    await workspace.pull((brief) => briefs.push(brief));
+    assert.equal(briefs.length, 1, `one brief: ${briefs.join(" | ")}`);
+    assert.match(briefs[0], /<!-- cds-design:gate .*최신 변경 받아오기/);
+    assert.match(briefs[0], /index\.html/);
+
+    // Claude's recovery, exactly as the brief describes: resolve, add, drop.
+    // Then 준비 다시 시도 — the clone comes back to ready.
+    writeFileSync(join(dir, "work", "index.html"), "<p>합쳐진 줄</p>\n");
+    await promisifiedRun("git", ["-C", join(dir, "work"), "add", "index.html"]);
+    await promisifiedRun("git", ["-C", join(dir, "work"), "stash", "drop"]);
+    const revived = await workspace.sync();
+    assert.equal(revived.phase, "ready", revived.detail ?? "");
+    assert.ok(revived.pendingChanges >= 1, "the resolved work is back, awaiting 저장");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

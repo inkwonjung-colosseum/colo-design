@@ -183,6 +183,19 @@ export interface SessionOptions {
  */
 const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 /**
+ * git 의 명사는 도구가 합니다 (README · PLAN D5): 커밋과 푸시는 저장·넘기기
+ * 버튼의 몫이라, 세션이 직접 만들면 개발자에게 가는 풀 리퀘스트가 도구가
+ * 검토하지 못한 역사를 실어 나른다(실측: 핸드오프 브랜치에 무의미한 커밋).
+ * 상태 읽기(status·log·diff·fetch)와 충돌 정리(add·stash)는 그대로 —
+ * 막는 것은 역사를 쓰는 동사뿐이다.
+ */
+const GIT_WRITE_REFUSAL =
+  "커밋과 푸시는 이 도구가 합니다 — 완성된 화면은 저장 버튼으로, 개발자에게는 넘기기 버튼으로 전달해 주세요.";
+
+function writesGitHistory(command: string): boolean {
+  return /\bgit\b/.test(command) && /\b(commit|push)\b/.test(command);
+}
+/**
  * The name a session carries until its first turn supplies one. Also the
  * sentinel for "nobody has named this yet" — a resumed thread inherits its
  * stored title only while the placeholder is still in place.
@@ -266,7 +279,10 @@ export class Session {
         managedSettings: { permissions: { defaultMode: "default" } },
         includePartialMessages: true,
         // Load the same user/project configuration the terminal would, so
-        // CLAUDE.md, skills, and permission rules behave identically.
+        // CLAUDE.md, skills, and permission rules behave identically. (The
+        // project tier is the repo's own files — a repo that ships
+        // pre-approved tool rules surfaces as a header warning; see
+        // repoSettingsWarning.)
         settingSources: ["user", "project", "local"],
         // The preview tools ride the query as an in-process MCP server
         // (PLAN D61), keyed by the server's own name.
@@ -366,6 +382,12 @@ export class Session {
     // cards — and they must not fall through to the edit-tool branch either.
     if (toolName.startsWith("mcp__cds-preview__")) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
+    }
+    // The git nouns belong to the tool (README): a session committing or
+    // pushing its own history puts words on the handoff branch the tool never
+    // reviewed. Refused before alwaysAllowed — 항상 허용 cannot buy it back.
+    if (toolName === "Bash" && writesGitHistory(String(input.command ?? ""))) {
+      return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
     }
     if (EDIT_TOOLS.has(toolName)) {
       const paths = [input.file_path, input.notebook_path].filter(
@@ -758,10 +780,12 @@ function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggest
     const s = raw as Record<string, any>;
     const destination = String(s?.destination ?? "session");
     const persisted = destination === "localSettings" || destination === "projectSettings";
-    const scope = persisted ? "saved for next time" : "this session only";
+    // 이 문장은 기획자가 읽는 권한 카드에 그대로 붙는다 — 기계 말이 아니라
+    // 기획 말로 쓴다 (README: 기획자는 git 명사를 읽지 않는다).
+    const scope = persisted ? "다음에도 유지" : "이 세션 동안만";
 
     if (s?.type === "setMode" && s?.mode) {
-      return { destination, label: `switch to ${s.mode} mode (${scope})`, raw };
+      return { destination, label: `${String(s.mode)} 모드로 전환 (${scope})`, raw };
     }
     if (Array.isArray(s?.rules) && s.rules.length > 0) {
       const rules = s.rules
@@ -770,7 +794,7 @@ function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggest
         )
         .filter(Boolean)
         .join(", ");
-      return { destination, label: `allow ${rules} (${scope})`, raw };
+      return { destination, label: `${rules} 허용 (${scope})`, raw };
     }
     return { destination, label: `${String(s?.type ?? "update")} (${scope})`, raw };
   });

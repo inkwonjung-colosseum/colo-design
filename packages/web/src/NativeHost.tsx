@@ -88,25 +88,46 @@ export function NativeHost({
     void window.cdsDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
   }, [width]);
 
+  // The nine channels subscribe ONCE: PreviewHost passes fresh inline
+  // callbacks every render, so keying the effect on them re-subscribed per
+  // render — and an event fired in an unsubscribe gap (a fast did-navigate
+  // between renders) was lost. The ref always holds the latest handlers;
+  // the subscription itself never churns.
+  const handlers = useRef({
+    onLocation,
+    onBridge,
+    onScreens,
+    onComments,
+    onError,
+    onLoading,
+    onZoom,
+  });
+  handlers.current = { onLocation, onBridge, onScreens, onComments, onError, onLoading, onZoom };
   useEffect(() => {
     const bridge = window.cdsDesignDesktop?.preview;
     if (!bridge) return;
     const offs = [
-      bridge.onLocation?.(onLocation),
-      bridge.onBridge?.((payload) => onBridge(payload.state)),
-      bridge.onScreens?.((payload) => {
-        if (Array.isArray(payload.screens)) onScreens(payload.screens);
+      bridge.onLocation?.((payload: { path: string; canGoBack: boolean; canGoForward: boolean }) =>
+        handlers.current.onLocation(payload),
+      ),
+      bridge.onBridge?.((payload: { state: "unknown" | "present" | "stale" }) =>
+        handlers.current.onBridge(payload.state),
+      ),
+      bridge.onScreens?.((payload: { screens: CdsDesignScreen[] }) => {
+        if (Array.isArray(payload.screens)) handlers.current.onScreens(payload.screens);
       }),
-      bridge.onComments?.((payload) => {
-        if (Array.isArray(payload.items)) onComments(payload);
+      bridge.onComments?.((payload: CdsDesignCommentsEnvelope) => {
+        if (Array.isArray(payload.items)) handlers.current.onComments(payload);
       }),
-      bridge.onError?.(onError),
-      bridge.onFreeze?.((jpeg) => setFreeze(jpeg)),
-      bridge.onLoading?.((payload) => onLoading(payload.on)),
-      bridge.onZoom?.((payload) => onZoom(payload.factor)),
+      bridge.onError?.((payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>
+        handlers.current.onError(payload),
+      ),
+      bridge.onFreeze?.((jpeg: string) => setFreeze(jpeg)),
+      bridge.onLoading?.((payload: { on: boolean }) => handlers.current.onLoading(payload.on)),
+      bridge.onZoom?.((payload: { factor: number }) => handlers.current.onZoom(payload.factor)),
       // D71: the view holds the keys while focused — replayed here so the
       // window's own listeners (⌘K, ⌘,) fire as if the planner never left.
-      bridge.onKey?.((payload) => {
+      bridge.onKey?.((payload: { key: string; meta: boolean }) => {
         if (payload.key === "Escape") return;
         window.dispatchEvent(
           new KeyboardEvent("keydown", { key: payload.key, metaKey: payload.meta, bubbles: true }),
@@ -114,7 +135,7 @@ export function NativeHost({
       }),
     ].filter((off): off is () => void => typeof off === "function");
     return () => offs.forEach((off) => off());
-  }, [onLocation, onBridge, onScreens, onComments, onError, onLoading, onZoom]);
+  }, []);
 
   return (
     <div className="preview__slot" ref={slot} data-testid="preview-slot">

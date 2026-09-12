@@ -58,8 +58,8 @@ export function readComments(file: string): CommentItem[] {
 
 /**
  * Writes one screen·state's comment set: that pair's unresolved rows go, the
- * new rows (and every other row — resolved ones included) stay. Returns how
- * many rows it wrote.
+ * new rows (and every other row — resolved ones included) stay. Returns the
+ * ids it wrote, in envelope order.
  *
  * `screen` is normalized to the `[data-screen]` spelling — no leading slash
  * (PLAN §9 틀리기 쉬운 자리): the recorded pin is matched literally against
@@ -76,7 +76,7 @@ export function recordComments(
     element?: CommentItem["element"];
   }>,
   now = new Date(),
-): number {
+): string[] {
   const id = screen.startsWith("/") ? screen.slice(1) : screen;
   const kept = readComments(file).filter(
     (row) => row.resolved || row.screen !== id || row.state !== state,
@@ -93,7 +93,10 @@ export function recordComments(
     resolved: false,
   }));
   writeStore(file, [...kept, ...written]);
-  return written.length;
+  // The ids ride the wire back: the sender's 확인해 주세요 matches rows by id,
+  // never by text — same-worded pins stay distinct, reworded rows never
+  // light the wrong one.
+  return written.map((row) => row.id);
 }
 
 /** Marks one row resolved or not; false when the id names nothing. */

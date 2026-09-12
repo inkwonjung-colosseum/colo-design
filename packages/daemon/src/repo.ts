@@ -138,6 +138,18 @@ const REFRESH_CONFLICT_DETAIL =
   "최신 변경을 받아 오다 저장하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
 /**
+ * What the planner reads when replaying a dead run's parked work conflicts
+ * and no thread is open — same state and remedy as REFRESH_CONFLICT_DETAIL,
+ * named for how the work got parked.
+ */
+const RECOVER_CONFLICT_DETAIL =
+  "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
+
+/** What the planner reads when a repo's commands have not been approved here. */
+const COMMANDS_UNAPPROVED_DETAIL =
+  "이 레포가 실행하기로 한 설치 · 미리보기 명령이 아직 승인되지 않았습니다 — 실행 허용을 누르면 준비를 계속합니다.";
+
+/**
  * The one refresh this tool refuses to do alone: the base branch carries
  * commits the clone does not know. Rewriting history a planner cannot read
  * is not 자동 병합, so it stays a named failure.
@@ -236,8 +248,18 @@ export function parseCdsDesignConfig(source: string): CdsDesignConfig {
   ) {
     throw new Error('cds-design.json의 registry는 { "host", "scope" } 형태여야 합니다');
   }
+  // The registry line is the one place a connected repo aims the machine's
+  // GitHub PAT: its host lands in ~/.npmrc as `//<host>/:_authToken=<PAT>`.
+  // A repo must not point that at a server of its choosing — GitHub's npm
+  // endpoints (npm.pkg.github.com and its subdomains) only.
+  const host = registry.host.trim().toLowerCase();
+  if (host !== "npm.pkg.github.com" && !host.endsWith(".pkg.github.com")) {
+    throw new Error(
+      'cds-design.json의 registry.host는 GitHub 패키지 호스트(npm.pkg.github.com)여야 합니다',
+    );
+  }
 
-  return { ...common, registry: { host: registry.host, scope: registry.scope } };
+  return { ...common, registry: { host, scope: registry.scope } };
 }
 
 export function readCdsDesignConfig(root: string): CdsDesignConfig {
@@ -248,14 +270,67 @@ export function readCdsDesignConfig(root: string): CdsDesignConfig {
   return parseCdsDesignConfig(readFileSync(file, "utf8"));
 }
 
+/**
+ * A connected repo can ship Claude Code project settings — and with them
+ * `permissions.allow` rules that pre-approve tools no card will ever ask
+ * about. Loading the project tier is deliberate (it is also how the repo's
+ * CLAUDE.md reaches the session), so this does not block: it makes the
+ * repo's ask visible, as one header warning line.
+ */
+export function repoSettingsWarning(root: string): string | null {
+  const file = join(root, ".claude", "settings.json");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    // Absent (the normal repo) or unreadable — nothing to report either way.
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const widening = (["permissions", "env", "hooks"] as const).filter((key) => key in parsed);
+  if (widening.length === 0) return null;
+  return `The connected repo ships .claude/settings.json (${widening.join(", ")}) — its sessions may run pre-approved tools without a permission card.`;
+}
+
 // ---------------------------------------------------------------------------
 // Credential helpers (pure, unit tested)
 // ---------------------------------------------------------------------------
 
-/** Embeds a PAT in an https url the way git accepts it; other schemes pass through. */
-export function authenticatedUrl(url: string, pat: string | null): string {
-  if (!pat || !url.startsWith("https://")) return url;
-  return `https://${pat}@${url.slice("https://".length)}`;
+/** The schemes a clone url may carry; anything else is a refusal. */
+const CLONABLE_SCHEMES: Record<string, true> = {
+  http: true,
+  https: true,
+  ssh: true,
+  git: true,
+  file: true,
+};
+
+/** Why an unacceptable clone url is refused, in the words the picker reads. */
+const CLONE_URL_REFUSED_DETAIL =
+  "이 주소로는 레포를 내려받을 수 없습니다 — https · ssh · git 주소나 이 기기의 경로만 가능합니다.";
+
+/**
+ * What git accepts as a clone source is wider than what a planner should be
+ * able to aim at this machine: the `ext::` family is a command executor
+ * wearing a url, and a leading `-` is an option, not an address. Allowed:
+ * the web's two, the git/ssh remotes, scp-style `user@host:path`, and a
+ * local path (the offline suites' bare remotes). Every wire entry that
+ * names a repo url runs through this before the registry hears it.
+ */
+export function assertClonableRepoUrl(url: string): void {
+  const trimmed = url.trim();
+  // Bracketed IPv6 literals are the one place `::` is an address, not a helper.
+  const unbracketed = trimmed.replace(/\[[^\]]*\]/g, "[]");
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(trimmed)?.[1]?.toLowerCase();
+  const localOrScp = /^([^@\s]+@[^:\s]+:|\/|\.\.?\/|~\/|[A-Za-z]:[\\/])/.test(trimmed);
+  if (
+    trimmed === "" ||
+    (scheme !== undefined && !CLONABLE_SCHEMES[scheme]) ||
+    unbracketed.includes("::") ||
+    (scheme === undefined && !localOrScp)
+  ) {
+    throw new Error(CLONE_URL_REFUSED_DETAIL);
+  }
 }
 
 /** git error output quotes the remote url; the PAT must never survive that. */
@@ -526,6 +601,8 @@ export class RepoWorkspace {
   private openHandoff: HandoffStatus | null;
   /** D94: this workspace was created with Claude-prepared connection. */
   private bootstrapRequested = false;
+  /** The planner's word on this repo's install · preview commands. */
+  private commandsApproved = true;
   /** The server's preparation turn: brief → Claude writes the contract → validate. */
   private prepareBootstrap: (() => Promise<boolean>) | null = null;
   /** D88: the developer comments the last 상태 확인 read — 답하기 resolves ids against this. */
@@ -562,6 +639,12 @@ export class RepoWorkspace {
       bootstrap?: boolean;
       /** The preparation turn: brief → Claude writes the contract → validate. */
       prepareBootstrap?: () => Promise<boolean>;
+      /**
+       * Whether the planner said this repo's commands may run here. Absent
+       * (a direct construction, a pre-gate project) reads as approved — the
+       * gate is for repos nobody has vouched for yet.
+       */
+      commandsApproved?: boolean;
     },
   ) {
     this.root = options.root;
@@ -575,6 +658,7 @@ export class RepoWorkspace {
     this.openHandoff = options.cycle?.handoff ?? null;
     this.bootstrapRequested = options.bootstrap ?? false;
     this.prepareBootstrap = options.prepareBootstrap ?? null;
+    this.commandsApproved = options.commandsApproved ?? true;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
     this.claudeExecutable = options.claudeExecutable ?? null;
@@ -592,6 +676,11 @@ export class RepoWorkspace {
    */
   setPat(pat: string | null): void {
     this.pat = pat;
+  }
+
+  /** The error card's 실행 허용 button lands here (project.update). */
+  setCommandsApproved(approved: boolean): void {
+    this.commandsApproved = approved;
   }
 
   /** The repo's declared private registry, once its cds-design.json was read. */
@@ -647,8 +736,10 @@ export class RepoWorkspace {
       await this.stop();
       rmSync(this.root, { recursive: true, force: true });
     } else if (this.isCloned()) {
-      // A PAT added later has to reach pulls too; clone already embedded it.
-      await this.git(["remote", "set-url", "origin", authenticatedUrl(this.url, this.pat)]);
+      // Auth rides the environment now, but a clone made before that still
+      // carries the PAT inside its remote url — the one place the keychain
+      // promise must never leak. Idempotent; a clean origin is a no-op read.
+      await this.scrubOriginCredential();
     }
     return await this.sync();
   }
@@ -656,6 +747,49 @@ export class RepoWorkspace {
 
   async stop(): Promise<void> {
     await this.killPreview();
+  }
+
+  /**
+   * The PAT never rides the url again — not into `.git/config` at rest, not
+   * into `ps`-visible argv. git takes per-invocation config from the
+   * environment (GIT_CONFIG_*), which clone, fetch and push all read as an
+   * `http.<origin>.extraheader`. Local-path remotes ignore http.* entirely.
+   */
+  private gitAuthEnv(): NodeJS.ProcessEnv {
+    if (!this.pat || !this.url?.startsWith("https://")) return {};
+    let scope: string;
+    try {
+      scope = new URL(this.url).origin;
+    } catch {
+      return {};
+    }
+    const basic = Buffer.from(`x-access-token:${this.pat}`).toString("base64");
+    return {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: `http.${scope}/.extraheader`,
+      GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${basic}`,
+    };
+  }
+
+  /** Rewrites a PAT-bearing origin to its clean form — see update(). */
+  private async scrubOriginCredential(): Promise<void> {
+    if (!this.isCloned()) return;
+    const origin = (await this.git(["remote", "get-url", "origin"]).catch(() => "")).trim();
+    if (!/^https:\/\/[^@/\s]+@/.test(origin)) return;
+    await this.git(["remote", "set-url", "origin", origin.replace(/^(https:\/\/)[^@/\s]+@/, "$1")]);
+  }
+
+  /**
+   * Everything that may still be writing to this clone, settled. A stop that
+   * only killed the preview could kill a 최신화 between its stash and its
+   * pop — the planner's unsaved work parks in `git stash` with nothing left
+   * running to bring it back. Shutdown waits the writers out first;
+   * `recoverParkedWork` is the net for the kills no wait survives.
+   */
+  async settle(): Promise<void> {
+    await this.publishing?.catch(() => undefined);
+    await this.refreshing?.catch(() => undefined);
+    await this.inFlight?.catch(() => undefined);
   }
 
 
@@ -670,7 +804,12 @@ export class RepoWorkspace {
    * failure properly.
    */
   async pull(onSessionTurn?: (brief: string) => void): Promise<void> {
-    if (this.phase !== "ready" || !this.isCloned()) return;
+    if (!this.isCloned()) return;
+    // 준비가 충돌로 멈춘 상태(phase error)에서도 문은 열려 있어야 한다(D96):
+    // 오류 카드의 Claude 요청이 읽을 것은 바로 그 상태고, 새 대화가 태어날 때의
+    // 이 pull 이 충돌을 첫 과제로 넣는다. error 이후의 상태는 어차피 없고,
+    // clone 이 없는 실패(내려받기 실패)는 위에서 걸린다.
+    if (this.phase !== "ready" && this.phase !== "error") return;
     // One worktree, two writers: a save or handoff in flight owns it, so
     // the refresh waits — and a save below waits for a refresh the same
     // way. Without this, the stash-move-replay window races `git diff` and
@@ -837,7 +976,7 @@ export class RepoWorkspace {
       const taken = await this.git([
         "ls-remote",
         "--heads",
-        authenticatedUrl(this.url ?? "origin", this.pat),
+        this.url ?? "origin",
         name,
       ]).catch(() => "");
       if (taken.trim() === "") break;
@@ -1087,9 +1226,8 @@ export class RepoWorkspace {
           });
         }
       };
-      await collect().catch((error) => console.error("D88 COLLECT DEBUG:", error));
+      await collect().catch(() => undefined);
     }
-    console.error("D88 REVIEWS DEBUG:", reviews.length);
     this.lastReviews = reviews;
     return { ...handoff, reviews };
   }
@@ -1503,6 +1641,12 @@ export class RepoWorkspace {
       return await this.briefOrThrow(this.popConflictBrief(leftover), onSessionTurn);
     }
 
+    // A run that died between the stash and its pop parked the planner's
+    // unsaved work in the stash — replay it before anything moves the branch,
+    // or a stash can outlive the process that made it. A parked replay that
+    // conflicts is exactly the leftover state above; the same brief covers it.
+    if ((await this.recoverParkedWork(onSessionTurn)) === "conflict") return "conflict";
+
     // Mid-cycle, merging the developer's base needs Claude within reach — a
     // conflict has to land as a first task, not as an error nobody can read.
     // A bare bring-up mid-cycle stays put; the merge is a session start's
@@ -1648,15 +1792,46 @@ export class RepoWorkspace {
    * Replays the parked work onto the moved branch. Returns the unmerged
    * paths when git could not finish the combine alone; anything else throws.
    */
-  private async popStash(): Promise<string[] | null> {
+  private async popStash(ref = "stash@{0}"): Promise<string[] | null> {
     try {
-      await this.git(["stash", "pop"]);
+      await this.git(["stash", "pop", ref]);
       return null;
     } catch (error) {
       const conflicted = await this.conflictedFiles();
       if (conflicted.length === 0) throw error;
       return conflicted;
     }
+  }
+
+  /**
+   * Replays unsaved work a dead run parked under our stash message. Only the
+   * entry carrying STASH_MESSAGE is touched — a stash the planner made by
+   * hand is theirs. A clean replay answers "restored"; a conflict answers
+   * "conflict" (the brief went to the thread when one is open, the Korean
+   * one-liner and the error card when it is not); anything else throws and
+   * the entry stays parked for the next attempt.
+   */
+  async recoverParkedWork(
+    onSessionTurn?: (brief: string) => void,
+  ): Promise<"none" | "restored" | "conflict"> {
+    if (!this.isCloned()) return "none";
+    let list: string;
+    try {
+      list = await this.git(["stash", "list"]);
+    } catch {
+      return "none";
+    }
+    const parked = list.split(/\r?\n/).find((line) => line.includes(STASH_MESSAGE));
+    const ref = parked?.match(/^stash@\{\d+\}/)?.[0];
+    if (!ref) return "none";
+    const conflicted = await this.popStash(ref);
+    if (!conflicted) return "restored";
+    if (onSessionTurn) {
+      onSessionTurn(this.popConflictBrief(conflicted));
+      return "conflict";
+    }
+    this.setPhase("error", RECOVER_CONFLICT_DETAIL, "conflict");
+    throw new Error(RECOVER_CONFLICT_DETAIL);
   }
 
   /** `ahead behind` vs the base branch, once the fetch has named it. */
@@ -1748,13 +1923,13 @@ export class RepoWorkspace {
         await this.killPreview();
         this.setPhase("cloning", null);
         this.clearBringUpDebris();
-        await this.git(
-          ["clone", authenticatedUrl(this.url, this.pat), this.root],
-          dirname(this.root),
-        );
+        // The clean url: the PAT travels in the environment (gitAuthEnv),
+        // so neither `.git/config` nor `ps` ever sees it.
+        await this.git(["clone", this.url, this.root], dirname(this.root));
         trustWorkspace(this.root);
       } else {
         this.setPhase("pulling", null);
+        await this.scrubOriginCredential();
         // Already cloned: 최신화, not a blind ff. Unsaved work survives the
         // move off-cycle, and a conflict left by an earlier run resurfaces
         // with its Korean reason instead of a raw git error.
@@ -1776,6 +1951,18 @@ export class RepoWorkspace {
         void configError;
       }
       this.config = config;
+      // The one gate the wire cannot skip: a repo nobody has vouched for
+      // stops here, after the clone but before any command it declares runs.
+      // 저장's check and 넘기기's build wait behind a planner's button press
+      // already — install and preview are the ones that run unattended.
+      // The refusal names WHAT runs: the approval is one button, so the card
+      // must show the sentences it is about to execute — the planner reads the
+      // verdict, a reviewer reads the evidence.
+      if (!this.commandsApproved) {
+        throw new Error(
+          `${COMMANDS_UNAPPROVED_DETAIL} 실행하려는 명령 — 설치: ${config.install ?? "(선언되지 않음)"} · 미리보기: ${config.preview.command} (포트 ${config.preview.port})`,
+        );
+      }
       const installed = await this.installIfNeeded(config);
 
       /**
@@ -2101,7 +2288,7 @@ export class RepoWorkspace {
       shell: windows && git === "git",
       detached: false,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ANTHROPIC_API_KEY: undefined, ...env },
+      env: { ...process.env, ANTHROPIC_API_KEY: undefined, ...this.gitAuthEnv(), ...env },
     }, args);
     if (result.code === 0) return result.stdout;
     // PLAN D36: a Korean lead, then git's own words — the throw may reach a
@@ -2200,12 +2387,23 @@ export class RepoWorkspace {
    */
   private bringUpErrorKind(error: unknown): RepoErrorKind {
     const message = error instanceof Error ? error.message : String(error);
+    // The refusal names the commands it blocks (the card shows the evidence),
+    // so the sentence CONTINUES past the constant — prefix, not equality.
+    if (message.startsWith(COMMANDS_UNAPPROVED_DETAIL)) return "commands";
     if (error instanceof BootstrapPrepareError || message === BOOTSTRAP_FAILED_DETAIL) {
       return "bootstrap";
     }
     if (message === PNPM_MISSING_DETAIL) return "pnpm-missing";
     if (message === REGISTRY_AUTH_DETAIL) return "registry-auth";
-    if (message.includes("충돌한 파일")) return "conflict";
+    // D96: 최신화 충돌의 한 줄은 정확히 이 상수로 던져지므로, 같은 상수로
+    // 읽는다 — 오류 카드가 "Claude에게 해결 요청" 을 보여 줄 수 있는 근거.
+    if (
+      message === REFRESH_CONFLICT_DETAIL ||
+      message === RECOVER_CONFLICT_DETAIL ||
+      message.includes("충돌한 파일")
+    ) {
+      return "conflict";
+    }
     if (message.includes("미리보기 서버") || message.includes("preview.port")) return "preview";
     return this.isCloned() ? "install" : "clone";
   }

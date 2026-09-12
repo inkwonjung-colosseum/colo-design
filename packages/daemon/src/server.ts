@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { extname, join } from "node:path";
 import { realpathBestEffort } from "./paths.js";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -24,8 +25,8 @@ import { repoWritePolicy } from "./workspaces.js";
 import { RepoWorkspace, trustWorkspace } from "./repo.js";
 import { readComments, recordComments, resolveComment } from "./comments.js";
 import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE } from "./bootstrap-brief.js";
+import { assertClonableRepoUrl, repoSettingsWarning, validateBootstrapConfig } from "./repo.js";
 import { markTurn } from "@cds-design/protocol";
-import { validateBootstrapConfig } from "./repo.js";
 import { GitHubClient, createGitHubTransport } from "./github.js";
 import { ProjectRegistry, type ProjectPaths } from "./projects.js";
 import {
@@ -319,7 +320,12 @@ export class DaemonServer {
         // client's first status read must see the counted clone, or a
         // restart blanks the counts for exactly the moment the tree also
         // starts scanning (PLAN D18/D59).
-        sweeps.push(workspaces.repo.refreshPendingChanges().catch(() => undefined));
+        sweeps.push(
+          workspaces.repo
+            .recoverParkedWork()
+            .catch(() => undefined)
+            .then(() => workspaces.repo.refreshPendingChanges()),
+        );
       }
     }
     await Promise.all(sweeps);
@@ -347,7 +353,10 @@ export class DaemonServer {
 
     this.http.on("upgrade", (req, socket, head) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      if (url.searchParams.get("token") !== this.config.token) {
+      const given = Buffer.from(url.searchParams.get("token") ?? "");
+      const expected = Buffer.from(this.config.token);
+      // Constant-time: this token guards every message the daemon accepts.
+      if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
@@ -372,6 +381,9 @@ export class DaemonServer {
     // inactive project holds no preview server, but its preview process is
     // ours to take down.
     for (const workspaces of this.workspaces.values()) {
+      // Writers settle BEFORE the preview dies: a 최신화 killed between its
+      // stash and its pop parks the planner's unsaved work in `git stash`.
+      await workspaces.repo.settle();
       await workspaces.repo.stop();
     }
     for (const client of this.clients) client.close();
@@ -421,6 +433,9 @@ export class DaemonServer {
     if (existing) return existing;
     const repo = this.registry.resolvedRepo(slug);
     const paths = this.registry.ensureDirs(slug);
+    // The registry owns the planner's word on this repo's commands; `undefined`
+    // is a pre-gate project whose commands have already run here.
+    const commandsApproved = this.registry.get(slug)?.commandsApproved !== false;
     const workspaces: ProjectWorkspaces = {
       slug,
       paths,
@@ -429,6 +444,7 @@ export class DaemonServer {
         url: repo.url,
         baseBranch: repo.baseBranch,
         cycle: { branch: repo.branch, handoff: repo.handoff },
+        commandsApproved,
         // D94: 연결 준비 — the picker's Claude-prepare choice rides the
         // workspace, and its callback opens the brief turn here.
         ...(this.bootstrapSlugs.has(slug)
@@ -833,18 +849,25 @@ export class DaemonServer {
     repoUrl: string | null;
     baseBranch?: string;
     bootstrap?: boolean;
+    approveCommands?: boolean;
   }): Promise<ProjectSummary> {
+    // The url reaches `git clone` — the ext:: family is a command executor
+    // wearing a url, so the wire's word passes through the guard first.
+    if (message.repoUrl) assertClonableRepoUrl(message.repoUrl);
     const project = this.registry.create({
       name: message.name,
       repoUrl: message.repoUrl,
       ...(message.baseBranch ? { baseBranch: message.baseBranch } : {}),
+      // The picker's word: the planner saw the commands this repo declares
+      // and said they may run here. Without it the workspace stops after the
+      // clone with errorKind `commands` until 실행 허용 is pressed.
+      commandsApproved: message.approveCommands === true,
     });
     // The flag must be known before the first sync runs — the workspace reads
     // it the moment workspacesFor builds it (activateProject below).
     if (message.bootstrap) this.bootstrapSlugs.add(project.slug);
 
     await this.activateProject(project.slug);
-    // The first project becomes active inside registry.create, so
     // activateProject sees no switch and stays silent — but a wizard waiting
     // on `project.changed` to show the switcher needs the announcement.
     this.announceProjects();
@@ -928,14 +951,19 @@ export class DaemonServer {
 
   private async status() {
     const active = this.activeOrNull();
+    const base = await buildStatus({
+      executable: this.claudeExecutable,
+      liveSessions: this.manager.liveCount,
+      pendingPermissions: this.manager.pendingCount,
+      // The registry probe only makes sense inside a repo that declares one.
+      registryProbeDir: active?.repo.registry() ? active.repo.root : null,
+    });
+    // A repo that ships its own pre-approved tool rules widens its sessions
+    // past the card flow — the planner should hear that it did.
+    const repoSettings = active ? repoSettingsWarning(active.repo.root) : null;
     return {
-      ...(await buildStatus({
-        executable: this.claudeExecutable,
-        liveSessions: this.manager.liveCount,
-        pendingPermissions: this.manager.pendingCount,
-        // The registry probe only makes sense inside a repo that declares one.
-        registryProbeDir: active?.repo.registry() ? active.repo.root : null,
-      })),
+      ...base,
+      ...(repoSettings ? { warnings: [...base.warnings, repoSettings] } : {}),
       planUsage: this.currentPlanUsage(),
       models: this.models,
       projects: this.projectSummaries(),
@@ -1275,6 +1303,17 @@ export class DaemonServer {
       }
 
       case "project.update": {
+        // Same guard as create — a moved url re-clones, so the wire's word
+        // passes through the clone-url guard before the registry hears it.
+        if (message.repoUrl != null) assertClonableRepoUrl(message.repoUrl);
+        // The error card's 실행 허용: the registry remembers, the workspace is
+        // told, and the bring-up it was waiting on runs to ready.
+        if (message.approveCommands !== undefined) {
+          this.registry.update(message.slug, { commandsApproved: message.approveCommands });
+          const gate = this.workspacesFor(message.slug);
+          gate.repo.setCommandsApproved(message.approveCommands);
+          if (message.approveCommands) void gate.repo.sync().catch(() => undefined);
+        }
         this.registry.update(message.slug, {
           ...(message.name !== undefined ? { name: message.name } : {}),
           ...(message.repoUrl !== undefined ? { repoUrl: message.repoUrl } : {}),
@@ -1289,6 +1328,7 @@ export class DaemonServer {
         this.announceProjects();
         return { projects: this.projectSummaries(), activeSlug: this.registry.activeSlug() };
       }
+
 
       case "project.remove": {
         const paths = this.registry.paths(message.slug);
@@ -1337,6 +1377,7 @@ export class DaemonServer {
       }
 
       case "repo.update":
+        if (message.url) assertClonableRepoUrl(message.url);
         return await this.repo.update({
           ...(message.url !== undefined ? { url: message.url } : {}),
         });
@@ -1506,15 +1547,15 @@ export class DaemonServer {
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,
       // exactly because the planner is looking at one project's preview.
-      case "comments.record":
-        return {
-          recorded: recordComments(
-            join(this.requireActive().paths.root, "comments.json"),
-            message.screen,
-            message.state,
-            message.items,
-          ),
-        };
+      case "comments.record": {
+        const ids = recordComments(
+          join(this.requireActive().paths.root, "comments.json"),
+          message.screen,
+          message.state,
+          message.items,
+        );
+        return { recorded: ids.length, ids };
+      }
 
       case "comments.list":
         return { items: readComments(join(this.requireActive().paths.root, "comments.json")) };

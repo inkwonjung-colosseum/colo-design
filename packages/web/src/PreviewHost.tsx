@@ -572,6 +572,10 @@ export function PreviewHost({
                 <b>{current.title}</b> · {stateLabel(activeState)}
               </span>
             )}
+            {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
+            {width !== "desktop" && (
+              <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
+            )}
             {/* D85 ⓔ: 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
             {native && zoom !== 1 && (
               <button

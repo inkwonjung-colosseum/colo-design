@@ -191,6 +191,7 @@ export function RepoPicker({
         repoUrl: selected.cloneUrl,
         ...(inspection?.phase === "ready" ? { baseBranch: inspection.result.defaultBranch } : {}),
         ...(bootstrapCreate ? { bootstrap: true } : {}),
+        ...(approveRun ? { approveCommands: true } : {}),
       });
       onCreated?.();
     } catch (e) {
@@ -208,11 +209,15 @@ export function RepoPicker({
    */
   const needsBootstrap = inspection !== null && inspection.phase === "ready" && !inspection.result.hasCdsDesign;
   const [bootstrapCreate, setBootstrapCreate] = useState(false);
+  /** The one explicit yes a new repo's install · preview commands need. */
+  const [approveRun, setApproveRun] = useState(false);
+  /** Same explicit yes, for the address-typed path. */
+  const [manualApprove, setManualApprove] = useState(false);
   const blocked =
     inspection === null ||
     inspection.phase !== "ready" ||
-    (!inspection.result.hasCdsDesign && !bootstrapCreate);
-
+    (!inspection.result.hasCdsDesign && !bootstrapCreate) ||
+    !approveRun;
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -246,6 +251,7 @@ export function RepoPicker({
         name: nameFromUrl(url) || url,
         repoUrl: url,
         ...(baseBranch ? { baseBranch } : {}),
+        ...(manualApprove ? { approveCommands: true } : {}),
       });
       setManualUrl("");
       onCreated?.();
@@ -360,7 +366,11 @@ export function RepoPicker({
           ) : inspection.phase === "error" ? (
             <p className="onboarding__detail">{inspection.error}</p>
           ) : (
-            <p className="onboarding__detail">
+            <p
+              className={`onboarding__detail repopicker__inspect repopicker__inspect--${
+                inspection.result.hasCdsDesign ? "ok" : "miss"
+              }`}
+            >
               {inspection.result.hasCdsDesign
                 ? `✓ cds-design.json 있음 · 기본 브랜치 ${inspection.result.defaultBranch}`
                 : "✗ 이 레포에는 cds-design.json이 없습니다 — Claude 가 연결을 준비할 수 있어요."}
@@ -370,6 +380,18 @@ export function RepoPicker({
                 </span>
               )}
             </p>
+          )}
+          {inspection?.phase === "ready" && (
+            <label className="repopicker__approve">
+              <input
+                type="checkbox"
+                data-testid="approve-commands"
+                checked={approveRun}
+                disabled={creating}
+                onChange={(e) => setApproveRun(e.target.checked)}
+              />
+              이 레포가 정의한 설치 · 미리보기 명령을 이 기기에서 실행하는 것을 허용합니다
+            </label>
           )}
           <div className="repopicker__confirmrow">
             <input
@@ -434,18 +456,30 @@ export function RepoPicker({
               disabled={manualBusy}
               onChange={(e) => setManualUrl(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && manualUrl.trim() && !manualBusy) void addManually();
+                if (e.key === "Enter" && manualUrl.trim() && !manualBusy && manualApprove) {
+                  void addManually();
+                }
               }}
             />
             <button
               type="button"
               className="primary"
-              disabled={!manualUrl.trim() || manualBusy}
+              disabled={!manualUrl.trim() || manualBusy || !manualApprove}
               onClick={() => void addManually()}
             >
               {manualBusy ? "만드는 중…" : "추가"}
             </button>
           </div>
+          <label className="repopicker__approve">
+            <input
+              type="checkbox"
+              data-testid="approve-commands-manual"
+              checked={manualApprove}
+              disabled={manualBusy}
+              onChange={(e) => setManualApprove(e.target.checked)}
+            />
+            이 레포가 정의한 설치 · 미리보기 명령을 이 기기에서 실행하는 것을 허용합니다
+          </label>
           <p className="hint">토큰 없이 접근할 수 있는 주소나, GitHub 밖의 git 주소를 쓸 때만.</p>
           {manualError && (
             <div className="notice notice--error">

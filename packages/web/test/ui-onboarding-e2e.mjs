@@ -195,6 +195,8 @@ async function main() {
     // --- 4. the manual url is the fallback for what the list cannot see ---
     await page.getByRole("button", { name: "목록에 없나요? 주소로 추가" }).click();
     await page.getByLabel("연결 레포 주소").fill(fixture.remote);
+    // The one explicit yes: the repo's install · preview commands may run here.
+    await page.getByTestId("approve-commands-manual").check();
     await page.getByRole("button", { name: "추가", exact: true }).click();
 
     // The picker gives way to the workspace as soon as the registry answers;
@@ -229,6 +231,10 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="프로젝트 추가"]', { timeout: 15000 });
     await page.getByRole("button", { name: "목록에 없나요? 주소로 추가" }).click();
     await page.getByLabel("연결 레포 주소").fill(fixture2.remote);
+    await page
+      .locator('[role="dialog"][aria-label="프로젝트 추가"]')
+      .getByTestId("approve-commands-manual")
+      .check();
     await page
       .locator('[role="dialog"][aria-label="프로젝트 추가"]')
       .getByRole("button", { name: "추가", exact: true })

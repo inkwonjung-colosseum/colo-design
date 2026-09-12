@@ -210,6 +210,12 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
      * first PR.
      */
     bootstrap: z.boolean().optional(),
+    /**
+     * The planner saw this repo's `install`/`preview` commands and said they
+     * may run on this machine. Absent means not yet approved: the workspace
+     * stops after clone with errorKind `commands` until an update approves.
+     */
+    approveCommands: z.boolean().optional(),
   }),
   /**
    * Switches which project everything else means. The outgoing project's
@@ -224,6 +230,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     name: z.string().min(1).max(64).optional(),
     repoUrl: z.string().min(1).nullable().optional(),
     baseBranch: z.string().min(1).max(128).optional(),
+    /** Approves this repo's commands post-hoc — the error card's button. */
+    approveCommands: z.boolean().optional(),
   }),
   /**
    * Forgets a project. Its folder survives unless `deleteFiles` — unpushed
@@ -508,9 +516,16 @@ export interface CommentItem {
   resolved: boolean;
 }
 
-/** `comments.record` — how many rows the store now holds for the pair. */
+/** `comments.record` — the ids the daemon just wrote, for the batch's return. */
 export interface CommentsRecorded {
   recorded: number;
+  /**
+   * The written rows' ids, in envelope order. The sender turns them into
+   * 확인해 주세요 attention at turn end — matching by id, not text, so two
+   * pins with the same words stay two pins and a reworded row never lights
+   * the wrong one.
+   */
+  ids: string[];
 }
 
 /** `comments.list` — every row, resolved included, oldest first. */
@@ -813,7 +828,8 @@ export type RepoErrorKind =
   | "pnpm-missing"
   | "preview"
   | "conflict"
-  | "bootstrap";
+  | "bootstrap"
+  | "commands";
 
 export interface RepoStatus {
   /** Absolute path of the clone on this machine. */

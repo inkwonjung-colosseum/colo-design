@@ -103,8 +103,9 @@ async function main() {
         (await page.getByLabel("연결 레포 주소").isDisabled()) === true,
     );
 
-    // 3. theme applies live and persists.
-    await page.getByLabel("테마").selectOption("dark");
+    // 3. theme applies live and persists. The picker is a gallery of live
+    //    palette tiles now, not a select — a palette is chosen by its colour.
+    await page.locator('[data-testid="theme-dark"]').click();
     await page
       .waitForFunction(() => document.documentElement.dataset.theme === "dark", undefined, {
         timeout: 3000,
@@ -112,7 +113,7 @@ async function main() {
       .catch(() => undefined);
     check("the console palette is still one choice away", (await theme(page)) === "dark");
     await page.screenshot({ path: join(here, "ui-settings-dark.png") });
-    await page.getByLabel("테마").selectOption("light");
+    await page.locator('[data-testid="theme-light"]').click();
     // A frame, not a reload: the attribute lands from React's commit.
     await page
       .waitForFunction(() => document.documentElement.dataset.theme === "light", undefined, {
@@ -147,7 +148,7 @@ async function main() {
       ["latte", "rgb(239, 241, 245)"],
     ];
     for (const [id, surface] of palettes) {
-      await page.getByLabel("테마").selectOption(id);
+      await page.locator(`[data-testid="theme-${id}"]`).click();
       await page
         .waitForFunction((want) => document.documentElement.dataset.theme === want, id, {
           timeout: 3000,
@@ -167,7 +168,7 @@ async function main() {
     check("the chrome tint follows the last palette onto paper", chrome === "#eff1f5", chrome);
 
     // 4. "system" follows the OS, in both directions, without a reload.
-    await page.getByLabel("테마").selectOption("system");
+    await page.locator('[data-testid="theme-system"]').click();
     // The palettes loop leaves a non-light palette on <html>, so the attribute
     // genuinely has to move — wait for the commit, as the dark direction below.
     await page

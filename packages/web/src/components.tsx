@@ -606,6 +606,14 @@ function lastUserText(blocks: Block[]): string | null {
   return null;
 }
 
+/** The empty conversation's one-click starts. 각 문장은 화면을 시키는 말이
+    그대로 되는 것 — 누르면 컴포저에 채워 지고, 고쳐 보내면 된다. */
+const STARTERS = [
+  "로그인 화면의 상태 3개를 만들어 줘",
+  "이 화면을 모바일 폭에서도 읽히게 다듬어 줘",
+  "테이블에 빈 상태와 오류 상태를 추가해 줘",
+];
+
 export function Transcript({
   blocks,
   live = true,
@@ -613,6 +621,7 @@ export function Transcript({
   onRetry,
   onRewind,
   onResendEdit,
+  onStarter,
   checkpoints,
   onRestoreCheckpoint,
 }: {
@@ -629,6 +638,8 @@ export function Transcript({
   onRewind?: (turn: number, text: string) => void;
   /** 고쳐서 다시 보내기 (PLAN D95): the planner's words return to the composer. */
   onResendEdit?: (text: string) => void;
+  /** A starter chip was pressed — its sentence becomes the composer's draft. */
+  onStarter?: (text: string) => void;
   /** This session's turn-start snapshots (PLAN D52), oldest first. */
   checkpoints?: Array<{ id: string; turn: number }>;
   /** Puts the worktree back the way it stood before that answer (PLAN D52). */
@@ -641,6 +652,20 @@ export function Transcript({
         <p className="empty__sub">
           만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로 들어옵니다.
         </p>
+        {onStarter && (
+          <div className="empty__starters">
+            {STARTERS.map((starter) => (
+              <button
+                key={starter}
+                type="button"
+                className="empty__starter"
+                onClick={() => onStarter(starter)}
+              >
+                {starter}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -878,7 +903,7 @@ export function PermissionCard({
             title={suggestion ? suggestion.label : "이 동작은 계속 물어볼 수밖에 없습니다"}
             onClick={() => onRespond("allowAlways")}
           >
-            {suggestion ? `항상 허용 · ${suggestion.label}` : "항상 허용"}
+            {suggestion ? suggestion.label : "항상 허용"}
           </button>
           <button type="button" className="danger" onClick={() => setShowReason(true)}>
             거절…

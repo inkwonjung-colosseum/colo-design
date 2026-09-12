@@ -188,9 +188,10 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
   assert.match(script, /kill -0 4242/, "waits on the electron main pid");
   assert.match(script, /seq 1 150/, "the wait is bounded — 30s, not forever");
   assert.match(script, /ditto -x -k '\/tmp\/down loads\/cds-design-0\.5\.0\.zip'/, "paths with spaces survive");
-  assert.match(script, /rm -rf '\/Applications\/CDS Design\.app'/);
-  assert.match(script, /mv "\$SRC" '\/Applications\/CDS Design\.app'/);
-  assert.match(script, /\/usr\/bin\/open '\/Applications\/CDS Design\.app'/);
+  assert.match(script, /mv "\$TARGET" "\$BACKUP"/, "the old bundle steps aside, never rm-rf'd first");
+  assert.match(script, /mv "\$SRC" "\$TARGET"/, "the new bundle takes the place");
+  assert.match(script, /mv "\$BACKUP" "\$TARGET"/, "a failed move restores the old bundle");
+  assert.match(script, /\/usr\/bin\/open "\$TARGET"/);
   assert.match(script, /exec >> '\/tmp\/swap\.log'/, "every failure leaves a trace in the log");
 });
 

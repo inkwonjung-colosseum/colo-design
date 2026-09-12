@@ -36,6 +36,12 @@ export interface Project {
   /** What the planner named it. Korean is normal here. */
   name: string;
   repo: ProjectRepo;
+  /**
+   * Whether the planner said this repo's `install`/`preview` commands may
+   * run on this machine. `undefined` is a project created before the gate —
+   * approval read as given, since its commands have already run here.
+   */
+  commandsApproved?: boolean;
 }
 
 /** Every path a project owns. */
@@ -134,6 +140,9 @@ function parseProject(raw: unknown): Project | null {
   return {
     slug,
     name: cleanString(value.name) ?? slug,
+    ...(typeof value.commandsApproved === "boolean"
+      ? { commandsApproved: value.commandsApproved }
+      : {}),
     repo: {
       url: cleanString(repo.url),
       baseBranch: cleanString(repo.baseBranch) ?? DEFAULT_BASE_BRANCH,
@@ -232,13 +241,22 @@ export class ProjectRegistry {
   }
 
   /** Registers a new project. */
-  create(input: { name: string; repoUrl: string | null; baseBranch?: string }): Project {
+  create(input: {
+    name: string;
+    repoUrl: string | null;
+    baseBranch?: string;
+    commandsApproved?: boolean;
+  }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
     const slug = slugify(name, new Set(this.file.projects.map((project) => project.slug)));
     const project: Project = {
       slug,
       name,
+      // The gate's whole point: a fresh project is unapproved until the
+      // picker says the planner saw the commands. `undefined` never persists
+      // from here — only legacy entries carry it.
+      commandsApproved: input.commandsApproved === true,
       repo: {
         url: input.repoUrl,
         baseBranch: input.baseBranch?.trim() || DEFAULT_BASE_BRANCH,
@@ -256,7 +274,12 @@ export class ProjectRegistry {
   /** Changes what a project points at. */
   update(
     slug: string,
-    changes: { name?: string; repoUrl?: string | null; baseBranch?: string },
+    changes: {
+      name?: string;
+      repoUrl?: string | null;
+      baseBranch?: string;
+      commandsApproved?: boolean;
+    },
   ): Project {
     const project = this.get(slug);
     if (!project) throw new Error(`프로젝트를 찾을 수 없습니다: ${slug}`);
@@ -264,6 +287,9 @@ export class ProjectRegistry {
       const name = changes.name.trim();
       if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
       project.name = name;
+    }
+    if (changes.commandsApproved !== undefined) {
+      project.commandsApproved = changes.commandsApproved;
     }
     if (changes.repoUrl !== undefined) project.repo.url = changes.repoUrl;
     if (changes.baseBranch !== undefined) {

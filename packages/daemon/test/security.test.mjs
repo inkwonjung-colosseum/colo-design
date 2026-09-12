@@ -156,3 +156,32 @@ test("daemon http responses carry cache-control: no-store (token'd page must not
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// git 의 명사 — a session never writes history the tool did not review
+// ---------------------------------------------------------------------------
+
+test("Bash git commit·push are refused before 항상 허용; reads and stash stay open", async () => {
+  const { Session } = await import("../dist/session.js");
+  // canUse runs on the prototype with a stub `this`: the git guard sits before
+  // alwaysAllowed, so a memory that would allow anything still cannot buy it.
+  const ask = {
+    alwaysAllowed: { allows: () => true },
+    handlePermission: () => Promise.resolve({ behavior: "allow", updatedInput: {} }),
+  };
+  const signal = new AbortController().signal;
+  for (const command of [
+    "git commit -m 'ㅅㄴㅅ'",
+    "git -C /repo push origin main",
+    "git push --set-upstream origin cds-design/20260911-1",
+  ]) {
+    const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
+    assert.equal(verdict.behavior, "deny", command);
+    assert.match(verdict.message, /저장 버튼/, `${command} names the tool's own verb`);
+  }
+  // Status reads and conflict cleanup (add·stash) are the session's to use.
+  for (const command of ["git status --porcelain", "git add -A", "git stash list"]) {
+    const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
+    assert.equal(verdict.behavior, "allow", command);
+  }
+});

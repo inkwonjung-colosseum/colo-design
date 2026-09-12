@@ -22,10 +22,10 @@ declare global {
   interface Window {
     cdsDesignDesktop?: {
       updateCheck: () => Promise<UpdateCheckResult>;
-      macSelfUpdate: (input: {
-        url: string;
-        sha256: string;
-      }) => Promise<
+      /** The feed — not the renderer — decides what gets downloaded; the
+       * request takes no arguments by design (a compromised renderer must not
+       * be able to point the updater at its own zip). */
+      macSelfUpdate: () => Promise<
         | { planned: unknown; guarded: string } // 개발 실행 — 계획만
         | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
         | { error: string }

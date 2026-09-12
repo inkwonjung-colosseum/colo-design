@@ -199,8 +199,8 @@ async function main() {
     await start.click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });
     // --- a. two projects, over the same socket the browser uses -----------
-    await call({ type: "project.create", name: "결제", repoUrl: paymentsFixture.remote });
-    await call({ type: "project.create", name: "환불", repoUrl: refundsFixture.remote });
+    await call({ type: "project.create", name: "결제", repoUrl: paymentsFixture.remote, approveCommands: true });
+    await call({ type: "project.create", name: "환불", repoUrl: refundsFixture.remote, approveCommands: true });
     await waitReady("the 환불 clone");
     check("two projects created over the socket, both cloning", true);
 
@@ -357,6 +357,9 @@ async function main() {
     await refundsTile.click();
     const popover = page.locator(".node__pop");
     await popover.waitFor({ timeout: 10000 });
+    // poprise(0.18s 스프링) 의 overshoot 은 정착 전 경계를 순간적으로 벗어
+    // 한다 — 재는 것은 멈춘 자리다. 병렬 레인의 부하가 애니메이션을 늘린다.
+    await popover.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
     check(
       "the rail's icon click opens the conversation popover",
       (await popover.getByRole("menuitem", { name: "새 화면" }).count()) >= 1 &&

@@ -80,6 +80,37 @@ function sameOrigin(url: string, origin: string | null): boolean {
   }
 }
 
+/**
+ * The only origins this view may ever show: the daemon's loopback preview
+ * servers. The renderer names urls, this decides — a compromised renderer
+ * must not aim the overlay at file:// or a foreign origin and snapshot it.
+ */
+function loopbackHttp(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return (
+      protocol === "http:" &&
+      (hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Repo content never gets to hand the OS a scheme — only the web's two.
+ * Same rule as the main window's guardNavigations; a dev-server page that
+ * opens help:// or a custom handler is a page the planner never asked for.
+ */
+function openExternalHttp(url: string): void {
+  try {
+    const { protocol } = new URL(url);
+    if (protocol === "http:" || protocol === "https:") void shell.openExternal(url);
+  } catch {
+    // a url that will not parse has no protocol to allow
+  }
+}
+
 export class PlannerPreviewView {
   private view: WebContentsView | null = null;
   private bridge: BridgeState = "unknown";
@@ -108,6 +139,7 @@ export class PlannerPreviewView {
    * navigated — the same url means the view is already right.
    */
   mount(url: string): void {
+    if (!loopbackHttp(url)) return;
     this.origin = new URL(url).origin;
     const view = this.ensureView();
     if (this.mountedUrl === url) return;
@@ -194,6 +226,9 @@ export class PlannerPreviewView {
     }
     if (!this.origin) return;
     const url = new URL(route, this.origin);
+    // open() refuses off-origin urls; a declared screen must not slip past
+    // that by carrying an absolute route — the repo owns the screens list.
+    if (url.origin !== this.origin) return;
     if (state) url.searchParams.set("state", state);
     this.mountedUrl = url.toString();
     void contents.loadURL(url.toString());
@@ -400,7 +435,7 @@ export class PlannerPreviewView {
     // windows the page tries to open are denied, same-origin ones absorbed.
     contents.setWindowOpenHandler(({ url }) => {
       if (sameOrigin(url, this.origin)) void contents.loadURL(url);
-      else void shell.openExternal(url);
+      else openExternalHttp(url);
       return { action: "deny" };
     });
     // Page-initiated main-frame navigation only — `loadURL` and history steps
@@ -408,7 +443,7 @@ export class PlannerPreviewView {
     contents.on("will-navigate", (event, url) => {
       if (!sameOrigin(url, this.origin)) {
         event.preventDefault();
-        void shell.openExternal(url);
+        openExternalHttp(url);
       }
     });
     contents.on("did-navigate", (_event, url) => {

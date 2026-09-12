@@ -15,6 +15,7 @@
  * Usage: node packages/daemon/test/projects-e2e.mjs
  */
 import { chmodSync, existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -165,11 +166,13 @@ async function main() {
       type: "project.create",
       name: "결제",
       repoUrl: paymentsFixture.remote,
+      approveCommands: true,
     });
     const refunds = await request({
       type: "project.create",
       name: "환불",
       repoUrl: refundsFixture.remote,
+      approveCommands: true,
     });
     check(
       "each project carries its own repo url",
@@ -281,7 +284,10 @@ async function main() {
           ? paymentsRow
           : null;
       },
-      30_000,
+      // Under the parallel lanes (CI included) the stub turn's settle can
+      // stretch past a quiet-machine budget; the claim is the count MOVES,
+      // not how fast.
+      90_000,
       "the off-screen project's count",
     );
     check(
@@ -296,7 +302,7 @@ async function main() {
       const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
       const row = changed?.projects?.find((p) => p.slug === payments.slug);
       return row?.threads?.some((t) => t.id === sessionId && t.state === "finished") ? row : null;
-    }, 30_000, "the finished thread state");
+    }, 90_000, "the finished thread state");
     check(
       "a turn that ended off-screen settles its thread to finished",
       settledRow.threads.every((t) => t.id !== sessionId || t.state === "finished"),
@@ -374,14 +380,33 @@ async function main() {
       `${removeReply.activeSlug}`,
     );
 
-    // --- 3.7 overlapping switches serialize; the last request wins (D34) ----
-    // 환불 is gone, so the duel is 결제 against the emptied registry: create
-    // a fresh second project and fire two activations without awaiting.
-    const third = await request({
-      type: "project.create",
-      name: "정산",
-      repoUrl: refundsFixture.remote,
-    });
+    // --- 3.8 a repo nobody has vouched for stops before its commands run --
+    // The gate's claim: without the planner's yes, the clone happens but the
+    // repo's install never does; one project.update is the yes. The fresh
+    // second project then doubles as the 3.7 duel partner below (D34).
+    const third = await request({ type: "project.create", name: "정산", repoUrl: refundsFixture.remote });
+    const gated = await waitFor(async () => {
+      const current = await request({ type: "repo.status" });
+      return current.phase === "error" && current.errorKind === "commands" ? current : null;
+    }, 60_000, "the commands gate");
+    check(
+      "an unapproved repo stops after the clone with the commands kind",
+      gated.errorKind === "commands",
+      `${gated.phase}/${gated.errorKind}`,
+    );
+    check(
+      "an unapproved repo's install command has not run",
+      !existsSync(join(DIR, "projects", third.slug, "repo", "node_modules")),
+    );
+    await request({ type: "project.update", slug: third.slug, approveCommands: true });
+    await waitFor(async () => {
+      const current = await request({ type: "repo.status" });
+      return current.phase === "ready" ? current : null;
+    }, 60_000, "정산 ready after the approval");
+    check(
+      "the approval lets the install run",
+      existsSync(join(DIR, "projects", third.slug, "repo", "node_modules")),
+    );
     await new Promise((resolve) => {
       ws.send(JSON.stringify({ type: "project.activate", slug: payments.slug, id: "d34a" }));
       ws.send(JSON.stringify({ type: "project.activate", slug: third.slug, id: "d34b" }));
@@ -429,6 +454,40 @@ async function main() {
     );
     ws2.close();
     await restarted.stop();
+
+    // --- 4.5 a hard kill mid-최신화 parks the work; startup brings it back --
+    // A stash under our message is exactly what a daemon killed between its
+    // stash and its pop leaves behind — no graceful stop waited that one out,
+    // so only the start sweep's recovery can bring the work back.
+    const parkedFile = join(DIR, "projects", payments.slug, "repo", "하드킬-산출물.txt");
+    writeFileSync(parkedFile, "죽은 실행이 임시 보관한 작업\n");
+    execFileSync("git", ["stash", "push", "--include-untracked", "-m", "CDS Design: 최신화 임시 보관"], {
+      cwd: join(DIR, "projects", payments.slug, "repo"),
+    });
+    check(
+      "a parked stash takes the file out of the worktree",
+      !existsSync(parkedFile),
+      `file still present=${existsSync(parkedFile)}`,
+    );
+    const revivePort = await freePort();
+    const revived = new DaemonServer({ host: "127.0.0.1", port: revivePort, token: "projects-e2e" });
+    await revived.start();
+    const ws3 = new WebSocket(`ws://127.0.0.1:${revivePort}?token=projects-e2e`);
+    const inbox3 = [];
+    ws3.on("message", (raw) => inbox3.push(JSON.parse(String(raw))));
+    await new Promise((resolve, reject) => {
+      ws3.once("open", resolve);
+      ws3.once("error", reject);
+    });
+    const hello3 = await waitFor(() => inbox3.find((m) => m.type === "hello"), 20_000, "hello after the hard kill");
+    const paymentsRevived = hello3.status.projects.find((p) => p.slug === payments.slug);
+    check(
+      "startup replays a dead run's parked work",
+      paymentsRevived?.pendingChanges > 0 && existsSync(parkedFile),
+      `pendingChanges=${paymentsRevived?.pendingChanges}, file back=${existsSync(parkedFile)}`,
+    );
+    ws3.close();
+    await revived.stop();
   } finally {
     try {
       await server.stop();
