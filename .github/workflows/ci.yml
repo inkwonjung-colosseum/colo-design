@@ -65,6 +65,10 @@ jobs:
       - name: 오프라인 레인 실행 (real-Claude L4 제외)
         env:
           ELECTRON_DISABLE_SANDBOX: "1"
+          # 멈춘 레인은 잡의 45분을 다 태우고 취소되며, 취소는 로그 업로드
+          # 조건을 타지 않아 원인까지 함께 사라진다(셋째 판이 그랬다).
+          # 레인마다 상한을 두어 멈춤이 로그를 남기는 실패가 되게 한다.
+          CDS_TEST_LANE_TIMEOUT_MIN: "12"
         run: |
           # 순차 실행: 공유 러너의 코어 수에서 3레인 병렬은 스스로 과부하를
           # 만들어 부하에 민감한 대기(화면 밖 턴의 카운트, 마법사의 이동)를
@@ -75,7 +79,7 @@ jobs:
           xvfb-run -a node scripts/test-parallel.mjs L3
 
       - name: 레인 로그 업로드
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-logs

@@ -79,6 +79,27 @@ function killLaneGroup(child) {
   }
 }
 
+/**
+ * A lane that stops making progress must fail loudly instead of eating the
+ * whole run: a hung Electron window once burned a 45 분 CI job to its limit
+ * and the job's cancellation threw the lane logs away with it. The cap is for
+ * hangs, never for slow-but-moving suites — the slowest lane on a cold runner
+ * (Electron 내려받기 포함) is minutes, not tens of them.
+ */
+const LANE_TIMEOUT_MS = Number(process.env.CDS_TEST_LANE_TIMEOUT_MIN ?? 15) * 60_000;
+
+/** SIGTERM first, then a hard kill for whatever ignored it. */
+function killLaneGroupHard(child) {
+  killLaneGroup(child);
+  setTimeout(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // The group is gone — the SIGTERM was enough.
+    }
+  }, 5_000).unref();
+}
+
 function runLane(id, lane) {
   return new Promise((resolve) => {
     const log = join(LOG_DIR, `${id}-${lane.name}.log`);
@@ -90,17 +111,28 @@ function runLane(id, lane) {
       { stdio: ["ignore", "pipe", "pipe"], detached: true },
     );
     running.add(child);
+    let timedOut = false;
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      appendFileSync(
+        log,
+        `\n[timeout] lane ${id} (${lane.name}) made no progress for ${LANE_TIMEOUT_MS / 60_000}m — killing its group\n`,
+      );
+      killLaneGroupHard(child);
+    }, LANE_TIMEOUT_MS);
     child.stdout.on("data", (chunk) => appendFileSync(log, chunk));
     child.stderr.on("data", (chunk) => appendFileSync(log, chunk));
     child.on("close", (code) => {
+      clearTimeout(deadline);
       running.delete(child);
       killLaneGroup(child);
       const seconds = ((Date.now() - startedAt.getTime()) / 1000).toFixed(0);
-      resolve({ id, name: lane.name, code: code ?? 1, seconds, log });
+      resolve({ id, name: lane.name, code: timedOut ? 124 : code ?? 1, seconds, log, timedOut });
     });
     child.on("error", () => {
+      clearTimeout(deadline);
       running.delete(child);
-      resolve({ id, name: lane.name, code: 1, seconds: "0", log });
+      resolve({ id, name: lane.name, code: 1, seconds: "0", log, timedOut: false });
     });
   });
 }
@@ -119,7 +151,7 @@ const elapsed = ((Date.now() - startedAll) / 1000).toFixed(0);
 
 let failed = 0;
 for (const result of results) {
-  const verdict = result.code === 0 ? "PASS" : "FAIL";
+  const verdict = result.code === 0 ? "PASS" : result.timedOut ? "TIMEOUT" : "FAIL";
   if (result.code !== 0) failed += 1;
   console.log(`${verdict}  lane ${result.id} (${result.name}) — ${result.seconds}s  log: ${result.log}`);
   // Per-suite outcome lines from each log, so the summary reads like the
