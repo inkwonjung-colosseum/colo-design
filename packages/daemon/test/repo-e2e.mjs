@@ -243,10 +243,17 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
     await workspace.stop();
 
     const before = await request({ id: "1", type: "repo.status" });
+    // 상태 묻기가 아무것도 띄우지 않았다는 것은 포트가 대답하지 않는 것으로
+    // 확인한다. previewUrl 은 설정이 아는 포트일 뿐이다 — 서버가 이미 클론을
+    // 읽어 ready 로 서 있으면(러너에서 그랬다) 아무도 듣고 있지 않아도
+    // 값이 채워진다. 검사가 말하는 것은 '시작하지 않는다' 이다.
+    const previewAnswers = before.data.previewUrl
+      ? await fetch(before.data.previewUrl).then(() => true, () => false)
+      : false;
     check(
       "repo.status reports the workspace without starting it",
-      before.data.root === ROOT && before.data.url === remoteUrl && before.data.previewUrl === null,
-      `${before.data.phase}, url=${before.data.url}`,
+      before.data.root === ROOT && before.data.url === remoteUrl && previewAnswers === false,
+      `${before.data.phase}, url=${before.data.url}, previewUrl=${before.data.previewUrl ?? "null"}, answers=${previewAnswers}`,
     );
 
     // PAT storage went machine-wide (github.token.set); a repo.update that
