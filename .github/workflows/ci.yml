@@ -53,17 +53,18 @@ jobs:
         run: |
           pnpm exec playwright install --with-deps chromium
           sudo apt-get install -y --no-install-recommends xvfb
-          # Electron 의 Chromium 샌드박스는 linux 에서 SUID 헬퍼를 요구한다.
-          # 러너의 node_modules 는 root 소유가 아니어서 그대로 두면 샌드박스를
-          # 포기하기보다 죽는다(SIGTRAP — 첫 ci 실행 L1 의 실패). 문서의 해법대로
-          # 헬퍼를 root 소유 4755 로 맞춘다. 샌드박스는 켜둔 채로.
-          sudo chown root:root node_modules/.pnpm/electron@*/node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/.pnpm/electron@*/node_modules/electron/dist/chrome-sandbox
 
       - name: 빌드
         run: pnpm build
 
+      # Electron 의 linux 샌드박스는 root 소유 4755 인 SUID 헬퍼를 요구한다.
+      # 러너의 node_modules 는 그렇지 않고, 헬퍼 파일은 electron 의 설치
+      # 스크립트가 레인 실행 중에야 내려받으므로 미리 권한을 고쳐 둘 수도
+      # 없다(그 시도가 두 번째 ci 실패였다). 이 스위트가 보는 것은 숨은 창 ·
+      # 진짜 JPEG · 클릭이지 샌드박스 정책이 아니므로, CI 에서만 끈다.
       - name: 오프라인 레인 실행 (real-Claude L4 제외)
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
         run: |
           # 순차 실행: 공유 러너의 코어 수에서 3레인 병렬은 스스로 과부하를
           # 만들어 부하에 민감한 대기(화면 밖 턴의 카운트, 마법사의 이동)를
