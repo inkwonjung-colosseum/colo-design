@@ -242,18 +242,18 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
     // started is foreign to it, so step aside before asking it to serve.
     await workspace.stop();
 
+    // 검사의 말 그대로: 묻는 행위가 아무것도 시작하지 않는다. 절대적인
+    // '포트가 조용하다' 는 이 자리에서 참이 아닐 수 있다 — killPreview 는
+    // 포트 해제를 3초까지만 기다리고, 느린 러너에서는 방금 멈춘 미리보기의
+    // 리스너가 그보다 늦게 사라진다. 그래서 묻기 전후를 비교한다: 상태 질의가
+    // 포트를 없던 데서 살려 냈다면 그것이 '시작' 이다.
+    const portBefore = await portAccepts(previewPort);
     const before = await request({ id: "1", type: "repo.status" });
-    // 상태 묻기가 아무것도 띄우지 않았다는 것은 포트가 대답하지 않는 것으로
-    // 확인한다. previewUrl 은 설정이 아는 포트일 뿐이다 — 서버가 이미 클론을
-    // 읽어 ready 로 서 있으면(러너에서 그랬다) 아무도 듣고 있지 않아도
-    // 값이 채워진다. 검사가 말하는 것은 '시작하지 않는다' 이다.
-    const previewAnswers = before.data.previewUrl
-      ? await fetch(before.data.previewUrl).then(() => true, () => false)
-      : false;
+    const portAfter = await portAccepts(previewPort);
     check(
       "repo.status reports the workspace without starting it",
-      before.data.root === ROOT && before.data.url === remoteUrl && previewAnswers === false,
-      `${before.data.phase}, url=${before.data.url}, previewUrl=${before.data.previewUrl ?? "null"}, answers=${previewAnswers}`,
+      before.data.root === ROOT && before.data.url === remoteUrl && portAfter === portBefore,
+      `${before.data.phase}, url=${before.data.url}, port ${portBefore} → ${portAfter}`,
     );
 
     // PAT storage went machine-wide (github.token.set); a repo.update that
