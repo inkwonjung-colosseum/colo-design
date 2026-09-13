@@ -2789,17 +2789,33 @@ function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 function portAccepts(port: number): Promise<boolean> {
-  const { promise, resolve } = Promise.withResolvers<boolean>();
-  const socket = createConnection({ port, host: "127.0.0.1" });
-  const settle = (ok: boolean) => {
-    socket.destroy();
-    resolve(ok);
-  };
-  socket.setTimeout(1_000);
-  socket.once("connect", () => settle(true));
-  socket.once("timeout", () => settle(false));
-  socket.once("error", () => settle(false));
-  return promise;
+  return new Promise<boolean>((resolve) => {
+    // A refused connection is the kernel's definitive "nothing listens here";
+    // the 1s timeout is not. An event loop starved past the second (a loaded
+    // runner mid-suite is enough) can deliver the timeout before the connect
+    // of a LIVE listener — and a busy-port read that trusts it skips the
+    // reclaimer and spawns the preview into EADDRINUSE. One immediate retry
+    // turns that coin flip back into a fact; a dead port still refuses
+    // instantly, so the free-side verdict pays nothing.
+    const attempt = (retriesLeft: number) => {
+      const socket = createConnection({ port, host: "127.0.0.1" });
+      socket.setTimeout(1_000);
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
+      socket.once("error", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.once("timeout", () => {
+        socket.destroy();
+        if (retriesLeft > 0) attempt(retriesLeft - 1);
+        else resolve(false);
+      });
+    };
+    attempt(1);
+  });
 }
 
 function respondsOk(url: string): Promise<boolean> {

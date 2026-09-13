@@ -378,14 +378,10 @@ async function main() {
         ),
       `last state=${afterStopState}`,
     );
-    // 스터브 한계 뒤정리: 무음 CLI 는 중지된 프롬프트를 소비하지 못한 채
-    // 남겨 SDK 가 재실행을 되풀이한다 — 실제 CLI 에서는 일어나지 않는 일.
-    // 뒤의 검사들이 그 churn 을 읽지 않게 이 스레드를 닫는다.
-    await request({ type: "session.close", sessionId }).catch(() => undefined);
-    // 3.6 이후의 검사들은 환불이 활성이라는 3.5 이전의 상태를 이어 받는다 —
-    // 중지 검사가 전환해 놓은 활성을 되돌려 놓는다.
-    await request({ type: "project.activate", slug: refunds.slug });
-    await waitReady("the 환불 clone restored after the 중지 check");
+    // The list contract read while the thread is still open — closing it
+    // first removed it from session.list (the stub writes no transcript to
+    // fall back on), so the check used to pass only when the close LOST the
+    // race. 결제 is still the active project here, which is the list it reads.
     const afterStopList = await request({ type: "session.list" });
     check(
       "the interrupted session returns to idle",
@@ -395,6 +391,14 @@ async function main() {
       ),
     );
     await stopTurn;
+    // 스터브 한계 뒤정리: 무음 CLI 는 중지된 프롬프트를 소비하지 못한 채
+    // 남겨 SDK 가 재실행을 되풀이한다 — 실제 CLI 에서는 일어나지 않는 일.
+    // 뒤의 검사들이 그 churn 을 읽지 않게 이 스레드를 닫는다.
+    await request({ type: "session.close", sessionId }).catch(() => undefined);
+    // 3.6 이후의 검사들은 환불이 활성이라는 3.5 이전의 상태를 이어 받는다 —
+    // 중지 검사가 전환해 놓은 활성을 되돌려 놓는다.
+    await request({ type: "project.activate", slug: refunds.slug });
+    await waitReady("the 환불 clone restored after the 중지 check");
 
     // --- 3.6 a removal closes the clone's live threads (D21) ----------------
     const refundSession = await request({ type: "session.create" });
