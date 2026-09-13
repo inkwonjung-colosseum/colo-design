@@ -1429,18 +1429,16 @@ export class DaemonServer {
         // 사실을 아무도 말하지 않았다. 병합이 실제로 일어났으면 그 기록이
         // 대화에 남는다 — 충돌 브리프와 같은 자리, 같은 어휘로.
         if (behind !== null && behind > 0 && outcome === "clean" && message.sessionId) {
-          this.manager
-            .get(message.sessionId)
-            ?.send(
-              markTurn(
-                {
-                  kind: "brief",
-                  title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
-                  purpose: "refresh",
-                },
-                "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
-              ),
-            );
+          this.manager.get(message.sessionId)?.send(
+            markTurn(
+              {
+                kind: "brief",
+                title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
+                purpose: "refresh",
+              },
+              "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
+            ),
+          );
         }
         return await this.repo.status();
       }

@@ -46,15 +46,16 @@ function run(command, args, cwd) {
 
 /**
  * The turn must really RUN for the pins to survive and settle — the stub
- * answers version/auth and sleeps on a comment turn, logging every line it
- * is fed so the suite can prove what Claude actually received.
- */
-/**
- * The turn must really RUN for the pins to survive and settle — the stub
  * answers version/auth, scans the stdin it is fed (control requests first,
  * then the user line), lingers on a comment turn, and logs every line so the
  * suite can prove what Claude actually received. One turn per process: the
  * user line ends it, whatever its words.
+ *
+ * set_permission_mode is the one control request the daemon AWAITS at session
+ * birth (전부 맡기기 now survives reload, so the branch is real): left
+ * unanswered it wedged startSession forever and the comment envelope never
+ * reached this CLI. Answering it — and only it — keeps every other request as
+ * pending as the real SDK leaves it in this suite.
  */
 function slowStubClaude(dir, logPath) {
   mkdirSync(dir, { recursive: true });
@@ -76,7 +77,14 @@ function slowStubClaude(dir, logPath) {
       "  let idx;",
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
       "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
-      '    if (log) { try { fs.appendFileSync(log, line + "\\n"); } catch {} }',
+      '    if (line.includes(\'"subtype":"set_permission_mode"\')) {',
+      '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
+      "      process.stdout.write(JSON.stringify({",
+      '        type: "control_response",',
+      '        response: { subtype: "success", request_id: id },',
+      '      }) + "\\n");',
+      "      continue;",
+      "    }",
       '    if (line.includes(\'"type":"user"\')) {',
       '      const sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || "stub";',
       "      process.stdout.write(JSON.stringify({",

@@ -282,6 +282,22 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       String(hello.protocolVersion),
     );
 
+    // The server's warm restart is bringing this same workspace up in the
+    // background (a fire-and-forget sync at boot, by design). The read-only
+    // check below samples the preview port around one repo.status — a
+    // bring-up that lands between the samples flips the port and wears the
+    // blame for a start the query never made. Let the boot settle first;
+    // polling the query is free, it is the very read under test.
+    const settleDeadline = Date.now() + 120_000;
+    for (;;) {
+      const r = await request({ id: `settle-${Date.now()}`, type: "repo.status" });
+      if (r.data.phase === "ready" || r.data.phase === "error") break;
+      if (Date.now() > settleDeadline) {
+        throw new Error(`timeout waiting for the warm-restart sync to settle (${r.data.phase})`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
     // The server owns its own workspace state; the preview this test process
     // started is foreign to it, so step aside before asking it to serve.
     await workspace.stop();
