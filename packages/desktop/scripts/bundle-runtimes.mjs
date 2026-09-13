@@ -106,9 +106,21 @@ if (withMinGit) {
 // 스크립트 자체가 실패해야 한다(런처만 복사하는 옛 버그는 이 검사를 통과할 수
 // 없다).
 const { stdout: nodeOut } = await run(join(bin, win ? "node.exe" : "node"), ["--version"]);
-const { stdout: corepackOut } = await run(join(bin, win ? "corepack.cmd" : "corepack"), [
-  "--version",
-]);
+// corepack 검사는 .cmd 셈을 execFile 하지 않는다 — Node 는 shell 없는 .cmd
+// 실행을 EINVAL 로 거부한다(CI 가 실제로 깼다). 셈이 하는 일(node 로
+// corepack.js 를 NODE_PATH 와 함께 돌린다)을 여기서 그대로 대신한다: 구현체
+// 패키지가 빠진 런처만 복사한 옛 버그는 이 검사를 여전히 통과할 수 없다.
+const { stdout: corepackOut } = await run(
+  join(bin, win ? "node.exe" : "node"),
+  [join(bin, "corepack-nm", "corepack", "dist", "corepack.js"), "--version"],
+  {
+    env: {
+      ...process.env,
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+      NODE_PATH: join(bin, "corepack-nm"),
+    },
+  },
+);
 writeFileSync(
   join(bin, "RUNTIMES.txt"),
   `node ${nodeOut.trim()}\ncorepack ${corepackOut.trim()} via bundled dist\n`,
