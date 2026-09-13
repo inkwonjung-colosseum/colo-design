@@ -14,7 +14,7 @@
  *
  * Usage: node packages/daemon/test/onboarding-e2e.mjs
  */
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,31 @@ import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DIR = join(tmpdir(), "colo-design-onboard-e2e");
+
 const REPO_PAT = "onboard_e2e_pat";
+/**
+ * The onboarding gate answers for the machine's Claude CLI — on a CI runner
+ * there is none, and on a dev machine the REAL one quietly made this suite
+ * pass. The stub satisfies what the gate asks of a CLI: `--version` and
+ * `auth status` (logged in, subscription attached). Pinned through
+ * COLO_DESIGN_CLAUDE_BIN so the check is the same everywhere.
+ */
+function stubClaude(dir) {
+  const path = join(dir, "claude");
+  const script = [
+    "#!/usr/bin/env node",
+    'if (process.argv[2] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+    'if (process.argv[2] === "auth" && process.argv[3] === "status") {',
+    '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\');',
+    "  process.exit(0);",
+    "}",
+    "console.log('{\"loggedIn\":false}');",
+  ].join("\n");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
+  return path;
+}
 
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 process.env.COLO_DESIGN_REPO_DIR = join(DIR, "work");
@@ -63,7 +87,7 @@ function step(steps, id) {
 
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
-  mkdirSync(DIR, { recursive: true });
+  process.env.COLO_DESIGN_CLAUDE_BIN = stubClaude(join(DIR, "claude-bin"));
   const fixture = await createFixtureRepo({
     dir: join(DIR, "fixture"),
     port: await freePort(),
