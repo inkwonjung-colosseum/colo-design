@@ -18,7 +18,7 @@
  * Usage: node packages/daemon/test/publish-e2e.mjs
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,10 +100,69 @@ process.exit(1);
 const PASSING_CHECK = `console.log("check: 통과");
 `;
 
+/**
+ * The CLI this suite's sessions speak to. The daemon resolves its Claude
+ * executable from COLO_DESIGN_CLAUDE_BIN first — pinned here so the suite is
+ * the same machine-independent check everywhere: a dev box with a real CLI
+ * installed must not quietly exercise the real one (that was the only reason
+ * this suite ever passed locally — CI, with no CLI at all, died at
+ * session.create). Every user line gets a plain result and the process stays
+ * up: the checkpoint section sends a second turn through the SAME session.
+ */
+function stubClaude(dir) {
+  const path = join(dir, "claude");
+  writeFileSync(
+    path,
+    [
+      "#!/usr/bin/env node",
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+      'if (args[0] === "auth") {',
+      '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\');',
+      "  process.exit(0);",
+      "}",
+      'let buf = "";',
+      "const seen = () => {",
+      "  let idx;",
+      '  while ((idx = buf.indexOf("\\n")) !== -1) {',
+      "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
+      '    if (line.includes(\'"subtype":"interrupt"\') || line.includes(\'"subtype":"set_permission_mode"\')) {',
+      '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
+      "      process.stdout.write(JSON.stringify({",
+      '        type: "control_response",',
+      '        response: { subtype: "success", request_id: id },',
+      '      }) + "\\n");',
+      "      continue;",
+      "    }",
+      '    if (line.includes(\'"type":"user"\')) {',
+      '      const sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || "stub";',
+      "      // A real CLI answers in model time; the suite closes the failing-check",
+      "      // session the moment its turn is OBSERVED, before any answer could",
+      "      // exist. An instant stub result would finish that turn first and fire",
+      "      // the planner's done notice the close contract forbids — so the answer",
+      "      // waits a beat the suite never gives it.",
+      "      setTimeout(() => {",
+      "        process.stdout.write(JSON.stringify({",
+      '          type: "result", subtype: "success", is_error: false,',
+      '          session_id: sessionId, result: "알겠습니다.", num_turns: 1, duration_ms: 10,',
+      '        }) + "\\n");',
+      "      }, 1000);",
+      "    }",
+      "  }",
+      "};",
+      'process.stdin.setEncoding("utf8");',
+      'process.stdin.on("data", (chunk) => { buf += chunk; seen(); });',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(join(DIR, "claude-config"), { recursive: true });
-
+  process.env.COLO_DESIGN_CLAUDE_BIN = stubClaude(join(DIR, "claude-config"));
   const port = await freePort();
   const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port });
   const remoteBefore = await remoteHead(fixture.remote);
