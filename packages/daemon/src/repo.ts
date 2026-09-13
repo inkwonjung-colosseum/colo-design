@@ -2220,14 +2220,18 @@ export class RepoWorkspace {
     // 실패는 정리가 실패했을 때만 남는다: 그때는 다시 시작도 소용이 없으니
     // 직접 종료나 포트 변경이 다음 과제다. The kill is listener-only: a blanket
     // port kill also hits the port's clients.
-    if (await portAccepts(port)) {
-      if (!(await this.killPortHolder(port)))
-        throw new PreviewPortBusyError(
-          `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
-            `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
-            `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
-        );
-    }
+    // The reclaimer runs unconditionally: a probe gate ("is the port busy?")
+    // reads the same flaky 1s connect that the verdict below refuses to
+    // trust — a starved runner can time it out against a live listener and
+    // skip the kill, spawning the preview into EADDRINUSE. With nothing
+    // listening, lsof finds no pid and the first refusal clears instantly —
+    // the free-port path pays one lookup, nothing more.
+    if (!(await this.killPortHolder(port)))
+      throw new PreviewPortBusyError(
+        `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
+          `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
+          `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
+      );
 
     const child = spawn(command, this.spawnOptions());
     this.preview = child;
@@ -2328,7 +2332,10 @@ export class RepoWorkspace {
     const port = this.config?.preview.port;
     if (!port) return;
     const deadline = Date.now() + 3_000;
-    while (Date.now() < deadline && (await portAccepts(port))) await sleep(100);
+    while (!(await portRefused(port))) {
+      if (Date.now() > deadline) break;
+      await sleep(100);
+    }
   }
 
   /**
@@ -2375,10 +2382,16 @@ export class RepoWorkspace {
       }
     }
     // The OS retires the listener asynchronously; a re-start before the port
-    // truly frees would fail on the very bind this kill was for.
+    // truly frees would fail on the very bind this kill was for. Only an
+    // explicit refusal is "free": a probe timeout can fire against a still-
+    // bound listener on a starved runner, and a verdict read from it spawns
+    // the preview into EADDRINUSE while the holder lives on.
     const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && (await portAccepts(port))) await sleep(100);
-    return !(await portAccepts(port));
+    while (!(await portRefused(port))) {
+      if (Date.now() > deadline) return false;
+      await sleep(100);
+    }
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -2816,6 +2829,31 @@ function portAccepts(port: number): Promise<boolean> {
     };
     attempt(1);
   });
+}
+
+/**
+ * The port's DEFINITIVE free verdict. A refused connection is the kernel
+ * saying nothing listens here; a connect means something still answers; a
+ * timeout is merely "unknown" — on a starved runner it can fire while a live
+ * listener is still bound, so it reads as NOT free and the caller waits on.
+ */
+function portRefused(port: number): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const socket = createConnection({ port, host: "127.0.0.1" });
+  socket.setTimeout(1_000);
+  socket.once("error", () => {
+    socket.destroy();
+    resolve(true);
+  });
+  socket.once("connect", () => {
+    socket.destroy();
+    resolve(false);
+  });
+  socket.once("timeout", () => {
+    socket.destroy();
+    resolve(false);
+  });
+  return promise;
 }
 
 function respondsOk(url: string): Promise<boolean> {
