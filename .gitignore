@@ -25,6 +25,8 @@ packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/
 .test-logs/
+# 수동으로 뭉친 데스크톱 산물(공유용 tgz) — 릴리스 에셋은 워크플로우가 짓는다.
+/*.tgz
 
 # ZCode 세션 디렉터리
 .zcode/

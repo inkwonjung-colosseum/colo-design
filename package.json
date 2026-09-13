@@ -1,7 +1,7 @@
 {
   "name": "colo-design",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Turns a planning document into working screens built from the company design system, in a chat a planner can use. Each user runs their own daemon and signs in with their own Claude subscription.",
   "type": "module",
   "scripts": {

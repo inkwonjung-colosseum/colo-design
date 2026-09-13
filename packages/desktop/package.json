@@ -1,7 +1,7 @@
 {
   "name": "@colo-design/desktop",
   "productName": "Colo Design",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Colo Design 데스크톱 앱 — Electron 메인이 데몬을 in-process 로 호스팅하고 웹 UI를 함께 띄운다.",
   "type": "module",
