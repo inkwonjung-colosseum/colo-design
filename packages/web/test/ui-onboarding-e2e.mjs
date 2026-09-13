@@ -10,7 +10,15 @@
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
@@ -26,6 +34,29 @@ const DIR = join(tmpdir(), "colo-design-onboard-ui-e2e");
 const PORT = 5401;
 
 const REPO_PAT = "onboard_ui_pat";
+
+/**
+ * The wizard's first gate answers for the machine's Claude CLI. A dev machine
+ * has one and made this suite pass by accident; a CI runner has none and the
+ * gate renders as a fix button instead of a answered line. The stub answers
+ * what the gate asks — `--version`, `auth status` — through the env pin.
+ */
+function stubClaude(dir) {
+  const path = join(dir, "claude");
+  const script = [
+    "#!/usr/bin/env node",
+    'if (process.argv[2] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+    'if (process.argv[2] === "auth" && process.argv[3] === "status") {',
+    '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\');',
+    "  process.exit(0);",
+    "}",
+    "console.log('{\"loggedIn\":false}');",
+  ].join("\n");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
+  return path;
+}
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -88,6 +119,8 @@ async function main() {
     // The github gate and the picker's list answer from the recorded pairs,
     // never from api.github.com.
     COLO_DESIGN_GITHUB_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "github"),
+    // The wizard's Claude gate reads this stub — see stubClaude above.
+    COLO_DESIGN_CLAUDE_BIN: stubClaude(join(DIR, "claude-bin")),
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
