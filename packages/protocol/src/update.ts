@@ -38,7 +38,14 @@ export interface UpdateCheckResult {
   sha256: string | null;
 }
 
-export type FetchLike = (url: string) => Promise<{ ok: boolean; json?: unknown; status: number }>;
+/**
+ * json 은 파싱된 값이다 — fetch 스타일의 json() 메서드가 아니라. unknown 은
+ * 함수형 구현도 삼켜 0.3.3 까지의 깨진 확인·설치가 게이트를 통과하게 했으므로
+ * 값의 모양을 계약으로 못박는다.
+ */
+export type FetchLike = (
+  url: string,
+) => Promise<{ ok: boolean; json?: Record<string, unknown>; status: number }>;
 
 /**
  * semver 비교: -1 | 0 | 1. 사전릴리스는 v1 에선 그냥 문자열 비교로
@@ -72,7 +79,7 @@ export async function fetchLatest(feedUrl: string, fetchLike: FetchLike): Promis
     }
     throw new Error(`업데이트 정보를 가져오지 못했습니다 (HTTP ${response.status})`);
   }
-  const parsed = response.json as Record<string, unknown> | undefined;
+  const parsed = response.json;
   if (!parsed || typeof parsed.version !== "string") {
     throw new Error("업데이트 정보 형식이 올바르지 않습니다");
   }

@@ -604,16 +604,8 @@ function paintBadge(): void {
  */
 function registerDesktopBridge(): void {
   ipcMain.handle("desktop:update-check", async () => {
-    const fetchLike = async (feedUrl: string) => {
-      const response = await netFetch(feedUrl);
-      return {
-        ok: response.ok,
-        status: response.status,
-        json: await response.json(),
-      };
-    };
     try {
-      return await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, fetchLike);
+      return await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
@@ -725,7 +717,7 @@ function registerDesktopBridge(): void {
 /** Electron net 모듈을 fetch 처럼 쓴다(프록시·인증서 정책을 앱이 따른다). */
 async function netFetch(
   feedUrl: string,
-): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
+): Promise<{ ok: boolean; status: number; json?: Record<string, unknown> }> {
   const request = net.request(feedUrl);
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
     let body = "";
@@ -736,11 +728,19 @@ async function netFetch(
     request.once("error", reject);
     request.end();
   });
+  // json 은 파싱된 값이다(FetchLike 계약). 몸통이 JSON 이 아니면 undefined 로
+  // 둔다 — fetchLatest 의 "형식이 올바르지 않습니다" 가 그 모양을 말하게.
+  let json: Record<string, unknown> | undefined;
+  try {
+    json = JSON.parse(response.body) as Record<string, unknown>;
+  } catch {
+    json = undefined;
+  }
   const statusCode = response.statusCode;
   return {
     ok: statusCode >= 200 && statusCode < 300,
     status: statusCode,
-    json: async () => JSON.parse(response.body),
+    json,
   };
 }
 /** zip 내려받기 — net.fetch 로 받아 파일로 흘려보낸다(큰 zip 도 메모리에 올리지 않는다). */
