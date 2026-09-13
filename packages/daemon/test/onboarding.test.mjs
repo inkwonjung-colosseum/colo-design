@@ -244,6 +244,22 @@ test("the github gate: no token warns without blocking, a working token names th
   assert.ok(!passStep.detail.includes("ghp_onboard_unit"), "the token never rides the detail");
 });
 
+test("the github gate: a stored but refused token warns — the wizard must stay escapable", async () => {
+  // 실사 결함: a pasted-and-rejected token judged fail, and fail hides
+  // 시작하기. Nothing on the card can un-store a token, so the planner was
+  // locked out of the product over one typo. A refused token is, capability
+  // for capability, a missing one — warn with the reason, form still open.
+  const rejected = new GitHubClient("ghp_onboard_unit", {
+    request: async () => ({ status: 401, body: new TextEncoder().encode("{}") }),
+  });
+  const steps = await runOnboardingChecks({ gitHubClient: () => rejected });
+  const step = find(steps, "github");
+  assert.equal(step.status, "warn", step.detail);
+  assert.match(step.detail, /토큰이 유효하지 않거나 만료됐습니다/);
+  assert.ok(step.detail.includes("시작"), "the detail must say the workspace stays reachable");
+  assert.equal(step.fix, undefined, "the token form is the fix, not a button");
+});
+
 // ---------------------------------------------------------------------------
 // Spawn hardening for the fix flows (B3)
 // ---------------------------------------------------------------------------

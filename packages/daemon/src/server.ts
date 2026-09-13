@@ -1617,7 +1617,7 @@ export class DaemonServer {
         return await this.repo.checkpoints();
 
       case "repo.checkpoint.restore":
-        return await this.repo.checkpointRestore(message.id);
+        return await this.repo.checkpointRestore(message.checkpoint);
 
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,

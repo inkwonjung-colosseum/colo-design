@@ -581,8 +581,9 @@ async function main() {
     );
     const firstCheckpoint = mine.find((entry) => entry.turn === 1);
     const rewound = await request({
+      id: "rewind-1",
       type: "repo.checkpoint.restore",
-      id: firstCheckpoint.id,
+      checkpoint: firstCheckpoint.id,
     });
     check(
       "the screen born after the snapshot is gone",

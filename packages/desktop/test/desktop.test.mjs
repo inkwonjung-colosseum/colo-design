@@ -9,14 +9,15 @@
  */
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile as execFileCb, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { extraPathPrefix } from "../../daemon/dist/repo.js";
 import {
   checkForUpdate,
@@ -38,6 +39,8 @@ import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
 }
+
+const execFile = promisify(execFileCb);
 
 // ---------------------------------------------------------------------------
 // semver compare + update check
@@ -397,6 +400,33 @@ test("COLO_DESIGN_EXTRA_PATH is prepended to PATH without duplicates", () => {
     extraPathPrefix("C:\\Apps\\Colo Design\\resources\\bin", win, "win32"),
     ["C:\\Apps\\Colo Design\\resources\\bin", "C:\\Windows", "C:\\Program Files\\nodejs"].join(";"),
   );
+});
+
+test("the bundled runtime carries corepack's implementation and its launcher loads it", async () => {
+  const dir = workdir("hub-desktop-bundle-");
+  try {
+    // --out 로 임시 폴더에 같은 번들을 만든다 — 스크립트는 기록 단계에서
+    // corepack --version 을 직접 돌리므로, 구현체가 빠지면 여기서 실패한다.
+    await execFile(process.execPath, [
+      join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "bundle-runtimes.mjs"),
+      "--out",
+      dir,
+    ]);
+
+    // 0.3.x 앱이 죽은 자리 — 런처(corepack)만 번들되고 require 대상 구현체가
+    // 빠진 배포가 나가지 않는다. 이름이 node_modules 이면 electron-builder 가
+    // extraResources 에서 빼 버리므로 corepack-nm 로 들어간다.
+    assert.ok(
+      existsSync(join(dir, "corepack-nm", "corepack", "dist", "lib", "corepack.cjs")),
+      "corepack.cjs 구현체가 런처와 함께 번들되어야 한다",
+    );
+    assert.ok(existsSync(join(dir, "pnpm")), "pnpm shim 이 있어야 한다");
+
+    const { stdout } = await execFile(join(dir, "corepack"), ["--version"]);
+    assert.match(stdout.trim(), /^\d+\.\d+\.\d+$/, "번들 corepack 이 자기 버전을 말해야 한다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

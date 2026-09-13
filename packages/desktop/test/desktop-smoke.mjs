@@ -53,10 +53,13 @@ async function main() {
   }
 
   // 데스크톱은 자기 userData 아래에서만 흔적을 남긴다(키체인·설정 오염 방지).
+  // Playwright 은 userData 를 격리하지 않으므로 앱이 스스로 이 폴더로 옮긴다
+  // (main.ts 의 COLO_DESIGN_DESKTOP_SMOKE 후크) — 진짜 머신의 토큰이 GitHub
+  // 게이트를 통과시키면 "fresh machine" 전제가 깨진다. 레지스트리도 마찬가지로
+  // 임시 폴더로: 개발 머신의 실제 프로젝트가 목록에 오르면 마법사는 필요 없어
+  // 진다.
   const userData = join(tmpdir(), `colo-design-desktop-smoke-${Date.now()}`);
-  const electronBinary = packagedApp
-    ? undefined
-    : join(desktop, "node_modules", ".bin", "electron");
+  const electronBinary = packagedApp ? undefined : join(desktop, "node_modules/.bin/electron");
 
   const app = await electron.launch({
     ...(electronBinary
@@ -67,7 +70,9 @@ async function main() {
       // 온보딩 게이트를 통과시킬 stub — 실제 로그인/네트워크 없이.
       COLO_DESIGN_CLAUDE_BIN: stubClaude(join(userData, "bin")),
       COLO_DESIGN_CREDENTIAL_STORE: undefined,
-      COLO_DESIGN_DESKTOP_SMOKE: "1",
+      COLO_DESIGN_DESKTOP_SMOKE: userData,
+      COLO_DESIGN_PROJECTS_SETTINGS: join(userData, "projects.json"),
+      COLO_DESIGN_PROJECTS_DIR: join(userData, "projects"),
     },
   });
 

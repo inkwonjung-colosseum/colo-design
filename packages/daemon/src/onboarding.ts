@@ -207,7 +207,21 @@ async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
     };
   }
   const me = await client.whoAmI();
-  if (!me.ok) return fail("github", me.detail);
+  if (!me.ok) {
+    // A refused or unreachable check leaves the planner exactly where a
+    // missing token does: the manual url and public repos stay open, so the
+    // workspace must stay reachable too. A fail here used to vanish the
+    // 시작하기 button the moment one bad token was pasted (실사 결함) — the
+    // wizard had no way back, because nothing can un-store a token from the
+    // cards it offers. The reason rides a warn, the form stays open for the
+    // next paste, and 넘기기 remains the one thing a tokenless machine
+    // eventually refuses.
+    return {
+      id: "github",
+      status: "warn",
+      detail: `${me.detail} 연결하지 않은 것과 같으니, 새 토큰을 다시 넣거나 그대로 시작해도 됩니다 — 주소로 직접 추가한 레포에서는 토큰이 필요 없습니다.`,
+    };
+  }
   return pass("github", `GitHub @${me.login} 로 연결됨`);
 }
 

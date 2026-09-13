@@ -286,6 +286,15 @@ if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
   void app.whenReady().then(() => bootApp());
 }
 
+// The smoke suite points this at a throwaway folder: Playwright launches
+// Electron without isolating userData, so the app would otherwise start with
+// the developer's real credentials.json — the GitHub gate would pass and the
+// "fresh machine lands on the wizard" check would hang on any machine that
+// has logged in. setPath must precede every userData reader below.
+if (process.env.COLO_DESIGN_DESKTOP_SMOKE) {
+  app.setPath("userData", process.env.COLO_DESIGN_DESKTOP_SMOKE);
+}
+
 async function bootApp(): Promise<void> {
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(

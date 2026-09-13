@@ -151,6 +151,27 @@ export function useSessions(
   }, [api]);
 
   /**
+   * One open thread's tape, read once: shared by the sidebar's open and the
+   * reload's saved-thread restore, so both fill the transcript the same way —
+   * and a listed session answering nothing reads as the failure it is.
+   */
+  const loadHistory = useCallback(
+    async (sessionId: string) => {
+      setHistoryFailed(false);
+      try {
+        const events = await api.history(sessionId);
+        hydrate(sessionId, events);
+        if (events.length === 0 && listRef.current.some((row) => row.sessionId === sessionId)) {
+          setHistoryFailed(true);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [api, hydrate],
+  );
+
+  /**
    * Every path that opens a thread goes through here, so a new session starts
    * on the chips the planner has set rather than the CLI's defaults. Those
    * values are read from a ref: this callback must keep a stable identity, or
@@ -213,11 +234,18 @@ export function useSessions(
       const saved = (
         JSON.parse(localStorage.getItem(LAST_THREAD_KEY) ?? "{}") as Record<string, string>
       )[activeSlug ?? ""];
-      if (saved && list.some((s) => s.sessionId === saved)) setActiveId(saved);
+      if (saved && list.some((s) => s.sessionId === saved)) {
+        ensureSession(saved);
+        setActiveId(saved);
+        // 실사 결함: 이 복원이 setActiveId 만 하고 대화록을 읽지 않았다 —
+        // 기록 가득한 대화가 새로고침마다 "빈 대화"로 열렸다. 다시 열 때는
+        // open() 과 같은 적재를 지난다.
+        void loadHistory(saved);
+      }
     } catch {
       // 손상된 기록은 버려진 것과 같다 — 조용히 건너뛴다.
     }
-  }, [connection, ready, activeId, activeSlug, list]);
+  }, [connection, ready, activeId, activeSlug, list, loadHistory, ensureSession]);
 
   useEffect(() => {
     if (!activeId || !activeSlug) return;
@@ -329,22 +357,7 @@ export function useSessions(
     ensureSession(summary.sessionId);
     setActiveId(summary.sessionId);
     if (summary.live) markLive(summary.sessionId);
-    setHistoryFailed(false);
-    try {
-      const events = await api.history(summary.sessionId);
-      hydrate(summary.sessionId, events);
-      // 실사 결함: 기록이 디스크에 있는 대화가 열렸는데 돌아온 것이 없으면,
-      // 실패는 커녕 아무 말이 없었다 — 빈 대화가 진짜 빈 대화로 읽혔다. 목록이
-      // 아는 대화(기록이 있어 목록에 오른 것)의 빈 하이드레이션은 보이는 실패다.
-      if (
-        events.length === 0 &&
-        listRef.current.some((row) => row.sessionId === summary.sessionId)
-      ) {
-        setHistoryFailed(true);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    await loadHistory(summary.sessionId);
   };
 
   /**

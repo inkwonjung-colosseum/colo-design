@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -394,8 +394,14 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("repo.checkpoint.restore"),
-    /** The `id` of one `repo.checkpoints` entry. */
-    id: z.string().min(1),
+    /**
+     * The `id` of one `repo.checkpoints` entry. Named apart from the
+     * correlation `id` on purpose (실사 결함): one field carrying both erased
+     * the reply's return address — the daemon did the restore, the reply
+     * matched no pending call, and every 되돌리기 timed out as
+     * "daemon did not respond" while the worktree had already moved.
+     */
+    checkpoint: z.string().min(1),
   }),
   /**
    * Store (or clear) the machine-wide GitHub token — the one gate of the

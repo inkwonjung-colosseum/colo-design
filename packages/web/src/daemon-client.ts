@@ -859,7 +859,9 @@ export function useDaemon(url: string | null): Daemon {
           resolve: resolve as (v: unknown) => void,
           reject,
         });
-        ws.send(JSON.stringify({ id, ...payload }));
+        // The correlation id rides LAST: a payload carrying its own `id` must
+        // never overwrite the return address the reply is matched by.
+        ws.send(JSON.stringify({ ...payload, id }));
         setTimeout(() => {
           if (pendingCalls.current.delete(id)) reject(new Error("daemon did not respond"));
         }, timeoutMs);
@@ -1089,8 +1091,8 @@ export function useDaemon(url: string | null): Daemon {
       restore: (sha: string) => call<DiffStatus>({ type: "repo.restore", sha }, 600_000),
       discard: () => call<{ removed: string[] }>({ type: "repo.discard" }, 120_000),
       checkpoints: () => call<CheckpointList>({ type: "repo.checkpoints" }, 60_000),
-      restoreCheckpoint: (id: string) =>
-        call<{ restored: string[] }>({ type: "repo.checkpoint.restore", id }, 120_000),
+      restoreCheckpoint: (checkpoint: string) =>
+        call<{ restored: string[] }>({ type: "repo.checkpoint.restore", checkpoint }, 120_000),
       recordComments: (input: {
         screen: string;
         state: string;
