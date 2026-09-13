@@ -1,8 +1,9 @@
 import type { HandoffStatus } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
+import { CopyButton } from "./components";
 import { RUNNING, stageLine } from "./DiffPanel";
 import type { Daemon } from "./daemon-client";
-import { CheckIcon, CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
+import { CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -43,7 +44,6 @@ export function HandoffPanel({
   const [title, setTitle] = useState(proposedTitle);
   const [body, setBody] = useState(proposedBody);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const diffStatus = daemon.diffStatus;
   const running = diffStatus !== null && RUNNING.includes(diffStatus.stage);
   const handedOff = diffStatus?.stage === "handed-off";
@@ -82,16 +82,6 @@ export function HandoffPanel({
     }
   };
 
-  const copy = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be blocked; the link itself is still one click away.
-    }
-  };
-
   return (
     <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div
@@ -117,7 +107,8 @@ export function HandoffPanel({
         <div className="modal__body">
           <p className="hint">
             저장한 화면을 개발자가 받아 검토합니다. 제목과 내용은 개발자가 가장 먼저 읽는 부분이니,
-            필요하면 고쳐 주세요.
+            필요하면 고쳐 주세요. 한 번 넘긴 사이클은 개발자가 반영한 뒤 되돌리기 기록이 지워지니,
+            반영 전까지만 이 앱에서 되돌릴 수 있습니다.
           </p>
 
           {diffStatus && (
@@ -134,8 +125,8 @@ export function HandoffPanel({
           {failed && diffStatus?.gate === "pr" && (
             <div className="notice notice--error" data-testid="pr-failure">
               <span className="notice__text">
-                레포 검사와 저장까지는 끝냈고, GitHub 풀 리퀘스트 만들기에서 멈췄습니다. 설정에서
-                토큰과 레포 주소를 확인한 뒤 다시 넘길 수 있습니다.
+                레포 검사와 저장까지는 끝냈고, 개발자에게 넘기기에서 멈췄습니다. 설정에서 토큰과
+                레포 주소를 확인한 뒤 다시 넘길 수 있습니다.
               </span>
               <button type="button" className="ghost" onClick={onOpenSettings}>
                 설정 열기
@@ -164,22 +155,7 @@ export function HandoffPanel({
                   <ExternalLinkIcon />
                   넘긴 내용 열기
                 </a>
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label="개발자 링크 복사"
-                  onClick={() => void copy(handoff.url)}
-                >
-                  {copied ? (
-                    <>
-                      <CheckIcon size={11} /> 복사됨
-                    </>
-                  ) : (
-                    <>
-                      <LinkIcon size={12} /> 링크 복사
-                    </>
-                  )}
-                </button>
+                <CopyButton value={handoff.url} label="링크 복사" icon={<LinkIcon size={12} />} />
                 <span className="handoff__state">{HANDOFF_STATE_LABEL[handoff.state]}</span>
               </div>
             )

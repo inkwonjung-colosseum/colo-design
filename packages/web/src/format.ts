@@ -8,6 +8,20 @@ export function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
+/** A turn's own length, read as time a person waited (리뷰 B4): "2분 30초". */
+export function waitedFor(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    const rest = seconds % 60;
+    return rest === 0 ? `${minutes}분` : `${minutes}분 ${rest}초`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}시간` : `${hours}시간 ${rest}분`;
+}
+
 /**
  * Screen states, in the planner's language (PLAN D13).
  *

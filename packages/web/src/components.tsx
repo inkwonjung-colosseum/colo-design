@@ -1,8 +1,9 @@
 import type { AskQuestion, RepoStatus, TurnMarker } from "@colo-design/protocol";
 import { readTurn } from "@colo-design/protocol";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
+import { waitedFor } from "./format";
 import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
@@ -573,21 +574,82 @@ const TURN_SUBTYPE_WORDS: Record<string, string> = {
 };
 
 /**
+ * 리뷰 U2: the one copy button. Five screens had each grown their own
+ * copied-state and reset dance; the words and the timing live here now.
+ * `icon` swaps the idle glyph (a link, for example); `className` keeps a
+ * caller's own placement class on the button.
+ */
+export function CopyButton({
+  value,
+  label = "복사",
+  doneLabel = "복사됨",
+  icon,
+  className = "ghost",
+  ariaLabel,
+}: {
+  value: string;
+  label?: string;
+  doneLabel?: string;
+  icon?: ReactNode;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard can be blocked; the text is visible to retype anyway.
+    }
+  };
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={ariaLabel ?? (copied ? doneLabel : label)}
+      onClick={() => void copy()}
+    >
+      {copied ? (
+        <>
+          <CheckIcon size={11} /> {doneLabel}
+        </>
+      ) : (
+        <>
+          {icon ?? <CopyIcon size={12} />} {label}
+        </>
+      )}
+    </button>
+  );
+}
+
+/**
  * The card a failed turn renders as (PLAN D35). A planner whose last words
  * got no answer must see WHY the silence, and have the cheapest recovery —
  * sending the very same words again — one click away.
  */
+/** The subscription's refusal names itself in the SDK's closing line (리뷰
+    B5): the card must NOT invite an immediate resend that fails again — the
+    limit refills on the clock, not on attempts. */
+const LIMIT_RESULT = /usage limit|rate limit|limit reached|weekly limit|capacity/i;
+
 function FailedTurn({
   subtype,
+  resultText,
   retryText,
   onRetry,
 }: {
   subtype: string;
+  resultText: string | null;
   retryText: string | null;
   onRetry?: (text: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const reason = TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요";
+  const limit = resultText !== null && LIMIT_RESULT.test(resultText);
+  const reason = limit
+    ? "구독 사용량이 채워졌습니다 — 채워지면 같은 말로 이어하면 됩니다"
+    : (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요");
   return (
     <div className="machine turnfail">
       <div className="machine__head">
@@ -595,7 +657,7 @@ function FailedTurn({
         <span className="machine__lead">{reason}</span>
       </div>
       <div className="turnfail__actions">
-        {onRetry && retryText && (
+        {!limit && onRetry && retryText && (
           <button type="button" className="primary" onClick={() => onRetry(retryText)}>
             다시 보내기
           </button>
@@ -609,7 +671,7 @@ function FailedTurn({
           {open ? "접기" : "자세히"}
         </button>
       </div>
-      {open && <pre className="machine__body">{subtype || "turn"}</pre>}
+      {open && <pre className="machine__body">{resultText ?? (subtype || "turn")}</pre>}
     </div>
   );
 }
@@ -847,16 +909,23 @@ export function Transcript({
               <ToolBlock key={block.id} block={block} />
             );
           // A failed turn is the one turn end a planner must SEE (PLAN D35):
-          // their words would otherwise just hang there, unanswered. Cost and
-          // duration stay invisible — that accounting is not theirs.
+          // their words would otherwise just hang there, unanswered. A settled
+          // turn keeps one quiet line (리뷰 B4) — the waiting it cost is the
+          // planner's own accounting, and the only scale they can judge the
+          // next spinner against. Cost stays invisible.
           case "turn":
             return block.isError || (block.subtype !== "" && block.subtype !== "success") ? (
               <FailedTurn
                 key={block.id}
                 subtype={block.subtype}
+                resultText={block.resultText}
                 retryText={lastUserText(blocks)}
                 onRetry={onRetry}
               />
+            ) : block.durationMs != null && block.durationMs >= 60_000 ? (
+              <div key={block.id} className="turndone">
+                {waitedFor(block.durationMs)} 걸렸습니다
+              </div>
             ) : null;
           case "notice":
             return (
@@ -875,6 +944,76 @@ export function Transcript({
 // ---------------------------------------------------------------------------
 // Human-in-the-loop cards
 // ---------------------------------------------------------------------------
+
+/**
+ * 계획의 승인 카드 (계획 모드 완결): 권한 카드의 형식을 빌리되 물는 것이
+ * 다르다 — "이 수행을 허용할까요"가 아니라 "이것을 만들까요". 본문은
+ * 계획 그 자체(Claude 가 ExitPlanMode 에 실어 보낸 마크다운)이고, 승인은
+ * 착수이며 거절은 수정 요청이다. 본문이 없는 요청은 있는 셈 치고 그리지
+ * 않고 본래의 권한 카드로 돌려 보낸다.
+ */
+export function PlanCard({
+  request,
+  onRespond,
+}: {
+  request: PendingPermission;
+  onRespond: (decision: "allow" | "allowAlways" | "deny", message?: string) => void;
+}) {
+  const [changes, setChanges] = useState("");
+  const [showChanges, setShowChanges] = useState(false);
+  const plan = (request.input as { plan?: unknown } | null)?.plan;
+  if (typeof plan !== "string" || plan.trim() === "") {
+    return <PermissionCard request={request} onRespond={onRespond} />;
+  }
+
+  return (
+    <div className="card card--plan" role="alert">
+      <div className="card__title">
+        <span className="card__badge">
+          <SparkIcon size={14} />
+        </span>
+        <span>
+          <strong>만들 것</strong>을 승인해 주세요
+        </span>
+      </div>
+      <p className="plan__lead">
+        Claude 가 화면을 만들기 전에 무엇을 만들지 보여 드립니다 — 승인하면 바로 만듭니다.
+      </p>
+      <div className="card__plan">
+        <Markdown text={plan} />
+      </div>
+      {showChanges ? (
+        <div className="card__reason">
+          <textarea
+            autoFocus
+            value={changes}
+            placeholder="무엇을 어떻게 바꿀지 알려 주세요"
+            onChange={(e) => setChanges(e.target.value)}
+          />
+          <button
+            type="button"
+            className="danger"
+            onClick={() => onRespond("deny", changes || undefined)}
+          >
+            바꿔 달라 보내기
+          </button>
+          <button type="button" className="ghost" onClick={() => setShowChanges(false)}>
+            뒤로
+          </button>
+        </div>
+      ) : (
+        <div className="card__actions">
+          <button type="button" className="primary" onClick={() => onRespond("allow")}>
+            승인하고 만들기
+          </button>
+          <button type="button" className="danger" onClick={() => setShowChanges(true)}>
+            바꿔 달라…
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PermissionCard({
   request,

@@ -1,6 +1,6 @@
 import type { RepoStatus } from "@colo-design/protocol";
 
-export { toolLabel } from "@colo-design/protocol";
+export { PLAN_TOOL, toolLabel } from "@colo-design/protocol";
 
 /** The repo's own colo-design.json commands, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;

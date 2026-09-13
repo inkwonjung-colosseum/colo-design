@@ -23,6 +23,7 @@ import type {
   RepoSummary,
   ServerMessage,
   SessionCommand,
+  SessionLocation,
   SessionSelectors,
   SessionState,
   SessionSummary,
@@ -75,6 +76,10 @@ export type Block =
       isError: boolean;
       costUsd: number | null;
       durationMs: number | null;
+      /** The SDK's own closing line (리뷰 B5) — a usage-limit refusal names
+          itself here, and the failed card answers in kind. Raw text: it goes
+          to the 자세히 fold only. */
+      resultText: string | null;
     }
   | {
       type: "notice";
@@ -227,6 +232,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           isError: event.isError,
           costUsd: event.costUsd,
           durationMs: event.durationMs,
+          resultText: event.resultText,
         },
       ];
     }
@@ -338,6 +344,8 @@ export type CommentItem = ProtocolCommentItem;
 interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
   listSessions: () => Promise<SessionSummary[]>;
+  /** Which project owns a session (리뷰 B7) — null when unknown. */
+  locateSession: (sessionId: string) => Promise<SessionLocation>;
   history: (sessionId: string) => Promise<ChatEvent[]>;
   /**
    * Omit `resume` for a fresh thread. `model` and `effort` carry the
@@ -729,7 +737,7 @@ export function useDaemon(url: string | null): Daemon {
           // is genuinely down. Show the connect screen; the retry below still
           // brings the app back if the daemon appears afterwards.
           setConnection("error");
-          setConnectionError("Could not reach the daemon. Is it running?");
+          setConnectionError("데몬에 연결하지 못했습니다 — 자동으로 다시 연결합니다.");
         }
         const delay = Math.min(1000 * 2 ** attempt, 5000);
         attempt += 1;
@@ -810,27 +818,31 @@ export function useDaemon(url: string | null): Daemon {
         return;
       }
 
-      if (message.type === "permission.request") {
-        const entry: PendingPermission = {
-          kind: "permission",
-          requestId: message.requestId,
-          sessionId: message.sessionId,
-          toolName: message.toolName,
-          input: message.input,
-          suggestions: message.suggestions,
-        };
-        setPending((prev) => [...prev, entry]);
-        return;
-      }
-
-      if (message.type === "question.request") {
-        const entry: PendingQuestion = {
-          kind: "question",
-          requestId: message.requestId,
-          sessionId: message.sessionId,
-          questions: message.questions,
-        };
-        setPending((prev) => [...prev, entry]);
+      if (message.type === "permission.request" || message.type === "question.request") {
+        // Dedupe by requestId (리뷰 B1): the daemon replays pending requests
+        // to a RECONNECTING socket, and a flapping socket can race its own
+        // replay — without this, the same card stacks twice.
+        const requestId = message.requestId;
+        setPending((prev) => {
+          if (prev.some((p) => p.requestId === requestId)) return prev;
+          const entry: Pending =
+            message.type === "permission.request"
+              ? {
+                  kind: "permission",
+                  requestId,
+                  sessionId: message.sessionId,
+                  toolName: message.toolName,
+                  input: message.input,
+                  suggestions: message.suggestions,
+                }
+              : {
+                  kind: "question",
+                  requestId,
+                  sessionId: message.sessionId,
+                  questions: message.questions,
+                };
+          return [...prev, entry];
+        });
       }
     };
 
@@ -863,7 +875,12 @@ export function useDaemon(url: string | null): Daemon {
         // never overwrite the return address the reply is matched by.
         ws.send(JSON.stringify({ ...payload, id }));
         setTimeout(() => {
-          if (pendingCalls.current.delete(id)) reject(new Error("daemon did not respond"));
+          // Not "retry": a save may have landed after the window closed, and
+          // a blind resend would double it. The honest line is that the reply
+          // is late — go look, then decide. (실사 이후: used to be the English
+          // "daemon did not respond", which read as a crash.)
+          if (pendingCalls.current.delete(id))
+            reject(new Error("응답이 늦어졌습니다 — 잠시 뒤 대화나 화면을 다시 확인해 주세요."));
         }, timeoutMs);
       });
     },
@@ -888,7 +905,32 @@ export function useDaemon(url: string | null): Daemon {
 
   const api = useMemo<DaemonApi>(
     () => ({
-      listSessions: () => call<SessionSummary[]>({ type: "session.list" }),
+      listSessions: () =>
+        call<SessionSummary[]>({ type: "session.list" }).then((list) => {
+          // 재접속 복원 (리뷰 B2): a window that just reconnected starts from
+          // an empty map, so a turn running on the daemon showed as a silent
+          // transcript — no lamp, no spinner, no end signal. The list IS the
+          // daemon's truth; adopt live+state for every session it names.
+          setSessions((prev) => {
+            let next = prev;
+            for (const summary of list) {
+              const view = next[summary.sessionId];
+              if (view && view.live === summary.live && view.state === summary.state) continue;
+              if (next === prev) next = { ...prev };
+              next[summary.sessionId] = {
+                ...(next[summary.sessionId] ?? EMPTY_SESSION),
+                live: summary.live,
+                state: summary.state,
+              };
+            }
+            return next;
+          });
+          return list;
+        }),
+      // 리뷰 B7: the notification click names a session — the UI asks which
+      // project owns it before it can reach the conversation.
+      locateSession: (sessionId: string) =>
+        call<SessionLocation>({ type: "session.locate", sessionId }, 15_000),
       history: (sessionId: string) => call<ChatEvent[]>({ type: "session.history", sessionId }),
       createSession: (opts?: {
         resume?: string;

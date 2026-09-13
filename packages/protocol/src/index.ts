@@ -60,6 +60,11 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...withId,
+    type: z.literal("session.locate"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
+    ...withId,
     type: z.literal("session.history"),
     sessionId: z.string().min(1),
   }),
@@ -708,6 +713,15 @@ export interface SessionSummary {
   state: SessionState;
 }
 
+/** `session.locate` — which project holds a session (리뷰 B7). The OS
+ * notification's click lands on a session id; the UI must reach its project
+ * before it can open the conversation (resuming it in the WRONG project
+ * would fork it there). */
+export interface SessionLocation {
+  /** The owning project's slug; null when the session is unknown. */
+  slug: string | null;
+}
+
 export interface DaemonStatus {
   /**
    * Every registered project and which one everything else means. Empty on a
@@ -1241,6 +1255,13 @@ export interface DiffStatus {
   stage: "computing" | "gating" | "pushing" | "published" | "handing-off" | "handed-off" | "failed";
   /** Which gate is running, or which one failed. */
   gate?: "check" | "build" | "commit" | "push" | "diff" | "pr";
+  /**
+   * Why a gate failed, when the tool already knows it is NOT Claude's to fix
+   * (리뷰 C5): `push-auth` = the push was refused over credentials, so the
+   * next move is the planner's token in 설정 — a turn would spin. Optional;
+   * absent, the UI keeps the generic failed line.
+   */
+  reason?: "push-auth";
   /** Progress line, or the failing command's output tail when `failed`. */
   detail?: string | null;
   /** The saved commit sha, once `stage === "published"`. */
@@ -1368,7 +1389,11 @@ export function parseClientMessage(
   try {
     json = JSON.parse(raw);
   } catch {
-    return { ok: false, error: "invalid JSON", id: null };
+    return {
+      ok: false,
+      error: "보낸 메시지를 해석하지 못했습니다 — 잠시 후 다시 시도해 주세요.",
+      id: null,
+    };
   }
   const id =
     json && typeof json === "object" && typeof (json as { id?: unknown }).id === "string"

@@ -35,6 +35,7 @@ export function Sidebar({
   onOpenThread,
   onNewThread,
   onDeleteThread,
+  onExportThread,
   onRenameThread,
   onBrowseThreads,
 }: {
@@ -62,6 +63,9 @@ export function Sidebar({
       the active clone's transcript store, so a cross-project delete would
       silently miss. */
   onDeleteThread: (slug: string, thread: ThreadSummary) => void;
+  /** 대화 내보내기 (리뷰 E5) — the transcript leaves as a markdown file. The
+      active project's leaf alone, for the same resolve reason as 지우기. */
+  onExportThread: (slug: string, thread: ThreadSummary) => void;
   /** The planner renames threads; 설정's store keeps them by session id. */
   onRenameThread: (sessionId: string, title: string) => void;
   /** `이전 대화 더 보기` — the palette, opened on this project's threads. */
@@ -647,6 +651,19 @@ export function Sidebar({
                                   >
                                     <span className="selector__label">이름 바꾸기</span>
                                   </button>
+                                  {project.slug === activeSlug && (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="selector__row"
+                                      onClick={() => {
+                                        setLeafMenuFor(null);
+                                        onExportThread(project.slug, thread);
+                                      }}
+                                    >
+                                      <span className="selector__label">대화 내보내기</span>
+                                    </button>
+                                  )}
                                   {project.slug === activeSlug && (
                                     <button
                                       type="button"

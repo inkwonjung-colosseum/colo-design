@@ -123,7 +123,10 @@ const GATE_BRIEF: Record<"check" | "build" | "commit" | "push" | "pr", string> =
 const BOOTSTRAP_FAILED_DETAIL =
   "Claude 가 연결 준비를 마치지 못했습니다 — 설정의 문제 해결에서 자세히 본 뒤 대화에서 이어 가세요.";
 
-export const PUSH_AUTH_FAILURE = /403|Permission denied|authentication|denied to|not authorized/i;
+// 리뷰 C6: 만료 · 무효 토큰의 말(401, Bad credentials, expired)도 같은
+// 안내로 가야 한다 — 만료 토큰으로 push 하면 Claude 에게 헛돌았다.
+export const PUSH_AUTH_FAILURE =
+  /401|403|Permission denied|authentication|denied to|not authorized|bad credentials|credentials? (?:expired|invalid)|token expired|authenticity/i;
 
 const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
   check: "저장 전 검사",
@@ -1460,7 +1463,8 @@ export class RepoWorkspace {
       return this.setDiff({
         stage: "failed",
         gate: "diff",
-        detail: "저장하지 않은 변경이 있습니다 — 먼저 저장하거나 되돌려 주세요.",
+        detail:
+          "저장하지 않은 변경이 있습니다 — 먼저 저장하거나 되돌려 주세요. 저장은 저장 검토의 저장으로, 버리는 것은 더 보기 메뉴의 변경 버리기로 할 수 있습니다.",
       });
     }
     if (!this.branch) {
@@ -1983,7 +1987,8 @@ export class RepoWorkspace {
     // 넘기기 대화상자의 안내(넘기지 못했습니다 + 설정 열기)로 응답한다.
     // `push` 는 갈라진다: 인증 · 권한 사유면 안내로, 그 외(non-fast-forward
     // 등)는 지금처럼 Claude — 모르면 Claude 쪽(보수적).
-    const skipClaude = gate === "pr" || (gate === "push" && PUSH_AUTH_FAILURE.test(detail));
+    const pushAuth = gate === "push" && PUSH_AUTH_FAILURE.test(detail);
+    const skipClaude = gate === "pr" || pushAuth;
     if (!skipClaude) {
       // The failure is actionable by Claude, not by the planner: hand it over
       // the same wire a typed message uses, output tail included. The step is
@@ -1995,7 +2000,14 @@ export class RepoWorkspace {
         ),
       );
     }
-    return this.setDiff({ stage: "failed", gate, detail });
+    // 리뷰 C5: push 인증 거절은 화면이 다음 행동(토큰 확인)을 말해야 한다 —
+    // reason 이 없으면 저장 검토는 "멈췄습니다" 로만 끝났다.
+    return this.setDiff({
+      stage: "failed",
+      gate,
+      ...(pushAuth ? { reason: "push-auth" as const } : {}),
+      detail,
+    });
   }
 
   /** Stages and commits exactly the approved paths — the reviewed diff. */

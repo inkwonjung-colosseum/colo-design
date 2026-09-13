@@ -228,7 +228,10 @@ async function main() {
     // The change count is event-driven (PLAN D8): a turn finishing or a save
     // recounts it, and these raw writes are neither — so one 레포 최신화 is
     // what unlocks 저장 in the top bar.
-    await page.locator(".screenpanel__bar").getByRole("button", { name: "최신화" }).click();
+    await page
+      .locator(".screenpanel__bar")
+      .getByRole("button", { name: "최신 변경 받아오기" })
+      .click();
     await page.waitForFunction(
       () => {
         const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
@@ -342,9 +345,12 @@ async function main() {
     await page.waitForSelector(".turnfail", { timeout: 30000 });
     check(
       "a failed turn is a card that says what happened",
-      (await page.locator(".turnfail").innerText()).includes("답을 마치지 못했습니다"),
+      (await page.locator(".turnfail").last().innerText()).includes("답을 마치지 못했습니다"),
     );
-    const retry = page.locator(".turnfail").getByRole("button", { name: "다시 보내기" });
+    // The retry is the LAST card's own button: with the dead-query resume in
+    // place every retried send honestly fails again, so older failed cards
+    // (and their retry buttons) stay on the tape.
+    const retry = page.locator(".turnfail").last().getByRole("button", { name: "다시 보내기" });
     await retry.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
     check("the card offers the same words back", (await retry.count()) === 1);
     await retry.click();
@@ -371,6 +377,19 @@ async function main() {
     await browser.close();
     server.close();
     daemon.kill("SIGTERM");
+    // The daemon's own shutdown settles writers (sessions, preview, git
+    // children) before exiting — removing the tmpdir against a live one
+    // races ENOTEMPTY on .git under load.
+    await new Promise((resolve) => {
+      const hard = setTimeout(() => {
+        daemon.kill("SIGKILL");
+        resolve(undefined);
+      }, 15_000);
+      daemon.once("exit", () => {
+        clearTimeout(hard);
+        resolve(undefined);
+      });
+    });
   }
 
   const failed = results.filter((r) => !r.passed);

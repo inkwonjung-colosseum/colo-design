@@ -15,6 +15,7 @@ import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@colo
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
   Notification,
@@ -58,6 +59,13 @@ let appUrl: string | null = null;
  * 개념이므로 다른 플랫폼은 paint 가 조용히 건너뛴다.
  */
 let unreadNotices = 0;
+
+/** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 렌더러에 건네는 채널. */
+const OPEN_SESSION_CHANNEL = "colodesign:open-session";
+/** 창이 없었다가 다시 열린 경우 — 적재가 끝난 뒤 건네기 위해 세워 둔 세션. */
+let pendingOpenSession: string | null = null;
+/** 실행 중인 턴의 존재를 창 닫기 가드가 묻는 데 쓴다(리뷰 B3). */
+let daemonServer: DaemonServer | null = null;
 
 // ---------------------------------------------------------------------------
 // 업데이트 (DESIGN §7) — 자동 확인 · 자가 교체 결과 보고
@@ -324,6 +332,7 @@ async function bootApp(): Promise<void> {
     onNotice: notifyPlanner,
   });
   await server.start();
+  daemonServer = server;
   const url = daemonUrl(server, token);
   appUrl = url;
 
@@ -376,6 +385,7 @@ async function bootApp(): Promise<void> {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+  registerCloseGuard(mainWindow);
 
   registerDesktopBridge();
   void reportSwapResult();
@@ -447,31 +457,71 @@ function daemonUrl(server: DaemonServer, token: string): string {
 async function reopen(url: string): Promise<void> {
   mainWindow = new BrowserWindow({ ...workAreaSize(), autoHideMenuBar: true });
   guardNavigations(mainWindow, new URL(url).origin);
+  registerCloseGuard(mainWindow);
   await mainWindow.loadURL(url);
+  // 리뷰 B7: a notification clicked while no window existed — the renderer
+  // was not mounted to hear the session id, so it rides after the load.
+  if (pendingOpenSession) {
+    const sessionId = pendingOpenSession;
+    pendingOpenSession = null;
+    setTimeout(() => mainWindow?.webContents.send(OPEN_SESSION_CHANNEL, sessionId), 1200);
+  }
 }
 
 /**
  * 데몬이 건넨 기획자의 순간을 OS 알림으로 그린다. 창이 앞에 있으면 기획자가
- * 이미 보고 있는 것이므로 조용히 한다. 클릭은 창을 앞으로 — 세션 탭 고르기는
- * UI 의 몫이다.
+ * 이미 보고 있는 것이므로 조용히 한다. 클릭은 창을 앞으로, 그리고 그 대화로 —
+ * 세션 아이디를 렌더러에 건네 열려는 대화를 알린다(리뷰 B7).
  */
 function notifyPlanner(notice: DaemonNotice): void {
   if (mainWindow?.isFocused()) return;
   unreadNotices += 1;
   paintBadge();
   const { title, body } = noticeCopy(notice);
-  showAppNotification(title, body, focusMainWindow);
+  showAppNotification(title, body, () => focusMainWindow(notice.sessionId));
 }
 
-/** 알림 클릭의 공통 행동 — 창을 앞으로, 창이 없으면 다시 연다. */
-function focusMainWindow(): void {
+/** 알림 클릭의 공통 행동 — 창을 앞으로, 그 대화로. 창이 없으면 다시 연다. */
+function focusMainWindow(sessionId?: string): void {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();
+    if (sessionId) mainWindow.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
   } else if (appUrl) {
+    pendingOpenSession = sessionId ?? null;
     void reopen(appUrl);
   }
+}
+
+/**
+ * 리뷰 B3: 창 닫기가 곧 종료인 플랫폼에서는 돌고 있는 턴이 창과 함께 조용히
+ * 죽었다 — mac 은 살고 windows 는 죽는 규칙은 기획자가 배울 수 없는 규칙이다.
+ * 일이 돌고 있는 동안에는 한 번 묻고, 확인한 닫기만 지난다. mac 의 닫기는
+ * 창만 닫으므로 가드가 애초에 없다.
+ */
+function registerCloseGuard(window: BrowserWindow): void {
+  let allowed = false;
+  window.on("close", (event) => {
+    if (allowed || process.platform === "darwin") return;
+    if (!daemonServer?.anySessionBusy()) return;
+    event.preventDefault();
+    void dialog
+      .showMessageBox(window, {
+        type: "question",
+        title: "작업이 진행 중입니다",
+        message: "Claude가 작업 중입니다. 창을 닫으면 이 작업은 멈춥니다.",
+        buttons: ["그만둡니다", "취소"],
+        defaultId: 1,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          allowed = true;
+          window.close();
+        }
+      });
+  });
 }
 
 /** OS 알림 — 클릭 행동을 골라 단다(기획자 순간과 업데이트 알림이 함께 쓴다). */

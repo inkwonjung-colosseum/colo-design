@@ -92,6 +92,39 @@ export function Shell({
   // The daemon knows why it cannot work — no CLI, not signed in, no pnpm — and
   // the planner cannot read a terminal to find out.
   const warnings = status?.warnings ?? [];
+  // 로그인 만료는 헤더의 경고 중 유일하게 앱 안에서 풀리는 것이다(리뷰 문서의
+  // "시한폭탄"): 구독 로그인이 끊기면 대화가 크래시 카드로 죽고, 여기가 그 소식이
+  // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
+  // 으로 지운다 — 터미널은 끝까지 기획자의 몫으로 남지 않는다.
+  const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
+  const [loginStarted, setLoginStarted] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginGuidance, setLoginGuidance] = useState<string | null>(null);
+  const loginPress = async () => {
+    if (loginStarted) {
+      setLoginBusy(true);
+      try {
+        await api.refreshStatus();
+      } finally {
+        setLoginBusy(false);
+      }
+      return;
+    }
+    setLoginBusy(true);
+    try {
+      const outcome = (await api.onboardingFix("login-claude")) as {
+        guidance: string;
+      };
+      setLoginStarted(true);
+      setLoginGuidance(outcome.guidance);
+    } catch {
+      setLoginGuidance(
+        "로그인 창을 열지 못했습니다 — 설정 → 처음 설정 다시 보기에서 다시 시도해 주세요.",
+      );
+    } finally {
+      setLoginBusy(false);
+    }
+  };
 
   // The rail's width and fold, seeded from the stored layout (already
   // clamped). Narrow windows fold it no matter what the setting says.
@@ -120,6 +153,8 @@ export function Shell({
   const newThread = (slug: string) => workspace.current?.newThread(slug);
   const deleteThread = (slug: string, thread: ThreadSummary) =>
     workspace.current?.deleteThread(slug, thread);
+  const exportThread = (slug: string, thread: ThreadSummary) =>
+    workspace.current?.exportThread(slug, thread);
   const browseThreads = (slug: string) => workspace.current?.browseThreads(slug);
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
@@ -184,6 +219,7 @@ export function Shell({
         onOpenThread={openThread}
         onNewThread={newThread}
         onDeleteThread={deleteThread}
+        onExportThread={exportThread}
         onRenameThread={onRenameSession}
         onBrowseThreads={browseThreads}
         boundary={
@@ -254,11 +290,32 @@ export function Shell({
 
         {warnings.length > 0 && (
           <div className="planner__warnings">
-            {warnings.map((warning) => (
-              <div key={warning} className="notice notice--warn">
-                <span className="notice__text">{warning}</span>
+            {warnings
+              // The logged-out warning is replaced by its own actionable row
+              // below — the sentence is the daemon's, the button is here.
+              .filter(
+                (warning) => !(loggedOut && warning.startsWith("Claude Code 로그인이 필요합니다")),
+              )
+              .map((warning) => (
+                <div key={warning} className="notice notice--warn">
+                  <span className="notice__text">{warning}</span>
+                </div>
+              ))}
+            {loggedOut && (
+              <div className="notice notice--warn">
+                <span className="notice__text">
+                  {loginGuidance ?? "Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다."}
+                </span>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={loginBusy}
+                  onClick={() => void loginPress()}
+                >
+                  {loginBusy ? "확인 중…" : loginStarted ? "다시 확인" : "다시 로그인"}
+                </button>
               </div>
-            ))}
+            )}
           </div>
         )}
 

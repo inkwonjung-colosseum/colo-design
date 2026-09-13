@@ -602,6 +602,14 @@ export function ScreenPanel({
   }, [turnState]);
 
   const sendLook = async (note: string) => {
+    // A press while the snapshot pipeline is still up is still a repeat
+    // intent — the words already went up with this turn. The same toast
+    // answers it, not silence.
+    if (lookBusy && turnState === "running" && lookSentThisTurn.current) {
+      setLookBlocked("이미 보냈습니다 — 답을 기다려 주세요");
+      window.setTimeout(() => setLookBlocked(null), 2500);
+      return;
+    }
     if (lookBusy) return;
     if (turnState === "running" && lookSentThisTurn.current) {
       setLookBlocked("이미 보냈습니다 — 답을 기다려 주세요");
@@ -987,7 +995,9 @@ export function ScreenPanel({
         >
           <RefreshIcon />
           <span className="screenpanel__refreshlabel">
-            {refreshing ? "받아 오는 중…" : "최신화"}
+            {/* 최신화 is a coinage; the gate step and the progress rail already
+                say 최신 변경 받아오기 — the button is the odd one out (리뷰 D7). */}
+            {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
           </span>
         </button>
         <span className="screenpanel__more">
@@ -1193,6 +1203,7 @@ export function ScreenPanel({
           daemon={daemon}
           sessionId={sessionId}
           branch={repo?.branch ?? null}
+          onOpenSettings={onOpenSettings}
           onClose={() => setSaveOpen(false)}
         />
       )}
@@ -1234,6 +1245,7 @@ export function ScreenPanel({
         items={commentItems}
         error={commentsError}
         busyId={resolvingId}
+        native={Boolean(window.coloDesignDesktop?.preview?.native)}
         onClose={() => setCommentsOpen(false)}
         onResolve={resolveComment}
         onResend={resendComment}

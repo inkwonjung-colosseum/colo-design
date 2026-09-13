@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
   macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
   openHome: () => ipcRenderer.invoke("desktop:open-home"),
+  /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 세션 아이디를 건넨다. */
+  onOpenSession: subscribe<string>("colodesign:open-session"),
   preview: {
     native: true as const,
     mount: (url: string) => ipcRenderer.invoke("preview:mount", { url }),

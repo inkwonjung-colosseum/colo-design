@@ -35,6 +35,8 @@ declare global {
       >;
       /** Opens ~/.colo-design in the OS file manager (PLAN D2). */
       openHome?: () => Promise<unknown>;
+      /** 알림 클릭 → 그 대화 열기(리뷰 B7): the session id to open. */
+      onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
       preview?: {
         /** Claude 시점 보기(PLAN D63) — 8fps JPEG(base64), 구독만. */
         onFrame: (callback: (jpeg: string) => void) => void;

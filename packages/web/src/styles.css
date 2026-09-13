@@ -1868,6 +1868,24 @@ select {
 .card--question {
   border-color: var(--warn-line);
 }
+/* 계획의 승인 카드: 권한 카드의 뼈대에 계획 본문이 얹힌다 — 읽을 것이
+   하나 늘 뿐, 물음의 형식은 같다. */
+.card--plan .card__badge {
+  color: var(--accent);
+}
+.plan__lead {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.card__plan {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  padding: 10px 12px;
+  max-height: 300px;
+  overflow: auto;
+}
 
 .card__title {
   font: 600 13px var(--sans);
@@ -2268,6 +2286,30 @@ select {
 .toolbar__icon:hover:not(:disabled) {
   background: var(--panel-2);
   color: var(--text);
+}
+/* 계획 먼저 칩: 도구 행의 조용한 알약이고, 재웠을 때만 액센트를 입는다 —
+   켜진 상태가 곧 이번 턴의 자세다. */
+.toolbar__plan {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  font: 500 11.5px var(--sans);
+  color: var(--text-2);
+  transition:
+    border-color 0.12s,
+    color 0.12s,
+    background 0.12s;
+}
+.toolbar__plan:hover:not(:disabled) {
+  border-color: var(--line-hover);
+  color: var(--text);
+}
+.toolbar__plan--armed {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .toolbar__stop {
   display: inline-flex;
@@ -6488,4 +6530,14 @@ select {
   .preview__device {
     transition: none;
   }
+}
+
+/* 리뷰 B4/U4 — a settled turn's own waiting, read at a glance. Quiet on
+   purpose: the planner should feel it as rhythm, not as another card. */
+.turndone {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  user-select: none;
 }

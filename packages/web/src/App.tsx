@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { CopyButton } from "./components";
 import { useDaemon } from "./daemon-client";
-import { CheckIcon, CopyIcon, GearIcon } from "./icons";
+import { GearIcon } from "./icons";
 import { SettingsDialog } from "./SettingsDialog";
 import { Shell } from "./Shell";
 import { useSettings } from "./settings";
@@ -29,17 +30,6 @@ function ConnectScreen({
   onOpenSettings: () => void;
 }) {
   const [value, setValue] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText("pnpm dev:daemon");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be blocked; the command is visible to retype anyway.
-    }
-  };
 
   return (
     <div className="connect">
@@ -64,17 +54,7 @@ function ConnectScreen({
         <span className="connect__stepnum">1</span>
         <pre className="connect__cmd">
           <code>pnpm dev:daemon</code>
-          <button type="button" className="ghost" onClick={() => void copy()}>
-            {copied ? (
-              <>
-                <CheckIcon size={11} /> 복사됨
-              </>
-            ) : (
-              <>
-                <CopyIcon size={12} /> 복사
-              </>
-            )}
-          </button>
+          <CopyButton value="pnpm dev:daemon" />
         </pre>
       </div>
       <div className="connect__step connect__step--fill">

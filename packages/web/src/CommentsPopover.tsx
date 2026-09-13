@@ -19,6 +19,7 @@ export function CommentsPopover({
   items,
   error,
   busyId,
+  native,
   onClose,
   onResolve,
   onResend,
@@ -30,6 +31,12 @@ export function CommentsPopover({
   error: string | null;
   /** The row with a resolve toggle in flight, if any. */
   busyId?: string | null;
+  /**
+   * Whether the preview is the desktop's view — the only place the pin
+   * overlay lives. The browser dev path has no pins, so advising
+   * ⌥+클릭 there would point at a gesture that does nothing.
+   */
+  native?: boolean;
   onClose: () => void;
   /** Toggle a comment's 해결 state; the caller refreshes the list. */
   onResolve: (id: string, resolved: boolean) => void;
@@ -82,8 +89,12 @@ export function CommentsPopover({
             {items === null
               ? "코멘트를 읽어 오는 중…"
               : unresolved > 0
-                ? `미해결 ${unresolved}건 — 기록된 핀은 미리보기 화면 위에도 남아 있습니다.`
-                : "다 해결된 목록입니다. 미리보기에서 ⌥+클릭으로 새 코멘트를 보낼 수 있습니다."}
+                ? native
+                  ? `미해결 ${unresolved}건 — 기록된 핀은 미리보기 화면 위에도 남아 있습니다.`
+                  : `미해결 ${unresolved}건입니다.`
+                : native
+                  ? "다 해결된 목록입니다. 미리보기에서 ⌥+클릭으로 새 코멘트를 보낼 수 있습니다."
+                  : "다 해결된 목록입니다."}
           </p>
           {resolvedCount > 0 && (
             <label className="comments__showresolved">
@@ -97,8 +108,9 @@ export function CommentsPopover({
           )}
           {items !== null && items.length === 0 && (
             <p className="hint">
-              아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에
-              쌓입니다.
+              {native
+                ? "아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에 쌓입니다."
+                : "아직 기록된 코멘트가 없습니다. 코멘트 핀은 데스크톱 앱의 미리보기에서 쓸 수 있습니다."}
             </p>
           )}
           {items !== null && shown.length > 0 && (

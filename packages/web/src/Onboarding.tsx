@@ -46,6 +46,10 @@ export function Onboarding({
   const steps = daemon.onboarding ?? [];
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The fix's own words. The daemon answers every fix with `{started, guidance}` —
+      on macOS the installer opens no window and drops its stdio, so this sentence
+      is the ONLY feedback a press produces. Dropping it made the button look dead. */
+  const [notice, setNotice] = useState<{ started: boolean; guidance: string } | null>(null);
   /** Re-opens the token form on a github line that already passed. */
   const [editingToken, setEditingToken] = useState(false);
 
@@ -59,8 +63,19 @@ export function Onboarding({
   const run = async (label: string, action: () => Promise<unknown>) => {
     setBusy(label);
     setError(null);
+    setNotice(null);
     try {
-      await action();
+      const reply = (await action()) as unknown;
+      if (
+        reply !== null &&
+        typeof reply === "object" &&
+        typeof (reply as { guidance?: unknown }).guidance === "string"
+      ) {
+        setNotice({
+          started: (reply as { started?: unknown }).started !== false,
+          guidance: (reply as { guidance: string }).guidance,
+        });
+      }
       await daemon.api.onboardingCheck();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -135,6 +150,18 @@ export function Onboarding({
               </div>
               <p className="onboarding__detail">{step.detail}</p>
 
+              {/* What this step is, before any button (실사 이후): the first
+                  gate asks a non-developer for a CLI they have never heard of,
+                  on an account somebody pays for, and opens a Terminal they
+                  did not expect. */}
+              {id === "claude" && open && step.status !== "pass" && (
+                <p className="hint">
+                  화면을 만드는 Claude의 도구입니다 — 설치와 로그인에는 본인의 Claude 계정(유료
+                  구독)이 필요합니다. 로그인하면 터미널 창이 열립니다. macOS가 'Terminal이 이 앱을
+                  제어하려고 합니다'라고 물으면 허용해 주세요.
+                </p>
+              )}
+
               {/* A passed token is still replaceable — expiry is the reason,
                   and it is the one thing this line can offer. */}
               {id === "github" && step.status === "pass" && !editingToken && (
@@ -184,6 +211,14 @@ export function Onboarding({
                   >
                     다시 확인
                   </button>
+                </div>
+              )}
+              {step.fix && step.status !== "pass" && notice && (
+                <div
+                  className={`notice ${notice.started ? "notice--info" : "notice--error"}`}
+                  role="status"
+                >
+                  <span className="notice__text">{notice.guidance}</span>
                 </div>
               )}
             </li>

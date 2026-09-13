@@ -417,11 +417,11 @@ export async function buildStatus(input: {
   const apiKeyInEnv = Boolean(process.env.ANTHROPIC_API_KEY);
   if (apiKeyInEnv) {
     warnings.push(
-      "ANTHROPIC_API_KEY is set in the daemon environment. Sessions would bill that key instead of the signed-in subscription. Unset it and restart.",
+      "데몬 환경에 ANTHROPIC_API_KEY 가 설정되어 있어 구독 대신 이 키로 결제됩니다 — 키를 지우고 앱을 다시 시작해 주세요.",
     );
   }
   if (!input.executable) {
-    warnings.push("Claude Code CLI not found. Install it and run `claude /login`.");
+    warnings.push("Claude Code CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.");
   }
 
   const version = input.executable ? await readClaudeVersion(input.executable) : null;
@@ -435,15 +435,17 @@ export async function buildStatus(input: {
       };
 
   if (input.executable && !auth.loggedIn) {
-    warnings.push("Not signed in. Run `claude /login` in a terminal on this machine.");
+    // 로그인 만료는 앱 안에서 풀린다: 이 문장으로 시작하는 줄에는 헤더가 다시
+    // 로그인 버튼을 붙인다(Shell). 시작 문장을 바꾸면 그쪽도 함께.
+    warnings.push("Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다.");
   }
 
   const gitAvailable = await isGitAvailable();
   if (!gitAvailable) {
     warnings.push(
       currentPlatform() === "win32"
-        ? "git was not found. Install Git for Windows so file mentions respect .gitignore and Claude Code can use the Bash tool."
-        : "git was not found. File mentions will fall back to a directory walk that ignores .gitignore.",
+        ? "git 이 없어 Claude 가 파일을 찾고 명령을 내리는 데 제약이 있습니다 — Git for Windows 를 설치해 주세요."
+        : "git 이 없어 파일 찾기가 .gitignore 를 따르지 않습니다 — git 을 설치해 주세요.",
     );
   }
 
@@ -453,11 +455,11 @@ export async function buildStatus(input: {
   const cdsRegistryAuth = await readCdsRegistryAuth(pnpm, input.registryProbeDir);
   if (cdsRegistryAuth === "unauthenticated") {
     warnings.push(
-      "GitHub Packages rejected the request for @colosseumcoinckr/cds. Run `pnpm config set //npm.pkg.github.com/:_authToken <PAT with read:packages>`.",
+      "GitHub 패키지 저장소가 @colosseumcoinckr/cds 요청을 거절했습니다 — 설정의 개인 액세스 토큰(read:packages 권한)을 확인해 주세요.",
     );
   } else if (cdsRegistryAuth === "unknown" && pnpm && input.registryProbeDir) {
     warnings.push(
-      "Could not verify access to @colosseumcoinckr/cds on GitHub Packages. The connected repo's install will fail if this machine is offline or unauthenticated.",
+      "GitHub 패키지 저장소 접근을 확인하지 못했습니다 — 기기가 오프라인이거나 인증이 없으면 연결 레포의 설치가 실패합니다.",
     );
   }
 

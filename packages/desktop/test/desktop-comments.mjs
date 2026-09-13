@@ -49,7 +49,11 @@ function run(command, args, cwd) {
  * answers version/auth, scans the stdin it is fed (control requests first,
  * then the user line), lingers on a comment turn, and logs every line so the
  * suite can prove what Claude actually received. One turn per process: the
- * user line ends it, whatever its words.
+ * user line ends it, whatever its words. A look turn (화면 보여 주기) never
+ * answers on its own — a real CLI keeps reading the screen until told to
+ * stop, the suite's mid-turn checks (연타 가드 · 대기줄) need the turn to RUN,
+ * and 중지 is how every look turn ends here — and an interrupt is answered
+ * the way the real CLI closes a stopped turn.
  *
  * set_permission_mode is the one control request the daemon AWAITS at session
  * birth (전부 맡기기 now survives reload, so the branch is real): left
@@ -73,6 +77,7 @@ function slowStubClaude(dir, logPath) {
       "}",
       "const log = process.env.COLO_PROMPT_LOG;",
       'let buf = "";',
+      'let sessionId = "stub";',
       "const seen = () => {",
       "  let idx;",
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
@@ -85,14 +90,34 @@ function slowStubClaude(dir, logPath) {
       '      }) + "\\n");',
       "      continue;",
       "    }",
+      '    if (line.includes(\'"subtype":"interrupt"\')) {',
+      '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
+      "      process.stdout.write(JSON.stringify({",
+      '        type: "control_response",',
+      '        response: { subtype: "success", request_id: id },',
+      '      }) + "\\n");',
+      "      process.stdout.write(JSON.stringify({",
+      '        type: "result", subtype: "error_during_execution", is_error: true,',
+      '        session_id: sessionId, result: "interrupted", num_turns: 1, duration_ms: 5,',
+      '      }) + "\\n");',
+      "      setTimeout(() => process.exit(0), 200);",
+      "      return;",
+      "    }",
       '    if (line.includes(\'"type":"user"\')) {',
-      '      const sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || "stub";',
+      '      sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || sessionId;',
+      '      const look = line.includes("이 화면이 이렇게 보입니다");',
+      '      const comment = line.includes("화면 수정 요청");',
+      "      if (look) {",
+      "        // A real CLI keeps looking at the screen until it is told to",
+      "        // stop — the suite's mid-turn checks (연타 가드 · 대기줄) need a",
+      "        // turn that RUNS, and 중지 is how every look turn ends here.",
+      "        return;",
+      "      }",
       "      process.stdout.write(JSON.stringify({",
       '        type: "result", subtype: "success", is_error: false,',
       '        session_id: sessionId, result: "알겠습니다.", num_turns: 1, duration_ms: 10,',
       '      }) + "\\n");',
-      '      const linger = line.includes("화면 수정 요청") ? 2000 : 700;',
-      "      setTimeout(() => process.exit(0), linger);",
+      "      setTimeout(() => process.exit(0), comment ? 2000 : 700);",
       "      return;",
       "    }",
       "  }",
@@ -481,6 +506,9 @@ async function main() {
     // --- ⓜ 연타 가드, 그리고 두 번째 요청 (D89) -----------------------------
     // The first look's turn is still running — exactly the state the 연타
     // guard is for: the repeat must be BLOCKED with the toast, not doubled.
+    // The stop button is the running turn's own lamp: waiting for it makes
+    // the precondition explicit instead of racing the send pipeline.
+    await page.locator(".toolbar__stop").waitFor({ timeout: 30000 });
     await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const blocked = await page

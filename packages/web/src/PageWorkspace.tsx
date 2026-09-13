@@ -13,6 +13,7 @@ import {
   PREVIEW_WIDTH_BOUNDS,
   type Settings,
 } from "./settings";
+import { downloadTranscript, transcriptToMarkdown } from "./transcript-export";
 import { useSessions } from "./useSessions";
 
 /** The chat column's floor, in px. The preview's drag may squeeze the chat;
@@ -52,6 +53,8 @@ export interface WorkspaceHandle {
   newThread: (slug: string) => void;
   /** 지우기, from a leaf's `···` (PLAN D76). */
   deleteThread: (slug: string, thread: ThreadSummary) => void;
+  /** 대화 내보내기 (리뷰 E5) — the transcript leaves as a markdown file. */
+  exportThread: (slug: string, thread: ThreadSummary) => void;
   /** The tree's `이전 대화 더 보기` — the palette, scoped to that project. */
   browseThreads: (slug: string) => void;
 }
@@ -208,6 +211,32 @@ export function PageWorkspace({
     });
   };
 
+  /**
+   * 리뷰 B7: the OS notification's click lands here as a session id, relayed
+   * by the desktop main. Locate the owning project first — resuming in the
+   * wrong project would fork the thread there — then walk the same paths the
+   * tree's rows use. Browser path (no bridge) never subscribes.
+   */
+  const openSessionFromNotice = (sessionId: string) => {
+    void daemon.api
+      .locateSession(sessionId)
+      .then((located) => {
+        if (located.slug && located.slug !== daemon.activeSlug) {
+          jumpTo({ slug: located.slug, threadId: sessionId });
+        } else {
+          void openThreadById(sessionId);
+        }
+      })
+      .catch(() => undefined);
+  };
+  const noticeRef = useRef(openSessionFromNotice);
+  noticeRef.current = openSessionFromNotice;
+  useEffect(() => {
+    const bridge = window.coloDesignDesktop;
+    if (!bridge?.onOpenSession) return;
+    return bridge.onOpenSession((sessionId) => noticeRef.current(sessionId));
+  }, []);
+
   // Rebuilt without a dep array on purpose: every render hands the tree the
   // newest closures, so a click never runs against a stale session list.
   useImperativeHandle(ref, () => ({
@@ -233,6 +262,20 @@ export function PageWorkspace({
           state: "closed",
         },
       );
+    },
+    exportThread: (slug, thread) => {
+      // 리뷰 E5: the transcript is the planner's deliverable — one click takes
+      // it out of the machine and into a markdown file they can keep.
+      if (slug !== daemon.activeSlug) return;
+      void daemon.api
+        .history(thread.id)
+        .then((events) =>
+          downloadTranscript(
+            transcriptToMarkdown(events, titleForThread(thread)),
+            titleForThread(thread),
+          ),
+        )
+        .catch(() => undefined);
     },
     browseThreads: (slug) => {
       setPaletteSlug(slug);

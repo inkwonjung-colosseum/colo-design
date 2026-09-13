@@ -317,6 +317,51 @@ async function main() {
       ),
     );
 
+    // --- 3b. a failing check with NO thread open still reaches Claude ------
+    // The gate's fix is Claude's task (README): with no session to brief, the
+    // daemon opens one itself — titled, the way the bootstrap prepare turn
+    // is — and the failure lands there as the same marked card.
+    const failedThreadless = await request({
+      id: "3b",
+      type: "repo.save",
+      message: "회원 관리 화면 추가",
+    });
+    check(
+      "a threadless failing check still reports the gate",
+      failedThreadless.stage === "failed" && failedThreadless.gate === "check",
+      `${failedThreadless.stage}/${failedThreadless.gate ?? ""}`,
+    );
+    const gateBrief = await waitFor(
+      () =>
+        inbox.find(
+          (m) =>
+            m.type === "session.event" &&
+            m.sessionId !== sessionId &&
+            m.event.kind === "user.echo" &&
+            m.event.text.includes("저장 전 검사(check)가 실패"),
+        ),
+      30_000,
+      "the failure turn in the daemon-opened thread",
+    );
+    const gateThreadId = gateBrief.sessionId;
+    check(
+      "the daemon opened a NEW thread for the brief",
+      typeof gateThreadId === "string" && gateThreadId !== sessionId,
+      String(gateThreadId),
+    );
+    const threads = await request({ id: "3b-list", type: "session.list" });
+    const gateThread = threads.find((row) => row.sessionId === gateThreadId);
+    check(
+      "and the thread is listed, live and titled",
+      gateThread?.live === true && gateThread?.title === "저장 문제 해결",
+      `live=${gateThread?.live} title=${gateThread?.title ?? "?"}`,
+    );
+    check(
+      "the threadless gate failure fired the planner notice too",
+      notices.some((n) => n.kind === "gate" && n.stage === "save" && n.sessionId === gateThreadId),
+    );
+    await request({ id: "3b-close", type: "session.close", sessionId: gateThreadId });
+
     // --- 4. a fixed repo saves onto its OWN branch, never onto main -------
     writeFileSync(join(ROOT, "scripts", "check.mjs"), PASSING_CHECK);
 

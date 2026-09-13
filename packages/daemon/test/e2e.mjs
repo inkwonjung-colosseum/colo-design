@@ -164,6 +164,32 @@ async function main() {
     `${permission.suggestions.length} suggestion(s)`,
   );
 
+  // 3.5 재접속 복원 (리뷰 B1): a window that connects while the request is
+  // still pending must receive the SAME card again — attach replays the
+  // pending requests to the new socket, or the newcomer waits on a question
+  // it cannot see while the turn sits frozen.
+  {
+    const ws2 = new WebSocket(url);
+    const inbox2 = [];
+    ws2.on("message", (raw) => inbox2.push(JSON.parse(String(raw))));
+    await new Promise((resolve, reject) => {
+      ws2.once("open", resolve);
+      ws2.once("error", reject);
+    });
+    const replay = await waitFor(
+      (m) => m.type === "permission.request" && m.requestId === permission.requestId,
+      10000,
+      "replayed permission.request",
+      inbox2,
+    );
+    check(
+      "a reconnecting socket receives the pending card again",
+      replay.toolName === permission.toolName && replay.sessionId === sessionId,
+      `tool=${replay.toolName}`,
+    );
+    ws2.close();
+  }
+
   // 4. approve without echoing the input back
   await call({
     type: "permission.respond",

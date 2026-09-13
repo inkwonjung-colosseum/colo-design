@@ -55,9 +55,11 @@ async function waitFor(predicate, timeoutMs, label) {
   throw new Error(`timeout waiting for ${label}`);
 }
 /**
- * Like writeStubClaude, but a real invocation answers by dropping a file
- * into the session cwd and stalling a moment — a turn whose product and
- * timing the sidebar checks can observe.
+ * Like writeStubClaude, but a real invocation behaves like a real CLI: it
+ * answers the SDK's control requests (so 중지 works), drops a file into the
+ * session cwd when a turn starts, ends the turn with a plain result two
+ * seconds later — a turn whose product and timing the sidebar checks can
+ * observe — and stays alive between turns the way the real CLI does.
  */
 function writeTurnStubClaude(dir) {
   mkdirSync(dir, { recursive: true });
@@ -65,16 +67,50 @@ function writeTurnStubClaude(dir) {
   writeFileSync(
     path,
     [
-      "#!/bin/sh",
-      'case "$1" in',
-      '  --version) echo "1.0.0-stub"; exit 0;;',
-      "  auth)",
-      '    echo \'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\'',
-      "    exit 0;;",
-      "esac",
-      'touch "$PWD/스텁-산출물.txt"',
-      "sleep 2",
-      "exit 0",
+      "#!/usr/bin/env node",
+      "const fs = require('node:fs');",
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+      'if (args[0] === "auth") {',
+      '  console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "team", email: "planner@example.com" }));',
+      "  process.exit(0);",
+      "}",
+      'let buf = "";',
+      "let sessionId = 'stub';",
+      "const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');",
+      "const seen = () => {",
+      "  let idx;",
+      '  while ((idx = buf.indexOf("\\n")) !== -1) {',
+      "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
+      "    let o = null; try { o = JSON.parse(line); } catch { continue; }",
+      '    if (o.type === "control_request") {',
+      "      const sub = String(o.request && o.request.subtype);",
+      "      const id = String(o.request_id);",
+      '      if (sub === "initialize" || sub === "set_permission_mode") {',
+      '        send({ type: "control_response", response: { subtype: "success", request_id: id, response: {} } });',
+      '      } else if (sub === "interrupt") {',
+      "        // The real CLI stops the turn and closes it with an error",
+      "        // result the daemon reads back as `interrupted`.",
+      '        send({ type: "control_response", response: { subtype: "success", request_id: id, response: {} } });',
+      "        setTimeout(() => send({",
+      '          type: "result", subtype: "error_during_execution", is_error: true,',
+      '          session_id: sessionId, result: "interrupted", num_turns: 1, duration_ms: 5,',
+      "        }), 20);",
+      "      }",
+      "      continue;",
+      "    }",
+      '    if (o.type === "user") {',
+      '      sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || sessionId;',
+      '      fs.closeSync(fs.openSync(`${process.cwd()}/스텁-산출물.txt`, "a"));',
+      "      setTimeout(() => send({",
+      '        type: "result", subtype: "success", is_error: false,',
+      '        session_id: sessionId, result: "완료했습니다.", num_turns: 1, duration_ms: 10,',
+      "      }), 2000);",
+      "    }",
+      "  }",
+      "};",
+      'process.stdin.setEncoding("utf8");',
+      'process.stdin.on("data", (chunk) => { buf += chunk; seen(); });',
       "",
     ].join("\n"),
   );
@@ -273,10 +309,9 @@ async function main() {
       ),
       JSON.stringify(threadRow.threads.map((t) => [t.title, t.state])),
     );
-    // state "finished" 도 합격이다: 이 스위트의 스터브 CLI 는 생성 2초 뒤
-    // 스스로 끝난다 — 실제 CLI 는 첫 프롬프트를 기다리며 살아 있어 idle 이
-    // 유지되는 것과 다른, 스터브만의 마감 아티팩트다. 단언의 본체는 행의
-    // 배치(own project row)와 존재다.
+    // state "finished" 도 합격이다: 스레드 표식은 마지막 상태 방송 시점에
+    // 따라 결정되므로 생성 직후의 idle 대신 이전 턴의 종료가 반영될 수 있다.
+    // 단언의 본체는 행의 배치(own project row)와 존재다.
 
     // --- 3.5 a turn finishing OFF-SCREEN counts its OWN project (D14) -------
     // The 결제 thread runs; the planner moves to 환불 mid-turn. The stub
@@ -391,9 +426,9 @@ async function main() {
       ),
     );
     await stopTurn;
-    // 스터브 한계 뒤정리: 무음 CLI 는 중지된 프롬프트를 소비하지 못한 채
-    // 남겨 SDK 가 재실행을 되풀이한다 — 실제 CLI 에서는 일어나지 않는 일.
-    // 뒤의 검사들이 그 churn 을 읽지 않게 이 스레드를 닫는다.
+    // 스터브 한계 뒤정리: 중지 뒤에도 큐에 남은 프롬프트가 있으면 SDK 가
+    // 프로세스를 되살려 소비를 시도한다 — 실제 CLI 와 같은 대답을 되풀이할
+    // 뿐이지만, 뒤의 검사들이 그 churn 을 읽지 않게 이 스레드를 닫는다.
     await request({ type: "session.close", sessionId }).catch(() => undefined);
     // 3.6 이후의 검사들은 환불이 활성이라는 3.5 이전의 상태를 이어 받는다 —
     // 중지 검사가 전환해 놓은 활성을 되돌려 놓는다.

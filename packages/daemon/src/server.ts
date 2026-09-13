@@ -61,7 +61,7 @@ import {
   trustWorkspace,
   validateBootstrapConfig,
 } from "./repo.js";
-import { NEW_SESSION_TITLE, probeCommands } from "./session.js";
+import { NEW_SESSION_TITLE, probeCommands, type Session } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { repoWritePolicy } from "./workspaces.js";
 
@@ -383,6 +383,11 @@ export class DaemonServer {
     return bound;
   }
 
+  /** 리뷰 B3: the desktop's close guard asks before quitting under a turn. */
+  anySessionBusy(): boolean {
+    return this.manager.anyBusy();
+  }
+
   async stop(): Promise<void> {
     await this.manager.closeAll();
     // Every project the daemon touched this run, not just the active one: an
@@ -408,13 +413,18 @@ export class DaemonServer {
     ws.on("close", () => this.clients.delete(ws));
     ws.on("message", (raw) => void this.onMessage(ws, String(raw)));
 
-    void this.status().then((status) =>
+    void this.status().then((status) => {
       this.send(ws, {
         type: "hello",
         protocolVersion: PROTOCOL_VERSION,
         status,
-      }),
-    );
+      });
+      // 재접속 복원 (리뷰 B1): the requests the window missed while it was
+      // gone — the cards it must answer or the turn waits forever. THIS
+      // socket only; a broadcast would double every other window's cards.
+      // The client dedupes by requestId, so a flapping socket replays safe.
+      for (const message of this.manager.pendingReplays()) this.send(ws, message);
+    });
     void this.activeOrNull()
       ?.repo.status()
       .then((status) => this.broadcast({ type: "repo.status", status }));
@@ -1172,6 +1182,16 @@ export class DaemonServer {
       case "session.list":
         return await this.manager.list(this.workspaceCwd(), message.limit ?? 50);
 
+      // 리뷰 B7: the notification click names a session, the UI needs its
+      // project first — resuming in the wrong project would fork the thread.
+      case "session.locate": {
+        const workspaces = this.workspaceOfSession(message.sessionId);
+        const slug = workspaces
+          ? ([...this.workspaces.entries()].find(([, value]) => value === workspaces)?.[0] ?? null)
+          : null;
+        return { slug };
+      }
+
       case "session.history":
         return await this.manager.history(
           message.sessionId,
@@ -1180,10 +1200,22 @@ export class DaemonServer {
 
       case "session.create": {
         if (!this.claudeExecutable) {
-          throw new Error("Claude Code CLI not found on this machine");
+          throw new Error(
+            "Claude Code CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.",
+          );
         }
         if (!existsSync(this.repo.root)) {
           throw new Error("연결 레포가 아직 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
+        }
+        // A resume onto a thread whose live query already died (the crash
+        // card's own state, or a force-aborted stop): tear the dead object
+        // down FIRST, under its own id — after the replacement lands, its
+        // late `closed` broadcast would take the fresh session's preview
+        // driver with it. A healthy live thread is left exactly as it was.
+        const dead = message.resume ? this.manager.get(message.resume) : undefined;
+        if (dead && (dead.state === "error" || dead.state === "closed")) {
+          this.destroyPreviewDriver(dead.id);
+          await this.manager.close(dead.id);
         }
         // The preview tools ride the session when a driver is injected and
         // the active preview is up (PLAN D61); `previewTools: false` opts
@@ -1222,7 +1254,14 @@ export class DaemonServer {
         // Mid-cycle that is a merge of the developer's base branch, and a
         // conflict lands as this session's first task — which is why it runs
         // after the session exists, and without blocking on it.
-        void this.repo.pull((brief) => this.manager.get(session.id)?.send(brief));
+        void this.repo.pull((brief) => {
+          try {
+            this.manager.get(session.id)?.send(brief);
+          } catch {
+            // The fresh thread's query died mid-pull; the conflict state
+            // itself still surfaces through repo.status.
+          }
+        });
         // The tree gains a child row (PLAN D59).
         this.manager.invalidateThreads(session.cwd);
         this.refreshThreads();
@@ -1245,7 +1284,10 @@ export class DaemonServer {
         const turn = (this.checkpointTurns.get(message.sessionId) ?? 0) + 1;
         this.checkpointTurns.set(message.sessionId, turn);
         void this.repo.checkpoint(message.sessionId, turn).catch(() => undefined);
-        target.send(message.text, message.images, message.files);
+        // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의
+        // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
+        const carrier = target.sendable ? target : await this.resurrectSession(target);
+        carrier.send(message.text, message.images, message.files);
         return { ok: true };
       }
 
@@ -1303,8 +1345,11 @@ export class DaemonServer {
 
       case "permission.respond": {
         const session = this.manager.findByRequest(message.requestId);
-        if (!session) throw new Error("permission request is no longer pending");
-        session.respondPermission(
+        if (!session)
+          throw new Error("이미 끝난 권한 요청입니다 — 방금 뜬 카드에서 다시 답해 주세요.");
+        // 계획 승인은 모드 복귀를 승인보다 먼저 맺는다 — ok 답신이 그 순서를
+        // 지나가길 기다린다.
+        await session.respondPermission(
           message.requestId,
           message.decision,
           message.message,
@@ -1315,7 +1360,7 @@ export class DaemonServer {
 
       case "question.respond": {
         const session = this.manager.findByRequest(message.requestId);
-        if (!session) throw new Error("question is no longer pending");
+        if (!session) throw new Error("이미 끝난 질문입니다 — 방금 뜬 카드에서 다시 답해 주세요.");
         session.respondQuestion(message.requestId, message.answers, message.response);
         return { ok: true };
       }
@@ -1429,16 +1474,22 @@ export class DaemonServer {
         // 사실을 아무도 말하지 않았다. 병합이 실제로 일어났으면 그 기록이
         // 대화에 남는다 — 충돌 브리프와 같은 자리, 같은 어휘로.
         if (behind !== null && behind > 0 && outcome === "clean" && message.sessionId) {
-          this.manager.get(message.sessionId)?.send(
-            markTurn(
-              {
-                kind: "brief",
-                title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
-                purpose: "refresh",
-              },
-              "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
-            ),
-          );
+          // The record is news, not cargo: a thread that died mid-refresh
+          // must not turn the report into an error reply.
+          try {
+            this.manager.get(message.sessionId)?.send(
+              markTurn(
+                {
+                  kind: "brief",
+                  title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
+                  purpose: "refresh",
+                },
+                "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
+              ),
+            );
+          } catch {
+            // The thread's query died; the merge itself is already done.
+          }
         }
         return await this.repo.status();
       }
@@ -1652,28 +1703,130 @@ export class DaemonServer {
   }
 
   /**
+   * The thread a send must land in when its own query died (crash · a
+   * force-aborted stop · a CLI that ended on its own): same id, fresh CLI,
+   * the stored transcript resumed — the planner's words ride the
+   * conversation they belong to, which is the promise the crash card made
+   * ("다시 보내면 이어집니다"). The dead object is torn down FIRST, under
+   * its own id, so its late `closed` broadcast cannot take the
+   * replacement's preview driver with it.
+   */
+  private async resurrectSession(dead: Session): Promise<Session> {
+    this.destroyPreviewDriver(dead.id);
+    await this.manager.close(dead.id);
+    if (!this.claudeExecutable) return dead;
+    const chosen = dead.chosen;
+    const openSink: {
+      current: ((route: string, state: string | null) => void) | null;
+    } = {
+      current: null,
+    };
+    const preview = await this.previewToolsFor(true, (route, state) =>
+      openSink.current?.(route, state),
+    );
+    const session = this.manager.create({
+      cwd: dead.cwd,
+      claudeExecutable: this.claudeExecutable,
+      writePolicy: repoWritePolicy(dead.cwd),
+      resume: dead.id,
+      title: dead.title,
+      ...(chosen.model ? { model: chosen.model } : {}),
+      ...(chosen.effort ? { effort: chosen.effort } : {}),
+      ...(preview ? { previewTools: preview.tools } : {}),
+    });
+    if (preview) {
+      this.previewDrivers.set(session.id, preview.driver);
+      openSink.current = (route, state) =>
+        this.broadcast({
+          type: "session.event",
+          sessionId: session.id,
+          event: { kind: "preview.opened", route, state },
+        });
+    }
+    // The tree's child row points at the same id; a rescan picks the new life up.
+    this.manager.invalidateThreads(session.cwd);
+    this.refreshThreads();
+    return session;
+  }
+
+  /**
    * Routes a failing gate's output to a live session as a user turn — the same
    * path a typed message takes, so Claude sees the planner asking for a fix.
    * The failure itself is news the planner clicked for — the step never
    * reached the developer and Claude is now on the fix — so it also fires a
    * notice before the turn starts.
+   *
+   * 게이트 실패는 Claude 의 과제다(README) — 열린 대화가 없어도 과제는 태어나야
+   * 한다: 저장·넘기기는 도구가 대화를 열고 브리프를 내려놓는다(준비 턴
+   * runBootstrapPrepare 와 같은 길). 최신화 충돌만 예외다 — 대화가 없을 때의 그
+   * 상태는 오류 카드가 자기 버튼(Claude 에게 해결 요청)으로 대화를 고르는 자리다.
    */
   private briefTo(sessionId: string | undefined, stage: "save" | "handoff" | "refresh") {
-    if (!sessionId) return { onSessionTurn: undefined };
+    if (!sessionId && stage === "refresh") return { onSessionTurn: undefined };
     return {
       onSessionTurn: (brief: string) => {
-        const session = this.manager.get(sessionId);
-        if (session) {
-          this.config.onNotice?.({
-            kind: "gate",
-            sessionId,
-            title: session.title,
-            stage,
-          });
+        // A named thread whose query already died cannot take the brief — and
+        // since the crash guard it would refuse the send. The gate thread is
+        // the fallback either way: no open thread, or a dead one.
+        const named = sessionId ? this.manager.get(sessionId) : undefined;
+        const session =
+          named && named.state !== "error" && named.state !== "closed"
+            ? named
+            : this.gateThreadFor(stage);
+        if (!session) return;
+        this.config.onNotice?.({
+          kind: "gate",
+          sessionId: session.id,
+          title: session.title,
+          stage,
+        });
+        try {
           session.send(brief);
+        } catch {
+          // Lost the race with the query's death — the failed DiffStatus
+          // still tells the planner why the step stopped.
         }
       },
     };
+  }
+
+  /** The last thread a failing gate briefed, when it had to open one itself. */
+  private gateThreadId: string | null = null;
+
+  /**
+   * The thread a failing gate briefs when none is (or none living one is)
+   * open. One per run: a planner who presses 저장 twice with no thread open
+   * must not grow a garden of failure threads. Reused while it lives in this
+   * clone and its query is healthy; a dead one is replaced on the next brief.
+   */
+  private gateThreadFor(stage: "save" | "handoff" | "refresh") {
+    const cwd = this.workspaceCwd();
+    const remembered = this.gateThreadId ? this.manager.get(this.gateThreadId) : undefined;
+    if (
+      remembered &&
+      remembered.cwd === cwd &&
+      remembered.state !== "error" &&
+      remembered.state !== "closed"
+    ) {
+      return remembered;
+    }
+    if (!this.claudeExecutable) return null;
+    const session = this.manager.create({
+      cwd,
+      claudeExecutable: this.claudeExecutable,
+      writePolicy: repoWritePolicy(cwd),
+      title:
+        stage === "save"
+          ? "저장 문제 해결"
+          : stage === "handoff"
+            ? "넘기기 문제 해결"
+            : "최신화 문제 해결",
+    });
+    this.gateThreadId = session.id;
+    // The tree gains a child row (PLAN D59), same as any daemon-opened thread.
+    this.manager.invalidateThreads(cwd);
+    this.refreshThreads();
+    return session;
   }
 }
 

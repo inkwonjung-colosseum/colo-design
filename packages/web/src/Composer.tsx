@@ -157,6 +157,8 @@ export function Composer({
   seed,
   sendKey,
   selector,
+  planArmed = false,
+  onTogglePlanArmed,
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
@@ -198,6 +200,13 @@ export function Composer({
    * workspace is still connecting.
    */
   selector: SessionSelectors;
+  /**
+   * 계획 먼저 (이번 턴 한정): armed 인 채 보내면 그 턴만 계획 자세로
+   * 들어간다 — 첫 답변이 '만들 것' 카드로 오고 승인 후 착수한다. 대화의
+   * 권한 선택이 이미 계획이면 칩은 의미가 없다(늘 계획이므로).
+   */
+  planArmed?: boolean;
+  onTogglePlanArmed?: () => void;
   onSetModel: (model: string | null) => void;
   onSetEffort: (effort: EffortLevel | null) => void;
   onSetPermissionMode: (mode: PermissionMode) => void;
@@ -813,6 +822,22 @@ export function Composer({
         >
           <PaperclipIcon />
         </button>
+        {selector.permissionMode !== "plan" && onTogglePlanArmed && !running && (
+          <button
+            type="button"
+            className={planArmed ? "toolbar__plan toolbar__plan--armed" : "toolbar__plan"}
+            aria-pressed={planArmed}
+            title={
+              planArmed
+                ? "이번 답변은 먼저 만들 것을 승인받고 시작합니다 — 다시 누르면 그대로 보냅니다"
+                : "이번 답변만 먼저 무엇을 만들지 승인받고 시작합니다"
+            }
+            disabled={disabled}
+            onClick={onTogglePlanArmed}
+          >
+            계획 먼저
+          </button>
+        )}
         {chips.map((chip) => (
           <SelectorChip
             key={chip.key}

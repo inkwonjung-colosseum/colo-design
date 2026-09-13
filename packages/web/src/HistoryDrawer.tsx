@@ -27,20 +27,25 @@ export function HistoryDrawer({
   // A 저장 or 넘기기 owns the worktree; a 되돌리기 streams on the same
   // `diff.status` channel, so the two can never race.
   const busy = diffStatus !== null && RUNNING.includes(diffStatus.stage);
+  // The STABLE api object, not the daemon prop: the client hands out a fresh
+  // wrapper every render, and with the prop in these deps every websocket
+  // message while the drawer is open re-read the whole history — the list
+  // collapsing back to "읽어 오는 중…" each time.
+  const { api } = daemon;
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setEntries(null);
     setError(null);
-    daemon.api
+    api
       .saveHistory()
       .then((next) => !cancelled && setEntries(next.entries))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [open, daemon]);
+  }, [open, api]);
 
   useEffect(() => {
     if (!open) return;
@@ -60,12 +65,20 @@ export function HistoryDrawer({
 
   if (!open) return null;
 
-  /** 새 커밋으로 되돌린다 (PLAN D53) — then the chip and the save review read the moved worktree. */
+  /** 새 커밋으로 되돌린다 (PLAN D53) — then the chip and the save review read the moved worktree.
+   *
+   * A refused restore does NOT throw: the call resolves with a failed
+   * DiffStatus (실사 결함 — the drawer used to close on it, so the
+   * "저장하지 않은 변경이 있습니다" refusal never reached the planner). */
   const restore = async (entry: SaveHistoryEntry) => {
     setError(null);
     setRestoring(entry.sha);
     try {
-      await daemon.api.restore(entry.sha);
+      const result = await daemon.api.restore(entry.sha);
+      if (result.stage === "failed") {
+        setError(result.detail ?? "되돌리지 못했습니다 — 잠시 후 다시 시도해 주세요.");
+        return;
+      }
       await daemon.api.repoStatus().catch(() => undefined);
       onClose();
     } catch (e) {
@@ -93,12 +106,15 @@ export function HistoryDrawer({
         </header>
 
         <div className="modal__body">
-          {diffStatus && (
-            <div
-              className={diffStatus?.stage === "failed" ? "notice notice--error" : "diff__stage"}
-            >
+          {/* The stage line is for work IN flight — a 저장 or the 되돌리기 this
+              drawer started. A settled outcome (saved / handed off / failed)
+              already told its story in the flow that produced it; repeating it
+              here made every later visit to the history open on an old
+              "넘기기에서 멈췄습니다" nobody was asking about. */}
+          {busy && diffStatus && (
+            <div className="diff__stage">
               <span className="notice__text">{stageLine(diffStatus)}</span>
-              {busy && <span className="spinner" />}
+              <span className="spinner" />
             </div>
           )}
 

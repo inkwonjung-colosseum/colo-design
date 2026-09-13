@@ -6,9 +6,9 @@
  */
 
 import type { RepoPhase } from "@colo-design/protocol";
-import { useState } from "react";
+import { CopyButton } from "./components";
 import { daemonLine } from "./format";
-import { CheckIcon, CopyIcon, RestartIcon, SparkIcon } from "./icons";
+import { RestartIcon, SparkIcon } from "./icons";
 import { type ErrorKind, errorKindOf, guidanceFor } from "./repo-guidance";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
@@ -57,7 +57,6 @@ export function ProgressPanel({
   onApproveCommands?: () => void;
   onOpenSettings: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
   const failed = phase === "error";
   const guidance = failed ? guidanceFor(errorKind, detail) : null;
   const progressLine = daemonLine(detail);
@@ -68,16 +67,6 @@ export function ProgressPanel({
     (errorKind === "conflict" && onAskClaude) ||
     (errorKind === "commands" && onApproveCommands) ||
     (errorKind === "port-busy" && onForceRestart);
-
-  const copy = async (command: string) => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be blocked; the command is visible to retype anyway.
-    }
-  };
 
   return (
     <div className={failed ? "progress progress--error" : "progress"}>
@@ -115,17 +104,7 @@ export function ProgressPanel({
         {guidance?.command && (
           <pre className="progress__cmd">
             <code>{guidance.command}</code>
-            <button type="button" className="ghost" onClick={() => void copy(guidance.command!)}>
-              {copied ? (
-                <>
-                  <CheckIcon size={11} /> 복사됨
-                </>
-              ) : (
-                <>
-                  <CopyIcon size={12} /> 복사
-                </>
-              )}
-            </button>
+            <CopyButton value={guidance.command} />
           </pre>
         )}
         {!failed && progressLine && <div className="progress__detail">{progressLine}</div>}
@@ -153,6 +132,21 @@ export function ProgressPanel({
               <RestartIcon />
               다시 시도
             </button>
+            {/* 리뷰 U2: the way out a non-developer actually has — hand the
+                whole card, Korean lead and raw tail, to someone who can read
+                it. The terminal it replaces never was their tool. */}
+            {guidance && (
+              <CopyButton
+                value={
+                  `Colo Design에서 이 화면이 준비되지 않았습니다.\n` +
+                  `[${guidance.title}]\n${guidance.body}` +
+                  (guidance.command ? `\n실행이 필요한 명령: ${guidance.command}` : "") +
+                  (detail ? `\n\n--- 자세히 ---\n${detail}` : "")
+                }
+                label="이 안내를 개발자에게 보내기"
+                icon={<SparkIcon size={12} />}
+              />
+            )}
           </div>
         )}
         {!failed && needsSetup && (

@@ -15,7 +15,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -147,7 +147,7 @@ test("the daemon still reports a usable status when git is missing", async () =>
   const status = JSON.parse(stdout);
   assert.equal(status.gitAvailable, false, "git must be reported missing");
   assert.ok(
-    status.warnings.some((w) => /git was not found/i.test(w)),
+    status.warnings.some((w) => w.startsWith("git 이 없")),
     `expected a git warning, got: ${status.warnings.join(" | ")}`,
   );
   assert.equal(typeof status.platform, "string");
@@ -156,4 +156,47 @@ test("the daemon still reports a usable status when git is missing", async () =>
   // here without a manual edit.
   const { PROTOCOL_VERSION } = await import("../../protocol/dist/index.js");
   assert.equal(status.protocolVersion, PROTOCOL_VERSION);
+});
+
+test("a logged-out CLI warns in the sentence the header keys its re-login row on", async () => {
+  // 로그인 만료(리뷰의 "시한폭탄")는 헤더가 앱 안에서 푼다 — Shell 이 이 문장의
+  // 시작으로 행을 찾아 다시 로그인 버튼을 붙인다. 이 검사가 그 커플링의 양쪽을
+  // 고정한다: 문장이 한국어라는 것과, 시작이 바뀌면 이 테스트와 Shell 이 함께
+  // 움직여야 한다는 것.
+  const daemonEntry = new URL("../dist/index.js", import.meta.url).pathname;
+  const stubDir = join(tmpdir(), "colo-design-platform-logged-out");
+  mkdirSync(stubDir, { recursive: true });
+  const stub = join(stubDir, "claude");
+  writeFileSync(
+    stub,
+    [
+      "#!/bin/sh",
+      'case "$1" in',
+      '  --version) echo "1.0.0-stub"; exit 0;;',
+      "  auth)",
+      '    echo "{\\"loggedIn\\":false,\\"authMethod\\":null,\\"subscriptionType\\":null,\\"email\\":null}"',
+      "    exit 0;;",
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(stub, 0o755);
+
+  const env = { ...process.env, COLO_DESIGN_CLAUDE_BIN: stub };
+  delete env.ANTHROPIC_API_KEY;
+  const { stdout } = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [daemonEntry, "doctor"], { env });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.on("error", reject);
+    child.on("close", () => resolve({ stdout: out }));
+  });
+
+  const status = JSON.parse(stdout);
+  assert.equal(status.loggedIn, false, "the stub reports logged out");
+  assert.ok(
+    status.warnings.some((w) => w.startsWith("Claude Code 로그인이 필요합니다")),
+    `expected the login warning, got: ${status.warnings.join(" | ")}`,
+  );
 });

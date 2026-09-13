@@ -20,7 +20,7 @@ import type {
   SessionSelectors,
   SessionState,
 } from "@colo-design/protocol";
-import { readTurn } from "@colo-design/protocol";
+import { PLAN_TOOL, readTurn } from "@colo-design/protocol";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import type { PreviewTools } from "./preview-tools.js";
 import { type SpecFile, saveSpecFiles } from "./repo.js";
@@ -67,7 +67,7 @@ class PushQueue implements AsyncIterable<SDKUserMessage> {
 
 interface PendingRequest {
   requestId: string;
-  kind: "permission" | "question";
+  kind: "permission" | "question" | "plan";
   toolName: string;
   resolve: (result: PermissionOutcome) => void;
   suggestions: PermissionUpdate[];
@@ -214,6 +214,12 @@ export class Session {
   readonly cwd: string;
   state: SessionState = "idle";
   permissionMode: PermissionMode = "default";
+  /**
+   * 계획 모드로 들어가기 전의 작업 모드. 계획은 한 턴의 자세라 승인 순간
+   * 여기로 되돌아간다(`respondPermission`) — 승인된 계획 뒤의 편집이 계획
+   * 모드의 제약 아래 갇히지 않게. `setPermissionMode` 가 기록하고 지운다.
+   */
+  modeBeforePlan: PermissionMode | null = null;
   model: string | null = null;
   /** Composer chip selections; `null` = the CLI's own default. */
   private selectedModel: string | null = null;
@@ -245,6 +251,14 @@ export class Session {
    * 표식으로 읽는다.
    */
   private aborted = false;
+  /**
+   * 질의가 저 혼자 죽었다 — 중지도 종료도 아닌 예외(CLI 크래시). aborted 와
+   * 같은 규칙이 이 사유에도 걸린다: 죽은 질의의 큐를 소비할 이는 없으니
+   * 직접 send 하면 조용히 삼켜지는 대신 거절로 돌아간다. 서버는 이 사유를
+   * 알아차려 같은 id 의 재개로 대신 전달한다(deliverTurn) — 크래시 카드의
+   * "다시 보내면 이어집니다" 약속을 데몬이 이행하는 길이다.
+   */
+  private crashed = false;
   /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
   private readonly abort = new AbortController();
 
@@ -388,10 +402,14 @@ export class Session {
         // feeding sends to a dead query.
         this.setState(this.aborted ? "closed" : "idle");
       } else if (!this.closed) {
+        this.crashed = true;
         this.events.onEvent(this.id, {
           kind: "notice",
           level: "error",
-          text: detail,
+          // The SDK detail is an English message string, not an error id —
+          // the retry dictionary can't match it (리뷰 C3). A Korean lead rides
+          // in front, the raw line stays below for 자세히.
+          text: `Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
         });
         this.setState("error", detail);
       }
@@ -463,6 +481,11 @@ export class Session {
       }
     }
     // A call the planner answered with 항상 허용 must not become a card again.
+    // 계획의 승인은 그 앞에서 갈라 놓는다 — 읽고 답하는 일이라 기억이 대신
+    // 답하지 못하게 한다(기억은 어차피 이 경로로 채워지지 않는다).
+    if (toolName === PLAN_TOOL) {
+      return this.handlePermission(toolName, input, opts);
+    }
     if (this.alwaysAllowed.allows(toolName, input)) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
@@ -489,7 +512,12 @@ export class Session {
 
       this.pending.set(requestId, {
         requestId,
-        kind: toolName === "AskUserQuestion" ? "question" : "permission",
+        kind:
+          toolName === "AskUserQuestion"
+            ? "question"
+            : toolName === PLAN_TOOL
+              ? "plan"
+              : "permission",
         toolName,
         resolve: settle,
         suggestions,
@@ -531,16 +559,60 @@ export class Session {
     return this.pending.size;
   }
 
-  listPending(): Array<{
-    requestId: string;
-    kind: "permission" | "question";
-    toolName: string;
-  }> {
-    return [...this.pending.values()].map(({ requestId, kind, toolName }) => ({
-      requestId,
-      kind,
-      toolName,
-    }));
+  /**
+   * Whether a send can still land in this session's own query. False once the
+   * query died any way it can — a crash (the card's own state), a force-aborted
+   * stop, a CLI that ended on its own. The server reads this to resurrect the
+   * thread (same id, fresh CLI) before delivering the planner's words.
+   */
+  get sendable(): boolean {
+    return !(this.crashed || this.aborted || this.state === "error" || this.state === "closed");
+  }
+
+  /** The chips the session is running on — what a resurrection must carry. */
+  get chosen(): { model: string | null; effort: EffortLevel | null } {
+    return { model: this.selectedModel, effort: this.selectedEffort };
+  }
+
+  /**
+   * Re-sendable copies of the pending requests (재접속 복원): the exact shapes
+   * `onPermissionRequest` / `onQuestionRequest` emit, so a reconnecting window
+   * can rebuild the cards it missed. The old listPending() returned bare ids
+   * nothing ever read — the replays carry the input the card draws.
+   */
+  pendingReplays(): Array<
+    | {
+        type: "permission.request";
+        requestId: string;
+        sessionId: string;
+        toolName: string;
+        input: Record<string, unknown>;
+        suggestions: PermissionSuggestion[];
+      }
+    | {
+        type: "question.request";
+        requestId: string;
+        sessionId: string;
+        questions: AskQuestion[];
+      }
+  > {
+    return [...this.pending.values()].map((entry) =>
+      entry.kind === "question"
+        ? {
+            type: "question.request" as const,
+            requestId: entry.requestId,
+            sessionId: this.id,
+            questions: normalizeQuestions(entry.input),
+          }
+        : {
+            type: "permission.request" as const,
+            requestId: entry.requestId,
+            sessionId: this.id,
+            toolName: entry.toolName,
+            input: entry.input,
+            suggestions: describeSuggestions(entry.suggestions),
+          },
+    );
   }
 
   respondPermission(
@@ -548,19 +620,31 @@ export class Session {
     decision: "allow" | "allowAlways" | "deny",
     message?: string,
     updatedInput?: Record<string, unknown>,
-  ): boolean {
+  ): Promise<boolean> {
     const request = this.pending.get(requestId);
-    if (!request) return false;
+    if (!request) return Promise.resolve(false);
 
     if (decision === "deny") {
       request.resolve({
         behavior: "deny",
         message: message ?? "User denied this action",
       });
-      return true;
+      return Promise.resolve(true);
     }
 
     const input = updatedInput ?? request.input;
+    if (request.kind === "plan") {
+      // 승인은 곧 착수다: 모드를 먼저 작업 모드로 되돌린 뒤 승인을 내린다 —
+      // CLI 가 승인 직후의 편집에 들어가도 계획 모드의 제약 아래 갇히지 않게.
+      // 복귀가 거절돼도 승인은 나간다: 갇힌 계획보다 조심스러운 착수가 낫다.
+      const restore = this.modeBeforePlan ?? "default";
+      return this.setPermissionMode(restore)
+        .catch(() => undefined)
+        .then(() => {
+          request.resolve({ behavior: "allow", updatedInput: input });
+          return true;
+        });
+    }
     if (decision === "allowAlways") {
       // Remember the exact call so the daemon itself never re-prompts it;
       // the CLI's own suggestions cover future sessions' rules.
@@ -574,11 +658,11 @@ export class Session {
         updatedInput: input,
         updatedPermissions: request.suggestions,
       });
-      return true;
+      return Promise.resolve(true);
     }
 
     request.resolve({ behavior: "allow", updatedInput: input });
-    return true;
+    return Promise.resolve(true);
   }
 
   respondQuestion(
@@ -603,9 +687,13 @@ export class Session {
     images?: Array<{ mediaType: string; data: string }>,
     files?: SpecFile[],
   ): void {
-    if (this.closed) throw new Error("session is closed");
+    if (this.closed) throw new Error("닫힌 대화입니다 — 목록에서 다시 열면 이어갑니다.");
     if (this.aborted)
       throw new Error("중지 요청에 답하지 않은 CLI를 끊었습니다 — 대화를 다시 열면 이어갑니다");
+    if (this.crashed)
+      throw new Error(
+        "Claude가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다",
+      );
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
     this.previewTools?.resetTurnQuota();
     // A fresh send is a fresh failure domain: an old interrupt's flag must
@@ -784,6 +872,14 @@ export class Session {
   /** Widening past `default` is the planner's own explicit choice here. */
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     await this.run.setPermissionMode(mode);
+    // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
+    // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
+    // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
+    if (mode === "plan") {
+      if (this.permissionMode !== "plan") this.modeBeforePlan = this.permissionMode;
+    } else {
+      this.modeBeforePlan = null;
+    }
     this.permissionMode = mode;
   }
 

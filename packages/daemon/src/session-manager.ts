@@ -98,7 +98,9 @@ export class SessionManager {
 
   require(sessionId: string): Session {
     const session = this.live.get(sessionId);
-    if (!session) throw new Error(`no live session ${sessionId}`);
+    // The id never reaches the planner's words — a closed thread is news, an
+    // uuid is not.
+    if (!session) throw new Error("대화가 이미 닫혔습니다 — 목록에서 다시 열면 이어갑니다.");
     return session;
   }
 
@@ -149,6 +151,25 @@ export class SessionManager {
     return this.live.size;
   }
 
+  /**
+   * A turn is running, or an answer is waited on, in ANY project (리뷰 B3).
+   * The desktop's close guard reads it before quitting under the work —
+   * quitting resolves pending prompts as denies and the turn dies silently.
+   */
+  anyBusy(): boolean {
+    for (const session of this.live.values()) {
+      if (
+        session.state === "running" ||
+        session.state === "starting" ||
+        session.state === "waiting_permission" ||
+        session.state === "waiting_question"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** A Claude turn is running in this clone right now — the sidebar's 작업 중 (PLAN D15). */
   anyRunning(cwd: string): boolean {
     for (const session of this.live.values()) {
@@ -197,6 +218,15 @@ export class SessionManager {
    * clone stale. The live half merges fresh on every read, so states and
    * titles are never served stale.
    */
+  /**
+   * Every pending request across the live sessions, in wire shape (리뷰 B1).
+   * `attach` hands these to a RECONNECTING socket only — the broadcast would
+   * double the cards every already-connected window is showing.
+   */
+  pendingReplays(): ReturnType<Session["pendingReplays"]> {
+    return [...this.live.values()].flatMap((session) => session.pendingReplays());
+  }
+
   async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
     let onDisk = this.disk.get(cwd);
     if (!onDisk || this.diskStale.has(cwd)) {

@@ -40,6 +40,8 @@ const LANES = {
       "test:repo",
       "test:publish",
       "test:onboarding",
+      "test:plan",
+      "test:crash",
     ],
   },
   L3: {

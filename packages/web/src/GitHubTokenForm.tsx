@@ -74,7 +74,17 @@ export function GitHubTokenForm({
           토큰 만들기 ↗
         </a>
       </div>
-      <p className="hint">값은 이 컴퓨터의 자격 증명 저장소에만 있고 다시 보이지 않습니다.</p>
+      <p className="hint">
+        값은 이 컴퓨터의 자격 증명 저장소에만 있고 다시 보이지 않습니다. 토큰에는 만료일이 있으니,
+        만들 때 만료를 '없음'으로 두면 다시 연결할 일이 줄고, 끊기면 다시 연결하면 됩니다.
+      </p>
+      <p className="hint">
+        GitHub 계정이 없다면{" "}
+        <a className="ghlink" href="https://github.com/signup" target="_blank" rel="noreferrer">
+          가입하기 ↗
+        </a>{" "}
+        — 가입은 1분이면 됩니다.
+      </p>
       {error && (
         <div className="notice notice--error">
           <span className="notice__text">{error}</span>

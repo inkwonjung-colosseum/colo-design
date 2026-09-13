@@ -1,10 +1,11 @@
 import type { SessionSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Composer } from "./Composer";
-import { PermissionCard, QuestionCard, Transcript } from "./components";
+import { PermissionCard, PlanCard, QuestionCard, Transcript } from "./components";
 import type { Daemon } from "./daemon-client";
 import { ChevronDownIcon } from "./icons";
 import type { SendKey } from "./settings";
+import { PLAN_TOOL } from "./tool-names";
 import type { Sessions } from "./useSessions";
 
 /**
@@ -35,6 +36,11 @@ export function ChatColumn({
   onDeleteSession: (session: SessionSummary) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
+  // 계획 먼저 (이번 턴 한정): armed 는 한 번의 보내기로 소비되고, 대화가
+  // 바뀌면 자리를 비운다 — 다른 대화에 남의 자세가 묻지 않게.
+  const [planArmed, setPlanArmed] = useState(false);
+  const draftKey = sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`;
+  useEffect(() => setPlanArmed(false), [draftKey]);
   /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
   const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
   const [restoring, setRestoring] = useState(false);
@@ -298,14 +304,29 @@ export function ChatColumn({
           )}
           {visiblePending.map((request) =>
             request.kind === "permission" ? (
-              <PermissionCard
-                key={request.requestId}
-                request={request}
-                onRespond={(decision, message) => {
-                  void api.respondPermission(request.requestId, decision, message);
-                  resolvePending(request.requestId);
-                }}
-              />
+              request.toolName === PLAN_TOOL ? (
+                // 계획의 승인은 카드가 다르고, 승인의 뒷정리도 다르다 — 데몬이
+                // 작업 모드로 되돌렸으니 칩과 대화의 권한 선택이 그 진실을 따라
+                // 온다(계획만 세우기로 세운 대화는 승인 한 번으로 소비된다).
+                <PlanCard
+                  key={request.requestId}
+                  request={request}
+                  onRespond={(decision, message) => {
+                    void api.respondPermission(request.requestId, decision, message);
+                    resolvePending(request.requestId);
+                    if (decision === "allow") sessions.afterPlanApproval();
+                  }}
+                />
+              ) : (
+                <PermissionCard
+                  key={request.requestId}
+                  request={request}
+                  onRespond={(decision, message) => {
+                    void api.respondPermission(request.requestId, decision, message);
+                    resolvePending(request.requestId);
+                  }}
+                />
+              )
             ) : (
               <QuestionCard
                 key={request.requestId}
@@ -339,7 +360,7 @@ export function ChatColumn({
 
       <Composer
         disabled={disabled}
-        draftKey={sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`}
+        draftKey={draftKey}
         placeholder={placeholder}
         usage={sessions.usage}
         plan={daemon.status?.planUsage ?? null}
@@ -354,7 +375,14 @@ export function ChatColumn({
         queued={sessions.queued}
         seed={seed}
         sendKey={sendKey}
-        onSend={(text, attachments) => sessions.submit(text, attachments)}
+        planArmed={planArmed}
+        onTogglePlanArmed={() => setPlanArmed((v) => !v)}
+        onSend={(text, attachments) => {
+          const sent = sessions.submit(text, attachments, planArmed);
+          // 칩은 한 번의 보내기로 소비된다 — 다음 턴의 자세는 다시 고른다.
+          if (planArmed) setPlanArmed(false);
+          return sent;
+        }}
         onInterrupt={stop}
         onFindFiles={(query) => api.findFiles(query)}
       />

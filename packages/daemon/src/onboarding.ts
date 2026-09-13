@@ -203,7 +203,7 @@ async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
       id: "github",
       status: "warn",
       detail:
-        "GitHub 토큰이 없습니다 — 레포 목록을 가져오고 개발자에게 넘길 때 쓰입니다. 연결하지 않으면 레포를 주소로 직접 추가해야 합니다.",
+        "GitHub 토큰이 없습니다 — 레포(GitHub의 프로젝트 저장소) 목록을 가져오고 개발자에게 넘길 때 쓰입니다. 연결하지 않으면 레포를 주소로 직접 추가해야 합니다.",
     };
   }
   const me = await client.whoAmI();
@@ -298,8 +298,9 @@ const LOGIN_FAILED =
 /**
  * Runs the Claude Code native installer detached. Nothing here shows the
  * progress — stdio is dropped, and on macOS no window opens — so the reply's
- * guidance is the wizard's only feedback, and the wizard re-checks on its
- * own while the installer works.
+ * guidance is the wizard's only feedback. The wizard checks ONCE right after
+ * the press; while the installer works there is no re-check on its own —
+ * 다시 확인 is the planner's move when a few minutes have passed.
  */
 export function startClaudeInstall(
   spawnLike: SpawnLike = spawn,

@@ -92,6 +92,7 @@ const blocks: Block[] = [
     isError: false,
     costUsd: null,
     durationMs: null,
+    resultText: null,
   },
 ];
 

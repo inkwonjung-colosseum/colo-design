@@ -169,6 +169,7 @@ export function DiffPanel({
   onClose,
   summaryLines,
   branch,
+  onOpenSettings,
 }: {
   daemon: Daemon;
   /** The live planning thread; a failed gate lands in it as Claude's next task. */
@@ -185,6 +186,8 @@ export function DiffPanel({
    * planner sees WHERE the work went, not just that it happened.
    */
   branch?: string | null;
+  /** A push refused over credentials is the planner's to fix, in 설정. */
+  onOpenSettings?: () => void;
 }) {
   const [files, setFiles] = useState<DiffFile[] | null>(null);
   const [message, setMessage] = useState("");
@@ -194,6 +197,13 @@ export function DiffPanel({
   /** Once the planner edits the note, the summary stops filling it. */
   const memoTouched = useRef(false);
   const diffStatus = daemon.diffStatus;
+  /**
+   * The calls ride the STABLE `api` object, not the `daemon` prop: the client
+   * hands out a fresh wrapper every render, and a websocket message landing
+   * while this dialog is open would otherwise cancel an in-flight summarize —
+   * a real Claude turn, paid for again — and ask it from scratch.
+   */
+  const { api } = daemon;
   const running = diffStatus !== null && RUNNING.includes(diffStatus.stage);
   const published = diffStatus?.stage === "published";
   const failed = diffStatus?.stage === "failed";
@@ -217,14 +227,14 @@ export function DiffPanel({
   useEffect(() => {
     if (running) return;
     let cancelled = false;
-    void daemon.api
+    void api
       .diff()
       .then((next) => !cancelled && setFiles(next))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [daemon, running]);
+  }, [api, running]);
 
   // The summary follows the diff: turn-end lines when the caller has them,
   // else one `repo.summarize` ask, cached by what the diff was. Three seconds
@@ -254,7 +264,7 @@ export function DiffPanel({
     const fallbackTimer = window.setTimeout(() => {
       if (!cancelled) setSummary({ lines: fallbackLines(files), source: "fallback" });
     }, 3_000);
-    daemon.api
+    api
       .summarizeDiff()
       .then((next) => {
         if (cancelled) return;
@@ -279,7 +289,7 @@ export function DiffPanel({
       cancelled = true;
       clearTimeout(fallbackTimer);
     };
-  }, [daemon, files, turnSummaryText]);
+  }, [api, files, turnSummaryText]);
 
   // The note opens filled with the summary's first line (PLAN D51) — the one
   // the planner would have typed anyway. Their own keystrokes win from then on.
@@ -330,11 +340,15 @@ export function DiffPanel({
               }
               role={published || failed ? "status" : undefined}
             >
-              <span className="notice__text">
+              <span
+                className="notice__text"
+                title={published && branch ? `저장 위치: ${branch}` : undefined}
+              >
                 {stageLine(diffStatus)}
                 {/* 어디에 저장됐는지는 제품의 약속 그 자체다 (실사 결함):
-                    "저장했습니다" 만으로는 기획자가 근거를 볼 수 없었다. */}
-                {published && branch ? ` — ${branch}` : ""}
+                    다만 브랜치명 원문은 기획자의 어휘가 아니므로 사람 말로
+                    말하고 위치는 툴팁에 남는다 (비개발자 리뷰 D4). */}
+                {published && branch ? " — 회사 GitHub에 올렸습니다" : ""}
               </span>
               {running && <span className="spinner" />}
             </div>
@@ -348,6 +362,22 @@ export function DiffPanel({
                 <code>{diffStatus.detail}</code>
               </pre>
             </details>
+          )}
+          {/* 리뷰 C5: a push refused over credentials will never fix itself in
+              a turn — the next move is the planner's token, so the card names
+              it instead of ending at "멈췄습니다". */}
+          {failed && diffStatus?.reason === "push-auth" && (
+            <div className="notice notice--error" data-testid="push-auth-failure">
+              <span className="notice__text">
+                저장과 검사까지는 끝냈고, 변경사항 올리기에서 멈췄습니다 — 설정에서 GitHub 토큰을
+                확인한 뒤 다시 저장해 주세요.
+              </span>
+              {onOpenSettings && (
+                <button type="button" className="ghost" onClick={onOpenSettings}>
+                  설정 열기
+                </button>
+              )}
+            </div>
           )}
 
           {summarizing && <p className="hint">요약을 만드는 중…</p>}

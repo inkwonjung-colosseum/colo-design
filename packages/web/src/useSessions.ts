@@ -81,7 +81,13 @@ export interface Sessions {
   cancelRemove: () => void;
   /** The dialog's 지우기 — actually deletes and refreshes. */
   acceptRemove: () => Promise<void>;
-  submit: (text: string, attachments: Attachment[]) => Promise<void>;
+  submit: (text: string, attachments: Attachment[], planFirst?: boolean) => Promise<void>;
+  /**
+   * 계획 승인의 뒷정리: 데몬이 작업 모드로 되돌린 직후, 칩과 대화의 권한
+   * 선택을 그 진실에 맞춘다. 계획만 세우기로 세워진 대화는 승인 한 번으로
+   * 소비된다 — 계획 모드는 한 턴의 자세다.
+   */
+  afterPlanApproval: () => void;
   /**
    * 되감기 (PLAN D95): discard the k-th answer — files and memory go back —
    * and send `text` again. The daemon forks the conversation; this side
@@ -428,7 +434,13 @@ export function useSessions(
     if (!activeId) return await startSession();
     // A stored thread the planner picked from the list: continue it in place.
     // Forking is a developer's concern, not theirs.
-    if (active && !active.live) return await startSession(activeId);
+    //
+    // 결함(죽은 질의에 말이 사라진다): a live thread whose CLI crashed —
+    // state error, the crash card's own state — must not be sent into.
+    // Nothing consumes that queue anymore, so the words would sink without an
+    // answer. Reopening resumes the stored transcript in a fresh CLI, which
+    // is the promise the crash card already made ("다시 보내면 이어집니다").
+    if (active && (!active.live || active.state === "error")) return await startSession(activeId);
     ensureSession(activeId);
     markLive(activeId);
     return activeId;
@@ -452,9 +464,24 @@ export function useSessions(
     setQueued(0);
   }, [active?.state]);
 
-  const submit = async (text: string, attachments: Attachment[]) => {
+  /**
+   * 계획 먼저로 보낸 턴의 자리. 전송 때 기록해 턴이 끝난 뒤(아래 효과)
+   * 승인 없이 계획 모드가 남아 있으면 원래 자세로 되돌리는 데 쓴다.
+   */
+  const planTurn = useRef<string | null>(null);
+
+  const submit = async (text: string, attachments: Attachment[], planFirst = false) => {
     try {
       const target = await targetSession();
+      if (planFirst) {
+        // 계획 먼저 (이번 턴 한정): 전송 전에 계획 자세로 들어가고, 승인되면
+        // 데몬이 작업 모드로 되돌린다. 승인 없이 턴이 끝나면 아래의 종료
+        // 정리가 원래 자세로 돌려 놓는다 — 계획 모드가 턴 밖에 남지 않게.
+        // 칩은 종료 정리가 남은 자세를 알아보게 로컬에도 새긴다.
+        await api.setPermissionMode(target, "plan");
+        setSelector((current) => (current ? { ...current, permissionMode: "plan" } : current));
+        planTurn.current = target;
+      }
       if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
       await api.send(
         target,
@@ -468,9 +495,47 @@ export function useSessions(
       );
       void refresh();
     } catch (e) {
+      planTurn.current = null;
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  /**
+   * 계획 먼저로 보낸 턴이 승인 없이 끝났을 때의 복귀. 승인이 있었다면 데몬이
+   * 이미 되돌려 놓았으니 아무것도 하지 않는다 — 남아 있는 계획 모드만이
+   * 뒷정리의 대상이다.
+   */
+  useEffect(() => {
+    const target = planTurn.current;
+    if (!target || target !== activeId) return;
+    const state = active?.state;
+    if (state === "starting" || state === "running" || state === "waiting_permission") return;
+    if (state === "waiting_question") return;
+    planTurn.current = null;
+    if (selector?.permissionMode !== "plan") return;
+    setSelector((current) =>
+      current ? { ...current, permissionMode: chat.permissionMode } : current,
+    );
+    void api.setPermissionMode(target, chat.permissionMode).catch(() => undefined);
+  }, [activeId, active?.state, selector?.permissionMode, chat.permissionMode, api]);
+
+  /** 계획 승인 직후: 데몬이 되돌린 작업 모드를 칩과 대화의 선택에 반영한다. */
+  const afterPlanApproval = useCallback(() => {
+    if (!activeId) return;
+    void api
+      .selectors(activeId)
+      .then((next) => {
+        setSelector(next);
+        if (next.models.length > 0) {
+          setCatalog(next.models);
+          saveModelCatalog(next.models);
+        }
+        if (next.permissionMode !== chat.permissionMode) {
+          onChatChange({ permissionMode: next.permissionMode });
+        }
+      })
+      .catch(() => undefined);
+  }, [activeId, api, chat.permissionMode, onChatChange]);
 
   const rewindAnswer = async (
     turn: number,
@@ -493,11 +558,13 @@ export function useSessions(
 
   /**
    * A machine-authored turn (the comment envelope): the same wire a typed
-   * message uses, minus the composer. `images` rides along (D87).
+   * message uses, minus the composer. `images` rides along (D87). The target
+   * resolves through targetSession for the same reason a typed word does — a
+   * crashed query must be resumed, not fed.
    */
   const sendTurn = async (text: string, images?: Array<{ mediaType: string; data: string }>) => {
     try {
-      const target = activeId ?? (await startSession());
+      const target = await targetSession();
       if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
       await api.send(target, text, images);
       void refresh();
@@ -606,6 +673,7 @@ export function useSessions(
     cancelRemove,
     acceptRemove,
     submit,
+    afterPlanApproval,
     rewindAnswer,
     sendTurn,
     queued,
