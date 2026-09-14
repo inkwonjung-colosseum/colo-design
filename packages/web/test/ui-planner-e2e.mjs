@@ -144,6 +144,23 @@ async function main() {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
+  // 작업 과정 보기를 켜 둔 채로 연다. 이 스위치의 기본은 꺼짐이고(설정 ·
+  // tape-visibility), 꺼져 있으면 도구 호출 묶음은 그룹으로 묶이기 전에
+  // 걸러져 접힌 활동 줄 자체가 테이프에 없다 — 5단계가 읽는 것이 바로 그
+  // 줄이다. 기본값 쪽의 계약(꺼져 있으면 보이지 않는다)은 오프라인
+  // ui-settings-e2e 가 지키므로, 여기서는 켠 기획자의 테이프를 본다.
+  await page.addInitScript(() => {
+    const key = "colo-design.settings";
+    let stored = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(key) ?? "{}") ?? {};
+    } catch {
+      stored = {};
+    }
+    stored.chat = { ...(stored.chat ?? {}), showTools: true };
+    localStorage.setItem(key, JSON.stringify(stored));
+  });
+
   await page.goto(`http://127.0.0.1:${PORT}/`);
   await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
   await page.getByRole("button", { name: "연결" }).click();

@@ -208,39 +208,49 @@ async function main() {
     check("ⓑ 모달을 닫으면 뷰가 돌아온다", closed.visible === true, JSON.stringify(closed));
 
     // --- ⓒ 창 재오픈: pane 은 창보다 오래 산다 ----------------------------
-    await page.keyboard.press("Meta+Comma");
-    await page.waitForSelector(".modal", { timeout: 5000 });
-    await sleep(300);
-    await app.evaluate(({ BrowserWindow }) => {
-      for (const window of BrowserWindow.getAllWindows()) window.close();
-    });
-    await sleep(800);
-    await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-    page = await app.waitForEvent("window", { timeout: 30000 });
-    await page.waitForSelector(".planner__body", { timeout: 60000 });
-    await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
-    const reopened = await waitForPage(app);
-    check(
-      "ⓒ 재오픈한 창에 미리보기가 다시 붙고 보인다",
-      reopened.attached === true && reopened.visible === true && reopened.covered === false,
-      JSON.stringify(reopened),
-    );
+    // 마지막 창을 닫고도 앱이 살아 있는 것은 mac 만의 계약이다 — main.ts 의
+    // window-all-closed 는 darwin 이 아니면 app.quit() 하고, 되살릴 dock 아이콘
+    // (activate)도 거기에만 있다. Linux CI 에서 이 구간은 이미 끝난 앱에
+    // evaluate 를 걸어 "Target page, context or browser has been closed" 로
+    // 죽었다 — 제품이 아니라 검사가 플랫폼을 잘못 가정한 자리였다. 배포
+    // 대상인 mac 에서는 그대로 돌고, 나머지에서는 ⓐ·ⓑ 까지가 이 스위트다.
+    if (process.platform === "darwin") {
+      await page.keyboard.press("Meta+Comma");
+      await page.waitForSelector(".modal", { timeout: 5000 });
+      await sleep(300);
+      await app.evaluate(({ BrowserWindow }) => {
+        for (const window of BrowserWindow.getAllWindows()) window.close();
+      });
+      await sleep(800);
+      await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+      page = await app.waitForEvent("window", { timeout: 30000 });
+      await page.waitForSelector(".planner__body", { timeout: 60000 });
+      await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
+      const reopened = await waitForPage(app);
+      check(
+        "ⓒ 재오픈한 창에 미리보기가 다시 붙고 보인다",
+        reopened.attached === true && reopened.visible === true && reopened.covered === false,
+        JSON.stringify(reopened),
+      );
 
-    // 새 창에서도 규약은 그대로 — 죽은 렌더러의 상태가 남지 않았다는 증거.
-    await page.keyboard.press("Meta+Comma");
-    await page.waitForSelector(".modal", { timeout: 5000 });
-    let again = null;
-    const reopenedAt = Date.now();
-    while (Date.now() - reopenedAt < 2000) {
-      const state = await paneState(app);
-      if (state.visible === false) {
-        again = Date.now() - reopenedAt;
-        break;
+      // 새 창에서도 규약은 그대로 — 죽은 렌더러의 상태가 남지 않았다는 증거.
+      await page.keyboard.press("Meta+Comma");
+      await page.waitForSelector(".modal", { timeout: 5000 });
+      let again = null;
+      const reopenedAt = Date.now();
+      while (Date.now() - reopenedAt < 2000) {
+        const state = await paneState(app);
+        if (state.visible === false) {
+          again = Date.now() - reopenedAt;
+          break;
+        }
+        await sleep(20);
       }
-      await sleep(20);
+      check("ⓒ 재오픈 뒤에도 모달이 뷰를 덮는다", again !== null, `${again ?? "never"}ms`);
+      await page.keyboard.press("Escape");
+    } else {
+      console.log("SKIP  ⓒ 창 재오픈 — 창을 모두 닫으면 앱이 끝나는 플랫폼이다 (mac 전용 계약)");
     }
-    check("ⓒ 재오픈 뒤에도 모달이 뷰를 덮는다", again !== null, `${again ?? "never"}ms`);
-    await page.keyboard.press("Escape");
   } finally {
     await closeApp(app);
   }
