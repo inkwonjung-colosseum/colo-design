@@ -3,7 +3,7 @@
 > **기획서를 채팅에 붙여넣으면 화면이 되고, 미리보기에서 검증한 뒤 개발자에게 넘어간다 —
 > git도 터미널도 열지 않고.**
 
-![version](https://img.shields.io/badge/version-0.3.4-blue)
+![version](https://img.shields.io/badge/version-0.3.5-blue)
 ![platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-lightgrey)
 ![stack](https://img.shields.io/badge/stack-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-9feaf9?labelColor=1e1e2e)
 ![monorepo](https://img.shields.io/badge/monorepo-pnpm-orange)

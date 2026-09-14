@@ -303,7 +303,11 @@ async function main() {
   // Hovering it is the whole disclosure: the window, the tokens behind the
   // percentage, and what this session run has cost.
   await ring.hover();
-  const reading = await page.locator(`${VISIBLE}.ctx__tip`).innerText();
+  // The tip is a CSS disclosure that fades in (0.12s) — reading before the
+  // visibility transition has flipped computes an empty innerText.
+  const tip = page.locator(`${VISIBLE}.ctx__tip`);
+  await tip.waitFor({ state: "visible", timeout: 2000 });
+  const reading = await tip.innerText();
   check(
     "hovering the ring names the context window and its numbers",
     reading.includes("컨텍스트 윈도우") && reading.includes("토큰"),

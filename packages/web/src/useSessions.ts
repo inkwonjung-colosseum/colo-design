@@ -230,6 +230,12 @@ export function useSessions(
   const listedSlug = useRef(activeSlug);
   useEffect(() => {
     if (listedSlug.current === activeSlug) return;
+    // 처리한 전환에 마크를 남긴다: 초깃값 그대로인 마크는 돌아오는 전환(시작
+    // 프로젝트로의 복귀)을 조기 반환시켜, 목록이 나가던 프로젝트의 행을 든 채
+    // 남는다 — 활성 대화의 id 는 새 프로젝트 것이라 머리(제목·이름 바꾸기)가
+    // 사라진다. 따뜻한 미리보기 아래 전환은 ready 를 흔들지 않으므로(위
+    // 코멘트), 이 효과가 목록 갱신의 유일한 길이다.
+    listedSlug.current = activeSlug;
     setList([]);
     setActiveId(null);
     if (connection === "open") void refresh();
