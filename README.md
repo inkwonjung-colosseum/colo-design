@@ -3,7 +3,7 @@
 > **기획서를 채팅에 붙여넣으면 화면이 되고, 미리보기에서 검증한 뒤 개발자에게 넘어간다 —
 > git도 터미널도 열지 않고.**
 
-![version](https://img.shields.io/badge/version-0.3.5-blue)
+![version](https://img.shields.io/badge/version-0.3.6-blue)
 ![platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-lightgrey)
 ![stack](https://img.shields.io/badge/stack-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-9feaf9?labelColor=1e1e2e)
 ![monorepo](https://img.shields.io/badge/monorepo-pnpm-orange)
@@ -537,8 +537,8 @@ CI 가 릴리스마다 빌드한다. mac 자가 업데이트(zip 내려받기 �
 # 1. packages/desktop/package.json 의 "version" 이 릴리스 버전이다 — 먼저 올린다.
 # 2. 태그는 버전과 같아야 한다(워크플로우가 검사한다). 주석(annotated tag)
 #    본문이 릴리스 노트가 된다.
-git tag -a v0.3.5 -m "기획서 → 화면 파이프라인"
-git push origin v0.3.5
+git tag -a v0.3.6 -m "기획서 → 화면 파이프라인"
+git push origin v0.3.6
 # 3. .github/workflows/desktop-release.yml → mac(macOS dmg+zip)·win(NSIS exe)
 #    빌드 → 릴리스 페이지에 4개 에셋 첨부(dmg, zip, exe, latest.json)
 ```
