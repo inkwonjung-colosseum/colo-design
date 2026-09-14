@@ -7,7 +7,8 @@
     },
     "packages/daemon": {
       "entry": ["test/**/*.mjs"],
-      "project": ["src/**/*.ts", "test/**/*.mjs"]
+      "project": ["src/**/*.ts", "test/**/*.mjs"],
+      "ignoreBinaries": ["pkill"]
     },
     "packages/desktop": {
       "entry": ["src/preload.ts", "src/preview-preload.ts", "test/**/*.mjs", "scripts/**/*.mjs"],

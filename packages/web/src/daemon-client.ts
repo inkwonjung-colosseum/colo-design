@@ -455,7 +455,7 @@ const EMPTY_SESSION: SessionView = {
  *   CommentItem       ← CommentItem      (PLAN D57 — one recorded comment) */
 export type DiffSummary = RepoSummary;
 export type SaveHistoryEntry = RepoHistoryEntry;
-export type HandoffDraft = RepoHandoffDraft;
+type HandoffDraft = RepoHandoffDraft;
 type SaveHistory = RepoHistory;
 type CheckpointList = RepoCheckpoints;
 export type CommentItem = ProtocolCommentItem;
