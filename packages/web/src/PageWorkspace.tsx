@@ -386,21 +386,31 @@ export function PageWorkspace({
     setFocusPinId((prev) => ({ id, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
-  // 고스트의 수명은 턴의 수명 (재설계 C10): the active thread leaving
-  // running — done, failed, stopped — is the moment the grey badges go.
-  // 해결 상태는 저장하지 않는다: the record popover is where the past reads.
+  // 고스트의 수명은 턴의 수명 (재설계 C10): done, failed, stopped — 그 순간
+  // 회색 배지는 간다. 해결 상태는 저장하지 않는다: the record popover is
+  // where the past reads. 판정은 종착 상태가 내린다 — 'running' 렌더를 봤는가에
+  // 기대면(옛 코드) 연달아 도착한 상태 갱신이 한 렌더로 합쳐질 때 중간의
+  // running 은 화면에 오지 않아 배지가 영원히 남는다(커밋 게이트 교훈: 시계는
+  // 창이 아니라 데몬의 것이다). 데몬이 아는 두 사실로 답한다: 살아 있는 턴이
+  // 없고 대기 중인 보내기도 없으면, 핀을 실은 턴은 끝난 것이다. 턴 중간에
+  // 받아 대기열에 든 보내기는(ⓘ) 대기줄이 비어야 끝난 것이다 — 중지가 줄을
+  // 지우면 배지도 함께 간다. 750ms 의 여유는 markSent 직후 아직 도착하지 않은
+  // running 갱신을 기다리는 것이다.
   const turnState = sessions.active?.state ?? "idle";
-  const turnWasRunning = useRef(false);
+  const turnLive =
+    turnState === "starting" ||
+    turnState === "running" ||
+    turnState === "waiting_permission" ||
+    turnState === "waiting_question";
+  const settledEmpty = !turnLive && (sessions.active?.queue?.length ?? 0) === 0;
+  const ghostCount = pins.ghosts.length;
   useEffect(() => {
-    if (turnState === "running") {
-      turnWasRunning.current = true;
-    } else if (turnWasRunning.current) {
-      turnWasRunning.current = false;
-      pins.dismissGhosts();
-    }
+    if (!settledEmpty) return;
+    const timer = setTimeout(() => pins.dismissGhosts(), 750);
+    return () => clearTimeout(timer);
     // pins 는 렌더마다 새 겉모습일 뿐 dismissGhosts 는 setState 의 포장이다 — state 만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnState]);
+  }, [settledEmpty, ghostCount]);
 
   /**
    * The preview's width, the one resizable boundary left. It drives the grid
