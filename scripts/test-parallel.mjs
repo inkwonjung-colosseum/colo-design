@@ -45,6 +45,7 @@ const LANES = {
       "test:plan",
       "test:crash",
       "test:midturn-queue",
+      "test:turn-clock",
     ],
   },
   L3: {
