@@ -405,7 +405,11 @@ export function ChatColumn({
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         running={sessions.running}
         stopping={stopping}
-        queued={sessions.queued}
+        queue={sessions.queue}
+        dropped={sessions.dropped}
+        onTakeQueued={sessions.takeQueued}
+        onSendQueuedNow={sessions.sendQueuedNow}
+        onDismissDropped={sessions.dismissDropped}
         seed={seed}
         sendKey={sendKey}
         midTurnSend={midTurnSend}

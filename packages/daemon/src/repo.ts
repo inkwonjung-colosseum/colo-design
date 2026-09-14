@@ -33,6 +33,7 @@ import type {
   RepoErrorKind,
   RepoHistory,
   RepoPhase,
+  RepoSettingsWarning,
   RepoStatus,
   RepoSummary,
 } from "@colo-design/protocol";
@@ -283,15 +284,24 @@ export function readColoDesignConfig(root: string): ColoDesignConfig {
  * `permissions.allow` rules that pre-approve tools no card will ever ask
  * about. Loading the project tier is deliberate (it is also how the repo's
  * CLAUDE.md reaches the session), so this does not block: it makes the
- * repo's ask visible, as one header warning line.
+ * repo's ask visible, as one header warning line. The fingerprint (repo
+ * root + raw bytes) is how a client files the news as read without
+ * mistaking an edited file — or another repo — for news it already saw.
  */
-export function repoSettingsWarning(root: string): string | null {
+export function repoSettingsWarning(root: string): RepoSettingsWarning | null {
   const file = join(root, ".claude", "settings.json");
-  let parsed: unknown;
+  let raw: string;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
+    raw = readFileSync(file, "utf8");
   } catch {
     // Absent (the normal repo) or unreadable — nothing to report either way.
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // A broken file is the CLI's news, not ours.
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
@@ -299,7 +309,10 @@ export function repoSettingsWarning(root: string): string | null {
   if (widening.length === 0) return null;
   // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 기획자는
   // 한국어다. 무엇이 사전 승인되는지 그 자리에서 알려 준다.
-  return `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`;
+  return {
+    text: `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`,
+    fingerprint: createHash("sha256").update(root).update("\0").update(raw).digest("hex"),
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -178,6 +178,11 @@ async function main() {
     inbox.filter(
       (m) => m.type === "session.event" && m.sessionId === sessionId && m.event.kind === kind,
     );
+  /** The wait room as the daemon last announced it — oldest first. */
+  const room = (sessionId) => sessionEvents(sessionId, "queued").at(-1)?.event.items ?? [];
+  const roomTexts = (sessionId) => room(sessionId).map((item) => item.text);
+  const arrivals = (text) =>
+    stdinLog().filter((row) => row.kind === "user" && row.text.includes(text));
 
   try {
     const ready = await request("repo.sync");
@@ -205,8 +210,8 @@ async function main() {
     await request("session.send", { sessionId, text: WAITING });
 
     check(
-      "the waiting words enter the transcript at once",
-      sessionEvents(sessionId, "user.echo").some((m) => m.event.text === WAITING),
+      "the waiting words stay OUT of the transcript until they go out",
+      !sessionEvents(sessionId, "user.echo").some((m) => m.event.text === WAITING),
     );
     // 도는 턴은 스스로 끝나지 않으니, 이 기다림은 경합이 아니다: 이 창이
     // 지나도 CLI 의 stdin 에 그 말이 없어야 한다. 있다면 그것이 끼어들기다.
@@ -218,9 +223,9 @@ async function main() {
       JSON.stringify(midTurn.map((row) => `${row.kind}:${row.text.slice(0, 20)}`)),
     );
     check(
-      "the daemon says one send is waiting",
-      sessionEvents(sessionId, "queued").some((m) => m.event.count === 1),
-      JSON.stringify(sessionEvents(sessionId, "queued").map((m) => m.event.count)),
+      "the daemon says which send is waiting",
+      roomTexts(sessionId).join("|") === WAITING,
+      JSON.stringify(roomTexts(sessionId)),
     );
 
     check(
@@ -247,11 +252,11 @@ async function main() {
       sessionEvents(sessionId, "turn.end").some((m) => m.event.subtype === "interrupted"),
       JSON.stringify(sessionEvents(sessionId, "turn.end").map((m) => m.event.subtype)),
     );
-    await waitFor(
-      () => sessionEvents(sessionId, "queued").some((m) => m.event.count === 0),
-      10_000,
-      "the wait-line clearing",
+    check(
+      "the waiting words echo into the transcript as they go out",
+      sessionEvents(sessionId, "user.echo").some((m) => m.event.text === WAITING),
     );
+    await waitFor(() => room(sessionId).length === 0, 10_000, "the wait-line clearing");
     check("the wait-line empties when the words go out", true);
 
     const answered = await waitFor(
@@ -263,6 +268,92 @@ async function main() {
       "the released words run as their own turn",
       answered.event.resultText === "알겠습니다.",
       String(answered.event.resultText),
+    );
+
+    // --- 4. 대기 줄 다루기: 고쳐서 보내기, 지금 보내기 --------------------
+    await waitFor(
+      () =>
+        inbox.filter((m) => m.type === "session.state" && m.sessionId === sessionId).at(-1)
+          ?.state === "idle",
+      10_000,
+      "the released turn settling",
+    );
+    const LONG_AGAIN = "오래 걸리는 작업 다시 시작해 줘";
+    const FIRST = "첫째로 기다리는 말";
+    const SECOND = "둘째로 기다리는 말";
+    await request("session.send", { sessionId, text: LONG_AGAIN });
+    await waitFor(() => arrivals(LONG_AGAIN).length === 1, 20_000, "the second marker turn");
+    await request("session.send", { sessionId, text: FIRST });
+    await request("session.send", { sessionId, text: SECOND });
+    check(
+      "the room lists every waiting send, oldest first",
+      roomTexts(sessionId).join("|") === `${FIRST}|${SECOND}`,
+      JSON.stringify(roomTexts(sessionId)),
+    );
+
+    // 고쳐서 보내기: the send comes back whole, and the room forgets it.
+    const secondId = room(sessionId)[1].id;
+    const taken = await request("session.queue.remove", { sessionId, itemId: secondId });
+    check(
+      "taking a send back returns what was sent",
+      taken?.text === SECOND && Array.isArray(taken.images) && Array.isArray(taken.files),
+      JSON.stringify(taken),
+    );
+    check(
+      "and the room keeps only the other",
+      roomTexts(sessionId).join("|") === FIRST,
+      JSON.stringify(roomTexts(sessionId)),
+    );
+    const again = await request("session.queue.remove", { sessionId, itemId: secondId });
+    check("a send no longer waiting has nothing to hand back", again === null, String(again));
+    check(
+      "nothing taken back ever reached the CLI",
+      arrivals(SECOND).length === 0 && arrivals(FIRST).length === 0,
+    );
+
+    // 지금 보내기: the turn is cut, THAT send goes out alone, the rest wait.
+    await request("session.send", { sessionId, text: SECOND });
+    const hurriedId = room(sessionId)[1].id;
+    await request("session.queue.sendNow", { sessionId, itemId: hurriedId });
+    const hurried = await waitFor(() => arrivals(SECOND)[0], 20_000, "the hurried words");
+    const secondCut = stdinLog().filter((row) => row.kind === "interrupt")[1];
+    check(
+      "지금 보내기 cuts the running turn and delivers that send after the cut",
+      Boolean(secondCut) && hurried.at >= secondCut.at,
+      `interrupt@${secondCut?.at} → send@${hurried.at}`,
+    );
+    // The room's announcements, in order: the hurried send moves to the
+    // front, then leaves alone. The socket frame and the stub's log line
+    // race across two processes, so the sequence is awaited, not sampled.
+    const rooms = () =>
+      sessionEvents(sessionId, "queued").map((m) =>
+        m.event.items.map((item) => item.text).join("|"),
+      );
+    await waitFor(
+      () =>
+        rooms().includes(`${SECOND}|${FIRST}`) &&
+        rooms().lastIndexOf(FIRST) > rooms().lastIndexOf(`${SECOND}|${FIRST}`),
+      5_000,
+      `the room going ${SECOND}|${FIRST} → ${FIRST}`,
+    );
+    check("the hurried send moved to the front, then left alone", true);
+    // The hurried turn answers on its own (알겠습니다.), and ITS end releases
+    // what kept waiting — after, never alongside.
+    const followed = await waitFor(() => arrivals(FIRST)[0], 20_000, "the remaining send");
+    check(
+      "the other send follows at the next turn's end",
+      followed.at >= hurried.at &&
+        sessionEvents(sessionId, "turn.end").filter((m) => m.event.subtype === "success").length >=
+          2,
+      `hurried@${hurried.at} → remaining@${followed.at}`,
+    );
+    await waitFor(() => room(sessionId).length === 0, 10_000, "the room emptying");
+    check(
+      "both echo into the transcript in delivery order",
+      sessionEvents(sessionId, "user.echo")
+        .map((m) => m.event.text)
+        .filter((text) => text === FIRST || text === SECOND)
+        .join("|") === `${SECOND}|${FIRST}`,
     );
 
     await request("session.close", { sessionId });

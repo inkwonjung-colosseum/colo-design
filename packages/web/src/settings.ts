@@ -539,3 +539,34 @@ export function markReplyConfirmed(): void {
     // 다음 답하기가 다시 물어볼 뿐이다.
   }
 }
+// ---------------------------------------------------------------------------
+// 레포 경고의 읽음 지문 — 닫은 소식은 기기에 눌러 담긴다
+// ---------------------------------------------------------------------------
+
+const REPO_WARNINGS_KEY = "colo-design.repo-warnings-read";
+
+/**
+ * 이 기기에서 닫은 레포 경고의 지문들. 헤더의 나머지 경고는 살아 있는 문제라
+ * 세션 동안만 숨겨지지만, 레포가 보낸 settings.json 경고는 뉴스다 — 한 번
+ * 읽은 같은 소식이 새로고침마다 돌아오면 잡음일 뿐이다. 지문(레포 루트+파일
+ * 원문)을 기억해, 설정이 바뀌거나 다른 레포가 연결될 때만 다시 보인다.
+ */
+export function loadReadRepoWarnings(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(REPO_WARNINGS_KEY) ?? "[]");
+    return Array.isArray(raw)
+      ? raw.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberReadRepoWarning(fingerprint: string): void {
+  try {
+    const stored = loadReadRepoWarnings();
+    localStorage.setItem(REPO_WARNINGS_KEY, JSON.stringify([...new Set([...stored, fingerprint])]));
+  } catch {
+    // 사적 모드 등에서 저장이 막혀도 닫기는 이 탭의 몫으로 끝난다.
+  }
+}

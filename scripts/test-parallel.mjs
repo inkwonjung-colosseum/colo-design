@@ -51,8 +51,9 @@ const LANES = {
     suites: [
       "test:publish-ui",
       "test:settings",
-      "test:sidebar-ui",
       "test:midturn-send",
+      "test:thread-delete-ui",
+      "test:sidebar-ui",
       "test:onboarding-ui",
       "test:port-busy-ui",
     ],

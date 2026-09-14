@@ -16,6 +16,8 @@ import type {
   ProjectList,
   ProjectSummary,
   CommentItem as ProtocolCommentItem,
+  QueuedSend,
+  QueuedSendPayload,
   RepoCheckpoints,
   RepoHistory,
   RepoHistoryEntry,
@@ -276,12 +278,13 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
     case "init":
     case "preview.opened":
     case "queued":
+    case "queue.dropped":
       // D91: `preview.opened` is not a transcript event — the session view
       // keeps it as `lastOpened` (below), and no block is built. D86's
-      // `queued` is the same kind of news: the words already entered the
-      // transcript as `user.echo`, and this only says how many are still
-      // waiting. The exhaustive switch is why neither slips through
-      // unhandled.
+      // `queued` and `queue.dropped` are the same kind of news: what is
+      // waiting above the field, and what fell out of the room — neither has
+      // entered the transcript (a waiting send echoes only when delivered).
+      // The exhaustive switch is why none slips through unhandled.
       return blocks;
   }
 }
@@ -323,12 +326,18 @@ interface SessionView {
    */
   lastOpened?: { route: string; state: string | null };
   /**
-   * 다음 턴에 보내기 (PLAN D86): how many sends are waiting in the DAEMON's
-   * wait room. The daemon owns this number because it owns the wait — the
-   * SDK's input stream would fold a mid-turn send into the running turn, so
-   * only the daemon knows what is still waiting and when it goes out.
+   * 다음 턴에 보내기 (PLAN D86): the sends waiting in the DAEMON's wait
+   * room, oldest first. The daemon owns this list because it owns the wait —
+   * the SDK's input stream would fold a mid-turn send into the running turn,
+   * so only the daemon knows what is still waiting and when it goes out.
    */
-  queued: number;
+  queue: QueuedSend[];
+  /**
+   * Sends the room lost without delivering (the query died). They never
+   * reached the transcript, so the composer keeps them above the field until
+   * the planner restores or dismisses each — this list is the window's own.
+   */
+  dropped: QueuedSend[];
 }
 
 const EMPTY_SESSION: SessionView = {
@@ -336,7 +345,8 @@ const EMPTY_SESSION: SessionView = {
   state: "idle",
   model: null,
   live: false,
-  queued: 0,
+  queue: [],
+  dropped: [],
 };
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
@@ -379,6 +389,13 @@ interface DaemonApi {
     files?: Array<{ name: string; mediaType: string; data: string }>,
   ) => Promise<unknown>;
   interrupt: (sessionId: string) => Promise<unknown>;
+  /**
+   * 대기 줄 다루기 (PLAN D86). `queueRemove` takes a waiting send back out
+   * and resolves with what was sent (null once it has already gone out);
+   * `queueSendNow` cuts the running turn and delivers that send first.
+   */
+  queueRemove: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
+  queueSendNow: (sessionId: string, itemId: string) => Promise<unknown>;
   contextUsage: (sessionId: string) => Promise<ContextUsage | null>;
   /** 모델·노력·권한 chips; switches apply from the next response. */
   selectors: (sessionId: string) => Promise<SessionSelectors>;
@@ -568,6 +585,8 @@ export interface Daemon {
   ensureSession: (sessionId: string) => void;
   hydrate: (sessionId: string, events: ChatEvent[]) => void;
   markLive: (sessionId: string) => void;
+  /** Forget one undelivered send the planner has restored or let go of. */
+  dismissDropped: (sessionId: string, itemId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -812,9 +831,11 @@ export function useDaemon(url: string | null): Daemon {
                     },
                   }
                 : message.event.kind === "queued"
-                  ? // D86: 대기 줄의 길이 — 기록이 아니라 입력창 위 한 줄.
-                    { ...view, queued: message.event.count }
-                  : { ...view, blocks: foldEvent(view.blocks, message.event) };
+                  ? // D86: 대기 줄 — 기록이 아니라 입력창 위 목록.
+                    { ...view, queue: message.event.items }
+                  : message.event.kind === "queue.dropped"
+                    ? { ...view, dropped: [...view.dropped, ...message.event.items] }
+                    : { ...view, blocks: foldEvent(view.blocks, message.event) };
           return { ...prev, [message.sessionId]: next };
         });
         return;
@@ -981,6 +1002,10 @@ export function useDaemon(url: string | null): Daemon {
         });
       },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
+      queueRemove: (sessionId: string, itemId: string) =>
+        call<QueuedSendPayload>({ type: "session.queue.remove", sessionId, itemId }),
+      queueSendNow: (sessionId: string, itemId: string) =>
+        call({ type: "session.queue.sendNow", sessionId, itemId }),
       contextUsage: (sessionId: string) =>
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
       selectors: (sessionId: string) =>
@@ -1236,15 +1261,24 @@ export function useDaemon(url: string | null): Daemon {
     setSessions((prev) => (prev[sessionId] ? prev : { ...prev, [sessionId]: EMPTY_SESSION }));
   }, []);
 
-  /** Replace a session's transcript with a stored one, without resuming it. */
+  /**
+   * Replace a session's transcript with a stored one, without resuming it.
+   * A live room rides at the tail of the replay (the daemon's `session.history`
+   * appends it), so a window opened mid-wait sees the list too.
+   */
   const hydrate = useCallback((sessionId: string, events: ChatEvent[]) => {
-    setSessions((prev) => ({
-      ...prev,
-      [sessionId]: {
-        ...(prev[sessionId] ?? EMPTY_SESSION),
-        blocks: events.reduce<Block[]>(foldEvent, []),
-      },
-    }));
+    setSessions((prev) => {
+      const view = prev[sessionId] ?? EMPTY_SESSION;
+      const tail = events.at(-1);
+      return {
+        ...prev,
+        [sessionId]: {
+          ...view,
+          blocks: events.reduce<Block[]>(foldEvent, []),
+          queue: tail?.kind === "queued" ? tail.items : view.queue,
+        },
+      };
+    });
   }, []);
 
   const markLive = useCallback((sessionId: string) => {
@@ -1253,6 +1287,17 @@ export function useDaemon(url: string | null): Daemon {
       ...prev,
       [sessionId]: { ...(prev[sessionId] ?? EMPTY_SESSION), live: true },
     }));
+  }, []);
+
+  const dismissDropped = useCallback((sessionId: string, itemId: string) => {
+    setSessions((prev) => {
+      const view = prev[sessionId];
+      if (!view) return prev;
+      return {
+        ...prev,
+        [sessionId]: { ...view, dropped: view.dropped.filter((item) => item.id !== itemId) },
+      };
+    });
   }, []);
 
   return {
@@ -1268,6 +1313,7 @@ export function useDaemon(url: string | null): Daemon {
     ensureSession,
     hydrate,
     markLive,
+    dismissDropped,
     repo,
     diffStatus,
     onboarding,

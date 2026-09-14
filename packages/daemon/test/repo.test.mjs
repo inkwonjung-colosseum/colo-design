@@ -157,14 +157,31 @@ test("a repo that ships Claude Code project settings gets a header warning", () 
     writeFileSync(file, JSON.stringify({ model: "opus" }));
     assert.equal(repoSettingsWarning(dir), null);
     // Pre-approved tools, env, and hooks each are — the warning names the
-    // file so the planner can go look.
+    // file so the planner can go look. The fingerprint moves with the
+    // bytes: a client may file one as read, but changed settings are new
+    // news.
+    let previous = null;
     for (const key of ["permissions", "env", "hooks"]) {
       writeFileSync(file, JSON.stringify({ [key]: {} }));
       const warning = repoSettingsWarning(dir);
       assert.ok(
-        warning && warning.includes(key) && warning.includes(".claude/settings.json"),
+        warning?.text.includes(key) && warning?.text.includes(".claude/settings.json"),
         `${key} must be named in the warning`,
       );
+      assert.notEqual(warning?.fingerprint, previous?.fingerprint);
+      previous = warning;
+    }
+    // Same bytes, same fingerprint — the re-broadcast a client may ignore.
+    assert.equal(repoSettingsWarning(dir)?.fingerprint, previous?.fingerprint);
+    // Another repo carrying the very same bytes is still new news — the
+    // fingerprint names the repo, not just the file.
+    const twin = workdir("repo-settings-warning-twin-");
+    try {
+      mkdirSync(join(twin, ".claude"), { recursive: true });
+      writeFileSync(join(twin, ".claude", "settings.json"), JSON.stringify({ hooks: {} }));
+      assert.notEqual(repoSettingsWarning(twin)?.fingerprint, previous?.fingerprint);
+    } finally {
+      rmSync(twin, { recursive: true, force: true });
     }
     // A broken file is the CLI's news, not ours.
     writeFileSync(file, "{not json");

@@ -2,6 +2,7 @@ import type {
   ContextUsage,
   EffortLevel,
   PermissionMode,
+  QueuedSend,
   SessionCommand,
   SessionModelInfo,
   SessionSelectors,
@@ -14,6 +15,24 @@ import { type ChatSettings, loadModelCatalog, saveModelCatalog } from "./setting
 
 /** Reload 후 마지막으로 연 대화를 프로젝트별로 되돌려 놓는 곳 (실사 결함). */
 const LAST_THREAD_KEY = "colo-design.last-thread";
+
+/**
+ * 프로젝트의 저장된 마지막 스레드 포인터를 지운다 (삭제 부활 결함). 복원
+ * 효과는 activeId 가 null 로 떨어지는 순간 이 포인터를 읽는데, 그 시점의
+ * 목록은 아직 갱신 전이라 지워진 행을 그대로 담고 있다. 포인터를 남겨 두면
+ * 방금 지운 스레드가 대화창에 되살아난다.
+ */
+function forgetLastThread(slug: string | null, sessionId: string) {
+  if (!slug) return;
+  try {
+    const map = JSON.parse(localStorage.getItem(LAST_THREAD_KEY) ?? "{}") as Record<string, string>;
+    if (map[slug] !== sessionId) return;
+    delete map[slug];
+    localStorage.setItem(LAST_THREAD_KEY, JSON.stringify(map));
+  } catch {
+    // 손상된 기록은 버려진 것과 같다 — 조용히 건너뛴다.
+  }
+}
 
 /** The chat state of the one workspace, as its views consume it. */
 export interface Sessions {
@@ -109,10 +128,21 @@ export interface Sessions {
     target?: string,
   ) => Promise<void>;
   /**
-   * 다음 턴에 밀려 있는 것 (PLAN D86): 데몬의 대기 줄에 남은 건수, 턴이
-   * 끝나면 0. The composer's one-line `다음 턴에 보냅니다 · N건 대기` reads it.
+   * 다음 턴에 밀려 있는 것 (PLAN D86): 데몬의 대기 줄, 오래된 것부터. 턴이
+   * 끝나면 빈다. The composer's list above the field draws it.
    */
-  queued: number;
+  queue: QueuedSend[];
+  /** Sends the room lost without delivering — the composer's 되살리기 rows. */
+  dropped: QueuedSend[];
+  /**
+   * 고쳐서 보내기: take a waiting send back out of the daemon's room, as the
+   * composer's own attachments. Null when it already went out.
+   */
+  takeQueued: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
+  /** 지금 보내기: cut the running turn and deliver this send first. */
+  sendQueuedNow: (itemId: string) => Promise<void>;
+  /** Let go of one undelivered send (restored into the field, or unwanted). */
+  dismissDropped: (itemId: string) => void;
   refresh: () => Promise<void>;
   /** A fresh usage reading on demand — the usage popover refreshes on open. */
   refreshUsage: () => void;
@@ -141,6 +171,7 @@ export function useSessions(
 ): Sessions {
   const { ready, chat, onChatChange } = opts;
   const { connection, api, sessions, ensureSession, hydrate, markLive } = daemon;
+  const forgetDropped = daemon.dismissDropped;
   const [list, setList] = useState<SessionSummary[]>([]);
   /** `open` reads the list without inheriting its closure — a mirror ref. */
   const listRef = useRef(list);
@@ -430,14 +461,20 @@ export function useSessions(
     const session = confirmRemove;
     setConfirmRemove(null);
     if (!session) return;
-    if (activeId === session.sessionId) setActiveId(null);
+    if (activeId === session.sessionId) {
+      setActiveId(null);
+      // 위 setActiveId 와 같은 동기 플러시에 지운다: 복원 효과가 실행될
+      // 때는 포인터가 이미 없어 갱신 전의 낡은 목록이 지워진 스레드를
+      // 되살릴 수 없다.
+      forgetLastThread(activeSlug, session.sessionId);
+    }
     try {
       await api.deleteSession(session.sessionId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
     void refresh();
-  }, [activeId, api, confirmRemove, refresh]);
+  }, [activeId, activeSlug, api, confirmRemove, refresh]);
 
   /** Resolve the session a turn should land in, creating or resuming as needed.
    * `wanted` pins the destination (the id a caller just created) — without it
@@ -460,13 +497,54 @@ export function useSessions(
   };
 
   /**
-   * 대기 줄 (PLAN D86) — 데몬이 세는 수를 그대로 읽는다.
+   * 대기 줄 (PLAN D86) — 데몬이 쥔 목록을 그대로 읽는다.
    *
    * 화면이 직접 세던 때에는 "보냈다" 만 알고 "언제 나갔다" 는 몰랐다: 말을
    * 붙들고 있는 쪽은 데몬이고(Session.held), 그 줄이 언제 풀리는지도 데몬만
-   * 안다. 턴 끝에 0 으로 돌아오는 것도 그쪽에서 온다.
+   * 안다. 턴 끝에 비는 것도 그쪽에서 온다.
    */
-  const queued = active?.queued ?? 0;
+  const queue = active?.queue ?? [];
+  const dropped = active?.dropped ?? [];
+
+  const takeQueued = async (itemId: string) => {
+    if (!activeId) return null;
+    const payload = await api.queueRemove(activeId, itemId);
+    if (!payload) return null;
+    // Back into the composer's own shape: an image keeps the name the chip
+    // shows (there was none on the wire — the daemon never needed it).
+    return {
+      text: payload.text,
+      attachments: [
+        ...payload.images.map(
+          (image, index): Attachment => ({
+            kind: "image",
+            name: `이미지 ${index + 1}`,
+            mediaType: image.mediaType,
+            data: image.data,
+            size: Math.floor((image.data.length * 3) / 4),
+          }),
+        ),
+        ...payload.files.map(
+          (file): Attachment => ({
+            kind: "document",
+            name: file.name,
+            mediaType: file.mediaType,
+            data: file.data,
+            size: Math.floor((file.data.length * 3) / 4),
+          }),
+        ),
+      ],
+    };
+  };
+
+  const sendQueuedNow = async (itemId: string) => {
+    if (!activeId) return;
+    await api.queueSendNow(activeId, itemId);
+  };
+
+  const dismissDropped = (itemId: string) => {
+    if (activeId) forgetDropped(activeId, itemId);
+  };
 
   /**
    * 계획 먼저로 보낸 턴의 자리. 전송 때 기록해 턴이 끝난 뒤(아래 효과)
@@ -692,7 +770,11 @@ export function useSessions(
     afterPlanApproval,
     rewindAnswer,
     sendTurn,
-    queued,
+    queue,
+    dropped,
+    takeQueued,
+    sendQueuedNow,
+    dismissDropped,
     refresh,
     refreshUsage,
   };

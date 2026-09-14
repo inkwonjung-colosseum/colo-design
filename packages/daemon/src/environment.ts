@@ -412,7 +412,9 @@ export async function buildStatus(input: {
   registryProbeDir: string | null;
   // Plan limits, the model list and the project registry are the server's to
   // own across sessions, so the machine report stops short of the wire shape.
-}): Promise<Omit<DaemonStatus, "planUsage" | "models" | "projects" | "activeProject">> {
+}): Promise<
+  Omit<DaemonStatus, "planUsage" | "models" | "projects" | "activeProject" | "repoSettingsWarning">
+> {
   const warnings: string[] = [];
   const apiKeyInEnv = Boolean(process.env.ANTHROPIC_API_KEY);
   if (apiKeyInEnv) {

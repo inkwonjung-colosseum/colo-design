@@ -239,6 +239,13 @@ export class DaemonServer {
    * stood the moment that turn was handed over. Daemon memory is the right
    * home: the refs themselves survive in git, and a restart only means the
    * count starts over on an unused number.
+   *
+   * `session.send` seeds the count (from the transcript, once per process);
+   * the DELIVERY bumps it — the `user.echo` the session emits as it hands the
+   * words to the CLI. A send waiting for the next turn (PLAN D86) is not a
+   * turn yet: snapshotting at send time would freeze the worktree while the
+   * previous turn is still editing it, and a send taken back out of the room
+   * would leave a numbered checkpoint no prompt ever had.
    */
   private readonly checkpointTurns = new Map<string, number>();
   /** Minimum spacing between re-reads of the plan's limits. */
@@ -280,7 +287,19 @@ export class DaemonServer {
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
     this.manager = new SessionManager({
-      onEvent: (sessionId, event) => this.broadcast({ type: "session.event", sessionId, event }),
+      onEvent: (sessionId, event) => {
+        this.broadcast({ type: "session.event", sessionId, event });
+        // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
+        // must never hold the turn hostage — a failed checkpoint only means
+        // one fewer 되돌리기, so it runs alongside and keeps its failure to
+        // itself. A session the planner never sent into has no count, and
+        // none of its machine turns starts one.
+        if (event.kind !== "user.echo") return;
+        const turn = this.checkpointTurns.get(sessionId);
+        if (turn === undefined) return;
+        this.checkpointTurns.set(sessionId, turn + 1);
+        void this.repo.checkpoint(sessionId, turn + 1).catch(() => undefined);
+      },
       onState: (sessionId, state, detail) => {
         this.broadcast({
           type: "session.state",
@@ -1081,11 +1100,15 @@ export class DaemonServer {
       registryProbeDir: active?.repo.registry() ? active.repo.root : null,
     });
     // A repo that ships its own pre-approved tool rules widens its sessions
-    // past the card flow — the planner should hear that it did.
+    // past the card flow — the planner should hear that it did. It rides its
+    // own field, not the env warnings: this is news, not a live problem, and
+    // the fingerprint lets a client that has read it stay quiet until the
+    // file or the repo changes. The daemon keeps sending it; the client
+    // owns "read".
     const repoSettings = active ? repoSettingsWarning(active.repo.root) : null;
     return {
       ...base,
-      ...(repoSettings ? { warnings: [...base.warnings, repoSettings] } : {}),
+      repoSettingsWarning: repoSettings,
       planUsage: this.currentPlanUsage(),
       models: this.models,
       projects: this.projectSummaries(),
@@ -1296,11 +1319,17 @@ export class DaemonServer {
         return { slug };
       }
 
-      case "session.history":
-        return await this.manager.history(
+      case "session.history": {
+        const events = await this.manager.history(
           message.sessionId,
           await this.resolveSessionCwd(message.sessionId),
         );
+        // 대기 줄은 기록이 아니라 지금의 상태 (PLAN D86): a window opened —
+        // or reloaded — while sends are waiting must still see them above
+        // the field, so the room rides at the tail of the replay.
+        const waiting = this.manager.get(message.sessionId)?.heldItems() ?? [];
+        return waiting.length > 0 ? [...events, { kind: "queued", items: waiting }] : events;
+      }
 
       case "session.create": {
         if (!this.claudeExecutable) {
@@ -1380,24 +1409,21 @@ export class DaemonServer {
         if (target.cwd !== this.workspaceCwd()) {
           throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 보내 주세요.");
         }
-        // 화면 턴의 시작점 (PLAN D52): the turn is what a planner may want
-        // to step back from, so the worktree is snapshotted the moment this
-        // turn is handed over. The snapshot must never hold the turn
-        // hostage — a failed checkpoint only means one fewer 되돌리기, so
-        // it runs alongside and keeps its failure to itself.
-        let turn = this.checkpointTurns.get(message.sessionId);
-        if (turn === undefined) {
+        // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
+        // manager's onEvent); this only seeds the count, before anything can
+        // be handed over — so the transcript is read while it still holds
+        // exactly the prompts that came before this one.
+        if (this.checkpointTurns.get(message.sessionId) === undefined) {
           // 재시작 뒤 첫 턴: 카운터는 프로세스와 함께 사라지지만 대화록은
           // 남는다. 되감기의 k 번째 프롬프트는 대화록 기준이므로 이미 있는
           // 프롬프트 수부터 이어 셀 수밖에 없다 — 1부터 다시 세면 첫 되감기가
           // 전체 기억을 버리고, 두 번째는 남의 턴을 자른 채 memoryKept 를
           // 보고하던 것.
-          turn = await this.manager.promptCount(message.sessionId, target.cwd);
-          this.checkpointTurns.set(message.sessionId, turn);
+          this.checkpointTurns.set(
+            message.sessionId,
+            await this.manager.promptCount(message.sessionId, target.cwd),
+          );
         }
-        turn += 1;
-        this.checkpointTurns.set(message.sessionId, turn);
-        void this.repo.checkpoint(message.sessionId, turn).catch(() => undefined);
         // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
         // Refusals answer through the dispatch-wide Korean boundary above.
@@ -1409,6 +1435,25 @@ export class DaemonServer {
       case "session.interrupt":
         await this.manager.require(message.sessionId).interrupt();
         return { ok: true };
+
+      // 대기 줄 다루기 (PLAN D86): both act on a live room, and `sendNow`
+      // writes into the clone — the same cross-project fence as session.send.
+      case "session.queue.remove": {
+        const target = this.manager.require(message.sessionId);
+        if (target.cwd !== this.workspaceCwd()) {
+          throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 시도해 주세요.");
+        }
+        return target.removeHeld(message.itemId);
+      }
+
+      case "session.queue.sendNow": {
+        const target = this.manager.require(message.sessionId);
+        if (target.cwd !== this.workspaceCwd()) {
+          throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 시도해 주세요.");
+        }
+        await target.sendHeldNow(message.itemId);
+        return { ok: true };
+      }
 
       case "session.close": {
         const cwd = this.manager.get(message.sessionId)?.cwd;

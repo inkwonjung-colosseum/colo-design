@@ -17,6 +17,8 @@ import type {
   PermissionMode,
   PermissionSuggestion,
   PlanUsage,
+  QueuedSend,
+  QueuedSendPayload,
   SessionCommand,
   SessionSelectors,
   SessionState,
@@ -98,6 +100,19 @@ interface PendingRequest {
   suggestions: PermissionUpdate[];
   /** Kept so an approval can echo the tool input back without the client resending it. */
   input: Record<string, unknown>;
+}
+
+/** A send waiting for the next turn (PLAN D86), exactly as `send` received it. */
+interface HeldSend {
+  id: string;
+  text: string;
+  images: Array<{ mediaType: string; data: string }>;
+  files: SpecFile[];
+}
+
+/** The wire shape of a waiting send: words and counts, never the bytes. */
+function summarize({ id, text, images, files }: HeldSend): QueuedSend {
+  return { id, text, images: images.length, files: files.map((file) => file.name) };
 }
 
 type PermissionOutcome = PermissionResult;
@@ -296,8 +311,20 @@ export class Session {
    * opposite of what 다음 턴에 보내기 promises, and it can replace the answer
    * the planner was already waiting for. So the wait happens HERE, and the
    * turn's end releases it.
+   *
+   * What waits is the send AS IT CAME — words, images, documents — not the
+   * SDK message. Nothing about a waiting send has happened yet: no `specs/`
+   * file, no echo, no title. `deliver` does all of that at once when the
+   * send actually goes out, which is also what lets the planner take a
+   * waiting send back whole (`removeHeld`).
    */
-  private readonly held: SDKUserMessage[] = [];
+  private readonly held: HeldSend[] = [];
+  /**
+   * 지금 보내기: how many of `held` the next release may deliver. `null`
+   * empties the room (the turn's end); `1` delivers the front send alone
+   * and the rest keep waiting for the turn it starts.
+   */
+  private releaseLimit: number | null = null;
   /**
    * 턴이 돌고 있다 — CLI 가 일하는 중이거나 카드 앞에 멈춰 있다. 상태가
    * 아니라 이 플래그가 기준인 이유: waiting_permission 도 도는 턴이고, 그
@@ -496,9 +523,9 @@ export class Session {
         });
       }
       this.pending.clear();
-      // …nor deliver what was waiting for the next turn. Those words already
-      // echoed into the transcript when they were typed, so dropping them in
-      // silence would leave the planner reading a send that never happened.
+      // …nor deliver what was waiting for the next turn. Those words never
+      // reached the transcript, so they go back to the planner whole rather
+      // than vanishing with the query.
       this.turnActive = false;
       this.dropHeld();
     }
@@ -529,37 +556,77 @@ export class Session {
   /**
    * 대기 줄을 CLI 로 — 턴 끝에서만 부른다. 여러 건이면 CLI 가 한 턴으로 묶을
    * 수 있지만(SDK 의 prompt batch), 어느 쪽이든 도는 턴에 끼어들지는 않는다.
+   * 지금 보내기가 한도를 걸어 두었으면 앞의 그만큼만 나가고 나머지는 이 턴의
+   * 끝을 다시 기다린다.
    */
   private release(): void {
+    // The hurry is spent at this turn's end whether or not anything is left
+    // to hurry — a limit outliving an emptied room would starve a later one.
+    const limit = this.releaseLimit ?? this.held.length;
+    this.releaseLimit = null;
     if (this.held.length === 0) return;
+    const batch = this.held.splice(0, limit);
     this.turnActive = true;
-    for (const message of this.held) this.queue.push(message);
-    this.held.length = 0;
+    for (const item of batch) this.deliver(item);
     this.announceHeld();
     this.setState("running");
   }
 
   /**
-   * 죽은 질의는 대기 줄을 소비하지 못한다. 그 말들은 이미 기록에 echo 됐으니
-   * 조용히 버리면 계획자는 보내지지도 않은 말을 읽는다 — 한 줄로 말하고
-   * 지운다. 닫는 대화만 예외: 스스로 닫은 창에 뒷말은 소식이 아니다.
+   * 죽은 질의는 대기 줄을 소비하지 못한다. 그 말들은 기록에 들어간 적이 없으니
+   * 원문을 화면으로 되돌려 준다 — 계획자가 되살려 다시 보낼 수 있게. 닫는
+   * 대화만 예외: 스스로 닫은 창에 뒷말은 소식이 아니다.
    */
   private dropHeld(): void {
     if (this.held.length === 0) return;
-    const lost = this.held.length;
-    this.held.length = 0;
+    const lost = this.held.splice(0);
+    this.releaseLimit = null;
     if (this.closed) return;
     this.announceHeld();
-    this.events.onEvent(this.id, {
-      kind: "notice",
-      level: "warn",
-      text: `다음 턴으로 기다리던 말 ${lost}건은 전달되지 못했습니다 — 다시 보내 주세요.`,
-    });
+    this.events.onEvent(this.id, { kind: "queue.dropped", items: lost.map(summarize) });
   }
 
-  /** 대기 줄의 길이를 화면으로 — 입력창 위 한 줄이 이 수를 읽는다. */
+  /** 대기 줄을 화면으로 — 입력창 위 목록이 이것을 그린다. */
   private announceHeld(): void {
-    this.events.onEvent(this.id, { kind: "queued", count: this.held.length });
+    this.events.onEvent(this.id, { kind: "queued", items: this.heldItems() });
+  }
+
+  /** The wait room as the composer shows it, oldest first. */
+  heldItems(): QueuedSend[] {
+    return this.held.map(summarize);
+  }
+
+  /**
+   * 고쳐서 보내기: take one waiting send back out, whole. `null` when it is
+   * no longer waiting — the turn ended and it went out, or it was already
+   * taken; either way there is nothing to restore.
+   */
+  removeHeld(itemId: string): QueuedSendPayload {
+    const item = this.held.find((held) => held.id === itemId);
+    if (!item) return null;
+    // Taking back the hurried send (the front) ends the hurry: the cut turn's
+    // end drains the room as any turn's end does.
+    if (this.held[0] === item) this.releaseLimit = null;
+    this.held.splice(this.held.indexOf(item), 1);
+    this.announceHeld();
+    return { text: item.text, images: item.images, files: item.files };
+  }
+
+  /**
+   * 지금 보내기: cut the running turn and deliver this send first. The turn's
+   * end (the interrupt's `turn.end`, or `endTurn` when the CLI refuses the
+   * interrupt) releases exactly one send — this one, moved to the front —
+   * and the rest keep waiting for the turn it starts. A send that already
+   * left the room is a no-op: there is nothing to hurry.
+   */
+  async sendHeldNow(itemId: string): Promise<void> {
+    const item = this.held.find((held) => held.id === itemId);
+    if (!item) return;
+    this.held.splice(this.held.indexOf(item), 1);
+    this.held.unshift(item);
+    this.releaseLimit = 1;
+    this.announceHeld();
+    await this.interrupt();
   }
 
   /**
@@ -831,18 +898,39 @@ export class Session {
       throw new Error(
         "Claude가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다",
       );
+    this.lastActivity = Date.now();
+    const item: HeldSend = { id: randomUUID(), text, images: images ?? [], files: files ?? [] };
+    // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
+    // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
+    if (this.turnActive) {
+      this.held.push(item);
+      this.announceHeld();
+      return;
+    }
+    this.turnActive = true;
+    this.deliver(item);
+    this.setState("running");
+  }
+
+  /**
+   * A send goes out: everything a send MEANS happens here, and only here —
+   * the moment the words are handed to the CLI. A waiting send has done none
+   * of this yet, so taking it back out of the room leaves no trace, and the
+   * running turn keeps its own quota and interrupt flag until its end.
+   */
+  private deliver({ text, images, files }: HeldSend): void {
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
     this.previewTools?.resetTurnQuota();
-    // A fresh send is a fresh failure domain: an old interrupt's flag must
+    // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
     // Documents go to disk and reach Claude as `@specs/…` mentions: its Read
     // tool handles PDF page ranges and image downscaling, and the clone keeps
     // the source document for later sessions.
-    const saved = files && files.length > 0 ? saveSpecFiles(this.cwd, files) : [];
+    const saved = files.length > 0 ? saveSpecFiles(this.cwd, files) : [];
     const prompt = saved.reduce((acc, path) => `${acc}\n\n첨부 기획서: @${path}`, text);
     const content =
-      images && images.length > 0
+      images.length > 0
         ? [
             { type: "text" as const, text: prompt },
             ...images.map((image) => ({
@@ -871,36 +959,25 @@ export class Session {
       this.title = title.slice(0, 80);
     }
 
-    const message = {
+    this.queue.push({
       type: "user",
       message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: this.id,
-    } as SDKUserMessage;
+    } as SDKUserMessage);
 
-    this.lastActivity = Date.now();
-    // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`). CLI 로
-    // 곧장 가는 건 도는 턴이 없을 때뿐이다.
-    if (this.turnActive) {
-      this.held.push(message);
-      this.announceHeld();
-    } else {
-      this.turnActive = true;
-      this.queue.push(message);
-      this.setState("running");
-    }
     // The echo carries the person's own words; the appended mentions are
     // plumbing, and the saved paths render as attachment chips instead.
     // D87: the pin crops ride back (capped) so the chat card can draw its
     // thumbnails — live only; a replayed transcript keeps the words.
-    const thumbs = (images ?? [])
+    const thumbs = images
       .filter((image) => image.mediaType === "image/jpeg")
       .slice(0, 6)
       .map((image) => image.data);
     this.events.onEvent(this.id, {
       kind: "user.echo",
       text,
-      images: images?.length ?? 0,
+      images: images.length,
       files: saved,
       ...(thumbs.length > 0 ? { thumbs } : {}),
     });

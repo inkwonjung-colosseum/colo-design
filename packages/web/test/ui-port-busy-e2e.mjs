@@ -7,7 +7,7 @@
  * 프로젝트가 선언한 포트의 주인은 활성 프로젝트다 — 묻지 않고 점유자를
  * 정리하고 그 자리에 미리보기를 띄운다. 이 스위트는 브라우저에서 그 회복을
  * 지켜본다. 덧붙여 .claude/settings.json 을 싣는 레포의 머리 경고가 한국어로
- * 읽히는지도 함께 (역시 실사 결함).
+ * 읽히는지, 닫은 뒤 새로고침에도 조용한지도 함께 (역시 실사 결함).
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
@@ -239,6 +239,18 @@ async function main() {
     check(
       "a repo shipping .claude/settings.json warns in Korean",
       text.includes("이 레포가 보낸 .claude/settings.json(permissions)이 일부 도구를 미리 승인"),
+    );
+    // --- 3. 닫은 레포 경고는 새로고침해도 조용하다 ----------------------------
+    // 뉴스는 한 번 읽히면 그만이다 — 닫고 새로고침해도 같은 문장이 돌아오지
+    // 않는다(설정 파일이 바뀌어 지문이 달라질 때만 다시 보인다).
+    await page.getByRole("button", { name: "경고 닫기" }).click();
+    await page.waitForSelector(".planner__warnings", { state: "detached", timeout: 15000 });
+    await page.reload();
+    await page.waitForSelector(".planner__body", { timeout: 60000 });
+    const quiet = await page.locator(".planner").innerText();
+    check(
+      "a closed repo warning stays closed across a reload",
+      !quiet.includes("이 레포가 보낸 .claude/settings.json"),
     );
 
     check("no page errors while driving the planner", errors.length === 0, errors.join(" | "));

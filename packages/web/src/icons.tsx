@@ -20,6 +20,7 @@ import {
   Lock,
   type LucideIcon,
   Monitor,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -48,6 +49,7 @@ function make(Glyph: LucideIcon, defaultSize: number, strokeWidth = 1.8) {
 // --- transcript & composer ------------------------------------------------
 
 export const ArrowUpIcon = make(ArrowUp, 14);
+export const PencilIcon = make(Pencil, 13);
 export const ChevronRightIcon = make(ChevronRight, 12, 2);
 export const ChevronDownIcon = make(ChevronDown, 12, 2);
 export const FileIcon = make(File, 13);

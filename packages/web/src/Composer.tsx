@@ -3,6 +3,7 @@ import type {
   EffortLevel,
   PermissionMode,
   PlanUsage,
+  QueuedSend,
   SessionCommand,
   SessionSelectors,
 } from "@colo-design/protocol";
@@ -19,9 +20,11 @@ import {
 import { Fold, useFoldNotice } from "./components";
 import {
   ArrowUpIcon,
+  CloseIcon,
   FileIcon,
   FolderIcon,
   GaugeIcon,
+  PencilIcon,
   PlusIcon,
   ShieldOffIcon,
   ShieldPlainIcon,
@@ -63,6 +66,27 @@ function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** What rode along with a waiting send, as the row's small print — or null for words alone. */
+function attachmentWords({ images, files }: QueuedSend): string | null {
+  const parts = [
+    images > 0 ? `이미지 ${images}` : null,
+    files.length > 0 ? `문서 ${files.length}` : null,
+  ];
+  const words = parts.filter((part) => part !== null).join(" · ");
+  return words || null;
+}
+
+/**
+ * The daemon's refusal sentence is Korean and carries the recovery — show it
+ * rather than a second generic line (리뷰: 실패 표면 하나); the fallback is
+ * for a dead socket, which has no sentence.
+ */
+function failureWords(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : `${fallback} — 잠시 뒤 다시 시도해 주세요`;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +191,11 @@ export function Composer({
   onRefreshUsage,
   running,
   stopping = false,
-  queued = 0,
+  queue = [],
+  dropped = [],
+  onTakeQueued,
+  onSendQueuedNow,
+  onDismissDropped,
   seed,
   sendKey,
   midTurnSend = "queue",
@@ -200,10 +228,25 @@ export function Composer({
    */
   stopping?: boolean;
   /**
-   * 다음 턴에 밀려 있는 건수 (PLAN D86). Running 중 보낸 send 가 세어 있고,
-   * 턴이 끝나면 0 — the one-line `다음 턴에 보냅니다` above the field.
+   * 다음 턴에 밀려 있는 것 (PLAN D86): the daemon's wait room, oldest first —
+   * the list above the field. Empties when the turn ends and they go out.
    */
-  queued?: number;
+  queue?: QueuedSend[];
+  /**
+   * Sends the room lost without delivering. They never reached the
+   * transcript, so they stay above the field until restored or let go of.
+   */
+  dropped?: QueuedSend[];
+  /**
+   * 고쳐서 보내기 on a waiting send: take it back out of the room, whole —
+   * the words and the attachments return to the field. Resolves null when it
+   * already went out (the turn ended first); the row is gone by then anyway.
+   */
+  onTakeQueued?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
+  /** 지금 보내기 on a waiting send: cut the running turn, deliver this first. */
+  onSendQueuedNow?: (itemId: string) => Promise<void>;
+  /** An undelivered send is restored into the field, or simply let go of. */
+  onDismissDropped?: (itemId: string) => void;
   /**
    * 고쳐서 다시 보내기 (PLAN D95): the planner's own words re-enter the
    * field for an edit. The nonce re-applies the same text on repeat clicks.
@@ -532,26 +575,55 @@ export function Composer({
         setSuggestions([]);
         rejected.clear();
       })
-      .catch((e) => {
-        // The daemon's refusal sentence is Korean and carries the recovery —
-        // show it rather than a second generic line (리뷰: 실패 표면 하나).
-        rejected.show(
-          e instanceof Error && e.message
-            ? e.message
-            : "보내지지 못했습니다 — 잠시 뒤 다시 시도해 주세요",
-        );
-      });
+      .catch((e) => rejected.show(failureWords(e, "보내지지 못했습니다")));
   };
 
-  /** Swap the field's text for a recalled row, keeping the attachments, caret parked at the end. */
-  const recall = (text: string) => {
-    setEditor((prev) => ({ text, attachments: prev.attachments }));
+  /** Caret parked at the end of the field, once React has written the new value. */
+  const parkCaretAtEnd = () => {
     requestAnimationFrame(() => {
       const element = area.current;
       if (!element) return;
       const end = element.value.length;
       element.setSelectionRange(end, end);
     });
+  };
+
+  /** Swap the field's text for a recalled row, keeping the attachments, caret parked at the end. */
+  const recall = (text: string) => {
+    setEditor((prev) => ({ text, attachments: prev.attachments }));
+    parkCaretAtEnd();
+  };
+
+  /**
+   * 고쳐서 보내기 · 되살리기: a send comes back into the field ahead of
+   * whatever is being drafted — both are the planner's words, so neither is
+   * thrown away; a blank line keeps them apart for the edit.
+   */
+  const restore = (text: string, attachments: Attachment[]) => {
+    historyAt.current = null;
+    setEditor((prev) => ({
+      text: prev.text.trim() ? `${text}\n\n${prev.text}` : text,
+      attachments: [...attachments, ...prev.attachments],
+    }));
+    area.current?.focus();
+    parkCaretAtEnd();
+  };
+
+  const takeQueued = (item: QueuedSend) => {
+    if (!onTakeQueued) return;
+    void onTakeQueued(item.id)
+      .then((payload) => {
+        // Null: it went out before the click landed — the row is gone with it.
+        if (payload) restore(payload.text, payload.attachments);
+      })
+      .catch((e) => rejected.show(failureWords(e, "대기 중인 말을 되돌리지 못했습니다")));
+  };
+
+  const sendQueuedNow = (item: QueuedSend) => {
+    if (!onSendQueuedNow) return;
+    void onSendQueuedNow(item.id).catch((e) =>
+      rejected.show(failureWords(e, "지금 보내지 못했습니다")),
+    );
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -811,11 +883,89 @@ export function Composer({
         </div>
       )}
 
-      {/* 대기 줄 (PLAN D86): what a mid-turn send means — one line above the
-          field, gone the moment the turn settles. */}
-      {running && queued > 0 && (
+      {/* 대기 줄 (PLAN D86): what a mid-turn send means — the sends themselves,
+          above the field, oldest first; gone the moment they go out. Each row
+          can come back for an edit or jump the running turn. */}
+      {queue.length > 0 && (
         <div className="composer__queued" role="status">
-          다음 턴에 보냅니다 · {queued}건 대기
+          <div className="queued__head">다음 턴에 보냅니다 · {queue.length}건 대기</div>
+          <ul className="queued__list">
+            {queue.map((item) => (
+              <li key={item.id} className="queued__row">
+                <span className="queued__text" title={item.text}>
+                  {item.text || "(첨부만)"}
+                </span>
+                {attachmentWords(item) && (
+                  <span className="queued__meta">{attachmentWords(item)}</span>
+                )}
+                <button
+                  type="button"
+                  className="ghost queued__action"
+                  aria-label="고쳐서 보내기"
+                  title="입력창으로 되돌려 고칩니다"
+                  disabled={disabled}
+                  onClick={() => takeQueued(item)}
+                >
+                  <PencilIcon />
+                </button>
+                <button
+                  type="button"
+                  className="ghost queued__action"
+                  aria-label="지금 보내기"
+                  title="지금 답변을 멈추고 이 말부터 보냅니다"
+                  disabled={disabled || stopping}
+                  onClick={() => sendQueuedNow(item)}
+                >
+                  <ArrowUpIcon size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* The room's losses: sends the dead query never delivered. Never in the
+          transcript, so they wait here — the words come back for a resend,
+          the attachments must be picked again. */}
+      {dropped.length > 0 && (
+        <div className="composer__lost" role="alert">
+          <div className="queued__head">
+            전달되지 못한 말 {dropped.length}건 — 되살려 다시 보내 주세요
+          </div>
+          <ul className="queued__list">
+            {dropped.map((item) => (
+              <li key={item.id} className="queued__row">
+                <span className="queued__text" title={item.text}>
+                  {item.text || "(첨부만)"}
+                </span>
+                {attachmentWords(item) && (
+                  <span className="queued__meta">{attachmentWords(item)} · 다시 붙여야 합니다</span>
+                )}
+                <button
+                  type="button"
+                  className="ghost queued__action"
+                  aria-label="되살리기"
+                  title="입력창으로 되돌립니다"
+                  disabled={disabled}
+                  onClick={() => {
+                    restore(item.text, []);
+                    onDismissDropped?.(item.id);
+                  }}
+                >
+                  <PencilIcon />
+                </button>
+                <button
+                  type="button"
+                  className="ghost queued__action"
+                  aria-label="지우기"
+                  title="이 말을 지웁니다"
+                  onClick={() => onDismissDropped?.(item.id)}
+                >
+                  <CloseIcon />
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

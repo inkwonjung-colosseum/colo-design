@@ -11,6 +11,8 @@ import { Splitter } from "./Splitter";
 import {
   type ChatSettings,
   type LayoutSettings,
+  loadReadRepoWarnings,
+  rememberReadRepoWarning,
   type Settings,
   SIDEBAR_WIDTH_BOUNDS,
 } from "./settings";
@@ -91,17 +93,27 @@ export function Shell({
     if (daemon.onboarding?.some((step) => step.status !== "pass")) setWizardNeeded(true);
   }, [daemon.onboarding, daemon.projects.length]);
   // The daemon knows why it cannot work — no CLI, not signed in, no pnpm — and
-  // the planner cannot read a terminal to find out.
+  // the planner cannot read a terminal to find out. The repo's settings.json
+  // warning rides beside them but is news, not a live problem: its
+  // fingerprint, once closed, stays closed on this device until the file or
+  // the repo changes.
   const warnings = status?.warnings ?? [];
+  const repoWarning = status?.repoSettingsWarning ?? null;
   // 로그인 만료는 헤더의 경고 중 유일하게 앱 안에서 풀리는 것이다(리뷰 문서의
   // "시한폭탄"): 구독 로그인이 끊기면 대화가 크래시 카드로 죽고, 여기가 그 소식이
   // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
   // 으로 지운다 — 터미널은 끝까지 기획자의 몫으로 남지 않는다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
   /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
-      새 문장은 새 소식이니 다시 보인다. */
+      새 문장은 새 소식이니 다시 보인다. 레포 경고(뉴스)만 예외로 기기에
+      눌러 담는다 — 아래 readRepoWarnings. */
   const [dismissedWarnings, setDismissedWarnings] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
+  );
+  /** 기기에서 닫은 레포 경고 지문 — 다른 레포, 수정된 설정은 새 지문이라
+      다시 보인다. 새로고침 사이에도 묵묵히 유지되는 것이 이 경고의 요구다. */
+  const [readRepoWarnings, setReadRepoWarnings] = useState<ReadonlySet<string>>(
+    () => new Set(loadReadRepoWarnings()),
   );
   /** 닫기는 즉시 지우지 않는다 — closing 동안만 담겨 슬롯이 접히고,
       transitionend(그리드 접힘)에서 dismissed 로 넘어간다. 사라지는 대신
@@ -111,18 +123,23 @@ export function Shell({
   );
   // The logged-out warning is replaced by its own actionable row below — the
   // sentence is the daemon's, the button is here. The rest the planner may
-  // close: 닫기는 "문제가 없다"가 아니라 "읽었다"다.
-  const visibleWarnings = warnings.filter(
-    (warning) =>
-      !dismissedWarnings.has(warning) &&
-      !(loggedOut && warning.startsWith("Claude Code 로그인이 필요합니다")),
-  );
+  // close: 닫기는 "문제가 없다"가 아니라 "읽었다"다. Env warnings close for
+  // the session; the repo warning's close carries its fingerprint and
+  // outlives the tab.
+  const visibleWarnings = [
+    ...warnings
+      .filter((w) => !(loggedOut && w.startsWith("Claude Code 로그인이 필요합니다")))
+      .map((text) => ({ text, fingerprint: null })),
+    ...(repoWarning && !readRepoWarnings.has(repoWarning.fingerprint)
+      ? [{ text: repoWarning.text, fingerprint: repoWarning.fingerprint }]
+      : []),
+  ].filter((w) => !dismissedWarnings.has(w.text));
   /** 보이는 경고가 전부 접히는 중이면 스트립도 같이 접는다 — 슬롯만 접고
       여백·경계선이 남으면 빈 테두리가 한 번에 사라지는 점프가 된다. */
   const stripClosing =
     !loggedOut &&
     visibleWarnings.length > 0 &&
-    visibleWarnings.every((w) => closingWarnings.has(w));
+    visibleWarnings.every((w) => closingWarnings.has(w.text));
   const [loginStarted, setLoginStarted] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginGuidance, setLoginGuidance] = useState<string | null>(null);
@@ -322,25 +339,30 @@ export function Shell({
           >
             {visibleWarnings.map((warning) => (
               <Fold
-                key={warning}
-                closing={closingWarnings.has(warning)}
+                key={warning.text}
+                closing={closingWarnings.has(warning.text)}
                 onCollapsed={() => {
+                  const { fingerprint } = warning;
+                  if (fingerprint) {
+                    rememberReadRepoWarning(fingerprint);
+                    setReadRepoWarnings((prev) => new Set(prev).add(fingerprint));
+                  }
                   setClosingWarnings((prev) => {
                     const next = new Set(prev);
-                    next.delete(warning);
+                    next.delete(warning.text);
                     return next;
                   });
-                  setDismissedWarnings((prev) => new Set(prev).add(warning));
+                  setDismissedWarnings((prev) => new Set(prev).add(warning.text));
                 }}
               >
                 <div className="notice notice--warn">
-                  <span className="notice__text">{warning}</span>
+                  <span className="notice__text">{warning.text}</span>
                   <button
                     type="button"
                     className="notice__close"
                     aria-label="경고 닫기"
-                    disabled={closingWarnings.has(warning)}
-                    onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning))}
+                    disabled={closingWarnings.has(warning.text)}
+                    onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
                   >
                     ×
                   </button>

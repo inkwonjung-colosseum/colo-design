@@ -115,6 +115,25 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.interrupt"),
     sessionId: z.string().min(1),
   }),
+  /**
+   * 대기 줄 다루기 (PLAN D86 의 확장). `remove` takes one waiting send back
+   * out of the daemon's wait room and returns its original payload, so the
+   * composer can put the words — and the attachments — back in the field.
+   * `sendNow` cuts the running turn and delivers THAT send first; the rest
+   * of the room keeps waiting for the turn it starts to end.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.queue.remove"),
+    sessionId: z.string().min(1),
+    itemId: z.string().min(1),
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("session.queue.sendNow"),
+    sessionId: z.string().min(1),
+    itemId: z.string().min(1),
+  }),
   z.object({
     ...withId,
     type: z.literal("session.close"),
@@ -550,6 +569,30 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 // Normalized chat events (daemon translates SDKMessage into these)
 // ---------------------------------------------------------------------------
 
+/**
+ * One send waiting in the daemon's wait room (PLAN D86), as the composer's
+ * list shows it: the planner's own words, plus how much rode along. `files`
+ * holds the names the planner attached, not the `specs/` paths — nothing is
+ * on disk until delivery.
+ */
+export interface QueuedSend {
+  id: string;
+  text: string;
+  images: number;
+  files: string[];
+}
+
+/**
+ * `session.queue.remove` — the payload as it was sent, handed back so the
+ * composer can restore the field exactly. `null` when the send had already
+ * left the room (the turn ended in the meantime).
+ */
+export type QueuedSendPayload = {
+  text: string;
+  images: Array<{ mediaType: string; data: string }>;
+  files: Array<{ name: string; mediaType: string; data: string }>;
+} | null;
+
 export type ChatEvent =
   | {
       kind: "init";
@@ -619,18 +662,26 @@ export type ChatEvent =
       error: string;
     }
   /**
-   * 다음 턴에 보내기 (PLAN D86): how many sends are waiting in the daemon's
-   * wait room right now — 0 when the room empties. Not a transcript event:
-   * the composer's one line above the field reads it, and `foldEvent` must
-   * NOT build a chat block from it (the words already echoed as `user.echo`
-   * when they were typed).
+   * 다음 턴에 보내기 (PLAN D86): what is waiting in the daemon's wait room
+   * right now, oldest first — empty when the room empties. Not a transcript
+   * event: the composer's list above the field reads it, and `foldEvent`
+   * must NOT build a chat block from it. A waiting send has NOT entered the
+   * transcript yet — its `user.echo` comes when the daemon delivers it, so
+   * the transcript only ever shows what Claude was actually handed.
    *
-   * The count is the DAEMON's, on purpose. The SDK's input stream is not a
+   * The room is the DAEMON's, on purpose. The SDK's input stream is not a
    * waiting room — anything written into it mid-turn is folded by the CLI
    * into the RUNNING turn between tool rounds — so the wait is the daemon's
    * to keep, and only the daemon knows when it ends.
    */
-  | { kind: "queued"; count: number }
+  | { kind: "queued"; items: QueuedSend[] }
+  /**
+   * The wait room emptied without delivering: the query died (crash, forced
+   * abort). The words never reached the transcript, so this carries them
+   * back for the planner to restore — text and attachment counts only; the
+   * bytes are gone with the room.
+   */
+  | { kind: "queue.dropped"; items: QueuedSend[] }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
   | { kind: "compact"; trigger: string }
   /**
@@ -710,6 +761,20 @@ export interface SessionLocation {
   slug: string | null;
 }
 
+/**
+ * The connected repo ships its own .claude/settings.json whose permissions,
+ * env, or hooks pre-approve tools no card will ever ask about. News, not a
+ * live problem: the daemon re-sends the same sentence on every status, and
+ * the fingerprint (repo root + raw file bytes) is how a client that has read
+ * it stays quiet — an edited file or a different repo is a new fingerprint
+ * and warns again.
+ */
+export interface RepoSettingsWarning {
+  /** Korean, one line: what the file pre-approves. */
+  text: string;
+  /** sha256 over the repo root and the settings file's raw bytes. */
+  fingerprint: string;
+}
 export interface DaemonStatus {
   /**
    * Every registered project and which one everything else means. Empty on a
@@ -733,6 +798,12 @@ export interface DaemonStatus {
   liveSessions: number;
   pendingPermissions: number;
   warnings: string[];
+  /**
+   * The repo-settings warning rides here instead of `warnings` because the
+   * two behave differently on close: those are live problems (session-scoped
+   * dismissal), this is news a fingerprint can retire.
+   */
+  repoSettingsWarning: RepoSettingsWarning | null;
   /** pnpm may drive the connected repo's install and preview commands. */
   pnpmAvailable: boolean;
   /**

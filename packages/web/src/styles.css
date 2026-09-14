@@ -2007,12 +2007,63 @@ select {
 .composer textarea:disabled {
   opacity: 0.5;
 }
-/* 대기 줄 (PLAN D86): the one line above the field — running 중 보낸 것이
-   다음 턴에 밀려 있다는 말. 사라지는 것도 말이다. */
-.composer__queued {
-  padding: 0 2px 4px;
+/* 대기 줄 (PLAN D86): the sends waiting above the field — running 중 보낸
+   것이 다음 턴에 밀려 있다는 말, 그 말 그대로. A row is a chip, not a bubble:
+   nothing here has entered the transcript yet, and the two glyphs at its end
+   are what the planner can still do about it. 사라지는 것도 말이다. */
+.composer__queued,
+.composer__lost {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 2px 6px;
+  padding: 5px 6px 5px 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+.composer__lost {
+  border-style: solid;
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+.queued__head {
   font: 500 11.5px var(--sans);
   color: var(--muted);
+}
+.composer__lost .queued__head {
+  color: var(--warn);
+}
+.queued__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.queued__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.queued__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 12.5px var(--sans);
+  color: var(--text-2);
+}
+.queued__meta {
+  flex: none;
+  font: 500 11px var(--mono);
+  color: var(--muted);
+}
+.queued__action {
+  flex: none;
+  padding: 3px 5px;
 }
 
 .chips {
@@ -3367,9 +3418,9 @@ select {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  /* the brand row beside it is 44px tall (styles.css .sidebar__brand) — one
+  /* the brand row beside it is 48px tall (styles.css .sidebar__brand) — one
      header line across both columns, or the seam reads as a layout bug. */
-  min-height: 44px;
+  min-height: 48px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   background: var(--glass);
   backdrop-filter: blur(12px) saturate(1.25);
@@ -3498,7 +3549,10 @@ select {
   justify-content: space-between;
   padding: 11px 12px 10px;
   border-bottom: 1px solid var(--line-soft);
-  min-height: 44px;
+  /* 26px fold button + 21px padding = 48: this row is the frame's header
+     line. The planner header beside it pins the same number, or the seam
+     reads as a layout bug. */
+  min-height: 48px;
 }
 /* The brand row signs off with the head's own light: a brand hairline over
    the separator — the rail answers the dialogs. */
