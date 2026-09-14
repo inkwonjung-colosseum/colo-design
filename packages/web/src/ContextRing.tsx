@@ -1,9 +1,10 @@
 /**
  * 컨텍스트 윈도우 — how full this conversation has grown, as one ring beside
  * the send button: the place the eye already is when it decides whether to
- * spend one more turn. Hover or focus opens the numbers behind it — the
- * reading, the window it is measured against, and what this session run has
- * cost so far.
+ * spend one more turn. Hover or focus opens the reading behind it — the
+ * percent, and nothing else. Token counts and session cost stay out
+ * (커미티 F-A2′, 2026-09-14): the product's promise is one subscription,
+ * and the transcript's own rule is "Cost stays invisible."
  *
  * Disclosure is CSS (`:hover` · `:focus-within`), not state: there is no
  * pointer bookkeeping to fall out of step with the pointer, and the panel
@@ -12,15 +13,6 @@
 
 import type { ContextUsage } from "@colo-design/protocol";
 import { useId } from "react";
-
-/** A window reads as a size, not a count: 106_000 → `106k`, 1_000_000 → `1m`. */
-function tokens(count: number): string {
-  const n = Math.max(0, Math.round(count));
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  const millions = n / 1_000_000;
-  return `${millions >= 10 ? Math.round(millions) : Math.round(millions * 10) / 10}m`;
-}
 
 export function ContextRing({ usage }: { usage: ContextUsage | null }) {
   const tipId = useId();
@@ -36,7 +28,6 @@ export function ContextRing({ usage }: { usage: ContextUsage | null }) {
   const shade = pct >= 85 ? "danger" : pct >= 60 ? "warn" : "";
   // r=7.5 in a 20-unit box, so a 3-wide stroke sits inside the viewBox.
   const circumference = 2 * Math.PI * 7.5;
-  const cost = usage.sessionCostUsd;
 
   return (
     <span className="ctx">
@@ -61,17 +52,6 @@ export function ContextRing({ usage }: { usage: ContextUsage | null }) {
       <span className="ctx__tip" id={tipId} role="tooltip">
         <span className="ctx__tiptitle">컨텍스트 윈도우</span>
         <span className="ctx__tipreading">{pct}% 사용됨</span>
-        <span className="ctx__tipnote">
-          {tokens(usage.totalTokens)} / {tokens(usage.maxTokens)} 토큰
-        </span>
-        {/* A run that has never answered has no price to report — the line
-            stays away rather than claiming a measured $0.00. Under half a
-            cent, two decimals would round to `$0.00` and read as free. */}
-        {cost != null && (
-          <span className="ctx__tipnote">
-            세션 비용 {cost > 0 && cost < 0.005 ? "$0.01 미만" : `$${cost.toFixed(2)}`}
-          </span>
-        )}
       </span>
     </span>
   );

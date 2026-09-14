@@ -2,7 +2,7 @@ import type { RepoStatus } from "@colo-design/protocol";
 
 export { PLAN_TOOL, toolLabel } from "@colo-design/protocol";
 
-/** The repo's own colo-design.json commands, as RepoStatus carries them. */
+/** The commands the clone resolved to, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
 /**
@@ -24,8 +24,8 @@ const GATE_LABEL: Record<keyof RepoCommands, string> = {
 
 /**
  * The headline a Bash row leads with (PLAN D37): a command that IS one of the
- * repo's own colo-design.json commands reads as that job; anything else keeps
- * the raw command, because `rm -rf` and `pnpm check` must never look alike.
+ * repo's own resolved commands reads as that job; anything else keeps the raw
+ * command, because `rm -rf` and `pnpm check` must never look alike.
  */
 export function bashHeadline(command: string, commands?: RepoCommands): string {
   const trimmed = command.trim();

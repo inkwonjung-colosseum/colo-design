@@ -1,30 +1,44 @@
 import type {
-  ColoDesignCommentsEnvelope,
+  ColoDesignPinEnvelope,
   ColoDesignScreen,
   DeveloperReview,
   DiffFile,
   SessionState,
 } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { CommentsPopover } from "./CommentsPopover";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Fold, useFoldNotice } from "./components";
 import { DiffPanel } from "./DiffPanel";
 import type { CommentItem, Daemon } from "./daemon-client";
-import { deriveDelivery } from "./delivery";
+import { type Delivery, deriveDelivery } from "./delivery";
 import { stateLabel } from "./format";
 import { HandoffPanel } from "./HandoffPanel";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { handoffDraft } from "./handoff-draft";
-import { ChevronDownIcon, CloseIcon, RefreshIcon } from "./icons";
+import {
+  BranchIcon,
+  ChevronDownIcon,
+  CircleCheckIcon,
+  CloseIcon,
+  CommentsIcon,
+  EyeIcon,
+  HandoffIcon,
+  HistoryIcon,
+  PencilIcon,
+  RefreshIcon,
+  SaveIcon,
+  TrashIcon,
+  WarnIcon,
+} from "./icons";
 import {
   type PreviewError,
   PreviewHost,
   type PreviewLocation,
   type PreviewTarget,
 } from "./PreviewHost";
-import { commentsToTurn, errorToTurn, lookToTurn, reviewToTurn } from "./preview-turns";
+import { errorToTurn, lookToTurn, reviewToTurn } from "./preview-turns";
 import { errorKindOf, ProgressPanel } from "./RepoProgress";
 import {
   isReplyConfirmed,
@@ -34,14 +48,53 @@ import {
 } from "./settings";
 import { objectParticle } from "./tool-names";
 import { useModalFocus } from "./use-modal-focus";
+import { type Pins, pinsSync } from "./usePins";
+
+/**
+ * 칩의 tone → leading 글리프 타일. delivery.ts 의 DeliveryTone 여섯 개가 전부다:
+ * none · merged 는 끝난 계열(ok), pending · changes 는 저장할 일·요청 계열
+ * (warn), saved 는 아직 로컬인 가지(quiet), handed 는 개발자 검토 중(quiet).
+ * 코멘트 전용 tone 은 없다 — 개발자의 말은 changes 가 운반한다.
+ */
+function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
+  switch (tone) {
+    case "none":
+    case "merged":
+      return (
+        <span className="ic ic--ok">
+          <CircleCheckIcon />
+        </span>
+      );
+    case "pending":
+    case "changes":
+      return (
+        <span className="ic ic--warn">
+          <PencilIcon />
+        </span>
+      );
+    case "saved":
+      return (
+        <span className="ic ic--quiet">
+          <BranchIcon />
+        </span>
+      );
+    case "handed":
+      return (
+        <span className="ic ic--quiet">
+          <EyeIcon />
+        </span>
+      );
+  }
+}
 
 /**
  * The workspace's right column: the connected repo clone rendered by its own
  * preview server, plus the three words of PLAN D5 over it — 저장, 개발자에게
  * 넘기기, and the status the cycle has reached (변경 있음 / 넘김 / 반영됨,
  * read mechanically off the repo — PLAN D4). It owns repo readiness, both
- * dialogs and the comment pins, and knows nothing about sessions — a comment
- * bundle is handed up to the shell, which decides which thread it lands in.
+ * dialogs, and knows nothing about sessions — a machine turn is handed up to
+ * the shell, which decides which thread it lands in. The pins live in the
+ * workspace's `usePins` (재설계 C1); this panel only re-anchors their badges.
  *
  * It is also where PLAN D7's envelopes land: the screens the repo declared
  * come up through `Preview` and stay here — feeding the address bar's
@@ -52,34 +105,48 @@ import { useModalFocus } from "./use-modal-focus";
 export function ScreenPanel({
   daemon,
   onOpenSettings,
-  onComments,
+  onMachineTurn,
+  pins,
+  onPin,
+  onPinFocus,
   turnState,
   sessionId = null,
   showPip,
   followClaude,
   screens,
   onScreens,
+  commentsOn,
+  onCommentsMode,
   jumpRequest,
 }: {
   daemon: Daemon;
   onOpenSettings: () => void;
   /**
-   * Forward a comment bundle as a turn in the working screen thread. The panel
-   * does not know which thread that is; the shell resolves it, creating one
-   * named after the screen if there is none yet. `images` rides along (D87):
-   * the crops the view took of the pinned elements.
+   * Forward a machine-authored turn — the error banner's 고치기, a review's
+   * 고치기, 화면 보여 주기, a failing gate's brief — into the working screen
+   * thread. The panel does not know which thread that is; the shell resolves
+   * it, creating one named after the ask if there is none yet. `images` rides
+   * along (D87): the look's frame. 핀은 이 길을 타지 않는다 — 컴포저의
+   * 몫이다 (재설계 C2).
    *
    * Resolves true when the turn reached the thread; false when it did not
-   * (the daemon refused it, D35). The caller needs the answer: the record is
-   * only written for a turn that landed, and the overlay only clears its pins
-   * on one.
+   * (the daemon refused it, D35).
    */
-  onComments: (
+  onMachineTurn: (
     turn: string,
     name?: string,
     images?: Array<{ mediaType: string; data: string }>,
   ) => Promise<boolean>;
-  /** State of the thread the comments went to, so pins clear when it settles. */
+  pins: Pins;
+  /**
+   * A pin landed from the overlay (재설계 C1): the workspace files it and
+   * waves the memo row's caret over — one gesture ends in typing, a second
+   * click to reach the box is a second click for every pin they ever make.
+   */
+  onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
+  /** 배지 클릭 — the workspace focuses that pin's memo input (재설계 §3.9). */
+  onPinFocus: (id: string) => void;
+  /** State of the thread the machine turns went to. */
   turnState: SessionState;
   /**
    * The live thread a failing gate briefs: a failed check or build hands its
@@ -98,6 +165,12 @@ export function ScreenPanel({
    */
   screens: ColoDesignScreen[];
   onScreens: (screens: ColoDesignScreen[]) => void;
+  /**
+   * 핀 모드 (재설계 C10) — the toggle's truth lives in the workspace now, so
+   * ⌘⇧P and this toolbar write the same state. The panel draws and relays.
+   */
+  commentsOn: boolean;
+  onCommentsMode: (on: boolean) => void;
   /**
    * A screen the palette picked: a change in this prop navigates the preview
    * there. The panel keeps owning `target` — the request is an ask, not a
@@ -177,12 +250,6 @@ export function ScreenPanel({
   const [discardConfirm, setDiscardConfirm] = useState(false);
   /** Paths the discard would throw away, read when the dialog opens. */
   const [discardFiles, setDiscardFiles] = useState<DiffFile[] | null>(null);
-
-  /**
-   * 코멘트 모드(PLAN D58 → D79) — 핀만 찍는 좁은 뜻의 토글; the preview toolbar's 💬 toggle draws
-   * and the frame is re-told.
-   */
-  const [commentsOn, setCommentsOn] = useState(false);
   /**
    * 코멘트 기록(PLAN D57): the log of what the pins asked Claude. Null until
    * the first read returns; the popover reads this one list.
@@ -214,9 +281,9 @@ export function ScreenPanel({
   const listNonce = useRef(0);
 
   /**
-   * 코멘트 기록 다시 읽기: asked on connect, when a pin batch lands, and when
-   * the popover opens. Nothing polls — the list only moves when this planner
-   * acts.
+   * 코멘트 기록 다시 읽기: asked on connect, when a sent turn's pins were
+   * recorded (`pins.version`, 재설계 C1), and when the popover opens.
+   * Nothing polls — the list only moves when this planner acts.
    */
   const refreshComments = useCallback(() => {
     const nonce = ++listNonce.current;
@@ -236,7 +303,16 @@ export function ScreenPanel({
   useEffect(() => {
     if (connection !== "open") return;
     refreshComments();
-  }, [connection, refreshComments]);
+  }, [connection, refreshComments, pins.version]);
+
+  // 커미티 차단 3 (2026-09-14): a refused record speaks through the same
+  // band the list's own read failures use. The tray already emptied — the
+  // turn is out (전달 우선) — so this is the only voice that says why the
+  // log is missing the rows the planner just sent. `version` did not move,
+  // so nothing else will re-read the store and silently overwrite the news.
+  useEffect(() => {
+    if (pins.recordError) setCommentsError(pins.recordError);
+  }, [pins.recordError]);
 
   // The 더 보기 menu answers Escape; the backdrop under it takes missed clicks.
   useEffect(() => {
@@ -281,7 +357,7 @@ export function ScreenPanel({
     if (live) {
       void api.repoRefresh(sessionId).catch((e: Error) => syncError.show(e.message));
     } else {
-      await onComments(
+      await onMachineTurn(
         markTurn(
           { kind: "gate", step: "최신 변경 받아오기" },
           `준비가 최신화 충돌로 멈춰 있습니다. 충돌을 정리해 저장 전 상태로 돌려 놓고, 미리보기가 다시 뜨도록 준비를 마쳐 주세요.\n\n${repo?.detail ?? ""}`,
@@ -333,18 +409,30 @@ export function ScreenPanel({
       .catch((e: Error) => syncError.show(e.message))
       .finally(() => setRefreshing(false));
   }, [api, sessionId]);
-  /** 넘기기 단계의 상태 다시 확인: GitHub 의 답을 다시 읽어 칩과 스테퍼에 반영한다. */
-  const checkHandoffState = useCallback(() => {
-    void api
-      .handoffStatus()
-      .then(async (report) => {
-        setDevReviews(report.reviews ?? []);
-        setHandledTick((tick) => tick + 1);
-        setDevPanelOpen(true);
-        await api.repoStatus();
-      })
-      .catch((e: Error) => syncError.show(e.message));
-  }, [api]);
+  /** 넘기기 단계의 상태 다시 확인: GitHub 의 답을 다시 읽어 칩과 스테퍼에
+   * 반영한다. quiet 재사용(커미티 F-A1, 2026-09-14): 데이터만 갱신하고
+   * 패널은 열지 않는다 — 프로젝트가 활성화될 때 조용히 한 번 읽어, 며칠
+   * 전 넘긴 요청의 칩이 마지막 클릭에 묶여 "개발자 검토 중"에 멈춰
+   * 있지 않게 한다. 열린 넘김이 없으면 데몬이 바로 돌려준다. */
+  const readHandoffState = useCallback(
+    (quiet: boolean) => {
+      void api
+        .handoffStatus()
+        .then(async (report) => {
+          setDevReviews(report.reviews ?? []);
+          setHandledTick((tick) => tick + 1);
+          if (!quiet) setDevPanelOpen(true);
+          await api.repoStatus();
+        })
+        .catch((e: Error) => {
+          if (!quiet) syncError.show(e.message);
+        });
+    },
+    [api],
+  );
+  useEffect(() => {
+    readHandoffState(true);
+  }, [readHandoffState, daemon.activeSlug]);
 
   // --- 개발자 코멘트의 동작 (PLAN D88) ---------------------------------------
   // 고치기 는 마커 턴(리뷰 카드)으로, 답하기 는 GitHub 의 스레드/이슈로.
@@ -361,7 +449,7 @@ export function ScreenPanel({
   const handleReview = (reviews: DeveloperReview[]) => {
     for (const review of reviews) saveHandledReview(review.pr, review.id);
     setHandledTick((tick) => tick + 1);
-    void onComments(reviewToTurn(reviews));
+    void onMachineTurn(reviewToTurn(reviews));
   };
 
   const sendDevReply = async (review: DeveloperReview) => {
@@ -430,68 +518,6 @@ export function ScreenPanel({
     if (typeof subscribe !== "function") return;
     subscribe((jpeg: string) => setPipFrame(jpeg));
   }, []);
-  /**
-   * A comment batch from the preview overlay: forwarded as one structured
-   * Korean turn — the same wire a typed message uses, so Claude sees it as
-   * the planner's own words (DESIGN §6) — and recorded with WHERE the pin sat
-   * (`element`, D78) once it has landed.
-   *
-   * Delivery comes FIRST because the record is the log OF the delivery: it is
-   * what 자동 정리 shows as already-handled (D57) and what the pull request
-   * body's `### 수정 요청` section is written from (D93). A turn the daemon
-   * refused must leave no such trace — otherwise the planner loses the pins,
-   * the words, and any sign that nothing was ever asked.
-   */
-  const forwardComments = async (envelope: ColoDesignCommentsEnvelope) => {
-    // D87: the crops the view took of each pin ride the turn as images —
-    // what the planner SAW, Claude sees too.
-    const images = envelope.items
-      .map((item) => item.shot)
-      .filter((shot): shot is { mediaType: string; data: string } => Boolean(shot))
-      .map(({ mediaType, data }) => ({ mediaType, data }));
-    // The envelope names the screen the way the app routes to it; the card
-    // wants the title the repo gave it. Falling back to the raw id keeps a
-    // screen the registry no longer declares from losing its card entirely.
-    const named = screens.find((screen) => screen.route === `/${envelope.screen}`);
-    // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
-    // after the screen the pins came from is the honest one-line answer to
-    // "where did this tab come from".
-    const sent = await onComments(
-      commentsToTurn(envelope, named?.title ?? envelope.screen),
-      named?.title,
-      images,
-    );
-    // The receipt goes back first and either way: the overlay is holding the
-    // pins and the planner's words, waiting to be told whether to let them
-    // go — it must not wait on the store's round trip to find out.
-    void window.coloDesignDesktop?.preview?.commentsSent?.({
-      batch: envelope.batch,
-      ok: sent,
-      shots: images.length,
-      items: envelope.items.length,
-    });
-    if (!sent) return;
-    // A failed record never blocks the planner's turn; the list just reads
-    // stale, and the strip says so rather than leaving them to wonder.
-    await api
-      .recordComments({
-        screen: envelope.screen,
-        state: envelope.state,
-        items: envelope.items.map((item) => ({
-          text: item.comment,
-          elementText: item.element.text || item.element.component,
-          element: {
-            component: item.element.component,
-            path: item.element.path,
-            rect: item.element.rect,
-          },
-        })),
-      })
-      .then(() => refreshComments())
-      .catch(() =>
-        setCommentsError("코멘트 기록을 저장하지 못했습니다 — 목록이 최신이 아닐 수 있습니다."),
-      );
-  };
 
   /**
    * The error banner's button (PLAN D49): the same channel the pins use, so
@@ -504,7 +530,7 @@ export function ScreenPanel({
     const count = lastErrorKey.current === key ? lastErrorCount.current + 1 : 1;
     lastErrorKey.current = key;
     lastErrorCount.current = count;
-    void onComments(errorToTurn(error, count));
+    void onMachineTurn(errorToTurn(error, count));
   };
 
   // --- 화면 보여 주기 (D89) -------------------------------------------------
@@ -571,7 +597,7 @@ export function ScreenPanel({
           ? `콘솔 마지막 기록:\n${snapshot.console.join("\n")}`
           : "",
       ].filter(Boolean);
-      await onComments(
+      await onMachineTurn(
         lookToTurn(route, state ?? "default", lines.join("\n\n"), count),
         undefined,
         images,
@@ -580,11 +606,6 @@ export function ScreenPanel({
       setLookBusy(false);
     }
   };
-
-  // --- 턴 실행 중 표식 (D86): the overlay's send-toast reads the room -----
-  useEffect(() => {
-    void window.coloDesignDesktop?.preview?.busy?.(turnState === "running");
-  }, [turnState]);
 
   // --- 따라가기 (D91): Claude 가 본 화면으로 --------------------------------
   // The daemon reports every screen_open as `preview.opened`; the panel keeps
@@ -751,6 +772,7 @@ export function ScreenPanel({
             title={delivery.chip.title}
             role="status"
           >
+            {chipGlyph(delivery.chip.tone)}
             {delivery.chip.label}
           </span>
         ) : (
@@ -787,7 +809,8 @@ export function ScreenPanel({
                 if (delivery.actions.save.enabled) setSaveOpen(true);
               }}
             >
-              저장
+              <SaveIcon />
+              <span className="screenpanel__actionlabel">저장</span>
             </button>
             <button
               type="button"
@@ -802,7 +825,8 @@ export function ScreenPanel({
                 if (delivery.actions.handoff.enabled) setHandoffOpen(true);
               }}
             >
-              개발자에게 넘기기
+              <HandoffIcon />
+              <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
             </button>
             {delivery.actions.check && (
               <button
@@ -810,12 +834,15 @@ export function ScreenPanel({
                 className="ghost screenpanel__action"
                 data-testid="check-state"
                 title="개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
-                onClick={checkHandoffState}
+                onClick={() => readHandoffState(false)}
               >
-                상태 확인
-                {unhandledDevReviews.length > 0
-                  ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
-                  : ""}
+                <EyeIcon />
+                <span className="screenpanel__actionlabel">
+                  상태 확인
+                  {unhandledDevReviews.length > 0
+                    ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
+                    : ""}
+                </span>
               </button>
             )}
           </span>
@@ -880,6 +907,9 @@ export function ScreenPanel({
                     setHistoryOpen(true);
                   }}
                 >
+                  <span className="ic ic--sm ic--quiet">
+                    <HistoryIcon />
+                  </span>
                   <span className="selector__label">저장 기록</span>
                 </button>
                 <button
@@ -898,6 +928,9 @@ export function ScreenPanel({
                     askDiscard();
                   }}
                 >
+                  <span className="ic ic--sm ic--danger">
+                    <TrashIcon />
+                  </span>
                   <span className="selector__label">변경 버리기</span>
                 </button>
                 <button
@@ -910,6 +943,9 @@ export function ScreenPanel({
                     setCommentsOpen(true);
                   }}
                 >
+                  <span className="ic ic--sm ic--quiet">
+                    <CommentsIcon />
+                  </span>
                   <span className="selector__label">코멘트 목록</span>
                 </button>
               </span>
@@ -989,16 +1025,18 @@ export function ScreenPanel({
             stopped={previewStopped}
             stoppedDetail={repo?.detail ?? null}
             onRestart={restart}
-            onComments={(envelope) => void forwardComments(envelope)}
+            onPin={onPin}
+            onPinFocus={onPinFocus}
             onFixError={forwardError}
             screens={screens}
             onScreens={onScreens}
             target={target}
+            sync={pinsSync(pins.ghosts, pins.list)}
             onNavigate={handleNavigate}
             onLocation={setLocation}
             location={location}
             commentsOn={commentsOn}
-            onCommentsMode={setCommentsOn}
+            onCommentsMode={onCommentsMode}
             onLook={(note) => void sendLook(note)}
             lookBusy={lookBusy}
             pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
@@ -1046,6 +1084,9 @@ export function ScreenPanel({
           title="변경 버리기"
           body={
             <>
+              <span className="ic ic--danger">
+                <WarnIcon />
+              </span>{" "}
               저장하지 않은 변경 <strong>{repo?.pendingChanges ?? 0}개</strong>를 모두 버릴까요?
             </>
           }

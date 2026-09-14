@@ -1,9 +1,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  ColoDesignCommentsEnvelope,
-  ColoDesignCommentsSent,
   ColoDesignErrorEnvelope,
+  ColoDesignPinEnvelope,
+  ColoDesignPinsSync,
 } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 
@@ -31,9 +31,9 @@ import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView }
  * it falls back to `loadURL` — the screen still shows, only the list is empty.
  * `preview-claude` (D61, the offscreen Claude window) keeps its own partition.
  *
- * D87 has the view crop each pin's element (`element.rect`) out of the page
- * before the envelope reaches the web; D89 keeps the last 20 console lines
- * for the 화면 보여 주기 turn.
+ * 재설계 C4 has the view crop each pin's element (`element.rect`) at pin
+ * time — the envelope that reaches the web already carries the shot; D89
+ * keeps the last 20 console lines for the 화면 보여 주기 turn.
  */
 
 /** The in-view preload, compiled to CommonJS beside this module. */
@@ -56,13 +56,47 @@ const EMULATION: Record<
   tablet: { size: [768, 1024], mobile: false },
 };
 
-/** D87's resolution: 봉투당 최대 6장, 긴 변 600px. */
-const MAX_SHOTS = 6;
+/** 재설계 C4's crop: 긴 변 600px. (The ≤6 cap is the web submit's to hold.) */
 const SHOT_LONG_SIDE = 600;
 /** D89's full-frame budget: 한 장, 긴 변 1200px. */
 const SNAPSHOT_LONG_SIDE = 1200;
 /** How long a hidden-overlay ack may take before the capture runs anyway. */
 const CAPTURE_ACK_MS = 400;
+
+/**
+ * 재설계 §4.3: the pinned element's React owner chain, read in the page's
+ * main world — the isolated preload cannot see fiber expandos. A constant
+ * function; the call site interpolates the pin id as a JSON string literal —
+ * and only after the UUID gate, so nothing else ever reaches the code string.
+ * The `data-colo-pick` stamp comes off in the script's finally; a non-React
+ * or production page answers null and the pin travels without owners.
+ */
+const OWNER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OWNER_SCRIPT = `(id) => {
+  const el = document.querySelector('[data-colo-pick="' + id + '"]');
+  if (!el) return null;
+  try {
+    let fiber = null;
+    for (const key of Object.keys(el)) {
+      if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
+        fiber = el[key];
+        break;
+      }
+    }
+    const names = [];
+    for (
+      let owner = fiber && fiber._debugOwner;
+      owner && names.length < 3;
+      owner = owner._debugOwner
+    ) {
+      const name = owner.type && (owner.type.displayName || owner.type.name);
+      if (typeof name === "string" && name !== "") names.push(name);
+    }
+    return names.length > 0 ? names : null;
+  } finally {
+    el.removeAttribute("data-colo-pick");
+  }
+}`;
 
 /** Downscale so the LONG side is `max`, keeping the aspect. No upscale. */
 function fitInside(image: Electron.NativeImage, max: number): Electron.NativeImage {
@@ -180,8 +214,8 @@ export class PlannerPreviewView {
   private covered = false;
   /** The last 💬 state — a fresh load, or a returning page, is re-told it (D67). */
   private commentsOn = false;
-  /** Whether a turn is running (D86) — the overlay's toast words depend on it. */
-  private busy = false;
+  /** The web's last pin sync (재설계 C1) — a page that loads or returns is re-told it. */
+  private lastPins: ColoDesignPinsSync | null = null;
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
 
@@ -411,18 +445,19 @@ export class PlannerPreviewView {
     this.webContents()?.send("colo-overlay:mode", { on });
   }
 
-  /** D86: the overlay's send-toast reads the room — running or not. */
-  setBusy(on: boolean): void {
-    this.busy = on;
-    this.webContents()?.send("colo-overlay:busy", { on });
+  /**
+   * 재설계 C1: the web's whole pin list is the truth — remember it so a page
+   * that loads or comes back from a park is re-told it, and project it onto
+   * the overlay (the badges redraw from this).
+   */
+  syncPins(sync: ColoDesignPinsSync): void {
+    this.lastPins = sync;
+    this.webContents()?.send("colo-overlay:pins", sync);
   }
 
-  /**
-   * D35 · D87: the web's receipt for one pin batch — the overlay clears or
-   * restores its pins by this, and says how many crops really rode along.
-   */
-  commentsSent(payload: ColoDesignCommentsSent): void {
-    this.webContents()?.send("colo-overlay:sent", payload);
+  /** 재설계 C1: the web's chip click — the matching badge on the page flashes. */
+  pinFlash(id: string): void {
+    this.webContents()?.send("colo-overlay:flash", { id });
   }
 
   /**
@@ -472,35 +507,53 @@ export class PlannerPreviewView {
   }
 
   /**
-   * D87: crop each pin's `element.rect` out of the page — 최대 6장, 긴 변
-   * 600px, JPEG q70 — before the envelope rides to the web. A failed crop
-   * costs only that item's thumbnail; the words always get through.
+   * 재설계 C4: the crop happens at pin time — the rect the overlay measured
+   * is where the element is NOW, one shot per pin (긴 변 600px, JPEG q70).
+   * A failed crop costs only the thumbnail; the pin always gets through.
    */
-  private async relayComments(payload: ColoDesignCommentsEnvelope): Promise<void> {
+  private async relayPin(payload: ColoDesignPinEnvelope): Promise<void> {
     try {
       await this.withOverlayHidden(async () => {
         const contents = this.webContents();
         if (!contents) return;
-        const shots = payload.items.slice(0, MAX_SHOTS);
-        const viewport = this.viewportCss();
-        for (const item of shots) {
-          const crop = cropRect(item.element.rect, viewport);
-          // Wholly off screen (scrolled past, or beside the frame): no photo.
-          if (!crop) continue;
-          try {
-            const image = await contents.capturePage(crop);
-            if (image.isEmpty()) continue;
-            item.shot = {
-              mediaType: "image/jpeg",
-              data: fitInside(image, SHOT_LONG_SIDE).toJPEG(70).toString("base64"),
-            };
-          } catch {
-            // The page moved under the rect; this pin travels text-only.
+        // §4.3 first — the order against the crop is free, but the stamp
+        // must come off (the script's own finally sees to it) either way.
+        try {
+          if (OWNER_UUID.test(payload.pin.id)) {
+            const owners = (await contents.executeJavaScript(
+              `(${OWNER_SCRIPT})(${JSON.stringify(payload.pin.id)})`,
+              true,
+            )) as string[] | null;
+            if (
+              Array.isArray(owners) &&
+              owners.length > 0 &&
+              owners.every((name) => typeof name === "string")
+            ) {
+              payload.pin.element.owners = owners;
+            }
           }
+        } catch {
+          // Not a React page (or a production build): no chain, no error.
+        }
+        const crop = cropRect(payload.pin.element.rect, this.viewportCss());
+        // Wholly off screen (scrolled past, or beside the frame): no photo.
+        if (!crop) return;
+        try {
+          const image = await contents.capturePage(crop);
+          if (image.isEmpty()) return;
+          payload.pin.shot = {
+            mediaType: "image/jpeg",
+            data: fitInside(image, SHOT_LONG_SIDE).toJPEG(70).toString("base64"),
+          };
+        } catch {
+          // The page moved under the rect; this pin travels text-only.
         }
       });
     } finally {
-      this.send("colo-preview:comments", payload);
+      this.send("colo-preview:pin", payload);
+      // The gesture ends here: focus returns to the composer, so the
+      // planner keeps talking without reaching for the mouse (재설계 C4).
+      this.window()?.webContents.focus();
     }
   }
 
@@ -549,7 +602,7 @@ export class PlannerPreviewView {
 
   /**
    * One envelope from a page's preload (D68): screens (the repo bridge
-   * speaking — marks THAT page's bridge `present`) or the pin bundle (D67).
+   * speaking — marks THAT page's bridge `present`) or a pin (재설계 C1).
    * Registered once per app, not per page, so pages coming and going never
    * stack listeners. A parked page's envelope updates its own facts and
    * stops there — the renderer hears only the page on screen.
@@ -562,9 +615,11 @@ export class PlannerPreviewView {
       page.bridge = "present";
       page.screens = payload;
       if (this.page === page) this.send("colo-preview:screens", payload);
-    } else if (type === "colo-design.comments" && this.page === page) {
-      // D87: the crops ride in before the web hears anything.
-      void this.relayComments(payload as ColoDesignCommentsEnvelope);
+    } else if (type === "colo-design.pin" && this.page === page) {
+      // 재설계 C4: the crop rides in before the web hears anything.
+      void this.relayPin(payload as ColoDesignPinEnvelope);
+    } else if (type === "colo-design.pin-focus" && this.page === page) {
+      this.send("colo-preview:pin-focus", payload);
     }
   }
 
@@ -608,10 +663,10 @@ export class PlannerPreviewView {
   /**
    * Puts a page on screen: topmost in the window (`addChildView` reorders a
    * child it already holds), sized to the slot, visible unless a modal
-   * covers the pane. The overlay is re-told the mode and the busy flag it
-   * may have missed while parked (D67 · D86), and the renderer's picture of
-   * the pane — where it is, its screens, whether it loads, its zoom — is
-   * replayed from this page's facts.
+   * covers the pane. The overlay is re-told the mode (D67) and the last pin
+   * sync (재설계 C1) it may have missed while parked, and the renderer's
+   * picture of the pane — where it is, its screens, whether it loads, its
+   * zoom — is replayed from this page's facts.
    */
   private show(page: PreviewPage): void {
     this.page = page;
@@ -622,7 +677,7 @@ export class PlannerPreviewView {
     page.view.setVisible(!this.covered);
     const contents = page.view.webContents;
     contents.send("colo-overlay:mode", { on: this.commentsOn });
-    contents.send("colo-overlay:busy", { on: this.busy });
+    if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
     this.sendLocation(page);
     this.send("colo-preview:screens", page.screens ?? { type: "colo-design.screens", screens: [] });
     this.send("colo-preview:loading", { on: contents.isLoading() });
@@ -702,13 +757,18 @@ export class PlannerPreviewView {
       if (this.page !== page) return;
       this.sendLocation(page);
       // The overlay never announces itself; a fresh load is re-told
-      // everything it needs — the mode (D67), the busy flag (D86).
+      // everything it needs — the mode (D67), the last pin sync (재설계 C1).
       if (this.commentsOn) contents.send("colo-overlay:mode", { on: true });
-      contents.send("colo-overlay:busy", { on: this.busy });
+      if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
     });
     contents.on("did-navigate-in-page", (_event, url) => {
       page.mountedUrl = url;
-      if (this.page === page) this.sendLocation(page);
+      if (this.page !== page) return;
+      this.sendLocation(page);
+      // A SPA move swaps the screen without a load; replaying the sync lets
+      // the overlay refilter its badges at once (재설계 C5) — the web's
+      // onLocation resend confirms with the fresh list.
+      if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
     });
     contents.on("did-start-loading", () => {
       if (this.page === page) this.send("colo-preview:loading", { on: true });
@@ -900,34 +960,15 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     view.commentsMode(Boolean(input?.on));
     return { ok: true };
   });
-  ipcMain.handle("preview:busy", (_event, input: { on?: boolean }) => {
-    view.setBusy(Boolean(input?.on));
+  // 재설계 C1: the web pushes the whole pin list; the overlay's badges are
+  // its projection. Idempotent — the web resends it on every change and
+  // after a page load.
+  ipcMain.handle("preview:pins", (_event, sync: ColoDesignPinsSync) => {
+    view.syncPins(sync);
     return { ok: true };
   });
-  // D35: the web's receipt travels on to the overlay, which holds its pins
-  // until it arrives. A malformed one is nobody's receipt — it is dropped
-  // rather than clearing pins the planner would then have to retype.
-  ipcMain.handle("preview:comments-sent", (_event, input: unknown) => {
-    if (
-      !input ||
-      typeof input !== "object" ||
-      !("batch" in input) ||
-      typeof input.batch !== "string" ||
-      !("ok" in input) ||
-      typeof input.ok !== "boolean" ||
-      !("shots" in input) ||
-      typeof input.shots !== "number" ||
-      !("items" in input) ||
-      typeof input.items !== "number"
-    ) {
-      return { ok: false };
-    }
-    view.commentsSent({
-      batch: input.batch,
-      ok: input.ok,
-      shots: input.shots,
-      items: input.items,
-    });
+  ipcMain.handle("preview:pin-flash", (_event, input: { id?: unknown }) => {
+    if (typeof input?.id === "string") view.pinFlash(input.id);
     return { ok: true };
   });
   ipcMain.handle("preview:snapshot", () => view.snapshot());

@@ -39,6 +39,12 @@ const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "gate", "error", 
 
 /** One pinned element, as the card lists it. */
 export interface CommentMarkerItem {
+  /**
+   * The pin's overlay UUID (커미티 2차 판정 5) — the same key the tray row,
+   * the badge and the store row carry, so a card row can be joined back to
+   * the pin that made it. Absent on markers written before the field.
+   */
+  id?: string;
   /** What the planner clicked, in words: the element's own text or its name. */
   label: string;
   comment: string;
@@ -51,13 +57,28 @@ export interface CommentMarkerItem {
    * position for those.
    */
   shot?: true;
+  /**
+   * The screen THIS pin sat on (재설계 C6) — one batch may span screens, and
+   * the card suffixes the row when the marker's screen is only the summary
+   * word (화면 N곳). Absent on older markers, whose batch was one screen.
+   */
+  screen?: string;
+  /**
+   * What the planner asked OF this pin (재설계 C10): a change (default —
+   * absent reads as `change`, and older markers carry no intent) or a
+   * question. The card titles the mix; the turn words each row.
+   */
+  intent?: "change" | "question";
 }
 
 export interface CommentsMarker {
   kind: "comments";
+  /** The screen title — or `화면 N곳` when one batch spans several. */
   screen: string;
   state: string;
   items: CommentMarkerItem[];
+  /** The planner's own sentence on the turn (재설계 C2); absent when they sent pins alone. */
+  note?: string;
 }
 
 /**
@@ -86,7 +107,7 @@ export interface BriefMarker {
    * of the 기획서 wording. "refresh" reads 최신 변경 받아오기: the record a
    * 최신화 leaves when it actually merged the developer's base.
    */
-  purpose?: "bootstrap" | "refresh";
+  purpose?: "bootstrap" | "refresh" | "conventions";
 }
 
 export interface GateMarker {
@@ -176,14 +197,18 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
         kind,
         screen: str(data.screen),
         state: str(data.state),
+        ...(data.note ? { note: str(data.note) } : {}),
         items: data.items.flatMap((entry): CommentMarkerItem[] => {
           if (!entry || typeof entry !== "object") return [];
           const row = entry as Record<string, unknown>;
           return [
             {
+              ...(row.id ? { id: str(row.id) } : {}),
               label: str(row.label),
               comment: str(row.comment),
               ...(row.shot === true ? { shot: true as const } : {}),
+              ...(row.screen ? { screen: str(row.screen) } : {}),
+              ...(row.intent === "question" ? { intent: "question" as const } : {}),
             },
           ];
         }),
@@ -193,7 +218,11 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return {
         kind,
         title: str(data.title),
-        ...(data.purpose === "bootstrap" ? { purpose: "bootstrap" as const } : {}),
+        ...(data.purpose === "bootstrap" ||
+        data.purpose === "refresh" ||
+        data.purpose === "conventions"
+          ? { purpose: data.purpose }
+          : {}),
       };
     case "gate":
       return { kind, step: str(data.step) };

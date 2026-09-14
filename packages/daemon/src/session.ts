@@ -26,6 +26,7 @@ import type {
 } from "@colo-design/protocol";
 import { PLAN_TOOL, readTurn } from "@colo-design/protocol";
 import { containsPath, realpathBestEffort } from "./paths.js";
+import { permissionLog } from "./permission-log.js";
 import type { PreviewTools } from "./preview-tools.js";
 import type { QueueDisk } from "./queue-store.js";
 import { type SpecFile, saveSpecFiles } from "./repo.js";
@@ -801,6 +802,11 @@ export class Session {
   ): Promise<PermissionOutcome> {
     const requestId = randomUUID();
     const suggestions = opts.suggestions ?? [];
+    // 권한 카드만 잰다(커미티 2026-09-14): 질문·계획 카드는 "항상 허용"이
+    // 없는 세계라 반복이라는 개념이 없다.
+    if (toolName !== "AskUserQuestion" && toolName !== PLAN_TOOL) {
+      permissionLog().ask(toolName, permissionSignature(toolName, input), this.cwd);
+    }
 
     return new Promise<PermissionOutcome>((resolve) => {
       const settle = (outcome: PermissionOutcome) => {
@@ -951,6 +957,13 @@ export class Session {
       // Remember the exact call so the daemon itself never re-prompts it;
       // the CLI's own suggestions cover future sessions' rules.
       this.alwaysAllowed.record(request.toolName, input);
+      // 반복 측정(커미티 2026-09-14): 이 답이 다음 대화의 repeat 판정의
+      // 씨앗이다 — alwaysAllowed 는 이 세션과 함께 사라지니, 파일이 기억한다.
+      permissionLog().alwaysAllowedAnswer(
+        request.toolName,
+        permissionSignature(request.toolName, input),
+        this.cwd,
+      );
       // Echo the CLI's own suggestions back so the same call stops prompting.
       // Bash-style calls offer an `addRules` update destined for
       // .claude/settings.local.json; Write and Edit instead offer a session

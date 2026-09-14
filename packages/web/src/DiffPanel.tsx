@@ -1,7 +1,7 @@
 import type { DiffFile, DiffStatus } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { Daemon, DiffSummary } from "./daemon-client";
-import { CloseIcon } from "./icons";
+import { CloseIcon, DiffIcon, FileIcon, MinusIcon, PlusIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 const STATUS_LABEL: Record<DiffFile["status"], string> = {
@@ -76,11 +76,29 @@ function FileRow({ file }: { file: DiffFile }) {
   return (
     <li className="diff__file">
       <button type="button" className="diff__filerow" onClick={() => setOpen((v) => !v)}>
+        <span className="ic ic--quiet ic--sm">
+          <FileIcon />
+        </span>
         <span className={`diff__badge diff__badge--${file.status}`}>
           {STATUS_LABEL[file.status]}
         </span>
         <span className="diff__path">{file.path}</span>
-        <span className="diff__count">{file.binary ? "바이너리" : `+${added} −${removed}`}</span>
+        <span className="diff__count">
+          {file.binary ? (
+            "바이너리"
+          ) : (
+            <>
+              <span className="ic ic--ok ic--sm">
+                <PlusIcon />
+              </span>
+              {added}{" "}
+              <span className="ic ic--danger ic--sm">
+                <MinusIcon />
+              </span>
+              {removed}
+            </>
+          )}
+        </span>
       </button>
       {open && !file.binary && (
         <div className="diff__hunks">
@@ -328,7 +346,12 @@ export function DiffPanel({
         ref={panelRef}
       >
         <header className="modal__head">
-          <h2 className="modal__title">저장 검토</h2>
+          <h2 className="modal__title">
+            <span className="ic ic--quiet">
+              <DiffIcon />
+            </span>{" "}
+            저장 검토
+          </h2>
           <button type="button" className="ghost" aria-label="저장 검토 닫기" onClick={onClose}>
             <CloseIcon />
           </button>

@@ -762,16 +762,21 @@ async function main() {
     await request({
       id: "c1",
       type: "comments.record",
-      screen: "/member/MemberList",
-      state: "default",
-      items: [{ text: "여백이 좁아요", elementText: "회원 목록" }],
+      items: [
+        {
+          screen: "/member/MemberList",
+          state: "default",
+          text: "여백이 좁아요",
+          elementText: "회원 목록",
+        },
+      ],
     });
     await request({
       id: "c2",
       type: "comments.record",
-      screen: "/pay/PayFailed",
-      state: "error",
-      items: [{ text: "문구를 다시", elementText: "결제 실패" }],
+      items: [
+        { screen: "/pay/PayFailed", state: "error", text: "문구를 다시", elementText: "결제 실패" },
+      ],
     });
     const listed = await request({ id: "c3", type: "comments.list" });
     check(
@@ -822,20 +827,18 @@ async function main() {
     await request({
       id: "16a",
       type: "comments.record",
-      screen: "member/MemberList",
-      state: "default",
-      items: [{ text: "코멘트 하나", elementText: "제목" }],
+      items: [
+        { screen: "member/MemberList", state: "default", text: "코멘트 하나", elementText: "제목" },
+      ],
     });
     // Both pay/PayFailed comments ride ONE record — the store appends, but
     // one batch is one moment's request, and the section reads cleaner for it.
     await request({
       id: "16b",
       type: "comments.record",
-      screen: "pay/PayFailed",
-      state: "error",
       items: [
-        { text: "코멘트 둘", elementText: "문구" },
-        { text: "코멘트 셋", elementText: "문구" },
+        { screen: "pay/PayFailed", state: "error", text: "코멘트 둘", elementText: "문구" },
+        { screen: "pay/PayFailed", state: "error", text: "코멘트 셋", elementText: "문구" },
       ],
     });
     const secondHanded = await request({

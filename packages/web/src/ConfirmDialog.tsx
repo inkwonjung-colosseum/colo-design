@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import { CloseIcon } from "./icons";
+import { CloseIcon, WarnIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -56,7 +56,12 @@ export function ConfirmDialog({
         ref={panel}
       >
         <header className="modal__head">
-          <h2 className="modal__title">{title}</h2>
+          <h2 className="modal__title">
+            <span className="ic ic--danger">
+              <WarnIcon />
+            </span>
+            {title}
+          </h2>
           <button type="button" className="ghost" aria-label={`${title} 닫기`} onClick={onClose}>
             <CloseIcon />
           </button>

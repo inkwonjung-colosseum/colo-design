@@ -1,9 +1,11 @@
 /**
  * 연결 준비 end-to-end (PLAN D94), fully offline: `colo-design.json` 이 없는
  * 레포를 `project.create {bootstrap: true}` 로 추가하면 — 준비 턴(brief 마커)
- * 이 열리고, 스텁 Claude 가 계약을 쓰고(여기서는 유효한 JSON), 데몬의 기계
- * 검증이 통과시켜 미리보기까지 간다. 준비 커밋은 저장을 기다리는 미해결
- * 변경으로 남는다 — 첫 넘기기 PR 이 개발자의 수용 게이트다.
+ * 이 열리고, 스텁 Claude 가 포트를 적고 개발 서버 스크립트를 붙이고, 데몬의
+ * 기계 검증이 통과시켜 미리보기까지 간다. 설치 · 검사 · 빌드 · 미리보기 명령은
+ * 준비 턴이 적지 않는다 — 레포의 락파일과 package.json 의 scripts 가 말한다.
+ * 준비 커밋은 저장을 기다리는 미해결 변경으로 남는다 — 첫 넘기기 PR 이
+ * 개발자의 수용 게이트다.
  *
  * Usage: node packages/daemon/test/bootstrap-e2e.mjs
  */
@@ -39,7 +41,7 @@ async function waitFor(predicate, timeoutMs, label) {
   throw new Error(`timeout waiting for ${label}`);
 }
 
-/** 준비 턴의 스텁: brief 를 받으면 계약을 쓰고 끝난다. 포트는 env 로 받는다. */
+/** 준비 턴의 스텁: brief 를 받으면 포트를 적고 dev 스크립트를 붙인다. */
 function bootstrapStub(dir, port) {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "claude");
@@ -67,8 +69,7 @@ function bootstrapStub(dir, port) {
       '      pkg.scripts.dev = "node server.mjs";',
       '      fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));',
       '      fs.writeFileSync("colo-design.json", JSON.stringify({',
-      '        install: "pnpm install", check: "pnpm run check", build: "pnpm run check",',
-      '        preview: { command: "pnpm run dev", port: Number(port) },',
+      "        preview: { port: Number(port) },",
       "      }, null, 2));",
       "      process.stdout.write(JSON.stringify({",
       '        type: "result", subtype: "success", is_error: false,',

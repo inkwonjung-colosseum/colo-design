@@ -1,12 +1,19 @@
-import { APP_SHORTCUTS } from "@colo-design/protocol";
+import { APP_SHORTCUTS, type AppShortcut } from "@colo-design/protocol";
 import { useEffect, useRef } from "react";
-import { CloseIcon } from "./icons";
+import { CloseIcon, CommandIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
  * ⌘/ 단축키 시트 (PLAN D92) — 단축키의 목록은 언제나 열어 볼 수 있는 곳에 산다.
  * 행은 protocol 의 APP_SHORTCUTS, 데스크톱 앱 메뉴가 읽는 상수와 같은 한 벌이다.
  */
+
+/**
+ * ⌘⇧P (재설계 C10) — the workspace's own chord, not a menu accelerator, so
+ * it lives here only: APP_SHORTCUTS 는 데스크톱 메뉴가 같이 읽는 상수다.
+ */
+const PIN_MODE_SHORTCUT: AppShortcut = { id: "pin-mode", label: "핀 모드", keys: "⌘⇧P" };
+
 export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   useEffect(() => {
     if (!open) return;
@@ -35,14 +42,22 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
         ref={panelRef}
       >
         <header className="modal__head">
-          <h2 className="modal__title">단축키</h2>
+          <h2 className="modal__title">
+            <span className="ic ic--quiet">
+              <CommandIcon />
+            </span>
+            단축키
+          </h2>
           <button type="button" className="ghost" aria-label="단축키 닫기" onClick={onClose}>
             <CloseIcon />
           </button>
         </header>
         <div className="modal__body">
           <ul className="shortcuts__list">
-            {APP_SHORTCUTS.map((shortcut) => (
+            {APP_SHORTCUTS.flatMap((shortcut) =>
+              // 핀 찍기(⌥+클릭) 곁에 핀 모드의 자리 — 같은 주제의 두 행이다.
+              shortcut.id === "pin" ? [shortcut, PIN_MODE_SHORTCUT] : [shortcut],
+            ).map((shortcut) => (
               <li key={shortcut.id} className="shortcuts__row">
                 <span className="shortcuts__label">{shortcut.label}</span>
                 <kbd className="shortcuts__keys">{shortcut.keys}</kbd>

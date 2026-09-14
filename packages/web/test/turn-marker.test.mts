@@ -37,6 +37,25 @@ test("round trips a marker and leaves the body untouched", () => {
   assert.equal(read.body, body);
 });
 
+test("note and per-item screen round trip; older markers read without them", () => {
+  const noted: TurnMarker = {
+    kind: "comments",
+    screen: "화면 2곳",
+    state: "기본",
+    note: "두 화면을 한 번에 봐 주세요.",
+    items: [
+      { label: "목록", comment: "여백이 좁아요", screen: "회원 목록", shot: true },
+      { label: "문구", comment: "다시 써 주세요" },
+    ],
+  };
+  const body = "1. 회원 목록\n";
+  const read = readTurn(markTurn(noted, body));
+  assert.deepEqual(read.marker, noted);
+  assert.equal(read.body, body);
+  // A marker from the batch-era build carries neither field and still reads.
+  assert.deepEqual(readTurn(markTurn(COMMENTS, body)).marker, COMMENTS);
+});
+
 test("every kind survives the round trip", () => {
   const markers: TurnMarker[] = [
     COMMENTS,

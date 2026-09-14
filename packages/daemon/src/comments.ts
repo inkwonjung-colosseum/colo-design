@@ -27,6 +27,10 @@ function isCommentItem(value: unknown): value is CommentItem {
     typeof row.state === "string" &&
     typeof row.text === "string" &&
     typeof row.elementText === "string" &&
+    // 재설계 C10: `intent` is optional — absent reads as change — but a row
+    // that CARRIES one must carry a real one, or the PR body would title a
+    // question by a word that means nothing.
+    (row.intent === undefined || row.intent === "change" || row.intent === "question") &&
     typeof row.at === "string" &&
     typeof row.resolved === "boolean"
   );
@@ -58,29 +62,34 @@ export function readComments(file: string): CommentItem[] {
 }
 
 /**
- * Appends one screen·state's comment batch as delivered rows. `screen` is
- * normalized to the `[data-screen]` spelling — no leading slash (PLAN §9
+ * Appends delivered rows — one per pin, whichever screen it sat on. `screen`
+ * is normalized to the `[data-screen]` spelling — no leading slash (PLAN §9
  * 틀리기 쉬운 자리): the row must match what the overlay read off the DOM.
  */
 export function recordComments(
   file: string,
-  screen: string,
-  state: string,
   items: Array<{
+    /** The pin's overlay UUID (커미티 2차 판정 5) — kept when carried, minted when not. */
+    id?: string;
+    screen: string;
+    state: string;
     text: string;
     elementText: string;
+    intent?: CommentItem["intent"];
     element?: CommentItem["element"];
   }>,
   now = new Date(),
 ): void {
-  const id = screen.startsWith("/") ? screen.slice(1) : screen;
   const at = now.toISOString();
   const written = items.map((item) => ({
-    id: randomUUID(),
-    screen: id,
-    state,
+    // The pin's own key when the send carried one — the row joins back to the
+    // tray, badge and card (커미티 2차 판정 5); older senders keep a minted id.
+    id: item.id ?? randomUUID(),
+    screen: item.screen.startsWith("/") ? item.screen.slice(1) : item.screen,
+    state: item.state,
     text: item.text,
     elementText: item.elementText,
+    ...(item.intent ? { intent: item.intent } : {}),
     ...(item.element ? { element: item.element } : {}),
     at,
     resolved: true,

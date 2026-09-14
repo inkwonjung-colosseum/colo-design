@@ -360,7 +360,9 @@ async function main() {
     // The tree offers two ways to start one (the row's ＋ and, for a project
     // with no conversations, its own row); this drives the row's ＋.
     await page.locator(".node__add").first().click();
-    const field = page.getByPlaceholder("메시지를 보내거나 @files 태그, /commands 를 사용하세요");
+    const field = page.getByPlaceholder(
+      "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요",
+    );
     await field.fill("화면을 만들어 줘");
     await field.press("Enter");
     await page.waitForSelector(".turnfail", { timeout: 30000 });
@@ -368,9 +370,10 @@ async function main() {
       "a failed turn is a card that says what happened",
       (await page.locator(".turnfail").last().innerText()).includes("답을 마치지 못했습니다"),
     );
-    // The retry is the LAST card's own button: with the dead-query resume in
-    // place every retried send honestly fails again, so older failed cards
-    // (and their retry buttons) stay on the tape.
+    // The retry is the LAST card's own button (커미티 F-B3): with the
+    // dead-query resume in place every retried send honestly fails again,
+    // so older failed cards stay on the tape WITHOUT their own buttons —
+    // only the newest failure offers 다시 보내기, with the newest words.
     const retry = page.locator(".turnfail").last().getByRole("button", { name: "다시 보내기" });
     await retry.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
     check("the card offers the same words back", (await retry.count()) === 1);

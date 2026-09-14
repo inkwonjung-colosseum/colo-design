@@ -331,6 +331,18 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     instructions: z.string().max(10_000).nullable().optional(),
   }),
   /**
+   * 관례 최신화 (커미티 판정 2026-09-14): opens one brief turn in this
+   * project's clone that rewrites the connection conventions (bridge,
+   * wrappers, CLAUDE.md marker) to the current revision. The changes stay
+   * unsaved — the existing save → handoff pipeline takes them to the
+   * developer's PR, which is the approval gate.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("project.refreshConventions"),
+    slug: z.string().min(1).max(64),
+  }),
+  /**
    * Forgets a project. Its folder survives unless `deleteFiles` — unpushed
    * screen work lives in the clone, and a mis-click must not take it.
    */
@@ -524,29 +536,54 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * 코멘트 기록 (PLAN D57): the pins the planner sent from the preview land
-   * in the project's own `comments.json` as delivered — every row is born
-   * resolved, because the turn carrying the words IS the delivery. The store
-   * is an append-only log: a second send of the same words is a second
-   * request, and both stay.
+   * in the project's own `comments.json` — every row is born resolved. The
+   * record's clock is ACCEPTANCE, not delivery (커미티 판정 3, 2026-09-14):
+   * `markSent` runs once the daemon has taken the turn, so a send that later
+   * drops from the waiting room (PLAN D86) keeps its rows here — the words
+   * come back to the composer as 전달되지 못한 말, and this log is the
+   * planner's "what I asked", not a courier's receipt. The store is an
+   * append-only log: a second send of the same words is a second request,
+   * and both stay. A batch may span screens — each item carries its own
+   * `screen`/`state` (재설계 C6).
    */
   z.object({
     ...withId,
     type: z.literal("comments.record"),
-    screen: z.string().min(1),
-    state: z.string().min(1),
     items: z
       .array(
         z.object({
-          /** What the planner wrote. */
-          text: z.string().min(1),
+          /** The screen the pin sat on — `[data-screen]` or the pathname id. */
+          screen: z.string().min(1),
+          /** The screen state the pin sat on. */
+          state: z.string().min(1),
+          /**
+           * The pin's overlay UUID (커미티 2차 판정 5): the one stable key the
+           * pin is born with — chip, badge, marker item and store row all
+           * meet on it. Absent on sends from older clients; the daemon then
+           * mints one, as it always did.
+           */
+          id: z.string().min(1).optional(),
+          /**
+           * What the planner wrote on THIS pin — its memo, nothing else
+           * (커미티 2차 판정 3). Empty is a real value: a pin sent without a
+           * memo, displayed as (메모 없음). The turn's sentence used to be
+           * borrowed into every memo-less row, which made the log — and the
+           * PR body — count one sentence N times.
+           */
+          text: z.string(),
           /** The commented element's own text, as the overlay captured it. */
           elementText: z.string(),
           /**
+           * What the planner asked OF this pin (재설계 C10, 커미티 2차 판정 4):
+           * a change (default — absent reads as `change`) or a question.
+           * Without it the PR body titles a planner's question a 수정 요청.
+           */
+          intent: z.enum(["change", "question"]).optional(),
+          /**
            * Where the pin sat (PLAN D78): the identity the overlay resolved
            * for the element, recorded so the pin can be drawn again — the
-           * comment lives on the screen, not only in this list. `text` stays
-           * top-level as `elementText`; old rows without it read as
-           * 자리 없는 코멘트.
+           * comment lives on the screen, not only in this list. Old rows
+           * without it read as 자리 없는 코멘트.
            */
           element: z
             .object({
@@ -592,12 +629,17 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
 
 /** One row of the project's `comments.json`, verbatim over the wire. */
 export interface CommentItem {
+  /**
+   * The pin's overlay UUID when the send carried one (커미티 2차 판정 5) —
+   * the tray, the badge, the marker item and this row meet on it. Older
+   * sends mint a row id instead, as rows always did.
+   */
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
   screen: string;
   /** The screen state the pin sat on. */
   state: string;
-  /** What the planner wrote. */
+  /** What the planner wrote on this pin — empty means no memo was written. */
   text: string;
   /** The commented element's own text, as the overlay captured it. */
   elementText: string;
@@ -610,6 +652,12 @@ export interface CommentItem {
     path: string;
     rect: { x: number; y: number; width: number; height: number };
   };
+  /**
+   * What the planner asked of this pin (재설계 C10): absent reads as
+   * `change` — rows written before the field existed were all changes, or
+   * were titled as one.
+   */
+  intent?: "change" | "question";
   /** When the row was written, ISO 8601. */
   at: string;
   /**
@@ -837,11 +885,6 @@ export type ChatEvent =
    */
   | { kind: "status"; status: "compacting" | "requesting" | null }
   /**
-   * 지금 생각에 쓴 토큰의 어림 (PLAN D100). 생각 과정을 끈 기본값에서 유일하게
-   * "돌고 있음"을 말해 주는 숫자다 — 청구되는 수가 아니라 눈금이다.
-   */
-  | { kind: "thinking.tokens"; tokens: number }
-  /**
    * CLI 가 스스로 내려간다고 알린 순간 (`worker_shutting_down`). 기록도 상태도
    * 아니고 데몬만 읽는 귀띔이다: 이 뒤의 스트림 끝은 고장이 아니라 종료이므로
    * 크래시 카드가 다른 말을 한다.
@@ -887,9 +930,10 @@ export interface ThreadSummary {
 export interface ProjectSummary {
   slug: string;
   name: string;
-  repoUrl: string | null;
   /** What a handoff PR targets. */
   baseBranch: string;
+  /** The clone url this project works on — 등록 목록의 재등록 방지가 읽는다. */
+  repoUrl?: string | null;
   /** Disk/process state. Only the active project climbs past `ready`; an inactive cloned one reports `ready` from disk alone. */
   phase: RepoPhase;
   /** Last counted unsaved-change files — the delivery chip's number, per project. */
@@ -909,6 +953,12 @@ export interface ProjectSummary {
    * 내용. 비어 있으면 키가 없다.
    */
   instructions?: string;
+  /**
+   * 관례 최신화 (커미티 2026-09-14): 이 클론의 CLAUDE.md 표식이 현행 판과
+   * 다르다(표식이 없어도) — 프로젝트 메뉴의 "관례 최신화"가 이 때만 뜬다.
+   * 내려받기 전(cloned 아님)에는 항상 거짓.
+   */
+  conventionsStale: boolean;
 }
 
 export interface ProjectList {
@@ -962,6 +1012,13 @@ export interface DaemonStatus {
   projects: ProjectSummary[];
   activeProject: string | null;
   protocolVersion: number;
+  /**
+   * The app-authored instruction block every session's system prompt carries
+   * (커미티 2026-09-14): owned by the app release, read-only for users — the
+   * 지켜 줄 것 dialog shows it so the planner can see what the app always
+   * says. Project instructions ride `ProjectSummary.instructions` beside it.
+   */
+  commonInstructions: string;
   /** node's process.platform, so a bug report says which OS produced it. */
   platform: string;
   claudeVersion: string | null;
@@ -1160,9 +1217,10 @@ export interface RepoStatus {
    */
   errorKind?: RepoErrorKind | null;
   /**
-   * The repo's own colo-design.json commands, once read (PLAN D37): the
-   * transcript matches a Bash call against these to say `검사 실행` instead of
-   * printing the command line.
+   * The commands the clone resolved to (PLAN D37) — derived from the repo's
+   * lockfile and `package.json` scripts, or whatever `colo-design.json`
+   * overrode. The transcript matches a Bash call against these to say
+   * `검사 실행` instead of printing the command line.
    */
   commands?: {
     install?: string;
@@ -1172,7 +1230,7 @@ export interface RepoStatus {
   };
   /** Preview origin once the declared preview port accepts connections. */
   previewUrl: string | null;
-  /** Port declared in the repo's `colo-design.json`. */
+  /** The preview port the repo's `colo-design.json` declares. */
   previewPort: number | null;
   /**
    * Which server process answers at `previewUrl` — a new number every time
@@ -1234,66 +1292,73 @@ export interface ColoDesignCommentTarget {
   path: string;
   /** Viewport rect of the element at pin time. */
   rect: { x: number; y: number; width: number; height: number };
-}
-
-/** A single comment (DESIGN §6 v1: click, comment, send — nothing else). */
-export interface ColoDesignComment {
-  type: "colo-design.comment";
-  screen: string;
-  state: string;
-  element: ColoDesignCommentTarget;
-  comment: string;
+  /**
+   * What the click took (재설계 C9): an element (default — absent reads as
+   * `element`, and older pins carry no kind) or a dragged region.
+   */
+  kind?: "element" | "region";
+  /** outerHTML, overlay nodes stripped, capped at 1.5KB (재설계 C9). */
+  html?: string;
+  /** A computed-style subset worth quoting: color, font, spacing, size. */
+  styles?: Record<string, string>;
+  /** The element's accessible identity, when the page declares one. */
+  a11y?: { role?: string; name?: string };
+  /** Stable hooks the repo may have left: id, test id, a few classes. */
+  attrs?: { id?: string; testId?: string; classes?: string[] };
+  /** React component names, nearest first, ≤3 (재설계 C9). Dev builds only. */
+  owners?: string[];
+  /** The repo's own `data-colo-src` stamp: `path:line` of the JSX (재설계 C8). */
+  source?: string;
 }
 
 /**
- * What the tool's preview overlay (D67) hands the main process when the
- * planner sends the batch: one envelope for all pins, then the overlay
- * holds them until the send is answered. The main process relays it verbatim
- * to the web (`colo-preview:comments`); nothing validates it in between
- * because both ends are the tool.
- *
- *     { type: "colo-design.comments", batch, screen, state,
- *       items: [{ element, comment }, …] }
+ * One pin from the tool's preview overlay (재설계 C1): a click lands as ONE
+ * envelope, the view crops the element (`shot`), and the web parks it as a
+ * composer attachment. The overlay holds no draft state — the web's pin list
+ * is the truth, and it projects back through `ColoDesignPinsSync`.
  */
-export interface ColoDesignCommentsEnvelope {
-  type: "colo-design.comments";
-  /**
-   * The overlay's own id for this send, echoed back in
-   * `ColoDesignCommentsSent`. The pins leave the screen only once the turn
-   * is known to have landed — a send the daemon refused (PLAN D35) must be
-   * retryable, and pins the planner can no longer see are not.
-   */
-  batch: string;
-  screen: string;
-  state: string;
-  items: Array<{
+export interface ColoDesignPinEnvelope {
+  type: "colo-design.pin";
+  pin: {
+    /** The overlay's UUID — chip, badge and store row all meet on it. */
+    id: string;
+    /** The screen the pin sat on, as `screenContext` read it. */
+    screen: string;
+    /** The screen state the pin sat on. */
+    state: string;
     element: ColoDesignCommentTarget;
-    comment: string;
     /**
      * What the planner was looking at (PLAN D87): the view crops the element
-     * (`element.rect`) out of the page before handing the envelope to the
-     * web, which sends it on as the turn's images. Filled by the VIEW — the
-     * overlay does not know it exists; absent when the capture could not run.
+     * (`element.rect`) out of the page before the pin reaches the web, and
+     * the crop rides the turn as the planner's own image. Filled by the
+     * VIEW — the overlay does not know it exists; absent when the capture
+     * could not run.
      */
     shot?: { mediaType: string; data: string };
-  }>;
+  };
 }
 
 /**
- * The answer to one `ColoDesignCommentsEnvelope` — tool-internal, the web's
- * word back to the overlay through the main process (`colo-overlay:sent`).
- * It is what turns a hopeful toast into a true one: the pins clear on `ok`
- * and come back on a refusal, and `shots` lets the overlay say when the
- * crops did not cover every pin.
+ * The web → overlay projection (재설계 C1): the live pins, oldest first —
+ * the order IS the badge number. Idempotent: the web resends the whole list
+ * on every change and after a page load, and the overlay re-anchors each
+ * badge on `path`. A pin on another screen draws no badge; its row exists
+ * all the same.
  */
-export interface ColoDesignCommentsSent {
-  batch: string;
-  /** Whether the turn reached the thread. */
-  ok: boolean;
-  /** How many pins travelled with a crop. */
-  shots: number;
-  /** How many pins were in the envelope. */
-  items: number;
+export interface ColoDesignPinsSync {
+  pins: Array<{
+    id: string;
+    screen: string;
+    state: string;
+    path: string;
+    /** Sent pins grey out for the turn's life (재설계 C10). */
+    sent: boolean;
+    /**
+     * A region pin has no element path — the overlay re-anchors it on these
+     * page coordinates instead (재설계 C9). Absent on element pins.
+     */
+    rect?: { x: number; y: number; width: number; height: number };
+  }>;
 }
 
 /**

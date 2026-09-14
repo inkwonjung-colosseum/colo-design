@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Daemon } from "./daemon-client";
+import { KeyIcon } from "./icons";
 
 /** GitHub's own form, with the name and `repo` scope this tool needs pre-filled. */
 const TOKEN_URL = "https://github.com/settings/tokens/new?description=Colo%20Design&scopes=repo";
@@ -49,6 +50,9 @@ export function GitHubTokenForm({
   return (
     <div className="ghtoken">
       <div className="ghtoken__row">
+        <span className="ic ic--quiet">
+          <KeyIcon />
+        </span>
         <input
           type="password"
           value={draft}

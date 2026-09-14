@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { RUNNING, stageLine } from "./DiffPanel";
 import type { Daemon, SaveHistoryEntry } from "./daemon-client";
 import { timeAgo } from "./format";
-import { CloseIcon } from "./icons";
+import { CloseIcon, HistoryIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -99,7 +99,12 @@ export function HistoryDrawer({
         ref={panelRef}
       >
         <header className="modal__head">
-          <h2 className="modal__title">저장 기록</h2>
+          <h2 className="modal__title">
+            <span className="ic ic--quiet">
+              <HistoryIcon />
+            </span>{" "}
+            저장 기록
+          </h2>
           <button type="button" className="ghost" aria-label="저장 기록 닫기" onClick={onClose}>
             <CloseIcon />
           </button>
@@ -120,7 +125,12 @@ export function HistoryDrawer({
 
           {entries === null && !error && <p className="hint">기록을 읽어 오는 중…</p>}
           {entries !== null && entries.length === 0 && (
-            <p className="hint">아직 저장한 것이 없습니다. 저장하면 여기에 쌓입니다.</p>
+            <p className="hint">
+              <span className="ic ic--lg">
+                <HistoryIcon />
+              </span>{" "}
+              아직 저장한 것이 없습니다. 저장하면 여기에 쌓입니다.
+            </p>
           )}
           {entries !== null && entries.length > 0 && (
             <ul className="diff__files">

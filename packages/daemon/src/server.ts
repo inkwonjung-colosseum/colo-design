@@ -19,8 +19,16 @@ import {
   type SessionState,
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
-import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE } from "./bootstrap-brief.js";
+import {
+  BOOTSTRAP_BRIEF,
+  BOOTSTRAP_TITLE,
+  CONVENTIONS_REVISION,
+  conventionsRevision,
+  REFRESH_BRIEF,
+  REFRESH_TITLE,
+} from "./bootstrap-brief.js";
 import { readComments, recordComments } from "./comments.js";
+import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import {
   type CredentialStore,
   createCredentialStore,
@@ -62,8 +70,8 @@ import {
   RepoWorkspace,
   repoSettingsWarning,
   trustWorkspace,
-  validateBootstrapConfig,
 } from "./repo.js";
+import { CONFIG_FILE, scopeOf, validateBootstrapOverrides } from "./repo-config.js";
 import {
   asPlannerFacingError,
   NEW_SESSION_TITLE,
@@ -713,6 +721,12 @@ export class DaemonServer {
         ? realpathBestEffort(workspaces.paths.repoRoot)
         : null;
       const threads = cwd ? this.manager.cachedThreads(cwd) : null;
+      // 관례 최신화(커미티 2026-09-14): the clone's CLAUDE.md marker names the
+      // revision its conventions were written for. No marker — or no CLAUDE.md
+      // at all — means a repo connected before conventions were versioned; a
+      // clone still on disk is the only one a refresh could help.
+      const conventionsStale =
+        cwd !== null && this.conventionsRevisionAt(cwd) !== CONVENTIONS_REVISION;
       return {
         slug: project.slug,
         name: project.name,
@@ -728,8 +742,22 @@ export class DaemonServer {
         handoff: repo?.currentHandoff ?? project.repo.handoff,
         ...(threads ? { threads } : {}),
         ...(project.instructions ? { instructions: project.instructions } : {}),
+        conventionsStale,
       };
     });
+  }
+
+  /**
+   * The revision this clone's CLAUDE.md marker names. A clone with no marker
+   * (or no CLAUDE.md — connected before conventions were versioned) answers
+   * null: honest "unknown", which the summary reads as stale.
+   */
+  private conventionsRevisionAt(root: string): number | null {
+    try {
+      return conventionsRevision(readFileSync(join(root, "CLAUDE.md"), "utf8"));
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -839,9 +867,9 @@ export class DaemonServer {
   /**
    * D94: 연결 준비 턴 — a daemon-opened conversation (the comment envelope's
    * path, server-side) sends the brief, waits for the turn to settle, then
-   * machine-validates what Claude wrote. False means the gate refused; the
-   * sync turns into error{errorKind:"bootstrap"} and NOTHING outside the
-   * gate ever ran.
+   * machine-validates what Claude wrote: a port, and nothing else. False
+   * means the gate refused; the sync turns into error{errorKind:"bootstrap"}
+   * and NOTHING outside the gate ever ran.
    */
   private async runBootstrapPrepare(repoRoot: string): Promise<boolean> {
     if (!this.claudeExecutable) return false;
@@ -872,27 +900,7 @@ export class DaemonServer {
     })();
     if (!settled) return false;
     try {
-      const config = JSON.parse(readFileSync(join(cwd, "colo-design.json"), "utf8")) as {
-        install?: string;
-        check?: string;
-        build?: string;
-        preview?: { command: string; port: number };
-      };
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as {
-        scripts?: Record<string, unknown>;
-      };
-      const lockfile = existsSync(join(cwd, "pnpm-lock.yaml"))
-        ? ("pnpm-lock.yaml" as const)
-        : existsSync(join(cwd, "package-lock.json"))
-          ? ("package-lock.json" as const)
-          : existsSync(join(cwd, "yarn.lock"))
-            ? ("yarn.lock" as const)
-            : null;
-      const problem = validateBootstrapConfig({
-        config,
-        packageScripts: pkg.scripts ?? {},
-        lockfile,
-      });
+      const problem = validateBootstrapOverrides(readFileSync(join(cwd, CONFIG_FILE), "utf8"));
       return problem === null;
     } catch {
       return false;
@@ -912,7 +920,7 @@ export class DaemonServer {
     if (!factory || !active?.repo.isCloned()) return [];
     // The repo's refusal is also read at commit time (repo.ts); checking here
     // spares the window the drive through every screen.
-    if (active.repo.coloDesign()?.shots === false) return [];
+    if (active.repo.repoConfig()?.shots === false) return [];
     const status = await active.repo.status().catch(() => null);
     if (!status?.previewUrl || this.previewScreens.length === 0) return [];
     const driver = factory.for(status.previewUrl);
@@ -1113,17 +1121,21 @@ export class DaemonServer {
   }
 
   /**
-   * 이 클론의 주인이 적어 둔 지침(설정 문서 P1#8). 활성 프로젝트가 아니라
-   * cwd 로 찾는다 — 크래시 부활과 게이트 스레드는 자기가 살던 클론으로
-   * 살아나므로, 그때의 프로젝트 규칙을 그대로 들고 가야 한다.
+   * 세션이 늘 달고 다니는 지침: 앱 공통 블록(주인은 앱 릴리스) + 이 클론
+   * 주인의 "지켜 줄 것"(설정 문서 P1#8). 활성 프로젝트가 아니라 cwd 로
+   * 찾는다 — 크래시 부활과 게이트 스레드는 자기가 살던 클론으로 살아나므로,
+   * 그때의 프로젝트 규칙을 그대로 들고 가야 한다. 어느 클론이든 공통
+   * 블록은 빠지지 않는다.
    */
-  private projectInstructions(cwd: string): string | null {
+  private projectInstructions(cwd: string): string {
     const home = realpathBestEffort(cwd);
     for (const project of this.registry.list()) {
       const root = realpathBestEffort(this.registry.paths(project.slug).repoRoot);
-      if (root === home) return project.instructions ?? null;
+      if (root === home) {
+        return [COMMON_INSTRUCTIONS, project.instructions].filter(Boolean).join("\n\n");
+      }
     }
-    return null;
+    return COMMON_INSTRUCTIONS;
   }
 
   /**
@@ -1175,15 +1187,12 @@ export class DaemonServer {
    * the bring-up just produced.
    */
   private mergeRegistryNpmrc(repo: RepoWorkspace): void {
-    const config = repo.coloDesign();
+    const registry = repo.repoConfig()?.registry;
     const pat = this.pat;
-    if (!config?.registry || !pat) return;
-    const scope = config.registry.scope.startsWith("@")
-      ? config.registry.scope
-      : `@${config.registry.scope}`;
+    if (!registry || !pat) return;
     mergeNpmrc(npmrcPath(), [
-      { key: `${scope}:registry`, value: `https://${config.registry.host}/` },
-      { key: `//${config.registry.host}/:_authToken`, value: pat },
+      { key: `${scopeOf(registry)}:registry`, value: `https://${registry.host}/` },
+      { key: `//${registry.host}/:_authToken`, value: pat },
     ]);
   }
 
@@ -1719,6 +1728,38 @@ export class DaemonServer {
           activeSlug: this.registry.activeSlug(),
         };
       }
+      case "project.refreshConventions": {
+        // 관례 최신화(커미티 2026-09-14): 재주입이 아니라 제안이다 — 쓰는
+        // 주체는 앱이 아니라 세션이고, 바뀐 파일은 저장 → 넘기기 파이프라인을
+        // 타 개발자의 PR 리뷰로 확정된다. 이 대화는 그 첫 턴일 뿐이다.
+        if (!this.claudeExecutable) {
+          throw new Error(
+            "Claude Code CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.",
+          );
+        }
+        const workspaces = this.workspaces.get(message.slug);
+        if (!workspaces?.repo.isCloned()) {
+          throw new Error("아직 내려받지 않은 프로젝트입니다 — 연결이 끝난 뒤 다시 시도해 주세요.");
+        }
+        const cwd = realpathBestEffort(this.registry.paths(message.slug).repoRoot);
+        const instructions = this.projectInstructions(cwd);
+        const session = this.manager.create({
+          cwd,
+          claudeExecutable: this.claudeExecutable,
+          queueDiskFor: this.queueDiskFor,
+          ...(instructions ? { appendSystemPrompt: instructions } : {}),
+          writePolicy: repoWritePolicy(cwd),
+          title: REFRESH_TITLE,
+        });
+        session.send(
+          markTurn({ kind: "brief", title: REFRESH_TITLE, purpose: "conventions" }, REFRESH_BRIEF),
+        );
+        // The tree gains a child row (PLAN D59), same as any daemon-opened thread.
+        this.manager.invalidateThreads(cwd);
+        this.refreshThreads();
+        this.announceProjectsThrottled();
+        return { sessionId: session.id };
+      }
 
       case "project.remove": {
         const paths = this.registry.paths(message.slug);
@@ -1984,12 +2025,7 @@ export class DaemonServer {
       // The pins belong to the ACTIVE project: the messages carry no slug,
       // exactly because the planner is looking at one project's preview.
       case "comments.record": {
-        recordComments(
-          join(this.requireActive().paths.root, "comments.json"),
-          message.screen,
-          message.state,
-          message.items,
-        );
+        recordComments(join(this.requireActive().paths.root, "comments.json"), message.items);
         return { recorded: message.items.length };
       }
 

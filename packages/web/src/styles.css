@@ -1885,7 +1885,14 @@ select {
   border: 0;
   color: inherit;
   opacity: 0.7;
-  padding: 0 2px;
+  /* 커미티 F-C3 (2026-09-14): an error strip's close is a recovery surface
+     — it gets the icon-button vocabulary's 24px floor, not a bare glyph. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   font-size: calc(14px * var(--ui-scale));
   line-height: 1;
 }
@@ -2300,12 +2307,184 @@ select {
   flex: none;
 }
 .chip .ghost {
-  padding: 0 4px;
+  /* 커미티 F-C3 (2026-09-14): the attachment chip's × joins the 24px icon
+     floor — a missed tap on a bare 13px glyph drops the file. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-right: -6px;
   font-size: calc(13px * var(--ui-scale));
   line-height: 1;
   color: var(--muted);
 }
 .chip .ghost:hover {
+  color: var(--danger);
+}
+
+/* 핀 트레이 (재설계 C1): the composer's pin attachments — one row per pin,
+   the number the overlay's badge wears, the crop the view took at pin time,
+   and the memo that rides the turn. The tray reads as a stack above the
+   attachment chips, not as a second editor. */
+.pintray {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.pintray__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pintray__title {
+  color: var(--text-2);
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 600;
+}
+.pintray__clear {
+  margin-left: auto;
+  padding: 0 4px;
+  font-size: calc(11.5px * var(--ui-scale));
+  color: var(--muted);
+}
+.pintray__clear:hover {
+  color: var(--danger);
+}
+.pintray__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pintray__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+.pintray__num {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+  font: 600 calc(11px * var(--ui-scale)) var(--mono);
+}
+.pintray__thumb {
+  flex: none;
+  width: 40px;
+  height: 28px;
+  border-radius: 3px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+}
+/* 영역 핀 (재설계 C9): no crop, no element — the dashed frame IS the
+   picture, the rectangle the planner dragged. */
+.pintray__thumb--region {
+  background: var(--accent-soft);
+  border: 1.5px dashed var(--line-hover);
+}
+.pintray__thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-style: dashed;
+  font-size: calc(11px * var(--ui-scale));
+}
+.pintray__what {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 40%;
+}
+.pintray__label {
+  color: var(--text-2);
+  font-size: calc(12px * var(--ui-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pintray__where {
+  color: var(--muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 레포가 새긴 출처 (재설계 C8) — the file the pin came from, mono so a path
+   reads as a path. */
+.pintray__source {
+  margin-right: 6px;
+  font-family: var(--mono);
+  font-size: calc(9.5px * var(--ui-scale));
+}
+.pintray__source::after {
+  content: "·";
+  margin-left: 6px;
+  color: var(--line-hover);
+}
+/* The memo input uses the form's own input tone; only the fit is this row's. */
+.pintray__note {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: calc(12px * var(--ui-scale));
+}
+/* 의도 칩 (재설계 C10): a two-way segment — the pressed side carries the
+   accent, the idle side stays as quiet as the row. */
+.pintray__intent {
+  flex: none;
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.pintray__intentbtn {
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1;
+  cursor: pointer;
+}
+.pintray__intentbtn + .pintray__intentbtn {
+  border-left: 1px solid var(--line);
+}
+.pintray__intentbtn:hover {
+  color: var(--text-2);
+}
+.pintray__intentbtn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.pintray__note:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pintray__row .ghost {
+  flex: none;
+  /* 커미티 F-C3 (2026-09-14): pin deletion has no undo — the × gets the
+     24px floor; a miss lands on the row's badge flash, not another row. */
+  min-width: 24px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-right: -6px;
+  line-height: 1;
+  color: var(--muted);
+}
+.pintray__row .ghost:hover {
   color: var(--danger);
 }
 
@@ -2466,14 +2645,15 @@ select {
   color: var(--text);
 }
 /* 계획 먼저 칩: 도구 행의 조용한 알약이고, 재웠을 때만 액센트를 입는다 —
-   켜진 상태가 곧 이번 턴의 자세다. */
+   켜진 상태가 곧 이번 턴의 자세다. 글자를 달았다(커미티 F-A2′): README 가
+   첫 행동으로 부르는 이름이 화면에도 보여야 한다. */
 .toolbar__plan {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  gap: 4px;
   height: 26px;
-  padding: 0;
+  padding: 0 9px;
   border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
@@ -2493,10 +2673,12 @@ select {
   color: var(--accent);
   background: var(--accent-soft);
 }
-/* 진행 시계 — 중지 왼쪽에 붙는 초. 고정폭 숫자라 초가 넘어갈 때 옆의 버튼이
-   밀리지 않고, 색은 눈금의 것(muted)이지 경고의 것이 아니다. */
-.toolbar__clock {
-  flex: none;
+/* 진행 시계 — 입력창 위 활동 줄에서 흐르는 초. 줄의 다른 말들(생각하는 중)
+   과 같은 자리에서 같은 목소리로, 색은 눈금의 것(muted)이지 경고의 것이
+   아니다. 고정폭 숫자라 초가 넘어갈 때 흔들리지 않는다. */
+.turnclock {
+  display: inline-flex;
+  align-items: center;
   color: var(--muted);
   font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
   font-variant-numeric: tabular-nums;
@@ -2908,6 +3090,15 @@ select {
   color: var(--muted);
   font-size: calc(12px * var(--ui-scale));
 }
+
+/* The planner's own sentence on a 핀 turn (재설계 C2) — a small paragraph
+   under the card's head, quieter than the rows it introduces. */
+.machine__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1.5;
+}
 .machine__rows {
   display: flex;
   flex-direction: column;
@@ -2961,8 +3152,23 @@ select {
   gap: 10px;
   align-items: center;
 }
-.turnfail__actions .primary {
-  align-self: auto;
+/* 커미티 F-B3 (2026-09-14): the retry used to be a second ink button on
+   every failed card at once. It demotes to the same gray grade the card
+   actions use — the top bar's primary stays the only ink on the screen. */
+.turnfail__retry {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 7px 14px;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.turnfail__retry:hover:not(:disabled) {
+  background: var(--panel-3);
+  border-color: var(--line-hover);
+  color: var(--text);
 }
 /* The text Claude actually received. Monospace here is right: this is the one
    place in the transcript that is deliberately showing machine input. */
@@ -3198,6 +3404,18 @@ select {
   border: 0;
   border-bottom: 1px solid var(--line-soft);
   border-radius: 0;
+}
+.palette__searchrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+.palette__searchrow .palette__search {
+  border-bottom: 0;
+  padding-left: 0;
 }
 .palette__search:focus {
   background: transparent;
@@ -3890,7 +4108,9 @@ select {
 .node__name {
   flex: 1;
   min-width: 0;
-  font: 600 calc(12.5px * var(--ui-scale)) var(--sans);
+  /* One step above its conversations (13px vs the leaf's 12px): the tree
+     reads parent over child by size first, weight second. */
+  font: 600 calc(13px * var(--ui-scale)) var(--sans);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -3987,7 +4207,7 @@ select {
 .node__rename {
   width: 100%;
   padding: 7px 8px;
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 500 calc(13px * var(--ui-scale)) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line-hover);
@@ -4019,9 +4239,9 @@ select {
   border-radius: var(--r-md);
   background: none;
   color: var(--muted);
+  font: 400 calc(12px * var(--ui-scale)) var(--sans);
   text-align: left;
   width: 100%;
-  font: 400 calc(12.5px * var(--ui-scale)) var(--sans);
   cursor: pointer;
 }
 .leaf:hover {
@@ -6583,10 +6803,22 @@ select {
     padding: 5px 8px;
     font-size: calc(11.5px * var(--ui-scale));
   }
-  .screenpanel__action[title] {
+  /* 커미티 F-B1 (2026-09-14): the fixed 88px cap hard-clipped mid-glyph — an
+     anonymous flex text node never gets text-overflow, and the `[title]`
+     selector only matched LOCKED buttons (enabled ones had no cap at all).
+     The label is a span now; the cap follows the width, not the lock. */
+  .screenpanel__action {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .screenpanel__action svg {
+    display: none;
+  }
+  .screenpanel__actionlabel {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 88px;
+    white-space: nowrap;
   }
   .screenpanel__status {
     max-width: 40vw;
@@ -7082,4 +7314,100 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 10px 12px;
+}
+.sidebar__common {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  padding: 8px 12px;
+}
+.sidebar__common summary {
+  cursor: default;
+  color: var(--text-2);
+  font: 500 calc(12px * var(--content-scale)) var(--sans);
+}
+.sidebar__commontext {
+  margin: 8px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 400 calc(12px * var(--content-scale)) var(--sans);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+/* ==========================================================================
+   디자인 패스 — 아이콘 타일 공용 계약
+   A glyph that leads a section, a menu row, or an empty state lives in one
+   tinted tile (.ic). The tile's colour carries the meaning; the glyph only
+   names it. Sizes follow the icon gate: 12–16px glyphs inside 18–28px tiles.
+   ========================================================================== */
+
+.ic {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ic--quiet {
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+.ic--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.ic--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.ic--ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+.ic--sm {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-sm);
+}
+.ic--lg {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-lg);
+}
+
+/* A button's glyph never wraps alone or steals width from its label. */
+button svg,
+button .ic {
+  flex: none;
+}
+
+/* Menu rows align on baseline; a leading tile centres itself instead. */
+.selector__row > .ic {
+  align-self: center;
+}
+
+/* A quiet column for "nothing here yet" inside menus and small panels —
+   the big rooms keep .empty; this is the doorway-sized one. */
+.menuempty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 14px 18px;
+  color: var(--muted);
+  font: 400 calc(12.5px * var(--ui-scale)) / 1.6 var(--sans);
+  text-align: center;
+}
+.menuempty .ic {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-lg);
+  background: var(--panel-2);
+  color: var(--muted);
 }

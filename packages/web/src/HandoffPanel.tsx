@@ -4,7 +4,7 @@ import { CopyButton } from "./components";
 import { RUNNING, stageLine } from "./DiffPanel";
 import type { Daemon } from "./daemon-client";
 import { mergeHandoffBody } from "./handoff-draft";
-import { CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
+import { CloseIcon, ExternalLinkIcon, FileIcon, HandoffIcon, LinkIcon, StepsIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -130,7 +130,12 @@ export function HandoffPanel({
         ref={panelRef}
       >
         <header className="modal__head">
-          <h2 className="modal__title">개발자에게 넘기기</h2>
+          <h2 className="modal__title">
+            <span className="ic">
+              <HandoffIcon />
+            </span>{" "}
+            개발자에게 넘기기
+          </h2>
           <button
             type="button"
             className="ghost"
@@ -201,7 +206,12 @@ export function HandoffPanel({
               {drafting && <p className="hint">개발자가 읽을 제목과 내용을 만드는 중…</p>}
               <label className="setting setting--wide handoff__field">
                 <span className="setting__text">
-                  <span className="setting__label">제목</span>
+                  <span className="setting__label">
+                    <span className="ic ic--quiet ic--sm">
+                      <FileIcon />
+                    </span>{" "}
+                    제목
+                  </span>
                   <span className="setting__hint">개발자가 목록에서 보는 한 줄입니다</span>
                 </span>
                 <span className="setting__control">
@@ -220,7 +230,12 @@ export function HandoffPanel({
 
               <label className="setting setting--wide handoff__field">
                 <span className="setting__text">
-                  <span className="setting__label">내용</span>
+                  <span className="setting__label">
+                    <span className="ic ic--quiet ic--sm">
+                      <StepsIcon />
+                    </span>{" "}
+                    내용
+                  </span>
                   <span className="setting__hint">
                     무엇을 만들었고 무엇을 봐 주면 되는지. Claude가 저장한 내용을 읽고 먼저 채웁니다
                     — 고쳐 주세요
@@ -257,6 +272,9 @@ export function HandoffPanel({
                   disabled={running}
                   onClick={() => void hand()}
                 >
+                  <span className="ic">
+                    <HandoffIcon />
+                  </span>
                   {running ? "넘기는 중…" : "개발자에게 넘기기"}
                 </button>
                 <button type="button" className="ghost" disabled={running} onClick={onClose}>

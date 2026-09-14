@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { CommentItem } from "./daemon-client";
 import { stateLabel, timeAgo } from "./format";
-import { CloseIcon } from "./icons";
+import { CloseIcon, CommentsIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
@@ -74,7 +74,12 @@ export function CommentsPopover({
         ref={panelRef}
       >
         <header className="modal__head">
-          <h2 className="modal__title">코멘트 기록</h2>
+          <h2 className="modal__title">
+            <span className="ic">
+              <CommentsIcon />
+            </span>{" "}
+            코멘트 기록
+          </h2>
           <button type="button" className="ghost" aria-label="코멘트 기록 닫기" onClick={onClose}>
             <CloseIcon />
           </button>
@@ -89,11 +94,16 @@ export function CommentsPopover({
                 : "미리보기에서 보낸 코멘트의 기록입니다."}
           </p>
           {items !== null && items.length === 0 && (
-            <p className="hint">
-              {native
-                ? "아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에 쌓입니다."
-                : "아직 기록된 코멘트가 없습니다. 코멘트 핀은 데스크톱 앱의 미리보기에서 쓸 수 있습니다."}
-            </p>
+            <div className="menuempty">
+              <span className="ic">
+                <CommentsIcon />
+              </span>
+              <p className="hint">
+                {native
+                  ? "아직 기록된 코멘트가 없습니다. 미리보기에서 ⌥+클릭으로 요소를 찍어 보내면 여기에 쌓입니다."
+                  : "아직 기록된 코멘트가 없습니다. 코멘트 핀은 데스크톱 앱의 미리보기에서 쓸 수 있습니다."}
+              </p>
+            </div>
           )}
           {items !== null && items.length > 0 && (
             <ul className="diff__files">
@@ -116,7 +126,7 @@ export function CommentsPopover({
                       </span>
                       <span className="diff__count">{timeAgo(Date.parse(item.at))}</span>
                     </button>
-                    <p className="hint">{item.text}</p>
+                    <p className="hint">{item.text || "(메모 없음)"}</p>
                   </li>
                 );
               })}

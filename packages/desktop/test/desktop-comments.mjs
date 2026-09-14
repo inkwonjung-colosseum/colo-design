@@ -1,14 +1,16 @@
 /**
- * Desktop comments suite (PLAN §1 — D67 · D78 · D79 · D80 · D86 · D87 · D89
- * · 자동 정리) — the native preview path, driven end to end against the dev
- * entry with Playwright _electron: 핀은 모드 없이 ⌥+클릭으로 찍히고(ⓐ),
- * ⏎ 보내기 로 하나만 보내지며(ⓑ), 보낸 핀은 그 자리에서 화면을 떠난다(ⓒ)
- * — 새로 고침 뒤에도 아무것도 돌아오지 않는다(ⓓ). 코멘트 기록은 전달의
- * 로그다 — 할 일도, 해결 단추도, 다시 보내기도 없다(ⓔ). 화면(상태)을
- * 옮기면 보내지 않은 핀은 지워진다(ⓕ). 보낸 봉투는 요소의 crop 을 실어
- * 온다(ⓖ), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도
- * ⌥+클릭은 핀을 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는
- * 카드가 되고(ⓛ) 같은 화면의 연타는 두 번째 요청으로 표식이 붙는다(ⓜ).
+ * Desktop comments suite (재설계 1단계 — 핀은 첨부, 문장은 컴포저; PLAN D67 · D78 ·
+ * D79 · D86 · D87 · D89 · 자동 정리) — the native preview path, driven end to end
+ * against the dev entry with Playwright _electron: 핀은 모드 없이 ⌥+클릭으로 찍혀
+ * 컴포저 트레이의 행이 되고(ⓐ), 문장과 함께 한 턴으로 나간다(ⓑ), 보낸 핀은 그
+ * 자리에서 화면을 떠난다(ⓒ) — 새로 고침 뒤에도 보내지 않은 핀의 배지는 돌아온다
+ * (ⓓ). 코멘트 기록은 전달의 로그다 — 할 일도, 해결 단추도, 다시 보내기도 없다(ⓔ).
+ * 화면(상태)을 옮겨도 핀 행은 살아 남는다(ⓕ). 크롭과 rect 는 찍는 순간의 것이다
+ * (ⓖ'), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을
+ * 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는 카드가 되고(ⓛ) 같은 화면의
+ * 연타는 두 번째 요청으로 표식이 붙는다(ⓜ).
+ * 거부된 전송은 말·핀·배지를 지키고 경고 띠 하나로 말한다(수용 기준 2), 계획
+ * 먼저 칩과 핀은 컴포저의 하나의 submit 을 탄다 — 와이어 순서가 영수증이다(기준 5).
  *
  * The main window's page is the planner UI; the VIEW's page is reached
  * through the main process (`globalThis.coloDesignPlannerPreview`) because a
@@ -83,11 +85,27 @@ function slowStubClaude(dir, logPath) {
       "  let idx;",
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
       "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
+      "    // 헤더의 약속(모든 줄을 기록)을 이행한다 — 수용 기준 5 의 영수증은",
+      "    // 이 로그의 줄 순서다: set_permission_mode 요청이 핀 턴보다 먼저다.",
+      "    try {",
+      '      if (log) fs.appendFileSync(log, line + "\\n");',
+      "    } catch {}",
       '    if (line.includes(\'"subtype":"set_permission_mode"\')) {',
       '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
+      "      // 거부 주입 (커밋 게이트 §3.12-2): the marker file primes ONE error",
+      "      // answer, so the daemon rejects the send's plan-mode first step and",
+      "      // the composer's D35 preservation is proven on the real wire.",
+      "      let refuse = false;",
+      "      try {",
+      "        const flag = process.env.COLO_REFUSE_MODE_FLAG;",
+      "        if (flag && fs.existsSync(flag)) {",
+      "          fs.unlinkSync(flag);",
+      "          refuse = true;",
+      "        }",
+      "      } catch {}",
       "      process.stdout.write(JSON.stringify({",
       '        type: "control_response",',
-      '        response: { subtype: "success", request_id: id },',
+      '        response: { subtype: refuse ? "error" : "success", request_id: id },',
       '      }) + "\\n");',
       "      continue;",
       "    }",
@@ -107,19 +125,28 @@ function slowStubClaude(dir, logPath) {
       '    if (line.includes(\'"type":"user"\')) {',
       '      sessionId = (line.match(/"session_id":"([^"]*)"/) || [])[1] || sessionId;',
       '      const look = line.includes("이 화면이 이렇게 보입니다");',
-      '      const comment = line.includes("화면 수정 요청");',
+      '      const comment = line.includes("미리보기에서 가리킨 요소");',
       "      if (look) {",
       "        // A real CLI keeps looking at the screen until it is told to",
       "        // stop — the suite's mid-turn checks (연타 가드 · 대기줄) need a",
       "        // turn that RUNS, and 중지 is how every look turn ends here.",
       "        return;",
       "      }",
-      "      process.stdout.write(JSON.stringify({",
-      '        type: "result", subtype: "success", is_error: false,',
-      '        session_id: sessionId, result: "알겠습니다.", num_turns: 1, duration_ms: 10,',
-      '      }) + "\\n");',
-      "      setTimeout(() => process.exit(0), comment ? 2000 : 700);",
-      "      return;",
+      "      // A real CLI answers pending control requests BEFORE the turn's",
+      "      // result. The SDK flushes a set_permission_mode with this very",
+      "      // user message (기준 5 경로), so its line lands a chunk later:",
+      "      // defer the result a beat — answering the control request AFTER",
+      "      // the result wedges the daemon's awaited promise forever.",
+      "      const sid = sessionId;",
+      "      const linger = comment ? 8000 : 700;",
+      "      setTimeout(() => {",
+      "        process.stdout.write(JSON.stringify({",
+      '          type: "result", subtype: "success", is_error: false,',
+      '          session_id: sid, result: "알겠습니다.", num_turns: 1, duration_ms: 10,',
+      '        }) + "\\n");',
+      "        setTimeout(() => process.exit(0), linger);",
+      "      }, 400);",
+      "      continue;",
       "    }",
       "  }",
       "};",
@@ -193,6 +220,43 @@ async function waitForNoPin(app, timeout = 10000) {
   return false;
 }
 
+/**
+ * Waits until the overlay draws a badge again — the web's pin list is the
+ * truth, and after a reload the sync re-anchors it (재설계 C5).
+ */
+async function waitForPin(app, timeout = 10000) {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    const there = await inView(
+      app,
+      `Boolean(document.querySelector('[data-colo-design-overlay] [data-pin]'))`,
+    );
+    if (there) return true;
+    await new Promise((ok) => setTimeout(ok, 250));
+  }
+  return false;
+}
+
+/**
+ * Clears the pin tray, however many re-renders swallow a single click — a
+ * × that lands mid re-render removes nothing, and a planner would simply
+ * click again.
+ */
+async function clearTray(page, timeout = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    if ((await page.locator(".pintray__row").count()) === 0) return true;
+    await page
+      .locator(".pintray__row")
+      .first()
+      .getByRole("button", { name: /지우기/ })
+      .click()
+      .catch(() => {});
+    await new Promise((ok) => setTimeout(ok, 300));
+  }
+  return (await page.locator(".pintray__row").count()) === 0;
+}
+
 async function main() {
   run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
   run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
@@ -227,6 +291,7 @@ async function main() {
       COLO_DESIGN_REPO_URL: fixture.remote,
       COLO_DESIGN_REPO_SETTINGS: join(dir, "settings.json"),
       COLO_DESIGN_PROJECTS_SETTINGS: join(dir, "projects.json"),
+      COLO_REFUSE_MODE_FLAG: join(dir, "bin", "refuse-mode.flag"),
       COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
       CLAUDE_CONFIG_DIR: join(dir, "claude-config"),
       COLO_DESIGN_CLAUDE_BIN: slowStubClaude(join(dir, "bin"), promptLog),
@@ -240,7 +305,6 @@ async function main() {
     await page.setViewportSize({ width: 1720, height: 1000 });
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
     await page.waitForSelector(".planner__body", { timeout: 60000 });
     await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
@@ -277,64 +341,46 @@ async function main() {
     );
     check("the overlay mounts without the comment mode", overlayAlways === true);
 
-    // --- ⓐ 모드 꺼진 채 ⌥+클릭 — 초안 핀, 페이지 클릭은 죽는다 (D79) --------
+    // --- ⓐ 모드 꺼진 채 ⌥+클릭 — 핀은 컴포저 트레이의 행이 된다 (재설계 C1) --
     await inView(
       app,
       `(() => { window.__pageClicks = 0; document.addEventListener("click", () => { window.__pageClicks += 1; }); return true; })()`,
     );
     check("⌥+클릭 hit the element", (await altClick(app, "[data-screen] tbody td")) === true);
-    const draftThere = await inView(
-      app,
-      `Boolean(document.querySelector('[data-colo-design-overlay] textarea[aria-label="핀 1 코멘트"]'))`,
-    );
+    // The row is the main window's composer; the badge is the view's overlay.
+    const trayRow = page.locator(".pintray__row");
+    await trayRow.waitFor({ timeout: 15000 });
+    const badgeThere = await waitForPin(app);
     const pageClicks = await inView(app, `window.__pageClicks`);
     check(
       "ⓐ mode OFF + ⌥+클릭 pins the element and the page never sees the click",
-      draftThere === true && pageClicks === 0,
-      `draft:${draftThere} pageClicks:${pageClicks}`,
+      (await trayRow.count()) === 1 && badgeThere === true && pageClicks === 0,
+      `rows:${await trayRow.count()} badge:${badgeThere} pageClicks:${pageClicks}`,
     );
 
-    // The pin lands with the caret already in it (D80): a planner who just
-    // clicked an element is about to describe it, and a second click to reach
-    // the box is a second click for every pin they ever make.
-    const caretThere = await inView(
-      app,
-      `document.activeElement === document.querySelector('textarea[aria-label="핀 1 코멘트"]')`,
-    );
-    check("the new pin's editor holds the caret", caretThere === true);
-
-    // --- ⓑ 편집기 ⏎ 보내기 — 핀 하나만 즉시 (D80) ---------------------------
-    await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label="핀 1 코멘트"]');
-        input.value = "이름 열을 가입일 역순으로 정렬해 주세요.";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        const send = [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => (b.textContent || "").includes("보내기"));
-        send.click();
-        return true;
-      })()`,
-    );
-    check("ⓑ the draft editor's ⏎ 보내기 cleared the draft", (await waitForNoPin(app)) === true);
-    // D35: the confirmation is the WEB's receipt coming back, not a hopeful
-    // line printed at the send. It also has to survive the re-render that
-    // clears the pins — the toast column is outside what renderOverlay sweeps.
-    let sentToast = false;
-    const sentDeadline = Date.now() + 15000;
-    while (Date.now() < sentDeadline && !sentToast) {
-      sentToast = await inView(
-        app,
-        `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [role="status"] div')]
-          .find((n) => (n.textContent || "").includes("보냈습니다")))`,
+    // The pin lands with the caret already in its memo field (재설계 C1):
+    // a planner who just clicked an element is about to describe it, and a
+    // second click to reach the box is a second click for every pin they make.
+    let caretThere = false;
+    const caretDeadline = Date.now() + 5000;
+    while (Date.now() < caretDeadline && !caretThere) {
+      caretThere = await page.evaluate(
+        () => document.activeElement?.classList.contains("pintray__note") === true,
       );
-      if (!sentToast) await new Promise((ok) => setTimeout(ok, 200));
+      if (!caretThere) await new Promise((ok) => setTimeout(ok, 200));
     }
-    check("the send is confirmed by the web's receipt, not by hope", sentToast === true);
+    check("the new pin's memo field holds the caret", caretThere === true);
 
-    // --- 가장자리 핀: 편집기가 뷰포트 밖으로 나가지 않는다 ------------------
-    // 뷰포트 오른쪽 끝의 요소를 ⌥+클릭한다 — 편집기(폭 306px)는 클램프 없이는
-    // 반쯤 잘린다. 확인 뒤 이 핀은 곧바로 지워 뒤 단계를 건드리지 않는다.
+    // --- ⓑ 문장과 한 턴으로 (재설계 C2) --------------------------------------
+    await page.locator(".pintray__note").first().fill("이름 열을 가입일 역순으로 정렬해 주세요.");
+    const composer = page.getByLabel("메시지");
+    await composer.click();
+    await composer.fill("가입일 순서도 한 번 봐 주세요.");
+    await composer.press("Enter");
+
+    // --- 가장자리 핀: 배지는 뷰포트 밖으로 나가지 않는다 --------------------
+    // 뷰포트 오른쪽 끝의 요소를 ⌥+클릭한다 — 배지는 클램프 없이는 반쯤 잘린다.
+    // 확인 뒤 이 핀은 트레이에서 지워 뒤 단계를 건드리지 않는다.
     const edgePinned = await inView(
       app,
       `(function () {
@@ -376,22 +422,16 @@ async function main() {
         edgeBox.bottom <= edgeBox.vh,
       JSON.stringify({ edgePinned, edgeBox }),
     );
-    await inView(
-      app,
-      `(function () {
-        const wrap = document.querySelector("[data-colo-design-overlay] [data-pin]");
-        const remove = wrap && wrap.querySelector('button[aria-label$=" 삭제"]');
-        if (!remove) return false;
-        remove.click();
-        return true;
-      })()`,
-    );
+    await page.waitForFunction(() => document.querySelectorAll(".pintray__row").length === 1);
+    check("the edge pin leaves via its tray button", (await clearTray(page)) === true);
     const card = page.locator(".machine--comments");
     await card.waitFor({ timeout: 30000 });
     const cardText = await card.innerText();
     check(
-      "the transcript shows the 수정 요청 card",
-      cardText.includes("수정 요청 1건") && cardText.includes("이름 열을 가입일 역순으로"),
+      "the transcript shows the 수정 요청 card with the sentence",
+      cardText.includes("수정 요청 1건") &&
+        cardText.includes("이름 열을 가입일 역순으로") &&
+        cardText.includes("가입일 순서도 한 번 봐 주세요."),
       cardText.split("\n")[0],
     );
 
@@ -439,16 +479,20 @@ async function main() {
     check("the carrying turn settled", true);
     check("ⓒ the sent pin left the screen at once", (await waitForNoPin(app)) === true);
 
-    // --- ⓓ 새로 고침 뒤에도 아무것도 돌아오지 않는다 ------------------------
+    // --- ⓓ 새로 고침 뒤에도 보내지 않은 핀은 돌아온다 (재설계 C5) ------------
+    // The web's list outlives the page — sessionStorage holds it, and the
+    // sync re-anchors the badge once the reloaded page reports its location.
+    await altClick(app, "[data-screen] tbody td");
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await page.getByRole("button", { name: "미리보기 새로 고침" }).click();
     await page.waitForTimeout(1200);
-    check("ⓓ after a reload no pin comes back", (await waitForNoPin(app)) === true);
+    check("ⓓ after a reload the unsent pin's badge returns", (await waitForPin(app)) === true);
+    check("ⓓ' the reloaded pin clears on demand", (await clearTray(page)) === true);
 
-    // --- 보낼 때의 자리로 찍는다 (D87): the crop follows the element --------
-    // A planner pins, keeps reading, and sends later — by then the element
-    // has moved. The envelope used to carry the rect from pin time, so the
-    // view photographed whatever had slid into that slot on the viewport and
-    // handed Claude a picture of the wrong thing.
+    // --- ⓖ' 크롭과 rect 는 찍는 순간의 것이다 (재설계 C4) --------------------
+    // The old flow re-measured at send, so a pin written while the planner
+    // kept reading photographed the element's NEW slot. Now the crop rides
+    // the pin: what the planner SAW is what Claude gets.
     const pinnedY = await inView(
       app,
       `(() => {
@@ -457,27 +501,23 @@ async function main() {
       })()`,
     );
     await altClick(app, "[data-screen] h1");
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await inView(
       app,
       `(() => {
-        const h1 = document.querySelector("[data-screen] h1");
-        h1.style.marginTop = "160px";
-        const input = document.querySelector('textarea[aria-label^="핀"]');
-        input.value = "제목 글씨를 키워 주세요";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => (b.textContent || "").includes("보내기"))
-          .click();
+        document.querySelector("[data-screen] h1").style.marginTop = "160px";
         return true;
       })()`,
     );
-    // Where the element actually sits now — the number the envelope has to
-    // carry. Margin collapsing makes the shift smaller than the margin, so
-    // the assertion reads the DOM rather than doing the arithmetic.
+    // Where the element sits by send time — the number the rect must NOT be.
     const movedY = await inView(
       app,
       `Math.round(document.querySelector("[data-screen] h1").getBoundingClientRect().y)`,
     );
+    await page.locator(".pintray__note").first().fill("제목 글씨를 키워 주세요");
+    const movedComposer = page.getByLabel("메시지");
+    await movedComposer.click();
+    await movedComposer.press("Enter");
     // The SECOND card, once it exists: `.last()` on a list that has not grown
     // yet is the FIRST card, and its rect would quietly answer the question.
     const cards = page.locator(".machine--comments");
@@ -491,8 +531,8 @@ async function main() {
     const movedBody = await movedCard.locator(".machine__body").innerText();
     const sentY = Number(movedBody.match(/rect \d+,(\d+)/)?.[1] ?? -1);
     check(
-      "the sent rect is where the element is NOW, not where it was pinned",
-      movedY > pinnedY && Math.abs(sentY - movedY) <= 2,
+      "the sent rect is where the element was PINNED, not where it drifted",
+      movedY > pinnedY && Math.abs(sentY - pinnedY) <= 2,
       `pinned:${pinnedY} moved:${movedY} sent:${sentY}`,
     );
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
@@ -538,77 +578,44 @@ async function main() {
     await dialog.waitFor({ timeout: 5000 });
     await dialog.getByRole("button", { name: "코멘트 기록 닫기" }).click();
 
-    // --- ⓕ 화면(상태)을 옮기면 보내지 않은 핀은 지워진다 (D67) --------------
+    // --- ⓕ 화면(상태)을 옮겨도 핀 행은 살아 남는다 (재설계 C5) ---------------
     await altClick(app, "[data-screen] h1");
-    await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label^="핀"]');
-        input.value = "제목을 두 줄로 줄여 주세요";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        const park = [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => b.textContent === "접기");
-        park.click();
-        return true;
-      })()`,
-    );
-    // Switch the state — the bridge rewrites data-state in place, so the
-    // observer (ours and the overlay's) must both see it in the SAME document.
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
+    await page.locator(".pintray__note").first().fill("제목을 두 줄로 줄여 주세요");
+    // Switch the state — the row keeps its pin and re-words its where-line;
+    // the tray is the truth, the badge only projects the screen it sits on.
     await page
       .getByRole("group", { name: "상태" })
       .getByRole("button", { name: "비어 있음" })
       .click();
-    let toastSeen = false;
-    const toastDeadline = Date.now() + 6000;
-    while (Date.now() < toastDeadline && !toastSeen) {
-      toastSeen = await inView(
-        app,
-        `Boolean([...document.querySelectorAll("[data-colo-design-overlay] div")]
-          .find((n) => (n.textContent || "").includes("보내지 않은 핀 1개를 지웠습니다")))`,
-      );
-      if (!toastSeen) await new Promise((ok) => setTimeout(ok, 200));
-    }
+    await page.waitForTimeout(600);
+    const whereText = await page.locator(".pintray__where").first().innerText();
+    const rowSurvives = (await page.locator(".pintray__row").count()) === 1;
     check(
-      "ⓕ the state switch cleared the parked draft with a toast",
-      toastSeen === true && (await waitForNoPin(app)) === true,
-      `toast:${toastSeen}`,
+      "ⓕ the state switch keeps the pin row with its own state",
+      rowSurvives === true && whereText.includes("기본"),
+      `row:${rowSurvives} where:${whereText}`,
+    );
+    // §3.10 ⓕ · 커미티 차단 4: while the OTHER state is on, the badge hides —
+    // the row keeps saying `회원 목록 · 기본` and the screen must not
+    // contradict it by re-anchoring the same CSS path on the error view.
+    const badgesOnOtherState = await inView(
+      app,
+      `document.querySelectorAll('[data-colo-design-overlay] [data-pin]').length`,
+    );
+    check(
+      "ⓕ the state switch hides the badge that belongs to another state",
+      badgesOnOtherState === 0,
+      `badges:${badgesOnOtherState}`,
     );
     await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
+    await page.waitForTimeout(600);
+    check("ⓕ back on its own state the badge returns", (await waitForPin(app)) === true);
 
-    // --- Esc: 키보드만으로 편집기를 빠져나온다 (D80) ------------------------
-    // An empty editor was never a request; a written one parks as its bubble.
-    await altClick(app, "[data-screen] tbody td");
-    const escEmpty = await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label^="핀"]');
-        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        return !document.querySelector("[data-colo-design-overlay] [data-pin]");
-      })()`,
-    );
-    await altClick(app, "[data-screen] tbody td");
-    const escWritten = await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label^="핀"]');
-        input.value = "이 칸은 오른쪽 정렬해 주세요";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-        const pin = document.querySelector("[data-colo-design-overlay] [data-pin]");
-        return Boolean(pin) && !pin.querySelector("textarea");
-      })()`,
-    );
-    check(
-      "Esc drops an empty pin and parks a written one",
-      escEmpty === true && escWritten === true,
-      `empty:${escEmpty} written:${escWritten}`,
-    );
-
-    // --- 래퍼가 통째로 바뀌어도 보내지 않은 핀은 남지 않는다 (D67) ----------
+    // --- 래퍼가 통째로 바뀌어도 핀 행은 남는다 (재설계 C5) -------------------
     // A router replaces the screen wrapper instead of rewriting its
-    // attributes: no mutation the attribute observer can see, an anchor that
-    // left the document, and a chip left drawing itself in the corner of a
-    // screen that is not there any more.
+    // attributes. The overlay's anchor dies with the old node — the next
+    // sync re-anchors by path — and the web's row never blinked.
     await inView(
       app,
       `(() => {
@@ -617,15 +624,115 @@ async function main() {
         return true;
       })()`,
     );
+    await page.waitForTimeout(600);
     check(
-      "a swapped screen wrapper takes the unsent pins with it",
-      (await waitForNoPin(app)) === true,
+      "a swapped screen wrapper keeps the pin's row",
+      (await page.locator(".pintray__row").count()) === 1,
     );
+    check("the swapped wrapper's pin clears on demand", (await clearTray(page)) === true);
+
+    // --- 거부된 전송은 말·핀·배지를 지키고, 계획 먼저는 핀과 같은 문으로 간다 --
+    // (§3.12 수용 기준 2·5, 커미티 차단 5) The refusal is real on the wire: the
+    // stub is primed (marker file) to answer the plan-mode control request
+    // with an error ONCE, the daemon rejects the send's first step, and the
+    // composer's D35 contract — words, pins, badges stay, ONE warning strip —
+    // is proven end to end. The chip stays armed through the failure, so the
+    // retry proves 기준 5 with the same composition: the plan-mode request
+    // and the pin turn ride the composer's one submit, mode first.
+    await altClick(app, "[data-screen] tbody td");
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
+    await page.locator(".pintray__note").first().fill("행 높이를 넉넉히 해 주세요");
+    const refusedComposer = page.getByLabel("메시지");
+    await refusedComposer.click();
+    await refusedComposer.fill("표가 좁아 보여요.");
+    const refuseModeFlag = join(dir, "bin", "refuse-mode.flag");
+    writeFileSync(refuseModeFlag, "1");
+    await page.locator(".toolbar__plan").click();
+    await refusedComposer.press("Enter");
+    const warnStrip = page.locator(".composer .notice--warn").first();
+    await warnStrip.waitFor({ timeout: 15000 });
+    const stripText = (await warnStrip.innerText()).trim();
+    const keptText = await refusedComposer.inputValue();
+    const keptRows = await page.locator(".pintray__row").count();
+    const keptBadges = await inView(
+      app,
+      `document.querySelectorAll('[data-colo-design-overlay] [data-pin]').length`,
+    );
+    check(
+      "a refused send keeps the words, the pin row and its badge, with one warning",
+      stripText.length > 0 &&
+        keptText === "표가 좁아 보여요." &&
+        keptRows === 1 &&
+        keptBadges === 1,
+      `strip:${stripText.slice(0, 48)} text:${keptText} rows:${keptRows} badges:${keptBadges}`,
+    );
+    // The refusal killed the CLI query (an error control answer is fatal to
+    // the SDK), so the session sits crashed. The SAME words must still go
+    // through: disarm the chip and send — the daemon resurrects the thread
+    // (same id, fresh CLI) and the recovered send carries the words and the
+    // pin out (D86 크래시 카드의 약속).
+    await page.locator(".toolbar__plan").click();
+    await refusedComposer.press("Enter");
+    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
+    check("the recovered send empties the tray", (await waitForNoPin(app)) === true);
+
+    // A FRESH thread (⌘T) for criterion 5: the resurrected session behind the
+    // recovery is a minefield of stub-exit races, and criterion 5 needs one
+    // clean submit on one healthy session — not that.
+    await page.keyboard.press("Meta+t");
+    await page.waitForTimeout(800);
+
+    // --- 계획 먼저 + 핀: 하나의 submit 이 둘 다 실는다 (수용 기준 5) ---------
+    // A fresh pin, the chip armed, one Enter: the composer's single submit
+    // must carry BOTH the plan-mode change and the pin turn. The stub's
+    // prompt log is the receipt — the mode request and the turn line both
+    // appear for THIS send. (Their order in the log is the SDK's flush
+    // behavior, not this app's contract: the daemon awaits the mode answer
+    // before the send — useSessions submit.)
+    await altClick(app, "[data-screen] tbody td");
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
+    await page.locator(".pintray__note").first().fill("간격도 함께 손봐 주세요");
+    await refusedComposer.click();
+    await refusedComposer.fill("이 표 전체를 봐 주세요.");
+    const logBefore = readFileSync(promptLog, "utf8").split("\n");
+    const modeCountBefore = logBefore.filter((l) =>
+      l.includes('"subtype":"set_permission_mode"'),
+    ).length;
+    const turnCountBefore = logBefore.filter((l) => l.includes("미리보기에서 가리킨 요소")).length;
+    await page.locator(".toolbar__plan").click();
+    await refusedComposer.press("Enter");
+    // The toolbar's stop is a UI mood, not the wire's clock (커밋 게이트 교훈:
+    // it can detach before the stub has appended the turn). The log's growth
+    // IS the receipt — poll for exactly one new mode request and one new
+    // pin-turn line, then judge.
+    const modeLine = (l) => l.includes('"subtype":"set_permission_mode"');
+    const turnLine = (l) => l.includes("미리보기에서 가리킨 요소");
+    let modeCountAfter = modeCountBefore;
+    let turnCountAfter = turnCountBefore;
+    const logDeadline = Date.now() + 15000;
+    while (Date.now() < logDeadline) {
+      const lines = readFileSync(promptLog, "utf8").split("\n");
+      modeCountAfter = lines.filter(modeLine).length;
+      turnCountAfter = lines.filter(turnLine).length;
+      if (modeCountAfter >= modeCountBefore + 1 && turnCountAfter >= turnCountBefore + 1) break;
+      await new Promise((ok) => setTimeout(ok, 250));
+    }
+    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
+    check(
+      "the armed chip and the pins ride one composer submit (계획 먼저 + 핀)",
+      modeCountAfter === modeCountBefore + 1 && turnCountAfter === turnCountBefore + 1,
+      `mode:${modeCountAfter}(was ${modeCountBefore}) turns:${turnCountAfter}(was ${turnCountBefore})`,
+    );
+    check("the plan-first pin send empties the tray", (await waitForNoPin(app)) === true);
 
     // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
     // The claude-design loop: comment → fix must not wait for a declared
     // screen. A page with no [data-screen] wrapper — 아직 이 도구로 만지지
-    // 않은 레포의 원래 페이지 — pins by its path, and the turn names it.
+    // 않은 레포의 원래 화면 — pins by its path, and the turn names it.
+    // 회원 목록의 핀 하나를 남겨 둔 채 래퍼를 벗긴다 — 두 화면의 핀이 한
+    // 트레이에서 한 턴으로 나가는 것이 수용 기준의 핵심 경로다 (재설계 C6).
+    await altClick(app, "[data-screen] tbody td");
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await inView(
       app,
       `(() => {
@@ -636,42 +743,46 @@ async function main() {
       })()`,
     );
     check("ⓚ ⌥+클릭 hit the wrapper-less page", (await altClick(app, "h1")) === true);
-    const nakedDraft = await inView(
-      app,
-      `Boolean(document.querySelector('[data-colo-design-overlay] textarea[aria-label="핀 1 코멘트"]'))`,
+    const trayRows = page.locator(".pintray__row");
+    // The h1 pin lands one crop round trip behind the click — wait for the
+    // SECOND row, not for the first one that is already there.
+    await page.waitForFunction(
+      () => document.querySelectorAll(".pintray__row").length === 2,
+      undefined,
+      { timeout: 15000 },
     );
-    const nakedToast = await inView(
+    await waitForPin(app);
+    // The badge projects the screen it sits on — the settings pin only; the
+    // member-list pin's row stays, badgeless, until its screen returns.
+    const badgesHere = await inView(
       app,
-      `Boolean([...document.querySelectorAll("[data-colo-design-overlay] div")]
-        .find((n) => (n.textContent || "").includes("이 화면에는 핀을 붙일 수 없습니다")))`,
+      `document.querySelectorAll('[data-colo-design-overlay] [data-pin]').length`,
     );
     check(
-      "ⓚ a wrapper-less ⌥+클릭 pins instead of toasting",
-      nakedDraft === true && nakedToast === false,
-      `draft:${nakedDraft} toast:${nakedToast}`,
+      "ⓚ two screens rest in one tray, one badge on the current screen",
+      (await trayRows.count()) === 2 && badgesHere === 1,
+      `rows:${await trayRows.count()} badges:${badgesHere}`,
     );
-    await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label="핀 1 코멘트"]');
-        input.value = "이 페이지도 기획서에 맞게 고쳐 주세요";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => (b.textContent || "").includes("보내기")).click();
-        return true;
-      })()`,
-    );
+    // 핀만의 전송 — 문장이 없어도 목록 하나로 성립한다 (재설계 §3.9). The
+    // count comes FIRST: the echo card renders the moment the send lands,
+    // and one taken after would already count the card we are waiting for.
+    const cardsBefore = await page.locator(".machine--comments").count();
+    await page.locator(".composer__send").click();
     // The naked turn's card is the NEXT comments card — waiting on `.last()`
     // would race and re-read the previous turn's card.
-    const cardsBefore = await page.locator(".machine--comments").count();
     const nakedCard = page.locator(".machine--comments").nth(cardsBefore);
     await nakedCard.waitFor({ timeout: 30000 });
+    const nakedText = await nakedCard.innerText();
     // The card's 자세히 fold shows the turn body — the exact words Claude reads.
     await nakedCard.getByRole("button", { name: "자세히" }).click();
     const nakedBody = await nakedCard.locator(".machine__body").innerText();
     check(
-      "ⓚ the turn names the path as the screen",
-      nakedBody.includes("화면 수정 요청 1건 — settings (default 상태)"),
+      "ⓚ the turn spans two screens — summary lead, per-row screens",
+      nakedText.includes("화면 2곳") &&
+        nakedText.includes("settings") &&
+        nakedBody.includes("미리보기에서 가리킨 요소 2개입니다") &&
+        nakedBody.includes(" · 회원 목록") &&
+        nakedBody.includes(" · settings"),
       nakedBody.slice(0, 80),
     );
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
@@ -686,6 +797,74 @@ async function main() {
         history.pushState(null, "", "/member/MemberList");
         return true;
       })()`,
+    );
+
+    // --- ⓣ 드래그 영역 핀, 의도 칩, 그리고 ⌘⇧P (재설계 C9·C10) --------------
+    // ⌥+드래그(6px 초과)는 요소가 아니라 좌표를 가리킨다 — 영역 핀.
+    const regionDragged = await inView(
+      app,
+      `(() => {
+        const target = document.elementFromPoint(300, 300);
+        if (!target || target.closest("[data-colo-design-overlay]")) return false;
+        const fire = (type, x, y) => target.dispatchEvent(new MouseEvent(type, {
+          bubbles: true, cancelable: true, altKey: true, button: 0,
+          clientX: x, clientY: y, view: window,
+        }));
+        fire("mousedown", 300, 300);
+        fire("mousemove", 340, 330);
+        fire("mouseup", 340, 330);
+        // A real browser fires the trailing click after mouseup — the
+        // overlay swallows exactly that one (재설계 C9).
+        fire("click", 340, 330);
+        return true;
+      })()`,
+    );
+    const regionRow = page.locator(".pintray__row");
+    await regionRow.waitFor({ timeout: 15000 });
+    const regionText = await regionRow.first().innerText();
+    const regionBox = await inView(
+      app,
+      `Boolean(document.querySelector('[data-colo-design-overlay] [data-pin-box]'))`,
+    );
+    check(
+      "ⓣ an ⌥+drag leaves a region pin — dashed box on the page, sized row",
+      regionDragged === true && regionText.includes("영역 40×30") && regionBox === true,
+      `drag:${regionDragged} row:${regionText.split("\\n")[0]} box:${regionBox}`,
+    );
+    // 질문으로 접었다가 보낸다 — 카드 제목과 안내줄이 따라 온다 (재설계 C10).
+    await regionRow.first().getByRole("button", { name: "질문" }).click();
+    await page.locator(".pintray__note").first().fill("이 영역은 왜 비어 있나요?");
+    const cardsBeforeRegion = await page.locator(".machine--comments").count();
+    await page.locator(".composer__send").click();
+    const regionCard = page.locator(".machine--comments").nth(cardsBeforeRegion);
+    await regionCard.waitFor({ timeout: 30000 });
+    const regionCardText = await regionCard.innerText();
+    await regionCard.getByRole("button", { name: "자세히" }).click();
+    const regionBody = await regionCard.locator(".machine__body").innerText();
+    check(
+      "ⓣ a question-intent region pin reads as 질문 — card and turn both",
+      regionCardText.includes("질문 1건") &&
+        regionBody.includes("아래 요소에 대한 질문입니다") &&
+        regionBody.includes("1. 영역 40×30") &&
+        regionBody.includes("메모: 이 영역은 왜 비어 있나요?"),
+      regionBody.slice(0, 80),
+    );
+    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
+    check("ⓣ the question turn settled", true);
+
+    // ⌘⇧P — the pin mode's own chord, from the chat column's keyboard.
+    const pinToggle = page.getByRole("button", { name: /핀/ }).first();
+    const pressedBefore = await pinToggle.getAttribute("aria-pressed");
+    await page.keyboard.press("Meta+Shift+P");
+    await page.waitForTimeout(300);
+    const pressedAfter = await pinToggle.getAttribute("aria-pressed");
+    await page.keyboard.press("Meta+Shift+P");
+    await page.waitForTimeout(300);
+    const pressedBack = await pinToggle.getAttribute("aria-pressed");
+    check(
+      "ⓣ ⌘⇧P toggles the pin mode both ways",
+      pressedBefore === "false" && pressedAfter === "true" && pressedBack === "false",
+      `${pressedBefore}→${pressedAfter}→${pressedBack}`,
     );
 
     // --- ⓛ 화면 보여 주기 (D89) ---------------------------------------------
@@ -750,22 +929,28 @@ async function main() {
       "ⓘ-setup second pin accepted mid-turn",
       (await altClick(app, "[data-screen] p")) === true,
     );
-    await inView(
-      app,
-      `(() => {
-        const input = document.querySelector('textarea[aria-label^="핀"]');
-        if (!input) return false;
-        input.value = "설명 문장은 반영해 주세요";
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => (b.textContent || "").includes("보내기")).click();
-        return true;
-      })()`,
-    );
+    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
+    await page.locator(".pintray__note").first().fill("설명 문장은 반영해 주세요");
+    const queuedComposer = page.getByLabel("메시지");
+    await queuedComposer.click();
+    await queuedComposer.press("Enter");
     const queuedLine = page.locator(".composer__queued");
     await queuedLine.waitFor({ timeout: 15000 });
     const queuedText = await queuedLine.innerText();
     check("ⓘ a mid-turn send shows the wait-line", queuedText.includes("대기"), queuedText);
+    // The queued batch is SENT — its badges grey out for the turn's life
+    // (재설계 C10), whatever the wait-line is doing.
+    let ghostGrey = false;
+    const ghostDeadline = Date.now() + 10000;
+    while (Date.now() < ghostDeadline && !ghostGrey) {
+      ghostGrey = await inView(
+        app,
+        `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')]
+          .find((b) => (b.getAttribute("aria-label") || "").includes("보냄")))`,
+      );
+      if (!ghostGrey) await new Promise((ok) => setTimeout(ok, 250));
+    }
+    check("ⓘ' the queued batch's badges grey out as sent", ghostGrey === true);
     // The stub CLI serves one turn per process, so the queued message cannot
     // complete here — 중지 is the planner's way out, and the wait-line must go
     // with it (D86), no error band left behind (결함①).
@@ -775,6 +960,18 @@ async function main() {
       "ⓘ 중지 clears the wait-line without an error band",
       (await page.locator(".notice--error").count()) === 0,
     );
+    // The turn left without answering — the grey badges go with it.
+    let ghostGone = false;
+    const goneDeadline = Date.now() + 10000;
+    while (Date.now() < goneDeadline && !ghostGone) {
+      ghostGone = !(await inView(
+        app,
+        `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')]
+          .find((b) => (b.getAttribute("aria-label") || "").includes("보냄")))`,
+      ));
+      if (!ghostGone) await new Promise((ok) => setTimeout(ok, 250));
+    }
+    check("ⓘ' 중지 takes the grey sent badges with the wait-line", ghostGone === true);
 
     await page
       .locator(".toolbar__stop")

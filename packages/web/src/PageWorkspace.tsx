@@ -15,6 +15,7 @@ import {
   type Settings,
 } from "./settings";
 import { downloadTranscript, transcriptToMarkdown } from "./transcript-export";
+import { usePins } from "./usePins";
 import { useSessions } from "./useSessions";
 
 /** The chat column's floor, in px. The preview's drag may squeeze the chat;
@@ -112,6 +113,12 @@ export function PageWorkspace({
     [settings.sessionTitles],
   );
 
+  /**
+   * The pin attachments of this project (재설계 C1) — the composer's tray,
+   * the overlay's badges and the sent-turn record all read this one list.
+   */
+  const pins = usePins(daemon.activeSlug, daemon.api);
+
   /** The same name for daemon thread rows, for the tree and the palette. */
   const titleForThread = useCallback(
     (thread: ThreadSummary) => settings.sessionTitles[thread.id] ?? thread.title,
@@ -141,6 +148,13 @@ export function PageWorkspace({
    */
   const [jumpRequest, setJumpRequest] = useState<PreviewTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  /**
+   * 핀 모드 (재설계 C10): the preview toolbar's toggle, lifted HERE so
+   * ⌘⇧P answers from anywhere — even while the preview page holds focus,
+   * its key relay replays into this window's listeners. The panel below
+   * only draws the toggle and passes the truth down.
+   */
+  const [commentsOn, setCommentsOn] = useState(false);
   const shortcuts = useRef({
     palette: () => {},
     newSession: () => {},
@@ -301,7 +315,17 @@ export function PageWorkspace({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      // ⌘⇧P (재설계 C10): 핀 모드 토글 — shift 가 붙은 조합은 여기서 갈린다.
+      // 미리보기에 포커스가 있는 동안에도 D71 릴레이가 shiftKey 를 살려
+      // 이 창으로 되말리므로, 워크스페이스의 이 한 곳이면 충분하다.
+      if (event.shiftKey) {
+        if (event.key === "p" || event.key === "P") {
+          event.preventDefault();
+          setCommentsOn((on) => !on);
+        }
+        return;
+      }
       if (event.key === "/") {
         event.preventDefault();
         shortcuts.current.sheet();
@@ -321,17 +345,17 @@ export function PageWorkspace({
   }, []);
 
   /**
-   * Comment pins from the preview land in the working thread, started on the
-   * spot if there is none: a planner marking up a screen should not have to
-   * open a conversation first. A thread the TOOL opens is named by the tool
-   * (the M5 lesson) — ScreenPanel names it after the screen. `images` ride
-   * the same wire as a composer attachment (D87): the crops the view took.
+   * A machine-authored turn — the error banner's 고치기, a review's 고치기,
+   * 화면 보여 주기, a failing gate's brief — lands in the working thread,
+   * started on the spot if there is none: the ask should not depend on the
+   * planner having opened a conversation first. A thread the TOOL opens is
+   * named by the tool (the M5 lesson) — the ask carries the name.
    *
-   * The boolean is what the overlay waits on: false brings the pins and the
-   * planner's words back on screen, because a machine turn the daemon refused
-   * (D35) has to stay retryable and pins nobody can see are not.
+   * The boolean is what the caller shows: false means the daemon refused the
+   * turn (D35) and it stays retryable. 핀은 이 길을 타지 않는다 — 컴포저가
+   * 보내고 markSent 가 기록한다 (재설계 C2).
    */
-  const forwardComments = useCallback(
+  const forwardMachineTurn = useCallback(
     async (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => {
       try {
         // The thread this turn lands in is the one create just named — the
@@ -350,6 +374,33 @@ export function PageWorkspace({
     },
     [sessions],
   );
+
+  /**
+   * The pins (재설계 C1): one list per project, owned HERE so the chat's
+   * composer and the preview's badge projection read the same truth. A badge
+   * click asks for its tray row's memo input; the nonce re-focuses on
+   * repeated clicks.
+   */
+  const [focusPinId, setFocusPinId] = useState<{ id: string; nonce: number } | null>(null);
+  const focusPin = useCallback((id: string) => {
+    setFocusPinId((prev) => ({ id, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  // 고스트의 수명은 턴의 수명 (재설계 C10): the active thread leaving
+  // running — done, failed, stopped — is the moment the grey badges go.
+  // 해결 상태는 저장하지 않는다: the record popover is where the past reads.
+  const turnState = sessions.active?.state ?? "idle";
+  const turnWasRunning = useRef(false);
+  useEffect(() => {
+    if (turnState === "running") {
+      turnWasRunning.current = true;
+    } else if (turnWasRunning.current) {
+      turnWasRunning.current = false;
+      pins.dismissGhosts();
+    }
+    // pins 는 렌더마다 새 겉모습일 뿐 dismissGhosts 는 setState 의 포장이다 — state 만 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState]);
 
   /**
    * The preview's width, the one resizable boundary left. It drives the grid
@@ -441,13 +492,14 @@ export function PageWorkspace({
           sessions={sessions}
           sendKey={settings.sendKey}
           midTurnSend={settings.midTurnSend}
-          // D83: 빈 대화의 placeholder 가 가르친다 — 화면 만들기는 단계가
-          // 아니라 아무 대화에서나 하는 한 턴이다. 이제 그 한 줄이 입력창의
-          // 문법도 같이 말한다: @ 로 파일을, / 로 명령을 부른다.
+          // D83 (2026-09-14 커미티 F-A2′ 로 갱신): 빈 대화의 placeholder 가
+          // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
+          // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
+          // (@files 태그 · /commands)는 기획자의 말로 벗겼다.
           placeholder={
             sessions.activeId
-              ? "메시지를 보내거나 @files 태그, /commands 를 사용하세요"
-              : "기획서를 첨부하거나 @files 태그, /commands 를 사용하세요"
+              ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
+              : "기획서를 첨부하고 만들고 싶은 화면을 말해 보세요 (@로 파일, /로 명령)"
           }
           disabled={false}
           titleFor={titleFor}
@@ -456,6 +508,8 @@ export function PageWorkspace({
           screens={screens}
           showThinking={settings.chat.showThinking}
           showTools={settings.chat.showTools}
+          pins={pins}
+          focusPinId={focusPinId}
         />
       </div>
       <Splitter
@@ -474,7 +528,7 @@ export function PageWorkspace({
       <ScreenPanel
         daemon={daemon}
         onOpenSettings={onOpenSettings}
-        onComments={forwardComments}
+        onMachineTurn={forwardMachineTurn}
         turnState={sessions.active?.state ?? "idle"}
         sessionId={sessions.activeId}
         showPip={settings.chat.showPip}
@@ -482,6 +536,14 @@ export function PageWorkspace({
         screens={screens}
         onScreens={setScreens}
         jumpRequest={jumpRequest}
+        commentsOn={commentsOn}
+        onCommentsMode={setCommentsOn}
+        pins={pins}
+        onPin={(pin) => {
+          pins.add(pin);
+          focusPin(pin.id);
+        }}
+        onPinFocus={focusPin}
       />
 
       {palette && (

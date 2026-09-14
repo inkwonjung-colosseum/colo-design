@@ -1,6 +1,6 @@
 import type {
-  ColoDesignCommentsEnvelope,
-  ColoDesignCommentsSent,
+  ColoDesignPinEnvelope,
+  ColoDesignPinsSync,
   ColoDesignScreen,
   UpdateCheckResult,
 } from "@colo-design/protocol";
@@ -72,17 +72,18 @@ declare global {
         zoom?: (kind: "in" | "out" | "reset") => Promise<unknown>;
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
-        /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
-        busy?: (on: boolean) => Promise<unknown>;
-        /** 전송 결과 되돌리기 (PLAN D35): the overlay holds its pins until this. */
-        commentsSent?: (payload: ColoDesignCommentsSent) => Promise<unknown>;
+        /** 핀 동기화 (재설계 C1): the web's whole pin list — the overlay's badges are its projection. */
+        pins?: (sync: ColoDesignPinsSync) => Promise<unknown>;
+        /** 칩 클릭 (재설계 C1): the matching badge on the page flashes. */
+        pinFlash?: (id: string) => Promise<unknown>;
         /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
         snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
         onLocation?: (
           callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void,
         ) => Unsubscribe;
         onScreens?: (callback: (payload: { screens: ColoDesignScreen[] }) => void) => Unsubscribe;
-        onComments?: (callback: (payload: ColoDesignCommentsEnvelope) => void) => Unsubscribe;
+        onPin?: (callback: (payload: ColoDesignPinEnvelope) => void) => Unsubscribe;
+        onPinFocus?: (callback: (payload: { id: string }) => void) => Unsubscribe;
         onError?: (
           callback: (payload: {
             kind: "runtime" | "build";
@@ -92,7 +93,9 @@ declare global {
           }) => void,
         ) => Unsubscribe;
         onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
-        onKey?: (callback: (payload: { key: string; meta: boolean }) => void) => Unsubscribe;
+        onKey?: (
+          callback: (payload: { key: string; meta: boolean; shift: boolean }) => void,
+        ) => Unsubscribe;
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
         /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
         onZoom?: (callback: (payload: { factor: number }) => void) => Unsubscribe;

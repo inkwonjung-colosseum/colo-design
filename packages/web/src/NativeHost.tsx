@@ -1,11 +1,15 @@
-import type { ColoDesignCommentsEnvelope, ColoDesignScreen } from "@colo-design/protocol";
-import { useEffect, useRef, useState } from "react";
+import type {
+  ColoDesignPinEnvelope,
+  ColoDesignPinsSync,
+  ColoDesignScreen,
+} from "@colo-design/protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 
 /**
  * 데스크톱의 미리보기 칸 (PLAN D64): an empty slot the main process lays its
  * `WebContentsView` over. All knowing flows through the §2 channels — bounds
- * up (`ResizeObserver` → `preview:bounds`), location · screens · comments ·
+ * up (`ResizeObserver` → `preview:bounds`), location · screens · pins ·
  * errors · freeze · keys down. The slot shows the freeze frame (D65) while a
  * modal covers the view, so the pane never reads as a hole.
  *
@@ -22,7 +26,9 @@ export function NativeHost({
   commentsOn,
   onLocation,
   onScreens,
-  onComments,
+  sync,
+  onPin,
+  onPinFocus,
   onError,
   onLoading,
   onZoom,
@@ -37,7 +43,16 @@ export function NativeHost({
   commentsOn: boolean;
   onLocation: (location: PreviewLocation) => void;
   onScreens: (screens: ColoDesignScreen[]) => void;
-  onComments: (envelope: ColoDesignCommentsEnvelope) => void;
+  /**
+   * The badge projection (재설계 C1) — the web's ghosts-then-pins list as
+   * `pinsSync` built it; resent after every navigation so a reload or an
+   * SPA move re-anchors the badges (region pins on their page rect, C9).
+   */
+  sync: ColoDesignPinsSync;
+  /** A pin landed from the overlay; a repeated id is usePins's to ignore. */
+  onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
+  /** 배지 클릭 — the planner wants that pin's memo input (PageWorkspace holds the state). */
+  onPinFocus: (id: string) => void;
   onError: (error: {
     kind: "runtime" | "build";
     message: string;
@@ -51,6 +66,18 @@ export function NativeHost({
 }) {
   const slot = useRef<HTMLDivElement>(null);
   const [freeze, setFreeze] = useState<string | null>(null);
+
+  // The overlay's badge projection (재설계 C1): resent after every location
+  // report — a reload or an SPA navigation forgets the anchors, and the
+  // sync (ghosts included, C10) is how they come back.
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+  const syncPins = useCallback(() => {
+    void window.coloDesignDesktop?.preview?.pins?.(syncRef.current);
+  }, []);
+  useEffect(() => {
+    syncPins();
+  }, [sync, syncPins]);
 
   // The slot's rect is the view's bounds. DIP in CSS pixels — Electron maps
   // the ratio; one observer covers the sidebar drag and the window resize.
@@ -109,15 +136,17 @@ export function NativeHost({
     void window.coloDesignDesktop?.preview?.emulate?.(width === "desktop" ? null : width);
   }, [width]);
 
-  // The eight channels subscribe ONCE: PreviewHost passes fresh inline
-  // callbacks every render, so keying the effect on them re-subscribed per
-  // render — and an event fired in an unsubscribe gap (a fast did-navigate
-  // between renders) was lost. The ref always holds the latest handlers;
-  // the subscription itself never churns.
+  // The channels subscribe ONCE: PreviewHost passes fresh inline callbacks
+  // every render, so keying the effect on them re-subscribed per render —
+  // and an event fired in an unsubscribe gap (a fast did-navigate between
+  // renders) was lost. The ref always holds the latest handlers; the
+  // subscription itself never churns. `syncPins` is stable, so it can ride
+  // the location report without resubscribing anything.
   const handlers = useRef({
     onLocation,
     onScreens,
-    onComments,
+    onPin,
+    onPinFocus,
     onError,
     onLoading,
     onZoom,
@@ -125,7 +154,8 @@ export function NativeHost({
   handlers.current = {
     onLocation,
     onScreens,
-    onComments,
+    onPin,
+    onPinFocus,
     onError,
     onLoading,
     onZoom,
@@ -134,18 +164,21 @@ export function NativeHost({
     const bridge = window.coloDesignDesktop?.preview;
     if (!bridge) return;
     const offs = [
-      bridge.onLocation?.((payload: { path: string; canGoBack: boolean; canGoForward: boolean }) =>
-        handlers.current.onLocation(payload),
+      bridge.onLocation?.(
+        (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => {
+          handlers.current.onLocation(payload);
+          // 리로드·SPA 이동 뒤 재앵커 (재설계 §3.6) — the page just forgot
+          // its badges; the sync is the only thing that brings them back.
+          syncPins();
+        },
       ),
       bridge.onScreens?.((payload: { screens: ColoDesignScreen[] }) => {
         if (Array.isArray(payload.screens)) handlers.current.onScreens(payload.screens);
       }),
-      bridge.onComments?.((payload: ColoDesignCommentsEnvelope) => {
-        // An empty bundle has nowhere to go: a 수정 요청 turn with 0 items
-        // says nothing to Claude and shows an empty card to the planner.
-        if (Array.isArray(payload.items) && payload.items.length > 0)
-          handlers.current.onComments(payload);
-      }),
+      // A pin lands whole — no empty-envelope guard anymore, and a repeated
+      // id is usePins's to ignore (재설계 C1).
+      bridge.onPin?.((payload: ColoDesignPinEnvelope) => handlers.current.onPin(payload.pin)),
+      bridge.onPinFocus?.((payload: { id: string }) => handlers.current.onPinFocus(payload.id)),
       bridge.onError?.(
         (payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>
           handlers.current.onError(payload),
@@ -155,12 +188,15 @@ export function NativeHost({
       bridge.onZoom?.((payload: { factor: number }) => handlers.current.onZoom(payload.factor)),
       // D71: the view holds the keys while focused — replayed here so the
       // window's own listeners (⌘K, ⌘,) fire as if the planner never left.
-      bridge.onKey?.((payload: { key: string; meta: boolean }) => {
+      bridge.onKey?.((payload) => {
         if (payload.key === "Escape") return;
         window.dispatchEvent(
           new KeyboardEvent("keydown", {
             key: payload.key,
             metaKey: payload.meta,
+            // ⌘⇧P (재설계 C10): shift 가 살아 있어야 워크스페이스의 토글이
+            // 미리보기 포커스 중에도 먹는다.
+            shiftKey: payload.shift,
             bubbles: true,
           }),
         );
@@ -170,7 +206,7 @@ export function NativeHost({
       offs.forEach((off) => {
         off();
       });
-  }, []);
+  }, [syncPins]);
 
   return (
     <div className="preview__slot" ref={slot} data-testid="preview-slot">

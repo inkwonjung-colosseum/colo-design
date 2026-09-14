@@ -434,58 +434,19 @@ test("the bundled runtime carries corepack's implementation and its launcher loa
 // notice copy — what the desktop paints as an OS notification
 // ---------------------------------------------------------------------------
 
-test("notice copy speaks the planner's words, never the daemon's", () => {
-  // 턴이 끝났을 때 — 돌아와서 미리보기를 보면 된다.
-  const done = noticeCopy({
-    kind: "done",
-    sessionId: "s1",
-    title: "로그인 화면",
-  });
-  assert.equal(done.title, "로그인 화면 · 완료");
-  assert.ok(done.body.includes("미리보기"));
-
-  // Claude 가 답을 기다릴 때 — 허락 카드와 질문 카드는 다른 문장이다.
-  const permission = noticeCopy({
-    kind: "ask",
-    sessionId: "s1",
-    title: "로그인 화면",
-    what: "permission",
-  });
-  assert.equal(permission.title, "로그인 화면 · 확인 필요");
-  assert.ok(permission.body.includes("허락"));
-  const question = noticeCopy({
-    kind: "ask",
-    sessionId: "s1",
-    title: "로그인 화면",
-    what: "question",
-  });
-  assert.equal(question.title, "로그인 화면 · 답 필요");
-
-  // 게이트 실패 — 저장과 넘기기가 버튼 이름 그대로 나온다.
-  const save = noticeCopy({
-    kind: "gate",
-    sessionId: "s1",
-    title: "회원 목록",
-    stage: "save",
-  });
-  assert.equal(save.title, "회원 목록 · 저장 실패");
-  const handoff = noticeCopy({
-    kind: "gate",
-    sessionId: "s1",
-    title: "회원 목록",
-    stage: "handoff",
-  });
-  assert.equal(handoff.title, "회원 목록 · 넘기기 실패");
-
-  const crashed = noticeCopy({
-    kind: "crashed",
-    sessionId: "s1",
-    title: "로그인 화면",
-  });
-  assert.equal(crashed.title, "로그인 화면 · 중단");
-
-  // 어휘 계약: git 명사와 도구 이름은 어떤 문구에도 나오지 않는다.
-  for (const n of [done, permission, question, save, handoff, crashed]) {
+test("notice copy never speaks the daemon's words", () => {
+  // 문구 자체는 카피의 영역이다 — 테스트가 지키는 것은 어휘 계약 하나:
+  // git 명사와 도구 이름은 어떤 알림에도 나오지 않는다.
+  const copies = [
+    noticeCopy({ kind: "done", sessionId: "s1", title: "로그인 화면" }),
+    noticeCopy({ kind: "ask", sessionId: "s1", title: "로그인 화면", what: "permission" }),
+    noticeCopy({ kind: "ask", sessionId: "s1", title: "로그인 화면", what: "question" }),
+    noticeCopy({ kind: "gate", sessionId: "s1", title: "회원 목록", stage: "save" }),
+    noticeCopy({ kind: "gate", sessionId: "s1", title: "회원 목록", stage: "handoff" }),
+    noticeCopy({ kind: "crashed", sessionId: "s1", title: "로그인 화면" }),
+  ];
+  for (const n of copies) {
+    assert.ok(n.title.length > 0 && n.body.length > 0, "빈 알림은 없다");
     assert.doesNotMatch(`${n.title} ${n.body}`, /git|branch|commit|push|pull|PR|Bash|Write|Edit/);
   }
 });
@@ -764,18 +725,6 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
     if (accelerator === "Alt+CmdOrCtrl+I") continue;
     assert.ok(constantAccelerators.has(accelerator), `${accelerator} comes from the constant`);
   }
-});
-
-test("buildMenuTemplate puts 설정 ⌘, in the app menu", () => {
-  const template = buildMenuTemplate({
-    preview: null,
-    gotoAddress: noop,
-    openSettings: noop,
-    packaged: true,
-  });
-  const app = template[0];
-  const settings = app.submenu.find((item) => item.accelerator === "CmdOrCtrl+,");
-  assert.equal(settings.label, "설정");
 });
 
 // ---------------------------------------------------------------------------

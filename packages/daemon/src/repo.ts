@@ -49,16 +49,23 @@ import {
   resolvePnpmExecutable,
 } from "./environment.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
+import {
+  type RepoConfig,
+  type RepoRegistry,
+  readDeclaredPreviewPort,
+  resolveRepoConfig,
+  scopeOf,
+} from "./repo-config.js";
 
 /**
  * The connected repo workspace: a clone of the repo the planner pointed the
- * daemon at, driven by that repo's own `colo-design.json` (install/check/build
- * commands, preview command + port, optional private registry). The daemon
- * clones and pulls it, runs its commands, and frames its preview server —
- * what the preview renders is entirely the repo's business.
+ * daemon at, driven by what that repo already says — its lockfile, its
+ * `package.json` scripts, its `.npmrc` — with `colo-design.json` naming the
+ * preview port and overriding whatever the derivation got wrong (repo-config.ts).
+ * The daemon clones and pulls it, runs its commands, and frames its preview
+ * server — what the preview renders is entirely the repo's business.
  */
 
-const CONFIG_FILE = "colo-design.json";
 /** Reinstall marker, kept inside `.git/` so it travels with the clone only. */
 const INSTALL_MARKER = "colo-design-install-hash";
 /**
@@ -168,6 +175,14 @@ const REFRESH_CONFLICT_DETAIL =
 const RECOVER_CONFLICT_DETAIL =
   "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
+/**
+ * What a 저장 pressed before Claude finished a conflict's cleanup reads —
+ * the unmerged files count as changes awaiting 저장, so the refusal must
+ * name the one thing standing in the way, not leave a silent door.
+ */
+const SAVE_CONFLICT_OPEN_DETAIL =
+  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 Claude가 정리를 마친 뒤 저장해 주세요.";
+
 /** What the planner reads when a repo's commands have not been approved here. */
 const COMMANDS_UNAPPROVED_DETAIL =
   "이 레포가 실행하기로 한 설치 · 미리보기 명령이 아직 승인되지 않았습니다 — 실행 허용을 누르면 준비를 계속합니다.";
@@ -186,115 +201,6 @@ const REGISTRY_AUTH_DETAIL =
   "GitHub 패키지 인증이 필요합니다 — pnpm config set //npm.pkg.github.com/:_authToken <read:packages 권한 PAT>";
 export const REPO_URL_MISSING_DETAIL =
   "연결 레포 주소가 설정되지 않았습니다 — 설정에서 레포 주소를 넣어 주세요.";
-
-// ---------------------------------------------------------------------------
-// colo-design.json contract
-// ---------------------------------------------------------------------------
-
-export interface ColoDesignRegistry {
-  host: string;
-  scope: string;
-}
-
-export interface ColoDesignConfig {
-  install?: string;
-  check?: string;
-  build?: string;
-  preview: { command: string; port: number };
-  registry?: ColoDesignRegistry;
-  /** D56: `false` refuses the handoff's screen captures — no files, no PR section. */
-  shots?: boolean;
-}
-
-/**
- * Parses and validates a repo's `colo-design.json`. Every rejection names the
- * field and what it should be, in Korean: the planner is the one who has to
- * act on it, and "invalid config" is not actionable.
- */
-export function parseColoDesignConfig(source: string): ColoDesignConfig {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(source);
-  } catch (error) {
-    throw new Error(
-      `colo-design.json을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("colo-design.json은 객체여야 합니다");
-  }
-  const config = raw as Record<string, unknown>;
-
-  for (const key of ["install", "check", "build"] as const) {
-    const value = config[key];
-    if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
-      throw new Error(`colo-design.json의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
-    }
-  }
-
-  const preview = config.preview;
-  if (!preview || typeof preview !== "object" || Array.isArray(preview)) {
-    throw new Error(
-      'colo-design.json에 preview가 없습니다 — { "command", "port" }를 적어야 합니다',
-    );
-  }
-  const { command, port } = preview as Record<string, unknown>;
-  if (typeof command !== "string" || command.trim() === "") {
-    throw new Error("colo-design.json의 preview.command가 없습니다 — 미리보기를 띄울 명령입니다");
-  }
-  if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
-    throw new Error(
-      "colo-design.json의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다",
-    );
-  }
-
-  if (config.shots !== undefined && typeof config.shots !== "boolean") {
-    throw new Error("colo-design.json의 shots는 true 또는 false여야 합니다");
-  }
-
-  const common = {
-    ...(typeof config.install === "string" ? { install: config.install } : {}),
-    ...(typeof config.check === "string" ? { check: config.check } : {}),
-    ...(typeof config.build === "string" ? { build: config.build } : {}),
-    ...(config.shots !== undefined ? { shots: config.shots } : {}),
-    preview: { command, port: port as number },
-  };
-
-  const rawRegistry = config.registry;
-  if (rawRegistry === undefined) return common;
-
-  const registry = rawRegistry as Record<string, unknown>;
-  if (
-    typeof registry.host !== "string" ||
-    registry.host.trim() === "" ||
-    typeof registry.scope !== "string" ||
-    registry.scope.trim() === ""
-  ) {
-    throw new Error('colo-design.json의 registry는 { "host", "scope" } 형태여야 합니다');
-  }
-  // The registry line is the one place a connected repo aims the machine's
-  // GitHub PAT: its host lands in ~/.npmrc as `//<host>/:_authToken=<PAT>`.
-  // A repo must not point that at a server of its choosing — GitHub's npm
-  // endpoints (npm.pkg.github.com and its subdomains) only.
-  const host = registry.host.trim().toLowerCase();
-  if (host !== "npm.pkg.github.com" && !host.endsWith(".pkg.github.com")) {
-    throw new Error(
-      "colo-design.json의 registry.host는 GitHub 패키지 호스트(npm.pkg.github.com)여야 합니다",
-    );
-  }
-
-  return { ...common, registry: { host, scope: registry.scope } };
-}
-
-export function readColoDesignConfig(root: string): ColoDesignConfig {
-  const file = join(root, CONFIG_FILE);
-  if (!existsSync(file)) {
-    throw new Error(
-      `colo-design.json이 없습니다 — 연결 레포 루트에 ${CONFIG_FILE}가 있어야 합니다`,
-    );
-  }
-  return parseColoDesignConfig(readFileSync(file, "utf8"));
-}
 
 /**
  * A connected repo can ship Claude Code project settings — and with them
@@ -643,7 +549,7 @@ export class RepoWorkspace {
   private detail: string | null = null;
   /** Set at the failure site, never sniffed back out of `detail` (PLAN D41). */
   private errorKind: RepoErrorKind | null = null;
-  private config: ColoDesignConfig | null = null;
+  private config: RepoConfig | null = null;
   private preview: ChildProcess | null = null;
   /** Counts preview starts — `RepoStatus.previewEpoch` names the process behind the port. */
   private previewEpoch = 0;
@@ -804,11 +710,7 @@ export class RepoWorkspace {
   declaredPreviewPort(): number | null {
     if (this.config) return this.config.preview.port;
     if (!this.isCloned()) return null;
-    try {
-      return readColoDesignConfig(this.root).preview.port;
-    } catch {
-      return null;
-    }
+    return readDeclaredPreviewPort(this.root);
   }
 
   get remoteUrl(): string | null {
@@ -830,8 +732,8 @@ export class RepoWorkspace {
     this.commandsApproved = approved;
   }
 
-  /** The repo's declared private registry, once its colo-design.json was read. */
-  registry(): ColoDesignRegistry | null {
+  /** The repo's private registry, once the clone's config was resolved. */
+  registry(): RepoRegistry | null {
     return this.config?.registry ?? null;
   }
 
@@ -839,7 +741,7 @@ export class RepoWorkspace {
   async status(): Promise<RepoStatus> {
     if (this.isCloned()) {
       try {
-        this.config = readColoDesignConfig(this.root);
+        this.config = resolveRepoConfig(this.root);
       } catch {
         // Keep the last known config; the working phases surface parse errors.
       }
@@ -982,12 +884,16 @@ export class RepoWorkspace {
         // by pressing a button must land as words on the screen, not only in
         // the status detail no card renders while phase stays ready.
         if (opts?.report) throw error;
+        return undefined;
       })
       .finally(() => {
         this.refreshing = null;
       });
     this.refreshing = run;
-    await run;
+    // The outcome is the caller's answer: the 최신화 button's "N건을 받아
+    // 왔습니다" record and the tests both read it. A bare `await run` dropped
+    // it on the floor, leaving that record dead code.
+    return await run;
   }
 
   /**
@@ -1079,6 +985,19 @@ export class RepoWorkspace {
     // The worktree is the review's subject: a session-start refresh still
     // stashing and replaying must settle before the diff is computed.
     await this.refreshing?.catch(() => undefined);
+
+    // A conflict left for Claude is not a save's ingredient: the unmerged
+    // files count as changes awaiting 저장, and staging exactly the approved
+    // paths would make git conclude the open merge (or, after a stash-pop
+    // fight, commit) with the markers themselves baked in — then push them
+    // to the cycle branch. The door reopens when the brief's cleanup lands.
+    if ((await this.mergeInProgress()) || (await this.conflictedFiles()).length > 0) {
+      return this.setDiff({
+        stage: "failed",
+        gate: "diff",
+        detail: SAVE_CONFLICT_OPEN_DETAIL,
+      });
+    }
 
     this.setDiff({ stage: "computing" });
     const files = await this.diff();
@@ -1291,7 +1210,7 @@ export class RepoWorkspace {
   ): Promise<string> {
     if (!shots || shots.length === 0) return body;
     const slug = this.repoSlug();
-    if (!slug || this.coloDesign()?.shots === false) return body;
+    if (!slug || this.repoConfig()?.shots === false) return body;
     const links: string[] = [];
     try {
       // The captures must join the branch the pull request is from — a
@@ -2261,17 +2180,17 @@ export class RepoWorkspace {
         await this.refreshFromRemote();
       }
 
-      let config: ColoDesignConfig;
+      let config: RepoConfig;
       try {
-        config = readColoDesignConfig(this.root);
+        config = resolveRepoConfig(this.root);
       } catch (configError) {
-        // D94: 연결 준비가 요청된 레포 — 막지 말고 Claude 가 계약을 쓰게
-        // 한다. 검증은 validateBootstrapConfig 가 기계로 하고, 벗어나면
-        // 준비는 실패로 끝난다(실행 없음).
+        // D94: 연결 준비가 요청된 레포 — 막지 말고 Claude 가 포트를 적게
+        // 한다. 검증은 validateBootstrapOverrides 가 기계로 하고, 명령이
+        // 적힌 파일은 한 번도 실행되지 않는다.
         if (!this.bootstrapRequested || !this.prepareBootstrap) throw configError;
         this.setPhase("preparing", "Claude 가 레포를 살펴보고 연결을 준비하는 중");
         const ok = await this.prepareBootstrap().catch(() => false);
-        config = readColoDesignConfig(this.root); // 실패면 여기서 다시 던진다
+        config = resolveRepoConfig(this.root); // 실패면 여기서 다시 던진다
         if (!ok) throw new BootstrapPrepareError(BOOTSTRAP_FAILED_DETAIL);
         void configError;
       }
@@ -2348,10 +2267,10 @@ export class RepoWorkspace {
     };
   }
 
-  /** The repo's colo-design.json, when the clone has one (onboarding check). */
-  coloDesign(): ColoDesignConfig | null {
+  /** The contract the clone resolves to — derived commands plus its overrides. */
+  repoConfig(): RepoConfig | null {
     try {
-      return readColoDesignConfig(this.root);
+      return resolveRepoConfig(this.root);
     } catch {
       return null;
     }
@@ -2359,7 +2278,7 @@ export class RepoWorkspace {
 
   /** True when the declared install already ran for the current lockfiles. */
   installUpToDate(): boolean {
-    const config = this.coloDesign();
+    const config = this.repoConfig();
     if (!config?.install) return true;
     if (!existsSync(join(this.root, "node_modules"))) return false;
     return !this.dependenciesMoved();
@@ -2374,7 +2293,7 @@ export class RepoWorkspace {
    * The identity is a content hash of the manifest and lockfiles, recorded
    * inside `.git/` so it belongs to this clone alone.
    */
-  private async installIfNeeded(config: ColoDesignConfig): Promise<boolean> {
+  private async installIfNeeded(config: RepoConfig): Promise<boolean> {
     if (!config.install) return false;
     if (!this.dependenciesMoved()) return false;
 
@@ -2436,7 +2355,7 @@ export class RepoWorkspace {
   // -------------------------------------------------------------------------
   // Preview server
   // -------------------------------------------------------------------------
-  private async startPreview(config: ColoDesignConfig): Promise<void> {
+  private async startPreview(config: RepoConfig): Promise<void> {
     // Second fence, closer to the metal: the window between bootstrap's gate
     // and this spawn is exactly where a fast B→C switch lands. An inactive
     // project must neither kill the port's holder nor START a server of its
@@ -2867,11 +2786,6 @@ export function extraPathPrefix(
   return merged.join(separator);
 }
 
-/** The npm scope form with a leading @, whatever the repo wrote. */
-function scopeOf(registry: ColoDesignRegistry): string {
-  return registry.scope.startsWith("@") ? registry.scope : `@${registry.scope}`;
-}
-
 function detailOf(error: unknown, pat: string | null): string {
   return redact(error instanceof Error ? error.message : String(error), pat);
 }
@@ -3124,6 +3038,10 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
  * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
  * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
  * Claude에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
+ * 의도가 제목을 정한다 (재설계 C10 · 커미티 2차 판정 4): 전부 질문이면 섹션
+ * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 기획자의 질문이 개발자
+ * 에게 변경 지시로 읽혀선 안 된다. 빈 메모는 빈 메모다 (커미티 2차 판정 3):
+ * 턴의 문장을 빌려 오면 한 문장이 N행으로 복제된다.
  */
 export function buildCommentsSection(
   rows: Array<{
@@ -3131,6 +3049,7 @@ export function buildCommentsSection(
     state: string;
     text: string;
     at: string;
+    intent?: "change" | "question";
   }>,
   screenTitle: (screenId: string) => string | null,
   sinceIso: string,
@@ -3149,90 +3068,29 @@ export function buildCommentsSection(
   if (cycle.length === 0) return null;
   const shown = cycle.slice(-max);
   const overflow = cycle.length - shown.length;
+  const questions = shown.filter((row) => row.intent === "question").length;
+  const changes = shown.length - questions;
   const lines = shown.map((row) => {
     const screen = screenTitle(row.screen) ?? row.screen;
     const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
-    return `- ${screen} · ${state} — "${row.text}"`;
+    const ask = row.intent === "question" ? " (질문)" : "";
+    const words = row.text ? `"${row.text}"` : "(메모 없음)";
+    return `- ${screen} · ${state}${ask} — ${words}`;
   });
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
-  return `### 수정 요청\n\n기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.\n\n${lines.join("\n")}${tail}\n`;
-}
-
-// ---------------------------------------------------------------------------
-// 연결 준비 (PLAN D94) — Claude 가 쓴 설정을 기계 검증하는 울타리. 벗어난
-// 명령은 한 번도 실행되지 않는다: "그래도 실행" 버튼은 없다.
-// ---------------------------------------------------------------------------
-
-/** Claude 가 쓴 연결 설정이 이 도구의 울타리 안에 있는지 판정하는 입력. */
-export interface BootstrapValidationInput {
-  config: {
-    install?: string;
-    check?: string;
-    build?: string;
-    preview?: { command: string; port: number };
-  };
-  /** package.json 의 scripts — 허용된 스크립트의 유일한 출처다. */
-  packageScripts: Record<string, unknown>;
-  /** 락파일이 정하는 설치 명령 — 없으면 pnpm 이 기본이다. */
-  lockfile: "pnpm-lock.yaml" | "package-lock.json" | "yarn.lock" | null;
-}
-
-const LOCKFILE_INSTALL: Record<string, string> = {
-  "pnpm-lock.yaml": "pnpm install",
-  "package-lock.json": "npm ci",
-  "yarn.lock": "yarn install",
-};
-
-/**
- * `pnpm run dev` · `pnpm dev` · `npm run dev` 꼴만 허용한다 — scripts 에 있는
- * 스크립트 이름만 뒤에 붙을 수 있고, 그 외의 문자는 전부 거부다.
- */
-export function validateBootstrapConfig(input: BootstrapValidationInput): string | null {
-  const { config, packageScripts, lockfile } = input;
-  const expectedInstall = LOCKFILE_INSTALL[lockfile ?? "pnpm-lock.yaml"];
-  if (config.install !== expectedInstall) {
-    return `install 명령이 락파일과 맞지 않습니다 — "${expectedInstall}" 이어야 합니다.`;
-  }
-  const scriptGate = (label: string, raw: string | undefined): string | null => {
-    if (!raw) return null;
-    const words = raw.trim().split(/\s+/);
-    if (words.length === 0 || words.length > 3) {
-      return `${label} 명령이 허용된 꼴이 아닙니다 — "<pm> [run] <script>" 만 허용됩니다.`;
-    }
-    const [pm, second, third] = words;
-    if (!pm || !["pnpm", "npm", "yarn", "bun"].includes(pm)) {
-      return `${label} 명령의 실행 도구(${pm ?? "(없음)"})는 허용되지 않습니다 — pnpm · npm · yarn · bun 만 됩니다.`;
-    }
-    let scriptName: string | undefined;
-    if (words.length === 3) {
-      if (second !== "run") {
-        return `${label} 명령이 허용된 꼴이 아닙니다 — "<pm> run <script>" 이어야 합니다.`;
-      }
-      scriptName = third;
-    } else {
-      scriptName = second;
-    }
-    if (typeof scriptName !== "string" || !(scriptName in packageScripts)) {
-      return `${label} 명령의 스크립트(${String(scriptName)})가 package.json 의 scripts 에 없습니다.`;
-    }
-    return null;
-  };
-  for (const [label, raw] of [
-    ["check", config.check],
-    ["build", config.build],
-  ] as const) {
-    const problem = scriptGate(label, raw);
-    if (problem) return problem;
-  }
-  if (config.preview) {
-    const problem = scriptGate("preview", config.preview.command);
-    if (problem) return problem;
-    const port = config.preview.port;
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      return "preview.port 는 1~65535 사이의 포트여야 합니다.";
-    }
-  }
-  return null;
+  const title =
+    questions > 0 && changes === 0
+      ? "### 질문"
+      : questions > 0
+        ? "### 수정 요청 · 질문"
+        : "### 수정 요청";
+  const lead =
+    questions > 0 && changes === 0
+      ? "기획자가 미리보기에서 찍어 Claude에게 보낸 질문입니다."
+      : questions > 0
+        ? "기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청과 질문입니다."
+        : "기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.";
+  return `${title}\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }
 
 /** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */

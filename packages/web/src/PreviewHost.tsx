@@ -1,4 +1,8 @@
-import type { ColoDesignCommentsEnvelope, ColoDesignScreen } from "@colo-design/protocol";
+import type {
+  ColoDesignPinEnvelope,
+  ColoDesignPinsSync,
+  ColoDesignScreen,
+} from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { daemonLine, stateLabel } from "./format";
 import { IframeHost } from "./IframeHost";
@@ -8,10 +12,12 @@ import {
   DesktopIcon,
   ExternalLinkIcon,
   LockIcon,
+  MapPinIcon,
   MobileIcon,
   RefreshIcon,
   RestartIcon,
   ServerOffIcon,
+  TabletIcon,
 } from "./icons";
 import { NativeHost } from "./NativeHost";
 import { parseAddress } from "./preview-address";
@@ -70,7 +76,9 @@ export function PreviewHost({
   stopped,
   stoppedDetail,
   onRestart,
-  onComments,
+  onPinFocus,
+  sync,
+  onPin,
   onFixError,
   screens,
   target,
@@ -94,8 +102,12 @@ export function PreviewHost({
   /** Why it is not running, in the daemon's own words. */
   stoppedDetail?: string | null;
   onRestart: () => void;
-  /** A pin bundle from the tool's overlay (D67) — the native path only. */
-  onComments: (envelope: ColoDesignCommentsEnvelope) => void;
+  /** The live pins (재설계 C1) — NativeHost projects them onto the overlay. */
+  sync: ColoDesignPinsSync;
+  /** A pin landed from the overlay; the workspace's usePins owns the list. */
+  onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
+  /** 배지 클릭 — the memo input of that pin's tray row takes the focus. */
+  onPinFocus: (id: string) => void;
   /** The banner's `Claude에게 고쳐 달라고 하기` (PLAN D49). */
   onFixError: (error: PreviewError) => void;
   /** Screens the repo declared — empty until the bridge speaks. */
@@ -354,12 +366,12 @@ export function PreviewHost({
             aria-pressed={commentsOn}
             title={
               commentsOn
-                ? "핀만 찍는 모드를 끕니다"
-                : "핀만 찍는 모드 — 클릭이 화면에 전달되지 않습니다. ⌥+클릭은 언제든 핀을 찍습니다"
+                ? "핀 모드를 끕니다"
+                : "핀 모드 — 클릭이 화면에 전달되지 않고 핀만 찍힙니다. ⌥+클릭은 언제든 핀을 찍습니다"
             }
             onClick={() => onCommentsMode(!commentsOn)}
           >
-            💬 코멘트
+            <MapPinIcon />핀
           </button>
         )}
         <div className="preview__width" role="group" aria-label="폭">
@@ -384,6 +396,7 @@ export function PreviewHost({
             title="태블릿 폭(768px)으로 봅니다"
             onClick={() => setWidth("tablet")}
           >
+            <TabletIcon />
             태블릿
           </button>
           <button
@@ -661,7 +674,9 @@ export function PreviewHost({
               commentsOn={commentsOn}
               onLocation={onLocation}
               onScreens={onScreens}
-              onComments={onComments}
+              sync={sync}
+              onPin={onPin}
+              onPinFocus={onPinFocus}
               onError={(payload) =>
                 setError({
                   ...payload,

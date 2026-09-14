@@ -1,3 +1,4 @@
+import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { contextBridge, ipcRenderer } from "electron";
 
 /**
@@ -53,11 +54,10 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
     emulate: (width: "mobile" | "tablet" | null) =>
       ipcRenderer.invoke("preview:emulate", { width }),
-    /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
-    busy: (on: boolean) => ipcRenderer.invoke("preview:busy", { on }),
-    /** 전송 결과를 오버레이에 되돌려 준다 (PLAN D35): 핀은 턴이 내려앉은 뒤에만 화면을 떠난다. */
-    commentsSent: (payload: { batch: string; ok: boolean; shots: number; items: number }) =>
-      ipcRenderer.invoke("preview:comments-sent", payload),
+    /** 핀 동기화 (재설계 C1): the web's whole pin list — the overlay redraws its badges from it. */
+    pins: (sync: ColoDesignPinsSync) => ipcRenderer.invoke("preview:pins", sync),
+    /** 칩 클릭 (재설계 C1) — the matching badge on the page flashes. */
+    pinFlash: (id: string) => ipcRenderer.invoke("preview:pin-flash", { id }),
     /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
     snapshot: () => ipcRenderer.invoke("preview:snapshot"),
     /**
@@ -74,7 +74,8 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       canGoForward: boolean;
     }>("colo-preview:location"),
     onScreens: subscribe<{ screens: unknown[] }>("colo-preview:screens"),
-    onComments: subscribe<unknown>("colo-preview:comments"),
+    onPin: subscribe<ColoDesignPinEnvelope>("colo-preview:pin"),
+    onPinFocus: subscribe<{ id: string }>("colo-preview:pin-focus"),
     onError: subscribe<{
       kind: string;
       message: string;
@@ -82,7 +83,7 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       state: string;
     }>("colo-preview:error"),
     onFreeze: subscribe<string>("colo-preview:freeze"),
-    onKey: subscribe<{ key: string; meta: boolean }>("colo-preview:key"),
+    onKey: subscribe<{ key: string; meta: boolean; shift: boolean }>("colo-preview:key"),
     onLoading: subscribe<{ on: boolean }>("colo-preview:loading"),
     /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
     onZoom: subscribe<{ factor: number }>("colo-preview:zoom"),

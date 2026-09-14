@@ -1,6 +1,6 @@
 import type { ColoDesignScreen, ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { FolderIcon, GearIcon, PlusIcon } from "./icons";
+import { FolderIcon, GearIcon, PlusIcon, SearchIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
@@ -266,6 +266,11 @@ export function Palette({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // An IME owns every keydown until its composition ends — Enter commits
+    // the hangul (isComposing, legacy keyCode 229), the arrows walk the
+    // candidate window. Reacting to any of them would run a half-typed
+    // search or close the palette mid-word (커미티 F-C1, 2026-09-14).
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setHighlight(Math.min(index + 1, rows.length - 1));
@@ -284,26 +289,36 @@ export function Palette({
   return (
     <div className="palette" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="palette__panel" ref={panelRef}>
-        <input
-          ref={searchRef}
-          className="palette__search"
-          value={query}
-          placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
-          aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="palette-list"
-          aria-activedescendant={rows[index] ? `palette-opt-${index}` : undefined}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setHighlight(0);
-          }}
-          onKeyDown={onKeyDown}
-        />
+        <div className="palette__searchrow">
+          <SearchIcon />
+          <input
+            ref={searchRef}
+            className="palette__search"
+            value={query}
+            placeholder={
+              projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"
+            }
+            aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="palette-list"
+            aria-activedescendant={rows[index] ? `palette-opt-${index}` : undefined}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setHighlight(0);
+            }}
+            onKeyDown={onKeyDown}
+          />
+        </div>
         {error && <p className="notice notice--error palette__error">{error}</p>}
         <ul className="palette__list" id="palette-list" role="listbox" ref={listRef}>
           {rows.length === 0 && (
-            <li className="palette__empty">&apos;{query.trim()}&apos;와 맞는 것이 없습니다.</li>
+            <li className="menuempty">
+              <span className="ic">
+                <SearchIcon />
+              </span>
+              <span>&apos;{query.trim()}&apos;와 맞는 것이 없습니다.</span>
+            </li>
           )}
           {rows.map((row, i) => {
             const header = i === 0 || rows[i - 1]?.group !== row.group ? row.group : null;

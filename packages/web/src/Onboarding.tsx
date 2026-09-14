@@ -1,7 +1,17 @@
 import type { OnboardingStep, OnboardingStepId, PermissionMode } from "@colo-design/protocol";
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, type ReactElement, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
+import {
+  BrainIcon,
+  BranchIcon,
+  CheckIcon,
+  CloseIcon,
+  KeyIcon,
+  PlugIcon,
+  ShieldIcon,
+  WarnIcon,
+} from "./icons";
 
 /**
  * The first-run wizard (DESIGN §8): machine gates answered once — Claude
@@ -23,10 +33,11 @@ const STEP_TITLE: Record<OnboardingStepId, string> = {
   github: "GitHub",
 };
 
-const STATUS_GLYPH: Record<OnboardingStep["status"], string> = {
-  pass: "✓",
-  warn: "!",
-  fail: "✗",
+/** Each gate status's glyph — the seat already carries its tone colour. */
+const STATUS_ICON: Record<OnboardingStep["status"], ReactElement> = {
+  pass: <CheckIcon />,
+  warn: <WarnIcon />,
+  fail: <CloseIcon />,
 };
 
 /** 한 번 확인 방식을 고른 표식 — 다음 마법사부터는 저장된 값을 띄운다. */
@@ -35,6 +46,14 @@ const STATUS_LABEL: Record<OnboardingStep["status"], string> = {
   pass: "통과",
   warn: "주의",
   fail: "실패",
+};
+
+/** Each gate row's subject — the quiet tile that names what the row is about. */
+const STEP_ICON: Record<OnboardingStepId, ReactElement> = {
+  claude: <BrainIcon />,
+  git: <BranchIcon />,
+  runtime: <PlugIcon />,
+  github: <KeyIcon />,
 };
 
 export function Onboarding({
@@ -165,8 +184,9 @@ export function Onboarding({
               style={{ "--i": STEP_ORDER.indexOf(id) } as CSSProperties}
             >
               <div className="onboarding__stephead">
+                <span className="ic ic--sm ic--quiet">{STEP_ICON[id]}</span>
                 <span className={`onboarding__glyph onboarding__glyph--${step.status}`}>
-                  {STATUS_GLYPH[step.status]}
+                  {STATUS_ICON[step.status]}
                 </span>
                 <span className="onboarding__stepnum">{STEP_ORDER.indexOf(id) + 1}</span>
                 <h2>{STEP_TITLE[id]}</h2>
@@ -254,7 +274,12 @@ export function Onboarding({
 
       {!blocked && steps.length > 0 && (
         <div className="onboarding__confirm">
-          <h2 className="onboarding__confirmTitle">Claude가 일을 실행하기 전에 물어볼까요?</h2>
+          <h2 className="onboarding__confirmTitle">
+            <span className="ic ic--sm ic--quiet">
+              <ShieldIcon />
+            </span>
+            Claude가 일을 실행하기 전에 물어볼까요?
+          </h2>
           <div className="onboarding__cards">
             <button
               type="button"

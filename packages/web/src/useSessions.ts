@@ -102,7 +102,17 @@ export interface Sessions {
   cancelRemove: () => void;
   /** The dialog's 지우기 — actually deletes and refreshes. */
   acceptRemove: () => Promise<void>;
-  submit: (text: string, attachments: Attachment[], planFirst?: boolean) => Promise<void>;
+  /**
+   * The composer's send. `thread.name` names a thread created BY this send —
+   * a first send that opens one (핀으로 열리는 대화는 첫 핀의 화면 이름을
+   * 얻는다, 재설계 C2/M5); an existing target ignores it.
+   */
+  submit: (
+    text: string,
+    attachments: Attachment[],
+    planFirst?: boolean,
+    thread?: { name?: string },
+  ) => Promise<void>;
   /**
    * 계획 승인의 뒷정리: 데몬이 작업 모드로 되돌린 직후, 칩과 대화의 권한
    * 선택을 그 진실에 맞춘다. 계획만 세우기로 세워진 대화는 승인 한 번으로
@@ -489,9 +499,9 @@ export function useSessions(
    * `wanted` pins the destination (the id a caller just created) — without it
    * the fallback reads `activeId`, which a closure captured before that
    * create's setState landed and would open a second, nameless thread. */
-  const targetSession = async (wanted?: string): Promise<string> => {
+  const targetSession = async (wanted?: string, name?: string): Promise<string> => {
     const id = wanted ?? activeId;
-    if (!id) return await startSession();
+    if (!id) return await startSession(undefined, name);
     // A stored thread the planner picked from the list: continue it in place.
     // Forking is a developer's concern, not theirs.
     //
@@ -571,9 +581,14 @@ export function useSessions(
    */
   const planTurn = useRef<string | null>(null);
 
-  const submit = async (text: string, attachments: Attachment[], planFirst = false) => {
+  const submit = async (
+    text: string,
+    attachments: Attachment[],
+    planFirst = false,
+    thread?: { name?: string },
+  ) => {
     try {
-      const target = await targetSession();
+      const target = await targetSession(undefined, thread?.name);
       if (planFirst) {
         // 계획 먼저 (이번 턴 한정): 전송 전에 계획 자세로 들어가고, 승인되면
         // 데몬이 작업 모드로 되돌린다. 승인 없이 턴이 끝나면 아래의 종료

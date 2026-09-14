@@ -32,7 +32,6 @@ test("realpathBestEffort resolves what exists and appends what does not", () => 
     mkdirSync(join(dir, "a", "b"), { recursive: true });
     // On macOS the tmpdir has two spellings; the resolved form is canonical.
     const real = realpathBestEffort(join(dir, "a", "b"));
-    assert.ok(!real.startsWith("/var/folders") || true); // sanity: no assertion on host layout
     assert.equal(realpathBestEffort(join(dir, "a", "b", "not-yet.md")), join(real, "not-yet.md"));
     assert.equal(
       realpathBestEffort(join(dir, "a", "b", "deep", "deeper", "file.md")),

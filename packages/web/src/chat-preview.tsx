@@ -91,7 +91,7 @@ const blocks: Block[] = [
     subtype: "success",
     isError: false,
     costUsd: null,
-    durationMs: null,
+    durationMs: 42_000,
     resultText: null,
   },
 ];
@@ -242,7 +242,7 @@ function PlannerShell({
       <Composer
         disabled={false}
         draftKey="preview"
-        placeholder="메시지를 보내거나 @files 태그, /commands 를 사용하세요"
+        placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
         usage={{
           totalTokens: 106_000,
           maxTokens: 1_000_000,
@@ -259,7 +259,7 @@ function PlannerShell({
         }}
         suggestion={live ? null : "정지 회원 안내 문구를 Alert 로 바꿔 줄까요?"}
         onDismissSuggestion={() => undefined}
-        activity={live ? { status: "requesting", thinkingTokens: 1840 } : undefined}
+        activity={live ? { status: "requesting" } : undefined}
         turnStartedAt={live ? startedAt : null}
         tasks={live ? [{ taskId: "task_2", type: "shell", description: "pnpm -s build" }] : []}
         onStopTask={() => undefined}
@@ -310,7 +310,7 @@ function Preview() {
   const [showThinking, setShowThinking] = useState(false);
   /** 설정의 `작업 과정 보기` 자리 — 활동 카드의 모양을 여기서도 본다. */
   const [showTools, setShowTools] = useState(false);
-  /** 첫 초 surface 의 진행 시계 — 방금 보낸 요청이 세는 자리. */
+  /** 첫 초 surface 의 진행 시계 — 입력창 위 한 줄에서 방금 보낸 요청이 센다. */
   const [sentAt] = useState(() => Date.now());
   document.documentElement.dataset.theme = theme;
   return (
@@ -372,7 +372,7 @@ function Preview() {
                 <Composer
                   disabled={false}
                   draftKey="preview-live"
-                  placeholder="메시지를 보내거나 @files 태그, /commands 를 사용하세요"
+                  placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
                   usage={{
                     totalTokens: 178_000,
                     maxTokens: 200_000,

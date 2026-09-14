@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { Fold } from "./components";
 import type { Daemon } from "./daemon-client";
+import { WarnIcon } from "./icons";
 import { Onboarding } from "./Onboarding";
 import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
 import { RepoPicker } from "./RepoPicker";
@@ -253,6 +254,7 @@ export function Shell({
     >
       <Sidebar
         daemon={daemon}
+        commonInstructions={status?.commonInstructions ?? null}
         collapsed={collapsed}
         collapsedByViewport={narrow}
         onToggleCollapsed={() => {
@@ -361,6 +363,9 @@ export function Shell({
                 }}
               >
                 <div className="notice notice--warn">
+                  <span className="ic ic--sm ic--warn">
+                    <WarnIcon />
+                  </span>
                   <span className="notice__text">{warning.text}</span>
                   <button
                     type="button"
@@ -376,6 +381,9 @@ export function Shell({
             ))}
             {loggedOut && (
               <div className="notice notice--warn">
+                <span className="ic ic--sm ic--warn">
+                  <WarnIcon />
+                </span>
                 <span className="notice__text">
                   {loginGuidance ?? "Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다."}
                 </span>

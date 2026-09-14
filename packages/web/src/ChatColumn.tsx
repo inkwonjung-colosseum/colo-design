@@ -1,18 +1,22 @@
 import type { ColoDesignScreen, SessionSummary } from "@colo-design/protocol";
-import { useEffect, useRef, useState } from "react";
-import { Composer } from "./Composer";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type Attachment, Composer } from "./Composer";
 import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "./components";
 import type { Daemon } from "./daemon-client";
-import { ChevronDownIcon } from "./icons";
+import { ChevronDownIcon, PencilIcon, TrashIcon } from "./icons";
+import { pinsToTurn } from "./preview-turns";
 import type { MidTurnSend, SendKey } from "./settings";
 import { suggestionsFromScreens } from "./suggestions";
 import { blockOnTape } from "./tape-visibility";
 import { PLAN_TOOL } from "./tool-names";
+import type { Pins } from "./usePins";
 import type { Sessions } from "./useSessions";
 
 /**
  * The middle column: one transcript, the cards that interrupt it, and the
- * composer under it. Everything about the session arrives as one `Sessions`.
+ * composer under it. Everything about the session arrives as one `Sessions`;
+ * the composer's pin attachments (재설계 C1) arrive as one `Pins` and leave
+ * as one turn (C2).
  */
 export function ChatColumn({
   daemon,
@@ -27,6 +31,8 @@ export function ChatColumn({
   screens,
   showThinking,
   showTools,
+  pins,
+  focusPinId,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -48,8 +54,18 @@ export function ChatColumn({
   showThinking: boolean;
   /** 작업 과정 보기 (설정) — 꺼져 있으면 도구 호출 묶음도 테이프에서 빠진다. */
   showTools: boolean;
+  /** The workspace's pins (재설계 C1) — sent with the turn, cleared by markSent. */
+  pins: Pins;
+  /** 배지 클릭 → 그 핀 행의 메모 입력 (PageWorkspace 가 흔든 상태). */
+  focusPinId: { id: string; nonce: number } | null;
 }) {
   const { api, pending, resolvePending } = daemon;
+  // The route id a pin carries → what the repo called the screen; the card,
+  // the thread name and the tray rows all read this one rule (재설계 §3.6).
+  const titleForScreen = useCallback(
+    (screen: string) => screens.find((s) => s.route === `/${screen}`)?.title ?? screen,
+    [screens],
+  );
   // 계획 먼저 (이번 턴 한정): armed 는 한 번의 보내기로 소비되고, 대화가
   // 바뀌면 자리를 비운다 — 다른 대화에 남의 자세가 묻지 않게.
   const [planArmed, setPlanArmed] = useState(false);
@@ -66,6 +82,20 @@ export function ChatColumn({
   });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
+  // 다시 보내기 이중 실행 가드 (커미티 F-C2): the failed-turn card's button
+  // walks straight into sessions.submit, not the composer — a double click
+  // would resend the same words twice while the first is still in flight.
+  const retrying = useRef(false);
+  const retry = (text: string) => {
+    if (retrying.current) return;
+    retrying.current = true;
+    sessions
+      .submit(text, [])
+      .catch(() => undefined)
+      .finally(() => {
+        retrying.current = false;
+      });
+  };
   const { active, activeId, error, setError } = sessions;
   /** 닫힘은 접힘이다(Fold) — 오류 줄 자체는 useSessions 의 데이터라 여기서
       접는 중만 간직한다. 새 오류는 접는 중이라도 다시 편다. */
@@ -229,6 +259,9 @@ export function ChatColumn({
               onChange={(event) => setDraft(event.target.value)}
               onBlur={commitRename}
               onKeyDown={(event) => {
+                // Enter that commits the hangul must not also commit the
+                // rename (isComposing, legacy keyCode 229 — 커미티 F-C1).
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                 if (event.key === "Enter") commitRename();
                 if (event.key === "Escape") setRenaming(false);
               }}
@@ -277,6 +310,9 @@ export function ChatColumn({
                   className="selector__row"
                   onClick={beginRename}
                 >
+                  <span className="ic">
+                    <PencilIcon />
+                  </span>
                   <span className="selector__label">이름 바꾸기</span>
                 </button>
                 <button
@@ -288,6 +324,9 @@ export function ChatColumn({
                     onDeleteSession(activeSummary);
                   }}
                 >
+                  <span className="ic ic--danger">
+                    <TrashIcon />
+                  </span>
                   <span className="selector__label">지우기</span>
                 </button>
               </span>
@@ -335,7 +374,7 @@ export function ChatColumn({
           <Transcript
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
-            onRetry={(text) => sessions.submit(text, []).catch(() => undefined)}
+            onRetry={retry}
             starters={suggestionsFromScreens(screens)}
             onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
@@ -449,12 +488,48 @@ export function ChatColumn({
         midTurnSend={midTurnSend}
         planArmed={planArmed}
         onTogglePlanArmed={() => setPlanArmed((v) => !v)}
-        onSend={(text, attachments) => {
-          const sent = sessions.submit(text, attachments, planArmed);
+        onSend={async (text, attachments, sentPins) => {
+          // 핀과 문장은 한 턴으로 (재설계 C2): 본문이 목록을 실은 마커 턴이
+          // 되고, 크롭은 이미지로 그대로 간다. 크롭을 첨부 맨 앞에 세운 것은
+          // 데몬 thumbs(앞 6장 JPEG)가 카드 썸네일이 되기 때문이다.
+          const pinImages: Attachment[] = sentPins.slice(0, 6).flatMap((pin) =>
+            pin.shot
+              ? [
+                  {
+                    kind: "image" as const,
+                    name: `핀 ${pin.element.text || pin.element.component}`,
+                    mediaType: pin.shot.mediaType,
+                    data: pin.shot.data,
+                    size: 0,
+                  },
+                ]
+              : [],
+          );
+          // 핀으로 처음 열리는 대화는 첫 핀의 화면 이름을 얻는다 (M5).
+          const name =
+            !sessions.activeId && sentPins.length > 0
+              ? (titleForScreen(sentPins[0]!.screen) ?? undefined)
+              : undefined;
+          await sessions.submit(
+            sentPins.length > 0 ? pinsToTurn(sentPins, text, titleForScreen) : text,
+            [...pinImages, ...attachments],
+            planArmed,
+            { name },
+          );
           // 칩은 한 번의 보내기로 소비된다 — 다음 턴의 자세는 다시 고른다.
           if (planArmed) setPlanArmed(false);
-          return sent;
+          // 턴이 나갔으면 핀을 기록하고 비운다 — 실패해도 턴은 이미 나갔다.
+          if (sentPins.length > 0) void pins.markSent(sentPins);
         }}
+        pins={pins.list}
+        pinNumberStart={pins.ghosts.length + 1}
+        focusPinId={focusPinId}
+        titleForScreen={titleForScreen}
+        onPinRemove={pins.remove}
+        onPinNote={pins.setNote}
+        onPinIntent={pins.setIntent}
+        // 행 클릭 → 오버레이 배지 강조 (재설계 §3.9).
+        onPinFocus={(id) => void window.coloDesignDesktop?.preview?.pinFlash?.(id)}
         onInterrupt={stop}
         onFindFiles={(query) => api.findFiles(query)}
       />

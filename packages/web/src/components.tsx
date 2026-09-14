@@ -23,7 +23,7 @@ const TAPE_LINES: Record<string, string> = {
   "No response requested.": "응답이 필요 없는 차례였습니다",
 };
 
-/** The repo's own colo-design.json commands, as RepoStatus carries them. */
+/** The commands the clone resolved to, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
 
 // ---------------------------------------------------------------------------
@@ -596,15 +596,29 @@ function MachineTurn({
   const aligned = marker.kind === "comments" ? alignThumbs(marker.items, thumbs) : null;
 
   switch (marker.kind) {
-    case "comments":
-      title = `수정 요청 ${marker.items.length}건`;
+    case "comments": {
+      // 의도가 제목을 정한다 (재설계 C10): absent reads as change, so older
+      // markers keep the 수정 요청 title they were written with.
+      const questions = marker.items.filter((item) => item.intent === "question").length;
+      const changes = marker.items.length - questions;
+      title =
+        questions === 0
+          ? `수정 요청 ${marker.items.length}건`
+          : changes === 0
+            ? `질문 ${marker.items.length}건`
+            : `수정 ${changes} · 질문 ${questions}`;
       lead = [marker.screen, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
-      rows = marker.items.map((item, index) => ({
-        key: String(index),
-        label: item.label || `${index + 1}번째`,
-        text: item.comment,
-      }));
+      rows = marker.items.map((item, index) => {
+        // 여러 화면을 한 턴에 찍은 배치는 머리글이 화면 N곳 요약이라 —
+        // 행마다 각자의 화면을 새긴다 (재설계 C6).
+        const label =
+          item.screen && marker.screen.startsWith("화면 ")
+            ? `${item.label || `${index + 1}번째`} · ${item.screen}`
+            : item.label || `${index + 1}번째`;
+        return { key: String(index), label, text: item.comment };
+      });
       break;
+    }
     case "brief":
       // D94: the connection-preparation brief reads as its own thing.
       title =
@@ -612,7 +626,9 @@ function MachineTurn({
           ? "연결 준비"
           : marker.purpose === "refresh"
             ? "최신 변경 받아오기"
-            : "이 기획서로 화면 만들기";
+            : marker.purpose === "conventions"
+              ? "관례 최신화"
+              : "이 기획서로 화면 만들기";
       lead = marker.title;
       break;
     case "gate":
@@ -647,6 +663,8 @@ function MachineTurn({
         <span className="machine__title">{title}</span>
         {lead && <span className="machine__lead">{lead}</span>}
       </div>
+      {/* The planner's own sentence (재설계 C2) — the card carries it above the rows. */}
+      {marker.kind === "comments" && marker.note && <p className="machine__note">{marker.note}</p>}
       {rows.length > 0 && (
         <ul className="machine__rows">
           {rows.map((row, index) => (
@@ -825,7 +843,7 @@ function FailedTurn({
       </div>
       <div className="turnfail__actions">
         {!limit && onRetry && retryText && (
-          <button type="button" className="primary" onClick={() => onRetry(retryText)}>
+          <button type="button" className="turnfail__retry" onClick={() => onRetry(retryText)}>
             다시 보내기
           </button>
         )}
@@ -853,6 +871,22 @@ function lastUserText(blocks: Block[]): string | null {
     }
   }
   return null;
+}
+
+/** The one failed turn whose card still owns `다시 보내기` (커미티 F-B3,
+ * 2026-09-14): only the LAST failure. An older card's button used to carry
+ * lastUserText too — resending the newest words under an old card's promise. */
+function isLastFailedTurn(blocks: Block[], block: Block): boolean {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const candidate = blocks[index];
+    if (
+      candidate?.type === "turn" &&
+      (candidate.isError || (candidate.subtype !== "" && candidate.subtype !== "success"))
+    ) {
+      return candidate.id === block.id;
+    }
+  }
+  return false;
 }
 
 export function Transcript({
@@ -1122,17 +1156,19 @@ export function Transcript({
           // their words would otherwise just hang there, unanswered. A settled
           // turn keeps one quiet line (리뷰 B4) — the waiting it cost is the
           // planner's own accounting, and the only scale they can judge the
-          // next spinner against. Cost stays invisible.
+          // next spinner against. 도는 동안의 시계는 입력창 위 한 줄(Composer)이
+          // 들고 있다가, 턴이 끝나면 이 줄의 `걸렸습니다`로 멈춘다.
+          // Cost stays invisible.
           case "turn":
             return block.isError || (block.subtype !== "" && block.subtype !== "success") ? (
               <FailedTurn
                 key={block.id}
                 subtype={block.subtype}
                 resultText={block.resultText}
-                retryText={lastUserText(blocks)}
+                retryText={isLastFailedTurn(blocks, block) ? lastUserText(blocks) : null}
                 onRetry={onRetry}
               />
-            ) : block.durationMs != null && block.durationMs >= 60_000 ? (
+            ) : block.durationMs != null ? (
               <div key={block.id} className="turndone">
                 {waitedFor(block.durationMs)} 걸렸습니다
               </div>
@@ -1232,7 +1268,7 @@ export function PermissionCard({
 }: {
   request: PendingPermission;
   onRespond: (decision: "allow" | "allowAlways" | "deny", message?: string) => void;
-  /** The repo's colo-design.json commands, for naming Bash calls (PLAN D37). */
+  /** The repo's resolved commands, for naming Bash calls (PLAN D37). */
   commands?: RepoCommands;
 }) {
   const [reason, setReason] = useState("");

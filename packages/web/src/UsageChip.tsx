@@ -8,6 +8,7 @@
 
 import type { PlanUsage } from "@colo-design/protocol";
 import { useEffect, useState } from "react";
+import { GaugeIcon } from "./icons";
 
 /**
  * "언제 끝나나" reads best as time left, and one unit is enough on a chip —
@@ -197,7 +198,12 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
       {open && (
         <span className="selector__menu usage__menu" role="dialog" aria-label="사용량">
           <span className="usage__head">
-            <span className="usage__title">사용량</span>
+            <span className="usage__title">
+              <span className="ic ic--sm ic--quiet">
+                <GaugeIcon />
+              </span>{" "}
+              사용량
+            </span>
             <span className={overall ? `usage__state usage__state--${overall}` : "usage__state"}>
               <i className="usage__statedot" aria-hidden />
               {worst.pct >= 85 ? "거의 찼어요" : worst.pct >= 60 ? "차오르는 중" : "여유로워요"}

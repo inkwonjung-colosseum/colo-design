@@ -299,7 +299,6 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
     case "tasks":
     case "suggestion":
     case "status":
-    case "thinking.tokens":
     case "shutdown":
     case "ratelimit":
       // D91: `preview.opened` is not a transcript event — the session view
@@ -341,20 +340,18 @@ function applyEvent(view: SessionView, event: ChatEvent): SessionView {
       return { ...view, suggestion: event.text };
     case "status":
       return { ...view, activity: { ...view.activity, status: event.status } };
-    case "thinking.tokens":
-      return { ...view, activity: { ...view.activity, thinkingTokens: event.tokens } };
     case "user.echo":
       // 보낸 순간 앞 턴의 칩과 진행 눈금은 지나간 말이 된다.
       return {
         ...view,
         suggestion: null,
-        activity: { status: null, thinkingTokens: 0 },
+        activity: { status: null },
         blocks: foldEvent(view.blocks, event),
       };
     case "turn.end":
       return {
         ...view,
-        activity: { status: null, thinkingTokens: 0 },
+        activity: { status: null },
         blocks: foldEvent(view.blocks, event),
       };
     default:
@@ -420,10 +417,10 @@ interface SessionView {
    */
   suggestion: string | null;
   /**
-   * 답이 나오기 전의 진행 (PLAN D100): 정리 중인지 · 답을 기다리는지, 그리고
-   * 생각에 쓴 토큰의 어림. 생각 과정을 끈 기본값에서 유일한 "돌고 있음"이다.
+   * 답이 나오기 전의 진행 (PLAN D100): 정리 중인지 · 답을 기다리는지.
+   * 생각 과정을 끈 기본값에서 유일한 "돌고 있음"이다.
    */
-  activity: { status: "compacting" | "requesting" | null; thinkingTokens: number };
+  activity: { status: "compacting" | "requesting" | null };
   /**
    * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 입력창의 진행
    * 시계가 읽는 자리. 창의 기억이 아니라 데몬의 것이다: 새로고침해도, 두 번째
@@ -441,7 +438,7 @@ const EMPTY_SESSION: SessionView = {
   dropped: [],
   tasks: [],
   suggestion: null,
-  activity: { status: null, thinkingTokens: 0 },
+  activity: { status: null },
   turnStartedAt: null,
 };
 
@@ -559,6 +556,8 @@ interface DaemonApi {
   ) => Promise<ProjectList>;
   /** Switch the active project; the outgoing preview stays warm unless its port is needed. */
   projectActivate: (slug: string) => Promise<ProjectList>;
+  /** 관례 최신화(커미티 2026-09-14) — starts the conventions refresh brief turn. */
+  projectRefreshConventions: (slug: string) => Promise<{ sessionId: string }>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
   repoStatus: () => Promise<RepoStatus>;
@@ -632,11 +631,16 @@ interface DaemonApi {
    * so every row is born resolved and the store is an append-only log.
    */
   recordComments: (input: {
-    screen: string;
-    state: string;
     items: Array<{
+      /** The pin's overlay UUID — the row joins the tray/badge/card on it (커미티 2차 판정 5). */
+      id?: string;
+      screen: string;
+      state: string;
+      /** The pin's own memo, verbatim — empty when none was written (커미티 2차 판정 3). */
       text: string;
       elementText: string;
+      /** 수정 ↔ 질문 (재설계 C10) — absent reads as change. */
+      intent?: "change" | "question";
       element?: {
         component: string;
         path: string;
@@ -1230,6 +1234,9 @@ export function useDaemon(url: string | null): Daemon {
           // A moved url re-clones.
           600_000,
         ).then(keepProjects),
+      /** 관례 최신화(커미티 2026-09-14) — opens the refresh brief turn. */
+      projectRefreshConventions: (slug: string) =>
+        call<{ sessionId: string }>({ type: "project.refreshConventions", slug }, 120_000),
       projectRemove: (slug: string, deleteFiles?: boolean) =>
         call<ProjectList>(
           {
@@ -1315,24 +1322,20 @@ export function useDaemon(url: string | null): Daemon {
       restoreCheckpoint: (checkpoint: string) =>
         call<{ restored: string[] }>({ type: "repo.checkpoint.restore", checkpoint }, 120_000),
       recordComments: (input: {
-        screen: string;
-        state: string;
         items: Array<{
+          id?: string;
+          screen: string;
+          state: string;
           text: string;
           elementText: string;
+          intent?: "change" | "question";
           element?: {
             component: string;
             path: string;
             rect: { x: number; y: number; width: number; height: number };
           };
         }>;
-      }) =>
-        call<{ recorded: number }>({
-          type: "comments.record",
-          screen: input.screen,
-          state: input.state,
-          items: input.items,
-        }),
+      }) => call<{ recorded: number }>({ type: "comments.record", items: input.items }),
       listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),

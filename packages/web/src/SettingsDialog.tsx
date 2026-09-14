@@ -5,7 +5,17 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { EFFORT_LABEL, MODE_LABEL, modelOptions, modelRowOf, SETTINGS_MODES } from "./chat-options";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
-import { CheckIcon, CloseIcon } from "./icons";
+import {
+  BellIcon,
+  BrainIcon,
+  CheckIcon,
+  CloseIcon,
+  InfoIcon,
+  KeyIcon,
+  LinkIcon,
+  RefreshIcon,
+  ThemeIcon,
+} from "./icons";
 import {
   type ChatSettings,
   clearAcceptEditsMigrated,
@@ -420,7 +430,12 @@ export function SettingsDialog({
 
         <div className="modal__body">
           <section className="settings__group">
-            <h3 className="settings__groupTitle">화면</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <ThemeIcon />
+              </span>
+              화면
+            </h3>
             <div className="setting setting--wide">
               <span className="setting__text">
                 <span className="setting__label">테마</span>
@@ -455,7 +470,12 @@ export function SettingsDialog({
               describing a screen should not be choosing a model to do it with;
               the choice is real, so it is kept, but it is kept here. */}
           <section className="settings__group">
-            <h3 className="settings__groupTitle">대화</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <BrainIcon />
+              </span>
+              대화
+            </h3>
             <Choice<string>
               label="답변 방식"
               hint={
@@ -564,7 +584,12 @@ export function SettingsDialog({
           </section>
 
           <section className="settings__group">
-            <h3 className="settings__groupTitle">동작</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <InfoIcon />
+              </span>
+              동작
+            </h3>
             <Choice<SendKey>
               label="보내기 키"
               value={settings.sendKey}
@@ -597,7 +622,12 @@ export function SettingsDialog({
               확인 요청·중단·게이트 실패는 시점과 무관하게 언제나 온다는
               것을 힌트가 한 줄로 말한다. */}
           <section className="settings__group">
-            <h3 className="settings__groupTitle">알림</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <BellIcon />
+              </span>
+              알림
+            </h3>
             <Choice<NoticeTiming>
               label="완료 알림"
               value={settings.notifications.done}
@@ -628,7 +658,12 @@ export function SettingsDialog({
           </section>
 
           <section className="settings__group">
-            <h3 className="settings__groupTitle">GitHub</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <KeyIcon />
+              </span>
+              GitHub
+            </h3>
             {daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
             !editingToken ? (
               <Field wide label="계정" hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다">
@@ -656,7 +691,12 @@ export function SettingsDialog({
           </section>
 
           <section className="settings__group">
-            <h3 className="settings__groupTitle">연결 레포</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <LinkIcon />
+              </span>
+              연결 레포
+            </h3>
             <Field
               wide
               label="레포 주소"
@@ -692,7 +732,12 @@ export function SettingsDialog({
               (PLAN D13). It used to sit open under the heading 데몬, which is
               a word for the program, not for the problem. */}
           <section className="settings__group">
-            <h3 className="settings__groupTitle">문제 해결</h3>
+            <h3 className="settings__groupTitle">
+              <span className="ic ic--sm ic--quiet">
+                <RefreshIcon />
+              </span>
+              문제 해결
+            </h3>
             <div className="settings__row">
               <button type="button" onClick={onOpenOnboarding}>
                 처음 설정 다시 보기

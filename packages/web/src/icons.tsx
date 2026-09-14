@@ -7,29 +7,54 @@
 
 import {
   ArrowUp,
+  Bell,
+  Brain,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleCheck,
+  Clock,
+  Command,
   Copy,
+  Download,
   ExternalLink,
+  Eye,
   File,
+  FileDiff,
   Folder,
+  FolderPlus,
   Gauge,
+  GitBranch,
+  GitPullRequest,
+  History,
+  Info,
+  KeyRound,
   Link,
+  ListChecks,
   Lock,
   type LucideIcon,
+  MapPin,
+  MessageSquare,
+  MessageSquarePlus,
+  Minus,
   Monitor,
+  Palette,
   Pencil,
+  PlugZap,
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
+  Search,
   ServerOff,
   Settings,
   Shield,
   ShieldCheck,
   ShieldOff,
   Smartphone,
+  Tablet,
+  Trash2,
   TriangleAlert,
   X,
   Zap,
@@ -67,6 +92,38 @@ export const GaugeIcon = make(Gauge, 13);
 export const ShieldPlainIcon = make(Shield, 13);
 export const ShieldOffIcon = make(ShieldOff, 13);
 export const ZapIcon = make(Zap, 14);
+
+// --- action bar & menus (디자인 패스) ---------------------------------------
+// The cycle's verbs and the menus' rows, one glyph each. A row's glyph names
+// the row; the tone (in .ic) carries whether it is ordinary, warning, or a
+// thing that destroys.
+
+export const SaveIcon = make(Save, 13);
+export const HandoffIcon = make(GitPullRequest, 13);
+export const EyeIcon = make(Eye, 12);
+export const HistoryIcon = make(History, 13);
+export const TrashIcon = make(Trash2, 13);
+/** 핀 모드 토글 (재설계 §3.9) — the picker the preview toolbar wears. */
+export const MapPinIcon = make(MapPin, 13);
+export const CommentsIcon = make(MessageSquare, 12);
+export const DiffIcon = make(FileDiff, 13);
+export const MinusIcon = make(Minus, 12, 2);
+export const ExportIcon = make(Download, 13);
+export const NewChatIcon = make(MessageSquarePlus, 13);
+export const FolderPlusIcon = make(FolderPlus, 13);
+export const BranchIcon = make(GitBranch, 12, 2);
+export const TabletIcon = make(Tablet, 12);
+export const ClockIcon = make(Clock, 12);
+export const SearchIcon = make(Search, 13);
+export const CircleCheckIcon = make(CircleCheck, 13);
+export const KeyIcon = make(KeyRound, 12);
+export const PlugIcon = make(PlugZap, 14);
+export const CommandIcon = make(Command, 12);
+export const BellIcon = make(Bell, 13);
+export const ThemeIcon = make(Palette, 13);
+export const BrainIcon = make(Brain, 13);
+export const InfoIcon = make(Info, 13);
+export const StepsIcon = make(ListChecks, 13);
 
 // --- workspace chrome -------------------------------------------------------
 

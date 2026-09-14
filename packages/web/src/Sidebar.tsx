@@ -2,7 +2,19 @@ import type { ProjectSummary, RepoPhase, ThreadSummary } from "@colo-design/prot
 import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "./delivery";
-import { CloseIcon, GearIcon, WarnIcon } from "./icons";
+import {
+  CloseIcon,
+  ExportIcon,
+  FolderPlusIcon,
+  GearIcon,
+  HistoryIcon,
+  NewChatIcon,
+  PencilIcon,
+  RefreshIcon,
+  ShieldIcon,
+  TrashIcon,
+  WarnIcon,
+} from "./icons";
 import { loadTreeFoldedFor, saveTreeFolded } from "./settings";
 import { useModalFocus } from "./use-modal-focus";
 
@@ -24,6 +36,7 @@ const RECENT_THREADS = 5;
  */
 export function Sidebar({
   daemon,
+  commonInstructions,
   collapsed,
   collapsedByViewport,
   onToggleCollapsed,
@@ -40,6 +53,8 @@ export function Sidebar({
   onBrowseThreads,
 }: {
   daemon: Daemon;
+  /** 앱이 늘 하는 말(커미티 2026-09-14) — 읽기 전용 표시의 원천. */
+  commonInstructions: string | null;
   collapsed: boolean;
   /** A narrow window folds the rail no matter what the setting says. */
   collapsedByViewport: boolean;
@@ -149,6 +164,22 @@ export function Sidebar({
     setPopoverFor(null);
     setGuarding(project);
     setGuardDraft(project.instructions ?? "");
+  };
+
+  /**
+   * 관례 최신화(커미티 2026-09-14): 낡은 관례 표식을 단 프로젝트에만 뜨는
+   * 메뉴 항목. 한 턴의 대화를 열고, 결과는 저장 → 넘기기로 개발자 PR 승인을
+   * 받는다 — 여기서 하는 일은 그 대화를 여는 것까지다.
+   */
+  const refreshConventions = async (project: ProjectSummary) => {
+    setMenuFor(null);
+    setPopoverFor(null);
+    try {
+      await api.projectRefreshConventions(project.slug);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setFailed(true);
+    }
   };
 
   /** 저장은 다음 대화부터 적용된다 — 돌고 있는 대화의 프롬프트는 그대로다. */
@@ -348,6 +379,9 @@ export function Sidebar({
                     onChange={(event) => setNameDraft(event.target.value)}
                     onBlur={() => void commitRename()}
                     onKeyDown={(event) => {
+                      // Enter that commits the hangul must not also commit
+                      // the rename (isComposing, keyCode 229 — 커미티 F-C1).
+                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                       if (event.key === "Enter") void commitRename();
                       if (event.key === "Escape") setRenaming(null);
                     }}
@@ -474,6 +508,9 @@ export function Sidebar({
                                   onNewThread(project.slug);
                                 }}
                               >
+                                <span className="ic ic--quiet ic--sm">
+                                  <NewChatIcon />
+                                </span>
                                 <span className="selector__label">새 대화</span>
                               </button>
                               <button
@@ -482,6 +519,9 @@ export function Sidebar({
                                 className="selector__row"
                                 onClick={() => beginRename(project)}
                               >
+                                <span className="ic ic--quiet ic--sm">
+                                  <PencilIcon />
+                                </span>
                                 <span className="selector__label">이름 바꾸기</span>
                               </button>
                               <button
@@ -490,8 +530,24 @@ export function Sidebar({
                                 className="selector__row"
                                 onClick={() => beginGuardrails(project)}
                               >
+                                <span className="ic ic--quiet ic--sm">
+                                  <ShieldIcon />
+                                </span>
                                 <span className="selector__label">지켜 줄 것</span>
                               </button>
+                              {project.conventionsStale && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="selector__row"
+                                  onClick={() => void refreshConventions(project)}
+                                >
+                                  <span className="ic ic--quiet ic--sm">
+                                    <RefreshIcon />
+                                  </span>
+                                  <span className="selector__label">관례 최신화</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 role="menuitem"
@@ -501,6 +557,9 @@ export function Sidebar({
                                   setRemoving(project);
                                 }}
                               >
+                                <span className="ic ic--danger ic--sm">
+                                  <TrashIcon />
+                                </span>
                                 <span className="selector__label">프로젝트 지우기</span>
                               </button>
                             </span>
@@ -557,6 +616,9 @@ export function Sidebar({
                                 onBrowseThreads(project.slug);
                               }}
                             >
+                              <span className="ic ic--quiet ic--sm">
+                                <HistoryIcon />
+                              </span>
                               <span className="selector__label">
                                 이전 대화 {threads.length - RECENT_THREADS}개 더 보기
                               </span>
@@ -571,6 +633,9 @@ export function Sidebar({
                               onNewThread(project.slug);
                             }}
                           >
+                            <span className="ic ic--quiet ic--sm">
+                              <NewChatIcon />
+                            </span>
                             <span className="selector__label">＋ 새 대화</span>
                           </button>
                           {/* The row menu's tail: a rail has no ··· button, so the
@@ -586,6 +651,9 @@ export function Sidebar({
                               setRemoving(project);
                             }}
                           >
+                            <span className="ic ic--danger ic--sm">
+                              <TrashIcon />
+                            </span>
                             <span className="selector__label">프로젝트 지우기</span>
                           </button>
                         </span>
@@ -607,6 +675,9 @@ export function Sidebar({
                             onChange={(event) => setThreadDraft(event.target.value)}
                             onBlur={commitThreadRename}
                             onKeyDown={(event) => {
+                              // Same hangul guard as the project rename above
+                              // (isComposing, keyCode 229 — 커미티 F-C1).
+                              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
                               if (event.key === "Enter") commitThreadRename();
                               if (event.key === "Escape") setThreadRenaming(null);
                             }}
@@ -664,6 +735,9 @@ export function Sidebar({
                                     className="selector__row"
                                     onClick={() => beginThreadRename(project.slug, thread)}
                                   >
+                                    <span className="ic ic--quiet ic--sm">
+                                      <PencilIcon />
+                                    </span>
                                     <span className="selector__label">이름 바꾸기</span>
                                   </button>
                                   {project.slug === activeSlug && (
@@ -676,6 +750,9 @@ export function Sidebar({
                                         onExportThread(project.slug, thread);
                                       }}
                                     >
+                                      <span className="ic ic--quiet ic--sm">
+                                        <ExportIcon />
+                                      </span>
                                       <span className="selector__label">대화 내보내기</span>
                                     </button>
                                   )}
@@ -689,6 +766,9 @@ export function Sidebar({
                                         onDeleteThread(project.slug, thread);
                                       }}
                                     >
+                                      <span className="ic ic--danger ic--sm">
+                                        <TrashIcon />
+                                      </span>
                                       <span className="selector__label">지우기</span>
                                     </button>
                                   )}
@@ -713,6 +793,9 @@ export function Sidebar({
                           onBrowseThreads(project.slug);
                         }}
                       >
+                        <span className="ic ic--quiet ic--sm">
+                          <HistoryIcon />
+                        </span>
                         이전 대화 {threads.length - RECENT_THREADS}개 더 보기
                       </button>
                     )}
@@ -730,6 +813,9 @@ export function Sidebar({
                           onNewThread(project.slug);
                         }}
                       >
+                        <span className="ic ic--quiet ic--sm">
+                          <NewChatIcon />
+                        </span>
                         ＋ 새 대화 시작
                       </button>
                     )}
@@ -757,7 +843,7 @@ export function Sidebar({
             </button>
           ) : (
             <button type="button" className="ghost sidebar__new" onClick={onAddProject}>
-              + 새 프로젝트
+              <FolderPlusIcon />+ 새 프로젝트
             </button>
           )}
           <button
@@ -847,6 +933,12 @@ export function Sidebar({
               이 프로젝트에서 Claude가 늘 지켜 줬으면 하는 것을 적어 주세요. 새로 시작하는 대화부터
               적용됩니다.
             </p>
+            {commonInstructions != null && (
+              <details className="sidebar__common">
+                <summary>앱이 늘 하는 말 — 모든 프로젝트에 공통, 읽기 전용</summary>
+                <pre className="sidebar__commontext">{commonInstructions}</pre>
+              </details>
+            )}
             <textarea
               className="sidebar__guardbox"
               rows={7}

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { DaemonStatus } from "@colo-design/protocol";
 import { PROTOCOL_VERSION } from "@colo-design/protocol";
+import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 
 const run = promisify(execFile);
 
@@ -467,6 +468,8 @@ export async function buildStatus(input: {
 
   return {
     protocolVersion: PROTOCOL_VERSION,
+    /** The app-authored block every session carries (read-only for users). */
+    commonInstructions: COMMON_INSTRUCTIONS,
     platform: process.platform,
     claudeVersion: version,
     claudeExecutable: input.executable,

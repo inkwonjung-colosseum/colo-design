@@ -196,7 +196,7 @@ test("도구의 경과와 서브에이전트 재시도가 그 도구 행으로 �
   assert.deepEqual(translator.translate({ type: "tool_progress", elapsed_time_seconds: 3 }), []);
 });
 
-test("다음 칩 · 상태 · 생각 토큰이 그대로 올라온다", () => {
+test("다음 칩 · 상태가 그대로 올라온다", () => {
   const translator = new MessageTranslator();
   assert.deepEqual(translator.translate({ type: "prompt_suggestion", suggestion: "  " }), []);
   assert.deepEqual(translator.translate({ type: "prompt_suggestion", suggestion: "다음은?" }), [
@@ -205,10 +205,6 @@ test("다음 칩 · 상태 · 생각 토큰이 그대로 올라온다", () => {
   assert.deepEqual(
     translator.translate({ type: "system", subtype: "status", status: "compacting" }),
     [{ kind: "status", status: "compacting" }],
-  );
-  assert.deepEqual(
-    translator.translate({ type: "system", subtype: "thinking_tokens", estimated_tokens: 1500 }),
-    [{ kind: "thinking.tokens", tokens: 1500 }],
   );
 });
 

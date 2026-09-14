@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Daemon } from "./daemon-client";
-import { CloseIcon } from "./icons";
+import { CloseIcon, FolderPlusIcon } from "./icons";
 import { RepoPicker } from "./RepoPicker";
 import { useModalFocus } from "./use-modal-focus";
 
@@ -45,7 +45,12 @@ export function AddProjectDialog({
         ref={panel}
       >
         <header className="modal__head">
-          <h2 className="modal__title">프로젝트 추가</h2>
+          <h2 className="modal__title">
+            <span className="ic">
+              <FolderPlusIcon />
+            </span>
+            프로젝트 추가
+          </h2>
           <button type="button" className="ghost" aria-label="프로젝트 추가 닫기" onClick={onClose}>
             <CloseIcon />
           </button>

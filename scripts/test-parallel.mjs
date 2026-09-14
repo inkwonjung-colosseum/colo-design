@@ -37,6 +37,9 @@ const LANES = {
     name: "daemon-e2e",
     suites: [
       "test:projects",
+      "test:common-instructions",
+      "test:conventions",
+      "test:permission-repeat",
       "test:rewind",
       "test:bootstrap",
       "test:repo",

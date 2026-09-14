@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { waitedFor } from "./format";
+import { ClockIcon } from "./icons";
 
 /**
  * 진행 시계: 지금 도는 요청이 몇 분 몇 초째인지. 보낸 다음 조용해진 화면에서
@@ -24,7 +25,10 @@ export function TurnClock({ startedAt }: { startedAt: number }) {
     return () => clearInterval(tick);
   }, []);
   return (
-    <span className="toolbar__clock" role="timer" title="이 요청이 진행된 시간">
+    <span className="turnclock" role="timer" title="이 요청이 진행된 시간">
+      <span className="ic ic--sm ic--quiet">
+        <ClockIcon />
+      </span>{" "}
       {waitedFor(now - startedAt)}
     </span>
   );

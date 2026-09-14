@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CopyButton } from "./components";
 import { useDaemon } from "./daemon-client";
-import { GearIcon } from "./icons";
+import { GearIcon, PlugIcon, WarnIcon } from "./icons";
 import { SettingsDialog } from "./SettingsDialog";
 import { Shell } from "./Shell";
 import { useSettings } from "./settings";
@@ -78,6 +78,9 @@ function ConnectScreen({
             disabled={!value.trim()}
             onClick={() => onConnect(value.trim())}
           >
+            <span className="ic">
+              <PlugIcon />
+            </span>
             연결
           </button>
         </div>
@@ -85,6 +88,9 @@ function ConnectScreen({
 
       {error && (
         <div className="notice notice--error">
+          <span className="ic ic--sm ic--danger">
+            <WarnIcon />
+          </span>
           <span className="notice__text">{error}</span>
         </div>
       )}

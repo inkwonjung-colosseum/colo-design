@@ -1,6 +1,7 @@
 import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "./daemon-client";
+import { FolderIcon, FolderPlusIcon } from "./icons";
 
 /** `https://github.com/o/r(.git)` → `o/r`, for matching a project's stored url. */
 function normalizeUrl(url: string): string {
@@ -219,6 +220,10 @@ export function RepoPicker({
     (!inspection.result.hasColoDesign && !bootstrapCreate) ||
     !approveRun;
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
+    // An IME owns every keydown until its composition ends — Enter commits
+    // the hangul (isComposing, legacy keyCode 229). Reacting to it would
+    // pick a repo off a half-typed word (커미티 F-C1, 2026-09-14).
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setHighlight((current) => Math.min(current + 1, rows.length - 1));
@@ -265,20 +270,25 @@ export function RepoPicker({
   return (
     <div className="repopicker">
       {!hasToken ? (
-        <p className="onboarding__detail">
-          GitHub에 연결하면 목록에서 고를 수 있습니다 —{" "}
-          {onOpenSettings ? (
-            <button
-              type="button"
-              className="ghost repopicker__settingslink"
-              onClick={onOpenSettings}
-            >
-              설정 → GitHub
-            </button>
-          ) : (
-            "설정 → GitHub"
-          )}
-        </p>
+        <div className="menuempty">
+          <span className="ic ic--quiet">
+            <FolderIcon />
+          </span>
+          <span>
+            GitHub에 연결하면 목록에서 고를 수 있습니다 —{" "}
+            {onOpenSettings ? (
+              <button
+                type="button"
+                className="ghost repopicker__settingslink"
+                onClick={onOpenSettings}
+              >
+                설정 → GitHub
+              </button>
+            ) : (
+              "설정 → GitHub"
+            )}
+          </span>
+        </div>
       ) : phase === "error" ? (
         <div className="repopicker__listerror">
           <p className="onboarding__detail">{listError}</p>
@@ -310,6 +320,9 @@ export function RepoPicker({
               [0, 1, 2].map((index) => <li key={index} className="repopicker__row--ghost" />)}
             {phase === "ready" && rows.length === 0 && query.trim() === "" && (
               <li className="repopicker__empty">
+                <span className="ic ic--lg ic--quiet">
+                  <FolderIcon />
+                </span>
                 이 토큰에 쓰기 권한이 있는 레포가 없습니다.
                 <span className="hint">
                   읽기만 가능한 레포는 개발자에게 넘길 수 없어 목록에서 제외됩니다. fine-grained
@@ -320,6 +333,9 @@ export function RepoPicker({
             )}
             {phase === "ready" && rows.length === 0 && query.trim() !== "" && (
               <li className="repopicker__empty">
+                <span className="ic ic--lg ic--quiet">
+                  <FolderIcon />
+                </span>
                 &apos;{query.trim()}&apos;와 맞는 레포가 없습니다 — 아래에서 주소로 추가하세요.
               </li>
             )}
@@ -508,6 +524,9 @@ export function RepoPicker({
             className="ghost repopicker__manualtoggle"
             onClick={() => setManualPreference(true)}
           >
+            <span className="ic ic--sm ic--quiet">
+              <FolderPlusIcon />
+            </span>
             목록에 없나요? 주소로 추가
           </button>
         )

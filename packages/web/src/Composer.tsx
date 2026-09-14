@@ -33,10 +33,12 @@ import {
   StopIcon,
   ZapIcon,
 } from "./icons";
+import { PinTray } from "./PinTray";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
 import type { MidTurnSend, SendKey } from "./settings";
 import { TurnClock } from "./TurnClock";
 import { UsageChip } from "./UsageChip";
+import type { PinAttachment, PinIntent } from "./usePins";
 
 export interface Attachment {
   /** Images ride inline with the turn; documents are saved to `specs/` by the daemon. */
@@ -200,9 +202,10 @@ export function Composer({
   onTakeQueued,
   onSendQueuedNow,
   onDismissDropped,
-  suggestion = null,
   onDismissSuggestion,
+  suggestion = null,
   activity,
+  turnStartedAt = null,
   tasks = [],
   onStopTask,
   seed,
@@ -216,8 +219,15 @@ export function Composer({
   onSetPermissionMode,
   onSend,
   onInterrupt,
-  turnStartedAt = null,
   onFindFiles,
+  pins = [],
+  pinNumberStart = 1,
+  focusPinId = null,
+  onPinRemove,
+  onPinNote,
+  onPinFocus,
+  onPinIntent,
+  titleForScreen = () => null,
 }: {
   disabled: boolean;
   /** Which conversation this field is the draft for; swapping keys swaps drafts. */
@@ -233,13 +243,6 @@ export function Composer({
   onRefreshUsage?: () => void;
   running: boolean;
   /**
-   * 도는 요청이 시작한 시각 (epoch ms), 없으면 null — 보내기 자리의 진행
-   * 시계가 이것을 센다. `running` 과 따로인 이유: 확인 카드 앞에 멈춘 턴은
-   * running 이 아니지만 그 요청은 여전히 진행 중이고, 기다린 시간도 그
-   * 요청의 시간이다.
-   */
-  turnStartedAt?: number | null;
-  /**
    * 중지를 누른 뒤 턴이 실제로 멈추기까지의 짧은 창 — 클릭이 무시된 것처럼
    * 보이지 않게 버튼이 "정리 중…" 이 된다 (실사 결함).
    */
@@ -253,10 +256,16 @@ export function Composer({
   /** 칩을 썼거나 닫았다 — 어느 쪽이든 이 칩의 생은 거기서 끝난다. */
   onDismissSuggestion?: () => void;
   /**
-   * 답이 나오기 전의 진행 (PLAN D100). 생각 과정을 끈 기본값에서는 이 한 줄이
-   * 유일하게 "돌고 있음"을 말한다.
+   * 답이 나오기 전의 한 줄의 상태 (PLAN D100): 대화를 정리하는 중인지, 모델의
+   * 답을 기다리는 중인지. 생각 과정을 끈 기본값에서는 이 한 줄이 유일하게
+   * "돌고 있음"을 말한다.
    */
-  activity?: { status: "compacting" | "requesting" | null; thinkingTokens: number };
+  activity?: { status: "compacting" | "requesting" | null };
+  /**
+   * 이 턴이 시작한 시각 (epoch ms) — 진행 시계가 읽는 자리. 데몬의 시각이므로
+   * 새로고침해도, 두 번째 창에서도 같은 초를 센다.
+   */
+  turnStartedAt?: number | null;
   /** 지금 뒤에서 도는 작업들 (PLAN D101). */
   tasks?: Array<{ taskId: string; type: string; description: string }>;
   /** 그 작업 하나만 세운다 — 턴은 그대로 둔다. */
@@ -317,7 +326,28 @@ export function Composer({
    * plain send: a mid-turn send cuts the running turn and starts over.
    */
   midTurnSend?: MidTurnSend;
-  onSend: (text: string, attachments: Attachment[]) => void | Promise<void>;
+  /**
+   * The pin attachments (재설계 C1) — the tray above the attachment chips
+   * draws them. Optional: the dev harness renders the composer without pins.
+   */
+  pins?: PinAttachment[];
+  /**
+   * The first number the tray's rows wear (커미티 2차 판정 2): the badge order
+   * counts the turn's grey ghosts first, so the tray must start after them —
+   * one number, one pin, on every surface that wears numbers.
+   */
+  pinNumberStart?: number;
+  /** 배지 클릭이 흔든 포커스 요청 — 그 핀 행의 메모 입력으로 간다. */
+  focusPinId?: { id: string; nonce: number } | null;
+  onPinRemove?: (id: string) => void;
+  onPinNote?: (id: string, note: string) => void;
+  /** 수정 ↔ 질문 칩 (재설계 C10) — the tray's toggle writes the pin's ask. */
+  onPinIntent?: (id: string, intent: PinIntent) => void;
+  onPinFocus?: (id: string) => void;
+  /** 화면 id → 제목; PinTray 의 머리글과 행 표기가 읽는다. */
+  titleForScreen?: (screen: string) => string | null;
+  /** 문장과 첨부에 핀이 한 턴으로 합류한다 (재설계 C2). */
+  onSend: (text: string, attachments: Attachment[], pins: PinAttachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
 }) {
@@ -595,9 +625,20 @@ export function Composer({
     }));
   };
 
+  // 보내기 진행 중 잠금 (커미티 F-C2, 2026-09-14): the field empties only
+  // when the daemon accepts (D35), so a second Enter while the first send is
+  // still in flight would resend the same words — or, with no session yet,
+  // open a second thread. The lock is the missing half of D35; on failure it
+  // opens again and the words are still there.
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+
   const submit = () => {
+    if (sendingRef.current) return;
     const text = editor.text.trim();
-    if (!text && editor.attachments.length === 0) return;
+    if (!text && editor.attachments.length === 0 && pins.length === 0) return;
+    sendingRef.current = true;
+    setSending(true);
     if (text) {
       // Consecutive duplicates collapse: retrying with Enter must not fill
       // the walk with a wall of identical rows.
@@ -608,15 +649,20 @@ export function Composer({
     }
     historyAt.current = null;
     // PLAN D35: the field empties when the daemon has ACCEPTED the turn, not
-    // when the button fired — a failed send leaves the words and attachments
-    // in place, with the reason in the warning strip.
-    void Promise.resolve(onSend(text, editor.attachments))
+    // when the button fired — a failed send leaves the words, attachments and
+    // pins in place, with the reason in the warning strip. 핀의 비움은
+    // 성공 뒤 markSent 의 몫이다 (재설계 C2).
+    void Promise.resolve(onSend(text, editor.attachments, pins))
       .then(() => {
         setEditor(EMPTY_EDITOR);
         setSuggestions([]);
         rejected.clear();
       })
-      .catch((e) => rejected.show(failureWords(e, "보내지지 못했습니다")));
+      .catch((e) => rejected.show(failureWords(e, "보내지지 못했습니다")))
+      .finally(() => {
+        sendingRef.current = false;
+        setSending(false);
+      });
   };
 
   /** Caret parked at the end of the field, once React has written the new value. */
@@ -782,14 +828,14 @@ export function Composer({
   const chips = [
     {
       key: "model" as const,
-      label: modelRow ? modelWords(modelRow).label : "Auto",
+      label: modelRow ? modelWords(modelRow).label : "모델 자동",
       icon: <SparkIcon size={13} />,
       title: "모델",
       // The list is the CLI's, and only a session (or an earlier one, cached)
       // can supply it. Until then the chip states the default and stays shut.
       disabled: selector.models.length === 0,
       options: [
-        { value: null, label: "Auto", picked: selector.model == null },
+        { value: null, label: "모델 자동", picked: selector.model == null },
         ...modelOptions(selector.models, modelRow).map(({ value, label, picked }) => ({
           value,
           label,
@@ -799,12 +845,12 @@ export function Composer({
     },
     {
       key: "effort" as const,
-      label: selector.effort ? EFFORT_LABEL[selector.effort] : "Auto",
+      label: selector.effort ? EFFORT_LABEL[selector.effort] : "생각 자동",
       icon: <GaugeIcon />,
       title: "생각 시간",
       disabled: modelRow ? !modelRow.supportsEffort : false,
       options: [
-        { value: null, label: "Auto", picked: selector.effort == null },
+        { value: null, label: "생각 자동", picked: selector.effort == null },
         ...effortLevels.map((level) => ({
           value: level,
           label: EFFORT_LABEL[level],
@@ -901,7 +947,30 @@ export function Composer({
           </div>
         </Fold>
       )}
-
+      {pins.length > 0 && (
+        // 메모 입력의 Enter 는 전송이 아니라 본문으로 — capture 에서 입력창을
+        // 데려 오고, 행의 onKeyDown 이 메모를 저장한 뒤 이벤트를 삼킨다.
+        <div
+          onKeyDownCapture={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key !== "Enter") return;
+            if (!(event.target as HTMLElement).matches("input.pintray__note")) return;
+            event.preventDefault();
+            area.current?.focus();
+          }}
+        >
+          <PinTray
+            pins={pins}
+            numberStart={pinNumberStart}
+            focusPinId={focusPinId}
+            onPinRemove={(id) => onPinRemove?.(id)}
+            onPinNote={(id, note) => onPinNote?.(id, note)}
+            onPinIntent={(id, intent) => onPinIntent?.(id, intent)}
+            onPinFocus={(id) => onPinFocus?.(id)}
+            titleFor={titleForScreen}
+          />
+        </div>
+      )}
       {editor.attachments.length > 0 && (
         <div className="chips">
           {editor.attachments.map((attachment, index) => (
@@ -914,7 +983,10 @@ export function Composer({
                   alt=""
                 />
               ) : (
-                <span className="chip__doc">문서</span>
+                <span className="chip__doc">
+                  <FileIcon size={11} />
+                  문서
+                </span>
               )}
               {attachment.name}
               {attachment.kind === "document" && (
@@ -938,23 +1010,22 @@ export function Composer({
         </div>
       )}
 
-      {/* 답이 나오기 전의 한 줄 (PLAN D100): 정리 중인지, 답을 기다리는지,
-          생각에 얼마나 썼는지. 기획자가 읽는 것은 숫자가 아니라 "멈춘 게
-          아니다" 라는 사실이다 — 그래서 도는 동안에만 있다. */}
-      {running && (activity?.status || (activity?.thinkingTokens ?? 0) > 0) && (
+      {/* 답이 나오기 전의 한 줄 (PLAN D100): 정리 중인지, 그리고 몇 분째인지.
+          기획자가 읽는 것은 숫자가 아니라 "멈춘 게 아니다" 라는 사실이다 —
+          그래서 도는 동안에만 있다. 시계가 여기 산다: 기록 아래가 아니라
+          기다리는 사람의 눈이 머무는 입력창 위 한 줄. 토큰 어림은 없다 —
+          청구되는 수도 아닌 눈금이 화면을 차지할 이유가 없다. */}
+      {running && (
         <div className="composer__activity" role="status">
           <span className="spinner" />
           <span>
             {activity?.status === "compacting"
               ? "길어진 대화를 정리하는 중…"
-              : (activity?.thinkingTokens ?? 0) > 0
-                ? `생각하는 중 · ${
-                    (activity?.thinkingTokens ?? 0) >= 1000
-                      ? `${((activity?.thinkingTokens ?? 0) / 1000).toFixed(1)}k`
-                      : (activity?.thinkingTokens ?? 0)
-                  } 토큰`
-                : "답을 기다리는 중…"}
+              : activity?.status === "requesting"
+                ? "답을 기다리는 중…"
+                : "생각하는 중"}
           </span>
+          {turnStartedAt !== null && <TurnClock startedAt={turnStartedAt} />}
         </div>
       )}
 
@@ -1000,7 +1071,9 @@ export function Composer({
                   {item.text || "(첨부만)"}
                 </span>
                 {attachmentWords(item) && (
-                  <span className="queued__meta">{attachmentWords(item)}</span>
+                  <span className="queued__meta">
+                    <FileIcon size={11} /> {attachmentWords(item)}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -1042,7 +1115,11 @@ export function Composer({
                 <span className="queued__text" title={item.text}>
                   {item.text || "(첨부만)"}
                 </span>
-                {lostWords(item) && <span className="queued__meta">{lostWords(item)}</span>}
+                {lostWords(item) && (
+                  <span className="queued__meta">
+                    <FileIcon size={11} /> {lostWords(item)}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="ghost queued__action"
@@ -1172,14 +1249,11 @@ export function Composer({
             onClick={onTogglePlanArmed}
           >
             <ZapIcon />
+            계획 먼저
           </button>
         )}
         <div className="toolbar__end">
           <ContextRing usage={usage} />
-          {/* 진행 시계: 보낸 요청이 몇 분 몇 초째인지. 중지 바로 옆인 이유는
-              그 숫자가 부르는 결정이 하나이기 때문이다 — 더 기다릴까, 세울까.
-              턴이 끝나면 사라진다(끝난 턴의 길이는 답 아래 `걸렸습니다`). */}
-          {turnStartedAt !== null && <TurnClock startedAt={turnStartedAt} />}
           {running ? (
             <button
               type="button"
@@ -1194,10 +1268,13 @@ export function Composer({
             </button>
           ) : (
             <button
-              type="button"
+              disabled={
+                disabled ||
+                sending ||
+                (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+              }
               className="composer__send"
               aria-label="보내기"
-              disabled={disabled || (!editor.text.trim() && editor.attachments.length === 0)}
               onClick={submit}
               title={sendKey === "enter" ? "보내기 · Enter" : "보내기 · ⌘/Ctrl+Enter"}
             >

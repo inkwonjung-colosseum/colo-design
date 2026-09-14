@@ -154,9 +154,6 @@ export class MessageTranslator {
         },
       ];
     }
-    if (m.subtype === "thinking_tokens") {
-      return [{ kind: "thinking.tokens", tokens: num(m.estimated_tokens) }];
-    }
     if (m.subtype === "task_started") {
       // 집안일(ambient · skip_transcript)은 활동이 아니다 — SDK 가 그렇게
       // 이름표를 달아 보내므로 여기서 끊는다.
