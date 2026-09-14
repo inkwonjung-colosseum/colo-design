@@ -125,8 +125,8 @@ export function HandoffPanel({
           {failed && diffStatus?.gate === "pr" && (
             <div className="notice notice--error" data-testid="pr-failure">
               <span className="notice__text">
-                레포 검사와 저장까지는 끝냈고, 개발자에게 넘기기에서 멈췄습니다. 설정에서 토큰과
-                레포 주소를 확인한 뒤 다시 넘길 수 있습니다.
+                저장까지는 끝냈고, 개발자에게 넘기기에서 멈췄습니다. 설정에서 토큰과 레포 주소를
+                확인한 뒤 다시 넘길 수 있습니다.
               </span>
               <button type="button" className="ghost" onClick={onOpenSettings}>
                 설정 열기

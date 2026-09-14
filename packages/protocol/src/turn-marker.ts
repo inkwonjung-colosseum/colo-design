@@ -25,7 +25,7 @@
  * not a data structure.
  */
 
-export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error" | "review";
+export type TurnMarkerKind = "comments" | "brief" | "gate" | "error" | "review";
 
 /**
  * How the preview failed: the page threw, or the dev build serving it did.
@@ -35,14 +35,7 @@ export type TurnMarkerKind = "comments" | "brief" | "precheck" | "gate" | "error
  */
 export type ErrorMarkerKind = "runtime" | "build" | "look";
 
-const KINDS: readonly TurnMarkerKind[] = [
-  "comments",
-  "brief",
-  "precheck",
-  "gate",
-  "error",
-  "review",
-];
+const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "gate", "error", "review"];
 
 /** One pinned element, as the card lists it. */
 export interface CommentMarkerItem {
@@ -70,16 +63,9 @@ export interface BriefMarker {
   purpose?: "bootstrap" | "refresh";
 }
 
-export interface PrecheckMarker {
-  kind: "precheck";
-  title: string;
-  /** Screen titles the check was asked about; empty means none exist yet. */
-  screens: string[];
-}
-
 export interface GateMarker {
   kind: "gate";
-  /** The step that failed, in the planner's own words ("저장 전 검사"). */
+  /** The step that failed, in the planner's own words ("저장한 내용 올리기"). */
   step: string;
 }
 
@@ -117,13 +103,7 @@ export interface ReviewMarker {
   path?: string;
 }
 
-export type TurnMarker =
-  | CommentsMarker
-  | BriefMarker
-  | PrecheckMarker
-  | GateMarker
-  | ErrorMarker
-  | ReviewMarker;
+export type TurnMarker = CommentsMarker | BriefMarker | GateMarker | ErrorMarker | ReviewMarker;
 
 export interface MarkedTurn {
   /** Null when this is an ordinary typed message. */
@@ -187,12 +167,6 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
         kind,
         title: str(data.title),
         ...(data.purpose === "bootstrap" ? { purpose: "bootstrap" as const } : {}),
-      };
-    case "precheck":
-      return {
-        kind,
-        title: str(data.title),
-        screens: Array.isArray(data.screens) ? data.screens.map((entry) => str(entry)) : [],
       };
     case "gate":
       return { kind, step: str(data.step) };

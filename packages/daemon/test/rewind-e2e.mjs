@@ -19,6 +19,7 @@ const DIR = join(tmpdir(), "colo-design-rewind-e2e");
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 process.env.COLO_PROMPT_LOG = join(DIR, "prompts.log");
 

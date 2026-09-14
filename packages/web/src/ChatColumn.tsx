@@ -1,10 +1,11 @@
-import type { SessionSummary } from "@colo-design/protocol";
+import type { ColoDesignScreen, SessionSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Composer } from "./Composer";
-import { PermissionCard, PlanCard, QuestionCard, Transcript } from "./components";
+import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "./components";
 import type { Daemon } from "./daemon-client";
 import { ChevronDownIcon } from "./icons";
-import type { SendKey } from "./settings";
+import type { MidTurnSend, SendKey } from "./settings";
+import { suggestionsFromScreens } from "./suggestions";
 import { PLAN_TOOL } from "./tool-names";
 import type { Sessions } from "./useSessions";
 
@@ -16,15 +17,19 @@ export function ChatColumn({
   daemon,
   sessions,
   sendKey,
+  midTurnSend,
   placeholder,
   disabled,
   titleFor,
   onRenameSession,
   onDeleteSession,
+  screens,
+  showThinking,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   sendKey: SendKey;
+  midTurnSend: MidTurnSend;
   placeholder: string;
   disabled: boolean;
   /** The name a thread wears: the planner's rename, else the daemon's summary. */
@@ -34,6 +39,11 @@ export function ChatColumn({
   /** The head's `···` → 지우기 (PLAN D76): the transcript goes for good, one
       unconditional confirm on the way. */
   onDeleteSession: (session: SessionSummary) => void;
+  /** The screens the connected repo declares — the empty conversation's
+      starter chips point at them instead of generic sentences. */
+  screens: ColoDesignScreen[];
+  /** 생각 과정 보기 (설정) — 꺼져 있으면 생각 블록은 테이프에서 빠진다. */
+  showThinking: boolean;
 }) {
   const { api, pending, resolvePending } = daemon;
   // 계획 먼저 (이번 턴 한정): armed 는 한 번의 보내기로 소비되고, 대화가
@@ -53,6 +63,13 @@ export function ChatColumn({
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   const { active, activeId, error, setError } = sessions;
+  /** 닫힘은 접힘이다(Fold) — 오류 줄 자체는 useSessions 의 데이터라 여기서
+      접는 중만 간직한다. 새 오류는 접는 중이라도 다시 편다. */
+  const [errorClosing, setErrorClosing] = useState(false);
+  const showError = (message: string) => {
+    setError(message);
+    setErrorClosing(false);
+  };
   /**
    * 실사 결함: 중지를 눌러도 응답이 돌아올 때까지 아무 일도 일어나지 않는 것처럼
    * 보였다. 클릭은 즉시 "정리 중…" 이 되고, 턴이 멈추면(데몬의 이행 보장이
@@ -163,7 +180,7 @@ export function ChatColumn({
       })
       .catch((e: Error) => {
         setRestoring(false);
-        setError(e.message);
+        showError(e.message);
       });
   };
   // The pill jumps instantly, like the follow: an animated tail would race
@@ -258,17 +275,26 @@ export function ChatColumn({
       <div className="chatstack">
         <section className="scroll" ref={scroll} onScroll={rememberPin}>
           {error && (
-            <div className="notice notice--error">
-              <span className="notice__text">{error}</span>
-              <button
-                type="button"
-                className="notice__close"
-                aria-label="오류 닫기"
-                onClick={() => setError(null)}
-              >
-                ×
-              </button>
-            </div>
+            <Fold
+              closing={errorClosing}
+              onCollapsed={() => {
+                setError(null);
+                setErrorClosing(false);
+              }}
+            >
+              <div className="notice notice--error">
+                <span className="notice__text">{error}</span>
+                <button
+                  type="button"
+                  className="notice__close"
+                  aria-label="오류 닫기"
+                  disabled={errorClosing}
+                  onClick={() => setErrorClosing(true)}
+                >
+                  ×
+                </button>
+              </div>
+            </Fold>
           )}
           {/* 실사 결함: 기록 있는 대화가 조용히 빈 대화로 열렸다 — 실패가
               실패로 보이지 않았다. 카드가 그 사실을 말하고 다시 시도는 같은
@@ -286,22 +312,29 @@ export function ChatColumn({
           <Transcript
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
-            onRetry={(text) => void sessions.submit(text, [])}
-            onRewind={(turn, text) => void sessions.rewindAnswer(turn, text)}
-            onResendEdit={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
+            onRetry={(text) => sessions.submit(text, []).catch(() => undefined)}
+            starters={suggestionsFromScreens(screens)}
             onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
+            showThinking={showThinking}
           />
           {/* A turn's first seconds: the tape holds only the planner's words,
             so the start says itself — spinner + shimmer until blocks land.
-            The tape speaks for itself the moment any Claude block exists. */}
-          {sessions.running && !(active?.blocks ?? []).some((block) => block.type !== "user") && (
-            <div className="turnlive" role="status">
-              <span className="spinner" />
-              작업 중…
-            </div>
-          )}
+            The tape speaks for itself the moment any Claude block exists —
+            any block the planner can actually SEE. 생각 과정이 꺼져 있으면
+            생각만 도착한 턴은 테이프에 아무것도 그리지 않으므로, 그 블록은
+            여기서도 도착한 셈에 들지 않는다. 그러지 않으면 Claude 가 생각만
+            하는 동안 화면이 통째로 조용해진다. */}
+          {sessions.running &&
+            !(active?.blocks ?? []).some(
+              (block) => block.type !== "user" && (showThinking || block.type !== "thinking"),
+            ) && (
+              <div className="turnlive" role="status">
+                <span className="spinner" />
+                작업 중…
+              </div>
+            )}
           {visiblePending.map((request) =>
             request.kind === "permission" ? (
               request.toolName === PLAN_TOOL ? (
@@ -375,6 +408,7 @@ export function ChatColumn({
         queued={sessions.queued}
         seed={seed}
         sendKey={sendKey}
+        midTurnSend={midTurnSend}
         planArmed={planArmed}
         onTogglePlanArmed={() => setPlanArmed((v) => !v)}
         onSend={(text, attachments) => {

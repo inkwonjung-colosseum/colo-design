@@ -35,12 +35,7 @@ test("every kind survives the round trip", () => {
   const markers: TurnMarker[] = [
     COMMENTS,
     { kind: "brief", title: "회원 관리 기획서" },
-    {
-      kind: "precheck",
-      title: "회원 관리 기획서",
-      screens: ["회원 목록", "회원 상세"],
-    },
-    { kind: "gate", step: "저장 전 검사" },
+    { kind: "gate", step: "저장한 내용 올리기" },
     {
       kind: "error",
       route: "/member/MemberList",

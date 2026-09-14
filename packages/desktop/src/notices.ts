@@ -34,12 +34,12 @@ export function noticeCopy(notice: DaemonNotice): {
       return notice.stage === "save"
         ? {
             title: `${notice.title} · 저장 실패`,
-            body: "저장 전 검사가 실패했습니다. Claude에게 고치도록 맡겼습니다.",
+            body: "저장이 끝나지 못했습니다. Claude에게 고치도록 맡겼습니다.",
           }
         : notice.stage === "handoff"
           ? {
               title: `${notice.title} · 넘기기 실패`,
-              body: "넘기기 전 빌드가 실패했습니다. Claude에게 고치도록 맡겼습니다.",
+              body: "넘기기가 끝나지 못했습니다. Claude에게 고치도록 맡겼습니다.",
             }
           : {
               title: `${notice.title} · 최신화 충돌`,

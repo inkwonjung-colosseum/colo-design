@@ -6,6 +6,7 @@ import {
   type PermissionUpdate,
   type Query,
   query,
+  type SDKControlGetUsageResponse,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -16,7 +17,6 @@ import type {
   PermissionMode,
   PermissionSuggestion,
   PlanUsage,
-  PlanWindow,
   SessionCommand,
   SessionSelectors,
   SessionState,
@@ -34,6 +34,30 @@ import { MessageTranslator } from "./translate.js";
 const INTERRUPT_GRACE_MS = 5_000;
 /** close 의 짧은 관대함 — 여러 wedged 세션을 닫아도 종료가 늦어지지 않게. */
 const CLOSE_GRACE_MS = 1_000;
+/**
+ * How long an unattended probe waits for its one control answer. The CLI it
+ * boots has no turn to run, so a second is the honest measure and twenty is
+ * only patience for a slow machine.
+ */
+const PROBE_GRACE_MS = 20_000;
+
+/**
+ * A send refusal the planner can read. The daemon's own guards answer in
+ * Korean and pass through untouched; anything else is foreign — the SDK, Node
+ * — and reaches the chat as raw English unless it is wrapped here (the same
+ * family as the C1·C3 fixes: "Query closed before response received" once
+ * rode the wire verbatim). The raw line stays in the daemon log; the
+ * planner's sentence carries the recovery instead.
+ */
+export function asPlannerFacingError(error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (/[\p{Script=Hangul}]/u.test(detail))
+    return error instanceof Error ? error : new Error(detail);
+  console.error(`[session] 전송이 거절됐습니다: ${detail}`);
+  return new Error(
+    "Claude와의 대화가 방금 끊겼습니다 — 입력창의 말을 잠시 뒤 다시 보내면 이어집니다.",
+  );
+}
 
 /** An async iterable the daemon can push user turns into while the query runs. */
 class PushQueue implements AsyncIterable<SDKUserMessage> {
@@ -262,6 +286,34 @@ export class Session {
   private crashed = false;
   /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
   private readonly abort = new AbortController();
+  /**
+   * 다음 턴에 보내기 (PLAN D86) 의 대기 줄 — 데몬이 쥔다.
+   *
+   * The SDK's input stream is NOT a waiting room: a user message written
+   * into it while a turn runs is folded by the CLI into that RUNNING turn
+   * between tool rounds (sdk.d.ts, `user_message_uuids`: "any queued user
+   * message folded into the running turn"). That is 끼어들기 — the exact
+   * opposite of what 다음 턴에 보내기 promises, and it can replace the answer
+   * the planner was already waiting for. So the wait happens HERE, and the
+   * turn's end releases it.
+   */
+  private readonly held: SDKUserMessage[] = [];
+  /**
+   * 턴이 돌고 있다 — CLI 가 일하는 중이거나 카드 앞에 멈춰 있다. 상태가
+   * 아니라 이 플래그가 기준인 이유: waiting_permission 도 도는 턴이고, 그
+   * 사이에 쓴 말도 똑같이 접혀 들어간다.
+   */
+  private turnActive = false;
+  /**
+   * 세션 비용: what this run has spent, as the SDK reports it — its
+   * `total_cost_usd` is already the running total for the query, so the
+   * latest result replaces the previous one rather than adding to it.
+   *
+   * Kept as a maximum because a crashed or startup-error result may carry
+   * zeroed values: a real total must not be erased by one of those. Null
+   * until a turn settles — an unanswered thread has no price to report.
+   */
+  private costUsd: number | null = null;
 
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
@@ -354,6 +406,9 @@ export class Session {
             this.model = event.model;
             this.permissionMode = event.permissionMode;
           }
+          if (event.kind === "turn.end" && event.costUsd != null) {
+            this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
+          }
           if (event.kind === "turn.end") {
             // 결함① 의 두 번째 길: interrupt() 를 부른 뒤 SDK 가 abort 예외를
             // 던지는 대신 에러 결과로 그 턴을 끝내면, 이 turn.end 는 그대로면
@@ -371,16 +426,34 @@ export class Session {
                 durationMs: event.durationMs,
                 resultText: null,
               });
-              this.setState(this.pending.size > 0 ? this.state : "idle");
+              this.endTurn();
               continue;
             }
             if (event.isError) this.interrupting = false;
-            this.setState(this.pending.size > 0 ? this.state : "idle");
+            // 턴 끝을 먼저 알리고, 그 다음에 대기 줄을 푼다 — 다음 턴은 앞
+            // 턴이 닫힌 뒤에 열려야 기록도 램프도 순서대로 읽힌다.
+            this.events.onEvent(this.id, event);
+            this.endTurn();
+            continue;
           }
           this.events.onEvent(this.id, event);
         }
       }
-      this.setState("closed");
+      // A query that ends while a turn is in flight is a crash wearing exit
+      // code 0: the planner's words got no result and no card would explain
+      // the running lamp dying into an empty answer. Say the same thing the
+      // exception path says; only a turn that was never running ends quietly.
+      if (this.state === "running") {
+        this.crashed = true;
+        this.events.onEvent(this.id, {
+          kind: "notice",
+          level: "error",
+          text: "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.",
+        });
+        this.setState("error", "Claude 프로그램이 응답 없이 종료됐습니다.");
+      } else {
+        this.setState("closed");
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       // The deliberate shutdown in close() aborts the in-flight query; that
@@ -423,6 +496,11 @@ export class Session {
         });
       }
       this.pending.clear();
+      // …nor deliver what was waiting for the next turn. Those words already
+      // echoed into the transcript when they were typed, so dropping them in
+      // silence would leave the planner reading a send that never happened.
+      this.turnActive = false;
+      this.dropHeld();
     }
   }
 
@@ -434,6 +512,54 @@ export class Session {
     if (this.state === state) return;
     this.state = state;
     this.events.onState(this.id, state, detail);
+  }
+
+  /**
+   * 턴이 끝났다 — 상태를 내리고 대기 줄을 다음 턴으로 내보낸다. 중지로 끝난
+   * 턴도 턴 끝이다: "다음 턴에 보냅니다" 라고 약속받고 써 둔 말은 멈춤 뒤에도
+   * 그 다음 턴으로 간다 (끊고 보내기가 기대하는 순서이기도 하다 — 끊은 다음,
+   * 그 말로 새 턴).
+   */
+  private endTurn(): void {
+    this.turnActive = false;
+    this.setState(this.pending.size > 0 ? this.state : "idle");
+    this.release();
+  }
+
+  /**
+   * 대기 줄을 CLI 로 — 턴 끝에서만 부른다. 여러 건이면 CLI 가 한 턴으로 묶을
+   * 수 있지만(SDK 의 prompt batch), 어느 쪽이든 도는 턴에 끼어들지는 않는다.
+   */
+  private release(): void {
+    if (this.held.length === 0) return;
+    this.turnActive = true;
+    for (const message of this.held) this.queue.push(message);
+    this.held.length = 0;
+    this.announceHeld();
+    this.setState("running");
+  }
+
+  /**
+   * 죽은 질의는 대기 줄을 소비하지 못한다. 그 말들은 이미 기록에 echo 됐으니
+   * 조용히 버리면 계획자는 보내지지도 않은 말을 읽는다 — 한 줄로 말하고
+   * 지운다. 닫는 대화만 예외: 스스로 닫은 창에 뒷말은 소식이 아니다.
+   */
+  private dropHeld(): void {
+    if (this.held.length === 0) return;
+    const lost = this.held.length;
+    this.held.length = 0;
+    if (this.closed) return;
+    this.announceHeld();
+    this.events.onEvent(this.id, {
+      kind: "notice",
+      level: "warn",
+      text: `다음 턴으로 기다리던 말 ${lost}건은 전달되지 못했습니다 — 다시 보내 주세요.`,
+    });
+  }
+
+  /** 대기 줄의 길이를 화면으로 — 입력창 위 한 줄이 이 수를 읽는다. */
+  private announceHeld(): void {
+    this.events.onEvent(this.id, { kind: "queued", count: this.held.length });
   }
 
   /**
@@ -745,15 +871,24 @@ export class Session {
       this.title = title.slice(0, 80);
     }
 
-    this.queue.push({
+    const message = {
       type: "user",
       message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: this.id,
-    } as SDKUserMessage);
+    } as SDKUserMessage;
 
     this.lastActivity = Date.now();
-    this.setState("running");
+    // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`). CLI 로
+    // 곧장 가는 건 도는 턴이 없을 때뿐이다.
+    if (this.turnActive) {
+      this.held.push(message);
+      this.announceHeld();
+    } else {
+      this.turnActive = true;
+      this.queue.push(message);
+      this.setState("running");
+    }
     // The echo carries the person's own words; the appended mentions are
     // plumbing, and the saved paths render as attachment chips instead.
     // D87: the pin crops ride back (capped) so the chat card can draw its
@@ -778,9 +913,11 @@ export class Session {
     const outcome = await this.settleInterrupt();
     if (outcome === "refused") {
       // Interrupt itself refused — nothing is being aborted, so the flag
-      // would only mask the next genuine error.
+      // would only mask the next genuine error. No turn.end will follow
+      // either, so this is the turn's end: the wait room drains here or
+      // never.
       this.interrupting = false;
-      this.setState("idle");
+      this.endTurn();
       return;
     }
     if (outcome === "timeout") {
@@ -792,7 +929,9 @@ export class Session {
       this.aborted = true;
       this.abort.abort();
     }
-    this.setState("idle");
+    // 대기 줄이 이미 다음 턴을 열었다면 그 램프를 끄지 않는다 — 멈춘 것은 앞
+    // 턴이고, 뒤에 선 말은 지금 돌고 있다.
+    if (!this.turnActive) this.setState("idle");
   }
 
   /**
@@ -826,6 +965,7 @@ export class Session {
         totalTokens: usage.totalTokens,
         maxTokens: usage.maxTokens,
         percentage: usage.percentage,
+        sessionCostUsd: this.costUsd,
         model: usage.model,
         plan: await this.planUsage(),
       };
@@ -835,33 +975,20 @@ export class Session {
   }
 
   /**
-   * The signed-in plan's 5-hour and weekly windows, from the SDK's /usage
-   * control call. API-key sessions answer `rate_limits_available: false` and
-   * any failure just means the composer shows nothing — the context ring
-   * above still works, so a broken experimental call must not take it down.
+   * The signed-in plan's windows, from the SDK's /usage control call. Any
+   * failure just means the composer shows nothing — the context ring above
+   * still works, so a broken experimental call must not take it down.
    */
   private async planUsage(): Promise<PlanUsage | null> {
     try {
-      const usage = await this.run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-        skipBehaviors: true,
-      });
-      if (!usage.rate_limits_available || !usage.rate_limits) return null;
-      return {
-        subscriptionType: usage.subscription_type,
-        fiveHour: this.toPlanWindow(usage.rate_limits.five_hour),
-        sevenDay: this.toPlanWindow(usage.rate_limits.seven_day),
-      };
+      return toPlanUsage(
+        await this.run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+          skipBehaviors: true,
+        }),
+      );
     } catch {
       return null;
     }
-  }
-
-  /** The SDK's wire shape for one limit window, narrowed to the protocol's. */
-  private toPlanWindow(
-    value: { utilization: number | null; resets_at: string | null } | null | undefined,
-  ): PlanWindow | null {
-    if (!value) return null;
-    return { utilization: value.utilization, resetsAt: value.resets_at };
   }
 
   // -------------------------------------------------------------------------
@@ -930,6 +1057,9 @@ export class Session {
       request.resolve({ behavior: "deny", message: "Session closed by user" });
     }
     this.pending.clear();
+    // 스스로 닫은 대화의 대기 줄은 조용히 사라진다 — 닫는 창에 뒷말은 소식이
+    // 아니다(dropHeld 가 closed 를 그렇게 읽는다).
+    this.dropHeld();
     this.queue.close();
     // The same grace as 중지, only shorter: a shutdown must not hang on a
     // wedged CLI either — and it must not pay the full grace per session.
@@ -940,30 +1070,39 @@ export class Session {
 }
 
 /**
+ * A CLI booted just far enough to answer one control request — the init
+ * handshake, no model turn, no transcript. The prompt stream never yields, so
+ * the process only ever answers the question the caller asks before closing
+ * it, and closing it is the caller's job.
+ */
+function probeQuery(cwd: string, executable: string): Query {
+  const idle = Promise.withResolvers<IteratorResult<SDKUserMessage>>();
+  const never: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]: () => ({ next: () => idle.promise }),
+  };
+  return query({
+    prompt: never,
+    options: {
+      cwd: realpathBestEffort(cwd),
+      pathToClaudeCodeExecutable: executable,
+      // The same user/project configuration a session loads, so a probe's
+      // answer is the one the first session will actually agree with.
+      settingSources: ["user", "project", "local"],
+    },
+  });
+}
+
+/**
  * The `/` palette before any thread exists. A live session answers from its
- * own CLI (`Session.commands`); this boots the CLI just far enough to ask the
- * same question — the init handshake, no model turn, no transcript — so an
- * empty workspace still reads like the terminal's `/`. The prompt stream
- * never yields; `close` tears the process down.
+ * own CLI (`Session.commands`); this asks the same question of a probe, so an
+ * empty workspace still reads like the terminal's `/`.
  */
 export async function probeCommands(options: {
   cwd: string;
   executable: string | null;
 }): Promise<SessionCommand[]> {
   if (!options.executable) return [];
-  const never: AsyncIterable<SDKUserMessage> = {
-    [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
-  };
-  const run = query({
-    prompt: never,
-    options: {
-      cwd: realpathBestEffort(options.cwd),
-      pathToClaudeCodeExecutable: options.executable,
-      // The same user/project configuration a session loads, so the probe's
-      // list is the one the first session will actually answer to.
-      settingSources: ["user", "project", "local"],
-    },
-  });
+  const run = probeQuery(options.cwd, options.executable);
   try {
     const commands = await run.supportedCommands();
     return commands.map((command) => ({
@@ -973,6 +1112,67 @@ export async function probeCommands(options: {
       aliases: command.aliases ?? [],
     }));
   } finally {
+    run.close();
+  }
+}
+
+/**
+ * The SDK's usage answer as the protocol's plan reading. API-key, Bedrock and
+ * Vertex sessions answer `rate_limits_available: false` and get null — plan
+ * limits do not apply there at all.
+ */
+function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
+  const limits = usage.rate_limits;
+  if (!usage.rate_limits_available || !limits) return null;
+  return {
+    subscriptionType: usage.subscription_type,
+    fiveHour: limits.five_hour
+      ? { utilization: limits.five_hour.utilization, resetsAt: limits.five_hour.resets_at }
+      : null,
+    sevenDay: limits.seven_day
+      ? { utilization: limits.seven_day.utilization, resetsAt: limits.seven_day.resets_at }
+      : null,
+    // The per-model weekly rows (Fable, Opus, …) are additive and named by
+    // the server, so they are carried through as they arrive rather than
+    // picked one by one — a bucket this build has never heard of still gets
+    // its row.
+    modelWeekly: (limits.model_scoped ?? []).map((row) => ({
+      label: row.display_name,
+      utilization: row.utilization,
+      resetsAt: row.resets_at,
+    })),
+  };
+}
+
+/**
+ * The plan's limits with no thread in the way. The chip has to read the
+ * account before the planner has opened anything — and the numbers move on
+ * the account, not in the thread — so this asks a probe rather than keeping a
+ * session alive for it: one process for a second, no tokens, no turn.
+ *
+ * The wait is bounded because this one runs unattended on a timer: a CLI that
+ * never answers must cost one closed process, not a live one per refresh. The
+ * answer is caught before the race so the loser cannot reject into no one's
+ * hands once `close` tears the query down.
+ */
+export async function probePlanUsage(options: {
+  cwd: string;
+  executable: string | null;
+}): Promise<PlanUsage | null> {
+  if (!options.executable) return null;
+  const run = probeQuery(options.cwd, options.executable);
+  const gaveUp = Promise.withResolvers<null>();
+  const timer = setTimeout(() => gaveUp.resolve(null), PROBE_GRACE_MS);
+  try {
+    const usage = await Promise.race([
+      run
+        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })
+        .catch(() => null),
+      gaveUp.promise,
+    ]);
+    return usage ? toPlanUsage(usage) : null;
+  } finally {
+    clearTimeout(timer);
     run.close();
   }
 }

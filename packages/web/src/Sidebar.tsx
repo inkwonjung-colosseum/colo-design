@@ -461,17 +461,6 @@ export function Sidebar({
                                 className="selector__row"
                                 onClick={() => {
                                   setMenuFor(null);
-                                  onOpenSettings();
-                                }}
-                              >
-                                <span className="selector__label">설정</span>
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="selector__row"
-                                onClick={() => {
-                                  setMenuFor(null);
                                   setRemoving(project);
                                 }}
                               >
@@ -551,17 +540,6 @@ export function Sidebar({
                             project's own moves ride here. 이름 바꾸기 stays out —
                             its inline input cannot live in a 44px column. */}
                           <span className="node__pop__sep" aria-hidden="true" />
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="selector__row"
-                            onClick={() => {
-                              setPopoverFor(null);
-                              onOpenSettings();
-                            }}
-                          >
-                            <span className="selector__label">설정</span>
-                          </button>
                           <button
                             type="button"
                             role="menuitem"

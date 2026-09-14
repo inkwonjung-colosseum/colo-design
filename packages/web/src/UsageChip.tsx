@@ -1,10 +1,12 @@
 /**
- * Everything the planner spends, behind one chip (PLAN D10[설정 이동]) —
- * ex `Composer` head. Pure presentation: numbers arrive as props, the face
- * reads the 5-hour window, the popover carries the whole budget picture.
+ * Everything the planner's ACCOUNT spends, behind one chip (PLAN D10[설정
+ * 이동]) — ex `Composer` head. Pure presentation: numbers arrive as props,
+ * the face reads the 5-hour window, the popover carries the whole budget
+ * picture. The conversation's own length is not an account budget and rides
+ * the send row instead (`ContextRing`).
  */
 
-import type { ContextUsage, PlanUsage } from "@colo-design/protocol";
+import type { PlanUsage } from "@colo-design/protocol";
 import { useEffect, useState } from "react";
 
 /**
@@ -45,15 +47,7 @@ function tone(pct: number): "" | "warn" | "danger" {
   return pct >= 85 ? "danger" : pct >= 60 ? "warn" : "";
 }
 
-export function UsageChip({
-  plan,
-  usage,
-  onRefresh,
-}: {
-  plan: PlanUsage | null;
-  usage: ContextUsage | null;
-  onRefresh?: () => void;
-}) {
+export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefresh?: () => void }) {
   const [open, setOpen] = useState(false);
 
   /**
@@ -85,19 +79,16 @@ export function UsageChip({
       note: resetNote(plan.sevenDay.resetsAt),
     });
   }
-  if (usage) {
-    const pct = clamp(usage.percentage);
+  // Per-model weeks sit under the plan's own week, because that is the order
+  // they run out in: the whole week is the budget, a model's week is a cap
+  // inside it. The server names them, so 'Fable' arrives spelled already.
+  for (const row of plan?.modelWeekly ?? []) {
     entries.push({
-      label: "대화 길이",
-      raw: usage.percentage,
-      pct,
-      resetsAt: null,
-      note:
-        pct >= 85
-          ? "곧 앞부분을 잊습니다. 새 대화로 나누는 편이 좋아요"
-          : pct >= 60
-            ? "대화가 길어지고 있어요"
-            : "",
+      label: `${row.label} 주간`,
+      raw: row.utilization ?? null,
+      pct: clamp(row.utilization ?? 0),
+      resetsAt: row.resetsAt ?? null,
+      note: resetNote(row.resetsAt),
     });
   }
 
@@ -175,7 +166,7 @@ export function UsageChip({
           if (next) onRefresh?.();
         }}
       >
-        <span className="usage__ring ring" aria-hidden>
+        <span className="usage__ring" aria-hidden>
           <svg viewBox="0 0 20 20" width={18} height={18}>
             <circle className="usage__ringtrack" cx="10" cy="10" r="7.5" />
             {ringPct !== null && (

@@ -295,11 +295,19 @@ async function main() {
   );
 
   // The ring only appears once a settled turn has reported usage, which is
-  // exactly where step 7 left the session. The chip it lives in floats above
-  // the input's top-left corner now, not in the toolbar with the send row.
+  // exactly where step 7 left the session. It rides the send row now, beside
+  // the button it is a reason to press or not — the plan chip that used to
+  // carry this reading keeps the account's budgets alone.
+  const ring = page.locator(`${VISIBLE}.ring`);
+  check("the chat shows how long the conversation has grown", await ring.isVisible());
+  // Hovering it is the whole disclosure: the window, the tokens behind the
+  // percentage, and what this session run has cost.
+  await ring.hover();
+  const reading = await page.locator(`${VISIBLE}.ctx__tip`).innerText();
   check(
-    "the chat shows how long the conversation has grown",
-    await page.locator(`${VISIBLE}.ring`).isVisible(),
+    "hovering the ring names the context window and its numbers",
+    reading.includes("컨텍스트 윈도우") && reading.includes("토큰"),
+    reading.replace(/\n/g, " · "),
   );
 
   // Duplicate assistant text was a real regression: the streamed deltas and

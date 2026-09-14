@@ -13,12 +13,12 @@
  * Usage: node packages/daemon/test/repo-e2e.mjs
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
-import { RepoWorkspace } from "../dist/repo.js";
+import { portListenerPids, RepoWorkspace, readPreviewClaim } from "../dist/repo.js";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
@@ -43,6 +43,7 @@ process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 
 const results = [];
@@ -80,6 +81,7 @@ async function waitFor(predicate, timeoutMs, label) {
 
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
+  mkdirSync(join(DIR, "run"), { recursive: true });
   mkdirSync(join(DIR, "claude-config"), { recursive: true });
 
   const port = await freePort();
@@ -192,6 +194,54 @@ async function main() {
   check("the foreign holder process is gone", squatter.signalCode === "SIGKILL");
   await checkWireProtocol(port, fixture.remote, workspace);
 
+  // --- 4b. 살아 있는 다른 인스턴스의 미리보기는 죽이지 않는다 -----------------
+  // 실사 전쟁: 패키지 앱과 개발 데몬이 한 프로젝트의 포트를 두고 서로의 서버를
+  // 1~2분마다 죽였다. 소유 기록(preview-<포트>.json)이 가리키는 점유자는 고아가
+  // 아니라 산 남의 인스턴스다 — 이쪽은 죽이지 않고 held-elsewhere 로 앉는다.
+  // 기록의 주인이 죽으면 (아래) 고아 정리가 예전처럼 이긴다.
+  await workspace.stop();
+  const heldSquatter = spawnSquatter(port);
+  await waitFor(() => portAccepts(port), 10_000, "the squatter to hold the port");
+  const stranger = spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], {
+    stdio: "ignore",
+  });
+  writeFileSync(
+    join(DIR, "run", `preview-${port}.json`),
+    JSON.stringify({
+      instancePid: stranger.pid,
+      listenerPid: (await portListenerPids(port))[0] ?? null,
+      port,
+      at: new Date().toISOString(),
+    }),
+  );
+  const held = await workspace.sync();
+  check(
+    "a live stranger's preview is refused, not killed",
+    held.phase === "error" && held.errorKind === "held-elsewhere",
+    `${held.phase}/${held.errorKind ?? "?"}: ${held.detail ?? ""}`,
+  );
+  check("the stranger's holder still answers", await portAccepts(port));
+  check("the stranger instance still lives", stranger.exitCode === null);
+  stranger.kill("SIGKILL");
+  await waitFor(
+    () => stranger.exitCode !== null || stranger.signalCode !== null,
+    5_000,
+    "the stranger to die",
+  );
+
+  const stale = await workspace.sync();
+  check(
+    "a stale claim (dead owner) reclaims the port as before",
+    stale.phase === "ready",
+    `${stale.phase}: ${stale.detail ?? ""}`,
+  );
+  await waitFor(
+    () => heldSquatter.exitCode !== null || heldSquatter.signalCode !== null,
+    5_000,
+    "the stale claim's holder to die",
+  );
+  check("the stale claim did not protect the squatter", heldSquatter.signalCode === "SIGKILL");
+
   // --- 5. 판정은 그 자리를 지킨다 ------------------------------------------
   // 실사 결함: 포트 충돌로 실패한 뒤 뒤에서 돈 git fetch 의 진행 출력
   // (`* branch main -> FETCH_HEAD`)이 에러 문구를 덮어 써, 기획자는 실패
@@ -246,6 +296,12 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
   process.env.COLO_DESIGN_REPO_DIR = ROOT;
   process.env.COLO_DESIGN_REPO_URL = remoteUrl;
   const port = await freePort();
+  // The server owns its own workspace state, and its warm-restart sync at
+  // boot brings this same workspace up. The preview this test process
+  // started is foreign to it — step aside (and clear this process's claim
+  // with it) BEFORE the boot, so the fence reads no live claim and the boot
+  // bring-up is the ordinary reclaim-free path.
+  await workspace.stop();
   const server = new DaemonServer({
     host: "127.0.0.1",
     port,
@@ -297,11 +353,6 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-
-    // The server owns its own workspace state; the preview this test process
-    // started is foreign to it, so step aside before asking it to serve.
-    await workspace.stop();
-
     // 검사의 말 그대로: 묻는 행위가 아무것도 시작하지 않는다. 절대적인
     // '포트가 조용하다' 는 이 자리에서 참이 아닐 수 있다 — killPreview 는
     // 포트 해제를 3초까지만 기다리고, 느린 러너에서는 방금 멈춘 미리보기의

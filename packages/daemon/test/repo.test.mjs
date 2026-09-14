@@ -14,29 +14,37 @@
  */
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readComments, recordComments, resolveComment } from "../dist/comments.js";
+import { readComments, recordComments } from "../dist/comments.js";
 import { MemoryCredentialStore, REPO_PAT_ITEM } from "../dist/credentials.js";
 import { detectsRegistryAuthFailure, pnpmCandidates } from "../dist/environment.js";
 import {
   assertClonableRepoUrl,
+  clearPreviewClaim,
   extraPathPrefix,
   fallbackGroup,
   fallbackSummary,
+  foreignLivePreviewClaim,
   parseColoDesignConfig,
   parseUnifiedDiff,
+  pidAlive,
+  portListenerPids,
   REPO_URL_MISSING_DETAIL,
   RepoWorkspace,
   readColoDesignConfig,
+  readPreviewClaim,
   repoSettingsWarning,
   restorePlan,
   safeRepoPath,
   saveSpecFiles,
   specFileName,
   trustWorkspace,
+  writePreviewClaim,
 } from "../dist/repo.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
@@ -852,7 +860,7 @@ test("trust survives a missing config and never rewrites a corrupt one", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Publish regressions (B1, F4, F5)
+// Publish regressions (B1, F5)
 // ---------------------------------------------------------------------------
 
 /** A fixture whose check passes while writing a file nobody reviewed. */
@@ -937,67 +945,7 @@ test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-le
   }
 });
 
-test("F4: a save commits exactly the reviewed paths — gate-written files stay out", async () => {
-  const dir = workdir("hub-publish-sneaky-");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-      previewCommand: 'node -e "process.exit(0)"',
-      checkMjs: SNEAKY_CHECK,
-    });
-    const workspace = new RepoWorkspace({
-      root: join(dir, "work"),
-      url: fixture.remote,
-      onStatus: () => undefined,
-    });
-    await workspace.sync();
-    await workspace.stop();
-
-    // The reviewed change: an edit the planner saw in the diff panel.
-    writeFileSync(join(dir, "work", "index.html"), "<p>검토된 변경</p>\n");
-    const published = await workspace.save({ message: "검토된 것만" });
-    assert.equal(published.stage, "published", published.detail ?? "");
-
-    const committed = (
-      await promisifiedRun("git", [
-        "-C",
-        join(dir, "work"),
-        "show",
-        "--name-only",
-        "--pretty=",
-        "HEAD",
-      ])
-    )
-      .split("\n")
-      .filter(Boolean);
-    assert.ok(committed.includes("index.html"), `index.html committed: ${committed.join(", ")}`);
-    assert.ok(
-      !committed.includes("sneaky-unreviewed.txt"),
-      "the gate's unreviewed file must not be committed",
-    );
-    assert.ok(
-      existsSync(join(dir, "work", "sneaky-unreviewed.txt")),
-      "the gate still ran (its file exists on disk)",
-    );
-    const status = await promisifiedRun("git", ["-C", join(dir, "work"), "status", "--porcelain"]);
-    assert.match(status, /sneaky-unreviewed\.txt/, "it remains untracked, awaiting its own review");
-
-    const remoteTree = await promisifiedRun("git", [
-      "-C",
-      fixture.remote,
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "HEAD",
-    ]);
-    assert.ok(!remoteTree.includes("sneaky-unreviewed.txt"), "the remote is clean too");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("F5: a save re-reads colo-design.json — a freshly edited gate is the one that runs", async () => {
+test("F5: a save does not run the repo's check — a broken gate no longer blocks", async () => {
   const dir = workdir("hub-publish-config-");
   try {
     const fixture = await createFixtureRepo({
@@ -1013,19 +961,21 @@ test("F5: a save re-reads colo-design.json — a freshly edited gate is the one 
     await workspace.sync();
     await workspace.stop();
 
-    // Swap the clone's gate AFTER sync cached the config: publish must run
-    // what is on disk now, not the cached copy.
+    // A freshly broken check on disk, the way a Claude turn or an editor
+    // leaves one: the save must put the work up anyway — problems are the
+    // developer's to catch in the pull request, not a wall in front of the
+    // planner (실사).
     const config = JSON.parse(readFileSync(join(dir, "work", "colo-design.json"), "utf8"));
     config.check = "node -e \"console.error('NEWGATE-RAN'); process.exit(7)\"";
     writeFileSync(join(dir, "work", "colo-design.json"), `${JSON.stringify(config, null, 2)}\n`);
 
     writeFileSync(join(dir, "work", "index.html"), "<p>게이트 확인</p>\n");
     const status = await workspace.save({ message: "게이트" });
-    assert.equal(status.stage, "failed");
-    assert.equal(status.gate, "check");
+    assert.equal(status.stage, "published", status.detail ?? "");
+    assert.ok(/[0-9a-f]{40}/.test(status.commit ?? ""), status.commit ?? "");
     assert.ok(
-      (status.detail ?? "").includes("NEWGATE-RAN"),
-      `the new gate ran: ${status.detail ?? ""}`,
+      !(status.detail ?? "").includes("NEWGATE-RAN"),
+      `the check must not run during a save: ${status.detail ?? ""}`,
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1041,40 +991,32 @@ const promisifiedRun = async (command, args) => (await promisify(execFileCb)(com
 // 코멘트 저장소 (PLAN D57)
 // ---------------------------------------------------------------------------
 
-test("comments.record replaces a screen·state's unresolved rows and keeps resolved history", () => {
+test("comments.record appends delivered rows — a second send of the same words stays", () => {
   const dir = workdir("hub-comments-");
   const file = join(dir, "comments.json");
   try {
     recordComments(file, "/member/MemberList", "default", [
       { text: "첫 코멘트", elementText: "목록" },
     ]);
-    // The overlay re-sends what is still pinned: one row becomes a reworded two.
-    const written = recordComments(file, "/member/MemberList", "default", [
+    // 자동 정리: delivery is the row's birth — every row lands resolved,
+    // because the turn carrying the words IS the delivery.
+    let rows = readComments(file);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].resolved, true, "the row is born delivered");
+    assert.equal(rows[0].screen, "member/MemberList", "no leading slash");
+
+    // The store is an append-only log of what went to Claude: a reworded
+    // second send is a second request, and both stay.
+    recordComments(file, "/member/MemberList", "default", [
       { text: "다시 쓴 코멘트", elementText: "목록" },
       { text: "하나 더", elementText: "페이지 제목" },
     ]);
-    assert.equal(written.length, 2);
-    assert.equal(new Set(written).size, 2, "each written row carries its own id");
-    let rows = readComments(file);
-    assert.equal(rows.length, 2, "the re-send replaced the pair's unresolved row");
-    assert.ok(
-      rows.every((row) => row.text !== "첫 코멘트"),
-      JSON.stringify(rows),
-    );
-    // A resolved row is history: the same screen·state's re-send cannot touch
-    // it — but the pair's other unresolved row still goes.
-    resolveComment(file, rows[0].id, true);
-    recordComments(file, "/member/MemberList", "default", [
-      { text: "새 코멘트", elementText: "목록" },
-    ]);
     rows = readComments(file);
-    assert.equal(rows.length, 2, "resolved history stayed, the unresolved one was replaced");
-    assert.deepEqual(
-      rows.map((row) => [row.resolved, row.text]),
-      [
-        [true, "다시 쓴 코멘트"],
-        [false, "새 코멘트"],
-      ],
+    assert.equal(rows.length, 3, "a second send of the same pair appends, never replaces");
+    assert.equal(new Set(rows.map((row) => row.id)).size, 3, "each written row carries its own id");
+    assert.ok(
+      rows.some((row) => row.text === "첫 코멘트"),
+      "the first request is still history",
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1150,13 +1092,6 @@ test("an old row without element survives; a broken element row is dropped (PLAN
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("resolveComment answers false for an id the store never had", () => {
-  const file = join(workdir("hub-comments-miss-"), "comments.json");
-  recordComments(file, "/a/A", "default", [{ text: "x", elementText: "y" }]);
-  assert.equal(resolveComment(file, "no-such-id", true), false);
-  assert.equal(readComments(file).length, 1, "a failed resolve moved nothing");
 });
 
 test("a comments.json a hand mangled reads as whatever survives", () => {
@@ -1968,7 +1903,7 @@ test("summarize without a Claude path falls back to folder grouping — once per
   }
 });
 
-test("buildCommentsSection: 선언된 제목·해결 표식·20건 넘김 (PLAN D93)", async () => {
+test("buildCommentsSection: 선언된 제목·20건 넘김 (PLAN D93)", async () => {
   const { buildCommentsSection } = await import("../dist/repo.js");
   const rows = [
     {
@@ -1976,23 +1911,15 @@ test("buildCommentsSection: 선언된 제목·해결 표식·20건 넘김 (PLAN 
       state: "default",
       text: "제목을 줄여",
       at: "2026-09-11T09:00:00.000Z",
-      resolved: true,
     },
     {
       screen: "pay/PayFailed",
       state: "error",
       text: "문구를 다시",
       at: "2026-09-11T09:05:00.000Z",
-      resolved: false,
     },
     // 이전 사이클(브랜치 이전)의 항목은 절에 들지 않는다.
-    {
-      screen: "pay/PayFailed",
-      state: "error",
-      text: "옛것",
-      at: "2026-09-10T09:00:00.000Z",
-      resolved: false,
-    },
+    { screen: "pay/PayFailed", state: "error", text: "옛것", at: "2026-09-10T09:00:00.000Z" },
   ];
   const section = buildCommentsSection(
     rows,
@@ -2000,9 +1927,11 @@ test("buildCommentsSection: 선언된 제목·해결 표식·20건 넘김 (PLAN 
     "2026-09-11T00:00:00Z",
   );
   assert.ok(section.includes("### 수정 요청"));
-  assert.ok(section.includes("- [x] 회원 목록 · 기본"), section);
-  assert.ok(section.includes("(해결)"), section);
-  assert.ok(section.includes("- [ ] pay/PayFailed · 오류"), "선언 없는 화면은 id 로 남는다");
+  assert.ok(section.includes('- 회원 목록 · 기본 — "제목을 줄여"'), section);
+  assert.ok(
+    section.includes('- pay/PayFailed · 오류 — "문구를 다시"'),
+    "선언 없는 화면은 id 로 남는다",
+  );
   assert.ok(!section.includes("옛것"), "브랜치 이전 항목은 제외");
   assert.ok(
     !section.includes("data-component") && !section.includes(".css"),
@@ -2015,7 +1944,6 @@ test("buildCommentsSection: 선언된 제목·해결 표식·20건 넘김 (PLAN 
       state: "default",
       text: `코멘트 ${index + 1}`,
       at: `2026-09-11T10:${String(index).padStart(2, "0")}:00.000Z`,
-      resolved: false,
     })),
     () => null,
     "2026-09-11T00:00:00Z",
@@ -2139,4 +2067,91 @@ test("validateBootstrapConfig: 락파일 · scripts 화이트리스트 · 포트
       },
     })?.includes("포트"),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Preview ownership claims — 두 인스턴스 포트 전쟁의 울타리
+// ---------------------------------------------------------------------------
+
+/** 살아 있는 남의 인스턴스 흉내 — 검사가 끝날 때까지 사는 짧은 프로세스. */
+function spawnStranger() {
+  return spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], { stdio: "ignore" });
+}
+
+test("claims: 쓰고 읽으면 같은 기록이고, 지우면 없어진다", () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  const claim = { instancePid: process.pid, listenerPid: null, port: 41023, at: "now" };
+  writePreviewClaim(claim, env);
+  assert.deepEqual(readPreviewClaim(41023, env), claim);
+  clearPreviewClaim(41023, env);
+  assert.equal(readPreviewClaim(41023, env), null);
+});
+
+test("claims: 기록이 없으면 아무도 막지 않는다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  assert.equal(await foreignLivePreviewClaim(41024, env), null);
+});
+
+test("claims: 우리 인스턴스의 기록은 살아 있어도 막지 않는다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  writePreviewClaim({ instancePid: process.pid, listenerPid: 1, port: 41025, at: "now" }, env);
+  assert.equal(await foreignLivePreviewClaim(41025, env), null);
+});
+
+test("claims: 주인이 죽은 기록은 고아 — 지우고 지나간다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  const dead = spawnStranger();
+  const pid = dead.pid;
+  assert.ok(typeof pid === "number");
+  dead.kill("SIGKILL");
+  await new Promise((ok) => dead.once("exit", ok));
+  assert.equal(pidAlive(pid), false);
+  writePreviewClaim({ instancePid: pid, listenerPid: 1, port: 41026, at: "now" }, env);
+  assert.equal(await foreignLivePreviewClaim(41026, env), null);
+  assert.equal(readPreviewClaim(41026, env), null);
+});
+
+test("claims: 산 남의 인스턴스가 리스너를 쥐고 있으면 그 기록이 답이다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  const stranger = spawnStranger();
+  const server = createServer();
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const port = server.address().port;
+  const holders = await portListenerPids(port);
+  assert.ok(holders.includes(process.pid), "lsof finds this suite's own listener");
+  writePreviewClaim({ instancePid: stranger.pid, listenerPid: process.pid, port, at: "now" }, env);
+  const held = await foreignLivePreviewClaim(port, env);
+  assert.equal(held?.instancePid, stranger.pid);
+  stranger.kill("SIGKILL");
+  server.close();
+});
+
+test("claims: 기록이 가리킨 리스너가 없으면 낡은 기록 — 지우고 지나간다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  const stranger = spawnStranger();
+  const server = createServer();
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const port = server.address().port;
+  // 리스너가 살아 있어도 기록이 가리키는 pid 가 그 포트에 없으면 낡은 것이다 —
+  // 기록의 주인이 이미 그 서버를 잃었고, 포트의 지금 주인은 따로 있다.
+  writePreviewClaim({ instancePid: stranger.pid, listenerPid: stranger.pid, port, at: "now" }, env);
+  assert.equal(await foreignLivePreviewClaim(port, env), null);
+  assert.equal(readPreviewClaim(port, env), null);
+  stranger.kill("SIGKILL");
+  server.close();
+});
+
+test("claims: 리스너 조회가 실패한 기록도 산 주인이 있으면 지킨다", async () => {
+  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
+  const stranger = spawnStranger();
+  const server = createServer();
+  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+  const port = server.address().port;
+  // listenerPid null — 기록 시점의 lsof 가 순간 놓쳤을 때의 모양 (실사 목격).
+  // 오류의 방향은 살아 있는 남의 미리보기를 죽이는 쪽이 아니어야 한다.
+  writePreviewClaim({ instancePid: stranger.pid, listenerPid: null, port, at: "now" }, env);
+  const held = await foreignLivePreviewClaim(port, env);
+  assert.equal(held?.instancePid, stranger.pid);
+  stranger.kill("SIGKILL");
+  server.close();
 });

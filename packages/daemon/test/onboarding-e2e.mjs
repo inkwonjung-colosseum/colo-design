@@ -59,6 +59,7 @@ process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "repo.json");
 // migrated, from a fixture remote that no longer exists.
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 // The github gate and the repo list talk to the recorded pairs, never to
 // api.github.com — the suite stays offline like the rest of it.
 process.env.COLO_DESIGN_GITHUB_FIXTURE = join(here, "fixtures", "github");

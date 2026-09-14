@@ -1,8 +1,8 @@
 /**
- * 주소창의 판정 (PLAN D66) — 순수 함수. The address bar takes a path, not a
- * url: the preview origin is never shown (the 새 창 button hides it for the
- * same reason), and a bar that can name another server is a browser this
- * tool refuses to be. What may be typed:
+ * 주소창의 판정 (PLAN D66) — 순수 함수. The bar DISPLAYS the full address —
+ * origin included, PreviewHost 가 붙여 보여 준다 — but what may be typed
+ * stays inside the preview server: a bar that can name another server is a
+ * browser this tool refuses to be. What may be typed:
  *
  * - `/member/MemberList` — a declared screen's route, `?state=` welcome.
  *   A declared route rides the bridge (client routing, no reload); anything

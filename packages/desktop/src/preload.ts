@@ -29,7 +29,9 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   onOpenSession: subscribe<string>("colodesign:open-session"),
   preview: {
     native: true as const,
-    mount: (url: string) => ipcRenderer.invoke("preview:mount", { url }),
+    mount: (url: string, epoch: number | null) =>
+      ipcRenderer.invoke("preview:mount", { url, epoch }),
+    /** Takes the page off screen — it stays alive for the planner's return. */
     unmount: () => ipcRenderer.invoke("preview:unmount"),
     bounds: (rect: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke("preview:bounds", rect),
@@ -46,11 +48,6 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     commentsMode: (on: boolean) => ipcRenderer.invoke("preview:comments-mode", { on }),
     emulate: (width: "mobile" | "tablet" | null) =>
       ipcRenderer.invoke("preview:emulate", { width }),
-    /**
-     * 기록된 핀 (PLAN D78): the web pushes the project's whole comment list
-     * down into the view; the view re-tells it on every load.
-     */
-    pins: (payload: unknown) => ipcRenderer.invoke("preview:pins", payload),
     /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
     busy: (on: boolean) => ipcRenderer.invoke("preview:busy", { on }),
     /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
@@ -81,7 +78,5 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     onLoading: subscribe<{ on: boolean }>("colo-preview:loading"),
     /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
     onZoom: subscribe<{ factor: number }>("colo-preview:zoom"),
-    onCommentResolve: subscribe<{ id: string; resolved: boolean }>("colo-preview:comment-resolve"),
-    onCommentResend: subscribe<{ id: string }>("colo-preview:comment-resend"),
   },
 });

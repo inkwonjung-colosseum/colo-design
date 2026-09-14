@@ -443,9 +443,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * 코멘트 기록 (PLAN D57): the pins the planner sent from the preview land
-   * in the project's own `comments.json`. The set REPLACES that screen·state
-   * pair's unresolved rows — the overlay re-sends what is still pinned, so a
-   * re-send must not double a comment — while resolved rows stay as history.
+   * in the project's own `comments.json` as delivered — every row is born
+   * resolved, because the turn carrying the words IS the delivery. The store
+   * is an append-only log: a second send of the same words is a second
+   * request, and both stay.
    */
   z.object({
     ...withId,
@@ -484,25 +485,10 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * The active project's whole comment store (PLAN D57) — the `💬 코멘트`
-   * popover's list, resolved entries included: they are the history the
-   * turn's pins leave behind.
+   * popover's list: the log of what the planner's pins asked Claude, oldest
+   * first.
    */
   z.object({ ...withId, type: z.literal("comments.list") }),
-  /**
-   * Toggle one comment's resolved mark (PLAN D57). The row never leaves the
-   * store; this only moves it out of the 미해결 count.
-   *
-   * `commentId`, never `id`: the wire's `id` is the CORRELATION id every
-   * reply echoes, and the client's `call` spreads the payload over its own —
-   * a field named `id` here would overwrite it and the reply would land on
-   * nobody (found by the desktop comments suite).
-   */
-  z.object({
-    ...withId,
-    type: z.literal("comments.resolve"),
-    commentId: z.string().min(1),
-    resolved: z.boolean(),
-  }),
   /**
    * 답하기 (PLAN D88): the planner's answer to ONE developer comment, from
    * inside the tool. The daemon picks the endpoint by the id's cached kind —
@@ -511,8 +497,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("comments.reply"),
-    /** `reviewId`, never `id`: the wire's `id` is the CORRELATION id (the
-        comments.resolve lesson). The developer comment's numeric id rides here. */
+    /** `reviewId`, never `id`: the wire's `id` is the CORRELATION id every
+        reply echoes — a payload field named `id` would overwrite it and the
+        reply would land on nobody. */
     reviewId: z.number(),
     body: z.string().min(1),
   }),
@@ -544,29 +531,17 @@ export interface CommentItem {
   };
   /** When the row was written, ISO 8601. */
   at: string;
+  /**
+   * Delivered mark. Every row is now written resolved — the send IS the
+   * delivery — and nothing reads it as a work state any more; the field
+   * survives because stores written before 자동 정리 carry it.
+   */
   resolved: boolean;
 }
 
-/** `comments.record` — the ids the daemon just wrote, for the batch's return. */
+/** `comments.record` — the batch landed; the count is the receipt. */
 export interface CommentsRecorded {
   recorded: number;
-  /**
-   * The written rows' ids, in envelope order. The sender turns them into
-   * 확인해 주세요 attention at turn end — matching by id, not text, so two
-   * pins with the same words stay two pins and a reworded row never lights
-   * the wrong one.
-   */
-  ids: string[];
-}
-
-/** `comments.list` — every row, resolved included, oldest first. */
-export interface CommentsList {
-  items: CommentItem[];
-}
-
-/** `comments.resolve` — the mark moved; the row stayed. */
-export interface CommentResolved {
-  ok: true;
 }
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -643,6 +618,19 @@ export type ChatEvent =
       delayMs: number;
       error: string;
     }
+  /**
+   * 다음 턴에 보내기 (PLAN D86): how many sends are waiting in the daemon's
+   * wait room right now — 0 when the room empties. Not a transcript event:
+   * the composer's one line above the field reads it, and `foldEvent` must
+   * NOT build a chat block from it (the words already echoed as `user.echo`
+   * when they were typed).
+   *
+   * The count is the DAEMON's, on purpose. The SDK's input stream is not a
+   * waiting room — anything written into it mid-turn is folded by the CLI
+   * into the RUNNING turn between tool rounds — so the wait is the daemon's
+   * to keep, and only the daemon knows when it ends.
+   */
+  | { kind: "queued"; count: number }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
   | { kind: "compact"; trigger: string }
   /**
@@ -774,6 +762,16 @@ export interface PlanWindow {
 }
 
 /**
+ * A weekly window that belongs to one model rather than to the whole plan —
+ * the Fable/Opus row of the usage dialog. The server names its own buckets,
+ * so the label travels with the numbers instead of being spelled here.
+ */
+export interface PlanModelWindow extends PlanWindow {
+  /** Server-supplied bucket name, e.g. 'Fable'. */
+  label: string;
+}
+
+/**
  * The signed-in plan's rolling limits. Null for API-key and third-party
  * provider sessions, where plan limits do not apply.
  */
@@ -782,12 +780,23 @@ export interface PlanUsage {
   subscriptionType: string | null;
   fiveHour: PlanWindow | null;
   sevenDay: PlanWindow | null;
+  /**
+   * Per-model weekly windows, in the order the server sent them. Empty when
+   * the plan has none — a Pro account, or a server that does not emit them.
+   */
+  modelWeekly: PlanModelWindow[];
 }
 
 export interface ContextUsage {
   totalTokens: number;
   maxTokens: number;
   percentage: number;
+  /**
+   * What this session run has spent so far, as the SDK's own running total.
+   * Null until a turn has settled — a thread that never answered has no
+   * price to report, and `0` would be a number nobody measured.
+   */
+  sessionCostUsd: number | null;
   model: string;
   plan: PlanUsage | null;
 }
@@ -886,7 +895,8 @@ export type RepoErrorKind =
   | "port-busy"
   | "conflict"
   | "bootstrap"
-  | "commands";
+  | "commands"
+  | "held-elsewhere";
 
 export interface RepoStatus {
   /** Absolute path of the clone on this machine. */
@@ -914,6 +924,14 @@ export interface RepoStatus {
   previewUrl: string | null;
   /** Port declared in the repo's `colo-design.json`. */
   previewPort: number | null;
+  /**
+   * Which server process answers at `previewUrl` — a new number every time
+   * the preview is started. The desktop keeps a page per preview across
+   * project switches; a page loaded under an earlier epoch is stale (the
+   * server was restarted, or the port fence handed the port to another
+   * project) and reloads on its return instead of showing the old app.
+   */
+  previewEpoch: number | null;
   /** Configured remote url, without any embedded credentials. */
   url: string | null;
   /**
@@ -1002,41 +1020,6 @@ export interface ColoDesignCommentsEnvelope {
      */
     shot?: { mediaType: string; data: string };
   }>;
-}
-
-/**
- * One recorded pin's 해결 toggle, from the overlay's own bubble (PLAN D78).
- * Tool-internal like the pin bundle: the overlay makes it, the view relays it
- * verbatim as `colo-preview:comment-resolve`, and the web calls
- * `comments.resolve` — the daemon never learns the overlay exists.
- */
-export interface ColoDesignCommentsResolveEnvelope {
-  type: "colo-design.comments.resolve";
-  id: string;
-  resolved: boolean;
-}
-
-/**
- * One recorded pin's 다시 요청, from the attention bubble (PLAN D78): the
- * overlay asks, the view relays it verbatim as `colo-preview:comment-resend`,
- * and the web composes the turn with its own `commentToTurn` — the popover's
- * 다시 보내기 on the same line.
- */
-export interface ColoDesignCommentsResendEnvelope {
-  type: "colo-design.comments.resend";
-  id: string;
-}
-
-/**
- * The whole recorded list the web pushes DOWN into the view (PLAN D78) —
- * `preview.pins(items)` → `colo-overlay:pins`. The overlay filters it against
- * the page's own `[data-screen]`·`[data-state]`, so a screen switch needs no
- * round trip. `attention` names the ids a just-finished turn owes a look at
- * (확인해 주세요).
- */
-export interface ColoDesignPinsPayload {
-  items: CommentItem[];
-  attention?: string[];
 }
 
 /**
@@ -1252,9 +1235,12 @@ export interface DiffFile {
 
 /** Where a 저장 or a 넘기기 stands. Broadcast as `diff.status` while it moves. */
 export interface DiffStatus {
-  stage: "computing" | "gating" | "pushing" | "published" | "handing-off" | "handed-off" | "failed";
-  /** Which gate is running, or which one failed. */
-  gate?: "check" | "build" | "commit" | "push" | "diff" | "pr";
+  stage: "computing" | "pushing" | "published" | "handing-off" | "handed-off" | "failed";
+  /**
+   * Which gate failed. The repo's own `check`/`build` commands are not gates
+   * anymore — a 저장 or 넘기기 never runs them; problems land in the PR.
+   */
+  gate?: "commit" | "push" | "diff" | "pr";
   /**
    * Why a gate failed, when the tool already knows it is NOT Claude's to fix
    * (리뷰 C5): `push-auth` = the push was refused over credentials, so the

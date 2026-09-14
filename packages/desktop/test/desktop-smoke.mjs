@@ -73,6 +73,7 @@ async function main() {
       COLO_DESIGN_DESKTOP_SMOKE: userData,
       COLO_DESIGN_PROJECTS_SETTINGS: join(userData, "projects.json"),
       COLO_DESIGN_PROJECTS_DIR: join(userData, "projects"),
+      COLO_DESIGN_RUN_DIR: join(userData, "run"),
     },
   });
 

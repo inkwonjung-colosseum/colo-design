@@ -4,9 +4,8 @@ import { CloseIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
- * ⌘/ 단축키 시트 (PLAN D92) — 코치 마크 셋이 한 번으로 끝나는 만큼, 단축키의
- * 목록은 언제나 열어 볼 수 있는 곳에 산다. 행은 protocol 의 APP_SHORTCUTS,
- * 데스크톱 앱 메뉴가 읽는 상수와 같은 한 벌이다.
+ * ⌘/ 단축키 시트 (PLAN D92) — 단축키의 목록은 언제나 열어 볼 수 있는 곳에 산다.
+ * 행은 protocol 의 APP_SHORTCUTS, 데스크톱 앱 메뉴가 읽는 상수와 같은 한 벌이다.
  */
 export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   useEffect(() => {

@@ -333,7 +333,7 @@ async function bootApp(): Promise<void> {
   });
   await server.start();
   daemonServer = server;
-  const url = daemonUrl(server, token);
+  const url = windowUrl(daemonUrl(server, token));
   appUrl = url;
 
   mainWindow = createMainWindow();
@@ -462,6 +462,24 @@ function daemonUrl(server: DaemonServer, token: string): string {
   // The daemon listens on an ephemeral port; ask it where it ended up.
   const address = server.address();
   return `http://${address.address === "::1" ? "127.0.0.1" : address.address}:${address.port}/?token=${token}`;
+}
+
+/**
+ * 창이 실제로 열 주소. 보통은 데몬 자신이지만, 개발 실행의 HMR 경로
+ * (`pnpm dev:desktop` → scripts/dev.mjs --hmr)에서는 vite 개발 서버를 연다 —
+ * 웹을 한 줄 고칠 때마다 전체 빌드를 다시 돌리지 않기 위해서다. 데몬은
+ * 그대로 in-process 이므로 ws 를 어디에 걸어야 하는지 `daemon` 질의로
+ * 건넨다(App.tsx 가 읽는다). 패키징된 앱은 환경 변수를 보지 않는다 —
+ * 창이 다른 origin 을 여는 문은 개발에만 존재한다.
+ */
+function windowUrl(daemon: string): string {
+  const devServer = app.isPackaged ? undefined : process.env.COLO_DESIGN_DEV_SERVER;
+  if (!devServer) return daemon;
+  const source = new URL(daemon);
+  const target = new URL(devServer);
+  target.searchParams.set("token", source.searchParams.get("token") ?? "");
+  target.searchParams.set("daemon", source.host);
+  return target.toString();
 }
 
 async function reopen(url: string): Promise<void> {

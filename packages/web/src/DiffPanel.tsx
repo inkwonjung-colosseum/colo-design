@@ -13,7 +13,6 @@ const STATUS_LABEL: Record<DiffFile["status"], string> = {
 
 const STAGE_LABEL: Record<DiffStatus["stage"], string> = {
   computing: "변경사항을 모으는 중",
-  gating: "레포 검사 통과 중",
   pushing: "변경사항을 저장하는 중",
   published: "저장했습니다",
   "handing-off": "개발자에게 넘기는 중",
@@ -25,12 +24,10 @@ const STAGE_LABEL: Record<DiffStatus["stage"], string> = {
  * Gates arrive as the daemon's own identifiers — `commit`, `push`, `pr`. Read
  * out raw they put git's vocabulary back on the planner's screen one word at
  * a time, so each names the step it actually is instead (PLAN D5). The words
- * a repo's own command also goes by (`check`) come from tool-names.ts — the
+ * a repo's own command goes by (`레포 검사`) come from tool-names.ts — the
  * same job must not wear two names between the transcript and this line.
  */
 const GATE_LABEL: Record<NonNullable<DiffStatus["gate"]>, string> = {
-  check: "레포 검사",
-  build: "빌드 검사",
   commit: "변경사항 정리",
   push: "변경사항 올리기",
   diff: "변경사항 확인",
@@ -38,7 +35,7 @@ const GATE_LABEL: Record<NonNullable<DiffStatus["gate"]>, string> = {
 };
 
 /** In flight: neither a 저장 nor a 넘기기 can be started on top of this. */
-export const RUNNING: DiffStatus["stage"][] = ["computing", "gating", "pushing", "handing-off"];
+export const RUNNING: DiffStatus["stage"][] = ["computing", "pushing", "handing-off"];
 
 /**
  * The one progress line both panels read. 저장 and 넘기기 stream on the same
@@ -369,8 +366,8 @@ export function DiffPanel({
           {failed && diffStatus?.reason === "push-auth" && (
             <div className="notice notice--error" data-testid="push-auth-failure">
               <span className="notice__text">
-                저장과 검사까지는 끝냈고, 변경사항 올리기에서 멈췄습니다 — 설정에서 GitHub 토큰을
-                확인한 뒤 다시 저장해 주세요.
+                변경사항 정리까지 끝냈고, 올리기에서 멈췄습니다 — 설정에서 GitHub 토큰을 확인한 뒤
+                다시 저장해 주세요.
               </span>
               {onOpenSettings && (
                 <button type="button" className="ghost" onClick={onOpenSettings}>
@@ -398,9 +395,11 @@ export function DiffPanel({
             <p className="hint">저장할 변경사항이 없습니다. 먼저 화면을 만들거나 고쳐 주세요.</p>
           )}
           {/* Paths and +/- lines live behind the fold — the first screen of
-              the review reads as sentences, not as a diff (PLAN D51). */}
+              the review reads as sentences, not as a diff (PLAN D51). A small
+              set opens itself: the 검토 약속은 누르게가 아니라 읽게 하는 것이니
+              five files and under arrive unfolded. */}
           {files !== null && files.length > 0 && (
-            <details className="settings__fold">
+            <details className="settings__fold" open={files.length <= 5}>
               <summary>자세히 보기 (파일 {files.length}개)</summary>
               <ul className="diff__files">
                 {files.map((file) => (

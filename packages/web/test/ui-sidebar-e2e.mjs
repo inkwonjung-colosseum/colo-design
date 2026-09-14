@@ -5,8 +5,8 @@
  * Two projects are created over the daemon socket (the same WebSocket the
  * browser uses), then the test drives the tree the planner uses: the project
  * rows with their conversations as children, the active mark, a one-click
- * jump into another project's conversation (the workspace switches and the
- * old project's preview port stops answering), a background turn reading
+ * jump into another project's conversation (the workspace switches while the
+ * old project's preview stays warm on its port), a background turn reading
  * 작업 중 → 답이 왔습니다, a fold that survives a reload, and the folded
  * rail's conversation popover.
  *
@@ -85,20 +85,13 @@ function serveDist() {
 }
 
 const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
-/** Waits until a TCP connect to the port is refused, giving the daemon a
-    moment to take the old project's preview down. */
-async function portClosed(port) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      await fetch(`http://127.0.0.1:${port}/`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      await sleep(500);
-    } catch {
-      return true;
-    }
+/** Whether the fixture preview on `port` still answers — a warm server does. */
+async function serving(port) {
+  try {
+    return (await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) })).ok;
+  } catch {
+    return false;
   }
-  return false;
 }
 
 async function main() {
@@ -304,9 +297,11 @@ async function main() {
       "clicking another project's child makes it active and opens it",
       (await leaf(paymentsSession).getAttribute("class"))?.includes("leaf--active") === true,
     );
+    // The project the planner left keeps its server: a return is a repaint of
+    // the page the desktop kept, so the port must still answer.
     check(
-      "the jumped-from project's preview port no longer answers",
-      await portClosed(refundsPort),
+      "the jumped-from project's preview stays warm on its port",
+      await serving(refundsPort),
       `port ${refundsPort}`,
     );
 

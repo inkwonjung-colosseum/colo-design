@@ -1,23 +1,15 @@
 import type { DaemonStatus, EffortLevel, PermissionMode } from "@colo-design/protocol";
 import { RELEASES_REPO, type UpdateCheckResult } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import { resetCoachMarks } from "./CoachMark";
 import { ConfirmDialog } from "./ConfirmDialog";
-import {
-  EFFORT_HINT,
-  EFFORT_LABEL,
-  MODE_HINT,
-  MODE_LABEL,
-  modelOptions,
-  modelRowOf,
-  SETTINGS_MODES,
-} from "./chat-options";
+import { EFFORT_LABEL, MODE_LABEL, modelOptions, modelRowOf, SETTINGS_MODES } from "./chat-options";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 import { CheckIcon, CloseIcon } from "./icons";
 import {
   type ChatSettings,
   loadModelCatalog,
+  type MidTurnSend,
   type SendKey,
   type Settings,
   THEMES,
@@ -57,6 +49,12 @@ const SYSTEM_HINT = "OS 밝기를 따르고, 고대비를 요청하면 고대비
 const SEND_LABEL: Record<SendKey, string> = {
   enter: "Enter로 보내기, Shift+Enter는 줄바꿈",
   modEnter: "⌘/Ctrl+Enter로 보내기, Enter는 줄바꿈",
+};
+
+/** 실행 중 보내기: what a send means while a turn is still running. */
+const MID_TURN_LABEL: Record<MidTurnSend, string> = {
+  queue: "다음 턴에 보내기",
+  interrupt: "끊고 보내기",
 };
 
 // ---------------------------------------------------------------------------
@@ -419,7 +417,6 @@ export function SettingsDialog({
                 ...EFFORT_ORDER.map((level) => ({
                   value: level,
                   label: EFFORT_LABEL[level],
-                  hint: EFFORT_HINT[level],
                 })),
               ]}
               onChange={(effort) => onChatChange({ effort: (effort as EffortLevel) || null })}
@@ -431,15 +428,14 @@ export function SettingsDialog({
               options={SETTINGS_MODES.map((mode) => ({
                 value: mode,
                 label: MODE_LABEL[mode],
-                hint: MODE_HINT[mode],
               }))}
               onChange={(permissionMode) => onChatChange({ permissionMode })}
             />
             {settings.chat.permissionMode === "bypassPermissions" && (
               <div className="notice notice--warn">
                 <span className="notice__text">
-                  전부 맡기기는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이 바뀔 수
-                  있으니, 물어보고 진행이 필요하면 확인 방식을 바꾸세요.
+                  Bypass는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이 바뀔 수
+                  있으니, 물어볼 필요가 있으면 확인 방식을 Default로 바꾸세요.
                 </span>
               </div>
             )}
@@ -461,23 +457,21 @@ export function SettingsDialog({
             {/* 따라가기 (PLAN D91): the turn's end moves the preview to the
                 screen Claude last opened — unless the planner moved it
                 themselves during the turn, which only toasts instead. */}
-            <div className="settings__row">
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  resetCoachMarks();
-                }}
-              >
-                안내 다시 보기
-              </button>
-              <span className="setting__hint">코치 마크 셋을 다시 한 번씩 보여 줍니다</span>
-            </div>
             <Switch
               label="턴이 끝나면 Claude가 본 화면으로"
               hint="고친 화면을 직접 찾지 않도록, Claude가 마지막으로 연 화면을 보여 줍니다"
               checked={settings.chat.followClaude}
               onChange={(followClaude) => onChatChange({ followClaude })}
+            />
+            {/* 생각 과정 보기: 기본은 꺼짐이다. 기획자가 읽어야 하는 것은
+                답이고, 답을 만드는 동안의 속말이 답과 답 사이마다 끼면
+                대화가 기계의 기록처럼 읽힌다. 읽고 싶은 사람에게는 여기서
+                돌려준다 — 켜면 접힌 채로 다시 자리를 잡는다. */}
+            <Switch
+              label="생각 과정 보기"
+              hint="Claude가 답을 만들며 한 생각을 대화에 접힌 채로 남깁니다"
+              checked={settings.chat.showThinking}
+              onChange={(showThinking) => onChatChange({ showThinking })}
             />
           </section>
 
@@ -491,6 +485,23 @@ export function SettingsDialog({
                 label: SEND_LABEL[key],
               }))}
               onChange={(sendKey) => onChange({ sendKey })}
+            />
+            <Choice<MidTurnSend>
+              label="실행 중 보내기"
+              value={settings.midTurnSend}
+              options={[
+                {
+                  value: "queue",
+                  label: MID_TURN_LABEL.queue,
+                  hint: "실행 중 보낸 말은 지금 답변이 끝난 뒤 다음 답변으로 전달됩니다",
+                },
+                {
+                  value: "interrupt",
+                  label: MID_TURN_LABEL.interrupt,
+                  hint: "실행 중 보내면 지금 답변을 멈추고 그 말로 새 답변을 시작합니다",
+                },
+              ]}
+              onChange={(midTurnSend) => onChange({ midTurnSend })}
             />
           </section>
 

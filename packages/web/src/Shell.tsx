@@ -1,6 +1,7 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { Fold } from "./components";
 import type { Daemon } from "./daemon-client";
 import { Onboarding } from "./Onboarding";
 import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
@@ -97,6 +98,31 @@ export function Shell({
   // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
   // 으로 지운다 — 터미널은 끝까지 기획자의 몫으로 남지 않는다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
+  /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
+      새 문장은 새 소식이니 다시 보인다. */
+  const [dismissedWarnings, setDismissedWarnings] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  /** 닫기는 즉시 지우지 않는다 — closing 동안만 담겨 슬롯이 접히고,
+      transitionend(그리드 접힘)에서 dismissed 로 넘어간다. 사라지는 대신
+      자리를 비워 주는 게 이 닫기의 전부다. */
+  const [closingWarnings, setClosingWarnings] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
+  // The logged-out warning is replaced by its own actionable row below — the
+  // sentence is the daemon's, the button is here. The rest the planner may
+  // close: 닫기는 "문제가 없다"가 아니라 "읽었다"다.
+  const visibleWarnings = warnings.filter(
+    (warning) =>
+      !dismissedWarnings.has(warning) &&
+      !(loggedOut && warning.startsWith("Claude Code 로그인이 필요합니다")),
+  );
+  /** 보이는 경고가 전부 접히는 중이면 스트립도 같이 접는다 — 슬롯만 접고
+      여백·경계선이 남으면 빈 테두리가 한 번에 사라지는 점프가 된다. */
+  const stripClosing =
+    !loggedOut &&
+    visibleWarnings.length > 0 &&
+    visibleWarnings.every((w) => closingWarnings.has(w));
   const [loginStarted, setLoginStarted] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const [loginGuidance, setLoginGuidance] = useState<string | null>(null);
@@ -288,19 +314,39 @@ export function Shell({
               foot (Sidebar) so the whole frame's controls sit in one room. */}
         </header>
 
-        {warnings.length > 0 && (
-          <div className="planner__warnings">
-            {warnings
-              // The logged-out warning is replaced by its own actionable row
-              // below — the sentence is the daemon's, the button is here.
-              .filter(
-                (warning) => !(loggedOut && warning.startsWith("Claude Code 로그인이 필요합니다")),
-              )
-              .map((warning) => (
-                <div key={warning} className="notice notice--warn">
+        {(visibleWarnings.length > 0 || loggedOut) && (
+          <div
+            className={
+              stripClosing ? "planner__warnings planner__warnings--closing" : "planner__warnings"
+            }
+          >
+            {visibleWarnings.map((warning) => (
+              <Fold
+                key={warning}
+                closing={closingWarnings.has(warning)}
+                onCollapsed={() => {
+                  setClosingWarnings((prev) => {
+                    const next = new Set(prev);
+                    next.delete(warning);
+                    return next;
+                  });
+                  setDismissedWarnings((prev) => new Set(prev).add(warning));
+                }}
+              >
+                <div className="notice notice--warn">
                   <span className="notice__text">{warning}</span>
+                  <button
+                    type="button"
+                    className="notice__close"
+                    aria-label="경고 닫기"
+                    disabled={closingWarnings.has(warning)}
+                    onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning))}
+                  >
+                    ×
+                  </button>
                 </div>
-              ))}
+              </Fold>
+            ))}
             {loggedOut && (
               <div className="notice notice--warn">
                 <span className="notice__text">

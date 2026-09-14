@@ -82,14 +82,10 @@
       "url": "/repos/colosseumcoinckr/colo-design-e2e/pulls",
       "bodyContains": [
         "### 수정 요청",
-        "- [x] member/MemberList · 기본 — ",
         "코멘트 하나",
-        "(해결)",
-        "- [ ] pay/PayFailed · 오류 — ",
         "코멘트 둘",
-        "(미해결)",
         "코멘트 셋",
-        "기획자가 미리보기에서 찍은 수정 요청입니다"
+        "기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다"
       ]
     },
     "response": {

@@ -29,6 +29,7 @@ const LANES = {
       "test:desktop-unit",
       "test:comments-ui",
       "test:desktop-smoke",
+      "test:desktop-switch",
     ],
   },
   L2: {
@@ -42,6 +43,7 @@ const LANES = {
       "test:onboarding",
       "test:plan",
       "test:crash",
+      "test:midturn-queue",
     ],
   },
   L3: {

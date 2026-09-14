@@ -242,15 +242,14 @@ async function main() {
       { timeout: 20000 },
     );
     await viaActionBar(page, "저장");
-    // PLAN D51: the summary is the first thing; the raw files live behind
+    // PLAN D51: the summary is the first thing; a small set of files (five
+    // and under) arrives unfolded — the review reads without a click.
     await page.getByText("자세히 보기 (파일 2개)").waitFor({ timeout: 10000 });
     check(
-      "the summary is on top and the raw diff waits behind a fold",
+      "the summary is on top and a small set of files is already unfolded",
       (await page.getByText("자세히 보기 (파일 2개)").isVisible()) === true &&
-        (await page.locator(".diff__file").first().isVisible()) === false,
+        (await page.locator(".diff__file").first().isVisible()) === true,
     );
-    await page.getByText("자세히 보기 (파일 2개)").click();
-    await page.locator(".diff__file").first().waitFor({ state: "visible", timeout: 10000 });
     const rows = page.locator(".diff__file");
     check(
       "every changed file is listed with its status",
@@ -316,13 +315,7 @@ async function main() {
       (await page.locator('[role="dialog"]').count()) === 0,
     );
 
-    // --- D92: 코치 마크 셋과 ⌘/ 시트 ---------------------------------------
-    // ① (핀) is anchored on the native toolbar; the browser path still gets
-    // ② (저장) — the mark that lives on this path.
-    const saveCoach = page.locator('[data-testid="coach-save"]');
-    await saveCoach.waitFor({ timeout: 20000 });
-    await saveCoach.getByRole("button", { name: "알겠어요" }).click();
-    check("D92 the save coach mark answers 알겠어요 and leaves", (await saveCoach.count()) === 0);
+    // --- D92: ⌘/ 시트 -------------------------------------------------------
     await page.keyboard.press("Meta+/");
     const sheet = page.locator('[role="dialog"][aria-label="단축키"]');
     await sheet.waitFor({ timeout: 5000 });
@@ -339,7 +332,7 @@ async function main() {
     // The tree offers two ways to start one (the row's ＋ and, for a project
     // with no conversations, its own row); this drives the row's ＋.
     await page.locator(".node__add").first().click();
-    const field = page.getByPlaceholder("만들고 싶은 화면을 말해 주세요");
+    const field = page.getByPlaceholder("메시지를 보내거나 @files 태그, /commands 를 사용하세요");
     await field.fill("화면을 만들어 줘");
     await field.press("Enter");
     await page.waitForSelector(".turnfail", { timeout: 30000 });

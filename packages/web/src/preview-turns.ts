@@ -9,7 +9,6 @@ import type {
   TurnMarker,
 } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
-import type { CommentItem } from "./daemon-client";
 import { stateLabel } from "./format";
 import type { PreviewError } from "./PreviewHost";
 
@@ -73,29 +72,6 @@ export function commentsToTurn(envelope: ColoDesignCommentsEnvelope, screenTitle
   });
   lines.push("```json", JSON.stringify(envelope, null, 2), "```");
   return markTurn(marker, lines.join("\n"));
-}
-
-/**
- * One recorded comment, sent again (PLAN D57): the same comments marker the
- * pin batch uses, so the planner's chat shows it as the card it is. The
- * stored words and the element's text are what Claude gets — the pin's
- * position was never recorded, and a fabricated one in the json fence would
- * only misdirect the fix.
- */
-export function commentToTurn(item: CommentItem, screenTitle: string): string {
-  const marker: TurnMarker = {
-    kind: "comments",
-    screen: screenTitle,
-    state: stateLabel(item.state),
-    items: [{ label: item.elementText || "화면의 요소", comment: item.text }],
-  };
-  return markTurn(
-    marker,
-    [
-      `코멘트를 다시 보냅니다 — ${screenTitle} (${item.state} 상태)`,
-      `${item.elementText ? `"${item.elementText}" 요소: ` : ""}${item.text}`,
-    ].join("\n"),
-  );
 }
 
 /**

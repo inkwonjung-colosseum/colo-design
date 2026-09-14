@@ -2,7 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.mjs"]
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/**/*.mjs"]
     },
     "packages/daemon": {
       "entry": ["test/**/*.mjs"],

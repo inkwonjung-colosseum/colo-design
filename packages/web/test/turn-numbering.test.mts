@@ -8,8 +8,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { answerTurnNumbers, promptTotal } from "../src/turn-numbering.ts";
 import type { Block } from "../src/daemon-client.ts";
+import { answerTurnNumbers, promptTotal } from "../src/turn-numbering.ts";
 
 const block = (type: Block["type"], id: string): Block => ({ type, id }) as unknown as Block;
 

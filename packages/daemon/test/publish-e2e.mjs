@@ -1,19 +1,23 @@
 /**
  * Publish-path end-to-end check, offline: the remote is a local bare git
- * repository (fixture-repo.mjs) whose `check` gate is a plain node script the
- * test breaks and then fixes.
+ * repository (fixture-repo.mjs). The repo's `check`/`build` commands never
+ * gate the path anymore — a save with a failing check on disk still lands,
+ * and a handoff with a failing build still opens the pull request (실사:
+ * problems are the developer's to catch in the PR, not a wall here).
  *
- * Covers the whole gate: diff.get lists tracked and untracked changes;
- * a publish with a failing `check` reports failed{gate:"check"} without moving
- * the remote, and hands the failure to the live session as a user turn; after
- * the fix the commit lands locally and on the remote; a publish with nothing
- * to commit is rejected. From PLAN D51–D53 on: `repo.history` reads the two
- * saves, `repo.restore` lands a 되돌리기 commit instead of rewriting, a dirty
- * worktree refuses it, `repo.discard` throws away exactly the unsaved work,
- * and two turn starts leave two checkpoint refs — the first of which puts the
- * worktree back — until the merge clears them all. The session is real (it is
- * the same wire a typed message uses) but is closed the moment its failure
- * turn is observed, so no model turn is spent.
+ * Covers the whole path: diff.get lists tracked and untracked changes; a
+ * failing check does not stop the save and never runs; a push that cannot
+ * reach the remote reports failed{gate:"push"} without moving the remote and
+ * hands the failure to the live session as a marked card — with no thread
+ * open the daemon opens one itself; after the fix the commits land on the
+ * remote; a publish with nothing to commit is rejected. From PLAN D51–D53
+ * on: `repo.history` reads the saves, `repo.restore` lands a 되돌리기 commit
+ * instead of rewriting, a dirty worktree refuses it, `repo.discard` throws
+ * away exactly the unsaved work, and two turn starts leave two checkpoint
+ * refs — the first of which puts the worktree back — until the merge clears
+ * them all. The session is real (it is the same wire a typed message uses)
+ * but is closed the moment its failure turn is observed, so no model turn is
+ * spent.
  *
  * Usage: node packages/daemon/test/publish-e2e.mjs
  */
@@ -41,6 +45,7 @@ process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 // The handoff half talks to GitHub. The remote here is a local bare
 // repository, so nothing in its url could name a GitHub project — the slug is
@@ -232,29 +237,74 @@ async function main() {
       `${page?.status ?? "missing"} · ${page?.hunks.length ?? 0} hunk(s)`,
     );
 
-    // --- 3. a failing check stops the save, and tells the session ---------
+    // --- 3. the repo's check does not gate the save ------------------------
+    // 실패하는 check 를 두고도 저장은 그대로 올라간다 — 검사는 아예 돌지 않고,
+    // 문제는 넘기기가 연 PR 에서 개발자가 본다 (실사: 검사에서 멈춘 저장).
     writeFileSync(join(ROOT, "scripts", "check.mjs"), FAILING_CHECK);
     const created = await request({ id: "3", type: "session.create" });
     const sessionId = created.sessionId;
 
-    const failed = await request({
+    const saved = await request({
       id: "4",
       type: "repo.save",
       message: "회원 관리 화면 추가",
       sessionId,
     });
     check(
-      "a failing check reports failed at the check gate",
-      failed.stage === "failed" && failed.gate === "check",
-      `${failed.stage}/${failed.gate}`,
+      "a failing check no longer stops the save",
+      saved.stage === "published" && /^[0-9a-f]{40}$/.test(saved.commit ?? ""),
+      saved.commit ?? `${saved.stage}/${saved.gate ?? ""}`,
     );
     check(
-      "the failure quotes the gate's own output",
-      (failed.detail ?? "").includes("테스트용 실패"),
-      (failed.detail ?? "").split("\n")[0] ?? "",
+      "the check never ran — its output is nowhere in the status",
+      !(saved.detail ?? "").includes("테스트용 실패"),
+      saved.detail ?? "",
     );
-    check("the remote ref is unchanged", (await remoteHead(fixture.remote)) === remoteBefore);
+    check(
+      "no gating stage is ever broadcast",
+      !inbox.some((m) => m.type === "diff.status" && m.status.stage === "gating"),
+    );
 
+    // The whole point of PLAN D5[넘기기]: a developer receives this as a branch
+    // to review, and the base they work on is untouched until they merge it.
+    const branches = await remoteBranches(fixture.remote);
+    const cycleBranch = branches.find((name) => name.startsWith("colo-design/"));
+    check(
+      "the save created its own branch on the remote",
+      cycleBranch !== undefined && /^colo-design\/\d{8}-\d+$/.test(cycleBranch),
+      branches.join(", "),
+    );
+    check(
+      "the commit is on that branch",
+      cycleBranch !== undefined && (await remoteHead(fixture.remote, cycleBranch)) === saved.commit,
+    );
+    check(
+      "main did not move — the developer's base is untouched",
+      (await remoteHead(fixture.remote)) === remoteBefore,
+      remoteBefore.slice(0, 10),
+    );
+
+    // --- 3b. a push that cannot reach the remote reaches Claude instead ----
+    // The failure machinery survives the check's removal: break the remote,
+    // save, and the failure lands in the live session as a marked card the
+    // planner reads instead of git's words.
+    await run("git", ["-C", ROOT, "remote", "set-url", "origin", join(DIR, "nowhere")]);
+    writeFileSync(join(ROOT, "index.html"), "<p>올리기 점검</p>\n");
+    const pushFailed = await request({
+      id: "4b",
+      type: "repo.save",
+      message: "올리기 점검",
+      sessionId,
+    });
+    check(
+      "an unreachable remote fails the save at the push gate",
+      pushFailed.stage === "failed" && pushFailed.gate === "push",
+      `${pushFailed.stage}/${pushFailed.gate ?? ""}`,
+    );
+    check(
+      "the remote branches stand where the good save left them",
+      JSON.stringify(await remoteBranches(fixture.remote)) === JSON.stringify(branches),
+    );
     const brief = await waitFor(
       () =>
         inbox.find(
@@ -262,14 +312,14 @@ async function main() {
             m.type === "session.event" &&
             m.sessionId === sessionId &&
             m.event.kind === "user.echo" &&
-            m.event.text.includes("저장 전 검사(check)가 실패"),
+            m.event.text.includes("저장한 변경을 올리지 못했습니다"),
         ),
       30_000,
       "the failure turn in the live session",
     );
     check(
       "the failure lands in the session as a fixable brief",
-      brief.event.text.includes("테스트용 실패"),
+      brief.event.text.includes("git push에 실패했습니다"),
       `${brief.event.text.split("\n").slice(0, 2).join(" ")}…`,
     );
     // The planner reads a card, not the command output (PLAN D9). The marker
@@ -278,17 +328,17 @@ async function main() {
     const marked = readTurn(brief.event.text);
     check(
       "and it is marked so the planner sees a card instead of the output",
-      marked.marker?.kind === "gate" && marked.marker.step === "저장 전 검사",
+      marked.marker?.kind === "gate" && marked.marker.step === "저장한 내용 올리기",
       JSON.stringify(marked.marker),
     );
     check(
       "the marker does not disturb what Claude reads",
-      marked.body.startsWith("저장 전 검사(check)가 실패했습니다.") &&
-        marked.body.includes("테스트용 실패"),
+      marked.body.startsWith("저장한 변경을 올리지 못했습니다.") &&
+        marked.body.includes("git push에 실패했습니다"),
       marked.body.split("\n")[0] ?? "",
     );
     check(
-      "the gate failure fired the planner notice for the unnamed thread",
+      "the gate failure fired the planner notice for the named thread",
       notices.some(
         (n) =>
           n.kind === "gate" &&
@@ -310,25 +360,19 @@ async function main() {
       JSON.stringify(notices),
     );
 
-    check(
-      "the check gate failure was broadcast",
-      inbox.some(
-        (m) => m.type === "diff.status" && m.status.stage === "gating" && m.status.gate === "check",
-      ),
-    );
-
-    // --- 3b. a failing check with NO thread open still reaches Claude ------
-    // The gate's fix is Claude's task (README): with no session to brief, the
-    // daemon opens one itself — titled, the way the bootstrap prepare turn
-    // is — and the failure lands there as the same marked card.
+    // --- 3c. a push failure with NO thread open still reaches Claude -------
+    // With no session to brief, the daemon opens one itself — titled, the way
+    // the bootstrap prepare turn is — and the failure lands there as the same
+    // marked card.
+    writeFileSync(join(ROOT, "index.html"), "<p>스레드 없는 저장</p>\n");
     const failedThreadless = await request({
-      id: "3b",
+      id: "3c",
       type: "repo.save",
-      message: "회원 관리 화면 추가",
+      message: "스레드 없는 저장",
     });
     check(
-      "a threadless failing check still reports the gate",
-      failedThreadless.stage === "failed" && failedThreadless.gate === "check",
+      "a threadless push failure still reports the gate",
+      failedThreadless.stage === "failed" && failedThreadless.gate === "push",
       `${failedThreadless.stage}/${failedThreadless.gate ?? ""}`,
     );
     const gateBrief = await waitFor(
@@ -338,7 +382,7 @@ async function main() {
             m.type === "session.event" &&
             m.sessionId !== sessionId &&
             m.event.kind === "user.echo" &&
-            m.event.text.includes("저장 전 검사(check)가 실패"),
+            m.event.text.includes("저장한 변경을 올리지 못했습니다"),
         ),
       30_000,
       "the failure turn in the daemon-opened thread",
@@ -349,7 +393,7 @@ async function main() {
       typeof gateThreadId === "string" && gateThreadId !== sessionId,
       String(gateThreadId),
     );
-    const threads = await request({ id: "3b-list", type: "session.list" });
+    const threads = await request({ id: "3c-list", type: "session.list" });
     const gateThread = threads.find((row) => row.sessionId === gateThreadId);
     check(
       "and the thread is listed, live and titled",
@@ -360,11 +404,11 @@ async function main() {
       "the threadless gate failure fired the planner notice too",
       notices.some((n) => n.kind === "gate" && n.stage === "save" && n.sessionId === gateThreadId),
     );
-    await request({ id: "3b-close", type: "session.close", sessionId: gateThreadId });
+    await request({ id: "3c-close", type: "session.close", sessionId: gateThreadId });
+    await run("git", ["-C", ROOT, "remote", "set-url", "origin", fixture.remote]);
 
-    // --- 4. a fixed repo saves onto its OWN branch, never onto main -------
+    // --- 4. the follow-up save rides the same branch -----------------------
     writeFileSync(join(ROOT, "scripts", "check.mjs"), PASSING_CHECK);
-
     /**
      * What a 저장 would carry, as the stepper reads it (PLAN D8). The number
      * moves when the clone is prepared, when a 화면 turn settles, and when a
@@ -378,41 +422,27 @@ async function main() {
       `pendingChanges=${dirty.pendingChanges}`,
     );
 
-    const saved = await request({
+    const saved2 = await request({
       id: "6",
       type: "repo.save",
-      message: "회원 관리 화면 추가",
+      message: "검사 문구 복원",
     });
     check(
-      "a fixed repo saves",
-      saved.stage === "published" && /^[0-9a-f]{40}$/.test(saved.commit ?? ""),
-      saved.commit ?? `${saved.stage}/${saved.gate ?? ""}`,
+      "the follow-up save lands, carrying the stranded commits with it",
+      saved2.stage === "published" && /^[0-9a-f]{40}$/.test(saved2.commit ?? ""),
+      saved2.commit ?? `${saved2.stage}/${saved2.gate ?? ""}`,
     );
 
     const { stdout: localHead } = await run("git", ["-C", ROOT, "rev-parse", "HEAD"]);
     check(
       "the commit is local HEAD",
-      localHead.trim() === saved.commit,
+      localHead.trim() === saved2.commit,
       `${localHead.trim().slice(0, 10)}`,
     );
-
-    // The whole point of PLAN D5[넘기기]: a developer receives this as a branch to
-    // review, and the base they work on is untouched until they merge it.
-    const branches = await remoteBranches(fixture.remote);
-    const cycleBranch = branches.find((name) => name.startsWith("colo-design/"));
     check(
-      "the save created its own branch on the remote",
-      cycleBranch !== undefined && /^colo-design\/\d{8}-\d+$/.test(cycleBranch),
-      branches.join(", "),
-    );
-    check(
-      "the commit is on that branch",
-      cycleBranch !== undefined && (await remoteHead(fixture.remote, cycleBranch)) === saved.commit,
-    );
-    check(
-      "main did not move — the developer's base is untouched",
-      (await remoteHead(fixture.remote)) === remoteBefore,
-      remoteBefore.slice(0, 10),
+      "it stays on the same branch — one cycle, one review",
+      JSON.stringify(await remoteBranches(fixture.remote)) === JSON.stringify(branches),
+      (await remoteBranches(fixture.remote)).join(", "),
     );
 
     const status = await request({ id: "6b", type: "repo.status" });
@@ -430,14 +460,14 @@ async function main() {
     const { stdout: subject } = await run("git", ["-C", ROOT, "log", "-1", "--pretty=%s"]);
     check(
       "the planner's message is the commit subject",
-      subject.trim() === "회원 관리 화면 추가",
+      subject.trim() === "검사 문구 복원",
       subject.trim(),
     );
 
     const stages = inbox
       .filter((m) => m.type === "diff.status")
       .map((m) => `${m.status.stage}${m.status.gate ? `:${m.status.gate}` : ""}`);
-    for (const stage of ["computing", "gating:check", "pushing", "published"]) {
+    for (const stage of ["computing", "pushing", "published"]) {
       check(
         `every save step is broadcast (${stage})`,
         stages.includes(stage),
@@ -478,22 +508,26 @@ async function main() {
     // --- 6.5 저장 기록 · 되돌리기 · 변경 버리기 (PLAN D53) -----------------
     const history = await request({ id: "u1", type: "repo.history" });
     check(
-      "two saves read as two entries over origin/main",
+      "every save on the cycle reads as an entry over origin/main",
       history.base === "origin/main" &&
-        history.entries.length === 2 &&
-        history.entries[0].message === "문구 수정" &&
-        history.entries[1].message === "회원 관리 화면 추가",
+        JSON.stringify(history.entries.map((entry) => entry.message)) ===
+          JSON.stringify([
+            "문구 수정",
+            "검사 문구 복원",
+            "스레드 없는 저장",
+            "올리기 점검",
+            "회원 관리 화면 추가",
+          ]),
       JSON.stringify(history.entries.map((entry) => entry.message)),
     );
     check(
       "each entry names the files it carried",
       history.entries[0].files.join(",") === "index.html" &&
-        history.entries[1].files.includes("index.html") &&
-        history.entries[1].files.includes("src/screens/member/MemberList.screen.tsx"),
+        history.entries[4].files.includes("index.html") &&
+        history.entries[4].files.includes("src/screens/member/MemberList.screen.tsx"),
       JSON.stringify(history.entries.map((entry) => entry.files)),
     );
-
-    const firstSha = history.entries[1].sha;
+    const firstSha = history.entries[4].sha;
     const undone = await request({
       id: "u2",
       type: "repo.restore",
@@ -506,8 +540,8 @@ async function main() {
     );
     const cycleCommits = await run("git", ["-C", ROOT, "rev-list", "--count", "origin/main..HEAD"]);
     check(
-      "the cycle carries three commits now — nothing was rewritten",
-      cycleCommits.stdout.trim() === "3",
+      "the cycle carries six commits now — nothing was rewritten",
+      cycleCommits.stdout.trim() === "6",
       cycleCommits.stdout.trim(),
     );
     const revertSubject = await run("git", ["-C", ROOT, "log", "-1", "--pretty=%s"]);
@@ -645,10 +679,9 @@ async function main() {
       rewoundStatus.stdout,
     );
 
-    // --- 7. `build` gates 넘기기, never 저장 -------------------------------
-    // A save that paid for a full build every time would teach the planner to
-    // save rarely; being wrong at 넘기기 costs a developer's attention, so the
-    // build belongs there. Both halves of that decision are checked here.
+    // --- 7. `build` gates nothing — the pull request is where problems land
+    // 넘기기가 연 PR 에서 개발자가 문제를 본다(실사): 실패하는 build 를 두고도
+    // 저장과 넘기기는 그대로 간다.
     const manifest = join(ROOT, "colo-design.json");
     const config = JSON.parse(readFileSync(manifest, "utf8"));
     config.build = "node -e \"console.error('build: 테스트용 실패'); process.exit(1)\"";
@@ -660,41 +693,22 @@ async function main() {
       message: "빌드 게이트 추가",
     });
     check(
-      "a save ignores build — only 넘기기 pays for it",
+      "a save ignores build",
       savedWithBadBuild.stage === "published",
       `${savedWithBadBuild.stage}/${savedWithBadBuild.gate ?? ""}`,
     );
 
-    const blocked = await request({
-      id: "9c",
-      type: "repo.handoff",
-      title: "실패할 넘기기",
-    });
-    check(
-      "a failing build stops the handoff before anything reaches the developer",
-      blocked.stage === "failed" && blocked.gate === "build",
-      `${blocked.stage}/${blocked.gate ?? ""}`,
-    );
-    check(
-      "and no pull request was opened",
-      (await request({ id: "9d", type: "repo.status" })).handoff === null,
-    );
-
-    config.build = 'node -e "process.exit(0)"';
-    writeFileSync(manifest, `${JSON.stringify(config, null, 2)}\n`);
-    await request({ id: "9e", type: "repo.save", message: "빌드 고침" });
-
-    // --- 8. 개발자에게 넘기기: the work becomes a pull request -------------
     const handed = await request({
-      id: "10",
+      id: "9c",
       type: "repo.handoff",
       title: "결제 화면",
     });
     check(
-      "handing over opens a pull request from this cycle's branch",
+      "a failing build no longer stops the handoff — the pull request is where it lands",
       handed.stage === "handed-off" && handed.handoff?.number === 12,
       `${handed.stage} · ${handed.handoff?.url ?? handed.detail ?? ""}`,
     );
+    // --- 8. 개발자에게 넘기기: the work became a pull request --------------
     const afterHandoff = await request({ id: "11", type: "repo.status" });
     check(
       "the status carries the handoff so the planner sees 넘김",
@@ -765,21 +779,16 @@ async function main() {
       listed.items.length === 2 && listed.items.every((item) => item.id !== "" && item.at !== ""),
       JSON.stringify(listed.items),
     );
-    // D78: the store normalizes the screen to the [data-screen] spelling —
-    // no leading slash, whatever spelling the client used.
-    const pinned = listed.items.find((item) => item.screen === "member/MemberList");
-    await request({
-      id: "c4",
-      type: "comments.resolve",
-      commentId: pinned.id,
-      resolved: true,
-    });
-    const relisted = await request({ id: "c5", type: "comments.list" });
+    // D78 + 자동 정리: the store normalizes the screen to the [data-screen]
+    // spelling — no leading slash, whatever spelling the client used — and
+    // every row is born resolved: the turn carrying the words IS the
+    // delivery, so no resolve step exists.
     check(
-      "the resolved mark moved without removing the row",
-      relisted.items.find((item) => item.id === pinned.id)?.resolved === true &&
-        relisted.items.find((item) => item.screen === "pay/PayFailed")?.resolved === false,
-      JSON.stringify(relisted.items),
+      "recorded rows land delivered, on the [data-screen] spelling",
+      listed.items.some((item) => item.screen === "member/MemberList") &&
+        listed.items.some((item) => item.screen === "pay/PayFailed") &&
+        listed.items.every((item) => item.resolved === true),
+      JSON.stringify(listed.items.map((item) => [item.screen, item.resolved])),
     );
 
     writeFileSync(join(ROOT, "index.html"), "<p>다음 주기</p>\n");
@@ -817,8 +826,8 @@ async function main() {
       state: "default",
       items: [{ text: "코멘트 하나", elementText: "제목" }],
     });
-    // Both pay/PayFailed comments ride ONE record — a second record for the
-    // same pair would REPLACE the first (the store's replace semantics).
+    // Both pay/PayFailed comments ride ONE record — the store appends, but
+    // one batch is one moment's request, and the section reads cleaner for it.
     await request({
       id: "16b",
       type: "comments.record",
@@ -828,14 +837,6 @@ async function main() {
         { text: "코멘트 둘", elementText: "문구" },
         { text: "코멘트 셋", elementText: "문구" },
       ],
-    });
-    const listedForPr = await request({ id: "16c", type: "comments.list" });
-    const firstRow = listedForPr.items.find((item) => item.text === "코멘트 하나");
-    await request({
-      id: "16d",
-      type: "comments.resolve",
-      commentId: firstRow.id,
-      resolved: true,
     });
     const secondHanded = await request({
       id: "17",

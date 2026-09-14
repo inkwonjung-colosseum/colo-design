@@ -1,10 +1,10 @@
-import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ColoDesignScreen, ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { FolderIcon, GearIcon, PlusIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
-/** The walk is grouped 대화 → 프로젝트 → 명령; a header prints on each turn. */
-type Group = "대화" | "프로젝트" | "명령";
+/** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
+type Group = "대화" | "화면" | "프로젝트" | "명령";
 
 type Row =
   | {
@@ -35,12 +35,22 @@ type Row =
       hint: string;
       icon: typeof PlusIcon;
       run: () => void | Promise<void>;
+    }
+  | {
+      kind: "screen";
+      group: Group;
+      key: string;
+      label: string;
+      /** The ?state= variants the screen implements — the row's hint. */
+      hint: string;
+      run: () => void | Promise<void>;
     };
 
 /**
  * One overlay the frame's every jump lives behind (⌘K): every project's
- * conversations (the daemon's threads, PLAN D59), the other projects, and
- * the few commands that exist.
+ * conversations (the daemon's threads, PLAN D59), the repo's declared screens
+ * (a search that reaches the preview), the other projects, and the few
+ * commands that exist.
  */
 export function Palette({
   titleForThread,
@@ -48,11 +58,13 @@ export function Palette({
   projects,
   activeSlug,
   projectSlug = null,
+  screens,
   onOpenThread,
   onCreateSession,
   onActivateProject,
   onAddProject,
   onOpenSettings,
+  onOpenScreen,
   onClose,
 }: {
   /** The name a thread wears: the planner's rename, else the daemon's title. */
@@ -64,6 +76,9 @@ export function Palette({
       session walk stays inside it, and the search says so. Null — the whole
       frame's jumps, as ever. */
   projectSlug?: string | null;
+  /** The connected repo's declared screens — a search that reaches the
+      preview, not just the conversations (리뷰: 화면 찾기). */
+  screens: ColoDesignScreen[];
   /** Opens a conversation — switching projects first when it is not this
       one's (PLAN D59 rule 1). */
   onOpenThread: (slug: string, thread: ThreadSummary) => void;
@@ -72,6 +87,8 @@ export function Palette({
   onActivateProject: (slug: string) => Promise<void>;
   onAddProject: () => void;
   onOpenSettings: () => void;
+  /** Points the preview at a declared screen (the palette's 화면 rows). */
+  onOpenScreen: (screen: ColoDesignScreen) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -135,6 +152,25 @@ export function Palette({
           now: project.slug === activeSlug && thread.id === activeSessionId,
           run: async () => {
             onOpenThread(project.slug, thread);
+            onClose();
+          },
+        });
+      }
+    }
+    // 화면 (리뷰: 화면 찾기): the repo's declared screens. A scoped palette is
+    // about one project's conversations, so the screens only join the
+    // frame-wide walk — the picker beside the preview still owns them there.
+    if (!projectSlug) {
+      for (const screen of screens) {
+        if (rank(screen.title) < 0) continue;
+        out.push({
+          kind: "screen",
+          group: "화면",
+          key: `screen:${screen.route}`,
+          label: screen.title,
+          hint: [screen.route, ...screen.states.filter((state) => state !== "default")].join(" · "),
+          run: async () => {
+            onOpenScreen(screen);
             onClose();
           },
         });
@@ -206,6 +242,7 @@ export function Palette({
     activeSlug,
     activeSessionId,
     projectSlug,
+    screens,
     query,
     titleForThread,
     onOpenThread,
@@ -213,6 +250,7 @@ export function Palette({
     onActivateProject,
     onAddProject,
     onOpenSettings,
+    onOpenScreen,
     onClose,
   ]);
 
@@ -250,8 +288,8 @@ export function Palette({
           ref={searchRef}
           className="palette__search"
           value={query}
-          placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트, 명령 찾기"}
-          aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트, 명령 찾기"}
+          placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
+          aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-list"
@@ -301,6 +339,7 @@ export function Palette({
                   )}
                   {row.kind === "project" && <span className="palette__hint">프로젝트</span>}
                   {row.kind === "action" && <span className="palette__hint">{row.hint}</span>}
+                  {row.kind === "screen" && <span className="palette__hint">{row.hint}</span>}
                 </li>
               </Fragment>
             );

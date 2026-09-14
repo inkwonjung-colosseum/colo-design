@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json && node -e \"const fs=require('fs');for (const name of ['preload','preview-preload']) for (const ext of ['js','js.map','d.ts']) { const from='dist/'+name+'.'+ext; const to='dist/'+name+'.cjs'+(ext==='js'?'':'.'+ext); if (fs.existsSync(from)) fs.renameSync(from,to); } \"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "node scripts/dev.mjs",
+    "dev:hmr": "node scripts/dev.mjs --hmr",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },

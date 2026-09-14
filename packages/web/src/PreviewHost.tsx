@@ -1,11 +1,13 @@
 import type { ColoDesignCommentsEnvelope, ColoDesignScreen } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import { CoachMark } from "./CoachMark";
 import { daemonLine, stateLabel } from "./format";
 import { IframeHost } from "./IframeHost";
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   DesktopIcon,
   ExternalLinkIcon,
+  LockIcon,
   MobileIcon,
   RefreshIcon,
   RestartIcon,
@@ -21,6 +23,13 @@ import { parseAddress } from "./preview-address";
 export type PreviewTarget =
   | { kind: "screen"; route: string; state: string | null }
   | { kind: "path"; path: string };
+/** Two asks land at the same place — the trail's consecutive-dedup. */
+function sameTarget(a: PreviewTarget, b: PreviewTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "screen" && b.kind === "screen") return a.route === b.route && a.state === b.state;
+  if (a.kind === "path" && b.kind === "path") return a.path === b.path;
+  return false;
+}
 
 /** Where the native view actually is — its truth, not the tool's ask (D66). */
 export interface PreviewLocation {
@@ -48,36 +57,16 @@ export interface PreviewError {
 type PreviewWidth = "mobile" | "tablet" | "desktop";
 
 /**
- * The picker's groups: screens bucketed by the feature their routes name
- * (`/member/MemberList` → `member`), the planner's own features first and the
- * repo's reference material last (the old rail's rule, kept where the picking
- * happens).
- */
-function groupedScreens(screens: ColoDesignScreen[]): [string, ColoDesignScreen[]][] {
-  const byFeature = new Map<string, ColoDesignScreen[]>();
-  for (const screen of screens) {
-    const segments = screen.route.split("/").filter(Boolean);
-    const feature = segments.length > 1 ? (segments[0] ?? "") : "";
-    const bucket = byFeature.get(feature) ?? [];
-    bucket.push(screen);
-    byFeature.set(feature, bucket);
-  }
-  const isReference = (feature: string) => feature.startsWith("_") || feature === "example";
-  return [...byFeature.entries()].sort(
-    ([a], [b]) => Number(isReference(a)) - Number(isReference(b)) || a.localeCompare(b),
-  );
-}
-
-/**
  * The preview pane (PLAN D64): the toolbar, the browser-bar frame head and
  * the stage are common; the stage itself is a host. `native` picks
  * `NativeHost` — the desktop's own view, with the address bar, back ·
  * forward, the error banner, real 폭 emulation and the 💬 toggle — and a
- * plain browser keeps the iframe, which offers the declared screens and
- * nothing else (D70).
+ * plain browser keeps the iframe — the declared screens, the ask's address
+ * in the pill, and a back·forward that walks the asks themselves (D70).
  */
 export function PreviewHost({
   url,
+  epoch = null,
   stopped,
   stoppedDetail,
   onRestart,
@@ -91,7 +80,6 @@ export function PreviewHost({
   location,
   commentsOn,
   onCommentsMode,
-  unresolvedComments = 0,
   onLook,
   lookBusy = false,
   pip,
@@ -99,6 +87,8 @@ export function PreviewHost({
   onPipToggle,
 }: {
   url: string | null;
+  /** The server process behind `url` (RepoStatus.previewEpoch); the native page reloads under a new one. */
+  epoch?: number | null;
   /** The preview server died after being ready; the pane would show nothing. */
   stopped: boolean;
   /** Why it is not running, in the daemon's own words. */
@@ -120,8 +110,6 @@ export function PreviewHost({
   /** 코멘트 모드(PLAN D58 → D67) — the toolbar owns the truth. */
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
-  /** 미해결 코멘트 수(PLAN D57) — the toggle's badge. */
-  unresolvedComments?: number;
   /**
    * 이 화면 Claude 에게 보여 주기 (PLAN D89): the whole frame, the route·
    * state and the console tail go up as one turn. Native only — the iframe
@@ -167,22 +155,27 @@ export function PreviewHost({
   // 서버가 돌아오면 지난 화면을 버린다 (실사 결함): bring-up 이 `stopped` 를
   // 끄는 순간이 곧 재접속 신호고, iframe 이 브라우저 오류 페이지("웹페이지가
   // 일시적으로 다운되었…")를 쥐고 있으면 앱 전체 reload 로만 빠져나올 수
-  // 없었다. 되돌아옴 = 한 번의 깨끗한 reload.
+  // 없었다. 되돌아옴 = 한 번의 깨끗한 reload. The native page needs no nudge:
+  // a server that came back is a new epoch, and the view reloads on that.
   const wasStopped = useRef(stopped);
   useEffect(() => {
-    if (wasStopped.current && !stopped) setReloadNonce((n) => n + 1);
+    if (!native && wasStopped.current && !stopped) setReloadNonce((n) => n + 1);
     wasStopped.current = stopped;
-  }, [stopped]);
+  }, [native, stopped]);
 
-  // What the bar shows when nobody is typing: where the view is, else the ask.
+  // What the bar shows when nobody is typing: the view's full address —
+  // origin included, a browser bar's shape — else the ask. Typing stays free:
+  // bare paths, `?state=`, and same-origin urls all parse (D66).
   useEffect(() => {
     if (addressFocused) return;
-    if (location) setAddress(location.path);
-    else if (target?.kind === "path") setAddress(target.path);
+    const origin = url ? new URL(url).origin : "";
+    const full = (path: string) => (origin === "" ? path : `${origin}${path}`);
+    if (location) setAddress(full(location.path));
+    else if (target?.kind === "path") setAddress(full(target.path));
     else if (target?.kind === "screen")
-      setAddress(target.state ? `${target.route}?state=${target.state}` : target.route);
-    else setAddress("/");
-  }, [location, target, addressFocused]);
+      setAddress(full(target.state ? `${target.route}?state=${target.state}` : target.route));
+    else setAddress(full("/"));
+  }, [url, location, target, addressFocused]);
 
   useEffect(() => {
     return () => {
@@ -204,6 +197,31 @@ export function PreviewHost({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [native]);
+
+  // iframe의 궤적 (D70½): a framed page reports no location of its own, so
+  // the asks are the history — back·forward walk this trail, and a new ask
+  // cuts the forward branch, as a browser would.
+  const [trail, setTrail] = useState<{ list: PreviewTarget[]; at: number }>({
+    list: [],
+    at: -1,
+  });
+  useEffect(() => {
+    setTrail({ list: [], at: -1 });
+  }, [url]);
+  useEffect(() => {
+    if (native || !target) return;
+    setTrail((t) => {
+      const cur = t.list[t.at];
+      if (cur && sameTarget(cur, target)) return t;
+      return { list: [...t.list.slice(0, t.at + 1), target], at: t.at + 1 };
+    });
+  }, [native, target]);
+  const goTrail = (delta: number) => {
+    const entry = trail.list[trail.at + delta];
+    if (!entry) return;
+    setTrail((t) => ({ ...t, at: t.at + delta }));
+    onNavigate(entry);
+  };
 
   // D85 ⓔ: 폭 is the device, 배율 is the eye — a width change resets the
   // eye to 100% (모바일 에뮬레이션 + 150% 는 가로 스크롤을 만든다).
@@ -310,47 +328,6 @@ export function PreviewHost({
   return (
     <div className="preview">
       <div className="preview__toolbar">
-        {screens.length > 0 ? (
-          <select
-            className="preview__screens"
-            aria-label="화면"
-            value={current?.route ?? ""}
-            onChange={(event) =>
-              onNavigate({
-                kind: "screen",
-                route: event.target.value,
-                state: null,
-              })
-            }
-          >
-            {!current && (
-              <option value="" disabled>
-                화면 선택
-              </option>
-            )}
-            {groupedScreens(screens).map(([feature, groupScreens]) =>
-              feature ? (
-                <optgroup key={feature} label={feature}>
-                  {groupScreens.map((screen) => (
-                    <option key={screen.route} value={screen.route}>
-                      {screen.title}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : (
-                groupScreens.map((screen) => (
-                  <option key={screen.route} value={screen.route}>
-                    {screen.title}
-                  </option>
-                ))
-              ),
-            )}
-          </select>
-        ) : (
-          <span className="preview__unlisted">
-            이 레포는 아직 화면을 선언하지 않았습니다 — 첫 화면을 만들면 여기에 목록이 생깁니다.
-          </span>
-        )}
         {current && current.states.length > 1 && (
           <div className="preview__states" role="group" aria-label="상태">
             {current.states.map((state) => (
@@ -382,10 +359,9 @@ export function PreviewHost({
             }
             onClick={() => onCommentsMode(!commentsOn)}
           >
-            💬 코멘트{unresolvedComments > 0 ? ` ${unresolvedComments}` : ""}
+            💬 코멘트
           </button>
         )}
-        {native && <CoachMark id="pin" text="⌥ 를 누른 채 요소를 클릭하면 코멘트를 달 수 있어요" />}
         <div className="preview__width" role="group" aria-label="폭">
           <button
             type="button"
@@ -493,51 +469,64 @@ export function PreviewHost({
       >
         <div className="preview__device">
           {/* 프레임 머리 (PLAN D44 → D66): a browser bar now — back ·
-              forward · reload, the address (native) or the screen name
-              (iframe), and the docked PiP thumbnail. Always drawn, even
+              forward · reload, the address on both hosts (the iframe pill
+              shows the ask's address, its back·forward walks the trail of
+              asks — D70½), and the docked PiP thumbnail. Always drawn, even
               before the first screen: a pane that grows a head only when a
               screen is picked reads as if it were hiding something. */}
+          {loading && <div className="frame__progress" aria-hidden="true" />}
           <div className="frame__chrome">
-            {native && (
+            <div className="frame__side frame__side--left">
+              <div className="frame__lights" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </div>
               <div className="frame__nav" role="group" aria-label="이동">
                 <button
                   type="button"
                   className="frame__navbtn"
                   aria-label="뒤로"
                   title="뒤로"
-                  disabled={!location?.canGoBack}
-                  onClick={() => void window.coloDesignDesktop?.preview?.history?.(-1)}
+                  disabled={native ? !location?.canGoBack : trail.at <= 0}
+                  onClick={() => {
+                    if (native) void window.coloDesignDesktop?.preview?.history?.(-1);
+                    else goTrail(-1);
+                  }}
                 >
-                  ◀
+                  <ChevronLeftIcon />
                 </button>
                 <button
                   type="button"
                   className="frame__navbtn"
                   aria-label="앞으로"
                   title="앞으로"
-                  disabled={!location?.canGoForward}
-                  onClick={() => void window.coloDesignDesktop?.preview?.history?.(1)}
+                  disabled={native ? !location?.canGoForward : trail.at >= trail.list.length - 1}
+                  onClick={() => {
+                    if (native) void window.coloDesignDesktop?.preview?.history?.(1);
+                    else goTrail(1);
+                  }}
                 >
-                  ▶
+                  <ChevronRightIcon />
                 </button>
               </div>
-            )}
-            <button
-              type="button"
-              className={loading ? "frame__toolsbtn frame__toolsbtn--busy" : "frame__toolsbtn"}
-              aria-busy={loading || undefined}
-              title={loading ? "불러오는 중 — 누르면 중단합니다" : "미리보기 새로 고침"}
-              onClick={() => {
-                if (!native) {
-                  setReloadNonce((n) => n + 1);
-                  return;
-                }
-                if (loading) void window.coloDesignDesktop?.preview?.stop?.();
-                else setReloadNonce((n) => n + 1);
-              }}
-            >
-              {loading ? <span className="frame__spin" /> : <RefreshIcon />}
-            </button>
+              <button
+                type="button"
+                className={loading ? "frame__toolsbtn frame__toolsbtn--busy" : "frame__toolsbtn"}
+                aria-busy={loading || undefined}
+                title={loading ? "불러오는 중 — 누르면 중단합니다" : "미리보기 새로 고침"}
+                onClick={() => {
+                  if (!native) {
+                    setReloadNonce((n) => n + 1);
+                    return;
+                  }
+                  if (loading) void window.coloDesignDesktop?.preview?.stop?.();
+                  else setReloadNonce((n) => n + 1);
+                }}
+              >
+                {loading ? <span className="frame__spin" /> : <RefreshIcon />}
+              </button>
+            </div>
             {native ? (
               <form
                 className="frame__addresswrap"
@@ -546,19 +535,22 @@ export function PreviewHost({
                   submitAddress(address);
                 }}
               >
-                <input
-                  className="frame__address"
-                  type="text"
-                  aria-label="주소"
-                  data-testid="preview-address"
-                  spellCheck={false}
-                  value={address}
-                  list="colo-frame-routes"
-                  ref={addressInput}
-                  onFocus={() => setAddressFocused(true)}
-                  onBlur={() => setAddressFocused(false)}
-                  onChange={(event) => setAddress(event.target.value)}
-                />
+                <span className="frame__addressbox">
+                  <LockIcon />
+                  <input
+                    className="frame__address"
+                    type="text"
+                    aria-label="주소"
+                    data-testid="preview-address"
+                    spellCheck={false}
+                    value={address}
+                    list="colo-frame-routes"
+                    ref={addressInput}
+                    onFocus={() => setAddressFocused(true)}
+                    onBlur={() => setAddressFocused(false)}
+                    onChange={(event) => setAddress(event.target.value)}
+                  />
+                </span>
                 {/* D85 ⓓ: the address bar proposes — declared routes, and the
                     route·state pairs when a screen declares more than one. */}
                 <datalist id="colo-frame-routes">
@@ -581,60 +573,57 @@ export function PreviewHost({
                 {addressError && <span className="frame__addrerror">{addressError}</span>}
               </form>
             ) : (
-              <span className="frame__name">
-                {current ? (
-                  <>
-                    <b>{current.title}</b> · {stateLabel(activeState)}
-                  </>
-                ) : (
-                  "미리보기"
-                )}
+              <span className="frame__pill">
+                <LockIcon />
+                <span className="frame__pill__text">{address !== "" ? address : "미리보기"}</span>
               </span>
             )}
-            {native && current && (
-              <span className="frame__name frame__name--beside">
-                <b>{current.title}</b> · {stateLabel(activeState)}
-              </span>
-            )}
-            {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
-            {width !== "desktop" && (
-              <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
-            )}
-            {/* D85 ⓔ: 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
-            {native && zoom !== 1 && (
-              <button
-                type="button"
-                className="frame__zoom"
-                data-testid="preview-zoom"
-                title="실제 크기로 돌아갑니다"
-                onClick={() => void window.coloDesignDesktop?.preview?.zoom?.("reset")}
-              >
-                {Math.round(zoom * 100)}%
-              </button>
-            )}
-            {native && onLook && (
-              <button
-                type="button"
-                className="frame__look"
-                aria-expanded={lookOpen}
-                title="화면 전체와 콘솔 기록을 Claude에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
-                onClick={() => setLookOpen((open) => !open)}
-              >
-                이 화면 Claude에게 보여 주기
-              </button>
-            )}
-            {native && pip && (
-              <button
-                type="button"
-                className="pip--docked"
-                title={pip.label}
-                aria-expanded={pipLarge}
-                onClick={onPipToggle}
-              >
-                <img src={`data:image/jpeg;base64,${pip.frame}`} alt="" />
-                <span className="pip--docked__label">{pip.label}</span>
-              </button>
-            )}
+            <div className="frame__side frame__side--right">
+              {current && (
+                <span className="frame__name frame__name--beside">
+                  <b>{current.title}</b> · {stateLabel(activeState)}
+                </span>
+              )}
+              {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
+              {width !== "desktop" && (
+                <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
+              )}
+              {/* D85 ⓔ: 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
+              {native && zoom !== 1 && (
+                <button
+                  type="button"
+                  className="frame__zoom"
+                  data-testid="preview-zoom"
+                  title="실제 크기로 돌아갑니다"
+                  onClick={() => void window.coloDesignDesktop?.preview?.zoom?.("reset")}
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+              )}
+              {native && onLook && (
+                <button
+                  type="button"
+                  className="frame__look"
+                  aria-expanded={lookOpen}
+                  title="화면 전체와 콘솔 기록을 Claude에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
+                  onClick={() => setLookOpen((open) => !open)}
+                >
+                  이 화면 Claude에게 보여 주기
+                </button>
+              )}
+              {native && pip && (
+                <button
+                  type="button"
+                  className="pip--docked"
+                  title={pip.label}
+                  aria-expanded={pipLarge}
+                  onClick={onPipToggle}
+                >
+                  <img src={`data:image/jpeg;base64,${pip.frame}`} alt="" />
+                  <span className="pip--docked__label">{pip.label}</span>
+                </button>
+              )}
+            </div>
           </div>
           {lookOpen && native && onLook && (
             <form
@@ -665,6 +654,7 @@ export function PreviewHost({
           {native ? (
             <NativeHost
               url={url}
+              epoch={epoch}
               target={target}
               reloadKey={reloadNonce}
               width={width}
@@ -682,7 +672,13 @@ export function PreviewHost({
               onZoom={setZoom}
             />
           ) : (
-            <IframeHost url={url} target={target} reloadKey={reloadNonce} onScreens={onScreens} />
+            <IframeHost
+              url={url}
+              target={target}
+              reloadKey={reloadNonce}
+              onScreens={onScreens}
+              onLoading={setLoading}
+            />
           )}
         </div>
       </div>

@@ -9,24 +9,29 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Copy,
   ExternalLink,
   File,
   Folder,
+  Gauge,
   Link,
+  Lock,
   type LucideIcon,
   Monitor,
-  Paperclip,
   Plus,
   RefreshCw,
   RotateCcw,
   ServerOff,
   Settings,
+  Shield,
   ShieldCheck,
+  ShieldOff,
   Smartphone,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 
 interface IconProps {
@@ -43,7 +48,6 @@ function make(Glyph: LucideIcon, defaultSize: number, strokeWidth = 1.8) {
 // --- transcript & composer ------------------------------------------------
 
 export const ArrowUpIcon = make(ArrowUp, 14);
-export const PaperclipIcon = make(Paperclip, 15);
 export const ChevronRightIcon = make(ChevronRight, 12, 2);
 export const ChevronDownIcon = make(ChevronDown, 12, 2);
 export const FileIcon = make(File, 13);
@@ -51,6 +55,16 @@ export const FolderIcon = make(Folder, 13);
 export const CheckIcon = make(Check, 12, 2.2);
 export const CloseIcon = make(X, 12, 2.2);
 export const ShieldIcon = make(ShieldCheck, 16);
+
+// --- composer toolbar chips -------------------------------------------------
+// Each chip leads with the glyph for what it governs, so the row reads as
+// three controls rather than three words. The 확인 방식 chip is the one whose
+// glyph carries a reading: the slash means nothing is being asked.
+
+export const GaugeIcon = make(Gauge, 13);
+export const ShieldPlainIcon = make(Shield, 13);
+export const ShieldOffIcon = make(ShieldOff, 13);
+export const ZapIcon = make(Zap, 14);
 
 // --- workspace chrome -------------------------------------------------------
 
@@ -61,6 +75,8 @@ export const MobileIcon = make(Smartphone, 12);
 export const DesktopIcon = make(Monitor, 12);
 export const ExternalLinkIcon = make(ExternalLink, 12);
 export const RestartIcon = make(RotateCcw, 13);
+export const ChevronLeftIcon = make(ChevronLeft, 14, 2);
+export const LockIcon = make(Lock, 11);
 export const CopyIcon = make(Copy, 12);
 export const LinkIcon = make(Link, 12);
 export const WarnIcon = make(TriangleAlert, 12);

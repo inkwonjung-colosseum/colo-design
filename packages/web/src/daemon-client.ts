@@ -275,9 +275,13 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
 
     case "init":
     case "preview.opened":
+    case "queued":
       // D91: `preview.opened` is not a transcript event — the session view
-      // keeps it as `lastOpened` (below), and no block is built. The
-      // exhaustive switch is why it cannot slip through unhandled.
+      // keeps it as `lastOpened` (below), and no block is built. D86's
+      // `queued` is the same kind of news: the words already entered the
+      // transcript as `user.echo`, and this only says how many are still
+      // waiting. The exhaustive switch is why neither slips through
+      // unhandled.
       return blocks;
   }
 }
@@ -318,6 +322,13 @@ interface SessionView {
    * position used to be guessed.
    */
   lastOpened?: { route: string; state: string | null };
+  /**
+   * 다음 턴에 보내기 (PLAN D86): how many sends are waiting in the DAEMON's
+   * wait room. The daemon owns this number because it owns the wait — the
+   * SDK's input stream would fold a mid-turn send into the running turn, so
+   * only the daemon knows what is still waiting and when it goes out.
+   */
+  queued: number;
 }
 
 const EMPTY_SESSION: SessionView = {
@@ -325,6 +336,7 @@ const EMPTY_SESSION: SessionView = {
   state: "idle",
   model: null,
   live: false,
+  queued: 0,
 };
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
@@ -418,7 +430,7 @@ interface DaemonApi {
       approveCommands?: boolean;
     },
   ) => Promise<ProjectList>;
-  /** Switch the active project; the outgoing preview stops first. */
+  /** Switch the active project; the outgoing preview stays warm unless its port is needed. */
   projectActivate: (slug: string) => Promise<ProjectList>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
@@ -483,9 +495,8 @@ interface DaemonApi {
   restoreCheckpoint: (id: string) => Promise<{ restored: string[] }>;
   /**
    * 코멘트 기록 (PLAN D57): a pin batch lands in the project's comments.json
-   * at send time. The daemon REPLACES that screen·state's unresolved items
-   * with the batch — resending the same pins never duplicates, and resolved
-   * history stays.
+   * at send time as DELIVERED — the turn carrying the words is the delivery,
+   * so every row is born resolved and the store is an append-only log.
    */
   recordComments: (input: {
     screen: string;
@@ -499,10 +510,9 @@ interface DaemonApi {
         rect: { x: number; y: number; width: number; height: number };
       };
     }>;
-  }) => Promise<{ recorded: number; ids: string[] }>;
-  /** Every recorded comment of the connected repo, resolved ones in. */
+  }) => Promise<{ recorded: number }>;
+  /** The recorded log of what the pins asked Claude, oldest first. */
   listComments: () => Promise<{ items: CommentItem[] }>;
-  resolveComment: (id: string, resolved: boolean) => Promise<{ ok: true }>;
   /** 답하기 (PLAN D88): the planner's answer to one developer comment. */
   replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
   /**
@@ -801,7 +811,10 @@ export function useDaemon(url: string | null): Daemon {
                       state: message.event.state,
                     },
                   }
-                : { ...view, blocks: foldEvent(view.blocks, message.event) };
+                : message.event.kind === "queued"
+                  ? // D86: 대기 줄의 길이 — 기록이 아니라 입력창 위 한 줄.
+                    { ...view, queued: message.event.count }
+                  : { ...view, blocks: foldEvent(view.blocks, message.event) };
           return { ...prev, [message.sessionId]: next };
         });
         return;
@@ -1148,19 +1161,13 @@ export function useDaemon(url: string | null): Daemon {
           };
         }>;
       }) =>
-        call<{ recorded: number; ids: string[] }>({
+        call<{ recorded: number }>({
           type: "comments.record",
           screen: input.screen,
           state: input.state,
           items: input.items,
         }),
       listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
-      resolveComment: (id: string, resolved: boolean) =>
-        call<{ ok: true }>({
-          type: "comments.resolve",
-          commentId: id,
-          resolved,
-        }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
       rewind: (sessionId, turn, text, images) =>

@@ -25,6 +25,8 @@ export function IframeHost({
   target,
   reloadKey,
   onScreens,
+  /** 로드의 시작과 끝을 프레임 머리에 알린다 — 스핀과 진행 바의 iframe 절반. */
+  onLoading,
 }: {
   url: string;
   /** The last screen asked for; free paths cannot be followed here (D70). */
@@ -32,9 +34,21 @@ export function IframeHost({
   /** Bumped by 새로 고침 — remounts the iframe for a clean reload. */
   reloadKey: number;
   onScreens: (screens: ColoDesignScreen[]) => void;
+  onLoading?: (busy: boolean) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [loads, setLoads] = useState(0);
+  /** 로드가 끝나 페이드인 — 리마운트(새로 고침)마다 다시 0. */
+  const [loaded, setLoaded] = useState(false);
+
+  // A remount is a fresh load — and so is a bumped key (새로 고침): the
+  // chrome's spin and sweep run until the frame reports back; the cleanup
+  // covers a mid-load remount.
+  useEffect(() => {
+    setLoaded(false);
+    onLoading?.(true);
+    return () => onLoading?.(false);
+  }, [onLoading, reloadKey]);
 
   useEffect(() => {
     if (!url) return;
@@ -69,11 +83,14 @@ export function IframeHost({
   return (
     <iframe
       key={reloadKey}
-      className="preview__frame"
+      className={loaded ? "preview__frame preview__frame--in" : "preview__frame"}
       title="미리보기"
       ref={frame}
       src={url}
       onLoad={() => {
+        // 로드가 끝났다 — 머리의 스핀과 진행 바를 거둔다.
+        onLoading?.(false);
+        setLoaded(true);
         setLoads((count) => count + 1);
         // The bridge posts its list once on its own mount and never retries,
         // so the two orderings cover each other (D7).

@@ -6,6 +6,7 @@ import type { Block, PendingPermission, PendingQuestion } from "./daemon-client"
 import { waitedFor } from "./format";
 import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
 import { Markdown } from "./Markdown";
+import { GENERIC_STARTERS } from "./suggestions";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
 import { answerTurnNumbers, promptTotal } from "./turn-numbering";
 
@@ -193,12 +194,13 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
 }
 
 /**
- * Claude's private reasoning, folded by default. While the turn is running it
- * reads as live ("생각 중…"); once the turn ends the same fold reads as a
- * record ("생각 과정") — a finished transcript must not look like it is still
- * thinking. The closed fold carries the thought's first line as a peek, so a
- * planner scanning the tape reads the shape of the reasoning without opening
- * it.
+ * Claude's private reasoning — off unless 설정's `생각 과정 보기` asks for it
+ * (Transcript drops the blocks before grouping). When it is on the fold is
+ * still closed: while the turn is running it reads as live ("생각 중…"); once
+ * the turn ends the same fold reads as a record ("생각 과정") — a finished
+ * transcript must not look like it is still thinking. The closed fold carries
+ * the thought's first line as a peek, so a planner scanning the tape reads the
+ * shape of the reasoning without opening it.
  */
 function ThinkingBlock({ block }: { block: Extract<Block, { type: "thinking" }> }) {
   const peek = block.text.trimStart().split("\n", 1)[0] ?? "";
@@ -455,24 +457,6 @@ function MachineTurn({
             : "이 기획서로 화면 만들기";
       lead = marker.title;
       break;
-    case "precheck":
-      title = "기획서와 대조하기";
-      lead = marker.title;
-      rows =
-        marker.screens.length > 0
-          ? marker.screens.map((screen, index) => ({
-              key: String(index),
-              label: screen,
-              text: "",
-            }))
-          : [
-              {
-                key: "none",
-                label: "아직 이 기획서로 만든 화면이 없습니다",
-                text: "",
-              },
-            ];
-      break;
     case "gate":
       title = `${marker.step}에서 멈췄습니다`;
       lead = "무엇이 잘못됐는지 Claude에게 넘겼습니다. 고치는 동안 기다려 주세요.";
@@ -531,39 +515,6 @@ function MachineTurn({
         {open ? "접기" : "자세히"}
       </button>
       {open && <pre className="machine__body">{body}</pre>}
-    </div>
-  );
-}
-
-/**
- * The planner lifts Claude's wording into a 기획 doc or a chat, so the
- * answer's hover carries a one-click copy. It copies the markdown source —
- * the text Claude wrote, not the rendered reading of it.
- */
-function AssistantBubble({ block }: { block: Extract<Block, { type: "text" }> }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(block.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be blocked; the answer stays selectable text regardless.
-    }
-  };
-  return (
-    <div className="bubble bubble--assistant">
-      <Markdown text={block.text} />
-      {block.streaming && <span className="caret" />}
-      <button
-        type="button"
-        className={copied ? "bubble__copy bubble__copy--done" : "bubble__copy"}
-        aria-label={copied ? "복사됨" : "답변 복사"}
-        title="복사"
-        onClick={() => void copy()}
-      >
-        {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
-      </button>
     </div>
   );
 }
@@ -744,14 +695,6 @@ function lastUserText(blocks: Block[]): string | null {
   return null;
 }
 
-/** The empty conversation's one-click starts. 각 문장은 화면을 시키는 말이
-    그대로 되는 것 — 누르면 컴포저에 채워 지고, 고쳐 보내면 된다. */
-const STARTERS = [
-  "로그인 화면의 상태 3개를 만들어 줘",
-  "이 화면을 모바일 폭에서도 읽히게 다듬어 줘",
-  "테이블에 빈 상태와 오류 상태를 추가해 줘",
-];
-
 export function Transcript({
   blocks,
   live = true,
@@ -759,8 +702,10 @@ export function Transcript({
   onRewind,
   onResendEdit,
   onStarter,
+  starters,
   checkpoints,
   onRestoreCheckpoint,
+  showThinking = false,
 }: {
   blocks: Block[];
   live?: boolean;
@@ -775,10 +720,19 @@ export function Transcript({
   onResendEdit?: (text: string) => void;
   /** A starter chip was pressed — its sentence becomes the composer's draft. */
   onStarter?: (text: string) => void;
+  /** The chips themselves — the connected repo's declared screens, falling
+      back to the generic sentences when it declares none (suggestions.ts). */
+  starters?: string[];
   /** This session's turn-start snapshots (PLAN D52), oldest first. */
   checkpoints?: Array<{ id: string; turn: number }>;
   /** Puts the worktree back the way it stood before that answer (PLAN D52). */
   onRestoreCheckpoint?: (id: string) => void;
+  /**
+   * 생각 과정 보기 (설정의 스위치). 꺼져 있으면 생각 블록은 접힌 채로도
+   * 남지 않고 테이프에서 아예 빠진다 — 기획자가 읽는 것은 답이지 답을
+   * 만드는 동안의 속말이 아니다. 기본은 꺼짐이다.
+   */
+  showThinking?: boolean;
 }) {
   // D95: 되감기 확인 — k 가 마지막 답이 아니면 뒤의 답들도 함께 사라진다는
   // 말을 한 번 묻는다. 마지막 답이면 곧장. 훅은 빈 테이프 early return 보다
@@ -798,7 +752,7 @@ export function Transcript({
         </p>
         {onStarter && (
           <div className="empty__starters">
-            {STARTERS.map((starter) => (
+            {(starters ?? GENERIC_STARTERS).map((starter) => (
               <button
                 key={starter}
                 type="button"
@@ -833,10 +787,15 @@ export function Transcript({
   // 넘쳤다 — 누른 답과 돌아가는 스냅샷이 어긋나던 것은 그 셈의 탓이다.
   const answerTurns = answerTurnNumbers(blocks);
   const totalTurns = promptTotal(blocks);
+  // 생각 과정이 꺼져 있으면 groupActivity 보다 **먼저** 걸러낸다: 묶기까지
+  // 마치고 나서 지우면 생각만 있던 구간이 아무것도 담지 않은 활동 막대로
+  // 남는다. 턴 번호의 셈(answerTurns · totalTurns)은 프롬프트와 답만 세므로
+  // 이 거르기와 무관하다 — 되감기가 가리키는 답은 그대로다.
+  const tape = showThinking ? blocks : blocks.filter((block) => block.type !== "thinking");
   const rows = groupActivity(
     live
-      ? blocks
-      : blocks.map((block) =>
+      ? tape
+      : tape.map((block) =>
           block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
         ),
   );
@@ -929,8 +888,14 @@ export function Transcript({
             const checkpoint = checkpoints?.find((entry) => entry.turn === turnNo);
             return (
               <div key={block.id}>
-                <AssistantBubble block={block} />
+                <div className="bubble bubble--assistant">
+                  <Markdown text={block.text} />
+                  {block.streaming && <span className="caret" />}
+                </div>
                 <div className="answer__actions">
+                  {!block.streaming && (
+                    <CopyButton value={block.text} label="답변 복사" className="answer__copy" />
+                  )}
                   {checkpoint && onRestoreCheckpoint && (
                     <button
                       type="button"

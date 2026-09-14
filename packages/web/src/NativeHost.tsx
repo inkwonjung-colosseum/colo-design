@@ -15,6 +15,7 @@ import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
  */
 export function NativeHost({
   url,
+  epoch,
   target,
   reloadKey,
   width,
@@ -27,6 +28,8 @@ export function NativeHost({
   onZoom,
 }: {
   url: string;
+  /** The server process behind `url` (RepoStatus.previewEpoch) — a kept page under a new one reloads. */
+  epoch: number | null;
   /** The last ask — a screen rides the bridge, a path rides `open` (D66). */
   target: PreviewTarget | null;
   reloadKey: number;
@@ -69,11 +72,14 @@ export function NativeHost({
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
+  // Mount puts this preview's page on screen — kept from an earlier visit or
+  // loaded once; unmount only parks it. The epoch rides along so a page whose
+  // server was restarted (or whose port now serves another project) reloads.
   useEffect(() => {
     if (!url) return;
-    void window.coloDesignDesktop?.preview?.mount?.(url);
+    void window.coloDesignDesktop?.preview?.mount?.(url, epoch);
     return () => void window.coloDesignDesktop?.preview?.unmount?.();
-  }, [url]);
+  }, [url, epoch]);
 
   // The last ask re-rides on every change — the prop IS the ask (D66).
   useEffect(() => {

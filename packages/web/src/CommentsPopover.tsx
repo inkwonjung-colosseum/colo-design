@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { CommentItem } from "./daemon-client";
 import { stateLabel, timeAgo } from "./format";
 import { CloseIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
- * 코멘트 기록 (PLAN D57 → D78): every comment the planner's pins left behind.
- * 기록된 핀은 이제 화면 위에도 산다 — this popover is the list side: 미해결이
- * 기본이고, `해결된 것 보기` 를 켜면 해결된 행도 회색으로 함께 읽는다. A row
- * can go 미해결 ↔ 해결 and be sent to Claude again — the words ride the same
- * shell path the pins used, so the shell picks the thread.
+ * 코멘트 기록 (PLAN D57 → 자동 정리): the log of what the planner's pins
+ * asked Claude. The send IS the delivery — a recorded comment leaves the
+ * screen with its turn — so this list reads as history, not work to do.
+ * Nothing to toggle, nothing to resend: another ask goes through the thread
+ * like any other message.
  *
  * Reuses the 저장 기록 drawer's classes — same dialog, same rows, one visual
  * language for "things saved beside the work".
@@ -18,19 +18,14 @@ export function CommentsPopover({
   open,
   items,
   error,
-  busyId,
   native,
   onClose,
-  onResolve,
-  onResend,
 }: {
   open: boolean;
   /** The recorded comments; null while the first read is still out. */
   items: CommentItem[] | null;
-  /** Why the last read or write failed, if it did. */
+  /** Why the last read failed, if it did. */
   error: string | null;
-  /** The row with a resolve toggle in flight, if any. */
-  busyId?: string | null;
   /**
    * Whether the preview is the desktop's view — the only place the pin
    * overlay lives. The browser dev path has no pins, so advising
@@ -38,13 +33,7 @@ export function CommentsPopover({
    */
   native?: boolean;
   onClose: () => void;
-  /** Toggle a comment's 해결 state; the caller refreshes the list. */
-  onResolve: (id: string, resolved: boolean) => void;
-  /** Send one recorded comment to Claude again, on the working thread. */
-  onResend: (item: CommentItem) => void;
 }) {
-  /** D78: 해결된 것 보기 — off by default, the list reads as work to do. */
-  const [showResolved, setShowResolved] = useState(false);
   useEffect(() => {
     if (!open) return;
     const onKeydown = (event: KeyboardEvent) => {
@@ -62,10 +51,6 @@ export function CommentsPopover({
   }, [open]);
 
   if (!open) return null;
-
-  const unresolved = (items ?? []).filter((item) => !item.resolved).length;
-  const resolvedCount = (items ?? []).length - unresolved;
-  const shown = (items ?? []).filter((item) => showResolved || !item.resolved);
 
   return (
     <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -88,24 +73,10 @@ export function CommentsPopover({
           <p className="hint">
             {items === null
               ? "코멘트를 읽어 오는 중…"
-              : unresolved > 0
-                ? native
-                  ? `미해결 ${unresolved}건 — 기록된 핀은 미리보기 화면 위에도 남아 있습니다.`
-                  : `미해결 ${unresolved}건입니다.`
-                : native
-                  ? "다 해결된 목록입니다. 미리보기에서 ⌥+클릭으로 새 코멘트를 보낼 수 있습니다."
-                  : "다 해결된 목록입니다."}
+              : native
+                ? "미리보기에서 보낸 코멘트의 기록입니다. 다시 바라는 것이 있으면 대화에서 말씀해 주세요."
+                : "미리보기에서 보낸 코멘트의 기록입니다."}
           </p>
-          {resolvedCount > 0 && (
-            <label className="comments__showresolved">
-              <input
-                type="checkbox"
-                checked={showResolved}
-                onChange={(event) => setShowResolved(event.target.checked)}
-              />
-              해결된 것 보기 ({resolvedCount})
-            </label>
-          )}
           {items !== null && items.length === 0 && (
             <p className="hint">
               {native
@@ -113,36 +84,15 @@ export function CommentsPopover({
                 : "아직 기록된 코멘트가 없습니다. 코멘트 핀은 데스크톱 앱의 미리보기에서 쓸 수 있습니다."}
             </p>
           )}
-          {items !== null && shown.length > 0 && (
+          {items !== null && items.length > 0 && (
             <ul className="diff__files">
-              {shown.map((item) => (
-                <li
-                  className={`diff__file${item.resolved ? " diff__file--resolved" : ""}`}
-                  key={item.id}
-                >
+              {items.map((item) => (
+                <li className="diff__file" key={item.id}>
                   <div className="diff__filerow">
                     <span className="diff__path" title={item.text}>
                       {item.screen} · {stateLabel(item.state)} · {item.elementText || "화면의 요소"}
                     </span>
                     <span className="diff__count">{timeAgo(Date.parse(item.at))}</span>
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={busyId === item.id}
-                      onClick={() => onResolve(item.id, !item.resolved)}
-                    >
-                      {item.resolved ? "미해결로" : "해결"}
-                    </button>
-                    {!item.resolved && (
-                      <button
-                        type="button"
-                        className="ghost"
-                        title="이 코멘트를 열려 있는 대화에서 Claude에게 다시 보냅니다"
-                        onClick={() => onResend(item)}
-                      >
-                        다시 보내기
-                      </button>
-                    )}
                   </div>
                   <p className="hint">{item.text}</p>
                 </li>

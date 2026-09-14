@@ -125,6 +125,10 @@ async function main() {
       "확인 방식 starts on 전부 맡기기",
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
+    check(
+      "실행 중 보내기 starts on 다음 턴에 보내기",
+      (await page.getByLabel("실행 중 보내기").inputValue()) === "queue",
+    );
 
     // 3. theme applies live and persists. The picker is a gallery of live
     //    palette tiles now, not a select — a palette is chosen by its colour.
@@ -228,12 +232,13 @@ async function main() {
 
     // 5. behaviour choices survive a reload.
     await page.getByLabel("보내기 키").selectOption("modEnter");
+    await page.getByLabel("실행 중 보내기").selectOption("interrupt");
     const before = await stored(page);
     check(
       "behaviour choices are stored together and the delete-confirm row is gone",
       before?.sendKey === "modEnter" &&
+        before?.midTurnSend === "interrupt" &&
         (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
-      JSON.stringify(before),
     );
 
     await page.reload();
@@ -245,7 +250,8 @@ async function main() {
     });
     check(
       "the panel reopens on the stored values",
-      (await page.getByLabel("보내기 키").inputValue()) === "modEnter",
+      (await page.getByLabel("보내기 키").inputValue()) === "modEnter" &&
+        (await page.getByLabel("실행 중 보내기").inputValue()) === "interrupt",
     );
 
     // 6. the 대화 group: the three chips that used to live in the composer
@@ -292,6 +298,27 @@ async function main() {
       "and a reload keeps it, like every other choice",
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
+
+    // 생각 과정은 기본으로 보이지 않는다: 기획자가 읽어야 하는 것은 답이다.
+    // 켜고 끄는 자리는 여기뿐이고, 켠 사실은 다른 선택처럼 남는다.
+    check(
+      "생각 과정 is off until the planner asks for it",
+      (await page.getByLabel("생각 과정 보기").isChecked()) === false &&
+        (await stored(page))?.chat?.showThinking !== true,
+      JSON.stringify((await stored(page))?.chat?.showThinking),
+    );
+    await page.getByLabel("생각 과정 보기").check();
+    check(
+      "asking for it is written down like every other choice",
+      (await stored(page))?.chat?.showThinking === true,
+    );
+    await page.reload();
+    await page.waitForSelector(".connect__cmd", { timeout: 10000 });
+    await page.getByRole("button", { name: "설정" }).click();
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
+    check("and a reload brings it back on", await page.getByLabel("생각 과정 보기").isChecked());
 
     // 7. the diagnostics are reachable and no longer the first thing in view.
     check(
@@ -371,6 +398,10 @@ async function main() {
     check(
       "a non-string send key falls back too",
       (await page.getByLabel("보내기 키").inputValue()) === "enter",
+    );
+    check(
+      "an absent 실행 중 보내기 falls back to the queue default",
+      (await page.getByLabel("실행 중 보내기").inputValue()) === "queue",
     );
 
     // 9. Escape closes without touching anything.

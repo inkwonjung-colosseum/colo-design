@@ -34,6 +34,7 @@ process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 // under test.
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
+process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 
 const results = [];
@@ -258,6 +259,103 @@ async function main() {
       announced?.activeSlug === payments.slug,
       announced?.activeSlug ?? "(no broadcast)",
     );
+
+    // --- 3.1 the outgoing preview stays warm; a return is a repaint ---------
+    // 환불 is off screen now, but its server never went down: the desktop keeps
+    // its page for the return, and a dead port would make that page a blank.
+    const serving = async (port) => {
+      try {
+        return (await fetch(`http://127.0.0.1:${port}/`)).ok;
+      } catch {
+        return false;
+      }
+    };
+    check(
+      "the outgoing project's preview server stays up across the switch",
+      await serving(previewPort),
+      `port ${previewPort}`,
+    );
+    // Coming back: ready at once, the same server (the epoch names the
+    // process), and no bring-up phase on the wire — the quiet refresh keeps
+    // the phase at ready.
+    const beforeReturn = inbox.length;
+    await request({ type: "project.activate", slug: refunds.slug });
+    const returned = await request({ type: "repo.status" });
+    const returnPhases = inbox
+      .slice(beforeReturn)
+      .filter((m) => m.type === "repo.status")
+      .map((m) => m.status.phase);
+    check(
+      "a return to a warm project is ready at once, on the same server",
+      returned.phase === "ready" &&
+        returned.previewUrl === refundsStatus.previewUrl &&
+        returned.previewEpoch === refundsStatus.previewEpoch,
+      `${returned.phase} ${returned.previewUrl} epoch ${returned.previewEpoch} (was ${refundsStatus.previewEpoch})`,
+    );
+    check(
+      "no bring-up phase rides the wire on a warm return",
+      returnPhases.length > 0 && returnPhases.every((phase) => phase === "ready"),
+      returnPhases.join("·") || "(no status)",
+    );
+
+    // --- 3.2 the port fence: two repos on one port cannot both stay warm ----
+    // 쌍둥이 declares 결제's port. Its own bring-up takes that port (결제 is
+    // cold from here); later, activating 결제 must stop the warm 쌍둥이 — and
+    // only it: 환불, on another port, stays warm through the fence.
+    const twinFixture = await createFixtureRepo({
+      dir: join(DIR, "fixture-twin"),
+      port: paymentsFixture.port,
+    });
+    const twin = await request({
+      type: "project.create",
+      name: "쌍둥이",
+      repoUrl: twinFixture.remote,
+      approveCommands: true,
+    });
+    const twinStatus = await waitReady("the 쌍둥이 clone on 결제's port");
+    check(
+      "a project declaring another's port takes it for its own bring-up",
+      twinStatus.previewUrl !== null &&
+        new URL(twinStatus.previewUrl).port === String(paymentsFixture.port),
+      `${twinStatus.previewUrl}`,
+    );
+    await request({ type: "project.activate", slug: refunds.slug });
+    await waitReady("the 환불 clone beside the warm 쌍둥이");
+    const beforeFence = inbox.length;
+    await request({ type: "project.activate", slug: payments.slug });
+    const fenced = await waitReady("결제 back on the port 쌍둥이 held");
+    const fencePhases = inbox
+      .slice(beforeFence)
+      .filter((m) => m.type === "repo.status")
+      .map((m) => m.status.phase);
+    check(
+      "a project whose port a warm twin holds brings itself up on it (the twin stopped first)",
+      fenced.previewUrl !== null &&
+        new URL(fenced.previewUrl).port === String(paymentsFixture.port) &&
+        fencePhases.includes("starting"),
+      `${fenced.previewUrl} phases ${fencePhases.join("·")}`,
+    );
+    check(
+      "a warm project on another port survives that fence",
+      await serving(previewPort),
+      `port ${previewPort}`,
+    );
+    const beforeTwinReturn = inbox.length;
+    await request({ type: "project.activate", slug: twin.slug });
+    await waitReady("쌍둥이 back after the fence");
+    const twinPhases = inbox
+      .slice(beforeTwinReturn)
+      .filter((m) => m.type === "repo.status")
+      .map((m) => m.status.phase);
+    check(
+      "the twin the fence stopped comes back through a bring-up, not a repaint",
+      twinPhases.includes("starting"),
+      twinPhases.join("·"),
+    );
+    // Leave the stage as section 3 found it: 쌍둥이 gone, 결제 on screen.
+    await request({ type: "project.remove", slug: twin.slug, deleteFiles: true });
+    await request({ type: "project.activate", slug: payments.slug });
+    await waitReady("the 결제 clone restored after the twin");
 
     // A thread opened in 결제 belongs to 결제: listing 환불's threads must
     // not carry it over, and sending into it from the wrong project is

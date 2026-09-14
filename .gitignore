@@ -1,26 +1,14 @@
 node_modules/
-# Runtime state of the GJC agent workflows (session-scoped, never shared).
 .gjc/
-# The connected repo is its own git repository (authored in-tree, pushed to
-# GitHub separately); the hub clones it like any other remote.
-/reference-repo/
+.zcode/
 dist/
 *.log
 .DS_Store
 .hub/
-packages/web/test/ui-e2e.png
-packages/web/test/ui-history-e2e.png
-packages/web/test/ui-composer-e2e.png
-packages/web/test/ui-settings-dark.png
-packages/web/test/ui-settings-light.png
-packages/web/test/ui-planner-e2e.png
-packages/web/test/ui-editor-e2e.png
-packages/web/test/ui-publish-e2e.png
-packages/web/test/ui-comments-e2e.png
-packages/web/test/ui-onboarding-done.png
-packages/web/test/ui-editor-1280.png
-packages/web/test/ui-onboarding-picker.png
-packages/web/test/ui-sidebar-e2e.png
+# 브라우저·Electron e2e 가 남기는 스크린샷 — 매 실행 다시 쓰이는 산출물이라
+# 커밋하면 바이너리 diff 만 쌓인다. 검사는 픽셀이 아니라 단언이 한다.
+packages/web/test/*.png
+packages/desktop/test/*.png
 packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/
@@ -28,5 +16,3 @@ packages/desktop/resources/bin/
 # 수동으로 뭉친 데스크톱 산물(공유용 tgz) — 릴리스 에셋은 워크플로우가 짓는다.
 /*.tgz
 
-# ZCode 세션 디렉터리
-.zcode/

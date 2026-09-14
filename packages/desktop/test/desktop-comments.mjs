@@ -1,14 +1,14 @@
 /**
- * Desktop comments suite (PLAN §1 — D78 · D79 · D80 · D86 · D87 · D89) — the
- * native preview path, driven end to end against the dev entry with
- * Playwright _electron: 핀은 모드 없이 ⌥+클릭으로 찍히고(ⓐ), ⏎ 보내기 로
- * 하나만 보내지며(ⓑ), 턴이 끝나도 화면 위에 남고(ⓒ) 새로 고침 뒤 같은
- * 요소에 다시 선다(ⓓ). 말풍선의 해결이 핀을 치우고(ⓔ), 화면(상태)을 옮기면
- * 그 곳의 핀만 보인다(ⓕ). 보낸 봉투는 요소의 crop 을 실어 온다(ⓖ), 턴 중에
- * 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을 남기고
- * 그 경로가 화면 id 가 된다(ⓚ), 화면
- * 보여 주기는 카드가 되고(ⓛ) 같은 화면의 연타는 두 번째 요청으로 표식이
- * 붙는다(ⓜ).
+ * Desktop comments suite (PLAN §1 — D67 · D78 · D79 · D80 · D86 · D87 · D89
+ * · 자동 정리) — the native preview path, driven end to end against the dev
+ * entry with Playwright _electron: 핀은 모드 없이 ⌥+클릭으로 찍히고(ⓐ),
+ * ⏎ 보내기 로 하나만 보내지며(ⓑ), 보낸 핀은 그 자리에서 화면을 떠난다(ⓒ)
+ * — 새로 고침 뒤에도 아무것도 돌아오지 않는다(ⓓ). 코멘트 기록은 전달의
+ * 로그다 — 할 일도, 해결 단추도, 다시 보내기도 없다(ⓔ). 화면(상태)을
+ * 옮기면 보내지 않은 핀은 지워진다(ⓕ). 보낸 봉투는 요소의 crop 을 실어
+ * 온다(ⓖ), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도
+ * ⌥+클릭은 핀을 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는
+ * 카드가 되고(ⓛ) 같은 화면의 연타는 두 번째 요청으로 표식이 붙는다(ⓜ).
  *
  * The main window's page is the planner UI; the VIEW's page is reached
  * through the main process (`globalThis.coloDesignPlannerPreview`) because a
@@ -270,7 +270,11 @@ async function main() {
     await address.press("Enter");
     await page.waitForFunction(
       () =>
-        document.querySelector('[data-testid="preview-address"]')?.value === "/member/MemberList",
+        // the bar shows the full address now; the fixture port is dynamic, so
+        // the route is matched at the end of the value
+        (document.querySelector('[data-testid="preview-address"]')?.value ?? "").endsWith(
+          "/member/MemberList",
+        ),
       { timeout: 30000 },
     );
     check("the view is on the fixture screen", true);
@@ -315,6 +319,61 @@ async function main() {
     check(
       "ⓑ the draft editor's ⏎ 보내기 cleared the draft",
       (await waitForDraftGone(app)) === true,
+    );
+
+    // --- 가장자리 핀: 편집기가 뷰포트 밖으로 나가지 않는다 ------------------
+    // 뷰포트 오른쪽 끝의 요소를 ⌥+클릭한다 — 편집기(폭 306px)는 클램프 없이는
+    // 반쯤 잘린다. 확인 뒤 이 핀은 곧바로 지워 뒤 단계를 건드리지 않는다.
+    const edgePinned = await inView(
+      app,
+      `(function () {
+        for (const y of [140, 240, 360, 480]) {
+          const target = document.elementFromPoint(window.innerWidth - 24, y);
+          if (!target || target.closest("[data-colo-design-overlay]")) continue;
+          target.dispatchEvent(new MouseEvent("click", {
+            bubbles: true, cancelable: true, altKey: true, view: window,
+          }));
+          return target.tagName;
+        }
+        return null;
+      })()`,
+    );
+    const edgeBox = await inView(
+      app,
+      `(function () {
+        const wrap = document.querySelector("[data-colo-design-overlay] [data-pin]");
+        if (!wrap) return null;
+        const box = wrap.getBoundingClientRect();
+        return {
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          bottom: box.bottom,
+          vw: window.innerWidth,
+          vh: window.innerHeight,
+        };
+      })()`,
+    );
+    check(
+      "a pin at the viewport's right edge keeps its editor inside",
+      typeof edgePinned === "string" &&
+        edgeBox !== null &&
+        typeof edgeBox === "object" &&
+        edgeBox.left >= 0 &&
+        edgeBox.right <= edgeBox.vw &&
+        edgeBox.top >= 0 &&
+        edgeBox.bottom <= edgeBox.vh,
+      JSON.stringify({ edgePinned, edgeBox }),
+    );
+    await inView(
+      app,
+      `(function () {
+        const wrap = document.querySelector("[data-colo-design-overlay] [data-pin]");
+        const remove = wrap && wrap.querySelector('button[aria-label$=" 삭제"]');
+        if (!remove) return false;
+        remove.click();
+        return true;
+      })()`,
     );
     const card = page.locator(".machine--comments");
     await card.waitFor({ timeout: 30000 });
@@ -363,76 +422,32 @@ async function main() {
       JSON.stringify(shotOk),
     );
 
-    // --- ⓒ 턴이 끝나도 핀은 남는다 (D78) — 기록된 핀(accent 점)이 선다 ------
+    // --- ⓒ 자동 정리: 보낸 핀은 그 자리에서 화면을 떠난다 -------------------
     // The turn settles when the composer's 중지 button goes back to 보내기.
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     check("the carrying turn settled", true);
-    check(
-      "ⓒ the recorded pin still stands after the turn ends",
-      (await waitForDot(app, true)) === true,
-    );
+    check("ⓒ the sent pin left the screen at once", (await waitForDot(app, false)) === true);
 
-    // --- ⓓ 새로 고침 뒤 같은 요소에 다시 (D78 — did-navigate resend) --------
+    // --- ⓓ 새로 고침 뒤에도 아무것도 돌아오지 않는다 ------------------------
     await page.getByRole("button", { name: "미리보기 새로 고침" }).click();
     await page.waitForTimeout(1200);
-    check("ⓓ after a reload the pin re-stands", (await waitForDot(app, true)) === true);
+    check("ⓓ after a reload no pin comes back", (await waitForDot(app, false)) === true);
 
-    // --- ⓔ 점 클릭 → 말풍선 → 해결 → 핀 사라짐 (D78) ------------------------
-    async function clickWhenThere(app, findScript, timeout = 8000) {
-      const started = Date.now();
-      while (Date.now() - started < timeout) {
-        const clicked = await inView(
-          app,
-          `(function () {
-            const node = (${findScript});
-            if (!node) return false;
-            node.click();
-            return true;
-          })()`,
-        );
-        if (clicked === true) return true;
-        await new Promise((ok) => setTimeout(ok, 250));
-      }
-      return false;
-    }
-    check(
-      "the recorded dot is clickable",
-      (await clickWhenThere(
-        app,
-        `document.querySelector('[data-colo-design-overlay] [data-rpin] > button')`,
-      )) === true,
-    );
-    const bubble = await inView(
-      app,
-      `Boolean([...document.querySelectorAll("[data-colo-design-overlay] button")]
-        .find((b) => b.textContent === "해결"))`,
-    );
-    check("the dot's bubble offers 해결", bubble === true);
-    check(
-      "해결 is clickable",
-      (await clickWhenThere(
-        app,
-        `[...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => b.textContent === "해결")`,
-      )) === true,
-    );
-    check("ⓔ 해결 clears the pin from the screen", (await waitForDot(app, false)) === true);
-    // the popover side: 해결된 것 보기 reveals the grey row (D78)
+    // --- ⓔ 코멘트 기록은 전달의 로그다 — 단추는 없다 ------------------------
     await page.locator(".screenpanel__bar").getByRole("button", { name: "더 보기" }).click();
     await page.getByRole("menuitem", { name: "코멘트 목록" }).click();
     const dialog = page.locator('[role="dialog"][aria-label="코멘트 기록"]');
     await dialog.waitFor({ timeout: 5000 });
-    const beforeShow = await dialog.locator(".diff__file").count();
-    await dialog.getByText("해결된 것 보기").click();
-    const afterShow = await dialog.locator(".diff__file").count();
+    const loggedRows = await dialog.locator(".diff__file").count();
+    const rowActions = await dialog.locator(".diff__file button").count();
     check(
-      "해결된 것 보기 reveals the resolved row",
-      beforeShow === 0 && afterShow === 1,
-      `${beforeShow} → ${afterShow}`,
+      "ⓔ the delivered comment is listed with nothing to act on",
+      loggedRows === 1 && rowActions === 0,
+      `rows:${loggedRows} actions:${rowActions}`,
     );
     await dialog.getByRole("button", { name: "코멘트 기록 닫기" }).click();
 
-    // --- ⓕ 화면(상태)을 옮기면 그 곳의 핀만 (D78 — screen·state filter) -----
+    // --- ⓕ 화면(상태)을 옮기면 보내지 않은 핀은 지워진다 (D67) --------------
     await altClick(app, "[data-screen] h1");
     await inView(
       app,
@@ -446,31 +461,28 @@ async function main() {
         return true;
       })()`,
     );
-    // 담아 두기 parked it; the bar sends the parked batch (D80).
-    await inView(
-      app,
-      `(() => {
-        const send = [...document.querySelectorAll("[data-colo-design-overlay] button")]
-          .find((b) => (b.textContent || "").includes("수정 요청 1건 보내기"));
-        if (!send) return false;
-        send.click();
-        return true;
-      })()`,
-    );
-    await page.locator(".machine--comments").last().waitFor({ timeout: 30000 });
-    // The turn settles before the state switch (the stub answers one turn per
-    // process; a queued message would only confuse what follows).
-    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
-    check("ⓕ the default-state pin stands", (await waitForDot(app, true)) === true);
-
-    // Switch the state — the pin belongs to default, so it leaves the screen.
+    // Switch the state — the bridge rewrites data-state in place, so the
+    // observer (ours and the overlay's) must both see it in the SAME document.
     await page
       .getByRole("group", { name: "상태" })
       .getByRole("button", { name: "비어 있음" })
       .click();
-    check("ⓕ the empty state hides the default-state pin", (await waitForDot(app, false)) === true);
+    let toastSeen = false;
+    const toastDeadline = Date.now() + 6000;
+    while (Date.now() < toastDeadline && !toastSeen) {
+      toastSeen = await inView(
+        app,
+        `Boolean([...document.querySelectorAll("[data-colo-design-overlay] div")]
+          .find((n) => (n.textContent || "").includes("보내지 않은 핀 1개를 지웠습니다")))`,
+      );
+      if (!toastSeen) await new Promise((ok) => setTimeout(ok, 200));
+    }
+    check(
+      "ⓕ the state switch cleared the parked draft with a toast",
+      toastSeen === true && (await waitForDot(app, false)) === true,
+      `toast:${toastSeen}`,
+    );
     await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
-    check("ⓕ coming back reveals it again", (await waitForDot(app, true)) === true);
 
     // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
     // The claude-design loop: comment → fix must not wait for a declared

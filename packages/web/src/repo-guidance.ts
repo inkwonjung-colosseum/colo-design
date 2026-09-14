@@ -23,6 +23,7 @@ export type ErrorKind =
   | "conflict"
   | "commands"
   | "clone"
+  | "held-elsewhere"
   | "unknown";
 
 export function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
@@ -34,6 +35,7 @@ export function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
   if (kind === "preview") return "preview";
   if (kind === "port-busy") return "port-busy";
   if (kind === "clone") return "clone";
+  if (kind === "held-elsewhere") return "held-elsewhere";
   if (!kind) {
     const detail = repo?.detail ?? null;
     if (detail?.includes("GitHub 패키지 인증")) return "auth";
@@ -99,6 +101,17 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
       body:
         detail ??
         "선언된 포트를 쓰는 프로그램을 종료하려 했지만 실패했습니다 — 그 프로그램을 직접 끄거나, 연결 레포의 colo-design.json에서 preview.port를 바꾼 뒤 다시 시도해 주세요.",
+    };
+  }
+  if (kind === "held-elsewhere") {
+    // 두 인스턴스 전쟁의 울타리(실사): 다른 창(앱·데몬)의 살아 있는 미리보기를
+    // 발견하면 이쪽은 죽이지 않고 멈춘다. 해법은 이 창 밖에 있다 — 다른
+    // 인스턴스를 끄는 일이라, 카드가 대신할 단추는 없다.
+    return {
+      title: "다른 Colo Design이 미리보기를 쓰고 있어요",
+      body:
+        detail ??
+        "다른 Colo Design 인스턴스(데스크톱 앱 또는 데몬)가 이 프로젝트의 미리보기를 이미 돌리고 있습니다. 다른 인스턴스를 끈 뒤 다시 시도해 주세요.",
     };
   }
   return {

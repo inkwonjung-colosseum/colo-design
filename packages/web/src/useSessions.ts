@@ -103,9 +103,13 @@ export interface Sessions {
    * same wire a composer attachment does (PLAN D87) — the pin crops, the
    * 화면 보여 주기 frame.
    */
-  sendTurn: (text: string, images?: Array<{ mediaType: string; data: string }>) => Promise<void>;
+  sendTurn: (
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+    target?: string,
+  ) => Promise<void>;
   /**
-   * 다음 턴에 밀려 있는 것 (PLAN D86): running 중 보낸 send 마다 +1, 턴이
+   * 다음 턴에 밀려 있는 것 (PLAN D86): 데몬의 대기 줄에 남은 건수, 턴이
    * 끝나면 0. The composer's one-line `다음 턴에 보냅니다 · N건 대기` reads it.
    */
   queued: number;
@@ -429,9 +433,13 @@ export function useSessions(
     void refresh();
   }, [activeId, api, confirmRemove, refresh]);
 
-  /** Resolve the session a turn should land in, creating or resuming as needed. */
-  const targetSession = async (): Promise<string> => {
-    if (!activeId) return await startSession();
+  /** Resolve the session a turn should land in, creating or resuming as needed.
+   * `wanted` pins the destination (the id a caller just created) — without it
+   * the fallback reads `activeId`, which a closure captured before that
+   * create's setState landed and would open a second, nameless thread. */
+  const targetSession = async (wanted?: string): Promise<string> => {
+    const id = wanted ?? activeId;
+    if (!id) return await startSession();
     // A stored thread the planner picked from the list: continue it in place.
     // Forking is a developer's concern, not theirs.
     //
@@ -440,29 +448,19 @@ export function useSessions(
     // Nothing consumes that queue anymore, so the words would sink without an
     // answer. Reopening resumes the stored transcript in a fresh CLI, which
     // is the promise the crash card already made ("다시 보내면 이어집니다").
-    if (active && (!active.live || active.state === "error")) return await startSession(activeId);
-    ensureSession(activeId);
-    markLive(activeId);
-    return activeId;
+    const picked = daemon.sessions[id];
+    if (picked && (!picked.live || picked.state === "error")) return await startSession(id);
+    return id;
   };
 
   /**
-   * 대기 줄 (PLAN D86). The SDK queues a mid-turn send itself; what was
-   * missing is the SIGN. A send while the thread is running counts here, and
-   * the turn's end zeroes it — the composer's one line above the input is
-   * the whole UI.
+   * 대기 줄 (PLAN D86) — 데몬이 세는 수를 그대로 읽는다.
+   *
+   * 화면이 직접 세던 때에는 "보냈다" 만 알고 "언제 나갔다" 는 몰랐다: 말을
+   * 붙들고 있는 쪽은 데몬이고(Session.held), 그 줄이 언제 풀리는지도 데몬만
+   * 안다. 턴 끝에 0 으로 돌아오는 것도 그쪽에서 온다.
    */
-  const [queued, setQueued] = useState(0);
-  const wasRunningRef = useRef(false);
-  useEffect(() => {
-    if (active?.state === "running") {
-      wasRunningRef.current = true;
-      return;
-    }
-    if (!wasRunningRef.current) return;
-    wasRunningRef.current = false;
-    setQueued(0);
-  }, [active?.state]);
+  const queued = active?.queued ?? 0;
 
   /**
    * 계획 먼저로 보낸 턴의 자리. 전송 때 기록해 턴이 끝난 뒤(아래 효과)
@@ -482,7 +480,6 @@ export function useSessions(
         setSelector((current) => (current ? { ...current, permissionMode: "plan" } : current));
         planTurn.current = target;
       }
-      if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
       await api.send(
         target,
         text,
@@ -496,7 +493,11 @@ export function useSessions(
       void refresh();
     } catch (e) {
       planTurn.current = null;
-      setError(e instanceof Error ? e.message : String(e));
+      // PLAN D35: the composer keeps the words AND the attachments unless the
+      // daemon accepted the turn. Its warning strip is also the ONE surface a
+      // refused send speaks from — the banner would read the same news twice,
+      // in two corners of the screen. The Korean sentence rides the rejection.
+      throw e;
     }
   };
 
@@ -560,16 +561,25 @@ export function useSessions(
    * A machine-authored turn (the comment envelope): the same wire a typed
    * message uses, minus the composer. `images` rides along (D87). The target
    * resolves through targetSession for the same reason a typed word does — a
-   * crashed query must be resumed, not fed.
+   * crashed query must be resumed, not fed. A caller that just created the
+   * thread passes its id: the closure's `activeId` still reads the pre-create
+   * value and would otherwise open a second, nameless thread (M5).
    */
-  const sendTurn = async (text: string, images?: Array<{ mediaType: string; data: string }>) => {
+  const sendTurn = async (
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+    target?: string,
+  ) => {
     try {
-      const target = await targetSession();
-      if (daemon.sessions[target]?.state === "running") setQueued((n) => n + 1);
-      await api.send(target, text, images);
+      const id = await targetSession(target);
+      await api.send(id, text, images);
       void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // Rejected on purpose (PLAN D35): a machine turn the daemon did not
+      // accept must be retryable — the caller decides what survives on
+      // screen, and swallowing here would tell it the send landed.
+      throw e;
     }
   };
 

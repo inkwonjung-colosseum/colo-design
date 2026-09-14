@@ -34,6 +34,14 @@ export type ThemeId =
 export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
 export type SendKey = "enter" | "modEnter";
+/**
+ * 실행 중 보내기 (PLAN D86 의 스위치). A send while a turn runs either waits
+ * for that turn to end (queue — the DAEMON holds it; the SDK would not, it
+ * hands a mid-turn send straight to the CLI, which folds it into the running
+ * turn) or cuts the running one and starts over with the new words
+ * (interrupt — the ⌥Enter "끊고 보내기" path, promoted to the plain send).
+ */
+export type MidTurnSend = "queue" | "interrupt";
 
 /**
  * The column width the planner may drag in the workspace — the preview's —
@@ -88,11 +96,18 @@ export interface ChatSettings {
    * "고쳤습니다" 뒤 기획자가 화면을 찾아 헤매지 않도록. 끄면 토스트만 온다.
    */
   followClaude: boolean;
+  /**
+   * 생각 과정을 대화에 남길지. 기본은 끔 — 기획자가 읽는 것은 답이지 답을
+   * 만드는 동안의 속말이 아니다. 접혀 있어도 답과 답 사이마다 한 줄씩 끼면
+   * 테이프가 기계의 기록처럼 읽힌다. 켜면 예전처럼 접힌 채로 돌아온다.
+   */
+  showThinking: boolean;
 }
 
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
+  midTurnSend: MidTurnSend;
   chat: ChatSettings;
   layout: LayoutSettings;
   /** The planner's own names for threads, by session id. The daemon's
@@ -113,6 +128,7 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   previewTools: true,
   showPip: true,
   followClaude: true,
+  showThinking: false,
 };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -125,6 +141,7 @@ const DEFAULT_SETTINGS: Settings = {
    */
   theme: "light",
   sendKey: "enter",
+  midTurnSend: "queue",
   chat: DEFAULT_CHAT_SETTINGS,
   layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
   sessionTitles: {},
@@ -174,12 +191,18 @@ function loadSettings(): Settings {
   } catch {
     return DEFAULT_SETTINGS;
   }
-  if (!raw || typeof raw !== "object") return DEFAULT_SETTINGS;
-  const stored = raw as Record<string, unknown>;
+  // Nothing stored yet (first visit) parses to null — an empty record reads
+  // the same as every-field-unrecognised, which loadSettings already handles.
+  const stored = (raw ?? {}) as Record<string, unknown>;
 
   return {
     theme: oneOf(THEMES, stored.theme, DEFAULT_SETTINGS.theme),
     sendKey: oneOf(["enter", "modEnter"] as const, stored.sendKey, DEFAULT_SETTINGS.sendKey),
+    midTurnSend: oneOf(
+      ["queue", "interrupt"] as const,
+      stored.midTurnSend,
+      DEFAULT_SETTINGS.midTurnSend,
+    ),
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
@@ -266,6 +289,9 @@ function loadChat(raw: unknown): ChatSettings {
     previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,
     showPip: stored.showPip === undefined ? true : stored.showPip === true,
     followClaude: stored.followClaude === undefined ? true : stored.followClaude === true,
+    // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정은 켜 달라고
+    // 말한 기획자에게만 보인다.
+    showThinking: stored.showThinking === true,
   };
 }
 

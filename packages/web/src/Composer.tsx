@@ -7,19 +7,30 @@ import type {
   SessionSelectors,
 } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
+import { ContextRing } from "./ContextRing";
 import {
-  EFFORT_HINT,
   EFFORT_LABEL,
-  MODE_HINT,
   MODE_LABEL,
   modelOptions,
   modelRowOf,
   modelWords,
   SETTINGS_MODES,
 } from "./chat-options";
-import { ArrowUpIcon, FileIcon, FolderIcon, PaperclipIcon, StopIcon } from "./icons";
+import { Fold, useFoldNotice } from "./components";
+import {
+  ArrowUpIcon,
+  FileIcon,
+  FolderIcon,
+  GaugeIcon,
+  PlusIcon,
+  ShieldOffIcon,
+  ShieldPlainIcon,
+  SparkIcon,
+  StopIcon,
+  ZapIcon,
+} from "./icons";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
-import type { SendKey } from "./settings";
+import type { MidTurnSend, SendKey } from "./settings";
 import { UsageChip } from "./UsageChip";
 
 export interface Attachment {
@@ -38,6 +49,9 @@ const DOCUMENT_TYPES: Record<string, string> = {
   ".txt": "text/plain",
   ".pdf": "application/pdf",
 };
+
+/** The modes that act without asking — the ones the chip marks with a slash. */
+const ASKS_NOTHING: PermissionMode[] = ["dontAsk", "bypassPermissions"];
 
 function documentType(name: string): string | null {
   const dot = name.lastIndexOf(".");
@@ -156,6 +170,7 @@ export function Composer({
   queued = 0,
   seed,
   sendKey,
+  midTurnSend = "queue",
   selector,
   planArmed = false,
   onTogglePlanArmed,
@@ -212,6 +227,12 @@ export function Composer({
   onSetPermissionMode: (mode: PermissionMode) => void;
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
+  /**
+   * 실행 중 보내기 (설정): "queue" keeps the D86 wait-line — a mid-turn send
+   * rides to the next turn. "interrupt" promotes ⌥Enter's 끊고 보내기 to the
+   * plain send: a mid-turn send cuts the running turn and starts over.
+   */
+  midTurnSend?: MidTurnSend;
   onSend: (text: string, attachments: Attachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
@@ -240,7 +261,7 @@ export function Composer({
   findFiles.current = onFindFiles;
   const [highlight, setHighlight] = useState(0);
   const filePicker = useRef<HTMLInputElement>(null);
-  const [rejected, setRejected] = useState<string | null>(null);
+  const rejected = useFoldNotice();
 
   /**
    * A draft belongs to the conversation it was typed in, not to the field
@@ -324,7 +345,7 @@ export function Composer({
       lostAttachments = 0;
     }
     if (restored.attachments.length === 0 && lostAttachments > 0) {
-      setRejected(`첨부 ${lostAttachments}개는 다시 붙여 주세요`);
+      rejected.show(`첨부 ${lostAttachments}개는 다시 붙여 주세요`);
     }
     setEditor(restored);
     requestAnimationFrame(() => {
@@ -456,11 +477,13 @@ export function Composer({
         refused.push(file.name);
       }
     }
-    setRejected(
-      refused.length > 0
-        ? `${refused.join(", ")} — 첨부할 수 없는 형식입니다. PDF로 내보내서 다시 첨부해 주세요.`
-        : null,
-    );
+    if (refused.length > 0) {
+      rejected.show(
+        `${refused.join(", ")} — 첨부할 수 없는 형식입니다. PDF로 내보내서 다시 첨부해 주세요.`,
+      );
+    } else {
+      rejected.clear();
+    }
     if (accepted.length === 0) return;
     const read = await Promise.all(
       accepted.map(
@@ -507,10 +530,16 @@ export function Composer({
       .then(() => {
         setEditor(EMPTY_EDITOR);
         setSuggestions([]);
-        setRejected(null);
+        rejected.clear();
       })
-      .catch(() => {
-        setRejected("보내지지 못했습니다 — 잠시 뒤 다시 시도해 주세요");
+      .catch((e) => {
+        // The daemon's refusal sentence is Korean and carries the recovery —
+        // show it rather than a second generic line (리뷰: 실패 표면 하나).
+        rejected.show(
+          e instanceof Error && e.message
+            ? e.message
+            : "보내지지 못했습니다 — 잠시 뒤 다시 시도해 주세요",
+        );
       });
   };
 
@@ -611,6 +640,9 @@ export function Composer({
     const sends = sendKey === "enter" ? !event.shiftKey : event.metaKey || event.ctrlKey;
     if (!sends) return;
     event.preventDefault();
+    // 실행 중 보내기 (설정): with "interrupt", the ordinary send IS the cut —
+    // ⌥Enter stays the same either way, so the shortcut outlives the choice.
+    if (running && midTurnSend === "interrupt") onInterrupt();
     submit();
   };
 
@@ -623,34 +655,32 @@ export function Composer({
   const chips = [
     {
       key: "model" as const,
-      label: modelRow ? modelWords(modelRow).label : "자동",
-      prefix: "모델",
-      title: "답변 방식",
+      label: modelRow ? modelWords(modelRow).label : "Auto",
+      icon: <SparkIcon size={13} />,
+      title: "모델",
       // The list is the CLI's, and only a session (or an earlier one, cached)
       // can supply it. Until then the chip states the default and stays shut.
       disabled: selector.models.length === 0,
       options: [
-        {
-          value: null,
-          label: "자동으로 고르기",
-          hint: "Claude Code 기본값을 그대로 써요",
-          picked: selector.model == null,
-        },
-        ...modelOptions(selector.models, modelRow),
+        { value: null, label: "Auto", picked: selector.model == null },
+        ...modelOptions(selector.models, modelRow).map(({ value, label, picked }) => ({
+          value,
+          label,
+          picked,
+        })),
       ],
     },
     {
       key: "effort" as const,
-      label: selector.effort ? EFFORT_LABEL[selector.effort] : "자동",
-      prefix: "생각",
+      label: selector.effort ? EFFORT_LABEL[selector.effort] : "Auto",
+      icon: <GaugeIcon />,
       title: "생각 시간",
       disabled: modelRow ? !modelRow.supportsEffort : false,
       options: [
-        { value: null, label: "자동", picked: selector.effort == null },
+        { value: null, label: "Auto", picked: selector.effort == null },
         ...effortLevels.map((level) => ({
           value: level,
           label: EFFORT_LABEL[level],
-          hint: EFFORT_HINT[level],
           picked: selector.effort === level,
         })),
       ],
@@ -658,15 +688,20 @@ export function Composer({
     {
       key: "mode" as const,
       label: MODE_LABEL[selector.permissionMode],
-      prefix: "확인",
-      title: "확인 방식 — 화면 파일 편집은 자동으로 적용되고, 명령 실행만 물어봅니다",
+      // The one chip whose glyph says something the label does not: a struck
+      // shield is a mode that asks nothing before it acts.
+      icon: ASKS_NOTHING.includes(selector.permissionMode) ? (
+        <ShieldOffIcon />
+      ) : (
+        <ShieldPlainIcon />
+      ),
+      title: "확인 방식",
       disabled: false,
-      // A mode already set to 전부 맡기기 still shows as this chip's label,
-      // so the planner can read what they are on and step back down.
+      // A mode already set to Bypass still shows as this chip's label, so the
+      // planner can read what they are on and step back down.
       options: SETTINGS_MODES.map((mode) => ({
         value: mode,
         label: MODE_LABEL[mode],
-        hint: MODE_HINT[mode],
         picked: selector.permissionMode === mode,
       })),
     },
@@ -687,11 +722,13 @@ export function Composer({
         void readAttachments(e.dataTransfer.files);
       }}
     >
-      {/* The spend chip floats just off the input card's top-left corner —
+      {/* The plan chip floats just off the input card's top-left corner —
           out of the toolbar below, where it crowded the send controls. A
-          reading about the account, parked where the eye already sits. */}
+          reading about the account, parked where the eye already sits. The
+          conversation's own length is not an account reading: it rides the
+          send row, beside the button it is a reason to press or not. */}
       <div className="composer__usage">
-        <UsageChip plan={plan} usage={usage} onRefresh={onRefreshUsage} />
+        <UsageChip plan={plan} onRefresh={onRefreshUsage} />
       </div>
       {suggestions.length > 0 && (
         <div className="autocomplete" role="listbox" ref={palette}>
@@ -721,18 +758,21 @@ export function Composer({
         </div>
       )}
 
-      {rejected && (
-        <div className="notice notice--warn">
-          <span className="notice__text">{rejected}</span>
-          <button
-            type="button"
-            className="notice__close"
-            aria-label="첨부 안내 닫기"
-            onClick={() => setRejected(null)}
-          >
-            ×
-          </button>
-        </div>
+      {rejected.text && (
+        <Fold closing={rejected.closing} onCollapsed={rejected.clear}>
+          <div className="notice notice--warn">
+            <span className="notice__text">{rejected.text}</span>
+            <button
+              type="button"
+              className="notice__close"
+              aria-label="첨부 안내 닫기"
+              disabled={rejected.closing}
+              onClick={rejected.close}
+            >
+              ×
+            </button>
+          </div>
+        </Fold>
       )}
 
       {editor.attachments.length > 0 && (
@@ -820,29 +860,13 @@ export function Composer({
           disabled={disabled}
           onClick={() => filePicker.current?.click()}
         >
-          <PaperclipIcon />
+          <PlusIcon size={16} />
         </button>
-        {selector.permissionMode !== "plan" && onTogglePlanArmed && !running && (
-          <button
-            type="button"
-            className={planArmed ? "toolbar__plan toolbar__plan--armed" : "toolbar__plan"}
-            aria-pressed={planArmed}
-            title={
-              planArmed
-                ? "이번 답변은 먼저 만들 것을 승인받고 시작합니다 — 다시 누르면 그대로 보냅니다"
-                : "이번 답변만 먼저 무엇을 만들지 승인받고 시작합니다"
-            }
-            disabled={disabled}
-            onClick={onTogglePlanArmed}
-          >
-            계획 먼저
-          </button>
-        )}
         {chips.map((chip) => (
           <SelectorChip
             key={chip.key}
             label={chip.label}
-            prefix={chip.prefix}
+            icon={chip.icon}
             title={chip.title}
             disabled={chip.disabled}
             open={menu === chip.key}
@@ -855,7 +879,25 @@ export function Composer({
             options={chip.options}
           />
         ))}
+        {selector.permissionMode !== "plan" && onTogglePlanArmed && !running && (
+          <button
+            type="button"
+            className={planArmed ? "toolbar__plan toolbar__plan--armed" : "toolbar__plan"}
+            aria-pressed={planArmed}
+            aria-label="계획 먼저"
+            title={
+              planArmed
+                ? "계획 먼저 — 이번 턴은 승인받고 시작합니다. 다시 누르면 그대로 보냅니다"
+                : "계획 먼저 — 이번 턴만 무엇을 만들지 승인받고 시작합니다"
+            }
+            disabled={disabled}
+            onClick={onTogglePlanArmed}
+          >
+            <ZapIcon />
+          </button>
+        )}
         <div className="toolbar__end">
+          <ContextRing usage={usage} />
           {running ? (
             <button
               type="button"

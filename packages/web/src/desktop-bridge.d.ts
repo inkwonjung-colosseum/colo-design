@@ -1,8 +1,6 @@
 import type {
   ColoDesignCommentsEnvelope,
-  ColoDesignPinsPayload,
   ColoDesignScreen,
-  CommentItem,
   UpdateCheckResult,
 } from "@colo-design/protocol";
 
@@ -42,7 +40,13 @@ declare global {
         onFrame: (callback: (jpeg: string) => void) => void;
         /** D64: the native view exists — NativeHost, not the iframe. */
         native?: boolean;
-        mount?: (url: string) => Promise<unknown>;
+        /**
+         * Puts the page for this preview on screen; `epoch` names the server
+         * process behind it (RepoStatus.previewEpoch). A page kept from an
+         * earlier visit comes back as it was — under a new epoch it reloads.
+         */
+        mount?: (url: string, epoch: number | null) => Promise<unknown>;
+        /** Takes the page off screen; it stays alive for the return. */
         unmount?: () => Promise<unknown>;
         bounds?: (rect: {
           x: number;
@@ -61,8 +65,6 @@ declare global {
         zoom?: (kind: "in" | "out" | "reset") => Promise<unknown>;
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
-        /** 기록된 핀 (PLAN D78): the whole list, pushed down into the view. */
-        pins?: (payload: ColoDesignPinsPayload) => Promise<unknown>;
         /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
         busy?: (on: boolean) => Promise<unknown>;
         /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
@@ -85,12 +87,6 @@ declare global {
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
         /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
         onZoom?: (callback: (payload: { factor: number }) => void) => Unsubscribe;
-        /** D78: the overlay bubble's 해결, relayed verbatim from the view. */
-        onCommentResolve?: (
-          callback: (payload: { id: string; resolved: boolean }) => void,
-        ) => Unsubscribe;
-        /** D78: the attention bubble's 다시 요청. */
-        onCommentResend?: (callback: (payload: { id: string }) => void) => Unsubscribe;
       };
     };
   }

@@ -9,6 +9,7 @@ import {
   type HandoffShot,
   markTurn,
   type PlanUsage,
+  type PlanWindow,
   PROTOCOL_VERSION,
   type ProjectSummary,
   parseClientMessage,
@@ -19,7 +20,7 @@ import {
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE } from "./bootstrap-brief.js";
-import { readComments, recordComments, resolveComment } from "./comments.js";
+import { readComments, recordComments } from "./comments.js";
 import {
   type CredentialStore,
   createCredentialStore,
@@ -61,7 +62,13 @@ import {
   trustWorkspace,
   validateBootstrapConfig,
 } from "./repo.js";
-import { NEW_SESSION_TITLE, probeCommands, type Session } from "./session.js";
+import {
+  asPlannerFacingError,
+  NEW_SESSION_TITLE,
+  probeCommands,
+  probePlanUsage,
+  type Session,
+} from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { repoWritePolicy } from "./workspaces.js";
 
@@ -73,12 +80,39 @@ interface ProjectWorkspaces {
   slug: string;
   paths: ProjectPaths;
   repo: RepoWorkspace;
+  /** When this project was last put on screen — the warm cap keeps the newest. */
+  shownAt: number;
 }
+
+/**
+ * Inactive projects whose preview server stays up beside the active one, so
+ * a return is a repaint and not a bring-up. Each is a dev server of its own
+ * (hundreds of MB): the cap bounds what clicking through the sidebar costs.
+ */
+const WARM_PREVIEWS = 2;
 
 /** Where the last plan-limit reading waits for the next start. */
 const PLAN_USAGE_FILE = join(CONFIG_DIR, "plan-usage.json");
 /** Where the model picker's rows wait for the next start. */
 const MODEL_CATALOG_FILE = join(CONFIG_DIR, "model-catalog.json");
+
+/** Whether a window's own reset moment has already gone by. */
+function hasReset(window: PlanWindow | null | undefined, now: number): boolean {
+  if (!window?.resetsAt) return false;
+  const at = Date.parse(window.resetsAt);
+  return !Number.isNaN(at) && at <= now;
+}
+
+/**
+ * The window as it stands now. A reset that has passed does not make the
+ * window unknown — it makes it empty, so it comes back refilled instead of
+ * disappearing: the row a planner watches is exactly the one that must not
+ * vanish the moment its news turns good. The next reading names the new
+ * reset time; until then there is none to promise.
+ */
+function refilled<T extends PlanWindow>(window: T, now: number): T {
+  return hasReset(window, now) ? { ...window, utilization: 0, resetsAt: null } : window;
+}
 
 // Session permission policy lives in Session itself: it pins the CLI to
 // `default` mode (so a user's own global defaultMode cannot widen hub
@@ -207,12 +241,20 @@ export class DaemonServer {
    * count starts over on an unused number.
    */
   private readonly checkpointTurns = new Map<string, number>();
-  /** Minimum spacing between re-reads of a plan whose 5-hour window went stale. */
+  /** Minimum spacing between re-reads of the plan's limits. */
   private static readonly PLAN_REFRESH_BACKOFF_MS = 120_000;
-  /** Last time `refreshPlanUsage` actually asked a session, epoch ms. */
+  /** Last time `refreshPlanUsage` actually asked, epoch ms. */
   private lastPlanRefresh = 0;
   /** Account-wide plan limits: last reading, restored across restarts. */
   private planUsage: PlanUsage | null = this.loadPlanUsage();
+  /**
+   * One fresh reading is owed per run. The cache on disk is only as complete
+   * as the build that wrote it — one from before per-model weeks carries no
+   * Fable row at all — and the account's numbers move whether this daemon is
+   * running or not, so the chip opens on a reading of its own rather than on
+   * whatever the last turn happened to leave behind.
+   */
+  private planReadingOwed = true;
   /**
    * The preview driver each session received (PLAN D61), so its window can
    * die with the session, the project switch, or the daemon itself.
@@ -391,8 +433,8 @@ export class DaemonServer {
   async stop(): Promise<void> {
     await this.manager.closeAll();
     // Every project the daemon touched this run, not just the active one: an
-    // inactive project holds no preview server, but its preview process is
-    // ours to take down.
+    // inactive project may still hold a warm preview server, and every
+    // preview process is ours to take down.
     for (const workspaces of this.workspaces.values()) {
       // Writers settle BEFORE the preview dies: a 최신화 killed between its
       // stash and its pop parks the planner's unsaved work in `git stash`.
@@ -461,12 +503,13 @@ export class DaemonServer {
     const workspaces: ProjectWorkspaces = {
       slug,
       paths,
+      shownAt: 0,
       repo: new RepoWorkspace({
         root: paths.repoRoot,
         url: repo.url,
         baseBranch: repo.baseBranch,
         cycle: { branch: repo.branch, handoff: repo.handoff },
-        // Only the project on screen owns a preview port (switch race fence).
+        // Only the project on screen may START a preview (switch race fence).
         active: slug === this.registry.activeSlug(),
         // The registry owns the planner's word on this repo's commands.
         commandsApproved,
@@ -796,9 +839,9 @@ export class DaemonServer {
   }
 
   /**
-   * Every driver rooted at a clone dies when that clone's preview does — a
-   * project switch stops the outgoing server, and the sessions left behind
-   * would otherwise point their windows at a dead port.
+   * Every driver rooted at a clone dies when that clone's preview does — the
+   * switch fence or the warm cap stopped the server, and the sessions left
+   * behind would otherwise point their windows at a dead port.
    */
   private destroyPreviewDriversWhere(cwd: string): void {
     for (const session of this.manager.all()) {
@@ -806,21 +849,16 @@ export class DaemonServer {
     }
   }
 
-  /**
-   * Switches which project everything means.
-   *
-   * The outgoing preview server stops BEFORE the incoming one starts: two
-   * repos may declare the same `preview.port`, and a half-overlapping restart
-   * would leave the planner looking at the wrong app on the right port.
-   */
+  /** The switch in flight — see `activateProject`. */
   private activating: Promise<ProjectWorkspaces> | null = null;
 
   /**
    * Switches which project everything means.
    *
-   * The outgoing preview server stops BEFORE the incoming one starts: two
-   * repos may declare the same `preview.port`, and a half-overlapping restart
-   * would leave the planner looking at the wrong app on the right port.
+   * The outgoing preview server STAYS UP (warm): coming back is a repaint of
+   * a page that never went away, not a bring-up. What stops before the
+   * incoming project may start is decided by `fenceWarmPreviews` — the port
+   * the incoming repo declares, and the warm cap.
    * Serialized (D34): a double-click is two wire messages, and two overlapping
    * switches would race those ports. The LAST request wins — earlier callers
    * await their own (superseded) run and the wire answer simply names the
@@ -840,19 +878,12 @@ export class DaemonServer {
     const switching = current?.slug !== slug;
 
     if (switching) {
-      if (current) {
-        // The fence for the switch race: stop() only kills the preview that
-        // exists NOW — the outgoing project's in-flight bring-up (a clone
-        // that takes minutes) would otherwise finish late, take the port it
-        // declares, and SIGKILL the listener the project the planner
-        // switched TO just started. Inactive workspaces abandon the bring-up
-        // at the unattended steps (install, preview).
-        current.repo.setActive(false);
-        await current.repo.stop();
-        // The outgoing clone's preview just went down — its sessions'
-        // drivers would point their windows at a dead port (PLAN D61).
-        this.destroyPreviewDriversWhere(realpathBestEffort(current.paths.repoRoot));
-      }
+      // The outgoing project keeps the server it HAS but may not start one:
+      // its in-flight bring-up (a clone that takes minutes) would otherwise
+      // finish late, take the port it declares, and SIGKILL the listener the
+      // project the planner switched TO just started. Inactive workspaces
+      // abandon the bring-up at the unattended steps (install, preview).
+      current?.repo.setActive(false);
       // Before the workspaces are built: `paths()` resolves the environment
       // overrides against the ACTIVE project, so a workspace built a moment
       // too early would cache the wrong roots for the rest of the run.
@@ -862,8 +893,14 @@ export class DaemonServer {
     // The token was loaded once in `start()`; every workspace gets it armed
     // the same way, switch or no switch.
     const next = this.workspacesFor(slug);
+    next.shownAt = Date.now();
     next.repo.setActive(true);
     next.repo.setPat(this.pat);
+    // The fence runs BEFORE the incoming bring-up can spawn: a server of ours
+    // on the port it declares would be killed by that spawn's port reclaim,
+    // and a half-overlapping restart would leave the planner looking at the
+    // wrong app on the right port.
+    if (switching) await this.fenceWarmPreviews(next);
     // Bringing the repo up is NOT conditional on a switch. `create` registers
     // the first project as active before calling here, so a shortcut that
     // skipped this left a brand-new project with no clone at all — the
@@ -871,15 +908,57 @@ export class DaemonServer {
     // The npmrc merge rides along: a repo that declares a private registry
     // only says so in the clone this sync produces.
     if (next.repo.remoteUrl) {
-      void next.repo
-        .sync()
-        .then(() => this.mergeRegistryNpmrc(next.repo))
-        .catch(() => undefined);
+      if (next.repo.previewLive) {
+        // Warm: the clone is brought current the way a session start does
+        // it — the phase never leaves `ready`, the preview never blinks. A
+        // dependency move still ends in the full sync (restart included).
+        void next.repo.pull().catch(() => undefined);
+      } else {
+        void next.repo
+          .sync()
+          .then(() => this.mergeRegistryNpmrc(next.repo))
+          .catch(() => undefined);
+      }
     }
     if (!switching) return next;
 
     this.announceProjects();
+    // The incoming project's state, now: a cold bring-up announced its first
+    // phase above, but a warm return emits nothing on its own (pull keeps
+    // the phase), and a client left holding the outgoing project's status
+    // would keep painting the wrong preview.
+    this.broadcast({ type: "repo.status", status: await next.repo.status() });
     return next;
+  }
+
+  /**
+   * 전환의 울타리. Of the servers still up in inactive projects, two kinds
+   * stop before the incoming project brings itself up: whatever holds the
+   * port the incoming repo declares (two repos may declare the same
+   * `preview.port`), and the oldest beyond the warm cap. Every other warm
+   * server survives the switch — that is what makes a return instant.
+   *
+   * An incoming port nobody can read yet (a clone still to come, no config)
+   * stops every warm server: the single-owner rule of old, kept for the one
+   * case the fence cannot decide.
+   */
+  private async fenceWarmPreviews(next: ProjectWorkspaces): Promise<void> {
+    const incoming = next.repo.declaredPreviewPort();
+    const warm = [...this.workspaces.values()]
+      .filter((workspaces) => workspaces !== next && workspaces.repo.previewRunning)
+      .sort((a, b) => b.shownAt - a.shownAt);
+    let kept = 0;
+    for (const workspaces of warm) {
+      const port = workspaces.repo.declaredPreviewPort();
+      const collides = incoming === null || port === null || port === incoming;
+      if (!collides && kept < WARM_PREVIEWS) {
+        kept += 1;
+        continue;
+      }
+      await workspaces.repo.stop();
+      // Its sessions' drivers would point their windows at a dead port (PLAN D61).
+      this.destroyPreviewDriversWhere(realpathBestEffort(workspaces.paths.repoRoot));
+    }
   }
 
   /**
@@ -1015,14 +1094,15 @@ export class DaemonServer {
   }
 
   /**
-   * Plan limits belong to the account, not to one thread: whatever session
-   * reports them last stands for every client, so the composer can show them
-   * with no session open at all. The last reading also survives a restart —
-   * the numbers only move when a turn runs, and a window whose reset has
-   * passed is dropped rather than shown stale.
+   * Plan limits belong to the account, not to one thread: whatever reading
+   * lands last stands for every client, so the composer can show them with no
+   * session open at all. The last reading also survives a restart, and it
+   * settles what the run still owes — one reading has now been had.
    */
   private rememberPlanUsage(plan: PlanUsage | null): void {
-    if (!plan || JSON.stringify(plan) === JSON.stringify(this.planUsage)) return;
+    if (!plan) return;
+    this.planReadingOwed = false;
+    if (JSON.stringify(plan) === JSON.stringify(this.planUsage)) return;
     this.planUsage = plan;
     try {
       mkdirSync(CONFIG_DIR, { recursive: true });
@@ -1035,73 +1115,82 @@ export class DaemonServer {
 
   /**
    * The cached reading as the composer may see it now. A window whose reset
-   * has passed is dropped here too, not just on load — a daemon that sits
-   * for hours would otherwise keep saying 43% about a window that no longer
-   * exists. Dropping the 5-hour window also asks a live session for a fresh
-   * reading, because a reset is exactly when that number matters again and
-   * the next turn is not the only moment one can land.
+   * has passed is refilled here, not just on load — a daemon that sits for
+   * hours would otherwise keep saying 43% about a window that no longer
+   * exists — and the row keeps its place either way, because a planner
+   * checking whether the weekly Fable cap is near must find it there whatever
+   * the answer turns out to be. A reset also asks for a fresh reading: it is
+   * exactly when the number matters again, and the next turn is not the only
+   * moment one can land.
    */
   private currentPlanUsage(): PlanUsage | null {
     const plan = this.planUsage;
-    if (!plan) return null;
-    const now = Date.now();
-    // A window with no reset time cannot expire; one whose reset has passed
-    // describes the previous window, so it goes.
-    const fiveHour =
-      plan.fiveHour && (!plan.fiveHour.resetsAt || Date.parse(plan.fiveHour.resetsAt) > now)
-        ? plan.fiveHour
-        : null;
-    const sevenDay =
-      plan.sevenDay && (!plan.sevenDay.resetsAt || Date.parse(plan.sevenDay.resetsAt) > now)
-        ? plan.sevenDay
-        : null;
-    if (
-      plan.sevenDay &&
-      !fiveHour &&
-      now - this.lastPlanRefresh > DaemonServer.PLAN_REFRESH_BACKOFF_MS
-    ) {
+    if (!plan) {
       this.refreshPlanUsage();
+      return null;
     }
-    if (fiveHour === plan.fiveHour && sevenDay === plan.sevenDay) return plan;
-    return { ...plan, fiveHour, sevenDay };
+    const now = Date.now();
+    const fiveHour = plan.fiveHour ? refilled(plan.fiveHour, now) : null;
+    const sevenDay = plan.sevenDay ? refilled(plan.sevenDay, now) : null;
+    const modelWeekly = plan.modelWeekly.map((row) => refilled(row, now));
+    // `refilled` hands back the same object when nothing moved, so identity
+    // is the whole test for "a window reset since this reading".
+    const reset =
+      fiveHour !== plan.fiveHour ||
+      sevenDay !== plan.sevenDay ||
+      modelWeekly.some((row, index) => row !== plan.modelWeekly[index]);
+    if (reset || this.planReadingOwed) this.refreshPlanUsage();
+    if (!reset) return plan;
+    return { ...plan, fiveHour, sevenDay, modelWeekly };
   }
 
   /**
-   * Re-read the plan's limits through the most recently active idle session.
-   * Failures stay silent — the cache keeps serving whatever it still has,
-   * and the settle-time reads keep working as before. Spaced out because
-   * status() runs on every broadcast, and a session that cannot answer (its
-   * CLI gone) must not turn those broadcasts into a request storm.
+   * Re-read the plan's limits, through the most recently active idle session
+   * when there is one and a probe CLI when there is not — the limits are the
+   * account's, so a planner who has opened no thread is exactly the planner
+   * most in need of being told. Failures stay silent: the cache keeps serving
+   * whatever it still has. Spaced out because status() runs on every
+   * broadcast, and a CLI that cannot answer must not turn those broadcasts
+   * into a request storm.
    */
   private refreshPlanUsage(): void {
     const now = Date.now();
     if (now - this.lastPlanRefresh < DaemonServer.PLAN_REFRESH_BACKOFF_MS) return;
-    this.lastPlanRefresh = now;
     const session = [...this.manager.all()]
       .filter((candidate) => candidate.state === "idle")
       .sort((a, b) => b.lastActivity - a.lastActivity)[0];
-    if (!session) return;
-    void session
-      .contextUsage()
-      .then((usage) => this.rememberPlanUsage(usage?.plan ?? null))
+    // Before `start` has resolved the CLI there is nothing to ask and nothing
+    // to record: leave the reading owed rather than spending the window on a
+    // question that cannot be put.
+    if (!session && !this.claudeExecutable) return;
+    this.lastPlanRefresh = now;
+    this.planReadingOwed = false;
+    if (session) {
+      void session
+        .contextUsage()
+        .then((usage) => this.rememberPlanUsage(usage?.plan ?? null))
+        .catch(() => undefined);
+      return;
+    }
+    const active = this.activeOrNull();
+    const cwd = active?.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
+    void probePlanUsage({ cwd, executable: this.claudeExecutable })
+      .then((plan) => this.rememberPlanUsage(plan))
       .catch(() => undefined);
   }
 
-  /** The last reading from disk, with every window that has since reset dropped. */
+  /** The last reading from disk, with every window that has since reset refilled. */
   private loadPlanUsage(): PlanUsage | null {
     try {
       const stored = JSON.parse(readFileSync(PLAN_USAGE_FILE, "utf8")) as PlanUsage;
       const now = Date.now();
-      const fiveHour =
-        stored.fiveHour && (!stored.fiveHour.resetsAt || Date.parse(stored.fiveHour.resetsAt) > now)
-          ? stored.fiveHour
-          : null;
-      const sevenDay =
-        stored.sevenDay && (!stored.sevenDay.resetsAt || Date.parse(stored.sevenDay.resetsAt) > now)
-          ? stored.sevenDay
-          : null;
+      const fiveHour = stored.fiveHour ? refilled(stored.fiveHour, now) : null;
+      const sevenDay = stored.sevenDay ? refilled(stored.sevenDay, now) : null;
+      // A cache written by an older build has no `modelWeekly` at all; the
+      // reading this run owes fills the rows in.
+      const modelWeekly = (stored.modelWeekly ?? []).map((row) => refilled(row, now));
       if (!fiveHour && !sevenDay) return null;
-      return { ...stored, fiveHour, sevenDay };
+      return { ...stored, fiveHour, sevenDay, modelWeekly };
     } catch {
       return null;
     }
@@ -1176,10 +1265,15 @@ export class DaemonServer {
       const data = await this.dispatch(message);
       this.send(ws, { type: "ok", id: message.id, data });
     } catch (error) {
+      // The one Korean boundary every RPC refusal passes (리뷰 C1·C3): the
+      // daemon's own guards already answer in Korean and pass through
+      // untouched, while a foreign error — the SDK's "Query closed before
+      // response received" once rode the wire to the chat banner — is logged
+      // here verbatim and replaced by the recovery sentence.
       this.send(ws, {
         type: "error",
         id: message.id,
-        message: error instanceof Error ? error.message : String(error),
+        message: asPlannerFacingError(error).message,
       });
     }
   }
@@ -1306,6 +1400,7 @@ export class DaemonServer {
         void this.repo.checkpoint(message.sessionId, turn).catch(() => undefined);
         // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
+        // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
         carrier.send(message.text, message.images, message.files);
         return { ok: true };
@@ -1694,31 +1789,19 @@ export class DaemonServer {
       // The pins belong to the ACTIVE project: the messages carry no slug,
       // exactly because the planner is looking at one project's preview.
       case "comments.record": {
-        const ids = recordComments(
+        recordComments(
           join(this.requireActive().paths.root, "comments.json"),
           message.screen,
           message.state,
           message.items,
         );
-        return { recorded: ids.length, ids };
+        return { recorded: message.items.length };
       }
 
       case "comments.list":
         return {
           items: readComments(join(this.requireActive().paths.root, "comments.json")),
         };
-
-      case "comments.resolve": {
-        const resolved = resolveComment(
-          join(this.requireActive().paths.root, "comments.json"),
-          message.commentId,
-          message.resolved,
-        );
-        if (!resolved) {
-          throw new Error("이미 없어진 코멘트입니다 — 코멘트 목록을 다시 열어 주세요.");
-        }
-        return { ok: true };
-      }
     }
   }
 

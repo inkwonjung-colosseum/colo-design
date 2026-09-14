@@ -1,9 +1,10 @@
-import type { SessionSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ColoDesignScreen, SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ChatColumn } from "./ChatColumn";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Daemon } from "./daemon-client";
 import { Palette } from "./Palette";
+import type { PreviewTarget } from "./PreviewHost";
 import { ScreenPanel } from "./ScreenPanel";
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { Splitter } from "./Splitter";
@@ -62,7 +63,7 @@ export interface WorkspaceHandle {
 /**
  * The workspace, all of it (PLAN D1). The 기획/디자인 split is gone — so are
  * the page tree, the 문서|화면 segment, and the screen rail: the preview is
- * the screens' only door, and its toolbar is where a planner picks one. The
+ * the screens' only door, and its address bar is where a planner names one. The
  * conversations the screens live in are chosen in the sidebar's tree now;
  * this column is one transcript under one `.thread` head. The boundary the
  * preview shares with it is draggable (Splitter); the width lives in 설정's
@@ -127,6 +128,18 @@ export function PageWorkspace({
   /** The project the palette was opened for (the tree's 더 보기 row); null —
       the palette answers to the whole frame. ⌘K always opens it unscoped. */
   const [paletteSlug, setPaletteSlug] = useState<string | null>(null);
+  /**
+   * The screens the connected repo declares (PLAN D7), owned HERE so one
+   * declaration feeds three doors: the preview picker (ScreenPanel), the
+   * empty conversation's starter chips (ChatColumn), and the palette's
+   * 화면 rows. ScreenPanel reports the envelope; the others only read.
+   */
+  const [screens, setScreens] = useState<ColoDesignScreen[]>([]);
+  /**
+   * A palette screen pick: handed to the preview as an ask; cleared once the
+   * panel has turned (the effect's null early-return makes that a no-op).
+   */
+  const [jumpRequest, setJumpRequest] = useState<PreviewTarget | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const shortcuts = useRef({
     palette: () => {},
@@ -313,8 +326,18 @@ export function PageWorkspace({
    */
   const forwardComments = useCallback(
     async (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => {
-      if (!sessions.activeId) await sessions.create(name);
-      await sessions.sendTurn(turn, images);
+      try {
+        // The thread this turn lands in is the one create just named — the
+        // closure's activeId still reads the pre-create null, and resolving
+        // through it would open a second, nameless thread and leave the named
+        // one empty on the list (M5: a thread the TOOL opens is named by the
+        // tool).
+        const target = sessions.activeId ?? (await sessions.create(name));
+        if (!target) return;
+        await sessions.sendTurn(turn, images, target);
+      } catch {
+        // sendTurn already put the reason in the error strip.
+      }
     },
     [sessions],
   );
@@ -408,17 +431,21 @@ export function PageWorkspace({
           daemon={daemon}
           sessions={sessions}
           sendKey={settings.sendKey}
+          midTurnSend={settings.midTurnSend}
           // D83: 빈 대화의 placeholder 가 가르친다 — 화면 만들기는 단계가
-          // 아니라 아무 대화에서나 하는 한 턴이다.
+          // 아니라 아무 대화에서나 하는 한 턴이다. 이제 그 한 줄이 입력창의
+          // 문법도 같이 말한다: @ 로 파일을, / 로 명령을 부른다.
           placeholder={
             sessions.activeId
-              ? "만들고 싶은 화면을 말해 주세요"
-              : "기획서를 첨부하고 화면을 시켜 보세요."
+              ? "메시지를 보내거나 @files 태그, /commands 를 사용하세요"
+              : "기획서를 첨부하거나 @files 태그, /commands 를 사용하세요"
           }
           disabled={false}
           titleFor={titleFor}
           onRenameSession={onRenameSession}
           onDeleteSession={(session) => void sessions.remove(session)}
+          screens={screens}
+          showThinking={settings.chat.showThinking}
         />
       </div>
       <Splitter
@@ -440,9 +467,11 @@ export function PageWorkspace({
         onComments={forwardComments}
         turnState={sessions.active?.state ?? "idle"}
         sessionId={sessions.activeId}
-        onPrecheck={(turn) => void sessions.sendTurn(turn)}
         showPip={settings.chat.showPip}
         followClaude={settings.chat.followClaude}
+        screens={screens}
+        onScreens={setScreens}
+        jumpRequest={jumpRequest}
       />
 
       {palette && (
@@ -452,6 +481,14 @@ export function PageWorkspace({
           projects={daemon.projects}
           activeSlug={daemon.activeSlug}
           projectSlug={paletteSlug}
+          screens={screens}
+          onOpenScreen={(screen) =>
+            setJumpRequest({
+              kind: "screen",
+              route: screen.route,
+              state: screen.states[0] ?? null,
+            })
+          }
           onOpenThread={(slug, thread) => {
             if (slug === daemon.activeSlug) void openThreadById(thread.id);
             else jumpTo({ slug, threadId: thread.id });

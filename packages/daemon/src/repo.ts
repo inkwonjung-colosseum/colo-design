@@ -40,6 +40,7 @@ import { markTurn } from "@colo-design/protocol";
 import { readComments } from "./comments.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import {
+  COLO_DESIGN_DIR,
   currentPlatform,
   detectsRegistryAuthFailure,
   resolveGitExecutable,
@@ -102,9 +103,7 @@ const FALLBACK_ROOT_GROUP = "기타";
  * button is. "push 단계가 실패했습니다" would send it looking for a git
  * problem when the planner pressed 저장.
  */
-const GATE_BRIEF: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
-  check: "저장 전 검사(check)가 실패했습니다.",
-  build: "넘기기 전 빌드(build)가 실패했습니다.",
+const GATE_BRIEF: Record<"commit" | "push" | "pr", string> = {
   commit: "저장할 변경을 커밋하지 못했습니다.",
   push: "저장한 변경을 올리지 못했습니다.",
   pr: "개발자에게 넘기지 못했습니다.",
@@ -128,9 +127,7 @@ const BOOTSTRAP_FAILED_DETAIL =
 export const PUSH_AUTH_FAILURE =
   /401|403|Permission denied|authentication|denied to|not authorized|bad credentials|credentials? (?:expired|invalid)|token expired|authenticity/i;
 
-const GATE_STEP: Record<"check" | "build" | "commit" | "push" | "pr", string> = {
-  check: "저장 전 검사",
-  build: "넘기기 전 빌드",
+const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
   commit: "저장",
   push: "저장한 내용 올리기",
   pr: "개발자에게 넘기기",
@@ -581,6 +578,8 @@ export class RepoWorkspace {
   private errorKind: RepoErrorKind | null = null;
   private config: ColoDesignConfig | null = null;
   private preview: ChildProcess | null = null;
+  /** Counts preview starts — `RepoStatus.previewEpoch` names the process behind the port. */
+  private previewEpoch = 0;
   private inFlight: Promise<RepoStatus> | null = null;
   private publishing: Promise<DiffStatus> | null = null;
   /** The session-start/button refresh while it runs — saves wait it out. */
@@ -699,9 +698,41 @@ export class RepoWorkspace {
     this.active = options.active ?? true;
   }
 
-  /** The one project on screen may own a preview port; switches flip this. */
+  /**
+   * Whether this project is the one on screen. Only the active project may
+   * START a preview (the bring-up gates below); an inactive one keeps the
+   * server it already has warm, so coming back is a repaint, not a bring-up
+   * — the server stops only for a port fence or the warm cap.
+   */
   setActive(active: boolean): void {
     this.active = active;
+  }
+
+  /** A preview process this workspace owns right now, warm or on screen. */
+  get previewRunning(): boolean {
+    return this.preview !== null;
+  }
+
+  /**
+   * Ready AND served by its own process: a return to this project needs no
+   * bring-up, only the quiet refresh (`pull`) that never touches the server.
+   */
+  get previewLive(): boolean {
+    return this.phase === "ready" && this.preview !== null;
+  }
+
+  /**
+   * The port colo-design.json declares, when the clone can say — the switch
+   * fence compares these. Unknown (not cloned, or no config yet) is `null`.
+   */
+  declaredPreviewPort(): number | null {
+    if (this.config) return this.config.preview.port;
+    if (!this.isCloned()) return null;
+    try {
+      return readColoDesignConfig(this.root).preview.port;
+    } catch {
+      return null;
+    }
   }
 
   get remoteUrl(): string | null {
@@ -935,17 +966,17 @@ export class RepoWorkspace {
   }
 
   /**
-   * 저장: review → `check` → commit → push, onto this cycle's own branch.
+   * 저장: review → commit → push, onto this cycle's own branch.
    *
    * The base branch is never written to. A developer receives this work as a
    * pull request they can read, run and refuse — pushing past them was what
    * the old `push origin HEAD` did, and it is the one thing a tool driven by
    * someone who does not read diffs must not do.
    *
-   * `build` is deliberately NOT run here. It gates 넘기기, where being wrong
-   * costs a developer's attention; making every save pay for a full build
-   * would teach the planner to save rarely, which is the opposite of what a
-   * reviewable history needs.
+   * The repo's own `check` does not gate this anymore (실사: a save stuck at
+   * 레포 검사 left work the planner could not put up). Problems are the
+   * developer's to catch in the pull request 넘기기 opens; Claude can still
+   * run the check inside a turn when it wants one.
    */
   save(
     options: { message?: string; onSessionTurn?: (brief: string) => void } = {},
@@ -983,21 +1014,8 @@ export class RepoWorkspace {
       });
     }
 
-    // Gates can change colo-design.json or write files between here and the
-    // commit: read the config fresh, and commit exactly the paths the planner
-    // approved — never `git add -A`, so a gate's unreviewed output cannot ride
-    // along in the save.
-    const config = readColoDesignConfig(this.root);
-    this.config = config;
-    if (config.check) {
-      this.setDiff({ stage: "gating", gate: "check" });
-      try {
-        await this.runCommand(config.check, "check");
-      } catch (error) {
-        return this.failGate("check", error, options.onSessionTurn);
-      }
-    }
-
+    // Commit exactly the paths the planner approved — never `git add -A`, so
+    // unreviewed output cannot ride along in the save.
     this.setDiff({ stage: "pushing" });
     try {
       const branch = await this.ensureCycleBranch();
@@ -1053,9 +1071,11 @@ export class RepoWorkspace {
   }
 
   /**
-   * 개발자에게 넘기기: `build`, then open the pull request — or update the one
-   * this cycle already has, because later saves accumulate on the same branch
-   * and a second PR for the same work is noise in a developer's queue.
+   * 개발자에게 넘기기: open the pull request — or update the one this cycle
+   * already has, because later saves accumulate on the same branch and a
+   * second PR for the same work is noise in a developer's queue. The repo's
+   * `build` no longer gates this: a broken build is the developer's to catch
+   * in the PR, not a wall in front of the planner (실사).
    */
   handoff(
     options: {
@@ -1117,17 +1137,6 @@ export class RepoWorkspace {
         gate: "pr",
         detail: "개인 액세스 토큰이 없습니다 — 설정에서 연결 레포 토큰을 넣어 주세요.",
       });
-    }
-
-    const config = readColoDesignConfig(this.root);
-    this.config = config;
-    if (config.build) {
-      this.setDiff({ stage: "gating", gate: "build" });
-      try {
-        await this.runCommand(config.build, "build");
-      } catch (error) {
-        return this.failGate("build", error, options.onSessionTurn);
-      }
     }
 
     this.setDiff({ stage: "handing-off" });
@@ -2000,7 +2009,7 @@ export class RepoWorkspace {
   }
 
   private failGate(
-    gate: "check" | "build" | "commit" | "push" | "pr",
+    gate: "commit" | "push" | "pr",
     error: unknown,
     onSessionTurn: ((brief: string) => void) | undefined,
   ): DiffStatus {
@@ -2250,8 +2259,9 @@ export class RepoWorkspace {
   private async startPreview(config: ColoDesignConfig): Promise<void> {
     // Second fence, closer to the metal: the window between bootstrap's gate
     // and this spawn is exactly where a fast B→C switch lands. An inactive
-    // project must neither kill the port's holder nor leave a server of its
-    // own running past the switch.
+    // project must neither kill the port's holder nor START a server of its
+    // own past the switch (the one it already has stays warm — the server's
+    // switch fence decides that one).
     if (!this.active) return;
     await this.killPreview();
     this.setPhase("starting", null);
@@ -2270,6 +2280,18 @@ export class RepoWorkspace {
     // skip the kill, spawning the preview into EADDRINUSE. With nothing
     // listening, lsof finds no pid and the first refusal clears instantly —
     // the free-port path pays one lookup, nothing more.
+    // 살아 있는 다른 인스턴스의 미리보기는 죽이지 않는다. 이 기록이 가리키는
+    // 점유자는 고아가 아니라 다른 창(패키지 앱 또는 데몬)의 살아 있는 서버다 —
+    // 죽이는 순간 두 인스턴스는 서로의 미리보기를 번갈아 죽이는 전쟁에 들어간다
+    // (실사: 앱+개발 데몬이 포트 3000을 두고 1~2분마다 서버를 교체). 여기서는
+    // 멈추고 카드로 말한다. 해법은 이 창 밖에 있다.
+    const held = await foreignLivePreviewClaim(port);
+    if (held)
+      throw new PreviewHeldElsewhereError(
+        `포트 ${port}에서 다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있습니다 — ` +
+          `서로의 미리보기를 죽이지 않도록 이쪽에서는 기다립니다. ` +
+          `다른 인스턴스를 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꾼 뒤 다시 시도해 주세요.`,
+      );
     if (!(await this.killPortHolder(port)))
       throw new PreviewPortBusyError(
         `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
@@ -2279,6 +2301,7 @@ export class RepoWorkspace {
 
     const child = spawn(command, this.spawnOptions());
     this.preview = child;
+    this.previewEpoch += 1;
     /** Last output line, so an exit can quote what the command actually said. */
     let lastLine: string | null = null;
     const absorb = (chunk: Buffer) => {
@@ -2297,6 +2320,9 @@ export class RepoWorkspace {
     child.once("exit", (code, signal) => {
       if (this.preview !== child) return; // stop() already took it down
       this.preview = null;
+      // 죽은 미리보기의 기록은 곧바로 거둔다 — 남은 기록은 낡은 리스너를
+      // 가리켜 판정 때 스스로 지워지지만, 여기서 지우는 것이 정확하다.
+      if (this.config?.preview.port) clearPreviewClaim(this.config.preview.port);
       const how = signal ? `signal ${signal}` : `exit ${code}`;
       this.setPhase(
         "error",
@@ -2317,6 +2343,15 @@ export class RepoWorkspace {
       await this.killPreview();
       throw error;
     }
+    // 부팅이 확인된 리스너를 기록해 둔다 — 다음 포트 충돌 때 이 기록이 살아 있는
+    // 다른 인스턴스의 미리보기를 말해 준다(위의 울타리).
+    const holders = await portListenerPids(port);
+    writePreviewClaim({
+      instancePid: process.pid,
+      listenerPid: holders[0] ?? null,
+      port,
+      at: new Date().toISOString(),
+    });
   }
 
   private spawnOptions(): SpawnOptions {
@@ -2380,6 +2415,7 @@ export class RepoWorkspace {
       if (Date.now() > deadline) break;
       await sleep(100);
     }
+    clearPreviewClaim(port);
   }
 
   /**
@@ -2391,33 +2427,7 @@ export class RepoWorkspace {
    */
   private async killPortHolder(port: number): Promise<boolean> {
     this.setProgressLine(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
-    const windows = currentPlatform() === "win32";
-    const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
-    const stdout = await new Promise<string>((resolve, reject) =>
-      execFile(
-        windows ? "netstat" : "lsof",
-        args,
-        { timeout: 10_000, shell: windows },
-        (error, out) => (error ? reject(error) : resolve(String(out))),
-      ),
-    ).catch(() => "");
-    const pids = new Set<number>();
-    for (const line of stdout.split(/\r?\n/)) {
-      if (windows) {
-        // `TCP  0.0.0.0:3000  0.0.0.0:0  LISTENING  4321` — the local address
-        // names the port, the last column owns it.
-        const columns = line.trim().split(/\s+/);
-        const local = columns[1] ?? "";
-        if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`))
-          continue;
-        const pid = Number(columns[4] ?? NaN);
-        if (Number.isInteger(pid) && pid > 0) pids.add(pid);
-      } else {
-        const pid = Number(line.trim());
-        if (Number.isInteger(pid) && pid > 0) pids.add(pid);
-      }
-    }
-    for (const pid of pids) {
+    for (const pid of await portListenerPids(port)) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {
@@ -2553,6 +2563,7 @@ export class RepoWorkspace {
       detail: this.detail,
       previewUrl: port === null ? null : `http://127.0.0.1:${port}`,
       previewPort: port,
+      previewEpoch: port === null ? null : this.previewEpoch,
       url: this.url,
       branch: this.branch,
       baseBranch: this.baseBranch,
@@ -2581,6 +2592,7 @@ export class RepoWorkspace {
     // so the sentence CONTINUES past the constant — prefix, not equality.
     if (message.startsWith(COMMANDS_UNAPPROVED_DETAIL)) return "commands";
     if (error instanceof PreviewPortBusyError) return "port-busy";
+    if (error instanceof PreviewHeldElsewhereError) return "held-elsewhere";
     if (error instanceof BootstrapPrepareError || message === BOOTSTRAP_FAILED_DETAIL) {
       return "bootstrap";
     }
@@ -2930,8 +2942,8 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
 /**
  * Builds the `### 수정 요청` section from this cycle's recorded comments:
  * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
- * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 해결 표식은 기획자가
- * 확인한 것 — 절 머리에 그 문장이 선다.
+ * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
+ * Claude에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
  */
 export function buildCommentsSection(
   rows: Array<{
@@ -2939,7 +2951,6 @@ export function buildCommentsSection(
     state: string;
     text: string;
     at: string;
-    resolved: boolean;
   }>,
   screenTitle: (screenId: string) => string | null,
   sinceIso: string,
@@ -2961,11 +2972,10 @@ export function buildCommentsSection(
   const lines = shown.map((row) => {
     const screen = screenTitle(row.screen) ?? row.screen;
     const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
-    const mark = row.resolved ? "x" : " ";
-    return `- [${mark}] ${screen} · ${state} — "${row.text}" (${row.resolved ? "해결" : "미해결"})`;
+    return `- ${screen} · ${state} — "${row.text}"`;
   });
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
-  return `### 수정 요청\n\n기획자가 미리보기에서 찍은 수정 요청입니다 — 해결 표식은 기획자가 확인한 것입니다.\n\n${lines.join("\n")}${tail}\n`;
+  return `### 수정 요청\n\n기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.\n\n${lines.join("\n")}${tail}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -3056,3 +3066,129 @@ class BootstrapPrepareError extends Error {}
  * (PLAN D41).
  */
 class PreviewPortBusyError extends Error {}
+
+/**
+ * 살아 있는 다른 인스턴스의 미리보기를 발견했을 때의 오류 — errorKind
+ * "held-elsewhere". 점유자가 고아가 아니라 다른 창(패키지 앱 또는 데몬)의 산
+ * 서버라는 뜻이고, 죽이는 대신 이쪽이 멈춘다. 종류는 던지는 자리가 밝힌다
+ * (PLAN D41).
+ */
+class PreviewHeldElsewhereError extends Error {}
+
+// ---------------------------------------------------------------------------
+// Preview ownership claims — 두 인스턴스의 포트 전쟁을 끊는 울타리
+// ---------------------------------------------------------------------------
+
+/**
+ * 어느 인스턴스가 어느 포트의 미리보기를 띄웠는지 한 줄짜리 기록,
+ * `~/.colo-design/run/preview-<포트>.json`. 검사 스위트는 `COLO_DESIGN_RUN_DIR`
+ * 로 갈라 놓는다 — 개발자의 실제 기록을 읽지도 쓰지도 않도록, 프로젝트
+ * 등록부가 하는 것과 같은 격리다.
+ */
+export interface PreviewClaim {
+  /** 이 미리보기를 띄운 데몬(또는 앱) 프로세스의 pid. */
+  instancePid: number;
+  /** 부팅이 확인된 순간 포트의 LISTEN 소유자. 조회가 순간 실패하면 null —
+   * 그때는 주인이 살아 있는 한 이 기록을 지킨다 (foreignLivePreviewClaim). */
+  listenerPid: number | null;
+  port: number;
+  at: string;
+}
+
+function previewClaimFile(port: number, env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.COLO_DESIGN_RUN_DIR ?? join(COLO_DESIGN_DIR, "run"), `preview-${port}.json`);
+}
+
+export function readPreviewClaim(
+  port: number,
+  env: NodeJS.ProcessEnv = process.env,
+): PreviewClaim | null {
+  try {
+    const parsed = JSON.parse(readFileSync(previewClaimFile(port, env), "utf8")) as PreviewClaim;
+    if (typeof parsed?.instancePid === "number" && parsed.port === port) return parsed;
+  } catch {
+    // 없거나 깨진 기록은 없는 것과 같다 — 울타리는 기록이 있을 때만 선다.
+  }
+  return null;
+}
+
+export function writePreviewClaim(claim: PreviewClaim, env: NodeJS.ProcessEnv = process.env): void {
+  const file = previewClaimFile(claim.port, env);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(claim, null, 2)}\n`, { mode: 0o600 });
+}
+
+export function clearPreviewClaim(port: number, env: NodeJS.ProcessEnv = process.env): void {
+  rmSync(previewClaimFile(port, env), { force: true });
+}
+
+/** signal 0 은 흔들지 않는다 — EPERM 도 프로세스가 살아 있다는 답이다. */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** 이 포트에서 LISTEN 하는 pid 들 — lsof(linux·mac) / netstat(windows). */
+export async function portListenerPids(port: number): Promise<number[]> {
+  const windows = currentPlatform() === "win32";
+  const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
+  const stdout = await new Promise<string>((resolve, reject) =>
+    execFile(
+      windows ? "netstat" : "lsof",
+      args,
+      { timeout: 10_000, shell: windows },
+      (error, out) => (error ? reject(error) : resolve(String(out))),
+    ),
+  ).catch(() => "");
+  const pids = new Set<number>();
+  for (const line of stdout.split(/\r?\n/)) {
+    if (windows) {
+      // `TCP  0.0.0.0:3000  0.0.0.0:0  LISTENING  4321` — the local address
+      // names the port, the last column owns it.
+      const columns = line.trim().split(/\s+/);
+      const local = columns[1] ?? "";
+      if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`)) continue;
+      const pid = Number(columns[4] ?? NaN);
+      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    } else {
+      const pid = Number(line.trim());
+      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+
+/**
+ * 이 포트의 기록이 살아 있는 다른 인스턴스의 미리보기를 가리키면 그 기록을
+ * 돌려 준다 — startPreview 는 이 경우 점유자를 죽이는 대신 멈춘다. 그 외는
+ * 모두 정리하고 null: 우리 것(같은 pid), 주인이 죽은 고아의 기록, 기록이
+ * 가리킨 리스너가 이미 사라진 낡은 기록.
+ *
+ * 오류의 방향은 하나다 — 살아 있는 남의 미리보기를 죽이는 쪽이 아니라, 죽어
+ * 있는 점유자를 잠시 남겨 두는 쪽. 그래서 기록 시점의 리스너 조회가 순간
+ * 실패해 listenerPid 가 null 인 기록(실사 목격: lsof 가 갓 뜬 리스너를 한
+ * 번 놓쳤다)은 주인이 살아 있는 한 지킨다. 주인의 서버가 정말 죽으면 주인
+ * 인스턴스의 exit 경로가 기록을 거두고, 그러지 못한 채 주인만 죽으면 이
+ * 함수의 고아 판정이 거둔다.
+ */
+export async function foreignLivePreviewClaim(
+  port: number,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<PreviewClaim | null> {
+  const claim = readPreviewClaim(port, env);
+  if (!claim) return null;
+  if (claim.instancePid === process.pid) return null;
+  if (!pidAlive(claim.instancePid)) {
+    clearPreviewClaim(port, env);
+    return null;
+  }
+  if (claim.listenerPid === null) return claim;
+  const holders = await portListenerPids(port);
+  if (holders.includes(claim.listenerPid)) return claim;
+  clearPreviewClaim(port, env);
+  return null;
+}

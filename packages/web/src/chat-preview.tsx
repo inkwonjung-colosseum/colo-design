@@ -122,7 +122,7 @@ const runningBlocks: Block[] = [
   },
 ];
 
-function PlannerShell({ live }: { live: boolean }) {
+function PlannerShell({ live, showThinking }: { live: boolean; showThinking: boolean }) {
   return (
     <main className="planner__chat">
       <header className="thread">
@@ -141,6 +141,7 @@ function PlannerShell({ live }: { live: boolean }) {
           <Transcript
             blocks={live ? runningBlocks : blocks}
             live={live}
+            showThinking={showThinking}
             checkpoints={[{ id: "cp1", turn: 1 }]}
             onRestoreCheckpoint={() => undefined}
           />
@@ -166,21 +167,48 @@ function PlannerShell({ live }: { live: boolean }) {
       <Composer
         disabled={false}
         draftKey="preview"
-        placeholder="만들고 싶은 화면을 설명해 주세요"
-        usage={null}
+        placeholder="메시지를 보내거나 @files 태그, /commands 를 사용하세요"
+        usage={{
+          totalTokens: 106_000,
+          maxTokens: 1_000_000,
+          percentage: 11,
+          model: "claude-opus-5",
+          plan: null,
+          sessionCostUsd: 1.66,
+        }}
         plan={{
           subscriptionType: "max",
-          fiveHour: { utilization: 0.42, resetsAt: null },
-          sevenDay: { utilization: 0.21, resetsAt: null },
+          fiveHour: { utilization: 42, resetsAt: null },
+          sevenDay: { utilization: 21, resetsAt: null },
+          modelWeekly: [{ label: "Fable", utilization: 68, resetsAt: null }],
         }}
         running={live}
         sendKey="enter"
         selector={{
-          model: null,
-          effort: null,
-          permissionMode: "acceptEdits",
-          models: [],
+          model: "opus",
+          effort: "high",
+          permissionMode: "bypassPermissions",
+          models: [
+            {
+              value: "opus",
+              displayName: "Opus 5",
+              description: "",
+              resolvedModel: "claude-opus-5",
+              supportsEffort: true,
+              supportedEffortLevels: ["low", "medium", "high", "max"],
+            },
+            {
+              value: "sonnet",
+              displayName: "Sonnet 5",
+              description: "",
+              resolvedModel: "claude-sonnet-5",
+              supportsEffort: true,
+              supportedEffortLevels: ["low", "medium", "high", "max"],
+            },
+          ],
         }}
+        planArmed={false}
+        onTogglePlanArmed={() => undefined}
         commands={[]}
         onSetModel={() => undefined}
         onSetEffort={() => undefined}
@@ -197,6 +225,8 @@ function Preview() {
   const [theme, setTheme] = useState("dark");
   const [live, setLive] = useState(false);
   const [surface, setSurface] = useState("chat");
+  /** 설정의 `생각 과정 보기` 자리 — 접힌 생각 블록의 모양을 여기서도 본다. */
+  const [showThinking, setShowThinking] = useState(false);
   document.documentElement.dataset.theme = theme;
   return (
     <div className="planner" style={{ height: "100vh", gridTemplateColumns: "minmax(0, 1fr)" }}>
@@ -214,6 +244,9 @@ function Preview() {
               }}
             >
               <button onClick={() => setLive(!live)}>{live ? "정지 상태로" : "실행 중으로"}</button>
+              <button onClick={() => setShowThinking(!showThinking)}>
+                {showThinking ? "생각 과정 숨기기" : "생각 과정 보기"}
+              </button>
               <select value={theme} onChange={(e) => setTheme(e.target.value)}>
                 <option value="dark">dark</option>
                 <option value="light">light</option>
@@ -227,7 +260,9 @@ function Preview() {
                 <option value="question">질문 카드</option>
               </select>
             </div>
-            {surface === "chat" && <PlannerShell key={String(live)} live={live} />}
+            {surface === "chat" && (
+              <PlannerShell key={String(live)} live={live} showThinking={showThinking} />
+            )}
             {surface === "turnlive" && (
               <main className="planner__chat">
                 <div className="chatstack">
@@ -244,8 +279,15 @@ function Preview() {
                 <Composer
                   disabled={false}
                   draftKey="preview-live"
-                  placeholder="만들고 싶은 화면을 설명해 주세요"
-                  usage={null}
+                  placeholder="메시지를 보내거나 @files 태그, /commands 를 사용하세요"
+                  usage={{
+                    totalTokens: 178_000,
+                    maxTokens: 200_000,
+                    percentage: 89,
+                    model: "claude-sonnet-5",
+                    plan: null,
+                    sessionCostUsd: 0.42,
+                  }}
                   plan={null}
                   running={true}
                   sendKey="enter"

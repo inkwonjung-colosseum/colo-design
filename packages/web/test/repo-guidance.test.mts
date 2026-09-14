@@ -16,6 +16,7 @@ const status = (patch: Partial<RepoStatus>): RepoStatus =>
     detail: null,
     previewUrl: null,
     previewPort: null,
+    previewEpoch: null,
     url: "https://example.invalid/org/repo.git",
     branch: null,
     baseBranch: "main",
@@ -85,4 +86,21 @@ test("guidanceFor: 충돌·승인 카드의 첫 동작 문구는 그대로다 (�
     "pnpm config set //npm.pkg.github.com/:_authToken <PAT>",
   );
   assert.equal(guidanceFor("pnpm", null).command, "corepack enable");
+});
+
+test("held-elsewhere: 산 남의 인스턴스는 그 종류로 알아보고, 카드는 다른 인스턴스를 가리킨다", () => {
+  const kind = errorKindOf(
+    status({
+      errorKind: "held-elsewhere",
+      detail:
+        "포트 3000에서 다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있습니다…",
+    }),
+  );
+  assert.equal(kind, "held-elsewhere");
+  const guidance = guidanceFor("held-elsewhere", null);
+  assert.equal(guidance.title, "다른 Colo Design이 미리보기를 쓰고 있어요");
+  assert.match(guidance.body, /다른 인스턴스/);
+  // 데몬이 준 문장이 있으면 그 문장이 본문이다 — 포트 충돌 카드와 같은 규칙.
+  const withDetail = guidanceFor("held-elsewhere", "포트 3000에서 다른 Colo Design 인스턴스가…");
+  assert.equal(withDetail.body, "포트 3000에서 다른 Colo Design 인스턴스가…");
 });

@@ -1,10 +1,11 @@
 /**
  * 코멘트 저장소 (PLAN D57): the pins a planner sends from the preview land in
  * the project's own `comments.json` (`~/.colo-design/projects/<slug>/`), one
- * row per comment. The turn ends and the pins disappear; the rows stay — and
- * a resolved row stays too, as history. A re-send of one screen·state
- * replaces that pair's UNRESOLVED rows only: the overlay sends what is still
- * pinned, so writing it verbatim twice must never double a comment.
+ * row per comment. 자동 정리 made delivery the row's birth: every row is
+ * written resolved, because the turn carrying the words IS the delivery. The
+ * store is an append-only log of what went to Claude — a second send of the
+ * same words is a second request, and both stay. Old stores with
+ * `resolved: false` rows read fine; nothing writes that state again.
  */
 
 import { randomUUID } from "node:crypto";
@@ -57,14 +58,9 @@ export function readComments(file: string): CommentItem[] {
 }
 
 /**
- * Writes one screen·state's comment set: that pair's unresolved rows go, the
- * new rows (and every other row — resolved ones included) stay. Returns the
- * ids it wrote, in envelope order.
- *
- * `screen` is normalized to the `[data-screen]` spelling — no leading slash
- * (PLAN §9 틀리기 쉬운 자리): the recorded pin is matched literally against
- * what the overlay reads off the DOM, so a route-shaped spelling here would
- * strand the pin on every screen.
+ * Appends one screen·state's comment batch as delivered rows. `screen` is
+ * normalized to the `[data-screen]` spelling — no leading slash (PLAN §9
+ * 틀리기 쉬운 자리): the row must match what the overlay read off the DOM.
  */
 export function recordComments(
   file: string,
@@ -76,11 +72,8 @@ export function recordComments(
     element?: CommentItem["element"];
   }>,
   now = new Date(),
-): string[] {
+): void {
   const id = screen.startsWith("/") ? screen.slice(1) : screen;
-  const kept = readComments(file).filter(
-    (row) => row.resolved || row.screen !== id || row.state !== state,
-  );
   const at = now.toISOString();
   const written = items.map((item) => ({
     id: randomUUID(),
@@ -90,23 +83,9 @@ export function recordComments(
     elementText: item.elementText,
     ...(item.element ? { element: item.element } : {}),
     at,
-    resolved: false,
+    resolved: true,
   }));
-  writeStore(file, [...kept, ...written]);
-  // The ids ride the wire back: the sender's 확인해 주세요 matches rows by id,
-  // never by text — same-worded pins stay distinct, reworded rows never
-  // light the wrong one.
-  return written.map((row) => row.id);
-}
-
-/** Marks one row resolved or not; false when the id names nothing. */
-export function resolveComment(file: string, id: string, resolved: boolean): boolean {
-  const rows = readComments(file);
-  const row = rows.find((entry) => entry.id === id);
-  if (!row) return false;
-  row.resolved = resolved;
-  writeStore(file, rows);
-  return true;
+  writeStore(file, [...readComments(file), ...written]);
 }
 
 function writeStore(file: string, rows: CommentItem[]): void {

@@ -7,9 +7,9 @@ import type {
 } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CoachMark } from "./CoachMark";
 import { CommentsPopover } from "./CommentsPopover";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Fold, useFoldNotice } from "./components";
 import { DiffPanel } from "./DiffPanel";
 import type { CommentItem, Daemon } from "./daemon-client";
 import { deriveDelivery } from "./delivery";
@@ -24,13 +24,7 @@ import {
   type PreviewLocation,
   type PreviewTarget,
 } from "./PreviewHost";
-import {
-  commentsToTurn,
-  commentToTurn,
-  errorToTurn,
-  lookToTurn,
-  reviewToTurn,
-} from "./preview-turns";
+import { commentsToTurn, errorToTurn, lookToTurn, reviewToTurn } from "./preview-turns";
 import { errorKindOf, ProgressPanel } from "./RepoProgress";
 import {
   isReplyConfirmed,
@@ -42,33 +36,6 @@ import { objectParticle } from "./tool-names";
 import { useModalFocus } from "./use-modal-focus";
 
 /**
- * 확인해 주세요 지속화 (D78): attention ids per project, so a reload or a
- * project round-trip during a turn cannot eat what still owes the planner a
- * look. Same contract as the draft/composer keys — best effort, private mode
- * keeps the in-memory set only.
- */
-function loadAttention(slug: string | null): string[] {
-  if (!slug) return [];
-  try {
-    const raw = JSON.parse(
-      localStorage.getItem(`colo-design.attention.${slug}`) ?? "[]",
-    ) as unknown;
-    return Array.isArray(raw) && raw.every((id) => typeof id === "string") ? (raw as string[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveAttention(slug: string | null, ids: string[]): void {
-  if (!slug) return;
-  try {
-    localStorage.setItem(`colo-design.attention.${slug}`, JSON.stringify(ids));
-  } catch {
-    // 저장이 막혀도 이번 실행의 하이라이트는 메모리의 몫으로 끝난다.
-  }
-}
-
-/**
  * The workspace's right column: the connected repo clone rendered by its own
  * preview server, plus the three words of PLAN D5 over it — 저장, 개발자에게
  * 넘기기, and the status the cycle has reached (변경 있음 / 넘김 / 반영됨,
@@ -77,9 +44,10 @@ function saveAttention(slug: string | null, ids: string[]): void {
  * bundle is handed up to the shell, which decides which thread it lands in.
  *
  * It is also where PLAN D7's envelopes land: the screens the repo declared
- * come up through `Preview` and stay here — feeding the picker, the state
- * chips and the 넘기기 proposal — and the screen the planner should be
- * looking at lives here too, as `target`, set by the toolbar alone.
+ * come up through `Preview` and stay here — feeding the address bar's
+ * proposals, the state chips and the 넘기기 proposal — and the screen the
+ * planner should be looking at lives here too, as `target`, set by the
+ * toolbar alone.
  */
 export function ScreenPanel({
   daemon,
@@ -87,9 +55,11 @@ export function ScreenPanel({
   onComments,
   turnState,
   sessionId = null,
-  onPrecheck,
   showPip,
   followClaude,
+  screens,
+  onScreens,
+  jumpRequest,
 }: {
   daemon: Daemon;
   onOpenSettings: () => void;
@@ -112,17 +82,23 @@ export function ScreenPanel({
    * not a dead end. Null when no thread is open — there is nobody to brief.
    */
   sessionId?: string | null;
-  /**
-   * Sends one Korean turn into the CURRENT thread (PLAN D5): whether the
-   * screens cover their 기획서 is a judgement the tool refuses to make —
-   * the 기획서 lives in the thread's specs/, so Claude is the one who can
-   * read it. The shell supplies the sender; the panel composes the words.
-   */
-  onPrecheck: (turn: string) => void;
   /** Claude 시점 보기(PLAN D63) — 설정의 `Claude가 보는 화면 표시`. */
   showPip: boolean;
   /** 턴이 끝나면 Claude 가 본 화면으로 (PLAN D91) — 설정의 따라가기. */
   followClaude: boolean;
+  /**
+   * The screens the repo declared (PLAN D7), owned by the workspace now: the
+   * chat's starter chips and the palette's screen rows read the same list the
+   * picker here renders — one declaration, three doors.
+   */
+  screens: ColoDesignScreen[];
+  onScreens: (screens: ColoDesignScreen[]) => void;
+  /**
+   * A screen the palette picked: a change in this prop navigates the preview
+   * there. The panel keeps owning `target` — the request is an ask, not a
+   * takeover (the toolbar and 따라가기 still move it on their own).
+   */
+  jumpRequest?: PreviewTarget | null;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
@@ -131,7 +107,7 @@ export function ScreenPanel({
    * A failed repo.sync is answered in this column, right above the preview
    * it could not bring up — the rail and the chat stay usable while it runs.
    */
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncError = useFoldNotice();
   /**
    * The turn's echo on the preview: while Claude works the column
    * wears a live hairline and the bar says 다시 그리는 중; the moment the turn
@@ -151,37 +127,6 @@ export function ScreenPanel({
     wasWorking.current = working;
   }, [working]);
   /**
-   * 확인해 주세요 (D78): the ids of recorded pins a finished turn carried.
-   * The overlay draws them orange with the bubble open; 해결 retires each
-   * one. Matched by the ids the daemon handed back at record time — same
-   * words on two pins stay two pins, and a reworded row never lights the
-   * wrong one. The set lives in localStorage per project: a reload or a
-   * project round-trip must not eat what still owes the planner a look.
-   */
-  const [attention, setAttention] = useState<string[]>(() => loadAttention(activeSlug));
-  /** What the last pin batch sent — turned into `attention` at turn end. */
-  const sentPins = useRef<{
-    screen: string;
-    state: string;
-    ids: string[];
-  } | null>(null);
-  /** Whether the carrying turn actually ran (a stale session settles at once). */
-  const pinsTurnRan = useRef(false);
-  // Switching projects switches the store's scope — the outgoing project's
-  // set keeps waiting for its planner (nothing is cleared), the incoming
-  // one re-reads its own.
-  useEffect(() => {
-    setAttention(loadAttention(activeSlug));
-  }, [activeSlug]);
-  /**
-   * What the repo said it can render (PLAN D7). Empty until its overlay
-   * speaks, which is why the toolbar's picker is absent rather than empty: an
-   * old repo that declares nothing and an app that has not booted yet look
-   * identical from here.
-   */
-  const [screens, setScreens] = useState<ColoDesignScreen[]>([]);
-
-  /**
    * Which screen and state the preview shows. The toolbar is the screens'
    * only door, so the ask lives here beside it; the address bar's free paths
    * are asks too (D66).
@@ -193,8 +138,31 @@ export function ScreenPanel({
    * too. Null on the browser path (the iframe cannot be asked).
    */
   const [location, setLocation] = useState<PreviewLocation | null>(null);
+  /**
+   * The ask and the view's word are facts about ONE preview. A project
+   * switch changes `repo.root` in the same message that changes the url, so
+   * both reset HERE, during render — before NativeHost's effects could
+   * re-ride a stale ask onto the page of the project the planner switched
+   * to. The page that comes back (kept by the desktop, exactly where it
+   * was) reports its own location; nothing yanks it back to an older ask.
+   */
+  const previewRoot = repo?.root ?? null;
+  const [askRoot, setAskRoot] = useState(previewRoot);
+  if (askRoot !== previewRoot) {
+    setAskRoot(previewRoot);
+    setTarget(null);
+    setLocation(null);
+  }
   /** The two dialogs of the cycle: 저장 and 개발자에게 넘기기. */
   const [saveOpen, setSaveOpen] = useState(false);
+  // The palette's ask: every pick hands a NEW object, so the effect re-runs
+  // and the preview turns once per pick — the panel's own toolbar keeps
+  // steering `target` on its own in between.
+  useEffect(() => {
+    if (!jumpRequest) return;
+    setTarget(jumpRequest);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpRequest]);
   const [handoffOpen, setHandoffOpen] = useState(false);
   /** 저장 기록 드로어 (PLAN D53) — 더 보기 ▾ 메뉴에서 연다. */
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -207,20 +175,16 @@ export function ScreenPanel({
 
   /**
    * 코멘트 모드(PLAN D58 → D79) — 핀만 찍는 좁은 뜻의 토글; the preview toolbar's 💬 toggle draws
-   * and the frame is re-told. ScreenPanel owns it because the popover and
-   * the badge below read the same comments story.
+   * and the frame is re-told.
    */
   const [commentsOn, setCommentsOn] = useState(false);
   /**
-   * 코멘트 기록(PLAN D57 → D78): every comment the pins left behind, resolved ones
-   * in. Null until the first read returns; the badge, the popover and
-   * the popover all count from this one list.
+   * 코멘트 기록(PLAN D57): the log of what the pins asked Claude. Null until
+   * the first read returns; the popover reads this one list.
    */
   const [commentItems, setCommentItems] = useState<CommentItem[] | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
-  /** The row whose resolve toggle is in flight. */
-  const [resolvingId, setResolvingId] = useState<string | null>(null);
   // --- 개발자 코멘트 (PLAN D88): 상태 확인 이 읽어 온 개발자의 말 ----------
   const [devReviews, setDevReviews] = useState<DeveloperReview[] | null>(null);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
@@ -245,10 +209,9 @@ export function ScreenPanel({
   const listNonce = useRef(0);
 
   /**
-   * 코멘트 기록 다시 읽기: asked on connect, when a pin batch lands (the
-   * daemon just replaced that screen·state's unresolved set), when the
-   * popover opens, and after a resolve toggle. Nothing polls — the list only
-   * moves when this planner acts.
+   * 코멘트 기록 다시 읽기: asked on connect, when a pin batch lands, and when
+   * the popover opens. Nothing polls — the list only moves when this planner
+   * acts.
    */
   const refreshComments = useCallback(() => {
     const nonce = ++listNonce.current;
@@ -281,8 +244,8 @@ export function ScreenPanel({
   }, [menuOpen]);
 
   const sync = useCallback(() => {
-    setSyncError(null);
-    void api.repoSync().catch((e: Error) => setSyncError(e.message));
+    syncError.clear();
+    void api.repoSync().catch((e: Error) => syncError.show(e.message));
   }, [api]);
 
   /**
@@ -292,8 +255,8 @@ export function ScreenPanel({
    * not depend on knowing that.
    */
   const restart = useCallback(() => {
-    setSyncError(null);
-    void api.repoSync(true).catch((e: Error) => setSyncError(e.message));
+    syncError.clear();
+    void api.repoSync(true).catch((e: Error) => syncError.show(e.message));
   }, [api]);
 
   /**
@@ -301,9 +264,8 @@ export function ScreenPanel({
    * 같은 자리를 도는 것이므로 해결의 문은 대화다: 열려 있는 대화에는
    * repoRefresh 가 데몬의 충돌 브리프를 실어 보내고(최신화와 같은 회선),
    * 없으면 새 대화를 만들어 요청을 보낸다 — 새 대화가 태어날 때의 준비 pull 이
-   * 충돌을 첫 과제로 넣는다. 정리 턴이 끝나면 준비를 한 번 다시 시도한다 —
-   * 게이트 뒤의 자동 재시도(D90 ⓐ)와 같은 형태로, 중지로 끊긴 턴 뒤에는
-   * 재시도가 없다.
+   * 충돌을 첫 과제로 넣는다. 정리 턴이 끝나면 준비를 한 번 다시 시도한다 — 고침
+   * 턴 뒤의 자동 재시도와 같은 형태로, 중지로 끊긴 턴 뒤에는 재시도가 없다.
    */
   const [askNote, setAskNote] = useState<string | null>(null);
   const askArmed = useRef(false);
@@ -312,7 +274,7 @@ export function ScreenPanel({
     const live = sessionId ? (daemon.sessions[sessionId]?.live ?? false) : false;
     setAskNote("Claude에게 정리를 요청했습니다 — 대화에서 정리합니다.");
     if (live) {
-      void api.repoRefresh(sessionId).catch((e: Error) => setSyncError(e.message));
+      void api.repoRefresh(sessionId).catch((e: Error) => syncError.show(e.message));
     } else {
       await onComments(
         markTurn(
@@ -346,7 +308,7 @@ export function ScreenPanel({
     setAskNote("정리가 끝났습니다 — 준비를 다시 시도합니다…");
     void api
       .repoSync()
-      .catch((e: Error) => setSyncError(e.message))
+      .catch((e: Error) => syncError.show(e.message))
       .finally(() => setAskNote(null));
     // The gate retry's own shape: refs and the daemon's session views are
     // read live; the settles this answers are what the deps carry.
@@ -363,7 +325,7 @@ export function ScreenPanel({
     setRefreshing(true);
     void api
       .repoRefresh(sessionId)
-      .catch((e: Error) => setSyncError(e.message))
+      .catch((e: Error) => syncError.show(e.message))
       .finally(() => setRefreshing(false));
   }, [api, sessionId]);
   /** 넘기기 단계의 상태 다시 확인: GitHub 의 답을 다시 읽어 칩과 스테퍼에 반영한다. */
@@ -376,7 +338,7 @@ export function ScreenPanel({
         setDevPanelOpen(true);
         await api.repoStatus();
       })
-      .catch((e: Error) => setSyncError(e.message));
+      .catch((e: Error) => syncError.show(e.message));
   }, [api]);
 
   // --- 개발자 코멘트의 동작 (PLAN D88) ---------------------------------------
@@ -420,7 +382,7 @@ export function ScreenPanel({
     void api
       .discard()
       .then(() => api.repoStatus())
-      .catch((e: Error) => setSyncError(e.message));
+      .catch((e: Error) => syncError.show(e.message));
   }, [api]);
 
   /**
@@ -449,34 +411,6 @@ export function ScreenPanel({
   }, [connection, sync]);
 
   /**
-   * 확인해 주세요 (D78): the turn carrying this batch ran and settled — the
-   * pins it left on the screen now owe the planner a look. They stay
-   * highlighted until 해결 (or until the same pins resolve elsewhere); the
-   * recorded pins themselves never clear (D78 — 지우는 효과는 없다). The
-   * batch's ids came back from the record call, so resolution here is by id
-   * — two pins with the same words stay two pins.
-   */
-  useEffect(() => {
-    if (turnState === "running") {
-      pinsTurnRan.current = true;
-      return;
-    }
-    if (!pinsTurnRan.current) return;
-    pinsTurnRan.current = false;
-    const sent = sentPins.current;
-    sentPins.current = null;
-    if (!sent) return;
-    const ids = new Set(attention);
-    for (const item of commentItems ?? []) {
-      if (sent.ids.includes(item.id) && !item.resolved) ids.add(item.id);
-    }
-    setAttention([...ids]);
-    saveAttention(activeSlug, [...ids]);
-    // attention: re-running this effect after the state lands is a no-op —
-    // pinsTurnRan already flipped back.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnState, commentItems, attention, activeSlug]);
-  /**
    * Claude 시점 보기(PLAN D63): the desktop bridge streams the offscreen
    * Claude window as 8fps JPEG frames. A plain browser has no bridge and
    * this panel renders nothing — 기능 부재를 말하지 않는다(PLAN D61).
@@ -495,8 +429,9 @@ export function ScreenPanel({
    * A comment batch from the preview overlay: recorded with WHERE the pin
    * sat (`element`, D78) and forwarded as one structured Korean turn — the
    * same wire a typed message uses, so Claude sees it as the planner's own
-   * words (DESIGN §6). The list re-read replaces this screen·state's
-   * unresolved rows; the overlay redraws from it.
+   * words (DESIGN §6). 자동 정리: the record IS the delivery — the rows are
+   * born resolved, the pins leave the screen with the send, and anything
+   * further is a re-request typed in the thread.
    */
   const forwardComments = async (envelope: ColoDesignCommentsEnvelope) => {
     // D87: the crops the view took of each pin ride the turn as images —
@@ -509,12 +444,9 @@ export function ScreenPanel({
     // wants the title the repo gave it. Falling back to the raw id keeps a
     // screen the registry no longer declares from losing its card entirely.
     const named = screens.find((screen) => screen.route === `/${envelope.screen}`);
-    // PLAN D57: the batch is recorded at send time — the daemon replaces
-    // this screen·state's UNRESOLVED items with it, so sending the same pins
-    // twice never duplicates, and the popover's list outlives the pins. A
+    // PLAN D57: the batch is recorded at send time, delivered at once. A
     // failed record never blocks the planner's turn; the list just reads
     // stale until the next one.
-    let sentIds: string[] | null = null;
     await api
       .recordComments({
         screen: envelope.screen,
@@ -529,17 +461,8 @@ export function ScreenPanel({
           },
         })),
       })
-      .then((reply) => {
-        sentIds = reply.ids;
-        return refreshComments();
-      })
+      .then(() => refreshComments())
       .catch(() => undefined);
-    // D78: the ids the daemon just wrote become 확인해 주세요 when the turn
-    // settles — matched by id, so same-worded pins stay two pins and a
-    // reworded row never lights the wrong one.
-    sentPins.current = sentIds
-      ? { screen: envelope.screen, state: envelope.state, ids: sentIds }
-      : null;
     // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
     // after the screen the pins came from is the honest one-line answer to
     // "where did this tab come from".
@@ -548,23 +471,6 @@ export function ScreenPanel({
       named?.title,
       images,
     );
-  };
-
-  /** The popover's 해결 toggle: one daemon write, then the list re-reads. */
-  const resolveComment = (id: string, resolved: boolean) => {
-    setResolvingId(id);
-    if (resolved) {
-      setAttention((prev) => prev.filter((entry) => entry !== id));
-      saveAttention(
-        activeSlug,
-        attention.filter((entry) => entry !== id),
-      );
-    }
-    api
-      .resolveComment(id, resolved)
-      .then(() => refreshComments())
-      .catch((e: Error) => setCommentsError(e.message))
-      .finally(() => setResolvingId(null));
   };
 
   /**
@@ -654,60 +560,18 @@ export function ScreenPanel({
       setLookBusy(false);
     }
   };
-  /**
-   * 다시 보내기 (PLAN D57): one recorded comment rides the same channel the
-   * pins used — the shell resolves the thread, creating one named after the
-   * screen when none is open. The comment stays as it is; resending is not
-   * re-recording.
-   */
-  const resendComment = (item: CommentItem) => {
-    const named = screens.find((screen) => screen.route === `/${item.screen}`);
-    void onComments(commentToTurn(item, named?.title ?? item.screen), named?.title);
-  };
-
-  // --- 기록된 핀 → 뷰 (D78) ------------------------------------------------
-  // The whole list goes down on every change; the view re-tells it on every
-  // load, so the pins live on the screen as long as the preview does. A view
-  // move (address · state chip → did-navigate-in-page) re-pushes too — the
-  // overlay re-filters against the new [data-screen]·[data-state] the moment
-  // the view reports being somewhere else.
-  useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
-    if (!bridge?.pins) return;
-    void bridge.pins({ items: commentItems ?? [], attention });
-  }, [commentItems, attention, location]);
 
   // --- 턴 실행 중 표식 (D86): the overlay's send-toast reads the room -----
   useEffect(() => {
     void window.coloDesignDesktop?.preview?.busy?.(turnState === "running");
   }, [turnState]);
 
-  // --- 오버레이의 해결 · 다시 요청 (D78): the bubble's word comes back -----
-  useEffect(() => {
-    const bridge = window.coloDesignDesktop?.preview;
-    if (!bridge) return;
-    const offResolve = bridge.onCommentResolve?.((payload) => {
-      resolveComment(payload.id, payload.resolved);
-    });
-    const offResend = bridge.onCommentResend?.((payload) => {
-      const item = (commentItems ?? []).find((entry) => entry.id === payload.id);
-      if (item) resendComment(item);
-    });
-    return () => {
-      offResolve?.();
-      offResend?.();
-    };
-    // resolveComment/resendComment close over the freshest screens; the list
-    // identity is what the resend lookup reads.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commentItems, screens]);
-
   // --- 따라가기 (D91): Claude 가 본 화면으로 --------------------------------
   // The daemon reports every screen_open as `preview.opened`; the panel keeps
   // the session's lastOpened and, when the carrying turn settles and the
   // planner has not moved the preview themselves, follows it. Otherwise only
   // a toast with a 보기 button — the planner's gaze is never stolen twice.
-  const [followToast, setFollowToast] = useState<string | null>(null);
+  const followToast = useFoldNotice();
   const [followTarget, setFollowTarget] = useState<PreviewTarget | null>(null);
   const plannerMoved = useRef(false);
   const wasRunning = useRef(false);
@@ -717,7 +581,7 @@ export function ScreenPanel({
 
   const followNow = useCallback(() => {
     if (followTarget) setTarget(followTarget);
-    setFollowToast(null);
+    followToast.clear();
     setFollowTarget(null);
   }, [followTarget]);
 
@@ -734,7 +598,7 @@ export function ScreenPanel({
     if (turnState === "running") {
       wasRunning.current = true;
       plannerMoved.current = false;
-      setFollowToast(null);
+      followToast.clear();
       setFollowTarget(null);
       return;
     }
@@ -750,7 +614,7 @@ export function ScreenPanel({
     if (plannerMoved.current || !followClaude) {
       const title = screens.find((screen) => screen.route === opened.route)?.title ?? opened.route;
       const subject = `${title}${opened.state ? ` · ${stateLabel(opened.state)}` : ""}`;
-      setFollowToast(`Claude가 ${subject}${objectParticle(subject)} 고쳤습니다.`);
+      followToast.show(`Claude가 ${subject}${objectParticle(subject)} 고쳤습니다.`);
       setFollowTarget(ask);
     } else {
       setTarget(ask);
@@ -758,62 +622,6 @@ export function ScreenPanel({
     // `screens` feeds the toast's title only; the follow itself reads refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turnState, followClaude]);
-
-  // --- 게이트 뒤의 자동 재시도 (D90 ⓐ) ---------------------------------------
-  // 검사·빌드가 실패하면 Claude 에게 넘어가고, 그 고침 턴이 끝나면 같은
-  // 동작을 한 번 다시 부른다 — 기획자가 저장을 다시 눌러야 한다는 말을 아무도
-  // 해 주지 않기 때문. 두 번 실패하면 멈춘다(무한 루프 없음). 중지 로 끊긴
-  // 턴이면 재시도도 취소한다.
-  const [gateRetryNote, setGateRetryNote] = useState<string | null>(null);
-  const [gateFailed2, setGateFailed2] = useState(false);
-  const gateAction = useRef<"save" | "handoff">("save");
-  const gateRetried = useRef(false);
-  const gateFixRan = useRef(false);
-
-  useEffect(() => {
-    const status = daemon.diffStatus;
-    if (!status) return;
-    if (status.stage === "handing-off") gateAction.current = "handoff";
-    else if (
-      status.stage === "computing" ||
-      status.stage === "gating" ||
-      status.stage === "pushing"
-    ) {
-      gateAction.current = "save";
-    }
-    if (status.stage === "published" || status.stage === "handed-off") {
-      setGateRetryNote(null);
-      setGateFailed2(false);
-      gateRetried.current = false;
-      return;
-    }
-    if (status.stage !== "failed") return;
-    if (status.gate !== "check" && status.gate !== "build") return;
-    if (gateFailed2 || gateRetried.current || !sessionId) return;
-    setGateRetryNote(gateAction.current === "handoff" ? "다시 넘기는 중…" : "다시 저장하는 중…");
-  }, [daemon.diffStatus, sessionId, gateFailed2]);
-
-  useEffect(() => {
-    if (turnState === "running") {
-      gateFixRan.current = true;
-      return;
-    }
-    if (!gateFixRan.current || !gateRetryNote) return;
-    gateFixRan.current = false;
-    // 중지로 끊긴 턴: the transcript's last block says interrupted — the
-    // planner stopped the fix, so the retry must not fire behind their back.
-    const blocks = sessionId ? (daemon.sessions[sessionId]?.blocks ?? []) : [];
-    const last = blocks[blocks.length - 1];
-    if (last?.type === "turn" && last.subtype === "interrupted") {
-      setGateRetryNote(null);
-      return;
-    }
-    const action = gateAction.current;
-    setGateRetryNote(null);
-    gateRetried.current = true;
-    if (action === "handoff") void api.handoff({ sessionId: sessionId ?? undefined });
-    else void api.save(undefined, sessionId);
-  }, [turnState, gateRetryNote, sessionId]);
 
   const errorKind = errorKindOf(repo);
   // Only a named preview death takes over the preview frame; anything else
@@ -831,7 +639,16 @@ export function ScreenPanel({
     phase === "cloning" ||
     (phase === "error" && (errorKind === "clone" || errorKind === "unknown"));
   const showProgress = bringUpFailedWithoutWorktree;
-  const bringUpCardInPreview = phase === "error" && !previewStopped && !showProgress;
+  // 살아 있는 준비 단계(준비 · 최신화 · 설치 · 미리보기 띄우기)도 같은 슬롯의
+  // 진행 판을 쓴다 — 레일과 명령 출력 줄은 ProgressPanel 에만 있고, 맨 힌트
+  // 한 줄은 첫 준비의 가장 긴 구간(설치)을 죽은 칸으로 읽게 했다 (실사: 레일이
+  // 1단계 내려받기에서 사라졌다).
+  const bringUpCardInPreview =
+    (phase === "error" && !previewStopped && !showProgress) ||
+    phase === "preparing" ||
+    phase === "pulling" ||
+    phase === "installing" ||
+    phase === "starting";
   // Progress renders inside this column, not over the whole planner: the rail
   // and the chat stay usable while the clone runs.
   if (showProgress) {
@@ -878,6 +695,7 @@ export function ScreenPanel({
   // 저장 and 넘기기 act on the worktree and the remote, so gating them on a
   // preview that cannot bind a port would strand work that is already done.
   const workable = phase === "ready" || phase === "error";
+  const refreshLocked = refreshing || phase !== "ready";
 
   /**
    * PiP 라벨(PLAN D63 → D91): `Claude가 보는 중 · <화면> · <상태>` — read off
@@ -904,9 +722,6 @@ export function ScreenPanel({
     : null;
   const pipLabel = ["Claude가 보는 중", pipScreen, pipState].filter(Boolean).join(" · ");
 
-  /** The number the toolbar badge, the popover and the overlay dots share. */
-  const unresolvedComments = (commentItems ?? []).filter((item) => !item.resolved).length;
-
   return (
     <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
       <div className="screenpanel__bar">
@@ -919,7 +734,12 @@ export function ScreenPanel({
             {delivery.chip.label}
           </span>
         ) : (
-          <span className="screenpanel__status screenpanel__status--none">화면 대기 중</span>
+          <span
+            className="screenpanel__status screenpanel__status--none"
+            title="프로젝트 준비가 끝나면 저장 · 넘기기가 열립니다"
+          >
+            화면 대기 중
+          </span>
         )}
         {working && (
           <span className="screenpanel__working">
@@ -931,8 +751,7 @@ export function ScreenPanel({
         {/* 동작은 상수다 (PLAN D82): 저장 · 넘기기는 언제나 그려지고 조건으로만
             잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만.
             강조는 그 순간 가장 자연스러운 하나에만. 잠김은 aria-disabled: 진짜
-            disabled 는 hover 도 포커스도 막아 title 이 도달할 길이 없었다
-            (실사 결함 — "마우스를 올려 이유를 보세요" 가 거짓말이었다). */}
+            disabled 는 hover 도 포커스도 막아 title 이 도달할 길이 없었다. */}
         {delivery && (
           <span className="screenpanel__actions">
             <button
@@ -979,19 +798,23 @@ export function ScreenPanel({
                   : ""}
               </button>
             )}
-            <CoachMark id="save" text="저장은 언제든 — 잠겨 있으면 마우스를 올려 이유를 보세요" />
-            {delivery.actions.check && (
-              <CoachMark id="review" text="개발자의 답은 여기로 들어옵니다" />
-            )}
           </span>
         )}
-        <span className="screenpanel__spacer" />
+        {delivery && <span className="screenpanel__divider" />}
         <button
           type="button"
           className="ghost screenpanel__refresh"
-          disabled={refreshing || phase !== "ready"}
-          title="개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
-          onClick={refresh}
+          aria-disabled={refreshLocked}
+          title={
+            refreshing
+              ? "받아 오는 중…"
+              : refreshLocked
+                ? "미리보기가 준비되면 받아올 수 있습니다"
+                : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
+          }
+          onClick={() => {
+            if (!refreshLocked) refresh();
+          }}
         >
           <RefreshIcon />
           <span className="screenpanel__refreshlabel">
@@ -1006,7 +829,7 @@ export function ScreenPanel({
             className="ghost screenpanel__morebtn"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
-            title="넘기기 전 점검 · 저장 기록 · 변경 버리기 · 코멘트 목록"
+            title="저장 기록 · 변경 버리기 · 코멘트 목록"
             onClick={() => setMenuOpen((open) => !open)}
           >
             <span className="screenpanel__morelabel">더 보기</span>
@@ -1022,34 +845,17 @@ export function ScreenPanel({
               />
               <span className="selector__menu screenpanel__menu" role="menu">
                 {/* D82: 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
-                  그 자리를 갖는다. 넘기기 전 점검 · 저장 기록 · 변경 버리기 ·
-                  코멘트 목록만 남는다. */}
+                  그 자리를 갖는다. 저장 기록 · 변경 버리기 · 코멘트 목록만 남는다.
+                  잠긴 행도 aria-disabled: 진짜 disabled 는 hover 를 막아 title 의
+                  잠긴 이유에 도달할 길이 없다 (상단 바와 같은 규칙). */}
                 <button
                   type="button"
                   role="menuitem"
                   className="selector__row"
-                  disabled={!sessionId}
-                  title={
-                    sessionId
-                      ? "열려 있는 대화에서 기획서와 화면을 맞춰 봅니다"
-                      : "먼저 대화를 열어 주세요"
-                  }
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onPrecheck(
-                      "넘기기 전 점검: 이 화면이 근거 기획서(specs/ 첨부)와 맞는지 확인하고, 다른 점·비어 있는 점을 목록으로 답해 주세요.",
-                    );
-                  }}
-                >
-                  <span className="selector__label">넘기기 전 점검</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="selector__row"
-                  disabled={!workable}
+                  aria-disabled={!workable}
                   title="이 사이클의 저장 차례를 보고 하나로 되돌립니다"
                   onClick={() => {
+                    if (!workable) return;
                     setMenuOpen(false);
                     setHistoryOpen(true);
                   }}
@@ -1060,13 +866,14 @@ export function ScreenPanel({
                   type="button"
                   role="menuitem"
                   className="selector__row"
-                  disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
+                  aria-disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
                   title={
                     (repo?.pendingChanges ?? 0) > 0
                       ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
                       : "버릴 저장하지 않은 변경이 없습니다"
                   }
                   onClick={() => {
+                    if (!workable || (repo?.pendingChanges ?? 0) === 0) return;
                     setMenuOpen(false);
                     askDiscard();
                   }}
@@ -1090,50 +897,46 @@ export function ScreenPanel({
           )}
         </span>
       </div>
-      {syncError && (
-        <div className="notice notice--error">
-          <span className="notice__text">{syncError}</span>
-          <button
-            type="button"
-            className="notice__close"
-            aria-label="오류 닫기"
-            onClick={() => setSyncError(null)}
-          >
-            ×
-          </button>
-        </div>
-      )}
-      {followToast && (
-        <div className="notice notice--info" role="status">
-          <span className="notice__text">{followToast}</span>
-          {followTarget && (
-            <button type="button" className="ghost" onClick={followNow}>
-              보기
+      {syncError.text && (
+        <Fold closing={syncError.closing} onCollapsed={syncError.clear}>
+          <div className="notice notice--error">
+            <span className="notice__text">{syncError.text}</span>
+            <button
+              type="button"
+              className="notice__close"
+              aria-label="오류 닫기"
+              disabled={syncError.closing}
+              onClick={syncError.close}
+            >
+              ×
             </button>
-          )}
-          <button
-            type="button"
-            className="notice__close"
-            aria-label="알림 닫기"
-            onClick={() => setFollowToast(null)}
-          >
-            ×
-          </button>
-        </div>
+          </div>
+        </Fold>
+      )}
+      {followToast.text && (
+        <Fold closing={followToast.closing} onCollapsed={followToast.clear}>
+          <div className="notice notice--info" role="status">
+            <span className="notice__text">{followToast.text}</span>
+            {followTarget && (
+              <button type="button" className="ghost" onClick={followNow}>
+                보기
+              </button>
+            )}
+            <button
+              type="button"
+              className="notice__close"
+              aria-label="알림 닫기"
+              disabled={followToast.closing}
+              onClick={followToast.close}
+            >
+              ×
+            </button>
+          </div>
+        </Fold>
       )}
       {lookBlocked && (
         <div className="notice notice--info" role="status">
           <span className="notice__text">{lookBlocked}</span>
-        </div>
-      )}
-      {gateRetryNote && (
-        <div className="notice notice--info" role="status" data-testid="gate-retry">
-          <span className="notice__text">{gateRetryNote}</span>
-        </div>
-      )}
-      {gateFailed2 && (
-        <div className="notice notice--error" role="status" data-testid="gate-failed2">
-          <span className="notice__text">두 번 실패했습니다 — 대화에서 이어 가세요.</span>
         </div>
       )}
       {/* The stage wrapper gives the PiP (PLAN D63) its coordinates: the
@@ -1162,20 +965,20 @@ export function ScreenPanel({
         ) : (
           <PreviewHost
             url={repo?.previewUrl ?? null}
+            epoch={repo?.previewEpoch ?? null}
             stopped={previewStopped}
             stoppedDetail={repo?.detail ?? null}
             onRestart={restart}
             onComments={(envelope) => void forwardComments(envelope)}
             onFixError={forwardError}
             screens={screens}
+            onScreens={onScreens}
             target={target}
             onNavigate={handleNavigate}
-            onScreens={setScreens}
             onLocation={setLocation}
             location={location}
             commentsOn={commentsOn}
             onCommentsMode={setCommentsOn}
-            unresolvedComments={unresolvedComments}
             onLook={(note) => void sendLook(note)}
             lookBusy={lookBusy}
             pip={showPip && pipFrame && !pipLarge ? { frame: pipFrame, label: pipLabel } : null}
@@ -1244,11 +1047,8 @@ export function ScreenPanel({
         open={commentsOpen}
         items={commentItems}
         error={commentsError}
-        busyId={resolvingId}
         native={Boolean(window.coloDesignDesktop?.preview?.native)}
         onClose={() => setCommentsOpen(false)}
-        onResolve={resolveComment}
-        onResend={resendComment}
       />
       {devPanelOpen && (
         <div

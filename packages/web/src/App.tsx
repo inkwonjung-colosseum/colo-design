@@ -12,12 +12,17 @@ const URL_KEY = "colo-design.daemon-url";
  * The desktop app loads this page from the daemon itself with the pairing
  * token in the query — no connect screen there. Browser users keep the
  * manual flow; the token url is not persisted (it is per-run).
+ *
+ * 데스크톱의 HMR 개발 실행(`pnpm dev:desktop`)에서는 페이지가 vite 에서
+ * 오고 데몬은 다른 포트에 있다 — 그때만 데스크톱이 `daemon` 으로 데몬의
+ * host 를 건넨다. 없으면 페이지를 준 곳이 곧 데몬이다.
  */
 function desktopDaemonUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
   if (!token) return null;
-  return `ws://${window.location.host}?token=${encodeURIComponent(token)}`;
+  const host = params.get("daemon") ?? window.location.host;
+  return `ws://${host}?token=${encodeURIComponent(token)}`;
 }
 
 function ConnectScreen({

@@ -64,6 +64,7 @@ async function main() {
       COLO_DESIGN_REPO_DIR: WORK,
       COLO_DESIGN_PROJECTS_SETTINGS: join(WORK, "projects.json"),
       COLO_DESIGN_PROJECTS_DIR: join(WORK, "projects"),
+      COLO_DESIGN_RUN_DIR: join(WORK, "run"),
       // The user's own daemon may be running right now; never fight it for 7823.
       COLO_DESIGN_PORT: String(await freePort()),
     };

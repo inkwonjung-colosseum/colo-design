@@ -1,12 +1,12 @@
 /**
- * One Paseo-style selector chip with its dropdown (ex `Composer`), plus the
- * Korean names for the commands a planner meets often enough to deserve one.
- * Options arrive pre-shaped; picked rows carry a check, hints ride on the
- * right.
+ * One selector chip with its dropdown (ex `Composer`), plus the Korean names
+ * for the commands a planner meets often enough to deserve one. Options
+ * arrive pre-shaped and carry nothing but a name: the menu is a list of what
+ * can be picked, not a place to be taught what each one costs.
  */
 
 import type { SessionCommand } from "@colo-design/protocol";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { CheckIcon, ChevronDownIcon } from "./icons";
 
 /**
@@ -45,7 +45,7 @@ export const COMMAND_FALLBACK: SessionCommand[] = Object.keys(COMMAND_LABEL).map
 
 export function SelectorChip({
   label,
-  prefix,
+  icon,
   open,
   disabled,
   title,
@@ -55,21 +55,16 @@ export function SelectorChip({
   options,
 }: {
   label: string;
-  /** The chip's domain in one word ("모델"), so two chips that both default
-      to 자동 never read as one control drawn twice. */
-  prefix?: string;
+  /** The glyph for what this chip governs. It leads, so two chips that both
+      read 자동 are still told apart at a glance — without a word spent. */
+  icon?: ReactNode;
   open: boolean;
   disabled?: boolean;
   title?: string;
   onToggle: () => void;
   onClose: () => void;
   onPick: (value: string | null) => void;
-  options: Array<{
-    value: string | null;
-    label: string;
-    hint?: string;
-    picked: boolean;
-  }>;
+  options: Array<{ value: string | null; label: string; picked: boolean }>;
 }) {
   const chip = useRef<HTMLButtonElement>(null);
 
@@ -108,7 +103,7 @@ export function SelectorChip({
         title={title}
         onClick={onToggle}
       >
-        {prefix && <span className="selector__chipprefix">{prefix} ·</span>}
+        {icon && <span className="selector__chipicon">{icon}</span>}
         {label}
         <ChevronDownIcon size={10} />
       </button>
@@ -127,7 +122,6 @@ export function SelectorChip({
                 {option.picked ? <CheckIcon size={11} /> : null}
               </span>
               <span className="selector__label">{option.label}</span>
-              {option.hint && <span className="selector__hint">{option.hint}</span>}
             </button>
           ))}
         </span>

@@ -1,10 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type {
-  ColoDesignCommentsEnvelope,
-  ColoDesignErrorEnvelope,
-  ColoDesignPinsPayload,
-} from "@colo-design/protocol";
+import type { ColoDesignCommentsEnvelope, ColoDesignErrorEnvelope } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 
 /**
@@ -12,6 +8,13 @@ import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView }
  * the app's own browser view: a `WebContentsView` laid over the web UI's
  * stage slot, so the address · history · errors · the comment-pin overlay
  * (D67, in the preload) are the tool's, not the connected repo's.
+ *
+ * ONE PAGE PER PREVIEW SERVER, KEPT. A project switch parks the page it
+ * leaves (hidden, alive, exactly where the planner was) and shows the page
+ * of the project it goes to — kept from an earlier visit, or created and
+ * loaded once. Coming back is a repaint, never a reload; the daemon keeps
+ * the servers warm for the same reason. Only the page on screen speaks to
+ * the renderer; a parked page keeps its own facts for the return.
  *
  * The view is ALWAYS above renderer DOM (D65) — `cover()` hides it behind a
  * captured freeze frame whenever a modal-like layer opens. Same-origin only
@@ -24,12 +27,9 @@ import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView }
  * it falls back to `loadURL` — the screen still shows, only the list is empty.
  * `preview-claude` (D61, the offscreen Claude window) keeps its own partition.
  *
- * D78 adds the down direction: the web pushes the whole recorded pin list in
- * (`pins()`), and the view re-tells it — with the mode and the busy flag — on
- * every fresh load, so a pin survives the planner's 새로 고침. D87 has the
- * view crop each pin's element (`element.rect`) out of the page before the
- * envelope reaches the web; D89 keeps the last 20 console lines for the
- * 화면 보여 주기 turn.
+ * D87 has the view crop each pin's element (`element.rect`) out of the page
+ * before the envelope reaches the web; D89 keeps the last 20 console lines
+ * for the 화면 보여 주기 turn.
  */
 
 /** The in-view preload, compiled to CommonJS beside this module. */
@@ -109,126 +109,208 @@ function openExternalHttp(url: string): void {
   }
 }
 
+/**
+ * The pages this pane keeps alive at once — the one on screen and the parked
+ * ones behind it. Each is a renderer process of its own: the cap bounds what
+ * clicking through the sidebar costs. Matches the daemon's warm-preview cap.
+ */
+const MAX_PAGES = 3;
+
+/**
+ * One preview server's page, kept for as long as the planner may come back
+ * to it: the view, and everything the pane knows about THIS page.
+ */
+interface PreviewPage {
+  /** The preview server's origin — the one origin this page may show (D66). */
+  readonly origin: string;
+  readonly view: WebContentsView;
+  /** The server process the page was loaded from (RepoStatus.previewEpoch). */
+  epoch: number | null;
+  bridge: BridgeState;
+  /** What the page is showing — a repeat mount or open must not reload. */
+  mountedUrl: string | null;
+  /** The last main-frame load failed, or the renderer died — a return reloads. */
+  failed: boolean;
+  /** The zoom the page is at (D85 ⓔ) — steps clamp into [0.5, 2]. */
+  zoomFactor: number;
+  /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
+  readonly consoleLog: string[];
+  /** The last screens envelope its bridge posted (D68) — replayed on a return. */
+  screens: object | null;
+  /** When the page was last on screen — the cap ends the ones left longest ago. */
+  shownAt: number;
+}
+
 export class PlannerPreviewView {
-  private view: WebContentsView | null = null;
-  private bridge: BridgeState = "unknown";
-  private origin: string | null = null;
+  /** Every page kept alive, by preview origin — the one on screen included. */
+  private readonly pages = new Map<string, PreviewPage>();
+  /** The page on screen; null while the slot is gone (a card took its place). */
+  private page: PreviewPage | null = null;
+  /** The slot's rect as the renderer last measured it — a page shown later takes it. */
+  private bounds: Electron.Rectangle | null = null;
   private covered = false;
-  /** The last 💬 state — a fresh page load is re-told it (D67). */
+  /** The last 💬 state — a fresh load, or a returning page, is re-told it (D67). */
   private commentsOn = false;
-  /** What this view is already showing — a repeat mount must not reload. */
-  private mountedUrl: string | null = null;
-  /** The last pin list the web pushed down (D78) — re-sent on every load. */
-  private lastPins: ColoDesignPinsPayload | null = null;
   /** Whether a turn is running (D86) — the overlay's toast words depend on it. */
   private busy = false;
-  /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
-  private readonly consoleLog: string[] = [];
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
-  /** The zoom the view is at (D85 ⓔ) — steps clamp into [0.5, 2]. */
-  private zoomFactor = 1;
 
   constructor(private readonly window: () => BrowserWindow | null) {}
+
   /**
-   * Boots (or re-aims) the view at a serving preview url. IDEMPOTENT: the
-   * renderer may re-run its mount effect (a repo status flap remounts the
-   * pane) and a reload to the root would throw away where the planner had
-   * navigated — the same url means the view is already right.
+   * Puts the page for a serving preview url on screen. A page the pane kept
+   * from an earlier visit comes back exactly where the planner left it — no
+   * load, the switch costs a repaint. A page the pane has not met is created
+   * and loaded once. Either way `epoch` names the server process behind the
+   * url: a page loaded under an earlier one is stale (the server restarted,
+   * or the port fence handed the port to another project) and reloads.
+   * IDEMPOTENT for the page on screen: the renderer may re-run its mount
+   * effect (a repo status flap remounts the pane), and a reload to the root
+   * would throw away where the planner had navigated.
    */
-  mount(url: string): void {
+  mount(url: string, epoch: number | null): void {
     if (!loopbackHttp(url)) return;
-    this.origin = new URL(url).origin;
-    const view = this.ensureView();
-    if (this.mountedUrl === url) return;
-    this.mountedUrl = url;
-    void view.webContents.loadURL(url);
+    const origin = new URL(url).origin;
+    const current = this.page;
+    if (current && current.origin === origin) {
+      this.refresh(current, url, epoch);
+      return;
+    }
+    if (current) this.park(current);
+    const kept = this.pages.get(origin);
+    if (kept && !kept.view.webContents.isDestroyed()) {
+      this.show(kept);
+      this.refresh(kept, url, epoch);
+      return;
+    }
+    if (kept) this.pages.delete(origin);
+    const page = this.createPage(origin, epoch);
+    this.pages.set(origin, page);
+    this.show(page);
+    this.evictParked();
+    this.load(page, url);
   }
 
-  /** The live webContents — the desktop suite drives the overlay through it. */
+  /**
+   * A page on screen against the server that answers now. A moved epoch is a
+   * different process — the app behind the port may be another project's,
+   * so the page starts over at the root; a failed last load (the server was
+   * down, the renderer died) retries where it was. Otherwise the page is
+   * already right and nothing loads.
+   */
+  private refresh(page: PreviewPage, url: string, epoch: number | null): void {
+    const moved = epoch !== null && page.epoch !== null && page.epoch !== epoch;
+    if (epoch !== null) page.epoch = epoch;
+    if (moved) {
+      page.failed = false;
+      page.mountedUrl = url;
+      void page.view.webContents.loadURL(url);
+    } else if (page.failed) {
+      page.failed = false;
+      void page.view.webContents.loadURL(page.mountedUrl ?? url);
+    }
+  }
+
+  /** The live webContents of the page on screen — the desktop suite drives the overlay through it. */
   webContents(): WebContents | null {
-    const contents = this.view?.webContents;
+    const contents = this.page?.view.webContents;
     return contents && !contents.isDestroyed() ? contents : null;
   }
 
-  /** Tears the view down — project switch, or the preview server died. */
+  /**
+   * Takes the page off screen — the slot is gone (a project switch, a card in
+   * the pane's place, the server died). The page stays alive, parked, for
+   * the planner's return; only the cap or its own death ends it.
+   */
   unmount(): void {
-    const view = this.view;
-    this.view = null;
-    this.origin = null;
-    this.bridge = "unknown";
-    this.covered = false;
-    this.mountedUrl = null;
-    this.zoomFactor = 1;
-    if (!view) return;
-    this.window()?.contentView.removeChildView(view);
-    if (!view.webContents.isDestroyed()) view.webContents.close();
+    if (this.page) this.park(this.page);
   }
 
   setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
-    this.view?.setBounds({
+    this.bounds = {
       x: Math.round(bounds.x),
       y: Math.round(bounds.y),
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height)),
-    });
+    };
+    this.page?.view.setBounds(this.bounds);
   }
 
   /**
    * D65: hide behind a freeze frame. The capture happens BEFORE the hide —
    * a hidden view's `capturePage()` has nothing promised (Electron docs).
+   * Covered is a fact about the pane, not a page: a page shown while a
+   * modal is open comes up hidden and appears when the modal closes.
    */
   async cover(on: boolean): Promise<void> {
-    const view = this.view;
-    if (!view) return;
     if (on && !this.covered) {
+      this.covered = true;
+      const page = this.page;
+      if (!page) return;
       try {
-        const image = await view.webContents.capturePage();
+        const image = await page.view.webContents.capturePage();
         if (!image.isEmpty()) this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
       } catch {
         // A paint that never happened; the slot just shows the pane background.
       }
-      view.setVisible(false);
-      this.covered = true;
+      // Whatever is on screen after the capture ran — a switch may have landed.
+      if (this.covered) this.page?.view.setVisible(false);
     } else if (!on && this.covered) {
-      view.setVisible(true);
       this.covered = false;
+      this.page?.view.setVisible(true);
     }
   }
 
   /** The address bar's word (D66): any path inside the preview origin. */
   open(path: string): void {
-    if (!this.origin) return;
+    const page = this.page;
+    if (!page) return;
     let url: URL;
     try {
-      url = new URL(path, this.origin);
+      url = new URL(path, page.origin);
     } catch {
       return;
     }
-    if (url.origin !== this.origin) return;
-    this.mountedUrl = url.toString();
-    void this.ensureView().webContents.loadURL(url.toString());
+    if (url.origin !== page.origin) return;
+    this.load(page, url.toString());
   }
 
   /**
    * A declared screen (D66 · D68): through the repo bridge when it is present
-   * — client routing, no reload — else a plain `loadURL` so the screen still
+   * — client routing, no reload — else a plain load so the screen still
    * shows on a repo whose bridge has not spoken.
    */
   navigate(route: string, state: string | null): void {
-    const contents = this.ensureView().webContents;
-    if (this.bridge === "present") {
-      contents.send("colo-overlay:navigate", { route, state });
+    const page = this.page;
+    if (!page) return;
+    if (page.bridge === "present") {
+      page.view.webContents.send("colo-overlay:navigate", { route, state });
       return;
     }
-    if (!this.origin) return;
-    const url = new URL(route, this.origin);
+    let url: URL;
+    try {
+      url = new URL(route, page.origin);
+    } catch {
+      return;
+    }
     // open() refuses off-origin urls; a declared screen must not slip past
     // that by carrying an absolute route — the repo owns the screens list.
-    if (url.origin !== this.origin) return;
+    if (url.origin !== page.origin) return;
     if (state) url.searchParams.set("state", state);
-    this.mountedUrl = url.toString();
-    void contents.loadURL(url.toString());
+    this.load(page, url.toString());
+  }
+
+  /**
+   * Loads a url the page is not already at. The same address asked again (a
+   * re-submitted bar, an ask re-riding a remount) is a no-op, not a reload —
+   * 새로 고침 is the one word for that.
+   */
+  private load(page: PreviewPage, url: string): void {
+    if (page.mountedUrl === url && !page.failed) return;
+    page.mountedUrl = url;
+    page.failed = false;
+    void page.view.webContents.loadURL(url);
   }
 
   history(delta: -1 | 1): void {
@@ -252,11 +334,11 @@ export class PlannerPreviewView {
    * 이 필요한 건 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
    */
   zoomIn(): void {
-    this.setZoom(this.zoomFactor + 0.2);
+    this.setZoom((this.page?.zoomFactor ?? 1) + 0.2);
   }
 
   zoomOut(): void {
-    this.setZoom(this.zoomFactor - 0.2);
+    this.setZoom((this.page?.zoomFactor ?? 1) - 0.2);
   }
 
   zoomReset(): void {
@@ -264,31 +346,22 @@ export class PlannerPreviewView {
   }
 
   private setZoom(factor: number): void {
+    const page = this.page;
+    if (!page || page.view.webContents.isDestroyed()) return;
     const clamped = Math.min(2, Math.max(0.5, factor));
-    const contents = this.webContents();
-    if (!contents) return;
-    contents.setZoomFactor(clamped);
-    this.zoomFactor = clamped;
+    page.view.webContents.setZoomFactor(clamped);
+    page.zoomFactor = clamped;
     this.send("colo-preview:zoom", { factor: clamped });
   }
 
-  /** The preview origin the view is parked on — the main window's popup gate. */
+  /** The preview origin on screen — the main window's popup gate. */
   getOrigin(): string | null {
-    return this.origin;
+    return this.page?.origin ?? null;
   }
 
   commentsMode(on: boolean): void {
     this.commentsOn = on;
     this.webContents()?.send("colo-overlay:mode", { on });
-  }
-
-  /**
-   * D78: the web's whole recorded list, pushed down as-is. The overlay does
-   * the screen filtering, so this is a fire-and-forget of the truth.
-   */
-  pins(payload: ColoDesignPinsPayload): void {
-    this.lastPins = payload;
-    this.webContents()?.send("colo-overlay:pins", payload);
   }
 
   /** D86: the overlay's send-toast reads the room — running or not. */
@@ -370,7 +443,7 @@ export class PlannerPreviewView {
   async snapshot(): Promise<{ jpeg: string | null; console: string[] }> {
     const result: { jpeg: string | null; console: string[] } = {
       jpeg: null,
-      console: [...this.consoleLog],
+      console: [...(this.page?.consoleLog ?? [])],
     };
     const contents = this.webContents();
     if (!contents) return result;
@@ -406,10 +479,38 @@ export class PlannerPreviewView {
     });
   }
 
+  /**
+   * One envelope from a page's preload (D68): screens (the repo bridge
+   * speaking — marks THAT page's bridge `present`) or the pin bundle (D67).
+   * Registered once per app, not per page, so pages coming and going never
+   * stack listeners. A parked page's envelope updates its own facts and
+   * stops there — the renderer hears only the page on screen.
+   */
+  onOverlayPost(sender: WebContents, payload: { type?: unknown }): void {
+    const page = this.pageOf(sender);
+    if (!page) return;
+    const type = typeof payload?.type === "string" ? payload.type : "";
+    if (type === "colo-design.screens") {
+      page.bridge = "present";
+      page.screens = payload;
+      if (this.page === page) this.send("colo-preview:screens", payload);
+    } else if (type === "colo-design.comments" && this.page === page) {
+      // D87: the crops ride in before the web hears anything.
+      void this.relayComments(payload as ColoDesignCommentsEnvelope);
+    }
+  }
+
   // ------------------------------------------------------------------ internals
 
-  private ensureView(): WebContentsView {
-    if (this.view && !this.view.webContents.isDestroyed()) return this.view;
+  private pageOf(sender: WebContents): PreviewPage | null {
+    for (const page of this.pages.values()) {
+      if (page.view.webContents === sender) return page;
+    }
+    return null;
+  }
+
+  /** A page is born parked: no bounds, not visible, not yet in the window. */
+  private createPage(origin: string, epoch: number | null): PreviewPage {
     const view = new WebContentsView({
       webPreferences: {
         partition: "preview",
@@ -418,65 +519,136 @@ export class PlannerPreviewView {
         preload: PREVIEW_PRELOAD,
       },
     });
-    this.attach(view.webContents);
-    const window = this.window();
-    window?.contentView.addChildView(view);
-    // A fresh view has no bounds until the renderer measures the slot.
+    view.setVisible(false);
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    this.view = view;
-    return view;
+    const page: PreviewPage = {
+      origin,
+      view,
+      epoch,
+      bridge: "unknown",
+      mountedUrl: null,
+      failed: false,
+      zoomFactor: 1,
+      consoleLog: [],
+      screens: null,
+      shownAt: 0,
+    };
+    this.attach(page);
+    return page;
   }
 
-  private attach(contents: WebContents): void {
+  /**
+   * Puts a page on screen: topmost in the window (`addChildView` reorders a
+   * child it already holds), sized to the slot, visible unless a modal
+   * covers the pane. The overlay is re-told the mode and the busy flag it
+   * may have missed while parked (D67 · D86), and the renderer's picture of
+   * the pane — where it is, its screens, whether it loads, its zoom — is
+   * replayed from this page's facts.
+   */
+  private show(page: PreviewPage): void {
+    this.page = page;
+    page.shownAt = Date.now();
+    const window = this.window();
+    if (window && !window.isDestroyed()) window.contentView.addChildView(page.view);
+    if (this.bounds) page.view.setBounds(this.bounds);
+    page.view.setVisible(!this.covered);
+    const contents = page.view.webContents;
+    contents.send("colo-overlay:mode", { on: this.commentsOn });
+    contents.send("colo-overlay:busy", { on: this.busy });
+    this.sendLocation(page);
+    this.send("colo-preview:screens", page.screens ?? { type: "colo-design.screens", screens: [] });
+    this.send("colo-preview:loading", { on: contents.isLoading() });
+    this.send("colo-preview:zoom", { factor: page.zoomFactor });
+  }
+
+  /** Takes a page off screen but keeps it: hidden, its facts its own. */
+  private park(page: PreviewPage): void {
+    page.view.setVisible(false);
+    if (this.page === page) this.page = null;
+  }
+
+  /** Beyond the cap, the parked pages the planner left longest ago end. */
+  private evictParked(): void {
+    const parked = [...this.pages.values()]
+      .filter((page) => page !== this.page)
+      .sort((a, b) => b.shownAt - a.shownAt);
+    for (const page of parked.slice(MAX_PAGES - 1)) this.destroy(page);
+  }
+
+  private destroy(page: PreviewPage): void {
+    this.pages.delete(page.origin);
+    if (this.page === page) this.page = null;
+    const window = this.window();
+    if (window && !window.isDestroyed()) window.contentView.removeChildView(page.view);
+    if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
+  }
+
+  /**
+   * A page's own ears, for its whole life. Every handler updates the page's
+   * facts; only the page on screen relays them to the renderer — a parked
+   * page reloading itself must not move the address bar or raise a banner
+   * over the project the planner is looking at.
+   */
+  private attach(page: PreviewPage): void {
+    const contents = page.view.webContents;
     // The pane is a viewer for this one dev server, never a browser (D66):
     // windows the page tries to open are denied, same-origin ones absorbed.
     contents.setWindowOpenHandler(({ url }) => {
-      if (sameOrigin(url, this.origin)) void contents.loadURL(url);
+      if (sameOrigin(url, page.origin)) void contents.loadURL(url);
       else openExternalHttp(url);
       return { action: "deny" };
     });
     // Page-initiated main-frame navigation only — `loadURL` and history steps
     // never fire this (Electron docs), which is why `open()` checks itself.
     contents.on("will-navigate", (event, url) => {
-      if (!sameOrigin(url, this.origin)) {
+      if (!sameOrigin(url, page.origin)) {
         event.preventDefault();
         openExternalHttp(url);
       }
     });
     contents.on("did-navigate", (_event, url) => {
-      this.bridge = "unknown";
-      this.mountedUrl = url;
-      this.sendLocation(contents, url);
+      // A fresh load's bridge has not spoken yet: the screens it knew go
+      // with the old document, until the new one declares its own.
+      page.bridge = "unknown";
+      page.screens = null;
+      page.mountedUrl = url;
+      page.failed = false;
+      if (this.page !== page) return;
+      this.sendLocation(page);
       // The overlay never announces itself; a fresh load is re-told
-      // everything it needs — the mode (D67), the recorded pins (D78), the
-      // busy flag (D86).
+      // everything it needs — the mode (D67), the busy flag (D86).
       if (this.commentsOn) contents.send("colo-overlay:mode", { on: true });
-      if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
       contents.send("colo-overlay:busy", { on: this.busy });
     });
     contents.on("did-navigate-in-page", (_event, url) => {
-      this.mountedUrl = url;
-      this.sendLocation(contents, url);
+      page.mountedUrl = url;
+      if (this.page === page) this.sendLocation(page);
     });
-    contents.on("did-start-loading", () => this.send("colo-preview:loading", { on: true }));
-    contents.on("did-stop-loading", () => this.send("colo-preview:loading", { on: false }));
+    contents.on("did-start-loading", () => {
+      if (this.page === page) this.send("colo-preview:loading", { on: true });
+    });
+    contents.on("did-stop-loading", () => {
+      if (this.page === page) this.send("colo-preview:loading", { on: false });
+    });
     // D69: the pane's own ears — no repo hook. 44 의 형태: 첫 인자가 details
     // 이벤트다(level 은 "info"|"warning"|"error"|"debug"). D89: every line
     // lands in the ring buffer first — the 화면 보여 주기 turn quotes it.
     contents.on("console-message", (details) => {
       const line = `[${details.level}] ${details.message}`.slice(0, 500);
-      this.consoleLog.push(line);
-      if (this.consoleLog.length > 20) this.consoleLog.splice(0, this.consoleLog.length - 20);
-      if (details.level !== "error") return;
-      this.reportError(contents, "runtime", details.message);
+      page.consoleLog.push(line);
+      if (page.consoleLog.length > 20) page.consoleLog.splice(0, page.consoleLog.length - 20);
+      if (details.level !== "error" || this.page !== page) return;
+      this.reportError(page, "runtime", details.message);
     });
     contents.on(
       "did-fail-load",
       (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         // -3 ERR_ABORTED is a navigation superseding itself, not a failure.
         if (!isMainFrame || errorCode === -3) return;
+        page.failed = true;
+        if (this.page !== page) return;
         this.reportError(
-          contents,
+          page,
           "build",
           `${errorDescription ?? "화면을 불러오지 못했습니다"} (${errorCode})`,
           validatedURL,
@@ -484,8 +656,10 @@ export class PlannerPreviewView {
       },
     );
     contents.on("render-process-gone", (_event, details) => {
+      page.failed = true;
+      if (this.page !== page) return;
       this.reportError(
-        contents,
+        page,
         "runtime",
         `미리보기 프로세스가 죽었습니다 (${details?.reason ?? "unknown"})`,
       );
@@ -510,30 +684,8 @@ export class PlannerPreviewView {
     });
   }
 
-  /**
-   * One envelope from the preview preload (D68): screens (the repo bridge
-   * speaking — marks it `present`) or the pin bundle (D67). Registered once
-   * per app, not per view, so re-mounting never stacks listeners.
-   */
-  onOverlayPost(payload: { type?: unknown }): void {
-    const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "colo-design.screens") {
-      this.bridge = "present";
-      this.send("colo-preview:screens", payload);
-    } else if (type === "colo-design.comments") {
-      // D87: the crops ride in before the web hears anything.
-      void this.relayComments(payload as ColoDesignCommentsEnvelope);
-    } else if (type === "colo-design.comments.resolve") {
-      // D78: the overlay bubble's 해결, relayed to the web verbatim.
-      this.send("colo-preview:comment-resolve", payload);
-    } else if (type === "colo-design.comments.resend") {
-      // D78: the attention bubble's 다시 요청 — the web composes the turn.
-      this.send("colo-preview:comment-resend", payload);
-    }
-  }
-
   private reportError(
-    contents: WebContents,
+    page: PreviewPage,
     kind: ColoDesignErrorEnvelope["kind"],
     message: string,
     at?: string,
@@ -541,7 +693,7 @@ export class PlannerPreviewView {
     let route = "";
     let state = "default";
     try {
-      const url = new URL(at ?? contents.getURL());
+      const url = new URL(at ?? page.view.webContents.getURL());
       route = url.pathname.replace(/^\//, "");
       state = url.searchParams.get("state") ?? "default";
     } catch {
@@ -556,10 +708,11 @@ export class PlannerPreviewView {
     });
   }
 
-  private sendLocation(contents: WebContents, url: string): void {
+  private sendLocation(page: PreviewPage): void {
+    const contents = page.view.webContents;
     let path = "/";
     try {
-      const parsed = new URL(url);
+      const parsed = new URL(contents.getURL());
       path = `${parsed.pathname}${parsed.search}`;
     } catch {
       // Keep "/" — an unparseable url still deserves a back button state.
@@ -585,22 +738,21 @@ export class PlannerPreviewView {
 // ---------------------------------------------------------------------------
 
 export function registerPreviewIpc(view: PlannerPreviewView): void {
+  // Routed by sender: a parked page's bridge may speak (its own reload) and
+  // must reach its own page's facts, never the renderer.
   ipcMain.on("colo-overlay:post", (event, payload: { type?: unknown }) => {
-    if (event.sender !== view.webContents()) return;
-    view.onOverlayPost(payload);
+    view.onOverlayPost(event.sender, payload);
   });
   ipcMain.on("colo-overlay:capture-done", (event) => {
     if (event.sender !== view.webContents()) return;
     view.onCaptureDone();
   });
   ipcMain.handle("preview:mount", (_event, input: unknown) => {
-    if (
-      input &&
-      typeof input === "object" &&
-      typeof (input as { url?: unknown }).url === "string"
-    ) {
-      view.mount((input as { url: string }).url);
+    if (!input || typeof input !== "object" || !("url" in input) || typeof input.url !== "string") {
+      return { ok: true };
     }
+    const epoch = "epoch" in input && typeof input.epoch === "number" ? input.epoch : null;
+    view.mount(input.url, epoch);
     return { ok: true };
   });
   ipcMain.handle("preview:unmount", () => {
@@ -656,10 +808,6 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
   });
   ipcMain.handle("preview:comments-mode", (_event, input: { on?: boolean }) => {
     view.commentsMode(Boolean(input?.on));
-    return { ok: true };
-  });
-  ipcMain.handle("preview:pins", (_event, payload: ColoDesignPinsPayload) => {
-    view.pins(payload);
     return { ok: true };
   });
   ipcMain.handle("preview:busy", (_event, input: { on?: boolean }) => {
