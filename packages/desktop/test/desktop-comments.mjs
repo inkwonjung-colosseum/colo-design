@@ -5,7 +5,8 @@
  * 하나만 보내지며(ⓑ), 턴이 끝나도 화면 위에 남고(ⓒ) 새로 고침 뒤 같은
  * 요소에 다시 선다(ⓓ). 말풍선의 해결이 핀을 치우고(ⓔ), 화면(상태)을 옮기면
  * 그 곳의 핀만 보인다(ⓕ). 보낸 봉투는 요소의 crop 을 실어 온다(ⓖ), 턴 중에
- * 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 화면에서 ⌥+클릭은 말한다(ⓚ), 화면
+ * 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을 남기고
+ * 그 경로가 화면 id 가 된다(ⓚ), 화면
  * 보여 주기는 카드가 되고(ⓛ) 같은 화면의 연타는 두 번째 요청으로 표식이
  * 붙는다(ⓜ).
  *
@@ -255,9 +256,18 @@ async function main() {
     check("the planner workspace renders with the fixture project", true);
 
     // --- the bridge speaks through the preload (D68) -----------------------
-    const picker = page.getByRole("combobox", { name: "화면" });
-    await picker.waitFor({ timeout: 60000 });
-    await picker.selectOption({ label: "회원 목록" });
+    // The picker is gone; the address bar is the screens' door. The bridge's
+    // arrival shows as the datalist filling with the declared route.
+    const address = page.getByTestId("preview-address");
+    await address.waitFor({ timeout: 60000 });
+    await page.waitForFunction(
+      () =>
+        Boolean(document.querySelector('#colo-frame-routes option[value="/member/MemberList"]')),
+      { timeout: 60000 },
+    );
+    await address.click();
+    await address.fill("/member/MemberList");
+    await address.press("Enter");
     await page.waitForFunction(
       () =>
         document.querySelector('[data-testid="preview-address"]')?.value === "/member/MemberList",
@@ -313,6 +323,20 @@ async function main() {
       "the transcript shows the 수정 요청 card",
       cardText.includes("수정 요청 1건") && cardText.includes("이름 열을 가입일 역순으로"),
       cardText.split("\n")[0],
+    );
+
+    // --- M5 회귀: 핀이 연 스레드는 하나, 그리고 도구가 지은 이름이다 -------
+    // 이 전송은 열린 대화 없이 시작된다 — create 가 지은 스레드가 코멘트를
+    // 받아야 한다. 옛 결함은 두 번째 이름 없는 스레드가 실어 가고, 이름 있는
+    // 첫 스레드는 빈 채 목록에 남았다.
+    const threadRow = page.locator(".leaf[data-thread-id]").first();
+    await threadRow.waitFor({ timeout: 15000 });
+    await threadRow.locator(".leaf__title", { hasText: "회원 목록" }).waitFor({ timeout: 15000 });
+    const threadCount = await page.locator(".leaf[data-thread-id]").count();
+    check(
+      "the pin opened exactly one thread, named after the screen",
+      threadCount === 1,
+      `threads:${threadCount}`,
     );
 
     // --- ⓖ 봉투가 shot 을 실어 온다 (D87): the card draws the crop ----------
@@ -448,35 +472,68 @@ async function main() {
     await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
     check("ⓕ coming back reveals it again", (await waitForDot(app, true)) === true);
 
-    // --- ⓚ 래퍼 없는 화면의 ⌥+클릭은 말한다 (D89) ---------------------------
+    // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
+    // The claude-design loop: comment → fix must not wait for a declared
+    // screen. A page with no [data-screen] wrapper — 아직 이 도구로 만지지
+    // 않은 레포의 원래 페이지 — pins by its path, and the turn names it.
     await inView(
       app,
       `(() => {
         const wrapper = document.querySelector("[data-screen]");
         wrapper.removeAttribute("data-screen");
+        history.pushState(null, "", "/settings");
         return true;
       })()`,
     );
-    await altClick(app, "h1");
-    const told = await inView(
+    check("ⓚ ⌥+클릭 hit the wrapper-less page", (await altClick(app, "h1")) === true);
+    const nakedDraft = await inView(
+      app,
+      `Boolean(document.querySelector('[data-colo-design-overlay] textarea[aria-label="핀 1 코멘트"]'))`,
+    );
+    const nakedToast = await inView(
       app,
       `Boolean([...document.querySelectorAll("[data-colo-design-overlay] div")]
         .find((n) => (n.textContent || "").includes("이 화면에는 핀을 붙일 수 없습니다")))`,
     );
-    const pinsWhileNaked = await inView(
-      app,
-      `document.querySelectorAll("[data-colo-design-overlay] [data-pin]").length`,
-    );
     check(
-      "ⓚ a wrapper-less ⌥+클릭 toasts and pins nothing",
-      told === true && pinsWhileNaked === 0,
-      `told:${told} pins:${pinsWhileNaked}`,
+      "ⓚ a wrapper-less ⌥+클릭 pins instead of toasting",
+      nakedDraft === true && nakedToast === false,
+      `draft:${nakedDraft} toast:${nakedToast}`,
     );
     await inView(
       app,
       `(() => {
-        const wrapper = document.querySelector("#app > div");
-        wrapper.setAttribute("data-screen", "member/MemberList");
+        const input = document.querySelector('textarea[aria-label="핀 1 코멘트"]');
+        input.value = "이 페이지도 기획서에 맞게 고쳐 주세요";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        [...document.querySelectorAll("[data-colo-design-overlay] button")]
+          .find((b) => (b.textContent || "").includes("보내기")).click();
+        return true;
+      })()`,
+    );
+    // The naked turn's card is the NEXT comments card — waiting on `.last()`
+    // would race and re-read the previous turn's card.
+    const cardsBefore = await page.locator(".machine--comments").count();
+    const nakedCard = page.locator(".machine--comments").nth(cardsBefore);
+    await nakedCard.waitFor({ timeout: 30000 });
+    // The card's 자세히 fold shows the turn body — the exact words Claude reads.
+    await nakedCard.getByRole("button", { name: "자세히" }).click();
+    const nakedBody = await nakedCard.locator(".machine__body").innerText();
+    check(
+      "ⓚ the turn names the path as the screen",
+      nakedBody.includes("화면 수정 요청 1건 — settings (default 상태)"),
+      nakedBody.slice(0, 80),
+    );
+    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
+    // The stub answers a comment turn at once but exits only 2s later, and
+    // the session's process is reused — a turn sent inside that window dies
+    // with it. Let the linger pass before the look turn below.
+    await page.waitForTimeout(2500);
+    await inView(
+      app,
+      `(() => {
+        document.querySelector("#app > div").setAttribute("data-screen", "member/MemberList");
+        history.pushState(null, "", "/member/MemberList");
         return true;
       })()`,
     );

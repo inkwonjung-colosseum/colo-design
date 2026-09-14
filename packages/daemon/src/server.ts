@@ -466,6 +466,9 @@ export class DaemonServer {
         url: repo.url,
         baseBranch: repo.baseBranch,
         cycle: { branch: repo.branch, handoff: repo.handoff },
+        // Only the project on screen owns a preview port (switch race fence).
+        active: slug === this.registry.activeSlug(),
+        // The registry owns the planner's word on this repo's commands.
         commandsApproved,
         // D94: 연결 준비 — the picker's Claude-prepare choice rides the
         // workspace, and its callback opens the brief turn here.
@@ -838,6 +841,13 @@ export class DaemonServer {
 
     if (switching) {
       if (current) {
+        // The fence for the switch race: stop() only kills the preview that
+        // exists NOW — the outgoing project's in-flight bring-up (a clone
+        // that takes minutes) would otherwise finish late, take the port it
+        // declares, and SIGKILL the listener the project the planner
+        // switched TO just started. Inactive workspaces abandon the bring-up
+        // at the unattended steps (install, preview).
+        current.repo.setActive(false);
         await current.repo.stop();
         // The outgoing clone's preview just went down — its sessions'
         // drivers would point their windows at a dead port (PLAN D61).
@@ -852,8 +862,8 @@ export class DaemonServer {
     // The token was loaded once in `start()`; every workspace gets it armed
     // the same way, switch or no switch.
     const next = this.workspacesFor(slug);
+    next.repo.setActive(true);
     next.repo.setPat(this.pat);
-
     // Bringing the repo up is NOT conditional on a switch. `create` registers
     // the first project as active before calling here, so a shortcut that
     // skipped this left a brand-new project with no clone at all — the

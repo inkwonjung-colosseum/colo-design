@@ -10,7 +10,14 @@
  *   ~/.colo-design/projects/<slug>/repo/   the clone
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type { HandoffStatus } from "@colo-design/protocol";
 import { COLO_DESIGN_DIR, CONFIG_DIR } from "./environment.js";
@@ -158,8 +165,9 @@ function parseProject(raw: unknown): Project | null {
 
 /** Reads the registry file, tolerating anything a hand edit could do to it. */
 function loadProjectsFile(env: NodeJS.ProcessEnv = process.env): ProjectsFile {
+  const path = projectsFile(env);
   try {
-    const parsed = JSON.parse(readFileSync(projectsFile(env), "utf8")) as Record<string, unknown>;
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     const projects = Array.isArray(parsed.projects)
       ? parsed.projects.map(parseProject).filter((project): project is Project => project !== null)
       : [];
@@ -171,7 +179,21 @@ function loadProjectsFile(env: NodeJS.ProcessEnv = process.env): ProjectsFile {
           ? active
           : (projects[0]?.slug ?? null),
     };
-  } catch {
+  } catch (error) {
+    // A file that exists but cannot be read is news, not absence: the next
+    // create would atomically REPLACE it and take every project's registry
+    // row (clone folders and PR state included) with it. Keep a copy the
+    // planner can recover from(설정 → 문제 해결 → 폴더 열기) and start
+    // empty — the daemon must still boot. A missing file is the normal
+    // first run and needs no ceremony.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      try {
+        if (existsSync(path)) copyFileSync(path, `${path}.corrupt`);
+      } catch {
+        // The backup is best effort — an unwritable disk has bigger
+        // problems, and refusing to boot helps nobody.
+      }
+    }
     return { active: null, projects: [] };
   }
 }
@@ -181,14 +203,20 @@ function saveProjectsFile(file: ProjectsFile, env: NodeJS.ProcessEnv = process.e
   mkdirSync(dirname(path), { recursive: true });
   // No secrets live here (the PAT is in the OS store), but the repo urls are
   // still the user's business: same private mode, same atomic replace as the
-  // other settings files.
+  // other settings files. The previous good copy stays one rename away —
+  // registry rows are the only map to clones and open PRs, so a bad write
+  // must never be the last one on disk.
+  try {
+    if (existsSync(path)) copyFileSync(path, `${path}.bak`);
+  } catch {
+    // Best effort: the atomic replace below is the real guarantee.
+  }
   const temporary = `${path}.colo-design-${process.pid}`;
   writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
     mode: 0o600,
   });
   renameSync(temporary, path);
 }
-
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------

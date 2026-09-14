@@ -336,16 +336,7 @@ async function bootApp(): Promise<void> {
   const url = daemonUrl(server, token);
   appUrl = url;
 
-  mainWindow = new BrowserWindow({
-    // 화면 작업 영역에 맞춘다 — 고정 크기는 큰 모니터에서 조그맣게 보인다.
-    ...workAreaSize(),
-    title: "Colo Design",
-    autoHideMenuBar: true,
-    webPreferences: {
-      // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.
-      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
-    },
-  });
+  mainWindow = createMainWindow();
   // 기획자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
   const plannerPreview = new PlannerPreviewView(() => mainWindow);
   registerPreviewIpc(plannerPreview);
@@ -448,6 +439,25 @@ function guardNavigations(window: BrowserWindow, toolOrigin: string): void {
   });
 }
 
+/**
+ * The one window recipe, shared by boot and reopen: a window made without it
+ * (the notification-click reopen used to build its own) has no preload, so
+ * `coloDesignDesktop` never exists in it — the update bridge, 폴더 열기, the
+ * native preview (pins, PiP, bounds) and open-session all die quietly, and
+ * the title goes with them.
+ */
+function createMainWindow(): BrowserWindow {
+  return new BrowserWindow({
+    // 화면 작업 영역에 맞춘다 — 고정 크기는 큰 모니터에서 조그맣게 보인다.
+    ...workAreaSize(),
+    title: "Colo Design",
+    autoHideMenuBar: true,
+    webPreferences: {
+      // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.
+      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
+    },
+  });
+}
 function daemonUrl(server: DaemonServer, token: string): string {
   // The daemon listens on an ephemeral port; ask it where it ended up.
   const address = server.address();
@@ -455,7 +465,7 @@ function daemonUrl(server: DaemonServer, token: string): string {
 }
 
 async function reopen(url: string): Promise<void> {
-  mainWindow = new BrowserWindow({ ...workAreaSize(), autoHideMenuBar: true });
+  mainWindow = createMainWindow();
   guardNavigations(mainWindow, new URL(url).origin);
   registerCloseGuard(mainWindow);
   await mainWindow.loadURL(url);

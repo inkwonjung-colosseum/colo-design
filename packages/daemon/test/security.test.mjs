@@ -187,6 +187,7 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
   const ask = {
     alwaysAllowed: { allows: () => true },
     handlePermission: () => Promise.resolve({ behavior: "allow", updatedInput: {} }),
+    cwd: workdir("hub-git-gate-"),
   };
   const signal = new AbortController().signal;
   for (const command of [
@@ -202,5 +203,40 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
   for (const command of ["git status --porcelain", "git add -A", "git stash list"]) {
     const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
     assert.equal(verdict.behavior, "allow", command);
+  }
+});
+
+test("an open merge lets the conflict card's git commit through; push never", async () => {
+  const { Session } = await import("../dist/session.js");
+  // 최신화 충돌의 회복 카드는 Claude 에게 [conflict] 커밋을 시킨다 — 그 지시를
+  // 게이트가 거부하면 도구가 제 손발을 묶는다(브리프 ↔ 게이트 모순). MERGE_HEAD
+  // 가 열려 있을 때만 커밋이 열리고, push 는 병합 중에도 도구의 동사다.
+  const dir = workdir("hub-git-gate-merge-");
+  const ask = {
+    alwaysAllowed: { allows: () => true },
+    handlePermission: () => Promise.resolve({ behavior: "allow", updatedInput: {} }),
+    cwd: dir,
+  };
+  const signal = new AbortController().signal;
+  try {
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".git", "MERGE_HEAD"), "refs/heads/main\n");
+    const verdict = await Session.prototype.canUse.call(
+      ask,
+      "Bash",
+      { command: "git commit -m '[conflict] 최신 변경 반영'" },
+      { signal },
+    );
+    assert.notEqual(verdict.behavior, "deny", "the merge-concluding commit is the card's own ask");
+    const push = await Session.prototype.canUse.call(
+      ask,
+      "Bash",
+      { command: "git push origin HEAD" },
+      { signal },
+    );
+    assert.equal(push.behavior, "deny");
+    assert.match(push.message, /저장 버튼/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   type PermissionResult,
@@ -455,8 +456,18 @@ export class Session {
     // The git nouns belong to the tool (README): a session committing or
     // pushing its own history puts words on the handoff branch the tool never
     // reviewed. Refused before alwaysAllowed — 항상 허용 cannot buy it back.
-    if (toolName === "Bash" && writesGitHistory(String(input.command ?? ""))) {
-      return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
+    // One door opens: the commit that CONCLUDES a merge this tool itself
+    // started(최신화 충돌). The conflict card asks Claude for exactly that
+    // commit, and this gate must not refuse the tool's own recovery
+    // instruction(브리프 ↔ 게이트 모순). A push stays the tool's verb even
+    // mid-merge, and a commit outside an open merge is still refused.
+    const command = String(input.command ?? "");
+    if (toolName === "Bash" && writesGitHistory(command)) {
+      const mergeOpen = existsSync(join(this.cwd, ".git", "MERGE_HEAD"));
+      const pushes = /\bgit\b/.test(command) && /\bpush\b/.test(command);
+      if (!mergeOpen || pushes) {
+        return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
+      }
     }
     if (EDIT_TOOLS.has(toolName)) {
       const paths = [input.file_path, input.notebook_path].filter(

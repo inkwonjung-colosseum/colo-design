@@ -585,6 +585,8 @@ export class RepoWorkspace {
   private publishing: Promise<DiffStatus> | null = null;
   /** The session-start/button refresh while it runs — saves wait it out. */
   private refreshing: Promise<unknown> | null = null;
+  /** Whether this project is the one on screen — see `setActive`. */
+  private active = true;
   /**
    * The summary's memory (PLAN D51): the diff hash its lines answer for.
    * One entry, in daemon memory on purpose — reopening the save review on
@@ -671,6 +673,13 @@ export class RepoWorkspace {
      * gate is for repos nobody has vouched for yet.
      */
     commandsApproved?: boolean;
+    /**
+     * Whether this workspace's project is the one on screen. Only the active
+     * project may take its preview port: a switch away abandons an in-flight
+     * bring-up instead of letting it finish late and SIGKILL the listener the
+     * NEXT project just started (or outlive the daemon on another port).
+     */
+    active?: boolean;
   }) {
     this.root = options.root;
     this.url = options.url;
@@ -687,6 +696,12 @@ export class RepoWorkspace {
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
     this.claudeExecutable = options.claudeExecutable ?? null;
+    this.active = options.active ?? true;
+  }
+
+  /** The one project on screen may own a preview port; switches flip this. */
+  setActive(active: boolean): void {
+    this.active = active;
   }
 
   get remoteUrl(): string | null {
@@ -1235,8 +1250,13 @@ export class RepoWorkspace {
     // with their merge, and forget the branch so the next save starts clean.
     try {
       await this.git(["fetch", "origin", this.baseBranch]);
+      // 반영됨은 저장 안 한 변경을 실어 나르지 않는다: 병합 직후엔 양쪽
+      // 블롭이 같아 checkout 이 수정을 거부하지 않고, 이어지는 reset 이
+      // 그대로 지워버린다. dirty 면 checkout 만 하고 reset 은 건너뛴다 —
+      // 다음 세션 시작의 최신화가 stash 로 그 변경을 지키며 반영을 따라간다.
+      const dirty = (await this.git(["status", "--porcelain"])).trim().length > 0;
       await this.git(["checkout", this.baseBranch]);
-      await this.git(["reset", "--hard", `origin/${this.baseBranch}`]);
+      if (!dirty) await this.git(["reset", "--hard", `origin/${this.baseBranch}`]);
     } catch (error) {
       // A dirty worktree can refuse the checkout. The PR really did merge, so
       // report that; the next session-start merge picks the base up anyway.
@@ -1532,7 +1552,10 @@ export class RepoWorkspace {
     for (const path of allowed) {
       if (inHead.has(path)) continue;
       await this.git(["rm", "--force", "--cached", "--", path]).catch(() => undefined);
-      rmSync(join(this.root, path), { force: true });
+      // porcelain folds a wholly-untracked folder into one `dir/` row, so the
+      // path here can BE a directory — force alone only suppresses ENOENT and
+      // throws EISDIR on one. Recursive handles the file case identically.
+      rmSync(join(this.root, path), { recursive: true, force: true });
     }
     await this.refreshPendingChanges();
     return { removed: allowed };
@@ -2068,7 +2091,7 @@ export class RepoWorkspace {
       // stops here, after the clone but before any command it declares runs.
       // 저장's check and 넘기기's build wait behind a planner's button press
       // already — install and preview are the ones that run unattended.
-      // The refusal names WHAT runs: the approval is one button, so the card
+      // The verdict names WHAT runs: the approval is one button, so the card
       // must show the sentences it is about to execute — the planner reads the
       // verdict, a reviewer reads the evidence.
       if (!this.commandsApproved) {
@@ -2076,6 +2099,11 @@ export class RepoWorkspace {
           `${COMMANDS_UNAPPROVED_DETAIL} 실행하려는 명령 — 설치: ${config.install ?? "(선언되지 않음)"} · 미리보기: ${config.preview.command} (포트 ${config.preview.port})`,
         );
       }
+      // The switch race's fence: a bring-up this project no longer owns
+      // stops here — install and preview are the unattended side effects,
+      // and a late finisher would otherwise kill the port the project the
+      // planner switched TO just started serving on.
+      if (!this.active) return this.snapshot();
       const installed = await this.installIfNeeded(config);
 
       /**
@@ -2219,8 +2247,12 @@ export class RepoWorkspace {
   // -------------------------------------------------------------------------
   // Preview server
   // -------------------------------------------------------------------------
-
   private async startPreview(config: ColoDesignConfig): Promise<void> {
+    // Second fence, closer to the metal: the window between bootstrap's gate
+    // and this spawn is exactly where a fast B→C switch lands. An inactive
+    // project must neither kill the port's holder nor leave a server of its
+    // own running past the switch.
+    if (!this.active) return;
     await this.killPreview();
     this.setPhase("starting", null);
     const { command, port } = config.preview;

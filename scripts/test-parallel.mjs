@@ -6,7 +6,7 @@
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
- *                      5402 sidebar) — all distinct
+ *                      5402 sidebar, 5403 midturn-send) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns
  *
@@ -46,7 +46,14 @@ const LANES = {
   },
   L3: {
     name: "browser-e2e",
-    suites: ["test:publish-ui", "test:settings", "test:sidebar-ui", "test:onboarding-ui"],
+    suites: [
+      "test:publish-ui",
+      "test:settings",
+      "test:sidebar-ui",
+      "test:midturn-send",
+      "test:onboarding-ui",
+      "test:port-busy-ui",
+    ],
   },
   L4: {
     name: "real-claude",

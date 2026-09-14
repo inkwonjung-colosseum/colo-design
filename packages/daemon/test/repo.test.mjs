@@ -329,6 +329,49 @@ test("a half-finished clone's leftover folder is cleared and re-cloned, not a 12
   }
 });
 
+test("전환된 프로젝트의 늦은 bring-up 은 프리뷰 포트를 건드리지 않는다", async () => {
+  const dir = workdir("hub-switch-race-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const port = await freePort();
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port,
+    });
+    const workspace = clone(dir, fixture);
+    const serving = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        return res.status > 0;
+      } catch {
+        return false;
+      }
+    };
+
+    // B→C 전환: B 의 bring-up 이 진행 중이던 창에서 활성이 바뀌었다. 늦게
+    // 끝나는 B 는 install · preview — 무인 부수효과 — 에서 멈춰야 한다: 포트를
+    // 빼액지도, 데몬보다 오래 사는 고아 서버를 남기지도 않는다.
+    workspace.setActive(false);
+    const abandoned = await workspace.sync();
+    await workspace.stop();
+    assert.notEqual(abandoned.phase, "ready", "the abandoned bring-up never reached ready");
+    assert.equal(await serving(), false, "no orphan preview server survives the switch");
+
+    // 게이트는 영구 스위치가 아니다 — 다시 활성이 되면 다음 sync 는 평범하게
+    // 띄운다.
+    workspace.setActive(true);
+    const ready = await workspace.sync();
+    try {
+      assert.equal(ready.phase, "ready", ready.detail ?? "");
+      assert.equal(await serving(), true, "re-activation brings the preview up");
+    } finally {
+      await workspace.stop();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a seeded repo walks cloning → installing → starting, and a dead preview names itself", async () => {
   const dir = workdir("hub-repo-phases-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -1488,6 +1531,70 @@ test("최신화 hands a genuine conflict to Claude, work parked and named", asyn
   }
 });
 
+test("반영됨 확인은 저장하지 않은 변경을 지우지 않는다", async () => {
+  const dir = workdir("hub-merged-dirty-");
+  const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
+  process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const requests = [];
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      gitHubClient: () => ({
+        ...stubPullRequestClient(requests),
+        // The developer pressed merge: the pull request reads merged now.
+        async getPullRequest() {
+          return {
+            number: 7,
+            url: "https://github.com/colosseumcoinckr/colo-design-e2e/pull/7",
+            title: "결제 화면",
+            state: "merged",
+          };
+        },
+      }),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    // 저장 → 넘기기: 이번 사이클의 변경이 브랜치에 커밋돼 올라간다.
+    writeFileSync(join(dir, "work", "index.html"), "<p>사이클의 변경</p>\n");
+    const saved = await workspace.save({ message: "사이클의 변경" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    await workspace.handoff({ title: "결제 화면" });
+
+    // 개발자의 병합: 원격 베이스는 사이클의 변경과 함께, 기획자가 모르는
+    // 사이 main 에서 직접 건 문장(CLAUDE.md)까지 담는다. 위험한 조합은
+    // 정확히 이것이다 — CLAUDE.md 는 이번 사이클이 건드린 적 없어 양쪽
+    // 브랜치에서 같으므로 checkout 이 기획자의 저장 안 한 편집을 실어
+    // 나르고, 뒤따르는 reset --hard 가 그것을 origin/main 의 문장으로
+    // 소리 없이 덮어쓴다.
+    const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "index.html": "<p>사이클의 변경</p>\n",
+      "CLAUDE.md": `${seedClaude}\n- 개발자가 main 에서 직접 단 문장\n`,
+    });
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      `${readFileSync(join(dir, "work", "CLAUDE.md"), "utf8")}\n기획자의 저장 안 한 메모\n`,
+    );
+
+    const report = await workspace.refreshHandoff();
+    assert.equal(report?.state, "merged");
+    const after = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    assert.ok(after.includes("기획자의 저장 안 한 메모"), "unsaved work survives the merged reset");
+  } finally {
+    if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
+    else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("준비가 충돌로 멈춘 뒤에도 pull 은 열려 있다 — 오류 카드의 Claude 요청이 브리프를 실어 나른다 (D96)", async () => {
   const dir = workdir("hub-refresh-error-brief-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -1767,6 +1874,62 @@ test("체크포인트는 추적 안 된 새 파일을 담고 HEAD · 인덱스�
       "the snapshot holds the untracked screen",
     );
     assert.match(tree, /index\.html/, "and the tracked file");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("변경 버리기는 미추적 화면 폴더째 지우고 죽지 않는다 (D53)", async () => {
+  const dir = workdir("hub-discard-dir-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    // A repo that already tracks a screen — the shape every real connection
+    // has. Without it porcelain folds the whole empty `src/` tree into one
+    // `?? src/` row and the new-folder scenario never appears.
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "src/screens/existing/Existing.screen.tsx": "export const Existing = () => null;\n",
+    });
+    const workspace = await bringUp(dir, fixture);
+    assert.ok(
+      existsSync(join(dir, "work", "src", "screens", "existing", "Existing.screen.tsx")),
+      "the tracked screen is here",
+    );
+
+    // Claude 의 가장 흔한 자국: 통째로 새로 생긴 화면 폴더. porcelain 은
+    // 이것을 `src/screens/brandnew/` 한 줄로 접어 내보내고, 버리기가 그
+    // 경로를 파일인 양 rmSync 하면 EISDIR 로 죽는다 — 부분 복구 상태로.
+    mkdirSync(join(dir, "work", "src", "screens", "brandnew"), { recursive: true });
+    writeFileSync(
+      join(dir, "work", "src", "screens", "brandnew", "BrandNew.screen.tsx"),
+      "export const BrandNew = () => null;\n",
+    );
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(join(dir, "work", "CLAUDE.md"), `${claude}\n임시 수정\n`);
+
+    const discarded = await workspace.discard();
+    assert.ok(
+      discarded.removed.some((path) => path.includes("brandnew")),
+      "the folded folder row is in the removal list",
+    );
+    assert.ok(
+      !existsSync(join(dir, "work", "src", "screens", "brandnew")),
+      "the untracked folder is gone whole",
+    );
+    assert.ok(
+      existsSync(join(dir, "work", "src", "screens", "existing", "Existing.screen.tsx")),
+      "the tracked screen is untouched — only the untracked folder row was removed",
+    );
+    assert.equal(
+      readFileSync(join(dir, "work", "CLAUDE.md"), "utf8"),
+      claude,
+      "the tracked edit is back at HEAD",
+    );
+    const status = await workspace.status();
+    assert.equal(status.pendingChanges, 0, "nothing is left to save");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
