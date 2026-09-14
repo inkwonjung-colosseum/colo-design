@@ -112,10 +112,10 @@ export class SessionManager {
     return undefined;
   }
 
-  async close(sessionId: string): Promise<void> {
+  async close(sessionId: string, reason: "user" | "shutdown" = "user"): Promise<void> {
     const session = this.live.get(sessionId);
     if (!session) return;
-    await session.close();
+    await session.close(reason);
     this.live.delete(sessionId);
     this.settledTurns.delete(sessionId);
   }
@@ -144,7 +144,9 @@ export class SessionManager {
   }
 
   async closeAll(): Promise<void> {
-    await Promise.all([...this.live.keys()].map((id) => this.close(id)));
+    // A daemon-wide stop is not the planner closing threads: the wait rooms
+    // stay on disk and come back as the lost room after a restart.
+    await Promise.all([...this.live.keys()].map((id) => this.close(id, "shutdown")));
   }
 
   get liveCount(): number {
@@ -254,6 +256,7 @@ export class SessionManager {
         lastModified: info.lastModified,
         live: false,
         state: "closed",
+        turnStartedAt: null,
       });
     }
 
@@ -273,6 +276,8 @@ export class SessionManager {
         lastModified: session.lastActivity,
         live: true,
         state: session.state,
+        // 재접속한 창의 진행 시계가 0 부터 다시 세지 않도록 (없으면 null).
+        turnStartedAt: session.turnStartedAt,
       });
     }
 

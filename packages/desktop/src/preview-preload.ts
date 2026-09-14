@@ -162,18 +162,46 @@ const root = document.createElement("div");
 root.setAttribute("data-colo-design-overlay", "");
 root.style.cssText = `position:fixed;inset:0;pointer-events:none;z-index:${Z};font-family:system-ui,-apple-system,sans-serif;`;
 
+/**
+ * Where every toast lands: one stacking column that `renderOverlay` never
+ * sweeps. Toasts used to be plain root children written just before a
+ * re-render, so the send's own confirmation was wiped the same tick it was
+ * made and the planner saw nothing. `aria-live` says them out loud.
+ */
+const toasts = document.createElement("div");
+toasts.setAttribute("role", "status");
+toasts.setAttribute("aria-live", "polite");
+toasts.style.cssText =
+  "position:fixed;right:16px;bottom:64px;display:flex;flex-direction:column-reverse;align-items:flex-end;gap:6px;pointer-events:none;";
+root.appendChild(toasts);
+
 let mode = false;
 let altHeld = false;
 let busy = false;
 let drafts: DraftPin[] = [];
 let hover: HTMLDivElement | null = null;
 let hoverTarget: Element | null = null;
+/** The hover box's name tab — lives and dies with `hover`. */
+let hoverLabel: HTMLElement | null = null;
 let nextId = 1;
 /** The pathname the open drafts were pinned on — a SPA move that carries no
     attribute change (래퍼 없는 페이지의 이동) would leave them lying. */
 let draftsPath: string | null = null;
 let layoutStop: (() => void) | null = null;
 let layoutTimer: number | null = null;
+/**
+ * The sends still waiting for the web's receipt (D35), by batch id: the pins
+ * are off the screen but not yet gone, so a turn the daemon refused can put
+ * them back with their words. `note` is the 보내는 중 toast this send owns.
+ */
+const pending = new Map<string, { pins: DraftPin[]; note: HTMLElement; timer: number }>();
+let nextBatch = 1;
+/** How long a send may go unanswered before its pins are counted as gone. */
+const SENT_ACK_MS = 10_000;
+/** Where the page remembers that the ⌥+클릭 hint has been said once. */
+const HINT_SEEN = "colo-design.pin-hint";
+/** The draft editor grows with the words, up to this many pixels. */
+const EDITOR_MAX_HEIGHT = 120;
 
 function isOverlayUi(target: EventTarget | null): boolean {
   return target instanceof Node && root.contains(target);
@@ -211,6 +239,7 @@ function scheduleLayout(): void {
   if (layoutTimer !== null) return;
   layoutTimer = window.setTimeout(() => {
     layoutTimer = null;
+    pruneDrafts();
     layoutOverlay();
   }, 100);
 }
@@ -235,15 +264,17 @@ function stopHoverLoop(): void {
 }
 
 function layoutHover(): void {
-  if (hover && hoverTarget) {
-    const rect = hoverTarget.getBoundingClientRect();
-    Object.assign(hover.style, {
-      left: `${rect.x}px`,
-      top: `${rect.y}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-    });
-  }
+  if (!hover || !hoverTarget) return;
+  const rect = hoverTarget.getBoundingClientRect();
+  Object.assign(hover.style, {
+    left: `${rect.x}px`,
+    top: `${rect.y}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  });
+  // The tab sits above the box, or inside it when the box is against the
+  // top of the viewport — a label the planner cannot read is no label.
+  if (hoverLabel) hoverLabel.style.top = rect.y >= 18 ? "-18px" : "0px";
 }
 
 /**
@@ -281,6 +312,25 @@ function layoutOverlay(): void {
   }
 }
 
+/**
+ * The same rule the attribute watcher enforces (D67), for the moves it
+ * cannot see. `screenWatch` only fires when a SURVIVING wrapper rewrites its
+ * `data-screen`/`data-state`; a router that swaps the wrapper for another
+ * one changes no attribute, and the drafts would sit on a screen that is no
+ * longer there — pinned to detached elements, drawn at the viewport's
+ * corner, and sent naming the screen they left.
+ */
+function pruneDrafts(): void {
+  if (drafts.length === 0) return;
+  const moved = draftsPath !== null && draftsPath !== window.location.pathname;
+  const kept = moved ? [] : drafts.filter((pin) => pin.anchor.isConnected);
+  if (kept.length === drafts.length) return;
+  const gone = drafts.length - kept.length;
+  drafts = kept;
+  renderOverlay();
+  toast(`화면이 바뀌어 보내지 않은 핀 ${gone}개를 지웠습니다.`);
+}
+
 // ---------------------------------------------------------------------------
 // Input — the D79 gate. Clicks are intercepted only for the mode or Alt;
 // hover highlighting is the mode's, or Alt's while it is held.
@@ -303,6 +353,7 @@ document.addEventListener(
     if (!hoverTarget) {
       hover?.remove();
       hover = null;
+      hoverLabel = null;
       stopHoverLoop();
       return;
     }
@@ -311,8 +362,23 @@ document.addEventListener(
       hover.setAttribute("data-colo-hover", "");
       hover.style.cssText =
         "position:fixed;outline:2px solid #e05252;outline-offset:1px;pointer-events:none;";
+      // What the click would actually take: the same words the chip and the
+      // transcript card use. Any element can take a pin (D79), so aiming at
+      // a table row means guessing between the cell, the row and the table
+      // unless the highlight says which one is under the cursor.
+      hoverLabel = el(
+        "span",
+        "position:absolute;left:0;background:#e05252;color:#fff;border-radius:4px 4px 0 0;padding:1px 6px;font-size:10px;line-height:1.5;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
+      );
+      hover.appendChild(hoverLabel);
       root.appendChild(hover);
       startHoverLoop();
+    }
+    if (hoverLabel) {
+      hoverLabel.textContent =
+        ownText(hoverTarget) ||
+        hoverTarget.getAttribute("data-component") ||
+        hoverTarget.tagName.toLowerCase();
     }
   },
   true,
@@ -332,14 +398,16 @@ document.addEventListener(
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
-    // A SPA route change no attribute carries: the open drafts would lie
-    // about where they were pinned, so they go the way the data-screen
-    // watcher clears them (D67).
-    if (drafts.length > 0 && draftsPath !== window.location.pathname) {
-      const gone = drafts.length;
-      drafts = [];
-      toast(`화면이 바뀌어 보내지 않은 핀 ${gone}개를 지웠습니다.`);
-    }
+    // A SPA route change no attribute carries, and a screen wrapper swapped
+    // for another one: either way the open drafts would lie about where they
+    // were pinned, so they go the way the data-screen watcher clears them
+    // (D67).
+    pruneDrafts();
+    // One editor at a time: the pin just clicked is the one being written,
+    // so a written neighbour folds to its bubble and an empty one — an
+    // editor opened and abandoned — was never a request to keep.
+    drafts = drafts.filter((pin) => !pin.editing || pin.comment.trim() !== "");
+    for (const pin of drafts) pin.editing = false;
     drafts = [
       ...drafts,
       {
@@ -364,17 +432,38 @@ function setAlt(on: boolean): void {
   if (!on) {
     hover?.remove();
     hover = null;
+    hoverLabel = null;
     hoverTarget = null;
     stopHoverLoop();
   }
 }
 document.addEventListener("keydown", (event) => {
-  if (event.altKey) setAlt(true);
+  // Option is a mac text key as much as a modifier: held inside the draft
+  // editor it is typing a character, not aiming at the page. Highlighting
+  // the element behind the editor there — and arming the click that pins
+  // it — would fight the planner mid-word.
+  if (event.altKey && !isOverlayUi(event.target)) setAlt(true);
 });
 document.addEventListener("keyup", (event) => {
   if (!event.altKey) setAlt(false);
 });
 window.addEventListener("blur", () => setAlt(false));
+// 뒤로/앞으로 로 화면이 바뀌어도 보내지 않은 핀은 남으면 안 된다 (D67).
+window.addEventListener("popstate", scheduleLayout);
+// A click that lands outside the overlay is the planner's attention moving
+// on: a written editor folds to its bubble so the page is readable again.
+// An empty one stays — it is the pin they just made, not one they left.
+document.addEventListener(
+  "mousedown",
+  (event) => {
+    if (isOverlayUi(event.target)) return;
+    const open = drafts.filter((pin) => pin.editing && pin.comment.trim() !== "");
+    if (open.length === 0) return;
+    for (const pin of open) pin.editing = false;
+    renderOverlay();
+  },
+  true,
+);
 
 // 화면이 바뀌면 미전송 핀은 지운다 (D67) — 핀이 다른 화면에 남으면 거짓말이다.
 const screenWatch = new MutationObserver(() => {
@@ -404,7 +493,7 @@ const BUTTON_BASE =
 
 function renderOverlay(): void {
   for (const child of [...root.childNodes]) {
-    if (child !== hover) child.remove();
+    if (child !== hover && child !== toasts) child.remove();
   }
 
   let number = 0;
@@ -426,8 +515,11 @@ function renderOverlay(): void {
     chip.appendChild(
       el(
         "span",
-        "max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace;font-size:10px;color:#666;",
-        pin.element.component,
+        // The element's own text is what the planner clicked and recognises;
+        // its name is the fallback nobody should normally read — the same
+        // rule the transcript card's rows follow.
+        "max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#666;",
+        pin.element.text || pin.element.component,
       ),
     );
     const remove = el(
@@ -487,11 +579,24 @@ function renderOverlay(): void {
   }
   root.appendChild(bar);
   layoutOverlay();
+
+  // The open editor is where the planner is about to type (D80) — only one
+  // is ever open, and landing in it is the difference between one gesture
+  // and two. `preventScroll`: the page must not jump under a pin that is
+  // already in view.
+  const input = root.querySelector("textarea");
+  if (!input) return;
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, EDITOR_MAX_HEIGHT)}px`;
+  if (document.activeElement === input) return;
+  input.focus({ preventScroll: true });
+  input.setSelectionRange(input.value.length, input.value.length);
 }
 
 /**
  * The draft editor (D80): the comment box and three buttons — ⏎ 보내기 sends
- * THIS pin alone at once, 담아 두기 parks it as a draft, 지우기 drops it.
+ * THIS pin alone at once, 접기 leaves it parked as a bubble, 지우기 drops it.
+ * Esc does whichever of the last two the words call for.
  */
 function draftEditor(pin: DraftPin, number: number): HTMLElement {
   const editor = el(
@@ -501,7 +606,7 @@ function draftEditor(pin: DraftPin, number: number): HTMLElement {
   const head = el(
     "div",
     "font-size:11px;font-weight:700;color:#b91c1c;",
-    `${number} · ${pin.element.component}`,
+    `${number} · ${pin.element.text || pin.element.component}`,
   );
   editor.appendChild(head);
   const input = document.createElement("textarea");
@@ -510,15 +615,30 @@ function draftEditor(pin: DraftPin, number: number): HTMLElement {
   input.setAttribute("aria-label", `핀 ${number} 코멘트`);
   input.placeholder = "이 요소에 바라는 점을 적어 주세요";
   input.style.cssText =
-    "resize:none;border:1px solid #d4d4d4;border-radius:6px;padding:6px;font-size:13px;font-family:inherit;";
+    "resize:none;overflow-y:auto;border:1px solid #d4d4d4;border-radius:6px;padding:6px;font-size:13px;font-family:inherit;";
   input.addEventListener("input", () => {
     pin.comment = input.value;
+    // The box follows the words to the editor's own ceiling: a request three
+    // lines long should not be read through a two-line slot.
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, EDITOR_MAX_HEIGHT)}px`;
   });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendDrafts([pin]);
+      return;
     }
+    if (event.key !== "Escape") return;
+    // The keyboard's way out (the page behind must not read the key as its
+    // own close): written words park as a bubble, an empty editor was never
+    // a request.
+    event.preventDefault();
+    event.stopPropagation();
+    pin.comment = input.value;
+    if (pin.comment.trim() === "") drafts = drafts.filter((entry) => entry.id !== pin.id);
+    else pin.editing = false;
+    renderOverlay();
   });
   editor.appendChild(input);
   const row = el("div", "display:flex;gap:6px;align-items:center;justify-content:flex-end;");
@@ -530,7 +650,7 @@ function draftEditor(pin: DraftPin, number: number): HTMLElement {
   const park = el(
     "button",
     `${BUTTON_BASE}background:none;color:#555;border:1px solid #d4d4d4;`,
-    "담아 두기",
+    "접기",
   );
   park.addEventListener("click", () => {
     pin.comment = input.value;
@@ -549,38 +669,83 @@ function draftEditor(pin: DraftPin, number: number): HTMLElement {
   return editor;
 }
 
-/** One (⏎ 보내기) or many (the bar): the envelope goes out, the drafts go. */
+/**
+ * One (⏎ 보내기) or many (the bar): the envelope goes out and the pins wait
+ * for the web's receipt (D35). They leave the screen at once — the planner
+ * must see the work go — but they are HELD until `settle`, because a turn
+ * the daemon refused has to stay retryable and pins nobody can see are not.
+ */
 function sendDrafts(pins: DraftPin[]): void {
   const ready = pins.filter((pin) => pin.comment.trim() !== "");
   if (ready.length === 0) return;
   const first = ready[0]!.context;
+  const batch = String(nextBatch++);
   const envelope: ColoDesignCommentsEnvelope = {
     type: "colo-design.comments",
+    batch,
     screen: first.screen,
     state: first.state,
     items: ready.map((pin) => ({
-      element: pin.element,
+      // Re-read, not replayed: the rect rides along for the view's crop
+      // (D87), so it has to be where the element is NOW. A pin written and
+      // then scrolled past would otherwise photograph whatever moved into
+      // its old slot on the viewport.
+      element: describeElement(pin.anchor) ?? pin.element,
       comment: pin.comment.trim(),
     })),
   };
   ipcRenderer.send("colo-overlay:post", envelope);
-  toast(
-    busy
-      ? "보냈습니다 — Claude 가 일하는 중, 끝나면 이어서 봅니다"
-      : `수정 요청 ${ready.length}건을 보냈습니다.`,
-  );
   drafts = drafts.filter((pin) => !ready.includes(pin));
+  pending.set(batch, {
+    pins: ready,
+    note: toast("보내는 중…", { hold: true }),
+    timer: window.setTimeout(() => settle(batch, true, 0, ready.length), SENT_ACK_MS),
+  });
   renderOverlay();
 }
 
-function toast(text: string): void {
+/**
+ * The receipt for one batch (D35 · D87): the words landed, or they did not
+ * and the pins come back where their elements still are. `shots` is how many
+ * crops really rode along — fewer than the pins means the rest travelled as
+ * text, which the planner would otherwise never learn.
+ */
+function settle(batch: string, ok: boolean, shots: number, items: number): void {
+  const held = pending.get(batch);
+  if (!held) return;
+  pending.delete(batch);
+  window.clearTimeout(held.timer);
+  held.note.remove();
+  const count = items || held.pins.length;
+  if (ok) {
+    const short = shots > 0 && shots < count ? ` 이미지는 ${shots}개까지만 실렸습니다.` : "";
+    toast(
+      busy
+        ? `보냈습니다 — Claude 가 일하는 중, 끝나면 이어서 봅니다.${short}`
+        : `수정 요청 ${count}건을 보냈습니다.${short}`,
+    );
+    return;
+  }
+  const back = held.pins.filter((pin) => pin.anchor.isConnected);
+  drafts = [...drafts, ...back];
+  renderOverlay();
+  toast(
+    back.length > 0
+      ? `보내지 못했습니다 — 핀 ${back.length}개를 되돌렸습니다. 대화의 오류를 확인해 주세요.`
+      : "보내지 못했습니다 — 대화의 오류를 확인해 주세요.",
+  );
+}
+
+/** A line in the toast column. `hold` keeps it until its sender removes it. */
+function toast(text: string, options?: { hold?: boolean }): HTMLElement {
   const note = el(
     "div",
-    "position:fixed;right:16px;bottom:64px;background:#fff;color:#1a1a1a;border:1px solid #d4d4d4;border-radius:8px;padding:8px 12px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.2);",
+    "background:#fff;color:#1a1a1a;border:1px solid #d4d4d4;border-radius:8px;padding:8px 12px;font-size:12px;max-width:320px;box-shadow:0 6px 20px rgba(0,0,0,.2);",
     text,
   );
-  root.appendChild(note);
-  setTimeout(() => note.remove(), 2500);
+  toasts.appendChild(note);
+  if (!options?.hold) setTimeout(() => note.remove(), 2500);
+  return note;
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +767,20 @@ ipcRenderer.on("colo-overlay:mode", (_event, payload: { on?: boolean }) => {
 ipcRenderer.on("colo-overlay:busy", (_event, payload: { on?: boolean }) => {
   setBusy(Boolean(payload?.on));
 });
+
+/** 전송 영수증 (D35): the web's word on whether the batch reached the thread. */
+ipcRenderer.on(
+  "colo-overlay:sent",
+  (_event, payload: { batch?: unknown; ok?: unknown; shots?: unknown; items?: unknown }) => {
+    if (typeof payload?.batch !== "string") return;
+    settle(
+      payload.batch,
+      payload.ok === true,
+      typeof payload.shots === "number" ? payload.shots : 0,
+      typeof payload.items === "number" ? payload.items : 0,
+    );
+  },
+);
 
 ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
@@ -634,6 +813,23 @@ const boot = () => {
     anchorWatch.observe(html, { childList: true, subtree: true });
   }
   scheduleLayout();
+  // ⌥+클릭 is the whole entry to the feature (D79) and nothing on the page
+  // announces it — the hint line only exists while the pin mode is on, which
+  // is the one state a planner who has not found it will never be in. Said
+  // once per repo, by the page's own storage; a machine that cannot store it
+  // simply hears it again.
+  try {
+    if (!window.localStorage.getItem(HINT_SEEN)) {
+      window.localStorage.setItem(HINT_SEEN, "1");
+      const note = toast(
+        "화면의 요소에 ⌥+클릭하면 핀을 찍어 Claude 에게 수정을 요청할 수 있습니다.",
+        { hold: true },
+      );
+      setTimeout(() => note.remove(), 6000);
+    }
+  } catch {
+    // Storage denied (a sandboxed page, a blocked origin): no hint, no harm.
+  }
 };
 if (document.readyState === "loading")
   document.addEventListener("DOMContentLoaded", boot, { once: true });

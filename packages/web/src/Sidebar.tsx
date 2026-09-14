@@ -97,6 +97,13 @@ export function Sidebar({
   const [threadDraft, setThreadDraft] = useState("");
   /** The project row the removal dialog is open for. */
   const [removing, setRemoving] = useState<ProjectSummary | null>(null);
+  /**
+   * 지켜 줄 것(설정 문서 P1#8): 프로젝트 하나의 지침 상자. 설정 모달이
+   * 아니라 프로젝트의 자리에 산다 — 프로젝트에 귀속된 값이기 때문이다.
+   */
+  const [guarding, setGuarding] = useState<ProjectSummary | null>(null);
+  const [guardDraft, setGuardDraft] = useState("");
+  const [savingGuard, setSavingGuard] = useState(false);
   /** Folds live in 설정's store; this session's toggles overlay it so the
       chevron moves before the write rounds-trips. */
   const [foldToggles, setFoldToggles] = useState<Record<string, boolean>>({});
@@ -134,6 +141,28 @@ export function Sidebar({
       // The daemon kept the old project: nothing moved, pick again.
       setSwitching(null);
       setFailed(true);
+    }
+  };
+
+  const beginGuardrails = (project: ProjectSummary) => {
+    setMenuFor(null);
+    setPopoverFor(null);
+    setGuarding(project);
+    setGuardDraft(project.instructions ?? "");
+  };
+
+  /** 저장은 다음 대화부터 적용된다 — 돌고 있는 대화의 프롬프트는 그대로다. */
+  const saveGuardrails = async () => {
+    if (!guarding) return;
+    setSavingGuard(true);
+    try {
+      await api.projectUpdate(guarding.slug, { instructions: guardDraft.trim() || null });
+      setGuarding(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setFailed(true);
+    } finally {
+      setSavingGuard(false);
     }
   };
 
@@ -459,6 +488,14 @@ export function Sidebar({
                                 type="button"
                                 role="menuitem"
                                 className="selector__row"
+                                onClick={() => beginGuardrails(project)}
+                              >
+                                <span className="selector__label">지켜 줄 것</span>
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="selector__row"
                                 onClick={() => {
                                   setMenuFor(null);
                                   setRemoving(project);
@@ -778,6 +815,57 @@ export function Sidebar({
               </button>
               <button type="button" className="danger" onClick={() => void remove(removing, true)}>
                 폴더까지 지우기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {guarding && (
+        <div
+          className="modal"
+          onMouseDown={(event) => event.target === event.currentTarget && setGuarding(null)}
+        >
+          <div
+            className="modal__panel sidebar__guard"
+            role="dialog"
+            aria-modal="true"
+            aria-label="지켜 줄 것"
+            tabIndex={-1}
+          >
+            <header className="modal__head">
+              <h2 className="modal__title">{guarding.name} · 지켜 줄 것</h2>
+              <button
+                type="button"
+                className="ghost"
+                aria-label="지켜 줄 것 닫기"
+                onClick={() => setGuarding(null)}
+              >
+                <CloseIcon />
+              </button>
+            </header>
+            <p className="sidebar__removehint">
+              이 프로젝트에서 Claude가 늘 지켜 줬으면 하는 것을 적어 주세요. 새로 시작하는 대화부터
+              적용됩니다.
+            </p>
+            <textarea
+              className="sidebar__guardbox"
+              rows={7}
+              value={guardDraft}
+              aria-label="지켜 줄 것"
+              placeholder="예) 버튼은 CDS 컴포넌트만 씁니다. 색은 디자인 토큰으로만 지정해 주세요."
+              onChange={(event) => setGuardDraft(event.target.value)}
+            />
+            <div className="sidebar__removebtns">
+              <button type="button" className="ghost" onClick={() => setGuarding(null)}>
+                취소
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={savingGuard}
+                onClick={() => void saveGuardrails()}
+              >
+                {savingGuard ? "저장 중…" : "저장"}
               </button>
             </div>
           </div>

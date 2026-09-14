@@ -54,6 +54,9 @@ export function commentsToTurn(envelope: ColoDesignCommentsEnvelope, screenTitle
       // its component name is the fallback nobody should normally read.
       label: item.element.text || item.element.component,
       comment: item.comment,
+      // D87: remember which pins actually carried a crop, so the card can
+      // put each image back on its own row later.
+      ...(item.shot ? { shot: true as const } : {}),
     })),
   };
   const lines = [

@@ -24,7 +24,12 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   platform: process.platform,
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
   macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
-  openHome: () => ipcRenderer.invoke("desktop:open-home"),
+  openHome: (target?: "logs") => ipcRenderer.invoke("desktop:open-home", target),
+  /** 알림 정책(시점·소리)을 메인에 반영한다 — 창이 닫혀도 정책이 살아 있게. */
+  setNotificationPrefs: (prefs: { done: string; sound: boolean }) =>
+    ipcRenderer.invoke("desktop:notify-prefs", prefs),
+  /** 설정의 `테스트 알림 보내기`. */
+  notifyTest: () => ipcRenderer.invoke("desktop:notify-test"),
   /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 세션 아이디를 건넨다. */
   onOpenSession: subscribe<string>("colodesign:open-session"),
   preview: {
@@ -50,6 +55,9 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       ipcRenderer.invoke("preview:emulate", { width }),
     /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
     busy: (on: boolean) => ipcRenderer.invoke("preview:busy", { on }),
+    /** 전송 결과를 오버레이에 되돌려 준다 (PLAN D35): 핀은 턴이 내려앉은 뒤에만 화면을 떠난다. */
+    commentsSent: (payload: { batch: string; ok: boolean; shots: number; items: number }) =>
+      ipcRenderer.invoke("preview:comments-sent", payload),
     /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
     snapshot: () => ipcRenderer.invoke("preview:snapshot"),
     /**

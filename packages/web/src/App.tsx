@@ -102,6 +102,12 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { settings, update: updateSettings } = useSettings();
 
+  // 알림 정책은 메인 프로세스가 그리는 OS 알림에도 적용된다 — 창이 닫혀
+  // 있을 때도 정책이 살아 있도록, 설정이 바뀔 때마다 메인에 밀어 넣는다.
+  useEffect(() => {
+    void window.coloDesignDesktop?.setNotificationPrefs?.(settings.notifications);
+  }, [settings.notifications]);
+
   // A 기획서 dropped outside the composer has no handler, and the browser
   // answers a dropped file by navigating this window to the file — the whole
   // tool reads as gone. The drop is refused app-wide; the composer keeps its
@@ -176,6 +182,9 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         onboardingOpen={onboardingOpen}
         onOnboardingClose={() => setOnboardingOpen(false)}
+        onChoosePermission={(permissionMode) =>
+          updateSettings({ chat: { ...settings.chat, permissionMode } })
+        }
       />
       {settingsDialog}
     </>

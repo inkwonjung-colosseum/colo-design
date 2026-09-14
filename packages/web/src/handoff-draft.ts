@@ -40,3 +40,22 @@ function bodyFor(screens: ColoDesignScreen[]): string {
   // proposal, and the daemon appends below it.
   return lines.length > 0 ? `넘기는 화면:\n${lines.join("\n")}\n\n` : "";
 }
+
+/**
+ * What the 넘기기 dialog shows once Claude's draft lands (비개발자 넘기기).
+ *
+ * Two halves with two authors, and the order is the point: the sentences a
+ * developer reads first are Claude's, and under them the screen list stays
+ * exactly what the running app declared. Routes and states are mechanical
+ * facts — a composed line about them would be a place to be wrong — so the
+ * draft never rewrites this half, it only sits above it.
+ *
+ * Either half may be missing: no draft leaves today's proposal untouched,
+ * and a repo that declares no screen leaves the draft standing alone.
+ */
+export function mergeHandoffBody(draft: string, screens: string): string {
+  const halves = [draft.trim(), screens.trim()].filter(Boolean);
+  // The trailing newline keeps the daemon's own sections (의견 · 화면
+  // 미리보기) off the last line the planner typed.
+  return halves.length > 0 ? `${halves.join("\n\n")}\n` : "";
+}

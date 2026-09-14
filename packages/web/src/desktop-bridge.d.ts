@@ -1,5 +1,6 @@
 import type {
   ColoDesignCommentsEnvelope,
+  ColoDesignCommentsSent,
   ColoDesignScreen,
   UpdateCheckResult,
 } from "@colo-design/protocol";
@@ -28,11 +29,17 @@ declare global {
        * be able to point the updater at its own zip). */
       macSelfUpdate: () => Promise<
         | { planned: unknown; guarded: string } // 개발 실행 — 계획만
+        | { deferred: true; version: string } // 세션이 돌고 있어 모두 끝나는 순간으로 연기
         | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
         | { error: string }
       >;
-      /** Opens ~/.colo-design in the OS file manager (PLAN D2). */
-      openHome?: () => Promise<unknown>;
+      /** Opens ~/.colo-design in the OS file manager (PLAN D2); `logs` opens
+       * the daemon's daily logs instead. */
+      openHome?: (target?: "logs") => Promise<unknown>;
+      /** 알림 정책(시점·소리)을 메인에 반영 — 창이 닫혀도 정책이 살게. */
+      setNotificationPrefs?: (prefs: { done: string; sound: boolean }) => Promise<unknown>;
+      /** 설정의 `테스트 알림 보내기`. */
+      notifyTest?: () => Promise<unknown>;
       /** 알림 클릭 → 그 대화 열기(리뷰 B7): the session id to open. */
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
       preview?: {
@@ -67,6 +74,8 @@ declare global {
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
         /** 턴 실행 중 표식 (PLAN D86) — the overlay's send-toast reads it. */
         busy?: (on: boolean) => Promise<unknown>;
+        /** 전송 결과 되돌리기 (PLAN D35): the overlay holds its pins until this. */
+        commentsSent?: (payload: ColoDesignCommentsSent) => Promise<unknown>;
         /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
         snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
         onLocation?: (

@@ -15,7 +15,15 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1915,6 +1923,182 @@ test("summarize without a Claude path falls back to folder grouping — once per
     // Same diff, same answer — from the one-entry cache, without another look.
     const again = await workspace.summarize();
     assert.deepEqual(again, summary);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * 비개발자 저장·넘기기의 한 턴: RepoWorkspace 의 기계 턴이 닿는 목 — 빈
+ * 메모의 저장도, 넘기기의 초안도 같은 한 턴이라 답만 갈아 끼우면 된다.
+ */
+const writeAnswerStubClaude = (stubDir, answer) => {
+  mkdirSync(stubDir, { recursive: true });
+  const path = join(stubDir, "claude");
+  writeFileSync(
+    path,
+    [
+      "#!/usr/bin/env node",
+      'if (process.argv[2] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+      `const answer = ${JSON.stringify(answer)};`,
+      "let buf = '';",
+      "const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');",
+      "const seen = () => {",
+      "  let idx;",
+      "  while ((idx = buf.indexOf('\\n')) !== -1) {",
+      "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
+      "    let o = null; try { o = JSON.parse(line); } catch { continue; }",
+      "    if (o.type === 'control_request') {",
+      "      send({ type: 'control_response', response: { subtype: 'success',",
+      "        request_id: String(o.request_id), response: {} } });",
+      "      continue;",
+      "    }",
+      "    if (o.type === 'user') {",
+      "      setTimeout(() => send({ type: 'result', subtype: 'success', is_error: false,",
+      "        session_id: 'stub', result: answer, num_turns: 1,",
+      "        duration_ms: 5 }), 20);",
+      "    }",
+      "  }",
+      "};",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { buf += chunk; seen(); });",
+    ].join("\n"),
+  );
+  chmodSync(path, 0o755);
+  return path;
+};
+
+/** The cycle branch's own subject, read straight off the bare remote. */
+const remoteSubject = async (remote) => {
+  const branch = (
+    await promisifiedRun("git", [
+      "--git-dir",
+      remote,
+      "for-each-ref",
+      "refs/heads/colo-design/*",
+      "--format=%(refname:short)",
+    ])
+  )
+    .split(/\r?\n/)
+    .filter(Boolean)[0];
+  return (
+    await promisifiedRun("git", ["--git-dir", remote, "log", "-1", "--pretty=%s", branch])
+  ).trim();
+};
+
+test("빈 메모의 저장은 Claude가 쓴 한 문장을 저장 메모로 커밋한다", async () => {
+  const dir = workdir("hub-memo-claude-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      claudeExecutable: writeAnswerStubClaude(join(dir, "bin"), "회원 목록에 페이지 추가"),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>빈 메모의 저장</p>\n");
+    // No memo, no session — the button alone (비개발자 저장).
+    const saved = await workspace.save();
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    assert.equal(saved.message, "회원 목록에 페이지 추가");
+    assert.equal(await remoteSubject(fixture.remote), "회원 목록에 페이지 추가");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("빈 메모의 저장은 Claude가 못 내면 기본 문구로 저장한다", async () => {
+  const dir = workdir("hub-memo-default-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    // bringUp carries no claudeExecutable — the memo turn cannot land.
+    const workspace = await bringUp(dir, fixture);
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>기본 문구의 저장</p>\n");
+    const saved = await workspace.save();
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    assert.equal(saved.message, "Colo Design 화면 변경");
+    assert.equal(await remoteSubject(fixture.remote), "Colo Design 화면 변경");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("넘기기의 초안은 이 사이클의 저장 메모에서 제목과 내용을 받아 온다", async () => {
+  const dir = workdir("hub-handoff-draft-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      claudeExecutable: writeAnswerStubClaude(
+        join(dir, "bin"),
+        "회원 관리 화면 넘김\n\n목록과 빈 상태를 만들었습니다.\n빈 상태 문구를 봐 주세요.",
+      ),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    // 저장 전에는 넘길 사이클이 없다 — 초안도 없다.
+    assert.deepEqual(await workspace.handoffDraft(), {
+      title: "",
+      body: "",
+      source: "fallback",
+    });
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>회원 목록</p>\n");
+    const saved = await workspace.save({ message: "회원 목록 화면 추가" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    const draft = await workspace.handoffDraft();
+    assert.equal(draft.source, "claude");
+    // 첫 줄은 제목, 나머지는 개발자가 읽을 내용 — 두 쪽이 섞이지 않는다.
+    assert.equal(draft.title, "회원 관리 화면 넘김");
+    assert.equal(draft.body, "목록과 빈 상태를 만들었습니다.\n빈 상태 문구를 봐 주세요.");
+
+    // 사이클이 그대로면 같은 답 — 다시 열어도 턴을 또 쓰지 않는다.
+    assert.deepEqual(await workspace.handoffDraft(), draft);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("넘기기의 초안은 Claude가 못 내면 비어 있어 브라우저의 제안이 남는다", async () => {
+  const dir = workdir("hub-handoff-draft-none-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    // bringUp carries no claudeExecutable — the draft turn cannot land.
+    const workspace = await bringUp(dir, fixture);
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>초안 없는 넘기기</p>\n");
+    const saved = await workspace.save({ message: "초안 없는 저장" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    assert.deepEqual(await workspace.handoffDraft(), {
+      title: "",
+      body: "",
+      source: "fallback",
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

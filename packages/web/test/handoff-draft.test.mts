@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoffDraft } from "../src/handoff-draft.ts";
+import { handoffDraft, mergeHandoffBody } from "../src/handoff-draft.ts";
 
 const screen = (over: Partial<Parameters<typeof handoffDraft>[1][number]> = {}) => ({
   route: "/inventory-audit/InventoryAuditList",
@@ -49,4 +49,24 @@ test("the draft does not say 화면 twice", () => {
   assert.equal(handoffDraft("재고 실사 화면", []).title, "재고 실사 화면");
   assert.equal(handoffDraft("결제", []).title, "결제 화면");
   assert.equal(handoffDraft("", []).title, "");
+});
+
+test("Claude가 채운 문장은 위, 화면 목록은 아래 — 기계적인 줄은 다시 쓰이지 않는다", () => {
+  const screens = handoffDraft("재고 실사 화면", [screen()]).body;
+  const merged = mergeHandoffBody("목록과 빈 상태를 만들었습니다.", screens);
+
+  // The developer reads the sentences first and the declared routes after —
+  // and the route line is the one the running app produced, verbatim.
+  assert.match(merged, /^목록과 빈 상태를 만들었습니다\.\n\n넘기는 화면:\n- 재고 실사 목록/);
+  // No stray blank run between the halves, and one trailing newline so the
+  // daemon's own sections start on their own line.
+  assert.doesNotMatch(merged, /\n{3}/);
+  assert.match(merged, /상태 default · empty\n$/);
+});
+
+test("한쪽이 없으면 남은 쪽만 — 초안이 없으면 오늘의 제안 그대로다", () => {
+  const screens = handoffDraft("재고 실사 화면", [screen()]).body;
+  assert.equal(mergeHandoffBody("", screens), `${screens.trim()}\n`);
+  assert.equal(mergeHandoffBody("만들었습니다.", ""), "만들었습니다.\n");
+  assert.equal(mergeHandoffBody("", ""), "");
 });

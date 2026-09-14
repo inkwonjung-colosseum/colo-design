@@ -49,6 +49,12 @@ export interface Project {
    * approval read as given, since its commands have already run here.
    */
   commandsApproved?: boolean;
+  /**
+   * 이 프로젝트에서 Claude 가 지켜 줄 것(설정 문서 P1#8) — 브랜치·커밋·PR
+   * 규칙을 기획자의 말로 적는 한 줄 상자. 세션의 시스템 프롬프트 끝에
+   * 붙는다. 비면 붙지 않는다.
+   */
+  instructions?: string;
 }
 
 /** Every path a project owns. */
@@ -150,6 +156,9 @@ function parseProject(raw: unknown): Project | null {
     name: cleanString(value.name) ?? slug,
     ...(typeof value.commandsApproved === "boolean"
       ? { commandsApproved: value.commandsApproved }
+      : {}),
+    ...(typeof value.instructions === "string" && value.instructions.trim()
+      ? { instructions: value.instructions.trim() }
       : {}),
     repo: {
       url: cleanString(repo.url),
@@ -313,6 +322,7 @@ export class ProjectRegistry {
       repoUrl?: string | null;
       baseBranch?: string;
       commandsApproved?: boolean;
+      instructions?: string | null;
     },
   ): Project {
     const project = this.get(slug);
@@ -324,6 +334,13 @@ export class ProjectRegistry {
     }
     if (changes.commandsApproved !== undefined) {
       project.commandsApproved = changes.commandsApproved;
+    }
+    // 지침은 지우개가 있어야 한다: null 은 "없음"이고, 빈 문자열도 없음으로
+    // 간다 — 기획자의 상자를 비우고 싶을 때 지워지지 않는 값이 되면 안 된다.
+    if (changes.instructions !== undefined) {
+      const instructions = changes.instructions?.trim();
+      if (instructions) project.instructions = instructions;
+      else delete project.instructions;
     }
     if (changes.repoUrl !== undefined) project.repo.url = changes.repoUrl;
     if (changes.baseBranch !== undefined) {

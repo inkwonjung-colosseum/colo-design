@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -34,6 +34,12 @@ import {
 } from "./mac-self-update.js";
 import { buildMenuTemplate } from "./menu.js";
 import { noticeCopy } from "./notices.js";
+import {
+  DEFAULT_NOTIFICATION_PREFS,
+  type NotificationPrefs,
+  normalizeNotificationPrefs,
+  shouldNotify,
+} from "./notify-policy.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 
@@ -83,6 +89,41 @@ let notifiedUpdateVersion: string | null = null;
 /** 교체 스크립트가 결과를 남기는 파일 — 다음 실행이 읽고 지운다. */
 function updateResultPath(): string {
   return join(app.getPath("userData"), "update-result.json");
+}
+
+/** 데몬이 남기는 하루 로그가 사는 폴더 — 문제 해결의 `로그 폴더 열기`가 연다. */
+const LOGS_DIR = join(COLO_DESIGN_DIR, "logs");
+
+// ---------------------------------------------------------------------------
+// 알림 설정 (설정 문서 P0#3) — 정책 자체는 notify-policy 가 들고, 여기서는
+// 그 값을 읽고 쓰는 자리만 맡는다. 메인이 그리는 알림은 창이 없어도 나가야
+// 하므로 userData 에 영속하고, 부팅 때 읽어 IPC 로 갱신받는다.
+// ---------------------------------------------------------------------------
+
+function desktopSettingsPath(): string {
+  return join(app.getPath("userData"), "desktop-settings.json");
+}
+
+/** 창이 없는 순간에도 알림 정책은 살아 있어야 하므로 부팅 때 한 번 읽는다. */
+function loadNotificationPrefs(): NotificationPrefs {
+  try {
+    const raw = readFileSync(desktopSettingsPath(), "utf8");
+    return normalizeNotificationPrefs(JSON.parse(raw).notifications);
+  } catch {
+    return { ...DEFAULT_NOTIFICATION_PREFS };
+  }
+}
+
+let notificationPrefs = DEFAULT_NOTIFICATION_PREFS;
+
+function saveNotificationPrefs(prefs: NotificationPrefs): void {
+  try {
+    writeFileSync(desktopSettingsPath(), JSON.stringify({ notifications: prefs }, null, 2), {
+      mode: 0o600,
+    });
+  } catch {
+    // 저장이 안 되면 이번 실행에만 유효하다 — 알림 자체는 계속 나간다.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +345,7 @@ if (process.env.COLO_DESIGN_DESKTOP_SMOKE) {
 }
 
 async function bootApp(): Promise<void> {
+  notificationPrefs = loadNotificationPrefs();
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
     safeStorage as never,
@@ -329,7 +371,11 @@ async function bootApp(): Promise<void> {
     credentialStore: credentials,
     // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
     previewDriverFactory: createPreviewDriverFactory(),
-    onNotice: notifyPlanner,
+    onNotice: (notice) => {
+      notifyPlanner(notice);
+      // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
+      void maybeRunDeferredSelfUpdate();
+    },
   });
   await server.start();
   daemonServer = server;
@@ -375,6 +421,14 @@ async function bootApp(): Promise<void> {
   await mainWindow.loadURL(url);
   mainWindow.on("closed", () => {
     mainWindow = null;
+    // The pane outlives the window — on mac ⌘W destroys it and the dock
+    // icon builds another (createWindow's closure follows `mainWindow`).
+    // Its page belongs to a contentView that is gone and its cover state
+    // to a renderer that is gone: park the page so the next mount attaches
+    // one to the NEW window, and drop the cover so the fresh renderer's
+    // first assertion — not a dead one's — decides what may be seen.
+    plannerPreview.unmount();
+    plannerPreview.cover(false);
   });
   registerCloseGuard(mainWindow);
 
@@ -503,10 +557,14 @@ async function reopen(url: string): Promise<void> {
  */
 function notifyPlanner(notice: DaemonNotice): void {
   if (mainWindow?.isFocused()) return;
+  // 완료 알림만 시점 정책을 탄다 — 확인 요청·중단·게이트 실패는 언제나 즉시.
+  if (!shouldNotify(notice, notificationPrefs)) return;
   unreadNotices += 1;
   paintBadge();
   const { title, body } = noticeCopy(notice);
-  showAppNotification(title, body, () => focusMainWindow(notice.sessionId));
+  showAppNotification(title, body, () => focusMainWindow(notice.sessionId), {
+    silent: !notificationPrefs.sound,
+  });
 }
 
 /** 알림 클릭의 공통 행동 — 창을 앞으로, 그 대화로. 창이 없으면 다시 연다. */
@@ -523,38 +581,58 @@ function focusMainWindow(sessionId?: string): void {
 }
 
 /**
- * 리뷰 B3: 창 닫기가 곧 종료인 플랫폼에서는 돌고 있는 턴이 창과 함께 조용히
- * 죽었다 — mac 은 살고 windows 는 죽는 규칙은 기획자가 배울 수 없는 규칙이다.
- * 일이 돌고 있는 동안에는 한 번 묻고, 확인한 닫기만 지난다. mac 의 닫기는
- * 창만 닫으므로 가드가 애초에 없다.
+ * 리뷰 B3 + ⌘Q 의 구멍: 돌아가는 턴이 앱과 함께 조용히 죽지 않게 한 번
+ * 묻는다. 비-mac 의 창 닫기(닫기=종료인 규칙)와 모든 플랫폼의 앱 종료(⌘Q ·
+ * 메뉴)가 같은 질문을 공유한다 — mac 은 닫기가 창만 닫으므로 종료 경로에만
+ * 묻는다. 한 번 확인한 종료는 이번 실행에서 다시 묻지 않는다.
  */
+let stopUnderTurnAllowed = false;
+let stopDialogOpen = false;
+
+function guardStopUnderTurn(event: { preventDefault(): void }, proceed: () => void): void {
+  if (stopUnderTurnAllowed || stopDialogOpen || !daemonServer?.anySessionBusy()) return;
+  event.preventDefault();
+  stopDialogOpen = true;
+  void dialog
+    .showMessageBox({
+      type: "question",
+      title: "작업이 진행 중입니다",
+      message: "Claude가 작업 중입니다. 지금 끝내면 이 작업은 멈춥니다.",
+      buttons: ["그만두고 끝내기", "취소"],
+      defaultId: 1,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response === 0) {
+        stopUnderTurnAllowed = true;
+        proceed();
+      }
+    })
+    .finally(() => {
+      stopDialogOpen = false;
+    });
+}
+
 function registerCloseGuard(window: BrowserWindow): void {
-  let allowed = false;
   window.on("close", (event) => {
-    if (allowed || process.platform === "darwin") return;
-    if (!daemonServer?.anySessionBusy()) return;
-    event.preventDefault();
-    void dialog
-      .showMessageBox(window, {
-        type: "question",
-        title: "작업이 진행 중입니다",
-        message: "Claude가 작업 중입니다. 창을 닫으면 이 작업은 멈춥니다.",
-        buttons: ["그만둡니다", "취소"],
-        defaultId: 1,
-        cancelId: 1,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          allowed = true;
-          window.close();
-        }
-      });
+    if (process.platform === "darwin") return;
+    guardStopUnderTurn(event, () => window.close());
   });
 }
 
+/** ⌘Q · 메뉴의 종료 — mac 의 창 닫기가 여기 오지 않으므로 플랫폼 무관 단다. */
+app.on("before-quit", (event) => {
+  guardStopUnderTurn(event, () => app.quit());
+});
+
 /** OS 알림 — 클릭 행동을 골라 단다(기획자 순간과 업데이트 알림이 함께 쓴다). */
-function showAppNotification(title: string, body: string, onClick: () => void): void {
-  const notification = new Notification({ title, body });
+function showAppNotification(
+  title: string,
+  body: string,
+  onClick: () => void,
+  options?: { silent?: boolean },
+): void {
+  const notification = new Notification({ title, body, silent: options?.silent });
   notification.on("click", onClick);
   notification.show();
 }
@@ -625,6 +703,85 @@ function paintBadge(): void {
   app.dock?.setBadge(unreadNotices > 0 ? String(unreadNotices) : "");
 }
 
+/** 연기된 자가 교체 — 실행 중 세션이 있는 동안의 설치는 그들이 내려앉는 순간으로 미룬다(P0#6). */
+let pendingSelfUpdate: { url: string; sha256: string; version: string } | null = null;
+
+/** 실제 교체: 내려받기·검증·스크립트·종료. 세션이 조용한 때에만 불린다. */
+async function runSelfUpdate(feed: {
+  url: string;
+  sha256: string;
+}): Promise<{ started: boolean; downloadPath: string; steps: string[] } | { error: string }> {
+  // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
+  // 어디에서 실행했든 그 자리를 바꾼다.
+  const bundle = dirname(dirname(dirname(process.execPath)));
+  const plan = planSelfUpdate({
+    url: feed.url,
+    sha256: feed.sha256,
+    downloadsDir: app.getPath("downloads"),
+    version: app.getVersion(),
+    targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
+  });
+  try {
+    // 만석은 sha256 이 잡지 못한다 — 내려받기 전에 두 볼륨(내려받기·교체
+    // 대상)의 여유를 먼저 본다.
+    await requireDiskSpace({
+      path: app.getPath("downloads"),
+      minBytes: UPDATE_MIN_FREE_BYTES,
+      statfs: (target) => statfs(target),
+    });
+    await requireDiskSpace({
+      path: dirname(plan.targetApp),
+      minBytes: UPDATE_MIN_FREE_BYTES,
+      statfs: (target) => statfs(target),
+    });
+    await downloadFile(feed.url, plan.downloadPath);
+    await verifyDownload(plan.downloadPath, plan.expectedSha256);
+    const logPath = join(app.getPath("temp"), "colo-design-update.log");
+    const scriptPath = join(app.getPath("temp"), `colo-design-update-${app.getVersion()}.sh`);
+    await writeFile(
+      scriptPath,
+      buildSwapScript({
+        plan,
+        pid: process.pid,
+        logPath,
+        resultPath: updateResultPath(),
+        version: app.getVersion(),
+      }),
+      {
+        mode: 0o755,
+      },
+    );
+    // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
+    spawn("/bin/bash", [scriptPath], {
+      detached: true,
+      stdio: "ignore",
+    }).unref();
+    // 이 종료는 사용자가 확인한 설치의 마지막 걸음이다 — 가드가 다시 묻지 않는다.
+    stopUnderTurnAllowed = true;
+    setTimeout(() => app.quit(), 500);
+    return {
+      started: true,
+      downloadPath: plan.downloadPath,
+      steps: plan.steps,
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** 세션 상태가 움직일 때마다: 연기된 설치가 있고 모두 내려앉았으면 지금 한다. */
+async function maybeRunDeferredSelfUpdate(): Promise<void> {
+  if (!pendingSelfUpdate || daemonServer?.anySessionBusy()) return;
+  const feed = pendingSelfUpdate;
+  pendingSelfUpdate = null;
+  showAppNotification(
+    "작업이 끝났습니다",
+    `이제 Colo Design ${feed.version} 업데이트를 설치합니다 — 잠시 앱이 닫혔다가 다시 열립니다.`,
+    focusMainWindow,
+  );
+  await runSelfUpdate(feed);
+}
+
 /**
  * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2[폴더 열기]). 숨긴
  * `~/.colo-design` 을 기획자가 찾아 헤매지 않게 앱이 열어 준다. 자격
@@ -680,65 +837,42 @@ function registerDesktopBridge(): void {
           "앱이 디스크 이미지(DMG)에서 실행 중입니다 — 응용 프로그램 폴더로 옮긴 뒤 다시 시도해 주세요.",
       };
     }
-    // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
-    // 어디에서 실행했든 그 자리를 바꾼다.
-    const bundle = dirname(dirname(dirname(process.execPath)));
-    const plan = planSelfUpdate({
-      url: feed.url,
-      sha256: feed.sha256,
-      downloadsDir: app.getPath("downloads"),
-      version: app.getVersion(),
-      targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
-    });
-    try {
-      // 만석은 sha256 이 잡지 못한다 — 내려받기 전에 두 볼륨(내려받기·교체
-      // 대상)의 여유를 먼저 본다.
-      await requireDiskSpace({
-        path: app.getPath("downloads"),
-        minBytes: UPDATE_MIN_FREE_BYTES,
-        statfs: (target) => statfs(target),
-      });
-      await requireDiskSpace({
-        path: dirname(plan.targetApp),
-        minBytes: UPDATE_MIN_FREE_BYTES,
-        statfs: (target) => statfs(target),
-      });
-      await downloadFile(feed.url, plan.downloadPath);
-      await verifyDownload(plan.downloadPath, plan.expectedSha256);
-      const logPath = join(app.getPath("temp"), "colo-design-update.log");
-      const scriptPath = join(app.getPath("temp"), `colo-design-update-${app.getVersion()}.sh`);
-      await writeFile(
-        scriptPath,
-        buildSwapScript({
-          plan,
-          pid: process.pid,
-          logPath,
-          resultPath: updateResultPath(),
-          version: app.getVersion(),
-        }),
-        {
-          mode: 0o755,
-        },
-      );
-      // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
-      spawn("/bin/bash", [scriptPath], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-      setTimeout(() => app.quit(), 500);
-      return {
-        started: true,
-        downloadPath: plan.downloadPath,
-        steps: plan.steps,
-      };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
+    // 실행 중 세션이 있으면 설치를 연기한다(P0#6) — 돌아가는 턴을 업데이트가
+    // 끊지 않는다. 모든 세션이 내려앉는 순간 알림과 함께 설치된다.
+    if (daemonServer?.anySessionBusy()) {
+      pendingSelfUpdate = { url: feed.url, sha256: feed.sha256, version: feed.version };
+      return { deferred: true, version: feed.version };
     }
+    return await runSelfUpdate({ url: feed.url, sha256: feed.sha256 });
   });
 
-  ipcMain.handle("desktop:open-home", async () => {
+  ipcMain.handle("desktop:open-home", async (_event, target?: "logs") => {
+    // 로그 폴더는 첫 줄이 나가기 전엔 없을 수 있다 — 열어 주기 전에 만든다.
+    if (target === "logs") {
+      mkdirSync(LOGS_DIR, { recursive: true });
+      await shell.openPath(LOGS_DIR);
+      return { opened: LOGS_DIR };
+    }
     await shell.openPath(COLO_DESIGN_DIR);
     return { opened: COLO_DESIGN_DIR };
+  });
+
+  // 알림 설정(시점·소리) — 렌더러의 설정이 메인의 알림을 움직인다. 창이
+  // 닫혀 있어도 정책이 살아 있도록 userData 에 영속한다.
+  ipcMain.handle("desktop:notify-prefs", (_event, prefs: unknown) => {
+    notificationPrefs = normalizeNotificationPrefs(prefs);
+    saveNotificationPrefs(notificationPrefs);
+    return { ok: true };
+  });
+
+  ipcMain.handle("desktop:notify-test", () => {
+    showAppNotification(
+      "알림 시험",
+      "실제 알림은 이렇게 도착합니다 — 소리 설정도 같이 적용됩니다.",
+      focusMainWindow,
+      { silent: !notificationPrefs.sound },
+    );
+    return { ok: true };
   });
 }
 

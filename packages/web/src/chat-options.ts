@@ -31,15 +31,14 @@ export const MODE_LABEL: Record<PermissionMode, string> = {
 
 /**
  * The 확인 방식 choices both menus offer — 설정 and the composer popover
- * alike. `dontAsk` stays reachable through the API but off the menus:
- * Bypass covers it.
+ * alike. `dontAsk` and `acceptEdits` stay reachable through the API but off
+ * the menus. acceptEdits left the menus because the CLI auto-approves "safe
+ * Bash" under it without ever consulting the daemon's canUse gate — the one
+ * place this tool refuses git history writes and tool-owned files. What the
+ * row promised ("edits are quiet") Default already delivers in-process, so
+ * the row sold nothing and unlocked the fence.
  */
-export const SETTINGS_MODES: PermissionMode[] = [
-  "default",
-  "plan",
-  "acceptEdits",
-  "bypassPermissions",
-];
+export const SETTINGS_MODES: PermissionMode[] = ["default", "plan", "bypassPermissions"];
 
 /**
  * What the conversation starts on when nobody has chosen (PLAN D10). Bypass

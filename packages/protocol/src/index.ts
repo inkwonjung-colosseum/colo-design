@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -134,6 +134,24 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     itemId: z.string().min(1),
   }),
+  /**
+   * The lost room (queue.lost) — `takeDropped` hands one lost send back
+   * whole, bytes included when they survived the persist cap; `dismiss`
+   * lets it go. Both work whether or not the session is live: the store is
+   * the daemon's, keyed by session id.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.queue.takeDropped"),
+    sessionId: z.string().min(1),
+    itemId: z.string().min(1),
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("session.queue.dismissDropped"),
+    sessionId: z.string().min(1),
+    itemId: z.string().min(1),
+  }),
   z.object({
     ...withId,
     type: z.literal("session.close"),
@@ -200,6 +218,27 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.contextUsage"),
     sessionId: z.string().min(1),
   }),
+  /**
+   * 이 작업만 중지 (PLAN D101): kill ONE background task — a runaway command
+   * or a subagent — without interrupting the turn that spawned it. The id is
+   * the one `task.start` carried.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.stopTask"),
+    sessionId: z.string().min(1),
+    taskId: z.string().min(1),
+  }),
+  /**
+   * 뒤로 보내기 (PLAN D101): move the task a tool call is blocking on into the
+   * background so the turn carries on. The reply says whether anything moved.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.backgroundTask"),
+    sessionId: z.string().min(1),
+    toolUseId: z.string().min(1),
+  }),
   z.object({
     ...withId,
     type: z.literal("repo.files"),
@@ -225,6 +264,18 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
     /** Freeform reply instead of answering the structured questions. */
     response: z.string().optional(),
+    /**
+     * 선택 옆의 메모 (PLAN D96): what the planner wrote about their pick,
+     * keyed by the question's own text, together with the preview they were
+     * looking at when they picked. Rides the tool's own `annotations` field
+     * back to Claude — the words are the point, the preview is the evidence.
+     */
+    annotations: z
+      .record(
+        z.string(),
+        z.object({ preview: z.string().optional(), notes: z.string().optional() }),
+      )
+      .optional(),
   }),
   /**
    * The registry: every project plus which one is active. Cheap and
@@ -276,6 +327,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     baseBranch: z.string().min(1).max(128).optional(),
     /** Approves this repo's commands post-hoc — the error card's button. */
     approveCommands: z.boolean().optional(),
+    /** 프로젝트별 지침(설정 문서 P1#8) — 세션의 시스템 프롬프트에 붙는다. */
+    instructions: z.string().max(10_000).nullable().optional(),
   }),
   /**
    * Forgets a project. Its folder survives unless `deleteFiles` — unpushed
@@ -381,6 +434,15 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    * per diff hash on the daemon, so reopening the review is free.
    */
   z.object({ ...withId, type: z.literal("repo.summarize") }),
+  /**
+   * 개발자에게 넘기기의 초안 (비개발자 넘기기): the daemon asks Claude one
+   * turn — no tools, an 8-second leash — for the title and the paragraph a
+   * developer reads first, from the cycle's own save memos and changed
+   * files. Empty strings mean "use the browser's proposal", which is what
+   * the dialog already opens with. Cached per cycle tip, so reopening the
+   * dialog is free.
+   */
+  z.object({ ...withId, type: z.literal("repo.handoffDraft") }),
   /**
    * 저장 기록 (PLAN D53): the cycle's commits, `git log <base>..HEAD`. This
    * is what the `저장 기록` drawer lists — messages and times, no git words.
@@ -583,9 +645,25 @@ export interface QueuedSend {
 }
 
 /**
- * `session.queue.remove` — the payload as it was sent, handed back so the
- * composer can restore the field exactly. `null` when the send had already
- * left the room (the turn ended in the meantime).
+ * One send the wait room lost without delivering (the query died, the daemon
+ * was restarted under it). The words survive on the daemon's disk; the
+ * attachments survive too unless they exceeded the persist cap, where
+ * `truncated` says the composer must ask for them again.
+ */
+export interface LostSend {
+  id: string;
+  text: string;
+  images: number;
+  files: string[];
+  truncated?: boolean;
+  /** Epoch ms — when the room lost it. The 30-day prune reads this. */
+  lostAt: number;
+}
+
+/**
+ * `session.queue.remove` / `session.queue.takeDropped` — the payload as it
+ * was sent, handed back so the composer can restore the field exactly.
+ * `null` when the send had already gone (delivered, or no longer stored).
  */
 export type QueuedSendPayload = {
   text: string;
@@ -676,14 +754,104 @@ export type ChatEvent =
    */
   | { kind: "queued"; items: QueuedSend[] }
   /**
-   * The wait room emptied without delivering: the query died (crash, forced
-   * abort). The words never reached the transcript, so this carries them
-   * back for the planner to restore — text and attachment counts only; the
-   * bytes are gone with the room.
+   * The lost room, as STATE (PLAN D86 의 확장): sends the daemon could not
+   * deliver — the query died, or a restart orphaned the wait room. They never
+   * reached the transcript, so the daemon keeps them on disk until the
+   * planner restores (`session.queue.takeDropped`) or dismisses each; every
+   * change announces the whole list, and `session.history` replays it, so a
+   * new window sees the recovery panel too. `foldEvent` must NOT build a
+   * chat block from it.
    */
-  | { kind: "queue.dropped"; items: QueuedSend[] }
+  | { kind: "queue.lost"; items: LostSend[] }
   | { kind: "notice"; level: "info" | "warn" | "error"; text: string }
   | { kind: "compact"; trigger: string }
+  /**
+   * 도구가 도는 동안 (PLAN D97). 기록이 아니라 그 도구 행의 상태다 —
+   * `foldEvent` 는 새 블록을 만들지 않고 이름한 행에 붙인다. 재생된 기록에는
+   * 없다.
+   */
+  | {
+      kind: "tool.progress";
+      toolUseId: string;
+      elapsedSeconds: number;
+      agentId: string | null;
+      /** A subagent whose API call failed and is being retried. */
+      retry?: { attempt: number; maxRetries: number; delayMs: number };
+    }
+  /**
+   * 보조 작업의 생애 (PLAN D97): 시작 · 진행 · 상태 변화 · 끝. `toolUseId` 는
+   * 그 작업을 띄운 도구 호출이다. 붙을 행이 없는 작업은 조용히 버려진다.
+   * ambient · skip_transcript 작업은 데몬이 여기까지 올리지 않는다 — 활동
+   * 표시에 섞이면 안 되는 집안일이다.
+   */
+  | {
+      kind: "task.start";
+      taskId: string;
+      toolUseId: string | null;
+      description: string;
+      subagentType: string | null;
+      backgrounded: boolean;
+    }
+  | {
+      kind: "task.progress";
+      taskId: string;
+      toolUseId: string | null;
+      description: string;
+      /** 모델이 쓴 한 줄 근황(`agentProgressSummaries`), 없으면 null. */
+      summary: string | null;
+      lastTool: string | null;
+      tokens: number;
+      toolUses: number;
+      durationMs: number;
+    }
+  | {
+      kind: "task.update";
+      taskId: string;
+      status: string | null;
+      backgrounded: boolean | null;
+      error: string | null;
+    }
+  | {
+      kind: "task.end";
+      taskId: string;
+      toolUseId: string | null;
+      status: "completed" | "failed" | "stopped";
+      summary: string;
+      tokens: number | null;
+      toolUses: number | null;
+      durationMs: number | null;
+    }
+  /**
+   * 지금 살아 있는 백그라운드 작업 전부 (PLAN D101). REPLACE 시맨틱: 받은
+   * 목록으로 통째로 갈아 끼운다. 기록이 아니라 세션의 현재 상태다.
+   */
+  | { kind: "tasks"; tasks: Array<{ taskId: string; type: string; description: string }> }
+  /**
+   * 다음에 물어볼 만한 말 (PLAN D99): 턴이 끝난 뒤 CLI 가 예측한 한 문장.
+   * 기록이 아니다 — 입력창 위 칩으로 한 번 떴다가 보내면 사라진다.
+   */
+  | { kind: "suggestion"; text: string }
+  /**
+   * 답이 나오기 전의 상태 (PLAN D100): 대화를 정리하는 중(`compacting`),
+   * 모델의 답을 기다리는 중(`requesting`), 또는 아무것도 아님(null).
+   */
+  | { kind: "status"; status: "compacting" | "requesting" | null }
+  /**
+   * 지금 생각에 쓴 토큰의 어림 (PLAN D100). 생각 과정을 끈 기본값에서 유일하게
+   * "돌고 있음"을 말해 주는 숫자다 — 청구되는 수가 아니라 눈금이다.
+   */
+  | { kind: "thinking.tokens"; tokens: number }
+  /**
+   * CLI 가 스스로 내려간다고 알린 순간 (`worker_shutting_down`). 기록도 상태도
+   * 아니고 데몬만 읽는 귀띔이다: 이 뒤의 스트림 끝은 고장이 아니라 종료이므로
+   * 크래시 카드가 다른 말을 한다.
+   */
+  | { kind: "shutdown"; reason: string }
+  /**
+   * 구독 한도의 상태가 바뀌었다 (`rate_limit_event`). 데몬이 요금 칩의 다음
+   * 읽기를 앞당기는 방아쇠 — 숫자 자체는 usage 가 들고 온다.
+   */
+  | { kind: "ratelimit"; status: string; resetsAt: number | null }
   /**
    * Claude opened a screen in the hidden preview (`screen_open`, PLAN D91).
    * Not a transcript event — `foldEvent` must NOT build a chat block from
@@ -736,6 +904,11 @@ export interface ProjectSummary {
    * yet omits it, and an absent key means "unknown", not "none".
    */
   threads?: ThreadSummary[];
+  /**
+   * 이 프로젝트에서 지켜 줄 것(설정 문서 P1#8) — 프로젝트 설정 상자의 현재
+   * 내용. 비어 있으면 키가 없다.
+   */
+  instructions?: string;
 }
 
 export interface ProjectList {
@@ -750,6 +923,12 @@ export interface SessionSummary {
   /** True when this daemon currently holds a live query() for the session. */
   live: boolean;
   state: SessionState;
+  /**
+   * 도는 턴이 시작한 시각 (epoch ms), 없으면 null. 재접속한 창이 진행 시계를
+   * 0 부터 다시 세지 않게 하는 자리 — 목록이 데몬의 진실이므로 시작 시각도
+   * 여기서 온다.
+   */
+  turnStartedAt: number | null;
 }
 
 /** `session.locate` — which project holds a session (리뷰 B7). The OS
@@ -1069,15 +1248,22 @@ export interface ColoDesignComment {
 /**
  * What the tool's preview overlay (D67) hands the main process when the
  * planner sends the batch: one envelope for all pins, then the overlay
- * clears them. The main process relays it verbatim to the web
- * (`colo-preview:comments`); nothing validates it in between because both
- * ends are the tool.
+ * holds them until the send is answered. The main process relays it verbatim
+ * to the web (`colo-preview:comments`); nothing validates it in between
+ * because both ends are the tool.
  *
- *     { type: "colo-design.comments", screen, state,
+ *     { type: "colo-design.comments", batch, screen, state,
  *       items: [{ element, comment }, …] }
  */
 export interface ColoDesignCommentsEnvelope {
   type: "colo-design.comments";
+  /**
+   * The overlay's own id for this send, echoed back in
+   * `ColoDesignCommentsSent`. The pins leave the screen only once the turn
+   * is known to have landed — a send the daemon refused (PLAN D35) must be
+   * retryable, and pins the planner can no longer see are not.
+   */
+  batch: string;
   screen: string;
   state: string;
   items: Array<{
@@ -1091,6 +1277,23 @@ export interface ColoDesignCommentsEnvelope {
      */
     shot?: { mediaType: string; data: string };
   }>;
+}
+
+/**
+ * The answer to one `ColoDesignCommentsEnvelope` — tool-internal, the web's
+ * word back to the overlay through the main process (`colo-overlay:sent`).
+ * It is what turns a hopeful toast into a true one: the pins clear on `ok`
+ * and come back on a refusal, and `shots` lets the overlay say when the
+ * crops did not cover every pin.
+ */
+export interface ColoDesignCommentsSent {
+  batch: string;
+  /** Whether the turn reached the thread. */
+  ok: boolean;
+  /** How many pins travelled with a crop. */
+  shots: number;
+  /** How many pins were in the envelope. */
+  items: number;
 }
 
 /**
@@ -1323,6 +1526,13 @@ export interface DiffStatus {
   detail?: string | null;
   /** The saved commit sha, once `stage === "published"`. */
   commit?: string | null;
+  /**
+   * The commit message a 저장 actually used — the planner's memo verbatim,
+   * or the one Claude wrote when the memo was empty (비개발자 저장: the
+   * button alone must be enough, but what was written in their name is
+   * still theirs to read). Present once `stage === "published"`.
+   */
+  message?: string | null;
   /** The pull request, once `stage === "handed-off"`. */
   handoff?: HandoffStatus | null;
 }
@@ -1332,6 +1542,20 @@ export interface RepoSummary {
   /** Up to three Korean sentences, no file names. Empty when nothing changed. */
   lines: string[];
   /** Who wrote them: the one Claude turn, or the path-grouping fallback. */
+  source: "claude" | "fallback";
+}
+
+/** `repo.handoffDraft` — what the 넘기기 dialog opens filled with. */
+export interface RepoHandoffDraft {
+  /** One line for the pull request title. Empty when Claude could not answer. */
+  title: string;
+  /**
+   * What was built and what to look at, in the planner's words — the prose
+   * half of the body. The screen list under it stays the browser's, because
+   * routes and states are mechanical facts, not a sentence to compose.
+   */
+  body: string;
+  /** Who wrote it: the one Claude turn, or nothing at all. */
   source: "claude" | "fallback";
 }
 
@@ -1406,6 +1630,13 @@ export type ServerMessage =
       sessionId: string;
       state: SessionState;
       detail?: string;
+      /**
+       * 이 턴이 시작한 시각 (epoch ms) — 도는 턴이 있을 때만 붙는다. 진행
+       * 시계가 읽는 하나의 진실이다: 시작을 창이 아니라 데몬이 기억하므로,
+       * 새로고침해도 두 번째 창에서도 같은 초를 센다. 확인 카드를 기다리는
+       * 동안에도 살아 있다 — 사람이 기다린 시간도 그 요청의 시간이다.
+       */
+      startedAt?: number;
     }
   | {
       type: "permission.request";

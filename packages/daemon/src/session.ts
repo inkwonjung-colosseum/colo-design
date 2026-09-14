@@ -14,6 +14,7 @@ import type {
   ChatEvent,
   ContextUsage,
   EffortLevel,
+  LostSend,
   PermissionMode,
   PermissionSuggestion,
   PlanUsage,
@@ -26,6 +27,7 @@ import type {
 import { PLAN_TOOL, readTurn } from "@colo-design/protocol";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import type { PreviewTools } from "./preview-tools.js";
+import type { QueueDisk } from "./queue-store.js";
 import { type SpecFile, saveSpecFiles } from "./repo.js";
 import { MessageTranslator } from "./translate.js";
 
@@ -113,6 +115,11 @@ interface HeldSend {
 /** The wire shape of a waiting send: words and counts, never the bytes. */
 function summarize({ id, text, images, files }: HeldSend): QueuedSend {
   return { id, text, images: images.length, files: files.map((file) => file.name) };
+}
+
+/** The same wire shape, stamped — the no-store fallback for the lost room. */
+function toLost(send: HeldSend): LostSend {
+  return { ...summarize(send), lostAt: Date.now() };
 }
 
 type PermissionOutcome = PermissionResult;
@@ -221,6 +228,19 @@ export interface SessionOptions {
    * driver.
    */
   previewTools?: PreviewTools | null;
+  /**
+   * 프로젝트별 지침(설정 문서 P1#8) — Claude Code 기본 시스템 프롬프트
+   * 끝에 붙는 몇 줄. 기획자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
+   */
+  appendSystemPrompt?: string;
+  /**
+   * 대기 줄의 디스크 절반 (PLAN D86 의 확장). Every held mutation writes
+   * through, so even a SIGKILL leaves the room recoverable; a crash converts
+   * the room into the lost room on the handle this returns. The session asks
+   * with its own id once it knows it. Omitted by tests that drive the room
+   * purely in memory.
+   */
+  queueDiskFor?: (sessionId: string) => QueueDisk;
 }
 
 /**
@@ -299,6 +319,11 @@ export class Session {
    * "다시 보내면 이어집니다" 약속을 데몬이 이행하는 길이다.
    */
   private crashed = false;
+  /**
+   * CLI 가 스스로 내려간다고 예고한 이유 (`worker_shutting_down`), 없으면 null.
+   * 예고 뒤의 스트림 끝은 고장이 아니다 — 크래시 카드의 말이 달라진다.
+   */
+  private shutdownReason: string | null = null;
   /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
   private readonly abort = new AbortController();
   /**
@@ -312,12 +337,12 @@ export class Session {
    * the planner was already waiting for. So the wait happens HERE, and the
    * turn's end releases it.
    *
-   * What waits is the send AS IT CAME — words, images, documents — not the
-   * SDK message. Nothing about a waiting send has happened yet: no `specs/`
-   * file, no echo, no title. `deliver` does all of that at once when the
-   * send actually goes out, which is also what lets the planner take a
-   * waiting send back whole (`removeHeld`).
+  private releaseLimit: number | null = null;
+  /**
+   * The room's mirror on disk (PLAN D86 의 확장). Null only in tests that
+   * construct a session bare — everything else writes through.
    */
+  private readonly disk: QueueDisk | null;
   private readonly held: HeldSend[] = [];
   /**
    * 지금 보내기: how many of `held` the next release may deliver. `null`
@@ -326,11 +351,20 @@ export class Session {
    */
   private releaseLimit: number | null = null;
   /**
-   * 턴이 돌고 있다 — CLI 가 일하는 중이거나 카드 앞에 멈춰 있다. 상태가
-   * 아니라 이 플래그가 기준인 이유: waiting_permission 도 도는 턴이고, 그
-   * 사이에 쓴 말도 똑같이 접혀 들어간다.
+   * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 두 가지를 한
+   * 필드로 말한다: 턴이 돌고 있는가(`!== null`), 그리고 언제부터인가.
+   *
+   * 돈다는 것은 CLI 가 일하는 중이거나 카드 앞에 멈춰 있다는 뜻이다. 상태가
+   * 아니라 이 시계가 기준인 이유: waiting_permission 도 도는 턴이고, 그 사이에
+   * 쓴 말도 똑같이 다음 턴으로 접혀 들어간다. 같은 이유로 시계는 카드를
+   * 기다리는 동안에도 계속 센다 — 사람이 기다린 시간도 그 요청의 시간이다.
+   * 대기 줄이 연 다음 턴은 새 시계를 받는다.
+   *
+   * 알림의 `걸렸습니다` 시계(server.ts)와는 다른 질문에 답한다 — 그쪽은 대기
+   * 뒤 재개마다 다시 놓아 "그때의 일"만 재고, 이쪽은 요청 하나가 시작한 시각을
+   * 끝까지 들고 있는다.
    */
-  private turnActive = false;
+  turnStartedAt: number | null = null;
   /**
    * 세션 비용: what this run has spent, as the SDK reports it — its
    * `total_cost_usd` is already the running total for the query, so the
@@ -362,11 +396,22 @@ export class Session {
     // arrives with the init event, which the CLI does not emit until the first
     // user turn is pushed.
     this.id = options.sessionId ?? options.resume ?? randomUUID();
-
+    this.disk = options.queueDiskFor?.(this.id) ?? null;
     this.run = query({
       prompt: this.queue,
       options: {
         cwd: this.cwd,
+        // 프로젝트별 지침(P1#8): 기본 프롬프트를 대체하지 않고 끝에 붙인다 —
+        // 도구가 Claude 에게 주는 나머지 규칙은 그대로 살아 있어야 한다.
+        ...(options.appendSystemPrompt
+          ? {
+              systemPrompt: {
+                type: "preset" as const,
+                preset: "claude_code" as const,
+                append: options.appendSystemPrompt,
+              },
+            }
+          : {}),
         pathToClaudeCodeExecutable: options.claudeExecutable,
         // 중지의 이행 보장: 유예 안에 interrupt 가 답하지 못하는 질의는 이
         // 컨트롤러로 끊는다 — SDK 가 자원을 정리하고 CLI 를 내린다.
@@ -376,7 +421,7 @@ export class Session {
         // `canUseTool`, which would let a session run shell commands with no
         // planner in the loop. The daemon answers edit-class tools itself
         // (see canUse), so the UX stays "edits are silent, everything else
-        // surfaces".
+        // asks".
         permissionMode: "default",
         // The launch flag — not the mode — is what the CLI checks before it
         // accepts a later `setPermissionMode("bypassPermissions")`; without
@@ -395,6 +440,23 @@ export class Session {
         // pre-approved tool rules surfaces as a header warning; see
         // repoSettingsWarning.)
         settingSources: ["user", "project", "local"],
+        // 질문 카드의 선택지 미리보기를 HTML 로 받는다 (PLAN D96): 이 앱의
+        // 카드는 웹이라 monospace 박스가 아니라 그려진 시안을 보여 줄 수 있다.
+        // 카드는 스크립트 없는 sandbox iframe 으로만 그린다.
+        toolConfig: { askUserQuestion: { previewFormat: "html" } },
+        // 보조 작업이 30초마다 한 줄로 지금 무엇을 하는지 말한다 (PLAN D97).
+        // 포크는 서브에이전트의 프롬프트 캐시를 재사용하므로 값이 싸다.
+        agentProgressSummaries: true,
+        // 보조 작업의 말과 생각까지 받아 중첩 기록으로 그린다 (PLAN D98).
+        // 이게 없으면 서브에이전트는 도구 행의 심장 박동으로만 보인다.
+        forwardSubagentText: true,
+        // 턴이 끝나면 다음에 할 만한 말 한 문장 (PLAN D99) — 부모 턴의 캐시에
+        // 얹혀 오므로 사실상 공짜다.
+        promptSuggestions: true,
+        // 작업별 중지를 이 앱이 그린다고 CLI 에 알린다 (PLAN D101). 선언하지
+        // 않으면 중지 한 번이 백그라운드 작업까지 함께 죽인다 — 선언과 UI 는
+        // 반드시 같이 간다(둘 중 하나만 있으면 폭주하는 작업을 세울 길이 없다).
+        perTaskStopAffordance: true,
         // The preview tools ride the query as an in-process MCP server
         // (PLAN D61), keyed by the server's own name.
         ...(this.previewTools
@@ -432,6 +494,13 @@ export class Session {
           if (event.kind === "init") {
             this.model = event.model;
             this.permissionMode = event.permissionMode;
+          }
+          if (event.kind === "shutdown") {
+            // 예고된 종료는 고장이 아니다: 아래의 스트림 끝이 이 깃발을 읽고
+            // 다른 말을 한다. 화면에는 올리지 않는다 — 계획자가 할 일은 없고,
+            // 곧 이어지는 카드가 이어가는 길을 말한다.
+            this.shutdownReason = event.reason;
+            continue;
           }
           if (event.kind === "turn.end" && event.costUsd != null) {
             this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
@@ -472,12 +541,19 @@ export class Session {
       // exception path says; only a turn that was never running ends quietly.
       if (this.state === "running") {
         this.crashed = true;
-        this.events.onEvent(this.id, {
-          kind: "notice",
-          level: "error",
-          text: "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.",
-        });
-        this.setState("error", "Claude 프로그램이 응답 없이 종료됐습니다.");
+        // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
+        // 를 말하되 놀라게 하지 않는다.
+        const announced = this.shutdownReason !== null;
+        const text = announced
+          ? "Claude 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다."
+          : "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.";
+        this.events.onEvent(this.id, { kind: "notice", level: "error", text });
+        this.setState(
+          "error",
+          announced
+            ? `Claude 프로그램이 종료됐습니다 (${this.shutdownReason})`
+            : "Claude 프로그램이 응답 없이 종료됐습니다.",
+        );
       } else {
         this.setState("closed");
       }
@@ -526,7 +602,7 @@ export class Session {
       // …nor deliver what was waiting for the next turn. Those words never
       // reached the transcript, so they go back to the planner whole rather
       // than vanishing with the query.
-      this.turnActive = false;
+      this.turnStartedAt = null;
       this.dropHeld();
     }
   }
@@ -538,6 +614,9 @@ export class Session {
     if (this.closed && state !== "closed") return;
     if (this.state === state) return;
     this.state = state;
+    // 내려앉은 상태에는 도는 턴이 없다 — 크래시로 끝난 턴이 화면에 멈추지 않는
+    // 시계를 남기지 않게, 시계는 상태와 같은 자리에서 꺼진다.
+    if (state === "idle" || state === "error" || state === "closed") this.turnStartedAt = null;
     this.events.onState(this.id, state, detail);
   }
 
@@ -548,7 +627,7 @@ export class Session {
    * 그 말로 새 턴).
    */
   private endTurn(): void {
-    this.turnActive = false;
+    this.turnStartedAt = null;
     this.setState(this.pending.size > 0 ? this.state : "idle");
     this.release();
   }
@@ -560,13 +639,19 @@ export class Session {
    * 끝을 다시 기다린다.
    */
   private release(): void {
+    // 내려가는 대화에는 내보내지 않는다: 닫는 중에 온 턴 끝(중지의 응답)이
+    // 대기 줄을 죽어 가는 질의로 밀면, 그 말들은 CLI 에 닿지도 못한 채 방에서
+    // 사라진다. 닫힘이 이긴 방은 디스크에 그대로 남아 재시작 뒤 회복된다.
+    if (this.closed) return;
     // The hurry is spent at this turn's end whether or not anything is left
     // to hurry — a limit outliving an emptied room would starve a later one.
     const limit = this.releaseLimit ?? this.held.length;
     this.releaseLimit = null;
     if (this.held.length === 0) return;
     const batch = this.held.splice(0, limit);
-    this.turnActive = true;
+    this.disk?.saveHeld(this.held);
+    // 대기 줄이 여는 턴은 새 요청이다 — 새 시계를 받는다.
+    this.turnStartedAt = Date.now();
     for (const item of batch) this.deliver(item);
     this.announceHeld();
     this.setState("running");
@@ -574,23 +659,30 @@ export class Session {
 
   /**
    * 죽은 질의는 대기 줄을 소비하지 못한다. 그 말들은 기록에 들어간 적이 없으니
-   * 원문을 화면으로 되돌려 준다 — 계획자가 되살려 다시 보낼 수 있게. 닫는
-   * 대화만 예외: 스스로 닫은 창에 뒷말은 소식이 아니다.
+   * lost room 으로 옮겨진다 — 화면의 회복 패널이 이 목록을 그리고, 되살리기는
+   * 계획자의 손으로 입력창을 거친다(자동 재전송은 없다).
    */
   private dropHeld(): void {
     if (this.held.length === 0) return;
     const lost = this.held.splice(0);
     this.releaseLimit = null;
     if (this.closed) return;
+    // 두 패널에 같은 말이 서지 않게: 방을 잃었다는 말은 대기 줄이 비었다는
+    // 말이기도 하다. 비움을 먼저 알리고, 그 다음 어디로 갔는지 말한다.
     this.announceHeld();
-    this.events.onEvent(this.id, { kind: "queue.dropped", items: lost.map(summarize) });
+    const items = this.disk?.moveToLost(lost) ?? lost.map(toLost);
+    this.announceLost(items);
+  }
+
+  /** lost room 을 화면으로 — 회복 패널이 이 목록을 그린다(상태 교체). */
+  private announceLost(items: LostSend[]): void {
+    this.events.onEvent(this.id, { kind: "queue.lost", items });
   }
 
   /** 대기 줄을 화면으로 — 입력창 위 목록이 이것을 그린다. */
   private announceHeld(): void {
     this.events.onEvent(this.id, { kind: "queued", items: this.heldItems() });
   }
-
   /** The wait room as the composer shows it, oldest first. */
   heldItems(): QueuedSend[] {
     return this.held.map(summarize);
@@ -608,6 +700,7 @@ export class Session {
     // end drains the room as any turn's end does.
     if (this.held[0] === item) this.releaseLimit = null;
     this.held.splice(this.held.indexOf(item), 1);
+    this.disk?.saveHeld(this.held);
     this.announceHeld();
     return { text: item.text, images: item.images, files: item.files };
   }
@@ -620,11 +713,16 @@ export class Session {
    * left the room is a no-op: there is nothing to hurry.
    */
   async sendHeldNow(itemId: string): Promise<void> {
+    // Already hurrying exactly this send — the click landed twice inside the
+    // interrupt's grace. A second cut here would slice the turn the FIRST
+    // click just started.
+    if (this.releaseLimit === 1 && this.held[0]?.id === itemId) return;
     const item = this.held.find((held) => held.id === itemId);
     if (!item) return;
     this.held.splice(this.held.indexOf(item), 1);
     this.held.unshift(item);
     this.releaseLimit = 1;
+    this.disk?.saveHeld(this.held);
     this.announceHeld();
     await this.interrupt();
   }
@@ -873,6 +971,7 @@ export class Session {
     requestId: string,
     answers: Record<string, string | string[]>,
     response: string | undefined,
+    annotations?: Record<string, { preview?: string; notes?: string }>,
   ): boolean {
     const request = this.pending.get(requestId);
     if (!request) return false;
@@ -882,6 +981,12 @@ export class Session {
       answers,
     };
     if (response) updatedInput.response = response;
+    // 선택 옆의 메모 (PLAN D96): 도구가 스스로 받는 자리가 `annotations` 다 —
+    // 질문 글자를 키로, 고른 시안과 계획자가 덧붙인 말을 함께 돌려준다. 빈
+    // 껍데기는 보내지 않는다: 모델이 읽을 것이 없는 필드는 소음이다.
+    if (annotations && Object.keys(annotations).length > 0) {
+      updatedInput.annotations = annotations;
+    }
     request.resolve({ behavior: "allow", updatedInput });
     return true;
   }
@@ -902,12 +1007,13 @@ export class Session {
     const item: HeldSend = { id: randomUUID(), text, images: images ?? [], files: files ?? [] };
     // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
     // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
-    if (this.turnActive) {
+    if (this.turnStartedAt !== null) {
       this.held.push(item);
+      this.disk?.saveHeld(this.held);
       this.announceHeld();
       return;
     }
-    this.turnActive = true;
+    this.turnStartedAt = Date.now();
     this.deliver(item);
     this.setState("running");
   }
@@ -1008,7 +1114,7 @@ export class Session {
     }
     // 대기 줄이 이미 다음 턴을 열었다면 그 램프를 끄지 않는다 — 멈춘 것은 앞
     // 턴이고, 뒤에 선 말은 지금 돌고 있다.
-    if (!this.turnActive) this.setState("idle");
+    if (this.turnStartedAt === null) this.setState("idle");
   }
 
   /**
@@ -1098,6 +1204,24 @@ export class Session {
     this.permissionMode = mode;
   }
 
+  /**
+   * 이 작업만 중지 (PLAN D101): 폭주하는 명령 하나, 서브에이전트 하나를 턴을
+   * 끊지 않고 세운다. 중지 버튼(interrupt)은 턴 전체의 것이고, 이것은 그 안의
+   * 한 작업의 것 — 두 개가 다른 버튼인 이유다.
+   */
+  async stopTask(taskId: string): Promise<void> {
+    await this.run.stopTask(taskId);
+  }
+
+  /**
+   * 뒤로 보내기 (PLAN D101): 지금 턴을 붙잡고 있는 작업을 백그라운드로 옮긴다.
+   * 답이 돌아온 뒤에도 그 작업은 계속 돌고, 끝나면 task.end 로 알려 온다.
+   * 옮길 것이 없으면 false — 버튼이 거짓말하지 않게 그대로 올린다.
+   */
+  async backgroundTask(toolUseId: string): Promise<boolean> {
+    return await this.run.backgroundTasks(toolUseId);
+  }
+
   /** Everything the composer's chips display, plus the model picker rows. */
   async selectors(): Promise<SessionSelectors> {
     const models = await this.run.supportedModels();
@@ -1127,16 +1251,23 @@ export class Session {
     }));
   }
 
-  async close(): Promise<void> {
+  /**
+   * 닫는 이유가 방의 운명을 정한다 (PLAN D86 의 확장). 유저가 스스로 닫은
+   * 대화의 대기 줄은 조용히 사라진다 — 닫는 창에 뒷말은 소식이 아니다. 데몬
+   * 전체의 종료(shutdown)는 다르다: 방은 디스크에 그대로 남아 재시작 뒤
+   * sweepOrphans 가 lost room 으로 회복한다.
+   */
+  async close(reason: "user" | "shutdown" = "user"): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     for (const request of this.pending.values()) {
       request.resolve({ behavior: "deny", message: "Session closed by user" });
     }
     this.pending.clear();
-    // 스스로 닫은 대화의 대기 줄은 조용히 사라진다 — 닫는 창에 뒷말은 소식이
-    // 아니다(dropHeld 가 closed 를 그렇게 읽는다).
-    this.dropHeld();
+    if (reason === "user") {
+      this.held.length = 0;
+      this.disk?.clear();
+    }
     this.queue.close();
     // The same grace as 중지, only shorter: a shutdown must not hang on a
     // wedged CLI either — and it must not pay the full grace per session.

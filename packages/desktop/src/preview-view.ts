@@ -1,6 +1,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ColoDesignCommentsEnvelope, ColoDesignErrorEnvelope } from "@colo-design/protocol";
+import type {
+  ColoDesignCommentsEnvelope,
+  ColoDesignCommentsSent,
+  ColoDesignErrorEnvelope,
+} from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 
 /**
@@ -66,6 +70,31 @@ function fitInside(image: Electron.NativeImage, max: number): Electron.NativeIma
   const long = Math.max(width, height);
   if (long <= max || long === 0) return image;
   return width >= height ? image.resize({ width: max }) : image.resize({ height: max });
+}
+
+/**
+ * The part of a pin's element the pane can actually photograph: its rect
+ * (CSS pixels, as the overlay measured it) intersected with the viewport.
+ * The planner pins, scrolls, and only then sends — so a rect may hang off
+ * any edge by the time the capture runs, and `capturePage` on a box that
+ * leaves the frame answers with an empty or half-blank image. Clamping x/y
+ * alone fixes the top-left only; the right and bottom need the viewport.
+ * No overlap at all → no crop, and D87's rule holds: the pin travels
+ * text-only rather than carrying a broken thumbnail.
+ */
+function cropRect(
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number } | null,
+): Electron.Rectangle | null {
+  const left = Math.round(rect.x);
+  const top = Math.round(rect.y);
+  const right = left + Math.min(Math.round(rect.width), 4000);
+  const bottom = top + Math.min(Math.round(rect.height), 4000);
+  const x = Math.max(0, left);
+  const y = Math.max(0, top);
+  const width = (viewport ? Math.min(right, Math.round(viewport.width)) : right) - x;
+  const height = (viewport ? Math.min(bottom, Math.round(viewport.height)) : bottom) - y;
+  return width >= 1 && height >= 1 ? { x, y, width, height } : null;
 }
 
 /** The screens a page must stay inside — the preview server's own origin. */
@@ -173,7 +202,7 @@ export class PlannerPreviewView {
     if (!loopbackHttp(url)) return;
     const origin = new URL(url).origin;
     const current = this.page;
-    if (current && current.origin === origin) {
+    if (current && current.origin === origin && this.attached(current)) {
       this.refresh(current, url, epoch);
       return;
     }
@@ -238,27 +267,45 @@ export class PlannerPreviewView {
   }
 
   /**
-   * D65: hide behind a freeze frame. The capture happens BEFORE the hide —
-   * a hidden view's `capturePage()` has nothing promised (Electron docs).
+   * D65: hide the view, THEN photograph it. The hide is synchronous — the
+   * view draws above every renderer pixel, so every millisecond spent
+   * awaiting a capture is a millisecond the planner's modal is covered by
+   * the stage (measured: an overlap on all 120 opens of a soak, up to
+   * 751ms while a page was loading). The freeze frame is decoration and
+   * rides behind: a hidden view answers `capturePage()` with its last
+   * composited frame, and where it does not, the slot shows the pane
+   * background under the scrim — a cost that is cosmetic, one-sided and
+   * gone at the next cover. The old order paid for that decoration with
+   * the correctness of the layer above it.
+   *
+   * Every call APPLIES. The renderer asserts the layer state it can see
+   * and this obeys — no dedupe guard, so an assertion that never landed is
+   * repaired by the next one instead of being taken for the truth.
    * Covered is a fact about the pane, not a page: a page shown while a
-   * modal is open comes up hidden and appears when the modal closes.
+   * modal is open comes up hidden (`show`) and appears when it closes.
    */
-  async cover(on: boolean): Promise<void> {
-    if (on && !this.covered) {
-      this.covered = true;
-      const page = this.page;
-      if (!page) return;
-      try {
-        const image = await page.view.webContents.capturePage();
-        if (!image.isEmpty()) this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
-      } catch {
-        // A paint that never happened; the slot just shows the pane background.
-      }
-      // Whatever is on screen after the capture ran — a switch may have landed.
-      if (this.covered) this.page?.view.setVisible(false);
-    } else if (!on && this.covered) {
-      this.covered = false;
-      this.page?.view.setVisible(true);
+  cover(on: boolean): void {
+    const edge = on && !this.covered;
+    this.covered = on;
+    const page = this.page;
+    if (!page || page.view.webContents.isDestroyed()) return;
+    page.view.setVisible(!on);
+    // One capture per false→true edge — a re-assertion is not a new modal.
+    if (edge) void this.freeze(page);
+  }
+
+  /**
+   * The slot's freeze frame (D65) — best-effort by contract: a capture that
+   * fails, comes back empty, or lands after the modal closed or another
+   * page took the screen is dropped rather than painted as this one.
+   */
+  private async freeze(page: PreviewPage): Promise<void> {
+    try {
+      const image = await page.view.webContents.capturePage();
+      if (image.isEmpty() || !this.covered || this.page !== page) return;
+      this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
+    } catch {
+      // A paint that never happened; the slot shows the pane background.
     }
   }
 
@@ -371,6 +418,14 @@ export class PlannerPreviewView {
   }
 
   /**
+   * D35 · D87: the web's receipt for one pin batch — the overlay clears or
+   * restores its pins by this, and says how many crops really rode along.
+   */
+  commentsSent(payload: ColoDesignCommentsSent): void {
+    this.webContents()?.send("colo-overlay:sent", payload);
+  }
+
+  /**
    * D87's three-beat: hide the overlay (the pins and bubbles must not ride
    * the crop), run the captures, show it again. The ack is the preload's two
    * rAFs; a missing one only means the pins photobomb — never a hang.
@@ -400,6 +455,23 @@ export class PlannerPreviewView {
   }
 
   /**
+   * The page's visible box in CSS pixels — the frame a pin's `element.rect`
+   * (a getBoundingClientRect) was measured against. The view's bounds are
+   * device-independent pixels; a zoomed page (D85 ⓔ) shows fewer CSS pixels
+   * in the same box, so the factor divides back out. Null while the pane has
+   * no page or no size yet — then a crop is taken on trust, as before.
+   */
+  private viewportCss(): { width: number; height: number } | null {
+    const page = this.page;
+    if (!page) return null;
+    const bounds = page.view.getBounds();
+    const factor = page.zoomFactor > 0 ? page.zoomFactor : 1;
+    const width = bounds.width / factor;
+    const height = bounds.height / factor;
+    return width >= 1 && height >= 1 ? { width, height } : null;
+  }
+
+  /**
    * D87: crop each pin's `element.rect` out of the page — 최대 6장, 긴 변
    * 600px, JPEG q70 — before the envelope rides to the web. A failed crop
    * costs only that item's thumbnail; the words always get through.
@@ -410,17 +482,13 @@ export class PlannerPreviewView {
         const contents = this.webContents();
         if (!contents) return;
         const shots = payload.items.slice(0, MAX_SHOTS);
+        const viewport = this.viewportCss();
         for (const item of shots) {
-          const rect = item.element.rect;
-          const width = Math.max(1, Math.min(Math.round(rect.width), 4000));
-          const height = Math.max(1, Math.min(Math.round(rect.height), 4000));
+          const crop = cropRect(item.element.rect, viewport);
+          // Wholly off screen (scrolled past, or beside the frame): no photo.
+          if (!crop) continue;
           try {
-            const image = await contents.capturePage({
-              x: Math.max(0, Math.round(rect.x)),
-              y: Math.max(0, Math.round(rect.y)),
-              width,
-              height,
-            });
+            const image = await contents.capturePage(crop);
             if (image.isEmpty()) continue;
             item.shot = {
               mediaType: "image/jpeg",
@@ -561,9 +629,27 @@ export class PlannerPreviewView {
     this.send("colo-preview:zoom", { factor: page.zoomFactor });
   }
 
+  /**
+   * Whether a page is alive AND a child of the window on screen now. The
+   * pane outlives the window — on mac ⌘W destroys it and the dock icon
+   * builds another — so `this.page` can belong to a contentView that is
+   * gone. `show()` is the only place that attaches a view, so a mount
+   * taking the fast path on an orphan would leave the slot empty for the
+   * rest of the run.
+   */
+  private attached(page: PreviewPage): boolean {
+    if (page.view.webContents.isDestroyed()) return false;
+    const window = this.window();
+    if (!window || window.isDestroyed()) return false;
+    return window.contentView.children.includes(page.view);
+  }
+
   /** Takes a page off screen but keeps it: hidden, its facts its own. */
   private park(page: PreviewPage): void {
-    page.view.setVisible(false);
+    // A page whose window was destroyed took its webContents with it —
+    // hiding that view throws, and this runs on the way out of a closed
+    // window.
+    if (!page.view.webContents.isDestroyed()) page.view.setVisible(false);
     if (this.page === page) this.page = null;
   }
 
@@ -777,8 +863,12 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     }
     return { ok: true };
   });
+  // The assertion is applied before this returns (the capture rides behind),
+  // so the renderer's ack means "the view is already hidden" — that contract
+  // is what lets the web side treat a resolved call as confirmed state.
   ipcMain.handle("preview:cover", (_event, input: { on?: boolean }) => {
-    return view.cover(Boolean(input?.on)).then(() => ({ ok: true }));
+    view.cover(Boolean(input?.on));
+    return { ok: true };
   });
   ipcMain.handle("preview:open", (_event, input: { path?: string }) => {
     if (typeof input?.path === "string") view.open(input.path);
@@ -812,6 +902,32 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
   });
   ipcMain.handle("preview:busy", (_event, input: { on?: boolean }) => {
     view.setBusy(Boolean(input?.on));
+    return { ok: true };
+  });
+  // D35: the web's receipt travels on to the overlay, which holds its pins
+  // until it arrives. A malformed one is nobody's receipt — it is dropped
+  // rather than clearing pins the planner would then have to retype.
+  ipcMain.handle("preview:comments-sent", (_event, input: unknown) => {
+    if (
+      !input ||
+      typeof input !== "object" ||
+      !("batch" in input) ||
+      typeof input.batch !== "string" ||
+      !("ok" in input) ||
+      typeof input.ok !== "boolean" ||
+      !("shots" in input) ||
+      typeof input.shots !== "number" ||
+      !("items" in input) ||
+      typeof input.items !== "number"
+    ) {
+      return { ok: false };
+    }
+    view.commentsSent({
+      batch: input.batch,
+      ok: input.ok,
+      shots: input.shots,
+      items: input.items,
+    });
     return { ok: true };
   });
   ipcMain.handle("preview:snapshot", () => view.snapshot());

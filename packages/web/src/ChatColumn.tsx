@@ -6,6 +6,7 @@ import type { Daemon } from "./daemon-client";
 import { ChevronDownIcon } from "./icons";
 import type { MidTurnSend, SendKey } from "./settings";
 import { suggestionsFromScreens } from "./suggestions";
+import { blockOnTape } from "./tape-visibility";
 import { PLAN_TOOL } from "./tool-names";
 import type { Sessions } from "./useSessions";
 
@@ -25,6 +26,7 @@ export function ChatColumn({
   onDeleteSession,
   screens,
   showThinking,
+  showTools,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -44,6 +46,8 @@ export function ChatColumn({
   screens: ColoDesignScreen[];
   /** 생각 과정 보기 (설정) — 꺼져 있으면 생각 블록은 테이프에서 빠진다. */
   showThinking: boolean;
+  /** 작업 과정 보기 (설정) — 꺼져 있으면 도구 호출 묶음도 테이프에서 빠진다. */
+  showTools: boolean;
 }) {
   const { api, pending, resolvePending } = daemon;
   // 계획 먼저 (이번 턴 한정): armed 는 한 번의 보내기로 소비되고, 대화가
@@ -84,6 +88,25 @@ export function ChatColumn({
     setStopping(true);
     void api.interrupt(activeId).catch(() => undefined);
   };
+  /**
+   * 작업 다루기 (PLAN D101): 턴 전체의 중지(위 `stop`)와 다른 손 — 그 작업
+   * 하나만 세우거나, 턴을 붙잡은 작업을 뒤로 보낸다.
+   */
+  const stopTask = (taskId: string) => {
+    if (!activeId) return;
+    void api.stopTask(activeId, taskId).catch((e: Error) => showError(e.message));
+  };
+  const backgroundTask = (toolUseId: string) => {
+    if (!activeId) return;
+    void api.backgroundTask(activeId, toolUseId).catch((e: Error) => showError(e.message));
+  };
+  /**
+   * 닫은 제안 (PLAN D99): 데몬은 한 문장을 한 번 보내고 잊지만, 계획자가 닫은
+   * 칩은 이 창에서 다시 떠오르면 안 된다 — 무엇을 닫았는지는 창의 기억이다.
+   */
+  const [hiddenSuggestion, setHiddenSuggestion] = useState<string | null>(null);
+  const suggestion =
+    active?.suggestion && active.suggestion !== hiddenSuggestion ? active.suggestion : null;
   const visiblePending = pending.filter((request) => request.sessionId === activeId);
   /** Whether the newest message is what the planner is looking at. */
   const pinned = useRef(true);
@@ -318,6 +341,9 @@ export function ChatColumn({
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
             showThinking={showThinking}
+            showTools={showTools}
+            onBackgroundTask={backgroundTask}
+            onStopTask={stopTask}
           />
           {/* A turn's first seconds: the tape holds only the planner's words,
             so the start says itself — spinner + shimmer until blocks land.
@@ -328,7 +354,7 @@ export function ChatColumn({
             하는 동안 화면이 통째로 조용해진다. */}
           {sessions.running &&
             !(active?.blocks ?? []).some(
-              (block) => block.type !== "user" && (showThinking || block.type !== "thinking"),
+              (block) => block.type !== "user" && blockOnTape(block, showThinking, showTools),
             ) && (
               <div className="turnlive" role="status">
                 <span className="spinner" />
@@ -364,8 +390,8 @@ export function ChatColumn({
               <QuestionCard
                 key={request.requestId}
                 request={request}
-                onRespond={(answers) => {
-                  void api.respondQuestion(request.requestId, answers);
+                onRespond={(answers, annotations) => {
+                  void api.respondQuestion(request.requestId, answers, annotations);
                   resolvePending(request.requestId);
                 }}
               />
@@ -409,7 +435,15 @@ export function ChatColumn({
         dropped={sessions.dropped}
         onTakeQueued={sessions.takeQueued}
         onSendQueuedNow={sessions.sendQueuedNow}
+        onTakeDropped={sessions.takeDropped}
         onDismissDropped={sessions.dismissDropped}
+        hurrying={sessions.hurrying}
+        suggestion={suggestion}
+        onDismissSuggestion={() => setHiddenSuggestion(active?.suggestion ?? null)}
+        activity={active?.activity}
+        turnStartedAt={active?.turnStartedAt ?? null}
+        tasks={active?.tasks ?? []}
+        onStopTask={stopTask}
         seed={seed}
         sendKey={sendKey}
         midTurnSend={midTurnSend}

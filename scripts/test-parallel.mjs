@@ -30,6 +30,7 @@ const LANES = {
       "test:comments-ui",
       "test:desktop-smoke",
       "test:desktop-switch",
+      "test:desktop-cover",
     ],
   },
   L2: {

@@ -1,8 +1,10 @@
 import type {
   ContextUsage,
   EffortLevel,
+  LostSend,
   PermissionMode,
   QueuedSend,
+  QueuedSendPayload,
   SessionCommand,
   SessionModelInfo,
   SessionSelectors,
@@ -133,7 +135,7 @@ export interface Sessions {
    */
   queue: QueuedSend[];
   /** Sends the room lost without delivering — the composer's 되살리기 rows. */
-  dropped: QueuedSend[];
+  dropped: LostSend[];
   /**
    * 고쳐서 보내기: take a waiting send back out of the daemon's room, as the
    * composer's own attachments. Null when it already went out.
@@ -141,6 +143,13 @@ export interface Sessions {
   takeQueued: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
   /** 지금 보내기: cut the running turn and deliver this send first. */
   sendQueuedNow: (itemId: string) => Promise<void>;
+  /** The send a 지금 보내기 click is currently cutting for — its row waits too. */
+  hurrying: string | null;
+  /**
+   * 되살리기: hand one lost send back into the field, attachments included
+   * when their bytes survived the persist cap.
+   */
+  takeDropped: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
   /** Let go of one undelivered send (restored into the field, or unwanted). */
   dismissDropped: (itemId: string) => void;
   refresh: () => Promise<void>;
@@ -506,40 +515,50 @@ export function useSessions(
   const queue = active?.queue ?? [];
   const dropped = active?.dropped ?? [];
 
+  const toAttachments = (payload: NonNullable<QueuedSendPayload>): Attachment[] => [
+    ...payload.images.map(
+      (image, index): Attachment => ({
+        kind: "image",
+        name: `이미지 ${index + 1}`,
+        mediaType: image.mediaType,
+        data: image.data,
+        size: Math.floor((image.data.length * 3) / 4),
+      }),
+    ),
+    ...payload.files.map(
+      (file): Attachment => ({
+        kind: "document",
+        name: file.name,
+        mediaType: file.mediaType,
+        data: file.data,
+        size: Math.floor((file.data.length * 3) / 4),
+      }),
+    ),
+  ];
+
   const takeQueued = async (itemId: string) => {
     if (!activeId) return null;
     const payload = await api.queueRemove(activeId, itemId);
     if (!payload) return null;
-    // Back into the composer's own shape: an image keeps the name the chip
-    // shows (there was none on the wire — the daemon never needed it).
-    return {
-      text: payload.text,
-      attachments: [
-        ...payload.images.map(
-          (image, index): Attachment => ({
-            kind: "image",
-            name: `이미지 ${index + 1}`,
-            mediaType: image.mediaType,
-            data: image.data,
-            size: Math.floor((image.data.length * 3) / 4),
-          }),
-        ),
-        ...payload.files.map(
-          (file): Attachment => ({
-            kind: "document",
-            name: file.name,
-            mediaType: file.mediaType,
-            data: file.data,
-            size: Math.floor((file.data.length * 3) / 4),
-          }),
-        ),
-      ],
-    };
+    return { text: payload.text, attachments: toAttachments(payload) };
   };
 
+  const [hurrying, setHurrying] = useState<string | null>(null);
   const sendQueuedNow = async (itemId: string) => {
     if (!activeId) return;
-    await api.queueSendNow(activeId, itemId);
+    setHurrying(itemId);
+    try {
+      await api.queueSendNow(activeId, itemId);
+    } finally {
+      setHurrying(null);
+    }
+  };
+
+  const takeDropped = async (itemId: string) => {
+    if (!activeId) return null;
+    const payload = await api.queueTakeDropped(activeId, itemId);
+    if (!payload) return null;
+    return { text: payload.text, attachments: toAttachments(payload) };
   };
 
   const dismissDropped = (itemId: string) => {
@@ -774,6 +793,8 @@ export function useSessions(
     dropped,
     takeQueued,
     sendQueuedNow,
+    hurrying,
+    takeDropped,
     dismissDropped,
     refresh,
     refreshUsage,

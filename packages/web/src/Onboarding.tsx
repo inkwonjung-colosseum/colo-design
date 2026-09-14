@@ -1,4 +1,4 @@
-import type { OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import type { OnboardingStep, OnboardingStepId, PermissionMode } from "@colo-design/protocol";
 import { type CSSProperties, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
@@ -29,6 +29,8 @@ const STATUS_GLYPH: Record<OnboardingStep["status"], string> = {
   fail: "✗",
 };
 
+/** 한 번 확인 방식을 고른 표식 — 다음 마법사부터는 저장된 값을 띄운다. */
+const PERMISSION_CHOSEN_KEY = "colo-design.permission-chosen";
 const STATUS_LABEL: Record<OnboardingStep["status"], string> = {
   pass: "통과",
   warn: "주의",
@@ -37,9 +39,15 @@ const STATUS_LABEL: Record<OnboardingStep["status"], string> = {
 
 export function Onboarding({
   daemon,
+  permissionMode,
+  onChoosePermission,
   onDone,
 }: {
   daemon: Daemon;
+  /** 지금 저장된 확인 방식 — 이미 고른 적이 있으면 카드가 그 값을 띄운다. */
+  permissionMode: PermissionMode;
+  /** 카드의 선택이 설정에 반영되는 길(P0#4). */
+  onChoosePermission: (mode: PermissionMode) => void;
   /** Called when every blocking step passed (the workspace may open). */
   onDone: () => void;
 }) {
@@ -52,6 +60,24 @@ export function Onboarding({
   const [notice, setNotice] = useState<{ started: boolean; guidance: string } | null>(null);
   /** Re-opens the token form on a github line that already passed. */
   const [editingToken, setEditingToken] = useState(false);
+  /**
+   * 확인 방식 카드의 선택(P0#4). 선택은 필수다 — 아무도 보지 못한 기본값으로
+   * 시작하는 대신, 첫 대화 전에 한 번 스스로 고른다. 한 번 고른 사용자는
+   * 마법사를 다시 열 때 저장된 값이 카드에 떠 있다.
+   */
+  const [picked, setPicked] = useState<PermissionMode | null>(() =>
+    localStorage.getItem(PERMISSION_CHOSEN_KEY) === "1" ? permissionMode : null,
+  );
+
+  const choosePermission = (mode: PermissionMode) => {
+    setPicked(mode);
+    try {
+      localStorage.setItem(PERMISSION_CHOSEN_KEY, "1");
+    } catch {
+      // 저장이 막히면 다음 마법사에서 다시 묻는다 — 값 자체는 설정에 산다.
+    }
+    onChoosePermission(mode);
+  };
 
   const byId = new Map(steps.map((step) => [step.id, step]));
   const blocked = steps.some((step) => step.status === "fail");
@@ -227,10 +253,43 @@ export function Onboarding({
       </ol>
 
       {!blocked && steps.length > 0 && (
-        <div className="onboarding__done">
-          <button type="button" className="primary onboarding__cta" onClick={onDone}>
-            시작하기
-          </button>
+        <div className="onboarding__confirm">
+          <h2 className="onboarding__confirmTitle">Claude가 일을 실행하기 전에 물어볼까요?</h2>
+          <div className="onboarding__cards">
+            <button
+              type="button"
+              className={`onboarding__card${picked === "bypassPermissions" ? " onboarding__card--on" : ""}`}
+              onClick={() => choosePermission("bypassPermissions")}
+            >
+              <span className="onboarding__cardTitle">바로 실행</span>
+              <span className="onboarding__cardBody">
+                확인 없이 진행합니다. 화면 파일은 어차피 자동으로 바뀌고, 자리를 비운 사이에도
+                멈추지 않습니다.
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`onboarding__card${picked === "default" ? " onboarding__card--on" : ""}`}
+              onClick={() => choosePermission("default")}
+            >
+              <span className="onboarding__cardTitle">물어보고 실행</span>
+              <span className="onboarding__cardBody">
+                명령을 실행하기 전에 확인 카드로 물어봅니다. 확인은 알림으로도 오므로 자리를 비워도
+                놓치지 않습니다.
+              </span>
+            </button>
+          </div>
+          <p className="hint">나중에 설정 → 대화의 확인 방식에서 바꿀 수 있습니다.</p>
+          <div className="onboarding__done">
+            <button
+              type="button"
+              className="primary onboarding__cta"
+              disabled={picked === null}
+              onClick={onDone}
+            >
+              시작하기
+            </button>
+          </div>
         </div>
       )}
     </div>

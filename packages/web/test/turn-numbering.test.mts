@@ -59,3 +59,19 @@ test("프롬프트 없이 홀로 남은 답은 1로 매겨 유효한 번호를 �
   assert.equal(turns.get("orphan"), 1);
   assert.equal(promptTotal([block("text", "orphan")]), 0);
 });
+
+test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지 않는다 (PLAN D98)", () => {
+  const subagentSay = { type: "text", id: "s1", agentId: "toolu_9" } as unknown as Block;
+  const blocks = [
+    block("user", "u1"),
+    block("tool", "t1"),
+    subagentSay, // 보조 에이전트의 수다
+    block("text", "a1"), // 계획자가 읽는 답
+    block("user", "u2"),
+    block("text", "a2"),
+  ];
+  const turns = answerTurnNumbers(blocks);
+  assert.equal(turns.has("s1"), false, "하위 작업의 말에는 턴 번호가 없다");
+  assert.equal(turns.get("a1"), 1);
+  assert.equal(turns.get("a2"), 2);
+});

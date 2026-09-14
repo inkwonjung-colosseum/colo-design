@@ -8,8 +8,13 @@ import { GitHubTokenForm } from "./GitHubTokenForm";
 import { CheckIcon, CloseIcon } from "./icons";
 import {
   type ChatSettings,
+  clearAcceptEditsMigrated,
   loadModelCatalog,
   type MidTurnSend,
+  type NoticeTiming,
+  readAcceptEditsMigrated,
+  SCALE_LEVELS,
+  type Scale,
   type SendKey,
   type Settings,
   THEMES,
@@ -56,6 +61,12 @@ const MID_TURN_LABEL: Record<MidTurnSend, string> = {
   queue: "다음 턴에 보내기",
   interrupt: "끊고 보내기",
 };
+
+/** The one three-step choice every 크기 knob offers (설정 벤치마크 P1 #13). */
+const SCALE_OPTIONS: { value: Scale; label: string }[] = SCALE_LEVELS.map((level) => ({
+  value: level,
+  label: level === "small" ? "작게" : level === "normal" ? "보통" : "크게",
+}));
 
 // ---------------------------------------------------------------------------
 // Rows
@@ -253,6 +264,8 @@ export function SettingsDialog({
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  /** 세션이 돌고 있어 설치가 연기됐음을 알리는 한 줄(P0#6). */
+  const [updateDeferred, setUpdateDeferred] = useState<string | null>(null);
   /** 내려받기·검증이 끝나 종료 직전임을 알리는 안내 — 성공 경로의 한 줄. */
   const [updateStarted, setUpdateStarted] = useState<string | null>(null);
 
@@ -281,6 +294,7 @@ export function SettingsDialog({
   const checkUpdate = async () => {
     setCheckingUpdate(true);
     setUpdateError(null);
+    setUpdateDeferred(null);
     try {
       const result = await desktop?.updateCheck();
       if (!result) return;
@@ -303,16 +317,47 @@ export function SettingsDialog({
     setInstallingUpdate(true);
     setUpdateError(null);
     setUpdateStarted(null);
+    setUpdateDeferred(null);
     try {
       const result = await window.coloDesignDesktop?.macSelfUpdate();
       if (result && typeof result === "object" && "error" in result && result.error) {
         throw new Error(String(result.error));
+      }
+      // 세션이 돌고 있으면 메인이 설치를 연기한다 — 이 문단이 그 약속을
+      // 보여준다. 모든 대화가 내려앉는 순간 알림과 함께 설치된다.
+      if (result && typeof result === "object" && "deferred" in result) {
+        setUpdateDeferred(
+          `작업이 끝나는 대로 ${result.version} 설치를 시작합니다 — 돌아가는 대화가 끊기지 않도록 기다리는 중입니다.`,
+        );
+        return;
       }
       setUpdateStarted("검증이 끝났습니다 — 앱이 저절로 닫히고 새 버전으로 다시 열립니다.");
     } catch (e) {
       setUpdateError(e instanceof Error ? e.message : String(e));
     } finally {
       setInstallingUpdate(false);
+    }
+  };
+  /** acceptEdits→default 이사 공지 — 대화 상단에 한 번 뜨고, 고르면 사라진다. */
+  const [modeMoved, setModeMoved] = useState(readAcceptEditsMigrated);
+
+  /** 테스트 알림 — 데스크톱은 메인이, 브라우저는 이 자리에서 보낸다. */
+  const sendTestNotice = async () => {
+    const bridge = window.coloDesignDesktop;
+    if (bridge?.notifyTest) {
+      await bridge.notifyTest();
+      return;
+    }
+    if (typeof Notification === "undefined") return;
+    try {
+      if (Notification.permission === "default") await Notification.requestPermission();
+      if (Notification.permission !== "granted") return;
+      new Notification("알림 시험", {
+        body: "실제 알림은 이렇게 도착합니다.",
+        silent: !settings.notifications.sound,
+      });
+    } catch {
+      // 서비스 워커 없이는 생성을 막는 브라우저가 있다 — 조용히 지나간다.
     }
   };
 
@@ -383,6 +428,27 @@ export function SettingsDialog({
               </span>
               <ThemeGallery value={settings.theme} onChange={(theme) => onChange({ theme })} />
             </div>
+            <Choice<Scale>
+              label="인터페이스 크기"
+              hint="탐색·컨트롤·레이블에 적용됩니다"
+              value={settings.uiScale}
+              options={SCALE_OPTIONS}
+              onChange={(uiScale) => onChange({ uiScale })}
+            />
+            <Choice<Scale>
+              label="콘텐츠 크기"
+              hint="채팅 본문과 렌더링된 문서에 적용됩니다"
+              value={settings.contentScale}
+              options={SCALE_OPTIONS}
+              onChange={(contentScale) => onChange({ contentScale })}
+            />
+            <Choice<Scale>
+              label="코드 크기"
+              hint="명령·diff·출력 같은 기계 텍스트에 적용됩니다"
+              value={settings.codeScale}
+              options={SCALE_OPTIONS}
+              onChange={(codeScale) => onChange({ codeScale })}
+            />
           </section>
 
           {/* Where the three composer chips went (PLAN D10). A planner
@@ -429,8 +495,19 @@ export function SettingsDialog({
                 value: mode,
                 label: MODE_LABEL[mode],
               }))}
-              onChange={(permissionMode) => onChatChange({ permissionMode })}
+              onChange={(permissionMode) => {
+                clearAcceptEditsMigrated();
+                setModeMoved(false);
+                onChatChange({ permissionMode });
+              }}
             />
+            {modeMoved && (
+              <div className="notice notice--info" role="status">
+                <span className="notice__text">
+                  확인 방식을 Default로 옮겼습니다 — 화면 파일 편집은 그대로 조용히 진행됩니다.
+                </span>
+              </div>
+            )}
             {settings.chat.permissionMode === "bypassPermissions" && (
               <div className="notice notice--warn">
                 <span className="notice__text">
@@ -462,6 +539,17 @@ export function SettingsDialog({
               hint="고친 화면을 직접 찾지 않도록, Claude가 마지막으로 연 화면을 보여 줍니다"
               checked={settings.chat.followClaude}
               onChange={(followClaude) => onChatChange({ followClaude })}
+            />
+            {/* 작업 과정 보기: 기본은 꺼짐이다 — 생각 과정과 같은 이유다.
+                기획자가 읽어야 하는 것은 답이고, 도구 호출 묶음이 답과 답
+                사이마다 끼면 대화가 기계의 작업 기록처럼 읽힌다. 읽고 싶은
+                사람에게는 여기서 돌려준다. 계획 카드와 캡처 카드는 이
+                스위치와 무관하게 언제나 자리를 지킨다(PLAN D48·D56). */}
+            <Switch
+              label="작업 과정 보기"
+              hint="Claude가 화면을 만들며 거친 작업 — 파일 작업과 검사 — 를 대화에 접힌 채로 남깁니다"
+              checked={settings.chat.showTools}
+              onChange={(showTools) => onChatChange({ showTools })}
             />
             {/* 생각 과정 보기: 기본은 꺼짐이다. 기획자가 읽어야 하는 것은
                 답이고, 답을 만드는 동안의 속말이 답과 답 사이마다 끼면
@@ -503,6 +591,40 @@ export function SettingsDialog({
               ]}
               onChange={(midTurnSend) => onChange({ midTurnSend })}
             />
+          </section>
+
+          {/* 알림(설정 문서 P0#3): 시점 3상태와 소리, 그리고 시험 한 장.
+              확인 요청·중단·게이트 실패는 시점과 무관하게 언제나 온다는
+              것을 힌트가 한 줄로 말한다. */}
+          <section className="settings__group">
+            <h3 className="settings__groupTitle">알림</h3>
+            <Choice<NoticeTiming>
+              label="완료 알림"
+              value={settings.notifications.done}
+              options={[
+                { value: "off", label: "끔", hint: "완료 알림은 받지 않습니다" },
+                {
+                  value: "long",
+                  label: "오래 걸린 턴만",
+                  hint: "1분 넘게 걸린 작업이 끝났을 때만 알립니다",
+                },
+                { value: "all", label: "모든 턴", hint: "모든 작업이 끝날 때마다 알립니다" },
+              ]}
+              onChange={(done) => onChange({ notifications: { ...settings.notifications, done } })}
+            />
+            <Switch
+              label="알림 소리"
+              hint="알림이 도착할 때 소리를 냅니다"
+              checked={settings.notifications.sound}
+              onChange={(sound) =>
+                onChange({ notifications: { ...settings.notifications, sound } })
+              }
+            />
+            <Field label="테스트" hint="확인 요청·중단은 이 설정과 관계없이 언제나 옵니다">
+              <button type="button" onClick={() => void sendTestNotice()}>
+                테스트 알림 보내기
+              </button>
+            </Field>
           </section>
 
           <section className="settings__group">
@@ -580,6 +702,11 @@ export function SettingsDialog({
                   폴더 열기
                 </button>
               )}
+              {typeof bridgeOpenHome === "function" && (
+                <button type="button" onClick={() => void bridgeOpenHome("logs")}>
+                  로그 폴더 열기
+                </button>
+              )}
               <span className="setting__hint">
                 {bridgeOpenHome
                   ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
@@ -621,6 +748,7 @@ export function SettingsDialog({
                 </>
               )}
               {updateStarted && <span className="setting__hint">{updateStarted}</span>}
+              {updateDeferred && <span className="setting__hint">{updateDeferred}</span>}
               {updateError && <span className="setting__hint">{updateError}</span>}
             </div>
 

@@ -42,6 +42,15 @@ export interface CommentMarkerItem {
   /** What the planner clicked, in words: the element's own text or its name. */
   label: string;
   comment: string;
+  /**
+   * Whether this pin's crop travelled with the turn (D87). The view skips a
+   * crop it cannot take — an element scrolled out of the viewport, a capture
+   * that came back empty — so the images are a SUBSET of the items, and the
+   * card needs this flag to put each thumbnail back on its own row. Absent
+   * on markers written before the flag existed; the card falls back to
+   * position for those.
+   */
+  shot?: true;
 }
 
 export interface CommentsMarker {
@@ -49,6 +58,23 @@ export interface CommentsMarker {
   screen: string;
   state: string;
   items: CommentMarkerItem[];
+}
+
+/**
+ * The pins' crops, back on the rows that asked for them. D87 sends the
+ * images as a flat list and the view photographs only what it can reach — an
+ * element scrolled out of the frame, a capture that came back empty, nothing
+ * past the sixth — so `thumbs[i]` is not item `i`, and lining them up by
+ * position would file one request's picture under another's.
+ *
+ * A marker written before the flag existed carries none at all: those meant
+ * position, so position is what they get.
+ */
+export function alignThumbs(items: CommentMarkerItem[], thumbs?: string[]): Array<string | null> {
+  if (!thumbs || thumbs.length === 0) return items.map(() => null);
+  if (!items.some((item) => item.shot)) return items.map((_, index) => thumbs[index] ?? null);
+  let next = 0;
+  return items.map((item) => (item.shot ? (thumbs[next++] ?? null) : null));
 }
 
 export interface BriefMarker {
@@ -150,16 +176,17 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
         kind,
         screen: str(data.screen),
         state: str(data.state),
-        items: data.items.flatMap((entry): CommentMarkerItem[] =>
-          entry && typeof entry === "object"
-            ? [
-                {
-                  label: str((entry as Record<string, unknown>).label),
-                  comment: str((entry as Record<string, unknown>).comment),
-                },
-              ]
-            : [],
-        ),
+        items: data.items.flatMap((entry): CommentMarkerItem[] => {
+          if (!entry || typeof entry !== "object") return [];
+          const row = entry as Record<string, unknown>;
+          return [
+            {
+              label: str(row.label),
+              comment: str(row.comment),
+              ...(row.shot === true ? { shot: true as const } : {}),
+            },
+          ];
+        }),
       };
     }
     case "brief":

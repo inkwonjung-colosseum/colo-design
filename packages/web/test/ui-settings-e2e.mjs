@@ -100,9 +100,9 @@ async function main() {
     const groups = await page.locator(".settings__groupTitle").allInnerTexts();
     check(
       "the panel offers only what a planner sets",
-      ["화면", "대화", "동작", "GITHUB", "연결 레포", "문제 해결"].every((g) =>
+      ["화면", "대화", "동작", "알림", "GITHUB", "연결 레포", "문제 해결"].every((g) =>
         groups.includes(g),
-      ) && groups.length === 6,
+      ) && groups.length === 7,
       groups.join(", "),
     );
     // PLAN D39: the word belongs to the program, not the planner's settings —
@@ -241,6 +241,47 @@ async function main() {
         (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
     );
 
+    // 5b. the type scale (설정 벤치마크 P1 #13): three 3-step knobs that ride
+    //     <html> attributes into CSS variables — and move real text, not
+    //     just state.
+    const scales = () =>
+      page.evaluate(() => [
+        document.documentElement.dataset.ui,
+        document.documentElement.dataset.content,
+        document.documentElement.dataset.code,
+      ]);
+    check(
+      "type scale starts on 보통 across the three knobs",
+      (await scales()).join() === "normal,normal,normal",
+    );
+    const labelSize = () =>
+      page.evaluate(() =>
+        parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize),
+      );
+    const uiBase = await labelSize();
+    await page.getByLabel("인터페이스 크기").selectOption("large");
+    await page.waitForFunction(
+      (base) =>
+        parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize) > base,
+      uiBase,
+      { timeout: 3000 },
+    );
+    const uiScaled = await labelSize();
+    check(
+      "인터페이스 크기 크게 resizes the controls",
+      uiScaled > uiBase,
+      `${uiBase}px → ${uiScaled}px`,
+    );
+    await page.getByLabel("콘텐츠 크기").selectOption("small");
+    await page.getByLabel("코드 크기").selectOption("large");
+    check(
+      "the three choices land on <html> and persist together",
+      (await scales()).join() === "large,small,large" &&
+        (await stored(page))?.uiScale === "large" &&
+        (await stored(page))?.contentScale === "small" &&
+        (await stored(page))?.codeScale === "large",
+    );
+
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("theme is applied on load, not after a click", (await theme(page)) === "light");
@@ -254,14 +295,29 @@ async function main() {
         (await page.getByLabel("실행 중 보내기").inputValue()) === "interrupt",
     );
 
+    // 5c. 알림(설정 문서 P0#3): 완료 알림만 시점을 고르고, 소리는 그 옆에
+    //     산다. 기본은 "오래 걸린 턴만" — 모든 턴마다 울리지 않는다.
+    check(
+      "완료 알림 starts on 오래 걸린 턴만",
+      (await page.getByLabel("완료 알림").inputValue()) === "long",
+    );
+    await page.getByLabel("완료 알림").selectOption("all");
+    await page.getByLabel("알림 소리").click();
+    check(
+      "the notification policy is stored like every other preference",
+      (await stored(page))?.notifications?.done === "all" &&
+        (await stored(page))?.notifications?.sound === false,
+      JSON.stringify((await stored(page))?.notifications),
+    );
+
     // 6. the 대화 group: the three chips that used to live in the composer
     //    (PLAN D10). They persist like any other preference — except one.
     await page.getByLabel("생각 시간").selectOption("high");
-    await page.getByLabel("확인 방식").selectOption("acceptEdits");
+    await page.getByLabel("확인 방식").selectOption("plan");
     const chat = (await stored(page))?.chat;
     check(
       "conversation choices are stored with the rest",
-      chat?.effort === "high" && chat?.permissionMode === "acceptEdits",
+      chat?.effort === "high" && chat?.permissionMode === "plan",
       JSON.stringify(chat),
     );
 
@@ -274,7 +330,30 @@ async function main() {
     check(
       "they come back on the values that were chosen",
       (await page.getByLabel("생각 시간").inputValue()) === "high" &&
-        (await page.getByLabel("확인 방식").inputValue()) === "acceptEdits",
+        (await page.getByLabel("확인 방식").inputValue()) === "plan",
+    );
+
+    // acceptEdits 는 메뉴에서 물러났다: CLI 가 safe Bash 를 canUseTool 없이
+    // 승인해 이 도구의 방어선(git 거부·관리 파일 거부)을 비켜 가므로. 옛
+    // 저장값은 조용히 넓어지지 않도록 default 로 이사 온다.
+    await page.evaluate(() => {
+      const raw = JSON.parse(localStorage.getItem("colo-design.settings") ?? "{}");
+      raw.chat = { ...raw.chat, permissionMode: "acceptEdits" };
+      localStorage.setItem("colo-design.settings", JSON.stringify(raw));
+    });
+    await page.reload();
+    await page.waitForSelector(".connect__cmd", { timeout: 10000 });
+    await page.getByRole("button", { name: "설정" }).click();
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
+    check(
+      "a stored acceptEdits reads back as Default, not Bypass",
+      (await page.getByLabel("확인 방식").inputValue()) === "default",
+    );
+    check(
+      "and the move says so, in one line",
+      (await page.locator(".notice--info").innerText()).includes("Default로 옮겼습니다"),
     );
 
     // 전부 맡기기 is the starting default now, so it restores like any other
@@ -319,6 +398,28 @@ async function main() {
       timeout: 5000,
     });
     check("and a reload brings it back on", await page.getByLabel("생각 과정 보기").isChecked());
+
+    // 작업 과정(도구 호출 묶음)도 생각 과정과 같은 기본값이다: 꺼져 있어야
+    // 하고, 켠 사실은 다른 선택처럼 남는다. 계획 카드 · 캡처 카드는 이
+    // 스위치와 무관하다는 것이 이 검사의 밑에 깔린 규칙이다(tape-visibility).
+    check(
+      "작업 과정 is off until the planner asks for it",
+      (await page.getByLabel("작업 과정 보기").isChecked()) === false &&
+        (await stored(page))?.chat?.showTools !== true,
+      JSON.stringify((await stored(page))?.chat?.showTools),
+    );
+    await page.getByLabel("작업 과정 보기").check();
+    check(
+      "asking for it is written down like every other choice",
+      (await stored(page))?.chat?.showTools === true,
+    );
+    await page.reload();
+    await page.waitForSelector(".connect__cmd", { timeout: 10000 });
+    await page.getByRole("button", { name: "설정" }).click();
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
+    check("and a reload brings it back on", await page.getByLabel("작업 과정 보기").isChecked());
 
     // 7. the diagnostics are reachable and no longer the first thing in view.
     check(
@@ -402,6 +503,10 @@ async function main() {
     check(
       "an absent 실행 중 보내기 falls back to the queue default",
       (await page.getByLabel("실행 중 보내기").inputValue()) === "queue",
+    );
+    check(
+      "an absent type scale falls back to 보통",
+      (await scales()).join() === "normal,normal,normal",
     );
 
     // 9. Escape closes without touching anything.

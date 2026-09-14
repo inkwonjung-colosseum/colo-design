@@ -69,3 +69,28 @@ test("every save keeps the previous good copy one rename away (.bak)", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("지켜 줄 것은 저장되고, 비우면 지워진다", () => {
+  const dir = workdir("hub-projects-guard-");
+  try {
+    const env = envFor(dir);
+    const registry = ProjectRegistry.load(env);
+    const project = registry.create({
+      name: "화면 프로젝트",
+      repoUrl: "https://github.com/org/screens.git",
+    });
+
+    registry.update(project.slug, { instructions: "  버튼은 CDS 컴포넌트만 씁니다.  " });
+    assert.equal(
+      ProjectRegistry.load(env).get(project.slug)?.instructions,
+      "버튼은 CDS 컴포넌트만 씁니다.",
+      "지침은 다듬어져 파일을 넘어 살아남는다",
+    );
+
+    // 빈 상자는 "없음"이다 — 지우개가 없으면 한 번 적은 규칙에 갇힌다.
+    registry.update(project.slug, { instructions: "   " });
+    assert.equal(ProjectRegistry.load(env).get(project.slug)?.instructions, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

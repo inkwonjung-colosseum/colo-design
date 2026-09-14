@@ -210,6 +210,8 @@ export function PageWorkspace({
         lastModified,
         live: true,
         state: view.state,
+        // 이 창이 이미 아는 진행 시계 — 여는 순간 0초로 되감기지 않게.
+        turnStartedAt: view.turnStartedAt,
       });
       return;
     }
@@ -273,6 +275,7 @@ export function PageWorkspace({
           lastModified: Date.parse(thread.updatedAt) || 0,
           live: false,
           state: "closed",
+          turnStartedAt: null,
         },
       );
     },
@@ -323,6 +326,10 @@ export function PageWorkspace({
    * open a conversation first. A thread the TOOL opens is named by the tool
    * (the M5 lesson) — ScreenPanel names it after the screen. `images` ride
    * the same wire as a composer attachment (D87): the crops the view took.
+   *
+   * The boolean is what the overlay waits on: false brings the pins and the
+   * planner's words back on screen, because a machine turn the daemon refused
+   * (D35) has to stay retryable and pins nobody can see are not.
    */
   const forwardComments = useCallback(
     async (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => {
@@ -333,10 +340,12 @@ export function PageWorkspace({
         // one empty on the list (M5: a thread the TOOL opens is named by the
         // tool).
         const target = sessions.activeId ?? (await sessions.create(name));
-        if (!target) return;
+        if (!target) return false;
         await sessions.sendTurn(turn, images, target);
+        return true;
       } catch {
         // sendTurn already put the reason in the error strip.
+        return false;
       }
     },
     [sessions],
@@ -446,6 +455,7 @@ export function PageWorkspace({
           onDeleteSession={(session) => void sessions.remove(session)}
           screens={screens}
           showThinking={settings.chat.showThinking}
+          showTools={settings.chat.showTools}
         />
       </div>
       <Splitter

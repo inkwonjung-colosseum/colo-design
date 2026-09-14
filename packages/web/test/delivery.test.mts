@@ -111,6 +111,32 @@ test("merged: 칩은 반영됨 — 변경이 생기면 저장이 열리고 넘�
   assert.equal(withChanges?.actions.handoff.enabled, false);
 });
 
+test("반영됨에서 턴이 도는 동안 칩도 작업 중을 말한다 — 행과 칩이 어긋나지 않는다 (D45)", () => {
+  const started = at({ handoff: pr("merged"), running: true });
+  assert.equal(started?.state, "merged", "잠김은 표가 정한 그대로 — 사이클은 아직 merged");
+  assert.equal(
+    started?.chip.label,
+    "작업 중",
+    "사이드바 행이 작업 중을 말할 때 칩이 반영됨을 말하면 두 표식이 어긋난다",
+  );
+  assert.equal(started?.chip.tone, "pending");
+  assert.equal(started?.actions.save.enabled, false, "저장할 변경이 없으니 잠겨 있다");
+  assert.equal(started?.actions.handoff.enabled, false, "개발자가 이미 받아 갔습니다");
+
+  const redrawing = at({ handoff: pr("merged"), running: true, pendingChanges: 2 });
+  assert.equal(redrawing?.chip.label, "고치는 중 · 2건");
+  assert.equal(
+    redrawing?.chip.title,
+    "다음 저장은 새 사이클을 시작합니다",
+    "말이 바뀌어도 칩이 말 못한 사이클의 사실은 title 이 전한다",
+  );
+  assert.equal(redrawing?.actions.save.enabled, false, "도는 동안 저장은 잠긴다");
+  assert.equal(redrawing?.actions.save.reason, "Claude가 고치는 중 — 끝나면 저장할 수 있습니다");
+
+  const handedTurn = at({ handoff: pr("open"), running: true });
+  assert.equal(handedTurn?.chip.label, "작업 중", "규칙은 넘김 행에도 같다");
+});
+
 test("D84 의 전제: merged 뒤 새 브랜치의 handoff 는 null 이어야 saved 가 성립한다", () => {
   // The daemon clears the merged handoff at ensureCycleBranch (D84); this is
   // the row the table draws once that holds — 새 사이클의 saved.

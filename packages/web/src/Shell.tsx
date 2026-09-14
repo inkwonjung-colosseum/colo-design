@@ -1,4 +1,4 @@
-import type { ThreadSummary } from "@colo-design/protocol";
+import type { PermissionMode, ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { Fold } from "./components";
@@ -41,6 +41,7 @@ export function Shell({
   onRenameSession,
   onboardingOpen,
   onOnboardingClose,
+  onChoosePermission,
 }: {
   daemon: Daemon;
   settings: Settings;
@@ -55,6 +56,8 @@ export function Shell({
   /** Forces the first-run wizard open (SettingsDialog's 다시 보기). */
   onboardingOpen: boolean;
   onOnboardingClose: () => void;
+  /** 마법사의 확인 방식 카드가 고른 값을 설정에 반영한다(P0#4). */
+  onChoosePermission: (mode: PermissionMode) => void;
 }) {
   const { connection, status, api } = daemon;
   /** 프로젝트 추가 (PLAN D25) — the sidebar's `+ 새 프로젝트` opens it. */
@@ -226,6 +229,8 @@ export function Shell({
       <div className="planner planner--onboarding">
         <Onboarding
           daemon={daemon}
+          permissionMode={settings.chat.permissionMode}
+          onChoosePermission={onChoosePermission}
           onDone={() => {
             setWizardDismissed(true);
             onOnboardingClose();

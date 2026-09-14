@@ -14,6 +14,7 @@
  *
  * Usage: node packages/daemon/test/midturn-queue-e2e.mjs
  */
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,6 +168,8 @@ async function main() {
   });
 
   let seq = 0;
+  /** 재시작 검사가 데몬을 먼저 내렸는지 — 두 번 내리면 돌아오지 않는다. */
+  let stopped = false;
   const request = async (type, extra = {}, timeoutMs = 60_000) => {
     const id = `m${++seq}`;
     ws.send(JSON.stringify({ id, type, ...extra }));
@@ -356,12 +359,140 @@ async function main() {
         .join("|") === `${SECOND}|${FIRST}`,
     );
 
-    await request("session.close", { sessionId });
+    // --- 5. 지금 보내기를 두 번 눌러도 한 번만 끊는다 ---------------------
+    // 두 번째 클릭이 인터럽트의 유예(5초) 안에 도착하면, 막 시작된 턴을
+    // 자를 수 있다. 데몬의 멱등 가드가 그 두 번째 컷을 삼킨다.
+    const DOUBLE = "두 번 눌린 말";
+    await request("session.send", { sessionId, text: LONG_AGAIN });
+    await waitFor(() => arrivals(LONG_AGAIN).length === 2, 20_000, "the third marker turn");
+    await request("session.send", { sessionId, text: DOUBLE });
+    const doubleId = room(sessionId)[0].id;
+    const cutsBefore = stdinLog().filter((row) => row.kind === "interrupt").length;
+    // Fired back to back, both inside the interrupt's grace.
+    const first = request("session.queue.sendNow", { sessionId, itemId: doubleId });
+    const second = request("session.queue.sendNow", { sessionId, itemId: doubleId });
+    await Promise.all([first, second]);
+    await waitFor(() => arrivals(DOUBLE).length === 1, 20_000, "the hurried words");
+    await sleep(600);
+    check(
+      "two 지금 보내기 clicks cut the running turn exactly once",
+      stdinLog().filter((row) => row.kind === "interrupt").length === cutsBefore + 1,
+      `cuts ${cutsBefore} → ${stdinLog().filter((row) => row.kind === "interrupt").length}`,
+    );
+    check(
+      "and the hurried words were delivered once",
+      arrivals(DOUBLE).length === 1,
+      String(arrivals(DOUBLE).length),
+    );
+
+    // --- 6. 잃은 방: 크래시가 삼킨 말이 원문으로 돌아온다 ------------------
+    const LOST = "크래시가 삼킨 말";
+    await waitFor(
+      () =>
+        inbox.filter((m) => m.type === "session.state" && m.sessionId === sessionId).at(-1)
+          ?.state === "idle",
+      20_000,
+      "the hurried turn settling",
+    );
+    await request("session.send", { sessionId, text: LONG_AGAIN });
+    await waitFor(() => arrivals(LONG_AGAIN).length === 3, 20_000, "the fourth marker turn");
+    await request("session.send", { sessionId, text: LOST });
+    check("the send waits before the crash", roomTexts(sessionId).join("|") === LOST);
+
+    // 스텁 CLI 를 죽인다 — 데몬은 살아 있고, 질의만 죽는다.
+    execFileSync("pkill", ["-9", "-f", join(DIR, "bin", "claude")], { stdio: "ignore" });
+    const lostRoom = await waitFor(
+      () => sessionEvents(sessionId, "queue.lost").at(-1)?.event.items,
+      20_000,
+      "the lost room announcement",
+    );
+    check(
+      "a dead query turns the wait room into the lost room",
+      lostRoom.length === 1 && lostRoom[0].text === LOST,
+      JSON.stringify(lostRoom.map((item) => item.text)),
+    );
+    check("the lost row carries the moment it was lost", typeof lostRoom[0].lostAt === "number");
+    check(
+      "the lost words never reached the CLI",
+      arrivals(LOST).length === 0,
+      String(arrivals(LOST).length),
+    );
+
+    // 되살리기: the daemon hands the send back whole, from its own store.
+    const restored = await request("session.queue.takeDropped", {
+      sessionId,
+      itemId: lostRoom[0].id,
+    });
+    check(
+      "되살리기 hands the lost send back whole",
+      restored?.text === LOST && Array.isArray(restored.images) && Array.isArray(restored.files),
+      JSON.stringify(restored),
+    );
+    const emptied = await request("session.history", { sessionId });
+    check(
+      "and the lost room empties with it",
+      !emptied.some((event) => event.kind === "queue.lost" && event.items.length > 0),
+    );
+
+    // --- 7. 재시작: 데몬이 죽어도 방은 디스크에 남는다 ---------------------
+    // 도는 턴 아래에 말을 하나 세워 둔 채 데몬을 내린다. 다음 데몬이 그 방을
+    // 기동 청소에서 lost room 으로 되살린다 — 자동 재전송은 없다.
+    const SURVIVOR = "재시작을 건너온 말";
+    const revived = await request("session.create", { resume: sessionId });
+    const liveId = revived.sessionId;
+    await request("session.send", { sessionId: liveId, text: LONG });
+    await waitFor(() => arrivals(LONG).length === 2, 20_000, "the marker turn after resume");
+    await request("session.send", { sessionId: liveId, text: SURVIVOR });
+    check("the survivor waits when the daemon goes down", roomTexts(liveId).join("|") === SURVIVOR);
+
+    ws.close();
+    await server.stop();
+    stopped = true;
+
+    const secondPort = await freePort();
+    const second_server = new DaemonServer({
+      host: "127.0.0.1",
+      port: secondPort,
+      token: "midturn-queue-2",
+    });
+    await second_server.start();
+    try {
+      const revivedRoom = await new Promise((resolve, reject) => {
+        const socket = new WebSocket(`ws://127.0.0.1:${secondPort}?token=midturn-queue-2`);
+        socket.on("error", reject);
+        socket.on("open", () =>
+          socket.send(JSON.stringify({ id: "h1", type: "session.history", sessionId: liveId })),
+        );
+        socket.on("message", (raw) => {
+          const reply = JSON.parse(String(raw));
+          if (reply.id !== "h1") return;
+          socket.close();
+          reply.type === "ok" ? resolve(reply.data) : reject(new Error(reply.message));
+        });
+      });
+      const lostAfterRestart = revivedRoom.filter((event) => event.kind === "queue.lost").at(-1);
+      check(
+        "a restart turns the orphaned wait room into the lost room",
+        lostAfterRestart?.items.some((item) => item.text === SURVIVOR) === true,
+        JSON.stringify(lostAfterRestart?.items.map((item) => item.text) ?? []),
+      );
+      check(
+        "and the restarted daemon never delivers it behind the planner's back",
+        arrivals(SURVIVOR).length === 0,
+        String(arrivals(SURVIVOR).length),
+      );
+    } finally {
+      await second_server.stop();
+    }
   } catch (e) {
     check(`unexpected failure: ${e.message}`, false);
   } finally {
-    ws.close();
-    await server.stop();
+    // 재시작 검사가 이미 데몬을 내렸다면 두 번 내리지 않는다 — 두 번째
+    // `stop()` 은 이미 닫힌 서버에서 돌아오지 않는다.
+    if (!stopped) {
+      ws.close();
+      await server.stop();
+    }
   }
 
   const failed = results.filter((r) => !r.passed);

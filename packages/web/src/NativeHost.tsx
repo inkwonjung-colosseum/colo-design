@@ -75,8 +75,15 @@ export function NativeHost({
   // Mount puts this preview's page on screen — kept from an earlier visit or
   // loaded once; unmount only parks it. The epoch rides along so a page whose
   // server was restarted (or whose port now serves another project) reloads.
+  //
+  // The freeze frame goes with the page it was taken from. This component
+  // survives a project switch (nothing keys it upstream), so a kept frame
+  // would sit under the NEXT project's modal as if it were that project's
+  // screen — and hiding the view before the capture (D65) widens the moment
+  // where that stale frame is exactly what shows.
   useEffect(() => {
     if (!url) return;
+    setFreeze(null);
     void window.coloDesignDesktop?.preview?.mount?.(url, epoch);
     return () => void window.coloDesignDesktop?.preview?.unmount?.();
   }, [url, epoch]);
@@ -134,7 +141,10 @@ export function NativeHost({
         if (Array.isArray(payload.screens)) handlers.current.onScreens(payload.screens);
       }),
       bridge.onComments?.((payload: ColoDesignCommentsEnvelope) => {
-        if (Array.isArray(payload.items)) handlers.current.onComments(payload);
+        // An empty bundle has nowhere to go: a 수정 요청 turn with 0 items
+        // says nothing to Claude and shows an empty card to the planner.
+        if (Array.isArray(payload.items) && payload.items.length > 0)
+          handlers.current.onComments(payload);
       }),
       bridge.onError?.(
         (payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>

@@ -39,6 +39,7 @@ import {
   resolveClaudeExecutable,
 } from "./environment.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
+import { createFileLogger, type DaemonLogger } from "./log.js";
 import {
   gitInstallGuidance,
   runOnboardingChecks,
@@ -55,6 +56,7 @@ import {
   type PreviewTools,
 } from "./preview-tools.js";
 import { type ProjectPaths, ProjectRegistry } from "./projects.js";
+import { QueueStore } from "./queue-store.js";
 import {
   assertClonableRepoUrl,
   RepoWorkspace,
@@ -136,7 +138,7 @@ const WEB_TYPES: Record<string, string> = {
  * a git word — so the receiver can paint it without re-deriving anything.
  */
 export type DaemonNotice =
-  | { kind: "done"; sessionId: string; title: string }
+  | { kind: "done"; sessionId: string; title: string; durationMs?: number }
   | { kind: "crashed"; sessionId: string; title: string }
   | {
       kind: "ask";
@@ -160,10 +162,16 @@ function noticeForState(
   sessionId: string,
   state: SessionState,
   title: string,
+  durationMs?: number,
 ): DaemonNotice | null {
   switch (state) {
     case "idle":
-      return { kind: "done", sessionId, title };
+      return {
+        kind: "done",
+        sessionId,
+        title,
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
     case "error":
       return { kind: "crashed", sessionId, title };
     case "waiting_permission":
@@ -198,6 +206,12 @@ export interface DaemonConfig {
    */
   onNotice?: (notice: DaemonNotice) => void;
   /**
+   * 데몬의 파일 로그 싱크. 지정하지 않으면 `~/.colo-design/logs` 의 하루
+   * 파일 로거를 스스로 만든다 — 데스크톱 앱이 in-process 로 데몬을 키우므로
+   * console 은 아무에게도 닿지 않고, 흔적은 파일로만 남는다.
+   */
+  logger?: DaemonLogger;
+  /**
    * The desktop's offscreen-window driver (PLAN D61). When a host injects
    * it, sessions of a project whose preview server is up get the
    * `colo-preview` tools; without it — the browser dev path — sessions run
@@ -209,6 +223,7 @@ export interface DaemonConfig {
 export class DaemonServer {
   private readonly clients = new Set<WebSocket>();
   private readonly manager: SessionManager;
+  private readonly logger: DaemonLogger;
   private readonly credentials: CredentialStore;
   /**
    * The project registry and one live workspace per project the daemon has
@@ -283,12 +298,36 @@ export class DaemonServer {
    */
   private readonly cliCommandsCache = new Map<string, SessionCommand[]>();
   private cliCommandsProbe: Promise<SessionCommand[]> | null = null;
+  /**
+   * 세션별 최근 running 진입 시각 — 완료 알림에 태울 턴의 길이(알림 시점
+   * 정책의 "오래 걸린 턴")를 재는 시계. 대기 후 재개는 시계를 다시 놓는다.
+   *
+   * 화면의 진행 시계(`Session.turnStartedAt`)와 헷갈리지 않게 이름이 다르다:
+   * 그쪽은 요청 하나가 시작한 시각을 카드 앞의 기다림까지 포함해 끝까지 든다.
+   */
+  private readonly notifyClockAt = new Map<string, number>();
+  /**
+   * 대기 줄의 디스크 절반 (PLAN D86 의 확장): the wait rooms' mirror and the
+   * lost room's keeper, keyed by session id under the run dir.
+   */
+  private readonly queueStore = new QueueStore();
+  /** 세션에 하나씩 물려주는 디스크 손잡이 — Session 이 자기 id 로 부른다. */
+  private readonly queueDiskFor = (sessionId: string) => this.queueStore.for(sessionId);
 
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
+    this.logger = config.logger ?? createFileLogger();
     this.manager = new SessionManager({
       onEvent: (sessionId, event) => {
         this.broadcast({ type: "session.event", sessionId, event });
+        // 한도가 움직였다 (PLAN D100): 요금 칩이 2분 뒤에야 진실을 말하면,
+        // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다.
+        if (event.kind === "ratelimit") {
+          this.planReadingOwed = true;
+          this.lastPlanRefresh = 0;
+          this.refreshPlanUsage();
+          return;
+        }
         // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
         // must never hold the turn hostage — a failed checkpoint only means
         // one fewer 되돌리기, so it runs alongside and keeps its failure to
@@ -301,11 +340,31 @@ export class DaemonServer {
         void this.repo.checkpoint(sessionId, turn + 1).catch(() => undefined);
       },
       onState: (sessionId, state, detail) => {
+        // 파일 로그의 뼈대: 턴이 언제 시작해 언제 어떤 상태로 내려앉았는지.
+        this.logger.info("세션 상태", { sessionId, state, ...(detail ? { detail } : {}) });
+        // 완료 알림에 태울 턴의 길이: running 진입에 시계를 놓고 idle 에서 회수한다.
+        // 대기 뒤 재개는 시계를 다시 놓는다 — 그때의 일이 그때의 완료를 말한다.
+        // (화면의 진행 시계는 다른 질문에 답한다 — 아래 `startedAt` 을 보라.)
+        let turnDurationMs: number | undefined;
+        if (state === "running") {
+          this.notifyClockAt.set(sessionId, Date.now());
+        } else if (state === "idle") {
+          const startedAt = this.notifyClockAt.get(sessionId);
+          this.notifyClockAt.delete(sessionId);
+          turnDurationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
+        } else if (state === "closed") {
+          this.notifyClockAt.delete(sessionId);
+        }
+        // 진행 시계 (화면의 `n분 n초`): 시작을 창이 아니라 세션이 들고 있으므로
+        // 새로고침해도 두 번째 창에서도 같은 초를 센다. 도는 턴이 없는 세션의
+        // 시계는 null 이라 그 상태에는 붙지 않는다.
+        const startedAt = this.manager.get(sessionId)?.turnStartedAt ?? null;
         this.broadcast({
           type: "session.state",
           sessionId,
           state,
           ...(detail ? { detail } : {}),
+          ...(startedAt === null ? {} : { startedAt }),
         });
         // A turn that just finished is the one moment the clone can have
         // gained files nobody has saved (PLAN D8). Counting here — rather
@@ -328,6 +387,7 @@ export class DaemonServer {
           sessionId,
           state,
           this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
+          turnDurationMs,
         );
         if (notice) this.config.onNotice?.(notice);
         // The driver a session received dies with the session (PLAN D61):
@@ -341,6 +401,11 @@ export class DaemonServer {
 
   async start(): Promise<void> {
     this.claudeExecutable = await resolveClaudeExecutable(this.config.claudeExecutable);
+    // 기동 청소 (PLAN D86 의 확장): rooms the dead process was holding come
+    // back as the lost room — the turns they waited for are gone, so the
+    // words surface for the planner's hand, never for an automatic send.
+    const orphaned = this.queueStore.sweepOrphans();
+    if (orphaned > 0) this.logger?.info(`queue: recovered ${orphaned} lost room(s) from disk`);
 
     // Secrets move into the OS store on the way in; settings files keep only
     // what is not secret. A platform without its store yet keeps its plaintext.
@@ -422,6 +487,9 @@ export class DaemonServer {
       const expected = Buffer.from(this.config.token);
       // Constant-time: this token guards every message the daemon accepts.
       if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+        this.logger.warn("토큰 불일치 연결 거부", {
+          remote: req.socket.remoteAddress ?? "unknown",
+        });
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
@@ -435,6 +503,12 @@ export class DaemonServer {
       // daemon entry prints its Korean guidance from that rejection.
       this.http!.once("error", reject);
       this.http!.listen(this.config.port, this.config.host, () => resolve());
+    });
+    const bound = this.address();
+    this.logger.info("데몬 시작", {
+      host: bound.address,
+      port: bound.port,
+      protocolVersion: PROTOCOL_VERSION,
     });
   }
 
@@ -450,6 +524,7 @@ export class DaemonServer {
   }
 
   async stop(): Promise<void> {
+    this.logger.info("데몬 종료");
     await this.manager.closeAll();
     // Every project the daemon touched this run, not just the active one: an
     // inactive project may still hold a warm preview server, and every
@@ -471,7 +546,11 @@ export class DaemonServer {
 
   private attach(ws: WebSocket): void {
     this.clients.add(ws);
-    ws.on("close", () => this.clients.delete(ws));
+    this.logger.info("클라이언트 연결", { clients: this.clients.size });
+    ws.on("close", () => {
+      this.clients.delete(ws);
+      this.logger.info("클라이언트 연결 해제", { clients: this.clients.size });
+    });
     ws.on("message", (raw) => void this.onMessage(ws, String(raw)));
 
     void this.status().then((status) => {
@@ -648,6 +727,7 @@ export class DaemonServer {
           : false,
         handoff: repo?.currentHandoff ?? project.repo.handoff,
         ...(threads ? { threads } : {}),
+        ...(project.instructions ? { instructions: project.instructions } : {}),
       };
     });
   }
@@ -766,9 +846,12 @@ export class DaemonServer {
   private async runBootstrapPrepare(repoRoot: string): Promise<boolean> {
     if (!this.claudeExecutable) return false;
     const cwd = realpathBestEffort(repoRoot);
+    const instructions = this.projectInstructions(cwd);
     const session = this.manager.create({
       cwd,
       claudeExecutable: this.claudeExecutable,
+      queueDiskFor: this.queueDiskFor,
+      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       title: BOOTSTRAP_TITLE,
     });
     this.announceProjectsThrottled();
@@ -1027,6 +1110,20 @@ export class DaemonServer {
    */
   private workspaceCwd(): string {
     return realpathBestEffort(this.requireActive().paths.repoRoot);
+  }
+
+  /**
+   * 이 클론의 주인이 적어 둔 지침(설정 문서 P1#8). 활성 프로젝트가 아니라
+   * cwd 로 찾는다 — 크래시 부활과 게이트 스레드는 자기가 살던 클론으로
+   * 살아나므로, 그때의 프로젝트 규칙을 그대로 들고 가야 한다.
+   */
+  private projectInstructions(cwd: string): string | null {
+    const home = realpathBestEffort(cwd);
+    for (const project of this.registry.list()) {
+      const root = realpathBestEffort(this.registry.paths(project.slug).repoRoot);
+      if (root === home) return project.instructions ?? null;
+    }
+    return null;
   }
 
   /**
@@ -1293,6 +1390,7 @@ export class DaemonServer {
       // untouched, while a foreign error — the SDK's "Query closed before
       // response received" once rode the wire to the chat banner — is logged
       // here verbatim and replaced by the recovery sentence.
+      this.logger.error("요청 실패", { type: message.type, err: error });
       this.send(ws, {
         type: "error",
         id: message.id,
@@ -1320,15 +1418,21 @@ export class DaemonServer {
       }
 
       case "session.history": {
-        const events = await this.manager.history(
+        const events0 = await this.manager.history(
           message.sessionId,
           await this.resolveSessionCwd(message.sessionId),
         );
-        // 대기 줄은 기록이 아니라 지금의 상태 (PLAN D86): a window opened —
-        // or reloaded — while sends are waiting must still see them above
-        // the field, so the room rides at the tail of the replay.
-        const waiting = this.manager.get(message.sessionId)?.heldItems() ?? [];
-        return waiting.length > 0 ? [...events, { kind: "queued", items: waiting }] : events;
+        // 대기 줄과 lost room 은 기록이 아니라 지금의 상태 (PLAN D86 의
+        // 확장): a window opened — or reloaded — must see both above the
+        // field, so they ride at the tail of the replay. The tail is
+        // AUTHORITATIVE, empty rooms included — a window that kept rows the
+        // daemon no longer holds must lose them here, not keep the ghosts.
+        const events = [
+          ...events0,
+          { kind: "queued", items: this.manager.get(message.sessionId)?.heldItems() ?? [] },
+        ];
+        const lost = this.queueStore.lostItems(message.sessionId);
+        return lost.length > 0 ? [...events, { kind: "queue.lost", items: lost }] : events;
       }
 
       case "session.create": {
@@ -1364,10 +1468,14 @@ export class DaemonServer {
         const preview = await this.previewToolsFor(message.previewTools !== false, (route, state) =>
           openSink.current?.(route, state),
         );
+        const sessionCwd = this.workspaceCwd();
+        const instructions = this.projectInstructions(sessionCwd);
         const session = this.manager.create({
-          cwd: this.workspaceCwd(),
+          cwd: sessionCwd,
           claudeExecutable: this.claudeExecutable,
-          writePolicy: repoWritePolicy(this.workspaceCwd()),
+          queueDiskFor: this.queueDiskFor,
+          ...(instructions ? { appendSystemPrompt: instructions } : {}),
+          writePolicy: repoWritePolicy(sessionCwd),
           ...(message.title ? { title: message.title } : {}),
           ...(message.resume ? { resume: message.resume } : {}),
           ...(message.model ? { model: message.model } : {}),
@@ -1455,19 +1563,38 @@ export class DaemonServer {
         return { ok: true };
       }
 
+      // lost room 다루기 (PLAN D86 의 확장): these touch only the daemon's
+      // own store — no clone is written — so they need no project fence, and
+      // they work for a thread nobody has reopened since the restart.
+      case "session.queue.takeDropped":
+        return this.queueStore.takeLost(message.sessionId, message.itemId);
+
+      case "session.queue.dismissDropped": {
+        this.queueStore.dismissLost(message.sessionId, message.itemId);
+        // The store changed under every window: re-announce the state.
+        this.broadcast({
+          type: "session.event",
+          sessionId: message.sessionId,
+          event: { kind: "queue.lost", items: this.queueStore.lostItems(message.sessionId) },
+        });
+        return { ok: true };
+      }
+
       case "session.close": {
         const cwd = this.manager.get(message.sessionId)?.cwd;
         await this.manager.close(message.sessionId);
         this.touchThreadsCwd(cwd);
         return { ok: true };
       }
+
       case "session.delete": {
         const cwd = await this.resolveSessionCwd(message.sessionId);
         await this.manager.remove(message.sessionId, cwd);
+        // The thread is gone; its wait room and lost room go with it.
+        this.queueStore.clear(message.sessionId);
         this.touchThreadsCwd(cwd);
         return { ok: true };
       }
-
       case "session.contextUsage": {
         const usage = await this.manager.require(message.sessionId).contextUsage();
         this.rememberPlanUsage(usage?.plan ?? null);
@@ -1500,6 +1627,17 @@ export class DaemonServer {
       case "session.commands":
         return await this.manager.require(message.sessionId).commands();
 
+      case "session.stopTask":
+        await this.manager.require(message.sessionId).stopTask(message.taskId);
+        return { ok: true };
+
+      case "session.backgroundTask": {
+        const moved = await this.manager
+          .require(message.sessionId)
+          .backgroundTask(message.toolUseId);
+        return { moved };
+      }
+
       case "cli.commands":
         return await this.cliCommands();
 
@@ -1521,7 +1659,12 @@ export class DaemonServer {
       case "question.respond": {
         const session = this.manager.findByRequest(message.requestId);
         if (!session) throw new Error("이미 끝난 질문입니다 — 방금 뜬 카드에서 다시 답해 주세요.");
-        session.respondQuestion(message.requestId, message.answers, message.response);
+        session.respondQuestion(
+          message.requestId,
+          message.answers,
+          message.response,
+          message.annotations,
+        );
         return { ok: true };
       }
 
@@ -1560,6 +1703,9 @@ export class DaemonServer {
           ...(message.name !== undefined ? { name: message.name } : {}),
           ...(message.repoUrl !== undefined ? { repoUrl: message.repoUrl } : {}),
           ...(message.baseBranch !== undefined ? { baseBranch: message.baseBranch } : {}),
+          // 지침(P1#8): 다음 대화부터 적용된다 — 돌고 있는 세션의 시스템
+          // 프롬프트를 중간에 바꾸지 않는다(SDK 의 스냅샷 계약).
+          ...(message.instructions !== undefined ? { instructions: message.instructions } : {}),
         });
         // A url change is a repo change: the workspace re-points (and
         // re-clones when the url moved) through its own update path.
@@ -1787,6 +1933,7 @@ export class DaemonServer {
           base: {
             cwd: this.workspaceCwd(),
             claudeExecutable: this.claudeExecutable ?? "",
+            queueDiskFor: this.queueDiskFor,
             writePolicy: repoWritePolicy(this.workspaceCwd()),
             ...(preview ? { previewTools: preview.tools } : {}),
           },
@@ -1814,6 +1961,9 @@ export class DaemonServer {
       // --- 되돌리기와 요약 (PLAN D51 · D52 · D53) --------------------------
       case "repo.summarize":
         return await this.repo.summarize();
+
+      case "repo.handoffDraft":
+        return await this.repo.handoffDraft();
 
       case "repo.history":
         return await this.repo.history();
@@ -1872,9 +2022,12 @@ export class DaemonServer {
     const preview = await this.previewToolsFor(true, (route, state) =>
       openSink.current?.(route, state),
     );
+    const instructions = this.projectInstructions(dead.cwd);
     const session = this.manager.create({
       cwd: dead.cwd,
       claudeExecutable: this.claudeExecutable,
+      queueDiskFor: this.queueDiskFor,
+      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       writePolicy: repoWritePolicy(dead.cwd),
       resume: dead.id,
       title: dead.title,
@@ -1922,6 +2075,7 @@ export class DaemonServer {
             ? named
             : this.gateThreadFor(stage);
         if (!session) return;
+        this.logger.warn("게이트 실패", { sessionId: session.id, stage });
         this.config.onNotice?.({
           kind: "gate",
           sessionId: session.id,
@@ -1959,9 +2113,12 @@ export class DaemonServer {
       return remembered;
     }
     if (!this.claudeExecutable) return null;
+    const instructions = this.projectInstructions(cwd);
     const session = this.manager.create({
       cwd,
       claudeExecutable: this.claudeExecutable,
+      queueDiskFor: this.queueDiskFor,
+      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       writePolicy: repoWritePolicy(cwd),
       title:
         stage === "save"

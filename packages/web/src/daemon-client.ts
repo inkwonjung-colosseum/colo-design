@@ -9,6 +9,7 @@ import type {
   GitHubRepoInspection,
   GitHubRepoList,
   HandoffStatusReport,
+  LostSend,
   OnboardingFixKind,
   OnboardingStep,
   PermissionMode,
@@ -19,6 +20,7 @@ import type {
   QueuedSend,
   QueuedSendPayload,
   RepoCheckpoints,
+  RepoHandoffDraft,
   RepoHistory,
   RepoHistoryEntry,
   RepoStatus,
@@ -32,6 +34,8 @@ import type {
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorWords } from "./error-words";
+import { attachProgress, type ToolProgress } from "./progress";
+import { currentNoticePrefs, LONG_TURN_MS } from "./settings";
 
 // ---------------------------------------------------------------------------
 // Transcript model: ChatEvents folded into renderable blocks
@@ -70,6 +74,11 @@ export type Block =
       result?: unknown;
       isError?: boolean;
       done: boolean;
+      /**
+       * D97: 도는 동안의 진행 — 라이브 전용. 재생된 기록에는 없다(도구 행의
+       * 입력·결과만 남는다), 그러니 없는 것이 정상이다.
+       */
+      progress?: ToolProgress;
     }
   | {
       type: "turn";
@@ -275,17 +284,81 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
         },
       ];
 
+    case "tool.progress":
+    case "task.start":
+    case "task.progress":
+    case "task.update":
+    case "task.end":
+      // D97: 새 행이 아니라 이름한 도구 행에 붙는다 (progress.ts).
+      return attachProgress(blocks, event);
+
     case "init":
     case "preview.opened":
     case "queued":
-    case "queue.dropped":
+    case "queue.lost":
+    case "tasks":
+    case "suggestion":
+    case "status":
+    case "thinking.tokens":
+    case "shutdown":
+    case "ratelimit":
       // D91: `preview.opened` is not a transcript event — the session view
       // keeps it as `lastOpened` (below), and no block is built. D86's
-      // `queued` and `queue.dropped` are the same kind of news: what is
+      // `queued` and `queue.lost` are the same kind of news: what is
       // waiting above the field, and what fell out of the room — neither has
       // entered the transcript (a waiting send echoes only when delivered).
+      // D99·D100·D101 의 칩·상태·작업 목록도 같은 성질이다: 지금의 상태이지
+      // 나중에 다시 읽을 기록이 아니다 (applyEvent 가 뷰에 담는다).
       // The exhaustive switch is why none slips through unhandled.
       return blocks;
+  }
+}
+
+/**
+ * 세션 하나에 사건 하나를 적용한다. 기록으로 남을 것은 `foldEvent` 가 블록으로
+ * 접고, 지금의 상태일 뿐인 것(열린 화면 · 대기 줄 · 다음 칩 · 진행 · 작업)은
+ * 뷰의 제 자리에 담긴다 — 이 갈림이 한 곳에 있어야 두 성질이 섞이지 않는다.
+ */
+function applyEvent(view: SessionView, event: ChatEvent): SessionView {
+  switch (event.kind) {
+    case "init":
+      return { ...view, model: event.model };
+    case "preview.opened":
+      // D91: the screen Claude is actually looking at — kept beside the view,
+      // not in the transcript.
+      return { ...view, lastOpened: { route: event.route, state: event.state } };
+    case "queued":
+      // D86: 대기 줄 — 기록이 아니라 입력창 위 목록.
+      return { ...view, queue: event.items };
+    case "queue.lost":
+      // 잃은 말도 상태다 (D86 의 확장): 데몬의 방이 진실이므로 통째로 갈아
+      // 끼운다 — 이어 붙이면 재접속 한 번에 같은 말이 두 줄이 된다.
+      return { ...view, dropped: event.items };
+    case "tasks":
+      // D101: REPLACE — 받은 목록이 지금 살아 있는 전부다.
+      return { ...view, tasks: event.tasks };
+    case "suggestion":
+      return { ...view, suggestion: event.text };
+    case "status":
+      return { ...view, activity: { ...view.activity, status: event.status } };
+    case "thinking.tokens":
+      return { ...view, activity: { ...view.activity, thinkingTokens: event.tokens } };
+    case "user.echo":
+      // 보낸 순간 앞 턴의 칩과 진행 눈금은 지나간 말이 된다.
+      return {
+        ...view,
+        suggestion: null,
+        activity: { status: null, thinkingTokens: 0 },
+        blocks: foldEvent(view.blocks, event),
+      };
+    case "turn.end":
+      return {
+        ...view,
+        activity: { status: null, thinkingTokens: 0 },
+        blocks: foldEvent(view.blocks, event),
+      };
+    default:
+      return { ...view, blocks: foldEvent(view.blocks, event) };
   }
 }
 
@@ -337,7 +410,26 @@ interface SessionView {
    * reached the transcript, so the composer keeps them above the field until
    * the planner restores or dismisses each — this list is the window's own.
    */
-  dropped: QueuedSend[];
+  dropped: LostSend[];
+  /**
+   * 지금 살아 있는 백그라운드 작업 (PLAN D101). 데몬이 통째로 갈아 끼운다.
+   */
+  tasks: Array<{ taskId: string; type: string; description: string }>;
+  /**
+   * 다음에 물어볼 만한 말 (PLAN D99) — 한 번 뜨고, 보내면 사라진다.
+   */
+  suggestion: string | null;
+  /**
+   * 답이 나오기 전의 진행 (PLAN D100): 정리 중인지 · 답을 기다리는지, 그리고
+   * 생각에 쓴 토큰의 어림. 생각 과정을 끈 기본값에서 유일한 "돌고 있음"이다.
+   */
+  activity: { status: "compacting" | "requesting" | null; thinkingTokens: number };
+  /**
+   * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 입력창의 진행
+   * 시계가 읽는 자리. 창의 기억이 아니라 데몬의 것이다: 새로고침해도, 두 번째
+   * 창에서도 같은 초를 센다. 확인 카드를 기다리는 동안에도 살아 있다.
+   */
+  turnStartedAt: number | null;
 }
 
 const EMPTY_SESSION: SessionView = {
@@ -347,6 +439,10 @@ const EMPTY_SESSION: SessionView = {
   live: false,
   queue: [],
   dropped: [],
+  tasks: [],
+  suggestion: null,
+  activity: { status: null, thinkingTokens: 0 },
+  turnStartedAt: null,
 };
 
 /** Requests the UI can make. Every method resolves with the daemon's reply. */
@@ -359,6 +455,7 @@ const EMPTY_SESSION: SessionView = {
  *   CommentItem       ← CommentItem      (PLAN D57 — one recorded comment) */
 export type DiffSummary = RepoSummary;
 export type SaveHistoryEntry = RepoHistoryEntry;
+export type HandoffDraft = RepoHandoffDraft;
 type SaveHistory = RepoHistory;
 type CheckpointList = RepoCheckpoints;
 export type CommentItem = ProtocolCommentItem;
@@ -393,9 +490,14 @@ interface DaemonApi {
    * 대기 줄 다루기 (PLAN D86). `queueRemove` takes a waiting send back out
    * and resolves with what was sent (null once it has already gone out);
    * `queueSendNow` cuts the running turn and delivers that send first.
+   * `queueTakeDropped` hands a lost send back whole; `queueDismissDropped`
+   * lets it go — the daemon's store is the one truth, so both work whether
+   * or not the thread has been reopened.
    */
   queueRemove: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
   queueSendNow: (sessionId: string, itemId: string) => Promise<unknown>;
+  queueTakeDropped: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
+  queueDismissDropped: (sessionId: string, itemId: string) => Promise<unknown>;
   contextUsage: (sessionId: string) => Promise<ContextUsage | null>;
   /** 모델·노력·권한 chips; switches apply from the next response. */
   selectors: (sessionId: string) => Promise<SessionSelectors>;
@@ -418,7 +520,13 @@ interface DaemonApi {
   respondQuestion: (
     requestId: string,
     answers: Record<string, string | string[]>,
+    /** 선택 옆의 메모와 그때 보던 시안 (PLAN D96), 질문 글자를 키로. */
+    annotations?: Record<string, { preview?: string; notes?: string }>,
   ) => Promise<unknown>;
+  /** 이 작업만 중지 (PLAN D101) — 턴은 그대로 두고 그 작업만 세운다. */
+  stopTask: (sessionId: string, taskId: string) => Promise<unknown>;
+  /** 뒤로 보내기 (PLAN D101) — 턴을 붙잡은 작업을 백그라운드로 옮긴다. */
+  backgroundTask: (sessionId: string, toolUseId: string) => Promise<{ moved: boolean }>;
   refreshStatus: () => Promise<void>;
   /**
    * The registry, asked for on connect. `hello` already carries it, so the
@@ -445,6 +553,8 @@ interface DaemonApi {
       repoUrl?: string | null;
       baseBranch?: string;
       approveCommands?: boolean;
+      /** 프로젝트별 지침(P1#8); null 이나 빈 문자열이면 지운다. */
+      instructions?: string | null;
     },
   ) => Promise<ProjectList>;
   /** Switch the active project; the outgoing preview stays warm unless its port is needed. */
@@ -493,6 +603,12 @@ interface DaemonApi {
    * answered in the planner's words. Asked once per diff, cached above this.
    */
   summarizeDiff: () => Promise<DiffSummary>;
+  /**
+   * 개발자에게 넘기기의 초안 (비개발자 넘기기): one no-tool Claude turn over
+   * this cycle's 저장 메모, answered as the title and the paragraph the
+   * developer reads first. Empty strings keep the browser's own proposal.
+   */
+  handoffDraft: () => Promise<HandoffDraft>;
   /**
    * 저장 기록 (PLAN D53): the saved commits of this cycle, `base` → HEAD.
    */
@@ -658,14 +774,22 @@ async function notifyBackgroundThread(
   findTitle: (sessionId: string) => Promise<string | null>,
   sessionId: string,
   state: SessionState,
+  turnDurationMs?: number,
 ): Promise<void> {
   if (typeof Notification === "undefined" || window.coloDesignDesktop) return;
   if (Notification.permission !== "granted") return;
+  // 알림 시점 정책(설정 문서 P0#3): 완료만 3상태를 탄다. 확인 요청·중단은
+  // 언제나 온다. 걸린 시간을 모르는 완료는 "오래 걸린" 쪽으로 묶는다.
+  const prefs = currentNoticePrefs();
+  if (state === "idle") {
+    if (prefs.done === "off") return;
+    if (prefs.done === "long" && (turnDurationMs ?? LONG_TURN_MS) < LONG_TURN_MS) return;
+  }
   const stored = await findTitle(sessionId).catch(() => null);
   const notice = backgroundNotice(stored ?? "대화", state);
   if (!notice) return;
   try {
-    new Notification(notice.title, { body: notice.body });
+    new Notification(notice.title, { body: notice.body, silent: !prefs.sound });
   } catch {
     // Some browsers gate the constructor behind a service worker; the strip
     // is the fallback there too.
@@ -712,6 +836,8 @@ export function useDaemon(url: string | null): Daemon {
   const watched = useRef<string | null>(null);
   /** The states at the previous pass — the transition is the event. */
   const prevStates = useRef<Record<string, SessionState>>({});
+  /** 세션별 최근 running 진입 시각 — 완료 알림의 "오래 걸린 턴"을 재는 시계. */
+  const runningSince = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (!url) return;
@@ -817,25 +943,7 @@ export function useDaemon(url: string | null): Daemon {
       if (message.type === "session.event") {
         setSessions((prev) => {
           const view = prev[message.sessionId] ?? EMPTY_SESSION;
-          const next: SessionView =
-            message.event.kind === "init"
-              ? { ...view, model: message.event.model }
-              : message.event.kind === "preview.opened"
-                ? // D91: the screen Claude is actually looking at — kept
-                  // beside the view, not in the transcript.
-                  {
-                    ...view,
-                    lastOpened: {
-                      route: message.event.route,
-                      state: message.event.state,
-                    },
-                  }
-                : message.event.kind === "queued"
-                  ? // D86: 대기 줄 — 기록이 아니라 입력창 위 목록.
-                    { ...view, queue: message.event.items }
-                  : message.event.kind === "queue.dropped"
-                    ? { ...view, dropped: [...view.dropped, ...message.event.items] }
-                    : { ...view, blocks: foldEvent(view.blocks, message.event) };
+          const next = applyEvent(view, message.event);
           return { ...prev, [message.sessionId]: next };
         });
         return;
@@ -847,6 +955,9 @@ export function useDaemon(url: string | null): Daemon {
           [message.sessionId]: {
             ...(prev[message.sessionId] ?? EMPTY_SESSION),
             state: message.state,
+            // 데몬이 시작 시각을 붙여 보낸다 — 붙지 않은 상태는 도는 턴이
+            // 없다는 뜻이므로 시계도 함께 꺼진다.
+            turnStartedAt: message.startedAt ?? null,
           },
         }));
         return;
@@ -944,17 +1055,26 @@ export function useDaemon(url: string | null): Daemon {
           // 재접속 복원 (리뷰 B2): a window that just reconnected starts from
           // an empty map, so a turn running on the daemon showed as a silent
           // transcript — no lamp, no spinner, no end signal. The list IS the
-          // daemon's truth; adopt live+state for every session it names.
+          // daemon's truth; adopt live+state for every session it names —
+          // 진행 시계의 시작 시각까지. 그러지 않으면 새로고침한 창이 이미
+          // 3분째인 턴을 0초부터 다시 센다.
           setSessions((prev) => {
             let next = prev;
             for (const summary of list) {
               const view = next[summary.sessionId];
-              if (view && view.live === summary.live && view.state === summary.state) continue;
+              if (
+                view &&
+                view.live === summary.live &&
+                view.state === summary.state &&
+                view.turnStartedAt === summary.turnStartedAt
+              )
+                continue;
               if (next === prev) next = { ...prev };
               next[summary.sessionId] = {
                 ...(next[summary.sessionId] ?? EMPTY_SESSION),
                 live: summary.live,
                 state: summary.state,
+                turnStartedAt: summary.turnStartedAt,
               };
             }
             return next;
@@ -1006,6 +1126,10 @@ export function useDaemon(url: string | null): Daemon {
         call<QueuedSendPayload>({ type: "session.queue.remove", sessionId, itemId }),
       queueSendNow: (sessionId: string, itemId: string) =>
         call({ type: "session.queue.sendNow", sessionId, itemId }),
+      queueTakeDropped: (sessionId: string, itemId: string) =>
+        call<QueuedSendPayload>({ type: "session.queue.takeDropped", sessionId, itemId }),
+      queueDismissDropped: (sessionId: string, itemId: string) =>
+        call({ type: "session.queue.dismissDropped", sessionId, itemId }),
       contextUsage: (sessionId: string) =>
         call<ContextUsage | null>({ type: "session.contextUsage", sessionId }),
       selectors: (sessionId: string) =>
@@ -1038,8 +1162,21 @@ export function useDaemon(url: string | null): Daemon {
           // A stored transcript is removed with the session.
           120_000,
         ),
-      respondQuestion: (requestId: string, answers: Record<string, string | string[]>) =>
-        call({ type: "question.respond", requestId, answers }),
+      respondQuestion: (
+        requestId: string,
+        answers: Record<string, string | string[]>,
+        annotations?: Record<string, { preview?: string; notes?: string }>,
+      ) =>
+        call({
+          type: "question.respond",
+          requestId,
+          answers,
+          ...(annotations && Object.keys(annotations).length > 0 ? { annotations } : {}),
+        }),
+      stopTask: (sessionId: string, taskId: string) =>
+        call({ type: "session.stopTask", sessionId, taskId }),
+      backgroundTask: (sessionId: string, toolUseId: string) =>
+        call<{ moved: boolean }>({ type: "session.backgroundTask", sessionId, toolUseId }),
       refreshStatus: () => call<DaemonStatus>({ type: "daemon.status" }).then(setStatus),
       projectList: () => call<ProjectList>({ type: "project.list" }).then(keepProjects),
       // Creating clones the repo and installs when needed: a first run is
@@ -1075,6 +1212,7 @@ export function useDaemon(url: string | null): Daemon {
           repoUrl?: string | null;
           baseBranch?: string;
           approveCommands?: boolean;
+          instructions?: string | null;
         },
       ) =>
         call<ProjectList>(
@@ -1087,6 +1225,7 @@ export function useDaemon(url: string | null): Daemon {
             ...(changes.approveCommands !== undefined
               ? { approveCommands: changes.approveCommands }
               : {}),
+            ...(changes.instructions !== undefined ? { instructions: changes.instructions } : {}),
           },
           // A moved url re-clones.
           600_000,
@@ -1165,6 +1304,8 @@ export function useDaemon(url: string | null): Daemon {
       // The summary runs one short Claude turn on the daemon: the window a
       // generation gets, not the minutes a gate takes.
       summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
+      // The draft runs the same short Claude turn the summary does.
+      handoffDraft: () => call<HandoffDraft>({ type: "repo.handoffDraft" }, 120_000),
       saveHistory: () => call<SaveHistory>({ type: "repo.history" }, 60_000),
       // A restore commits and pushes, and the repo's checks may run on the
       // way: the same window a save is given.
@@ -1235,19 +1376,24 @@ export function useDaemon(url: string | null): Daemon {
     const next: Record<string, SessionState> = {};
     for (const [sessionId, view] of Object.entries(sessions)) {
       next[sessionId] = view.state;
-      if (
-        prevStates.current[sessionId] === "running" &&
-        view.state !== "running" &&
-        sessionId !== watched.current
-      ) {
-        void notifyBackgroundThread(
-          (id) =>
-            call<SessionSummary[]>({ type: "session.list" }).then(
-              (list) => list.find((session) => session.sessionId === id)?.title ?? null,
-            ),
-          sessionId,
-          view.state,
-        );
+      // 시계: running 진입에 놓고, 세션이 running 을 벗어나면 회수한다.
+      if (view.state === "running" && prevStates.current[sessionId] !== "running") {
+        runningSince.current[sessionId] = Date.now();
+      }
+      if (prevStates.current[sessionId] === "running" && view.state !== "running") {
+        const startedAt = runningSince.current[sessionId];
+        delete runningSince.current[sessionId];
+        if (sessionId !== watched.current) {
+          void notifyBackgroundThread(
+            (id) =>
+              call<SessionSummary[]>({ type: "session.list" }).then(
+                (list) => list.find((session) => session.sessionId === id)?.title ?? null,
+              ),
+            sessionId,
+            view.state,
+            startedAt === undefined ? undefined : Date.now() - startedAt,
+          );
+        }
       }
     }
     prevStates.current = next;
@@ -1263,24 +1409,32 @@ export function useDaemon(url: string | null): Daemon {
 
   /**
    * Replace a session's transcript with a stored one, without resuming it.
-   * A live room rides at the tail of the replay (the daemon's `session.history`
-   * appends it), so a window opened mid-wait sees the list too.
+   * The replay's tail is authoritative: the daemon always appends the live
+   * room (empty included), so a window opened mid-wait sees the list too.
    */
   const hydrate = useCallback((sessionId: string, events: ChatEvent[]) => {
     setSessions((prev) => {
       const view = prev[sessionId] ?? EMPTY_SESSION;
-      const tail = events.at(-1);
+      // The replay's tail is AUTHORITATIVE (PLAN D86 의 확장): the daemon
+      // always appends the live room, empty included, so rows a stale window
+      // kept die here instead of becoming ghosts.
+      let queue: QueuedSend[] = [];
+      let dropped: LostSend[] = [];
+      for (const event of events) {
+        if (event.kind === "queued") queue = event.items;
+        else if (event.kind === "queue.lost") dropped = event.items;
+      }
       return {
         ...prev,
         [sessionId]: {
           ...view,
           blocks: events.reduce<Block[]>(foldEvent, []),
-          queue: tail?.kind === "queued" ? tail.items : view.queue,
+          queue,
+          dropped,
         },
       };
     });
   }, []);
-
   const markLive = useCallback((sessionId: string) => {
     watched.current = sessionId;
     setSessions((prev) => ({
@@ -1289,16 +1443,17 @@ export function useDaemon(url: string | null): Daemon {
     }));
   }, []);
 
-  const dismissDropped = useCallback((sessionId: string, itemId: string) => {
-    setSessions((prev) => {
-      const view = prev[sessionId];
-      if (!view) return prev;
-      return {
-        ...prev,
-        [sessionId]: { ...view, dropped: view.dropped.filter((item) => item.id !== itemId) },
-      };
-    });
-  }, []);
+  /**
+   * Let go of one lost send. The DAEMON owns the lost room now — the store
+   * deletes it and the re-announcement updates every open window, this one
+   * included.
+   */
+  const dismissDropped = useCallback(
+    (sessionId: string, itemId: string) => {
+      void api.queueDismissDropped(sessionId, itemId).catch(() => undefined);
+    },
+    [api],
+  );
 
   return {
     connection,

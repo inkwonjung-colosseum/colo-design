@@ -31,6 +31,7 @@ import type {
   RepoCheckpoints,
   RepoDiscard,
   RepoErrorKind,
+  RepoHandoffDraft,
   RepoHistory,
   RepoPhase,
   RepoSettingsWarning,
@@ -96,6 +97,22 @@ const SUMMARY_TIMEOUT_MS = 3_000;
 const SUMMARY_MAX_LINES = 3;
 /** D51: per-file diff fed to the summarizer — a refactor's full diff is noise. */
 const SUMMARY_HUNK_CHAR_LIMIT = 4_096;
+/** The machine turns' model (비개발자 저장): reading a diff and saying what it
+ * did is haiku's job — fast enough for the leashes above and below, and a
+ * planner's model stays for planning. */
+const MACHINE_MODEL = "haiku";
+/** How long the save-time memo turn may take before the default message. */
+const MEMO_TIMEOUT_MS = 8_000;
+/** `repo.save`'s message cap (protocol) — a composed memo never outgrows it. */
+const MEMO_MAX_CHARS = 500;
+/** How long the 넘기기 draft's turn may take before the browser's proposal wins. */
+const HANDOFF_DRAFT_TIMEOUT_MS = 8_000;
+/** The cycle's changed files fed to the draft — a long cycle's tail is noise. */
+const HANDOFF_FILE_LIMIT = 60;
+/** A pull request title is one line a developer scans in a list. */
+const HANDOFF_TITLE_MAX_CHARS = 200;
+/** The prose half of the body; the screen list and 의견 section follow it. */
+const HANDOFF_BODY_MAX_CHARS = 2_000;
 /** The fallback bucket for a changed file with no folder above it. */
 const FALLBACK_ROOT_GROUP = "기타";
 
@@ -522,6 +539,43 @@ function summaryPrompt(files: DiffFile[]): string {
 }
 
 /**
+ * The save-time memo's whole instruction (비개발자 저장): one Korean
+ * sentence that can stand alone as a commit subject — no file-name lists,
+ * no quoting, nothing but the sentence. The diff is the only thing this
+ * turn may read, so it rides in the prompt, exactly like the summary's.
+ */
+function memoPrompt(files: DiffFile[]): string {
+  return [
+    "아래 변경 내용이 저장(커밋)됩니다. 저장 메모로 쓸 한국어 한 문장을 적어 주세요.",
+    "규칙: 한 줄만 답하고, 따옴표·목록 기호·접두어를 붙이지 않으며, 파일 이름을 나열하지 않습니다. 예: 회원 관리 화면 추가",
+    "",
+    `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
+    "",
+    files.map(renderSummaryFile).join("\n"),
+  ].join("\n");
+}
+
+/**
+ * The 넘기기 draft's whole instruction (비개발자 넘기기): the cycle's own
+ * 저장 메모 and the files those saves moved. The memos are already the
+ * planner's words — this turn joins them into the two things a developer
+ * reads first, and is told not to invent what the memos do not say.
+ */
+function handoffPrompt(memos: string[], files: string[]): string {
+  return [
+    "아래는 기획자가 이번에 저장한 작업입니다. 개발자에게 넘길 제목과 내용을 한국어로 적어 주세요.",
+    "첫 줄: 제목 한 줄 (40자 안쪽, 따옴표·접두어 없이).",
+    "둘째 줄부터: 무엇을 만들었고 개발자가 무엇을 봐 주면 되는지 3줄 이내. 파일 이름은 나열하지 않고, 저장 메모에 없는 내용은 지어내지 않습니다.",
+    "",
+    "저장 메모:",
+    ...memos.map((memo) => `- ${memo}`),
+    "",
+    "바뀐 파일:",
+    ...files,
+  ].join("\n");
+}
+
+/**
  * The one path rule every write here obeys — the same rule a save's
  * reviewed diff already follows: a repo-relative, forward-slash path that
  * stays inside the clone. Absolute paths and `..` are not paths inside a
@@ -609,6 +663,15 @@ export class RepoWorkspace {
     hash: string;
     lines: string[];
     source: RepoSummary["source"];
+  } | null = null;
+  /**
+   * The 넘기기 draft's memory (비개발자 넘기기): the cycle tip its title and
+   * body answer for. Same rule as the summary's — reopening the dialog on an
+   * unchanged cycle is free, and a save that moved the tip retires it.
+   */
+  private handoffDraftCache: {
+    tip: string;
+    draft: RepoHandoffDraft;
   } | null = null;
   private lastEmit = 0;
   /**
@@ -1018,7 +1081,8 @@ export class RepoWorkspace {
     await this.refreshing?.catch(() => undefined);
 
     this.setDiff({ stage: "computing" });
-    const approved = (await this.diff()).map((file) => file.path);
+    const files = await this.diff();
+    const approved = files.map((file) => file.path);
     if (approved.length === 0) {
       return this.setDiff({
         stage: "failed",
@@ -1027,12 +1091,22 @@ export class RepoWorkspace {
       });
     }
 
+    // 비개발자 저장: an empty memo is not a question the planner must answer
+    // before saving — the memo turn reads the diff and writes one sentence,
+    // and the default message still catches a turn that cannot land (no
+    // CLI, timeout, refusal). Whatever is committed is announced back on
+    // the published status, so nothing is written in their name unseen.
+    const memo =
+      options.message?.trim() ||
+      (await this.claudeMemo(files).catch(() => null)) ||
+      DEFAULT_COMMIT_MESSAGE;
+
     // Commit exactly the paths the planner approved — never `git add -A`, so
     // unreviewed output cannot ride along in the save.
     this.setDiff({ stage: "pushing" });
     try {
       const branch = await this.ensureCycleBranch();
-      await this.commitApproved(options.message?.trim() || DEFAULT_COMMIT_MESSAGE, approved);
+      await this.commitApproved(memo, approved);
       await this.git(["push", "--set-upstream", "origin", branch]);
     } catch (error) {
       return this.failGate("push", error, options.onSessionTurn);
@@ -1041,7 +1115,7 @@ export class RepoWorkspace {
     const commit = (await this.git(["rev-parse", "HEAD"])).trim();
     // The worktree is clean now; the chip moves off unsaved on this.
     await this.refreshPendingChanges();
-    return this.setDiff({ stage: "published", commit });
+    return this.setDiff({ stage: "published", commit, message: memo });
   }
 
   /**
@@ -1398,6 +1472,67 @@ export class RepoWorkspace {
   }
 
   /**
+   * 개발자에게 넘기기의 초안 (비개발자 넘기기): the title and the paragraph a
+   * developer reads first, written from what this cycle already said about
+   * itself — its 저장 메모 and the files those saves moved, never the whole
+   * diff. One Claude turn on the same leash as the save memo's; anywhere it
+   * cannot land the answer is empty, and the dialog keeps the browser's own
+   * proposal, which is what it opened with before this existed.
+   */
+  async handoffDraft(): Promise<RepoHandoffDraft> {
+    const empty: RepoHandoffDraft = { title: "", body: "", source: "fallback" };
+    if (!this.isCloned() || !this.branch) return empty;
+    const range = `origin/${this.baseBranch}..${this.branch}`;
+    const tip = (await this.git(["rev-parse", this.branch]).catch(() => "")).trim();
+    if (!tip) return empty;
+    if (this.handoffDraftCache?.tip === tip) return this.handoffDraftCache.draft;
+
+    const memos = (await this.git(["log", "--reverse", "--format=%s", range]).catch(() => ""))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const files = (await this.git(["diff", "--name-status", range]).catch(() => ""))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, HANDOFF_FILE_LIMIT);
+    // Nothing saved on this cycle yet: there is no work to describe, and a
+    // turn over an empty range would invent one.
+    if (memos.length === 0 && files.length === 0) return empty;
+
+    const draft = (await this.claudeHandoffDraft(memos, files).catch(() => null)) ?? empty;
+    this.handoffDraftCache = { tip, draft };
+    return draft;
+  }
+
+  /** The draft's one turn; an empty draft means "keep the browser's". */
+  private async claudeHandoffDraft(
+    memos: string[],
+    files: string[],
+  ): Promise<RepoHandoffDraft | null> {
+    const answer = await this.oneTurn(handoffPrompt(memos, files), HANDOFF_DRAFT_TIMEOUT_MS);
+    const lines = (answer ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*#+\s*/, "").trimEnd());
+    const first = lines.findIndex((line) => line.trim() !== "");
+    if (first === -1) return null;
+    const title = (lines[first] ?? "")
+      .replace(/^[-·•*]\s*/, "")
+      .replace(/^(제목|title)\s*[:：]\s*/i, "")
+      .replace(/^["'`]+|["'`]+$/g, "")
+      .trim()
+      .slice(0, HANDOFF_TITLE_MAX_CHARS);
+    if (!title) return null;
+    const body = lines
+      .slice(first + 1)
+      .join("\n")
+      .replace(/^(내용|body)\s*[:：]\s*/i, "")
+      .trim()
+      .slice(0, HANDOFF_BODY_MAX_CHARS);
+    return { title, body, source: "claude" };
+  }
+
+  /**
    * The summarizer's working directory — deliberately NOT the clone. The CLI
    * files every transcript under the project folder of its cwd, and the
    * session list offers every transcript in the clone's folder as a
@@ -1413,20 +1548,26 @@ export class RepoWorkspace {
     return dir;
   }
 
-  /** The summarizer's one turn; null means "use the fallback". */
-  private async claudeSummary(files: DiffFile[]): Promise<RepoSummary | null> {
+  /**
+   * One machine turn (비개발자 저장): the same SDK entry the sessions use,
+   * aimed at a single answer-nothing-else turn — no tools to run, no
+   * settings to load, and haiku answering: reading a diff and saying what
+   * it did is haiku's job, and its latency is what the leashes assume. The
+   * prompt is everything this call may read; the transcript lands beside
+   * the summary's, out of the conversation store. Null means "use the
+   * fallback".
+   */
+  private async oneTurn(prompt: string, timeoutMs: number): Promise<string | null> {
     if (!this.claudeExecutable) return null;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      // The same SDK entry the sessions use, aimed at a single
-      // answer-nothing-else turn: no tools to run, no settings to load — the
-      // diff in the prompt is everything this call may read.
       const conversation = query({
-        prompt: summaryPrompt(files),
+        prompt,
         options: {
           cwd: this.summaryCwd(),
           pathToClaudeCodeExecutable: this.claudeExecutable,
+          model: MACHINE_MODEL,
           maxTurns: 1,
           tools: [],
           settingSources: [],
@@ -1439,15 +1580,41 @@ export class RepoWorkspace {
           answer = message.result;
         }
       }
-      const lines = (answer ?? "")
-        .split(/\r?\n/)
-        .map((line) => line.replace(/^[-·•*]\s*/, "").trim())
-        .filter(Boolean)
-        .slice(0, SUMMARY_MAX_LINES);
-      return lines.length > 0 ? { lines, source: "claude" } : null;
+      return answer;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /** The summarizer's one turn; null means "use the fallback". */
+  private async claudeSummary(files: DiffFile[]): Promise<RepoSummary | null> {
+    const answer = await this.oneTurn(summaryPrompt(files), SUMMARY_TIMEOUT_MS);
+    const lines = (answer ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[-·•*]\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, SUMMARY_MAX_LINES);
+    return lines.length > 0 ? { lines, source: "claude" } : null;
+  }
+
+  /**
+   * The save-time memo (비개발자 저장): when the planner saves with the memo
+   * left empty, this turn writes one — one Korean sentence from the same
+   * diff the review's summary read, so pressing 저장 alone is enough. Null
+   * means "use the default message".
+   */
+  private async claudeMemo(files: DiffFile[]): Promise<string | null> {
+    const answer = await this.oneTurn(memoPrompt(files), MEMO_TIMEOUT_MS);
+    const line = (answer ?? "")
+      .split(/\r?\n/)
+      .map((line) =>
+        line
+          .replace(/^[-·•*#>\s]+/, "")
+          .replace(/^["'`]+|["'`]+$/g, "")
+          .trim(),
+      )
+      .filter(Boolean)[0];
+    return line ? line.slice(0, MEMO_MAX_CHARS) : null;
   }
 
   /**

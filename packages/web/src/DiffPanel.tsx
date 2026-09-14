@@ -58,7 +58,10 @@ export function stageLine(status: DiffStatus | null): string {
 }
 
 function FileRow({ file }: { file: DiffFile }) {
-  const [open, setOpen] = useState(file.hunks.length === 1);
+  // Even a single hunk stays folded until the row is pressed: the row —
+  // status, path, how much moved — is the reading unit (비개발자 저장
+  // 검토), and raw code is one click away, never the first thing shown.
+  const [open, setOpen] = useState(false);
   const added = file.hunks.reduce(
     (total, hunk) =>
       total + hunk.lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
@@ -287,12 +290,14 @@ export function DiffPanel({
       clearTimeout(fallbackTimer);
     };
   }, [api, files, turnSummaryText]);
-
-  // The note opens filled with the summary's first line (PLAN D51) — the one
-  // the planner would have typed anyway. Their own keystrokes win from then on.
+  // The note opens filled with the summary's first line (PLAN D51) — but
+  // only a Claude-written one: a fallback grouping (`screens: 수정 1`) is a
+  // count, not a memo, and an empty note now means Claude writes the memo
+  // at 저장 (비개발자 저장). Their own keystrokes win from then on.
   useEffect(() => {
     if (memoTouched.current) return;
-    const first = summary?.lines[0];
+    if (summary?.source !== "claude") return;
+    const first = summary.lines[0];
     if (first) setMessage(first);
   }, [summary]);
 
@@ -350,6 +355,14 @@ export function DiffPanel({
               {running && <span className="spinner" />}
             </div>
           )}
+          {/* What the save wrote in the planner's name (비개발자 저장): an
+              empty memo is Claude's sentence now, so the settled line shows
+              it — theirs to read, correct, or 되돌리기 away. */}
+          {published && diffStatus.message && (
+            <p className="hint" data-testid="committed-memo">
+              저장 메모: {diffStatus.message}
+            </p>
+          )}
           {/* The gate's own output is a developer's text (PLAN D51): the stage
               line above already says what failed, the raw transcript waits. */}
           {failed && diffStatus?.detail && (
@@ -395,11 +408,12 @@ export function DiffPanel({
             <p className="hint">저장할 변경사항이 없습니다. 먼저 화면을 만들거나 고쳐 주세요.</p>
           )}
           {/* Paths and +/- lines live behind the fold — the first screen of
-              the review reads as sentences, not as a diff (PLAN D51). A small
-              set opens itself: the 검토 약속은 누르게가 아니라 읽게 하는 것이니
-              five files and under arrive unfolded. */}
+              the review reads as sentences, not as a diff (PLAN D51). The
+              fold now stays shut until the planner asks, at every size:
+              even one file of raw code read as noise (비개발자 저장 검토),
+              and the summary above is the review. */}
           {files !== null && files.length > 0 && (
-            <details className="settings__fold" open={files.length <= 5}>
+            <details className="settings__fold">
               <summary>자세히 보기 (파일 {files.length}개)</summary>
               <ul className="diff__files">
                 {files.map((file) => (
@@ -419,7 +433,7 @@ export function DiffPanel({
             <span className="setting__text">
               <span className="setting__label">저장 메모</span>
               <span className="setting__hint">
-                요약의 첫 줄이 채워져 있습니다 — 고칠 수 있습니다
+                비워 두면 Claude가 바뀐 점을 읽고 저장 메모를 씁니다
               </span>
             </span>
             <span className="setting__control">

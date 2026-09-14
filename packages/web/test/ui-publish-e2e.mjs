@@ -242,14 +242,16 @@ async function main() {
       { timeout: 20000 },
     );
     await viaActionBar(page, "저장");
-    // PLAN D51: the summary is the first thing; a small set of files (five
-    // and under) arrives unfolded — the review reads without a click.
+    // PLAN D51 + 비개발자 저장: the summary is the first thing; the raw
+    // files stay folded at every size — the review reads as sentences, and
+    // the code is one deliberate click away.
     await page.getByText("자세히 보기 (파일 2개)").waitFor({ timeout: 10000 });
     check(
-      "the summary is on top and a small set of files is already unfolded",
+      "the summary is on top and the raw file list stays folded",
       (await page.getByText("자세히 보기 (파일 2개)").isVisible()) === true &&
-        (await page.locator(".diff__file").first().isVisible()) === true,
+        (await page.locator(".diff__file").first().isVisible()) === false,
     );
+    await page.getByText("자세히 보기 (파일 2개)").click();
     const rows = page.locator(".diff__file");
     check(
       "every changed file is listed with its status",
@@ -261,12 +263,14 @@ async function main() {
       (await page.locator(".diff__badge").allInnerTexts()).sort().join(",") === "수정,추가",
     );
 
-    // Single-hunk files are expanded by default; the added file's hunk is
-    // on screen without a click.
-    const hunk = await page
-      .locator(".diff__file", { hasText: "MemberList.screen.tsx" })
-      .locator(".diff__hunk")
-      .innerText();
+    // Even a single-hunk file keeps its code folded until the row is pressed.
+    const addedRow = page.locator(".diff__file", { hasText: "MemberList.screen.tsx" });
+    check(
+      "the hunk stays folded until the row is pressed",
+      (await addedRow.locator(".diff__hunk").isVisible()) === false,
+    );
+    await addedRow.locator(".diff__filerow").click();
+    const hunk = await addedRow.locator(".diff__hunk").innerText();
     check(
       "the hunk shows the added content",
       hunk.includes("+export default function MemberListScreen"),
@@ -280,6 +284,10 @@ async function main() {
       .getByRole("button", { name: "저장", exact: true })
       .click();
     await page.waitForSelector(".notice--info", { timeout: 120000 });
+    check(
+      "the settled line shows the memo the save carried",
+      (await page.getByTestId("committed-memo").innerText()).includes("회원 관리 화면 추가"),
+    );
 
     await page.waitForFunction(
       () => document.querySelectorAll(".diff__file").length === 0,
@@ -314,6 +322,26 @@ async function main() {
       "closing the review returns to the planner",
       (await page.locator('[role="dialog"]').count()) === 0,
     );
+
+    // --- 넘기기: the draft turn fails on this stub, so the dialog must open
+    // on the browser's own proposal — never on an empty form (비개발자 넘기기).
+    await viaActionBar(page, "개발자에게 넘기기");
+    const handoffDialog = page.locator('[role="dialog"][aria-label="개발자에게 넘기기"]');
+    await handoffDialog.waitFor({ timeout: 10000 });
+    await page.waitForFunction(
+      () => !document.body.innerText.includes("개발자가 읽을 제목과 내용을 만드는 중"),
+      undefined,
+      { timeout: 20000 },
+    );
+    const proposedTitle = await page.getByLabel("넘길 제목").inputValue();
+    check(
+      "a draft that cannot land leaves the browser's proposal in the fields",
+      proposedTitle.length > 0 &&
+        !(await handoffDialog.innerText()).includes("Claude가 채웠습니다"),
+      proposedTitle,
+    );
+    await handoffDialog.getByRole("button", { name: "취소", exact: true }).click();
+    check("the handoff closes", (await handoffDialog.count()) === 0);
 
     // --- D92: ⌘/ 시트 -------------------------------------------------------
     await page.keyboard.press("Meta+/");

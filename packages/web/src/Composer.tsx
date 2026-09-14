@@ -1,6 +1,7 @@
 import type {
   ContextUsage,
   EffortLevel,
+  LostSend,
   PermissionMode,
   PlanUsage,
   QueuedSend,
@@ -34,6 +35,7 @@ import {
 } from "./icons";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
 import type { MidTurnSend, SendKey } from "./settings";
+import { TurnClock } from "./TurnClock";
 import { UsageChip } from "./UsageChip";
 
 export interface Attachment {
@@ -193,9 +195,16 @@ export function Composer({
   stopping = false,
   queue = [],
   dropped = [],
+  hurrying = null,
+  onTakeDropped,
   onTakeQueued,
   onSendQueuedNow,
   onDismissDropped,
+  suggestion = null,
+  onDismissSuggestion,
+  activity,
+  tasks = [],
+  onStopTask,
   seed,
   sendKey,
   midTurnSend = "queue",
@@ -207,6 +216,7 @@ export function Composer({
   onSetPermissionMode,
   onSend,
   onInterrupt,
+  turnStartedAt = null,
   onFindFiles,
 }: {
   disabled: boolean;
@@ -223,10 +233,34 @@ export function Composer({
   onRefreshUsage?: () => void;
   running: boolean;
   /**
+   * 도는 요청이 시작한 시각 (epoch ms), 없으면 null — 보내기 자리의 진행
+   * 시계가 이것을 센다. `running` 과 따로인 이유: 확인 카드 앞에 멈춘 턴은
+   * running 이 아니지만 그 요청은 여전히 진행 중이고, 기다린 시간도 그
+   * 요청의 시간이다.
+   */
+  turnStartedAt?: number | null;
+  /**
    * 중지를 누른 뒤 턴이 실제로 멈추기까지의 짧은 창 — 클릭이 무시된 것처럼
    * 보이지 않게 버튼이 "정리 중…" 이 된다 (실사 결함).
    */
   stopping?: boolean;
+  /**
+   * 다음에 물어볼 만한 말 (PLAN D99) — 턴이 끝난 뒤 CLI 가 하나 예측한다.
+   * 누르면 입력창에 들어가고, 계획자는 거기서 고쳐 보낸다. 자동으로 나가는
+   * 말은 없다.
+   */
+  suggestion?: string | null;
+  /** 칩을 썼거나 닫았다 — 어느 쪽이든 이 칩의 생은 거기서 끝난다. */
+  onDismissSuggestion?: () => void;
+  /**
+   * 답이 나오기 전의 진행 (PLAN D100). 생각 과정을 끈 기본값에서는 이 한 줄이
+   * 유일하게 "돌고 있음"을 말한다.
+   */
+  activity?: { status: "compacting" | "requesting" | null; thinkingTokens: number };
+  /** 지금 뒤에서 도는 작업들 (PLAN D101). */
+  tasks?: Array<{ taskId: string; type: string; description: string }>;
+  /** 그 작업 하나만 세운다 — 턴은 그대로 둔다. */
+  onStopTask?: (taskId: string) => void;
   /**
    * 다음 턴에 밀려 있는 것 (PLAN D86): the daemon's wait room, oldest first —
    * the list above the field. Empties when the turn ends and they go out.
@@ -236,7 +270,7 @@ export function Composer({
    * Sends the room lost without delivering. They never reached the
    * transcript, so they stay above the field until restored or let go of.
    */
-  dropped?: QueuedSend[];
+  dropped?: LostSend[];
   /**
    * 고쳐서 보내기 on a waiting send: take it back out of the room, whole —
    * the words and the attachments return to the field. Resolves null when it
@@ -245,6 +279,13 @@ export function Composer({
   onTakeQueued?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
   /** 지금 보내기 on a waiting send: cut the running turn, deliver this first. */
   onSendQueuedNow?: (itemId: string) => Promise<void>;
+  /** The send a 지금 보내기 click is currently cutting for — its row waits. */
+  hurrying?: string | null;
+  /**
+   * 되살리기 on a lost send: the daemon hands the send back from its store,
+   * bytes included when they survived the persist cap.
+   */
+  onTakeDropped?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
   /** An undelivered send is restored into the field, or simply let go of. */
   onDismissDropped?: (itemId: string) => void;
   /**
@@ -626,6 +667,20 @@ export function Composer({
     );
   };
 
+  const takeDropped = (item: LostSend) => {
+    if (!onTakeDropped) return;
+    void onTakeDropped(item.id)
+      .then((payload) => {
+        if (!payload) return;
+        restore(payload.text, payload.attachments);
+        onDismissDropped?.(item.id);
+      })
+      .catch((e) => rejected.show(failureWords(e, "잃은 말을 되돌리지 못했습니다")));
+  };
+
+  const lostWords = (item: LostSend): string | null =>
+    item.truncated ? "첨부는 다시 붙여야 합니다" : attachmentWords(item);
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // An IME owns every keydown until its composition ends — Enter commits
     // the hangul (isComposing, legacy keyCode 229), the arrows walk the
@@ -883,6 +938,55 @@ export function Composer({
         </div>
       )}
 
+      {/* 답이 나오기 전의 한 줄 (PLAN D100): 정리 중인지, 답을 기다리는지,
+          생각에 얼마나 썼는지. 기획자가 읽는 것은 숫자가 아니라 "멈춘 게
+          아니다" 라는 사실이다 — 그래서 도는 동안에만 있다. */}
+      {running && (activity?.status || (activity?.thinkingTokens ?? 0) > 0) && (
+        <div className="composer__activity" role="status">
+          <span className="spinner" />
+          <span>
+            {activity?.status === "compacting"
+              ? "길어진 대화를 정리하는 중…"
+              : (activity?.thinkingTokens ?? 0) > 0
+                ? `생각하는 중 · ${
+                    (activity?.thinkingTokens ?? 0) >= 1000
+                      ? `${((activity?.thinkingTokens ?? 0) / 1000).toFixed(1)}k`
+                      : (activity?.thinkingTokens ?? 0)
+                  } 토큰`
+                : "답을 기다리는 중…"}
+          </span>
+        </div>
+      )}
+
+      {/* 뒤에서 도는 작업 (PLAN D101): 턴이 끝나도 남아 있을 수 있으니 대기
+          줄과 따로 산다. 각 줄의 버튼은 그 작업 하나만 세운다 — 중지 버튼은
+          턴의 것이고 이것은 작업의 것이다. */}
+      {tasks.length > 0 && (
+        <div className="composer__tasks" role="status">
+          <div className="queued__head">뒤에서 도는 작업 {tasks.length}건</div>
+          <ul className="queued__list">
+            {tasks.map((task) => (
+              <li key={task.taskId} className="queued__row">
+                <span className="queued__text" title={task.description}>
+                  {task.description || task.type}
+                </span>
+                {onStopTask && (
+                  <button
+                    type="button"
+                    className="ghost queued__action"
+                    aria-label="이 작업만 중지"
+                    title="이 작업만 세웁니다 — 대화는 그대로 이어집니다"
+                    onClick={() => onStopTask(task.taskId)}
+                  >
+                    <CloseIcon />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* 대기 줄 (PLAN D86): what a mid-turn send means — the sends themselves,
           above the field, oldest first; gone the moment they go out. Each row
           can come back for an edit or jump the running turn. */}
@@ -913,7 +1017,7 @@ export function Composer({
                   className="ghost queued__action"
                   aria-label="지금 보내기"
                   title="지금 답변을 멈추고 이 말부터 보냅니다"
-                  disabled={disabled || stopping}
+                  disabled={disabled || stopping || hurrying === item.id}
                   onClick={() => sendQueuedNow(item)}
                 >
                   <ArrowUpIcon size={13} />
@@ -938,19 +1042,14 @@ export function Composer({
                 <span className="queued__text" title={item.text}>
                   {item.text || "(첨부만)"}
                 </span>
-                {attachmentWords(item) && (
-                  <span className="queued__meta">{attachmentWords(item)} · 다시 붙여야 합니다</span>
-                )}
+                {lostWords(item) && <span className="queued__meta">{lostWords(item)}</span>}
                 <button
                   type="button"
                   className="ghost queued__action"
                   aria-label="되살리기"
-                  title="입력창으로 되돌립니다"
+                  title="첨부까지 되돌려 집어넣습니다"
                   disabled={disabled}
-                  onClick={() => {
-                    restore(item.text, []);
-                    onDismissDropped?.(item.id);
-                  }}
+                  onClick={() => takeDropped(item)}
                 >
                   <PencilIcon />
                 </button>
@@ -966,6 +1065,35 @@ export function Composer({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* 다음 칩 (PLAN D99): 답이 끝난 자리에서 CLI 가 예측한 한 문장. 누르면
+          입력창으로 들어갈 뿐 — 보내는 것은 언제나 사람이다. 쓰던 말이 있으면
+          칩은 비켜선다(그 자리의 주인은 계획자의 문장이다). */}
+      {suggestion && !running && !editor.text.trim() && (
+        <div className="composer__next">
+          <button
+            type="button"
+            className="composer__nextchip"
+            disabled={disabled}
+            title="이 말을 입력창에 넣습니다"
+            onClick={() => {
+              restore(suggestion, []);
+              onDismissSuggestion?.();
+            }}
+          >
+            <SparkIcon size={12} />
+            {suggestion}
+          </button>
+          <button
+            type="button"
+            className="ghost composer__nextclose"
+            aria-label="제안 닫기"
+            onClick={() => onDismissSuggestion?.()}
+          >
+            <CloseIcon />
+          </button>
         </div>
       )}
 
@@ -1048,6 +1176,10 @@ export function Composer({
         )}
         <div className="toolbar__end">
           <ContextRing usage={usage} />
+          {/* 진행 시계: 보낸 요청이 몇 분 몇 초째인지. 중지 바로 옆인 이유는
+              그 숫자가 부르는 결정이 하나이기 때문이다 — 더 기다릴까, 세울까.
+              턴이 끝나면 사라진다(끝난 턴의 길이는 답 아래 `걸렸습니다`). */}
+          {turnStartedAt !== null && <TurnClock startedAt={turnStartedAt} />}
           {running ? (
             <button
               type="button"

@@ -120,9 +120,83 @@ const runningBlocks: Block[] = [
     agentId: null,
     done: false,
   },
+  {
+    // D97: 보조 작업이 도는 중 — 근황 한 줄, 경과, 뒤로 보내기·중지 버튼.
+    type: "tool",
+    id: "k6",
+    name: "Task",
+    input: { description: "CDS 목록 화면 관례 조사" },
+    agentId: null,
+    done: false,
+    progress: {
+      elapsedSeconds: 42,
+      task: {
+        id: "task_1",
+        description: "CDS 목록 화면 관례 조사",
+        summary: "검색·필터 툴바 관례를 비교하는 중",
+        lastTool: "Read",
+        subagentType: "Explore",
+        tokens: 12_400,
+        toolUses: 6,
+        backgrounded: false,
+        status: "running",
+      },
+    },
+  },
+  {
+    // D98: 그 보조 작업이 한 말 — 답이 아니라 그 작업 아래의 기록이다.
+    type: "text",
+    id: "s1",
+    agentId: "k6",
+    streaming: false,
+    text: "CDS 목록 화면 여섯 곳 모두 SearchField 를 툴바 오른쪽에 두고, 상태 필터를 그 왼쪽에 붙였습니다.",
+  },
+  {
+    type: "tool",
+    id: "s2",
+    name: "Read",
+    input: { file_path: "src/screens/order/OrderList.screen.tsx" },
+    agentId: "k6",
+    done: true,
+    result: "88 lines",
+  },
+  {
+    // D101: 뒤로 보낸 명령 — 도구 결과는 자리표시자, 일은 아직 돈다.
+    type: "tool",
+    id: "k7",
+    name: "Bash",
+    input: { command: "pnpm -s build" },
+    agentId: null,
+    done: true,
+    result: "백그라운드에서 계속 실행 중",
+    progress: {
+      task: {
+        id: "task_2",
+        description: "pnpm -s build",
+        summary: null,
+        lastTool: null,
+        subagentType: null,
+        tokens: 0,
+        toolUses: 0,
+        backgrounded: true,
+        status: "running",
+      },
+    },
+  },
 ];
 
-function PlannerShell({ live, showThinking }: { live: boolean; showThinking: boolean }) {
+function PlannerShell({
+  live,
+  showThinking,
+  showTools,
+}: {
+  live: boolean;
+  showThinking: boolean;
+  showTools: boolean;
+}) {
+  // 진행 시계의 자리: 이 창이 열린 순간을 턴의 시작으로 삼는다 — 미리보기는
+  // 실제로 초가 도는 모습까지 보여야 그 자리가 맞는지 알 수 있다.
+  const [startedAt] = useState(() => Date.now() - 95_000);
   return (
     <main className="planner__chat">
       <header className="thread">
@@ -142,6 +216,7 @@ function PlannerShell({ live, showThinking }: { live: boolean; showThinking: boo
             blocks={live ? runningBlocks : blocks}
             live={live}
             showThinking={showThinking}
+            showTools={showTools}
             checkpoints={[{ id: "cp1", turn: 1 }]}
             onRestoreCheckpoint={() => undefined}
           />
@@ -182,6 +257,12 @@ function PlannerShell({ live, showThinking }: { live: boolean; showThinking: boo
           sevenDay: { utilization: 21, resetsAt: null },
           modelWeekly: [{ label: "Fable", utilization: 68, resetsAt: null }],
         }}
+        suggestion={live ? null : "정지 회원 안내 문구를 Alert 로 바꿔 줄까요?"}
+        onDismissSuggestion={() => undefined}
+        activity={live ? { status: "requesting", thinkingTokens: 1840 } : undefined}
+        turnStartedAt={live ? startedAt : null}
+        tasks={live ? [{ taskId: "task_2", type: "shell", description: "pnpm -s build" }] : []}
+        onStopTask={() => undefined}
         running={live}
         sendKey="enter"
         selector={{
@@ -227,6 +308,10 @@ function Preview() {
   const [surface, setSurface] = useState("chat");
   /** 설정의 `생각 과정 보기` 자리 — 접힌 생각 블록의 모양을 여기서도 본다. */
   const [showThinking, setShowThinking] = useState(false);
+  /** 설정의 `작업 과정 보기` 자리 — 활동 카드의 모양을 여기서도 본다. */
+  const [showTools, setShowTools] = useState(false);
+  /** 첫 초 surface 의 진행 시계 — 방금 보낸 요청이 세는 자리. */
+  const [sentAt] = useState(() => Date.now());
   document.documentElement.dataset.theme = theme;
   return (
     <div className="planner" style={{ height: "100vh", gridTemplateColumns: "minmax(0, 1fr)" }}>
@@ -247,6 +332,9 @@ function Preview() {
               <button onClick={() => setShowThinking(!showThinking)}>
                 {showThinking ? "생각 과정 숨기기" : "생각 과정 보기"}
               </button>
+              <button onClick={() => setShowTools(!showTools)}>
+                {showTools ? "작업 과정 숨기기" : "작업 과정 보기"}
+              </button>
               <select value={theme} onChange={(e) => setTheme(e.target.value)}>
                 <option value="dark">dark</option>
                 <option value="light">light</option>
@@ -261,7 +349,12 @@ function Preview() {
               </select>
             </div>
             {surface === "chat" && (
-              <PlannerShell key={String(live)} live={live} showThinking={showThinking} />
+              <PlannerShell
+                key={String(live)}
+                live={live}
+                showThinking={showThinking}
+                showTools={showTools}
+              />
             )}
             {surface === "turnlive" && (
               <main className="planner__chat">
@@ -290,6 +383,7 @@ function Preview() {
                   }}
                   plan={null}
                   running={true}
+                  turnStartedAt={sentAt}
                   sendKey="enter"
                   selector={{
                     model: null,
@@ -347,8 +441,15 @@ function Preview() {
                             {
                               label: "가입일 최신순",
                               description: "새 회원이 위로",
+                              preview:
+                                '<div style="border:1px solid #e5e5e8;border-radius:8px;overflow:hidden"><div style="display:flex;gap:8px;padding:8px 10px;background:#fafafa;font-size:11px;color:#71717a"><span style="flex:1">이름</span><span>가입일 ▼</span></div><div style="display:flex;gap:8px;padding:8px 10px;border-top:1px solid #f0f0f2"><span style="flex:1">김서연</span><span>2026-09-12</span></div><div style="display:flex;gap:8px;padding:8px 10px;border-top:1px solid #f0f0f2"><span style="flex:1">박도윤</span><span>2026-08-30</span></div></div>',
                             },
-                            { label: "이름순", description: "가나다 순" },
+                            {
+                              label: "이름순",
+                              description: "가나다 순",
+                              preview:
+                                '<div style="border:1px solid #e5e5e8;border-radius:8px;overflow:hidden"><div style="display:flex;gap:8px;padding:8px 10px;background:#fafafa;font-size:11px;color:#71717a"><span style="flex:1">이름 ▲</span><span>가입일</span></div><div style="display:flex;gap:8px;padding:8px 10px;border-top:1px solid #f0f0f2"><span style="flex:1">김서연</span><span>2026-09-12</span></div><div style="display:flex;gap:8px;padding:8px 10px;border-top:1px solid #f0f0f2"><span style="flex:1">박도윤</span><span>2026-08-30</span></div></div>',
+                            },
                           ],
                         },
                       ],

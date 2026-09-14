@@ -12,7 +12,13 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { markTurn, readTurn, type TurnMarker } from "../../protocol/src/turn-marker.ts";
+import {
+  alignThumbs,
+  type CommentMarkerItem,
+  markTurn,
+  readTurn,
+  type TurnMarker,
+} from "../../protocol/src/turn-marker.ts";
 
 const COMMENTS: TurnMarker = {
   kind: "comments",
@@ -129,6 +135,32 @@ test("a comment item that is not an object is dropped, not fatal", () => {
   ]);
 });
 
+test("the crop flag survives the round trip, and its absence is not an empty one", () => {
+  // D87: the view photographs what it can reach, so a marker's rows split
+  // into flagged and unflagged. The flag has to come back exactly as written
+  // — the card hands out thumbnails by counting flagged rows, and one row
+  // that lost its flag would shift every image after it onto a wrong pin.
+  const marker: TurnMarker = {
+    kind: "comments",
+    screen: "member/MemberList",
+    state: "default",
+    items: [
+      { label: "정진수", comment: "정렬해 주세요.", shot: true },
+      { label: "검색", comment: "보조 스타일로." },
+    ],
+  };
+  assert.deepEqual(readTurn(markTurn(marker, "본문")).marker, marker);
+});
+
+test("a marker from before the crop flag reads as flagless, never half-flagged", () => {
+  const text =
+    '<!-- colo-design:comments {"screen":"s","state":"default","items":[{"label":"검색","comment":"고쳐 주세요","shot":"yes"}]} -->\n본문';
+  const marker = readTurn(text).marker;
+  assert.deepEqual(marker?.kind === "comments" ? marker.items : null, [
+    { label: "검색", comment: "고쳐 주세요" },
+  ]);
+});
+
 test("a body that itself contains a marker line is not re-split", () => {
   // Claude quoting our own marker back at us must not turn its answer into a
   // second card.
@@ -136,4 +168,47 @@ test("a body that itself contains a marker line is not re-split", () => {
   const read = readTurn(markTurn({ kind: "brief", title: "회원" }, body));
   assert.equal(read.marker?.kind, "brief");
   assert.equal(read.body, body);
+});
+
+test("a skipped crop does not shift the pictures onto the wrong pins", () => {
+  // The middle pin was off screen when the send ran, so only two images
+  // travelled. Handing them out by position would file 상세's picture under
+  // 검색's words — the quietest kind of wrong, and the one a planner would
+  // believe.
+  const items: CommentMarkerItem[] = [
+    { label: "정진수", comment: "a", shot: true },
+    { label: "검색", comment: "b" },
+    { label: "상세", comment: "c", shot: true },
+  ];
+  assert.deepEqual(alignThumbs(items, ["첫장", "셋째장"]), ["첫장", null, "셋째장"]);
+});
+
+test("more pins than crops leaves the unphotographed ones bare", () => {
+  // Seven pins, six crops (D87's ceiling): the seventh shows no image rather
+  // than borrowing the sixth pin's.
+  const items: CommentMarkerItem[] = Array.from({ length: 7 }, (_, index) => ({
+    label: `핀${index + 1}`,
+    comment: "고쳐 주세요",
+    ...(index < 6 ? { shot: true as const } : {}),
+  }));
+  const aligned = alignThumbs(
+    items,
+    Array.from({ length: 6 }, (_, index) => `장${index + 1}`),
+  );
+  assert.equal(aligned[5], "장6");
+  assert.equal(aligned[6], null);
+});
+
+test("a marker from before the flag still gets its pictures, by position", () => {
+  const items: CommentMarkerItem[] = [
+    { label: "정진수", comment: "a" },
+    { label: "검색", comment: "b" },
+  ];
+  assert.deepEqual(alignThumbs(items, ["첫장", "둘째장"]), ["첫장", "둘째장"]);
+});
+
+test("a replayed transcript has no crops at all, and no rows break", () => {
+  const items: CommentMarkerItem[] = [{ label: "정진수", comment: "a", shot: true }];
+  assert.deepEqual(alignThumbs(items, []), [null]);
+  assert.deepEqual(alignThumbs(items, undefined), [null]);
 });

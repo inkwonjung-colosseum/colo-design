@@ -42,6 +42,29 @@ export type SendKey = "enter" | "modEnter";
  * (interrupt — the ⌥Enter "끊고 보내기" path, promoted to the plain send).
  */
 export type MidTurnSend = "queue" | "interrupt";
+/** 완료 알림의 시점(설정 문서 P0#3): 끔 / 오래 걸린 턴만(기본) / 모든 턴. */
+export type NoticeTiming = "off" | "long" | "all";
+
+const NOTICE_TIMINGS: NoticeTiming[] = ["off", "long", "all"];
+
+/** "오래 걸린 턴"의 기준 — 데스크톱 메인의 알림과 같은 값이다. */
+export const LONG_TURN_MS = 60_000;
+
+/** The three-step type scale (설정 벤치마크 P1 #13). 보통 is the stylesheet's
+    own sizes; 작게/크게 multiply one knob — UI chrome, conversation content,
+    or machine text — by 0.9/1.1. */
+export type Scale = "small" | "normal" | "large";
+
+export const SCALE_LEVELS: Scale[] = ["small", "normal", "large"];
+
+/**
+ * 알림 정책. 확인 요청·중단·게이트 실패는 시점과 무관하게 언제나 오므로,
+ * 여기의 3상태는 "완료" 알림에만 적용된다.
+ */
+export interface NotificationSettings {
+  done: NoticeTiming;
+  sound: boolean;
+}
 
 /**
  * The column width the planner may drag in the workspace — the preview's —
@@ -97,6 +120,14 @@ export interface ChatSettings {
    */
   followClaude: boolean;
   /**
+   * 작업 과정(도구 호출 묶음)을 대화에 남길지. 기본은 끔 — 생각 과정과 같은
+   * 이유다. 접힌 활동 카드라 해도 답과 답 사이마다 한 줄씩 끼면 테이프가
+   * 기계의 작업 기록처럼 읽힌다. 켜면 접힌 활동 카드로 돌아온다. 계획
+   * 카드(TodoWrite)와 캡처 카드는 이 스위치와 무관하게 언제나 자리를
+   * 지킨다(PLAN D48·D56) — 그 둘은 작업의 기록이 아니라 읽을 내용이다.
+   */
+  showTools: boolean;
+  /**
    * 생각 과정을 대화에 남길지. 기본은 끔 — 기획자가 읽는 것은 답이지 답을
    * 만드는 동안의 속말이 아니다. 접혀 있어도 답과 답 사이마다 한 줄씩 끼면
    * 테이프가 기계의 기록처럼 읽힌다. 켜면 예전처럼 접힌 채로 돌아온다.
@@ -108,6 +139,12 @@ export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
   midTurnSend: MidTurnSend;
+  /** Three-step type scales (설정 벤치마크 P1 #13). Each rides a data
+      attribute on <html> that the stylesheet turns into a CSS variable. */
+  uiScale: Scale;
+  contentScale: Scale;
+  codeScale: Scale;
+  notifications: NotificationSettings;
   chat: ChatSettings;
   layout: LayoutSettings;
   /** The planner's own names for threads, by session id. The daemon's
@@ -128,6 +165,7 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   previewTools: true,
   showPip: true,
   followClaude: true,
+  showTools: false,
   showThinking: false,
 };
 
@@ -142,6 +180,11 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   sendKey: "enter",
   midTurnSend: "queue",
+  uiScale: "normal",
+  contentScale: "normal",
+  codeScale: "normal",
+  /** 기본은 "오래 걸린 턴만 + 소리" — 모든 턴마다 알림이 울리는 것부터 막는다. */
+  notifications: { done: "long", sound: true },
   chat: DEFAULT_CHAT_SETTINGS,
   layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
   sessionTitles: {},
@@ -203,11 +246,58 @@ function loadSettings(): Settings {
       stored.midTurnSend,
       DEFAULT_SETTINGS.midTurnSend,
     ),
+    uiScale: oneOf(SCALE_LEVELS, stored.uiScale, DEFAULT_SETTINGS.uiScale),
+    contentScale: oneOf(SCALE_LEVELS, stored.contentScale, DEFAULT_SETTINGS.contentScale),
+    codeScale: oneOf(SCALE_LEVELS, stored.codeScale, DEFAULT_SETTINGS.codeScale),
+    notifications: loadNotifications(stored.notifications),
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
     treeFolded: loadTreeFolded(stored.treeFolded),
   };
+}
+
+/**
+ * 알림 정책 복원 — 다른 필드와 같은 규칙: 못 알아보는 값은 기본으로.
+ */
+function loadNotifications(raw: unknown): NotificationSettings {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_SETTINGS.notifications };
+  const stored = raw as Partial<NotificationSettings>;
+  return {
+    done: oneOf(NOTICE_TIMINGS, stored.done, DEFAULT_SETTINGS.notifications.done),
+    sound: typeof stored.sound === "boolean" ? stored.sound : true,
+  };
+}
+
+/** 브라우저 알림 경로가 설정 화면 없이 최신 값을 읽는 작은 창구. */
+export function currentNoticePrefs(): NotificationSettings {
+  let raw: unknown = null;
+  try {
+    raw = JSON.parse(localStorage.getItem(KEY) ?? "null").notifications;
+  } catch {
+    raw = null;
+  }
+  return loadNotifications(raw);
+}
+
+/** acceptEdits→default 이사를 겪은 사용자 표식 — 설정의 공지 한 줄이 읽는다. */
+const MIGRATED_KEY = "colo-design.acceptedits-migrated";
+
+export function readAcceptEditsMigrated(): boolean {
+  try {
+    return localStorage.getItem(MIGRATED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 공지는 사용자가 확인 방식을 한 번이라도 고르면 사라진다. */
+export function clearAcceptEditsMigrated(): void {
+  try {
+    localStorage.removeItem(MIGRATED_KEY);
+  } catch {
+    // 저장이 막혀 있으면 공지가 다음에도 뜬다 — 해로운 것은 없다.
+  }
 }
 
 /** Project slug → whether its tree is folded (PLAN D59). Slugs and booleans
@@ -277,7 +367,18 @@ function loadChat(raw: unknown): ChatSettings {
   const legacy = legacyComposerDefaults();
   if (!raw || typeof raw !== "object") return { ...DEFAULT_CHAT_SETTINGS, ...legacy };
   const stored = raw as Record<string, unknown>;
-  const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
+  // acceptEdits 는 메뉴에서 물러났다: oneOf 의 fallback 이 bypass 를 향하므로
+  // 이사를 먼저한다 — 남아 있던 값이 조용히 넓어지는 일은 없어야 한다.
+  // 옮겨진 사용자에게는 설정에 한 줄 공지가 뜬다(아래 MIGRATED_KEY).
+  if (stored.permissionMode === "acceptEdits") {
+    try {
+      localStorage.setItem(MIGRATED_KEY, "1");
+    } catch {
+      // 저장이 막히면 공지 없이 이사만 간다 — 값 자체는 이미 default 다.
+    }
+  }
+  const storedMode = stored.permissionMode === "acceptEdits" ? "default" : stored.permissionMode;
+  const mode = oneOf(SETTINGS_MODES, storedMode, DEFAULT_PERMISSION_MODE);
   return {
     model: typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
@@ -289,8 +390,9 @@ function loadChat(raw: unknown): ChatSettings {
     previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,
     showPip: stored.showPip === undefined ? true : stored.showPip === true,
     followClaude: stored.followClaude === undefined ? true : stored.followClaude === true,
-    // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정은 켜 달라고
-    // 말한 기획자에게만 보인다.
+    // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정과 작업 과정은
+    // 켜 달라고 말한 기획자에게만 보인다.
+    showTools: stored.showTools === true,
     showThinking: stored.showThinking === true,
   };
 }
@@ -365,6 +467,17 @@ function resolveTheme(choice: ThemeChoice): ThemeId {
 export function applyStoredTheme(): void {
   document.documentElement.dataset.theme = resolveTheme(loadSettings().theme);
   syncThemeColor();
+}
+
+/**
+ * Paint the stored type scale before React mounts — the same first-frame
+ * argument as the theme: a client set to 크게 must not render one 보통 frame.
+ */
+export function applyStoredTypeScale(): void {
+  const { uiScale, contentScale, codeScale } = loadSettings();
+  document.documentElement.dataset.ui = uiScale;
+  document.documentElement.dataset.content = contentScale;
+  document.documentElement.dataset.code = codeScale;
 }
 
 /** The browser chrome (mobile Safari toolbar, installed-window frame) tints
@@ -442,6 +555,15 @@ export function useSettings(): {
     const timer = setTimeout(() => root.classList.remove("theme-swap"), 50);
     return () => clearTimeout(timer);
   }, [theme]);
+
+  // The stylesheet keys each type-scale knob off these attributes; a choice
+  // made in the dialog moves the page without a reload.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.ui = settings.uiScale;
+    root.dataset.content = settings.contentScale;
+    root.dataset.code = settings.codeScale;
+  }, [settings.uiScale, settings.contentScale, settings.codeScale]);
 
   return { settings, update, theme };
 }

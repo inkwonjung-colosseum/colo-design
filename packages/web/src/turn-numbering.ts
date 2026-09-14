@@ -19,13 +19,21 @@ export function promptTotal(blocks: Block[]): number {
 /**
  * 각 assistant 답 블록의 턴 번호 — 그 답에 앞선(그 답을 낸) 프롬프트의 수.
  * 프롬프트 없이 홀로 남은 답(불완전한 복원)은 1로 매겨 유효한 번호를 지킨다.
+ *
+ * 하위 작업이 한 말(`agentId !== null`, PLAN D98)은 답이 아니다: 보조
+ * 에이전트의 수다까지 세면 되감기가 가리키는 k 번째 답이 밀려 엉뚱한 턴을
+ * 버린다. 세는 것은 메인 스레드가 계획자에게 한 말뿐이다.
  */
 export function answerTurnNumbers(blocks: Block[]): Map<string, number> {
   let prompts = 0;
   const turns = new Map<string, number>();
   for (const block of blocks) {
     if (block.type === "user") prompts += 1;
-    else if (block.type === "text") turns.set(block.id, Math.max(prompts, 1));
+    // 값이 없는 블록(테스트의 얇은 조각, 옛 기록)은 메인의 말로 본다: 답을
+    // 잃는 쪽이 하나 더 세는 쪽보다 나쁘다 — 되감기가 가리킬 답이 사라진다.
+    else if (block.type === "text" && !block.agentId) {
+      turns.set(block.id, Math.max(prompts, 1));
+    }
   }
   return turns;
 }

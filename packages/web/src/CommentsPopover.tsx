@@ -9,7 +9,8 @@ import { useModalFocus } from "./use-modal-focus";
  * asked Claude. The send IS the delivery — a recorded comment leaves the
  * screen with its turn — so this list reads as history, not work to do.
  * Nothing to toggle, nothing to resend: another ask goes through the thread
- * like any other message.
+ * like any other message. A row does lead somewhere, but only back to the
+ * screen it was written on — a door, not a task.
  *
  * Reuses the 저장 기록 drawer's classes — same dialog, same rows, one visual
  * language for "things saved beside the work".
@@ -19,6 +20,8 @@ export function CommentsPopover({
   items,
   error,
   native,
+  titleFor,
+  onOpen,
   onClose,
 }: {
   open: boolean;
@@ -32,6 +35,14 @@ export function CommentsPopover({
    * ⌥+클릭 there would point at a gesture that does nothing.
    */
   native?: boolean;
+  /**
+   * The title the repo declared for a screen id, or null when it declares it
+   * no longer. A planner names screens by their titles, not their routes
+   * (D38) — the same reason the pull request body writes them that way.
+   */
+  titleFor: (screen: string) => string | null;
+  /** Take the planner to the screen this comment was written on. */
+  onOpen: (item: CommentItem) => void;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -86,17 +97,29 @@ export function CommentsPopover({
           )}
           {items !== null && items.length > 0 && (
             <ul className="diff__files">
-              {items.map((item) => (
-                <li className="diff__file" key={item.id}>
-                  <div className="diff__filerow">
-                    <span className="diff__path" title={item.text}>
-                      {item.screen} · {stateLabel(item.state)} · {item.elementText || "화면의 요소"}
-                    </span>
-                    <span className="diff__count">{timeAgo(Date.parse(item.at))}</span>
-                  </div>
-                  <p className="hint">{item.text}</p>
-                </li>
-              ))}
+              {items.map((item) => {
+                const name = titleFor(item.screen) ?? item.screen;
+                return (
+                  <li className="diff__file" key={item.id}>
+                    {/* A button, but not a thing to DO: the row navigates back
+                        to the screen the pin was placed on. The record stays
+                        history — 자동 정리 leaves no resolve toggle and no
+                        resend here. */}
+                    <button
+                      type="button"
+                      className="diff__filerow diff__filerow--link"
+                      aria-label={`${name} 화면 보기`}
+                      onClick={() => onOpen(item)}
+                    >
+                      <span className="diff__path" title={item.text}>
+                        {name} · {stateLabel(item.state)} · {item.elementText || "화면의 요소"}
+                      </span>
+                      <span className="diff__count">{timeAgo(Date.parse(item.at))}</span>
+                    </button>
+                    <p className="hint">{item.text}</p>
+                  </li>
+                );
+              })}
             </ul>
           )}
           {error && (

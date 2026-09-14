@@ -211,6 +211,8 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".onboarding", { timeout: 60000 });
+    // 확인 방식 카드를 고른 뒤에야 마법사가 끝난다(설정 문서 P0#4).
+    await page.getByRole("button", { name: /바로 실행/ }).click();
     const start = page.getByRole("button", { name: "시작하기" });
     await start.waitFor({ timeout: 30000 });
     await start.click();
@@ -373,6 +375,39 @@ async function main() {
       true,
       (await page.locator(".node__name").allInnerTexts()).join(", "),
     );
+
+    // --- h1. 지켜 줄 것: the project's own rules, in the project's own place
+    //     (설정 문서 P1#8). The box lives on the project row, not in 설정 —
+    //     and what it saves is what the next conversation is told.
+    const guarded = page.locator(".node", { hasText: "결제 시스템" });
+    await guarded.locator(".node__menu-btn").click();
+    await guarded.getByRole("menuitem", { name: "지켜 줄 것" }).click();
+    await page.locator('[role="dialog"][aria-label="지켜 줄 것"]').waitFor({ timeout: 10000 });
+    await page.getByRole("textbox", { name: "지켜 줄 것" }).fill("버튼은 CDS 컴포넌트만 씁니다.");
+    await page
+      .locator('[role="dialog"][aria-label="지켜 줄 것"]')
+      .getByRole("button", { name: "저장" })
+      .click();
+    await page
+      .locator('[role="dialog"][aria-label="지켜 줄 것"]')
+      .waitFor({ state: "detached", timeout: 15000 });
+    const guardedProject = await call({ type: "project.list" });
+    check(
+      "지켜 줄 것 is saved on the project the row names",
+      guardedProject.projects.find((project) => project.name === "결제 시스템")?.instructions ===
+        "버튼은 CDS 컴포넌트만 씁니다.",
+      JSON.stringify(guardedProject.projects.map((project) => project.instructions)),
+    );
+    // 다시 열면 적어 둔 것이 그대로 있어야 한다 — 상자가 자기 값을 잊으면
+    // 기획자는 매번 처음부터 쓴다.
+    await guarded.locator(".node__menu-btn").click();
+    await guarded.getByRole("menuitem", { name: "지켜 줄 것" }).click();
+    check(
+      "reopening the box shows what was written",
+      (await page.getByRole("textbox", { name: "지켜 줄 것" }).inputValue()) ===
+        "버튼은 CDS 컴포넌트만 씁니다.",
+    );
+    await page.getByRole("button", { name: "취소" }).click();
 
     // --- h2. a sixth conversation becomes a count row into the palette ----
     // Five rows are all the tree holds (PLAN D59 rule 3); the sixth must not

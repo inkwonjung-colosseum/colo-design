@@ -68,12 +68,17 @@ export function ScreenPanel({
    * does not know which thread that is; the shell resolves it, creating one
    * named after the screen if there is none yet. `images` rides along (D87):
    * the crops the view took of the pinned elements.
+   *
+   * Resolves true when the turn reached the thread; false when it did not
+   * (the daemon refused it, D35). The caller needs the answer: the record is
+   * only written for a turn that landed, and the overlay only clears its pins
+   * on one.
    */
   onComments: (
     turn: string,
     name?: string,
     images?: Array<{ mediaType: string; data: string }>,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /** State of the thread the comments went to, so pins clear when it settles. */
   turnState: SessionState;
   /**
@@ -426,12 +431,16 @@ export function ScreenPanel({
     subscribe((jpeg: string) => setPipFrame(jpeg));
   }, []);
   /**
-   * A comment batch from the preview overlay: recorded with WHERE the pin
-   * sat (`element`, D78) and forwarded as one structured Korean turn — the
-   * same wire a typed message uses, so Claude sees it as the planner's own
-   * words (DESIGN §6). 자동 정리: the record IS the delivery — the rows are
-   * born resolved, the pins leave the screen with the send, and anything
-   * further is a re-request typed in the thread.
+   * A comment batch from the preview overlay: forwarded as one structured
+   * Korean turn — the same wire a typed message uses, so Claude sees it as
+   * the planner's own words (DESIGN §6) — and recorded with WHERE the pin sat
+   * (`element`, D78) once it has landed.
+   *
+   * Delivery comes FIRST because the record is the log OF the delivery: it is
+   * what 자동 정리 shows as already-handled (D57) and what the pull request
+   * body's `### 수정 요청` section is written from (D93). A turn the daemon
+   * refused must leave no such trace — otherwise the planner loses the pins,
+   * the words, and any sign that nothing was ever asked.
    */
   const forwardComments = async (envelope: ColoDesignCommentsEnvelope) => {
     // D87: the crops the view took of each pin ride the turn as images —
@@ -444,9 +453,26 @@ export function ScreenPanel({
     // wants the title the repo gave it. Falling back to the raw id keeps a
     // screen the registry no longer declares from losing its card entirely.
     const named = screens.find((screen) => screen.route === `/${envelope.screen}`);
-    // PLAN D57: the batch is recorded at send time, delivered at once. A
-    // failed record never blocks the planner's turn; the list just reads
-    // stale until the next one.
+    // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
+    // after the screen the pins came from is the honest one-line answer to
+    // "where did this tab come from".
+    const sent = await onComments(
+      commentsToTurn(envelope, named?.title ?? envelope.screen),
+      named?.title,
+      images,
+    );
+    // The receipt goes back first and either way: the overlay is holding the
+    // pins and the planner's words, waiting to be told whether to let them
+    // go — it must not wait on the store's round trip to find out.
+    void window.coloDesignDesktop?.preview?.commentsSent?.({
+      batch: envelope.batch,
+      ok: sent,
+      shots: images.length,
+      items: envelope.items.length,
+    });
+    if (!sent) return;
+    // A failed record never blocks the planner's turn; the list just reads
+    // stale, and the strip says so rather than leaving them to wonder.
     await api
       .recordComments({
         screen: envelope.screen,
@@ -462,15 +488,9 @@ export function ScreenPanel({
         })),
       })
       .then(() => refreshComments())
-      .catch(() => undefined);
-    // A thread the TOOL opens is named by the tool (the M5 lesson): naming it
-    // after the screen the pins came from is the honest one-line answer to
-    // "where did this tab come from".
-    await onComments(
-      commentsToTurn(envelope, named?.title ?? envelope.screen),
-      named?.title,
-      images,
-    );
+      .catch(() =>
+        setCommentsError("코멘트 기록을 저장하지 못했습니다 — 목록이 최신이 아닐 수 있습니다."),
+      );
   };
 
   /**
@@ -1049,6 +1069,19 @@ export function ScreenPanel({
         error={commentsError}
         native={Boolean(window.coloDesignDesktop?.preview?.native)}
         onClose={() => setCommentsOpen(false)}
+        titleFor={(id) => screens.find((screen) => screen.route === `/${id}`)?.title ?? null}
+        onOpen={(item) => {
+          setCommentsOpen(false);
+          // A recorded comment names its screen the way the app routes to it;
+          // a screen the registry still declares can be asked for by route and
+          // state, and one it no longer does is still reachable as a path.
+          const named = screens.find((screen) => screen.route === `/${item.screen}`);
+          handleNavigate(
+            named
+              ? { kind: "screen", route: named.route, state: item.state }
+              : { kind: "path", path: `/${item.screen}` },
+          );
+        }}
       />
       {devPanelOpen && (
         <div

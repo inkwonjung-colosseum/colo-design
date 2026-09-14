@@ -203,6 +203,21 @@ async function main() {
       githubLine.includes("GitHub @jik-dev 로 연결됨"),
       githubLine.replace(/\n+/g, " · "),
     );
+
+    // --- 2b. 확인 방식은 고르고 넘어간다 (설정 문서 P0#4) ------------------
+    //     아무도 본 적 없는 기본값으로 시작하지 않는다: 시작하기는 카드를
+    //     고르기 전까지 잠겨 있고, 고른 값은 설정에 그대로 남는다.
+    check(
+      "시작하기 waits until 확인 방식 is chosen",
+      await page.getByRole("button", { name: "시작하기" }).isDisabled(),
+    );
+    await page.getByRole("button", { name: /물어보고 실행/ }).click();
+    check(
+      "the choice is written where 설정 reads it",
+      (await page.evaluate(
+        () => JSON.parse(localStorage.getItem("colo-design.settings") ?? "{}").chat?.permissionMode,
+      )) === "default",
+    );
     await page.getByRole("button", { name: "시작하기" }).click();
 
     // --- 3. no project yet: the workspace IS the picker --------------------

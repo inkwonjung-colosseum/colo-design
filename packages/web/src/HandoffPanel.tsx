@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { CopyButton } from "./components";
 import { RUNNING, stageLine } from "./DiffPanel";
 import type { Daemon } from "./daemon-client";
+import { mergeHandoffBody } from "./handoff-draft";
 import { CloseIcon, ExternalLinkIcon, LinkIcon } from "./icons";
 import { useModalFocus } from "./use-modal-focus";
 
@@ -44,12 +45,48 @@ export function HandoffPanel({
   const [title, setTitle] = useState(proposedTitle);
   const [body, setBody] = useState(proposedBody);
   const [error, setError] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  /** Whether the text on screen is Claude's — said out loud under the fields. */
+  const [drafted, setDrafted] = useState(false);
+  /** Once the planner types, the draft stops landing in that field. */
+  const titleTouched = useRef(false);
+  const bodyTouched = useRef(false);
   const diffStatus = daemon.diffStatus;
   const running = diffStatus !== null && RUNNING.includes(diffStatus.stage);
   const handedOff = diffStatus?.stage === "handed-off";
   const failed = diffStatus?.stage === "failed";
   const handoff = handedOff ? (diffStatus?.handoff ?? null) : null;
+  /**
+   * The call rides the STABLE `api`, not the `daemon` prop: the client hands
+   * out a fresh wrapper every render, and a websocket message landing while
+   * this dialog is open would otherwise cancel an in-flight draft — a real
+   * Claude turn — and ask it again from scratch.
+   */
+  const { api } = daemon;
 
+  // 비개발자 넘기기: the dialog opens on the browser's proposal — the project
+  // name and the declared screens — and asks the daemon for the sentences a
+  // developer reads first. Empty answer (no CLI, timeout, refusal) leaves the
+  // proposal exactly as it was, so the dialog is never worse than before.
+  useEffect(() => {
+    let cancelled = false;
+    setDrafting(true);
+    api
+      .handoffDraft()
+      .then((draft) => {
+        if (cancelled || draft.source !== "claude") return;
+        if (draft.title && !titleTouched.current) setTitle(draft.title);
+        if (draft.body && !bodyTouched.current) setBody(mergeHandoffBody(draft.body, proposedBody));
+        if (draft.title || draft.body) setDrafted(true);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setDrafting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, proposedBody]);
   useEffect(() => {
     const onKeydown = (event: KeyboardEvent) => {
       // A handoff in flight keeps its progress line: ESC only leaves when the
@@ -161,6 +198,7 @@ export function HandoffPanel({
             )
           ) : (
             <>
+              {drafting && <p className="hint">개발자가 읽을 제목과 내용을 만드는 중…</p>}
               <label className="setting setting--wide handoff__field">
                 <span className="setting__text">
                   <span className="setting__label">제목</span>
@@ -172,7 +210,10 @@ export function HandoffPanel({
                     placeholder="예: 회원 관리 화면"
                     aria-label="넘길 제목"
                     disabled={running}
-                    onChange={(e) => setTitle(e.target.value)}
+                    onChange={(e) => {
+                      titleTouched.current = true;
+                      setTitle(e.target.value);
+                    }}
                   />
                 </span>
               </label>
@@ -181,7 +222,8 @@ export function HandoffPanel({
                 <span className="setting__text">
                   <span className="setting__label">내용</span>
                   <span className="setting__hint">
-                    무엇을 만들었고 무엇을 봐 주면 되는지. 비워 두면 자동으로 채워집니다
+                    무엇을 만들었고 무엇을 봐 주면 되는지. Claude가 저장한 내용을 읽고 먼저 채웁니다
+                    — 고쳐 주세요
                   </span>
                 </span>
                 <span className="setting__control">
@@ -191,10 +233,14 @@ export function HandoffPanel({
                     placeholder="예: 기획서의 목록·빈 상태·오류 상태를 만들었습니다."
                     aria-label="넘길 내용"
                     disabled={running}
-                    onChange={(e) => setBody(e.target.value)}
+                    onChange={(e) => {
+                      bodyTouched.current = true;
+                      setBody(e.target.value);
+                    }}
                   />
                 </span>
               </label>
+              {drafted && <p className="hint">제목과 내용은 Claude가 채웠습니다</p>}
             </>
           )}
 

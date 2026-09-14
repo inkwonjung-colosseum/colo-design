@@ -34,6 +34,7 @@ import {
   verifyDownload,
 } from "../dist/mac-self-update.js";
 import { noticeCopy } from "../dist/notices.js";
+import { normalizeNotificationPrefs, shouldNotify } from "../dist/notify-policy.js";
 import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
 
 function workdir(prefix) {
@@ -775,4 +776,48 @@ test("buildMenuTemplate puts 설정 ⌘, in the app menu", () => {
   const app = template[0];
   const settings = app.submenu.find((item) => item.accelerator === "CmdOrCtrl+,");
   assert.equal(settings.label, "설정");
+});
+
+// ---------------------------------------------------------------------------
+// 알림 정책 (설정 문서 P0#3)
+// ---------------------------------------------------------------------------
+
+test("부르는 값이 있는 순간은 시점 설정과 무관하게 부른다", () => {
+  const off = { done: "off", sound: true };
+  for (const notice of [
+    { kind: "ask", sessionId: "s", title: "로그인", what: "permission" },
+    { kind: "ask", sessionId: "s", title: "로그인", what: "question" },
+    { kind: "crashed", sessionId: "s", title: "로그인" },
+    { kind: "gate", sessionId: "s", title: "로그인", stage: "save" },
+  ]) {
+    assert.equal(shouldNotify(notice, off), true, `${notice.kind} 은 꺼짐에도 불린다`);
+  }
+});
+
+test("완료 알림만 시점을 탄다 — 기본은 오래 걸린 턴", () => {
+  const done = (durationMs) => ({ kind: "done", sessionId: "s", title: "로그인", durationMs });
+
+  assert.equal(shouldNotify(done(5_000), { done: "off", sound: true }), false);
+  assert.equal(shouldNotify(done(5_000), { done: "all", sound: true }), true);
+
+  const long = { done: "long", sound: true };
+  assert.equal(shouldNotify(done(5_000), long), false, "짧은 턴은 조용히 지나간다");
+  assert.equal(shouldNotify(done(60_000), long), true, "1분은 부르는 값이 있다");
+  assert.equal(
+    shouldNotify({ kind: "done", sessionId: "s", title: "로그인" }, long),
+    true,
+    "걸린 시간을 모르면 부른다 — 놓치는 쪽이 비싸다",
+  );
+});
+
+test("렌더러가 넘긴 알림 설정은 믿지 않고 기본으로 돌아간다", () => {
+  assert.deepEqual(normalizeNotificationPrefs(null), { done: "long", sound: true });
+  assert.deepEqual(normalizeNotificationPrefs({ done: "가끔", sound: "네" }), {
+    done: "long",
+    sound: true,
+  });
+  assert.deepEqual(normalizeNotificationPrefs({ done: "all", sound: false }), {
+    done: "all",
+    sound: false,
+  });
 });

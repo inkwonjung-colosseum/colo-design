@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createCredentialStore, loadRepoPat, migratePlaintextSecrets } from "./credentials.js";
 import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./environment.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
+import { createFileLogger } from "./log.js";
 import { runOnboardingChecks } from "./onboarding.js";
 import { ProjectRegistry } from "./projects.js";
 import { RepoWorkspace } from "./repo.js";
@@ -129,7 +130,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const server = new DaemonServer(config);
+  const logger = createFileLogger();
+  process.on("uncaughtException", (error) => logger.error("미처리 예외", { err: error }));
+  process.on("unhandledRejection", (reason) =>
+    logger.error("미처리 거부", { err: reason instanceof Error ? reason : String(reason) }),
+  );
+  const server = new DaemonServer({ ...config, logger });
   try {
     await server.start();
   } catch (error) {

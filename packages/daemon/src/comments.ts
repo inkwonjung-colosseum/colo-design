@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CommentItem } from "@colo-design/protocol";
 
@@ -88,7 +88,20 @@ export function recordComments(
   writeStore(file, [...readComments(file), ...written]);
 }
 
+/**
+ * The store is an append-only log, so a half-written file is lost history:
+ * `readComments` cannot tell truncated JSON from an empty store and returns
+ * `[]`. Write a sibling temp file and rename it over the store — same
+ * directory means same filesystem, so the swap is atomic.
+ */
 function writeStore(file: string, rows: CommentItem[]): void {
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(rows, null, 2)}\n`);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(rows, null, 2)}\n`);
+  try {
+    renameSync(tmp, file);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
 }
