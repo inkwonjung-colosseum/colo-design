@@ -7,6 +7,7 @@ import { waitedFor } from "./format";
 import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
+import { answerTurnNumbers, promptTotal } from "./turn-numbering";
 
 /**
  * The CLI's own housekeeping lines. They arrive dressed as ordinary user or
@@ -625,6 +626,61 @@ export function CopyButton({
 }
 
 /**
+ * 접힘 슬롯 — 자식을 그리드 행에 담아 닫힘 전이(1fr→0fr)를 재생하고, 끝나면
+ * onCollapsed 로 내린다. 화면 아래의 내용이 끌려 올라와 빈 자리가 점프로
+ * 사라지지 않게 하는 게 전부다. styles.css 의 .fold 와 한 쌍이다.
+ */
+export function Fold({
+  closing,
+  onCollapsed,
+  children,
+}: {
+  closing: boolean;
+  onCollapsed: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="fold"
+      data-closing={closing || undefined}
+      onTransitionEnd={(event) => {
+        // 슬롯 자신의 그리드 접힘(가장 긴 전이)만 센다 — 자식에서 버블된
+        // 전이는 닫기와 무관하다.
+        if (event.target !== event.currentTarget) return;
+        if (event.propertyName !== "grid-template-rows" || !closing) return;
+        onCollapsed();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * 닫힘 전이를 거치는 한 줄 노티스의 상태. show 는 내용을 열며 접는 중이라도
+ * 다시 편다(새 소식이 진행 중인 접힘을 이어받지 않게), close 는 사용자의
+ * 닫기로 접기를 시작하고, clear 는 내린다 — 접힘이 끝났거나 시스템이
+ * 대체할 때(재시도, 다음 알림).
+ */
+export function useFoldNotice() {
+  const [text, setText] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  return {
+    text,
+    closing,
+    show: (next: string) => {
+      setText(next);
+      setClosing(false);
+    },
+    close: () => setClosing(true),
+    clear: () => {
+      setText(null);
+      setClosing(false);
+    },
+  };
+}
+
+/**
  * The card a failed turn renders as (PLAN D35). A planner whose last words
  * got no answer must see WHY the silence, and have the cheapest recovery —
  * sending the very same words again — one click away.
@@ -771,9 +827,12 @@ export function Transcript({
       todosSoFar = [];
     }
   }
-  // The k-th assistant answer maps to the k-th turn-start snapshot (PLAN
-  // D52): every send takes one, so the counts line up even when a turn failed.
-  let assistantCount = 0;
+  // 되감기 · 체크포인트의 턴 번호는 데몬의 정의를 따른다: k 번째 **프롬프트**
+  // (기계 턴 포함 — 세션이 보낸 말이면 전부). 답의 턴은 그 답을 낸 프롬프트의
+  // 순번이다. text 블록을 세던 옛 셈은 도구만 돈 턴을 잃고 한 턴에 답이 둘이면
+  // 넘쳤다 — 누른 답과 돌아가는 스냅샷이 어긋나던 것은 그 셈의 탓이다.
+  const answerTurns = answerTurnNumbers(blocks);
+  const totalTurns = promptTotal(blocks);
   const rows = groupActivity(
     live
       ? blocks
@@ -781,10 +840,9 @@ export function Transcript({
           block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
         ),
   );
-  const totalAnswers = blocks.filter((block) => block.type === "text").length;
   const askRewind = (turn: number, text: string) => {
     if (!onRewind) return;
-    const after = totalAnswers - turn;
+    const after = totalTurns - turn;
     if (after > 0) setRewindAsk({ turn, text, after });
     else onRewind(turn, text);
   };
@@ -860,9 +918,7 @@ export function Transcript({
             );
           }
           case "text": {
-            assistantCount += 1;
-            // The checkpoint count stays aligned even for a block that only
-            // poses as an answer; the k-th turn is the k-th turn regardless.
+            const turnNo = answerTurns.get(block.id) ?? 1;
             const tape = TAPE_LINES[block.text.trim()];
             if (tape)
               return (
@@ -870,7 +926,7 @@ export function Transcript({
                   {tape}
                 </p>
               );
-            const checkpoint = checkpoints?.find((entry) => entry.turn === assistantCount);
+            const checkpoint = checkpoints?.find((entry) => entry.turn === turnNo);
             return (
               <div key={block.id}>
                 <AssistantBubble block={block} />
@@ -891,7 +947,7 @@ export function Transcript({
                       type="button"
                       className="revert"
                       title="이 답을 버리고 파일·대화를 그 전으로 돌려 같은 말로 다시 받습니다"
-                      onClick={() => askRewind(assistantCount, lastUserText(blocks) ?? block.text)}
+                      onClick={() => askRewind(turnNo, lastUserText(blocks) ?? block.text)}
                     >
                       다시 요청
                     </button>

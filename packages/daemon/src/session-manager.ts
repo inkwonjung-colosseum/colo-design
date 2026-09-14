@@ -333,6 +333,17 @@ export class SessionManager {
   }
 
   /**
+   * 대화록에 이미 있는 프롬프트 수 — 재시작 뒤 턴 번호를 이어 셀 때의 밑값.
+   * 읽기가 실패하면 0(빈 대화): 이전 동작과 같은 보수적 귀결이다.
+   */
+  async promptCount(sessionId: string, dir: string): Promise<number> {
+    const raw = await getSessionMessages(sessionId, { dir, limit: REWIND_HISTORY_LIMIT }).catch(
+      () => [],
+    );
+    return (raw as Array<Record<string, unknown>>).filter((message) => isPrompt(message)).length;
+  }
+
+  /**
    * 되감기 (PLAN D95): discard the k-th answer — files are ALREADY restored
    * by the caller — and carry on in a forked session whose memory stops
    * before that answer, re-sending `text`. When the CLI refuses the
@@ -353,7 +364,7 @@ export class SessionManager {
     const title = old?.title ?? input.base.title ?? NEW_SESSION_TITLE;
     const raw = await getSessionMessages(input.sessionId, {
       dir: input.cwd,
-      limit: 1000,
+      limit: REWIND_HISTORY_LIMIT,
     }).catch(() => []);
     const cutoff = resolveRewindCutoff(raw as Array<Record<string, unknown>>, input.turn);
     if (cutoff === null && raw.length > 0) {
@@ -479,6 +490,9 @@ function isPrompt(message: Record<string, unknown>): boolean {
   }
   return false;
 }
+
+/** 되감기가 프롬프트를 찾는 창 — 대화록 전체에서 k 번째를 읽는다(제한 없이). */
+const REWIND_HISTORY_LIMIT = 100_000;
 
 /**
  * k 번째 답을 버리는 절단점: kept = prompt[k] 바로 앞의 마지막 체인 항목

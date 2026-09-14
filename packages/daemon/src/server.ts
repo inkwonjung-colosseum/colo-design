@@ -1291,7 +1291,17 @@ export class DaemonServer {
         // turn is handed over. The snapshot must never hold the turn
         // hostage — a failed checkpoint only means one fewer 되돌리기, so
         // it runs alongside and keeps its failure to itself.
-        const turn = (this.checkpointTurns.get(message.sessionId) ?? 0) + 1;
+        let turn = this.checkpointTurns.get(message.sessionId);
+        if (turn === undefined) {
+          // 재시작 뒤 첫 턴: 카운터는 프로세스와 함께 사라지지만 대화록은
+          // 남는다. 되감기의 k 번째 프롬프트는 대화록 기준이므로 이미 있는
+          // 프롬프트 수부터 이어 셀 수밖에 없다 — 1부터 다시 세면 첫 되감기가
+          // 전체 기억을 버리고, 두 번째는 남의 턴을 자른 채 memoryKept 를
+          // 보고하던 것.
+          turn = await this.manager.promptCount(message.sessionId, target.cwd);
+          this.checkpointTurns.set(message.sessionId, turn);
+        }
+        turn += 1;
         this.checkpointTurns.set(message.sessionId, turn);
         void this.repo.checkpoint(message.sessionId, turn).catch(() => undefined);
         // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의

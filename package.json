@@ -21,7 +21,7 @@
     "test:sidebar-ui": "node packages/web/test/ui-sidebar-e2e.mjs",
     "test:unit": "node --test packages/daemon/test/platform.test.mjs packages/daemon/test/security.test.mjs packages/daemon/test/workspaces.test.mjs packages/daemon/test/session-manager.test.mjs packages/daemon/test/plan.test.mjs && pnpm test:repo-unit && pnpm test:web-unit",
     "test:repo-unit": "node --test --test-force-exit packages/daemon/test/repo.test.mjs packages/daemon/test/github.test.mjs packages/daemon/test/translate.test.mjs packages/daemon/test/preview-tools.test.mjs packages/daemon/test/projects.test.mjs",
-    "test:web-unit": "node --experimental-transform-types --disable-warning=ExperimentalWarning --test packages/web/test/handoff-draft.test.mts packages/web/test/session-activity.test.mts packages/web/test/turn-marker.test.mts packages/web/test/naming.test.mts packages/web/test/preview-address.test.mts packages/web/test/delivery.test.mts packages/web/test/repo-guidance.test.mts packages/web/test/transcript-export.test.mts",
+    "test:web-unit": "node --experimental-transform-types --disable-warning=ExperimentalWarning --test packages/web/test/handoff-draft.test.mts packages/web/test/session-activity.test.mts packages/web/test/turn-marker.test.mts packages/web/test/naming.test.mts packages/web/test/preview-address.test.mts packages/web/test/delivery.test.mts packages/web/test/repo-guidance.test.mts packages/web/test/transcript-export.test.mts packages/web/test/turn-numbering.test.mts",
     "test:onboard-unit": "node --test packages/daemon/test/onboarding.test.mjs packages/daemon/test/credentials.test.mjs",
     "test:projects": "node packages/daemon/test/projects-e2e.mjs",
     "test:rewind": "node packages/daemon/test/rewind-e2e.mjs",
