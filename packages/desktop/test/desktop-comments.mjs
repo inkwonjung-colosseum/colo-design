@@ -695,17 +695,20 @@ async function main() {
     await refusedComposer.click();
     await refusedComposer.fill("이 표 전체를 봐 주세요.");
     const logBefore = readFileSync(promptLog, "utf8").split("\n");
-    const modeCountBefore = logBefore.filter((l) =>
-      l.includes('"subtype":"set_permission_mode"'),
-    ).length;
+    // 영수증은 이 순서의 'plan' 요청이다 — 턴이 승인 없이 끝나면 종료 정리가
+    // 원래 자세를 되돌리는 요청을 남긴다(after 로그). 그 복원도 같은
+    // subtype 이라 세면 두 번째가 되어, 정리가 카운트 창 안에 들어오는 순간
+    // 무조건 실패한다. 세는 것을 plan 진입으로만 좁힌다.
+    const modeLine = (l) =>
+      l.includes('"subtype":"set_permission_mode"') && l.includes('"mode":"plan"');
+    const modeCountBefore = logBefore.filter(modeLine).length;
     const turnCountBefore = logBefore.filter((l) => l.includes("미리보기에서 가리킨 요소")).length;
     await page.locator(".toolbar__plan").click();
     await refusedComposer.press("Enter");
     // The toolbar's stop is a UI mood, not the wire's clock (커밋 게이트 교훈:
     // it can detach before the stub has appended the turn). The log's growth
-    // IS the receipt — poll for exactly one new mode request and one new
+    // IS the receipt — poll for exactly one new plan request and one new
     // pin-turn line, then judge.
-    const modeLine = (l) => l.includes('"subtype":"set_permission_mode"');
     const turnLine = (l) => l.includes("미리보기에서 가리킨 요소");
     let modeCountAfter = modeCountBefore;
     let turnCountAfter = turnCountBefore;
@@ -956,9 +959,15 @@ async function main() {
     // with it (D86), no error band left behind (결함①).
     await page.locator(".toolbar__stop").click();
     await queuedLine.waitFor({ state: "detached", timeout: 15000 });
+    const bandText = await page
+      .locator(".notice--error")
+      .first()
+      .innerText()
+      .catch(() => "(none)");
     check(
       "ⓘ 중지 clears the wait-line without an error band",
       (await page.locator(".notice--error").count()) === 0,
+      `band:${bandText.slice(0, 96).replace(/\n/g, " ")}`,
     );
     // The turn left without answering — the grey badges go with it.
     let ghostGone = false;
@@ -971,7 +980,16 @@ async function main() {
       ));
       if (!ghostGone) await new Promise((ok) => setTimeout(ok, 250));
     }
-    check("ⓘ' 중지 takes the grey sent badges with the wait-line", ghostGone === true);
+    check(
+      "ⓘ' 중지 takes the grey sent badges with the wait-line",
+      ghostGone === true,
+      `badges:${JSON.stringify(
+        await inView(
+          app,
+          `[...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')].map((b) => b.getAttribute("aria-label"))`,
+        ),
+      )}`,
+    );
 
     await page
       .locator(".toolbar__stop")
