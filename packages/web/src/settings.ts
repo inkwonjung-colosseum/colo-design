@@ -249,7 +249,7 @@ function loadSettings(): Settings {
     uiScale: oneOf(SCALE_LEVELS, stored.uiScale, DEFAULT_SETTINGS.uiScale),
     contentScale: oneOf(SCALE_LEVELS, stored.contentScale, DEFAULT_SETTINGS.contentScale),
     codeScale: oneOf(SCALE_LEVELS, stored.codeScale, DEFAULT_SETTINGS.codeScale),
-    notifications: loadNotifications(stored.notifications),
+    notifications: normalizeNotificationSettings(stored.notifications),
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
@@ -258,9 +258,10 @@ function loadSettings(): Settings {
 }
 
 /**
- * 알림 정책 복원 — 다른 필드와 같은 규칙: 못 알아보는 값은 기본으로.
+ * 저장 블롭이든 데스크톱 메인이 건넨 값이든 — 못 쓰는 값은 기본으로 돌린다.
+ * 데스크톱의 부팅 동기화(App.tsx)도 이 규칙을 쓴다.
  */
-function loadNotifications(raw: unknown): NotificationSettings {
+export function normalizeNotificationSettings(raw: unknown): NotificationSettings {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_SETTINGS.notifications };
   const stored = raw as Partial<NotificationSettings>;
   return {
@@ -277,7 +278,7 @@ export function currentNoticePrefs(): NotificationSettings {
   } catch {
     raw = null;
   }
-  return loadNotifications(raw);
+  return normalizeNotificationSettings(raw);
 }
 
 /** Project slug → whether its tree is folded (PLAN D59). Slugs and booleans

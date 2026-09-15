@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   /** 알림 정책(시점·소리)을 메인에 반영한다 — 창이 닫혀도 정책이 살아 있게. */
   setNotificationPrefs: (prefs: { done: string; sound: boolean }) =>
     ipcRenderer.invoke("desktop:notify-prefs", prefs),
+  /**
+   * 메인이 영속한 알림 정책을 읽는다 — 새 origin 으로 뜬 렌더러의 기본값이
+   * 디스크의 저장값을 덮지 않게 부팅 때 한 번 묻는다.
+   */
+  getNotificationPrefs: () => ipcRenderer.invoke("desktop:notify-prefs:get"),
   /** 설정의 `테스트 알림 보내기` — OS 가 받았는지(shown)까지 돌려준다. */
   notifyTest: () => ipcRenderer.invoke("desktop:notify-test"),
   /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */

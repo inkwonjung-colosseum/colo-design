@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -33,13 +33,13 @@ import {
   screen,
   shell,
 } from "electron";
+import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
 import { buildSwapScript as buildMacSwapScript } from "./mac-self-update.js";
 import { buildMenuTemplate } from "./menu.js";
 import { noticeCopy } from "./notices.js";
 import {
   DEFAULT_NOTIFICATION_PREFS,
-  type NotificationPrefs,
   normalizeNotificationPrefs,
   shouldNotify,
 } from "./notify-policy.js";
@@ -127,36 +127,16 @@ function platformAsset(feed: UpdateCheckResult): { url: string | null; sha256: s
 const LOGS_DIR = join(COLO_DESIGN_DIR, "logs");
 
 // ---------------------------------------------------------------------------
-// 알림 설정 (설정 문서 P0#3) — 정책 자체는 notify-policy 가 들고, 여기서는
-// 그 값을 읽고 쓰는 자리만 맡는다. 메인이 그리는 알림은 창이 없어도 나가야
-// 하므로 userData 에 영속하고, 부팅 때 읽어 IPC 로 갱신받는다.
+// 데스크톱 설정 — desktop-settings.json 은 창이 없어도 메인이 알아야 하는 값
+// (알림 정책, 설정 문서 P0#3)과 다음 실행이 그대로 잡아야 하는 값(데몬 포트)을
+// 든다. 알림 정책 자체는 notify-policy 가 들고, 여기서는 읽고 쓰는 자리만 맡는다.
 // ---------------------------------------------------------------------------
 
 function desktopSettingsPath(): string {
   return join(app.getPath("userData"), "desktop-settings.json");
 }
 
-/** 창이 없는 순간에도 알림 정책은 살아 있어야 하므로 부팅 때 한 번 읽는다. */
-function loadNotificationPrefs(): NotificationPrefs {
-  try {
-    const raw = readFileSync(desktopSettingsPath(), "utf8");
-    return normalizeNotificationPrefs(JSON.parse(raw).notifications);
-  } catch {
-    return { ...DEFAULT_NOTIFICATION_PREFS };
-  }
-}
-
 let notificationPrefs = DEFAULT_NOTIFICATION_PREFS;
-
-function saveNotificationPrefs(prefs: NotificationPrefs): void {
-  try {
-    writeFileSync(desktopSettingsPath(), JSON.stringify({ notifications: prefs }, null, 2), {
-      mode: 0o600,
-    });
-  } catch {
-    // 저장이 안 되면 이번 실행에만 유효하다 — 알림 자체는 계속 나간다.
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Claude 의 미리보기 드라이버 (PLAN D61 · D63)
@@ -770,7 +750,7 @@ async function bootApp(): Promise<void> {
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
   // 유실시킨다. mac·linux 에서는 이 호출이 아무 일도 하지 않는다.
   app.setAppUserModelId(APP_BUNDLE_ID);
-  notificationPrefs = loadNotificationPrefs();
+  notificationPrefs = loadNotificationPrefs(desktopSettingsPath());
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
     safeStorage as never,
@@ -788,21 +768,42 @@ async function bootApp(): Promise<void> {
     ? join(app.getAppPath(), "web-dist")
     : undefined;
 
-  const server = new DaemonServer({
-    host: "127.0.0.1",
-    port: 0, // ephemeral — the daemon picks a free port
-    token,
-    webDist,
-    credentialStore: credentials,
-    // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
-    previewDriverFactory: createPreviewDriverFactory(),
-    onNotice: (notice) => {
-      notifyPlanner(notice);
-      // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
-      void maybeRunDeferredSelfUpdate();
-    },
-  });
-  await server.start();
+  // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
+  const previewDriverFactory = createPreviewDriverFactory();
+  const onNotice = (notice: DaemonNotice) => {
+    notifyPlanner(notice);
+    // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
+    void maybeRunDeferredSelfUpdate();
+  };
+  const makeServer = (port: number) =>
+    new DaemonServer({
+      host: "127.0.0.1",
+      port,
+      token,
+      webDist,
+      credentialStore: credentials,
+      previewDriverFactory,
+      onNotice,
+    });
+
+  /**
+   * 지난 실행이 저장한 포트로 먼저 뜬다 — 저장 포트가 점유돼 있으면 임시
+   * 포트로 물러나고, 실제로 잡힌 포트를 다시 저장해 다음 실행이 같은 자리로
+   * 수렴하게 한다.
+   */
+  const storedPort = loadStoredPort(desktopSettingsPath());
+  let server = makeServer(storedPort ?? 0);
+  try {
+    await server.start();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || storedPort === null) {
+      throw error;
+    }
+    server = makeServer(0);
+    await server.start();
+  }
+  const boundPort = server.address().port;
+  if (boundPort !== storedPort) saveDesktopSettings(desktopSettingsPath(), { port: boundPort });
   daemonServer = server;
   const url = windowUrl(daemonUrl(server, token));
   appUrl = url;
@@ -950,7 +951,7 @@ function createMainWindow(): BrowserWindow {
   });
 }
 function daemonUrl(server: DaemonServer, token: string): string {
-  // The daemon listens on an ephemeral port; ask it where it ended up.
+  // 저장 포트거나 폴백이거나 — 실제로 잡힌 자리를 묻는다.
   const address = server.address();
   return `http://${address.address === "::1" ? "127.0.0.1" : address.address}:${address.port}/?token=${token}`;
 }
@@ -1417,9 +1418,11 @@ function registerDesktopBridge(): void {
   // 닫혀 있어도 정책이 살아 있도록 userData 에 영속한다.
   ipcMain.handle("desktop:notify-prefs", (_event, prefs: unknown) => {
     notificationPrefs = normalizeNotificationPrefs(prefs);
-    saveNotificationPrefs(notificationPrefs);
+    saveDesktopSettings(desktopSettingsPath(), { notifications: notificationPrefs });
     return { ok: true };
   });
+  // 렌더러가 부팅 때 저장값을 묻는다 — 새 origin 의 기본값이 디스크를 덮지 않게.
+  ipcMain.handle("desktop:notify-prefs:get", () => notificationPrefs);
 
   ipcMain.handle("desktop:notify-test", () =>
     showAppNotification(

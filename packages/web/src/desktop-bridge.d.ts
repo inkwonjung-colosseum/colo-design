@@ -40,6 +40,8 @@ declare global {
       openHome?: (target?: "logs") => Promise<unknown>;
       /** 알림 정책(시점·소리)을 메인에 반영 — 창이 닫혀도 정책이 살게. */
       setNotificationPrefs?: (prefs: { done: string; sound: boolean }) => Promise<unknown>;
+      /** 메인이 영속한 알림 정책 — 부팅 때 읽어 렌더러 설정에 맞춘다. */
+      getNotificationPrefs?: () => Promise<{ done: string; sound: boolean }>;
       /**
        * 설정의 `테스트 알림 보내기`. `shown` 은 **OS 가 이 알림을 그렸는가** —
        * 서명이 없는 실행(개발 실행)에서는 `false` 와 함께 이유가 온다. 사용자가

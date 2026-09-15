@@ -4,7 +4,7 @@ import { useDaemon } from "./daemon-client";
 import { GearIcon, PlugIcon, WarnIcon } from "./icons";
 import { SettingsDialog } from "./SettingsDialog";
 import { Shell } from "./Shell";
-import { useSettings } from "./settings";
+import { normalizeNotificationSettings, useSettings } from "./settings";
 
 const URL_KEY = "colo-design.daemon-url";
 
@@ -108,11 +108,34 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { settings, update: updateSettings } = useSettings();
 
-  // 알림 정책은 메인 프로세스가 그리는 OS 알림에도 적용된다 — 창이 닫혀
-  // 있을 때도 정책이 살아 있도록, 설정이 바뀔 때마다 메인에 밀어 넣는다.
+  // 알림 정책의 진실은 메인의 desktop-settings.json 이다 — 창이 닫혀 있을
+  // 때도 정책이 살아 있어야 하기 때문이다. 새 origin 으로 떠 localStorage 가
+  // 비어 있을 때 렌더러의 기본값이 저장값을 덮지 않게, 부팅에는 메인의 값을
+  // 먼저 받아 설정에 맞추고 그 뒤 사용자의 변경만 되밀어 넣는다.
+  const [notifyPrefsReady, setNotifyPrefsReady] = useState(false);
   useEffect(() => {
+    const bridge = window.coloDesignDesktop;
+    if (!bridge?.getNotificationPrefs) {
+      setNotifyPrefsReady(true);
+      return;
+    }
+    let disposed = false;
+    bridge
+      .getNotificationPrefs()
+      .then((prefs) => {
+        if (disposed) return;
+        updateSettings({ notifications: normalizeNotificationSettings(prefs) });
+        setNotifyPrefsReady(true);
+      })
+      .catch(() => setNotifyPrefsReady(true));
+    return () => {
+      disposed = true;
+    };
+  }, [updateSettings]);
+  useEffect(() => {
+    if (!notifyPrefsReady) return;
     void window.coloDesignDesktop?.setNotificationPrefs?.(settings.notifications);
-  }, [settings.notifications]);
+  }, [settings.notifications, notifyPrefsReady]);
 
   // A file dropped outside the composer has no handler, and the browser
   // answers a dropped file by navigating this window to the file — the whole

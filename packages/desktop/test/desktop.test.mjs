@@ -25,6 +25,12 @@ import {
   fetchLatest,
   RELEASES_FEED_URL,
 } from "../../protocol/dist/update.js";
+import {
+  loadDesktopSettings,
+  loadNotificationPrefs,
+  loadStoredPort,
+  saveDesktopSettings,
+} from "../dist/desktop-settings.js";
 import { buildSwapScript as buildMacSwapScript } from "../dist/mac-self-update.js";
 import { noticeCopy } from "../dist/notices.js";
 import { normalizeNotificationPrefs, shouldNotify } from "../dist/notify-policy.js";
@@ -1069,4 +1075,68 @@ test("렌더러가 넘긴 알림 설정은 믿지 않고 기본으로 돌아간�
     done: "all",
     sound: false,
   });
+});
+
+// ---------------------------------------------------------------------------
+// desktop-settings.json — 알림 정책과 데몬 포트가 한 파일을 나눠 쓴다
+// ---------------------------------------------------------------------------
+
+test("설정 저장은 다른 키를 지우지 않는다 — 알림 뒤에 포트를 써도 둘 다 산다", () => {
+  const dir = workdir("hub-desktop-settings-");
+  const file = join(dir, "desktop-settings.json");
+
+  saveDesktopSettings(file, { notifications: { done: "all", sound: false } });
+  saveDesktopSettings(file, { port: 52341 });
+
+  const stored = loadDesktopSettings(file);
+  assert.deepEqual(stored.notifications, { done: "all", sound: false });
+  assert.equal(stored.port, 52341);
+});
+
+test("포트 순서를 바꿔도 같다 — 포트 뒤의 알림 갱신이 포트를 지우지 않는다", () => {
+  const dir = workdir("hub-desktop-settings-");
+  const file = join(dir, "desktop-settings.json");
+
+  saveDesktopSettings(file, { port: 52341 });
+  saveDesktopSettings(file, { notifications: { done: "off", sound: true } });
+
+  assert.equal(loadStoredPort(file), 52341, "알림 갱신 뒤에도 포트가 남는다");
+});
+
+test("저장 포트는 범위를 검증한다 — 손으로 고친 값은 없던 것으로 읽는다", () => {
+  const dir = workdir("hub-desktop-settings-");
+  const file = join(dir, "desktop-settings.json");
+
+  assert.equal(loadStoredPort(file), null, "파일 자체가 없어도 null");
+
+  for (const bad of [80, 1023, 65536, 3.5, "7823", true, null]) {
+    writeFileSync(file, JSON.stringify({ port: bad }));
+    assert.equal(loadStoredPort(file), null, `${JSON.stringify(bad)} 는 못 쓰는 값`);
+  }
+
+  writeFileSync(file, JSON.stringify({ port: 7823 }));
+  assert.equal(loadStoredPort(file), 7823);
+});
+
+test("깨진 파일은 기본값으로 읽힌다 — 부팅을 망가뜨리지 않는다", () => {
+  const dir = workdir("hub-desktop-settings-");
+  const file = join(dir, "desktop-settings.json");
+
+  writeFileSync(file, "{ not json");
+  assert.deepEqual(loadNotificationPrefs(file), { done: "long", sound: true });
+  assert.equal(loadStoredPort(file), null);
+
+  writeFileSync(file, JSON.stringify([1, 2, 3]));
+  assert.deepEqual(loadDesktopSettings(file), {}, "배열도 객체가 아니면 빈 설정");
+});
+
+test("알림 정책은 normalize 를 거쳐 읽힌다 — 저장된 못 쓰는 값은 기본으로", () => {
+  const dir = workdir("hub-desktop-settings-");
+  const file = join(dir, "desktop-settings.json");
+
+  writeFileSync(file, JSON.stringify({ notifications: { done: "가끔", sound: "네" } }));
+  assert.deepEqual(loadNotificationPrefs(file), { done: "long", sound: true });
+
+  writeFileSync(file, JSON.stringify({ notifications: { done: "all", sound: false } }));
+  assert.deepEqual(loadNotificationPrefs(file), { done: "all", sound: false });
 });
