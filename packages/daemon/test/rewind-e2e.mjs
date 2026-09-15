@@ -22,6 +22,7 @@ process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 process.env.COLO_PROMPT_LOG = join(DIR, "prompts.log");
+process.env.COLO_DESIGN_UNDO_LOG = join(DIR, "undo.jsonl");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -216,6 +217,18 @@ async function main() {
       "the old conversation is gone from the list",
       !listed.some((s) => s.sessionId === first),
       listed.map((s) => s.sessionId.slice(0, 8)).join(","),
+    );
+    // 되돌리기 측정(undo-log.ts)은 이 절차의 영수증이다 — 되돌린 종류와 턴
+    // 번호가 한 줄로 남는다. 파일은 이 실행의 것이라 사용자의 집을 건드리지
+    // 않는다(위 COLO_DESIGN_UNDO_LOG).
+    const undo = readPrompts(process.env.COLO_DESIGN_UNDO_LOG)
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    check(
+      "the rewind is counted as a retry on the turn it dropped",
+      undo.some((line) => line.kind === "retry" && line.turn === 2 && line.sessionId === first),
+      JSON.stringify(undo.map((line) => `${line.kind}:${line.turn ?? "-"}`)),
     );
   } finally {
     ws.close();

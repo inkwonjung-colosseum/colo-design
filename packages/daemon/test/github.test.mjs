@@ -53,13 +53,13 @@ test("the golden pass runs end to end, in order", async () => {
     ...REPO,
     head: "colo-design/20260909-1",
     base: "main",
-    title: "회원 관리 기획서",
+    title: "회원 관리 화면",
     body: byName("pr-create").request.bodyJson.body,
   });
   assert.deepEqual(created, {
     number: 7,
     url: "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-    title: "회원 관리 기획서",
+    title: "회원 관리 화면",
     state: "open",
     branch: "colo-design/20260909-1",
     // 리뷰어 보고(2026-09-15): 새 요청에는 아직 아무도 지정되지 않았다 —
@@ -92,7 +92,7 @@ test("the golden pass runs end to end, in order", async () => {
     title: byName("pr-update").request.bodyJson.title,
     body: byName("pr-update").request.bodyJson.body,
   });
-  assert.equal(updated.title, "회원 관리 기획서 · 주문 정책 기획서");
+  assert.equal(updated.title, "회원 관리 화면 · 주문 정책 화면");
   assert.equal(updated.state, "open");
 
   // 403 — the API's own message reaches the reader, the token does not.
@@ -205,7 +205,7 @@ test("a 422 names the field GitHub complained about", async () => {
         ...REPO,
         head: "colo-design/20260909-1",
         base: "main",
-        title: "회원 관리 기획서",
+        title: "회원 관리 화면",
         body: "본문",
       }),
     /개발자에게 넘기기에 실패했습니다 — GitHub 422: Validation Failed — A pull request already exists/,

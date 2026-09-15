@@ -1,18 +1,6 @@
-import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:child_process";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { get as httpGet } from "node:http";
-import { createConnection } from "node:net";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 // The summarizer's one Claude turn (PLAN D51) rides the same SDK the
@@ -21,7 +9,6 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   DeveloperReview,
   DiffFile,
-  DiffHunk,
   DiffStatus,
   HandoffShot,
   HandoffStatus,
@@ -34,7 +21,6 @@ import type {
   RepoHandoffDraft,
   RepoHistory,
   RepoPhase,
-  RepoSettingsWarning,
   RepoShelf,
   RepoShelfRestore,
   RepoStatus,
@@ -44,7 +30,6 @@ import { markTurn } from "@colo-design/protocol";
 import { readComments } from "./comments.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import {
-  COLO_DESIGN_DIR,
   currentPlatform,
   detectsRegistryAuthFailure,
   resolveGitExecutable,
@@ -52,12 +37,64 @@ import {
 } from "./environment.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
 import {
+  clearPreviewClaim,
+  foreignLivePreviewClaim,
+  killTree,
+  portAccepts,
+  portListenerPids,
+  portRefused,
+  respondsOk,
+  writePreviewClaim,
+} from "./preview-claim.js";
+
+// 포트·소유 기록의 순수 절차는 preview-claim.ts 가 갖는다. 검사들이 이
+// 이름들을 `dist/repo.js` 에서 가져가므로 여기서 그대로 다시 내보낸다 —
+// 옮긴 것은 코드의 자리이지 이 모듈의 표면이 아니다.
+export {
+  clearPreviewClaim,
+  foreignLivePreviewClaim,
+  pidAlive,
+  portListenerPids,
+  readPreviewClaim,
+  writePreviewClaim,
+} from "./preview-claim.js";
+
+import { extraPathPrefix, trustWorkspace } from "./claude-trust.js";
+
+// 셋 다 이 모듈이 쓰면서 동시에 이 모듈의 표면이다 — 검사와 온보딩이
+// `dist/repo.js` 에서 이 이름들을 가져간다.
+export { extraPathPrefix, repoSettingsWarning, trustWorkspace } from "./claude-trust.js";
+
+import { buildCommentsSection } from "./handoff-body.js";
+import { fallbackSummary, parseUnifiedDiff, untrackedAsAdded } from "./repo-diff.js";
+
+export { buildCommentsSection } from "./handoff-body.js";
+
+import { restorePlan, safeRepoPath } from "./repo-paths.js";
+
+// 순수 절차는 옮겼고 표면은 그대로다 — 검사들이 `dist/repo.js` 에서 이
+// 이름들을 가져간다.
+export { fallbackGroup, fallbackSummary, parseUnifiedDiff } from "./repo-diff.js";
+export { restorePlan, safeRepoPath } from "./repo-paths.js";
+
+import {
   type RepoConfig,
   type RepoRegistry,
   readDeclaredPreviewPort,
   resolveRepoConfig,
   scopeOf,
 } from "./repo-config.js";
+import {
+  HANDOFF_BODY_MAX_CHARS,
+  HANDOFF_FILE_LIMIT,
+  HANDOFF_TITLE_MAX_CHARS,
+  handoffPrompt,
+  MEMO_MAX_CHARS,
+  memoPrompt,
+  renderSummaryFile,
+  SUMMARY_MAX_LINES,
+  summaryPrompt,
+} from "./repo-prompts.js";
 
 /**
  * The connected repo workspace: a clone of the repo the planner pointed the
@@ -93,6 +130,15 @@ const BRANCH_PREFIX = "colo-design";
 /** How many output lines a failed gate quotes back to people and Claude. */
 const GATE_OUTPUT_TAIL_LINES = 30;
 /**
+ * 실사 결함: 멈춘 설치는 끝나지 않는다 — `capture` 는 `close` 만 기다리고,
+ * 진행 줄은 마지막으로 찍힌 한 줄에 굳은 채 남는다. 비개발자가 보는 것은
+ * 영원한 `설치 중`뿐이다. 벽시계 상한은 답이 아니다(큰 모노레포의 정상
+ * 설치가 십 분을 넘긴다) — 기준은 **출력이 멎은 시간**이다. 파이프로 받는
+ * stdio 라 npm 은 진행 막대를 끄므로 조용한 구간이 길다: 다섯 분은 정상
+ * 설치가 결코 넘지 않고, 응답 없는 레지스트리·프록시는 반드시 넘는 선이다.
+ */
+const COMMAND_STALL_MS = 300_000;
+/**
  * Where every turn-start snapshot lives (PLAN D52). A namespace of its own
  * under `refs/`, so a developer's `git for-each-ref` never trips over it by
  * accident and one `refs/colo-design/checkpoints` listing sweeps it.
@@ -113,28 +159,14 @@ const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
 
 /** D51: how long the summary's one Claude turn may take before the fallback. */
 const SUMMARY_TIMEOUT_MS = 3_000;
-/** D51: "3줄 이내" — and that is all the save review shows first, anyway. */
-const SUMMARY_MAX_LINES = 3;
-/** D51: per-file diff fed to the summarizer — a refactor's full diff is noise. */
-const SUMMARY_HUNK_CHAR_LIMIT = 4_096;
 /** The machine turns' model (비개발자 저장): reading a diff and saying what it
  * did is haiku's job — fast enough for the leashes above and below, and a
  * planner's model stays for planning. */
 const MACHINE_MODEL = "haiku";
 /** How long the save-time memo turn may take before the default message. */
 const MEMO_TIMEOUT_MS = 8_000;
-/** `repo.save`'s message cap (protocol) — a composed memo never outgrows it. */
-const MEMO_MAX_CHARS = 500;
 /** How long the 넘기기 draft's turn may take before the browser's proposal wins. */
 const HANDOFF_DRAFT_TIMEOUT_MS = 8_000;
-/** The cycle's changed files fed to the draft — a long cycle's tail is noise. */
-const HANDOFF_FILE_LIMIT = 60;
-/** A pull request title is one line a developer scans in a list. */
-const HANDOFF_TITLE_MAX_CHARS = 200;
-/** The prose half of the body; the screen list and 의견 section follow it. */
-const HANDOFF_BODY_MAX_CHARS = 2_000;
-/** The fallback bucket for a changed file with no folder above it. */
-const FALLBACK_ROOT_GROUP = "기타";
 
 /**
  * What Claude is told when a step fails, named the way the planner's own
@@ -241,42 +273,6 @@ const REGISTRY_AUTH_DETAIL =
 export const REPO_URL_MISSING_DETAIL =
   "연결 레포 주소가 설정되지 않았습니다 — 설정에서 레포 주소를 넣어 주세요.";
 
-/**
- * A connected repo can ship Claude Code project settings — and with them
- * `permissions.allow` rules that pre-approve tools no card will ever ask
- * about. Loading the project tier is deliberate (it is also how the repo's
- * CLAUDE.md reaches the session), so this does not block: it makes the
- * repo's ask visible, as one header warning line. The fingerprint (repo
- * root + raw bytes) is how a client files the news as read without
- * mistaking an edited file — or another repo — for news it already saw.
- */
-export function repoSettingsWarning(root: string): RepoSettingsWarning | null {
-  const file = join(root, ".claude", "settings.json");
-  let raw: string;
-  try {
-    raw = readFileSync(file, "utf8");
-  } catch {
-    // Absent (the normal repo) or unreadable — nothing to report either way.
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // A broken file is the CLI's news, not ours.
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const widening = (["permissions", "env", "hooks"] as const).filter((key) => key in parsed);
-  if (widening.length === 0) return null;
-  // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 사용자는
-  // 한국어다. 무엇이 사전 승인되는지 그 자리에서 알려 준다.
-  return {
-    text: `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`,
-    fingerprint: createHash("sha256").update(root).update("\0").update(raw).digest("hex"),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Credential helpers (pure, unit tested)
 // ---------------------------------------------------------------------------
@@ -322,257 +318,6 @@ export function assertClonableRepoUrl(url: string): void {
 function redact(text: string, secret: string | null): string {
   return secret ? text.split(secret).join("***") : text;
 }
-
-// ---------------------------------------------------------------------------
-// Unified diff parsing (pure, unit tested)
-// ---------------------------------------------------------------------------
-
-const DIFF_HEADER = /^diff --git a\/(.*) b\/(.*)$/;
-
-/**
- * Parses `git diff HEAD` output into per-file hunks. Header noise (index,
- * mode, ---/+++) is dropped; `\ No newline at end of file` stays in the hunk
- * it belongs to, because it is part of what the planner is approving.
- */
-export function parseUnifiedDiff(output: string): DiffFile[] {
-  const files: DiffFile[] = [];
-  let current: DiffFile | null = null;
-  let hunk: DiffHunk | null = null;
-
-  const lines = output.split("\n");
-  if (lines[lines.length - 1] === "") lines.pop(); // trailing newline artifact
-
-  for (const line of lines) {
-    const header = DIFF_HEADER.exec(line);
-    if (header) {
-      current = { path: header[2]!, status: "modified", hunks: [] };
-      files.push(current);
-      hunk = null;
-      continue;
-    }
-    if (!current) continue;
-    if (line.startsWith("new file mode")) current.status = "added";
-    else if (line.startsWith("deleted file mode")) current.status = "deleted";
-    else if (line.startsWith("rename from ")) current.status = "renamed";
-    else if (line.startsWith("rename to ")) current.path = line.slice("rename to ".length);
-    else if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
-      current.binary = true;
-      hunk = null;
-    } else if (line.startsWith("@@")) {
-      hunk = { header: line, lines: [] };
-      current.hunks.push(hunk);
-    } else if (
-      hunk &&
-      (line.startsWith("+") ||
-        line.startsWith("-") ||
-        line.startsWith(" ") ||
-        line.startsWith("\\"))
-    ) {
-      hunk.lines.push(line);
-    }
-    // Everything else — index, mode, ---/+++ — is plumbing the panel does not show.
-  }
-  return files;
-}
-
-/** An untracked file is a change too: shown as one added-everything hunk. */
-function untrackedAsAdded(root: string, rel: string): DiffFile {
-  const file: DiffFile = { path: rel, status: "added", hunks: [] };
-  let content: Buffer;
-  try {
-    content = readFileSync(join(root, rel));
-  } catch {
-    return file; // vanished mid-listing; the next diff.get will tell the truth
-  }
-  // A NUL byte in the head of the file is how git decides "binary" without a
-  // parser; adopt the same cheap test.
-  if (content.subarray(0, 8000).includes(0)) return { ...file, binary: true };
-  const lines = content.toString("utf8").split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-  if (lines.length === 0) lines.push("");
-  file.hunks = [
-    {
-      header: `@@ -0,0 +1,${lines.length} @@`,
-      lines: lines.map((line) => `+${line}`),
-    },
-  ];
-  return file;
-}
-
-// ---------------------------------------------------------------------------
-// 요약 폴백 · 되돌리기 경로 규칙 (PLAN D51 · D52 · D53 — pure, unit tested)
-// ---------------------------------------------------------------------------
-
-/**
- * The folder a changed path is read as, for the summary's fallback (PLAN
- * D51): `src/screens/member/PayFailed.screen.tsx` → `member`. The folder
- * directly above the file is the one the repo's own convention names a
- * screen group with; a file with no folder above it lands in `기타`. This is
- * string cutting, not repo-convention reading — the daemon never decides
- * what a "screens" folder means.
- */
-export function fallbackGroup(path: string): string {
-  const segments = path.split("/");
-  return segments.length >= 2
-    ? (segments[segments.length - 2] ?? FALLBACK_ROOT_GROUP)
-    : FALLBACK_ROOT_GROUP;
-}
-
-/**
- * The summary when Claude's turn cannot land (PLAN D51): the changed paths
- * grouped by their folder, `폴더: 수정 N · 추가 M` per group. Deterministic —
- * same diff, same lines — because this is what the planner reads when the
- * fancy version failed.
- */
-export function fallbackSummary(files: Array<Pick<DiffFile, "path" | "status">>): string[] {
-  const groups = new Map<string, { modified: number; added: number }>();
-  for (const file of files) {
-    const group = fallbackGroup(file.path);
-    const counts = groups.get(group) ?? { modified: 0, added: 0 };
-    if (file.status === "added") counts.added += 1;
-    else counts.modified += 1;
-    groups.set(group, counts);
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([group, counts]) => {
-      const parts: string[] = [];
-      if (counts.modified > 0) parts.push(`수정 ${counts.modified}`);
-      if (counts.added > 0) parts.push(`추가 ${counts.added}`);
-      return `${group}: ${parts.join(" · ")}`;
-    });
-}
-
-/**
- * The diff as the summarizer reads it: `git diff`-shaped lines, each file
- * capped at SUMMARY_HUNK_CHAR_LIMIT so one wholesale rewrite cannot crowd
- * the rest out of the prompt. The cap is on what Claude is handed — the
- * planner's `자세히 보기` still gets every hunk.
- */
-function renderSummaryFile(file: DiffFile): string {
-  if (file.binary) return `파일: ${file.path} (바이너리 — 내용 생략)`;
-  const lines: string[] = [`파일: ${file.path}`];
-  let size = 0;
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      const piece =
-        line.length > SUMMARY_HUNK_CHAR_LIMIT ? `${line.slice(0, SUMMARY_HUNK_CHAR_LIMIT)}…` : line;
-      if (size + piece.length > SUMMARY_HUNK_CHAR_LIMIT) {
-        lines.push("(이 파일의 나머지는 생략했습니다)");
-        return lines.join("\n");
-      }
-      size += piece.length;
-      lines.push(piece);
-    }
-  }
-  return lines.join("\n");
-}
-
-/**
- * The summarizer's whole instruction (PLAN D51): the changed screens, the
- * diff, and the ask — planner's words, three lines, no file names. The
- * diff is the only thing this turn may read, so it rides in the prompt.
- */
-function summaryPrompt(files: DiffFile[]): string {
-  return [
-    "아래는 저장 전에 검토할 변경 내용입니다. 바뀐 화면과 바뀐 점을 사용자 말로 3줄 이내, 파일 이름 없이 적어 주세요. 한 줄에 한 가지 바뀐 점을 적습니다.",
-    "",
-    `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
-    "",
-    files.map(renderSummaryFile).join("\n"),
-  ].join("\n");
-}
-
-/**
- * The save-time memo's whole instruction (비개발자 저장): one Korean
- * sentence that can stand alone as a commit subject — no file-name lists,
- * no quoting, nothing but the sentence. The diff is the only thing this
- * turn may read, so it rides in the prompt, exactly like the summary's.
- */
-function memoPrompt(files: DiffFile[]): string {
-  return [
-    "아래 변경 내용이 저장(커밋)됩니다. 저장 메모로 쓸 한국어 한 문장을 적어 주세요.",
-    "규칙: 한 줄만 답하고, 따옴표·목록 기호·접두어를 붙이지 않으며, 파일 이름을 나열하지 않습니다. 예: 회원 관리 화면 추가",
-    "",
-    `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
-    "",
-    files.map(renderSummaryFile).join("\n"),
-  ].join("\n");
-}
-
-/**
- * The 넘기기 draft's whole instruction (비개발자 넘기기): the cycle's own
- * 저장 메모 and the files those saves moved. The memos are already the
- * planner's words — this turn joins them into the two things a developer
- * reads first, and is told not to invent what the memos do not say.
- */
-function handoffPrompt(memos: string[], files: string[]): string {
-  return [
-    "아래는 사용자가 이번에 저장한 작업입니다. 개발자에게 넘길 제목과 내용을 한국어로 적어 주세요.",
-    "첫 줄: 제목 한 줄 (40자 안쪽, 따옴표·접두어 없이).",
-    "둘째 줄부터: 무엇을 만들었고 개발자가 무엇을 봐 주면 되는지 3줄 이내. 파일 이름은 나열하지 않고, 저장 메모에 없는 내용은 지어내지 않습니다.",
-    "",
-    "저장 메모:",
-    ...memos.map((memo) => `- ${memo}`),
-    "",
-    "바뀐 파일:",
-    ...files,
-  ].join("\n");
-}
-
-/**
- * The one path rule every write here obeys — the same rule a save's
- * reviewed diff already follows: a repo-relative, forward-slash path that
- * stays inside the clone. Absolute paths and `..` are not paths inside a
- * worktree; they are an escape attempt, and an escape is refused with null.
- * Returns the normalized path otherwise.
- */
-export function safeRepoPath(path: string): string | null {
-  const normalized = path.replaceAll("\\", "/");
-  if (normalized === "" || normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return null;
-  const segments: string[] = [];
-  for (const segment of normalized.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment === "..") return null;
-    segments.push(segment);
-  }
-  return segments.length > 0 ? segments.join("/") : null;
-}
-
-/**
- * A checkpoint restore's plan (PLAN D52): `git diff --name-status <tree>`
- * splits into the paths to check out (present in the snapshot, changed
- * since) and the paths to delete (created after the snapshot). Only paths
- * the allow rule passes survive — a snapshot tree is git's own output, but
- * the plan is what gets executed, and the plan never reaches outside.
- */
-export function restorePlan(
-  nameStatus: string,
-  allowed: (path: string) => boolean = (path) => safeRepoPath(path) !== null,
-): { checkout: string[]; remove: string[] } {
-  const checkout = new Set<string>();
-  const remove = new Set<string>();
-  for (const line of nameStatus.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    const tab = trimmed.indexOf("\t");
-    if (trimmed === "" || tab < 0) continue;
-    const status = trimmed.slice(0, tab).trim();
-    const path = trimmed.slice(tab + 1).trim();
-    if (!allowed(path)) continue;
-    // `--no-renames` keeps this to A/M/D/T; anything else (U, X) is a state
-    // a mid-merge worktree is in, and a restore must not touch it.
-    if (status === "A") remove.add(path);
-    else if (status === "M" || status === "D" || status === "T") checkout.add(path);
-  }
-  return {
-    checkout: [...checkout].sort(),
-    remove: [...remove].sort(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Workspace
-// ---------------------------------------------------------------------------
 
 export class RepoWorkspace {
   readonly root: string;
@@ -1321,8 +1066,9 @@ export class RepoWorkspace {
       mkdirSync(join(this.root, SHOTS_DIR), { recursive: true });
       for (const shot of shots) {
         // A route keeps its Korean; only its path separators become dashes.
-        const name = `${shot.route.replaceAll("/", "-")}--${shot.state}.png`;
-        writeFileSync(join(this.root, SHOTS_DIR, name), shot.png);
+        // The extension is the capture's own — see HandoffShot.
+        const name = `${shot.route.replaceAll("/", "-")}--${shot.state}${shot.extension}`;
+        writeFileSync(join(this.root, SHOTS_DIR, name), shot.image);
         await this.git(["add", "--", `${SHOTS_DIR}/${name}`]);
         // Only the url's spaces are escaped — a Korean route reads as itself.
         const url =
@@ -2688,8 +2434,21 @@ export class RepoWorkspace {
 
   private async runCommand(command: string, label: string): Promise<void> {
     await this.requirePnpmIfReferenced(command);
-    const result = await this.capture(command, this.spawnOptions());
+    // 다섯 분을 기다리는 검사는 검사가 아니다 — `COLO_DESIGN_COMMAND_STALL_MS`
+    // 가 e2e 를 초 단위로 그 문 앞에 세운다.
+    const stall = Number(process.env.COLO_DESIGN_COMMAND_STALL_MS) || COMMAND_STALL_MS;
+    const result = await this.capture(command, this.spawnOptions(), [], stall);
     if (result.code === 0) return;
+    if (result.stalled) {
+      const waited =
+        stall < 60_000 ? `${Math.round(stall / 1000)}초` : `${Math.round(stall / 60_000)}분`;
+      throw new Error(
+        redact(
+          `${label} 명령이 ${waited} 동안 아무 말도 하지 않아 중단했습니다 — 네트워크나 패키지 저장소가 응답하지 않는 것으로 보입니다.\n마지막으로 한 말: ${result.lastLine || "(없음)"}`,
+          this.pat,
+        ),
+      );
+    }
     if (detectsRegistryAuthFailure(result.output)) throw new Error(REGISTRY_AUTH_DETAIL);
     // The tail, not just the last line: a gate failure is handed to Claude,
     // whose fix starts where the first error line points.
@@ -2948,21 +2707,31 @@ export class RepoWorkspace {
     );
   }
 
+  /**
+   * Runs a command and keeps its tail. `stallMs`, when given, is the silence
+   * the caller refuses to wait past: every chunk of output rearms it, so a
+   * command that keeps talking is never cut, and one that stops talking is
+   * killed with its whole process group and reported as `stalled` rather
+   * than left to hold the phase forever.
+   */
   private capture(
     command: string,
     options: SpawnOptions,
     args: string[] = [],
+    stallMs?: number,
   ): Promise<{
     code: number | null;
     output: string;
     stdout: string;
     lastLine: string;
+    stalled: boolean;
   }> {
     const { promise, resolve, reject } = Promise.withResolvers<{
       code: number | null;
       output: string;
       stdout: string;
       lastLine: string;
+      stalled: boolean;
     }>();
 
     let child: ChildProcess;
@@ -2975,11 +2744,33 @@ export class RepoWorkspace {
     let output = "";
     let stdout = "";
     let lastLine = "";
+    let stalled = false;
+    let watchdog: NodeJS.Timeout | undefined;
+    let hardKill: NodeJS.Timeout | undefined;
+    const clearTimers = () => {
+      clearTimeout(watchdog);
+      clearTimeout(hardKill);
+      watchdog = undefined;
+      hardKill = undefined;
+    };
+    const rearm = () => {
+      if (stallMs === undefined || stalled) return;
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        killTree(child, "SIGTERM");
+        // A shell that ignores SIGTERM would keep the phase hostage anyway.
+        hardKill = setTimeout(() => killTree(child, "SIGKILL"), 3_000);
+      }, stallMs);
+      // The watchdog must not be the reason the daemon's loop stays alive.
+      watchdog.unref?.();
+    };
     const absorb = (chunk: Buffer) => {
       const text = String(chunk);
       // The whole output is kept for the 401 check but only the tail is worth
       // holding: an install can print megabytes.
       output = (output + text).slice(-20_000);
+      rearm();
       const line = text
         .split(/\r?\n/)
         .map((l) => l.trim())
@@ -2994,16 +2785,21 @@ export class RepoWorkspace {
       stdout = (stdout + String(chunk)).slice(-1_000_000);
       absorb(chunk);
     };
+    rearm();
     child.stdout?.on("data", absorbStdout);
     child.stderr?.on("data", absorb);
-    child.once("error", (error) =>
+    child.once("error", (error) => {
+      clearTimers();
       reject(
         error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT"
           ? new Error(GIT_MISSING_DETAIL)
           : error,
-      ),
-    );
-    child.once("close", (code) => resolve({ code, output, stdout, lastLine }));
+      );
+    });
+    child.once("close", (code) => {
+      clearTimers();
+      resolve({ code, output, stdout, lastLine, stalled });
+    });
     return promise;
   }
 
@@ -3132,158 +2928,8 @@ export class RepoWorkspace {
 
 const GIT_MISSING_DETAIL = "git을 찾을 수 없습니다 — git을 설치한 뒤 다시 시도해 주세요.";
 
-/** PATH with COLO_DESIGN_EXTRA_PATH prepended when the desktop app sets it. */
-export function extraPathPrefix(
-  extra: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-  platform: "win32" | "darwin" | "linux" = currentPlatform(),
-): string {
-  const separator = platform === "win32" ? ";" : ":";
-  if (!extra || extra.trim() === "") return env.PATH ?? "";
-  const parts = (env.PATH ?? "").split(separator).filter(Boolean);
-  const additions = extra.split(separator).filter(Boolean);
-  const merged = [...additions];
-  for (const part of parts) if (!merged.includes(part)) merged.push(part);
-  return merged.join(separator);
-}
-
 function detailOf(error: unknown, pat: string | null): string {
   return redact(error instanceof Error ? error.message : String(error), pat);
-}
-
-// ---------------------------------------------------------------------------
-// Spec attachments
-// ---------------------------------------------------------------------------
-
-export interface SpecFile {
-  name: string;
-  mediaType: string;
-  /** base64 */
-  data: string;
-}
-
-const ALLOWED_SPEC_EXTENSIONS = [".md", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".webp"];
-const MAX_SPEC_NAME = 100;
-
-/**
- * `<YYYY-MM-DD>-<original name>.<ext>`, unique within `specs/`.
- *
- * The name reaches Claude as an `@specs/…` mention and reaches the filesystem
- * of three operating systems, so anything a path parser could read as
- * structure is removed. Spaces and Korean stay: the planner recognises their
- * own document by them.
- */
-export function specFileName(
-  original: string,
-  date: string,
-  taken: (candidate: string) => boolean,
-): string {
-  const dot = original.lastIndexOf(".");
-  const extension = dot > 0 ? original.slice(dot).toLowerCase() : "";
-  if (!ALLOWED_SPEC_EXTENSIONS.includes(extension)) {
-    throw new Error(
-      `첨부할 수 없는 파일 형식입니다: ${extension || original} (허용: ${ALLOWED_SPEC_EXTENSIONS.join(" ")})`,
-    );
-  }
-
-  const cleaned =
-    (dot > 0 ? original.slice(0, dot) : original)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: 제어 문자 strip 이 목적이다.
-      .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, "")
-      .replace(/^\.+/, "")
-      .trim() || "spec";
-
-  // Planners date their filenames too, and `2026-09-08-2026-09-08-…` reads as
-  // a bug to the person who attached it.
-  const prefix = /^\d{4}-\d{2}-\d{2}-/.test(cleaned) ? "" : `${date}-`;
-  const base =
-    prefix + cleaned.slice(0, Math.max(1, MAX_SPEC_NAME - prefix.length - extension.length));
-
-  let candidate = base + extension;
-  for (let n = 2; taken(candidate); n += 1) candidate = `${base}-${n}${extension}`;
-  return candidate;
-}
-
-/** Writes each attachment into `<cwd>/specs/` and returns the relative paths. */
-export function saveSpecFiles(cwd: string, files: SpecFile[], now = new Date()): string[] {
-  const dir = join(cwd, "specs");
-  mkdirSync(dir, { recursive: true });
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-
-  const saved: string[] = [];
-  for (const file of files) {
-    const name = specFileName(
-      file.name,
-      date,
-      (candidate) => existsSync(join(dir, candidate)) || saved.includes(`specs/${candidate}`),
-    );
-    writeFileSync(join(dir, name), Buffer.from(file.data, "base64"));
-    saved.push(`specs/${name}`);
-  }
-  return saved;
-}
-
-// ---------------------------------------------------------------------------
-// Workspace trust
-// ---------------------------------------------------------------------------
-
-/**
- * Claude Code drops every `permissions.allow` entry from a project's
- * `.claude/settings.json` until that directory has been trusted, and says so
- * only on stderr. The repo's rules are what keep approval cards away from a
- * planner, so an untrusted clone silently turns the product into a stream of
- * permission prompts. The trust dialog is interactive and the daemon has no
- * terminal, so record the acceptance the same way the CLI does.
- *
- * Connecting a repo is an explicit act by the planner, so accepting on their
- * behalf grants nothing they did not ask for.
- */
-export function trustWorkspace(root: string, home = homedir()): void {
-  const configDir = process.env.CLAUDE_CONFIG_DIR ?? home;
-  const configFile = join(configDir, ".claude.json");
-  mkdirSync(configDir, { recursive: true });
-
-  let config: { projects?: Record<string, Record<string, unknown>> } = {};
-  if (existsSync(configFile)) {
-    try {
-      config = JSON.parse(readFileSync(configFile, "utf8"));
-    } catch {
-      // A corrupt config is the CLI's problem to report; overwriting it with a
-      // fresh object would throw away the user's own projects.
-      return;
-    }
-  }
-
-  // The CLI keys projects by the resolved cwd, which on macOS turns /tmp into
-  // /private/tmp. Record both spellings when they differ.
-  const keys = new Set([root]);
-  try {
-    keys.add(realpathSync(root));
-  } catch {
-    // Not created yet; the literal path is the best we can do.
-  }
-
-  // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
-  const projects = (config.projects ??= {});
-  let changed = false;
-  for (const key of keys) {
-    // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
-    const project = (projects[key] ??= {});
-    if (project.hasTrustDialogAccepted !== true) {
-      project.hasTrustDialogAccepted = true;
-      changed = true;
-    }
-  }
-  if (!changed) return;
-
-  // The CLI rewrites this file whenever a session ends, so replace it in one
-  // step rather than leaving a window where it is half written.
-  const temporary = `${configFile}.colo-design-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  renameSync(temporary, configFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -3299,159 +2945,6 @@ function dependencyHash(root: string): string {
     hash.update(existsSync(path) ? readFileSync(path) : Buffer.alloc(0));
   }
   return hash.digest("hex").slice(0, 16);
-}
-
-function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  try {
-    // Detached on POSIX means the shell and its children share a process
-    // group; signalling the group is what actually releases the port.
-    if (currentPlatform() !== "win32" && child.pid) process.kill(-child.pid, signal);
-    else child.kill(signal);
-  } catch {
-    child.kill(signal);
-  }
-}
-
-function portAccepts(port: number): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    // A refused connection is the kernel's definitive "nothing listens here";
-    // the 1s timeout is not. An event loop starved past the second (a loaded
-    // runner mid-suite is enough) can deliver the timeout before the connect
-    // of a LIVE listener — and a busy-port read that trusts it skips the
-    // reclaimer and spawns the preview into EADDRINUSE. One immediate retry
-    // turns that coin flip back into a fact; a dead port still refuses
-    // instantly, so the free-side verdict pays nothing.
-    const attempt = (retriesLeft: number) => {
-      const socket = createConnection({ port, host: "127.0.0.1" });
-      socket.setTimeout(1_000);
-      socket.once("connect", () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.once("error", () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.once("timeout", () => {
-        socket.destroy();
-        if (retriesLeft > 0) attempt(retriesLeft - 1);
-        else resolve(false);
-      });
-    };
-    attempt(1);
-  });
-}
-
-/**
- * The port's DEFINITIVE free verdict. A refused connection is the kernel
- * saying nothing listens here; a connect means something still answers; a
- * timeout is merely "unknown" — on a starved runner it can fire while a live
- * listener is still bound, so it reads as NOT free and the caller waits on.
- */
-function portRefused(port: number): Promise<boolean> {
-  const { promise, resolve } = Promise.withResolvers<boolean>();
-  const socket = createConnection({ port, host: "127.0.0.1" });
-  socket.setTimeout(1_000);
-  socket.once("error", () => {
-    socket.destroy();
-    resolve(true);
-  });
-  socket.once("connect", () => {
-    socket.destroy();
-    resolve(false);
-  });
-  socket.once("timeout", () => {
-    socket.destroy();
-    resolve(false);
-  });
-  return promise;
-}
-
-function respondsOk(url: string): Promise<boolean> {
-  const { promise, resolve } = Promise.withResolvers<boolean>();
-  const request = httpGet(url, (response) => {
-    response.resume();
-    resolve(response.statusCode === 200);
-  });
-  request.setTimeout(2_000, () => {
-    request.destroy();
-    resolve(false);
-  });
-  request.once("error", () => resolve(false));
-  return promise;
-}
-
-// ---------------------------------------------------------------------------
-// 넘기기 본문의 코멘트 절 (PLAN D93) — the developer reads what changed AND
-// why, without leaving the pull request.
-// ---------------------------------------------------------------------------
-
-/** The planner's words for a screen state, matching the web's stateLabel. */
-const COMMENT_STATE_LABEL: Record<string, string> = {
-  default: "기본",
-  empty: "비어 있음",
-  loading: "불러오는 중",
-  error: "오류",
-};
-
-/**
- * Builds the `### 수정 요청` section from this cycle's recorded comments:
- * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
- * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
- * Claude에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
- * 의도가 제목을 정한다 (재설계 C10 · 커미티 2차 판정 4): 전부 질문이면 섹션
- * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 사용자의 질문이 개발자
- * 에게 변경 지시로 읽혀선 안 된다. 빈 메모는 빈 메모다 (커미티 2차 판정 3):
- * 턴의 문장을 빌려 오면 한 문장이 N행으로 복제된다.
- */
-export function buildCommentsSection(
-  rows: Array<{
-    screen: string;
-    state: string;
-    text: string;
-    at: string;
-    intent?: "change" | "question";
-  }>,
-  screenTitle: (screenId: string) => string | null,
-  sinceIso: string,
-  max = 20,
-): string | null {
-  // Compare as instants, not strings: the commit date is local-offset ISO,
-  // the comment rows are UTC — a string compare would sort them wrong.
-  const sinceMs = Date.parse(sinceIso);
-  if (Number.isNaN(sinceMs)) return null;
-  const cycle = rows
-    .filter((row) => {
-      const at = Date.parse(row.at);
-      return !Number.isNaN(at) && at >= sinceMs;
-    })
-    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  if (cycle.length === 0) return null;
-  const shown = cycle.slice(-max);
-  const overflow = cycle.length - shown.length;
-  const questions = shown.filter((row) => row.intent === "question").length;
-  const changes = shown.length - questions;
-  const lines = shown.map((row) => {
-    const screen = screenTitle(row.screen) ?? row.screen;
-    const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
-    const ask = row.intent === "question" ? " (질문)" : "";
-    const words = row.text ? `"${row.text}"` : "(메모 없음)";
-    return `- ${screen} · ${state}${ask} — ${words}`;
-  });
-  const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
-  const title =
-    questions > 0 && changes === 0
-      ? "### 질문"
-      : questions > 0
-        ? "### 수정 요청 · 질문"
-        : "### 수정 요청";
-  const lead =
-    questions > 0 && changes === 0
-      ? "사용자가 미리보기에서 찍어 Claude에게 보낸 질문입니다."
-      : questions > 0
-        ? "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청과 질문입니다."
-        : "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.";
-  return `${title}\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }
 
 /** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */
@@ -3473,121 +2966,3 @@ class PreviewPortBusyError extends Error {}
  * (PLAN D41).
  */
 class PreviewHeldElsewhereError extends Error {}
-
-// ---------------------------------------------------------------------------
-// Preview ownership claims — 두 인스턴스의 포트 전쟁을 끊는 울타리
-// ---------------------------------------------------------------------------
-
-/**
- * 어느 인스턴스가 어느 포트의 미리보기를 띄웠는지 한 줄짜리 기록,
- * `~/.colo-design/run/preview-<포트>.json`. 검사 스위트는 `COLO_DESIGN_RUN_DIR`
- * 로 갈라 놓는다 — 개발자의 실제 기록을 읽지도 쓰지도 않도록, 프로젝트
- * 등록부가 하는 것과 같은 격리다.
- */
-export interface PreviewClaim {
-  /** 이 미리보기를 띄운 데몬(또는 앱) 프로세스의 pid. */
-  instancePid: number;
-  /** 부팅이 확인된 순간 포트의 LISTEN 소유자. 조회가 순간 실패하면 null —
-   * 그때는 주인이 살아 있는 한 이 기록을 지킨다 (foreignLivePreviewClaim). */
-  listenerPid: number | null;
-  port: number;
-  at: string;
-}
-
-function previewClaimFile(port: number, env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.COLO_DESIGN_RUN_DIR ?? join(COLO_DESIGN_DIR, "run"), `preview-${port}.json`);
-}
-
-export function readPreviewClaim(
-  port: number,
-  env: NodeJS.ProcessEnv = process.env,
-): PreviewClaim | null {
-  try {
-    const parsed = JSON.parse(readFileSync(previewClaimFile(port, env), "utf8")) as PreviewClaim;
-    if (typeof parsed?.instancePid === "number" && parsed.port === port) return parsed;
-  } catch {
-    // 없거나 깨진 기록은 없는 것과 같다 — 울타리는 기록이 있을 때만 선다.
-  }
-  return null;
-}
-
-export function writePreviewClaim(claim: PreviewClaim, env: NodeJS.ProcessEnv = process.env): void {
-  const file = previewClaimFile(claim.port, env);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(claim, null, 2)}\n`, { mode: 0o600 });
-}
-
-export function clearPreviewClaim(port: number, env: NodeJS.ProcessEnv = process.env): void {
-  rmSync(previewClaimFile(port, env), { force: true });
-}
-
-/** signal 0 은 흔들지 않는다 — EPERM 도 프로세스가 살아 있다는 답이다. */
-export function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/** 이 포트에서 LISTEN 하는 pid 들 — lsof(linux·mac) / netstat(windows). */
-export async function portListenerPids(port: number): Promise<number[]> {
-  const windows = currentPlatform() === "win32";
-  const args = windows ? ["-a", "-n", "-o"] : ["-t", `-i:${port}`, "-sTCP:LISTEN"];
-  const stdout = await new Promise<string>((resolve, reject) =>
-    execFile(
-      windows ? "netstat" : "lsof",
-      args,
-      { timeout: 10_000, shell: windows },
-      (error, out) => (error ? reject(error) : resolve(String(out))),
-    ),
-  ).catch(() => "");
-  const pids = new Set<number>();
-  for (const line of stdout.split(/\r?\n/)) {
-    if (windows) {
-      // `TCP  0.0.0.0:3000  0.0.0.0:0  LISTENING  4321` — the local address
-      // names the port, the last column owns it.
-      const columns = line.trim().split(/\s+/);
-      const local = columns[1] ?? "";
-      if (columns.length < 5 || columns[3] !== "LISTENING" || !local.endsWith(`:${port}`)) continue;
-      const pid = Number(columns[4] ?? NaN);
-      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
-    } else {
-      const pid = Number(line.trim());
-      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
-    }
-  }
-  return [...pids];
-}
-
-/**
- * 이 포트의 기록이 살아 있는 다른 인스턴스의 미리보기를 가리키면 그 기록을
- * 돌려 준다 — startPreview 는 이 경우 점유자를 죽이는 대신 멈춘다. 그 외는
- * 모두 정리하고 null: 우리 것(같은 pid), 주인이 죽은 고아의 기록, 기록이
- * 가리킨 리스너가 이미 사라진 낡은 기록.
- *
- * 오류의 방향은 하나다 — 살아 있는 남의 미리보기를 죽이는 쪽이 아니라, 죽어
- * 있는 점유자를 잠시 남겨 두는 쪽. 그래서 기록 시점의 리스너 조회가 순간
- * 실패해 listenerPid 가 null 인 기록(실사 목격: lsof 가 갓 뜬 리스너를 한
- * 번 놓쳤다)은 주인이 살아 있는 한 지킨다. 주인의 서버가 정말 죽으면 주인
- * 인스턴스의 exit 경로가 기록을 거두고, 그러지 못한 채 주인만 죽으면 이
- * 함수의 고아 판정이 거둔다.
- */
-export async function foreignLivePreviewClaim(
-  port: number,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<PreviewClaim | null> {
-  const claim = readPreviewClaim(port, env);
-  if (!claim) return null;
-  if (claim.instancePid === process.pid) return null;
-  if (!pidAlive(claim.instancePid)) {
-    clearPreviewClaim(port, env);
-    return null;
-  }
-  if (claim.listenerPid === null) return claim;
-  const holders = await portListenerPids(port);
-  if (holders.includes(claim.listenerPid)) return claim;
-  clearPreviewClaim(port, env);
-  return null;
-}

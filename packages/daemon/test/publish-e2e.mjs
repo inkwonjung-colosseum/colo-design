@@ -47,6 +47,9 @@ process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
+// 되돌리기 측정은 이 실행의 파일에 쌓인다 — 사용자의 집(~/.colo-design)에
+// 검사의 줄이 섞이지 않게.
+process.env.COLO_DESIGN_UNDO_LOG = join(DIR, "undo.jsonl");
 // The handoff half talks to GitHub. The remote here is a local bare
 // repository, so nothing in its url could name a GitHub project — the slug is
 // pinned, and the REST calls replay recorded pairs in order.

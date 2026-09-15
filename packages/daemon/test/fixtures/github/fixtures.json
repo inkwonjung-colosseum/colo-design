@@ -6,8 +6,8 @@
       "method": "POST",
       "url": "/repos/colosseumcoinckr/colo-open-design/pulls",
       "bodyJson": {
-        "title": "회원 관리 기획서",
-        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n\n## 화면\n- `src/screens/member/MemberList.screen.tsx` — default · empty · loading · error\n\n<!-- colo-design:pages 101 -->",
+        "title": "회원 관리 화면",
+        "body": "## 화면\n- `src/screens/member/MemberList.screen.tsx` — default · empty · loading · error\n\n<!-- colo-design:pages 101 -->",
         "head": "colo-design/20260909-1",
         "base": "main"
       }
@@ -17,7 +17,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "open",
         "merged": false,
         "merged_at": null,
@@ -38,7 +38,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "open",
         "merged": false,
         "merged_at": null,
@@ -71,7 +71,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "open",
         "merged": false,
         "merged_at": null,
@@ -123,7 +123,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "open",
         "merged": false,
         "merged_at": null,
@@ -175,7 +175,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "closed",
         "merged": true,
         "merged_at": "2026-09-10T04:20:00Z",
@@ -196,7 +196,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서",
+        "title": "회원 관리 화면",
         "state": "closed",
         "merged": false,
         "merged_at": null,
@@ -212,8 +212,8 @@
       "method": "PATCH",
       "url": "/repos/colosseumcoinckr/colo-open-design/pulls/7",
       "bodyJson": {
-        "title": "회원 관리 기획서 · 주문 정책 기획서",
-        "body": "## 넘기는 기획서\n- 회원 관리 기획서 (101)\n- 주문 정책 기획서 (102)\n\n<!-- colo-design:pages 101,102 -->"
+        "title": "회원 관리 화면 · 주문 정책 화면",
+        "body": "## 화면\n- `src/screens/member/MemberList.screen.tsx` — default · empty · loading · error\n- `src/screens/order/OrderPolicy.screen.tsx` — default · error\n\n<!-- colo-design:pages 101,102 -->"
       }
     },
     "response": {
@@ -221,7 +221,7 @@
       "json": {
         "number": 7,
         "html_url": "https://github.com/colosseumcoinckr/colo-open-design/pull/7",
-        "title": "회원 관리 기획서 · 주문 정책 기획서",
+        "title": "회원 관리 화면 · 주문 정책 화면",
         "state": "open",
         "merged": false,
         "merged_at": null,

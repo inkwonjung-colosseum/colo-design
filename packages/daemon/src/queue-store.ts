@@ -25,7 +25,6 @@ export interface StoredSend {
   id: string;
   text: string;
   images: Array<{ mediaType: string; data: string }>;
-  files: Array<{ name: string; mediaType: string; data: string }>;
   /** 쓰는 시점에 첨부가 상한을 넘어 바이트가 버려졌다는 표식. */
   truncated?: boolean;
 }
@@ -52,19 +51,15 @@ function summarize(send: StoredSend): Omit<LostSend, "lostAt"> {
     id: send.id,
     text: send.text,
     images: send.images.length,
-    files: send.files.map((file) => file.name),
     ...(send.truncated ? { truncated: true } : {}),
   };
 }
 
 /** Attachment bytes beyond the budget are dropped at WRITE time — the file stays bounded. */
 function budget(item: StoredSend): StoredSend {
-  const bytes = [...item.images, ...item.files].reduce(
-    (sum, part) => sum + (part.data.length * 3) / 4,
-    0,
-  );
+  const bytes = item.images.reduce((sum, part) => sum + (part.data.length * 3) / 4, 0);
   if (bytes <= MAX_ITEM_BYTES) return item;
-  return { ...item, images: [], files: [], truncated: true };
+  return { ...item, images: [], truncated: true };
 }
 
 /** What a live Session needs from the disk — already bound to its own file. */
@@ -145,8 +140,8 @@ export class QueueStore {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
     });
-    if (item.truncated) return { text: item.text, images: [], files: [] };
-    return { text: item.text, images: item.images, files: item.files };
+    if (item.truncated) return { text: item.text, images: [] };
+    return { text: item.text, images: item.images };
   }
 
   dismissLost(sessionId: string, itemId: string): void {

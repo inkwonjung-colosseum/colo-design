@@ -5,10 +5,9 @@
  *
  * These cover the parts that decide what the planner ends up with: what a
  * repo's colo-design.json may declare, how the workspace moves through its
- * phases, how an attached document is named on disk, how the PAT is kept out
- * of urls and errors, how workspace trust is recorded, and how the two
- * failure modes a planner cannot debug (no pnpm, no registry token) are
- * recognised.
+ * phases, how the PAT is kept out of urls and errors, how workspace trust is
+ * recorded, and how the two failure modes a planner cannot debug (no pnpm, no
+ * registry token) are recognised.
  *
  * Run: node --test packages/daemon/test/repo.test.mjs
  */
@@ -46,8 +45,6 @@ import {
   repoSettingsWarning,
   restorePlan,
   safeRepoPath,
-  saveSpecFiles,
-  specFileName,
   trustWorkspace,
   writePreviewClaim,
 } from "../dist/repo.js";
@@ -59,8 +56,6 @@ import {
   validateBootstrapOverrides,
 } from "../dist/repo-config.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
-
-const never = () => false;
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -771,88 +766,6 @@ test("COLO_DESIGN_EXTRA_PATH is prepended to PATH, deduplicated, on both separat
 });
 
 // ---------------------------------------------------------------------------
-// specs/ naming
-// ---------------------------------------------------------------------------
-
-test("a spec file is dated, keeps its spaces, and loses path structure", () => {
-  assert.equal(
-    specFileName("회원 관리 기획서.pdf", "2026-09-08", never),
-    "2026-09-08-회원 관리 기획서.pdf",
-  );
-  assert.equal(
-    specFileName("../../etc/passwd.md", "2026-09-08", never),
-    "2026-09-08-etcpasswd.md",
-    "separators and the leading dots that hide a file both go",
-  );
-  assert.equal(specFileName("plan\u0007\u0000.txt", "2026-09-08", never), "2026-09-08-plan.txt");
-  assert.equal(specFileName("a:b*c?.txt", "2026-09-08", never), "2026-09-08-abc.txt");
-});
-
-test("a filename the planner already dated is not dated twice", () => {
-  assert.equal(
-    specFileName("2026-09-08-회원관리.md", "2026-09-08", never),
-    "2026-09-08-회원관리.md",
-  );
-  assert.equal(
-    specFileName("2026-09-05-회원관리.md", "2026-09-08", never),
-    "2026-09-05-회원관리.md",
-    "their date wins — it is the document's version, not the upload time",
-  );
-});
-
-test("a spec name stays under the 100 character cap", () => {
-  const name = specFileName(`${"가".repeat(300)}.pdf`, "2026-09-08", never);
-  assert.ok(name.length <= 100, `expected <= 100 chars, got ${name.length}`);
-  assert.ok(name.startsWith("2026-09-08-"));
-  assert.ok(name.endsWith(".pdf"));
-});
-
-test("colliding uploads get -2, -3 instead of overwriting", () => {
-  const existing = new Set(["2026-09-08-spec.pdf", "2026-09-08-spec-2.pdf"]);
-  assert.equal(
-    specFileName("spec.pdf", "2026-09-08", (candidate) => existing.has(candidate)),
-    "2026-09-08-spec-3.pdf",
-  );
-});
-
-test("an extension outside the allow list is refused with the list in the message", () => {
-  assert.throws(() => specFileName("기획서.docx", "2026-09-08", never), /docx/);
-  assert.throws(() => specFileName("noextension", "2026-09-08", never), /\.pdf/);
-  for (const extension of [".md", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".webp"]) {
-    assert.ok(
-      specFileName(`plan${extension.toUpperCase()}`, "2026-09-08", never).endsWith(extension),
-    );
-  }
-});
-
-test("attachments land in specs/ and are reported as relative paths", () => {
-  const cwd = workdir("hub-specs-");
-  try {
-    const saved = saveSpecFiles(
-      cwd,
-      [
-        {
-          name: "기획서.md",
-          mediaType: "text/markdown",
-          data: Buffer.from("# 회원").toString("base64"),
-        },
-        {
-          name: "기획서.md",
-          mediaType: "text/markdown",
-          data: Buffer.from("# 주문").toString("base64"),
-        },
-      ],
-      new Date(2026, 8, 8),
-    );
-    assert.deepEqual(saved, ["specs/2026-09-08-기획서.md", "specs/2026-09-08-기획서-2.md"]);
-    assert.equal(readFileSync(join(cwd, saved[0]), "utf8"), "# 회원");
-    assert.equal(readFileSync(join(cwd, saved[1]), "utf8"), "# 주문");
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});
-
-// ---------------------------------------------------------------------------
 // pnpm discovery and registry failure
 // ---------------------------------------------------------------------------
 
@@ -1328,12 +1241,14 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
         {
           route: "/member/MemberList",
           state: "default",
-          png: Buffer.from("png-기본"),
+          image: Buffer.from("webp-기본"),
+          extension: ".webp",
         },
         {
           route: "/결제 완료",
           state: "빈 상태",
-          png: Buffer.from("png-빈 상태"),
+          image: Buffer.from("webp-빈 상태"),
+          extension: ".webp",
         },
       ],
     });
@@ -1358,11 +1273,11 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       .split("\n")
       .filter(Boolean);
     assert.ok(
-      committed.includes(".colo-design/shots/-member-MemberList--default.png"),
+      committed.includes(".colo-design/shots/-member-MemberList--default.webp"),
       committed.join(", "),
     );
     assert.ok(
-      committed.includes(".colo-design/shots/-결제 완료--빈 상태.png"),
+      committed.includes(".colo-design/shots/-결제 완료--빈 상태.webp"),
       committed.join(", "),
     );
     const remoteTree = await promisifiedRun("git", [
@@ -1376,7 +1291,7 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       branch,
     ]);
     assert.ok(
-      remoteTree.includes(".colo-design/shots/-결제 완료--빈 상태.png"),
+      remoteTree.includes(".colo-design/shots/-결제 완료--빈 상태.webp"),
       "the captures reached the remote",
     );
 
@@ -1386,11 +1301,12 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
     assert.ok(body.indexOf("### 화면 미리보기") > 0, "appended, not prepended");
     const section = body.slice(body.indexOf("### 화면 미리보기"));
     assert.ok(
-      section.includes(`blob/${branch}/.colo-design/shots/-결제%20완료--빈%20상태.png`),
+      section.includes(`blob/${branch}/.colo-design/shots/-결제%20완료--빈%20상태.webp`),
       section,
     );
     assert.ok(section.includes("`/member/MemberList · default`"), section);
-    assert.ok(section.trimEnd().endsWith(".png)"), section);
+    // Nothing follows the links — the section is the body's tail.
+    assert.ok(section.trimEnd().endsWith("-결제%20완료--빈%20상태.webp)"), section);
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
     else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
@@ -1434,7 +1350,8 @@ test("colo-design.json#shots: false refuses the captures — no files, no sectio
         {
           route: "/member/MemberList",
           state: "default",
-          png: Buffer.from("png"),
+          image: Buffer.from("webp"),
+          extension: ".webp",
         },
       ],
     });

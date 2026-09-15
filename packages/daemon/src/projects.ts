@@ -226,9 +226,6 @@ function saveProjectsFile(file: ProjectsFile, env: NodeJS.ProcessEnv = process.e
   });
   renameSync(temporary, path);
 }
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
 
 /**
  * The loaded registry: the list, which one is active, and where each one's

@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
-import { extname, join } from "node:path";
+import { join } from "node:path";
 import {
   type ClientMessage,
   type DiffStatus,
@@ -74,6 +74,7 @@ import {
   trustWorkspace,
 } from "./repo.js";
 import { CONFIG_FILE, scopeOf, validateBootstrapOverrides } from "./repo-config.js";
+import { type GateScreen, gateBrief, inspectScreens, type ScreenTrouble } from "./screen-gate.js";
 import {
   asPlannerFacingError,
   NEW_SESSION_TITLE,
@@ -82,11 +83,23 @@ import {
   type Session,
 } from "./session.js";
 import { SessionManager } from "./session-manager.js";
+import { undoLog } from "./undo-log.js";
+import { serveWeb } from "./web-static.js";
 import { repoWritePolicy } from "./workspaces.js";
 
 // The desktop builds its driver against these (PLAN D61) — exported here so
 // `@colo-design/daemon/server` stays the one import a host needs.
-export type { PreviewDriver, PreviewDriverFactory } from "./preview-tools.js";
+export type {
+  PreviewAxNode,
+  PreviewCapture,
+  PreviewConsoleLine,
+  PreviewDriver,
+  PreviewDriverFactory,
+  PreviewOpenOptions,
+  PreviewOpenResult,
+  PreviewScreenDeclaration,
+  PreviewViewport,
+} from "./preview-tools.js";
 
 interface ProjectWorkspaces {
   slug: string;
@@ -142,16 +155,16 @@ function refilled<T extends PlanWindow>(window: T, now: number): T {
 // `default` mode (so a user's own global defaultMode cannot widen hub
 // sessions) and answers edit-class tools in-process. See session.ts.
 
-/** Static types for the built web UI. */
-const WEB_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".json": "application/json",
-  ".woff2": "font/woff2",
+/**
+ * 넘기기의 캡처는 사람이 풀 리퀘스트에서 읽는다 (PLAN D56) — 모델의 토큰
+ * 예산과 무관하므로 화면을 알아볼 만한 긴 변을 준다.
+ */
+const HANDOFF_SHOT_LONG_EDGE = 1200;
+/** 캡처가 스스로 말한 형식 → 커밋될 파일의 확장자. */
+const SHOT_EXTENSIONS: Record<string, string> = {
+  "image/webp": ".webp",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
 };
 
 /**
@@ -172,7 +185,8 @@ export type DaemonNotice =
       kind: "gate";
       sessionId: string;
       title: string;
-      stage: "save" | "handoff" | "refresh";
+      /** `screen` 은 턴 끝의 화면 확인 — 나머지 셋은 사용자가 누른 단추다. */
+      stage: "save" | "handoff" | "refresh" | "screen";
     }
   | {
       /**
@@ -333,9 +347,9 @@ export class DaemonServer {
   private readonly previewDrivers = new Map<string, PreviewDriver>();
   /**
    * The connected repo's declared screens (the `colo-design.screens`
-   * envelope's cache, PLAN D7) — the list `screen_list` serves. The web UI
-   * holds the same list today; the daemon's copy fills when the overlay
-   * bridge lands. Read on every call, never snapshotted into the tools.
+   * envelope's cache, PLAN D7) — the list `screen_list` serves, filled by
+   * `setPreviewScreens` and emptied by a project switch. Read on every call,
+   * never snapshotted into the tools.
    */
   private previewScreens: PreviewScreenDeclaration[] = [];
   /** D94: slugs whose connection Claude prepares (the picker's 선택). */
@@ -397,6 +411,9 @@ export class DaemonServer {
         let turnDurationMs: number | undefined;
         if (state === "running") {
           this.notifyClockAt.set(sessionId, Date.now());
+          // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 연 화면을 다시
+          // 판정하면 고치지도 않은 화면을 Claude 에게 떠넘기게 된다.
+          this.openedThisTurn.delete(sessionId);
         } else if (state === "idle") {
           const startedAt = this.notifyClockAt.get(sessionId);
           this.notifyClockAt.delete(sessionId);
@@ -432,16 +449,27 @@ export class DaemonServer {
           this.manager.invalidateThreads(realpathBestEffort(sessionWorkspaces.paths.repoRoot));
           this.refreshThreads();
         }
-        const notice = noticeForState(
-          sessionId,
-          state,
-          this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
-          turnDurationMs,
-        );
-        if (notice) this.config.onNotice?.(notice);
+        // 턴이 화면을 열어 봤다면 완료 알림은 게이트의 판정 뒤로 미룬다
+        // (runScreenGate 가 둘 중 하나를 내보낸다). 여기서 먼저 부르면
+        // 사용자는 `작업이 끝났습니다` 를 읽은 직후 다시 도는 대화를 본다.
+        if (state === "idle" && this.screenGatePossible(sessionId)) {
+          void this.runScreenGate(sessionId, turnDurationMs);
+        } else {
+          const notice = noticeForState(
+            sessionId,
+            state,
+            this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
+            turnDurationMs,
+          );
+          if (notice) this.config.onNotice?.(notice);
+        }
         // The driver a session received dies with the session (PLAN D61):
         // close, delete, remove, and daemon stop all land here as `closed`.
-        if (state === "closed") this.destroyPreviewDriver(sessionId);
+        if (state === "closed") {
+          this.destroyPreviewDriver(sessionId);
+          this.openedThisTurn.delete(sessionId);
+          this.gatedSessions.delete(sessionId);
+        }
       },
       onPermissionRequest: (payload) => this.broadcast({ type: "permission.request", ...payload }),
       onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
@@ -528,7 +556,7 @@ export class DaemonServer {
         return;
       }
       if (this.config.webDist) {
-        this.serveWeb(req, res);
+        serveWeb(this.config.webDist, req, res);
         return;
       }
       res.writeHead(404).end();
@@ -1001,6 +1029,105 @@ export class DaemonServer {
     return { tools, driver };
   }
 
+  /**
+   * The connected repo said which screens it has (`colo-design.screens`,
+   * PLAN D7). The host hands the envelope's contents here: the daemon has no
+   * page of its own to hear it from, and without this `screen_list` answers
+   * "아직 선언된 화면이 없습니다" for a repo that declared everything. Read
+   * live by the tools, so a list that arrives mid-session counts.
+   */
+  setPreviewScreens(screens: PreviewScreenDeclaration[]): void {
+    this.previewScreens = screens;
+  }
+
+  /**
+   * 이 턴이 연 화면들 (PLAN D61 게이트): `screen_open` 이 실제로 열어 낸
+   * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 만진 화면"이다.
+   * 키는 `route\nstate` — 같은 화면의 같은 상태를 두 번 열어도 한 번 본다.
+   */
+  private readonly openedThisTurn = new Map<string, Map<string, GateScreen>>();
+  /**
+   * 이미 게이트가 한 번 말을 건 세션. 사용자가 다시 보내기 전까지는 다시
+   * 걸지 않는다 — 게이트가 부른 턴이 또 게이트를 부르면 기계 둘이 서로
+   * 답하며 구독을 태운다. 두 번째 문제는 사람의 다음 턴이 본다.
+   */
+  private readonly gatedSessions = new Set<string>();
+
+  /** `screen_open` 하나 — 이 턴의 목록에 담는다. */
+  private noteScreenOpened(sessionId: string, route: string, state: string | null): void {
+    const opened = this.openedThisTurn.get(sessionId) ?? new Map<string, GateScreen>();
+    opened.set(`${route}\n${state ?? ""}`, { route, state });
+    this.openedThisTurn.set(sessionId, opened);
+  }
+
+  /**
+   * 게이트를 걸 수 있는 턴인가. 열어 본 화면이 없으면 볼 것이 없고, 드라이버가
+   * 없는 브라우저 개발 경로에는 창 자체가 없으며, 이미 한 번 건 세션은
+   * 사용자의 다음 보내기를 기다린다. 여기서 false 면 완료 알림은 평소대로
+   * 그 자리에서 나간다.
+   */
+  private screenGatePossible(sessionId: string): boolean {
+    if (!this.config.previewDriverFactory) return false;
+    if (this.gatedSessions.has(sessionId)) return false;
+    return (this.openedThisTurn.get(sessionId)?.size ?? 0) > 0;
+  }
+
+  /**
+   * 턴이 끝난 뒤 그 화면들을 기계가 다시 열어 본다 (screen-gate.ts). 문제가
+   * 있으면 Claude 에게 게이트 턴으로 돌려보내고, 없으면 미뤄 둔 완료 알림을
+   * 그제야 내보낸다 — 순서가 뒤집히면 사용자는 `작업이 끝났습니다` 를 읽은
+   * 직후 다시 도는 대화를 보게 된다.
+   *
+   * 세션이 쓰던 창을 빌리지 않고 제 드라이버를 만든다: `open` 이 콘솔 기록을
+   * 비우므로 여기서 읽는 줄이 정확히 그 화면의 것이 되고, Claude 가 다음 턴에
+   * 들고 갈 ref 세대도 건드리지 않는다.
+   */
+  private async runScreenGate(sessionId: string, turnDurationMs?: number): Promise<void> {
+    const screens = [...(this.openedThisTurn.get(sessionId)?.values() ?? [])];
+    this.openedThisTurn.delete(sessionId);
+    const session = this.manager.get(sessionId);
+    const done = (): void => {
+      const notice = noticeForState(
+        sessionId,
+        "idle",
+        session?.title ?? NEW_SESSION_TITLE,
+        turnDurationMs,
+      );
+      if (notice) this.config.onNotice?.(notice);
+    };
+    const factory = this.config.previewDriverFactory;
+    if (!factory || !session || screens.length === 0) return done();
+    const status = await this.activeOrNull()
+      ?.repo.status()
+      .catch(() => null);
+    if (!status?.previewUrl) return done();
+    const driver = factory.for(status.previewUrl);
+    let troubles: ScreenTrouble[] = [];
+    try {
+      troubles = await inspectScreens(driver, screens);
+    } catch {
+      // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다.
+      troubles = [];
+    } finally {
+      await driver.destroy().catch(() => undefined);
+    }
+    // 사용자가 그 사이 다시 보냈으면 이 판정은 낡았다 — 도는 턴에 끼어들지 않는다.
+    if (troubles.length === 0 || this.manager.get(sessionId)?.state !== "idle") return done();
+    this.gatedSessions.add(sessionId);
+    this.config.onNotice?.({
+      kind: "gate",
+      sessionId,
+      title: session.title,
+      stage: "screen",
+    });
+    try {
+      session.send(gateBrief(troubles));
+    } catch {
+      // 질의가 방금 죽었다 — 완료로 닫는 편이 아무 말도 없는 것보다 낫다.
+      done();
+    }
+  }
+
   /** The session's driver dies with the session (PLAN D61). */
   private destroyPreviewDriver(sessionId: string): void {
     const driver = this.previewDrivers.get(sessionId);
@@ -1076,11 +1203,18 @@ export class DaemonServer {
         const states = screen.states.length > 0 ? screen.states : ["default"];
         for (const state of states) {
           try {
-            await driver.open(screen.route, state);
+            const opened = await driver.open(screen.route, state);
+            // A screen that would not come up has no picture to take.
+            if (!opened.ok) continue;
+            // A handoff picture is read by a person in a pull request, not by
+            // a model — it gets the detailed long edge, and its real
+            // extension so the committed file is named after what it holds.
+            const capture = await driver.screenshot({ longEdge: HANDOFF_SHOT_LONG_EDGE });
             shots.push({
               route: screen.route,
               state,
-              png: Buffer.from(await driver.screenshot(), "base64"),
+              image: Buffer.from(capture.data, "base64"),
+              extension: SHOT_EXTENSIONS[capture.mediaType] ?? ".bin",
             });
           } catch {
             // One screen failing must not sink the rest of the set.
@@ -1133,6 +1267,10 @@ export class DaemonServer {
     const switching = current?.slug !== slug;
 
     if (switching) {
+      // The screens are the OUTGOING repo's declarations (PLAN D7): keeping
+      // them would have `screen_list` name routes the incoming app does not
+      // serve. The new bridge announces itself and fills this again.
+      this.previewScreens = [];
       // The outgoing project keeps the server it HAS but may not start one:
       // its in-flight bring-up (a clone that takes minutes) would otherwise
       // finish late, take the port it declares, and SIGKILL the listener the
@@ -1505,33 +1643,6 @@ export class DaemonServer {
     }
   }
 
-  /**
-   * Static serving of the built web UI (desktop mode): files from webDist,
-   * unknown paths fall back to index.html so the SPA routes itself. Path
-   * traversal stays inside webDist.
-   */
-  private serveWeb(req: IncomingMessage, res: ServerResponse): void {
-    const root = this.config.webDist!;
-    const requested = (req.url ?? "/").split("?")[0]!;
-    let candidate = requested === "/" ? "index.html" : requested.slice(1);
-    candidate = candidate.split("%2e%2e").join("..");
-    const file = join(root, candidate);
-    if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) {
-      // SPA fallback: /anything is the app.
-      const index = join(root, "index.html");
-      if (!existsSync(index)) {
-        res.writeHead(404).end();
-        return;
-      }
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(readFileSync(index));
-      return;
-    }
-    const type = WEB_TYPES[extname(file)] ?? "application/octet-stream";
-    res.writeHead(200, { "content-type": type });
-    res.end(readFileSync(file));
-  }
-
   private async onMessage(ws: WebSocket, raw: string): Promise<void> {
     const parsed = parseClientMessage(raw);
     if (!parsed.ok) {
@@ -1647,12 +1758,14 @@ export class DaemonServer {
         });
         if (preview) {
           this.previewDrivers.set(session.id, preview.driver);
-          openSink.current = (route, state) =>
+          openSink.current = (route, state) => {
+            this.noteScreenOpened(session.id, route, state);
             this.broadcast({
               type: "session.event",
               sessionId: session.id,
               event: { kind: "preview.opened", route, state },
             });
+          };
         }
         // A session start is the moment the 화면 half goes back to the remote.
         // Mid-cycle that is a merge of the developer's base branch, and a
@@ -1680,6 +1793,9 @@ export class DaemonServer {
         if (target.cwd !== this.workspaceCwd()) {
           throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 보내 주세요.");
         }
+        // 사람이 다시 말을 걸었다 — 화면 확인 게이트의 한 번 제한이 풀린다.
+        // 게이트는 사람의 턴마다 한 번이지, 대화마다 한 번이 아니다.
+        this.gatedSessions.delete(message.sessionId);
         // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
         // manager's onEvent); this only seeds the count, before anything can
         // be handed over — so the transcript is read while it still holds
@@ -1699,7 +1815,7 @@ export class DaemonServer {
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
         // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
-        carrier.send(message.text, message.images, message.files);
+        carrier.send(message.text, message.images);
         return { ok: true };
       }
 
@@ -2099,30 +2215,6 @@ export class DaemonServer {
       case "repo.handoffStatus":
         return await this.repo.refreshHandoff();
 
-      case "repo.specPath": {
-        // 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로 — 활성 클론의
-        // specs/ 아래만 인정한다. 렌더러가 임의 경로를 셸에 넘기는 일은
-        // 이 검증과 데스크톱 main 의 ~/.colo-design 검증 이중으로 막힌다.
-        const active = this.requireActive();
-        const rel = message.path;
-        const normalized = rel.replace(/\\/g, "/");
-        if (
-          !normalized.startsWith("specs/") ||
-          normalized.includes("..") ||
-          normalized.slice("specs/".length).includes("/")
-        ) {
-          throw new Error("기획서 보관함(specs/) 안의 파일만 열 수 있습니다.");
-        }
-        // 첨부는 세션 cwd = 활성 클론에 쓰인다(session.deliver → saveSpecFiles).
-        // 프로젝트 루트(~/.colo-design/projects/<slug>)가 아니라 그 아래
-        // repo/ 가 기준이어야 파일이 실제로 거기 있다.
-        const absolute = join(active.paths.repoRoot, normalized);
-        if (!existsSync(absolute)) {
-          throw new Error("그 기획서 파일을 찾을 수 없습니다.");
-        }
-        return { path: absolute };
-      }
-
       // 답하기 (PLAN D88): the planner's words to one developer comment —
       // the daemon picks the endpoint by the id's kind.
       // 되감기 (PLAN D95): files (the turn's checkpoint) go back first, then
@@ -2163,14 +2255,22 @@ export class DaemonServer {
         });
         if (preview) {
           this.previewDrivers.set(result.sessionId, preview.driver);
-          openSink.current = (route, state) =>
+          openSink.current = (route, state) => {
+            this.noteScreenOpened(result.sessionId, route, state);
             this.broadcast({
               type: "session.event",
               sessionId: result.sessionId,
               event: { kind: "preview.opened", route, state },
             });
+          };
         }
         this.manager.invalidateThreads(target.cwd);
+        undoLog().record({
+          kind: "retry",
+          slug: this.requireActive().slug,
+          sessionId: message.sessionId,
+          turn: message.turn,
+        });
         this.refreshThreads();
         return result;
       }
@@ -2191,8 +2291,11 @@ export class DaemonServer {
       case "repo.history":
         return await this.repo.history();
 
-      case "repo.restore":
-        return await this.repo.restore(message.sha);
+      case "repo.restore": {
+        const restored = await this.repo.restore(message.sha);
+        undoLog().record({ kind: "save", slug: this.requireActive().slug });
+        return restored;
+      }
 
       case "repo.discard":
         return await this.repo.discard();
@@ -2209,8 +2312,19 @@ export class DaemonServer {
       case "repo.checkpoints":
         return await this.repo.checkpoints();
 
-      case "repo.checkpoint.restore":
-        return await this.repo.checkpointRestore(message.checkpoint);
+      case "repo.checkpoint.restore": {
+        const restored = await this.repo.checkpointRestore(message.checkpoint);
+        // 체크포인트 id 는 `<sessionId>/<turn>` 그대로다 — 되돌린 턴의 번호를
+        // 알아내려고 git 을 한 번 더 부를 이유가 없다.
+        const [sessionId, turn] = message.checkpoint.split("/");
+        undoLog().record({
+          kind: "turn",
+          slug: this.requireActive().slug,
+          ...(sessionId ? { sessionId } : {}),
+          ...(Number.isFinite(Number(turn)) ? { turn: Number(turn) } : {}),
+        });
+        return restored;
+      }
 
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,
@@ -2260,12 +2374,14 @@ export class DaemonServer {
     });
     if (preview) {
       this.previewDrivers.set(session.id, preview.driver);
-      openSink.current = (route, state) =>
+      openSink.current = (route, state) => {
+        this.noteScreenOpened(session.id, route, state);
         this.broadcast({
           type: "session.event",
           sessionId: session.id,
           event: { kind: "preview.opened", route, state },
         });
+      };
     }
     // The tree's child row points at the same id; a rescan picks the new life up.
     this.manager.invalidateThreads(session.cwd);

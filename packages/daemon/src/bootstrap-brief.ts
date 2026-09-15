@@ -30,6 +30,83 @@ export function conventionsRevision(claudeMd: string): number | null {
   return hit ? Number(hit[1]) : null;
 }
 
+/**
+ * 브리프가 "아래 템플릿" 이라 부르는 것 — 실제로 함께 나가는 두 조각.
+ * 레포마다 라우터도 JSX 파이프라인도 다르므로 준비 턴이 고쳐 쓸 출발점이지,
+ * 그대로 복사해 넣으라는 정답이 아니다. 도구가 읽는 것은 여기 적힌 봉투
+ * 이름과 속성 이름뿐이고, 그것들만 바뀌지 않으면 된다.
+ */
+const BRIDGE_TEMPLATE = `## 화면 브리지 템플릿
+
+\`\`\`ts
+// src/dev/colo-bridge.ts — 개발 전용. 프로덕션 번들에 넣지 마세요.
+declare global {
+  interface Window {
+    coloDesign?: { post(envelope: unknown): void };
+  }
+}
+
+/** 이 레포가 그릴 수 있는 것 전부. */
+const SCREENS = [
+  { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"] },
+];
+
+/** 데스크톱 네이티브 뷰는 window.coloDesign, 브라우저 개발 경로는 부모 iframe. */
+function post(envelope: unknown): void {
+  if (window.coloDesign) window.coloDesign.post(envelope);
+  else if (window.parent !== window) window.parent.postMessage(envelope, "*");
+}
+
+const announce = () => post({ type: "colo-design.screens", screens: SCREENS });
+announce();
+
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  // 도구가 목록을 다시 묻는다(오버레이가 다시 붙었을 때).
+  if (data?.type === "colo-design.screens?") return announce();
+  // 도구가 화면을 하나 열라고 한다.
+  if (data?.type !== "colo-design.navigate" || typeof data.route !== "string") return;
+  const state = typeof data.state === "string" && data.state ? data.state : null;
+  // 이동은 이 레포의 라우터가 합니다 — react-router 면 navigate(), 직접
+  // 라우팅이면 history.pushState + 리렌더. 도구는 레포의 url 에 관여하지 않습니다.
+  navigateTo(data.route + (state ? \`?state=\${state}\` : ""));
+});
+\`\`\`
+
+진입점에서 개발일 때만 부릅니다: \`if (import.meta.env.DEV) void import("./dev/colo-bridge");\``;
+
+const SRC_MARKER_TEMPLATE = `## 소스 표식 템플릿 (선택)
+
+JSX 를 AST 로 고치는 자리에 붙입니다 — 문자열 치환은 코드 안의 문자열까지
+건드리므로 쓰지 마세요. 아래는 \`@vitejs/plugin-react\`(babel)를 쓰는 레포의
+예이고, SWC 나 다른 파이프라인이면 같은 규칙(소문자 태그만 · 개발 빌드만)으로
+그쪽 변환기에 맞춰 주세요.
+
+\`\`\`js
+// babel-plugin-colo-src.cjs — 개발 전용.
+module.exports = ({ types: t }) => ({
+  visitor: {
+    JSXOpeningElement(path, state) {
+      const name = path.node.name;
+      // 소문자로 시작하는 태그만 = 실제 DOM 요소. 컴포넌트 태그는 그대로 둔다.
+      if (name.type !== "JSXIdentifier" || !/^[a-z]/.test(name.name)) return;
+      const line = path.node.loc?.start.line;
+      const file = state.filename?.replace(\`\${state.cwd}/\`, "");
+      if (!line || !file) return;
+      path.node.attributes.push(
+        t.jsxAttribute(t.jsxIdentifier("data-colo-src"), t.stringLiteral(\`\${file}:\${line}\`)),
+      );
+    },
+  },
+});
+\`\`\`
+
+\`vite.config\` 에서 개발 실행에만 겁니다:
+
+\`\`\`ts
+react({ babel: { plugins: command === "serve" ? ["./babel-plugin-colo-src.cjs"] : [] } })
+\`\`\``;
+
 export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연결되어 있지 않습니다. 레포를 살펴보고 아래 다섯(마지막은 선택)을 작성해 연결을 준비해 주세요.
 
 1. \`colo-design.json\` (레포 루트) — 딱 한 줄입니다:
@@ -52,13 +129,17 @@ export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연�
    넣어 주세요 — 도구가 관례의 판을 읽는 표식입니다.
 5. (선택) 소스 표식 — 개발 빌드의 JSX 소문자 태그에
    \`data-colo-src="<src/ 아래 파일 경로>:<줄>"\` 속성을 붙여 주면, 사용자가
-   미리보기에서 찍은 핀이 화면만이 아니라 소스 위치를 가리킵니다. Vite
-   플러그인 한 조각(dev 전용, enforce: "pre")으로 소문자로 시작하는 태그
-   오프닝에만 붙이면 충분합니다 — 대문자나 숫자로 시작하는 컴포넌트 태그는
-   그대로 둡니다. 프로덕션 번들에 포함되지 않게 해 주세요.
+   미리보기에서 찍은 핀이 화면만이 아니라 소스 위치를 가리킵니다. 아래
+   템플릿을 이 레포의 JSX 파이프라인에 맞게 고쳐 주세요 — 소문자로 시작하는
+   태그에만 붙이고(대문자·숫자로 시작하는 컴포넌트 태그는 그대로 둡니다),
+   프로덕션 번들에는 들어가지 않게 합니다.
 
 절대 하지 말 것: 네트워크 내려받기(curl … | sh 등), 비밀키·토큰 다루기.
-준비가 끝나면 화면 하나 이상이 미리보기에 떠야 합니다.`;
+준비가 끝나면 화면 하나 이상이 미리보기에 떠야 합니다.
+
+${BRIDGE_TEMPLATE}
+
+${SRC_MARKER_TEMPLATE}`;
 
 export const REFRESH_TITLE = "관례 최신화";
 
@@ -79,4 +160,8 @@ export const REFRESH_BRIEF = `이 레포는 이미 Colo Design 도구와 연결�
 절대 하지 말 것: \`colo-design.json\` 고치기(연결은 이미 살아 있습니다),
 네트워크 내려받기(curl … | sh 등), 비밀키·토큰 다루기.
 바뀐 파일은 저장 → 넘기기 흐름으로 개발자의 PR 승인을 받습니다 —
-스스로 커밋하거나 푸시하지 마세요.`;
+스스로 커밋하거나 푸시하지 마세요.
+
+${BRIDGE_TEMPLATE}
+
+${SRC_MARKER_TEMPLATE}`;

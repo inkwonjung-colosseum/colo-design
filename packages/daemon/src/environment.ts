@@ -566,7 +566,7 @@ export async function listFiles(cwd: string): Promise<string[]> {
  * expects. Folders come back with a trailing slash, so the caller can drill in.
  *
  * Dot-entries stay out of the listing: `.claude/`, `.npmrc` and friends mean
- * nothing to a planner picking a document. Typing the name still finds them.
+ * nothing to a planner picking a file to mention. Typing the name still finds them.
  */
 export function browseFiles(files: string[], query: string, limit: number): string[] {
   if (query !== "" && !query.endsWith("/")) return filterFiles(files, query, limit);

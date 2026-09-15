@@ -277,6 +277,55 @@ async function main() {
   );
   await dyingWorkspace.stop();
 
+  // --- 6. 말이 없는 설치는 영원히 기다리지 않는다 ---------------------------
+  // `capture` 는 `close` 만 기다렸다 — 응답 없는 레지스트리를 만난 설치는
+  // 끝나지 않고, 비개발자가 보는 것은 굳어 버린 `설치 중` 한 줄뿐이었다.
+  // 기준은 벽시계가 아니라 침묵이다: 말을 계속하는 설치는 절대 끊기지 않고
+  // (아래 두 번째 검사), 말을 멈춘 설치만 제 프로세스 그룹째 끊긴다.
+  process.env.COLO_DESIGN_COMMAND_STALL_MS = "1500";
+  const mutePort = await freePort();
+  const mute = await createFixtureRepo({
+    dir: join(DIR, "fixture-mute"),
+    port: mutePort,
+    installCommand: 'node -e "setInterval(() => {}, 1 << 30)"',
+  });
+  const muteWorkspace = new RepoWorkspace({
+    root: join(DIR, "work-mute"),
+    url: mute.remote,
+    onStatus: () => undefined,
+  });
+  const muted = await muteWorkspace.sync();
+  check(
+    "an install that stops talking is cut and says so in Korean",
+    muted.phase === "error" && (muted.detail ?? "").includes("아무 말도 하지 않아 중단했습니다"),
+    `${muted.phase}: ${muted.detail ?? ""}`,
+  );
+  await muteWorkspace.stop();
+
+  // Talking longer than the stall window: every line rearms the watchdog, so
+  // a slow-but-live install must survive to its own exit. (No backticks or
+  // `${}` in the command — a shell would read them as substitutions.)
+  const talkerPort = await freePort();
+  const talker = await createFixtureRepo({
+    dir: join(DIR, "fixture-talker"),
+    port: talkerPort,
+    installCommand:
+      "node -e \"let n = 0; const t = setInterval(() => { console.log('step ' + ++n); if (n === 6) { clearInterval(t); require('node:fs').mkdirSync('node_modules', { recursive: true }); } }, 600)\"",
+  });
+  const talkerWorkspace = new RepoWorkspace({
+    root: join(DIR, "work-talker"),
+    url: talker.remote,
+    onStatus: () => undefined,
+  });
+  const talked = await talkerWorkspace.sync();
+  check(
+    "an install that keeps talking past the window is never cut",
+    talked.phase === "ready",
+    `${talked.phase}: ${talked.detail ?? ""}`,
+  );
+  await talkerWorkspace.stop();
+  process.env.COLO_DESIGN_COMMAND_STALL_MS = "";
+
   rmSync(DIR, { recursive: true, force: true });
 
   const failed = results.filter((r) => !r.passed);
@@ -400,35 +449,6 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       "the preview url serves the repo's app",
       (await fetch(updated.data.previewUrl)).status === 200,
       updated.data.previewUrl,
-    );
-
-    // 기획서 열기(커미티 C-5): 첨부는 세션 cwd = 클론 안 specs/ 에 쓰인다
-    // (session.deliver → saveSpecFiles). 그러므로 repo.specPath 도 클론을
-    // 기준으로 풀어야 한다 — 프로젝트 루트를 보던 판은 파일이 거기 없어
-    // "찾을 수 없습니다" 만 돌려주었고, 첨부 칩을 눌러도 아무 일이 없었다.
-    mkdirSync(join(ROOT, "specs"), { recursive: true });
-    writeFileSync(join(ROOT, "specs", "2026-09-15-기획서.md"), "# 회원");
-    const spec = await request({
-      id: "spec-1",
-      type: "repo.specPath",
-      path: "specs/2026-09-15-기획서.md",
-    });
-    check(
-      "repo.specPath resolves inside the clone the attachments were saved in",
-      spec.data.path === join(ROOT, "specs", "2026-09-15-기획서.md"),
-      spec.data.path,
-    );
-    // 보관함 밖은 열리지 않는다 — 렌더러가 임의 경로를 셸에 넘기는 길.
-    let escaped = null;
-    try {
-      await request({ id: "spec-2", type: "repo.specPath", path: "../.git/config" });
-    } catch (error) {
-      escaped = String(error.message);
-    }
-    check(
-      "repo.specPath refuses a path outside specs/",
-      escaped !== null && escaped.includes("기획서 보관함"),
-      String(escaped),
     );
   } finally {
     ws.close();

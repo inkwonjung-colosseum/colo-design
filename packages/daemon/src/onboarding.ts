@@ -17,6 +17,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import { extraPathPrefix } from "./claude-trust.js";
 import {
   currentPlatform,
   type Platform,
@@ -28,7 +29,6 @@ import {
   resolvePnpmExecutable,
 } from "./environment.js";
 import type { GitHubClient } from "./github.js";
-import { extraPathPrefix } from "./repo.js";
 
 export type { OnboardingStep };
 
@@ -60,10 +60,6 @@ export async function runOnboardingChecks(deps: OnboardingDeps): Promise<Onboard
   ];
 }
 
-// ---------------------------------------------------------------------------
-// Claude Code
-// ---------------------------------------------------------------------------
-
 async function checkClaude(deps: OnboardingDeps): Promise<OnboardingStep> {
   const executable = await resolveClaudeExecutable(deps.claudeExecutableOverride);
   if (!executable) {
@@ -91,10 +87,6 @@ async function checkClaude(deps: OnboardingDeps): Promise<OnboardingStep> {
   const plan = auth.subscriptionType ? ` · ${auth.subscriptionType}` : "";
   return pass("claude", `Claude Code 준비됨${version ? ` (${version})` : ""}${plan}`);
 }
-
-// ---------------------------------------------------------------------------
-// git
-// ---------------------------------------------------------------------------
 
 async function checkGit(): Promise<OnboardingStep> {
   const git = await resolveGitExecutable();

@@ -31,7 +31,6 @@ import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
 import type { PreviewTools } from "./preview-tools.js";
 import type { QueueDisk } from "./queue-store.js";
-import { type SpecFile, saveSpecFiles } from "./repo.js";
 import { MessageTranslator } from "./translate.js";
 
 /**
@@ -112,12 +111,11 @@ interface HeldSend {
   id: string;
   text: string;
   images: Array<{ mediaType: string; data: string }>;
-  files: SpecFile[];
 }
 
 /** The wire shape of a waiting send: words and counts, never the bytes. */
-function summarize({ id, text, images, files }: HeldSend): QueuedSend {
-  return { id, text, images: images.length, files: files.map((file) => file.name) };
+function summarize({ id, text, images }: HeldSend): QueuedSend {
+  return { id, text, images: images.length };
 }
 
 /** The same wire shape, stamped — the no-store fallback for the lost room. */
@@ -211,8 +209,8 @@ export interface SessionOptions {
   /**
    * A name for a thread the tool opened on the planner's behalf. The first
    * turn only names an UNNAMED thread, so a handoff — whose first turn is a
-   * sentence this tool wrote, not the planner's — reads as its 기획서 instead
-   * of as the file path inside that sentence.
+   * sentence this tool wrote, not the planner's — would be named by that
+   * whole sentence instead of by the file path inside it.
    */
   title?: string;
   /** Model the query starts on (SDK alias or id); omitted = CLI default. */
@@ -719,7 +717,7 @@ export class Session {
     this.held.splice(this.held.indexOf(item), 1);
     this.disk?.saveHeld(this.held);
     this.announceHeld();
-    return { text: item.text, images: item.images, files: item.files };
+    return { text: item.text, images: item.images };
   }
 
   /**
@@ -1020,11 +1018,7 @@ export class Session {
     return true;
   }
 
-  send(
-    text: string,
-    images?: Array<{ mediaType: string; data: string }>,
-    files?: SpecFile[],
-  ): void {
+  send(text: string, images?: Array<{ mediaType: string; data: string }>): void {
     if (this.closed) throw new Error("닫힌 대화입니다 — 목록에서 다시 열면 이어갑니다.");
     if (this.aborted)
       throw new Error("중지 요청에 답하지 않은 CLI를 끊었습니다 — 대화를 다시 열면 이어갑니다");
@@ -1033,7 +1027,7 @@ export class Session {
         "Claude가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다",
       );
     this.lastActivity = Date.now();
-    const item: HeldSend = { id: randomUUID(), text, images: images ?? [], files: files ?? [] };
+    const item: HeldSend = { id: randomUUID(), text, images: images ?? [] };
     // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
     // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
     if (this.turnStartedAt !== null) {
@@ -1053,21 +1047,16 @@ export class Session {
    * of this yet, so taking it back out of the room leaves no trace, and the
    * running turn keeps its own quota and interrupt flag until its end.
    */
-  private deliver({ text, images, files }: HeldSend): void {
+  private deliver({ text, images }: HeldSend): void {
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
     this.previewTools?.resetTurnQuota();
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
-    // Documents go to disk and reach Claude as `@specs/…` mentions: its Read
-    // tool handles PDF page ranges and image downscaling, and the clone keeps
-    // the source document for later sessions.
-    const saved = files.length > 0 ? saveSpecFiles(this.cwd, files) : [];
-    const prompt = saved.reduce((acc, path) => `${acc}\n\n첨부 기획서: @${path}`, text);
     const content =
       images.length > 0
         ? [
-            { type: "text" as const, text: prompt },
+            { type: "text" as const, text },
             ...images.map((image) => ({
               type: "image" as const,
               source: {
@@ -1077,7 +1066,7 @@ export class Session {
               },
             })),
           ]
-        : prompt;
+        : text;
 
     /**
      * A thread names itself after its first turn — unless the tool wrote that
@@ -1088,7 +1077,7 @@ export class Session {
      * opens on purpose is named at `session.create` instead.
      */
     const machine = readTurn(text).marker !== null;
-    const title = text.trim() || saved.join(", ");
+    const title = text.trim();
     const unnamed = this.title === NEW_SESSION_TITLE;
     if (unnamed && title && !machine) {
       this.title = title.slice(0, 80);
@@ -1101,10 +1090,9 @@ export class Session {
       session_id: this.id,
     } as SDKUserMessage);
 
-    // The echo carries the person's own words; the appended mentions are
-    // plumbing, and the saved paths render as attachment chips instead.
-    // D87: the pin crops ride back (capped) so the chat card can draw its
-    // thumbnails — live only; a replayed transcript keeps the words.
+    // The echo carries the person's own words. D87: the pin crops ride back
+    // (capped) so the chat card can draw its thumbnails — live only; a
+    // replayed transcript keeps the words.
     const thumbs = images
       .filter((image) => image.mediaType === "image/jpeg")
       .slice(0, 6)
@@ -1113,7 +1101,6 @@ export class Session {
       kind: "user.echo",
       text,
       images: images.length,
-      files: saved,
       ...(thumbs.length > 0 ? { thumbs } : {}),
     });
   }

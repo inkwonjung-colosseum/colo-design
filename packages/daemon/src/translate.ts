@@ -432,7 +432,7 @@ export function replayHistory(messages: unknown[]): ChatEvent[] {
           out.push(
             synthetic
               ? { kind: "notice", level: "info", text: content }
-              : { kind: "user.echo", text: content, images: 0, files: [] },
+              : { kind: "user.echo", text: content, images: 0 },
           );
         }
         continue;
@@ -453,7 +453,7 @@ export function replayHistory(messages: unknown[]): ChatEvent[] {
                 level: "info",
                 text: text || `${images} image(s)`,
               }
-            : { kind: "user.echo", text, images, files: [] },
+            : { kind: "user.echo", text, images },
         );
       }
       for (const block of content as Record<string, any>[]) {

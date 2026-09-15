@@ -88,7 +88,7 @@ const INDEX_HTML = `<!doctype html>
     (function () {
       if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
       var SCREENS = [
-        { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"], spec: null },
+        { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"] },
       ];
       var post = function (envelope) {
         if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
@@ -144,7 +144,7 @@ const CLAUDE_MD = `# fixture colo-design 레포
 ## 작업 절차
 
 - 화면 요청이 오면 \`src/screens/<기능>/<화면이름>.screen.tsx\` 형태로 파일을 만든다.
-- 기획서에 없는 것은 지어내지 않고 AskUserQuestion으로 한 번에 묻는다.
+- 사용자가 말하지 않은 화면 내용은 지어내지 않고 AskUserQuestion으로 한 번에 묻는다.
 - 터미널 명령은 실행하지 않는다. 미리보기 서버는 이미 돌고 있다.
 - 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다.
 `;

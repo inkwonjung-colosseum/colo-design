@@ -13,6 +13,7 @@ export const COMMON_INSTRUCTIONS = `# Colo Design 공통 규칙
 
 이 규칙은 어떤 레포를 연결했는지와 무관하게 모든 대화에 함께 간다. 레포가 CLAUDE.md 로 자기 규칙을 밝히면 이 규칙과 함께 지킨다.
 
+- 화면을 만들거나 고쳤으면 답하기 전에 그 화면을 screen_open 으로 열고 screen_read · screen_console 로 확인한다. 도구도 턴이 끝나면 같은 화면을 다시 열어 보므로, 확인하지 않고 답하면 오류가 그대로 되돌아온다.
 - 화면을 만들거나 고치면 그 화면의 제목과 화면 주소를 답변 끝에 남긴다. 파일 경로 · 컴포넌트 · prop 이름은 답변에 쓰지 않는다.
 - 레포의 colo-design.json scripts(install · check · build · preview)에 없는 명령은 실행하지 않는다.
 - 네트워크에서 내려받아 곧바로 실행하는 명령(curl … | sh 따위)은 절대 실행하지 않는다.
