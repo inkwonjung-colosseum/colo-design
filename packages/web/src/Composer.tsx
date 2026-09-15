@@ -52,6 +52,64 @@ export interface Attachment {
   size: number;
 }
 
+/**
+ * 붙여넣은 그림의 긴 변 상한 — 비전 입력이 실질적으로 쓰는 한계(1568)에 맞춘다.
+ * 기계 캡처는 전부 다운스케일(preview-tools 의 fitInside)되는데 사람 첨부만
+ * 무제한이던 관습의 구멍을 메운다: 수 MB 짜리 원본은 API 가 거절하고, 큰
+ * base64 는 소켓 프레임과 대기열 저장소를 무겁게 했다.
+ */
+const PASTE_IMAGE_LONG_EDGE = 1568;
+
+/** canvas 로 다시 인코드해도 의미가 보존되는 형식 — gif·svg 등은 건드리지 않는다. */
+const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function decodeImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("image decode failed"));
+    image.src = dataUrl;
+  });
+}
+
+/**
+ * 한 장을 첨부로 읽는다. 상한을 넘는 래스터는 같은 형식으로 줄여서, 디코드·
+ * 인코드가 안 되는 것(움짤·벡터·손상)은 원본 그대로 둔다 — 줄이기가 그림을
+ * 바꿔버리는 쪽이 거절당하는 쪽보다 나쁘다.
+ */
+async function toAttachment(file: File): Promise<Attachment> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`could not read ${file.name}`));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+  const original = {
+    name: file.name || "pasted image",
+    mediaType: file.type,
+    data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+    size: file.size,
+  };
+  if (!RESIZABLE_IMAGE_TYPES.has(file.type)) return original;
+  try {
+    const image = await decodeImage(dataUrl);
+    const longEdge = Math.max(image.naturalWidth, image.naturalHeight);
+    if (!longEdge || longEdge <= PASTE_IMAGE_LONG_EDGE) return original;
+    const scale = PASTE_IMAGE_LONG_EDGE / longEdge;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return original;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL(file.type, 0.92);
+    const data = encoded.slice(encoded.indexOf(",") + 1);
+    return { ...original, data, size: Math.ceil(data.length * 0.75) };
+  } catch {
+    return original;
+  }
+}
+
 /** The modes that act without asking — the ones the chip marks with a slash. */
 const ASKS_NOTHING: PermissionMode[] = ["dontAsk", "bypassPermissions"];
 
@@ -564,25 +622,7 @@ export function Composer({
       rejected.clear();
     }
     if (accepted.length === 0) return;
-    const read = await Promise.all(
-      accepted.map(
-        (file) =>
-          new Promise<Attachment>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onerror = () => reject(new Error(`could not read ${file.name}`));
-            reader.onload = () => {
-              const result = String(reader.result);
-              resolve({
-                name: file.name || "pasted image",
-                mediaType: file.type,
-                data: result.slice(result.indexOf(",") + 1),
-                size: file.size,
-              });
-            };
-            reader.readAsDataURL(file);
-          }),
-      ),
-    );
+    const read = await Promise.all(accepted.map((file) => toAttachment(file)));
     setEditor((prev) => ({
       text: prev.text,
       attachments: [...prev.attachments, ...read],
