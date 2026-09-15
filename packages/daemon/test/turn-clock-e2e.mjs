@@ -182,12 +182,13 @@ async function main() {
       String((await listed())?.turnStartedAt),
     );
 
+    const runningBefore = states(sessionId).filter((m) => m.state === "running").length;
     await request("permission.respond", { requestId: card.requestId, decision: "allow" });
     const resumed = await waitFor(
-      () =>
-        states(sessionId)
-          .filter((m) => m.state === "running")
-          .at(-1) ?? null,
+      () => {
+        const runningNow = states(sessionId).filter((m) => m.state === "running");
+        return runningNow.length > runningBefore ? (runningNow.at(-1) ?? null) : null;
+      },
       20_000,
       "the resumed turn",
     );

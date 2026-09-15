@@ -66,11 +66,7 @@ export function ChatColumn({
     (screen: string) => screens.find((s) => s.route === `/${screen}`)?.title ?? screen,
     [screens],
   );
-  // 계획 먼저 (이번 턴 한정): armed 는 한 번의 보내기로 소비되고, 대화가
-  // 바뀌면 자리를 비운다 — 다른 대화에 남의 자세가 묻지 않게.
-  const [planArmed, setPlanArmed] = useState(false);
   const draftKey = sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`;
-  useEffect(() => setPlanArmed(false), [draftKey]);
   /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
   const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
   const [restoring, setRestoring] = useState(false);
@@ -486,8 +482,7 @@ export function ChatColumn({
         seed={seed}
         sendKey={sendKey}
         midTurnSend={midTurnSend}
-        planArmed={planArmed}
-        onTogglePlanArmed={() => setPlanArmed((v) => !v)}
+        onToggleFastMode={(fast) => void sessions.setFastMode(fast)}
         onSend={async (text, attachments, sentPins) => {
           // 핀과 문장은 한 턴으로 (재설계 C2): 본문이 목록을 실은 마커 턴이
           // 되고, 크롭은 이미지로 그대로 간다. 크롭을 첨부 맨 앞에 세운 것은
@@ -513,11 +508,8 @@ export function ChatColumn({
           await sessions.submit(
             sentPins.length > 0 ? pinsToTurn(sentPins, text, titleForScreen) : text,
             [...pinImages, ...attachments],
-            planArmed,
             { name },
           );
-          // 칩은 한 번의 보내기로 소비된다 — 다음 턴의 자세는 다시 고른다.
-          if (planArmed) setPlanArmed(false);
           // 턴이 나갔으면 핀을 기록하고 비운다 — 실패해도 턴은 이미 나갔다.
           if (sentPins.length > 0) void pins.markSent(sentPins);
         }}

@@ -37,3 +37,35 @@ export function answerTurnNumbers(blocks: Block[]): Map<string, number> {
   }
   return turns;
 }
+/**
+ * 턴별 마지막 답의 블록 id — 턴 번호 → 그 턴의 마지막 답. 되돌리기 · 다시
+ * 요청은 턴 단위 행동이다(같은 턴의 답들이 가리키는 체크포인트가 하나이므로)
+ * — 답 카드마다 두르지 않고 그 턴의 마지막 답 하나에만 놓는다. 판정은
+ * answerTurnNumbers 의 셈을 그대로 산다: 메인 스레드의 답만 후보다.
+ */
+export function lastAnswerPerTurn(blocks: Block[]): Map<number, string> {
+  const last = new Map<number, string>();
+  for (const [id, turn] of answerTurnNumbers(blocks)) last.set(turn, id);
+  return last;
+}
+
+/**
+ * 턴이 낸 답의 전문 — 턴 끝 블록 id → 그 턴의 답 텍스트 전부. 도구 사이에서
+ * 나뉜 조각들을 빈 줄로 이어 붙여 한 번의 복사로 돌려 주는 게 목적이다. 답의
+ * 판정은 answerTurnNumbers 와 같고(메인 스레드의 text 블록만), 답 없이 끝난
+ * 턴은 목록에 들지 않는다.
+ */
+export function turnAnswerText(blocks: Block[]): Map<string, string> {
+  const parts: string[] = [];
+  const whole = new Map<string, string>();
+  for (const block of blocks) {
+    if (block.type === "user") {
+      parts.length = 0;
+    } else if (block.type === "text" && !block.agentId) {
+      parts.push(block.text);
+    } else if (block.type === "turn" && parts.length > 0) {
+      whole.set(block.id, parts.join("\n\n"));
+    }
+  }
+  return whole;
+}

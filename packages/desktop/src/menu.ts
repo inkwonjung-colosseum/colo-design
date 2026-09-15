@@ -33,7 +33,7 @@ export interface MenuTargets {
   openSettings(): void;
   /** 새 대화 ⌘T — the web's own chord, replayed so focus does not matter. */
   newSession(): void;
-  /** 개발자 도구는 dev 에서만 — 기획자에게 필요 없고, 문제 해결은 설정에. */
+  /** 개발자 도구는 dev 에서만 — 사용자에게 필요 없고, 문제 해결은 설정에. */
   packaged: boolean;
 }
 

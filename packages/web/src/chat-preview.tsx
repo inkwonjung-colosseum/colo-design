@@ -79,6 +79,14 @@ const blocks: Block[] = [
     text: "네 화면 모두 만들어 등록했습니다. 미리보기에서 `/member/MemberList` 부터 확인해 보세요.",
   },
   {
+    // ```mermaid — 다이어그램 렌더와, 파싱 실패 폴백(코드 블록)을 함께 본다.
+    type: "text",
+    id: "a3",
+    agentId: null,
+    streaming: false,
+    text: '전체 흐름을 그림으로 정리하면 이렇습니다.\n\n```mermaid\nflowchart LR\n    spec["기획서"] --> chat["화면 대화"]\n    chat --> preview["미리보기"]\n    preview -->|"코멘트 핀"| chat\n    preview --> save["저장 · 넘기기"]\n```\n\n아래는 파싱에 실패한 다이어그램 — 원본 코드 블록으로 폴백한다.\n\n```mermaid\nflowchart LR\n    A[기획서 -->\n```',
+  },
+  {
     type: "thinking",
     id: "t2",
     agentId: null,
@@ -269,6 +277,8 @@ function PlannerShell({
           model: "opus",
           effort: "high",
           permissionMode: "bypassPermissions",
+          fastMode: false,
+          fastModeBlocked: null,
           models: [
             {
               value: "opus",
@@ -277,6 +287,7 @@ function PlannerShell({
               resolvedModel: "claude-opus-5",
               supportsEffort: true,
               supportedEffortLevels: ["low", "medium", "high", "max"],
+              supportsFastMode: true,
             },
             {
               value: "sonnet",
@@ -285,11 +296,11 @@ function PlannerShell({
               resolvedModel: "claude-sonnet-5",
               supportsEffort: true,
               supportedEffortLevels: ["low", "medium", "high", "max"],
+              supportsFastMode: false,
             },
           ],
         }}
-        planArmed={false}
-        onTogglePlanArmed={() => undefined}
+        onToggleFastMode={() => undefined}
         commands={[]}
         onSetModel={() => undefined}
         onSetEffort={() => undefined}
@@ -389,6 +400,8 @@ function Preview() {
                     model: null,
                     effort: null,
                     permissionMode: "acceptEdits",
+                    fastMode: true,
+                    fastModeBlocked: null,
                     models: [],
                   }}
                   commands={[]}

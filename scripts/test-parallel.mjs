@@ -24,6 +24,7 @@ const LANES = {
   L1: {
     name: "unit",
     suites: [
+      "test:contrast",
       "test:unit",
       "test:onboard-unit",
       "test:desktop-unit",

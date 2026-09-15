@@ -139,7 +139,7 @@ const CHECK_MJS = `console.log("check: 통과");
 // this; the browser planner e2e relies on it, the daemon e2e does not.
 const CLAUDE_MD = `# fixture colo-design 레포
 
-**대화 상대는 기획자다.** 모든 문장은 한국어로 쓴다.
+**대화 상대는 사용자다.** 모든 문장은 한국어로 쓴다.
 
 ## 작업 절차
 

@@ -51,7 +51,7 @@ export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연�
    문서 첫 줄에 \`${conventionsMarker(CONVENTIONS_REVISION)}\` 주석을 그대로
    넣어 주세요 — 도구가 관례의 판을 읽는 표식입니다.
 5. (선택) 소스 표식 — 개발 빌드의 JSX 소문자 태그에
-   \`data-colo-src="<src/ 아래 파일 경로>:<줄>"\` 속성을 붙여 주면, 기획자가
+   \`data-colo-src="<src/ 아래 파일 경로>:<줄>"\` 속성을 붙여 주면, 사용자가
    미리보기에서 찍은 핀이 화면만이 아니라 소스 위치를 가리킵니다. Vite
    플러그인 한 조각(dev 전용, enforce: "pre")으로 소문자로 시작하는 태그
    오프닝에만 붙이면 충분합니다 — 대문자나 숫자로 시작하는 컴포넌트 태그는

@@ -116,7 +116,7 @@ export interface ChatSettings {
   showPip: boolean;
   /**
    * 턴이 끝나면 Claude 가 본 화면으로 따라갈지(PLAN D91). 기본은 따라감 —
-   * "고쳤습니다" 뒤 기획자가 화면을 찾아 헤매지 않도록. 끄면 토스트만 온다.
+   * "고쳤습니다" 뒤 사용자가 화면을 찾아 헤매지 않도록. 끄면 토스트만 온다.
    */
   followClaude: boolean;
   /**
@@ -128,7 +128,7 @@ export interface ChatSettings {
    */
   showTools: boolean;
   /**
-   * 생각 과정을 대화에 남길지. 기본은 끔 — 기획자가 읽는 것은 답이지 답을
+   * 생각 과정을 대화에 남길지. 기본은 끔 — 사용자가 읽는 것은 답이지 답을
    * 만드는 동안의 속말이 아니다. 접혀 있어도 답과 답 사이마다 한 줄씩 끼면
    * 테이프가 기계의 기록처럼 읽힌다. 켜면 예전처럼 접힌 채로 돌아온다.
    */
@@ -280,26 +280,6 @@ export function currentNoticePrefs(): NotificationSettings {
   return loadNotifications(raw);
 }
 
-/** acceptEdits→default 이사를 겪은 사용자 표식 — 설정의 공지 한 줄이 읽는다. */
-const MIGRATED_KEY = "colo-design.acceptedits-migrated";
-
-export function readAcceptEditsMigrated(): boolean {
-  try {
-    return localStorage.getItem(MIGRATED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** 공지는 사용자가 확인 방식을 한 번이라도 고르면 사라진다. */
-export function clearAcceptEditsMigrated(): void {
-  try {
-    localStorage.removeItem(MIGRATED_KEY);
-  } catch {
-    // 저장이 막혀 있으면 공지가 다음에도 뜬다 — 해로운 것은 없다.
-  }
-}
-
 /** Project slug → whether its tree is folded (PLAN D59). Slugs and booleans
     only; anything else in a hand-edited blob is dropped. */
 function loadTreeFolded(raw: unknown): Record<string, boolean> {
@@ -367,18 +347,9 @@ function loadChat(raw: unknown): ChatSettings {
   const legacy = legacyComposerDefaults();
   if (!raw || typeof raw !== "object") return { ...DEFAULT_CHAT_SETTINGS, ...legacy };
   const stored = raw as Record<string, unknown>;
-  // acceptEdits 는 메뉴에서 물러났다: oneOf 의 fallback 이 bypass 를 향하므로
-  // 이사를 먼저한다 — 남아 있던 값이 조용히 넓어지는 일은 없어야 한다.
-  // 옮겨진 사용자에게는 설정에 한 줄 공지가 뜬다(아래 MIGRATED_KEY).
-  if (stored.permissionMode === "acceptEdits") {
-    try {
-      localStorage.setItem(MIGRATED_KEY, "1");
-    } catch {
-      // 저장이 막히면 공지 없이 이사만 간다 — 값 자체는 이미 default 다.
-    }
-  }
-  const storedMode = stored.permissionMode === "acceptEdits" ? "default" : stored.permissionMode;
-  const mode = oneOf(SETTINGS_MODES, storedMode, DEFAULT_PERMISSION_MODE);
+  // acceptEdits 가 메뉴로 돌아왔으므로(chat-options) 이사도 함께 물러났다:
+  // 저장된 값은 고른 그대로 돌아온다.
+  const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
   return {
     model: typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
@@ -391,7 +362,7 @@ function loadChat(raw: unknown): ChatSettings {
     showPip: stored.showPip === undefined ? true : stored.showPip === true,
     followClaude: stored.followClaude === undefined ? true : stored.followClaude === true,
     // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정과 작업 과정은
-    // 켜 달라고 말한 기획자에게만 보인다.
+    // 켜 달라고 말한 사용자에게만 보인다.
     showTools: stored.showTools === true,
     showThinking: stored.showThinking === true,
   };
@@ -600,6 +571,10 @@ export function loadModelCatalog(): SessionModelInfo[] {
         description: typeof row.description === "string" ? row.description : "",
         supportsEffort: row.supportsEffort !== false,
         supportedEffortLevels: levels,
+        // 캐시는 빠르게를 모를 수 있다(이 열이 없던 시절의 블롭): 없으면
+        // 받는다고 읽는다 — Composer 가 모르는 동안 토글을 보이는 자세와
+        // 같다. 진짜 여부는 세션이 답하는 순간 정정된다.
+        supportsFastMode: row.supportsFastMode !== false,
       },
     ];
   });
@@ -645,7 +620,7 @@ export function saveHandledReview(pr: number, id: number): void {
   }
 }
 
-/** 첫 답하기의 확인 — 도구가 기획자 이름으로 GitHub 에 쓰는 첫 자리라 한 번. */
+/** 첫 답하기의 확인 — 도구가 사용자 이름으로 GitHub 에 쓰는 첫 자리라 한 번. */
 export function isReplyConfirmed(): boolean {
   try {
     return localStorage.getItem(REPLY_CONFIRMED_KEY) === "1";

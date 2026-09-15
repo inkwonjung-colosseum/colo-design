@@ -9,8 +9,9 @@
  * (ⓖ'), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을
  * 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는 카드가 되고(ⓛ) 같은 화면의
  * 연타는 두 번째 요청으로 표식이 붙는다(ⓜ).
- * 거부된 전송은 말·핀·배지를 지키고 경고 띠 하나로 말한다(수용 기준 2), 계획
- * 먼저 칩과 핀은 컴포저의 하나의 submit 을 탄다 — 와이어 순서가 영수증이다(기준 5).
+ * 핀은 컴포저의 하나의 submit 을 탄다 — 와이어의 줄이 영수증이다(기준 5).
+ * 거부된 전송의 보존(수용 기준 2)은 계획 먼저와 함께 이 파일에서 자리를 비웠다
+ * — 아래 그 자리의 주석이 왜, 무엇이 있어야 돌아오는지 말한다.
  *
  * The main window's page is the planner UI; the VIEW's page is reached
  * through the main process (`globalThis.coloDesignPlannerPreview`) because a
@@ -93,8 +94,10 @@ function slowStubClaude(dir, logPath) {
       '    if (line.includes(\'"subtype":"set_permission_mode"\')) {',
       '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
       "      // 거부 주입 (커밋 게이트 §3.12-2): the marker file primes ONE error",
-      "      // answer, so the daemon rejects the send's plan-mode first step and",
-      "      // the composer's D35 preservation is proven on the real wire.",
+      "      // answer — 계획 먼저가 그 거부를 submit 안으로 나르던 도구였다.",
+      "      // 지금은 부르는 자리가 없다(아래 §3.12 수용 기준 2 의 빈 자리를",
+      "      // 보라). 문은 열어 둔다: 거부를 다시 꽂을 길이 생기면 표식 하나로",
+      "      // 돌아온다.",
       "      let refuse = false;",
       "      try {",
       "        const flag = process.env.COLO_REFUSE_MODE_FLAG;",
@@ -631,69 +634,39 @@ async function main() {
     );
     check("the swapped wrapper's pin clears on demand", (await clearTray(page)) === true);
 
-    // --- 거부된 전송은 말·핀·배지를 지키고, 계획 먼저는 핀과 같은 문으로 간다 --
-    // (§3.12 수용 기준 2·5, 커미티 차단 5) The refusal is real on the wire: the
-    // stub is primed (marker file) to answer the plan-mode control request
-    // with an error ONCE, the daemon rejects the send's first step, and the
-    // composer's D35 contract — words, pins, badges stay, ONE warning strip —
-    // is proven end to end. The chip stays armed through the failure, so the
-    // retry proves 기준 5 with the same composition: the plan-mode request
-    // and the pin turn ride the composer's one submit, mode first.
-    await altClick(app, "[data-screen] tbody td");
-    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
-    await page.locator(".pintray__note").first().fill("행 높이를 넉넉히 해 주세요");
-    const refusedComposer = page.getByLabel("메시지");
-    await refusedComposer.click();
-    await refusedComposer.fill("표가 좁아 보여요.");
-    const refuseModeFlag = join(dir, "bin", "refuse-mode.flag");
-    writeFileSync(refuseModeFlag, "1");
-    await page.locator(".toolbar__plan").click();
-    await refusedComposer.press("Enter");
-    const warnStrip = page.locator(".composer .notice--warn").first();
-    await warnStrip.waitFor({ timeout: 15000 });
-    const stripText = (await warnStrip.innerText()).trim();
-    const keptText = await refusedComposer.inputValue();
-    const keptRows = await page.locator(".pintray__row").count();
-    const keptBadges = await inView(
-      app,
-      `document.querySelectorAll('[data-colo-design-overlay] [data-pin]').length`,
-    );
-    check(
-      "a refused send keeps the words, the pin row and its badge, with one warning",
-      stripText.length > 0 &&
-        keptText === "표가 좁아 보여요." &&
-        keptRows === 1 &&
-        keptBadges === 1,
-      `strip:${stripText.slice(0, 48)} text:${keptText} rows:${keptRows} badges:${keptBadges}`,
-    );
-    // The refusal killed the CLI query (an error control answer is fatal to
-    // the SDK), so the session sits crashed. The SAME words must still go
-    // through: disarm the chip and send — the daemon resurrects the thread
-    // (same id, fresh CLI) and the recovered send carries the words and the
-    // pin out (D86 크래시 카드의 약속).
-    await page.locator(".toolbar__plan").click();
-    await refusedComposer.press("Enter");
-    await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
-    check("the recovered send empties the tray", (await waitForNoPin(app)) === true);
+    // --- 거부된 전송의 e2e 자리는 계획 먼저와 함께 비었다 (§3.12 수용 기준 2) --
+    // 이 자리에는 "거부된 전송은 말·핀·배지를 지키고 경고 띠 하나로 말한다"
+    // 가 있었다. 그 거부를 실선에 꽂던 도구가 계획 먼저였다 — 그 칩만이
+    // submit 안에 제어 요청(set_permission_mode)을 무조건 하나 넣었고,
+    // 스텁은 그것을 error 로 받아 전송을 실패시켰다. 칩이 빠르게로 바뀌면서
+    // (빠르게는 눌리는 즉시 나가지 submit 을 타지 않는다) 그 한 걸음이
+    // 사라졌고, 남은 길 — 죽은 질의를 되살리는 전송 — 은 이 하네스에서
+    // 결정적이지 않다: 크래시 뒤 앱이 다음 전송보다 먼저 스스로 되살려서
+    // 보내기가 기다릴 제어 요청이 남지 않는다(실측: 거부 표식은 소비되지
+    // 않고 turn 만 나갔다).
+    //
+    // 그래서 여기서는 억지 벡터를 만들지 않고 자리를 비워 둔다. 다시 채우려면
+    // 전송을 결정적으로 거부할 문이 먼저 필요하다 — 스텁이 유저 턴 자체를
+    // 거부할 수 있게 하거나, 데몬에 시험용 거부 문을 두거나.
 
-    // A FRESH thread (⌘T) for criterion 5: the resurrected session behind the
-    // recovery is a minefield of stub-exit races, and criterion 5 needs one
-    // clean submit on one healthy session — not that.
+    // A FRESH thread (⌘T) for the next criterion: the resurrected session
+    // behind the recovery is a minefield of stub-exit races, and one clean
+    // submit on one healthy session is what the receipt needs — not that.
     await page.keyboard.press("Meta+t");
     await page.waitForTimeout(800);
 
-    // --- 계획 먼저 + 핀: 하나의 submit 이 둘 다 실는다 (수용 기준 5) ---------
-    // A fresh pin, the chip armed, one Enter: the composer's single submit
-    // must carry BOTH the plan-mode change and the pin turn. The stub's
-    // prompt log is the receipt — the mode request and the turn line both
-    // appear for THIS send. (Their order in the log is the SDK's flush
-    // behavior, not this app's contract: the daemon awaits the mode answer
-    // before the send — useSessions submit.)
+    // --- 핀은 하나의 submit 으로 나간다 (수용 기준 5) ------------------------
+    // A fresh pin, one Enter: the composer's single submit carries the pin
+    // turn and nothing else. The stub's prompt log is the receipt — exactly
+    // one new turn line, and NO new mode request: ⌘T 가 대화를 만들면서 전부
+    // 맡기기는 그때 이미 밀렸다. 한 번의 보내기가 한 번의 턴이라는 것이
+    // 이 줄이 지키는 전부다.
     await altClick(app, "[data-screen] tbody td");
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await page.locator(".pintray__note").first().fill("간격도 함께 손봐 주세요");
-    await refusedComposer.click();
-    await refusedComposer.fill("이 표 전체를 봐 주세요.");
+    const pinComposer = page.getByLabel("메시지");
+    await pinComposer.click();
+    await pinComposer.fill("이 표 전체를 봐 주세요.");
     const logBefore = readFileSync(promptLog, "utf8").split("\n");
     // 영수증은 이 순서의 'plan' 요청이다 — 턴이 승인 없이 끝나면 종료 정리가
     // 원래 자세를 되돌리는 요청을 남긴다(after 로그). 그 복원도 같은
@@ -703,8 +676,7 @@ async function main() {
       l.includes('"subtype":"set_permission_mode"') && l.includes('"mode":"plan"');
     const modeCountBefore = logBefore.filter(modeLine).length;
     const turnCountBefore = logBefore.filter((l) => l.includes("미리보기에서 가리킨 요소")).length;
-    await page.locator(".toolbar__plan").click();
-    await refusedComposer.press("Enter");
+    await pinComposer.press("Enter");
     // The toolbar's stop is a UI mood, not the wire's clock (커밋 게이트 교훈:
     // it can detach before the stub has appended the turn). The log's growth
     // IS the receipt — poll for exactly one new plan request and one new
@@ -717,16 +689,16 @@ async function main() {
       const lines = readFileSync(promptLog, "utf8").split("\n");
       modeCountAfter = lines.filter(modeLine).length;
       turnCountAfter = lines.filter(turnLine).length;
-      if (modeCountAfter >= modeCountBefore + 1 && turnCountAfter >= turnCountBefore + 1) break;
+      if (turnCountAfter >= turnCountBefore + 1) break;
       await new Promise((ok) => setTimeout(ok, 250));
     }
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     check(
-      "the armed chip and the pins ride one composer submit (계획 먼저 + 핀)",
-      modeCountAfter === modeCountBefore + 1 && turnCountAfter === turnCountBefore + 1,
+      "the pins ride one composer submit and ask for nothing else (핀 한 번)",
+      modeCountAfter === modeCountBefore && turnCountAfter === turnCountBefore + 1,
       `mode:${modeCountAfter}(was ${modeCountBefore}) turns:${turnCountAfter}(was ${turnCountBefore})`,
     );
-    check("the plan-first pin send empties the tray", (await waitForNoPin(app)) === true);
+    check("the pin send empties the tray", (await waitForNoPin(app)) === true);
 
     // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
     // The claude-design loop: comment → fix must not wait for a declared

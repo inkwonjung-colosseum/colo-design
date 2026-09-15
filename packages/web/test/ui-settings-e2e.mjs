@@ -333,9 +333,9 @@ async function main() {
         (await page.getByLabel("확인 방식").inputValue()) === "plan",
     );
 
-    // acceptEdits 는 메뉴에서 물러났다: CLI 가 safe Bash 를 canUseTool 없이
-    // 승인해 이 도구의 방어선(git 거부·관리 파일 거부)을 비켜 가므로. 옛
-    // 저장값은 조용히 넓어지지 않도록 default 로 이사 온다.
+    // acceptEdits 는 메뉴로 돌아왔다(소유자 결정): 저장값은 이사 가지 않고
+    // 고른 그대로 돌아온다. 대신 그 줄이 무엇을 여는지 — 편집만이 아니라
+    // CLI 가 안전하다고 본 명령까지 — 설정이 한 줄로 말해야 한다.
     await page.evaluate(() => {
       const raw = JSON.parse(localStorage.getItem("colo-design.settings") ?? "{}");
       raw.chat = { ...raw.chat, permissionMode: "acceptEdits" };
@@ -348,12 +348,14 @@ async function main() {
       timeout: 5000,
     });
     check(
-      "a stored acceptEdits reads back as Default, not Bypass",
-      (await page.getByLabel("확인 방식").inputValue()) === "default",
+      "a stored acceptEdits comes back as acceptEdits",
+      (await page.getByLabel("확인 방식").inputValue()) === "acceptEdits",
     );
     check(
-      "and the move says so, in one line",
-      (await page.locator(".notice--info").innerText()).includes("Default로 옮겼습니다"),
+      "and the row says what it opens beyond edits",
+      (await page.locator('[role="dialog"][aria-label="설정"] .notice--warn').innerText()).includes(
+        "명령까지 묻지 않고",
+      ),
     );
 
     // 전부 맡기기 is the starting default now, so it restores like any other
@@ -378,7 +380,7 @@ async function main() {
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
 
-    // 생각 과정은 기본으로 보이지 않는다: 기획자가 읽어야 하는 것은 답이다.
+    // 생각 과정은 기본으로 보이지 않는다: 사용자가 읽어야 하는 것은 답이다.
     // 켜고 끄는 자리는 여기뿐이고, 켠 사실은 다른 선택처럼 남는다.
     check(
       "생각 과정 is off until the planner asks for it",

@@ -3,7 +3,7 @@
  * docs/repo-common-settings-injection-debate-2026-09-14.md 3장).
  *
  * 주인은 앱 릴리스다 — 사용자는 설정의 "지켜 줄 것" 대화상자에서 읽기
- * 전용으로 볼 수 있고 편집하지는 못한다. 프로젝트별 지침(기획자 소유,
+ * 전용으로 볼 수 있고 편집하지는 못한다. 프로젝트별 지침(사용자 소유,
  * projects.json 의 instructions)과 레포의 CLAUDE.md(개발자 소유)는
  * server.ts 의 projectInstructions() 에서 이 블록 뒤에 이어 붙는다.
  * 세 계층의 주인이 겹치지 않으므로 갱신·덮어쓰기 드리프트도 없다:

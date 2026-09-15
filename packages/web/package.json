@@ -1,6 +1,6 @@
 {
   "name": "@colo-design/web",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
   "dependencies": {
     "@colo-design/protocol": "workspace:*",
     "lucide-react": "^1.43.0",
+    "mermaid": "^12.0.0",
     "pretendard": "^1.3.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -25,7 +25,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
-import { createFixtureRepo, freePort, writeStubClaude } from "../../daemon/test/fixture-repo.mjs";
+import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -92,20 +92,42 @@ async function cycleBranch(remote) {
  * browser can prove the silence is gone.
  */
 function writeErrorStubClaude(dir) {
-  const path = writeStubClaude(dir);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "claude");
+  const promptsLog = join(dir, "prompts.log");
   // The gates read --version and `auth status`; the SDK's stream-json run
-  // falls through the stub's case and used to exit silently. Now it answers
-  // with a failed result (PLAN D35), so the browser can prove the silence is
-  // gone. Single-quoted sh echoes: the JSON carries no single quotes.
-  const script = readFileSync(path, "utf8").replace(
-    "esac\nexit 0",
-    [
-      "esac",
-      `echo '{"type":"system","subtype":"init","session_id":"stub","tools":[],"mcp_servers":[],"model":"stub","permissionMode":"default","slash_commands":[],"agents":[]}'`,
-      `echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["의도된 스텁 실패"],"result":"의도된 스텁 실패","session_id":"stub","total_cost_usd":0,"duration_ms":10,"num_turns":1}'`,
-      "exit 0",
-    ].join("\n"),
-  );
+  // fails every turn (PLAN D35) so the browser can prove the silence is
+  // gone. Every stdin line is appended to prompts.log synchronously — the
+  // wire-level record a resend assertion can count.
+  const script = [
+    "#!/usr/bin/env node",
+    "const fs = require('fs');",
+    "const args = process.argv.slice(2);",
+    'if (args[0] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+    'if (args[0] === "auth") {',
+    '  console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "team", email: "planner@example.com" }));',
+    "  process.exit(0);",
+    "}",
+    `const LOG = ${JSON.stringify(promptsLog)};`,
+    'const INIT = { type: "system", subtype: "init", session_id: "stub", tools: [], mcp_servers: [], model: "stub", permissionMode: "default", slash_commands: [], agents: [] };',
+    'const FAIL = { type: "result", subtype: "error_during_execution", is_error: true, errors: ["의도된 스텁 실패"], result: "의도된 스텁 실패", session_id: "stub", total_cost_usd: 0, duration_ms: 10, num_turns: 1 };',
+    'let buf = "";',
+    'process.stdin.setEncoding("utf8");',
+    'process.stdin.on("data", (chunk) => {',
+    "  buf += chunk;",
+    "  let idx;",
+    '  while ((idx = buf.indexOf("\\n")) !== -1) {',
+    "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
+    '    fs.appendFileSync(LOG, line + "\\n");',
+    "    let o = null; try { o = JSON.parse(line); } catch { continue; }",
+    '    if (o.type === "user") {',
+    '      process.stdout.write(JSON.stringify(INIT) + "\\n");',
+    '      process.stdout.write(JSON.stringify(FAIL) + "\\n");',
+    "    }",
+    "  }",
+    "});",
+    "",
+  ].join("\n");
   writeFileSync(path, script);
   chmodSync(path, 0o755);
   return path;
@@ -377,21 +399,19 @@ async function main() {
     const retry = page.locator(".turnfail").last().getByRole("button", { name: "다시 보내기" });
     await retry.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
     check("the card offers the same words back", (await retry.count()) === 1);
+    const cardsBefore = await page.locator(".turnfail").count();
     await retry.click();
-    // A failed turn closes the CLI run; resuming may continue the same thread
-    // or open a fresh one on the same words. What must hold either way: the
-    // words went out again (the field emptied) and a failed-turn card stands.
+    // A failed turn closes the CLI run; resending may continue the same thread
+    // or open a fresh one. The wire-level proof either way: the stub CLI saw
+    // the same words again, and a new failed card stands.
     await page.waitForFunction(
-      () => {
-        const area = document.querySelector(".composer textarea");
-        return area instanceof HTMLTextAreaElement && area.value === "";
-      },
-      undefined,
+      (n) => document.querySelectorAll(".turnfail").length > n,
+      cardsBefore,
       { timeout: 30000 },
     );
-    await page.waitForSelector(".turnfail", { timeout: 30000 });
-    check("retrying sends the same words again", true);
-
+    const sends =
+      readFileSync(join(DIR, "bin", "prompts.log"), "utf8").split("화면을 만들어 줘").length - 1;
+    check("retrying sends the same words again", sends === 2, `${sends} send(s) on the wire`);
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({
       path: join(here, "ui-publish-e2e.png"),

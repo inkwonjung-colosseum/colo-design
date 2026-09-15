@@ -4,7 +4,7 @@
  * Confirms the connect handoff, the connected repo's phase, and the session
  * list, without spending a model turn. It starts nothing.
  *
- * Usage: node packages/web/test/smoke-live.mjs "$(grep -o 'ws://[^ ]*' /tmp/hub-daemon.log)"
+ * Usage: node scripts/smoke-live.mjs "$(grep -o 'ws://[^ ]*' /tmp/hub-daemon.log)"
  */
 import { tmpdir } from "node:os";
 import { join } from "node:path";

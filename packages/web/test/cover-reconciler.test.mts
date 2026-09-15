@@ -155,7 +155,7 @@ test("백오프는 소진되고, 새 변이가 예산을 되살린다", async ()
   assert.equal(calls.length, 1 + COVER_RETRY_MS.length, "무한 재시도는 없다");
   assert.deepEqual(timers.waits(), [], "예산이 끝나면 조용해진다");
 
-  reconciler.sync(); // 기획자가 다시 무언가를 한다
+  reconciler.sync(); // 사용자가 다시 무언가를 한다
   await settle();
   assert.equal(calls.length, 2 + COVER_RETRY_MS.length, "새 증거는 예산을 되살린다");
   assert.deepEqual(timers.waits(), [COVER_RETRY_MS[0]]);

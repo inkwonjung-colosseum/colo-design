@@ -233,7 +233,7 @@ export interface SessionOptions {
   previewTools?: PreviewTools | null;
   /**
    * 프로젝트별 지침(설정 문서 P1#8) — Claude Code 기본 시스템 프롬프트
-   * 끝에 붙는 몇 줄. 기획자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
+   * 끝에 붙는 몇 줄. 사용자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
    */
   appendSystemPrompt?: string;
   /**
@@ -283,6 +283,15 @@ export class Session {
    * 모드의 제약 아래 갇히지 않게. `setPermissionMode` 가 기록하고 지운다.
    */
   modeBeforePlan: PermissionMode | null = null;
+  /**
+   * 빠르게(fast mode)가 이 세션에서 켜져 있는지. 우리가 보낸 부탁이 아니라
+   * CLI 가 매 메시지에 실어 보내는 `fast_mode_state` 가 주인이다 — 요금제나
+   * 모델이나 쿨다운 때문에 거절된 부탁까지 켜짐으로 읽으면 토글이 거짓말을
+   * 한다. 부탁은 낙관적으로 적고, 첫 메시지가 정정한다.
+   */
+  fastMode = false;
+  /** 왜 지금 빠르게를 쓸 수 없는지(CLI 의 사유 문자열). null 이면 막힘 없음. */
+  fastModeBlocked: string | null = null;
   model: string | null = null;
   /** Composer chip selections; `null` = the CLI's own default. */
   private selectedModel: string | null = null;
@@ -493,6 +502,11 @@ export class Session {
     try {
       for await (const message of this.run) {
         this.lastActivity = Date.now();
+        // 빠르게의 진실은 CLI 에 있다: init·result·system 이 실어 오는
+        // fast_mode_state 를 번역 전에 읽어 둔다. 'cooldown' 은 한도 뒤의
+        // 쉬는 중 — 켜 달라는 뜻은 살아 있으나 지금 도는 것은 보통 속도라,
+        // 켜짐으로 세지 않는다.
+        this.readFastMode(message);
         for (const event of this.translator.translate(message)) {
           if (event.kind === "init") {
             this.model = event.model;
@@ -581,7 +595,7 @@ export class Session {
         // thread down — the next open resumes it with a fresh CLI instead of
         // feeding sends to a dead query.
         this.setState(this.aborted ? "closed" : "idle");
-      } else if (!this.closed) {
+      } else if (!this.closed && this.state !== "closed") {
         this.crashed = true;
         this.events.onEvent(this.id, {
           kind: "notice",
@@ -1109,13 +1123,35 @@ export class Session {
     // planner action, and the catch must turn it into `멈추었습니다` (결함①).
     this.interrupting = true;
     const outcome = await this.settleInterrupt();
-    if (outcome === "refused") {
-      // Interrupt itself refused — nothing is being aborted, so the flag
-      // would only mask the next genuine error. No turn.end will follow
-      // either, so this is the turn's end: the wait room drains here or
-      // never.
-      this.interrupting = false;
-      this.endTurn();
+    if (outcome === "dead") {
+      // 제어 요청이 답이 아니라 거절(throw)로 돌아왔다. SDK 의 인터럽트는
+      // 거부마저 응답으로 resolve 하므로(sdk.d.ts `interrupt():` 의 반환형)
+      // reject 는 한 가지뿐이다: 쓸 수 없는 질의. 중지는 도는 턴 위에서만
+      // 눌리므로 부팅 창의 not ready 일 수 없다 — 질의는 이미 없다(실사 결함:
+      // 답한 뒤 스스로 내려간 CLI 를 중지로 끊어도 대기 줄이 그 시체로 흘러
+      // 램프가 영원히 켜져 있었다). 죽은 질의는 abort 로 끊을 스트림도 없으므로
+      // timeout 과 달리 정리를 직접 한다: 멈춤 카드, 대기 줄은 lost room 으로,
+      // 대화는 닫는다 — 다음 보내기가 새 CLI 로 이어받는다(resurrectSession).
+      this.aborted = true;
+      this.abort.abort();
+      if (!this.closed) {
+        const hadTurn = this.turnStartedAt !== null;
+        this.interrupting = false;
+        this.turnStartedAt = null;
+        this.dropHeld();
+        if (hadTurn) {
+          this.events.onEvent(this.id, {
+            kind: "turn.end",
+            subtype: "interrupted",
+            isError: false,
+            costUsd: null,
+            numTurns: null,
+            durationMs: null,
+            resultText: null,
+          });
+        }
+        this.setState("closed");
+      }
       return;
     }
     if (outcome === "timeout") {
@@ -1134,28 +1170,27 @@ export class Session {
 
   /**
    * A control request's grace. The CLI answers an interrupt quickly when it
-   * can, and a refusal is still an answer (it is alive enough to talk —
-   * nothing to abort). `timeout` is the wedged case: the caller must abort
-   * the query outright. `close` passes a shorter courtesy: a shutdown with
-   * several wedged sessions must not pay the full grace for each of them.
+   * can. `timeout` is the wedged case and `dead` the already-gone one — both
+   * are the caller's cue to abort the query outright (interrupt 위 참조).
+   * `close` passes a shorter courtesy: a shutdown with several wedged
+   * sessions must not pay the full grace for each of them.
    */
-  private settleInterrupt(
-    graceMs = INTERRUPT_GRACE_MS,
-  ): Promise<"answered" | "refused" | "timeout"> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve("timeout"), graceMs);
-      this.run.interrupt().then(
-        () => {
-          clearTimeout(timer);
-          resolve("answered");
-        },
-        () => {
-          clearTimeout(timer);
-          resolve("refused");
-        },
-      );
-    });
+  private settleInterrupt(graceMs = INTERRUPT_GRACE_MS): Promise<"answered" | "timeout" | "dead"> {
+    const { promise, resolve } = Promise.withResolvers<"answered" | "timeout" | "dead">();
+    const timer = setTimeout(() => resolve("timeout"), graceMs);
+    this.run.interrupt().then(
+      () => {
+        clearTimeout(timer);
+        resolve("answered");
+      },
+      () => {
+        clearTimeout(timer);
+        resolve("dead");
+      },
+    );
+    return promise;
   }
+
   async contextUsage(): Promise<ContextUsage | null> {
     try {
       const usage = await this.run.getContextUsage({ detail: "summary" });
@@ -1236,6 +1271,35 @@ export class Session {
   }
 
   /**
+   * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 노력 수준과 같은
+   * 깃발 층으로 가고(`applyFlagSettings`), 켜 달라는 부탁일 뿐이다 — 받아들여
+   * 졌는지는 다음 메시지의 `fast_mode_state` 가 말한다(위 readFastMode).
+   */
+  async setFastMode(fast: boolean): Promise<void> {
+    await this.run.applyFlagSettings({ fastMode: fast });
+    this.fastMode = fast;
+    // 켜는 쪽의 사유는 이제 옛말이다. 거절이면 다음 메시지가 다시 적는다.
+    if (fast) this.fastModeBlocked = null;
+  }
+
+  /**
+   * CLI 가 매 메시지에 실어 보내는 빠르게의 상태를 그대로 받아 적는다.
+   * 말이 없는 메시지는 소식이 없는 것이지 꺼졌다는 뜻이 아니라, 건드리지
+   * 않는다.
+   */
+  private readFastMode(message: unknown): void {
+    const m = message as {
+      fast_mode_state?: "off" | "cooldown" | "on";
+      fast_mode_disabled_reason?: string;
+    };
+    if (m.fast_mode_state === undefined) return;
+    this.fastMode = m.fast_mode_state === "on";
+    // 상태를 실은 메시지는 온전한 보고다: 사유가 없다는 것은 모른다는 뜻이
+    // 아니라 막는 것이 없다는 뜻이라(SDK 의 정의), 옛 사유를 물려주지 않는다.
+    this.fastModeBlocked = m.fast_mode_disabled_reason ?? null;
+  }
+
+  /**
    * 이 작업만 중지 (PLAN D101): 폭주하는 명령 하나, 서브에이전트 하나를 턴을
    * 끊지 않고 세운다. 중지 버튼(interrupt)은 턴 전체의 것이고, 이것은 그 안의
    * 한 작업의 것 — 두 개가 다른 버튼인 이유다.
@@ -1273,6 +1337,8 @@ export class Session {
       model: this.selectedModel ?? this.model,
       effort: this.selectedEffort,
       permissionMode: this.permissionMode,
+      fastMode: this.fastMode,
+      fastModeBlocked: this.fastModeBlocked,
       models: models.map((model) => ({
         value: model.value,
         displayName: model.displayName,
@@ -1280,6 +1346,7 @@ export class Session {
         description: model.description,
         supportsEffort: model.supportsEffort ?? false,
         supportedEffortLevels: model.supportedEffortLevels ?? null,
+        supportsFastMode: model.supportsFastMode ?? false,
       })),
     };
   }
@@ -1443,8 +1510,8 @@ function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggest
     const s = raw as Record<string, any>;
     const destination = String(s?.destination ?? "session");
     const persisted = destination === "localSettings" || destination === "projectSettings";
-    // 이 문장은 기획자가 읽는 권한 카드에 그대로 붙는다 — 기계 말이 아니라
-    // 기획 말로 쓴다 (README: 기획자는 git 명사를 읽지 않는다).
+    // 이 문장은 사용자가 읽는 권한 카드에 그대로 붙는다 — 기계 말이 아니라
+    // 기획 말로 쓴다 (README: 사용자는 git 명사를 읽지 않는다).
     const scope = persisted ? "다음에도 유지" : "이 세션 동안만";
 
     if (s?.type === "setMode" && s?.mode) {

@@ -136,7 +136,7 @@ test("only the scripts the repo has become commands — the preview name falls b
     assert.equal(config.preview.command, "pnpm run start");
     // 없는 스크립트는 게이트가 되지 않는다 — 저장은 검사 없이 간다. 락파일이
     // 없으면 설치도 돌지 않는다: `pnpm install` 이 레포에 락파일을 만들어
-    // 기획자가 만들지 않은 변경을 저장 검토에 올린다.
+    // 사용자가 만들지 않은 변경을 저장 검토에 올린다.
     assert.equal(config.install, undefined);
     assert.equal(config.check, undefined);
     assert.equal(config.build, undefined);
@@ -1482,7 +1482,7 @@ test("최신화 carries unsaved work across a moved base — tracked and untrack
     const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
     writeFileSync(
       join(dir, "work", "CLAUDE.md"),
-      claude.replace("# fixture colo-design 레포", "# 기획자의 저장하지 않은 제목"),
+      claude.replace("# fixture colo-design 레포", "# 사용자의 저장하지 않은 제목"),
     );
     mkdirSync(join(dir, "work", "src", "screens", "new"), { recursive: true });
     writeFileSync(
@@ -1505,7 +1505,7 @@ test("최신화 carries unsaved work across a moved base — tracked and untrack
     const merged = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
     assert.ok(merged.includes("개발자가 다듬은 문장"), "the developer's change landed");
     assert.ok(
-      merged.includes("기획자의 저장하지 않은 제목"),
+      merged.includes("사용자의 저장하지 않은 제목"),
       "the planner's unsaved edit survived",
     );
     assert.ok(
@@ -1540,7 +1540,7 @@ test("a bare bring-up carries unsaved work across a moved base too", async () =>
     const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
     writeFileSync(
       join(dir, "work", "CLAUDE.md"),
-      claude.replace("# fixture colo-design 레포", "# 기획자의 저장하지 않은 제목"),
+      claude.replace("# fixture colo-design 레포", "# 사용자의 저장하지 않은 제목"),
     );
     const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
     await pushFixtureChange(fixture.seed, fixture.remote, {
@@ -1555,7 +1555,7 @@ test("a bare bring-up carries unsaved work across a moved base too", async () =>
     const merged = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
     assert.ok(merged.includes("개발자가 다듬은 문장"), "the developer's change landed");
     assert.ok(
-      merged.includes("기획자의 저장하지 않은 제목"),
+      merged.includes("사용자의 저장하지 않은 제목"),
       "the planner's unsaved edit survived",
     );
   } finally {
@@ -1576,7 +1576,7 @@ test("최신화 hands a genuine conflict to Claude, work parked and named", asyn
     const html = readFileSync(join(dir, "work", "index.html"), "utf8");
     writeFileSync(
       join(dir, "work", "index.html"),
-      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>기획자의 줄</p>"),
+      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>사용자의 줄</p>"),
     );
     // The developer changed the very same line: git cannot combine this.
     const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
@@ -1649,10 +1649,10 @@ test("반영됨 확인은 저장하지 않은 변경을 지우지 않는다", as
     assert.equal(saved.stage, "published", saved.detail ?? "");
     await workspace.handoff({ title: "결제 화면" });
 
-    // 개발자의 병합: 원격 베이스는 사이클의 변경과 함께, 기획자가 모르는
+    // 개발자의 병합: 원격 베이스는 사이클의 변경과 함께, 사용자가 모르는
     // 사이 main 에서 직접 건 문장(CLAUDE.md)까지 담는다. 위험한 조합은
     // 정확히 이것이다 — CLAUDE.md 는 이번 사이클이 건드린 적 없어 양쪽
-    // 브랜치에서 같으므로 checkout 이 기획자의 저장 안 한 편집을 실어
+    // 브랜치에서 같으므로 checkout 이 사용자의 저장 안 한 편집을 실어
     // 나르고, 뒤따르는 reset --hard 가 그것을 origin/main 의 문장으로
     // 소리 없이 덮어쓴다.
     const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
@@ -1662,13 +1662,13 @@ test("반영됨 확인은 저장하지 않은 변경을 지우지 않는다", as
     });
     writeFileSync(
       join(dir, "work", "CLAUDE.md"),
-      `${readFileSync(join(dir, "work", "CLAUDE.md"), "utf8")}\n기획자의 저장 안 한 메모\n`,
+      `${readFileSync(join(dir, "work", "CLAUDE.md"), "utf8")}\n사용자의 저장 안 한 메모\n`,
     );
 
     const report = await workspace.refreshHandoff();
     assert.equal(report?.state, "merged");
     const after = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
-    assert.ok(after.includes("기획자의 저장 안 한 메모"), "unsaved work survives the merged reset");
+    assert.ok(after.includes("사용자의 저장 안 한 메모"), "unsaved work survives the merged reset");
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
     else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
@@ -1692,7 +1692,7 @@ test("준비가 충돌로 멈춘 뒤에도 pull 은 열려 있다 — 오류 카
     const html = readFileSync(join(dir, "work", "index.html"), "utf8");
     writeFileSync(
       join(dir, "work", "index.html"),
-      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>기획자의 줄</p>"),
+      html.replace("<p>연결 레포가 렌더하는 미리보기입니다.</p>", "<p>사용자의 줄</p>"),
     );
     const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
     await pushFixtureChange(fixture.seed, fixture.remote, {
@@ -1763,7 +1763,7 @@ test("mid-cycle, the developer's base merges into the cycle — conflict include
     });
 
     // Unsaved work on another file parks while the merge runs.
-    writeFileSync(join(dir, "work", "CLAUDE.md"), "# 기획자의 메모\n");
+    writeFileSync(join(dir, "work", "CLAUDE.md"), "# 사용자의 메모\n");
 
     const briefs = [];
     await workspace.pull((brief) => briefs.push(brief));
@@ -1797,7 +1797,7 @@ test("mid-cycle, the developer's base merges into the cycle — conflict include
     ]);
     await promisifiedRun("git", ["-C", join(dir, "work"), "stash", "pop"]);
     const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
-    assert.ok(claude.includes("기획자의 메모"), "the parked edit came back after the merge");
+    assert.ok(claude.includes("사용자의 메모"), "the parked edit came back after the merge");
 
     const parents = await promisifiedRun("git", [
       "-C",

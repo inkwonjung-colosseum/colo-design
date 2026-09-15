@@ -152,7 +152,7 @@ async function main() {
   );
   check(
     "permission request surfaces the tool and its input",
-    typeof permission.toolName === "string" && permission.input !== undefined,
+    permission.toolName === "Bash" && permission.input !== undefined,
     `tool=${permission.toolName}`,
   );
   check(
@@ -161,7 +161,7 @@ async function main() {
   );
   check(
     "suggestions are offered for remember-this",
-    Array.isArray(permission.suggestions),
+    Array.isArray(permission.suggestions) && permission.suggestions.length > 0,
     `${permission.suggestions.length} suggestion(s)`,
   );
 

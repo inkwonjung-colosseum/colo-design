@@ -34,7 +34,10 @@ extraResources:
     to: bin
     filter: ["**/*"]
 mac:
-  identity: "-"           # ad-hoc 서명 — 인증서 없음(DESIGN §7)
+  # 자체 서명 인증서(macOS 알림 실험): UNNotification 은 ad-hoc 앱의 알림을
+  # 조용히 유실시킨다 — 키체인의 "Colo Design Dev"(CN)로 서명해 본다.
+  # 실험이 실패하면 "-"로 되돌린다. ~/.colo-design-certs/ 에 인증서가 있다.
+  identity: "Colo Design Dev"
   # ad-hoc + hardenedRuntime 조합은 library validation 때문에 실행이 깨질 수
   # 있다(공증 없이는 runtime 보호가 필수가 아니다) — 끈다.
   hardenedRuntime: false

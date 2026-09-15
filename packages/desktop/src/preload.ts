@@ -6,7 +6,7 @@ import { contextBridge, ipcRenderer } from "electron";
  * 열기`(PLAN D2[폴더 열기]). 자격 증명·페어링 토큰은 절대 건너가지 않는다 — 렌더러는
  * 존재만 안다.
  *
- * `preview` 는 기획자의 미리보기 뷰(PLAN D64–D71): `native` 가 있으면 웹은
+ * `preview` 는 사용자의 미리보기 뷰(PLAN D64–D71): `native` 가 있으면 웹은
  * `NativeHost` 를 고르고, 없는 브라우저는 iframe 을 유지한다(D70). 구독은 모두
  * 해제 함수를 돌려준다 — 호스트가 언마운트된다.
  */

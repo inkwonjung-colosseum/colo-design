@@ -277,7 +277,15 @@ function eventingSpawn() {
     const child = {
       once: (event, handler) => listeners.set(event, handler),
       unref: () => undefined,
-      emitError: () => listeners.get("error")?.(new Error("spawn ENOENT")),
+      emitError: () => {
+        const handler = listeners.get("error");
+        if (!handler) {
+          // 진짜 ChildProcess 라면 등록 안 된 error 는 프로세스를 죽인다.
+          // 등록을 지운 회귀가 이 더블에서도 드러나야 한다.
+          throw new Error("no error listener attached — the daemon would crash");
+        }
+        handler(new Error("spawn ENOENT"));
+      },
     };
     children.push(child);
     return child;
@@ -312,11 +320,10 @@ test("B3: an async spawn error is absorbed, never an unhandled crash", async () 
   assert.equal(install.started, true);
   assert.ok(factory.children.length >= 1, "a child was spawned");
   // The detached child dies asynchronously; without the error listener this
-  // would crash the process. Every spawned child firing 'error' must be a
-  // no-op the caller survives.
+  // would crash the process. The double throws when no listener is attached,
+  // so dropping the once("error", …) registration fails this test loudly.
   for (const child of factory.children) child.emitError();
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(true, "still standing after every detached child errored");
 });
 
 // ---------------------------------------------------------------------------

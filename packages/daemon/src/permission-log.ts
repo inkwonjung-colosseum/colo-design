@@ -1,7 +1,7 @@
 /**
  * 권한 카드 반복 측정 (커미티 판정 2026-09-14, 의장 판정 2) — 측정이 먼저다.
  *
- * `alwaysAllowed` 는 세션 인스텐스 하나의 기억이라(session.ts), 기획자는
+ * `alwaysAllowed` 는 세션 인스텐스 하나의 기억이라(session.ts), 사용자는
  * 새 대화마다 이미 "항상 허용"이라 답한 같은 카드를 다시 받는다. 그 반복이
  * 실제로 얼마나, 어떤 서명에서 일어나는지 측정하기 전에는 앱이 제공하는
  * 권한 번들(managedSettings)의 목록을 정할 근거가 없다 — 그래서 이 로그가
@@ -63,7 +63,7 @@ export class PermissionRepeatLog {
     });
   }
 
-  /** 기획자가 "항상 허용"이라 답했다 — 다음 세션부터 이 서명은 반복이 된다. */
+  /** 사용자가 "항상 허용"이라 답했다 — 다음 세션부터 이 서명은 반복이 된다. */
   alwaysAllowedAnswer(tool: string, signature: string, cwd: string): void {
     this.always.add(signature);
     this.write({ ts: Date.now(), kind: "always", tool, signature, cwd });

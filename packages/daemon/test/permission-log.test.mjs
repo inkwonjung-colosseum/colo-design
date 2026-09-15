@@ -6,7 +6,7 @@
  * 상한을 넘으면 최근 절반만 남되, 살아남은 "항상 허용"은 계속 씨앗이다.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -57,7 +57,10 @@ test("상한을 넘으면 최근 절반만 남고 살아있는 '항상 허용'�
 
 test("깨진 파일은 없던 것이 되어 측정을 죽이지 않는다", () => {
   const file = join(workdir("perm-repeat-broken-"), "log.jsonl");
+  // 절단된 줄 — 빈-줄 필터는 통과하고 JSON.parse 에서 죽는다. read() 의
+  // 회복 분기가 없다면 이 생성 자체가 던진다.
+  writeFileSync(file, '{"kind":"ask"\n');
   const log = new PermissionRepeatLog(file);
   log.ask("Bash", "Bash:command:ok", "/work/repo");
-  assert.equal(new PermissionRepeatLog(file).repeatsOf("Bash:command:ok"), 0);
+  assert.equal(log.repeatsOf("Bash:command:ok"), 0);
 });

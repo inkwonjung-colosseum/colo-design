@@ -371,7 +371,7 @@ export function DiffPanel({
               >
                 {stageLine(diffStatus)}
                 {/* 어디에 저장됐는지는 제품의 약속 그 자체다 (실사 결함):
-                    다만 브랜치명 원문은 기획자의 어휘가 아니므로 사람 말로
+                    다만 브랜치명 원문은 사용자의 어휘가 아니므로 사람 말로
                     말하고 위치는 툴팁에 남는다 (비개발자 리뷰 D4). */}
                 {published && branch ? " — 회사 GitHub에 올렸습니다" : ""}
               </span>

@@ -10,7 +10,12 @@ import { isToolRunning } from "./progress";
 import { GENERIC_STARTERS } from "./suggestions";
 import { blockOnTape, SCREEN_SHOT_TOOL } from "./tape-visibility";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
-import { answerTurnNumbers, promptTotal } from "./turn-numbering";
+import {
+  answerTurnNumbers,
+  lastAnswerPerTurn,
+  promptTotal,
+  turnAnswerText,
+} from "./turn-numbering";
 
 /**
  * The CLI's own housekeeping lines. They arrive dressed as ordinary user or
@@ -684,14 +689,21 @@ function MachineTurn({
           ))}
         </ul>
       )}
-      <button
-        type="button"
-        className="machine__more"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? "접기" : "자세히"}
-      </button>
+      <div className="machine__actions">
+        <button
+          type="button"
+          className="machine__more"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "접기" : "자세히"}
+        </button>
+        {/* 요청 복사: the card is a reading of the turn, not the turn — the
+            text Claude actually received is what travels elsewhere. */}
+        {body.trim() !== "" && (
+          <CopyButton value={body} label="요청 복사" icon={null} className="machine__more" />
+        )}
+      </div>
       {open && <pre className="machine__body">{body}</pre>}
     </div>
   );
@@ -706,7 +718,8 @@ const TURN_SUBTYPE_WORDS: Record<string, string> = {
 /**
  * 리뷰 U2: the one copy button. Five screens had each grown their own
  * copied-state and reset dance; the words and the timing live here now.
- * `icon` swaps the idle glyph (a link, for example); `className` keeps a
+ * `icon` swaps the idle glyph (a link, for example); `null` drops it, for the
+ * rows that read as text links rather than buttons. `className` keeps a
  * caller's own placement class on the button.
  */
 export function CopyButton({
@@ -720,7 +733,7 @@ export function CopyButton({
   value: string;
   label?: string;
   doneLabel?: string;
-  icon?: ReactNode;
+  icon?: ReactNode | null;
   className?: string;
   ariaLabel?: string;
 }) {
@@ -741,15 +754,8 @@ export function CopyButton({
       aria-label={ariaLabel ?? (copied ? doneLabel : label)}
       onClick={() => void copy()}
     >
-      {copied ? (
-        <>
-          <CheckIcon size={11} /> {doneLabel}
-        </>
-      ) : (
-        <>
-          {icon ?? <CopyIcon size={12} />} {label}
-        </>
-      )}
+      {icon === null ? null : copied ? <CheckIcon size={11} /> : (icon ?? <CopyIcon size={12} />)}
+      {copied ? doneLabel : label}
     </button>
   );
 }
@@ -889,6 +895,21 @@ function isLastFailedTurn(blocks: Block[], block: Block): boolean {
   return false;
 }
 
+/**
+ * 정산된 턴의 한 줄 (리뷰 B4/U4) — 그리고 답이 도구 사이에서 조각으로 올 때
+ * 그 요청의 output 전부를 한 번에 복사해 나르는 유일한 자리다. 위 카드들의
+ * 답변 복사가 조각을 가져간다면 이 버튼은 그 턴의 답을 이어 붙여 한 번에
+ * 건넨다.
+ */
+function TurnDone({ durationMs, whole }: { durationMs: number; whole?: string }) {
+  return (
+    <div className="turndone">
+      {waitedFor(durationMs)} 걸렸습니다
+      {whole && <CopyButton value={whole} label="전체 복사" className="turndone__copy" />}
+    </div>
+  );
+}
+
 export function Transcript({
   blocks,
   live = true,
@@ -926,7 +947,7 @@ export function Transcript({
   onRestoreCheckpoint?: (id: string) => void;
   /**
    * 생각 과정 보기 (설정의 스위치). 꺼져 있으면 생각 블록은 접힌 채로도
-   * 남지 않고 테이프에서 아예 빠진다 — 기획자가 읽는 것은 답이지 답을
+   * 남지 않고 테이프에서 아예 빠진다 — 사용자가 읽는 것은 답이지 답을
    * 만드는 동안의 속말이 아니다. 기본은 꺼짐이다.
    */
   showThinking?: boolean;
@@ -997,6 +1018,12 @@ export function Transcript({
   // 넘쳤다 — 누른 답과 돌아가는 스냅샷이 어긋나던 것은 그 셈의 탓이다.
   const answerTurns = answerTurnNumbers(blocks);
   const totalTurns = promptTotal(blocks);
+
+  // 되돌리기 · 다시 요청은 턴 단위 행동이다 — 같은 턴의 답들이 가리키는
+  // 체크포인트는 하나이므로 두 버튼 모두 그 턴의 마지막 답에만 둔다. 턴이 낸
+  // 답의 전문은 턴 끝 줄의 전체 복사가 대신 들고 나간다.
+  const lastAnswers = lastAnswerPerTurn(blocks);
+  const turnAnswers = turnAnswerText(blocks);
   // 생각 · 작업 과정이 꺼져 있으면 groupActivity 보다 **먼저** 걸러낸다:
   // 묶기까지 마치고 나서 지우면 생각이나 도구만 있던 구간이 아무것도 담지
   // 않은 활동 막대로 남는다. 턴 번호의 셈(answerTurns · totalTurns)은
@@ -1081,15 +1108,28 @@ export function Transcript({
                     {file.split("/").pop()}
                   </span>
                 ))}
-                {onResendEdit && block.text.trim() !== "" && (
-                  <button
-                    type="button"
-                    className="bubble__resend"
-                    title="이 문장을 고쳐서 다시 보냅니다"
-                    onClick={() => onResendEdit(block.text)}
-                  >
-                    고쳐서 다시 보내기
-                  </button>
+                {block.text.trim() !== "" && (
+                  <div className="bubble__actions">
+                    {/* 요청 복사: the planner's own sentence is as worth
+                        keeping as the answer to it — the same word, on the
+                        turn that asked. */}
+                    <CopyButton
+                      value={block.text}
+                      label="요청 복사"
+                      icon={null}
+                      className="bubble__act"
+                    />
+                    {onResendEdit && (
+                      <button
+                        type="button"
+                        className="bubble__act"
+                        title="이 문장을 고쳐서 다시 보냅니다"
+                        onClick={() => onResendEdit(block.text)}
+                      >
+                        고쳐서 다시 보내기
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -1104,6 +1144,7 @@ export function Transcript({
                 </p>
               );
             const checkpoint = checkpoints?.find((entry) => entry.turn === turnNo);
+            const isLastAnswer = lastAnswers.get(turnNo) === block.id;
             return (
               <div key={block.id}>
                 <div className="bubble bubble--assistant">
@@ -1114,18 +1155,18 @@ export function Transcript({
                   {!block.streaming && (
                     <CopyButton value={block.text} label="답변 복사" className="answer__copy" />
                   )}
-                  {checkpoint && onRestoreCheckpoint && (
+                  {isLastAnswer && checkpoint && onRestoreCheckpoint && (
                     <button
                       type="button"
                       className="revert"
                       disabled={live}
-                      title="이 답변이 바꾼 화면 파일을, 이 답변이 시작하기 전 모습으로 되돌립니다"
+                      title="이 요청이 바꾼 화면 파일을, 이 요청이 시작하기 전 모습으로 되돌립니다"
                       onClick={() => onRestoreCheckpoint(checkpoint.id)}
                     >
-                      이 답변 이전으로 되돌리기
+                      이 요청 이전으로 되돌리기
                     </button>
                   )}
-                  {onRewind && !live && (
+                  {isLastAnswer && onRewind && !live && (
                     <button
                       type="button"
                       className="revert"
@@ -1169,9 +1210,11 @@ export function Transcript({
                 onRetry={onRetry}
               />
             ) : block.durationMs != null ? (
-              <div key={block.id} className="turndone">
-                {waitedFor(block.durationMs)} 걸렸습니다
-              </div>
+              <TurnDone
+                key={block.id}
+                durationMs={block.durationMs}
+                whole={turnAnswers.get(block.id)}
+              />
             ) : null;
           case "notice":
             return (

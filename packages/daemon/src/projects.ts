@@ -51,7 +51,7 @@ export interface Project {
   commandsApproved?: boolean;
   /**
    * 이 프로젝트에서 Claude 가 지켜 줄 것(설정 문서 P1#8) — 브랜치·커밋·PR
-   * 규칙을 기획자의 말로 적는 한 줄 상자. 세션의 시스템 프롬프트 끝에
+   * 규칙을 사용자의 말로 적는 한 줄 상자. 세션의 시스템 프롬프트 끝에
    * 붙는다. 비면 붙지 않는다.
    */
   instructions?: string;
@@ -336,7 +336,7 @@ export class ProjectRegistry {
       project.commandsApproved = changes.commandsApproved;
     }
     // 지침은 지우개가 있어야 한다: null 은 "없음"이고, 빈 문자열도 없음으로
-    // 간다 — 기획자의 상자를 비우고 싶을 때 지워지지 않는 값이 되면 안 된다.
+    // 간다 — 사용자의 상자를 비우고 싶을 때 지워지지 않는 값이 되면 안 된다.
     if (changes.instructions !== undefined) {
       const instructions = changes.instructions?.trim();
       if (instructions) project.instructions = instructions;

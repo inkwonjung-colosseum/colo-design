@@ -91,7 +91,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 /**
  * 커밋된 락파일이 매니저를 말한다 — 없으면 null 이다. 락파일이 없는 레포에서는
- * 설치를 돌리지 않는다: `pnpm install` 은 락파일을 만들어 레포를 바꾸고, 기획자는
+ * 설치를 돌리지 않는다: `pnpm install` 은 락파일을 만들어 레포를 바꾸고, 사용자는
  * 자기가 만들지 않은 변경을 저장 검토에서 보게 된다.
  */
 function lockedManager(root: string): PackageManager | null {
@@ -167,7 +167,7 @@ export function deriveRegistry(root: string): RepoRegistry | null {
 
 /**
  * 오버라이드 파일을 읽어 형태만 검증한다. 모든 거절은 필드 이름과 무엇이어야
- * 하는지를 한국어로 말한다: 이것을 고치는 사람은 기획자이고, "invalid config"
+ * 하는지를 한국어로 말한다: 이것을 고치는 사람은 사용자이고, "invalid config"
  * 로는 아무것도 할 수 없다. 무엇이 없는지는 여기서 판정하지 않는다 — 빈 파일도
  * 합법이고, 빠진 포트는 resolveRepoConfig 가 말한다.
  */
@@ -253,7 +253,7 @@ function readRepoOverrides(root: string): RepoOverrides {
 
 /**
  * 레포가 말하는 것 + 오버라이드 = 데몬이 돌릴 계약. 포트나 미리보기 명령을 끝내
- * 알 수 없으면 던진다 — 그 둘 없이는 미리보기가 뜰 수 없고, 기획자가 읽는 카드는
+ * 알 수 없으면 던진다 — 그 둘 없이는 미리보기가 뜰 수 없고, 사용자가 읽는 카드는
  * 무엇을 적어야 하는지 말해야 한다.
  */
 export function resolveRepoConfig(root: string): RepoConfig {

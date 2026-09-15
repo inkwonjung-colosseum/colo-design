@@ -132,7 +132,7 @@ process.on("exit", () => {
   }
 });
 if (hmr) {
-  // 기획자의 터미널 1에 `pnpm dev:web` 이 이미 돌고 있는 일이 흔하다 —
+  // 사용자의 터미널 1에 `pnpm dev:web` 이 이미 돌고 있는 일이 흔하다 —
   // vite 는 strictPort 라 그 위에 또 뜨지 못한다. 그 서버가 이 레포의
   // 웹이면 그대로 쓰고, 남의 것이면 창을 엉뚱한 앱으로 열기 전에 멈춘다.
   if (await webDevServerRunning(DEV_SERVER)) {

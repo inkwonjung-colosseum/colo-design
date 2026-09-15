@@ -511,7 +511,7 @@ export function ScreenPanel({
    * final frame of a turn stays as the thumbnail until a newer one lands.
    */
   const [pipFrame, setPipFrame] = useState<string | null>(null);
-  /** 크게 보기 — 클릭하면 기획자 iframe 위에 겹치고, 턴이 끝나면 접힌다. */
+  /** 크게 보기 — 클릭하면 사용자 iframe 위에 겹치고, 턴이 끝나면 접힌다. */
   const [pipLarge, setPipLarge] = useState(false);
   useEffect(() => {
     const subscribe = window.coloDesignDesktop?.preview?.onFrame;
@@ -535,7 +535,7 @@ export function ScreenPanel({
 
   // --- 화면 보여 주기 (D89) -------------------------------------------------
   // 오류도 핀도 아닌 화면 — 흰 화면, 무한 로딩 — 를 Claude 에게 통째로 보여
-  // 준다: 프레임 캡처 한 장 + 콘솔 마지막 20줄 + 기획자의 한 줄(선택).
+  // 준다: 프레임 캡처 한 장 + 콘솔 마지막 20줄 + 사용자의 한 줄(선택).
   // 같은 라우트·상태의 연타는 `N번째 요청` 표식을 얹고, 턴이 도는 동안의
   // 연타는 막는다(같은 턴이 겹치니까).
   const [lookBusy, setLookBusy] = useState(false);
@@ -592,7 +592,7 @@ export function ScreenPanel({
         : undefined;
       const lines = [
         "이 화면이 이렇게 보입니다. 무엇이 잘못됐는지 보고 고쳐 주세요.",
-        note.trim() ? `기획자의 말: ${note.trim()}` : "",
+        note.trim() ? `사용자의 말: ${note.trim()}` : "",
         snapshot && snapshot.console.length > 0
           ? `콘솔 마지막 기록:\n${snapshot.console.join("\n")}`
           : "",
@@ -1257,7 +1257,7 @@ export function ScreenPanel({
           title="GitHub에 답하기"
           body={
             <>
-              이 도구가 <strong>기획자의 이름</strong>으로 GitHub에 답을 남깁니다.
+              이 도구가 <strong>사용자의 이름</strong>으로 GitHub에 답을 남깁니다.
             </>
           }
           hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."

@@ -1,6 +1,7 @@
 node_modules/
 .gjc/
 .zcode/
+.claude/
 dist/
 *.log
 .DS_Store

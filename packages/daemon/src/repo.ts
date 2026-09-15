@@ -230,7 +230,7 @@ export function repoSettingsWarning(root: string): RepoSettingsWarning | null {
   if (!parsed || typeof parsed !== "object") return null;
   const widening = (["permissions", "env", "hooks"] as const).filter((key) => key in parsed);
   if (widening.length === 0) return null;
-  // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 기획자는
+  // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 사용자는
   // 한국어다. 무엇이 사전 승인되는지 그 자리에서 알려 준다.
   return {
     text: `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`,
@@ -436,7 +436,7 @@ function renderSummaryFile(file: DiffFile): string {
  */
 function summaryPrompt(files: DiffFile[]): string {
   return [
-    "아래는 저장 전에 검토할 변경 내용입니다. 바뀐 화면과 바뀐 점을 기획자 말로 3줄 이내, 파일 이름 없이 적어 주세요. 한 줄에 한 가지 바뀐 점을 적습니다.",
+    "아래는 저장 전에 검토할 변경 내용입니다. 바뀐 화면과 바뀐 점을 사용자 말로 3줄 이내, 파일 이름 없이 적어 주세요. 한 줄에 한 가지 바뀐 점을 적습니다.",
     "",
     `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
     "",
@@ -469,7 +469,7 @@ function memoPrompt(files: DiffFile[]): string {
  */
 function handoffPrompt(memos: string[], files: string[]): string {
   return [
-    "아래는 기획자가 이번에 저장한 작업입니다. 개발자에게 넘길 제목과 내용을 한국어로 적어 주세요.",
+    "아래는 사용자가 이번에 저장한 작업입니다. 개발자에게 넘길 제목과 내용을 한국어로 적어 주세요.",
     "첫 줄: 제목 한 줄 (40자 안쪽, 따옴표·접두어 없이).",
     "둘째 줄부터: 무엇을 만들었고 개발자가 무엇을 봐 주면 되는지 3줄 이내. 파일 이름은 나열하지 않고, 저장 메모에 없는 내용은 지어내지 않습니다.",
     "",
@@ -2755,7 +2755,7 @@ export class RepoWorkspace {
    * 진행 줄은 판정이 아니다: workspace 가 `error` 에 앉아 있는 동안에는 마지막
    * 판정이 그 자리를 지킨다. 실사에서 발견한 결함: 포트 충돌로 실패한 뒤 뒤에서
    * 돈 git fetch 의 진행 출력(`* branch main -> FETCH_HEAD`)이 에러 문구를
-   * 덮어 써, 기획자는 실패 이유로 git 의 말을 읽게 됐다. 진행은 phase 가
+   * 덮어 써, 사용자는 실패 이유로 git 의 말을 읽게 됐다. 진행은 phase 가
    * 다시 움직이는 순간부터 흐른다.
    */
   private setProgressLine(line: string): void {
@@ -3039,7 +3039,7 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
  * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
  * Claude에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
  * 의도가 제목을 정한다 (재설계 C10 · 커미티 2차 판정 4): 전부 질문이면 섹션
- * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 기획자의 질문이 개발자
+ * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 사용자의 질문이 개발자
  * 에게 변경 지시로 읽혀선 안 된다. 빈 메모는 빈 메모다 (커미티 2차 판정 3):
  * 턴의 문장을 빌려 오면 한 문장이 N행으로 복제된다.
  */
@@ -3086,10 +3086,10 @@ export function buildCommentsSection(
         : "### 수정 요청";
   const lead =
     questions > 0 && changes === 0
-      ? "기획자가 미리보기에서 찍어 Claude에게 보낸 질문입니다."
+      ? "사용자가 미리보기에서 찍어 Claude에게 보낸 질문입니다."
       : questions > 0
-        ? "기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청과 질문입니다."
-        : "기획자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.";
+        ? "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청과 질문입니다."
+        : "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.";
   return `${title}\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }
 

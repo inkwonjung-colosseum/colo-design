@@ -211,7 +211,7 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
     plan,
     pid: 4242,
     logPath: "/tmp/swap.log",
-    resultPath: "/Users/기획자/Library/Application Support/Colo Design/update-result.json",
+    resultPath: "/Users/사용자/Library/Application Support/Colo Design/update-result.json",
     version: "0.5.0",
   });
   assert.match(script, /^#!\/bin\/bash/m);
@@ -233,7 +233,7 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
   // 결과 기록 — 스크립트의 모든 끝(성공·실패)이 결과 파일로 말을 남긴다.
   assert.match(
     script,
-    /'\/Users\/기획자\/Library\/Application Support\/Colo Design\/update-result\.json'/,
+    /'\/Users\/사용자\/Library\/Application Support\/Colo Design\/update-result\.json'/,
     "the result path survives its spaces",
   );
   const embeddedResults = [...script.matchAll(/'(\{"outcome":[^\n]*\})'/g)].map((m) => m[1]);
@@ -435,20 +435,31 @@ test("the bundled runtime carries corepack's implementation and its launcher loa
 // ---------------------------------------------------------------------------
 
 test("notice copy never speaks the daemon's words", () => {
-  // 문구 자체는 카피의 영역이다 — 테스트가 지키는 것은 어휘 계약 하나:
-  // git 명사와 도구 이름은 어떤 알림에도 나오지 않는다.
-  const copies = [
-    noticeCopy({ kind: "done", sessionId: "s1", title: "로그인 화면" }),
-    noticeCopy({ kind: "ask", sessionId: "s1", title: "로그인 화면", what: "permission" }),
-    noticeCopy({ kind: "ask", sessionId: "s1", title: "로그인 화면", what: "question" }),
-    noticeCopy({ kind: "gate", sessionId: "s1", title: "회원 목록", stage: "save" }),
-    noticeCopy({ kind: "gate", sessionId: "s1", title: "회원 목록", stage: "handoff" }),
-    noticeCopy({ kind: "crashed", sessionId: "s1", title: "로그인 화면" }),
+  // 문구 자체는 카피의 영역이다 — 테스트가 지키는 것은 구조와 어휘 계약:
+  // 스레드 이름이 제목이 되고(notices.ts:5), 여섯 종은 서로 다른 말을
+  // 하며, git 명사와 도구 이름은 어떤 알림에도 나오지 않는다.
+  const cases = [
+    { kind: "done", sessionId: "s1", title: "로그인 화면" },
+    { kind: "ask", sessionId: "s1", title: "로그인 화면", what: "permission" },
+    { kind: "ask", sessionId: "s1", title: "로그인 화면", what: "question" },
+    { kind: "gate", sessionId: "s1", title: "회원 목록", stage: "save" },
+    { kind: "gate", sessionId: "s1", title: "회원 목록", stage: "handoff" },
+    { kind: "crashed", sessionId: "s1", title: "로그인 화면" },
   ];
-  for (const n of copies) {
-    assert.ok(n.title.length > 0 && n.body.length > 0, "빈 알림은 없다");
-    assert.doesNotMatch(`${n.title} ${n.body}`, /git|branch|commit|push|pull|PR|Bash|Write|Edit/);
+  const copies = cases.map((notice) => ({ notice, out: noticeCopy(notice) }));
+  for (const { notice, out } of copies) {
+    assert.ok(out.title.length > 0 && out.body.length > 0, "빈 알림은 없다");
+    assert.ok(out.title.startsWith(notice.title), "스레드 이름이 제목이 된다");
+    assert.doesNotMatch(
+      `${out.title} ${out.body}`,
+      /git|branch|commit|push|pull|PR|Bash|Write|Edit/,
+    );
   }
+  assert.equal(
+    new Set(copies.map((c) => c.out.body)).size,
+    copies.length,
+    "알림 여섯 종은 서로 다른 말을 한다",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -582,7 +593,7 @@ test("the preview driver opens a hidden window, answers a real JPEG, clicks, and
   try {
     const result = await runDriverUnit(url);
     assert.equal(result.error, undefined);
-    // 보이는 창은 기획자의 것뿐 — Claude 의 창은 화면에 없다 (PLAN D61).
+    // 보이는 창은 사용자의 것뿐 — Claude 의 창은 화면에 없다 (PLAN D61).
     assert.equal(result.hidden, true);
     // 캡처는 진짜 JPEG 다.
     assert.equal(result.jpegOk, true);

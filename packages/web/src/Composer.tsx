@@ -12,6 +12,8 @@ import { useEffect, useRef, useState } from "react";
 import { ContextRing } from "./ContextRing";
 import {
   EFFORT_LABEL,
+  FAST_BLOCKED_WORDS,
+  FAST_HARD_BLOCKS,
   MODE_LABEL,
   modelOptions,
   modelRowOf,
@@ -212,8 +214,7 @@ export function Composer({
   sendKey,
   midTurnSend = "queue",
   selector,
-  planArmed = false,
-  onTogglePlanArmed,
+  onToggleFastMode,
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
@@ -309,12 +310,11 @@ export function Composer({
    */
   selector: SessionSelectors;
   /**
-   * 계획 먼저 (이번 턴 한정): armed 인 채 보내면 그 턴만 계획 자세로
-   * 들어간다 — 첫 답변이 '만들 것' 카드로 오고 승인 후 착수한다. 대화의
-   * 권한 선택이 이미 계획이면 칩은 의미가 없다(늘 계획이므로).
+   * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 턴 한정이 아닌
+   * 세션의 자세라 한 번 켜면 끌 때까지 간다. 지금 모델이 받지 않거나 CLI 가
+   * 막아 두었으면 토글 자체가 오지 않는다 — 아래 fast 를 보라.
    */
-  planArmed?: boolean;
-  onTogglePlanArmed?: () => void;
+  onToggleFastMode?: (fast: boolean) => void;
   onSetModel: (model: string | null) => void;
   onSetEffort: (effort: EffortLevel | null) => void;
   onSetPermissionMode: (mode: PermissionMode) => void;
@@ -825,6 +825,32 @@ export function Composer({
   // which levels it takes gets the full set.
   const effortLevels =
     modelRow?.supportedEffortLevels ?? (Object.keys(EFFORT_LABEL) as EffortLevel[]);
+  /**
+   * 빠르게 토글이 지금 무엇을 말해야 하는지.
+   *
+   * 켜짐의 근거는 CLI 가 보내온 `fastMode` 뿐이다 — 누른 순간이 아니라
+   * 받아들여진 순간에 켜진다. 모델이 받지 않는다고 알려졌을 때만 숨기고
+   * (효과 칩이 supportsEffort 를 다루는 방식 그대로), 모르는 동안에는
+   * 보인다: 눌러 봐야 알 수 있는 일을 미리 지우지 않는다.
+   */
+  const fastReason = selector.fastModeBlocked;
+  const fastBlocked = fastReason != null && FAST_HARD_BLOCKS.has(fastReason);
+  const fast = {
+    shown:
+      !!onToggleFastMode &&
+      (modelRow ? modelRow.supportsFastMode : true) &&
+      fastReason !== "model_not_allowed",
+    on: selector.fastMode,
+    // 켜져 있는데 사유가 왔다면 잠그지 않는다 — 끄는 길은 늘 열려 있어야
+    // 한다. 잠금은 켤 수 없는 자리에서만.
+    blocked: fastBlocked && !selector.fastMode,
+    title: fastBlocked
+      ? (FAST_BLOCKED_WORDS[fastReason] ?? "지금은 빠르게를 쓸 수 없습니다")
+      : selector.fastMode
+        ? "빠르게 — 켜져 있습니다. 다시 누르면 보통 속도로 돌아갑니다"
+        : "빠르게 — 같은 모델을 더 빠른 응답으로 돌립니다",
+  };
+
   const chips = [
     {
       key: "model" as const,
@@ -1011,7 +1037,7 @@ export function Composer({
       )}
 
       {/* 답이 나오기 전의 한 줄 (PLAN D100): 정리 중인지, 그리고 몇 분째인지.
-          기획자가 읽는 것은 숫자가 아니라 "멈춘 게 아니다" 라는 사실이다 —
+          사용자가 읽는 것은 숫자가 아니라 "멈춘 게 아니다" 라는 사실이다 —
           그래서 도는 동안에만 있다. 시계가 여기 산다: 기록 아래가 아니라
           기다리는 사람의 눈이 머무는 입력창 위 한 줄. 토큰 어림은 없다 —
           청구되는 수도 아닌 눈금이 화면을 차지할 이유가 없다. */}
@@ -1210,8 +1236,8 @@ export function Composer({
         <button
           type="button"
           className="toolbar__icon"
-          title="기획서·이미지 첨부"
-          aria-label="기획서 첨부"
+          title="문서·이미지 첨부"
+          aria-label="파일 첨부"
           disabled={disabled}
           onClick={() => filePicker.current?.click()}
         >
@@ -1234,22 +1260,18 @@ export function Composer({
             options={chip.options}
           />
         ))}
-        {selector.permissionMode !== "plan" && onTogglePlanArmed && !running && (
+        {fast.shown && (
           <button
             type="button"
-            className={planArmed ? "toolbar__plan toolbar__plan--armed" : "toolbar__plan"}
-            aria-pressed={planArmed}
-            aria-label="계획 먼저"
-            title={
-              planArmed
-                ? "계획 먼저 — 이번 턴은 승인받고 시작합니다. 다시 누르면 그대로 보냅니다"
-                : "계획 먼저 — 이번 턴만 무엇을 만들지 승인받고 시작합니다"
-            }
-            disabled={disabled}
-            onClick={onTogglePlanArmed}
+            className={fast.on ? "toolbar__fast toolbar__fast--on" : "toolbar__fast"}
+            aria-pressed={fast.on}
+            aria-label="빠르게"
+            title={fast.title}
+            disabled={disabled || fast.blocked}
+            onClick={() => onToggleFastMode?.(!fast.on)}
           >
             <ZapIcon />
-            계획 먼저
+            빠르게
           </button>
         )}
         <div className="toolbar__end">

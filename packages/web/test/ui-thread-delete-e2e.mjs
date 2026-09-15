@@ -253,7 +253,7 @@ async function main() {
     );
     check(
       "the pane reads as no-thread-open, not as the deleted thread",
-      (await page.locator('textarea[placeholder^="기획서를 첨부하거나"]').count()) === 1,
+      (await page.locator('textarea[placeholder^="만들고 싶은 화면을"]').count()) === 1,
     );
     const saved = await page.evaluate(() => localStorage.getItem("colo-design.last-thread"));
     const pointers = Object.values(JSON.parse(saved ?? "{}"));

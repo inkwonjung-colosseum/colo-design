@@ -148,6 +148,7 @@ async function main() {
       30_000,
       "turn 1 settle",
     );
+    const turn2From = inbox.length;
     await request({
       type: "session.send",
       sessionId: first,
@@ -156,12 +157,20 @@ async function main() {
     await waitFor(
       () =>
         inbox.some(
-          (m) => m.type === "session.state" && m.sessionId === first && m.state === "idle",
+          (m, i) =>
+            i >= turn2From &&
+            m.type === "session.state" &&
+            m.sessionId === first &&
+            m.state === "idle",
         ),
       30_000,
       "turn 2 settle",
     );
-    check("two turns ran", true);
+    check(
+      "two turns ran",
+      inbox.filter((m) => m.type === "session.state" && m.sessionId === first && m.state === "idle")
+        .length === 2,
+    );
 
     // The checkpoint write rides the send asynchronously — poll for it.
     const checkpoints = await waitFor(

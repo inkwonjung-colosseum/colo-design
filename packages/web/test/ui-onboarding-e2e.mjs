@@ -4,7 +4,7 @@
  *
  * The daemon boots with no project at all, against a local fixture repo, so
  * the wizard blocks the workspace and the test drives the exact sequence a
- * 기획자 would: name a project, point it at a repo, and start. The machine
+ * 사용자 would: name a project, point it at a repo, and start. The machine
  * gates (Claude Code, git) are the ones this machine already passes.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)

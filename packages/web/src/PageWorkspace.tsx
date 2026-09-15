@@ -518,11 +518,11 @@ export function PageWorkspace({
           // D83 (2026-09-14 커미티 F-A2′ 로 갱신): 빈 대화의 placeholder 가
           // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
           // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
-          // (@files 태그 · /commands)는 기획자의 말로 벗겼다.
+          // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
           placeholder={
             sessions.activeId
               ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
-              : "기획서를 첨부하고 만들고 싶은 화면을 말해 보세요 (@로 파일, /로 명령)"
+              : "만들고 싶은 화면을 말해 보세요 — 기획서나 그림을 붙여도 돼요 (@로 파일, /로 명령)"
           }
           disabled={false}
           titleFor={titleFor}

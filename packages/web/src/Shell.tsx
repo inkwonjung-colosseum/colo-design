@@ -106,7 +106,7 @@ export function Shell({
   // 로그인 만료는 헤더의 경고 중 유일하게 앱 안에서 풀리는 것이다(리뷰 문서의
   // "시한폭탄"): 구독 로그인이 끊기면 대화가 크래시 카드로 죽고, 여기가 그 소식이
   // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
-  // 으로 지운다 — 터미널은 끝까지 기획자의 몫으로 남지 않는다.
+  // 으로 지운다 — 터미널은 끝까지 사용자의 몫으로 남지 않는다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
   /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
       새 문장은 새 소식이니 다시 보인다. 레포 경고(뉴스)만 예외로 기기에
@@ -431,7 +431,7 @@ export function Shell({
                 </span>
               </div>
               <p className="emptyhero__caption">
-                기획서를 첨부하면, 회사 디자인 시스템으로 짜인 화면이 이 자리에 뜹니다
+                말로 시켜도, 기획서를 붙여도 — 회사 디자인 시스템으로 짜인 화면이 이 자리에 떠납니다
               </p>
             </div>
             <h2 className="planner__emptyTitle">프로젝트 추가</h2>

@@ -1,7 +1,7 @@
 import type { DaemonNotice } from "@colo-design/daemon/server";
 
 /**
- * 알림 한 장의 문구. 기획자의 어휘만 나간다 — 도구 이름도, git 도 없다.
+ * 알림 한 장의 문구. 사용자의 어휘만 나간다 — 도구 이름도, git 도 없다.
  * 스레드 이름이 제목이 되고, 몸글은 창을 열면 무엇을 확인하게 되는지를
  * 한 문장으로 말한다. 데몬은 의미만 건넨다(DaemonNotice); 문장은 여기서 정한다.
  */

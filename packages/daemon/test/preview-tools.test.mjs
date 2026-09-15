@@ -110,7 +110,12 @@ test("screen_list answers the declared screens, reading the provider per call", 
 });
 
 test("screen_open hands route and state to the driver — state optional", async () => {
-  const driver = fakeDriver();
+  const opened = [];
+  const driver = fakeDriver({
+    open: (route, state) => {
+      opened.push([route, state]);
+    },
+  });
   const { client, close } = await openTools(createPreviewTools(driver, () => SCREENS));
   const named = await client.callTool({
     name: "screen_open",
@@ -121,7 +126,13 @@ test("screen_open hands route and state to the driver — state optional", async
     name: "screen_open",
     arguments: { route: "/pay/PayFailed" },
   });
-  assert.ok(textOf(unnamed).length > 0);
+  // state 를 생략하면 이전 상태를 물려주지 않는다 — 드라이버에는 null 이
+  // 내려가고(PLAN D61), 오류가 아니다.
+  assert.equal(unnamed.isError, undefined);
+  assert.deepEqual(opened, [
+    ["/pay/PayFailed", "오류"],
+    ["/pay/PayFailed", null],
+  ]);
   const missing = await client.callTool({ name: "screen_open", arguments: {} });
   assert.equal(missing.isError, true);
   await close();

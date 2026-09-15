@@ -56,6 +56,8 @@ export interface Sessions {
   setModel: (model: string | null) => Promise<void>;
   setEffort: (effort: EffortLevel | null) => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** 빠르게 — 이 대화에만 걸리는 자세라 설정에 남지 않는다. */
+  setFastMode: (fast: boolean) => Promise<void>;
   error: string | null;
   setError: (error: string | null) => void;
   /**
@@ -107,12 +109,7 @@ export interface Sessions {
    * a first send that opens one (핀으로 열리는 대화는 첫 핀의 화면 이름을
    * 얻는다, 재설계 C2/M5); an existing target ignores it.
    */
-  submit: (
-    text: string,
-    attachments: Attachment[],
-    planFirst?: boolean,
-    thread?: { name?: string },
-  ) => Promise<void>;
+  submit: (text: string, attachments: Attachment[], thread?: { name?: string }) => Promise<void>;
   /**
    * 계획 승인의 뒷정리: 데몬이 작업 모드로 되돌린 직후, 칩과 대화의 권한
    * 선택을 그 진실에 맞춘다. 계획만 세우기로 세워진 대화는 승인 한 번으로
@@ -575,29 +572,9 @@ export function useSessions(
     if (activeId) forgetDropped(activeId, itemId);
   };
 
-  /**
-   * 계획 먼저로 보낸 턴의 자리. 전송 때 기록해 턴이 끝난 뒤(아래 효과)
-   * 승인 없이 계획 모드가 남아 있으면 원래 자세로 되돌리는 데 쓴다.
-   */
-  const planTurn = useRef<string | null>(null);
-
-  const submit = async (
-    text: string,
-    attachments: Attachment[],
-    planFirst = false,
-    thread?: { name?: string },
-  ) => {
+  const submit = async (text: string, attachments: Attachment[], thread?: { name?: string }) => {
     try {
       const target = await targetSession(undefined, thread?.name);
-      if (planFirst) {
-        // 계획 먼저 (이번 턴 한정): 전송 전에 계획 자세로 들어가고, 승인되면
-        // 데몬이 작업 모드로 되돌린다. 승인 없이 턴이 끝나면 아래의 종료
-        // 정리가 원래 자세로 돌려 놓는다 — 계획 모드가 턴 밖에 남지 않게.
-        // 칩은 종료 정리가 남은 자세를 알아보게 로컬에도 새긴다.
-        await api.setPermissionMode(target, "plan");
-        setSelector((current) => (current ? { ...current, permissionMode: "plan" } : current));
-        planTurn.current = target;
-      }
       await api.send(
         target,
         text,
@@ -610,7 +587,6 @@ export function useSessions(
       );
       void refresh();
     } catch (e) {
-      planTurn.current = null;
       // PLAN D35: the composer keeps the words AND the attachments unless the
       // daemon accepted the turn. Its warning strip is also the ONE surface a
       // refused send speaks from — the banner would read the same news twice,
@@ -618,25 +594,6 @@ export function useSessions(
       throw e;
     }
   };
-
-  /**
-   * 계획 먼저로 보낸 턴이 승인 없이 끝났을 때의 복귀. 승인이 있었다면 데몬이
-   * 이미 되돌려 놓았으니 아무것도 하지 않는다 — 남아 있는 계획 모드만이
-   * 뒷정리의 대상이다.
-   */
-  useEffect(() => {
-    const target = planTurn.current;
-    if (!target || target !== activeId) return;
-    const state = active?.state;
-    if (state === "starting" || state === "running" || state === "waiting_permission") return;
-    if (state === "waiting_question") return;
-    planTurn.current = null;
-    if (selector?.permissionMode !== "plan") return;
-    setSelector((current) =>
-      current ? { ...current, permissionMode: chat.permissionMode } : current,
-    );
-    void api.setPermissionMode(target, chat.permissionMode).catch(() => undefined);
-  }, [activeId, active?.state, selector?.permissionMode, chat.permissionMode, api]);
 
   /** 계획 승인 직후: 데몬이 되돌린 작업 모드를 칩과 대화의 선택에 반영한다. */
   const afterPlanApproval = useCallback(() => {
@@ -771,6 +728,23 @@ export function useSessions(
     }
   };
 
+  /**
+   * 빠르게는 부탁이지 명령이 아니다: 눌린 자리를 먼저 그려 두되, 다음
+   * 메시지의 `fast_mode_state` 가 데몬을 통해 돌아오면 그 말이 이긴다.
+   * 요청 자체가 실패하면 눌리기 전으로 돌려놓는다.
+   */
+  const switchFastMode = async (fast: boolean) => {
+    if (!activeId) return;
+    const prev = selector?.fastMode ?? false;
+    setSelector((current) => (current ? { ...current, fastMode: fast } : current));
+    try {
+      await api.setFastMode(activeId, fast);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSelector((current) => (current ? { ...current, fastMode: prev } : current));
+    }
+  };
+
   return {
     activeId,
     list,
@@ -788,6 +762,11 @@ export function useSessions(
       model: chat.model,
       effort: chat.effort,
       permissionMode: chat.permissionMode,
+      // 빠르게는 세션이 태어날 때 꺼진 채 시작한다(SDK 의
+      // fastModePerSessionOptIn 과 같은 자세) — 설정에 남지 않으므로 세션이
+      // 없을 때의 답은 언제나 꺼짐이다.
+      fastMode: false,
+      fastModeBlocked: null,
       // Local cache first (it matches what this planner last saw), then the
       // daemon's own copy so a fresh browser still gets a real picker.
       models: catalog.length > 0 ? catalog : (daemon.status?.models ?? []),
@@ -796,6 +775,7 @@ export function useSessions(
     setModel: switchModel,
     setEffort: switchEffort,
     setPermissionMode: switchPermissionMode,
+    setFastMode: switchFastMode,
     remove,
     confirmRemove,
     cancelRemove,

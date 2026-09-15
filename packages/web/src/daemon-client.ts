@@ -505,6 +505,8 @@ interface DaemonApi {
   setModel: (sessionId: string, model: string | null) => Promise<unknown>;
   setEffort: (sessionId: string, effort: EffortLevel | null) => Promise<unknown>;
   setPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<unknown>;
+  /** 빠르게 — 같은 모델을 더 빠른 응답으로. 이 세션에만 걸린다. */
+  setFastMode: (sessionId: string, fast: boolean) => Promise<unknown>;
   /** @-mention autocomplete, over the connected repo's files. */
   findFiles: (query: string, limit?: number) => Promise<string[]>;
   closeSession: (sessionId: string) => Promise<unknown>;
@@ -1154,6 +1156,8 @@ export function useDaemon(url: string | null): Daemon {
         call({ type: "session.setEffort", sessionId, effort }),
       setPermissionMode: (sessionId: string, mode: PermissionMode) =>
         call({ type: "session.setPermissionMode", sessionId, mode }),
+      setFastMode: (sessionId: string, fast: boolean) =>
+        call({ type: "session.setFastMode", sessionId, fast }),
       respondPermission: (
         requestId: string,
         decision: "allow" | "allowAlways" | "deny",

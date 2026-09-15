@@ -399,7 +399,7 @@ async function main() {
       JSON.stringify(guardedProject.projects.map((project) => project.instructions)),
     );
     // 다시 열면 적어 둔 것이 그대로 있어야 한다 — 상자가 자기 값을 잊으면
-    // 기획자는 매번 처음부터 쓴다.
+    // 사용자는 매번 처음부터 쓴다.
     await guarded.locator(".node__menu-btn").click();
     await guarded.getByRole("menuitem", { name: "지켜 줄 것" }).click();
     check(

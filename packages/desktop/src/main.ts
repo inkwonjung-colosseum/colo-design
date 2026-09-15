@@ -61,7 +61,7 @@ let mainWindow: BrowserWindow | null = null;
 /** 알림 클릭이 창을 되살릴 수 있도록 — macOS 는 창이 없어도 앱이 산다. */
 let appUrl: string | null = null;
 /**
- * 창이 뒤에 있는 동안 도착한 기획자의 순간 수 — dock 배지로 세운다. mac 의
+ * 창이 뒤에 있는 동안 도착한 사용자의 순간 수 — dock 배지로 세운다. mac 의
  * 개념이므로 다른 플랫폼은 paint 가 조용히 건너뛴다.
  */
 let unreadNotices = 0;
@@ -141,7 +141,7 @@ const PIP_LONG_EDGE = 640;
  * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`,
  * 접근성 트리는 `Accessibility.getFullAXTree`, 클릭은 `Runtime.evaluate` 로
  * 찾은 rect 위에 `Input.dispatchMouseEvent`. 창은 화면에 뜨지 않는다 —
- * 보이는 창은 기획자의 것뿐이다.
+ * 보이는 창은 사용자의 것뿐이다.
  */
 class ElectronPreviewDriver implements PreviewDriver {
   private window: BrowserWindow | null = null;
@@ -345,6 +345,11 @@ if (process.env.COLO_DESIGN_DESKTOP_SMOKE) {
 }
 
 async function bootApp(): Promise<void> {
+  // Windows 토스트 알림은 시작 메뉴 바로 가기의 AUMID 로 귀속된다. NSIS 템플릿은
+  // 바로 가기에 appId 를 새기므로 같은 문자열을 여기서 직접 건다 — Squirrel 이
+  // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
+  // 유실시킨다. mac·linux 에서는 이 호출이 아무 일도 하지 않는다.
+  app.setAppUserModelId("org.colo-design.desktop");
   notificationPrefs = loadNotificationPrefs();
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
@@ -383,7 +388,7 @@ async function bootApp(): Promise<void> {
   appUrl = url;
 
   mainWindow = createMainWindow();
-  // 기획자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
+  // 사용자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
   const plannerPreview = new PlannerPreviewView(() => mainWindow);
   registerPreviewIpc(plannerPreview);
   // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
@@ -551,7 +556,7 @@ async function reopen(url: string): Promise<void> {
 }
 
 /**
- * 데몬이 건넨 기획자의 순간을 OS 알림으로 그린다. 창이 앞에 있으면 기획자가
+ * 데몬이 건넨 사용자의 순간을 OS 알림으로 그린다. 창이 앞에 있으면 사용자가
  * 이미 보고 있는 것이므로 조용히 한다. 클릭은 창을 앞으로, 그리고 그 대화로 —
  * 세션 아이디를 렌더러에 건네 열려는 대화를 알린다(리뷰 B7).
  */
@@ -625,7 +630,7 @@ app.on("before-quit", (event) => {
   guardStopUnderTurn(event, () => app.quit());
 });
 
-/** OS 알림 — 클릭 행동을 골라 단다(기획자 순간과 업데이트 알림이 함께 쓴다). */
+/** OS 알림 — 클릭 행동을 골라 단다(사용자 순간과 업데이트 알림이 함께 쓴다). */
 function showAppNotification(
   title: string,
   body: string,
@@ -784,7 +789,7 @@ async function maybeRunDeferredSelfUpdate(): Promise<void> {
 
 /**
  * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2[폴더 열기]). 숨긴
- * `~/.colo-design` 을 기획자가 찾아 헤매지 않게 앱이 열어 준다. 자격
+ * `~/.colo-design` 을 사용자가 찾아 헤매지 않게 앱이 열어 준다. 자격
  * 증명·토큰은 결코 건너가지 않는다.
  */
 function registerDesktopBridge(): void {

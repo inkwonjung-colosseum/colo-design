@@ -18,11 +18,9 @@ import {
 } from "./icons";
 import {
   type ChatSettings,
-  clearAcceptEditsMigrated,
   loadModelCatalog,
   type MidTurnSend,
   type NoticeTiming,
-  readAcceptEditsMigrated,
   SCALE_LEVELS,
   type Scale,
   type SendKey,
@@ -348,9 +346,6 @@ export function SettingsDialog({
       setInstallingUpdate(false);
     }
   };
-  /** acceptEdits→default 이사 공지 — 대화 상단에 한 번 뜨고, 고르면 사라진다. */
-  const [modeMoved, setModeMoved] = useState(readAcceptEditsMigrated);
-
   /** 테스트 알림 — 데스크톱은 메인이, 브라우저는 이 자리에서 보낸다. */
   const sendTestNotice = async () => {
     const bridge = window.coloDesignDesktop;
@@ -515,16 +510,13 @@ export function SettingsDialog({
                 value: mode,
                 label: MODE_LABEL[mode],
               }))}
-              onChange={(permissionMode) => {
-                clearAcceptEditsMigrated();
-                setModeMoved(false);
-                onChatChange({ permissionMode });
-              }}
+              onChange={(permissionMode) => onChatChange({ permissionMode })}
             />
-            {modeMoved && (
-              <div className="notice notice--info" role="status">
+            {settings.chat.permissionMode === "acceptEdits" && (
+              <div className="notice notice--warn">
                 <span className="notice__text">
-                  확인 방식을 Default로 옮겼습니다 — 화면 파일 편집은 그대로 조용히 진행됩니다.
+                  Accept Edits는 화면 파일 편집뿐 아니라 CLI가 안전하다고 본 명령까지 묻지 않고
+                  실행합니다. 편집만 조용하면 되면 Default를 고르세요.
                 </span>
               </div>
             )}
@@ -561,7 +553,7 @@ export function SettingsDialog({
               onChange={(followClaude) => onChatChange({ followClaude })}
             />
             {/* 작업 과정 보기: 기본은 꺼짐이다 — 생각 과정과 같은 이유다.
-                기획자가 읽어야 하는 것은 답이고, 도구 호출 묶음이 답과 답
+                사용자가 읽어야 하는 것은 답이고, 도구 호출 묶음이 답과 답
                 사이마다 끼면 대화가 기계의 작업 기록처럼 읽힌다. 읽고 싶은
                 사람에게는 여기서 돌려준다. 계획 카드와 캡처 카드는 이
                 스위치와 무관하게 언제나 자리를 지킨다(PLAN D48·D56). */}
@@ -571,7 +563,7 @@ export function SettingsDialog({
               checked={settings.chat.showTools}
               onChange={(showTools) => onChatChange({ showTools })}
             />
-            {/* 생각 과정 보기: 기본은 꺼짐이다. 기획자가 읽어야 하는 것은
+            {/* 생각 과정 보기: 기본은 꺼짐이다. 사용자가 읽어야 하는 것은
                 답이고, 답을 만드는 동안의 속말이 답과 답 사이마다 끼면
                 대화가 기계의 기록처럼 읽힌다. 읽고 싶은 사람에게는 여기서
                 돌려준다 — 켜면 접힌 채로 다시 자리를 잡는다. */}

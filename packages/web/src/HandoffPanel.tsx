@@ -245,7 +245,7 @@ export function HandoffPanel({
                   <textarea
                     className="handoff__body"
                     value={body}
-                    placeholder="예: 기획서의 목록·빈 상태·오류 상태를 만들었습니다."
+                    placeholder="예: 목록·빈 상태·오류 상태를 만들었습니다."
                     aria-label="넘길 내용"
                     disabled={running}
                     onChange={(e) => {

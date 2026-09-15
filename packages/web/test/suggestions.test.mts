@@ -17,7 +17,6 @@ test("a repo that declares nothing keeps the generic sentences", () => {
 test("the first declared screen names itself in the first chip", () => {
   const out = suggestionsFromScreens([screen("회원 관리"), screen("결제 목록")]);
   assert.equal(out[0], "「회원 관리」화면을 만들어 줘");
-  assert.ok(out.length >= 1);
 });
 
 test("a screen with a non-default state borrows the state sentence", () => {

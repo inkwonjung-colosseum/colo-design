@@ -1528,6 +1528,20 @@ select {
   line-height: 1.55;
   color: var(--text-2);
 }
+.md__mermaid {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+}
+.md__mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
 .md blockquote {
   margin: 0;
   padding: 2px 14px;
@@ -2644,10 +2658,11 @@ select {
   background: var(--panel-2);
   color: var(--text);
 }
-/* 계획 먼저 칩: 도구 행의 조용한 알약이고, 재웠을 때만 액센트를 입는다 —
-   켜진 상태가 곧 이번 턴의 자세다. 글자를 달았다(커미티 F-A2′): README 가
-   첫 행동으로 부르는 이름이 화면에도 보여야 한다. */
-.toolbar__plan {
+/* 빠르게 칩: 도구 행의 조용한 알약이고, 켰을 때만 액센트를 입는다 —
+   켜진 상태가 곧 이 대화의 속도다. 글자를 단 것은 아이콘만으로는 무엇이
+   빨라지는지 말할 수 없기 때문이다. 잠겼을 때(요금제·제공자가 막은 자리)는
+   다른 비활성 컨트롤과 같은 목소리로 물러난다. */
+.toolbar__fast {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2663,15 +2678,19 @@ select {
     color 0.12s,
     background 0.12s;
 }
-.toolbar__plan:hover:not(:disabled) {
+.toolbar__fast:hover:not(:disabled) {
   background: var(--panel-2);
   border-color: var(--line);
   color: var(--text);
 }
-.toolbar__plan--armed {
+.toolbar__fast--on {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
+}
+.toolbar__fast:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* 진행 시계 — 입력창 위 활동 줄에서 흐르는 초. 줄의 다른 말들(생각하는 중)
    과 같은 자리에서 같은 목소리로, 색은 눈금의 것(muted)이지 경고의 것이
@@ -3131,6 +3150,13 @@ select {
   object-fit: cover;
   border-radius: var(--r-sm);
   border: 1px solid var(--line);
+}
+/* 자세히 와 요청 복사 — the card's two ways back to the text that was sent. */
+.machine__actions {
+  display: flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 12px;
 }
 .machine__more {
   align-self: flex-start;
@@ -5239,8 +5265,9 @@ select {
   color: var(--muted);
 }
 
-/* 되감기 (PLAN D95): the answer's action row and the planner bubble's
-   고쳐서 다시 보내기. */
+/* 되감기 (PLAN D95): the answer's action row and the planner bubble's own —
+   요청 복사 and 고쳐서 다시 보내기. Both act on the sentence the planner
+   typed, so they share one row rather than stacking under it. */
 .answer__actions {
   display: flex;
   gap: 10px;
@@ -5249,10 +5276,15 @@ select {
 .bubble--user {
   position: relative;
 }
-.bubble__resend {
-  display: block;
+.bubble__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
   margin-top: 6px;
-  align-self: flex-start;
+  /* The bubble keeps the planner's line breaks; its action row must not. */
+  white-space: normal;
+}
+.bubble__act {
   padding: 0;
   border: 0;
   background: transparent;
@@ -5262,7 +5294,7 @@ select {
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.bubble__resend:hover {
+.bubble__act:hover {
   color: var(--text);
 }
 
@@ -7239,11 +7271,37 @@ select {
 /* 리뷰 B4/U4 — a settled turn's own waiting, read at a glance. Quiet on
    purpose: the planner should feel it as rhythm, not as another card. */
 .turndone {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
   margin: 6px 0 2px;
   font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
   text-align: center;
   user-select: none;
+}
+/* 전체 복사 — the duration line's quiet plus-one: no box of its own, only an
+   underline until the hover warms it the way the answer buttons warm. */
+.turndone__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.turndone__copy svg {
+  flex: none;
+}
+.turndone__copy:hover:not(:disabled) {
+  color: var(--text);
 }
 
 /* 확인 방식 카드 (온보딩, P0#4) ------------------------------------------------ */

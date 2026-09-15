@@ -9,11 +9,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Block } from "../src/daemon-client.ts";
-import { answerTurnNumbers, promptTotal } from "../src/turn-numbering.ts";
+import {
+  answerTurnNumbers,
+  lastAnswerPerTurn,
+  promptTotal,
+  turnAnswerText,
+} from "../src/turn-numbering.ts";
 
 const block = (type: Block["type"], id: string): Block => ({ type, id }) as unknown as Block;
 
-test("promptTotal: 기획자의 말과 기계 턴을 모두 센다", () => {
+const answer = (id: string, text: string): Block =>
+  ({ type: "text", id, text, agentId: null, streaming: false }) as unknown as Block;
+const turnDone = (id: string): Block =>
+  ({
+    type: "turn",
+    id,
+    subtype: "success",
+    isError: false,
+    costUsd: null,
+    durationMs: 60_000,
+    resultText: null,
+  }) as unknown as Block;
+const prompt = (id: string, text: string): Block =>
+  ({ type: "user", id, text, images: 0, files: [] }) as unknown as Block;
+
+test("promptTotal: 사용자의 말과 기계 턴을 모두 센다", () => {
   const blocks = [
     block("user", "u1"),
     block("text", "a1"),
@@ -74,4 +94,61 @@ test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지
   assert.equal(turns.has("s1"), false, "하위 작업의 말에는 턴 번호가 없다");
   assert.equal(turns.get("a1"), 1);
   assert.equal(turns.get("a2"), 2);
+});
+
+test("한 턴의 마지막 답 — 되돌리기 · 다시 요청은 그 자리에만 둔다", () => {
+  const blocks = [
+    block("user", "u1"),
+    block("text", "a1"),
+    block("tool", "t1"),
+    block("text", "a2"),
+    block("user", "u2"),
+    block("text", "a3"),
+  ];
+  const last = lastAnswerPerTurn(blocks);
+  assert.equal(last.get(1), "a2");
+  assert.equal(last.get(2), "a3");
+  assert.equal(last.get(3), undefined, "없는 턴의 마지막 답은 없다");
+});
+
+test("하위 작업의 말은 마지막 답 자리를 빼앗지 않는다", () => {
+  const subagentSay = { type: "text", id: "s1", agentId: "toolu_9" } as unknown as Block;
+  const blocks = [block("user", "u1"), subagentSay, block("text", "a1")];
+  assert.equal(lastAnswerPerTurn(blocks).get(1), "a1");
+});
+
+test("턴이 낸 답의 전문 — 조각을 빈 줄로 이어 붙여 한 번에 복사한다", () => {
+  const blocks = [
+    prompt("u1", "고쳐 줘"),
+    answer("a1", "이제 타입 검사를 돌립니다"),
+    block("tool", "t1"),
+    answer("a2", "고쳤습니다"),
+    turnDone("turn1"),
+    prompt("u2", "또 고쳐 줘"),
+    answer("a3", "두 번째 답"),
+    turnDone("turn2"),
+  ];
+  const whole = turnAnswerText(blocks);
+  assert.equal(whole.get("turn1"), "이제 타입 검사를 돌립니다\n\n고쳤습니다");
+  assert.equal(whole.get("turn2"), "두 번째 답");
+});
+
+test("답 없이 끝난 턴과 하위 작업의 말은 전문에 들지 않는다", () => {
+  const subagentSay = {
+    type: "text",
+    id: "s1",
+    text: "수다",
+    agentId: "toolu_9",
+  } as unknown as Block;
+  const blocks = [
+    prompt("u1", "첫 요청"),
+    subagentSay,
+    turnDone("turn1"), // 답 없이 끝난 턴
+    prompt("u2", "둘째 요청"),
+    answer("a2", "답"),
+    turnDone("turn2"),
+  ];
+  const whole = turnAnswerText(blocks);
+  assert.equal(whole.has("turn1"), false);
+  assert.equal(whole.get("turn2"), "답");
 });

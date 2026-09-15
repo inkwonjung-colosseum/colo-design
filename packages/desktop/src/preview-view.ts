@@ -8,7 +8,7 @@ import type {
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 
 /**
- * 기획자의 미리보기 뷰 (PLAN D64 — D60 개봉). The planner's preview pane is
+ * 사용자의 미리보기 뷰 (PLAN D64 — D60 개봉). The planner's preview pane is
  * the app's own browser view: a `WebContentsView` laid over the web UI's
  * stage slot, so the address · history · errors · the comment-pin overlay
  * (D67, in the preload) are the tool's, not the connected repo's.

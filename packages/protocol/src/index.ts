@@ -18,7 +18,7 @@ import { z } from "zod";
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 // ---------------------------------------------------------------------------
 // Shared enums
@@ -196,6 +196,13 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.setPermissionMode"),
     sessionId: z.string().min(1),
     mode: permissionModeSchema,
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("session.setFastMode"),
+    sessionId: z.string().min(1),
+    /** 빠르게: 같은 모델을 더 빠른 응답으로 돌린다. 세션의 자세다. */
+    fast: z.boolean(),
   }),
   z.object({
     ...withId,
@@ -1119,6 +1126,11 @@ export interface SessionModelInfo {
   supportsEffort: boolean;
   /** `null` when the row does not say — then offer every level. */
   supportedEffortLevels: EffortLevel[] | null;
+  /**
+   * 이 모델이 빠르게를 받는지. 받지 않는 모델 위에서는 토글이 눌리지 않는다
+   * — 켤 수 없는 스위치를 켜 보이는 것이 이 줄이 막는 거짓말이다.
+   */
+  supportsFastMode: boolean;
 }
 
 /** What the composer's model·노력·권한 chips show and switch, per session. */
@@ -1127,6 +1139,17 @@ export interface SessionSelectors {
   model: string | null;
   effort: EffortLevel | null;
   permissionMode: PermissionMode;
+  /**
+   * 빠르게가 지금 켜져 있는지. CLI 가 말해 준 상태이지 우리가 보낸 요청이
+   * 아니다 — 요금제·모델·쿨다운 때문에 켜 달라는 부탁이 거절될 수 있고,
+   * 그때 토글은 스스로 꺼진 자리로 돌아온다.
+   */
+  fastMode: boolean;
+  /**
+   * 왜 빠르게를 지금 쓸 수 없는지. `null` 이면 막는 것이 없다 — CLI 의
+   * `fast_mode_disabled_reason` 을 그대로 나른다.
+   */
+  fastModeBlocked: string | null;
   models: SessionModelInfo[];
 }
 

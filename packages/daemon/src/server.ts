@@ -163,8 +163,8 @@ export type DaemonNotice =
 
 /**
  * 상태 전환 중 부르는 값이 되는 것: Claude 가 멈췄거나(idle), 중단됐거나
- * (error), 기획자의 답을 기다리거나(waiting_*). starting 과 running 은
- * 기획자가 방금 본 것이고 closed 는 스스로 닫은 것이다.
+ * (error), 사용자의 답을 기다리거나(waiting_*). starting 과 running 은
+ * 사용자가 방금 본 것이고 closed 는 스스로 닫은 것이다.
  */
 function noticeForState(
   sessionId: string,
@@ -207,7 +207,7 @@ export interface DaemonConfig {
   /** Credential store; the desktop app injects its safeStorage-backed one. */
   credentialStore?: CredentialStore;
   /**
-   * 기획자가 돌아와야 하는 순간의 갈고리 — 턴이 끝났을 때, Claude 가 확인을
+   * 사용자가 돌아와야 하는 순간의 갈고리 — 턴이 끝났을 때, Claude 가 확인을
    * 기다릴 때, 게이트가 실패했을 때. 데몬은 의미만 건넨다; 그것을 OS 알림으로
    * 그릴지는 받는 쪽(데스크톱 앱)의 몫이므로, 브라우저 개발 경로는 이 갈고리
    * 없이도 온전하다.
@@ -1626,6 +1626,10 @@ export class DaemonServer {
 
       case "session.setPermissionMode":
         await this.manager.require(message.sessionId).setPermissionMode(message.mode);
+        return { ok: true };
+
+      case "session.setFastMode":
+        await this.manager.require(message.sessionId).setFastMode(message.fast);
         return { ok: true };
 
       case "session.selectors": {

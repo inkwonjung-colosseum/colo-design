@@ -148,7 +148,7 @@ async function main() {
   // tape-visibility), 꺼져 있으면 도구 호출 묶음은 그룹으로 묶이기 전에
   // 걸러져 접힌 활동 줄 자체가 테이프에 없다 — 5단계가 읽는 것이 바로 그
   // 줄이다. 기본값 쪽의 계약(꺼져 있으면 보이지 않는다)은 오프라인
-  // ui-settings-e2e 가 지키므로, 여기서는 켠 기획자의 테이프를 본다.
+  // ui-settings-e2e 가 지키므로, 여기서는 켠 사용자의 테이프를 본다.
   await page.addInitScript(() => {
     const key = "colo-design.settings";
     let stored = {};
@@ -173,7 +173,7 @@ async function main() {
   if (await progress.count()) {
     check("bootstrap reports what it is doing", true, await progress.first().innerText());
   }
-  await page.waitForSelector(".preview", { timeout: 600000 });
+  await page.waitForSelector(".preview", { timeout: 300000 });
   check("the connected repo reaches a ready preview", true);
 
   // The repo's own preview app — not the tool's — renders inside the iframe.
@@ -233,7 +233,7 @@ async function main() {
   let answered = 0;
   let approved = 0;
   const screensReady = () => generatedScreens(WORK_ROOT).length > 0;
-  for (const deadline = Date.now() + 900000; Date.now() < deadline; ) {
+  for (const deadline = Date.now() + 420000; Date.now() < deadline; ) {
     if (await screensReady()) break;
     if (await page.locator(".card--question").count()) {
       const questions = page.locator(".card--question .question");
@@ -252,10 +252,11 @@ async function main() {
     }
     await page.waitForTimeout(5000);
   }
-  if (answered > 0)
-    check("clarifying questions can be answered from the card", true, `${answered} card(s)`);
-  if (approved > 0)
-    check("permission cards can be approved from the card", true, `${approved} card(s)`);
+  check(
+    "question or permission cards are exercised at least once",
+    answered + approved > 0,
+    `answered=${answered} approved=${approved}`,
+  );
   const written = generatedScreens(WORK_ROOT);
   check(
     "Claude wrote screen files inside the connected repo",
@@ -266,14 +267,10 @@ async function main() {
   // --- 7. the turn settles, and the preview is still the repo's ----------
   await page.waitForSelector(".toolbar__stop", {
     state: "detached",
-    timeout: 900000,
+    timeout: 120000,
   });
   const settled = generatedScreens(WORK_ROOT);
-  check(
-    "the turn ends with every planned screen written",
-    settled.length >= written.length,
-    settled.join(", "),
-  );
+  check("the turn ends with every planned screen written", settled.length >= 2, settled.join(", "));
   check(
     "the repo's preview still serves after the turn",
     (await page.locator(".preview__frame").getAttribute("src")) ===

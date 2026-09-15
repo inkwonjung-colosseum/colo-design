@@ -81,6 +81,19 @@ async function main() {
     const window = await app.firstWindow();
     check("a window opens", Boolean(window));
 
+    // Windows 알림은 프로세스 AUMID 가 NSIS 바로 가기에 새겨진 appId 와 같아야
+    // 유실되지 않는다(main.ts 의 setAppUserModelId) — 어긋나면 토스트도, Windows
+    // 설정 → 알림 목록의 앱 등록도 조용히 사라진다. 게터는 win32 에만 있어서
+    // 다른 플랫폼에서는 이 단서가 그냥 지나간다.
+    const appUserModelId = await app.evaluate(({ app }) =>
+      typeof app.getAppUserModelId === "function" ? app.getAppUserModelId() : null,
+    );
+    check(
+      "the process AppUserModelId matches the electron-builder appId",
+      appUserModelId === null || appUserModelId === "org.colo-design.desktop",
+      appUserModelId === null ? "no getter off-windows" : appUserModelId,
+    );
+
     // 첫 창은 화면 작업 영역을 채운다 — 고정 크기는 큰 모니터에서 조그맣다.
     const [bounds, workArea] = await app.evaluate(({ BrowserWindow, screen }) => {
       const display = screen.getPrimaryDisplay();

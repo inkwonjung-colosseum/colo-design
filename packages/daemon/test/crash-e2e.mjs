@@ -165,8 +165,7 @@ async function main() {
     );
     check(
       "the crash card carries the raw detail below the Korean lead",
-      crashNotice.event.text.includes("exited with code") ||
-        crashNotice.event.text.split("\n").length > 1,
+      crashNotice.event.text.split("\n").filter(Boolean).length >= 2,
       crashNotice.event.text.split("\n").at(-1) ?? "",
     );
     await waitFor(
