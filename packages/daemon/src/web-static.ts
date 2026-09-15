@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, type Stats, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join } from "node:path";
+import { containsPath } from "./paths.js";
 
 /**
  * 데스크톱이 웹 UI 를 따로 띄우지 않는 이유 (DESIGN §7): 데몬이 지어진 번들을
@@ -30,7 +31,18 @@ export function serveWeb(root: string, req: IncomingMessage, res: ServerResponse
   let candidate = requested === "/" ? "index.html" : requested.slice(1);
   candidate = candidate.split("%2e%2e").join("..");
   const file = join(root, candidate);
-  if (!file.startsWith(root) || !existsSync(file) || statSync(file).isDirectory()) {
+  // 봉쇄는 파일시스템이 결정한다 (paths.ts): 어휘적 접두사 비교는 이름이
+  // 루트를 연장하는 형제(`web-dist-evil`)를 안쪽으로 읽고, 안쪽에 놓인
+  // 심볼릭 링크가 바깥을 가리키는 것을 못 본다 — 두 방향 다 틀린 답이었다.
+  let stat: Stats | null = null;
+  if (containsPath(root, file)) {
+    try {
+      stat = statSync(file);
+    } catch {
+      stat = null; // 없는 파일·읽을 수 없는 파일 모두 SPA fallback 으로
+    }
+  }
+  if (!stat || stat.isDirectory()) {
     // SPA fallback: /anything is the app.
     const index = join(root, "index.html");
     if (!existsSync(index)) {

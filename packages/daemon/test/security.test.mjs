@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { containsPath, realpathBestEffort } from "../dist/paths.js";
 import { PermissionMemory, permissionSignature } from "../dist/session.js";
+import { serveWeb } from "../dist/web-static.js";
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -251,6 +252,85 @@ test("an open merge lets the conflict card's git commit through; push never", as
     );
     assert.equal(push.behavior, "deny");
     assert.match(push.message, /저장 버튼/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// serveWeb containment — the static host answers unauthenticated requests, so
+// its traversal check is the whole boundary. The old lexical `startsWith`
+// read a prefix-named sibling (`web-evil` next to `web`) as inside, and a
+// symlink planted inside pointing out as inside too.
+// ---------------------------------------------------------------------------
+
+function fakeRes() {
+  const res = {
+    status: 0,
+    body: undefined,
+    writeHead(code) {
+      res.status = code;
+      return res;
+    },
+    end(body) {
+      res.body = body;
+    },
+  };
+  return res;
+}
+
+function served(root, url) {
+  const res = fakeRes();
+  serveWeb(root, { url }, res);
+  return res;
+}
+
+test("serveWeb serves files under root and falls back for unknown paths", async () => {
+  const dir = workdir("hub-web-");
+  try {
+    mkdirSync(join(dir, "web"), { recursive: true });
+    writeFileSync(join(dir, "web", "index.html"), "<html>app</html>");
+    writeFileSync(join(dir, "web", "app.js"), "console.log(1)");
+    const page = served(join(dir, "web"), "/app.js");
+    assert.equal(page.status, 200);
+    assert.equal(String(page.body), "console.log(1)");
+    // SPA fallback: an unknown route is the app, not an error.
+    const spa = served(join(dir, "web"), "/some/route");
+    assert.equal(spa.status, 200);
+    assert.equal(String(spa.body), "<html>app</html>");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("serveWeb: a prefix-named sibling is outside, not inside", async () => {
+  const dir = workdir("hub-web-");
+  try {
+    mkdirSync(join(dir, "web"), { recursive: true });
+    mkdirSync(join(dir, "web-evil"), { recursive: true });
+    writeFileSync(join(dir, "web", "index.html"), "<html>app</html>");
+    writeFileSync(join(dir, "web-evil", "secret.txt"), "leak me");
+    // Lexical check passed: "/x/web-evil/…" starts with "/x/web". The
+    // filesystem check refuses it.
+    for (const url of ["/../web-evil/secret.txt", "/%2e%2e/web-evil/secret.txt"]) {
+      const res = served(join(dir, "web"), url);
+      assert.equal(res.status, 200, url);
+      assert.equal(String(res.body), "<html>app</html>", `${url} must not leak the sibling`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("serveWeb: a symlink inside pointing out is outside too", async () => {
+  const dir = workdir("hub-web-");
+  try {
+    mkdirSync(join(dir, "web"), { recursive: true });
+    writeFileSync(join(dir, "web", "index.html"), "<html>app</html>");
+    writeFileSync(join(dir, "secret.txt"), "leak me");
+    symlinkSync(join(dir, "secret.txt"), join(dir, "web", "leak.txt"));
+    const res = served(join(dir, "web"), "/leak.txt");
+    assert.equal(String(res.body), "<html>app</html>");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
