@@ -92,23 +92,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.send"),
     sessionId: z.string().min(1),
     text: z.string(),
-    /** Optional base64 image attachments. */
+    /** Optional base64 image attachments — pasted or dropped pictures. */
     images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
-    /**
-     * Planning documents. The daemon saves each one under `<cwd>/specs/` and
-     * appends an `@specs/<name>` reference to the prompt, so Claude reads it
-     * with its own Read tool (which handles PDF page ranges and image
-     * downscaling) instead of receiving the bytes inline.
-     */
-    files: z
-      .array(
-        z.object({
-          name: z.string().min(1),
-          mediaType: z.string().min(1),
-          data: z.string().min(1),
-        }),
-      )
-      .optional(),
   }),
   z.object({
     ...withId,
@@ -447,11 +432,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    */
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
-   * 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로 — 클론의 `specs/` 아래로
-   * 검증해서 돌려준다. 렌더러는 이 경로를 데스크톱 셸에만 넘긴다.
-   */
-  z.object({ ...withId, type: z.literal("repo.specPath"), path: z.string().min(1).max(500) }),
-  /**
    * 저장 검토의 요약 한 번 (PLAN D51). The daemon asks Claude one turn — no
    * tools, a 3-second leash — to say what changed in planner's words, and
    * falls back to grouping the changed paths when that cannot land. Cached
@@ -713,28 +693,24 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 /**
  * One send waiting in the daemon's wait room (PLAN D86), as the composer's
- * list shows it: the planner's own words, plus how much rode along. `files`
- * holds the names the planner attached, not the `specs/` paths — nothing is
- * on disk until delivery.
+ * list shows it: the planner's own words, plus how many pictures rode along.
  */
 export interface QueuedSend {
   id: string;
   text: string;
   images: number;
-  files: string[];
 }
 
 /**
  * One send the wait room lost without delivering (the query died, the daemon
  * was restarted under it). The words survive on the daemon's disk; the
- * attachments survive too unless they exceeded the persist cap, where
+ * pictures survive too unless they exceeded the persist cap, where
  * `truncated` says the composer must ask for them again.
  */
 export interface LostSend {
   id: string;
   text: string;
   images: number;
-  files: string[];
   truncated?: boolean;
   /** Epoch ms — when the room lost it. The 30-day prune reads this. */
   lostAt: number;
@@ -748,7 +724,6 @@ export interface LostSend {
 export type QueuedSendPayload = {
   text: string;
   images: Array<{ mediaType: string; data: string }>;
-  files: Array<{ name: string; mediaType: string; data: string }>;
 } | null;
 
 export type ChatEvent =
@@ -790,7 +765,6 @@ export type ChatEvent =
       agentId: string | null;
     }
   /**
-   * `files` holds `specs/` paths of documents that rode along with the turn.
    * `thumbs` (D87) holds the JPEG crops the view took of the pinned elements,
    * capped at six — live-only echoes the chat card draws as thumbnails; a
    * replayed transcript keeps the words, not the bytes.
@@ -799,7 +773,6 @@ export type ChatEvent =
       kind: "user.echo";
       text: string;
       images: number;
-      files: string[];
       thumbs?: string[];
     }
   | {
@@ -1246,7 +1219,14 @@ export interface HandoffShot {
   /** The state the screen was captured in, as the repo declared it. */
   state: string;
   /** The capture's bytes; `Buffer` on the daemon side, `Uint8Array` here. */
-  png: Uint8Array;
+  image: Uint8Array;
+  /**
+   * The extension the bytes really are, leading dot included (`.webp`). The
+   * driver picks the encoder, so the committed file must be named after what
+   * it holds — a capture written as `.png` while holding something else is a
+   * file browsers only render by sniffing.
+   */
+  extension: string;
 }
 
 export type RepoErrorKind =
@@ -1490,27 +1470,20 @@ export interface SessionRewound {
 
 /**
  * One screen the connected repo declares, as its overlay reports it (PLAN D7).
- * `spec` is the `specs/` file name of the 기획서 the screen was built from —
- * an attachment that rode along with a chat turn, committed beside the screen.
- * The repo names the file it was built from; the tool never resolves it
- * further. A repo that had to carry global document ids would break when the
- * documents move; a file name beside the screen cannot.
+ * The repo names what it can render; the tool never parses its code.
  */
 export interface ColoDesignScreen {
   /** Route the preview app serves it at, e.g. `/member/MemberList`. */
   route: string;
-  /** What the 기획서 calls it. */
+  /** What the screen is called, in the planner's words. */
   title: string;
   /** `?state=` variants this screen actually implements. */
   states: string[];
-  /** The 기획서 this screen was built from, or null when it names none. */
-  spec: string | null;
 }
 
 /**
  * What the preview app posts on load: everything it can render. The tool never
- * parses the repo's code, so this is the only way it can offer a screen picker
- * — and the only reason the screen list can mark what was built from what.
+ * parses the repo's code, so this is the only way it can offer a screen picker.
  */
 export interface ColoDesignScreensEnvelope {
   type: "colo-design.screens";

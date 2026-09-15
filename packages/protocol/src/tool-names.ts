@@ -21,14 +21,18 @@ const NAMES: Record<string, string> = {
   Task: "보조 작업",
   AskUserQuestion: "질문",
   ExitPlanMode: "계획 승인",
-  // 화면 세션의 colo-preview 도구들(PLAN D61): 여섯 모두 대화에서는 하나의
-  // 동작으로 읽힌다 — "화면 보기". 실제 이름은 `mcp__colo-preview__screen_*`
-  // 로 오므로 toolLabel 이 접두를 떼고 찾는다.
+  // 화면 세션의 colo-preview 도구들(PLAN D61): 전부 대화에서는 하나의 동작으로
+  // 읽힌다 — "화면 보기". 실제 이름은 `mcp__colo-preview__screen_*` 로 오므로
+  // toolLabel 이 접두를 떼고 찾는다.
   screen_list: "화면 보기",
   screen_open: "화면 보기",
   screen_screenshot: "화면 보기",
   screen_read: "화면 보기",
   screen_click: "화면 보기",
+  screen_type: "화면 보기",
+  screen_press: "화면 보기",
+  screen_scroll: "화면 보기",
+  screen_hover: "화면 보기",
   screen_console: "화면 보기",
 };
 

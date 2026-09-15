@@ -3,9 +3,9 @@
  * (PLAN D9).
  *
  * Some turns in a planner's chat are not typed by the planner: a bundle of
- * comment pins, the brief that opens a 화면 thread, a 기획서 comparison, a
- * failed gate handed back to Claude, a preview error the planner asked
- * Claude to fix. Their text is written for Claude — CSS
+ * comment pins, the brief that opens a 화면 thread, a failed gate handed back
+ * to Claude, a preview error the planner asked Claude to fix. Their text is
+ * written for Claude — CSS
  * paths, file paths, command output — and a planner reading their own chat
  * should not meet any of it.
  *
@@ -100,11 +100,11 @@ export function alignThumbs(items: CommentMarkerItem[], thumbs?: string[]): Arra
 
 export interface BriefMarker {
   kind: "brief";
-  /** The 기획서 title, as the tree shows it. */
+  /** The thread's title, as the tree shows it. */
   title: string;
   /**
    * D94: the connection-preparation brief — the card reads 연결 준비 instead
-   * of the 기획서 wording. "refresh" reads 최신 변경 받아오기: the record a
+   * of the 화면 만들기 wording. "refresh" reads 최신 변경 받아오기: the record a
    * 최신화 leaves when it actually merged the developer's base.
    */
   purpose?: "bootstrap" | "refresh" | "conventions";

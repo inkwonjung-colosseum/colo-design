@@ -24,6 +24,10 @@ export interface LatestFeed {
   url?: string;
   /** mac zip 의 sha256(자가 교체 검증용), 선택. */
   sha256?: string;
+  /** Windows NSIS 설치 파일의 url, 선택. */
+  winUrl?: string;
+  /** Windows NSIS 설치 파일의 sha256(자가 교체 검증용), 선택. */
+  winSha256?: string;
 }
 
 export interface UpdateCheckResult {
@@ -36,6 +40,10 @@ export interface UpdateCheckResult {
    * 돌려준다). 피드에 없으면 null 이고 그때는 설치를 제안하지 않는다.
    */
   sha256: string | null;
+  /** Windows NSIS 설치 파일의 url — win32 자가 교체가 내려받는다. */
+  winUrl: string | null;
+  /** 그 설치 파일의 sha256 — 없으면 Windows 에서는 설치를 제안하지 않는다. */
+  winSha256: string | null;
 }
 
 /**
@@ -88,6 +96,8 @@ export async function fetchLatest(feedUrl: string, fetchLike: FetchLike): Promis
     notes: typeof parsed.notes === "string" ? parsed.notes : undefined,
     url: typeof parsed.url === "string" ? parsed.url : undefined,
     sha256: typeof parsed.sha256 === "string" ? parsed.sha256 : undefined,
+    winUrl: typeof parsed.winUrl === "string" ? parsed.winUrl : undefined,
+    winSha256: typeof parsed.winSha256 === "string" ? parsed.winSha256 : undefined,
   };
 }
 
@@ -104,5 +114,7 @@ export async function checkForUpdate(
     notes: latest.notes ?? null,
     url: latest.url ?? null,
     sha256: latest.sha256 ?? null,
+    winUrl: latest.winUrl ?? null,
+    winSha256: latest.winSha256 ?? null,
   };
 }
