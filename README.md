@@ -722,7 +722,10 @@ pnpm --filter @colo-design/desktop dist
 인증서가 없는 기계·러너는 진짜 ad-hoc 으로 짓는다:
 `pnpm --filter @colo-design/desktop exec electron-builder -c.mac.identity=-`. 둘 다
 UNNotification 이 받아들이며, 차이는 cdhash 의 안정성이다 — ad-hoc 은 빌드마다 값이
-바뀌어 업데이트할 때마다 키체인(Safe Storage) 허용을 다시 묻는다. 공증은 없다.
+바뀌어 업데이트할 때마다 키체인(Safe Storage) 허용을 다시 묻는다. **릴리스 CI 는
+언제나 ad-hoc 으로 짓는다**: 인증서를 시크릿으로 두던 길은 p12 암호가 어긋나면
+릴리스 전체를 막았고(v0.3.8), 그 한 번의 키체인 허용이 막힌 릴리스보다 싸다.
+공증은 없다.
 `codesign -v` 가 깨끗하고, 패키징된 바이너리가 dev 와 같은 스모크를 통과한다.
 Windows 대상(NSIS, MinGit 동반)은 CI 가 릴리스마다 빌드한다. mac 자가 업데이트(zip
 내려받기 → sha256 → `/Applications/Colo Design.app` 교체)는 `app.isPackaged` 가드

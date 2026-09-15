@@ -20,9 +20,9 @@
 # 공증은 없다(사내 배포) — Gatekeeper·SmartScreen 우회 안내는 릴리스 노트가
 # 담당한다. 서명은 mac 에서 필수다: Electron 44 의 UNNotification 은 서명되지
 # 않은(=linker-signed) 앱의 알림을 거절하고, 그 거절은 사용자에게 "알림이 안
-# 온다"로만 보인다. 아래 mac 빌드 스텝이 인증서 시크릿이 있으면 그것으로,
-# 없으면 ad-hoc 로 서명하며, 서명이 없는 산출물은 electron-builder 의
-# forceCodeSigning 이 실패로 막는다.
+# 온다"로만 보인다. 그래서 mac 빌드는 언제나 ad-hoc(`-`) 로 서명한다 — 알림은
+# 동작하고, 대신 업데이트할 때마다 키체인 허용을 한 번 다시 묻는다. 서명이
+# 빠진 산출물은 electron-builder 의 forceCodeSigning 이 실패로 막는다.
 name: desktop-release
 
 on:
@@ -116,25 +116,14 @@ jobs:
       # 대상(target)·아키텍처는 electron-builder.yml 이 정한다: mac dmg+zip
       # (arm64), win nsis(x64). 릴리스 업로드는 publish 잡이 단독으로 한다.
       #
-      # mac 은 서명 없이는 알림이 죽는다(위 헤더). 두 길 중 하나로만 지어진다:
-      #   MAC_CSC_LINK(base64 p12) + MAC_CSC_KEY_PASSWORD 가 있으면 그 인증서로
-      #     — electron-builder 가 임시 키체인에 넣고 yml 의 identity 로 찾는다.
-      #     cdhash 가 안정적이라 업데이트해도 키체인 허용을 다시 묻지 않는다.
-      #   없으면 진짜 ad-hoc(`-`) 로. 알림은 살지만 업데이트마다 키체인 허용을
-      #     다시 묻는다 — 그래서 경고를 남긴다.
-      # 어느 길이든 서명이 빠지면 forceCodeSigning 이 빌드를 실패시킨다.
+      # mac 은 서명 없이는 알림이 죽는다(위 헤더). 서명은 언제나 ad-hoc(`-`)
+      # 이다: 인증서 시크릿을 두던 길은 p12 암호 하나가 어긋나면 릴리스 전체를
+      # 막았고(v0.3.8 의 두 번), 그 대가로 얻는 것은 "업데이트마다 키체인 허용을
+      # 다시 묻지 않는다" 하나뿐이었다. 사내 배포에서 그 한 번의 허용은 릴리스가
+      # 막히는 것보다 싸다. 서명이 빠지면 forceCodeSigning 이 빌드를 실패시킨다.
       - name: 설치 파일 빌드 (macOS)
         if: runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            pnpm --filter @colo-design/desktop exec electron-builder --publish never
-          else
-            echo "::warning::mac 서명 인증서 시크릿(MAC_CSC_LINK)이 없어 ad-hoc 로 서명합니다 — 알림은 동작하지만 업데이트마다 키체인 허용을 다시 묻습니다."
-            pnpm --filter @colo-design/desktop exec electron-builder --publish never -c.mac.identity=-
-          fi
+        run: pnpm --filter @colo-design/desktop exec electron-builder --publish never -c.mac.identity=-
 
       - name: 설치 파일 빌드 (Windows)
         if: runner.os == 'Windows'
