@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
+  type ModelInfo,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
   query,
   type SDKControlGetUsageResponse,
   type SDKUserMessage,
+  type SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskQuestion,
@@ -1205,7 +1207,23 @@ export class Session {
 
   /** Widening past `default` is the planner's own explicit choice here. */
   async setPermissionMode(mode: PermissionMode): Promise<void> {
-    await this.run.setPermissionMode(mode);
+    // 갓 살아난 CLI 는 제어 요청을 받아들일 준비가 늦는다 — 방금 만들거나
+    // 되살린 대화의 첫 칩(계획 먼저)이 부팅 창에 부딪히면 계획자는 자기가
+    // 누른 칩이 오류 밴드로 돌아오는 것을 받는다. "준비 안 됨"은 거절이
+    // 아니라 아직이라는 뜻이니, 묻는 것을 잠시 뒤로 미룬다.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await this.run.setPermissionMode(mode);
+        break;
+      } catch (e) {
+        if (attempt >= 5 || !/not ready/i.test(e instanceof Error ? e.message : String(e))) {
+          throw e;
+        }
+        const backoff = Promise.withResolvers<void>();
+        setTimeout(backoff.resolve, 300 * attempt);
+        await backoff.promise;
+      }
+    }
     // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
     // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
     // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
@@ -1237,7 +1255,20 @@ export class Session {
 
   /** Everything the composer's chips display, plus the model picker rows. */
   async selectors(): Promise<SessionSelectors> {
-    const models = await this.run.supportedModels();
+    // 죽은 질의가 칩 새로고침을 채팅의 오류 밴드로 만들지 않는다 — "Query
+    // closed" 가 send 에 이어 selectors 에서도 같은 버선을 넘던 집안(리뷰
+    // C1·C3). 칩이 보여 주는 줄 대부분은 세션 필드라 질의 없이도 살아
+    // 있고, 모형 목록은 빈 채 돌려 화면이 기억한 카탈로그를 유지하게 한다.
+    let models: ModelInfo[] = [];
+    if (this.sendable) {
+      // 죽은 질의의 SDK 메서드는 거절이 아니라 동기 throw 로 답하는 수가
+      // 있다 — .catch 는 붙지 못하니 try 로 감싼다.
+      try {
+        models = (await this.run.supportedModels()) ?? [];
+      } catch {
+        models = [];
+      }
+    }
     return {
       model: this.selectedModel ?? this.model,
       effort: this.selectedEffort,
@@ -1255,7 +1286,16 @@ export class Session {
 
   /** The composer's /command palette: names, descriptions, argument hints. */
   async commands(): Promise<SessionCommand[]> {
-    const commands = await this.run.supportedCommands();
+    // selectors 와 같은 손: 죽은 질의의 팔레트는 비워 두고, 칩은 밴드 대신
+    // 제 자리를 지킨다.
+    let commands: SlashCommand[] = [];
+    if (this.sendable) {
+      try {
+        commands = (await this.run.supportedCommands()) ?? [];
+      } catch {
+        commands = [];
+      }
+    }
     return commands.map((command) => ({
       name: command.name,
       description: command.description,
