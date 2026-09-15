@@ -1,18 +1,25 @@
 /**
  * Parallel test runner — the same suites as `test:sequential`, grouped into
- * four lanes that share no resources while running:
- *   L1 unit + app    — `node --test` suites and the two Electron app
- *                      suites (comments, smoke); every port is a free port
+ * five lanes that share no resources while running:
+ *   L1 unit          — `node --test` suites; no port, no window, no display
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
  *                      5402 sidebar, 5403 midturn-send) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns
+ *   L5 electron      — the Electron app suites; they take the app's
+ *                      single-instance lock in turn, so they are one lane
+ *
+ * Every lane reads `dist/`, so the runner builds ONCE up front and hands the
+ * lanes `COLO_TEST_SKIP_BUILD=1`. Before that, four Electron suites each ran
+ * `pnpm build` themselves — minutes of repeated compiling, and worse, `tsc`
+ * rewriting `packages/daemon/dist` WHILE L2 and L3 imported it (three L2
+ * suites once died mid-run on a half-written module, green on a rerun).
  *
  * Usage: node scripts/test-parallel.mjs [lane ...]   (default: all lanes)
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -23,16 +30,7 @@ const LOG_DIR = join(process.cwd(), ".test-logs", new Date().toISOString().repla
 const LANES = {
   L1: {
     name: "unit",
-    suites: [
-      "test:contrast",
-      "test:unit",
-      "test:onboard-unit",
-      "test:desktop-unit",
-      "test:comments-ui",
-      "test:desktop-smoke",
-      "test:desktop-switch",
-      "test:desktop-cover",
-    ],
+    suites: ["test:contrast", "test:unit", "test:onboard-unit"],
   },
   L2: {
     name: "daemon-e2e",
@@ -68,6 +66,21 @@ const LANES = {
     name: "real-claude",
     suites: ["test:daemon", "test:planner"],
   },
+  L5: {
+    name: "electron",
+    suites: [
+      // Every suite here boots a real Electron: the driver unit through its
+      // own entry, the four app suites through the app's. They take the
+      // single-instance lock in turn, which is why they are ONE lane — and
+      // why they are not L1's tail, where a headless `node --test` lane had
+      // to wait on a window.
+      "test:desktop-unit",
+      "test:comments-ui",
+      "test:desktop-smoke",
+      "test:desktop-switch",
+      "test:desktop-cover",
+    ],
+  },
 };
 
 const requested = process.argv.slice(2);
@@ -78,6 +91,19 @@ for (const id of laneIds) {
     process.exit(2);
   }
 }
+
+// The one build every lane reads. CI builds in its own step and sets the
+// flag; a developer running `pnpm test` gets it here, once.
+if (!process.env.COLO_TEST_SKIP_BUILD) {
+  const startedBuild = Date.now();
+  const build = spawnSync("pnpm", ["build"], { stdio: "inherit" });
+  if (build.status !== 0) {
+    console.error("build failed — no lane can run against a dist that is not there");
+    process.exit(build.status ?? 1);
+  }
+  console.log(`build — ${((Date.now() - startedBuild) / 1000).toFixed(0)}s`);
+}
+const LANE_ENV = { ...process.env, COLO_TEST_SKIP_BUILD: "1" };
 
 mkdirSync(LOG_DIR, { recursive: true });
 
@@ -133,7 +159,7 @@ function runLane(id, lane) {
     const child = spawn(
       "bash",
       ["-lc", `set -o pipefail; ${lane.suites.map((suite) => `pnpm run ${suite}`).join(" && ")}`],
-      { stdio: ["ignore", "pipe", "pipe"], detached: true },
+      { stdio: ["ignore", "pipe", "pipe"], detached: true, env: LANE_ENV },
     );
     running.add(child);
     let timedOut = false;

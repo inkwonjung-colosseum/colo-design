@@ -15,11 +15,20 @@ export const HANDOFF_BADGE = "넘김";
 export const MERGED_BADGE = "반영됨";
 export const changesBadge = (count: number): string => `변경 ${count}`;
 
-/** The six rows of the D82 table — mechanical, no screen list needed. */
-type DeliveryState = "clean" | "unsaved" | "saved" | "handed" | "changes_requested" | "merged";
+/** The rows of the D82 table — mechanical, no screen list needed. `closed`
+ *  (개발자 반려) joined in 커미티 2026-09-15 C-3: 그 전까지 반려된 요청은
+ *  `저장됨` 으로 위장돼 넘기기까지 열려 있었다. */
+type DeliveryState =
+  | "clean"
+  | "unsaved"
+  | "saved"
+  | "handed"
+  | "changes_requested"
+  | "merged"
+  | "closed";
 
 /** 칩의 색 — the tones styles.css knows. */
-type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged";
+type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged" | "shelf";
 
 /** One button of the action set: 열림, or 잠깐 with its reason in a title. */
 interface DeliveryAction {
@@ -36,6 +45,20 @@ export interface Delivery {
     /** 마우스를 올릴 때의 한 문장 — 칩이 말 못한 것을 말한다. */
     title?: string;
   };
+  /**
+   * 그 순간 가장 자연스러운 다음 수 하나 (커미티 2026-09-15, B 전제조건).
+   * 강조 판정이 상단 바의 인라인 삼항에 흩어져 있으면 복도 버튼(DiffPanel)
+   * 까지 네 군데에서 제각각 읽는다 — 칩·버튼·복도가 하나의 원천을 본다.
+   * `변경 요청` 처럼 눌러야 할 것이 회색으로 남는 일이 없어진다.
+   */
+  primary: "save" | "handoff" | "check" | null;
+  /**
+   * 지금 상태 한 줄 + 다음 한 동작 (커미티 A-3+B5, 2026-09-15): 칩 팝오버와
+   * 개발자 패널 머리가 **같은 문장**을 읽는다 — 두 표면이 각자 문자열을
+   * 가지면 칩과 진실이 어긋나던 병이 문장 층에서 재발한다(사이드바 배지가
+   * 이 파일의 단어를 빌려 쓰는 규율, D45 의 확장).
+   */
+  next: { line: string };
   actions: {
     save: DeliveryAction;
     handoff: DeliveryAction;
@@ -45,19 +68,48 @@ export interface Delivery {
 }
 
 export interface DeliveryInput {
-  /** Unsaved-change files, the chip's number (PLAN D8). */
+  /**
+   * Unsaved-change files (PLAN D8). 칩의 숫자는 그만두었다(커미티
+   * 2026-09-15 A-3 최소안): 파일 수는 기획자의 체감과 역상관이라서.
+   * 판정(0인가 아닌가)과 버리기 확인의 개수는 여전히 이 값을 쓴다.
+   */
   pendingChanges: number;
   /** This cycle's `colo-design/…` branch, or null before the first 저장. */
   branch: string | null;
+  /** null before the daemon has reported — as good as not ready. */
+  phase: RepoPhase | null;
+  /** The open (or merged) pull request of this save cycle. */
   handoff: HandoffStatus | null;
   /** A Claude turn is running in the open thread. */
   running: boolean;
-  /** null before the daemon has reported — as good as not ready. */
-  phase: RepoPhase | null;
+  /**
+   * 치워둔 작업 (보관함 토론 2026-09-15): the ONE shelf slot, or null.
+   * While filled, the clean row's chip must not say `변경 없음` — parked is
+   * a state, not an absence; a gray there read as "nothing to do" is how a
+   * parked work comes to feel lost.
+   */
+  shelf?: { at: string } | null;
 }
 
 const BUSY_SAVE = "Claude가 고치는 중 — 끝나면 저장할 수 있습니다";
 const NOTHING_TO_SAVE = "저장할 변경이 없습니다";
+/**
+ * 치워둔 작업이 있을 때의 저장·넘기기 잠금 이유 (보관함 토론): "없다"는
+ * 문장(NOTHING_TO_SAVE)이 치워둔 순간 거짓말이 되므로, 없는 말은 치워둔 곳을
+ * 가리킨다. 칩은 clean 행에서만 바뀌고(칩 하나 계약, D82), 다른 행에서는
+ * 이 title 들이 자리를 지킨다.
+ */
+const PARKED_AWAY = "치워둔 작업이 있습니다 — 더 보기 메뉴에서 꺼내 주세요";
+
+/**
+ * 리뷰어 보고 (커미티 2026-09-15): GitHub 이 PR 에 대해 보고한 요청 리뷰어들.
+ * undefined(구형 기록)는 "모른다" — 아무 말도 하지 않는다. 빈 배열도 칩 타이틀
+ * 에서는 조용하다(넘기기 성공 화면이 그 근거를 길게 말한다).
+ */
+function reviewerNote(handoff: HandoffStatus): string | null {
+  if (handoff.reviewers === undefined || handoff.reviewers.length === 0) return null;
+  return handoff.reviewers.join(" · ");
+}
 
 /**
  * `phase !== "ready"` 면 null — 지금처럼 ProgressPanel 이 열을 갖는다. 단
@@ -78,7 +130,7 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
     ...row,
     chip: {
       ...row.chip,
-      label: pendingChanges > 0 ? `고치는 중 · ${pendingChanges}건` : WORKING_LABEL,
+      label: pendingChanges > 0 ? "고치는 중" : WORKING_LABEL,
       tone: "pending",
     },
   };
@@ -93,6 +145,8 @@ function cycleRow(input: DeliveryInput): Delivery {
   const { pendingChanges, branch, handoff, running } = input;
   const unsaved = pendingChanges > 0;
   const saveLocked = unsaved && running;
+  // 치워둔 작업이 있으면 "없다"는 거짓말 — 잠금 이유가 치워둔 곳을 가리킨다.
+  const saveReason = input.shelf ? PARKED_AWAY : NOTHING_TO_SAVE;
   if (handoff?.state === "merged") {
     return {
       state: "merged",
@@ -101,14 +155,48 @@ function cycleRow(input: DeliveryInput): Delivery {
         tone: "merged",
         title: "다음 저장은 새 사이클을 시작합니다",
       },
+      next: { line: "이번 작업이 제품에 합쳐졌습니다 — 다음 저장은 새 작업을 시작합니다" },
+      primary: unsaved ? "save" : null,
       actions: {
         save: unsaved
           ? running
             ? { enabled: false, reason: BUSY_SAVE }
             : { enabled: true }
-          : { enabled: false, reason: NOTHING_TO_SAVE },
+          : { enabled: false, reason: saveReason },
         handoff: { enabled: false, reason: "개발자가 이미 받아 갔습니다" },
         check: null,
+      },
+    };
+  }
+
+  // 반려 (커미티 2026-09-15 C-3 · 판정 2): 개발자가 요청을 닫으면 그것도
+  // 사이클의 끝이다 — merged 행을 미러한다. 이 행이 없던 동안 반려된 요청은
+  // `저장됨` + "아직 개발자에게 전달되지 않았습니다"로 위장됐고, 넘기기가
+  // 열려 있어 닫힌 요청의 제목·본문만 덮어쓰는 길이 나 있었다. 데몬은 이제
+  // 반려를 보면 사이클을 닫고 베이스로 돌아온다(repo.ts refreshHandoff).
+  if (handoff?.state === "closed") {
+    return {
+      state: "closed",
+      chip: {
+        label: "개발자가 반려함",
+        tone: "changes",
+        title: `개발자가 넘긴 요청 ${handoff.number}번을 닫았습니다 — 코멘트를 읽고 이어 가세요`,
+      },
+      next: {
+        line: "개발자가 이번 요청을 닫았습니다 — 상태 확인에서 이유를 읽고, 고쳐 저장하면 새 요청이 열립니다",
+      },
+      primary: "check",
+      actions: {
+        save: unsaved
+          ? running
+            ? { enabled: false, reason: BUSY_SAVE }
+            : { enabled: true }
+          : { enabled: false, reason: saveReason },
+        handoff: {
+          enabled: false,
+          reason: "개발자가 이번 요청을 닫았습니다 — 새로 저장하면 새 요청이 열립니다",
+        },
+        check: { enabled: true },
       },
     };
   }
@@ -117,10 +205,19 @@ function cycleRow(input: DeliveryInput): Delivery {
     return {
       state: "unsaved",
       chip: {
-        label: running ? `고치는 중 · ${pendingChanges}건` : `저장 안 함 ${pendingChanges}건`,
+        // 파일 수는 칩에서 나갔다(커미티 2026-09-15 A-3): 핀 하나가 파일
+        // 셋을 건드리면 3건, 핀 둘이 한 파일에 모이면 1건 — 숫자가 체감과
+        // 역상관이었다. 개수는 저장 검토의 `자세히 보기`에만 산다.
+        label: running ? "고치는 중" : "저장 안 함",
         tone: "pending",
         ...(handoff ? { title: "저장하면 넘긴 요청에 함께 담깁니다" } : {}),
       },
+      next: {
+        line: running
+          ? "Claude가 고치는 중입니다 — 끝나면 남은 작업을 저장으로 묶으세요"
+          : "저장하지 않은 작업이 있습니다 — 저장을 눌러 검토하고 이번 작업에 묶으세요",
+      },
+      primary: "save",
       actions: {
         save: saveLocked ? { enabled: false, reason: BUSY_SAVE } : { enabled: true },
         handoff: { enabled: false, reason: "저장하지 않은 변경이 있습니다" },
@@ -135,10 +232,16 @@ function cycleRow(input: DeliveryInput): Delivery {
       chip: {
         label: "개발자 검토 중",
         tone: "handed",
-        title: `넘긴 요청 ${handoff.number}번을 개발자가 검토하는 중입니다`,
+        title: `넘긴 요청 ${handoff.number}번을 개발자가 검토하는 중입니다${
+          reviewerNote(handoff) ? ` · ${reviewerNote(handoff)}` : ""
+        }`,
       },
+      next: {
+        line: `넘긴 요청 ${handoff.number}번을 개발자가 보고 있습니다 — 상태 확인으로 최근 소식을 보세요`,
+      },
+      primary: "check",
       actions: {
-        save: { enabled: false, reason: NOTHING_TO_SAVE },
+        save: { enabled: false, reason: saveReason },
         handoff: {
           enabled: false,
           reason: "이미 넘겼습니다 — 새로 저장하면 같은 요청에 합쳐집니다",
@@ -156,8 +259,14 @@ function cycleRow(input: DeliveryInput): Delivery {
         tone: "changes",
         title: `개발자가 넘긴 요청 ${handoff.number}번에 코멘트를 남겼습니다 — 상태 확인에서 이어 가세요`,
       },
+      next: {
+        line: "개발자가 코멘트를 남겼습니다 — 상태 확인에서 읽고 고치기로 이어 가세요",
+      },
+      // 개발자가 기획자를 기다리는 상태 — 이때 상태 확인이 회색이면 바의
+      // 세 버튼이 전부 잠긴 채 며칠이 흐른다 (커미티 2026-09-15 A-2 뒷절).
+      primary: "check",
       actions: {
-        save: { enabled: false, reason: NOTHING_TO_SAVE },
+        save: { enabled: false, reason: saveReason },
         handoff: {
           enabled: false,
           reason: "이미 넘겼습니다 — 새로 저장하면 같은 요청에 합쳐집니다",
@@ -175,9 +284,32 @@ function cycleRow(input: DeliveryInput): Delivery {
         tone: "saved",
         title: "이번 저장은 아직 개발자에게 전달되지 않았습니다",
       },
+      next: { line: "저장했습니다 — 개발자에게 넘기면 검토가 시작됩니다" },
+      primary: "handoff",
       actions: {
-        save: { enabled: false, reason: NOTHING_TO_SAVE },
+        save: { enabled: false, reason: saveReason },
         handoff: { enabled: true },
+        check: null,
+      },
+    };
+  }
+
+  // 치워둔 작업이 있는 clean 행 (보관함 토론): `변경 없음` 칩은 존재하지
+  // 않는다 — 치워둔 것은 없음이 아니라 상태다. 회색은 "할 일 없음"으로
+  // 읽히고(styles.css 4813의 옛 판정), 그 회색이 분실이 시작되는 곳이다.
+  if (input.shelf) {
+    return {
+      state: "clean",
+      chip: {
+        label: "치워둔 작업 1건",
+        tone: "shelf",
+        title: "다시 꺼내면 이어서 작업합니다 — 더 보기 메뉴에서 꺼냅니다",
+      },
+      next: { line: "치워둔 작업이 있습니다 — 더 보기 메뉴에서 꺼내면 이어서 작업합니다" },
+      primary: null,
+      actions: {
+        save: { enabled: false, reason: PARKED_AWAY },
+        handoff: { enabled: false, reason: "치워둔 작업을 먼저 꺼내 저장해 주세요" },
         check: null,
       },
     };
@@ -186,8 +318,10 @@ function cycleRow(input: DeliveryInput): Delivery {
   return {
     state: "clean",
     chip: { label: "변경 없음", tone: "none" },
+    next: { line: "저장할 새 작업이 없습니다 — 화면을 만들어 달라고 하면 시작됩니다" },
+    primary: null,
     actions: {
-      save: { enabled: false, reason: NOTHING_TO_SAVE },
+      save: { enabled: false, reason: saveReason },
       handoff: { enabled: false, reason: "먼저 저장해 주세요" },
       check: null,
     },

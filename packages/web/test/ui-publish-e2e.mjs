@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { stopDaemon } from "./stop-daemon.mjs";
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -420,20 +421,10 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
-    daemon.kill("SIGTERM");
     // The daemon's own shutdown settles writers (sessions, preview, git
     // children) before exiting — removing the tmpdir against a live one
     // races ENOTEMPTY on .git under load.
-    await new Promise((resolve) => {
-      const hard = setTimeout(() => {
-        daemon.kill("SIGKILL");
-        resolve(undefined);
-      }, 15_000);
-      daemon.once("exit", () => {
-        clearTimeout(hard);
-        resolve(undefined);
-      });
-    });
+    await stopDaemon(daemon);
   }
 
   const failed = results.filter((r) => !r.passed);

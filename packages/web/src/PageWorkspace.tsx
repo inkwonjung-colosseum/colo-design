@@ -533,6 +533,7 @@ export function PageWorkspace({
           showTools={settings.chat.showTools}
           pins={pins}
           focusPinId={focusPinId}
+          onOpenScreen={(route, state) => setJumpRequest({ kind: "screen", route, state })}
         />
       </div>
       <Splitter

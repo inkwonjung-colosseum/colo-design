@@ -133,6 +133,8 @@ async function main() {
     port: await freePort(),
   });
 
+  const stubClaude = writeTurnStubClaude(join(DIR, "bin"));
+
   const port = await freePort();
   const server = new DaemonServer({
     host: "127.0.0.1",
@@ -142,7 +144,11 @@ async function main() {
     // scoping checks below create one. This stub WRITES A FILE into the cwd
     // when a turn runs and takes a moment doing it — that is how the D14
     // check produces a count in one project while another one is on screen.
-    claudeExecutable: writeTurnStubClaude(join(DIR, "bin")),
+    // Every server this suite starts gets it: one without it resolves the
+    // DEVELOPER'S real CLI and spends their login on probe questions, and
+    // the config that CLI writes into CLAUDE_CONFIG_DIR raced this run's
+    // own cleanup (an ENOTEMPTY nobody could reproduce twice).
+    claudeExecutable: stubClaude,
   });
   await server.start();
 
@@ -689,6 +695,7 @@ async function main() {
       host: "127.0.0.1",
       port: restartPort,
       token: "projects-e2e",
+      claudeExecutable: stubClaude,
     });
     await restarted.start();
     const ws2 = new WebSocket(`ws://127.0.0.1:${restartPort}?token=projects-e2e`);
@@ -740,6 +747,7 @@ async function main() {
       host: "127.0.0.1",
       port: revivePort,
       token: "projects-e2e",
+      claudeExecutable: stubClaude,
     });
     await revived.start();
     const ws3 = new WebSocket(`ws://127.0.0.1:${revivePort}?token=projects-e2e`);
@@ -763,11 +771,9 @@ async function main() {
     ws3.close();
     await revived.stop();
   } finally {
-    try {
-      await server.stop();
-    } catch {
-      // Already stopped by the restart step; the second stop is the cleanup.
-    }
+    // Idempotent since the shutdown memo landed: this joins the stop the
+    // restart step already ran.
+    await server.stop();
     rmSync(DIR, { recursive: true, force: true });
   }
 

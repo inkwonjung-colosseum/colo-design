@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
@@ -66,10 +66,20 @@ let appUrl: string | null = null;
  */
 let unreadNotices = 0;
 
+/**
+ * 앱 번들 아이디. 두 자리가 같은 문자열을 써야 한다 — Windows 토스트의 AUMID
+ * (NSIS 바로 가기에 새겨진 appId)와 mac 알림 설정으로 가는 딥링크.
+ */
+const APP_BUNDLE_ID = "org.colo-design.desktop";
+
 /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 렌더러에 건네는 채널. */
 const OPEN_SESSION_CHANNEL = "colodesign:open-session";
+/** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — 넘김 사건에는 대화가 없다. */
+const OPEN_PROJECT_CHANNEL = "colodesign:open-project";
 /** 창이 없었다가 다시 열린 경우 — 적재가 끝난 뒤 건네기 위해 세워 둔 세션. */
 let pendingOpenSession: string | null = null;
+/** 같은 자리의 프로젝트 판본. */
+let pendingOpenProject: string | null = null;
 /** 실행 중인 턴의 존재를 창 닫기 가드가 묻는 데 쓴다(리뷰 B3). */
 let daemonServer: DaemonServer | null = null;
 
@@ -83,8 +93,8 @@ const UPDATE_MIN_FREE_BYTES = 1024 ** 3;
 const UPDATE_FIRST_CHECK_DELAY_MS = 15_000;
 /** 자동 확인의 주기 — 하루 한 번. */
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-/** 이미 알림을 띄운 버전 — 같은 버전으로 하루마다 다시 띄우지 않는다. */
-let notifiedUpdateVersion: string | null = null;
+/** 자동 확인의 최소 간격 — 포커스마다 피드를 묻지 않는다. */
+const UPDATE_MIN_CHECK_GAP_MS = 60 * 60 * 1000;
 
 /** 교체 스크립트가 결과를 남기는 파일 — 다음 실행이 읽고 지운다. */
 function updateResultPath(): string {
@@ -349,7 +359,7 @@ async function bootApp(): Promise<void> {
   // 바로 가기에 appId 를 새기므로 같은 문자열을 여기서 직접 건다 — Squirrel 이
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
   // 유실시킨다. mac·linux 에서는 이 호출이 아무 일도 하지 않는다.
-  app.setAppUserModelId("org.colo-design.desktop");
+  app.setAppUserModelId(APP_BUNDLE_ID);
   notificationPrefs = loadNotificationPrefs();
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
@@ -553,6 +563,11 @@ async function reopen(url: string): Promise<void> {
     pendingOpenSession = null;
     setTimeout(() => mainWindow?.webContents.send(OPEN_SESSION_CHANNEL, sessionId), 1200);
   }
+  if (pendingOpenProject) {
+    const slug = pendingOpenProject;
+    pendingOpenProject = null;
+    setTimeout(() => mainWindow?.webContents.send(OPEN_PROJECT_CHANNEL, slug), 1200);
+  }
 }
 
 /**
@@ -562,14 +577,36 @@ async function reopen(url: string): Promise<void> {
  */
 function notifyPlanner(notice: DaemonNotice): void {
   if (mainWindow?.isFocused()) return;
-  // 완료 알림만 시점 정책을 탄다 — 확인 요청·중단·게이트 실패는 언제나 즉시.
+  // 완료 알림만 시점 정책을 탄다 — 확인 요청·중단·게이트 실패·개발자 쪽
+  // 사건(커미티 B1)은 언제나 즉시.
   if (!shouldNotify(notice, notificationPrefs)) return;
   unreadNotices += 1;
   paintBadge();
   const { title, body } = noticeCopy(notice);
-  showAppNotification(title, body, () => focusMainWindow(notice.sessionId), {
-    silent: !notificationPrefs.sound,
-  });
+  void showAppNotification(
+    title,
+    body,
+    // 커미티 B1: 넘김 사건의 행선은 프로젝트다 — 대화가 아니라 slug 로 간다.
+    notice.kind === "handoff"
+      ? () => focusProjectWindow(notice.slug)
+      : () => focusMainWindow(notice.sessionId),
+    {
+      silent: !notificationPrefs.sound,
+    },
+  );
+}
+
+/** 알림 클릭의 프로젝트 판본 — 창을 앞으로, 그 프로젝트로. */
+function focusProjectWindow(slug: string): void {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send(OPEN_PROJECT_CHANNEL, slug);
+  } else if (appUrl) {
+    pendingOpenProject = slug;
+    void reopen(appUrl);
+  }
 }
 
 /** 알림 클릭의 공통 행동 — 창을 앞으로, 그 대화로. 창이 없으면 다시 연다. */
@@ -630,31 +667,99 @@ app.on("before-quit", (event) => {
   guardStopUnderTurn(event, () => app.quit());
 });
 
-/** OS 알림 — 클릭 행동을 골라 단다(사용자 순간과 업데이트 알림이 함께 쓴다). */
+/**
+ * 종료가 데몬을 데리고 나간다. 앱은 데몬을 제 프로세스 안에서 키우는데,
+ * 미리보기 서버는 그 데몬이 띄운 별개의 프로세스다 — 아무도 `stop()` 을
+ * 부르지 않으면 앱이 사라진 뒤에도 그 서버들이 포트를 쥔 채 남는다(테스트
+ * 기계에서 하루치 실행이 수백 개를 남긴 것이 그 증거였다). `will-quit` 은
+ * 창이 다 닫힌 뒤, 프로세스가 끝나기 직전이다: 한 번만 막아 세우고,
+ * 정리가 끝나면 스스로 다시 나간다.
+ */
+let daemonStopped = false;
+app.on("will-quit", (event) => {
+  if (daemonStopped || !daemonServer) return;
+  event.preventDefault();
+  void daemonServer.stop().finally(() => {
+    daemonStopped = true;
+    app.quit();
+  });
+});
+
+/** OS 가 show·failed 중 어느 것도 말하지 않을 때 시험 버튼이 기다리는 한계. */
+const NOTIFICATION_VERDICT_MS = 3_000;
+
+/**
+ * OS 알림 — 클릭 행동을 골라 단다(사용자 순간과 업데이트 알림이 함께 쓴다).
+ * 소리는 설정이 정하고 그 결정은 여기 한 곳에만 있다: 부르는 자리가 각자
+ * 계산하면 한 자리가 빠지고(업데이트 알림이 그랬다) 설정을 껐는데 우는 알림이
+ * 남는다. `options.silent` 는 그 기본을 덮는다.
+ *
+ * 돌려주는 값은 **OS 가 이 알림을 받아 그렸는가**다. Electron 44 의 mac 알림은
+ * UNNotification 위에 있고, 그 API 는 제대로 서명되지 않은 앱 — 개발 실행이
+ * 띄우는 linker-signed `Electron.app` 이 그렇다 — 의 알림을 `failed` 로
+ * 거절한다. 리스너가 없으면 그 거절은 아무 데도 남지 않는다: 시험 알림이 이
+ * 답을 그대로 사용자에게 보여 준다.
+ *
+ * 한 가지는 여기서 알 수 없다 — 사용자가 OS 에서 이 앱의 알림을 꺼 둔 경우.
+ * 그때의 `show()` 는 성공하고 배너만 오지 않는다(usernoted 가 `as none` 으로
+ * 기록한다). 설정 화면의 `시스템 알림 설정 열기` 가 그 경우의 유일한 길이다.
+ */
 function showAppNotification(
   title: string,
   body: string,
   onClick: () => void,
   options?: { silent?: boolean },
-): void {
-  const notification = new Notification({ title, body, silent: options?.silent });
+): Promise<{ shown: boolean; error?: string }> {
+  const notification = new Notification({
+    title,
+    body,
+    silent: options?.silent ?? !notificationPrefs.sound,
+  });
   notification.on("click", onClick);
+  const { promise, resolve } = Promise.withResolvers<{ shown: boolean; error?: string }>();
+  // 두 사건 중 먼저 오는 것이 답이다. 어느 쪽도 오지 않는 플랫폼에서는 침묵을
+  // 성공으로 읽는다 — 시험 버튼이 영원히 도는 것보다 낫다.
+  let settled = false;
+  const settle = (result: { shown: boolean; error?: string }): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(result);
+  };
+  const timer = setTimeout(() => settle({ shown: true }), NOTIFICATION_VERDICT_MS);
+  notification.once("show", () => settle({ shown: true }));
+  notification.once("failed", (_event, error) => settle({ shown: false, error: String(error) }));
   notification.show();
+  return promise;
 }
 
 /**
- * 자동 업데이트 확인(DESIGN §7): 앱이 살아 있는 동안 하루 한 번 조용히 피드를
- * 묻는다. 새 버전이 있으면 알림을 띄워 설정까지 찾아가게 하지 않는다 — 버전마다
- * 한 번만. 실패는 언제나 조용히: 자동으로 떠드는 오류는 없고 다음 확인이 다시
- * 온다. 개발 실행은 피드를 묻지 않는다.
+ * 자동 업데이트 확인(DESIGN §7): 새 버전이 있으면 알림을 띄워 설정까지 찾아가게
+ * 하지 않는다 — 버전마다 한 번만. 실패는 언제나 조용히: 자동으로 떠드는 오류는
+ * 없고 다음 확인이 다시 온다. 개발 실행은 피드를 묻지 않는다.
+ *
+ * 확인의 순간은 셋이다 — 시작 직후 한 번, 하루 한 번, 그리고 **사용자가 앱으로
+ * 돌아올 때**. 마지막 것 없이는 하루 주기가 벽시계를 모른다: 뚜껑을 닫아 둔
+ * 동안 타이머는 뛰지 않고 깨어나서 늦게 뛰며 못 뛴 회차를 따라잡지 않는다. 앱을
+ * 끄지 않는 사람에게 그 늦음은 "껐다 켜야 보이는 알림"이었다. 포커스는 사람이
+ * 설치를 누를 수 있는 순간이기도 하다.
+ *
+ * 대신 포커스마다 피드를 묻지는 않는다(UPDATE_MIN_CHECK_GAP_MS). 같은 버전으로
+ * 두 번 부르지도 않으니 창을 왕복해도 재촉은 생기지 않는다.
  */
 function scheduleUpdateChecks(): void {
   if (!app.isPackaged) return;
-  const check = async () => {
+  /** 마지막으로 피드를 물은 시각 — 포커스 확인의 스로틀 기준. */
+  let lastCheckAt = 0;
+  /** 이미 알림을 띄운 버전 — 확인이 거듭돼도 한 번만 부른다. */
+  let notifiedVersion: string | null = null;
+  const check = async (): Promise<void> => {
+    // 실패도 물어본 것으로 센다 — 끊긴 망에서 포커스마다 다시 걸지 않는다.
+    lastCheckAt = Date.now();
     try {
       const feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
-      if (!feed.updateAvailable || feed.version === notifiedUpdateVersion) return;
-      notifiedUpdateVersion = feed.version;
+      if (!feed.updateAvailable || feed.version === notifiedVersion) return;
+      notifiedVersion = feed.version;
       showAppNotification(
         "새 버전이 있습니다",
         `Colo Design ${feed.version} — 설정 → 문제 해결의 업데이트 확인에서 설치할 수 있습니다.`,
@@ -664,8 +769,14 @@ function scheduleUpdateChecks(): void {
       // 자동 확인의 실패는 조용히 넘어간다 — 수동 확인 버튼이 오류를 보여준다.
     }
   };
-  setTimeout(() => void check(), UPDATE_FIRST_CHECK_DELAY_MS);
-  setInterval(() => void check(), UPDATE_CHECK_INTERVAL_MS);
+  const checkIfStale = (): void => {
+    if (Date.now() - lastCheckAt < UPDATE_MIN_CHECK_GAP_MS) return;
+    void check();
+  };
+  setTimeout(checkIfStale, UPDATE_FIRST_CHECK_DELAY_MS);
+  setInterval(checkIfStale, UPDATE_CHECK_INTERVAL_MS);
+  // 배지를 지우는 리스너와 나란히 달리지만, 이 자리는 패키징된 앱에만 생긴다.
+  app.on("browser-window-focus", checkIfStale);
 }
 
 /**
@@ -862,6 +973,19 @@ function registerDesktopBridge(): void {
     return { opened: COLO_DESIGN_DIR };
   });
 
+  // 커미티 C-5 (2026-09-15): 기획서 원본 열기. 데몬이 클론의 specs/ 아래로
+  // 검증한 절대경로만 받는다 — 렌더러가 임의의 경로를 열게 하지 않는다.
+  // 이중 허들: main 도 ~/.colo-design 밖은 거절한다.
+  ipcMain.handle("desktop:open-spec", async (_event, path: string) => {
+    const resolved = resolve(String(path ?? ""));
+    const home = resolve(COLO_DESIGN_DIR);
+    if (!resolved.startsWith(`${home}${sep}`)) {
+      return { error: "이 도구가 보관한 파일만 열 수 있습니다." };
+    }
+    const problem = await shell.openPath(resolved);
+    return problem ? { error: problem } : { opened: resolved };
+  });
+
   // 알림 설정(시점·소리) — 렌더러의 설정이 메인의 알림을 움직인다. 창이
   // 닫혀 있어도 정책이 살아 있도록 userData 에 영속한다.
   ipcMain.handle("desktop:notify-prefs", (_event, prefs: unknown) => {
@@ -870,14 +994,33 @@ function registerDesktopBridge(): void {
     return { ok: true };
   });
 
-  ipcMain.handle("desktop:notify-test", () => {
+  ipcMain.handle("desktop:notify-test", () =>
     showAppNotification(
       "알림 시험",
       "실제 알림은 이렇게 도착합니다 — 소리 설정도 같이 적용됩니다.",
       focusMainWindow,
-      { silent: !notificationPrefs.sound },
-    );
-    return { ok: true };
+    ),
+  );
+
+  /**
+   * OS 의 알림 허용 스위치로 데려간다. 앱은 그 스위치를 읽지도 바꾸지도 못한다:
+   * mac 은 앱마다 한 번만 묻고, 그 답이 거부였으면 이후의 모든 알림은 조용히
+   * 알림 센터 목록에만 쌓인다. 사람이 갈 수 있는 유일한 자리다.
+   */
+  ipcMain.handle("desktop:open-notification-settings", async () => {
+    const target =
+      process.platform === "darwin"
+        ? `x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${APP_BUNDLE_ID}`
+        : process.platform === "win32"
+          ? "ms-settings:notifications"
+          : null;
+    if (!target) return { error: "이 시스템에는 알림 설정 화면이 없습니다." };
+    try {
+      await shell.openExternal(target);
+      return { opened: target };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   });
 }
 

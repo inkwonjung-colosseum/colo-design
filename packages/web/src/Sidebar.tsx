@@ -2,6 +2,7 @@ import type { ProjectSummary, RepoPhase, ThreadSummary } from "@colo-design/prot
 import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "./delivery";
+import { ownerRepoOf } from "./format";
 import {
   CloseIcon,
   ExportIcon,
@@ -123,6 +124,28 @@ export function Sidebar({
       chevron moves before the write rounds-trips. */
   const [foldToggles, setFoldToggles] = useState<Record<string, boolean>>({});
   const listRef = useRef<HTMLDivElement>(null);
+
+  // --- 커미티 C-3 (2026-09-15): 사이드바 배지도 반영됨의 한 박자를 입는다 -----
+  // 데이터는 project.changed 가 이미 옮긴다 — 이 신호는 오직 리듬이다(ScreenPanel
+  // 의 칩 펄스와 같은 초에 운다).
+  const [mergedPulse, setMergedPulse] = useState<string | null>(null);
+  useEffect(() => {
+    const onMerged = (event: Event) => {
+      const slug = (event as CustomEvent<{ slug: string | null }>).detail?.slug ?? null;
+      if (!slug) return;
+      setMergedPulse(slug);
+      const timer = window.setTimeout(() => setMergedPulse(null), 1200);
+      return () => clearTimeout(timer);
+    };
+    window.addEventListener("colo-design:merged", onMerged);
+    return () => window.removeEventListener("colo-design:merged", onMerged);
+  }, []);
+  // 커미티 B2 목적지: 같은 이름의 프로젝트 둘은 부제로, 나머지는 title 로.
+  const duplicatedNames = new Set(
+    projects
+      .map((project) => project.name)
+      .filter((name, index, all) => all.indexOf(name) !== index),
+  );
 
   useEffect(() => {
     if (!switching) return;
@@ -398,7 +421,9 @@ export function Sidebar({
                           ? `${project.name} 대화${badge ? ` · ${badge.label}` : ""}`
                           : switching === project.slug
                             ? "전환 중…"
-                            : project.name
+                            : ownerRepoOf(project.repoUrl)
+                              ? `${project.name} — ${ownerRepoOf(project.repoUrl)}`
+                              : project.name
                       }
                       aria-label={
                         rail ? `${project.name} 대화${badge ? `, ${badge.label}` : ""}` : undefined
@@ -455,8 +480,15 @@ export function Sidebar({
                           </span>
                           <span className="node__dot" aria-hidden="true" />
                           <span className="node__name">{project.name}</span>
+                          {duplicatedNames.has(project.name) && ownerRepoOf(project.repoUrl) && (
+                            <span className="node__owner">{ownerRepoOf(project.repoUrl)}</span>
+                          )}
                           {badge && (
-                            <span className={`node__badge node__badge--${badge.kind}`}>
+                            <span
+                              className={`node__badge node__badge--${badge.kind}${
+                                mergedPulse === project.slug ? " node__badge--pulse" : ""
+                              }`}
+                            >
                               {switching === project.slug ? "전환 중…" : badge.label}
                             </span>
                           )}

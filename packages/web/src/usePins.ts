@@ -41,25 +41,20 @@ export interface Pins {
   clear(): void;
   /**
    * After the turn left (C2): record the pins and take them off the tray —
-   * success or not. A failed record only leaves the log stale; the turn has
+   * success or not. A failed record only leaves the store short; the turn has
    * already gone out, so holding the pins hostage to the store would protect
    * nothing (the delivery-first rule the old batch path lived by).
-   * The failure itself is NOT silent: `recordError` carries it to the same
-   * warning band the list's own read failures use (커미티 차단 3, 2026-09-14)
-   * — the planner must learn why the log is missing rows they just sent.
+   * The failure itself is NOT silent: `recordError` carries it to the screen
+   * panel's warning band (커미티 차단 3, 2026-09-14) — the store's one reader
+   * is the pull request body, and the planner must learn that this cycle's
+   * `### 수정 요청` will be missing the rows they just sent.
    * Each row carries the pin's own id and intent, and its memo verbatim —
    * empty when none was written (커미티 2차 판정 3·4·5).
    */
   markSent(sent: PinAttachment[]): Promise<void>;
   /** The turn ended — the grey badges go with it (재설계 C10). */
   dismissGhosts(): void;
-  /** How many times the recorded log's input moved — ScreenPanel's refreshComments trigger. */
-  version: number;
-  /**
-   * The last record round trip's failure, verbatim — null while healthy.
-   * `version` moves only on success, so a stale log never masquerades as a
-   * fresh one (커미티 차단 3: "보냄"의 목소리).
-   */
+  /** The last record round trip's failure, verbatim — null while healthy. */
   recordError: string | null;
 }
 /** One project's pins live under one sessionStorage key (재설계 C5). */
@@ -127,10 +122,9 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
   // Lives in memory only: it belongs to a running turn, and a refresh ends
   // the turn as surely as it ends the page (계획 §6).
   const [ghosts, setGhosts] = useState<PinAttachment[]>([]);
-  const [version, setVersion] = useState(0);
   // The record round trip's voice (커미티 차단 3): null while healthy, the
-  // failure verbatim when the store refused — ScreenPanel shows it through
-  // the same band the list's own read failures use.
+  // failure verbatim when the store refused — ScreenPanel shows it in the
+  // screen column's warning band.
   const [recordError, setRecordError] = useState<string | null>(null);
 
   const [loadedSlug, setLoadedSlug] = useState(slug);
@@ -180,15 +174,14 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
   const markSent = async (sent: PinAttachment[]): Promise<void> => {
     // The tray empties FIRST (재설계 C2 — 자동 정리): the turn is out, and a
     // record round trip that waits behind the running turn must not leave
-    // sent pins sitting on the screen. The version — the popover's cue to
-    // re-read — moves after the store has actually taken the rows.
+    // sent pins sitting on the screen.
     setList((current) => current.filter((pin) => !sent.some((sentPin) => sentPin.id === pin.id)));
     // The grey badges (재설계 C10): the batch stays visible — sent semantics,
     // shot intact — until the turn ends and PageWorkspace calls dismissGhosts.
     setGhosts((current) => [...current, ...sent]);
-    // A memo-less pin records an EMPTY text (커미티 2차 판정 3) — the display
-    // layers draw (메모 없음). Borrowing the turn's sentence made one sentence
-    // count N times, in the log and in the PR body the developer reads.
+    // A memo-less pin records an EMPTY text (커미티 2차 판정 3) — the PR body
+    // draws (메모 없음). Borrowing the turn's sentence made one sentence
+    // count N times in the PR body the developer reads.
     try {
       await api.recordComments({
         items: sent.map((pin) => ({
@@ -208,17 +201,14 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
         })),
       });
       setRecordError(null);
-      // The re-read cue moves ONLY on success (커미티 차단 3): a failed record
-      // would otherwise bump the log's freshness while the rows are missing.
-      setVersion((v) => v + 1);
     } catch (e) {
-      // 기록 실패는 목록을 낡게 두되 침묵하지 않는다 — 턴은 이미 나갔다(전달
-      // 우선). The old batch path said this in a toast; the band the list
-      // reads through (ScreenPanel's commentsError) says it now.
+      // 기록 실패는 침묵하지 않는다 — 턴은 이미 나갔다(전달 우선). 이 사이클의
+      // 핀들은 개발자가 읽을 `### 수정 요청` 에서 빠진다; 대화에 남은 말은
+      // 그대로이므로 Claude 는 이미 들었다.
       setRecordError(
         e instanceof Error && e.message
-          ? `코멘트 기록을 저장하지 못했습니다 — ${e.message}`
-          : "코멘트 기록을 저장하지 못했습니다 — 목록이 최신이 아닐 수 있습니다",
+          ? `코멘트 기록을 저장하지 못했습니다 — ${e.message}. 넘긴 요청 본문에서 이번 코멘트가 빠집니다.`
+          : "코멘트 기록을 저장하지 못했습니다 — 넘긴 요청 본문에서 이번 코멘트가 빠집니다.",
       );
     }
   };
@@ -232,7 +222,7 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
 
   // The turn is over — 성공이든 실패든 — and the grey badges go with it
   // (재설계 C10). No resolved-state is kept: a sent pin is history, and the
-  // record popover is where the past is read.
+  // conversation is where that history is read.
   const dismissGhosts = () => setGhosts([]);
 
   return {
@@ -245,7 +235,6 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
     clear,
     markSent,
     dismissGhosts,
-    version,
     recordError,
   };
 }

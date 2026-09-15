@@ -102,11 +102,9 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
   const lead = entries.find((entry) => entry.label === "5시간") ?? entries[0] ?? null;
   const badge = lead ? tone(lead.pct) : "";
   const overall = worst ? tone(worst.pct) : "";
-  const reading = lead
-    ? [lead.raw != null ? `${lead.pct}%` : "", timeLeft(lead.resetsAt) ?? ""]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
+  // 커미티 A-5 (2026-09-15): 칩의 얼굴은 말이다 — 숫자(퍼센트·시간)는 팝오버의
+  // 몫. 여유로울 때는 링만 남는 계량기(감동판 구조), 경고 톤부터 말이 돌아온다.
+  const faceWord = badge === "" ? "여유로워요" : badge === "warn" ? "차오르는 중" : "거의 찼어요";
   // Time left is computed from `now`, so a rendered countdown goes stale;
   // re-render on the half-minute while one is on screen.
   const counting = Boolean(lead?.resetsAt);
@@ -156,9 +154,10 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
         aria-expanded={open}
         title={
           lead.resetsAt
-            ? `${lead.label} 한도는 ${clockTime(lead.resetsAt)}에 다시 채워집니다`
-            : "Claude를 얼마나 썼는지 봅니다"
+            ? `${faceWord} · ${lead.label} 한도는 ${clockTime(lead.resetsAt)}에 다시 채워집니다`
+            : `${faceWord} — Claude를 얼마나 썼는지 봅니다`
         }
+        aria-label={`사용량 — ${faceWord}`}
         onClick={() => {
           const next = !open;
           setOpen(next);
@@ -186,13 +185,15 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
             )}
           </svg>
         </span>
-        {reading ? (
-          <>
-            {lead.label}
-            <span className="usage__reading">{reading}</span>
-          </>
+        {badge === "" ? null : badge === "warn" ? (
+          "차오르는 중"
         ) : (
-          "사용량"
+          <>
+            거의 찼어요
+            {timeLeft(lead.resetsAt) && (
+              <span className="usage__reading">{timeLeft(lead.resetsAt)}</span>
+            )}
+          </>
         )}
       </button>
       {open && (

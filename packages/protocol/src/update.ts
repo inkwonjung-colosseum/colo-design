@@ -2,9 +2,9 @@
 /**
  * 업데이트 확인: 릴리스 페이지(GitHub Releases)의 latest.json 과 현재 버전을 비교.
  * fetch 는 주입받는다 — 데스크톱은 Electron 의 net, 브라우저는 window.fetch,
- * 테스트는 로컬 fixture 서버. 확인 타이밍은 호출자의 몫이다: 데스크톱은 하루 1회
- * 자동 확인 + OS 알림을 돌리고(packages/desktop/src/main.ts), 설정의 확인 버튼은
- * 이 로직을 직접 부른다.
+ * 테스트는 로컬 fixture 서버. 확인 타이밍은 호출자의 몫이다: 데스크톱은 시작
+ * 직후 · 앱으로 돌아올 때(시간당 1회) · 하루 1회 자동으로 물어 OS 알림을
+ * 돌리고(packages/desktop/src/main.ts), 설정의 확인 버튼은 이 로직을 직접 부른다.
  *
  * 이 모듈은 순수 로직만 담아 데몬·웹·데스크톱이 한 곳에서 공유한다.
  */

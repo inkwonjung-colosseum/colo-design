@@ -35,6 +35,8 @@ import type {
   RepoHistory,
   RepoPhase,
   RepoSettingsWarning,
+  RepoShelf,
+  RepoShelfRestore,
   RepoStatus,
   RepoSummary,
 } from "@colo-design/protocol";
@@ -98,6 +100,17 @@ const GATE_OUTPUT_TAIL_LINES = 30;
 const CHECKPOINT_REF_PREFIX = "refs/colo-design/checkpoints";
 /** D52: a session keeps its most recent snapshots; older ones are deleted. */
 const CHECKPOINTS_PER_SESSION = 20;
+/**
+ * 잠깐 치워두기 (보관함 토론 2026-09-15): the worktree's unsaved work, parked
+ * in ONE ref of its own — a sibling of the checkpoints namespace, so 반영됨's
+ * clearCheckpoints never sweeps it, and never a `git stash`, whose namespace
+ * the refresh's transit stash and its recovery machinery own. A sibling ref
+ * also means the agent Bash gate's open `git stash` verbs cannot reach it.
+ */
+const SHELF_REF = "refs/colo-design/shelf";
+/** Forensics only — the planner's words for the slot live in the UI. */
+const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
+
 /** D51: how long the summary's one Claude turn may take before the fallback. */
 const SUMMARY_TIMEOUT_MS = 3_000;
 /** D51: "3줄 이내" — and that is all the save review shows first, anyway. */
@@ -174,6 +187,32 @@ const REFRESH_CONFLICT_DETAIL =
  */
 const RECOVER_CONFLICT_DETAIL =
   "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
+/** What the planner reads when the slot they are filling is already full. */
+const SHELF_ALREADY_DETAIL = "이미 치워둔 작업이 있습니다 — 더 보기 메뉴에서 먼저 꺼내 주세요.";
+
+/** 치워두기 pressed with nothing unsaved — the door is for work in hand. */
+const SHELF_EMPTY_DETAIL = "치워둘 변경이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
+
+/**
+ * 꺼내기 pressed onto work in progress — the one-slot contract's other half:
+ * the slot is not a second worktree, so what is out must come back onto an
+ * empty desk. Named for the two doors that clear it, never for git.
+ */
+const SHELF_DIRTY_DETAIL = "지금 작업 중인 변경이 있습니다 — 저장하거나 버린 뒤 꺼내 주세요.";
+
+const SHELF_NONE_DETAIL = "치워둔 작업이 없습니다.";
+
+/** 치워두기·꺼내기 pressed while Claude still owes a conflict's cleanup. */
+const SHELF_CONFLICT_OPEN_DETAIL =
+  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 Claude가 정리를 마친 뒤 시도해 주세요.";
+
+/**
+ * What the planner reads when the 꺼내기 overlapped: same state and remedy as
+ * RECOVER_CONFLICT_DETAIL, named for the shelf. The slot SURVIVES the
+ * conflict — dropping it is the cleanup's last step, not the failure's.
+ */
+const SHELF_CONFLICT_DETAIL =
+  "치워둔 작업을 다시 얹다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 치워둔 작업은 그대로 남아 있습니다.";
 
 /**
  * What a 저장 pressed before Claude finished a conflict's cleanup reads —
@@ -557,6 +596,17 @@ export class RepoWorkspace {
   private publishing: Promise<DiffStatus> | null = null;
   /** The session-start/button refresh while it runs — saves wait it out. */
   private refreshing: Promise<unknown> | null = null;
+  /** 잠깐 치워두기 연산이 도는 동안 — 저장 · 최신화 · 버리기가 이를 기다린다. */
+  private shelving: Promise<unknown> | null = null;
+  /** 치워둔 작업의 시각(ISO) — 상태의 한 조각으로 pendingChanges 와 함께 나간다. */
+  private shelfAt: string | null = null;
+  /**
+   * Whether the ref behind `shelfAt` was read at least once in this daemon.
+   * The field above is memory; the ref is the truth (`shelve` checks it), so
+   * the first status on a clone reconciles them — see `status`.
+   */
+  private shelfRead = false;
+
   /** Whether this project is the one on screen — see `setActive`. */
   private active = true;
   /**
@@ -737,13 +787,27 @@ export class RepoWorkspace {
     return this.config?.registry ?? null;
   }
 
-  /** Disk state only; safe to call from any client at any time. */
+  /**
+   * Disk state only; safe to call from any client at any time.
+   *
+   * The shelf is read from the REF the first time a status is asked on a
+   * clone, not left at the memory field's `null`. Without this probe the
+   * first status after a daemon restart says "no shelf": the menu offers
+   * 잠깐 치워두기 (which the ref-checking `shelve` then refuses) and hides
+   * 꺼내기 — 치워둔 작업이 분실로 읽히는 그 자리다. `refreshPendingChanges`
+   * keeps it current afterwards, so this costs one `for-each-ref` per
+   * daemon lifetime rather than one per poll.
+   */
   async status(): Promise<RepoStatus> {
     if (this.isCloned()) {
       try {
         this.config = resolveRepoConfig(this.root);
       } catch {
         // Keep the last known config; the working phases surface parse errors.
+      }
+      if (!this.shelfRead) {
+        this.shelfRead = true;
+        this.shelfAt = await this.readShelfAt();
       }
     }
     return this.snapshot();
@@ -837,6 +901,7 @@ export class RepoWorkspace {
   async settle(): Promise<void> {
     await this.publishing?.catch(() => undefined);
     await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
     await this.inFlight?.catch(() => undefined);
   }
 
@@ -865,6 +930,7 @@ export class RepoWorkspace {
     // way. Without this, the stash-move-replay window races `git diff` and
     // the planner's save can read a worktree that is momentarily parked.
     if (this.publishing) await this.publishing.catch(() => undefined);
+    if (this.shelving) await this.shelving.catch(() => undefined);
     const run = this.refreshFromRemote(onSessionTurn)
       .then(async (outcome) => {
         // A conflict brief leaves the worktree mid-resolution: the delivery chip's
@@ -942,6 +1008,29 @@ export class RepoWorkspace {
     return this.openHandoff;
   }
 
+  /**
+   * 커미티 2026-09-15 판정 1·2: 폴링이 **읽어서 본** 사이클의 끝(반영됨·반려).
+   * 칩에는 아직 반영하지 않는다 — 끝을 칩에만 적고 착지를 미루면 `this.branch`
+   * 가 살아 있어 다음 저장이 이미 닫힌 브랜치로 푸시된다(ensureCycleBranch 가
+   * 이름이 있으면 그대로 쓴다). 그래서 끝은 여기 따로 세워 두고, 사람이 있는
+   * 자리(상태 확인 · 프로젝트 활성화 · 다음 저장의 머리)에서만 내려앉힌다.
+   */
+  private endedHandoff: HandoffStatus | null = null;
+
+  /** 내려앉을 사이클의 끝이 밀려 있는가 — 폴링이 같은 알림을 반복하지 않게. */
+  get handoffLandingDue(): boolean {
+    return this.endedHandoff !== null;
+  }
+
+  /**
+   * 커미티 B1 (2026-09-15): 최신화(pull)가 돌고 있는가 — handoff 폴링이 이
+   * 사이에 refreshHandoff 를 겹치지 않게 하는 수단. 저장·넘기기의 판정은
+   * 서버가 diffStage 로 이미 알고, 이쪽은 레포 자체의 손길만 센다.
+   */
+  get busyRefreshing(): boolean {
+    return this.refreshing !== null;
+  }
+
   /** Last counted unsaved-change files — the sidebar badge's number (PLAN D16). */
   get pendingChangeCount(): number {
     return this.pendingChanges;
@@ -985,6 +1074,15 @@ export class RepoWorkspace {
     // The worktree is the review's subject: a session-start refresh still
     // stashing and replaying must settle before the diff is computed.
     await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
+
+    // 저장 직전 가드 (커미티 2026-09-15 판정 1): 기획자가 `상태 확인`을 한 번도
+    // 누르지 않아도, 이미 반영되거나 반려된 요청의 브랜치에 커밋이 쌓이는 일은
+    // 없어야 한다. 읽기와 착지를 여기서 한 번에 치른다 — 사람이 저장을 눌렀으니
+    // 사람 있는 자리이고(되돌리기 기록이 조용히 지워지지 않는다), 끝난 사이클은
+    // 여기서 닫혀 아래 ensureCycleBranch 가 새 브랜치를 연다. 실패는 저장을
+    // 막지 않는다 — 네트워크가 없다고 저장을 막을 이유는 없다.
+    if (this.openHandoff || this.endedHandoff) await this.refreshHandoff().catch(() => null);
 
     // A conflict left for Claude is not a save's ingredient: the unmerged
     // files count as changes awaiting 저장, and staging exactly the approved
@@ -1068,11 +1166,13 @@ export class RepoWorkspace {
     }
 
     await this.git(["checkout", "-B", name]);
-    // D84: a MERGED handoff belongs to the cycle that ended. Carrying it onto
-    // the new branch made the next 넘기기 try to `updatePullRequest` the
-    // merged PR, and the chip read 반영됨 while changes piled up. A new cycle
-    // starts with the handoff history in the store, not in the way.
-    this.setCycle(name, this.openHandoff?.state === "merged" ? null : this.openHandoff);
+    // D84 + 커미티 2026-09-15 판정 2: 끝난 사이클의 넘김(반영됨·반려)은 그
+    // 사이클의 것이다. 들고 오면 다음 넘기기가 이미 끝난 요청을
+    // `updatePullRequest` 로 덮어쓰고(닫힌 요청이면 닫힌 채 제목·본문만 바뀐다),
+    // 칩은 반영됨·반려를 말하는 채로 변경만 쌓인다. 새 사이클은 그 기록을
+    // 저장소에 두고 시작한다.
+    const ended = this.openHandoff?.state === "merged" || this.openHandoff?.state === "closed";
+    this.setCycle(name, ended ? null : this.openHandoff);
     return name;
   }
 
@@ -1123,6 +1223,7 @@ export class RepoWorkspace {
     // The same worktree contract as a save: wait out a refresh before
     // reading and writing the cycle.
     await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
 
     // Two different problems with two different fixes: a repo that is not on
     // GitHub needs a different url, a repo with no token needs a token. One
@@ -1242,11 +1343,56 @@ export class RepoWorkspace {
   }
 
   /**
-   * Re-reads the pull request. A merge ends the cycle: the clone goes back to
-   * the base branch with the developer's merge in it, and the next 저장 opens
-   * a fresh branch — which is why this is not a passive status read.
+   * Re-reads the pull request. 반영됨(merged)과 반려(closed) 둘 다 사이클을
+   * 끝낸다: 클론은 베이스 브랜치로 돌아가고 다음 저장이 새 브랜치를 연다 —
+   * 그래서 이것은 수동적인 상태 읽기가 아니다 (커미티 2026-09-15 판정 1·2).
    */
   async refreshHandoff(): Promise<HandoffStatusReport | null> {
+    const current = this.openHandoff;
+    // 폴링이 이미 본 끝 — 읽기에 실패해도 이것만으로 내려앉을 수 있다.
+    const ended = this.endedHandoff;
+    const target = current ?? ended;
+    const slug = this.repoSlug();
+    const client = this.gitHubClient?.() ?? null;
+    if (!target) return null;
+    if (!slug || !client) {
+      if (ended) await this.landCycle(ended);
+      return ended ?? current;
+    }
+
+    const pull = await client.getPullRequest({ ...slug, number: target.number }).catch(() => null);
+    if (!pull) {
+      // 못 읽었다고 끝나지 않은 것이 되지는 않는다: 폴링이 본 끝은 그대로 내려앉는다.
+      if (ended) await this.landCycle(ended);
+      return ended ?? current;
+    }
+
+    const handoff: HandoffStatus = pull;
+    // 사이클을 끝내는 판정은 둘이다: 반영됨과 반려. 반려를 사이클로 계속 들고
+    // 있으면 칩이 `저장됨` 으로 떨어져(넘기기까지 열린다) 저장은 아무도 읽지
+    // 않는 브랜치에 쌓이고, 넘기기는 닫힌 요청의 제목·본문만 덮어쓴다 —
+    // 개발자의 판정이 조용히 무효가 된다 (커미티 2026-09-15 C-3).
+    if (pull.state !== "merged" && pull.state !== "closed") {
+      // 닫혔다 다시 열린 요청 — 세워 둔 끝은 더 이상 끝이 아니다.
+      this.endedHandoff = null;
+      this.setCycle(this.branch, handoff);
+      return await this.withReviews(handoff);
+    }
+
+    await this.landCycle(handoff);
+    return await this.withReviews(handoff);
+  }
+
+  /**
+   * 폴링의 읽기 (커미티 2026-09-15 판정 1): **읽기만 한다.**
+   *
+   * open ↔ changes_requested 사이의 움직임만 칩·배지에 반영한다. 사이클을
+   * 끝내는 판정(반영됨·반려)은 워크트리를 베이스로 되돌리고 체크포인트까지
+   * 건드리는 착지를 동반하므로, 타이머가 조용히 해서는 안 되는 일이다 —
+   * 본 끝은 `endedHandoff` 에 세워만 두고, 사람이 있는 자리(상태 확인 ·
+   * 프로젝트 활성화 · 다음 저장의 머리)가 내려앉힌다.
+   */
+  async peekHandoff(): Promise<HandoffStatusReport | null> {
     const current = this.openHandoff;
     const slug = this.repoSlug();
     const client = this.gitHubClient?.() ?? null;
@@ -1255,34 +1401,47 @@ export class RepoWorkspace {
     const pull = await client.getPullRequest({ ...slug, number: current.number }).catch(() => null);
     if (!pull) return current;
 
-    const handoff: HandoffStatus = pull;
-    if (pull.state !== "merged") {
-      this.setCycle(this.branch, handoff);
-      return await this.withReviews(handoff);
-    }
+    if (pull.state === "merged" || pull.state === "closed") this.endedHandoff = pull;
+    else this.setCycle(this.branch, pull);
+    return await this.withReviews(pull);
+  }
 
-    // Merged: the work is the developer's now. Land back on the base branch
-    // with their merge, and forget the branch so the next save starts clean.
+  /** 사람이 온 자리 — 폴링이 세워 둔 사이클의 끝이 있으면 지금 내려앉힌다. */
+  async landHandoffIfDue(): Promise<void> {
+    if (!this.endedHandoff) return;
+    await this.refreshHandoff().catch(() => undefined);
+  }
+
+  /**
+   * 사이클의 끝 — 반영됨과 반려가 같은 모양으로 내려앉는다: 베이스 브랜치로
+   * 돌아가고 브랜치를 잊는다. 반려에서 워크트리를 반려된 팁에 남겨 두면 다음
+   * 저장의 `checkout -B` 가 그 위에서 새 사이클을 만들어 **반려된 커밋을 새
+   * 요청으로 다시 제안한다** (커미티 2026-09-15 판정 2).
+   */
+  private async landCycle(handoff: HandoffStatus): Promise<void> {
     try {
       await this.git(["fetch", "origin", this.baseBranch]);
-      // 반영됨은 저장 안 한 변경을 실어 나르지 않는다: 병합 직후엔 양쪽
-      // 블롭이 같아 checkout 이 수정을 거부하지 않고, 이어지는 reset 이
-      // 그대로 지워버린다. dirty 면 checkout 만 하고 reset 은 건너뛴다 —
-      // 다음 세션 시작의 최신화가 stash 로 그 변경을 지키며 반영을 따라간다.
+      // 저장 안 한 변경은 실어 나르지 않는다: 병합 직후엔 양쪽 블롭이 같아
+      // checkout 이 수정을 거부하지 않고, 이어지는 reset 이 그대로 지워버린다.
+      // dirty 면 checkout 만 하고 reset 은 건너뛴다 — 다음 세션 시작의 최신화가
+      // stash 로 그 변경을 지키며 따라간다.
       const dirty = (await this.git(["status", "--porcelain"])).trim().length > 0;
       await this.git(["checkout", this.baseBranch]);
       if (!dirty) await this.git(["reset", "--hard", `origin/${this.baseBranch}`]);
     } catch (error) {
-      // A dirty worktree can refuse the checkout. The PR really did merge, so
-      // report that; the next session-start merge picks the base up anyway.
+      // A dirty worktree can refuse the checkout. The request really did end,
+      // so report that; the next session-start merge picks the base up anyway.
       this.setDetail(detailOf(error, this.pat));
     }
+    this.endedHandoff = null;
     this.setCycle(null, handoff);
-    // 반영됨 (PLAN D52): the cycle's checkpoints snapshot a worktree the
-    // developer has already absorbed — restoring them now would move the
-    // work backwards past a merge. Their refs go, quietly.
-    await this.clearCheckpoints().catch(() => undefined);
-    return await this.withReviews(handoff);
+    if (handoff.state === "merged") {
+      // 반영됨 (PLAN D52): the cycle's checkpoints snapshot a worktree the
+      // developer has already absorbed — restoring them now would move the work
+      // backwards past a merge. Their refs go, quietly. 반려는 다르다: 흡수된
+      // 적이 없으니 되돌릴 가치가 남는다 — 체크포인트를 유지한다 (판정 2).
+      await this.clearCheckpoints().catch(() => undefined);
+    }
   }
 
   /**
@@ -1586,6 +1745,7 @@ export class RepoWorkspace {
     // The same worktree contract as a save: a refresh settling underneath a
     // restore would half-undo two different moments at once.
     await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
     const dirty = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
     if (dirty.trim() !== "") {
       return this.setDiff({
@@ -1641,6 +1801,16 @@ export class RepoWorkspace {
   async discard(): Promise<RepoDiscard> {
     if (!this.isCloned()) return { removed: [] };
     await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
+    return await this.clearUnsavedWork();
+  }
+
+  /**
+   * 버리기의 본문 — 잠깐 치워두기가 스냅샷을 남긴 뒤 워크트리를 비우는 같은
+   * 경로. 대기 없음: 호출자(버리기·치워두기)가 이미 worktree 소유권을
+   * 정리했고, 여기서 다시 기다리면 치워두기가 자기 자신을 기다린다.
+   */
+  private async clearUnsavedWork(): Promise<RepoDiscard> {
     const changed = await this.changedPaths();
     const allowed = changed
       .map((path) => safeRepoPath(path))
@@ -1681,6 +1851,177 @@ export class RepoWorkspace {
       else paths.push(body.trim());
     }
     return paths.filter(Boolean);
+  }
+
+  // -----------------------------------------------------------------------
+  // 잠깐 치워두기 (보관함 토론 2026-09-15) — the third door between 저장 and
+  // 버리기: one slot, the checkpoint's own snapshot mechanism, and a 3-way
+  // 꺼내기 that re-applies instead of rewinding. Never `git stash`.
+  // -----------------------------------------------------------------------
+
+  /**
+   * 잠깐 치워두기: snapshot the unsaved worktree into SHELF_REF — the
+   * checkpoint's own mechanism (a throwaway index, a tree, a parented
+   * commit; untracked screens included), so the slot survives the daemon's
+   * death like any ref — then clear the worktree through 버리기's one path
+   * rule. One slot: filling it twice must name the door out first.
+   */
+  async shelve(): Promise<RepoShelf> {
+    if (!this.isCloned()) {
+      throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
+    }
+    await this.publishing?.catch(() => undefined);
+    await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
+    const run = (async () => {
+      if (await this.shelfExists()) throw new Error(SHELF_ALREADY_DETAIL);
+      if ((await this.mergeInProgress()) || (await this.conflictedFiles()).length > 0) {
+        throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
+      }
+      if ((await this.git(["status", "--porcelain"])).trim() === "") {
+        throw new Error(SHELF_EMPTY_DETAIL);
+      }
+      // The snapshot: never HEAD, never the real index — the checkpoint's
+      // throwaway-index trick, one ref of its own at the end.
+      const temporaryIndex = join(this.root, ".git", `colo-design-shelf-${randomUUID()}`);
+      const indexEnv = { GIT_INDEX_FILE: temporaryIndex };
+      try {
+        await this.git(["add", "-A"], this.root, indexEnv);
+        const tree = (await this.git(["write-tree"], this.root, indexEnv)).trim();
+        const head = (await this.git(["rev-parse", "HEAD"])).trim();
+        const commit = (
+          await this.git(
+            [
+              ...(await this.identityArgs()),
+              "commit-tree",
+              tree,
+              "-p",
+              head,
+              "-m",
+              `${SHELF_COMMIT_MESSAGE} · 브랜치 ${this.branch ?? this.baseBranch}`,
+            ],
+            this.root,
+            indexEnv,
+          )
+        ).trim();
+        await this.git(["update-ref", SHELF_REF, commit]);
+      } finally {
+        rmSync(temporaryIndex, { force: true });
+      }
+      // The desk is cleared through 버리기's own rule — the snapshot went
+      // first, so what the rule refuses to touch stays honestly in view.
+      await this.clearUnsavedWork();
+      this.shelfAt = new Date().toISOString();
+      await this.refreshPendingChanges();
+      this.emit();
+      return { at: this.shelfAt };
+    })();
+    this.shelving = run;
+    try {
+      return await run;
+    } finally {
+      this.shelving = null;
+    }
+  }
+
+  /**
+   * 치워둔 작업 꺼내기: re-APPLY the shelved work on top of whatever HEAD is
+   * now — the shelf's own diff, three ways, exactly what a `git stash pop`
+   * computes without entering that namespace. A checkpoint restore would
+   * REPLACE the worktree with the shelf-era tree and quietly rewind every
+   * 저장 · 최신화 since (되감기가 아니라 다시 얹기 — 보관함 토론의 핵심
+   * 판정). Refuses onto a dirty desk; a conflict is Claude's first task like
+   * every conflict here, and the slot SURVIVES it — the cleanup's last step
+   * drops the ref, not the failure's.
+   */
+  async unshelve(onSessionTurn?: (brief: string) => void): Promise<RepoShelfRestore> {
+    if (!this.isCloned()) {
+      throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
+    }
+    await this.publishing?.catch(() => undefined);
+    await this.refreshing?.catch(() => undefined);
+    await this.shelving?.catch(() => undefined);
+    const run = (async () => {
+      if (!(await this.shelfExists())) throw new Error(SHELF_NONE_DETAIL);
+      if ((await this.mergeInProgress()) || (await this.conflictedFiles()).length > 0) {
+        throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
+      }
+      if ((await this.git(["status", "--porcelain"])).trim() !== "") {
+        throw new Error(SHELF_DIRTY_DETAIL);
+      }
+      const names = (
+        await this.git(["diff", "--no-renames", "--name-only", `${SHELF_REF}^`, SHELF_REF])
+      )
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      // The patch rides a file under `.git/` — never an untracked screen of
+      // its own. `--full-index` records the blob identities the 3-way needs;
+      // `--binary` carries images a screen change may have brought in.
+      const patchFile = join(this.root, ".git", `colo-design-shelf-${randomUUID()}.patch`);
+      try {
+        const patch = await this.git([
+          "diff",
+          "--no-renames",
+          "--full-index",
+          "--binary",
+          `${SHELF_REF}^`,
+          SHELF_REF,
+        ]);
+        writeFileSync(patchFile, patch);
+        await this.git(["apply", "--3way", "--index", patchFile]);
+      } catch (error) {
+        // `apply --3way` leaves a conflict as unmerged index entries — the
+        // same shape a conflicted 최신화 leaves, so the same net catches it.
+        const conflicted = await this.conflictedFiles();
+        if (conflicted.length > 0) {
+          await this.refreshPendingChanges();
+          this.emit();
+          if (onSessionTurn) onSessionTurn(this.shelfConflictBrief(conflicted));
+          throw new Error(SHELF_CONFLICT_DETAIL);
+        }
+        throw error;
+      } finally {
+        rmSync(patchFile, { force: true });
+      }
+      // A clean landing spends the slot. A conflicted one does not — the
+      // brief's cleanup drops the ref once Claude finishes.
+      await this.git(["update-ref", "-d", SHELF_REF]);
+      this.shelfAt = null;
+      await this.refreshPendingChanges();
+      this.emit();
+      return { applied: names };
+    })();
+    this.shelving = run;
+    try {
+      return await run;
+    } finally {
+      this.shelving = null;
+    }
+  }
+
+  /** 치워둔 작업이 자리를 잡고 있는가 — the ref, nothing else, says so. */
+  private async shelfExists(): Promise<boolean> {
+    try {
+      await this.git(["rev-parse", "-q", "--verify", SHELF_REF]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The slot's `at`, read where `refreshPendingChanges` recounts the chip. */
+  private async readShelfAt(): Promise<string | null> {
+    try {
+      const out = await this.git([
+        "for-each-ref",
+        "--format=%(committerdate:iso8601-strict)",
+        SHELF_REF,
+      ]);
+      return out.trim() === "" ? null : out.trim();
+    } catch {
+      return this.shelfAt;
+    }
   }
 
   /**
@@ -1969,6 +2310,22 @@ export class RepoWorkspace {
         `충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}\n` +
         "충돌 표식을 정리한 뒤 git add 로 해결을 표시하고, git stash drop 으로 임시 보관을 치워 주세요. " +
         "그러면 변경은 저장 전 상태로 돌아옵니다.",
+    );
+  }
+
+  /**
+   * 치워둔 작업 꺼내기가 겹쳤을 때 Claude 의 첫 과제 — the pop-conflict
+   * brief's shape, the shelf ref's own words. The ref is NOT a stash: the
+   * cleanup empties the slot with update-ref, never `git stash drop`.
+   */
+  private shelfConflictBrief(files: string[]): string {
+    return markTurn(
+      { kind: "gate", step: "치워둔 작업 꺼내기" },
+      "치워둔 작업을 화면에 다시 얹다 겹치는 부분이 생겼습니다.\n" +
+        `충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}\n` +
+        "충돌 표식을 정리한 뒤 git add 로 해결을 표시해 주세요. " +
+        "정리가 끝나면 git update-ref -d refs/colo-design/shelf 로 치워둔 자리를 비워 주세요 — " +
+        "그 전까지 꺼내기는 같은 작업을 다시 얹으려 합니다.",
     );
   }
 
@@ -2668,6 +3025,7 @@ export class RepoWorkspace {
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       pendingChanges: this.pendingChanges,
+      shelf: this.shelfAt === null ? null : { at: this.shelfAt },
       errorKind: this.errorKind,
       commands: this.config
         ? {
@@ -2728,8 +3086,11 @@ export class RepoWorkspace {
     } catch {
       return;
     }
-    if (next === this.pendingChanges) return;
+    const shelf = await this.readShelfAt();
+    this.shelfRead = true;
+    if (next === this.pendingChanges && shelf === this.shelfAt) return;
     this.pendingChanges = next;
+    this.shelfAt = shelf;
     this.emit();
   }
 

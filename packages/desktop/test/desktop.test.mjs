@@ -462,6 +462,27 @@ test("notice copy never speaks the daemon's words", () => {
   );
 });
 
+test("개발자 쪽 알림은 프로젝트 이름으로 부르고 네 사건이 서로 다른 말을 한다", () => {
+  // 커미티 B1+2026-09-15: 단위는 프로젝트(대화가 아니다), 그리고 반영됨 ·
+  // 반려 · 변경 요청 · 코멘트는 사용자가 할 일이 서로 다르므로 문장도 다르다.
+  const cases = [
+    { kind: "handoff", slug: "shop", projectName: "쇼핑몰", event: "merged" },
+    { kind: "handoff", slug: "shop", projectName: "쇼핑몰", event: "closed" },
+    { kind: "handoff", slug: "shop", projectName: "쇼핑몰", event: "changes_requested" },
+    { kind: "handoff", slug: "shop", projectName: "쇼핑몰", event: "comments", count: 3 },
+  ];
+  const copies = cases.map((notice) => noticeCopy(notice));
+  for (const out of copies) {
+    assert.ok(out.title.startsWith("쇼핑몰"), "프로젝트 이름이 제목이 된다");
+    assert.doesNotMatch(
+      `${out.title} ${out.body}`,
+      /git|branch|commit|push|pull|PR|Bash|Write|Edit/,
+    );
+  }
+  assert.equal(new Set(copies.map((out) => out.body)).size, copies.length);
+  assert.match(copies[3].body, /3건/, "코멘트 알림은 몇 건인지 말한다");
+});
+
 // ---------------------------------------------------------------------------
 // preview driver (PLAN D61 · D63) — the hidden offscreen window, over real Electron
 // ---------------------------------------------------------------------------

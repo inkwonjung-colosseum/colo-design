@@ -8,17 +8,16 @@
  * Usage: node packages/desktop/test/desktop-smoke.mjs [appPath]
  * Run: node packages/desktop/test/desktop-smoke.mjs release/mac-arm64/Colo Design.app/Contents/MacOS/Colo Design
  */
-import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
+import { buildDesktopBundle } from "./build-desktop.mjs";
 import { closeApp } from "./close-app.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = join(here, "..");
-const repo = join(desktop, "..", "..");
 const packagedApp = process.argv[2] ?? process.env.PACKAGED_APP ?? null;
 
 const results = [];
@@ -30,23 +29,11 @@ function check(name, passed, detail = "") {
   console.log(`${passed ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { stdio: "inherit", cwd });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-}
-
 async function main() {
   let appPath = packagedApp;
 
   if (!packagedApp) {
-    run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
-    const webDist = join(desktop, "web-dist");
-    rmSync(webDist, { recursive: true, force: true });
-    mkdirSync(webDist, { recursive: true });
-    cpSync(join(repo, "packages", "web", "dist"), webDist, { recursive: true });
+    buildDesktopBundle();
     appPath = desktop; // electron CLI runs the project dir with its main
   } else if (!existsSync(packagedApp)) {
     throw new Error(`packaged app not found: ${packagedApp}`);

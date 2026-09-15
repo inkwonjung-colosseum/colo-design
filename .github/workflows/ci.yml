@@ -5,10 +5,10 @@
 # 미저장 변경 수 복원이 그렇게 한 달을 붉게 지냈다). 이 워크플로우는
 # main 푸시와 모든 PR 에서 같은 스위트를 먼저 돌려 그 창을 없앤다.
 #
-# 무엇을 돌리는가: `pnpm test` 와 같은 네 레인 병렬 러너에서 real-Claude
-# 두 스위트(test:daemon · test:planner — 구독 사용량을 쓰는 L4)만 뺀
-# L1(단위·Electron) · L2(데몬 소켓 e2e) · L3(브라우저 e2e). 전부 로컬
-# fixture(bare git 원격 · 스텁 CLI · 녹화된 GitHub REST)로 돌아가 외부
+# 무엇을 돌리는가: `pnpm test` 와 같은 레인 병렬 러너에서 real-Claude 두
+# 스위트(test:daemon · test:planner — 구독 사용량을 쓰는 L4)만 뺀
+# L1(단위) · L2(데몬 소켓 e2e) · L3(브라우저 e2e) · L5(Electron 앱). 전부
+# 로컬 fixture(bare git 원격 · 스텁 CLI · 녹화된 GitHub REST)로 돌아가 외부
 # 네트워크가 필요 없다. Electron 스위트는 ubuntu 에서 xvfb 로 뜬다.
 #
 # 실패한 경우: 레인별 로그(.test-logs/)를 아티팩트로 올려 웹 UI 로그에서
@@ -74,9 +74,34 @@ jobs:
           ./actionlint -color
 
   offline:
-    name: 오프라인 스위트 (L1–L3)
+    # 레인 하나에 러너 하나. 전에는 셋을 한 러너에서 순차로 돌렸는데(병렬은
+    # 공유 러너를 과부하시켜 부하에 민감한 대기를 플레이크시킨다), 그러면
+    # 앞 레인이 깨질 때 `bash -e` 가 거기서 끊겨 뒤 레인의 결과가 통째로
+    # 사라졌다(31번째 판: L1 의 검사 하나 때문에 L2·L3 를 아예 못 봤다).
+    # 러너를 나누면 레인끼리 코어를 다투지 않고, 셋의 판정이 늘 함께 온다.
+    name: 오프라인 ${{ matrix.lane }} (${{ matrix.label }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # gui: Chromium·Electron 이 필요한 레인 — 설치도 xvfb 도 이 값이 정한다.
+          - lane: L1
+            label: 단위
+            gui: false
+          - lane: L2
+            label: 데몬 e2e
+            gui: false
+          - lane: L3
+            label: 브라우저 e2e
+            gui: true
+          # Electron 은 제 러너로 나왔다 — 앱의 단일 인스턴스 잠금 때문에
+          # 스위트끼리는 줄을 서야 하고, 그 줄이 단위 레인의 꼬리가 될
+          # 이유는 없다.
+          - lane: L5
+            label: Electron 앱
+            gui: true
     steps:
       - uses: actions/checkout@v4
 
@@ -91,10 +116,12 @@ jobs:
       - name: 설치
         run: pnpm install --frozen-lockfile
 
-      # 브라우저(e2e)와 Electron(L1 의 comments·smoke)이 ubuntu 에서 돌기
+      # 브라우저(e2e)와 Electron(L5 의 앱 스위트)이 ubuntu 에서 돌기
       # 위해 필요한 것을 한 번에: chromium 바이너리 + 시스템 라이브러리 +
-      # xvfb(Electron 은 디스플레이 없이는 뜨지 않는다).
+      # xvfb(Electron 은 디스플레이 없이는 뜨지 않는다). L2 는 소켓만 보므로
+      # 이 스텝을 건너뛴다.
       - name: 브라우저·Electron 실행 환경
+        if: matrix.gui
         run: |
           pnpm exec playwright install --with-deps chromium
           sudo apt-get install -y --no-install-recommends xvfb
@@ -107,27 +134,22 @@ jobs:
       # 스크립트가 레인 실행 중에야 내려받으므로 미리 권한을 고쳐 둘 수도
       # 없다(그 시도가 두 번째 ci 실패였다). 이 스위트가 보는 것은 숨은 창 ·
       # 진짜 JPEG · 클릭이지 샌드박스 정책이 아니므로, CI 에서만 끈다.
-      - name: 오프라인 레인 실행 (real-Claude L4 제외)
+      - name: 레인 실행 (real-Claude L4 제외)
         env:
           ELECTRON_DISABLE_SANDBOX: "1"
-          # 멈춘 레인은 잡의 45분을 다 태우고 취소되며, 취소는 로그 업로드
+          # 멈춘 레인은 잡의 시간을 다 태우고 취소되며, 취소는 로그 업로드
           # 조건을 타지 않아 원인까지 함께 사라진다(셋째 판이 그랬다).
           # 레인마다 상한을 두어 멈춤이 로그를 남기는 실패가 되게 한다.
           COLO_TEST_LANE_TIMEOUT_MIN: "12"
-        run: |
-          # 순차 실행: 공유 러너의 코어 수에서 3레인 병렬은 스스로 과부하를
-          # 만들어 부하에 민감한 대기(화면 밖 턴의 카운트, 마법사의 이동)를
-          # 플레이크시킨다. 각 레인은 이미 스위트를 순서대로 돌리고, 전체는
-          # 여전히 여유(타임아웃 45분) 안에 든다.
-          xvfb-run -a node scripts/test-parallel.mjs L1
-          xvfb-run -a node scripts/test-parallel.mjs L2
-          xvfb-run -a node scripts/test-parallel.mjs L3
+          # 바로 위 스텝이 네 패키지를 이미 지었다 — 러너가 다시 짓지 않게 한다.
+          COLO_TEST_SKIP_BUILD: "1"
+        run: ${{ matrix.gui && 'xvfb-run -a' || '' }} node scripts/test-parallel.mjs ${{ matrix.lane }}
 
       - name: 레인 로그 업로드
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ matrix.lane }}
           path: .test-logs/
           retention-days: 3
           # .test-logs 는 점으로 시작하는 숨김 디렉터리다 — 기본값은 이를

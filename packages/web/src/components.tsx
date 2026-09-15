@@ -1,10 +1,18 @@
-import type { AskQuestion, RepoStatus, TurnMarker } from "@colo-design/protocol";
+import type { AskQuestion, ColoDesignScreen, RepoStatus, TurnMarker } from "@colo-design/protocol";
 import { alignThumbs, readTurn } from "@colo-design/protocol";
 import { type ReactNode, useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
 import { waitedFor } from "./format";
-import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  CopyIcon,
+  FileIcon,
+  ShieldIcon,
+  SparkIcon,
+} from "./icons";
 import { Markdown } from "./Markdown";
 import { isToolRunning } from "./progress";
 import { GENERIC_STARTERS } from "./suggestions";
@@ -585,17 +593,21 @@ function MachineTurn({
   marker,
   body,
   thumbs,
+  onOpenItem,
 }: {
   marker: TurnMarker;
   body: string;
   /** D87: the pin crops, when the live echo carried them. */
   thumbs?: string[];
+  /** 커미티 C-4 (2026-09-15): 행 클릭 → 그 핀이 찍힌 화면으로. 항목의 screen
+      (경로)이 없는 옛 마커는 클릭이 없다 — 짐작으로 보내지 않는다. */
+  onOpenItem?: (screen: string) => void;
 }) {
   const [open, setOpen] = useState(false);
 
   let title: string;
   let lead: string | null = null;
-  let rows: Array<{ key: string; label: string; text: string }> = [];
+  let rows: Array<{ key: string; label: string; text: string; screen?: string }> = [];
   // D87: the crops are fewer than the rows when the view could not
   // photograph a pin, so each image has to be put back on its own row.
   const aligned = marker.kind === "comments" ? alignThumbs(marker.items, thumbs) : null;
@@ -615,12 +627,20 @@ function MachineTurn({
       lead = [marker.screen, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
       rows = marker.items.map((item, index) => {
         // 여러 화면을 한 턴에 찍은 배치는 머리글이 화면 N곳 요약이라 —
-        // 행마다 각자의 화면을 새긴다 (재설계 C6).
+        // 행마다 각자의 화면을 새긴다 (재설계 C6). 번호 접두는 커미티 C-4
+        // (2026-09-15): 턴 본문이 "1. 2. 3."으로 세는 이 목록을, 화면의
+        // 영수증도 같은 수로 센다 — 기획자가 답변과 영수증을 눈으로 맞춘다.
+        const inner = item.label || `${index + 1}번째`;
         const label =
           item.screen && marker.screen.startsWith("화면 ")
-            ? `${item.label || `${index + 1}번째`} · ${item.screen}`
-            : item.label || `${index + 1}번째`;
-        return { key: String(index), label, text: item.comment };
+            ? `${index + 1}. ${inner} · ${item.screen}`
+            : `${index + 1}. ${inner}`;
+        return {
+          key: String(index),
+          label,
+          text: item.comment,
+          ...(item.screen ? { screen: item.screen } : {}),
+        };
       });
       break;
     }
@@ -673,7 +693,10 @@ function MachineTurn({
       {rows.length > 0 && (
         <ul className="machine__rows">
           {rows.map((row, index) => (
-            <li key={row.key}>
+            <li
+              key={row.key}
+              className={onOpenItem && row.screen ? "machine__row--link" : undefined}
+            >
               {marker.kind === "comments" && aligned?.[index] && (
                 <img
                   className="machine__thumb"
@@ -683,7 +706,22 @@ function MachineTurn({
                   alt={row.label}
                 />
               )}
-              <span className="machine__label">{row.label}</span>
+              {onOpenItem && row.screen ? (
+                // 커미티 C-4: 영수증의 행은 과거의 가리킴을 회수하는 문이다.
+                <button
+                  type="button"
+                  className="machine__label machine__label--link"
+                  title="이 핀이 찍혔던 화면으로 돌아갑니다"
+                  onClick={() => {
+                    if (row.screen) onOpenItem(row.screen);
+                  }}
+                >
+                  {row.label}
+                  <ChevronRightIcon />
+                </button>
+              ) : (
+                <span className="machine__label">{row.label}</span>
+              )}
               {row.text && <span className="machine__text">{row.text}</span>}
             </li>
           ))}
@@ -712,7 +750,7 @@ function MachineTurn({
 const TURN_SUBTYPE_WORDS: Record<string, string> = {
   error_max_turns: "정한 대화 길이를 채웠습니다 — 새 대화에서 이어 가면 됩니다",
   error_during_execution: "잠시 문제가 있었습니다 — 다시 보내 주세요",
-  interrupted: "멈추었습니다 — 이어서 말하면 됩니다",
+  interrupted: "멈추었습니다 — 고치던 화면이 반쯤 남았을 수 있습니다. 이어서 말하거나 되돌리세요",
 };
 
 /**
@@ -830,14 +868,25 @@ function FailedTurn({
   resultText,
   retryText,
   onRetry,
+  onResendEdit,
+  checkpointId,
+  onRestoreCheckpoint,
+  live,
 }: {
   subtype: string;
   resultText: string | null;
   retryText: string | null;
   onRetry?: (text: string) => void;
+  /** 커미티 B4 (2026-09-15): 중지 카드의 회수 — 같은 말의 수정 재전송. */
+  onResendEdit?: (text: string) => void;
+  /** 같은 턴 시작의 스냅샷 — 텍스트 없이 도구만 돌다 멈춘 턴의 되돌림 손. */
+  checkpointId?: string;
+  onRestoreCheckpoint?: (id: string) => void;
+  live?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const limit = resultText !== null && LIMIT_RESULT.test(resultText);
+  const interrupted = subtype === "interrupted";
   const reason = limit
     ? "구독 사용량이 채워졌습니다 — 채워지면 같은 말로 이어하면 됩니다"
     : (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요");
@@ -848,9 +897,29 @@ function FailedTurn({
         <span className="machine__lead">{reason}</span>
       </div>
       <div className="turnfail__actions">
-        {!limit && onRetry && retryText && (
+        {/* 커미티 B4: 스스로 멈춘 사람에게 "같은 말 재발사"는 이상한 첫 제안 —
+            고쳐서 다시 보내기(입력창으로 돌아온다)가 그 자리를 대신한다. */}
+        {interrupted && !limit && retryText && onResendEdit && (
+          <button type="button" className="turnfail__retry" onClick={() => onResendEdit(retryText)}>
+            고쳐서 다시 보내기
+          </button>
+        )}
+        {!interrupted && !limit && onRetry && retryText && (
           <button type="button" className="turnfail__retry" onClick={() => onRetry(retryText)}>
             다시 보내기
+          </button>
+        )}
+        {/* 텍스트 없이 도구만 돌다 멈춘 턴은 되돌릴 버튼이 답변에만 있어 여기까지
+            못 미쳤다 — 중지 카드가 스스로의 체크포인트로 돌리는 손을 가진다. */}
+        {interrupted && checkpointId && onRestoreCheckpoint && (
+          <button
+            type="button"
+            className="revert"
+            disabled={live}
+            title="이 요청이 바꾼 화면 파일을, 이 요청이 시작하기 전 모습으로 되돌립니다"
+            onClick={() => onRestoreCheckpoint(checkpointId)}
+          >
+            이 요청 이전으로 되돌리기
           </button>
         )}
         <button
@@ -863,6 +932,43 @@ function FailedTurn({
         </button>
       </div>
       {open && <pre className="machine__body">{resultText ?? (subtype || "turn")}</pre>}
+    </div>
+  );
+}
+
+/**
+ * 커미티 C-1 (2026-09-15): 답변 본문에 선언된 화면의 주소가 보이면 그 화면을
+ * 미리보기로 여는 침 행. 대조는 주소 문자열로(제목은 답변에서 변형되기
+ * 쉽다 — 커미티 B 수정). 첫 상태로 간다; 상태 골라 보기는 주소창 자동완성과
+ * 같은 어휘로 자란다(감동판).
+ */
+function ScreenChips({
+  text,
+  screens,
+  onOpen,
+}: {
+  text: string;
+  screens: ColoDesignScreen[];
+  onOpen: (route: string, state: string | null) => void;
+}) {
+  const named = screens.filter(
+    (screen) => screen.title.trim() !== "" && text.includes(screen.route),
+  );
+  if (named.length === 0) return null;
+  return (
+    <div className="answer__screens">
+      {named.map((screen) => (
+        <button
+          key={screen.route}
+          type="button"
+          className="answer__screen"
+          title={`미리보기에서 「${screen.title}」을 엽니다`}
+          onClick={() => onOpen(screen.route, screen.states[0] ?? null)}
+        >
+          {screen.title}
+          <ChevronRightIcon />
+        </button>
+      ))}
     </div>
   );
 }
@@ -917,7 +1023,12 @@ export function Transcript({
   onRewind,
   onResendEdit,
   onStarter,
+  onStarterAttach,
   starters,
+  screens,
+  onOpenScreen,
+  onOpenScreenTitle,
+  onOpenSpec,
   checkpoints,
   onRestoreCheckpoint,
   showThinking = false,
@@ -936,6 +1047,16 @@ export function Transcript({
   onRewind?: (turn: number, text: string) => void;
   /** 고쳐서 다시 보내기 (PLAN D95): the planner's words return to the composer. */
   onResendEdit?: (text: string) => void;
+  /** 커미티 A-1 (2026-09-15): 첨부로 시작하기 — 컴포저의 파일 고르기를 연다. */
+  onStarterAttach?: () => void;
+  /** 커미티 C-1: 연결 레포가 선언한 화면 — 답변의 "만든 화면" 칩의 대조 원본. */
+  screens?: ColoDesignScreen[];
+  /** 커미티 C-1: 칩을 누르면 미리보기가 그 화면으로 간다. */
+  onOpenScreen?: (route: string, state: string | null) => void;
+  /** 커미티 C-4: 영수증 행 클릭 — 화면 제목으로 점프(상태는 그 턴이 본 것). */
+  onOpenScreenTitle?: (title: string, state: string | null) => void;
+  /** 커미티 C-5: 첨부 칩 클릭 — 기획서 원본을 연다(데몬이 specs/ 로 검증). */
+  onOpenSpec?: (relPath: string) => void;
   /** A starter chip was pressed — its sentence becomes the composer's draft. */
   onStarter?: (text: string) => void;
   /** The chips themselves — the connected repo's declared screens, falling
@@ -983,6 +1104,18 @@ export function Transcript({
         </p>
         {onStarter && (
           <div className="empty__starters">
+            {/* 커미티 A-1 (2026-09-15): 첫 문장의 초대는 타이핑만이 아니라 첨부다 —
+                "입력은 뭐든 된다"(README)를 빈 대화의 첫 동작으로 지킨다. 문장
+                칩들보다 앞에 서되, 같은 어휘의 칩이다(메뉴가 아니라 문턱). */}
+            {onStarterAttach && (
+              <button
+                type="button"
+                className="empty__starter empty__starter--attach"
+                onClick={onStarterAttach}
+              >
+                기획서나 그림을 붙여 시작하기
+              </button>
+            )}
             {(starters ?? GENERIC_STARTERS).map((starter) => (
               <button
                 key={starter}
@@ -1090,7 +1223,18 @@ export function Transcript({
             const { marker, body } = readTurn(block.text);
             if (marker)
               return (
-                <MachineTurn key={block.id} marker={marker} body={body} thumbs={block.thumbs} />
+                <MachineTurn
+                  key={block.id}
+                  marker={marker}
+                  body={body}
+                  thumbs={block.thumbs}
+                  onOpenItem={
+                    onOpenScreenTitle
+                      ? (screen) =>
+                          onOpenScreenTitle(screen, "state" in marker ? marker.state : null)
+                      : undefined
+                  }
+                />
               );
             const halted = TAPE_LINES[block.text.trim()];
             if (halted)
@@ -1104,9 +1248,17 @@ export function Transcript({
                 {block.text}
                 {block.images > 0 && <span className="tag">이미지 {block.images}장</span>}
                 {block.files.map((file) => (
-                  <span key={file} className="bubble__file">
+                  <button
+                    key={file}
+                    type="button"
+                    className="bubble__file"
+                    title={onOpenSpec ? `${file} — 보관한 원본을 엽니다` : "첨부한 문서입니다"}
+                    disabled={!onOpenSpec}
+                    onClick={() => onOpenSpec?.(file)}
+                  >
+                    <FileIcon />
                     {file.split("/").pop()}
-                  </span>
+                  </button>
                 ))}
                 {block.text.trim() !== "" && (
                   <div className="bubble__actions">
@@ -1151,6 +1303,14 @@ export function Transcript({
                   <Markdown text={block.text} />
                   {block.streaming && <span className="caret" />}
                 </div>
+                {/* 커미티 C-1 (2026-09-15): 답변의 "만든 화면"을 미리보기로 여는
+                    칩. 파싱이 아니라 대조다 — 선언된 화면의 주소가 답변에
+                    보이는 것만 칩이 되므로, 형식을 안 지킨 답변은 지금과
+                    같다. 복사·되돌리기(파괴적)와는 다른 행 — 탐색은 액션과
+                    섞이지 않는다(커미티 A 조건). */}
+                {!block.streaming && screens && onOpenScreen && (
+                  <ScreenChips text={block.text} screens={screens} onOpen={onOpenScreen} />
+                )}
                 <div className="answer__actions">
                   {!block.streaming && (
                     <CopyButton value={block.text} label="답변 복사" className="answer__copy" />
@@ -1193,13 +1353,6 @@ export function Transcript({
                 onStopTask={onStopTask}
               />
             );
-          // A failed turn is the one turn end a planner must SEE (PLAN D35):
-          // their words would otherwise just hang there, unanswered. A settled
-          // turn keeps one quiet line (리뷰 B4) — the waiting it cost is the
-          // planner's own accounting, and the only scale they can judge the
-          // next spinner against. 도는 동안의 시계는 입력창 위 한 줄(Composer)이
-          // 들고 있다가, 턴이 끝나면 이 줄의 `걸렸습니다`로 멈춘다.
-          // Cost stays invisible.
           case "turn":
             return block.isError || (block.subtype !== "" && block.subtype !== "success") ? (
               <FailedTurn
@@ -1208,6 +1361,14 @@ export function Transcript({
                 resultText={block.resultText}
                 retryText={isLastFailedTurn(blocks, block) ? lastUserText(blocks) : null}
                 onRetry={onRetry}
+                onResendEdit={onResendEdit}
+                checkpointId={
+                  block.subtype === "interrupted" && checkpoints?.length
+                    ? checkpoints[checkpoints.length - 1]?.id
+                    : undefined
+                }
+                onRestoreCheckpoint={onRestoreCheckpoint}
+                live={live}
               />
             ) : block.durationMs != null ? (
               <TurnDone

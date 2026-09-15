@@ -27,10 +27,30 @@ import {
 const STEP_ORDER: OnboardingStepId[] = ["claude", "git", "runtime", "github"];
 
 const STEP_TITLE: Record<OnboardingStepId, string> = {
+  // 커미티 A-4 (2026-09-15): 제목은 쓸모가 먼저다 — 도구 이름은 조용한 부제로
+  // 내려간다(claude 행이 이미 사람 말 설명을 가진 것의 확장). 기획자가 평생
+  // 생각할 일 없는 런타임(Node · pnpm)은 "앱에 포함"이 본체다.
+  claude: "화면을 만드는 Claude",
+  git: "작업을 보관할 준비",
+  runtime: "앱 실행 준비",
+  github: "개발자에게 넘길 준비",
+};
+
+/** The tool behind each gate — the stephead's quiet subtitle. */
+const STEP_TOOL: Record<OnboardingStepId, string> = {
   claude: "Claude Code",
   git: "git",
-  runtime: "Node · pnpm",
+  runtime: "앱에 포함",
   github: "GitHub",
+};
+
+/** 커미티 A-4: claude 행의 설명 한 줄 패턴(:203-209)을 나머지 셋에도. */
+const STEP_HINT: Record<OnboardingStepId, string> = {
+  claude: "",
+  git: "화면 작업을 저장하고 개발자에게 넘기는 데 쓰는 도구입니다 — 이 앱이 대신 다룹니다.",
+  runtime: "앱 안에 들어 있습니다 — 없다고 나오면 앱 설치가 깨진 것입니다.",
+  github:
+    "작업을 개발자에게 넘기는 길입니다. 없어도 시작할 수 있습니다 — 공개 저장소로 작업합니다.",
 };
 
 /** Each gate status's glyph — the seat already carries its tone colour. */
@@ -190,11 +210,16 @@ export function Onboarding({
                 </span>
                 <span className="onboarding__stepnum">{STEP_ORDER.indexOf(id) + 1}</span>
                 <h2>{STEP_TITLE[id]}</h2>
+                {/* 도구 이름은 부제다 — 알아야 하는 것은 무엇에 쓰는지다. */}
+                <span className="onboarding__tool">{STEP_TOOL[id]}</span>
                 <span className={`onboarding__status onboarding__status--${step.status}`}>
                   {STATUS_LABEL[step.status]}
                 </span>
               </div>
               <p className="onboarding__detail">{step.detail}</p>
+              {open && step.status !== "pass" && STEP_HINT[id] !== "" && (
+                <p className="hint">{STEP_HINT[id]}</p>
+              )}
 
               {/* What this step is, before any button (실사 이후): the first
                   gate asks a non-developer for a CLI they have never heard of,

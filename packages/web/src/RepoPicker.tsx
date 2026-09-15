@@ -219,6 +219,17 @@ export function RepoPicker({
     inspection.phase !== "ready" ||
     (!inspection.result.hasColoDesign && !bootstrapCreate) ||
     !approveRun;
+  /**
+   * 커미티 A-2 (2026-09-15): 잠긴 이유는 조건마다 다르다 — 같은 문장을 걸면
+   * "확인하는 중"에 "체크해 주세요"가 거짓말을 한다. 주소 경로가 이미 갖고
+   * 있던 교훈(:493-499)을 목록 경로에 적용한다.
+   */
+  const blockedReason =
+    inspection === null || inspection.phase !== "ready"
+      ? "레포를 확인하는 중입니다"
+      : !inspection.result.hasColoDesign && !bootstrapCreate
+        ? "이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결 준비하기를 눌러 주세요"
+        : "위 명령 실행 동의에 체크하면 켜집니다";
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     // An IME owns every keydown until its composition ends — Enter commits
     // the hangul (isComposing, legacy keyCode 229). Reacting to it would
@@ -424,7 +435,7 @@ export function RepoPicker({
             {bootstrapCreate && (
               <button
                 type="button"
-                className="primary"
+                title={blocked ? blockedReason : undefined}
                 disabled={Boolean(blocked)}
                 onClick={() => void create()}
               >
@@ -434,7 +445,7 @@ export function RepoPicker({
             {!bootstrapCreate && (
               <button
                 type="button"
-                className="primary"
+                title={blocked ? blockedReason : undefined}
                 disabled={Boolean(blocked)}
                 onClick={() => void create()}
               >
@@ -451,6 +462,11 @@ export function RepoPicker({
             >
               Claude가 연결 준비하기
             </button>
+          )}
+          {inspection?.phase === "ready" && !approveRun && !creating && (
+            <p className="hint" data-testid="create-needed-hint">
+              {blockedReason}
+            </p>
           )}
           <p className="hint">
             {bootstrapCreate

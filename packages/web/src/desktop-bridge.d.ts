@@ -38,10 +38,24 @@ declare global {
       openHome?: (target?: "logs") => Promise<unknown>;
       /** 알림 정책(시점·소리)을 메인에 반영 — 창이 닫혀도 정책이 살게. */
       setNotificationPrefs?: (prefs: { done: string; sound: boolean }) => Promise<unknown>;
-      /** 설정의 `테스트 알림 보내기`. */
-      notifyTest?: () => Promise<unknown>;
+      /**
+       * 설정의 `테스트 알림 보내기`. `shown` 은 **OS 가 이 알림을 그렸는가** —
+       * 서명이 없는 실행(개발 실행)에서는 `false` 와 함께 이유가 온다. 사용자가
+       * OS 에서 알림을 꺼 둔 경우는 여기 잡히지 않는다(`shown: true` 인데 배너가
+       * 없다) — 그 길은 `openNotificationSettings` 뿐이다.
+       */
+      notifyTest?: () => Promise<{ shown: boolean; error?: string }>;
+      /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */
+      openNotificationSettings?: () => Promise<{ opened?: string; error?: string }>;
       /** 알림 클릭 → 그 대화 열기(리뷰 B7): the session id to open. */
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
+      /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
+      onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
+      /**
+       * 커미티 C-5 (2026-09-15): 기획서 원본을 OS 기본 프로그램으로 연다 —
+       * 경로는 데몬이 클론의 specs/ 아래로 검증한 절대경로만 올 수 있다.
+       */
+      openSpec?: (path: string) => Promise<string>;
       preview?: {
         /** Claude 시점 보기(PLAN D63) — 8fps JPEG(base64), 구독만. */
         onFrame: (callback: (jpeg: string) => void) => void;

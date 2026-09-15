@@ -42,6 +42,17 @@ export function stateLabel(state: string): string {
 }
 
 /**
+ * 되돌릴 수 없는 동작의 행선 (커미티 B2 목적지, 2026-09-15): 연결 레포
+ * 주소에서 `owner/repo` 만을 딴다 — 회사가 저장소를 부르는 이름이고, git
+ * 어휘가 아니다. GitHub 주소가 아니면 아무 말도 하지 않는다(null).
+ */
+export function ownerRepoOf(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const match = /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(url.trim());
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+/**
  * The daemon streams the raw output of whatever it is running. A planner
  * should never meet terminal colour codes or the command line itself, so
  * only the last human-readable line survives.

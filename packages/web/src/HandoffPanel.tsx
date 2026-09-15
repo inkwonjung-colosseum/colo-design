@@ -29,6 +29,8 @@ export function HandoffPanel({
   daemon,
   proposedTitle,
   proposedBody,
+  shotNotice,
+  destination,
   sessionId,
   onOpenSettings,
   onClose,
@@ -36,6 +38,9 @@ export function HandoffPanel({
   daemon: Daemon;
   proposedTitle: string;
   proposedBody: string;
+  shotNotice?: string;
+  /** 커미티 B2 목적지: 넘긴 요청이 향할 회사 저장소의 이름(owner/repo). */
+  destination?: string | null;
   /** The live 화면 thread; a failing gate lands in it as Claude's next task. */
   sessionId: string | null;
   /** D90 ⓑ: pr 실패는 Claude 이 아닌 설정의 문제다 — 여기서 바로 연다. */
@@ -135,6 +140,7 @@ export function HandoffPanel({
               <HandoffIcon />
             </span>{" "}
             개발자에게 넘기기
+            {destination ? <span className="modal__destination">→ {destination}</span> : null}
           </h2>
           <button
             type="button"
@@ -199,11 +205,28 @@ export function HandoffPanel({
                 </a>
                 <CopyButton value={handoff.url} label="링크 복사" icon={<LinkIcon size={12} />} />
                 <span className="handoff__state">{HANDOFF_STATE_LABEL[handoff.state]}</span>
+                {/* 리뷰어 보고 (커미티 2026-09-15): 고르지 않고 읽는다 — GitHub 이
+                    보고한 요청 리뷰어. 비어 있으면 그 사실이 곧 안내다: 링크를
+                    개발자에게 직접 들고 가라. 도구는 사람을 지정하지 않는다. */}
+                {handoff.reviewers !== undefined && handoff.reviewers.length > 0 ? (
+                  <p className="hint" data-testid="handoff-reviewers">
+                    개발자 {handoff.reviewers.length}명에게 갔습니다 ·{" "}
+                    {handoff.reviewers.join(" · ")}
+                  </p>
+                ) : (
+                  handoff.reviewers !== undefined && (
+                    <p className="hint" data-testid="handoff-reviewers">
+                      이 레포는 리뷰어를 자동 지정하지 않습니다 — 링크 복사로 개발자에게 보내
+                      주세요.
+                    </p>
+                  )
+                )}
               </div>
             )
           ) : (
             <>
               {drafting && <p className="hint">개발자가 읽을 제목과 내용을 만드는 중…</p>}
+              {shotNotice && <p className="hint">{shotNotice}</p>}
               <label className="setting setting--wide handoff__field">
                 <span className="setting__text">
                   <span className="setting__label">

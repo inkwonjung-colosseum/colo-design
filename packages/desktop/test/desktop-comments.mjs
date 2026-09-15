@@ -4,7 +4,8 @@
  * against the dev entry with Playwright _electron: 핀은 모드 없이 ⌥+클릭으로 찍혀
  * 컴포저 트레이의 행이 되고(ⓐ), 문장과 함께 한 턴으로 나간다(ⓑ), 보낸 핀은 그
  * 자리에서 화면을 떠난다(ⓒ) — 새로 고침 뒤에도 보내지 않은 핀의 배지는 돌아온다
- * (ⓓ). 코멘트 기록은 전달의 로그다 — 할 일도, 해결 단추도, 다시 보내기도 없다(ⓔ).
+ * (ⓓ). 보낸 코멘트는 대화에서 소비된다 — 도구에 되읽는 목록은 없고, 저장소는
+ * 넘길 때 개발자가 읽을 본문의 재료로만 남는다(ⓔ).
  * 화면(상태)을 옮겨도 핀 행은 살아 남는다(ⓕ). 크롭과 rect 는 찍는 순간의 것이다
  * (ⓖ'), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을
  * 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는 카드가 되고(ⓛ) 같은 화면의
@@ -22,17 +23,17 @@
  * Prerequisites: pnpm build (all four packages) — same as desktop-smoke.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { buildDesktopBundle } from "./build-desktop.mjs";
 import { closeApp } from "./close-app.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = join(here, "..");
-const repo = join(desktop, "..", "..");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -205,22 +206,32 @@ const altClick = (app, selector) =>
 const viewUrl = (app) =>
   app.evaluate(() => globalThis.coloDesignPlannerPreview?.webContents()?.getURL() ?? null);
 
+/** The badges the overlay still draws, by their labels (`핀 1 (보냄)`). */
+const pinLabels = (app) =>
+  inView(
+    app,
+    `Array.from(document.querySelectorAll('[data-colo-design-overlay] [data-pin]'))
+       .map((node) => node.getAttribute("aria-label"))
+       .join(" · ")`,
+  );
+
 /**
  * Waits until the overlay carries no pin at all. 자동 정리 left the overlay
  * holding drafts only — there is no recorded-pin element to look for any
  * more, so "nothing came back" and "the pin left" are the same question.
+ *
+ * A timeout answers with what is STILL there: (보냄) means the grey ghost
+ * outlived its turn (the web never dismissed it), a plain badge means an
+ * unsent pin — two different bugs that used to reach CI as the same
+ * verdictless `false`.
  */
 async function waitForNoPin(app, timeout = 10000) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
-    const there = await inView(
-      app,
-      `Boolean(document.querySelector('[data-colo-design-overlay] [data-pin]'))`,
-    );
-    if (!there) return true;
+    if (!(await pinLabels(app))) return "";
     await new Promise((ok) => setTimeout(ok, 250));
   }
-  return false;
+  return (await pinLabels(app)) || "(gone at the last look)";
 }
 
 /**
@@ -261,14 +272,7 @@ async function clearTray(page, timeout = 8000) {
 }
 
 async function main() {
-  run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
-  run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
-  run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
-  run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
-  const webDist = join(desktop, "web-dist");
-  rmSync(webDist, { recursive: true, force: true });
-  mkdirSync(webDist, { recursive: true });
-  cpSync(join(repo, "packages", "web", "dist"), webDist, { recursive: true });
+  buildDesktopBundle();
 
   const dir = join(tmpdir(), `colo-design-desktop-comments-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
@@ -425,7 +429,14 @@ async function main() {
         edgeBox.bottom <= edgeBox.vh,
       JSON.stringify({ edgePinned, edgeBox }),
     );
-    await page.waitForFunction(() => document.querySelectorAll(".pintray__row").length === 1);
+    // 행이 하나라는 것만으로는 어느 하나인지 모른다: 보낸 핀 ⓑ 가 아직
+    // 트레이를 떠나지 않은 순간에도 하나이고, 그때 비우면 방금 찍은 가장자리
+    // 핀은 비운 뒤에 도착해 화면에 남는다(ⓒ 가 그 잔상을 잡아 CI 를 붉게 한
+    // 판이 이것이다). 메모가 빈 행 하나 — 즉 ⓑ 는 떠났고 가장자리 핀은 왔다.
+    await page.waitForFunction(() => {
+      const rows = Array.from(document.querySelectorAll(".pintray__row"));
+      return rows.length === 1 && rows[0].querySelector(".pintray__note")?.value === "";
+    });
     check("the edge pin leaves via its tray button", (await clearTray(page)) === true);
     const card = page.locator(".machine--comments");
     await card.waitFor({ timeout: 30000 });
@@ -480,7 +491,8 @@ async function main() {
     // The turn settles when the composer's 중지 button goes back to 보내기.
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     check("the carrying turn settled", true);
-    check("ⓒ the sent pin left the screen at once", (await waitForNoPin(app)) === true);
+    const leftBehind = await waitForNoPin(app);
+    check("ⓒ the sent pin left the screen at once", leftBehind === "", `still:${leftBehind}`);
 
     // --- ⓓ 새로 고침 뒤에도 보내지 않은 핀은 돌아온다 (재설계 C5) ------------
     // The web's list outlives the page — sessionStorage holds it, and the
@@ -544,42 +556,40 @@ async function main() {
       `(() => { document.querySelector("[data-screen] h1").style.marginTop = ""; return true; })()`,
     );
 
-    // --- ⓔ 코멘트 기록은 전달의 로그다 — 단추는 없다 ------------------------
-    await page.locator(".screenpanel__bar").getByRole("button", { name: "더 보기" }).click();
-    await page.getByRole("menuitem", { name: "코멘트 목록" }).click();
-    const dialog = page.locator('[role="dialog"][aria-label="코멘트 기록"]');
-    await dialog.waitFor({ timeout: 5000 });
-    // Both sends are in the log by now; the list is read again when the
-    // popover opens, so give that read its moment before counting.
-    let loggedRows = 0;
-    const rowsDeadline = Date.now() + 5000;
-    while (Date.now() < rowsDeadline && loggedRows !== 2) {
-      loggedRows = await dialog.locator(".diff__file").count();
-      if (loggedRows !== 2) await new Promise((ok) => setTimeout(ok, 250));
+    // --- ⓔ 보낸 코멘트는 대화에서 소비된다 — 도구에 목록은 없다 --------------
+    // 핀은 턴으로 나가 대화록의 카드가 되고, 저장소의 유일한 독자는 개발자가
+    // 읽을 풀 리퀘스트 본문이다. 그래서 더 보기 ▾ 에는 코멘트 항목이 없고,
+    // 기록이 정말 남았는지는 파일이 답한다.
+    // 막대에는 이름이 겹치는 단추가 둘이다 — 사이클 상태의 `더 보기`(카드)와
+    // 화면 메뉴의 `더 보기 ▾`. 이 검사가 묻는 것은 후자이므로 클래스로 집는다.
+    await page.locator(".screenpanel__bar .screenpanel__morebtn").click();
+    const menu = page.locator(".screenpanel__menu");
+    await menu.waitFor({ timeout: 5000 });
+    const commentRows = await menu.getByRole("menuitem", { name: /코멘트/ }).count();
+    check(
+      "ⓔ 더 보기 ▾ 에 보낸 코멘트를 되읽는 자리는 없다",
+      commentRows === 0,
+      (await menu.getByRole("menuitem").allInnerTexts()).join(" | "),
+    );
+    await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached", timeout: 5000 });
+    const storeSlug = JSON.parse(readFileSync(join(dir, "projects.json"), "utf8")).projects[0].slug;
+    const storeFile = join(dir, "projects", storeSlug, "comments.json");
+    let storedRows = [];
+    const storeDeadline = Date.now() + 5000;
+    while (Date.now() < storeDeadline && storedRows.length !== 2) {
+      try {
+        storedRows = JSON.parse(readFileSync(storeFile, "utf8"));
+      } catch {
+        storedRows = [];
+      }
+      if (storedRows.length !== 2) await new Promise((ok) => setTimeout(ok, 250));
     }
-    // The rows are doors now, not tasks: each one leads back to its screen.
-    // 자동 정리 still leaves nothing to DO here — no resolve, no resend.
-    const rowActions = await dialog
-      .locator(".diff__file button", { hasText: /해결|다시 보내기|지우기/ })
-      .count();
     check(
-      "ⓔ the delivered comments are listed with nothing to act on",
-      loggedRows === 2 && rowActions === 0,
-      `rows:${loggedRows} actions:${rowActions} · ${(await dialog.locator(".diff__path").allInnerTexts()).join(" | ")}`,
+      "ⓔ 두 번의 전송이 넘길 때 읽힐 저장소에 두 행으로 남는다",
+      storedRows.length === 2 && storedRows.every((row) => row.resolved === true),
+      JSON.stringify(storedRows.map((row) => [row.screen, row.resolved])),
     );
-    // A record names a screen; the row is how the planner gets back to it.
-    await dialog.locator(".diff__filerow").first().click();
-    await page.waitForTimeout(600);
-    const backOnScreen = (await viewUrl(app)) ?? "";
-    check(
-      "ⓔ a recorded row leads back to its own screen",
-      backOnScreen.includes("/member/MemberList"),
-      backOnScreen,
-    );
-    await page.locator(".screenpanel__bar").getByRole("button", { name: "더 보기" }).click();
-    await page.getByRole("menuitem", { name: "코멘트 목록" }).click();
-    await dialog.waitFor({ timeout: 5000 });
-    await dialog.getByRole("button", { name: "코멘트 기록 닫기" }).click();
 
     // --- ⓕ 화면(상태)을 옮겨도 핀 행은 살아 남는다 (재설계 C5) ---------------
     await altClick(app, "[data-screen] h1");
@@ -698,7 +708,8 @@ async function main() {
       modeCountAfter === modeCountBefore && turnCountAfter === turnCountBefore + 1,
       `mode:${modeCountAfter}(was ${modeCountBefore}) turns:${turnCountAfter}(was ${turnCountBefore})`,
     );
-    check("the pin send empties the tray", (await waitForNoPin(app)) === true);
+    const trayLeftBehind = await waitForNoPin(app);
+    check("the pin send empties the tray", trayLeftBehind === "", `still:${trayLeftBehind}`);
 
     // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
     // The claude-design loop: comment → fix must not wait for a declared
@@ -931,14 +942,16 @@ async function main() {
     // with it (D86), no error band left behind (결함①).
     await page.locator(".toolbar__stop").click();
     await queuedLine.waitFor({ state: "detached", timeout: 15000 });
-    const bandText = await page
-      .locator(".notice--error")
-      .first()
-      .innerText()
-      .catch(() => "(none)");
+    // The band is what must NOT be there, so it is counted, not awaited: an
+    // `innerText()` on an absent locator sits out Playwright's full 30s
+    // auto-wait before its catch — half this suite's runtime for a string
+    // only the failure message ever prints.
+    const bands = page.locator(".notice--error");
+    const bandCount = await bands.count();
+    const bandText = bandCount === 0 ? "(none)" : await bands.first().innerText();
     check(
       "ⓘ 중지 clears the wait-line without an error band",
-      (await page.locator(".notice--error").count()) === 0,
+      bandCount === 0,
       `band:${bandText.slice(0, 96).replace(/\n/g, " ")}`,
     );
     // The turn left without answering — the grey badges go with it.

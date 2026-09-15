@@ -16,7 +16,6 @@ import type {
   PermissionSuggestion,
   ProjectList,
   ProjectSummary,
-  CommentItem as ProtocolCommentItem,
   QueuedSend,
   QueuedSendPayload,
   RepoCheckpoints,
@@ -448,14 +447,12 @@ const EMPTY_SESSION: SessionView = {
  * while the daemon sends ISO 8601 strings, so the save history read
  * "Invalid Date". The web keeps its own names; the shape lives in one place.
  *   DiffSummary       ← RepoSummary      (PLAN D51 — the 저장 review's lines)
- *   SaveHistoryEntry  ← RepoHistoryEntry (PLAN D53 — one saved commit)
- *   CommentItem       ← CommentItem      (PLAN D57 — one recorded comment) */
+ *   SaveHistoryEntry  ← RepoHistoryEntry (PLAN D53 — one saved commit) */
 export type DiffSummary = RepoSummary;
 export type SaveHistoryEntry = RepoHistoryEntry;
 type HandoffDraft = RepoHandoffDraft;
 type SaveHistory = RepoHistory;
 type CheckpointList = RepoCheckpoints;
-export type CommentItem = ProtocolCommentItem;
 
 interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
@@ -599,6 +596,8 @@ interface DaemonApi {
    */
   /** 상태 확인 (PLAN D88) — the pull request plus the developer's comments. */
   handoffStatus: () => Promise<HandoffStatusReport>;
+  /** 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로(데몬이 specs/ 로 검증). */
+  specPath: (path: string) => Promise<{ path: string }>;
   /**
    * 저장 검토의 요약 (PLAN D51): one no-tool Claude turn over the diff,
    * answered in the planner's words. Asked once per diff, cached above this.
@@ -628,6 +627,21 @@ interface DaemonApi {
   /** Move the worktree back to one snapshot's tree (PLAN D52). */
   restoreCheckpoint: (id: string) => Promise<{ restored: string[] }>;
   /**
+   * 잠깐 치워두기 (보관함 토론 2026-09-15): park every unsaved change in the
+   * ONE shelf slot and clear the worktree — the non-destructive third door
+   * next to 저장 and 버리기. Refusals (slot full · nothing unsaved) arrive
+   * as one Korean sentence in the error's message.
+   */
+  shelve: () => Promise<{ at: string }>;
+  /**
+   * 치워둔 작업 꺼내기: re-apply the shelved work onto the current HEAD —
+   * never a rewind. Refused while the worktree is dirty; a conflict is
+   * Claude's brief in the named thread and the slot survives it. The
+   * `sessionId` is where that brief lands — without it a conflict has
+   * nowhere to go and the planner gets only the refusal sentence.
+   */
+  unshelve: (sessionId?: string | null) => Promise<{ applied: string[] }>;
+  /**
    * 코멘트 기록 (PLAN D57): a pin batch lands in the project's comments.json
    * at send time as DELIVERED — the turn carrying the words is the delivery,
    * so every row is born resolved and the store is an append-only log.
@@ -650,8 +664,6 @@ interface DaemonApi {
       };
     }>;
   }) => Promise<{ recorded: number }>;
-  /** The recorded log of what the pins asked Claude, oldest first. */
-  listComments: () => Promise<{ items: CommentItem[] }>;
   /** 답하기 (PLAN D88): the planner's answer to one developer comment. */
   replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
   /**
@@ -1312,6 +1324,7 @@ export function useDaemon(url: string | null): Daemon {
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
       handoffStatus: () => call<HandoffStatusReport>({ type: "repo.handoffStatus" }, 120_000),
+      specPath: (path: string) => call<{ path: string }>({ type: "repo.specPath", path }, 15_000),
       // The summary runs one short Claude turn on the daemon: the window a
       // generation gets, not the minutes a gate takes.
       summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
@@ -1322,6 +1335,12 @@ export function useDaemon(url: string | null): Daemon {
       // way: the same window a save is given.
       restore: (sha: string) => call<DiffStatus>({ type: "repo.restore", sha }, 600_000),
       discard: () => call<{ removed: string[] }>({ type: "repo.discard" }, 120_000),
+      shelve: () => call<{ at: string }>({ type: "repo.shelve" }, 120_000),
+      unshelve: (sessionId?: string | null) =>
+        call<{ applied: string[] }>(
+          { type: "repo.unshelve", ...(sessionId ? { sessionId } : {}) },
+          120_000,
+        ),
       checkpoints: () => call<CheckpointList>({ type: "repo.checkpoints" }, 60_000),
       restoreCheckpoint: (checkpoint: string) =>
         call<{ restored: string[] }>({ type: "repo.checkpoint.restore", checkpoint }, 120_000),
@@ -1340,7 +1359,6 @@ export function useDaemon(url: string | null): Daemon {
           };
         }>;
       }) => call<{ recorded: number }>({ type: "comments.record", items: input.items }),
-      listComments: () => call<{ items: CommentItem[] }>({ type: "comments.list" }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
       rewind: (sessionId, turn, text, images) =>

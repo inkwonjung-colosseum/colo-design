@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { stopDaemon } from "./stop-daemon.mjs";
 
 /**
  * A fake `claude` CLI whose real invocation stalls two seconds — long enough
@@ -512,7 +513,7 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
-    daemon.kill("SIGTERM");
+    await stopDaemon(daemon);
   }
 
   const failed = results.filter((r) => !r.passed);

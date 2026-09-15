@@ -15,6 +15,7 @@ export function ConfirmDialog({
   hint,
   confirmLabel,
   cancelLabel = "취소",
+  alt,
   onConfirm,
   onClose,
   children,
@@ -27,6 +28,12 @@ export function ConfirmDialog({
   hint?: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
+  /**
+   * A second, non-destructive way out (보관함 토론: the planner discovers
+   * 치워두기 at the moment of throwing away) — a `primary` button between
+   * 취소 and the destructive confirm. Absent elsewhere, unchanged layout.
+   */
+  alt?: { label: string; onAlt: () => void };
   onConfirm: () => void;
   onClose: () => void;
   /** Between question and buttons: a file list, a warning row. */
@@ -73,6 +80,11 @@ export function ConfirmDialog({
           <button type="button" className="ghost" onClick={onClose}>
             {cancelLabel}
           </button>
+          {alt && (
+            <button type="button" className="primary" onClick={alt.onAlt}>
+              {alt.label}
+            </button>
+          )}
           <button type="button" className="danger" onClick={onConfirm}>
             {confirmLabel}
           </button>

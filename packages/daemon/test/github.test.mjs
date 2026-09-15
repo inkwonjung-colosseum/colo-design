@@ -62,6 +62,9 @@ test("the golden pass runs end to end, in order", async () => {
     title: "회원 관리 기획서",
     state: "open",
     branch: "colo-design/20260909-1",
+    // 리뷰어 보고(2026-09-15): 새 요청에는 아직 아무도 지정되지 않았다 —
+    // 빈 배열은 "모른다"가 아니라 "없다"이고, 칩은 그때 조용하다.
+    reviewers: [],
   });
 
   // 열림 — no review yet.

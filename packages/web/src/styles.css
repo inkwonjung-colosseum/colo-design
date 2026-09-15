@@ -3687,6 +3687,8 @@ select {
   flex: none;
   display: flex;
   align-items: center;
+  /* 한 줄에 단추가 둘일 때(알림의 시험 · 시스템 설정) 서로 붙지 않게. */
+  gap: 6px;
 }
 .setting__control select {
   font-size: calc(12.5px * var(--ui-scale));
@@ -4826,6 +4828,13 @@ select {
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
 }
+/* 치워둔 작업 — parked, not lost: never the warning hue (the work is safe,
+   the door back is one click); a quiet accent, distinct from 개발자 검토 중
+   by carrying no PR expectation. */
+.screenpanel__status--shelf {
+  color: color-mix(in srgb, var(--accent) 55%, var(--text-2));
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
 /* 저장됨 sits mid-cycle (local only) and 반영됨 is the terminus: the same
    green would erase the one moment worth celebrating, so 저장됨 dims toward
    text-2 and 반영됨 keeps the full green — with a check instead of a dot. */
@@ -5250,13 +5259,6 @@ select {
 }
 .diff__file:last-child .diff__filerow {
   border-bottom: 0;
-}
-/* 코멘트 기록 (D38): the row is a door back to its screen. `.diff__files`
-   clips its overflow, so the global focus ring's 2px offset would fall
-   outside the list and vanish — draw it inside the row instead. */
-.diff__filerow--link:focus-visible {
-  outline-offset: -2px;
-  background: var(--bg-2);
 }
 /* 해결된 것 보기 (PLAN D78): a resolved comment row reads grey — history,
    not work to do. */
@@ -6118,6 +6120,53 @@ select {
   background: var(--panel-3);
   border-color: var(--line);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* 화면·상태 매트릭스 (커미티 2026-09-15, B-1+A): 선언된 화면×상태 전부와
+   "이 수정 이후 본 곳" 표식 — 검증 커버리지의 질문에 그림이 아니라 표식이
+   답한다. 선언은 기계 사실이므로 열 때 캡처가 돌지 않는다(원칙 6의 성격). */
+.preview__matrixwrap {
+  position: relative;
+  flex: none;
+}
+.preview__matrix {
+  /* selector__menu 는 위로 여는 규칙 — 도구줄 아래 공간이 진짜 무대다. */
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 0;
+  min-width: 280px;
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preview__mrow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.preview__mtitle {
+  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+  color: var(--text);
+}
+.preview__mstates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+/* 확인할 곳 N행 (커미티 2026-09-15, A-4 최소안): 턴 종료 토스트의 목록 몸통 —
+   첫 줄은 사실, 아래 줄은 기획자가 짚었던 자리들의 이름이다. */
+.notice__stack {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.notice__row {
+  color: var(--muted);
+  font: 500 calc(11px * var(--ui-scale)) var(--sans);
 }
 
 .preview__width {
@@ -7468,4 +7517,215 @@ button .ic {
   border-radius: var(--r-lg);
   background: var(--panel-2);
   color: var(--muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * 비개발자 감탄 커미티 (2026-09-15) — docs/ui-ux-delight-debate-2026-09-15.md
+ * 기존 어휘의 재사용만: 새 토큰 0, 새 색 0. 모든 모션은 전역 reduced-motion
+ * 규칙과 짝을 이룬다.
+ * ------------------------------------------------------------------------- */
+
+/* A-1: 대화 열 전체 드롭존 — 컴포저가 포커스를 받을 때 입는 바로 그 피부. */
+.planner__chat--droptarget .composer {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line-strong));
+  box-shadow:
+    var(--shadow-float),
+    0 0 0 4px var(--accent-soft);
+}
+.planner__chat--droptarget::after {
+  content: "여기에 놓으면 첨부됩니다";
+  position: absolute;
+  left: 50%;
+  bottom: 118px;
+  transform: translateX(-50%);
+  padding: 5px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line-strong));
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+  z-index: 5;
+}
+.planner__chat {
+  position: relative;
+}
+
+/* A-1: 도구줄의 첫 칸이 이름을 가진다 — 빠르게 칩과 같은 알약 어휘. */
+.toolbar__attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: 600 calc(11.5px * var(--ui-scale)) var(--sans);
+}
+.toolbar__attach:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.toolbar__attach:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A-1: 빈 대화의 첫 칩은 문장보다 한 걸음 앞선다 — 문턱이지 메뉴가 아니다. */
+.empty__starter--attach {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  color: var(--text);
+}
+.empty__starter--attach::before {
+  content: "+";
+  font: 700 calc(11px * var(--ui-scale)) var(--mono);
+}
+
+/* C-1: 답변의 만든 화면 → 미리보기. 액션 행과는 다른 행(탐색 ≠ 파괴). */
+.answer__screens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 6px;
+}
+.answer__screen {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+}
+.answer__screen:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+.answer__screen .ic {
+  color: var(--accent);
+}
+
+/* C-4: 영수증의 행이 과거의 가리킴을 회수하는 문이 된다. */
+.machine__row--link {
+  list-style: none;
+}
+.machine__label--link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text) 24%, transparent);
+  text-underline-offset: 3px;
+}
+.machine__label--link:hover {
+  text-decoration-color: var(--accent);
+  color: var(--text);
+}
+
+/* C-5: 첨부 칩이 열리는 문으로 — span 이 button 이 되어도 옷은 그대로. */
+button.bubble__file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+button.bubble__file .ic {
+  color: var(--text-2);
+}
+button.bubble__file:disabled {
+  cursor: default;
+}
+
+/* C-3 앞: 반영됨의 한 박자 — 칩과 배지가 같은 초에 운다(settlepulse 재사용). */
+.screenpanel__status--mergedflash,
+.node__badge--pulse {
+  animation: settlepulse 1.2s ease-out;
+}
+.screenpanel__action--beat {
+  animation: settlepulse 1.1s ease-out;
+}
+
+/* A-3: 칩 옆의 지도 — 물어볼 때만 나온다(UsageChip 의 칩→팝오버 구조 재사용). */
+.screenpanel__statuswrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.screenpanel__statusmore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+}
+.screenpanel__statusmore:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.screenpanel__statusmenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 280px;
+  max-width: 340px;
+}
+.screenpanel__statusline {
+  color: var(--text);
+  font: 500 calc(12.5px * var(--ui-scale)) / 1.55 var(--sans);
+}
+.screenpanel__destination {
+  color: var(--text-2);
+  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+}
+.screenpanel__statusrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* B2: 되돌릴 수 없는 동작의 행선 — 모달 제목 옆 조용한 한 줄. */
+.modal__destination {
+  margin-left: 8px;
+  color: var(--text-2);
+  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+}
+
+/* B2: 사이드바의 같은 이름 둘 — 부제로 회사가 부르는 이름을. */
+.node__owner {
+  color: var(--text-2);
+  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+}
+
+/* A-4: 온보딩의 제목은 쓸모, 도구 이름은 부제. */
+.onboarding__tool {
+  margin-left: 6px;
+  color: var(--text-2);
+  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+}
+
+/* C-2 웹 절반: 핀 트레이 행의 탄생 — 집의 등장 어휘(risefade)를 따른다. 오버레이
+ * 안무는 핀 재설계 2단계(C9)와 같은 PR 에서 한다(충돌 회피, 커미티 판정). */
+.pintray__row {
+  animation: risefade 0.28s var(--drift);
 }

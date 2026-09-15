@@ -5,8 +5,10 @@ import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import {
   type ClientMessage,
+  type DiffStatus,
   type GitHubRepoList,
   type HandoffShot,
+  type HandoffStatusReport,
   markTurn,
   type PlanUsage,
   type PlanWindow,
@@ -27,7 +29,7 @@ import {
   REFRESH_BRIEF,
   REFRESH_TITLE,
 } from "./bootstrap-brief.js";
-import { readComments, recordComments } from "./comments.js";
+import { recordComments } from "./comments.js";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import {
   type CredentialStore,
@@ -92,6 +94,12 @@ interface ProjectWorkspaces {
   repo: RepoWorkspace;
   /** When this project was last put on screen — the warm cap keeps the newest. */
   shownAt: number;
+  /**
+   * 커미티 B1 (2026-09-15): the workspace's last diff stage, recorded off the
+   * same callback the bar listens to. The handoff poll refuses to touch a
+   * repo whose 저장·넘기기 is still moving ("not a passive status read").
+   */
+  diffStage: DiffStatus["stage"] | null;
 }
 
 /**
@@ -100,6 +108,12 @@ interface ProjectWorkspaces {
  * (hundreds of MB): the cap bounds what clicking through the sidebar costs.
  */
 const WARM_PREVIEWS = 2;
+
+/**
+ * 커미티 B1 (2026-09-15): 열린 넘김 폴링 주기. 10분 = 프로젝트당 GitHub 읽기
+ * 6회/시간(PR 1 + 리뷰 1) — "한 사람·한 대·한 구독"의 개인 규모 안이다.
+ */
+const HANDOFF_POLL_MS = 10 * 60_000;
 
 /** Where the last plan-limit reading waits for the next start. */
 const PLAN_USAGE_FILE = join(CONFIG_DIR, "plan-usage.json");
@@ -159,6 +173,20 @@ export type DaemonNotice =
       sessionId: string;
       title: string;
       stage: "save" | "handoff" | "refresh";
+    }
+  | {
+      /**
+       * 커미티 B1 (2026-09-15): the developer's side moved — 반영됨·변경 요청·
+       * 새 코멘트. No sessionId: the destination is a PROJECT, so the click
+       * switches by slug, not by thread.
+       */
+      kind: "handoff";
+      slug: string;
+      /** The project's own name — the notification's unit (커미티 A 수정). */
+      projectName: string;
+      event: "merged" | "closed" | "changes_requested" | "comments";
+      /** `comments` 만: 새로 읽힌 개수. */
+      count?: number;
     };
 
 /**
@@ -241,6 +269,10 @@ export class DaemonServer {
    */
   private registry!: ProjectRegistry;
   private readonly workspaces = new Map<string, ProjectWorkspaces>();
+  /** 커미티 B1 (2026-09-15): 열린 넘김 폴링 타이머 — stop() 이 끊는다. */
+  private handoffTimer: NodeJS.Timeout | null = null;
+  /** 커미티 B1: slug → 마지막 폴링이 본 개발자 코멘트 수. */
+  private readonly lastReviewCount = new Map<string, number>();
   /**
    * One GitHub transport for the whole daemon: the fixture one when a test
    * points at recorded pairs, `api.github.com` otherwise. The token is not
@@ -271,6 +303,15 @@ export class DaemonServer {
    * would leave a numbered checkpoint no prompt ever had.
    */
   private readonly checkpointTurns = new Map<string, number>();
+  /**
+   * Aborted the moment `stop()` begins. Unattended CLI probes ride it: a CLI
+   * that never answers must not hold the process open for the probe's full
+   * grace after the daemon is down — the offline suites each paid that grace
+   * at exit, and the desktop's quit waited on it too.
+   */
+  private readonly closing = new AbortController();
+  /** The one shutdown, shared by every caller that asks for it. */
+  private stopping: Promise<void> | null = null;
   /** Minimum spacing between re-reads of the plan's limits. */
   private static readonly PLAN_REFRESH_BACKOFF_MS = 120_000;
   /** Last time `refreshPlanUsage` actually asked, epoch ms. */
@@ -430,6 +471,12 @@ export class DaemonServer {
     );
     this.pat = await loadRepoPat(this.credentials);
 
+    // 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 주기적으로
+    // 다시 읽는다 — 반영됨·변경 요청이 기획자를 찾아온다. unref: 테스트 러너와
+    // 데스크톱 in-process 호스트를 타이머가 붙잡지 않게.
+    this.handoffTimer = setInterval(() => void this.pollOpenHandoffs(), HANDOFF_POLL_MS);
+    this.handoffTimer.unref?.();
+
     // Warm restart: bring the active project up the same way a switch does —
     // in particular, arm its token. A start that only built the workspace
     // left it unarmed until the planner happened to switch projects, so a
@@ -531,7 +578,24 @@ export class DaemonServer {
     return this.manager.anyBusy();
   }
 
+  /**
+   * Shutdown, asked for as many times as anyone likes. A second call joins
+   * the first instead of running the sequence again: the old one re-entered
+   * `http.close()` on a listener already closed (and already nulled), whose
+   * callback never fires — the caller's promise hung forever, which is how
+   * projects-e2e finished green while its `main()` never returned.
+   */
   async stop(): Promise<void> {
+    this.stopping ??= this.runStop();
+    return this.stopping;
+  }
+
+  private async runStop(): Promise<void> {
+    // First, before any await: the probes this run left unattended must stop
+    // waiting on a CLI nobody is listening to any more.
+    this.closing.abort();
+    clearInterval(this.handoffTimer ?? undefined);
+    this.handoffTimer = null;
     this.logger.info("데몬 종료");
     await this.manager.closeAll();
     // Every project the daemon touched this run, not just the active one: an
@@ -548,8 +612,9 @@ export class DaemonServer {
     // The web/http listener refs the event loop for as long as it listens —
     // the desktop in-process host and the test runner both stay alive until
     // it is closed, so stop() must close it, not just the websocket.
-    await new Promise<void>((resolve) => this.http?.close(() => resolve()));
+    const http = this.http;
     this.http = null;
+    if (http) await new Promise<void>((resolve) => http.close(() => resolve()));
   }
 
   private attach(ws: WebSocket): void {
@@ -610,6 +675,7 @@ export class DaemonServer {
       slug,
       paths,
       shownAt: 0,
+      diffStage: null,
       repo: new RepoWorkspace({
         root: paths.repoRoot,
         url: repo.url,
@@ -643,7 +709,10 @@ export class DaemonServer {
             this.broadcast({ type: "repo.status", status });
           }
         },
-        onDiffStatus: (status) => this.broadcastFor(slug, { type: "diff.status", status }),
+        onDiffStatus: (status) => {
+          workspaces.diffStage = status.stage;
+          this.broadcastFor(slug, { type: "diff.status", status });
+        },
       }),
     };
     this.workspaces.set(slug, workspaces);
@@ -683,6 +752,7 @@ export class DaemonServer {
     this.cliCommandsProbe ??= probeCommands({
       cwd,
       executable: this.claudeExecutable,
+      signal: this.closing.signal,
     })
       .then((commands) => {
         this.cliCommandsCache.set(cwd, commands);
@@ -776,6 +846,81 @@ export class DaemonServer {
     }, 200);
     // Keep the Node process from being held open by a pending announce.
     this.announceTimer.unref();
+  }
+
+  /**
+   * 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 다시 읽어,
+   * 개발자 쪽 사건(반영됨·반려·변경 요청·새 코멘트)을 알림으로 보낸다.
+   *
+   * 읽기만 한다 (판정 1·2). `peekHandoff` 는 open↔changes_requested 만 칩에
+   * 반영하고, 사이클을 끝내는 판정(반영됨·반려)은 세워 두기만 한다 — 착지는
+   * fetch·checkout·reset 에 체크포인트 삭제까지 가는 일이라 사람 없는 자리에서
+   * 타이머가 할 일이 아니다. 알림이 사람을 부르고, 그 사람이 프로젝트를 열거나
+   * 상태 확인을 누르거나 저장을 누르는 순간 내려앉는다.
+   *
+   * 그래도 도는 턴·저장·넘기기·최신화 중에는 읽지 않는다: GitHub 한 번 더
+   * 부르는 값보다 그 손길들이 조용한 편이 낫다. 실패는 조용히 넘어간다 —
+   * 다음 틱이 다시 본다.
+   */
+  private async pollOpenHandoffs(): Promise<void> {
+    if (this.manager.anyBusy()) return;
+    for (const workspaces of this.workspaces.values()) {
+      const current = workspaces.repo.currentHandoff;
+      if (!current || current.state === "merged" || current.state === "closed") continue;
+      // 이미 본 끝은 다시 부르지 않는다 — 착지 전까지 열 번 울리지 않게.
+      if (workspaces.repo.handoffLandingDue) continue;
+      if (
+        workspaces.diffStage === "computing" ||
+        workspaces.diffStage === "pushing" ||
+        workspaces.diffStage === "handing-off" ||
+        workspaces.repo.busyRefreshing
+      ) {
+        continue;
+      }
+      const before = current.state;
+      const beforeReviews = this.lastReviewCount.get(workspaces.slug) ?? null;
+      let report: HandoffStatusReport | null = null;
+      try {
+        report = await workspaces.repo.peekHandoff();
+      } catch {
+        continue;
+      }
+      if (!report) continue;
+      const reviews = report.reviews?.length ?? 0;
+      this.lastReviewCount.set(workspaces.slug, reviews);
+      const projectName = this.registry.get(workspaces.slug)?.name ?? workspaces.slug;
+      const handoffNotice = (
+        event: "merged" | "closed" | "changes_requested" | "comments",
+        count?: number,
+      ) => {
+        this.config.onNotice?.({
+          kind: "handoff",
+          slug: workspaces.slug,
+          projectName,
+          event,
+          ...(count === undefined ? {} : { count }),
+        });
+      };
+      if (report.state === "merged") {
+        handoffNotice("merged");
+      } else if (report.state === "closed") {
+        handoffNotice("closed");
+      } else if (before === "open" && report.state === "changes_requested") {
+        handoffNotice("changes_requested");
+      } else if (report.state === "open" && beforeReviews !== null && reviews > beforeReviews) {
+        handoffNotice("comments", reviews - beforeReviews);
+      }
+    }
+    // 사이드바 배지와 활성 프로젝트의 칩이 폴링의 결과를 본다 — UI 가 다시
+    // 당기기를 기다리지 않게.
+    this.announceProjectsThrottled();
+    const active = this.activeOrNull();
+    if (active) {
+      void active.repo
+        .status()
+        .then((status) => this.broadcast({ type: "repo.status", status }))
+        .catch(() => undefined);
+    }
   }
   private announceProjects(): void {
     this.broadcast({
@@ -1011,6 +1156,11 @@ export class DaemonServer {
     // and a half-overlapping restart would leave the planner looking at the
     // wrong app on the right port.
     if (switching) await this.fenceWarmPreviews(next);
+    // 커미티 2026-09-15 판정 2: 사람이 이 프로젝트 앞에 섰다 — 폴링이 세워 둔
+    // 사이클의 끝(반영됨·반려)을 여기서 내려앉힌다. 밀린 것이 없으면 네트워크도
+    // 타지 않고 즉시 돌아온다. 아래의 pull·sync 보다 **먼저**여야 한다: 착지의
+    // checkout 과 최신화의 stash 가 같은 워크트리를 동시에 만지면 안 된다.
+    await next.repo.landHandoffIfDue().catch(() => undefined);
     // Bringing the repo up is NOT conditional on a switch. `create` registers
     // the first project as active before calling here, so a shortcut that
     // skipped this left a brand-new project with no clone at all — the
@@ -1303,7 +1453,11 @@ export class DaemonServer {
     }
     const active = this.activeOrNull();
     const cwd = active?.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
-    void probePlanUsage({ cwd, executable: this.claudeExecutable })
+    void probePlanUsage({
+      cwd,
+      executable: this.claudeExecutable,
+      signal: this.closing.signal,
+    })
       .then((plan) => this.rememberPlanUsage(plan))
       .catch(() => undefined);
   }
@@ -1945,6 +2099,30 @@ export class DaemonServer {
       case "repo.handoffStatus":
         return await this.repo.refreshHandoff();
 
+      case "repo.specPath": {
+        // 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로 — 활성 클론의
+        // specs/ 아래만 인정한다. 렌더러가 임의 경로를 셸에 넘기는 일은
+        // 이 검증과 데스크톱 main 의 ~/.colo-design 검증 이중으로 막힌다.
+        const active = this.requireActive();
+        const rel = message.path;
+        const normalized = rel.replace(/\\/g, "/");
+        if (
+          !normalized.startsWith("specs/") ||
+          normalized.includes("..") ||
+          normalized.slice("specs/".length).includes("/")
+        ) {
+          throw new Error("기획서 보관함(specs/) 안의 파일만 열 수 있습니다.");
+        }
+        // 첨부는 세션 cwd = 활성 클론에 쓰인다(session.deliver → saveSpecFiles).
+        // 프로젝트 루트(~/.colo-design/projects/<slug>)가 아니라 그 아래
+        // repo/ 가 기준이어야 파일이 실제로 거기 있다.
+        const absolute = join(active.paths.repoRoot, normalized);
+        if (!existsSync(absolute)) {
+          throw new Error("그 기획서 파일을 찾을 수 없습니다.");
+        }
+        return { path: absolute };
+      }
+
       // 답하기 (PLAN D88): the planner's words to one developer comment —
       // the daemon picks the endpoint by the id's kind.
       // 되감기 (PLAN D95): files (the turn's checkpoint) go back first, then
@@ -2019,6 +2197,15 @@ export class DaemonServer {
       case "repo.discard":
         return await this.repo.discard();
 
+      // 잠깐 치워두기 · 꺼내기 (보관함 토론 2026-09-15): one slot per repo.
+      // Refusals are one Korean sentence in the reply; a 꺼내기 conflict
+      // rides the session wire like every gate failure does.
+      case "repo.shelve":
+        return await this.repo.shelve();
+
+      case "repo.unshelve":
+        return await this.repo.unshelve(this.briefTo(message.sessionId, "save").onSessionTurn);
+
       case "repo.checkpoints":
         return await this.repo.checkpoints();
 
@@ -2028,15 +2215,11 @@ export class DaemonServer {
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,
       // exactly because the planner is looking at one project's preview.
+      // Write-only from here: the store's reader is the pull request body.
       case "comments.record": {
         recordComments(join(this.requireActive().paths.root, "comments.json"), message.items);
         return { recorded: message.items.length };
       }
-
-      case "comments.list":
-        return {
-          items: readComments(join(this.requireActive().paths.root, "comments.json")),
-        };
     }
   }
 

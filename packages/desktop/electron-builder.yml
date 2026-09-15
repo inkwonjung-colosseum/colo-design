@@ -1,10 +1,18 @@
 # electron-builder 설정(DESIGN §7).
 #
-# mac — ad-hoc 서명: identity 를 null 로 두면 electron-builder 가 실제
-# 인증서 대신 ad-hoc("-") 서명을 한다. Apple Silicon 은 서명 없는 바이너리가
-# 실행 자체가 안 되므로 이 옵션이 필요하고, 인증서·공증은 요구하지 않는다.
-# 참고: https://es.electron.build/mac#identity — "Identity to use for signing.
-# ... null to sign ad-hoc" (문서의 Identity 절).
+# mac — 서명은 **필수**다. Electron 44 의 알림은 UNNotification 위에 있고, 그
+# API 는 제대로 서명되지 않은 앱의 알림을 `failed`(UNErrorDomain 1)로 거절한다.
+# 거절되는 것은 정확히 `linker-signed` 표식이 붙은 바이너리 — 서명을 건너뛴
+# 빌드가 그대로 남기는 상태다. electron-builder 는 지정한 identity 를 찾지
+# 못하면 경고 한 줄만 찍고 서명을 통째로 건너뛰므로(`forceCodeSigning` 이
+# 없을 때), 그 조용한 길을 여기서 막는다: 서명 없는 설치 파일은 만들어지지
+# 않는다.
+#   identity  — 키체인의 자체 서명 인증서(CN "Colo Design Dev"). 인증서가 없는
+#               기계·러너는 진짜 ad-hoc 서명으로 지어야 한다:
+#               `electron-builder -c.mac.identity=-` (릴리스 워크플로가 그렇게
+#               한다). ad-hoc 도 UNNotification 은 받아들인다 — 다만 빌드마다
+#               cdhash 가 달라져 업데이트할 때마다 키체인(Safe Storage) 허용을
+#               다시 묻는다. 안정된 identity 를 쓰는 이유가 그것이다.
 # target: dmg(설치 배포) + zip(자가 업데이트가 내려받는 형태).
 #
 # win — NSIS 설치 파일(DESIGN §7). 이 머신에서는 빌드하지 않고 CI 의
@@ -34,12 +42,12 @@ extraResources:
     to: bin
     filter: ["**/*"]
 mac:
-  # 자체 서명 인증서(macOS 알림 실험): UNNotification 은 ad-hoc 앱의 알림을
-  # 조용히 유실시킨다 — 키체인의 "Colo Design Dev"(CN)로 서명해 본다.
-  # 실험이 실패하면 "-"로 되돌린다. ~/.colo-design-certs/ 에 인증서가 있다.
   identity: "Colo Design Dev"
-  # ad-hoc + hardenedRuntime 조합은 library validation 때문에 실행이 깨질 수
-  # 있다(공증 없이는 runtime 보호가 필수가 아니다) — 끈다.
+  # 서명을 건너뛴 빌드는 여기서 실패한다 — 알림이 죽은 앱을 배포하지 않는다.
+  # mac 에만 건다: Windows 잡은 인증서 없이 짓는다.
+  forceCodeSigning: true
+  # ad-hoc·자체 서명 + hardenedRuntime 조합은 library validation 때문에 실행이
+  # 깨질 수 있다(공증 없이는 runtime 보호가 필수가 아니다) — 끈다.
   hardenedRuntime: false
   category: public.app-category.productivity
   # artifactName 은 mac 플랫폼 설정이 dmg·zip 모두에 적용된다(${ext} 로

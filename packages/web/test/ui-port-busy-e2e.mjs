@@ -19,6 +19,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createFixtureRepo, freePort, pushFixtureChange } from "../../daemon/test/fixture-repo.mjs";
+import { stopDaemon } from "./stop-daemon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
@@ -260,7 +261,7 @@ async function main() {
     squatter.kill("SIGKILL");
     await browser.close().catch(() => undefined);
     server.close();
-    daemon.kill("SIGKILL");
+    await stopDaemon(daemon);
     rmSync(DIR, { recursive: true, force: true });
   }
 

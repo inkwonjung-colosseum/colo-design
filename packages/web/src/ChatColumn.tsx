@@ -33,6 +33,7 @@ export function ChatColumn({
   showTools,
   pins,
   focusPinId,
+  onOpenScreen,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -58,6 +59,11 @@ export function ChatColumn({
   pins: Pins;
   /** 배지 클릭 → 그 핀 행의 메모 입력 (PageWorkspace 가 흔든 상태). */
   focusPinId: { id: string; nonce: number } | null;
+  /**
+   * 커미티 C-1 (2026-09-15): 대화 열에서 미리보기로 — 답변의 화면 칩과 영수증
+   * 행이 같은 문으로 나간다. 배관은 팔레트가 쓰는 jumpRequest 그대로.
+   */
+  onOpenScreen: (route: string, state: string | null) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
   // The route id a pin carries → what the repo called the screen; the card,
@@ -70,6 +76,30 @@ export function ChatColumn({
   /** This thread's turn-start snapshots (PLAN D52), refetched when a turn ends. */
   const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
   const [restoring, setRestoring] = useState(false);
+
+  // --- 커미티 A-1 (2026-09-15): 대화 열 전체가 첨부를 받는다 --------------------
+  // 드롭 핸들은 컴포저 상자에만 있어서, 두 번째 기획서는 빈 대화가 아닌 곳에
+  // 떨어지면 조용히 사라졌다(App.tsx 의 전역 거절이 창 내비게이션만 막았을 뿐).
+  // 컴포저의 readAttachments 를 등록받아 대화 열 전체가 같은 손을 쓴다.
+  // dragleave 는 자식 진입에도 발사되므로 깊이 카운터로 편렬을 잡는다.
+  const attachFiles = useRef<((files: FileList | File[]) => void) | null>(null);
+  const registerAttach = useCallback((fn: ((files: FileList | File[]) => void) | null) => {
+    attachFiles.current = fn;
+  }, []);
+  const [dragDepth, setDragDepth] = useState(0);
+  const [attachNonce, setAttachNonce] = useState(0);
+  /** 빈 대화의 "붙여 시작하기" 칩 — 파일 고르기 + 문장 초안 한 번에. */
+  const startWithAttachment = () => {
+    setAttachNonce((nonce) => nonce + 1);
+    setSeed({ text: "이걸 화면으로 만들어 줘", nonce: seed.nonce + 1 });
+  };
+  /** 커미티 C-5: 첨부 칩 클릭 — 데몬이 specs/ 아래로 검증한 절대경로를 OS 로. */
+  const openSpec = (relPath: string) => {
+    void api
+      .specPath(relPath)
+      .then(({ path }) => window.coloDesignDesktop?.openSpec?.(path))
+      .catch((e: Error) => showError(e.message));
+  };
   // 고쳐서 다시 보내기 (PLAN D95): the planner's own words return to the
   // composer for an edit; the nonce re-fires the seed on every click.
   const [seed, setSeed] = useState<{ text: string; nonce: number }>({
@@ -218,7 +248,6 @@ export function ChatColumn({
   }, [activeId, sessions.running, api]);
 
   const restoreCheckpoint = (id: string) => {
-    if (restoring) return;
     setRestoring(true);
     void api
       .restoreCheckpoint(id)
@@ -240,7 +269,22 @@ export function ChatColumn({
     bottom.current?.scrollIntoView();
   };
   return (
-    <main className="planner__chat">
+    <main
+      className={`planner__chat${dragDepth > 0 ? " planner__chat--droptarget" : ""}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragDepth((depth) => depth + 1);
+      }}
+      onDragLeave={() => setDragDepth((depth) => Math.max(0, depth - 1))}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragDepth(0);
+        if (event.dataTransfer.files.length > 0) {
+          attachFiles.current?.(event.dataTransfer.files);
+        }
+      }}
+    >
       {activeSummary && (
         <header className="thread">
           {/* A turn in flight announces itself as light, not words: the lamp
@@ -372,6 +416,15 @@ export function ChatColumn({
             live={sessions.running || restoring}
             onRetry={retry}
             starters={suggestionsFromScreens(screens)}
+            onStarterAttach={startWithAttachment}
+            screens={screens}
+            onOpenScreen={onOpenScreen}
+            onOpenScreenTitle={(title, state) => {
+              // 영수증의 행은 화면 제목을 새긴다 — 주소로 되돌리는 사전은 여기.
+              const found = screens.find((screen) => screen.title === title);
+              if (found) onOpenScreen(found.route, state ?? found.states[0] ?? null);
+            }}
+            onOpenSpec={openSpec}
             onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
@@ -480,6 +533,8 @@ export function ChatColumn({
         tasks={active?.tasks ?? []}
         onStopTask={stopTask}
         seed={seed}
+        seedAttach={attachNonce}
+        registerAttach={registerAttach}
         sendKey={sendKey}
         midTurnSend={midTurnSend}
         onToggleFastMode={(fast) => void sessions.setFastMode(fast)}

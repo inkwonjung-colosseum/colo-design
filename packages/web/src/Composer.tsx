@@ -8,7 +8,7 @@ import type {
   SessionCommand,
   SessionSelectors,
 } from "@colo-design/protocol";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ContextRing } from "./ContextRing";
 import {
   EFFORT_LABEL,
@@ -211,6 +211,8 @@ export function Composer({
   tasks = [],
   onStopTask,
   seed,
+  seedAttach,
+  registerAttach,
   sendKey,
   midTurnSend = "queue",
   selector,
@@ -303,6 +305,11 @@ export function Composer({
    * field for an edit. The nonce re-applies the same text on repeat clicks.
    */
   seed?: { text: string; nonce: number };
+  /** 커미티 A-1 (2026-09-15): 논스가 오르면 파일 고르기가 열린다 — 빈 대화의
+      "붙여 시작하기" 칩이 문장 초안과 함께 쓰는 손. */
+  seedAttach?: number;
+  /** 커미티 A-1: 대화 열 전체 드롭존이 컴포저의 첨부 손을 등록받는다. */
+  registerAttach?: (fn: ((files: FileList | File[]) => void) | null) => void;
   /**
    * 모델·노력·권한 chips. Before a session exists these carry what the next
    * one will start with, so the planner can set the run up while the
@@ -624,6 +631,27 @@ export function Composer({
       attachments: [...prev.attachments, ...read],
     }));
   };
+
+  // 커미티 A-1 (2026-09-15): 대화 열 전체 드롭존이 이 손을 빌린다 — 첨부의
+  // 진실은 컴포저 한 곳에 있고, 드롭은 그 문을 넓힐 뿐이다.
+  const attachFiles = useCallback(
+    (files: FileList | File[]) => void readAttachments(files),
+    // readAttachments 는 컴포넌트 스코프의 최신 클로저를 봐야 하므로 매 렌더
+    // 갱신이 맞다 — 등록 쪽은 ref 로 받으므로 잦은 재등록 비용이 없다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rejected.show],
+  );
+  useEffect(() => {
+    registerAttach?.(attachFiles);
+    return () => registerAttach?.(null);
+  }, [registerAttach, attachFiles]);
+  // 붙여 시작하기 칩: 파일 고르기 + 문장 초안 — 사용자 활동 창 안에서 열린다.
+  const attachNonceRef = useRef(0);
+  useEffect(() => {
+    if (seedAttach === undefined || seedAttach === attachNonceRef.current) return;
+    attachNonceRef.current = seedAttach;
+    filePicker.current?.click();
+  }, [seedAttach]);
 
   // 보내기 진행 중 잠금 (커미티 F-C2, 2026-09-14): the field empties only
   // when the daemon accepts (D35), so a second Enter while the first send is
@@ -1233,15 +1261,17 @@ export function Composer({
             e.target.value = "";
           }}
         />
+        {/* 커미티 A-1 (2026-09-15): 글자 없는 + 는 첨부를 발견하는 길이 아니었다 —
+            도구줄의 첫 칸이 이름을 가진다(빠르게 칩과 같은 알약 어휘). */}
         <button
           type="button"
-          className="toolbar__icon"
+          className="toolbar__attach"
           title="문서·이미지 첨부"
-          aria-label="파일 첨부"
           disabled={disabled}
           onClick={() => filePicker.current?.click()}
         >
-          <PlusIcon size={16} />
+          <PlusIcon size={14} />
+          첨부
         </button>
         {chips.map((chip) => (
           <SelectorChip

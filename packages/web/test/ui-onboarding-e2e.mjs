@@ -25,6 +25,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { stopDaemon } from "./stop-daemon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
@@ -169,8 +170,15 @@ async function main() {
     const stepTitles = await page.locator(".onboarding__stephead h2").allInnerTexts();
     check(
       "the four machine gates are listed in order, GitHub last",
+      // 커밋리 A-4 (2026-09-15): 제목은 쓸모가 먼저다 — 도구 이름은 부제
+      // (.onboarding__tool)로 내려갔다. 의도된 계약 변경.
       JSON.stringify(stepTitles) ===
-        JSON.stringify(["Claude Code", "git", "Node · pnpm", "GitHub"]),
+        JSON.stringify([
+          "화면을 만드는 Claude",
+          "작업을 보관할 준비",
+          "앱 실행 준비",
+          "개발자에게 넘길 준비",
+        ]),
       stepTitles.join(" · "),
     );
     check(
@@ -346,7 +354,7 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
-    daemon.kill("SIGKILL");
+    await stopDaemon(daemon);
     rmSync(DIR, { recursive: true, force: true });
   }
 

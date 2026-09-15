@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { claudeCandidates, filterFiles, listFiles, lookupCommand } from "../dist/environment.js";
+import { writeStubClaude } from "./fixture-repo.mjs";
 
 test("Windows candidates point at .exe files", () => {
   const found = claudeCandidates("win32", "C:/Users/dev", {
@@ -119,20 +120,25 @@ test("an empty query returns the head of the list", () => {
 });
 
 test("the daemon still reports a usable status when git is missing", async () => {
-  // A stock Windows machine has no git until the user installs it. Stripping
-  // PATH is the closest we can get to that from here, and it proves the file
-  // listing and the status check both degrade instead of failing.
   const daemonEntry = new URL("../dist/index.js", import.meta.url).pathname;
   // A stock Windows machine has no git until the user installs it. Stripping
   // PATH is the closest we can get to that from here — but the resolver's
   // absolute fallbacks (/usr/bin/git ships with the macOS CLT) would still
   // find one, so the pin points at a file that cannot work, which is the
   // knob the resolver itself offers for "no git anywhere".
+  //
+  // The CLI is pinned to a stub for the same reason the login check pins
+  // one: unpinned, this doctor resolves whatever `claude` the machine has
+  // and asks the DEVELOPER'S login a question about a scenario that has
+  // nothing to do with it.
   const env = {
     ...process.env,
     PATH: "",
     Path: "",
     COLO_DESIGN_GIT_BIN: "/nonexistent/colo-design-no-git",
+    COLO_DESIGN_CLAUDE_BIN: writeStubClaude(
+      mkdtempSync(join(tmpdir(), "colo-design-platform-nogit-")),
+    ),
   };
   delete env.ANTHROPIC_API_KEY;
 

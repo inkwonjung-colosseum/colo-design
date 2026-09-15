@@ -86,6 +86,7 @@ export function PreviewHost({
   onScreens,
   onLocation,
   location,
+  visitedCells,
   commentsOn,
   onCommentsMode,
   onLook,
@@ -119,6 +120,12 @@ export function PreviewHost({
   /** The native view's location reports arrive here (D66). */
   onLocation: (location: PreviewLocation) => void;
   location: PreviewLocation | null;
+  /**
+   * 본 곳 표식 (커미티 2026-09-15, B-1+A): 이번 수정 이후 기획자의 눈이
+   * 닿은 화면·상태 키(`${route}|${state}`) — 패널이 위치 보고로 채우고,
+   * 파일을 쓴 턴이 끝나면 비운다. 칸은 "존재한다"가 아니라 "봤다"를 말한다.
+   */
+  visitedCells?: Set<string>;
   /** 코멘트 모드(PLAN D58 → D67) — the toolbar owns the truth. */
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
@@ -140,6 +147,17 @@ export function PreviewHost({
   /** Bumped by 새로 고침: a clean reload on whichever host is mounted. */
   const [reloadNonce, setReloadNonce] = useState(0);
   /** The last `colo-preview:error` (D69) — one at a time, the newest wins. */
+
+  /** 화면·상태 매트릭스 (커미티 2026-09-15 B-1+A): 선언 전부와 본 곳 표식. */
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  useEffect(() => {
+    if (!matrixOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMatrixOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [matrixOpen]);
   const [error, setError] = useState<PreviewError | null>(null);
   /** The banner's `자세히`: the message starts clamped to one line. */
   const [detail, setDetail] = useState(false);
@@ -340,6 +358,65 @@ export function PreviewHost({
   return (
     <div className="preview">
       <div className="preview__toolbar">
+        {screens.length > 0 && (
+          <div className="preview__matrixwrap">
+            <button
+              type="button"
+              className={matrixOpen ? "preview__state preview__state--on" : "preview__state"}
+              aria-haspopup="true"
+              aria-expanded={matrixOpen}
+              title="선언된 화면과 상태를 한눈에 — 이 수정 이후 본 곳에 표식이 붙습니다"
+              onClick={() => setMatrixOpen((open) => !open)}
+            >
+              화면 목록
+            </button>
+            {matrixOpen && (
+              <>
+                <button
+                  type="button"
+                  className="selector__backdrop"
+                  aria-label="화면 목록 닫기"
+                  onClick={() => setMatrixOpen(false)}
+                />
+                <div className="selector__menu preview__matrix" role="menu" aria-label="화면 목록">
+                  {screens.map((screen) => (
+                    <div className="preview__mrow" key={screen.route}>
+                      <span className="preview__mtitle">{screen.title}</span>
+                      <span className="preview__mstates">
+                        {screen.states.map((state) => {
+                          const seen = visitedCells?.has(`${screen.route}|${state}`) ?? false;
+                          const on = current?.route === screen.route && activeState === state;
+                          return (
+                            <button
+                              key={state}
+                              type="button"
+                              role="menuitem"
+                              className={
+                                on ? "preview__state preview__state--on" : "preview__state"
+                              }
+                              title={
+                                seen
+                                  ? "이 수정 이후에 본 상태입니다"
+                                  : "아직 안 본 상태입니다 — 누르면 그 화면으로 갑니다"
+                              }
+                              onClick={() => {
+                                setMatrixOpen(false);
+                                onNavigate({ kind: "screen", route: screen.route, state });
+                              }}
+                            >
+                              {seen ? "✓ " : ""}
+                              {stateLabel(state)}
+                            </button>
+                          );
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {current && current.states.length > 1 && (
           <div className="preview__states" role="group" aria-label="상태">
             {current.states.map((state) => (

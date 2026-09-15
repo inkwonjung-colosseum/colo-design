@@ -447,6 +447,11 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    */
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
+   * 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로 — 클론의 `specs/` 아래로
+   * 검증해서 돌려준다. 렌더러는 이 경로를 데스크톱 셸에만 넘긴다.
+   */
+  z.object({ ...withId, type: z.literal("repo.specPath"), path: z.string().min(1).max(500) }),
+  /**
    * 저장 검토의 요약 한 번 (PLAN D51). The daemon asks Claude one turn — no
    * tools, a 3-second leash — to say what changed in planner's words, and
    * falls back to grouping the changed paths when that cannot land. Cached
@@ -509,6 +514,25 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     checkpoint: z.string().min(1),
   }),
   /**
+   * 잠깐 치워두기: snapshot every unsaved worktree change into the ONE shelf
+   * ref and clear the worktree through 버리기's path rule. One slot — a
+   * second call is refused until the first is 꺼내기'd. The clear, not the
+   * snapshot, is the promise: a parked work must never read as lost.
+   */
+  z.object({ ...withId, type: z.literal("repo.shelve") }),
+  /**
+   * 치워둔 작업 꺼내기: re-apply the shelved work on top of whatever HEAD is
+   * now — a 3-way apply, never a rewind. Refuses while the worktree is
+   * dirty; a conflict lands as Claude's brief in the named thread and the
+   * slot survives until the cleanup drops it.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.unshelve"),
+    /** Where a conflict brief goes; absent, the refusal line is the reply. */
+    sessionId: z.string().min(1).optional(),
+  }),
+  /**
    * Store (or clear) the machine-wide GitHub token — the one gate of the
    * onboarding list the planner answers with a value rather than an install.
    * The daemon saves it to the OS credential store and never echoes it back;
@@ -551,7 +575,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    * planner's "what I asked", not a courier's receipt. The store is an
    * append-only log: a second send of the same words is a second request,
    * and both stay. A batch may span screens — each item carries its own
-   * `screen`/`state` (재설계 C6).
+   * `screen`/`state` (재설계 C6). Nothing in the tool reads the store back —
+   * the pins were consumed in the conversation; the pull request body is the
+   * one reader, for the developer who never saw that conversation.
    */
   z.object({
     ...withId,
@@ -609,12 +635,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
       .min(1),
   }),
   /**
-   * The active project's whole comment store (PLAN D57) — the `💬 코멘트`
-   * popover's list: the log of what the planner's pins asked Claude, oldest
-   * first.
-   */
-  z.object({ ...withId, type: z.literal("comments.list") }),
-  /**
    * 답하기 (PLAN D88): the planner's answer to ONE developer comment, from
    * inside the tool. The daemon picks the endpoint by the id's cached kind —
    * an inline thread's replies, or an issue comment on the pull request.
@@ -634,7 +654,12 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
 // 코멘트 저장소 (PLAN D57)
 // ---------------------------------------------------------------------------
 
-/** One row of the project's `comments.json`, verbatim over the wire. */
+/**
+ * One row of the project's `comments.json`. The store's reader is the pull
+ * request body (`buildCommentsSection`): the planner's pins are consumed in
+ * the conversation, so nothing in the tool lists them again — the developer,
+ * who never sees that conversation, reads them as `### 수정 요청`.
+ */
 export interface CommentItem {
   /**
    * The pin's overlay UUID when the send carried one (커미티 2차 판정 5) —
@@ -1198,6 +1223,14 @@ export interface HandoffStatus {
   state: "open" | "changes_requested" | "merged" | "closed";
   /** Branch the PR is from — the same one 저장 pushes to. */
   branch: string;
+  /**
+   * 리뷰어 보고 (커미티 2026-09-15): the logins GitHub reports as
+   * `requested_reviewers` — the repo's CODEOWNERS·team rules filled them, not
+   * this tool. Empty means the repo auto-assigns nobody; the planner is told
+   * to carry the link themselves. Absent on older fixtures reads as "unknown"
+   * (`undefined`), which the UI treats like empty.
+   */
+  reviewers?: string[];
 }
 
 /**
@@ -1283,6 +1316,12 @@ export interface RepoStatus {
    * would leave the button lying for up to a minute.
    */
   pendingChanges: number;
+  /**
+   * 치워둔 작업 — null when the slot is empty. While it is filled the
+   * `변경 없음` chip must not exist: parked is a state, not an absence
+   * (보관함 토론 — 분실은 가시성 부재로 시작된다).
+   */
+  shelf: RepoShelf | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1687,6 +1726,23 @@ export interface RepoCheckpointRestore {
 export interface RepoDiscard {
   /** Unsaved changes that were thrown away, relative to the repo root. */
   removed: string[];
+}
+
+/**
+ * 치워둔 작업 (보관함 토론 2026-09-15): ONE slot, no names to manage — the
+ * third door between 저장 (public, permanent) and 버리기 (gone). The work
+ * lives in a ref of the tool's own (`refs/colo-design/shelf`), never a git
+ * stash, so the refresh's transit stash machinery cannot touch it.
+ */
+export interface RepoShelf {
+  /** When the work was parked, ISO 8601. */
+  at: string;
+}
+
+/** `repo.unshelve` — what the 꺼내기 landed, named for the planner to read. */
+export interface RepoShelfRestore {
+  /** Paths the re-apply touched, relative to the repo root. */
+  applied: string[];
 }
 
 export interface PermissionSuggestion {

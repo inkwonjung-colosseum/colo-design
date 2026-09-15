@@ -27,7 +27,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { readComments, recordComments } from "../dist/comments.js";
 import { detectsRegistryAuthFailure, pnpmCandidates } from "../dist/environment.js";
 import {
@@ -1459,12 +1459,25 @@ const clone = (dir, fixture) =>
     onStatus: () => undefined,
   });
 
+/**
+ * Brought-up workspaces, stopped together when the file is done. A test that
+ * syncs or pulls again after `bringUp` starts a SECOND preview server and
+ * most have no reason to say so; `--test-force-exit` then orphaned it, and
+ * the machine collected hundreds of `node server.mjs` across a day's runs.
+ */
+const liveWorkspaces = new Set();
+
 const bringUp = async (dir, fixture) => {
   const workspace = clone(dir, fixture);
+  liveWorkspaces.add(workspace);
   await workspace.sync();
   await workspace.stop();
   return workspace;
 };
+
+after(async () => {
+  for (const workspace of liveWorkspaces) await workspace.stop().catch(() => undefined);
+});
 
 test("최신화 carries unsaved work across a moved base — tracked and untracked alike", async () => {
   const dir = workdir("hub-refresh-dirty-");
@@ -1669,6 +1682,114 @@ test("반영됨 확인은 저장하지 않은 변경을 지우지 않는다", as
     assert.equal(report?.state, "merged");
     const after = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
     assert.ok(after.includes("사용자의 저장 안 한 메모"), "unsaved work survives the merged reset");
+  } finally {
+    if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
+    else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * 커미티 2026-09-15 판정 1·2. 폴링은 10분마다 도는 타이머다: 그것이 사이클을
+ * 내려앉히면 되돌리기 기록(체크포인트)이 아무도 없는 자리에서 사라지고,
+ * 반대로 칩에만 끝을 적고 착지를 미루면 `this.branch` 가 살아남아 다음 저장이
+ * 이미 닫힌 브랜치로 푸시된다. 두 실패 모두 이 한 테스트가 잡는다.
+ */
+const endedCycleWorkspace = async (dir, state) => {
+  const fixture = await createFixtureRepo({
+    dir: join(dir, "fixture"),
+    port: await freePort(),
+  });
+  const requests = [];
+  const workspace = new RepoWorkspace({
+    root: join(dir, "work"),
+    url: fixture.remote,
+    onStatus: () => undefined,
+    gitHubClient: () => ({
+      ...stubPullRequestClient(requests),
+      async getPullRequest() {
+        return {
+          number: 7,
+          url: "https://github.com/colosseumcoinckr/colo-design-e2e/pull/7",
+          title: "결제 화면",
+          state,
+        };
+      },
+    }),
+  });
+  await workspace.sync();
+  await workspace.stop();
+  writeFileSync(join(dir, "work", "index.html"), "<p>사이클의 변경</p>\n");
+  const saved = await workspace.save({ message: "사이클의 변경" });
+  assert.equal(saved.stage, "published", saved.detail ?? "");
+  await workspace.handoff({ title: "결제 화면" });
+  await workspace.checkpoint("session-a", 1);
+  return workspace;
+};
+
+test("폴링의 재판독은 착지하지 않는다 — 사람이 올 때까지 사이클도 되돌리기도 그대로", async () => {
+  const dir = workdir("hub-peek-merged-");
+  const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
+  process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const workspace = await endedCycleWorkspace(dir, "merged");
+    const work = join(dir, "work");
+    const git = (args) => promisifiedRun("git", ["-C", work, ...args]);
+    const branch = workspace.currentBranch;
+    assert.ok(branch, "넘긴 사이클에는 브랜치가 있다");
+
+    const peeked = await workspace.peekHandoff();
+    assert.equal(peeked?.state, "merged", "읽기는 개발자의 병합을 본다");
+    assert.equal(workspace.currentHandoff?.state, "open", "칩은 아직 넘김 그대로다");
+    assert.equal(workspace.currentBranch, branch, "사이클은 아직 닫히지 않았다");
+    assert.equal(workspace.handoffLandingDue, true, "내려앉을 끝이 세워졌다");
+    assert.match(
+      await git(["for-each-ref", "refs/colo-design/checkpoints"]),
+      /session-a\/1/,
+      "타이머는 되돌리기 기록을 지우지 않는다",
+    );
+
+    // 사람이 왔다 — 그제야 내려앉는다.
+    await workspace.landHandoffIfDue();
+    assert.equal(workspace.currentBranch, null, "사이클이 닫혀 다음 저장이 새 브랜치를 연다");
+    assert.equal(workspace.currentHandoff?.state, "merged", "이제 칩이 반영됨을 말한다");
+    assert.equal(workspace.handoffLandingDue, false);
+    assert.equal(
+      (await git(["for-each-ref", "refs/colo-design/checkpoints"])).trim(),
+      "",
+      "반영된 사이클의 스냅샷은 착지와 함께 간다",
+    );
+  } finally {
+    if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
+    else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("반려된 사이클은 베이스로 돌아가되 되돌리기 기록은 남는다", async () => {
+  const dir = workdir("hub-closed-cycle-");
+  const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
+  process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const workspace = await endedCycleWorkspace(dir, "closed");
+    const work = join(dir, "work");
+    const git = (args) => promisifiedRun("git", ["-C", work, ...args]);
+
+    const report = await workspace.refreshHandoff();
+    assert.equal(report?.state, "closed");
+    assert.equal(workspace.currentBranch, null, "반려도 사이클의 끝이다 — 브랜치를 잊는다");
+    assert.equal(
+      (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim(),
+      "main",
+      "워크트리가 베이스로 돌아와야 다음 저장이 반려된 커밋을 다시 제안하지 않는다",
+    );
+    assert.match(
+      await git(["for-each-ref", "refs/colo-design/checkpoints"]),
+      /session-a\/1/,
+      "합쳐진 적 없는 작업이므로 되돌아갈 자리는 남는다",
+    );
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
     else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
@@ -2491,4 +2612,186 @@ test("claims: 리스너 조회가 실패한 기록도 산 주인이 있으면 �
   assert.equal(held?.instancePid, stranger.pid);
   stranger.kill("SIGKILL");
   server.close();
+});
+
+// ---------------------------------------------------------------------------
+// 잠깐 치워두기 (보관함 토론 2026-09-15) — snapshot + 버리기 경로로 비우고,
+// 꺼내기는 3-way 로 다시 얹는다(되감기가 아니다). stash 는 쓰지 않는다.
+// ---------------------------------------------------------------------------
+
+test("잠깐 치워두기: 미저장 작업을 치워 두고 워크트리를 깨끗하게 만든다", async () => {
+  const dir = workdir("hub-shelve-basic-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      claude.replace("# fixture colo-design 레포", "# 치워둘 제목"),
+    );
+    mkdirSync(join(dir, "work", "src", "screens", "parked"), { recursive: true });
+    writeFileSync(
+      join(dir, "work", "src", "screens", "parked", "Parked.screen.tsx"),
+      "export const Parked = () => null;\n",
+    );
+
+    await workspace.shelve();
+
+    const shelved = await workspace.status();
+    assert.ok(shelved.shelf?.at, "the slot reads as filled");
+    assert.equal(shelved.pendingChanges, 0, "the desk is clean — nothing reads as unsaved");
+    assert.ok(
+      !existsSync(join(dir, "work", "src", "screens", "parked")),
+      "untracked work left too",
+    );
+
+    // 한 칸: 두 번째 치워두기는 먼저 꺼내라고 말한다.
+    await assert.rejects(
+      () => workspace.shelve(),
+      /이미 치워둔 작업이 있습니다/,
+      "a second shelve must name the door out",
+    );
+
+    // 치울 것이 없을 때의 거부도 한 문장이다.
+    const { applied } = await workspace.unshelve();
+    assert.ok(applied.length >= 2, `the shelved work is back: ${applied}`);
+    await workspace.discard();
+    await assert.rejects(() => workspace.shelve(), /치워둘 변경이 없습니다/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("꺼내기는 최신화된 머리 위에 다시 얹는다 — 되감기가 아니다", async () => {
+  const dir = workdir("hub-unshelve-3way-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      claude.replace("# fixture colo-design 레포", "# 치워둔 제목"),
+    );
+    await workspace.shelve();
+
+    // 치워둔 사이 개발자는 다른 줄을 반영했다 — 같은 파일, 다른 위치.
+    const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "CLAUDE.md": seedClaude.replace(
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다.",
+        "- 만들거나 바꾼 화면을 이름과 경로로 답변에 남긴다 — 개발자가 다듬은 문장.",
+      ),
+    });
+    const outcome = await workspace.pull(() => undefined);
+    assert.equal(outcome, "clean");
+
+    const { applied } = await workspace.unshelve();
+    assert.ok(applied.includes("CLAUDE.md"), "the shelved edit lands");
+
+    const merged = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    assert.ok(merged.includes("치워둔 제목"), "the shelved work is back");
+    assert.ok(
+      merged.includes("개발자가 다듬은 문장"),
+      "the developer's change is NOT rewound — 다시 얹기, not 되감기",
+    );
+    const after = await workspace.status();
+    assert.equal(after.shelf, null, "a clean landing spends the slot");
+    assert.ok(after.pendingChanges >= 1, "the work awaits 저장 again");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("꺼내기: 진행 중인 변경 위에는 내려오지 않고, 슬롯은 지킨다", async () => {
+  const dir = workdir("hub-unshelve-dirty-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(join(dir, "work", "CLAUDE.md"), `${claude}\n치워둘 한 줄\n`);
+    await workspace.shelve();
+
+    writeFileSync(join(dir, "work", "CLAUDE.md"), `${claude}\n새로 시작한 줄\n`);
+    await assert.rejects(
+      () => workspace.unshelve(),
+      /지금 작업 중인 변경이 있습니다/,
+      "the slot is not a second worktree",
+    );
+    const status = await workspace.status();
+    assert.ok(status.shelf?.at, "the refusal keeps the slot");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("꺼내기가 겹치면 Claude 의 과제가 되고, 치워둔 작업은 남는다", async () => {
+  const dir = workdir("hub-unshelve-conflict-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(
+      join(dir, "work", "CLAUDE.md"),
+      claude.replace("# fixture colo-design 레포", "# 치워둔 제목"),
+    );
+    await workspace.shelve();
+
+    // 개발자는 같은 줄을 다르게 반영했다 — 다시 얹을 수 없는 겹침.
+    const seedClaude = readFileSync(join(fixture.seed, "CLAUDE.md"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "CLAUDE.md": seedClaude.replace("# fixture colo-design 레포", "# 개발자의 제목"),
+    });
+    await workspace.pull(() => undefined);
+
+    const briefs = [];
+    await assert.rejects(
+      () => workspace.unshelve((brief) => briefs.push(brief)),
+      /치워둔 작업을 다시 얹다 겹치는 부분이 생겼습니다/,
+      "the refusal names the shelf, not git",
+    );
+    assert.equal(briefs.length, 1, "the conflict is Claude's first task, not the planner's");
+    assert.ok(briefs[0].includes("치워둔 작업 꺼내기"), "the brief's step is the button's name");
+    assert.ok(
+      readFileSync(join(dir, "work", "CLAUDE.md"), "utf8").includes("<<<<<<<"),
+      "the overlap is in the worktree, exactly where Claude reads it",
+    );
+    const status = await workspace.status();
+    assert.ok(status.shelf?.at, "the slot survives its own conflict");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("치워둔 작업은 재시작을 건너온다 — 첫 status 가 ref 를 읽는다", async () => {
+  const dir = workdir("hub-shelf-restart-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(join(dir, "work", "CLAUDE.md"), `${claude}\n재시작을 건너올 한 줄\n`);
+    await workspace.shelve();
+
+    // 데몬 재시작: 같은 클론을 보는 새 인스턴스는 메모리를 하나도 물려받지
+    // 않는다. 첫 status 가 ref 를 읽지 않으면 메뉴는 `잠깐 치워두기` 를
+    // 내밀고(ref 를 보는 shelve 는 그걸 거절한다) `꺼내기` 는 사라진다 —
+    // 치워둔 작업이 분실로 읽히는 그 자리.
+    const restarted = clone(dir, fixture);
+    const first = await restarted.status();
+    assert.ok(first.shelf?.at, "the first status after a restart still sees the slot");
+
+    const { applied } = await restarted.unshelve();
+    assert.ok(applied.includes("CLAUDE.md"), `the parked work comes back: ${applied}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

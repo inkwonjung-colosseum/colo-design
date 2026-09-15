@@ -185,8 +185,11 @@ export function DiffPanel({
   daemon,
   sessionId,
   onClose,
-  summaryLines,
   branch,
+  handoffNext,
+  openHandoffNumber,
+  destination,
+  onHandoff,
   onOpenSettings,
 }: {
   daemon: Daemon;
@@ -194,16 +197,26 @@ export function DiffPanel({
   sessionId: string | null;
   onClose: () => void;
   /**
-   * The screen turns' own end-of-turn summaries (`<!-- colo-design:summary -->`),
-   * when the caller has them. Present, they are the whole summary — no daemon
-   * round trip. Absent (the usual mount), the panel asks `repo.summarize`.
-   */
-  summaryLines?: string[];
-  /**
    * The cycle branch 저장 pushes to — shown on the settled line so the
    * planner sees WHERE the work went, not just that it happened.
    */
   branch?: string | null;
+  /**
+   * 게이트 사이의 복도 (커미티 2026-09-15): 이 순간 넘기기가 열려 있다는
+   * 렌더 시점의 판정 — 저장 리뷰의 끝에서 바로 넘기기 리뷰로 이어가는
+   * 버튼이 그린다. 부르는 쪽(ScreenPanel)이 웹소켓 갱신마다 다시 계산해
+   * 내린다. 클릭 수도 게이트 수도 줄지 않는다 — 줄어드는 것은 왕복뿐.
+   */
+  handoffNext?: boolean;
+  /**
+   * 커미티 B2+B3 문장 (2026-09-15): 열린 넘김의 번호 — 성공 문장이 "요청에
+   * 함께 담았다"로 바뀐다. null 이면 이번 저장이 첫발이다.
+   */
+  openHandoffNumber?: number | null;
+  /** 커미티 B2 목적지: 이 저장이 향할 회사 저장소의 이름(owner/repo). */
+  destination?: string | null;
+  /** 커미티 2026-09-15 (PR-ease): 저장 리뷰의 끝에서 바로 넘기기 리뷰로. */
+  onHandoff?: () => void;
   /** A push refused over credentials is the planner's to fix, in 설정. */
   onOpenSettings?: () => void;
 }) {
@@ -225,10 +238,6 @@ export function DiffPanel({
   const running = diffStatus !== null && RUNNING.includes(diffStatus.stage);
   const published = diffStatus?.stage === "published";
   const failed = diffStatus?.stage === "failed";
-
-  // The turn-end summary and the asked-for one differ only in provenance; key
-  // the effect on the joined text so a caller-side array identity cannot loop it.
-  const turnSummaryText = summaryLines && summaryLines.length > 0 ? summaryLines.join("\n") : null;
 
   useEffect(() => {
     const onKeydown = (event: KeyboardEvent) => {
@@ -254,16 +263,11 @@ export function DiffPanel({
     };
   }, [api, running]);
 
-  // The summary follows the diff: turn-end lines when the caller has them,
-  // else one `repo.summarize` ask, cached by what the diff was. Three seconds
-  // in, the planner reads the local fallback — a slow answer still replaces
-  // it when it lands (PLAN D51's 폴백 is a display floor, not a cancel).
+  // The summary follows the diff: one `repo.summarize` ask, cached by what the
+  // diff was. Three seconds in, the planner reads the local fallback — a slow
+  // answer still replaces it when it lands (PLAN D51's 폴백 is a display
+  // floor, not a cancel).
   useEffect(() => {
-    if (turnSummaryText !== null) {
-      setSummary({ lines: turnSummaryText.split("\n"), source: "claude" });
-      setSummarizing(false);
-      return;
-    }
     if (!files || files.length === 0) {
       setSummary(null);
       setSummarizing(false);
@@ -307,7 +311,7 @@ export function DiffPanel({
       cancelled = true;
       clearTimeout(fallbackTimer);
     };
-  }, [api, files, turnSummaryText]);
+  }, [api, files]);
   // The note opens filled with the summary's first line (PLAN D51) — but
   // only a Claude-written one: a fallback grouping (`screens: 수정 1`) is a
   // count, not a memo, and an empty note now means Claude writes the memo
@@ -317,6 +321,13 @@ export function DiffPanel({
     if (summary?.source !== "claude") return;
     const first = summary.lines[0];
     if (first) setMessage(first);
+  }, [summary]);
+  /** 폴백 요약은 숫자 묶음일 뿐 메모가 못 된다(커미티 2026-09-15 C-5a) — 프리필은
+   *  하지 않는 현 규칙 그대로, 대신 커서를 직접 메모로 옮긴다. 사람의 한
+   *  줄이 기본 문약("화면 변경")보다 낫다. */
+  const memoRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (summary?.source === "fallback" && !memoTouched.current) memoRef.current?.focus();
   }, [summary]);
 
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
@@ -351,6 +362,7 @@ export function DiffPanel({
               <DiffIcon />
             </span>{" "}
             저장 검토
+            {destination ? <span className="modal__destination">→ {destination}</span> : null}
           </h2>
           <button type="button" className="ghost" aria-label="저장 검토 닫기" onClick={onClose}>
             <CloseIcon />
@@ -372,8 +384,14 @@ export function DiffPanel({
                 {stageLine(diffStatus)}
                 {/* 어디에 저장됐는지는 제품의 약속 그 자체다 (실사 결함):
                     다만 브랜치명 원문은 사용자의 어휘가 아니므로 사람 말로
-                    말하고 위치는 툴팁에 남는다 (비개발자 리뷰 D4). */}
-                {published && branch ? " — 회사 GitHub에 올렸습니다" : ""}
+                    말하고 위치는 툴팁에 남는다 (비개발자 리뷰 D4). 열린 넘김이
+                    있으면 이번 저장이 첫발이 아니라는 사실이 더 중요하다
+                    (커미티 B2+B3 문장, 2026-09-15). */}
+                {published && branch
+                  ? openHandoffNumber
+                    ? ` — 넘긴 요청 ${openHandoffNumber}번에 함께 담았습니다`
+                    : " — 회사 GitHub에 올렸습니다"
+                  : ""}
               </span>
               {running && <span className="spinner" />}
             </div>
@@ -456,11 +474,13 @@ export function DiffPanel({
             <span className="setting__text">
               <span className="setting__label">저장 메모</span>
               <span className="setting__hint">
-                비워 두면 Claude가 바뀐 점을 읽고 저장 메모를 씁니다
+                비워 두면 Claude가 바뀐 점을 읽고 저장 메모를 씁니다 — 못 쓰면 "화면 변경"으로
+                저장됩니다
               </span>
             </span>
             <span className="setting__control">
               <input
+                ref={memoRef}
                 value={message}
                 placeholder="예: 회원 관리 화면 추가"
                 aria-label="저장 메모"
@@ -475,9 +495,20 @@ export function DiffPanel({
 
           <div className="settings__row">
             {published ? (
-              <button type="button" className="primary" onClick={onClose}>
-                닫기
-              </button>
+              <>
+                {handoffNext && onHandoff && (
+                  <button type="button" className="primary" onClick={onHandoff}>
+                    개발자에게 넘기기 →
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={handoffNext && onHandoff ? "ghost" : "primary"}
+                  onClick={onClose}
+                >
+                  닫기
+                </button>
+              </>
             ) : (
               <>
                 <button

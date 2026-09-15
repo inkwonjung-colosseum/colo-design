@@ -29,6 +29,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { stopDaemon } from "./stop-daemon.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
@@ -351,7 +352,7 @@ async function main() {
 
   await browser.close();
   server.close();
-  daemon.kill("SIGTERM");
+  await stopDaemon(daemon);
 
   const failed = results.filter((r) => !r.passed);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);

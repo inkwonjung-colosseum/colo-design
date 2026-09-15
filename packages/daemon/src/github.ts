@@ -31,6 +31,8 @@ export interface PullRequestRef {
   state: "open" | "changes_requested" | "merged" | "closed";
   /** The branch the PR is from — the one 저장 keeps pushing to. */
   branch: string;
+  /** Who the repo's own rules asked to review, as reported on the PR itself. */
+  reviewers: string[];
 }
 
 const JSON_HEADERS = {
@@ -625,13 +627,21 @@ function stateOf(data: Record<string, any>): PullRequestRef["state"] {
   if (data.merged === true || typeof data.merged_at === "string") return "merged";
   return data.state === "open" ? "open" : "closed";
 }
-
 function refOf(data: Record<string, any>): Omit<PullRequestRef, "state"> {
+  // requested_reviewers rides the same GET /pulls/{number} payload (커미티
+  // 2026-09-15 리뷰어 보고) — no extra request, and a fixture recorded before
+  // the field just reads as "nobody".
+  const reviewers = Array.isArray(data.requested_reviewers)
+    ? data.requested_reviewers
+        .map((row: Record<string, any>) => String(row?.login ?? ""))
+        .filter((login: string) => login !== "")
+    : [];
   return {
     number: Number(data.number),
     url: String(data.html_url ?? ""),
     title: String(data.title ?? ""),
     branch: String(data.head?.ref ?? ""),
+    reviewers,
   };
 }
 

@@ -241,6 +241,9 @@ async function main() {
     "the stale claim's holder to die",
   );
   check("the stale claim did not protect the squatter", heldSquatter.signalCode === "SIGKILL");
+  // The reclaim left a preview serving; nothing below needs it, and the
+  // `process.exit(0)` at the end would otherwise orphan it on the port.
+  await workspace.stop();
 
   // --- 5. 판정은 그 자리를 지킨다 ------------------------------------------
   // 실사 결함: 포트 충돌로 실패한 뒤 뒤에서 돈 git fetch 의 진행 출력
@@ -397,6 +400,35 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       "the preview url serves the repo's app",
       (await fetch(updated.data.previewUrl)).status === 200,
       updated.data.previewUrl,
+    );
+
+    // 기획서 열기(커미티 C-5): 첨부는 세션 cwd = 클론 안 specs/ 에 쓰인다
+    // (session.deliver → saveSpecFiles). 그러므로 repo.specPath 도 클론을
+    // 기준으로 풀어야 한다 — 프로젝트 루트를 보던 판은 파일이 거기 없어
+    // "찾을 수 없습니다" 만 돌려주었고, 첨부 칩을 눌러도 아무 일이 없었다.
+    mkdirSync(join(ROOT, "specs"), { recursive: true });
+    writeFileSync(join(ROOT, "specs", "2026-09-15-기획서.md"), "# 회원");
+    const spec = await request({
+      id: "spec-1",
+      type: "repo.specPath",
+      path: "specs/2026-09-15-기획서.md",
+    });
+    check(
+      "repo.specPath resolves inside the clone the attachments were saved in",
+      spec.data.path === join(ROOT, "specs", "2026-09-15-기획서.md"),
+      spec.data.path,
+    );
+    // 보관함 밖은 열리지 않는다 — 렌더러가 임의 경로를 셸에 넘기는 길.
+    let escaped = null;
+    try {
+      await request({ id: "spec-2", type: "repo.specPath", path: "../.git/config" });
+    } catch (error) {
+      escaped = String(error.message);
+    }
+    check(
+      "repo.specPath refuses a path outside specs/",
+      escaped !== null && escaped.includes("기획서 보관함"),
+      String(escaped),
     );
   } finally {
     ws.close();

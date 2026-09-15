@@ -19,17 +19,17 @@
  * Run: node packages/desktop/test/desktop-cover.mjs
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
 import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs";
+import { buildDesktopBundle } from "./build-desktop.mjs";
 import { closeApp } from "./close-app.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktop = join(here, "..");
-const repo = join(desktop, "..", "..");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -97,19 +97,7 @@ async function waitForPage(app, timeout = 30000) {
 }
 
 async function main() {
-  // COLO_COVER_SKIP_BUILD=1 runs against whatever is already built — the one
-  // affordance a developer needs while another package in the tree is
-  // mid-edit. CI leaves it unset and the suite builds everything itself.
-  if (!process.env.COLO_COVER_SKIP_BUILD) {
-    run("pnpm", ["--filter", "@colo-design/protocol", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/daemon", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/web", "build"], repo);
-    run("pnpm", ["--filter", "@colo-design/desktop", "build"], repo);
-    const webDist = join(desktop, "web-dist");
-    rmSync(webDist, { recursive: true, force: true });
-    mkdirSync(webDist, { recursive: true });
-    cpSync(join(repo, "packages", "web", "dist"), webDist, { recursive: true });
-  }
+  buildDesktopBundle();
 
   const dir = join(tmpdir(), `colo-design-cover-${Date.now()}`);
   mkdirSync(dir, { recursive: true });

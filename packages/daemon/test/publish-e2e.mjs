@@ -778,11 +778,16 @@ async function main() {
         { screen: "/pay/PayFailed", state: "error", text: "문구를 다시", elementText: "결제 실패" },
       ],
     });
-    const listed = await request({ id: "c3", type: "comments.list" });
+    // 코멘트 목록 UI 는 없다 — 핀은 대화에서 소비되고, 저장소의 유일한 독자는
+    // 풀 리퀘스트 본문이다. 그래서 이 검사는 파일 그 자체를 읽는다.
+    const storeSlug = JSON.parse(readFileSync(join(DIR, "projects.json"), "utf8")).projects[0].slug;
+    const stored = JSON.parse(
+      readFileSync(join(DIR, "projects", storeSlug, "comments.json"), "utf8"),
+    );
     check(
-      "two recorded screens read as two stored comments",
-      listed.items.length === 2 && listed.items.every((item) => item.id !== "" && item.at !== ""),
-      JSON.stringify(listed.items),
+      "two recorded screens land as two stored comments",
+      stored.length === 2 && stored.every((item) => item.id !== "" && item.at !== ""),
+      JSON.stringify(stored),
     );
     // D78 + 자동 정리: the store normalizes the screen to the [data-screen]
     // spelling — no leading slash, whatever spelling the client used — and
@@ -790,10 +795,10 @@ async function main() {
     // delivery, so no resolve step exists.
     check(
       "recorded rows land delivered, on the [data-screen] spelling",
-      listed.items.some((item) => item.screen === "member/MemberList") &&
-        listed.items.some((item) => item.screen === "pay/PayFailed") &&
-        listed.items.every((item) => item.resolved === true),
-      JSON.stringify(listed.items.map((item) => [item.screen, item.resolved])),
+      stored.some((item) => item.screen === "member/MemberList") &&
+        stored.some((item) => item.screen === "pay/PayFailed") &&
+        stored.every((item) => item.resolved === true),
+      JSON.stringify(stored.map((item) => [item.screen, item.resolved])),
     );
 
     writeFileSync(join(ROOT, "index.html"), "<p>다음 주기</p>\n");

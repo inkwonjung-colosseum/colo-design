@@ -3,7 +3,7 @@
 > **개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는
 > 도구 — git, Claude Code, 터미널 같은 건 몰라도 쓴다.**
 
-![version](https://img.shields.io/badge/version-0.3.7-blue)
+![version](https://img.shields.io/badge/version-0.3.8-blue)
 ![platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-lightgrey)
 ![stack](https://img.shields.io/badge/stack-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-9feaf9?labelColor=1e1e2e)
 ![monorepo](https://img.shields.io/badge/monorepo-pnpm-orange)
@@ -52,8 +52,9 @@ git 용어는 익히지 않아도 된다. 세 단어만 알면 된다.
    있다.
 3. 앱에는 실행에 필요한 런타임(Node · pnpm)이 들어 있다. 따로 준비할 것은 둘 —
    로그인된 Claude Code CLI(`claude /login` 한 번)와 git.
-4. 업데이트는 하루에 한 번 저절로 확인해 OS 알림으로 알린다(설정의 확인 버튼으로도 즉시
-   확인할 수 있다). mac 은 새 버전을 앱이 스스로 교체한다.
+4. 업데이트는 저절로 확인한다 — 앱을 켤 때, 앱으로 돌아올 때, 그리고 하루에 한 번.
+   새 버전이 있으면 OS 알림으로 알린다(설정의 확인 버튼으로도 즉시 확인할 수 있다).
+   mac 은 새 버전을 앱이 스스로 교체한다.
 
 ## 작업은 한 바퀴로 흘러간다
 
@@ -74,11 +75,13 @@ flowchart LR
 | 상태 칩 | 뜻 |
 | --- | --- |
 | `변경 없음` | 저장하지 않은 새 작업이 없다 |
-| `저장 안 함 N건` | 저장하지 않은 작업이 N건 있다. Claude 가 고치는 중이면 `고치는 중 · N건`으로 읽는다. 넘긴 요청이 열려 있으면 저장분은 그 요청에 함께 담긴다 |
+| `저장 안 함` | 저장하지 않은 작업이 있다. Claude 가 고치는 중이면 `고치는 중`으로 읽는다. 넘긴 요청이 열려 있으면 저장분은 그 요청에 함께 담긴다 |
 | `저장됨` | 저장했지만 아직 개발자에게 전달하지 않았다 |
 | `개발자 검토 중` | 넘긴 요청을 개발자가 보고 있다 |
 | `변경 요청` | 개발자가 넘긴 요청에 코멘트를 남겼다 — `상태 확인` 버튼으로 이어 간다 |
 | `반영됨` | 작업이 제품에 합쳐졌다. 다음 저장은 새 사이클을 시작한다 |
+| `개발자가 반려함` | 개발자가 넘긴 요청을 닫았다 — `상태 확인`으로 이유를 읽고, 고쳐 저장하면 새 요청이 열린다 |
+| `치워둔 작업 1건` | 작업을 잠깐 치워 두었다 — `더 보기` 메뉴에서 꺼내면 이어서 작업한다 |
 
 ## 사용 안내 — 여덟 걸음
 
@@ -96,6 +99,11 @@ flowchart LR
 설치하고 미리보기를 띄우는 일은 사용자의 승인 한 번(`실행 허용`) 뒤에만 돈다 — 승인은
 기억되어 다시 묻지 않는다. 왼쪽 사이드바의 프로젝트를 고르면 그 서비스의 대화 ·
 미리보기 · 변경 사항이 오른쪽에 뜬다.
+
+목록에는 토큰이 **쓸 수 있는** 저장소가 나온다. 고르면 클론 전에 확인 줄이 뜨는데,
+`✗ 이 레포에는 화면 제작 설정이 없습니다` 라면 그 저장소가 아직 도구에 연결되지 않은
+것이다 — 개발자에게 [연결 레포 만들기](#연결-레포-만들기)를 넘기거나, 같은 화면의
+`Claude 가 연결 준비하기` 로 도구가 준비하게 할 수 있다.
 
 ### 3. 화면 만들기 — 말로 시작하기
 
@@ -118,8 +126,9 @@ Claude 의 첫 답은 `만들 것` 카드로 오고, 승인하면 착수한다. 
 미리보기에서 ⌥+클릭하면 그 자리에 핀이 찍혀 입력창 아래 트레이에 행이 담긴다 — 행마다
 메모를 남길 수 있고, 여러 개를 찍은 뒤 문장을 붙여 한 번에 보낸다. 핀과 문장은 한
 턴이 되고, 보낸 핀은 그 자리에서 화면을 떠난다 — 해결 표식을 붙이고 다니는 일은
-없다. 다시 바라는 것이 있으면 그대로 대화에서 말하면 되고, 지금까지 보낸 코멘트는
-더 보기 ▾ 의 `코멘트 목록`에서 기록으로 읽는다.
+없다. 보낸 코멘트는 대화록에 카드로 남는다; 도구 어디에도 그것을 되읽는 목록은
+없고, 다시 바라는 것이 있으면 그대로 대화에서 말하면 된다. 기록은 넘길 때 한 번
+더 쓰인다 — 개발자가 받는 요청 본문의 `수정 요청` 목록이 그것이다.
 
 ### 6. 저장 — 작업 묶기
 
@@ -164,6 +173,9 @@ Claude 의 첫 답은 `만들 것` 카드로 오고, 승인하면 착수한다. 
   오며 그 대화를 연다(다른 프로젝트의 대화라면 전환까지 한다). 창이 뒤에 있는 동안
   도착한 것은 dock 배지가 센다. 확인 요청·중단은 언제나 오고, `완료` 알림만 설정에서
   `끔 · 오래 걸린 턴만(기본) · 모든 턴`으로 고를 수 있다(소리와 시험 알림도 그 옆).
+  알림을 보일지 말지는 마지막에 OS 가 정한다 — 컴퓨터마다 한 번만 묻고, 그때 거절했거나
+  모르고 지나갔으면 그 뒤로는 조용히 알림 센터에만 쌓인다. 시험 알림을 눌렀는데 배너가
+  오지 않으면 그 경우이므로, 같은 자리의 `시스템 알림 설정 열기`로 이 앱의 알림을 켠다.
 - **여러 프로젝트** — 한 번에 하나의 프로젝트가 활성이지만, 떠난 프로젝트의 미리보기는
   따뜻하게 남는다(최근 두 개까지). 다시 고르면 서버를 새로 띄우거나 화면을 다시
   그리지 않고, 보던 자리 그대로 곧바로 돌아온다. 전환해도 다른 프로젝트에서 돌던
@@ -179,6 +191,11 @@ Claude 의 첫 답은 `만들 것` 카드로 오고, 승인하면 착수한다. 
   `걸렸습니다` 줄에 남는다.
 - **잠긴 버튼** — 저장 · 넘기기 · 상태 확인 버튼은 항상 그려지고, 못 쓰는 상태면 마우스를
   올릴 때 이유가 뜬다(예: `먼저 저장해 주세요`).
+- **잠깐 치워두기** — 저장하기엔 이르지만 지금 화면은 비워 두고 싶을 때, 화면 막대의
+  `더 보기` → `잠깐 치워두기` 가 저장하지 않은 작업을 통째로 보관한다. 자리는 하나뿐이고,
+  치워 두는 동안 상태 칩은 `치워둔 작업 1건` 으로 남는다 — 회색 `변경 없음` 으로 읽혀
+  분실되지 않는다. 같은 자리의 `치워둔 작업 꺼내기` 가 그대로 다시 얹는다. 화면이
+  이미 지저분하거나 자리가 차 있으면 이유를 말하고 거절한다.
 - **대화 내보내기** — 행 메뉴에서 markdown 파일로 내보낼 수 있다. 지우기 전의 안전망이다.
 - **미리보기 자리** — 미리보기가 쓰려는 자리를 다른 프로그램이 쓰고 있으면 도구가 그
   프로그램을 정리하고 미리보기를 띄운다. 활성 프로젝트가 선언한 자리는 활성 프로젝트의
@@ -208,6 +225,10 @@ OS 자격 증명 저장소(맥 키체인 등)에만 있다. 토큰은 기계에 
 **Node 나 터미널을 직접 설치해야 하나요?**
 아니요. 데스크톱 앱에 필요한 런타임이 들어 있다. Claude Code CLI 와 git만 설치하고
 (`claude /login`) 로그인하면 된다.
+
+**우리 서비스 저장소를 이 도구에 연결하려면요?**
+개발자가 한 번 준비하면 된다 — [연결 레포 만들기](#연결-레포-만들기). 준비되지 않은
+저장소를 골랐을 때 피커의 `Claude 가 연결 준비하기` 를 쓰면 도구가 대신 준비한다.
 
 ---
 
@@ -375,7 +396,9 @@ CSS 경로, 자기 텍스트, rect)와 그 순간의 crop 을 실어 컴포저�
 투영이다. 보내면 문장과 핀 목록이 구조화된 한국어 턴 하나가 되고, 핀은 트레이에서
 비워지며 `comments.json` 에 전달 기록으로만 남는다. 전달이 곧 정리다(자동 정리) —
 해결 토글 · 다시 요청 단추는 없다; 다음 요청은 대화에서 말하는 것이 다른 메시지와
-같은 길이다.
+같은 길이다. 저장소는 쓰기 전용이다 — 코멘트는 대화에서 소비되므로 도구는 그것을
+다시 목록으로 그리지 않는다. 한 명의 독자만 남는다: 그 대화를 보지 못하는 개발자,
+즉 넘긴 요청 본문의 `### 수정 요청` 절이다.
 핀은 선언된 화면에만 찍히지 않는다 — `[data-screen]` 래퍼가 없는 페이지(아직 이
 도구로 만지지 않은 레포의 원래 화면)에서도 ⌥+클릭이 핀을 남기고, 그 페이지의 경로가
 화면 id 가 된다. 화면 목록이 비어 있어도 코멘트 → 수정의 고리는 처음부터 열려 있다.
@@ -448,21 +471,161 @@ Node 는 링크로만 제시한다 — 도구가 사용자의 기계에 설치�
 메인 프로세스가 데몬을 in-process 로 호스팅하는 Electron 앱이다 — 임시 포트, 실행마다
 바뀌는 토큰, 데몬이 스스로 서빙하는 웹 UI, 페어링 화면 없음. 포터블 node + corepack 이
 extra resource 로 실려 repo 명령의 PATH 앞에 붙으므로, 사용자의 기계에는 둘 다
-필요 없다. 업데이트는 하루에 한 번 저절로 확인해 OS 알림을 띄우고, 설정의 확인
-버튼으로도 돌릴 수 있다 — 자가 교체는 mac 이다. 대화가 멈췄을 때(작업 완료 · Claude
-가 확인 대기 · 게이트 실패) 데몬이 의미를 건네면 앱이 OS 알림으로 부른다 — 창이 앞에
-있을 때는 조용히 하고, 알림을 누르면 창이 앞으로 오고 그 대화를 연다(다른
-프로젝트의 대화면 전환까지 한다). 창이 뒤에 있는 동안 도착한 것은 dock 배지가
-세운다. Windows 에서는 실행 중인 턴이 있을 때 창을 닫으면 한 번 묻는다 — 닫으면
-그 작업이 멈춘다고. mac 은 ad-hoc 서명으로 나간다(인증서 없음, 공증 없음).
+필요 없다. 업데이트는 앱을 켤 때 · 앱으로 돌아올 때(시간당 1회) · 하루에 한 번 저절로
+확인해 OS 알림을 띄우고, 설정의 확인 버튼으로도 돌릴 수 있다 — 자가 교체는 mac 이다.
+대화가 멈췄을 때(작업 완료 · Claude 가 확인 대기 · 게이트 실패) 데몬이 의미를 건네면
+앱이 OS 알림으로 부른다 — 창이 앞에 있을 때는 조용히 하고, 알림을 누르면 창이 앞으로
+오고 그 대화를 연다(다른 프로젝트의 대화면 전환까지 한다). 창이 뒤에 있는 동안 도착한
+것은 dock 배지가 세운다. Windows 에서는 실행 중인 턴이 있을 때 창을 닫으면 한 번
+묻는다 — 닫으면 그 작업이 멈춘다고.
+
+mac 알림에는 서명이 필수다. Electron 44 의 알림은 UNNotification 위에 있고 그 API 는
+서명되지 않은(=`linker-signed`) 앱의 알림을 `failed`(UNErrorDomain 1)로 거절한다 —
+`pnpm dev:desktop` 이 띄우는 `node_modules` 의 `Electron.app` 이 정확히 그 상태라,
+개발 실행에서는 알림이 오지 않는다(설정의 시험 알림이 그 이유를 그대로 보여 준다).
+보려면 그 바이너리를 한 번 서명한다:
+`codesign --force --deep --sign "<키체인의 코드서명 인증서 CN>" packages/desktop/node_modules/electron/dist/Electron.app`.
+서명이 붙어도 마지막 결정은 OS 의 알림 허용 스위치다 — 한 번 거절된 앱은 설정 →
+알림에서만 다시 켤 수 있고, 앱의 `시스템 알림 설정 열기` 가 그 자리로 데려간다.
 
 ## 연결 레포 만들기
 
-계약은 한 줄이다. 나머지는 레포가 이미 말한 것에서 읽는다.
+개발자가 한 번 하는 일이다. 레포가 도구에 줄 것은 넷 — 설정 한 줄, 화면 브리지,
+화면 래퍼, `CLAUDE.md`. 손으로 쓰지 않고 [Claude 에게 맡길](#claude-에게-준비를-맡기기)
+수도 있다.
+
+### 0. 준비물
+
+- **GitHub 레포** — 사용자의 토큰이 **쓸 수 있어야** 한다. `프로젝트 추가` 목록은 쓰기
+  가능한 저장소만 보여 주고, 읽기 전용 저장소는 `주소로 추가` 로만 들어가며 화면 작업은
+  되지만 `개발자에게 넘기기`(풀 리퀘스트)가 막힌다.
+- **도는 개발 서버** — `package.json` 의 scripts 에 `dev`(없으면 `start` · `serve` ·
+  `preview` 중 하나)가 있고, 그것이 고정된 포트에서 떠야 한다. 도구는 그 포트를 iframe ·
+  네이티브 뷰에 그대로 띄운다.
+- **커밋된 락파일** — 있으면 도구가 설치를 대신 돌린다. 없으면 설치를 돌리지 않는다.
+
+### 1. `colo-design.json` — 포트 한 줄
+
+레포 루트에 새로 만드는 파일, 전부다.
 
 ```json
 { "preview": { "port": 5274 } }
 ```
+
+명령은 적지 않는다 — 락파일과 `package.json` 의 scripts 에서 읽는다([아래 표](#도구가-값을-읽는-곳)).
+
+도구는 `http://127.0.0.1:<port>/` 가 응답할 때까지 기다린 뒤에야 `준비됨`이라고 부른다.
+그래서 **포트가 움직이면 안 된다** — Vite 처럼 포트가 잡혀 있으면 자동으로 올리는
+개발 서버는 `strictPort: true` 나 `--port <포트>` 로 고정해 두는 편이 안전하다.
+
+### 2. 화면 브리지 — 개발 미리보기에만
+
+도구는 레포의 코드를 읽지 않는다. 어떤 화면이 있는지 아는 길은 **앱이 스스로 말해 주는
+것** 하나뿐이다. 개발 전용 모듈 하나를 붙인다.
+
+```ts
+// src/dev/colo-bridge.ts — 개발 전용. 프로덕션 번들에 들어가지 않게 한다.
+declare global {
+  interface Window {
+    coloDesign?: { post(envelope: unknown): void };
+  }
+}
+
+/** 이 레포가 렌더할 수 있는 것 전부. spec 은 화면을 만든 기획서 파일 이름(없으면 null). */
+const SCREENS = [
+  { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"], spec: null },
+];
+
+/** 데스크톱 네이티브 뷰는 window.coloDesign, 브라우저 개발 경로는 부모 iframe. */
+function post(envelope: unknown): void {
+  if (window.coloDesign) window.coloDesign.post(envelope);
+  else if (window.parent !== window) window.parent.postMessage(envelope, "*");
+}
+
+const announce = () => post({ type: "colo-design.screens", screens: SCREENS });
+announce();
+
+window.addEventListener("message", (event) => {
+  const data = event.data;
+  // 도구가 목록을 다시 묻는다 (오버레이가 다시 붙었을 때).
+  if (data?.type === "colo-design.screens?") return announce();
+  // 도구가 화면을 하나 열라고 한다.
+  if (data?.type !== "colo-design.navigate" || typeof data.route !== "string") return;
+  const state = typeof data.state === "string" && data.state ? data.state : null;
+  // 이동은 레포의 라우터가 한다 — react-router 면 navigate(), 직접 라우팅이면
+  // history.pushState + 리렌더. 도구는 레포의 url 에 관여하지 않는다.
+  navigateTo(data.route + (state ? `?state=${state}` : ""));
+});
+```
+
+진입점에서 개발일 때만 불러온다.
+
+```ts
+if (import.meta.env.DEV) void import("./dev/colo-bridge");
+```
+
+브리지가 해야 하는 일은 둘이다 — **뜰 때 목록을 올리고**(`colo-design.screens`),
+**도구가 다시 물으면 다시 올린다**(`colo-design.screens?`, 브라우저 개발 경로에서 온다).
+세 번째 봉투 `colo-design.navigate` 는 내려오는 것 하나뿐이고, 이동은 레포의 라우터가
+한다 — 도구는 레포의 url 을 직접 만지지 않는다. 전부 `packages/protocol` 의 타입이다.
+
+브리지가 없어도 미리보기는 뜬다 — 화면 목록과 상태 칩이 없고, 화면 이동은 도구가
+주소를 바꿔 페이지를 다시 읽는 방식이 된다(클라이언트 라우팅이 아니다). 동작하는 최소
+구현은 `packages/daemon/test/fixture-repo.mjs` 의 `INDEX_HTML` 에 있다.
+
+### 3. 화면 래퍼 — `data-screen` · `data-state`
+
+미리보기의 코멘트 핀은 사용자가 찍은 곳이 **어느 화면의 어느 상태인지** 알아야 한다.
+각 화면 최상위에 속성 둘을 붙인다.
+
+```tsx
+export function MemberList() {
+  const state = new URLSearchParams(location.search).get("state") ?? "default";
+  return (
+    <main data-screen="member/MemberList" data-state={state}>
+      …
+    </main>
+  );
+}
+```
+
+화면 주소 규칙은 `/<feature>/<Screen>?state=<state>` 로 고정이다. 상태를 주지 않으면
+그 화면의 기본 상태다.
+
+### 4. `CLAUDE.md` — 레포의 규칙
+
+레포가 Claude 에게 들려주는 것도 레포가 정한다. 터미널의 Claude Code 가 읽는 것과 같은
+파일을 클론에서 같은 방식으로 읽는다 — 스택, 관습, 화면이 사는 곳. 스크린 파일이 import
+할 수 있는 것(react, `@colosseumcoinckr/*`, 같은 폴더), 데이터는 `<화면이름>.mock.ts`
+에만 두는 규칙 같은 것들이 여기 적힌다.
+
+### 5. 스스로 한 번 확인
+
+커밋하기 전에 개발자가 직접 본다 — 도구 없이도 성립해야 하는 것들이다.
+
+```bash
+pnpm run dev                         # colo-design.json 의 포트에서 떠야 한다 (npm·yarn·bun 도 같다)
+curl -sI http://127.0.0.1:5274/      # 도구가 준비됐다고 부르는 조건
+open 'http://127.0.0.1:5274/member/MemberList?state=empty'   # 래퍼와 라우팅
+```
+
+### 6. 앱에서 추가
+
+GitHub 에 밀고, 작업 화면의 `프로젝트 추가` 목록에서 고른다(목록에 없으면 `주소로 추가`).
+피커가 클론 전에 한 번 판정한다 — `colo-design.json` 이 있는지, 이 토큰으로 넘길 수
+있는지, 넘기기가 겨눌 기본 브랜치가 무엇인지. 데몬이 클론하고, 설치하고, 미리보기 명령을
+돌린다. 테스트가 fixture 원격으로 돌리는 것과 같은 코드 경로다.
+
+### Claude 에게 준비를 맡기기
+
+위 넷을 손으로 쓰지 않아도 된다. 피커에서 `Claude 가 연결 준비하기` 를 고르면 준비 턴이
+레포를 살펴보고 넷(포트 한 줄 · 브리지 · 래퍼 · `CLAUDE.md`)을 쓰고, 데몬이 기계 검증을
+통과시킨 뒤 미리보기를 띄운다. 검증은 하나다: **준비 턴이 적은 설정에 명령이 있으면 한
+번도 실행하지 않고 거부한다** — 명령은 레포의 락파일과 scripts 가 말하므로 Claude 가 적을
+자리가 없다. 준비 커밋은 첫 저장이 실어 첫 넘기기 PR 이 되므로, 개발자의 수용 게이트는
+그대로다.
+
+### 도구가 값을 읽는 곳
 
 | 값 | 어디서 읽는가 |
 | --- | --- |
@@ -471,7 +634,7 @@ extra resource 로 실려 repo 명령의 PATH 앞에 붙으므로, 사용자의 
 | `check` · `build` | `package.json` 의 scripts 에 그 이름이 있으면 `<pm> run check` · `<pm> run build`. 없으면 도구가 그 명령을 모른다 |
 | `preview.command` | scripts 의 `dev` → `start` → `serve` → `preview` 중 처음 있는 것 |
 | `registry` | 레포가 커밋한 `.npmrc` 의 `@scope:registry=` 줄. GitHub 패키지 호스트만 받는다 — 이 값이 기계의 PAT 를 겨눈다 |
-| `preview.port` | **오직 이 파일.** 개발 서버의 포트는 스크립트 인자나 프레임워크 설정 안에 있어 기계가 읽을 수 없고, 도구는 그 포트에 연결이 될 때까지 기다려야 한다 |
+| `preview.port` | **오직 `colo-design.json`.** 개발 서버의 포트는 스크립트 인자나 프레임워크 설정 안에 있어 기계가 읽을 수 없고, 도구는 그 포트에 연결이 될 때까지 기다려야 한다 |
 
 - `install` 은 매니페스트/락파일 해시가 움직일 때 돈다 — 도구가 스스로 돌리는 명령은
   이것과 `preview.command` 둘뿐이다.
@@ -481,30 +644,30 @@ extra resource 로 실려 repo 명령의 PATH 앞에 붙으므로, 사용자의 
   돈다 — 프로젝트 추가 화면의 확인란이거나, 승인 없이 멈춘 준비 화면의 `실행 허용`
   버튼이고, 승인은 프로젝트 레지스트리에 남아 다시 묻지 않는다. 승인 카드는 돌릴
   명령을 문장으로 보여 준다.
-- `preview.port` 는 도구가 준비됐다고 부르기 전에 연결을 받아야 한다.
-- 추론이 틀린 자리는 같은 파일이 덮는다 — `install` · `check` · `build` ·
-  `preview.command` · `registry` · `shots` 를 적으면 그 값이 이긴다. 모노레포의
-  `pnpm --filter web dev` 처럼 관례를 벗어난 레포가 이 문을 쓴다.
 - 그 밖의 키는 도구가 읽지 않는다 — 화면 레지스트리를 생성 · 검증하는 스크립트를
-  `screens` 키로 달 수 있고, 그 목록이 도구에 닿는 길은 런타임의 오버레이
-  엔벨로프뿐이다.
+  `screens` 키로 달 수 있고, 그 목록이 도구에 닿는 길은 위의 브리지 엔벨로프뿐이다.
 
-레포가 Claude 에게 들려주는 것도 레포가 정한다. `CLAUDE.md` 는 화면 세션의 규칙이다 —
-스택, 관습, 화면이 사는 곳 — 터미널이 읽는 것과 같은 방식으로 클론에서 읽힌다.
-화면 주소 규칙은 `/<feature>/<Screen>?state=<state>` 로 고정이고, 스크린 파일이
-import 할 수 있는 것(react, `@colosseumcoinckr/*`, 같은 폴더), 데이터는
-`<화면이름>.mock.ts` 에만 두는 규칙 같은 것들이 `CLAUDE.md` 에 적혀 있다.
+### 추론이 틀렸을 때 — 오버라이드
 
-`colo-design.json` 이 없어도 시작할 수 있다. 피커에서 `Claude 가 연결 준비하기` 를
-고르면 준비 턴이 계약 넷(포트 한 줄 · 화면 브리지 · 래퍼 · CLAUDE.md)을 쓰고, 데몬이
-기계 검증을 통과시킨 뒤 미리보기를 띄운다. 검증은 하나다: 준비 턴이 적은 설정에
-명령이 있으면 한 번도 실행하지 않고 거부한다 — 명령은 레포의 락파일과 scripts 가
-말하므로 Claude 가 적을 자리가 없다. 준비 커밋은 첫 저장이 실어 첫 넘기기 PR 이
-된다 — 개발자의 수용 게이트는 그대로다.
+같은 파일에 적으면 그 값이 이긴다. 관례를 벗어난 레포가 쓰는 문이다.
 
-도구를 자기 레포로 돌리려면 — GitHub 에 밀고, 작업 화면의 `프로젝트 추가` 목록에서
-고른다(목록에 없으면 `주소로 추가`). 데몬이 클론하고, 설치하고, 미리보기 명령을
-돌린다. 테스트가 fixture 원격으로 돌리는 것과 같은 코드 경로다.
+```json
+{
+  "preview": { "command": "pnpm --filter web dev", "port": 5274 },
+  "install":  "pnpm install --filter web...",
+  "check":    "pnpm --filter web typecheck",
+  "build":    "pnpm --filter web build",
+  "registry": { "host": "npm.pkg.github.com", "scope": "@colosseumcoinckr" },
+  "shots":    false
+}
+```
+
+| 막히는 곳 | 적을 것 |
+| --- | --- |
+| 모노레포 — 루트 `dev` 가 전체를 띄운다 | `preview.command` |
+| 검사 스크립트 이름이 `check` 가 아니다 | `check` · `build` |
+| `.npmrc` 없이 private 패키지를 쓴다 | `registry` (`read:packages` 권한 토큰도 기계에 필요하다) |
+| 넘기기 PR 에 화면 캡처를 넣고 싶지 않다 | `shots: false` |
 
 ## 전체 구조
 
@@ -523,7 +686,7 @@ flowchart LR
 
 | 패키지 | 하는 일 |
 | --- | --- |
-| `packages/protocol` | v15 선로 계약(zod 로 검증되는 클라이언트 메시지), 공유 수동 업데이트 확인 로직, 기계가 쓴 턴을 카드로 그리게 하는 턴 마커. |
+| `packages/protocol` | v15 선로 계약(zod 로 검증되는 클라이언트 메시지), 공유 업데이트 확인 로직(자동 확인과 설정의 버튼이 함께 쓴다), 기계가 쓴 턴을 카드로 그리게 하는 턴 마커. |
 | `packages/daemon` | 프로젝트 레지스트리, 세션, 레포 워크스페이스(clone · 저장/넘기기 게이트), 온보딩 검사, 자격 증명 저장, 데스크톱을 위한 정적 웹 서빙. |
 | `packages/web` | 사용자(비개발자) UI — 프로젝트 사이드바, 레포 피커(프로젝트 추가), 채팅, 레포 미리보기(주소창 · 핀 · 배율 · 단축키 시트), 상단 바 동작 셋, diff 검토, 온보딩 마법사, 설정. |
 | `packages/desktop` | Electron 메인(데몬 in-process, safeStorage 저장소, 동반 런타임, 업데이트 브리지) + electron-builder 구성. |
@@ -549,15 +712,21 @@ pnpm --filter @colo-design/desktop dev
 node packages/desktop/scripts/bundle-runtimes.mjs
 pnpm --filter @colo-design/desktop pack      # release/mac-arm64/Colo Design.app
 
-# 설치 파일: dmg + zip (mac, ad-hoc 서명), nsis (win)
+# 설치 파일: dmg + zip (mac, 서명 필수 — 아래), nsis (win)
 pnpm --filter @colo-design/desktop dist
 ```
 
 데스크톱 앱은 appId `org.colo-design.desktop`, 제품명 `Colo Design` 이다. mac 경로는
-ad-hoc 서명(`identity: "-"`, 인증서 없음)으로 나가고, `codesign -v` 가 깨끗하며,
-패키징된 바이너리가 dev 와 같은 스모크를 통과한다. Windows 대상(NSIS, MinGit 동반)은
-CI 가 릴리스마다 빌드한다. mac 자가 업데이트(zip 내려받기 → sha256 →
-`/Applications/Colo Design.app` 교체)는 `app.isPackaged` 가드 안에서 돈다.
+**반드시 서명되어 나간다**(`forceCodeSigning: true`) — 서명이 없으면 알림이 죽기
+때문이다. 기본 identity 는 키체인의 자체 서명 인증서 `Colo Design Dev` 이고, 그
+인증서가 없는 기계·러너는 진짜 ad-hoc 으로 짓는다:
+`pnpm --filter @colo-design/desktop exec electron-builder -c.mac.identity=-`. 둘 다
+UNNotification 이 받아들이며, 차이는 cdhash 의 안정성이다 — ad-hoc 은 빌드마다 값이
+바뀌어 업데이트할 때마다 키체인(Safe Storage) 허용을 다시 묻는다. 공증은 없다.
+`codesign -v` 가 깨끗하고, 패키징된 바이너리가 dev 와 같은 스모크를 통과한다.
+Windows 대상(NSIS, MinGit 동반)은 CI 가 릴리스마다 빌드한다. mac 자가 업데이트(zip
+내려받기 → sha256 → `/Applications/Colo Design.app` 교체)는 `app.isPackaged` 가드
+안에서 돈다.
 
 ## 릴리스
 
@@ -618,16 +787,25 @@ pnpm test:desktop-cover   # 오프라인 — Electron: 무대의 덮개(D65) —
 pnpm test:crash           # 오프라인 — 죽은 CLI 로부터의 회복: 크래시 카드 · 그 이후 send 는 거절 · 같은 id 의 resume 이 새 CLI 에서 대화를 이어받는다
 pnpm test:midturn-queue   # 오프라인 — 다음 턴에 보내기: 도는 턴에 보낸 말이 스텁 CLI 의 stdin 에 닿지 않고, 턴이 끝난 뒤에야 제 턴으로 나간다
 pnpm test:turn-clock      # 오프라인 — 진행 시계의 와이어: 보내기가 시계를 놓고, 확인 카드 앞에서도 같은 시작을 유지하며(목록으로 새 창도 같은 시작을 읽는다), 턴이 끝나면 사라진다
-pnpm test                 # 위 전부를 4개 병렬 레인으로(아래)
+pnpm test                 # 위 전부를 5개 병렬 레인으로(아래)
 pnpm test:smoke "<url>"   # 이미 도는 데몬에 대한 생존 검사; 아무것도 시작하지 않는다
 ```
 
-`pnpm test` 는 모든 것을 `scripts/test-parallel.mjs` 로 돌린다 — 네 레인이 동시에:
-L1 단위 + Electron 앱 스위트(comments · smoke), L2 오프라인 데몬 소켓 e2e, L3 여섯
-브라우저 스위트(각자 고정 포트에서, 레인 안은 순서대로), L4 real-Claude 두 스위트.
-레인별 로그는 `.test-logs/`(gitignored)에 쌓이고, `pnpm test:sequential` 은 같은
-스위트 집합을 한 번에 하나씩 돌려 준다. 브라우저 스위트는 먼저
-`pnpm --filter @colo-design/web build`(또는 풀 `pnpm build`)이 필요하다.
+`pnpm test` 는 모든 것을 `scripts/test-parallel.mjs` 로 돌린다 — 다섯 레인이
+동시에: L1 단위(`node --test`, 창도 포트도 없다), L2 오프라인 데몬 소켓 e2e,
+L3 일곱 브라우저 스위트(각자 고정 포트에서, 레인 안은 순서대로), L4
+real-Claude 두 스위트, L5 Electron 앱 스위트(단위 드라이버 · comments ·
+smoke · switch · cover — 앱의 단일 인스턴스 잠금 때문에 한 레인에서 줄을
+선다). 레인별 로그는 `.test-logs/`(gitignored)에 쌓이고, `pnpm test:sequential`
+은 같은 스위트 집합을 한 번에 하나씩 돌려 준다.
+
+빌드는 러너가 레인보다 먼저 한 번 돌리고, 레인에는 `COLO_TEST_SKIP_BUILD=1`
+을 쥐어 준다. 전에는 Electron 스위트 넷이 저마다 네 패키지를 다시 지었다 —
+같은 컴파일을 반복하는 데 그치지 않고, `tsc` 가 `packages/daemon/dist` 를 다시
+쓰는 동안 L2·L3 가 바로 그 파일을 import 해서 세 스위트가 모듈 로더 오류로
+죽은 판이 있었다. 이미 지어 둔 트리에 대고 한 스위트만 손으로 돌릴 때도 같은
+변수를 앞에 붙이면 재빌드를 건너뛴다. ci 의 레인 잡은 빌드를 제 스텝으로
+돌리므로 그 변수를 그대로 쓴다.
 
 fixture 설계를 한 문단으로 — git 원격은 최소 `colo-design.json` 앱을 담은 bare
 레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude CLI 는 전부 스텁 스크립트다.

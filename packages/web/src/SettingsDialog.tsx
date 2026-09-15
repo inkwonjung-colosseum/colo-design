@@ -276,6 +276,13 @@ export function SettingsDialog({
   const [updateDeferred, setUpdateDeferred] = useState<string | null>(null);
   /** 내려받기·검증이 끝나 종료 직전임을 알리는 안내 — 성공 경로의 한 줄. */
   const [updateStarted, setUpdateStarted] = useState<string | null>(null);
+  /**
+   * 시험 알림의 답 한 줄. 알림이 안 온다는 신고의 절반은 OS 가 이 앱의 알림을
+   * 막고 있는 경우인데, 그 사실은 어디에도 나타나지 않았다 — 시험 버튼은
+   * 언제나 조용히 성공했다. 이제는 OS 가 거절하면 이유를, 받아 갔으면 "그래도
+   * 배너가 없으면 OS 설정을 보라"는 다음 걸음을 말한다.
+   */
+  const [noticeTest, setNoticeTest] = useState<string | null>(null);
 
   /**
    * 업데이트 문단은 데스크톱 앱 안에서만 산다 — 브라우저엔 '이 앱의 버전'이
@@ -294,6 +301,14 @@ export function SettingsDialog({
   const bridgeOpenHome =
     window.coloDesignDesktop && "openHome" in window.coloDesignDesktop
       ? window.coloDesignDesktop.openHome
+      : undefined;
+  /**
+   * `시스템 알림 설정 열기` — 같은 규칙(`in` 가드로 한 번만 읽는다). 브라우저
+   * 경로에는 없다: 거기서는 사이트 권한이라 주소창의 자물쇠가 그 자리다.
+   */
+  const bridgeOpenNotificationSettings =
+    window.coloDesignDesktop && "openNotificationSettings" in window.coloDesignDesktop
+      ? window.coloDesignDesktop.openNotificationSettings
       : undefined;
   /**
    * 수동 업데이트 확인(DESIGN §7): 데스크톱 다리로만 묻는다 — 확인은
@@ -348,21 +363,37 @@ export function SettingsDialog({
   };
   /** 테스트 알림 — 데스크톱은 메인이, 브라우저는 이 자리에서 보낸다. */
   const sendTestNotice = async () => {
+    setNoticeTest(null);
     const bridge = window.coloDesignDesktop;
     if (bridge?.notifyTest) {
-      await bridge.notifyTest();
+      const result = await bridge.notifyTest();
+      setNoticeTest(
+        result?.shown === false
+          ? `이 컴퓨터의 OS 가 알림을 거절했습니다 — ${result.error ?? "이유를 알려주지 않았습니다"}`
+          : "보냈습니다. 배너가 보이지 않으면 OS 가 이 앱의 알림을 꺼 둔 것입니다 — 아래 버튼으로 켜 주세요.",
+      );
       return;
     }
-    if (typeof Notification === "undefined") return;
+    if (typeof Notification === "undefined") {
+      setNoticeTest("이 브라우저는 알림을 지원하지 않습니다.");
+      return;
+    }
     try {
       if (Notification.permission === "default") await Notification.requestPermission();
-      if (Notification.permission !== "granted") return;
+      if (Notification.permission !== "granted") {
+        setNoticeTest(
+          "브라우저가 이 사이트의 알림을 허용하지 않았습니다 — 주소창의 자물쇠에서 켭니다.",
+        );
+        return;
+      }
       new Notification("알림 시험", {
         body: "실제 알림은 이렇게 도착합니다.",
         silent: !settings.notifications.sound,
       });
+      setNoticeTest("보냈습니다.");
     } catch {
-      // 서비스 워커 없이는 생성을 막는 브라우저가 있다 — 조용히 지나간다.
+      // 서비스 워커 없이는 생성을 막는 브라우저가 있다 — 그 사실을 말해 준다.
+      setNoticeTest("이 브라우저는 페이지에서 직접 알림을 띄우지 못합니다.");
     }
   };
 
@@ -642,10 +673,21 @@ export function SettingsDialog({
                 onChange({ notifications: { ...settings.notifications, sound } })
               }
             />
-            <Field label="테스트" hint="확인 요청·중단은 이 설정과 관계없이 언제나 옵니다">
+            <Field
+              label="테스트"
+              hint={
+                noticeTest ??
+                "확인 요청·중단은 이 설정과 관계없이 언제나 옵니다. 알림 허용 여부는 OS 가 앱마다 한 번만 묻습니다 — 한 번 거절된 뒤에는 OS 설정에서만 켤 수 있습니다."
+              }
+            >
               <button type="button" onClick={() => void sendTestNotice()}>
                 테스트 알림 보내기
               </button>
+              {bridgeOpenNotificationSettings && (
+                <button type="button" onClick={() => void bridgeOpenNotificationSettings()}>
+                  시스템 알림 설정 열기
+                </button>
+              )}
             </Field>
           </section>
 

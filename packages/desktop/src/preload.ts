@@ -26,13 +26,19 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
   macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
   openHome: (target?: "logs") => ipcRenderer.invoke("desktop:open-home", target),
+  /** 커미티 C-5 (2026-09-15): 데몬이 검증한 기획서 경로를 OS 기본 프로그램으로. */
+  openSpec: (path: string) => ipcRenderer.invoke("desktop:open-spec", path),
   /** 알림 정책(시점·소리)을 메인에 반영한다 — 창이 닫혀도 정책이 살아 있게. */
   setNotificationPrefs: (prefs: { done: string; sound: boolean }) =>
     ipcRenderer.invoke("desktop:notify-prefs", prefs),
-  /** 설정의 `테스트 알림 보내기`. */
+  /** 설정의 `테스트 알림 보내기` — OS 가 받았는지(shown)까지 돌려준다. */
   notifyTest: () => ipcRenderer.invoke("desktop:notify-test"),
+  /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */
+  openNotificationSettings: () => ipcRenderer.invoke("desktop:open-notification-settings"),
   /** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 세션 아이디를 건넨다. */
   onOpenSession: subscribe<string>("colodesign:open-session"),
+  /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 가 건너온다. */
+  onOpenProject: subscribe<string>("colodesign:open-project"),
   preview: {
     native: true as const,
     mount: (url: string, epoch: number | null) =>

@@ -6,6 +6,7 @@
 // visible text labels instead of icon-only names.
 
 import {
+  Archive,
   ArrowUp,
   Bell,
   Brain,
@@ -35,7 +36,6 @@ import {
   Lock,
   type LucideIcon,
   MapPin,
-  MessageSquare,
   MessageSquarePlus,
   Minus,
   Monitor,
@@ -103,9 +103,10 @@ export const HandoffIcon = make(GitPullRequest, 13);
 export const EyeIcon = make(Eye, 12);
 export const HistoryIcon = make(History, 13);
 export const TrashIcon = make(Trash2, 13);
+/** 잠깐 치워두기 (보관함 토론) — the box the current attempt goes into. */
+export const ArchiveIcon = make(Archive, 13);
 /** 핀 모드 토글 (재설계 §3.9) — the picker the preview toolbar wears. */
 export const MapPinIcon = make(MapPin, 13);
-export const CommentsIcon = make(MessageSquare, 12);
 export const DiffIcon = make(FileDiff, 13);
 export const MinusIcon = make(Minus, 12, 2);
 export const ExportIcon = make(Download, 13);

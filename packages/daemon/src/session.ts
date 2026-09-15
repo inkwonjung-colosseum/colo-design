@@ -1421,27 +1421,68 @@ function probeQuery(cwd: string, executable: string): Query {
 }
 
 /**
+ * One probe question, bounded twice over: by the grace above, and by the
+ * caller's own signal. The signal is shutdown — a daemon that has stopped
+ * must not be held open by a CLI that never answers. Without it every
+ * offline suite paid the full grace at exit (the stub CLI answers no
+ * control request the probes ask), which is where ~20s per suite went.
+ *
+ * A give-up answers `null`; the ask's own failure is carried out to the
+ * caller, whose retry rule differs per question. Either way the loser of
+ * the race is settled here, so nothing rejects into no one's hands once
+ * `close` tears the query down.
+ */
+async function askProbe<T>(
+  options: { cwd: string; executable: string | null; signal?: AbortSignal },
+  ask: (run: Query) => Promise<T>,
+): Promise<T | null> {
+  if (!options.executable || options.signal?.aborted) return null;
+  const run = probeQuery(options.cwd, options.executable);
+  const gaveUp = Promise.withResolvers<null>();
+  const abandon = () => gaveUp.resolve(null);
+  const timer = setTimeout(abandon, PROBE_GRACE_MS);
+  options.signal?.addEventListener("abort", abandon, { once: true });
+  try {
+    const settled = await Promise.race([
+      ask(run).then(
+        (value) => ({ ok: true, value }) as const,
+        (error) => ({ ok: false, error }) as const,
+      ),
+      gaveUp.promise,
+    ]);
+    if (settled === null) return null;
+    if (!settled.ok) throw settled.error;
+    return settled.value;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abandon);
+    run.close();
+  }
+}
+
+/**
  * The `/` palette before any thread exists. A live session answers from its
  * own CLI (`Session.commands`); this asks the same question of a probe, so an
  * empty workspace still reads like the terminal's `/`.
+ *
+ * A probe that never answered is not an empty palette: it throws, so the
+ * caller retries the next time someone opens `/` instead of caching a CLI
+ * as commandless.
  */
 export async function probeCommands(options: {
   cwd: string;
   executable: string | null;
+  signal?: AbortSignal;
 }): Promise<SessionCommand[]> {
   if (!options.executable) return [];
-  const run = probeQuery(options.cwd, options.executable);
-  try {
-    const commands = await run.supportedCommands();
-    return commands.map((command) => ({
-      name: command.name,
-      description: command.description,
-      argumentHint: command.argumentHint ?? "",
-      aliases: command.aliases ?? [],
-    }));
-  } finally {
-    run.close();
-  }
+  const commands = await askProbe(options, (run) => run.supportedCommands());
+  if (!commands) throw new Error("명령 목록을 묻는 probe 가 답하지 않았습니다");
+  return commands.map((command) => ({
+    name: command.name,
+    description: command.description,
+    argumentHint: command.argumentHint ?? "",
+    aliases: command.aliases ?? [],
+  }));
 }
 
 /**
@@ -1478,31 +1519,19 @@ function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
  * the account, not in the thread — so this asks a probe rather than keeping a
  * session alive for it: one process for a second, no tokens, no turn.
  *
- * The wait is bounded because this one runs unattended on a timer: a CLI that
- * never answers must cost one closed process, not a live one per refresh. The
- * answer is caught before the race so the loser cannot reject into no one's
- * hands once `close` tears the query down.
+ * A reading that never came is no reading: the chip keeps the last one and
+ * the next refresh asks again. Failure and give-up read the same here, which
+ * is why this one swallows where `probeCommands` throws.
  */
 export async function probePlanUsage(options: {
   cwd: string;
   executable: string | null;
+  signal?: AbortSignal;
 }): Promise<PlanUsage | null> {
-  if (!options.executable) return null;
-  const run = probeQuery(options.cwd, options.executable);
-  const gaveUp = Promise.withResolvers<null>();
-  const timer = setTimeout(() => gaveUp.resolve(null), PROBE_GRACE_MS);
-  try {
-    const usage = await Promise.race([
-      run
-        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })
-        .catch(() => null),
-      gaveUp.promise,
-    ]);
-    return usage ? toPlanUsage(usage) : null;
-  } finally {
-    clearTimeout(timer);
-    run.close();
-  }
+  const usage = await askProbe(options, (run) =>
+    run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
+  ).catch(() => null);
+  return usage ? toPlanUsage(usage) : null;
 }
 
 function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggestion[] {

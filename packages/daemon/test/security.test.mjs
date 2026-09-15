@@ -152,6 +152,15 @@ test("daemon http responses carry cache-control: no-store (token'd page must not
   const { DaemonServer } = await import("../dist/server.js");
   const dir = workdir("hub-security-nostore-");
   writeFileSync(join(dir, "index.html"), "<!doctype html><html><body>hub</body></html>\n");
+  // Every path this daemon reads is this directory's. Unscoped, it adopted
+  // the DEVELOPER'S ~/.colo-design registry: it activated their project,
+  // started a bring-up of their real clone, and `stop()` then waited that
+  // bring-up out — twenty-odd seconds of the L1 lane spent syncing a repo
+  // this check has no opinion about (and touching a tree nobody asked it to).
+  process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(dir, "projects.json");
+  process.env.COLO_DESIGN_PROJECTS_DIR = join(dir, "projects");
+  process.env.COLO_DESIGN_RUN_DIR = join(dir, "run");
+  process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
   const server = new DaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -172,6 +181,13 @@ test("daemon http responses carry cache-control: no-store (token'd page must not
   } finally {
     await server.stop();
     rmSync(dir, { recursive: true, force: true });
+    // The other checks in this file run in the same process and read no
+    // registry, but a leaked pointer at a deleted directory is a trap for
+    // whatever is added next.
+    delete process.env.COLO_DESIGN_PROJECTS_SETTINGS;
+    delete process.env.COLO_DESIGN_PROJECTS_DIR;
+    delete process.env.COLO_DESIGN_RUN_DIR;
+    delete process.env.COLO_DESIGN_CREDENTIAL_STORE;
   }
 });
 
