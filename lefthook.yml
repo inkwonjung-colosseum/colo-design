@@ -7,8 +7,10 @@ pre-commit:
       run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
       stage_fixed: true
 
-# 푸시 직전, CI 와 같은 문을 한 번 더 로컬에서 지나간다.
+# 푸시 직전, CI 와 같은 문을 한 번 더 로컬에서 지나간다. 두 검사는 서로
+# 독립이라 같은 시간에 돌린다.
 pre-push:
+  parallel: true
   commands:
     typecheck:
       run: pnpm -r typecheck

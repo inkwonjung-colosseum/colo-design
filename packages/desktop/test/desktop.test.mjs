@@ -892,7 +892,11 @@ test("미리보기 드라이버: 숨은 창, 거절하는 open, ref 로 읽고 �
     // ref 로 누르면 화면이 응답하고, 입력은 필드에 들어가고, 콘솔 error 와
     // 실패한 요청이 기록된다. 오프스크린 창의 입력·콘솔 다리는 머신 성향을
     // 타는 — 그 조각만 desktop-smoke (pack 앱, 실사용 경로)로 넘긴다.
-    if (result.clickWorked !== true || result.consoleHasError !== true) {
+    if (
+      result.clickWorked !== true ||
+      result.consoleHasError !== true ||
+      result.consoleHasNet !== true
+    ) {
       t.skip("이 머신의 오프스크린 입력·콘솔 다리가 미확인 — desktop-smoke 에서 재확인");
       return;
     }
