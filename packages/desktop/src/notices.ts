@@ -41,10 +41,15 @@ export function noticeCopy(notice: DaemonNotice): {
               title: `${notice.title} · 넘기기 실패`,
               body: "넘기기가 끝나지 못했습니다. Claude에게 고치도록 맡겼습니다.",
             }
-          : {
-              title: `${notice.title} · 최신화 충돌`,
-              body: "최신 변경과 저장하지 않은 변경이 겹쳤습니다. Claude에게 정리를 맡겼습니다.",
-            };
+          : notice.stage === "screen"
+            ? {
+                title: `${notice.title} · 화면 확인`,
+                body: "만든 화면에서 오류를 찾았습니다. Claude에게 고치도록 맡겼습니다.",
+              }
+            : {
+                title: `${notice.title} · 최신화 충돌`,
+                body: "최신 변경과 저장하지 않은 변경이 겹쳤습니다. Claude에게 정리를 맡겼습니다.",
+              };
     case "handoff":
       // 커미티 B1+A (2026-09-15): 단위는 프로젝트다 — 한 사이클에 화면이
       // 여럿이라 첫 화면 하나만 부르면 나머지가 안 간 것처럼 읽힌다.

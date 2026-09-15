@@ -21,13 +21,11 @@ function subscribe<T>(channel: string): (callback: (payload: T) => void) => Unsu
 }
 
 contextBridge.exposeInMainWorld("coloDesignDesktop", {
-  /** 설치 문단은 플랫폼을 안다 — mac 만 설치 단추, win 은 릴리스 페이지로. */
+  /** 설치 문단은 플랫폼을 안다 — mac·win 은 설치 단추, 나머지는 릴리스 페이지로. */
   platform: process.platform,
   updateCheck: () => ipcRenderer.invoke("desktop:update-check"),
-  macSelfUpdate: () => ipcRenderer.invoke("desktop:mac-self-update"),
+  selfUpdate: () => ipcRenderer.invoke("desktop:self-update"),
   openHome: (target?: "logs") => ipcRenderer.invoke("desktop:open-home", target),
-  /** 커미티 C-5 (2026-09-15): 데몬이 검증한 기획서 경로를 OS 기본 프로그램으로. */
-  openSpec: (path: string) => ipcRenderer.invoke("desktop:open-spec", path),
   /** 알림 정책(시점·소리)을 메인에 반영한다 — 창이 닫혀도 정책이 살아 있게. */
   setNotificationPrefs: (prefs: { done: string; sound: boolean }) =>
     ipcRenderer.invoke("desktop:notify-prefs", prefs),

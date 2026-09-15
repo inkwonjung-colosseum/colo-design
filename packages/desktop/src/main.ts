@@ -2,13 +2,22 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
-import type { DaemonNotice, PreviewDriver, PreviewDriverFactory } from "@colo-design/daemon/server";
+import type {
+  DaemonNotice,
+  PreviewAxNode,
+  PreviewCapture,
+  PreviewDriver,
+  PreviewDriverFactory,
+  PreviewOpenOptions,
+  PreviewOpenResult,
+  PreviewViewport,
+} from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer } from "@colo-design/daemon/server";
 import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@colo-design/protocol";
@@ -19,19 +28,13 @@ import {
   ipcMain,
   Menu,
   Notification,
-  nativeImage,
   net,
   safeStorage,
   screen,
   shell,
 } from "electron";
-import {
-  buildSwapScript,
-  parseSwapResult,
-  planSelfUpdate,
-  requireDiskSpace,
-  verifyDownload,
-} from "./mac-self-update.js";
+import { VIEWPORT_METRICS } from "./emulation.js";
+import { buildSwapScript as buildMacSwapScript } from "./mac-self-update.js";
 import { buildMenuTemplate } from "./menu.js";
 import { noticeCopy } from "./notices.js";
 import {
@@ -42,6 +45,13 @@ import {
 } from "./notify-policy.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
+import {
+  parseSwapResult,
+  planSelfUpdate,
+  requireDiskSpace,
+  verifyDownload,
+} from "./self-update.js";
+import { buildSwapScript as buildWinSwapScript } from "./win-self-update.js";
 
 /**
  * Colo Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
@@ -87,7 +97,7 @@ let daemonServer: DaemonServer | null = null;
 // 업데이트 (DESIGN §7) — 자동 확인 · 자가 교체 결과 보고
 // ---------------------------------------------------------------------------
 
-/** 자가 교체에 필요한 최소 여유 — zip + 풀린 번들 + 백업 사본의 상한. */
+/** 자가 교체에 필요한 최소 여유 — 에셋 + 풀린 번들·설치본 + 백업 사본의 상한. */
 const UPDATE_MIN_FREE_BYTES = 1024 ** 3;
 /** 자동 확인의 첫 시점 — 시작 작업(데몬·창)과 경합하지 않는다. */
 const UPDATE_FIRST_CHECK_DELAY_MS = 15_000;
@@ -99,6 +109,18 @@ const UPDATE_MIN_CHECK_GAP_MS = 60 * 60 * 1000;
 /** 교체 스크립트가 결과를 남기는 파일 — 다음 실행이 읽고 지운다. */
 function updateResultPath(): string {
   return join(app.getPath("userData"), "update-result.json");
+}
+
+/**
+ * 피드는 두 플랫폼의 에셋을 함께 싣는다 — url·sha256 은 mac zip, winUrl·
+ * winSha256 은 Windows 설치 파일이다. 어느 쪽이 내 것인지는 데스크톱만 안다:
+ * 여기서 한 번 고르고 나면 렌더러도 교체 코드도 url·sha256 한 쌍만 본다.
+ * 자가 교체가 없는 플랫폼은 둘 다 없다 — 그 자리는 릴리스 페이지 안내가 맡는다.
+ */
+function platformAsset(feed: UpdateCheckResult): { url: string | null; sha256: string | null } {
+  if (process.platform === "darwin") return { url: feed.url, sha256: feed.sha256 };
+  if (process.platform === "win32") return { url: feed.winUrl, sha256: feed.winSha256 };
+  return { url: null, sha256: null };
 }
 
 /** 데몬이 남기는 하루 로그가 사는 폴더 — 문제 해결의 `로그 폴더 열기`가 연다. */
@@ -140,32 +162,122 @@ function saveNotificationPrefs(prefs: NotificationPrefs): void {
 // Claude 의 미리보기 드라이버 (PLAN D61 · D63)
 // ---------------------------------------------------------------------------
 
-/** 캡처의 원본 해상도 — 도구가 긴 변 900px 로 줄여 준다. */
-const PREVIEW_WINDOW_SIZE = { width: 1280, height: 800 };
 /** PiP 프레임 스로틀 (PLAN D63): 8fps. */
 const PIP_FRAME_INTERVAL_MS = 125;
 const PIP_LONG_EDGE = 640;
+/**
+ * 도구가 긴 변을 말하지 않을 때의 값, 그리고 인코딩 품질. 품질은 토큰 값을
+ * 바꾸지 않는다 — 토큰은 픽셀 수로 매겨지고 품질은 와이어 바이트만 움직인다 —
+ * 그래서 UI 의 얇은 글자가 살아남는 쪽으로 넉넉히 둔다.
+ */
+const CAPTURE_LONG_EDGE = 900;
+const CAPTURE_QUALITY = 88;
+/** 화면이 자리를 잡았는지 기다리는 한계 — 넘으면 못 잡았다고 말한다. */
+const SETTLE_TIMEOUT_MS = 3000;
+const SETTLE_POLL_MS = 100;
+/** 접근성 트리에서 건너뛰지만 아이들은 살리는 역할. */
+const AX_SKIP_ROLES: Record<string, true> = { InlineTextBox: true, IframePresentational: true };
+/** 노드가 스스로 말하지 않는 것들 — 상태로 뽑아 올린다. */
+const AX_STATE_PROPERTIES: Record<string, true> = {
+  disabled: true,
+  checked: true,
+  expanded: true,
+  focused: true,
+  required: true,
+  selected: true,
+  pressed: true,
+  invalid: true,
+  readonly: true,
+};
+/** `screen_press` 의 키 → CDP 키 이벤트. 화이트리스트는 도구가 지킨다. */
+const PRESS_KEY_CODES: Record<string, { code: string; key: string; vk: number; text?: string }> = {
+  Enter: { code: "Enter", key: "Enter", vk: 13, text: "\r" },
+  Escape: { code: "Escape", key: "Escape", vk: 27 },
+  Tab: { code: "Tab", key: "Tab", vk: 9, text: "\t" },
+  Backspace: { code: "Backspace", key: "Backspace", vk: 8 },
+  Delete: { code: "Delete", key: "Delete", vk: 46 },
+  Space: { code: "Space", key: " ", vk: 32, text: " " },
+  ArrowUp: { code: "ArrowUp", key: "ArrowUp", vk: 38 },
+  ArrowDown: { code: "ArrowDown", key: "ArrowDown", vk: 40 },
+  ArrowLeft: { code: "ArrowLeft", key: "ArrowLeft", vk: 37 },
+  ArrowRight: { code: "ArrowRight", key: "ArrowRight", vk: 39 },
+};
+
+/** 요소를 화면 가운데로 올리고 그 시점의 뷰포트 rect 를 돌려주는 함수. */
+const RECT_OF_SELF = `function () {
+  const el = this.nodeType === 1 ? this : this.parentElement;
+  if (!el) return null;
+  el.scrollIntoView({ block: "center", inline: "center" });
+  const r = el.getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
+}`;
+
+interface PreviewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Chromium 이 돌려주는 접근성 노드 — 쓰는 부분만 적는다. */
+interface CdpAxNode {
+  nodeId: string;
+  backendDOMNodeId?: number;
+  ignored?: boolean;
+  childIds?: string[];
+  role?: { value?: unknown };
+  name?: { value?: unknown };
+  value?: { value?: unknown };
+  properties?: Array<{ name?: string; value?: { value?: unknown } }>;
+}
 
 /**
  * 숨은 오프스크린 `BrowserWindow` 하나가 Claude 전용 브라우저다. 그리기는
  * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`,
- * 접근성 트리는 `Accessibility.getFullAXTree`, 클릭은 `Runtime.evaluate` 로
- * 찾은 rect 위에 `Input.dispatchMouseEvent`. 창은 화면에 뜨지 않는다 —
- * 보이는 창은 사용자의 것뿐이다.
+ * 접근성 트리는 `Accessibility.getFullAXTree`, 입력은 `Input.*`. 창은 화면에
+ * 뜨지 않는다 — 보이는 창은 사용자의 것뿐이다.
+ *
+ * 주소는 ref 다 (PLAN D61): `axTree()` 가 걸어간 노드마다 `e12` 를 붙이고
+ * backend 노드 번호를 기억한다. `open()` 과 다음 `axTree()` 가 세대를 갈아
+ * 치우므로, 낡은 ref 는 "다시 읽으십시오" 라는 오류가 된다 — 엉뚱한 곳을
+ * 누르는 일은 없다.
  */
 class ElectronPreviewDriver implements PreviewDriver {
   private window: BrowserWindow | null = null;
   private readonly consoleHistory: Array<{ level: string; text: string }> = [];
   private lastFrameSent = 0;
+  /** 지금 세대의 ref → backend 노드 번호. `open`·`axTree` 가 비운다. */
+  private readonly refs = new Map<string, number>();
+  /** 이 창에 걸린 에뮬레이션 — 같은 값을 두 번 걸지 않는다. */
+  private applied: { viewport: PreviewViewport; colorScheme: "light" | "dark" } | null = null;
+  /** 세우는 중인 창 — 동시 호출이 창 두 개를 만들지 않게. */
+  private booting: Promise<BrowserWindow> | null = null;
 
   constructor(private readonly baseUrl: string) {}
 
+  /**
+   * 창을 한 번만 세운다. 동시에 부르면 같은 부팅을 기다린다 — 창 두 개가
+   * 생기면 ref 세대가 갈라진다.
+   */
   private async ensureWindow(): Promise<BrowserWindow> {
     if (this.window && !this.window.isDestroyed()) return this.window;
-    if (this.window && !this.window.isDestroyed()) return this.window;
+    this.booting ??= this.bootWindow().finally(() => {
+      this.booting = null;
+    });
+    return this.booting;
+  }
+
+  /**
+   * 오프스크린 창은 첫 로드 전까지 렌더러가 없다 — 그 사이에 보낸
+   * `Runtime`·`DOM`·`Network`·`Emulation` 명령은 **돌아오지 않는다**. 그래서
+   * 창은 `about:blank` 로 먼저 태어나고, 도메인을 켠 뒤에야 도구의 손에
+   * 넘어간다. 이 순서가 아니면 첫 `screen_open` 이 영원히 매달린다.
+   */
+  private async bootWindow(): Promise<BrowserWindow> {
     const window = new BrowserWindow({
       show: false,
-      ...PREVIEW_WINDOW_SIZE,
+      width: VIEWPORT_METRICS.desktop.size[0],
+      height: VIEWPORT_METRICS.desktop.size[1],
       webPreferences: {
         offscreen: true,
         partition: "preview-claude",
@@ -175,8 +287,10 @@ class ElectronPreviewDriver implements PreviewDriver {
     });
     const contents = window.webContents;
     contents.debugger.attach("1.3");
-    // consoleAPICalled 은 Runtime 도메인을 켜야 흐른다.
-    contents.debugger.sendCommand("Runtime.enable", {});
+    // 실패한 요청은 콘솔에 남지 않는다 — 빈 화면의 절반이 여기서 온다 (D61).
+    contents.debugger.on("message", (_event, method, params) => {
+      this.onDebuggerMessage(method, params as Record<string, unknown>);
+    });
     // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다(PLAN D69 와 같은
     // 형태) — 44 부터 첫 인자가 details { level: "info"|"warning"|"error"|"debug" }.
     contents.on("console-message", (details) => {
@@ -192,124 +306,418 @@ class ElectronPreviewDriver implements PreviewDriver {
       const shrunk = scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
       mainWindow.webContents.send("colo-preview:frame", shrunk.toJPEG(60).toString("base64"));
     });
+    await contents.loadURL("about:blank").catch(() => undefined);
+    // consoleAPICalled 은 Runtime 도메인을 켜야 흐르고, resolveNode 는 DOM,
+    // 실패한 요청은 Network 를 켜야 온다. 하나가 없어도 나머지는 산다.
+    for (const domain of ["Runtime.enable", "DOM.enable", "Network.enable"]) {
+      await contents.debugger.sendCommand(domain, {}).catch(() => undefined);
+    }
     this.window = window;
     return window;
   }
 
-  async open(route: string, state: string | null): Promise<void> {
-    const url = new URL(route, this.baseUrl);
+  /** 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않는다. */
+  private onDebuggerMessage(method: string, params: Record<string, unknown>): void {
+    if (method === "Network.loadingFailed") {
+      const text = typeof params.errorText === "string" ? params.errorText : "요청 실패";
+      if (params.canceled === true) return;
+      this.consoleHistory.push({ level: "net", text });
+      return;
+    }
+    if (method !== "Network.responseReceived") return;
+    const response = params.response as { status?: number; url?: string } | undefined;
+    const status = response?.status ?? 0;
+    if (status < 400) return;
+    this.consoleHistory.push({ level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
+  }
+
+  private debugger(): Electron.Debugger {
+    const window = this.window;
+    if (!window || window.isDestroyed()) throw new Error("미리보기 창이 닫혔습니다.");
+    return window.webContents.debugger;
+  }
+
+  /**
+   * 이 창에 폭과 색 스킴을 건다. 데스크톱 폭은 override 를 걷어내는 것이
+   * 맞다 — 창의 제 크기가 데스크톱이다.
+   */
+  private async emulate(viewport: PreviewViewport, colorScheme: "light" | "dark"): Promise<void> {
+    if (this.applied?.viewport === viewport && this.applied.colorScheme === colorScheme) return;
+    const dbg = this.debugger();
+    const preset = VIEWPORT_METRICS[viewport];
+    if (viewport === "desktop") {
+      await dbg.sendCommand("Emulation.clearDeviceMetricsOverride", {}).catch(() => undefined);
+    } else {
+      await dbg.sendCommand("Emulation.setDeviceMetricsOverride", {
+        width: preset.size[0],
+        height: preset.size[1],
+        deviceScaleFactor: 2,
+        mobile: preset.mobile,
+      });
+    }
+    await dbg
+      .sendCommand("Emulation.setUserAgentOverride", {
+        userAgent: preset.userAgent ?? this.window?.webContents.getUserAgent() ?? "",
+      })
+      .catch(() => undefined);
+    await dbg
+      .sendCommand("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-color-scheme", value: colorScheme }],
+      })
+      .catch(() => undefined);
+    this.applied = { viewport, colorScheme };
+  }
+
+  async open(
+    route: string,
+    state: string | null,
+    options?: PreviewOpenOptions,
+  ): Promise<PreviewOpenResult> {
+    let url: URL;
+    try {
+      url = new URL(route, this.baseUrl);
+    } catch {
+      return { ok: false, reason: `route 를 주소로 읽을 수 없습니다: ${route}` };
+    }
     // A declared screen must stay inside the preview server — an absolute
     // route would carry this hidden window (and its debugger) to an origin
     // the repo picked. PlannerPreviewView.open checks the same thing.
-    if (url.origin !== new URL(this.baseUrl).origin) return;
+    if (url.origin !== new URL(this.baseUrl).origin) {
+      return {
+        ok: false,
+        reason: `미리보기 서버 밖의 주소는 열지 않습니다: ${route} (${new URL(this.baseUrl).origin} 안의 경로를 쓰십시오)`,
+      };
+    }
     if (state) url.searchParams.set("state", state);
-    // 콘솔 기록은 화면 이동과 함께 리셋 — screen_console 의 기준점이다.
+    // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
     this.consoleHistory.length = 0;
+    this.refs.clear();
     const window = await this.ensureWindow();
-    await window.webContents.loadURL(url.toString());
+    await this.emulate(options?.viewport ?? "desktop", options?.colorScheme ?? "light");
+    try {
+      await window.webContents.loadURL(url.toString());
+    } catch (error) {
+      return {
+        ok: false,
+        reason: `화면을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    return { ok: true, settled: await this.settle(state) };
   }
 
-  async screenshot(): Promise<string> {
-    const window = await this.ensureWindow();
-    const result = (await window.webContents.debugger.sendCommand("Page.captureScreenshot", {
-      format: "jpeg",
-      quality: 70,
+  /**
+   * `loadURL` 이 끝난 것은 문서가 왔다는 뜻일 뿐이다 (PLAN D61): SPA 는 그
+   * 뒤에 라우팅하고 `?state=` 를 읽는다. 문서가 완전해지고, 상태를 요청했으면
+   * 그 표식(`data-state`)이 나타날 때까지 기다린다 — 못 기다리면 false 다.
+   */
+  private async settle(state: string | null): Promise<boolean> {
+    const selector = state ? `[data-state=${JSON.stringify(state)}]` : null;
+    const probe = `(function () {
+      if (document.readyState !== "complete") return false;
+      const sel = ${JSON.stringify(selector)};
+      return sel === null ? true : !!document.querySelector(sel);
+    })()`;
+    const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const result = (await this.debugger()
+        .sendCommand("Runtime.evaluate", { expression: probe, returnByValue: true })
+        .catch(() => null)) as { result?: { value?: unknown } } | null;
+      if (result?.result?.value === true) return true;
+      const poll = Promise.withResolvers<void>();
+      setTimeout(poll.resolve, SETTLE_POLL_MS);
+      await poll.promise;
+    }
+    return false;
+  }
+
+  /**
+   * 한 번만 굽는다. 예전 판은 CDP 가 JPEG 로 구운 것을 `nativeImage` 로 풀어
+   * 줄이고 다시 JPEG 로 구웠다 — 같은 토큰을 내고 두 세대의 압축 흔적을 받는
+   * 셈이었다. 축소는 `clip.scale` 로 컴포지터가 하고, 인코딩은 그 자리에서
+   * 한 번이다. 형식은 WebP: 토큰은 픽셀 수로 매겨지니 형식은 값을 바꾸지
+   * 않지만, JPEG 의 크로마 서브샘플링이 UI 의 얇은 색 글자를 흐리게 만든다.
+   */
+  async screenshot(options?: { ref?: string; longEdge?: number }): Promise<PreviewCapture> {
+    await this.ensureWindow();
+    const longEdge = options?.longEdge ?? CAPTURE_LONG_EDGE;
+    const area = options?.ref ? await this.rectOfRef(options.ref) : await this.viewportRect();
+    const scale = Math.min(1, longEdge / Math.max(area.width, area.height));
+    const result = (await this.debugger().sendCommand("Page.captureScreenshot", {
+      format: "webp",
+      quality: CAPTURE_QUALITY,
+      clip: { x: area.x, y: area.y, width: area.width, height: area.height, scale },
+      captureBeyondViewport: true,
     })) as { data?: string };
     if (!result?.data) throw new Error("미리보기 화면을 캡처하지 못했습니다");
-    const image = nativeImage.createFromBuffer(Buffer.from(result.data, "base64"));
-    const size = image.getSize();
-    const scale = 900 / Math.max(size.width, size.height);
-    if (scale >= 1) return result.data;
-    const longEdge = Math.round(900);
-    const shortEdge = Math.round((size.width < size.height ? size.width : size.height) * scale);
-    const resized =
-      size.width < size.height
-        ? image.resize({ width: shortEdge, height: longEdge })
-        : image.resize({ width: longEdge, height: shortEdge });
-    return resized.toJPEG(70).toString("base64");
+    return { data: result.data, mediaType: "image/webp" };
   }
 
-  async axTree(): Promise<string> {
-    const window = await this.ensureWindow();
-    const result = (await window.webContents.debugger.sendCommand(
-      "Accessibility.getFullAXTree",
-      {},
-    )) as {
-      nodes?: Array<{ role?: { type?: string }; name?: { value?: unknown } }>;
+  /**
+   * 지금 보이는 만큼의 사각형. `clip` 은 페이지 좌표라서 스크롤한 만큼을
+   * 더해야 한다 — 빼면 언제나 문서의 맨 위를 찍는다.
+   */
+  private async viewportRect(): Promise<PreviewRect> {
+    const metrics = (await this.debugger().sendCommand("Page.getLayoutMetrics", {})) as {
+      cssVisualViewport?: {
+        pageX?: number;
+        pageY?: number;
+        clientWidth?: number;
+        clientHeight?: number;
+      };
     };
-    const lines = (result.nodes ?? [])
-      .map((node) => [node.role?.type, node.name?.value].filter(Boolean).map(String).join(" "))
-      .filter((line) => line.trim() !== "");
-    return lines.slice(0, 200).join("\n");
+    const view = metrics.cssVisualViewport;
+    const preset = VIEWPORT_METRICS[this.applied?.viewport ?? "desktop"];
+    return {
+      x: view?.pageX ?? 0,
+      y: view?.pageY ?? 0,
+      width: view?.clientWidth ?? preset.size[0],
+      height: view?.clientHeight ?? preset.size[1],
+    };
   }
 
-  async click(target: { text?: string; selector?: string }): Promise<void> {
-    const window = await this.ensureWindow();
-    // 오프스크린 창은 포커스가 없어 입력이 무시될 수 있다 — 먼저 창을 살린다.
-    window.webContents.focus();
-    // 요소를 찾아(CSS 거나 보이는 글자거나 — 글자면 가장 안쪽 것) 화면 한가운데로
-    // 굴려 올린 뒤, 그 시점의 뷰포트 rect 를 돌려 받는다.
+  /**
+   * 접근성 트리를 계층 그대로 돌려주고, 그 자리에서 ref 를 새로 발급한다 —
+   * 이 호출이 곧 ref 의 세대다. 이름 없는 구조 노드까지 그대로 담고, 무엇을
+   * 접을지는 도구가 정한다 (`compact`).
+   */
+  async axTree(): Promise<PreviewAxNode[]> {
+    await this.ensureWindow();
+    const result = (await this.debugger().sendCommand("Accessibility.getFullAXTree", {})) as {
+      nodes?: CdpAxNode[];
+    };
+    const nodes = result.nodes ?? [];
+    const byId = new Map<string, CdpAxNode>();
+    const childOf = new Set<string>();
+    for (const node of nodes) byId.set(node.nodeId, node);
+    for (const node of nodes) for (const child of node.childIds ?? []) childOf.add(child);
+
+    this.refs.clear();
+    let minted = 0;
+    const build = (ids: string[]): PreviewAxNode[] => {
+      const out: PreviewAxNode[] = [];
+      for (const id of ids) {
+        const node = byId.get(id);
+        if (!node) continue;
+        const role = typeof node.role?.value === "string" ? node.role.value : "";
+        const children = build(node.childIds ?? []);
+        // 무시된 노드와 텍스트 조각은 자리만 차지한다 — 아이들만 올린다.
+        if (node.ignored === true || AX_SKIP_ROLES[role] === true || role === "") {
+          out.push(...children);
+          continue;
+        }
+        const states: string[] = [];
+        for (const property of node.properties ?? []) {
+          if (!property.name || AX_STATE_PROPERTIES[property.name] !== true) continue;
+          const value = property.value?.value;
+          if (value === false || value === "false" || value === undefined) continue;
+          states.push(value === true ? property.name : `${property.name}=${String(value)}`);
+        }
+        const rawValue = node.value?.value;
+        const backendId = node.backendDOMNodeId;
+        let ref = "";
+        if (backendId !== undefined) {
+          minted += 1;
+          ref = `e${minted}`;
+          this.refs.set(ref, backendId);
+        }
+        out.push({
+          ref,
+          role,
+          name: typeof node.name?.value === "string" ? node.name.value.trim() : "",
+          ...(rawValue === undefined || rawValue === "" ? {} : { value: String(rawValue) }),
+          states,
+          children,
+        });
+      }
+      return out;
+    };
+    const roots = nodes.filter((node) => !childOf.has(node.nodeId)).map((node) => node.nodeId);
+    return build(roots);
+  }
+
+  /**
+   * ref 가 가리키는 요소를 화면 가운데로 올리고 뷰포트 rect 를 받는다. 낡은
+   * ref 는 여기서 걸린다 — 도구가 그 말을 그대로 모델에게 전한다.
+   */
+  private async rectOfRef(ref: string): Promise<PreviewRect> {
+    const backendNodeId = this.refs.get(ref);
+    if (backendNodeId === undefined) {
+      throw new Error(`${ref} 는 지금 화면의 것이 아닙니다 — screen_read 로 다시 읽으십시오.`);
+    }
+    const dbg = this.debugger();
+    const resolved = (await dbg.sendCommand("DOM.resolveNode", { backendNodeId })) as {
+      object?: { objectId?: string };
+    };
+    const objectId = resolved.object?.objectId;
+    if (!objectId) {
+      throw new Error(`${ref} 를 화면에서 찾지 못했습니다 — screen_read 로 다시 읽으십시오.`);
+    }
+    const evaluated = (await dbg.sendCommand("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: RECT_OF_SELF,
+      returnByValue: true,
+    })) as { result?: { value?: PreviewRect | null } };
+    const rect = evaluated.result?.value ?? null;
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error(`${ref} 는 화면에 보이지 않습니다.`);
+    }
+    return rect;
+  }
+
+  /** text·selector 로 찾는 옛 길 — ref 가 없을 때의 차선책이다. */
+  private async rectOfQuery(target: { text?: string; selector?: string }): Promise<PreviewRect> {
     const find = target.selector
       ? `(function () {
           const el = document.querySelector(${JSON.stringify(target.selector)});
           if (!el) return null;
           el.scrollIntoView({ block: "center", inline: "center" });
           const r = el.getBoundingClientRect();
-          return { x: r.x, y: r.y, width: r.width, height: r.height };
+          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
         })()`
-      : `(function () {
+      : // 정확히 그 글자인 것이 먼저다 — "저장" 이 "저장 안 함" 을 누르면 안
+        // 된다. 정확한 것이 여럿이면 고르지 않고 후보를 돌려준다.
+        `(function () {
           const needle = ${JSON.stringify(target.text ?? "")};
-          const all = Array.from(document.querySelectorAll("body *")).filter((el) =>
-            (el.textContent || "").includes(needle));
-          const el = all.find((candidate) =>
-            !all.some((other) => other !== candidate && candidate.contains(other))) || null;
-          if (!el) return null;
+          const all = Array.from(document.querySelectorAll("body *"));
+          const innermost = (list) => list.filter((candidate) =>
+            !list.some((other) => other !== candidate && candidate.contains(other)));
+          const exact = innermost(all.filter((el) => (el.textContent || "").trim() === needle));
+          const loose = innermost(all.filter((el) => (el.textContent || "").includes(needle)));
+          const picked = exact.length > 0 ? exact : loose;
+          if (picked.length === 0) return null;
+          if (picked.length > 1) {
+            return { ambiguous: picked.slice(0, 5).map((el) =>
+              (el.tagName.toLowerCase() + ' "' + (el.textContent || "").trim().slice(0, 40) + '"')) };
+          }
+          const el = picked[0];
           el.scrollIntoView({ block: "center", inline: "center" });
           const r = el.getBoundingClientRect();
-          return { x: r.x, y: r.y, width: r.width, height: r.height };
+          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
         })()`;
     const evaluate = () =>
-      window.webContents.debugger.sendCommand("Runtime.evaluate", {
+      this.debugger().sendCommand("Runtime.evaluate", {
         expression: find,
         returnByValue: true,
       }) as Promise<{
-        result?: {
-          value?: { x: number; y: number; width: number; height: number };
-        };
+        result?: { value?: { rect?: PreviewRect; ambiguous?: string[] } | null };
       }>;
     // 캡처 직후 등 컨텍스트가 갈아엎어지는 순간이 있다 — 한 번 더 물어본다.
     let result = await evaluate();
     if (!result?.result?.value) {
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      const settle = Promise.withResolvers<void>();
+      setTimeout(settle.resolve, 120);
+      await settle.promise;
       result = await evaluate();
     }
-    const rect = result?.result?.value;
+    const value = result?.result?.value;
+    if (value?.ambiguous) {
+      throw new Error(
+        `"${target.text}" 에 맞는 것이 여럿입니다 — screen_read 의 ref 를 쓰십시오: ${value.ambiguous.join(", ")}`,
+      );
+    }
+    const rect = value?.rect;
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       throw new Error(`화면에서 찾지 못했습니다: ${target.text ?? target.selector}`);
     }
+    return rect;
+  }
+
+  private async clickRect(rect: PreviewRect): Promise<void> {
+    const dbg = this.debugger();
     const x = rect.x + rect.width / 2;
     const y = rect.y + rect.height / 2;
     // 오프스크린 페이지는 태어나자마자 뒷전이다 — 먼저 앞으로 끌어 올린다.
-    await window.webContents.debugger.sendCommand("Page.bringToFront", {});
-    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+    await dbg.sendCommand("Page.bringToFront", {});
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      await dbg.sendCommand("Input.dispatchMouseEvent", {
+        type,
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+    }
+  }
+
+  async click(target: { ref?: string; text?: string; selector?: string }): Promise<void> {
+    const window = await this.ensureWindow();
+    // 오프스크린 창은 포커스가 없어 입력이 무시될 수 있다 — 먼저 창을 살린다.
+    window.webContents.focus();
+    const rect = target.ref
+      ? await this.rectOfRef(target.ref)
+      : await this.rectOfQuery({
+          ...(target.text ? { text: target.text } : {}),
+          ...(target.selector ? { selector: target.selector } : {}),
+        });
+    await this.clickRect(rect);
+  }
+
+  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<void> {
+    const window = await this.ensureWindow();
+    window.webContents.focus();
+    if (input.ref) await this.clickRect(await this.rectOfRef(input.ref));
+    const dbg = this.debugger();
+    if (input.clear === true) {
+      // 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의 onChange 가 흐르는
+      // 유일한 길이다(값을 직접 넣으면 React 는 모른다).
+      const modifiers = process.platform === "darwin" ? 4 : 2;
+      for (const type of ["rawKeyDown", "keyUp"]) {
+        await dbg.sendCommand("Input.dispatchKeyEvent", {
+          type,
+          modifiers,
+          key: "a",
+          code: "KeyA",
+          windowsVirtualKeyCode: 65,
+        });
+      }
+    }
+    await dbg.sendCommand("Input.insertText", { text: input.text });
+  }
+
+  async press(key: string): Promise<void> {
+    await this.ensureWindow();
+    const mapped = PRESS_KEY_CODES[key];
+    if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
+    const dbg = this.debugger();
+    await dbg.sendCommand("Input.dispatchKeyEvent", {
+      type: mapped.text ? "keyDown" : "rawKeyDown",
+      key: mapped.key,
+      code: mapped.code,
+      windowsVirtualKeyCode: mapped.vk,
+      ...(mapped.text ? { text: mapped.text } : {}),
+    });
+    await dbg.sendCommand("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: mapped.key,
+      code: mapped.code,
+      windowsVirtualKeyCode: mapped.vk,
+    });
+  }
+
+  async scroll(target: { ref?: string; dy: number }): Promise<void> {
+    await this.ensureWindow();
+    // ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것 자체가 그 일이다.
+    const rect = target.ref ? await this.rectOfRef(target.ref) : null;
+    if (target.dy === 0) return;
+    const dbg = this.debugger();
+    await dbg.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x: rect ? rect.x + rect.width / 2 : VIEWPORT_METRICS.desktop.size[0] / 2,
+      y: rect ? rect.y + rect.height / 2 : VIEWPORT_METRICS.desktop.size[1] / 2,
+      deltaX: 0,
+      deltaY: target.dy,
+    });
+  }
+
+  async hover(target: { ref: string }): Promise<void> {
+    await this.ensureWindow();
+    const rect = await this.rectOfRef(target.ref);
+    await this.debugger().sendCommand("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x,
-      y,
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
       button: "none",
-    });
-    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x,
-      y,
-      button: "left",
-      clickCount: 1,
-    });
-    await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x,
-      y,
-      button: "left",
-      clickCount: 1,
     });
   }
 
@@ -320,6 +728,8 @@ class ElectronPreviewDriver implements PreviewDriver {
   async destroy(): Promise<void> {
     const window = this.window;
     this.window = null;
+    this.refs.clear();
+    this.applied = null;
     if (!window || window.isDestroyed()) return;
     try {
       window.webContents.debugger.detach();
@@ -399,7 +809,12 @@ async function bootApp(): Promise<void> {
 
   mainWindow = createMainWindow();
   // 사용자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
-  const plannerPreview = new PlannerPreviewView(() => mainWindow);
+  // 화면 선언은 데몬에도 간다 (PLAN D61): `screen_list` 가 읽는 목록이 여기서
+  // 채워진다 — 데몬에는 브리지의 말을 들을 페이지가 없다.
+  const plannerPreview = new PlannerPreviewView(
+    () => mainWindow,
+    (screens) => server.setPreviewScreens(screens),
+  );
   registerPreviewIpc(plannerPreview);
   // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
   // 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 를 건드리던 시절은 끝난다.
@@ -516,9 +931,16 @@ function guardNavigations(window: BrowserWindow, toolOrigin: string): void {
  * the title goes with them.
  */
 function createMainWindow(): BrowserWindow {
+  // 창의 바닥: 접힌 레일(44) + 미리보기 바닥(340) + 대화 바닥(320) + 여백.
+  // 이 밑으로는 그리드가 대화 열을 0까지 짜낸다(minmax(0,1fr)) — 대화는 이
+  // 앱의 몸통이니 창이 대신 멈춘다. 작은 작업 영역(Sidecar·분할 화면)이
+  // 바닥보다 좁으면 그 화면에 맞춘다 — 못 미치는 창보다는 잘린 창이 낫다.
+  const workArea = workAreaSize();
   return new BrowserWindow({
     // 화면 작업 영역에 맞춘다 — 고정 크기는 큰 모니터에서 조그맣게 보인다.
-    ...workAreaSize(),
+    ...workArea,
+    minWidth: Math.min(760, workArea.width),
+    minHeight: Math.min(560, workArea.height),
     title: "Colo Design",
     autoHideMenuBar: true,
     webPreferences: {
@@ -827,52 +1249,68 @@ async function runSelfUpdate(feed: {
   url: string;
   sha256: string;
 }): Promise<{ started: boolean; downloadPath: string; steps: string[] } | { error: string }> {
-  // 교체 대상은 지금 이 실행 파일이 사는 번들 — /Applications 고정이 아니라
-  // 어디에서 실행했든 그 자리를 바꾼다.
-  const bundle = dirname(dirname(dirname(process.execPath)));
-  const plan = planSelfUpdate({
-    url: feed.url,
-    sha256: feed.sha256,
-    downloadsDir: app.getPath("downloads"),
-    version: app.getVersion(),
-    targetApp: basename(bundle).endsWith(".app") ? bundle : undefined,
-  });
+  const version = app.getVersion();
+  const downloadsDir = app.getPath("downloads");
+  const windows = process.platform === "win32";
   try {
+    // 교체 대상: Windows 는 지금 도는 exe 그대로(설치 프로그램이 그 자리를
+    // 덮어쓴다), mac 은 그 exe 가 사는 앱 번들 — /Applications 고정이 아니라
+    // 어디에서 실행했든 그 자리를 바꾼다.
+    const bundle = dirname(dirname(dirname(process.execPath)));
+    const macTarget = basename(bundle).endsWith(".app") ? bundle : undefined;
+    const plan = planSelfUpdate({
+      url: feed.url,
+      sha256: feed.sha256,
+      downloadsDir,
+      version,
+      platform: process.platform,
+      target: windows ? process.execPath : macTarget,
+    });
     // 만석은 sha256 이 잡지 못한다 — 내려받기 전에 두 볼륨(내려받기·교체
     // 대상)의 여유를 먼저 본다.
     await requireDiskSpace({
-      path: app.getPath("downloads"),
+      path: downloadsDir,
       minBytes: UPDATE_MIN_FREE_BYTES,
       statfs: (target) => statfs(target),
     });
     await requireDiskSpace({
-      path: dirname(plan.targetApp),
+      path: dirname(plan.target),
       minBytes: UPDATE_MIN_FREE_BYTES,
       statfs: (target) => statfs(target),
     });
     await downloadFile(feed.url, plan.downloadPath);
     await verifyDownload(plan.downloadPath, plan.expectedSha256);
     const logPath = join(app.getPath("temp"), "colo-design-update.log");
-    const scriptPath = join(app.getPath("temp"), `colo-design-update-${app.getVersion()}.sh`);
-    await writeFile(
-      scriptPath,
-      buildSwapScript({
-        plan,
-        pid: process.pid,
-        logPath,
-        resultPath: updateResultPath(),
-        version: app.getVersion(),
-      }),
-      {
-        mode: 0o755,
-      },
-    );
-    // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
-    spawn("/bin/bash", [scriptPath], {
-      detached: true,
-      stdio: "ignore",
-    }).unref();
-    // 이 종료는 사용자가 확인한 설치의 마지막 걸음이다 — 가드가 다시 묻지 않는다.
+    const script = {
+      plan,
+      pid: process.pid,
+      logPath,
+      resultPath: updateResultPath(),
+      version,
+    };
+    if (windows) {
+      const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.ps1`);
+      // BOM 을 붙여 쓴다: Windows PowerShell 5.1 은 BOM 없는 UTF-8 .ps1 을
+      // 현재 코드페이지(ANSI)로 읽어 스크립트 안의 한국어를 깨뜨린다 — 깨진
+      // 실패 이유는 그대로 사용자 알림에 실린다.
+      await writeFile(scriptPath, `\uFEFF${buildWinSwapScript(script)}`);
+      spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    } else {
+      const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.sh`);
+      await writeFile(scriptPath, buildMacSwapScript(script), { mode: 0o755 });
+      // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
+      spawn("/bin/bash", [scriptPath], {
+        detached: true,
+        stdio: "ignore",
+      }).unref();
+    }
+    // 이 종료는 사용자가 확인한 설치의 마지막 걸음이다 — 가드가 다시 묻지
+    // 않는다. Windows 에서는 이 한 줄이 교체의 성립 조건이다: 세션이 돌고
+    // 있으면 guardStopUnderTurn 의 `세션 실행 중` 확인 창이 quit 을 막아
+    // 앱이 살아 있고, 잠긴 exe 앞에서 스크립트는 30초를 기다리다 실패로 끝난다.
     stopUnderTurnAllowed = true;
     setTimeout(() => app.quit(), 500);
     return {
@@ -906,13 +1344,15 @@ async function maybeRunDeferredSelfUpdate(): Promise<void> {
 function registerDesktopBridge(): void {
   ipcMain.handle("desktop:update-check", async () => {
     try {
-      return await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
+      const feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
+      // 렌더러는 플랫폼을 모른 채 url·sha256 한 쌍만 본다 — 여기서 고른다.
+      return { ...feed, ...platformAsset(feed) };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  ipcMain.handle("desktop:mac-self-update", async () => {
+  ipcMain.handle("desktop:self-update", async () => {
     // 무엇을 내려받고 무엇으로 검증할지는 피드가 정한다 — 렌더러가 건넨
     // url·sha256 은 받지 않는다. 이 다리는 침해된 렌더러가 앱을 제 zip 으로
     // 바꾸는 통로가 되어서는 안 된다: 요청은 요청일 뿐, 출처는 피드다.
@@ -922,7 +1362,10 @@ function registerDesktopBridge(): void {
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
-    if (!feed.updateAvailable || !feed.url || !feed.sha256) {
+    // 이 플랫폼의 에셋이 없으면(자가 교체가 없는 OS 이거나 피드가 한쪽만
+    // 실었으면) 설치할 것이 없다.
+    const asset = platformAsset(feed);
+    if (!feed.updateAvailable || !asset.url || !asset.sha256) {
       return {
         error: "설치할 업데이트가 확인되지 않았습니다 — 업데이트 확인을 다시 눌러 주세요.",
       };
@@ -931,23 +1374,20 @@ function registerDesktopBridge(): void {
     if (!app.isPackaged) {
       return {
         planned: planSelfUpdate({
-          url: feed.url,
-          sha256: feed.sha256,
+          url: asset.url,
+          sha256: asset.sha256,
           downloadsDir: app.getPath("downloads"),
           version: "0",
+          platform: process.platform,
+          // Windows 는 교체 대상이 필수다 — 개발 실행도 지금 도는 exe 를 건넨다.
+          target: process.platform === "win32" ? process.execPath : undefined,
         }),
         guarded: "개발 실행에서는 교체를 실행하지 않습니다",
       };
     }
-    if (process.platform !== "darwin") {
-      return {
-        error:
-          "자가 업데이트는 macOS 에서만 동작합니다 — Windows 는 릴리스 페이지의 설치 파일로 갈아입으세요.",
-      };
-    }
-    // DMG 안에서 실행 중이면 교체 대상이 읽기 전용 볼륨이다 — 헛돌고 롤백으로
-    // 끝나기 전에 막고 옮기라고 먼저 말한다.
-    if (process.execPath.startsWith("/Volumes/")) {
+    // mac 한정: DMG 안에서 실행 중이면 교체 대상이 읽기 전용 볼륨이다 — 헛돌고
+    // 롤백으로 끝나기 전에 막고 옮기라고 먼저 말한다.
+    if (process.platform === "darwin" && process.execPath.startsWith("/Volumes/")) {
       return {
         error:
           "앱이 디스크 이미지(DMG)에서 실행 중입니다 — 응용 프로그램 폴더로 옮긴 뒤 다시 시도해 주세요.",
@@ -956,10 +1396,10 @@ function registerDesktopBridge(): void {
     // 실행 중 세션이 있으면 설치를 연기한다(P0#6) — 돌아가는 턴을 업데이트가
     // 끊지 않는다. 모든 세션이 내려앉는 순간 알림과 함께 설치된다.
     if (daemonServer?.anySessionBusy()) {
-      pendingSelfUpdate = { url: feed.url, sha256: feed.sha256, version: feed.version };
+      pendingSelfUpdate = { url: asset.url, sha256: asset.sha256, version: feed.version };
       return { deferred: true, version: feed.version };
     }
-    return await runSelfUpdate({ url: feed.url, sha256: feed.sha256 });
+    return await runSelfUpdate({ url: asset.url, sha256: asset.sha256 });
   });
 
   ipcMain.handle("desktop:open-home", async (_event, target?: "logs") => {
@@ -971,19 +1411,6 @@ function registerDesktopBridge(): void {
     }
     await shell.openPath(COLO_DESIGN_DIR);
     return { opened: COLO_DESIGN_DIR };
-  });
-
-  // 커미티 C-5 (2026-09-15): 기획서 원본 열기. 데몬이 클론의 specs/ 아래로
-  // 검증한 절대경로만 받는다 — 렌더러가 임의의 경로를 열게 하지 않는다.
-  // 이중 허들: main 도 ~/.colo-design 밖은 거절한다.
-  ipcMain.handle("desktop:open-spec", async (_event, path: string) => {
-    const resolved = resolve(String(path ?? ""));
-    const home = resolve(COLO_DESIGN_DIR);
-    if (!resolved.startsWith(`${home}${sep}`)) {
-      return { error: "이 도구가 보관한 파일만 열 수 있습니다." };
-    }
-    const problem = await shell.openPath(resolved);
-    return problem ? { error: problem } : { opened: resolved };
   });
 
   // 알림 설정(시점·소리) — 렌더러의 설정이 메인의 알림을 움직인다. 창이

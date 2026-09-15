@@ -4,8 +4,11 @@ import type {
   ColoDesignErrorEnvelope,
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
+  ColoDesignScreen,
+  ColoDesignScreensEnvelope,
 } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
+import { VIEWPORT_METRICS } from "./emulation.js";
 
 /**
  * 사용자의 미리보기 뷰 (PLAN D64 — D60 개봉). The planner's preview pane is
@@ -42,19 +45,7 @@ const PREVIEW_PRELOAD = join(dirname(fileURLToPath(import.meta.url)), "preview-p
 /** Whether this load's repo bridge spoke (`unknown` until it does). */
 type BridgeState = "unknown" | "present";
 
-/** What a 폭 toggle narrows to (PLAN D69 — real emulation, not CSS names). */
-const EMULATION: Record<
-  "mobile" | "tablet",
-  { size: [number, number]; mobile: boolean; userAgent?: string }
-> = {
-  mobile: {
-    size: [390, 844],
-    mobile: true,
-    userAgent:
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-  },
-  tablet: { size: [768, 1024], mobile: false },
-};
+/** 폭 toggle presets live beside Claude's window — see emulation.ts. */
 
 /** 재설계 C4's crop: 긴 변 600px. (The ≤6 cap is the web submit's to hold.) */
 const SHOT_LONG_SIDE = 600;
@@ -199,7 +190,7 @@ interface PreviewPage {
   /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
   readonly consoleLog: string[];
   /** The last screens envelope its bridge posted (D68) — replayed on a return. */
-  screens: object | null;
+  screens: ColoDesignScreensEnvelope | null;
   /** When the page was last on screen — the cap ends the ones left longest ago. */
   shownAt: number;
 }
@@ -219,7 +210,16 @@ export class PlannerPreviewView {
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
 
-  constructor(private readonly window: () => BrowserWindow | null) {}
+  /**
+   * `onScreens` is the daemon's copy of the declaration list (PLAN D61): the
+   * tool's `screen_list` reads it, and the daemon has no page of its own to
+   * hear the bridge from. Only the page on screen reports — the list means
+   * "the app the planner is looking at", the same thing the renderer shows.
+   */
+  constructor(
+    private readonly window: () => BrowserWindow | null,
+    private readonly onScreens?: (screens: ColoDesignScreen[]) => void,
+  ) {}
 
   /**
    * Puts the page for a serving preview url on screen. A page the pane kept
@@ -588,7 +588,7 @@ export class PlannerPreviewView {
       contents.disableDeviceEmulation();
       return;
     }
-    const preset = EMULATION[width];
+    const preset = VIEWPORT_METRICS[width];
     contents.enableDeviceEmulation({
       screenPosition: preset.mobile ? "mobile" : "desktop",
       screenSize: { width: preset.size[0], height: preset.size[1] },
@@ -612,9 +612,16 @@ export class PlannerPreviewView {
     if (!page) return;
     const type = typeof payload?.type === "string" ? payload.type : "";
     if (type === "colo-design.screens") {
+      // The bridge's own shape (D68): narrowed once here, and a bridge that
+      // posted no array is a bridge with nothing to declare.
+      const envelope = payload as ColoDesignScreensEnvelope;
+      const screens = Array.isArray(envelope.screens) ? envelope.screens : [];
       page.bridge = "present";
-      page.screens = payload;
-      if (this.page === page) this.send("colo-preview:screens", payload);
+      page.screens = { type: "colo-design.screens", screens };
+      if (this.page === page) {
+        this.send("colo-preview:screens", page.screens);
+        this.onScreens?.(screens);
+      }
     } else if (type === "colo-design.pin" && this.page === page) {
       // 재설계 C4: the crop rides in before the web hears anything.
       void this.relayPin(payload as ColoDesignPinEnvelope);
@@ -679,7 +686,9 @@ export class PlannerPreviewView {
     contents.send("colo-overlay:mode", { on: this.commentsOn });
     if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
     this.sendLocation(page);
-    this.send("colo-preview:screens", page.screens ?? { type: "colo-design.screens", screens: [] });
+    const screens = page.screens ?? { type: "colo-design.screens" as const, screens: [] };
+    this.send("colo-preview:screens", screens);
+    this.onScreens?.(screens.screens);
     this.send("colo-preview:loading", { on: contents.isLoading() });
     this.send("colo-preview:zoom", { factor: page.zoomFactor });
   }

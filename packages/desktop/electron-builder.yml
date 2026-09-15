@@ -64,14 +64,16 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  # v1 업데이트 흐름: 앱의 확인 버튼은 latest.json(릴리스 에셋)과 버전을
-  # 비교해서 보여줄 뿐, 설치는 수동이다(mac 자가 교체 계획은 별개 모듈).
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   # 릴리스 URL 이 이름을 그대로 쓴다 — mac artifactName 과 같은 이유로 고정.
   artifactName: colo-design-Setup-${version}-win-${arch}.${ext}
   # SmartScreen "추가 정보 → 실행" 한 번은 설치 안내 페이지가 담당한다.
-# v1 업데이트 흐름:
-#   mac  — 앱이 직접 zip 다운로드·sha256 검증·교체(mac-self-update.ts).
-#   win  — 설치 파일을 릴리스 페이지에서 수동 내려받는다(auto-update 없음).
+  #
+  # perMachine 은 일부러 비운다(사용자별 설치): UAC 승격이 없어야 자가 교체가
+  # 무인(/S)으로 돌 수 있다. 설치 위치는 레지스트리에 남고, 재설치가 그 자리를
+  # 그대로 쓴다 — 그래서 자가 교체는 /D= 를 넘기지 않는다.
+# v1 업데이트 흐름 — 두 플랫폼 모두 앱이 스스로 갈아입는다(self-update.ts):
+#   mac  — zip 다운로드·sha256 검증·번들 교체(mac-self-update.ts).
+#   win  — 설치 파일 다운로드·sha256 검증·NSIS 무인 설치(win-self-update.ts).

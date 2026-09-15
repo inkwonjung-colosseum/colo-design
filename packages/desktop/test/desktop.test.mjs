@@ -25,17 +25,18 @@ import {
   fetchLatest,
   RELEASES_FEED_URL,
 } from "../../protocol/dist/update.js";
+import { buildSwapScript as buildMacSwapScript } from "../dist/mac-self-update.js";
+import { noticeCopy } from "../dist/notices.js";
+import { normalizeNotificationPrefs, shouldNotify } from "../dist/notify-policy.js";
+import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
 import {
-  buildSwapScript,
   parseSwapResult,
   planSelfUpdate,
   requireDiskSpace,
   sha256OfFile,
   verifyDownload,
-} from "../dist/mac-self-update.js";
-import { noticeCopy } from "../dist/notices.js";
-import { normalizeNotificationPrefs, shouldNotify } from "../dist/notify-policy.js";
-import { SafeStorageCredentialStore } from "../dist/safe-storage-store.js";
+} from "../dist/self-update.js";
+import { buildSwapScript as buildWinSwapScript } from "../dist/win-self-update.js";
 
 function workdir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -61,6 +62,8 @@ test("checkForUpdate reads the feed and compares against the current version", a
     notes: "화면 코멘트 지원",
     url: "https://example/colo-design-0.3.0.zip",
     sha256: "ab".repeat(32),
+    winUrl: "https://example/colo-design-Setup-0.3.0.exe",
+    winSha256: "cd".repeat(32),
   };
   const fetchLike = async (url) => {
     assert.equal(url, "https://example.test/latest.json");
@@ -74,6 +77,8 @@ test("checkForUpdate reads the feed and compares against the current version", a
     notes: "화면 코멘트 지원",
     url: "https://example/colo-design-0.3.0.zip",
     sha256: "ab".repeat(32),
+    winUrl: "https://example/colo-design-Setup-0.3.0.exe",
+    winSha256: "cd".repeat(32),
   });
 
   const current = await checkForUpdate("0.3.0", "https://example.test/latest.json", fetchLike);
@@ -92,6 +97,32 @@ test("a feed without a checksum still checks, but offers nothing to install", as
   }));
   assert.equal(result.updateAvailable, true);
   assert.equal(result.sha256, null, "the install button needs url + sha256, null means hint only");
+});
+
+test("a one-platform feed leaves the other platform's asset absent", async () => {
+  // 한쪽 플랫폼만 실은 피드는 흔하다(빌드 하나가 실패한 릴리스). 그때 다른
+  // 플랫폼의 설치 단추가 아무것도 없는 url 로 달려가서는 안 된다.
+  const macOnly = await fetchLatest("https://x", async () => ({
+    ok: true,
+    status: 200,
+    json: { version: "0.6.0", url: "https://example/mac.zip", sha256: "ab".repeat(32) },
+  }));
+  assert.equal(macOnly.winUrl, undefined);
+  assert.equal(macOnly.winSha256, undefined);
+
+  const winOnly = await checkForUpdate("0.5.0", "https://x", async () => ({
+    ok: true,
+    status: 200,
+    json: {
+      version: "0.6.0",
+      winUrl: "https://example/setup.exe",
+      winSha256: "cd".repeat(32),
+    },
+  }));
+  assert.equal(winOnly.url, null);
+  assert.equal(winOnly.sha256, null);
+  assert.equal(winOnly.winUrl, "https://example/setup.exe");
+  assert.equal(winOnly.winSha256, "cd".repeat(32));
 });
 
 test("feed errors are Korean and shaped for the settings row", async () => {
@@ -155,19 +186,20 @@ test("the check flow works against a real local feed server", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// mac self-update: plan + sha256 verification
+// self-update: plan (mac · win) + sha256 verification + swap scripts
 // ---------------------------------------------------------------------------
 
-test("the self-update plan names every step and the download target", () => {
+test("the mac self-update plan names every step and the download target", () => {
   const plan = planSelfUpdate({
     url: "https://example.test/colo-design-0.5.0.zip",
     sha256: "ab".repeat(32),
     downloadsDir: "/tmp/downloads",
     version: "0.5.0",
+    platform: "darwin",
   });
-  assert.equal(plan.zipUrl, "https://example.test/colo-design-0.5.0.zip");
+  assert.equal(plan.assetUrl, "https://example.test/colo-design-0.5.0.zip");
   assert.equal(plan.downloadPath, "/tmp/downloads/colo-design-0.5.0.zip");
-  assert.equal(plan.targetApp, "/Applications/Colo Design.app");
+  assert.equal(plan.target, "/Applications/Colo Design.app");
   assert.deepEqual(plan.steps, [
     "colo-design-0.5.0.zip 내려받기",
     "sha256 검증",
@@ -175,6 +207,54 @@ test("the self-update plan names every step and the download target", () => {
     "/Applications/Colo Design.app 교체",
     "다시 실행",
   ]);
+});
+
+test("the Windows plan installs an exe into the running exe's place", () => {
+  const target = "C:\\Users\\Kim\\AppData\\Local\\Programs\\colo-design\\Colo Design.exe";
+  const plan = planSelfUpdate({
+    url: "https://example.test/colo-design-Setup-0.5.0-win-x64.exe",
+    sha256: "cd".repeat(32),
+    downloadsDir: "C:\\Users\\Kim\\Down loads",
+    version: "0.5.0",
+    platform: "win32",
+    target,
+  });
+  assert.equal(plan.assetUrl, "https://example.test/colo-design-Setup-0.5.0-win-x64.exe");
+  assert.ok(
+    plan.downloadPath.endsWith("colo-design-Setup-0.5.0.exe"),
+    `the installer, not a zip: ${plan.downloadPath}`,
+  );
+  assert.equal(plan.target, target, "the caller's exe path is the target, verbatim");
+  assert.deepEqual(plan.steps, [
+    "colo-design-Setup-0.5.0.exe 내려받기",
+    "sha256 검증",
+    "앱 종료",
+    "설치 프로그램 실행(무인)",
+    "다시 실행",
+  ]);
+  // 설치 위치를 추측하면 엉뚱한 자리를 다시 띄운다 — 그래서 대상은 필수다.
+  assert.throws(
+    () =>
+      planSelfUpdate({
+        url: "https://example.test/setup.exe",
+        sha256: "cd".repeat(32),
+        downloadsDir: "C:\\Down loads",
+        version: "0.5.0",
+        platform: "win32",
+      }),
+    /교체 대상 실행 파일의 경로가 필요합니다/,
+  );
+  assert.throws(
+    () =>
+      planSelfUpdate({
+        url: "https://example.test/whatever",
+        sha256: "cd".repeat(32),
+        downloadsDir: "/tmp",
+        version: "0.5.0",
+        platform: "linux",
+      }),
+    /자가 교체를 지원하지 않습니다/,
+  );
 });
 
 test("sha256 verification accepts a good file and refuses a bad one", async () => {
@@ -199,15 +279,16 @@ test("sha256 verification accepts a good file and refuses a bad one", async () =
   }
 });
 
-test("the swap script waits for the app to die, swaps the bundle, relaunches", () => {
+test("the mac swap script waits for the app to die, swaps the bundle, relaunches", () => {
   const plan = planSelfUpdate({
     url: "https://example.test/colo-design-0.5.0.zip",
     sha256: "ab".repeat(32),
     downloadsDir: "/tmp/down loads",
     version: "0.5.0",
-    targetApp: "/Applications/Colo Design.app",
+    platform: "darwin",
+    target: "/Applications/Colo Design.app",
   });
-  const script = buildSwapScript({
+  const script = buildMacSwapScript({
     plan,
     pid: 4242,
     logPath: "/tmp/swap.log",
@@ -259,6 +340,89 @@ test("the swap script waits for the app to die, swaps the bundle, relaunches", (
   // 재실행 — 성공 경로와 롤백 경로 모두에서 open: 어떤 끝도 앱 부재로 끝나지 않는다.
   const opens = script.match(/\/usr\/bin\/open "\$TARGET"/g) ?? [];
   assert.equal(opens.length, 2, "open runs on success AND after rollback");
+});
+
+test("the Windows swap script waits out the locked exe, installs silently, relaunches", () => {
+  // 경로에 한 번 든 작은따옴표가 PowerShell 리터럴을 닫아 버리면 스크립트는
+  // 문법 오류로 죽고, 앱은 닫힌 채 남는다 — 그래서 O'Brien 이 대상 경로에 있다.
+  const target = "C:\\Users\\O'Brien\\AppData\\Local\\Programs\\colo-design\\Colo Design.exe";
+  const plan = planSelfUpdate({
+    url: "https://example.test/colo-design-Setup-0.5.0-win-x64.exe",
+    sha256: "cd".repeat(32),
+    downloadsDir: "C:\\Users\\사용자\\Down loads",
+    version: "0.5.0",
+    platform: "win32",
+    target,
+  });
+  const script = buildWinSwapScript({
+    plan,
+    pid: 4242,
+    logPath: "C:\\Temp\\swap.log",
+    resultPath: "C:\\Users\\사용자\\AppData\\Roaming\\Colo Design\\update-result.json",
+    version: "0.5.0",
+  });
+  // 도는 exe 는 잠겨 있다 — 이 기다림 없이는 설치가 파일을 덮어쓰지 못한다.
+  assert.match(
+    script,
+    /Get-Process -Id 4242 -ErrorAction SilentlyContinue/,
+    "polls the electron main pid",
+  );
+  assert.match(script, /AddSeconds\(30\)/, "the wait is bounded — 30s, not forever");
+  assert.match(
+    script,
+    /Start-Process -FilePath \$installer -ArgumentList '\/S' -Wait -PassThru/,
+    "silent install, and the script waits for its verdict",
+  );
+  assert.ok(!script.includes("/D="), "the install location comes from the registry, not /D=");
+  assert.match(script, /\$process\.ExitCode -ne 0/, "a non-zero exit is a failure, not a success");
+  assert.match(script, /Start-Process -FilePath \$target/, "the new build gets relaunched");
+  // 결과 파일에 BOM 이 붙으면 다음 실행의 JSON.parse 가 그대로 던지고, 교체는
+  // 성공했는데 아무 보고도 남지 않는다.
+  assert.match(
+    script,
+    /New-Object System\.Text\.UTF8Encoding \$false/,
+    "the result line has no BOM",
+  );
+  // 경로는 모두 단일 인용 — 공백·한글이 흔하고, 따옴표는 두 번 찍어 막는다.
+  assert.match(
+    script,
+    /\$installer = '[^\n']*Down loads[^\n']*colo-design-Setup-0\.5\.0\.exe'/,
+    "the download path with its space survives, single-quoted",
+  );
+  assert.match(
+    script,
+    /\$target = 'C:\\Users\\O''Brien\\[^\n]*Colo Design\.exe'/,
+    "a quote inside the path is doubled, not left to close the literal",
+  );
+  assert.match(
+    script,
+    /\$resultPath = 'C:\\Users\\사용자\\AppData\\Roaming\\Colo Design\\update-result\.json'/,
+    "the result path survives its spaces",
+  );
+  const embedded = [...script.matchAll(/'(\{"outcome":[^\n]*?\})'/g)].map((m) => m[1]);
+  const parsed = embedded.map((raw) => parseSwapResult(raw));
+  assert.ok(parsed.length >= 4, `every exit leaves a result line (found ${parsed.length})`);
+  assert.ok(
+    parsed.every((r) => r !== null),
+    "each embedded line parses as a swap result — the same shape the mac script writes",
+  );
+  assert.ok(
+    parsed.some(
+      (r) => r?.outcome === "done" && r.version === "0.5.0" && r.logPath === "C:\\Temp\\swap.log",
+    ),
+    "the happy path records done + version + log",
+  );
+  assert.ok(
+    parsed.some(
+      (r) => r?.outcome === "failed" && r.reason === "앱이 끝나지 않아 교체를 포기했습니다",
+    ),
+    "a still-running app is reported, not silently skipped",
+  );
+  assert.ok(
+    parsed.some((r) => r?.outcome === "failed" && /종료 코드 __EXIT__/.test(r.reason ?? "")),
+    "the installer's exit code reaches the user's notice",
+  );
+  assert.match(script, /-replace '__EXIT__', \$code/, "that placeholder is filled at runtime");
 });
 
 test("parseSwapResult accepts the script's line and refuses anything doubtful", () => {
@@ -490,16 +654,32 @@ test("개발자 쪽 알림은 프로젝트 이름으로 부르고 네 사건이 
 const here = dirname(fileURLToPath(import.meta.url));
 const electronBinary = join(here, "..", "node_modules", ".bin", "electron");
 
-/** The page the driver visits: a button that answers with text and a console error. */
-const DRIVER_PAGE = `<!doctype html><html><body>
+/**
+ * The page the driver visits: a button that answers with text, a field to
+ * type into, a width readout (so 폭 emulation is observable through the
+ * accessibility tree alone), a `data-state` marker for the settle wait, and
+ * a console error plus a failing request on load.
+ */
+const DRIVER_PAGE = `<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+</head><body>
+<div data-screen="unit/Driver" data-state="기본">
+  <button onclick="pressed()">나를 눌러</button>
+  <label>카드번호 <input id="card" /></label>
+  <p id="w">?</p>
+</div>
 <script>
   console.error("열자마자의 콘솔 오류");
+  fetch("/missing").catch(function () {});
   function pressed() {
     const p = document.createElement("p");
     p.id = "done";
     p.textContent = "눌렀다";
     document.body.appendChild(p);
   }
+  function report() { document.getElementById("w").textContent = String(window.innerWidth); }
+  report();
+  window.addEventListener("resize", report);
 </script>
 </body></html>`;
 
@@ -516,48 +696,110 @@ app.whenReady().then(async () => {
     process.stdout.write("COLO_DRIVER_UNIT " + JSON.stringify(payload) + "\\n");
     app.exit(0);
   };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // ref 트리는 계층이다 — 평탄하게 펴서 찾는다.
+  const flatten = (nodes, out = []) => {
+    for (const node of nodes) {
+      out.push(node);
+      flatten(node.children, out);
+    }
+    return out;
+  };
+  const findRef = (nodes, role, name) =>
+    flatten(nodes).find((node) => node.role === role && node.name.includes(name)) ?? null;
   try {
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
     const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
-    await driver.open("/", null);
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    // 선언한 상태의 표식을 기다리므로, 여기서 돌아오면 화면은 자리를 잡았다.
+    const opened = await driver.open("/", "기본");
+    // 미리보기 서버 밖의 주소는 열지 않는다 — 조용히 넘어가지 않고 말한다.
+    const refused = await driver.open("https://example.invalid/x", null);
     const windows = BrowserWindow.getAllWindows();
     const hidden = windows.length === 1 && windows.every((w) => !w.isVisible());
     // 첫 프레임이 칠해질 때까지 캡처를 재시도한다 — 오프스크린 paint 는 첫 로드 뒤에 온다.
-    let jpeg = "";
+    // WebP 의 base64 는 RIFF 헤더라 "UklGR" 로 시작한다.
+    let shot = null;
     for (let i = 0; i < 15; i++) {
-      jpeg = await driver.screenshot();
-      if (typeof jpeg === "string" && jpeg.startsWith("/9j/")) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      shot = await driver.screenshot({ longEdge: 900 });
+      if (shot && typeof shot.data === "string" && shot.data.startsWith("UklGR")) break;
+      await sleep(200);
     }
     // 접근성 트리가 페이지 내용을 반영할 때까지 잠깐 기다린다.
-    let before = "";
+    let before = [];
     for (let i = 0; i < 15; i++) {
       before = await driver.axTree();
-      if (before.includes("나를 눌러")) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      if (findRef(before, "button", "나를 눌러")) break;
+      await sleep(200);
     }
+    const button = findRef(before, "button", "나를 눌러");
     let clickWorked = false;
     let clickError = null;
+    let staleRefRefused = false;
+    let typed = null;
+    let cropOk = false;
     try {
-      await driver.click({ text: "나를 눌러" });
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      if (!button) throw new Error("버튼을 트리에서 찾지 못했다");
+      // ref 로 찍으면 그 요소만 잘린다 — 전체보다 작아야 한다.
+      const crop = await driver.screenshot({ ref: button.ref, longEdge: 600 });
+      cropOk =
+        crop.mediaType === "image/webp" &&
+        crop.data.startsWith("UklGR") &&
+        crop.data.length < shot.data.length;
+      const field = findRef(before, "textbox", "카드번호");
+      if (field) {
+        await driver.type({ ref: field.ref, text: "4242", clear: true });
+        await sleep(200);
+        const after = await driver.axTree();
+        const again = flatten(after).find((node) => node.role === "textbox");
+        typed = again ? (again.value ?? null) : null;
+      }
+      await driver.click({ ref: button.ref });
+      await sleep(400);
       const after = await driver.axTree();
-      clickWorked = after.includes("눌렀다") && !before.includes("눌렀다");
+      clickWorked =
+        !!findRef(after, "paragraph", "눌렀다") || !!findRef(after, "StaticText", "눌렀다");
+      // 앞 세대의 ref 는 죽었다 — 엉뚱한 곳을 누르지 않고 거절한다.
+      try {
+        await driver.click({ ref: "e99999" });
+      } catch (error) {
+        staleRefRefused = /screen_read/.test(error && error.message ? error.message : "");
+      }
     } catch (error) {
       clickError = error && error.message ? error.message : String(error);
+    }
+    // 폭은 진짜로 좁아진다 — 페이지가 스스로 읽은 innerWidth 가 증거다.
+    let mobileWidth = null;
+    await driver.open("/", "기본", { viewport: "mobile", colorScheme: "dark" });
+    for (let i = 0; i < 15; i++) {
+      const nodes = await driver.axTree();
+      const readout = flatten(nodes).find((node) => /^\\d{3,4}$/.test(node.name));
+      if (readout) {
+        mobileWidth = Number(readout.name);
+        if (mobileWidth === 390) break;
+      }
+      await sleep(200);
     }
     const lines = await driver.consoleLines();
     await driver.destroy();
     const afterWindows = BrowserWindow.getAllWindows().length;
     answer({
+      openedOk: opened && opened.ok === true,
+      openedSettled: opened && opened.settled === true,
+      refusedOk: refused && refused.ok === false,
+      refusedReason: refused ? refused.reason ?? null : null,
       hidden,
-      jpegOk: typeof jpeg === "string" && jpeg.startsWith("/9j/"),
-      axTreeHasButton: before.includes("나를 눌러"),
+      webpOk: !!shot && shot.mediaType === "image/webp" && shot.data.startsWith("UklGR"),
+      axTreeHasButton: !!button,
+      buttonHasRef: !!button && /^e\\d+$/.test(button.ref),
+      cropOk,
+      typed,
       clickWorked,
       clickError,
+      staleRefRefused,
       clickResolved: true,
+      mobileWidth,
       consoleHasError: lines.some((line) => line.text.includes("콘솔 오류")),
+      consoleHasNet: lines.some((line) => line.level === "net"),
       windowDestroyed: afterWindows === 0,
     });
   } catch (error) {
@@ -604,8 +846,14 @@ async function runDriverUnit(url) {
   return line;
 }
 
-test("the preview driver opens a hidden window, answers a real JPEG, clicks, and dies", async (t) => {
-  const server = createServer((_request, response) => {
+test("미리보기 드라이버: 숨은 창, 거절하는 open, ref 로 읽고 누르고 입력한다", async (t) => {
+  const server = createServer((request, response) => {
+    // 실패하는 요청 하나 — screen_console 의 `net` 줄이 여기서 온다.
+    if (request.url?.startsWith("/missing")) {
+      response.writeHead(404, { "content-type": "text/plain" });
+      response.end("nope");
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(DRIVER_PAGE);
   });
@@ -616,26 +864,42 @@ test("the preview driver opens a hidden window, answers a real JPEG, clicks, and
     assert.equal(result.error, undefined);
     // 보이는 창은 사용자의 것뿐 — Claude 의 창은 화면에 없다 (PLAN D61).
     assert.equal(result.hidden, true);
-    // 캡처는 진짜 JPEG 다.
-    assert.equal(result.jpegOk, true);
+    // 캡처는 컴포지터가 한 번에 구운 진짜 WebP 다 — 재인코딩 세대가 없다.
+    assert.equal(result.webpOk, true);
+    // 선언한 상태의 표식을 기다렸으므로 열림은 자리를 잡은 열림이다.
+    assert.equal(result.openedOk, true);
+    assert.equal(result.openedSettled, true);
+    // 미리보기 서버 밖의 주소는 "열었습니다" 가 아니라 거절이다 — 조용히
+    // 넘어가면 도구가 모델에게 거짓말을 한다.
+    assert.equal(result.refusedOk, true);
+    assert.match(result.refusedReason, /미리보기 서버 밖/);
+    // 폭 에뮬레이션은 페이지가 스스로 읽은 innerWidth 로만 증명된다.
+    assert.equal(result.mobileWidth, 390);
     // 접근성 트리 · 클릭 · 콘솔 다리는 오프스크린 AX 합성 시점에 좌우된다 —
-    // 핵심(숨은 창 + 진짜 JPEG)은 여기서, 나머지는 desktop-smoke 로 (PLAN §8 5단계).
+    // 핵심(숨은 창 + 진짜 JPEG + 거절 + 폭)은 여기서, 나머지는 desktop-smoke
+    // 로 (PLAN §8 5단계).
     if (result.axTreeHasButton !== true) {
       t.skip("이 머신에서 접근성 트리가 늦게 채워진다 — desktop-smoke 에서 재확인");
       return;
     }
-    assert.equal(result.axTreeHasButton, true);
+    assert.equal(result.buttonHasRef, true, "트리의 모든 요소는 ref 로 주소가 있다");
     assert.equal(result.clickResolved, true);
-    // 글자로 찾아 누르면 화면이 응답하고, 콘솔 error 가 기록된다. 오프스크린
-    // 창의 입력·콘솔 다리는 머신 성향을 타는 — 그 두 조각만 desktop-smoke
-    // (pack 앱, 실사용 경로)로 넘기고 나머지는 여기서 전부 검증한다
-    // (PLAN §8 5단계).
+    assert.equal(result.clickError, null);
+    // 잘라 찍은 사진은 전체보다 작다 — 예산이 실제로 싸지는 이유다.
+    assert.equal(result.cropOk, true);
+    // 낡은 ref 는 엉뚱한 곳을 누르지 않고 "다시 읽으십시오" 로 돌아온다.
+    assert.equal(result.staleRefRefused, true);
+    // ref 로 누르면 화면이 응답하고, 입력은 필드에 들어가고, 콘솔 error 와
+    // 실패한 요청이 기록된다. 오프스크린 창의 입력·콘솔 다리는 머신 성향을
+    // 타는 — 그 조각만 desktop-smoke (pack 앱, 실사용 경로)로 넘긴다.
     if (result.clickWorked !== true || result.consoleHasError !== true) {
       t.skip("이 머신의 오프스크린 입력·콘솔 다리가 미확인 — desktop-smoke 에서 재확인");
       return;
     }
     assert.equal(result.clickWorked, true);
+    assert.equal(result.typed, "4242");
     assert.equal(result.consoleHasError, true);
+    assert.equal(result.consoleHasNet, true);
     assert.equal(result.windowDestroyed, true);
   } finally {
     server.close();
