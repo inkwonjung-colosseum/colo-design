@@ -728,11 +728,25 @@ export function createPreviewDriverFactory(): PreviewDriverFactory {
   return { for: (baseUrl) => new ElectronPreviewDriver(baseUrl) };
 }
 
-// The preview-driver unit imports this module inside its own Electron to
-// reach createPreviewDriverFactory() — the daemon boot below belongs to the
-// app entry only (PLAN D61).
-if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
-  void app.whenReady().then(() => bootApp());
+/**
+ * 같은 userData 를 두 데몬이 쓰는 경쟁을 막는다 — 독립 데몬이 daemon.json 의
+ * /health 로 세우던 이중 실행 가드의 앱 판본. 두 번째 실행은 첫째의 창으로
+ * 합쳐진다. 테스트 실행(단위 임포트 · 격리 userData 스모크)은 잠그지 않는다
+ * — 병렬 레인이 같은 앱을 동시에 띄운다.
+ */
+const underTest =
+  process.env.COLO_DESIGN_DESKTOP_UNIT === "1" || Boolean(process.env.COLO_DESIGN_DESKTOP_SMOKE);
+if (underTest || app.requestSingleInstanceLock()) {
+  app.on("second-instance", () => focusMainWindow());
+  // The preview-driver unit imports this module inside its own Electron to
+  // reach createPreviewDriverFactory() — the daemon boot below belongs to the
+  // app entry only (PLAN D61).
+  if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
+    void app.whenReady().then(() => bootApp());
+  }
+} else {
+  // 두 번째 인스턴스 — 첫째에 합쳐지고 여기서 끝난다.
+  app.quit();
 }
 
 // The smoke suite points this at a throwaway folder: Playwright launches
