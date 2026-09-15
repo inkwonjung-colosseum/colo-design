@@ -2,7 +2,13 @@ import type { DaemonStatus, EffortLevel, PermissionMode } from "@colo-design/pro
 import { RELEASES_REPO, type UpdateCheckResult } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { EFFORT_LABEL, MODE_LABEL, modelOptions, modelRowOf, SETTINGS_MODES } from "./chat-options";
+import {
+  EFFORT_LABEL,
+  modelOptions,
+  modelRowOf,
+  modeMenuLabel,
+  SETTINGS_MODES,
+} from "./chat-options";
 import type { Daemon } from "./daemon-client";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 import {
@@ -190,16 +196,39 @@ function ThemeGallery({
   value: ThemeChoice;
   onChange: (theme: ThemeChoice) => void;
 }) {
+  const grid = useRef<HTMLDivElement>(null);
+  /**
+   * 라디오그룹의 키보드 규칙: Tab 은 그룹에 한 번만 멈추고(선택된 타일),
+   * 화살표가 안에서 옮긴다 — 옮기는 것이 곧 고르는 것(APG radio).
+   * 18개 타일이 전부 Tab 스톱이면 다른 설정까지 18번을 걸어야 했다.
+   */
+  const move = (from: number, dir: 1 | -1) => {
+    const to = (from + dir + THEMES.length) % THEMES.length;
+    const theme = THEMES[to];
+    if (!theme) return;
+    onChange(theme);
+    grid.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[to]?.focus();
+  };
   return (
-    <div className="themegrid" role="radiogroup" aria-label="테마">
-      {THEMES.map((theme) => (
+    <div className="themegrid" role="radiogroup" aria-label="테마" ref={grid}>
+      {THEMES.map((theme, index) => (
         <button
           key={theme}
           type="button"
           role="radio"
           aria-checked={theme === value}
+          tabIndex={theme === value ? 0 : -1}
           className="themegrid__tile"
           data-testid={`theme-${theme}`}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+              event.preventDefault();
+              move(index, 1);
+            } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+              event.preventDefault();
+              move(index, -1);
+            }
+          }}
           onClick={() => onChange(theme)}
         >
           <span className="themegrid__art" {...(theme === "system" ? {} : { "data-theme": theme })}>
@@ -226,10 +255,6 @@ function ThemeGallery({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Dialog
-// ---------------------------------------------------------------------------
 
 export function SettingsDialog({
   settings,
@@ -286,11 +311,13 @@ export function SettingsDialog({
 
   /**
    * 업데이트 문단은 데스크톱 앱 안에서만 산다 — 브라우저엔 '이 앱의 버전'이
-   * 없어 비교가 성립하지 않는다. 다리의 platform 이 설치 문단을 고른다: mac
-   * 은 자가 교체 단추, win 은 릴리스 페이지로 안내한다.
+   * 없어 비교가 성립하지 않는다. 다리의 platform 이 설치 문단을 고른다: mac·
+   * Windows 는 앱이 스스로 갈아입고, 나머지는 릴리스 페이지로 안내한다. 이
+   * 플랫폼의 에셋이 피드에 있는지는 update.url·update.sha256 이 말해 준다 —
+   * 메인이 이 플랫폼 몫으로 이미 골라 돌려준 한 쌍이다.
    */
   const desktop = window.coloDesignDesktop ?? null;
-  const canSelfUpdate = desktop?.platform === "darwin";
+  const canSelfUpdate = desktop?.platform === "darwin" || desktop?.platform === "win32";
 
   /**
    * `폴더 열기`(PLAN D2) — the desktop bridge opens ~/.colo-design in the OS
@@ -331,9 +358,10 @@ export function SettingsDialog({
   };
 
   /**
-   * mac 자가 교체(DESIGN §7): 새 버전이 확인되면 내려받고 sha256 검증한 뒤
-   * 앱이 스스로 종료·교체·재실행한다. 무엇을 내려받을지는 메인이 피드에서
-   * 다시 읽는다 — 렌더러는 요청만 보낸다. 이 단추는 mac 에서만 보인다.
+   * 자가 교체(DESIGN §7): 새 버전이 확인되면 내려받고 sha256 검증한 뒤 앱이
+   * 스스로 종료·교체·재실행한다 — mac 은 번들을 갈아 치우고, Windows 는 설치
+   * 프로그램을 무인으로 돌린다. 무엇을 내려받을지는 메인이 피드에서 다시
+   * 읽는다 — 렌더러는 요청만 보낸다.
    */
   const installUpdate = async () => {
     if (!update?.url || !update.sha256) return;
@@ -342,7 +370,7 @@ export function SettingsDialog({
     setUpdateStarted(null);
     setUpdateDeferred(null);
     try {
-      const result = await window.coloDesignDesktop?.macSelfUpdate();
+      const result = await window.coloDesignDesktop?.selfUpdate();
       if (result && typeof result === "object" && "error" in result && result.error) {
         throw new Error(String(result.error));
       }
@@ -539,7 +567,7 @@ export function SettingsDialog({
               value={settings.chat.permissionMode}
               options={SETTINGS_MODES.map((mode) => ({
                 value: mode,
-                label: MODE_LABEL[mode],
+                label: modeMenuLabel(mode),
               }))}
               onChange={(permissionMode) => onChatChange({ permissionMode })}
             />
@@ -583,27 +611,33 @@ export function SettingsDialog({
               checked={settings.chat.followClaude}
               onChange={(followClaude) => onChatChange({ followClaude })}
             />
-            {/* 작업 과정 보기: 기본은 꺼짐이다 — 생각 과정과 같은 이유다.
-                사용자가 읽어야 하는 것은 답이고, 도구 호출 묶음이 답과 답
-                사이마다 끼면 대화가 기계의 작업 기록처럼 읽힌다. 읽고 싶은
-                사람에게는 여기서 돌려준다. 계획 카드와 캡처 카드는 이
-                스위치와 무관하게 언제나 자리를 지킨다(PLAN D48·D56). */}
-            <Switch
-              label="작업 과정 보기"
-              hint="Claude가 화면을 만들며 거친 작업 — 파일 작업과 검사 — 를 대화에 접힌 채로 남깁니다"
-              checked={settings.chat.showTools}
-              onChange={(showTools) => onChatChange({ showTools })}
-            />
-            {/* 생각 과정 보기: 기본은 꺼짐이다. 사용자가 읽어야 하는 것은
-                답이고, 답을 만드는 동안의 속말이 답과 답 사이마다 끼면
-                대화가 기계의 기록처럼 읽힌다. 읽고 싶은 사람에게는 여기서
-                돌려준다 — 켜면 접힌 채로 다시 자리를 잡는다. */}
-            <Switch
-              label="생각 과정 보기"
-              hint="Claude가 답을 만들며 한 생각을 대화에 접힌 채로 남깁니다"
-              checked={settings.chat.showThinking}
-              onChange={(showThinking) => onChatChange({ showThinking })}
-            />
+            {/* 대화에 남길 기록 두 스위치 (감사 위원회): "작업·생각 과정" 은
+                기계의 작업 로그를 여는 구현자용 스위치다 — 매일 만지는 행이
+                아니니 기본은 접는다. 열어도 행의 말과 동작은 그대로다. */}
+            <details className="settings__fold">
+              <summary>고급 · 대화에 남길 작업 기록</summary>
+              {/* 작업 과정 보기: 기본은 꺼짐이다 — 생각 과정과 같은 이유다.
+                  사용자가 읽어야 하는 것은 답이고, 도구 호출 묶음이 답과 답
+                  사이마다 끼면 대화가 기계의 작업 기록처럼 읽힌다. 읽고 싶은
+                  사람에게는 여기서 돌려준다. 계획 카드와 캡처 카드는 이
+                  스위치와 무관하게 언제나 자리를 지킨다(PLAN D48·D56). */}
+              <Switch
+                label="작업 과정 보기"
+                hint="Claude가 화면을 만들며 거친 작업 — 파일 작업과 검사 — 를 대화에 접힌 채로 남깁니다"
+                checked={settings.chat.showTools}
+                onChange={(showTools) => onChatChange({ showTools })}
+              />
+              {/* 생각 과정 보기: 기본은 꺼짐이다. 사용자가 읽어야 하는 것은
+                  답이고, 답을 만드는 동안의 속말이 답과 답 사이마다 끼면
+                  대화가 기계의 기록처럼 읽힌다. 읽고 싶은 사람에게는 여기서
+                  돌려준다 — 켜면 접힌 채로 다시 자리를 잡는다. */}
+              <Switch
+                label="생각 과정 보기"
+                hint="Claude가 답을 만들며 한 생각을 대화에 접힌 채로 남깁니다"
+                checked={settings.chat.showThinking}
+                onChange={(showThinking) => onChatChange({ showThinking })}
+              />
+            </details>
           </section>
 
           <section className="settings__group">

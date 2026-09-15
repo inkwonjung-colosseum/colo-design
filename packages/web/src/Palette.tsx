@@ -1,6 +1,7 @@
 import type { ColoDesignScreen, ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { FolderIcon, GearIcon, PlusIcon, SearchIcon } from "./icons";
+import { composing } from "./ime";
 import { useModalFocus } from "./use-modal-focus";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
@@ -266,11 +267,9 @@ export function Palette({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    // An IME owns every keydown until its composition ends — Enter commits
-    // the hangul (isComposing, legacy keyCode 229), the arrows walk the
-    // candidate window. Reacting to any of them would run a half-typed
-    // search or close the palette mid-word (커미티 F-C1, 2026-09-14).
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // Composition keys pass straight through: Enter would run a half-typed
+    // search and the arrows would yank the IME's candidate list.
+    if (composing(event)) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setHighlight(Math.min(index + 1, rows.length - 1));

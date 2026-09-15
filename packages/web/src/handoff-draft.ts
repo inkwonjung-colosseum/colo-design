@@ -8,11 +8,10 @@ import type { ColoDesignScreen } from "@colo-design/protocol";
  * implements. A blank field never crosses the wire, which is what lets the
  * daemon's own proposal win when the repo reports nothing.
  *
- * One line per screen that names the 기획서 it was built from (D5); a screen
- * with no spec contributes no line at all rather than a line with a hole in
- * it. Deliberately absent: the preview URL. It is a loopback address on the
- * planner's own machine, and in a handoff a developer reads, a link that
- * looks openable and never is costs more than no link.
+ * One line per declared screen — its title, its route, and the states it
+ * implements. Deliberately absent: the preview URL. It is a loopback address
+ * on the planner's own machine, and in a handoff a developer reads, a link
+ * that looks openable and never is costs more than no link.
  */
 export function handoffDraft(
   projectName: string,
@@ -29,7 +28,6 @@ export function handoffDraft(
 function bodyFor(screens: ColoDesignScreen[]): string {
   const lines: string[] = [];
   for (const screen of screens) {
-    if (!screen.spec) continue;
     // The states the repo DECLARED for this screen. This is the only
     // mechanical answer a developer gets to "how far did the mock go": the
     // list is handed over unjudged instead of summarised.

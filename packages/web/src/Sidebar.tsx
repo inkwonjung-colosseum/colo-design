@@ -16,6 +16,7 @@ import {
   TrashIcon,
   WarnIcon,
 } from "./icons";
+import { composing } from "./ime";
 import { loadTreeFoldedFor, saveTreeFolded } from "./settings";
 import { useModalFocus } from "./use-modal-focus";
 
@@ -402,9 +403,8 @@ export function Sidebar({
                     onChange={(event) => setNameDraft(event.target.value)}
                     onBlur={() => void commitRename()}
                     onKeyDown={(event) => {
-                      // Enter that commits the hangul must not also commit
-                      // the rename (isComposing, keyCode 229 — 커미티 F-C1).
-                      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                      // Enter that commits the hangul must not commit the rename.
+                      if (composing(event)) return;
                       if (event.key === "Enter") void commitRename();
                       if (event.key === "Escape") setRenaming(null);
                     }}
@@ -707,9 +707,8 @@ export function Sidebar({
                             onChange={(event) => setThreadDraft(event.target.value)}
                             onBlur={commitThreadRename}
                             onKeyDown={(event) => {
-                              // Same hangul guard as the project rename above
-                              // (isComposing, keyCode 229 — 커미티 F-C1).
-                              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                              // Same hangul guard as the project rename above.
+                              if (composing(event)) return;
                               if (event.key === "Enter") commitThreadRename();
                               if (event.key === "Escape") setThreadRenaming(null);
                             }}

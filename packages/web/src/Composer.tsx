@@ -14,10 +14,11 @@ import {
   EFFORT_LABEL,
   FAST_BLOCKED_WORDS,
   FAST_HARD_BLOCKS,
-  MODE_LABEL,
+  MODE_LABEL_KO,
   modelOptions,
   modelRowOf,
   modelWords,
+  modeMenuLabel,
   SETTINGS_MODES,
 } from "./chat-options";
 import { Fold, useFoldNotice } from "./components";
@@ -35,6 +36,7 @@ import {
   StopIcon,
   ZapIcon,
 } from "./icons";
+import { composing } from "./ime";
 import { PinTray } from "./PinTray";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
 import type { MidTurnSend, SendKey } from "./settings";
@@ -43,8 +45,6 @@ import { UsageChip } from "./UsageChip";
 import type { PinAttachment, PinIntent } from "./usePins";
 
 export interface Attachment {
-  /** Images ride inline with the turn; documents are saved to `specs/` by the daemon. */
-  kind: "image" | "document";
   name: string;
   mediaType: string;
   /** base64, without the data-url prefix. */
@@ -52,36 +52,12 @@ export interface Attachment {
   size: number;
 }
 
-/** What a planner may attach as a document. Claude's Read tool handles all three. */
-const DOCUMENT_TYPES: Record<string, string> = {
-  ".md": "text/markdown",
-  ".txt": "text/plain",
-  ".pdf": "application/pdf",
-};
-
 /** The modes that act without asking — the ones the chip marks with a slash. */
 const ASKS_NOTHING: PermissionMode[] = ["dontAsk", "bypassPermissions"];
 
-function documentType(name: string): string | null {
-  const dot = name.lastIndexOf(".");
-  // Browsers leave `type` empty for .md, so the extension decides.
-  return dot === -1 ? null : (DOCUMENT_TYPES[name.slice(dot).toLowerCase()] ?? null);
-}
-
-function fileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 /** What rode along with a waiting send, as the row's small print — or null for words alone. */
-function attachmentWords({ images, files }: QueuedSend): string | null {
-  const parts = [
-    images > 0 ? `이미지 ${images}` : null,
-    files.length > 0 ? `문서 ${files.length}` : null,
-  ];
-  const words = parts.filter((part) => part !== null).join(" · ");
-  return words || null;
+function attachmentWords({ images }: QueuedSend): string | null {
+  return images > 0 ? `이미지 ${images}장` : null;
 }
 
 /**
@@ -110,9 +86,7 @@ interface Suggestion {
 /**
  * Work out whether the caret sits in a sigil token — `@` for files, `/` for
  * commands. Returns the token being typed so the caller can look up matches,
- * plus the span to replace when one is chosen. Attached documents land in
- * `specs/`, so `@specs/…` is how a planner points Claude back at one they
- * sent earlier.
+ * plus the span to replace when one is chosen.
  */
 const MENTION_TOKEN = /(^|\s)@(\S*)$/;
 const COMMAND_TOKEN = /(^|\s)\/(\S*)$/;
@@ -182,10 +156,6 @@ function saveHistory(rows: string[]): void {
     // Same story as the draft: losing the walk on a reload is tolerable.
   }
 }
-
-// ---------------------------------------------------------------------------
-// Composer
-// ---------------------------------------------------------------------------
 
 export function Composer({
   commands,
@@ -582,42 +552,29 @@ export function Composer({
   };
 
   const readAttachments = async (files: FileList | File[]) => {
-    const accepted: Array<{
-      file: File;
-      kind: Attachment["kind"];
-      mediaType: string;
-    }> = [];
+    const accepted: File[] = [];
     const refused: string[] = [];
     for (const file of [...files]) {
-      const document = documentType(file.name);
-      if (file.type.startsWith("image/")) {
-        accepted.push({ file, kind: "image", mediaType: file.type });
-      } else if (document) {
-        accepted.push({ file, kind: "document", mediaType: document });
-      } else {
-        refused.push(file.name);
-      }
+      if (file.type.startsWith("image/")) accepted.push(file);
+      else refused.push(file.name);
     }
     if (refused.length > 0) {
-      rejected.show(
-        `${refused.join(", ")} — 첨부할 수 없는 형식입니다. PDF로 내보내서 다시 첨부해 주세요.`,
-      );
+      rejected.show(`${refused.join(", ")} — 그림만 붙일 수 있습니다.`);
     } else {
       rejected.clear();
     }
     if (accepted.length === 0) return;
     const read = await Promise.all(
       accepted.map(
-        ({ file, kind, mediaType }) =>
+        (file) =>
           new Promise<Attachment>((resolve, reject) => {
             const reader = new FileReader();
             reader.onerror = () => reject(new Error(`could not read ${file.name}`));
             reader.onload = () => {
               const result = String(reader.result);
               resolve({
-                kind,
                 name: file.name || "pasted image",
-                mediaType,
+                mediaType: file.type,
                 data: result.slice(result.indexOf(",") + 1),
                 size: file.size,
               });
@@ -756,11 +713,9 @@ export function Composer({
     item.truncated ? "첨부는 다시 붙여야 합니다" : attachmentWords(item);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // An IME owns every keydown until its composition ends — Enter commits
-    // the hangul (isComposing, legacy keyCode 229), the arrows walk the
-    // candidate window. Reacting to any of them would send half a word or
-    // yank the candidate list, so composition keys pass straight through.
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // Composition keys pass straight through: Enter would send half a word
+    // and the arrows would yank the IME's candidate list.
+    if (composing(event)) return;
     if (suggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -914,7 +869,9 @@ export function Composer({
     },
     {
       key: "mode" as const,
-      label: MODE_LABEL[selector.permissionMode],
+      // 칩은 사람 말("바로 실행") — 온보딩이 가르친 그 말. CLI 원명은 메뉴
+      // 행의 괄호 안에 산다.
+      label: MODE_LABEL_KO[selector.permissionMode],
       // The one chip whose glyph says something the label does not: a struck
       // shield is a mode that asks nothing before it acts.
       icon: ASKS_NOTHING.includes(selector.permissionMode) ? (
@@ -928,7 +885,7 @@ export function Composer({
       // planner can read what they are on and step back down.
       options: SETTINGS_MODES.map((mode) => ({
         value: mode,
-        label: MODE_LABEL[mode],
+        label: modeMenuLabel(mode),
         picked: selector.permissionMode === mode,
       })),
     },
@@ -958,10 +915,11 @@ export function Composer({
         <UsageChip plan={plan} onRefresh={onRefreshUsage} />
       </div>
       {suggestions.length > 0 && (
-        <div className="autocomplete" role="listbox" ref={palette}>
+        <div className="autocomplete" role="listbox" id="composer-suggestions" ref={palette}>
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion.insert}
+              id={`composer-suggestion-${index}`}
               type="button"
               role="option"
               aria-selected={index === highlight}
@@ -1006,7 +964,7 @@ export function Composer({
         // 데려 오고, 행의 onKeyDown 이 메모를 저장한 뒤 이벤트를 삼킨다.
         <div
           onKeyDownCapture={(event) => {
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (composing(event)) return;
             if (event.key !== "Enter") return;
             if (!(event.target as HTMLElement).matches("input.pintray__note")) return;
             event.preventDefault();
@@ -1030,22 +988,12 @@ export function Composer({
           {editor.attachments.map((attachment, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
             <span key={`${attachment.name}-${index}`} className="chip">
-              {attachment.kind === "image" ? (
-                <img
-                  className="chip__thumb"
-                  src={`data:${attachment.mediaType};base64,${attachment.data}`}
-                  alt=""
-                />
-              ) : (
-                <span className="chip__doc">
-                  <FileIcon size={11} />
-                  문서
-                </span>
-              )}
+              <img
+                className="chip__thumb"
+                src={`data:${attachment.mediaType};base64,${attachment.data}`}
+                alt=""
+              />
               {attachment.name}
-              {attachment.kind === "document" && (
-                <span className="chip__size">{fileSize(attachment.size)}</span>
-              )}
               <button
                 type="button"
                 className="ghost"
@@ -1233,6 +1181,15 @@ export function Composer({
         value={editor.text}
         placeholder={placeholder}
         aria-label="메시지"
+        /* @/… 자동완성의 콤보박스 선언 — 목록은 위의 listbox, 하이라이트는
+           activedescendant 가 가리킨다(팔레트·RepoPicker 와 같은 패턴). */
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-expanded={suggestions.length > 0}
+        aria-controls={suggestions.length > 0 ? "composer-suggestions" : undefined}
+        aria-activedescendant={
+          suggestions.length > 0 ? `composer-suggestion-${highlight}` : undefined
+        }
         disabled={disabled}
         rows={1}
         onChange={(e) => {
@@ -1253,7 +1210,7 @@ export function Composer({
         <input
           ref={filePicker}
           type="file"
-          accept="image/*,.md,.txt,.pdf"
+          accept="image/*"
           multiple
           hidden
           onChange={(e) => {
@@ -1266,7 +1223,7 @@ export function Composer({
         <button
           type="button"
           className="toolbar__attach"
-          title="문서·이미지 첨부"
+          title="그림 첨부"
           disabled={disabled}
           onClick={() => filePicker.current?.click()}
         >

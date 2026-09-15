@@ -33,16 +33,19 @@ function defaultPreviewWidth(): number {
   return Math.round(window.innerWidth * (narrow ? 0.45 : 0.5));
 }
 
+/** 미리보기의 절대 바닥 — 대화 바닥과 창이 다투면 미리보기가 먼저 양보한다. */
+const PREVIEW_HARD_MIN = 240;
+
 /**
  * The preview's width, clamped to its own bounds and to what the body has
- * left for the chat. On a window too narrow for both maxima the clamp floor
- * wins and the boundary simply stops.
+ * left for the chat. 창이 두 바닥을 다 품지 못하면 미리보기가 양보한다 —
+ * 대화 열이 0까지 짜이는 대신. (데스크톱은 창의 minWidth 가 이 갈림길에
+ * 거의 닿지 않게 한다; 이 클램프는 브라우저 경로와 창 축소의 보험이다.)
  */
 function clampWidth(value: number, bodyWidth: number): number {
-  const max = Math.min(PREVIEW_WIDTH_BOUNDS.max, bodyWidth - CHAT_MIN);
-  return Math.round(
-    Math.min(Math.max(value, PREVIEW_WIDTH_BOUNDS.min), Math.max(PREVIEW_WIDTH_BOUNDS.min, max)),
-  );
+  const max = Math.min(PREVIEW_WIDTH_BOUNDS.max, Math.max(PREVIEW_HARD_MIN, bodyWidth - CHAT_MIN));
+  const min = Math.min(PREVIEW_WIDTH_BOUNDS.min, max);
+  return Math.round(Math.min(Math.max(value, min), max));
 }
 
 /**
@@ -522,7 +525,7 @@ export function PageWorkspace({
           placeholder={
             sessions.activeId
               ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
-              : "만들고 싶은 화면을 말해 보세요 — 기획서나 그림을 붙여도 돼요 (@로 파일, /로 명령)"
+              : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
           }
           disabled={false}
           titleFor={titleFor}

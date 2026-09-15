@@ -21,6 +21,10 @@ test("toolLabel folds the screen tools into 화면 보기", () => {
     "screen_screenshot",
     "screen_read",
     "screen_click",
+    "screen_type",
+    "screen_press",
+    "screen_scroll",
+    "screen_hover",
     "screen_console",
   ]) {
     assert.equal(toolLabel(name), "화면 보기");

@@ -33,3 +33,29 @@ export function blockOnTape(block: Block, showThinking: boolean, showTools: bool
   if (block.type === "text" && block.agentId) return showTools;
   return true;
 }
+
+/**
+ * 붙어 있는 생각 조각은 한 번의 생각이다. 한 턴의 Claude 는 도구를 부를 때마다
+ * 생각을 새 블록으로 끊어 보내므로, `작업 과정 보기`가 꺼져 사이의 도구 행이
+ * 빠지면 그 조각들이 서로 이웃이 된다 — 실사에서 대화가 접힌 "생각 중…" 줄
+ * 여덟 개의 벽으로 열린 것이 이것이다. 이으는 것은 **같은 주체(agentId)의
+ * 이웃한 조각**뿐이다: 하위 작업의 속말은 그 작업의 것이고, 도구 행이 보이는
+ * 테이프에서는 애초에 이웃이 되지 않는다(활동 카드가 그 사이에 선다).
+ */
+export function mergeThinking(tape: Block[]): Block[] {
+  const merged: Block[] = [];
+  for (const block of tape) {
+    const prev = merged[merged.length - 1];
+    if (block.type === "thinking" && prev?.type === "thinking" && prev.agentId === block.agentId) {
+      // 마지막 조각의 진행이 이어진 생각의 진행이다 — 앞 조각들은 이미 끝났다.
+      merged[merged.length - 1] = {
+        ...prev,
+        text: `${prev.text.trimEnd()}\n\n${block.text.trimStart()}`,
+        streaming: block.streaming,
+      };
+      continue;
+    }
+    merged.push(block);
+  }
+  return merged;
+}

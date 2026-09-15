@@ -37,6 +37,9 @@ export function IframeHost({
   onLoading?: (busy: boolean) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  /** 스킵 링크의 착지점 — iframe 바로 뒤의 빈 자리. 포커스가 여기 오면
+      다음 Tab 은 미리보기 앱이 아니라 도구의 나머지로 이어진다. */
+  const afterFrame = useRef<HTMLSpanElement>(null);
   const [loads, setLoads] = useState(0);
   /** 로드가 끝나 페이드인 — 리마운트(새로 고침)마다 다시 0. */
   const [loaded, setLoaded] = useState(false);
@@ -81,24 +84,33 @@ export function IframeHost({
   }, [url, screen, loads]);
 
   return (
-    <iframe
-      key={reloadKey}
-      className={loaded ? "preview__frame preview__frame--in" : "preview__frame"}
-      title="미리보기"
-      ref={frame}
-      src={url}
-      onLoad={() => {
-        // 로드가 끝났다 — 머리의 스핀과 진행 바를 거둔다.
-        onLoading?.(false);
-        setLoaded(true);
-        setLoads((count) => count + 1);
-        // The bridge posts its list once on its own mount and never retries,
-        // so the two orderings cover each other (D7).
-        const request: ColoDesignScreensRequestEnvelope = {
-          type: "colo-design.screens?",
-        };
-        frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
-      }}
-    />
+    <>
+      {/* 키보드 탈출구 (감사 위원회): Tab 이 미리보기 안으로 빠지면 그 앱의
+          모든 링크를 지나야 도구로 돌아온다. iframe 바로 앞의 이 버튼이
+          지름길 — 포커스될 때만 보인다(스킵 링크 규칙). */}
+      <button type="button" className="skippreview" onClick={() => afterFrame.current?.focus()}>
+        미리보기 건너뛰기
+      </button>
+      <iframe
+        key={reloadKey}
+        className={loaded ? "preview__frame preview__frame--in" : "preview__frame"}
+        title="미리보기"
+        ref={frame}
+        src={url}
+        onLoad={() => {
+          // 로드가 끝났다 — 머리의 스핀과 진행 바를 거둔다.
+          onLoading?.(false);
+          setLoaded(true);
+          setLoads((count) => count + 1);
+          // The bridge posts its list once on its own mount and never retries,
+          // so the two orderings cover each other (D7).
+          const request: ColoDesignScreensRequestEnvelope = {
+            type: "colo-design.screens?",
+          };
+          frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
+        }}
+      />
+      <span ref={afterFrame} tabIndex={-1} className="skippreview__after" />
+    </>
   );
 }

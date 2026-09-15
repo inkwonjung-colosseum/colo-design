@@ -2,6 +2,7 @@ import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "./daemon-client";
 import { FolderIcon, FolderPlusIcon } from "./icons";
+import { composing } from "./ime";
 
 /** `https://github.com/o/r(.git)` → `o/r`, for matching a project's stored url. */
 function normalizeUrl(url: string): string {
@@ -231,10 +232,9 @@ export function RepoPicker({
         ? "이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결 준비하기를 눌러 주세요"
         : "위 명령 실행 동의에 체크하면 켜집니다";
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
-    // An IME owns every keydown until its composition ends — Enter commits
-    // the hangul (isComposing, legacy keyCode 229). Reacting to it would
-    // pick a repo off a half-typed word (커미티 F-C1, 2026-09-14).
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Composition keys pass straight through: Enter would pick a repo off a
+    // half-typed word.
+    if (composing(e)) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setHighlight((current) => Math.min(current + 1, rows.length - 1));

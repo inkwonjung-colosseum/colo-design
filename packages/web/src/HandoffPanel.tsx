@@ -125,7 +125,10 @@ export function HandoffPanel({
   };
 
   return (
-    <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="modal"
+      onMouseDown={(e) => e.target === e.currentTarget && !running && onClose()}
+    >
       <div
         className="modal__panel modal__panel--handoff"
         role="dialog"
@@ -146,7 +149,11 @@ export function HandoffPanel({
             type="button"
             className="ghost"
             aria-label="개발자에게 넘기기 닫기"
-            onClick={onClose}
+            aria-disabled={running}
+            title={running ? "넘기기가 진행 중입니다 — 끝나면 닫을 수 있습니다" : undefined}
+            onClick={() => {
+              if (!running) onClose();
+            }}
           >
             <CloseIcon />
           </button>

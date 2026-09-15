@@ -12,7 +12,8 @@
 #   colo-design-<v>-mac-arm64.zip        mac 자가 업데이트가 내려받는 형태
 #   colo-design-Setup-<v>-win-x64.exe    Windows NSIS 설치 파일
 #   latest.json                         앱의 업데이트 확인 피드(version/notes/
-#                                       sha256/url — mac zip sha256 검증용)
+#                                       url·sha256 = mac zip, winUrl·winSha256
+#                                       = win 설치 파일 — 자가 교체 검증용)
 #
 # 수동 실행(workflow_dispatch)은 빌드만 하고 릴리스는 만들지 않는다 — 파이프
 # 라인 점검용: 실행 페이지의 artifacts 에서 설치 파일을 내려받아 확인한다.
@@ -196,12 +197,16 @@ jobs:
             [ -f "dist/$f" ] || { echo "::error::빌드 산출물이 없습니다: $f"; exit 1; }
           done
 
-          # 앱 업데이트 확인 피드: mac zip sha256 은 자가 교체가 검증에 쓴다.
+          # 앱 업데이트 확인 피드: 두 플랫폼의 에셋을 함께 싣는다 — 자가 교체가
+          # 제 플랫폼 몫의 sha256 으로 내려받은 파일을 검증한다.
           SHA=$(sha256sum "dist/$ZIP" | cut -d' ' -f1)
+          WIN_SHA=$(sha256sum "dist/$EXE" | cut -d' ' -f1)
           NOTES=$(git cat-file tag "$TAG" | sed '1,/^$/d')
           jq -n --arg version "$VERSION" --arg notes "$NOTES" --arg sha256 "$SHA" \
             --arg url "${BASE_URL}/${ZIP}" \
-            '{version: $version, notes: $notes, sha256: $sha256, url: $url}' > dist/latest.json
+            --arg winSha256 "$WIN_SHA" \
+            --arg winUrl "${BASE_URL}/${EXE}" \
+            '{version: $version, notes: $notes, sha256: $sha256, url: $url, winSha256: $winSha256, winUrl: $winUrl}' > dist/latest.json
 
           # 릴리스 페이지 본문(설치 안내 페이지를 겸한다 — 미서명 안내 포함).
           {
@@ -212,7 +217,7 @@ jobs:
             echo "| macOS (Apple Silicon) | \`$DMG\` |"
             echo "| Windows (x64) | \`$EXE\` |"
             echo
-            echo "mac 자가 업데이트는 \`$ZIP\`(sha256 \`$SHA\`)을 내려받는다."
+            echo "자가 업데이트가 내려받는 파일: mac \`$ZIP\`(sha256 \`$SHA\`) · Windows \`$EXE\`(sha256 \`$WIN_SHA\`)."
             echo
             echo "### 미서명 배포 안내"
             echo

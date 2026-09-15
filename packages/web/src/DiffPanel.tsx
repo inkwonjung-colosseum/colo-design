@@ -347,7 +347,10 @@ export function DiffPanel({
   };
 
   return (
-    <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="modal"
+      onMouseDown={(e) => e.target === e.currentTarget && !running && onClose()}
+    >
       <div
         className="modal__panel modal__panel--diff"
         role="dialog"
@@ -364,7 +367,16 @@ export function DiffPanel({
             저장 검토
             {destination ? <span className="modal__destination">→ {destination}</span> : null}
           </h2>
-          <button type="button" className="ghost" aria-label="저장 검토 닫기" onClick={onClose}>
+          <button
+            type="button"
+            className="ghost"
+            aria-label="저장 검토 닫기"
+            aria-disabled={running}
+            title={running ? "저장이 진행 중입니다 — 끝나면 닫을 수 있습니다" : undefined}
+            onClick={() => {
+              if (!running) onClose();
+            }}
+          >
             <CloseIcon />
           </button>
         </header>

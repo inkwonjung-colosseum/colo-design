@@ -18,10 +18,7 @@ export function transcriptToMarkdown(
   const out: string[] = [`# ${title}`, "", `- 내보낸 시각: ${exportedAt.toLocaleString()}`, ""];
   for (const event of events) {
     if (event.kind === "user.echo") {
-      const extra = [
-        event.images > 0 ? `이미지 ${event.images}장` : null,
-        event.files.length > 0 ? `첨부 파일 ${event.files.length}개` : null,
-      ].filter((part): part is string => part !== null);
+      const extra = event.images > 0 ? [`이미지 ${event.images}장`] : [];
       out.push(
         `**나**${extra.length > 0 ? ` (${extra.join(", ")})` : ""}`,
         "",

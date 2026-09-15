@@ -306,26 +306,33 @@ export function Onboarding({
             Claude가 일을 실행하기 전에 물어볼까요?
           </h2>
           <div className="onboarding__cards">
-            <button
-              type="button"
-              className={`onboarding__card${picked === "bypassPermissions" ? " onboarding__card--on" : ""}`}
-              onClick={() => choosePermission("bypassPermissions")}
-            >
-              <span className="onboarding__cardTitle">바로 실행</span>
-              <span className="onboarding__cardBody">
-                확인 없이 진행합니다. 화면 파일은 어차피 자동으로 바뀌고, 자리를 비운 사이에도
-                멈추지 않습니다.
-              </span>
-            </button>
+            {/* 안전한 쪽이 먼저 읽힌다 (감사 위원회): 확인 없이 진행하는 카드가
+                첫 자리면 "권장"처럼 읽힌다 — 선택은 어차피 강제이니 순서만
+                바꿔도 기본값은 건드리지 않는다. */}
             <button
               type="button"
               className={`onboarding__card${picked === "default" ? " onboarding__card--on" : ""}`}
               onClick={() => choosePermission("default")}
             >
-              <span className="onboarding__cardTitle">물어보고 실행</span>
+              <span className="onboarding__cardTitle">
+                물어보고 실행 <span className="onboarding__cardcli">Default</span>
+              </span>
               <span className="onboarding__cardBody">
                 명령을 실행하기 전에 확인 카드로 물어봅니다. 확인은 알림으로도 오므로 자리를 비워도
                 놓치지 않습니다.
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`onboarding__card${picked === "bypassPermissions" ? " onboarding__card--on" : ""}`}
+              onClick={() => choosePermission("bypassPermissions")}
+            >
+              <span className="onboarding__cardTitle">
+                바로 실행 <span className="onboarding__cardcli">Bypass</span>
+              </span>
+              <span className="onboarding__cardBody">
+                확인 없이 진행합니다. 화면 파일은 어차피 자동으로 바뀌고, 자리를 비운 사이에도
+                멈추지 않습니다.
               </span>
             </button>
           </div>

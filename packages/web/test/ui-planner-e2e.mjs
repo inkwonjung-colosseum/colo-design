@@ -1,12 +1,12 @@
 /**
  * Browser-level check of the planner app, end to end with a real Claude session.
  *
- * This is the one suite that proves the product's claim: a planning document
- * goes in, screens come out inside the repo the planner connected, and the
- * planner watches the repo's own preview render them. The connected repo is a
- * local fixture remote (packages/daemon/test/fixture-repo.mjs), so the git
- * side stays offline; the Claude turn is real and billed to the signed-in
- * subscription.
+ * This is the one suite that proves the product's claim: requirements typed
+ * into the composer go in, screens come out inside the repo the planner
+ * connected, and the planner watches the repo's own preview render them. The
+ * connected repo is a local fixture remote (packages/daemon/test/fixture-repo.mjs),
+ * so the git side stays offline; the Claude turn is real and billed to the
+ * signed-in subscription.
  *
  * Costs one multi-turn session which writes several files — budget several
  * minutes. The first run also installs the fixture repo (a no-op npm script).
@@ -14,15 +14,7 @@
  * Prerequisites: `pnpm build`
  */
 import { spawn } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
@@ -37,21 +29,19 @@ const daemonEntry = join(repoRoot, "packages", "daemon", "dist", "index.js");
 const webDist = join(repoRoot, "packages", "web", "dist");
 const DIR = join(tmpdir(), "colo-design-planner-e2e");
 const WORK_ROOT = join(DIR, "work");
-const SPEC = join(DIR, "2026-09-08-회원관리.md");
 const PORT = 5396;
 const DAEMON_PORT = 7834;
 
-const SPEC_MARKDOWN = `# 회원 관리 기획서
+const REQUIREMENTS = `회원 관리 화면을 만들어줘. 되물을 것이 있으면 한 번에 물어보고, 없으면 바로 만들어.
 
-## 회원 목록
+회원 목록
 - 회원번호, 이름, 가입일, 상태를 한 줄로 보여 준다.
 - 상태는 활성/정지 두 가지다.
 - 행을 클릭하면 상세로 간다.
 
-## 회원 상세
+회원 상세
 - 기본 정보(회원번호, 이름, 가입일)와 상태 변경 버튼이 있다.
-- 정지 회원은 상단에 안내 문구가 나온다.
-`;
+- 정지 회원은 상단에 안내 문구가 나온다.`;
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -98,7 +88,6 @@ async function main() {
 
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
-  writeFileSync(SPEC, SPEC_MARKDOWN);
   const previewPort = await freePort();
   const fixture = await createFixtureRepo({
     dir: join(DIR, "fixture"),
@@ -189,31 +178,21 @@ async function main() {
     src ?? "",
   );
 
-  // --- 3. attaching a planning document -----------------------------------
+  // --- 3. the ask itself, typed into the composer --------------------------
   const VISIBLE = ".planner__body:not([hidden]) ";
-  await page.setInputFiles(`${VISIBLE}.composer input[type=file]`, SPEC);
-  await page.waitForSelector(`${VISIBLE}.chip`, { timeout: 5000 });
-  check(
-    "a markdown document attaches as a document chip",
-    true,
-    await page.locator(`${VISIBLE}.chip`).innerText(),
-  );
-
   const area = page.locator(`${VISIBLE}.composer textarea`);
-  await area.pressSequentially(
-    "이 기획서로 화면 만들어줘. 되물을 것이 있으면 한 번에 물어보고, 없으면 바로 만들어.",
-  );
+  // `fill` rather than keystrokes: the requirements carry newlines, and Enter
+  // in this field is 보내기.
+  await area.fill(REQUIREMENTS);
   await page.getByRole("button", { name: "보내기" }).click();
 
-  // --- 4. the document lands in the clone, not in the prompt -------------
-  await page.waitForFunction(() => document.querySelector(".bubble__file") !== null, undefined, {
-    timeout: 30000,
-  });
-  const specs = existsSync(join(WORK_ROOT, "specs")) ? readdirSync(join(WORK_ROOT, "specs")) : [];
+  // --- 4. the ask lands in the transcript as the planner's own turn -------
+  await page.waitForSelector(".bubble--user", { timeout: 30000 });
+  const echoed = await page.locator(".bubble--user").first().innerText();
   check(
-    "the attached document is saved under the repo's specs/",
-    specs.some((name) => name.endsWith(".md")),
-    specs.join(", "),
+    "the typed requirements come back as the planner's own turn",
+    echoed.includes("회원 목록"),
+    echoed.slice(0, 40),
   );
 
   // --- 5. Claude works, and the planner sees a folded activity line -------
@@ -228,7 +207,7 @@ async function main() {
   );
 
   // --- 6. answering questions, then screens on disk ----------------------
-  // Claude asks about what the document leaves open and then waits — nothing
+  // Claude asks about what the ask leaves open and then waits — nothing
   // times out on its own. A suite that only polled for files would sit here
   // until its own timeout, so answering is part of the path being tested.
   let answered = 0;
@@ -315,8 +294,9 @@ async function main() {
   // carry this reading keeps the account's budgets alone.
   const ring = page.locator(`${VISIBLE}.ring`);
   check("the chat shows how long the conversation has grown", await ring.isVisible());
-  // Hovering it is the whole disclosure: the window, the tokens behind the
-  // percentage, and what this session run has cost.
+  // Hovering it is the whole disclosure — and the whole disclosure is the
+  // percent. 토큰 수와 세션 비용은 커미티 F-A2′(2026-09-14)로 화면을 떠났다:
+  // 구독 하나가 이 제품의 약속이므로 숫자로 재는 자리를 두지 않는다.
   await ring.hover();
   // The tip is a CSS disclosure that fades in (0.12s) — reading before the
   // visibility transition has flipped computes an empty innerText.
@@ -324,8 +304,13 @@ async function main() {
   await tip.waitFor({ state: "visible", timeout: 2000 });
   const reading = await tip.innerText();
   check(
-    "hovering the ring names the context window and its numbers",
-    reading.includes("컨텍스트 윈도우") && reading.includes("토큰"),
+    "hovering the ring names the context window and how full it is",
+    reading.includes("컨텍스트 윈도우") && /\d+% 사용됨/.test(reading),
+    reading.replace(/\n/g, " · "),
+  );
+  check(
+    "the reading keeps token counts and cost off the screen",
+    !reading.includes("토큰") && !reading.includes("$"),
     reading.replace(/\n/g, " · "),
   );
 

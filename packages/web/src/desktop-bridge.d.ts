@@ -20,14 +20,16 @@ type Unsubscribe = () => void;
 declare global {
   interface Window {
     coloDesignDesktop?: {
-      /** The OS the app runs on — the install button is mac-only; win goes
-       * to the releases page. */
+      /** The OS the app runs on — mac and win replace themselves; anything
+       * else goes to the releases page. */
       platform: string;
+      /** `url`/`sha256` arrive already resolved for this platform (main picks
+       * the mac zip or the Windows installer), so the renderer stays blind. */
       updateCheck: () => Promise<UpdateCheckResult>;
       /** The feed — not the renderer — decides what gets downloaded; the
        * request takes no arguments by design (a compromised renderer must not
        * be able to point the updater at its own zip). */
-      macSelfUpdate: () => Promise<
+      selfUpdate: () => Promise<
         | { planned: unknown; guarded: string } // 개발 실행 — 계획만
         | { deferred: true; version: string } // 세션이 돌고 있어 모두 끝나는 순간으로 연기
         | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
@@ -51,11 +53,6 @@ declare global {
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
       /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
-      /**
-       * 커미티 C-5 (2026-09-15): 기획서 원본을 OS 기본 프로그램으로 연다 —
-       * 경로는 데몬이 클론의 specs/ 아래로 검증한 절대경로만 올 수 있다.
-       */
-      openSpec?: (path: string) => Promise<string>;
       preview?: {
         /** Claude 시점 보기(PLAN D63) — 8fps JPEG(base64), 구독만. */
         onFrame: (callback: (jpeg: string) => void) => void;

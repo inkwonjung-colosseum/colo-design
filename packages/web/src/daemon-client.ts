@@ -46,7 +46,6 @@ export type Block =
       id: string;
       text: string;
       images: number;
-      files: string[];
       /** D87: the pin crops, live-echo only; a replayed transcript has none. */
       thumbs?: string[];
     }
@@ -100,6 +99,19 @@ export type Block =
 
 let noticeSeq = 0;
 
+/**
+ * 한 조각의 생각은 **다음 블록이 시작되는 순간** 끝난 생각이다. `thinking.done`
+ * 이벤트가 없어 예전에는 턴이 끝날 때에만 접혔고, 도는 동안의 테이프에는 이미
+ * 끝난 생각들이 나란히 "생각 중…" 이라 말하며 (peek 도 없이) 쌓였다 — 실사에서
+ * 본 여덟 줄의 벽이 그것이다. 지금 도는 생각은 언제나 마지막 하나뿐이다.
+ */
+function settleThinking(blocks: Block[]): Block[] {
+  if (!blocks.some((block) => block.type === "thinking" && block.streaming)) return blocks;
+  return blocks.map((block) =>
+    block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
+  );
+}
+
 function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
   switch (event.kind) {
     case "user.echo":
@@ -110,7 +122,6 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           id: `u${++noticeSeq}`,
           text: event.text,
           images: event.images,
-          files: event.files,
           ...(event.thumbs && event.thumbs.length > 0 ? { thumbs: event.thumbs } : {}),
         },
       ];
@@ -119,7 +130,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       const index = blocks.findIndex((b) => b.type === "text" && b.id === event.blockId);
       if (index === -1) {
         return [
-          ...blocks,
+          ...settleThinking(blocks),
           {
             type: "text",
             id: event.blockId,
@@ -181,7 +192,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       const index = blocks.findIndex((b) => b.type === "thinking" && b.id === event.blockId);
       if (index === -1) {
         return [
-          ...blocks,
+          ...settleThinking(blocks),
           {
             type: "thinking",
             id: event.blockId,
@@ -203,7 +214,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
 
     case "tool.start":
       return [
-        ...blocks,
+        ...settleThinking(blocks),
         {
           type: "tool",
           id: event.toolUseId,
@@ -228,13 +239,10 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
     }
 
     case "turn.end": {
-      // No `thinking.done` event exists: a finished turn is what settles its
-      // thinking folds, so they stop reading as still-running ("생각 중").
-      const settled = blocks.map((block) =>
-        block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
-      );
+      // 도는 동안의 조각들은 이미 자기 자리에서 접혔다(settleThinking); 턴의
+      // 끝은 마지막 조각까지 접어 기록으로 남긴다.
       return [
-        ...settled,
+        ...settleThinking(blocks),
         {
           type: "turn",
           id: `t${++noticeSeq}`,
@@ -477,7 +485,6 @@ interface DaemonApi {
     sessionId: string,
     text: string,
     images?: Array<{ mediaType: string; data: string }>,
-    files?: Array<{ name: string; mediaType: string; data: string }>,
   ) => Promise<unknown>;
   interrupt: (sessionId: string) => Promise<unknown>;
   /**
@@ -596,8 +603,6 @@ interface DaemonApi {
    */
   /** 상태 확인 (PLAN D88) — the pull request plus the developer's comments. */
   handoffStatus: () => Promise<HandoffStatusReport>;
-  /** 커미티 C-5 (2026-09-15): 기획서 원본의 절대경로(데몬이 specs/ 로 검증). */
-  specPath: (path: string) => Promise<{ path: string }>;
   /**
    * 저장 검토의 요약 (PLAN D51): one no-tool Claude turn over the diff,
    * answered in the planner's words. Asked once per diff, cached above this.
@@ -1125,7 +1130,6 @@ export function useDaemon(url: string | null): Daemon {
         sessionId: string,
         text: string,
         images?: Array<{ mediaType: string; data: string }>,
-        files?: Array<{ name: string; mediaType: string; data: string }>,
       ) => {
         // Speaking into a thread is looking at it (D50), and the first send
         // is the one moment the browser may ask about notifications.
@@ -1136,7 +1140,6 @@ export function useDaemon(url: string | null): Daemon {
           sessionId,
           text,
           ...(images?.length ? { images } : {}),
-          ...(files?.length ? { files } : {}),
         });
       },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
@@ -1324,7 +1327,6 @@ export function useDaemon(url: string | null): Daemon {
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
       handoffStatus: () => call<HandoffStatusReport>({ type: "repo.handoffStatus" }, 120_000),
-      specPath: (path: string) => call<{ path: string }>({ type: "repo.specPath", path }, 15_000),
       // The summary runs one short Claude turn on the daemon: the window a
       // generation gets, not the minutes a gate takes.
       summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { stateLabel } from "./format";
+import { composing } from "./ime";
 import type { PinAttachment, PinIntent } from "./usePins";
 
 /**
@@ -142,7 +143,7 @@ export function PinTray({
               }}
               onChange={(event) => onPinNote(pin.id, event.target.value)}
               onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (composing(event)) return;
                 if (event.key !== "Enter") return;
                 // 전송 아님 — 메모를 붙이고 이벤트를 삼킨다. 본문으로의
                 // 포커스 이동은 Composer 가 capture 에서 한다.

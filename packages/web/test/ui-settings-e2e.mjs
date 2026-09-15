@@ -111,7 +111,6 @@ async function main() {
       "the planner's settings never say 데몬",
       !(await page.locator('[role="dialog"][aria-label="설정"]').innerText()).includes("데몬"),
     );
-    // No daemon yet, so the repo fields wait for one instead of pretending.
     // No daemon yet: the GitHub token form and the repo url field wait for
     // one instead of pretending.
     check(
@@ -380,6 +379,11 @@ async function main() {
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
 
+    // "생각·작업 과정" 스위치는 고급 fold 안이다 — 기계의 작업 로그를 여는
+    // 구현자용 스위치를 매일 만지는 행과 나누기로 한 감사 결정. 열면 행의
+    // 말과 동작은 그대로다.
+    await page.getByText("고급 · 대화에 남길 작업 기록", { exact: true }).click();
+
     // 생각 과정은 기본으로 보이지 않는다: 사용자가 읽어야 하는 것은 답이다.
     // 켜고 끄는 자리는 여기뿐이고, 켠 사실은 다른 선택처럼 남는다.
     check(
@@ -404,6 +408,8 @@ async function main() {
     // 작업 과정(도구 호출 묶음)도 생각 과정과 같은 기본값이다: 꺼져 있어야
     // 하고, 켠 사실은 다른 선택처럼 남는다. 계획 카드 · 캡처 카드는 이
     // 스위치와 무관하다는 것이 이 검사의 밑에 깔린 규칙이다(tape-visibility).
+    // 재연 다이얼로그에서 fold 는 다시 접혀 있으니 켜기 전에 한 번 연다.
+    await page.getByText("고급 · 대화에 남길 작업 기록", { exact: true }).click();
     check(
       "작업 과정 is off until the planner asks for it",
       (await page.getByLabel("작업 과정 보기").isChecked()) === false &&
@@ -424,12 +430,13 @@ async function main() {
     check("and a reload brings it back on", await page.getByLabel("작업 과정 보기").isChecked());
 
     // 7. the diagnostics are reachable and no longer the first thing in view.
+    //    fold 는 두 개 — 대화의 "작업 기록" 과 여기 "연결 정보".
     check(
       "connection details sit behind a fold",
-      (await page.locator(".settings__fold").count()) === 1 &&
+      (await page.locator(".settings__fold").count()) === 2 &&
         (await page.getByLabel("접속 주소").isVisible()) === false,
     );
-    await page.locator(".settings__fold > summary").click();
+    await page.getByText("고급 · 연결 정보", { exact: true }).click();
     check(
       "opening the fold reveals them",
       (await page.getByLabel("접속 주소").isVisible()) === true,

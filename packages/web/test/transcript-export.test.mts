@@ -14,7 +14,7 @@ test("a quiet transcript is a title and nothing to read", () => {
 
 test("the planner's words and Claude's answer keep their order and speakers", () => {
   const events: ChatEvent[] = [
-    { kind: "user.echo", text: "로그인 화면 만들어 줘", images: 1, files: [] },
+    { kind: "user.echo", text: "로그인 화면 만들어 줘", images: 1 },
     {
       kind: "text.done",
       blockId: "b1",
@@ -31,7 +31,7 @@ test("the planner's words and Claude's answer keep their order and speakers", ()
 
 test("machine traffic — tools, thinking, retries — never reaches the file", () => {
   const events: ChatEvent[] = [
-    { kind: "user.echo", text: "고쳐 줘", images: 0, files: [] },
+    { kind: "user.echo", text: "고쳐 줘", images: 0 },
     {
       kind: "tool.start",
       toolUseId: "t1",
@@ -70,11 +70,9 @@ test("machine traffic — tools, thinking, retries — never reaches the file", 
   assert.match(md, /고쳤습니다\./);
 });
 
-test("a blank message and attached files still read as the planner's turn", () => {
-  const events: ChatEvent[] = [
-    { kind: "user.echo", text: "  ", images: 0, files: ["specs/회원가입.md"] },
-  ];
+test("a blank message with an attached image still reads as the planner's turn", () => {
+  const events: ChatEvent[] = [{ kind: "user.echo", text: "  ", images: 1 }];
   const md = transcriptToMarkdown(events, "첨부", AT);
-  assert.match(md, /\*\*나\*\* \(첨부 파일 1개\)/);
+  assert.match(md, /\*\*나\*\* \(이미지 1장\)/);
   assert.match(md, /\(빈 메시지\)/);
 });

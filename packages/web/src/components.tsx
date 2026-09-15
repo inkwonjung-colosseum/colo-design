@@ -4,19 +4,12 @@ import { type ReactNode, useState } from "react";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Block, PendingPermission, PendingQuestion } from "./daemon-client";
 import { waitedFor } from "./format";
-import {
-  CheckIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  CopyIcon,
-  FileIcon,
-  ShieldIcon,
-  SparkIcon,
-} from "./icons";
+import { CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, ShieldIcon, SparkIcon } from "./icons";
+import { composing } from "./ime";
 import { Markdown } from "./Markdown";
 import { isToolRunning } from "./progress";
 import { GENERIC_STARTERS } from "./suggestions";
-import { blockOnTape, SCREEN_SHOT_TOOL } from "./tape-visibility";
+import { blockOnTape, mergeThinking, SCREEN_SHOT_TOOL } from "./tape-visibility";
 import { bashHeadline, objectParticle, toolLabel } from "./tool-names";
 import {
   answerTurnNumbers,
@@ -653,7 +646,7 @@ function MachineTurn({
             ? "최신 변경 받아오기"
             : marker.purpose === "conventions"
               ? "관례 최신화"
-              : "이 기획서로 화면 만들기";
+              : "화면 만들기";
       lead = marker.title;
       break;
     case "gate":
@@ -1028,7 +1021,6 @@ export function Transcript({
   screens,
   onOpenScreen,
   onOpenScreenTitle,
-  onOpenSpec,
   checkpoints,
   onRestoreCheckpoint,
   showThinking = false,
@@ -1055,8 +1047,6 @@ export function Transcript({
   onOpenScreen?: (route: string, state: string | null) => void;
   /** 커미티 C-4: 영수증 행 클릭 — 화면 제목으로 점프(상태는 그 턴이 본 것). */
   onOpenScreenTitle?: (title: string, state: string | null) => void;
-  /** 커미티 C-5: 첨부 칩 클릭 — 기획서 원본을 연다(데몬이 specs/ 로 검증). */
-  onOpenSpec?: (relPath: string) => void;
   /** A starter chip was pressed — its sentence becomes the composer's draft. */
   onStarter?: (text: string) => void;
   /** The chips themselves — the connected repo's declared screens, falling
@@ -1113,7 +1103,7 @@ export function Transcript({
                 className="empty__starter empty__starter--attach"
                 onClick={onStarterAttach}
               >
-                기획서나 그림을 붙여 시작하기
+                그림을 붙여 시작하기
               </button>
             )}
             {(starters ?? GENERIC_STARTERS).map((starter) => (
@@ -1162,7 +1152,9 @@ export function Transcript({
   // 않은 활동 막대로 남는다. 턴 번호의 셈(answerTurns · totalTurns)은
   // 프롬프트와 답만 세므로 이 거르기와 무관하다 — 되감기가 가리키는 답은
   // 그대로다. 판정 규칙 하나는 tape-visibility 이다.
-  const tape = blocks.filter((block) => blockOnTape(block, showThinking, showTools));
+  // 이웃한 생각 조각은 한 생각으로 잇는다(mergeThinking): 도구 행이 빠진 자리
+  // 에서 한 턴의 생각이 접힌 줄 여럿으로 쌓이면 대화가 생각의 벽으로 열린다.
+  const tape = mergeThinking(blocks.filter((block) => blockOnTape(block, showThinking, showTools)));
   const rows = groupActivity(
     live
       ? tape
@@ -1247,19 +1239,6 @@ export function Transcript({
               <div key={block.id} className="bubble bubble--user">
                 {block.text}
                 {block.images > 0 && <span className="tag">이미지 {block.images}장</span>}
-                {block.files.map((file) => (
-                  <button
-                    key={file}
-                    type="button"
-                    className="bubble__file"
-                    title={onOpenSpec ? `${file} — 보관한 원본을 엽니다` : "첨부한 문서입니다"}
-                    disabled={!onOpenSpec}
-                    onClick={() => onOpenSpec?.(file)}
-                  >
-                    <FileIcon />
-                    {file.split("/").pop()}
-                  </button>
-                ))}
                 {block.text.trim() !== "" && (
                   <div className="bubble__actions">
                     {/* 요청 복사: the planner's own sentence is as worth
@@ -1507,10 +1486,9 @@ export function PermissionCard({
             placeholder="왜 안 되는지, 대신 무엇을 할지 알려 주세요"
             onChange={(e) => setReason(e.target.value)}
             onKeyDown={(e) => {
-              // An IME owns every keydown until its composition ends — Enter
-              // commits the hangul (isComposing, legacy keyCode 229). Sending
-              // the refusal on it would hand Claude half a sentence.
-              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              // Composition keys pass straight through: Enter would hand
+              // Claude half a sentence as the refusal.
+              if (composing(e)) return;
               if (e.key === "Enter") onRespond("deny", reason || undefined);
             }}
           />

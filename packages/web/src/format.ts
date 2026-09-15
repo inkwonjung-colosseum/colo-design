@@ -28,7 +28,7 @@ export function waitedFor(ms: number): string {
  * The four names below are the ones `CLAUDE.md` asks a connected repo to use,
  * so they cover what the preview will normally offer. A repo that declares
  * something else keeps its own word — inventing a Korean gloss for a state we
- * have never seen would put a label on the chip that the 기획서 does not use.
+ * have never seen would put a label on the chip that the repo does not use.
  */
 const STATE_LABEL: Record<string, string> = {
   default: "기본",

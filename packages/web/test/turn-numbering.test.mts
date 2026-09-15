@@ -31,7 +31,7 @@ const turnDone = (id: string): Block =>
     resultText: null,
   }) as unknown as Block;
 const prompt = (id: string, text: string): Block =>
-  ({ type: "user", id, text, images: 0, files: [] }) as unknown as Block;
+  ({ type: "user", id, text, images: 0 }) as unknown as Block;
 
 test("promptTotal: 사용자의 말과 기계 턴을 모두 센다", () => {
   const blocks = [

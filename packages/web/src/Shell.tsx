@@ -31,7 +31,7 @@ const NARROW_QUERY = "(max-width: 1100px)";
  *
  * There is one workspace now (PLAN D1). The 기획/디자인 tabs that used to
  * live here were the daemon's two cwds showing through — a planner works on
- * one 기획서 at a time, not on one half of the tool at a time.
+ * one project at a time, not on one half of the tool at a time.
  */
 export function Shell({
   daemon,
@@ -407,11 +407,11 @@ export function Shell({
         {daemon.projects.length === 0 ? (
           <section className="planner__body planner__empty">
             {/* The product's whole story, told once in miniature: an ask with
-                a 기획서 attached, and the screen that comes back.
+                a picture attached, and the screen that comes back.
                 Decorative — the picker below is the actual task. */}
             <div className="emptyhero" aria-hidden="true">
               <div className="emptyhero__ask">
-                <span className="emptyhero__attach">기획서.pdf</span>
+                <span className="emptyhero__attach">화면.png</span>
                 <span className="emptyhero__prompt">❯</span>
                 결제 실패 화면의 세 상태를 만들어 줘
               </div>
@@ -431,7 +431,7 @@ export function Shell({
                 </span>
               </div>
               <p className="emptyhero__caption">
-                말로 시켜도, 기획서를 붙여도 — 회사 디자인 시스템으로 짜인 화면이 이 자리에 떠납니다
+                말로 시켜도, 그림을 붙여도 — 회사 디자인 시스템으로 짜인 화면이 이 자리에 떠납니다
               </p>
             </div>
             <h2 className="planner__emptyTitle">프로젝트 추가</h2>

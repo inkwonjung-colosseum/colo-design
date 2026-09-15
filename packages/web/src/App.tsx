@@ -114,7 +114,7 @@ export default function App() {
     void window.coloDesignDesktop?.setNotificationPrefs?.(settings.notifications);
   }, [settings.notifications]);
 
-  // A 기획서 dropped outside the composer has no handler, and the browser
+  // A file dropped outside the composer has no handler, and the browser
   // answers a dropped file by navigating this window to the file — the whole
   // tool reads as gone. The drop is refused app-wide; the composer keeps its
   // own handler, which runs first on the way down and attaches the file.

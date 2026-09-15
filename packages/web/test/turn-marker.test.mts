@@ -59,7 +59,7 @@ test("note and per-item screen round trip; older markers read without them", () 
 test("every kind survives the round trip", () => {
   const markers: TurnMarker[] = [
     COMMENTS,
-    { kind: "brief", title: "회원 관리 기획서" },
+    { kind: "brief", title: "회원 관리 화면" },
     { kind: "gate", step: "저장한 내용 올리기" },
     {
       kind: "error",
@@ -129,15 +129,15 @@ test("the wrong shape for a known kind is not a marker", () => {
 });
 
 test("a marker in the middle of a turn is body, not a marker", () => {
-  const text = `기획서를 봐 주세요.\n<!-- colo-design:brief {"title":"회원"} -->`;
+  const text = `회원 관리 화면을 만들어 주세요.\n<!-- colo-design:brief {"title":"회원"} -->`;
   assert.deepEqual(readTurn(text), { marker: null, body: text });
 });
 
 test("an older build's extra fields are ignored, missing ones blank out", () => {
-  const text = '<!-- colo-design:brief {"title":"회원 관리 기획서","path":"ENG/회원.md"} -->\n본문';
+  const text = '<!-- colo-design:brief {"title":"회원 관리 화면","path":"ENG/회원.md"} -->\n본문';
   assert.deepEqual(readTurn(text).marker, {
     kind: "brief",
-    title: "회원 관리 기획서",
+    title: "회원 관리 화면",
   });
 
   const bare = "<!-- colo-design:gate {} -->\n본문";

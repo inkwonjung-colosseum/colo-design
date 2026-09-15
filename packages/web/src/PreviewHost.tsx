@@ -150,6 +150,24 @@ export function PreviewHost({
 
   /** 화면·상태 매트릭스 (커미티 2026-09-15 B-1+A): 선언 전부와 본 곳 표식. */
   const [matrixOpen, setMatrixOpen] = useState(false);
+  /** 매트릭스의 "안 본 상태만" — 커버리지 도구의 필터: 기본은 전체 보기. */
+  const [unseenOnly, setUnseenOnly] = useState(false);
+  const cellSeen = (route: string, state: string) =>
+    visitedCells?.has(`${route}|${state}`) ?? false;
+  const unseenTotal = screens.reduce(
+    (count, screen) =>
+      count + screen.states.filter((state) => !cellSeen(screen.route, state)).length,
+    0,
+  );
+  /** 토글이 켜지면 본 칸은 빠진다 — 행에 남은 칸이 없으면 행도 함께. */
+  const matrixScreens = unseenOnly
+    ? screens
+        .map((screen) => ({
+          ...screen,
+          states: screen.states.filter((state) => !cellSeen(screen.route, state)),
+        }))
+        .filter((screen) => screen.states.length > 0)
+    : screens;
   useEffect(() => {
     if (!matrixOpen) return;
     const onKey = (event: KeyboardEvent) => {
@@ -365,7 +383,7 @@ export function PreviewHost({
               className={matrixOpen ? "preview__state preview__state--on" : "preview__state"}
               aria-haspopup="true"
               aria-expanded={matrixOpen}
-              title="선언된 화면과 상태를 한눈에 — 이 수정 이후 본 곳에 표식이 붙습니다"
+              title="선언된 화면과 상태를 한눈에 — 이 수정 이후 본 곳에 표식이 붙습니다. 화면 이름으로 찾으려면 ⌘K"
               onClick={() => setMatrixOpen((open) => !open)}
             >
               화면 목록
@@ -378,19 +396,43 @@ export function PreviewHost({
                   aria-label="화면 목록 닫기"
                   onClick={() => setMatrixOpen(false)}
                 />
-                <div className="selector__menu preview__matrix" role="menu" aria-label="화면 목록">
-                  {screens.map((screen) => (
-                    <div className="preview__mrow" key={screen.route}>
+                <div className="selector__menu preview__matrix" role="group" aria-label="화면 목록">
+                  {/* 커버리지 필터 (감사 위원회): 이 패널의 질문은 "아직 안 본
+                      곳이 어디냐" — 이름 검색은 ⌘K 가 이미 한다. 기본은 전체
+                      보기: 한눈 커버리지가 이 패널의 본령이니. */}
+                  <div className="preview__mfilter">
+                    <button
+                      type="button"
+                      className={
+                        unseenOnly ? "preview__state preview__state--on" : "preview__state"
+                      }
+                      aria-pressed={unseenOnly}
+                      title={
+                        unseenOnly
+                          ? "모든 화면과 상태를 봅니다"
+                          : "이 수정 이후 아직 보지 않은 상태만 골라 봅니다"
+                      }
+                      onClick={() => setUnseenOnly((v) => !v)}
+                    >
+                      안 본 상태만{unseenTotal > 0 ? ` ${unseenTotal}` : ""}
+                    </button>
+                  </div>
+                  {matrixScreens.map((screen) => (
+                    <div
+                      className="preview__mrow"
+                      key={screen.route}
+                      role="group"
+                      aria-label={screen.title}
+                    >
                       <span className="preview__mtitle">{screen.title}</span>
                       <span className="preview__mstates">
                         {screen.states.map((state) => {
-                          const seen = visitedCells?.has(`${screen.route}|${state}`) ?? false;
+                          const seen = cellSeen(screen.route, state);
                           const on = current?.route === screen.route && activeState === state;
                           return (
                             <button
                               key={state}
                               type="button"
-                              role="menuitem"
                               className={
                                 on ? "preview__state preview__state--on" : "preview__state"
                               }
@@ -412,6 +454,9 @@ export function PreviewHost({
                       </span>
                     </div>
                   ))}
+                  {unseenOnly && matrixScreens.length === 0 && (
+                    <p className="preview__mempty">모든 상태를 확인했습니다</p>
+                  )}
                 </div>
               </>
             )}
@@ -604,7 +649,16 @@ export function PreviewHost({
                 type="button"
                 className={loading ? "frame__toolsbtn frame__toolsbtn--busy" : "frame__toolsbtn"}
                 aria-busy={loading || undefined}
-                title={loading ? "불러오는 중 — 누르면 중단합니다" : "미리보기 새로 고침"}
+                /* 중단은 네이티브 뷰에만 있는 동작 — iframe 에서는 누르면
+                   다시 불러오므로 말을 그 동작에 맞춘다. */
+                aria-label={loading && native ? "미리보기 불러오기 중단" : "미리보기 새로 고침"}
+                title={
+                  loading
+                    ? native
+                      ? "불러오는 중 — 누르면 중단합니다"
+                      : "불러오는 중 — 누르면 다시 불러옵니다"
+                    : "미리보기 새로 고침"
+                }
                 onClick={() => {
                   if (!native) {
                     setReloadNonce((n) => n + 1);

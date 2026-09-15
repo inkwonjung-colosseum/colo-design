@@ -30,6 +30,26 @@ export const MODE_LABEL: Record<PermissionMode, string> = {
 };
 
 /**
+ * 확인 방식의 사람 말 — 온보딩이 가르치는 어휘("바로 실행"·"물어보고 실행")를
+ * 칩과 설정이 그대로 이어 쓴다. 온보딩에서 "바로 실행"을 고른 계획자가 칩의
+ * "Bypass" 를 자기가 고른 것으로 못 알아보는 단절이 감사에서 지적됐다.
+ * CLI 원명은 버리지 않는다 — 메뉴 행에서 괄호 안 부제로 남아 검색·붙여넣기·
+ * 터미널 매칭이 계속 먹히게 (위 MODE_LABEL 주석의 근거는 유효하다).
+ */
+export const MODE_LABEL_KO: Record<PermissionMode, string> = {
+  default: "물어보고 실행",
+  plan: "계획만 세우기",
+  acceptEdits: "편집은 바로 실행",
+  dontAsk: "물어보지 않기",
+  bypassPermissions: "바로 실행",
+};
+
+/** 메뉴 행이 말하는 이름: 사람 말이 앞서고 CLI 원명이 조용히 따라간다. */
+export function modeMenuLabel(mode: PermissionMode): string {
+  return `${MODE_LABEL_KO[mode]} (${MODE_LABEL[mode]})`;
+}
+
+/**
  * The 확인 방식 choices both menus offer — 설정 and the composer popover
  * alike, in widening order. `dontAsk` stays reachable through the API but off
  * the menus.

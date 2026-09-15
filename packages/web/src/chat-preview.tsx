@@ -18,14 +18,13 @@ const blocks: Block[] = [
     id: "u1",
     text: "admin에 사용자 관리 페이지에 화면 구현해줘\nhttps://colosseum.atlassian.net/wiki/spaces/PROD/pages/1785659411/Platform+v1.2",
     images: 0,
-    files: [],
   },
   {
     type: "thinking",
     id: "t1",
     agentId: null,
     streaming: false,
-    text: "I'll start by reading the skill procedure and the referenced spec documents.\nBoth specs read in full. Now checking CDS catalog and existing screen conventions.",
+    text: "I'll start by reading the skill procedure and the screens the ask names.\nThe four screens are clear. Now checking CDS catalog and existing screen conventions.",
   },
   {
     type: "tool",
@@ -37,6 +36,15 @@ const blocks: Block[] = [
     result: "ok — 0 errors",
   },
   {
+    // 실사의 모양: 한 턴의 생각은 도구를 부를 때마다 새 블록으로 끊긴다 —
+    // 작업 과정이 꺼진 테이프에서 이 조각들이 이웃이 되어 접힌 줄로 쌓였다.
+    type: "thinking",
+    id: "t1b",
+    agentId: null,
+    streaming: false,
+    text: "타입검사는 깨끗하다. 목록 화면의 관례를 먼저 읽고 CDS 카탈로그와 맞춰 본다.",
+  },
+  {
     type: "tool",
     id: "k2",
     name: "Read",
@@ -44,6 +52,13 @@ const blocks: Block[] = [
     agentId: null,
     done: true,
     result: "142 lines",
+  },
+  {
+    type: "thinking",
+    id: "t1c",
+    agentId: null,
+    streaming: false,
+    text: "MemberTable 이라는 이름은 이 레포에 없다. 테이블은 CDS Table 을 직접 쓰는 관례다.",
   },
   {
     type: "tool",
@@ -60,7 +75,7 @@ const blocks: Block[] = [
     id: "a1",
     agentId: null,
     streaming: false,
-    text: "기획서 범위가 네 화면이네요 — **목록 · 등록 · 상세 · 수정**으로 나눠 만들겠습니다.\n\n- 목록: 회원번호·이름·가입일·상태를 한 줄로\n- 상세: 기본 정보와 상태 변경\n\nCDS `Table`, `TextField`, `Timeline` 컴포넌트를 그대로 사용합니다.",
+    text: "말씀하신 범위가 네 화면이네요 — **목록 · 등록 · 상세 · 수정**으로 나눠 만들겠습니다.\n\n- 목록: 회원번호·이름·가입일·상태를 한 줄로\n- 상세: 기본 정보와 상태 변경\n\nCDS `Table`, `TextField`, `Timeline` 컴포넌트를 그대로 사용합니다.",
   },
   {
     type: "tool",
@@ -84,7 +99,7 @@ const blocks: Block[] = [
     id: "a3",
     agentId: null,
     streaming: false,
-    text: '전체 흐름을 그림으로 정리하면 이렇습니다.\n\n```mermaid\nflowchart LR\n    spec["기획서"] --> chat["화면 대화"]\n    chat --> preview["미리보기"]\n    preview -->|"코멘트 핀"| chat\n    preview --> save["저장 · 넘기기"]\n```\n\n아래는 파싱에 실패한 다이어그램 — 원본 코드 블록으로 폴백한다.\n\n```mermaid\nflowchart LR\n    A[기획서 -->\n```',
+    text: '전체 흐름을 그림으로 정리하면 이렇습니다.\n\n```mermaid\nflowchart LR\n    ask["화면 요청"] --> chat["화면 대화"]\n    chat --> preview["미리보기"]\n    preview -->|"코멘트 핀"| chat\n    preview --> save["저장 · 넘기기"]\n```\n\n아래는 파싱에 실패한 다이어그램 — 원본 코드 블록으로 폴백한다.\n\n```mermaid\nflowchart LR\n    A[화면 요청 -->\n```',
   },
   {
     type: "thinking",
@@ -111,7 +126,6 @@ const runningBlocks: Block[] = [
     id: "u2",
     text: "목록에 검색창도 추가해줘",
     images: 0,
-    files: [],
   },
   {
     type: "thinking",

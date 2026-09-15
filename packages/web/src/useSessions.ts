@@ -501,7 +501,6 @@ export function useSessions(
     if (!id) return await startSession(undefined, name);
     // A stored thread the planner picked from the list: continue it in place.
     // Forking is a developer's concern, not theirs.
-    //
     // 결함(죽은 질의에 말이 사라진다): a live thread whose CLI crashed —
     // state error, the crash card's own state — must not be sent into.
     // Nothing consumes that queue anymore, so the words would sink without an
@@ -522,26 +521,15 @@ export function useSessions(
   const queue = active?.queue ?? [];
   const dropped = active?.dropped ?? [];
 
-  const toAttachments = (payload: NonNullable<QueuedSendPayload>): Attachment[] => [
-    ...payload.images.map(
+  const toAttachments = (payload: NonNullable<QueuedSendPayload>): Attachment[] =>
+    payload.images.map(
       (image, index): Attachment => ({
-        kind: "image",
         name: `이미지 ${index + 1}`,
         mediaType: image.mediaType,
         data: image.data,
         size: Math.floor((image.data.length * 3) / 4),
       }),
-    ),
-    ...payload.files.map(
-      (file): Attachment => ({
-        kind: "document",
-        name: file.name,
-        mediaType: file.mediaType,
-        data: file.data,
-        size: Math.floor((file.data.length * 3) / 4),
-      }),
-    ),
-  ];
+    );
 
   const takeQueued = async (itemId: string) => {
     if (!activeId) return null;
@@ -578,12 +566,7 @@ export function useSessions(
       await api.send(
         target,
         text,
-        attachments
-          .filter((a) => a.kind === "image")
-          .map(({ mediaType, data }) => ({ mediaType, data })),
-        attachments
-          .filter((a) => a.kind === "document")
-          .map(({ name, mediaType, data }) => ({ name, mediaType, data })),
+        attachments.map(({ mediaType, data }) => ({ mediaType, data })),
       );
       void refresh();
     } catch (e) {

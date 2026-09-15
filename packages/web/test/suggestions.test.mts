@@ -7,7 +7,6 @@ const screen = (title: string, states: string[] = ["default"]): ColoDesignScreen
   route: `/s/${encodeURIComponent(title)}`,
   title,
   states,
-  spec: null,
 });
 
 test("a repo that declares nothing keeps the generic sentences", () => {

@@ -4,6 +4,7 @@ import { type Attachment, Composer } from "./Composer";
 import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "./components";
 import type { Daemon } from "./daemon-client";
 import { ChevronDownIcon, PencilIcon, TrashIcon } from "./icons";
+import { composing } from "./ime";
 import { pinsToTurn } from "./preview-turns";
 import type { MidTurnSend, SendKey } from "./settings";
 import { suggestionsFromScreens } from "./suggestions";
@@ -78,8 +79,8 @@ export function ChatColumn({
   const [restoring, setRestoring] = useState(false);
 
   // --- 커미티 A-1 (2026-09-15): 대화 열 전체가 첨부를 받는다 --------------------
-  // 드롭 핸들은 컴포저 상자에만 있어서, 두 번째 기획서는 빈 대화가 아닌 곳에
-  // 떨어지면 조용히 사라졌다(App.tsx 의 전역 거절이 창 내비게이션만 막았을 뿐).
+  // 드롭 핸들은 컴포저 상자에만 있어서, 빈 대화가 아닌 곳에 떨어진 그림은
+  // 조용히 사라졌다(App.tsx 의 전역 거절이 창 내비게이션만 막았을 뿐).
   // 컴포저의 readAttachments 를 등록받아 대화 열 전체가 같은 손을 쓴다.
   // dragleave 는 자식 진입에도 발사되므로 깊이 카운터로 편렬을 잡는다.
   const attachFiles = useRef<((files: FileList | File[]) => void) | null>(null);
@@ -92,13 +93,6 @@ export function ChatColumn({
   const startWithAttachment = () => {
     setAttachNonce((nonce) => nonce + 1);
     setSeed({ text: "이걸 화면으로 만들어 줘", nonce: seed.nonce + 1 });
-  };
-  /** 커미티 C-5: 첨부 칩 클릭 — 데몬이 specs/ 아래로 검증한 절대경로를 OS 로. */
-  const openSpec = (relPath: string) => {
-    void api
-      .specPath(relPath)
-      .then(({ path }) => window.coloDesignDesktop?.openSpec?.(path))
-      .catch((e: Error) => showError(e.message));
   };
   // 고쳐서 다시 보내기 (PLAN D95): the planner's own words return to the
   // composer for an edit; the nonce re-fires the seed on every click.
@@ -299,9 +293,8 @@ export function ChatColumn({
               onChange={(event) => setDraft(event.target.value)}
               onBlur={commitRename}
               onKeyDown={(event) => {
-                // Enter that commits the hangul must not also commit the
-                // rename (isComposing, legacy keyCode 229 — 커미티 F-C1).
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                // Enter that commits the hangul must not commit the rename.
+                if (composing(event)) return;
                 if (event.key === "Enter") commitRename();
                 if (event.key === "Escape") setRenaming(false);
               }}
@@ -424,7 +417,6 @@ export function ChatColumn({
               const found = screens.find((screen) => screen.title === title);
               if (found) onOpenScreen(found.route, state ?? found.states[0] ?? null);
             }}
-            onOpenSpec={openSpec}
             onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={restoreCheckpoint}
