@@ -811,25 +811,36 @@ pnpm test:desktop-cover   # 오프라인 — Electron: 무대의 덮개(D65) —
 pnpm test:crash           # 오프라인 — 죽은 CLI 로부터의 회복: 크래시 카드 · 그 이후 send 는 거절 · 같은 id 의 resume 이 새 CLI 에서 대화를 이어받는다
 pnpm test:midturn-queue   # 오프라인 — 다음 턴에 보내기: 도는 턴에 보낸 말이 스텁 CLI 의 stdin 에 닿지 않고, 턴이 끝난 뒤에야 제 턴으로 나간다
 pnpm test:turn-clock      # 오프라인 — 진행 시계의 와이어: 보내기가 시계를 놓고, 확인 카드 앞에서도 같은 시작을 유지하며(목록으로 새 창도 같은 시작을 읽는다), 턴이 끝나면 사라진다
-pnpm test                 # 위 전부를 5개 병렬 레인으로(아래)
+pnpm test                 # 오프라인 전부를 병렬 레인으로(아래) — real-Claude 는 뺀다
+pnpm test:real            # REAL CLAUDE 두 스위트만 — 구독 사용량을 쓰는 opt-in
 pnpm test:smoke "<url>"   # 이미 도는 데몬에 대한 생존 검사; 아무것도 시작하지 않는다
 ```
 
-`pnpm test` 는 모든 것을 `scripts/test-parallel.mjs` 로 돌린다 — 다섯 레인이
-동시에: L1 단위(`node --test`, 창도 포트도 없다), L2 오프라인 데몬 소켓 e2e,
-L3 일곱 브라우저 스위트(각자 고정 포트에서, 레인 안은 순서대로), L4
-real-Claude 두 스위트, L5 Electron 앱 스위트(단위 드라이버 · comments ·
-smoke · switch · cover — 앱의 단일 인스턴스 잠금 때문에 한 레인에서 줄을
-선다). 레인별 로그는 `.test-logs/`(gitignored)에 쌓이고, `pnpm test:sequential`
-은 같은 스위트 집합을 한 번에 하나씩 돌려 준다.
+`pnpm test` 는 오프라인 전부를 `scripts/test-parallel.mjs` 로 돌린다 — 네
+레인이 동시에: L1 단위(`node --test`, 창도 포트도 없다), L2 오프라인 데몬
+소켓 e2e, L3 일곱 브라우저 스위트(각자 고정 포트에서, 레인 안은 순서대로),
+L5 Electron 앱 스위트(단위 드라이버 · comments · smoke · switch · cover —
+각 스위트가 web-dist 를 다시 채우는 복사가 유일한 공유 상태라, 러너가 한 번
+스테이징하고 스위트에는 `COLO_TEST_SKIP_WEBDIST=1` 을 쥐어 준다). L4
+real-Claude 두 스위트는 구독을 쓰고 머신·계정 성향을 타므로 `pnpm test:real`
+로만 돌린다. 스위트별 로그는 `.test-logs/`(gitignored)에 쌓이고,
+`pnpm test:sequential` 은 같은 스위트 집합을 한 번에 하나씩 돌려 준다.
 
-빌드는 러너가 레인보다 먼저 한 번 돌리고, 레인에는 `COLO_TEST_SKIP_BUILD=1`
+빌드는 러너가 레인보다 먼저 한 번 돌린다 — 요청된 레인이 읽는 패키지만
+(L1·L2 는 web 번들 없이 daemon+protocol). 레인에는 `COLO_TEST_SKIP_BUILD=1`
 을 쥐어 준다. 전에는 Electron 스위트 넷이 저마다 네 패키지를 다시 지었다 —
 같은 컴파일을 반복하는 데 그치지 않고, `tsc` 가 `packages/daemon/dist` 를 다시
 쓰는 동안 L2·L3 가 바로 그 파일을 import 해서 세 스위트가 모듈 로더 오류로
 죽은 판이 있었다. 이미 지어 둔 트리에 대고 한 스위트만 손으로 돌릴 때도 같은
 변수를 앞에 붙이면 재빌드를 건너뛴다. ci 의 레인 잡은 빌드를 제 스텝으로
 돌리므로 그 변수를 그대로 쓴다.
+
+레인 안의 스위트는 기본 순서대로지만, `COLO_TEST_LANE_CONCURRENCY=<n>` 으로
+한 레인 안도 겹쳐 돌릴 수 있다 — L2·L3 는 전부 free port+전용 tmpdir 라
+로컬에서 켜도 충돌하지 않는다(freePort() 의 확인-바인드 사이 창에서 아주
+드물게 같은 포트를 뽑을 수 있어 CI 는 기본값을 지킨다). 각 스위트는 제
+프로세스·로그·진행 감지 상한을 가진다 — 출력이 멈춘 스위트만 시간 초과로
+죽고, 실패한 스위트가 뒤 스위트의 결과를 삼키지 않는다.
 
 fixture 설계를 한 문단으로 — git 원격은 최소 `colo-design.json` 앱을 담은 bare
 레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude CLI 는 전부 스텁 스크립트다.

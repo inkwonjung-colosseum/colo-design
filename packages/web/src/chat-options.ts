@@ -21,7 +21,7 @@ export const EFFORT_LABEL: Record<EffortLevel, string> = {
   max: "Max",
 };
 
-export const MODE_LABEL: Record<PermissionMode, string> = {
+const MODE_LABEL: Record<PermissionMode, string> = {
   default: "Default",
   plan: "Plan",
   acceptEdits: "Accept Edits",

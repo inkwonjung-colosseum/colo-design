@@ -3,6 +3,7 @@ node_modules/
 .zcode/
 .claude/
 dist/
+*.tsbuildinfo
 *.log
 .DS_Store
 .hub/

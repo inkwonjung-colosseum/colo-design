@@ -39,7 +39,10 @@ export function buildDesktopBundle() {
     }
   }
   // The copy stays either way: it is a second's work, and it is what makes
-  // the app's bundle the one the tree just produced.
+  // the app's bundle the one the tree just produced. test-parallel.mjs stages
+  // web-dist once for the whole lane instead, so its suites do not rmSync a
+  // sibling's copy mid-run — it hands them COLO_TEST_SKIP_WEBDIST=1.
+  if (process.env.COLO_TEST_SKIP_WEBDIST) return;
   const webDist = join(desktop, "web-dist");
   rmSync(webDist, { recursive: true, force: true });
   mkdirSync(webDist, { recursive: true });
