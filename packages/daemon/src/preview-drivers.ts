@@ -50,7 +50,7 @@ export class PreviewDrivers {
   private readonly bySession = new Map<string, PreviewDriver>();
   /**
    * The connected repo's declared screens (the `colo-design.screens`
-   * envelope's cache, PLAN D7) — the list `screen_list` serves, filled by
+   * envelope's cache, PLAN D7) - the list `screen_list` serves, filled by
    * `setScreens` and emptied by a project switch. Read on every call,
    * never snapshotted into the tools.
    */
@@ -58,15 +58,21 @@ export class PreviewDrivers {
   /**
    * 이 턴이 연 화면들 (PLAN D61 게이트): `screen_open` 이 실제로 열어 낸
    * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 만진 화면"이다.
-   * 키는 `route\nstate` — 같은 화면의 같은 상태를 두 번 열어도 한 번 본다.
+   * 키는 `route\nstate` - 같은 화면의 같은 상태를 두 번 열어도 한 번 본다.
    */
   readonly openedThisTurn = new Map<string, Map<string, GateScreen>>();
   /**
    * 이미 게이트가 한 번 말을 건 세션. 사용자가 다시 보내기 전까지는 다시
-   * 걸지 않는다 — 게이트가 부른 턴이 또 게이트를 부르면 기계 둘이 서로
+   * 걸지 않는다 - 게이트가 부른 턴이 또 게이트를 부르면 기계 둘이 서로
    * 답하며 구독을 태운다. 두 번째 문제는 사람의 다음 턴이 본다.
    */
   readonly gatedSessions = new Set<string>();
+  /**
+   * The preview server's own origin, captured when `toolsFor` mints a
+   * driver. `noteOpened` keeps only screens inside it — allowed extra
+   * origins are the repo's other servers, not screens the gate re-verifies.
+   */
+  private previewOrigin: string | null = null;
 
   constructor(private readonly deps: PreviewDriverDeps) {}
 
@@ -100,8 +106,16 @@ export class PreviewDrivers {
     this.bySession.set(sessionId, driver);
   }
 
-  /** `screen_open` 하나 — 이 턴의 목록에 담는다. */
+  /** `screen_open` 하나 — 이 턴의 목록에 담는다. preview origin 밖의 화면은
+   *  게이트가 재검증할 대상이 아니므로 담지 않는다. */
   noteOpened(sessionId: string, route: string, state: string | null): void {
+    if (this.previewOrigin !== null) {
+      try {
+        if (new URL(route, this.previewOrigin).origin !== this.previewOrigin) return;
+      } catch {
+        return;
+      }
+    }
     const opened = this.openedThisTurn.get(sessionId) ?? new Map<string, GateScreen>();
     opened.set(`${route}\n${state ?? ""}`, { route, state });
     this.openedThisTurn.set(sessionId, opened);
@@ -124,7 +138,9 @@ export class PreviewDrivers {
     if (!repo?.isCloned()) return null;
     const status = await repo.status().catch(() => null);
     if (!status?.previewUrl) return null;
-    const driver = factory.for(status.previewUrl);
+    const origins = repo.repoConfig()?.preview.origins ?? [];
+    this.previewOrigin = new URL(status.previewUrl).origin;
+    const driver = factory.for(status.previewUrl, origins);
     const tools = createPreviewTools(driver, () => this.declaredScreens, onOpened);
     if (!tools) {
       // A driver that never got tools must not leave a window behind.
@@ -176,7 +192,8 @@ export class PreviewDrivers {
       ?.status()
       .catch(() => null);
     if (!status?.previewUrl) return done();
-    const driver = factory.for(status.previewUrl);
+    const origins = this.deps.activeRepo()?.repoConfig()?.preview.origins ?? [];
+    const driver = factory.forIsolated(status.previewUrl, origins);
     let troubles: ScreenTrouble[] = [];
     try {
       troubles = await inspectScreens(driver, screens);
@@ -256,7 +273,7 @@ export class PreviewDrivers {
     if (repo.repoConfig()?.shots === false) return [];
     const status = await repo.status().catch(() => null);
     if (!status?.previewUrl || this.declaredScreens.length === 0) return [];
-    const driver = factory.for(status.previewUrl);
+    const driver = factory.forIsolated(status.previewUrl, repo.repoConfig()?.preview.origins ?? []);
     const shots: HandoffShot[] = [];
     try {
       for (const screen of this.declaredScreens) {

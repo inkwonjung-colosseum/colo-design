@@ -44,8 +44,8 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   onOpenProject: subscribe<string>("colodesign:open-project"),
   preview: {
     native: true as const,
-    mount: (url: string, epoch: number | null) =>
-      ipcRenderer.invoke("preview:mount", { url, epoch }),
+    mount: (url: string, epoch: number | null, origins?: string[]) =>
+      ipcRenderer.invoke("preview:mount", { url, epoch, origins }),
     /** Takes the page off screen — it stays alive for the planner's return. */
     unmount: () => ipcRenderer.invoke("preview:unmount"),
     bounds: (rect: { x: number; y: number; width: number; height: number }) =>

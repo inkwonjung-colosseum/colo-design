@@ -64,8 +64,10 @@ declare global {
          * Puts the page for this preview on screen; `epoch` names the server
          * process behind it (RepoStatus.previewEpoch). A page kept from an
          * earlier visit comes back as it was — under a new epoch it reloads.
+         * `origins` are the extra servers the repo allows the pane to open
+         * (RepoStatus.previewOrigins).
          */
-        mount?: (url: string, epoch: number | null) => Promise<unknown>;
+        mount?: (url: string, epoch: number | null, origins?: string[]) => Promise<unknown>;
         /** Takes the page off screen; it stays alive for the return. */
         unmount?: () => Promise<unknown>;
         bounds?: (rect: {

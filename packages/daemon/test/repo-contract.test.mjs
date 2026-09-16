@@ -40,7 +40,7 @@ test("the contract is derived from the repo's own files — the config names onl
       check: "pnpm run check",
       build: "pnpm run build",
       registry: { host: "npm.pkg.github.com", scope: "@colosseumcoinckr" },
-      preview: { command: "pnpm run dev", port: 5274 },
+      preview: { command: "pnpm run dev", port: 5274, origins: [] },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -203,6 +203,23 @@ test("override validation errors are Korean, name the field, and say what it sho
     /registry는 \{ "host", "scope" \} 형태여야 합니다/,
   );
   assert.throws(() => parseRepoOverrides('{"shots":"no"}'), /shots는 true 또는 false여야 합니다/);
+  assert.throws(
+    () => parseRepoOverrides('{"preview":{"origins":"http://localhost:6006"}}'),
+    /preview\.origins는 주소 문자열의 배열/,
+  );
+  assert.throws(
+    () => parseRepoOverrides('{"preview":{"origins":["file:///etc/passwd"]}}'),
+    /preview\.origins 항목이 http\(s\) 주소가 아닙니다/,
+  );
+  // 경로까지 적어도 origin 으로 정규화되고, 중복은 한 번만 남는다.
+  assert.deepEqual(
+    parseRepoOverrides(
+      JSON.stringify({
+        preview: { origins: ["http://localhost:6006/iframe.html", "http://localhost:6006"] },
+      }),
+    ).preview?.origins,
+    ["http://localhost:6006"],
+  );
   assert.throws(() => parseRepoOverrides("{not json"), /colo-design\.json을 해석할 수 없습니다/);
   assert.throws(() => parseRepoOverrides("[]"), /colo-design\.json은 객체여야 합니다/);
   for (const host of [
