@@ -7,6 +7,7 @@ dist/
 *.log
 .DS_Store
 .hub/
+.local/
 # 브라우저·Electron e2e 가 남기는 스크린샷 — 매 실행 다시 쓰이는 산출물이라
 # 커밋하면 바이너리 diff 만 쌓인다. 검사는 픽셀이 아니라 단언이 한다.
 packages/web/test/*.png
@@ -14,6 +15,7 @@ packages/desktop/test/*.png
 packages/desktop/release/
 packages/desktop/web-dist/
 packages/desktop/resources/bin/
+packages/desktop/.dev-userData/
 .test-logs/
 # 수동으로 뭉친 데스크톱 산물(공유용 tgz) — 릴리스 에셋은 워크플로우가 짓는다.
 /*.tgz
