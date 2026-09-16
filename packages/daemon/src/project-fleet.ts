@@ -125,7 +125,7 @@ export class ProjectFleet {
         root: paths.repoRoot,
         url: repo.url,
         baseBranch: repo.baseBranch,
-        cycle: { branch: repo.branch, handoff: repo.handoff },
+        cycle: { branch: repo.branch, handoff: repo.handoff, commentsSince: repo.commentsSince },
         // Only the project on screen may START a preview (switch race fence).
         active: slug === this.deps.registry.activeSlug(),
         // The registry owns the planner's word on this repo's commands.

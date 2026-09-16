@@ -128,6 +128,67 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
   }
 });
 
+test("첫 저장 전에 찍힌 핀도 넘긴 요청 본문의 수정 요청 절에 온다 — 앵커는 사이클의 태생이다 (D93 후속)", async () => {
+  const dir = workdir("hub-handoff-pins-");
+  const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
+  process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+      previewCommand: 'node -e "process.exit(0)"',
+    });
+    const requests = [];
+    // 사이클의 앵커는 핀보다 앞선다 — 프로젝트가 태어날 때 심기는 값이다.
+    const cycle = { branch: null, handoff: null, commentsSince: new Date().toISOString() };
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      cycle,
+      onStatus: () => undefined,
+      gitHubClient: () => stubPullRequestClient(requests),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    // The standard 핀 → 저장 flow: the pin lands BEFORE anything is committed,
+    // so a commit-time anchor would sort it out of its own cycle's body.
+    const commentsFile = join(dir, "comments.json");
+    writeFileSync(
+      commentsFile,
+      JSON.stringify([
+        {
+          id: "pin-1",
+          screen: "member/MemberList",
+          state: "default",
+          text: "이 버튼은 더 크게",
+          elementText: "div",
+          at: new Date().toISOString(),
+          resolved: true,
+        },
+      ]),
+    );
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>핀 실어 넘기기</p>\n");
+    const saved = await workspace.save({ message: "핀 실어 넘기기" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    const handed = await workspace.handoff({ title: "핀 실어 넘기기", commentsFile });
+    assert.equal(handed.stage, "handed-off", handed.detail ?? handed.stage);
+    assert.match(
+      requests[0].body,
+      /### 수정 요청/,
+      "본문에 수정 요청 절이 없으면 기획자의 핀이 개발자에게 닿지 않는다",
+    );
+    assert.match(requests[0].body, /이 버튼은 더 크게/);
+  } finally {
+    if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
+    else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("colo-design.json#shots: false refuses the captures — no files, no section", async () => {
   const dir = workdir("hub-handoff-noshots-");
   const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;

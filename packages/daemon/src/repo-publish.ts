@@ -244,17 +244,22 @@ export class PublishCycle {
     let body = options.body ?? "";
     // D93: the planner's comment history rides the pull request body — the
     // developer reads what changed and why without leaving the PR.
+    // D93 후속: the anchor is the CYCLE's birth (project creation or the
+    // previous request's landing), not the branch's first commit — the pins
+    // that motivated this cycle's changes are always logged BEFORE the first
+    // 저장 lands, so a commit-time anchor silently dropped the section on
+    // every first handoff. A cycle started before the anchor existed still
+    // falls back to the commit time, which is no worse than before.
     try {
-      const since = (
-        await this.core.git([
-          "log",
-          "--reverse",
-          "--format=%cI",
-          `origin/${this.core.baseBranch}..${branch}`,
-        ])
-      )
-        .split("\n")[0]
-        ?.trim();
+      const since =
+        this.core.commentsSince ??
+        (
+          await this.core
+            .git(["log", "--reverse", "--format=%cI", `origin/${this.core.baseBranch}..${branch}`])
+            .catch(() => "")
+        )
+          .split("\n")[0]
+          ?.trim();
       if (options.commentsFile && since) {
         const section = buildCommentsSection(
           readComments(options.commentsFile),
@@ -439,6 +444,11 @@ export class PublishCycle {
     }
     this.endedHandoff = null;
     this.core.setCycle(null, handoff);
+    // D93 후속: the ended cycle's pins belonged to its request — 다음 넘기기의
+    // `### 수정 요청` 절은 이 순간 이후의 핀만 읽는다. GitHub 가 merged_at 을
+    // 주지 않으니 착지의 순간이 앵커다 — 반영 전의 늦은 핀 한두 개가 다음
+    // 요청으로 넘어가는 것이 저장 때마다 묻는 것보다 싸다.
+    this.core.rotateCommentsCycle();
     if (handoff.state === "merged") {
       // 반영됨 (PLAN D52): the cycle's checkpoints snapshot a worktree the
       // developer has already absorbed — restoring them now would move the work

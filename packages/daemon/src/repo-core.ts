@@ -258,9 +258,13 @@ export interface RepoWorkspaceOptions {
   /** Persistence hook for a moved url — see onUrlChange in update(). */
   onUrlChange?: (url: string | null) => void;
   /** Cycle state restored from the project registry, if any. */
-  cycle?: { branch: string | null; handoff: HandoffStatus | null };
+  cycle?: { branch: string | null; handoff: HandoffStatus | null; commentsSince?: string | null };
   /** Where the cycle is written back; the registry is the only store. */
-  onCycleChange?: (cycle: { branch: string | null; handoff: HandoffStatus | null }) => void;
+  onCycleChange?: (cycle: {
+    branch: string | null;
+    handoff: HandoffStatus | null;
+    commentsSince?: string | null;
+  }) => void;
   /** Built per call so a PAT changed mid-run reaches the next request. */
   gitHubClient?: () => GitHubClient | null;
   /** Claude Code CLI executable for the summarizer's one turn (D51). */
@@ -371,6 +375,15 @@ export class RepoCore {
 
   openHandoff: HandoffStatus | null;
 
+  /**
+   * 이 사이클의 핀 앵커 (D93 후속): 이 시각 이후의 코멘트가 이 사이클의 것이다 —
+   * 넘기기가 요청 본문의 `### 수정 요청` 절을 여기부터 읽는다. 사이클이
+   * 태어난 시각(프로젝트 생성 · 이전 요청의 착지)에 새로 쓰이고, setCycle 이
+   * 레지스트리로 같이 나른다. 널이면(업그레이드 전에 시작한 사이클) 넘기기가
+   * 예전처럼 브랜치 첫 커밋 시각으로 대신 읽는다.
+   */
+  commentsSince: string | null;
+
   /** D94: this workspace was created with Claude-prepared connection. */
   bootstrapRequested = false;
 
@@ -381,7 +394,11 @@ export class RepoCore {
   prepareBootstrap: (() => Promise<boolean>) | null = null;
 
   readonly onCycleChange:
-    | ((cycle: { branch: string | null; handoff: HandoffStatus | null }) => void)
+    | ((cycle: {
+        branch: string | null;
+        handoff: HandoffStatus | null;
+        commentsSince?: string | null;
+      }) => void)
     | null;
 
   readonly gitHubClient: (() => GitHubClient | null) | null;
@@ -401,9 +418,13 @@ export class RepoCore {
     /** Persistence hook for a moved url — see onUrlChange in update(). */
     onUrlChange?: (url: string | null) => void;
     /** Cycle state restored from the project registry, if any. */
-    cycle?: { branch: string | null; handoff: HandoffStatus | null };
+    cycle?: { branch: string | null; handoff: HandoffStatus | null; commentsSince?: string | null };
     /** Where the cycle is written back; the registry is the only store. */
-    onCycleChange?: (cycle: { branch: string | null; handoff: HandoffStatus | null }) => void;
+    onCycleChange?: (cycle: {
+      branch: string | null;
+      handoff: HandoffStatus | null;
+      commentsSince?: string | null;
+    }) => void;
     /** Built per call so a PAT changed mid-run reaches the next request. */
     gitHubClient?: () => GitHubClient | null;
     /** Claude Code CLI executable for the summarizer's one turn (D51). */
@@ -435,6 +456,7 @@ export class RepoCore {
     this.baseBranch = options.baseBranch ?? "main";
     this.branch = options.cycle?.branch ?? null;
     this.openHandoff = options.cycle?.handoff ?? null;
+    this.commentsSince = options.cycle?.commentsSince ?? null;
     this.bootstrapRequested = options.bootstrap ?? false;
     this.prepareBootstrap = options.prepareBootstrap ?? null;
     this.commandsApproved = options.commandsApproved ?? true;
@@ -971,7 +993,22 @@ export class RepoCore {
   setCycle(branch: string | null, handoff: HandoffStatus | null): void {
     this.branch = branch;
     this.openHandoff = handoff;
-    this.onCycleChange?.({ branch, handoff });
+    this.onCycleChange?.({ branch, handoff, commentsSince: this.commentsSince });
+    this.emit();
+  }
+
+  /**
+   * 핀 앵커를 다음 사이클로 넘긴다 (D93 후속): 방금 내려앉은 요청까지의 코멘트는
+   * 그 요청의 것이고, 이 순간 이후의 핀은 다음 넘기기의 `### 수정 요청` 절의
+   * 것이다. 사이클이 끝나는 유일한 자리(landCycle)에서 부른다.
+   */
+  rotateCommentsCycle(): void {
+    this.commentsSince = new Date().toISOString();
+    this.onCycleChange?.({
+      branch: this.branch,
+      handoff: this.openHandoff,
+      commentsSince: this.commentsSince,
+    });
     this.emit();
   }
 
