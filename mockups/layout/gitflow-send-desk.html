@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>안 2 — 만들기/보내기 두 개의 방 · Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+/* ---- 안 2: 보내기 방 — 우체국 은유 (포장 → 발송 → 배달 추적) ---- */
+.roomtab { display:flex; gap:4px; padding:3px; margin:0 0 12px;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:var(--r-md); }
+.roomtab button { flex:1; border:0; background:transparent; font:inherit; font-size:13px;
+  padding:8px 10px; border-radius:var(--r-sm); color:var(--muted); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px; }
+.roomtab button.on { background:var(--panel); color:var(--text); font-weight:600; box-shadow:var(--shadow-card); }
+.roomtab .bdg { min-width:18px; height:17px; padding:0 5px; border-radius:var(--r-pill);
+  background:var(--accent); color:#fff; font-family:var(--mono); font-size:10.5px; font-weight:600;
+  display:inline-flex; align-items:center; justify-content:center; }
+.send-col { max-width:680px; margin:0 auto; padding:26px 24px 80px; }
+.send-glabel { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600;
+  color:var(--muted); letter-spacing:.02em; margin:22px 2px 8px; }
+.send-glabel:first-of-type { margin-top:8px; }
+.send-gline { flex:1; height:1px; background:var(--line-soft); }
+.parcel { background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:16px; margin-bottom:8px; box-shadow:var(--shadow-card); }
+.parcel__head { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.parcel__title { font-size:14px; font-weight:600; }
+.parcel__items { margin:0 0 12px; padding:0; list-style:none; }
+.parcel__items li { display:flex; gap:8px; font-size:13px; color:var(--text-2); padding:5px 0;
+  border-bottom:1px solid var(--line-soft); }
+.parcel__items li:last-child { border-bottom:0; }
+.parcel__items .nm { font-weight:600; color:var(--text); }
+.parcel__acts { display:flex; gap:8px; flex-wrap:wrap; }
+.sent { display:flex; align-items:center; gap:12px; padding:12px 14px;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md); margin-bottom:8px; }
+.sent__body { flex:1; min-width:0; }
+.sent__name { font-size:13.5px; font-weight:600; }
+.sent__line { font-size:12.5px; color:var(--muted); margin-top:2px; }
+.sent__state { flex:none; font-size:12px; white-space:nowrap; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand">◐ Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <!-- 방 전환: 만들기 ↔ 보내기 -->
+    <div class="roomtab">
+      <button>◐ 만들기</button>
+      <button class="on">✉ 보내기 <span class="bdg">1</span></button>
+    </div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">보내기</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="work" style="overflow:auto">
+      <div class="send-col">
+        <div class="send-glabel">보낼 것 <span class="send-gline"></span></div>
+
+        <div class="parcel">
+          <div class="parcel__head">
+            <span class="parcel__title">📦 아직 담기지 않은 변경 3건</span>
+            <span class="grow"></span>
+            <span class="chip chip--warn">저장 안 함</span>
+          </div>
+          <ul class="parcel__items">
+            <li><span class="nm">로그인 화면</span><span>버튼 색 · 문구 바꿈</span></li>
+            <li><span class="nm">장바구니</span><span>빈 상태 화면 새로 만듦</span></li>
+            <li><span class="nm">회원 관리</span><span>표 여백 조정</span></li>
+          </ul>
+          <div class="parcel__acts">
+            <button class="btn btn--primary">저장하고 개발자에게 보내기</button>
+            <button class="btn btn--ghost">저장만 하기</button>
+            <button class="btn btn--quiet">치워두기</button>
+          </div>
+          <p class="hint" style="margin:10px 0 0">내면 준호 님이 검토합니다. 보낸 뒤에도 아래에서 진행 상황을 볼 수 있어요.</p>
+        </div>
+
+        <div class="send-glabel">보낸 것 <span class="send-gline"></span></div>
+
+        <div class="sent" style="border-color:var(--warn-line);background:var(--warn-soft)">
+          <span class="dot dot--ask"></span>
+          <div class="sent__body">
+            <div class="sent__name">회원 관리 화면</div>
+            <div class="sent__line">준호 님이 코멘트를 남겼어요 — "제목 여백만 조금 줄여요"</div>
+          </div>
+          <span class="sent__state" style="color:var(--warn)">검토 중 · 2시간째</span>
+          <button class="btn btn--sm">보기</button>
+        </div>
+
+        <div class="sent">
+          <span class="dot dot--done"></span>
+          <div class="sent__body">
+            <div class="sent__name">로그인 화면</div>
+            <div class="sent__line">제품에 반영됐어요</div>
+          </div>
+          <span class="sent__state" style="color:var(--ok)">반영됨 · 어제</span>
+        </div>
+
+        <div class="sent">
+          <span class="dot" style="background:var(--danger)"></span>
+          <div class="sent__body">
+            <div class="sent__name">배송지 목록</div>
+            <div class="sent__line">개발자가 반려했어요 — 사유: "다른 화면과 겹쳐요"</div>
+          </div>
+          <span class="sent__state" style="color:var(--danger)">반려됨 · 3일 전</span>
+          <button class="btn btn--sm btn--quiet">사유 보기</button>
+        </div>
+
+        <p class="hint" style="text-align:center;margin-top:22px">만들기는 왼쪽 「만들기」 탭에서 — 이 방은 보내는 일만 합니다</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

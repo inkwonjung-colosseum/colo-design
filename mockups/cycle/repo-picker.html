@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>레포 선택 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+  /* repo-picker: combobox + repo rows */
+  .rp-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    background: var(--panel);
+    padding: 9px 12px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .rp-search input {
+    flex: 1;
+    border: 0;
+    outline: none;
+    background: transparent;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .rp-list {
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .rp-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line-soft);
+    font-size: 13px;
+  }
+  .rp-row:last-child { border-bottom: 0; }
+  .rp-row:hover { background: var(--panel-2); }
+  .rp-row.on { background: var(--accent-soft); }
+  .rp-row__name { font-weight: 600; }
+  .rp-row__owner { color: var(--muted); font-size: 12px; }
+  .rp-row__time { margin-left: auto; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+  .rp-row--blocked { flex-wrap: wrap; }
+  .rp-row--blocked .notice { width: 100%; margin-top: 6px; font-size: 12px; padding: 8px 10px; }
+  .rp-name input {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--panel);
+    padding: 9px 12px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .rp-name input:focus { outline: none; border-color: var(--accent-line); }
+</style>
+</head>
+<body>
+<div class="stagepage">
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf"><span class="dot dot--ask"></span><span class="leaf__t">장바구니 빈 상태</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">회원 관리 화면 세 상태</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+          <div class="turn-user"><div class="turn-user__bubble">회원 관리 화면을 만들어 줘. 목록·검색·권한 변경까지 있으면 좋겠어.</div></div>
+          <div class="turn-ai">
+            <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">화면 만들기</span><span class="tool__sum">/members — 목록 + 검색 + 권한 드롭다운</span></button></div>
+            <div class="turn-ai__prose"><p>회원 관리 화면을 만들었습니다. 오른쪽 미리보기에서 바로 확인할 수 있습니다.</p></div>
+            <div class="turn-ai__meta"><button class="ibtn" title="복사">⧉</button><button class="ibtn" title="다시 만들기">↻</button><span class="hint" style="margin-left:4px">방금</span></div>
+          </div>
+        </div></div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">＋</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <button class="composer__model" title="확인 방식">알아서 진행 ▾</button>
+              <span class="spacer"></span>
+              <span class="hint" style="margin-right:8px">컨텍스트 18%</span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+          <p class="composer__hint">Enter로 보내기 · Shift+Enter 줄바꿈</p>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div class="cycle">
+          <div class="cycle__steps">
+            <span class="cycle__step done"><span class="n">✓</span>만들기</span><span class="cycle__sep">→</span>
+            <span class="cycle__step now"><span class="n">3</span>검토·수정</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">4</span>저장</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">5</span>넘기기</span>
+          </div>
+          <div class="cycle__actions">
+            <button class="btn btn--ghost btn--sm">더 보기 ▾</button>
+            <button class="btn btn--primary btn--sm">저장</button>
+          </div>
+        </div>
+        <div class="pbar">
+          <div class="seg"><button>모바일</button><button class="on">데스크톱</button></div>
+          <div class="pbar__url"><span>/members</span></div>
+          <button class="ibtn" title="새 창">↗</button>
+          <button class="ibtn" title="코멘트 모드">✎</button>
+        </div>
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body">
+              <div class="fakeapp">
+                <div class="fakeapp__head"><div class="fakeapp__title">회원 관리</div><div class="fakeapp__desc">연결 레포가 렌더하는 미리보기입니다</div></div>
+                <div class="fakeapp__table">
+                  <div class="fakeapp__row"><span class="fakeapp__ava">김</span><div class="fakeapp__cell"><div class="a">김도현</div><div class="b">kim@shop.kr · 어제 가입</div></div><span class="fakeapp__badge">관리자</span></div>
+                  <div class="fakeapp__row"><span class="fakeapp__ava">이</span><div class="fakeapp__cell"><div class="a">이서윤</div><div class="b">lee@shop.kr · 3일 전</div></div><span class="fakeapp__badge fakeapp__badge--off">회원</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="pins"><span class="hint" style="align-self:center">상태 칩으로 화면 상태를 전환합니다</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 연결할 레포 고르기 ============ -->
+<div class="scrim">
+  <div class="modal" role="dialog" aria-label="연결할 레포 고르기" style="width:min(640px,calc(100vw - 48px))">
+    <div class="modal__head">
+      <span class="modal__title">연결할 레포 고르기</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="닫기">✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="rp-search" role="combobox" aria-expanded="true">
+        <span>⌕</span>
+        <input type="text" placeholder="레포 이름으로 찾기" />
+      </div>
+      <div class="rp-list">
+        <button class="rp-row on">
+          <span class="rp-row__name">shop-web</span>
+          <span class="rp-row__owner">team</span>
+          <span class="rp-row__time">2시간 전</span>
+        </button>
+        <button class="rp-row">
+          <span class="rp-row__name">admin</span>
+          <span class="rp-row__owner">team</span>
+          <span class="rp-row__time">어제</span>
+        </button>
+        <button class="rp-row">
+          <span class="rp-row__name">checkout-v2</span>
+          <span class="rp-row__owner">team</span>
+          <span class="rp-row__time">3일 전</span>
+        </button>
+        <button class="rp-row rp-row--blocked">
+          <span class="rp-row__name">legacy-storefront</span>
+          <span class="rp-row__owner">team</span>
+          <span class="rp-row__time">지난주</span>
+          <span class="notice"><span class="notice__text">이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결 준비하기를 눌러 주세요</span></span>
+        </button>
+        <button class="rp-row">
+          <span class="rp-row__name">design-sandbox</span>
+          <span class="rp-row__owner">jiyeon</span>
+          <span class="rp-row__time">지난달</span>
+        </button>
+      </div>
+      <p class="hint" style="margin:0">최근 5개만 보여줍니다 — 이름으로 찾거나 주소로 추가하세요</p>
+      <div class="rp-name">
+        <input type="text" placeholder="프로젝트 이름 (예: 결제)" />
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost">취소</button>
+      <button class="btn btn--primary">프로젝트 만들기</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

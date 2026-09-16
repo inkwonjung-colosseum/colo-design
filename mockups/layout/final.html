@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>최종안 — 지금 홈 + 작업 모드 · Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+/* ==========================================================================
+   최종안: 「지금」 피드 홈 + 현행 작업 모드 무손상
+   - 레일 존치, 최상단에 「지금」 진입 행
+   - 홈은 일이 있을 때만 현관; 카드는 처리됨으로 떠난다(모두 읽음 없음)
+   - 허가 승인은 대화 안에서만 — 카드는 "대화에서 보기"까지
+   - 사이클 칩·저장·넘기기는 프로젝트 표면(미리보기 바)에 그대로
+   ========================================================================== */
+
+/* ---- 지금 피드 ---- */
+.ibx-work { flex:1; display:block; min-height:0; overflow:auto; background:var(--bg); }
+.ibx-col { max-width:720px; margin:0 auto; padding:26px 24px 80px; }
+.ibx-head { display:flex; align-items:flex-end; gap:12px; margin-bottom:6px; }
+.ibx-title { font-family:var(--serif); font-size:26px; font-weight:700; letter-spacing:-.01em; color:var(--text); }
+.ibx-sub { font-size:13px; color:var(--muted); padding-bottom:4px; }
+.ibx-headrow { display:flex; align-items:center; gap:10px; margin:0 0 14px; }
+.ibx-group { margin-top:26px; }
+.ibx-group:first-of-type { margin-top:8px; }
+.ibx-glabel { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600; color:var(--muted);
+  letter-spacing:.02em; margin:0 2px 8px; }
+.ibx-gcount { font-family:var(--mono); font-size:11px; color:var(--faint); }
+.ibx-gline { flex:1; height:1px; background:var(--line-soft); }
+.ibx-card { display:flex; align-items:center; gap:12px; padding:13px 14px; width:100%;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md);
+  margin-bottom:8px; transition:border-color .16s; font:inherit; text-align:left; cursor:pointer; }
+.ibx-card:hover { border-color:var(--line-strong); }
+.ibx-card .dot { flex:none; margin-top:1px; }
+.ibx-body { min-width:0; flex:1; }
+.ibx-top { display:flex; align-items:baseline; gap:8px; }
+.ibx-name { font-size:14px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ibx-proj { font-size:12px; color:var(--faint); white-space:nowrap; }
+.ibx-line { margin-top:3px; font-size:13px; color:var(--text-2); }
+.ibx-time { flex:none; font-size:12px; color:var(--faint); white-space:nowrap; }
+.ibx-acts { flex:none; display:flex; gap:6px; align-items:center; }
+.ibx-card--quiet { background:transparent; border-color:transparent; border-bottom:1px solid var(--line-soft);
+  border-radius:0; margin-bottom:0; padding:11px 14px; }
+.ibx-card--quiet .ibx-name { font-weight:500; color:var(--text-2); }
+.ibx-card--quiet .ibx-line { color:var(--muted); }
+.ibx-card--ask { border-color:var(--warn-line); background:var(--warn-soft); }
+.ibx-run { font-size:12px; color:var(--accent-ink); white-space:nowrap; }
+
+/* ---- 레일 「지금」 행 ---- */
+.ibx-rail { display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px;
+  border:0; border-radius:var(--r-sm); background:var(--accent-soft); color:var(--text);
+  font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:left; margin-bottom:12px; }
+.ibx-rail:hover { background:rgba(217,119,87,.16); }
+.ibx-rail.on { outline:1px solid var(--accent-line); }
+.ibx-railbadge { margin-left:auto; min-width:20px; height:19px; padding:0 6px; border-radius:var(--r-pill);
+  background:var(--accent); color:#fff; font-family:var(--mono); font-size:11px; font-weight:600;
+  display:inline-flex; align-items:center; justify-content:center; }
+
+/* ---- 프로젝트 사이클 띠 (홈 상단, deriveDelivery 거울) ---- */
+.cycstrip { display:flex; align-items:center; gap:10px; padding:10px 14px; margin:0 0 18px;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:var(--r-md); font-size:13px; }
+.cycstrip .next { color:var(--muted); }
+.cycstrip .shelf { margin-left:auto; font-size:12px; color:var(--warn); }
+
+/* ---- 칩 변형 (프로젝트 사이클 상태) ---- */
+.chip--warn { border-color:var(--warn-line); background:var(--warn-soft); color:var(--warn); }
+.chip--info { border-color:rgba(122,143,168,.35); background:var(--info-soft); color:var(--info); }
+.chip--ok { border-color:rgba(111,154,107,.35); background:var(--ok-soft); color:var(--ok); }
+
+/* ---- 모드 전환: 지금 / 작업 / 시작(신규) ---- */
+.view-home, .view-work, .view-start, .cycbar { display:none; }
+body[data-view="home"] .view-home { display:flex; flex:1; min-height:0; }
+body[data-view="work"] .view-work { display:flex; flex:1; min-height:0; }
+body[data-view="start"] .view-start { display:flex; flex:1; min-height:0; }
+
+/* 수정1: 사이클 바는 미리보기 열이 아니라 작업 모드의 전폭 머리 줄.
+   칩·저장·넘기기가 프로젝트의 것임을 자리로 가르친다. */
+body[data-view="work"] .cycbar { display:flex; }
+.cycbar { align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line);
+  background:var(--panel); font-size:13px; }
+.cycbar .next { color:var(--muted); }
+.cycbar .who { font-size:12px; color:var(--faint); }
+.cycbar .acts { margin-left:auto; display:flex; gap:6px; }
+
+/* 시작 화면 (일도 대화도 없을 때) */
+.startpane { flex:1; display:flex; align-items:center; justify-content:center; background:var(--bg); }
+.startcol { max-width:520px; text-align:center; padding:0 24px; }
+.starttitle { font-family:var(--serif); font-size:24px; font-weight:700; margin:0 0 8px; color:var(--text); }
+.startdesc { font-size:14px; color:var(--muted); margin:0 0 20px; line-height:1.6; }
+.startchips { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+</style>
+</head>
+<body data-view="home">
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <button class="ibx-rail on" id="nowRow">✉ 지금 <span class="ibx-railbadge">4</span></button>
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf" data-goto="work"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf" data-goto="work"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf" data-goto="work"><span class="dot dot--ask"></span><span class="leaf__t">장바구니 빈 상태</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title" id="tbTitle">지금</span>
+      <span class="topbar__crumb" id="tbCrumb">모든 프로젝트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <!-- ==================== 홈: 「지금」 피드 ==================== -->
+    <div class="work ibx-work view-home">
+      <div class="ibx-col">
+        <div class="ibx-headrow">
+          <div class="ibx-head">
+            <span class="ibx-title">지금</span>
+            <span class="ibx-sub">나를 기다리는 일 4건이에요</span>
+          </div>
+          <span class="grow"></span>
+          <button class="btn btn--sm" data-goto="start">＋ 새 대화</button>
+        </div>
+
+        <!-- 수정7: 저장 안 함인 프로젝트마다 띠 하나 (2개 초과 시 접힘) -->
+        <div class="cycstrip">
+          <span class="chip chip--warn">저장 안 함</span>
+          <span class="next">다음은 저장입니다 — 쇼핑몰 프론트</span>
+          <span class="shelf">치워둔 작업 1건</span>
+        </div>
+        <div class="cycstrip">
+          <span class="chip chip--info">개발자 검토 중</span>
+          <span class="next">넘긴 요청을 개발자가 보고 있습니다 — 관리자 콘솔</span>
+        </div>
+
+        <section class="ibx-group">
+          <div class="ibx-glabel">나를 기다리는 <span class="ibx-gcount">4</span><span class="ibx-gline"></span>
+            <span class="hint" style="font-weight:400">카드는 사건의 주인을 따라갑니다</span>
+          </div>
+
+          <button class="ibx-card ibx-card--ask" data-goto="work">
+            <span class="dot dot--ask"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">장바구니 빈 상태</span><span class="ibx-proj">쇼핑몰 프론트</span></div>
+              <div class="ibx-line">“공용 버튼 파일을 고쳐도 될까요? 다른 화면에도 같이 반영돼요”</div>
+            </div>
+            <span class="ibx-time">4분 전</span>
+            <div class="ibx-acts"><span class="btn btn--sm">대화에서 보기</span></div>
+          </button>
+
+          <!-- 수정3: 프로젝트 사건 — 스레드가 아니라 개발자 코멘트 표면을 연 채로 떨어진다 -->
+          <button class="ibx-card" data-goto="work">
+            <span class="dot" style="background:var(--info)"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">개발자 코멘트 2건</span><span class="ibx-proj">쇼핑몰 프론트 · 넘긴 요청 12번</span></div>
+              <div class="ibx-line">준호 님이 코멘트를 남겼어요 — “제목 여백만 조금 줄여요” 외 1건</div>
+            </div>
+            <span class="ibx-time">1시간 전</span>
+            <div class="ibx-acts"><span class="btn btn--sm">코멘트 열기</span></div>
+          </button>
+
+          <!-- 수정4·6: 비활성 프로젝트는 인용 없이 상태 카드로만 — 없는 데이터를 지어내지 않는다 -->
+          <button class="ibx-card" data-goto="work">
+            <span class="dot" style="background:var(--info)"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">변경 요청</span><span class="ibx-proj">관리자 콘솔</span></div>
+              <div class="ibx-line">개발자가 넘긴 요청에 코멘트를 남겼습니다 — 열어서 보기</div>
+            </div>
+            <span class="ibx-time">3시간 전</span>
+            <div class="ibx-acts"><span class="btn btn--sm">열어서 보기</span></div>
+          </button>
+
+          <button class="ibx-card">
+            <span class="dot dot--done"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">치워둔 작업</span><span class="ibx-proj">쇼핑몰 프론트</span></div>
+              <div class="ibx-line">주문 상세 정리 — 꺼내면 이어서 작업합니다</div>
+            </div>
+            <div class="ibx-acts"><span class="btn btn--sm">꺼내기</span></div>
+          </button>
+        </section>
+
+        <section class="ibx-group">
+          <div class="ibx-glabel">지금 작업 중 <span class="ibx-gcount">2</span><span class="ibx-gline"></span></div>
+
+          <button class="ibx-card" data-goto="work">
+            <span class="dot dot--live"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">결제 실패 플로우</span><span class="ibx-proj">쇼핑몰 프론트</span></div>
+              <div class="ibx-line">카드 오류 안내 화면을 만드는 중이에요</div>
+            </div>
+            <span class="ibx-run">고치는 중 · 1분 42초</span>
+          </button>
+
+          <button class="ibx-card" data-goto="work">
+            <span class="dot dot--live"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">알림 설정 화면</span><span class="ibx-proj">관리자 콘솔</span></div>
+              <div class="ibx-line">토글 목록과 저장 버튼을 붙이는 중이에요</div>
+            </div>
+            <span class="ibx-run">만드는 중 · 27초</span>
+          </button>
+        </section>
+
+        <section class="ibx-group">
+          <div class="ibx-glabel">지난 일 <span class="ibx-gcount">3</span><span class="ibx-gline"></span></div>
+
+          <button class="ibx-card ibx-card--quiet" data-goto="work">
+            <span class="dot dot--done"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">배송지 목록</span><span class="ibx-proj">쇼핑몰 프론트</span></div>
+              <div class="ibx-line">저장 완료 — 화면 두 개가 프로젝트에 담겼어요</div>
+            </div>
+            <span class="ibx-time">오늘 오전 11:20</span>
+          </button>
+
+          <button class="ibx-card ibx-card--quiet" data-goto="work">
+            <span class="dot dot--done"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">리뷰 카드</span><span class="ibx-proj">관리자 콘솔</span></div>
+              <div class="ibx-line">정리 완료 — 쓰지 않는 예시 문구를 지웠어요</div>
+            </div>
+            <span class="ibx-time">어제</span>
+          </button>
+
+          <button class="ibx-card ibx-card--quiet" data-goto="work">
+            <span class="dot dot--done"></span>
+            <div class="ibx-body">
+              <div class="ibx-top"><span class="ibx-name">로그인 화면</span><span class="ibx-proj">쇼핑몰 프론트</span></div>
+              <div class="ibx-line">반영됨 — 개발자가 제품에 합쳤어요. 열면 이 프로젝트에 내려앉습니다</div>
+            </div>
+            <span class="ibx-time">어제</span>
+          </button>
+        </section>
+
+        <p class="hint" style="text-align:center;margin-top:22px">여기까지예요. 새 일이 생기면 맨 위에 쌓아 둘게요</p>
+      </div>
+    </div>
+
+    <!-- 수정1: 사이클 바는 작업 모드의 전폭 머리 줄 — 프로젝트의 것이지 이 대화의 것이 아니다 -->
+    <div class="cycbar">
+      <span class="chip chip--warn">저장 안 함</span>
+      <span class="next">다음은 저장입니다 — <strong>쇼핑몰 프론트</strong>의 모든 대화가 만든 변경이 함께 묶입니다</span>
+      <span class="acts">
+        <button class="btn btn--ghost btn--sm">더 보기 ▾</button>
+        <button class="btn btn--sm">저장</button>
+        <button class="btn btn--primary btn--sm">개발자에게 넘기기</button>
+      </span>
+    </div>
+
+    <!-- ==================== 작업 모드: 현행 3열 그대로 ==================== -->
+    <div class="work view-work">
+      <section class="chat">
+        <div class="chat__scroll">
+          <div class="chat__col">
+            <div class="turn-user">
+              <div class="turn-user__bubble">회원 관리 화면을 만들어 줘. 목록·검색·권한 변경까지 있으면 좋겠어.</div>
+            </div>
+            <div class="turn-ai">
+              <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">파일 읽기</span><span class="tool__sum">src/pages/members.tsx · 기존 표 컴포넌트 확인</span></button></div>
+              <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">화면 만들기</span><span class="tool__sum">/members — 목록 + 검색 + 권한 드롭다운</span></button></div>
+              <div class="turn-ai__prose"><p>회원 관리 화면을 만들었습니다. 디자인 시스템의 표 컴포넌트를 그대로 써서, 검색 입력과 권한 드롭다운을 붙였어요. 오른쪽 미리보기에서 바로 확인할 수 있습니다.</p></div>
+              <button class="scard">
+                <span class="scard__shot"><span class="wire" style="inset:8px"><span class="wire__main"><span class="wire__bar" style="width:45%"></span><span class="wire__bar"></span><span class="wire__bar"></span><span class="wire__bar" style="width:70%"></span></span></span></span>
+                <span class="scard__body">
+                  <span class="scard__title">회원 관리</span>
+                  <span class="scard__route">/members</span>
+                  <span class="scard__states"><span class="state-chip on">기본</span><span class="state-chip">비어 있음</span><span class="state-chip">로딩</span></span>
+                </span>
+              </button>
+              <div class="turn-ai__meta">
+                <button class="ibtn" title="복사">⧉</button>
+                <button class="ibtn" title="다시 만들기">↻</button>
+                <span class="hint" style="margin-left:4px">2분 전 · 토큰 12.4k</span>
+              </div>
+            </div>
+            <div class="turn-user">
+              <span class="turn-user__attach"><span class="thumb"></span> 결제실패-레퍼런스.png</span>
+              <div class="turn-user__bubble">비어 있을 때랑 오류 났을 때 화면도 같이 보여줘. 첨부한 그림처럼 일러스트를 넣어 줘.</div>
+            </div>
+            <div class="turn-ai">
+              <div class="turn-ai__prose"><p>두 상태를 추가했습니다. <strong>비어 있음</strong>은 첫 회원을 초대하는 버튼을, <strong>오류</strong>는 다시 시도 버튼을 가운데 둡니다. 상태 칩으로 미리보기에서 바로 전환해 보세요.</p></div>
+              <div class="turn-ai__meta">
+                <button class="ibtn" title="복사">⧉</button>
+                <button class="ibtn" title="다시 만들기">↻</button>
+                <span class="hint" style="margin-left:4px">방금</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.5-8.5a3.7 3.7 0 015.2 5.2l-8.5 8.5a1.85 1.85 0 01-2.6-2.6l7.8-7.8"/></svg></button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <button class="composer__model" title="확인 방식">알아서 진행 ▾</button>
+              <span class="spacer"></span>
+              <span class="hint" style="margin-right:8px">컨텍스트 18%</span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+          <p class="composer__hint">Enter로 보내기 · Shift+Enter 줄바꿈</p>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div class="pbar">
+          <div class="seg"><button>모바일</button><button class="on">데스크톱</button></div>
+          <div class="pbar__url"><span>/members?state=empty</span></div>
+          <button class="ibtn" title="새 창">↗</button>
+          <button class="ibtn" title="코멘트 모드">✎</button>
+        </div>
+        <div class="row" style="padding:0 16px 10px;gap:6px">
+          <button class="chip">기본</button>
+          <button class="chip" style="border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent-ink)">비어 있음</button>
+          <button class="chip">로딩</button>
+          <button class="chip">오류</button>
+        </div>
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body">
+              <div class="fakeapp">
+                <div class="fakeapp__head">
+                  <div class="fakeapp__title">회원 관리</div>
+                  <div class="fakeapp__desc">연결 레포가 렌더하는 미리보기입니다</div>
+                </div>
+                <div class="fakeapp__tabs">
+                  <span class="fakeapp__tab on">전체 0</span>
+                  <span class="fakeapp__tab">관리자</span>
+                  <span class="fakeapp__tab">정지됨</span>
+                </div>
+                <div style="padding:44px 22px;text-align:center">
+                  <div style="width:56px;height:56px;border-radius:16px;background:var(--accent-soft);margin:0 auto 14px;display:flex;align-items:center;justify-content:center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-ink)" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-4.8 5.5-4.8s4.9 1.6 5.5 4.8"/><circle cx="16.5" cy="9" r="2.4"/><path d="M16 14.4c2.2.3 3.8 1.7 4.4 4.1"/></svg></div>
+                  <div style="font-weight:600;margin-bottom:4px">아직 회원이 없습니다</div>
+                  <div class="hint" style="margin-bottom:16px">첫 회원을 초대해 보세요</div>
+                  <button class="btn btn--primary btn--sm">회원 초대</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="pins">
+          <span class="pin"><span class="n">1</span> 권한 드롭다운 위치</span>
+          <span class="pin"><span class="n">2</span> 빈 상태 문구</span>
+          <span class="hint" style="align-self:center">화면을 찍어 남긴 메모 2개</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ 시작 화면: 일도 없고 마지막 대화도 없을 때 (수정2) ============ -->
+    <div class="work view-start">
+      <div class="startpane">
+        <div class="startcol">
+          <p class="starttitle serif">무엇을 만들어 볼까요?</p>
+          <p class="startdesc">만들고 싶은 화면을 말로 해도 되고, 참고할 그림을 붙여넣어도 됩니다.<br/>처음 연결한 프로젝트라 아직 기다리는 일이 없어요.</p>
+          <div class="composer" style="max-width:none;margin-bottom:16px">
+            <textarea class="composer__input" rows="2" placeholder="예: 회원 관리 화면을 만들어 줘. 목록·검색·권한 변경까지 있으면 좋겠어"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">⧉</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+          <div class="startchips">
+            <button class="chip">그림을 붙여 시작하기</button>
+            <button class="chip">이 레포의 화면 둘러보기</button>
+            <button class="chip">무엇을 할 수 있나요?</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+
+// 세 얼굴 전환: 지금(기다리는 일 있음) / 작업 / 시작(일도 대화도 없음)
+const TITLES = { home:['지금','모든 프로젝트'], work:['회원 관리 화면 세 상태','쇼핑몰 프론트'], start:['새 대화','쇼핑몰 프론트'] };
+function setView(v){
+  document.body.dataset.view=v;
+  const [t,c]=TITLES[v];
+  document.getElementById('tbTitle').textContent=t;
+  document.getElementById('tbCrumb').textContent=c;
+  document.getElementById('nowRow').classList.toggle('on', v==='home');
+}
+document.getElementById('nowRow').addEventListener('click',()=>setView('home'));
+document.querySelectorAll('[data-goto="work"]').forEach(el=>el.addEventListener('click',()=>setView('work')));
+document.querySelectorAll('[data-goto="start"]').forEach(el=>el.addEventListener('click',()=>setView('start')));
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>제품이 주인공이다 — 미리보기 위의 대화 · Colo 목업</title>
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../mockup.css">
+<style>
+  /* ============ 페이지 고유: 미리보기가 창을 차지하고, 대화는 얇은 층 ============ */
+
+  .fill {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    padding: 14px 16px 16px;
+    background: var(--bg-2);
+  }
+
+  /* ---------- 미리보기 프레임: 창의 주인공 ---------- */
+  .pv {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .pv__bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px 9px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--panel-2);
+    min-height: 50px;
+  }
+  .pv__bar .pbar__url {
+    flex: 1;
+    min-width: 110px;
+    font-family: var(--sans);
+    color: var(--text-2);
+  }
+  .pv__bar .pbar__url .dot {
+    flex: none;
+  }
+
+  /* 상태 클러스터 — 저장·넘기기가 사는 곳 = 제품 표면 */
+  .pv__state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .stchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-2);
+    padding: 5px 11px;
+    border-radius: var(--r-pill);
+    border: 1px solid var(--line);
+    background: var(--panel);
+    white-space: nowrap;
+  }
+  .stchip .dot { width: 7px; height: 7px; }
+  .stchip--warn { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+  .stchip--ok   { color: var(--ok); border-color: rgba(111, 154, 107, 0.4); background: var(--ok-soft); }
+  .stchip--info { color: var(--info); border-color: rgba(122, 143, 168, 0.35); background: var(--info-soft); }
+
+  .pv__body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    position: relative;
+  }
+  /* 모바일 뷰 토글 */
+  .pv--mobile .pv__body { display: flex; justify-content: center; }
+  .pv--mobile .fakeapp {
+    width: 430px;
+    border-left: 1px solid var(--line-soft);
+    border-right: 1px solid var(--line-soft);
+  }
+
+  /* ---------- 고침 표시: 대화의 말이 미리보기의 물건을 가리킨다 ---------- */
+  .mark { position: relative; }
+  .mark::before {
+    content: "";
+    position: absolute;
+    inset: -5px -8px;
+    border: 1.5px dashed var(--accent);
+    border-radius: 9px;
+    pointer-events: none;
+    animation: markpulse 1.7s var(--drift) infinite;
+  }
+  .mark .mtag {
+    position: absolute;
+    top: -10px;
+    left: -10px;
+    z-index: 3;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-card);
+  }
+  .mark--done::before {
+    border-style: solid;
+    border-color: var(--ok);
+    opacity: 0.55;
+    animation: none;
+  }
+  .mark--done .mtag { background: var(--ok); }
+  @keyframes markpulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* 고치는 중 라이브 칩 — 화면 우측 상단에 뜸 */
+  .working {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    z-index: 6;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 13px;
+    border-radius: var(--r-pill);
+    background: var(--panel);
+    border: 1px solid var(--accent-line);
+    box-shadow: var(--shadow-pop);
+    font-size: 12.5px;
+    color: var(--accent-ink);
+  }
+
+  /* fakeapp 확장 */
+  .fakeapp__search {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 14px 0 4px;
+    padding: 9px 15px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+    background: var(--panel-2);
+    color: var(--faint);
+    font-size: 12.5px;
+  }
+  .fakeapp__search svg { flex: none; }
+  .fakeapp__badge--ok { background: var(--ok-soft); color: var(--ok); }
+  .r-dim .fakeapp__ava,
+  .r-dim .fakeapp__cell { opacity: 0.42; }
+
+  /* ---------- 대화 층: 하단 시트 (필요할 때만 뜸) ---------- */
+  .sheet {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    width: min(700px, calc(100% - 36px));
+    max-height: calc(100% - 26px);
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-pop);
+    transform: translate(-50%, 0);
+    transition: transform 0.3s var(--drift), opacity 0.24s;
+    z-index: 20;
+  }
+  body.nosheet .sheet {
+    transform: translate(-50%, 36px);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sheet__head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 12px 10px 16px;
+    border-bottom: 1px solid var(--line-soft);
+    flex: none;
+  }
+  .sheet__ic {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .sheet__t {
+    font-family: var(--serif);
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sheet__scroll {
+    max-height: min(330px, 36vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  .sheet__more {
+    margin: 10px auto 0;
+    font-size: 11.5px;
+    color: var(--faint);
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+  }
+  .sheet__more:hover { background: var(--panel-2); color: var(--muted); }
+  .sheet__col {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 10px 18px 14px;
+  }
+  .sheet .composer { box-shadow: none; }
+  .sheet .composer__hint { text-align: center; }
+
+  /* 핀 참조 — transcript 안의 '이거' */
+  .sheet .pin { padding: 5px 11px 5px 6px; font-size: 11.5px; }
+  .pin--done .n { background: var(--ok); }
+
+  /* 평소 상태 — 화면에 남는 말 걾기 알약 */
+  .saypill {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: none;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 16px;
+    border-radius: var(--r-pill);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-pop);
+    font-size: 13px;
+    color: var(--muted);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .saypill:hover { border-color: var(--accent-line); color: var(--text); }
+  body.nosheet .saypill { display: inline-flex; }
+  .saypill svg { color: var(--accent); }
+
+  /* ============ 상태 스트립 — 저장·넘기기가 표면에 붙는 방식 ============ */
+  .states {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 58px 28px 96px;
+  }
+  .states h2 {
+    font-family: var(--serif);
+    font-size: 23px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+  }
+  .states .lede {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.65;
+    max-width: 640px;
+    margin: 0;
+  }
+  .states__grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 26px;
+  }
+  .stcard {
+    flex: 1 1 330px;
+    min-width: 300px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--panel);
+    overflow: hidden;
+    box-shadow: var(--shadow-card);
+    display: flex;
+    flex-direction: column;
+  }
+  .mbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 11px 13px;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--line-soft);
+    min-height: 52px;
+  }
+  .stcard__body {
+    padding: 13px 15px 15px;
+    display: grid;
+    gap: 8px;
+    flex: 1;
+  }
+  .stcard__no {
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: var(--accent-ink);
+  }
+  .stcard__cap {
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.65;
+  }
+  .mstage {
+    position: relative;
+    height: 110px;
+    background: var(--bg-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mstage .saypill { position: static; transform: none; display: inline-flex; box-shadow: var(--shadow-card); }
+
+  /* 개발자 메모 — 넘긴 화면 가장자리에 붙는 코멘트/반려 */
+  .memo {
+    margin: 0 13px 13px;
+    padding: 11px 13px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--r-sm);
+    background: var(--panel);
+    font-size: 12.5px;
+    color: var(--text-2);
+    line-height: 1.6;
+    display: grid;
+    gap: 7px;
+  }
+  .memo .who { font-weight: 650; color: var(--text); }
+  .memo .acts { display: flex; gap: 6px; }
+
+  .states .note {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.7;
+    border-top: 1px solid var(--line-soft);
+    padding-top: 18px;
+    max-width: 720px;
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ================= 좌측: 화면 목록 (= Claude의 대화 목록 자리) ================= -->
+  <aside class="rail">
+    <div class="rail__top">
+      <div class="rail__brand grow">
+        <span class="letter">콜</span>
+        콜로
+      </div>
+      <button class="ibtn" title="설정" type="button">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.7"/><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4"/></svg>
+      </button>
+    </div>
+
+    <button class="rail__new" type="button">
+      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>
+      새 화면 만들기
+      <span class="kbd">⌘N</span>
+    </button>
+    <div class="rail__search">
+      <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="5.2"/><path d="M13 13l4 4"/></svg>
+      화면 찾기
+    </div>
+
+    <div class="tree">
+      <div class="tree__label">레포 · 화면</div>
+
+      <div class="tnode">
+        <div class="tnode__row">
+          <span class="chev">▾</span>
+          <span class="tnode__name">그로서리 앱</span>
+          <span class="tnode__repo">싱싱한과일</span>
+        </div>
+        <div class="tnode__kids">
+          <button class="leaf on" type="button">
+            <span class="leaf__t">회원 목록</span>
+            <span class="leaf__meta leaf__meta--live">고치는 중 · 저장 안 됨 3</span>
+          </button>
+          <button class="leaf" type="button">
+            <span class="leaf__t">이벤트 페이지</span>
+            <span class="leaf__meta leaf__meta--ask">검토 중 · 메시지 2</span>
+          </button>
+          <button class="leaf" type="button">
+            <span class="leaf__t">설정 폼</span>
+            <span class="leaf__meta" style="color: var(--ok)">반영됨</span>
+          </button>
+          <button class="leaf leaf--add" type="button">
+            <span class="leaf__t">＋ 다른 화면 만들기</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="tnode closed">
+        <div class="tnode__row">
+          <span class="chev">▾</span>
+          <span class="tnode__name">배달 스테이션</span>
+          <span class="tnode__repo">새벽배달</span>
+        </div>
+        <div class="tnode__kids">
+          <button class="leaf" type="button">
+            <span class="leaf__t">주문 내역</span>
+            <span class="leaf__meta">반영됨</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail__foot">
+      <button class="who" type="button">
+        <span class="letter">수</span>
+        <span class="grow">
+          <strong>수진</strong>
+          <small>기획팀</small>
+        </span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= 우측: 창 전체가 곧 제품 ================= -->
+  <main class="main">
+    <div class="topbar">
+      <span class="topbar__crumb">그로서리 앱 /</span>
+      <span class="topbar__title">회원 목록</span>
+      <span class="spacer" style="flex:1"></span>
+      <span class="conn conn--ok"><span class="dot"></span>내 토큰으로 연결됨</span>
+      <button class="btn btn--ghost btn--sm" type="button">담당 개발자 민수 ▾</button>
+    </div>
+
+    <div class="fill">
+      <!-- 미리보기 프레임 -->
+      <div class="pv" id="pv">
+        <div class="pv__bar">
+          <div class="pbar__url">
+            <span class="dot dot--live"></span>
+            <span>싱싱한과일 가게 · 회원 목록 — 실제 앱</span>
+          </div>
+          <button class="ibtn" title="다시 불러오기" type="button">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 6.8A6.5 6.5 0 1 0 16.9 10.4"/><path d="M16.4 3.2v3.6h-3.6"/></svg>
+          </button>
+          <div class="seg">
+            <button class="on" data-dev="desktop" type="button">데스크톱</button>
+            <button data-dev="mobile" type="button">모바일</button>
+          </div>
+
+          <!-- 상태 클러스터: 문서 앱의 저장 문법 -->
+          <div class="pv__state">
+            <span class="stchip stchip--warn"><span class="dot dot--ask"></span>바꿈 3 · 저장 안 됨</span>
+            <button class="btn btn--primary btn--sm" type="button">
+              <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v8m0 0L6.8 7.8M10 11l3.2-3.2M4.5 14.5V16h11v-1.5"/></svg>
+              저장
+            </button>
+            <button class="btn btn--ghost btn--sm" type="button" disabled>넘기기</button>
+          </div>
+        </div>
+
+        <div class="pv__body">
+          <!-- 고치는 중 라이브 표시 -->
+          <div class="working">
+            <span class="spin"></span>
+            두 곳 고치는 중… — 끝나면 여기에 알림
+          </div>
+
+          <!-- ===== 실제 앱 미리보기(가짜) ===== -->
+          <div class="fakeapp">
+            <div class="fakeapp__head">
+              <div class="fakeapp__title">회원 목록</div>
+              <div class="fakeapp__desc">가게를 쓰는 회원 1,204명 · 오늘 12명 가입</div>
+
+              <div class="fakeapp__search mark mark--done">
+                <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="9" r="5.2"/><path d="M13 13l4 4"/></svg>
+                이름 · 이메일로 회원 찾기
+                <span class="mtag">3</span>
+              </div>
+
+              <div class="fakeapp__tabs">
+                <span class="fakeapp__tab on">전체 1,204</span>
+                <span class="fakeapp__tab">활성 891</span>
+                <span class="fakeapp__tab">비활성 313</span>
+              </div>
+            </div>
+
+            <div class="fakeapp__table">
+              <div class="fakeapp__row">
+                <div class="fakeapp__ava">민</div>
+                <div class="fakeapp__cell" style="flex:1">
+                  <div class="a">김민재</div>
+                  <div class="b">minjae@greenfruit.kr</div>
+                </div>
+                <div class="fakeapp__cell">
+                  <span class="fakeapp__badge fakeapp__badge--ok mark">
+                    활성
+                    <span class="mtag">1</span>
+                  </span>
+                </div>
+                <div class="fakeapp__cell" style="text-align:right"><div class="b">3월 2일 가입</div></div>
+              </div>
+
+              <div class="fakeapp__row">
+                <div class="fakeapp__ava">수</div>
+                <div class="fakeapp__cell" style="flex:1">
+                  <div class="a">이수진</div>
+                  <div class="b">soojin@greenfruit.kr</div>
+                </div>
+                <div class="fakeapp__cell"><span class="fakeapp__badge">활성</span></div>
+                <div class="fakeapp__cell" style="text-align:right"><div class="b">3월 2일 가입</div></div>
+              </div>
+
+              <div class="fakeapp__row r-dim mark">
+                <div class="fakeapp__ava">서</div>
+                <div class="fakeapp__cell" style="flex:1">
+                  <div class="a">박서연</div>
+                  <div class="b">seoyeon@greenfruit.kr</div>
+                </div>
+                <div class="fakeapp__cell"><span class="fakeapp__badge fakeapp__badge--off">비활성</span></div>
+                <div class="fakeapp__cell" style="text-align:right"><div class="b">1월 8일 가입</div></div>
+                <span class="mtag">2</span>
+              </div>
+
+              <div class="fakeapp__row">
+                <div class="fakeapp__ava">하</div>
+                <div class="fakeapp__cell" style="flex:1">
+                  <div class="a">정하늘</div>
+                  <div class="b">haneul@greenfruit.kr</div>
+                </div>
+                <div class="fakeapp__cell"><span class="fakeapp__badge fakeapp__badge--off">비활성</span></div>
+                <div class="fakeapp__cell" style="text-align:right"><div class="b">1월 8일 가입</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 평소 상태: 화면에 남는 얇은 입구 -->
+      <button class="saypill" id="saypill" type="button">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.6A1.6 1.6 0 0 1 5.6 4h8.8A1.6 1.6 0 0 1 16 5.6v5.8a1.6 1.6 0 0 1-1.6 1.6H9.2L5.9 15.6c-.5.4-1.2 0-1.2-.6V5.6z"/></svg>
+        이 화면에 말 걸기
+        <span class="kbd">⌘K</span>
+      </button>
+
+      <!-- ============ 대화 층: 미리보기 위에 얹히는 하단 시트 ============ -->
+      <div class="sheet" id="sheet">
+        <div class="sheet__head">
+          <span class="sheet__ic">
+            <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.6A1.6 1.6 0 0 1 5.6 4h8.8A1.6 1.6 0 0 1 16 5.6v5.8a1.6 1.6 0 0 1-1.6 1.6H9.2L5.9 15.6c-.5.4-1.2 0-1.2-.6V5.6z"/></svg>
+          </span>
+          <span class="sheet__t">회원 목록 화면 — 대화로 고치는 중</span>
+          <span class="tag">말 14</span>
+          <span style="flex:1"></span>
+          <button class="ibtn" id="sheetClose" title="대화 접기 — 화면만 남기기" type="button">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8l4 4 4-4"/></svg>
+          </button>
+        </div>
+
+        <div class="sheet__scroll">
+          <button class="sheet__more" type="button">이전 대화 12개 펼치기 — 이 화면을 만들 때 나눈 대화</button>
+          <div class="sheet__col">
+
+            <div class="turn-user">
+              <div class="turn-user__bubble">검색창을 표 위로 옮겨줘. 회원 찾기가 너무 불편해.</div>
+            </div>
+            <div class="turn-ai">
+              <div class="turn-ai__prose">
+                <p>옮겼어요. 이 화면의 <strong>3번째 바꿈</strong>이에요 — 아직 저장 전이에요.</p>
+              </div>
+              <div class="row">
+                <span class="pin pin--done"><span class="n">3</span>검색창 위로 이동</span>
+              </div>
+            </div>
+
+            <div class="turn-user">
+              <div class="turn-user__bubble">상태 배지를 주황 대신 초록으로 하고, 비활성 회원은 행 전체를 흐리게 해줘.</div>
+            </div>
+            <div class="turn-ai">
+              <div class="turn-ai__prose">
+                <p>두 곳을 고치고 있어요. 미리보기에서 <strong>바로</strong> 보일 거예요 — 점선 친 곳이 방금 말한 곳이에요.</p>
+              </div>
+              <div class="row">
+                <span class="pin"><span class="n">1</span>활성 배지 → 초록</span>
+                <span class="pin"><span class="n">2</span>비활성 행 → 흐리게</span>
+              </div>
+              <div class="act">
+                <span class="ic"><span class="spin"></span></span>
+                고치는 중… 이 동안에도 미리보기는 만질 수 있어요
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div style="padding: 0 12px 4px">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="이 화면에 말 걾기 — 예: 배지를 다시 주황으로, 비활성은 배지색만 회색으로…"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 붙이기" type="button">
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 6.2l-5.7 5.7a2 2 0 1 0 2.8 2.8l5.7-5.7a3.6 3.6 0 0 0-5-5L5.5 9.9"/></svg>
+              </button>
+              <button class="composer__model" type="button">콜로 · 이 화면 안에서만 답함</button>
+              <span class="spacer"></span>
+              <button class="send" type="button" title="보내기">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15.5V4.5m0 0L5.6 8.9M10 4.5l4.4 4.4"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="composer__hint">말은 미리보기 위에만 떠요 — 다른 화면으로 함께 넘어가지 않아요</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ================================================================ -->
+<!-- 상태 스트립: 저장·넘기기가 제품 표면에 붙는 방식 (문서 앱의 문법) -->
+<!-- ================================================================ -->
+<section class="states">
+  <h2>저장 · 넘기기 — 상태는 대화가 아니라 <em>화면 표면</em>에 붙는다</h2>
+  <p class="lede">
+    git 용어는 한 곳도 없다. 사용자가 아는 문법은 문서 앱 하나다: 고치고, 저장하고, 동료에게 넘긴다.
+    아래는 미리보기 크롬(위 목업의 오른쪽 상단)이 사이클 동안 거치는 다섯 얼굴이다.
+  </p>
+
+  <div class="states__grid">
+
+    <div class="stcard">
+      <div class="mbar">
+        <span class="stchip"><span class="dot dot--done"></span>싱싱한과일 · 회원 목록</span>
+        <span style="flex:1"></span>
+        <div class="seg"><button class="on" type="button">데스크톱</button><button type="button">모바일</button></div>
+      </div>
+      <div class="mstage">
+        <span class="saypill">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.6A1.6 1.6 0 0 1 5.6 4h8.8A1.6 1.6 0 0 1 16 5.6v5.8a1.6 1.6 0 0 1-1.6 1.6H9.2L5.9 15.6c-.5.4-1.2 0-1.2-.6V5.6z"/></svg>
+          이 화면에 말 걾기 <span class="kbd">⌘K</span>
+        </span>
+      </div>
+      <div class="stcard__body">
+        <span class="stcard__no">0 · 평소 — 창 전체가 곧 화면</span>
+        <p class="stcard__cap">대화 흔적은 알약 하나. Claude에서 artifact을 열면 대화가 옆으로 밀리던 경험을 뒤집은 기본값 — 미리보기가 먼저, 대화는 부름받을 때만.</p>
+      </div>
+    </div>
+
+    <div class="stcard">
+      <div class="mbar">
+        <span class="stchip stchip--warn"><span class="dot dot--ask"></span>바꿈 3 · 저장 안 됨</span>
+        <span style="flex:1"></span>
+        <button class="btn btn--primary btn--sm" type="button">저장</button>
+        <button class="btn btn--ghost btn--sm" type="button" disabled>넘기기</button>
+      </div>
+      <div class="stcard__body">
+        <span class="stcard__no">1 · 고치는 중 — 바꿈은 표면에 점선으로</span>
+        <p class="stcard__cap">말이 점선과 번호 핀으로 미리보기에 붙는다. 저장은 문서 앱처럼 표면의 주 버튼 — 아직 저장 안 된 바꿈 개수만 세어 보여준다. 넘기기는 잠겨 있다.</p>
+      </div>
+    </div>
+
+    <div class="stcard">
+      <div class="mbar">
+        <span class="stchip stchip--ok"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10.5l3.2 3L15 6.5"/></svg>저장함 · 3번째 · 오후 12:41</span>
+        <span style="flex:1"></span>
+        <button class="btn btn--primary btn--sm" type="button">개발자에게 넘기기</button>
+        <button class="btn btn--ghost btn--sm" type="button">계속 고치기</button>
+      </div>
+      <div class="stcard__body">
+        <span class="stcard__no">2 · 저장함 — 주 행동이 넘기기로 승격</span>
+        <p class="stcard__cap">저장(=커밋+푸시)하는 순간 버튼 자리가 바뀐다. "몇 번째 저장"만 남고 커밋·브랜치 같은 말은 끝까지 등장하지 않는다.</p>
+      </div>
+    </div>
+
+    <div class="stcard">
+      <div class="mbar">
+        <span class="stchip stchip--info"><svg width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4.5" y="8.5" width="11" height="7.5" rx="1.6"/><path d="M7 8.5V6.8a3 3 0 0 1 6 0v1.7"/></svg>검토 중 · 민수가 보는 중</span>
+        <span style="flex:1"></span>
+        <button class="btn btn--ghost btn--sm" type="button">메시지 2</button>
+      </div>
+      <div class="memo">
+        <span class="who">민수 (개발) :</span>
+        두 번째 열 여백이 좁은데, 이번 넘김에 같이 조절할까요?
+        <span class="acts">
+          <button class="btn btn--primary btn--sm" type="button">이 화면에서 고치기</button>
+          <button class="btn btn--ghost btn--sm" type="button">답장</button>
+        </span>
+      </div>
+      <div class="stcard__body">
+        <span class="stcard__no">3 · 검토 중 — 화면은 잠기고, 말은 메모로</span>
+        <p class="stcard__cap">넘긴 화면(=PR)은 더 붙잡지 못한다. 대신 개발자의 코멘트가 화면 가장자리 메모로 오고, [고치기]를 누르면 이 화면에서 바로 다음 바꿈이 시작된다.</p>
+      </div>
+    </div>
+
+    <div class="stcard">
+      <div class="mbar">
+        <span class="stchip stchip--ok"><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10.5l3.2 3L15 6.5"/></svg>반영됨 · 오전 11:20</span>
+        <span style="flex:1"></span>
+        <button class="btn btn--primary btn--sm" type="button">새 바꿈 시작</button>
+      </div>
+      <div class="stcard__body">
+        <span class="stcard__no">4 · 반영됨 — 화면이 다시 내 것</span>
+        <p class="stcard__cap">개발자가 반영(=머지)하면 초록으로 바뀌고 사이클이 돌아온다. 왼쪽 화면 목록의 같은 자리에서 다음 지시가 이어진다 — 새 창도, 새 문서도 없이.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note">
+    반려되면? — 3번과 같은 자리에 <strong>"이번엔 안 됨 + 이유"</strong> 메모가 오고, 그 옆에 [다시 넘기기]가 생긴다.
+    되돌리고 싶으면? — 1번 상태의 바꿈 칩을 누르면 "방금 한 말 하나씩 무르기"가 열린다. 커밋 로그는 끝까지 등장하지 않는다.
+  </p>
+</section>
+
+<button class="themetoggle" id="themetoggle" title="테마 바꾸기" type="button">
+  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.8 12.6A6.6 6.6 0 0 1 7.4 4.2 6.6 6.6 0 1 0 15.8 12.6z"/></svg>
+</button>
+
+<script>
+  // 대화 시트: 열림(기본) ↔ 접기(화면만 남기기)
+  var sheet = document.getElementById('sheet');
+  var saypill = document.getElementById('saypill');
+  function setSheet(open) { document.body.classList.toggle('nosheet', !open); }
+  document.getElementById('sheetClose').addEventListener('click', function () { setSheet(false); });
+  saypill.addEventListener('click', function () { setSheet(true); });
+  document.addEventListener('keydown', function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSheet(true); }
+    if (e.key === 'Escape') { setSheet(false); }
+  });
+
+  // 미리보기 기기 폭
+  var pv = document.getElementById('pv');
+  document.querySelectorAll('.pv__bar .seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.pv__bar .seg button').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      pv.classList.toggle('pv--mobile', b.dataset.dev === 'mobile');
+    });
+  });
+
+  // 테마
+  document.getElementById('themetoggle').addEventListener('click', function () {
+    var r = document.documentElement;
+    r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark';
+  });
+</script>
+</body>
+</html>

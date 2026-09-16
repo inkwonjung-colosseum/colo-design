@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>단축키 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="stagepage">
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree"><div class="tree__label">프로젝트</div></nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+  <div class="main">
+    <header class="topbar"><span class="topbar__title">회원 관리 화면 세 상태</span><span class="topbar__crumb">쇼핑몰 프론트</span><span class="grow"></span><span class="conn conn--ok"><span class="dot"></span>연결됨</span></header>
+    <div class="work work--chatonly"></div>
+  </div>
+</div>
+
+<!-- ============ 단축키 시트 ============ -->
+<div class="scrim">
+  <div class="modal" role="dialog" aria-label="단축키" style="width:min(440px,calc(100vw - 48px))">
+    <div class="modal__head">
+      <span class="modal__title">단축키</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="단축키 닫기">✕</button>
+    </div>
+    <div class="modal__body" style="padding-top:6px">
+      <div class="krow">새 대화<span class="krow__keys"><span class="kbd">⌘N</span></span></div>
+      <div class="krow">대화 · 화면 검색<span class="krow__keys"><span class="kbd">⌘K</span></span></div>
+      <div class="krow">핀 찍기<span class="krow__keys"><span class="kbd">⌥</span><span class="kbd">클릭</span></span></div>
+      <div class="krow">핀 모드<span class="krow__keys"><span class="kbd">⌘⇧P</span></span></div>
+      <div class="krow">끊고 보내기<span class="krow__keys"><span class="kbd">⌥</span><span class="kbd">Enter</span></span></div>
+      <div class="krow">설정<span class="krow__keys"><span class="kbd">⌘,</span></span></div>
+      <div class="krow">이 목록<span class="krow__keys"><span class="kbd">⌘/</span></span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

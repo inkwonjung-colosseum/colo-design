@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orca 식 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+  /* Orca idiom: ADE — worktree가 일급 시민, Agents feed가 모든 이벤트를
+     한 스레드로, Design Mode(요소 클릭→프롬프트), decision gate. */
+  :root{
+    --bg:#111417; --panel:#171b1f; --panel2:#1d2227; --line:#272d33;
+    --text:#e8ecef; --text2:#9aa4ad; --muted:#5f6a73;
+    --accent:#5aa9e6; --accent-soft:rgba(90,169,230,.14);
+    --warn:#d9a05b; --ok:#6fbf8f;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:"Pretendard Variable",-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13.5px;height:100vh;overflow:hidden}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .or{display:grid;grid-template-columns:264px 1fr 380px;height:100vh}
+  /* left: worktrees + agents feed */
+  .or-side{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+  .or-side__top{padding:13px 14px;display:flex;align-items:center;gap:8px;font-weight:650}
+  .or-bell{margin-left:auto;position:relative;color:var(--text2)}
+  .or-bell i{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+  .or-wt{margin:0 10px 6px;border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .or-wt.on{border-color:var(--accent);background:var(--accent-soft)}
+  .or-wt__name{font-size:12.5px;font-weight:600;display:flex;gap:7px;align-items:center}
+  .or-wt__meta{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:3px}
+  .or-wt__chips{display:flex;gap:5px;margin-top:7px}
+  .or-chip{font-size:10px;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--text2);border:1px solid var(--line)}
+  .or-chip--live{color:var(--ok);border-color:rgba(111,191,143,.35)}
+  .or-chip--ask{color:var(--warn);border-color:rgba(217,160,91,.35)}
+  .or-feedlabel{padding:12px 14px 6px;font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .or-feed{flex:1;overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:2px}
+  .or-ev{display:flex;gap:8px;padding:7px 8px;border-radius:8px;font-size:12px;color:var(--text2);align-items:baseline}
+  .or-ev:hover{background:var(--panel2)}
+  .or-ev .ic{flex:none;width:16px;text-align:center}
+  .or-ev .t{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--muted);flex:none}
+  .or-ev--pin{position:sticky;top:0;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+  /* center: terminal-ish thread + design mode banner */
+  .or-main{display:flex;flex-direction:column;min-width:0}
+  .or-top{height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px}
+  .or-top .taskid{font-family:var(--mono);font-size:11px;color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+  .or-dm{margin:12px 16px 0;border:1px solid rgba(90,169,230,.4);background:var(--accent-soft);border-radius:10px;padding:9px 12px;font-size:12.5px;display:flex;align-items:center;gap:8px}
+  .or-scroll{flex:1;overflow-y:auto;padding:16px}
+  .or-line{display:flex;gap:10px;padding:6px 0;font-size:13px;color:var(--text2);line-height:1.6}
+  .or-line .who{flex:none;width:64px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--muted);padding-top:2px}
+  .or-line .who--me{color:var(--accent)}
+  .or-gate{margin:10px 0 10px 74px;border:1px solid rgba(217,160,91,.4);background:rgba(217,160,91,.08);border-radius:10px;padding:11px 13px}
+  .or-gate__q{font-size:13px;font-weight:550;margin-bottom:8px}
+  .or-gate__opts{display:flex;gap:8px}
+  .or-gate__opt{flex:1;border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:8px;font-size:12px;text-align:left}
+  .or-gate__opt:hover{border-color:var(--accent)}
+  .or-comp{padding:12px 16px 16px}
+  .or-box{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:10px 12px;display:flex;gap:8px;align-items:center}
+  .or-box input{flex:1;background:none;border:0;outline:0;color:var(--text);font:inherit}
+  .or-box .grp{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  /* right: preview + design mode */
+  .or-right{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+  .or-pbar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12px}
+  .or-url{flex:1;font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 9px}
+  .or-stage{flex:1;padding:14px;position:relative}
+  .or-frame{height:100%;border:1px solid var(--line);border-radius:10px;background:#f4f3ec;overflow:hidden;position:relative}
+  .or-el{position:absolute;border:1.5px dashed var(--accent);border-radius:4px}
+  .or-el::after{content:"요소 선택됨 — 프롬프트로 보내기";position:absolute;top:-24px;left:0;font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .or-actions{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+  .or-btn{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.5px;color:var(--text2)}
+  .or-btn--pri{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
+</style>
+</head>
+<body>
+<div class="or">
+  <!-- worktree 카드 + Agents feed: 모든 이벤트가 한 스레드 -->
+  <aside class="or-side">
+    <div class="or-side__top">⬡ Orca-style<span class="or-bell">🔔<i></i></span></div>
+    <div class="or-wt on">
+      <div class="or-wt__name"><span style="color:var(--ok)">●</span>members-screen</div>
+      <div class="or-wt__meta">shop-web · feat/members · claude</div>
+      <div class="or-wt__chips"><span class="or-chip or-chip--live">running</span><span class="or-chip">wt:3</span></div>
+    </div>
+    <div class="or-wt">
+      <div class="or-wt__name"><span style="color:var(--warn)">●</span>checkout-fail</div>
+      <div class="or-wt__meta">shop-web · fix/checkout · codex</div>
+      <div class="or-wt__chips"><span class="or-chip or-chip--ask">blocked · gate</span></div>
+    </div>
+    <div class="or-feedlabel">Agents feed</div>
+    <div class="or-feed">
+      <div class="or-ev or-ev--pin"><span class="ic">⏸</span><span><b>checkout-fail</b> — 게이트: 포트 5274 점유</span><span class="t">now</span></div>
+      <div class="or-ev"><span class="ic">✓</span><span>members-screen: 화면 3개 작성 완료</span><span class="t">2m</span></div>
+      <div class="or-ev"><span class="ic">◌</span><span>members-screen: 검사 통과 (14/14)</span><span class="t">3m</span></div>
+      <div class="or-ev"><span class="ic">＋</span><span>worktree 생성: members-screen</span><span class="t">18m</span></div>
+      <div class="or-ev"><span class="ic">✉</span><span>@all: 저장 전 검토 부탁 — 지연</span><span class="t">1h</span></div>
+    </div>
+  </aside>
+
+  <!-- 중앙: 에이전트 로그 + decision gate -->
+  <div class="or-main">
+    <div class="or-top">
+      <span style="font-weight:600">members-screen</span>
+      <span class="taskid">task:7f3a</span>
+      <span style="flex:1"></span>
+      <span class="or-chip">claude · sonnet-4.5</span>
+    </div>
+    <div class="or-dm">✎ Design Mode 켜짐 — 오른쪽 미리보기에서 요소를 누르면 HTML·CSS·크롭이 프롬프트로 갑니다</div>
+    <div class="or-scroll">
+      <div class="or-line"><span class="who who--me">jiyeon</span><span>회원 관리 화면을 만들어 줘. 목록·검색·권한 변경까지.</span></div>
+      <div class="or-line"><span class="who">claude</span><span>회원 관리 화면을 만들었습니다. 표 컴포넌트를 재사용하고 세 상태를 뒀습니다.</span></div>
+      <div class="or-line"><span class="who">system</span><span style="font-family:var(--mono);font-size:11.5px">dispatch:7f3a → worker_done · files +306 −13</span></div>
+      <!-- decision gate: 코디네이터가 묻고 태스크가 블록된다 -->
+      <div class="or-gate">
+        <div class="or-gate__q">⏸ 게이트 — members-screen이 묻습니다: 권한 변경은 관리자만 보이게 할까요?</div>
+        <div class="or-gate__opts">
+          <button class="or-gate__opt"><b>관리자만</b><br/><span style="color:var(--muted);font-size:11px">role=admin 일 때 렌더</span></button>
+          <button class="or-gate__opt"><b>모두에게</b><br/><span style="color:var(--muted);font-size:11px">비관리자는 disabled</span></button>
+          <button class="or-gate__opt"><b>직접 답하기</b><br/><span style="color:var(--muted);font-size:11px">메시지로 지시</span></button>
+        </div>
+      </div>
+    </div>
+    <div class="or-comp"><div class="or-box">
+      <span class="grp">@members-screen</span>
+      <input placeholder="메시지 — @all @idle @worktree:3 으로 그룹 주소" />
+      <button class="or-btn or-btn--pri" style="flex:none;padding:6px 14px">보내기</button>
+    </div></div>
+  </div>
+
+  <!-- 오른쪽: Design Mode 미리보기 -->
+  <aside class="or-right">
+    <div class="or-pbar"><span class="or-url">localhost:5274/members</span><span class="or-chip or-chip--live">design</span></div>
+    <div class="or-stage">
+      <div class="or-frame">
+        <div style="padding:16px;color:#57544a">
+          <div style="font-weight:650;font-size:15px;color:#1f1e1a;margin-bottom:10px">회원 관리</div>
+          <div style="border:1px solid #e6e4da;border-radius:8px;padding:10px;margin-bottom:8px;background:#fff;font-size:12px">김도현 · 관리자 ▾</div>
+          <div style="border:1px solid #e6e4da;border-radius:8px;padding:10px;background:#fff;font-size:12px">이서윤 · 회원 ▾</div>
+        </div>
+        <div class="or-el" style="top:64px;left:14px;right:14px;height:40px"></div>
+      </div>
+    </div>
+    <div class="or-actions">
+      <button class="or-btn">저장 검토</button>
+      <button class="or-btn or-btn--pri">개발자에게 넘기기</button>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

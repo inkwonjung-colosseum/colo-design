@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>1단계 — 레일 「지금」 행 · Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+/* 1단계 최소 조각: 레일 최상단 고정 행 + 팝오버. 작업 모드는 현행 그대로. */
+.ibx-rail { display:flex; align-items:center; gap:8px; width:100%; padding:9px 10px;
+  border:0; border-radius:var(--r-sm); background:var(--accent-soft); color:var(--text);
+  font:inherit; font-size:13px; font-weight:600; cursor:pointer; text-align:left; margin-bottom:12px; }
+.ibx-rail:hover { background:rgba(217,119,87,.16); }
+.ibx-railbadge { margin-left:auto; min-width:20px; height:19px; padding:0 6px; border-radius:var(--r-pill);
+  background:var(--accent); color:#fff; font-family:var(--mono); font-size:11px; font-weight:600;
+  display:inline-flex; align-items:center; justify-content:center; }
+/* 팝오버 — selector__menu 관용구 재사용 */
+.nowpop { position:absolute; left:14px; top:150px; width:300px; z-index:30;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--r-md);
+  box-shadow:0 12px 40px rgba(0,0,0,.14); padding:6px; }
+.nowpop__row { display:flex; align-items:center; gap:9px; width:100%; padding:9px 10px;
+  border:0; border-radius:var(--r-sm); background:transparent; font:inherit; font-size:13px;
+  color:var(--text); cursor:pointer; text-align:left; }
+.nowpop__row:hover { background:var(--panel-2); }
+.nowpop__row .t { min-width:0; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.nowpop__row .m { flex:none; font-size:11px; color:var(--faint); }
+.nowpop__sep { height:1px; background:var(--line-soft); margin:5px 8px; }
+.nowpop__label { font-size:11px; font-weight:600; color:var(--faint); padding:7px 10px 3px; letter-spacing:.02em; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <button class="ibx-rail">✉ 지금 <span class="ibx-railbadge">3</span></button>
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf leaf--on"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf"><span class="dot dot--ask"></span><span class="leaf__t">장바구니 빈 상태</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+
+    <!-- 「지금」 행의 팝오버: badgeFor 우선순위 그대로, 새 데이터 없음 -->
+    <div class="nowpop">
+      <div class="nowpop__label">나를 기다리는</div>
+      <button class="nowpop__row"><span class="dot dot--ask"></span><span class="t">장바구니 빈 상태 — 확인을 기다려요</span><span class="m">4분</span></button>
+      <button class="nowpop__row"><span class="dot" style="background:var(--info)"></span><span class="t">회원 관리 — 개발자 코멘트 도착</span><span class="m">1시간</span></button>
+      <button class="nowpop__row"><span class="dot dot--done"></span><span class="t">치워둔 작업 1건 — 꺼내기</span><span class="m"></span></button>
+      <div class="nowpop__sep"></div>
+      <div class="nowpop__label">지금 작업 중</div>
+      <button class="nowpop__row"><span class="dot dot--live"></span><span class="t">결제 실패 플로우 — 고치는 중</span><span class="m">1분 42초</span></button>
+      <button class="nowpop__row"><span class="dot dot--live"></span><span class="t">알림 설정 화면 — 만드는 중</span><span class="m">27초</span></button>
+      <div class="nowpop__sep"></div>
+      <button class="nowpop__row" style="color:var(--accent-ink);font-weight:600"><span class="t">모두 보기 — 지금 홈으로</span><span class="m">→</span></button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">결제 실패 플로우</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+          <div class="msg msg--user"><div class="msg__log">❯ 카드 오류가 났을 때 보여줄 안내 화면을 만들어 줘. 다시 시도 버튼이랑 고객센터 안내가 있으면 좋겠어.</div></div>
+          <div class="msg"><div class="msg__body">결제 실패 화면을 만들고 있어요. 오류 종류별로 문구가 달라지게 세 상태로 나눴습니다.</div></div>
+          <div class="tool"><button class="tool__head">▸ 도구 3개 — 화면 만들기 · 파일 읽기 · 미리보기 새로고침</button></div>
+        </div></div>
+        <div class="composer"><div class="composer__in">메시지를 입력하세요…</div></div>
+      </section>
+      <section class="preview">
+        <div class="preview__stage" style="display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:13px">미리보기 — 작업 모드는 현행 그대로</div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

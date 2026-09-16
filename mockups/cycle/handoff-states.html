@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>개발자에게 넘기기 — 네 상태 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+  .stateswrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 64px; }
+  .stateswrap__title { font-family: var(--serif); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 22px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid2__cell { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+  .grid2 .modal { width: 100%; max-height: none; }
+</style>
+</head>
+<body>
+<div class="stateswrap">
+  <h1 class="stateswrap__title">개발자에게 넘기기 — 네 상태</h1>
+  <p class="hint" style="margin:0">넘기기 모달이 진행과 개발자의 응답에 따라 바뀌는 모습입니다.</p>
+
+  <div class="grid2">
+
+    <!-- ============ 넘기는 중 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">넘기는 중</span>
+      <div class="modal" role="dialog" aria-label="개발자에게 넘기기 — 넘기는 중">
+        <div class="modal__head">
+          <span class="modal__title">개발자에게 넘기기</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="개발자에게 넘기기 닫기" disabled>✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="prcard">
+            <div class="prcard__head">
+              <span class="prcard__title">회원 관리 화면 세 상태 추가</span>
+              <span class="prcard__badge">Claude가 쓴 초안</span>
+            </div>
+            <div class="prcard__body">저장한 내용과 화면 미리보기를 묶어 개발자에게 보냅니다.</div>
+          </div>
+          <div class="savesteps">
+            <span class="savestep now"><span class="n"><span class="spin" style="width:10px;height:10px"></span></span>개발자에게 넘기는 중</span>
+          </div>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost" disabled>취소</button>
+          <button class="btn btn--primary" disabled>넘기는 중…</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 실패 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">실패</span>
+      <div class="modal" role="dialog" aria-label="개발자에게 넘기기 — 실패">
+        <div class="modal__head">
+          <span class="modal__title">개발자에게 넘기기</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="개발자에게 넘기기 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="notice notice--error">저장까지는 끝냈고, 개발자에게 넘기기에서 멈췄습니다. 설정에서 토큰과 레포 주소를 확인한 뒤 다시 넘길 수 있습니다.</div>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">설정 열기</button>
+          <button class="btn btn--primary">다시 넘기기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 변경 요청됨 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">변경 요청됨</span>
+      <div class="modal" role="dialog" aria-label="개발자에게 넘기기 — 변경 요청됨">
+        <div class="modal__head">
+          <span class="modal__title">개발자에게 넘기기</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="개발자에게 넘기기 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="prcard">
+            <div class="prcard__head">
+              <span class="prcard__title">회원 관리 화면 세 상태 추가</span>
+              <span class="prstate prstate--changes">변경 요청</span>
+            </div>
+            <div class="prcard__body">team/shop-web · 요청 42번 — 개발자가 코멘트를 남겼습니다.</div>
+          </div>
+          <p class="hint" style="margin:0">개발자가 코멘트를 남겼습니다 — 상태 확인에서 읽고 이어 갈 수 있습니다.</p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">닫기</button>
+          <button class="btn btn--primary">코멘트 보기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 닫힘 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">닫힘</span>
+      <div class="modal" role="dialog" aria-label="개발자에게 넘기기 — 닫힘">
+        <div class="modal__head">
+          <span class="modal__title">개발자에게 넘기기</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="개발자에게 넘기기 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="prcard">
+            <div class="prcard__head">
+              <span class="prcard__title">회원 관리 화면 세 상태 추가</span>
+              <span class="prstate">닫힘</span>
+            </div>
+            <div class="prcard__body">team/shop-web · 요청 42번 — 반영 없이 닫혔습니다.</div>
+          </div>
+          <p class="hint" style="margin:0">개발자가 반영하지 않고 닫았습니다 — 링크에서 이유를 확인해 보세요.</p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">넘긴 내용 열기</button>
+          <button class="btn btn--quiet">닫기</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nimbalyst 식 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<style>
+  /* Nimbalyst idiom: 비주얼 워크스페이스 — 세션=칸반 카드, 세션별 파일
+     추적, 세션 브랜칭, 에이전트 산출물이 리치 문서로. */
+  :root{
+    --bg:#f2f1ec; --panel:#fbfaf7; --panel2:#efeee8; --line:#e0ded4;
+    --text:#26251f; --text2:#5d5a4e; --muted:#948f7f;
+    --accent:#7a6fd0; --accent-soft:rgba(122,111,208,.12);
+    --ok:#5f9a6e; --warn:#c08a3e;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:"Pretendard Variable",-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13.5px;height:100vh;overflow:hidden}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .nb{display:grid;grid-template-columns:230px 1fr 300px;height:100vh}
+  .nb-side{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+  .nb-side__top{padding:14px;font-weight:700}
+  .nb-search{margin:0 12px 10px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;color:var(--muted);background:var(--panel)}
+  .nb-label{padding:6px 14px;font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .nb-sess{margin:0 10px;padding:8px 10px;border-radius:8px;display:flex;gap:8px;align-items:center;font-size:12.5px}
+  .nb-sess.on{background:var(--panel2)}
+  .nb-sess .br{font-family:var(--mono);font-size:10px;color:var(--accent);margin-left:auto}
+  .nb-side__foot{margin-top:auto;padding:10px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  /* center: kanban of session cards */
+  .nb-main{display:flex;flex-direction:column;min-width:0}
+  .nb-top{height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--panel)}
+  .nb-board{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:14px;overflow-y:auto;align-content:start}
+  .nb-col__head{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:0 2px 8px}
+  .nb-card{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:12px;box-shadow:0 1px 2px rgba(60,55,40,.04)}
+  .nb-card--sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .nb-card__t{font-size:13px;font-weight:650}
+  .nb-card__stat{font-size:11px;color:var(--muted);margin-top:5px;font-family:var(--mono)}
+  .nb-card__files{margin-top:9px;display:flex;flex-direction:column;gap:3px}
+  .nb-card__file{font-family:var(--mono);font-size:10.5px;color:var(--text2);display:flex;gap:6px}
+  .nb-card__file .w{color:var(--ok)}
+  .nb-card__foot{display:flex;gap:6px;margin-top:10px}
+  .nb-pill{font-size:10px;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--text2);border:1px solid var(--line)}
+  .nb-pill--branch{color:var(--accent);border-color:rgba(122,111,208,.35)}
+  /* right: session detail — files + branch + doc */
+  .nb-right{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+  .nb-right__sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .nb-right__label{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .nb-doc{border:1px solid var(--line);border-radius:9px;padding:10px 11px;font-size:12px;color:var(--text2);line-height:1.6}
+  .nb-doc h5{font-size:12px;color:var(--text);margin-bottom:4px}
+  .nb-file{display:flex;gap:7px;padding:5px 0;font-family:var(--mono);font-size:11px;color:var(--text2);align-items:center}
+  .nb-file .rw{font-size:9.5px;padding:1px 6px;border-radius:4px;flex:none}
+  .rw-r{background:var(--panel2);color:var(--muted)}
+  .rw-w{background:rgba(95,154,110,.14);color:var(--ok)}
+  .nb-branch{display:flex;align-items:center;gap:8px;padding:8px 0;font-size:12px}
+  .nb-branch .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+</style>
+</head>
+<body>
+<div class="nb">
+  <aside class="nb-side">
+    <div class="nb-side__top">◇ Nimbalyst-style</div>
+    <div class="nb-search">⌕ 세션·파일 검색 — 어디서든 재개</div>
+    <div class="nb-label">Sessions</div>
+    <div class="nb-sess on"><span>●</span>회원 관리 화면<span class="br">feat/members</span></div>
+    <div class="nb-sess"><span>●</span>결제 실패 플로우<span class="br">fix/checkout</span></div>
+    <div class="nb-sess"><span style="color:var(--accent)">⑂</span>회원 관리 — 대안 B<span class="br">branch</span></div>
+    <div class="nb-side__foot">세션 = 카드 · 파일 추적 · 브랜칭</div>
+  </aside>
+
+  <div class="nb-main">
+    <div class="nb-top">
+      <span style="font-weight:650">shop-web</span>
+      <span style="flex:1"></span>
+      <button class="nb-pill">＋ 세션</button>
+      <button class="nb-pill">⑂ 선택 세션 브랜치</button>
+    </div>
+    <div class="nb-board">
+      <div>
+        <div class="nb-col__head">진행 중</div>
+        <div class="nb-card nb-card--sel">
+          <div class="nb-card__t">회원 관리 화면 세 상태</div>
+          <div class="nb-card__stat">6m57s — 3 files +306 −13</div>
+          <div class="nb-card__files">
+            <div class="nb-card__file"><span class="w">W</span>src/pages/members.tsx</div>
+            <div class="nb-card__file"><span class="w">W</span>src/pages/members.empty.tsx</div>
+            <div class="nb-card__file"><span class="w">W</span>src/routes.ts</div>
+          </div>
+          <div class="nb-card__foot"><span class="nb-pill">claude</span><span class="nb-pill nb-pill--branch">⑂ 1 branch</span></div>
+        </div>
+        <div class="nb-card" style="margin-top:10px">
+          <div class="nb-card__t">결제 실패 플로우</div>
+          <div class="nb-card__stat">12m — 2 files +88 −4</div>
+          <div class="nb-card__foot"><span class="nb-pill">codex</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="nb-col__head">검토</div>
+        <div class="nb-card">
+          <div class="nb-card__t">장바구니 빈 상태</div>
+          <div class="nb-card__stat">PR #38 · 코멘트 2</div>
+          <div class="nb-card__foot"><span class="nb-pill">devin</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="nb-col__head">문서</div>
+        <div class="nb-card">
+          <div class="nb-card__t">회원 관리 — 설계 메모</div>
+          <div class="nb-card__stat">에이전트 산출물 · markdown</div>
+          <div class="nb-card__foot"><span class="nb-pill">📄 doc</span></div>
+        </div>
+        <div class="nb-card" style="margin-top:10px">
+          <div class="nb-card__t">권한 플로우 — 화이트보드</div>
+          <div class="nb-card__stat">에이전트 산출물 · excalidraw</div>
+          <div class="nb-card__foot"><span class="nb-pill">✏︎ board</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="nb-right">
+    <div class="nb-right__sec">
+      <div class="nb-right__label">이 세션이 만진 파일</div>
+      <div class="nb-file"><span class="rw rw-w">W</span>src/pages/members.tsx</div>
+      <div class="nb-file"><span class="rw rw-w">W</span>src/pages/members.empty.tsx</div>
+      <div class="nb-file"><span class="rw rw-w">W</span>src/routes.ts</div>
+      <div class="nb-file"><span class="rw rw-r">R</span>src/components/table.tsx</div>
+      <div class="nb-file"><span class="rw rw-r">R</span>src/styles/tokens.css</div>
+    </div>
+    <div class="nb-right__sec">
+      <div class="nb-right__label">세션 브랜치</div>
+      <div class="nb-branch"><span class="dot"></span>대안 B — 권한을 행 밖으로 <span style="margin-left:auto;font-size:10.5px;color:var(--muted)">원본 보존</span></div>
+    </div>
+    <div class="nb-right__sec">
+      <div class="nb-right__label">산출 문서</div>
+      <div class="nb-doc">
+        <h5>회원 관리 — 설계 메모</h5>
+        목록·검색·권한 변경. 빈 상태는 초대 동선, 오류는 재시도. 권한 드롭다운 위치는 대안 B에서 실험 중.
+      </div>
+    </div>
+    <div class="nb-right__sec" style="margin-top:auto;border-bottom:0;border-top:1px solid var(--line)">
+      <button style="width:100%;background:var(--accent);color:#fff;border-radius:8px;padding:9px;font-weight:600">저장 검토</button>
+      <button style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;margin-top:6px;color:var(--text2)">개발자에게 넘기기</button>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

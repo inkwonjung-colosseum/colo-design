@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>데몬 연결 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="connpage">
+  <div class="conncard">
+    <div class="conncard__mark">
+      <img src="../../packages/web/public/colonova-icon.svg" alt="" width="30" height="30" onerror="this.outerHTML='<span style=&quot;font-family:var(--serif);font-size:24px;color:var(--accent-ink)&quot;>C</span>'"/>
+    </div>
+    <h1 class="serif" style="font-size:24px;letter-spacing:-0.02em;margin:0 0 6px">Colo Design</h1>
+    <p class="hint" style="margin:0 0 4px">화면을 대화로 만드는 도구</p>
+    <p class="hint" style="margin:0">브라우저에서 쓰려면 데몬 주소를 붙여 넣으세요.<br/>데스크톱 앱에서는 이 화면이 나오지 않습니다.</p>
+
+    <div class="connfield">
+      <input placeholder="ws://localhost:5274?token=…" aria-label="데몬 주소" />
+      <button class="btn btn--primary">연결</button>
+    </div>
+
+    <div class="notice notice--error" style="margin-top:14px;text-align:left">
+      <span class="notice__text">연결하지 못했습니다 — 주소와 토큰이 맞는지 확인해 주세요.</span>
+      <button class="notice__x">✕</button>
+    </div>
+
+    <p class="hint" style="margin-top:18px;font-size:11.5px">터미널에서 <span class="mono">colo-design</span>을 실행하면 토큰이 담긴 주소가 열립니다.</p>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>
