@@ -300,6 +300,7 @@ async function main() {
       COLO_DESIGN_PROJECTS_SETTINGS: join(dir, "projects.json"),
       COLO_REFUSE_MODE_FLAG: join(dir, "bin", "refuse-mode.flag"),
       COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+      COLO_DESIGN_DESKTOP_SMOKE: join(dir, "userData"),
       CLAUDE_CONFIG_DIR: join(dir, "claude-config"),
       COLO_DESIGN_CLAUDE_BIN: slowStubClaude(join(dir, "bin"), promptLog),
       COLO_PROMPT_LOG: promptLog,
