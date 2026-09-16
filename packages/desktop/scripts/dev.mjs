@@ -63,7 +63,11 @@ let finished = false;
 
 function startElectron() {
   if (finished) return;
-  electronProc = spawn(electron, [desktop], {
+  // dev 는 설치본과 userData 를 나눈다 — productName 이 같아 기본 userData
+  // (~/Library/Application Support/Colo Design)를 공유하면 설치본이 잡은
+  // single-instance 잠금에 dev 가 두 번째 인스턴스로 합쳐져 조용히 종료된다.
+  // worktree 안에 두는 것도 의도다: 워크트리끼리도 같은 잠금 경쟁을 한다.
+  electronProc = spawn(electron, [`--user-data-dir=${devUserData}`, desktop], {
     stdio: "inherit",
     cwd: desktop,
     shell,
@@ -158,6 +162,8 @@ if (!existsSync(electron)) {
   console.error("electron 바이너리가 없습니다 — pnpm install 을 먼저 실행해 주세요.");
   process.exit(1);
 }
+const devUserData = join(desktop, ".dev-userData");
+console.log(`[dev] userData → ${devUserData}`);
 if (hmr) console.log(`[dev] electron → ${DEV_SERVER} (HMR)`);
 
 startElectron();
