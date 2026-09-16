@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveRewindCutoff } from "../dist/session-manager.js";
+import { resolveRewindCutoff } from "../dist/agent/drivers/claude/rewind.js";
 
 /** A synthetic transcript: prompts and answers with tool-result carriers. */
 const msg = (type, uuid, extra = {}) => ({ type, uuid, ...extra });

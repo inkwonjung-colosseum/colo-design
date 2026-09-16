@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MessageTranslator } from "../dist/translate.js";
+import { MessageTranslator } from "../dist/agent/drivers/claude/event-mapper.js";
 
 function textBlocks(events) {
   return events.filter((event) => event.kind === "text.delta" || event.kind === "text.done");

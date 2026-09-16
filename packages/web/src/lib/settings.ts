@@ -100,6 +100,8 @@ export const SIDEBAR_WIDTH_BOUNDS = { min: 200, max: 360 } as const;
  * asked a question they have no way to answer differently.
  */
 export interface ChatSettings {
+  /** Which agent provider new sessions run on; "claude" is the default. */
+  provider: string;
   model: string | null;
   effort: EffortLevel | null;
   permissionMode: PermissionMode;
@@ -159,6 +161,7 @@ export interface Settings {
 }
 
 const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+  provider: "claude",
   model: null,
   effort: null,
   permissionMode: DEFAULT_PERMISSION_MODE,
@@ -352,6 +355,7 @@ function loadChat(raw: unknown): ChatSettings {
   // 저장된 값은 고른 그대로 돌아온다.
   const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
   return {
+    provider: typeof stored.provider === "string" && stored.provider ? stored.provider : "claude",
     model: typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
       ? (stored.effort as EffortLevel)

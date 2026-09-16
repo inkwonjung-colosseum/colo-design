@@ -6,6 +6,7 @@ import {
   markTurn,
   type ServerMessage,
 } from "@colo-design/protocol";
+import type { DriverRegistry } from "./agent/registry.js";
 import { REFRESH_BRIEF, REFRESH_TITLE } from "./bootstrap-brief.js";
 import { recordComments } from "./comments.js";
 import { browseFiles, listFiles } from "./environment.js";
@@ -38,7 +39,9 @@ import { repoWritePolicy } from "./workspaces.js";
 export interface RouterDeps {
   manager: SessionManager;
   fleet: ProjectFleet;
-  drivers: PreviewDrivers;
+  previewDrivers: PreviewDrivers;
+  /** The agent provider registry — session.create resolves its driver here. */
+  agentDrivers: DriverRegistry;
   plans: PlanTracker;
   github: GitHubBridge;
   queueStore: QueueStore;
@@ -166,10 +169,24 @@ export class RequestRouter {
       }
 
       case "session.create": {
-        const executable = this.deps.claudeExecutable();
-        if (!executable) {
+        // A resume names the thread, not the provider — the store that owns
+        // the id decides which driver continues it.
+        const provider =
+          message.provider ??
+          (message.resume
+            ? ((await this.deps.manager.findStoredProvider(message.resume, this.workspaceCwd())) ??
+              "claude")
+            : "claude");
+        const driver = this.deps.agentDrivers.get(provider);
+        if (!driver) {
+          throw new Error(`알 수 없는 에이전트입니다: ${provider}`);
+        }
+        const availability = await driver.isAvailable();
+        if (!availability.ok || !availability.executable) {
           throw new Error(
-            "Claude Code CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.",
+            provider === "claude"
+              ? "Claude Code CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요."
+              : `${driver.describe().label} CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.`,
           );
         }
         if (!existsSync(this.repo.root)) {
@@ -182,42 +199,45 @@ export class RequestRouter {
         // driver with it. A healthy live thread is left exactly as it was.
         const dead = message.resume ? this.deps.manager.get(message.resume) : undefined;
         if (dead && (dead.state === "error" || dead.state === "closed")) {
-          this.deps.drivers.destroy(dead.id);
+          this.deps.previewDrivers.destroy(dead.id);
           await this.deps.manager.close(dead.id);
         }
         // The preview tools ride the session when a driver is injected and
         // the active preview is up (PLAN D61); `previewTools: false` opts
-        // out. The driver is remembered under the session's own id so the
-        // lifecycle hooks above can destroy it. D91: the session id only
-        // exists after `create`, so the opened-report goes through a sink
-        // the code below points at the fresh id.
+        // out. Only providers that can host an in-process MCP server get
+        // them — an ACP subprocess cannot.
         const openSink: {
           current: ((route: string, state: string | null) => void) | null;
         } = {
           current: null,
         };
-        const preview = await this.deps.drivers.toolsFor(
-          message.previewTools !== false,
-          (route, state) => openSink.current?.(route, state),
-        );
+        const preview = driver.describe().capabilities.inProcessMcp
+          ? await this.deps.previewDrivers.toolsFor(
+              message.previewTools !== false,
+              (route, state) => openSink.current?.(route, state),
+            )
+          : null;
         const sessionCwd = this.workspaceCwd();
         const instructions = this.projectInstructions(sessionCwd);
         const session = this.deps.manager.create({
           cwd: sessionCwd,
-          claudeExecutable: executable,
+          provider,
           queueDiskFor: this.deps.queueDiskFor,
-          ...(instructions ? { appendSystemPrompt: instructions } : {}),
           writePolicy: repoWritePolicy(sessionCwd),
           ...(message.title ? { title: message.title } : {}),
-          ...(message.resume ? { resume: message.resume } : {}),
-          ...(message.model ? { model: message.model } : {}),
-          ...(message.effort ? { effort: message.effort } : {}),
-          ...(preview ? { previewTools: preview.tools } : {}),
+          launch: {
+            executable: availability.executable,
+            ...(instructions ? { appendSystemPrompt: instructions } : {}),
+            ...(message.resume ? { resume: message.resume } : {}),
+            ...(message.model ? { model: message.model } : {}),
+            ...(message.effort ? { effort: message.effort } : {}),
+            ...(preview ? { previewTools: preview.tools } : {}),
+          },
         });
         if (preview) {
-          this.deps.drivers.register(session.id, preview.driver);
+          this.deps.previewDrivers.register(session.id, preview.driver);
           openSink.current = (route, state) => {
-            this.deps.drivers.noteOpened(session.id, route, state);
+            this.deps.previewDrivers.noteOpened(session.id, route, state);
             this.deps.broadcast({
               type: "session.event",
               sessionId: session.id,
@@ -253,7 +273,7 @@ export class RequestRouter {
         }
         // 사람이 다시 말을 걸었다 — 화면 확인 게이트의 한 번 제한이 풀린다.
         // 게이트는 사람의 턴마다 한 번이지, 대화마다 한 번이 아니다.
-        this.deps.drivers.gatedSessions.delete(message.sessionId);
+        this.deps.previewDrivers.gatedSessions.delete(message.sessionId);
         // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
         // manager's onEvent); this only seeds the count, before anything can
         // be handed over — so the transcript is read while it still holds
@@ -344,6 +364,11 @@ export class RequestRouter {
         const files = existsSync(root) ? await listFiles(root) : [];
         return browseFiles(files, message.query ?? "", message.limit ?? 40);
       }
+
+      case "session.setMode":
+        await this.deps.manager.require(message.sessionId).setPermissionMode(message.mode);
+        return { ok: true };
+
       case "session.setModel":
         await this.deps.manager.require(message.sessionId).setModel(message.model);
         return { ok: true };
@@ -478,11 +503,13 @@ export class RequestRouter {
         const instructions = this.projectInstructions(cwd);
         const session = this.deps.manager.create({
           cwd,
-          claudeExecutable: executable,
           queueDiskFor: this.deps.queueDiskFor,
-          ...(instructions ? { appendSystemPrompt: instructions } : {}),
           writePolicy: repoWritePolicy(cwd),
           title: REFRESH_TITLE,
+          launch: {
+            executable,
+            ...(instructions ? { appendSystemPrompt: instructions } : {}),
+          },
         });
         session.send(
           markTurn({ kind: "brief", title: REFRESH_TITLE, purpose: "conventions" }, REFRESH_BRIEF),
@@ -621,7 +648,7 @@ export class RequestRouter {
         const active = this.requireActive();
         // The captures come first, while the preview server is still the one
         // serving — the build gate inside the handoff may not leave it up.
-        const shots = await this.deps.drivers.captureHandoffShots();
+        const shots = await this.deps.previewDrivers.captureHandoffShots();
         return await active.repo.handoff({
           title: message.title ?? this.deps.registry.get(active.slug)?.name ?? undefined,
           body: message.body ?? DEFAULT_HANDOFF_BODY,
@@ -629,7 +656,7 @@ export class RequestRouter {
           // D93: the comment store and the declared titles — the PR body's
           // ### 수정 요청 section is the daemon's to build.
           commentsFile: join(active.paths.root, "comments.json"),
-          screenTitles: this.deps.drivers.screens.map((screen) => ({
+          screenTitles: this.deps.previewDrivers.screens.map((screen) => ({
             route: screen.route,
             title: screen.title,
           })),
@@ -661,9 +688,18 @@ export class RequestRouter {
         } = {
           current: null,
         };
-        const preview = await this.deps.drivers.toolsFor(true, (route, state) =>
-          openSink.current?.(route, state),
-        );
+        const targetDriver = this.deps.agentDrivers.get(target.provider);
+        const preview = targetDriver?.describe().capabilities.inProcessMcp
+          ? await this.deps.previewDrivers.toolsFor(true, (route, state) =>
+              openSink.current?.(route, state),
+            )
+          : null;
+        // The fork's binary is the TARGET provider's — a codex thread must
+        // not be handed the claude path just because the field used to be
+        // named after it.
+        const targetExecutable = targetDriver
+          ? ((await targetDriver.isAvailable().catch(() => null))?.executable ?? null)
+          : null;
         const result = await this.deps.manager.rewind({
           sessionId: message.sessionId,
           cwd: this.workspaceCwd(),
@@ -672,16 +708,18 @@ export class RequestRouter {
           images: message.images,
           base: {
             cwd: this.workspaceCwd(),
-            claudeExecutable: this.deps.claudeExecutable() ?? "",
+            provider: target.provider,
             queueDiskFor: this.deps.queueDiskFor,
             writePolicy: repoWritePolicy(this.workspaceCwd()),
-            ...(preview ? { previewTools: preview.tools } : {}),
+            launch: {
+              ...(targetExecutable ? { executable: targetExecutable } : {}),
+            },
           },
         });
         if (preview) {
-          this.deps.drivers.register(result.sessionId, preview.driver);
+          this.deps.previewDrivers.register(result.sessionId, preview.driver);
           openSink.current = (route, state) => {
-            this.deps.drivers.noteOpened(result.sessionId, route, state);
+            this.deps.previewDrivers.noteOpened(result.sessionId, route, state);
             this.deps.broadcast({
               type: "session.event",
               sessionId: result.sessionId,
@@ -711,18 +749,21 @@ export class RequestRouter {
         // The declared screens ride along so the summary can say 회원 목록
         // instead of a folder name — the same list 넘기기's body uses.
         return await this.repo.summarize(
-          this.deps.drivers.screens.map((screen) => ({ route: screen.route, title: screen.title })),
+          this.deps.previewDrivers.screens.map((screen) => ({
+            route: screen.route,
+            title: screen.title,
+          })),
         );
 
       case "repo.handoffDraft": {
         const active = this.requireActive();
         return await active.repo.handoffDraft({
           commentsFile: join(active.paths.root, "comments.json"),
-          screenTitles: this.deps.drivers.screens.map((screen) => ({
+          screenTitles: this.deps.previewDrivers.screens.map((screen) => ({
             route: screen.route,
             title: screen.title,
           })),
-          shotCount: await this.deps.drivers.handoffShotCount(),
+          shotCount: await this.deps.previewDrivers.handoffShotCount(),
         });
       }
 
@@ -780,14 +821,17 @@ export class RequestRouter {
    * force-aborted stop · a CLI that ended on its own): same id, fresh CLI,
    * the stored transcript resumed — the planner's words ride the
    * conversation they belong to, which is the promise the crash card made
-   * ("다시 보내면 이어집니다"). The dead object is torn down FIRST, under
+   * ("다시내면 이어집니다"). The dead object is torn down FIRST, under
    * its own id, so its late `closed` broadcast cannot take the
    * replacement's preview driver with it.
    */
   private async resurrectSession(dead: Session): Promise<Session> {
-    this.deps.drivers.destroy(dead.id);
+    this.deps.previewDrivers.destroy(dead.id);
     await this.deps.manager.close(dead.id);
-    const executable = this.deps.claudeExecutable();
+    const provider = dead.provider;
+    const driver = this.deps.agentDrivers.get(provider);
+    const availability = driver ? await driver.isAvailable().catch(() => null) : null;
+    const executable = availability?.executable;
     if (!executable) return dead;
     const chosen = dead.chosen;
     const openSink: {
@@ -795,26 +839,31 @@ export class RequestRouter {
     } = {
       current: null,
     };
-    const preview = await this.deps.drivers.toolsFor(true, (route, state) =>
-      openSink.current?.(route, state),
-    );
+    const preview = driver?.describe().capabilities.inProcessMcp
+      ? await this.deps.previewDrivers.toolsFor(true, (route, state) =>
+          openSink.current?.(route, state),
+        )
+      : null;
     const instructions = this.projectInstructions(dead.cwd);
     const session = this.deps.manager.create({
       cwd: dead.cwd,
-      claudeExecutable: executable,
+      provider,
       queueDiskFor: this.deps.queueDiskFor,
-      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       writePolicy: repoWritePolicy(dead.cwd),
-      resume: dead.id,
       title: dead.title,
-      ...(chosen.model ? { model: chosen.model } : {}),
-      ...(chosen.effort ? { effort: chosen.effort } : {}),
-      ...(preview ? { previewTools: preview.tools } : {}),
+      launch: {
+        ...(instructions ? { appendSystemPrompt: instructions } : {}),
+        executable,
+        resume: dead.id,
+        ...(chosen.model ? { model: chosen.model } : {}),
+        ...(chosen.effort ? { effort: chosen.effort } : {}),
+        ...(preview ? { previewTools: preview.tools } : {}),
+      },
     });
     if (preview) {
-      this.deps.drivers.register(session.id, preview.driver);
+      this.deps.previewDrivers.register(session.id, preview.driver);
       openSink.current = (route, state) => {
-        this.deps.drivers.noteOpened(session.id, route, state);
+        this.deps.previewDrivers.noteOpened(session.id, route, state);
         this.deps.broadcast({
           type: "session.event",
           sessionId: session.id,
@@ -892,9 +941,7 @@ export class RequestRouter {
     const instructions = this.projectInstructions(cwd);
     const session = this.deps.manager.create({
       cwd,
-      claudeExecutable: executable,
       queueDiskFor: this.deps.queueDiskFor,
-      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       writePolicy: repoWritePolicy(cwd),
       title:
         stage === "save"
@@ -902,6 +949,10 @@ export class RequestRouter {
           : stage === "handoff"
             ? "넘기기 문제 해결"
             : "최신화 문제 해결",
+      launch: {
+        executable,
+        ...(instructions ? { appendSystemPrompt: instructions } : {}),
+      },
     });
     this.gateThreadId = session.id;
     // The tree gains a child row (PLAN D59), same as any daemon-opened thread.

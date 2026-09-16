@@ -19,8 +19,8 @@ const { PLAN_TOOL } = await import("../../protocol/dist/index.js");
 function planSession({ mode = "plan", modeBeforePlan = "bypassPermissions" } = {}) {
   const seen = { modeCalls: [], resolved: null };
   const stub = {
-    run: {
-      setPermissionMode: async (m) => {
+    agent: {
+      setMode: async (m) => {
         seen.modeCalls.push(m);
       },
     },
@@ -48,23 +48,23 @@ function planSession({ mode = "plan", modeBeforePlan = "bypassPermissions" } = {
   return { stub, seen };
 }
 
-test("canUse routes ExitPlanMode to a plan card even when 항상 허용 remembers it", async () => {
+test("decidePermission routes ExitPlanMode to a plan card even when 항상 허용 remembers it", async () => {
   let captured = null;
   const ask = {
     alwaysAllowed: { allows: () => true },
-    handlePermission: (toolName, input) => {
-      captured = { toolName, input };
+    handlePermission: (tool, input) => {
+      captured = { tool, input };
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     },
   };
   const signal = new AbortController().signal;
-  const verdict = await Session.prototype.canUse.call(
+  const verdict = await Session.prototype.decidePermission.call(
     ask,
-    PLAN_TOOL,
+    { kind: "plan", name: PLAN_TOOL },
     { plan: "1. 화면 2. 상태" },
     { signal },
   );
-  assert.equal(captured.toolName, PLAN_TOOL, "the plan went to a card, not to the memory");
+  assert.equal(captured.tool.name, PLAN_TOOL, "the plan went to a card, not to the memory");
   assert.equal(verdict.behavior, "allow");
 });
 
@@ -96,7 +96,7 @@ test("respondPermission deny keeps the plan mode and delivers the reason", async
 
 test("setPermissionMode stashes on entering plan and clears on leaving it", async () => {
   const stub = {
-    run: { setPermissionMode: async () => {} },
+    agent: { setMode: async () => {} },
     permissionMode: "bypassPermissions",
   };
   await Session.prototype.setPermissionMode.call(stub, "plan");
@@ -109,7 +109,7 @@ test("setPermissionMode stashes on entering plan and clears on leaving it", asyn
 
 test("a restore failure still releases the plan", async () => {
   const { stub, seen } = planSession();
-  stub.run.setPermissionMode = async () => {
+  stub.agent.setMode = async () => {
     throw new Error("stub refused");
   };
   const ok = await Session.prototype.respondPermission.call(stub, "req-1", "allow");

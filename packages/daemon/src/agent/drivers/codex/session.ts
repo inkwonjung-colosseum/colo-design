@@ -1,0 +1,896 @@
+import type {
+  ContextUsage,
+  EffortLevel,
+  PlanUsage,
+  SessionCommand,
+  SessionModelInfo,
+} from "@colo-design/protocol";
+import type {
+  AgentSession,
+  DriverHooks,
+  LaunchConfig,
+  PermissionVerdict,
+  SessionHandle,
+  ToolClass,
+  Turn,
+} from "../../driver.js";
+import { JsonRpcTransport } from "../../jsonrpc.js";
+
+/** The app-server wire shapes this driver reads — kept loose, the spec evolves. */
+type Wire = Record<string, any>;
+
+/** The composer's effort enum — codex names more levels than we offer. */
+const EFFORT_LEVELS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The three permission modes this driver exposes. Codex splits the decision
+ * two ways — `approvalPolicy` (does the agent ask?) and `sandbox` (what may
+ * it touch without asking) — and both are per-turn params, so a mode switch
+ * lands on the next `turn/start`, never mid-turn.
+ */
+const CODEX_MODES: Record<string, { approvalPolicy: string; sandbox: string }> = {
+  default: { approvalPolicy: "on-request", sandbox: "workspace-write" },
+  plan: { approvalPolicy: "never", sandbox: "read-only" },
+  bypass: { approvalPolicy: "never", sandbox: "danger-full-access" },
+};
+
+/** `thread/*` takes a SandboxMode string; `turn/start` takes the full policy. */
+function sandboxPolicy(modeId: string, cwd: string): Wire {
+  switch (CODEX_MODES[modeId]?.sandbox ?? "workspace-write") {
+    case "read-only":
+      return { type: "readOnly", networkAccess: true };
+    case "danger-full-access":
+      return { type: "dangerFullAccess" };
+    default:
+      return {
+        type: "workspaceWrite",
+        writableRoots: [cwd],
+        networkAccess: true,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      };
+  }
+}
+
+/**
+ * An AgentSession over Codex's `app-server` JSON-RPC protocol: one child
+ * process per session, stdio framing. The handshake is async, so calls made
+ * before `thread/start` (or resume/fork) resolves queue behind `ready` — the
+ * core session is synchronous and must never see the gap.
+ *
+ * Turn model: `turn/start` resolves on acceptance; the turn's end is the
+ * `turn/completed` notification. `turn/steer` carries mid-turn input (it
+ * needs the live turn id as a precondition), `turn/interrupt` stops it.
+ * Approvals arrive as server→client requests and are answered through
+ * `hooks.decidePermission`.
+ */
+export class CodexAgentSession implements AgentSession {
+  private readonly transport: JsonRpcTransport;
+  private readonly ready: Promise<void>;
+  private threadId: string | null = null;
+  private closed = false;
+  private turnStartedAt = 0;
+  /** The turn the server says is in progress — steer's precondition. */
+  private activeTurnId: string | null = null;
+  /** Resolves when the in-flight `turn/start`'s turn completes. */
+  private turnDone: Promise<void> | null = null;
+  private markTurnDone: (() => void) | null = null;
+  /**
+   * Resolves once the in-flight `turn/start` has answered — steer must not
+   * read `activeTurnId` while the server is still naming the turn, or a
+   * steer sent moments after a send would open a SECOND turn instead of
+   * joining the first. The core fires `send()` without awaiting it, so that
+   * window is reachable by a fast planner.
+   */
+  private turnAccepted: Promise<void> | null = null;
+  private markTurnAccepted: (() => void) | null = null;
+  /** interrupt() waiters — resolved "answered" on turn/completed, "dead" on end. */
+  private readonly turnSettlers = new Set<(outcome: "answered" | "dead") => void>();
+  private currentModeId: string;
+  private currentModel: string | null;
+  private currentEffort: EffortLevel | null;
+  private lastContext: { used: number; size: number } | null = null;
+  /** Items whose deltas already streamed — completed items don't re-emit. */
+  private readonly streamedItems = new Set<string>();
+  private readonly launch: LaunchConfig;
+
+  constructor(
+    private readonly providerId: string,
+    command: string,
+    launch: LaunchConfig,
+    private readonly hooks: DriverHooks,
+  ) {
+    this.launch = launch;
+    this.currentModeId = CODEX_MODES[launch.modeId] ? launch.modeId : "default";
+    this.currentModel = launch.model;
+    this.currentEffort = launch.effort;
+    this.transport = new JsonRpcTransport(command, ["app-server"], launch.cwd, {
+      onRequest: (method, params) => this.onAgentRequest(method, params),
+      onNotify: (method, params) => this.onAgentNotify(method, params),
+      onEnd: (code) => this.onTransportEnd(code),
+    });
+    this.ready = this.handshake();
+  }
+
+  handle(): SessionHandle {
+    return { provider: this.providerId, vendorSessionId: this.threadId ?? "" };
+  }
+
+  // -------------------------------------------------------------------------
+  // Handshake — initialize, then start/resume/fork the thread.
+  // -------------------------------------------------------------------------
+
+  private async handshake(): Promise<void> {
+    await this.transport.request("initialize", {
+      clientInfo: { name: "colo-design", title: null, version: "0" },
+      capabilities: {
+        // steer, item/* approvals and skills/list live behind this flag.
+        experimentalApi: true,
+        requestAttestation: false,
+      },
+    });
+    this.transport.notify("initialized");
+
+    const resumeId = typeof this.launch.resume === "string" ? this.launch.resume : null;
+    const fork = this.launch.forkSession === true;
+    const cut =
+      typeof this.launch.resumeSessionAt === "string" ? this.launch.resumeSessionAt : null;
+    const overrides = this.threadOverrides();
+
+    let response: Wire;
+    if (resumeId && fork && cut) {
+      // D95 truncating fork: keep the source thread through `cut`, drop the
+      // rest, continue as a fresh thread id.
+      response = (await this.transport.request("thread/fork", {
+        threadId: resumeId,
+        lastTurnId: cut,
+        ...overrides,
+      })) as Wire;
+    } else if (resumeId && !fork) {
+      response = (await this.transport.request("thread/resume", {
+        threadId: resumeId,
+        ...overrides,
+      })) as Wire;
+    } else {
+      // fork without a cut means "keep nothing" — a fresh thread IS that fork.
+      response = (await this.transport.request("thread/start", {
+        cwd: this.launch.cwd,
+        ...overrides,
+      })) as Wire;
+    }
+
+    const thread = (response?.thread ?? {}) as Wire;
+    this.threadId = String(thread.id ?? resumeId ?? this.launch.sessionId);
+    this.currentModel = String(response?.model ?? this.launch.model ?? "default");
+
+    this.hooks.onEvent({
+      kind: "init",
+      sessionId: this.threadId,
+      model: this.currentModel,
+      cwd: this.launch.cwd,
+      tools: [],
+      apiKeySource: "none",
+      permissionMode: this.currentModeId,
+    });
+  }
+
+  /** The per-thread overrides every thread/* call carries. */
+  private threadOverrides(): Wire {
+    const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
+    const config = this.configOverlay();
+    return {
+      ...(this.launch.model ? { model: this.launch.model } : {}),
+      approvalPolicy: mode.approvalPolicy,
+      sandbox: mode.sandbox,
+      ...(this.launch.appendSystemPrompt
+        ? { developerInstructions: this.launch.appendSystemPrompt }
+        : {}),
+      ...(config ? { config } : {}),
+    };
+  }
+
+  /**
+   * Launch-time MCP servers ride the thread's config overlay — codex keeps
+   * its own `mcp_servers` table, so the capability stays off but a launch
+   * that carries servers still tries to hand them over.
+   */
+  private configOverlay(): Wire | null {
+    const servers = Object.entries(this.launch.mcpServers ?? {});
+    if (servers.length === 0) return null;
+    return {
+      mcp_servers: Object.fromEntries(
+        servers.map(([name, s]) => [
+          name,
+          { url: s.url, ...(s.headers ? { http_headers: s.headers } : {}) },
+        ]),
+      ),
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // AgentSession
+  // -------------------------------------------------------------------------
+
+  async send(turn: Turn): Promise<void> {
+    await this.ready;
+    if (this.closed || !this.transport.alive) throw new Error("Codex transport closed");
+    const threadId = this.threadId;
+    if (!threadId) throw new Error("Codex thread not established");
+
+    this.turnStartedAt = Date.now();
+    this.turnDone = new Promise<void>((resolve) => {
+      this.markTurnDone = resolve;
+    });
+    this.turnAccepted = new Promise<void>((resolve) => {
+      this.markTurnAccepted = resolve;
+    });
+    try {
+      let result: Wire;
+      try {
+        result = (await this.transport.request(
+          "turn/start",
+          this.turnStartParams(threadId, turn),
+        )) as Wire;
+        // The acceptance answer names the turn before turn/started lands.
+        this.activeTurnId = String(result?.turn?.id ?? "") || this.activeTurnId;
+      } finally {
+        // Open the gate even on rejection — a waiting steer must not hang.
+        this.markTurnAccepted?.();
+        this.markTurnAccepted = null;
+      }
+      await this.turnDone;
+    } catch (error) {
+      if (this.closed) return;
+      this.hooks.onEvent({
+        kind: "turn.end",
+        subtype: "error_during_execution",
+        isError: true,
+        costUsd: null,
+        numTurns: null,
+        durationMs: Date.now() - this.turnStartedAt,
+        resultText: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.turnDone = null;
+      this.markTurnDone = null;
+      this.turnAccepted = null;
+    }
+  }
+
+  /**
+   * Mid-turn input. `turn/steer` needs the live turn id as a precondition;
+   * with no active turn the words are simply the next turn.
+   */
+  async steer(turn: Turn): Promise<void> {
+    await this.ready;
+    // A send issued moments ago may still be learning its turn id.
+    if (this.turnAccepted) await this.turnAccepted;
+    const threadId = this.threadId;
+    if (!threadId || this.closed) return;
+    const expectedTurnId = this.activeTurnId;
+    if (expectedTurnId) {
+      await this.transport.request("turn/steer", {
+        threadId,
+        expectedTurnId,
+        input: this.userInput(turn),
+      });
+      return;
+    }
+    await this.transport.request("turn/start", this.turnStartParams(threadId, turn));
+  }
+
+  /**
+   * `turn/start`'s params. Mode, model and effort are per-turn overrides, so
+   * this is where a stored pick becomes real — and why both callers share it:
+   * a steer that opens its own turn must run under the same settings a plain
+   * send would, or the mode chip would be lying for that one turn.
+   */
+  private turnStartParams(threadId: string, turn: Turn): Wire {
+    const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
+    return {
+      threadId,
+      input: this.userInput(turn),
+      approvalPolicy: mode.approvalPolicy,
+      sandboxPolicy: sandboxPolicy(this.currentModeId, this.launch.cwd),
+      ...(this.currentModel ? { model: this.currentModel } : {}),
+      ...(this.currentEffort ? { effort: this.currentEffort } : {}),
+    };
+  }
+
+  async interrupt(): Promise<"answered" | "timeout" | "dead"> {
+    await this.ready.catch(() => undefined);
+    if (!this.transport.alive) return "dead";
+    const threadId = this.threadId;
+    const turnId = this.activeTurnId;
+    if (!threadId || !turnId) return "answered";
+    try {
+      await this.transport.request("turn/interrupt", { threadId, turnId });
+    } catch {
+      // The turn may have completed as the request flew — that IS the answer.
+      if (!this.transport.alive) return "dead";
+      if (!this.activeTurnId) return "answered";
+    }
+    if (!this.activeTurnId) return "answered";
+    let settle: (outcome: "answered" | "dead") => void = () => undefined;
+    const settled = new Promise<"answered" | "dead">((resolve) => {
+      settle = resolve;
+      this.turnSettlers.add(resolve);
+    });
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), 10_000),
+    );
+    try {
+      return await Promise.race([settled, timeout]);
+    } finally {
+      this.turnSettlers.delete(settle);
+    }
+  }
+
+  /** Modes are per-turn params — store the pick; the next turn/start applies it. */
+  async setMode(modeId: string): Promise<void> {
+    await this.ready;
+    if (CODEX_MODES[modeId]) this.currentModeId = modeId;
+  }
+
+  async setModel(id: string | null): Promise<void> {
+    await this.ready;
+    this.currentModel = id;
+  }
+
+  async setEffort(effort: EffortLevel | null): Promise<void> {
+    await this.ready;
+    this.currentEffort = effort;
+  }
+
+  async modes(): Promise<Array<{ id: string; label: string; description?: string }> | null> {
+    return [
+      { id: "default", label: "Default", description: "Ask before running commands" },
+      { id: "plan", label: "Plan", description: "Read-only — never runs or writes" },
+      { id: "bypass", label: "Bypass", description: "Full access, never asks" },
+    ];
+  }
+
+  async commands(): Promise<SessionCommand[]> {
+    await this.ready;
+    try {
+      const result = (await this.transport.request("skills/list", {
+        cwds: [this.launch.cwd],
+      })) as Wire;
+      const entries = Array.isArray(result?.data) ? (result.data as Wire[]) : [];
+      return entries.flatMap((entry) =>
+        (Array.isArray(entry?.skills) ? (entry.skills as Wire[]) : [])
+          .filter((skill) => skill?.enabled !== false)
+          .map((skill) => ({
+            name: String(skill.name ?? ""),
+            description: String(skill.description ?? skill.shortDescription ?? ""),
+            argumentHint: "",
+            aliases: [],
+          })),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async models(): Promise<SessionModelInfo[]> {
+    await this.ready;
+    try {
+      const rows: Wire[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = (await this.transport.request("model/list", {
+          ...(cursor ? { cursor } : {}),
+        })) as Wire;
+        rows.push(...(Array.isArray(page?.data) ? (page.data as Wire[]) : []));
+        cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
+      } while (cursor);
+      return rows.map((m) => {
+        const efforts = (
+          Array.isArray(m.supportedReasoningEfforts)
+            ? (m.supportedReasoningEfforts as Wire[]).map((o) => String(o?.reasoningEffort ?? ""))
+            : []
+        ).filter((e) => EFFORT_LEVELS.includes(e)) as EffortLevel[];
+        return {
+          value: String(m.id ?? m.model ?? ""),
+          displayName: String(m.displayName ?? m.id ?? ""),
+          resolvedModel: String(m.model ?? m.id ?? "") || null,
+          description: String(m.description ?? ""),
+          supportsEffort: efforts.length > 0,
+          supportedEffortLevels: efforts,
+          supportsFastMode: false,
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * `account/rateLimits/read` — codex names its own windows, so the buckets
+   * are classified by duration: ≤12h is the short window, longer is weekly,
+   * and every extra metered limit lands in modelWeekly under its own name.
+   */
+  async usage(): Promise<PlanUsage | null> {
+    await this.ready;
+    try {
+      const result = (await this.transport.request("account/rateLimits/read")) as Wire;
+      const snapshots: Wire[] = [];
+      if (result?.rateLimits) snapshots.push(result.rateLimits as Wire);
+      const byId = result?.rateLimitsByLimitId as Wire | null | undefined;
+      if (byId) {
+        for (const [key, snapshot] of Object.entries(byId)) {
+          if (key !== (result.rateLimits as Wire)?.limitId) snapshots.push(snapshot as Wire);
+        }
+      }
+      const plan: PlanUsage = {
+        subscriptionType: null,
+        fiveHour: null,
+        sevenDay: null,
+        modelWeekly: [],
+      };
+      for (const snapshot of snapshots) {
+        if (typeof snapshot?.planType === "string" && !plan.subscriptionType) {
+          plan.subscriptionType = snapshot.planType;
+        }
+        const windows: Array<{ window: Wire; label: string | null }> = [];
+        if (snapshot?.primary) {
+          windows.push({ window: snapshot.primary as Wire, label: null });
+        }
+        if (snapshot?.secondary) {
+          windows.push({ window: snapshot.secondary as Wire, label: null });
+        }
+        for (const { window } of windows) {
+          const mapped = {
+            utilization: typeof window.usedPercent === "number" ? window.usedPercent : null,
+            resetsAt:
+              typeof window.resetsAt === "number"
+                ? new Date(window.resetsAt * 1000).toISOString()
+                : null,
+          };
+          const mins = Number(window.windowDurationMins ?? 0);
+          if (mins > 0 && mins <= 720 && !plan.fiveHour) {
+            plan.fiveHour = mapped;
+          } else if (mins > 0 && mins <= 11000 && !plan.sevenDay) {
+            plan.sevenDay = mapped;
+          } else {
+            plan.modelWeekly.push({
+              ...mapped,
+              label: String(snapshot?.limitName ?? snapshot?.limitId ?? "limit"),
+            });
+          }
+        }
+      }
+      return plan;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The token ring rides `thread/tokenUsage/updated` — free, no extra call. */
+  async contextUsage(): Promise<ContextUsage | null> {
+    await this.ready;
+    if (!this.lastContext) return null;
+    const { used, size } = this.lastContext;
+    return {
+      totalTokens: used,
+      maxTokens: size,
+      percentage: size > 0 ? Math.min(100, Math.round((used / size) * 100)) : 0,
+      sessionCostUsd: null,
+      model: this.currentModel ?? "",
+      plan: null,
+    };
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.transport.close();
+  }
+
+  // -------------------------------------------------------------------------
+  // Server → client requests — approvals go through the core's policy.
+  // -------------------------------------------------------------------------
+
+  private async onAgentRequest(method: string, params: unknown): Promise<unknown> {
+    const p = (params ?? {}) as Wire;
+    switch (method) {
+      case "item/commandExecution/requestApproval":
+        return await this.approveCommandExecution(p);
+      case "item/fileChange/requestApproval":
+        return await this.approveFileChange(p);
+      case "item/permissions/requestApproval":
+        return await this.approvePermissions(p);
+      case "execCommandApproval":
+        return await this.approveExecLegacy(p);
+      case "applyPatchApproval":
+        return await this.approvePatchLegacy(p);
+      default:
+        // item/tool/call, item/tool/requestUserInput, mcpServer/elicitation/*,
+        // attestation/generate, account/chatgptAuthTokens/refresh — no client
+        // surface for these; an error beats a hang.
+        throw new Error(`Unsupported client method: ${method}`);
+    }
+  }
+
+  private async decide(
+    tool: ToolClass,
+    input: Record<string, unknown>,
+  ): Promise<PermissionVerdict> {
+    return await this.hooks.decidePermission(tool, input, {
+      signal: new AbortController().signal,
+    });
+  }
+
+  private async approveCommandExecution(p: Wire): Promise<unknown> {
+    const command = String(p.command ?? "");
+    const verdict = await this.decide(
+      {
+        kind: "exec",
+        name: "commandExecution",
+        command,
+        ...(p.cwd ? { paths: [String(p.cwd)] } : {}),
+      },
+      {
+        command,
+        cwd: p.cwd ?? null,
+        reason: p.reason ?? null,
+        kind: p.kind ?? "command",
+      },
+    );
+    if (verdict.behavior === "deny") return { decision: "decline" };
+    // 항상 허용 echoes through updatedPermissions — its presence is the
+    // signal that the planner picked the durable answer.
+    return { decision: verdict.updatedPermissions !== undefined ? "acceptForSession" : "accept" };
+  }
+
+  private async approveFileChange(p: Wire): Promise<unknown> {
+    const verdict = await this.decide(
+      {
+        kind: "edit",
+        name: "fileChange",
+        ...(p.grantRoot ? { paths: [String(p.grantRoot)] } : {}),
+      },
+      { reason: p.reason ?? null, grantRoot: p.grantRoot ?? null },
+    );
+    if (verdict.behavior === "deny") return { decision: "decline" };
+    return { decision: verdict.updatedPermissions !== undefined ? "acceptForSession" : "accept" };
+  }
+
+  private async approvePermissions(p: Wire): Promise<unknown> {
+    const requested = (p.permissions ?? {}) as Wire;
+    const fs = (requested.fileSystem ?? {}) as Wire;
+    const paths = [...(fs.read ?? []), ...(fs.write ?? [])].map(String);
+    const verdict = await this.decide(
+      { kind: "other", name: "permissions", paths },
+      {
+        reason: p.reason ?? null,
+        permissions: requested,
+      },
+    );
+    if (verdict.behavior === "deny") {
+      // Granting nothing is the decline shape this request understands.
+      return { permissions: {}, scope: "turn" };
+    }
+    return {
+      permissions: {
+        ...(requested.fileSystem ? { fileSystem: requested.fileSystem } : {}),
+        ...(requested.network ? { network: requested.network } : {}),
+      },
+      scope: verdict.updatedPermissions !== undefined ? "session" : "turn",
+    };
+  }
+
+  /** Legacy `execCommandApproval` — the ReviewDecision vocabulary. */
+  private async approveExecLegacy(p: Wire): Promise<unknown> {
+    const command = Array.isArray(p.command) ? (p.command as unknown[]).join(" ") : "";
+    const verdict = await this.decide(
+      {
+        kind: "exec",
+        name: "execCommand",
+        command,
+        ...(p.cwd ? { paths: [String(p.cwd)] } : {}),
+      },
+      { command, cwd: p.cwd ?? null, reason: p.reason ?? null },
+    );
+    if (verdict.behavior === "deny") {
+      return { decision: { denied: { rejection: verdict.message } } };
+    }
+    return {
+      decision: verdict.updatedPermissions !== undefined ? "approved_for_session" : "approved",
+    };
+  }
+
+  /** Legacy `applyPatchApproval` — fileChanges is a path→change map. */
+  private async approvePatchLegacy(p: Wire): Promise<unknown> {
+    const changes = (p.fileChanges ?? {}) as Wire;
+    const verdict = await this.decide(
+      { kind: "edit", name: "applyPatch", paths: Object.keys(changes) },
+      { fileChanges: changes, reason: p.reason ?? null, grantRoot: p.grantRoot ?? null },
+    );
+    if (verdict.behavior === "deny") {
+      return { decision: { denied: { rejection: verdict.message } } };
+    }
+    return {
+      decision: verdict.updatedPermissions !== undefined ? "approved_for_session" : "approved",
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Server → client notifications — the event tape.
+  // -------------------------------------------------------------------------
+
+  private onAgentNotify(method: string, params: unknown): void {
+    const p = (params ?? {}) as Wire;
+    switch (method) {
+      case "turn/started":
+        this.activeTurnId = String(p.turn?.id ?? this.activeTurnId ?? "");
+        this.turnStartedAt = Date.now();
+        break;
+      case "turn/completed":
+        this.onTurnCompleted(p);
+        break;
+      case "item/started":
+        this.onItemStarted(p.item as Wire | undefined);
+        break;
+      case "item/completed":
+        this.onItemCompleted(p.item as Wire | undefined);
+        break;
+      case "item/agentMessage/delta":
+        this.onDelta(p, "text.delta");
+        break;
+      case "item/reasoning/textDelta":
+      case "item/reasoning/summaryTextDelta":
+      case "item/plan/delta":
+        this.onDelta(p, "thinking.delta");
+        break;
+      case "error":
+        this.onError(p);
+        break;
+      case "thread/tokenUsage/updated": {
+        const usage = (p.tokenUsage ?? {}) as Wire;
+        const last = (usage.last ?? usage.total ?? {}) as Wire;
+        this.lastContext = {
+          used: Number(last.totalTokens ?? 0),
+          size: Number(usage.modelContextWindow ?? 0),
+        };
+        break;
+      }
+      case "account/rateLimits/updated": {
+        const primary = (p.rateLimits?.primary ?? null) as Wire | null;
+        this.hooks.onEvent({
+          kind: "ratelimit",
+          status: String(p.rateLimits?.rateLimitReachedType ?? "updated"),
+          resetsAt: typeof primary?.resetsAt === "number" ? primary.resetsAt * 1000 : null,
+        });
+        break;
+      }
+      case "thread/compacted":
+        this.hooks.onEvent({ kind: "compact", trigger: "auto" });
+        break;
+      default:
+        break;
+    }
+  }
+
+  private onDelta(p: Wire, kind: "text.delta" | "thinking.delta"): void {
+    const itemId = String(p.itemId ?? "main");
+    const text = String(p.delta ?? "");
+    if (!text) return;
+    this.streamedItems.add(itemId);
+    this.hooks.onEvent({ kind, blockId: itemId, text, agentId: null });
+  }
+
+  private onItemStarted(item: Wire | undefined): void {
+    if (!item) return;
+    const id = String(item.id ?? "");
+    if (!id) return;
+    switch (item.type) {
+      case "commandExecution":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id,
+          name: "commandExecution",
+          input: { command: item.command ?? "", cwd: item.cwd ?? null },
+          agentId: null,
+        });
+        break;
+      case "fileChange":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id,
+          name: "fileChange",
+          input: { changes: item.changes ?? [] },
+          agentId: null,
+        });
+        break;
+      case "mcpToolCall":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id,
+          name: `${item.server ?? "mcp"}/${item.tool ?? "tool"}`,
+          input: item.arguments ?? {},
+          agentId: null,
+        });
+        break;
+      case "dynamicToolCall":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id,
+          name: String(item.tool ?? "tool"),
+          input: item.arguments ?? {},
+          agentId: null,
+        });
+        break;
+      case "collabAgentToolCall":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id,
+          name: String(item.tool ?? "collab"),
+          input: { prompt: item.prompt ?? null, model: item.model ?? null },
+          agentId: null,
+        });
+        break;
+      case "webSearch":
+        this.hooks.onEvent({
+          kind: "tool.start",
+          toolUseId: id || `web-${this.turnStartedAt}`,
+          name: "webSearch",
+          input: { query: item.query ?? item.action?.query ?? null },
+          agentId: null,
+        });
+        break;
+      default:
+        break;
+    }
+  }
+
+  private onItemCompleted(item: Wire | undefined): void {
+    if (!item) return;
+    const id = String(item.id ?? "");
+    switch (item.type) {
+      case "commandExecution": {
+        const exitCode = typeof item.exitCode === "number" ? item.exitCode : null;
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id,
+          isError: item.status === "failed" || item.status === "declined" || (exitCode ?? 0) !== 0,
+          content: item.aggregatedOutput ?? null,
+          agentId: null,
+        });
+        break;
+      }
+      case "fileChange":
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id,
+          isError: item.status === "failed" || item.status === "declined",
+          content: item.changes ?? null,
+          agentId: null,
+        });
+        break;
+      case "mcpToolCall":
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id,
+          isError: item.status === "failed" || item.error != null,
+          content: item.error ?? item.result ?? null,
+          agentId: null,
+        });
+        break;
+      case "dynamicToolCall":
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id,
+          isError: item.status === "failed" || item.success === false,
+          content: item.contentItems ?? null,
+          agentId: null,
+        });
+        break;
+      case "collabAgentToolCall":
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id,
+          isError: item.status === "failed",
+          content: item.agentsStates ?? null,
+          agentId: null,
+        });
+        break;
+      case "webSearch":
+        this.hooks.onEvent({
+          kind: "tool.end",
+          toolUseId: id || `web-${this.turnStartedAt}`,
+          isError: false,
+          content: item.action ?? null,
+          agentId: null,
+        });
+        break;
+      case "agentMessage":
+        // Deltas streamed the text live; text.done closes the block.
+        if (typeof item.text === "string" && item.text) {
+          this.hooks.onEvent({ kind: "text.done", blockId: id, text: item.text, agentId: null });
+        }
+        break;
+      case "plan":
+      case "reasoning": {
+        // Only emit when no delta stream covered this item — otherwise the
+        // tape would carry the same words twice.
+        if (this.streamedItems.has(id)) break;
+        const text =
+          item.type === "plan"
+            ? String(item.text ?? "")
+            : [...(item.summary ?? []), ...(item.content ?? [])].map(String).join("\n");
+        if (text) {
+          this.hooks.onEvent({ kind: "thinking.delta", blockId: id, text, agentId: null });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  private onTurnCompleted(p: Wire): void {
+    const turn = (p.turn ?? {}) as Wire;
+    this.activeTurnId = null;
+    const status = String(turn.status ?? "");
+    const subtype =
+      status === "completed"
+        ? "success"
+        : status === "interrupted"
+          ? "interrupted"
+          : "error_during_execution";
+    this.hooks.onEvent({
+      kind: "turn.end",
+      subtype,
+      isError: subtype === "error_during_execution",
+      costUsd: null,
+      numTurns: null,
+      durationMs:
+        typeof turn.durationMs === "number"
+          ? turn.durationMs
+          : this.turnStartedAt
+            ? Date.now() - this.turnStartedAt
+            : null,
+      resultText: turn.error?.message ? String(turn.error.message) : null,
+    });
+    this.markTurnDone?.();
+    for (const settle of this.turnSettlers) settle("answered");
+    this.turnSettlers.clear();
+    this.streamedItems.clear();
+  }
+
+  private onError(p: Wire): void {
+    const error = (p.error ?? {}) as Wire;
+    const message = String(error.message ?? "Codex error");
+    if (p.willRetry === true) {
+      // "Reconnecting... 2/5" — the only retry shape the server sends.
+      const match = /(\d+)\s*\/\s*(\d+)/.exec(message);
+      this.hooks.onEvent({
+        kind: "retry",
+        attempt: match ? Number(match[1]) : 1,
+        maxRetries: match ? Number(match[2]) : 5,
+        delayMs: 0,
+        error: message,
+      });
+      return;
+    }
+    this.hooks.onEvent({ kind: "notice", level: "error", text: message });
+  }
+
+  private userInput(turn: Turn): Wire[] {
+    const input: Wire[] = [{ type: "text", text: turn.text, text_elements: [] }];
+    for (const image of turn.images ?? []) {
+      input.push({ type: "image", url: `data:${image.mediaType};base64,${image.data}` });
+    }
+    return input;
+  }
+
+  private onTransportEnd(_code: number | null): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.markTurnDone?.();
+    for (const settle of this.turnSettlers) settle("dead");
+    this.turnSettlers.clear();
+    this.hooks.onTransportEnd(null);
+  }
+}

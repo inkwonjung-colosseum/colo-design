@@ -30,6 +30,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("session.create"),
+    /** Which agent provider runs the thread; omitted = the daemon default. */
+    provider: z.string().min(1).optional(),
     /** Model the query starts on (SDK alias or id); omitted = CLI default. */
     model: z.string().min(1).optional(),
     /** Reasoning effort the query starts on; omitted = CLI default. */
@@ -140,6 +142,17 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.setPermissionMode"),
     sessionId: z.string().min(1),
     mode: permissionModeSchema,
+  }),
+  z.object({
+    ...withId,
+    /**
+     * The provider's own mode ids (ACP `session/set_mode` or a `mode`
+     * config option) — `session.setPermissionMode` covers only the Claude
+     * enum, so drivers with their own modes ride this message.
+     */
+    type: z.literal("session.setMode"),
+    sessionId: z.string().min(1),
+    mode: z.string().min(1),
   }),
   z.object({
     ...withId,

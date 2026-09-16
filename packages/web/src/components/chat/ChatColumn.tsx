@@ -524,6 +524,7 @@ export function ChatColumn({
         onSetModel={(model) => void sessions.setModel(model)}
         onSetEffort={(effort) => void sessions.setEffort(effort)}
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
+        onSetMode={(mode) => void sessions.setMode(mode)}
         running={sessions.running}
         stopping={stopping}
         queue={sessions.queue}

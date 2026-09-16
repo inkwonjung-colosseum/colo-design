@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PlanUsage, PlanWindow, SessionModelInfo } from "@colo-design/protocol";
+import { probePlanUsage } from "./agent/drivers/claude/session.js";
 import { CONFIG_DIR } from "./environment.js";
-import { probePlanUsage, type Session } from "./session.js";
+import type { Session } from "./session.js";
 
 /** Where the last plan-limit reading waits for the next start. */
 const PLAN_USAGE_FILE = join(CONFIG_DIR, "plan-usage.json");

@@ -3,8 +3,8 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { DiffFile, RepoHandoffDraft, RepoSummary } from "@colo-design/protocol";
+import { claudeOneShot } from "./agent/drivers/claude/one-shot.js";
 import { readComments } from "./comments.js";
 import { buildCommentsSection } from "./handoff-body.js";
 import {
@@ -237,32 +237,12 @@ export class RepoSummarizer {
    * fallback".
    */
   private async oneTurn(prompt: string, timeoutMs: number): Promise<string | null> {
-    if (!this.core.claudeExecutable) return null;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const conversation = query({
-        prompt,
-        options: {
-          cwd: this.summaryCwd(),
-          pathToClaudeCodeExecutable: this.core.claudeExecutable,
-          model: MACHINE_MODEL,
-          maxTurns: 1,
-          tools: [],
-          settingSources: [],
-          abortController: controller,
-        },
-      });
-      let answer: string | null = null;
-      for await (const message of conversation) {
-        if (message.type === "result" && message.subtype === "success" && !message.is_error) {
-          answer = message.result;
-        }
-      }
-      return answer;
-    } finally {
-      clearTimeout(timeout);
-    }
+    return claudeOneShot(prompt, {
+      cwd: this.summaryCwd(),
+      executable: this.core.claudeExecutable,
+      model: MACHINE_MODEL,
+      timeoutMs,
+    });
   }
 
   /**
