@@ -89,7 +89,7 @@ async function cycleBranch(remote) {
 
 /**
  * A claude that answers the gates, then fails EVERY turn on the stream-json
- * wire (PLAN D35): the offline stand-in for a turn that ends wrong, so the
+ * wire: the offline stand-in for a turn that ends wrong, so the
  * browser can prove the silence is gone.
  */
 function writeErrorStubClaude(dir) {
@@ -97,7 +97,7 @@ function writeErrorStubClaude(dir) {
   const path = join(dir, "claude");
   const promptsLog = join(dir, "prompts.log");
   // The gates read --version and `auth status`; the SDK's stream-json run
-  // fails every turn (PLAN D35) so the browser can prove the silence is
+  // fails every turn so the browser can prove the silence is
   // gone. Every stdin line is appended to prompts.log synchronously — the
   // wire-level record a resend assertion can count.
   const script = [
@@ -135,12 +135,32 @@ function writeErrorStubClaude(dir) {
 }
 
 /**
- * The action set lives in the top bar (PLAN D82): 저장 · 개발자에게 넘기기 ·
+ * The action set lives in the top bar: 저장 · 개발자에게 넘기기 ·
  * 상태 확인 are always drawn and locked by condition — the label is the
- * button's, the reason is its title.
+ * button's, the reason is its tip.
  */
 async function viaActionBar(page, label) {
   await page.locator(".screenpanel__bar").getByRole("button", { name: label, exact: true }).click();
+}
+
+/**
+ * 잠긴 이유를 읽는다. The reason left the `title` attribute for Tip's own
+ * bubble (Tip.tsx): the button points at it with `aria-describedby`, and the
+ * bubble is a `role="tooltip"` in the body. `title` stays as the fallback for
+ * the controls that still wear one.
+ */
+async function lockReason(page, label) {
+  return await page
+    .locator(".screenpanel__bar")
+    .getByRole("button", { name: label, exact: true })
+    .evaluate((element) => {
+      const id = (element.getAttribute("aria-describedby") ?? "")
+        .split(/\s+/)
+        .filter(Boolean)
+        .pop();
+      const tip = id ? document.getElementById(id) : null;
+      return tip?.textContent?.trim() || element.getAttribute("title") || "";
+    });
 }
 async function main() {
   if (!existsSync(webDist))
@@ -219,24 +239,22 @@ async function main() {
     check("the planner connects and the workspace shows the repo preview", true);
 
     // --- the empty cycle --------------------------------------------------
-    // "저장할 것이 없다"는 잠긴 버튼의 title 로 증명한다 (PLAN D82) — 잠긴
+    // "저장할 것이 없다"는 잠긴 버튼의 title 로 증명한다 — 잠긴
     // 저장은 패널을 열 수도 없다.
     const emptySave = page
       .locator(".screenpanel__bar")
       .getByRole("button", { name: "저장", exact: true });
     await emptySave.waitFor({ timeout: 20000 });
+    const emptySaveReason = await lockReason(page, "저장");
     check(
-      "an empty cycle locks 저장 with its reason in the title",
-      (await emptySave.isDisabled()) === true &&
-        (await emptySave.getAttribute("title")) === "저장할 변경이 없습니다",
-      (await emptySave.getAttribute("title")) ?? "(no title)",
+      "an empty cycle locks 저장 with its reason on the button",
+      (await emptySave.isDisabled()) === true && emptySaveReason === "저장할 변경이 없습니다",
+      emptySaveReason || "(no reason)",
     );
     check(
       "and 넘기기 is locked with 먼저 저장해 주세요",
-      (await page
-        .locator(".screenpanel__bar")
-        .getByRole("button", { name: "개발자에게 넘기기" })
-        .getAttribute("title")) === "먼저 저장해 주세요",
+      (await lockReason(page, "개발자에게 넘기기")) === "먼저 저장해 주세요",
+      (await lockReason(page, "개발자에게 넘기기")) || "(no reason)",
     );
 
     // --- work appears, the review shows it --------------------------------
@@ -247,8 +265,12 @@ async function main() {
     );
     const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
     writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
+    // 삭제도 저장에 실려 간다 — 되돌리기 어려운 변경이므로 검토 화면이 먼저
+    // 말해야 한다 (비개발자 저장 검토). CLAUDE.md 는 이 스텁 CLI 가 읽지
+    // 않으므로 이 뒤의 어느 단계도 이 삭제에 걸리지 않는다.
+    rmSync(join(WORK_ROOT, "CLAUDE.md"), { force: true });
 
-    // The change count is event-driven (PLAN D8): a turn finishing or a save
+    // The change count is event-driven: a turn finishing or a save
     // recounts it, and these raw writes are neither — so one 레포 최신화 is
     // what unlocks 저장 in the top bar.
     await page
@@ -265,25 +287,59 @@ async function main() {
       { timeout: 20000 },
     );
     await viaActionBar(page, "저장");
-    // PLAN D51 + 비개발자 저장: the summary is the first thing; the raw
+    // 비개발자 저장: the summary is the first thing; the raw
     // files stay folded at every size — the review reads as sentences, and
     // the code is one deliberate click away.
-    await page.getByText("자세히 보기 (파일 2개)").waitFor({ timeout: 10000 });
+    await page.getByText("자세히 보기 (파일 3개)").waitFor({ timeout: 10000 });
     check(
       "the summary is on top and the raw file list stays folded",
-      (await page.getByText("자세히 보기 (파일 2개)").isVisible()) === true &&
+      (await page.getByText("자세히 보기 (파일 3개)").isVisible()) === true &&
         (await page.locator(".diff__file").first().isVisible()) === false,
     );
-    await page.getByText("자세히 보기 (파일 2개)").click();
+    // 비개발자 저장 검토: 요약은 각주가 아니라 검토의 본문이다 — 이 스텁의
+    // Claude 턴은 실패하므로 폴백 묶음이 그 카드에 선다. 카드가 없으면
+    // 기획자가 코드를 펼치기 전에 읽을 것이 화면에 없다. 뼈대(.diff__skel)
+    // 가 아니라 글자가 선 것을 본다 — 기다리는 자리에 속으면 이 검사는
+    // 아무것도 지키지 않는다.
+    const summaryCard = page.getByTestId("diff-summary");
+    const summaryLines = summaryCard.locator(".diff__summarylines > li");
+    await summaryLines.first().waitFor({ timeout: 20000 });
+    const summaryText = await summaryCard.innerText();
+    check(
+      "the summary stands as a card above the fold, in words",
+      (await summaryLines.count()) > 0 &&
+        (await summaryLines.first().innerText()).trim().length > 0 &&
+        // 폴백이든 Claude 든, 누가 썼는지를 카드가 말한다.
+        (summaryText.includes("Claude가 바뀐 점을 읽고 적었습니다") ||
+          summaryText.includes("바뀐 파일을 묶어 적었습니다")),
+      summaryText.replace(/\n+/g, " | "),
+    );
+    // 삭제 경고는 요약이 말하지 않아도 선다 — 기계적 사실이므로.
+    check(
+      "a deletion is named before the save",
+      (await page.locator(".notice--warn").innerText()).includes("파일 1개가 삭제됩니다"),
+      await page.locator(".notice--warn").innerText(),
+    );
+    await page.getByText("자세히 보기 (파일 3개)").click();
     const rows = page.locator(".diff__file");
     check(
       "every changed file is listed with its status",
-      (await rows.count()) === 2,
+      (await rows.count()) === 3,
       (await page.locator(".diff__path").allInnerTexts()).join(", "),
     );
     check(
-      "a new screen reads 추가, an edit reads 수정",
-      (await page.locator(".diff__badge").allInnerTexts()).sort().join(",") === "수정,추가",
+      "a new screen reads 추가, an edit reads 수정, a removal reads 삭제",
+      (await page.locator(".diff__badge").allInnerTexts()).sort().join(",") === "삭제,수정,추가",
+    );
+    // 기획자는 경로가 아니라 이름을 읽는다 — 파일의 이름이 행의 머리에 선다.
+    check(
+      "the row leads with the file's own name, the folder follows",
+      (await page.locator(".diff__basename").allInnerTexts()).includes("MemberList.screen.tsx") &&
+        (await page
+          .locator(".diff__file", { hasText: "MemberList.screen.tsx" })
+          .locator(".diff__dir")
+          .innerText()) === "src/screens/member",
+      (await page.locator(".diff__basename").allInnerTexts()).join(", "),
     );
 
     // Even a single-hunk file keeps its code folded until the row is pressed.
@@ -366,20 +422,20 @@ async function main() {
     await handoffDialog.getByRole("button", { name: "취소", exact: true }).click();
     check("the handoff closes", (await handoffDialog.count()) === 0);
 
-    // --- D92: ⌘/ 시트 -------------------------------------------------------
+    // --- ⌘/ 시트 ------------------------------------------------------------
     await page.keyboard.press("Meta+/");
     const sheet = page.locator('[role="dialog"][aria-label="단축키"]');
     await sheet.waitFor({ timeout: 5000 });
     const sheetText = await sheet.innerText();
     check(
-      "D92 the ⌘/ sheet lists the pin and the reload rows",
+      "the ⌘/ sheet lists the pin and the reload rows",
       sheetText.includes("⌥+클릭") && sheetText.includes("⌘R"),
       sheetText.split("\n").slice(0, 3).join(" / "),
     );
     await sheet.getByRole("button", { name: "단축키 닫기" }).click();
-    check("D92 the sheet closes", (await sheet.count()) === 0);
+    check("the sheet closes", (await sheet.count()) === 0);
 
-    // --- a failed turn is a card, not a silence (PLAN D35) ----------------
+    // --- a failed turn is a card, not a silence ---------------------------
     // The tree offers two ways to start one (the row's ＋ and, for a project
     // with no conversations, its own row); this drives the row's ＋.
     await page.locator(".node__add").first().click();
@@ -393,7 +449,7 @@ async function main() {
       "a failed turn is a card that says what happened",
       (await page.locator(".turnfail").last().innerText()).includes("답을 마치지 못했습니다"),
     );
-    // The retry is the LAST card's own button (커미티 F-B3): with the
+    // The retry is the LAST card's own button: with the
     // dead-query resume in place every retried send honestly fails again,
     // so older failed cards stay on the tape WITHOUT their own buttons —
     // only the newest failure offers 다시 보내기, with the newest words.

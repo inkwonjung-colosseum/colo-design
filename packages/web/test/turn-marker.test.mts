@@ -1,5 +1,5 @@
 /**
- * The marker that turns a machine-authored turn into a card (PLAN D9).
+ * The marker that turns a machine-authored turn into a card.
  *
  * The format has to survive a round trip nobody controls: the text is written
  * here, stored by the Claude Code SDK verbatim, and read back when a planner
@@ -80,7 +80,7 @@ test("every kind survives the round trip", () => {
 });
 
 test("the plan's literal error marker parses — its kind is the failure, not the card", () => {
-  // D49 writes the payload as {"route","state","kind"}: the tag already said
+  // The payload is written as {"route","state","kind"}: the tag already said
   // "error", so the payload's kind is free to mean runtime vs build.
   const text =
     '<!-- colo-design:error {"route":"/member/MemberList","state":"오류","kind":"build"} -->\n' +
@@ -155,7 +155,7 @@ test("a comment item that is not an object is dropped, not fatal", () => {
 });
 
 test("the crop flag survives the round trip, and its absence is not an empty one", () => {
-  // D87: the view photographs what it can reach, so a marker's rows split
+  // The view photographs what it can reach, so a marker's rows split
   // into flagged and unflagged. The flag has to come back exactly as written
   // — the card hands out thumbnails by counting flagged rows, and one row
   // that lost its flag would shift every image after it onto a wrong pin.
@@ -203,7 +203,7 @@ test("a skipped crop does not shift the pictures onto the wrong pins", () => {
 });
 
 test("more pins than crops leaves the unphotographed ones bare", () => {
-  // Seven pins, six crops (D87's ceiling): the seventh shows no image rather
+  // Seven pins, six crops (the crop ceiling): the seventh shows no image rather
   // than borrowing the sixth pin's.
   const items: CommentMarkerItem[] = Array.from({ length: 7 }, (_, index) => ({
     label: `핀${index + 1}`,

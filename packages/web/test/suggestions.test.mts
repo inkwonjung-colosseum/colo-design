@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ColoDesignScreen } from "../../protocol/src/index.ts";
-import { GENERIC_STARTERS, suggestionsFromScreens } from "../src/suggestions.ts";
+import { GENERIC_STARTERS, suggestionsFromScreens } from "../src/lib/suggestions.ts";
 
 const screen = (title: string, states: string[] = ["default"]): ColoDesignScreen => ({
   route: `/s/${encodeURIComponent(title)}`,

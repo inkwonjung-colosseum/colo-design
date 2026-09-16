@@ -47,15 +47,30 @@ export function renderSummaryFile(file: DiffFile): string {
 
 /**
  * The summarizer's whole instruction (PLAN D51): the changed screens, the
- * diff, and the ask — planner's words, three lines, no file names. The
- * diff is the only thing this turn may read, so it rides in the prompt.
+ * diff, and the ask — planner's words, three lines, no file names, then one
+ * `메모:` line the review's 저장 메모 field opens with. The diff is the only
+ * thing this turn may read, so it rides in the prompt. `screenTitles` are the
+ * repo's own declared names for its screens (the same list 넘기기's body
+ * uses): with them the summary can say 회원 목록 instead of guessing from a
+ * path — a screen the diff touches but the list does not know is still
+ * described, never named.
  */
-export function summaryPrompt(files: DiffFile[]): string {
+export function summaryPrompt(
+  files: DiffFile[],
+  screenTitles: Array<{ route: string; title: string }> = [],
+): string {
   return [
     "아래는 저장 전에 검토할 변경 내용입니다. 바뀐 화면과 바뀐 점을 사용자 말로 3줄 이내, 파일 이름 없이 적어 주세요. 한 줄에 한 가지 바뀐 점을 적습니다.",
+    "마지막 줄에는 `메모:` 로 시작하는 저장 메모 한 문장을 적어 주세요 — 저장 기록에 남을 짧은 제목입니다. 예: 메모: 회원 관리 화면 추가",
     "",
     `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
     "",
+    ...(screenTitles.length > 0
+      ? [
+          `이 레포가 선언한 화면: ${screenTitles.map((screen) => `${screen.title}(${screen.route})`).join(", ")}`,
+          "",
+        ]
+      : []),
     files.map(renderSummaryFile).join("\n"),
   ].join("\n");
 }

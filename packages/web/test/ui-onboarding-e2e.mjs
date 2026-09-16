@@ -1,5 +1,5 @@
 /**
- * Browser-level check of the first-run wizard (DESIGN §8, PLAN D6), fully
+ * Browser-level check of the first-run wizard, fully
  * offline.
  *
  * The daemon boots with no project at all, against a local fixture repo, so
@@ -170,7 +170,7 @@ async function main() {
     const stepTitles = await page.locator(".onboarding__stephead h2").allInnerTexts();
     check(
       "the four machine gates are listed in order, GitHub last",
-      // 커밋리 A-4 (2026-09-15): 제목은 쓸모가 먼저다 — 도구 이름은 부제
+      // 제목은 쓸모가 먼저다 — 도구 이름은 부제
       // (.onboarding__tool)로 내려갔다. 의도된 계약 변경.
       JSON.stringify(stepTitles) ===
         JSON.stringify([
@@ -212,21 +212,10 @@ async function main() {
       githubLine.replace(/\n+/g, " · "),
     );
 
-    // --- 2b. 확인 방식은 고르고 넘어간다 (설정 문서 P0#4) ------------------
-    //     아무도 본 적 없는 기본값으로 시작하지 않는다: 시작하기는 카드를
-    //     고르기 전까지 잠겨 있고, 고른 값은 설정에 그대로 남는다.
-    check(
-      "시작하기 waits until 확인 방식 is chosen",
-      await page.getByRole("button", { name: "시작하기" }).isDisabled(),
-    );
-    await page.getByRole("button", { name: /물어보고 실행/ }).click();
-    check(
-      "the choice is written where 설정 reads it",
-      (await page.evaluate(
-        () => JSON.parse(localStorage.getItem("colo-design.settings") ?? "{}").chat?.permissionMode,
-      )) === "default",
-    );
-    await page.getByRole("button", { name: "시작하기" }).click();
+    // --- 2b. 게이트가 다 서면 시작하기가 바로 열린다 -----------------------
+    //     확인 방식은 여기서 묻지 않는다 — 설정 → 대화의 확인 방식이 그 자리다.
+    //     exact: 닫기 버튼의 aria-label("시작하기 닫기")이 부분일치로 걸린다.
+    await page.getByRole("button", { name: "시작하기", exact: true }).click();
 
     // --- 3. no project yet: the workspace IS the picker --------------------
     await page.waitForSelector(".planner__empty", { timeout: 20000 });
@@ -334,7 +323,7 @@ async function main() {
     );
 
     // A brand new project starts with no threads: the tree row where the eye
-    // lands IS the way to begin (PLAN D3/D59), next to the row's own ＋.
+    // lands IS the way to begin, next to the row's own ＋.
     const tree = page.locator(".tree");
     await tree.waitFor({ timeout: 15000 });
     const startButtons = await tree.getByRole("button", { name: "새 대화" }).count();

@@ -1,5 +1,5 @@
 /**
- * D65 의 단언 고리 — the rule that keeps the native preview view from
+ * 단언 고리 — the rule that keeps the native preview view from
  * painting over a modal. What is pinned here is everything the old
  * fire-and-forget latch got wrong: one dropped call left the stage drawn
  * over an open settings dialog until the planner closed it, and no DOM
@@ -15,7 +15,7 @@ import {
   COVER_RETRY_MS,
   type CoverTimer,
   createCoverReconciler,
-} from "../src/cover-reconciler.ts";
+} from "../src/lib/cover-reconciler.ts";
 
 /** A hand-cranked clock: the backoff must be observable, never awaited. */
 function clock() {

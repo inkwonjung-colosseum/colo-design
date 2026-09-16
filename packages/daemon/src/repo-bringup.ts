@@ -1,0 +1,472 @@
+// Bring-up: clone → config → install → preview. Owns the preview
+// process itself (startPreview/killPreview) and the port fence around it,
+// plus the install short-circuit and the bring-up error taxonomy.
+import { type SpawnOptions, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { RepoErrorKind, RepoStatus } from "@colo-design/protocol";
+import { extraPathPrefix, trustWorkspace } from "./claude-trust.js";
+import { mergeNpmrc, npmrcPath } from "./credentials.js";
+import {
+  currentPlatform,
+  detectsRegistryAuthFailure,
+  resolvePnpmExecutable,
+} from "./environment.js";
+import {
+  clearPreviewClaim,
+  foreignLivePreviewClaim,
+  killTree,
+  portAccepts,
+  portListenerPids,
+  portRefused,
+  respondsOk,
+  writePreviewClaim,
+} from "./preview-claim.js";
+import { type RepoConfig, resolveRepoConfig, scopeOf } from "./repo-config.js";
+import {
+  BOOTSTRAP_FAILED_DETAIL,
+  BootstrapPrepareError,
+  COMMAND_STALL_MS,
+  COMMANDS_UNAPPROVED_DETAIL,
+  detailOf,
+  GATE_OUTPUT_TAIL_LINES,
+  INSTALL_MARKER,
+  PNPM_MISSING_DETAIL,
+  PreviewHeldElsewhereError,
+  PreviewPortBusyError,
+  READY_TIMEOUT_MS,
+  RECOVER_CONFLICT_DETAIL,
+  REFRESH_CONFLICT_DETAIL,
+  REGISTRY_AUTH_DETAIL,
+  REPO_URL_MISSING_DETAIL,
+  type RepoCore,
+  redact,
+} from "./repo-core.js";
+
+export class BringUp {
+  constructor(private readonly core: RepoCore) {}
+
+  // -------------------------------------------------------------------------
+  // Bootstrap
+  // -------------------------------------------------------------------------
+
+  async bootstrap(): Promise<RepoStatus> {
+    try {
+      if (!this.core.url) {
+        this.core.setPhase("missing", REPO_URL_MISSING_DETAIL);
+        return this.core.snapshot();
+      }
+
+      if (!this.core.isCloned()) {
+        await this.killPreview();
+        this.core.setPhase("cloning", null);
+        this.clearBringUpDebris();
+        // The clean url: the PAT travels in the environment (gitAuthEnv),
+        // so neither `.git/config` nor `ps` ever sees it.
+        await this.core.git(["clone", this.core.url, this.core.root], dirname(this.core.root));
+        trustWorkspace(this.core.root);
+      } else {
+        this.core.setPhase("pulling", null);
+        await this.core.scrubOriginCredential();
+        // Already cloned: 최신화, not a blind ff. Unsaved work survives the
+        // move off-cycle, and a conflict left by an earlier run resurfaces
+        // with its Korean reason instead of a raw git error.
+        await this.core.refreshFromRemote();
+      }
+
+      let config: RepoConfig;
+      try {
+        config = resolveRepoConfig(this.core.root);
+      } catch (configError) {
+        // D94: 연결 준비가 요청된 레포 — 막지 말고 Claude 가 포트를 적게
+        // 한다. 검증은 validateBootstrapOverrides 가 기계로 하고, 명령이
+        // 적힌 파일은 한 번도 실행되지 않는다.
+        if (!this.core.bootstrapRequested || !this.core.prepareBootstrap) throw configError;
+        this.core.setPhase("preparing", "Claude 가 레포를 살펴보고 연결을 준비하는 중");
+        const ok = await this.core.prepareBootstrap().catch(() => false);
+        config = resolveRepoConfig(this.core.root); // 실패면 여기서 다시 던진다
+        if (!ok) throw new BootstrapPrepareError(BOOTSTRAP_FAILED_DETAIL);
+        void configError;
+      }
+      this.core.config = config;
+      // The one gate the wire cannot skip: a repo nobody has vouched for
+      // stops here, after the clone but before any command it declares runs.
+      // 저장's check and 넘기기's build wait behind a planner's button press
+      // already — install and preview are the ones that run unattended.
+      // The verdict names WHAT runs: the approval is one button, so the card
+      // must show the sentences it is about to execute — the planner reads the
+      // verdict, a reviewer reads the evidence.
+      if (!this.core.commandsApproved) {
+        throw new Error(
+          `${COMMANDS_UNAPPROVED_DETAIL} 실행하려는 명령 — 설치: ${config.install ?? "(선언되지 않음)"} · 미리보기: ${config.preview.command} (포트 ${config.preview.port})`,
+        );
+      }
+      // The switch race's fence: a bring-up this project no longer owns
+      // stops here — install and preview are the unattended side effects,
+      // and a late finisher would otherwise kill the port the project the
+      // planner switched TO just started serving on.
+      if (!this.core.active) return this.core.snapshot();
+      const installed = await this.installIfNeeded(config);
+
+      /**
+       * Count once the clone is on disk and checked out. Without this the
+       * chip reads zero after every restart — the count only moves on a
+       * 화면 turn otherwise, and a planner who closed the app mid-cycle would
+       * come back to a rail that says there is nothing to save.
+       */
+      await this.core.refreshPendingChanges();
+
+      // Up to date and still serving: restarting the preview would only flip
+      // the UI out of `ready` for no gain.
+      if (!installed && this.core.preview && (await this.isServing(config.preview.port))) {
+        this.core.setPhase("ready", null);
+        return this.core.snapshot();
+      }
+      await this.startPreview(config);
+      this.core.setPhase("ready", null);
+    } catch (error) {
+      this.core.setPhase("error", detailOf(error, this.core.pat), this.bringUpErrorKind(error));
+    }
+    return this.core.snapshot();
+  }
+
+  /**
+   * A bring-up that died between creating the folder and finishing the clone
+   * leaves the root with files but no `.git` — every later sync reads it as
+   * uncloned, and `git clone` refuses a non-empty destination (128) until a
+   * human deletes the folder by hand. Everything in it is a partial copy of
+   * the remote, so clearing it is a re-clone, not a loss (the same trade the
+   * url move already makes). A real clone has `.git` and is never touched.
+   */
+  private clearBringUpDebris(): void {
+    if (this.core.isCloned() || !existsSync(this.core.root)) return;
+    rmSync(this.core.root, { recursive: true, force: true });
+  }
+
+  /** True when the declared install already ran for the current lockfiles. */
+  installUpToDate(): boolean {
+    const config = this.core.repoConfig();
+    if (!config?.install) return true;
+    if (!existsSync(join(this.core.root, "node_modules"))) return false;
+    return !this.dependenciesMoved();
+  }
+
+  // -------------------------------------------------------------------------
+  // Command runner (install/check/build)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Runs `install` only when the dependency set moved or the clone is fresh.
+   * The identity is a content hash of the manifest and lockfiles, recorded
+   * inside `.git/` so it belongs to this clone alone.
+   */
+  private async installIfNeeded(config: RepoConfig): Promise<boolean> {
+    if (!config.install) return false;
+    if (!this.dependenciesMoved()) return false;
+
+    this.core.setPhase("installing", null);
+    // The repo declares its private registry; the daemon holds the PAT. The
+    // credential goes ONLY into the user-level npmrc — the clone's tree is
+    // committed and pushed, so a clone-level .npmrc would publish the PAT.
+    if (config.registry && this.core.pat) {
+      mergeNpmrc(npmrcPath(), [
+        {
+          key: `${scopeOf(config.registry)}:registry`,
+          value: `https://${config.registry.host}/`,
+        },
+        { key: `//${config.registry.host}/:_authToken`, value: this.core.pat },
+      ]);
+    }
+    await this.runCommand(config.install, "install");
+    writeFileSync(join(this.core.root, ".git", INSTALL_MARKER), this.dependencyHash());
+    return true;
+  }
+
+  private dependencyHash(): string {
+    return dependencyHash(this.core.root);
+  }
+
+  dependenciesMoved(): boolean {
+    const marker = join(this.core.root, ".git", INSTALL_MARKER);
+    if (!existsSync(marker)) return true;
+    try {
+      return readFileSync(marker, "utf8") !== this.dependencyHash();
+    } catch {
+      return true;
+    }
+  }
+
+  private async runCommand(command: string, label: string): Promise<void> {
+    await this.requirePnpmIfReferenced(command);
+    // 다섯 분을 기다리는 검사는 검사가 아니다 — `COLO_DESIGN_COMMAND_STALL_MS`
+    // 가 e2e 를 초 단위로 그 문 앞에 세운다.
+    const stall = Number(process.env.COLO_DESIGN_COMMAND_STALL_MS) || COMMAND_STALL_MS;
+    const result = await this.core.capture(command, this.spawnOptions(), [], stall);
+    if (result.code === 0) return;
+    if (result.stalled) {
+      const waited =
+        stall < 60_000 ? `${Math.round(stall / 1000)}초` : `${Math.round(stall / 60_000)}분`;
+      throw new Error(
+        redact(
+          `${label} 명령이 ${waited} 동안 아무 말도 하지 않아 중단했습니다 — 네트워크나 패키지 저장소가 응답하지 않는 것으로 보입니다.\n마지막으로 한 말: ${result.lastLine || "(없음)"}`,
+          this.core.pat,
+        ),
+      );
+    }
+    if (detectsRegistryAuthFailure(result.output)) throw new Error(REGISTRY_AUTH_DETAIL);
+    // The tail, not just the last line: a gate failure is handed to Claude,
+    // whose fix starts where the first error line points.
+    const tail = result.output
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-GATE_OUTPUT_TAIL_LINES)
+      .join("\n");
+    throw new Error(
+      redact(`${label} 명령이 실패했습니다 (exit ${result.code})\n${tail}`, this.core.pat),
+    );
+  }
+
+  /** A colo-design command may or may not need pnpm; only demand it when it does. */
+  private async requirePnpmIfReferenced(command: string): Promise<void> {
+    if (!/\bpnpm\b/.test(command)) return;
+    if (!(await resolvePnpmExecutable())) throw new Error(PNPM_MISSING_DETAIL);
+  }
+
+  // -------------------------------------------------------------------------
+  // Preview server
+  // -------------------------------------------------------------------------
+  private async startPreview(config: RepoConfig): Promise<void> {
+    // Second fence, closer to the metal: the window between bootstrap's gate
+    // and this spawn is exactly where a fast B→C switch lands. An inactive
+    // project must neither kill the port's holder nor START a server of its
+    // own past the switch (the one it already has stays warm — the server's
+    // switch fence decides that one).
+    if (!this.core.active) return;
+    await this.killPreview();
+    this.core.setPhase("starting", null);
+    const { command, port } = config.preview;
+    await this.requirePnpmIfReferenced(command);
+
+    // 활성 프로젝트가 선언한 포트의 주인은 활성 프로젝트다. 충돌의 보통 원인은
+    // 강제 종료된 데몬이 남긴 고아 서버고, 전환 때 이전 프로젝트의 잔여분은 이미
+    // 정리되므로 — 묻지 않고 점유자를 정리하고 이 자리에서 다시 띄운다. 명명된
+    // 실패는 정리가 실패했을 때만 남는다: 그때는 다시 시작도 소용이 없으니
+    // 직접 종료나 포트 변경이 다음 과제다. The kill is listener-only: a blanket
+    // port kill also hits the port's clients.
+    // The reclaimer runs unconditionally: a probe gate ("is the port busy?")
+    // reads the same flaky 1s connect that the verdict below refuses to
+    // trust — a starved runner can time it out against a live listener and
+    // skip the kill, spawning the preview into EADDRINUSE. With nothing
+    // listening, lsof finds no pid and the first refusal clears instantly —
+    // the free-port path pays one lookup, nothing more.
+    // 살아 있는 다른 인스턴스의 미리보기는 죽이지 않는다. 이 기록이 가리키는
+    // 점유자는 고아가 아니라 다른 창(패키지 앱 또는 데몬)의 살아 있는 서버다 —
+    // 죽이는 순간 두 인스턴스는 서로의 미리보기를 번갈아 죽이는 전쟁에 들어간다
+    // (실사: 앱+개발 데몬이 포트 3000을 두고 1~2분마다 서버를 교체). 여기서는
+    // 멈추고 카드로 말한다. 해법은 이 창 밖에 있다.
+    const held = await foreignLivePreviewClaim(port);
+    if (held)
+      throw new PreviewHeldElsewhereError(
+        `포트 ${port}에서 다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있습니다 — ` +
+          `서로의 미리보기를 죽이지 않도록 이쪽에서는 기다립니다. ` +
+          `다른 인스턴스를 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꾼 뒤 다시 시도해 주세요.`,
+      );
+    if (!(await this.killPortHolder(port)))
+      throw new PreviewPortBusyError(
+        `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
+          `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
+          `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
+      );
+
+    const child = spawn(command, this.spawnOptions());
+    this.core.preview = child;
+    this.core.previewEpoch += 1;
+    /** Last output line, so an exit can quote what the command actually said. */
+    let lastLine: string | null = null;
+    const absorb = (chunk: Buffer) => {
+      const line = String(chunk)
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .pop();
+      if (!line) return;
+      lastLine = line;
+      this.core.setProgressLine(line);
+    };
+    child.stdout?.on("data", absorb);
+    child.stderr?.on("data", absorb);
+
+    child.once("exit", (code, signal) => {
+      if (this.core.preview !== child) return; // stop() already took it down
+      this.core.preview = null;
+      // 죽은 미리보기의 기록은 곧바로 거둔다 — 남은 기록은 낡은 리스너를
+      // 가리켜 판정 때 스스로 지워지지만, 여기서 지우는 것이 정확하다.
+      if (this.core.config?.preview.port) clearPreviewClaim(this.core.config.preview.port);
+      const how = signal ? `signal ${signal}` : `exit ${code}`;
+      this.core.setPhase(
+        "error",
+        // The command's own last line is what says WHY; an exit code alone
+        // sends the planner to a terminal they were promised they would not need.
+        lastLine
+          ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}`
+          : `미리보기 서버가 종료되었습니다 (${how})`,
+        "preview",
+      );
+    });
+
+    try {
+      await this.waitReady(port);
+    } catch (error) {
+      // 늦게라도 뜰 예정이던 서버를 죽은 것으로 선고한 채 두면, 실제로는 살아
+      // 포트를 쥔 유령이 남는다 (실사 목격). 선고가 서면 서버도 내려야 한다.
+      await this.killPreview();
+      throw error;
+    }
+    // 부팅이 확인된 리스너를 기록해 둔다 — 다음 포트 충돌 때 이 기록이 살아 있는
+    // 다른 인스턴스의 미리보기를 말해 준다(위의 울타리).
+    const holders = await portListenerPids(port);
+    writePreviewClaim({
+      instancePid: process.pid,
+      listenerPid: holders[0] ?? null,
+      port,
+      at: new Date().toISOString(),
+    });
+  }
+
+  private spawnOptions(): SpawnOptions {
+    const windows = currentPlatform() === "win32";
+    return {
+      cwd: this.core.root,
+      // colo-design.json commands are strings ("pnpm dev"), so a shell parses
+      // them. `detached` on POSIX puts the tree in one process group we can
+      // signal together when the preview must stop.
+      shell: true,
+      detached: !windows,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // The preview must never inherit a key that would bill API credit.
+        ANTHROPIC_API_KEY: undefined,
+        // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
+        // in its resources; those binaries win over whatever the planner's
+        // machine happens to have — or not have — on PATH.
+        PATH: extraPathPrefix(process.env.COLO_DESIGN_EXTRA_PATH),
+      },
+    };
+  }
+
+  private async waitReady(port: number): Promise<void> {
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (!this.core.preview)
+        throw new Error(this.core.detail ?? "미리보기 서버가 시작되지 않았습니다");
+      if (await this.isServing(port)) return;
+      await sleep(250);
+    }
+    throw new Error(
+      `미리보기 서버가 ${READY_TIMEOUT_MS / 1000}초 안에 응답하지 않았습니다 (포트 ${port})`,
+    );
+  }
+
+  /** Ready means the port is open *and* the app answers, not just listening. */
+  private async isServing(port: number): Promise<boolean> {
+    if (!(await portAccepts(port))) return false;
+    return await respondsOk(`http://127.0.0.1:${port}/`);
+  }
+
+  async killPreview(): Promise<void> {
+    const child = this.core.preview;
+    if (!child) return;
+    this.core.preview = null;
+
+    const { promise: exited, resolve } = Promise.withResolvers<void>();
+    child.once("exit", () => resolve());
+    killTree(child, "SIGTERM");
+    const hard = setTimeout(() => killTree(child, "SIGKILL"), 3_000);
+    await exited;
+    clearTimeout(hard);
+
+    // The command may start its server as its own child; the port is only
+    // free once that process is gone, and a re-start would fail on a busy port.
+    const port = this.core.config?.preview.port;
+    if (!port) return;
+    const deadline = Date.now() + 3_000;
+    while (!(await portRefused(port))) {
+      if (Date.now() > deadline) break;
+      await sleep(100);
+    }
+    clearPreviewClaim(port);
+  }
+
+  /**
+   * 다시 시작's mandate: whatever LISTENS on the declared preview port dies —
+   * and only the listener. lsof without the LISTEN filter also matches the
+   * port's clients (a browser tab on the old preview, this app's own iframe),
+   * and a restart that kill -9s the planner's browser is no fix. The lookup's
+   * exit status is not trusted — bind-ability is the verdict.
+   */
+  private async killPortHolder(port: number): Promise<boolean> {
+    this.core.setProgressLine(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
+    for (const pid of await portListenerPids(port)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone, or not ours to signal — the verdict below says
+        // whether the port actually freed.
+      }
+    }
+    // The OS retires the listener asynchronously; a re-start before the port
+    // truly frees would fail on the very bind this kill was for. Only an
+    // explicit refusal is "free": a probe timeout can fire against a still-
+    // bound listener on a starved runner, and a verdict read from it spawns
+    // the preview into EADDRINUSE while the holder lives on.
+    const deadline = Date.now() + 5_000;
+    while (!(await portRefused(port))) {
+      if (Date.now() > deadline) return false;
+      await sleep(100);
+    }
+    return true;
+  }
+
+  /**
+   * Why a bring-up failed, from the constants this class itself threw (PLAN
+   * D41) — the same words `classifyError` used to substring-match on the web
+   * side, now decided where the throw happened.
+   */
+  private bringUpErrorKind(error: unknown): RepoErrorKind {
+    const message = error instanceof Error ? error.message : String(error);
+    // The refusal names the commands it blocks (the card shows the evidence),
+    // so the sentence CONTINUES past the constant — prefix, not equality.
+    if (message.startsWith(COMMANDS_UNAPPROVED_DETAIL)) return "commands";
+    if (error instanceof PreviewPortBusyError) return "port-busy";
+    if (error instanceof PreviewHeldElsewhereError) return "held-elsewhere";
+    if (error instanceof BootstrapPrepareError || message === BOOTSTRAP_FAILED_DETAIL) {
+      return "bootstrap";
+    }
+    if (message === PNPM_MISSING_DETAIL) return "pnpm-missing";
+    if (message === REGISTRY_AUTH_DETAIL) return "registry-auth";
+    // D96: 최신화 충돌의 한 줄은 정확히 이 상수로 던져지므로, 같은 상수로
+    // 읽는다 — 오류 카드가 "Claude에게 해결 요청" 을 보여 줄 수 있는 근거.
+    if (
+      message === REFRESH_CONFLICT_DETAIL ||
+      message === RECOVER_CONFLICT_DETAIL ||
+      message.includes("충돌한 파일")
+    ) {
+      return "conflict";
+    }
+    if (message.includes("미리보기 서버") || message.includes("preview.port")) return "preview";
+    return this.core.isCloned() ? "install" : "clone";
+  }
+}
+
+function dependencyHash(root: string): string {
+  const hash = createHash("sha256");
+  for (const file of ["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock"]) {
+    const path = join(root, file);
+    hash.update(file);
+    hash.update(existsSync(path) ? readFileSync(path) : Buffer.alloc(0));
+  }
+  return hash.digest("hex").slice(0, 16);
+}

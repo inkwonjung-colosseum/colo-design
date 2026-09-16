@@ -1,5 +1,5 @@
 /**
- * 진행의 병합 (PLAN D97 · D101) — 새 행을 만들지 않고 이름한 도구 행에 붙는
+ * 진행의 병합 — 새 행을 만들지 않고 이름한 도구 행에 붙는
  * 규칙. 여기서 지키는 것 둘:
  *
  * 1. 뒤로 보낸 작업의 `tool_result` 는 자리표시자다. 도구 행이 done 이 되어도
@@ -13,8 +13,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Block } from "../src/daemon-client.ts";
-import { attachProgress, isToolRunning, type ProgressEvent } from "../src/progress.ts";
+import type { Block } from "../src/lib/daemon-client.ts";
+import { attachProgress, isToolRunning, type ProgressEvent } from "../src/lib/progress.ts";
 
 type ToolBlock = Extract<Block, { type: "tool" }>;
 

@@ -1,57 +1,24 @@
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
-import { readFile, rm, statfs, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
-import type {
-  DaemonNotice,
-  PreviewAxNode,
-  PreviewCapture,
-  PreviewDriver,
-  PreviewDriverFactory,
-  PreviewOpenOptions,
-  PreviewOpenResult,
-  PreviewViewport,
-} from "@colo-design/daemon/server";
+import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer } from "@colo-design/daemon/server";
-import { checkForUpdate, RELEASES_FEED_URL, type UpdateCheckResult } from "@colo-design/protocol";
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  Notification,
-  net,
-  safeStorage,
-  screen,
-  shell,
-} from "electron";
+import { app, BrowserWindow, dialog, Menu, safeStorage } from "electron";
+import { PlannerNotices } from "./app-notify.js";
+import { SelfUpdates } from "./app-updates.js";
+import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
-import { VIEWPORT_METRICS } from "./emulation.js";
-import { buildSwapScript as buildMacSwapScript } from "./mac-self-update.js";
 import { buildMenuTemplate } from "./menu.js";
-import { noticeCopy } from "./notices.js";
-import {
-  DEFAULT_NOTIFICATION_PREFS,
-  normalizeNotificationPrefs,
-  shouldNotify,
-} from "./notify-policy.js";
+import { createPreviewDriverFactory } from "./preview-driver.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
-import {
-  parseSwapResult,
-  planSelfUpdate,
-  requireDiskSpace,
-  verifyDownload,
-} from "./self-update.js";
-import { buildSwapScript as buildWinSwapScript } from "./win-self-update.js";
+import { daemonUrl, guardNavigations, MainWindowHost, windowUrl } from "./windows.js";
+
+// The preview-driver unit imports dist/main.js for this symbol — the seam
+// predates the split, so the export stays on the entry module.
+export { createPreviewDriverFactory } from "./preview-driver.js";
 
 /**
  * Colo Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
@@ -61,20 +28,14 @@ import { buildSwapScript as buildWinSwapScript } from "./win-self-update.js";
  *   http://127.0.0.1:<port>/?token=<token> 을 연다 — 연결 화면 없음.
  * - 자격 증명은 safeStorage 저장소를 데몬에 주입한다.
  * - 번들 런타임(포터블 node·pnpm, win 은 MinGit)이 resources 에 있으면
- *   COLO_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo.ts 가 PATH 앞에 붙인다).
- * - Claude 의 미리보기 창(PLAN D61 · D63)도 여기서 산다 — 숨은 오프스크린
- *   `BrowserWindow` 가 데몬의 `previewDriverFactory` 로 들어가고, paint 는
- *   PiP 프레임으로 렌더러에 흐른다.
+ *   COLO_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo-core.ts 가 PATH 앞에 붙인다).
+ * - Claude 의 미리보기 창(PLAN D61 · D63)은 preview-driver.ts 가 든다 —
+ *   숨은 오프스크린 `BrowserWindow` 가 데몬의 `previewDriverFactory` 로
+ *   들어가고, paint 는 PiP 프레임으로 렌더러에 흐른다.
+ *
+ * 이 파일은 조립만 남는다 — 창은 windows.ts, OS 알림·배지는 app-notify.ts,
+ * 자가 교체는 app-updates.ts, 렌더러 다리는 bridge.ts 가 갖는다.
  */
-
-let mainWindow: BrowserWindow | null = null;
-/** 알림 클릭이 창을 되살릴 수 있도록 — macOS 는 창이 없어도 앱이 산다. */
-let appUrl: string | null = null;
-/**
- * 창이 뒤에 있는 동안 도착한 사용자의 순간 수 — dock 배지로 세운다. mac 의
- * 개념이므로 다른 플랫폼은 paint 가 조용히 건너뛴다.
- */
-let unreadNotices = 0;
 
 /**
  * 앱 번들 아이디. 두 자리가 같은 문자열을 써야 한다 — Windows 토스트의 AUMID
@@ -82,48 +43,6 @@ let unreadNotices = 0;
  */
 const APP_BUNDLE_ID = "org.colo-design.desktop";
 
-/** 알림 클릭 → 그 대화 열기(리뷰 B7): 메인이 렌더러에 건네는 채널. */
-const OPEN_SESSION_CHANNEL = "colodesign:open-session";
-/** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — 넘김 사건에는 대화가 없다. */
-const OPEN_PROJECT_CHANNEL = "colodesign:open-project";
-/** 창이 없었다가 다시 열린 경우 — 적재가 끝난 뒤 건네기 위해 세워 둔 세션. */
-let pendingOpenSession: string | null = null;
-/** 같은 자리의 프로젝트 판본. */
-let pendingOpenProject: string | null = null;
-/** 실행 중인 턴의 존재를 창 닫기 가드가 묻는 데 쓴다(리뷰 B3). */
-let daemonServer: DaemonServer | null = null;
-
-// ---------------------------------------------------------------------------
-// 업데이트 (DESIGN §7) — 자동 확인 · 자가 교체 결과 보고
-// ---------------------------------------------------------------------------
-
-/** 자가 교체에 필요한 최소 여유 — 에셋 + 풀린 번들·설치본 + 백업 사본의 상한. */
-const UPDATE_MIN_FREE_BYTES = 1024 ** 3;
-/** 자동 확인의 첫 시점 — 시작 작업(데몬·창)과 경합하지 않는다. */
-const UPDATE_FIRST_CHECK_DELAY_MS = 15_000;
-/** 자동 확인의 주기 — 하루 한 번. */
-const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
-/** 자동 확인의 최소 간격 — 포커스마다 피드를 묻지 않는다. */
-const UPDATE_MIN_CHECK_GAP_MS = 60 * 60 * 1000;
-
-/** 교체 스크립트가 결과를 남기는 파일 — 다음 실행이 읽고 지운다. */
-function updateResultPath(): string {
-  return join(app.getPath("userData"), "update-result.json");
-}
-
-/**
- * 피드는 두 플랫폼의 에셋을 함께 싣는다 — url·sha256 은 mac zip, winUrl·
- * winSha256 은 Windows 설치 파일이다. 어느 쪽이 내 것인지는 데스크톱만 안다:
- * 여기서 한 번 고르고 나면 렌더러도 교체 코드도 url·sha256 한 쌍만 본다.
- * 자가 교체가 없는 플랫폼은 둘 다 없다 — 그 자리는 릴리스 페이지 안내가 맡는다.
- */
-function platformAsset(feed: UpdateCheckResult): { url: string | null; sha256: string | null } {
-  if (process.platform === "darwin") return { url: feed.url, sha256: feed.sha256 };
-  if (process.platform === "win32") return { url: feed.winUrl, sha256: feed.winSha256 };
-  return { url: null, sha256: null };
-}
-
-/** 데몬이 남기는 하루 로그가 사는 폴더 — 문제 해결의 `로그 폴더 열기`가 연다. */
 const LOGS_DIR = join(COLO_DESIGN_DIR, "logs");
 
 // ---------------------------------------------------------------------------
@@ -136,597 +55,29 @@ function desktopSettingsPath(): string {
   return join(app.getPath("userData"), "desktop-settings.json");
 }
 
-let notificationPrefs = DEFAULT_NOTIFICATION_PREFS;
-
-// ---------------------------------------------------------------------------
-// Claude 의 미리보기 드라이버 (PLAN D61 · D63)
-// ---------------------------------------------------------------------------
-
-/** PiP 프레임 스로틀 (PLAN D63): 8fps. */
-const PIP_FRAME_INTERVAL_MS = 125;
-const PIP_LONG_EDGE = 640;
-/**
- * 도구가 긴 변을 말하지 않을 때의 값, 그리고 인코딩 품질. 품질은 토큰 값을
- * 바꾸지 않는다 — 토큰은 픽셀 수로 매겨지고 품질은 와이어 바이트만 움직인다 —
- * 그래서 UI 의 얇은 글자가 살아남는 쪽으로 넉넉히 둔다.
- */
-const CAPTURE_LONG_EDGE = 900;
-const CAPTURE_QUALITY = 88;
-/** 화면이 자리를 잡았는지 기다리는 한계 — 넘으면 못 잡았다고 말한다. */
-const SETTLE_TIMEOUT_MS = 3000;
-const SETTLE_POLL_MS = 100;
-/** 접근성 트리에서 건너뛰지만 아이들은 살리는 역할. */
-const AX_SKIP_ROLES: Record<string, true> = { InlineTextBox: true, IframePresentational: true };
-/** 노드가 스스로 말하지 않는 것들 — 상태로 뽑아 올린다. */
-const AX_STATE_PROPERTIES: Record<string, true> = {
-  disabled: true,
-  checked: true,
-  expanded: true,
-  focused: true,
-  required: true,
-  selected: true,
-  pressed: true,
-  invalid: true,
-  readonly: true,
-};
-/** `screen_press` 의 키 → CDP 키 이벤트. 화이트리스트는 도구가 지킨다. */
-const PRESS_KEY_CODES: Record<string, { code: string; key: string; vk: number; text?: string }> = {
-  Enter: { code: "Enter", key: "Enter", vk: 13, text: "\r" },
-  Escape: { code: "Escape", key: "Escape", vk: 27 },
-  Tab: { code: "Tab", key: "Tab", vk: 9, text: "\t" },
-  Backspace: { code: "Backspace", key: "Backspace", vk: 8 },
-  Delete: { code: "Delete", key: "Delete", vk: 46 },
-  Space: { code: "Space", key: " ", vk: 32, text: " " },
-  ArrowUp: { code: "ArrowUp", key: "ArrowUp", vk: 38 },
-  ArrowDown: { code: "ArrowDown", key: "ArrowDown", vk: 40 },
-  ArrowLeft: { code: "ArrowLeft", key: "ArrowLeft", vk: 37 },
-  ArrowRight: { code: "ArrowRight", key: "ArrowRight", vk: 39 },
-};
-
-/** 요소를 화면 가운데로 올리고 그 시점의 뷰포트 rect 를 돌려주는 함수. */
-const RECT_OF_SELF = `function () {
-  const el = this.nodeType === 1 ? this : this.parentElement;
-  if (!el) return null;
-  el.scrollIntoView({ block: "center", inline: "center" });
-  const r = el.getBoundingClientRect();
-  return { x: r.x, y: r.y, width: r.width, height: r.height };
-}`;
-
-interface PreviewRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-/** Chromium 이 돌려주는 접근성 노드 — 쓰는 부분만 적는다. */
-interface CdpAxNode {
-  nodeId: string;
-  backendDOMNodeId?: number;
-  ignored?: boolean;
-  childIds?: string[];
-  role?: { value?: unknown };
-  name?: { value?: unknown };
-  value?: { value?: unknown };
-  properties?: Array<{ name?: string; value?: { value?: unknown } }>;
-}
+let daemonServer: DaemonServer | null = null;
 
 /**
- * 숨은 오프스크린 `BrowserWindow` 하나가 Claude 전용 브라우저다. 그리기는
- * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`,
- * 접근성 트리는 `Accessibility.getFullAXTree`, 입력은 `Input.*`. 창은 화면에
- * 뜨지 않는다 — 보이는 창은 사용자의 것뿐이다.
- *
- * 주소는 ref 다 (PLAN D61): `axTree()` 가 걸어간 노드마다 `e12` 를 붙이고
- * backend 노드 번호를 기억한다. `open()` 과 다음 `axTree()` 가 세대를 갈아
- * 치우므로, 낡은 ref 는 "다시 읽으십시오" 라는 오류가 된다 — 엉뚱한 곳을
- * 누르는 일은 없다.
+ * 리뷰 B3 + ⌘Q 의 구멍: 돌아가는 턴이 앱과 함께 조용히 죽지 않게 한 번
+ * 묻는다. 비-mac 의 창 닫기(닫기=종료인 규칙)와 모든 플랫폼의 앱 종료(⌘Q ·
+ * 메뉴)가 같은 질문을 공유한다 — mac 은 닫기가 창만 닫으므로 종료 경로에만
+ * 묻는다. 한 번 확인한 종료는 이번 실행에서 다시 묻지 않는다.
  */
-class ElectronPreviewDriver implements PreviewDriver {
-  private window: BrowserWindow | null = null;
-  private readonly consoleHistory: Array<{ level: string; text: string }> = [];
-  private lastFrameSent = 0;
-  /** 지금 세대의 ref → backend 노드 번호. `open`·`axTree` 가 비운다. */
-  private readonly refs = new Map<string, number>();
-  /** 이 창에 걸린 에뮬레이션 — 같은 값을 두 번 걸지 않는다. */
-  private applied: { viewport: PreviewViewport; colorScheme: "light" | "dark" } | null = null;
-  /** 세우는 중인 창 — 동시 호출이 창 두 개를 만들지 않게. */
-  private booting: Promise<BrowserWindow> | null = null;
+let stopUnderTurnAllowed = false;
+let stopDialogOpen = false;
 
-  constructor(private readonly baseUrl: string) {}
-
-  /**
-   * 창을 한 번만 세운다. 동시에 부르면 같은 부팅을 기다린다 — 창 두 개가
-   * 생기면 ref 세대가 갈라진다.
-   */
-  private async ensureWindow(): Promise<BrowserWindow> {
-    if (this.window && !this.window.isDestroyed()) return this.window;
-    this.booting ??= this.bootWindow().finally(() => {
-      this.booting = null;
-    });
-    return this.booting;
-  }
-
-  /**
-   * 오프스크린 창은 첫 로드 전까지 렌더러가 없다 — 그 사이에 보낸
-   * `Runtime`·`DOM`·`Network`·`Emulation` 명령은 **돌아오지 않는다**. 그래서
-   * 창은 `about:blank` 로 먼저 태어나고, 도메인을 켠 뒤에야 도구의 손에
-   * 넘어간다. 이 순서가 아니면 첫 `screen_open` 이 영원히 매달린다.
-   */
-  private async bootWindow(): Promise<BrowserWindow> {
-    const window = new BrowserWindow({
-      show: false,
-      width: VIEWPORT_METRICS.desktop.size[0],
-      height: VIEWPORT_METRICS.desktop.size[1],
-      webPreferences: {
-        offscreen: true,
-        partition: "preview-claude",
-        sandbox: true,
-        contextIsolation: true,
-      },
-    });
-    const contents = window.webContents;
-    contents.debugger.attach("1.3");
-    // 실패한 요청은 콘솔에 남지 않는다 — 빈 화면의 절반이 여기서 온다 (D61).
-    contents.debugger.on("message", (_event, method, params) => {
-      this.onDebuggerMessage(method, params as Record<string, unknown>);
-    });
-    // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다(PLAN D69 와 같은
-    // 형태) — 44 부터 첫 인자가 details { level: "info"|"warning"|"error"|"debug" }.
-    contents.on("console-message", (details) => {
-      this.consoleHistory.push({ level: details.level, text: details.message });
-    });
-    contents.on("paint", (_details, _rect, image) => {
-      const now = Date.now();
-      if (now - this.lastFrameSent < PIP_FRAME_INTERVAL_MS) return;
-      this.lastFrameSent = now;
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      const size = image.getSize();
-      const scale = Math.min(1, PIP_LONG_EDGE / Math.max(size.width, size.height));
-      const shrunk = scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
-      mainWindow.webContents.send("colo-preview:frame", shrunk.toJPEG(60).toString("base64"));
-    });
-    await contents.loadURL("about:blank").catch(() => undefined);
-    // consoleAPICalled 은 Runtime 도메인을 켜야 흐르고, resolveNode 는 DOM,
-    // 실패한 요청은 Network 를 켜야 온다. 하나가 없어도 나머지는 산다.
-    for (const domain of ["Runtime.enable", "DOM.enable", "Network.enable"]) {
-      await contents.debugger.sendCommand(domain, {}).catch(() => undefined);
-    }
-    this.window = window;
-    return window;
-  }
-
-  /** 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않는다. */
-  private onDebuggerMessage(method: string, params: Record<string, unknown>): void {
-    if (method === "Network.loadingFailed") {
-      const text = typeof params.errorText === "string" ? params.errorText : "요청 실패";
-      if (params.canceled === true) return;
-      this.consoleHistory.push({ level: "net", text });
-      return;
-    }
-    if (method !== "Network.responseReceived") return;
-    const response = params.response as { status?: number; url?: string } | undefined;
-    const status = response?.status ?? 0;
-    if (status < 400) return;
-    this.consoleHistory.push({ level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
-  }
-
-  private debugger(): Electron.Debugger {
-    const window = this.window;
-    if (!window || window.isDestroyed()) throw new Error("미리보기 창이 닫혔습니다.");
-    return window.webContents.debugger;
-  }
-
-  /**
-   * 이 창에 폭과 색 스킴을 건다. 데스크톱 폭은 override 를 걷어내는 것이
-   * 맞다 — 창의 제 크기가 데스크톱이다.
-   */
-  private async emulate(viewport: PreviewViewport, colorScheme: "light" | "dark"): Promise<void> {
-    if (this.applied?.viewport === viewport && this.applied.colorScheme === colorScheme) return;
-    const dbg = this.debugger();
-    const preset = VIEWPORT_METRICS[viewport];
-    if (viewport === "desktop") {
-      await dbg.sendCommand("Emulation.clearDeviceMetricsOverride", {}).catch(() => undefined);
-    } else {
-      await dbg.sendCommand("Emulation.setDeviceMetricsOverride", {
-        width: preset.size[0],
-        height: preset.size[1],
-        deviceScaleFactor: 2,
-        mobile: preset.mobile,
-      });
-    }
-    await dbg
-      .sendCommand("Emulation.setUserAgentOverride", {
-        userAgent: preset.userAgent ?? this.window?.webContents.getUserAgent() ?? "",
-      })
-      .catch(() => undefined);
-    await dbg
-      .sendCommand("Emulation.setEmulatedMedia", {
-        features: [{ name: "prefers-color-scheme", value: colorScheme }],
-      })
-      .catch(() => undefined);
-    this.applied = { viewport, colorScheme };
-  }
-
-  async open(
-    route: string,
-    state: string | null,
-    options?: PreviewOpenOptions,
-  ): Promise<PreviewOpenResult> {
-    let url: URL;
-    try {
-      url = new URL(route, this.baseUrl);
-    } catch {
-      return { ok: false, reason: `route 를 주소로 읽을 수 없습니다: ${route}` };
-    }
-    // A declared screen must stay inside the preview server — an absolute
-    // route would carry this hidden window (and its debugger) to an origin
-    // the repo picked. PlannerPreviewView.open checks the same thing.
-    if (url.origin !== new URL(this.baseUrl).origin) {
-      return {
-        ok: false,
-        reason: `미리보기 서버 밖의 주소는 열지 않습니다: ${route} (${new URL(this.baseUrl).origin} 안의 경로를 쓰십시오)`,
-      };
-    }
-    if (state) url.searchParams.set("state", state);
-    // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
-    this.consoleHistory.length = 0;
-    this.refs.clear();
-    const window = await this.ensureWindow();
-    await this.emulate(options?.viewport ?? "desktop", options?.colorScheme ?? "light");
-    try {
-      await window.webContents.loadURL(url.toString());
-    } catch (error) {
-      return {
-        ok: false,
-        reason: `화면을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-    return { ok: true, settled: await this.settle(state) };
-  }
-
-  /**
-   * `loadURL` 이 끝난 것은 문서가 왔다는 뜻일 뿐이다 (PLAN D61): SPA 는 그
-   * 뒤에 라우팅하고 `?state=` 를 읽는다. 문서가 완전해지고, 상태를 요청했으면
-   * 그 표식(`data-state`)이 나타날 때까지 기다린다 — 못 기다리면 false 다.
-   */
-  private async settle(state: string | null): Promise<boolean> {
-    const selector = state ? `[data-state=${JSON.stringify(state)}]` : null;
-    const probe = `(function () {
-      if (document.readyState !== "complete") return false;
-      const sel = ${JSON.stringify(selector)};
-      return sel === null ? true : !!document.querySelector(sel);
-    })()`;
-    const deadline = Date.now() + SETTLE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const result = (await this.debugger()
-        .sendCommand("Runtime.evaluate", { expression: probe, returnByValue: true })
-        .catch(() => null)) as { result?: { value?: unknown } } | null;
-      if (result?.result?.value === true) return true;
-      const poll = Promise.withResolvers<void>();
-      setTimeout(poll.resolve, SETTLE_POLL_MS);
-      await poll.promise;
-    }
-    return false;
-  }
-
-  /**
-   * 한 번만 굽는다. 예전 판은 CDP 가 JPEG 로 구운 것을 `nativeImage` 로 풀어
-   * 줄이고 다시 JPEG 로 구웠다 — 같은 토큰을 내고 두 세대의 압축 흔적을 받는
-   * 셈이었다. 축소는 `clip.scale` 로 컴포지터가 하고, 인코딩은 그 자리에서
-   * 한 번이다. 형식은 WebP: 토큰은 픽셀 수로 매겨지니 형식은 값을 바꾸지
-   * 않지만, JPEG 의 크로마 서브샘플링이 UI 의 얇은 색 글자를 흐리게 만든다.
-   */
-  async screenshot(options?: { ref?: string; longEdge?: number }): Promise<PreviewCapture> {
-    await this.ensureWindow();
-    const longEdge = options?.longEdge ?? CAPTURE_LONG_EDGE;
-    const area = options?.ref ? await this.rectOfRef(options.ref) : await this.viewportRect();
-    const scale = Math.min(1, longEdge / Math.max(area.width, area.height));
-    const result = (await this.debugger().sendCommand("Page.captureScreenshot", {
-      format: "webp",
-      quality: CAPTURE_QUALITY,
-      clip: { x: area.x, y: area.y, width: area.width, height: area.height, scale },
-      captureBeyondViewport: true,
-    })) as { data?: string };
-    if (!result?.data) throw new Error("미리보기 화면을 캡처하지 못했습니다");
-    return { data: result.data, mediaType: "image/webp" };
-  }
-
-  /**
-   * 지금 보이는 만큼의 사각형. `clip` 은 페이지 좌표라서 스크롤한 만큼을
-   * 더해야 한다 — 빼면 언제나 문서의 맨 위를 찍는다.
-   */
-  private async viewportRect(): Promise<PreviewRect> {
-    const metrics = (await this.debugger().sendCommand("Page.getLayoutMetrics", {})) as {
-      cssVisualViewport?: {
-        pageX?: number;
-        pageY?: number;
-        clientWidth?: number;
-        clientHeight?: number;
-      };
-    };
-    const view = metrics.cssVisualViewport;
-    const preset = VIEWPORT_METRICS[this.applied?.viewport ?? "desktop"];
-    return {
-      x: view?.pageX ?? 0,
-      y: view?.pageY ?? 0,
-      width: view?.clientWidth ?? preset.size[0],
-      height: view?.clientHeight ?? preset.size[1],
-    };
-  }
-
-  /**
-   * 접근성 트리를 계층 그대로 돌려주고, 그 자리에서 ref 를 새로 발급한다 —
-   * 이 호출이 곧 ref 의 세대다. 이름 없는 구조 노드까지 그대로 담고, 무엇을
-   * 접을지는 도구가 정한다 (`compact`).
-   */
-  async axTree(): Promise<PreviewAxNode[]> {
-    await this.ensureWindow();
-    const result = (await this.debugger().sendCommand("Accessibility.getFullAXTree", {})) as {
-      nodes?: CdpAxNode[];
-    };
-    const nodes = result.nodes ?? [];
-    const byId = new Map<string, CdpAxNode>();
-    const childOf = new Set<string>();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    for (const node of nodes) for (const child of node.childIds ?? []) childOf.add(child);
-
-    this.refs.clear();
-    let minted = 0;
-    const build = (ids: string[]): PreviewAxNode[] => {
-      const out: PreviewAxNode[] = [];
-      for (const id of ids) {
-        const node = byId.get(id);
-        if (!node) continue;
-        const role = typeof node.role?.value === "string" ? node.role.value : "";
-        const children = build(node.childIds ?? []);
-        // 무시된 노드와 텍스트 조각은 자리만 차지한다 — 아이들만 올린다.
-        if (node.ignored === true || AX_SKIP_ROLES[role] === true || role === "") {
-          out.push(...children);
-          continue;
-        }
-        const states: string[] = [];
-        for (const property of node.properties ?? []) {
-          if (!property.name || AX_STATE_PROPERTIES[property.name] !== true) continue;
-          const value = property.value?.value;
-          if (value === false || value === "false" || value === undefined) continue;
-          states.push(value === true ? property.name : `${property.name}=${String(value)}`);
-        }
-        const rawValue = node.value?.value;
-        const backendId = node.backendDOMNodeId;
-        let ref = "";
-        if (backendId !== undefined) {
-          minted += 1;
-          ref = `e${minted}`;
-          this.refs.set(ref, backendId);
-        }
-        out.push({
-          ref,
-          role,
-          name: typeof node.name?.value === "string" ? node.name.value.trim() : "",
-          ...(rawValue === undefined || rawValue === "" ? {} : { value: String(rawValue) }),
-          states,
-          children,
-        });
-      }
-      return out;
-    };
-    const roots = nodes.filter((node) => !childOf.has(node.nodeId)).map((node) => node.nodeId);
-    return build(roots);
-  }
-
-  /**
-   * ref 가 가리키는 요소를 화면 가운데로 올리고 뷰포트 rect 를 받는다. 낡은
-   * ref 는 여기서 걸린다 — 도구가 그 말을 그대로 모델에게 전한다.
-   */
-  private async rectOfRef(ref: string): Promise<PreviewRect> {
-    const backendNodeId = this.refs.get(ref);
-    if (backendNodeId === undefined) {
-      throw new Error(`${ref} 는 지금 화면의 것이 아닙니다 — screen_read 로 다시 읽으십시오.`);
-    }
-    const dbg = this.debugger();
-    const resolved = (await dbg.sendCommand("DOM.resolveNode", { backendNodeId })) as {
-      object?: { objectId?: string };
-    };
-    const objectId = resolved.object?.objectId;
-    if (!objectId) {
-      throw new Error(`${ref} 를 화면에서 찾지 못했습니다 — screen_read 로 다시 읽으십시오.`);
-    }
-    const evaluated = (await dbg.sendCommand("Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration: RECT_OF_SELF,
-      returnByValue: true,
-    })) as { result?: { value?: PreviewRect | null } };
-    const rect = evaluated.result?.value ?? null;
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      throw new Error(`${ref} 는 화면에 보이지 않습니다.`);
-    }
-    return rect;
-  }
-
-  /** text·selector 로 찾는 옛 길 — ref 가 없을 때의 차선책이다. */
-  private async rectOfQuery(target: { text?: string; selector?: string }): Promise<PreviewRect> {
-    const find = target.selector
-      ? `(function () {
-          const el = document.querySelector(${JSON.stringify(target.selector)});
-          if (!el) return null;
-          el.scrollIntoView({ block: "center", inline: "center" });
-          const r = el.getBoundingClientRect();
-          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-        })()`
-      : // 정확히 그 글자인 것이 먼저다 — "저장" 이 "저장 안 함" 을 누르면 안
-        // 된다. 정확한 것이 여럿이면 고르지 않고 후보를 돌려준다.
-        `(function () {
-          const needle = ${JSON.stringify(target.text ?? "")};
-          const all = Array.from(document.querySelectorAll("body *"));
-          const innermost = (list) => list.filter((candidate) =>
-            !list.some((other) => other !== candidate && candidate.contains(other)));
-          const exact = innermost(all.filter((el) => (el.textContent || "").trim() === needle));
-          const loose = innermost(all.filter((el) => (el.textContent || "").includes(needle)));
-          const picked = exact.length > 0 ? exact : loose;
-          if (picked.length === 0) return null;
-          if (picked.length > 1) {
-            return { ambiguous: picked.slice(0, 5).map((el) =>
-              (el.tagName.toLowerCase() + ' "' + (el.textContent || "").trim().slice(0, 40) + '"')) };
-          }
-          const el = picked[0];
-          el.scrollIntoView({ block: "center", inline: "center" });
-          const r = el.getBoundingClientRect();
-          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-        })()`;
-    const evaluate = () =>
-      this.debugger().sendCommand("Runtime.evaluate", {
-        expression: find,
-        returnByValue: true,
-      }) as Promise<{
-        result?: { value?: { rect?: PreviewRect; ambiguous?: string[] } | null };
-      }>;
-    // 캡처 직후 등 컨텍스트가 갈아엎어지는 순간이 있다 — 한 번 더 물어본다.
-    let result = await evaluate();
-    if (!result?.result?.value) {
-      const settle = Promise.withResolvers<void>();
-      setTimeout(settle.resolve, 120);
-      await settle.promise;
-      result = await evaluate();
-    }
-    const value = result?.result?.value;
-    if (value?.ambiguous) {
-      throw new Error(
-        `"${target.text}" 에 맞는 것이 여럿입니다 — screen_read 의 ref 를 쓰십시오: ${value.ambiguous.join(", ")}`,
-      );
-    }
-    const rect = value?.rect;
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      throw new Error(`화면에서 찾지 못했습니다: ${target.text ?? target.selector}`);
-    }
-    return rect;
-  }
-
-  private async clickRect(rect: PreviewRect): Promise<void> {
-    const dbg = this.debugger();
-    const x = rect.x + rect.width / 2;
-    const y = rect.y + rect.height / 2;
-    // 오프스크린 페이지는 태어나자마자 뒷전이다 — 먼저 앞으로 끌어 올린다.
-    await dbg.sendCommand("Page.bringToFront", {});
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
-    for (const type of ["mousePressed", "mouseReleased"]) {
-      await dbg.sendCommand("Input.dispatchMouseEvent", {
-        type,
-        x,
-        y,
-        button: "left",
-        clickCount: 1,
-      });
-    }
-  }
-
-  async click(target: { ref?: string; text?: string; selector?: string }): Promise<void> {
-    const window = await this.ensureWindow();
-    // 오프스크린 창은 포커스가 없어 입력이 무시될 수 있다 — 먼저 창을 살린다.
-    window.webContents.focus();
-    const rect = target.ref
-      ? await this.rectOfRef(target.ref)
-      : await this.rectOfQuery({
-          ...(target.text ? { text: target.text } : {}),
-          ...(target.selector ? { selector: target.selector } : {}),
-        });
-    await this.clickRect(rect);
-  }
-
-  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<void> {
-    const window = await this.ensureWindow();
-    window.webContents.focus();
-    if (input.ref) await this.clickRect(await this.rectOfRef(input.ref));
-    const dbg = this.debugger();
-    if (input.clear === true) {
-      // 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의 onChange 가 흐르는
-      // 유일한 길이다(값을 직접 넣으면 React 는 모른다).
-      const modifiers = process.platform === "darwin" ? 4 : 2;
-      for (const type of ["rawKeyDown", "keyUp"]) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", {
-          type,
-          modifiers,
-          key: "a",
-          code: "KeyA",
-          windowsVirtualKeyCode: 65,
-        });
-      }
-    }
-    await dbg.sendCommand("Input.insertText", { text: input.text });
-  }
-
-  async press(key: string): Promise<void> {
-    await this.ensureWindow();
-    const mapped = PRESS_KEY_CODES[key];
-    if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
-    const dbg = this.debugger();
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: mapped.text ? "keyDown" : "rawKeyDown",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-      ...(mapped.text ? { text: mapped.text } : {}),
-    });
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-    });
-  }
-
-  async scroll(target: { ref?: string; dy: number }): Promise<void> {
-    await this.ensureWindow();
-    // ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것 자체가 그 일이다.
-    const rect = target.ref ? await this.rectOfRef(target.ref) : null;
-    if (target.dy === 0) return;
-    const dbg = this.debugger();
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseWheel",
-      x: rect ? rect.x + rect.width / 2 : VIEWPORT_METRICS.desktop.size[0] / 2,
-      y: rect ? rect.y + rect.height / 2 : VIEWPORT_METRICS.desktop.size[1] / 2,
-      deltaX: 0,
-      deltaY: target.dy,
-    });
-  }
-
-  async hover(target: { ref: string }): Promise<void> {
-    await this.ensureWindow();
-    const rect = await this.rectOfRef(target.ref);
-    await this.debugger().sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-      button: "none",
-    });
-  }
-
-  async consoleLines(): Promise<Array<{ level: string; text: string }>> {
-    return [...this.consoleHistory];
-  }
-
-  async destroy(): Promise<void> {
-    const window = this.window;
-    this.window = null;
-    this.refs.clear();
-    this.applied = null;
-    if (!window || window.isDestroyed()) return;
-    try {
-      window.webContents.debugger.detach();
-    } catch {
-      // 이미 떨어져 나갔거나 창이 닫히는 중이다 — 지울 게 없을 뿐이다.
-    }
-    window.destroy();
-  }
-}
-
-/**
- * 데몬에 주입되는 드라이버 공장. 데몬은 Electron 을 모른다 — 이 모듈만이
- * 창을 만들고, 세션마다 하나의 숨은 창이 생긴다(PLAN D61).
- */
-export function createPreviewDriverFactory(): PreviewDriverFactory {
-  return { for: (baseUrl) => new ElectronPreviewDriver(baseUrl) };
-}
+const host = new MainWindowHost();
+const notices = new PlannerNotices(host);
+const updates = new SelfUpdates({
+  notify: (title, body, onClick) => notices.show(title, body, onClick),
+  focusMain: () => host.focusMain(),
+  sessionsBusy: () => daemonServer?.anySessionBusy() ?? false,
+  allowQuit: () => {
+    stopUnderTurnAllowed = true;
+  },
+});
+// reopen 이 만드는 창도 첫 창과 같은 닫기 가드를 단다.
+host.onCreated = registerCloseGuard;
 
 /**
  * 같은 userData 를 두 데몬이 쓰는 경쟁을 막는다 — 독립 데몬이 daemon.json 의
@@ -737,7 +88,7 @@ export function createPreviewDriverFactory(): PreviewDriverFactory {
 const underTest =
   process.env.COLO_DESIGN_DESKTOP_UNIT === "1" || Boolean(process.env.COLO_DESIGN_DESKTOP_SMOKE);
 if (underTest || app.requestSingleInstanceLock()) {
-  app.on("second-instance", () => focusMainWindow());
+  app.on("second-instance", () => host.focusMain());
   // The preview-driver unit imports this module inside its own Electron to
   // reach createPreviewDriverFactory() — the daemon boot below belongs to the
   // app entry only (PLAN D61).
@@ -764,7 +115,7 @@ async function bootApp(): Promise<void> {
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
   // 유실시킨다. mac·linux 에서는 이 호출이 아무 일도 하지 않는다.
   app.setAppUserModelId(APP_BUNDLE_ID);
-  notificationPrefs = loadNotificationPrefs(desktopSettingsPath());
+  notices.prefs = loadNotificationPrefs(desktopSettingsPath());
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(
     safeStorage as never,
@@ -783,11 +134,11 @@ async function bootApp(): Promise<void> {
     : undefined;
 
   // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
-  const previewDriverFactory = createPreviewDriverFactory();
+  const previewDriverFactory = createPreviewDriverFactory(() => host.window);
   const onNotice = (notice: DaemonNotice) => {
-    notifyPlanner(notice);
+    notices.notifyPlanner(notice);
     // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
-    void maybeRunDeferredSelfUpdate();
+    void updates.maybeRunDeferred();
   };
   const makeServer = (port: number) =>
     new DaemonServer({
@@ -820,14 +171,14 @@ async function bootApp(): Promise<void> {
   if (boundPort !== storedPort) saveDesktopSettings(desktopSettingsPath(), { port: boundPort });
   daemonServer = server;
   const url = windowUrl(daemonUrl(server, token));
-  appUrl = url;
 
-  mainWindow = createMainWindow();
+  const window = host.create();
+  host.adopt(window, url);
   // 사용자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
   // 화면 선언은 데몬에도 간다 (PLAN D61): `screen_list` 가 읽는 목록이 여기서
   // 채워진다 — 데몬에는 브리지의 말을 들을 페이지가 없다.
   const plannerPreview = new PlannerPreviewView(
-    () => mainWindow,
+    () => host.window,
     (screens) => server.setPreviewScreens(screens),
   );
   registerPreviewIpc(plannerPreview);
@@ -838,17 +189,17 @@ async function bootApp(): Promise<void> {
       buildMenuTemplate({
         preview: plannerPreview,
         gotoAddress: () =>
-          mainWindow?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("colo-preview:key", {
             key: "l",
             meta: true,
           }),
         openSettings: () =>
-          mainWindow?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("colo-preview:key", {
             key: ",",
             meta: true,
           }),
         newSession: () =>
-          mainWindow?.webContents.send("colo-preview:key", {
+          host.window?.webContents.send("colo-preview:key", {
             key: "t",
             meta: true,
           }),
@@ -858,16 +209,15 @@ async function bootApp(): Promise<void> {
   );
   // 새 창과 같은 창 네비게이션을 전부 가둔다 — guardNavigations 가 두 잠금을
   // 든다. 채팅의 링크도 window.open 을 지나 OS 브라우저로 나간다.
-  guardNavigations(mainWindow, new URL(url).origin);
+  guardNavigations(window, new URL(url).origin);
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
   const suiteHandle = globalThis as Record<string, unknown>;
   suiteHandle.coloDesignPlannerPreview = plannerPreview;
-  await mainWindow.loadURL(url);
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  await window.loadURL(url);
+  window.on("closed", () => {
     // The pane outlives the window — on mac ⌘W destroys it and the dock
-    // icon builds another (createWindow's closure follows `mainWindow`).
+    // icon builds another (createWindow's closure follows `host.window`).
     // Its page belongs to a contentView that is gone and its cover state
     // to a renderer that is gone: park the page so the next mount attaches
     // one to the NEW window, and drop the cover so the fresh renderer's
@@ -875,13 +225,20 @@ async function bootApp(): Promise<void> {
     plannerPreview.unmount();
     plannerPreview.cover(false);
   });
-  registerCloseGuard(mainWindow);
+  registerCloseGuard(window);
 
-  registerDesktopBridge();
-  void reportSwapResult();
-  scheduleUpdateChecks();
+  registerDesktopBridge({
+    updates,
+    notices,
+    focusMain: () => host.focusMain(),
+    bundleId: APP_BUNDLE_ID,
+    logsDir: LOGS_DIR,
+    settingsPath: desktopSettingsPath,
+  });
+  void updates.reportSwapResult();
+  updates.schedule();
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) void reopen(url);
+    if (BrowserWindow.getAllWindows().length === 0) void host.reopen();
   });
 }
 
@@ -890,183 +247,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("browser-window-focus", () => {
-  unreadNotices = 0;
-  paintBadge();
+  notices.markRead();
 });
-
-/** 화면 작업 영역 크기 — 창을 열 때 고정 크기 대신 쓴다. */
-function workAreaSize(): { width: number; height: number } {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  return { width, height };
-}
-
-/**
- * 창의 네비게이션을 도구 안에 가둔다 (PLAN D85 ⓑ의 잠금 연장): window.open
- * 계열은 http(s) 를 OS 브라우저로 열고 그 외는 막는다 — 빈 Electron 자식
- * 창이 뜨고 도구의 preload 를 물려받는 일은 없다. 같은 창 네비게이션은
- * 도구 origin(데몬) 안의 이동만 허용한다: preload 는 네비게이션을 살아
- * 남으므로, 이 문이 없으면 채팅의 링크 하나가 창을 통째로 다른 origin 으로
- * 데려갈 수 있다.
- */
-function guardNavigations(window: BrowserWindow, toolOrigin: string): void {
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const { protocol } = new URL(url);
-      if (protocol === "http:" || protocol === "https:") {
-        void shell.openExternal(url);
-      }
-    } catch {
-      // a url that will not parse has no protocol to allow
-    }
-    return { action: "deny" };
-  });
-  window.webContents.on("will-navigate", (event, target) => {
-    try {
-      if (new URL(target).origin === toolOrigin) return;
-    } catch {
-      // unparseable targets fall through to the block below
-    }
-    event.preventDefault();
-    try {
-      const { protocol } = new URL(target);
-      if (protocol === "http:" || protocol === "https:") {
-        void shell.openExternal(target);
-      }
-    } catch {
-      // nothing worth handing to the browser either
-    }
-  });
-}
-
-/**
- * The one window recipe, shared by boot and reopen: a window made without it
- * (the notification-click reopen used to build its own) has no preload, so
- * `coloDesignDesktop` never exists in it — the update bridge, 폴더 열기, the
- * native preview (pins, PiP, bounds) and open-session all die quietly, and
- * the title goes with them.
- */
-function createMainWindow(): BrowserWindow {
-  // 창의 바닥: 접힌 레일(44) + 미리보기 바닥(340) + 대화 바닥(320) + 여백.
-  // 이 밑으로는 그리드가 대화 열을 0까지 짜낸다(minmax(0,1fr)) — 대화는 이
-  // 앱의 몸통이니 창이 대신 멈춘다. 작은 작업 영역(Sidecar·분할 화면)이
-  // 바닥보다 좁으면 그 화면에 맞춘다 — 못 미치는 창보다는 잘린 창이 낫다.
-  const workArea = workAreaSize();
-  return new BrowserWindow({
-    // 화면 작업 영역에 맞춘다 — 고정 크기는 큰 모니터에서 조그맣게 보인다.
-    ...workArea,
-    minWidth: Math.min(760, workArea.width),
-    minHeight: Math.min(560, workArea.height),
-    title: "Colo Design",
-    autoHideMenuBar: true,
-    webPreferences: {
-      // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.
-      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
-    },
-  });
-}
-function daemonUrl(server: DaemonServer, token: string): string {
-  // 저장 포트거나 폴백이거나 — 실제로 잡힌 자리를 묻는다.
-  const address = server.address();
-  return `http://${address.address === "::1" ? "127.0.0.1" : address.address}:${address.port}/?token=${token}`;
-}
-
-/**
- * 창이 실제로 열 주소. 보통은 데몬 자신이지만, 개발 실행의 HMR 경로
- * (`pnpm dev:desktop` → scripts/dev.mjs --hmr)에서는 vite 개발 서버를 연다 —
- * 웹을 한 줄 고칠 때마다 전체 빌드를 다시 돌리지 않기 위해서다. 데몬은
- * 그대로 in-process 이므로 ws 를 어디에 걸어야 하는지 `daemon` 질의로
- * 건넨다(App.tsx 가 읽는다). 패키징된 앱은 환경 변수를 보지 않는다 —
- * 창이 다른 origin 을 여는 문은 개발에만 존재한다.
- */
-function windowUrl(daemon: string): string {
-  const devServer = app.isPackaged ? undefined : process.env.COLO_DESIGN_DEV_SERVER;
-  if (!devServer) return daemon;
-  const source = new URL(daemon);
-  const target = new URL(devServer);
-  target.searchParams.set("token", source.searchParams.get("token") ?? "");
-  target.searchParams.set("daemon", source.host);
-  return target.toString();
-}
-
-async function reopen(url: string): Promise<void> {
-  mainWindow = createMainWindow();
-  guardNavigations(mainWindow, new URL(url).origin);
-  registerCloseGuard(mainWindow);
-  await mainWindow.loadURL(url);
-  // 리뷰 B7: a notification clicked while no window existed — the renderer
-  // was not mounted to hear the session id, so it rides after the load.
-  if (pendingOpenSession) {
-    const sessionId = pendingOpenSession;
-    pendingOpenSession = null;
-    setTimeout(() => mainWindow?.webContents.send(OPEN_SESSION_CHANNEL, sessionId), 1200);
-  }
-  if (pendingOpenProject) {
-    const slug = pendingOpenProject;
-    pendingOpenProject = null;
-    setTimeout(() => mainWindow?.webContents.send(OPEN_PROJECT_CHANNEL, slug), 1200);
-  }
-}
-
-/**
- * 데몬이 건넨 사용자의 순간을 OS 알림으로 그린다. 창이 앞에 있으면 사용자가
- * 이미 보고 있는 것이므로 조용히 한다. 클릭은 창을 앞으로, 그리고 그 대화로 —
- * 세션 아이디를 렌더러에 건네 열려는 대화를 알린다(리뷰 B7).
- */
-function notifyPlanner(notice: DaemonNotice): void {
-  if (mainWindow?.isFocused()) return;
-  // 완료 알림만 시점 정책을 탄다 — 확인 요청·중단·게이트 실패·개발자 쪽
-  // 사건(커미티 B1)은 언제나 즉시.
-  if (!shouldNotify(notice, notificationPrefs)) return;
-  unreadNotices += 1;
-  paintBadge();
-  const { title, body } = noticeCopy(notice);
-  void showAppNotification(
-    title,
-    body,
-    // 커미티 B1: 넘김 사건의 행선은 프로젝트다 — 대화가 아니라 slug 로 간다.
-    notice.kind === "handoff"
-      ? () => focusProjectWindow(notice.slug)
-      : () => focusMainWindow(notice.sessionId),
-    {
-      silent: !notificationPrefs.sound,
-    },
-  );
-}
-
-/** 알림 클릭의 프로젝트 판본 — 창을 앞으로, 그 프로젝트로. */
-function focusProjectWindow(slug: string): void {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.webContents.send(OPEN_PROJECT_CHANNEL, slug);
-  } else if (appUrl) {
-    pendingOpenProject = slug;
-    void reopen(appUrl);
-  }
-}
-
-/** 알림 클릭의 공통 행동 — 창을 앞으로, 그 대화로. 창이 없으면 다시 연다. */
-function focusMainWindow(sessionId?: string): void {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-    if (sessionId) mainWindow.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
-  } else if (appUrl) {
-    pendingOpenSession = sessionId ?? null;
-    void reopen(appUrl);
-  }
-}
-
-/**
- * 리뷰 B3 + ⌘Q 의 구멍: 돌아가는 턴이 앱과 함께 조용히 죽지 않게 한 번
- * 묻는다. 비-mac 의 창 닫기(닫기=종료인 규칙)와 모든 플랫폼의 앱 종료(⌘Q ·
- * 메뉴)가 같은 질문을 공유한다 — mac 은 닫기가 창만 닫으므로 종료 경로에만
- * 묻는다. 한 번 확인한 종료는 이번 실행에서 다시 묻지 않는다.
- */
-let stopUnderTurnAllowed = false;
-let stopDialogOpen = false;
 
 function guardStopUnderTurn(event: { preventDefault(): void }, proceed: () => void): void {
   if (stopUnderTurnAllowed || stopDialogOpen || !daemonServer?.anySessionBusy()) return;
@@ -1121,390 +303,3 @@ app.on("will-quit", (event) => {
     app.quit();
   });
 });
-
-/** OS 가 show·failed 중 어느 것도 말하지 않을 때 시험 버튼이 기다리는 한계. */
-const NOTIFICATION_VERDICT_MS = 3_000;
-
-/**
- * OS 알림 — 클릭 행동을 골라 단다(사용자 순간과 업데이트 알림이 함께 쓴다).
- * 소리는 설정이 정하고 그 결정은 여기 한 곳에만 있다: 부르는 자리가 각자
- * 계산하면 한 자리가 빠지고(업데이트 알림이 그랬다) 설정을 껐는데 우는 알림이
- * 남는다. `options.silent` 는 그 기본을 덮는다.
- *
- * 돌려주는 값은 **OS 가 이 알림을 받아 그렸는가**다. Electron 44 의 mac 알림은
- * UNNotification 위에 있고, 그 API 는 제대로 서명되지 않은 앱 — 개발 실행이
- * 띄우는 linker-signed `Electron.app` 이 그렇다 — 의 알림을 `failed` 로
- * 거절한다. 리스너가 없으면 그 거절은 아무 데도 남지 않는다: 시험 알림이 이
- * 답을 그대로 사용자에게 보여 준다.
- *
- * 한 가지는 여기서 알 수 없다 — 사용자가 OS 에서 이 앱의 알림을 꺼 둔 경우.
- * 그때의 `show()` 는 성공하고 배너만 오지 않는다(usernoted 가 `as none` 으로
- * 기록한다). 설정 화면의 `시스템 알림 설정 열기` 가 그 경우의 유일한 길이다.
- */
-function showAppNotification(
-  title: string,
-  body: string,
-  onClick: () => void,
-  options?: { silent?: boolean },
-): Promise<{ shown: boolean; error?: string }> {
-  const notification = new Notification({
-    title,
-    body,
-    silent: options?.silent ?? !notificationPrefs.sound,
-  });
-  notification.on("click", onClick);
-  const { promise, resolve } = Promise.withResolvers<{ shown: boolean; error?: string }>();
-  // 두 사건 중 먼저 오는 것이 답이다. 어느 쪽도 오지 않는 플랫폼에서는 침묵을
-  // 성공으로 읽는다 — 시험 버튼이 영원히 도는 것보다 낫다.
-  let settled = false;
-  const settle = (result: { shown: boolean; error?: string }): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    resolve(result);
-  };
-  const timer = setTimeout(() => settle({ shown: true }), NOTIFICATION_VERDICT_MS);
-  notification.once("show", () => settle({ shown: true }));
-  notification.once("failed", (_event, error) => settle({ shown: false, error: String(error) }));
-  notification.show();
-  return promise;
-}
-
-/**
- * 자동 업데이트 확인(DESIGN §7): 새 버전이 있으면 알림을 띄워 설정까지 찾아가게
- * 하지 않는다 — 버전마다 한 번만. 실패는 언제나 조용히: 자동으로 떠드는 오류는
- * 없고 다음 확인이 다시 온다. 개발 실행은 피드를 묻지 않는다.
- *
- * 확인의 순간은 셋이다 — 시작 직후 한 번, 하루 한 번, 그리고 **사용자가 앱으로
- * 돌아올 때**. 마지막 것 없이는 하루 주기가 벽시계를 모른다: 뚜껑을 닫아 둔
- * 동안 타이머는 뛰지 않고 깨어나서 늦게 뛰며 못 뛴 회차를 따라잡지 않는다. 앱을
- * 끄지 않는 사람에게 그 늦음은 "껐다 켜야 보이는 알림"이었다. 포커스는 사람이
- * 설치를 누를 수 있는 순간이기도 하다.
- *
- * 대신 포커스마다 피드를 묻지는 않는다(UPDATE_MIN_CHECK_GAP_MS). 같은 버전으로
- * 두 번 부르지도 않으니 창을 왕복해도 재촉은 생기지 않는다.
- */
-function scheduleUpdateChecks(): void {
-  if (!app.isPackaged) return;
-  /** 마지막으로 피드를 물은 시각 — 포커스 확인의 스로틀 기준. */
-  let lastCheckAt = 0;
-  /** 이미 알림을 띄운 버전 — 확인이 거듭돼도 한 번만 부른다. */
-  let notifiedVersion: string | null = null;
-  const check = async (): Promise<void> => {
-    // 실패도 물어본 것으로 센다 — 끊긴 망에서 포커스마다 다시 걸지 않는다.
-    lastCheckAt = Date.now();
-    try {
-      const feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
-      if (!feed.updateAvailable || feed.version === notifiedVersion) return;
-      notifiedVersion = feed.version;
-      showAppNotification(
-        "새 버전이 있습니다",
-        `Colo Design ${feed.version} — 설정 → 문제 해결의 업데이트 확인에서 설치할 수 있습니다.`,
-        focusMainWindow,
-      );
-    } catch {
-      // 자동 확인의 실패는 조용히 넘어간다 — 수동 확인 버튼이 오류를 보여준다.
-    }
-  };
-  const checkIfStale = (): void => {
-    if (Date.now() - lastCheckAt < UPDATE_MIN_CHECK_GAP_MS) return;
-    void check();
-  };
-  setTimeout(checkIfStale, UPDATE_FIRST_CHECK_DELAY_MS);
-  setInterval(checkIfStale, UPDATE_CHECK_INTERVAL_MS);
-  // 배지를 지우는 리스너와 나란히 달리지만, 이 자리는 패키징된 앱에만 생긴다.
-  app.on("browser-window-focus", checkIfStale);
-}
-
-/**
- * 지난 번 자가 교체의 결과를 보고한다: 교체 스크립트는 앱이 죽은 뒤에 돌기
- * 때문에 성공·실패를 말할 창이 없다. 다음 실행(=지금)이 결과 파일을 읽어
- * 알림으로 대신 말하고 지운다. 성공은 현재 버전과 일치할 때만 — 어긋나면 오래
- * 된 흔적이니 조용히 지운다. 실패의 클릭은 로그 파일을 연다.
- */
-async function reportSwapResult(): Promise<void> {
-  const path = updateResultPath();
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch {
-    return; // 결과 파일이 없으면 보고할 교체가 없었다
-  }
-  await rm(path, { force: true });
-  const result = parseSwapResult(raw);
-  if (!result) return;
-  if (result.outcome === "done") {
-    if (result.version !== app.getVersion()) return;
-    showAppNotification(
-      "업데이트 완료",
-      `Colo Design ${result.version}으로 갈아입었습니다.`,
-      focusMainWindow,
-    );
-    return;
-  }
-  showAppNotification(
-    "업데이트하지 못했습니다",
-    `${result.reason ?? "알 수 없는 실패"} — 클릭하면 기록을 보여줍니다.`,
-    () => {
-      void shell.openPath(result.logPath);
-    },
-  );
-}
-
-/** 배지는 읽지 않은 순간의 수. 알림 클릭이 창을 앞으로 하면 focus 이벤트가 지운다. */
-function paintBadge(): void {
-  app.dock?.setBadge(unreadNotices > 0 ? String(unreadNotices) : "");
-}
-
-/** 연기된 자가 교체 — 실행 중 세션이 있는 동안의 설치는 그들이 내려앉는 순간으로 미룬다(P0#6). */
-let pendingSelfUpdate: { url: string; sha256: string; version: string } | null = null;
-
-/** 실제 교체: 내려받기·검증·스크립트·종료. 세션이 조용한 때에만 불린다. */
-async function runSelfUpdate(feed: {
-  url: string;
-  sha256: string;
-}): Promise<{ started: boolean; downloadPath: string; steps: string[] } | { error: string }> {
-  const version = app.getVersion();
-  const downloadsDir = app.getPath("downloads");
-  const windows = process.platform === "win32";
-  try {
-    // 교체 대상: Windows 는 지금 도는 exe 그대로(설치 프로그램이 그 자리를
-    // 덮어쓴다), mac 은 그 exe 가 사는 앱 번들 — /Applications 고정이 아니라
-    // 어디에서 실행했든 그 자리를 바꾼다.
-    const bundle = dirname(dirname(dirname(process.execPath)));
-    const macTarget = basename(bundle).endsWith(".app") ? bundle : undefined;
-    const plan = planSelfUpdate({
-      url: feed.url,
-      sha256: feed.sha256,
-      downloadsDir,
-      version,
-      platform: process.platform,
-      target: windows ? process.execPath : macTarget,
-    });
-    // 만석은 sha256 이 잡지 못한다 — 내려받기 전에 두 볼륨(내려받기·교체
-    // 대상)의 여유를 먼저 본다.
-    await requireDiskSpace({
-      path: downloadsDir,
-      minBytes: UPDATE_MIN_FREE_BYTES,
-      statfs: (target) => statfs(target),
-    });
-    await requireDiskSpace({
-      path: dirname(plan.target),
-      minBytes: UPDATE_MIN_FREE_BYTES,
-      statfs: (target) => statfs(target),
-    });
-    await downloadFile(feed.url, plan.downloadPath);
-    await verifyDownload(plan.downloadPath, plan.expectedSha256);
-    const logPath = join(app.getPath("temp"), "colo-design-update.log");
-    const script = {
-      plan,
-      pid: process.pid,
-      logPath,
-      resultPath: updateResultPath(),
-      version,
-    };
-    if (windows) {
-      const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.ps1`);
-      // BOM 을 붙여 쓴다: Windows PowerShell 5.1 은 BOM 없는 UTF-8 .ps1 을
-      // 현재 코드페이지(ANSI)로 읽어 스크립트 안의 한국어를 깨뜨린다 — 깨진
-      // 실패 이유는 그대로 사용자 알림에 실린다.
-      await writeFile(scriptPath, `\uFEFF${buildWinSwapScript(script)}`);
-      spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-    } else {
-      const scriptPath = join(app.getPath("temp"), `colo-design-update-${version}.sh`);
-      await writeFile(scriptPath, buildMacSwapScript(script), { mode: 0o755 });
-      // 응답이 렌더러에 닿은 뒤에 종료한다 — 화면이 "곧 닫힙니다"를 볼 시간.
-      spawn("/bin/bash", [scriptPath], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-    }
-    // 이 종료는 사용자가 확인한 설치의 마지막 걸음이다 — 가드가 다시 묻지
-    // 않는다. Windows 에서는 이 한 줄이 교체의 성립 조건이다: 세션이 돌고
-    // 있으면 guardStopUnderTurn 의 `세션 실행 중` 확인 창이 quit 을 막아
-    // 앱이 살아 있고, 잠긴 exe 앞에서 스크립트는 30초를 기다리다 실패로 끝난다.
-    stopUnderTurnAllowed = true;
-    setTimeout(() => app.quit(), 500);
-    return {
-      started: true,
-      downloadPath: plan.downloadPath,
-      steps: plan.steps,
-    };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/** 세션 상태가 움직일 때마다: 연기된 설치가 있고 모두 내려앉았으면 지금 한다. */
-async function maybeRunDeferredSelfUpdate(): Promise<void> {
-  if (!pendingSelfUpdate || daemonServer?.anySessionBusy()) return;
-  const feed = pendingSelfUpdate;
-  pendingSelfUpdate = null;
-  showAppNotification(
-    "작업이 끝났습니다",
-    `이제 Colo Design ${feed.version} 업데이트를 설치합니다 — 잠시 앱이 닫혔다가 다시 열립니다.`,
-    focusMainWindow,
-  );
-  await runSelfUpdate(feed);
-}
-
-/**
- * 렌더러에 노출되는 다리: 업데이트 확인과 `폴더 열기`(PLAN D2[폴더 열기]). 숨긴
- * `~/.colo-design` 을 사용자가 찾아 헤매지 않게 앱이 열어 준다. 자격
- * 증명·토큰은 결코 건너가지 않는다.
- */
-function registerDesktopBridge(): void {
-  ipcMain.handle("desktop:update-check", async () => {
-    try {
-      const feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
-      // 렌더러는 플랫폼을 모른 채 url·sha256 한 쌍만 본다 — 여기서 고른다.
-      return { ...feed, ...platformAsset(feed) };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-
-  ipcMain.handle("desktop:self-update", async () => {
-    // 무엇을 내려받고 무엇으로 검증할지는 피드가 정한다 — 렌더러가 건넨
-    // url·sha256 은 받지 않는다. 이 다리는 침해된 렌더러가 앱을 제 zip 으로
-    // 바꾸는 통로가 되어서는 안 된다: 요청은 요청일 뿐, 출처는 피드다.
-    let feed: UpdateCheckResult;
-    try {
-      feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-    // 이 플랫폼의 에셋이 없으면(자가 교체가 없는 OS 이거나 피드가 한쪽만
-    // 실었으면) 설치할 것이 없다.
-    const asset = platformAsset(feed);
-    if (!feed.updateAvailable || !asset.url || !asset.sha256) {
-      return {
-        error: "설치할 업데이트가 확인되지 않았습니다 — 업데이트 확인을 다시 눌러 주세요.",
-      };
-    }
-    // 실제 교체는 패키징된 앱에서만 — 개발 실행에서는 계획만 돌려준다.
-    if (!app.isPackaged) {
-      return {
-        planned: planSelfUpdate({
-          url: asset.url,
-          sha256: asset.sha256,
-          downloadsDir: app.getPath("downloads"),
-          version: "0",
-          platform: process.platform,
-          // Windows 는 교체 대상이 필수다 — 개발 실행도 지금 도는 exe 를 건넨다.
-          target: process.platform === "win32" ? process.execPath : undefined,
-        }),
-        guarded: "개발 실행에서는 교체를 실행하지 않습니다",
-      };
-    }
-    // mac 한정: DMG 안에서 실행 중이면 교체 대상이 읽기 전용 볼륨이다 — 헛돌고
-    // 롤백으로 끝나기 전에 막고 옮기라고 먼저 말한다.
-    if (process.platform === "darwin" && process.execPath.startsWith("/Volumes/")) {
-      return {
-        error:
-          "앱이 디스크 이미지(DMG)에서 실행 중입니다 — 응용 프로그램 폴더로 옮긴 뒤 다시 시도해 주세요.",
-      };
-    }
-    // 실행 중 세션이 있으면 설치를 연기한다(P0#6) — 돌아가는 턴을 업데이트가
-    // 끊지 않는다. 모든 세션이 내려앉는 순간 알림과 함께 설치된다.
-    if (daemonServer?.anySessionBusy()) {
-      pendingSelfUpdate = { url: asset.url, sha256: asset.sha256, version: feed.version };
-      return { deferred: true, version: feed.version };
-    }
-    return await runSelfUpdate({ url: asset.url, sha256: asset.sha256 });
-  });
-
-  ipcMain.handle("desktop:open-home", async (_event, target?: "logs") => {
-    // 로그 폴더는 첫 줄이 나가기 전엔 없을 수 있다 — 열어 주기 전에 만든다.
-    if (target === "logs") {
-      mkdirSync(LOGS_DIR, { recursive: true });
-      await shell.openPath(LOGS_DIR);
-      return { opened: LOGS_DIR };
-    }
-    await shell.openPath(COLO_DESIGN_DIR);
-    return { opened: COLO_DESIGN_DIR };
-  });
-
-  // 알림 설정(시점·소리) — 렌더러의 설정이 메인의 알림을 움직인다. 창이
-  // 닫혀 있어도 정책이 살아 있도록 userData 에 영속한다.
-  ipcMain.handle("desktop:notify-prefs", (_event, prefs: unknown) => {
-    notificationPrefs = normalizeNotificationPrefs(prefs);
-    saveDesktopSettings(desktopSettingsPath(), { notifications: notificationPrefs });
-    return { ok: true };
-  });
-  // 렌더러가 부팅 때 저장값을 묻는다 — 새 origin 의 기본값이 디스크를 덮지 않게.
-  ipcMain.handle("desktop:notify-prefs:get", () => notificationPrefs);
-
-  ipcMain.handle("desktop:notify-test", () =>
-    showAppNotification(
-      "알림 시험",
-      "실제 알림은 이렇게 도착합니다 — 소리 설정도 같이 적용됩니다.",
-      focusMainWindow,
-    ),
-  );
-
-  /**
-   * OS 의 알림 허용 스위치로 데려간다. 앱은 그 스위치를 읽지도 바꾸지도 못한다:
-   * mac 은 앱마다 한 번만 묻고, 그 답이 거부였으면 이후의 모든 알림은 조용히
-   * 알림 센터 목록에만 쌓인다. 사람이 갈 수 있는 유일한 자리다.
-   */
-  ipcMain.handle("desktop:open-notification-settings", async () => {
-    const target =
-      process.platform === "darwin"
-        ? `x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=${APP_BUNDLE_ID}`
-        : process.platform === "win32"
-          ? "ms-settings:notifications"
-          : null;
-    if (!target) return { error: "이 시스템에는 알림 설정 화면이 없습니다." };
-    try {
-      await shell.openExternal(target);
-      return { opened: target };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  });
-}
-
-/** Electron net 모듈을 fetch 처럼 쓴다(프록시·인증서 정책을 앱이 따른다). */
-async function netFetch(
-  feedUrl: string,
-): Promise<{ ok: boolean; status: number; json?: Record<string, unknown> }> {
-  const request = net.request(feedUrl);
-  const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-    let body = "";
-    request.on("response", (incoming) => {
-      incoming.on("data", (chunk: Buffer) => (body += String(chunk)));
-      incoming.on("end", () => resolve({ statusCode: incoming.statusCode, body }));
-    });
-    request.once("error", reject);
-    request.end();
-  });
-  // json 은 파싱된 값이다(FetchLike 계약). 몸통이 JSON 이 아니면 undefined 로
-  // 둔다 — fetchLatest 의 "형식이 올바르지 않습니다" 가 그 모양을 말하게.
-  let json: Record<string, unknown> | undefined;
-  try {
-    json = JSON.parse(response.body) as Record<string, unknown>;
-  } catch {
-    json = undefined;
-  }
-  const statusCode = response.statusCode;
-  return {
-    ok: statusCode >= 200 && statusCode < 300,
-    status: statusCode,
-    json,
-  };
-}
-/** zip 내려받기 — net.fetch 로 받아 파일로 흘려보낸다(큰 zip 도 메모리에 올리지 않는다). */
-async function downloadFile(url: string, destPath: string): Promise<void> {
-  // 릴리스 에셋 → CDN 넘겨주기는 net 이 기본으로 따라간다.
-  const response = await net.fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`업데이트 파일을 내려받지 못했습니다 (HTTP ${response.status})`);
-  }
-  // Electron 의 body 는 DOM 계열 ReadableStream — Node 스트림으로 다리를 놓는다.
-  const body = Readable.fromWeb(response.body as unknown as NodeWebReadableStream);
-  await pipeline(body, createWriteStream(destPath));
-}

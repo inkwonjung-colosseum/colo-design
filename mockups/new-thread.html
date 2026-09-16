@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>새 대화 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand">
+        <img src="../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>
+        Colo Design
+      </span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row">
+          <span class="chev">▾</span>
+          <span class="letter">쇼</span>
+          <span class="tnode__name">쇼핑몰 프론트</span>
+          <span class="tnode__repo">team/shop-web</span>
+        </button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot"></span><span class="leaf__t">새 대화</span></button>
+          <button class="leaf"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf leaf--add">＋ 새 대화</button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span>
+          <span class="letter" style="background:var(--info-soft);color:var(--info)">관</span>
+          <span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot">
+      <button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button>
+      <span class="grow"></span>
+      <button class="ibtn" title="설정">⚙</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">새 대화</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <!-- 빈 대화: 히어로 + 큰 입력창. 미리보기 열은 아직 없다 — 화면이
+         만들어지면 그때 오른쪽이 열린다. -->
+    <div class="hero">
+      <h1 class="hero__title">어떤 화면을 만들까요?</h1>
+      <p class="hero__sub">말로 시켜도, 그림을 붙여도 됩니다. 회사 디자인 시스템으로 짜인 화면이 돌아옵니다.</p>
+
+      <div class="composer">
+        <textarea class="composer__input" rows="3"
+          placeholder="만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요"></textarea>
+        <div class="composer__bar">
+          <button class="ibtn" title="그림 첨부"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.5-8.5a3.7 3.7 0 015.2 5.2l-8.5 8.5a1.85 1.85 0 01-2.6-2.6l7.8-7.8"/></svg></button>
+          <button class="composer__model">소네트 4.5 ▾</button>
+          <button class="composer__model" title="확인 방식">알아서 진행 ▾</button>
+          <span class="spacer"></span>
+          <button class="send" title="보내기 · Enter">↑</button>
+        </div>
+      </div>
+
+      <div class="sugg">
+        <button class="chip">로그인 화면</button>
+        <button class="chip">결제 실패의 세 상태</button>
+        <button class="chip">대시보드 첫 화면</button>
+        <button class="chip">설정 페이지</button>
+        <button class="chip">＋ 이 레포의 화면 목록</button>
+      </div>
+
+      <p class="composer__hint" style="margin-top:26px">@로 파일을, /로 명령을 불러올 수 있어요</p>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

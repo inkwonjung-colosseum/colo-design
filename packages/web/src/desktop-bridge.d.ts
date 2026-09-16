@@ -10,9 +10,9 @@ import type {
  * one surface the renderer reaches the main process through. Absent in a
  * plain browser; every access guards on it.
  *
- * `preview` grows with the native preview view (PLAN D64–D71): `native` is
- * how PreviewHost picks NativeHost over the iframe (D70), and the rest are
- * the §2 IPC channels — commands down, subscriptions up (each returns its
+ * `preview` grows with the native preview view: `native` is
+ * how PreviewHost picks NativeHost over the iframe, and the rest are
+ * the IPC channels — commands down, subscriptions up (each returns its
  * unsubscribe).
  */
 type Unsubscribe = () => void;
@@ -35,7 +35,7 @@ declare global {
         | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
         | { error: string }
       >;
-      /** Opens ~/.colo-design in the OS file manager (PLAN D2); `logs` opens
+      /** Opens ~/.colo-design in the OS file manager; `logs` opens
        * the daemon's daily logs instead. */
       openHome?: (target?: "logs") => Promise<unknown>;
       /** 알림 정책(시점·소리)을 메인에 반영 — 창이 닫혀도 정책이 살게. */
@@ -51,14 +51,14 @@ declare global {
       notifyTest?: () => Promise<{ shown: boolean; error?: string }>;
       /** 설정의 `시스템 알림 설정 열기` — OS 의 알림 허용 스위치로 데려간다. */
       openNotificationSettings?: () => Promise<{ opened?: string; error?: string }>;
-      /** 알림 클릭 → 그 대화 열기(리뷰 B7): the session id to open. */
+      /** 알림 클릭 → 그 대화 열기: the session id to open. */
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
-      /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
+      /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
       preview?: {
-        /** Claude 시점 보기(PLAN D63) — 8fps JPEG(base64), 구독만. */
+        /** Claude 시점 보기 — 8fps JPEG(base64), 구독만. */
         onFrame: (callback: (jpeg: string) => void) => void;
-        /** D64: the native view exists — NativeHost, not the iframe. */
+        /** The native view exists — NativeHost, not the iframe. */
         native?: boolean;
         /**
          * Puts the page for this preview on screen; `epoch` names the server
@@ -79,17 +79,17 @@ declare global {
         navigate?: (route: string, state: string | null) => Promise<unknown>;
         history?: (delta: -1 | 1) => Promise<unknown>;
         reload?: () => Promise<unknown>;
-        /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
+        /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단. */
         stop?: () => Promise<unknown>;
-        /** 배율 (PLAN D85 ⓔ). */
+        /** 배율. */
         zoom?: (kind: "in" | "out" | "reset") => Promise<unknown>;
         commentsMode?: (on: boolean) => Promise<unknown>;
         emulate?: (width: "mobile" | "tablet" | null) => Promise<unknown>;
-        /** 핀 동기화 (재설계 C1): the web's whole pin list — the overlay's badges are its projection. */
+        /** 핀 동기화: the web's whole pin list — the overlay's badges are its projection. */
         pins?: (sync: ColoDesignPinsSync) => Promise<unknown>;
-        /** 칩 클릭 (재설계 C1): the matching badge on the page flashes. */
+        /** 칩 클릭: the matching badge on the page flashes. */
         pinFlash?: (id: string) => Promise<unknown>;
-        /** 화면 보여 주기 (PLAN D89): the frame plus the recent console lines. */
+        /** 화면 보여 주기: the frame plus the recent console lines. */
         snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
         onLocation?: (
           callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void,
@@ -110,7 +110,7 @@ declare global {
           callback: (payload: { key: string; meta: boolean; shift: boolean }) => void,
         ) => Unsubscribe;
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
-        /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
+        /** 배율 되알림 — the menu changed it, the web redraws. */
         onZoom?: (callback: (payload: { factor: number }) => void) => Unsubscribe;
       };
     };

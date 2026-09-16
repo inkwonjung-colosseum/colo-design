@@ -6,9 +6,9 @@
  */
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Composer } from "./Composer";
 import { PermissionCard, QuestionCard, Transcript } from "./components";
-import type { Block } from "./daemon-client";
+import { Composer } from "./components/chat/Composer";
+import type { Block } from "./lib/daemon-client";
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./styles.css";
 
@@ -143,7 +143,7 @@ const runningBlocks: Block[] = [
     done: false,
   },
   {
-    // D97: 보조 작업이 도는 중 — 근황 한 줄, 경과, 뒤로 보내기·중지 버튼.
+    // 보조 작업이 도는 중 — 근황 한 줄, 경과, 뒤로 보내기·중지 버튼.
     type: "tool",
     id: "k6",
     name: "Task",
@@ -166,7 +166,7 @@ const runningBlocks: Block[] = [
     },
   },
   {
-    // D98: 그 보조 작업이 한 말 — 답이 아니라 그 작업 아래의 기록이다.
+    // 그 보조 작업이 한 말 — 답이 아니라 그 작업 아래의 기록이다.
     type: "text",
     id: "s1",
     agentId: "k6",
@@ -183,7 +183,7 @@ const runningBlocks: Block[] = [
     result: "88 lines",
   },
   {
-    // D101: 뒤로 보낸 명령 — 도구 결과는 자리표시자, 일은 아직 돈다.
+    // 뒤로 보낸 명령 — 도구 결과는 자리표시자, 일은 아직 돈다.
     type: "tool",
     id: "k7",
     name: "Bash",

@@ -63,7 +63,7 @@ async function main() {
   const failures = [];
   page.on("pageerror", (e) => failures.push(e.message));
   page.on("console", (m) => m.type() === "error" && failures.push(m.text()));
-  // 결함③ (PLAN 0단계): the browser's own confirm must never enter the
+  // The browser's own confirm must never enter the
   // picture — every dangerous ask is the app's dialog.
   await page.addInitScript(() => {
     window.confirm = () => {
@@ -73,8 +73,8 @@ async function main() {
   });
 
   try {
-    // 1. an unconfigured client opens on paper, whatever the OS says (PLAN
-    //    D13). The default is a decision about the work — reading a document
+    // 1. an unconfigured client opens on paper, whatever the OS says.
+    //    The default is a decision about the work — reading a document
     //    beside a rendered screen — not about what the OS happens to prefer.
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(APP);
@@ -105,7 +105,7 @@ async function main() {
       ) && groups.length === 7,
       groups.join(", "),
     );
-    // PLAN D39: the word belongs to the program, not the planner's settings —
+    // The word belongs to the program, not the planner's settings —
     // the diagnostics fold (where a developer debugs) is the only home left.
     check(
       "the planner's settings never say 데몬",
@@ -240,7 +240,7 @@ async function main() {
         (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
     );
 
-    // 5b. the type scale (설정 벤치마크 P1 #13): three 3-step knobs that ride
+    // 5b. the type scale: three 3-step knobs that ride
     //     <html> attributes into CSS variables — and move real text, not
     //     just state.
     const scales = () =>
@@ -294,7 +294,7 @@ async function main() {
         (await page.getByLabel("실행 중 보내기").inputValue()) === "interrupt",
     );
 
-    // 5c. 알림(설정 문서 P0#3): 완료 알림만 시점을 고르고, 소리는 그 옆에
+    // 5c. 알림: 완료 알림만 시점을 고르고, 소리는 그 옆에
     //     산다. 기본은 "오래 걸린 턴만" — 모든 턴마다 울리지 않는다.
     check(
       "완료 알림 starts on 오래 걸린 턴만",
@@ -309,8 +309,8 @@ async function main() {
       JSON.stringify((await stored(page))?.notifications),
     );
 
-    // 6. the 대화 group: the three chips that used to live in the composer
-    //    (PLAN D10). They persist like any other preference — except one.
+    // 6. the 대화 group: the three chips that used to live in the composer.
+    //    They persist like any other preference — except one.
     await page.getByLabel("생각 시간").selectOption("high");
     await page.getByLabel("확인 방식").selectOption("plan");
     const chat = (await stored(page))?.chat;
@@ -442,8 +442,8 @@ async function main() {
       (await page.getByLabel("접속 주소").isVisible()) === true,
     );
 
-    // 7b. the one dangerous action on this panel asks in the app's dialog
-    //     (결함③) — the native confirm stays silent, cancelling keeps all.
+    // 7b. the one dangerous action on this panel asks in the app's dialog —
+    //     the native confirm stays silent, cancelling keeps all.
     await page.getByRole("button", { name: "접속 주소 지우기" }).click();
     const forgetDialog = page.locator('[role="dialog"][aria-label="접속 주소 지우기"]');
     await forgetDialog.waitFor({ timeout: 5000 });

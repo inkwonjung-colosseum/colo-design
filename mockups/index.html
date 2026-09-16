@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Colo Design — UI/UX 개선 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body>
+<div class="gallery">
+  <p class="hint" style="margin:0 0 10px">UI/UX 개선안 목업 · 2026-09-16</p>
+  <h1>Colo Design, 대화 도구로 다시 입히기</h1>
+  <p class="lede">
+    현재 UI는 콘솔에서 출발한 차가운 판넬 구조입니다. 개선안은 채팅형 디자인 도구의 언어를 빌립니다 —
+    따뜻한 종이색, 세리프 제목, 둥근 카드, 그리고 대화가 언제나 화면의 주인공인 배치.
+    각 목업은 실제 화면 구조(사이드바 트리 · 대화 열 · 미리보기 패널 · 사이클 바)를 그대로 옮긴 것입니다.
+  </p>
+
+  <div class="gallery__grid">
+    <a class="gcard" href="workspace.html">
+      <div class="gcard__shot">
+        <div class="wire"><div class="wire__side"></div>
+          <div class="wire__main"><div class="wire__bar"></div>
+            <div class="wire__split"><div class="wire__pane"></div><div class="wire__pane"></div></div>
+          </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">작업 공간 — 대화 + 미리보기</div>
+        <div class="gcard__desc">말한 것 → 돌아온 화면 카드 → 오른쪽 라이브 미리보기. 사이클 바가 저장·넘기기를 상단에 둡니다.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="new-thread.html">
+      <div class="gcard__shot">
+        <div class="wire"><div class="wire__side"></div>
+          <div class="wire__main"><div class="wire__bar wire__bar--accent" style="height:22px"></div>
+            <div class="wire__bar"></div><div class="wire__bar" style="width:60%"></div>
+          </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">새 대화 — 빈 상태</div>
+        <div class="gcard__desc">빈 대화는 가운데 정렬 히어로 + 큰 입력창 + 제안 칩. "무엇을 만들지"만 묻습니다.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="running.html">
+      <div class="gcard__shot">
+        <div class="wire"><div class="wire__side"></div>
+          <div class="wire__main"><div class="wire__bar"></div>
+            <div class="wire__split"><div class="wire__pane"></div><div class="wire__pane"></div></div>
+            <div class="wire__bar wire__bar--accent" style="width:40%"></div>
+          </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">턴 진행 중 — 도구·큐·중지</div>
+        <div class="gcard__desc">도구 호출은 접힌 한 줄, 대기 메시지는 입력창 위 칩, 보내기 버튼은 중지로 바뀝니다.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="onboarding.html">
+      <div class="gcard__shot">
+        <div class="wire" style="inset:20px 40px"><div class="wire__main" style="align-items:center;justify-content:center">
+          <div class="wire__bar" style="width:50%;height:10px"></div>
+          <div class="wire__bar" style="width:80%"></div>
+          <div class="wire__bar" style="width:80%"></div>
+          <div class="wire__bar wire__bar--accent" style="width:34%;height:12px"></div>
+        </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">온보딩 — 첫 실행 마법사</div>
+        <div class="gcard__desc">CLI 확인 → 로그인 → 레포 선택을 세 단계 카드로. 막힌 단계만 색을 입힙니다.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="settings.html">
+      <div class="gcard__shot">
+        <div class="wire" style="inset:24px 30px"><div class="wire__main">
+          <div class="wire__bar" style="width:40%"></div>
+          <div class="wire__bar"></div><div class="wire__bar"></div><div class="wire__bar" style="width:70%"></div>
+        </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">설정 — 대화·미리보기·알림</div>
+        <div class="gcard__desc">항목은 이름+설명+컨트롤 한 줄씩. 테마 타일은 실제 팔레트를 입은 미리보기.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="palette.html">
+      <div class="gcard__shot">
+        <div class="wire" style="inset:16px 24px"><div class="wire__main">
+          <div class="wire__bar" style="height:14px"></div>
+          <div class="wire__bar wire__bar--accent"></div>
+          <div class="wire__bar"></div><div class="wire__bar"></div>
+        </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">명령 팔레트 — ⌘K</div>
+        <div class="gcard__desc">대화·화면·프로젝트·설정을 한 검색창에서. 선택 행은 액센트 소프트로.</div>
+      </div>
+    </a>
+
+    <a class="gcard" href="components.html">
+      <div class="gcard__shot">
+        <div class="wire" style="inset:18px"><div class="wire__main" style="flex-direction:row;flex-wrap:wrap;gap:6px">
+          <div class="wire__bar" style="width:44%"></div><div class="wire__bar" style="width:44%"></div>
+          <div class="wire__bar" style="width:44%"></div><div class="wire__bar" style="width:44%"></div>
+        </div></div>
+      </div>
+      <div class="gcard__body">
+        <div class="gcard__title">컴포넌트 시트 — 디자인 토큰</div>
+        <div class="gcard__desc">버튼·칩·도구행·알림·스위치 등 개선안의 부품 전체를 한 장에.</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="sep" style="margin:40px 0 24px"></div>
+  <h2 class="serif" style="font-size:19px;margin:0 0 12px">무엇이 바뀌나</h2>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;font-size:13px;color:var(--text-2)">
+    <div class="todo"><strong>팔레트</strong><br/>중성 회색 → 따뜻한 종이(#FAF9F5)와 점토 오렌지(#D97757). 액센트는 보내기·저장·넘기기처럼 행동 버튼에만.</div>
+    <div class="todo"><strong>타이포</strong><br/>제목·인사·빈 상태는 세리프(Noto Serif KR), UI 크롬은 Pretendard, 코드·경로는 모노.</div>
+    <div class="todo"><strong>대화 우선</strong><br/>내 말은 둥근 말풍선, 답변은 말풍선 없는 산문. 도구 호출은 기본 접힌 한 줄 — 대화가 스크롤을 이깁니다.</div>
+    <div class="todo"><strong>둥근 형태</strong><br/>카드 20px, 입력창 28px, 칩·버튼은 pill. 헤어라인은 옅게, 구분은 여백으로.</div>
+    <div class="todo"><strong>사이클 바</strong><br/>쓰기→만들기→검토→저장→넘기기 진행을 미리보기 상단의 스텝 바로. 다음 행동 버튼이 같은 줄에.</div>
+    <div class="todo"><strong>다크 테마</strong><br/>따뜻한 검정(#26251F) — 순검정 대신 종이의 밤. 우하단 토글로 각 목업에서 확인.</div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

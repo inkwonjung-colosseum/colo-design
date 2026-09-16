@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type DeliveryInput, deriveDelivery } from "../src/delivery.ts";
+import { type DeliveryInput, deriveDelivery } from "../src/lib/delivery.ts";
 
 const base: DeliveryInput = {
   pendingChanges: 0,
@@ -24,7 +24,7 @@ test("phase 가 없거나 진행 중이면 null — ProgressPanel 이 열을 갖
   assert.equal(at({ phase: null }), null);
 });
 
-test("closed: 개발자의 반려는 저장됨으로 위장되지 않는다 (커미티 2026-09-15 C-3)", () => {
+test("closed: 개발자의 반려는 저장됨으로 위장되지 않는다", () => {
   const d = at({ handoff: pr("closed"), branch: "colo-design/20260915-1" });
   assert.equal(d?.state, "closed", "반려 행이 없으면 `if (branch)` 로 떨어져 저장됨이 된다");
   assert.equal(d?.chip.label, "개발자가 반려함");
@@ -48,7 +48,7 @@ test("closed: 개발자의 반려는 저장됨으로 위장되지 않는다 (커
 test("phase error 도 칩을 그린다 — 미리보기는 죽어도 워크트리는 살아 있다", () => {
   const d = at({ phase: "error", pendingChanges: 3 });
   assert.equal(d?.state, "unsaved");
-  // 칩의 숫자는 그만두었다(커미티 2026-09-15 A-3 최소안): 파일 수는 기획자
+  // 칩의 숫자는 그만두었다: 파일 수는 기획자
   // 체감과 역상관 — 개수는 저장 검토의 `자세히 보기`가 말한다.
   assert.equal(d?.chip.label, "저장 안 함");
   assert.equal(d?.primary, "save");
@@ -123,7 +123,7 @@ test("changes_requested: 칩의 title 이 개발자 코멘트로 이어 준다",
     "개발자가 넘긴 요청 12번에 코멘트를 남겼습니다 — 상태 확인에서 이어 가세요",
   );
   assert.ok(d?.actions.check?.enabled);
-  // 바늘 보정(커미티 2026-09-15 A-2 뒷절): 개발자가 기획자를 기다리는 이
+  // 바늘 보정: 개발자가 기획자를 기다리는 이
   // 상태에서 상태 확인이 회색이면 바의 세 버튼이 전부 잠긴 채 며칠이 흐른다.
   assert.equal(d?.primary, "check");
 });
@@ -144,7 +144,7 @@ test("merged: 칩은 반영됨 — 변경이 생기면 저장이 열리고 넘�
   assert.equal(withChanges?.actions.handoff.enabled, false);
 });
 
-test("반영됨에서 턴이 도는 동안 칩도 작업 중을 말한다 — 행과 칩이 어긋나지 않는다 (D45)", () => {
+test("반영됨에서 턴이 도는 동안 칩도 작업 중을 말한다 — 행과 칩이 어긋나지 않는다", () => {
   const started = at({ handoff: pr("merged"), running: true });
   assert.equal(started?.state, "merged", "잠김은 표가 정한 그대로 — 사이클은 아직 merged");
   assert.equal(
@@ -170,14 +170,14 @@ test("반영됨에서 턴이 도는 동안 칩도 작업 중을 말한다 — �
   assert.equal(handedTurn?.chip.label, "작업 중", "규칙은 넘김 행에도 같다");
 });
 
-test("D84 의 전제: merged 뒤 새 브랜치의 handoff 는 null 이어야 saved 가 성립한다", () => {
-  // The daemon clears the merged handoff at ensureCycleBranch (D84); this is
+test("merged 뒤 새 브랜치의 handoff 는 null 이어야 saved 가 성립한다", () => {
+  // The daemon clears the merged handoff at ensureCycleBranch; this is
   // the row the table draws once that holds — 새 사이클의 saved.
   const d = at({ branch: "colo-design/20260911-2", handoff: null });
   assert.equal(d?.state, "saved");
 });
 
-test("치워둔 작업이 있으면 clean 행의 `변경 없음` 칩은 존재하지 않는다 (보관함 토론)", () => {
+test("치워둔 작업이 있으면 clean 행의 `변경 없음` 칩은 존재하지 않는다", () => {
   const d = at({ shelf: { at: "2026-09-15T00:00:00Z" } });
   assert.equal(d?.state, "clean");
   assert.equal(d?.chip.label, "치워둔 작업 1건");
@@ -192,7 +192,7 @@ test("치워둔 작업이 있으면 clean 행의 `변경 없음` 칩은 존재�
   assert.equal(d?.actions.handoff.reason, "치워둔 작업을 먼저 꺼내 저장해 주세요");
 });
 
-test("치워둔 작업은 다른 행의 칩을 빼앗지 않는다 — 칩 하나 계약 (D82)", () => {
+test("치워둔 작업은 다른 행의 칩을 빼앗지 않는다 — 칩 하나 계약", () => {
   // 저장 안 함 2건 + 치워둔 1건: 칩은 지금 눌러야 할 것(저장)을 말하고,
   // 치워둔 작업은 더 보기 메뉴와 저장 잠금 이유로만 산다.
   const d = at({ pendingChanges: 2, shelf: { at: "2026-09-15T00:00:00Z" } });

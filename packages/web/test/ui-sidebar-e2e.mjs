@@ -1,6 +1,6 @@
 /**
- * Browser-level check of the project sidebar and its conversation tree
- * (PLAN D12–D21, D59), fully offline.
+ * Browser-level check of the project sidebar and its conversation tree,
+ * fully offline.
  *
  * Two projects are created over the daemon socket (the same WebSocket the
  * browser uses), then the test drives the tree the planner uses: the project
@@ -153,7 +153,7 @@ async function main() {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
-  // 결함③ (PLAN 0단계): the browser's own confirm must never enter the
+  // The browser's own confirm must never enter the
   // picture — every dangerous ask is the app's dialog.
   await page.addInitScript(() => {
     window.confirm = () => {
@@ -212,9 +212,7 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".onboarding", { timeout: 60000 });
-    // 확인 방식 카드를 고른 뒤에야 마법사가 끝난다(설정 문서 P0#4).
-    await page.getByRole("button", { name: /바로 실행/ }).click();
-    const start = page.getByRole("button", { name: "시작하기" });
+    const start = page.getByRole("button", { name: "시작하기", exact: true });
     await start.waitFor({ timeout: 30000 });
     await start.click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });
@@ -330,7 +328,7 @@ async function main() {
       "the settled turn reads 답이 왔습니다 with a ring",
       (await leaf(paymentsSecond).locator(".leaf__dot--done").count()) === 1,
     );
-    // The row the planner is reading wears no ring (PLAN D2).
+    // The row the planner is reading wears no ring.
     check(
       "the open conversation's row shows no finished ring",
       (await leaf(paymentsSession).locator(".leaf__dot--done").count()) === 0,
@@ -377,8 +375,8 @@ async function main() {
       (await page.locator(".node__name").allInnerTexts()).join(", "),
     );
 
-    // --- h1. 지켜 줄 것: the project's own rules, in the project's own place
-    //     (설정 문서 P1#8). The box lives on the project row, not in 설정 —
+    // --- h1. 지켜 줄 것: the project's own rules, in the project's own place.
+    //     The box lives on the project row, not in 설정 —
     //     and what it saves is what the next conversation is told.
     const guarded = page.locator(".node", { hasText: "결제 시스템" });
     await guarded.locator(".node__menu-btn").click();
@@ -411,7 +409,7 @@ async function main() {
     await page.getByRole("button", { name: "취소" }).click();
 
     // --- h2. a sixth conversation becomes a count row into the palette ----
-    // Five rows are all the tree holds (PLAN D59 rule 3); the sixth must not
+    // Five rows are all the tree holds; the sixth must not
     // read as gone — the count row names it and opens the palette, already
     // narrowed to this project's conversations.
     for (let extra = 0; extra < 4; extra += 1) await call({ type: "session.create" });
@@ -458,7 +456,7 @@ async function main() {
       `${workRootsBefore} → ${afterRemove.projects.length}`,
     );
     check(
-      "no dangerous ask fell back to the browser's confirm (결함③)",
+      "no dangerous ask fell back to the browser's confirm",
       (await page.evaluate(() => window.__nativeConfirmUsed ?? false)) === false,
     );
 

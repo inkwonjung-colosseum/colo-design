@@ -6,7 +6,15 @@
  * in ./repo-test-kit.mjs.
  */
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readComments, recordComments } from "../dist/comments.js";
@@ -22,7 +30,7 @@ import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.m
 import { bringUp, promisifiedRun, workdir } from "./repo-test-kit.mjs";
 
 // ---------------------------------------------------------------------------
-// 코멘트 저장소 (PLAN D57)
+// 코멘트 저장소
 // ---------------------------------------------------------------------------
 
 test("comments.record appends delivered rows — a second send of the same words stays", () => {
@@ -79,7 +87,7 @@ test("one pair's re-send never touches another screen·state's rows", () => {
   assert.equal(rows.length, 2, JSON.stringify(rows));
 });
 
-test("recordComments keeps the pin's element and normalizes the screen spelling (PLAN D78)", () => {
+test("recordComments keeps the pin's element and normalizes the screen spelling", () => {
   const file = join(workdir("hub-comments-element-"), "comments.json");
   const element = {
     component: "button",
@@ -105,14 +113,14 @@ test("recordComments keeps the pin's element and normalizes the screen spelling 
   assert.equal(rows[0].elementText, "다시 시도");
 });
 
-test("an old row without element survives; a broken element row is dropped (PLAN D78)", () => {
+test("an old row without element survives; a broken element row is dropped", () => {
   const dir = workdir("hub-comments-legacy-");
   const file = join(dir, "comments.json");
   try {
     writeFileSync(
       file,
       JSON.stringify([
-        // A pre-D78 row: no element, still a comment.
+        // A legacy row: no element, still a comment.
         {
           id: "old",
           screen: "pay/PayFailed",
@@ -179,13 +187,13 @@ test("a comments.json a hand mangled reads as whatever survives", () => {
   }
 });
 // ---------------------------------------------------------------------------
-// 되돌리기와 요약 (PLAN D51 · D52 · D53) — offline: the fallback path and the
+// 되돌리기와 요약 — offline: the fallback path and the
 // snapshot mechanics. The summarizer's Claude turn is test:daemon's stub case.
 // ---------------------------------------------------------------------------
 
 test("폴백 요약은 경로를 화면 폴더로 묶어 `폴더: 수정 N · 추가 M` 로 쓴다", () => {
   // `src/screens/<기능>/<화면>` — the folder above the file names the group,
-  // exactly as D51's own example (`member: 수정 2 · 추가 1`) reads.
+  // exactly as the example (`member: 수정 2 · 추가 1`) reads.
   assert.equal(fallbackGroup("src/screens/member/MemberList.screen.tsx"), "member");
   assert.equal(fallbackGroup("src/screens/pay/PayFailed.screen.tsx"), "pay");
   // A file with no folder above it has no group to borrow.
@@ -280,7 +288,7 @@ test("체크포인트는 추적 안 된 새 파일을 담고 HEAD · 인덱스�
   }
 });
 
-test("변경 버리기는 미추적 화면 폴더째 지우고 죽지 않는다 (D53)", async () => {
+test("변경 버리기는 미추적 화면 폴더째 지우고 죽지 않는다", async () => {
   const dir = workdir("hub-discard-dir-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
   try {
@@ -344,7 +352,7 @@ test("summarize without a Claude path falls back to folder grouping — once per
       dir: join(dir, "fixture"),
       port: await freePort(),
     });
-    // No claudeExecutable option: the fallback is the only path (PLAN D51).
+    // No claudeExecutable option: the fallback is the only path.
     const workspace = await bringUp(dir, fixture);
 
     const html = readFileSync(join(dir, "work", "index.html"), "utf8");
@@ -475,6 +483,97 @@ test("빈 메모의 저장은 Claude가 못 내면 기본 문구로 저장한다
   }
 });
 
+test("올리기에서 멈춘 저장은 다시 누르면 올리기만 다시 한다 — 묶은 작업이 갇히지 않는다", async () => {
+  const dir = workdir("hub-push-retry-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = await bringUp(dir, fixture);
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>올리기 실패</p>\n");
+    // 원격이 사라진 순간의 저장: 커밋은 끝나고 푸시가 거절된다.
+    const away = `${fixture.remote}.away`;
+    renameSync(fixture.remote, away);
+    const failed = await workspace.save({ message: "회원 목록 화면 추가" });
+    assert.equal(failed.stage, "failed");
+    assert.equal(failed.gate, "push", failed.detail ?? "");
+    // 커밋은 남았으므로 워크트리는 깨끗하다 — 이 상태가 예전에는 "저장할
+    // 변경사항이 없습니다" 로 읽혀 묶은 작업이 갇혔다.
+    assert.equal((await workspace.diff()).length, 0, "the commit landed, so the diff is empty");
+
+    renameSync(away, fixture.remote);
+    const retried = await workspace.save();
+    assert.equal(retried.stage, "published", retried.detail ?? "");
+    // 재시도는 새 커밋을 쓰지 않는다: 멈춘 저장의 메모가 그대로 실려 간다.
+    assert.equal(retried.message, "회원 목록 화면 추가");
+    assert.equal(await remoteSubject(fixture.remote), "회원 목록 화면 추가");
+    const count = (
+      await promisifiedRun("git", [
+        "-C",
+        join(dir, "work"),
+        "rev-list",
+        "--count",
+        "origin/main..HEAD",
+      ])
+    ).trim();
+    assert.equal(count, "1", "the retry pushed the one commit, it did not add another");
+
+    // 올릴 것도 저장할 것도 없으면 예전 그대로 거절한다.
+    const nothing = await workspace.save();
+    assert.equal(nothing.stage, "failed");
+    assert.match(nothing.detail ?? "", /저장할 변경사항이 없습니다/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("저장 검토의 요약은 같은 턴에서 저장 메모 제안까지 받아 온다", async () => {
+  const dir = workdir("hub-summary-memo-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      claudeExecutable: writeAnswerStubClaude(
+        join(dir, "bin"),
+        // 목록 표식과 따옴표는 답변의 장식이다 — 요약도 메모도 그것 없이 선다.
+        '- 회원 목록 화면에 검색창을 넣었습니다\n- 빈 상태 문구를 바꿨습니다\n메모: "회원 목록 검색 추가"',
+      ),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>검색창</p>\n");
+    const summary = await workspace.summarize([
+      { route: "/member/MemberList", title: "회원 목록" },
+    ]);
+    assert.equal(summary.source, "claude");
+    assert.deepEqual(summary.lines, [
+      "회원 목록 화면에 검색창을 넣었습니다",
+      "빈 상태 문구를 바꿨습니다",
+    ]);
+    // 메모 줄은 요약에 섞이지 않고 제안으로 따로 선다 — 검토 화면의 메모
+    // 칸이 이것으로 열린다 (비개발자 저장 검토).
+    assert.equal(summary.memo, "회원 목록 검색 추가");
+
+    // 같은 diff·같은 화면 목록이면 같은 답 — 메모까지 캐시에서 온다.
+    assert.deepEqual(
+      await workspace.summarize([{ route: "/member/MemberList", title: "회원 목록" }]),
+      summary,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("넘기기의 초안은 이 사이클의 저장 메모에서 제목과 내용을 받아 온다", async () => {
   const dir = workdir("hub-handoff-draft-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -534,17 +633,56 @@ test("넘기기의 초안은 Claude가 못 내면 비어 있어 브라우저의 
     const saved = await workspace.save({ message: "초안 없는 저장" });
     assert.equal(saved.stage, "published", saved.detail ?? "");
 
-    assert.deepEqual(await workspace.handoffDraft(), {
-      title: "",
-      body: "",
-      source: "fallback",
-    });
+    // 빈 제목·빈 내용이 계약이다 — 그래야 대화창이 제 제안을 그대로 쓴다.
+    const draft = await workspace.handoffDraft();
+    assert.equal(draft.title, "");
+    assert.equal(draft.body, "");
+    assert.equal(draft.source, "fallback");
+    // 자동 첨부는 초안과 무관하게 답한다 — 핀도 캡처도 없으면 없다고 말한다.
+    assert.deepEqual(draft.extras, { commentsSection: null, shotCount: 0 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("buildCommentsSection: 선언된 제목·20건 넘김 (PLAN D93)", async () => {
+test("넘기기의 미리보기는 개발자가 받을 자동 첨부를 그대로 보고한다 (비개발자 넘기기)", async () => {
+  const dir = workdir("hub-handoff-draft-extras-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = await bringUp(dir, fixture);
+
+    writeFileSync(join(dir, "work", "index.html"), "<p>회원 목록</p>\n");
+    const saved = await workspace.save({ message: "회원 목록 화면 추가" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+
+    // 사이클이 열린 뒤에 찍은 핀 — 넘기기 본문의 `### 수정 요청` 이 될 것.
+    const commentsFile = join(dir, "comments.json");
+    recordComments(commentsFile, [
+      { screen: "/member/MemberList", state: "default", text: "제목을 줄여", elementText: "목록" },
+    ]);
+
+    const draft = await workspace.handoffDraft({
+      commentsFile,
+      screenTitles: [{ route: "/member/MemberList", title: "회원 목록" }],
+      shotCount: 3,
+    });
+
+    // 미리보기가 보여 주는 절은 넘기기가 실제로 붙이는 절과 같은 문장이다 —
+    // 선언된 제목으로, 사용자의 말 그대로.
+    assert.ok(draft.extras, "자동 첨부가 보고되지 않았다");
+    assert.match(draft.extras.commentsSection ?? "", /### 수정 요청/);
+    assert.match(draft.extras.commentsSection ?? "", /- 회원 목록 · 기본 — "제목을 줄여"/);
+    assert.equal(draft.extras.shotCount, 3);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildCommentsSection: 선언된 제목·20건 넘김", async () => {
   const { buildCommentsSection } = await import("../dist/repo.js");
   const rows = [
     {
@@ -592,7 +730,7 @@ test("buildCommentsSection: 선언된 제목·20건 넘김 (PLAN D93)", async ()
   assert.ok(overflow.includes("외 5건"), overflow.slice(-120));
 });
 
-test("PUSH_AUTH_FAILURE: 인증·권한 사유만 골라내고 나머지는 Claude 로 (PLAN D90)", async () => {
+test("PUSH_AUTH_FAILURE: 인증·권한 사유만 골라내고 나머지는 Claude 로", async () => {
   const { PUSH_AUTH_FAILURE } = await import("../dist/repo.js");
   for (const reason of [
     "remote: 403 denied to install-token",
@@ -611,7 +749,7 @@ test("PUSH_AUTH_FAILURE: 인증·권한 사유만 골라내고 나머지는 Clau
   }
 });
 
-test("validateBootstrapOverrides: 준비 턴은 포트만 적는다 (PLAN D94)", () => {
+test("validateBootstrapOverrides: 준비 턴은 포트만 적는다", () => {
   // 포트 하나 — 통과.
   assert.equal(validateBootstrapOverrides('{"preview":{"port":3000}}'), null);
 

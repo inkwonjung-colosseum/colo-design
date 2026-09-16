@@ -8,13 +8,13 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Block } from "../src/daemon-client.ts";
+import type { Block } from "../src/lib/daemon-client.ts";
 import {
   answerTurnNumbers,
   lastAnswerPerTurn,
   promptTotal,
   turnAnswerText,
-} from "../src/turn-numbering.ts";
+} from "../src/lib/turn-numbering.ts";
 
 const block = (type: Block["type"], id: string): Block => ({ type, id }) as unknown as Block;
 
@@ -80,7 +80,7 @@ test("프롬프트 없이 홀로 남은 답은 1로 매겨 유효한 번호를 �
   assert.equal(promptTotal([block("text", "orphan")]), 0);
 });
 
-test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지 않는다 (PLAN D98)", () => {
+test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지 않는다", () => {
   const subagentSay = { type: "text", id: "s1", agentId: "toolu_9" } as unknown as Block;
   const blocks = [
     block("user", "u1"),

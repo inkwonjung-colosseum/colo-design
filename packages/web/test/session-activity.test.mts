@@ -1,5 +1,5 @@
 /**
- * The finished-tab rule (PLAN D2): a thread that ends a turn while the planner
+ * The finished-tab rule: a thread that ends a turn while the planner
  * is reading a different one gets marked until they look.
  *
  * Run: node --experimental-transform-types --test packages/web/test/session-activity.test.mts
@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { settleTransitions } from "../src/session-activity.ts";
+import { settleTransitions } from "../src/lib/session-activity.ts";
 
 test("a background turn that ends is what gets marked", () => {
   // First pass: nothing was running before, so nothing has finished — an idle
@@ -32,7 +32,7 @@ test("the thread the planner is watching is never marked", () => {
   assert.deepEqual(settleTransitions({ b: true }, { b: "error" }, null).settled, ["b"]);
 });
 
-test("a thread that stops to ask is awaiting, not finished (PLAN D50)", () => {
+test("a thread that stops to ask is awaiting, not finished", () => {
   // Permission and question waits are the orange dot in the tree, not the
   // finished mark: the turn is not over, it wants an answer.
   const permission = settleTransitions({ b: true }, { b: "waiting_permission" }, "a");

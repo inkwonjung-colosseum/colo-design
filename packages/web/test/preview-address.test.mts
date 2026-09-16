@@ -1,11 +1,11 @@
 /**
- * 주소창 판정(PLAN D66)의 표 — preview-address.test 에서 node --test 로.
+ * 주소창 판정의 표 — preview-address.test 에서 node --test 로.
  * 순수 함수라 시뮬레이션 없이 표 그대로 단언한다.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseAddress, splitPath } from "../src/preview-address.ts";
+import { parseAddress, splitPath } from "../src/lib/preview-address.ts";
 
 const opts = {
   origin: "http://127.0.0.1:5400",

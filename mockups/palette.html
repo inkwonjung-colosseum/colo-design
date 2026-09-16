@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>명령 팔레트 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body>
+<!-- 팔레트 뒤의 작업 공간 (흐린 배경) -->
+<div class="app" style="filter:saturate(.9)">
+  <aside class="rail">
+    <div class="rail__top"><span class="rail__brand">Colo Design</span></div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span>
+          <span class="tnode__name">쇼핑몰 프론트</span></button>
+        <div class="tnode__kids">
+          <button class="leaf"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span></button>
+          <button class="leaf"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span></button>
+        </div>
+      </div>
+    </nav>
+  </aside>
+  <div class="main">
+    <header class="topbar"><span class="topbar__title">회원 관리 화면 세 상태</span></header>
+    <div class="hero"><h1 class="hero__title" style="font-size:24px;color:var(--faint)">대화가 여기에</h1></div>
+  </div>
+</div>
+
+<!-- 팔레트 -->
+<div class="scrim">
+  <div class="palette">
+    <div class="palette__input">
+      <span style="color:var(--faint)">⌕</span>
+      <input value="회원" />
+      <span class="kbd">esc</span>
+    </div>
+    <div class="palette__list">
+      <div class="palette__group">대화</div>
+      <button class="palette__row on">
+        <span class="dot dot--done"></span> 회원 관리 화면 세 상태
+        <span class="meta">쇼핑몰 프론트 · 방금</span>
+      </button>
+      <button class="palette__row">
+        <span class="dot"></span> 회원 탈퇴 확인 모달
+        <span class="meta">관리자 콘솔 · 3일 전</span>
+      </button>
+      <div class="palette__group">화면</div>
+      <button class="palette__row">
+        <span style="color:var(--faint)">▣</span> 회원 관리 <span class="mono" style="color:var(--faint)">/members</span>
+        <span class="meta">미리보기에서 열기</span>
+      </button>
+      <div class="palette__group">명령</div>
+      <button class="palette__row">
+        <span style="color:var(--faint)">＋</span> 새 대화 — 회원
+        <span class="meta">⌘N</span>
+      </button>
+      <button class="palette__row">
+        <span style="color:var(--faint)">⚙</span> 설정 열기
+        <span class="meta">⌘,</span>
+      </button>
+      <button class="palette__row">
+        <span style="color:var(--faint)">⇪</span> 프로젝트 바꾸기
+        <span class="meta">3개</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

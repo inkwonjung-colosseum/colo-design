@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChatEvent } from "@colo-design/protocol";
-import { transcriptToMarkdown } from "../src/transcript-export.ts";
+import { transcriptToMarkdown } from "../src/lib/transcript-export.ts";
 
 const AT = new Date("2026-09-13T09:00:00");
 

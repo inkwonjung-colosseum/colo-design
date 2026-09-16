@@ -194,9 +194,7 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".onboarding", { timeout: 60000 });
-    // 확인 방식 카드를 고른 뒤에야 마법사가 끝난다(설정 문서 P0#4).
-    await page.getByRole("button", { name: /바로 실행/ }).click();
-    const start = page.getByRole("button", { name: "시작하기" });
+    const start = page.getByRole("button", { name: "시작하기", exact: true });
     await start.waitFor({ timeout: 30000 });
     await start.click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });

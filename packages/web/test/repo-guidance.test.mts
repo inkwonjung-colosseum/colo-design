@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RepoStatus } from "@colo-design/protocol";
-import { errorKindOf, guidanceFor } from "../src/repo-guidance.ts";
+import { errorKindOf, guidanceFor } from "../src/lib/repo-guidance.ts";
 
 const status = (patch: Partial<RepoStatus>): RepoStatus =>
   ({
@@ -58,10 +58,14 @@ test("errorKindOf: 갈라진 거부는 포트 충돌이 아니다", () => {
   assert.equal(kind, "unknown");
 });
 
-test("errorKindOf: clone 실패는 그 종류로, install 실패는 알 수 없음으로 — 카드는 detail 을 그대로 보여 준다", () => {
+test("errorKindOf: clone · install · bootstrap 실패는 각자의 종류로 — 카드는 detail 을 그대로 보여 준다", () => {
   assert.equal(
     errorKindOf(status({ errorKind: "install", detail: "설치가 실패했습니다" })),
-    "unknown",
+    "install",
+  );
+  assert.equal(
+    errorKindOf(status({ errorKind: "bootstrap", detail: "준비 턴이 끝나지 않았습니다" })),
+    "bootstrap",
   );
   assert.equal(
     errorKindOf(status({ errorKind: "clone", detail: "내려받기가 실패했습니다" })),
@@ -103,4 +107,42 @@ test("held-elsewhere: 산 남의 인스턴스는 그 종류로 알아보고, 카
   // 데몬이 준 문장이 있으면 그 문장이 본문이다 — 포트 충돌 카드와 같은 규칙.
   const withDetail = guidanceFor("held-elsewhere", "포트 3000에서 다른 Colo Design 인스턴스가…");
   assert.equal(withDetail.body, "포트 3000에서 다른 Colo Design 인스턴스가…");
+});
+
+test("guidanceFor: commands · preview 를 뺀 모든 실패가 Claude 요청을 안다", () => {
+  // commands 는 사람의 동의가 곧 해결이고, preview 는 미리보기 자리의 자체
+  // 버튼이 답한다 — 이 둘만 카드의 첫 동작이 Claude 가 아니다.
+  for (const kind of [
+    "auth",
+    "pnpm",
+    "port-busy",
+    "conflict",
+    "clone",
+    "install",
+    "bootstrap",
+    "held-elsewhere",
+    "unknown",
+  ] as const) {
+    const claude = guidanceFor(kind, "데몬의 자세한 출력").claude;
+    assert.ok(claude, `${kind} 카드에 Claude 요청이 없습니다`);
+    assert.ok(claude.step && claude.thread, `${kind}: 카드 제목·대화 이름이 비었습니다`);
+    assert.match(
+      claude.brief,
+      /데몬의 자세한 출력/,
+      `${kind}: 브리프가 detail 을 증거로 싣지 않습니다`,
+    );
+  }
+  assert.equal(guidanceFor("commands", null).claude, undefined);
+  assert.equal(guidanceFor("preview", null).claude, undefined);
+});
+
+test("guidanceFor: 충돌 요청의 브리프는 옛 카드가내던 문구 그대로다 (회귀)", () => {
+  const claude = guidanceFor("conflict", "충돌한 파일: app.tsx").claude;
+  assert.ok(claude);
+  assert.equal(claude.step, "최신 변경 받아오기");
+  assert.equal(claude.thread, "최신화 충돌 정리");
+  assert.match(claude.brief, /준비가 최신화 충돌로 멈춰 있습니다/);
+  assert.match(claude.brief, /충돌한 파일: app\.tsx/);
+  // detail 없는 브리프는 리드 문장만이다 — 빈 꼬리표를 달지 않는다.
+  assert.equal(guidanceFor("conflict", null).claude?.brief.endsWith("마쳐 주세요."), true);
 });

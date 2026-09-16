@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { CopyButton } from "./components";
-import { useDaemon } from "./daemon-client";
-import { GearIcon, PlugIcon, WarnIcon } from "./icons";
-import { SettingsDialog } from "./SettingsDialog";
-import { Shell } from "./Shell";
-import { normalizeNotificationSettings, useSettings } from "./settings";
+import { SettingsDialog } from "./components/dialogs/SettingsDialog";
+import { GearIcon, PlugIcon, WarnIcon } from "./components/icons";
+import { Shell } from "./components/shell/Shell";
+import { Tip } from "./components/shell/Tip";
+import { useDaemon } from "./lib/daemon-client";
+import { normalizeNotificationSettings, useSettings } from "./lib/settings";
 
 const URL_KEY = "colo-design.daemon-url";
 
@@ -38,15 +39,16 @@ function ConnectScreen({
 
   return (
     <div className="connect">
-      <button
-        type="button"
-        className="connect__settings ghost"
-        aria-label="설정"
-        title="설정"
-        onClick={onOpenSettings}
-      >
-        <GearIcon size={15} />
-      </button>
+      <Tip label="설정" side="bottom">
+        <button
+          type="button"
+          className="connect__settings ghost"
+          aria-label="설정"
+          onClick={onOpenSettings}
+        >
+          <GearIcon size={15} />
+        </button>
+      </Tip>
       <h1>
         <span className="brand-name">Colo Design</span>
       </h1>
@@ -211,9 +213,6 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         onboardingOpen={onboardingOpen}
         onOnboardingClose={() => setOnboardingOpen(false)}
-        onChoosePermission={(permissionMode) =>
-          updateSettings({ chat: { ...settings.chat, permissionMode } })
-        }
       />
       {settingsDialog}
     </>

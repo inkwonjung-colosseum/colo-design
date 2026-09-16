@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>컴포넌트 시트 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="mockup.css" />
+<style>
+  .sheet{max-width:880px;margin:0 auto;padding:44px 28px 80px}
+  .sheet h1{font-family:var(--serif);font-size:26px;letter-spacing:-0.02em;margin:0 0 4px}
+  .sheet .sec{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:32px 0 10px}
+  .swatchgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+  .swatch{border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;background:var(--panel)}
+  .swatch .c{height:52px}
+  .swatch .n{font-size:11px;padding:6px 9px;color:var(--text-2)}
+  .swatch .v{font-size:10px;padding:0 9px 7px;color:var(--faint);font-family:var(--mono)}
+  .demo{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);padding:18px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .demo--col{flex-direction:column;align-items:stretch}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <p class="hint" style="margin:0 0 8px">디자인 토큰</p>
+  <h1>컴포넌트 시트</h1>
+  <p class="hint">개선안의 부품 전체. 우하단 토글로 다크 테마를 확인하세요.</p>
+
+  <div class="sec">색</div>
+  <div class="swatchgrid">
+    <div class="swatch"><div class="c" style="background:var(--bg)"></div><div class="n">종이</div><div class="v">--bg</div></div>
+    <div class="swatch"><div class="c" style="background:var(--bg-2)"></div><div class="n">사이드바</div><div class="v">--bg-2</div></div>
+    <div class="swatch"><div class="c" style="background:var(--panel)"></div><div class="n">카드</div><div class="v">--panel</div></div>
+    <div class="swatch"><div class="c" style="background:var(--bubble)"></div><div class="n">내 말풍선</div><div class="v">--bubble</div></div>
+    <div class="swatch"><div class="c" style="background:var(--accent)"></div><div class="n">액센트</div><div class="v">--accent</div></div>
+    <div class="swatch"><div class="c" style="background:var(--ok)"></div><div class="n">완료</div><div class="v">--ok</div></div>
+    <div class="swatch"><div class="c" style="background:var(--warn)"></div><div class="n">경고</div><div class="v">--warn</div></div>
+    <div class="swatch"><div class="c" style="background:var(--danger)"></div><div class="n">위험</div><div class="v">--danger</div></div>
+  </div>
+
+  <div class="sec">글자</div>
+  <div class="demo demo--col" style="gap:6px">
+    <span class="serif" style="font-size:24px;font-weight:600">세리프 — 제목과 인사의 목소리</span>
+    <span style="font-size:14px">산세리프 — UI 크롬과 본문, 14px 기본</span>
+    <span class="mono" style="font-size:12.5px;color:var(--text-2)">모노 — src/pages/members.tsx · 코드와 경로</span>
+    <span class="hint">힌트 — 12.5px, 덜 중요한 말</span>
+  </div>
+
+  <div class="sec">버튼</div>
+  <div class="demo">
+    <button class="btn btn--primary">저장</button>
+    <button class="btn btn--ghost">더 보기 ▾</button>
+    <button class="btn btn--quiet">건너뛰기</button>
+    <button class="btn btn--primary" disabled>넘기기</button>
+    <button class="ibtn">⚙</button>
+    <button class="send">↑</button>
+    <button class="send send--stop">■</button>
+  </div>
+
+  <div class="sec">칩 · 태그 · 점</div>
+  <div class="demo">
+    <button class="chip">기본</button>
+    <button class="chip" style="border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent-ink)">비어 있음</button>
+    <span class="tag">하위 작업</span>
+    <span class="tag tag--accent">새 화면</span>
+    <span class="tag tag--ok">저장됨</span>
+    <span class="tag tag--warn">확인 대기</span>
+    <span class="row" style="gap:10px"><span class="dot dot--live"></span><span class="dot dot--ask"></span><span class="dot dot--done"></span><span class="dot"></span></span>
+    <span class="spin"></span>
+  </div>
+
+  <div class="sec">세그먼트 · 스위치</div>
+  <div class="demo">
+    <div class="seg"><button>모바일</button><button class="on">데스크톱</button></div>
+    <div class="seg"><button>끔</button><button class="on">소리</button><button>배너</button></div>
+    <button class="sw on"></button>
+    <button class="sw"></button>
+  </div>
+
+  <div class="sec">대화 부품</div>
+  <div class="demo demo--col">
+    <div class="turn-user" style="align-items:flex-end">
+      <div class="turn-user__bubble">결제 실패 화면의 세 상태를 만들어 줘</div>
+    </div>
+    <div class="tool">
+      <button class="tool__head"><span class="chev">▸</span>
+        <span class="tool__name">파일 읽기</span>
+        <span class="tool__sum">src/pages/members.tsx</span></button>
+    </div>
+    <div class="tool open">
+      <button class="tool__head"><span class="chev">▸</span>
+        <span class="tool__name">화면 만들기</span>
+        <span class="tool__sum">/members — 목록 + 검색</span></button>
+      <div class="tool__body">열린 도구 행 — 입력과 결과가 모노로 펼쳐집니다.</div>
+    </div>
+    <div class="act"><span class="ic">✎</span> members.tsx 를 고치고 있습니다</div>
+    <div class="turnlive"><span class="spin"></span> 화면을 만들고 있습니다 · 14초</div>
+  </div>
+
+  <div class="sec">화면 카드 · 핀</div>
+  <div class="demo demo--col">
+    <button class="scard" style="max-width:420px">
+      <span class="scard__shot"><span class="wire" style="inset:8px"><span class="wire__main">
+        <span class="wire__bar" style="width:45%"></span><span class="wire__bar"></span><span class="wire__bar"></span>
+      </span></span></span>
+      <span class="scard__body">
+        <span class="scard__title">회원 관리</span>
+        <span class="scard__route">/members</span>
+        <span class="scard__states"><span class="state-chip on">기본</span><span class="state-chip">비어 있음</span></span>
+      </span>
+    </button>
+    <div class="row"><span class="pin"><span class="n">1</span> 권한 드롭다운 위치</span><span class="pin"><span class="n">2</span> 빈 상태 문구</span></div>
+  </div>
+
+  <div class="sec">알림</div>
+  <div class="demo demo--col">
+    <div class="notice"><span>⚠</span><span>settings.json이 바뀌었습니다 — 다시 읽어 오세요.</span><button class="notice__x">×</button></div>
+    <div class="notice notice--error"><span>✕</span><span>연결이 끊겼습니다 — 대화와 저장이 잠시 멈춥니다.</span><button class="btn btn--ghost btn--sm" style="margin-left:auto">다시 연결</button></div>
+  </div>
+
+  <div class="sec">입력창</div>
+  <div class="composer" style="max-width:none">
+    <div class="composer__queue">다음 턴에 보냅니다 · 1건 — “오류 문구는 좀 더 부드럽게”</div>
+    <textarea class="composer__input" rows="2" placeholder="메시지를 보내 보세요"></textarea>
+    <div class="composer__bar">
+    <button class="ibtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.5-8.5a3.7 3.7 0 015.2 5.2l-8.5 8.5a1.85 1.85 0 01-2.6-2.6l7.8-7.8"/></svg></button>
+      <button class="composer__model">소네트 4.5 ▾</button>
+      <span class="spacer"></span>
+      <span class="hint" style="margin-right:8px">컨텍스트 18%</span>
+      <button class="send">↑</button>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+document.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>s.classList.toggle('on')));
+document.querySelectorAll('.seg').forEach(g=>g.addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  g.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on')}));
+</script>
+</body>
+</html>

@@ -295,7 +295,7 @@ async function main() {
   const ring = page.locator(`${VISIBLE}.ring`);
   check("the chat shows how long the conversation has grown", await ring.isVisible());
   // Hovering it is the whole disclosure — and the whole disclosure is the
-  // percent. 토큰 수와 세션 비용은 커미티 F-A2′(2026-09-14)로 화면을 떠났다:
+  // percent. 토큰 수와 세션 비용은 화면을 떠났다:
   // 구독 하나가 이 제품의 약속이므로 숫자로 재는 자리를 두지 않는다.
   await ring.hover();
   // The tip is a CSS disclosure that fades in (0.12s) — reading before the
