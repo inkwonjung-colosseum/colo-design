@@ -16,6 +16,7 @@ const status = (patch: Partial<RepoStatus>): RepoStatus =>
     detail: null,
     previewUrl: null,
     previewPort: null,
+    previewOrigins: [],
     previewEpoch: null,
     url: "https://example.invalid/org/repo.git",
     branch: null,

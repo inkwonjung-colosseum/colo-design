@@ -1416,6 +1416,7 @@ export function ScreenPanel({
           <PreviewHost
             url={repo?.previewUrl ?? null}
             epoch={repo?.previewEpoch ?? null}
+            origins={repo?.previewOrigins ?? []}
             stopped={previewStopped}
             stoppedDetail={repo?.detail ?? null}
             onRestart={restart}

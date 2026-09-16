@@ -133,8 +133,13 @@ async function bootApp(): Promise<void> {
     ? join(app.getAppPath(), "web-dist")
     : undefined;
 
-  // Claude 의 미리보기 창 (PLAN D61): 세션에 colo-preview 도구를 단다.
-  const previewDriverFactory = createPreviewDriverFactory(() => host.window);
+  // Claude 의 미리보기 (PLAN D61): 세션 도구는 pane 의 페이지를 drive 하고,
+  // 게이트·넘기기는 숨은 창을 쓴다. pane 은 아래에서 만들어진다 — getter 는
+  // 세션이 드라이버를 처음 요구할 때까지 부르지 않는다.
+  const previewDriverFactory = createPreviewDriverFactory(
+    () => host.window,
+    () => plannerPreview,
+  );
   const onNotice = (notice: DaemonNotice) => {
     notices.notifyPlanner(notice);
     // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.

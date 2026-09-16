@@ -1196,6 +1196,7 @@ export class RepoCore {
       detail: this.detail,
       previewUrl: port === null ? null : `http://127.0.0.1:${port}`,
       previewPort: port,
+      previewOrigins: this.config?.preview.origins ?? [],
       previewEpoch: port === null ? null : this.previewEpoch,
       url: this.url,
       branch: this.branch,

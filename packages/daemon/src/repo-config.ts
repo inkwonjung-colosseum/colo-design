@@ -25,18 +25,26 @@ export interface RepoConfig {
   install?: string;
   check?: string;
   build?: string;
-  preview: { command: string; port: number };
+  preview: {
+    command: string;
+    port: number;
+    /**
+     * 미리보기 서버 외에 열어도 되는 origin 들 — 스토리북·별도 admin 같은
+     * 같은 레포의 다른 로컬 서버. 비워 두면 preview 서버 하나뿐이다.
+     */
+    origins: string[];
+  };
   registry?: RepoRegistry;
-  /** D56: `false` refuses the handoff's screen captures — no files, no PR section. */
+  /** D56: `false` refuses the handoff's screen captures - no files, no PR section. */
   shots?: boolean;
 }
 
-/** `colo-design.json` 이 적을 수 있는 것 — 전부 선택이고 preview.port 만 필수다. */
-export interface RepoOverrides {
+/** `colo-design.json` 이 적을 수 있는 것 - 전부 선택이고 preview.port 만 필수다. */
+interface RepoOverrides {
   install?: string;
   check?: string;
   build?: string;
-  preview?: { command?: string; port?: number };
+  preview?: { command?: string; port?: number; origins?: string[] };
   registry?: RepoRegistry;
   shots?: boolean;
 }
@@ -212,6 +220,31 @@ export function parseRepoOverrides(source: string): RepoOverrides {
       }
       overrides.preview.port = port;
     }
+    if (preview.origins !== undefined) {
+      if (!Array.isArray(preview.origins)) {
+        throw new Error(`${CONFIG_FILE}의 preview.origins는 주소 문자열의 배열이어야 합니다`);
+      }
+      const origins: string[] = [];
+      for (const entry of preview.origins) {
+        if (typeof entry !== "string" || entry.trim() === "") {
+          throw new Error(`${CONFIG_FILE}의 preview.origins 항목은 주소 문자열이어야 합니다`);
+        }
+        let origin: string;
+        try {
+          const parsed = new URL(entry);
+          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new Error("not-http");
+          }
+          origin = parsed.origin;
+        } catch {
+          throw new Error(
+            `${CONFIG_FILE}의 preview.origins 항목이 http(s) 주소가 아닙니다: ${entry}`,
+          );
+        }
+        if (!origins.includes(origin)) origins.push(origin);
+      }
+      overrides.preview.origins = origins;
+    }
   }
 
   if (config.shots !== undefined) {
@@ -281,7 +314,7 @@ export function resolveRepoConfig(root: string): RepoConfig {
     ...(build !== undefined ? { build } : {}),
     ...(registry !== undefined ? { registry } : {}),
     ...(overrides.shots !== undefined ? { shots: overrides.shots } : {}),
-    preview: { command, port },
+    preview: { command, port, origins: overrides.preview?.origins ?? [] },
   };
 }
 

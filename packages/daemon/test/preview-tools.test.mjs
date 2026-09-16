@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { PreviewDrivers } from "../dist/preview-drivers.js";
 import { createPreviewTools, serializeAxTree } from "../dist/preview-tools.js";
 
 // The in-memory MCP pair arrives through the Agent SDK's dependency graph —
@@ -106,6 +107,7 @@ test("the colo-preview server serves exactly the screen tools", async () => {
   assert.deepEqual(names, [
     "screen_click",
     "screen_console",
+    "screen_do",
     "screen_hover",
     "screen_list",
     "screen_open",
@@ -172,6 +174,16 @@ test("screen_open hands route, state and window options to the driver", async ()
     textOf(await client.callTool({ name: "screen_list", arguments: {} })),
     /지금 창: mobile · dark/,
   );
+  await close();
+});
+
+test("screen_open answers with the screen's tree — the read is already paid", async () => {
+  const { client, close } = await openTools(createPreviewTools(fakeDriver(), () => SCREENS));
+  const result = textOf(
+    await client.callTool({ name: "screen_open", arguments: { route: "/pay/PayFailed" } }),
+  );
+  assert.match(result, /\/pay\/PayFailed 을\(를\) 열었습니다/);
+  assert.match(result, /button "다시 시도" \[e3\]/);
   await close();
 });
 
@@ -347,6 +359,159 @@ test("a stale ref is the driver's refusal, read back as a tool error", async () 
   const result = await client.callTool({ name: "screen_click", arguments: { ref: "e9" } });
   assert.equal(result.isError, true);
   assert.match(textOf(result), /screen_read 로 다시 읽으십시오/);
+  await close();
+});
+
+test("an action's answer carries the fresh tree — no second read needed", async () => {
+  const { client, close } = await openTools(createPreviewTools(fakeDriver(), () => SCREENS));
+  const clicked = textOf(await client.callTool({ name: "screen_click", arguments: { ref: "e3" } }));
+  assert.match(clicked, /눌렀습니다: e3/);
+  assert.match(clicked, /textbox "카드번호" = "4242" \(required\) \[e4\]/);
+  const typed = textOf(
+    await client.callTool({ name: "screen_type", arguments: { ref: "e4", text: "4242" } }),
+  );
+  assert.match(typed, /heading "결제 실패" \[e2\]/);
+  await close();
+});
+
+test("an action still answers when the tree read fails", async () => {
+  const { client, close } = await openTools(
+    createPreviewTools(
+      fakeDriver({
+        axTree: () => {
+          throw new Error("미리보기 창이 닫혔습니다.");
+        },
+      }),
+      () => SCREENS,
+    ),
+  );
+  const result = await client.callTool({ name: "screen_click", arguments: { ref: "e3" } });
+  assert.equal(result.isError, undefined);
+  assert.match(textOf(result), /눌렀습니다: e3/);
+  assert.match(textOf(result), /다시 읽지 못했습니다/);
+  await close();
+});
+
+test("screen_do runs the steps in order and answers with the last tree", async () => {
+  const calls = [];
+  const { client, close } = await openTools(
+    createPreviewTools(
+      fakeDriver({
+        click: (target) => calls.push(["click", target]),
+        type: (input) => calls.push(["type", input]),
+        press: (key) => calls.push(["press", key]),
+      }),
+      () => SCREENS,
+    ),
+  );
+  const result = await client.callTool({
+    name: "screen_do",
+    arguments: {
+      steps: [
+        { click: "e3" },
+        { type: { ref: "e4", text: "4242", clear: true } },
+        { press: "Enter" },
+      ],
+    },
+  });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(calls, [
+    ["click", { ref: "e3" }],
+    ["type", { ref: "e4", text: "4242", clear: true }],
+    ["press", "Enter"],
+  ]);
+  const body = textOf(result);
+  assert.match(body, /3개 스텝을 모두 실행했습니다/);
+  assert.match(body, /button "다시 시도" \[e3\]/);
+  await close();
+});
+
+test("the gate tracks only preview-origin screens — allowed origins pass through", async () => {
+  const factoryCalls = [];
+  const drivers = new PreviewDrivers({
+    factory: () => ({
+      for: (baseUrl, origins) => {
+        factoryCalls.push([baseUrl, origins]);
+        return fakeDriver();
+      },
+      forIsolated: (baseUrl, origins) => {
+        factoryCalls.push([baseUrl, origins]);
+        return fakeDriver();
+      },
+    }),
+    activeRepo: () => ({
+      isCloned: () => true,
+      status: async () => ({ previewUrl: "http://127.0.0.1:5274" }),
+      repoConfig: () => ({ preview: { origins: ["http://localhost:6006"] } }),
+    }),
+    session: () => undefined,
+    sessions: () => [],
+    notice: () => undefined,
+  });
+  const made = await drivers.toolsFor(true, (route, state) =>
+    drivers.noteOpened("s1", route, state),
+  );
+  assert.ok(made, "toolsFor must build the tool set");
+  // The repo's extra origins reach the driver factory.
+  assert.deepEqual(factoryCalls, [["http://127.0.0.1:5274", ["http://localhost:6006"]]]);
+
+  const { client, close } = await openTools(made.tools);
+  // A declared screen lands on the gate list…
+  await client.callTool({ name: "screen_open", arguments: { route: "/pay/PayFailed" } });
+  // …but a repo-allowed foreign origin does not — the gate re-verifies the
+  // repo's own preview, not a server the repo merely pointed at.
+  await client.callTool({
+    name: "screen_open",
+    arguments: { route: "http://localhost:6006/iframe.html" },
+  });
+  assert.deepEqual([...drivers.openedThisTurn.get("s1").keys()], ["/pay/PayFailed\n"]);
+  await close();
+});
+test("screen_do stops at the first failure and says which step and why", async () => {
+  const calls = [];
+  const { client, close } = await openTools(
+    createPreviewTools(
+      fakeDriver({
+        click: (target) => calls.push(["click", target]),
+        type: () => {
+          throw new Error("e4 는 지금 화면의 것이 아닙니다");
+        },
+        press: (key) => calls.push(["press", key]),
+      }),
+      () => SCREENS,
+    ),
+  );
+  const result = await client.callTool({
+    name: "screen_do",
+    arguments: {
+      steps: [{ click: "e3" }, { type: { ref: "e4", text: "x" } }, { press: "Enter" }],
+    },
+  });
+  assert.equal(result.isError, true);
+  // The third step never ran — a dead ref stops the batch, not skips it.
+  assert.deepEqual(calls, [["click", { ref: "e3" }]]);
+  const body = textOf(result);
+  assert.match(body, /2번째 스텝에서 멈췄습니다/);
+  assert.match(body, /지금 화면의 것이 아닙니다/);
+  // The tree at the stop point rides along so the model can keep going.
+  assert.match(body, /heading "결제 실패" \[e2\]/);
+  await close();
+});
+
+test("screen_do refuses a step that names no action or a bad key", async () => {
+  const calls = [];
+  const { client, close } = await openTools(
+    createPreviewTools(fakeDriver({ click: (target) => calls.push(target) }), () => SCREENS),
+  );
+  const empty = await client.callTool({ name: "screen_do", arguments: { steps: [] } });
+  assert.equal(empty.isError, true);
+  const badKey = await client.callTool({
+    name: "screen_do",
+    arguments: { steps: [{ press: "F13" }] },
+  });
+  assert.equal(badKey.isError, true);
+  assert.match(textOf(badKey), /쓸 수 있는 키가 아닙니다/);
+  assert.deepEqual(calls, []);
   await close();
 });
 

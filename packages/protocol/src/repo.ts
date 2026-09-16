@@ -160,11 +160,17 @@ export interface RepoStatus {
   /** The preview port the repo's `colo-design.json` declares. */
   previewPort: number | null;
   /**
+   * Extra origins the repo allows the preview to open
+   * (`colo-design.json` preview.origins) — 스토리북 같은 같은 레포의 다른
+   * 로컬 서버. 비어 있으면 previewUrl 하나뿐이다.
+   */
+  previewOrigins: string[];
+  /**
    * Which server process answers at `previewUrl` — a new number every time
    * the preview is started. The desktop keeps a page per preview across
    * project switches; a page loaded under an earlier epoch is stale (the
    * server was restarted, or the port fence handed the port to another
-   * project) and reloads on its return instead of showing the old app.
+   * project) and reloads instead of trusting what it kept.
    */
   previewEpoch: number | null;
   /** Configured remote url, without any embedded credentials. */

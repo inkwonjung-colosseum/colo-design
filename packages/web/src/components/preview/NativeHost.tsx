@@ -20,6 +20,7 @@ import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 export function NativeHost({
   url,
   epoch,
+  origins,
   target,
   reloadKey,
   width,
@@ -36,6 +37,8 @@ export function NativeHost({
   url: string;
   /** The server process behind `url` (RepoStatus.previewEpoch) — a kept page under a new one reloads. */
   epoch: number | null;
+  /** Extra origins the repo allows the pane to open (RepoStatus.previewOrigins). */
+  origins?: string[];
   /** The last ask — a screen rides the bridge, a path rides `open`. */
   target: PreviewTarget | null;
   reloadKey: number;
@@ -111,9 +114,9 @@ export function NativeHost({
   useEffect(() => {
     if (!url) return;
     setFreeze(null);
-    void window.coloDesignDesktop?.preview?.mount?.(url, epoch);
+    void window.coloDesignDesktop?.preview?.mount?.(url, epoch, origins);
     return () => void window.coloDesignDesktop?.preview?.unmount?.();
-  }, [url, epoch]);
+  }, [url, epoch, origins]);
 
   // The last ask re-rides on every change — the prop IS the ask.
   useEffect(() => {

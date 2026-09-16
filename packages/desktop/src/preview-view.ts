@@ -132,6 +132,15 @@ function sameOrigin(url: string, origin: string | null): boolean {
   }
 }
 
+/** The origin of a url, or "" when it does not parse — never throws. */
+function safeOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
 /**
  * The only origins this view may ever show: the daemon's loopback preview
  * servers. The renderer names urls, this decides — a compromised renderer
@@ -222,6 +231,13 @@ export class PlannerPreviewView {
   ) {}
 
   /**
+   * Extra origins the repo allows (`colo-design.json` preview.origins),
+   * refreshed by every mount — a project switch rewrites the list with the
+   * page. Empty means the pane shows the preview server alone.
+   */
+  private allowedOrigins: string[] = [];
+
+  /**
    * Puts the page for a serving preview url on screen. A page the pane kept
    * from an earlier visit comes back exactly where the planner left it — no
    * load, the switch costs a repaint. A page the pane has not met is created
@@ -232,9 +248,10 @@ export class PlannerPreviewView {
    * effect (a repo status flap remounts the pane), and a reload to the root
    * would throw away where the planner had navigated.
    */
-  mount(url: string, epoch: number | null): void {
-    if (!loopbackHttp(url)) return;
+  mount(url: string, epoch: number | null, origins?: string[]): void {
+    this.allowedOrigins = origins ?? [];
     const origin = new URL(url).origin;
+    if (!loopbackHttp(url) && !this.allowedOrigins.includes(origin)) return;
     const current = this.page;
     if (current && current.origin === origin && this.attached(current)) {
       this.refresh(current, url, epoch);
@@ -343,7 +360,8 @@ export class PlannerPreviewView {
     }
   }
 
-  /** The address bar's word (D66): any path inside the preview origin. */
+  /** The address bar's word (D66): any path inside the preview origin — or a
+   *  repo-allowed origin, which mounts as its own page. */
   open(path: string): void {
     const page = this.page;
     if (!page) return;
@@ -353,7 +371,12 @@ export class PlannerPreviewView {
     } catch {
       return;
     }
-    if (url.origin !== page.origin) return;
+    if (url.origin !== page.origin) {
+      if (this.allowedOrigins.includes(url.origin)) {
+        this.mount(url.toString(), null, this.allowedOrigins);
+      }
+      return;
+    }
     this.load(page, url.toString());
   }
 
@@ -365,10 +388,6 @@ export class PlannerPreviewView {
   navigate(route: string, state: string | null): void {
     const page = this.page;
     if (!page) return;
-    if (page.bridge === "present") {
-      page.view.webContents.send("colo-overlay:navigate", { route, state });
-      return;
-    }
     let url: URL;
     try {
       url = new URL(route, page.origin);
@@ -377,9 +396,64 @@ export class PlannerPreviewView {
     }
     // open() refuses off-origin urls; a declared screen must not slip past
     // that by carrying an absolute route — the repo owns the screens list.
-    if (url.origin !== page.origin) return;
+    // A repo-allowed origin is the one exception: it mounts as its own page.
+    if (url.origin !== page.origin) {
+      if (this.allowedOrigins.includes(url.origin)) {
+        this.mount(url.toString(), null, this.allowedOrigins);
+      }
+      return;
+    }
+    if (page.bridge === "present") {
+      page.view.webContents.send("colo-overlay:navigate", { route, state });
+      return;
+    }
     if (state) url.searchParams.set("state", state);
     this.load(page, url.toString());
+  }
+
+  /**
+   * The agent's navigation (PanePreviewDriver): a real load, awaited — never
+   * the bridge's client routing, because the driver needs a document it can
+   * wait on. A repo-allowed foreign origin mounts as its own page, same as
+   * `open`. Returns false when the load failed or the url is not allowed.
+   */
+  async driveTo(url: string): Promise<boolean> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    const page = this.page;
+    if (!page) return false;
+    if (parsed.origin !== page.origin) {
+      if (!this.allowedOrigins.includes(parsed.origin)) return false;
+      this.mount(url, null, this.allowedOrigins);
+      const mounted = this.page;
+      if (!mounted || mounted.origin !== parsed.origin) return false;
+      const contents = mounted.view.webContents;
+      if (!contents.isLoading()) return !mounted.failed;
+      return await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 30_000);
+        contents.once("did-finish-load", () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+        contents.once("did-fail-load", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
+      });
+    }
+    page.mountedUrl = url;
+    page.failed = false;
+    try {
+      await page.view.webContents.loadURL(url);
+      return true;
+    } catch {
+      page.failed = true;
+      return false;
+    }
   }
 
   /**
@@ -742,18 +816,22 @@ export class PlannerPreviewView {
   private attach(page: PreviewPage): void {
     const contents = page.view.webContents;
     // The pane is a viewer for this one dev server, never a browser (D66):
-    // windows the page tries to open are denied, same-origin ones absorbed.
+    // windows the page tries to open are denied, same-origin ones absorbed,
+    // repo-allowed origins mounted as their own page.
     contents.setWindowOpenHandler(({ url }) => {
       if (sameOrigin(url, page.origin)) void contents.loadURL(url);
-      else openExternalHttp(url);
+      else if (this.allowedOrigins.includes(safeOrigin(url))) {
+        this.mount(url, null, this.allowedOrigins);
+      } else openExternalHttp(url);
       return { action: "deny" };
     });
-    // Page-initiated main-frame navigation only — `loadURL` and history steps
-    // never fire this (Electron docs), which is why `open()` checks itself.
+
     contents.on("will-navigate", (event, url) => {
       if (!sameOrigin(url, page.origin)) {
         event.preventDefault();
-        openExternalHttp(url);
+        if (this.allowedOrigins.includes(safeOrigin(url))) {
+          this.mount(url, null, this.allowedOrigins);
+        } else openExternalHttp(url);
       }
     });
     contents.on("did-navigate", (_event, url) => {
@@ -907,7 +985,11 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
       return { ok: true };
     }
     const epoch = "epoch" in input && typeof input.epoch === "number" ? input.epoch : null;
-    view.mount(input.url, epoch);
+    const origins =
+      "origins" in input && Array.isArray(input.origins)
+        ? input.origins.filter((origin): origin is string => typeof origin === "string")
+        : [];
+    view.mount(input.url, epoch, origins);
     return { ok: true };
   });
   ipcMain.handle("preview:unmount", () => {

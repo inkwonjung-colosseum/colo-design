@@ -74,6 +74,7 @@ type PreviewWidth = "mobile" | "tablet" | "desktop";
 export function PreviewHost({
   url,
   epoch = null,
+  origins,
   stopped,
   stoppedDetail,
   onRestart,
@@ -99,6 +100,8 @@ export function PreviewHost({
   url: string | null;
   /** The server process behind `url` (RepoStatus.previewEpoch); the native page reloads under a new one. */
   epoch?: number | null;
+  /** Extra origins the repo allows the pane to open (RepoStatus.previewOrigins). */
+  origins?: string[];
   /** The preview server died after being ready; the pane would show nothing. */
   stopped: boolean;
   /** Why it is not running, in the daemon's own words. */
@@ -847,6 +850,7 @@ export function PreviewHost({
             <NativeHost
               url={url}
               epoch={epoch}
+              origins={origins}
               target={target}
               reloadKey={reloadNonce}
               width={width}

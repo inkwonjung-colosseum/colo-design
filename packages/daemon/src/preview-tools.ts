@@ -104,7 +104,18 @@ export interface PreviewDriver {
 }
 
 export interface PreviewDriverFactory {
-  for(baseUrl: string): PreviewDriver;
+  /**
+   * `baseUrl` is the preview server; `allowedOrigins` are the extra origins
+   * the repo declared (`colo-design.json` preview.origins) that this window
+   * may also open. The session's driver — the pane when one is on screen.
+   */
+  for(baseUrl: string, allowedOrigins?: string[]): PreviewDriver;
+  /**
+   * A driver for verification work (the screen gate, handoff captures) —
+   * always an isolated window, never the pane the session is driving:
+   * re-opening the session's own screen would contaminate the check.
+   */
+  forIsolated(baseUrl: string, allowedOrigins?: string[]): PreviewDriver;
 }
 
 /** What a session receives when preview tools are on. */
@@ -190,7 +201,8 @@ interface PreviewZod {
   string(): PreviewZodType;
   number(): PreviewZodType;
   boolean(): PreviewZodType;
-  object(shape: Record<string, PreviewZodType>): unknown;
+  object(shape: Record<string, PreviewZodType>): PreviewZodType;
+  array(item: PreviewZodType): PreviewZodType;
 }
 
 function loadZod(): PreviewZod | null {
@@ -228,12 +240,14 @@ const createServer = createSdkMcpServer as unknown as (options: {
 
 const SERVER_INSTRUCTIONS =
   "미리보기 화면을 다룰 때는 screen_list 로 화면과 상태를 확인하고, " +
-  "screen_open 으로 연 뒤 screen_read 로 읽으십시오. screen_read 가 주는 " +
-  "[e12] 같은 ref 로 누르고(screen_click) 입력합니다(screen_type) — ref 는 " +
-  "다음 screen_read·screen_open 까지만 삽니다. 사진(screen_screenshot)의 값은 " +
-  "픽셀 수라서, 되도록 ref 를 주어 그 요소만 찍고 size 는 기본(작게)으로 " +
-  "두십시오. 글자나 레이블을 확인하려는 것이라면 사진보다 screen_read 가 " +
-  "정확하고 거의 공짜입니다.";
+  "screen_open 으로 엽니다. screen_open 과 누르기·입력 도구는 결과에 화면의 " +
+  "접근성 트리를 함께 돌려주므로, 액션 뒤에 screen_read 를 다시 부르지 " +
+  "마십시오 — 트리의 [e12] 같은 ref 로 누르고(screen_click) 입력합니다" +
+  "(screen_type). 이어지는 여러 스텝은 screen_do 로 한 번에 묶으십시오. " +
+  "ref 는 다음 트리까지 삽니다 — 트리는 액션 결과와 screen_read·screen_open " +
+  "이 새로 냅니다. 사진(screen_screenshot)의 값은 픽셀 수라서, 되도록 ref 를 " +
+  "주어 그 요소만 찍고 size 는 기본(작게)으로 두십시오. 글자나 레이블을 " +
+  "확인하려는 것이라면 사진보다 트리가 정확하고 거의 공짜입니다.";
 
 // ---------------------------------------------------------------------------
 // The accessibility outline
@@ -349,6 +363,34 @@ export function createPreviewTools(
   });
 
   /**
+   * An action's answer is the headline PLUS the fresh tree — the model's next
+   * look is already paid for, so look-act-look collapses to look-act. The
+   * tree call also mints the next ref generation, so the refs in this answer
+   * are the ones the following action may use. A tree that fails to come back
+   * degrades to the headline alone: the action already landed, and hiding it
+   * behind a read error would lie about what happened.
+   */
+  const withTree = async (headline: string, isError = false): Promise<PreviewToolResult> => {
+    try {
+      const tree = serializeAxTree(await driver.axTree(), true);
+      return {
+        content: [{ type: "text", text: `${headline}\n\n${tree}` }],
+        ...(isError ? { isError: true } : {}),
+      };
+    } catch {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${headline}\n\n화면을 다시 읽지 못했습니다 — screen_read 로 확인하십시오.`,
+          },
+        ],
+        ...(isError ? { isError: true } : {}),
+      };
+    }
+  };
+
+  /**
    * A driver's refusal — a stale ref, an element that is not there, a window
    * that died — is the model's to read and act on, not an MCP transport
    * error. Every handler goes through here.
@@ -395,7 +437,7 @@ export function createPreviewTools(
     ),
     defineTool(
       "screen_open",
-      "미리보기에서 화면을 연다. route 와 state 는 screen_list 의 값을 그대로 쓴다. state 를 생략하면 화면의 기본 상태다. viewport(mobile·tablet·desktop)와 colorScheme(light·dark)은 다음 screen_open 까지 유지된다.",
+      "미리보기에서 화면을 연다. route 와 state 는 screen_list 의 값을 그대로 쓴다 — 레포가 허용한 다른 서버의 절대 주소도 열린다. state 를 생략하면 화면의 기본 상태다. viewport(mobile·tablet·desktop)와 colorScheme(light·dark)은 다음 screen_open 까지 유지된다. 결과에 화면의 트리가 함께 온다.",
       {
         route: zod.string(),
         state: zod.string().optional(),
@@ -428,7 +470,7 @@ export function createPreviewTools(
         onOpened?.(route, state);
         const where = state ? `${route} · ${state} 상태` : route;
         const head = `${where} 을(를) 열었습니다 (${nextViewport} · ${nextScheme}).`;
-        return text(
+        return withTree(
           result.settled
             ? head
             : `${head}\n화면의 상태 표식을 확인하지 못했습니다 — 아직 그려지는 중일 수 있습니다.`,
@@ -472,7 +514,7 @@ export function createPreviewTools(
     ),
     defineTool(
       "screen_click",
-      "화면의 요소를 누른다. screen_read 가 준 ref 가 가장 정확하다. ref 대신 text(보이는 글자)나 selector(CSS)도 쓸 수 있다.",
+      "화면의 요소를 누른다. screen_read 가 준 ref 가 가장 정확하다. ref 대신 text(보이는 글자)나 selector(CSS)도 쓸 수 있다. 결과에 눌린 뒤의 화면 트리가 함께 온다.",
       {
         ref: zod.string().optional(),
         text: zod.string().optional(),
@@ -490,12 +532,12 @@ export function createPreviewTools(
           ...(textTarget ? { text: textTarget } : {}),
           ...(selector ? { selector } : {}),
         });
-        return text(`눌렀습니다: ${ref ?? textTarget ?? selector}`);
+        return withTree(`눌렀습니다: ${ref ?? textTarget ?? selector}`);
       }),
     ),
     defineTool(
       "screen_type",
-      "입력란에 글자를 넣는다. ref 를 주면 그 요소를 먼저 누르고 입력하고, 생략하면 지금 포커스된 곳에 넣는다. clear 를 true 로 주면 있던 값을 지우고 쓴다.",
+      "입력란에 글자를 넣는다. ref 를 주면 그 요소를 먼저 누르고 입력하고, 생략하면 지금 포커스된 곳에 넣는다. clear 를 true 로 주면 있던 값을 지우고 쓴다. 결과에 입력 뒤의 화면 트리가 함께 온다.",
       { ref: zod.string().optional(), text: zod.string(), clear: zod.boolean().optional() },
       guard(async (args) => {
         const value = typeof args.text === "string" ? args.text : null;
@@ -506,12 +548,12 @@ export function createPreviewTools(
           text: value,
           ...(args.clear === true ? { clear: true } : {}),
         });
-        return text(`입력했습니다${ref ? ` (${ref})` : ""}: ${value}`);
+        return withTree(`입력했습니다${ref ? ` (${ref})` : ""}: ${value}`);
       }),
     ),
     defineTool(
       "screen_press",
-      `키 하나를 누른다. 쓸 수 있는 키: ${PRESS_KEYS.join(", ")}. 글자를 넣을 때는 screen_type 을 쓴다.`,
+      `키 하나를 누른다. 쓸 수 있는 키: ${PRESS_KEYS.join(", ")}. 글자를 넣을 때는 screen_type 을 쓴다. 결과에 누른 뒤의 화면 트리가 함께 온다.`,
       { key: zod.string() },
       guard(async (args) => {
         const key = str(args, "key");
@@ -519,30 +561,122 @@ export function createPreviewTools(
           return fail(`쓸 수 있는 키가 아닙니다 — ${PRESS_KEYS.join(", ")} 중 하나입니다.`);
         }
         await driver.press(key);
-        return text(`눌렀습니다: ${key}`);
+        return withTree(`눌렀습니다: ${key}`);
       }),
     ),
     defineTool(
       "screen_scroll",
-      "화면을 굴린다. ref 를 주면 그 요소가 보이도록 옮기고, dy 를 주면 그만큼(양수는 아래로) 굴린다.",
+      "화면을 굴린다. ref 를 주면 그 요소가 보이도록 옮기고, dy 를 주면 그만큼(양수는 아래로) 굴린다. 결과에 굴린 뒤의 화면 트리가 함께 온다.",
       { ref: zod.string().optional(), dy: zod.number().optional() },
       guard(async (args) => {
         const ref = str(args, "ref");
         const dy = typeof args.dy === "number" && Number.isFinite(args.dy) ? args.dy : 0;
         if (!ref && dy === 0) return fail("ref 나 0 이 아닌 dy 중 하나는 필요합니다.");
         await driver.scroll({ ...(ref ? { ref } : {}), dy });
-        return text(ref ? `${ref} 가 보이도록 옮겼습니다.` : `${dy}px 굴렸습니다.`);
+        return withTree(ref ? `${ref} 가 보이도록 옮겼습니다.` : `${dy}px 굴렸습니다.`);
       }),
     ),
     defineTool(
       "screen_hover",
-      "요소 위에 마우스를 올린다 — 툴팁이나 hover 상태를 볼 때 쓴다. ref 는 screen_read 의 값이다.",
+      "요소 위에 마우스를 올린다 — 툴팁이나 hover 상태를 볼 때 쓴다. ref 는 screen_read 의 값이다. 결과에 올린 뒤의 화면 트리가 함께 오므로, 툴팁이 트리에 잡혔는지 바로 확인할 수 있다.",
       { ref: zod.string() },
       guard(async (args) => {
         const ref = str(args, "ref");
         if (!ref) return fail("ref 가 필요합니다 — screen_read 의 값을 쓰십시오.");
         await driver.hover({ ref });
-        return text(`올렸습니다: ${ref}`);
+        return withTree(`올렸습니다: ${ref}`);
+      }),
+    ),
+    defineTool(
+      "screen_do",
+      "이어지는 액션 여러 개를 한 번에 실행한다 — 폼 채우기처럼 순서가 정해진 흐름에 쓴다. 각 스텝은 { click: ref } · { type: { ref?, text, clear? } } · { press: key } · { scroll: { ref?, dy } } · { hover: ref } 중 정확히 하나. 스텝의 ref 는 이 호출 직전의 트리에서 온 것이어야 한다 — 중간 스텝이 화면을 바꿔 ref 가 죽으면 그 스텝에서 멈춘다. 멈추면 몇 번째 스텝이 왜 실패했는지와 그 시점의 트리를 돌려준다.",
+      {
+        steps: zod.array(
+          zod.object({
+            click: zod.string().optional(),
+            type: zod
+              .object({
+                ref: zod.string().optional(),
+                text: zod.string(),
+                clear: zod.boolean().optional(),
+              })
+              .optional(),
+            press: zod.string().optional(),
+            scroll: zod
+              .object({
+                ref: zod.string().optional(),
+                dy: zod.number().optional(),
+              })
+              .optional(),
+            hover: zod.string().optional(),
+          }),
+        ),
+      },
+      guard(async (args) => {
+        const steps = Array.isArray(args.steps) ? args.steps : null;
+        if (!steps || steps.length === 0) {
+          return fail("steps 에 실행할 스텝을 하나 이상 넣으십시오.");
+        }
+        const STEP_KEYS = ["click", "type", "press", "scroll", "hover"] as const;
+        const runStep = async (step: Record<string, unknown>): Promise<string> => {
+          const named = STEP_KEYS.filter((key) => step[key] !== undefined);
+          if (named.length !== 1) {
+            throw new Error(`스텝은 ${STEP_KEYS.join(" · ")} 중 정확히 하나를 담아야 합니다.`);
+          }
+          if (typeof step.click === "string" && step.click !== "") {
+            await driver.click({ ref: step.click });
+            return `눌렀습니다: ${step.click}`;
+          }
+          if (step.type && typeof step.type === "object") {
+            const input = step.type as { ref?: unknown; text?: unknown; clear?: unknown };
+            if (typeof input.text !== "string") throw new Error("type 스텝에 text 가 필요합니다.");
+            await driver.type({
+              ...(typeof input.ref === "string" && input.ref !== "" ? { ref: input.ref } : {}),
+              text: input.text,
+              ...(input.clear === true ? { clear: true } : {}),
+            });
+            return `입력했습니다: ${input.text}`;
+          }
+          if (typeof step.press === "string") {
+            if (!PRESS_KEYS.includes(step.press as (typeof PRESS_KEYS)[number])) {
+              throw new Error(`쓸 수 있는 키가 아닙니다 — ${PRESS_KEYS.join(", ")} 중 하나입니다.`);
+            }
+            await driver.press(step.press);
+            return `눌렀습니다: ${step.press}`;
+          }
+          if (step.scroll && typeof step.scroll === "object") {
+            const target = step.scroll as { ref?: unknown; dy?: unknown };
+            const dy = typeof target.dy === "number" && Number.isFinite(target.dy) ? target.dy : 0;
+            const ref =
+              typeof target.ref === "string" && target.ref !== "" ? target.ref : undefined;
+            if (!ref && dy === 0)
+              throw new Error("scroll 스텝에 ref 나 0 이 아닌 dy 가 필요합니다.");
+            await driver.scroll({ ...(ref ? { ref } : {}), dy });
+            return ref ? `${ref} 가 보이도록 옮겼습니다.` : `${dy}px 굴렸습니다.`;
+          }
+          if (typeof step.hover === "string" && step.hover !== "") {
+            await driver.hover({ ref: step.hover });
+            return `올렸습니다: ${step.hover}`;
+          }
+          throw new Error(`스텝은 ${STEP_KEYS.join(" · ")} 중 정확히 하나를 담아야 합니다.`);
+        };
+        const done: string[] = [];
+        for (let index = 0; index < steps.length; index += 1) {
+          const step = steps[index];
+          if (!step || typeof step !== "object" || Array.isArray(step)) {
+            return withTree(`${index + 1}번째 스텝이 객체가 아닙니다.`, true);
+          }
+          try {
+            done.push(`${index + 1}. ${await runStep(step as Record<string, unknown>)}`);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            return withTree(
+              `${index + 1}번째 스텝에서 멈췄습니다: ${reason}${done.length > 0 ? `\n\n${done.join("\n")}` : ""}`,
+              true,
+            );
+          }
+        }
+        return withTree(`${steps.length}개 스텝을 모두 실행했습니다.\n\n${done.join("\n")}`);
       }),
     ),
     defineTool(

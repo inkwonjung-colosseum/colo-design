@@ -715,10 +715,13 @@ app.whenReady().then(async () => {
     flatten(nodes).find((node) => node.role === role && node.name.includes(name)) ?? null;
   try {
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
-    const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
+    const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL, [
+      "http://localhost:6006",
+    ]);
     // 선언한 상태의 표식을 기다리므로, 여기서 돌아오면 화면은 자리를 잡았다.
     const opened = await driver.open("/", "기본");
-    // 미리보기 서버 밖의 주소는 열지 않는다 — 조용히 넘어가지 않고 말한다.
+    // 미리보기 서버도 레포가 허용한 서버도 아닌 주소는 열지 않는다 — 조용히
+    // 넘어가지 않고 말한다.
     const refused = await driver.open("https://example.invalid/x", null);
     const windows = BrowserWindow.getAllWindows();
     const hidden = windows.length === 1 && windows.every((w) => !w.isVisible());
@@ -788,6 +791,39 @@ app.whenReady().then(async () => {
     const lines = await driver.consoleLines();
     await driver.destroy();
     const afterWindows = BrowserWindow.getAllWindows().length;
+    // pane 드라이버: 사용자가 보는 pane 의 페이지를 그대로 drive 한다 — 창을
+    // 새로 세우지 않고, 세션이 끝나도 페이지는 사용자의 것이라 살아 있다.
+    const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
+    const paneWindow = new BrowserWindow({ show: true, width: 1280, height: 800 });
+    const pane = new PlannerPreviewView(() => paneWindow);
+    pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null, ["http://localhost:6006"]);
+    pane.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    const paneDriver = createPreviewDriverFactory(() => paneWindow, () => pane).for(
+      process.env.COLO_DRIVER_UNIT_URL,
+      ["http://localhost:6006"],
+    );
+    const paneOpened = await paneDriver.open("/", "기본");
+    let paneNodes = [];
+    for (let i = 0; i < 15; i++) {
+      paneNodes = await paneDriver.axTree();
+      if (findRef(paneNodes, "button", "나를 눌러")) break;
+      await sleep(200);
+    }
+    const paneButton = findRef(paneNodes, "button", "나를 눌러");
+    let paneClicked = false;
+    if (paneButton) {
+      await paneDriver.click({ ref: paneButton.ref });
+      await sleep(400);
+      const paneAfter = await paneDriver.axTree();
+      paneClicked =
+        !!findRef(paneAfter, "paragraph", "눌렀다") ||
+        !!findRef(paneAfter, "StaticText", "눌렀다");
+    }
+    const paneShot = await paneDriver.screenshot({ longEdge: 600 });
+    await paneDriver.destroy();
+    const paneContents = pane.webContents();
+    const panePageAlive = paneContents !== null && !paneContents.isDestroyed();
+    paneWindow.destroy();
     answer({
       openedOk: opened && opened.ok === true,
       openedSettled: opened && opened.settled === true,
@@ -807,6 +843,12 @@ app.whenReady().then(async () => {
       consoleHasError: lines.some((line) => line.text.includes("콘솔 오류")),
       consoleHasNet: lines.some((line) => line.level === "net"),
       windowDestroyed: afterWindows === 0,
+      paneOpenedOk: paneOpened && paneOpened.ok === true,
+      paneHasButton: !!paneButton,
+      paneClicked,
+      paneShotOk:
+        !!paneShot && paneShot.mediaType === "image/webp" && paneShot.data.startsWith("UklGR"),
+      panePageAlive,
     });
   } catch (error) {
     answer({ error: error && error.message ? error.message : String(error) });
@@ -823,6 +865,7 @@ async function runDriverUnit(url) {
       ...process.env,
       COLO_DESIGN_DESKTOP_UNIT: "1",
       COLO_DRIVER_UNIT_MAIN: pathToFileURL(join(here, "..", "dist", "main.js")).href,
+      COLO_DRIVER_UNIT_VIEW: pathToFileURL(join(here, "..", "dist", "preview-view.js")).href,
       COLO_DRIVER_UNIT_URL: url,
       ELECTRON_DISABLE_SECURITY_WARNINGS: "1",
     },
@@ -875,12 +918,18 @@ test("미리보기 드라이버: 숨은 창, 거절하는 open, ref 로 읽고 �
     // 선언한 상태의 표식을 기다렸으므로 열림은 자리를 잡은 열림이다.
     assert.equal(result.openedOk, true);
     assert.equal(result.openedSettled, true);
-    // 미리보기 서버 밖의 주소는 "열었습니다" 가 아니라 거절이다 — 조용히
+    // 허용 목록 밖의 주소는 "열었습니다" 가 아니라 거절이다 — 조용히
     // 넘어가면 도구가 모델에게 거짓말을 한다.
     assert.equal(result.refusedOk, true);
-    assert.match(result.refusedReason, /미리보기 서버 밖/);
+    assert.match(result.refusedReason, /허용되지 않은 서버/);
     // 폭 에뮬레이션은 페이지가 스스로 읽은 innerWidth 로만 증명된다.
     assert.equal(result.mobileWidth, 390);
+    // pane 드라이버: 같은 WebContents 를 drive 하고, 세션이 끝나도 페이지는 산다.
+    assert.equal(result.paneOpenedOk, true);
+    assert.equal(result.paneHasButton, true);
+    assert.equal(result.paneClicked, true);
+    assert.equal(result.paneShotOk, true);
+    assert.equal(result.panePageAlive, true);
     // 접근성 트리 · 클릭 · 콘솔 다리는 오프스크린 AX 합성 시점에 좌우된다 —
     // 핵심(숨은 창 + 진짜 JPEG + 거절 + 폭)은 여기서, 나머지는 desktop-smoke
     // 로 (PLAN §8 5단계).
