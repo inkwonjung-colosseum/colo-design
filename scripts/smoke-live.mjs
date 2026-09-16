@@ -17,7 +17,7 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
-await page.goto("http://127.0.0.1:5273/");
+await page.goto("http://127.0.0.1:29173/");
 await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(url);
 await page.getByRole("button", { name: "연결" }).click();
 await page.waitForSelector(".planner", { timeout: 15000 });

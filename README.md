@@ -247,10 +247,10 @@ pnpm build
 pnpm dev:daemon        # … client url: ws://127.0.0.1:7823?token=…
 
 # 터미널 2
-pnpm dev:web           # http://127.0.0.1:5273
+pnpm dev:web           # http://127.0.0.1:29173
 ```
 
-`dev:daemon`(7823) · `dev:web`(5273) · `dev:desktop`(5273) 은 시작 직전
+`dev:daemon`(7823) · `dev:web`(29173) · `dev:desktop`(29173) 은 시작 직전
 `scripts/free-port.mjs` 로 자기 포트를 먼저 확보한다 — 예전 실행이 남긴 좀비
 리스너는 강제로 종료되므로, 포트가 겹쳐서 시작이 실패하는 일은 없다.
 
@@ -266,7 +266,7 @@ git · GitHub 토큰 셋을 지나 `시작하기` 를 누르면, 프로젝트가
 
 ```bash
 # 빠른 고리 — 웹은 vite 가 주고(HMR), 데몬은 앱 안에 그대로 있다.
-# 시작할 때 5273 을 먼저 확보한다 — 이미 도는 dev:web 이 있으면 그것을
+# 시작할 때 29173 을 먼저 확보한다 — 이미 도는 dev:web 이 있으면 그것을
 # 끄고 이 실행이 새 vite 를 띄운다.
 pnpm dev:desktop
 

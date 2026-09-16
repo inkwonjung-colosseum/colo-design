@@ -26,7 +26,7 @@ const repo = join(desktop, "..", "..");
 const shell = process.platform === "win32";
 
 /** vite 개발 서버 주소 — 포트는 packages/web/vite.config.ts 의 strictPort 와 같다. */
-const DEFAULT_DEV_SERVER = "http://127.0.0.1:5273";
+const DEFAULT_DEV_SERVER = "http://127.0.0.1:29173";
 const DEV_SERVER = process.env.COLO_DESIGN_DEV_SERVER ?? DEFAULT_DEV_SERVER;
 const hmr = process.argv.includes("--hmr");
 

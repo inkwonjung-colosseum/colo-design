@@ -46,5 +46,5 @@ export default defineConfig({
   // Bind IPv4 explicitly. The default `localhost` resolves to ::1 only on
   // macOS, which makes the app unreachable at 127.0.0.1 while the daemon,
   // which binds 127.0.0.1, is reachable. Matching them avoids confusion.
-  server: { host: "127.0.0.1", port: 5273, strictPort: true },
+  server: { host: "127.0.0.1", port: 29173, strictPort: true },
 });
