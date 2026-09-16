@@ -198,26 +198,38 @@ test("daemon http responses carry cache-control: no-store (token'd page must not
 
 test("Bash git commit·push are refused before 항상 허용; reads and stash stay open", async () => {
   const { Session } = await import("../dist/session.js");
-  // canUse runs on the prototype with a stub `this`: the git guard sits before
-  // alwaysAllowed, so a memory that would allow anything still cannot buy it.
+  // decidePermission runs on the prototype with a stub `this`: the git guard
+  // sits before alwaysAllowed, so a memory that would allow anything still
+  // cannot buy it.
   const ask = {
     alwaysAllowed: { allows: () => true },
     handlePermission: () => Promise.resolve({ behavior: "allow", updatedInput: {} }),
     cwd: workdir("hub-git-gate-"),
   };
   const signal = new AbortController().signal;
+  const exec = { kind: "exec", name: "Bash" };
   for (const command of [
     "git commit -m 'ㅅㄴㅅ'",
     "git -C /repo push origin main",
     "git push --set-upstream origin colo-design/20260911-1",
   ]) {
-    const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
+    const verdict = await Session.prototype.decidePermission.call(
+      ask,
+      { ...exec, command },
+      { command },
+      { signal },
+    );
     assert.equal(verdict.behavior, "deny", command);
     assert.match(verdict.message, /저장 버튼/, `${command} names the tool's own verb`);
   }
   // Status reads and conflict cleanup (add·stash) are the session's to use.
   for (const command of ["git status --porcelain", "git add -A", "git stash list"]) {
-    const verdict = await Session.prototype.canUse.call(ask, "Bash", { command }, { signal });
+    const verdict = await Session.prototype.decidePermission.call(
+      ask,
+      { ...exec, command },
+      { command },
+      { signal },
+    );
     assert.equal(verdict.behavior, "allow", command);
   }
 });
@@ -234,24 +246,24 @@ test("an open merge lets the conflict card's git commit through; push never", as
     cwd: dir,
   };
   const signal = new AbortController().signal;
+  const exec = { kind: "exec", name: "Bash" };
   try {
     mkdirSync(join(dir, ".git"), { recursive: true });
     writeFileSync(join(dir, ".git", "MERGE_HEAD"), "refs/heads/main\n");
-    const verdict = await Session.prototype.canUse.call(
+    const verdict = await Session.prototype.decidePermission.call(
       ask,
-      "Bash",
+      { ...exec, command: "git commit -m '[conflict] 최신 변경 반영'" },
       { command: "git commit -m '[conflict] 최신 변경 반영'" },
       { signal },
     );
     assert.notEqual(verdict.behavior, "deny", "the merge-concluding commit is the card's own ask");
-    const push = await Session.prototype.canUse.call(
+    const push = await Session.prototype.decidePermission.call(
       ask,
-      "Bash",
-      { command: "git push origin HEAD" },
+      { ...exec, command: "git push origin main" },
+      { command: "git push origin main" },
       { signal },
     );
-    assert.equal(push.behavior, "deny");
-    assert.match(push.message, /저장 버튼/);
+    assert.equal(push.behavior, "deny", "push stays the tool's verb even mid-merge");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

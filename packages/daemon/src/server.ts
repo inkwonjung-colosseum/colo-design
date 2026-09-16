@@ -8,6 +8,12 @@ import {
   type ServerMessage,
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
+import { AcpDriver } from "./agent/drivers/acp/driver.js";
+import { OPENCODE_ACP } from "./agent/drivers/acp/opencode.js";
+import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
+import { CodexDriver } from "./agent/drivers/codex/driver.js";
+import { OmpDriver } from "./agent/drivers/omp/omp.js";
+import { DriverRegistry } from "./agent/registry.js";
 import {
   type CredentialStore,
   createCredentialStore,
@@ -124,6 +130,7 @@ export class DaemonServer {
   private readonly github: GitHubBridge;
   private http: Server | null = null;
   private wss: WebSocketServer | null = null;
+  private readonly agentDrivers = new DriverRegistry();
   private claudeExecutable: string | null = null;
   /**
    * How many 화면 turns each session has started (PLAN D52). The number is
@@ -187,98 +194,106 @@ export class DaemonServer {
         for (const workspaces of this.fleet.workspaces.values()) workspaces.repo.setPat(pat);
       },
     });
-    this.manager = new SessionManager({
-      onEvent: (sessionId, event) => {
-        this.broadcast({ type: "session.event", sessionId, event });
-        // 한도가 움직였다 (PLAN D100): 요금 칩이 2분 뒤에야 진실을 말하면,
-        // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다.
-        if (event.kind === "ratelimit") {
-          this.plans.noteRateLimit();
-          return;
-        }
-        // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
-        // must never hold the turn hostage — a failed checkpoint only means
-        // one fewer 되돌리기, so it runs alongside and keeps its failure to
-        // itself. A session the planner never sent into has no count, and
-        // none of its machine turns starts one.
-        if (event.kind !== "user.echo") return;
-        const turn = this.checkpointTurns.get(sessionId);
-        if (turn === undefined) return;
-        this.checkpointTurns.set(sessionId, turn + 1);
-        void this.repo.checkpoint(sessionId, turn + 1).catch(() => undefined);
-      },
-      onState: (sessionId, state, detail) => {
-        // 파일 로그의 뼈대: 턴이 언제 시작해 언제 어떤 상태로 내려앉았는지.
-        this.logger.info("세션 상태", { sessionId, state, ...(detail ? { detail } : {}) });
-        // 완료 알림에 태울 턴의 길이: running 진입에 시계를 놓고 idle 에서 회수한다.
-        // 대기 뒤 재개는 시계를 다시 놓는다 — 그때의 일이 그때의 완료를 말한다.
-        // (화면의 진행 시계는 다른 질문에 답한다 — 아래 `startedAt` 을 보라.)
-        let turnDurationMs: number | undefined;
-        if (state === "running") {
-          this.notifyClockAt.set(sessionId, Date.now());
-          // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 연 화면을 다시
-          // 판정하면 고치지도 않은 화면을 Claude 에게 떠넘기게 된다.
-          this.drivers.openedThisTurn.delete(sessionId);
-        } else if (state === "idle") {
-          const startedAt = this.notifyClockAt.get(sessionId);
-          this.notifyClockAt.delete(sessionId);
-          turnDurationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
-        } else if (state === "closed") {
-          this.notifyClockAt.delete(sessionId);
-        }
-        // 진행 시계 (화면의 `n분 n초`): 시작을 창이 아니라 세션이 들고 있으므로
-        // 새로고침해도 두 번째 창에서도 같은 초를 센다. 도는 턴이 없는 세션의
-        // 시계는 null 이라 그 상태에는 붙지 않는다.
-        const startedAt = this.manager.get(sessionId)?.turnStartedAt ?? null;
-        this.broadcast({
-          type: "session.state",
-          sessionId,
-          state,
-          ...(detail ? { detail } : {}),
-          ...(startedAt === null ? {} : { startedAt }),
-        });
-        // A turn that just finished is the one moment the clone can have
-        // gained files nobody has saved (PLAN D8). Counting here — rather
-        // than on a timer — is what lets the top bar say 저장 the instant
-        // Claude stops, and say nothing at all while it is still writing.
-        // The count belongs to the session's OWN project, not the active
-        // one: a turn finishing in B while the planner reads A must move
-        // B's number (D14).
-        if (state !== "running") {
-          void this.workspaceOfSession(sessionId)?.repo.refreshPendingChanges();
-        }
-        // The tree's child row reads this session's state (PLAN D59): the
-        // clone's threads are stale the moment it moves.
-        const sessionWorkspaces = this.workspaceOfSession(sessionId);
-        if (sessionWorkspaces) {
-          this.manager.invalidateThreads(realpathBestEffort(sessionWorkspaces.paths.repoRoot));
-          this.refreshThreads();
-        }
-        // 턴이 화면을 열어 봤다면 완료 알림은 게이트의 판정 뒤로 미룬다
-        // (runScreenGate 가 둘 중 하나를 내보낸다). 여기서 먼저 부르면
-        // 사용자는 `작업이 끝났습니다` 를 읽은 직후 다시 도는 대화를 본다.
-        if (state === "idle" && this.drivers.gatePossible(sessionId)) {
-          void this.drivers.runGate(sessionId, turnDurationMs);
-        } else {
-          const notice = noticeForState(
+    this.agentDrivers.register(new ClaudeDriver(() => this.claudeExecutable));
+    this.agentDrivers.register(new CodexDriver());
+    this.agentDrivers.register(new AcpDriver(OPENCODE_ACP));
+    this.agentDrivers.register(new OmpDriver());
+    this.manager = new SessionManager(
+      {
+        onEvent: (sessionId, event) => {
+          this.broadcast({ type: "session.event", sessionId, event });
+          // 한도가 움직였다 (PLAN D100): 요금 칩이 2분 뒤에야 진실을 말하면,
+          // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다.
+          if (event.kind === "ratelimit") {
+            this.plans.noteRateLimit();
+            return;
+          }
+          // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
+          // must never hold the turn hostage — a failed checkpoint only means
+          // one fewer 되돌리기, so it runs alongside and keeps its failure to
+          // itself. A session the planner never sent into has no count, and
+          // none of its machine turns starts one.
+          if (event.kind !== "user.echo") return;
+          const turn = this.checkpointTurns.get(sessionId);
+          if (turn === undefined) return;
+          this.checkpointTurns.set(sessionId, turn + 1);
+          void this.repo.checkpoint(sessionId, turn + 1).catch(() => undefined);
+        },
+        onState: (sessionId, state, detail) => {
+          // 파일 로그의 뼈대: 턴이 언제 시작해 언제 어떤 상태로 내려앉았는지.
+          this.logger.info("세션 상태", { sessionId, state, ...(detail ? { detail } : {}) });
+          // 완료 알림에 태울 턴의 길이: running 진입에 시계를 놓고 idle 에서 회수한다.
+          // 대기 뒤 재개는 시계를 다시 놓는다 — 그때의 일이 그때의 완료를 말한다.
+          // (화면의 진행 시계는 다른 질문에 답한다 — 아래 `startedAt` 을 보라.)
+          let turnDurationMs: number | undefined;
+          if (state === "running") {
+            this.notifyClockAt.set(sessionId, Date.now());
+            // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 연 화면을 다시
+            // 판정하면 고치지도 않은 화면을 Claude 에게 떠넘기게 된다.
+            this.drivers.openedThisTurn.delete(sessionId);
+          } else if (state === "idle") {
+            const startedAt = this.notifyClockAt.get(sessionId);
+            this.notifyClockAt.delete(sessionId);
+            turnDurationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
+          } else if (state === "closed") {
+            this.notifyClockAt.delete(sessionId);
+          }
+          // 진행 시계 (화면의 `n분 n초`): 시작을 창이 아니라 세션이 들고 있으므로
+          // 새로고침해도 두 번째 창에서도 같은 초를 센다. 도는 턴이 없는 세션의
+          // 시계는 null 이라 그 상태에는 붙지 않는다.
+          const startedAt = this.manager.get(sessionId)?.turnStartedAt ?? null;
+          this.broadcast({
+            type: "session.state",
             sessionId,
             state,
-            this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
-            turnDurationMs,
-          );
-          if (notice) this.config.onNotice?.(notice);
-        }
-        // The driver a session received dies with the session (PLAN D61):
-        // close, delete, remove, and daemon stop all land here as `closed`.
-        if (state === "closed") {
-          this.drivers.destroy(sessionId);
-          this.drivers.openedThisTurn.delete(sessionId);
-          this.drivers.gatedSessions.delete(sessionId);
-        }
+            ...(detail ? { detail } : {}),
+            ...(startedAt === null ? {} : { startedAt }),
+          });
+          // A turn that just finished is the one moment the clone can have
+          // gained files nobody has saved (PLAN D8). Counting here — rather
+          // than on a timer — is what lets the top bar say 저장 the instant
+          // Claude stops, and say nothing at all while it is still writing.
+          // The count belongs to the session's OWN project, not the active
+          // one: a turn finishing in B while the planner reads A must move
+          // B's number (D14).
+          if (state !== "running") {
+            void this.workspaceOfSession(sessionId)?.repo.refreshPendingChanges();
+          }
+          // The tree's child row reads this session's state (PLAN D59): the
+          // clone's threads are stale the moment it moves.
+          const sessionWorkspaces = this.workspaceOfSession(sessionId);
+          if (sessionWorkspaces) {
+            this.manager.invalidateThreads(realpathBestEffort(sessionWorkspaces.paths.repoRoot));
+            this.refreshThreads();
+          }
+          // 턴이 화면을 열어 봤다면 완료 알림은 게이트의 판정 뒤로 미룬다
+          // (runScreenGate 가 둘 중 하나를 내보낸다). 여기서 먼저 부르면
+          // 사용자는 `작업이 끝났습니다` 를 읽은 직후 다시 도는 대화를 본다.
+          if (state === "idle" && this.drivers.gatePossible(sessionId)) {
+            void this.drivers.runGate(sessionId, turnDurationMs);
+          } else {
+            const notice = noticeForState(
+              sessionId,
+              state,
+              this.manager.get(sessionId)?.title ?? NEW_SESSION_TITLE,
+              turnDurationMs,
+            );
+            if (notice) this.config.onNotice?.(notice);
+          }
+          // The driver a session received dies with the session (PLAN D61):
+          // close, delete, remove, and daemon stop all land here as `closed`.
+          if (state === "closed") {
+            this.drivers.destroy(sessionId);
+            this.drivers.openedThisTurn.delete(sessionId);
+            this.drivers.gatedSessions.delete(sessionId);
+          }
+        },
+        onPermissionRequest: (payload) =>
+          this.broadcast({ type: "permission.request", ...payload }),
+        onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
       },
-      onPermissionRequest: (payload) => this.broadcast({ type: "permission.request", ...payload }),
-      onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
-    });
+      this.agentDrivers,
+    );
     this.plans = new PlanTracker({
       idleSession: () =>
         [...this.manager.all()]
@@ -321,7 +336,7 @@ export class DaemonServer {
     this.fleet = new ProjectFleet({
       registry: this.registry,
       manager: this.manager,
-      drivers: this.drivers,
+      previewDrivers: this.drivers,
       broadcast: (m) => this.broadcast(m),
       notice: (n) => this.config.onNotice?.(n),
       claudeExecutable: () => this.claudeExecutable,
@@ -339,7 +354,8 @@ export class DaemonServer {
     this.router = new RequestRouter({
       manager: this.manager,
       fleet: this.fleet,
-      drivers: this.drivers,
+      previewDrivers: this.drivers,
+      agentDrivers: this.agentDrivers,
       plans: this.plans,
       github: this.github,
       queueStore: this.queueStore,
@@ -609,9 +625,21 @@ export class DaemonServer {
     // past the card flow — the planner should hear that it did. It rides its
     // own field, not the env warnings: this is news, not a live problem, and
     // the fingerprint lets a client that has read it stay quiet until the
-    // file or the repo changes. The daemon keeps sending it; the client
-    // owns "read".
     const repoSettings = active ? repoSettingsWarning(active.repo.root) : null;
+    const providers = await Promise.all(
+      this.agentDrivers.all().map(async (driver) => {
+        const descriptor = driver.describe();
+        const diagnostic = await driver.isAvailable().catch(() => ({ ok: false }));
+        return {
+          id: descriptor.id,
+          label: descriptor.label,
+          available: diagnostic.ok,
+          modes: descriptor.modes,
+          defaultModeId: descriptor.defaultModeId,
+          capabilities: { ...descriptor.capabilities } as Record<string, unknown>,
+        };
+      }),
+    );
     return {
       ...base,
       repoSettingsWarning: repoSettings,
@@ -619,6 +647,7 @@ export class DaemonServer {
       models: this.plans.models,
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,
+      providers,
     };
   }
 

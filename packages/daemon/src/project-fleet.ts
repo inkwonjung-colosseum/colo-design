@@ -9,6 +9,7 @@ import {
   type ServerMessage,
   type SessionCommand,
 } from "@colo-design/protocol";
+import { probeCommands } from "./agent/drivers/claude/session.js";
 import {
   BOOTSTRAP_BRIEF,
   BOOTSTRAP_TITLE,
@@ -25,7 +26,6 @@ import type { ProjectPaths, ProjectRegistry } from "./projects.js";
 import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { CONFIG_FILE, scopeOf, validateBootstrapOverrides } from "./repo-config.js";
-import { probeCommands } from "./session.js";
 import type { SessionManager } from "./session-manager.js";
 
 /**
@@ -56,7 +56,7 @@ export interface ProjectWorkspaces {
 export interface FleetDeps {
   registry: ProjectRegistry;
   manager: SessionManager;
-  drivers: PreviewDrivers;
+  previewDrivers: PreviewDrivers;
   broadcast(message: ServerMessage): void;
   notice(notice: DaemonNotice): void;
   claudeExecutable(): string | null;
@@ -423,12 +423,13 @@ export class ProjectFleet {
     const instructions = this.projectInstructions(cwd);
     const session = this.deps.manager.create({
       cwd,
-      claudeExecutable: executable,
       queueDiskFor: this.deps.queueDiskFor,
-      ...(instructions ? { appendSystemPrompt: instructions } : {}),
       title: BOOTSTRAP_TITLE,
+      launch: {
+        executable,
+        ...(instructions ? { appendSystemPrompt: instructions } : {}),
+      },
     });
-    this.announceProjectsThrottled();
     session.send(
       markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF),
     );
@@ -482,7 +483,7 @@ export class ProjectFleet {
       // The screens are the OUTGOING repo's declarations (PLAN D7): keeping
       // them would have `screen_list` name routes the incoming app does not
       // serve. The new bridge announces itself and fills this again.
-      this.deps.drivers.clearScreens();
+      this.deps.previewDrivers.clearScreens();
       // The outgoing project keeps the server it HAS but may not start one:
       // its in-flight bring-up (a clone that takes minutes) would otherwise
       // finish late, take the port it declares, and SIGKILL the listener the
@@ -567,7 +568,7 @@ export class ProjectFleet {
       }
       await workspaces.repo.stop();
       // Its sessions' drivers would point their windows at a dead port (PLAN D61).
-      this.deps.drivers.destroyWhere(realpathBestEffort(workspaces.paths.repoRoot));
+      this.deps.previewDrivers.destroyWhere(realpathBestEffort(workspaces.paths.repoRoot));
     }
   }
 

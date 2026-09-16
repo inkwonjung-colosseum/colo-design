@@ -475,6 +475,7 @@ interface DaemonApi {
    * whether the thread gets the colo-preview 도구 at all; 생략은 켬이다.
    */
   createSession: (opts?: {
+    provider?: string;
     resume?: string;
     model?: string;
     effort?: EffortLevel;
@@ -509,6 +510,8 @@ interface DaemonApi {
   setModel: (sessionId: string, model: string | null) => Promise<unknown>;
   setEffort: (sessionId: string, effort: EffortLevel | null) => Promise<unknown>;
   setPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<unknown>;
+  /** The provider's own mode ids (ACP agents) — session.setMode. */
+  setMode: (sessionId: string, mode: string) => Promise<unknown>;
   /** 빠르게 — 같은 모델을 더 빠른 응답으로. 이 세션에만 걸린다. */
   setFastMode: (sessionId: string, fast: boolean) => Promise<unknown>;
   /** @-mention autocomplete, over the connected repo's files. */
@@ -1110,6 +1113,7 @@ export function useDaemon(url: string | null): Daemon {
         call<SessionLocation>({ type: "session.locate", sessionId }, 15_000),
       history: (sessionId: string) => call<ChatEvent[]>({ type: "session.history", sessionId }),
       createSession: (opts?: {
+        provider?: string;
         resume?: string;
         model?: string;
         effort?: EffortLevel;
@@ -1118,6 +1122,7 @@ export function useDaemon(url: string | null): Daemon {
       }) =>
         call<{ sessionId: string }>({
           type: "session.create",
+          ...(opts?.provider ? { provider: opts.provider } : {}),
           ...(opts?.resume ? { resume: opts.resume } : {}),
           ...(opts?.model ? { model: opts.model } : {}),
           ...(opts?.effort ? { effort: opts.effort } : {}),
@@ -1171,6 +1176,9 @@ export function useDaemon(url: string | null): Daemon {
         call({ type: "session.setEffort", sessionId, effort }),
       setPermissionMode: (sessionId: string, mode: PermissionMode) =>
         call({ type: "session.setPermissionMode", sessionId, mode }),
+      /** The provider's own mode ids (ACP agents) — setPermissionMode covers only the Claude enum. */
+      setMode: (sessionId: string, mode: string) =>
+        call({ type: "session.setMode", sessionId, mode }),
       setFastMode: (sessionId: string, fast: boolean) =>
         call({ type: "session.setFastMode", sessionId, fast }),
       respondPermission: (

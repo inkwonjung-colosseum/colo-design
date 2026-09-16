@@ -249,6 +249,7 @@ export function Composer({
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
+  onSetMode,
   onSend,
   onInterrupt,
   onFindFiles,
@@ -354,6 +355,8 @@ export function Composer({
   onSetModel: (model: string | null) => void;
   onSetEffort: (effort: EffortLevel | null) => void;
   onSetPermissionMode: (mode: PermissionMode) => void;
+  /** The provider's own mode ids (ACP agents) — when `selector.modes` is set, the chip calls this instead. */
+  onSetMode?: (mode: string) => void;
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
   /**
@@ -910,9 +913,13 @@ export function Composer({
     },
     {
       key: "mode" as const,
-      // 칩은 사람 말("바로 실행") — 온보딩이 가르친 그 말. CLI 원명은 메뉴
-      // 행의 괄호 안에 산다.
-      label: MODE_LABEL_KO[selector.permissionMode],
+      // The provider's own mode rows (ACP agents) replace the Claude enum —
+      // the chip lists what the driver actually offers.
+      label: selector.modes
+        ? (selector.modes.find((m) => m.id === (selector.mode ?? selector.permissionMode))?.label ??
+          selector.mode ??
+          selector.permissionMode)
+        : MODE_LABEL_KO[selector.permissionMode],
       // The one chip whose glyph says something the label does not: a struck
       // shield is a mode that asks nothing before it acts.
       icon: ASKS_NOTHING.includes(selector.permissionMode) ? (
@@ -924,17 +931,24 @@ export function Composer({
       disabled: false,
       // A mode already set to Bypass still shows as this chip's label, so the
       // planner can read what they are on and step back down.
-      options: SETTINGS_MODES.map((mode) => ({
-        value: mode,
-        label: modeMenuLabel(mode),
-        picked: selector.permissionMode === mode,
-      })),
+      options: selector.modes
+        ? selector.modes.map((m) => ({
+            value: m.id,
+            label: m.label,
+            picked: (selector.mode ?? selector.permissionMode) === m.id,
+          }))
+        : SETTINGS_MODES.map((mode) => ({
+            value: mode,
+            label: modeMenuLabel(mode),
+            picked: selector.permissionMode === mode,
+          })),
     },
   ];
 
   const pickChip = (key: "model" | "effort" | "mode", value: string | null) => {
     if (key === "model") onSetModel(value);
     else if (key === "effort") onSetEffort((value as EffortLevel | null) ?? null);
+    else if (value && selector.modes && onSetMode) onSetMode(value);
     else if (value) onSetPermissionMode(value as PermissionMode);
   };
 

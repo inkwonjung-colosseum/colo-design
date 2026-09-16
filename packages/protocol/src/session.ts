@@ -48,7 +48,7 @@ export type ChatEvent =
       tools: string[];
       apiKeySource: string;
       /** Slash commands and agents available, for UI affordances. */
-      permissionMode: PermissionMode;
+      permissionMode: string;
     }
   | {
       kind: "text.delta";
@@ -238,6 +238,8 @@ export interface SessionSummary {
    * 여기서 온다.
    */
   turnStartedAt: number | null;
+  /** Which agent provider owns the thread — resume and history route by it. */
+  provider?: string;
 }
 
 /** `session.locate` — which project holds a session (리뷰 B7). The OS
@@ -344,6 +346,16 @@ export interface SessionSelectors {
    */
   fastModeBlocked: string | null;
   models: SessionModelInfo[];
+  /** Which provider this session runs on — the chips read it to pick their vocabulary. */
+  provider?: string;
+  /**
+   * The provider's own mode rows (ACP agents name their own modes). When
+   * present the mode chip lists these instead of the Claude enum, and
+   * `mode` holds the current row's id.
+   */
+  modes?: Array<{ id: string; label: string; description?: string }>;
+  /** The current provider-mode id — equals `permissionMode` for Claude. */
+  mode?: string;
 }
 
 /** One row of the composer's /command palette. */

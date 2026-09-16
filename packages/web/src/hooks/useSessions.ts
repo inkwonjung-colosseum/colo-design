@@ -56,6 +56,8 @@ export interface Sessions {
   setModel: (model: string | null) => Promise<void>;
   setEffort: (effort: EffortLevel | null) => Promise<void>;
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
+  /** The provider's own mode ids (ACP agents) — routed to session.setMode. */
+  setMode: (mode: string) => Promise<void>;
   /** 빠르게 — 이 대화에만 걸리는 자세라 설정에 남지 않는다. */
   setFastMode: (fast: boolean) => Promise<void>;
   error: string | null;
@@ -266,26 +268,34 @@ export function useSessions(
   const startSession = useCallback(
     async (resume?: string, title?: string): Promise<string> => {
       const { chat: picked, pendingFast: fast } = startRef.current;
+      const provider = picked.provider ?? "claude";
+      // Claude-only picks (model alias, effort, preview tools, the Claude
+      // permission enum) are new-session picks — a resumed thread keeps the
+      // provider its store recorded, whatever the settings say today.
+      const claude = !resume && provider === "claude";
       const { sessionId } = await api.createSession({
+        // A resume names the thread, not the provider — the daemon's store
+        // lookup decides which driver continues it.
+        ...(resume ? {} : { provider }),
         ...(resume ? { resume } : {}),
-        ...(picked.model ? { model: picked.model } : {}),
-        ...(picked.effort ? { effort: picked.effort } : {}),
+        ...(claude && picked.model ? { model: picked.model } : {}),
+        ...(claude && picked.effort ? { effort: picked.effort } : {}),
         // 화면 도구는 세션이 태어날 때 정해진다: 설정값을 그대로
         // 실어 보낸다. 이후 설정을 바꿔도 진행 중인 세션은 무관하다 — 도구
         // 목록은 실행 중인 query 에 되돌려 꽂지 않는다. 새 세션부터 적용이다.
-        previewTools: picked.previewTools,
+        previewTools: claude ? picked.previewTools : false,
         ...(title ? { title } : {}),
       });
       ensureSession(sessionId);
       markLive(sessionId);
       setActiveId(sessionId);
       // Not a create option — the mode has to be applied to the live session.
-      if (picked.permissionMode !== "default") {
+      if (claude && picked.permissionMode !== "default") {
         await api.setPermissionMode(sessionId, picked.permissionMode);
       }
       // 세션이 없는 동안 눌러 둔 빠르게 — 다른 칩(모델·권한)과 같은 자세로
       // 다음 세션에 실어 보낸다. 눌러도 아무 일도 없던 칩이 되지 않게.
-      if (fast) {
+      if (claude && fast) {
         await api.setFastMode(sessionId, true).catch(() => undefined);
       }
       // The selector probe fired by setActiveId can land BEFORE the mode
@@ -728,9 +738,13 @@ export function useSessions(
     pushed.current = chat;
     if (!activeId || !last) return;
     const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
-    if (last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
-    if (last.effort !== chat.effort) void api.setEffort(activeId, chat.effort).catch(fail);
-    if (last.permissionMode !== chat.permissionMode) {
+    // Claude-only picks must not reach a session another provider owns —
+    // its chips answer through its own driver instead.
+    const claude = (selector?.provider ?? "claude") === "claude";
+    if (claude && last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
+    if (claude && last.effort !== chat.effort)
+      void api.setEffort(activeId, chat.effort).catch(fail);
+    if (claude && last.permissionMode !== chat.permissionMode) {
       void api.setPermissionMode(activeId, chat.permissionMode).catch(fail);
     }
   }, [activeId, chat, api]);
@@ -745,6 +759,27 @@ export function useSessions(
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSelector((current) => (current ? { ...current, permissionMode: prev } : current));
+    }
+  };
+
+  /**
+   * The provider's own mode ids (ACP agents name their own — `build`,
+   * `plan`, …). Rides `session.setMode`, which the daemon routes to the
+   * driver's setMode; the Claude enum path stays for Claude sessions.
+   */
+  const switchMode = async (mode: string) => {
+    const prev = selector?.mode ?? selector?.permissionMode ?? "default";
+    setSelector((current) =>
+      current ? { ...current, mode, permissionMode: mode as PermissionMode } : current,
+    );
+    if (!activeId) return;
+    try {
+      await api.setMode(activeId, mode);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSelector((current) =>
+        current ? { ...current, mode: prev, permissionMode: prev as PermissionMode } : current,
+      );
     }
   };
 
@@ -800,6 +835,7 @@ export function useSessions(
     setModel: switchModel,
     setEffort: switchEffort,
     setPermissionMode: switchPermissionMode,
+    setMode: switchMode,
     setFastMode: switchFastMode,
     remove,
     confirmRemove,

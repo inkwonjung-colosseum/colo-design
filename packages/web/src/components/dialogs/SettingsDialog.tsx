@@ -533,6 +533,18 @@ export function SettingsDialog({
               </span>
               대화
             </h3>
+            {(status?.providers?.length ?? 0) > 1 && (
+              <Choice<string>
+                label="에이전트"
+                hint="새로 시작하는 대화가 어느 에이전트로 돌지 고릅니다 — 열려 있는 대화는 그대로입니다"
+                value={settings.chat.provider}
+                options={(status?.providers ?? []).map((p) => ({
+                  value: p.id,
+                  label: p.available ? p.label : `${p.label} (설치 필요)`,
+                }))}
+                onChange={(provider) => onChatChange({ provider })}
+              />
+            )}
             <Choice<string>
               label="답변 방식"
               hint={

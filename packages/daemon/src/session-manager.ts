@@ -1,30 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  deleteSession,
-  getSessionInfo,
-  getSessionMessages,
-  listSessions,
-  type SDKSessionInfo,
-} from "@anthropic-ai/claude-agent-sdk";
 import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
+import type { AgentDriver } from "./agent/driver.js";
+import type { DriverRegistry } from "./agent/registry.js";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
-import { replayHistory } from "./translate.js";
-
-/**
- * A transcript's summary can be the conversation's own first line — and the
- * tool's machine-authored turns open with the `<!-- colo-design:… -->` marker
- * (protocol turn-marker), so without this the raw marker leaks into the tree
- * and the palette as a conversation name. Marker lines are dropped, the first
- * human line wins, and whatever survives is collapsed to one clean line.
- */
-function presentableTitle(summary: string | undefined | null): string {
-  if (!summary) return "";
-  const human = summary
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith("<!--"));
-  return (human ?? "").replace(/\s+/g, " ").trim();
-}
 
 export class SessionManager {
   private readonly live = new Map<string, Session>();
@@ -39,17 +17,29 @@ export class SessionManager {
   /**
    * The per-clone thread cache (PLAN D59). The sidebar tree shows every
    * project's conversations at once, but `projectSummaries()` is a
-   * synchronous read — so the answers of the SDK scan (`listSessions`) are
-   * kept per clone and re-served until a session event marks the clone
-   * stale. `disk` is the scan itself (shared with `list`), `threads` the
-   * merged, tree-shaped result a summary can read synchronously.
+   * synchronous read — so the answers of the driver's store scan
+   * (`listStored`) are kept per clone and re-served until a session event
+   * marks the clone stale. `disk` is the scan itself (shared with `list`),
+   * `threads` the merged, tree-shaped result a summary can read
+   * synchronously.
    */
-  private readonly disk = new Map<string, SDKSessionInfo[]>();
+  private readonly disk = new Map<
+    string,
+    Array<{ id: string; title: string; lastModified: number; provider?: string }>
+  >();
   private readonly diskStale = new Set<string>();
   private readonly threadCache = new Map<string, ThreadSummary[]>();
+  /**
+   * Which provider's store a stored session id lives in — filled by every
+   * `list` scan so history/resume/delete route to the right driver without
+   * rescanning every store.
+   */
+  private readonly storedProvider = new Map<string, string>();
   private readonly events: SessionEvents;
+  private readonly drivers: DriverRegistry;
 
-  constructor(events: SessionEvents) {
+  constructor(events: SessionEvents, drivers: DriverRegistry) {
+    this.drivers = drivers;
     this.events = {
       ...events,
       onState: (sessionId, state, detail) => {
@@ -62,17 +52,56 @@ export class SessionManager {
     };
   }
 
+  /** The provider a session id belongs to — live sessions carry it; stored ones are looked up. */
+  private driverFor(provider: string | undefined): AgentDriver {
+    return this.drivers.require(provider ?? "claude");
+  }
+  /** The provider a stored session id belongs to, from the last list scan. */
+  storedProviderOf(sessionId: string): string | undefined {
+    return this.storedProvider.get(sessionId);
+  }
+
+  /**
+   * Which provider's store holds a session id — the scan's answer first,
+   * then a targeted sweep of every driver's store for an id no list has
+   * surfaced yet (a resume that arrives before the first scan).
+   */
+  async findStoredProvider(sessionId: string, cwd: string): Promise<string | undefined> {
+    const known = this.storedProvider.get(sessionId);
+    if (known) return known;
+    for (const driver of this.drivers.all()) {
+      const stored = await driver.store?.list(cwd, 200).catch(() => []);
+      if (stored?.some((s) => s.id === sessionId)) {
+        this.storedProvider.set(sessionId, driver.id);
+        return driver.id;
+      }
+    }
+    return undefined;
+  }
+
   create(options: SessionOptions): Session {
     const session = new Session(options, this.events);
+    const driver = this.driverFor(session.provider);
+    const launch = {
+      cwd: session.cwd,
+      sessionId: session.id,
+      model: options.launch?.model ?? null,
+      modeId: driver.describe().defaultModeId,
+      effort: options.launch?.effort ?? null,
+      appendSystemPrompt: options.launch?.appendSystemPrompt ?? null,
+      mcpServers: {},
+      ...options.launch,
+    };
+    session.attach(driver.createSession(launch, session.driverHooks));
     this.live.set(session.id, session);
 
     // A resumed or forked session should keep the name of the thread it came
     // from, otherwise it shows up in the list as an untitled new session until
     // the next message happens to rename it.
-    if (options.resume) {
-      void getSessionInfo(options.resume, { dir: options.cwd })
-        .then((info) => {
-          const inherited = info?.customTitle || presentableTitle(info?.summary);
+    if (options.launch?.resume) {
+      void driver.store
+        ?.title?.(options.launch.resume, session.cwd)
+        .then((inherited) => {
           const untouched = session.title === NEW_SESSION_TITLE;
           if (inherited && untouched) session.title = inherited;
         })
@@ -123,22 +152,24 @@ export class SessionManager {
   /**
    * Close the live query, if any, and permanently delete the stored
    * transcript. Throws when the local store has no such session.
-   * transcript. Throws when the local store has no such session.
    */
   async remove(sessionId: string, cwd: string): Promise<void> {
     const live = this.live.get(sessionId);
     if (live) await this.close(sessionId);
+    const driver = this.driverFor(
+      live?.provider ?? (await this.findStoredProvider(sessionId, cwd)),
+    );
     try {
-      await deleteSession(sessionId, { dir: cwd });
+      await driver.store?.delete?.(sessionId, cwd);
     } catch (error) {
       // A live session that never sent a message wrote no transcript, so
       // closing it above already removed every trace.
       if (live) return;
-      const stored = await listSessions({ dir: cwd, limit: 200 }).catch(() => []);
+      const stored = await driver.store?.list(cwd, 200).catch(() => []);
       // Deleting an id the store has already forgotten is a no-op, not a
       // failure — this also covers phantom rows left over from a daemon
       // restart. A real store error still surfaces.
-      if (!stored.some((s) => s.sessionId === sessionId)) return;
+      if (!stored?.some((s) => s.id === sessionId)) return;
       throw error;
     }
   }
@@ -172,7 +203,7 @@ export class SessionManager {
     return false;
   }
 
-  /** A Claude turn is running in this clone right now — the sidebar's 작업 중 (PLAN D15). */
+  /** A turn is running in this clone right now — the sidebar's 작업 중 (PLAN D15). */
   anyRunning(cwd: string): boolean {
     for (const session of this.live.values()) {
       if (session.cwd === cwd && session.state === "running") return true;
@@ -196,10 +227,14 @@ export class SessionManager {
    */
   async removeWhere(cwd: string): Promise<void> {
     await this.closeWhere(cwd);
-    const stored = await listSessions({ dir: cwd, limit: 200 }).catch(() => []);
-    await Promise.all(
-      stored.map((info) => deleteSession(info.sessionId, { dir: cwd }).catch(() => undefined)),
-    );
+    // Every registered driver's store gets a sweep — a clone may hold
+    // transcripts from more than one provider.
+    for (const driver of this.drivers.all()) {
+      const stored = await driver.store?.list(cwd, 200).catch(() => []);
+      await Promise.all(
+        (stored ?? []).map((info) => driver.store?.delete?.(info.id, cwd).catch(() => undefined)),
+      );
+    }
     this.disk.delete(cwd);
     this.diskStale.delete(cwd);
   }
@@ -211,16 +246,6 @@ export class SessionManager {
   }
 
   /**
-   * Merge sessions this daemon is running with transcripts already on disk, so
-   * conversations started in the terminal show up in the UI and can be resumed.
-   * The SDK stores transcripts per directory, so the active project's repo
-   * clone is exactly the session list. The disk half is the per-clone cache
-   * (PLAN D59) — the scan is what `projectSummaries` cannot afford per
-   * announce, so it runs once and again only after a session event marks the
-   * clone stale. The live half merges fresh on every read, so states and
-   * titles are never served stale.
-   */
-  /**
    * Every pending request across the live sessions, in wire shape (리뷰 B1).
    * `attach` hands these to a RECONNECTING socket only — the broadcast would
    * double the cards every already-connected window is showing.
@@ -229,6 +254,16 @@ export class SessionManager {
     return [...this.live.values()].flatMap((session) => session.pendingReplays());
   }
 
+  /**
+   * Merge sessions this daemon is running with transcripts already on disk, so
+   * conversations started in the terminal show up in the UI and can be resumed.
+   * The store is keyed by directory, so the active project's repo clone is
+   * exactly the session list. The disk half is the per-clone cache (PLAN D59)
+   * — the scan is what `projectSummaries` cannot afford per announce, so it
+   * runs once and again only after a session event marks the clone stale.
+   * The live half merges fresh on every read, so states and titles are never
+   * served stale.
+   */
   async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
     let onDisk = this.disk.get(cwd);
     if (!onDisk || this.diskStale.has(cwd)) {
@@ -237,8 +272,14 @@ export class SessionManager {
       // the planner's sidebar went blank (or stale) for no visible reason.
       // Failure keeps the previous answer and the staleness marker, so the
       // next call rescans instead of trusting the accident.
-      const scanned = await listSessions({ dir: cwd, limit }).catch(() => null);
-      if (scanned) {
+      // Every registered driver's store contributes — a clone may hold
+      // threads from more than one provider.
+      const scanned = (
+        await Promise.all(
+          this.drivers.all().map((driver) => driver.store?.list(cwd, limit).catch(() => []) ?? []),
+        )
+      ).flat();
+      if (scanned.length > 0 || onDisk === undefined) {
         onDisk = scanned;
         this.disk.set(cwd, scanned);
         this.diskStale.delete(cwd);
@@ -250,13 +291,15 @@ export class SessionManager {
     const untitled = "제목 없는 대화";
 
     for (const info of onDisk) {
-      summaries.set(info.sessionId, {
-        sessionId: info.sessionId,
-        title: info.customTitle || presentableTitle(info.summary) || untitled,
+      if (info.provider) this.storedProvider.set(info.id, info.provider);
+      summaries.set(info.id, {
+        sessionId: info.id,
+        title: info.title || untitled,
         lastModified: info.lastModified,
         live: false,
         state: "closed",
         turnStartedAt: null,
+        ...(info.provider ? { provider: info.provider } : {}),
       });
     }
 
@@ -266,7 +309,7 @@ export class SessionManager {
       // from the previous project survive a project switch.
       if (session.cwd !== cwd) continue;
       const stored = summaries.get(session.id);
-      // Prefer the transcript's own summary. Claude Code keeps it current as the
+      // Prefer the transcript's own summary. The store keeps it current as the
       // conversation moves, so using it for live and stored sessions alike stops
       // a session from being labelled one way while open and another once closed.
       const title = stored && stored.title !== untitled ? stored.title : session.title;
@@ -278,6 +321,7 @@ export class SessionManager {
         state: session.state,
         // 재접속한 창의 진행 시계가 0 부터 다시 세지 않도록 (없으면 null).
         turnStartedAt: session.turnStartedAt,
+        provider: session.provider,
       });
     }
 
@@ -330,11 +374,12 @@ export class SessionManager {
 
   /** Stored transcript, already shaped as the events the UI renders. */
   async history(sessionId: string, cwd: string): Promise<ChatEvent[]> {
-    const messages = await getSessionMessages(sessionId, {
-      dir: cwd,
-      limit: 1000,
-    }).catch(() => []);
-    return replayHistory(messages);
+    // The live session's provider owns the store; a stored-only thread is
+    // routed by the provider the last list scan recorded for its id.
+    const provider =
+      this.live.get(sessionId)?.provider ?? (await this.findStoredProvider(sessionId, cwd));
+    const driver = this.driverFor(provider);
+    return (await driver.store?.import?.(sessionId, cwd, 1000)) ?? [];
   }
 
   /**
@@ -342,16 +387,16 @@ export class SessionManager {
    * 읽기가 실패하면 0(빈 대화): 이전 동작과 같은 보수적 귀결이다.
    */
   async promptCount(sessionId: string, dir: string): Promise<number> {
-    const raw = await getSessionMessages(sessionId, { dir, limit: REWIND_HISTORY_LIMIT }).catch(
-      () => [],
-    );
-    return (raw as Array<Record<string, unknown>>).filter((message) => isPrompt(message)).length;
+    const provider =
+      this.live.get(sessionId)?.provider ?? (await this.findStoredProvider(sessionId, dir));
+    const driver = this.driverFor(provider);
+    return (await driver.store?.promptCount?.(sessionId, dir)) ?? 0;
   }
 
   /**
    * 되감기 (PLAN D95): discard the k-th answer — files are ALREADY restored
    * by the caller — and carry on in a forked session whose memory stops
-   * before that answer, re-sending `text`. When the CLI refuses the
+   * before that answer, re-sending `text`. When the provider refuses the
    * truncating fork (a deterministic refusal — never retried), the fallback
    * is a fresh conversation on the restored files, and `memoryKept` comes
    * back false so the card can say `Claude 의 기억은 그대로입니다`.
@@ -367,15 +412,10 @@ export class SessionManager {
   }): Promise<{ sessionId: string; memoryKept: boolean }> {
     const old = this.live.get(input.sessionId);
     const title = old?.title ?? input.base.title ?? NEW_SESSION_TITLE;
-    const raw = await getSessionMessages(input.sessionId, {
-      dir: input.cwd,
-      limit: REWIND_HISTORY_LIMIT,
-    }).catch(() => []);
-    const cutoff = resolveRewindCutoff(raw as Array<Record<string, unknown>>, input.turn);
-    if (cutoff === null && raw.length > 0) {
-      // 존재하는 대화에서 k 가 넘친다 — 호출자 오류.
-      throw new Error(`되돌릴 ${input.turn}번째 답이 이 대화에 없습니다.`);
-    }
+    const driver = this.driverFor(old?.provider ?? input.base.provider);
+    const cutoff = driver.store?.rewind
+      ? await driver.store.rewind(input.sessionId, input.cwd, input.turn)
+      : null;
     if (cutoff === null) {
       // 대화록이 비어 있어 어디를 남길지 모른다 — 기억을 못 찾은 것이니
       // 폴백이 정직한 답이다: 새 대화로 문장만 다시 보낸다(파일은 이미
@@ -383,8 +423,7 @@ export class SessionManager {
       await old?.close();
       this.live.delete(input.sessionId);
       this.settledTurns.delete(input.sessionId);
-      const fresh = new Session({ ...input.base, title }, this.events);
-      this.live.set(fresh.id, fresh);
+      const fresh = this.create({ ...input.base, title });
       fresh.send(input.text, input.images);
       return { sessionId: fresh.id, memoryKept: false };
     }
@@ -395,14 +434,13 @@ export class SessionManager {
 
     if (cutoff.cut === null) {
       // k = 1: nothing to keep — a fresh conversation carries the title on.
-      const fresh = new Session({ ...input.base, title }, this.events);
-      this.live.set(fresh.id, fresh);
+      const fresh = this.create({ ...input.base, title });
       fresh.send(input.text, input.images);
       return { sessionId: fresh.id, memoryKept: false };
     }
 
     // The fork: keep the transcript up to `cut`, drop the turn whose prompt
-    // is `drops`. The CLI validates the range and refuses deterministically —
+    // is `drops`. The provider validates the range and refuses deterministically —
     // that refusal (or any first-turn failure) falls back, it never retries.
     const outcomeBox: {
       value: { type: "end"; subtype: string; resultText: string | null } | { type: "error" } | null;
@@ -429,13 +467,35 @@ export class SessionManager {
       {
         ...input.base,
         title,
-        resume: input.sessionId,
         sessionId: forkId,
-        resumeSessionAt: cutoff.cut,
-        resumeDropsTurn: cutoff.drops ?? cutoff.cut,
-        forkSession: true,
+        launch: {
+          ...input.base.launch,
+          resume: input.sessionId,
+          forkSession: true,
+          resumeSessionAt: cutoff.cut,
+          resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+        },
       },
       shim,
+    );
+    fork.attach(
+      driver.createSession(
+        {
+          cwd: fork.cwd,
+          sessionId: fork.id,
+          model: input.base.launch?.model ?? null,
+          effort: input.base.launch?.effort ?? null,
+          modeId: "default",
+          appendSystemPrompt: input.base.launch?.appendSystemPrompt ?? null,
+          mcpServers: {},
+          ...input.base.launch,
+          resume: input.sessionId,
+          forkSession: true,
+          resumeSessionAt: cutoff.cut,
+          resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+        },
+        fork.driverHooks,
+      ),
     );
     this.live.set(fork.id, fork);
     // The refusal surfaces within the first exchange; a healthy fork sits
@@ -457,8 +517,7 @@ export class SessionManager {
       // evidence — the files are already back.
       await fork.close().catch(() => undefined);
       this.live.delete(fork.id);
-      const fresh = new Session({ ...input.base, title }, this.events);
-      this.live.set(fresh.id, fresh);
+      const fresh = this.create({ ...input.base, title });
       fresh.send(input.text, input.images);
       return { sessionId: fresh.id, memoryKept: false };
     }
@@ -469,56 +528,4 @@ export class SessionManager {
     await this.remove(input.sessionId, input.cwd).catch(() => undefined);
     return { sessionId: fork.id, memoryKept: true };
   }
-}
-
-// ---------------------------------------------------------------------------
-// 되감기의 절단점 (PLAN D95 §9) — 순수 함수, 단위 테스트가 케이스를 박는다.
-// ---------------------------------------------------------------------------
-
-export interface RewindCutoff {
-  /** The chain uuid the truncated resume keeps up to; null when k = 1. */
-  cut: string | null;
-  /** The discarded turn's prompt uuid, per `resumeDropsTurn`. */
-  drops: string | null;
-  answerCount: number;
-}
-
-/** A user message that STARTED a turn: not a tool-result carrier, not synthetic. */
-function isPrompt(message: Record<string, unknown>): boolean {
-  if (message.type !== "user") return false;
-  if (message.isSynthetic === true) return false;
-  const content = message.message as { content?: unknown } | undefined;
-  const value = content?.content;
-  if (typeof value === "string") return value.trim() !== "";
-  if (Array.isArray(value)) {
-    return !value.some((block) => (block as { type?: unknown })?.type === "tool_result");
-  }
-  return false;
-}
-
-/** 되감기가 프롬프트를 찾는 창 — 대화록 전체에서 k 번째를 읽는다(제한 없이). */
-const REWIND_HISTORY_LIMIT = 100_000;
-
-/**
- * k 번째 답을 버리는 절단점: kept = prompt[k] 바로 앞의 마지막 체인 항목
- * (도구 결과 캐리어가 뒤에 있으면 그것 — SDK 문서의 규칙), drops = prompt[k].
- */
-export function resolveRewindCutoff(
-  raw: Array<Record<string, unknown>>,
-  turn: number,
-): RewindCutoff | null {
-  const promptIndexes: number[] = [];
-  raw.forEach((message, index) => {
-    if (isPrompt(message)) promptIndexes.push(index);
-  });
-  if (turn < 1 || turn > promptIndexes.length) return null;
-  const start = promptIndexes[turn - 1]!;
-  const kept = start > 0 ? raw[start - 1] : null;
-  const keptUuid = typeof kept?.uuid === "string" ? kept.uuid : null;
-  const dropsUuid = typeof raw[start]?.uuid === "string" ? (raw[start]!.uuid as string) : null;
-  return {
-    cut: turn === 1 ? null : keptUuid,
-    drops: dropsUuid,
-    answerCount: promptIndexes.length,
-  };
 }

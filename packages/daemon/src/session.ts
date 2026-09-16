@@ -1,16 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import {
-  type ModelInfo,
-  type PermissionResult,
-  type PermissionUpdate,
-  type Query,
-  query,
-  type SDKControlGetUsageResponse,
-  type SDKUserMessage,
-  type SlashCommand,
-} from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskQuestion,
   ChatEvent,
@@ -19,33 +9,18 @@ import type {
   LostSend,
   PermissionMode,
   PermissionSuggestion,
-  PlanUsage,
   QueuedSend,
   QueuedSendPayload,
   SessionCommand,
   SessionSelectors,
   SessionState,
 } from "@colo-design/protocol";
-import { PLAN_TOOL, readTurn } from "@colo-design/protocol";
+import { readTurn } from "@colo-design/protocol";
+import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
 import type { PreviewTools } from "./preview-tools.js";
 import type { QueueDisk } from "./queue-store.js";
-import { MessageTranslator } from "./translate.js";
-
-/**
- * 중지가 답을 기다리는 유예. 이 안에 CLI 가 control 요청에 답하지 못하면 질의를
- * 강제로 끊는다 — 영원히 매달린 중지 버튼은 버튼이 아니다 (실사 결함).
- */
-const INTERRUPT_GRACE_MS = 5_000;
-/** close 의 짧은 관대함 — 여러 wedged 세션을 닫아도 종료가 늦어지지 않게. */
-const CLOSE_GRACE_MS = 1_000;
-/**
- * How long an unattended probe waits for its one control answer. The CLI it
- * boots has no turn to run, so a second is the honest measure and twenty is
- * only patience for a slow machine.
- */
-const PROBE_GRACE_MS = 20_000;
 
 /**
  * A send refusal the planner can read. The daemon's own guards answer in
@@ -65,43 +40,12 @@ export function asPlannerFacingError(error: unknown): Error {
   );
 }
 
-/** An async iterable the daemon can push user turns into while the query runs. */
-class PushQueue implements AsyncIterable<SDKUserMessage> {
-  private buffer: SDKUserMessage[] = [];
-  private wake: (() => void) | null = null;
-  private closed = false;
-
-  push(message: SDKUserMessage): void {
-    if (this.closed) return;
-    this.buffer.push(message);
-    this.wake?.();
-  }
-
-  close(): void {
-    this.closed = true;
-    this.wake?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
-    while (true) {
-      const next = this.buffer.shift();
-      if (next) {
-        yield next;
-        continue;
-      }
-      if (this.closed) return;
-      await new Promise<void>((resolve) => (this.wake = resolve));
-      this.wake = null;
-    }
-  }
-}
-
 interface PendingRequest {
   requestId: string;
   kind: "permission" | "question" | "plan";
   toolName: string;
-  resolve: (result: PermissionOutcome) => void;
-  suggestions: PermissionUpdate[];
+  resolve: (result: PermissionVerdict) => void;
+  suggestions: unknown[];
   /** Kept so an approval can echo the tool input back without the client resending it. */
   input: Record<string, unknown>;
 }
@@ -122,8 +66,6 @@ function summarize({ id, text, images }: HeldSend): QueuedSend {
 function toLost(send: HeldSend): LostSend {
   return { ...summarize(send), lostAt: Date.now() };
 }
-
-type PermissionOutcome = PermissionResult;
 
 // ---------------------------------------------------------------------------
 // 항상 허용 memory (F7)
@@ -189,18 +131,52 @@ export interface SessionEvents {
 type WriteDecision = "allow" | "ask" | "deny";
 export type WritePolicy = (absolutePath: string) => WriteDecision;
 
+/**
+ * The launch half of SessionOptions — everything the provider's driver needs
+ * to start its transport. The core reads none of it except through the
+ * driver; provider-specific fields (Claude: resume/forkSession/…) ride the
+ * same bag.
+ */
+interface SessionLaunch {
+  /** The provider's resolved binary — the driver's availability probe found it. */
+  executable?: string;
+  /** Resume an existing transcript (the provider's stored session id). */
+  resume?: string;
+  /** D95: with `resume` — this session is a fork carrying a new id. */
+  forkSession?: boolean;
+  /** D95: with `resume` — the chain uuid the truncated resume keeps up to. */
+  resumeSessionAt?: string;
+  /** D95: with `resumeSessionAt` — the discarded turn's prompt uuid. */
+  resumeDropsTurn?: string;
+  /** Model the query starts on; omitted = the provider's default. */
+  model?: string;
+  /** Reasoning effort the query starts on; omitted = the provider's default. */
+  effort?: EffortLevel;
+  /**
+   * 프로젝트별 지침(설정 문서 P1#8) — 기본 시스템 프롬프트 끝에 붙는 몇 줄.
+   * 사용자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
+   */
+  appendSystemPrompt?: string;
+  /**
+   * The `colo-preview` in-process MCP server (PLAN D61), or null when the
+   * daemon runs without a preview driver or the planner turned the tools
+   * off. The session only carries it: the capture quota resets here at turn
+   * starts, and its lifetime (destroy) belongs to whoever injected the
+   * driver.
+   */
+  previewTools?: PreviewTools | null;
+}
+
 export interface SessionOptions {
   cwd: string;
-  claudeExecutable: string;
-  /** Resume an existing transcript. */
-  resume?: string;
+  /** The provider id the registry resolves; omitted = "claude". */
+  provider?: string;
   /**
-   * A custom session id — with `resume` + `forkSession` it names the FORK
-   * (PLAN D95); without a resume it is what a new session is born as.
+   * A custom session id — with `launch.resume` + `launch.forkSession` it
+   * names the FORK (PLAN D95); without a resume it is what a new session is
+   * born as.
    */
   sessionId?: string;
-  /** D95: truncating resume → a new session instead of rewriting history. */
-  forkSession?: boolean;
   /**
    * Verdict for every edit-class tool call. Defaults to the historical rule:
    * silent inside cwd, a card everywhere else.
@@ -213,27 +189,8 @@ export interface SessionOptions {
    * whole sentence instead of by the file path inside it.
    */
   title?: string;
-  /** Model the query starts on (SDK alias or id); omitted = CLI default. */
-  model?: string;
-  /** Reasoning effort the query starts on; omitted = CLI default. */
-  effort?: EffortLevel;
-  /** D95: with `resume` — the chain uuid the truncated resume keeps up to. */
-  resumeSessionAt?: string;
-  /** D95: with `resumeSessionAt` — the discarded turn's prompt uuid. */
-  resumeDropsTurn?: string;
-  /**
-   * The `colo-preview` in-process MCP server (PLAN D61), or null when the
-   * daemon runs without a preview driver or the planner turned the tools
-   * off. The session only carries it: the capture quota resets here at turn
-   * starts, and its lifetime (destroy) belongs to whoever injected the
-   * driver.
-   */
-  previewTools?: PreviewTools | null;
-  /**
-   * 프로젝트별 지침(설정 문서 P1#8) — Claude Code 기본 시스템 프롬프트
-   * 끝에 붙는 몇 줄. 사용자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
-   */
-  appendSystemPrompt?: string;
+  /** Everything the driver's transport needs; see SessionLaunch. */
+  launch?: SessionLaunch;
   /**
    * 대기 줄의 디스크 절반 (PLAN D86 의 확장). Every held mutation writes
    * through, so even a SIGKILL leaves the room recoverable; a crash converts
@@ -244,12 +201,6 @@ export interface SessionOptions {
   queueDiskFor?: (sessionId: string) => QueueDisk;
 }
 
-/**
- * File-edit tools that `acceptEdits` mode used to silence. Under the pinned
- * `default` mode the CLI asks about them like anything else, so the daemon
- * answers here instead, through the session's own `writePolicy`.
- */
-const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 /**
  * git 의 명사는 도구가 합니다 (README · PLAN D5): 커밋과 푸시는 저장·넘기기
  * 버튼의 몫이라, 세션이 직접 만들면 개발자에게 가는 풀 리퀘스트가 도구가
@@ -263,6 +214,7 @@ const GIT_WRITE_REFUSAL =
 function writesGitHistory(command: string): boolean {
   return /\bgit\b/.test(command) && /\b(commit|push)\b/.test(command);
 }
+
 /**
  * The name a session carries until its first turn supplies one. Also the
  * sentinel for "nobody has named this yet" — a resumed thread inherits its
@@ -270,17 +222,29 @@ function writesGitHistory(command: string): boolean {
  */
 export const NEW_SESSION_TITLE = "새 화면";
 
+/**
+ * The core session: provider-agnostic. It owns the state machine, the held
+ * queue (D86), permission memory and policy, the pending card requests, and
+ * the title/cost bookkeeping. The transport — the live query to the agent —
+ * is an `AgentSession` attached by the manager after the driver creates it;
+ * events flow back through `driverHooks`.
+ */
 export class Session {
   readonly id: string;
   readonly cwd: string;
+  readonly provider: string;
   state: SessionState = "idle";
-  permissionMode: PermissionMode = "default";
+  /**
+   * The provider's own mode id — Claude's four values for Claude sessions,
+   * the driver's own ids (ACP `build`/`plan`/…) for everyone else.
+   */
+  permissionMode: string = "default";
   /**
    * 계획 모드로 들어가기 전의 작업 모드. 계획은 한 턴의 자세라 승인 순간
    * 여기로 되돌아간다(`respondPermission`) — 승인된 계획 뒤의 편집이 계획
    * 모드의 제약 아래 갇히지 않게. `setPermissionMode` 가 기록하고 지운다.
    */
-  modeBeforePlan: PermissionMode | null = null;
+  modeBeforePlan: string | null = null;
   /**
    * 빠르게(fast mode)가 이 세션에서 켜져 있는지. 우리가 보낸 부탁이 아니라
    * CLI 가 매 메시지에 실어 보내는 `fast_mode_state` 가 주인이다 — 요금제나
@@ -291,7 +255,7 @@ export class Session {
   /** 왜 지금 빠르게를 쓸 수 없는지(CLI 의 사유 문자열). null 이면 막힘 없음. */
   fastModeBlocked: string | null = null;
   model: string | null = null;
-  /** Composer chip selections; `null` = the CLI's own default. */
+  /** Composer chip selections; `null` = the provider's own default. */
   private selectedModel: string | null = null;
   private selectedEffort: EffortLevel | null = null;
   lastActivity = Date.now();
@@ -301,23 +265,21 @@ export class Session {
   private readonly writePolicy: WritePolicy;
   private readonly previewTools: PreviewTools | null;
 
-  private readonly queue = new PushQueue();
   private readonly alwaysAllowed = new PermissionMemory();
-  private readonly translator = new MessageTranslator();
   private readonly pending = new Map<string, PendingRequest>();
   private readonly events: SessionEvents;
-  private run: Query;
-  private consumer: Promise<void>;
+  private agent: AgentSession | null = null;
   private closed = false;
   /**
-   * 결함① (PLAN 0단계): set by `interrupt()` so the abort the SDK throws in
-   * the consume loop reads as the planner's own 중지 — a turn end, not a
-   * crash. Cleared on the next `send()`, so a later real error still surfaces.
+   * 결함① (PLAN 0단계): set by `interrupt()` so the abort the transport
+   * throws in the consume loop reads as the planner's own 중지 — a turn end,
+   * not a crash. Cleared on the next `send()`, so a later real error still
+   * surfaces.
    */
   private interrupting = false;
   /**
    * 중지가 유예 안에 답을 받지 못해 질의를 강제로 끊었다 — 그 CLI 는 죽었고,
-   * 이 세션은 더는 보낸 말을 삼키지 않는다. consume 루프가 대화를 닫는
+   * 이 세션은 더는 보낸 말을 삼키지 않는다. transport end 가 대화를 닫는
    * 표식으로 읽는다.
    */
   private aborted = false;
@@ -329,25 +291,6 @@ export class Session {
    * "다시 보내면 이어집니다" 약속을 데몬이 이행하는 길이다.
    */
   private crashed = false;
-  /**
-   * CLI 가 스스로 내려간다고 예고한 이유 (`worker_shutting_down`), 없으면 null.
-   * 예고 뒤의 스트림 끝은 고장이 아니다 — 크래시 카드의 말이 달라진다.
-   */
-  private shutdownReason: string | null = null;
-  /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
-  private readonly abort = new AbortController();
-  /**
-   * 다음 턴에 보내기 (PLAN D86) 의 대기 줄 — 데몬이 쥔다.
-   *
-   * The SDK's input stream is NOT a waiting room: a user message written
-   * into it while a turn runs is folded by the CLI into that RUNNING turn
-   * between tool rounds (sdk.d.ts, `user_message_uuids`: "any queued user
-   * message folded into the running turn"). That is 끼어들기 — the exact
-   * opposite of what 다음 턴에 보내기 promises, and it can replace the answer
-   * the planner was already waiting for. So the wait happens HERE, and the
-   * turn's end releases it.
-   *
-  private releaseLimit: number | null = null;
   /**
    * The room's mirror on disk (PLAN D86 의 확장). Null only in tests that
    * construct a session bare — everything else writes through.
@@ -376,7 +319,7 @@ export class Session {
    */
   turnStartedAt: number | null = null;
   /**
-   * 세션 비용: what this run has spent, as the SDK reports it — its
+   * 세션 비용: what this run has spent, as the provider reports it — its
    * `total_cost_usd` is already the running total for the query, so the
    * latest result replaces the previous one rather than adding to it.
    *
@@ -386,240 +329,174 @@ export class Session {
    */
   private costUsd: number | null = null;
 
+  /**
+   * The hooks the driver calls back into. Exposed so the manager can hand
+   * them to `driver.createSession` before this session's agent is attached —
+   * events arriving during the handshake are safe: they only touch events
+   * and state, never `this.agent`.
+   */
+  readonly driverHooks: DriverHooks = {
+    onEvent: (event) => this.handleDriverEvent(event),
+    onTransportEnd: (shutdownReason) => this.handleTransportEnd(shutdownReason),
+    onTransportError: (detail) => this.handleTransportError(detail),
+    decidePermission: (tool, input, opts) => this.decidePermission(tool, input, opts),
+    onFastMode: (on, blocked) => {
+      this.fastMode = on;
+      this.fastModeBlocked = blocked;
+    },
+  };
+
   constructor(options: SessionOptions, events: SessionEvents) {
     this.events = events;
+    this.provider = options.provider ?? "claude";
     this.title = options.title?.trim().slice(0, 80) || NEW_SESSION_TITLE;
     // /tmp vs /private/tmp: the resolved spelling, so workspace containment
-    // and the SDK's own cwd agree with what the filesystem calls the folder.
-    // The CLI reports tool paths already resolved, so an unresolved cwd makes
-    // it read its own workspace as foreign and card every Read in it.
+    // and the provider's own cwd agree with what the filesystem calls the
+    // folder. The CLI reports tool paths already resolved, so an unresolved
+    // cwd makes it read its own workspace as foreign and card every Read in it.
     this.cwd = realpathBestEffort(options.cwd);
     // Containment is the floor, not the whole rule: a policy may refuse files
     // inside the cwd itself.
     this.writePolicy =
       options.writePolicy ?? ((path) => (containsPath(this.cwd, path) ? "allow" : "ask"));
-    this.selectedModel = options.model ?? null;
-    this.selectedEffort = options.effort ?? null;
-    this.previewTools = options.previewTools ?? null;
+    this.selectedModel = options.launch?.model ?? null;
+    this.selectedEffort = options.launch?.effort ?? null;
+    this.previewTools = options.launch?.previewTools ?? null;
 
     // `sessionId` lets us name the session up front. Without it the id only
     // arrives with the init event, which the CLI does not emit until the first
     // user turn is pushed.
-    this.id = options.sessionId ?? options.resume ?? randomUUID();
+    this.id = options.sessionId ?? options.launch?.resume ?? randomUUID();
     this.disk = options.queueDiskFor?.(this.id) ?? null;
-    this.run = query({
-      prompt: this.queue,
-      options: {
-        cwd: this.cwd,
-        // 프로젝트별 지침(P1#8): 기본 프롬프트를 대체하지 않고 끝에 붙인다 —
-        // 도구가 Claude 에게 주는 나머지 규칙은 그대로 살아 있어야 한다.
-        ...(options.appendSystemPrompt
-          ? {
-              systemPrompt: {
-                type: "preset" as const,
-                preset: "claude_code" as const,
-                append: options.appendSystemPrompt,
-              },
-            }
-          : {}),
-        pathToClaudeCodeExecutable: options.claudeExecutable,
-        // 중지의 이행 보장: 유예 안에 interrupt 가 답하지 못하는 질의는 이
-        // 컨트롤러로 끊는다 — SDK 가 자원을 정리하고 CLI 를 내린다.
-        abortController: this.abort,
-        // `default` is pinned on purpose: current CLI builds auto-approve
-        // safe Bash under acceptEdits/auto without ever consulting
-        // `canUseTool`, which would let a session run shell commands with no
-        // planner in the loop. The daemon answers edit-class tools itself
-        // (see canUse), so the UX stays "edits are silent, everything else
-        // asks".
-        permissionMode: "default",
-        // The launch flag — not the mode — is what the CLI checks before it
-        // accepts a later `setPermissionMode("bypassPermissions")`; without
-        // it every 전부 맡기기 switch dies with "was not launched with
-        // --dangerously-skip-permissions". The starting mode above stays
-        // `default`, so nothing widens until the planner picks it themselves.
-        allowDangerouslySkipPermissions: true,
-        // Policy tier beats a user's own `defaultMode` (e.g. `"auto"`) in
-        // ~/.claude/settings.json — without it that setting silently widens
-        // every hub session.
-        managedSettings: { permissions: { defaultMode: "default" } },
-        includePartialMessages: true,
-        // Load the same user/project configuration the terminal would, so
-        // CLAUDE.md, skills, and permission rules behave identically. (The
-        // project tier is the repo's own files — a repo that ships
-        // pre-approved tool rules surfaces as a header warning; see
-        // repoSettingsWarning.)
-        settingSources: ["user", "project", "local"],
-        // 질문 카드의 선택지 미리보기를 HTML 로 받는다 (PLAN D96): 이 앱의
-        // 카드는 웹이라 monospace 박스가 아니라 그려진 시안을 보여 줄 수 있다.
-        // 카드는 스크립트 없는 sandbox iframe 으로만 그린다.
-        toolConfig: { askUserQuestion: { previewFormat: "html" } },
-        // 보조 작업이 30초마다 한 줄로 지금 무엇을 하는지 말한다 (PLAN D97).
-        // 포크는 서브에이전트의 프롬프트 캐시를 재사용하므로 값이 싸다.
-        agentProgressSummaries: true,
-        // 보조 작업의 말과 생각까지 받아 중첩 기록으로 그린다 (PLAN D98).
-        // 이게 없으면 서브에이전트는 도구 행의 심장 박동으로만 보인다.
-        forwardSubagentText: true,
-        // 턴이 끝나면 다음에 할 만한 말 한 문장 (PLAN D99) — 부모 턴의 캐시에
-        // 얹혀 오므로 사실상 공짜다.
-        promptSuggestions: true,
-        // 작업별 중지를 이 앱이 그린다고 CLI 에 알린다 (PLAN D101). 선언하지
-        // 않으면 중지 한 번이 백그라운드 작업까지 함께 죽인다 — 선언과 UI 는
-        // 반드시 같이 간다(둘 중 하나만 있으면 폭주하는 작업을 세울 길이 없다).
-        perTaskStopAffordance: true,
-        // The preview tools ride the query as an in-process MCP server
-        // (PLAN D61), keyed by the server's own name.
-        ...(this.previewTools
-          ? {
-              mcpServers: {
-                [this.previewTools.name]: this.previewTools.config,
-              },
-            }
-          : {}),
-        // A fresh query starts on the chips' choices; mid-session switches
-        // go through the control methods below instead.
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.resume
-          ? {
-              resume: options.resume,
-              // D95: a fork keeps the old transcript and continues as OUR id.
-              ...(options.sessionId ? { sessionId: options.sessionId, forkSession: true } : {}),
-              ...(options.resumeSessionAt ? { resumeSessionAt: options.resumeSessionAt } : {}),
-              ...(options.resumeDropsTurn ? { resumeDropsTurn: options.resumeDropsTurn } : {}),
-            }
-          : { sessionId: this.id }),
-        canUseTool: (toolName, input, opts) => this.canUse(toolName, input, opts),
-      },
-    });
-
-    this.consumer = this.consume();
   }
 
-  private async consume(): Promise<void> {
-    try {
-      for await (const message of this.run) {
-        this.lastActivity = Date.now();
-        // 빠르게의 진실은 CLI 에 있다: init·result·system 이 실어 오는
-        // fast_mode_state 를 번역 전에 읽어 둔다. 'cooldown' 은 한도 뒤의
-        // 쉬는 중 — 켜 달라는 뜻은 살아 있으나 지금 도는 것은 보통 속도라,
-        // 켜짐으로 세지 않는다.
-        this.readFastMode(message);
-        for (const event of this.translator.translate(message)) {
-          if (event.kind === "init") {
-            this.model = event.model;
-            this.permissionMode = event.permissionMode;
-          }
-          if (event.kind === "shutdown") {
-            // 예고된 종료는 고장이 아니다: 아래의 스트림 끝이 이 깃발을 읽고
-            // 다른 말을 한다. 화면에는 올리지 않는다 — 계획자가 할 일은 없고,
-            // 곧 이어지는 카드가 이어가는 길을 말한다.
-            this.shutdownReason = event.reason;
-            continue;
-          }
-          if (event.kind === "turn.end" && event.costUsd != null) {
-            this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
-          }
-          if (event.kind === "turn.end") {
-            // 결함① 의 두 번째 길: interrupt() 를 부른 뒤 SDK 가 abort 예외를
-            // 던지는 대신 에러 결과로 그 턴을 끝내면, 이 turn.end 는 그대로면
-            // "잠시 문제가 있었습니다" 카드로 내려간다 — 계획자가 누른 중지를
-            // 고장으로 읽히게 하는 것. 성공으로 끝난 턴은 건드리지 않고,
-            // 플래그는 어떤 턴 끝이든 소비해 다음 진짜 오류를 가리지 않는다.
-            if (event.isError && this.interrupting) {
-              this.interrupting = false;
-              this.events.onEvent(this.id, {
-                kind: "turn.end",
-                subtype: "interrupted",
-                isError: false,
-                costUsd: event.costUsd,
-                numTurns: event.numTurns,
-                durationMs: event.durationMs,
-                resultText: null,
-              });
-              this.endTurn();
-              continue;
-            }
-            if (event.isError) this.interrupting = false;
-            // 턴 끝을 먼저 알리고, 그 다음에 대기 줄을 푼다 — 다음 턴은 앞
-            // 턴이 닫힌 뒤에 열려야 기록도 램프도 순서대로 읽힌다.
-            this.events.onEvent(this.id, event);
-            this.endTurn();
-            continue;
-          }
-          this.events.onEvent(this.id, event);
-        }
-      }
-      // A query that ends while a turn is in flight is a crash wearing exit
-      // code 0: the planner's words got no result and no card would explain
-      // the running lamp dying into an empty answer. Say the same thing the
-      // exception path says; only a turn that was never running ends quietly.
-      if (this.state === "running") {
-        this.crashed = true;
-        // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
-        // 를 말하되 놀라게 하지 않는다.
-        const announced = this.shutdownReason !== null;
-        const text = announced
-          ? "Claude 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다."
-          : "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.";
-        this.events.onEvent(this.id, { kind: "notice", level: "error", text });
-        this.setState(
-          "error",
-          announced
-            ? `Claude 프로그램이 종료됐습니다 (${this.shutdownReason})`
-            : "Claude 프로그램이 응답 없이 종료됐습니다.",
-        );
-      } else {
-        this.setState("closed");
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      // The deliberate shutdown in close() aborts the in-flight query; that
-      // abort must not read as a crash — no error card, no error state.
-      // Same for the planner's own 중지 (결함①): the SDK surfaces it as an
-      // abort exception, and the card vocabulary already has the word.
-      if (this.interrupting && !this.closed) {
+  /** The manager attaches the driver's transport once `createSession` returns. */
+  attach(agent: AgentSession): void {
+    this.agent = agent;
+  }
+
+  // -------------------------------------------------------------------------
+  // Driver → core: events and transport lifecycle
+  // -------------------------------------------------------------------------
+
+  private handleDriverEvent(event: ChatEvent): void {
+    this.lastActivity = Date.now();
+    if (event.kind === "init") {
+      this.model = event.model;
+      this.permissionMode = event.permissionMode;
+    }
+    if (event.kind === "turn.end" && event.costUsd != null) {
+      this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
+    }
+    if (event.kind === "turn.end") {
+      // 결함① 의 두 번째 길: interrupt() 를 부른 뒤 transport 가 abort 예외를
+      // 던지는 대신 에러 결과로 그 턴을 끝내면, 이 turn.end 는 그대로면
+      // "잠시 문제가 있었습니다" 카드로 내려간다 — 계획자가 누른 중지를
+      // 고장으로 읽히게 하는 것. 성공으로 끝난 턴은 건드리지 않고,
+      // 플래그는 어떤 턴 끝이든 소비해 다음 진짜 오류를 가리지 않는다.
+      if (event.isError && this.interrupting) {
         this.interrupting = false;
         this.events.onEvent(this.id, {
           kind: "turn.end",
           subtype: "interrupted",
           isError: false,
-          costUsd: null,
-          numTurns: null,
-          durationMs: null,
+          costUsd: event.costUsd,
+          numTurns: event.numTurns,
+          durationMs: event.durationMs,
           resultText: null,
         });
-        // A forced abort killed the CLI: record the 멈춤 above, then take the
-        // thread down — the next open resumes it with a fresh CLI instead of
-        // feeding sends to a dead query.
-        this.setState(this.aborted ? "closed" : "idle");
-      } else if (!this.closed && this.state !== "closed") {
-        this.crashed = true;
-        this.events.onEvent(this.id, {
-          kind: "notice",
-          level: "error",
-          // The SDK detail is an English message string, not an error id —
-          // the retry dictionary can't match it (리뷰 C3). A Korean lead rides
-          // in front, the raw line stays below for 자세히.
-          text: `Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
-        });
-        this.setState("error", detail);
+        this.endTurn();
+        return;
       }
-    } finally {
-      // A crashed or finished query can never answer a pending prompt.
-      for (const request of this.pending.values()) {
-        request.resolve({
-          behavior: "deny",
-          message: "Session ended before approval",
-        });
-      }
-      this.pending.clear();
-      // …nor deliver what was waiting for the next turn. Those words never
-      // reached the transcript, so they go back to the planner whole rather
-      // than vanishing with the query.
-      this.turnStartedAt = null;
-      this.dropHeld();
+      if (event.isError) this.interrupting = false;
+      // 턴 끝을 먼저 알리고, 그 다음에 대기 줄을 푼다 — 다음 턴은 앞
+      // 턴이 닫힌 뒤에 열려야 기록도 램프도 순서대로 읽힌다.
+      this.events.onEvent(this.id, event);
+      this.endTurn();
+      return;
     }
+    this.events.onEvent(this.id, event);
+  }
+
+  /**
+   * The transport's stream ended on its own. A query that ends while a turn
+   * is in flight is a crash wearing exit code 0: the planner's words got no
+   * result and no card would explain the running lamp dying into an empty
+   * answer. Say the same thing the exception path says; only a turn that was
+   * never running ends quietly.
+   */
+  private handleTransportEnd(shutdownReason: string | null): void {
+    if (this.state === "running") {
+      this.crashed = true;
+      // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
+      // 를 말하되 놀라게 하지 않는다.
+      const announced = shutdownReason !== null;
+      const text = announced
+        ? "Claude 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다."
+        : "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.";
+      this.events.onEvent(this.id, { kind: "notice", level: "error", text });
+      this.setState(
+        "error",
+        announced
+          ? `Claude 프로그램이 종료됐습니다 (${shutdownReason})`
+          : "Claude 프로그램이 응답 없이 종료됐습니다.",
+      );
+    } else {
+      this.setState("closed");
+    }
+    this.settleTransport();
+  }
+
+  private handleTransportError(detail: string): void {
+    // The deliberate shutdown in close() aborts the in-flight query; that
+    // abort must not read as a crash — no error card, no error state.
+    // Same for the planner's own 중지 (결함①): the transport surfaces it as
+    // an abort exception, and the card vocabulary already has the word.
+    if (this.interrupting && !this.closed) {
+      this.interrupting = false;
+      this.events.onEvent(this.id, {
+        kind: "turn.end",
+        subtype: "interrupted",
+        isError: false,
+        costUsd: null,
+        numTurns: null,
+        durationMs: null,
+        resultText: null,
+      });
+      // A forced abort killed the CLI: record the 멈춤 above, then take the
+      // thread down — the next open resumes it with a fresh CLI instead of
+      // feeding sends to a dead query.
+      this.setState(this.aborted ? "closed" : "idle");
+    } else if (!this.closed && this.state !== "closed") {
+      this.crashed = true;
+      this.events.onEvent(this.id, {
+        kind: "notice",
+        level: "error",
+        // The transport detail is an English message string, not an error id —
+        // the retry dictionary can't match it (리뷰 C3). A Korean lead rides
+        // in front, the raw line stays below for 자세히.
+        text: `Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
+      });
+      this.setState("error", detail);
+    }
+    this.settleTransport();
+  }
+
+  /**
+   * Whatever way the transport died, its pending prompts can never be
+   * answered and its held sends never reached the transcript — the first go
+   * back as denies, the second to the lost room.
+   */
+  private settleTransport(): void {
+    for (const request of this.pending.values()) {
+      request.resolve({
+        behavior: "deny",
+        message: "Session ended before approval",
+      });
+    }
+    this.pending.clear();
+    this.turnStartedAt = null;
+    this.dropHeld();
   }
 
   private setState(state: SessionState, detail?: string): void {
@@ -636,7 +513,7 @@ export class Session {
   }
 
   /**
-   * 턴이 끝났다 — 상태를 내리고 대기 줄을 다음 턴으로 내보낸다. 중지로 끝난
+   * 턴이 끝났다 — 상태를 내리고 대기 줄을 다음 턴으로 보낸다. 중지로 끝난
    * 턴도 턴 끝이다: "다음 턴에 보냅니다" 라고 약속받고 써 둔 말은 멈춤 뒤에도
    * 그 다음 턴으로 간다 (끊고 보내기가 기대하는 순서이기도 하다 — 끊은 다음,
    * 그 말로 새 턴).
@@ -654,7 +531,7 @@ export class Session {
    * 끝을 다시 기다린다.
    */
   private release(): void {
-    // 내려가는 대화에는 내보내지 않는다: 닫는 중에 온 턴 끝(중지의 응답)이
+    // 내려가는 대화에는 보내지 않는다: 닫는 중에 온 턴 끝(중지의 응답)이
     // 대기 줄을 죽어 가는 질의로 밀면, 그 말들은 CLI 에 닿지도 못한 채 방에서
     // 사라진다. 닫힘이 이긴 방은 디스크에 그대로 남아 재시작 뒤 회복된다.
     if (this.closed) return;
@@ -743,20 +620,21 @@ export class Session {
   }
 
   /**
-   * The hub's single permission choke point. Edit-class tools are answered by
-   * the session's `writePolicy`: silent for the repo's own working set, a
-   * card for anything ambiguous, a refusal for the files the tool owns.
-   * Everything else goes to the planner as a permission (or question) card.
+   * The hub's single permission choke point — the driver's `decidePermission`
+   * hook. Edit-class tools are answered by the session's `writePolicy`:
+   * silent for the repo's own working set, a card for anything ambiguous, a
+   * refusal for the files the tool owns. Everything else goes to the planner
+   * as a permission (or question) card.
    */
-  private canUse(
-    toolName: string,
+  private decidePermission(
+    tool: ToolClass,
     input: Record<string, unknown>,
-    opts: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
-  ): Promise<PermissionResult> {
-    // The preview tools are the daemon's own in-process server (PLAN D61):
-    // they only look at the hidden preview window, so they never surface as
-    // cards — and they must not fall through to the edit-tool branch either.
-    if (toolName.startsWith("mcp__colo-preview__")) {
+    opts: { signal: AbortSignal; suggestions?: unknown[] },
+  ): Promise<PermissionVerdict> {
+    // The preview tools are the daemon's own server (PLAN D61): they only
+    // look at the hidden preview window, so they never surface as cards —
+    // and they must not fall through to the edit-tool branch either.
+    if (tool.kind === "mcp" && tool.mcpServer === "colo-preview") {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
     // The git nouns belong to the tool (README): a session committing or
@@ -767,18 +645,16 @@ export class Session {
     // commit, and this gate must not refuse the tool's own recovery
     // instruction(브리프 ↔ 게이트 모순). A push stays the tool's verb even
     // mid-merge, and a commit outside an open merge is still refused.
-    const command = String(input.command ?? "");
-    if (toolName === "Bash" && writesGitHistory(command)) {
+    const command = tool.command ?? String(input.command ?? "");
+    if (tool.kind === "exec" && writesGitHistory(command)) {
       const mergeOpen = existsSync(join(this.cwd, ".git", "MERGE_HEAD"));
-      const pushes = /\bgit\b/.test(command) && /\bpush\b/.test(command);
+      const pushes = /\bpush\b/.test(command);
       if (!mergeOpen || pushes) {
         return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
       }
     }
-    if (EDIT_TOOLS.has(toolName)) {
-      const paths = [input.file_path, input.notebook_path].filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      );
+    if (tool.kind === "edit") {
+      const paths = tool.paths ?? [];
       if (paths.length > 0) {
         // Relative names resolve against cwd and symlinks resolve through,
         // so a policy compares prefixes without being talked past.
@@ -800,30 +676,30 @@ export class Session {
     // A call the planner answered with 항상 허용 must not become a card again.
     // 계획의 승인은 그 앞에서 갈라 놓는다 — 읽고 답하는 일이라 기억이 대신
     // 답하지 못하게 한다(기억은 어차피 이 경로로 채워지지 않는다).
-    if (toolName === PLAN_TOOL) {
-      return this.handlePermission(toolName, input, opts);
+    if (tool.kind === "plan") {
+      return this.handlePermission(tool, input, opts);
     }
-    if (this.alwaysAllowed.allows(toolName, input)) {
+    if (this.alwaysAllowed.allows(tool.name, input)) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
-    return this.handlePermission(toolName, input, opts);
+    return this.handlePermission(tool, input, opts);
   }
 
   private handlePermission(
-    toolName: string,
+    tool: ToolClass,
     input: Record<string, unknown>,
-    opts: { signal: AbortSignal; suggestions?: PermissionUpdate[] },
-  ): Promise<PermissionOutcome> {
+    opts: { signal: AbortSignal; suggestions?: unknown[] },
+  ): Promise<PermissionVerdict> {
     const requestId = randomUUID();
     const suggestions = opts.suggestions ?? [];
     // 권한 카드만 잰다(커미티 2026-09-14): 질문·계획 카드는 "항상 허용"이
     // 없는 세계라 반복이라는 개념이 없다.
-    if (toolName !== "AskUserQuestion" && toolName !== PLAN_TOOL) {
-      permissionLog().ask(toolName, permissionSignature(toolName, input), this.cwd);
+    if (tool.kind !== "question" && tool.kind !== "plan") {
+      permissionLog().ask(tool.name, permissionSignature(tool.name, input), this.cwd);
     }
 
-    return new Promise<PermissionOutcome>((resolve) => {
-      const settle = (outcome: PermissionOutcome) => {
+    return new Promise<PermissionVerdict>((resolve) => {
+      const settle = (outcome: PermissionVerdict) => {
         if (!this.pending.has(requestId)) return;
         this.pending.delete(requestId);
         if (this.pending.size === 0 && this.state !== "closed" && this.state !== "error") {
@@ -834,13 +710,8 @@ export class Session {
 
       this.pending.set(requestId, {
         requestId,
-        kind:
-          toolName === "AskUserQuestion"
-            ? "question"
-            : toolName === PLAN_TOOL
-              ? "plan"
-              : "permission",
-        toolName,
+        kind: tool.kind === "question" ? "question" : tool.kind === "plan" ? "plan" : "permission",
+        toolName: tool.name,
         resolve: settle,
         suggestions,
         input,
@@ -853,7 +724,7 @@ export class Session {
         { once: true },
       );
 
-      if (toolName === "AskUserQuestion") {
+      if (tool.kind === "question") {
         this.setState("waiting_question");
         this.events.onQuestionRequest({
           requestId,
@@ -865,7 +736,7 @@ export class Session {
         this.events.onPermissionRequest({
           requestId,
           sessionId: this.id,
-          toolName,
+          toolName: tool.name,
           input,
           suggestions: describeSuggestions(suggestions),
         });
@@ -1043,9 +914,9 @@ export class Session {
 
   /**
    * A send goes out: everything a send MEANS happens here, and only here —
-   * the moment the words are handed to the CLI. A waiting send has done none
-   * of this yet, so taking it back out of the room leaves no trace, and the
-   * running turn keeps its own quota and interrupt flag until its end.
+   * the moment the words are handed to the transport. A waiting send has done
+   * none of this yet, so taking it back out of the room leaves no trace, and
+   * the running turn keeps its own quota and interrupt flag until its end.
    */
   private deliver({ text, images }: HeldSend): void {
     // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
@@ -1053,20 +924,6 @@ export class Session {
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
-    const content =
-      images.length > 0
-        ? [
-            { type: "text" as const, text },
-            ...images.map((image) => ({
-              type: "image" as const,
-              source: {
-                type: "base64" as const,
-                media_type: image.mediaType,
-                data: image.data,
-              },
-            })),
-          ]
-        : text;
 
     /**
      * A thread names itself after its first turn — unless the tool wrote that
@@ -1083,12 +940,7 @@ export class Session {
       this.title = title.slice(0, 80);
     }
 
-    this.queue.push({
-      type: "user",
-      message: { role: "user", content },
-      parent_tool_use_id: null,
-      session_id: this.id,
-    } as SDKUserMessage);
+    void this.agent?.send({ text, images }).catch(() => undefined);
 
     // The echo carries the person's own words. D87: the pin crops ride back
     // (capped) so the chat card can draw its thumbnails — live only; a
@@ -1106,21 +958,19 @@ export class Session {
   }
 
   async interrupt(): Promise<void> {
-    // Mark first: the abort the CLI throws back in the consume loop is THIS
-    // planner action, and the catch must turn it into `멈추었습니다` (결함①).
+    // Mark first: the abort the transport throws back reads as THIS planner
+    // action, and the catch must turn it into `멈추었습니다` (결함①).
     this.interrupting = true;
-    const outcome = await this.settleInterrupt();
+    const outcome = (await this.agent?.interrupt()) ?? "dead";
     if (outcome === "dead") {
-      // 제어 요청이 답이 아니라 거절(throw)로 돌아왔다. SDK 의 인터럽트는
-      // 거부마저 응답으로 resolve 하므로(sdk.d.ts `interrupt():` 의 반환형)
-      // reject 는 한 가지뿐이다: 쓸 수 없는 질의. 중지는 도는 턴 위에서만
-      // 눌리므로 부팅 창의 not ready 일 수 없다 — 질의는 이미 없다(실사 결함:
-      // 답한 뒤 스스로 내려간 CLI 를 중지로 끊어도 대기 줄이 그 시체로 흘러
-      // 램프가 영원히 켜져 있었다). 죽은 질의는 abort 로 끊을 스트림도 없으므로
-      // timeout 과 달리 정리를 직접 한다: 멈춤 카드, 대기 줄은 lost room 으로,
-      // 대화는 닫는다 — 다음 보내기가 새 CLI 로 이어받는다(resurrectSession).
+      // 제어 요청이 답이 아니라 거절(throw)로 돌아왔다 — 쓸 수 없는 질의.
+      // 중지는 도는 턴 위에서만 눌리므로 부팅 창의 not ready 일 수 없다 —
+      // 질의는 이미 없다(실사 결함: 답한 뒤 스스로 내려간 CLI 를 중지로 끊어도
+      // 대기 줄이 그 시체로 흘러 램프가 영원히 켜져 있었다). 죽은 질의는
+      // 끊을 스트림도 없으므로 timeout 과 달리 정리를 직접 한다: 멈춤 카드,
+      // 대기 줄은 lost room 으로, 대화는 닫는다 — 다음 보내기가 새 CLI 로
+      // 이어받는다(resurrectSession).
       this.aborted = true;
-      this.abort.abort();
       if (!this.closed) {
         const hadTurn = this.turnStartedAt !== null;
         this.interrupting = false;
@@ -1144,108 +994,44 @@ export class Session {
     if (outcome === "timeout") {
       // The CLI never answered the control request — 실사 결함: 네트워크 대기에
       // 걸린 턴에서 중지를 두 번 눌러도 아무 일도 일어나지 않았다. 유예가 지났으면
-      // 질의를 끊는다. consume 루프가 같은 깃발을 읽어 멈춤으로 기록하고,
-      // `aborted` 로 대화를 닫는다 — 죽은 CLI 가 이후의 보낸 말을 조용히 삼키지
-      // 않게.
+      // 질의를 끊는다(드라이버가 이미 abort 했다). transport end 가 같은 깃발을
+      // 읽어 멈춤으로 기록하고, `aborted` 로 대화를 닫는다 — 죽은 CLI 가 이후의
+      // 보낸 말을 조용히 삼키지 않게.
       this.aborted = true;
-      this.abort.abort();
     }
     // 대기 줄이 이미 다음 턴을 열었다면 그 램프를 끄지 않는다 — 멈춘 것은 앞
     // 턴이고, 뒤에 선 말은 지금 돌고 있다.
     if (this.turnStartedAt === null) this.setState("idle");
   }
 
-  /**
-   * A control request's grace. The CLI answers an interrupt quickly when it
-   * can. `timeout` is the wedged case and `dead` the already-gone one — both
-   * are the caller's cue to abort the query outright (interrupt 위 참조).
-   * `close` passes a shorter courtesy: a shutdown with several wedged
-   * sessions must not pay the full grace for each of them.
-   */
-  private settleInterrupt(graceMs = INTERRUPT_GRACE_MS): Promise<"answered" | "timeout" | "dead"> {
-    const { promise, resolve } = Promise.withResolvers<"answered" | "timeout" | "dead">();
-    const timer = setTimeout(() => resolve("timeout"), graceMs);
-    this.run.interrupt().then(
-      () => {
-        clearTimeout(timer);
-        resolve("answered");
-      },
-      () => {
-        clearTimeout(timer);
-        resolve("dead");
-      },
-    );
-    return promise;
-  }
-
   async contextUsage(): Promise<ContextUsage | null> {
-    try {
-      const usage = await this.run.getContextUsage({ detail: "summary" });
-      return {
-        totalTokens: usage.totalTokens,
-        maxTokens: usage.maxTokens,
-        percentage: usage.percentage,
-        sessionCostUsd: this.costUsd,
-        model: usage.model,
-        plan: await this.planUsage(),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * The signed-in plan's windows, from the SDK's /usage control call. Any
-   * failure just means the composer shows nothing — the context ring above
-   * still works, so a broken experimental call must not take it down.
-   */
-  private async planUsage(): Promise<PlanUsage | null> {
-    try {
-      return toPlanUsage(
-        await this.run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-          skipBehaviors: true,
-        }),
-      );
-    } catch {
-      return null;
-    }
+    const usage = (await this.agent?.contextUsage?.()) ?? null;
+    if (!usage) return null;
+    return { ...usage, sessionCostUsd: this.costUsd };
   }
 
   // -------------------------------------------------------------------------
-  // Composer selector chips — mid-session switches (SDK control requests)
+  // Composer selector chips — mid-session switches (driver control requests)
   // -------------------------------------------------------------------------
 
-  /** Effective from the next response. `null` returns to the CLI default. */
+  /** Effective from the next response. `null` returns to the provider default. */
   async setModel(model: string | null): Promise<void> {
-    await this.run.setModel(model ?? undefined);
+    if (!this.agent?.setModel) throw new Error("이 에이전트는 모델 선택을 지원하지 않습니다.");
+    await this.agent.setModel(model);
     this.selectedModel = model;
   }
 
   /** Effective from the next response. `null` clears the override. */
   async setEffort(effort: EffortLevel | null): Promise<void> {
-    await this.run.applyFlagSettings({ effortLevel: effort ?? null });
+    if (!this.agent?.setEffort) throw new Error("이 에이전트는 노력 수준을 지원하지 않습니다.");
+    await this.agent.setEffort(effort);
     this.selectedEffort = effort;
   }
 
   /** Widening past `default` is the planner's own explicit choice here. */
-  async setPermissionMode(mode: PermissionMode): Promise<void> {
-    // 갓 살아난 CLI 는 제어 요청을 받아들일 준비가 늦는다 — 방금 만들거나
-    // 되살린 대화의 첫 칩(계획 먼저)이 부팅 창에 부딪히면 계획자는 자기가
-    // 누른 칩이 오류 밴드로 돌아오는 것을 받는다. "준비 안 됨"은 거절이
-    // 아니라 아직이라는 뜻이니, 묻는 것을 잠시 뒤로 미룬다.
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        await this.run.setPermissionMode(mode);
-        break;
-      } catch (e) {
-        if (attempt >= 5 || !/not ready/i.test(e instanceof Error ? e.message : String(e))) {
-          throw e;
-        }
-        const backoff = Promise.withResolvers<void>();
-        setTimeout(backoff.resolve, 300 * attempt);
-        await backoff.promise;
-      }
-    }
+  async setPermissionMode(mode: string): Promise<void> {
+    if (!this.agent) throw new Error("대화가 아직 준비되지 않았습니다.");
+    await this.agent.setMode(mode);
     // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
     // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
     // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
@@ -1258,32 +1044,15 @@ export class Session {
   }
 
   /**
-   * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 노력 수준과 같은
-   * 깃발 층으로 가고(`applyFlagSettings`), 켜 달라는 부탁일 뿐이다 — 받아들여
-   * 졌는지는 다음 메시지의 `fast_mode_state` 가 말한다(위 readFastMode).
+   * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 켜 달라는 부탁일
+   * 뿐이다 — 받아들여졌는지는 다음 메시지의 `fast_mode_state` 가 말한다.
    */
   async setFastMode(fast: boolean): Promise<void> {
-    await this.run.applyFlagSettings({ fastMode: fast });
+    if (!this.agent?.setFastMode) throw new Error("이 에이전트는 빠르게를 지원하지 않습니다.");
+    await this.agent.setFastMode(fast);
     this.fastMode = fast;
     // 켜는 쪽의 사유는 이제 옛말이다. 거절이면 다음 메시지가 다시 적는다.
     if (fast) this.fastModeBlocked = null;
-  }
-
-  /**
-   * CLI 가 매 메시지에 실어 보내는 빠르게의 상태를 그대로 받아 적는다.
-   * 말이 없는 메시지는 소식이 없는 것이지 꺼졌다는 뜻이 아니라, 건드리지
-   * 않는다.
-   */
-  private readFastMode(message: unknown): void {
-    const m = message as {
-      fast_mode_state?: "off" | "cooldown" | "on";
-      fast_mode_disabled_reason?: string;
-    };
-    if (m.fast_mode_state === undefined) return;
-    this.fastMode = m.fast_mode_state === "on";
-    // 상태를 실은 메시지는 온전한 보고다: 사유가 없다는 것은 모른다는 뜻이
-    // 아니라 막는 것이 없다는 뜻이라(SDK 의 정의), 옛 사유를 물려주지 않는다.
-    this.fastModeBlocked = m.fast_mode_disabled_reason ?? null;
   }
 
   /**
@@ -1292,7 +1061,8 @@ export class Session {
    * 한 작업의 것 — 두 개가 다른 버튼인 이유다.
    */
   async stopTask(taskId: string): Promise<void> {
-    await this.run.stopTask(taskId);
+    if (!this.agent?.stopTask) throw new Error("이 에이전트는 작업별 중지를 지원하지 않습니다.");
+    await this.agent.stopTask(taskId);
   }
 
   /**
@@ -1301,7 +1071,8 @@ export class Session {
    * 옮길 것이 없으면 false — 버튼이 거짓말하지 않게 그대로 올린다.
    */
   async backgroundTask(toolUseId: string): Promise<boolean> {
-    return await this.run.backgroundTasks(toolUseId);
+    if (!this.agent?.backgroundTask) return false;
+    return await this.agent.backgroundTask(toolUseId);
   }
 
   /** Everything the composer's chips display, plus the model picker rows. */
@@ -1310,31 +1081,31 @@ export class Session {
     // closed" 가 send 에 이어 selectors 에서도 같은 버선을 넘던 집안(리뷰
     // C1·C3). 칩이 보여 주는 줄 대부분은 세션 필드라 질의 없이도 살아
     // 있고, 모형 목록은 빈 채 돌려 화면이 기억한 카탈로그를 유지하게 한다.
-    let models: ModelInfo[] = [];
-    if (this.sendable) {
-      // 죽은 질의의 SDK 메서드는 거절이 아니라 동기 throw 로 답하는 수가
-      // 있다 — .catch 는 붙지 못하니 try 로 감싼다.
+    let models: Awaited<ReturnType<NonNullable<AgentSession["models"]>>> = [];
+    if (this.sendable && this.agent?.models) {
       try {
-        models = (await this.run.supportedModels()) ?? [];
+        models = (await this.agent.models()) ?? [];
       } catch {
         models = [];
+      }
+    }
+    let modes: Awaited<ReturnType<NonNullable<AgentSession["modes"]>>> = null;
+    if (this.sendable && this.agent?.modes) {
+      try {
+        modes = (await this.agent.modes()) ?? null;
+      } catch {
+        modes = null;
       }
     }
     return {
       model: this.selectedModel ?? this.model,
       effort: this.selectedEffort,
-      permissionMode: this.permissionMode,
+      permissionMode: this.permissionMode as PermissionMode,
       fastMode: this.fastMode,
       fastModeBlocked: this.fastModeBlocked,
-      models: models.map((model) => ({
-        value: model.value,
-        displayName: model.displayName,
-        resolvedModel: model.resolvedModel ?? null,
-        description: model.description,
-        supportsEffort: model.supportsEffort ?? false,
-        supportedEffortLevels: model.supportedEffortLevels ?? null,
-        supportsFastMode: model.supportsFastMode ?? false,
-      })),
+      models,
+      provider: this.provider,
+      ...(modes ? { modes, mode: this.permissionMode } : {}),
     };
   }
 
@@ -1342,20 +1113,15 @@ export class Session {
   async commands(): Promise<SessionCommand[]> {
     // selectors 와 같은 손: 죽은 질의의 팔레트는 비워 두고, 칩은 밴드 대신
     // 제 자리를 지킨다.
-    let commands: SlashCommand[] = [];
-    if (this.sendable) {
+    let commands: SessionCommand[] = [];
+    if (this.sendable && this.agent?.commands) {
       try {
-        commands = (await this.run.supportedCommands()) ?? [];
+        commands = (await this.agent.commands()) ?? [];
       } catch {
         commands = [];
       }
     }
-    return commands.map((command) => ({
-      name: command.name,
-      description: command.description,
-      argumentHint: command.argumentHint ?? "",
-      aliases: command.aliases ?? [],
-    }));
+    return commands;
   }
 
   /**
@@ -1375,153 +1141,12 @@ export class Session {
       this.held.length = 0;
       this.disk?.clear();
     }
-    this.queue.close();
-    // The same grace as 중지, only shorter: a shutdown must not hang on a
-    // wedged CLI either — and it must not pay the full grace per session.
-    if ((await this.settleInterrupt(CLOSE_GRACE_MS)) === "timeout") this.abort.abort();
-    await this.consumer.catch(() => undefined);
+    await this.agent?.close().catch(() => undefined);
     this.setState("closed");
   }
 }
 
-/**
- * A CLI booted just far enough to answer one control request — the init
- * handshake, no model turn, no transcript. The prompt stream never yields, so
- * the process only ever answers the question the caller asks before closing
- * it, and closing it is the caller's job.
- */
-function probeQuery(cwd: string, executable: string): Query {
-  const idle = Promise.withResolvers<IteratorResult<SDKUserMessage>>();
-  const never: AsyncIterable<SDKUserMessage> = {
-    [Symbol.asyncIterator]: () => ({ next: () => idle.promise }),
-  };
-  return query({
-    prompt: never,
-    options: {
-      cwd: realpathBestEffort(cwd),
-      pathToClaudeCodeExecutable: executable,
-      // The same user/project configuration a session loads, so a probe's
-      // answer is the one the first session will actually agree with.
-      settingSources: ["user", "project", "local"],
-    },
-  });
-}
-
-/**
- * One probe question, bounded twice over: by the grace above, and by the
- * caller's own signal. The signal is shutdown — a daemon that has stopped
- * must not be held open by a CLI that never answers. Without it every
- * offline suite paid the full grace at exit (the stub CLI answers no
- * control request the probes ask), which is where ~20s per suite went.
- *
- * A give-up answers `null`; the ask's own failure is carried out to the
- * caller, whose retry rule differs per question. Either way the loser of
- * the race is settled here, so nothing rejects into no one's hands once
- * `close` tears the query down.
- */
-async function askProbe<T>(
-  options: { cwd: string; executable: string | null; signal?: AbortSignal },
-  ask: (run: Query) => Promise<T>,
-): Promise<T | null> {
-  if (!options.executable || options.signal?.aborted) return null;
-  const run = probeQuery(options.cwd, options.executable);
-  const gaveUp = Promise.withResolvers<null>();
-  const abandon = () => gaveUp.resolve(null);
-  const timer = setTimeout(abandon, PROBE_GRACE_MS);
-  options.signal?.addEventListener("abort", abandon, { once: true });
-  try {
-    const settled = await Promise.race([
-      ask(run).then(
-        (value) => ({ ok: true, value }) as const,
-        (error) => ({ ok: false, error }) as const,
-      ),
-      gaveUp.promise,
-    ]);
-    if (settled === null) return null;
-    if (!settled.ok) throw settled.error;
-    return settled.value;
-  } finally {
-    clearTimeout(timer);
-    options.signal?.removeEventListener("abort", abandon);
-    run.close();
-  }
-}
-
-/**
- * The `/` palette before any thread exists. A live session answers from its
- * own CLI (`Session.commands`); this asks the same question of a probe, so an
- * empty workspace still reads like the terminal's `/`.
- *
- * A probe that never answered is not an empty palette: it throws, so the
- * caller retries the next time someone opens `/` instead of caching a CLI
- * as commandless.
- */
-export async function probeCommands(options: {
-  cwd: string;
-  executable: string | null;
-  signal?: AbortSignal;
-}): Promise<SessionCommand[]> {
-  if (!options.executable) return [];
-  const commands = await askProbe(options, (run) => run.supportedCommands());
-  if (!commands) throw new Error("명령 목록을 묻는 probe 가 답하지 않았습니다");
-  return commands.map((command) => ({
-    name: command.name,
-    description: command.description,
-    argumentHint: command.argumentHint ?? "",
-    aliases: command.aliases ?? [],
-  }));
-}
-
-/**
- * The SDK's usage answer as the protocol's plan reading. API-key, Bedrock and
- * Vertex sessions answer `rate_limits_available: false` and get null — plan
- * limits do not apply there at all.
- */
-function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
-  const limits = usage.rate_limits;
-  if (!usage.rate_limits_available || !limits) return null;
-  return {
-    subscriptionType: usage.subscription_type,
-    fiveHour: limits.five_hour
-      ? { utilization: limits.five_hour.utilization, resetsAt: limits.five_hour.resets_at }
-      : null,
-    sevenDay: limits.seven_day
-      ? { utilization: limits.seven_day.utilization, resetsAt: limits.seven_day.resets_at }
-      : null,
-    // The per-model weekly rows (Fable, Opus, …) are additive and named by
-    // the server, so they are carried through as they arrive rather than
-    // picked one by one — a bucket this build has never heard of still gets
-    // its row.
-    modelWeekly: (limits.model_scoped ?? []).map((row) => ({
-      label: row.display_name,
-      utilization: row.utilization,
-      resetsAt: row.resets_at,
-    })),
-  };
-}
-
-/**
- * The plan's limits with no thread in the way. The chip has to read the
- * account before the planner has opened anything — and the numbers move on
- * the account, not in the thread — so this asks a probe rather than keeping a
- * session alive for it: one process for a second, no tokens, no turn.
- *
- * A reading that never came is no reading: the chip keeps the last one and
- * the next refresh asks again. Failure and give-up read the same here, which
- * is why this one swallows where `probeCommands` throws.
- */
-export async function probePlanUsage(options: {
-  cwd: string;
-  executable: string | null;
-  signal?: AbortSignal;
-}): Promise<PlanUsage | null> {
-  const usage = await askProbe(options, (run) =>
-    run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
-  ).catch(() => null);
-  return usage ? toPlanUsage(usage) : null;
-}
-
-function describeSuggestions(suggestions: PermissionUpdate[]): PermissionSuggestion[] {
+function describeSuggestions(suggestions: unknown[]): PermissionSuggestion[] {
   return suggestions.map((raw) => {
     const s = raw as Record<string, any>;
     const destination = String(s?.destination ?? "session");

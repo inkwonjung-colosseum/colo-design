@@ -132,6 +132,18 @@ export interface DaemonStatus {
    * offer a choice before any thread exists. Empty until a session reports.
    */
   models: SessionModelInfo[];
+  /**
+   * The agent providers this daemon can run — id, label, availability, and
+   * the modes/capabilities the UI reads to hide what a driver cannot do.
+   */
+  providers?: Array<{
+    id: string;
+    label: string;
+    available: boolean;
+    modes: Array<{ id: string; label: string; tier: string }>;
+    defaultModeId: string;
+    capabilities: Record<string, unknown>;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
