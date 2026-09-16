@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>변경 버리기 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="stagepage">
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+        </div>
+      </div>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+  <div class="main">
+    <header class="topbar"><span class="topbar__title">회원 관리 화면 세 상태</span><span class="topbar__crumb">쇼핑몰 프론트</span><span class="grow"></span><span class="conn conn--ok"><span class="dot"></span>연결됨</span></header>
+    <div class="work work--chatonly"></div>
+  </div>
+</div>
+
+<!-- ============ 변경 버리기 확인 — 되돌릴 수 없는 동작 ============ -->
+<div class="scrim">
+  <div class="modal" role="dialog" aria-label="변경 버리기" style="width:min(460px,calc(100vw - 48px))">
+    <div class="modal__head">
+      <span class="modal__title">변경 버리기</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="변경 버리기 닫기">✕</button>
+    </div>
+    <div class="modal__body">
+      <p style="margin:0;font-size:13.5px;line-height:1.6">저장하지 않은 변경 <strong>4개 파일</strong>을 모두 버립니다. 이 동작은 되돌릴 수 없습니다.</p>
+      <div style="border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:4px">
+        <div class="dfile"><span class="tag tag--ok">추가</span><span class="dfile__name">src/pages/members.tsx</span><span class="dfile__count"><span class="plus">+214</span></span></div>
+        <div class="dfile"><span class="tag">수정</span><span class="dfile__name">src/components/table.tsx</span><span class="dfile__count"><span class="plus">+38</span> <span class="minus">−12</span></span></div>
+        <div class="dfile"><span class="tag">수정</span><span class="dfile__name">src/routes.ts</span><span class="dfile__count"><span class="plus">+6</span> <span class="minus">−1</span></span></div>
+        <div class="dfile"><span class="tag tag--accent">추가</span><span class="dfile__name">src/pages/members.empty.tsx</span><span class="dfile__count"><span class="plus">+86</span></span></div>
+      </div>
+      <p class="hint" style="margin:0">잠깐 치워두면 나중에 다시 꺼낼 수 있습니다 — 버리기 대신 치워두기를 고려해 보세요.</p>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost">취소</button>
+      <button class="btn btn--ghost">잠깐 치워두기</button>
+      <button class="btn btn--primary" style="background:var(--danger)">모두 버리기</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

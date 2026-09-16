@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>설정 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+  /* settings-only bits */
+  .setpage{max-width:640px;margin:0 auto;padding:44px 28px 80px}
+  .setpage h1{font-family:var(--serif);font-size:26px;letter-spacing:-0.02em;margin:0 0 4px}
+  .setpage .sec{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:30px 0 4px}
+  .setcard{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);padding:4px 18px}
+  .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:13px 0}
+  .theme-tile{border:1.5px solid var(--line);border-radius:var(--r-md);padding:10px;text-align:left;background:var(--panel)}
+  .theme-tile.on{border-color:var(--accent)}
+  .theme-tile .sw{width:100%;height:44px;border-radius:var(--r-sm);margin-bottom:8px;position:relative}
+  .theme-tile .sw::after{display:none}
+  .tile-light{background:#faf9f5;border:1px solid #e6e4da}
+  .tile-dark{background:#26251f}
+  .tile-sys{background:linear-gradient(105deg,#faf9f5 50%,#26251f 50%)}
+  .theme-tile .nm{font-size:12.5px;font-weight:550}
+</style>
+</head>
+<body>
+<div class="setpage">
+  <p class="hint" style="margin:0 0 8px">⚙ 설정</p>
+  <h1>도구를 내 손에 맞게</h1>
+  <p class="hint">바꾼 값은 이 기기에 저장됩니다.</p>
+
+  <div class="sec">모양</div>
+  <div class="setcard">
+    <div class="set-row" style="display:block">
+      <div class="set-row__txt" style="padding-bottom:4px">
+        <div class="set-row__name">테마</div>
+      </div>
+      <div class="themes">
+        <button class="theme-tile on"><span class="sw tile-light"></span><span class="nm">밝게</span></button>
+        <button class="theme-tile"><span class="sw tile-dark"></span><span class="nm">어둡게</span></button>
+        <button class="theme-tile"><span class="sw tile-sys"></span><span class="nm">시스템</span></button>
+      </div>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">글자 크기</div>
+        <div class="set-row__desc">UI 크롬 · 대화 · 코드를 따로 조절합니다</div></div>
+      <div class="seg"><button>작게</button><button class="on">보통</button><button>크게</button></div>
+    </div>
+  </div>
+
+  <div class="sec">대화</div>
+  <div class="setcard">
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">확인 방식</div>
+        <div class="set-row__desc">파일을 고치거나 명령을 실행하기 전에 물어볼지 정합니다</div></div>
+      <div class="seg"><button>매번 확인</button><button class="on">알아서 진행</button></div>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">생각 과정 보기</div>
+        <div class="set-row__desc">답변 위에 접힌 생각 과정을 보여 줍니다</div></div>
+      <button class="sw" aria-pressed="false"></button>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">도구 실행 보기</div>
+        <div class="set-row__desc">파일 읽기·명령 실행 같은 도구 행을 대화에 남깁니다</div></div>
+      <button class="sw on" aria-pressed="true"></button>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">보내기 키</div></div>
+      <div class="seg"><button class="on">Enter</button><button>⌘Enter</button></div>
+    </div>
+  </div>
+
+  <div class="sec">미리보기</div>
+  <div class="setcard">
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">화면 따라가기</div>
+        <div class="set-row__desc">Claude가 화면을 만들면 미리보기가 그 화면으로 이동합니다</div></div>
+      <button class="sw on" aria-pressed="true"></button>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">작은 화면에 띄우기</div>
+        <div class="set-row__desc">다른 창 위에 뜨는 작은 미리보기(PiP)를 씁니다</div></div>
+      <button class="sw" aria-pressed="false"></button>
+    </div>
+  </div>
+
+  <div class="sec">알림</div>
+  <div class="setcard">
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">답변이 오면</div>
+        <div class="set-row__desc">창을 보고 있지 않을 때만 알립니다</div></div>
+      <div class="seg"><button>끔</button><button class="on">소리</button><button>배너</button></div>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">확인이 필요하면</div></div>
+      <div class="seg"><button>끔</button><button class="on">소리</button><button>배너</button></div>
+    </div>
+  </div>
+
+  <div class="sec">문제 해결</div>
+  <div class="setcard">
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">연결 · 환경</div>
+        <div class="set-row__desc">데몬 주소, Claude 로그인, git 확인</div></div>
+      <button class="btn btn--ghost btn--sm">열기</button>
+    </div>
+    <div class="set-row">
+      <div class="set-row__txt"><div class="set-row__name">처음 설정 다시 보기</div></div>
+      <button class="btn btn--ghost btn--sm">다시 보기</button>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.sw').forEach(s=>s.addEventListener('click',()=>{
+  s.classList.toggle('on');s.setAttribute('aria-pressed',s.classList.contains('on'))}));
+document.querySelectorAll('.seg').forEach(g=>g.addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  g.querySelectorAll('button').forEach(b=>b.classList.remove('on'));e.target.classList.add('on')}));
+document.querySelectorAll('.theme-tile').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.theme-tile').forEach(x=>x.classList.remove('on'));t.classList.add('on')}));
+</script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Claude 시점 보기 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+        </div>
+      </div>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">결제 실패 플로우</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+          <div class="turn-user"><div class="turn-user__bubble">결제 실패 화면에서 다시 시도 버튼이 안 눌러져. 뭐가 문제인지 봐 줘.</div></div>
+          <div class="turn-ai">
+            <div class="act"><span class="ic"><span class="spin"></span></span> 화면을 열어 버튼을 직접 눌러 보는 중…</div>
+            <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">화면 열기</span><span class="tool__sum">/checkout/fail — 카드 오류 상태</span></button></div>
+          </div>
+        </div></div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="메시지를 보내 보세요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">＋</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <span class="spacer"></span>
+              <button class="send send--stop" title="중지">■</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="preview" style="position:relative">
+        <div class="cycle">
+          <div class="cycle__steps">
+            <span class="cycle__step done"><span class="n">✓</span>만들기</span><span class="cycle__sep">→</span>
+            <span class="cycle__step now"><span class="n">3</span>검토·수정</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">4</span>저장</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">5</span>넘기기</span>
+          </div>
+          <div class="cycle__actions"><span class="hint" style="align-self:center"><span class="spin" style="width:10px;height:10px;border-width:1.5px"></span> 다시 그리는 중</span></div>
+        </div>
+        <div class="pbar">
+          <div class="seg"><button>모바일</button><button class="on">데스크톱</button></div>
+          <div class="pbar__url"><span>/checkout/fail</span></div>
+        </div>
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body">
+              <div class="fakeapp">
+                <div class="fakeapp__head"><div class="fakeapp__title">결제 실패</div><div class="fakeapp__desc">내가 보는 화면 — Claude는 따로 봅니다</div></div>
+                <div style="padding:40px 22px;text-align:center">
+                  <div style="font-weight:600;margin-bottom:4px">결제가 완료되지 않았습니다</div>
+                  <div class="hint" style="margin-bottom:14px">카드사 한도를 확인한 뒤 다시 시도해 주세요</div>
+                  <button class="btn btn--primary btn--sm">다시 시도</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ Claude 시점 PiP ============ -->
+        <div class="pip">
+          <div class="pip__shot">
+            <div class="wire" style="inset:10px"><span class="wire__main">
+              <span class="wire__bar" style="width:40%"></span>
+              <span class="wire__bar"></span>
+              <span class="wire__bar wire__bar--accent" style="width:30%"></span>
+            </span></div>
+          </div>
+          <div class="pip__label"><span class="dot dot--live"></span>Claude가 보는 중 · 결제 실패 · 카드 오류</div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

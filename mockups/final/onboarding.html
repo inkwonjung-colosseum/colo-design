@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>시작 — 콜로 최종 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<link rel="stylesheet" href="final.css" />
+<style>
+/* 첫 화면 = 대화가 아직 시작되지 않은 첫 메시지 */
+.start { min-height: 100vh; display: flex; flex-direction: column; }
+.start .rail { visibility: hidden; } /* 목록은 있지만 아직 비어 있다 — 자리만 */
+.start__body { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+.start__card { width: 100%; max-width: 520px; }
+.start__title { font-family: var(--serif); font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 10px; }
+.start__sub { font-size: 14px; color: var(--text-2); line-height: 1.65; margin: 0 0 8px; }
+.start__note { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+.repo { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 12px 14px; margin-bottom: 8px; background: var(--panel); border: 1.5px solid var(--line); border-radius: var(--r-md); font: inherit; cursor: pointer; }
+.repo:hover { border-color: var(--line-strong); }
+.repo.sel { border-color: var(--accent); background: var(--accent-soft); }
+.repo .radio { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; }
+.repo.sel .radio { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--panel); }
+.repo__name { font-size: 13.5px; font-weight: 600; font-family: var(--mono); }
+.repo__desc { font-size: 12px; color: var(--muted); margin-top: 1px; }
+.step2 { display: none; }
+.step2.show { display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 대화 목록은 있지만 아직 비어 있다 — Claude chat 첫 실행과 같은 모습 -->
+  <aside class="rail">
+    <div class="rail__top">
+      <div class="rail__brand"><span class="letter" style="width:24px;height:24px;border-radius:7px;font-size:12px;">콜</span>콜로</div>
+    </div>
+    <button class="rail__new" disabled>＋ 새 대화</button>
+    <nav class="tree"></nav>
+    <div class="rail__foot"></div>
+  </aside>
+
+  <div class="main start">
+    <div class="start__body">
+      <div class="start__card">
+        <h1 class="start__title">토큰 하나면 시작해요</h1>
+        <p class="start__sub">
+          개발자에게 받은 연결 토큰을 붙여넣으면, 그 사람의 프로젝트에 바로 연결돼요.<br/>
+          토큰이 없으면 개발자에게 "콜로 연결 토큰 하나 만들어줘"라고 부탁하면 됩니다.
+        </p>
+
+        <div class="tokenin">
+          <input id="token" placeholder="ghp_············ 붙여넣기" />
+          <button class="btn btn--primary" id="connectBtn">연결</button>
+        </div>
+        <p class="start__note">토큰은 이 컴퓨터에만 저장돼요. 개발자 화면에는 "김서연님이 연결함"으로 보입니다.</p>
+
+        <!-- 2단계: 같은 자리에서 레포 고르기 — 화면 전환 없음 -->
+        <div class="step2" id="step2">
+          <p class="start__sub" style="margin-top:22px">토큰이 볼 수 있는 레포 3개를 찾았어요. 화면을 만들 곳을 골라 주세요.</p>
+          <button class="repo sel"><span class="radio"></span><div><div class="repo__name">team/attendance-app</div><div class="repo__desc">우리 팀 근태 앱 · 마지막 작업 2일 전</div></div></button>
+          <button class="repo"><span class="radio"></span><div><div class="repo__name">team/shop-web</div><div class="repo__desc">쇼핑몰 프론트 · 마지막 작업 어제</div></div></button>
+          <button class="repo"><span class="radio"></span><div><div class="repo__name">company/landing</div><div class="repo__desc">랜딩 페이지 · 한 달 전</div></div></button>
+          <p class="start__note" style="margin-top:10px">어느 레포인지 모르겠으면 개발자에게 레포 이름을 물어보세요.</p>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button class="btn btn--primary" style="padding:9px 26px">이 레포로 시작</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" id="themeBtn" title="테마 바꾸기">☾</button>
+<script>
+const $ = (s) => document.querySelector(s);
+$("#themeBtn").addEventListener("click", () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme === "dark";
+  r.dataset.theme = dark ? "light" : "dark";
+  $("#themeBtn").textContent = dark ? "☾" : "☀";
+});
+$("#connectBtn").addEventListener("click", () => $("#step2").classList.add("show"));
+document.querySelectorAll(".repo").forEach((r) =>
+  r.addEventListener("click", () => {
+    document.querySelectorAll(".repo").forEach((x) => x.classList.remove("sel"));
+    r.classList.add("sel");
+  })
+);
+</script>
+</body>
+</html>

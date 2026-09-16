@@ -1,0 +1,757 @@
+<!doctype html>
+<!-- 「대화가 전부다」 — 저장 안 함 상태에서 대화 중인 순간.
+     미리보기·저장·넘기기·반영은 전부 대화의 문법으로만 존재한다:
+     메시지 카드 / 대화에서 열리는 오른쪽 패널 / 입력창 위 칩. 별도 화면 없음. -->
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>근태 화면 고치기 · 콜로 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+/* ============================== 페이지 고유 ============================== */
+
+.spacer { flex: 1; }
+
+/* ── 입력창 위 칩: 저장 안 함 상태의 심장박동 ─────────────────────────── */
+.inbox-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.chip--save {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 500;
+}
+button.chip--save:hover {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.chip--now {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.chip--okc {
+  border-color: transparent;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* ── 저장 제안 카드: 대화 안의 메시지 카드 ────────────────────────────── */
+.savecard {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.savecard__head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.savecard__ic {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.savecard__ic svg { width: 15px; height: 15px; }
+.savecard__ic--ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.savecard__tt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.savecard__tt strong { font-size: 13.5px; font-weight: 600; }
+.savecard__sub { font-size: 12px; color: var(--muted); }
+.savecard__head .tag { margin-left: auto; flex: none; }
+.savecard__files { padding: 6px 8px; }
+.frow {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 8px;
+  border-radius: var(--r-sm);
+}
+.frow:hover { background: var(--panel-2); }
+.frow__ic {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.frow__tx { min-width: 0; display: flex; flex-direction: column; }
+.frow__tx strong { font-size: 13px; font-weight: 550; }
+.frow__d { font-size: 12px; color: var(--muted); }
+.frow .tag { margin-left: auto; flex: none; }
+.savecard__hint {
+  padding: 0 16px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.savecard__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.savecard--done .savecard__head { border-bottom: 0; padding-bottom: 4px; }
+
+@keyframes flashring {
+  0%   { box-shadow: 0 0 0 0 var(--accent-line), var(--shadow-card); }
+  70%  { box-shadow: 0 0 0 9px transparent, var(--shadow-card); }
+  100% { box-shadow: 0 0 0 0 transparent, var(--shadow-card); }
+}
+.savecard.flash { animation: flashring 0.9s var(--drift) 2; }
+
+/* ── 넘기기 → 반영 타임라인 카드 ──────────────────────────────────────── */
+.jcard {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  padding: 13px 16px 11px;
+}
+.jcard__t {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.jrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 5px 0;
+}
+.jrow__ic {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  font-size: 10.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-top: 2px;
+}
+.jrow__tx {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.jrow__tx strong { font-size: 13px; font-weight: 550; }
+.jrow__m { font-size: 11.5px; color: var(--muted); }
+.jquote {
+  margin-top: 3px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--panel-2);
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+/* ── 대화 안 미니 스크린샷 ────────────────────────────────────────────── */
+.mini {
+  position: absolute;
+  inset: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mini__bar { height: 6px; width: 42%; border-radius: 3px; background: var(--panel-3); }
+.mini__search {
+  height: 11px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+}
+.mini__row { display: flex; align-items: center; gap: 4px; padding: 0 2px; }
+.mini__row .d { width: 5px; height: 5px; border-radius: 50%; flex: none; }
+.d--ok   { background: var(--ok); }
+.d--mut  { background: var(--line-strong); }
+.d--warn { background: var(--warn); }
+.mini__row .ln { height: 5px; border-radius: 3px; background: var(--panel-3); flex: 1; }
+
+/* 지금 대화에서 열어둔 카드 */
+.scard--open {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-card), 0 0 0 3px var(--accent-soft);
+}
+.state-chip--ok {
+  border-color: transparent;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* ── 오른쪽 패널 헤더: 대화에서 열린 artifact 패널 ───────────────────── */
+.phead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 10px;
+}
+.phead__t {
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.phead__s { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
+.phead .ibtn { margin-left: auto; }
+
+/* ── 미리보기 무대: 우리 팀 실제 앱 ──────────────────────────────────── */
+.fa-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.fa-newwrap {
+  position: relative;
+  margin: 2px 0 10px;
+  padding: 4px 6px;
+  border: 1.5px dashed var(--accent-line);
+  border-radius: var(--r-md);
+}
+.fa-newwrap .tag { position: absolute; top: -9px; right: 10px; }
+.stage__body.is-saved .fa-newwrap { display: none; }
+
+.fa-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fa-row:last-child { border-bottom: 0; }
+.fa-row .ava {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.fa-row .nm { min-width: 0; display: flex; flex-direction: column; }
+.fa-row .nm .a { font-size: 13px; font-weight: 550; }
+.fa-row .nm .b { font-size: 11.5px; color: var(--muted); }
+.st {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+}
+.st--in   { background: var(--ok-soft); color: var(--ok); }
+.st--out  { background: var(--panel-3); color: var(--muted); }
+.st--vac  { background: var(--warn-soft); color: var(--warn); }
+
+/* 테마 토글 */
+.themetoggle {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: var(--shadow-pop);
+  font-size: 14px;
+}
+.themetoggle:hover { color: var(--text); border-color: var(--line-strong); }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ══════════════ 왼쪽: 대화 목록 (Claude chat 그대로) ══════════════ -->
+  <aside class="rail">
+    <div class="rail__top">
+      <div class="rail__brand">
+        <span class="letter" style="width:24px;height:24px;border-radius:7px;font-size:12px;">콜</span>
+        콜로
+      </div>
+      <span class="spacer"></span>
+      <button class="ibtn" title="설정">⋯</button>
+    </div>
+
+    <button class="rail__new">＋ 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      대화 검색
+    </div>
+
+    <nav class="tree">
+      <div class="tree__label">오늘</div>
+      <button class="leaf on">
+        <span class="leaf__t">근태 화면 고치기</span>
+        <span class="leaf__meta leaf__meta--ask">저장 안 됨</span>
+      </button>
+      <button class="leaf">
+        <span class="leaf__t">로그인 화면 문구 바꾸기</span>
+        <span class="leaf__meta">확인 중</span>
+      </button>
+      <button class="leaf">
+        <span class="leaf__t">신규 입사자 온보딩 화면</span>
+        <span class="leaf__meta">반영됨</span>
+      </button>
+
+      <div class="tree__label">어제</div>
+      <button class="leaf">
+        <span class="leaf__t">휴가 신청 화면 만들기</span>
+        <span class="leaf__meta">반영됨</span>
+      </button>
+      <button class="leaf">
+        <span class="leaf__t">급여표 정렬 고치기</span>
+        <span class="leaf__meta leaf__meta--ask">반려</span>
+      </button>
+      <button class="leaf">
+        <span class="leaf__t">관리자 화면 메뉴 줄이기</span>
+        <span class="leaf__meta">반영됨</span>
+      </button>
+
+      <div class="tree__label">지난주</div>
+      <button class="leaf">
+        <span class="leaf__t">출퇴근 기록 화면 만들기</span>
+        <span class="leaf__meta">반영됨</span>
+      </button>
+    </nav>
+
+    <div class="rail__foot">
+      <button class="who" style="flex:1;">
+        <span class="letter">김</span>
+        <span style="text-align:left;min-width:0;">
+          <span style="display:block;font-size:12.5px;">김서연</span>
+          <span style="display:block;font-size:11px;color:var(--faint);">우리 팀 근태 앱 · 연결됨</span>
+        </span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ══════════════ 가운데: 이 대화 ══════════════ -->
+  <div class="main">
+
+    <header class="topbar">
+      <div class="topbar__title">근태 화면 고치기</div>
+      <div class="topbar__crumb">우리 팀 근태 앱</div>
+      <span class="spacer"></span>
+      <span class="conn conn--ok"><span class="dot"></span>레포 연결됨</span>
+      <button class="ibtn" title="대화 옵션">⋯</button>
+    </header>
+
+    <div class="work">
+
+      <!-- ─────────── 대화 스크롤 ─────────── -->
+      <section class="chat">
+        <div class="chat__scroll">
+          <div class="chat__col">
+
+            <!-- 오전: 저장 → 넘기기 → 반영까지 끝난 사이클 (같은 대화 안) -->
+            <div class="turn-user">
+              <div class="turn-user__bubble">출퇴근 기록 화면에 직원 상태를 색 배지로 보여줘. 출근중 · 퇴근 · 휴가 세 가지로.</div>
+            </div>
+
+            <div class="turn-ai">
+              <div class="tool">
+                <button class="tool__head">
+                  <span class="chev">▶</span>
+                  <span class="tool__name">근태 화면 파일을 확인했어요</span>
+                  <span class="tool__sum">출퇴근 기록 · 직원 목록 · 설정</span>
+                </button>
+                <div class="tool__body">screens/attendance/AttendanceList.tsx
+screens/attendance/StatusBadge.tsx  ← 배지 추가</div>
+              </div>
+
+              <div class="turn-ai__prose">
+                <p>상태 배지를 넣었어요. 목록에서 각 직원의 상태가 색으로 바로 보여요.</p>
+              </div>
+
+              <button class="scard">
+                <div class="scard__shot"><div class="mini">
+                  <div class="mini__bar"></div>
+                  <div class="mini__row"><i class="d d--ok"></i><i class="ln"></i></div>
+                  <div class="mini__row"><i class="d d--mut"></i><i class="ln" style="max-width:70%;"></i></div>
+                  <div class="mini__row"><i class="d d--warn"></i><i class="ln"></i></div>
+                </div></div>
+                <div class="scard__body">
+                  <div class="scard__title">출퇴근 기록 화면</div>
+                  <div class="scard__route">미리보기 · 오전 10:58</div>
+                  <div class="scard__states">
+                    <span class="state-chip state-chip--ok">저장됨</span>
+                    <span class="state-chip state-chip--ok">반영됨</span>
+                  </div>
+                </div>
+              </button>
+
+              <!-- 저장 완료 카드 (이미 끝난 상태) -->
+              <div class="savecard savecard--done">
+                <div class="savecard__head">
+                  <span class="savecard__ic savecard__ic--ok">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg>
+                  </span>
+                  <div class="savecard__tt">
+                    <strong>저장했어요</strong>
+                    <span class="savecard__sub">오전 11:02 · 바뀐 파일 1개</span>
+                  </div>
+                  <span class="tag tag--ok">저장됨</span>
+                </div>
+                <div class="savecard__files">
+                  <div class="frow">
+                    <span class="frow__ic">▣</span>
+                    <div class="frow__tx">
+                      <strong>출퇴근 기록 화면</strong>
+                      <span class="frow__d">상태 배지 추가</span>
+                    </div>
+                    <span class="tag">고침</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 넘기기 → 반영 타임라인 카드 -->
+              <div class="jcard">
+                <div class="jcard__t">개발자에게 넘긴 뒤 이야기</div>
+                <div class="jrow">
+                  <span class="jrow__ic">✓</span>
+                  <div class="jrow__tx">
+                    <strong>박지훈님에게 넘겼어요</strong>
+                    <span class="jrow__m">오전 11:10 · 확인 요청</span>
+                  </div>
+                </div>
+                <div class="jrow">
+                  <span class="jrow__ic">✓</span>
+                  <div class="jrow__tx">
+                    <strong>코멘트가 왔어요</strong>
+                    <div class="jquote">“멋지네요. 그대로 반영할게요.” — 박지훈님 · 오전 11:18</div>
+                  </div>
+                </div>
+                <div class="jrow">
+                  <span class="jrow__ic">✓</span>
+                  <div class="jrow__tx">
+                    <strong>우리 팀 근태 앱에 반영됐어요</strong>
+                    <span class="jrow__m">오전 11:24 · 이 대화에서 계속 고칠 수 있어요</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 지금: 저장 안 함 상태 — 검색창 요청 처리 중 -->
+            <div class="turn-user">
+              <div class="turn-user__bubble">좋아요! 이번엔 위쪽에 검색창을 넣어줘. 이름으로 직원을 찾고 싶어.</div>
+            </div>
+
+            <div class="turn-ai">
+              <div class="act"><span class="ic">✓</span> 출퇴근 기록 화면을 찾아 2곳을 고쳤어요</div>
+
+              <div class="turn-ai__prose">
+                <p>검색창을 추가했어요. 이름을 입력하면 목록이 바로 걸러져요.</p>
+                <p style="color:var(--text-2);">지금은 <strong>저장 전</strong>이라 미리보기에서만 보여요. 마음에 들면 아래 카드에서 저장하세요.</p>
+              </div>
+
+              <!-- 미리보기 카드: 이 카드가 오른쪽 패널을 열어둠 -->
+              <button class="scard scard--open">
+                <div class="scard__shot"><div class="mini">
+                  <div class="mini__bar"></div>
+                  <div class="mini__search"></div>
+                  <div class="mini__row"><i class="d d--ok"></i><i class="ln"></i></div>
+                  <div class="mini__row"><i class="d d--mut"></i><i class="ln" style="max-width:70%;"></i></div>
+                </div></div>
+                <div class="scard__body">
+                  <div class="scard__title">출퇴근 기록 화면 · 바뀐 화면</div>
+                  <div class="scard__route"><span class="dot dot--live" style="display:inline-block;vertical-align:1px;margin-right:4px;"></span>오른쪽 미리보기에서 열려 있어요</div>
+                  <div class="scard__states">
+                    <span class="state-chip on">지금 화면</span>
+                    <span class="state-chip">저장 전</span>
+                  </div>
+                </div>
+              </button>
+
+              <!-- 저장 제안 카드: 이 목업의 핵심 순간 -->
+              <div class="savecard" id="savecard">
+                <div class="savecard__head">
+                  <span class="savecard__ic">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+                  </span>
+                  <div class="savecard__tt">
+                    <strong>이번에 바뀐 것</strong>
+                    <span class="savecard__sub" id="saveHeadSub">아직 저장 전 · 미리보기에만 보여요</span>
+                  </div>
+                  <span class="tag tag--warn" id="saveTag">저장 대기</span>
+                </div>
+                <div class="savecard__files">
+                  <div class="frow">
+                    <span class="frow__ic">▣</span>
+                    <div class="frow__tx">
+                      <strong>출퇴근 기록 화면</strong>
+                      <span class="frow__d">위쪽에 검색창 추가</span>
+                    </div>
+                    <span class="tag">고침</span>
+                  </div>
+                  <div class="frow">
+                    <span class="frow__ic">＋</span>
+                    <div class="frow__tx">
+                      <strong>이름 검색</strong>
+                      <span class="frow__d">이름으로 직원을 찾는 기능</span>
+                    </div>
+                    <span class="tag tag--accent">새로 만듦</span>
+                  </div>
+                </div>
+                <div class="savecard__hint" id="saveHint">저장하면 우리 팀 앱의 개발자 화면에 바로 보여요. 저장 전에는 아무도 못 봐요.</div>
+                <div class="savecard__actions" id="saveActions">
+                  <button class="btn btn--ghost js-later">아직이요, 더 고칠래요</button>
+                  <button class="btn btn--primary js-save">저장하기</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="turnlive">
+              <span class="dot dot--live"></span>
+              <span id="liveTx">계속 말씀해 주세요 — 고친 것은 모두 이 대화에 모여 있어요</span>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ─────────── 입력창 + 입력창 위 칩 ─────────── -->
+        <div class="composer-wrap">
+          <div class="composer">
+            <div class="inbox-chips">
+              <button class="chip chip--save" id="chipUnsaved">
+                <span class="dot dot--ask"></span>
+                저장하지 않은 변경 2개
+              </button>
+              <button class="chip chip--now" id="chipSaveNow">지금 저장하기</button>
+            </div>
+            <textarea class="composer__input" rows="1" placeholder="이 대화에서 계속 — 예: 휴가자는 회색으로 보여줘"></textarea>
+            <div class="composer__bar">
+              <button class="composer__model">콜로 · 우리 팀 근태 앱</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="composer__hint">저장하기 전까지는 우리 팀 앱에 반영되지 않아요</div>
+        </div>
+      </section>
+
+      <!-- ─────────── 오른쪽 패널: 대화 안에서 열린 미리보기 (artifact 문법) ─────────── -->
+      <aside class="preview">
+        <div class="phead">
+          <div>
+            <div class="phead__t">출퇴근 기록 화면 — 미리보기</div>
+            <div class="phead__s">대화에서 열었어요 · 닫아도 대화는 그대로예요</div>
+          </div>
+          <button class="ibtn" title="패널 닫기">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+
+        <div class="cycle">
+          <div class="cycle__steps">
+            <span class="cycle__step done"><span class="n">✓</span>만들기</span>
+            <span class="cycle__sep">›</span>
+            <span class="cycle__step now"><span class="n">2</span>확인</span>
+            <span class="cycle__sep">›</span>
+            <span class="cycle__step" id="cycleSave"><span class="n">3</span>저장</span>
+          </div>
+          <div class="cycle__actions">
+            <button class="btn btn--ghost btn--sm" id="handoffBtn" disabled title="저장한 다음에 넘길 수 있어요">개발자에게 넘기기</button>
+            <button class="btn btn--primary btn--sm js-save">저장하기</button>
+          </div>
+        </div>
+
+        <div class="pbar">
+          <div class="seg" id="viewSeg">
+            <button data-view="saved">저장된 화면</button>
+            <button class="on" data-view="now">지금 화면</button>
+          </div>
+          <div class="pbar__url">
+            <span class="dot dot--live"></span>
+            <span id="urlTx">우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기</span>
+          </div>
+        </div>
+
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body" id="stageBody">
+              <div class="fakeapp">
+                <div class="fakeapp__head">
+                  <div class="fakeapp__title">출퇴근 기록</div>
+                  <div class="fakeapp__desc">오늘의 출근 현황을 한눈에</div>
+                  <div class="fakeapp__tabs">
+                    <span class="fakeapp__tab on">전체 24</span>
+                    <span class="fakeapp__tab">출근중 17</span>
+                    <span class="fakeapp__tab">퇴근 5</span>
+                    <span class="fakeapp__tab">휴가 2</span>
+                  </div>
+                </div>
+                <div style="padding: 4px 22px 20px;">
+                  <div class="fa-newwrap">
+                    <div class="fa-search">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                      이름으로 검색…
+                    </div>
+                    <span class="tag tag--accent">이번에 추가됨 · 저장 전</span>
+                  </div>
+
+                  <div class="fa-row">
+                    <span class="ava">하</span>
+                    <div class="nm"><span class="a">김하늘</span><span class="b">디자인팀</span></div>
+                    <span class="st st--in">출근중</span>
+                  </div>
+                  <div class="fa-row">
+                    <span class="ava">윤</span>
+                    <div class="nm"><span class="a">이도윤</span><span class="b">개발팀</span></div>
+                    <span class="st st--out">퇴근</span>
+                  </div>
+                  <div class="fa-row">
+                    <span class="ava">리</span>
+                    <div class="nm"><span class="a">최유리</span><span class="b">운영팀</span></div>
+                    <span class="st st--vac">휴가</span>
+                  </div>
+                  <div class="fa-row">
+                    <span class="ava">서</span>
+                    <div class="nm"><span class="a">정민서</span><span class="b">개발팀</span></div>
+                    <span class="st st--in">출근중</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pins">
+          <span class="pin"><span class="n">1</span>새 검색창</span>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" id="themeBtn" title="테마 바꾸기">☾</button>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+/* 테마 */
+$("#themeBtn").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme === "dark";
+  root.dataset.theme = dark ? "light" : "dark";
+  $("#themeBtn").textContent = dark ? "☾" : "☀";
+});
+
+/* 열리면 대화 맨 아래, 저장 대기 카드로 — 채팅 앱의 기본값 */
+requestAnimationFrame(() => {
+  $("#savecard").scrollIntoView({ block: "center" });
+});
+
+/* 저장 안 됨 칩 → 저장 제안 카드로 (대화 안에서 스크롤) */
+function goSave() {
+  const c = $("#savecard");
+  c.scrollIntoView({ behavior: "smooth", block: "center" });
+  c.classList.remove("flash");
+  void c.offsetWidth;
+  c.classList.add("flash");
+}
+$("#chipUnsaved").addEventListener("click", goSave);
+$("#chipSaveNow").addEventListener("click", () => { goSave(); save(); });
+
+/* 저장 = 대화 안 카드의 상태가 바뀐다. 화면 이동 없음. */
+function save() {
+  const c = $("#savecard");
+  if (c.classList.contains("savecard--done")) return;
+  c.classList.add("savecard--done");
+  $("#saveTag").textContent = "저장됨";
+  $("#saveTag").className = "tag tag--ok";
+  $("#saveHeadSub").textContent = "방금 · 바뀐 파일 2개";
+  $("#saveHint").textContent = "저장했어요. 이제 개발자에게 넘겨 확인을 받을 수 있어요.";
+  $("#saveActions").innerHTML =
+    '<button class="btn btn--ghost js-later">나중에</button>' +
+    '<button class="btn btn--primary">개발자에게 넘기기</button>';
+  $("#handoffBtn").disabled = false;
+  $("#handoffBtn").removeAttribute("title");
+  const step = $("#cycleSave");
+  step.classList.remove("now");
+  step.classList.add("done");
+  step.querySelector(".n").textContent = "✓";
+  const chip = $("#chipUnsaved");
+  chip.className = "chip chip--okc";
+  chip.innerHTML = '<span class="dot dot--done"></span>모두 저장됨';
+  $("#chipSaveNow").style.display = "none";
+  $("#liveTx").textContent = "저장 완료 — 이 대화에서 계속 고칠 수 있어요";
+}
+document.querySelectorAll(".js-save").forEach((b) => b.addEventListener("click", save));
+
+/* "아직이요" — 카드는 대화에 그대로 남는다 */
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".js-later")) return;
+  $("#saveHint").textContent = "좋아요 — 저장 제안은 이 대화에 그대로 기다리고 있어요.";
+  $(".composer__input").focus();
+});
+
+/* 지금 화면 ↔ 저장된 화면: 저장 전 차이를 패널 안에서 비교 */
+$("#viewSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-view]");
+  if (!b) return;
+  document.querySelectorAll("#viewSeg button").forEach((x) => x.classList.toggle("on", x === b));
+  const saved = b.dataset.view === "saved";
+  $("#stageBody").classList.toggle("is-saved", saved);
+  $("#urlTx").textContent = saved
+    ? "우리 팀 근태 앱 · 마지막으로 저장된 화면"
+    : "우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기";
+});
+</script>
+</body>
+</html>

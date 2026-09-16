@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>대화 메뉴 · 대화 삭제 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+  /* thread-menu: topbar dropdown */
+  .tm-wrap { position: relative; }
+  .tm-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 160px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop);
+    padding: 5px;
+    z-index: 40;
+  }
+  .tm-menu__item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: var(--r-sm);
+    font-size: 12.5px;
+    color: var(--text-2);
+  }
+  .tm-menu__item:hover { background: var(--panel-2); color: var(--text); }
+  .tm-menu__item--danger { color: var(--danger); }
+  .tm-menu__item--danger:hover { background: var(--danger-soft); color: var(--danger); }
+</style>
+</head>
+<body>
+<div class="stagepage">
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf"><span class="dot dot--ask"></span><span class="leaf__t">장바구니 빈 상태</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">회원 관리 화면 세 상태</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+      <!-- ============ 대화 메뉴 — ⋯ 아래에 열림 ============ -->
+      <span class="tm-wrap">
+        <button class="ibtn" title="대화 메뉴">⋯</button>
+        <span class="tm-menu" role="menu">
+          <button class="tm-menu__item" role="menuitem">✎ 이름 바꾸기</button>
+          <button class="tm-menu__item tm-menu__item--danger" role="menuitem">🗑 대화 삭제</button>
+        </span>
+      </span>
+    </header>
+
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+          <div class="turn-user"><div class="turn-user__bubble">회원 관리 화면을 만들어 줘. 목록·검색·권한 변경까지 있으면 좋겠어.</div></div>
+          <div class="turn-ai">
+            <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">화면 만들기</span><span class="tool__sum">/members — 목록 + 검색 + 권한 드롭다운</span></button></div>
+            <div class="turn-ai__prose"><p>회원 관리 화면을 만들었습니다. 오른쪽 미리보기에서 바로 확인할 수 있습니다.</p></div>
+            <div class="turn-ai__meta"><button class="ibtn" title="복사">⧉</button><button class="ibtn" title="다시 만들기">↻</button><span class="hint" style="margin-left:4px">방금</span></div>
+          </div>
+        </div></div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">＋</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <button class="composer__model" title="확인 방식">알아서 진행 ▾</button>
+              <span class="spacer"></span>
+              <span class="hint" style="margin-right:8px">컨텍스트 18%</span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+          <p class="composer__hint">Enter로 보내기 · Shift+Enter 줄바꿈</p>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div class="cycle">
+          <div class="cycle__steps">
+            <span class="cycle__step done"><span class="n">✓</span>만들기</span><span class="cycle__sep">→</span>
+            <span class="cycle__step now"><span class="n">3</span>검토·수정</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">4</span>저장</span><span class="cycle__sep">→</span>
+            <span class="cycle__step"><span class="n">5</span>넘기기</span>
+          </div>
+          <div class="cycle__actions">
+            <button class="btn btn--ghost btn--sm">더 보기 ▾</button>
+            <button class="btn btn--primary btn--sm">저장</button>
+          </div>
+        </div>
+        <div class="pbar">
+          <div class="seg"><button>모바일</button><button class="on">데스크톱</button></div>
+          <div class="pbar__url"><span>/members</span></div>
+          <button class="ibtn" title="새 창">↗</button>
+          <button class="ibtn" title="코멘트 모드">✎</button>
+        </div>
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body">
+              <div class="fakeapp">
+                <div class="fakeapp__head"><div class="fakeapp__title">회원 관리</div><div class="fakeapp__desc">연결 레포가 렌더하는 미리보기입니다</div></div>
+                <div class="fakeapp__table">
+                  <div class="fakeapp__row"><span class="fakeapp__ava">김</span><div class="fakeapp__cell"><div class="a">김도현</div><div class="b">kim@shop.kr · 어제 가입</div></div><span class="fakeapp__badge">관리자</span></div>
+                  <div class="fakeapp__row"><span class="fakeapp__ava">이</span><div class="fakeapp__cell"><div class="a">이서윤</div><div class="b">lee@shop.kr · 3일 전</div></div><span class="fakeapp__badge fakeapp__badge--off">회원</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="pins"><span class="hint" style="align-self:center">상태 칩으로 화면 상태를 전환합니다</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 대화 삭제 — 확인 ============ -->
+<div class="scrim">
+  <div class="modal" role="dialog" aria-label="대화 삭제" style="width:min(440px,calc(100vw - 48px))">
+    <div class="modal__head">
+      <span class="modal__title">대화 삭제</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="닫기">✕</button>
+    </div>
+    <div class="modal__body">
+      <p style="margin:0;font-size:13.5px;line-height:1.6">이 대화를 삭제합니다. 화면 작업과 저장 기록은 그대로 남습니다.</p>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost">취소</button>
+      <button class="btn btn--primary" style="background:var(--danger)">삭제</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

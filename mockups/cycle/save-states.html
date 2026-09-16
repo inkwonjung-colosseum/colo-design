@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>저장 검토 — 네 상태 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+  .stateswrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 64px; }
+  .stateswrap__title { font-family: var(--serif); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 22px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid2__cell { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+  .grid2 .modal { width: 100%; max-height: none; }
+</style>
+</head>
+<body>
+<div class="stateswrap">
+  <h1 class="stateswrap__title">저장 검토 — 네 상태</h1>
+  <p class="hint" style="margin:0">같은 저장 검토 모달이 진행에 따라 바뀌는 모습입니다.</p>
+
+  <div class="grid2">
+
+    <!-- ============ 진행 중 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">진행 중</span>
+      <div class="modal" role="dialog" aria-label="저장 검토 — 진행 중">
+        <div class="modal__head">
+          <span class="modal__title">저장 검토</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="저장 검토 닫기" disabled>✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="savesteps">
+            <span class="savestep done"><span class="n">✓</span>바뀐 점 모으기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep now"><span class="n"><span class="spin" style="width:10px;height:10px"></span></span>저장소에 올리기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep"><span class="n">3</span>완료</span>
+          </div>
+          <p class="hint" style="margin:0">바뀐 점을 이번 작업에 묶고 회사 GitHub에 올리고 있습니다 — 잠깐만 기다려 주세요.</p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost" disabled>취소</button>
+          <button class="btn btn--primary" disabled>저장 중…</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 실패 (토큰) ============ -->
+    <div class="grid2__cell">
+      <span class="variant">실패 — 토큰</span>
+      <div class="modal" role="dialog" aria-label="저장 검토 — 실패">
+        <div class="modal__head">
+          <span class="modal__title">저장 검토</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="저장 검토 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="savesteps">
+            <span class="savestep done"><span class="n">✓</span>바뀐 점 모으기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep failed"><span class="n">✕</span>저장소에 올리기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep"><span class="n">3</span>완료</span>
+          </div>
+          <div class="notice notice--error">변경사항 정리까지 끝냈고, 올리기에서 멈췄습니다 — 설정에서 GitHub 토큰을 확인한 뒤 다시 저장해 주세요.</div>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">설정 열기</button>
+          <button class="btn btn--primary">다시 저장</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 완료 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">완료</span>
+      <div class="modal" role="dialog" aria-label="저장 검토 — 완료">
+        <div class="modal__head">
+          <span class="modal__title">저장 검토</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="저장 검토 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="savesteps">
+            <span class="savestep done"><span class="n">✓</span>바뀐 점 모으기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep done"><span class="n">✓</span>저장소에 올리기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep done"><span class="n">✓</span>완료</span>
+          </div>
+          <div class="notice" style="border-color:var(--ok);background:var(--ok-soft)">저장했습니다 — 회사 GitHub에 올렸습니다.</div>
+          <div class="dsum">
+            <p class="dsum__cap">저장 메모</p>
+            <ul class="dsum__lines"><li>회원 관리 화면 세 상태 추가</li></ul>
+          </div>
+          <p class="hint" style="margin:0">잘못 저장했다면 더 보기 → 저장 기록에서 되돌릴 수 있습니다.</p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">닫기</button>
+          <button class="btn btn--primary">개발자에게 넘기기 →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 올리기만 남음 ============ -->
+    <div class="grid2__cell">
+      <span class="variant">올리기만 남음</span>
+      <div class="modal" role="dialog" aria-label="저장 검토 — 올리기만 남음">
+        <div class="modal__head">
+          <span class="modal__title">저장 검토</span>
+          <span class="modal__dest">→ team/shop-web</span>
+          <span class="grow"></span>
+          <button class="ibtn" title="저장 검토 닫기">✕</button>
+        </div>
+        <div class="modal__body">
+          <div class="savesteps">
+            <span class="savestep done"><span class="n">✓</span>바뀐 점 모으기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep failed"><span class="n">✕</span>저장소에 올리기</span>
+            <span class="savestep__sep">→</span>
+            <span class="savestep"><span class="n">3</span>완료</span>
+          </div>
+          <p class="hint" style="margin:0">바뀐 점은 이번 작업에 묶었습니다 — 남은 것은 회사 GitHub에 올리는 일이니, 다시 저장을 누르면 그 한 걸음만 다시 시도합니다.</p>
+        </div>
+        <div class="modal__foot">
+          <button class="btn btn--ghost">취소</button>
+          <button class="btn btn--primary">다시 저장</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>자동 시작 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<style>
+/* triggers: 자동 시작 규칙 목록 — 이 페이지 전용 */
+.trg-scroll { flex: 1; overflow-y: auto; padding: 36px 28px 60px; min-height: 0; }
+.trg-col { max-width: 720px; margin: 0 auto; }
+.trg-title { font-family: var(--serif); font-size: 24px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+.trg-lede { color: var(--muted); font-size: 13.5px; margin: 0 0 26px; }
+
+.trg-rule {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.trg-rule--off { opacity: 0.72; }
+.trg-rule__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  font-size: 13.5px;
+}
+.trg-ev {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  background: var(--panel-3);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  flex: none;
+}
+.trg-rule__arrow { color: var(--faint); flex: none; }
+.trg-rule__act { color: var(--text); min-width: 0; }
+.trg-rule__log {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+  padding: 4px 8px;
+  border-radius: var(--r-xs);
+}
+.trg-rule__log:hover { background: var(--panel-2); color: var(--text); }
+
+/* 펼친 규칙 상세 */
+.trg-rule__detail {
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.trg-field { display: flex; flex-direction: column; gap: 5px; }
+.trg-field__label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--faint); }
+.trg-field__val {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.trg-field__val--pick { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.trg-rule__foot { display: flex; gap: 8px; justify-content: flex-end; }
+
+.trg-new { margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">방금</span></button>
+          <button class="leaf"><span class="dot dot--live"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--live">작업 중</span></button>
+          <button class="leaf"><span class="dot dot--ask"></span><span class="leaf__t">장바구니 빈 상태</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+        </div>
+      </div>
+      <div class="tnode closed">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter" style="background:var(--info-soft);color:var(--info)">관</span><span class="tnode__name">관리자 콘솔</span><span class="tnode__repo">team/admin</span></button>
+      </div>
+      <button class="leaf leaf--add" style="margin-top:8px;padding-left:10px">＋ 새 프로젝트</button>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">설정</span>
+      <span class="topbar__crumb">자동 시작</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="trg-scroll">
+      <div class="trg-col">
+        <h1 class="trg-title">자동 시작</h1>
+        <p class="trg-lede">정해진 일이 생기면 대화를 저절로 시작합니다. 켜 둔 규칙만 움직여요.</p>
+
+        <!-- ============ 규칙 1 — 켜짐 + 펼침 ============ -->
+        <div class="trg-rule">
+          <div class="trg-rule__row">
+            <span class="trg-ev">⚠ 회사 시험이 실패하면</span>
+            <span class="trg-rule__arrow">→</span>
+            <span class="trg-rule__act">수리 대화 시작</span>
+            <button class="trg-rule__log">기록</button>
+            <button class="sw on" title="끄기"></button>
+          </div>
+          <div class="trg-rule__detail">
+            <div class="trg-field">
+              <span class="trg-field__label">조건</span>
+              <div class="trg-field__val">넘긴 화면의 회사 시험이 실패할 때 — 같은 실패가 세 번까지 이어지면 다시 시도합니다</div>
+            </div>
+            <div class="trg-field">
+              <span class="trg-field__label">실행할 말</span>
+              <div class="trg-field__val">실패한 시험을 보고 고쳐 줘. 고쳐지면 저장까지 해 줘.</div>
+            </div>
+            <div class="trg-field">
+              <span class="trg-field__label">어느 프로젝트</span>
+              <div class="trg-field__val trg-field__val--pick"><span class="letter" style="width:18px;height:18px;font-size:10px">쇼</span>쇼핑몰 프론트 · team/shop-web</div>
+            </div>
+            <div class="trg-rule__foot">
+              <button class="btn btn--quiet btn--sm">규칙 지우기</button>
+              <button class="btn btn--ghost btn--sm">접기</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ 규칙 2 — 켜짐 ============ -->
+        <div class="trg-rule">
+          <div class="trg-rule__row">
+            <span class="trg-ev">✎ 넘긴 화면에 코멘트가 달리면</span>
+            <span class="trg-rule__arrow">→</span>
+            <span class="trg-rule__act">받은편지함에 올리고 대화에 전달</span>
+            <button class="trg-rule__log">기록</button>
+            <button class="sw on" title="끄기"></button>
+          </div>
+        </div>
+
+        <!-- ============ 규칙 3 — 꺼짐 ============ -->
+        <div class="trg-rule trg-rule--off">
+          <div class="trg-rule__row">
+            <span class="trg-ev">◷ 매주 월요일 아침</span>
+            <span class="trg-rule__arrow">→</span>
+            <span class="trg-rule__act">지난 주 저장 모아 보고</span>
+            <button class="trg-rule__log">기록</button>
+            <button class="sw" title="켜기"></button>
+          </div>
+        </div>
+
+        <button class="btn btn--ghost trg-new">＋ 새 규칙</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.sw').forEach(b=>b.addEventListener('click',()=>b.classList.toggle('on')));
+</script>
+</body>
+</html>

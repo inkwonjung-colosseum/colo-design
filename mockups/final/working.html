@@ -1,0 +1,272 @@
+<!doctype html>
+<!-- 최종안 · 작업 중 — 대화가 몸통, 미리보기는 대화에서 열린 패널.
+     저장 제안 카드 + 입력창 위 칩 + 저장된 화면/지금 화면 토글. -->
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>근태 화면 고치기 · 콜로 최종 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<link rel="stylesheet" href="final.css" />
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="rail__top">
+      <div class="rail__brand"><span class="letter" style="width:24px;height:24px;border-radius:7px;font-size:12px;">콜</span>콜로</div>
+      <span class="spacer"></span>
+      <button class="ibtn" title="설정">⋯</button>
+    </div>
+    <button class="rail__new">＋ 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      대화 검색
+    </div>
+    <nav class="tree">
+      <div class="tree__label">오늘</div>
+      <button class="leaf on"><span class="leaf__t">근태 화면 고치기</span><span class="leaf__meta leaf__meta--ask">저장 안 됨</span></button>
+      <button class="leaf"><span class="leaf__t">로그인 화면 문구 바꾸기</span><span class="leaf__meta">확인 중</span></button>
+      <button class="leaf"><span class="leaf__t">신규 입사자 온보딩 화면</span><span class="leaf__meta">반영됨</span></button>
+      <div class="tree__label">어제</div>
+      <button class="leaf"><span class="leaf__t">휴가 신청 화면 만들기</span><span class="leaf__meta">반영됨</span></button>
+      <button class="leaf"><span class="leaf__t">급여표 정렬 고치기</span><span class="leaf__meta leaf__meta--ask">반려</span></button>
+      <button class="leaf"><span class="leaf__t">관리자 화면 메뉴 줄이기</span><span class="leaf__meta">반영됨</span></button>
+    </nav>
+    <div class="rail__foot">
+      <button class="who" style="flex:1;">
+        <span class="letter">김</span>
+        <span style="text-align:left;min-width:0;">
+          <span style="display:block;font-size:12.5px;">김서연</span>
+          <span style="display:block;font-size:11px;color:var(--faint);">우리 팀 근태 앱 · 연결됨</span>
+        </span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar__title">근태 화면 고치기</div>
+      <div class="topbar__crumb">우리 팀 근태 앱</div>
+      <span class="spacer"></span>
+      <span class="conn conn--ok"><span class="dot"></span>레포 연결됨</span>
+      <button class="ibtn" title="대화 옵션">⋯</button>
+    </header>
+
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll">
+          <div class="chat__col">
+
+            <div class="turn-user">
+              <div class="turn-user__bubble">출퇴근 기록 화면에 직원 상태를 색 배지로 보여줘. 출근중 · 퇴근 · 휴가 세 가지로.</div>
+            </div>
+
+            <div class="turn-ai">
+              <div class="tool">
+                <button class="tool__head">
+                  <span class="chev">▶</span>
+                  <span class="tool__name">근태 화면 파일을 확인했어요</span>
+                  <span class="tool__sum">출퇴근 기록 · 직원 목록 · 설정</span>
+                </button>
+              </div>
+              <div class="turn-ai__prose"><p>상태 배지를 넣었어요. 목록에서 각 직원의 상태가 색으로 바로 보여요.</p></div>
+
+              <button class="scard">
+                <div class="scard__shot"><div class="mini">
+                  <div class="mini__bar"></div>
+                  <div class="mini__row"><i class="d d--ok"></i><i class="ln"></i></div>
+                  <div class="mini__row"><i class="d d--mut"></i><i class="ln" style="max-width:70%;"></i></div>
+                  <div class="mini__row"><i class="d d--warn"></i><i class="ln"></i></div>
+                </div></div>
+                <div class="scard__body">
+                  <div class="scard__title">출퇴근 기록 화면</div>
+                  <div class="scard__route">미리보기 · 오전 10:58</div>
+                  <div class="scard__states">
+                    <span class="state-chip state-chip--ok">저장됨</span>
+                    <span class="state-chip state-chip--ok">반영됨</span>
+                  </div>
+                </div>
+              </button>
+
+              <div class="savecard savecard--done">
+                <div class="savecard__head">
+                  <span class="savecard__ic savecard__ic--ok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg></span>
+                  <div class="savecard__tt"><strong>저장했어요</strong><span class="savecard__sub">오전 11:02 · 바뀐 파일 1개</span></div>
+                  <span class="tag tag--ok">저장됨</span>
+                </div>
+              </div>
+
+              <div class="jcard">
+                <div class="jcard__t">개발자에게 넘긴 뒤 이야기</div>
+                <div class="jrow"><span class="jrow__ic">✓</span><div class="jrow__tx"><strong>박지훈님에게 넘겼어요</strong><span class="jrow__m">오전 11:10 · 확인 요청</span></div></div>
+                <div class="jrow"><span class="jrow__ic">✓</span><div class="jrow__tx"><strong>코멘트가 왔어요</strong><div class="jquote">"멋지네요. 그대로 반영할게요." — 박지훈님 · 오전 11:18</div></div></div>
+                <div class="jrow"><span class="jrow__ic">✓</span><div class="jrow__tx"><strong>우리 팀 근태 앱에 반영됐어요</strong><span class="jrow__m">오전 11:24 · 이 대화에서 계속 고칠 수 있어요</span></div></div>
+              </div>
+            </div>
+
+            <div class="turn-user">
+              <div class="turn-user__bubble">좋아요! 이번엔 위쪽에 검색창을 넣어줘. 이름으로 직원을 찾고 싶어.</div>
+            </div>
+
+            <div class="turn-ai">
+              <div class="act"><span class="ic">✓</span> 출퇴근 기록 화면을 찾아 2곳을 고쳤어요</div>
+              <div class="turn-ai__prose">
+                <p>검색창을 추가했어요. 이름을 입력하면 목록이 바로 걸러져요.</p>
+                <p style="color:var(--text-2);">지금은 <strong>저장 전</strong>이라 미리보기에서만 보여요. 마음에 들면 아래 카드에서 저장하세요.</p>
+              </div>
+
+              <button class="scard scard--open">
+                <div class="scard__shot"><div class="mini">
+                  <div class="mini__bar"></div>
+                  <div class="mini__search"></div>
+                  <div class="mini__row"><i class="d d--ok"></i><i class="ln"></i></div>
+                  <div class="mini__row"><i class="d d--mut"></i><i class="ln" style="max-width:70%;"></i></div>
+                </div></div>
+                <div class="scard__body">
+                  <div class="scard__title">출퇴근 기록 화면 · 바뀐 화면</div>
+                  <div class="scard__route"><span class="dot dot--live" style="display:inline-block;vertical-align:1px;margin-right:4px;"></span>오른쪽 미리보기에서 열려 있어요</div>
+                  <div class="scard__states"><span class="state-chip on">지금 화면</span><span class="state-chip">저장 전</span></div>
+                </div>
+              </button>
+
+              <div class="savecard" id="savecard">
+                <div class="savecard__head">
+                  <span class="savecard__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span>
+                  <div class="savecard__tt"><strong>이번에 바뀐 것</strong><span class="savecard__sub" id="saveHeadSub">아직 저장 전 · 미리보기에만 보여요</span></div>
+                  <span class="tag tag--warn" id="saveTag">저장 대기</span>
+                </div>
+                <div class="savecard__files">
+                  <div class="frow"><span class="frow__ic">▣</span><div class="frow__tx"><strong>출퇴근 기록 화면</strong><span class="frow__d">위쪽에 검색창 추가</span></div><span class="tag">고침</span></div>
+                  <div class="frow"><span class="frow__ic">＋</span><div class="frow__tx"><strong>이름 검색</strong><span class="frow__d">이름으로 직원을 찾는 기능</span></div><span class="tag tag--accent">새로 만듦</span></div>
+                </div>
+                <div class="savecard__hint" id="saveHint">저장하면 우리 팀 앱의 개발자 화면에 바로 보여요. 저장 전에는 아무도 못 봐요.</div>
+                <div class="savecard__actions" id="saveActions">
+                  <button class="btn btn--ghost js-later">아직이요, 더 고칠래요</button>
+                  <button class="btn btn--primary js-save">저장하기</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="turnlive"><span class="dot dot--live"></span><span id="liveTx">계속 말씀해 주세요 — 고친 것은 모두 이 대화에 모여 있어요</span></div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <div class="inbox-chips">
+              <button class="chip chip--save" id="chipUnsaved"><span class="dot dot--ask"></span>저장하지 않은 변경 2개</button>
+              <button class="chip chip--now" id="chipSaveNow">지금 저장하기</button>
+            </div>
+            <textarea class="composer__input" rows="1" placeholder="이 대화에서 계속 — 예: 휴가자는 회색으로 보여줘"></textarea>
+            <div class="composer__bar">
+              <button class="composer__model">콜로 · 우리 팀 근태 앱</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg></button>
+            </div>
+          </div>
+          <div class="composer__hint">저장하기 전까지는 우리 팀 앱에 반영되지 않아요</div>
+        </div>
+      </section>
+
+      <aside class="preview">
+        <div class="phead">
+          <div>
+            <div class="phead__t">출퇴근 기록 화면 — 미리보기</div>
+            <div class="phead__s">대화에서 열었어요 · 닫아도 대화는 그대로예요</div>
+          </div>
+          <button class="ibtn" title="패널 닫기"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        </div>
+
+        <div class="pbar">
+          <div class="seg" id="viewSeg">
+            <button data-view="saved">저장된 화면</button>
+            <button class="on" data-view="now">지금 화면</button>
+          </div>
+          <div class="pbar__url"><span class="dot dot--live"></span><span id="urlTx">우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기</span></div>
+        </div>
+
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body" id="stageBody">
+              <div class="fakeapp">
+                <div class="fakeapp__head">
+                  <div class="fakeapp__title">출퇴근 기록</div>
+                  <div class="fakeapp__desc">오늘의 출근 현황을 한눈에</div>
+                  <div class="fakeapp__tabs">
+                    <span class="fakeapp__tab on">전체 24</span>
+                    <span class="fakeapp__tab">출근중 17</span>
+                    <span class="fakeapp__tab">퇴근 5</span>
+                    <span class="fakeapp__tab">휴가 2</span>
+                  </div>
+                </div>
+                <div style="padding: 4px 22px 20px;">
+                  <div class="fa-newwrap">
+                    <div class="fa-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>이름으로 검색…</div>
+                    <span class="tag tag--accent">이번에 추가됨 · 저장 전</span>
+                  </div>
+                  <div class="fa-row"><span class="ava">하</span><div class="nm"><span class="a">김하늘</span><span class="b">디자인팀</span></div><span class="st st--in">출근중</span></div>
+                  <div class="fa-row"><span class="ava">윤</span><div class="nm"><span class="a">이도윤</span><span class="b">개발팀</span></div><span class="st st--out">퇴근</span></div>
+                  <div class="fa-row"><span class="ava">리</span><div class="nm"><span class="a">최유리</span><span class="b">운영팀</span></div><span class="st st--vac">휴가</span></div>
+                  <div class="fa-row"><span class="ava">서</span><div class="nm"><span class="a">정민서</span><span class="b">개발팀</span></div><span class="st st--in">출근중</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pins"><span class="pin"><span class="n">1</span>새 검색창</span></div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" id="themeBtn" title="테마 바꾸기">☾</button>
+<script>
+const $ = (s) => document.querySelector(s);
+$("#themeBtn").addEventListener("click", () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme === "dark";
+  r.dataset.theme = dark ? "light" : "dark";
+  $("#themeBtn").textContent = dark ? "☾" : "☀";
+});
+requestAnimationFrame(() => { $("#savecard").scrollIntoView({ block: "center" }); });
+function goSave() {
+  const c = $("#savecard");
+  c.scrollIntoView({ behavior: "smooth", block: "center" });
+  c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash");
+}
+$("#chipUnsaved").addEventListener("click", goSave);
+$("#chipSaveNow").addEventListener("click", () => { goSave(); save(); });
+function save() {
+  const c = $("#savecard");
+  if (c.classList.contains("savecard--done")) return;
+  c.classList.add("savecard--done");
+  $("#saveTag").textContent = "저장됨"; $("#saveTag").className = "tag tag--ok";
+  $("#saveHeadSub").textContent = "방금 · 바뀐 파일 2개";
+  $("#saveHint").textContent = "저장했어요. 이제 개발자에게 넘겨 확인을 받을 수 있어요.";
+  $("#saveActions").innerHTML = '<button class="btn btn--ghost js-later">나중에</button><button class="btn btn--primary">개발자에게 넘기기</button>';
+  const chip = $("#chipUnsaved");
+  chip.className = "chip chip--okc"; chip.innerHTML = '<span class="dot dot--done"></span>모두 저장됨';
+  $("#chipSaveNow").style.display = "none";
+  $("#liveTx").textContent = "저장 완료 — 이 대화에서 계속 고칠 수 있어요";
+}
+document.querySelectorAll(".js-save").forEach((b) => b.addEventListener("click", save));
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".js-later")) return;
+  $("#saveHint").textContent = "좋아요 — 저장 제안은 이 대화에 그대로 기다리고 있어요.";
+  $(".composer__input").focus();
+});
+$("#viewSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-view]"); if (!b) return;
+  document.querySelectorAll("#viewSeg button").forEach((x) => x.classList.toggle("on", x === b));
+  const saved = b.dataset.view === "saved";
+  $("#stageBody").classList.toggle("is-saved", saved);
+  $("#urlTx").textContent = saved ? "우리 팀 근태 앱 · 마지막으로 저장된 화면" : "우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기";
+});
+</script>
+</body>
+</html>

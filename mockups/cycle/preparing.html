@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>프로젝트 준비 중 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--live"></span><span class="leaf__t">새 대화</span><span class="leaf__meta leaf__meta--live">준비 중</span></button>
+        </div>
+      </div>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">새 대화</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="work">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+          <div class="turn-user"><div class="turn-user__bubble">장바구니 화면을 새로 만들어 줘.</div></div>
+          <div class="turn-ai"><div class="turn-ai__prose"><p>프로젝트 준비가 끝나는 대로 시작합니다.</p></div></div>
+        </div></div>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="준비가 끝나는 동안에도 적어 둘 수 있어요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">＋</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div class="cycle">
+          <div class="cycle__steps"><span class="dchip dchip--quiet"><span class="g">—</span>화면 대기 중</span></div>
+        </div>
+
+        <!-- ============ 준비 진행 판 ============ -->
+        <div class="stage">
+          <div class="stage__frame">
+            <div class="stage__chrome"><i></i><i></i><i></i></div>
+            <div class="stage__body">
+              <div class="errcard" style="justify-content:center">
+                <div class="errcard__title" style="font-family:var(--serif);font-size:17px">프로젝트를 준비하고 있습니다</div>
+                <div class="errcard__desc" style="margin-bottom:18px">처음 한 번만 걸립니다 — 다음부터는 바로 열립니다.</div>
+
+                <div class="savesteps" style="flex-direction:column;align-items:flex-start;gap:10px;font-size:13px">
+                  <span class="savestep done"><span class="n">✓</span>레포 내려받기</span>
+                  <span class="savestep done"><span class="n">✓</span>최신 변경 받아오기</span>
+                  <span class="savestep now"><span class="n"><span class="spin" style="width:10px;height:10px;border-width:1.5px"></span></span>패키지 설치</span>
+                  <span class="savestep"><span class="n">4</span>미리보기 띄우기</span>
+                </div>
+
+                <div class="dhunk" style="margin-top:20px;width:min(360px,100%);text-align:left">
+                  <span style="color:var(--faint)">$</span> pnpm install<br/>
+                  <span style="color:var(--muted)">Packages: +412</span><br/>
+                  <span style="color:var(--muted)">Progress: resolved 412, reused 398, downloaded 14</span>
+                </div>
+                <p class="hint" style="margin-top:14px">설치가 가장 긴 구간입니다 — 보통 1~2분.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>

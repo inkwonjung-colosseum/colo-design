@@ -1,0 +1,604 @@
+<!doctype html>
+<!-- 히어로 · 「여정이 정점이다」
+     창 전체가 하나의 여정 무대다. 상단의 여정 지도가 "지금 어느 장면인가"를 말하고,
+     장면 전환은 스테퍼 클릭이 아니라 대화 속 행동 버튼(저장하기 → 넘기기)과
+     바깥 세계의 사건(개발자 코멘트 → 반영)이 일으킨다.
+     사이드바도 날짜가 아니라 여정 단계로 대화를 묶는다.
+     → 화면의 '저장하기'를 눌러 만들기→저장→넘기기→반영까지 창이 통째로
+       장면을 바꾸는 것을 볼 수 있다. -->
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>여정이 정점이다 — 근태 화면 고치기 · 콜로 히어로 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+<link rel="stylesheet" href="../final/final.css" />
+<style>
+  /* ============================================================
+     journey hero — 이 페이지 고유 요소
+     ============================================================ */
+
+  /* ── 여정 지도 바: 스테퍼가 아니라 '지금 어디인가'의 지도 ────── */
+  .jbar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 9px 20px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line-soft);
+    flex: none;
+  }
+  .jbar__cap {
+    font-family: var(--serif);
+    font-size: 14px;
+    letter-spacing: -0.01em;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+  .jbar__cap b { color: var(--accent-ink); font-weight: 700; }
+  .jmap {
+    display: flex;
+    align-items: flex-start;
+    flex: 1;
+    max-width: 430px;
+    margin-left: auto;
+  }
+  .jstop { display: flex; flex-direction: column; align-items: center; gap: 5px; flex: none; }
+  .jdot {
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid var(--line-strong);
+    background: var(--panel);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 8.5px; color: #fff;
+    transition: all .45s var(--drift);
+  }
+  .jstop.done .jdot { background: var(--ok); border-color: var(--ok); }
+  .jstop.now .jdot {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+  }
+  .jstop.arrived .jdot { box-shadow: 0 0 0 4px var(--ok-soft); }
+  .jnm { font-size: 10.5px; color: var(--faint); transition: color .3s; }
+  .jstop.done .jnm { color: var(--muted); }
+  .jstop.now .jnm { color: var(--accent-ink); font-weight: 600; }
+  .jstop.arrived .jnm { color: var(--ok); font-weight: 600; }
+  .jseg {
+    flex: 1; height: 2px; border-radius: 1px;
+    background: var(--line);
+    margin: 6.5px 5px 0;
+    position: relative; overflow: hidden;
+  }
+  .jseg::after {
+    content: ""; position: absolute; inset: 0;
+    background: var(--accent);
+    transform: scaleX(0); transform-origin: left;
+    transition: transform .7s var(--drift);
+  }
+  .jseg.done::after { transform: scaleX(1); }
+
+  /* ── 장면 경계 카드: 대화 흐름에 박히는 '넘어감' ────────────── */
+  .handoff {
+    display: flex; gap: 13px; align-items: flex-start;
+    border: 1px solid var(--accent-line);
+    background: var(--panel);
+    border-radius: var(--r-lg);
+    padding: 15px 16px;
+    box-shadow: var(--shadow-card);
+  }
+  .handoff--ok { border-color: var(--ok); }
+  .handoff__icon {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; flex: none;
+  }
+  .handoff__icon--ok { background: var(--ok-soft); color: var(--ok); }
+  .handoff__body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .handoff__title { font-weight: 600; font-size: 13.5px; }
+  .handoff__meta { font-size: 12px; color: var(--muted); }
+  .handoff__flow {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 6px; font-size: 11.5px; color: var(--faint);
+  }
+  .handoff__flow .done { color: var(--text-2); }
+  .handoff__flow .done::before { content: "✓ "; color: var(--ok); }
+  .handoff__flow .now {
+    color: var(--accent-ink); font-weight: 600;
+    padding: 2px 9px; border-radius: var(--r-pill);
+    background: var(--accent-soft);
+  }
+  .handoff__flow i { font-style: normal; color: var(--line-strong); }
+
+  /* ── 개발자의 메시지: 대화에 도착한 사람의 말 ───────────────── */
+  .devmsg { display: flex; gap: 10px; }
+  .devmsg__ava {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--info-soft); color: var(--info);
+    font-size: 12px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: none; margin-top: 2px;
+  }
+  .devmsg__body { flex: 1; min-width: 0; }
+  .devmsg__who { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .devmsg__who b { color: var(--text-2); font-weight: 600; }
+  .devmsg__text {
+    font-size: 13.5px; line-height: 1.6; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--r-md); padding: 11px 14px;
+  }
+
+  /* ── 도착 애니메이션 ───────────────────────────────────────── */
+  @keyframes arrive {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .arrive { animation: arrive .5s var(--drift); }
+
+  /* ── 스테이지 스탬프·크롬 캡션 ─────────────────────────────── */
+  #stageFrame { position: relative; }
+  .stage__chrome .when { margin-left: auto; font-size: 11px; color: var(--faint); }
+  .stamp--ok { color: var(--ok); border-color: var(--ok); }
+
+  /* 반영된 뒤의 미리보기: '이번에 추가됨' 표시는 실제 앱의 일부가 된다 */
+  .stage__body.is-live .fa-newwrap { border: 0; margin: 0; padding: 0; }
+  .stage__body.is-live .fa-newwrap .tag { display: none; }
+
+  /* 미리보기 열 헤더의 장면 라벨 */
+  .phead__scene {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .04em; color: var(--accent-ink);
+    background: var(--accent-soft); border-radius: var(--r-pill);
+    padding: 2px 8px; margin-bottom: 4px;
+  }
+  .phead__scene--ok { color: var(--ok); background: var(--ok-soft); }
+  .phead__scene--mut { color: var(--muted); background: var(--panel-3); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ══════════ 왼쪽: 대화 목록 — 날짜가 아니라 여정으로 묶는다 ══════════ -->
+  <aside class="rail">
+    <div class="rail__top">
+      <div class="rail__brand"><span class="letter" style="width:24px;height:24px;border-radius:7px;font-size:12px;">콜</span>콜로</div>
+      <span class="spacer"></span>
+      <button class="ibtn" title="설정">⋯</button>
+    </div>
+    <button class="rail__new">＋ 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      대화 검색
+    </div>
+    <nav class="tree">
+      <div class="tree__label">만드는 중 · 넘긴 것</div>
+      <button class="leaf on" id="curLeaf">
+        <span class="leaf__t">근태 화면 고치기</span>
+        <span class="leaf__meta leaf__meta--ask" id="curLeafMeta">저장 안 됨</span>
+      </button>
+      <button class="leaf">
+        <span class="leaf__t">휴가 신청 화면 만들기</span>
+        <span class="leaf__meta">검토 중</span>
+      </button>
+      <div class="tree__label">반영됨</div>
+      <div id="doneGroup">
+        <button class="leaf">
+          <span class="leaf__t">신규 입사자 온보딩 화면</span>
+          <span class="leaf__meta">반영됨</span>
+        </button>
+        <button class="leaf">
+          <span class="leaf__t">급여표 정렬 고치기</span>
+          <span class="leaf__meta">반영됨</span>
+        </button>
+      </div>
+      <button class="leaf leaf--add">+ 다른 레포 연결하기</button>
+    </nav>
+    <div class="rail__foot">
+      <button class="who" style="flex:1;">
+        <span class="letter">김</span>
+        <span style="text-align:left;min-width:0;">
+          <span style="display:block;font-size:12.5px;">김서연</span>
+          <span style="display:block;font-size:11px;color:var(--faint);">우리 팀 근태 앱 · 연결됨</span>
+        </span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ══════════════════════════ main ══════════════════════════ -->
+  <div class="main">
+
+    <header class="topbar">
+      <div class="topbar__title">근태 화면 고치기</div>
+      <div class="topbar__crumb">우리 팀 근태 앱</div>
+      <span class="spacer"></span>
+      <span class="conn conn--ok" id="conn"><span class="dot"></span>레포 연결됨</span>
+      <button class="ibtn" title="대화 옵션">⋯</button>
+    </header>
+
+    <!-- 여정 지도: 클릭하는 스테퍼가 아니라, 버튼이 움직이는 '현재 위치' -->
+    <div class="jbar">
+      <div class="jbar__cap" id="sceneCap"></div>
+      <div class="jmap" id="jmap" aria-label="이 대화의 여정">
+        <div class="jstop"><span class="jdot"></span><span class="jnm">연결</span></div>
+        <div class="jseg"></div>
+        <div class="jstop"><span class="jdot"></span><span class="jnm">만들기</span></div>
+        <div class="jseg"></div>
+        <div class="jstop"><span class="jdot"></span><span class="jnm">저장</span></div>
+        <div class="jseg"></div>
+        <div class="jstop"><span class="jdot"></span><span class="jnm">넘기기</span></div>
+        <div class="jseg"></div>
+        <div class="jstop"><span class="jdot"></span><span class="jnm">반영</span></div>
+      </div>
+      <button class="btn btn--quiet btn--sm" id="replay" title="처음 장면부터 다시 보기">↺ 처음부터</button>
+    </div>
+
+    <div class="work">
+
+      <!-- ---------------- 대화 열 ---------------- -->
+      <section class="chat">
+        <div class="chat__scroll" id="chatScroll">
+          <div class="chat__col" id="transcript">
+
+            <div class="turn-user">
+              <div class="turn-user__bubble">출퇴근 기록 화면 위쪽에 검색창을 넣어줘. 이름으로 직원을 찾고 싶어.</div>
+            </div>
+
+            <div class="turn-ai">
+              <div class="act"><span class="ic">✓</span> 출퇴근 기록 화면을 찾아 2곳을 고쳤어요</div>
+              <div class="turn-ai__prose">
+                <p>검색창을 추가했어요. 이름을 입력하면 목록이 바로 걸러져요.</p>
+                <p style="color:var(--text-2);">지금은 <strong>저장 전</strong>이라 미리보기에서만 보여요. 마음에 들면 아래 카드에서 저장하세요.</p>
+              </div>
+
+              <button class="scard scard--open">
+                <div class="scard__shot"><div class="mini">
+                  <div class="mini__bar"></div>
+                  <div class="mini__search"></div>
+                  <div class="mini__row"><i class="d d--ok"></i><i class="ln"></i></div>
+                  <div class="mini__row"><i class="d d--mut"></i><i class="ln" style="max-width:70%;"></i></div>
+                </div></div>
+                <div class="scard__body">
+                  <div class="scard__title">출퇴근 기록 화면 · 바뀐 화면</div>
+                  <div class="scard__route"><span class="dot dot--live" style="display:inline-block;vertical-align:1px;margin-right:4px;"></span>오른쪽 미리보기에서 열려 있어요</div>
+                  <div class="scard__states"><span class="state-chip on">지금 화면</span><span class="state-chip">저장 전</span></div>
+                </div>
+              </button>
+
+              <!-- 이 카드의 버튼이 장면을 바꾼다 -->
+              <div class="savecard" id="savecard">
+                <div class="savecard__head">
+                  <span class="savecard__ic" id="saveIc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></span>
+                  <div class="savecard__tt"><strong id="saveTitle">이번에 바뀐 것</strong><span class="savecard__sub" id="saveHeadSub">아직 저장 전 · 미리보기에만 보여요</span></div>
+                  <span class="tag tag--warn" id="saveTag">저장 대기</span>
+                </div>
+                <div class="savecard__files" id="saveFiles">
+                  <div class="frow"><span class="frow__ic">▣</span><div class="frow__tx"><strong>출퇴근 기록 화면</strong><span class="frow__d">위쪽에 검색창 추가</span></div><span class="tag">고침</span></div>
+                  <div class="frow"><span class="frow__ic">＋</span><div class="frow__tx"><strong>이름 검색</strong><span class="frow__d">이름으로 직원을 찾는 기능</span></div><span class="tag tag--accent">새로 만듦</span></div>
+                </div>
+                <div class="savecard__hint" id="saveHint">저장하면 우리 팀 앱의 개발자 화면에 바로 보여요. 저장 전에는 아무도 못 봐요.</div>
+                <div class="savecard__actions" id="saveActions">
+                  <button class="btn btn--ghost" id="laterBtn">아직이요, 더 고칠래요</button>
+                  <button class="btn btn--primary" id="saveBtn">저장하기</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="turnlive" id="turnlive"><span class="dot dot--live"></span><span id="liveTx">계속 말씀해 주세요 — 고친 것은 모두 이 대화에 모여 있어요</span></div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <div class="inbox-chips" id="chipRow">
+              <button class="chip chip--save" id="chipUnsaved"><span class="dot dot--ask"></span>저장하지 않은 변경 2개</button>
+              <button class="chip chip--now" id="chipSaveNow">지금 저장하기</button>
+            </div>
+            <textarea class="composer__input" id="composerInput" rows="1" placeholder="이 대화에서 계속 — 예: 휴가자는 회색으로 보여줘"></textarea>
+            <div class="composer__bar">
+              <button class="composer__model">콜로 · 우리 팀 근태 앱</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg></button>
+            </div>
+          </div>
+          <div class="composer__hint" id="composerHint">저장하기 전까지는 우리 팀 앱에 반영되지 않아요</div>
+        </div>
+      </section>
+
+      <!-- ---------------- 미리보기 열: 장면마다 의미가 바뀌는 같은 사각형 ---------------- -->
+      <aside class="preview">
+        <div class="phead">
+          <div>
+            <span class="phead__scene" id="pheadScene">만들기 장면</span>
+            <div class="phead__t" id="pheadT">출퇴근 기록 화면 — 미리보기</div>
+            <div class="phead__s" id="pheadS">내 컴퓨터에서 도는 화면 · 아직 아무도 못 봐요</div>
+          </div>
+          <button class="ibtn" title="패널 닫기"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+        </div>
+
+        <div class="pbar">
+          <span id="pbarLeft">
+            <span class="seg" id="viewSeg">
+              <button data-view="saved">저장된 화면</button>
+              <button class="on" data-view="now">지금 화면</button>
+            </span>
+          </span>
+          <div class="pbar__url"><span class="dot dot--live" id="urlDot"></span><span id="urlTx">우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기</span></div>
+        </div>
+
+        <div class="stage">
+          <div class="stage__frame" id="stageFrame">
+            <div class="stage__chrome"><i></i><i></i><i></i><span class="when" id="chromeWhen">지금 고치는 중</span></div>
+            <div class="stage__body" id="stageBody">
+              <div class="fakeapp">
+                <div class="fakeapp__head">
+                  <div class="fakeapp__title">출퇴근 기록</div>
+                  <div class="fakeapp__desc">오늘의 출근 현황을 한눈에</div>
+                  <div class="fakeapp__tabs">
+                    <span class="fakeapp__tab on">전체 24</span>
+                    <span class="fakeapp__tab">출근중 17</span>
+                    <span class="fakeapp__tab">퇴근 5</span>
+                    <span class="fakeapp__tab">휴가 2</span>
+                  </div>
+                </div>
+                <div style="padding: 4px 22px 20px;">
+                  <div class="fa-newwrap">
+                    <div class="fa-search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>이름으로 검색…</div>
+                    <span class="tag tag--accent" id="newTag">이번에 추가됨 · 저장 전</span>
+                  </div>
+                  <div class="fa-row"><span class="ava">하</span><div class="nm"><span class="a">김하늘</span><span class="b">디자인팀</span></div><span class="st st--in">출근중</span></div>
+                  <div class="fa-row"><span class="ava">윤</span><div class="nm"><span class="a">이도윤</span><span class="b">개발팀</span></div><span class="st st--out">퇴근</span></div>
+                  <div class="fa-row"><span class="ava">리</span><div class="nm"><span class="a">최유리</span><span class="b">운영팀</span></div><span class="st st--vac">휴가</span></div>
+                  <div class="fa-row"><span class="ava">서</span><div class="nm"><span class="a">정민서</span><span class="b">개발팀</span></div><span class="st st--in">출근중</span></div>
+                </div>
+              </div>
+            </div>
+            <span class="frozen__stamp" id="stamp" style="display:none;"></span>
+          </div>
+        </div>
+
+        <div class="pins"><span class="pin"><span class="n">1</span>새 검색창</span></div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" id="themeBtn" title="테마 바꾸기">☾</button>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+/* ── 테마 ─────────────────────────────────────────────────── */
+$("#themeBtn").addEventListener("click", () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme === "dark";
+  r.dataset.theme = dark ? "light" : "dark";
+  $("#themeBtn").textContent = dark ? "☾" : "☀";
+});
+
+/* ── 여정 상태기계 ──────────────────────────────────────────
+   scene: 0 만들기 → 1 저장됨 → 2 검토 중 → 3 반영됨
+   전환은 오직 행동 버튼(save/handoff)과 바깥 사건(devReply/merged)뿐.
+   여정 지도는 읽기 전용이다. */
+let scene = 0;
+
+const CAPTIONS = [
+  '지금 장면 · <b>만들기</b> — 고친 것은 아직 미리보기에만 있어요',
+  '지금 장면 · <b>저장됨</b> — 개발자에게 넘길 준비가 됐어요',
+  '지금 장면 · <b>검토 중</b> — 지훈 님이 보낸 화면을 보고 있어요',
+  '지금 장면 · <b>반영됨</b> — 팀원들이 지금 이 화면을 써요',
+];
+
+function setScene(n) {
+  scene = n;
+  const cur = n + 1; // 정류장 인덱스(0=연결은 항상 지나옴)
+  $$(".jstop").forEach((el, i) => {
+    const done = i < cur || (n === 3 && i === cur);
+    el.classList.toggle("done", done);
+    el.classList.toggle("now", n < 3 && i === cur);
+    el.classList.toggle("arrived", n === 3 && i === cur);
+    el.querySelector(".jdot").textContent = done ? "✓" : "";
+  });
+  $$(".jseg").forEach((el, i) => el.classList.toggle("done", i < cur));
+  $("#sceneCap").innerHTML = CAPTIONS[n];
+}
+
+function setConn(kind, text) {
+  const dot = kind === "ask" ? "dot dot--ask" : kind === "live" ? "dot dot--live" : "dot dot--done";
+  $("#conn").className = "conn" + (kind === "ok" ? " conn--ok" : "");
+  $("#conn").innerHTML = '<span class="' + dot + '"></span>' + text;
+}
+
+function setLeaf(text, mode) {
+  const m = $("#curLeafMeta");
+  m.textContent = text;
+  m.className = "leaf__meta" + (mode === "ask" ? " leaf__meta--ask" : mode === "live" ? " leaf__meta--live" : "");
+}
+
+function scrollChat() {
+  const s = $("#chatScroll");
+  s.scrollTo({ top: s.scrollHeight, behavior: "smooth" });
+}
+
+function appendTurn(html) {
+  $("#turnlive").insertAdjacentHTML("beforebegin", html);
+  const el = $("#turnlive").previousElementSibling;
+  el.classList.add("arrive");
+  scrollChat();
+}
+
+/* ── 장면 0 → 1: 사용자가 '저장하기'를 누른다 ─────────────── */
+function save() {
+  if (scene !== 0) return;
+  setScene(1);
+
+  const c = $("#savecard");
+  c.classList.add("savecard--done");
+  $("#saveIc").className = "savecard__ic savecard__ic--ok";
+  $("#saveIc").innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5 5L20 6.5"/></svg>';
+  $("#saveTitle").textContent = "저장했어요";
+  $("#saveHeadSub").textContent = "방금 · 바뀐 파일 2개";
+  $("#saveTag").textContent = "저장됨";
+  $("#saveTag").className = "tag tag--ok";
+  $("#saveHint").textContent = "저장했어요. 이제 개발자에게 넘겨 확인을 받을 수 있어요.";
+  $("#saveActions").innerHTML = '<button class="btn btn--primary" id="handoffBtn">개발자에게 넘기기</button>';
+  $("#handoffBtn").addEventListener("click", handoff);
+
+  $("#chipRow").innerHTML =
+    '<span class="chip chip--okc"><span class="dot dot--done"></span>모두 저장됨</span>' +
+    '<button class="chip chip--now" id="chipHandoff">개발자에게 넘기기</button>';
+  $("#chipHandoff").addEventListener("click", handoff);
+
+  $("#newTag").textContent = "이번에 추가됨 · 저장됨";
+  $("#newTag").className = "tag tag--ok";
+  $("#pbarLeft").innerHTML = '<span class="tag tag--ok">저장된 화면</span>';
+  $("#urlTx").textContent = "우리 팀 근태 앱 · 저장된 화면 — 넘기면 개발자가 이걸 봐요";
+  $("#pheadScene").textContent = "저장 장면";
+  $("#pheadT").textContent = "출퇴근 기록 화면 — 저장된 미리보기";
+  $("#pheadS").textContent = "저장된 화면 · 개발자에게 넘기면 이 화면을 그대로 봐요";
+  $("#chromeWhen").textContent = "방금 저장됨";
+
+  setConn("ok", "저장됨 · 넘기기 전");
+  setLeaf("저장됨");
+  $("#liveTx").textContent = "저장 완료 — 넘기면 지훈 님이 확인해요";
+  $("#composerHint").textContent = "넘기기 전까지는 실제 앱에 반영되지 않아요";
+}
+
+/* ── 장면 1 → 2: 사용자가 '개발자에게 넘기기'를 누른다 ────── */
+function handoff() {
+  if (scene !== 1) return;
+  setScene(2);
+
+  appendTurn(
+    '<div class="handoff">' +
+      '<div class="handoff__icon">→</div>' +
+      '<div class="handoff__body">' +
+        '<div class="handoff__title">박지훈 님에게 보냈어요</div>' +
+        '<div class="handoff__meta">방금 · 화면 1개 · 실제 앱에 반영해 달라는 요청</div>' +
+        '<div class="handoff__flow"><span class="done">보냄</span><i>→</i><span class="now">검토 중</span><i>→</i><span>반영</span></div>' +
+      '</div>' +
+    '</div>'
+  );
+
+  $("#saveActions").innerHTML = '<span class="hint" style="padding:2px 4px;">지훈 님에게 보낸 화면이에요</span>';
+
+  /* 미리보기는 '보낸 화면'으로 얼어붙는다 */
+  $("#stageFrame").classList.add("frozen");
+  const st = $("#stamp");
+  st.style.display = "";
+  st.textContent = "오늘 15:04에 보낸 화면";
+  $("#pbarLeft").innerHTML = '<span class="tag">보낸 화면</span>';
+  $("#urlDot").className = "dot";
+  $("#urlTx").textContent = "보낸 그대로의 화면 · 지금은 바꿀 수 없어요";
+  $("#pheadScene").textContent = "검토 장면";
+  $("#pheadScene").className = "phead__scene phead__scene--mut";
+  $("#pheadT").textContent = "보낸 화면 — 그때 그대로";
+  $("#pheadS").textContent = "지훈 님이 지금 보고 있는 화면이에요";
+  $("#chromeWhen").textContent = "15:04에 보낸 화면";
+
+  /* 입력창은 고치는 곳에서 지훈 님과의 답장 채널로 바뀐다 */
+  $("#chipRow").innerHTML = '<span class="chip chip--now"><span class="dot dot--ask"></span>검토 중 · 지훈 님이 보고 있어요</span>';
+  $("#composerInput").placeholder = "지훈 님에게 답장…";
+  $("#composerHint").textContent = "반영되면 이 대화에 알림이 와요";
+
+  setConn("ask", "박지훈 님 · 검토 중");
+  setLeaf("검토 중");
+  $("#liveTx").textContent = "지훈 님의 확인을 기다리고 있어요";
+
+  /* 바깥 세계의 사건: 코멘트가 오고, 반영된다 */
+  setTimeout(devReply, 2400);
+  setTimeout(merged, 5400);
+}
+
+/* ── 사건: 개발자 코멘트 도착 ─────────────────────────────── */
+function devReply() {
+  if (scene !== 2) return;
+  appendTurn(
+    '<div class="devmsg">' +
+      '<span class="devmsg__ava">박</span>' +
+      '<div class="devmsg__body">' +
+        '<div class="devmsg__who"><b>박지훈</b> · 개발자 · 방금</div>' +
+        '<div class="devmsg__text">검색창 좋네요. 그대로 반영할게요.</div>' +
+      '</div>' +
+    '</div>'
+  );
+  setConn("ask", "박지훈 님 · 코멘트 도착");
+  setLeaf("코멘트 1", "ask");
+  $("#liveTx").textContent = "지훈 님이 반영을 준비하고 있어요";
+}
+
+/* ── 장면 2 → 3: 반영됨 — 여정의 끝, 창이 다시 살아난다 ───── */
+function merged() {
+  if (scene !== 2) return;
+  setScene(3);
+
+  appendTurn(
+    '<div class="handoff handoff--ok">' +
+      '<div class="handoff__icon handoff__icon--ok">✓</div>' +
+      '<div class="handoff__body">' +
+        '<div class="handoff__title">우리 팀 근태 앱에 반영됐어요</div>' +
+        '<div class="handoff__meta">방금 · 지훈 님이 실제 앱에 넣었어요 · 이 대화에서 계속 고칠 수 있어요</div>' +
+        '<div class="handoff__flow"><span class="done">보냄</span><i>→</i><span class="done">검토</span><i>→</i><span class="done">반영</span></div>' +
+      '</div>' +
+    '</div>'
+  );
+
+  /* 미리보기가 다시 산다 — 이번엔 '실제 앱'이다 */
+  $("#stageFrame").classList.remove("frozen");
+  $("#stageBody").classList.add("is-live");
+  const st = $("#stamp");
+  st.textContent = "실제 앱 · 방금 반영된 화면";
+  st.classList.add("stamp--ok");
+  $("#pbarLeft").innerHTML = '<span class="tag tag--ok">실제 앱</span>';
+  $("#urlDot").className = "dot dot--done";
+  $("#urlTx").textContent = "우리 팀 근태 앱 · 팀원들이 지금 보는 화면";
+  $("#pheadScene").textContent = "반영 장면";
+  $("#pheadScene").className = "phead__scene phead__scene--ok";
+  $("#pheadT").textContent = "실제 앱 — 반영된 화면";
+  $("#pheadS").textContent = "팀원들이 지금 이 화면을 써요";
+  $("#chromeWhen").textContent = "실제 앱 · 방금 반영";
+
+  $("#chipRow").innerHTML = '<span class="chip chip--okc"><span class="dot dot--done"></span>반영됨 · 실제 앱에서 보여요</span>';
+  $("#composerInput").placeholder = "이 대화에서 계속 고치기 — 예: 휴가자는 회색으로 보여줘";
+  $("#composerHint").textContent = "반영된 뒤에도 이 대화에서 계속 고칠 수 있어요";
+
+  setConn("ok", "반영됨");
+  setLeaf("반영됨");
+  $("#liveTx").textContent = "여정 완료 — 이 대화에서 다음 변경을 시작할 수 있어요";
+
+  /* 사이드바도 장면을 따라간다: 대화가 '반영됨' 묶음으로 이동 */
+  $("#doneGroup").prepend($("#curLeaf"));
+}
+
+/* ── 장면 0의 인터랙션 ────────────────────────────────────── */
+function goSave() {
+  const c = $("#savecard");
+  c.scrollIntoView({ behavior: "smooth", block: "center" });
+  c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash");
+}
+$("#saveBtn").addEventListener("click", save);
+$("#chipSaveNow").addEventListener("click", () => { goSave(); save(); });
+$("#chipUnsaved").addEventListener("click", goSave);
+$("#laterBtn").addEventListener("click", () => {
+  $("#saveHint").textContent = "좋아요 — 저장 제안은 이 대화에 그대로 기다리고 있어요.";
+  $("#composerInput").focus();
+});
+
+/* 저장된 화면 / 지금 화면 토글 — '만들기' 장면에서만 의미가 있다 */
+$("#viewSeg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-view]"); if (!b) return;
+  $$("#viewSeg button").forEach((x) => x.classList.toggle("on", x === b));
+  const saved = b.dataset.view === "saved";
+  $("#stageBody").classList.toggle("is-saved", saved);
+  $("#urlTx").textContent = saved
+    ? "우리 팀 근태 앱 · 마지막으로 저장된 화면"
+    : "우리 팀 근태 앱 · 내 컴퓨터에서 도는 미리보기";
+});
+
+$("#replay").addEventListener("click", () => location.reload());
+
+setScene(0);
+</script>
+</body>
+</html>

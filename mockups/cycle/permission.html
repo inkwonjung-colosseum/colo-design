@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>허가 요청 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__top">
+      <span class="rail__brand"><img src="../../packages/web/public/colonova-icon.svg" alt="" onerror="this.style.display='none'"/>Colo Design</span>
+      <span class="grow"></span>
+      <button class="ibtn" title="사이드바 접기">⟨</button>
+    </div>
+    <button class="rail__new"><span style="color:var(--accent-ink)">＋</span> 새 대화 <span class="kbd">⌘N</span></button>
+    <div class="rail__search">⌕ &nbsp;대화 · 화면 검색 <span class="kbd" style="margin-left:auto">⌘K</span></div>
+    <nav class="tree">
+      <div class="tree__label">프로젝트</div>
+      <div class="tnode">
+        <button class="tnode__row"><span class="chev">▾</span><span class="letter">쇼</span><span class="tnode__name">쇼핑몰 프론트</span><span class="tnode__repo">team/shop-web</span></button>
+        <div class="tnode__kids">
+          <button class="leaf on"><span class="dot dot--ask"></span><span class="leaf__t">결제 실패 플로우</span><span class="leaf__meta leaf__meta--ask">확인 대기</span></button>
+          <button class="leaf"><span class="dot dot--done"></span><span class="leaf__t">회원 관리 화면 세 상태</span><span class="leaf__meta">1시간 전</span></button>
+        </div>
+      </div>
+    </nav>
+    <div class="rail__foot"><button class="who"><span class="letter" style="width:24px;height:24px">지</span> 지연</button><span class="grow"></span><button class="ibtn" title="설정">⚙</button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <span class="topbar__title">결제 실패 플로우</span>
+      <span class="topbar__crumb">쇼핑몰 프론트</span>
+      <span class="grow"></span>
+      <span class="conn conn--ok"><span class="dot"></span>연결됨</span>
+    </header>
+
+    <div class="work work--chatonly">
+      <section class="chat">
+        <div class="chat__scroll"><div class="chat__col">
+
+          <div class="turn-user"><div class="turn-user__bubble">결제가 실패했을 때 다시 시도하는 플로우를 만들어 줘. 실제 결제 모듈은 안 붙이고 화면만.</div></div>
+
+          <div class="turn-ai">
+            <div class="tool"><button class="tool__head"><span class="chev">▸</span><span class="tool__name">화면 만들기</span><span class="tool__sum">/checkout/fail — 카드 오류 + 다시 시도</span></button></div>
+            <div class="turn-ai__prose"><p>실패 화면 골격을 만들었습니다. 실제 결제창을 띄워 보기 전에 패키지를 하나 설치해야 합니다.</p></div>
+
+            <!-- ============ 허가 요청 카드 ============ -->
+            <div class="perm">
+              <div class="perm__head">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="1.9" stroke-linecap="round"><path d="M12 3l8 3.5v5c0 4.8-3.4 8.3-8 9.5-4.6-1.2-8-4.7-8-9.5v-5z"/><path d="M12 9v4"/><circle cx="12" cy="16.4" r=".6" fill="var(--warn)"/></svg>
+                명령을 실행해도 될까요?
+              </div>
+              <div class="perm__cmd">pnpm add @tosspayments/payment-widget-sdk</div>
+              <div class="perm__opts">
+                <button class="perm__opt perm__opt--yes"><span class="k">허용</span><span class="d">이번 한 번만</span></button>
+                <button class="perm__opt"><span class="k">항상 허용</span><span class="d">이 프로젝트에서</span></button>
+                <button class="perm__opt"><span class="k">거절</span><span class="d">다른 방법 찾기</span></button>
+              </div>
+            </div>
+
+            <div class="act"><span class="ic">⏳</span> 답을 기다리는 중 — 허용하면 이어서 진행합니다</div>
+          </div>
+
+        </div></div>
+
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea class="composer__input" rows="1" placeholder="허가를 기다리는 동안에도 메시지를 남길 수 있어요"></textarea>
+            <div class="composer__bar">
+              <button class="ibtn" title="그림 첨부">＋</button>
+              <button class="composer__model">소네트 4.5 ▾</button>
+              <button class="composer__model" title="확인 방식">매번 확인 ▾</button>
+              <span class="spacer"></span>
+              <button class="send" title="보내기 · Enter">↑</button>
+            </div>
+          </div>
+          <p class="composer__hint">확인 방식을 '알아서 진행'으로 바꾸면 이런 질문이 줄어듭니다</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+document.querySelectorAll('.tool__head').forEach(b=>b.addEventListener('click',()=>b.parentElement.classList.toggle('open')));
+</script>
+</body>
+</html>

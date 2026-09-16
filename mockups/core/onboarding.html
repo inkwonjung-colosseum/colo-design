@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>온보딩 — Colo Design 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap" />
+<link rel="stylesheet" href="../mockup.css" />
+</head>
+<body>
+<div class="onb">
+  <div class="onb__card">
+    <img class="onb__mark" src="../../packages/web/public/colonova-icon.svg" alt=""
+         onerror="this.outerHTML='<div class=onb__mark style=&quot;background:var(--accent-soft);display:inline-flex;align-items:center;justify-content:center;font-size:24px&quot;>◐</div>'"/>
+    <h1 class="onb__title">화면을 말로 만드는 자리</h1>
+    <p class="onb__sub">
+      레포를 연결하고, 만들고 싶은 화면을 말하면 — 회사 디자인 시스템으로 짜인
+      화면이 미리보기에 뜁니다. 시작하기 전에 세 가지만 확인할게요.
+    </p>
+
+    <div class="onb__steps">
+      <div class="onb__step">
+        <span class="st st--ok">✓</span>
+        <div><div class="nm">Claude 준비</div></div>
+        <span class="ds">설치됨 · 로그인됨</span>
+      </div>
+      <div class="onb__step" style="border-color:var(--accent-line);box-shadow:var(--shadow-card)">
+        <span class="st st--run">2</span>
+        <div><div class="nm">GitHub 연결</div>
+          <div class="hint">팀 레포를 고르려면 토큰이 필요합니다</div></div>
+        <span class="ds"><button class="btn btn--primary btn--sm">토큰 붙여넣기</button></span>
+      </div>
+      <div class="onb__step">
+        <span class="st st--wait">3</span>
+        <div><div class="nm" style="color:var(--muted)">첫 프로젝트 고르기</div></div>
+        <span class="ds">다음 단계</span>
+      </div>
+    </div>
+
+    <div class="row" style="justify-content:center;gap:10px">
+      <button class="btn btn--quiet">건너뛰기</button>
+      <button class="btn btn--primary" style="padding:9px 22px">계속</button>
+    </div>
+    <p class="hint" style="margin-top:18px">확인 방식은 다음 단계에서 고릅니다 — 나중에 설정에서 바꿀 수 있어요</p>
+  </div>
+</div>
+
+<button class="themetoggle" onclick="toggleTheme()">◐ 테마 전환</button>
+<script>
+function toggleTheme(){
+  const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==="dark"?"light":"dark";
+  try{localStorage.setItem("mockup-theme",h.dataset.theme)}catch(e){}
+}
+try{const t=localStorage.getItem("mockup-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}
+</script>
+</body>
+</html>
