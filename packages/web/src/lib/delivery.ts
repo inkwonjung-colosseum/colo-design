@@ -148,14 +148,27 @@ function cycleRow(input: DeliveryInput): Delivery {
   // 치워둔 작업이 있으면 "없다"는 거짓말 — 잠금 이유가 치워둔 곳을 가리킨다.
   const saveReason = input.shelf ? PARKED_AWAY : NOTHING_TO_SAVE;
   if (handoff?.state === "merged") {
+    // unsaved 가 앞선다(위의 원칙): 머지 뒤에 쌓인 변경을 `반영됨` 이
+    // 가리면 저장할 일감 자체가 칩에서 사라진다 — 말은 `저장 안 함` 이
+    // 하고, 머지라는 사실은 title 과 다음 줄이 전한다.
     return {
       state: "merged",
-      chip: {
-        label: "반영됨",
-        tone: "merged",
-        title: "다음 저장은 새 사이클을 시작합니다",
+      chip: unsaved
+        ? {
+            label: "저장 안 함",
+            tone: "pending",
+            title: "다음 저장은 새 사이클을 시작합니다",
+          }
+        : {
+            label: "반영됨",
+            tone: "merged",
+            title: "다음 저장은 새 사이클을 시작합니다",
+          },
+      next: {
+        line: unsaved
+          ? "이번 작업이 제품에 합쳐졌습니다 — 저장하지 않은 작업이 있으니 저장이 새 사이클을 엽니다"
+          : "이번 작업이 제품에 합쳐졌습니다 — 다음 저장은 새 작업을 시작합니다",
       },
-      next: { line: "이번 작업이 제품에 합쳐졌습니다 — 다음 저장은 새 작업을 시작합니다" },
       primary: unsaved ? "save" : null,
       actions: {
         save: unsaved

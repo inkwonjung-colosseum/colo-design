@@ -128,7 +128,7 @@ test("changes_requested: 칩의 title 이 개발자 코멘트로 이어 준다",
   assert.equal(d?.primary, "check");
 });
 
-test("merged: 칩은 반영됨 — 변경이 생기면 저장이 열리고 넘기기는 잠긴다", () => {
+test("merged: 변경이 없으면 반영됨 — 변경이 쌓이면 저장 안 함이 앞선다", () => {
   const merged = at({ handoff: pr("merged") });
   assert.equal(merged?.state, "merged");
   assert.equal(merged?.chip.label, "반영됨");
@@ -138,7 +138,18 @@ test("merged: 칩은 반영됨 — 변경이 생기면 저장이 열리고 넘�
   assert.equal(merged?.actions.check, null);
 
   const withChanges = at({ handoff: pr("merged"), pendingChanges: 1 });
-  assert.equal(withChanges?.state, "merged", "칩은 반영됨을 유지한다");
+  assert.equal(withChanges?.state, "merged", "사이클은 아직 merged 다");
+  assert.equal(
+    withChanges?.chip.label,
+    "저장 안 함",
+    "머지 뒤의 변경을 반영됨이 가리면 저장할 일감이 칩에서 사라진다 — unsaved 가 앞선다",
+  );
+  assert.equal(withChanges?.chip.tone, "pending");
+  assert.equal(
+    withChanges?.chip.title,
+    "다음 저장은 새 사이클을 시작합니다",
+    "머지라는 사실은 title 이 전한다",
+  );
   assert.equal(withChanges?.primary, "save", "변경이 쌓였으면 다음 사이클의 저장이 다음 수다");
   assert.equal(withChanges?.actions.save.enabled, true, "변경이 있으면 저장이 열린다");
   assert.equal(withChanges?.actions.handoff.enabled, false);
