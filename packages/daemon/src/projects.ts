@@ -35,6 +35,14 @@ export interface ProjectRepo {
    */
   branch: string | null;
   handoff: HandoffStatus | null;
+  /**
+   * 이 사이클의 핀 앵커 (D93 후속): 이 시각 이후에 찍힌 코멘트가 이 사이클의
+   * 것이다 — 넘긴 요청 본문의 `### 수정 요청` 절이 여기부터 읽는다. 사이클이
+   * 태어난 시각(프로젝트 생성 · 이전 요청의 착지)에 새로 쓰이고, 레지스트리만이
+   * 재시작을 살아남는다. 없으면(업그레이드 전에 시작한 사이클) 넘기기는 예전처럼
+   * 브랜치 첫 커밋 시각으로 대신한다.
+   */
+  commentsSince?: string;
 }
 
 export interface Project {
@@ -168,6 +176,12 @@ function parseProject(raw: unknown): Project | null {
       // breaks its shape reads as "no open handoff", which is recoverable —
       // 넘기기 simply opens a new pull request.
       handoff: parseHandoff(repo.handoff),
+      // D93 후속: the pin anchor rides the same persistence. A hand edit
+      // that breaks it reads as "no anchor" — 넘기기 then falls back to the
+      // branch's first commit time, which under-reads but never fails.
+      ...(typeof repo.commentsSince === "string" && repo.commentsSince
+        ? { commentsSince: repo.commentsSince }
+        : {}),
     },
   };
 }
@@ -302,6 +316,9 @@ export class ProjectRegistry {
         baseBranch: input.baseBranch?.trim() || DEFAULT_BASE_BRANCH,
         branch: null,
         handoff: null,
+        // D93 후속: the first cycle's pins are already this cycle's — the
+        // anchor starts at birth so the first 넘기기 reads them all.
+        commentsSince: new Date().toISOString(),
       },
     };
     this.file.projects.push(project);
@@ -399,11 +416,17 @@ export class ProjectRegistry {
    * the only thing that survives a restart, and a re-clone must not lose track
    * of a PR somebody is already reviewing.
    */
-  setCycle(slug: string, cycle: { branch: string | null; handoff: HandoffStatus | null }): void {
+  setCycle(
+    slug: string,
+    cycle: { branch: string | null; handoff: HandoffStatus | null; commentsSince?: string | null },
+  ): void {
     const project = this.get(slug);
     if (!project) return;
     project.repo.branch = cycle.branch;
     project.repo.handoff = cycle.handoff;
+    if (cycle.commentsSince !== undefined) {
+      project.repo.commentsSince = cycle.commentsSince ?? undefined;
+    }
     this.save();
   }
 
@@ -468,6 +491,8 @@ function migrateLegacyLayout(env: NodeJS.ProcessEnv): ProjectsFile | null {
           baseBranch: DEFAULT_BASE_BRANCH,
           branch: null,
           handoff: null,
+          // D93 후속: the migrated project's first cycle begins here.
+          commentsSince: new Date().toISOString(),
         },
       },
     ],

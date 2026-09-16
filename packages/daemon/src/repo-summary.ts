@@ -154,16 +154,22 @@ export class RepoSummarizer {
   }): Promise<NonNullable<RepoHandoffDraft["extras"]>> {
     let commentsSection: string | null = null;
     try {
-      const since = (
-        await this.core.git([
-          "log",
-          "--reverse",
-          "--format=%cI",
-          `origin/${this.core.baseBranch}..${this.core.branch}`,
-        ])
-      )
-        .split("\n")[0]
-        ?.trim();
+      // D93 후속: the anchor is the cycle's birth — project creation or the
+      // previous request's landing. The pins that motivated this cycle's
+      // changes are logged before the branch's first commit exists, so the
+      // commit-time anchor read here before dropped the whole section.
+      const since =
+        this.core.commentsSince ??
+        (
+          await this.core.git([
+            "log",
+            "--reverse",
+            "--format=%cI",
+            `origin/${this.core.baseBranch}..${this.core.branch}`,
+          ])
+        )
+          .split("\n")[0]
+          ?.trim();
       if (options.commentsFile && since) {
         commentsSection = buildCommentsSection(
           readComments(options.commentsFile),
