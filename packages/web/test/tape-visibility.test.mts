@@ -1,8 +1,8 @@
 /**
  * 테이프의 보이는 규칙 — 설정의 `생각 과정 보기` · `작업 과정 보기`가 블록을
- * 어떻게 거르는지. 계획 카드(TodoWrite)와 캡처 카드는
+ * 어떻게 거르는지. 계획 카드(TodoWrite)는
  * 도구여도 언제나 자리를 지킨다는 예외가 여기서 못 들어오게 한다 — "도구는
- * 전부 숨긴다" 로 단순해진 필터는 계획과 화면을 함께 지워 버린다.
+ * 전부 숨긴다" 로 단순해진 필터는 계획을 함께 지워 버린다.
  *
  * Run: node --experimental-transform-types --test packages/web/test/tape-visibility.test.mts
  */
@@ -35,9 +35,10 @@ test("작업 과정이 꺼져 있으면 도구 묶음은 테이프에서 빠진�
   assert.equal(blockOnTape(tool("Grep"), false, true), true);
 });
 
-test("계획 카드와 캡처 카드는 스위치와 무관하게 남는다", () => {
+test("계획 카드는 스위치와 무관하게 남는다", () => {
   assert.equal(blockOnTape(tool("TodoWrite"), false, false), true);
-  assert.equal(blockOnTape(tool("mcp__colo-preview__screen_screenshot"), false, false), true);
+  // 화면 도구는 사라졌다 (게이트 재배선) — 옛 대화의 재생분은 일반 도구 행.
+  assert.equal(blockOnTape(tool("mcp__colo-preview__screen_screenshot"), false, false), false);
 });
 
 test("생각 과정은 자기 스위치를 따르고, 작업 스위치가 대신하지 않는다", () => {
@@ -52,7 +53,7 @@ test("사람이 읽는 블록 — 말 · 턴 끝 · 안내 — 는 언제나 테
 });
 
 /**
- * 한 턴의 Claude 는 도구를 부를 때마다 생각을 새 블록으로 끊는다. 작업 과정이
+ * 한 턴의 AI 는 도구를 부를 때마다 생각을 새 블록으로 끊는다. 작업 과정이
  * 꺼진 테이프에서는 그 조각들이 이웃이 되어 접힌 줄의 벽으로 쌓였다(실사 결함).
  */
 test("이웃한 생각 조각은 한 생각으로 이어진다", () => {

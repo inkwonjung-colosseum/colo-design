@@ -2,6 +2,7 @@ import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { composing } from "../../lib/ime";
+import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { FolderIcon, FolderPlusIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
@@ -69,7 +70,7 @@ export function RepoPicker({
   /** Runs once `project.create` answered — the dialog closes on it. */
   onCreated?: () => void;
   /** Opens 설정 where a missing token is entered. */
-  onOpenSettings?: () => void;
+  onOpenSettings?: (category?: SettingsCategory) => void;
 }) {
   // A token that never passed the gate cannot list anything; saying so beats
   // an empty list that looks like "no repos".
@@ -193,7 +194,6 @@ export function RepoPicker({
         name: name.trim(),
         repoUrl: selected.cloneUrl,
         ...(inspection?.phase === "ready" ? { baseBranch: inspection.result.defaultBranch } : {}),
-        ...(bootstrapCreate ? { bootstrap: true } : {}),
         ...(approveRun ? { approveCommands: true } : {}),
       });
       onCreated?.();
@@ -205,22 +205,17 @@ export function RepoPicker({
   };
 
   /**
-   * The 만들기 gate: the inspection must have answered, and
-   * the answer must be a repo this tool can work in — OR one Claude can
-   * prepare, which is a choice now, not a wall.
+   * The 만들기 gate: the inspection must have answered, and the repo's own
+   * commands need one explicit yes. 준비(규약 · 미리보기 명령)는 AI 가
+   * 이어 받으므로 만들기 자체를 막는 문은 없다.
    */
-  const needsBootstrap =
-    inspection !== null && inspection.phase === "ready" && !inspection.result.hasColoDesign;
-  const [bootstrapCreate, setBootstrapCreate] = useState(false);
+  const needsConventions =
+    inspection !== null && inspection.phase === "ready" && !inspection.result.hasConventions;
   /** The one explicit yes a new repo's install · preview commands need. */
   const [approveRun, setApproveRun] = useState(false);
   /** Same explicit yes, for the address-typed path. */
   const [manualApprove, setManualApprove] = useState(false);
-  const blocked =
-    inspection === null ||
-    inspection.phase !== "ready" ||
-    (!inspection.result.hasColoDesign && !bootstrapCreate) ||
-    !approveRun;
+  const blocked = inspection === null || inspection.phase !== "ready" || !approveRun;
   /**
    * 잠긴 이유는 조건마다 다르다 — 같은 문장을 걸면
    * "확인하는 중"에 "체크해 주세요"가 거짓말을 한다. 주소 경로가 이미 갖고
@@ -229,9 +224,7 @@ export function RepoPicker({
   const blockedReason =
     inspection === null || inspection.phase !== "ready"
       ? "레포를 확인하는 중입니다"
-      : !inspection.result.hasColoDesign && !bootstrapCreate
-        ? "이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결 준비하기를 눌러 주세요"
-        : "위 명령 실행 동의에 체크하면 켜집니다";
+      : "위 명령 실행 동의에 체크하면 켜집니다";
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     // Composition keys pass straight through: Enter would pick a repo off a
     // half-typed word.
@@ -292,7 +285,7 @@ export function RepoPicker({
               <button
                 type="button"
                 className="ghost repopicker__settingslink"
-                onClick={onOpenSettings}
+                onClick={() => onOpenSettings("connection")}
               >
                 설정 → GitHub
               </button>
@@ -400,12 +393,17 @@ export function RepoPicker({
           ) : (
             <p
               className={`onboarding__detail repopicker__inspect repopicker__inspect--${
-                inspection.result.hasColoDesign ? "ok" : "miss"
+                inspection.result.hasConventions ? "ok" : "miss"
               }`}
             >
-              {inspection.result.hasColoDesign
+              {inspection.result.hasConventions
                 ? "✓ 화면 제작 준비가 된 레포입니다"
-                : "✗ 이 레포에는 화면 제작 설정이 없습니다 — Claude가 연결을 준비할 수 있어요."}
+                : "✗ 이 레포에는 화면 제작 규약이 없습니다 — 미리보기가 뜨면 AI가 알아서 준비합니다."}
+              {!inspection.result.hasDevScript && (
+                <span className="repopicker__warnline">
+                  ! 미리보기 명령이 없습니다 — 준비 중에 AI가 추가합니다.
+                </span>
+              )}
               {!inspection.result.canPush && (
                 <span className="repopicker__warnline">
                   ! 이 토큰으로는 개발자에게 넘길 수 없습니다 — 화면 작업은 계속할 수 있습니다.
@@ -433,39 +431,20 @@ export function RepoPicker({
               disabled={creating}
               onChange={(e) => setName(e.target.value)}
             />
-            {bootstrapCreate && (
-              <Tip label={blocked ? blockedReason : undefined}>
-                <button type="button" disabled={Boolean(blocked)} onClick={() => void create()}>
-                  {creating ? "준비하는 중…" : "Claude가 연결 준비하기"}
-                </button>
-              </Tip>
-            )}
-            {!bootstrapCreate && (
-              <Tip label={blocked ? blockedReason : undefined}>
-                <button type="button" disabled={Boolean(blocked)} onClick={() => void create()}>
-                  {creating ? "만드는 중…" : "프로젝트 만들기"}
-                </button>
-              </Tip>
-            )}
+            <Tip label={blocked ? blockedReason : undefined}>
+              <button type="button" disabled={Boolean(blocked)} onClick={() => void create()}>
+                {creating ? "만드는 중…" : "프로젝트 만들기"}
+              </button>
+            </Tip>
           </div>
-          {needsBootstrap && !bootstrapCreate && (
-            <button
-              type="button"
-              className="ghost"
-              data-testid="bootstrap-choice"
-              onClick={() => setBootstrapCreate(true)}
-            >
-              Claude가 연결 준비하기
-            </button>
-          )}
           {inspection?.phase === "ready" && !approveRun && !creating && (
             <p className="hint" data-testid="create-needed-hint">
               {blockedReason}
             </p>
           )}
           <p className="hint">
-            {bootstrapCreate
-              ? "Claude가 레포에 연결 파일을 쓰고, 개발자는 첫 넘기기 요청으로 받아 봅니다."
+            {needsConventions
+              ? "미리보기가 뜨면 AI가 화면 제작 규약을 알아서 준비합니다."
               : "레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다."}
           </p>
           {createError && (

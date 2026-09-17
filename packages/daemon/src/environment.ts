@@ -414,7 +414,10 @@ export async function buildStatus(input: {
   // Plan limits, the model list and the project registry are the server's to
   // own across sessions, so the machine report stops short of the wire shape.
 }): Promise<
-  Omit<DaemonStatus, "planUsage" | "models" | "projects" | "activeProject" | "repoSettingsWarning">
+  Omit<
+    DaemonStatus,
+    "planUsage" | "modelsByProvider" | "projects" | "activeProject" | "repoSettingsWarning"
+  >
 > {
   const warnings: string[] = [];
   const apiKeyInEnv = Boolean(process.env.ANTHROPIC_API_KEY);
@@ -447,7 +450,7 @@ export async function buildStatus(input: {
   if (!gitAvailable) {
     warnings.push(
       currentPlatform() === "win32"
-        ? "git 이 없어 Claude 가 파일을 찾고 명령을 내리는 데 제약이 있습니다 — Git for Windows 를 설치해 주세요."
+        ? "git 이 없어 AI 가 파일을 찾고 명령을 내리는 데 제약이 있습니다 — Git for Windows 를 설치해 주세요."
         : "git 이 없어 파일 찾기가 .gitignore 를 따르지 않습니다 — git 을 설치해 주세요.",
     );
   }

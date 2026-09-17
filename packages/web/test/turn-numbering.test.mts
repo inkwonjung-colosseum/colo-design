@@ -14,6 +14,7 @@ import {
   lastAnswerPerTurn,
   promptTotal,
   turnAnswerText,
+  turnBlockNumbers,
 } from "../src/lib/turn-numbering.ts";
 
 const block = (type: Block["type"], id: string): Block => ({ type, id }) as unknown as Block;
@@ -151,4 +152,33 @@ test("답 없이 끝난 턴과 하위 작업의 말은 전문에 들지 않는�
   const whole = turnAnswerText(blocks);
   assert.equal(whole.has("turn1"), false);
   assert.equal(whole.get("turn2"), "답");
+});
+
+test("턴 끝 블록의 번호 — 그 턴의 답들과 같은 셈을 따른다", () => {
+  const blocks = [
+    prompt("u1", "첫 요청"),
+    answer("a1", "답"),
+    block("tool", "t1"),
+    answer("a2", "조각"),
+    turnDone("turn1"),
+    prompt("u2", "둘째 요청"),
+    answer("a3", "둘째 답"),
+    turnDone("turn2"),
+  ];
+  const turns = turnBlockNumbers(blocks);
+  assert.equal(turns.get("turn1"), 1);
+  assert.equal(turns.get("turn2"), 2);
+  // 정산 줄이 실은 되감기가 가리키는 체크포인트는 답의 것과 같아야 한다 —
+  // 두 셈이 어긋나면 엉뚱한 스냅샷으로 돌아간다.
+  const answers = answerTurnNumbers(blocks);
+  assert.equal(answers.get("a1"), turns.get("turn1"));
+  assert.equal(answers.get("a2"), turns.get("turn1"));
+  assert.equal(answers.get("a3"), turns.get("turn2"));
+});
+
+test("답 없이 끝난 턴도 번호를 얻고, 프롬프트 없는 옛 턴은 1로 유효한 번호를 지킨다", () => {
+  const blocks = [turnDone("turn0"), prompt("u1", "요청"), turnDone("turn1")];
+  const turns = turnBlockNumbers(blocks);
+  assert.equal(turns.get("turn0"), 1);
+  assert.equal(turns.get("turn1"), 1);
 });

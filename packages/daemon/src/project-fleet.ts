@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  type ChatEvent,
   type DiffStatus,
   type HandoffStatusReport,
   markTurn,
@@ -19,14 +20,16 @@ import {
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import type { GitHubClient } from "./github.js";
+import type { DaemonLogger } from "./log.js";
 import type { DaemonNotice } from "./notices.js";
 import { realpathBestEffort } from "./paths.js";
 import type { PreviewDrivers } from "./preview-drivers.js";
 import type { ProjectPaths, ProjectRegistry } from "./projects.js";
 import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
-import { CONFIG_FILE, scopeOf, validateBootstrapOverrides } from "./repo-config.js";
+import { scopeOf } from "./repo-config.js";
 import type { SessionManager } from "./session-manager.js";
+import { appendTape, tapeCycles } from "./session-tape.js";
 
 /**
  * Inactive projects whose preview server stays up beside the active one, so
@@ -59,6 +62,7 @@ export interface FleetDeps {
   previewDrivers: PreviewDrivers;
   broadcast(message: ServerMessage): void;
   notice(notice: DaemonNotice): void;
+  logger: DaemonLogger;
   claudeExecutable(): string | null;
   closingSignal: AbortSignal;
   pat(): string | null;
@@ -81,8 +85,11 @@ export class ProjectFleet {
   readonly workspaces = new Map<string, ProjectWorkspaces>();
   /** The switch in flight — see `activateProject`. */
   private activating: Promise<ProjectWorkspaces> | null = null;
-  /** D94: slugs whose connection Claude prepares (the picker's 선택). */
-  private readonly bootstrapSlugs = new Set<string>();
+  /**
+   * 관례 준비를 한 번 시도한 클론들 (repoRoot). 실패든 부재든 데몬 수명 안에서는
+   * 다시 돌지 않는다 — 매 동기화마다 준비 턴을 여는 것보다 조용한 편이 낫다.
+   */
+  private readonly conventionsAttempted = new Set<string>();
   /** The announce coalescer's pending send — see announceProjectsThrottled. */
   private announceTimer: NodeJS.Timeout | null = null;
   /** The last threads each project announced with, as JSON — the guard that
@@ -91,12 +98,29 @@ export class ProjectFleet {
   /** 커미티 B1: slug → 마지막 폴링이 본 개발자 코멘트 수. */
   private readonly lastReviewCount = new Map<string, number>();
   /**
+   * 커미티 P3-2: slug → 폴러가 마지막으로 감지한 개발자 쪽 사건과 그 발견
+   * 시각. `projectSummaries()`가 그대로 내보낸다 — 비활성 프로젝트도 이
+   * 값으로 홈의 요약 행을 그린다(§4 크로스 프로젝트 인박스).
+   */
+  private readonly lastHandoffEvent = new Map<
+    string,
+    { kind: "merged" | "closed" | "changes_requested" | "comments"; at: string }
+  >();
+  /**
    * The `/` palette with no thread open: one CLI boot per repo, cached, so an
    * empty workspace still lists every command the terminal would. A live
    * session's own answer always wins over this.
    */
+
   private readonly cliCommandsCache = new Map<string, SessionCommand[]>();
-  private cliCommandsProbe: Promise<SessionCommand[]> | null = null;
+  private readonly cliCommandsProbe = new Map<string, Promise<SessionCommand[]>>();
+
+  /**
+   * hero-synthesis D1: cycle events serialize through this tail so a save →
+   * handoff chain writes its tape rows in the order they happened — the
+   * anchor read (`promptCount`) is async and would otherwise race.
+   */
+  private cycleTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: FleetDeps) {}
 
@@ -130,14 +154,9 @@ export class ProjectFleet {
         active: slug === this.deps.registry.activeSlug(),
         // The registry owns the planner's word on this repo's commands.
         commandsApproved,
-        // D94: 연결 준비 — the picker's Claude-prepare choice rides the
-        // workspace, and its callback opens the brief turn here.
-        ...(this.bootstrapSlugs.has(slug)
-          ? {
-              bootstrap: true,
-              prepareBootstrap: () => this.runBootstrapPrepare(paths.repoRoot),
-            }
-          : {}),
+        // 관례 준비 — 표식이 없는 클론은 준비 턴이 관례를 쓴다. 콜백은 늘
+        // 넘기고 돌릴지는 runConventionsPrepare 가 표식으로 판단한다.
+        prepareConventions: () => this.runConventionsPrepare(paths.repoRoot),
         onCycleChange: (cycle) => this.deps.registry.setCycle(slug, cycle),
         gitHubClient: () => this.deps.gitHubClient(),
         // The summarizer's one turn rides the same CLI the sessions do
@@ -158,10 +177,68 @@ export class ProjectFleet {
           workspaces.diffStage = status.stage;
           this.broadcastFor(slug, { type: "diff.status", status });
         },
+        // hero-synthesis D1: 저장 · 넘김 · 반영 · 코멘트 도착 — 세션 채널 +
+        // 테이프. The cycle names its session when the call carried one.
+        onCycleEvent: (event, sessionId) => this.emitCycleEvent(workspaces, event, sessionId),
       }),
     };
     this.workspaces.set(slug, workspaces);
     return workspaces;
+  }
+
+  /**
+   * 사이클 사건의 발송 (hero-synthesis D1): the daemon already knows the
+   * moment — 저장 완료 · 넘김 완료 · 병합 감지 · 새 코멘트 — so the event
+   * goes to the session channel AND the session tape in one step.
+   *
+   * 귀속: the sessionId the call carried (api.save / api.handoff), else the
+   * most recently active live session in this clone, else the newest stored
+   * thread — a save with no open conversation still lands in a real one.
+   * The tape write precedes the broadcast: a window that reloads on the
+   * event replays the row instead of missing it.
+   */
+  private emitCycleEvent(
+    workspaces: ProjectWorkspaces,
+    event: ChatEvent,
+    sessionId?: string,
+  ): void {
+    const cwd = realpathBestEffort(workspaces.paths.repoRoot);
+    const named = sessionId ? this.deps.manager.get(sessionId) : undefined;
+    const live = [...this.deps.manager.all()]
+      .filter((session) => session.cwd === cwd)
+      .sort((a, b) => b.lastActivity - a.lastActivity)[0];
+    this.cycleTail = this.cycleTail
+      .then(async () => {
+        const target =
+          (named && named.cwd === cwd ? named.id : undefined) ??
+          live?.id ??
+          (await this.deps.manager.list(cwd, 1).catch(() => []))[0]?.sessionId;
+        if (!target) return;
+        const afterTurn = await this.deps.manager.promptCount(target, cwd).catch(() => 0);
+        try {
+          appendTape(workspaces.paths.root, { sessionId: target, afterTurn, event });
+        } catch {
+          // The broadcast still goes out — a lost row is a missing card on
+          // reload, not a reason to hide the moment from the open window.
+        }
+        // P3-1: the leaf dot reads the tape's last row per session — a cycle
+        // event just moved it, so the tree's picture is stale until re-stamped.
+        this.refreshThreads();
+        this.deps.broadcast({ type: "session.event", sessionId: target, event });
+      })
+      // A failed emit must not poison the chain — the next cycle event still ships.
+      .catch(() => undefined);
+  }
+
+  /**
+   * The project a session's cwd names — `session.history` reads its tape
+   * here. Null for a session whose clone the daemon has not touched.
+   */
+  workspacesForCwd(cwd: string): ProjectWorkspaces | null {
+    for (const workspaces of this.workspaces.values()) {
+      if (realpathBestEffort(workspaces.paths.repoRoot) === cwd) return workspaces;
+    }
+    return null;
   }
 
   /**
@@ -195,20 +272,26 @@ export class ProjectFleet {
       active && active.repo.isCloned() ? realpathBestEffort(active.paths.repoRoot) : homedir();
     const cached = this.cliCommandsCache.get(cwd);
     if (cached) return cached;
-    this.cliCommandsProbe ??= probeCommands({
-      cwd,
-      executable,
-      signal: this.deps.closingSignal,
-    })
-      .then((commands) => {
-        this.cliCommandsCache.set(cwd, commands);
-        return commands;
+    // The single-flight is keyed by cwd like the cache: a probe started for
+    // one project's clone must not answer — or pin — another's palette.
+    let probe = this.cliCommandsProbe.get(cwd);
+    if (!probe) {
+      probe = probeCommands({
+        cwd,
+        executable,
+        signal: this.deps.closingSignal,
       })
-      .catch(() => {
-        this.cliCommandsProbe = null;
-        return [] as SessionCommand[];
-      });
-    return await this.cliCommandsProbe;
+        .then((commands) => {
+          this.cliCommandsCache.set(cwd, commands);
+          return commands;
+        })
+        .catch(() => [] as SessionCommand[])
+        .finally(() => {
+          this.cliCommandsProbe.delete(cwd);
+        });
+      this.cliCommandsProbe.set(cwd, probe);
+    }
+    return await probe;
   }
 
   /**
@@ -239,6 +322,7 @@ export class ProjectFleet {
       // clone still on disk is the only one a refresh could help.
       const conventionsStale =
         cwd !== null && this.conventionsRevisionAt(cwd) !== CONVENTIONS_REVISION;
+      const lastEvent = this.lastHandoffEvent.get(project.slug);
       return {
         slug: project.slug,
         name: project.name,
@@ -255,6 +339,11 @@ export class ProjectFleet {
         ...(threads ? { threads } : {}),
         ...(project.instructions ? { instructions: project.instructions } : {}),
         conventionsStale,
+        // 홈 크로스 프로젝트 인박스(PLAN P3-2): 질문+권한 모두 스레드를
+        // "awaiting" 으로 세우므로, 비활성 프로젝트라도 이 카운트만으로
+        // 답을 기다리는 일의 수를 안다 — 세션이 살아 있는 한 값이 있다.
+        pendingCount: (threads ?? []).filter((thread) => thread.state === "awaiting").length,
+        ...(lastEvent ? { lastEventKind: lastEvent.kind, lastEventAt: lastEvent.at } : {}),
       };
     });
   }
@@ -334,6 +423,7 @@ export class ProjectFleet {
         event: "merged" | "closed" | "changes_requested" | "comments",
         count?: number,
       ) => {
+        this.lastHandoffEvent.set(workspaces.slug, { kind: event, at: new Date().toISOString() });
         this.deps.notice({
           kind: "handoff",
           slug: workspaces.slug,
@@ -386,8 +476,10 @@ export class ProjectFleet {
       const workspaces = this.workspaces.get(project.slug);
       if (!workspaces?.repo.isCloned()) continue;
       const cwd = realpathBestEffort(workspaces.paths.repoRoot);
+      // P3-1: one tape read per clone stamps every leaf's cycle position —
+      // the dot that says where THIS conversation left the cycle.
       void this.deps.manager
-        .refreshThreads(cwd)
+        .refreshThreads(cwd, 50, tapeCycles(workspaces.paths.root))
         .then((threads) => {
           const key = JSON.stringify(threads);
           if (this.announcedThreads.get(project.slug) === key) return;
@@ -410,16 +502,24 @@ export class ProjectFleet {
   }
 
   /**
-   * D94: 연결 준비 턴 — a daemon-opened conversation (the comment envelope's
-   * path, server-side) sends the brief, waits for the turn to settle, then
-   * machine-validates what Claude wrote: a port, and nothing else. False
-   * means the gate refused; the sync turns into error{errorKind:"bootstrap"}
-   * and NOTHING outside the gate ever ran.
+   * 관례 준비 턴 — a daemon-opened conversation (the comment envelope's path,
+   * server-side) sends the brief and waits for the turn to settle. The turn's
+   * output is repo files reviewed via the normal save→PR pipeline, so there
+   * is nothing to machine-validate afterward. Failure is a log line plus the
+   * session's own error state — never a repo error, never a throw.
    */
-  private async runBootstrapPrepare(repoRoot: string): Promise<boolean> {
-    const executable = this.deps.claudeExecutable();
-    if (!executable) return false;
+  private async runConventionsPrepare(repoRoot: string): Promise<void> {
     const cwd = realpathBestEffort(repoRoot);
+    // 표식이 이미 있으면 할 일이 없다 — CLAUDE.md 가 없거나 표식만 없으면 준비 대상.
+    if (this.conventionsRevisionAt(cwd) !== null) return;
+    // 한 클론당 한 번 — 실패한 준비가 매 동기화마다 턴을 열지 않게.
+    if (this.conventionsAttempted.has(cwd)) return;
+    this.conventionsAttempted.add(cwd);
+    const executable = this.deps.claudeExecutable();
+    if (!executable) {
+      this.deps.logger.warn("관례 준비 건너뜀 — Claude Code 실행 파일이 없습니다", { cwd });
+      return;
+    }
     const instructions = this.projectInstructions(cwd);
     const session = this.deps.manager.create({
       cwd,
@@ -434,24 +534,23 @@ export class ProjectFleet {
       markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF),
     );
     // The turn ends when the session settles back to idle; a stalled CLI
-    // fails the prepare rather than hanging the sync forever.
-    const settled = await (async () => {
-      for (let attempt = 0; attempt < 300; attempt += 1) {
-        const live = this.deps.manager.get(session.id);
-        if (!live) return false;
-        if (live.state === "idle" || live.state === "closed") return true;
-        if (live.state === "error") return false;
-        await new Promise((ok) => setTimeout(ok, 500));
+    // gives up rather than hanging the post-ready hook forever.
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const live = this.deps.manager.get(session.id);
+      if (!live || live.state === "error") {
+        this.deps.logger.warn("관례 준비 턴이 끝나지 못했습니다", {
+          sessionId: session.id,
+          cwd,
+        });
+        return;
       }
-      return false;
-    })();
-    if (!settled) return false;
-    try {
-      const problem = validateBootstrapOverrides(readFileSync(join(cwd, CONFIG_FILE), "utf8"));
-      return problem === null;
-    } catch {
-      return false;
+      if (live.state === "idle" || live.state === "closed") return;
+      await new Promise((ok) => setTimeout(ok, 500));
     }
+    this.deps.logger.warn("관례 준비 턴이 시간 안에 끝나지 않았습니다", {
+      sessionId: session.id,
+      cwd,
+    });
   }
 
   /**
@@ -545,13 +644,14 @@ export class ProjectFleet {
   /**
    * 전환의 울타리. Of the servers still up in inactive projects, two kinds
    * stop before the incoming project brings itself up: whatever holds the
-   * port the incoming repo declares (two repos may declare the same
-   * `preview.port`), and the oldest beyond the warm cap. Every other warm
-   * server survives the switch — that is what makes a return instant.
+   * port the incoming repo will take, and the oldest beyond the warm cap.
+   * Every other warm server survives the switch — that is what makes a
+   * return instant.
    *
-   * An incoming port nobody can read yet (a clone still to come, no config)
-   * stops every warm server: the single-owner rule of old, kept for the one
-   * case the fence cannot decide.
+   * An incoming repo with no declared port never collides: its dev server
+   * picks a free port and the bring-up detects it. A warm server whose port
+   * is not yet detected (null) is kept — stopping it on a guess would kill
+   * the very return the warm cap exists for.
    */
   private async fenceWarmPreviews(next: ProjectWorkspaces): Promise<void> {
     const incoming = next.repo.declaredPreviewPort();
@@ -560,15 +660,13 @@ export class ProjectFleet {
       .sort((a, b) => b.shownAt - a.shownAt);
     let kept = 0;
     for (const workspaces of warm) {
-      const port = workspaces.repo.declaredPreviewPort();
-      const collides = incoming === null || port === null || port === incoming;
+      const port = workspaces.repo.occupiedPreviewPort();
+      const collides = incoming !== null && port === incoming;
       if (!collides && kept < WARM_PREVIEWS) {
         kept += 1;
         continue;
       }
       await workspaces.repo.stop();
-      // Its sessions' drivers would point their windows at a dead port (PLAN D61).
-      this.deps.previewDrivers.destroyWhere(realpathBestEffort(workspaces.paths.repoRoot));
     }
   }
 
@@ -581,7 +679,6 @@ export class ProjectFleet {
     name: string;
     repoUrl: string | null;
     baseBranch?: string;
-    bootstrap?: boolean;
     approveCommands?: boolean;
   }): Promise<ProjectSummary> {
     // The url reaches `git clone` — the ext:: family is a command executor
@@ -596,10 +693,6 @@ export class ProjectFleet {
       // clone with errorKind `commands` until 실행 허용 is pressed.
       commandsApproved: message.approveCommands === true,
     });
-    // The flag must be known before the first sync runs — the workspace reads
-    // it the moment workspacesFor builds it (activateProject below).
-    if (message.bootstrap) this.bootstrapSlugs.add(project.slug);
-
     await this.activateProject(project.slug);
     // activateProject sees no switch and stays silent — but a wizard waiting
     // on `project.changed` to show the switcher needs the announcement.

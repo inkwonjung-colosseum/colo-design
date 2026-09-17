@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { SessionModelInfo } from "@colo-design/protocol";
 import type { ImportableSession, TranscriptStore } from "../../driver.js";
 import type { AcpDriverConfig } from "./driver.js";
 import { exportPromptCount, replayExport } from "./export.js";
@@ -113,10 +114,56 @@ function opencodeStore(executable: string): TranscriptStore {
       const doc = await exportSession(executable, id, cwd);
       return doc ? exportPromptCount(doc) : 0;
     },
+    has: async (id, cwd) => (await exportSession(executable, id, cwd)) !== null,
     delete: async (id, cwd) => {
-      await run(executable, ["session", "delete", id], { cwd, timeout: 15_000 });
+      // A store that already forgot the id is a no-op, not a failure.
+      await run(executable, ["session", "delete", id], { cwd, timeout: 15_000 }).catch(
+        () => undefined,
+      );
+    },
+    deleteAll: async (cwd) => {
+      // One list, then the deletes in parallel — the CLI has no per-cwd
+      // sweep, and serial `session delete` spawns are the slow part.
+      const stored = await listStored(executable, cwd, 200);
+      await Promise.all(
+        stored.map((row) =>
+          run(executable, ["session", "delete", row.id], { cwd, timeout: 15_000 }).catch(
+            () => undefined,
+          ),
+        ),
+      );
     },
   };
+}
+
+/**
+ * `opencode models` — one `provider/model` per line, no metadata. Honest
+ * poverty: the row's id is all the CLI says, so the picker shows exactly
+ * that, and 노력·빠르게 claims stay false rather than guessed. This is what
+ * fills the daemon's cache before any session exists.
+ */
+async function listModels(executable: string): Promise<SessionModelInfo[]> {
+  try {
+    const { stdout } = await run(executable, ["models"], { timeout: 20_000 });
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^[^\s/]+\/\S+$/.test(line))
+      .map((line) => {
+        const modelId = line.slice(line.indexOf("/") + 1);
+        return {
+          value: line,
+          displayName: modelId,
+          resolvedModel: modelId,
+          description: line,
+          supportsEffort: false,
+          supportedEffortLevels: null,
+          supportsFastMode: false,
+        };
+      });
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -132,7 +179,6 @@ export const OPENCODE_ACP: AcpDriverConfig = {
   ],
   defaultModeId: "build",
   capabilities: {
-    steer: false,
     rewind: false,
     usage: false,
     contextUsage: true,
@@ -140,8 +186,6 @@ export const OPENCODE_ACP: AcpDriverConfig = {
     effort: false,
     modelSelect: true,
     slashCommands: true,
-    mcpServers: true,
-    inProcessMcp: false,
     planMode: "plan",
     subtasks: false,
   },
@@ -149,4 +193,8 @@ export const OPENCODE_ACP: AcpDriverConfig = {
   acpArgs: ["acp"],
   loggedIn: opencodeLoggedIn,
   store: opencodeStore,
+  listModels: () => {
+    const executable = resolveOpencodeExecutable();
+    return executable ? listModels(executable) : Promise.resolve([]);
+  },
 };

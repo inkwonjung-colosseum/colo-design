@@ -9,6 +9,7 @@ import type {
   LostSend,
   PermissionMode,
   PermissionSuggestion,
+  PlanUsage,
   QueuedSend,
   QueuedSendPayload,
   SessionCommand,
@@ -19,7 +20,6 @@ import { readTurn } from "@colo-design/protocol";
 import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
-import type { PreviewTools } from "./preview-tools.js";
 import type { QueueDisk } from "./queue-store.js";
 
 /**
@@ -36,7 +36,7 @@ export function asPlannerFacingError(error: unknown): Error {
     return error instanceof Error ? error : new Error(detail);
   console.error(`[session] 전송이 거절됐습니다: ${detail}`);
   return new Error(
-    "Claude와의 대화가 방금 끊겼습니다 — 입력창의 말을 잠시 뒤 다시 보내면 이어집니다.",
+    "에이전트와의 대화가 방금 끊겼습니다 — 입력창의 말을 잠시 뒤 다시 보내면 이어집니다.",
   );
 }
 
@@ -48,6 +48,15 @@ interface PendingRequest {
   suggestions: unknown[];
   /** Kept so an approval can echo the tool input back without the client resending it. */
   input: Record<string, unknown>;
+  /** 요청이 만들어진 시각 (epoch ms) — 홈 카드의 "N분 전"이 읽는다. */
+  requestedAt: number;
+  /**
+   * 이 요청에 답이 없으면 일이 못 가는가 — settle 이 resolve 를 풀기 전엔
+   * 턴이 못 가므로, 이 자리에서의 판정은 "도구 호출이 응답을 기다린다"와
+   * 같은 말이다. 알림 위계의 세 번째 단계(네이티브 알림)는 이 판정을
+   * 데이터로 읽는다(P3-3): 조용한 요청이 생기면 이 한 곳만 바꾸면 된다.
+   */
+  blocking: boolean;
 }
 
 /** A send waiting for the next turn (PLAN D86), exactly as `send` received it. */
@@ -111,11 +120,15 @@ export interface SessionEvents {
     toolName: string;
     input: unknown;
     suggestions: PermissionSuggestion[];
+    blocking: boolean;
+    requestedAt: number;
   }) => void;
   onQuestionRequest: (payload: {
     requestId: string;
     sessionId: string;
     questions: AskQuestion[];
+    blocking: boolean;
+    requestedAt: number;
   }) => void;
 }
 
@@ -125,7 +138,7 @@ export interface SessionEvents {
  *
  * - `allow` — write it without asking (the repo's own working set).
  * - `ask`   — surface a permission card, as any non-edit tool would.
- * - `deny`  — refuse outright, with a Korean reason Claude can read. Used for
+ * - `deny`  — refuse outright, with a Korean reason the agent can read. Used for
  *   files the tool owns and a session must never rewrite.
  */
 type WriteDecision = "allow" | "ask" | "deny";
@@ -157,20 +170,18 @@ interface SessionLaunch {
    * 사용자가 이 프로젝트에서 지켜 줄 것을 적는 상자다.
    */
   appendSystemPrompt?: string;
-  /**
-   * The `colo-preview` in-process MCP server (PLAN D61), or null when the
-   * daemon runs without a preview driver or the planner turned the tools
-   * off. The session only carries it: the capture quota resets here at turn
-   * starts, and its lifetime (destroy) belongs to whoever injected the
-   * driver.
-   */
-  previewTools?: PreviewTools | null;
 }
 
 export interface SessionOptions {
   cwd: string;
   /** The provider id the registry resolves; omitted = "claude". */
   provider?: string;
+  /** The provider's display name for user-facing strings; omitted = generic wording. */
+  providerLabel?: string;
+  /** The provider's plan-mode id (descriptor's capabilities.planMode); null = none. */
+  planModeId?: string | null;
+  /** The mode a fresh session starts on — the plan-approval restore target. */
+  defaultModeId?: string;
   /**
    * A custom session id — with `launch.resume` + `launch.forkSession` it
    * names the FORK (PLAN D95); without a resume it is what a new session is
@@ -205,14 +216,31 @@ export interface SessionOptions {
  * git 의 명사는 도구가 합니다 (README · PLAN D5): 커밋과 푸시는 저장·넘기기
  * 버튼의 몫이라, 세션이 직접 만들면 개발자에게 가는 풀 리퀘스트가 도구가
  * 검토하지 못한 역사를 실어 나른다(실측: 핸드오프 브랜치에 무의미한 커밋).
- * 상태 읽기(status·log·diff·fetch)와 충돌 정리(add·stash)는 그대로 —
- * 막는 것은 역사를 쓰는 동사뿐이다.
+ * 같은 이유로 워크트리·인덱스·레퍼런스를 바꾸는 동사들도 막는다 — reset·
+ * checkout·stash 는 커밋 없이도 저장 검토가 읽는 상태를 흔든다. 상태 읽기
+ * (status·log·diff·fetch)와 충돌 정리의 add 는 그대로다.
  */
 const GIT_WRITE_REFUSAL =
   "커밋과 푸시는 이 도구가 합니다 — 완성된 화면은 저장 버튼으로, 개발자에게는 넘기기 버튼으로 전달해 주세요.";
 
 function writesGitHistory(command: string): boolean {
-  return /\bgit\b/.test(command) && /\b(commit|push)\b/.test(command);
+  if (!/\bgit\b/.test(command)) return false;
+  // 상태를 바꾸는 동사는 전부 막는다 — 커밋·푸시만이 아니라 reset·checkout·
+  // merge·config(hooks 경로를 바꿀 수 있다)도 저장 검토가 읽는 상태를 흔든다.
+  if (
+    /\b(commit|push|reset|rebase|update-ref|clean|checkout|restore|switch|am|cherry-pick|revert|merge|pull|apply|config|rm|mv|init)\b/.test(
+      command,
+    )
+  ) {
+    return true;
+  }
+  // stash·tag·branch 는 읽기 형태가 있다 — list·show·나열은 열어 두고,
+  // 쓰기 형태(pop·drop·생성·삭제)만 막는다.
+  return (
+    /\bstash\b(?!\s+(?:list|show)\b)/.test(command) ||
+    /\btag\b(?!\s*(?:$|\s+-[ln]\b|--list\b))/.test(command) ||
+    /\bbranch\b(?!\s*(?:$|\s+-[alrv]+\b|--list\b|--show-current\b))/.test(command)
+  );
 }
 
 /**
@@ -239,6 +267,12 @@ export class Session {
    * the driver's own ids (ACP `build`/`plan`/…) for everyone else.
    */
   permissionMode: string = "default";
+  /** The provider's display name for crash/error strings. */
+  private readonly providerLabel: string;
+  /** The provider's plan-mode id; null = the provider has no plan mode. */
+  private readonly planModeId: string | null;
+  /** The mode a fresh session starts on — the plan-approval restore target. */
+  private readonly defaultModeId: string;
   /**
    * 계획 모드로 들어가기 전의 작업 모드. 계획은 한 턴의 자세라 승인 순간
    * 여기로 되돌아간다(`respondPermission`) — 승인된 계획 뒤의 편집이 계획
@@ -263,7 +297,6 @@ export class Session {
   title: string;
 
   private readonly writePolicy: WritePolicy;
-  private readonly previewTools: PreviewTools | null;
 
   private readonly alwaysAllowed = new PermissionMemory();
   private readonly pending = new Map<string, PendingRequest>();
@@ -361,8 +394,10 @@ export class Session {
       options.writePolicy ?? ((path) => (containsPath(this.cwd, path) ? "allow" : "ask"));
     this.selectedModel = options.launch?.model ?? null;
     this.selectedEffort = options.launch?.effort ?? null;
-    this.previewTools = options.launch?.previewTools ?? null;
 
+    this.providerLabel = options.providerLabel ?? "에이전트";
+    this.planModeId = options.planModeId ?? null;
+    this.defaultModeId = options.defaultModeId ?? "default";
     // `sessionId` lets us name the session up front. Without it the id only
     // arrives with the init event, which the CLI does not emit until the first
     // user turn is pushed.
@@ -431,15 +466,16 @@ export class Session {
       // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
       // 를 말하되 놀라게 하지 않는다.
       const announced = shutdownReason !== null;
+      const label = this.providerLabel;
       const text = announced
-        ? "Claude 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다."
-        : "Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\nClaude 프로그램이 응답 없이 종료됐습니다.";
+        ? `${label} 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다.`
+        : `${label}가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${label} 프로그램이 응답 없이 종료됐습니다.`;
       this.events.onEvent(this.id, { kind: "notice", level: "error", text });
       this.setState(
         "error",
         announced
-          ? `Claude 프로그램이 종료됐습니다 (${shutdownReason})`
-          : "Claude 프로그램이 응답 없이 종료됐습니다.",
+          ? `${label} 프로그램이 종료됐습니다 (${shutdownReason})`
+          : `${label} 프로그램이 응답 없이 종료됐습니다.`,
       );
     } else {
       this.setState("closed");
@@ -475,7 +511,7 @@ export class Session {
         // The transport detail is an English message string, not an error id —
         // the retry dictionary can't match it (리뷰 C3). A Korean lead rides
         // in front, the raw line stays below for 자세히.
-        text: `Claude가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
+        text: `${this.providerLabel}가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
       });
       this.setState("error", detail);
     }
@@ -631,17 +667,11 @@ export class Session {
     input: Record<string, unknown>,
     opts: { signal: AbortSignal; suggestions?: unknown[] },
   ): Promise<PermissionVerdict> {
-    // The preview tools are the daemon's own server (PLAN D61): they only
-    // look at the hidden preview window, so they never surface as cards —
-    // and they must not fall through to the edit-tool branch either.
-    if (tool.kind === "mcp" && tool.mcpServer === "colo-preview") {
-      return Promise.resolve({ behavior: "allow", updatedInput: input });
-    }
     // The git nouns belong to the tool (README): a session committing or
     // pushing its own history puts words on the handoff branch the tool never
     // reviewed. Refused before alwaysAllowed — 항상 허용 cannot buy it back.
     // One door opens: the commit that CONCLUDES a merge this tool itself
-    // started(최신화 충돌). The conflict card asks Claude for exactly that
+    // started(최신화 충돌). The conflict card asks the agent for exactly that
     // commit, and this gate must not refuse the tool's own recovery
     // instruction(브리프 ↔ 게이트 모순). A push stays the tool's verb even
     // mid-merge, and a commit outside an open merge is still refused.
@@ -697,6 +727,8 @@ export class Session {
     if (tool.kind !== "question" && tool.kind !== "plan") {
       permissionLog().ask(tool.name, permissionSignature(tool.name, input), this.cwd);
     }
+    // 요청의 시계는 이곳에서 시작한다 — 세션 상태와 무관하게 "N분 전"의 기준.
+    const requestedAt = Date.now();
 
     return new Promise<PermissionVerdict>((resolve) => {
       const settle = (outcome: PermissionVerdict) => {
@@ -715,6 +747,11 @@ export class Session {
         resolve: settle,
         suggestions,
         input,
+        requestedAt,
+        // 도구 호출이 이 응답을 기다린다 — settle 이 resolve 를 풀기 전엔
+        // 턴이 못 간다. 그래서 여기서 만드는 모든 pending 은 막힌 요청이고,
+        // 판정은 상태가 아니라 이 데이터로 옮겨진다(P3-3).
+        blocking: true,
       });
 
       // If the query is torn down while a human is deciding, stop waiting.
@@ -724,22 +761,29 @@ export class Session {
         { once: true },
       );
 
+      // 요청 먼저, 상태는 나중: "기다림" 상태를 읽는 소비자(웹의 네이티브
+      // 알림 판정)는 그 상태의 원인인 요청 데이터를 이미 갖고 있어야 한다.
+      // 반대 순서면 상태만 먼저 도착해 blocking 판정을 읽을 카드가 없다.
       if (tool.kind === "question") {
-        this.setState("waiting_question");
         this.events.onQuestionRequest({
           requestId,
           sessionId: this.id,
           questions: normalizeQuestions(input),
+          blocking: true,
+          requestedAt,
         });
+        this.setState("waiting_question");
       } else {
-        this.setState("waiting_permission");
         this.events.onPermissionRequest({
           requestId,
           sessionId: this.id,
           toolName: tool.name,
           input,
           suggestions: describeSuggestions(suggestions),
+          blocking: true,
+          requestedAt,
         });
+        this.setState("waiting_permission");
       }
     });
   }
@@ -759,7 +803,15 @@ export class Session {
    * thread (same id, fresh CLI) before delivering the planner's words.
    */
   get sendable(): boolean {
-    return !(this.crashed || this.aborted || this.state === "error" || this.state === "closed");
+    // `agent.alive` catches the dying-query window: the stream ended but the
+    // end event hasn't landed yet — a send pushed now would be swallowed.
+    return !(
+      this.crashed ||
+      this.aborted ||
+      this.state === "error" ||
+      this.state === "closed" ||
+      this.agent?.alive === false
+    );
   }
 
   /** The chips the session is running on — what a resurrection must carry. */
@@ -781,12 +833,16 @@ export class Session {
         toolName: string;
         input: Record<string, unknown>;
         suggestions: PermissionSuggestion[];
+        blocking: boolean;
+        requestedAt: number;
       }
     | {
         type: "question.request";
         requestId: string;
         sessionId: string;
         questions: AskQuestion[];
+        blocking: boolean;
+        requestedAt: number;
       }
   > {
     return [...this.pending.values()].map((entry) =>
@@ -796,6 +852,10 @@ export class Session {
             requestId: entry.requestId,
             sessionId: this.id,
             questions: normalizeQuestions(entry.input),
+            // 리플레이는 원 요청과 같은 판정·같은 시계를 싣는다 — 다시 뜬
+            // 창의 카드도 "N분 전"을 세고, 알림 위계도 같은 데이터를 읽는다.
+            blocking: entry.blocking,
+            requestedAt: entry.requestedAt,
           }
         : {
             type: "permission.request" as const,
@@ -804,6 +864,8 @@ export class Session {
             toolName: entry.toolName,
             input: entry.input,
             suggestions: describeSuggestions(entry.suggestions),
+            blocking: entry.blocking,
+            requestedAt: entry.requestedAt,
           },
     );
   }
@@ -830,7 +892,7 @@ export class Session {
       // 승인은 곧 착수다: 모드를 먼저 작업 모드로 되돌린 뒤 승인을 내린다 —
       // CLI 가 승인 직후의 편집에 들어가도 계획 모드의 제약 아래 갇히지 않게.
       // 복귀가 거절돼도 승인은 나간다: 갇힌 계획보다 조심스러운 착수가 낫다.
-      const restore = this.modeBeforePlan ?? "default";
+      const restore = this.modeBeforePlan ?? this.defaultModeId;
       return this.setPermissionMode(restore)
         .catch(() => undefined)
         .then(() => {
@@ -895,7 +957,7 @@ export class Session {
       throw new Error("중지 요청에 답하지 않은 CLI를 끊었습니다 — 대화를 다시 열면 이어갑니다");
     if (this.crashed)
       throw new Error(
-        "Claude가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다",
+        `${this.providerLabel}가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다`,
       );
     this.lastActivity = Date.now();
     const item: HeldSend = { id: randomUUID(), text, images: images ?? [] };
@@ -919,8 +981,6 @@ export class Session {
    * the running turn keeps its own quota and interrupt flag until its end.
    */
   private deliver({ text, images }: HeldSend): void {
-    // A new turn starts the screenshot quota over (PLAN D61 — 턴당 12장).
-    this.previewTools?.resetTurnQuota();
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
@@ -928,7 +988,7 @@ export class Session {
     /**
      * A thread names itself after its first turn — unless the tool wrote that
      * turn. A marked turn (PLAN D9) is a bundle of pins, a brief, a gate
-     * failure: text composed for Claude, in Claude's vocabulary. The tab strip
+     * failure: text composed for the agent, in the provider.s vocabulary. The tab strip
      * is the one place a planner navigates by reading, so it keeps its
      * placeholder rather than taking a machine's words. A thread the tool
      * opens on purpose is named at `session.create` instead.
@@ -1010,6 +1070,17 @@ export class Session {
     return { ...usage, sessionCostUsd: this.costUsd };
   }
 
+  /**
+   * The account's plan-limit reading alone — what the usage tracker wants.
+   * Rides the driver's own `usage()` where the provider offers one and is
+   * null where it does not. Separate from `contextUsage` so a tracker
+   * refresh never asks for a token ring it is about to throw away, and so a
+   * fresh thread answers for its account before its first ring exists.
+   */
+  async usage(): Promise<PlanUsage | null> {
+    return (await this.agent?.usage?.()) ?? null;
+  }
+
   // -------------------------------------------------------------------------
   // Composer selector chips — mid-session switches (driver control requests)
   // -------------------------------------------------------------------------
@@ -1035,8 +1106,8 @@ export class Session {
     // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
     // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
     // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
-    if (mode === "plan") {
-      if (this.permissionMode !== "plan") this.modeBeforePlan = this.permissionMode;
+    if (this.planModeId !== null && mode === this.planModeId) {
+      if (this.permissionMode !== this.planModeId) this.modeBeforePlan = this.permissionMode;
     } else {
       this.modeBeforePlan = null;
     }

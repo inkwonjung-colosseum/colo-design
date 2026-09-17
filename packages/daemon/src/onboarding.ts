@@ -17,6 +17,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import type { AgentDriver } from "./agent/driver.js";
 import { extraPathPrefix } from "./claude-trust.js";
 import {
   currentPlatform,
@@ -49,18 +50,54 @@ export interface OnboardingDeps {
    * Absent means the gate reports "토큰을 연결해 주세요", never an error.
    */
   gitHubClient?: () => GitHubClient | null;
+  /**
+   * Which provider the agent step checks (PLAN: provider-aware gate).
+   * Defaults to "claude" — the historical gate.
+   */
+  provider?: string;
+  /**
+   * Driver lookup for non-claude providers. Absent with provider "claude"
+   * keeps the direct resolveClaudeExecutable path (tests inject
+   * claudeExecutableOverride without a registry).
+   */
+  driverFor?: (id: string) => AgentDriver | undefined;
 }
 
 export async function runOnboardingChecks(deps: OnboardingDeps): Promise<OnboardingStep[]> {
   return [
-    await checkClaude(deps),
+    await checkAgent(deps),
     await checkGit(),
     await checkRuntime(deps.pnpmResolver),
     await checkGitHub(deps),
   ];
 }
 
-async function checkClaude(deps: OnboardingDeps): Promise<OnboardingStep> {
+async function checkAgent(deps: OnboardingDeps): Promise<OnboardingStep> {
+  const provider = deps.provider ?? "claude";
+  if (provider !== "claude") {
+    const driver = deps.driverFor?.(provider);
+    if (!driver) {
+      return fail(
+        "claude",
+        `선택한 에이전트(${provider})를 이 데몬이 모릅니다 — 설정에서 다른 에이전트를 골라 주세요.`,
+      );
+    }
+    const label = driver.describe().label;
+    const diag = await driver.isAvailable();
+    if (diag.ok) {
+      return pass("claude", `${label} 준비됨${diag.version ? ` (${diag.version})` : ""}`);
+    }
+    if (!diag.executable) {
+      return fail("claude", `${label} CLI를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.`);
+    }
+    if (diag.loggedIn === false) {
+      return fail(
+        "claude",
+        `${label} 로그인이 필요합니다 — 터미널에서 로그인한 뒤 다시 확인해 주세요.`,
+      );
+    }
+    return fail("claude", diag.reason ?? `${label} 실행 준비가 되지 않았습니다.`);
+  }
   const executable = await resolveClaudeExecutable(deps.claudeExecutableOverride);
   if (!executable) {
     return fail("claude", "Claude Code CLI를 찾지 못했습니다.", {
@@ -242,7 +279,7 @@ export type RunLike = typeof run;
 
 /**
  * Enables pnpm through corepack — the same shim the bundled runtime ships.
- * Unlike the Claude flows this one runs to COMPLETION and returns the output:
+ * Unlike the agent flows this one runs to COMPLETION and returns the output:
  * `corepack enable` is quick, writes inside the node prefix, and its failure
  * (usually a permission error) is exactly the sentence the planner needs.
  * The runner is injectable so tests never execute corepack for real.

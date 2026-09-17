@@ -8,6 +8,7 @@ import {
   type ServerMessage,
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
+import type { Diagnostic } from "./agent/driver.js";
 import { AcpDriver } from "./agent/drivers/acp/driver.js";
 import { OPENCODE_ACP } from "./agent/drivers/acp/opencode.js";
 import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
@@ -23,16 +24,17 @@ import {
 import { RequestRouter } from "./dispatch.js";
 import { buildStatus, resolveClaudeExecutable } from "./environment.js";
 import { GitHubBridge } from "./github-bridge.js";
+import { HandoffPreviews } from "./handoff-preview.js";
 import { createFileLogger, type DaemonLogger } from "./log.js";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import { realpathBestEffort } from "./paths.js";
 import { PlanTracker } from "./plan-tracker.js";
+import type { PreviewDriverFactory, PreviewScreenDeclaration } from "./preview-driver.js";
 import { PreviewDrivers } from "./preview-drivers.js";
-import type { PreviewDriverFactory, PreviewScreenDeclaration } from "./preview-tools.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
-import { type RepoWorkspace, repoSettingsWarning, trustWorkspace } from "./repo.js";
+import { repoSettingsWarning, trustWorkspace } from "./repo.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { serveWeb } from "./web-static.js";
@@ -40,10 +42,9 @@ import { serveWeb } from "./web-static.js";
 // The host's notice type (notices.ts) — re-exported so
 // `@colo-design/daemon/server` stays the one import a host needs.
 export type { DaemonNotice } from "./notices.js";
-// The desktop builds its driver against these (PLAN D61) — exported here so
+// The desktop builds its driver against these (게이트 재배선) — exported here so
 // `@colo-design/daemon/server` stays the one import a host needs.
 export type {
-  PreviewAxNode,
   PreviewCapture,
   PreviewConsoleLine,
   PreviewDriver,
@@ -52,7 +53,7 @@ export type {
   PreviewOpenResult,
   PreviewScreenDeclaration,
   PreviewViewport,
-} from "./preview-tools.js";
+} from "./preview-driver.js";
 
 /**
  * 커미티 B1 (2026-09-15): 열린 넘김 폴링 주기. 10분 = 프로젝트당 GitHub 읽기
@@ -80,7 +81,7 @@ export interface DaemonConfig {
   /** Credential store; the desktop app injects its safeStorage-backed one. */
   credentialStore?: CredentialStore;
   /**
-   * 사용자가 돌아와야 하는 순간의 갈고리 — 턴이 끝났을 때, Claude 가 확인을
+   * 사용자가 돌아와야 하는 순간의 갈고리 — 턴이 끝났을 때, AI 가 확인을
    * 기다릴 때, 게이트가 실패했을 때. 데몬은 의미만 건넨다; 그것을 OS 알림으로
    * 그릴지는 받는 쪽(데스크톱 앱)의 몫이므로, 브라우저 개발 경로는 이 갈고리
    * 없이도 온전하다.
@@ -93,10 +94,10 @@ export interface DaemonConfig {
    */
   logger?: DaemonLogger;
   /**
-   * The desktop's offscreen-window driver (PLAN D61). When a host injects
-   * it, sessions of a project whose preview server is up get the
-   * `colo-preview` tools; without it — the browser dev path — sessions run
-   * exactly as before, with no preview tools at all.
+   * The desktop's preview-window driver (게이트 재배선). When a host injects
+   * it, the screen gate re-opens the screens a turn pointed at, and the
+   * 화면 캡처 button works; without it — the browser dev path — neither
+   * exists.
    */
   previewDriverFactory?: PreviewDriverFactory;
 }
@@ -167,6 +168,27 @@ export class DaemonServer {
    */
   private readonly drivers: PreviewDrivers;
   /**
+   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's worktree
+   * build — one at a time, for the active project's open handoff. Its
+   * lifetime is this server's to enforce: the conversation that opened it
+   * reaps it on close (onState below), the daemon reaps it on stop, and the
+   * store's own idle timer catches the window that never said goodbye.
+   */
+  private readonly handoffPreviews = new HandoffPreviews(
+    () => {
+      const active = this.activeOrNull();
+      if (!active) return null;
+      return {
+        slug: active.slug,
+        repoRoot: active.paths.repoRoot,
+        projectRoot: active.paths.root,
+        previewCommand: active.repo.repoConfig()?.preview.command ?? null,
+        handoff: active.repo.currentHandoff,
+      };
+    },
+    (message) => this.logger.info(message),
+  );
+  /**
    * 세션별 최근 running 진입 시각 — 완료 알림에 태울 턴의 길이(알림 시점
    * 정책의 "오래 걸린 턴")를 재는 시계. 대기 후 재개는 시계를 다시 놓는다.
    *
@@ -193,6 +215,11 @@ export class DaemonServer {
       onToken: (pat) => {
         for (const workspaces of this.fleet.workspaces.values()) workspaces.repo.setPat(pat);
       },
+      // 데몬이 본 GitHub 401(또는 그 뒤의 회복) — 판정이 바뀔 때만 status 를
+      // 다시 방송한다. 웹의 만료 카드는 이 방송 하나로 열리고 닫힌다.
+      onAuthChange: () => {
+        void this.status().then((status) => this.broadcast({ type: "status", status }));
+      },
     });
     this.agentDrivers.register(new ClaudeDriver(() => this.claudeExecutable));
     this.agentDrivers.register(new CodexDriver());
@@ -203,9 +230,10 @@ export class DaemonServer {
         onEvent: (sessionId, event) => {
           this.broadcast({ type: "session.event", sessionId, event });
           // 한도가 움직였다 (PLAN D100): 요금 칩이 2분 뒤에야 진실을 말하면,
-          // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다.
+          // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다 —
+          // 이벤트를 보낸 계정의 provider로.
           if (event.kind === "ratelimit") {
-            this.plans.noteRateLimit();
+            this.plans.noteRateLimit(this.manager.get(sessionId)?.provider ?? "claude");
             return;
           }
           // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
@@ -217,7 +245,9 @@ export class DaemonServer {
           const turn = this.checkpointTurns.get(sessionId);
           if (turn === undefined) return;
           this.checkpointTurns.set(sessionId, turn + 1);
-          void this.repo.checkpoint(sessionId, turn + 1).catch(() => undefined);
+          void this.workspaceOfSession(sessionId)
+            ?.repo.checkpoint(sessionId, turn + 1)
+            .catch(() => undefined);
         },
         onState: (sessionId, state, detail) => {
           // 파일 로그의 뼈대: 턴이 언제 시작해 언제 어떤 상태로 내려앉았는지.
@@ -228,9 +258,9 @@ export class DaemonServer {
           let turnDurationMs: number | undefined;
           if (state === "running") {
             this.notifyClockAt.set(sessionId, Date.now());
-            // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 연 화면을 다시
-            // 판정하면 고치지도 않은 화면을 Claude 에게 떠넘기게 된다.
-            this.drivers.openedThisTurn.delete(sessionId);
+            // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 가리킨 화면을
+            // 다시 판정하면 고치지도 않은 화면을 AI 에게 떠넘기게 된다.
+            this.drivers.pinnedThisTurn.delete(sessionId);
           } else if (state === "idle") {
             const startedAt = this.notifyClockAt.get(sessionId);
             this.notifyClockAt.delete(sessionId);
@@ -252,7 +282,7 @@ export class DaemonServer {
           // A turn that just finished is the one moment the clone can have
           // gained files nobody has saved (PLAN D8). Counting here — rather
           // than on a timer — is what lets the top bar say 저장 the instant
-          // Claude stops, and say nothing at all while it is still writing.
+          // the agent stops, and say nothing at all while it is still writing.
           // The count belongs to the session's OWN project, not the active
           // one: a turn finishing in B while the planner reads A must move
           // B's number (D14).
@@ -280,12 +310,15 @@ export class DaemonServer {
             );
             if (notice) this.config.onNotice?.(notice);
           }
-          // The driver a session received dies with the session (PLAN D61):
-          // close, delete, remove, and daemon stop all land here as `closed`.
+          // 게이트의 판정 상태는 세션과 함께 간다 — close, delete, remove,
+          // daemon stop all land here as `closed`.
           if (state === "closed") {
-            this.drivers.destroy(sessionId);
-            this.drivers.openedThisTurn.delete(sessionId);
+            this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
+            // 수명 규칙 (preview.md §3 2단계): the worktree build's life is
+            // tied to the conversation that opened it — its close reaps the
+            // worktree and the port. The store ignores strangers itself.
+            this.handoffPreviews.closeSession(sessionId);
           }
         },
         onPermissionRequest: (payload) =>
@@ -295,9 +328,10 @@ export class DaemonServer {
       this.agentDrivers,
     );
     this.plans = new PlanTracker({
-      idleSession: () =>
+      idleSession: (provider) =>
         [...this.manager.all()]
           .filter((candidate) => candidate.state === "idle")
+          .filter((candidate) => provider === undefined || candidate.provider === provider)
           .sort((a, b) => b.lastActivity - a.lastActivity)[0] ?? null,
       claudeExecutable: () => this.claudeExecutable,
       probeCwd: () => {
@@ -307,6 +341,13 @@ export class DaemonServer {
       signal: this.closing.signal,
       onChanged: () =>
         void this.status().then((status) => this.broadcast({ type: "status", status })),
+      catalogSources: this.agentDrivers
+        .all()
+        .filter((driver) => typeof driver.listModels === "function")
+        .map((driver) => ({
+          provider: driver.id,
+          read: () => driver.listModels!(),
+        })),
     });
     this.drivers = new PreviewDrivers({
       factory: () => this.config.previewDriverFactory,
@@ -339,6 +380,7 @@ export class DaemonServer {
       previewDrivers: this.drivers,
       broadcast: (m) => this.broadcast(m),
       notice: (n) => this.config.onNotice?.(n),
+      logger: this.logger,
       claudeExecutable: () => this.claudeExecutable,
       closingSignal: this.closing.signal,
       pat: () => this.github.token,
@@ -355,6 +397,7 @@ export class DaemonServer {
       manager: this.manager,
       fleet: this.fleet,
       previewDrivers: this.drivers,
+      handoffPreviews: this.handoffPreviews,
       agentDrivers: this.agentDrivers,
       plans: this.plans,
       github: this.github,
@@ -436,6 +479,20 @@ export class DaemonServer {
     this.wss = new WebSocketServer({ noServer: true });
 
     this.http.on("upgrade", (req, socket, head) => {
+      // A browser page on another origin could drive this socket cross-site —
+      // the token sits in the url, so an Origin-bearing client must be one of
+      // ours: the daemon's own pages or the dev server. Non-browser clients
+      // send no Origin and answer to the token alone.
+      const origin = req.headers.origin;
+      if (origin !== undefined && !this.allowedUpgradeOrigin(origin)) {
+        this.logger.warn("허용되지 않은 출처의 연결 거부", {
+          origin,
+          remote: req.socket.remoteAddress ?? "unknown",
+        });
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const given = Buffer.from(url.searchParams.get("token") ?? "");
       const expected = Buffer.from(this.config.token);
@@ -472,6 +529,35 @@ export class DaemonServer {
     return bound;
   }
 
+  /**
+   * The origins a WebSocket upgrade may come from: the daemon's own pages
+   * (loopback on the bound port — the desktop's one-process origin) and, on
+   * the HMR dev path, the vite server the window was opened from
+   * (`COLO_DESIGN_DEV_SERVER`, desktop/scripts/dev.mjs). Anything else that
+   * sends an Origin is a foreign page and gets a 403.
+   */
+  private allowedUpgradeOrigin(origin: string): boolean {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const port = this.address().port;
+    const loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
+    if (loopback && parsed.port === String(port)) return true;
+    const devServer = process.env.COLO_DESIGN_DEV_SERVER;
+    if (devServer) {
+      try {
+        if (parsed.origin === new URL(devServer).origin) return true;
+      } catch {
+        // A malformed dev-server env var allows nothing.
+      }
+    }
+    return false;
+  }
+
   /** 리뷰 B3: the desktop's close guard asks before quitting under a turn. */
   anySessionBusy(): boolean {
     return this.manager.anyBusy();
@@ -506,6 +592,8 @@ export class DaemonServer {
       await workspaces.repo.settle();
       await workspaces.repo.stop();
     }
+    // 수명 규칙의 마지막 자리 — 데몬이 내려가면 워크트리·서버·기록이 남는다.
+    await this.handoffPreviews.dispose();
     for (const client of this.clients) client.close();
     this.wss?.close();
     // The web/http listener refs the event loop for as long as it listens —
@@ -564,10 +652,6 @@ export class DaemonServer {
 
   private activeOrNull(): ProjectWorkspaces | null {
     return this.fleet.activeOrNull();
-  }
-
-  private get repo(): RepoWorkspace {
-    return this.fleet.requireActive().repo;
   }
 
   private projectSummaries(): ProjectSummary[] {
@@ -629,25 +713,33 @@ export class DaemonServer {
     const providers = await Promise.all(
       this.agentDrivers.all().map(async (driver) => {
         const descriptor = driver.describe();
-        const diagnostic = await driver.isAvailable().catch(() => ({ ok: false }));
+        const diagnostic = await driver.isAvailable().catch((): Diagnostic => ({ ok: false }));
         return {
           id: descriptor.id,
           label: descriptor.label,
           available: diagnostic.ok,
+          ...(diagnostic.version ? { version: diagnostic.version } : {}),
+          ...(diagnostic.loggedIn !== undefined ? { loggedIn: diagnostic.loggedIn } : {}),
+          ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
           modes: descriptor.modes,
           defaultModeId: descriptor.defaultModeId,
           capabilities: { ...descriptor.capabilities } as Record<string, unknown>,
         };
       }),
     );
+    // The picker's rows before any thread: drivers that can answer without
+    // a session are read once per run, off this await — the next broadcast
+    // carries whatever landed.
+    this.plans.refreshModels();
     return {
       ...base,
       repoSettingsWarning: repoSettings,
       planUsage: this.plans.current(),
-      models: this.plans.models,
+      modelsByProvider: this.plans.models,
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,
       providers,
+      githubAuthExpired: this.github.authExpired,
     };
   }
 

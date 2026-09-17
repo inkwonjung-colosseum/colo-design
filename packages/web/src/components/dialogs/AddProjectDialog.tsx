@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
 import { CloseIcon, FolderPlusIcon } from "../icons";
 import { RepoPicker } from "../onboarding/RepoPicker";
-import { Tip } from "../shell/Tip";
+import type { SettingsCategory } from "./SettingsDialog";
 
 /**
  * 프로젝트 추가, for a planner who already has one. The same
@@ -18,18 +18,12 @@ export function AddProjectDialog({
 }: {
   daemon: Daemon;
   onClose: () => void;
-  onOpenSettings?: () => void;
+  onOpenSettings?: (category?: SettingsCategory) => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
 
-  useEffect(() => {
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [onClose]);
+  useModalEscape(panel, onClose);
 
   useEffect(() => {
     panel.current?.focus();
@@ -52,16 +46,9 @@ export function AddProjectDialog({
             </span>
             프로젝트 추가
           </h2>
-          <Tip label="프로젝트 추가 닫기" side="left">
-            <button
-              type="button"
-              className="ghost"
-              aria-label="프로젝트 추가 닫기"
-              onClick={onClose}
-            >
-              <CloseIcon />
-            </button>
-          </Tip>
+          <button type="button" className="ghost" aria-label="프로젝트 추가 닫기" onClick={onClose}>
+            <CloseIcon />
+          </button>
         </header>
         <div className="modal__body">
           <p className="hint">화면을 만들 레포를 고르세요.</p>

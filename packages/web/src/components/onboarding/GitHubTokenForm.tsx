@@ -3,7 +3,8 @@ import type { Daemon } from "../../lib/daemon-client";
 import { KeyIcon } from "../icons";
 
 /** GitHub's own form, with the name and `repo` scope this tool needs pre-filled. */
-const TOKEN_URL = "https://github.com/settings/tokens/new?description=Colo%20Design&scopes=repo";
+export const GITHUB_TOKEN_URL =
+  "https://github.com/settings/tokens/new?description=Colo%20Design&scopes=repo";
 
 /**
  * The machine-wide GitHub token, as the wizard's `github` gate and 설정 both
@@ -74,7 +75,7 @@ export function GitHubTokenForm({
         >
           {busy ? "연결하는 중…" : "연결"}
         </button>
-        <a className="ghlink" href={TOKEN_URL} target="_blank" rel="noreferrer">
+        <a className="ghlink" href={GITHUB_TOKEN_URL} target="_blank" rel="noreferrer">
           토큰 만들기 ↗
         </a>
       </div>

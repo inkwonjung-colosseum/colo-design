@@ -28,14 +28,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DIR = join(tmpdir(), "colo-design-projects-e2e");
 
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
-// Every registry path in the temp dir. This suite deliberately does NOT set
-// COLO_DESIGN_REPO_DIR or COLO_DESIGN_REPO_URL: those override the ACTIVE
-// project's clone, which would erase exactly the per-project separation
-// under test.
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
+// The store sweep on project.remove must not walk the developer's real
+// vendor stores — point every one at an empty dir, and opencode at a stub
+// that answers `session list` with nothing.
+process.env.CODEX_HOME = join(DIR, "codex-home");
+process.env.OMP_CODING_AGENT_DIR = join(DIR, "omp-agent");
+process.env.COLO_DESIGN_OPENCODE_BIN = join(DIR, "bin", "opencode");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -134,6 +136,13 @@ async function main() {
   });
 
   const stubClaude = writeTurnStubClaude(join(DIR, "bin"));
+  // The opencode store sweep spawns `session list`/`session delete` — a stub
+  // that answers with an empty list keeps the test off the real CLI.
+  writeFileSync(
+    join(DIR, "bin", "opencode"),
+    '#!/usr/bin/env node\nif (process.argv[2] === "session" && process.argv[3] === "list") console.log("[]");\nprocess.exit(0);\n',
+  );
+  chmodSync(join(DIR, "bin", "opencode"), 0o755);
 
   const port = await freePort();
   const server = new DaemonServer({
@@ -303,6 +312,39 @@ async function main() {
       returnPhases.length > 0 && returnPhases.every((phase) => phase === "ready"),
       returnPhases.join("·") || "(no status)",
     );
+
+    // --- 3.1b a port-less project never fences a warm server ---------------
+    // 자유 declares no preview.port: its dev server picks a free port and the
+    // bring-up detects it from the server's own output, so the incoming
+    // project can never collide with a warm one — the fence stops nothing.
+    const freeFixture = await createFixtureRepo({
+      dir: join(DIR, "fixture-free"),
+      port: null,
+    });
+    const free = await request({
+      type: "project.create",
+      name: "자유",
+      repoUrl: freeFixture.remote,
+      approveCommands: true,
+    });
+    const freeStatus = await waitReady("the 자유 clone on a detected port");
+    const detectedPort = freeStatus.previewUrl ? new URL(freeStatus.previewUrl).port : null;
+    check(
+      "a project with no declared port comes up on a detected one",
+      freeStatus.previewUrl !== null &&
+        detectedPort !== String(paymentsFixture.port) &&
+        detectedPort !== previewPort,
+      `${freeStatus.previewUrl}`,
+    );
+    check(
+      "the warm declared-port projects survive a port-less project switching in",
+      (await serving(previewPort)) && (await serving(paymentsFixture.port)),
+      `ports ${previewPort}·${paymentsFixture.port}`,
+    );
+    // Leave the stage as 3.1 found it: 자유 gone, 환불 on screen.
+    await request({ type: "project.remove", slug: free.slug, deleteFiles: true });
+    await request({ type: "project.activate", slug: refunds.slug });
+    await waitReady("the 환불 clone restored after 자유");
 
     // --- 3.2 the port fence: two repos on one port cannot both stay warm ----
     // 쌍둥이 declares 결제's port. Its own bring-up takes that port (결제 is

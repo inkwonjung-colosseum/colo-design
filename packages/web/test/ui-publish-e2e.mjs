@@ -3,9 +3,11 @@
  *
  * The connected repo is a local fixture remote; the "work to publish" is
  * written straight into the clone (what Claude's Write tool would have left
- * there), and the test drives the panel the planner uses: changed-file list
- * with expandable hunks, a commit message, 승인, then the published result —
- * and verifies the commit actually reached the bare remote.
+ * there), and the test drives the surface the planner uses: the live save
+ * card in the conversation (changed-file list with expandable hunks, a
+ * commit message, 저장하기), then the published result — and verifies the
+ * commit actually reached the bare remote. 저장 검토·넘기기 are in-chat
+ * cards now (states.md §2.1), not dialogs.
  *
  * Prerequisites: `pnpm build`
  */
@@ -121,6 +123,17 @@ function writeErrorStubClaude(dir) {
     "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
     '    fs.appendFileSync(LOG, line + "\\n");',
     "    let o = null; try { o = JSON.parse(line); } catch { continue; }",
+    // The SDK opens the stream with control requests (initialize, mode
+    // writes, interrupts) and waits for each answer before a user line can
+    // ride the queue — an unanswered one closes the query and the send is
+    // refused before it ever reaches the tape. Answer every one.
+    '    if (o.type === "control_request") {',
+    "      process.stdout.write(JSON.stringify({",
+    '        type: "control_response",',
+    '        response: { subtype: "success", request_id: o.request_id },',
+    '      }) + "\\n");',
+    "      continue;",
+    "    }",
     '    if (o.type === "user") {',
     '      process.stdout.write(JSON.stringify(INIT) + "\\n");',
     '      process.stdout.write(JSON.stringify(FAIL) + "\\n");',
@@ -191,6 +204,9 @@ async function main() {
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
     COLO_DESIGN_CLAUDE_BIN: writeErrorStubClaude(join(DIR, "bin")),
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
+    // The page comes from this file's static server, not the daemon — the
+    // upgrade's Origin must be named or the daemon 403s it.
+    COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -226,7 +242,10 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     try {
-      await page.waitForSelector(".planner__body", { timeout: 60000 });
+      await page.waitForSelector(".planner__work", { timeout: 60000 });
+      // 홈이 기본값이므로 대화 화면은 새 대화 leaf 가 연다 — 상시 표시다.
+      await page.locator(".leaf--start").first().click();
+      await page.waitForSelector(".planner__body:not(.planner__empty)", { timeout: 60000 });
     } catch {
       console.error(
         "CONNECT DUMP:",
@@ -270,6 +289,22 @@ async function main() {
     // 않으므로 이 뒤의 어느 단계도 이 삭제에 걸리지 않는다.
     rmSync(join(WORK_ROOT, "CLAUDE.md"), { force: true });
 
+    // 저장의 완료 카드는 대화 테이프에 쓰인다 — 대화가 없으면 갈 곳이 없다.
+    // 한 마디를 보내 세션을 세운다. 스텁의 send 는 거절로 끝나지만 세션은
+    // send 를 시도한 순간(createSession) 생긴다 — 컴포저의 placeholder 가
+    // 활성 대화의 것으로 바뀌는 순간이 그 신호다.
+    const seedField = page.locator(".composer textarea");
+    await seedField.fill("화면을 만들어 줘");
+    await seedField.press("Enter");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector(".composer textarea")
+          ?.getAttribute("placeholder")
+          ?.includes("메시지를 보내 보세요") === true,
+      undefined,
+      { timeout: 30000 },
+    );
     // The change count is event-driven: a turn finishing or a save
     // recounts it, and these raw writes are neither — so one 레포 최신화 is
     // what unlocks 저장 in the top bar.
@@ -277,20 +312,46 @@ async function main() {
       .locator(".screenpanel__bar")
       .getByRole("button", { name: "최신 변경 받아오기" })
       .click();
+    // The pull parks unsaved work in a stash while it moves the branch —
+    // a diff read inside that window sees a clean tree. The button's own
+    // label is the pull's clock: it reads 받아 오는 중… until the stash is
+    // back, so 저장 is only safe to open once it flips back.
     await page.waitForFunction(
       () => {
         const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
+        const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
         const save = buttons.find((b) => b.textContent?.trim() === "저장");
-        return save ? !save.disabled : false;
+        return refresh !== undefined && save ? !save.disabled : false;
       },
       undefined,
-      { timeout: 20000 },
+      { timeout: 30000 },
     );
     await viaActionBar(page, "저장");
+    // 저장 검토는 모달이 아니라 대화 안 카드다 — 살아있는 카드가 스크롤되어
+    // 오고, 그 몸통(SaveReviewBody)이 검토할 거리를 실어 온다.
+    const saveCard = page.locator("#live-savecard");
+    await saveCard.waitFor({ timeout: 10000 });
     // 비개발자 저장: the summary is the first thing; the raw
     // files stay folded at every size — the review reads as sentences, and
     // the code is one deliberate click away.
-    await page.getByText("자세히 보기 (파일 3개)").waitFor({ timeout: 10000 });
+    await page
+      .getByText("자세히 보기 (파일 3개)")
+      .waitFor({ timeout: 10000 })
+      .catch(async () => {
+        console.error(
+          "FOLD DUMP:",
+          (
+            await page
+              .locator(".modal, .diff, #live-savecard")
+              .first()
+              .innerText()
+              .catch(() => "(none)")
+          )
+            .slice(0, 800)
+            .replace(/\n+/g, " | "),
+        );
+        throw new Error("fold never appeared");
+      });
     check(
       "the summary is on top and the raw file list stays folded",
       (await page.getByText("자세히 보기 (파일 3개)").isVisible()) === true &&
@@ -310,7 +371,7 @@ async function main() {
       (await summaryLines.count()) > 0 &&
         (await summaryLines.first().innerText()).trim().length > 0 &&
         // 폴백이든 Claude 든, 누가 썼는지를 카드가 말한다.
-        (summaryText.includes("Claude가 바뀐 점을 읽고 적었습니다") ||
+        (summaryText.includes("AI가 바뀐 점을 읽고 적었습니다") ||
           summaryText.includes("바뀐 파일을 묶어 적었습니다")),
       summaryText.replace(/\n+/g, " | "),
     );
@@ -358,22 +419,20 @@ async function main() {
 
     // --- save, and watch it land on its own branch ------------------------
     await page.getByLabel("저장 메모").fill("회원 관리 화면 추가");
-    await page
-      .locator('[role="dialog"][aria-label="저장 검토"]')
-      .getByRole("button", { name: "저장", exact: true })
-      .click();
-    await page.waitForSelector(".notice--info", { timeout: 120000 });
-    check(
-      "the settled line shows the memo the save carried",
-      (await page.getByTestId("committed-memo").innerText()).includes("회원 관리 화면 추가"),
-    );
+    await saveCard.getByRole("button", { name: "저장하기", exact: true }).click();
+    // 저장이 끝나면 살아있는 카드는 자리를 기록의 `저장했어요` 카드에 넘기고,
+    // 그 밑에 넘기기로 이어가는 복도가 선다(states.md §2.2).
+    await page.getByText("저장했어요").waitFor({ timeout: 120000 });
+    const corridor = page.getByRole("button", { name: "개발자에게 넘기기로 이어가기" });
+    await corridor.waitFor({ timeout: 10000 });
+    check("the settled save hands its seat to the record card and the corridor", true);
 
     await page.waitForFunction(
       () => document.querySelectorAll(".diff__file").length === 0,
       undefined,
       { timeout: 10000 },
     );
-    check("the panel reloads to an empty diff", true);
+    check("the review body leaves with the live card", true);
 
     const branch = await cycleBranch(fixture.remote);
     check("the save created its own branch on the remote", branch !== null, `${branch}`);
@@ -396,31 +455,27 @@ async function main() {
       subject.trim(),
     );
 
-    await page.getByRole("button", { name: "닫기", exact: true }).click();
-    check(
-      "closing the review returns to the planner",
-      (await page.locator('[role="dialog"]').count()) === 0,
-    );
-
-    // --- 넘기기: the draft turn fails on this stub, so the dialog must open
-    // on the browser's own proposal — never on an empty form (비개발자 넘기기).
-    await viaActionBar(page, "개발자에게 넘기기");
-    const handoffDialog = page.locator('[role="dialog"][aria-label="개발자에게 넘기기"]');
-    await handoffDialog.waitFor({ timeout: 10000 });
+    // --- 넘기기: the corridor opens the in-chat card; the draft turn fails
+    // on this stub, so the card must open on the browser's own proposal —
+    // never on an empty form (비개발자 넘기기).
+    await corridor.click();
+    const handoffCard = page.locator(".handoffcard");
+    await handoffCard.waitFor({ timeout: 10000 });
     await page.waitForFunction(
       () => !document.body.innerText.includes("개발자가 읽을 제목과 내용을 만드는 중"),
       undefined,
       { timeout: 20000 },
     );
+    // 제목 필드는 `직접 고치기` 폴드 안에 있다 — 읽기 우선 카드의 규칙.
+    await handoffCard.getByText("직접 고치기", { exact: true }).click();
     const proposedTitle = await page.getByLabel("넘길 제목").inputValue();
     check(
       "a draft that cannot land leaves the browser's proposal in the fields",
-      proposedTitle.length > 0 &&
-        !(await handoffDialog.innerText()).includes("Claude가 채웠습니다"),
+      proposedTitle.length > 0 && !(await handoffCard.innerText()).includes("AI가 쓴 초안"),
       proposedTitle,
     );
-    await handoffDialog.getByRole("button", { name: "취소", exact: true }).click();
-    check("the handoff closes", (await handoffDialog.count()) === 0);
+    await handoffCard.getByRole("button", { name: "접기", exact: true }).click();
+    check("the handoff card folds", (await handoffCard.count()) === 0);
 
     // --- ⌘/ 시트 ------------------------------------------------------------
     await page.keyboard.press("Meta+/");
@@ -439,12 +494,23 @@ async function main() {
     // The tree offers two ways to start one (the row's ＋ and, for a project
     // with no conversations, its own row); this drives the row's ＋.
     await page.locator(".node__add").first().click();
-    const field = page.getByPlaceholder(
-      "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요",
-    );
+    const field = page.locator(".composer textarea");
     await field.fill("화면을 만들어 줘");
     await field.press("Enter");
-    await page.waitForSelector(".turnfail", { timeout: 30000 });
+    try {
+      await page.waitForSelector(".turnfail", { timeout: 30000 });
+    } catch {
+      const log = existsSync(join(DIR, "bin", "prompts.log"))
+        ? readFileSync(join(DIR, "bin", "prompts.log"), "utf8")
+        : "(no prompts.log)";
+      console.error(
+        "TURNFAIL DUMP:",
+        (await page.locator("body").innerText()).slice(0, 1500).replace(/\n+/g, " | "),
+        "\nPROMPTS:",
+        log.slice(0, 500),
+      );
+      throw new Error("no turnfail card");
+    }
     check(
       "a failed turn is a card that says what happened",
       (await page.locator(".turnfail").last().innerText()).includes("답을 마치지 못했습니다"),
@@ -468,7 +534,8 @@ async function main() {
     );
     const sends =
       readFileSync(join(DIR, "bin", "prompts.log"), "utf8").split("화면을 만들어 줘").length - 1;
-    check("retrying sends the same words again", sends === 2, `${sends} send(s) on the wire`);
+    // 시드 한 번 + 실패 카드의 다시 보내기 두 번 — 같은 말이 세 번 선에 섰다.
+    check("retrying sends the same words again", sends === 3, `${sends} send(s) on the wire`);
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({
       path: join(here, "ui-publish-e2e.png"),

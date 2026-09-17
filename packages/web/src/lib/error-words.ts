@@ -5,7 +5,7 @@
  * fallback wording. Raw ids stay available to `자세히` folds.
  */
 const WORDS: Record<string, string> = {
-  overloaded: "Claude가 붐빕니다",
+  overloaded: "AI가 붐빕니다",
   api_error: "잠시 문제가 있었습니다",
   invalid_request: "요청을 처리하지 못했습니다",
   timeout: "응답이 늦어졌습니다",

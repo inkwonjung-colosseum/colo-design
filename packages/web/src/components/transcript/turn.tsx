@@ -4,21 +4,24 @@ import {
   readTurn,
   type TurnMarker,
 } from "@colo-design/protocol";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { waitedFor } from "../../lib/format";
+import { latestSaveAfter, type ScreenRepoSnapshot, screenChips } from "../../lib/screen-state";
 import { CopyButton } from "../CopyButton";
 import { ChevronRightIcon } from "../icons";
 import { Tip } from "../shell/Tip";
+import { ScreenCard } from "./ScreenCard";
+import { clockTime } from "./shared";
 
 /**
  * A turn this app wrote on the planner's behalf, rendered as what it means
- * instead of as what Claude reads.
+ * instead of as what the agent reads.
  *
  * The four kinds share one shape — a heading, a short list, and the original
  * text one fold away — because they interrupt the chat for the same reason:
  * something happened that the planner started but did not type. The fold is
- * not decoration; a turn Claude answered oddly is only diagnosable against the
+ * not decoration; a turn the agent answered oddly is only diagnosable against the
  * text it actually received.
  */
 function MachineTurn({
@@ -90,7 +93,7 @@ function MachineTurn({
       break;
     case "gate":
       title = `${marker.step}에서 멈췄습니다`;
-      lead = "무엇이 잘못됐는지 Claude에게 넘겼습니다. 고치는 동안 기다려 주세요.";
+      lead = "무엇이 잘못됐는지 AI에게 넘겼습니다. 고치는 동안 기다려 주세요.";
       break;
     case "error":
       // `look` is the 화면 보여 주기 ask (no error the console can
@@ -170,7 +173,7 @@ function MachineTurn({
           {open ? "접기" : "자세히"}
         </button>
         {/* 요청 복사: the card is a reading of the turn, not the turn — the
-            text Claude actually received is what travels elsewhere. */}
+            text the agent actually received is what travels elsewhere. */}
         {body.trim() !== "" && (
           <CopyButton value={body} label="요청 복사" icon={null} className="machine__more" />
         )}
@@ -231,7 +234,9 @@ function FailedTurn({
       </div>
       <div className="turnfail__actions">
         {/* 스스로 멈춘 사람에게 "같은 말 재발사"는 이상한 첫 제안 —
-            고쳐서 다시 보내기(입력창으로 돌아온다)가 그 자리를 대신한다. */}
+            고쳐서 다시 보내기(입력창으로 돌아온다)가 그 자리를 대신한다.
+            다른 실패에서도 같은 손이 옆에 선다 — 같은 말 재발사만으로는
+            고칠 말이 있는 사람이 버블까지 올라가야 했다. */}
         {interrupted && !limit && retryText && onResendEdit && (
           <button type="button" className="turnfail__retry" onClick={() => onResendEdit(retryText)}>
             고쳐서 다시 보내기
@@ -240,6 +245,11 @@ function FailedTurn({
         {!interrupted && !limit && onRetry && retryText && (
           <button type="button" className="turnfail__retry" onClick={() => onRetry(retryText)}>
             다시 보내기
+          </button>
+        )}
+        {!interrupted && !limit && retryText && onResendEdit && (
+          <button type="button" className="turnfail__retry" onClick={() => onResendEdit(retryText)}>
+            고쳐서 다시 보내기
           </button>
         )}
         {/* 텍스트 없이 도구만 돌다 멈춘 턴은 되돌릴 버튼이 답변에만 있어 여기까지
@@ -271,38 +281,54 @@ function FailedTurn({
 }
 
 /**
- * 답변 본문에 선언된 화면의 주소가 보이면 그 화면을
- * 미리보기로 여는 침 행. 대조는 주소 문자열로(제목은 답변에서 변형되기
- * 쉽다). 첫 상태로 간다; 상태 골라 보기는 주소창 자동완성과
- * 같은 어휘로 자란다.
+ * 답변 본문에 선언된 화면의 주소가 보이면 그 화면의 카드 행. 대조는
+ * 주소 문자열로(제목은 답변에서 변형되기 쉽다) — ScreenChips 가 하던
+ * 판정 그대로다. 카드가 사이클 진행(§3.3)과 미리보기의 시선(§4.2)을
+ * 칩과 accent 링으로 보여 주고, 누르면 첫 상태로 미리보기를 연다.
  */
-function ScreenChips({
+function ScreenCards({
   text,
   screens,
+  blocks,
+  blockId,
+  repo,
   onOpen,
 }: {
   text: string;
   screens: ColoDesignScreen[];
+  /** 온 테이프 전체 — 이 답변 뒤의 저장과 같은 턴의 캡처를 찾는 원본. */
+  blocks: Block[];
+  blockId: string;
+  repo: ScreenRepoSnapshot | null;
   onOpen: (route: string, state: string | null) => void;
 }) {
   const named = screens.filter(
     (screen) => screen.title.trim() !== "" && text.includes(screen.route),
   );
   if (named.length === 0) return null;
+  const index = blocks.findIndex((block) => block.id === blockId);
+  // 이 답변 뒤의 마지막 저장 — 카드마다 판정이 같으니 한 번만 훑는다.
+  const save = latestSaveAfter(blocks, index);
   return (
     <div className="answer__screens">
-      {named.map((screen) => (
-        <Tip key={screen.route} label={`미리보기에서 「${screen.title}」을 엽니다`}>
-          <button
-            type="button"
-            className="answer__screen"
-            onClick={() => onOpen(screen.route, screen.states[0] ?? null)}
-          >
-            {screen.title}
-            <ChevronRightIcon />
-          </button>
-        </Tip>
-      ))}
+      {named.map((screen) => {
+        const state = screen.states[0] ?? null;
+        const saved = save?.screens.find((entry) => entry.route === screen.route);
+        const chips = screenChips(screen.route, {
+          pendingChanges: repo?.pendingChanges ?? null,
+          handoffState: repo?.handoffState ?? null,
+          savedScreens: save?.screens ?? [],
+        });
+        return (
+          <ScreenCard
+            key={screen.route}
+            title={saved?.note ? `${screen.title} · ${saved.note}` : screen.title}
+            caption={`미리보기${save && saved ? ` · ${clockTime(save.at)}` : ""}`}
+            states={chips}
+            onOpen={() => onOpen(screen.route, state)}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -338,17 +364,34 @@ function isLastFailedTurn(blocks: Block[], block: Block): boolean {
 /**
  * 정산된 턴의 한 줄 — 그리고 답이 도구 사이에서 조각으로 올 때
  * 그 요청의 output 전부를 한 번에 복사해 나르는 유일한 자리다. 복사는 이
- * 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에 건넨다.
+ * 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에 건넨다. 되돌리기 · 다시
+ * 요청(턴 단위 행동)도 같은 줄을 탄다 — 행동 왼쪽, 시간과 복사 오른쪽,
+ * 한 턴의 마침표가 행 하나로 찍힌다. 액션과 시간이 모두 없으면 아무것도
+ * 남기지 않는다(부르는 쪽 Transcript 이 이미 걸러내지만, 줄 자체도 안다).
  */
-function TurnDone({ durationMs, whole }: { durationMs: number; whole?: string }) {
+function TurnDone({
+  durationMs,
+  whole,
+  actions,
+}: {
+  durationMs: number | null;
+  whole?: string;
+  /** 되돌리기 · 다시 요청 — 답 카드 아래 행을 따로 두르지 않고 정산 줄이
+      대신 실어 나른다. */
+  actions?: ReactNode;
+}) {
+  if (durationMs == null && actions == null) return null;
   return (
-    <div className="turndone">
-      {waitedFor(durationMs)} 걸렸습니다
-      {whole && (
-        <CopyButton value={whole} label="" ariaLabel="전체 복사" className="turndone__copy" />
+    <div className={`turndone${actions != null ? " turndone--actions" : ""}`}>
+      {actions != null && <div className="turndone__actions">{actions}</div>}
+      {durationMs != null && (
+        <div className="turndone__meta">
+          {waitedFor(durationMs)} 걸렸습니다
+          {whole && <CopyButton value={whole} label="전체 복사" className="turndone__copy" />}
+        </div>
       )}
     </div>
   );
 }
 
-export { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, ScreenChips, TurnDone };
+export { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, ScreenCards, TurnDone };

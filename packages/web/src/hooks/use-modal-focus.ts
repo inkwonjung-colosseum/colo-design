@@ -64,3 +64,34 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
     };
   }, [panel, open]);
 }
+
+/**
+ * The Escape side of `aria-modal="true"`: only the TOPMOST overlay answers.
+ * Every dialog used to listen on `document` unconditionally, so a confirm
+ * stacked on a settings or review surface closed both at once — the planner
+ * pressed Escape once and lost two layers. The rule is positional, not
+ * registration order: the overlay whose root is the last `.modal` /
+ * `.palette` / `.onboarding` in the DOM is the one Escape dismisses.
+ *
+ * Menus and folds are not overlays — they keep their own Escape handlers.
+ */
+export function useModalEscape(
+  panel: RefObject<HTMLElement | null>,
+  onClose: () => void,
+  open: boolean = true,
+): void {
+  useEffect(() => {
+    if (!open) return;
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const overlays = document.querySelectorAll(".modal, .palette, .onboarding");
+      const top = overlays[overlays.length - 1];
+      if (!top) return;
+      const root = panel.current?.closest(".modal, .palette, .onboarding");
+      if (root !== top) return;
+      onClose();
+    };
+    document.addEventListener("keydown", onKeydown);
+    return () => document.removeEventListener("keydown", onKeydown);
+  }, [panel, onClose, open]);
+}

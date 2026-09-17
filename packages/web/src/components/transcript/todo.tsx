@@ -8,7 +8,7 @@ interface TodoItem {
 }
 
 /**
- * Claude's plan, read defensively out of a TodoWrite input: `content` is the
+ * the agent.s plan, read defensively out of a TodoWrite input: `content` is the
  * CLI's current shape, `activeForm` and `subject` are shapes other senders
  * used. Something that is not a todo list at all gets no card.
  */
@@ -48,7 +48,7 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
 }
 
 /**
- * Claude's own plan as a card: `진행 N/M`, items ✓ · ● · ○ with
+ * the agent.s own plan as a card: `진행 N/M`, items ✓ · ● · ○ with
  * the current one bold. Once the turn has ended it folds to a single line —
  * the plan was followed; the reading is over. A write we cannot parse falls
  * back to the plain tool row, which is the honest rendering of noise.

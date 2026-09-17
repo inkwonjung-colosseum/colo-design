@@ -66,7 +66,6 @@ export type RepoPhase =
   | "missing"
   | "cloning"
   | "pulling"
-  | "preparing"
   | "installing"
   | "starting"
   | "ready"
@@ -127,8 +126,9 @@ export type RepoErrorKind =
   | "pnpm-missing"
   | "preview"
   | "port-busy"
+  | "port-undetected"
+  | "no-preview-command"
   | "conflict"
-  | "bootstrap"
   | "commands"
   | "held-elsewhere";
 
@@ -155,9 +155,9 @@ export interface RepoStatus {
     build?: string;
     preview?: string;
   };
-  /** Preview origin once the declared preview port accepts connections. */
+  /** Preview origin once the preview port accepts connections — declared or detected. */
   previewUrl: string | null;
-  /** The preview port the repo's `colo-design.json` declares. */
+  /** The port the preview is serving on — declared in `colo-design.json` or detected at startup. */
   previewPort: number | null;
   /**
    * Extra origins the repo allows the preview to open
@@ -221,6 +221,32 @@ export interface DeveloperReview {
 /** `repo.handoffStatus` — the pull request plus the developer's comments. */
 export interface HandoffStatusReport extends HandoffStatus {
   reviews?: DeveloperReview[];
+}
+
+/**
+ * `repo.handoffPreview` — the handed-off moment's REAL build (preview.md
+ * §3 2단계): the open handoff's branch tip checked out into a throwaway
+ * worktree and served by the repo's own preview command on a second port.
+ * `ready: false` is the honest answer for every absence — no open handoff,
+ * a worktree that would not check out, a server that would not come up —
+ * and the frozen stage falls back to the committed capture. It is not an
+ * error: the capture is the feature's floor, not a failure.
+ */
+export interface HandoffPreviewInfo {
+  /** The port the worktree's preview answers on; null while not serving. */
+  port: number | null;
+  /** True once the worktree's server actually answers on that port. */
+  ready: boolean;
+  /** The tip the worktree was checked out at — '넘긴 시점'의 커밋. */
+  commit: string | null;
+  /**
+   * The exact loopback address the server answered on — a port alone cannot
+   * say which loopback family bound it, and a framed page needs the URL.
+   * Null while not serving.
+   */
+  url: string | null;
+  /** Why there is no build, in the planner's words. Absent while serving. */
+  detail?: string;
 }
 
 /** `comments.reply` — the answer went out under the planner's own name. */
@@ -290,6 +316,53 @@ export interface RepoSummary {
   memo?: string;
   /** Who wrote them: the one Claude turn, or the path-grouping fallback. */
   source: "claude" | "fallback";
+}
+
+// ---------------------------------------------------------------------------
+// 요약 폴백 (PLAN D51) — 데몬의 한 턴이 못 닿을 때와 웹의 3초 바닥이 같은
+// 문장을 쓰도록, 규칙은 프로토콜에 하나만 산다.
+// ---------------------------------------------------------------------------
+
+/** 한 줄에 이름을 나열하는 파일 수 — 넘으면 `외 N개` 로 접는다. */
+const FALLBACK_NAME_LIMIT = 3;
+
+/** 파일 상태가 폴백 문장에서 입는 말 — `자세히 보기` 행의 배지 어휘와 짝을 맞춘다. */
+const FALLBACK_STATUS_LABEL: Record<DiffFile["status"], string> = {
+  added: "새로 만든 파일",
+  modified: "고친 파일",
+  renamed: "이름 바꾼 파일",
+  deleted: "지운 파일",
+};
+
+const FALLBACK_STATUS_ORDER: DiffFile["status"][] = ["added", "modified", "renamed", "deleted"];
+
+/**
+ * The summary when the agent's turn cannot land (PLAN D51): what changed,
+ * said with the file's own names — `새로 만든 파일: colo-bridge.tsx` —
+ * grouped by kind of change, not by folder. A folder name is the repo's
+ * jargon (`routes: 수정 2`); a file's name is the thing the planner can
+ * point at. Deterministic — same diff, same lines — because this is what
+ * the planner reads when the fancy version failed, on either side of the
+ * socket.
+ */
+export function fallbackSummary(files: Array<Pick<DiffFile, "path" | "status">>): string[] {
+  const groups: Record<DiffFile["status"], string[]> = {
+    added: [],
+    modified: [],
+    renamed: [],
+    deleted: [],
+  };
+  for (const file of files) {
+    const slash = file.path.lastIndexOf("/");
+    groups[file.status].push(slash === -1 ? file.path : file.path.slice(slash + 1));
+  }
+  return FALLBACK_STATUS_ORDER.filter((status) => groups[status].length > 0).map((status) => {
+    const names = groups[status];
+    const shown = names.slice(0, FALLBACK_NAME_LIMIT).join(", ");
+    const rest =
+      names.length > FALLBACK_NAME_LIMIT ? ` 외 ${names.length - FALLBACK_NAME_LIMIT}개` : "";
+    return `${FALLBACK_STATUS_LABEL[status]} ${names.length}개: ${shown}${rest}`;
+  });
 }
 
 /** `repo.handoffDraft` — what the 넘기기 dialog opens filled with. */

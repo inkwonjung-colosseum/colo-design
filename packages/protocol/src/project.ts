@@ -10,13 +10,32 @@ import type { PlanUsage, SessionModelInfo } from "./session.js";
  * (PLAN D59). The daemon maps the session state onto the four words the tree
  * draws; the planner's own rename rides the client's 설정, not this wire.
  */
+
+/**
+ * 이 대화의 사이클 위치 (P3-1): the session tape's LAST cycle row, read per
+ * session — `saved` a cycle.saved landed here, `handed` a cycle.handed,
+ * `merged` a cycle.merged, `review` a review.arrived. The leaf's status dot
+ * wears it; absent means this conversation has no cycle rows at all.
+ */
+export type ThreadCycle = "saved" | "handed" | "merged" | "review";
+
+/**
+ * 연결 준비 대화의 이름 — the tool opens it itself once on a repo whose
+ * conventions are not written yet (PLAN D94). The tree reads the words to
+ * tell the tool's own record from the planner's conversations; the constant
+ * lives here because daemon and UI must hold the same one.
+ */
+export const BOOTSTRAP_THREAD_TITLE = "연결 준비";
+
 export interface ThreadSummary {
   id: string;
   title: string;
   /** `running` a turn is on; `awaiting` a permission or question; `finished`
-      a turn ended and nothing has followed it; `idle` everything else. */
+     a turn ended and nothing has followed it; `idle` everything else. */
   state: "running" | "awaiting" | "finished" | "idle";
   updatedAt: string;
+  /** The tape's last cycle row for this conversation — 대화별 여정의 원천. */
+  cycle?: ThreadCycle;
 }
 
 /**
@@ -57,6 +76,20 @@ export interface ProjectSummary {
    * 내려받기 전(cloned 아님)에는 항상 거짓.
    */
   conventionsStale: boolean;
+  /**
+   * 답을 기다리는 질문 + 권한 요청의 수(스레드 단위, PLAN P3-2) — 비활성
+   * 프로젝트도 포함. `threads[].state === "awaiting"` 인 대화의 개수와 같다.
+   */
+  pendingCount: number;
+  /**
+   * 열린 넘김의 마지막 사건 — 폴러(`pollOpenHandoffs`)가 감지한 것.
+   * 코멘트 도착(`comments`) · 반영됨(`merged`) · 반려(`closed`·
+   * `changes_requested`) 중 하나. 아직 아무 사건도 못 본 프로젝트는 키가 없다.
+   */
+  lastEventKind?: "merged" | "closed" | "changes_requested" | "comments";
+  /** `lastEventKind`를 폴러가 감지한 시각(ISO) — 사건이 실제로 일어난 시각이
+      아니라 최대 10분 지연된 발견 시각이다. */
+  lastEventAt?: string;
 }
 
 export interface ProjectList {
@@ -105,6 +138,14 @@ export interface DaemonStatus {
   email: string | null;
   /** True when ANTHROPIC_API_KEY is present, which would bill the key not the subscription. */
   apiKeyInEnv: boolean;
+  /**
+   * 데몬 자신의 GitHub 읽기가 마지막으로 본 인증 판정: 어떤 GitHub REST 응답이
+   * 401 이면 true, 그 뒤의 어떤 응답이든(숨긴 레포의 404 도 인증을 마친 뒤의
+   * 대답이다) 다시 false. 만료 카드의 진입점 — 푸시 인증 거절은 이미
+   * `DiffStatus.reason: "push-auth"` 로 말하므로 여기에 섞지 않는다.
+   * 브로드캐스트는 판정이 바뀔 때만이다.
+   */
+  githubAuthExpired?: boolean;
   liveSessions: number;
   pendingPermissions: number;
   warnings: string[];
@@ -128,18 +169,28 @@ export interface DaemonStatus {
    */
   planUsage: PlanUsage | null;
   /**
-   * The model rows the CLI offers, cached daemon-wide so the composer can
-   * offer a choice before any thread exists. Empty until a session reports.
+   * The model rows each provider's CLI offers, cached daemon-wide so the
+   * composer can offer a choice before any thread exists. Keyed by provider
+   * id — a Claude alias and a Codex model id are different vocabularies and
+   * must never share a list. Empty until a session reports.
    */
-  models: SessionModelInfo[];
+  modelsByProvider: Record<string, SessionModelInfo[]>;
   /**
    * The agent providers this daemon can run — id, label, availability, and
    * the modes/capabilities the UI reads to hide what a driver cannot do.
+   * `version`/`loggedIn`/`reason` carry the driver's own diagnostic so the
+   * settings list can say what is wrong, not just that something is.
    */
   providers?: Array<{
     id: string;
     label: string;
     available: boolean;
+    /** The CLI's own version string when the driver could read it. */
+    version?: string;
+    /** The vendor's credential check; absent when the driver doesn't track one. */
+    loggedIn?: boolean;
+    /** Why the provider cannot run — shown in place of a bare "설치 필요". */
+    reason?: string;
     modes: Array<{ id: string; label: string; tier: string }>;
     defaultModeId: string;
     capabilities: Record<string, unknown>;
@@ -213,7 +264,10 @@ export interface GitHubRepoList {
 
 /** What the picker shows about the one repo a planner chose, before cloning. */
 export interface GitHubRepoInspection {
-  hasColoDesign: boolean;
+  /** package.json scripts carry a dev-family script (dev · start · serve · preview). */
+  hasDevScript: boolean;
+  /** CLAUDE.md carries the current conventions marker — the bridge/wrapper contract is installed. */
+  hasConventions: boolean;
   canPush: boolean;
   defaultBranch: string;
 }

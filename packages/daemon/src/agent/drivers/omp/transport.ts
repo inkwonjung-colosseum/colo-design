@@ -52,6 +52,8 @@ export class OmpTransport {
     });
     // The agent's own log stream — useful in the daemon log, never parsed.
     this.proc.stderr?.on("data", () => undefined);
+    // An EPIPE racing the agent's exit must not become an uncaughtException.
+    this.proc.stdin?.on("error", () => undefined);
     this.lines = createInterface({ input: this.proc.stdout ?? process.stdout });
     this.lines.on("line", (line) => this.onLine(line));
     const end = (exitCode: number | null) => {
@@ -110,15 +112,30 @@ export class OmpTransport {
 
   /**
    * A client → agent command; resolves with the response's `data` (or `{}`)
-   * and rejects on `success: false` or transport death.
+   * and rejects on `success: false` or transport death. `timeoutMs` bounds
+   * control-plane calls — a wedged agent that never answers must not hang
+   * an interrupt forever. Omit it for turn-length commands (`prompt`).
    */
-  command<T = Wire>(type: string, params?: Wire): Promise<T> {
+  command<T = Wire>(type: string, params?: Wire, timeoutMs?: number): Promise<T> {
     if (this.ended) return Promise.reject(new Error("pi transport closed"));
     const id = `req-${this.nextId++}`;
     return new Promise<T>((resolve, reject) => {
+      const timer =
+        timeoutMs !== undefined
+          ? setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error(`omp ${type} timed out after ${timeoutMs}ms`));
+            }, timeoutMs)
+          : undefined;
       this.pending.set(id, {
-        resolve: resolve as (value: Wire) => void,
-        reject,
+        resolve: (value: Wire) => {
+          clearTimeout(timer);
+          resolve(value as T);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
       });
       this.write({ id, type, ...(params ?? {}) });
     });

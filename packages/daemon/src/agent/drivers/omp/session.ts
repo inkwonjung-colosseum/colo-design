@@ -1,5 +1,6 @@
 import type { ContextUsage, SessionCommand, SessionModelInfo } from "@colo-design/protocol";
-import type { AgentSession, DriverHooks, LaunchConfig, SessionHandle, Turn } from "../../driver.js";
+import type { AgentSession, DriverHooks, LaunchConfig, Turn } from "../../driver.js";
+import { ompModelRows } from "./catalog.js";
 import { OmpTransport } from "./transport.js";
 
 /** The omp wire shapes this driver reads — kept loose, the protocol evolves. */
@@ -13,9 +14,12 @@ type Wire = Record<string, any>;
  *
  * Turn model: `prompt` resolves on acceptance; the turn's end is the
  * `agent_end` event with `willRetry` unset — retries and queued
- * continuations settle inside it. `abort` interrupts; `steer`/`follow_up`
- * carry mid-turn input.
+ * continuations settle inside it. `abort` interrupts. Mid-turn input is
+ * the core's held queue, not a wire call.
  */
+/** The single mode row both the descriptor and the chip share. */
+export const OMP_MODE_ROWS = [{ id: "default", label: "Default", tier: "moderate" as const }];
+
 export class OmpAgentSession implements AgentSession {
   private readonly transport: OmpTransport;
   private readonly ready: Promise<void>;
@@ -26,10 +30,15 @@ export class OmpAgentSession implements AgentSession {
   private turnFailed: string | null = null;
   private turnCostUsd: number | null = null;
   private currentModel: string | null = null;
+  private initialModel: string | null = null;
   private availableCommands: SessionCommand[] = [];
   private messageSeq = 0;
   private currentMessageId = "m0";
   private readonly launch: LaunchConfig;
+
+  get alive(): boolean {
+    return !this.closed && this.transport.alive;
+  }
 
   constructor(
     command: string,
@@ -51,9 +60,6 @@ export class OmpAgentSession implements AgentSession {
     this.ready = this.handshake();
   }
 
-  handle(): SessionHandle {
-    return { provider: "omp", vendorSessionId: this.vendorSessionId ?? "" };
-  }
   private async handshake(): Promise<void> {
     // 되감기의 fork: the process opened the OLD session via --session; the
     // fork command cuts it at the dropped prompt's entry and switches this
@@ -63,12 +69,14 @@ export class OmpAgentSession implements AgentSession {
         ? this.launch.resumeSessionAt
         : null;
     if (forkAt) {
-      await this.transport.command("branch", { entryId: forkAt });
+      await this.transport.command("branch", { entryId: forkAt }, 15_000);
     }
-    const state = (await this.transport.command("get_state")) as Wire;
+    const state = (await this.transport.command("get_state", undefined, 15_000)) as Wire;
     this.vendorSessionId = typeof state.sessionId === "string" ? state.sessionId : null;
     const model = (state.model ?? null) as Wire | null;
     this.currentModel = model?.id ? String(model.id) : this.launch.model;
+    // The model the CLI opened with — the target a null pick restores.
+    this.initialModel = this.currentModel;
     this.hooks.onEvent({
       kind: "init",
       sessionId: this.vendorSessionId ?? this.launch.sessionId,
@@ -122,30 +130,15 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  /** Mid-turn input — omp's own steer queue, delivered between tool rounds. */
-  async steer(turn: Turn): Promise<void> {
-    await this.ready;
-    await this.transport.command("steer", {
-      message: turn.text,
-      ...(turn.images?.length
-        ? {
-            images: turn.images.map((image) => ({
-              type: "image",
-              data: image.data,
-              mimeType: image.mediaType,
-            })),
-          }
-        : {}),
-    });
-  }
-
   async interrupt(): Promise<"answered" | "timeout" | "dead"> {
     if (!this.transport.alive) return "dead";
     try {
-      await this.transport.command("abort");
+      await this.transport.command("abort", undefined, 10_000);
       return "answered";
     } catch {
-      return "dead";
+      // A wedged agent that never answered is a timeout, not a corpse —
+      // only a dead transport is "dead".
+      return this.transport.alive ? "timeout" : "dead";
     }
   }
 
@@ -157,35 +150,46 @@ export class OmpAgentSession implements AgentSession {
 
   async setModel(id: string | null): Promise<void> {
     await this.ready;
-    if (id === null) return;
+    // null = back to the CLI's own choice — the model it opened with.
+    const target = id ?? this.initialModel;
+    if (target === null) return;
     // The picker's value is "provider/modelId" when the catalog said so.
-    const slash = id.indexOf("/");
-    const provider = slash > 0 ? id.slice(0, slash) : "";
-    const modelId = slash > 0 ? id.slice(slash + 1) : id;
-    await this.transport.command("set_model", { provider, modelId });
-    this.currentModel = id;
+    const slash = target.indexOf("/");
+    const provider = slash > 0 ? target.slice(0, slash) : "";
+    const modelId = slash > 0 ? target.slice(slash + 1) : target;
+    await this.transport.command("set_model", { provider, modelId }, 10_000);
+    this.currentModel = target;
   }
 
   async setEffort(effort: string | null): Promise<void> {
     await this.ready;
     if (effort === null) return;
-    await this.transport.command("set_thinking_level", { level: effort });
+    await this.transport.command("set_thinking_level", { level: effort }, 10_000);
   }
 
   async setFastMode(on: boolean): Promise<void> {
     await this.ready;
-    await this.transport.command("set_fast_mode", { enabled: on });
+    await this.transport.command("set_fast_mode", { enabled: on }, 10_000);
   }
 
-  async modes(): Promise<Array<{ id: string; label: string; description?: string }> | null> {
-    return [{ id: "default", label: "Default" }];
+  async modes(): Promise<Array<{
+    id: string;
+    label: string;
+    description?: string;
+    tier?: string;
+  }> | null> {
+    return OMP_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier }));
   }
 
   async commands(): Promise<SessionCommand[]> {
     await this.ready;
     if (this.availableCommands.length === 0) {
       try {
-        const data = (await this.transport.command("get_available_commands")) as Wire;
+        const data = (await this.transport.command(
+          "get_available_commands",
+          undefined,
+          10_000,
+        )) as Wire;
         this.availableCommands = this.mapCommands(data?.commands);
       } catch {
         // No palette is better than a wrong one.
@@ -197,26 +201,13 @@ export class OmpAgentSession implements AgentSession {
   async models(): Promise<SessionModelInfo[]> {
     await this.ready;
     try {
-      const data = (await this.transport.command("get_available_models")) as Wire;
+      const data = (await this.transport.command(
+        "get_available_models",
+        undefined,
+        10_000,
+      )) as Wire;
       const rows = Array.isArray(data?.models) ? (data.models as Wire[]) : [];
-      return rows.map((m) => {
-        const provider = String(m.provider ?? "");
-        const modelId = String(m.id ?? m.name ?? "");
-        const value = provider && modelId ? `${provider}/${modelId}` : modelId;
-        const thinking = (m.thinking ?? null) as Wire | null;
-        const efforts = Array.isArray(thinking?.efforts)
-          ? (thinking.efforts as unknown[]).map(String)
-          : null;
-        return {
-          value,
-          displayName: String(m.name ?? modelId),
-          resolvedModel: modelId || null,
-          description: "",
-          supportsEffort: m.reasoning === true,
-          supportedEffortLevels: efforts as SessionModelInfo["supportedEffortLevels"],
-          supportsFastMode: true,
-        };
-      });
+      return ompModelRows(rows);
     } catch {
       return [];
     }
@@ -225,7 +216,7 @@ export class OmpAgentSession implements AgentSession {
   async contextUsage(): Promise<ContextUsage | null> {
     await this.ready;
     try {
-      const stats = (await this.transport.command("get_session_stats")) as Wire;
+      const stats = (await this.transport.command("get_session_stats", undefined, 10_000)) as Wire;
       const usage = (stats?.contextUsage ?? null) as Wire | null;
       const tokens = stats?.tokens as Wire | undefined;
       const cost = typeof stats?.cost === "number" ? stats.cost : null;
@@ -381,6 +372,11 @@ export class OmpAgentSession implements AgentSession {
   private onTransportEnd(_code: number | null): void {
     if (this.closed) return;
     this.closed = true;
+    // A pipe that dies mid-turn is a crash, not a success — mark the turn
+    // failed before settling it so the tape records what happened.
+    if (this.turnActive && this.turnFailed === null) {
+      this.turnFailed = "transport closed mid-turn";
+    }
     if (this.turnActive) this.endTurn();
     this.hooks.onTransportEnd(null);
   }

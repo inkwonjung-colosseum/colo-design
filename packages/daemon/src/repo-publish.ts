@@ -3,6 +3,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type ChatEvent,
   type DeveloperReview,
   type DiffFile,
   type DiffStatus,
@@ -27,6 +28,29 @@ import {
   SHOTS_DIR,
 } from "./repo-core.js";
 
+/** The `<img>` needs a media type; the committed file's extension is the
+ *  capture's own (see HandoffShot.extension). */
+const SHOT_MEDIA_TYPES: Record<string, string> = {
+  ".webp": "image/webp",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".avif": "image/avif",
+};
+
+/**
+ * A route or state becomes part of a committed filename: separators and
+ * `..` would let it walk out of `.colo-design/shots/` (or simply fail to
+ * match on read-back). Korean stays — the route keeps its own words.
+ */
+function shotNamePart(value: string): string {
+  return value
+    .replace(/[/\\]+/g, "-")
+    .replace(/\.\.+/g, ".")
+    .replace(/^\.+/, "");
+}
+
 export class PublishCycle {
   constructor(
     private readonly core: RepoCore,
@@ -40,6 +64,13 @@ export class PublishCycle {
 
   /** D88: the developer comments the last 상태 확인 read — 답하기 resolves ids against this. */
   private lastReviews: DeveloperReview[] = [];
+  /**
+   * hero-synthesis D1: ids the daemon has already SEEN, for `review.arrived`.
+   * `null` until the first successful read — a daemon that just booted must
+   * not announce every old comment as new (the poll's own count guard makes
+   * the same call for notices).
+   */
+  private knownReviewIds: Set<number> | null = null;
 
   /**
    * 커미티 2026-09-15 판정 1·2: 폴링이 **읽어서 본** 사이클의 끝(반영됨·반려).
@@ -53,6 +84,10 @@ export class PublishCycle {
   async runSave(options: {
     message?: string;
     onSessionTurn?: (brief: string) => void;
+    /** hero-synthesis D1: the conversation this save belongs to (세션 테이프). */
+    sessionId?: string;
+    /** Declared screens — the saved card names which ones the files touch. */
+    screens?: Array<{ route: string; title: string }>;
   }): Promise<DiffStatus> {
     if (!this.core.isCloned()) {
       return this.core.setDiff({
@@ -74,7 +109,7 @@ export class PublishCycle {
     // 막지 않는다 — 네트워크가 없다고 저장을 막을 이유는 없다.
     if (this.core.openHandoff || this.endedHandoff) await this.refreshHandoff().catch(() => null);
 
-    // A conflict left for Claude is not a save's ingredient: the unmerged
+    // A conflict left for the agent is not a save's ingredient: the unmerged
     // files count as changes awaiting 저장, and staging exactly the approved
     // paths would make git conclude the open merge (or, after a stash-pop
     // fight, commit) with the markers themselves baked in — then push them
@@ -102,6 +137,7 @@ export class PublishCycle {
      * push that never landed leaves none, so the base is.
      */
     let retryPush = false;
+    let retryFiles: string[] = [];
     if (approved.length === 0 && this.core.branch) {
       const onRemote = (
         await this.core
@@ -113,6 +149,14 @@ export class PublishCycle {
         : `origin/${this.core.baseBranch}..${this.core.branch}`;
       const waiting = (await this.core.git(["rev-list", "--count", range]).catch(() => "")).trim();
       retryPush = Number(waiting) > 0;
+      // A push retry carries no fresh diff — the saved card names the files
+      // the waiting commits already hold.
+      if (retryPush) {
+        retryFiles = (await this.core.git(["diff", "--name-only", range]).catch(() => ""))
+          .split("\n")
+          .map((path) => path.trim())
+          .filter(Boolean);
+      }
     }
     if (approved.length === 0 && !retryPush) {
       return this.core.setDiff({
@@ -151,7 +195,21 @@ export class PublishCycle {
     await this.core.refreshPendingChanges();
     const message =
       memo ?? (await this.core.git(["log", "-1", "--pretty=%s"]).catch(() => "")).trim();
-    return this.core.setDiff({ stage: "published", commit, message });
+    const status = this.core.setDiff({ stage: "published", commit, message });
+    // hero-synthesis D1: the save lands on the session tape — a reloaded
+    // window replays the card instead of losing it with `diffStatus`.
+    this.deps.onCycleEvent?.(
+      {
+        kind: "cycle.saved",
+        at: new Date().toISOString(),
+        commit,
+        message,
+        files: approved.length > 0 ? approved : retryFiles,
+        screens: screensOfFiles(approved.length > 0 ? approved : retryFiles, options.screens ?? []),
+      },
+      options.sessionId,
+    );
+    return status;
   }
 
   /**
@@ -201,6 +259,8 @@ export class PublishCycle {
     body?: string;
     shots?: HandoffShot[];
     onSessionTurn?: (brief: string) => void;
+    /** hero-synthesis D1: the conversation this handoff belongs to. */
+    sessionId?: string;
     /** D93: the project's comment store + declared titles, for the PR body. */
     commentsFile?: string;
     screenTitles?: Array<{ route: string; title: string }>;
@@ -227,7 +287,7 @@ export class PublishCycle {
         stage: "failed",
         gate: "pr",
         detail:
-          "GitHub 레포가 아니라 개발자에게 넘길 수 없습니다 — 설정에서 레포 주소를 확인해 주세요.",
+          "GitHub 레포가 아니라 개발자에게 넘길 수 없습니다 — 프로젝트의 레포 주소를 확인해 주세요.",
       });
     }
     const client = this.core.gitHubClient?.() ?? null;
@@ -293,7 +353,18 @@ export class PublishCycle {
           });
       const handoff: HandoffStatus = pull;
       this.core.setCycle(branch, handoff);
-      return this.core.setDiff({ stage: "handed-off", handoff });
+      const status = this.core.setDiff({ stage: "handed-off", handoff });
+      // hero-synthesis D1: the milestone line — 넘겼어요 — joins the tape.
+      this.deps.onCycleEvent?.(
+        {
+          kind: "cycle.handed",
+          at: new Date().toISOString(),
+          pr: handoff.number,
+          ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
+        },
+        options.sessionId,
+      );
+      return status;
     } catch (error) {
       return this.failGate("pr", error, options.onSessionTurn);
     }
@@ -324,8 +395,10 @@ export class PublishCycle {
       mkdirSync(join(this.core.root, SHOTS_DIR), { recursive: true });
       for (const shot of shots) {
         // A route keeps its Korean; only its path separators become dashes.
+        // Route AND state pass the same gate — a state is a wire value too,
+        // and `..` or a separator would walk the name out of SHOTS_DIR.
         // The extension is the capture's own — see HandoffShot.
-        const name = `${shot.route.replaceAll("/", "-")}--${shot.state}${shot.extension}`;
+        const name = `${shotNamePart(shot.route)}--${shotNamePart(shot.state)}${shot.extension}`;
         writeFileSync(join(this.core.root, SHOTS_DIR, name), shot.image);
         await this.core.git(["add", "--", `${SHOTS_DIR}/${name}`]);
         // Only the url's spaces are escaped — a Korean route reads as itself.
@@ -349,6 +422,44 @@ export class PublishCycle {
       return body;
     }
     return `${body.replace(/\n*$/, "")}\n\n### 화면 미리보기\n\n${links.join("\n")}\n`;
+  }
+
+  /**
+   * 보낸 화면 동결 (preview.md §1-E): one committed capture, read out of the
+   * handoff branch with `git show` — never the worktree, so the frozen stage
+   * keeps showing '보낸 그대로' after the work moved on, was 반려'd, or the
+   * clone went back to the base. The remote ref is tried first: a merged
+   * cycle's local branch may already be gone while `origin/` still holds it.
+   * Null is the honest answer for every absence — a repo that refused shots
+   * (`shots: false`), a capture that failed, a branch nobody pushed.
+   */
+  async handoffShot(
+    route: string,
+    state: string,
+  ): Promise<{ mediaType: string; data: string } | null> {
+    if (!this.core.isCloned()) return null;
+    const branch = this.core.openHandoff?.branch ?? this.endedHandoff?.branch ?? null;
+    if (!branch) return null;
+    // The same name attachShots wrote — route and state pass the same
+    // normalization so the lookup matches what was committed.
+    const name = `${shotNamePart(route)}--${shotNamePart(state)}`;
+    for (const ref of [`origin/${branch}`, branch]) {
+      const listing = await this.core
+        .git(["ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
+        .catch(() => "");
+      const file = listing
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(`${SHOTS_DIR}/${name}.`));
+      if (!file) continue;
+      const data = await this.core
+        .git(["show", `${ref}:${file}`], this.core.root, {}, true)
+        .catch(() => "");
+      if (data === "") continue;
+      const ext = file.slice(file.lastIndexOf("."));
+      return { mediaType: SHOT_MEDIA_TYPES[ext] ?? "application/octet-stream", data };
+    }
+    return null;
   }
 
   /**
@@ -377,6 +488,17 @@ export class PublishCycle {
     }
 
     const handoff: HandoffStatus = pull;
+    // hero-synthesis D1: 반영됨 is news the moment the daemon learns it —
+    // here (상태 확인 · 저장의 머리) or in the poll below. The target's own
+    // state is the guard: a handoff already staged or landed as merged does
+    // not announce twice. 반려 has no tape event — the contract names only
+    // `cycle.merged`; the notice and the review rows carry that story.
+    if (pull.state === "merged" && target.state !== "merged") {
+      this.deps.onCycleEvent?.(
+        { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
+        undefined,
+      );
+    }
     // 사이클을 끝내는 판정은 둘이다: 반영됨과 반려. 반려를 사이클로 계속 들고
     // 있으면 칩이 `저장됨` 으로 떨어져(넘기기까지 열린다) 저장은 아무도 읽지
     // 않는 브랜치에 쌓이고, 넘기기는 닫힌 요청의 제목·본문만 덮어쓴다 —
@@ -410,8 +532,17 @@ export class PublishCycle {
     const pull = await client.getPullRequest({ ...slug, number: current.number }).catch(() => null);
     if (!pull) return current;
 
-    if (pull.state === "merged" || pull.state === "closed") this.endedHandoff = pull;
-    else this.core.setCycle(this.core.branch, pull);
+    if (pull.state === "merged" || pull.state === "closed") {
+      // hero-synthesis D1: the poll's fresh read of 반영됨 is the same news —
+      // `endedHandoff` already holding a merged pull means it was announced.
+      if (pull.state === "merged" && this.endedHandoff?.state !== "merged") {
+        this.deps.onCycleEvent?.(
+          { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
+          undefined,
+        );
+      }
+      this.endedHandoff = pull;
+    } else this.core.setCycle(this.core.branch, pull);
     return await this.withReviews(pull);
   }
 
@@ -500,7 +631,23 @@ export class PublishCycle {
           });
         }
       };
-      await collect().catch(() => undefined);
+      const collected = await collect()
+        .then(() => true)
+        .catch(() => false);
+      // hero-synthesis D1: ids this read adds are the 사람 메시지's arrival —
+      // the poll and 상태 확인 share this path, so both record the same rows.
+      // A refused read seeds nothing: announcing every old comment as new on
+      // the next successful read is worse than staying quiet once.
+      if (collected) {
+        const known = this.knownReviewIds;
+        if (known !== null) {
+          const arrived = reviews.filter((review) => !known.has(review.id));
+          if (arrived.length > 0) {
+            this.deps.onCycleEvent?.({ kind: "review.arrived", reviews: arrived }, undefined);
+          }
+        }
+        this.knownReviewIds = new Set(reviews.map((review) => review.id));
+      }
     }
     this.lastReviews = reviews;
     return { ...handoff, reviews };
@@ -539,15 +686,15 @@ export class PublishCycle {
     onSessionTurn: ((brief: string) => void) | undefined,
   ): DiffStatus {
     const detail = detailOf(error, this.core.pat);
-    // D90 ⓑ: `pr` 은 Claude 에게 가지 않는다 — PR 열기 실패의 원인은 토큰
-    // 권한 · 브랜치 보호 · 네트워크라 Claude 가 고칠 게 없어 헛돈다. 웹이
+    // D90 ⓑ: `pr` 은 AI 에게 가지 않는다 — PR 열기 실패의 원인은 토큰
+    // 권한 · 브랜치 보호 · 네트워크라 AI 가 고칠 게 없어 헛돈다. 웹이
     // 넘기기 대화상자의 안내(넘기지 못했습니다 + 설정 열기)로 응답한다.
     // `push` 는 갈라진다: 인증 · 권한 사유면 안내로, 그 외(non-fast-forward
-    // 등)는 지금처럼 Claude — 모르면 Claude 쪽(보수적).
+    // 등)는 지금처럼 AI — 모르면 AI 쪽(보수적).
     const pushAuth = gate === "push" && PUSH_AUTH_FAILURE.test(detail);
     const skipClaude = gate === "pr" || pushAuth;
     if (!skipClaude) {
-      // The failure is actionable by Claude, not by the planner: hand it over
+      // The failure is actionable by the agent, not by the planner: hand it over
       // the same wire a typed message uses, output tail included. The step is
       // named the way the planner's button is, not the way git is.
       onSessionTurn?.(
@@ -580,4 +727,36 @@ export interface PublishDeps {
   claudeMemo(files: DiffFile[]): Promise<string | null>;
   /** A merged cycle's snapshots are history, not exits. */
   clearCheckpoints(): Promise<void>;
+  /**
+   * 사이클 사건의 기록 (hero-synthesis D1): 저장 · 넘김 · 반영 · 코멘트 도착을
+   * 세션 채널로 보내고 테이프에 남긴다. `sessionId` 는 저장·넘기기를 부른
+   * 대화 — 없으면 붙이는 쪽이 마지막 활성 세션으로 귀속한다.
+   */
+  onCycleEvent?(event: ChatEvent, sessionId?: string): void;
+}
+
+/**
+ * Which declared screens a save's file list touches (hero-synthesis D1): a
+ * file whose path ends with the route's path part matches outright; a bare
+ * basename match counts only when exactly one screen claims that tail —
+ * two screens sharing a name is ambiguity, not a double match.
+ */
+function screensOfFiles(
+  files: string[],
+  screens: Array<{ route: string; title: string }>,
+): Array<{ route: string; title: string }> {
+  return screens.filter((screen) => {
+    const routePath = screen.route.replace(/^\/+/, "").toLowerCase();
+    const tail = routePath.split("/").pop() ?? routePath;
+    const tailUnique =
+      screens.filter(
+        (other) => (other.route.replace(/^\/+/, "").toLowerCase().split("/").pop() ?? "") === tail,
+      ).length === 1;
+    return files.some((file) => {
+      const path = file.toLowerCase().replace(/\.[^./]+$/, "");
+      if (path.endsWith(routePath)) return true;
+      const base = path.split("/").pop() ?? path;
+      return tailUnique && base === tail;
+    });
+  });
 }

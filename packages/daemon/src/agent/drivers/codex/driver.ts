@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { realpath, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,7 +14,7 @@ import type {
   ProviderDescriptor,
   TranscriptStore,
 } from "../../driver.js";
-import { CodexAgentSession } from "./session.js";
+import { CODEX_MODE_ROWS, CodexAgentSession } from "./session.js";
 import {
   codexHome,
   collectPrompts,
@@ -26,7 +27,6 @@ import {
 
 const run = promisify(execFile);
 const CODEX_CAPABILITIES = {
-  steer: true,
   rewind: true,
   usage: true,
   contextUsage: true,
@@ -34,8 +34,6 @@ const CODEX_CAPABILITIES = {
   effort: true,
   modelSelect: true,
   slashCommands: true,
-  mcpServers: false,
-  inProcessMcp: false,
   planMode: "plan",
   subtasks: false,
 } as const;
@@ -95,11 +93,7 @@ export class CodexDriver implements AgentDriver {
     return {
       id: this.id,
       label: "Codex",
-      modes: [
-        { id: "default", label: "Default", tier: "moderate" },
-        { id: "plan", label: "Plan", tier: "planning" },
-        { id: "bypass", label: "Bypass", tier: "dangerous" },
-      ],
+      modes: CODEX_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier })),
       defaultModeId: "default",
       capabilities: { ...CODEX_CAPABILITIES },
     };
@@ -113,7 +107,7 @@ export class CodexDriver implements AgentDriver {
   async isAvailable(): Promise<Diagnostic> {
     const executable = this.exe();
     if (!executable) {
-      return { ok: false };
+      return { ok: false, reason: "Codex CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요." };
     }
     let version: string | null = null;
     try {
@@ -134,7 +128,7 @@ export class CodexDriver implements AgentDriver {
   createSession(launch: LaunchConfig, hooks: DriverHooks): AgentSession {
     const executable = this.exe();
     if (!executable) throw new Error("Codex CLI 를 찾지 못했습니다.");
-    return new CodexAgentSession(this.id, executable, launch, hooks);
+    return new CodexAgentSession(executable, launch, hooks);
   }
 
   // -------------------------------------------------------------------------
@@ -145,19 +139,19 @@ export class CodexDriver implements AgentDriver {
     list: async (cwd, limit = 50) => {
       let real = cwd;
       try {
-        real = realpathSync(cwd);
+        real = await realpath(cwd);
       } catch {
         // The clone may not exist yet — compare the spelling we were given.
       }
       const rows: ImportableSession[] = [];
-      for (const path of listRolloutFiles(codexHome())) {
+      for (const path of await listRolloutFiles(codexHome())) {
         if (rows.length >= limit) break;
-        const meta = readSessionMeta(path);
+        const meta = await readSessionMeta(path);
         if (!meta || (meta.cwd !== real && meta.cwd !== cwd)) continue;
-        const prompts = collectPrompts(readRolloutLines(path));
+        const prompts = await collectPrompts(await readRolloutLines(path));
         let lastModified = 0;
         try {
-          lastModified = Math.round(statSync(path).mtimeMs);
+          lastModified = Math.round((await stat(path)).mtimeMs);
         } catch {
           lastModified = meta.timestamp ? Date.parse(meta.timestamp) || 0 : 0;
         }
@@ -172,21 +166,21 @@ export class CodexDriver implements AgentDriver {
     },
 
     title: async (id, _cwd) => {
-      const path = findRollout(codexHome(), id);
+      const path = await findRollout(codexHome(), id);
       if (!path) return null;
-      const prompts = collectPrompts(readRolloutLines(path));
+      const prompts = await collectPrompts(await readRolloutLines(path));
       return prompts[0]?.text.split("\n", 1)[0]?.slice(0, 80) ?? null;
     },
 
     import: async (id, _cwd) => {
-      const path = findRollout(codexHome(), id);
-      return path ? replayRollout(readRolloutLines(path)) : [];
+      const path = await findRollout(codexHome(), id);
+      return path ? replayRollout(await readRolloutLines(path)) : [];
     },
 
     /** 대화록에 이미 있는 프롬프트 수 — 재시작 뒤 턴 번호를 이어 셀 때의 밑값. */
     promptCount: async (id, _cwd) => {
-      const path = findRollout(codexHome(), id);
-      return path ? collectPrompts(readRolloutLines(path)).length : 0;
+      const path = await findRollout(codexHome(), id);
+      return path ? (await collectPrompts(await readRolloutLines(path))).length : 0;
     },
 
     /**
@@ -195,9 +189,9 @@ export class CodexDriver implements AgentDriver {
      * 버릴 때는 cut 이 null — 세션 쪽은 그때 빈 스레드를 새로 연다.
      */
     rewind: async (id, _cwd, turn) => {
-      const path = findRollout(codexHome(), id);
+      const path = await findRollout(codexHome(), id);
       if (!path) return null;
-      const prompts = collectPrompts(readRolloutLines(path));
+      const prompts = await collectPrompts(await readRolloutLines(path));
       if (turn < 1 || turn > prompts.length) return null;
       const drops = prompts[turn - 1]?.turnId ?? null;
       const cut = turn > 1 ? (prompts[turn - 2]?.turnId ?? null) : null;
@@ -206,13 +200,34 @@ export class CodexDriver implements AgentDriver {
       return { cut, drops, answerCount: prompts.length };
     },
 
+    has: async (id, _cwd) => (await findRollout(codexHome(), id)) !== null,
+
     delete: async (id, _cwd) => {
-      const path = findRollout(codexHome(), id);
+      const path = await findRollout(codexHome(), id);
       if (!path) return;
       try {
-        unlinkSync(path);
+        await unlink(path);
       } catch {
         // Already gone.
+      }
+    },
+
+    /**
+     * A removed project's sweep: rollouts are date-keyed, so the scan still
+     * walks the store — but only the first line (`session_meta`) decides the
+     * cwd match; the full prompt read `list` pays for is skipped.
+     */
+    deleteAll: async (cwd) => {
+      let real = cwd;
+      try {
+        real = await realpath(cwd);
+      } catch {
+        // The clone may already be gone — compare the spelling we were given.
+      }
+      for (const path of await listRolloutFiles(codexHome())) {
+        const meta = await readSessionMeta(path);
+        if (!meta || (meta.cwd !== real && meta.cwd !== cwd)) continue;
+        await unlink(path).catch(() => undefined);
       }
     },
   };

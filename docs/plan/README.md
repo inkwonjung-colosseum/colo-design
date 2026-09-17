@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | 대화면 | `chat.md` | 메시지 8종 중 3종은 이미 있음 | 버블·Markdown·`ActivitySummary`·`QuestionCard`·`PinTray`·큐 | `ScreenCard`·`MilestoneRow`·`SaveCard`·`HumanMessage` + 컴포저 상태 칩 |
 | 홈 인박스 | `home.md` | 결정 카드 인용은 오늘 데이터로 됨 | `PendingQuestion.questions[]` 원문·`respondQuestion`·`openThread` 내비 | "마지막 행동 한 줄"(메인 턴용) + pending 타임스탬프 |
-| 미리보기·띠 | `preview.md` | 제목바는 대체가 아니라 흡수 | `.screenpanel__bar`·`deriveDelivery`·`pinsSync`·`HandoffShot`(이미 커밋됨) | `JourneyBar`·`deriveJourney()`·`useMarks` 레지스트리·`FrozenStage` |
+| 미리보기·띠 | `preview.md` | 제목바는 대체가 아니라 흡수 | `.screenpanel__bar`·`deriveDelivery`·`pinsSync`·`HandoffShot`(이미 커밋됨) | `JourneyMap`(제목 행 흡수)·`deriveJourney()`·`useMarks` 레지스트리·`FrozenStage` |
 | 상태·모달 | `states.md` | 8단어 어휘 = `DeliveryState` 유일 원천 | `deriveDelivery`·`ConfirmDialog`·저장 기록 드로어·push-stalled 재시도 | 토큰 만료 오버레이 + 모달 3종의 대화 카드화 |
 
 ## 2. 크로스 슬라이스 정합성 — 합의된 것과 조정한 것
@@ -53,7 +53,7 @@
 ## 4. 구현 순서 (슬라이스 통합)
 
 **P0 — 기반(기록과 어휘)**
-1. D1 `cycle` ChatEvent 4종 + history 재생 → D6 `docLabel` → `JourneyBar`+`deriveJourney()`(전체 폭, 읽기 전용) → 컴포저 상태 칩.
+1. D1 `cycle` ChatEvent 4종 + history 재생 → D6 `docLabel` → `JourneyMap`+`deriveJourney()`(제목 행, 읽기 전용) → 컴포저 상태 칩.
    검증: 저장→넘기기→반영이 새로고침 후에도 대화에 카드로 남는가.
 
 **P1 — 대화면 + 홈**

@@ -37,7 +37,7 @@ export type DaemonNotice =
     };
 
 /**
- * 상태 전환 중 부르는 값이 되는 것: Claude 가 멈췄거나(idle), 중단됐거나
+ * 상태 전환 중 부르는 값이 되는 것: AI 가 멈췄거나(idle), 중단됐거나
  * (error), 사용자의 답을 기다리거나(waiting_*). starting 과 running 은
  * 사용자가 방금 본 것이고 closed 는 스스로 닫은 것이다.
  */

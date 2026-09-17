@@ -115,7 +115,7 @@ export class CheckpointStore {
    * The move list is `git diff --name-status <tree>` filtered through the
    * one path rule: allowed paths that the snapshot has are checked out,
    * allowed paths it never had are deleted. Merge-conflicted paths (U) are
-   * left for Claude, exactly like a refresh leaves them.
+   * left for the agent, exactly like a refresh leaves them.
    */
   async checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
     if (!this.core.isCloned()) return { restored: [] };

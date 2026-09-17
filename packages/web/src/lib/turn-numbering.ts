@@ -38,6 +38,21 @@ export function answerTurnNumbers(blocks: Block[]): Map<string, number> {
   return turns;
 }
 /**
+ * 턴 끝 블록의 턴 번호 — 턴 블록 id → 그 턴의 번호. 셈은 answerTurnNumbers 와
+ * 같다(앞선 프롬프트의 수): 정산 줄이 되돌리기 · 다시 요청을 함께 실으므로,
+ * 이 셈이 답의 셈과 어긋나면 체크포인트가 엉뚱한 스냅샷을 고른다.
+ */
+export function turnBlockNumbers(blocks: Block[]): Map<string, number> {
+  let prompts = 0;
+  const turns = new Map<string, number>();
+  for (const block of blocks) {
+    if (block.type === "user") prompts += 1;
+    else if (block.type === "turn") turns.set(block.id, Math.max(prompts, 1));
+  }
+  return turns;
+}
+
+/**
  * 턴별 마지막 답의 블록 id — 턴 번호 → 그 턴의 마지막 답. 되돌리기 · 다시
  * 요청은 턴 단위 행동이다(같은 턴의 답들이 가리키는 체크포인트가 하나이므로)
  * — 답 카드마다 두르지 않고 그 턴의 마지막 답 하나에만 놓는다. 판정은

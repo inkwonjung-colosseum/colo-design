@@ -2,24 +2,31 @@ import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
   ColoDesignScreen,
+  PreviewTabMeta,
 } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
+import type { Daemon } from "../../lib/daemon-client";
 import { daemonLine, stateLabel } from "../../lib/format";
 import { parseAddress } from "../../lib/preview-address";
 import {
+  AppWindowIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CloseIcon,
   DesktopIcon,
   ExternalLinkIcon,
+  GlobeIcon,
   LockIcon,
   MapPinIcon,
   MobileIcon,
+  PlusIcon,
   RefreshIcon,
   RestartIcon,
   ServerOffIcon,
   TabletIcon,
 } from "../icons";
 import { Tip } from "../shell/Tip";
+import { FrozenStage } from "./FrozenStage";
 import { IframeHost } from "./IframeHost";
 import { NativeHost } from "./NativeHost";
 
@@ -41,12 +48,16 @@ function sameTarget(a: PreviewTarget, b: PreviewTarget): boolean {
 /** Where the native view actually is — its truth, not the tool's ask. */
 export interface PreviewLocation {
   path: string;
+  /** The full address — external pages show it whole in the bar. */
+  url?: string;
+  /** The pane is browsing a clicked link, not the preview (설정 `앱에서 링크 열기`). */
+  external?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
 }
 
 /**
- * An error the planner can hand to Claude. The native view's
+ * An error the planner can hand to the agent. The native view's
  * events build it now — the repo hook is gone.
  */
 export interface PreviewError {
@@ -62,6 +73,60 @@ export interface PreviewError {
  * names turn on real emulation; here they only narrow the stage.
  */
 type PreviewWidth = "mobile" | "tablet" | "desktop";
+
+/**
+ * 탭 스트립 (인앱 브라우저 1단계): the browser's tabs, drawn from the view's
+ * `colo-preview:tabs` truth — the web only renders and asks. A tab activates
+ * on click, closes on its ×, and `+` opens a fresh web tab (`tabNew` with no
+ * url). 탭이 하나도 없어도 스트립은 그린다 — `+` 가 유일한 탈출구니까.
+ */
+function TabStrip({ tabs, activeTabId }: { tabs: PreviewTabMeta[]; activeTabId: string | null }) {
+  const bridge = window.coloDesignDesktop?.preview;
+  return (
+    <div className="frame__tabs" role="tablist" aria-label="탭">
+      {tabs.map((tab) => (
+        <div
+          key={tab.id}
+          className={
+            tab.id === activeTabId
+              ? "frame__tab frame__tab--on"
+              : tab.discarded
+                ? "frame__tab frame__tab--asleep"
+                : "frame__tab"
+          }
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab.id === activeTabId}
+            className="frame__tabbtn"
+            title={tab.url ?? undefined}
+            onClick={() => void bridge?.tabActivate?.(tab.id)}
+          >
+            {tab.kind === "web" ? <GlobeIcon /> : <AppWindowIcon />}
+            <span className="frame__tabtitle">{tab.title}</span>
+          </button>
+          <button
+            type="button"
+            className="frame__tabclose"
+            aria-label={`${tab.title} 탭 닫기`}
+            onClick={() => void bridge?.tabClose?.(tab.id)}
+          >
+            <CloseIcon />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="frame__tabnew"
+        aria-label="새 탭"
+        onClick={() => void bridge?.tabNew?.()}
+      >
+        <PlusIcon />
+      </button>
+    </div>
+  );
+}
 
 /**
  * The preview pane: the toolbar, the browser-bar frame head and
@@ -93,9 +158,8 @@ export function PreviewHost({
   onCommentsMode,
   onLook,
   lookBusy = false,
-  pip,
-  pipLarge,
-  onPipToggle,
+  frozen = null,
+  frozenApi = null,
 }: {
   url: string | null;
   /** The server process behind `url` (RepoStatus.previewEpoch); the native page reloads under a new one. */
@@ -113,7 +177,7 @@ export function PreviewHost({
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
   /** 배지 클릭 — the memo input of that pin's tray row takes the focus. */
   onPinFocus: (id: string) => void;
-  /** The banner's `Claude에게 고쳐 달라고 하기`. */
+  /** The banner's `AI에게 고쳐 달라고 하기`. */
   onFixError: (error: PreviewError) => void;
   /** Screens the repo declared — empty until the bridge speaks. */
   screens: ColoDesignScreen[];
@@ -121,8 +185,9 @@ export function PreviewHost({
   target: PreviewTarget | null;
   onNavigate: (target: PreviewTarget) => void;
   onScreens: (screens: ColoDesignScreen[]) => void;
-  /** The native view's location reports arrive here. */
-  onLocation: (location: PreviewLocation) => void;
+  /** The native view's location reports arrive here; null when the pane
+      closes its page (외부 페이지 닫기). */
+  onLocation: (location: PreviewLocation | null) => void;
   location: PreviewLocation | null;
   /**
    * 본 곳 표식: 이번 수정 이후 기획자의 눈이
@@ -134,22 +199,61 @@ export function PreviewHost({
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
   /**
-   * 이 화면 Claude 에게 보여 주기: the whole frame, the route·
+   * 이 화면 AI 에게 보여 주기: the whole frame, the route·
    * state and the console tail go up as one turn. Native only — the iframe
    * cannot be photographed from here.
    */
   onLook?: (note: string) => void;
   /** True while the snapshot is being taken and the turn composed. */
   lookBusy?: boolean;
-  /** The docked Claude-view thumbnail — desktop only. */
-  pip: { frame: string; label: string } | null;
-  pipLarge: boolean;
-  onPipToggle: () => void;
+  /**
+   * 보낸 화면 동결 (preview.md §1-E): while set, the stage wears the frozen
+   * face — FrozenStage's bar and the committed capture over the view, with
+   * 시점 빌드 재현 (§3 2단계) one press away. Null: the plain live stage.
+   * The derivation lives with the panel that owns `delivery`; the host only
+   * dresses the stage.
+   */
+  frozen?: {
+    shot: { mediaType: string; data: string } | null;
+    stamp: string;
+    tone: "info" | "ok" | "warn";
+    mode: "sent" | "live";
+    onMode?: (mode: "sent" | "live") => void;
+  } | null;
+  /**
+   * The wire 실제로 열기 speaks through — the api and the conversation that
+   * owns the stage. Absent: the button is not on the bar.
+   */
+  frozenApi?: { api: Daemon["api"]; sessionId: string | null } | null;
 }) {
   const native = Boolean(window.coloDesignDesktop?.preview?.native);
   const [width, setWidth] = useState<PreviewWidth>("desktop");
   /** Bumped by 새로 고침: a clean reload on whichever host is mounted. */
   const [reloadNonce, setReloadNonce] = useState(0);
+  /**
+   * 탭 모델 (인앱 브라우저 1단계): the view owns the list — the strip and
+   * every kind 분기는 이 스냅샷을 읽는다. `preview:tabs` 가 첫 스냅샷이고
+   * `colo-preview:tabs` 가 이후를 밀어 준다.
+   */
+  const [tabState, setTabState] = useState<{
+    tabs: PreviewTabMeta[];
+    activeTabId: string | null;
+  }>({ tabs: [], activeTabId: null });
+  useEffect(() => {
+    if (!native) return;
+    const bridge = window.coloDesignDesktop?.preview;
+    if (!bridge) return;
+    let live = true;
+    void bridge.tabs?.().then((snapshot) => {
+      if (live && snapshot) setTabState(snapshot);
+    });
+    const off = bridge.onTabs?.((payload) => setTabState(payload));
+    return () => {
+      live = false;
+      off?.();
+    };
+  }, [native]);
+  const activeTab = tabState.tabs.find((tab) => tab.id === tabState.activeTabId) ?? null;
   /** The last `colo-preview:error` — one at a time, the newest wins. */
 
   /** 화면·상태 매트릭스: 선언 전부와 본 곳 표식. */
@@ -180,6 +284,19 @@ export function PreviewHost({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [matrixOpen]);
+  // 고정 해제 Esc: 얼린 얼굴(보낸 화면)이 떠 있을 때 한 번 누르면 지금 화면으로
+  // 돌아온다 — 세그먼트의 `지금 화면`과 같은 동작. 화면 목록이 열려 있으면
+  // Esc 는 그쪽의 몫이다.
+  const frozenOnMode = frozen?.onMode;
+  const frozenSent = frozen?.mode === "sent";
+  useEffect(() => {
+    if (!frozenSent || !frozenOnMode || matrixOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") frozenOnMode("live");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [frozenSent, frozenOnMode, matrixOpen]);
   const [error, setError] = useState<PreviewError | null>(null);
   /** The banner's `자세히`: the message starts clamped to one line. */
   const [detail, setDetail] = useState(false);
@@ -204,6 +321,11 @@ export function PreviewHost({
     setError(null);
   }, [url]);
 
+  // 오류 배너는 활성 탭의 것 — `colo-preview:error` 는 활성 탭만 보내니
+  // 탭을 바꾸면 지난 탭의 배너를 들고 가지 않는다.
+  useEffect(() => {
+    setError(null);
+  }, [tabState.activeTabId]);
   // 서버가 돌아오면 지난 화면을 버린다 (실사 결함): bring-up 이 `stopped` 를
   // 끄는 순간이 곧 재접속 신호고, iframe 이 브라우저 오류 페이지("웹페이지가
   // 일시적으로 다운되었…")를 쥐고 있으면 앱 전체 reload 로만 빠져나올 수
@@ -215,11 +337,22 @@ export function PreviewHost({
     wasStopped.current = stopped;
   }, [native, stopped]);
 
+  // 외부 페이지 모드 (설정 `앱에서 링크 열기`): 활성 탭의 kind 가 말한다 —
+  // web 탭이 뜬 pane 은 미리보기가 아니라 브라우저 탭이고, 주소창은 주소
+  // 전체를 보여 준다. kind 가 진실이라 첫 위치 보고가 아직 없는 새 탭도
+  // 빈 화면이 아니라 탐색 중으로 읽힌다.
+  const externalMode = activeTab?.kind === "web";
+  const externalUrl = externalMode ? (location?.url ?? activeTab?.url ?? null) : null;
+
   // What the bar shows when nobody is typing: the view's full address —
   // origin included, a browser bar's shape — else the ask. Typing stays free:
   // bare paths, `?state=`, and same-origin urls all parse.
   useEffect(() => {
     if (addressFocused) return;
+    if (externalUrl) {
+      setAddress(externalUrl);
+      return;
+    }
     const origin = url ? new URL(url).origin : "";
     const full = (path: string) => (origin === "" ? path : `${origin}${path}`);
     if (location) setAddress(full(location.path));
@@ -227,7 +360,7 @@ export function PreviewHost({
     else if (target?.kind === "screen")
       setAddress(full(target.state ? `${target.route}?state=${target.state}` : target.route));
     else setAddress(full("/"));
-  }, [url, location, target, addressFocused]);
+  }, [url, location, target, addressFocused, externalUrl]);
 
   useEffect(() => {
     return () => {
@@ -284,6 +417,41 @@ export function PreviewHost({
   }, [width]);
 
   const submitAddress = (raw: string) => {
+    // 규칙 9 — 주소창의 이동은 활성 탭의 몫이다. web 탭에서는 브라우저처럼
+    // 제자리 이동(새 탭을 만들지 않는다); preview 탭에서 다른 origin 의
+    // 전체 http(s) 주소는 새 web 탭으로 연다. 나머지 — 경로·`?state=`·
+    // 같은 origin 의 주소 — 는 예전 parseAddress 흐름 그대로.
+    const trimmed = raw.trim();
+    if (externalMode) {
+      let target: URL | null = null;
+      try {
+        target = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+      } catch {
+        target = null;
+      }
+      if (target && (target.protocol === "http:" || target.protocol === "https:")) {
+        setAddressError(null);
+        void window.coloDesignDesktop?.preview?.open?.(target.toString());
+        return;
+      }
+      setAddressError("http(s) 주소만 열 수 있습니다");
+      if (addressTimer.current !== null) window.clearTimeout(addressTimer.current);
+      addressTimer.current = window.setTimeout(() => setAddressError(null), 2500);
+      return;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      let offOrigin = false;
+      try {
+        offOrigin = !url || new URL(trimmed).origin !== new URL(url).origin;
+      } catch {
+        offOrigin = false;
+      }
+      if (offOrigin) {
+        setAddressError(null);
+        void window.coloDesignDesktop?.preview?.tabNew?.(trimmed);
+        return;
+      }
+    }
     if (!url) return;
     const verdict = parseAddress(raw, {
       origin: new URL(url).origin,
@@ -304,13 +472,16 @@ export function PreviewHost({
     );
   };
 
-  if (stopped) {
+  // 서버 중단 카드는 preview 탭의 얼굴 — web 탭이 활성이면 pane 은 그 탭의
+  // 것이니 정상 경로로 내려보낸다(스트립은 어느 경로든 그린다).
+  if (stopped && !externalMode) {
     const stoppedLine = daemonLine(stoppedDetail);
     // The 준비/실패 card's language (progress__card): one framed surface
     // centered in the column. The daemon's own words drop to a clipped mono
     // line under the human sentence — never the headline.
     return (
       <div className="preview">
+        {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
         <div className="progress progress--error">
           <div className="progress__card">
             <div className="progress__head">
@@ -320,7 +491,7 @@ export function PreviewHost({
               <h2>미리보기 서버 중단</h2>
             </div>
             <p className="progress__body">
-              화면을 그리는 서버가 멈췄습니다. 대화 내용은 그대로입니다.
+              화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
             </p>
             {stoppedLine && <div className="progress__detail">{stoppedLine}</div>}
             <div className="preview__stopactions">
@@ -340,7 +511,7 @@ export function PreviewHost({
                   })
                 }
               >
-                Claude에게 고쳐 달라고 하기
+                AI에게 고쳐 달라고 하기
               </button>
             </div>
           </div>
@@ -349,11 +520,14 @@ export function PreviewHost({
     );
   }
 
-  if (!url) {
+  // web 탭이 하나라도 살아 있으면 pane 은 비어 있지 않다 — 스트립이 그
+  // 탭들을 보여 주고, 활성화되면 슬롯이 그린다.
+  if (!url && !externalMode && !tabState.tabs.some((tab) => tab.kind === "web")) {
     return (
       <div className="preview">
+        {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
         <div className="preview__blank">
-          <p className="hint">미리보기 주소를 기다리는 중입니다.</p>
+          <p className="hint">화면이 바뀌면 여기에 뜹니다</p>
         </div>
       </div>
     );
@@ -361,9 +535,11 @@ export function PreviewHost({
 
   // The picker follows where the view IS — the ask is only its opening
   // bid. No `?state=` is what the repo's ScreenRunner labels `default`.
-  const activePath = location?.path ?? (target?.kind === "path" ? target.path : null);
+  // An external page has no screens: the derivation stays out entirely.
+  const activePath =
+    !externalMode && location ? location.path : target?.kind === "path" ? target.path : null;
   const activeRouteState =
-    target?.kind === "screen"
+    !externalMode && target?.kind === "screen"
       ? { route: target.route, state: target.state }
       : activePath !== null
         ? (() => {
@@ -380,7 +556,46 @@ export function PreviewHost({
   return (
     <div className="preview">
       <div className="preview__toolbar">
-        {screens.length > 0 && (
+        {externalMode
+          ? (() => {
+              // web 탭 위의 두 손잡이: `미리보기` 는 첫 preview 탭으로 돌아가고
+              // (살아 있는 탭이 없을 때만 mount 가 새로 만든다 — mount 는 멱등),
+              // `닫기` 는 활성 web 탭을 닫는다 — 다음 탭의 위치 보고가 주소창을
+              // 채우기 전까지 잠깐의 빈칸을 onLocation(null) 이 메운다.
+              const previewTab = tabState.tabs.find((tab) => tab.kind === "preview");
+              return previewTab || url ? (
+                <Tip label="프로젝트 미리보기로 돌아갑니다" side="bottom" align="start">
+                  <button
+                    type="button"
+                    className="preview__state"
+                    onClick={() => {
+                      if (previewTab)
+                        void window.coloDesignDesktop?.preview?.tabActivate?.(previewTab.id);
+                      else if (url)
+                        void window.coloDesignDesktop?.preview?.mount?.(url, epoch, origins);
+                    }}
+                  >
+                    <ChevronLeftIcon />
+                    미리보기
+                  </button>
+                </Tip>
+              ) : (
+                <Tip label="이 탭을 닫습니다" side="bottom" align="start">
+                  <button
+                    type="button"
+                    className="preview__state"
+                    onClick={() => {
+                      void window.coloDesignDesktop?.preview?.tabClose?.(activeTab?.id);
+                      onLocation(null);
+                    }}
+                  >
+                    닫기
+                  </button>
+                </Tip>
+              );
+            })()
+          : null}
+        {!externalMode && screens.length > 0 && (
           <div className="preview__matrixwrap">
             <Tip
               label={
@@ -503,7 +718,7 @@ export function PreviewHost({
           </div>
         )}
         <span className="preview__spacer" />
-        {native && (
+        {native && !externalMode && (
           <Tip
             label={
               commentsOn
@@ -524,106 +739,84 @@ export function PreviewHost({
             </button>
           </Tip>
         )}
-        <div className="preview__width" role="group" aria-label="폭">
-          <Tip label="휴대폰 폭으로 좁혀서 봅니다" side="bottom">
-            <button
-              type="button"
-              className={
-                width === "mobile" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"
-              }
-              aria-pressed={width === "mobile"}
-              onClick={() => setWidth("mobile")}
-            >
-              <MobileIcon />
-              모바일
-            </button>
-          </Tip>
-          <Tip label="태블릿 폭(768px)으로 봅니다" side="bottom">
-            <button
-              type="button"
-              className={
-                width === "tablet" ? "preview__widthbtn preview__widthbtn--on" : "preview__widthbtn"
-              }
-              aria-pressed={width === "tablet"}
-              onClick={() => setWidth("tablet")}
-            >
-              <TabletIcon />
-              태블릿
-            </button>
-          </Tip>
-          <Tip label="화면 전체 폭으로 봅니다" side="bottom">
-            <button
-              type="button"
-              className={
-                width === "desktop"
-                  ? "preview__widthbtn preview__widthbtn--on"
-                  : "preview__widthbtn"
-              }
-              aria-pressed={width === "desktop"}
-              onClick={() => setWidth("desktop")}
-            >
-              <DesktopIcon />
-              데스크톱
-            </button>
-          </Tip>
-        </div>
-        <Tip label="미리보기를 브라우저로" side="bottom">
+        {!externalMode && (
+          <div className="preview__width" role="group" aria-label="폭">
+            <Tip label="휴대폰 폭으로 좁혀서 봅니다" side="bottom">
+              <button
+                type="button"
+                className={
+                  width === "mobile"
+                    ? "preview__widthbtn preview__widthbtn--on"
+                    : "preview__widthbtn"
+                }
+                aria-pressed={width === "mobile"}
+                onClick={() => setWidth("mobile")}
+              >
+                <MobileIcon />
+                모바일
+              </button>
+            </Tip>
+            <Tip label="태블릿 폭(768px)으로 봅니다" side="bottom">
+              <button
+                type="button"
+                className={
+                  width === "tablet"
+                    ? "preview__widthbtn preview__widthbtn--on"
+                    : "preview__widthbtn"
+                }
+                aria-pressed={width === "tablet"}
+                onClick={() => setWidth("tablet")}
+              >
+                <TabletIcon />
+                태블릿
+              </button>
+            </Tip>
+            <Tip label="화면 전체 폭으로 봅니다" side="bottom">
+              <button
+                type="button"
+                className={
+                  width === "desktop"
+                    ? "preview__widthbtn preview__widthbtn--on"
+                    : "preview__widthbtn"
+                }
+                aria-pressed={width === "desktop"}
+                onClick={() => setWidth("desktop")}
+              >
+                <DesktopIcon />
+                데스크톱
+              </button>
+            </Tip>
+          </div>
+        )}
+        <Tip
+          label={externalMode ? "이 페이지를 OS 브라우저로" : "미리보기를 브라우저로"}
+          side="bottom"
+        >
           <button
             type="button"
             className="preview__link"
             onClick={() => {
               // The OS browser opens WHERE THE PLANNER IS — the current
-              // path rides along, not just the bare origin.
+              // path rides along, not just the bare origin. External pages
+              // hand over their whole address.
+              if (externalUrl) {
+                window.open(externalUrl, "_blank", "noopener");
+                return;
+              }
               const path = location?.path ?? address ?? "/";
               let full = url;
               try {
-                full = new URL(path, url).toString();
+                full = new URL(path, url ?? undefined).toString();
               } catch {
                 // a malformed path falls back to the bare origin
               }
-              window.open(full, "_blank", "noopener");
+              if (full) window.open(full, "_blank", "noopener");
             }}
           >
             <ExternalLinkIcon />새 창
           </button>
         </Tip>
       </div>
-      {error && (
-        <div className="preview__error" role="alert" data-testid="error-banner">
-          <div className="preview__error__text">
-            <strong>화면에 오류가 났습니다</strong>
-            <pre
-              className={
-                detail
-                  ? "preview__error__message preview__error__message--open"
-                  : "preview__error__message"
-              }
-            >
-              {error.message}
-            </pre>
-          </div>
-          <div className="preview__error__actions">
-            <button
-              type="button"
-              className="primary"
-              onClick={() => {
-                onFixError(error);
-                setError(null);
-              }}
-            >
-              Claude에게 고쳐 달라고 하기
-            </button>
-            <button
-              type="button"
-              className="machine__more"
-              aria-expanded={detail}
-              onClick={() => setDetail((v) => !v)}
-            >
-              {detail ? "접기" : "자세히"}
-            </button>
-          </div>
-        </div>
-      )}
       {/* Width is CSS on this wrapper for the iframe; the native side turns
           the same name into emulation. Reloading never narrows the app
           itself — the frame is told nothing. */}
@@ -633,7 +826,7 @@ export function PreviewHost({
             ? "preview__stage preview__stage--mobile"
             : width === "tablet"
               ? "preview__stage preview__stage--tablet"
-              : "preview__stage"
+              : "preview__stage preview__stage--desktop"
         }
       >
         <div className="preview__device">
@@ -644,6 +837,9 @@ export function PreviewHost({
               before the first screen: a pane that grows a head only when a
               screen is picked reads as if it were hiding something. */}
           {loading && <div className="frame__progress" aria-hidden="true" />}
+          {/* 탭 스트립 — 진행 바 아래·크롬 줄 위, 브라우저의 탭 자리.
+              네이티브만: iframe 경로는 탭이 없는 단일 화면이다. */}
+          {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
           <div className="frame__chrome">
             <div className="frame__side frame__side--left">
               <div className="frame__lights" aria-hidden="true">
@@ -652,34 +848,30 @@ export function PreviewHost({
                 <i />
               </div>
               <div className="frame__nav" role="group" aria-label="이동">
-                <Tip label="뒤로" side="bottom">
-                  <button
-                    type="button"
-                    className="frame__navbtn"
-                    aria-label="뒤로"
-                    disabled={native ? !location?.canGoBack : trail.at <= 0}
-                    onClick={() => {
-                      if (native) void window.coloDesignDesktop?.preview?.history?.(-1);
-                      else goTrail(-1);
-                    }}
-                  >
-                    <ChevronLeftIcon />
-                  </button>
-                </Tip>
-                <Tip label="앞으로" side="bottom">
-                  <button
-                    type="button"
-                    className="frame__navbtn"
-                    aria-label="앞으로"
-                    disabled={native ? !location?.canGoForward : trail.at >= trail.list.length - 1}
-                    onClick={() => {
-                      if (native) void window.coloDesignDesktop?.preview?.history?.(1);
-                      else goTrail(1);
-                    }}
-                  >
-                    <ChevronRightIcon />
-                  </button>
-                </Tip>
+                <button
+                  type="button"
+                  className="frame__navbtn"
+                  aria-label="뒤로"
+                  disabled={native ? !location?.canGoBack : trail.at <= 0}
+                  onClick={() => {
+                    if (native) void window.coloDesignDesktop?.preview?.history?.(-1);
+                    else goTrail(-1);
+                  }}
+                >
+                  <ChevronLeftIcon />
+                </button>
+                <button
+                  type="button"
+                  className="frame__navbtn"
+                  aria-label="앞으로"
+                  disabled={native ? !location?.canGoForward : trail.at >= trail.list.length - 1}
+                  onClick={() => {
+                    if (native) void window.coloDesignDesktop?.preview?.history?.(1);
+                    else goTrail(1);
+                  }}
+                >
+                  <ChevronRightIcon />
+                </button>
               </div>
               <Tip
                 label={
@@ -738,7 +930,7 @@ export function PreviewHost({
                 {/* The address bar proposes — declared routes, and the
                     route·state pairs when a screen declares more than one. */}
                 <datalist id="colo-frame-routes">
-                  {screens.flatMap((screen) => [
+                  {(externalMode ? [] : screens).flatMap((screen) => [
                     <option key={screen.route} value={screen.route}>
                       {screen.title}
                     </option>,
@@ -769,7 +961,7 @@ export function PreviewHost({
                 </span>
               )}
               {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
-              {width !== "desktop" && (
+              {width !== "desktop" && !externalMode && (
                 <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
               )}
               {/* 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
@@ -785,12 +977,12 @@ export function PreviewHost({
                   </button>
                 </Tip>
               )}
-              {native && onLook && (
+              {native && onLook && !externalMode && (
                 <Tip
                   label={
                     lookOpen
                       ? undefined
-                      : "화면 전체와 콘솔 기록을 Claude에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
+                      : "화면 전체와 콘솔 기록을 AI에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
                   }
                   side="bottom"
                   align="end"
@@ -801,26 +993,13 @@ export function PreviewHost({
                     aria-expanded={lookOpen}
                     onClick={() => setLookOpen((open) => !open)}
                   >
-                    이 화면 Claude에게 보여 주기
-                  </button>
-                </Tip>
-              )}
-              {native && pip && (
-                <Tip label={pip.label} side="bottom" align="end">
-                  <button
-                    type="button"
-                    className="pip--docked"
-                    aria-expanded={pipLarge}
-                    onClick={onPipToggle}
-                  >
-                    <img src={`data:image/jpeg;base64,${pip.frame}`} alt="" />
-                    <span className="pip--docked__label">{pip.label}</span>
+                    이 화면 AI에게 보여 주기
                   </button>
                 </Tip>
               )}
             </div>
           </div>
-          {lookOpen && native && onLook && (
+          {lookOpen && native && onLook && !externalMode && (
             <form
               className="frame__lookform"
               onSubmit={(event) => {
@@ -846,38 +1025,101 @@ export function PreviewHost({
               </button>
             </form>
           )}
-          {native ? (
-            <NativeHost
-              url={url}
-              epoch={epoch}
-              origins={origins}
-              target={target}
-              reloadKey={reloadNonce}
-              width={width}
-              commentsOn={commentsOn}
-              onLocation={onLocation}
-              onScreens={onScreens}
-              sync={sync}
-              onPin={onPin}
-              onPinFocus={onPinFocus}
-              onError={(payload) =>
-                setError({
-                  ...payload,
-                  kind: payload.kind === "build" ? "build" : "runtime",
-                })
-              }
-              onLoading={setLoading}
-              onZoom={setZoom}
-            />
-          ) : (
-            <IframeHost
-              url={url}
-              target={target}
-              reloadKey={reloadNonce}
-              onScreens={onScreens}
-              onLoading={setLoading}
-            />
+          {(() => {
+            const host = native ? (
+              <NativeHost
+                url={url}
+                epoch={epoch}
+                origins={origins}
+                target={target}
+                reloadKey={reloadNonce}
+                width={width}
+                commentsOn={commentsOn}
+                activeTab={activeTab}
+                onLocation={onLocation}
+                onScreens={onScreens}
+                sync={sync}
+                onPin={onPin}
+                onPinFocus={onPinFocus}
+                onError={(payload) =>
+                  setError({
+                    ...payload,
+                    kind: payload.kind === "build" ? "build" : "runtime",
+                  })
+                }
+                onLoading={setLoading}
+                onZoom={setZoom}
+              />
+            ) : url ? (
+              <IframeHost
+                url={url}
+                target={target}
+                reloadKey={reloadNonce}
+                onScreens={onScreens}
+                onLoading={setLoading}
+              />
+            ) : null;
+            // 동결 (preview.md §1-E): the frozen face wraps the host — the
+            // host always renders so the native view's slot never moves; the
+            // capture covers it through `data-cover-stage`, and 실제로 열기
+            // (§3 2단계) rides in the same cover when frozenApi is wired.
+            return frozen ? (
+              <FrozenStage
+                shot={frozen.shot}
+                stamp={frozen.stamp}
+                tone={frozen.tone}
+                mode={frozen.mode}
+                onMode={frozen.onMode}
+                api={frozenApi?.api ?? null}
+                sessionId={frozenApi?.sessionId ?? null}
+              >
+                {host}
+              </FrozenStage>
+            ) : (
+              host
+            );
+          })()}
+          {/* 오류 띠는 프레임 안쪽 — 스테이지 바닥에 얹힌다 (프레임 밖 띠는
+              도구줄과 화면 사이에 끼어 화면의 일처럼 읽혔다). */}
+          {error && (
+            <div className="preview__error" role="alert" data-testid="error-banner">
+              <div className="preview__error__text">
+                <strong>화면에 오류가 났습니다</strong>
+                <pre
+                  className={
+                    detail
+                      ? "preview__error__message preview__error__message--open"
+                      : "preview__error__message"
+                  }
+                >
+                  {error.message}
+                </pre>
+              </div>
+              <div className="preview__error__actions">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => {
+                    onFixError(error);
+                    setError(null);
+                  }}
+                >
+                  AI에게 고쳐 달라고 하기
+                </button>
+                <button
+                  type="button"
+                  className="machine__more"
+                  aria-expanded={detail}
+                  onClick={() => setDetail((v) => !v)}
+                >
+                  {detail ? "접기" : "자세히"}
+                </button>
+              </div>
+            </div>
           )}
+          {/* 얼린 얼굴이 떠 있을 때만: 해제 손잡이(세그먼트의 지금 화면)가
+              있으면 Esc 도 같은 일을 한다고 표면에 말한다. */}
+          {frozenSent && frozenOnMode && <span className="preview__unpin">Esc로 고정 해제</span>}
         </div>
       </div>
     </div>

@@ -96,7 +96,7 @@ export class ShelfStore {
    * computes without entering that namespace. A checkpoint restore would
    * REPLACE the worktree with the shelf-era tree and quietly rewind every
    * 저장 · 최신화 since (되감기가 아니라 다시 얹기 — 보관함 토론의 핵심
-   * 판정). Refuses onto a dirty desk; a conflict is Claude's first task like
+   * 판정). Refuses onto a dirty desk; a conflict is the agent.s first task like
    * every conflict here, and the slot SURVIVES it — the cleanup's last step
    * drops the ref, not the failure's.
    */
@@ -151,7 +151,7 @@ export class ShelfStore {
         rmSync(patchFile, { force: true });
       }
       // A clean landing spends the slot. A conflicted one does not — the
-      // brief's cleanup drops the ref once Claude finishes.
+      // brief's cleanup drops the ref once the agent finishes.
       await this.core.git(["update-ref", "-d", SHELF_REF]);
       this.core.shelfAt = null;
       await this.core.refreshPendingChanges();
@@ -167,7 +167,7 @@ export class ShelfStore {
   }
 
   /**
-   * 치워둔 작업 꺼내기가 겹쳤을 때 Claude 의 첫 과제 — the pop-conflict
+   * 치워둔 작업 꺼내기가 겹쳤을 때 AI 의 첫 과제 — the pop-conflict
    * brief's shape, the shelf ref's own words. The ref is NOT a stash: the
    * cleanup empties the slot with update-ref, never `git stash drop`.
    */

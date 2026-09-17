@@ -55,18 +55,24 @@ export function freePort() {
 }
 
 const SERVER_MJS = `import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const { preview } = JSON.parse(readFileSync(join(root, "colo-design.json"), "utf8"));
+// Port: declared colo-design.json preview.port > FIXTURE_PORT > auto (0).
+const configPath = join(root, "colo-design.json");
+const declared = existsSync(configPath)
+  ? JSON.parse(readFileSync(configPath, "utf8")).preview?.port
+  : undefined;
+const port = declared ?? (process.env.FIXTURE_PORT ? Number(process.env.FIXTURE_PORT) : 0);
 
-createServer((req, res) => {
+const server = createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(readFileSync(join(root, "index.html"), "utf8"));
-}).listen(preview.port, "127.0.0.1", () => {
-  console.log(\`fixture preview on http://127.0.0.1:\${preview.port}\`);
+});
+server.listen(port, "127.0.0.1", () => {
+  console.log(\`fixture preview on http://127.0.0.1:\${server.address().port}\`);
 });
 `;
 
@@ -124,6 +130,7 @@ const PACKAGE_JSON = JSON.stringify(
     scripts: {
       install: 'node -e ""',
       check: 'node -e ""',
+      dev: "node server.mjs",
     },
   },
   null,
@@ -152,12 +159,15 @@ const CLAUDE_MD = `# fixture colo-design 레포
 /**
  * Creates the remote and pushes the seed commit.
  *
- * `overrides.previewCommand` swaps what `preview.command` runs (unit tests use
- * a command that exits immediately to observe the failure phases).
+ * `port` declares preview.port in colo-design.json; null (default) leaves it
+ * undeclared so the daemon auto-detects the preview from the dev server's
+ * output/listen port. `overrides.previewCommand` swaps what `preview.command`
+ * runs (unit tests use a command that exits immediately to observe the
+ * failure phases).
  */
 export async function createFixtureRepo({
   dir,
-  port,
+  port = null,
   previewCommand = "node server.mjs",
   // `installUpToDate()` requires node_modules to exist, so the no-op install
   // must create it — a real repo's install always does.
@@ -188,7 +198,7 @@ export async function createFixtureRepo({
         {
           install: installCommand,
           check: checkCommand,
-          preview: { command: previewCommand, port },
+          preview: port === null ? { command: previewCommand } : { command: previewCommand, port },
           ...(registry ? { registry } : {}),
         },
         null,

@@ -117,10 +117,14 @@ async function main() {
 
     await window.waitForSelector(".planner", { timeout: 30000 });
     check("the planner shell renders", (await window.locator(".planner").count()) === 1);
-    await window.waitForSelector(".onboarding", { timeout: 30000 });
+    // The first-run landing is the redesign's two-step flow (토큰 → 레포,
+    // StartFlow's .planner__empty) unless a machine gate FAILS — only then
+    // does the wizard (.onboarding) stand up. A healthy host takes the flow,
+    // a broken one the wizard; either is the planner's first face.
+    await window.waitForSelector(".planner__empty, .onboarding", { timeout: 30000 });
     check(
-      "a fresh machine lands on the onboarding wizard",
-      (await window.locator(".onboarding").count()) === 1,
+      "a fresh machine lands on the first-run flow or the wizard",
+      (await window.locator(".planner__empty, .onboarding").count()) === 1,
     );
 
     // The wizard's gates run against the daemon the app hosts; the same

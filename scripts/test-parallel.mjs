@@ -6,7 +6,7 @@
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
  *                      5402 sidebar, 5403 midturn-send, 5407 port-busy,
- *                      5409 thread-delete) — all distinct
+ *                      5409 thread-delete, 5411 clear-all) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns,
  *                      so they are opt-in: `pnpm test` skips them, CI never
@@ -79,6 +79,7 @@ const LANES = {
       "test:settings",
       "test:midturn-send",
       "test:thread-delete-ui",
+      "test:clear-all-ui",
       "test:sidebar-ui",
       "test:onboarding-ui",
       "test:port-busy-ui",

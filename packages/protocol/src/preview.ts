@@ -86,9 +86,31 @@ export interface ColoDesignPinsSync {
     id: string;
     screen: string;
     state: string;
+    /**
+     * The element path the badge re-anchors on. A `screenMark` row has no
+     * element — it carries "" and the overlay anchors on the screen frame.
+     */
     path: string;
     /** Sent pins grey out for the turn's life (재설계 C10). */
     sent: boolean;
+    /**
+     * 고침 표시 (preview.md §1-C): the mark registry's number — stable for
+     * the cycle, so a done mark keeps the number its pin was sent with and
+     * the conversation's ③④⑤⑥ references resolve 1:1. Absent on old webs;
+     * the overlay falls back to the row's place in the list.
+     */
+    n?: number;
+    /**
+     * The badge's tone: `live` (absent — the accent badge), `sent` (the
+     * turn's grey), `done` (a sent 수정 핀 that outlives its turn — solid
+     * green). `sent` and `tone` agree; tone is the newer word.
+     */
+    tone?: "live" | "sent" | "done";
+    /**
+     * 화면 마크: a changed screen no pin covered — no element anchor, so the
+     * badge docks on the screen frame's corner instead.
+     */
+    screenMark?: boolean;
     /**
      * A region pin has no element path — the overlay re-anchors it on these
      * page coordinates instead (재설계 C9). Absent on element pins.
@@ -139,6 +161,25 @@ export interface ColoDesignScreen {
   title: string;
   /** `?state=` variants this screen actually implements. */
   states: string[];
+}
+
+/**
+ * 스트립이 그리는 탭 한 칸의 계약(인앱 브라우저 1단계, §3 규칙 3). 데스크톱이
+ * `colo-preview:tabs` 로 푸는 사실이자 `preview:tabs` 가 돌려주는 것 — 웹의
+ * 스트립이 그릴 전부다. WebContents 를 담지 않는다: 버려진(discarded) 탭도
+ * 메타로는 살아 있어, 다시 골랐을 때 `url` 로 되살아난다.
+ */
+export interface PreviewTabMeta {
+  /** 스트립 id — "t1"부터. 닫혀도 재활용하지 않는다. */
+  id: string;
+  /** repo 가 선언한 origin 위면 `preview`(오버레이 무장), 그 밖의 http(s) 면 `web`. */
+  kind: "preview" | "web";
+  /** 페이지가 마지막으로 보고한 제목 — 스트립 라벨. */
+  title: string;
+  /** 마지막 주소 — 버려진 탭이 되살아날 때 이 주소로 다시 시작한다. */
+  url: string | null;
+  /** WebContents 는 파기됐고 메타만 남았다 — 재활성화가 재로드를 부른다. */
+  discarded: boolean;
 }
 
 /**

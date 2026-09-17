@@ -1,11 +1,10 @@
 import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { isToolRunning } from "../../lib/progress";
-import { SCREEN_SHOT_TOOL } from "../../lib/tape-visibility";
 import { CheckIcon, ChevronRightIcon } from "../icons";
 import { Markdown } from "../Markdown";
 import { ThinkingBlock, ToolBlock } from "./blocks";
-import { SCREEN_LOOK_TOOL, type TaskControls, type TodoToolBlock } from "./shared";
+import type { TaskControls, TodoToolBlock } from "./shared";
 
 /**
  * A planner never asked for a tool log. One assistant turn's tool calls fold
@@ -27,19 +26,13 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
   let file = 0;
   let command = 0;
   let read = 0;
-  let screen = 0;
   let other = 0;
   for (const tool of tools) {
-    // 화면 세션의 읽기·이동·클릭: the driver's look-arounds fold
-    // into one phrase instead of reading as file work.
-    if (SCREEN_LOOK_TOOL.test(tool.name)) screen += 1;
-    else {
-      const bucket = ACTIVITY_BUCKET[tool.name];
-      if (bucket === "file") file += 1;
-      else if (bucket === "command") command += 1;
-      else if (bucket === "read") read += 1;
-      else other += 1;
-    }
+    const bucket = ACTIVITY_BUCKET[tool.name];
+    if (bucket === "file") file += 1;
+    else if (bucket === "command") command += 1;
+    else if (bucket === "read") read += 1;
+    else other += 1;
   }
   // A planner is watching someone work on their screen, not a process table.
   // "파일 3개 생성" is true of a Write call and says nothing about what was
@@ -48,7 +41,6 @@ function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
   if (file) parts.push(`화면 파일 ${file}개 작업`);
   if (command) parts.push(`검사 ${command}회 실행`);
   if (read) parts.push(`${read}곳 확인`);
-  if (screen) parts.push(`화면 ${screen}곳 확인`);
   if (other) parts.push(`그 밖에 ${other}가지`);
   return parts.join(" · ");
 }
@@ -97,7 +89,7 @@ function ActivityStepRow({ step, controls }: { step: ActivityStep; controls: Tas
 }
 
 /**
- * A run folds tools AND the thinking between them into one row: Claude thinks
+ * A run folds tools AND the thinking between them into one row: the agent thinks
  * between tool calls, so tool-only grouping rendered a finished turn as a
  * stack of near-identical bars. The head counts the tools; the body replays
  * the steps, thinking included, for the planner who needs the detail.
@@ -212,14 +204,6 @@ function groupActivity(blocks: Block[]): Row[] {
         todo = { kind: "todo", id: `todo-${block.id}`, block };
         rows.push(todo);
       }
-      continue;
-    }
-    // 캡처는 활동 줄에 접지 않는다: each screenshot is its own
-    // card row, the way the todo card is — a picture folded into "그 밖에
-    // 1가지" would be invisible where it matters.
-    if (block.type === "tool" && SCREEN_SHOT_TOOL.test(block.name)) {
-      flush();
-      rows.push({ kind: "block", block });
       continue;
     }
     if (block.type === "tool" || block.type === "thinking") {

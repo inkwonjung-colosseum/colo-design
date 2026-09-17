@@ -17,6 +17,8 @@ import type { MenuItemConstructorOptions } from "electron";
 interface MenuPreviewTarget {
   reload(): void;
   history(delta: -1 | 1): void;
+  /** 탭 전환 ⌘⇧[/⌘⇧] (인앱 브라우저 계획 §3 규칙 8) — 뷰의 활성 탭을 돌린다. */
+  cycleTab(delta: -1 | 1): void;
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
@@ -46,6 +48,8 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     back: () => preview?.history(-1),
     forward: () => preview?.history(1),
     address: () => targets.gotoAddress(),
+    "tab-previous": () => preview?.cycleTab(-1),
+    "tab-next": () => preview?.cycleTab(1),
     "zoom-in": () => preview?.zoomIn(),
     "zoom-out": () => preview?.zoomOut(),
     "zoom-reset": () => preview?.zoomReset(),
@@ -67,6 +71,12 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     item("back"),
     item("forward"),
     item("address"),
+    // 탭 전환(인앱 브라우저 계획 §3 규칙 8): 메뉴에 오는 것은 이 쌍뿐이다 —
+    // ⌘T(새 탭)·⌘W(탭 닫기)는 preview 뷰 포커스에서만 뜻이 있는 키라
+    // before-input-event 채널로 가고, 메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
+    { type: "separator" },
+    item("tab-previous"),
+    item("tab-next"),
     { type: "separator" },
     item("zoom-in"),
     item("zoom-out"),

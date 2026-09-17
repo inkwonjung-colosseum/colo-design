@@ -1,12 +1,10 @@
 import type { HandoffShot } from "@colo-design/protocol";
 import { type DaemonNotice, noticeForState } from "./notices.js";
-import {
-  createPreviewTools,
-  type PreviewDriver,
-  type PreviewDriverFactory,
-  type PreviewScreenDeclaration,
-  type PreviewTools,
-} from "./preview-tools.js";
+import type {
+  PreviewCapture,
+  PreviewDriverFactory,
+  PreviewScreenDeclaration,
+} from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
 import { type GateScreen, gateBrief, inspectScreens, type ScreenTrouble } from "./screen-gate.js";
 import { NEW_SESSION_TITLE, type Session } from "./session.js";
@@ -39,40 +37,32 @@ export interface PreviewDriverDeps {
 }
 
 /**
- * 세션별 프리뷰 드라이버의 수명과 화면 게이트 (PLAN D61, D56, D7).
+ * 세션별 화면 게이트의 상태와 캡처 (게이트 재배선 2026-09-17, PLAN D56 · D7).
  *
- * 서버에 남는 것은 연결부뿐이다: `session.create`가 도구를 물고, 상태 전환이
- * 게이트를 부르며, 닫힘이 창을 거둔다. 창의 소유권(어느 세션이 어느 드라이버를
- * 받았는가)과 게이트의 판정 상태(이 턴이 연 화면, 이미 건 세션)는 전부 여기다.
+ * 에이전트는 더 이상 화면 도구를 갖지 않는다 — 사람이 pin 과 화면 캡처로
+ * 가리킨 화면이 게이트의 입력이다 (`notePinned`). 서버에 남는 것은 그 판정
+ * 상태와, 넘기기·캡처를 위한 드라이버 대여다. 창의 소유권은 쓰는 곳에
+ * 있다: 게이트와 캡처는 제 창을 세웠다가 닫는다.
  */
 export class PreviewDrivers {
-  /** 세션이 받은 드라이버 — 세션·프로젝트·데몬의 죽음과 함께 간다. */
-  private readonly bySession = new Map<string, PreviewDriver>();
   /**
    * The connected repo's declared screens (the `colo-design.screens`
-   * envelope's cache, PLAN D7) - the list `screen_list` serves, filled by
-   * `setScreens` and emptied by a project switch. Read on every call,
-   * never snapshotted into the tools.
+   * envelope's cache, PLAN D7) - the list the 화면 매트릭스 and 넘기기
+   * captures read, filled by `setScreens` and emptied by a project switch.
    */
   private declaredScreens: PreviewScreenDeclaration[] = [];
   /**
-   * 이 턴이 연 화면들 (PLAN D61 게이트): `screen_open` 이 실제로 열어 낸
-   * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 만진 화면"이다.
-   * 키는 `route\nstate` - 같은 화면의 같은 상태를 두 번 열어도 한 번 본다.
+   * 이 턴이 가리킨 화면들 (게이트 재배선): 사람이 pin·화면 캡처로 보낸
+   * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 가리킨 화면"이다.
+   * 키는 `route\nstate` - 같은 화면의 같은 상태를 두 번 가리켜도 한 번 본다.
    */
-  readonly openedThisTurn = new Map<string, Map<string, GateScreen>>();
+  readonly pinnedThisTurn = new Map<string, Map<string, GateScreen>>();
   /**
    * 이미 게이트가 한 번 말을 건 세션. 사용자가 다시 보내기 전까지는 다시
    * 걸지 않는다 - 게이트가 부른 턴이 또 게이트를 부르면 기계 둘이 서로
    * 답하며 구독을 태운다. 두 번째 문제는 사람의 다음 턴이 본다.
    */
   readonly gatedSessions = new Set<string>();
-  /**
-   * The preview server's own origin, captured when `toolsFor` mints a
-   * driver. `noteOpened` keeps only screens inside it — allowed extra
-   * origins are the repo's other servers, not screens the gate re-verifies.
-   */
-  private previewOrigin: string | null = null;
 
   constructor(private readonly deps: PreviewDriverDeps) {}
 
@@ -84,9 +74,8 @@ export class PreviewDrivers {
   /**
    * The connected repo said which screens it has (`colo-design.screens`,
    * PLAN D7). The host hands the envelope's contents here: the daemon has no
-   * page of its own to hear it from, and without this `screen_list` answers
-   * "아직 선언된 화면이 없습니다" for a repo that declared everything. Read
-   * live by the tools, so a list that arrives mid-session counts.
+   * page of its own to hear it from. The new bridge announces itself and
+   * fills this again.
    */
   setScreens(screens: PreviewScreenDeclaration[]): void {
     this.declaredScreens = screens;
@@ -94,64 +83,23 @@ export class PreviewDrivers {
 
   /**
    * The screens are the OUTGOING repo's declarations (PLAN D7): keeping
-   * them would have `screen_list` name routes the incoming app does not
+   * them would have the picker name routes the incoming app does not
    * serve. The new bridge announces itself and fills this again.
    */
   clearScreens(): void {
     this.declaredScreens = [];
   }
 
-  /** The session's driver dies with the session (PLAN D61). */
-  register(sessionId: string, driver: PreviewDriver): void {
-    this.bySession.set(sessionId, driver);
-  }
-
-  /** `screen_open` 하나 — 이 턴의 목록에 담는다. preview origin 밖의 화면은
-   *  게이트가 재검증할 대상이 아니므로 담지 않는다. */
-  noteOpened(sessionId: string, route: string, state: string | null): void {
-    if (this.previewOrigin !== null) {
-      try {
-        if (new URL(route, this.previewOrigin).origin !== this.previewOrigin) return;
-      } catch {
-        return;
-      }
-    }
-    const opened = this.openedThisTurn.get(sessionId) ?? new Map<string, GateScreen>();
-    opened.set(`${route}\n${state ?? ""}`, { route, state });
-    this.openedThisTurn.set(sessionId, opened);
+  /** pin·캡처 하나 — 이 턴의 목록에 담는다. preview origin 밖의 주소는
+   *  게이트가 재검증할 대상이 아니므로 runGate 에서 걸러진다. */
+  notePinned(sessionId: string, route: string, state: string | null): void {
+    const pinned = this.pinnedThisTurn.get(sessionId) ?? new Map<string, GateScreen>();
+    pinned.set(`${route}\n${state ?? ""}`, { route, state });
+    this.pinnedThisTurn.set(sessionId, pinned);
   }
 
   /**
-   * The session options' preview half: a `colo-preview` tool set bound to the
-   * active project's preview url, when a driver is injected, the preview
-   * server is up, and the planner has not turned the tools off. Everything
-   * else — no desktop, no preview yet, `previewTools: false` — is a session
-   * without them.
-   */
-  async toolsFor(
-    enabled: boolean,
-    onOpened?: (route: string, state: string | null) => void,
-  ): Promise<{ tools: PreviewTools; driver: PreviewDriver } | null> {
-    const factory = this.deps.factory();
-    if (!factory || !enabled) return null;
-    const repo = this.deps.activeRepo();
-    if (!repo?.isCloned()) return null;
-    const status = await repo.status().catch(() => null);
-    if (!status?.previewUrl) return null;
-    const origins = repo.repoConfig()?.preview.origins ?? [];
-    this.previewOrigin = new URL(status.previewUrl).origin;
-    const driver = factory.for(status.previewUrl, origins);
-    const tools = createPreviewTools(driver, () => this.declaredScreens, onOpened);
-    if (!tools) {
-      // A driver that never got tools must not leave a window behind.
-      await driver.destroy().catch(() => undefined);
-      return null;
-    }
-    return { tools, driver };
-  }
-
-  /**
-   * 게이트를 걸 수 있는 턴인가. 열어 본 화면이 없으면 볼 것이 없고, 드라이버가
+   * 게이트를 걸 수 있는 턴인가. 가리킨 화면이 없으면 볼 것이 없고, 드라이버가
    * 없는 브라우저 개발 경로에는 창 자체가 없으며, 이미 한 번 건 세션은
    * 사용자의 다음 보내기를 기다린다. 여기서 false 면 완료 알림은 평소대로
    * 그 자리에서 나간다.
@@ -159,22 +107,22 @@ export class PreviewDrivers {
   gatePossible(sessionId: string): boolean {
     if (!this.deps.factory()) return false;
     if (this.gatedSessions.has(sessionId)) return false;
-    return (this.openedThisTurn.get(sessionId)?.size ?? 0) > 0;
+    return (this.pinnedThisTurn.get(sessionId)?.size ?? 0) > 0;
   }
 
   /**
    * 턴이 끝난 뒤 그 화면들을 기계가 다시 열어 본다 (screen-gate.ts). 문제가
-   * 있으면 Claude 에게 게이트 턴으로 돌려보내고, 없으면 미뤄 둔 완료 알림을
-   * 그제야 내보낸다 — 순서가 뒤집히면 사용자는 `작업이 끝났습니다` 를 읽은
+   * 있으면 AI 에게 게이트 턴으로 돌려보내고, 없으면 미뤄 둔 완료 알림을
+   * 그제야보낸다 — 순서가 뒤집히면 사용자는 `작업이 끝났습니다` 를 읽은
    * 직후 다시 도는 대화를 보게 된다.
    *
-   * 세션이 쓰던 창을 빌리지 않고 제 드라이버를 만든다: `open` 이 콘솔 기록을
-   * 비우므로 여기서 읽는 줄이 정확히 그 화면의 것이 되고, Claude 가 다음 턴에
-   * 들고 갈 ref 세대도 건드리지 않는다.
+   * 게이트는 제 드라이버를 만든다: `open` 이 콘솔 기록을 비우므로 여기서
+   * 읽는 줄이 정확히 그 화면의 것이 되고, 사용자가 보고 있는 창도
+   * 건드리지 않는다.
    */
   async runGate(sessionId: string, turnDurationMs?: number): Promise<void> {
-    const screens = [...(this.openedThisTurn.get(sessionId)?.values() ?? [])];
-    this.openedThisTurn.delete(sessionId);
+    const screens = [...(this.pinnedThisTurn.get(sessionId)?.values() ?? [])];
+    this.pinnedThisTurn.delete(sessionId);
     const session = this.deps.session(sessionId);
     const done = (): void => {
       const notice = noticeForState(
@@ -192,11 +140,22 @@ export class PreviewDrivers {
       ?.status()
       .catch(() => null);
     if (!status?.previewUrl) return done();
+    // preview origin 밖의 주소는 게이트가 재검증할 대상이 아니다 — 허용된
+    // 추가 origin 은 레포의 다른 서버이지, 게이트가 다시 열 화면이 아니다.
+    const origin = new URL(status.previewUrl).origin;
+    const kept = screens.filter((screen) => {
+      try {
+        return new URL(screen.route, origin).origin === origin;
+      } catch {
+        return false;
+      }
+    });
+    if (kept.length === 0) return done();
     const origins = this.deps.activeRepo()?.repoConfig()?.preview.origins ?? [];
     const driver = factory.forIsolated(status.previewUrl, origins);
     let troubles: ScreenTrouble[] = [];
     try {
-      troubles = await inspectScreens(driver, screens);
+      troubles = await inspectScreens(driver, kept);
     } catch {
       // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다.
       troubles = [];
@@ -220,22 +179,36 @@ export class PreviewDrivers {
     }
   }
 
-  /** The session's driver dies with the session (PLAN D61). */
-  destroy(sessionId: string): void {
-    const driver = this.bySession.get(sessionId);
-    if (!driver) return;
-    this.bySession.delete(sessionId);
-    void driver.destroy().catch(() => undefined);
-  }
-
   /**
-   * Every driver rooted at a clone dies when that clone's preview does — the
-   * switch fence or the warm cap stopped the server, and the sessions left
-   * behind would otherwise point their windows at a dead port.
+   * 화면 캡처 (preview.capture): the planner's "이 화면" 버튼. `route` 가
+   * 오면 그 화면을 먼저 연다 — pane 이 떠 있으면 그 창이, 아니면 숨은 창이
+   * 그린다. 창은 쓰고 나면 닫는다(pane 은 디버거만 뗀다 — 페이지는 사용자의
+   * 것). 브라우저 개발 경로에는 창 자체가 없으므로 거절한다.
    */
-  destroyWhere(cwd: string): void {
-    for (const session of this.deps.sessions()) {
-      if (session.cwd === cwd) this.destroy(session.id);
+  async capture(
+    route?: string,
+    state?: string | null,
+  ): Promise<PreviewCapture & { route: string | null; state: string | null }> {
+    const factory = this.deps.factory();
+    const repo = this.deps.activeRepo();
+    if (!factory || !repo?.isCloned()) {
+      throw new Error("화면 캡처는 데스크톱 앱에서만 동작합니다.");
+    }
+    const status = await repo.status().catch(() => null);
+    if (!status?.previewUrl) {
+      throw new Error("미리보기 서버가 아직 뜨지 않았습니다 — 잠시 후 다시 시도해 주세요.");
+    }
+    const origins = repo.repoConfig()?.preview.origins ?? [];
+    const driver = factory.for(status.previewUrl, origins);
+    try {
+      if (route) {
+        const opened = await driver.open(route, state ?? null);
+        if (!opened.ok) throw new Error(`화면을 열지 못했습니다: ${opened.reason}`);
+      }
+      const shot = await driver.screenshot({ longEdge: 900 });
+      return { ...shot, route: route ?? null, state: state ?? null };
+    } finally {
+      await driver.destroy().catch(() => undefined);
     }
   }
 

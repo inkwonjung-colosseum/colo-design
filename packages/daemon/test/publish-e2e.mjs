@@ -866,7 +866,7 @@ async function main() {
       `${secondCheck.state} · ${secondCheck.number}`,
     );
 
-    // --- D90: pr 게이트는 Claude 에게 가지 않는다 ---------------------------
+    // --- D90: pr 게이트는 AI 에게 가지 않는다 ---------------------------
     // A third handoff with no recording left fails at the pr gate. A session
     // rides along so the test can prove NO fixable brief was composed — the
     // inbox is the whole wire.

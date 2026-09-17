@@ -2,6 +2,7 @@ import type { ComponentPropsWithoutRef } from "react";
 import { isValidElement, useEffect, useId, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { linkClick } from "../lib/open-link";
 
 /**
  * A link the chat renders must never replace the tool itself: a plain <a>
@@ -16,7 +17,7 @@ function ChatLink({
   ...rest
 }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer" {...rest}>
+    <a href={href} target="_blank" rel="noreferrer" {...rest} onClick={linkClick}>
       {children}
     </a>
   );

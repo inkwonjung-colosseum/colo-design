@@ -48,6 +48,31 @@ export function modeMenuLabel(mode: PermissionMode): string {
 }
 
 /**
+ * 확인 방식 메뉴 행의 한 줄 설명 — 칩 팝오버가 읽는다(설정의 Choice 는
+ * 자기 문단을 이미 갖는다). 행동 옆 설명은 인라인이라는 규칙의 몫: 모드가
+ * 무엇을 묻고 무엇을 그냥 하는지, 고르기 전에 행이 말한다.
+ */
+export const MODE_MENU_HINT: Record<PermissionMode, string> = {
+  default: "명령 실행 전에 물어봅니다",
+  plan: "만들기 전에 계획을 먼저 보여 줍니다",
+  acceptEdits: "안전하다고 본 명령까지 묻지 않고 실행합니다",
+  dontAsk: "아무것도 묻지 않습니다",
+  bypassPermissions: "아무것도 묻지 않고 바로 진행합니다",
+};
+
+/**
+ * 생각 시간 행의 한 줄 — Low/High 만으로는 무엇이 달라지는지 알 수 없어서,
+ * 오를수록 꼼꼼하고 느려진다는 축을 각 행이 말한다.
+ */
+export const EFFORT_MENU_HINT: Record<EffortLevel, string> = {
+  low: "빠르게 답합니다",
+  medium: "보통의 꼼꼼함",
+  high: "더 오래, 더 꼼꼼하게",
+  xhigh: "가장 꼼꼼한 단계 아래",
+  max: "가장 오래, 가장 꼼꼼하게",
+};
+
+/**
  * The 확인 방식 choices both menus offer — 설정 and the composer popover
  * alike, in widening order. `dontAsk` stays reachable through the API but off
  * the menus.
@@ -132,9 +157,11 @@ export function modelRowOf(
 }
 
 /**
- * The CLI lists an alias row and the pinned id it resolves to as two rows with
- * the same displayName; a planner would see "Opus" twice with nothing to
- * choose between. First one wins.
+ * The CLI lists an alias row and the pinned id it resolves to as two rows that
+ * read alike — a planner would see "Opus" twice with nothing to choose between.
+ * First one wins. Rows that read alike but say different ids stay: omp's
+ * catalog repeats a displayName across providers, and the id is the only
+ * thing telling those rows apart.
  */
 export function modelOptions(
   models: SessionModelInfo[],
@@ -155,5 +182,8 @@ export function modelOptions(
         picked: model === current,
       };
     })
-    .filter((row, index, all) => all.findIndex((other) => other.label === row.label) === index);
+    .filter(
+      (row, index, all) =>
+        all.findIndex((other) => other.label === row.label && other.hint === row.hint) === index,
+    );
 }

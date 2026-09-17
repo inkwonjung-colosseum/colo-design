@@ -6,6 +6,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type ChatEvent,
   type DiffFile,
   type DiffStatus,
   type HandoffStatus,
@@ -33,7 +34,7 @@ export const INSTALL_MARKER = "colo-design-install-hash";
  * 넘겼다 — 시간 예산 안에 뜨는 fixture 로는 잡히지 않는다. 데드라인은 실제
  * 레포의 첫 부팅이 들어올 만큼 넉넉해야 한다.
  */
-export const READY_TIMEOUT_MS = 120_000;
+export const READY_TIMEOUT_MS = Number(process.env.COLO_DESIGN_READY_TIMEOUT_MS) || 120_000;
 const DETAIL_THROTTLE_MS = 200;
 /** Commit message when the planner approves without writing one. */
 export const DEFAULT_COMMIT_MESSAGE = "Colo Design 화면 변경";
@@ -48,7 +49,7 @@ export const SHOTS_COMMIT_MESSAGE = "Colo Design 화면 미리보기 캡처";
  * tell at a glance which branches a planner made and which are theirs.
  */
 export const BRANCH_PREFIX = "colo-design";
-/** How many output lines a failed gate quotes back to people and Claude. */
+/** How many output lines a failed gate quotes back to people and the agent. */
 export const GATE_OUTPUT_TAIL_LINES = 30;
 /**
  * 실사 결함: 멈춘 설치는 끝나지 않는다 — `capture` 는 `close` 만 기다리고,
@@ -78,7 +79,7 @@ export const SHELF_REF = "refs/colo-design/shelf";
 /** Forensics only — the planner's words for the slot live in the UI. */
 export const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
 
-/** D51: how long the summary's one Claude turn may take before the fallback. */
+/** D51: how long the summary.s one agent turn may take before the fallback. */
 export const SUMMARY_TIMEOUT_MS = 3_000;
 /** The machine turns' model (비개발자 저장): reading a diff and saying what it
  * did is haiku's job — fast enough for the leashes above and below, and a
@@ -90,7 +91,7 @@ export const MEMO_TIMEOUT_MS = 8_000;
 export const HANDOFF_DRAFT_TIMEOUT_MS = 8_000;
 
 /**
- * What Claude is told when a step fails, named the way the planner's own
+ * What the agent is told when a step fails, named the way the planner's own
  * button is. "push 단계가 실패했습니다" would send it looking for a git
  * problem when the planner pressed 저장.
  */
@@ -103,18 +104,14 @@ export const GATE_BRIEF: Record<"commit" | "push" | "pr", string> = {
 /**
  * The same five failures, named for the button the planner pressed rather than
  * for the step that ran. This is what the transcript CARD says (PLAN D9); the
- * brief above is what Claude reads, command output and all.
- */
-/**
- * D90 ⓑ: push 거절 중 인증 · 권한 사유의 표식 — 이 문자열들이면 Claude 대신
+ * brief above is what the agent reads, command output and all.
+ *
+ * D90 ⓑ: push 거절 중 인증 · 권한 사유의 표식 — 이 문자열들이면 AI 대신
  * 설정 안내로 간다. 문자열 분기의 위험(D41)은 상수 하나에 모으고 단위 테스트가
- * 잡는 것으로; 모르면 Claude 쪽(보수적)이다.
+ * 잡는 것으로; 모르면 AI 쪽(보수적)이다.
+ * 리뷰 C6: 만료 · 무효 토큰의 말(401, Bad credentials, expired)도 같은
+ * 안내로 가야 한다 — 만료 토큰으로 push 하면 AI 에게 헛돌았다.
  */
-export const BOOTSTRAP_FAILED_DETAIL =
-  "Claude 가 연결 준비를 마치지 못했습니다 — 설정의 문제 해결에서 자세히 본 뒤 대화에서 이어 가세요.";
-
-// 리뷰 C6: 만료 · 무효 토큰의 말(401, Bad credentials, expired)도 같은
-// 안내로 가야 한다 — 만료 토큰으로 push 하면 Claude 에게 헛돌았다.
 export const PUSH_AUTH_FAILURE =
   /401|403|Permission denied|authentication|denied to|not authorized|bad credentials|credentials? (?:expired|invalid)|token expired|authenticity/i;
 
@@ -129,9 +126,9 @@ export const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
  */
 const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
 
-/** What the planner reads when a conflict needs Claude and no thread is open. */
+/** What the planner reads when a conflict needs the agent and no thread is open. */
 export const REFRESH_CONFLICT_DETAIL =
-  "최신 변경을 받아 오다 저장하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
+  "최신 변경을 받아 오다 저장하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
 /**
  * What the planner reads when replaying a dead run's parked work conflicts
@@ -139,7 +136,7 @@ export const REFRESH_CONFLICT_DETAIL =
  * named for how the work got parked.
  */
 export const RECOVER_CONFLICT_DETAIL =
-  "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 정리 전까지는 같은 상태입니다.";
+  "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
 /** What the planner reads when the slot they are filling is already full. */
 export const SHELF_ALREADY_DETAIL =
   "이미 치워둔 작업이 있습니다 — 더 보기 메뉴에서 먼저 꺼내 주세요.";
@@ -157,9 +154,9 @@ export const SHELF_DIRTY_DETAIL =
 
 export const SHELF_NONE_DETAIL = "치워둔 작업이 없습니다.";
 
-/** 치워두기·꺼내기 pressed while Claude still owes a conflict's cleanup. */
+/** 치워두기·꺼내기 pressed while the agent still owes a conflict's cleanup. */
 export const SHELF_CONFLICT_OPEN_DETAIL =
-  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 Claude가 정리를 마친 뒤 시도해 주세요.";
+  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 시도해 주세요.";
 
 /**
  * What the planner reads when the 꺼내기 overlapped: same state and remedy as
@@ -167,15 +164,15 @@ export const SHELF_CONFLICT_OPEN_DETAIL =
  * conflict — dropping it is the cleanup's last step, not the failure's.
  */
 export const SHELF_CONFLICT_DETAIL =
-  "치워둔 작업을 다시 얹다 겹치는 부분이 생겼습니다 — 대화를 열면 Claude가 정리합니다. 치워둔 작업은 그대로 남아 있습니다.";
+  "치워둔 작업을 다시 얹다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 치워둔 작업은 그대로 남아 있습니다.";
 
 /**
- * What a 저장 pressed before Claude finished a conflict's cleanup reads —
+ * What a 저장 pressed before the agent finished a conflict's cleanup reads —
  * the unmerged files count as changes awaiting 저장, so the refusal must
  * name the one thing standing in the way, not leave a silent door.
  */
 export const SAVE_CONFLICT_OPEN_DETAIL =
-  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 Claude가 정리를 마친 뒤 저장해 주세요.";
+  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 저장해 주세요.";
 
 /** What the planner reads when a repo's commands have not been approved here. */
 export const COMMANDS_UNAPPROVED_DETAIL =
@@ -187,14 +184,14 @@ export const COMMANDS_UNAPPROVED_DETAIL =
  * is not 자동 병합, so it stays a named failure.
  */
 const REFRESH_DIVERGED_DETAIL =
-  "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 Claude가 확인합니다.";
+  "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 AI가 확인합니다.";
 
 export const PNPM_MISSING_DETAIL =
   "pnpm이 없습니다 — corepack enable 또는 npm i -g pnpm 으로 설치해 주세요.";
 export const REGISTRY_AUTH_DETAIL =
   "GitHub 패키지 인증이 필요합니다 — pnpm config set //npm.pkg.github.com/:_authToken <read:packages 권한 PAT>";
 export const REPO_URL_MISSING_DETAIL =
-  "연결 레포 주소가 설정되지 않았습니다 — 설정에서 레포 주소를 넣어 주세요.";
+  "연결 레포 주소가 없습니다 — 새 프로젝트로 레포를 연결해 주세요.";
 
 // ---------------------------------------------------------------------------
 // Credential helpers (pure, unit tested)
@@ -269,10 +266,8 @@ export interface RepoWorkspaceOptions {
   gitHubClient?: () => GitHubClient | null;
   /** Claude Code CLI executable for the summarizer's one turn (D51). */
   claudeExecutable?: string | null;
-  /** D94: 연결 준비 — sync 가 설정 없음에서 막히면 Claude 가 계약을 쓴다. */
-  bootstrap?: boolean;
-  /** The preparation turn: brief → Claude writes the contract → validate. */
-  prepareBootstrap?: () => Promise<boolean>;
+  /** Post-ready conventions turn: Claude installs bridge · wrappers · CLAUDE.md. */
+  prepareConventions?: () => Promise<void>;
   /**
    * Whether the planner said this repo's commands may run here. Absent
    * (a direct construction, a pre-gate project) reads as approved — the
@@ -286,6 +281,12 @@ export interface RepoWorkspaceOptions {
    * NEXT project just started (or outlive the daemon on another port).
    */
   active?: boolean;
+  /**
+   * 사이클 사건의 기록 (hero-synthesis D1): 저장 · 넘김 · 반영 · 코멘트 도착을
+   * 세션 채널로 보내고 테이프에 남기는 손잡이. `sessionId` 는 저장·넘기기를
+   * 부른 대화 — 없으면 붙이는 쪽(플릿)이 마지막 활성 세션으로 귀속한다.
+   */
+  onCycleEvent?: (event: ChatEvent, sessionId?: string) => void;
 }
 
 export class RepoCore {
@@ -384,14 +385,14 @@ export class RepoCore {
    */
   commentsSince: string | null;
 
-  /** D94: this workspace was created with Claude-prepared connection. */
-  bootstrapRequested = false;
+  /** The URL the preview actually answers on — declared origin or detected at startup. */
+  previewUrl: string | null = null;
 
   /** The planner's word on this repo's install · preview commands. */
   commandsApproved = true;
 
-  /** The server's preparation turn: brief → Claude writes the contract → validate. */
-  prepareBootstrap: (() => Promise<boolean>) | null = null;
+  /** Post-ready conventions turn: brief → the agent installs the screen contract. */
+  prepareConventions: (() => Promise<void>) | null = null;
 
   readonly onCycleChange:
     | ((cycle: {
@@ -429,10 +430,8 @@ export class RepoCore {
     gitHubClient?: () => GitHubClient | null;
     /** Claude Code CLI executable for the summarizer's one turn (D51). */
     claudeExecutable?: string | null;
-    /** D94: 연결 준비 — sync 가 설정 없음에서 막히면 Claude 가 계약을 쓴다. */
-    bootstrap?: boolean;
-    /** The preparation turn: brief → Claude writes the contract → validate. */
-    prepareBootstrap?: () => Promise<boolean>;
+    /** Post-ready conventions turn: Claude installs bridge · wrappers · CLAUDE.md. */
+    prepareConventions?: () => Promise<void>;
     /**
      * Whether the planner said this repo's commands may run here. Absent
      * (a direct construction, a pre-gate project) reads as approved — the
@@ -457,8 +456,7 @@ export class RepoCore {
     this.branch = options.cycle?.branch ?? null;
     this.openHandoff = options.cycle?.handoff ?? null;
     this.commentsSince = options.cycle?.commentsSince ?? null;
-    this.bootstrapRequested = options.bootstrap ?? false;
-    this.prepareBootstrap = options.prepareBootstrap ?? null;
+    this.prepareConventions = options.prepareConventions ?? null;
     this.commandsApproved = options.commandsApproved ?? true;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
@@ -494,9 +492,17 @@ export class RepoCore {
    * fence compares these. Unknown (not cloned, or no config yet) is `null`.
    */
   declaredPreviewPort(): number | null {
-    if (this.config) return this.config.preview.port;
+    if (this.config) return this.config.preview.port ?? null;
     if (!this.isCloned()) return null;
     return readDeclaredPreviewPort(this.root);
+  }
+
+  /**
+   * The port this workspace's preview occupies — declared, or the one the
+   * running server was detected on. The switch fence compares these.
+   */
+  occupiedPreviewPort(): number | null {
+    return this.declaredPreviewPort() ?? previewPortOf(this.previewUrl);
   }
 
   get remoteUrl(): string | null {
@@ -563,6 +569,10 @@ export class RepoCore {
     } catch {
       return {};
     }
+    // The PAT is GitHub's: a non-github.com remote (a mirror, a proxy, a
+    // typo'd host) must never receive the header. There is no GHE host
+    // config — colo-design.json's registry is a package host, not a git one.
+    if (scope !== "https://github.com" && scope !== "https://www.github.com") return {};
     const basic = Buffer.from(`x-access-token:${this.pat}`).toString("base64");
     return {
       GIT_CONFIG_COUNT: "1",
@@ -581,7 +591,7 @@ export class RepoCore {
 
   /**
    * 최신화 버튼이 열린 대화 없이 눌렸을 때의 사전 확인 (실사 P0 — 조용한
-   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 Claude 의 첫 과제가
+   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 AI 의 첫 과제가
    * 되야 하므로 혼자 하지 않는다 — 대신 fetch 로 원격을 확인해 무엇이 기다리는
    * 지 알려준다. null 이면 막을 이유가 없다: 베이스 브랜치 위의 fast-forward 는
    * 혼자서도 안전하고, 새 커밋이 없으면 할 일 자체가 없다.
@@ -739,23 +749,23 @@ export class RepoCore {
    * precious half, so it is stashed first (untracked screens included), the
    * branch moves onto what the developer merged, and the work comes back on
    * top — git's mechanical merge does the combining. What git cannot finish
-   * alone is a genuine conflict, and a conflict is Claude's task: the brief
+   * alone is a genuine conflict, and a conflict is the agent.s task: the brief
    * rides the same wire a typed message does. With no thread to brief (a
    * bare bring-up), the throw names the state in Korean where the retry
    * panel reads it.
    *
-   * Returns `"conflict"` when a conflict was left for Claude — the caller
+   * Returns `"conflict"` when a conflict was left for the agent — the caller
    * must not pile an install or preview restart onto a mid-resolution tree.
    */
   async refreshFromRemote(onSessionTurn?: (brief: string) => void): Promise<"clean" | "conflict"> {
     // A refresh that finds a conflict left over from an earlier run briefs
-    // again instead of piling on: until Claude resolves it, that state IS
+    // again instead of piling on: until the agent resolves it, that state IS
     // the current one.
     if (await this.mergeInProgress()) {
       return await this.briefOrThrow(
         this.mergeConflictBrief(
           await this.conflictedFiles(),
-          // The stash from the run that left this merge open — Claude must
+          // The stash from the run that left this merge open — the agent must
           // know it is still parked once the merge commit lands.
           (await this.git(["stash", "list"])).trim() !== "",
         ),
@@ -773,7 +783,7 @@ export class RepoCore {
     // conflicts is exactly the leftover state above; the same brief covers it.
     if ((await this.recoverParkedWork(onSessionTurn)) === "conflict") return "conflict";
 
-    // Mid-cycle, merging the developer's base needs Claude within reach — a
+    // Mid-cycle, merging the developer's base needs the agent within reach — a
     // conflict has to land as a first task, not as an error nobody can read.
     // A bare bring-up mid-cycle stays put on the merge, but the fetch still
     // runs: the planner who pressed 최신화 deserves to learn that something
@@ -798,7 +808,7 @@ export class RepoCore {
         }
       }
     } catch (error) {
-      // A conflicted merge stays open on purpose (the brief is Claude's
+      // A conflicted merge stays open on purpose (the brief is the agent.s
       // recovery path); popping the stash onto a conflicted tree would pile
       // one conflict on another, so it waits. Any other failure never moved
       // the branch: the work goes straight back where it was.
@@ -822,7 +832,7 @@ export class RepoCore {
   }
 
   /**
-   * A conflict is news for Claude when a thread is open and for the planner
+   * A conflict is news for the agent when a thread is open and for the planner
    * when one is not: the brief rides the session wire, the throw surfaces a
    * Korean one-liner where the retry panel reads it.
    */
@@ -836,7 +846,7 @@ export class RepoCore {
   }
 
   /**
-   * Claude's instructions, as a gate card: what collided and the exact
+   * the agent.s instructions, as a gate card: what collided and the exact
    * recovery, named for the planner's words (최신 변경 받아오기), never git's.
    */
   mergeConflictBrief(files: string[], stashed: boolean): string {
@@ -1053,6 +1063,9 @@ export class RepoCore {
     cwd = this.root,
     /** Per-call environment — the checkpoint's temporary GIT_INDEX_FILE. */
     env: NodeJS.ProcessEnv = {},
+    /** `binary` keeps stdout as bytes and answers base64 — `git show` on a
+     *  committed capture would otherwise come back utf8-mangled. */
+    binary = false,
   ): Promise<string> {
     const windows = currentPlatform() === "win32";
     // The same binary the onboarding gate judged: on a Finder-launched app
@@ -1076,6 +1089,8 @@ export class RepoCore {
         },
       },
       args,
+      undefined,
+      binary,
     );
     if (result.code === 0) return result.stdout;
     // PLAN D36: a Korean lead, then git's own words — the throw may reach a
@@ -1093,13 +1108,15 @@ export class RepoCore {
    * the caller refuses to wait past: every chunk of output rearms it, so a
    * command that keeps talking is never cut, and one that stops talking is
    * killed with its whole process group and reported as `stalled` rather
-   * than left to hold the phase forever.
+   * than left to hold the phase forever. `binary` keeps stdout as bytes and
+   * answers it base64 — for `git show` on a committed capture.
    */
   capture(
     command: string,
     options: SpawnOptions,
     args: string[] = [],
     stallMs?: number,
+    binary = false,
   ): Promise<{
     code: number | null;
     output: string;
@@ -1124,6 +1141,8 @@ export class RepoCore {
     }
     let output = "";
     let stdout = "";
+    /** Binary stdout accumulates as bytes — a utf8 join would corrupt it. */
+    const stdoutBytes: Buffer[] = [];
     let lastLine = "";
     let stalled = false;
     let watchdog: NodeJS.Timeout | undefined;
@@ -1163,10 +1182,15 @@ export class RepoCore {
       }
     };
     const absorbStdout = (chunk: Buffer) => {
+      if (binary) {
+        // Bytes only — no progress-line parsing on an image's innards.
+        stdoutBytes.push(chunk);
+        rearm();
+        return;
+      }
       stdout = (stdout + String(chunk)).slice(-1_000_000);
       absorb(chunk);
     };
-    rearm();
     child.stdout?.on("data", absorbStdout);
     child.stderr?.on("data", absorb);
     child.once("error", (error) => {
@@ -1179,7 +1203,8 @@ export class RepoCore {
     });
     child.once("close", (code) => {
       clearTimers();
-      resolve({ code, output, stdout, lastLine, stalled });
+      const bytes = stdoutBytes.length > 0 ? Buffer.concat(stdoutBytes).toString("base64") : stdout;
+      resolve({ code, output, stdout: binary ? bytes : stdout, lastLine, stalled });
     });
     return promise;
   }
@@ -1189,12 +1214,13 @@ export class RepoCore {
   // -------------------------------------------------------------------------
 
   snapshot(): RepoStatus {
-    const port = this.phase === "ready" ? (this.config?.preview.port ?? null) : null;
+    const url = this.phase === "ready" ? this.previewUrl : null;
+    const port = previewPortOf(url);
     return {
       root: this.root,
       phase: this.phase,
       detail: this.detail,
-      previewUrl: port === null ? null : `http://127.0.0.1:${port}`,
+      previewUrl: url,
       previewPort: port,
       previewOrigins: this.config?.preview.origins ?? [],
       previewEpoch: port === null ? null : this.previewEpoch,
@@ -1280,15 +1306,27 @@ export function detailOf(error: unknown, pat: string | null): string {
   return redact(error instanceof Error ? error.message : String(error), pat);
 }
 
+/** Port a preview URL answers on — explicit, or the scheme's default. */
+function previewPortOf(url: string | null): number | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Small process/network helpers
 // ---------------------------------------------------------------------------
 
-/** Identity of the installed dependency set: reinstall exactly when it moves. */
-
-/** D94: 준비 턴이 계약을 못 썼을 때의 오류 — errorKind "bootstrap". */
-export class BootstrapPrepareError extends Error {}
-
+/**
+ * 서버는 떴지만 어느 포트에서 듣는지 끝내 알지 못했을 때의 오류 — errorKind
+ * "port-undetected". 출력에 URL 이 없고 소켓 스캔도 못 찾은 경우다. 카드의
+ * 다음 과제는 서버가 주소를 출력하게 하거나 preview.port 를 적는 것이다.
+ */
+export class PreviewPortUndetectedError extends Error {}
 /**
  * 선언된 미리보기 포트를 정리하려 했지만 정리하지 못했을 때의 오류 — errorKind
  * "port-busy". 평범한 충돌은 활성 프로젝트가 이겨 자동 정리되지만, 이 오류는

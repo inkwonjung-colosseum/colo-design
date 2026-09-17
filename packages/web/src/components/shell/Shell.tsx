@@ -10,11 +10,14 @@ import {
   rememberReadRepoWarning,
   type Settings,
   SIDEBAR_WIDTH_BOUNDS,
+  switchProviderPatch,
 } from "../../lib/settings";
 import { AddProjectDialog } from "../dialogs/AddProjectDialog";
+import type { SettingsCategory } from "../dialogs/SettingsDialog";
+import { TokenExpiryDialog } from "../dialogs/TokenExpiryDialog";
 import { WarnIcon } from "../icons";
 import { Onboarding } from "../onboarding/Onboarding";
-import { RepoPicker } from "../onboarding/RepoPicker";
+import { StartFlow } from "../onboarding/StartFlow";
 import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
 import { Sidebar } from "./Sidebar";
 import { Splitter } from "./Splitter";
@@ -22,6 +25,10 @@ import { Tip } from "./Tip";
 
 /** The folded rail's width — an icon column, not a hidden panel. */
 const SIDEBAR_COLLAPSED_WIDTH = 44;
+/** The unfolded tree's width until a drag says otherwise. 240 truncated
+    most Korean task names to ~9 characters; 264 buys the titles back
+    without crowding a 1280px workspace (the bounds cap at 360). */
+const SIDEBAR_DEFAULT_WIDTH = 264;
 /** Below this the rail folds by itself: three columns cannot fit. */
 const NARROW_QUERY = "(max-width: 1100px)";
 
@@ -46,12 +53,12 @@ export function Shell({
 }: {
   daemon: Daemon;
   settings: Settings;
-  /** 설정 owns how Claude answers; the workspace starts threads on it. */
+  /** 설정 owns how the agent answers; the workspace starts threads on it. */
   onChatChange: (patch: Partial<ChatSettings>) => void;
   /** The workspace column widths, persisted the same way — a planner who has
       dragged the columns to fit their window should find them there tomorrow. */
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (category?: SettingsCategory) => void;
   /** The planner's own names for threads, kept by session id in 설정's store. */
   onRenameSession: (sessionId: string, title: string) => void;
   /** Forces the first-run wizard open (SettingsDialog's 다시 보기). */
@@ -69,15 +76,51 @@ export function Shell({
 
   useEffect(() => {
     if (connection !== "open") return;
-    void api.onboardingCheck().catch(() => undefined);
+    // 연결 직후의 검사는 설정이 고른 에이전트의 몫이다 — 기본 claude 로
+    // 검사해 놓고 불일치로 한 번 더 묻는 낭비를 줄인다. 설정이 연결된 뒤
+    // 바뀌는 경우는 아래의 불일치 effect 가 걷는다.
+    void api.onboardingCheck(settings.chat.provider).catch(() => undefined);
   }, [connection, api]);
+
+  // 설정에서 고른 에이전트가 마지막 검사의 에이전트와 다르면 한 번 다시
+  // 묻는다. 기다리는 동안의 판정(stale steps)으로는 작업대를 막지 않는다 —
+  // 낡은 fail 이 화면을 다시 마법사로 밀어 올리는 일이 없게.
+  const [recheckingProvider, setRecheckingProvider] = useState(false);
+  const checkedProvider = useRef<string | null>(null);
+  useEffect(() => {
+    if (connection !== "open") return;
+    const wanted = settings.chat.provider;
+    if (checkedProvider.current === wanted) {
+      if (recheckingProvider) setRecheckingProvider(false);
+      return;
+    }
+    const mismatch = daemon.onboardingProvider !== null && daemon.onboardingProvider !== wanted;
+    if (!mismatch) {
+      checkedProvider.current = wanted;
+      if (recheckingProvider) setRecheckingProvider(false);
+      return;
+    }
+    if (recheckingProvider) return;
+    checkedProvider.current = wanted;
+    setRecheckingProvider(true);
+    void api
+      .onboardingCheck(wanted)
+      .catch(() => undefined)
+      .finally(() => {
+        // 설정이 그 사이에 또 바뀌었다면 다음 effect 가 다시 걷는다.
+        if (checkedProvider.current === wanted) setRecheckingProvider(false);
+      });
+  }, [connection, api, settings.chat.provider, daemon.onboardingProvider, recheckingProvider]);
 
   // A failing gate blocks: the tool cannot work without a Claude CLI or git,
   // and an UNANSWERED check blocks too — the checks run real commands and
   // treating "not yet known" as "fine" flashed the whole workspace at a
   // planner who has configured nothing, then yanked it away.
-  const onboardingBlocked =
-    daemon.onboarding === null || daemon.onboarding.some((step) => step.status === "fail");
+  // 예외: 에이전트 불일치 재검사가 도는 동안에는 화면의 steps 가 지난
+  // 에이전트의 판정이라 그 fail 로는 막지 않는다 — 재검사의 답이 판정이다.
+  const onboardingBlocked = recheckingProvider
+    ? false
+    : daemon.onboarding === null || daemon.onboarding.some((step) => step.status === "fail");
   // A warn does not block. On a FIRST run it still holds the stage — a
   // machine with no GitHub token should land on the token form, not on an
   // empty picker that can only offer a pasted url — and once the wizard is
@@ -92,7 +135,11 @@ export function Shell({
       setWizardNeeded(false);
       return;
     }
-    if (daemon.onboarding?.some((step) => step.status !== "pass")) setWizardNeeded(true);
+    // github 의 warn(토큰 없음)은 마법사를 세우지 않는다 — 그 수정은 첫 화면
+    // 그 자체다(StartFlow 의 1단, onboarding.html). 기계 게이트의 warn은 오늘
+    // 처럼 마법사를 세운다: 고칠 행이 여기밖에 없다.
+    if (daemon.onboarding?.some((step) => step.status !== "pass" && step.id !== "github"))
+      setWizardNeeded(true);
   }, [daemon.onboarding, daemon.projects.length]);
   // The daemon knows why it cannot work — no CLI, not signed in, no pnpm — and
   // the planner cannot read a terminal to find out. The repo's settings.json
@@ -106,6 +153,19 @@ export function Shell({
   // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
   // 으로 지운다 — 터미널은 끝까지 사용자의 몫으로 남지 않는다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
+  // GitHub 토큰 만료 카드(states.md §5-3, modals.html "연결이 끊겼어요") —
+  // 데몬이 자신의 GitHub 읽기에서 401 을 볼 때만 열린다. 닫기는 이 만료 국면에만
+  // 먹는다: 회복 뒤 새 401 은 새 소식이라 카드는 다시 선다. 데몬이 판정을
+  // 되돌리면(토큰 재연결·성공 읽기) 국면 자체가 끝난다.
+  const [expiryDismissed, setExpiryDismissed] = useState(false);
+  const githubExpired = daemon.status?.githubAuthExpired === true;
+  useEffect(() => {
+    if (!githubExpired) setExpiryDismissed(false);
+  }, [githubExpired]);
+  const expiryCard =
+    githubExpired && !expiryDismissed && connection === "open" ? (
+      <TokenExpiryDialog daemon={daemon} onDismiss={() => setExpiryDismissed(true)} />
+    ) : null;
   /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
       새 문장은 새 소식이니 다시 보인다. 레포 경고(뉴스)만 예외로 기기에
       눌러 담는다 — 아래 readRepoWarnings. */
@@ -173,7 +233,9 @@ export function Shell({
 
   // The rail's width and fold, seeded from the stored layout (already
   // clamped). Narrow windows fold it no matter what the setting says.
-  const [sidebarWidth, setSidebarWidth] = useState(() => settings.layout.sidebarWidth ?? 240);
+  const [sidebarWidth, setSidebarWidth] = useState(
+    () => settings.layout.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH,
+  );
   const [collapsed, setCollapsed] = useState(settings.layout.sidebarCollapsed);
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(NARROW_QUERY).matches ?? false);
   useEffect(() => {
@@ -181,7 +243,7 @@ export function Shell({
     if (!media) return;
     const onChange = () => setNarrow(media.matches);
     media.addEventListener("change", onChange);
-    return () => window.removeEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
   }, []);
   const folded = collapsed || narrow;
 
@@ -198,9 +260,11 @@ export function Shell({
   const newThread = (slug: string) => workspace.current?.newThread(slug);
   const deleteThread = (slug: string, thread: ThreadSummary) =>
     workspace.current?.deleteThread(slug, thread);
+  const clearThreads = (slug: string) => workspace.current?.clearThreads(slug);
   const exportThread = (slug: string, thread: ThreadSummary) =>
     workspace.current?.exportThread(slug, thread);
   const browseThreads = (slug: string) => workspace.current?.browseThreads(slug);
+  const goHome = () => workspace.current?.goHome();
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
@@ -228,6 +292,10 @@ export function Shell({
       <div className="planner planner--onboarding">
         <Onboarding
           daemon={daemon}
+          provider={settings.chat.provider}
+          providers={daemon.status?.providers ?? []}
+          checking={recheckingProvider}
+          onProviderChange={(id) => onChatChange(switchProviderPatch(settings.chat, id))}
           onDone={() => {
             setWizardDismissed(true);
             onOnboardingClose();
@@ -243,11 +311,10 @@ export function Shell({
                 }
           }
         />
+        {expiryCard}
       </div>
     );
   }
-
-  const activeProject = daemon.projects.find((project) => project.slug === daemon.activeSlug);
 
   return (
     <div
@@ -275,9 +342,11 @@ export function Shell({
         onOpenThread={openThread}
         onNewThread={newThread}
         onDeleteThread={deleteThread}
+        onClearThreads={clearThreads}
         onExportThread={exportThread}
         onRenameThread={onRenameSession}
         onBrowseThreads={browseThreads}
+        onGoHome={goHome}
         boundary={
           !folded && (
             <Splitter
@@ -316,7 +385,7 @@ export function Shell({
               }}
               onReset={() => {
                 setDrag(null);
-                setSidebarWidth(240);
+                setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
                 onLayoutChange({ sidebarWidth: null });
               }}
             />
@@ -325,24 +394,27 @@ export function Shell({
       />
 
       <div className="planner__main">
-        <header className="planner__header">
-          {/* With no project the header stays empty — the brand already reads
-              in the rail beside it, and the picker below is the real content. */}
-          {activeProject && <span className="planner__project">{activeProject.name}</span>}
-          <span className="planner__spacer" />
-          {/* The header used to read "데몬: 연결됨 · https://github.com/…" — the
-              name of a program the planner never starts, beside a git url they
-              never type. What is left is the only part that changes
-              what they should do: whether the tool can work right now. Both the
-              address and the repo live in 설정 → 문제 해결. */}
-          {connection !== "open" && (
-            <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
-              <span className="hint">연결하는 중…</span>
-            </Tip>
-          )}
-          {/* 설정 used to live here as a header gear — it moved to the rail's
-              foot (Sidebar) so the whole frame's controls sit in one room. */}
-        </header>
+        {/* 프로젝트가 있으면 제목 행은 PageWorkspace 의 것이 다 — 프로젝트
+            이름과 여정 지도가 한 행을 쓴다(preview.md). 이 자리의 헤더는
+            프로젝트가 없을 때만 남는다: 시작 흐름 동안 연결 상태를 오른쪽에
+            비추는 최소한의 행. 브랜드는 왼쪽 레일이 이미 읽는다. */}
+        {daemon.projects.length === 0 && (
+          <header className="planner__header">
+            <span className="planner__spacer" />
+            {/* The header used to read "데몬: 연결됨 · https://github.com/…" — the
+                name of a program the planner never starts, beside a git url they
+                never type. What is left is the only part that changes
+                what they should do: whether the tool can work right now. Both the
+                address and the repo live in 설정 → 문제 해결. */}
+            {connection !== "open" && (
+              <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
+                <span className="hint">연결하는 중…</span>
+              </Tip>
+            )}
+            {/* 설정 used to live here as a header gear — it moved to the rail's
+                foot (Sidebar) so the whole frame's controls sit in one room. */}
+          </header>
+        )}
 
         {(visibleWarnings.length > 0 || loggedOut) && (
           <div
@@ -373,17 +445,15 @@ export function Shell({
                     <WarnIcon />
                   </span>
                   <span className="notice__text">{warning.text}</span>
-                  <Tip label="경고 닫기">
-                    <button
-                      type="button"
-                      className="notice__close"
-                      aria-label="경고 닫기"
-                      disabled={closingWarnings.has(warning.text)}
-                      onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
-                    >
-                      ×
-                    </button>
-                  </Tip>
+                  <button
+                    type="button"
+                    className="notice__close"
+                    aria-label="경고 닫기"
+                    disabled={closingWarnings.has(warning.text)}
+                    onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
+                  >
+                    ×
+                  </button>
                 </div>
               </Fold>
             ))}
@@ -408,44 +478,13 @@ export function Shell({
           </div>
         )}
 
-        {/* With no project there is nothing to show and nothing to ask Claude
-            about — the picker IS the workspace until one exists.
+        {/* With no project there is nothing to show and nothing to ask the agent
+            about — the 2-step start flow IS the workspace until one exists
+            (onboarding.html): 토큰 → 레포, 같은 자리에서 단계만 바뀐다.
             `PageWorkspace` cannot stand in for it: its screen rail calls
             `repo.*`, which refuses without an active project. */}
         {daemon.projects.length === 0 ? (
-          <section className="planner__body planner__empty">
-            {/* The product's whole story, told once in miniature: an ask with
-                a picture attached, and the screen that comes back.
-                Decorative — the picker below is the actual task. */}
-            <div className="emptyhero" aria-hidden="true">
-              <div className="emptyhero__ask">
-                <span className="emptyhero__attach">화면.png</span>
-                <span className="emptyhero__prompt">❯</span>
-                결제 실패 화면의 세 상태를 만들어 줘
-              </div>
-              <span className="emptyhero__link" />
-              <div className="emptyhero__screen">
-                <span className="emptyhero__dots">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span className="emptyhero__line" />
-                <span className="emptyhero__line emptyhero__line--short" />
-                <span className="emptyhero__chips">
-                  <i>기본</i>
-                  <i>비어 있음</i>
-                  <i>오류</i>
-                </span>
-              </div>
-              <p className="emptyhero__caption">
-                말로 시켜도, 그림을 붙여도 — 회사 디자인 시스템으로 짜인 화면이 이 자리에 떠납니다
-              </p>
-            </div>
-            <h2 className="planner__emptyTitle">프로젝트 추가</h2>
-            <p className="hint">화면을 만들 레포를 고르세요.</p>
-            <RepoPicker daemon={daemon} onOpenSettings={onOpenSettings} />
-          </section>
+          <StartFlow daemon={daemon} onOpenSettings={onOpenSettings} />
         ) : (
           /* The workspace owns its own .planner__body — the three columns and
              their draggable boundaries are its business, not the frame's. */
@@ -469,6 +508,7 @@ export function Shell({
           onOpenSettings={onOpenSettings}
         />
       )}
+      {expiryCard}
     </div>
   );
 }

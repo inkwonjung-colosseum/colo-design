@@ -122,6 +122,10 @@ async function main() {
     COLO_DESIGN_GITHUB_FIXTURE: join(repoRoot, "packages", "daemon", "test", "fixtures", "github"),
     // The wizard's Claude gate reads this stub — see stubClaude above.
     COLO_DESIGN_CLAUDE_BIN: stubClaude(join(DIR, "claude-bin")),
+    // The page comes from this file's static server, not the daemon — the
+    // upgrade's Origin must be named or the daemon 403s it (server.ts
+    // allowedUpgradeOrigin).
+    COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -154,75 +158,32 @@ async function main() {
 
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`);
-    // --- 1. the wizard is the first run, and it is three gates long -------
+    // --- 1. the first run is the 2-step start flow, not the wizard -------
+    //     기계 게이트는 조용히 확인된다 — 실패만 마법사를 세운다(states.md
+    //     §2.2). 여기서는 전부 통과하므로 첫 화면은 곧 토큰 단계다.
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
 
-    await page.waitForSelector(".onboarding", { timeout: 20000 });
-    check("the first run opens the wizard, not the workspace", true);
-    await page
-      .waitForFunction(
-        () => document.querySelectorAll(".onboarding__step").length === 4,
-        undefined,
-        { timeout: 30000 },
-      )
-      .catch(() => undefined);
-    const stepTitles = await page.locator(".onboarding__stephead h2").allInnerTexts();
+    await page.waitForSelector(".planner__empty .ghtoken", { timeout: 20000 });
     check(
-      "the four machine gates are listed in order, GitHub last",
-      // 제목은 쓸모가 먼저다 — 도구 이름은 부제
-      // (.onboarding__tool)로 내려갔다. 의도된 계약 변경.
-      JSON.stringify(stepTitles) ===
-        JSON.stringify([
-          "화면을 만드는 Claude",
-          "작업을 보관할 준비",
-          "앱 실행 준비",
-          "개발자에게 넘길 준비",
-        ]),
-      stepTitles.join(" · "),
-    );
-    check(
-      "the answered gates are lines and the github gate holds the token form",
-      (await page.locator(".onboarding__step--line").count()) === 3 &&
-        (await page.locator(".ghtoken").count()) === 1,
-      `lines=${await page.locator(".onboarding__step--line").count()}`,
-    );
-    check(
-      "no project step remains — picking a repo is not a gate",
-      !stepTitles.includes("프로젝트"),
-      stepTitles.join(" · "),
+      "the first run opens the token step, not the wizard",
+      (await page.locator(".onboarding").count()) === 0 &&
+        (await page.locator(".planner__emptyTitle").innerText()).includes("토큰 하나면 시작해요"),
     );
 
-    // --- 2. the token turns the last gate green, and the wizard ends ------
+    // --- 2. the token turns the same screen into the repo step -----------
     await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
     await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
-    await page
-      .waitForFunction(
-        () => document.querySelectorAll(".onboarding__step--line").length === 4,
-        undefined,
-        { timeout: 15000 },
-      )
-      .catch(() => undefined);
-    const githubLine = await page
-      .locator(".onboarding__step--line", { hasText: "GitHub" })
-      .innerText();
+    await page.waitForSelector(".planner__empty .repopicker", { timeout: 20000 });
     check(
-      "the github line passes, naming the login the token acts as",
-      githubLine.includes("GitHub @jik-dev 로 연결됨"),
-      githubLine.replace(/\n+/g, " · "),
+      "the token step gives way to the repo step in place",
+      (await page.locator(".planner__emptyTitle").innerText()).includes("레포를 골라 주세요") &&
+        (await page.locator(".ghtoken").count()) === 0,
     );
-
-    // --- 2b. 게이트가 다 서면 시작하기가 바로 열린다 -----------------------
-    //     확인 방식은 여기서 묻지 않는다 — 설정 → 대화의 확인 방식이 그 자리다.
-    //     exact: 닫기 버튼의 aria-label("시작하기 닫기")이 부분일치로 걸린다.
-    await page.getByRole("button", { name: "시작하기", exact: true }).click();
-
-    // --- 3. no project yet: the workspace IS the picker --------------------
-    await page.waitForSelector(".planner__empty", { timeout: 20000 });
+    // --- 3. the repo step is the picker itself -----------------------------
     check(
       "the empty workspace asks for a repo instead of an address",
-      (await page.locator(".planner__emptyTitle").innerText()).includes("프로젝트 추가") &&
-        (await page.locator(".repopicker").count()) === 1,
+      (await page.locator(".repopicker").count()) === 1,
     );
     await page
       .waitForFunction(
@@ -264,8 +225,13 @@ async function main() {
     await page.getByTestId("approve-commands-manual").check();
     await page.getByRole("button", { name: "추가", exact: true }).click();
 
-    // The picker gives way to the workspace as soon as the registry answers;
-    // the clone that follows draws itself in the preview column.
+    // The picker gives way to the workspace frame as soon as the registry
+    // answers; the home inbox is the landing view (P1 홈 인박스 §2), and the
+    // clone that follows draws itself in the preview column once a
+    // conversation opens.
+    await page.waitForSelector(".planner__work", { timeout: 90000 });
+    // 홈이 기본값이므로 대화 화면은 새 대화 leaf 가 연다 — 상시 표시다.
+    await page.locator(".leaf--start").first().click();
     await page.waitForSelector(".planner__body:not(.planner__empty)", {
       timeout: 90000,
     });
@@ -293,6 +259,44 @@ async function main() {
       "escape closes the dialog",
       (await page.locator('[role="dialog"][aria-label="프로젝트 추가"]').count()) === 0,
     );
+
+    // --- 6. the wizard still exists — behind 설정, for the machine gates --
+    //     첫 화면이 2단으로 바뀐 뒤에도 마법사는 기계 게이트의 자리로 남는다
+    //     (설정 → 처음 설정 다시 보기).
+    await page.locator(".sidebar__gear").click();
+    await page.getByRole("button", { name: "처음 설정 다시 보기" }).click();
+    await page.waitForSelector(".onboarding", { timeout: 15000 });
+    await page
+      .waitForFunction(
+        () => document.querySelectorAll(".onboarding__step").length === 4,
+        undefined,
+        { timeout: 15000 },
+      )
+      .catch(() => undefined);
+    const stepTitles = await page.locator(".onboarding__stephead h2").allInnerTexts();
+    check(
+      "the four machine gates are listed in order, GitHub last",
+      // 제목은 쓸모가 먼저다 — 도구 이름은 부제
+      // (.onboarding__tool)로 내려갔다. 의도된 계약 변경.
+      JSON.stringify(stepTitles) ===
+        JSON.stringify([
+          "화면을 만드는 Claude",
+          "작업을 보관할 준비",
+          "앱 실행 준비",
+          "개발자에게 넘길 준비",
+        ]),
+      stepTitles.join(" · "),
+    );
+    const githubLine = await page
+      .locator(".onboarding__step--line", { hasText: "GitHub" })
+      .innerText();
+    check(
+      "the github line passes, naming the login the token acts as",
+      githubLine.includes("GitHub @jik-dev 로 연결됨"),
+      githubLine.replace(/\n+/g, " · "),
+    );
+    await page.getByRole("button", { name: "시작하기", exact: true }).click();
+    await page.waitForSelector(".onboarding", { state: "detached", timeout: 15000 });
 
     // The dialog is not just for show: the same manual-address path that
     // made the first project makes the second one inside it.

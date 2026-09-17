@@ -1,8 +1,7 @@
 import { APP_SHORTCUTS, type AppShortcut } from "@colo-design/protocol";
 import { useEffect, useRef } from "react";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { CloseIcon, CommandIcon } from "../icons";
-import { Tip } from "../shell/Tip";
 
 /**
  * ⌘/ 단축키 시트 — 단축키의 목록은 언제나 열어 볼 수 있는 곳에 산다.
@@ -16,17 +15,9 @@ import { Tip } from "../shell/Tip";
 const PIN_MODE_SHORTCUT: AppShortcut = { id: "pin-mode", label: "핀 모드", keys: "⌘⇧P" };
 
 export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [open, onClose]);
-
   const panelRef = useRef<HTMLDivElement>(null);
   useModalFocus(panelRef, open);
+  useModalEscape(panelRef, onClose, open);
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
@@ -49,11 +40,9 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
             </span>
             단축키
           </h2>
-          <Tip label="단축키 닫기" side="left">
-            <button type="button" className="ghost" aria-label="단축키 닫기" onClick={onClose}>
-              <CloseIcon />
-            </button>
-          </Tip>
+          <button type="button" className="ghost" aria-label="단축키 닫기" onClick={onClose}>
+            <CloseIcon />
+          </button>
         </header>
         <div className="modal__body">
           <ul className="shortcuts__list">

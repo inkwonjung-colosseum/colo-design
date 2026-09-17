@@ -32,8 +32,6 @@ export interface ToolClass {
  * features the driver cannot honor.
  */
 export interface Capabilities {
-  /** Mid-turn user input injection (Claude: PushQueue). */
-  steer: boolean;
   /** D95 truncating fork (Claude: forkSession+resumeSessionAt). */
   rewind: boolean;
   /** Plan/subscription usage windows (Claude only). */
@@ -48,10 +46,6 @@ export interface Capabilities {
   modelSelect: boolean;
   /** Slash-command palette. */
   slashCommands: boolean;
-  /** MCP server injection (preview tools over HTTP). */
-  mcpServers: boolean;
-  /** Can host the daemon's own in-process MCP server (SDK transports only). */
-  inProcessMcp: boolean;
   /** Plan-mode id, or null when the provider has no plan mode. */
   planMode: string | null;
   /** stopTask/backgroundTask subagent controls. */
@@ -71,6 +65,12 @@ export interface Diagnostic {
   executable?: string;
   version?: string;
   loggedIn?: boolean;
+  /**
+   * Why the provider cannot run, in the planner's language — the settings
+   * list shows it instead of a bare "설치 필요". Absent when `ok`, or when
+   * the driver has nothing more specific to say.
+   */
+  reason?: string;
 }
 
 export interface ImportableSession {
@@ -97,12 +97,15 @@ export interface TranscriptStore {
   promptCount?(id: string, cwd: string): Promise<number>;
   /** Where the k-th answer's rewind cuts, or null when it cannot. */
   rewind?(id: string, cwd: string, turn: number): Promise<RewindCutoff | null>;
+  /** Whether this store holds the id — a targeted check for resume routing. */
+  has?(id: string, cwd: string): Promise<boolean>;
   delete?(id: string, cwd: string): Promise<void>;
-}
-
-export interface SessionHandle {
-  provider: string;
-  vendorSessionId: string;
+  /**
+   * Every transcript this store holds for a clone, gone at once — a removed
+   * project's sweep. Stores that key sessions by cwd directory can drop the
+   * whole directory instead of listing then deleting one id at a time.
+   */
+  deleteAll?(cwd: string): Promise<void>;
 }
 
 export interface Turn {
@@ -140,8 +143,15 @@ export interface LaunchConfig {
   effort: EffortLevel | null;
   modeId: string;
   appendSystemPrompt: string | null;
-  mcpServers: Record<string, { type: "http"; url: string; headers?: Record<string, string> }>;
-  /** Provider-specific extras (Claude: resume/forkSession/claudeExecutable/…). */
+  /** Resume an existing transcript (the provider's stored session id). */
+  resume?: string;
+  /** D95: with `resume` — this session is a fork carrying a new id. */
+  forkSession?: boolean;
+  /** D95: with `resume` — the point the truncated resume keeps up to. */
+  resumeSessionAt?: string;
+  /** D95: with `resumeSessionAt` — the discarded turn's prompt id. */
+  resumeDropsTurn?: string;
+  /** Provider-specific extras (Claude: executable/…). */
   [key: string]: unknown;
 }
 
@@ -182,10 +192,13 @@ export interface DriverHooks {
  * handshake is async buffers calls behind an internal ready promise.
  */
 export interface AgentSession {
-  handle(): SessionHandle;
+  /**
+   * Whether the transport can still carry a send. False once the stream
+   * ended or the process died — a send pushed past this point is swallowed
+   * silently, so callers must resurrect instead.
+   */
+  readonly alive: boolean;
   send(turn: Turn): Promise<void>;
-  /** Mid-turn steer; only when capabilities.steer. */
-  steer?(turn: Turn): Promise<void>;
   interrupt(): Promise<"answered" | "timeout" | "dead">;
   setMode(modeId: string): Promise<void>;
   setModel?(id: string | null): Promise<void>;
@@ -212,4 +225,12 @@ export interface AgentDriver {
   createSession(launch: LaunchConfig, hooks: DriverHooks): AgentSession;
   /** The vendor's transcript store; absent when the provider keeps none. */
   store?: TranscriptStore;
+  /**
+   * The CLI's model rows without a thread — a driver whose CLI can list
+   * models on its own (`omp models`, `opencode models`) answers here, so the
+   * daemon's per-provider cache fills before any session exists. Absent = a
+   * live session is the only source (Claude, Codex); the cache then waits
+   * for the first session's report as before.
+   */
+  listModels?(): Promise<SessionModelInfo[]>;
 }

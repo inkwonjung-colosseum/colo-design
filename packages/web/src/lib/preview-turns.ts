@@ -1,6 +1,6 @@
 /**
  * The machine turns the preview column composes — pure functions, each one
- * a structured Korean turn Claude reads and the transcript renders back as
+ * a structured Korean turn the agent reads and the transcript renders back as
  * the marker card it carries. 핀 턴은 다음을 따른다:
  * 문장은 컴포저에서 온 노트 하나, 목록은 마커가 실고, json fence 는 없다.
  */
@@ -11,7 +11,7 @@ import type { PinAttachment } from "../hooks/usePins";
 import { stateLabel } from "./format";
 
 /**
- * 고치기 의 턴: the bundled developer comments, as Claude should
+ * 고치기 의 턴: the bundled developer comments, as the agent should
  * read them. The marker keeps one author and one path for the card; the body
  * carries every comment's words.
  */
@@ -40,10 +40,10 @@ export function reviewToTurn(reviews: DeveloperReview[]): string {
  * when the batch spans screens); the body is the sentence, one guide
  * line, and one readable block per pin — what was pinned, the repo's own
  * source stamp, the memo, the React owner chain and the CSS path with
- * the pin-time rect, which is all Claude ever needed the json fence for.
+ * the pin-time rect, which is all the agent ever needed the json fence for.
  *
  * The intent words the batch: all questions ask to be explained
- * — never fixed — and a mixed batch prefixes each memo so Claude knows
+ * — never fixed — and a mixed batch prefixes each memo so the agent knows
  * which rows order and which rows ask. `titleFor` resolves what the repo
  * called a screen; a screen the registry no longer declares falls back to
  * its raw id.
@@ -94,7 +94,7 @@ export function pinsToTurn(
         spread ? ` · ${titleFor(pin.screen) ?? pin.screen}` : ""
       } (${stateLabel(pin.state)} 상태)`,
     ];
-    // 레포가 새긴 출처 — the file Claude would edit, when the
+    // 레포가 새긴 출처 — the file the agent would edit, when the
     // repo stamps one.
     if (pin.element.source) rows.push(`   파일: ${pin.element.source}`);
     if (pin.note.trim()) {
@@ -110,19 +110,34 @@ export function pinsToTurn(
       const { x, y, width, height } = pin.element.rect;
       rows.push(`   위치: rect ${x},${y} ${width}×${height}`);
     } else {
+      // The agent's anchors on this element, richest first: the runtime CSS
+      // path (position facts), the repo's testid (the one hook that maps to
+      // source when the path's nth-of-type does not survive a re-render),
+      // and the accessible identity the page declares — a missing name on a
+      // clickable element is the fix a planner most often pins asking for.
       const rect = pin.element.rect;
       rows.push(
         `   위치: ${pin.element.path} (rect ${rect.x},${rect.y} ${rect.width}×${rect.height})`,
       );
+      if (pin.element.attrs?.testId) {
+        rows.push(`   셀렉터: [data-testid="${pin.element.attrs.testId}"]`);
+      }
+      const a11yFacts = [
+        ...(pin.element.a11y?.role ? [`role ${pin.element.a11y.role}`] : []),
+        ...(pin.element.a11y?.name ? [`이름 "${pin.element.a11y.name}"`] : []),
+      ];
+      if (a11yFacts.length > 0) rows.push(`   접근성: ${a11yFacts.join(" · ")}`);
     }
     // 계산된 스타일의 일부 — the planner saw these values.
     const styleRows = Object.entries(pin.element.styles ?? {})
       .slice(0, 6)
       .map(([key, value]) => `${key} ${value}`);
     if (styleRows.length > 0) rows.push(`   스타일: ${styleRows.join(" · ")}`);
-    // outerHTML — one line; the markup is context, not a file.
+    // outerHTML — one line; the markup is context, not a file. 500 of the
+    // envelope's 1,500: a utility-class tag alone eats the old 200 before
+    // the element's own attributes begin.
     if (pin.element.html) {
-      rows.push(`   HTML: ${pin.element.html.replace(/\s+/g, " ").trim().slice(0, 200)}`);
+      rows.push(`   HTML: ${pin.element.html.replace(/\s+/g, " ").trim().slice(0, 500)}`);
     }
     return rows.join("\n");
   });
@@ -141,7 +156,7 @@ export function pinsToTurn(
 /**
  * The error banner's structured turn: the marker names where it
  * happened, and the body is the message itself — the stack or build output
- * is what Claude fixes from; prose around it would only be in the way.
+ * is what the agent fixes from; prose around it would only be in the way.
  * `count` marks the same message coming back after a fix turn.
  */
 export function errorToTurn(error: PreviewError, count = 1): string {
@@ -156,7 +171,7 @@ export function errorToTurn(error: PreviewError, count = 1): string {
 }
 
 /**
- * 화면 보여 주기: the screen Claude cannot be told about in words.
+ * 화면 보여 주기: the screen the agent cannot be told about in words.
  * The body carries the planner's sentence and the console tail; the picture
  * rides as the turn's image, not in the text.
  */

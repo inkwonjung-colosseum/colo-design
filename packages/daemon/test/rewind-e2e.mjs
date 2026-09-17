@@ -155,22 +155,43 @@ async function main() {
       sessionId: first,
       text: "두 번째 화면",
     });
-    await waitFor(
+    // The stub exits 150ms after every answer — a send that lands before the
+    // exit is processed goes to a dying query and surfaces as the crash card
+    // (error state), which the card's own promise answers: send again.
+    const turn2Settled = await waitFor(
       () =>
         inbox.some(
           (m, i) =>
             i >= turn2From &&
             m.type === "session.state" &&
             m.sessionId === first &&
-            m.state === "idle",
+            (m.state === "idle" || m.state === "error"),
         ),
       30_000,
       "turn 2 settle",
-    );
+    ).then(() => inbox.findLast((m) => m.type === "session.state" && m.sessionId === first));
+    if (turn2Settled.state === "error") {
+      await request({
+        type: "session.send",
+        sessionId: first,
+        text: "두 번째 화면",
+      });
+      await waitFor(
+        () =>
+          inbox.some(
+            (m) => m.type === "session.state" && m.sessionId === first && m.state === "idle",
+          ),
+        30_000,
+        "turn 2 retry settle",
+      );
+    }
+    const idleCount = inbox.filter(
+      (m) => m.type === "session.state" && m.sessionId === first && m.state === "idle",
+    ).length;
     check(
       "two turns ran",
-      inbox.filter((m) => m.type === "session.state" && m.sessionId === first && m.state === "idle")
-        .length === 2,
+      idleCount === 2,
+      `idle events: ${idleCount} — ${JSON.stringify(inbox.filter((m) => m.type === "session.state" && m.sessionId === first).map((m) => m.state))}`,
     );
 
     // The checkpoint write rides the send asynchronously — poll for it.
@@ -193,7 +214,9 @@ async function main() {
       type: "session.rewind",
       sessionId: first,
       turn: 2,
-      text: "두 번째 화면, 대신 이렇게 고쳐 주세요",
+      // The conventions-prepare prompt (bootstrap-brief) itself says
+      // "고쳐 주세요" — a plain phrase would already sit in prompts.log.
+      text: "두 번째 화면, 되돌아간-문장-마커로 고쳐 주세요",
     });
     check(
       "the rewind answers with a session to carry on in",
@@ -205,11 +228,15 @@ async function main() {
       typeof rewound.memoryKept === "boolean",
       String(rewound.memoryKept),
     );
-    await waitFor(() => readPrompts(promptLog).includes("고쳐 주세요"), 10_000, "resent prompt");
+    await waitFor(
+      () => readPrompts(promptLog).includes("되돌아간-문장-마커"),
+      10_000,
+      "resent prompt",
+    );
     const after = readPrompts(promptLog);
     check(
       "the corrected words went out again",
-      after.includes("고쳐 주세요") && !before.includes("고쳐 주세요"),
+      after.includes("되돌아간-문장-마커") && !before.includes("되돌아간-문장-마커"),
       "prompts.log diff",
     );
     const listed = await request({ type: "session.list" });

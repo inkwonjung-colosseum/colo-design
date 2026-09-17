@@ -341,13 +341,20 @@ async function main() {
     );
     check("the hurried send moved to the front, then left alone", true);
     // The hurried turn answers on its own (알겠습니다.), and ITS end releases
-    // what kept waiting — after, never alongside.
+    // what kept waiting — after, never alongside. The send's arrival at the
+    // stub races the turn.end frame across two processes, so the end itself
+    // is awaited, not sampled.
+    const secondEnd = await waitFor(
+      () =>
+        sessionEvents(sessionId, "turn.end").filter((m) => m.event.subtype === "success").length >=
+        2,
+      20_000,
+      "the hurried turn's own end",
+    );
     const followed = await waitFor(() => arrivals(FIRST)[0], 20_000, "the remaining send");
     check(
       "the other send follows at the next turn's end",
-      followed.at >= hurried.at &&
-        sessionEvents(sessionId, "turn.end").filter((m) => m.event.subtype === "success").length >=
-          2,
+      followed.at >= hurried.at && secondEnd,
       `hurried@${hurried.at} → remaining@${followed.at}`,
     );
     await waitFor(() => room(sessionId).length === 0, 10_000, "the room emptying");

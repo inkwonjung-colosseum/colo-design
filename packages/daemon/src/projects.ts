@@ -1,6 +1,6 @@
 /**
  * Projects (PLAN D2[프로젝트]): one project is one connected repo. It is the unit
- * everything else is scoped to — the clone Claude edits, the preview server
+ * everything else is scoped to — the clone the agent edits, the preview server
  * that runs, and (because the Agent SDK stores transcripts per directory) the
  * session list.
  *
@@ -58,7 +58,7 @@ export interface Project {
    */
   commandsApproved?: boolean;
   /**
-   * 이 프로젝트에서 Claude 가 지켜 줄 것(설정 문서 P1#8) — 브랜치·커밋·PR
+   * 이 프로젝트에서 AI 가 지켜 줄 것(설정 문서 P1#8) — 브랜치·커밋·PR
    * 규칙을 사용자의 말로 적는 한 줄 상자. 세션의 시스템 프롬프트 끝에
    * 붙는다. 비면 붙지 않는다.
    */
@@ -126,6 +126,16 @@ function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * The shape a baseBranch may take. It reaches `git fetch origin <branch>` and
+ * `git checkout <branch>` as an argv word, so a wire value that is not a
+ * plain refname — a leading `-` reads as a flag, `..` as a range, a space as
+ * two words — is refused at the registry boundary instead of at git's.
+ */
+function isSafeRefname(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !value.includes("..");
 }
 
 const HANDOFF_STATES: Record<string, true> = {
@@ -304,6 +314,10 @@ export class ProjectRegistry {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
     const slug = slugify(name, new Set(this.file.projects.map((project) => project.slug)));
+    const baseBranch = input.baseBranch?.trim() || DEFAULT_BASE_BRANCH;
+    if (!isSafeRefname(baseBranch)) {
+      throw new Error(`브랜치 이름이 올바르지 않습니다: ${baseBranch.slice(0, 64)}`);
+    }
     const project: Project = {
       slug,
       name,
@@ -313,7 +327,7 @@ export class ProjectRegistry {
       commandsApproved: input.commandsApproved === true,
       repo: {
         url: input.repoUrl,
-        baseBranch: input.baseBranch?.trim() || DEFAULT_BASE_BRANCH,
+        baseBranch,
         branch: null,
         handoff: null,
         // D93 후속: the first cycle's pins are already this cycle's — the
@@ -358,7 +372,11 @@ export class ProjectRegistry {
     }
     if (changes.repoUrl !== undefined) project.repo.url = changes.repoUrl;
     if (changes.baseBranch !== undefined) {
-      project.repo.baseBranch = changes.baseBranch.trim() || DEFAULT_BASE_BRANCH;
+      const baseBranch = changes.baseBranch.trim() || DEFAULT_BASE_BRANCH;
+      if (!isSafeRefname(baseBranch)) {
+        throw new Error(`브랜치 이름이 올바르지 않습니다: ${baseBranch.slice(0, 64)}`);
+      }
+      project.repo.baseBranch = baseBranch;
     }
     this.save();
     return project;

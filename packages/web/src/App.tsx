@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { CopyButton } from "./components";
-import { SettingsDialog } from "./components/dialogs/SettingsDialog";
+import { type SettingsCategory, SettingsDialog } from "./components/dialogs/SettingsDialog";
 import { GearIcon, PlugIcon, WarnIcon } from "./components/icons";
 import { Shell } from "./components/shell/Shell";
-import { Tip } from "./components/shell/Tip";
 import { useDaemon } from "./lib/daemon-client";
 import { normalizeNotificationSettings, useSettings } from "./lib/settings";
 
@@ -39,16 +38,14 @@ function ConnectScreen({
 
   return (
     <div className="connect">
-      <Tip label="설정" side="bottom">
-        <button
-          type="button"
-          className="connect__settings ghost"
-          aria-label="설정"
-          onClick={onOpenSettings}
-        >
-          <GearIcon size={15} />
-        </button>
-      </Tip>
+      <button
+        type="button"
+        className="connect__settings ghost"
+        aria-label="설정"
+        onClick={() => onOpenSettings()}
+      >
+        <GearIcon size={15} />
+      </button>
       <h1>
         <span className="brand-name">Colo Design</span>
       </h1>
@@ -108,6 +105,8 @@ export default function App() {
   // The planner view needs the whole connection, not a copy of each field.
   const daemon = useDaemon(url);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** `설정 열기`가 들고 온 칸 — 다이얼로그는 그 방부터 연다. */
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory | null>(null);
   const { settings, update: updateSettings } = useSettings();
 
   // 알림 정책의 진실은 메인의 desktop-settings.json 이다 — 창이 닫혀 있을
@@ -154,16 +153,31 @@ export default function App() {
   }, []);
 
   const connect = (next: string) => {
-    localStorage.setItem(URL_KEY, next);
+    try {
+      localStorage.setItem(URL_KEY, next);
+    } catch {
+      // Storage can be unavailable (private mode) — the session still
+      // connects; only the reload loses the remembered url.
+    }
     setUrl(next);
     setSettingsOpen(false);
   };
 
   /** Drop the stored URL and go back to the connect screen. Nothing is deleted. */
   const forgetUrl = () => {
-    localStorage.removeItem(URL_KEY);
+    try {
+      localStorage.removeItem(URL_KEY);
+    } catch {
+      // Same story — the in-memory url is dropped either way.
+    }
     setUrl(null);
     setSettingsOpen(false);
+  };
+
+  /** 설정을 여는 모든 손이 지나는 문 — 칸을 들고 오면 그 방부터 연다. */
+  const openSettings = (category?: SettingsCategory) => {
+    setSettingsCategory(category ?? null);
+    setSettingsOpen(true);
   };
 
   const settingsDialog = settingsOpen ? (
@@ -182,6 +196,7 @@ export default function App() {
       onReconnect={connect}
       onForgetUrl={forgetUrl}
       onClose={() => setSettingsOpen(false)}
+      initialCategory={settingsCategory ?? undefined}
     />
   ) : null;
 
@@ -191,7 +206,7 @@ export default function App() {
         <ConnectScreen
           onConnect={connect}
           error={daemon.connectionError}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
         />
         {settingsDialog}
       </>
@@ -210,7 +225,7 @@ export default function App() {
             sessionTitles: { ...settings.sessionTitles, [sessionId]: title },
           })
         }
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={openSettings}
         onboardingOpen={onboardingOpen}
         onOnboardingClose={() => setOnboardingOpen(false)}
       />

@@ -1,5 +1,6 @@
 /** Timestamps read as "얼마 전"; an exact date only helps once it is old. */
 export function timeAgo(ts: number): string {
+  if (!Number.isFinite(ts)) return "";
   const seconds = Math.max(0, (Date.now() - ts) / 1000);
   if (seconds < 60) return "방금";
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;

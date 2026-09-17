@@ -76,3 +76,42 @@ test("planMode names a declared planning mode or is null", () => {
     assert.equal(row.tier, "planning", `${driver.id}: planMode must be the planning-tier mode`);
   }
 });
+
+test("listModels exists exactly where a session-less catalog does", () => {
+  // omp (`omp models --json`) and ACP configs that declare one (`opencode
+  // models`) can answer without a thread; Claude and Codex cannot — their
+  // cache waits for the first live session's report.
+  const withCatalog = ["omp", "opencode"];
+  for (const driver of drivers) {
+    assert.equal(
+      typeof driver.listModels === "function",
+      withCatalog.includes(driver.id),
+      `${driver.id}: listModels presence must match its session-less catalog`,
+    );
+  }
+});
+
+test("ompModelRows maps the CLI catalog into picker rows", async () => {
+  const { ompModelRows } = await import("../dist/agent/drivers/omp/catalog.js");
+  const rows = ompModelRows([
+    {
+      provider: "zai",
+      id: "glm-5.3-flash",
+      name: "GLM 5.3 Flash",
+      reasoning: true,
+      thinking: { efforts: ["low", "high"] },
+    },
+    { provider: "", id: "bare-id", name: "Bare" },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].value, "zai/glm-5.3-flash");
+  assert.equal(rows[0].displayName, "GLM 5.3 Flash");
+  assert.equal(rows[0].resolvedModel, "glm-5.3-flash");
+  assert.equal(rows[0].supportsEffort, true);
+  assert.deepEqual(rows[0].supportedEffortLevels, ["low", "high"]);
+  assert.equal(rows[0].supportsFastMode, true);
+  // A provider-less row keeps the bare id — no phantom "undefined/" prefix.
+  assert.equal(rows[1].value, "bare-id");
+  assert.equal(rows[1].supportsEffort, false);
+  assert.equal(rows[1].supportedEffortLevels, null);
+});

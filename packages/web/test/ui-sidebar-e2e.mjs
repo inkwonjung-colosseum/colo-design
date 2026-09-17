@@ -7,7 +7,7 @@
  * rows with their conversations as children, the active mark, a one-click
  * jump into another project's conversation (the workspace switches while the
  * old project's preview stays warm on its port), a background turn reading
- * 작업 중 → 답이 왔습니다, a fold that survives a reload, and the folded
+ * 작업 중 → 다시 조용해짐, a fold that survives a reload, and the folded
  * rail's conversation popover.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
@@ -22,9 +22,11 @@ import { createFixtureRepo, freePort } from "../../daemon/test/fixture-repo.mjs"
 import { stopDaemon } from "./stop-daemon.mjs";
 
 /**
- * A fake `claude` CLI whose real invocation stalls two seconds — long enough
- * for a background turn's 작업 중 mark to be watched before it settles.
- * (Same shape as projects-e2e's, kept local: fixture-repo stays UI-agnostic.)
+ * A fake `claude` CLI whose real invocation stalls eight seconds — long enough
+ * for a background turn's 작업 중 mark to be watched before it settles, and
+ * for the thread-state announce (disk scan + coalesced broadcast) to land
+ * while the turn is still running. (Same shape as projects-e2e's, kept
+ * local: fixture-repo stays UI-agnostic.)
  */
 function writeTurnStubClaude(dir) {
   mkdirSync(dir, { recursive: true });
@@ -39,7 +41,7 @@ function writeTurnStubClaude(dir) {
       '    echo \'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"planner@example.com"}\'',
       "    exit 0;;",
       "esac",
-      "sleep 2",
+      "sleep 8",
       "exit 0",
       "",
     ].join("\n"),
@@ -124,6 +126,9 @@ async function main() {
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
     COLO_DESIGN_CLAUDE_BIN: writeTurnStubClaude(join(DIR, "bin")),
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
+    // The page comes from this file's static server, not the daemon — the
+    // upgrade's Origin must be named or the daemon 403s it.
+    COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -211,11 +216,10 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".onboarding", { timeout: 60000 });
-    const start = page.getByRole("button", { name: "시작하기", exact: true });
-    await start.waitFor({ timeout: 30000 });
-    await start.click();
-    await page.waitForSelector(".planner__body", { timeout: 60000 });
+    // 첫 화면은 마법사가 아니라 2단 시작 흐름이다(states.md §2.2) — 기계
+    // 게이트는 조용히 통과하고, 소켓 호출은 사이드바가 서 있는 이 자리에서
+    // 바로 간다.
+    await page.waitForSelector(".planner__empty", { timeout: 60000 });
     // --- a. two projects, over the same socket the browser uses -----------
     await call({
       type: "project.create",
@@ -249,10 +253,13 @@ async function main() {
       type: "session.create",
     });
     await leaf(refundsSession).waitFor({ timeout: 30000 });
+    // The row count is not asserted: the conventions-prep turn (연결 준비)
+    // auto-opens a sibling thread post-ready, and under the stub CLI that
+    // leaf is transient — it leaves the tree when the session closes without
+    // a transcript. What this step proves is the created session's own row.
     check(
       "a created session arrives as a child row of its project",
-      (await page.locator(".leaf[data-thread-id]").count()) === 1 &&
-        (await leaf(refundsSession).innerText()).includes("새 화면"),
+      (await leaf(refundsSession).innerText()).includes("새 화면"),
       (await leaf(refundsSession).innerText()).split("\n")[0] ?? "",
     );
 
@@ -264,16 +271,20 @@ async function main() {
     check("the header switches the moment a row is clicked", true);
     const paymentsStatus = await waitReady("the 결제 clone after the switch");
     const paymentsPort = Number(new URL(paymentsStatus.previewUrl).port);
+    // The preview column lives in the thread view — a project row alone
+    // lands on the project's home. Opening the new conversation's row is
+    // what brings the column (and its iframe) on screen.
+    const { sessionId: paymentsSession } = await call({
+      type: "session.create",
+    });
+    await leaf(paymentsSession).waitFor({ timeout: 30000 });
+    await leaf(paymentsSession).click();
     await page
       .locator(`.preview__frame[src="http://127.0.0.1:${paymentsPort}"]`)
       .waitFor({ timeout: 30000 });
     check("the preview column serves the new project's fixture port", true, `port ${paymentsPort}`);
 
     // --- d. one conversation per project, both visible at once -------------
-    const { sessionId: paymentsSession } = await call({
-      type: "session.create",
-    });
-    await leaf(paymentsSession).waitFor({ timeout: 30000 });
     // Back to 환불: the tree's point is that 결제's conversation stays visible
     // while nobody is looking at that project.
     await page.locator(".node", { hasText: "환불" }).locator(".node__row").click();
@@ -282,7 +293,7 @@ async function main() {
     await leaf(paymentsSession).waitFor({ timeout: 30000 });
     check(
       "two projects' conversations show in the tree at the same time",
-      (await page.locator(".leaf").count()) >= 2,
+      (await page.locator(".leaf[data-thread-id]").count()) >= 2,
       (await page.locator(".leaf__title").allInnerTexts()).join(", "),
     );
 
@@ -294,10 +305,18 @@ async function main() {
       .locator(`.preview__frame[src="http://127.0.0.1:${paymentsPort}"]`)
       .waitFor({ timeout: 30000 });
     await leaf(paymentsSession).waitFor({ timeout: 30000 });
-    check(
-      "clicking another project's child makes it active and opens it",
-      (await leaf(paymentsSession).getAttribute("class"))?.includes("leaf--active") === true,
+    // The active mark rides the thread-state announce — poll for the class
+    // rather than reading it once, the same patience the row's own wait had.
+    await page.waitForFunction(
+      (id) =>
+        document
+          .querySelector(`.leaf[data-thread-id="${id}"]`)
+          ?.getAttribute("class")
+          ?.includes("leaf--active") === true,
+      paymentsSession,
+      { timeout: 30000 },
     );
+    check("clicking another project's child makes it active and opens it", true);
     // The project the planner left keeps its server: a return is a repaint of
     // the page the desktop kept, so the port must still answer.
     check(
@@ -306,7 +325,7 @@ async function main() {
       `port ${refundsPort}`,
     );
 
-    // --- f. a background turn reads 작업 중, then 답이 왔습니다 -------------
+    // --- f. a background turn reads 작업 중, then settles back to quiet -----
     const { sessionId: paymentsSecond } = await call({
       type: "session.create",
     });
@@ -321,12 +340,16 @@ async function main() {
       "a turn on a background row reads 작업 중",
       (await leaf(paymentsSecond).innerText()).includes("작업 중"),
     );
-    await leaf(paymentsSecond)
-      .locator(".leaf__meta", { hasText: "답이 왔습니다" })
-      .waitFor({ timeout: 60000 });
+    // A settled conversation is the steady state, so the row returns to
+    // recency words and the ring carries the answer-arrived mark alone.
+    await leaf(paymentsSecond).locator(".leaf__dot--done").waitFor({ timeout: 60000 });
+    const settled = await leaf(paymentsSecond).innerText();
     check(
-      "the settled turn reads 답이 왔습니다 with a ring",
-      (await leaf(paymentsSecond).locator(".leaf__dot--done").count()) === 1,
+      "the settled turn reads quiet — recency words, ring on the dot",
+      !settled.includes("작업 중") &&
+        /방금|(\d+분 전)/.test(settled) &&
+        (await leaf(paymentsSecond).locator(".leaf__dot--done").count()) === 1,
+      settled.split("\n").join(" · "),
     );
     // The row the planner is reading wears no ring.
     check(
@@ -353,7 +376,7 @@ async function main() {
         (await page.locator(".node--folded").count()) === 1,
     );
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.locator(".planner__body").waitFor({ timeout: 30000 });
+    await page.locator(".planner__main").waitFor({ timeout: 30000 });
     await page.locator(".node", { hasText: "환불" }).waitFor({ timeout: 30000 });
     const foldedAfterReload = page.locator(".node", { hasText: "환불" });
     check(
@@ -412,6 +435,10 @@ async function main() {
     // Five rows are all the tree holds; the sixth must not
     // read as gone — the count row names it and opens the palette, already
     // narrowed to this project's conversations.
+    // The conventions-prep thread (연결 준비) may still be a sibling leaf —
+    // it is a conversation too, so the count row's number absorbs it. What
+    // this step proves is the cap (5 rows) plus a count row that names the
+    // overflow, whatever the prep leaf does to the exact figure.
     for (let extra = 0; extra < 4; extra += 1) await call({ type: "session.create" });
     const paymentsKids = page.locator(".node", { hasText: "결제 시스템" });
     const moreRow = paymentsKids.locator(".leaf--more");
@@ -419,7 +446,7 @@ async function main() {
     check(
       "a sixth conversation turns into a count row, not silence",
       (await paymentsKids.locator(".leaf[data-thread-id]").count()) === 5 &&
-        (await moreRow.innerText()).includes("이전 대화 1개 더 보기"),
+        /이전 대화 \d+개 더 보기/.test(await moreRow.innerText()),
       await moreRow.innerText(),
     );
     await moreRow.click();

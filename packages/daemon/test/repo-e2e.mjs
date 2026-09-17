@@ -6,9 +6,8 @@
  * Covers what a planner's first minute depends on: the workspace clones,
  * installs once, reaches `ready` with a serving preview; a second sync pulls
  * and skips the install; a pushed commit arrives with the next pull; the same
- * workspace works through the wire the browser uses, `repo.update` stores a
- * PAT daemon-side without ever echoing it back; and shutdown gives the port
- * back.
+ * workspace works through the wire the browser uses, a repo-mutating message
+ * never carries a per-project PAT; and shutdown gives the port back.
  *
  * Usage: node packages/daemon/test/repo-e2e.mjs
  */
@@ -341,7 +340,7 @@ async function main() {
 
 /**
  * The same workspace through the wire the browser uses: `repo.status` must
- * stay read-only, `repo.update` must persist a PAT without echoing it back,
+ * stay read-only, a repo-mutating message must never carry a per-project PAT,
  * and every client must see the phase broadcasts.
  */
 async function checkWireProtocol(previewPort, remoteUrl, workspace) {
@@ -419,15 +418,17 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       `${before.data.phase}, url=${before.data.url}, port ${portBefore} → ${portAfter}`,
     );
 
-    // PAT storage went machine-wide (github.token.set); a repo.update that
-    // still carries one has the field stripped by the protocol, not stored.
+    // PAT storage went machine-wide (github.token.set); a repo-mutating
+    // message that still carries one has the field stripped by the protocol,
+    // not stored. project.update is the wire's remaining repo-mutating word.
     const PAT = "ghp_repo_e2e_secret";
-    const updated = await request({ id: "2", type: "repo.update", pat: PAT });
-    check(
-      "repo.update ignores a stray pat field and reports no per-project PAT",
-      updated.data.phase === "ready" && !("patConfigured" in updated.data),
-      `${updated.data.phase}`,
-    );
+    const listed = await request({ id: "2", type: "project.list" });
+    await request({
+      id: "3",
+      type: "project.update",
+      slug: listed.data.projects[0].slug,
+      pat: PAT,
+    });
     check(
       "the PAT never crosses the wire back",
       !JSON.stringify(inbox).includes(PAT),
@@ -445,10 +446,11 @@ async function checkWireProtocol(previewPort, remoteUrl, workspace) {
       inbox.some((m) => m.type === "repo.status" && m.status.phase === "pulling") &&
         inbox.some((m) => m.type === "repo.status" && m.status.phase === "ready"),
     );
+    const status = await request({ id: "4", type: "repo.status" });
     check(
       "the preview url serves the repo's app",
-      (await fetch(updated.data.previewUrl)).status === 200,
-      updated.data.previewUrl,
+      (await fetch(status.data.previewUrl)).status === 200,
+      status.data.previewUrl,
     );
   } finally {
     ws.close();

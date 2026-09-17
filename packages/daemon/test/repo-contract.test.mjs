@@ -112,21 +112,32 @@ test("only the scripts the repo has become commands — the preview name falls b
   }
 });
 
-test("the port is the one thing the repo cannot say for itself", () => {
+test("an undeclared port still resolves — the address is detected once the server is up", () => {
   const root = repoRoot("repo-noport-", { "package.json": { scripts: { dev: "vite" } } });
   const file = join(root, "colo-design.json");
   try {
-    // 파일이 아예 없는 레포도, 빈 파일인 레포도 같은 말을 듣는다.
-    assert.throws(() => resolveRepoConfig(root), /미리보기 포트를 알 수 없습니다/);
-    assert.equal(readDeclaredPreviewPort(root), null);
-    writeFileSync(file, "{}");
-    assert.throws(() => resolveRepoConfig(root), /미리보기 포트를 알 수 없습니다/);
-    assert.equal(readDeclaredPreviewPort(root), null);
+    // 파일이 아예 없는 레포도, 빈 파일인 레포도 같은 답을 듣는다 — 포트는
+    // 미리보기가 뜬 뒤 서버 출력·소켓에서 감지한다. 락파일이 없으면 pnpm 이다.
+    for (const setup of ["missing", "empty"]) {
+      if (setup === "empty") writeFileSync(file, "{}");
+      const config = resolveRepoConfig(root);
+      assert.equal(config.preview.command, "pnpm run dev", setup);
+      assert.equal(config.preview.port, undefined, setup);
+      assert.equal(readDeclaredPreviewPort(root), null, setup);
+    }
     writeFileSync(file, JSON.stringify({ preview: { port: 4000 } }));
     assert.equal(readDeclaredPreviewPort(root), 4000);
     assert.equal(resolveRepoConfig(root).preview.port, 4000);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+
+  // 스크립트도 오버라이드도 없는 레포는 여전히 거절이다 — 명령 없이는 띄울 수 없다.
+  const bare = repoRoot("repo-noscript-", { "package.json": { scripts: { check: "tsc" } } });
+  try {
+    assert.throws(() => resolveRepoConfig(bare), /미리보기 명령을 찾지 못했습니다/);
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
   }
 });
 

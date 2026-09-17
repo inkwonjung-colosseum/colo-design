@@ -1,11 +1,10 @@
-// Claude 의 미리보기 드라이버 (PLAN D61 · D63): 세션의 colo-preview 도구가
-// 노리는 브라우저다. pane 이 화면에 있으면 그 페이지를 그대로 drive 하고
-// (PanePreviewDriver — 사용자와 같은 WebContents), 없으면 숨은 오프스크린
-// BrowserWindow 를 세운다(ElectronPreviewDriver). 게이트·넘기기는 언제나
-// 숨은 창이다 — 세션이 쓰던 화면을 다시 열면 재검증이 아니라 재방문이 된다.
+// 미리보기 드라이버 (PLAN D61): 게이트·넘기기·화면 캡처가 화면을 다시 보는
+// 브라우저다. pane 이 화면에 있으면 캡처는 그 페이지를 그대로 찍고
+// (PanePreviewDriver — 사용자와 같은 WebContents), 게이트·넘기기는 언제나
+// 숨은 오프스크린 BrowserWindow 를 세운다(ElectronPreviewDriver) — 세션이
+// 쓰던 화면을 다시 열면 재검증이 아니라 재방문이 된다.
 
 import type {
-  PreviewAxNode,
   PreviewCapture,
   PreviewDriver,
   PreviewDriverFactory,
@@ -17,9 +16,6 @@ import { BrowserWindow, type WebContents } from "electron";
 import { VIEWPORT_METRICS } from "./emulation.js";
 import type { PlannerPreviewView } from "./preview-view.js";
 
-/** PiP 프레임 스로틀 (PLAN D63): 8fps. */
-const PIP_FRAME_INTERVAL_MS = 125;
-const PIP_LONG_EDGE = 640;
 /**
  * 도구가 긴 변을 말하지 않을 때의 값, 그리고 인코딩 품질. 품질은 토큰 값을
  * 바꾸지 않는다 — 토큰은 픽셀 수로 매겨지고 품질은 와이어 바이트만 움직인다 —
@@ -30,93 +26,6 @@ const CAPTURE_QUALITY = 88;
 /** 화면이 자리를 잡았는지 기다리는 한계 — 넘으면 못 잡았다고 말한다. */
 const SETTLE_TIMEOUT_MS = 3000;
 const SETTLE_POLL_MS = 100;
-/** 접근성 트리에서 건너뛰지만 아이들은 살리는 역할. */
-const AX_SKIP_ROLES: Record<string, true> = { InlineTextBox: true, IframePresentational: true };
-/** 노드가 스스로 말하지 않는 것들 — 상태로 뽑아 올린다. */
-const AX_STATE_PROPERTIES: Record<string, true> = {
-  disabled: true,
-  checked: true,
-  expanded: true,
-  focused: true,
-  required: true,
-  selected: true,
-  pressed: true,
-  invalid: true,
-  readonly: true,
-};
-/** `screen_press` 의 키 → CDP 키 이벤트. 화이트리스트는 도구가 지킨다. */
-const PRESS_KEY_CODES: Record<string, { code: string; key: string; vk: number; text?: string }> = {
-  Enter: { code: "Enter", key: "Enter", vk: 13, text: "\r" },
-  Escape: { code: "Escape", key: "Escape", vk: 27 },
-  Tab: { code: "Tab", key: "Tab", vk: 9, text: "\t" },
-  Backspace: { code: "Backspace", key: "Backspace", vk: 8 },
-  Delete: { code: "Delete", key: "Delete", vk: 46 },
-  Space: { code: "Space", key: " ", vk: 32, text: " " },
-  ArrowUp: { code: "ArrowUp", key: "ArrowUp", vk: 38 },
-  ArrowDown: { code: "ArrowDown", key: "ArrowDown", vk: 40 },
-  ArrowLeft: { code: "ArrowLeft", key: "ArrowLeft", vk: 37 },
-  ArrowRight: { code: "ArrowRight", key: "ArrowRight", vk: 39 },
-};
-
-/** 요소를 화면 가운데로 올리고 그 시점의 뷰포트 rect 를 돌려주는 함수. */
-const RECT_OF_SELF = `function () {
-  const el = this.nodeType === 1 ? this : this.parentElement;
-  if (!el) return null;
-  el.scrollIntoView({ block: "center", inline: "center" });
-  const r = el.getBoundingClientRect();
-  return { x: r.x, y: r.y, width: r.width, height: r.height };
-}`;
-
-/**
- * 누를 수 있는 rect 를 돌려주는 함수 — 누르기·입력·hover 가 쓴다. 요소가
- * 자리를 잡을 때까지(두 프레임 연속 같은 rect) 기다리고, disabled·가려짐도
- * 본다. 기다리는 이유: rect 하나만 보고 바로 쏘면 애니메이션 중인 요소를
- * 누르는 flaky click 이 된다. 2초 안에 못 누르면 사유를 돌려준다 — 도구가
- * 그 말을 그대로 모델에게 전한다.
- */
-const ACTIONABLE_RECT_OF_SELF = `async function () {
-  const el = this.nodeType === 1 ? this : this.parentElement;
-  if (!el) return { error: "detached" };
-  const deadline = Date.now() + 2000;
-  let last = null;
-  while (Date.now() < deadline) {
-    el.scrollIntoView({ block: "center", inline: "center" });
-    const r = el.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) {
-      last = "invisible";
-    } else if (el.disabled === true || el.getAttribute("aria-disabled") === "true") {
-      last = "disabled";
-    } else if (getComputedStyle(el).pointerEvents === "none") {
-      last = "inert";
-    } else {
-      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-      if (top !== null && top !== el && !el.contains(top)) {
-        last = "covered";
-      } else {
-        const settled = Promise.withResolvers();
-        // A covered or hidden view never paints — rAF would wait forever and
-        // the deadline would never be seen, so the frame pair races a timer.
-        const rafTimer = setTimeout(() => settled.resolve(null), 500);
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => {
-            clearTimeout(rafTimer);
-            const again = el.getBoundingClientRect();
-            settled.resolve(
-              again.x === r.x && again.y === r.y &&
-              again.width === r.width && again.height === r.height);
-          }));
-        if (await settled.promise) {
-          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-        }
-        last = "moving";
-      }
-    }
-    const pause = Promise.withResolvers();
-    setTimeout(pause.resolve, 100);
-    await pause.promise;
-  }
-  return { error: last ?? "invisible" };
-}`;
 
 interface PreviewRect {
   x: number;
@@ -125,33 +34,24 @@ interface PreviewRect {
   height: number;
 }
 
-/** Chromium 이 돌려주는 접근성 노드 — 쓰는 부분만 적는다. */
-interface CdpAxNode {
-  nodeId: string;
-  backendDOMNodeId?: number;
-  ignored?: boolean;
-  childIds?: string[];
-  role?: { value?: unknown };
-  name?: { value?: unknown };
-  value?: { value?: unknown };
-  properties?: Array<{ name?: string; value?: { value?: unknown } }>;
-}
-
 /**
  * The CDP surface every preview driver shares: 캡처는 `Page.captureScreenshot`,
- * 접근성 트리는 `Accessibility.getFullAXTree`, 입력은 `Input.*`. What differs
- * is whose webContents answers — ElectronPreviewDriver owns a hidden offscreen
- * window, PanePreviewDriver drives the pane the user is looking at.
- *
- * 주소는 ref 다 (PLAN D61): `axTree()` 가 걸어간 노드마다 `e12` 를 붙이고
- * backend 노드 번호를 기억한다. `open()` 과 다음 `axTree()` 가 세대를 갈아
- * 치우므로, 낡은 ref 는 "다시 읽으십시오" 라는 오류가 된다 — 엉뚱한 곳을
- * 누르는 일은 없다.
+ * 콘솔은 `Runtime.consoleAPICalled`. What differs is whose webContents
+ * answers — ElectronPreviewDriver owns a hidden offscreen window,
+ * PanePreviewDriver drives the pane the user is looking at.
  */
 abstract class CdpPreviewDriver implements PreviewDriver {
   protected readonly consoleHistory: Array<{ level: string; text: string }> = [];
-  /** 지금 세대의 ref → backend 노드 번호. `open`·`axTree` 가 비운다. */
-  protected readonly refs = new Map<string, number>();
+  /**
+   * 최근 200줄 까지 — pane 의 ring(preview-view.ts 의 20줄)과 같은 식의
+   * 상한. 네 곳의 push 가 모두 여기를 거친다.
+   */
+  protected pushConsole(entry: { level: string; text: string }): void {
+    this.consoleHistory.push(entry);
+    if (this.consoleHistory.length > 200) {
+      this.consoleHistory.splice(0, this.consoleHistory.length - 200);
+    }
+  }
   /** 이 대상에 걸린 에뮬레이션 — 같은 값을 두 번 걸지 않는다. */
   protected applied: { viewport: PreviewViewport; colorScheme: "light" | "dark" } | null = null;
 
@@ -159,8 +59,6 @@ abstract class CdpPreviewDriver implements PreviewDriver {
   protected abstract ready(): Promise<void>;
   /** 명령이 향하는 webContents — 없으면 던진다. */
   protected abstract contents(): WebContents;
-  /** 입력 전에 대상을 깨운다 — 오프스크린 창은 포커스가, pane 은 이미 앞에 있다. */
-  protected wake(): void {}
   /** 이 대상에 폭과 색 스킴을 건다. */
   protected abstract emulate(
     viewport: PreviewViewport,
@@ -178,14 +76,14 @@ abstract class CdpPreviewDriver implements PreviewDriver {
     if (method === "Network.loadingFailed") {
       const text = typeof params.errorText === "string" ? params.errorText : "요청 실패";
       if (params.canceled === true) return;
-      this.consoleHistory.push({ level: "net", text });
+      this.pushConsole({ level: "net", text });
       return;
     }
     if (method !== "Network.responseReceived") return;
     const response = params.response as { status?: number; url?: string } | undefined;
     const status = response?.status ?? 0;
     if (status < 400) return;
-    this.consoleHistory.push({ level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
+    this.pushConsole({ level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
   }
 
   protected debugger(): Electron.Debugger {
@@ -224,10 +122,10 @@ abstract class CdpPreviewDriver implements PreviewDriver {
    * 한 번이다. 형식은 WebP: 토큰은 픽셀 수로 매겨지니 형식은 값을 바꾸지
    * 않지만, JPEG 의 크로마 서브샘플링이 UI 의 얇은 색 글자를 흐리게 만든다.
    */
-  async screenshot(options?: { ref?: string; longEdge?: number }): Promise<PreviewCapture> {
+  async screenshot(options?: { longEdge?: number }): Promise<PreviewCapture> {
     await this.ready();
     const longEdge = options?.longEdge ?? CAPTURE_LONG_EDGE;
-    const area = options?.ref ? await this.rectOfRef(options.ref) : await this.viewportRect();
+    const area = await this.viewportRect();
     const scale = Math.min(1, longEdge / Math.max(area.width, area.height));
     const result = (await this.debugger().sendCommand("Page.captureScreenshot", {
       format: "webp",
@@ -262,314 +160,23 @@ abstract class CdpPreviewDriver implements PreviewDriver {
     };
   }
 
-  /**
-   * 접근성 트리를 계층 그대로 돌려주고, 그 자리에서 ref 를 새로 발급한다 —
-   * 이 호출이 곧 ref 의 세대다. 이름 없는 구조 노드까지 그대로 담고, 무엇을
-   * 접을지는 도구가 정한다 (`compact`).
-   */
-  async axTree(): Promise<PreviewAxNode[]> {
-    await this.ready();
-    const result = (await this.debugger().sendCommand("Accessibility.getFullAXTree", {})) as {
-      nodes?: CdpAxNode[];
-    };
-    const nodes = result.nodes ?? [];
-    const byId = new Map<string, CdpAxNode>();
-    const childOf = new Set<string>();
-    for (const node of nodes) byId.set(node.nodeId, node);
-    for (const node of nodes) for (const child of node.childIds ?? []) childOf.add(child);
-
-    this.refs.clear();
-    let minted = 0;
-    const build = (ids: string[]): PreviewAxNode[] => {
-      const out: PreviewAxNode[] = [];
-      for (const id of ids) {
-        const node = byId.get(id);
-        if (!node) continue;
-        const role = typeof node.role?.value === "string" ? node.role.value : "";
-        const children = build(node.childIds ?? []);
-        // 무시된 노드와 텍스트 조각은 자리만 차지한다 — 아이들만 올린다.
-        if (node.ignored === true || AX_SKIP_ROLES[role] === true || role === "") {
-          out.push(...children);
-          continue;
-        }
-        const states: string[] = [];
-        for (const property of node.properties ?? []) {
-          if (!property.name || AX_STATE_PROPERTIES[property.name] !== true) continue;
-          const value = property.value?.value;
-          if (value === false || value === "false" || value === undefined) continue;
-          states.push(value === true ? property.name : `${property.name}=${String(value)}`);
-        }
-        const rawValue = node.value?.value;
-        const backendId = node.backendDOMNodeId;
-        let ref = "";
-        if (backendId !== undefined) {
-          minted += 1;
-          ref = `e${minted}`;
-          this.refs.set(ref, backendId);
-        }
-        out.push({
-          ref,
-          role,
-          name: typeof node.name?.value === "string" ? node.name.value.trim() : "",
-          ...(rawValue === undefined || rawValue === "" ? {} : { value: String(rawValue) }),
-          states,
-          children,
-        });
-      }
-      return out;
-    };
-    const roots = nodes.filter((node) => !childOf.has(node.nodeId)).map((node) => node.nodeId);
-    return build(roots);
-  }
-
-  /**
-   * ref 가 가리키는 요소를 화면 가운데로 올리고 뷰포트 rect 를 받는다. 낡은
-   * ref 는 여기서 걸린다 — 도구가 그 말을 그대로 모델에게 전한다. `actionable`
-   * 이면(누르기·입력·hover) 요소가 자리 잡고 누를 수 있을 때까지 기다린다;
-   * 스크롤·캡처는 보이기만 하면 되므로 한 번만 묻는다.
-   */
-  private async rectOfRef(ref: string, actionable = false): Promise<PreviewRect> {
-    const backendNodeId = this.refs.get(ref);
-    if (backendNodeId === undefined) {
-      throw new Error(`${ref} 는 지금 화면의 것이 아닙니다 — screen_read 로 다시 읽으십시오.`);
-    }
-    const dbg = this.debugger();
-    const resolved = (await dbg.sendCommand("DOM.resolveNode", { backendNodeId })) as {
-      object?: { objectId?: string };
-    };
-    const objectId = resolved.object?.objectId;
-    if (!objectId) {
-      throw new Error(`${ref} 를 화면에서 찾지 못했습니다 — screen_read 로 다시 읽으십시오.`);
-    }
-    const evaluated = (await dbg.sendCommand("Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration: actionable ? ACTIONABLE_RECT_OF_SELF : RECT_OF_SELF,
-      returnByValue: true,
-      awaitPromise: actionable,
-    })) as { result?: { value?: unknown } };
-    // 두 함수의 반환 모양이 다르다: RECT_OF_SELF 는 rect 를, ACTIONABLE 은
-    // { rect } 나 { error } 를 돌려준다.
-    const value = evaluated.result?.value;
-    let rect: PreviewRect | null = null;
-    let reason: string | undefined;
-    if (value !== null && typeof value === "object") {
-      if ("error" in value && typeof value.error === "string") reason = value.error;
-      const candidate = "rect" in value ? value.rect : value;
-      if (
-        candidate !== null &&
-        typeof candidate === "object" &&
-        "x" in candidate &&
-        typeof candidate.x === "number" &&
-        "y" in candidate &&
-        typeof candidate.y === "number" &&
-        "width" in candidate &&
-        typeof candidate.width === "number" &&
-        "height" in candidate &&
-        typeof candidate.height === "number" &&
-        candidate.width > 0 &&
-        candidate.height > 0
-      ) {
-        rect = { x: candidate.x, y: candidate.y, width: candidate.width, height: candidate.height };
-      }
-    }
-    if (!rect) {
-      const why =
-        reason === "disabled"
-          ? "비활성 상태입니다"
-          : reason === "covered"
-            ? "다른 요소에 가려져 있습니다"
-            : reason === "inert"
-              ? "pointer-events 가 꺼져 있습니다"
-              : reason === "moving"
-                ? "자리를 잡지 못했습니다"
-                : "화면에 보이지 않습니다";
-      throw new Error(`${ref} 는 지금 누를 수 없습니다 — ${why}.`);
-    }
-    return rect;
-  }
-
-  /** text·selector 로 찾는 옛 길 — ref 가 없을 때의 차선책이다. */
-  private async rectOfQuery(target: { text?: string; selector?: string }): Promise<PreviewRect> {
-    const find = target.selector
-      ? `(function () {
-          const el = document.querySelector(${JSON.stringify(target.selector)});
-          if (!el) return null;
-          el.scrollIntoView({ block: "center", inline: "center" });
-          const r = el.getBoundingClientRect();
-          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-        })()`
-      : // 정확히 그 글자인 것이 먼저다 — "저장" 이 "저장 안 함" 을 누르면 안
-        // 된다. 정확한 것이 여럿이면 고르지 않고 후보를 돌려준다.
-        `(function () {
-          const needle = ${JSON.stringify(target.text ?? "")};
-          const all = Array.from(document.querySelectorAll("body *"));
-          const innermost = (list) => list.filter((candidate) =>
-            !list.some((other) => other !== candidate && candidate.contains(other)));
-          const exact = innermost(all.filter((el) => (el.textContent || "").trim() === needle));
-          const loose = innermost(all.filter((el) => (el.textContent || "").includes(needle)));
-          const picked = exact.length > 0 ? exact : loose;
-          if (picked.length === 0) return null;
-          if (picked.length > 1) {
-            return { ambiguous: picked.slice(0, 5).map((el) =>
-              (el.tagName.toLowerCase() + ' "' + (el.textContent || "").trim().slice(0, 40) + '"')) };
-          }
-          const el = picked[0];
-          el.scrollIntoView({ block: "center", inline: "center" });
-          const r = el.getBoundingClientRect();
-          return { rect: { x: r.x, y: r.y, width: r.width, height: r.height } };
-        })()`;
-    const evaluate = () =>
-      this.debugger().sendCommand("Runtime.evaluate", {
-        expression: find,
-        returnByValue: true,
-      }) as Promise<{
-        result?: { value?: { rect?: PreviewRect; ambiguous?: string[] } | null };
-      }>;
-    // 캡처 직후 등 컨텍스트가 갈아엎어지는 순간이 있다 — 한 번 더 물어본다.
-    let result = await evaluate();
-    if (!result?.result?.value) {
-      const settle = Promise.withResolvers<void>();
-      setTimeout(settle.resolve, 120);
-      await settle.promise;
-      result = await evaluate();
-    }
-    const value = result?.result?.value;
-    if (value?.ambiguous) {
-      throw new Error(
-        `"${target.text}" 에 맞는 것이 여럿입니다 — screen_read 의 ref 를 쓰십시오: ${value.ambiguous.join(", ")}`,
-      );
-    }
-    const rect = value?.rect;
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      throw new Error(`화면에서 찾지 못했습니다: ${target.text ?? target.selector}`);
-    }
-    return rect;
-  }
-
-  private async clickRect(rect: PreviewRect): Promise<void> {
-    const dbg = this.debugger();
-    const x = rect.x + rect.width / 2;
-    const y = rect.y + rect.height / 2;
-    // 오프스크린 페이지는 태어나자마자 뒷전이다 — 먼저 앞으로 끌어 올린다.
-    // pane 에서는 이미 앞이라 no-op 이다.
-    await dbg.sendCommand("Page.bringToFront", {}).catch(() => undefined);
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
-    for (const type of ["mousePressed", "mouseReleased"]) {
-      await dbg.sendCommand("Input.dispatchMouseEvent", {
-        type,
-        x,
-        y,
-        button: "left",
-        clickCount: 1,
-      });
-    }
-  }
-
-  async click(target: { ref?: string; text?: string; selector?: string }): Promise<void> {
-    await this.ready();
-    this.wake();
-    const rect = target.ref
-      ? await this.rectOfRef(target.ref, true)
-      : await this.rectOfQuery({
-          ...(target.text ? { text: target.text } : {}),
-          ...(target.selector ? { selector: target.selector } : {}),
-        });
-    await this.clickRect(rect);
-  }
-
-  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<void> {
-    await this.ready();
-    this.wake();
-    if (input.ref) await this.clickRect(await this.rectOfRef(input.ref, true));
-    const dbg = this.debugger();
-    if (input.clear === true) {
-      // 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의 onChange 가 흐르는
-      // 유일한 길이다(값을 직접 넣으면 React 는 모른다).
-      const modifiers = process.platform === "darwin" ? 4 : 2;
-      for (const type of ["rawKeyDown", "keyUp"]) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", {
-          type,
-          modifiers,
-          key: "a",
-          code: "KeyA",
-          windowsVirtualKeyCode: 65,
-        });
-      }
-    }
-    await dbg.sendCommand("Input.insertText", { text: input.text });
-  }
-
-  async press(key: string): Promise<void> {
-    await this.ready();
-    const mapped = PRESS_KEY_CODES[key];
-    if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
-    const dbg = this.debugger();
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: mapped.text ? "keyDown" : "rawKeyDown",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-      ...(mapped.text ? { text: mapped.text } : {}),
-    });
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-    });
-  }
-
-  async scroll(target: { ref?: string; dy: number }): Promise<void> {
-    await this.ready();
-    // ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것 자체가 그 일이다.
-    const rect = target.ref ? await this.rectOfRef(target.ref) : null;
-    if (target.dy === 0) return;
-    const dbg = this.debugger();
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseWheel",
-      x: rect ? rect.x + rect.width / 2 : VIEWPORT_METRICS.desktop.size[0] / 2,
-      y: rect ? rect.y + rect.height / 2 : VIEWPORT_METRICS.desktop.size[1] / 2,
-      deltaX: 0,
-      deltaY: target.dy,
-    });
-  }
-
-  async hover(target: { ref: string }): Promise<void> {
-    await this.ready();
-    const rect = await this.rectOfRef(target.ref, true);
-    await this.debugger().sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-      button: "none",
-    });
-  }
-
   async consoleLines(): Promise<Array<{ level: string; text: string }>> {
     return [...this.consoleHistory];
   }
 }
 
 /**
- * 숨은 오프스크린 `BrowserWindow` 하나가 Claude 전용 브라우저다. 그리기는
- * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`,
- * 접근성 트리는 `Accessibility.getFullAXTree`, 입력은 `Input.*`. 창은 화면에
+ * 숨은 오프스크린 `BrowserWindow` 하나가 AI 전용 브라우저다. 그리기는
+ * `webContents.debugger`(CDP)에게 맡긴다: 캡처는 `Page.captureScreenshot`, 콘솔은 `Runtime.consoleAPICalled`. 창은 화면에
  * 뜨지 않는다 — 보이는 창은 사용자의 것뿐이다.
- *
- * 주소는 ref 다 (PLAN D61): `axTree()` 가 걸어간 노드마다 `e12` 를 붙이고
- * backend 노드 번호를 기억한다. `open()` 과 다음 `axTree()` 가 세대를 갈아
- * 치우므로, 낡은 ref 는 "다시 읽으십시오" 라는 오류가 된다 — 엉뚱한 곳을
- * 누르는 일은 없다.
  */
 class ElectronPreviewDriver extends CdpPreviewDriver {
   private window: BrowserWindow | null = null;
-  private lastFrameSent = 0;
   /** 세우는 중인 창 — 동시 호출이 창 두 개를 만들지 않게. */
   private booting: Promise<BrowserWindow> | null = null;
 
   constructor(
     private readonly baseUrl: string,
-    private readonly plannerWindow: () => BrowserWindow | null,
     private readonly allowedOrigins: readonly string[] = [],
   ) {
     super();
@@ -595,11 +202,6 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     const window = this.window;
     if (!window || window.isDestroyed()) throw new Error("미리보기 창이 닫혔습니다.");
     return window.webContents;
-  }
-
-  /** 오프스크린 창은 포커스가 없어 입력이 무시될 수 있다 — 먼저 창을 살린다. */
-  protected override wake(): void {
-    this.window?.webContents.focus();
   }
 
   /**
@@ -629,23 +231,12 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     // Electron 이 스스로 내주는 콘솔 이벤트가 제일 믿을 만하다(PLAN D69 와 같은
     // 형태) — 44 부터 첫 인자가 details { level: "info"|"warning"|"error"|"debug" }.
     contents.on("console-message", (details) => {
-      this.consoleHistory.push({ level: details.level, text: details.message });
-    });
-    contents.on("paint", (_details, _rect, image) => {
-      const now = Date.now();
-      if (now - this.lastFrameSent < PIP_FRAME_INTERVAL_MS) return;
-      this.lastFrameSent = now;
-      const planner = this.plannerWindow();
-      if (!planner || planner.isDestroyed()) return;
-      const size = image.getSize();
-      const scale = Math.min(1, PIP_LONG_EDGE / Math.max(size.width, size.height));
-      const shrunk = scale < 1 ? image.resize({ width: Math.round(size.width * scale) }) : image;
-      planner.webContents.send("colo-preview:frame", shrunk.toJPEG(60).toString("base64"));
+      this.pushConsole({ level: details.level, text: details.message });
     });
     await contents.loadURL("about:blank").catch(() => undefined);
     // consoleAPICalled 은 Runtime 도메인을 켜야 흐르고, resolveNode 는 DOM,
     // 실패한 요청은 Network 를 켜야 온다. 하나가 없어도 나머지는 산다.
-    for (const domain of ["Runtime.enable", "DOM.enable", "Network.enable"]) {
+    for (const domain of ["Runtime.enable", "Network.enable"]) {
       await contents.debugger.sendCommand(domain, {}).catch(() => undefined);
     }
     this.window = window;
@@ -708,7 +299,6 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     if (state) url.searchParams.set("state", state);
     // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
     this.consoleHistory.length = 0;
-    this.refs.clear();
     const window = await this.ensureWindow();
     await this.emulate(options?.viewport ?? "desktop", options?.colorScheme ?? "light");
     try {
@@ -725,7 +315,6 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
   async destroy(): Promise<void> {
     const window = this.window;
     this.window = null;
-    this.refs.clear();
     this.applied = null;
     if (!window || window.isDestroyed()) return;
     try {
@@ -748,6 +337,15 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
 class PanePreviewDriver extends CdpPreviewDriver {
   /** 디버거가 붙어 있는 페이지 — 페이지가 바뀌면 다시 붙는다. */
   private attachedTo: WebContents | null = null;
+  /**
+   * The listeners `ready` hangs on the page — stored so `detachFrom` can
+   * take them off. A re-attach (DevTools opened and closed) used to stack a
+   * fresh `message` closure and a second `console-message` on each pass.
+   */
+  private readonly onDebuggerEvent = (_event: Electron.Event, method: string, params: unknown) => {
+    this.onDebuggerMessage(method, params as Record<string, unknown>);
+  };
+  private onDestroyed: (() => void) | null = null;
 
   constructor(
     private readonly baseUrl: string,
@@ -776,14 +374,14 @@ class PanePreviewDriver extends CdpPreviewDriver {
         "화면의 DevTools 가 열려 있어 조작할 수 없습니다 — DevTools 를 닫으면 이어집니다.",
       );
     }
-    contents.debugger.on("message", (_event, method, params) => {
-      this.onDebuggerMessage(method, params as Record<string, unknown>);
-    });
+    contents.debugger.on("message", this.onDebuggerEvent);
     contents.on("console-message", this.onConsoleMessage);
-    contents.once("destroyed", () => {
+    if (this.onDestroyed) contents.off("destroyed", this.onDestroyed);
+    this.onDestroyed = () => {
       if (this.attachedTo === contents) this.attachedTo = null;
-    });
-    for (const domain of ["Runtime.enable", "DOM.enable", "Network.enable"]) {
+    };
+    contents.once("destroyed", this.onDestroyed);
+    for (const domain of ["Runtime.enable", "Network.enable"]) {
       await contents.debugger.sendCommand(domain, {}).catch(() => undefined);
     }
     this.attachedTo = contents;
@@ -797,11 +395,6 @@ class PanePreviewDriver extends CdpPreviewDriver {
       throw new Error("미리보기 화면이 없습니다 — 화면이 보이는 상태에서 다시 시도하십시오.");
     }
     return contents;
-  }
-
-  /** pane 은 이미 보이는 창이다 — 포커스만 넘긴다. */
-  protected override wake(): void {
-    this.attachedTo?.focus();
   }
 
   /**
@@ -841,7 +434,6 @@ class PanePreviewDriver extends CdpPreviewDriver {
     if (state) url.searchParams.set("state", state);
     // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
     this.consoleHistory.length = 0;
-    this.refs.clear();
     const pane = this.pane();
     if (!pane) {
       return {
@@ -864,7 +456,7 @@ class PanePreviewDriver extends CdpPreviewDriver {
   private readonly onConsoleMessage = (
     details: Electron.Event<Electron.WebContentsConsoleMessageEventParams>,
   ): void => {
-    this.consoleHistory.push({ level: details.level, text: details.message });
+    this.pushConsole({ level: details.level, text: details.message });
   };
 
   private detachFrom(contents: WebContents): void {
@@ -873,14 +465,16 @@ class PanePreviewDriver extends CdpPreviewDriver {
     } catch {
       // 이미 떨어져 나갔다 — 지울 게 없을 뿐이다.
     }
+    contents.debugger.off("message", this.onDebuggerEvent);
     contents.off("console-message", this.onConsoleMessage);
+    if (this.onDestroyed) contents.off("destroyed", this.onDestroyed);
+    this.onDestroyed = null;
   }
 
   /** 세션이 끝나면 디버거만 뗀다 — 페이지는 사용자의 것이라 그대로 둔다. */
   async destroy(): Promise<void> {
     const contents = this.attachedTo;
     this.attachedTo = null;
-    this.refs.clear();
     this.applied = null;
     if (contents && !contents.isDestroyed()) this.detachFrom(contents);
   }
@@ -893,15 +487,14 @@ class PanePreviewDriver extends CdpPreviewDriver {
  * 같은 인스턴스를 다시 열면 세션의 콘솔 기록과 ref 세대가 오염된다.
  */
 export function createPreviewDriverFactory(
-  plannerWindow: () => BrowserWindow | null = () => null,
   pane: () => PlannerPreviewView | null = () => null,
 ): PreviewDriverFactory {
   return {
     for: (baseUrl, allowedOrigins = []) =>
       pane()?.webContents()
         ? new PanePreviewDriver(baseUrl, pane, allowedOrigins)
-        : new ElectronPreviewDriver(baseUrl, plannerWindow, allowedOrigins),
+        : new ElectronPreviewDriver(baseUrl, allowedOrigins),
     forIsolated: (baseUrl, allowedOrigins = []) =>
-      new ElectronPreviewDriver(baseUrl, plannerWindow, allowedOrigins),
+      new ElectronPreviewDriver(baseUrl, allowedOrigins),
   };
 }

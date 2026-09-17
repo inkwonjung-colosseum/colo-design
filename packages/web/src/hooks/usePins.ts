@@ -149,12 +149,9 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
       // Quota or private mode: pins stay in memory, they just do not survive a reload.
     }
   }, [slug, list]);
-  // The overlay's projection, resent on every change and on mount —
-  // idempotent, and the badge order IS this order. NativeHost resends the
-  // same shape after a navigation.
-  useEffect(() => {
-    void window.coloDesignDesktop?.preview?.pins?.(pinsSync(ghosts, list));
-  }, [list, ghosts]);
+  // The overlay's projection moved to useMarks (preview.md §1-C): the marks
+  // registry owns `pinsSync` now — numbering, done marks, and screen marks
+  // all ride the same channel from one place.
 
   const add = (pin: ColoDesignPinEnvelope["pin"]) => {
     setList((current) =>
@@ -204,7 +201,7 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
     } catch (e) {
       // 기록 실패는 침묵하지 않는다 — 턴은 이미 나갔다(전달 우선). 이 사이클의
       // 핀들은 개발자가 읽을 `### 수정 요청` 에서 빠진다; 대화에 남은 말은
-      // 그대로이므로 Claude 는 이미 들었다.
+      // 그대로이므로 AI 는 이미 들었다.
       setRecordError(
         e instanceof Error && e.message
           ? `코멘트 기록을 저장하지 못했습니다 — ${e.message}. 넘긴 요청 본문에서 이번 코멘트가 빠집니다.`

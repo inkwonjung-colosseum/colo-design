@@ -16,15 +16,7 @@ import type {
   SessionModelInfo,
 } from "@colo-design/protocol";
 import { PLAN_TOOL } from "@colo-design/protocol";
-import type { PreviewTools } from "../../../preview-tools.js";
-import type {
-  AgentSession,
-  DriverHooks,
-  LaunchConfig,
-  SessionHandle,
-  ToolClass,
-  Turn,
-} from "../../driver.js";
+import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { MessageTranslator } from "./event-mapper.js";
 
 /**
@@ -121,15 +113,6 @@ function classifyTool(toolName: string, input: Record<string, unknown>): ToolCla
  */
 export interface ClaudeLaunch extends LaunchConfig {
   executable: string;
-  /** Resume an existing transcript. */
-  resume?: string;
-  /** D95: with `resume` — this session is a fork carrying a new id. */
-  forkSession?: boolean;
-  /** D95: with `resume` — the chain uuid the truncated resume keeps up to. */
-  resumeSessionAt?: string;
-  /** D95: with `resumeSessionAt` — the discarded turn's prompt uuid. */
-  resumeDropsTurn?: string;
-  previewTools?: PreviewTools | null;
 }
 
 export class ClaudeAgentSession implements AgentSession {
@@ -140,6 +123,8 @@ export class ClaudeAgentSession implements AgentSession {
   private readonly run: Query;
   private readonly consumer: Promise<void>;
   private closed = false;
+  /** The SDK stream finished — sends past this point are swallowed. */
+  private streamEnded = false;
   /**
    * CLI 가 스스로 내려간다고 예고한 이유 (`worker_shutting_down`), 없으면 null.
    * 예고 뒤의 스트림 끝은 고장이 아니다 — 크래시 카드의 말이 달라진다.
@@ -211,15 +196,6 @@ export class ClaudeAgentSession implements AgentSession {
         // 않으면 중지 한 번이 백그라운드 작업까지 함께 죽인다 — 선언과 UI 는
         // 반드시 같이 간다(둘 중 하나만 있으면 폭주하는 작업을 세울 길이 없다).
         perTaskStopAffordance: true,
-        // The preview tools ride the query as an in-process MCP server
-        // (PLAN D61), keyed by the server's own name.
-        ...(launch.previewTools
-          ? {
-              mcpServers: {
-                [launch.previewTools.name]: launch.previewTools.config,
-              },
-            }
-          : {}),
         // A fresh query starts on the chips' choices; mid-session switches
         // go through the control methods below instead.
         ...(launch.model ? { model: launch.model } : {}),
@@ -243,8 +219,8 @@ export class ClaudeAgentSession implements AgentSession {
     this.consumer = this.consume();
   }
 
-  handle(): SessionHandle {
-    return { provider: "claude", vendorSessionId: this.id };
+  get alive(): boolean {
+    return !this.closed && !this.streamEnded;
   }
 
   private async consume(): Promise<void> {
@@ -252,13 +228,13 @@ export class ClaudeAgentSession implements AgentSession {
       for await (const message of this.run) {
         // 빠르게의 진실은 CLI 에 있다: init·result·system 이 실어 오는
         // fast_mode_state 를 번역 전에 읽어 둔다. 'cooldown' 은 한도 뒤의
-        // 쉬는 중 — 켜 달라는 뜻은 살아 있으나 지금 도는 것은 보통 속도라,
+        // 쉬는 중 - 켜 달라는 뜻은 살아 있으나 지금 도는 것은 보통 속도라,
         // 켜짐으로 세지 않는다.
         this.readFastMode(message);
         for (const event of this.translator.translate(message)) {
           if (event.kind === "shutdown") {
             // 예고된 종료는 고장이 아니다: 스트림 끝이 이 깃발을 읽고 다른
-            // 말을 한다. 화면에는 올리지 않는다 — 계획자가 할 일은 없고, 곧
+            // 말을 한다. 화면에는 올리지 않는다 - 계획자가 할 일은 없고, 곧
             // 이어지는 카드가 이어가는 길을 말한다.
             this.shutdownReason = event.reason;
             continue;
@@ -266,9 +242,12 @@ export class ClaudeAgentSession implements AgentSession {
           this.hooks.onEvent(event);
         }
       }
-      this.hooks.onTransportEnd(this.shutdownReason);
+      // A deliberate close() ends the stream too — that end is not a crash.
+      if (!this.closed) this.hooks.onTransportEnd(this.shutdownReason);
     } catch (error) {
       this.hooks.onTransportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      this.streamEnded = true;
     }
   }
 
@@ -575,12 +554,15 @@ export async function probeCommands(options: {
 /**
  * The SDK's usage answer as the protocol's plan reading. API-key, Bedrock and
  * Vertex sessions answer `rate_limits_available: false` and get null — plan
- * limits do not apply there at all.
+ * limits do not apply there at all. Pure, and exported for the mapper test:
+ * the classification is the only bridge between the SDK's answer and the
+ * chip's rows, so it is tested without a session in the way.
  */
-function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
+export function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
   const limits = usage.rate_limits;
   if (!usage.rate_limits_available || !limits) return null;
   return {
+    provider: "claude",
     subscriptionType: usage.subscription_type,
     fiveHour: limits.five_hour
       ? { utilization: limits.five_hour.utilization, resetsAt: limits.five_hour.resets_at }

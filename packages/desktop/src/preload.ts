@@ -1,4 +1,8 @@
-import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
+import type {
+  ColoDesignPinEnvelope,
+  ColoDesignPinsSync,
+  PreviewTabMeta,
+} from "@colo-design/protocol";
 import { contextBridge, ipcRenderer } from "electron";
 
 /**
@@ -52,8 +56,23 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       ipcRenderer.invoke("preview:bounds", rect),
     cover: (on: boolean) => ipcRenderer.invoke("preview:cover", { on }),
     open: (path: string) => ipcRenderer.invoke("preview:open", { path }),
+    /** 설정 `앱에서 링크 열기` — a clicked link browses in the pane, or the
+        OS browser when no slot is on screen. */
+    openExternal: (url: string) => ipcRenderer.invoke("preview:open-external", { url }),
     navigate: (route: string, state: string | null) =>
       ipcRenderer.invoke("preview:navigate", { route, state }),
+    /**
+     * 탭 스트립 (인앱 브라우저 1단계): the view owns the tab list — the web
+     * only asks. `tabClose`·`tabNew` 생략 인자는 활성 탭·빈 탭을 뜻한다.
+     */
+    tabs: () =>
+      ipcRenderer.invoke("preview:tabs") as Promise<{
+        tabs: PreviewTabMeta[];
+        activeTabId: string | null;
+      }>,
+    tabActivate: (tabId: string) => ipcRenderer.invoke("preview:tab-activate", { tabId }),
+    tabClose: (tabId?: string) => ipcRenderer.invoke("preview:tab-close", { tabId }),
+    tabNew: (url?: string) => ipcRenderer.invoke("preview:tab-new", { url }),
     history: (delta: -1 | 1) => ipcRenderer.invoke("preview:history", { delta }),
     reload: () => ipcRenderer.invoke("preview:reload"),
     /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
@@ -69,19 +88,18 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     pinFlash: (id: string) => ipcRenderer.invoke("preview:pin-flash", { id }),
     /** 화면 보여 주기 (PLAN D89): the whole frame plus the recent console. */
     snapshot: () => ipcRenderer.invoke("preview:snapshot"),
-    /**
-     * Claude 시점 보기 (PLAN D63): Claude 가 보는 화면의 프레임 — 8fps 로
-     * 스로틀된 JPEG(base64). 구독만 있고 해제는 없다; 프레임은 미리보기
-     * 세션이 살아 있는 동안만 흐른다. 렌더러→메인은 따로 없다.
-     */
-    onFrame: (callback: (frame: string) => void) => {
-      ipcRenderer.on("colo-preview:frame", (_event, frame: string) => callback(frame));
-    },
     onLocation: subscribe<{
       path: string;
+      /** The full address — web 탭은 주소창에 통째로 보여 준다. */
+      url?: string;
+      /** 어느 탭의 보고인지 — 늦게 도착한 비활성 탭의 보고를 걸러 낸다. */
+      tabId: string;
+      kind: "preview" | "web";
       canGoBack: boolean;
       canGoForward: boolean;
     }>("colo-preview:location"),
+    /** 탭 목록이 바뀔 때마다 통째로 — 스트립은 이 한 채널로 그린다. */
+    onTabs: subscribe<{ tabs: PreviewTabMeta[]; activeTabId: string | null }>("colo-preview:tabs"),
     onScreens: subscribe<{ screens: unknown[] }>("colo-preview:screens"),
     onPin: subscribe<ColoDesignPinEnvelope>("colo-preview:pin"),
     onPinFocus: subscribe<{ id: string }>("colo-preview:pin-focus"),

@@ -19,26 +19,25 @@
 
 ## 1. 화면/상태 목록
 
-### 1-A. 여정 띠 (`JourneyBar`) — 대화 상단, 읽기 전용
+### 1-A. 여정 지도 (`JourneyMap`) — 제목 행 오른쪽, 읽기 전용
 
-`deriveDelivery`의 `state`를 4정류장으로 기계 번역한다('연결' 정류장은 제외 — 대화 단위에선 노이즈, 계약 확정):
+`deriveDelivery`의 `state`를 4정류장으로 기계 번역한다('연결' 정류장은 제외 — 대화 단위에선 노이즈, 계약 확정). 지도는 프레임 제목 행(.planner__header)의 오른쪽 끝에서 프로젝트 이름과 한 행을 쓴다 — 2026-09, 별도의 띠 행과 상태 캡션(`지금 장면 · …`)은 빠졌다: 상태는 점·색이 말하고, 세로 공간은 두 행에서 한 행으로 줄었다.
 
-| `delivery.state` | 지도 | 캡션 |
-|---|---|---|
-| `clean` (shelf 없음) | 만들기=now | `지금 장면 · 만들기 — 화면을 만들어 달라고 하면 시작돼요` |
-| `unsaved` | 만들기=now | `지금 장면 · 만들기 — 고친 것은 아직 미리보기에만 있어요` |
-| `saved` | 만들기✓ 저장=now | `지금 장면 · 저장됨 — 개발자에게 넘길 준비가 됐어요` |
-| `handed` (open) | …✓ 넘기기=now | `지금 장면 · 검토 중 — 개발자가 보낸 화면을 보고 있어요` |
-| `changes_requested` | 넘기기=now(경고 톤) | `지금 장면 · 변경 요청 — 개발자의 코멘트가 대화에 와 있어요` |
-| `closed` (반려) | 넘기기=now(경고 톤) | `지금 장면 · 반려 — 이유를 읽고 고쳐서 다시 저장하세요` |
-| `merged` + pendingChanges=0 + !running | 전부✓ 반영=arrived | `지금 장면 · 반영됨 — 팀원들이 지금 이 화면을 써요` |
-| `merged` + (pendingChanges>0 또는 running) | **리셋** → 만들기=now | `새 여정 · 만들기 — 지난 작업은 반영됐어요` |
-| `clean` + shelf 있음 | 만들기=now | `치워둔 작업이 있어요 — 꺼내면 이어서 만들어요` |
-| `delivery === null` (phase ≠ ready/error) | 띠 자체를 숨김 | — (준비 중엔 지도가 거짓말을 한다) |
+| `delivery.state` | 지도 |
+|---|---|
+| `clean` | 만들기=now |
+| `unsaved` | 만들기=now |
+| `saved` | 만들기✓ 저장=now |
+| `handed` (open) | …✓ 넘기기=now |
+| `changes_requested` | 넘기기=now(경고 톤) |
+| `closed` (반려) | 넘기기=now(경고 톤) |
+| `merged` + pendingChanges=0 + !running | 전부✓ 반영=arrived |
+| `merged` + (pendingChanges>0 또는 running) | **리셋** → 만들기=now |
+| `delivery === null` (phase ≠ ready/error) | 지도 자체를 숨김 — (준비 중엔 지도가 거짓말을 한다) |
 
-**2주차 리셋 규칙(확정)**: `merged` 도착 상태는 "새 작업이 시작되기 전까지"만 유지한다. 리셋 트리거 = `pendingChanges > 0` 또는 `turnState === "running"`(새 고침 턴). 리셋되면 4정류장이 모두 비고 만들기가 now가 되며, 캡션이 `새 여정 ·` 접두를 단다. 별도 시계·타이머 없음 — `delivery.state`와 `pendingChanges`만으로 결정되는 순수 함수(`deriveJourney(delivery, pendingChanges, running)`).
+**2주차 리셋 규칙(확정)**: `merged` 도착 상태는 "새 작업이 시작되기 전까지"만 유지한다. 리셋 트리거 = `pendingChanges > 0` 또는 `turnState === "running"`(새 고침 턴). 리셋되면 4정류장이 모두 비고 만들기가 now가 된다. 별도 시계·타이머 없음 — `delivery.state`와 `pendingChanges`만으로 결정되는 순수 함수(`deriveJourney(delivery, pendingChanges, running)`).
 
-**주의 — 지도는 대화가 아니라 프로젝트 사이클의 것이다.** `repo.handoff`·`pendingChanges`는 프로젝트 단위라 같은 프로젝트의 모든 대화가 같은 지도를 본다. 목업의 "이 대화의 여정"은 현 구현에서 대화-사이클 1:1이 아니므로, 띠는 **워크스페이스 전체 폭**(chat+preview 위)에 두어 프로젝트 진실임을 레이아웃으로 말한다. 대화별 지도는 사이클이 대화 단위로 갈라지는 대공사가 선행돼야 하며 이 슬라이스 범위 밖(§7 리스크).
+**주의 — 지도는 대화가 아니라 프로젝트 사이클의 것이다.** `repo.handoff`·`pendingChanges`는 프로젝트 단위라 같은 프로젝트의 모든 대화가 같은 지도를 본다. 목업의 "이 대화의 여정"은 현 구현에서 대화-사이클 1:1이 아니므로, 지도는 **워크스페이스 전체 폭의 제목 행**(chat+preview 위)에 두어 프로젝트 진실임을 레이아웃으로 말한다. 대화별 지도는 사이클이 대화 단위로 갈라지는 대공사가 선행돼야 하며 이 슬라이스 범위 밖(§7 리스크).
 
 ### 1-B. 미리보기 제목바 (문서앱 문법) — `.screenpanel__bar` 재편
 
@@ -96,14 +95,14 @@
 ## 2. 컴포넌트 계획
 
 ### 신규
-- **`packages/web/src/components/shell/JourneyBar.tsx`** — 읽기 전용 띠. props: `journey: Journey`(§3의 derive 결과). 정류장 4개 + 세그먼트 + 캡션. 클릭 핸들러 없음(읽기 전용 계약). `aria-label="이 작업의 여정"`, `role="img"` 또는 정류장마다 `aria-current`.
-- **`packages/web/src/lib/journey.ts`** — `deriveJourney(input: { delivery: Delivery | null; pendingChanges: number; running: boolean; shelf: boolean }): Journey | null`. 순수 함수, `delivery.ts`와 같은 파일 규율(표 한 곳). `Journey = { stop: 0..3; arrived: boolean; warn: boolean; caption: string }`.
+- **`packages/web/src/components/chat/JourneyMap.tsx`** — 읽기 전용 지도. props: `journey: Journey`(§3의 derive 결과). 정류장 4개 + 세그먼트. 클릭 핸들러 없음(읽기 전용 계약). `aria-label="이 작업의 여정"`, 정류장마다 `aria-current`. 제목 행(.planner__header) 안에서 프로젝트 이름 오른쪽에 렌더된다(캡션 없음 — 2026-09 제목 행 흡수).
+- **`packages/web/src/lib/journey.ts`** — `deriveJourney(input: { delivery: Delivery | null; pendingChanges: number; running: boolean; shelf: boolean }): Journey | null`. 순수 함수, `delivery.ts`와 같은 파일 규율(표 한 곳). `Journey = { stop: 0..3; arrived: boolean; warn: boolean }`.
 - **`packages/web/src/hooks/useMarks.ts`** — 고침 표시 레지스트리. `pins.ghosts`의 settle을 감지해 `intent:"change"` 핀을 done 마크로 승격, 핀 없는 바뀐 화면을 화면 마크로 추가, 번호 부여, sessionStorage 영속(`colo-design.marks.<slug>`), 사이클 리셋 시 클리어. 출력: `ColoDesignPinsSync` 확장분(§3).
 - **`packages/web/src/components/preview/FrozenStage.tsx`** — 동결 표시: 캡처 `<img>` + 도장 + `[보낸 화면 | 지금 화면]` 세그먼트. `data-cover-stage`를 달아 `usePreviewCover`가 네이티브 뷰를 가리게 한다(기존 규칙 재사용 — 새 z-order 규칙을 만들지 않는다).
 - **`packages/web/src/components/preview/TalkSheet.tsx`** — 확장 상태의 도킹 대화 시트 껍데기(헤더·접기 버튼·알약). 내용은 `ChatColumn`을 통째로 얹는다 — 대화를 재구현하지 않는다.
 
 ### 수정
-- **`packages/web/src/components/shell/PageWorkspace.tsx`** — ① `JourneyBar`를 `.planner__body` 위 전체 폭 행으로 삽입(grid를 세로 2행으로). ② 확장 상태 `previewExpanded` 추가: grid를 `1fr`로 바꾸고 `ScreenPanel`만 렌더, `ChatColumn`은 `TalkSheet` 안으로 이동(언마운트 금지 — 스크롤·컴포저 상태 보존). ③ `⌘.` 토글(시트 접기), 확장 토글 키는 `⌘⇧E`(미사용 확인). ④ `useMarks` 마운트, `pinsSync` 대신 `marksSync`를 `ScreenPanel`→`PreviewHost`로 전달.
+- **`packages/web/src/components/shell/PageWorkspace.tsx`** — ① `JourneyMap`을 제목 행(`.planner__header`, 프로젝트 이름과 한 행)에 삽입 — 2026-09 제목 행 흡수로 별도의 띠 행은 없다. ② 확장 상태 `previewExpanded` 추가: grid를 `1fr`로 바꾸고 `ScreenPanel`만 렌더, `ChatColumn`은 `TalkSheet` 안으로 이동(언마운트 금지 — 스크롤·컴포저 상태 보존). ③ `⌘.` 토글(시트 접기), 확장 토글 키는 `⌘⇧E`(미사용 확인). ④ `useMarks` 마운트, `pinsSync` 대신 `marksSync`를 `ScreenPanel`→`PreviewHost`로 전달.
 - **`packages/web/src/components/panels/ScreenPanel.tsx`** — `.screenpanel__bar` 재편: ① 칩을 docstate 문법으로(`chipGlyph` 유지, 라벨만 `delivery.chip.label` → docstate 문자열 매핑 — **문자열 생성은 `delivery.ts`로 내린다**, 컴포넌트에 분기를 두지 않는다). ② [상태 확인] 버튼 제거 → 칩 클릭이 `statusOpen` 팝오버를 열고 `지금 확인`이 그 안에 남는다(기존 `statusOpen`·`readHandoffState` 재사용). ③ `working` 표시(`다시 그리는 중`)는 유지. ④ `FrozenStage`를 `.previewcol__stage` 안에 조건부 렌더. ⑤ `PreviewHost`에 `frozen` props 전달.
 - **`packages/web/src/components/preview/PreviewHost.tsx`** — ① 툴바에 `크게 보기` 버튼 추가(`onExpandToggle`). ② `핀` 버튼 옆에 `고침 표시` 토글(마크 on/off — `pinsSync`에 done/화면 마크를 포함할지의 플래그를 위로 올림). ③ `frozen` 모드: 주소창·상태 칩·핀 모드 비활성 + `FrozenStage` 렌더.
 - **`packages/web/src/components/preview/NativeHost.tsx`** — 변경 없음(커버는 `usePreviewCover`가 처리). 단 `sync` prop이 확장 스키마를 받는다.
@@ -148,7 +147,7 @@
 
 ## 4. 상호작용 상세
 
-### 여정 띠
+### 여정 지도
 - **클릭 없음.** 정류장·세그먼트 전부 읽기 전용. 호버 시 `Tip`으로 그 정류장의 의미 한 줄(`저장 — 고친 것을 우리 팀 앱 개발자가 볼 수 있게 묶어 둡니다`).
 - 전환은 `delivery.state` 변화에만 반응 — CSS `transition`으로 점·세그먼트가 채워진다(목업 `.jseg::after` scaleX).
 - `merged` 도착 시 `arrived` 펄스 1회(기존 `mergedFlash`와 같은 박자 — `colo-design:merged` 이벤트 재사용).
@@ -182,11 +181,11 @@
 - **반려(`closed`)**: 지도는 넘기기 정류장에 경고 톤으로 머문다(반영으로 위장 금지 — 기존 `saved` 위장 버그의 교훈). 동결은 해제.
 - **넘긴 뒤 추가 저장**: `handed + unsaved`는 지도상 넘기기=now 유지 + docstate는 `바꿈 N · 저장 안 됨`(unsaved가 PR 상태보다 앞선다는 기존 규칙). 동결은 `pendingChanges>0` 규칙으로 자동 해제.
 - **샷이 없는 넘기기**: `shots:false` 레포, 브라우저 경로(드라이버 없음), 캡처 실패 → 동결 없이 도장만. 기능 부재를 말하지 않되, `[보낸 화면]` 세그먼트는 렌더하지 않는다(눌러도 없는 것은 버튼이 아니다).
-- **프로젝트 전환**: `useMarks`·`JourneyBar` 모두 `activeSlug` 키로 리셋 — `usePins`의 `loadedSlug` 패턴 그대로.
+- **프로젝트 전환**: `useMarks`·`JourneyMap` 모두 `activeSlug` 키로 리셋 — `usePins`의 `loadedSlug` 패턴 그대로.
 - **리로드**: 마크는 sessionStorage에서 복원, 고스트는 소멸(기존 규칙 — 리로드는 턴의 끝). 동결 상태는 `delivery.state`에서 재계산되므로 영속 불필요.
 - **화면 마크 추정 실패**: diff 폴더↔route 매칭이 하나도 안 되면 화면 마크 0개 — done 핀만 표시. 추정이 틀릴 바엔 없는 게 낫다.
-- **대화 없는 상태**: `delivery === null`(준비 중)엔 띠 자체를 숨긴다 — 빈 지도는 "아직 아무 데도 못 갔다"로 오독된다.
-- **여러 대화가 한 사이클 공유**: 지도는 프로젝트 진실이라 대화를 바꿔도 같은 띠. 대화별 지도처럼 보이는 것을 막기 위해 띠를 전체 폭에 둔다(§1-A).
+- **대화 없는 상태**: `delivery === null`(준비 중)엔 지도 자체를 숨긴다 — 빈 지도는 "아직 아무 데도 못 갔다"로 오독된다.
+- **여러 대화가 한 사이클 공유**: 지도는 프로젝트 진실이라 대화를 바꿔도 같은 지도. 대화별 지도처럼 보이는 것을 막기 위해 지도를 전체 폭 제목 행에 둔다(§1-A).
 - **`pendingScreens` 미구현 데몬**: 필드 optional — 없으면 `pendingChanges` 폴백과 화면 마크 생략.
 - **확장 상태 + 모달**: `DiffPanel`·`HandoffPanel` 등 `.modal`은 `COVER_LAYERS`로 이미 커버됨 — 확장 여부와 무관하게 동작.
 - **확장 상태에서 핀 찍기**: 시트가 도킹이라 뷰가 가려지지 않으므로 핀 모드 정상 동작. 시트에 가려진 영역은 뷰 bounds 밖이라 핀 불가 — 자연스러운 결과.
@@ -195,7 +194,7 @@
 
 ## 6. 구현 순서 (이 슬라이스 안)
 
-1. **`lib/journey.ts` + `JourneyBar`** — `deriveDelivery` 출력만 읽는 순수 추가. 데몬 변경 0. 먼저 놓고 전환이 실제 상태를 따라가는지 눈으로 검증.
+1. **`lib/journey.ts` + `JourneyMap`** — `deriveDelivery` 출력만 읽는 순수 추가. 데몬 변경 0. 먼저 놓고 전환이 실제 상태를 따라가는지 눈으로 검증.
 2. **제목바 재편** — `delivery.ts`에 `docLabel` 추가 → `ScreenPanel` 칩 교체 + [상태 확인] 흡수 + `⌘S`. 기존 동작(팝오버·다이얼로그) 전부 재사용이라 회귀 면이 작다.
 3. **`useMarks` + 오버레이 `done` 톤** — 고스트→done 승격과 번호 레지스트리. `PinTray` 번호 교체로 1:1 완결. 화면 마크는 `pendingScreens`가 올 때까지 뒤로 미룬다(프로토콜·데몬 선행 필요).
 4. **동결 1단계** — `handedAt` 필드 + `api.handoffShot` + `FrozenStage`(`data-cover-stage`). 샷은 이미 커밋되고 있으므로 읽기 경로만.
@@ -206,7 +205,7 @@
 
 ## 7. 리스크
 
-- **지도의 단위 불일치(최대 리스크)**: 여정은 프로젝트 사이클, 목업은 대화 단위로 그렸다. 한 프로젝트에 대화가 여러 개면 "이 대화의 여정"이라는 프레임이 깨진다. 완화: 전체 폭 배치 + 캡션이 `이 작업`을 말하게. 근본 해결(대화별 사이클)은 데몬의 사이클 모델을 갈아야 해 별도 결정 사항.
+- **지도의 단위 불일치(최대 리스크)**: 여정은 프로젝트 사이클, 목업은 대화 단위로 그렸다. 한 프로젝트에 대화가 여러 개면 "이 대화의 여정"이라는 프레임이 깨진다. 완화: 전체 폭 제목 행 배치(캡션은 2026-09에 뺐다 — `journey.scope === "thread"`일 때만 대화 제목 칩이 붙는다). 근본 해결(대화별 사이클)은 데몬의 사이클 모델을 갈아야 해 별도 결정 사항.
 - **`바꿈 N`의 N 정의**: 화면 수(`pendingScreens`)는 폴더↔route 추정이라 레포 관례가 다르면 빈 배열로 떨어진다. 폴백(파일 수)은 기존에 "체감과 역상관"이라 버린 숫자 — N이 파일 수로 떨어질 때 칩이 옛 병으로 돌아간다. 추정 커버리지를 실측하고 안 되면 N을 빼고 `저장 안 됨`만 쓰는 퇴로를 남긴다.
 - **시트 도킹 ≠ 목업 오버레이**: 네이티브 뷰 제약상 목업의 "화면 위에 얹히는 층"을 그대로 못 한다. 도킹은 뷰를 세로로 줄인다 — 38vh 시트가 뷰를 너무 누르면 확장의 가치가 줄어든다. 실측 후 시트 기본 높이 조정.
 - **done 마크의 오버레이 작업량**: 배지 톤 추가는 데스크톱 main 프로세스의 오버레이 코드(`PlannerPreviewView`) 수정이 필요 — 이 문서 범위의 유일한 네이티브 변경.
