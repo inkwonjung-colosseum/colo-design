@@ -1,4 +1,4 @@
-import type { ColoDesignScreen, ProjectSummary, ThreadSummary } from "@colo-design/protocol";
+import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { timeAgo } from "../../lib/format";
@@ -41,15 +41,6 @@ type Row =
       icon: typeof PlusIcon;
       run: () => void | Promise<void>;
     }
-  | {
-      kind: "screen";
-      group: Group;
-      key: string;
-      label: string;
-      /** The ?state= variants the screen implements — the row's hint. */
-      hint: string;
-      run: () => void | Promise<void>;
-    };
 
 /**
  * One overlay the frame's every jump lives behind (⌘K): every project's
@@ -63,14 +54,12 @@ export function Palette({
   projects,
   activeSlug,
   projectSlug = null,
-  screens,
   onOpenThread,
   onCreateSession,
   onActivateProject,
   onAddProject,
   onOpenSettings,
   onCheckState,
-  onOpenScreen,
   onClose,
 }: {
   /** The name a thread wears: the planner's rename, else the daemon's title. */
@@ -82,9 +71,6 @@ export function Palette({
       session walk stays inside it, and the search says so. Null — the whole
       frame's jumps, as ever. */
   projectSlug?: string | null;
-  /** The connected repo's declared screens — a search that reaches the
-      preview, not just the conversations. */
-  screens: ColoDesignScreen[];
   /** Opens a conversation — switching projects first when it is not this
       one's. */
   onOpenThread: (slug: string, thread: ThreadSummary) => void;
@@ -95,8 +81,6 @@ export function Palette({
   onOpenSettings: (category?: SettingsCategory) => void;
   /** 개발자의 판정을 GitHub 에서 다시 읽는다 — 상단 바의 상태 확인과 같은 통로. */
   onCheckState: () => void;
-  /** Points the preview at a declared screen (the palette's 화면 rows). */
-  onOpenScreen: (screen: ColoDesignScreen) => void;
   onClose: () => void;
 }) {
   // The scoped walk names its project once — in the group header — instead
@@ -186,31 +170,6 @@ export function Palette({
             hint,
             run: async () => {
               onOpenThread(project.slug, thread);
-              onClose();
-            },
-          },
-        });
-      }
-    }
-    // 화면: the repo's declared screens. A scoped palette is
-    // about one project's conversations, so the screens only join the
-    // frame-wide walk — the picker beside the preview still owns them there.
-    if (!projectSlug) {
-      for (const screen of screens) {
-        const at = rank(screen.title);
-        if (at < 0) continue;
-        out.push({
-          rank: at,
-          row: {
-            kind: "screen",
-            group: "화면",
-            key: `screen:${screen.route}`,
-            label: screen.title,
-            hint: [screen.route, ...screen.states.filter((state) => state !== "default")].join(
-              " · ",
-            ),
-            run: async () => {
-              onOpenScreen(screen);
               onClose();
             },
           },
@@ -327,7 +286,6 @@ export function Palette({
     activeSlug,
     activeSessionId,
     projectSlug,
-    screens,
     query,
     titleForThread,
     onOpenThread,
@@ -336,7 +294,6 @@ export function Palette({
     onAddProject,
     onOpenSettings,
     onCheckState,
-    onOpenScreen,
     onClose,
   ]);
 

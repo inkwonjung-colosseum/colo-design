@@ -5,6 +5,7 @@ import type {
   SessionCommand,
   SessionModelInfo,
 } from "@colo-design/protocol";
+import { BROWSER_MCP_SERVER_NAME, codexBrowserMcpServer } from "../../../browser-launch.js";
 import type {
   AgentSession,
   DriverHooks,
@@ -262,15 +263,28 @@ export class CodexAgentSession implements AgentSession {
     });
   }
 
-  /** The per-thread overrides every thread/* call carries. */
+  /**
+   * The per-thread overrides every thread/* call carries. 브라우저 도구
+   * (3단계): host가 팩토리를 주입한 세션만 config.mcp_servers에 stdio 서버
+   * 하나를 실는다 — 스레드가 start·resume·fork 어느 길로 열리든 그 프로세스가
+   * MCP 자식을 함께 기동해야 하므로 예외는 없다.
+   */
   private threadOverrides(): Wire {
     const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
+    const browser = this.launch.browserMcp;
     return {
       ...(this.launch.model ? { model: this.launch.model } : {}),
       approvalPolicy: mode.approvalPolicy,
       sandbox: mode.sandbox,
       ...(this.launch.appendSystemPrompt
         ? { developerInstructions: this.launch.appendSystemPrompt }
+        : {}),
+      ...(browser
+        ? {
+            config: {
+              mcp_servers: { [BROWSER_MCP_SERVER_NAME]: codexBrowserMcpServer(browser) },
+            },
+          }
         : {}),
     };
   }

@@ -615,6 +615,11 @@ export class RepoCore {
    * planner reviews exactly what a publish would commit — nothing more.
    */
   async diff(): Promise<DiffFile[]> {
+    // A refresh mid-flight has parked the planner's work in a stash — a diff
+    // answered inside that window reads a clean (or half-popped) tree and
+    // the review would say 저장할 변경사항이 없습니다 over real work. Same
+    // contract as runSave: wait the pull out, then read.
+    while (this.refreshing) await this.refreshing.catch(() => undefined);
     if (!this.isCloned()) return [];
     const tracked = parseUnifiedDiff(await this.git(["diff", "HEAD", "--no-color"]));
     const files = [...tracked];
@@ -1020,6 +1025,25 @@ export class RepoCore {
       commentsSince: this.commentsSince,
     });
     this.emit();
+  }
+
+  /**
+   * 사이클의 앵커 — 이 사이클에 기록된 코멘트와 캡처 대상을 가르는 시각.
+   * 기록된 앵커(commentsSince)가 없으면 사이클 브랜치의 첫 커밋 시각으로
+   * 읽는다. repo-publish · repo-summary 가 각자 두던 판정을 한 곳에 모은다.
+   */
+  async cycleAnchor(): Promise<string | null> {
+    if (this.commentsSince) return this.commentsSince;
+    if (!this.branch) return null;
+    const out = await this
+      .git([
+        "log",
+        "--reverse",
+        "--format=%cI",
+        `origin/${this.baseBranch}..${this.branch}`,
+      ])
+      .catch(() => "");
+    return out.split("\n")[0]?.trim() || null;
   }
 
   setDiff(status: DiffStatus): DiffStatus {

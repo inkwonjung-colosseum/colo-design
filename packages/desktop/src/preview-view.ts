@@ -4,8 +4,6 @@ import type {
   ColoDesignErrorEnvelope,
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  ColoDesignScreen,
-  ColoDesignScreensEnvelope,
   PreviewTabMeta,
 } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
@@ -35,9 +33,9 @@ import { VIEWPORT_METRICS } from "./emulation.js";
  * 는 이 이벤트를 끄지 않는다 — Electron docs), 어느 종류의 탭이 됐는지는
  * `did-navigate` 가 레지스트리로 다시 정한다.
  *
- * The repo bridge contract (D68) is `colo-design.screens` · `navigate`: when
- * the bridge is `present` a navigate rides the preload (no reload), otherwise
- * it falls back to `loadURL` — the screen still shows, only the list is empty.
+ * The repo bridge contract (D68) is `colo-design.navigate`: a pin's 화면
+ * 이동이 이 한 봉투로 간다 — the screens envelope that once marked the
+ * bridge `present` is gone, so navigate always rides a plain load.
  * `preview-claude` (D61, the offscreen Claude window) keeps its own partition.
  *
  * 재설계 C4 has the view crop each pin's element (`element.rect`) at pin
@@ -47,9 +45,6 @@ import { VIEWPORT_METRICS } from "./emulation.js";
 
 /** The in-view preload, compiled to CommonJS beside this module. */
 const PREVIEW_PRELOAD = join(dirname(fileURLToPath(import.meta.url)), "preview-preload.cjs");
-
-/** Whether this load's repo bridge spoke (`unknown` until it does). */
-type BridgeState = "unknown" | "present";
 
 /** 폭 toggle presets live beside the agent.s window — see emulation.ts. */
 
@@ -231,7 +226,6 @@ interface PreviewPage {
   readonly view: WebContentsView;
   /** The server process the page was loaded from (RepoStatus.previewEpoch). */
   epoch: number | null;
-  bridge: BridgeState;
   /** What the page is showing — a repeat mount or open must not reload. */
   mountedUrl: string | null;
   /** The last main-frame load failed, or the renderer died — a return reloads. */
@@ -240,8 +234,6 @@ interface PreviewPage {
   zoomFactor: number;
   /** D89: the last 20 console lines, for the 화면 보여 주기 turn. */
   readonly consoleLog: string[];
-  /** The last screens envelope its bridge posted (D68) — replayed on a return. */
-  screens: ColoDesignScreensEnvelope | null;
   /** When the page was last on screen — the cap ends the ones left longest ago. */
   shownAt: number;
   /**
@@ -281,16 +273,7 @@ export class PlannerPreviewView {
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
   private captureAck: (() => void) | null = null;
 
-  /**
-   * `onScreens` is the daemon's copy of the declaration list (PLAN D61): the
-   * tool's `screen_list` reads it, and the daemon has no page of its own to
-   * hear the bridge from. Only the page on screen reports — the list means
-   * "the app the planner is looking at", the same thing the renderer shows.
-   */
-  constructor(
-    private readonly window: () => BrowserWindow | null,
-    private readonly onScreens?: (screens: ColoDesignScreen[]) => void,
-  ) {}
+  constructor(private readonly window: () => BrowserWindow | null) {}
 
   /**
    * Extra origins the repo allows (`colo-design.json` preview.origins),
@@ -602,10 +585,10 @@ export class PlannerPreviewView {
   }
 
   /**
-   * A declared screen (D66 · D68): through the repo bridge when it is present
-   * — client routing, no reload — else a plain load so the screen still
-   * shows on a repo whose bridge has not spoken. 주소창과 달리 여기서 새 탭을
-   * 만들지 않는다: 이 말은 repo 의 것이라 repo 의 origin 밖으로 나가지 않는다.
+   * A pin's 화면 이동 (D66): a plain load — the screens envelope that once
+   * marked the bridge `present` is gone, so client routing is too. 주소창과
+   * 달리 여기서 새 탭을 만들지 않는다: 이 말은 repo 의 것이라 repo 의 origin
+   * 밖으로 나가지 않는다.
    */
   navigate(route: string, state: string | null): void {
     const page = this.active();
@@ -616,23 +599,18 @@ export class PlannerPreviewView {
     } catch {
       return;
     }
-    // open() refuses off-origin urls; a declared screen must not slip past
-    // that by carrying an absolute route — the repo owns the screens list.
-    // A repo-allowed origin is the one exception: it mounts as its own page.
+    // open() refuses off-origin urls; a pin's route must not slip past that
+    // by carrying an absolute route. A repo-allowed origin is the one
+    // exception: it mounts as its own page.
     if (url.origin !== page.origin) {
       if (this.allowedOrigins.includes(url.origin)) {
         this.mount(url.toString(), null, this.allowedOrigins);
       }
       return;
     }
-    if (page.bridge === "present") {
-      page.view.webContents.send("colo-overlay:navigate", { route, state });
-      return;
-    }
     if (state) url.searchParams.set("state", state);
     this.load(page, url.toString());
   }
-
   /**
    * The agent's navigation (PanePreviewDriver): a real load, awaited — never
    * the bridge's client routing, because the driver needs a document it can
@@ -942,8 +920,7 @@ export class PlannerPreviewView {
   }
 
   /**
-   * One envelope from a page's preload (D68): screens (the repo bridge
-   * speaking — marks THAT page's bridge `present`) or a pin (재설계 C1).
+   * One envelope from a page's preload (D68): a pin (재설계 C1).
    * Registered once per app, not per page, so pages coming and going never
    * stack listeners. A parked page's envelope updates its own facts and
    * stops there — the renderer hears only the page on screen.
@@ -951,32 +928,11 @@ export class PlannerPreviewView {
   onOverlayPost(sender: WebContents, payload: { type?: unknown }): void {
     const page = this.pageOf(sender);
     // web 탭도 preload 를 함께 실어 다니지만 bridge 는 repo 의 것이 아니다:
-    // 링크 너머 페이지의 "screens" 나 "pin" 은 통째로 버린다(kind 가 external
-    // 의 자리를 대신한다).
+    // 링크 너머 페이지의 "pin" 은 통째로 버린다(kind 가 external 의 자리를
+    // 대신한다).
     if (!page || page.meta.kind !== "preview") return;
     const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "colo-design.screens") {
-      // The bridge's own shape (D68): narrowed once here, and a bridge that
-      // posted no array is a bridge with nothing to declare.
-      const envelope = payload as ColoDesignScreensEnvelope;
-      const screens = Array.isArray(envelope.screens) ? envelope.screens : [];
-      page.bridge = "present";
-      page.screens = { type: "colo-design.screens", screens };
-      if (this.activeTabId === page.id) {
-        this.send("colo-preview:screens", page.screens);
-        this.onScreens?.(screens);
-      }
-    } else if (type === "colo-design.pin" && this.activeTabId === page.id) {
-      // Narrowed before the relay: a page's preload is repo-adjacent input,
-      // so a pin without an id or a measurable rect is dropped, not cast.
-      const pin = "pin" in payload ? payload.pin : null;
-      if (!pin || typeof pin !== "object") return;
-      const id = "id" in pin ? pin.id : null;
-      const element = "element" in pin ? pin.element : null;
-      if (typeof id !== "string" || !element || typeof element !== "object") return;
-      const rect = "rect" in element ? element.rect : null;
-      if (!rect || typeof rect !== "object") return;
-      // 재설계 C4: the crop rides in before the web hears anything. A throw
+    if (type === "colo-design.pin" && this.activeTabId === page.id) {
       // inside is logged, never an unhandled rejection.
       void this.relayPin(payload as ColoDesignPinEnvelope).catch((error) => {
         console.error("preview pin relay failed", error);
@@ -1021,16 +977,18 @@ export class PlannerPreviewView {
       origin,
       view,
       epoch,
-      bridge: "unknown",
       mountedUrl: null,
       failed: false,
       zoomFactor: 1,
       consoleLog: [],
-      screens: null,
       shownAt: 0,
       originSnapshot: [...this.allowedOrigins],
     };
+    // 등록이 곧 산 것이다 — active()·pageOf·evictParked 가 livePages 로 탭을
+    // 찾는다. 이 한 줄이 빠지면 cover() 가 화면의 탭을 못 찾아 네이티브 뷰가
+    // 모달 위에 계속 그려진다(D65 의 규칙이 무너진 채로).
     this.livePages.set(meta.id, page);
+    // 되살림도 여기를 지난다 — 버려진 메타는 몸통이 다시 섰으면 산 것이다.
     meta.discarded = false;
     this.attach(page);
     return page;
@@ -1092,12 +1050,6 @@ export class PlannerPreviewView {
     contents.send("colo-overlay:mode", { on: this.commentsOn && preview });
     contents.send("colo-overlay:pins", preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
     this.sendLocation(page);
-    const screens = page.screens ?? { type: "colo-design.screens" as const, screens: [] };
-    this.send("colo-preview:screens", screens);
-    // 규칙 7: screens 전파는 sticky — web 탭이 활성된다고 화면 목록이 비는 건
-    // 핸드오프 캡처와 preview.capture 대상을 무너뜨린다. 목록의 수명은
-    // clearScreens(프로젝트 전환)가 책임진다.
-    if (preview) this.onScreens?.(screens.screens);
     this.send("colo-preview:loading", { on: contents.isLoading() });
     this.send("colo-preview:zoom", { factor: page.zoomFactor });
   }
@@ -1120,9 +1072,8 @@ export class PlannerPreviewView {
   /** 화면에서 내리되 살려 둔다: 숨기고, 활성 선택도 함께 내린다. */
   private park(page: PreviewPage): void {
     // A page whose window was destroyed took its webContents with it —
-    // hiding that view throws, and this runs on the way out of a closed
-    // window.
-    if (!page.view.webContents.isDestroyed()) page.view.setVisible(false);
+    // the view is already gone, so only the selection moves.
+    page.view.setVisible(false);
     if (this.activeTabId === page.id) this.activeTabId = null;
   }
 
@@ -1177,10 +1128,6 @@ export class PlannerPreviewView {
       if (!httpUrl(url)) event.preventDefault();
     });
     contents.on("did-navigate", (_event, url) => {
-      // A fresh load's bridge has not spoken yet: the screens it knew go
-      // with the old document, until the new one declares its own.
-      page.bridge = "unknown";
-      page.screens = null;
       page.mountedUrl = url;
       page.meta.url = url;
       page.failed = false;

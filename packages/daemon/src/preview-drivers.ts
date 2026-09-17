@@ -3,7 +3,6 @@ import { type DaemonNotice, noticeForState } from "./notices.js";
 import type {
   PreviewCapture,
   PreviewDriverFactory,
-  PreviewScreenDeclaration,
 } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
 import { type GateScreen, gateBrief, inspectScreens, type ScreenTrouble } from "./screen-gate.js";
@@ -46,12 +45,6 @@ export interface PreviewDriverDeps {
  */
 export class PreviewDrivers {
   /**
-   * The connected repo's declared screens (the `colo-design.screens`
-   * envelope's cache, PLAN D7) - the list the 화면 매트릭스 and 넘기기
-   * captures read, filled by `setScreens` and emptied by a project switch.
-   */
-  private declaredScreens: PreviewScreenDeclaration[] = [];
-  /**
    * 이 턴이 가리킨 화면들 (게이트 재배선): 사람이 pin·화면 캡처로 보낸
    * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 가리킨 화면"이다.
    * 키는 `route\nstate` - 같은 화면의 같은 상태를 두 번 가리켜도 한 번 본다.
@@ -65,30 +58,6 @@ export class PreviewDrivers {
   readonly gatedSessions = new Set<string>();
 
   constructor(private readonly deps: PreviewDriverDeps) {}
-
-  /** 활성 레포가 선언한 화면 목록 — 핸드오프의 `screenTitles`가 읽는다. */
-  get screens(): readonly PreviewScreenDeclaration[] {
-    return this.declaredScreens;
-  }
-
-  /**
-   * The connected repo said which screens it has (`colo-design.screens`,
-   * PLAN D7). The host hands the envelope's contents here: the daemon has no
-   * page of its own to hear it from. The new bridge announces itself and
-   * fills this again.
-   */
-  setScreens(screens: PreviewScreenDeclaration[]): void {
-    this.declaredScreens = screens;
-  }
-
-  /**
-   * The screens are the OUTGOING repo's declarations (PLAN D7): keeping
-   * them would have the picker name routes the incoming app does not
-   * serve. The new bridge announces itself and fills this again.
-   */
-  clearScreens(): void {
-    this.declaredScreens = [];
-  }
 
   /** pin·캡처 하나 — 이 턴의 목록에 담는다. preview origin 밖의 주소는
    *  게이트가 재검증할 대상이 아니므로 runGate 에서 걸러진다. */
@@ -214,30 +183,29 @@ export class PreviewDrivers {
 
   /**
    * How many captures a 넘기기 would attach — the preview's `### 화면 미리보기`
-   * line. Same gates as captureHandoffShots, count only: a screen with no
-   * declared states still ships its default look.
+   * line. Same gates as captureHandoffShots, count only.
    */
-  async handoffShotCount(): Promise<number> {
+  async handoffShotCount(targets: Array<{ route: string; state: string }>): Promise<number> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return 0;
     if (repo.repoConfig()?.shots === false) return 0;
     const status = await repo.status().catch(() => null);
-    if (!status?.previewUrl || this.declaredScreens.length === 0) return 0;
-    return this.declaredScreens.reduce(
-      (total, screen) => total + Math.max(screen.states.length, 1),
-      0,
-    );
+    if (!status?.previewUrl || targets.length === 0) return 0;
+    return targets.length;
   }
 
   /**
-   * 넘기기의 화면 캡처 (PLAN D56): each declared screen·state, opened in the
-   * preview driver and captured. Desktop only — the browser dev path has no
-   * driver — and every failure is quiet: a capture that will not come back
-   * simply is not in the set, and an empty set means the pull request body
-   * carries no `### 화면 미리보기` section at all.
+   * 넘기기의 화면 캡처 (PLAN D56 · 브리지 폐지): the screen·state pairs the
+   * planner's own pins named this cycle (`captureTargets`), each opened in
+   * the preview driver and captured. Desktop only — the browser dev path has
+   * no driver — and every failure is quiet: a capture that will not come
+   * back simply is not in the set, and an empty set means the pull request
+   * body carries no `### 화면 미리보기` section at all.
    */
-  async captureHandoffShots(): Promise<HandoffShot[]> {
+  async captureHandoffShots(
+    targets: Array<{ route: string; state: string }>,
+  ): Promise<HandoffShot[]> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return [];
@@ -245,31 +213,27 @@ export class PreviewDrivers {
     // spares the window the drive through every screen.
     if (repo.repoConfig()?.shots === false) return [];
     const status = await repo.status().catch(() => null);
-    if (!status?.previewUrl || this.declaredScreens.length === 0) return [];
+    if (!status?.previewUrl || targets.length === 0) return [];
     const driver = factory.forIsolated(status.previewUrl, repo.repoConfig()?.preview.origins ?? []);
     const shots: HandoffShot[] = [];
     try {
-      for (const screen of this.declaredScreens) {
-        // A screen that declares no states still has its default look.
-        const states = screen.states.length > 0 ? screen.states : ["default"];
-        for (const state of states) {
-          try {
-            const opened = await driver.open(screen.route, state);
-            // A screen that would not come up has no picture to take.
-            if (!opened.ok) continue;
-            // A handoff picture is read by a person in a pull request, not by
-            // a model — it gets the detailed long edge, and its real
-            // extension so the committed file is named after what it holds.
-            const capture = await driver.screenshot({ longEdge: HANDOFF_SHOT_LONG_EDGE });
-            shots.push({
-              route: screen.route,
-              state,
-              image: Buffer.from(capture.data, "base64"),
-              extension: SHOT_EXTENSIONS[capture.mediaType] ?? ".bin",
-            });
-          } catch {
-            // One screen failing must not sink the rest of the set.
-          }
+      for (const target of targets) {
+        try {
+          const opened = await driver.open(target.route, target.state);
+          // A screen that would not come up has no picture to take.
+          if (!opened.ok) continue;
+          // A handoff picture is read by a person in a pull request, not by
+          // a model — it gets the detailed long edge, and its real
+          // extension so the committed file is named after what it holds.
+          const capture = await driver.screenshot({ longEdge: HANDOFF_SHOT_LONG_EDGE });
+          shots.push({
+            route: target.route,
+            state: target.state,
+            image: Buffer.from(capture.data, "base64"),
+            extension: SHOT_EXTENSIONS[capture.mediaType] ?? ".bin",
+          });
+        } catch {
+          // One screen failing must not sink the rest of the set.
         }
       }
     } finally {

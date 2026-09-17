@@ -1,7 +1,6 @@
 import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  ColoDesignScreen,
   PreviewTabMeta,
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,7 +27,6 @@ export function NativeHost({
   width,
   commentsOn,
   onLocation,
-  onScreens,
   sync,
   onPin,
   onPinFocus,
@@ -49,7 +47,6 @@ export function NativeHost({
   width: "mobile" | "tablet" | "desktop";
   commentsOn: boolean;
   onLocation: (location: PreviewLocation | null) => void;
-  onScreens: (screens: ColoDesignScreen[]) => void;
   /**
    * The badge projection — the web's ghosts-then-pins list as
    * `pinsSync` built it; resent after every navigation so a reload or an
@@ -171,7 +168,6 @@ export function NativeHost({
   // the location report without resubscribing anything.
   const handlers = useRef({
     onLocation,
-    onScreens,
     onPin,
     onPinFocus,
     onError,
@@ -181,7 +177,6 @@ export function NativeHost({
   });
   handlers.current = {
     onLocation,
-    onScreens,
     onPin,
     onPinFocus,
     onError,
@@ -213,9 +208,6 @@ export function NativeHost({
           syncPins();
         },
       ),
-      bridge.onScreens?.((payload: { screens: ColoDesignScreen[] }) => {
-        if (Array.isArray(payload.screens)) handlers.current.onScreens(payload.screens);
-      }),
       // A pin lands whole — no empty-envelope guard anymore, and a repeated
       // id is usePins's to ignore.
       bridge.onPin?.((payload: ColoDesignPinEnvelope) => handlers.current.onPin(payload.pin)),

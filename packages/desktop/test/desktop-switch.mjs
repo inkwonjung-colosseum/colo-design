@@ -3,8 +3,8 @@
  * end to end against the dev entry with Playwright _electron: two fixture
  * projects on two ports; leaving one and coming back shows the page the app
  * KEPT (a marker set in the page survives — no reload), the return is a
- * repaint's worth of time, and the pane's own facts (address bar, screens
- * list) follow the page on screen. The daemon side of the same promise (the
+ * repaint's worth of time, and the pane's own facts (address bar) follow the
+ * page on screen. The daemon side of the same promise (the
  * outgoing server stays warm) is projects-e2e's; this suite is the view's.
  *
  * Prerequisites: pnpm build (all four packages) — same as desktop-smoke.
@@ -205,11 +205,8 @@ async function main() {
     // The address bar follows the page on screen (the replayed location).
     const address = await page.getByTestId("preview-address").inputValue();
     check("the address bar shows the page on screen", address.startsWith(alphaOrigin), address);
-    // The datalist carries the fixture's declared route (the replayed screens).
-    const route = await page.evaluate(() =>
-      Boolean(document.querySelector('#colo-frame-routes option[value="/member/MemberList"]')),
-    );
-    check("the screens list is back for the page on screen", route === true);
+    // The datalist is gone — the address bar is the only door, and it
+    // already shows the page on screen.
 
     check("no renderer errors", errors.length === 0, errors.slice(0, 3).join(" | "));
     ws.close();

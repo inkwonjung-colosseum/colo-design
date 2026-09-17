@@ -12,6 +12,7 @@
  * Prerequisites: `pnpm build`
  */
 import { execFile, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -277,22 +278,12 @@ async function main() {
     );
 
     // --- work appears, the review shows it --------------------------------
-    mkdirSync(join(WORK_ROOT, "src", "screens", "member"), { recursive: true });
-    writeFileSync(
-      join(WORK_ROOT, "src", "screens", "member", "MemberList.screen.tsx"),
-      "export default function MemberListScreen() { return null; }\n",
-    );
-    const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
-    writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
-    // 삭제도 저장에 실려 간다 — 되돌리기 어려운 변경이므로 검토 화면이 먼저
-    // 말해야 한다 (비개발자 저장 검토). CLAUDE.md 는 이 스텁 CLI 가 읽지
-    // 않으므로 이 뒤의 어느 단계도 이 삭제에 걸리지 않는다.
-    rmSync(join(WORK_ROOT, "CLAUDE.md"), { force: true });
-
     // 저장의 완료 카드는 대화 테이프에 쓰인다 — 대화가 없으면 갈 곳이 없다.
     // 한 마디를 보내 세션을 세운다. 스텁의 send 는 거절로 끝나지만 세션은
     // send 를 시도한 순간(createSession) 생긴다 — 컴포저의 placeholder 가
-    // 활성 대화의 것으로 바뀌는 순간이 그 신호다.
+    // 활성 대화의 것으로 바뀌는 순간이 그 신호다. 파일 쓰기는 이 뒤에 둔다:
+    // 세션 탄생의 자동 pull 이 stash 를 쥐는 창에 쓰기가 끼어들면 검토의
+    // diff 가 빈 트리를 읽는다 (실측 결함).
     const seedField = page.locator(".composer textarea");
     await seedField.fill("화면을 만들어 줘");
     await seedField.press("Enter");
@@ -305,34 +296,102 @@ async function main() {
       undefined,
       { timeout: 30000 },
     );
+    mkdirSync(join(WORK_ROOT, "src", "screens", "member"), { recursive: true });
+    writeFileSync(
+      join(WORK_ROOT, "src", "screens", "member", "MemberList.screen.tsx"),
+      "export default function MemberListScreen() { return null; }\n",
+    );
+    const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
+    writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
+    // 삭제도 저장에 실려 간다 — 되돌리기 어려운 변경이므로 검토 화면이 먼저
+    // 말해야 한다 (비개발자 저장 검토). CLAUDE.md 는 이 스텁 CLI 가 읽지
+    // 않으므로 이 뒤의 어느 단계도 이 삭제에 걸리지 않는다.
+    rmSync(join(WORK_ROOT, "CLAUDE.md"), { force: true });
+
     // The change count is event-driven: a turn finishing or a save
     // recounts it, and these raw writes are neither — so one 레포 최신화 is
-    // what unlocks 저장 in the top bar.
-    await page
-      .locator(".screenpanel__bar")
-      .getByRole("button", { name: "최신 변경 받아오기" })
-      .click();
-    // The pull parks unsaved work in a stash while it moves the branch —
-    // a diff read inside that window sees a clean tree. The button's own
-    // label is the pull's clock: it reads 받아 오는 중… until the stash is
-    // back, so 저장 is only safe to open once it flips back.
+    // what unlocks 저장 in the top bar. The session's own birth pull can
+    // still hold the refresh lock (phase "pulling"), which makes the click
+    // a no-op — wait for the button to be pressable first.
+    const refreshButton = page.locator(".screenpanel__bar .screenpanel__refresh");
     await page.waitForFunction(
       () => {
         const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
         const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
-        const save = buttons.find((b) => b.textContent?.trim() === "저장");
-        return refresh !== undefined && save ? !save.disabled : false;
+        return refresh?.getAttribute("aria-disabled") !== "true";
       },
       undefined,
       { timeout: 30000 },
     );
-    await viaActionBar(page, "저장");
-    // 저장 검토는 모달이 아니라 대화 안 카드다 — 살아있는 카드가 스크롤되어
-    // 오고, 그 몸통(SaveReviewBody)이 검토할 거리를 실어 온다.
-    const saveCard = page.locator("#live-savecard");
-    await saveCard.waitFor({ timeout: 10000 });
-    // 비개발자 저장: the summary is the first thing; the raw
-    // files stay folded at every size — the review reads as sentences, and
+    await refreshButton.click();
+    // The label flips to 받아 오는 중… a render after the click — a poll that
+    // samples in between reads the pre-pull state and opens 저장 inside the
+    // stash window (실측 결함). Wait for the pull to be observed running
+    // first; an instant pull may flip past it, so this wait is soft.
+    await page
+      .waitForFunction(
+        () => {
+          const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
+          const refresh = buttons.find(
+            (b) =>
+              b.textContent?.includes("받아 오는 중") ||
+              b.getAttribute("aria-disabled") === "true",
+          );
+          return refresh !== undefined;
+        },
+        undefined,
+        { timeout: 10000 },
+      )
+      .catch(() => undefined);
+    // the label flipping back is not enough: the session's own birth pull
+    // can still be queued behind this one (session.create returns before
+    // pull() reaches core.refreshing), and its stash window lands on the
+    // review's diff. 저장 is only safe once the refresh button has stayed
+    // pressable AND the worktree reads dirty with no stash parked — twice
+    // in a row, so a pull starting between samples resets the count.
+    const worktreeSettled = async () => {
+      const stash = execSync(`git -C ${JSON.stringify(WORK_ROOT)} stash list`, {
+        encoding: "utf8",
+      }).trim();
+      const status = execSync(`git -C ${JSON.stringify(WORK_ROOT)} status --porcelain`, {
+        encoding: "utf8",
+      });
+      const pressable = await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
+        const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
+        return refresh !== undefined && refresh.getAttribute("aria-disabled") !== "true";
+      });
+      return (
+        pressable &&
+        stash === "" &&
+        status.includes("D CLAUDE.md") &&
+        status.includes("M index.html") &&
+        status.includes("?? src/")
+      );
+    };
+    for (let stable = 0, tries = 0; stable < 3 && tries < 120; tries += 1) {
+      if (await worktreeSettled()) stable += 1;
+      else stable = 0;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (!(await worktreeSettled())) {
+      console.error(
+        "SETTLE DUMP stash:",
+        execSync(`git -C ${JSON.stringify(WORK_ROOT)} stash list`, { encoding: "utf8" }).trim() ||
+          "(none)",
+        "status:",
+        execSync(`git -C ${JSON.stringify(WORK_ROOT)} status --porcelain`, {
+          encoding: "utf8",
+        }).trim() || "(clean)",
+        "pressable:",
+        await page.evaluate(() => {
+          const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
+          const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
+          return refresh !== undefined && refresh.getAttribute("aria-disabled") !== "true";
+        }),
+      );
+      throw new Error("worktree never settled");
+    }
     // the code is one deliberate click away.
     await page
       .getByText("자세히 보기 (파일 3개)")
@@ -350,6 +409,36 @@ async function main() {
             .slice(0, 800)
             .replace(/\n+/g, " | "),
         );
+        console.error(
+          "FOLD FILES:",
+          await page.locator(".diff__file .diff__path").evaluateAll((els) =>
+            els.map((el) => el.getAttribute("title") ?? el.textContent),
+          ),
+        );
+        console.error(
+          "GIT DUMP status:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} status --porcelain`, {
+            encoding: "utf8",
+          }).trim() || "(clean)",
+        );
+        console.error(
+          "GIT DUMP stash:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} stash list`, {
+            encoding: "utf8",
+          }).trim() || "(none)",
+        );
+        console.error(
+          "GIT LS-FILES:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} ls-files --others --exclude-standard`, {
+            encoding: "utf8",
+          }).trim() || "(none)",
+        );
+        console.error(
+          "GIT DIFF:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} diff HEAD --name-only`, {
+            encoding: "utf8",
+          }).trim() || "(none)",
+        );
         throw new Error("fold never appeared");
       });
     check(
@@ -364,7 +453,18 @@ async function main() {
     // 아무것도 지키지 않는다.
     const summaryCard = page.getByTestId("diff-summary");
     const summaryLines = summaryCard.locator(".diff__summarylines > li");
-    await summaryLines.first().waitFor({ timeout: 20000 });
+    await summaryLines
+      .first()
+      .waitFor({ timeout: 20000 })
+      .catch(async () => {
+        console.error(
+          "SUMMARY DUMP:",
+          (await summaryCard.innerText().catch(() => "(no card)"))
+            .slice(0, 600)
+            .replace(/\n+/g, " | "),
+        );
+        throw new Error("summary lines never rendered");
+      });
     const summaryText = await summaryCard.innerText();
     check(
       "the summary stands as a card above the fold, in words",
@@ -422,7 +522,30 @@ async function main() {
     await saveCard.getByRole("button", { name: "저장하기", exact: true }).click();
     // 저장이 끝나면 살아있는 카드는 자리를 기록의 `저장했어요` 카드에 넘기고,
     // 그 밑에 넘기기로 이어가는 복도가 선다(states.md §2.2).
-    await page.getByText("저장했어요").waitFor({ timeout: 120000 });
+    await page
+      .getByText("저장했어요")
+      .waitFor({ timeout: 120000 })
+      .catch(async () => {
+        console.error(
+          "SAVE DUMP:",
+          (await page.locator("body").innerText().catch(() => "(none)"))
+            .slice(0, 1500)
+            .replace(/\n+/g, " | "),
+        );
+        console.error(
+          "GIT LOG:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} log --oneline -5 --all`, {
+            encoding: "utf8",
+          }),
+        );
+        console.error(
+          "GIT STATUS:",
+          execSync(`git -C ${JSON.stringify(WORK_ROOT)} status --porcelain`, {
+            encoding: "utf8",
+          }).trim() || "(clean)",
+        );
+        throw new Error("save never settled");
+      });
     const corridor = page.getByRole("button", { name: "개발자에게 넘기기로 이어가기" });
     await corridor.waitFor({ timeout: 10000 });
     check("the settled save hands its seat to the record card and the corridor", true);

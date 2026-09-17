@@ -94,7 +94,7 @@ export function SelectorChip({
    */
   header?: ReactNode;
   /**
-   * 메뉴 안의 단계 (모델 ↔ 에이전트). 바뀌는 순간 찾기·강조를 리셋한다 —
+   * 메뉴 안의 단계 (모델 ↔ 프로바이더). 바뀌는 순간 찾기·강조를 리셋한다 —
    * 이전 단계에서 반쯤 친 검색어가 다음 단계의 목록에 남으면 안 된다.
    */
   levelKey?: string;
@@ -117,7 +117,7 @@ export function SelectorChip({
     if (searchable) search.current?.focus();
   }, [open, searchable]);
 
-  // 단계가 바뀔 때도 같은 리셋 — 모델 목록에서 친 찾기가 에이전트 목록을
+  // 단계가 바뀔 때도 같은 리셋 — 모델 목록에서 친 찾기가 프로바이더 목록을
   // 그대로 걸러 버리는 일이 없게.
   useEffect(() => {
     setQuery("");

@@ -1,18 +1,10 @@
-import {
-  alignThumbs,
-  type ColoDesignScreen,
-  readTurn,
-  type TurnMarker,
-} from "@colo-design/protocol";
+import { alignThumbs, readTurn, type TurnMarker } from "@colo-design/protocol";
 import { type ReactNode, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { waitedFor } from "../../lib/format";
-import { latestSaveAfter, type ScreenRepoSnapshot, screenChips } from "../../lib/screen-state";
 import { CopyButton } from "../CopyButton";
 import { ChevronRightIcon } from "../icons";
 import { Tip } from "../shell/Tip";
-import { ScreenCard } from "./ScreenCard";
-import { clockTime } from "./shared";
 
 /**
  * A turn this app wrote on the planner's behalf, rendered as what it means
@@ -280,58 +272,6 @@ function FailedTurn({
   );
 }
 
-/**
- * 답변 본문에 선언된 화면의 주소가 보이면 그 화면의 카드 행. 대조는
- * 주소 문자열로(제목은 답변에서 변형되기 쉽다) — ScreenChips 가 하던
- * 판정 그대로다. 카드가 사이클 진행(§3.3)과 미리보기의 시선(§4.2)을
- * 칩과 accent 링으로 보여 주고, 누르면 첫 상태로 미리보기를 연다.
- */
-function ScreenCards({
-  text,
-  screens,
-  blocks,
-  blockId,
-  repo,
-  onOpen,
-}: {
-  text: string;
-  screens: ColoDesignScreen[];
-  /** 온 테이프 전체 — 이 답변 뒤의 저장과 같은 턴의 캡처를 찾는 원본. */
-  blocks: Block[];
-  blockId: string;
-  repo: ScreenRepoSnapshot | null;
-  onOpen: (route: string, state: string | null) => void;
-}) {
-  const named = screens.filter(
-    (screen) => screen.title.trim() !== "" && text.includes(screen.route),
-  );
-  if (named.length === 0) return null;
-  const index = blocks.findIndex((block) => block.id === blockId);
-  // 이 답변 뒤의 마지막 저장 — 카드마다 판정이 같으니 한 번만 훑는다.
-  const save = latestSaveAfter(blocks, index);
-  return (
-    <div className="answer__screens">
-      {named.map((screen) => {
-        const state = screen.states[0] ?? null;
-        const saved = save?.screens.find((entry) => entry.route === screen.route);
-        const chips = screenChips(screen.route, {
-          pendingChanges: repo?.pendingChanges ?? null,
-          handoffState: repo?.handoffState ?? null,
-          savedScreens: save?.screens ?? [],
-        });
-        return (
-          <ScreenCard
-            key={screen.route}
-            title={saved?.note ? `${screen.title} · ${saved.note}` : screen.title}
-            caption={`미리보기${save && saved ? ` · ${clockTime(save.at)}` : ""}`}
-            states={chips}
-            onOpen={() => onOpen(screen.route, state)}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 /** The planner's last own words — what `다시 보내기` resends. */
 function lastUserText(blocks: Block[]): string | null {
@@ -394,4 +334,4 @@ function TurnDone({
   );
 }
 
-export { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, ScreenCards, TurnDone };
+export { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, TurnDone };

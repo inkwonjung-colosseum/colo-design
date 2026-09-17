@@ -98,6 +98,36 @@ export function recordComments(
 }
 
 /**
+ * 넘기기 캡처의 대상 (브리지 폐지): 이 사이클에 사람이 핀으로 가리킨
+ * 화면·상태 쌍. 선언된 화면 목록은 없다 — "보낸 화면"의 유일한 원천은
+ * 사용자가 실제로 짚은 곳이다. `sinceIso` 는 사이클 앵커(`RepoCore.cycleAnchor`)
+ * — buildCommentsSection 과 같은 판정으로 이 사이클의 행만 고르고, 철자도
+ * 같다(`/${screen}`, 슬래시 없는 행의 screen 에 슬래시를 얹는다). 같은 곳을
+ * 여러 핀이 가리켰으면 한 장만 담는다. 순서는 기록 순서 — 사람이 본 순서다.
+ */
+export function captureTargets(
+  rows: Array<Pick<CommentItem, "screen" | "state" | "at">>,
+  sinceIso: string | null,
+): Array<{ route: string; state: string }> {
+  const sinceMs = sinceIso === null ? null : Date.parse(sinceIso);
+  const seen = new Set<string>();
+  const targets: Array<{ route: string; state: string }> = [];
+  for (const row of rows) {
+    if (!row.screen) continue;
+    const at = Date.parse(row.at);
+    if (Number.isNaN(at)) continue;
+    if (sinceMs !== null && !Number.isNaN(sinceMs) && at < sinceMs) continue;
+    const route = `/${row.screen.replace(/^\/+/, "")}`;
+    const state = row.state || "default";
+    const key = `${route}\n${state}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ route, state });
+  }
+  return targets;
+}
+
+/**
  * The store is an append-only log, so a half-written file is lost history:
  * `readComments` cannot tell truncated JSON from an empty store and returns
  * `[]`. Write a sibling temp file and rename it over the store — same

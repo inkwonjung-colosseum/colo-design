@@ -1,4 +1,4 @@
-import type { ColoDesignScreen, SessionSummary, ThreadSummary } from "@colo-design/protocol";
+import type { SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import {
   useCallback,
   useEffect,
@@ -20,13 +20,11 @@ import {
 import { visibleThreads } from "../../lib/thread-visibility";
 import { downloadTranscript, transcriptToMarkdown } from "../../lib/transcript-export";
 import { ChatColumn } from "../chat/ChatColumn";
-import { JourneyMap } from "../chat/JourneyMap";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { ShortcutsSheet } from "../dialogs/ShortcutsSheet";
 import { HomeInbox } from "../home/HomeInbox";
 import { ScreenPanel } from "../panels/ScreenPanel";
-import type { PreviewTarget } from "../preview/PreviewHost";
 import { Palette } from "./Palette";
 import { Splitter } from "./Splitter";
 import { Tip } from "./Tip";
@@ -154,8 +152,8 @@ export function PageWorkspace({
   const [view, setView] = useState<"home" | "thread">("home");
   /**
    * 새 대화 버튼·⌘T 의 단일 통로 — "thread" 로 넘어가되 세션은 만들지 않는다
-   * (fresh). 첫 입력 전까지 컴포저의 에이전트 칩이 살아 있어 연결되고 켠
-   * 에이전트 중에 고를 수 있고, 세션은 첫 문장이 나갈 때 submit 이 만든다.
+   * (fresh). 첫 입력 전까지 컴포저의 프로바이더 칩이 살아 있어 연결되고 켠
+   * 프로바이더 중에 고를 수 있고, 세션은 첫 문장이 나갈 때 submit 이 만든다.
    * 곧장 보내는 길(화면 넘김·기계 턴)은 세션 id 가 곧 필요하므로
    * `sessions.create` 를 직접 쓴다 — 그 자리엔 이미 문장이 있다.
    */
@@ -174,18 +172,6 @@ export function PageWorkspace({
   /** The project the palette was opened for (the tree's 더 보기 row); null —
       the palette answers to the whole frame. ⌘K always opens it unscoped. */
   const [paletteSlug, setPaletteSlug] = useState<string | null>(null);
-  /**
-   * The screens the connected repo declares, owned HERE so one
-   * declaration feeds three doors: the preview picker (ScreenPanel), the
-   * empty conversation's starter chips (ChatColumn), and the palette's
-   * 화면 rows. ScreenPanel reports the envelope; the others only read.
-   */
-  const [screens, setScreens] = useState<ColoDesignScreen[]>([]);
-  /**
-   * A palette screen pick: handed to the preview as an ask; cleared once the
-   * panel has turned (the effect's null early-return makes that a no-op).
-   */
-  const [jumpRequest, setJumpRequest] = useState<PreviewTarget | null>(null);
   /**
    * 사이클 동작의 단일 통로 — 상단 바의 저장·넘기기 버튼, ⌘S, 팔레트의
    * 상태 확인이 전부 이 요청으로 간다. 모달이던 시절의 setSaveOpen 대신
@@ -622,19 +608,16 @@ export function PageWorkspace({
     setPreviewWidth(defaultPreviewWidth());
     onLayoutChange({ previewWidth: null });
   };
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
   return (
     <div className="planner__work">
-      {/* 프레임의 제목바와 여정 띠가 한 행으로 합쳐졌다 — 프로젝트 이름이
-          왼쪽을, 여정 지도가 오른쪽 끝을 쓴다. 상태 문장(캡션)은 없다: 지도의
-          점과 색이 그 말을 한다. 지도가 숨는 준비 중(phase ≠ ready/error)엔
-          이름 행만 남는다. */}
+      {/* 프레임의 한 헤더 줄 — 프로젝트 이름이 왼쪽을 쓰고, ScreenPanel 이
+          그린 사이클 바(지도 → 상태 → 행동)가 이 슬롯으로 올라와 나머지를
+          채운다. 바의 상태는 전부 패널의 것이라 끌어올리는 대신 자리만
+          내준다. */}
       <header className="planner__header">
         {projectName && <span className="planner__project">{projectName}</span>}
-        {view === "thread" && journey ? (
-          <JourneyMap journey={journey} title={journeyTitle} />
-        ) : (
-          <span className="planner__spacer" />
-        )}
+        <div ref={setBarSlot} className="planner__barslot" />
         {daemon.connection !== "open" && (
           <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
             <span className="hint">연결하는 중…</span>
@@ -672,20 +655,18 @@ export function PageWorkspace({
               titleFor={titleFor}
               onRenameSession={onRenameSession}
               onDeleteSession={(session) => void sessions.remove(session)}
-              screens={screens}
               showThinking={settings.chat.showThinking}
               showTools={settings.chat.showTools}
-              // 설정에서 끈 에이전트 — 새 대화의 칩에서도 빠진다.
+              // 설정에서 끈 프로바이더 — 새 대화의 칩에서도 빠진다.
               disabledProviders={settings.chat.disabledProviders ?? []}
               pins={pins}
-              focusPinId={focusPinId}
-              onOpenScreen={(route, state) => setJumpRequest({ kind: "screen", route, state })}
               onExportThread={() => {
                 const id = sessions.activeId;
                 if (!id) return;
                 const summary = sessions.list.find((session) => session.sessionId === id);
                 exportThreadById(id, summary ? titleFor(summary) : "conversation");
               }}
+              focusPinId={focusPinId}
               onChatChange={onChatChange}
               onOpenSendSettings={() => onOpenSettings("behavior")}
               onOpenProviderSettings={() => onOpenSettings("providers")}
@@ -707,14 +688,12 @@ export function PageWorkspace({
           />
 
           <ScreenPanel
+            barSlot={barSlot}
             daemon={daemon}
             onOpenSettings={onOpenSettings}
             onMachineTurn={forwardMachineTurn}
             turnState={sessions.active?.state ?? "idle"}
             sessionId={sessions.activeId}
-            screens={screens}
-            onScreens={setScreens}
-            jumpRequest={jumpRequest?.kind === "screen" ? jumpRequest : null}
             commentsOn={commentsOn}
             onCommentsMode={setCommentsOn}
             pins={pins}
@@ -723,6 +702,8 @@ export function PageWorkspace({
               focusPin(pin.id);
             }}
             onPinFocus={focusPin}
+            journey={view === "thread" ? journey : null}
+            journeyTitle={journeyTitle}
             onCycleAction={askCycle}
             cycleRequest={cycleRequest}
             reviewsTick={reviewsTick}
@@ -737,14 +718,6 @@ export function PageWorkspace({
           projects={daemon.projects}
           activeSlug={daemon.activeSlug}
           projectSlug={paletteSlug}
-          screens={screens}
-          onOpenScreen={(screen) =>
-            setJumpRequest({
-              kind: "screen",
-              route: screen.route,
-              state: screen.states[0] ?? null,
-            })
-          }
           onOpenThread={(slug, thread) => {
             if (slug === daemon.activeSlug) void openThreadById(thread.id);
             else jumpTo({ slug, threadId: thread.id });

@@ -300,6 +300,69 @@ async function main() {
         (await stored(page))?.codeScale === "large",
     );
 
+    // 5b-2. the token ladder: every scaled size in the stylesheet is a
+    //     --font-* token now, so the contract lives at the tokens — each one
+    //     rides exactly its own knob and nothing else. A probe element reads
+    //     the resolved px straight out of the custom property, independent of
+    //     which component happens to use it.
+    const tokenPx = (name) =>
+      page.evaluate((n) => {
+        const probe = document.createElement("span");
+        probe.style.fontSize = `var(${n})`;
+        document.body.appendChild(probe);
+        const px = parseFloat(getComputedStyle(probe).fontSize);
+        probe.remove();
+        return px;
+      }, name);
+    const near = (a, b) => Math.abs(a - b) < 0.01;
+    await pick(page, "인터페이스 크기", "보통");
+    await pick(page, "콘텐츠 크기", "보통");
+    await pick(page, "코드 크기", "보통");
+    check(
+      "at 보통 every token resolves to its base px",
+      near(await tokenPx("--font-ui-130"), 13) &&
+        near(await tokenPx("--font-ui-90"), 9) &&
+        near(await tokenPx("--font-ui-340"), 34) &&
+        near(await tokenPx("--font-content-135"), 13.5) &&
+        near(await tokenPx("--font-content-120"), 12) &&
+        near(await tokenPx("--font-code-115"), 11.5) &&
+        near(await tokenPx("--font-code-120"), 12),
+    );
+    await pick(page, "인터페이스 크기", "크게");
+    check(
+      "인터페이스 크게 rides only the interface knob",
+      near(await tokenPx("--font-ui-130"), 14.3) &&
+        near(await tokenPx("--font-content-135"), 13.5) &&
+        near(await tokenPx("--font-code-115"), 11.5),
+    );
+    await pick(page, "콘텐츠 크기", "크게");
+    check(
+      "콘텐츠 크게 moves prose and leaves the other knobs alone",
+      near(await tokenPx("--font-content-135"), 14.85) &&
+        near(await tokenPx("--font-ui-130"), 14.3) &&
+        near(await tokenPx("--font-code-115"), 11.5),
+    );
+    await pick(page, "코드 크기", "크게");
+    check(
+      "코드 크게 moves machine text and leaves the other knobs alone",
+      near(await tokenPx("--font-code-115"), 12.65) &&
+        near(await tokenPx("--font-ui-130"), 14.3) &&
+        near(await tokenPx("--font-content-135"), 14.85),
+    );
+    await pick(page, "인터페이스 크기", "작게");
+    await pick(page, "콘텐츠 크기", "작게");
+    await pick(page, "코드 크기", "작게");
+    check(
+      "작게 shrinks every axis by the same step",
+      near(await tokenPx("--font-ui-130"), 11.7) &&
+        near(await tokenPx("--font-content-135"), 12.15) &&
+        near(await tokenPx("--font-code-115"), 10.35),
+    );
+    // The rest of the panel reads at the stored sizes — put 보통 back.
+    await pick(page, "인터페이스 크기", "보통");
+    await pick(page, "콘텐츠 크기", "보통");
+    await pick(page, "코드 크기", "보통");
+
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("theme is applied on load, not after a click", (await theme(page)) === "light");
@@ -510,19 +573,6 @@ async function main() {
       "Tab stays inside the dialog however far it walks",
       escaped === false,
       `focusables: ${focusableCount}`,
-    );
-    // TEMP-DIAG
-    console.log(
-      "DIAG",
-      JSON.stringify(
-        await page.evaluate(() => ({
-          active: `${document.activeElement?.tagName}.${document.activeElement?.className}`,
-          text: (document.activeElement?.textContent ?? "").slice(0, 30),
-          overlays: [...document.querySelectorAll(".modal, .palette, .onboarding")].map(
-            (el) => `${el.tagName}.${String(el.className).slice(0, 60)}`,
-          ),
-        })),
-      ),
     );
     await page.keyboard.press("Escape");
     await page

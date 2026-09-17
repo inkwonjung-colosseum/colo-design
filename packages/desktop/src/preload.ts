@@ -100,7 +100,6 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     }>("colo-preview:location"),
     /** 탭 목록이 바뀔 때마다 통째로 — 스트립은 이 한 채널로 그린다. */
     onTabs: subscribe<{ tabs: PreviewTabMeta[]; activeTabId: string | null }>("colo-preview:tabs"),
-    onScreens: subscribe<{ screens: unknown[] }>("colo-preview:screens"),
     onPin: subscribe<ColoDesignPinEnvelope>("colo-preview:pin"),
     onPinFocus: subscribe<{ id: string }>("colo-preview:pin-focus"),
     onError: subscribe<{

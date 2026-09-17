@@ -68,16 +68,12 @@ export class RepoSummarizer {
    * falls back to grouping the changed paths. Answered from memory when the
    * diff has not moved since the last ask, so re-opening the review is free.
    */
-  async summarize(
-    screenTitles: Array<{ route: string; title: string }> = [],
-  ): Promise<RepoSummary> {
+  async summarize(): Promise<RepoSummary> {
     if (!this.core.isCloned()) return { lines: [], source: "fallback" };
     const files = await this.core.diff();
     if (files.length === 0) return { lines: [], source: "fallback" };
     const hash = createHash("sha256")
       .update(files.map(renderSummaryFile).join("\n"))
-      .update("\0")
-      .update(screenTitles.map((screen) => `${screen.route}=${screen.title}`).join(","))
       .digest("hex");
     if (this.summaryCache?.hash === hash) {
       return {
@@ -86,7 +82,7 @@ export class RepoSummarizer {
         source: this.summaryCache.source,
       };
     }
-    const summary = (await this.claudeSummary(files, screenTitles).catch(() => null)) ?? {
+    const summary = (await this.claudeSummary(files).catch(() => null)) ?? {
       lines: fallbackSummary(files),
       source: "fallback" as const,
     };
@@ -110,7 +106,6 @@ export class RepoSummarizer {
   async handoffDraft(
     options: {
       commentsFile?: string;
-      screenTitles?: Array<{ route: string; title: string }>;
       shotCount?: number;
     } = {},
   ): Promise<RepoHandoffDraft> {
@@ -153,7 +148,6 @@ export class RepoSummarizer {
    */
   private async handoffExtras(options: {
     commentsFile?: string;
-    screenTitles?: Array<{ route: string; title: string }>;
     shotCount?: number;
   }): Promise<NonNullable<RepoHandoffDraft["extras"]>> {
     let commentsSection: string | null = null;
@@ -162,25 +156,9 @@ export class RepoSummarizer {
       // previous request's landing. The pins that motivated this cycle's
       // changes are logged before the branch's first commit exists, so the
       // commit-time anchor read here before dropped the whole section.
-      const since =
-        this.core.commentsSince ??
-        (
-          await this.core.git([
-            "log",
-            "--reverse",
-            "--format=%cI",
-            `origin/${this.core.baseBranch}..${this.core.branch}`,
-          ])
-        )
-          .split("\n")[0]
-          ?.trim();
+      const since = await this.core.cycleAnchor();
       if (options.commentsFile && since) {
-        commentsSection = buildCommentsSection(
-          readComments(options.commentsFile),
-          (screenId) =>
-            options.screenTitles?.find((screen) => screen.route === `/${screenId}`)?.title ?? null,
-          since,
-        );
+        commentsSection = buildCommentsSection(readComments(options.commentsFile), since);
       }
     } catch {
       // A history that will not read costs only the preview line.
@@ -256,9 +234,8 @@ export class RepoSummarizer {
    */
   private async claudeSummary(
     files: DiffFile[],
-    screenTitles: Array<{ route: string; title: string }>,
   ): Promise<RepoSummary | null> {
-    const answer = await this.oneTurn(summaryPrompt(files, screenTitles), SUMMARY_TIMEOUT_MS);
+    const answer = await this.oneTurn(summaryPrompt(files), SUMMARY_TIMEOUT_MS);
     const lines: string[] = [];
     let memo: string | undefined;
     for (const raw of (answer ?? "").split(/\r?\n/)) {

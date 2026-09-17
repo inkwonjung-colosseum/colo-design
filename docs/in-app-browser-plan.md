@@ -10,6 +10,7 @@
 
 - 참조 4제품 공통 모델: 에이전트와 사용자가 **같은 Chromium 탭을 공유**, 에이전트는 AX 스냅샷+ref 도구로 조작. 임의 http(s), 로그인 공유(persist), 탭 스트립이 표준 기능 집합.
 - 4단계로 진행: ① 탭 모델+persist(사용자 가치 독립 배포) → ② BrowserDriver 계약+07bd3bf 이식 → ③ `browser_*` MCP 도구(4 프로바이더) → ④ 게이트 재연결+활동 표시.
+- **구현 상태 (2026-09-17)**: 1~4단계 전부 구현·검증 완료. ① 탭 이중 구조(livePages/tabList)·persist:preview·kind 전환·탭 스트립·⌘⇧[/⌘⇧] — 유닛 17시나리오+스모크 통과. ② PaneBrowserDriver(AX ref 세대·actionability·다이얼로그 자동 처리 이식) + PaneCaptureDriver(게이트 캡처가 같은 드라이버 경유, 디버거 단일 소유) — 유닛 27케이스 통과. ③ browser-mcp.js stdio 서버(17도구→/internal/browser) + 세션별 시크릿 + claude/acp/codex 3형태 주입, omp 폴백 — 유닛 6케이스 통과. ④ navigate/openTab→notePinned(게이트 입력) + browser.driving 브로드캐스트→탭 스트립 스피너.
 
 ## 1. 현재 구조 (2026-09-17, 재배선 후)
 

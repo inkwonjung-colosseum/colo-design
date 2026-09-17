@@ -112,15 +112,15 @@ export interface ChatSettings {
   effort: EffortLevel | null;
   /**
    * Model/effort pins for providers other than `provider`. Switching the
-   * 에이전트 picker swaps the top-level fields with this map's entry, so a
+   * 프로바이더 picker swaps the top-level fields with this map's entry, so a
    * Codex id never reaches a Claude session or vice versa.
    */
   byProvider?: Record<string, { model: string | null; effort: EffortLevel | null }>;
   /**
-   * 새 대화의 에이전트 목록에서 숨긴 프로바이더. 설치 여부(`available`)와
-   * 별개의 사용자 선택이다 — 끈 에이전트는 컴포저의 칩에도 나오지 않고,
-   * 설정의 목록에서만 다시 켠다. 기본 에이전트를 끄면 목록의 다른 켜진
-   * 에이전트로 옮겨 심는다.
+   * 새 대화의 프로바이더 목록에서 숨긴 프로바이더. 설치 여부(`available`)와
+   * 별개의 사용자 선택이다 — 끈 프로바이더는 컴포저의 칩에도 나오지 않고,
+   * 설정의 목록에서만 다시 켠다. 기본 프로바이더를 끄면 목록의 다른 켜진
+   * 프로바이더로 옮겨 심는다.
    */
   disabledProviders: string[];
   permissionMode: PermissionMode;
@@ -169,7 +169,7 @@ export function withChatPick(
 }
 
 /**
- * The settings patch for switching the 에이전트 picker: the outgoing
+ * The settings patch for switching the 프로바이더 picker: the outgoing
  * provider's top-level pins are stashed under its id, and the incoming
  * provider's stashed pins become the top-level fields. What the dialog shows
  * after the switch is exactly what the next session of that provider gets.
@@ -434,7 +434,7 @@ function loadChat(raw: unknown): ChatSettings {
       : (legacy.effort ?? null),
     ...(byProvider ? { byProvider } : {}),
     // 손으로 고친 기록의 쓰레기 값(문자열 아닌 항목, 중복)은 목록에 들어오지
-    // 못한다 — 이 필드는 '숨김'이므로 오염된 값은 에이전트를 조용히 지운다.
+    // 못한다 — 이 필드는 '숨김'이므로 오염된 값은 프로바이더를 조용히 지운다.
     disabledProviders: Array.isArray(stored.disabledProviders)
       ? [...new Set(stored.disabledProviders.filter((v): v is string => typeof v === "string"))]
       : [],

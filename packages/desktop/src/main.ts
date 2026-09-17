@@ -11,14 +11,14 @@ import { SelfUpdates } from "./app-updates.js";
 import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
 import { buildMenuTemplate } from "./menu.js";
-import { createPreviewDriverFactory } from "./preview-driver.js";
+import { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 import { PlannerPreviewView, registerPreviewIpc } from "./preview-view.js";
 import { SafeStorageCredentialStore } from "./safe-storage-store.js";
 import { daemonUrl, guardNavigations, MainWindowHost, windowUrl } from "./windows.js";
 
 // The preview-driver unit imports dist/main.js for this symbol — the seam
 // predates the split, so the export stays on the entry module.
-export { createPreviewDriverFactory } from "./preview-driver.js";
+export { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 
 /**
  * Colo Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
@@ -136,7 +136,8 @@ async function bootApp(): Promise<void> {
   // AI 의 미리보기 (PLAN D61): 세션 도구는 pane 의 페이지를 drive 하고,
   // 창은 모두 이 파일이 만든다 — pane 을 찾는 getter 를 넘기면
   // 드라이버는 Electron 을 몰라도 된다 (PLAN D61).
-  const previewDriverFactory = createPreviewDriverFactory(() => plannerPreview);
+  const browserDrivers = createBrowserDriverFactory(() => plannerPreview);
+  const previewDriverFactory = createPreviewDriverFactory(() => plannerPreview, browserDrivers);
   const onNotice = (notice: DaemonNotice) => {
     notices.notifyPlanner(notice);
     // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
@@ -150,6 +151,7 @@ async function bootApp(): Promise<void> {
       webDist,
       credentialStore: credentials,
       previewDriverFactory,
+      browserDriverFactory: browserDrivers,
       onNotice,
     });
 
@@ -177,12 +179,7 @@ async function bootApp(): Promise<void> {
   const window = host.create();
   host.adopt(window, url);
   // 사용자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
-  // 화면 선언은 데몬에도 간다 (PLAN D61): `screen_list` 가 읽는 목록이 여기서
-  // 채워진다 — 데몬에는 브리지의 말을 들을 페이지가 없다.
-  const plannerPreview = new PlannerPreviewView(
-    () => host.window,
-    (screens) => server.setPreviewScreens(screens),
-  );
+  const plannerPreview = new PlannerPreviewView(() => host.window);
   registerPreviewIpc(plannerPreview);
   // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
   // 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 를 건드리던 시절은 끝난다.

@@ -6,9 +6,9 @@ import {
   markTurn,
   type ServerMessage,
 } from "@colo-design/protocol";
-import type { DriverRegistry } from "./agent/registry.js";
+import { type DriverRegistry } from "./agent/registry.js";
 import { REFRESH_BRIEF, REFRESH_TITLE } from "./bootstrap-brief.js";
-import { recordComments } from "./comments.js";
+import { captureTargets, readComments, recordComments } from "./comments.js";
 import { browseFiles, listFiles } from "./environment.js";
 import type { GitHubBridge } from "./github-bridge.js";
 import type { HandoffPreviews } from "./handoff-preview.js";
@@ -656,13 +656,8 @@ export class RequestRouter {
       case "repo.save":
         return await this.repo.save({
           ...(message.message ? { message: message.message } : {}),
-          // hero-synthesis D1: the calling conversation owns the saved card;
-          // declared screens let it name which ones the files touch.
+          // hero-synthesis D1: the calling conversation owns the saved card.
           ...(message.sessionId ? { sessionId: message.sessionId } : {}),
-          screens: this.deps.previewDrivers.screens.map((screen) => ({
-            route: screen.route,
-            title: screen.title,
-          })),
           ...this.briefTo(message.sessionId, "save"),
         });
 
@@ -670,18 +665,21 @@ export class RequestRouter {
         const active = this.requireActive();
         // The captures come first, while the preview server is still the one
         // serving — the build gate inside the handoff may not leave it up.
-        const shots = await this.deps.previewDrivers.captureHandoffShots();
+        // 핀 주도 (브리지 폐지): 이 사이클에 사람이 핀으로 가리킨 화면·상태만이
+        // "보낸 화면"이다 — 선언된 목록은 더 이상 없다.
+        const commentsFile = join(active.paths.root, "comments.json");
+        const targets = captureTargets(
+          readComments(commentsFile),
+          await active.repo.cycleAnchor(),
+        );
+        const shots = await this.deps.previewDrivers.captureHandoffShots(targets);
         return await active.repo.handoff({
           title: message.title ?? this.deps.registry.get(active.slug)?.name ?? undefined,
           body: message.body ?? DEFAULT_HANDOFF_BODY,
           ...(shots.length > 0 ? { shots } : {}),
-          // D93: the comment store and the declared titles — the PR body's
-          // ### 수정 요청 section is the daemon's to build.
-          commentsFile: join(active.paths.root, "comments.json"),
-          screenTitles: this.deps.previewDrivers.screens.map((screen) => ({
-            route: screen.route,
-            title: screen.title,
-          })),
+          // D93: the comment store — the PR body's `### 수정 요청` section is
+          // the daemon's to build.
+          commentsFile,
           ...(message.sessionId ? { sessionId: message.sessionId } : {}),
           ...this.briefTo(message.sessionId, "handoff"),
         });
@@ -783,24 +781,21 @@ export class RequestRouter {
 
       // --- 되돌리기와 요약 (PLAN D51 · D52 · D53) --------------------------
       case "repo.summarize":
-        // The declared screens ride along so the summary can say 회원 목록
-        // instead of a folder name — the same list 넘기기's body uses.
-        return await this.repo.summarize(
-          this.deps.previewDrivers.screens.map((screen) => ({
-            route: screen.route,
-            title: screen.title,
-          })),
-        );
+        return await this.repo.summarize();
 
       case "repo.handoffDraft": {
         const active = this.requireActive();
+        const commentsFile = join(active.paths.root, "comments.json");
+        // The dialog's shot count reads the same pin-driven targets the
+        // handoff itself will capture — the preview never promises a number
+        // the handoff then fails to deliver.
+        const targets = captureTargets(
+          readComments(commentsFile),
+          await active.repo.cycleAnchor(),
+        );
         return await active.repo.handoffDraft({
-          commentsFile: join(active.paths.root, "comments.json"),
-          screenTitles: this.deps.previewDrivers.screens.map((screen) => ({
-            route: screen.route,
-            title: screen.title,
-          })),
-          shotCount: await this.deps.previewDrivers.handoffShotCount(),
+          commentsFile,
+          shotCount: await this.deps.previewDrivers.handoffShotCount(targets),
         });
       }
 

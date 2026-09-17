@@ -639,7 +639,11 @@ export function SettingsDialog({
               value={query}
               onChange={(event) => searchTo(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Escape") {
+                /* 지울 검색어가 있을 때만 Escape를 이 칸에서 멈춘다 — 빈 칸의
+                   Escape 는 다이얼로그 닫힘으로 흘러가야 한다(useModalEscape 가
+                   document 에서 듣는다). 무조건 stopPropagation 이면 검색 칸에
+                   초점이 남은 채 패널을 닫을 수 없었다. */
+                if (event.key === "Escape" && query) {
                   event.stopPropagation();
                   setQuery("");
                 }
@@ -1133,21 +1137,30 @@ export function SettingsDialog({
                     onChange({ notifications: { ...settings.notifications, sound } })
                   }
                 />
+                {/* 시험 결과는 정책 힌트를 덮지 않는다 — 힌트는 그 자리에
+                    남기고, 결과는 버튼 아래의 한 줄이 말한다. */}
                 <Field
+                  wide
                   label="테스트"
-                  hint={
-                    noticeTest ??
-                    "확인 요청·중단은 이 설정과 관계없이 언제나 옵니다. 알림 허용 여부는 OS 가 앱마다 한 번만 묻습니다 — 한 번 거절된 뒤에는 OS 설정에서만 켤 수 있습니다."
-                  }
+                  hint="확인 요청·중단은 이 설정과 관계없이 언제나 옵니다. 알림 허용 여부는 OS 가 앱마다 한 번만 묻습니다 — 한 번 거절된 뒤에는 OS 설정에서만 켤 수 있습니다."
                 >
-                  <button type="button" onClick={() => void sendTestNotice()}>
-                    테스트 알림 보내기
-                  </button>
-                  {bridgeOpenNotificationSettings && (
-                    <button type="button" onClick={() => void bridgeOpenNotificationSettings()}>
-                      시스템 알림 설정 열기
-                    </button>
-                  )}
+                  <span className="settings__stack">
+                    <span className="settings__row">
+                      <button type="button" onClick={() => void sendTestNotice()}>
+                        테스트 알림 보내기
+                      </button>
+                      {bridgeOpenNotificationSettings && (
+                        <button type="button" onClick={() => void bridgeOpenNotificationSettings()}>
+                          시스템 알림 설정 열기
+                        </button>
+                      )}
+                    </span>
+                    {noticeTest && (
+                      <p className="settings__statusline" aria-live="polite">
+                        {noticeTest}
+                      </p>
+                    )}
+                  </span>
                 </Field>
               </section>
             )}
@@ -1158,13 +1171,13 @@ export function SettingsDialog({
                   <span className="ic ic--sm ic--quiet">
                     <KeyIcon />
                   </span>
-                  GitHub
+                  연결
                 </h3>
                 {daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
                 !editingToken ? (
                   <Field
                     wide
-                    label="계정"
+                    label="GitHub 계정"
                     hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
                   >
                     <span className="settings__url">
@@ -1202,26 +1215,38 @@ export function SettingsDialog({
                   </span>
                   문제 해결
                 </h3>
-                <div className="settings__row">
+                {/* 버튼 수프를 라벨 있는 행으로 — 한 flex 행에 섞여 있던
+                    세 가지 일(처음 설정·저장 위치·업데이트)이 각자 자기
+                    이름 아래에 선다. */}
+                <Row
+                  label="처음 설정"
+                  hint="연결·설치 검사를 처음 화면부터 다시 돌립니다"
+                >
                   <button type="button" onClick={onOpenOnboarding}>
                     처음 설정 다시 보기
                   </button>
-                  {typeof bridgeOpenHome === "function" && (
-                    <button type="button" onClick={() => void bridgeOpenHome()}>
-                      폴더 열기
-                    </button>
-                  )}
-                  {typeof bridgeOpenHome === "function" && (
-                    <button type="button" onClick={() => void bridgeOpenHome("logs")}>
-                      로그 폴더 열기
-                    </button>
-                  )}
-                  <span className="setting__hint">
-                    {bridgeOpenHome
+                </Row>
+                <Row
+                  label="저장 위치"
+                  hint={
+                    bridgeOpenHome
                       ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
-                      : "~/.colo-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."}
-                  </span>
-                  {desktop && (
+                      : "~/.colo-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."
+                  }
+                >
+                  {typeof bridgeOpenHome === "function" && (
+                    <>
+                      <button type="button" onClick={() => void bridgeOpenHome()}>
+                        폴더 열기
+                      </button>
+                      <button type="button" onClick={() => void bridgeOpenHome("logs")}>
+                        로그 폴더 열기
+                      </button>
+                    </>
+                  )}
+                </Row>
+                {desktop && (
+                  <Row label="업데이트" hint="앱의 새 버전이 나왔는지 확인합니다">
                     <button
                       type="button"
                       disabled={checkingUpdate}
@@ -1229,41 +1254,40 @@ export function SettingsDialog({
                     >
                       {checkingUpdate ? "확인 중…" : "업데이트 확인"}
                     </button>
-                  )}
-                  {desktop && update && (
-                    <>
-                      <span className="setting__hint">
-                        {update.updateAvailable
+                    {update?.updateAvailable &&
+                      update.url &&
+                      update.sha256 &&
+                      (canSelfUpdate ? (
+                        <button
+                          type="button"
+                          disabled={installingUpdate}
+                          onClick={() => void installUpdate()}
+                        >
+                          {installingUpdate ? "준비 중…" : "업데이트 설치"}
+                        </button>
+                      ) : (
+                        <a
+                          className="setting__hint"
+                          href={`https://github.com/${RELEASES_REPO}/releases/latest`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          릴리스 페이지에서 설치 파일 내려받기
+                        </a>
+                      ))}
+                  </Row>
+                )}
+                {(update || updateStarted || updateDeferred || updateError) && (
+                  <p className="settings__statusline" aria-live="polite">
+                    {updateError ??
+                      updateDeferred ??
+                      updateStarted ??
+                      (update &&
+                        (update.updateAvailable
                           ? `새 버전 ${update.version}${update.notes ? ` — ${update.notes}` : ""}`
-                          : `최신 버전입니다 (${update.version})`}
-                      </span>
-                      {update.updateAvailable &&
-                        update.url &&
-                        update.sha256 &&
-                        (canSelfUpdate ? (
-                          <button
-                            type="button"
-                            disabled={installingUpdate}
-                            onClick={() => void installUpdate()}
-                          >
-                            {installingUpdate ? "준비 중…" : "업데이트 설치"}
-                          </button>
-                        ) : (
-                          <a
-                            className="setting__hint"
-                            href={`https://github.com/${RELEASES_REPO}/releases/latest`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            릴리스 페이지에서 설치 파일 내려받기
-                          </a>
-                        ))}
-                    </>
-                  )}
-                  {updateStarted && <span className="setting__hint">{updateStarted}</span>}
-                  {updateDeferred && <span className="setting__hint">{updateDeferred}</span>}
-                  {updateError && <span className="setting__hint">{updateError}</span>}
-                </div>
+                          : `최신 버전입니다 (${update.version})`))}
+                  </p>
+                )}
 
                 <details className="settings__fold">
                   <summary>고급 · 연결 정보</summary>

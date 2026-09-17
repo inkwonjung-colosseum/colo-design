@@ -188,6 +188,10 @@ export const OPENCODE_ACP: AcpDriverConfig = {
     slashCommands: true,
     planMode: "plan",
     subtasks: false,
+    // 브라우저 도구 주입 가능(계획 §3 — ACP v1 stdio 서버는 MUST). 공급자
+    // 선언일 뿐 실제 제공은 host의 browserDriverFactory 주입이 정하고,
+    // status가 둘을 AND해 UI에 보인다.
+    browserTools: true,
   },
   resolveExecutable: resolveOpencodeExecutable,
   acpArgs: ["acp"],

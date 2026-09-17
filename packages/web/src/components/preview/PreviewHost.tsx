@@ -1,12 +1,11 @@
 import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  ColoDesignScreen,
   PreviewTabMeta,
 } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
-import { daemonLine, stateLabel } from "../../lib/format";
+import { daemonLine } from "../../lib/format";
 import { parseAddress } from "../../lib/preview-address";
 import {
   AppWindowIcon,
@@ -79,8 +78,18 @@ type PreviewWidth = "mobile" | "tablet" | "desktop";
  * `colo-preview:tabs` truth — the web only renders and asks. A tab activates
  * on click, closes on its ×, and `+` opens a fresh web tab (`tabNew` with no
  * url). 탭이 하나도 없어도 스트립은 그린다 — `+` 가 유일한 탈출구니까.
+ * `driving`(4단계)은 에이전트가 조작 중인 탭 id들 — null은 "활성 탭"을 뜻해
+ * 여기서 그 탭으로 읽는다. 닫힌 탭은 목록에서 빠지므로 표시도 함께 사라진다.
  */
-function TabStrip({ tabs, activeTabId }: { tabs: PreviewTabMeta[]; activeTabId: string | null }) {
+function TabStrip({
+  tabs,
+  activeTabId,
+  driving,
+}: {
+  tabs: PreviewTabMeta[];
+  activeTabId: string | null;
+  driving: ReadonlySet<string | null>;
+}) {
   const bridge = window.coloDesignDesktop?.preview;
   return (
     <div className="frame__tabs" role="tablist" aria-label="탭">
@@ -105,6 +114,14 @@ function TabStrip({ tabs, activeTabId }: { tabs: PreviewTabMeta[]; activeTabId: 
           >
             {tab.kind === "web" ? <GlobeIcon /> : <AppWindowIcon />}
             <span className="frame__tabtitle">{tab.title}</span>
+            {driving.has(tab.id) || (driving.has(null) && tab.id === activeTabId) ? (
+              <span
+                className="frame__spin"
+                role="status"
+                aria-label="에이전트 조작 중"
+                title="에이전트 조작 중"
+              />
+            ) : null}
           </button>
           <button
             type="button"
@@ -128,6 +145,9 @@ function TabStrip({ tabs, activeTabId }: { tabs: PreviewTabMeta[]; activeTabId: 
   );
 }
 
+/** 조작 중인 탭이 하나도 없을 때의 빈 집합 — 매 렌더 새로 만들지 않는다. */
+const NO_DRIVING: ReadonlySet<string | null> = new Set();
+
 /**
  * The preview pane: the toolbar, the browser-bar frame head and
  * the stage are common; the stage itself is a host. `native` picks
@@ -147,19 +167,17 @@ export function PreviewHost({
   sync,
   onPin,
   onFixError,
-  screens,
   target,
   onNavigate,
-  onScreens,
   onLocation,
   location,
-  visitedCells,
   commentsOn,
   onCommentsMode,
   onLook,
   lookBusy = false,
   frozen = null,
   frozenApi = null,
+  drivingTabs,
 }: {
   url: string | null;
   /** The server process behind `url` (RepoStatus.previewEpoch); the native page reloads under a new one. */
@@ -179,22 +197,13 @@ export function PreviewHost({
   onPinFocus: (id: string) => void;
   /** The banner's `AI에게 고쳐 달라고 하기`. */
   onFixError: (error: PreviewError) => void;
-  /** Screens the repo declared — empty until the bridge speaks. */
-  screens: ColoDesignScreen[];
   /** The last ask; the caller answers by handing a new one back. */
   target: PreviewTarget | null;
   onNavigate: (target: PreviewTarget) => void;
-  onScreens: (screens: ColoDesignScreen[]) => void;
   /** The native view's location reports arrive here; null when the pane
       closes its page (외부 페이지 닫기). */
   onLocation: (location: PreviewLocation | null) => void;
   location: PreviewLocation | null;
-  /**
-   * 본 곳 표식: 이번 수정 이후 기획자의 눈이
-   * 닿은 화면·상태 키(`${route}|${state}`) — 패널이 위치 보고로 채우고,
-   * 파일을 쓴 턴이 끝나면 비운다. 칸은 "존재한다"가 아니라 "봤다"를 말한다.
-   */
-  visitedCells?: Set<string>;
   /** 코멘트 모드 — the toolbar owns the truth. */
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
@@ -225,7 +234,13 @@ export function PreviewHost({
    * owns the stage. Absent: the button is not on the bar.
    */
   frozenApi?: { api: Daemon["api"]; sessionId: string | null } | null;
+  /**
+   * 에이전트가 조작 중인 탭 id들 (4단계) — 데몬의 `browser.driving`이 채우는
+   * `daemon.browserDriving`. null은 활성 탭. 없으면 아무 탭도 조작 중이 아니다.
+   */
+  drivingTabs?: ReadonlySet<string | null>;
 }) {
+  const driving = drivingTabs ?? NO_DRIVING;
   const native = Boolean(window.coloDesignDesktop?.preview?.native);
   const [width, setWidth] = useState<PreviewWidth>("desktop");
   /** Bumped by 새로 고침: a clean reload on whichever host is mounted. */
@@ -256,47 +271,18 @@ export function PreviewHost({
   const activeTab = tabState.tabs.find((tab) => tab.id === tabState.activeTabId) ?? null;
   /** The last `colo-preview:error` — one at a time, the newest wins. */
 
-  /** 화면·상태 매트릭스: 선언 전부와 본 곳 표식. */
-  const [matrixOpen, setMatrixOpen] = useState(false);
-  /** 매트릭스의 "안 본 상태만" — 커버리지 도구의 필터: 기본은 전체 보기. */
-  const [unseenOnly, setUnseenOnly] = useState(false);
-  const cellSeen = (route: string, state: string) =>
-    visitedCells?.has(`${route}|${state}`) ?? false;
-  const unseenTotal = screens.reduce(
-    (count, screen) =>
-      count + screen.states.filter((state) => !cellSeen(screen.route, state)).length,
-    0,
-  );
-  /** 토글이 켜지면 본 칸은 빠진다 — 행에 남은 칸이 없으면 행도 함께. */
-  const matrixScreens = unseenOnly
-    ? screens
-        .map((screen) => ({
-          ...screen,
-          states: screen.states.filter((state) => !cellSeen(screen.route, state)),
-        }))
-        .filter((screen) => screen.states.length > 0)
-    : screens;
-  useEffect(() => {
-    if (!matrixOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMatrixOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [matrixOpen]);
   // 고정 해제 Esc: 얼린 얼굴(보낸 화면)이 떠 있을 때 한 번 누르면 지금 화면으로
-  // 돌아온다 — 세그먼트의 `지금 화면`과 같은 동작. 화면 목록이 열려 있으면
-  // Esc 는 그쪽의 몫이다.
+  // 돌아온다 — 세그먼트의 `지금 화면`과 같은 동작.
   const frozenOnMode = frozen?.onMode;
   const frozenSent = frozen?.mode === "sent";
   useEffect(() => {
-    if (!frozenSent || !frozenOnMode || matrixOpen) return;
+    if (!frozenSent || !frozenOnMode) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") frozenOnMode("live");
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [frozenSent, frozenOnMode, matrixOpen]);
+  }, [frozenSent, frozenOnMode]);
   const [error, setError] = useState<PreviewError | null>(null);
   /** The banner's `자세히`: the message starts clamped to one line. */
   const [detail, setDetail] = useState(false);
@@ -456,7 +442,7 @@ export function PreviewHost({
     const verdict = parseAddress(raw, {
       origin: new URL(url).origin,
       currentPath: location?.path ?? "/",
-      routes: screens.map((screen) => screen.route),
+      routes: [],
     });
     if (verdict.kind === "error") {
       setAddressError(verdict.message);
@@ -481,7 +467,9 @@ export function PreviewHost({
     // line under the human sentence — never the headline.
     return (
       <div className="preview">
-        {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
+        {native && (
+          <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} driving={driving} />
+        )}
         <div className="progress progress--error">
           <div className="progress__card">
             <div className="progress__head">
@@ -525,33 +513,15 @@ export function PreviewHost({
   if (!url && !externalMode && !tabState.tabs.some((tab) => tab.kind === "web")) {
     return (
       <div className="preview">
-        {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
+        {native && (
+          <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} driving={driving} />
+        )}
         <div className="preview__blank">
           <p className="hint">화면이 바뀌면 여기에 뜹니다</p>
         </div>
       </div>
     );
   }
-
-  // The picker follows where the view IS — the ask is only its opening
-  // bid. No `?state=` is what the repo's ScreenRunner labels `default`.
-  // An external page has no screens: the derivation stays out entirely.
-  const activePath =
-    !externalMode && location ? location.path : target?.kind === "path" ? target.path : null;
-  const activeRouteState =
-    !externalMode && target?.kind === "screen"
-      ? { route: target.route, state: target.state }
-      : activePath !== null
-        ? (() => {
-            const [route, query = ""] = activePath.split("?");
-            const state = new URLSearchParams(query).get("state");
-            return { route, state: state && state !== "" ? state : null };
-          })()
-        : null;
-  const current = activeRouteState
-    ? (screens.find((screen) => screen.route === activeRouteState.route) ?? null)
-    : null;
-  const activeState = activeRouteState?.state ?? "default";
 
   return (
     <div className="preview">
@@ -595,128 +565,6 @@ export function PreviewHost({
               );
             })()
           : null}
-        {!externalMode && screens.length > 0 && (
-          <div className="preview__matrixwrap">
-            <Tip
-              label={
-                matrixOpen
-                  ? undefined
-                  : "선언된 화면과 상태를 한눈에 — 이 수정 이후 본 곳에 표식이 붙습니다. 화면 이름으로 찾으려면 ⌘K"
-              }
-              side="bottom"
-              align="start"
-            >
-              <button
-                type="button"
-                className={matrixOpen ? "preview__state preview__state--on" : "preview__state"}
-                aria-haspopup="true"
-                aria-expanded={matrixOpen}
-                onClick={() => setMatrixOpen((open) => !open)}
-              >
-                화면 목록
-              </button>
-            </Tip>
-            {matrixOpen && (
-              <>
-                <button
-                  type="button"
-                  className="selector__backdrop"
-                  aria-label="화면 목록 닫기"
-                  onClick={() => setMatrixOpen(false)}
-                />
-                <div className="selector__menu preview__matrix" role="group" aria-label="화면 목록">
-                  {/* 커버리지 필터: 이 패널의 질문은 "아직 안 본
-                      곳이 어디냐" — 이름 검색은 ⌘K 가 이미 한다. 기본은 전체
-                      보기: 한눈 커버리지가 이 패널의 본령이니. */}
-                  <div className="preview__mfilter">
-                    <Tip
-                      label={
-                        unseenOnly
-                          ? "모든 화면과 상태를 봅니다"
-                          : "이 수정 이후 아직 보지 않은 상태만 골라 봅니다"
-                      }
-                      side="bottom"
-                      align="start"
-                    >
-                      <button
-                        type="button"
-                        className={
-                          unseenOnly ? "preview__state preview__state--on" : "preview__state"
-                        }
-                        aria-pressed={unseenOnly}
-                        onClick={() => setUnseenOnly((v) => !v)}
-                      >
-                        안 본 상태만{unseenTotal > 0 ? ` ${unseenTotal}` : ""}
-                      </button>
-                    </Tip>
-                  </div>
-                  {matrixScreens.map((screen) => (
-                    <div
-                      className="preview__mrow"
-                      key={screen.route}
-                      role="group"
-                      aria-label={screen.title}
-                    >
-                      <span className="preview__mtitle">{screen.title}</span>
-                      <span className="preview__mstates">
-                        {screen.states.map((state) => {
-                          const seen = cellSeen(screen.route, state);
-                          const on = current?.route === screen.route && activeState === state;
-                          return (
-                            <Tip
-                              key={state}
-                              label={
-                                seen
-                                  ? "이 수정 이후에 본 상태입니다"
-                                  : "아직 안 본 상태입니다 — 누르면 그 화면으로 갑니다"
-                              }
-                              side="bottom"
-                            >
-                              <button
-                                type="button"
-                                className={
-                                  on ? "preview__state preview__state--on" : "preview__state"
-                                }
-                                onClick={() => {
-                                  setMatrixOpen(false);
-                                  onNavigate({ kind: "screen", route: screen.route, state });
-                                }}
-                              >
-                                {seen ? "✓ " : ""}
-                                {stateLabel(state)}
-                              </button>
-                            </Tip>
-                          );
-                        })}
-                      </span>
-                    </div>
-                  ))}
-                  {unseenOnly && matrixScreens.length === 0 && (
-                    <p className="preview__mempty">모든 상태를 확인했습니다</p>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-        {current && current.states.length > 1 && (
-          <div className="preview__states" role="group" aria-label="상태">
-            {current.states.map((state) => (
-              <Tip key={state} label={`이 화면의 ${stateLabel(state)} 상태를 봅니다`} side="bottom">
-                <button
-                  type="button"
-                  className={
-                    state === activeState ? "preview__state preview__state--on" : "preview__state"
-                  }
-                  aria-pressed={state === activeState}
-                  onClick={() => onNavigate({ kind: "screen", route: current.route, state })}
-                >
-                  {stateLabel(state)}
-                </button>
-              </Tip>
-            ))}
-          </div>
-        )}
         <span className="preview__spacer" />
         {native && !externalMode && (
           <Tip
@@ -839,7 +687,9 @@ export function PreviewHost({
           {loading && <div className="frame__progress" aria-hidden="true" />}
           {/* 탭 스트립 — 진행 바 아래·크롬 줄 위, 브라우저의 탭 자리.
               네이티브만: iframe 경로는 탭이 없는 단일 화면이다. */}
-          {native && <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} />}
+          {native && (
+            <TabStrip tabs={tabState.tabs} activeTabId={tabState.activeTabId} driving={driving} />
+          )}
           <div className="frame__chrome">
             <div className="frame__side frame__side--left">
               <div className="frame__lights" aria-hidden="true">
@@ -927,25 +777,6 @@ export function PreviewHost({
                     onChange={(event) => setAddress(event.target.value)}
                   />
                 </span>
-                {/* The address bar proposes — declared routes, and the
-                    route·state pairs when a screen declares more than one. */}
-                <datalist id="colo-frame-routes">
-                  {(externalMode ? [] : screens).flatMap((screen) => [
-                    <option key={screen.route} value={screen.route}>
-                      {screen.title}
-                    </option>,
-                    ...screen.states
-                      .filter((state) => state !== "default")
-                      .map((state) => (
-                        <option
-                          key={`${screen.route}?state=${state}`}
-                          value={`${screen.route}?state=${state}`}
-                        >
-                          {`${screen.title} · ${stateLabel(state)}`}
-                        </option>
-                      )),
-                  ])}
-                </datalist>
                 {addressError && <span className="frame__addrerror">{addressError}</span>}
               </form>
             ) : (
@@ -955,11 +786,6 @@ export function PreviewHost({
               </span>
             )}
             <div className="frame__side frame__side--right">
-              {current && (
-                <span className="frame__name frame__name--beside">
-                  <b>{current.title}</b> · {stateLabel(activeState)}
-                </span>
-              )}
               {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
               {width !== "desktop" && !externalMode && (
                 <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
@@ -1037,7 +863,6 @@ export function PreviewHost({
                 commentsOn={commentsOn}
                 activeTab={activeTab}
                 onLocation={onLocation}
-                onScreens={onScreens}
                 sync={sync}
                 onPin={onPin}
                 onPinFocus={onPinFocus}
@@ -1055,7 +880,6 @@ export function PreviewHost({
                 url={url}
                 target={target}
                 reloadKey={reloadNonce}
-                onScreens={onScreens}
                 onLoading={setLoading}
               />
             ) : null;

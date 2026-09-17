@@ -16,6 +16,7 @@ import type {
   SessionModelInfo,
 } from "@colo-design/protocol";
 import { PLAN_TOOL } from "@colo-design/protocol";
+import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { MessageTranslator } from "./event-mapper.js";
 
@@ -179,6 +180,16 @@ export class ClaudeAgentSession implements AgentSession {
         // pre-approved tool rules surfaces as a header warning; see
         // repoSettingsWarning.)
         settingSources: ["user", "project", "local"],
+        // 브라우저 도구(3단계): host가 브라우저 팩토리를 주입한 세션만 세션
+        // 시크릿을 든 stdio MCP 서버를 받는다 — 메인 query에만 주입하고,
+        // probe·one-shot 사이트는 의도적 무도구 그대로다.
+        ...(launch.browserMcp
+          ? {
+              mcpServers: {
+                [BROWSER_MCP_SERVER_NAME]: claudeBrowserMcpServer(launch.browserMcp),
+              },
+            }
+          : {}),
         // 질문 카드의 선택지 미리보기를 HTML 로 받는다 (PLAN D96): 이 앱의
         // 카드는 웹이라 monospace 박스가 아니라 그려진 시안을 보여 줄 수 있다.
         // 카드는 스크립트 없는 sandbox iframe 으로만 그린다.

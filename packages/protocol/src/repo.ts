@@ -104,7 +104,7 @@ export interface HandoffStatus {
  * from the pull request body's `### 화면 미리보기` section.
  */
 export interface HandoffShot {
-  /** Route the screen is served at, as `colo-design.screens` declared it. */
+  /** Route the screen is served at — the pin's `data-screen` id, slash-restored. */
   route: string;
   /** The state the screen was captured in, as the repo declared it. */
   state: string;

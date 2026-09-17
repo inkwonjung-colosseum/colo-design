@@ -1,7 +1,6 @@
 import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  ColoDesignScreen,
   PreviewTabMeta,
   UpdateCheckResult,
 } from "@colo-design/protocol";
@@ -127,7 +126,6 @@ declare global {
         onTabs?: (
           callback: (payload: { tabs: PreviewTabMeta[]; activeTabId: string | null }) => void,
         ) => Unsubscribe;
-        onScreens?: (callback: (payload: { screens: ColoDesignScreen[] }) => void) => Unsubscribe;
         onPin?: (callback: (payload: ColoDesignPinEnvelope) => void) => Unsubscribe;
         onPinFocus?: (callback: (payload: { id: string }) => void) => Unsubscribe;
         onError?: (

@@ -174,7 +174,12 @@ export function SaveReviewBody({ daemon, memo, onMemo }: SaveReviewBodyProps) {
   const failed = diffStatus?.stage === "failed";
 
   // The list is a snapshot of what a 저장 would write; reload it whenever one
-  // settles, because a success means the worktree is clean now.
+  // settles, because a success means the worktree is clean now. The count
+  // rides along too: a pull's stash window can answer this fetch with a
+  // momentarily-clean tree, and the recount that lands with the pop is the
+  // only sign the truth moved — without it the review would keep saying
+  // 저장할 변경사항이 없습니다 over a dirty worktree (실측 결함).
+  const pendingChanges = daemon.repo?.pendingChanges ?? null;
   useEffect(() => {
     if (running) return;
     let cancelled = false;
@@ -185,7 +190,7 @@ export function SaveReviewBody({ daemon, memo, onMemo }: SaveReviewBodyProps) {
     return () => {
       cancelled = true;
     };
-  }, [api, running]);
+  }, [api, running, pendingChanges]);
 
   // The summary follows the diff: one `repo.summarize` ask, cached by what the
   // diff was. Three seconds in, the planner reads the local fallback — a slow
