@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatEvent, SessionSummary, ThreadCycle, ThreadSummary } from "@colo-design/protocol";
 import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
+import type { BrowserMcpEntry } from "./browser-launch.js";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 
 export class SessionManager {
@@ -58,7 +59,16 @@ export class SessionManager {
   private readonly events: SessionEvents;
   private readonly drivers: DriverRegistry;
 
-  constructor(events: SessionEvents, drivers: DriverRegistry) {
+  constructor(
+    events: SessionEvents,
+    drivers: DriverRegistry,
+    /**
+     * 세션별 브라우저 MCP 기동 명세를 만드는 훅(3단계). DaemonServer가
+     * browserDriverFactory 주입 여부·시크릿 발급·바인딩 포트를 알고 있으므로
+     * 클로저로 받는다 — 미주입 host(브라우저 개발 경로)에서는 undefined.
+     */
+    private readonly browserMcpFor?: (sessionId: string) => BrowserMcpEntry | null,
+  ) {
     this.drivers = drivers;
     this.events = {
       ...events,
@@ -124,6 +134,9 @@ export class SessionManager {
       effort: options.launch?.effort ?? null,
       appendSystemPrompt: options.launch?.appendSystemPrompt ?? null,
       ...options.launch,
+      // 브라우저 도구 명세는 데몬이 세션별 시크릿과 함께 발급한다 — 호출자가
+      // options.launch로 넣은 값이 있어도 덮는다(시크릿은 세션 소유).
+      browserMcp: this.browserMcpFor?.(session.id) ?? undefined,
     };
     session.attach(driver.createSession(launch, session.driverHooks));
     this.live.set(session.id, session);
@@ -588,6 +601,7 @@ export class SessionManager {
           forkSession: true,
           resumeSessionAt: cutoff.cut,
           resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+          browserMcp: this.browserMcpFor?.(fork.id) ?? undefined,
         },
         fork.driverHooks,
       ),

@@ -1,4 +1,5 @@
 import type { ContextUsage, SessionCommand, SessionModelInfo } from "@colo-design/protocol";
+import { acpBrowserMcpServer } from "../../../browser-launch.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { JsonRpcTransport } from "../../jsonrpc.js";
 
@@ -91,10 +92,13 @@ export class AcpAgentSession implements AgentSession {
     )) as Wire;
     this.agentCapabilities = (init?.agentCapabilities ?? {}) as Wire;
 
-    // ACP's session/new requires the field — the daemon injects no MCP
-    // servers (게이트 재배선: the in-process colo-preview server is gone),
-    // so it is always the empty list.
-    const mcpServers: Wire[] = [];
+    // ACP's session/new requires the field. 브라우저 도구(3단계): host가
+    // 팩토리를 주입한 세션만 stdio 서버 하나를 실어 보낸다 — command는
+    // 절대경로, args·env는 스키마상 생략 불가라 빌더가 채워 준다. 주입이
+    // 없으면 (게이트 재배선 이후의 기본) 빈 배열 그대로다.
+    const mcpServers: Wire[] = this.launch.browserMcp
+      ? [acpBrowserMcpServer(this.launch.browserMcp)]
+      : [];
     const resumeId = typeof this.launch.resume === "string" ? this.launch.resume : null;
     if (resumeId && this.agentCapabilities.loadSession === false) {
       throw new Error(`${this.providerId} 에이전트는 대화 재개를 지원하지 않습니다.`);

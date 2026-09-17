@@ -1,4 +1,4 @@
-import type { ColoDesignScreen, DeveloperReview, SessionSummary } from "@colo-design/protocol";
+import type { DeveloperReview, SessionSummary } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "../../components";
 import type { Pins } from "../../hooks/usePins";
@@ -11,7 +11,7 @@ import { composing } from "../../lib/ime";
 import { PLAN_TOOL } from "../../lib/labels";
 import { pinsToTurn, reviewToTurn } from "../../lib/preview-turns";
 import { type MidTurnSend, type SendKey, saveHandledReview } from "../../lib/settings";
-import { suggestionsFromScreens } from "../../lib/suggestions";
+import { GENERIC_STARTERS } from "../../lib/suggestions";
 import { blockOnTape } from "../../lib/tape-visibility";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
@@ -39,13 +39,11 @@ export function ChatColumn({
   titleFor,
   onRenameSession,
   onDeleteSession,
-  screens,
   showThinking,
   showTools,
   disabledProviders,
   pins,
   focusPinId,
-  onOpenScreen,
   cycleRequest,
   onReviewsHandled,
   onExportThread,
@@ -66,24 +64,16 @@ export function ChatColumn({
   /** The head's `···` → 지우기: the transcript goes for good, one
       unconditional confirm on the way. */
   onDeleteSession: (session: SessionSummary) => void;
-  /** The screens the connected repo declares — the empty conversation's
-      starter chips point at them instead of generic sentences. */
-  screens: ColoDesignScreen[];
   /** 생각 과정 보기 (설정) — 꺼져 있으면 생각 블록은 테이프에서 빠진다. */
   showThinking: boolean;
   /** 작업 과정 보기 (설정) — 꺼져 있으면 도구 호출 묶음도 테이프에서 빠진다. */
   showTools: boolean;
-  /** 설정에서 끈 에이전트 — 새 대화의 칩 옵션에서도 빠진다. */
+  /** 설정에서 끈 프로바이더 — 새 대화의 칩 옵션에서도 빠진다. */
   disabledProviders: string[];
   /** The workspace's pins — sent with the turn, cleared by markSent. */
   pins: Pins;
   /** 배지 클릭 → 그 핀 행의 메모 입력 (PageWorkspace 가 흔든 상태). */
   focusPinId: { id: string; nonce: number } | null;
-  /**
-   * 대화 열에서 미리보기로 — 답변의 화면 칩과 영수증
-   * 행이 같은 문으로 나간다. 배관은 팔레트가 쓰는 jumpRequest 그대로.
-   */
-  onOpenScreen: (route: string, state: string | null) => void;
   /**
    * 사이클 동작 요청 (PageWorkspace 의 단일 통로): 상단 바의 저장·넘기기와
    * ⌘S 가 여기로 온다 — 모달이던 시절의 setSaveOpen 대신, 대화 안 카드가
@@ -106,20 +96,10 @@ export function ChatColumn({
   onOpenProviderSettings?: () => void;
 }) {
   const { api, pending, resolvePending } = daemon;
-  // The route id a pin carries → what the repo called the screen; the card,
-  // the thread name and the tray rows all read this one rule.
-  const titleForScreen = useCallback(
-    (screen: string) => screens.find((s) => s.route === `/${screen}`)?.title ?? screen,
-    [screens],
-  );
   const draftKey = sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`;
   /** This thread's turn-start snapshots, refetched when a turn ends. */
   const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
   const [restoring, setRestoring] = useState(false);
-
-  // --- 대화 열 전체가 첨부를 받는다 --------------------
-  // 드롭 핸들은 컴포저 상자에만 있어서, 빈 대화가 아닌 곳에 떨어진 그림은
-  // 조용히 사라졌다(App.tsx 의 전역 거절이 창 내비게이션만 막았을 뿐).
   // 컴포저의 readAttachments 를 등록받아 대화 열 전체가 같은 손을 쓴다.
   // dragleave 는 자식 진입에도 발사되므로 깊이 카운터로 편렬을 잡는다.
   const attachFiles = useRef<((files: FileList | File[]) => void) | null>(null);
@@ -256,15 +236,7 @@ export function ChatColumn({
   );
   const { title: proposedTitle, body: proposedBody } = handoffDraft(
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? "",
-    screens,
   );
-  /** 캡처 고지: 넘기기가 함께 커밋하는 화면 캡처의 수. 데스크톱에만
-      캡처가 있으니 그곳에서만 말한다 — 기능 부재를 말하지 않는다. */
-  const shotNotice = window.coloDesignDesktop?.preview?.native
-    ? screens.length > 0
-      ? `넘기면 화면 캡처 ${screens.reduce((total, screen) => total + screen.states.length, 0)}장이 함께 저장됩니다`
-      : undefined
-    : undefined;
   // "지금 저장하기"의 원인이 되는 라벨 — 잠긴 이유는 ComposerChips 가
   // deriveDelivery 로 따로 읽는다; 여기는 버튼의 말만 고른다. 저장은 됐고
   // 넘기기만 멈춘 카드(gate:"pr")는 저장을 다시 돌리지 않는다.
@@ -627,18 +599,8 @@ export function ChatColumn({
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
             onRetry={retry}
-            starters={suggestionsFromScreens(screens)}
+            starters={GENERIC_STARTERS}
             onStarterAttach={startWithAttachment}
-            screens={screens}
-            onOpenScreen={onOpenScreen}
-            screenRepo={
-              repo ? { pendingChanges: repo.pendingChanges, handoff: repo.handoff } : null
-            }
-            onOpenScreenTitle={(title, state) => {
-              // 영수증의 행은 화면 제목을 새긴다 — 주소로 되돌리는 사전은 여기.
-              const found = screens.find((screen) => screen.title === title);
-              if (found) onOpenScreen(found.route, state ?? found.states[0] ?? null);
-            }}
             onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={(id) => setConfirmRestore(id)}
@@ -724,7 +686,6 @@ export function ChatColumn({
                 destination={destination}
                 proposedTitle={proposedTitle}
                 proposedBody={proposedBody}
-                shotNotice={shotNotice}
                 sessionId={activeId}
                 onClose={() => setHandoffOpen(false)}
               />
@@ -862,8 +823,6 @@ export function ChatColumn({
         hurrying={sessions.hurrying}
         suggestion={suggestion}
         onDismissSuggestion={() => setHiddenSuggestion(active?.suggestion ?? null)}
-        activity={active?.activity}
-        turnStartedAt={active?.turnStartedAt ?? null}
         tasks={active?.tasks ?? []}
         onStopTask={stopTask}
         seed={seed}
@@ -911,11 +870,9 @@ export function ChatColumn({
           );
           // 핀으로 처음 열리는 대화는 첫 핀의 화면 이름을 얻는다.
           const name =
-            !sessions.activeId && sentPins.length > 0
-              ? (titleForScreen(sentPins[0]!.screen) ?? undefined)
-              : undefined;
+            !sessions.activeId && sentPins.length > 0 ? sentPins[0]!.screen : undefined;
           await sessions.submit(
-            sentPins.length > 0 ? pinsToTurn(sentPins, text, titleForScreen) : text,
+            sentPins.length > 0 ? pinsToTurn(sentPins, text, () => null) : text,
             [...pinImages, ...attachments],
             { name },
             // 게이트 재배선: 이 턴이 가리킨 화면들 — 턴이 끝나면 기계가
@@ -928,7 +885,6 @@ export function ChatColumn({
         pins={pins.list}
         pinNumberStart={pins.ghosts.length + 1}
         focusPinId={focusPinId}
-        titleForScreen={titleForScreen}
         onPinRemove={pins.remove}
         onPinNote={pins.setNote}
         onPinIntent={pins.setIntent}

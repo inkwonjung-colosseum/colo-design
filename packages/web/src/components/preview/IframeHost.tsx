@@ -1,18 +1,13 @@
-import type {
-  ColoDesignNavigateEnvelope,
-  ColoDesignScreen,
-  ColoDesignScreensEnvelope,
-  ColoDesignScreensRequestEnvelope,
-} from "@colo-design/protocol";
+import type { ColoDesignNavigateEnvelope } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { PreviewTarget } from "./PreviewHost";
 
 /**
  * 브라우저 개발 경로의 미리보기: the repo's dev server framed
- * as-is, speaking the repo bridge contract only — `colo-design.screens` in,
- * `colo-design.navigate` out. Comments, the address bar and the error banner
- * are the native view's and are simply absent here; a plain
- * browser is the developer's path, and it is not told what it lacks.
+ * as-is, speaking the repo bridge contract only — `colo-design.navigate`
+ * out. Comments, the address bar and the error banner are the native
+ * view's and are simply absent here; a plain browser is the developer's
+ * path, and it is not told what it lacks.
  *
  * NAVIGATION IS A PROP, NOT A HANDLE — `target` comes down because nothing in
  * this package exposes an imperative handle (PreviewHost's rule). The re-send
@@ -24,7 +19,6 @@ export function IframeHost({
   url,
   target,
   reloadKey,
-  onScreens,
   /** 로드의 시작과 끝을 프레임 머리에 알린다 — 스핀과 진행 바의 iframe 절반. */
   onLoading,
 }: {
@@ -33,7 +27,6 @@ export function IframeHost({
   target: PreviewTarget | null;
   /** Bumped by 새로 고침 — remounts the iframe for a clean reload. */
   reloadKey: number;
-  onScreens: (screens: ColoDesignScreen[]) => void;
   onLoading?: (busy: boolean) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -53,20 +46,6 @@ export function IframeHost({
     return () => onLoading?.(false);
   }, [onLoading, reloadKey]);
 
-  useEffect(() => {
-    if (!url) return;
-    const expectedOrigin = new URL(url).origin;
-    const onMessage = (event: MessageEvent) => {
-      // Only this iframe may speak; anything else in the page is noise.
-      if (event.source !== frame.current?.contentWindow) return;
-      if (event.origin !== expectedOrigin) return;
-      const data = event.data as ColoDesignScreensEnvelope | null;
-      if (data?.type === "colo-design.screens" && Array.isArray(data.screens))
-        onScreens(data.screens);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [url, onScreens]);
 
   const screen = target?.kind === "screen" ? target : null;
 
@@ -102,12 +81,6 @@ export function IframeHost({
           onLoading?.(false);
           setLoaded(true);
           setLoads((count) => count + 1);
-          // The bridge posts its list once on its own mount and never retries,
-          // so the two orderings cover each other.
-          const request: ColoDesignScreensRequestEnvelope = {
-            type: "colo-design.screens?",
-          };
-          frame.current?.contentWindow?.postMessage(request, new URL(url).origin);
         }}
       />
       <span ref={afterFrame} tabIndex={-1} className="skippreview__after" />

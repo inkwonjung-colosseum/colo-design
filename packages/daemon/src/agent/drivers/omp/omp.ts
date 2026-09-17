@@ -71,6 +71,9 @@ export class OmpDriver implements AgentDriver {
         slashCommands: true,
         planMode: null,
         subtasks: false,
+        // 브라우저 도구 미지원(계획 §3): --mode rpc 명령 집합에 도구 주입
+        // wire가 없다. false로 선언해 UI가 도구 의존 기능을 숨긴다.
+        browserTools: false,
       },
     };
   }

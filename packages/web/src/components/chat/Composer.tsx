@@ -45,7 +45,6 @@ import {
   ZapIcon,
 } from "../icons";
 import { PinTray } from "../preview/PinTray";
-import { TurnClock } from "../preview/TurnClock";
 import { Tip } from "../shell/Tip";
 import { ContextRing } from "./ContextRing";
 import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
@@ -61,7 +60,7 @@ export interface Attachment {
 
 /**
  * 툴바 칩 한 개의 재료 — SelectorChip 이 먹는 모양 그대로. 모델 칩만
- * 드릴다운(header·levelKey·alwaysSearch)을 입는다: 통합 메뉴의 에이전트
+ * 드릴다운(header·levelKey·alwaysSearch)을 입는다: 통합 메뉴의 프로바이더
  * 단계도 같은 SelectorChip 이 그린다.
  */
 type Chip = {
@@ -267,8 +266,6 @@ export function Composer({
   onClearQueue,
   onDismissSuggestion,
   suggestion = null,
-  activity,
-  turnStartedAt = null,
   tasks = [],
   onStopTask,
   seed,
@@ -330,17 +327,6 @@ export function Composer({
   suggestion?: string | null;
   /** 칩을 썼거나 닫았다 — 어느 쪽이든 이 칩의 생은 거기서 끝난다. */
   onDismissSuggestion?: () => void;
-  /**
-   * 답이 나오기 전의 한 줄의 상태: 대화를 정리하는 중인지, 모델의
-   * 답을 기다리는 중인지. 생각 과정을 끈 기본값에서는 이 한 줄이 유일하게
-   * "돌고 있음"을 말한다.
-   */
-  activity?: { status: "compacting" | "requesting" | null };
-  /**
-   * 이 턴이 시작한 시각 (epoch ms) — 진행 시계가 읽는 자리. 데몬의 시각이므로
-   * 새로고침해도, 두 번째 창에서도 같은 초를 센다.
-   */
-  turnStartedAt?: number | null;
   /** 지금 뒤에서 도는 작업들. */
   tasks?: Array<{ taskId: string; type: string; description: string }>;
   /** 그 작업 하나만 세운다 — 턴은 그대로 둔다. */
@@ -1235,24 +1221,6 @@ export function Composer({
         </div>
       )}
 
-      {/* 답이 나오기 전의 한 줄: 정리 중인지, 그리고 몇 분째인지.
-          사용자가 읽는 것은 숫자가 아니라 "멈춘 게 아니다" 라는 사실이다 —
-          그래서 도는 동안에만 있다. 시계가 여기 산다: 기록 아래가 아니라
-          기다리는 사람의 눈이 머무는 입력창 위 한 줄. 토큰 어림은 없다 —
-          청구되는 수도 아닌 눈금이 화면을 차지할 이유가 없다. */}
-      {running && (
-        <div className="composer__activity" role="status">
-          <span className="spinner" />
-          <span>
-            {activity?.status === "compacting"
-              ? "길어진 대화를 정리하는 중…"
-              : activity?.status === "requesting"
-                ? "답을 기다리는 중…"
-                : "생각하는 중"}
-          </span>
-          {turnStartedAt !== null && <TurnClock startedAt={turnStartedAt} />}
-        </div>
-      )}
 
       {/* 뒤에서 도는 작업: 턴이 끝나도 남아 있을 수 있으니 대기
           줄과 따로 산다. 각 줄의 버튼은 그 작업 하나만 세운다 — 중지 버튼은
@@ -1476,7 +1444,7 @@ export function Composer({
           }}
         />
         {/* 글자 없는 + 는 첨부를 발견하는 길이 아니었다 —
-            도구줄의 첫 칸이 이름을 가진다(빠르게 칩과 같은 알약 어휘). */}
+            도구줄의 첫 칸이 이름을 가진다. */}
         <button
           type="button"
           className="toolbar__attach"
@@ -1505,7 +1473,7 @@ export function Composer({
               setMenu(null);
             }}
             onPick={(value) => {
-              // 에이전트 단계의 고름은 메뉴를 닫지 않는다 — 고른 에이전트의
+              // 프로바이더 단계의 고름은 메뉴를 닫지 않는다 — 고른 프로바이더의
               // 모델 목록이 이어서 보여야 고르기가 끊기지 않는다. 행은 언제
               // 이름이 있다 — null 은 모델 해제의 말이라 이 단계엔 없다.
               if (chip.key === "model" && modelMenuLevel === "providers") {
@@ -1535,7 +1503,6 @@ export function Composer({
               onClick={() => onToggleFastMode?.(!fast.on)}
             >
               <ZapIcon />
-              빠르게
             </button>
           </Tip>
         )}

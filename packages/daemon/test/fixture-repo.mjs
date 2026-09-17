@@ -93,18 +93,13 @@ const INDEX_HTML = `<!doctype html>
   <script>
     (function () {
       if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
-      var SCREENS = [
-        { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"] },
-      ];
       var post = function (envelope) {
         if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
         else window.parent.postMessage(envelope, "*");
       };
-      post({ type: "colo-design.screens", screens: SCREENS });
       window.addEventListener("message", function (event) {
         if (event.source !== window.parent && event.source !== window) return;
         var data = event.data || {};
-        if (data.type === "colo-design.screens?") post({ type: "colo-design.screens", screens: SCREENS });
         if (data.type !== "colo-design.navigate" || typeof data.route !== "string") return;
         if (data.route !== "/member/MemberList") return;
         var state = typeof data.state === "string" && data.state ? data.state : "default";

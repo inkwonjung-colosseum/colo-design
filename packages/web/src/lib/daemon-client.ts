@@ -112,14 +112,13 @@ export type Block =
   | {
       /** 저장 한 건의 기록 (cycle.saved, hero-synthesis D1): 창의 휘발 상태가
        * 아니라 세션 테이프에 남는 것 — 상태 카드가 그릴 내용을 사건 필드
-       * 그대로 운반한다(시각·커밋·문구·파일·화면). */
+       * 그대로 운반한다(시각·커밋·문구·파일). */
       type: "save";
       id: string;
       at: string;
       commit: string;
       message: string;
       files: string[];
-      screens: Array<{ route: string; title: string; note?: string }>;
     }
   | {
       /** 넘김·반영의 진행 한 줄 (cycle.handed·cycle.merged): subtype 이 어느
@@ -350,7 +349,6 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           commit: event.commit,
           message: event.message,
           files: event.files,
-          screens: event.screens,
         },
       ];
 
@@ -441,19 +439,18 @@ function applyEvent(view: SessionView, event: ChatEvent): SessionView {
     case "suggestion":
       return { ...view, suggestion: event.text };
     case "status":
-      return { ...view, activity: { ...view.activity, status: event.status } };
+      // 진행 상태는 화면에 그리지 않는다 — 입력창 위 활동 줄이 없어졌다.
+      return view;
     case "user.echo":
-      // 보낸 순간 앞 턴의 칩과 진행 눈금은 지나간 말이 된다.
+      // 보낸 순간 앞 턴의 칩은 지나간 말이 된다.
       return {
         ...view,
         suggestion: null,
-        activity: { status: null },
         blocks: foldEvent(view.blocks, event),
       };
     case "turn.end":
       return {
         ...view,
-        activity: { status: null },
         blocks: foldEvent(view.blocks, event),
       };
     default:
@@ -524,12 +521,7 @@ interface SessionView {
    */
   suggestion: string | null;
   /**
-   * 답이 나오기 전의 진행: 정리 중인지 · 답을 기다리는지.
-   * 생각 과정을 끈 기본값에서 유일한 "돌고 있음"이다.
-   */
-  activity: { status: "compacting" | "requesting" | null };
-  /**
-   * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 입력창의 진행
+   * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 테이프의 진행
    * 시계가 읽는 자리. 창의 기억이 아니라 데몬의 것이다: 새로고침해도, 두 번째
    * 창에서도 같은 초를 센다. 확인 카드를 기다리는 동안에도 살아 있다.
    */
@@ -545,7 +537,6 @@ const EMPTY_SESSION: SessionView = {
   dropped: [],
   tasks: [],
   suggestion: null,
-  activity: { status: null },
   turnStartedAt: null,
 };
 
@@ -847,11 +838,18 @@ export interface Daemon {
    * one channel — the daemon runs one at a time against one clone.
    */
   diffStatus: DiffStatus | null;
+  /**
+   * 에이전트가 조작 중인 브라우저 탭 id들 (인앱 브라우저 4단계) — 탭 스트립의
+   * "에이전트 조작 중" 표시가 읽는다. null은 "활성 탭"이라는 뜻으로, 그 해석은
+   * 스트립의 몫이다. `browser.driving` 브로드캐스트가 켜고 끄고, 세션 종료·
+   * 연결 끊김에 함께 거둔다.
+   */
+  browserDriving: ReadonlySet<string | null>;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
   /**
    * The provider `onboarding` was computed for — the cache's or the latest
-   * check's. 설정에서 에이전트를 바꾼 창이 이 값으로 재검사를 걸어 둔다.
+   * check's. 설정에서 프로바이더를 바꾼 창이 이 값으로 재검사를 걸어 둔다.
    */
   onboardingProvider: string | null;
   resolvePending: (requestId: string) => void;
@@ -1017,6 +1015,12 @@ export function useDaemon(url: string | null): Daemon {
     () => readOnboardingCache().provider,
   );
   /**
+   * 에이전트가 조작 중인 브라우저 탭 (인앱 브라우저 4단계): `browser.driving`
+   * 브로드캐스트가 켜고 끄는, 세션별 탭 id 목록. null 탭 id는 "활성 탭"을
+   * 뜻하고 그 해석은 탭 스트립의 몫이다 — 여기서는 있는 그대로 보관한다.
+   */
+  const [driving, setDriving] = useState<Map<string, Set<string | null>>>(new Map());
+  /**
    * The thread the planner is looking at: the last one they opened or spoke
    * into. A DIFFERENT thread settling is what a notification is for;
    * the one on screen settles where they can see it.
@@ -1094,6 +1098,9 @@ export function useDaemon(url: string | null): Daemon {
         socket.current = null;
         if (disposed) return;
         flushPending();
+        // 데몬이 끊기면 조작 중 표시의 끝 신호도 함께 죽는다 — 재연결 뒤에도
+        // 스피너가 남지 않게 여기서 전부 거둔다.
+        setDriving(new Map());
         if (!everOpen) {
           // First attempt never got in: most likely a wrong url or the daemon
           // is genuinely down. Show the connect screen; the retry below still
@@ -1181,6 +1188,28 @@ export function useDaemon(url: string | null): Daemon {
         });
         return;
       }
+      if (message.type === "browser.driving") {
+        // 탭 스트립의 "에이전트 조작 중" 표시 (4단계). on:true는 그 세션의
+        // 조작 시작, on:false는 끝 — 끝은 시작과 같은 (세션, 탭) 짝을 지운다.
+        setDriving((prev) => {
+          const next = new Map(prev);
+          if (message.on) {
+            const tabs = new Set(next.get(message.sessionId) ?? []);
+            tabs.add(message.tabId);
+            next.set(message.sessionId, tabs);
+          } else {
+            const tabs = next.get(message.sessionId);
+            if (tabs) {
+              const kept = new Set(tabs);
+              kept.delete(message.tabId);
+              if (kept.size > 0) next.set(message.sessionId, kept);
+              else next.delete(message.sessionId);
+            }
+          }
+          return next;
+        });
+        return;
+      }
 
       if (message.type === "session.state") {
         setSessions((prev) => ({
@@ -1197,6 +1226,14 @@ export function useDaemon(url: string | null): Daemon {
         // 걷어 낸다. 남겨 두면 답할 수 없는 카드가 화면에 남는다.
         if (message.state === "error" || message.state === "closed") {
           setPending((prev) => prev.filter((p) => p.sessionId !== message.sessionId));
+          // 끝난 세션의 조작 표시도 함께 거둔다 — on:false를 놓친 채 죽은
+          // 세션이 탭 스트립에 스피너를 남기지 않게.
+          setDriving((prev) => {
+            if (!prev.has(message.sessionId)) return prev;
+            const next = new Map(prev);
+            next.delete(message.sessionId);
+            return next;
+          });
         }
         return;
       }
@@ -1756,6 +1793,13 @@ export function useDaemon(url: string | null): Daemon {
     [api],
   );
 
+  /** 탭 스트립이 읽는 납작한 모습 — 어느 세션이든 조작 중이면 그 탭에 표시. */
+  const browserDriving = useMemo(() => {
+    const tabs = new Set<string | null>();
+    for (const set of driving.values()) for (const tabId of set) tabs.add(tabId);
+    return tabs;
+  }, [driving]);
+
   return {
     connection,
     connectionError,
@@ -1777,6 +1821,7 @@ export function useDaemon(url: string | null): Daemon {
     dismissDropped,
     repo,
     diffStatus,
+    browserDriving,
     onboarding,
     onboardingProvider,
   };

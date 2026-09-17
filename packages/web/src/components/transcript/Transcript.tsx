@@ -1,9 +1,4 @@
-import {
-  type ColoDesignScreen,
-  type DeveloperReview,
-  type RepoStatus,
-  readTurn,
-} from "@colo-design/protocol";
+import { type DeveloperReview, readTurn } from "@colo-design/protocol";
 import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { GENERIC_STARTERS } from "../../lib/suggestions";
@@ -25,14 +20,7 @@ import { MilestoneRow } from "./MilestoneRow";
 import { SaveCard } from "./SaveCard";
 import { clockTime } from "./shared";
 import { TodoCard } from "./todo";
-import {
-  FailedTurn,
-  isLastFailedTurn,
-  lastUserText,
-  MachineTurn,
-  ScreenCards,
-  TurnDone,
-} from "./turn";
+import { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, TurnDone } from "./turn";
 
 /**
  * The CLI's own housekeeping lines. They arrive dressed as ordinary user or
@@ -54,10 +42,6 @@ export function Transcript({
   onStarter,
   onStarterAttach,
   starters,
-  screens,
-  onOpenScreen,
-  onOpenScreenTitle,
-  screenRepo,
   checkpoints,
   onRestoreCheckpoint,
   showThinking = false,
@@ -81,22 +65,9 @@ export function Transcript({
   onResendEdit?: (text: string) => void;
   /** 첨부로 시작하기 — 컴포저의 파일 고르기를 연다. */
   onStarterAttach?: () => void;
-  /** 연결 레포가 선언한 화면 — 답변의 화면 카드의 대조 원본. */
-  screens?: ColoDesignScreen[];
-  /** 칩을 누르면 미리보기가 그 화면으로 간다. */
-  onOpenScreen?: (route: string, state: string | null) => void;
-  /** 영수증 행 클릭 — 화면 제목으로 점프(상태는 그 턴이 본 것). */
-  onOpenScreenTitle?: (title: string, state: string | null) => void;
-  /**
-   * 화면 카드 상태 칩의 살아있는 입력(§3.3) — 데몬의 `repo` 브로드캐스트를
-   * 그대로 내려준다(`daemon.repo`). 없으면 칩은 테이프가 아는 것(저장)만
-   * 말하고, 저장 전·넘김 칩은 데몬이 보고될 때까지 참는다.
-   */
-  screenRepo?: Pick<RepoStatus, "pendingChanges" | "handoff"> | null;
   /** A starter chip was pressed — its sentence becomes the composer's draft. */
   onStarter?: (text: string) => void;
-  /** The chips themselves — the connected repo's declared screens, falling
-      back to the generic sentences when it declares none (suggestions.ts). */
+  /** 시작 칩의 문장들 — 선언 화면이 없으니 언제나 generic 문장(suggestions.ts). */
   starters?: string[];
   /** This session's turn-start snapshots, oldest first. */
   checkpoints?: Array<{ id: string; turn: number }>;
@@ -285,12 +256,6 @@ export function Transcript({
                   marker={marker}
                   body={body}
                   thumbs={block.thumbs}
-                  onOpenItem={
-                    onOpenScreenTitle
-                      ? (screen) =>
-                          onOpenScreenTitle(screen, "state" in marker ? marker.state : null)
-                      : undefined
-                  }
                 />
               );
             const halted = TAPE_LINES[block.text.trim()];
@@ -345,23 +310,7 @@ export function Transcript({
                   <Markdown text={block.text} />
                   {block.streaming && <span className="caret" />}
                 </div>
-                {/* 답변의 "만든 화면" 카드. 파싱이 아니라 대조다 —
-                    선언된 화면의 주소가 답변에 보이는 것만 카드가 되므로,
-                    형식을 안 지킨 답변은 지금과 같다. 되돌리기·다시
-                    요청(파괴적)과는 다른 행 — 탐색은 액션과 섞이지 않는다. */}
-                {!block.streaming && screens && onOpenScreen && (
-                  <ScreenCards
-                    text={block.text}
-                    screens={screens}
-                    blocks={blocks}
-                    blockId={block.id}
-                    repo={{
-                      pendingChanges: screenRepo?.pendingChanges ?? null,
-                      handoffState: screenRepo?.handoff?.state ?? null,
-                    }}
-                    onOpen={onOpenScreen}
-                  />
-                )}
+
               </div>
             );
           }
@@ -476,9 +425,9 @@ export function Transcript({
                   sub={`${clockTime(block.at)} · 바뀐 파일 ${block.files.length}개`}
                   tagLabel="저장됨"
                   tagTone="ok"
-                  files={block.screens.map((screen) => ({
-                    title: screen.title,
-                    detail: screen.note ?? "",
+                  files={block.files.map((file) => ({
+                    title: file,
+                    detail: "",
                     tag: "고침",
                   }))}
                 />

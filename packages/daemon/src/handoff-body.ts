@@ -16,8 +16,8 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
 /**
  * Builds the `### 수정 요청` section from this cycle's recorded comments:
  * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
- * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
- * AI에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
+ * 핀이 기록한 화면 id로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든
+ * 행은 AI에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
  * 의도가 제목을 정한다 (재설계 C10 · 커미티 2차 판정 4): 전부 질문이면 섹션
  * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 사용자의 질문이 개발자
  * 에게 변경 지시로 읽혀선 안 된다. 빈 메모는 빈 메모다 (커미티 2차 판정 3):
@@ -31,7 +31,6 @@ export function buildCommentsSection(
     at: string;
     intent?: "change" | "question";
   }>,
-  screenTitle: (screenId: string) => string | null,
   sinceIso: string,
   max = 20,
 ): string | null {
@@ -51,7 +50,7 @@ export function buildCommentsSection(
   const questions = shown.filter((row) => row.intent === "question").length;
   const changes = shown.length - questions;
   const lines = shown.map((row) => {
-    const screen = screenTitle(row.screen) ?? row.screen;
+    const screen = row.screen;
     const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
     const ask = row.intent === "question" ? " (질문)" : "";
     const words = row.text ? `"${row.text}"` : "(메모 없음)";

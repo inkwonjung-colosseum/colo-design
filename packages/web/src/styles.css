@@ -2281,17 +2281,8 @@ select {
   color: var(--warn);
 }
 
-/* 답이 나오기 전의 한 줄 · 뒤에서 도는 작업 ·
-   다음 칩 — 셋 다 입력창 위에 살지만 성질이 다르다: 진행은
-   도는 동안만, 작업은 살아 있는 동안, 칩은 쉬는 동안. */
-.composer__activity {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0 2px 6px;
-  font: 400 var(--font-ui-115) var(--sans);
-  color: var(--muted);
-}
+/* 뒤에서 도는 작업 · 다음 칩 — 둘 다 입력창 위에 살지만 성질이
+   다르다: 작업은 살아 있는 동안, 칩은 쉬는 동안. */
 .composer__tasks {
   display: flex;
   flex-direction: column;
@@ -2723,7 +2714,7 @@ select {
 .selector__search::placeholder {
   color: var(--muted);
 }
-/* 드릴다운 헤더 (통합 모델 메뉴): ← 에이전트·⚙ 설정이 사는 메뉴
+/* 드릴다운 헤더 (통합 모델 메뉴): ← 프로바이더·⚙ 설정이 사는 메뉴
    최상단 한 줄 — 목록과 같은 카드 안에 붙고, searchrow 위에 선다. */
 .selector__head {
   flex: none;
@@ -2877,17 +2868,17 @@ select {
   background: var(--panel-2);
   color: var(--text);
 }
-/* 빠르게 칩: 도구 행의 조용한 알약이고, 켰을 때만 액센트를 입는다 —
-   켜진 상태가 곧 이 대화의 속도다. 글자를 단 것은 아이콘만으로는 무엇이
-   빨라지는지 말할 수 없기 때문이다. 잠겼을 때(요금제·제공자가 막은 자리)는
-   다른 비활성 컨트롤과 같은 목소리로 물러난다. */
+/* 빠르게 칩: 도구 행의 조용한 아이콘 버튼이고, 켰을 때만 액센트를 입는다 —
+   켜진 상태가 곧 이 대화의 속도다. 무엇이 빨라지는지는 호버 툴팁이 말한다.
+   잠겼을 때(요금제·제공자가 막은 자리)는 다른 비활성 컨트롤과 같은 목소리로
+   물러난다. */
 .toolbar__fast {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  width: 26px;
   height: 26px;
-  padding: 0 9px;
+  padding: 0;
   border-radius: var(--r-md);
   border: 1px solid transparent;
   background: transparent;
@@ -2897,7 +2888,7 @@ select {
     color 0.12s,
     background 0.12s;
 }
-.toolbar__fast:hover:not(:disabled) {
+.toolbar__fast:hover:not(:disabled):not(.toolbar__fast--on) {
   background: var(--panel-2);
   border-color: var(--line);
   color: var(--text);
@@ -3416,6 +3407,12 @@ select {
   align-items: center;
   gap: 12px;
 }
+/* 제목 줄과 같은 선에 설 때는 가운데 정렬 — flex-start 는 버튼이 제목의
+   베이스라인보다 위로 뜨게 했다. 코멘트 카드는 액션이 긴 행 목록 옆줄에
+   설 수 있어 위쪽 정렬을 유지한다. */
+.machine:not(.machine--comments) .machine__actions {
+  align-self: center;
+}
 .machine__more {
   align-self: flex-start;
   padding: 0;
@@ -3622,7 +3619,7 @@ select {
   max-width: 860px;
   /* 방의 크기가 패널의 크기다 — 고정 높이였을 때 1~3행짜리 방(동작·알림)이
      70% 공백을 보여 줬다. 420px 바닥은 방을 옮길 때 패널이 펄럭이는 것을
-     막고, cap 넘는 방(화면·에이전트)은 판 안에서 굴린다. */
+     막고, cap 넘는 방(화면·프로바이더)은 판 안에서 굴린다. */
   height: auto;
   min-height: min(420px, 78vh);
   max-height: min(620px, 78vh);
@@ -4488,6 +4485,24 @@ select {
   flex-wrap: wrap;
 }
 
+/* A control that stacks its own rows — 알림의 시험 칸처럼 버튼 줄 위에
+   결과 줄이 오는 자리. */
+.settings__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+}
+/* 결과·상태의 한 줄 — 시험 알림의 답, 업데이트 확인의 답. 힌트가 아니라
+   방금 일어난 일의 보고라 text-2 로 한 단계 올린다. */
+.settings__statusline {
+  margin: 0;
+  font-size: var(--font-ui-115);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
 /* Classless buttons in a settings row (문제 해결) read like every other
    panel button instead of the browser's native bevel. */
 .settings__row button:not(.primary):not(.danger) {
@@ -4556,9 +4571,22 @@ select {
   background: var(--glass);
   backdrop-filter: blur(12px) saturate(1.25);
   -webkit-backdrop-filter: blur(12px) saturate(1.25);
+  /* the glass makes this bar its own stacking context, so the 사이클 바's
+     menus would paint under the body that follows it — the header rides
+     above instead (same rule as .thread · .screenpanel__bar) */
+  position: relative;
+  z-index: 31;
 }
 .planner__spacer {
   flex: 1;
+}
+/* 사이클 바가 포털로 올라와 채우는 자리 — 프로젝트 이름과 오른쪽 끝 사이의
+   남은 폭 전부. */
+.planner__barslot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
 }
 .planner__project {
   font: 650 var(--font-ui-135) var(--sans);
@@ -5352,14 +5380,15 @@ select {
 /* ── 여정 지도 (mockups/hero/journey.html → 프로젝트 토큰) ─────────────
    스테퍼가 아니라 '지금 어디인가'의 지도: 읽기 전용이라 hover·cursor·
    클릭 affordance를 두지 않는다. 전환은 delivery.state 변화에만 반응 —
-   점·세그먼트가 transition으로 채워진다. 지도는 프레임 제목 행
-   (.planner__header)의 오른쪽 끝에 산다 — 캡션 줄은 없어졌다. */
+   점·세그먼트가 transition으로 채워진다. 지도는 사이클 바
+   (.screenpanel__bar)의 첫 요소로 산다 — 프로젝트 이름 옆에서
+   지도 → 상태 → 행동이 한 줄로 읽힌다. */
 .jmap {
   display: flex;
   align-items: flex-start;
-  flex: 1;
+  flex: 0 1 auto;
   max-width: 430px;
-  margin: 0 0 0 auto;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -5631,8 +5660,8 @@ select {
   background: var(--panel-2);
 }
 
-/* The workspace's right column, full-time now: the action bar with 저장 ·
-   개발자에게 넘기기 and the cycle's status, then the preview itself. */
+/* The workspace's right column, full-time now: the preview itself. The
+   action bar that used to head it lives in the frame header (.planner__barslot). */
 .planner__previewcol {
   display: flex;
   flex-direction: column;
@@ -5643,7 +5672,9 @@ select {
 }
 
 /* The cycle's status, read off the repo: the same three words the
-   tab strip and the 넘기기 dialog use, so one state never has two names. */
+   tab strip and the 넘기기 dialog use, so one state never has two names.
+   포털로 프레임 헤더(.planner__barslot)에 올라간다 — 테두리·배경·패딩은
+   헤더의 것이고, 이 바는 남은 폭을 채우는 투명한 행이다. */
 .screenpanel__bar {
   display: flex;
   align-items: center;
@@ -5651,16 +5682,16 @@ select {
      접힘 없이 읽혀야 하는 동작이니. 넓으면 한 줄 그대로다. */
   flex-wrap: wrap;
   gap: 6px 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--glass);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  flex: none;
-  /* same rule as .thread: the glass stacks this bar, so keep it — and the
-     더 보기 ▾ menu it hosts — above the stage that follows it */
-  position: relative;
-  z-index: 31;
+  flex: 1;
+  min-width: 0;
+  /* 여정 지도가 이 바 안에서 너비를 스스로 읽는다 — 칸이 좁으면 지도는
+     라벨을 버리고 점과 선만 남긴다. */
+  container-type: inline-size;
+}
+@container (max-width: 1000px) {
+  .screenpanel__bar .jnm {
+    display: none;
+  }
 }
 .screenpanel__spacer {
   flex: 1;
@@ -5947,13 +5978,15 @@ select {
 }
 
 .preview__toolbar {
-  /* no bottom hairline and no fill: this row belongs to the canvas below,
-     not to the header stack above — three gray bars read as three apps. */
+  /* panel fill + bottom hairline: the strip below now wears the canvas
+     white, so this row carries the gray and the seam between them. */
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
 /* The toolbar's and the bar's buttons never give their words up to wrapping:
    a squeezed row must squeeze the paddings (see the ≤1100 rules below), not
@@ -6918,7 +6951,9 @@ select {
   gap: 10px;
   padding: 9px 16px;
   border-bottom: 1px solid var(--line-soft);
-  min-height: 44px;
+  /* 45px: 대화 열의 머리 줄 — 사이클 바가 프레임 헤더로 올라간 뒤에도
+     대화 제목이 숨 쉴 높이로 남는다. */
+  min-height: 45px;
   background: var(--glass);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
@@ -7620,6 +7655,7 @@ select {
   color: var(--accent);
 }
 .frame__spin {
+  flex: none;
   width: 11px;
   height: 11px;
   border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -7819,15 +7855,15 @@ select {
   }
 }
 /* 탭 스트립 (인앱 브라우저 1단계): 진행 바 아래·크롬 줄 위의 브라우저 탭
-   자리. 활성 탭은 알약의 재질(panel-2)을 입고 스트립의 경계선을 지우며
-   크롬 줄과 이어진다 — fakeapp__tab 의 밑줄 어휘를 탭 모양으로 옮긴 것. */
+   자리. 스트립은 캔버스색(--bg)을 입고, 활성 탭은 아래 크롬 줄의 재질
+   (panel)을 입어 스트립의 경계선을 지우며 그 줄과 이어진다. */
 .frame__tabs {
   display: flex;
   align-items: flex-end;
   gap: 2px;
   padding: 5px 8px 0;
   border-bottom: 1px solid var(--line-soft);
-  background: var(--panel);
+  background: var(--bg);
   flex: none;
   overflow-x: auto;
   scrollbar-width: none;
@@ -7845,7 +7881,7 @@ select {
   border-radius: 8px 8px 0 0;
 }
 .frame__tab--on {
-  background: var(--panel-2);
+  background: var(--panel);
   border-color: var(--line);
   /* 스트립의 경계선이 활성 탭 아래를 지나가지 않게 한 픽셀 덮는다. */
   margin-bottom: -1px;

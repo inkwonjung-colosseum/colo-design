@@ -86,8 +86,6 @@ export class PublishCycle {
     onSessionTurn?: (brief: string) => void;
     /** hero-synthesis D1: the conversation this save belongs to (세션 테이프). */
     sessionId?: string;
-    /** Declared screens — the saved card names which ones the files touch. */
-    screens?: Array<{ route: string; title: string }>;
   }): Promise<DiffStatus> {
     if (!this.core.isCloned()) {
       return this.core.setDiff({
@@ -205,7 +203,6 @@ export class PublishCycle {
         commit,
         message,
         files: approved.length > 0 ? approved : retryFiles,
-        screens: screensOfFiles(approved.length > 0 ? approved : retryFiles, options.screens ?? []),
       },
       options.sessionId,
     );
@@ -261,9 +258,8 @@ export class PublishCycle {
     onSessionTurn?: (brief: string) => void;
     /** hero-synthesis D1: the conversation this handoff belongs to. */
     sessionId?: string;
-    /** D93: the project's comment store + declared titles, for the PR body. */
+    /** D93: the project's comment store, for the PR body. */
     commentsFile?: string;
-    screenTitles?: Array<{ route: string; title: string }>;
   }): Promise<DiffStatus> {
     const branch = this.core.branch;
     if (!this.core.isCloned() || !branch) {
@@ -311,22 +307,9 @@ export class PublishCycle {
     // every first handoff. A cycle started before the anchor existed still
     // falls back to the commit time, which is no worse than before.
     try {
-      const since =
-        this.core.commentsSince ??
-        (
-          await this.core
-            .git(["log", "--reverse", "--format=%cI", `origin/${this.core.baseBranch}..${branch}`])
-            .catch(() => "")
-        )
-          .split("\n")[0]
-          ?.trim();
+      const since = await this.core.cycleAnchor();
       if (options.commentsFile && since) {
-        const section = buildCommentsSection(
-          readComments(options.commentsFile),
-          (screenId) =>
-            options.screenTitles?.find((screen) => screen.route === `/${screenId}`)?.title ?? null,
-          since,
-        );
+        const section = buildCommentsSection(readComments(options.commentsFile), since);
         if (section) body = `${body.replace(/\n*$/, "")}\n\n${section}`;
       }
     } catch {
@@ -733,30 +716,4 @@ export interface PublishDeps {
    * 대화 — 없으면 붙이는 쪽이 마지막 활성 세션으로 귀속한다.
    */
   onCycleEvent?(event: ChatEvent, sessionId?: string): void;
-}
-
-/**
- * Which declared screens a save's file list touches (hero-synthesis D1): a
- * file whose path ends with the route's path part matches outright; a bare
- * basename match counts only when exactly one screen claims that tail —
- * two screens sharing a name is ambiguity, not a double match.
- */
-function screensOfFiles(
-  files: string[],
-  screens: Array<{ route: string; title: string }>,
-): Array<{ route: string; title: string }> {
-  return screens.filter((screen) => {
-    const routePath = screen.route.replace(/^\/+/, "").toLowerCase();
-    const tail = routePath.split("/").pop() ?? routePath;
-    const tailUnique =
-      screens.filter(
-        (other) => (other.route.replace(/^\/+/, "").toLowerCase().split("/").pop() ?? "") === tail,
-      ).length === 1;
-    return files.some((file) => {
-      const path = file.toLowerCase().replace(/\.[^./]+$/, "");
-      if (path.endsWith(routePath)) return true;
-      const base = path.split("/").pop() ?? path;
-      return tailUnique && base === tail;
-    });
-  });
 }

@@ -228,7 +228,6 @@ export type ChatEvent =
       commit: string;
       message: string;
       files: string[];
-      screens: Array<{ route: string; title: string; note?: string }>;
     }
   | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string }
   | { kind: "cycle.merged"; at: string; pr: number }

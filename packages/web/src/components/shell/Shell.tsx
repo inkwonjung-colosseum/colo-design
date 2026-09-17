@@ -76,13 +76,13 @@ export function Shell({
 
   useEffect(() => {
     if (connection !== "open") return;
-    // 연결 직후의 검사는 설정이 고른 에이전트의 몫이다 — 기본 claude 로
+    // 연결 직후의 검사는 설정이 고른 프로바이더의 몫이다 — 기본 claude 로
     // 검사해 놓고 불일치로 한 번 더 묻는 낭비를 줄인다. 설정이 연결된 뒤
     // 바뀌는 경우는 아래의 불일치 effect 가 걷는다.
     void api.onboardingCheck(settings.chat.provider).catch(() => undefined);
   }, [connection, api]);
 
-  // 설정에서 고른 에이전트가 마지막 검사의 에이전트와 다르면 한 번 다시
+  // 설정에서 고른 프로바이더가 마지막 검사의 프로바이더와 다르면 한 번 다시
   // 묻는다. 기다리는 동안의 판정(stale steps)으로는 작업대를 막지 않는다 —
   // 낡은 fail 이 화면을 다시 마법사로 밀어 올리는 일이 없게.
   const [recheckingProvider, setRecheckingProvider] = useState(false);
@@ -116,8 +116,8 @@ export function Shell({
   // and an UNANSWERED check blocks too — the checks run real commands and
   // treating "not yet known" as "fine" flashed the whole workspace at a
   // planner who has configured nothing, then yanked it away.
-  // 예외: 에이전트 불일치 재검사가 도는 동안에는 화면의 steps 가 지난
-  // 에이전트의 판정이라 그 fail 로는 막지 않는다 — 재검사의 답이 판정이다.
+  // 예외: 프로바이더 불일치 재검사가 도는 동안에는 화면의 steps 가 지난
+  // 프로바이더의 판정이라 그 fail 로는 막지 않는다 — 재검사의 답이 판정이다.
   const onboardingBlocked = recheckingProvider
     ? false
     : daemon.onboarding === null || daemon.onboarding.some((step) => step.status === "fail");

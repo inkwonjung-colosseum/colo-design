@@ -725,6 +725,16 @@ export type ServerMessage =
       type: "project.changed";
       projects: ProjectSummary[];
       activeSlug: string | null;
+    }
+  /**
+   * 에이전트의 브라우저 도구가 pane의 탭을 조작 중이다(4단계) — 탭 스트립의
+   * "에이전트 조작 중" 표시. on:false는 그 조작이 끝났다는 뜻.
+   */
+  | {
+      type: "browser.driving";
+      sessionId: string;
+      tabId: string | null;
+      on: boolean;
     };
 
 // ---------------------------------------------------------------------------

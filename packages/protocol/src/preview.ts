@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Preview envelopes (PLAN D64–D69) — two contracts live here.
 //
-// 1. 레포 브리지 계약 (D68): `colo-design.screens`(+ `screens?`) and
-//    `colo-design.navigate` are ALL a connected repo owes the tool. The repo
+// 1. 레포 브리지 계약 (D68): `colo-design.navigate` is ALL a connected repo
+//    owes the tool — a pin's 화면 이동이 이 한 봉투로 간다. The repo
 //    carries a hand-synced duplicate of these shapes
 //    (reference clone `src/preview-bridge/types.ts`); on the desktop the
 //    envelopes ride the preview preload's `window.coloDesign.post` → IPC, in a
@@ -150,18 +150,6 @@ export interface ColoDesignCommentsModeEnvelope {
   on: boolean;
 }
 
-/**
- * One screen the connected repo declares, as its overlay reports it (PLAN D7).
- * The repo names what it can render; the tool never parses its code.
- */
-export interface ColoDesignScreen {
-  /** Route the preview app serves it at, e.g. `/member/MemberList`. */
-  route: string;
-  /** What the screen is called, in the planner's words. */
-  title: string;
-  /** `?state=` variants this screen actually implements. */
-  states: string[];
-}
 
 /**
  * 스트립이 그리는 탭 한 칸의 계약(인앱 브라우저 1단계, §3 규칙 3). 데스크톱이
@@ -182,27 +170,6 @@ export interface PreviewTabMeta {
   discarded: boolean;
 }
 
-/**
- * What the preview app posts on load: everything it can render. The tool never
- * parses the repo's code, so this is the only way it can offer a screen picker.
- */
-export interface ColoDesignScreensEnvelope {
-  type: "colo-design.screens";
-  screens: ColoDesignScreen[];
-}
-
-/**
- * The tool asking for the list again.
- *
- * A request rather than a retry on the overlay's side: a retry window that
- * expires loses the list with no way to ask for it back, while a request can
- * only be lost while the overlay is unmounted — and the overlay's own mount
- * post then lands at a tool that is provably already listening. Every
- * ordering is covered and neither side waits on the other.
- */
-export interface ColoDesignScreensRequestEnvelope {
-  type: "colo-design.screens?";
-}
 
 /**
  * The one message that goes the other way: show this route in this state.

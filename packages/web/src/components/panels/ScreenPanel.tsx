@@ -1,18 +1,19 @@
 import type {
   ColoDesignPinEnvelope,
-  ColoDesignScreen,
   DeveloperReview,
   DiffFile,
   SessionState,
 } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Fold, useFoldNotice } from "../../components";
 import { useModalFocus } from "../../hooks/use-modal-focus";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf } from "../../lib/format";
+import type { Journey } from "../../lib/journey";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn, reviewToTurn } from "../../lib/preview-turns";
 import { guidanceFor } from "../../lib/repo-guidance";
@@ -22,6 +23,7 @@ import {
   markReplyConfirmed,
   saveHandledReview,
 } from "../../lib/settings";
+import { JourneyMap } from "../chat/JourneyMap";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
@@ -127,13 +129,14 @@ function diffCounts(file: DiffFile): { added: number; removed: number } {
  * the shell, which decides which thread it lands in. The pins live in the
  * workspace's `usePins`; this panel only re-anchors their badges.
  *
- * It is also where the screen envelopes land: the screens the repo declared
- * come up through `Preview` and stay here — feeding the address bar's
- * proposals, the state chips and the 넘기기 proposal — and the screen the
- * planner should be looking at lives here too, as `target`, set by the
- * toolbar alone.
+ * It is also where the pin envelopes land: the pins the repo's overlay
+ * posts come up through `Preview` and stay here — feeding the address
+ * bar's proposals and the 넘기기 proposal — and the screen the planner
+ * should be looking at lives here too, as `target`, set by the toolbar
+ * alone.
  */
 export function ScreenPanel({
+  barSlot,
   daemon,
   onOpenSettings,
   onMachineTurn,
@@ -142,15 +145,17 @@ export function ScreenPanel({
   onPinFocus,
   turnState,
   sessionId = null,
-  screens,
-  onScreens,
   commentsOn,
   onCommentsMode,
-  jumpRequest,
   onCycleAction,
   cycleRequest,
   reviewsTick,
+  journey,
+  journeyTitle,
 }: {
+  /** 프레임 헤더가 내준 자리 — 사이클 바는 여기로 올라가 프로젝트 이름 옆에
+      선다. null 이면 바는 그려지지 않는다(헤더가 없는 호출은 없다). */
+  barSlot: HTMLDivElement | null;
   daemon: Daemon;
   onOpenSettings: (category?: SettingsCategory) => void;
   /**
@@ -188,24 +193,11 @@ export function ScreenPanel({
    */
   sessionId?: string | null;
   /**
-   * The screens the repo declared, owned by the workspace now: the
-   * chat's starter chips and the palette's screen rows read the same list the
-   * picker here renders — one declaration, three doors.
-   */
-  screens: ColoDesignScreen[];
-  onScreens: (screens: ColoDesignScreen[]) => void;
-  /**
    * 핀 모드 — the toggle's truth lives in the workspace now, so
    * ⌘⇧P and this toolbar write the same state. The panel draws and relays.
    */
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
-  /**
-   * A screen the palette picked: a change in this prop navigates the preview
-   * there. The panel keeps owning `target` — the request is an ask, not a
-   * takeover (the toolbar and 따라가기 still move it on their own).
-   */
-  jumpRequest?: PreviewTarget | null;
   /**
    * 사이클 동작의 단일 통로 (PageWorkspace): 저장·넘기기·상태 확인 버튼은
    * 모달을 열지 않고 이 콜백으로 올라간다 — 저장·넘기기는 대화 안 카드가
@@ -216,6 +208,13 @@ export function ScreenPanel({
   cycleRequest: { kind: "save" | "handoff" | "check"; nonce: number } | null;
   /** 대화 열에서 처리된 개발자 코멘트 — 배지의 수를 다시 읽는 신호. */
   reviewsTick: number;
+  /**
+   * 여정 지도 — 제목 행에서 내려와 이 바의 첫 요소로 산다: 지도 → 상태 →
+   * 행동이 한 줄로 읽힌다. `null`(준비 중·홈)이면 지도 자리가 없다.
+   */
+  journey: Journey | null;
+  /** 대화 지도일 때만 읽힌다 — 그 대화의 이름. */
+  journeyTitle?: string;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
@@ -244,9 +243,9 @@ export function ScreenPanel({
     wasWorking.current = working;
   }, [working]);
   /**
-   * Which screen and state the preview shows. The toolbar is the screens'
-   * only door, so the ask lives here beside it; the address bar's free paths
-   * are asks too.
+   * Which screen and state the preview shows. The toolbar is the pins'
+   * only door, so the ask lives here beside it; the address bar's free
+   * paths are asks too.
    */
   const [target, setTarget] = useState<PreviewTarget | null>(null);
   /**
@@ -307,13 +306,6 @@ export function ScreenPanel({
     });
   }, [visitPath]);
   /** 저장·넘기기는 대화 안 카드로 갔다 — 이 패널이 여는 모달은 없다. */
-  // The palette's ask: every pick hands a NEW object, so the effect re-runs
-  // and the preview turns once per pick — the panel's own toolbar keeps
-  // steering `target` on its own in between.
-  useEffect(() => {
-    if (jumpRequest?.kind !== "screen") return;
-    setTarget({ kind: "screen", route: jumpRequest.route, state: jumpRequest.state });
-  }, [jumpRequest]);
   /** 저장 기록 드로어 — 더 보기 ▾ 메뉴에서 연다. */
   const [historyOpen, setHistoryOpen] = useState(false);
   /** 더 보기 ▾ 메뉴 — 점검·기록·버리기의 자리. */
@@ -944,376 +936,417 @@ export function ScreenPanel({
 
   return (
     <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
-      <div className="screenpanel__bar">
-        {delivery ? (
-          <span className="selector screenpanel__statuswrap">
-            {statusOpen && (
-              <button
-                type="button"
-                className="selector__backdrop"
-                aria-label="사이클 상태 닫기"
-                onClick={() => setStatusOpen(false)}
-              />
-            )}
-            <Tip label={delivery.chip.title} side="bottom" align="start">
-              <span
-                className={`screenpanel__status screenpanel__status--${delivery.chip.tone}${
-                  mergedFlash ? " screenpanel__status--mergedflash" : ""
-                }`}
-                role="status"
-              >
-                {chipGlyph(delivery.chip.tone)}
-                {delivery.chip.label}
-              </span>
-            </Tip>
-            {/* 칩은 라이브 리전으로 남고, 지도는 옆의 조용한 트리거. */}
-            <Tip label={statusOpen ? undefined : "지금 상태와 다음 할 일을 봅니다"} side="bottom">
-              <button
-                type="button"
-                className="ghost screenpanel__statusmore"
-                aria-haspopup="dialog"
-                aria-expanded={statusOpen}
-                aria-label="사이클 상태 더 보기"
-                onClick={() => setStatusOpen((open) => !open)}
-              >
-                <ChevronDownIcon />
-              </button>
-            </Tip>
-            {statusOpen && (
-              <span
-                className="selector__menu screenpanel__statusmenu"
-                role="dialog"
-                aria-label="사이클 상태"
-              >
-                <span className="screenpanel__statusline">{delivery.next.line}</span>
-                {destination && (
-                  <span className="screenpanel__destination">
-                    이 프로젝트 →{" "}
-                    {handoff?.url ? (
-                      <a
-                        className="screenpanel__destinationlink"
-                        href={handoff.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="넘긴 요청 열기"
-                        onClick={linkClick}
-                      >
-                        <span className="screenpanel__destinationname">{destination}</span>
-                        <ExternalLinkIcon />
-                      </a>
-                    ) : (
-                      destination
-                    )}
-                  </span>
-                )}
-                <span className="screenpanel__statusrow">
-                  <span className="hint">
-                    {lastCheckAt
-                      ? `마지막 확인 ${lastCheckAt.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`
-                      : "이 창에서는 아직 확인하지 않았습니다"}
-                  </span>
-                  {delivery.actions.check?.enabled && (
+      {/* 사이클 바는 프레임 헤더의 슬롯으로 올라간다 — 프로젝트 이름 옆에서
+          지도 → 상태 → 행동이 한 줄로 읽힌다. 상태는 전부 이 패널의 것이라
+          끌어올리는 대신 포털로 그린다. */}
+      {barSlot
+        ? createPortal(
+            <div className="screenpanel__bar">
+              {journey ? <JourneyMap journey={journey} title={journeyTitle} /> : null}
+              {delivery ? (
+                <span className="selector screenpanel__statuswrap">
+                  {statusOpen && (
                     <button
                       type="button"
-                      className="primary"
-                      onClick={() => {
-                        setStatusOpen(false);
-                        readHandoffState(false);
-                      }}
+                      className="selector__backdrop"
+                      aria-label="사이클 상태 닫기"
+                      onClick={() => setStatusOpen(false)}
+                    />
+                  )}
+                  <Tip label={delivery.chip.title} side="bottom" align="start">
+                    <span
+                      className={`screenpanel__status screenpanel__status--${delivery.chip.tone}${
+                        mergedFlash ? " screenpanel__status--mergedflash" : ""
+                      }`}
+                      role="status"
                     >
-                      지금 확인
+                      {chipGlyph(delivery.chip.tone)}
+                      {delivery.chip.label}
+                    </span>
+                  </Tip>
+                  {/* 칩은 라이브 리전으로 남고, 지도는 옆의 조용한 트리거. */}
+                  <Tip
+                    label={statusOpen ? undefined : "지금 상태와 다음 할 일을 봅니다"}
+                    side="bottom"
+                  >
+                    <button
+                      type="button"
+                      className="ghost screenpanel__statusmore"
+                      aria-haspopup="dialog"
+                      aria-expanded={statusOpen}
+                      aria-label="사이클 상태 더 보기"
+                      onClick={() => setStatusOpen((open) => !open)}
+                    >
+                      <ChevronDownIcon />
                     </button>
+                  </Tip>
+                  {statusOpen && (
+                    <span
+                      className="selector__menu screenpanel__statusmenu"
+                      role="dialog"
+                      aria-label="사이클 상태"
+                    >
+                      <span className="screenpanel__statusline">{delivery.next.line}</span>
+                      {destination && (
+                        <span className="screenpanel__destination">
+                          이 프로젝트 →{" "}
+                          {handoff?.url ? (
+                            <a
+                              className="screenpanel__destinationlink"
+                              href={handoff.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="넘긴 요청 열기"
+                              onClick={linkClick}
+                            >
+                              <span className="screenpanel__destinationname">{destination}</span>
+                              <ExternalLinkIcon />
+                            </a>
+                          ) : (
+                            destination
+                          )}
+                        </span>
+                      )}
+                      <span className="screenpanel__statusrow">
+                        <span className="hint">
+                          {lastCheckAt
+                            ? `마지막 확인 ${lastCheckAt.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`
+                            : "이 창에서는 아직 확인하지 않았습니다"}
+                        </span>
+                        {delivery.actions.check?.enabled && (
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={() => {
+                              setStatusOpen(false);
+                              readHandoffState(false);
+                            }}
+                          >
+                            지금 확인
+                          </button>
+                        )}
+                      </span>
+                    </span>
                   )}
                 </span>
-              </span>
-            )}
-          </span>
-        ) : (
-          <Tip label="프로젝트 준비가 끝나면 저장 · 넘기기가 열립니다" side="bottom" align="start">
-            <span className="screenpanel__status screenpanel__status--none">화면 대기 중</span>
-          </Tip>
-        )}
-        {working && (
-          <span className="screenpanel__working">
-            <span className="spinner" />
-            다시 그리는 중
-          </span>
-        )}
-        <span className="screenpanel__spacer" />
-        {/* 동작은 상수다: 저장 · 넘기기는 언제나 그려지고 조건으로만
+              ) : (
+                <Tip
+                  label="프로젝트 준비가 끝나면 저장 · 넘기기가 열립니다"
+                  side="bottom"
+                  align="start"
+                >
+                  <span className="screenpanel__status screenpanel__status--none">
+                    화면 대기 중
+                  </span>
+                </Tip>
+              )}
+              {working && (
+                <span className="screenpanel__working">
+                  <span className="spinner" />
+                  다시 그리는 중
+                </span>
+              )}
+              <span className="screenpanel__spacer" />
+              {/* 동작은 상수다: 저장 · 넘기기는 언제나 그려지고 조건으로만
             잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만.
             강조는 그 순간 가장 자연스러운 하나에만. 잠김은 aria-disabled: 진짜
             disabled 는 hover 도 포커스도 막아 title 이 도달할 길이 없었다. */}
-        <span className="screenpanel__actions">
-          {delivery ? (
-            <>
-              <Tip label={delivery.actions.save.reason} side="bottom">
+              <span className="screenpanel__actions">
+                {delivery ? (
+                  <>
+                    <Tip label={delivery.actions.save.reason} side="bottom">
+                      <button
+                        type="button"
+                        className={`${
+                          delivery.primary === "save" && delivery.actions.save.enabled
+                            ? "primary screenpanel__action"
+                            : "ghost screenpanel__action"
+                        }${beatPrimary === "save" ? " screenpanel__action--beat" : ""}`}
+                        aria-disabled={!delivery.actions.save.enabled}
+                        onClick={() => {
+                          if (delivery.actions.save.enabled) onCycleAction("save");
+                        }}
+                      >
+                        <SaveIcon />
+                        <span className="screenpanel__actionlabel">저장</span>
+                      </button>
+                    </Tip>
+                    <Tip label={delivery.actions.handoff.reason} side="bottom">
+                      <button
+                        type="button"
+                        className={`${
+                          delivery.primary === "handoff" && delivery.actions.handoff.enabled
+                            ? "primary screenpanel__action"
+                            : "ghost screenpanel__action"
+                        }${beatPrimary === "handoff" ? " screenpanel__action--beat" : ""}`}
+                        aria-disabled={!delivery.actions.handoff.enabled}
+                        onClick={() => {
+                          if (delivery.actions.handoff.enabled) onCycleAction("handoff");
+                        }}
+                      >
+                        <HandoffIcon />
+                        <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
+                      </button>
+                    </Tip>
+                    {delivery.actions.check && (
+                      <Tip
+                        label="개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
+                        side="bottom"
+                      >
+                        <button
+                          type="button"
+                          className={`${
+                            delivery.primary === "check"
+                              ? "primary screenpanel__action"
+                              : "ghost screenpanel__action"
+                          }${beatPrimary === "check" ? " screenpanel__action--beat" : ""}`}
+                          data-testid="check-state"
+                          onClick={() => onCycleAction("check")}
+                        >
+                          <EyeIcon />
+                          <span className="screenpanel__actionlabel">
+                            상태 확인
+                            {unhandledDevReviews.length > 0
+                              ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
+                              : ""}
+                          </span>
+                        </button>
+                      </Tip>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* 답변이 끝나기 전: 동작은 상수라 버튼은 그려지고 잠긴다 —
+                  잠긴 이유는 옆의 한 줄이 말한다 (tooltip 뒤에 숨기지 않는다). */}
+                    <button
+                      type="button"
+                      className="ghost screenpanel__action"
+                      aria-disabled="true"
+                    >
+                      <SaveIcon />
+                      <span className="screenpanel__actionlabel">저장</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost screenpanel__action"
+                      aria-disabled="true"
+                    >
+                      <HandoffIcon />
+                      <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
+                    </button>
+                    <span className="screenpanel__locknote">
+                      저장·넘기기는 답변이 끝난 뒤 열립니다
+                    </span>
+                  </>
+                )}
+              </span>
+              <span className="screenpanel__divider" />
+              <Tip
+                label={
+                  refreshing
+                    ? "받아 오는 중…"
+                    : refreshLocked
+                      ? "미리보기가 준비되면 받아올 수 있습니다"
+                      : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
+                }
+                side="bottom"
+                align="end"
+              >
                 <button
                   type="button"
-                  className={`${
-                    delivery.primary === "save" && delivery.actions.save.enabled
-                      ? "primary screenpanel__action"
-                      : "ghost screenpanel__action"
-                  }${beatPrimary === "save" ? " screenpanel__action--beat" : ""}`}
-                  aria-disabled={!delivery.actions.save.enabled}
+                  className="ghost screenpanel__refresh"
+                  aria-disabled={refreshLocked}
                   onClick={() => {
-                    if (delivery.actions.save.enabled) onCycleAction("save");
+                    if (!refreshLocked) refresh();
                   }}
                 >
-                  <SaveIcon />
-                  <span className="screenpanel__actionlabel">저장</span>
+                  <RefreshIcon />
+                  <span className="screenpanel__refreshlabel">
+                    {/* 최신화 is a coinage; the gate step and the progress rail already
+                  say 최신 변경 받아오기 — the button is the odd one out. */}
+                    {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
+                  </span>
                 </button>
               </Tip>
-              <Tip label={delivery.actions.handoff.reason} side="bottom">
-                <button
-                  type="button"
-                  className={`${
-                    delivery.primary === "handoff" && delivery.actions.handoff.enabled
-                      ? "primary screenpanel__action"
-                      : "ghost screenpanel__action"
-                  }${beatPrimary === "handoff" ? " screenpanel__action--beat" : ""}`}
-                  aria-disabled={!delivery.actions.handoff.enabled}
-                  onClick={() => {
-                    if (delivery.actions.handoff.enabled) onCycleAction("handoff");
-                  }}
+              {followSpots.length > 0 && followDone < followSpots.length && (
+                <Tip
+                  label="이번 수정에서 아직 안 본 화면으로 옮겨 갑니다"
+                  side="bottom"
+                  align="end"
                 >
-                  <HandoffIcon />
-                  <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
-                </button>
-              </Tip>
-              {delivery.actions.check && (
-                <Tip label="개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다" side="bottom">
                   <button
                     type="button"
-                    className={`${
-                      delivery.primary === "check"
-                        ? "primary screenpanel__action"
-                        : "ghost screenpanel__action"
-                    }${beatPrimary === "check" ? " screenpanel__action--beat" : ""}`}
-                    data-testid="check-state"
-                    onClick={() => onCycleAction("check")}
+                    className="ghost screenpanel__followchip"
+                    onClick={cycleFollowSpot}
                   >
-                    <EyeIcon />
-                    <span className="screenpanel__actionlabel">
-                      상태 확인
-                      {unhandledDevReviews.length > 0
-                        ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
-                        : ""}
-                    </span>
+                    확인 {followDone}/{followSpots.length}
                   </button>
                 </Tip>
               )}
-            </>
-          ) : (
-            <>
-              {/* 답변이 끝나기 전: 동작은 상수라 버튼은 그려지고 잠긴다 —
-                  잠긴 이유는 옆의 한 줄이 말한다 (tooltip 뒤에 숨기지 않는다). */}
-              <button type="button" className="ghost screenpanel__action" aria-disabled="true">
-                <SaveIcon />
-                <span className="screenpanel__actionlabel">저장</span>
-              </button>
-              <button type="button" className="ghost screenpanel__action" aria-disabled="true">
-                <HandoffIcon />
-                <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
-              </button>
-              <span className="screenpanel__locknote">저장·넘기기는 답변이 끝난 뒤 열립니다</span>
-            </>
-          )}
-        </span>
-        <span className="screenpanel__divider" />
-        <Tip
-          label={
-            refreshing
-              ? "받아 오는 중…"
-              : refreshLocked
-                ? "미리보기가 준비되면 받아올 수 있습니다"
-                : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
-          }
-          side="bottom"
-          align="end"
-        >
-          <button
-            type="button"
-            className="ghost screenpanel__refresh"
-            aria-disabled={refreshLocked}
-            onClick={() => {
-              if (!refreshLocked) refresh();
-            }}
-          >
-            <RefreshIcon />
-            <span className="screenpanel__refreshlabel">
-              {/* 최신화 is a coinage; the gate step and the progress rail already
-                  say 최신 변경 받아오기 — the button is the odd one out. */}
-              {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
-            </span>
-          </button>
-        </Tip>
-        {followSpots.length > 0 && followDone < followSpots.length && (
-          <Tip label="이번 수정에서 아직 안 본 화면으로 옮겨 갑니다" side="bottom" align="end">
-            <button
-              type="button"
-              className="ghost screenpanel__followchip"
-              onClick={cycleFollowSpot}
-            >
-              확인 {followDone}/{followSpots.length}
-            </button>
-          </Tip>
-        )}
-        <span className="screenpanel__more">
-          <Tip label={menuOpen ? undefined : "저장 기록 · 변경 버리기"} side="bottom" align="end">
-            <button
-              type="button"
-              className="ghost screenpanel__morebtn"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <span className="screenpanel__morelabel">더 보기</span>
-              <ChevronDownIcon />
-            </button>
-          </Tip>
-          {menuOpen && (
-            <>
-              <button
-                type="button"
-                className="selector__backdrop"
-                aria-label="메뉴 닫기"
-                onClick={() => setMenuOpen(false)}
-              />
-              <span className="selector__menu screenpanel__menu" role="menu">
-                {/* 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
+              <span className="screenpanel__more">
+                <Tip
+                  label={menuOpen ? undefined : "저장 기록 · 변경 버리기"}
+                  side="bottom"
+                  align="end"
+                >
+                  <button
+                    type="button"
+                    className="ghost screenpanel__morebtn"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    onClick={() => setMenuOpen((open) => !open)}
+                  >
+                    <span className="screenpanel__morelabel">더 보기</span>
+                    <ChevronDownIcon />
+                  </button>
+                </Tip>
+                {menuOpen && (
+                  <>
+                    <button
+                      type="button"
+                      className="selector__backdrop"
+                      aria-label="메뉴 닫기"
+                      onClick={() => setMenuOpen(false)}
+                    />
+                    <span className="selector__menu screenpanel__menu" role="menu">
+                      {/* 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
                   그 자리를 갖는다. 저장 기록 · 변경 버리기만 남는다.
                   잠긴 행도 aria-disabled: 진짜 disabled 는 hover 를 막아 title 의
                   잠긴 이유에 도달할 길이 없다 (상단 바와 같은 규칙). */}
-                <Tip label="이 사이클의 저장 차례를 보고 하나로 되돌립니다" side="left">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="selector__row"
-                    aria-disabled={!workable}
-                    onClick={() => {
-                      if (!workable) return;
-                      setMenuOpen(false);
-                      setHistoryOpen(true);
-                    }}
-                  >
-                    <span className="ic ic--sm ic--quiet">
-                      <HistoryIcon />
+                      <Tip label="이 사이클의 저장 차례를 보고 하나로 되돌립니다" side="left">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row"
+                          aria-disabled={!workable}
+                          onClick={() => {
+                            if (!workable) return;
+                            setMenuOpen(false);
+                            setHistoryOpen(true);
+                          }}
+                        >
+                          <span className="ic ic--sm ic--quiet">
+                            <HistoryIcon />
+                          </span>
+                          <span className="selector__text">
+                            <span className="selector__label">저장 기록</span>
+                            <span className="selector__desc">
+                              이 사이클의 저장 차례를 보고 하나로 되돌립니다
+                            </span>
+                          </span>
+                        </button>
+                      </Tip>
+                      <Tip
+                        label={
+                          (repo?.pendingChanges ?? 0) > 0
+                            ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
+                            : "버릴 저장하지 않은 변경이 없습니다"
+                        }
+                        side="left"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row"
+                          aria-disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
+                          onClick={() => {
+                            if (!workable || (repo?.pendingChanges ?? 0) === 0) return;
+                            setMenuOpen(false);
+                            askDiscard();
+                          }}
+                        >
+                          <span className="ic ic--sm ic--danger">
+                            <TrashIcon />
+                          </span>
+                          <span className="selector__text">
+                            <span className="selector__label">변경 버리기</span>
+                            <span className="selector__desc">
+                              저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다
+                            </span>
+                          </span>
+                        </button>
+                      </Tip>
+                      <Tip
+                        label={
+                          repo?.shelf
+                            ? turnState === "running"
+                              ? "AI가 고치는 중 — 끝나면 꺼낼 수 있습니다"
+                              : "치워둔 작업을 지금 화면에 다시 얹습니다"
+                            : (repo?.pendingChanges ?? 0) === 0
+                              ? "치워둘 저장하지 않은 변경이 없습니다"
+                              : turnState === "running"
+                                ? "AI가 고치는 중 — 끝나면 치워둘 수 있습니다"
+                                : "지금 작업을 치워 두고 화면을 저장 전 상태로 되돌립니다 — 다시 꺼내 이어합니다"
+                        }
+                        side="left"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row"
+                          aria-disabled={
+                            !workable ||
+                            turnState === "running" ||
+                            (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
+                          }
+                          onClick={() => {
+                            if (
+                              !workable ||
+                              turnState === "running" ||
+                              (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
+                            )
+                              return;
+                            setMenuOpen(false);
+                            if (repo?.shelf) takeOut();
+                            else putAway();
+                          }}
+                        >
+                          <span className="ic ic--sm ic--quiet">
+                            <ArchiveIcon />
+                          </span>
+                          <span className="selector__text">
+                            <span className="selector__label">
+                              {repo?.shelf ? "치워둔 작업 꺼내기" : "잠깐 치워두기"}
+                            </span>
+                            <span className="selector__desc">
+                              {repo?.shelf
+                                ? "치워둔 작업을 지금 화면에 다시 얹습니다"
+                                : "치워둔 작업을 나중에 다시 얹습니다"}
+                            </span>
+                          </span>
+                        </button>
+                      </Tip>
+                      {repo?.handoff?.url && (
+                        <Tip label="개발자가 검토하는 넘긴 요청을 엽니다" side="left">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="selector__row"
+                            onClick={() => {
+                              setMenuOpen(false);
+                              openLink(repo?.handoff?.url ?? "");
+                            }}
+                          >
+                            <span className="ic ic--quiet">
+                              <ExternalLinkIcon />
+                            </span>
+                            <span className="selector__text">
+                              <span className="selector__label">넘긴 내용 열기</span>
+                              <span className="selector__desc">
+                                개발자가 검토하는 넘긴 요청을 엽니다
+                              </span>
+                            </span>
+                          </button>
+                        </Tip>
+                      )}
                     </span>
-                    <span className="selector__text">
-                      <span className="selector__label">저장 기록</span>
-                      <span className="selector__desc">
-                        이 사이클의 저장 차례를 보고 하나로 되돌립니다
-                      </span>
-                    </span>
-                  </button>
-                </Tip>
-                <Tip
-                  label={
-                    (repo?.pendingChanges ?? 0) > 0
-                      ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
-                      : "버릴 저장하지 않은 변경이 없습니다"
-                  }
-                  side="left"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="selector__row"
-                    aria-disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
-                    onClick={() => {
-                      if (!workable || (repo?.pendingChanges ?? 0) === 0) return;
-                      setMenuOpen(false);
-                      askDiscard();
-                    }}
-                  >
-                    <span className="ic ic--sm ic--danger">
-                      <TrashIcon />
-                    </span>
-                    <span className="selector__text">
-                      <span className="selector__label">변경 버리기</span>
-                      <span className="selector__desc">
-                        저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다
-                      </span>
-                    </span>
-                  </button>
-                </Tip>
-                <Tip
-                  label={
-                    repo?.shelf
-                      ? turnState === "running"
-                        ? "AI가 고치는 중 — 끝나면 꺼낼 수 있습니다"
-                        : "치워둔 작업을 지금 화면에 다시 얹습니다"
-                      : (repo?.pendingChanges ?? 0) === 0
-                        ? "치워둘 저장하지 않은 변경이 없습니다"
-                        : turnState === "running"
-                          ? "AI가 고치는 중 — 끝나면 치워둘 수 있습니다"
-                          : "지금 작업을 치워 두고 화면을 저장 전 상태로 되돌립니다 — 다시 꺼내 이어합니다"
-                  }
-                  side="left"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="selector__row"
-                    aria-disabled={
-                      !workable ||
-                      turnState === "running" ||
-                      (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
-                    }
-                    onClick={() => {
-                      if (
-                        !workable ||
-                        turnState === "running" ||
-                        (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
-                      )
-                        return;
-                      setMenuOpen(false);
-                      if (repo?.shelf) takeOut();
-                      else putAway();
-                    }}
-                  >
-                    <span className="ic ic--sm ic--quiet">
-                      <ArchiveIcon />
-                    </span>
-                    <span className="selector__text">
-                      <span className="selector__label">
-                        {repo?.shelf ? "치워둔 작업 꺼내기" : "잠깐 치워두기"}
-                      </span>
-                      <span className="selector__desc">
-                        {repo?.shelf
-                          ? "치워둔 작업을 지금 화면에 다시 얹습니다"
-                          : "치워둔 작업을 나중에 다시 얹습니다"}
-                      </span>
-                    </span>
-                  </button>
-                </Tip>
-                {repo?.handoff?.url && (
-                  <Tip label="개발자가 검토하는 넘긴 요청을 엽니다" side="left">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="selector__row"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        openLink(repo?.handoff?.url ?? "");
-                      }}
-                    >
-                      <span className="ic ic--quiet">
-                        <ExternalLinkIcon />
-                      </span>
-                      <span className="selector__text">
-                        <span className="selector__label">넘긴 내용 열기</span>
-                        <span className="selector__desc">개발자가 검토하는 넘긴 요청을 엽니다</span>
-                      </span>
-                    </button>
-                  </Tip>
+                  </>
                 )}
               </span>
-            </>
-          )}
-        </span>
-      </div>
+            </div>,
+            barSlot,
+          )
+        : null}
       {syncError.text && (
         <Fold closing={syncError.closing} onCollapsed={syncError.clear}>
           <div className="notice notice--error">
@@ -1374,18 +1407,16 @@ export function ScreenPanel({
             onPin={onPin}
             onPinFocus={onPinFocus}
             onFixError={forwardError}
-            screens={screens}
-            onScreens={onScreens}
             target={target}
             sync={pinsSync(pins.ghosts, pins.list)}
             onNavigate={handleNavigate}
             onLocation={setLocation}
             location={location}
-            visitedCells={visited}
             commentsOn={commentsOn}
             onCommentsMode={onCommentsMode}
             onLook={(note) => void sendLook(note)}
             lookBusy={lookBusy}
+            drivingTabs={daemon.browserDriving}
           />
         )}
       </div>

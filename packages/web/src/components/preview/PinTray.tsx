@@ -1,5 +1,4 @@
-import { useContext, useEffect, useRef, useState } from "react";
-import { MarksContext } from "../../hooks/useMarks";
+import { useEffect, useRef, useState } from "react";
 import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import { stateLabel } from "../../lib/format";
 import { composing } from "../../lib/ime";
@@ -49,11 +48,7 @@ export function PinTray({
     if (!focusPinId) return;
     noteInputs.current.get(focusPinId.id)?.focus();
   }, [focusPinId]);
-  // 고침 표시 계약 (preview.md §1-C): the registry's number is the badge's
-  // number — a sent pin keeps it as a done mark, so the conversation's ③
-  // and this row's ③ are the same mark. The index is only the fallback for
-  // a pin the registry has not seen yet (same render it was added).
-  const numberFor = useContext(MarksContext);
+  // 행 번호는 트레이 순서 그대로 — 레지스트리 번호 매기기는 useMarks 와 함께 갔다.
 
   const screens = new Set(pins.map((pin) => pin.screen));
   const first = pins[0]!;
@@ -86,7 +81,7 @@ export function PinTray({
       </div>
       <ul className="pintray__list">
         {pins.map((pin, index) => {
-          const n = numberFor(pin.id) ?? numberStart + index;
+          const n = numberStart + index;
           return (
             <li
               key={pin.id}

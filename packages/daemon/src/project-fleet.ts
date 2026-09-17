@@ -579,10 +579,6 @@ export class ProjectFleet {
     const switching = current?.slug !== slug;
 
     if (switching) {
-      // The screens are the OUTGOING repo's declarations (PLAN D7): keeping
-      // them would have `screen_list` name routes the incoming app does not
-      // serve. The new bridge announces itself and fills this again.
-      this.deps.previewDrivers.clearScreens();
       // The outgoing project keeps the server it HAS but may not start one:
       // its in-flight bring-up (a clone that takes minutes) would otherwise
       // finish late, take the port it declares, and SIGKILL the listener the

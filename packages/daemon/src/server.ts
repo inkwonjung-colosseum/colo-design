@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import {
   PROTOCOL_VERSION,
@@ -15,6 +15,7 @@ import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
 import { CodexDriver } from "./agent/drivers/codex/driver.js";
 import { OmpDriver } from "./agent/drivers/omp/omp.js";
 import { DriverRegistry } from "./agent/registry.js";
+import { browserMcpEntry } from "./browser-launch.js";
 import {
   type CredentialStore,
   createCredentialStore,
@@ -29,7 +30,11 @@ import { createFileLogger, type DaemonLogger } from "./log.js";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import { realpathBestEffort } from "./paths.js";
 import { PlanTracker } from "./plan-tracker.js";
-import type { PreviewDriverFactory, PreviewScreenDeclaration } from "./preview-driver.js";
+import type {
+  BrowserDriver,
+  BrowserDriverFactory,
+  PreviewDriverFactory,
+} from "./preview-driver.js";
 import { PreviewDrivers } from "./preview-drivers.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
@@ -42,16 +47,19 @@ import { serveWeb } from "./web-static.js";
 // The host's notice type (notices.ts) — re-exported so
 // `@colo-design/daemon/server` stays the one import a host needs.
 export type { DaemonNotice } from "./notices.js";
-// The desktop builds its driver against these (게이트 재배선) — exported here so
-// `@colo-design/daemon/server` stays the one import a host needs.
+// The desktop builds its drivers against these (게이트 재배선 + 인앱 브라우저
+// 2단계) — exported here so `@colo-design/daemon/server` stays the one import
+// a host needs.
 export type {
+  BrowserDriver,
+  BrowserDriverFactory,
+  PreviewAxNode,
   PreviewCapture,
   PreviewConsoleLine,
   PreviewDriver,
   PreviewDriverFactory,
   PreviewOpenOptions,
   PreviewOpenResult,
-  PreviewScreenDeclaration,
   PreviewViewport,
 } from "./preview-driver.js";
 
@@ -60,6 +68,127 @@ export type {
  * 6회/시간(PR 1 + 리뷰 1) — "한 사람·한 대·한 구독"의 개인 규모 안이다.
  */
 const HANDOFF_POLL_MS = 10 * 60_000;
+/**
+ * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 20개). 와이어에
+ * 노출하지 않는 것: destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자 탭이
+ * 망가진다), getActiveTabId(listTabs 응답으로 대체 가능).
+ */
+const BROWSER_OPS: Record<string, true> = {
+  listTabs: true,
+  openTab: true,
+  closeTab: true,
+  activateTab: true,
+  cycleActiveTab: true,
+  navigate: true,
+  back: true,
+  forward: true,
+  snapshot: true,
+  screenshot: true,
+  click: true,
+  type: true,
+  press: true,
+  scroll: true,
+  hover: true,
+  select: true,
+  drag: true,
+  consoleLines: true,
+  evaluate: true,
+  waitFor: true,
+};
+
+/** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
+const BROWSER_BODY_LIMIT = 1_000_000;
+
+/** 와이어의 JSON 값을 시그니처 형태로 좁힌다 — 엔드포인트는 임의 JSON이 닿는 경계라 믿지 않는다. */
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+/**
+ * 와이어의 flat 인자(params, tabId 포함)를 BrowserDriver의 위치 인자로 풀어
+ * 부른다 — MCP 자식은 하나의 params 객체만 알고, 호출 규약은 드라이버 소유다.
+ */
+async function callBrowserOp(
+  driver: BrowserDriver,
+  op: string,
+  params: Record<string, unknown>,
+): Promise<unknown> {
+  const tabId = asString(params.tabId);
+  switch (op) {
+    case "listTabs":
+      return driver.listTabs();
+    case "openTab":
+      return driver.openTab(String(params.url ?? ""), {
+        background: params.background === true,
+      });
+    case "closeTab":
+      return driver.closeTab(tabId);
+    case "activateTab":
+      return driver.activateTab(String(params.tabId ?? ""));
+    case "cycleActiveTab":
+      return driver.cycleActiveTab(params.delta === -1 ? -1 : 1);
+    case "navigate":
+      return driver.navigate(String(params.url ?? ""), tabId);
+    case "back":
+      return driver.back(tabId);
+    case "forward":
+      return driver.forward(tabId);
+    case "snapshot":
+      return driver.snapshot(tabId);
+    case "screenshot":
+      return driver.screenshot({
+        tabId,
+        ref: asString(params.ref),
+        longEdge: asNumber(params.longEdge),
+      });
+    case "click":
+      return driver.click({ ref: String(params.ref ?? "") }, tabId);
+    case "type":
+      return driver.type(
+        {
+          ref: String(params.ref ?? ""),
+          text: String(params.text ?? ""),
+          clear: params.clear === false ? false : true,
+        },
+        tabId,
+      );
+    case "press":
+      return driver.press(String(params.key ?? ""), tabId);
+    case "scroll":
+      return driver.scroll({ ref: asString(params.ref), dy: asNumber(params.dy) ?? 0 }, tabId);
+    case "hover":
+      return driver.hover({ ref: String(params.ref ?? "") }, tabId);
+    case "select":
+      return driver.select(
+        { ref: String(params.ref ?? ""), value: String(params.value ?? "") },
+        tabId,
+      );
+    case "drag":
+      return driver.drag(
+        { fromRef: String(params.fromRef ?? ""), toRef: String(params.toRef ?? "") },
+        tabId,
+      );
+    case "consoleLines":
+      return driver.consoleLines(tabId);
+    case "evaluate":
+      return driver.evaluate(String(params.fn ?? ""), tabId);
+    case "waitFor":
+      return driver.waitFor(
+        {
+          text: asString(params.text),
+          url: asString(params.url),
+          ms: asNumber(params.ms),
+        },
+        tabId,
+      );
+    default:
+      throw new Error(`알 수 없는 브라우저 op: ${op}`);
+  }
+}
 
 // Session permission policy lives in Session itself: it pins the CLI to
 // `default` mode (so a user's own global defaultMode cannot widen hub
@@ -100,6 +229,14 @@ export interface DaemonConfig {
    * exists.
    */
   previewDriverFactory?: PreviewDriverFactory;
+  /**
+   * The desktop's shared browser (인앱 브라우저 2단계, 계획 §4-2): the driver
+   * the agent's browser tools will go through — the pane's tabs, the same
+   * one the user watches. The capture path rides the SAME instance so each
+   * tab keeps a single debugger owner (§3 규칙 10). The browser dev path
+   * injects nothing and the tools answer 404.
+   */
+  browserDriverFactory?: BrowserDriverFactory;
 }
 
 export class DaemonServer {
@@ -149,6 +286,13 @@ export class DaemonServer {
    */
   private readonly checkpointTurns = new Map<string, number>();
   /**
+   * 브라우저 MCP 자식의 세션별 시크릿(3단계): Map<secret, {sessionId,
+   * issuedAt}>. 데몬의 config.token은 전역 공유라 자식에게 못 준다 — 세션마다
+   * 새 시크릿을 발급해 메모리에 매핑하면 자식이 타 세션의 RPC를 칠 수 없고,
+   * 세션이 닫히면(onState closed) 시크릿도 함께 간다.
+   */
+  private readonly browserSecrets = new Map<string, { sessionId: string; issuedAt: number }>();
+  /**
    * Aborted the moment `stop()` begins. Unattended CLI probes ride it: a CLI
    * that never answers must not hold the process open for the probe's full
    * grace after the daemon is down — the offline suites each paid that grace
@@ -163,8 +307,8 @@ export class DaemonServer {
    */
   private readonly plans: PlanTracker;
   /**
-   * The preview driver each session received, the declared screens, and the
-   * screen-gate's verdict state (preview-drivers.ts, PLAN D61·D56·D7).
+   * The preview driver each session received and the screen-gate's verdict
+   * state (preview-drivers.ts, PLAN D61·D56).
    */
   private readonly drivers: PreviewDrivers;
   /**
@@ -315,6 +459,11 @@ export class DaemonServer {
           if (state === "closed") {
             this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
+            // 브라우저 시크릿도 세션과 함께 간다(3단계) — 남은 자식의 비밀로
+            // 닫힌 세션의 브라우저를 몰 수 없게.
+            for (const [secret, candidate] of this.browserSecrets) {
+              if (candidate.sessionId === sessionId) this.browserSecrets.delete(secret);
+            }
             // 수명 규칙 (preview.md §3 2단계): the worktree build's life is
             // tied to the conversation that opened it — its close reaps the
             // worktree and the port. The store ignores strangers itself.
@@ -326,6 +475,14 @@ export class DaemonServer {
         onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
       },
       this.agentDrivers,
+      // 세션별 브라우저 MCP 명세(3단계): 팩토리가 없으면(브라우저 개발 경로)
+      // 시크릿도 발급하지 않는다. URL은 루프백 고정 — 자식은 같은 호스트의
+      // 프로세스라 바인딩 호스트가 무엇이든 127.0.0.1로 닿는다.
+      (sessionId) => {
+        if (this.config.browserDriverFactory === undefined || this.http === undefined) return null;
+        const secret = this.issueBrowserSecret(sessionId);
+        return browserMcpEntry(true, `http://127.0.0.1:${this.address().port}`, secret);
+      },
     );
     this.plans = new PlanTracker({
       idleSession: (provider) =>
@@ -467,6 +624,12 @@ export class DaemonServer {
       if (req.url === "/health") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true, protocolVersion: PROTOCOL_VERSION }));
+        return;
+      }
+      // 브라우저 MCP 자식의 중계 엔드포인트(3단계) — 인증은 세션별 시크릿.
+      // 정적 서빙이 이 요청을 삼키지 않게 /health 다음에 둔다.
+      if (req.url === "/internal/browser") {
+        void this.onInternalBrowser(req, res);
         return;
       }
       if (this.config.webDist) {
@@ -685,15 +848,137 @@ export class DaemonServer {
   // create / rewind / fork.
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // Browser tools (인앱 브라우저 3단계) — the MCP child's relay endpoint.
+  // A session-scoped secret is the only credential: issued here at session
+  // create, carried to the child in env, revoked when the session closes.
+  // -------------------------------------------------------------------------
+
   /**
-   * The connected repo said which screens it has (`colo-design.screens`,
-   * PLAN D7). The host hands the envelope's contents here: the daemon has no
-   * page of its own to hear it from, and without this `screen_list` answers
-   * "아직 선언된 화면이 없습니다" for a repo that declared everything. Read
-   * live by the tools, so a list that arrives mid-session counts.
+   * 세션 하나의 브라우저 시크릿을 발급한다. session-manager가 세션을 열 때
+   * browserDriverFactory가 있으면 불러 browserMcp 기동 명세의 env에 태운다 —
+   * MCP 자식은 이 시크릿으로만 /internal/browser에 닿는다.
    */
-  setPreviewScreens(screens: PreviewScreenDeclaration[]): void {
-    this.drivers.setScreens(screens);
+  issueBrowserSecret(sessionId: string): string {
+    const secret = randomBytes(32).toString("base64url");
+    this.browserSecrets.set(secret, { sessionId, issuedAt: Date.now() });
+    return secret;
+  }
+
+  /**
+   * POST /internal/browser — browser-mcp.js의 도구 호출이 닿는 자리. op는
+   * 화이트리스트로 가리고 실행은 pane 드라이버로 위임한다. 계약: 200
+   * {ok:true,result} | 200 {ok:false,error} | 401 시크릿 불일치 | 404
+   * 팩토리·pane 없음. 드라이버가 던진 실패(stale ref·DevTools 충돌 등)는
+   * 도구가 읽고 고칠 수 있게 200 ok:false로 내려간다.
+   */
+  private async onInternalBrowser(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const reply = (status: number, body: Record<string, unknown>): void => {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify(body));
+    };
+    // 시크릿 검사 — 발급된 시크릿과 상수 시간 비교. 길이 노출은 무의미하다
+    // (시크릿은 43글자 base64url로 일정하다).
+    const given = Buffer.from(/^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1] ?? "");
+    let authorized = false;
+    let sessionId: string | null = null;
+    for (const [secret, candidate] of this.browserSecrets) {
+      const expected = Buffer.from(secret);
+      if (given.length === expected.length && timingSafeEqual(given, expected)) {
+        authorized = true;
+        sessionId = candidate.sessionId;
+      }
+    }
+    if (!authorized || sessionId === null) {
+      reply(401, { ok: false, error: "브라우저 시크릿이 일치하지 않습니다." });
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      for await (const chunk of req) {
+        size += (chunk as Buffer).length;
+        if (size > BROWSER_BODY_LIMIT) {
+          reply(413, { ok: false, error: "요청 본문이 너무 큽니다." });
+          return;
+        }
+        chunks.push(chunk as Buffer);
+      }
+    } catch {
+      reply(400, { ok: false, error: "요청 본문을 읽지 못했습니다." });
+      return;
+    }
+    let message: { op?: unknown; params?: unknown };
+    try {
+      message = JSON.parse(Buffer.concat(chunks).toString("utf8")) as typeof message;
+    } catch {
+      reply(400, { ok: false, error: "요청 본문을 JSON으로 읽지 못했습니다." });
+      return;
+    }
+    if (typeof message !== "object" || message === null || Array.isArray(message)) {
+      reply(400, { ok: false, error: "요청 본문은 {op, params} 객체여야 합니다." });
+      return;
+    }
+    const op = typeof message.op === "string" ? message.op : "";
+    if (!BROWSER_OPS[op]) {
+      reply(400, { ok: false, error: `알 수 없는 브라우저 op: ${op || "(없음)"}` });
+      return;
+    }
+    const params = message.params ?? {};
+    if (typeof params !== "object" || params === null || Array.isArray(params)) {
+      reply(400, { ok: false, error: "params는 객체여야 합니다." });
+      return;
+    }
+    const factory = this.config.browserDriverFactory;
+    if (!factory) {
+      reply(404, {
+        ok: false,
+        error: "브라우저 드라이버가 없습니다 — 데스크톱 앱에서만 동작합니다.",
+      });
+      return;
+    }
+    const driver = factory.forPane();
+    if (!driver) {
+      reply(404, {
+        ok: false,
+        error: "브라우저 창이 아직 없습니다 — 탭을 열거나 미리보기를 띄운 뒤 다시 시도해 주세요.",
+      });
+      return;
+    }
+    // 에이전트가 pane을 조작하는 동안 탭 스트립에 표시한다(4단계) — 시작과
+    // 끝을 같은 자리에서 방송하므로 실패해도 표시가 남지 않는다.
+    const tabId =
+      typeof (params as Record<string, unknown>).tabId === "string"
+        ? ((params as Record<string, unknown>).tabId as string)
+        : null;
+    this.broadcast({ type: "browser.driving", sessionId, tabId, on: true });
+    try {
+      const result = await callBrowserOp(driver, op, params as Record<string, unknown>);
+      // navigate·openTab이 가리킨 주소는 이 턴의 게이트 입력이다 — 사람의
+      // pin과 같은 자리(notePinned)에 담고, preview origin 판별은 runGate가
+      // 한다. state는 ?state= 쿼리로 실리므로 route에서 떼어 낸다.
+      if (
+        (op === "navigate" || op === "openTab") &&
+        typeof (params as Record<string, unknown>).url === "string"
+      ) {
+        try {
+          const u = new URL((params as Record<string, unknown>).url as string);
+          const state = u.searchParams.get("state");
+          u.searchParams.delete("state");
+          this.drivers.notePinned(sessionId, u.pathname + u.search + u.hash, state);
+        } catch {
+          // 못 읽는 주소는 게이트 입력이 아니다.
+        }
+      }
+      reply(200, { ok: true, result });
+    } catch (error) {
+      reply(200, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.broadcast({ type: "browser.driving", sessionId, tabId, on: false });
+    }
   }
 
   private async status() {
@@ -723,7 +1008,15 @@ export class DaemonServer {
           ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
           modes: descriptor.modes,
           defaultModeId: descriptor.defaultModeId,
-          capabilities: { ...descriptor.capabilities } as Record<string, unknown>,
+          capabilities: {
+            ...descriptor.capabilities,
+            // 브라우저 도구(3단계): 공급자 선언은 "주입 가능"일 뿐 — 실제
+            // 제공은 host의 browserDriverFactory 주입이 정한다. 둘 다 참일
+            // 때만 UI가 브라우저 의존 기능을 보여 준다.
+            browserTools:
+              descriptor.capabilities.browserTools === true &&
+              this.config.browserDriverFactory !== undefined,
+          } as Record<string, unknown>,
         };
       }),
     );

@@ -35,6 +35,11 @@ extraMetadata:
   # 패키지 버전이 앱 버전이다(업데이트 비교 기준).
   main: dist/main.js
 asar: true
+# browser-mcp.js 는 plain node 자식이 실행하는 파일이다 — asar 안에 있으면
+# node 가 읽지 못하므로 풀어 둔다(3단계). 나머지 데몬 코드는 asar 안에서
+# Electron 의 fs 패치로 읽힌다.
+asarUnpack:
+  - "**/node_modules/@colo-design/daemon/dist/browser-mcp.js"
 extraResources:
   # 빌드 머신의 포터블 node+corepack 번들(스크립트가 채운다). Windows 는
   # MinGit 도 여기에 들어간다(config-complete).

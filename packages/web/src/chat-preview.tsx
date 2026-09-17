@@ -216,9 +216,6 @@ function PlannerShell({
   showThinking: boolean;
   showTools: boolean;
 }) {
-  // 진행 시계의 자리: 이 창이 열린 순간을 턴의 시작으로 삼는다 — 미리보기는
-  // 실제로 초가 도는 모습까지 보여야 그 자리가 맞는지 알 수 있다.
-  const [startedAt] = useState(() => Date.now() - 95_000);
   /** 에이전트 칩의 재료 — 데몬 없이도 칩의 모양과 고르기를 본다. */
   const [provider, setProvider] = useState("claude");
   return (
@@ -285,8 +282,6 @@ function PlannerShell({
         }}
         suggestion={live ? null : "정지 회원 안내 문구를 Alert 로 바꿔 줄까요?"}
         onDismissSuggestion={() => undefined}
-        activity={live ? { status: "requesting" } : undefined}
-        turnStartedAt={live ? startedAt : null}
         tasks={live ? [{ taskId: "task_2", type: "shell", description: "pnpm -s build" }] : []}
         onStopTask={() => undefined}
         running={live}
@@ -376,8 +371,6 @@ function Preview() {
   const [showThinking, setShowThinking] = useState(false);
   /** 설정의 `작업 과정 보기` 자리 — 활동 카드의 모양을 여기서도 본다. */
   const [showTools, setShowTools] = useState(false);
-  /** 첫 초 surface 의 진행 시계 — 입력창 위 한 줄에서 방금 보낸 요청이 센다. */
-  const [sentAt] = useState(() => Date.now());
   document.documentElement.dataset.theme = theme;
   return (
     <div className="planner" style={{ height: "100vh", gridTemplateColumns: "minmax(0, 1fr)" }}>
@@ -449,7 +442,6 @@ function Preview() {
                   }}
                   plan={null}
                   running={true}
-                  turnStartedAt={sentAt}
                   sendKey="enter"
                   selector={{
                     model: null,

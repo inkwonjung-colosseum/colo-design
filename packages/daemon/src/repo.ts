@@ -266,9 +266,11 @@ export class RepoWorkspace {
     // A refresh already in flight owns the worktree the same way — a second
     // pull queues behind it instead of racing its stash-move-replay window.
     if (this.core.refreshing) await this.core.refreshing.catch(() => undefined);
+    console.error("[pull] start");
     const run = this.core
       .refreshFromRemote(onSessionTurn)
       .then(async (outcome) => {
+        console.error("[pull] refreshFromRemote done:", outcome);
         // A conflict brief leaves the worktree mid-resolution: the delivery chip's
         // count must show it (the unmerged files are changes awaiting 저장),
         // and an install or preview restart would only bury the brief in
@@ -370,8 +372,6 @@ export class RepoWorkspace {
       onSessionTurn?: (brief: string) => void;
       /** hero-synthesis D1: the conversation this save belongs to. */
       sessionId?: string;
-      /** Declared screens — the saved card names which ones the files touch. */
-      screens?: Array<{ route: string; title: string }>;
     } = {},
   ): Promise<DiffStatus> {
     if (!this.core.publishing) {
@@ -391,9 +391,8 @@ export class RepoWorkspace {
       onSessionTurn?: (brief: string) => void;
       /** hero-synthesis D1: the conversation this handoff belongs to. */
       sessionId?: string;
-      /** D93: the project's comment store + declared titles, for the PR body. */
+      /** D93: the project's comment store, for the PR body. */
       commentsFile?: string;
-      screenTitles?: Array<{ route: string; title: string }>;
     } = {},
   ): Promise<DiffStatus> {
     if (!this.core.publishing) {
@@ -432,14 +431,17 @@ export class RepoWorkspace {
   // Summaries — the summarizer.s one agent turn (PLAN D51)
   // -------------------------------------------------------------------------
 
-  summarize(screenTitles: Array<{ route: string; title: string }> = []): Promise<RepoSummary> {
-    return this.summarizer.summarize(screenTitles);
+  summarize(): Promise<RepoSummary> {
+    return this.summarizer.summarize();
+  }
+
+  cycleAnchor(): Promise<string | null> {
+    return this.core.cycleAnchor();
   }
 
   handoffDraft(
     options: {
       commentsFile?: string;
-      screenTitles?: Array<{ route: string; title: string }>;
       shotCount?: number;
     } = {},
   ): Promise<RepoHandoffDraft> {

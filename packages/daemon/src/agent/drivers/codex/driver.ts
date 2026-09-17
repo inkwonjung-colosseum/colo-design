@@ -36,6 +36,9 @@ const CODEX_CAPABILITIES = {
   slashCommands: true,
   planMode: "plan",
   subtasks: false,
+  // 브라우저 도구 주입 가능(계획 §3). 공급자 선언일 뿐 실제 제공은 host의
+  // browserDriverFactory 주입이 정하고, status가 둘을 AND해 UI에 보인다.
+  browserTools: true,
 } as const;
 
 /** Where the installers put the binary, in the order we trust them. */

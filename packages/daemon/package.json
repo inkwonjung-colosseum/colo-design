@@ -19,6 +19,9 @@
     "./server": {
       "types": "./dist/server.d.ts",
       "default": "./dist/server.js"
+    },
+    "./browser-mcp": {
+      "default": "./dist/browser-mcp.js"
     }
   },
   "bin": {

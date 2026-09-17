@@ -58,13 +58,8 @@ function post(envelope: unknown): void {
   else if (window.parent !== window) window.parent.postMessage(envelope, "*");
 }
 
-const announce = () => post({ type: "colo-design.screens", screens: SCREENS });
-announce();
-
 window.addEventListener("message", (event) => {
   const data = event.data;
-  // 도구가 목록을 다시 묻는다(오버레이가 다시 붙었을 때).
-  if (data?.type === "colo-design.screens?") return announce();
   // 도구가 화면을 하나 열라고 한다.
   if (data?.type !== "colo-design.navigate" || typeof data.route !== "string") return;
   const state = typeof data.state === "string" && data.state ? data.state : null;
@@ -110,8 +105,7 @@ react({ babel: { plugins: command === "serve" ? ["./babel-plugin-colo-src.cjs"] 
 
 export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연결되어 있지 않습니다. 레포를 살펴보고 아래 넷(마지막은 선택)을 작성해 연결을 준비해 주세요.
 
-1. 화면 브리지 — 개발 미리보기에만 붙는 작은 스크립트로, 앱이 떠 있을 때
-   \`colo-design.screens\` 봉투로 화면 목록을 알려 주고 \`colo-design.navigate\`
+1. 화면 브리지 — 개발 미리보기에만 붙는 작은 스크립트로, \`colo-design.navigate\`
    메시지를 받아 화면을 이동합니다. 아래 템플릿을 참고해 이 레포의 라우팅에
    맞게 붙여 주세요. 프로덕션 번들에 포함되지 않게 개발 전용 경로로 넣어 주세요.
 2. 화면 래퍼 — 각 화면 최상위에 \`data-screen="<feature>/<Screen>"\`,
@@ -139,8 +133,8 @@ export const REFRESH_TITLE = "관례 최신화";
 export const REFRESH_BRIEF = `이 레포는 이미 Colo Design 도구와 연결되어 있습니다. 도구의 연결 관례가 개선되었으니, 레포의 관례를 현행 판에 맞춰 다시 써 주세요.
 
 1. 화면 브리지 — 개발 미리보기에 붙은 브리지 스크립트를 점검하고 현행 규격
-   (\`colo-design.screens\` 봉투 송신, \`colo-design.navigate\` 수신)에 맞춰
-   주세요. 이 레포의 라우팅에 맞게 붙은 부분은 그대로 살립니다.
+   (\`colo-design.navigate\` 수신)에 맞춰 주세요. 이 레포의 라우팅에 맞게
+   붙은 부분은 그대로 살립니다.
 2. 화면 래퍼 — 각 화면 최상위의 \`data-screen="<feature>/<Screen>"\`,
    \`data-state="<상태>"\` 규칙이 지켜지고 있는지 점검해 주세요. 소스 표식
    (\`data-colo-src="<파일>:<줄>"\`)이 없으면 이번에 선택 규약이니 붙여도

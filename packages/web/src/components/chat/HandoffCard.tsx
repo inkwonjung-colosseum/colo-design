@@ -35,8 +35,6 @@ export interface HandoffCardProps {
   /** 브라우저의 초안 제안 — 데몬 초안 전의 첫 모습(빈 형태 금지). */
   proposedTitle: string;
   proposedBody: string;
-  /** 캡처 고지 — 데스크톱에만 캡처가 있을 때 호출부가 계산해 넣는다. */
-  shotNotice?: string;
   /** The live 화면 thread; a failing gate lands in it as the agent.s next task. */
   sessionId: string | null;
   onClose: () => void;
@@ -47,7 +45,6 @@ export function HandoffCard({
   destination,
   proposedTitle,
   proposedBody,
-  shotNotice,
   sessionId,
   onClose,
 }: HandoffCardProps) {
@@ -103,7 +100,7 @@ export function HandoffCard({
         if (draft.extras) setExtras(draft.extras);
         if (draft.source !== "claude") return;
         if (draft.title && !titleTouched.current) setTitle(draft.title);
-        if (draft.body && !bodyTouched.current) setBody(mergeHandoffBody(draft.body, proposedBody));
+        if (draft.body && !bodyTouched.current) setBody(mergeHandoffBody(draft.body));
         if (draft.title || draft.body) setDrafted(true);
       })
       .catch(() => undefined)
@@ -113,7 +110,7 @@ export function HandoffCard({
     return () => {
       cancelled = true;
     };
-  }, [api, proposedBody]);
+  }, [api]);
 
   // 카드는 모달이 아니다: Escape 는 접기일 뿐이고, 도는 넘기기의 진행
   // 줄은 카드가 닫혀도 자리를 지킨다 — 끝나야 접힌다(구 패널과 같은 규율).
@@ -269,14 +266,12 @@ export function HandoffCard({
               ) : (
                 <Markdown text={previewBody} />
               )}
-              {(extras?.commentsSection || (shotCount ?? 0) > 0 || shotNotice) && (
+              {(extras?.commentsSection || (shotCount ?? 0) > 0) && (
                 <div className="handoff__auto">
                   <span className="handoff__autolabel">함께 담기는 것</span>
                   {extras?.commentsSection && <Markdown text={extras.commentsSection} />}
-                  {(shotCount ?? 0) > 0 ? (
+                  {(shotCount ?? 0) > 0 && (
                     <p className="hint">화면 미리보기 — 캡처 {shotCount}장</p>
-                  ) : (
-                    shotNotice && <p className="hint">{shotNotice}</p>
                   )}
                 </div>
               )}
