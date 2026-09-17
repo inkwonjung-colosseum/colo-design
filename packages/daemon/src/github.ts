@@ -15,10 +15,8 @@
  *   GET   /user                                                — token identity (github gate)
  *   GET   /user/repos                                          — the project picker's list
  *   GET   /repos/{owner}/{repo}/contents/package.json            — dev-family script probe
- *   GET   /repos/{owner}/{repo}/contents/CLAUDE.md               — conventions marker probe
  */
 import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
-import { conventionsRevision } from "./bootstrap-brief.js";
 import { FixtureTransport, loadFixturePairs, type RestTransport } from "./rest-transport.js";
 
 export interface PullRequestRef {
@@ -136,15 +134,13 @@ export class GitHubClient {
   /**
    * One repo, judged before any clone: whether its package.json scripts carry
    * a dev-family script (dev · start · serve · preview — the preview server
-   * the tool can start), whether its CLAUDE.md carries the conventions marker
-   * (the bridge/wrapper contract is installed), whether this token may push
+   * the tool can start), whether this token may push
    * (넘기기 opens the pull request), and what branch a handoff PR targets.
    */
   async inspectRepo(input: { owner: string; repo: string }): Promise<GitHubRepoInspection> {
     const data = await this.getJson(`/repos/${input.owner}/${input.repo}`, "레포 확인");
     return {
       hasDevScript: await this.hasDevScript(input),
-      hasConventions: await this.hasConventions(input),
       canPush: data.permissions?.push === true,
       defaultBranch: String(data.default_branch ?? "main"),
     };
@@ -167,16 +163,6 @@ export class GitHubClient {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * Whether the repo's CLAUDE.md carries the conventions marker — the sign
-   * the bridge/wrapper contract was installed. Same tolerance as the
-   * package.json probe: 404 is "absent", anything else throws.
-   */
-  async hasConventions(input: { owner: string; repo: string }): Promise<boolean> {
-    const data = await this.contentsOrNull(input, "CLAUDE.md");
-    return data !== null && conventionsRevision(decodeContents(data)) !== null;
   }
 
   /**

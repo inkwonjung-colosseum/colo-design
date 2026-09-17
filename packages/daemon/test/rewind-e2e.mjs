@@ -214,8 +214,8 @@ async function main() {
       type: "session.rewind",
       sessionId: first,
       turn: 2,
-      // The conventions-prepare prompt (bootstrap-brief) itself says
-      // "고쳐 주세요" — a plain phrase would already sit in prompts.log.
+      // A plain "고쳐 주세요" phrase may already sit in prompts.log from an
+      // earlier turn — the marker keeps the rewind's prompt distinct.
       text: "두 번째 화면, 되돌아간-문장-마커로 고쳐 주세요",
     });
     check(

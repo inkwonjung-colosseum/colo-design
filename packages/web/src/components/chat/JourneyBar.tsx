@@ -6,8 +6,9 @@ import type { Journey } from "../../lib/journey";
  * 장면 전환은 대화 속 행동과 바깥 사건이 일으킨다).
  *
  * 두 단위의 지도 (P3-1): `journey.scope === "thread"` 면 이 대화가 기여한
- * 사이클 위치 — 대화 제목(`title`)을 캡션 앞에 달아 "이 대화의 여정"임을
- * 말한다. `project` 면 프로젝트 사이클의 진실 그대로(제목 없음).
+ * 사이클 위치 — 대화 제목(`title`) 칩을 지도 앞에 달아 "이 대화의 여정"임을
+ * 말한다. `project` 면 프로젝트 사이클의 진실 그대로(칩 없음). 상태 캡션은
+ * 없다 — 스펙 §1-A(2026-09): 점·색이 상태를 말한다.
  */
 const STOPS = ["만들기", "저장", "넘기기", "반영"] as const;
 
@@ -28,7 +29,6 @@ export function JourneyBar({
           {title}
         </span>
       ) : null}
-      <div className="jbar__cap">{journey.caption}</div>
       <ol className="jmap" aria-label={thread ? "이 대화의 여정" : "이 작업의 여정"}>
         {STOPS.map((name, index) => {
           const done = journey.reached[index];

@@ -10,54 +10,37 @@ import { parseAddress, splitPath } from "../src/lib/preview-address.ts";
 const opts = {
   origin: "http://127.0.0.1:5400",
   currentPath: "/member/MemberList?state=empty",
-  routes: ["/member/MemberList", "/member/MemberDetail"],
 };
 
-test("declared route (+state) becomes a screen target", () => {
+test("a path inside the origin is an open target", () => {
   assert.deepEqual(parseAddress("/member/MemberList", opts), {
-    kind: "screen",
-    route: "/member/MemberList",
-    state: null,
+    kind: "path",
+    path: "/member/MemberList",
   });
   assert.deepEqual(parseAddress("/member/MemberList?state=empty", opts), {
-    kind: "screen",
-    route: "/member/MemberList",
-    state: "empty",
+    kind: "path",
+    path: "/member/MemberList?state=empty",
   });
 });
 
-test("a route without the leading slash gets one", () => {
+test("a path without the leading slash gets one", () => {
   assert.deepEqual(parseAddress("member/MemberDetail", opts), {
-    kind: "screen",
-    route: "/member/MemberDetail",
-    state: null,
+    kind: "path",
+    path: "/member/MemberDetail",
   });
 });
 
 test("a lone ?state= applies to the current path", () => {
   assert.deepEqual(parseAddress("?state=error", opts), {
-    kind: "screen",
-    route: "/member/MemberList",
-    state: "error",
-  });
-});
-
-test("any other path inside the origin is an open target", () => {
-  assert.deepEqual(parseAddress("/docs/guide", opts), {
     kind: "path",
-    path: "/docs/guide",
-  });
-  assert.deepEqual(parseAddress("docs/guide?page=2", opts), {
-    kind: "path",
-    path: "/docs/guide?page=2",
+    path: "/member/MemberList?state=error",
   });
 });
 
 test("an absolute url of the preview origin reduces to its path", () => {
   assert.deepEqual(parseAddress("http://127.0.0.1:5400/member/MemberList?state=empty", opts), {
-    kind: "screen",
-    route: "/member/MemberList",
-    state: "empty",
+    kind: "path",
+    path: "/member/MemberList?state=empty",
   });
 });
 
@@ -74,7 +57,10 @@ test("another origin, protocol-relative and scheme urls are refused", () => {
 });
 
 test("whitespace is trimmed; empty input says so", () => {
-  assert.deepEqual(parseAddress("  /member/MemberList  ", opts).kind, "screen");
+  assert.deepEqual(parseAddress("  /member/MemberList  ", opts), {
+    kind: "path",
+    path: "/member/MemberList",
+  });
   assert.equal(parseAddress("   ", opts).kind, "error");
 });
 

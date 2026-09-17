@@ -71,12 +71,6 @@ export interface ProjectSummary {
    */
   instructions?: string;
   /**
-   * 관례 최신화 (커미티 2026-09-14): 이 클론의 CLAUDE.md 표식이 현행 판과
-   * 다르다(표식이 없어도) — 프로젝트 메뉴의 "관례 최신화"가 이 때만 뜬다.
-   * 내려받기 전(cloned 아님)에는 항상 거짓.
-   */
-  conventionsStale: boolean;
-  /**
    * 답을 기다리는 질문 + 권한 요청의 수(스레드 단위, PLAN P3-2) — 비활성
    * 프로젝트도 포함. `threads[].state === "awaiting"` 인 대화의 개수와 같다.
    */
@@ -266,8 +260,6 @@ export interface GitHubRepoList {
 export interface GitHubRepoInspection {
   /** package.json scripts carry a dev-family script (dev · start · serve · preview). */
   hasDevScript: boolean;
-  /** CLAUDE.md carries the current conventions marker — the bridge/wrapper contract is installed. */
-  hasConventions: boolean;
   canPush: boolean;
   defaultBranch: string;
 }

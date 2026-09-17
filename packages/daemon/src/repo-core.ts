@@ -266,8 +266,6 @@ export interface RepoWorkspaceOptions {
   gitHubClient?: () => GitHubClient | null;
   /** Claude Code CLI executable for the summarizer's one turn (D51). */
   claudeExecutable?: string | null;
-  /** Post-ready conventions turn: Claude installs bridge · wrappers · CLAUDE.md. */
-  prepareConventions?: () => Promise<void>;
   /**
    * Whether the planner said this repo's commands may run here. Absent
    * (a direct construction, a pre-gate project) reads as approved — the
@@ -391,9 +389,6 @@ export class RepoCore {
   /** The planner's word on this repo's install · preview commands. */
   commandsApproved = true;
 
-  /** Post-ready conventions turn: brief → the agent installs the screen contract. */
-  prepareConventions: (() => Promise<void>) | null = null;
-
   readonly onCycleChange:
     | ((cycle: {
         branch: string | null;
@@ -430,8 +425,6 @@ export class RepoCore {
     gitHubClient?: () => GitHubClient | null;
     /** Claude Code CLI executable for the summarizer's one turn (D51). */
     claudeExecutable?: string | null;
-    /** Post-ready conventions turn: Claude installs bridge · wrappers · CLAUDE.md. */
-    prepareConventions?: () => Promise<void>;
     /**
      * Whether the planner said this repo's commands may run here. Absent
      * (a direct construction, a pre-gate project) reads as approved — the
@@ -456,7 +449,6 @@ export class RepoCore {
     this.branch = options.cycle?.branch ?? null;
     this.openHandoff = options.cycle?.handoff ?? null;
     this.commentsSince = options.cycle?.commentsSince ?? null;
-    this.prepareConventions = options.prepareConventions ?? null;
     this.commandsApproved = options.commandsApproved ?? true;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;

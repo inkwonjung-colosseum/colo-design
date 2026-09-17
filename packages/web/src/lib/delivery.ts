@@ -48,7 +48,7 @@ export interface Delivery {
      * 문서앱 제목바 문법(`바꿈 N · 저장 안 됨` — docs/plan/preview.md §1-B,
      * README D6). N 은 "화면을 바꾼 턴 수"가 목표지만 지금 데이터로는
      * `pendingChanges`로 근사한다 — 필드명을 docLabel 로 둔 것은 나중에
-     * 정확한 수(`pendingScreens` 등)로 갈아 끼우기 위해서다.
+     * 정확한 수로 갈아 끼우기 위해서다.
      */
     docLabel: string;
   };

@@ -458,6 +458,15 @@ export class PlannerPreviewView {
   }
 
   /**
+   * 데스크톱 스위트의 손잡이(desktop-cover.mjs `paneState` 가 app.evaluate 로
+   * 읽는다) — 탭 모델이 `this.page` 를 갈아엎으면서 사라진 공개 이름이다.
+   * 화면의 탭 한 장이 곧 옛 `page` 다.
+   */
+  get page(): PreviewPage | null {
+    return this.active();
+  }
+
+  /**
    * 레지스트리에 오른 origin, 또는 지금 preview 탭이 머무는 origin — repo 의
    * 것으로 인정한다(규칙 4). kind 재계산과 openTab 의 위임 판정이 함께 쓴다.
    * `except` 는 지금 판정 중인 탭 자신 — origin 을 먼저 채워 놓고 부르면

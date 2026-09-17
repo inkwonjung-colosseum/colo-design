@@ -4,9 +4,8 @@
  * stays inside the preview server: a bar that can name another server is a
  * browser this tool refuses to be. What may be typed:
  *
- * - `/member/MemberList` — a declared screen's route, `?state=` welcome.
- *   A declared route rides the bridge (client routing, no reload); anything
- *   else inside the origin rides `open` (`loadURL`).
+ * - `/member/MemberList` — a path inside the origin, `?state=` welcome.
+ *   Anything inside the origin rides `open` (`loadURL`).
  * - `member/MemberList` — the leading slash is typed for you.
  * - `?state=empty` — the state alone, on the current path.
  * - a full url — accepted only when its origin is the preview server's,
@@ -17,14 +16,11 @@
  * the answer, not the gate.
  */
 
-export type AddressTarget =
-  | { kind: "screen"; route: string; state: string | null }
-  | { kind: "path"; path: string }
-  | { kind: "error"; message: string };
+export type AddressTarget = { kind: "path"; path: string } | { kind: "error"; message: string };
 
 const ONLY_PREVIEW = "미리보기 서버 안의 주소만 열 수 있습니다";
 
-/** `/a/b?state=x` → route + state, the shape the picker and chips speak. */
+/** `/a/b?state=x` → route + state, the shape the pane speaks. */
 export function splitPath(path: string): {
   route: string;
   state: string | null;
@@ -35,10 +31,7 @@ export function splitPath(path: string): {
   return { route, state: state && state !== "" ? state : null };
 }
 
-export function parseAddress(
-  raw: string,
-  opts: { origin: string; currentPath: string; routes: string[] },
-): AddressTarget {
+export function parseAddress(raw: string, opts: { origin: string; currentPath: string }): AddressTarget {
   const input = raw.trim();
   if (input === "") return { kind: "error", message: "주소를 입력해 주세요" };
 
@@ -48,7 +41,7 @@ export function parseAddress(
     try {
       const url = new URL(input);
       if (url.origin !== opts.origin) return { kind: "error", message: ONLY_PREVIEW };
-      return pathTarget(`${url.pathname}${url.search}`, opts.routes);
+      return { kind: "path", path: `${url.pathname}${url.search}` };
     } catch {
       return { kind: "error", message: ONLY_PREVIEW };
     }
@@ -59,11 +52,5 @@ export function parseAddress(
     : input.startsWith("/")
       ? input
       : `/${input}`;
-  return pathTarget(path, opts.routes);
-}
-
-function pathTarget(path: string, routes: string[]): AddressTarget {
-  const { route, state } = splitPath(path);
-  if (routes.includes(route)) return { kind: "screen", route, state };
   return { kind: "path", path };
 }

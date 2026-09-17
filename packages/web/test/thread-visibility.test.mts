@@ -23,7 +23,6 @@ const project = (slug: string, threads: ThreadSummary[] | null): ProjectSummary 
   pendingChanges: 0,
   working: false,
   handoff: null,
-  conventionsStale: false,
   pendingCount: 0,
   ...(threads ? { threads } : {}),
 });

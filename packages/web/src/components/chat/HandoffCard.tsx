@@ -84,7 +84,7 @@ export function HandoffCard({
   const { api } = daemon;
 
   // 비개발자 넘기기: the card opens on the browser's proposal — the project
-  // name and the declared screens — and asks the daemon for the sentences a
+  // name and the pins' screens — and asks the daemon for the sentences a
   // developer reads first plus the sections the daemon appends on its own.
   // Empty answer (no CLI, timeout, refusal) leaves the proposal exactly as it
   // was, so the card is never worse than before.
