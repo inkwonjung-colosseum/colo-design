@@ -14,27 +14,12 @@ import type {
   RepoShelf,
   RepoShelfRestore,
   RepoStatus,
-  RepoSummary,
 } from "@colo-design/protocol";
 
-// 순수 절차는 옮겼고 표면은 그대로다 — 검사들이 `dist/repo.js` 에서 이
-// 이름들을 가져간다.
-export { fallbackSummary } from "@colo-design/protocol";
 // 셋 다 이 모듈이 쓰면서 동시에 이 모듈의 표면이다 — 검사와 온보딩이
 // `dist/repo.js` 에서 이 이름들을 가져간다.
 export { extraPathPrefix, repoSettingsWarning, trustWorkspace } from "./claude-trust.js";
 export { buildCommentsSection } from "./handoff-body.js";
-// 포트·소유 기록의 순수 절차는 preview-claim.ts 가 갖는다. 검사들이 이
-// 이름들을 `dist/repo.js` 에서 가져가므로 여기서 그대로 다시보낸다 —
-// 옮긴 것은 코드의 자리이지 이 모듈의 표면이 아니다.
-export {
-  clearPreviewClaim,
-  foreignLivePreviewClaim,
-  pidAlive,
-  portListenerPids,
-  readPreviewClaim,
-  writePreviewClaim,
-} from "./preview-claim.js";
 // 상수와 URL 게이트는 repo-core.ts 로 옮겼다 — 표면은 여기서 다시보낸다.
 export { assertClonableRepoUrl, PUSH_AUTH_FAILURE, REPO_URL_MISSING_DETAIL } from "./repo-core.js";
 export { parseUnifiedDiff } from "./repo-diff.js";
@@ -49,6 +34,7 @@ import {
   RepoCore,
   type RepoWorkspaceOptions,
 } from "./repo-core.js";
+import { safeRepoPath } from "./repo-paths.js";
 import { PublishCycle } from "./repo-publish.js";
 import { ShelfStore } from "./repo-shelf.js";
 import { RepoSummarizer } from "./repo-summary.js";
@@ -56,8 +42,7 @@ import { RepoSummarizer } from "./repo-summary.js";
 /**
  * The connected repo workspace: a clone of the repo the planner pointed the
  * daemon at, driven by what that repo already says — its lockfile, its
- * `package.json` scripts, its `.npmrc` — with `colo-design.json` naming the
- * preview port and overriding whatever the derivation got wrong (repo-config.ts).
+ * `package.json` scripts, its `.npmrc` (repo-config.ts).
  * The daemon clones and pulls it, runs its commands, and frames its preview
  * server — what the preview renders is entirely the repo's business.
  *
@@ -118,22 +103,6 @@ export class RepoWorkspace {
    */
   get previewLive(): boolean {
     return this.core.previewLive;
-  }
-
-  /**
-   * The port colo-design.json declares, when the clone can say — the switch
-   * fence compares these. Unknown (not cloned, or no config yet) is `null`.
-   */
-  declaredPreviewPort(): number | null {
-    return this.core.declaredPreviewPort();
-  }
-
-  /**
-   * The port this workspace's preview occupies — declared, or the one the
-   * running server was detected on. The switch fence compares these.
-   */
-  occupiedPreviewPort(): number | null {
-    return this.core.occupiedPreviewPort();
   }
 
   get remoteUrl(): string | null {
@@ -208,6 +177,9 @@ export class RepoWorkspace {
     }
 
     if (urlChanged) {
+      // 클론을 지우기 전에 그 클론을 쓰는 모든 손을 기다린다 — 저장·최신화·
+      // 부팅 도중의 rmSync 는 반쯤 지워진 클론과 날아간 약속을 남긴다.
+      await this.settle();
       await this.stop();
       rmSync(this.root, { recursive: true, force: true });
     } else if (this.core.isCloned()) {
@@ -216,7 +188,9 @@ export class RepoWorkspace {
       // promise must never leak. Idempotent; a clean origin is a no-op read.
       await this.core.scrubOriginCredential();
     }
-    return await this.sync();
+    // A moved url means a different repository: force re-reads the disk state
+    // (the old clone's in-flight bootstrap must not pose as this one's).
+    return await this.sync(urlChanged);
   }
 
   async stop(): Promise<void> {
@@ -374,11 +348,13 @@ export class RepoWorkspace {
       sessionId?: string;
     } = {},
   ): Promise<DiffStatus> {
-    if (!this.core.publishing) {
-      this.core.publishing = this.publish.runSave(options).finally(() => {
-        this.core.publishing = null;
-      });
+    // 날아가는 저장을 돌려주면 새로 온 메시지는 조용히 증발한다 — 거절이 답이다.
+    if (this.core.publishing) {
+      throw new Error("저장이 진행 중입니다 — 끝나면 다시 눌러 주세요.");
     }
+    this.core.publishing = this.publish.runSave(options).finally(() => {
+      this.core.publishing = null;
+    });
     return this.core.publishing;
   }
 
@@ -395,11 +371,12 @@ export class RepoWorkspace {
       commentsFile?: string;
     } = {},
   ): Promise<DiffStatus> {
-    if (!this.core.publishing) {
-      this.core.publishing = this.publish.runHandoff(options).finally(() => {
-        this.core.publishing = null;
-      });
+    if (this.core.publishing) {
+      throw new Error("넘기기가 진행 중입니다 — 끝나면 다시 눌러 주세요.");
     }
+    this.core.publishing = this.publish.runHandoff(options).finally(() => {
+      this.core.publishing = null;
+    });
     return this.core.publishing;
   }
 
@@ -408,10 +385,13 @@ export class RepoWorkspace {
   }
 
   /**
-   * 보낸 화면 동결 (preview.md §1-E): the committed capture for one
+   * 보낸 화면 동결: the committed capture for one
    * screen·state, read off the handoff branch — the frozen stage's picture.
    */
-  handoffShot(route: string, state: string): Promise<{ mediaType: string; data: string } | null> {
+  handoffShot(
+    route: string,
+    state: string | null,
+  ): Promise<{ mediaType: string; data: string } | null> {
     return this.publish.handoffShot(route, state);
   }
 
@@ -427,23 +407,12 @@ export class RepoWorkspace {
     return this.publish.replyToReview(id, body);
   }
 
-  // -------------------------------------------------------------------------
-  // Summaries — the summarizer.s one agent turn (PLAN D51)
-  // -------------------------------------------------------------------------
-
-  summarize(): Promise<RepoSummary> {
-    return this.summarizer.summarize();
-  }
-
   cycleAnchor(): Promise<string | null> {
     return this.core.cycleAnchor();
   }
 
   handoffDraft(
-    options: {
-      commentsFile?: string;
-      shotCount?: number;
-    } = {},
+    options: { commentsFile?: string; shotCount?: number } = {},
   ): Promise<RepoHandoffDraft> {
     return this.summarizer.handoffDraft(options);
   }
@@ -468,6 +437,7 @@ export class RepoWorkspace {
     }
     // The same worktree contract as a save: a refresh settling underneath a
     // restore would half-undo two different moments at once.
+    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
     await this.core.refreshing?.catch(() => undefined);
     await this.core.shelving?.catch(() => undefined);
     const dirty = await this.core.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
@@ -505,6 +475,24 @@ export class RepoWorkspace {
       // anywhere by a restart. ensureCycleBranch checks it out when named.
       const branch = await this.publish.ensureCycleBranch();
       await this.core.git(["checkout", sha, "--", "."]);
+      // `checkout sha -- .` 는 sha 가 아는 경로만 돌려놓는다 — 그 뒤에 태어난
+      // 파일이 살아 남아 되돌리기 커밋에 그대로 실린다. 체크포인트 복원의
+      // born-after 규칙과 같은 바닥을 쓴다: sha 이후 생긴 경로는 지운다.
+      const bornAfter = (
+        await this.core.git([
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--name-only",
+          "--diff-filter=A",
+          sha,
+          "HEAD",
+        ])
+      )
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((path) => path !== "" && safeRepoPath(path) !== null);
+      if (bornAfter.length > 0) await this.core.git(["rm", "--force", "--", ...bornAfter]);
       await this.core.git([
         ...(await this.core.identityArgs()),
         "commit",
@@ -532,6 +520,7 @@ export class RepoWorkspace {
    */
   async discard(): Promise<RepoDiscard> {
     if (!this.core.isCloned()) return { removed: [] };
+    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
     await this.core.refreshing?.catch(() => undefined);
     await this.core.shelving?.catch(() => undefined);
     return await this.core.clearUnsavedWork();
@@ -561,7 +550,10 @@ export class RepoWorkspace {
     return this.checkpointStore.checkpoints();
   }
 
-  checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
+  async checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
+    // The worktree is the snapshot's subject: a save mid-flight owns it, and
+    // restoring under that save would mix two different moments.
+    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
     return this.checkpointStore.checkpointRestore(id);
   }
 

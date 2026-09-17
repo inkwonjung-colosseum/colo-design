@@ -700,9 +700,7 @@ app.whenReady().then(async () => {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   try {
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
-    const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL, [
-      "http://localhost:6006",
-    ]);
+    const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
     // 선언한 상태의 표식을 기다리므로, 여기서 돌아오면 화면은 자리를 잡았다.
     const opened = await driver.open("/", "기본");
     // 미리보기 서버도 레포가 허용한 서버도 아닌 주소는 열지 않는다 — 조용히
@@ -743,12 +741,9 @@ app.whenReady().then(async () => {
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
     const paneWindow = new BrowserWindow({ show: true, width: 1280, height: 800 });
     const pane = new PlannerPreviewView(() => paneWindow);
-    pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null, ["http://localhost:6006"]);
+    pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null);
     pane.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
-    const paneDriver = createPreviewDriverFactory(() => pane).for(
-      process.env.COLO_DRIVER_UNIT_URL,
-      ["http://localhost:6006"],
-    );
+    const paneDriver = createPreviewDriverFactory(() => pane).for(process.env.COLO_DRIVER_UNIT_URL);
     const paneOpened = await paneDriver.open("/", "기본");
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });
     await paneDriver.destroy();
@@ -872,8 +867,7 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
   const template = buildMenuTemplate({
     preview: {
       reload: noop,
-      history: noop,
-      cycleTab: (delta) => deltas.push(delta),
+      history: (delta) => deltas.push(delta),
       zoomIn: noop,
       zoomOut: noop,
       zoomReset: noop,
@@ -891,11 +885,6 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
   assert.equal(byAccelerator("CmdOrCtrl+[").label, "뒤로");
   assert.equal(byAccelerator("CmdOrCtrl+]").label, "앞으로");
   assert.equal(byAccelerator("CmdOrCtrl+L").label, "주소로 이동");
-  // 탭 전환(인앱 브라우저 계획 §3 규칙 8): 메뉴에 오는 것은 ⌘⇧[/⌘⇧] 쌍뿐이다
-  // — ⌘T(새 탭)·⌘W(탭 닫기)는 뷰 포커스 스코프라 before-input-event 채널로
-  // 가고, 메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
-  assert.equal(byAccelerator("CmdOrCtrl+Shift+[").label, "이전 탭");
-  assert.equal(byAccelerator("CmdOrCtrl+Shift+]").label, "다음 탭");
   assert.equal(byAccelerator("CmdOrCtrl+=").label, "확대");
   assert.equal(byAccelerator("CmdOrCtrl+-").label, "축소");
   assert.equal(byAccelerator("CmdOrCtrl+0").label, "실제 크기");
@@ -907,9 +896,9 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
   assert.ok(!roles.includes("zoomIn"), "no role:zoomIn");
   assert.ok(!roles.includes("zoomOut"), "no role:zoomOut");
   assert.ok(!roles.includes("resetZoom"), "no role:resetZoom");
-  // 탭 전환 클릭은 방향을 그대로 뷰로 옮긴다 — 이전/다음이 뒤집히면 여기서 걸린다.
-  byAccelerator("CmdOrCtrl+Shift+[").click();
-  byAccelerator("CmdOrCtrl+Shift+]").click();
+  // 클릭은 방향을 그대로 뷰로 옮긴다 — 뒤로/앞으로가 뒤집히면 여기서 걸린다.
+  byAccelerator("CmdOrCtrl+[").click();
+  byAccelerator("CmdOrCtrl+]").click();
   assert.deepEqual(deltas, [-1, 1]);
 });
 
@@ -958,7 +947,6 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
     preview: {
       reload: noop,
       history: noop,
-      cycleTab: noop,
       zoomIn: noop,
       zoomOut: noop,
       zoomReset: noop,
@@ -986,14 +974,11 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
     if (accelerator === "Alt+CmdOrCtrl+I") continue;
     assert.ok(constantAccelerators.has(accelerator), `${accelerator} comes from the constant`);
   }
-  // 새 엔트리(⌘⇧[/⌘⇧], 탭 전환)도 같은 규칙 안에 산다 — ⊆ 루프는 빠진 것을
-  // 증명하지 못하니, 메뉴에 실제로 도착했는지를 먼저 확인한다.
-  for (const accelerator of ["CmdOrCtrl+Shift+[", "CmdOrCtrl+Shift+]"]) {
+  // ⌘T(새 대화)는 앱 전역 항목이라 메뉴에도 상수에도 같은 자리에 산다 —
+  // ⊆ 루프는 빠진 것을 증명하지 못하니, 메뉴에 실제로 도착했는지 확인한다.
+  for (const accelerator of ["CmdOrCtrl+T", "CmdOrCtrl+R"]) {
     assert.ok(menuAccelerators.includes(accelerator), `${accelerator} is a menu item`);
   }
-  // ⌘T(새 탭)·⌘W(탭 닫기)는 일부러 메뉴 항목이 아니다(인앱 브라우저 계획
-  // §3 규칙 8): preview 뷰 포커스에서만 뜻이 있는 키라 before-input-event
-  // 채널로 가고, 상수·메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
 });
 
 // ---------------------------------------------------------------------------

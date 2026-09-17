@@ -1,18 +1,19 @@
 import type {
+  ChangedFileLite,
   ColoDesignPinEnvelope,
   DeveloperReview,
   DiffFile,
   SessionState,
 } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Fold, useFoldNotice } from "../../components";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
-import { ownerRepoOf } from "../../lib/format";
+import { ownerRepoOf, timeAgo } from "../../lib/format";
 import type { Journey } from "../../lib/journey";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn, reviewToTurn } from "../../lib/preview-turns";
@@ -21,9 +22,9 @@ import {
   isReplyConfirmed,
   loadHandledReviews,
   markReplyConfirmed,
+  markRepoPrepSeen,
   saveHandledReview,
 } from "../../lib/settings";
-import { JourneyMap } from "../chat/JourneyMap";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
@@ -43,6 +44,7 @@ import {
   TrashIcon,
   WarnIcon,
 } from "../icons";
+import { JourneyDots } from "../journey/JourneyDots";
 import { errorKindOf, ProgressPanel } from "../onboarding/RepoProgress";
 import {
   type PreviewError,
@@ -52,6 +54,7 @@ import {
 } from "../preview/PreviewHost";
 import { HistoryDrawer } from "../shell/HistoryDrawer";
 import { Tip } from "../shell/Tip";
+import { ChangedFiles } from "./ChangedFiles";
 import { FILE_STATUS_LABEL } from "./DiffPanel";
 
 /**
@@ -107,6 +110,9 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
       );
   }
 }
+
+/** 변경 점의 빈 값 — 같은 이유(렌더마다 새 배열)로 상수 하나. */
+const NO_CHANGED_FILES: ChangedFileLite[] = [];
 /** 버리기 확인의 ±수 — 헝크 본문의 +/− 줄만 센다 (헤더는 hunk.header 에 따로). */
 function diffCounts(file: DiffFile): { added: number; removed: number } {
   let added = 0;
@@ -219,6 +225,7 @@ export function ScreenPanel({
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
   const ready = phase === "ready";
+  const connectionLost = connection === "closed" || connection === "error";
   /**
    * A failed repo.sync is answered in this column, right above the preview
    * it could not bring up — the rail and the chat stay usable while it runs.
@@ -255,25 +262,6 @@ export function ScreenPanel({
    */
   const [location, setLocation] = useState<PreviewLocation | null>(null);
   /**
-   * 본 곳 표식: 이번 수정 이후
-   * 기획자의 눈이 닿은 화면·상태. 위치 보고(onLocation)가 이미 흐르고 있으니
-   * 표식은 공짜다 — 파일을 쓴 턴이 끝나면(pendingChanges 가 움직이면) 전부
-   * 비운다. 칸이 말하는 것은 "존재한다"가 아니라 "이 수정 이후로 내 눈이
-   * 닿았다"다. 영속 상태는 없다(세션 동안만 산다).
-   */
-  const [visited, setVisited] = useState<Set<string>>(new Set());
-  // 확인할 곳 목록: 토스트가 접혀도 사서 칩이 순회하는 몸통 — 토스트·칩은
-  // 모두 이 한 목록의 뷰다. 핀이 없던 턴은 목록조차 없다(채팅의 답이 기록).
-  const [followSpots, setFollowSpots] = useState<Array<{ screen: string; state: string }>>([]);
-  const pendingNow = repo?.pendingChanges ?? 0;
-  const pendingWas = useRef(pendingNow);
-  if (pendingWas.current !== pendingNow) {
-    pendingWas.current = pendingNow;
-    setVisited(new Set());
-    // 저장·넘기기로 변경이 비워지면 직전 턴의 확인 목록도 소비된 것이다.
-    if (pendingNow === 0) setFollowSpots([]);
-  }
-  /**
    * The ask and the view's word are facts about ONE preview. A project
    * switch changes `repo.root` in the same message that changes the url, so
    * both reset HERE, during render — before NativeHost's effects could
@@ -289,40 +277,26 @@ export function ScreenPanel({
     setLocation(null);
   }
 
-  // 칸 표식: 뷰가 보고하는 곳마다 찍고, pendingChanges 가 움직이는 순간(파일을
-  // 쓴 턴의 끝 · 저장) 전부 비운다 — 렌더 중 재설정은 위 askRoot 패턴과 같다.
-  // 링크로 연 외부 페이지(external)는 미리보기의 화면이 아니니 찍지 않는다.
-  const visitPath = location && !location.external ? location.path : null;
-  useEffect(() => {
-    if (!visitPath) return;
-    const [route, query = ""] = visitPath.split("?");
-    const state = new URLSearchParams(query).get("state") ?? "default";
-    setVisited((prev) => {
-      const key = `${route}|${state}`;
-      if (prev.has(key)) return prev;
-      const next = new Set(prev);
-      next.add(key);
-      return next;
-    });
-  }, [visitPath]);
   /** 저장 기록 도킹 패널 — 더 보기 ▾ 메뉴에서 열고 닫는다(토글). */
   const [historyOpen, setHistoryOpen] = useState(false);
   /** 도킹이 무대와 나란히 설 폭 — 좁으면 패널이 무대를 덮는 폴백(cover)으로. */
   const [historyCover, setHistoryCover] = useState(false);
-  const stageRowRef = useRef<HTMLDivElement>(null);
+  // 무대 줄은 콜백 참조로 받는다 — 패널이 준비 화면으로 먼저 뜨면(ref 를 한
+  // 번 읽고 마는 효과) 줄이 나중에 그려져도 관측이 영영 안 달렸다. 줄이
+  // 그려지는 순간 상태로 올라와 효과가 다시 달린다.
+  const [stageRow, setStageRow] = useState<HTMLDivElement | null>(null);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
   // The stage floor is ~320px and the pane ~348px — below ~700px of row the
   // two cannot stand side by side, and the pane joins the cover convention
   // instead: data-cover-stage freezes the view, honestly, like a modal did.
   useEffect(() => {
-    const node = stageRowRef.current;
-    if (!node) return;
-    const measure = () => setHistoryCover(node.clientWidth < 700);
+    if (!stageRow) return;
+    const measure = () => setHistoryCover(stageRow.clientWidth < 700);
     measure();
     const observer = new ResizeObserver(measure);
-    observer.observe(node);
+    observer.observe(stageRow);
     return () => observer.disconnect();
-  }, []);
+  }, [stageRow]);
   /** 더 보기 ▾ 메뉴 — 점검·기록·버리기의 자리. */
   const [menuOpen, setMenuOpen] = useState(false);
   /** 변경 버리기 확인 — this app's dialog, with the file list it names. */
@@ -335,22 +309,28 @@ export function ScreenPanel({
   /** The row with an open 답하기 input. */
   const [devReplyFor, setDevReplyFor] = useState<number | null>(null);
   const [devReplyText, setDevReplyText] = useState("");
+  useEffect(() => {
+    // 초안은 행 하나의 것이지 패널의 것이 아니다 — 답하는 행을 옮기면 그 행의
+    // 초안이 다른 행의 입력칸에 앉아 있으면 안 된다.
+    setDevReplyText("");
+  }, [devReplyFor]);
   /** The 답하기 that still owes the planner the GitHub-writes confirmation. */
   const [replyConfirmFor, setReplyConfirmFor] = useState<number | null>(null);
   const [devBusy, setDevBusy] = useState(false);
   const devPanelRef = useRef<HTMLDivElement>(null);
   useModalFocus(devPanelRef, devPanelOpen);
+  // Escape 는 최상단 오버레이의 몫이다 — 위에 대화상자나 팔레트가 떠 있으면
+  // 이 패널은 닫지 않는다. GitHub 쓰기 확인이 떠 있는 동안엔 아예 귀를 닫는다:
+  // 그 확인의 Escape 다.
+  useModalEscape(
+    devPanelRef,
+    () => setDevPanelOpen(false),
+    devPanelOpen && replyConfirmFor === null,
+  );
   useEffect(() => {
     if (!devPanelOpen) return;
     devPanelRef.current?.focus();
-    const onKeydown = (event: KeyboardEvent) => {
-      // GitHub 쓰기 확인이 위에 떠 있으면 Escape 는 그 확인의 몫이다.
-      if (replyConfirmFor !== null) return;
-      if (event.key === "Escape") setDevPanelOpen(false);
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [devPanelOpen, replyConfirmFor]);
+  }, [devPanelOpen]);
   // 기록이 거절당해도 침묵하지 않는다. 트레이는
   // 이미 비었고 턴은 나갔다(전달 우선) — 이 띠만이 왜 이번 사이클의 핀들이
   // 풀 리퀘스트 본문의 `### 수정 요청` 에서 빠지는지 말해 준다.
@@ -374,6 +354,11 @@ export function ScreenPanel({
     syncError.clear();
     void api.repoSync().catch((e: Error) => syncError.show(e.message));
   }, [api]);
+
+  // 오버레이의 핀 그릇은 렌더마다 새로 만들지 않는다 — NativeHost 는 이
+  // sync 객체가 바뀔 때마다 preview.pins 를 쏜다. 매 렌더의 새 배열은
+  // 바뀌지 않아도 될 IPC 를 매번 일으킨다.
+  const pinsFrame = useMemo(() => pinsSync(pins.ghosts, pins.list), [pins.ghosts, pins.list]);
 
   /**
    * The stopped screen's 다시 시작. Every bring-up reclaims the declared port
@@ -423,6 +408,8 @@ export function ScreenPanel({
   };
   useEffect(() => {
     if (phase === "ready") {
+      // 첫 준비가 끝난 기기다 — 다음 준비부터 대기 카드는 이름만 말한다.
+      markRepoPrepSeen();
       askArmed.current = false;
       setAskNote(null);
       return;
@@ -472,6 +459,16 @@ export function ScreenPanel({
       .catch((e: Error) => syncError.show(e.message))
       .finally(() => setRefreshing(false));
   }, [api, sessionId]);
+  /** 상태 확인의 빈 답 — 내용 영역의 띠 대신 누른 버튼 곁의 한 줄. 같은
+   * 말을 다시 싣으면 이전 타이머를 지운다 — 답이 온전히 6 초를 살게. */
+  const [checkNote, setCheckNote] = useState<string | null>(null);
+  const checkNoteTimer = useRef<number | null>(null);
+  const showCheckNote = useCallback((text: string) => {
+    setCheckNote(text);
+    if (checkNoteTimer.current !== null) window.clearTimeout(checkNoteTimer.current);
+    checkNoteTimer.current = window.setTimeout(() => setCheckNote(null), 6_000);
+  }, []);
+
   /** 넘기기 단계의 상태 다시 확인: GitHub 의 답을 다시 읽어 칩과 스테퍼에
    * 반영한다. quiet 재사용: 데이터만 갱신하고
    * 패널은 열지 않는다 — 프로젝트가 활성화될 때 조용히 한 번 읽어, 며칠
@@ -510,12 +507,10 @@ export function ScreenPanel({
               setDevPanelOpen(true);
             } else if (state !== prevState) {
               // 상태만의 이동 — 방은 열지 않는다. 새 말은 칩이 입고
-              // (role=status 라이브 리전), 이 띠는 어디를 보라는지만 말한다.
-              setCheckNote("상태가 바뀌었습니다 — 위의 상태 칩을 확인해 주세요");
-              window.setTimeout(() => setCheckNote(null), 6_000);
+              // (role=status 라이브 리전), 이 노트는 어디를 보라는지만 말한다.
+              showCheckNote("상태가 바뀌었습니다 — 왼쪽 상태 칩을 확인해 주세요");
             } else {
-              setCheckNote("방금 확인함 · 변화 없음");
-              window.setTimeout(() => setCheckNote(null), 6_000);
+              showCheckNote("방금 확인함 · 변화 없음");
             }
           }
           await api.repoStatus();
@@ -524,7 +519,7 @@ export function ScreenPanel({
           if (!quiet) syncError.show(e.message);
         });
     },
-    [api, repo?.handoff?.state],
+    [api, repo?.handoff?.state, showCheckNote],
   );
   useEffect(() => {
     readHandoffState(true);
@@ -549,6 +544,115 @@ export function ScreenPanel({
     phase,
     shelf: repo?.shelf ?? null,
   });
+  // --- 보낸 화면 동결 (preview.md §1-E) ----------------
+  // 넘긴 사이클이 서 있는 동안 스테이지는 얼린 얼굴을 쓴다 — PreviewHost 는
+  // 입히기만 하고, 무엇을 얼리는지는 delivery 를 소유한 이 패널이 정한다.
+  // 샷의 존재 여부는 따로 묻지 않는다: `handoffShot` 의 null 답이 곧
+  // "이 화면은 보낸 캡처가 없다" 이다 — 넘긴 화면 목록은 데몬의
+  // captureTargets(코멘트 경로)이 만들고, 웹은 지금 보는 화면의 route·state
+  // 로 한 장씩 묻는다.
+  const handoffState = handoff?.state ?? null;
+  const frozenCycle =
+    handoffState === "open" ||
+    handoffState === "changes_requested" ||
+    handoffState === "merged" ||
+    handoffState === "closed";
+  const frozenWhere = location?.path ?? (target?.kind === "path" ? target.path : "/");
+  const [frozenRoute = "/", frozenQuery = ""] = frozenWhere.split("?");
+  const frozenState = new URLSearchParams(frozenQuery).get("state");
+  const [frozenShot, setFrozenShot] = useState<{ mediaType: string; data: string } | null>(null);
+  const frozenShotKey = `${handoff?.number ?? ""}|${frozenRoute}|${frozenState ?? ""}`;
+  useEffect(() => {
+    if (!frozenCycle) {
+      setFrozenShot(null);
+      return;
+    }
+    let cancelled = false;
+    setFrozenShot(null);
+    void api
+      .handoffShot(frozenRoute, frozenState)
+      .then((shot) => {
+        if (!cancelled) setFrozenShot(shot);
+      })
+      .catch(() => {
+        if (!cancelled) setFrozenShot(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // frozenShotKey 가 route·state·PR 번호를 다 품는다 — 셋은 읽기 편의로
+    // 나란히 둔다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, frozenCycle, frozenShotKey]);
+  // 얼굴의 기본값: 넘기고 손 안 댄 사이클은 보낸 화면이 먼저다. 새 작업이
+  // 시작되면(pendingChanges > 0) 얼린 화면을 보여 주는 것은 거짓말이라
+  // 지금 화면으로 돌아온다 — 되돌아가는 것은 세그먼트의 몫이다.
+  const [frozenMode, setFrozenMode] = useState<"sent" | "live">("live");
+  const [frozenStampGone, setFrozenStampGone] = useState(false);
+  const frozenCycleKeyRef = useRef<string | null>(null);
+  const frozenCycleKey = `${handoff?.number ?? ""}|${handoffState ?? ""}`;
+  if (frozenCycleKeyRef.current !== frozenCycleKey) {
+    frozenCycleKeyRef.current = frozenCycleKey;
+    setFrozenMode(
+      (handoffState === "open" || handoffState === "changes_requested") &&
+        (repo?.pendingChanges ?? 0) === 0
+        ? "sent"
+        : "live",
+    );
+    setFrozenStampGone(false);
+  }
+  useEffect(() => {
+    if (frozenCycle && (repo?.pendingChanges ?? 0) > 0) setFrozenMode("live");
+  }, [frozenCycle, repo?.pendingChanges]);
+  // 도장의 시각: 테이프의 cycle.handed 마일스톤이 PR 번호로 찾는 유일한
+  // 원천이다 — HandoffStatus 에 handedAt 이 없다(설계의 새 필드, 미구현).
+  // 못 찾으면 시각 없는 도장으로 떨어진다.
+  const handedAt = useMemo(() => {
+    if (!handoff) return null;
+    for (const view of Object.values(daemon.sessions)) {
+      for (const block of view.blocks) {
+        if (
+          block.type === "milestone" &&
+          block.subtype === "handed" &&
+          block.pr === handoff.number
+        ) {
+          return block.at;
+        }
+      }
+    }
+    return null;
+  }, [daemon.sessions, handoff]);
+  const sentAgo = handedAt ? timeAgo(Date.parse(handedAt)) : "";
+  const frozenStamp =
+    handoffState === "merged"
+      ? "실제 앱 · 반영된 화면"
+      : handoffState === "closed"
+        ? "반려된 화면"
+        : sentAgo === ""
+          ? "보낸 화면"
+          : sentAgo === "방금"
+            ? "방금 보낸 화면"
+            : `${sentAgo}에 보낸 화면`;
+  const frozenTone: "info" | "ok" | "warn" =
+    handoffState === "merged" ? "ok" : handoffState === "closed" ? "warn" : "info";
+  // 반영됨 도장은 6 초만 산다 — 종착의 인사지 새 상태가 아니다.
+  useEffect(() => {
+    if (handoffState !== "merged") return;
+    const timer = window.setTimeout(() => setFrozenStampGone(true), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [handoffState]);
+  const frozen =
+    frozenCycle && !frozenStampGone
+      ? {
+          shot: frozenShot,
+          stamp: frozenStamp,
+          tone: frozenTone,
+          mode: frozenMode,
+          // 눌러도 없는 것은 버튼이 아니다 — 샷이 있을 때만 왕복 손잡이를 단다.
+          ...(frozenShot !== null ? { onMode: setFrozenMode } : {}),
+        }
+      : null;
+
   // 되돌릴 수 없는 동작의 행선 — 회사가
   // 부르는 이름(owner/repo)로, git 어휘는 아니다.
   const activeProject = projects.find((project) => project.slug === activeSlug) ?? null;
@@ -628,8 +732,6 @@ export function ScreenPanel({
   /** 펼쳐 읽은 개발자 코멘트: "모두 AI에게"는
    * 전부 읽은 뒤에만 눌린다 — 개발자의 말에 "이 방향은 접자"가 섞여 있으므로. */
   const [readReviews, setReadReviews] = useState<Set<number>>(new Set());
-  /** 빈 상태 확인의 한 줄 — 모달 대신. */
-  const [checkNote, setCheckNote] = useState<string | null>(null);
   const handledIds = new Set(
     devReviews && devReviews.length > 0 && devReviews[0]
       ? loadHandledReviews(devReviews[0].pr).map((id) => Number(id))
@@ -642,10 +744,14 @@ export function ScreenPanel({
   const unhandledDevReviews = (devReviews ?? []).filter((review) => !handledIds.has(review.id));
   const unreadReviews = unhandledDevReviews.filter((review) => !readReviews.has(review.id));
 
-  const handleReview = (reviews: DeveloperReview[]) => {
+  const handleReview = async (reviews: DeveloperReview[]) => {
+    const delivered = await onMachineTurn(reviewToTurn(reviews));
+    // 거절(아직 대화가 없어 열지 못한 경우 등)에는 표식을 찍지 않는다 —
+    // askAgent 의 규칙과 같다. 표식이 먼저 가면 배지는 줄고 행은 'AI에게
+    // 보냄'으로 읽히는데 정작 나간 것이 없다.
+    if (!delivered) return;
     for (const review of reviews) saveHandledReview(review.pr, review.id);
     setHandledTick((tick) => tick + 1);
-    void onMachineTurn(reviewToTurn(reviews));
   };
 
   const sendDevReply = async (review: DeveloperReview) => {
@@ -783,7 +889,6 @@ export function ScreenPanel({
       const count = lookKey.current === key ? lookCount.current + 1 : 1;
       lookKey.current = key;
       lookCount.current = count;
-      lookSentThisTurn.current = true;
       const images = snapshot?.jpeg
         ? [{ mediaType: "image/jpeg", data: snapshot.jpeg }]
         : undefined;
@@ -794,101 +899,29 @@ export function ScreenPanel({
           ? `콘솔 마지막 기록:\n${snapshot.console.join("\n")}`
           : "",
       ].filter(Boolean);
-      await onMachineTurn(
+      const delivered = await onMachineTurn(
         lookToTurn(route, state ?? "default", lines.join("\n\n"), count),
         undefined,
         images,
         // 게이트 재배선: 이 캡처가 가리킨 화면이 턴의 게이트 입력이다.
         [{ screen: route, state: state ?? null }],
       );
+      // 거절당한 요청은 '보냈습니다'로 기억하지 않는다 — 다시 누를 수 있어야.
+      lookSentThisTurn.current = delivered;
+    } catch (e) {
+      // 스냅샷 IPC 가 죽거나 턴이 거절돼도 조용히 삼키지 않는다 — try/finally
+      // 만이던 이전 몸은 거절을 창 밖으로 흘려 아무 표시도 남기지 않았다.
+      syncError.show(e instanceof Error ? e.message : String(e));
     } finally {
       setLookBusy(false);
     }
   };
 
-  // --- 확인할 곳: 이번 턴이 가리킨 화면들 --------------------------------
-  // 핀·캡처가 실은 화면들 — 턴이 끝나면 칩이 순회한다. 고스트 배지는 턴이
-  // 끝나면 사라지므로 도는 동안 여기 붙잡아 두고, 끝나는 순간 칩이 읽는
-  // 목록으로 바꾼다. 핀의 크롭이 곧 기획자가 지목한 '고치기 전' 그림이다.
-  const ghostSpotsRef = useRef<Array<{ screen: string; state: string }>>([]);
-  if (turnState === "running") {
-    ghostSpotsRef.current = pins.ghosts.map((ghost) => ({
-      screen: ghost.screen,
-      state: ghost.state,
-    }));
-  }
-
-  /** 칩의 분자: 이번 목록 가운데 눈이 닿은 자리 수. */
-  const followDone = followSpots.filter((spot) =>
-    visited.has(`${spot.screen}|${spot.state}`),
-  ).length;
-  /** 칩 순회: 아직 안 본 첫 자리로 옮긴다 — 전부 보면 칩이 먼저 사라진다. */
-  const cycleFollowSpot = useCallback(() => {
-    const next = followSpots.find((spot) => !visited.has(`${spot.screen}|${spot.state}`));
-    if (next)
-      setTarget({
-        kind: "path",
-        path: `/${next.screen}${next.state ? `?state=${next.state}` : ""}`,
-      });
-  }, [followSpots, visited]);
-
-  /** The planner's own moves are marked — a turn's end may not steal them. */
-  const handleNavigate = useCallback((ask: PreviewTarget) => {
-    setTarget(ask);
-  }, []);
-
-  useEffect(() => {
-    if (turnState === "running") {
-      setFollowSpots([]);
-      return;
-    }
-    const spots: Array<{ screen: string; state: string }> = [];
-    const seenSpots = new Set<string>();
-    for (const spot of ghostSpotsRef.current) {
-      const key = `${spot.screen}|${spot.state}`;
-      if (seenSpots.has(key)) continue;
-      seenSpots.add(key);
-      spots.push(spot);
-    }
-    ghostSpotsRef.current = [];
-    // 목록은 칩이 순회하는 몸통이다. 핀이 없던 턴은 빈 목록으로 끝난다.
-    setFollowSpots(spots);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnState]);
-
   // --- 선예열 ----------------------------------------
-  // 요약·초안을 묻는 시점을 버튼 클릭에서 턴의 끝으로 옮긴다. 데몬 캐시(요약은
-  // diff 해시, 초안은 브랜치 tip)가 나머지를 하므로 검토 화면을 여는 속도가
-  // 곧 8단계의 체감 속도다. 요약 캐시는 diff 해시 키라 기획자가 이어서 고치는
-  // 동안의 예열은 대부분 버려진다 — 턴이 끝나고 새 턴 없이 20초 뒤에 묻는다.
-  // 저장하지 않을 턴에는 아예 돌지 않는다(pendingChanges 0 게이트).
+  // 초안을 묻는 시점을 버튼 클릭에서 저장의 끝으로 옮긴다. 데몬 캐시(초안은
+  // 브랜치 tip)가 나머지를 하므로 넘기기 카드를 여는 속도가 곧 체감 속도다.
   const daemonRef = useRef(daemon);
   daemonRef.current = daemon;
-  const prewarmWasRunning = useRef(false);
-  const summarizeTimer = useRef<number | null>(null);
-  useEffect(() => {
-    if (turnState === "running") {
-      prewarmWasRunning.current = true;
-      if (summarizeTimer.current !== null) window.clearTimeout(summarizeTimer.current);
-      summarizeTimer.current = null;
-      return;
-    }
-    const settledNow = prewarmWasRunning.current;
-    prewarmWasRunning.current = false;
-    if (!settledNow) return;
-    summarizeTimer.current = window.setTimeout(() => {
-      summarizeTimer.current = null;
-      if ((daemonRef.current.repo?.pendingChanges ?? 0) > 0) {
-        void daemonRef.current.api.summarizeDiff().catch(() => undefined);
-      }
-    }, 20_000);
-    return () => {
-      if (summarizeTimer.current !== null) {
-        window.clearTimeout(summarizeTimer.current);
-        summarizeTimer.current = null;
-      }
-    };
-  }, [turnState]);
   // 초안 예열: 저장이 끝날 때마다(published) 한 번 — 이어지는 넘기기 복도의
   // 캐시 미스(tip이 방금 움직였다)를 미리 채운다.
   const prewarmStage = useRef<string | null>(null);
@@ -935,8 +968,8 @@ export function ScreenPanel({
           detail={repo?.detail ?? null}
           errorKind={errorKind}
           note={askNote}
+          connectionLost={connectionLost}
           onRetry={sync}
-          onForceRestart={restart}
           onAskAgent={() => void askAgent()}
           onApproveCommands={
             activeSlug
@@ -966,7 +999,7 @@ export function ScreenPanel({
       {barSlot
         ? createPortal(
             <div className="screenpanel__bar">
-              {journey ? <JourneyMap journey={journey} title={journeyTitle} /> : null}
+              {journey ? <JourneyDots journey={journey} title={journeyTitle} /> : null}
               {delivery ? (
                 <span className="selector screenpanel__statuswrap">
                   {statusOpen && (
@@ -1114,7 +1147,14 @@ export function ScreenPanel({
                     </Tip>
                     {delivery.actions.check && (
                       <Tip
-                        label="개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
+                        /* 빈 답( screenpanel__checknote )이 버튼 아래 서 있는
+                          6 초 동안은 설명 tip 이 답을 덮는다 — 같은 자리다.
+                          답이 말을 대신하므로 설명은 그 동안 눕혀 둔다. */
+                        label={
+                          checkNote
+                            ? undefined
+                            : "개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
+                        }
                         side="bottom"
                       >
                         <button
@@ -1163,6 +1203,15 @@ export function ScreenPanel({
                     </span>
                   </>
                 )}
+                {/* 상태 확인의 빈 답 — 누른 버튼 아래에서 대답한다. 내용
+              영역의 띠가 아니라 여기인 이유: 원인(클릭)과 결과(말)가 같은
+              자리에 있어야 눈이 옮겨 다니지 않고, 내용물은 위아래로
+              흔들리지 않는다. role=status 는 띠의 낭독을 이어받는다. */}
+                {checkNote && (
+                  <span className="selector__menu screenpanel__checknote" role="status">
+                    {checkNote}
+                  </span>
+                )}
               </span>
               <span className="screenpanel__divider" />
               <Tip
@@ -1192,21 +1241,6 @@ export function ScreenPanel({
                   </span>
                 </button>
               </Tip>
-              {followSpots.length > 0 && followDone < followSpots.length && (
-                <Tip
-                  label="이번 수정에서 아직 안 본 화면으로 옮겨 갑니다"
-                  side="bottom"
-                  align="end"
-                >
-                  <button
-                    type="button"
-                    className="ghost screenpanel__followchip"
-                    onClick={cycleFollowSpot}
-                  >
-                    확인 {followDone}/{followSpots.length}
-                  </button>
-                </Tip>
-              )}
               <span className="screenpanel__more">
                 <Tip
                   label={menuOpen ? undefined : "저장 기록 · 변경 버리기"}
@@ -1392,11 +1426,6 @@ export function ScreenPanel({
           <span className="notice__text">{lookBlocked}</span>
         </div>
       )}
-      {checkNote && (
-        <div className="notice notice--info" role="status">
-          <span className="notice__text">{checkNote}</span>
-        </div>
-      )}
       {/* The row lets the history pane stand BESIDE the stage — docking
           (not overlaying) is how a DOM layer shares the column with the
           native view: the slot's rect shrinks and the view's bounds follow.
@@ -1404,7 +1433,7 @@ export function ScreenPanel({
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
       <div
-        ref={stageRowRef}
+        ref={setStageRow}
         className={`previewcol__row${historyCover ? " previewcol__row--cover" : ""}`}
       >
         <div className={`previewcol__stage${settleFlash ? " previewcol__stage--settled" : ""}`}>
@@ -1414,8 +1443,8 @@ export function ScreenPanel({
               detail={repo?.detail ?? null}
               errorKind={errorKind}
               note={askNote}
+              connectionLost={connectionLost}
               onRetry={sync}
-              onForceRestart={restart}
               onAskAgent={() => void askAgent()}
               onApproveCommands={
                 activeSlug
@@ -1431,7 +1460,6 @@ export function ScreenPanel({
             <PreviewHost
               url={repo?.previewUrl ?? null}
               epoch={repo?.previewEpoch ?? null}
-              origins={repo?.previewOrigins ?? []}
               stopped={previewStopped}
               stoppedDetail={repo?.detail ?? null}
               onRestart={restart}
@@ -1439,15 +1467,17 @@ export function ScreenPanel({
               onPinFocus={onPinFocus}
               onFixError={forwardError}
               target={target}
-              sync={pinsSync(pins.ghosts, pins.list)}
-              onNavigate={handleNavigate}
+              sync={pinsFrame}
+              onNavigate={setTarget}
               onLocation={setLocation}
               location={location}
               commentsOn={commentsOn}
               onCommentsMode={onCommentsMode}
               onLook={(note) => void sendLook(note)}
               lookBusy={lookBusy}
-              drivingTabs={daemon.browserDriving}
+              driving={daemon.browserDriving}
+              frozen={frozen}
+              frozenApi={frozen ? { api, sessionId: sessionId ?? null } : null}
             />
           )}
           {historyOpen && (
@@ -1551,7 +1581,7 @@ export function ScreenPanel({
                       aria-disabled={devBusy || unreadReviews.length > 0}
                       onClick={() => {
                         if (devBusy || unreadReviews.length > 0) return;
-                        handleReview(unhandledDevReviews);
+                        void handleReview(unhandledDevReviews);
                         setDevPanelOpen(false);
                       }}
                     >
@@ -1582,7 +1612,7 @@ export function ScreenPanel({
                                   className="primary"
                                   disabled={devBusy}
                                   onClick={() => {
-                                    handleReview([review]);
+                                    void handleReview([review]);
                                     setDevPanelOpen(false);
                                   }}
                                 >
@@ -1676,6 +1706,10 @@ export function ScreenPanel({
           />
         )}
       </div>
+      {/* 변경 점 — the column's floor (mockup 03 · 분할). Below the row, so
+          the stage yields height to it and the native view's bounds follow
+          the slot's rect: docking, never overlaying. */}
+      <ChangedFiles files={repo?.changedFiles ?? NO_CHANGED_FILES} />
     </div>
   );
 }

@@ -6,7 +6,6 @@ import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./e
 import { createGitHubTransport, GitHubClient } from "./github.js";
 import { createFileLogger } from "./log.js";
 import { runOnboardingChecks } from "./onboarding.js";
-import { sweepOrphanedPreviewClaims } from "./preview-claim.js";
 import { ProjectRegistry } from "./projects.js";
 import { RepoWorkspace } from "./repo.js";
 import { DaemonServer } from "./server.js";
@@ -50,7 +49,7 @@ async function doctor(): Promise<number> {
     registryProbeDir: null,
   });
 
-  // The onboarding checks are doctor's product surface (DESIGN §8, PLAN M1).
+  // The onboarding checks are doctor's product surface (PLAN M1).
   const credentials = createCredentialStore();
   await migratePlaintextSecrets(credentials);
 
@@ -136,9 +135,6 @@ async function main(): Promise<void> {
   process.on("unhandledRejection", (reason) =>
     logger.error("미처리 거부", { err: reason instanceof Error ? reason : String(reason) }),
   );
-  // 고아 미리보기 회수: 죽은 인스턴스가 남긴 claim 의 리스너를 정리한다 —
-  // 동적 포트 시대에는 선언 포트 충돌이 이 일을 대신해 주지 않는다.
-  void sweepOrphanedPreviewClaims().catch(() => undefined);
 
   const server = new DaemonServer({ ...config, logger });
   try {

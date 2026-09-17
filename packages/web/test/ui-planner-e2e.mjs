@@ -159,7 +159,7 @@ async function main() {
   await page.getByRole("button", { name: "연결" }).click();
 
   // --- 1. connecting lands on the home inbox; a conversation opens the workspace ---
-  //     홈 인박스가 기본 뷰다(P1 §2) — 대화 화면은 새 대화 leaf 가 연다.
+  //     홈 인박스가 기본 뷰다(P1) — 대화 화면은 새 대화 leaf 가 연다.
   await page.waitForSelector(".planner__work", { timeout: 60000 });
   await page.locator(".leaf--start").first().click();
   await page.waitForSelector(".planner__body", { timeout: 60000 });

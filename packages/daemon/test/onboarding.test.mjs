@@ -1,6 +1,6 @@
 /**
  * Onboarding step checks — offline, against a stubbed PATH (fake git and a
- * fake claude CLI) and a local fixture repo remote. Covers the §8 contract:
+ * fake claude CLI) and a local fixture repo remote. Covers the contract:
  * Korean failure reasons, fix kinds, pass/warn/fail transitions, and the
  * registry→npmrc merge.
  *

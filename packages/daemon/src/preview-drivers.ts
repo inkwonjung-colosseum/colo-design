@@ -1,9 +1,6 @@
 import type { HandoffShot } from "@colo-design/protocol";
 import { type DaemonNotice, noticeForState } from "./notices.js";
-import type {
-  PreviewCapture,
-  PreviewDriverFactory,
-} from "./preview-driver.js";
+import type { PreviewCapture, PreviewDriverFactory } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
 import { type GateScreen, gateBrief, inspectScreens, type ScreenTrouble } from "./screen-gate.js";
 import { NEW_SESSION_TITLE, type Session } from "./session.js";
@@ -28,8 +25,15 @@ const SHOT_EXTENSIONS: Record<string, string> = {
 export interface PreviewDriverDeps {
   /** 데스크톱만 드라이버 공장을 주입한다 — 브라우저 개발 경로에는 창 자체가 없다. */
   factory(): PreviewDriverFactory | undefined;
-  /** 활성 프로젝트의 레포 — 프리뷰 주소·클론 여부·repo 설정의 출처. */
+  /** 활성 프로젝트의 레포 — 캡처 등 화면의 현재 주인을 묻는 경로의 출처. */
   activeRepo(): RepoWorkspace | null;
+  /**
+   * 세션이 사는 프로젝트의 레포 — 게이트의 재검증은 이 기준이다. 활성
+   * 레포와 다른 프로젝트의 세션이 턴을 마쳤을 때 activeRepo 의 주소로
+   * 판정하면 상대 route 핀이 전혀 다른 앱의 화면으로 재해석된다(실사
+   * 결함). 없으면(구현체가 알려주지 않으면) 활성 레포로 물러난다.
+   */
+  repoForSession?(sessionId: string): RepoWorkspace | null;
   session(sessionId: string): Session | undefined;
   sessions(): Iterable<Session>;
   notice(notice: DaemonNotice): void;
@@ -93,43 +97,64 @@ export class PreviewDrivers {
     const screens = [...(this.pinnedThisTurn.get(sessionId)?.values() ?? [])];
     this.pinnedThisTurn.delete(sessionId);
     const session = this.deps.session(sessionId);
-    const done = (): void => {
+    const done = (detail?: string): void => {
+      // 대기 줄이 곧(또는 이미) 새 턴을 열었다면 이 완료 알림은 허위다 — 도는
+      // 턴이 있는데 `작업이 끝났습니다` 가 나간다(턴 끝의 idle 방출과 release
+      // 순서가 만드는 창). 새 턴의 끝이 제 알림을 내므로 여기서는 잠든다.
+      if (this.deps.session(sessionId)?.state !== "idle") return;
       const notice = noticeForState(
         sessionId,
         "idle",
         session?.title ?? NEW_SESSION_TITLE,
         turnDurationMs,
       );
-      if (notice) this.deps.notice(notice);
+      if (notice)
+        this.deps.notice(detail && notice.kind === "done" ? { ...notice, detail } : notice);
     };
     const factory = this.deps.factory();
     if (!factory || !session || screens.length === 0) return done();
-    const status = await this.deps
-      .activeRepo()
-      ?.status()
-      .catch(() => null);
+    // 게이트는 이 세션이 사는 프로젝트를 기준으로 판정한다 — 활성 프로젝트가
+    // 아니라. 턴 도중 프로젝트를 전환한 뒤 끝난 턴의 핀을 활성 레포의 주소로
+    // 다시 열면 전혀 다른 앱의 콘솔이 이 세션의 판정이 된다.
+    const repo = this.deps.repoForSession?.(sessionId) ?? this.deps.activeRepo();
+    const status = await repo?.status().catch(() => null);
     if (!status?.previewUrl) return done();
     // preview origin 밖의 주소는 게이트가 재검증할 대상이 아니다 — 허용된
     // 추가 origin 은 레포의 다른 서버이지, 게이트가 다시 열 화면이 아니다.
     const origin = new URL(status.previewUrl).origin;
-    const kept = screens.filter((screen) => {
+    const kept: GateScreen[] = [];
+    const seen = new Set<string>();
+    for (const screen of screens) {
       try {
-        return new URL(screen.route, origin).origin === origin;
+        const u = new URL(screen.route, origin);
+        if (u.origin !== origin) continue;
+        // 사람의 pin 은 경로로, 에이전트의 navigate·openTab 은 전체 주소로
+        // 온다 — 같은 화면을 두 번 열지 않게 경로로 정규화해 중복을 접는다.
+        const route = u.pathname + u.search + u.hash;
+        const key = `${route}\n${screen.state ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        kept.push({ route, state: screen.state });
       } catch {
-        return false;
+        // 못 읽는 주소는 게이트 입력이 아니다.
       }
-    });
+    }
     if (kept.length === 0) return done();
-    const origins = this.deps.activeRepo()?.repoConfig()?.preview.origins ?? [];
-    const driver = factory.forIsolated(status.previewUrl, origins);
+    const driver = factory.forIsolated(status.previewUrl);
     let troubles: ScreenTrouble[] = [];
+    /** 게이트 스스로 깨진 것 — 판정이 아니라 확인 불능이다. */
+    let broken = false;
     try {
       troubles = await inspectScreens(driver, kept);
     } catch {
-      // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다.
-      troubles = [];
+      // 게이트가 깨지는 것은 턴의 실패가 아니다 — 확인을 못 했을 뿐이다. 그러나
+      // 못했다는 사실까지 삼키면 확인 못 한 턴과 통과한 턴이 같은 침묵이 된다.
+      broken = true;
     } finally {
       await driver.destroy().catch(() => undefined);
+    }
+    if (broken) {
+      return done("화면 확인을 실행하지 못했습니다 — 다음 말에 핀을 다시 찍어 확인해 주세요.");
     }
     // 사용자가 그 사이 다시 보냈으면 이 판정은 낡았다 — 도는 턴에 끼어들지 않는다.
     if (troubles.length === 0 || this.deps.session(sessionId)?.state !== "idle") return done();
@@ -167,8 +192,7 @@ export class PreviewDrivers {
     if (!status?.previewUrl) {
       throw new Error("미리보기 서버가 아직 뜨지 않았습니다 — 잠시 후 다시 시도해 주세요.");
     }
-    const origins = repo.repoConfig()?.preview.origins ?? [];
-    const driver = factory.for(status.previewUrl, origins);
+    const driver = factory.for(status.previewUrl);
     try {
       if (route) {
         const opened = await driver.open(route, state ?? null);
@@ -185,11 +209,10 @@ export class PreviewDrivers {
    * How many captures a 넘기기 would attach — the preview's `### 화면 미리보기`
    * line. Same gates as captureHandoffShots, count only.
    */
-  async handoffShotCount(targets: Array<{ route: string; state: string }>): Promise<number> {
+  async handoffShotCount(targets: Array<{ route: string; state: string | null }>): Promise<number> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return 0;
-    if (repo.repoConfig()?.shots === false) return 0;
     const status = await repo.status().catch(() => null);
     if (!status?.previewUrl || targets.length === 0) return 0;
     return targets.length;
@@ -204,17 +227,14 @@ export class PreviewDrivers {
    * body carries no `### 화면 미리보기` section at all.
    */
   async captureHandoffShots(
-    targets: Array<{ route: string; state: string }>,
+    targets: Array<{ route: string; state: string | null }>,
   ): Promise<HandoffShot[]> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return [];
-    // The repo's refusal is also read at commit time (repo.ts); checking here
-    // spares the window the drive through every screen.
-    if (repo.repoConfig()?.shots === false) return [];
     const status = await repo.status().catch(() => null);
     if (!status?.previewUrl || targets.length === 0) return [];
-    const driver = factory.forIsolated(status.previewUrl, repo.repoConfig()?.preview.origins ?? []);
+    const driver = factory.forIsolated(status.previewUrl);
     const shots: HandoffShot[] = [];
     try {
       for (const target of targets) {

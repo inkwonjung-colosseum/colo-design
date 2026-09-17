@@ -25,7 +25,7 @@
  * not a data structure.
  */
 
-export type TurnMarkerKind = "comments" | "brief" | "gate" | "error" | "review";
+type TurnMarkerKind = "comments" | "brief" | "gate" | "error" | "review";
 
 /**
  * How the preview failed: the page threw, or the dev build serving it did.
@@ -33,7 +33,7 @@ export type TurnMarkerKind = "comments" | "brief" | "gate" | "error" | "review";
  * describe in words (흰 화면 · 무한 로딩 · 통째로 깨진 레이아웃), shown to
  * Claude whole (`이 화면 Claude 에게 보여 주기`).
  */
-export type ErrorMarkerKind = "runtime" | "build" | "look";
+type ErrorMarkerKind = "runtime" | "build" | "look";
 
 const KINDS: readonly TurnMarkerKind[] = ["comments", "brief", "gate", "error", "review"];
 
@@ -71,11 +71,12 @@ export interface CommentMarkerItem {
   intent?: "change" | "question";
 }
 
-export interface CommentsMarker {
+interface CommentsMarker {
   kind: "comments";
   /** The screen title — or `화면 N곳` when one batch spans several. */
   screen: string;
-  state: string;
+  /** 표식 없는 페이지의 핀은 null — 카드 머리글은 상태 절을 생략한다. */
+  state: string | null;
   items: CommentMarkerItem[];
   /** The planner's own sentence on the turn (재설계 C2); absent when they sent pins alone. */
   note?: string;
@@ -98,7 +99,7 @@ export function alignThumbs(items: CommentMarkerItem[], thumbs?: string[]): Arra
   return items.map((item) => (item.shot ? (thumbs[next++] ?? null) : null));
 }
 
-export interface BriefMarker {
+interface BriefMarker {
   kind: "brief";
   /** The thread's title, as the tree shows it. */
   title: string;
@@ -110,7 +111,7 @@ export interface BriefMarker {
   purpose?: "bootstrap" | "refresh" | "conventions";
 }
 
-export interface GateMarker {
+interface GateMarker {
   kind: "gate";
   /** The step that failed, in the planner's own words ("저장한 내용 올리기"). */
   step: string;
@@ -120,8 +121,8 @@ export interface ErrorMarker {
   kind: "error";
   /** The route that was up when the preview failed. */
   route: string;
-  /** The state the screen was showing. */
-  state: string;
+  /** 표식 없는 페이지의 오류는 null — 카드 머리글은 상태 절을 생략한다. */
+  state: string | null;
   /**
    * Runtime exception, dev build failure, or the D89 `look` (a screen with
    * nothing wrong the console can name). The PLAN writes this payload key
@@ -143,7 +144,7 @@ export interface ErrorMarker {
  * `path` is the developer's own location word — the card keeps it out of the
  * first line and behind 자세히 (D37·D38).
  */
-export interface ReviewMarker {
+interface ReviewMarker {
   kind: "review";
   pr: number;
   author: string;
@@ -152,7 +153,7 @@ export interface ReviewMarker {
 
 export type TurnMarker = CommentsMarker | BriefMarker | GateMarker | ErrorMarker | ReviewMarker;
 
-export interface MarkedTurn {
+interface MarkedTurn {
   /** Null when this is an ordinary typed message. */
   marker: TurnMarker | null;
   /** The turn without its marker line — what a card's 자세히 fold shows. */
@@ -196,7 +197,7 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return {
         kind,
         screen: str(data.screen),
-        state: str(data.state),
+        state: data.state === null ? null : str(data.state),
         ...(data.note ? { note: str(data.note) } : {}),
         items: data.items.flatMap((entry): CommentMarkerItem[] => {
           if (!entry || typeof entry !== "object") return [];
@@ -245,7 +246,7 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return {
         kind,
         route: str(data.route),
-        state: str(data.state),
+        state: data.state === null ? null : str(data.state),
         errorKind: errorKind === "build" ? "build" : errorKind === "look" ? "look" : "runtime",
         ...(typeof data.count === "number" && data.count > 1 ? { count: data.count } : {}),
       };

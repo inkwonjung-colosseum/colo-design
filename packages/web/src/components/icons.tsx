@@ -6,7 +6,6 @@
 // visible text labels instead of icon-only names.
 
 import {
-  AppWindow,
   Archive,
   ArrowUp,
   Bell,
@@ -20,20 +19,16 @@ import {
   Command,
   Copy,
   Download,
-  Expand,
   ExternalLink,
   Eye,
   File,
-  FileDiff,
   Folder,
   FolderPlus,
   Gauge,
   GitBranch,
   GitPullRequest,
-  Globe,
   History,
   Home,
-  Info,
   KeyRound,
   Link,
   ListChecks,
@@ -56,13 +51,11 @@ import {
   Shield,
   ShieldCheck,
   ShieldOff,
-  Shrink,
   Smartphone,
   Tablet,
   Trash2,
   TriangleAlert,
   X,
-  Zap,
 } from "lucide-react";
 
 export interface IconProps {
@@ -96,7 +89,6 @@ export const ShieldIcon = make(ShieldCheck, 16);
 export const GaugeIcon = make(Gauge, 13);
 export const ShieldPlainIcon = make(Shield, 13);
 export const ShieldOffIcon = make(ShieldOff, 13);
-export const ZapIcon = make(Zap, 14);
 
 // --- action bar & menus (디자인 패스) ---------------------------------------
 // The cycle's verbs and the menus' rows, one glyph each. A row's glyph names
@@ -112,7 +104,6 @@ export const TrashIcon = make(Trash2, 13);
 export const ArchiveIcon = make(Archive, 13);
 /** 핀 모드 토글 — the picker the preview toolbar wears. */
 export const MapPinIcon = make(MapPin, 13);
-export const DiffIcon = make(FileDiff, 13);
 export const MinusIcon = make(Minus, 12, 2);
 export const ExportIcon = make(Download, 13);
 export const NewChatIcon = make(MessageSquarePlus, 13);
@@ -128,7 +119,6 @@ export const CommandIcon = make(Command, 12);
 export const BellIcon = make(Bell, 13);
 export const ThemeIcon = make(Palette, 13);
 export const BrainIcon = make(Brain, 13);
-export const InfoIcon = make(Info, 13);
 export const StepsIcon = make(ListChecks, 13);
 
 // --- workspace chrome -------------------------------------------------------
@@ -148,12 +138,6 @@ export const LinkIcon = make(Link, 12);
 export const WarnIcon = make(TriangleAlert, 12);
 /** 미리보기 서버 중단: the server itself is down — distinct from 재시작's rotate. */
 export const ServerOffIcon = make(ServerOff, 15);
-/** 크게 보기 (preview.md §1-D): the preview column takes the body's width. */
-export const ExpandIcon = make(Expand, 12);
-export const ShrinkIcon = make(Shrink, 12);
-/** 탭 스트립의 kind 표식 (인앱 브라우저 1단계): preview 탭은 앱 창, web 탭은 지구본. */
-export const AppWindowIcon = make(AppWindow, 12);
-export const GlobeIcon = make(Globe, 12);
 
 // --- the two glyphs lucide does not own -------------------------------------
 // The filled stop square and the tool's eight-ray spark are drawn by hand so
@@ -189,7 +173,7 @@ export function SparkIcon({ size = 15 }: IconProps) {
 // stroke. Claude wears the spark — the app's own mark already reads as Claude —
 // and so does any provider that has no mark yet.
 
-export function OpenAIIcon({ size = 13 }: IconProps) {
+function OpenAIIcon({ size = 13 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path
@@ -201,7 +185,7 @@ export function OpenAIIcon({ size = 13 }: IconProps) {
 }
 
 /** OpenCode's mark — the square ring, exactly as the vendor draws it. */
-export function OpenCodeIcon({ size = 13 }: IconProps) {
+function OpenCodeIcon({ size = 13 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" fillRule="evenodd" d="M22 24H2V0h20zM17 4.8H7v14.4h10z" />
@@ -210,7 +194,7 @@ export function OpenCodeIcon({ size = 13 }: IconProps) {
 }
 
 /** omp 의 π — the name is the mark, drawn at the house stroke. */
-export function PiIcon({ size = 13 }: IconProps) {
+function PiIcon({ size = 13 }: IconProps) {
   return (
     <svg
       width={size}

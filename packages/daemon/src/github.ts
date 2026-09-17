@@ -581,7 +581,17 @@ export function parseRepoSlug(url: string): { owner: string; repo: string } | nu
 function nextLink(header: string | undefined): string | null {
   if (!header) return null;
   const match = header.match(/<([^>]+)>\s*;\s*rel="next"/);
-  return match?.[1] ?? null;
+  const target = match?.[1];
+  if (!target) return null;
+  // GitHub 은 절대 주소를 돌려준다 — transport 가 여기에 api base 를 또 붙이면
+  // `https://api.github.comhttps://…` 가 되어 100개 넘는 레포의 목록이 깨진다.
+  if (!/^https?:\/\//i.test(target)) return target;
+  try {
+    const url = new URL(target);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return target;
+  }
 }
 
 /** The first line of a transport error; fetch writes whole sentences per line. */

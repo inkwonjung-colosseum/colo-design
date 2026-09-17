@@ -10,7 +10,7 @@ import { effortLevelSchema, permissionModeSchema, type SessionState } from "./sh
 
 const withId = { id: z.string().min(1) };
 
-export const clientMessageSchema = z.discriminatedUnion("type", [
+const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ ...withId, type: z.literal("daemon.status") }),
   z.object({
     ...withId,
@@ -323,8 +323,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ ...withId, type: z.literal("repo.status") }),
   /**
    * Idempotent bootstrap of the connected repo: clone when missing, pull,
-   * install when the dependency hash moved, start the preview command
-   * declared in `colo-design.json`. Resolves when it settles; progress arrives
+   * install when the dependency hash moved, start the repo's preview
+   * command. Resolves when it settles; progress arrives
    * as `repo.status`.
    */
   z.object({
@@ -400,7 +400,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    */
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
-   * 보낸 화면 동결 (preview.md §1-E): read one committed handoff capture —
+   * 보낸 화면 동결: read one committed handoff capture —
    * `.colo-design/shots/<route>--<state>.<ext>` — out of the handoff branch
    * with `git show`, so the frozen stage shows what was sent even after the
    * worktree moved on. Null when the shot was never committed.
@@ -408,13 +408,13 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("repo.handoffShot"),
-    /** The screen's route, as `colo-design.screens` declared it. */
+    /** The screen's route — the pin's `data-screen` id, slash-restored. */
     route: z.string().min(1),
-    /** The state the shot was captured in. */
-    state: z.string().min(1),
+    /** The state the shot was captured in — 표식 없는 화면의 커밋은 null. */
+    state: z.string().min(1).nullable(),
   }),
   /**
-   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's REAL
+   * 시점 빌드 재현: the handed-off moment's REAL
    * build. The daemon checks the open handoff's branch tip out into a
    * throwaway worktree and serves the repo's own preview command on a second
    * port. Absence answers as a `ready:false` info (HandoffPreviewInfo), not
@@ -429,16 +429,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
      */
     sessionId: z.string().min(1).optional(),
   }),
-  /**
-   * 저장 검토의 요약 한 번 (PLAN D51). The daemon asks Claude one turn — no
-   * tools, a 3-second leash — to say what changed in planner's words and to
-   * propose the 저장 메모 in the same breath, and falls back to grouping the
-   * changed paths when that cannot land. The repo's declared screens ride
-   * the prompt, so the summary names 회원 목록 rather than a folder. Cached
-   * per diff hash (screen names included) on the daemon, so reopening the
-   * review is free.
-   */
-  z.object({ ...withId, type: z.literal("repo.summarize") }),
   /**
    * 개발자에게 넘기기의 초안 (비개발자 넘기기): the daemon asks Claude one
    * turn — no tools, an 8-second leash — for the title and the paragraph a
@@ -537,8 +527,9 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     refresh: z.boolean().optional(),
   }),
   /**
-   * One repo, judged before any clone: does it carry a `colo-design.json`, may
-   * this token open pull requests against it, and what branch would it target.
+   * One repo, judged before any clone: does package.json carry a dev-family
+   * script, may this token open pull requests against it, and what branch
+   * would it target.
    */
   z.object({
     ...withId,
@@ -568,8 +559,8 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
         z.object({
           /** The screen the pin sat on — `[data-screen]` or the pathname id. */
           screen: z.string().min(1),
-          /** The screen state the pin sat on. */
-          state: z.string().min(1),
+          /** The screen state the pin sat on — 표식 없는 페이지의 핀은 null. */
+          state: z.string().min(1).nullable(),
           /**
            * The pin's overlay UUID (커미티 2차 판정 5): the one stable key the
            * pin is born with — chip, badge, marker item and store row all
@@ -643,7 +634,7 @@ export interface PermissionSuggestion {
   raw: unknown;
 }
 
-export interface AskQuestionOption {
+interface AskQuestionOption {
   label: string;
   description: string;
   preview?: string;
@@ -721,7 +712,6 @@ export type ServerMessage =
   | {
       type: "browser.driving";
       sessionId: string;
-      tabId: string | null;
       on: boolean;
     };
 

@@ -1,11 +1,11 @@
 /**
- * Browser-level check of the first-run wizard, fully
+ * Browser-level check of the first run, fully
  * offline.
  *
  * The daemon boots with no project at all, against a local fixture repo, so
- * the wizard blocks the workspace and the test drives the exact sequence a
- * 사용자 would: name a project, point it at a repo, and start. The machine
- * gates (Claude Code, git) are the ones this machine already passes.
+ * the full-window start wizard holds the stage and the test drives the exact
+ * sequence a 사용자 would: connect a token, pick a repo, and start. The
+ * machine gates (Claude Code, git) are the ones this machine already passes.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
@@ -72,6 +72,7 @@ const MIME = {
   ".html": "text/html",
   ".js": "text/javascript",
   ".css": "text/css",
+  ".svg": "image/svg+xml",
 };
 
 function serveDist() {
@@ -158,32 +159,49 @@ async function main() {
 
   try {
     await page.goto(`http://127.0.0.1:${PORT}/`);
-    // --- 1. the first run is the 2-step start flow, not the wizard -------
-    //     기계 게이트는 조용히 확인된다 — 실패만 마법사를 세운다(states.md
-    //     §2.2). 여기서는 전부 통과하므로 첫 화면은 곧 토큰 단계다.
+    // --- 1. the first run is the full-window start wizard -----------------
+    //     기계 게이트는 조용히 확인된다 — 실패만 기계 마법사를 세운다.
+    //     여기서는 전부 통과하므로 시작 마법사의 토큰 단계가 첫 화면이다.
+    //     토큰 전에는 레포·준비 단계가 접힌 한 줄이다.
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
 
-    await page.waitForSelector(".planner__empty .ghtoken", { timeout: 20000 });
+    await page.waitForSelector(".onboarding--start .ghtoken", { timeout: 20000 });
     check(
-      "the first run opens the token step, not the wizard",
-      (await page.locator(".onboarding").count()) === 0 &&
-        (await page.locator(".planner__emptyTitle").innerText()).includes("토큰 하나면 시작해요"),
+      "the first run opens the start wizard's token step, not the machine wizard",
+      (await page.locator(".onboarding--start").count()) === 1 &&
+        (await page.locator(".onboarding--start .onboarding__step").count()) === 3 &&
+        (await page.locator(".onboarding--start .onboarding__step--line").count()) === 2,
     );
 
-    // --- 2. the token turns the same screen into the repo step -----------
+    // --- 2. the token passes: its card folds to a line, the repo card opens
     await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
     await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".planner__empty .repopicker", { timeout: 20000 });
+    await page.waitForSelector(".onboarding--start .repopicker", { timeout: 20000 });
+    const tokenLine = page.locator(".onboarding--start .onboarding__step--line", {
+      hasText: "토큰 연결",
+    });
     check(
-      "the token step gives way to the repo step in place",
-      (await page.locator(".planner__emptyTitle").innerText()).includes("레포를 골라 주세요") &&
-        (await page.locator(".ghtoken").count()) === 0,
+      "the token step folds into a line and the repo step opens",
+      (await page.locator(".onboarding--start .ghtoken").count()) === 0 &&
+        (await tokenLine.count()) === 1 &&
+        (await tokenLine.getByRole("button", { name: "토큰 바꾸기" }).count()) === 1,
     );
+
+    // --- 2b. 토큰 바꾸기 re-opens the form; a pass folds the line back -----
+    await tokenLine.getByRole("button", { name: "토큰 바꾸기" }).click();
+    await page.waitForSelector(".onboarding--start .ghtoken", { timeout: 15000 });
+    await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
+    await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
+    await page.waitForSelector(".onboarding--start .ghtoken", {
+      state: "detached",
+      timeout: 20000,
+    });
+
     // --- 3. the repo step is the picker itself -----------------------------
     check(
-      "the empty workspace asks for a repo instead of an address",
-      (await page.locator(".repopicker").count()) === 1,
+      "the start wizard asks for a repo instead of an address",
+      (await page.locator(".onboarding--start .repopicker").count()) === 1,
     );
     await page
       .waitForFunction(
@@ -226,7 +244,7 @@ async function main() {
     await page.getByRole("button", { name: "추가", exact: true }).click();
 
     // The picker gives way to the workspace frame as soon as the registry
-    // answers; the home inbox is the landing view (P1 홈 인박스 §2), and the
+    // answers; the home inbox is the landing view (P1 홈 인박스), and the
     // clone that follows draws itself in the preview column once a
     // conversation opens.
     await page.waitForSelector(".planner__work", { timeout: 90000 });

@@ -27,7 +27,7 @@ export interface TapeRow {
   event: ChatEvent;
 }
 
-export function tapeFile(projectRoot: string): string {
+function tapeFile(projectRoot: string): string {
   return join(projectRoot, "session-tape.jsonl");
 }
 

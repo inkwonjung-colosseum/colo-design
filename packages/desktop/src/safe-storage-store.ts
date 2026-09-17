@@ -1,7 +1,7 @@
 import type { CredentialStore } from "@colo-design/daemon/credentials";
 
 /**
- * safeStorage 기반 자격 증명 저장소(DESIGN §7: Keychain/DPAPI). Electron 의
+ * safeStorage 기반 자격 증명 저장소(Keychain/DPAPI). Electron 의
  * safeStorage 인터페이스를 생성자로 주입받아 단위 테스트에서는 가짜로
  * 대체한다. 암호문(base64)은 userData 의 credentials.json 하나에 모은다 —
  * 렌더러로는 절대 나가지 않는다.

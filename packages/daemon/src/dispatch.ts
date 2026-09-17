@@ -6,7 +6,7 @@ import {
   markTurn,
   type ServerMessage,
 } from "@colo-design/protocol";
-import { type DriverRegistry } from "./agent/registry.js";
+import type { DriverRegistry } from "./agent/registry.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
 import { browseFiles, listFiles } from "./environment.js";
 import type { GitHubBridge } from "./github-bridge.js";
@@ -42,7 +42,7 @@ export interface RouterDeps {
   fleet: ProjectFleet;
   previewDrivers: PreviewDrivers;
   /**
-   * 시점 빌드 재현 (preview.md §3 2단계) — the handed-off moment's worktree
+   * 시점 빌드 재현 — the handed-off moment's worktree
    * build. The server owns its lifetime; the router only relays.
    */
   handoffPreviews: HandoffPreviews;
@@ -257,12 +257,10 @@ export class RequestRouter {
         // 사람이 다시 말을 걸었다 — 화면 확인 게이트의 한 번 제한이 풀린다.
         // 게이트는 사람의 턴마다 한 번이지, 대화마다 한 번이 아니다.
         this.deps.previewDrivers.gatedSessions.delete(message.sessionId);
-        // 사람이 가리킨 화면이 게이트의 입력이다 (게이트 재배선): pin·화면
-        // 캡처가 실은 route·state 를 이 턴의 목록에 담는다. 턴이 끝나면
-        // runGate 가 그 화면들을 기계가 다시 열어 본다.
-        for (const pin of message.pins ?? []) {
-          this.deps.previewDrivers.notePinned(message.sessionId, pin.screen, pin.state);
-        }
+        // 사람이 가리킨 화면은 이 말과 함께 간다: 핀을 받는 시점에 기록하지
+        // 않는 이유는 대기 줄 때문이다. 도는 턴에 온 말은 held 로 기다리는데,
+        // 그 핀을 미리 적으면 턴이 바뀔 때 지워져 그 말을 실은 턴의 게이트
+        // 입력이 영영 사라진다. 핀은 deliver 시점(session 쪽)에 적힌다.
         // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
         // manager's onEvent); this only seeds the count, before anything can
         // be handed over — so the transcript is read while it still holds
@@ -282,7 +280,7 @@ export class RequestRouter {
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
         // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
-        carrier.send(message.text, message.images);
+        carrier.send(message.text, message.images, message.pins);
         return { ok: true };
       }
 
@@ -627,10 +625,7 @@ export class RequestRouter {
         // 핀 주도 (브리지 폐지): 이 사이클에 사람이 핀으로 가리킨 화면·상태만이
         // "보낸 화면"이다 — 선언된 목록은 더 이상 없다.
         const commentsFile = join(active.paths.root, "comments.json");
-        const targets = captureTargets(
-          readComments(commentsFile),
-          await active.repo.cycleAnchor(),
-        );
+        const targets = captureTargets(readComments(commentsFile), await active.repo.cycleAnchor());
         const shots = await this.deps.previewDrivers.captureHandoffShots(targets);
         return await active.repo.handoff({
           title: message.title ?? this.deps.registry.get(active.slug)?.name ?? undefined,
@@ -661,13 +656,13 @@ export class RequestRouter {
         return await workspaces.repo.refreshHandoff();
       }
 
-      // 보낸 화면 동결 (preview.md §1-E): the frozen stage asks for one
+      // 보낸 화면 동결: the frozen stage asks for one
       // committed capture at a time — null is the "no shot" answer, not an
       // error, so the panel falls back to the live preview with the stamp.
       case "repo.handoffShot":
         return await this.repo.handoffShot(message.route, message.state);
 
-      // 시점 빌드 재현 (preview.md §3 2단계): the frozen stage's 실제로
+      // 시점 빌드 재현: the frozen stage's 실제로
       // 열기 — the handoff branch's tip in a throwaway worktree, served on
       // a second port. Absence answers as a ready:false info, not an error,
       // so the stage falls back to the committed capture. The sessionId is
@@ -738,20 +733,14 @@ export class RequestRouter {
         return { ok: true as const };
       }
 
-      // --- 되돌리기와 요약 (PLAN D51 · D52 · D53) --------------------------
-      case "repo.summarize":
-        return await this.repo.summarize();
-
+      // --- 되돌리기와 넘기기 (PLAN D52 · D53) ------------------------------
       case "repo.handoffDraft": {
         const active = this.requireActive();
         const commentsFile = join(active.paths.root, "comments.json");
         // The dialog's shot count reads the same pin-driven targets the
         // handoff itself will capture — the preview never promises a number
         // the handoff then fails to deliver.
-        const targets = captureTargets(
-          readComments(commentsFile),
-          await active.repo.cycleAnchor(),
-        );
+        const targets = captureTargets(readComments(commentsFile), await active.repo.cycleAnchor());
         return await active.repo.handoffDraft({
           commentsFile,
           shotCount: await this.deps.previewDrivers.handoffShotCount(targets),
@@ -822,7 +811,13 @@ export class RequestRouter {
     const driver = this.deps.agentDrivers.get(provider);
     const availability = driver ? await driver.isAvailable().catch(() => null) : null;
     const executable = availability?.executable;
-    if (!executable) return dead;
+    if (!executable) {
+      // 죽은 세션을 돌려주면 호출자의 send 가 "크래시" 에러로 오진된다 —
+      // 진짜 이유는 CLI 가 없는 것. isAvailable 의 한국어 사유를 그대로 넘긴다.
+      throw new Error(
+        availability?.reason ?? `${provider} 를 찾지 못했습니다 — 설치한 뒤 다시 보내 주세요.`,
+      );
+    }
     const chosen = dead.chosen;
     const instructions = this.projectInstructions(dead.cwd);
     const session = this.deps.manager.create({

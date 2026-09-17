@@ -29,6 +29,13 @@ export class MessageTranslator {
    * sequence counter is the fallback for a stream that never announced one.
    */
   private messageIdByAgent = new Map<string | null, string | null>();
+  /**
+   * Message ids whose thinking already streamed as `thinking.delta`, per
+   * agent. The aggregated assistant message repeats the same blocks —
+   * re-emitting them appends the text a second time. Subagent messages have
+   * no stream events, never enter this set, and keep their one-shot emit.
+   */
+  private streamedThinkingByAgent = new Map<string | null, Set<string>>();
 
   private nextSeq(agentId: string | null): number {
     const next = (this.seqByAgent.get(agentId) ?? 0) + 1;
@@ -317,6 +324,17 @@ export class MessageTranslator {
         ];
       }
       if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") {
+        // 이 메시지의 생각은 이미 흘렀다 — 뒤이은 assistant 덩어리가 같은 것을
+        // 다시 올리지 않게 표식을 남긴다.
+        const streamed = this.messageIdByAgent.get(agentId);
+        if (streamed) {
+          let seen = this.streamedThinkingByAgent.get(agentId);
+          if (!seen) {
+            seen = new Set<string>();
+            this.streamedThinkingByAgent.set(agentId, seen);
+          }
+          seen.add(streamed);
+        }
         return [
           {
             kind: "thinking.delta",
@@ -352,6 +370,9 @@ export class MessageTranslator {
         // 서브에이전트의 생각은 stream_event 없이 이 메시지로만 온다
         // (`forwardSubagentText`, PLAN D98): 델타 한 번으로 통째로 올리고,
         // 턴 끝이 그 접힘을 정착시킨다 — 메인 스레드의 생각과 같은 길.
+        // 메인 스레드는 thinking_delta 로 이미 흘렀다 — 다시 올리면 화면에
+        // 생각이 두 번 붙는다. 흘렀으면 건너뛴다.
+        if (messageId && this.streamedThinkingByAgent.get(agentId)?.has(messageId)) return;
         out.push({
           kind: "thinking.delta",
           blockId: this.blockId(agentId, index, messageId),
@@ -391,6 +412,8 @@ export class MessageTranslator {
   }
 
   private result(m: Record<string, any>): ChatEvent[] {
+    // 표식은 턴 수명이다 — 턴이 끝나면 메시지 id 도 다시 시작된다.
+    this.streamedThinkingByAgent.clear();
     return [
       {
         kind: "turn.end",

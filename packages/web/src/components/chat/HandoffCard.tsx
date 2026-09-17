@@ -1,9 +1,9 @@
 /**
- * 넘기기 카드 (구 panels/HandoffPanel.tsx — docs/plan/states.md §2.1 "그릇
- * 바뀜"): 개발자가 읽을 것의 렌더 미리보기(제목·본문 = `handoffDraft()`),
- * 자동 첨부 명시(`### 수정 요청` · `### 화면 미리보기`), `직접 고치기` 폴드,
- * 목적지 표기, `DEFAULT_HANDOFF_BODY` 폴백. 모달이 아니라 대화 안 카드다 —
- * 포커스 함정도 백드롭도 없고, Escape 는 접기일 뿐이다(states.md §4).
+ * 넘기기 카드 (구 panels/HandoffPanel.tsx): 개발자가 읽을 것의 렌더
+ * 미리보기(제목·본문 = `handoffDraft()`), 자동 첨부 명시(`### 수정 요청` ·
+ * `### 화면 미리보기`), `직접 고치기` 폴드, 목적지 표기,
+ * `DEFAULT_HANDOFF_BODY` 폴백. 모달이 아니라 대화 안 카드다 — 포커스 함정도
+ * 백드롭도 없고, Escape 는 접기일 뿐이다.
  */
 import { DEFAULT_HANDOFF_BODY, type HandoffStatus } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
@@ -57,6 +57,8 @@ export function HandoffCard({
   /** The daemon's own appended sections — the preview's 자동 첨부. */
   const [extras, setExtras] = useState<{
     commentsSection: string | null;
+    /** `### 바뀐 파일` — 실제 본문에 붙는 같은 문자열. */
+    filesSection: string | null;
     shotCount: number;
   } | null>(null);
   /** Once the planner types, the draft stops landing in that field. */
@@ -266,9 +268,10 @@ export function HandoffCard({
               ) : (
                 <Markdown text={previewBody} />
               )}
-              {(extras?.commentsSection || (shotCount ?? 0) > 0) && (
+              {(extras?.filesSection || extras?.commentsSection || (shotCount ?? 0) > 0) && (
                 <div className="handoff__auto">
                   <span className="handoff__autolabel">함께 담기는 것</span>
+                  {extras?.filesSection && <Markdown text={extras.filesSection} />}
                   {extras?.commentsSection && <Markdown text={extras.commentsSection} />}
                   {(shotCount ?? 0) > 0 && (
                     <p className="hint">화면 미리보기 — 캡처 {shotCount}장</p>

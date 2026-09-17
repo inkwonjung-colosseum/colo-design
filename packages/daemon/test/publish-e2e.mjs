@@ -682,13 +682,9 @@ async function main() {
       rewoundStatus.stdout,
     );
 
-    // --- 7. `build` gates nothing — the pull request is where problems land
-    // 넘기기가 연 PR 에서 개발자가 문제를 본다(실사): 실패하는 build 를 두고도
-    // 저장과 넘기기는 그대로 간다.
-    const manifest = join(ROOT, "colo-design.json");
-    const config = JSON.parse(readFileSync(manifest, "utf8"));
-    config.build = "node -e \"console.error('build: 테스트용 실패'); process.exit(1)\"";
-    writeFileSync(manifest, `${JSON.stringify(config, null, 2)}\n`);
+    // --- 7. 저장과 넘기기는 그대로 간다 ------------------------------------
+    // 빌드 · 검사 게이트는 없다 — 넘기기가 연 PR 에서 개발자가 문제를 본다(실사).
+    writeFileSync(join(ROOT, "gate-note.txt"), "게이트 없이도 저장은 간다\n");
 
     const savedWithBadBuild = await request({
       id: "9b",
@@ -696,7 +692,7 @@ async function main() {
       message: "빌드 게이트 추가",
     });
     check(
-      "a save ignores build",
+      "a save runs no build gate",
       savedWithBadBuild.stage === "published",
       `${savedWithBadBuild.stage}/${savedWithBadBuild.gate ?? ""}`,
     );
@@ -707,7 +703,7 @@ async function main() {
       title: "결제 화면",
     });
     check(
-      "a failing build no longer stops the handoff — the pull request is where it lands",
+      "the handoff lands — the pull request is where problems land",
       handed.stage === "handed-off" && handed.handoff?.number === 12,
       `${handed.stage} · ${handed.handoff?.url ?? handed.detail ?? ""}`,
     );

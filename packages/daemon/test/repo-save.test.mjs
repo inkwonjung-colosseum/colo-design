@@ -18,7 +18,7 @@ import {
 import { join } from "node:path";
 import { test } from "node:test";
 import { readComments, recordComments } from "../dist/comments.js";
-import { fallbackSummary, RepoWorkspace, restorePlan, safeRepoPath } from "../dist/repo.js";
+import { RepoWorkspace, restorePlan, safeRepoPath } from "../dist/repo.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 import { bringUp, promisifiedRun, workdir } from "./repo-test-kit.mjs";
 
@@ -180,34 +180,9 @@ test("a comments.json a hand mangled reads as whatever survives", () => {
   }
 });
 // ---------------------------------------------------------------------------
-// 되돌리기와 요약 — offline: the fallback path and the
-// snapshot mechanics. The summarizer's Claude turn is test:daemon's stub case.
+// 되돌리기 — offline: the restore plan and the snapshot mechanics. The
+// machine turns' Claude path is test:daemon's stub case.
 // ---------------------------------------------------------------------------
-
-test("폴백 요약은 바뀐 종류별로 파일 이름을 묶어 쓴다", () => {
-  // 폴더 이름은 레포의 전문어다 — 기획자가 가리킬 수 있는 것은 파일의 이름.
-  const lines = fallbackSummary([
-    { path: "src/screens/member/MemberList.screen.tsx", status: "modified" },
-    { path: "src/screens/member/PayFailed.screen.tsx", status: "added" },
-    { path: "src/screens/pay/Pay.screen.tsx", status: "modified" },
-    { path: "index.html", status: "modified" },
-    { path: "src/screens/old/Old.screen.tsx", status: "deleted" },
-  ]);
-  assert.deepEqual(lines, [
-    "새로 만든 파일 1개: PayFailed.screen.tsx",
-    "고친 파일 3개: MemberList.screen.tsx, Pay.screen.tsx, index.html",
-    "지운 파일 1개: Old.screen.tsx",
-  ]);
-
-  // 이름이 넷을 넘으면 나열을 접고 `외 N개` 로 센다.
-  const many = fallbackSummary([
-    { path: "a/1.tsx", status: "modified" },
-    { path: "a/2.tsx", status: "modified" },
-    { path: "a/3.tsx", status: "modified" },
-    { path: "a/4.tsx", status: "modified" },
-  ]);
-  assert.deepEqual(many, ["고친 파일 4개: 1.tsx, 2.tsx, 3.tsx 외 1개"]);
-});
 
 test("복원 계획은 허용 경로 밖의 파일을 손대지 않는다", () => {
   const plan = restorePlan(
@@ -340,42 +315,6 @@ test("변경 버리기는 미추적 화면 폴더째 지우고 죽지 않는다"
     );
     const status = await workspace.status();
     assert.equal(status.pendingChanges, 0, "nothing is left to save");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("summarize without a Claude path falls back to file-name grouping — once per diff", async () => {
-  const dir = workdir("hub-summarize-");
-  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-    });
-    // No claudeExecutable option: the fallback is the only path.
-    const workspace = await bringUp(dir, fixture);
-
-    const html = readFileSync(join(dir, "work", "index.html"), "utf8");
-    writeFileSync(join(dir, "work", "index.html"), `${html}<p>회원 목록 줄</p>\n`);
-    mkdirSync(join(dir, "work", "src", "screens", "member"), {
-      recursive: true,
-    });
-    writeFileSync(
-      join(dir, "work", "src", "screens", "member", "PayFailed.screen.tsx"),
-      "export const PayFailed = () => null;\n",
-    );
-
-    const summary = await workspace.summarize();
-    assert.equal(summary.source, "fallback");
-    assert.deepEqual(summary.lines, [
-      "새로 만든 파일 1개: PayFailed.screen.tsx",
-      "고친 파일 1개: index.html",
-    ]);
-
-    // Same diff, same answer — from the one-entry cache, without another look.
-    const again = await workspace.summarize();
-    assert.deepEqual(again, summary);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -534,50 +473,6 @@ test("올리기에서 멈춘 저장은 다시 누르면 올리기만 다시 한�
   }
 });
 
-test("저장 검토의 요약은 같은 턴에서 저장 메모 제안까지 받아 온다", async () => {
-  const dir = workdir("hub-summary-memo-");
-  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-    });
-    const workspace = new RepoWorkspace({
-      root: join(dir, "work"),
-      url: fixture.remote,
-      onStatus: () => undefined,
-      claudeExecutable: writeAnswerStubClaude(
-        join(dir, "bin"),
-        // 목록 표식과 따옴표는 답변의 장식이다 — 요약도 메모도 그것 없이 선다.
-        '- 회원 목록 화면에 검색창을 넣었습니다\n- 빈 상태 문구를 바꿨습니다\n메모: "회원 목록 검색 추가"',
-      ),
-    });
-    await workspace.sync();
-    await workspace.stop();
-
-    writeFileSync(join(dir, "work", "index.html"), "<p>검색창</p>\n");
-    const summary = await workspace.summarize([
-      { route: "/member/MemberList", title: "회원 목록" },
-    ]);
-    assert.equal(summary.source, "claude");
-    assert.deepEqual(summary.lines, [
-      "회원 목록 화면에 검색창을 넣었습니다",
-      "빈 상태 문구를 바꿨습니다",
-    ]);
-    // 메모 줄은 요약에 섞이지 않고 제안으로 따로 선다 — 검토 화면의 메모
-    // 칸이 이것으로 열린다 (비개발자 저장 검토).
-    assert.equal(summary.memo, "회원 목록 검색 추가");
-
-    // 같은 diff·같은 화면 목록이면 같은 답 — 메모까지 캐시에서 온다.
-    assert.deepEqual(
-      await workspace.summarize([{ route: "/member/MemberList", title: "회원 목록" }]),
-      summary,
-    );
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("넘기기의 초안은 이 사이클의 저장 메모에서 제목과 내용을 받아 온다", async () => {
   const dir = workdir("hub-handoff-draft-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -643,7 +538,11 @@ test("넘기기의 초안은 Claude가 못 내면 비어 있어 브라우저의 
     assert.equal(draft.body, "");
     assert.equal(draft.source, "fallback");
     // 자동 첨부는 초안과 무관하게 답한다 — 핀도 캡처도 없으면 없다고 말한다.
-    assert.deepEqual(draft.extras, { commentsSection: null, shotCount: 0 });
+    // 저장이 끝난 사이클이라 `### 바뀐 파일` 은 있다: 절이 곧 본문에 간다.
+    assert.equal(draft.extras?.commentsSection, null);
+    assert.equal(draft.extras?.shotCount, 0);
+    assert.match(draft.extras?.filesSection ?? "", /### 바뀐 파일/);
+    assert.match(draft.extras?.filesSection ?? "", /index\.html/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -679,6 +578,9 @@ test("넘기기의 미리보기는 개발자가 받을 자동 첨부를 그대�
     assert.ok(draft.extras, "자동 첨부가 보고되지 않았다");
     assert.match(draft.extras.commentsSection ?? "", /### 수정 요청/);
     assert.match(draft.extras.commentsSection ?? "", /- member\/MemberList · 기본 — "제목을 줄여"/);
+    // 같은 규칙의 새 절: 사이클 브랜치의 numstat 이 미리보기에 그대로 온다.
+    assert.match(draft.extras.filesSection ?? "", /### 바뀐 파일/);
+    assert.match(draft.extras.filesSection ?? "", /index\.html/);
     assert.equal(draft.extras.shotCount, 3);
   } finally {
     rmSync(dir, { recursive: true, force: true });

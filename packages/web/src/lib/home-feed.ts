@@ -4,13 +4,13 @@ import { toolLabel } from "./labels";
 
 type Pending = PendingPermission | PendingQuestion;
 
-/** 질문형 결정 카드 — 즉답 칩은 단일 질문·단일 선택일 때만 있다(§5). */
-export interface AskingQuestion {
+/** 질문형 결정 카드 — 즉답 칩은 단일 질문·단일 선택일 때만 있다. */
+interface AskingQuestion {
   kind: "question";
   requestId: string;
   sessionId: string;
   title: string;
-  /** 인용할 질문 원문 — 즉답 칩이 없는 다중 질문/다중 선택일 때는 null(§5). */
+  /** 인용할 질문 원문 — 즉답 칩이 없는 다중 질문/다중 선택일 때는 null. */
   quote: string | null;
   /** 즉답 칩의 라벨들 — quote 가 null 이면 항상 빈 배열. */
   options: string[];
@@ -19,8 +19,8 @@ export interface AskingQuestion {
   requestedAt?: number;
 }
 
-/** 권한형 결정 카드 — 인용할 문장이 없다(§0.1); 헤드라인은 카드가 포맷한다. */
-export interface AskingPermission {
+/** 권한형 결정 카드 — 인용할 문장이 없다; 헤드라인은 카드가 포맷한다. */
+interface AskingPermission {
   kind: "permission";
   requestId: string;
   sessionId: string;
@@ -33,7 +33,7 @@ export interface AskingPermission {
 }
 
 /** 코멘트 도착 카드 — 그 대화의 마지막 블록이 아직 답 없는 개발자 코멘트다. */
-export interface AskingReview {
+interface AskingReview {
   kind: "review";
   sessionId: string;
   title: string;
@@ -78,13 +78,13 @@ export interface HomeFeed {
   running: RunningItem[];
   done: DoneItem[];
   /** 활성 프로젝트를 뺀 나머지 — pending 도 마지막 사건도 없는 프로젝트는
-      0건 숨김 규칙(§1)을 따라 걸러진다. */
+      0건 숨김 규칙을 따라 걸러진다. */
   otherProjects: OtherProjectItem[];
 }
 
 /**
  * 지금 진행 중 카드의 한 줄 — 서브에이전트(Task 도구) 경유 작업이면 그 설명을
- * 그대로 쓰고(§0.2), 아니면 마지막으로 돈 도구의 한국어 이름으로 낮춘다.
+ * 그대로 쓰고, 아니면 마지막으로 돈 도구의 한국어 이름으로 낮춘다.
  * 아무 신호도 없으면(막 시작해 블록이 쌓이기 전) 빈 문장을 보이지 않는다.
  */
 function lastActionLine(view: SessionView): string {
@@ -100,11 +100,10 @@ function lastActionLine(view: SessionView): string {
 /**
  * `pending`·`sessions`·`projects`를 홈의 네 그룹으로 접는다. 순수 함수라
  * React 없이도 그룹핑 규칙(0건 숨김, 다중 질문/선택 판별, 활성 프로젝트
- * 스코프)을 검증할 수 있다(§2 구현 순서).
+ * 스코프)을 검증할 수 있다.
  *
  * 결정 카드의 인용·즉답(`asking`)과 진행/완료 줄(`running`/`done`)은 활성
  * 프로젝트로 계속 좁힌다 — 비활성 프로젝트엔 살아 있는 세션이 없으므로
- * (§3 신규 3) 그 대화들의 인용문·칩을 그릴 수 없다. 대신 `otherProjects`가
  * 폴러(`pollOpenHandoffs`)로부터 온 세 숫자(pendingCount·lastEventKind·
  * lastEventAt, PLAN P3-2)만으로 나머지 프로젝트를 한 줄씩 요약한다 — 그
  * 대화를 열려면 먼저 그 프로젝트로 전환해야 한다.
@@ -120,7 +119,7 @@ export function buildHomeFeed(
   const threadById = new Map(threads.map((thread) => [thread.id, thread]));
   const titleFor = (sessionId: string) => threadById.get(sessionId)?.title ?? "대화";
 
-  // 질문형·권한형: 데몬이 준 순서는 도착 순이지 발생 순이 아니다(§5) —
+  // 질문형·권한형: 데몬이 준 순서는 도착 순이지 발생 순이 아니다 —
   // 타임스탬프가 없는 한 "최신이 맨 위"는 근사값일 뿐이니, 도착이 늦은
   // 쪽(배열의 뒤)을 먼저 보인다.
   const askingFromPending: AskingItem[] = [];
@@ -196,8 +195,8 @@ export function buildHomeFeed(
   running.sort((a, b) => (b.turnStartedAt ?? 0) - (a.turnStartedAt ?? 0));
   done.sort((a, b) => b.at - a.at);
 
-  // 크로스 프로젝트 인박스(§4 신규 3, PLAN P3-2): 활성 프로젝트를 뺀 나머지
-  // 중 pending 도 마지막 사건도 없는 프로젝트는 그룹별 0건 숨김 규칙(§1)을
+  // 크로스 프로젝트 인박스(PLAN P3-2): 활성 프로젝트를 뺀 나머지
+  // 중 pending 도 마지막 사건도 없는 프로젝트는 그룹별 0건 숨김 규칙을
   // 따라 걸러진다. pending 이 있는 쪽을 먼저, 그 다음 최근 사건순.
   const otherProjects: OtherProjectItem[] = projects
     .filter((project) => project.slug !== activeSlug)

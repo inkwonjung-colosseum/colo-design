@@ -1,7 +1,7 @@
 import { resultLine, type SelfUpdatePlan } from "./self-update.js";
 
 /**
- * macOS 자가 교체의 교체 스크립트(DESIGN §7): 앱이 죽은 뒤에 도는 bash 한 장.
+ * macOS 자가 교체의 교체 스크립트: 앱이 죽은 뒤에 도는 bash 한 장.
  * 계획·검증·결과 모양은 플랫폼 공통부(`self-update.ts`)가 갖는다 — 이 파일에는
  * mac 이 번들을 갈아 치우는 방법만 있다.
  */

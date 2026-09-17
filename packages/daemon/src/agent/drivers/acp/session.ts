@@ -1,4 +1,9 @@
-import type { ContextUsage, SessionCommand, SessionModelInfo } from "@colo-design/protocol";
+import type {
+  ContextUsage,
+  EffortLevel,
+  SessionCommand,
+  SessionModelInfo,
+} from "@colo-design/protocol";
 import { acpBrowserMcpServer } from "../../../browser-launch.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { JsonRpcTransport } from "../../jsonrpc.js";
@@ -44,6 +49,8 @@ export class AcpAgentSession implements AgentSession {
   private readonly abort = new AbortController();
   private modeOptions: AcpModeInfo[] = [];
   private currentModeId: string;
+  /** The agent's own effort value at session open — what `setEffort(null)` restores. */
+  private initialEffort: string | null = null;
   private availableCommands: SessionCommand[] = [];
   private readonly toolCalls = new Map<string, Wire>();
 
@@ -61,6 +68,10 @@ export class AcpAgentSession implements AgentSession {
     args: string[],
     launch: LaunchConfig,
     private readonly hooks: DriverHooks,
+    private readonly wiring: {
+      effortConfigId?: string;
+      enrichModels?(rows: SessionModelInfo[]): SessionModelInfo[] | Promise<SessionModelInfo[]>;
+    } = {},
   ) {
     this.launch = launch;
     this.currentModeId = launch.modeId || "default";
@@ -156,6 +167,15 @@ export class AcpAgentSession implements AgentSession {
         this.currentModeId = this.launch.modeId;
       } catch {
         // A pin the agent refuses is not fatal — the session runs its own mode.
+      }
+    }
+    // 노력 수준 핀 — 에이전트가 effort를 configOption으로 노출할 때만. null
+    // 복원(setEffort(null))은 이 초기값으로 되돌린다.
+    if (this.wiring.effortConfigId) {
+      const effortOption = this.configOptions.find((o) => o.id === this.wiring.effortConfigId);
+      this.initialEffort = effortOption?.currentValue ?? null;
+      if (this.launch.effort && this.launch.effort !== this.initialEffort) {
+        await this.setConfig(this.wiring.effortConfigId, this.launch.effort).catch(() => undefined);
       }
     }
   }
@@ -284,6 +304,17 @@ export class AcpAgentSession implements AgentSession {
     await this.setConfig("model", id);
   }
 
+  /** Effective from the next response. `null` restores the agent's own open value. */
+  async setEffort(effort: EffortLevel | null): Promise<void> {
+    if (!this.wiring.effortConfigId) {
+      throw new Error("이 에이전트는 노력 수준을 지원하지 않습니다.");
+    }
+    await this.ready;
+    const value = effort ?? this.initialEffort;
+    if (value === null) return;
+    await this.setConfig(this.wiring.effortConfigId, value);
+  }
+
   async modes(): Promise<Array<{ id: string; label: string; description?: string }> | null> {
     await this.ready;
     if (this.modeOptions.length > 0) {
@@ -308,7 +339,7 @@ export class AcpAgentSession implements AgentSession {
     await this.ready;
     const option = this.configOptions.find((o) => o.category === "model" || o.id === "model");
     if (!option?.options?.length) return [];
-    return option.options.map((o) => ({
+    const rows = option.options.map((o) => ({
       value: o.value,
       displayName: o.name ?? o.value,
       resolvedModel: o.value,
@@ -317,6 +348,9 @@ export class AcpAgentSession implements AgentSession {
       supportedEffortLevels: null,
       supportsFastMode: false,
     }));
+    // configOptions는 어떤 모델이 있는지는 알지만 모델별 특성(노력 수준 등)은
+    // 모를 때가 많다 — 설정이 자기 세션 없는 출처에서 되찾아 준다.
+    return this.wiring.enrichModels ? await this.wiring.enrichModels(rows) : rows;
   }
 
   async commands(): Promise<SessionCommand[]> {

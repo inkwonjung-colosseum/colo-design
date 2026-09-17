@@ -55,6 +55,7 @@ export function Tip({
   align = "center",
   className,
   bubbleClass,
+  open = false,
   children,
 }: {
   /** What the element does. Falsy renders the bare child — callers can gate
@@ -67,6 +68,10 @@ export function Tip({
   /** Extra class on the bubble for a richer card (ctx__tip keeps its
       title+reading layout through this). */
   bubbleClass?: string;
+  /** Pin the bubble open with no hover — the one-shot coach marks use it.
+      While open the bubble takes pointer events so a 닫기 inside can be
+      pressed (hover tips stay pointer-transparent). */
+  open?: boolean;
   children: ReactElement;
 }) {
   const id = useId();
@@ -120,7 +125,7 @@ export function Tip({
   // already placed — no flash of a wrong position. No dep array: place is a
   // cheap rect read and a label swap while shown must re-measure anyway.
   useLayoutEffect(() => {
-    if (shown) place();
+    if (shown || open) place();
   });
 
   // Falsy label renders the bare child — hooks above already ran, so this
@@ -154,16 +159,16 @@ export function Tip({
           role="tooltip"
           className={
             bubbleClass
-              ? `tip__bubble${shown ? " tip__bubble--shown" : ""} ${bubbleClass}`
-              : `tip__bubble${shown ? " tip__bubble--shown" : ""}`
+              ? `tip__bubble${shown || open ? " tip__bubble--shown" : ""} ${bubbleClass}`
+              : `tip__bubble${shown || open ? " tip__bubble--shown" : ""}`
           }
-          style={at}
+          style={open ? { ...at, pointerEvents: "auto" } : at}
         >
           {label}
         </span>,
         document.body,
       )}
-      {shown && <TipFollow onMove={place} />}
+      {(shown || open) && <TipFollow onMove={place} />}
     </span>
   );
 }

@@ -1,11 +1,10 @@
 /**
- * Preview auto-detection end-to-end check. A repo that never declares
- * preview.port still reaches `ready`: the daemon reads the address from the
- * dev server's own output first, and falls back to the preview process
- * tree's LISTEN sockets when the server prints nothing. The failure kinds
- * are pinned too — a server that never listens is "port-undetected", a repo
- * with no dev-family script and no preview.command is "no-preview-command",
- * and a declared port still wins over detection.
+ * Preview auto-detection end-to-end check. A repo reaches `ready` without
+ * declaring anything: the daemon reads the address from the dev server's own
+ * output first, and falls back to the preview process tree's LISTEN sockets
+ * when the server prints nothing. The failure kinds are pinned too — a
+ * server that never listens is "port-undetected", and a repo with no
+ * dev-family script is "no-preview-command".
  *
  * No Claude session, no network: the remotes are local bare git
  * repositories (see fixture-repo.mjs).
@@ -15,7 +14,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
+import { createFixtureRepo, pushFixtureChange } from "./fixture-repo.mjs";
 
 const DIR = join(tmpdir(), "colo-design-preview-detect-e2e");
 
@@ -62,18 +61,10 @@ createServer((req, res) => {
 // Same silent server bound to [::1] alone — react-router dev listens this
 // way, and a v4-only probe read that live preview as port-undetected.
 const SILENT6_SERVER_MJS = `import { createServer } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-const root = dirname(fileURLToPath(import.meta.url));
-const configPath = join(root, "colo-design.json");
-const declared = existsSync(configPath)
-  ? JSON.parse(readFileSync(configPath, "utf8")).preview?.port
-  : undefined;
 createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end("<!doctype html><p>silent v6 preview</p>");
-}).listen(declared ?? 0, "::1");
+}).listen(0, "::1");
 `;
 
 async function main() {
@@ -82,8 +73,8 @@ async function main() {
   mkdirSync(join(DIR, "claude-config"), { recursive: true });
 
   // --- 1. stdout detection: the server prints its own address ------------
-  // port: null → colo-design.json carries preview.command but no port; the
-  // fixture server listens on 0 and prints `fixture preview on http://…`.
+  // No baked port — the fixture server listens on 0 and prints
+  // `fixture preview on http://…`.
   const printed = await createFixtureRepo({ dir: join(DIR, "fixture-printed") });
   const printedWorkspace = workspace("work-printed", printed);
   const detected = await printedWorkspace.sync();
@@ -154,19 +145,18 @@ async function main() {
     `${undetected.phase}/${undetected.errorKind ?? "?"}`,
   );
   check(
-    "the verdict points at preview.port",
-    (undetected.detail ?? "").includes("preview.port"),
+    "the verdict asks for a printed address",
+    (undetected.detail ?? "").includes("주소를 출력하게"),
     undetected.detail ?? "",
   );
   check("no preview url survives the failure", undetected.previewUrl === null);
   await deafWorkspace.stop();
 
   // --- 4. no-preview-command: nothing to run ------------------------------
-  // No colo-design.json at all, and a package.json with no dev-family
-  // script — resolveRepoConfig throws before anything is spawned.
+  // A package.json with no dev-family script — resolveRepoConfig throws
+  // before anything is spawned.
   const noCommand = await createFixtureRepo({
     dir: join(DIR, "fixture-nocommand"),
-    omitConfig: true,
   });
   await pushFixtureChange(
     noCommand.seed,
@@ -188,30 +178,13 @@ async function main() {
   const noCommandWorkspace = workspace("work-nocommand", noCommand);
   const refused = await noCommandWorkspace.sync();
   check(
-    "a repo with no dev script and no preview.command is no-preview-command",
+    "a repo with no dev script is no-preview-command",
     refused.phase === "error" && refused.errorKind === "no-preview-command",
     `${refused.phase}/${refused.errorKind ?? "?"}: ${refused.detail ?? ""}`,
   );
   await noCommandWorkspace.stop();
 
-  // --- 5. declared port still wins ----------------------------------------
-  const declaredPort = await freePort();
-  const declared = await createFixtureRepo({
-    dir: join(DIR, "fixture-declared"),
-    port: declaredPort,
-  });
-  const declaredWorkspace = workspace("work-declared", declared);
-  const pinned = await declaredWorkspace.sync();
-  check(
-    "a declared port is used exactly, not detected",
-    pinned.phase === "ready" &&
-      pinned.previewUrl === `http://127.0.0.1:${declaredPort}` &&
-      pinned.previewPort === declaredPort,
-    `${pinned.phase}: ${pinned.previewUrl}`,
-  );
-  await declaredWorkspace.stop();
-
-  // --- 6. a listener bound to [::1] alone is still found -------------------
+  // --- 5. a listener bound to [::1] alone is still found -------------------
   // The socket scan sees the port; only the probe family decides whether the
   // live server is found or the run dies as port-undetected.
   const silent6 = await createFixtureRepo({
@@ -236,30 +209,6 @@ async function main() {
     scanned6.previewUrl !== null && (await fetch(scanned6.previewUrl)).status === 200,
   );
   await silent6Workspace.stop();
-
-  // --- 7. a declared port bound to [::1] alone still reaches ready ---------
-  const declared6Port = await freePort();
-  const declared6 = await createFixtureRepo({
-    dir: join(DIR, "fixture-declared6"),
-    port: declared6Port,
-    previewCommand: "node silent6-server.mjs",
-  });
-  await pushFixtureChange(
-    declared6.seed,
-    declared6.remote,
-    { "silent6-server.mjs": SILENT6_SERVER_MJS },
-    "a declared-port preview on [::1] only",
-  );
-  const declared6Workspace = workspace("work-declared6", declared6);
-  const pinned6 = await declared6Workspace.sync();
-  check(
-    "a declared port on [::1] is used exactly",
-    pinned6.phase === "ready" &&
-      pinned6.previewUrl === `http://[::1]:${declared6Port}` &&
-      pinned6.previewPort === declared6Port,
-    `${pinned6.phase}: ${pinned6.previewUrl}`,
-  );
-  await declared6Workspace.stop();
 
   rmSync(DIR, { recursive: true, force: true });
 

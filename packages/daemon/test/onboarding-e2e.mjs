@@ -1,5 +1,5 @@
 /**
- * Onboarding end-to-end check, fully offline: the four §8 gates driven over
+ * Onboarding end-to-end check, fully offline: the four gates driven over
  * the real DaemonServer WebSocket — a local fixture repo as the connected
  * repo, the memory credential store, and the recorded GitHub fixtures. The
  * story walks the wizard's exact sequence: a first run with no project and

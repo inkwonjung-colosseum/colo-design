@@ -17,8 +17,6 @@ import type { MenuItemConstructorOptions } from "electron";
 interface MenuPreviewTarget {
   reload(): void;
   history(delta: -1 | 1): void;
-  /** 탭 전환 ⌘⇧[/⌘⇧] (인앱 브라우저 계획 §3 규칙 8) — 뷰의 활성 탭을 돌린다. */
-  cycleTab(delta: -1 | 1): void;
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
@@ -37,10 +35,17 @@ export interface MenuTargets {
   newSession(): void;
   /** 개발자 도구는 dev 에서만 — 사용자에게 필요 없고, 문제 해결은 설정에. */
   packaged: boolean;
+  /** 도움말의 `기록 폴더 열기` — 메인이 직접 여는 bridge 의 open-home("logs") 판본. */
+  openLogs(): void;
+  /**
+   * 메뉴를 그릴 플랫폼 — mac 전용 역할(hide · windowMenu)은 다른 OS 에서
+   * 죽은 항목으로 렌더되므로 여기서 갈라진다. 생략하면 지금 플랫폼.
+   */
+  platform?: NodeJS.Platform;
 }
 
 export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOptions[] {
-  const { preview, packaged } = targets;
+  const { preview, packaged, platform = process.platform } = targets;
   // D92: the menu and the ⌘/ sheet read ONE constant — the accelerators and
   // labels here are the array's, so the two surfaces cannot drift.
   const clickFor: Record<string, () => void> = {
@@ -48,8 +53,6 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     back: () => preview?.history(-1),
     forward: () => preview?.history(1),
     address: () => targets.gotoAddress(),
-    "tab-previous": () => preview?.cycleTab(-1),
-    "tab-next": () => preview?.cycleTab(1),
     "zoom-in": () => preview?.zoomIn(),
     "zoom-out": () => preview?.zoomOut(),
     "zoom-reset": () => preview?.zoomReset(),
@@ -71,12 +74,6 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     item("back"),
     item("forward"),
     item("address"),
-    // 탭 전환(인앱 브라우저 계획 §3 규칙 8): 메뉴에 오는 것은 이 쌍뿐이다 —
-    // ⌘T(새 탭)·⌘W(탭 닫기)는 preview 뷰 포커스에서만 뜻이 있는 키라
-    // before-input-event 채널로 가고, 메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
-    { type: "separator" },
-    item("tab-previous"),
-    item("tab-next"),
     { type: "separator" },
     item("zoom-in"),
     item("zoom-out"),
@@ -94,17 +91,23 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     );
   }
 
+  // hide · hideOthers · unhide · about 는 mac 전용 역할이다 — 다른 OS 에서는
+  // 아무 일도 하지 않는 죽은 항목으로 렌더되므로 mac 에서만 싣는다.
   const appMenu: MenuItemConstructorOptions = {
     label: "Colo Design",
     submenu: [
-      { role: "about" },
+      ...(platform === "darwin" ? [{ role: "about" } as MenuItemConstructorOptions] : []),
       item("new-session"),
       item("settings"),
       { type: "separator" },
-      { role: "hide" },
-      { role: "hideOthers" },
-      { role: "unhide" },
-      { type: "separator" },
+      ...(platform === "darwin"
+        ? ([
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+          ] as MenuItemConstructorOptions[])
+        : []),
       { role: "quit" },
     ],
   };
@@ -125,9 +128,16 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     label: "보기",
     submenu: viewMenu,
   };
-  const windowMenu: MenuItemConstructorOptions = {
-    label: "창",
-    role: "windowMenu",
+  // windowMenu 역할도 mac 전용 — 다른 플랫폼은 최소화·닫기 역할로 채운다.
+  const windowMenu: MenuItemConstructorOptions =
+    platform === "darwin"
+      ? { label: "창", role: "windowMenu" }
+      : { label: "창", submenu: [{ role: "minimize" }, { role: "close" }] };
+  // 문제 해결의 입구 — 기록 폴더는 창이 없어도 열 수 있어야 한다(메인이 연다).
+  const helpMenu: MenuItemConstructorOptions = {
+    label: "도움말",
+    role: "help",
+    submenu: [{ label: "기록 폴더 열기", click: () => targets.openLogs() }],
   };
-  return [appMenu, editMenu, viewItem, windowMenu];
+  return [appMenu, editMenu, viewItem, windowMenu, helpMenu];
 }

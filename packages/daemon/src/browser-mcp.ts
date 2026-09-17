@@ -25,7 +25,9 @@ type Wire = Record<string, unknown>;
 
 /** tools/call의 MCP 결과. 실패도 결과다 — isError 텍스트로 모델이 읽는다. */
 interface ToolOutcome {
-  content: Array<{ type: "text"; text: string }>;
+  content: Array<
+    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+  >;
   isError?: boolean;
 }
 
@@ -38,41 +40,19 @@ interface ToolDef {
   required?: string[];
 }
 
-/** tabId 인자의 공통 형태 — 생략하면 활성 탭(2단계 BrowserDriver 계약). */
-const TAB_ID = {
-  type: "string",
-  description: "탭 id — 생략하면 활성 탭.",
-};
-
 /**
- * 계약의 17개 도구. 이름·인자는 3단계 도구셋 계약 그대로 — `browser_fill`이
+ * 계약의 16개 도구. 이름·인자는 도구셋 계약 그대로 — `browser_fill`이
  * op `type`으로, `browser_wait`가 op `waitFor`로, `browser_console`이 op
- * `consoleLines`로 걸리는 것만 이름 차이라.
+ * `consoleLines`로 걸리는 것만 이름 차이라. pane 은 프로젝트당 페이지
+ * 하나라 탭 주소는 없다 — 모든 도구는 화면의 페이지를 겨눈다.
  */
 const TOOLS: ToolDef[] = [
   {
-    name: "browser_list_tabs",
-    op: "listTabs",
-    description: "인앱 브라우저의 열린 탭 목록 (id·제목·주소·활성 여부).",
-    properties: {},
-  },
-  {
-    name: "browser_new_tab",
-    op: "openTab",
-    description: "새 탭을 열고 그 탭의 스냅샷을 돌려준다.",
-    properties: {
-      url: { type: "string", description: "열 주소 (http·https)." },
-      background: { type: "boolean", description: "true면 뒤에서 연다 (활성화하지 않음)." },
-    },
-    required: ["url"],
-  },
-  {
     name: "browser_navigate",
     op: "navigate",
-    description: "탭을 주소로 이동하고 새 스냅샷을 돌려준다.",
+    description: "화면의 페이지를 주소로 이동하고 새 스냅샷을 돌려준다 — 페이지가 없으면 연다.",
     properties: {
       url: { type: "string", description: "이동할 주소 (http·https)." },
-      tabId: TAB_ID,
     },
     required: ["url"],
   },
@@ -80,15 +60,14 @@ const TOOLS: ToolDef[] = [
     name: "browser_snapshot",
     op: "snapshot",
     description:
-      "탭의 접근성 스냅샷 — ref가 붙은 요소 트리. 액션 전후에 읽고, 액션에는 그 ref를 쓴다.",
-    properties: { tabId: TAB_ID },
+      "페이지의 접근성 스냅샷 — ref가 붙은 요소 트리. 액션 전후에 읽고, 액션에는 그 ref를 쓴다.",
+    properties: {},
   },
   {
     name: "browser_screenshot",
     op: "screenshot",
-    description: "탭(또는 ref 하나)의 화면을 캡처한다.",
+    description: "페이지(또는 ref 하나)의 화면을 캡처한다.",
     properties: {
-      tabId: TAB_ID,
       ref: { type: "string", description: "요소 하나만 찍을 때 그 ref." },
       longEdge: { type: "number", description: "긴 변 픽셀 — 생략하면 기본값." },
     },
@@ -99,7 +78,6 @@ const TOOLS: ToolDef[] = [
     description: "ref 요소를 누르고 새 스냅샷을 돌려준다.",
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
-      tabId: TAB_ID,
     },
     required: ["ref"],
   },
@@ -111,9 +89,17 @@ const TOOLS: ToolDef[] = [
       ref: { type: "string", description: "스냅샷의 요소 ref." },
       text: { type: "string", description: "채울 텍스트." },
       clear: { type: "boolean", description: "true면 기존 값을 지우고 채운다 (기본 true)." },
-      tabId: TAB_ID,
     },
     required: ["ref", "text"],
+  },
+  {
+    name: "browser_type",
+    op: "type",
+    description: "지금 포커스된 곳에 텍스트를 쓴다 — ref 없이 키보드 입력만.",
+    properties: {
+      text: { type: "string", description: "쓸 텍스트." },
+    },
+    required: ["text"],
   },
   {
     name: "browser_press",
@@ -121,7 +107,6 @@ const TOOLS: ToolDef[] = [
     description: "키보드 입력을 보낸다 (예: Enter, Escape, ArrowDown).",
     properties: {
       key: { type: "string", description: "키 이름." },
-      tabId: TAB_ID,
     },
     required: ["key"],
   },
@@ -132,7 +117,6 @@ const TOOLS: ToolDef[] = [
     properties: {
       dy: { type: "number", description: "픽셀 단위 세로 이동 (+아래 / −위)." },
       ref: { type: "string", description: "요소 안에서 스크롤할 때 그 ref." },
-      tabId: TAB_ID,
     },
     required: ["dy"],
   },
@@ -142,7 +126,6 @@ const TOOLS: ToolDef[] = [
     description: "ref 요소에 마우스를 올리고 새 스냅샷을 돌려준다.",
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
-      tabId: TAB_ID,
     },
     required: ["ref"],
   },
@@ -153,55 +136,59 @@ const TOOLS: ToolDef[] = [
     properties: {
       ref: { type: "string", description: "스냅샷의 요소 ref." },
       value: { type: "string", description: "고를 값." },
-      tabId: TAB_ID,
     },
     required: ["ref", "value"],
   },
   {
+    name: "browser_drag",
+    op: "drag",
+    description: "ref 요소를 다른 ref 요소 위로 끌어 놓고 새 스냅샷을 돌려준다.",
+    properties: {
+      fromRef: { type: "string", description: "끌 요소의 ref." },
+      toRef: { type: "string", description: "놓을 자리 요소의 ref." },
+    },
+    required: ["fromRef", "toRef"],
+  },
+  {
     name: "browser_wait",
     op: "waitFor",
-    description: "조건을 기다린다 — 텍스트·주소·밀리초 중 하나 이상.",
+    description: "조건을 기다린다 — 텍스트·주소·밀리초 중 하나 이상. ms는 최대 30초.",
     properties: {
       text: { type: "string", description: "이 텍스트가 보일 때까지." },
       url: { type: "string", description: "주소가 이것(부분 일치)이 될 때까지." },
-      ms: { type: "number", description: "이 밀리초만 기다린다." },
-      tabId: TAB_ID,
+      ms: { type: "number", description: "이 밀리초만 기다린다 — 조건 없이 쓰면 그냥 잔다." },
     },
   },
   {
     name: "browser_console",
     op: "consoleLines",
-    description: "탭의 콘솔·네트워크 기록을 읽는다 — 오류 확인에 쓴다.",
-    properties: { tabId: TAB_ID },
+    description: "페이지의 콘솔·네트워크 기록을 읽는다 — 오류 확인에 쓴다.",
+    properties: {},
   },
   {
     name: "browser_evaluate",
     op: "evaluate",
-    description: "페이지에서 자바스크립트 함수를 실행한다 (반환은 8KB로 잘린다). 권한 카드가 온다.",
+    description:
+      "페이지에서 자바스크립트 함수를 실행한다 (반환은 8KB로 잘린다). 연결 레포의 화면 바깥을 겨누면 권한 카드가 온다.",
     properties: {
-      fn: { type: "string", description: "실행할 함수 본문 — 예: () => document.title. 식이 아니라 함수다." },
-      tabId: TAB_ID,
+      fn: {
+        type: "string",
+        description: "실행할 함수 본문 — 예: () => document.title. 식이 아니라 함수다.",
+      },
     },
     required: ["fn"],
-  },
-  {
-    name: "browser_close_tab",
-    op: "closeTab",
-    description: "탭을 닫는다.",
-    properties: { tabId: { ...TAB_ID, description: "닫을 탭 id." } },
-    required: ["tabId"],
   },
   {
     name: "browser_back",
     op: "back",
     description: "뒤로 가고 새 스냅샷을 돌려준다.",
-    properties: { tabId: TAB_ID },
+    properties: {},
   },
   {
     name: "browser_forward",
     op: "forward",
     description: "앞으로 가고 새 스냅샷을 돌려준다.",
-    properties: { tabId: TAB_ID },
+    properties: {},
   },
 ];
 
@@ -264,6 +251,14 @@ async function callTool(tool: ToolDef, args: Wire): Promise<ToolOutcome> {
     return refused("브라우저 엔드포인트의 응답이 계약에 없는 형태다 (ok 없음).");
   }
   if (!payload.ok) return refused(String(payload.error ?? "알 수 없는 오류"));
+  // 스크린샷은 MCP 의 image 블록으로 내려간다 — base64 를 텍스트로 싣으면
+  // 모델이 그림을 못 보고 컨텍스트만 태운다.
+  if (tool.op === "screenshot") {
+    const shot = payload.result as { data?: unknown; mediaType?: unknown } | null;
+    if (shot && typeof shot.data === "string" && typeof shot.mediaType === "string") {
+      return { content: [{ type: "image", data: shot.data, mimeType: shot.mediaType }] };
+    }
+  }
   return text(JSON.stringify(payload.result ?? null));
 }
 
@@ -281,8 +276,8 @@ async function handle(message: Wire): Promise<void> {
         capabilities: { tools: {} },
         serverInfo: { name: "colo-browser", title: "콜로디자인 인앱 브라우저", version: "0" },
         instructions:
-          "인앱 브라우저 도구 — 사용자가 보고 있는 탭을 드라이브한다. browser_snapshot의 ref로 " +
-          "요소를 가리키며, 모든 액션의 결과에 새 스냅샷이 실려 온다. 탭 생략은 활성 탭이다.",
+          "인앱 브라우저 도구 — 사용자가 보고 있는 페이지를 드라이브한다. browser_snapshot의 ref로 " +
+          "요소를 가리키며, 모든 액션의 결과에 새 스냅샷이 실려 온다.",
       });
       return;
     case "notifications/initialized":

@@ -4,7 +4,6 @@ import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "../../
 import type { Pins } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
-import { BUSY_SAVE } from "../../lib/delivery";
 import { ownerRepoOf } from "../../lib/format";
 import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
@@ -16,12 +15,11 @@ import { blockOnTape } from "../../lib/tape-visibility";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
 import { TurnClock } from "../preview/TurnClock";
+import { StateBanner } from "../StateBanner";
 import { Tip } from "../shell/Tip";
-import { SaveCard, type SaveCardStatus } from "../transcript/SaveCard";
 import { type Attachment, Composer } from "./Composer";
 import { ComposerChips } from "./ComposerChips";
 import { HandoffCard } from "./HandoffCard";
-import { SaveReviewBody } from "./SaveReviewBody";
 
 /**
  * The middle column: one transcript, the cards that interrupt it, and the
@@ -170,7 +168,7 @@ export function ChatColumn({
     void api.backgroundTask(activeId, toolUseId).catch((e: Error) => showError(e.message));
   };
 
-  // --- 저장 → (다시) 넘기기: 한 번의 클릭 (docs/plan/chat.md §4.1) --------
+  // --- 저장 → (다시) 넘기기: 한 번의 클릭 --------------------------------
   // 반영·반려 뒤의 새 변경은 새 사이클이라 넘기기를 자동으로 잇지 않는다 —
   // `merged`·`closed` 는 "저장하기"만, 열린 요청(`open`·`changes_requested`)
   // 은 저장 뒤 handoff 로 이어 같은 요청을 갱신한다.
@@ -179,25 +177,28 @@ export function ChatColumn({
   const handoff = repo?.handoff ?? null;
   const diffStage = daemon.diffStatus?.stage;
   const [savingNow, setSavingNow] = useState(false);
-  const [saveMemo, setSaveMemo] = useState("");
   /** 답장 모드 — 사람 메시지의 `답하기`가 여는 컴포저 상태. 내면 api.replyToReview. */
   const [replyTo, setReplyTo] = useState<DeveloperReview | null>(null);
   /** 넘기기 카드 — 대화 안의 검토 자리. 상단 바·복도·⌘K 가 연다. */
   const [handoffOpen, setHandoffOpen] = useState(false);
   const runSave = useCallback(() => {
-    if (savingNow) return;
-    // 저장은 됐고 넘기기만 멈춘 카드의 다시 시도 — 저장을 다시 돌리지 않는다.
+    // 도는 턴 중의 저장 잠금 — 상단바·⌘S·저장 칩이 이미 읽는 같은 규칙이다.
+    // 턴이 워크트리에 쓰는 중에 커밋하면 반쯤 쓰인 파일이 저장된다. 데몬의
+    // 저장에는 턴 가드가 없으므로(repo.ts save() 는 직렬화만 한다) 이곳이
+    // 지킨다.
+    if (savingNow || sessions.running) return;
+    // 저장은 됐고 넘기기만 멈춘 실패의 다시 시도 — 저장을 다시 돌리지 않는다.
     const handoffOnly = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
     // 열린 요청(open·changes_requested)은 저장 뒤 같은 요청을 갱신한다 —
     // "저장하고 다시 넘기기". 새 사이클(없음·반영됨·반려)은 저장만 하고
-    // 넘기기는 완료 카드의 복도가 잇는다(states.md §2.2).
+    // 넘기기는 저장 기록의 복도가 잇는다.
     const openCycle = handoff?.state === "open" || handoff?.state === "changes_requested";
     setSavingNow(true);
     void (
       handoffOnly
         ? api.handoff({ sessionId: activeId })
         : api
-            .save(saveMemo.trim() || undefined, activeId)
+            .save(undefined, activeId)
             .then((status) =>
               openCycle && status.stage === "published"
                 ? api.handoff({ sessionId: activeId })
@@ -206,20 +207,24 @@ export function ChatColumn({
     )
       .catch((e: Error) => showError(e.message))
       .finally(() => setSavingNow(false));
-  }, [activeId, savingNow, handoff, api, saveMemo, showError, diffStage, daemon.diffStatus]);
-  // 저장이 착지하면 메모 칸을 비운다 — 다음 사이클의 AI 제안이 다시 채운다.
-  // 실패한 저장의 메모는 남는다: 고쳐 쓴 한 줄이 재시도에도 실려야 한다.
-  useEffect(() => {
-    if (diffStage === "published" || diffStage === "handed-off") setSaveMemo("");
-  }, [diffStage]);
+  }, [
+    activeId,
+    savingNow,
+    sessions.running,
+    handoff,
+    api,
+    showError,
+    diffStage,
+    daemon.diffStatus,
+  ]);
   /**
-   * 사이클 요청의 응답 — 저장은 살아있는 카드로 스크롤(검토는 카드의 몸통),
-   * 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라 여기선
-   * 무시한다.
+   * 사이클 요청의 응답 — 저장은 곧 저장(칩·⌘S·상단 바가 같은 핸들러를
+   * 누른다), 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라
+   * 여기선 무시한다.
    */
   useEffect(() => {
     if (!cycleRequest) return;
-    if (cycleRequest.kind === "save") scrollToSaveCard();
+    if (cycleRequest.kind === "save") runSave();
     else if (cycleRequest.kind === "handoff") setHandoffOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycleRequest]);
@@ -237,42 +242,22 @@ export function ChatColumn({
   const { title: proposedTitle, body: proposedBody } = handoffDraft(
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? "",
   );
-  // "지금 저장하기"의 원인이 되는 라벨 — 잠긴 이유는 ComposerChips 가
-  // deriveDelivery 로 따로 읽는다; 여기는 버튼의 말만 고른다. 저장은 됐고
-  // 넘기기만 멈춘 카드(gate:"pr")는 저장을 다시 돌리지 않는다.
+  // 저장·넘기기가 오가는 중 — 칩의 "저장하는 중…" 이 읽는다.
+  const savingInFlight =
+    savingNow ||
+    diffStage === "computing" ||
+    diffStage === "pushing" ||
+    diffStage === "handing-off";
+  // 저장은 됐고 넘기기만 멈춘 실패(gate:"pr")는 저장을 다시 돌리지 않는다.
   const handoffFailed = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
-  const saveLabel = handoffFailed
-    ? "다시 넘기기"
-    : handoff?.state === "open" || handoff?.state === "changes_requested"
-      ? "저장하고 다시 넘기기"
-      : "저장하기";
-  const liveSaveStatus: SaveCardStatus | null =
-    savingNow || diffStage === "computing" || diffStage === "pushing" || diffStage === "handing-off"
-      ? "progress"
-      : diffStage === "failed"
-        ? "failed"
-        : pendingChanges > 0
-          ? "pending"
-          : null;
-  // 살아있는 대기 카드로 스크롤 + panelring 두 번(컴포저 칩·카드 버튼이 공유).
-  const scrollToSaveCard = () => {
-    const el = document.getElementById("live-savecard");
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.classList.remove("flash");
-    void el.offsetWidth;
-    el.classList.add("flash");
-  };
-  const liveSaveHint = handoffFailed
-    ? "저장은 끝났습니다 — 개발자에게 넘기는 일만 다시 시도합니다."
-    : handoff?.state === "open" || handoff?.state === "changes_requested"
-      ? "저장하고 넘기면 개발자가 이어서 확인해요. 저장 전에는 우리 팀 앱에 아무 표시도 남지 않아요."
-      : "저장하면 이번 작업이 커밋됩니다 — 넘기기는 저장 뒤 카드에서 이어갑니다.";
-  const liveFailDetail = handoffFailed
+  // 실패 배너의 한 줄 — 카드가 없는 지금, 데몬이 diff.status 로 말하는
+  // 실패가 사람에게 보이는 유일한 자리다.
+  const saveFailDetail = handoffFailed
     ? (daemon.diffStatus?.detail ?? "넘기지 못했습니다.")
     : daemon.diffStatus?.reason === "push-auth"
       ? "GitHub 인증에 실패했습니다 — 설정에서 토큰을 확인해 주세요."
       : (daemon.diffStatus?.detail ?? "저장하지 못했습니다.");
+
   /**
    * 닫은 제안: 데몬은 한 문장을 한 번 보내고 잊지만, 계획자가 닫은
    * 칩은 이 창에서 다시 떠오르면 안 된다 — 무엇을 닫았는지는 창의 기억이다.
@@ -390,6 +375,17 @@ export function ChatColumn({
     setUnpinned(false);
     bottom.current?.scrollIntoView();
   };
+  // 컴포저 잠금의 사유 — disabled prop 은 이유를 모르는 채 잠그므로, 연결이
+  // 닿아 있는지가 여기서 읽을 수 있는 유일한 원인이다. 끊긴 선 위의 보내기는
+  // 어차피 실패하니 잠그고 이유를 보이는 쪽이 조용한 실패보다 낫다. 사유가
+  // 여럿일 수 있어도 한 줄만 선다 — 연결이 가장 먼저다.
+  const composerLockReason =
+    daemon.connection === "closed" || daemon.connection === "error"
+      ? "연결이 끊겼어요"
+      : daemon.connection !== "open"
+        ? "연결하는 중이에요"
+        : null;
+  const composerDisabled = disabled || composerLockReason !== null;
   return (
     <main
       className={`planner__chat${dragDepth > 0 ? " planner__chat--droptarget" : ""}`}
@@ -586,14 +582,13 @@ export function ChatColumn({
               실패로 보이지 않았다. 카드가 그 사실을 말하고 다시 시도는 같은
               열기를 다시 묻는다. */}
           {sessions.historyFailed && !error && (
-            <div className="notice notice--error" role="alert">
-              <span className="notice__text">
-                대화 기록을 읽지 못했습니다 — 다시 시도로 다시 열어 주세요.
-              </span>
-              <button type="button" className="ghost" onClick={sessions.reopen}>
-                다시 시도
-              </button>
-            </div>
+            <StateBanner
+              tone="danger"
+              role="alert"
+              title="대화 기록을 읽지 못했습니다"
+              sub="다시 시도로 다시 열어 주세요."
+              action={{ label: "다시 시도", onClick: sessions.reopen }}
+            />
           )}
           <Transcript
             blocks={active?.blocks ?? []}
@@ -625,60 +620,24 @@ export function ChatColumn({
                 : null
             }
           />
-          {/* 살아있는 저장 제안(§3.2): 완료된 저장은 daemon-client 의 "save"
-              블록(cycle.saved 접힘)이 대신하므로, 이 카드는 대기·진행·실패
-              세 상태에서만 뜬다 — 완료로 넘어가면 사라져 기록에 자리를 넘긴다. */}
-          {liveSaveStatus && (
-            <SaveCard
-              id="live-savecard"
-              status={liveSaveStatus}
-              title="이번에 바뀐 것"
-              sub={
-                handoffFailed
-                  ? "저장됨 · 넘기기에서 멈춤"
-                  : `저장 전 · 바뀐 파일 ${pendingChanges}개`
-              }
-              review={
-                // 넘기기 단계로 넘어가면 diff 는 이미 비었다 — 빈 검토가
-                // "저장할 게 없다"고 거짓말하지 않게 몸통은 그때 내린다.
-                diffStage === "handing-off" || diffStage === "handed-off" ? null : (
-                  <SaveReviewBody daemon={daemon} memo={saveMemo} onMemo={setSaveMemo} />
-                )
-              }
-              tagLabel={
-                liveSaveStatus === "failed"
-                  ? handoffFailed
-                    ? "넘기기 실패"
-                    : "저장 실패"
-                  : liveSaveStatus === "progress"
-                    ? diffStage === "handing-off"
-                      ? "넘기는 중"
-                      : "저장하는 중"
-                    : "저장 대기"
-              }
-              tagTone={liveSaveStatus === "failed" ? "danger" : "warn"}
-              hint={liveSaveHint}
-              detail={liveSaveStatus === "failed" ? liveFailDetail : null}
-              onRetry={liveSaveStatus === "failed" ? runSave : undefined}
-              retryReason={sessions.running ? BUSY_SAVE : null}
-              primary={{
-                label: saveLabel,
+          {/* 저장 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
+              말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
+              시도가 시작되는 순간에만 사라진다(실패가 조용히 지워졌던 실사
+              결함의 반대 판정). 재시도는 칩의 저장 버튼과 같은 핸들러다. */}
+          {diffStage === "failed" && (
+            <StateBanner
+              tone="danger"
+              role="alert"
+              title={handoffFailed ? "넘기기에 실패했습니다" : "저장에 실패했습니다"}
+              sub={saveFailDetail}
+              action={{
+                label: handoffFailed ? "다시 넘기기" : "다시 저장하기",
                 onClick: runSave,
-                // 도는 턴 중의 저장 잠금 (docs/plan/chat.md §4.1 각주 1) —
-                // 상단바·⌘S·지금 저장하기 칩이 이미 읽는 같은 규칙이다. 턴이
-                // 워크트리에 쓰는 중에 커밋하면 반쯤 쓰인 파일이 저장된다.
-                disabled: savingNow || sessions.running,
-                reason: sessions.running ? BUSY_SAVE : undefined,
-              }}
-              secondary={{
-                label: "더 고칠래요",
-                onClick: () =>
-                  document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(),
               }}
             />
           )}
-          {/* 넘기기 카드 — 모달이 아니라 대화 안의 검토 자리(states.md §2.1).
-              상단 바·저장 카드의 복도·⌘K 가 연다; Escape 는 접기일 뿐이다. */}
+          {/* 넘기기 카드 — 모달이 아니라 대화 안의 검토 자리.
+              상단 바·복도·⌘K 가 연다; Escape 는 접기일 뿐이다. */}
           {handoffOpen && (
             <div id="live-handoffcard">
               <HandoffCard
@@ -786,7 +745,8 @@ export function ChatColumn({
       )}
 
       <Composer
-        disabled={disabled}
+        disabled={composerDisabled}
+        disabledReason={composerLockReason}
         draftKey={draftKey}
         placeholder={placeholder}
         usage={sessions.usage}
@@ -832,11 +792,17 @@ export function ChatColumn({
         midTurnSend={midTurnSend}
         onOpenSendSettings={onOpenSendSettings}
         onOpenProviderSettings={onOpenProviderSettings}
-        onToggleFastMode={(fast) => void sessions.setFastMode(fast)}
         onSend={async (text, attachments, sentPins) => {
           // 답장 모드: 사람 메시지의 `답하기`가 연 상태 — 컴포저의 말은
           // 새 턴이 아니라 개발자에게 가는 답이다.
           if (replyTo) {
+            // 답장 모드에는 첨부를 실어 보낼 길이 없다 — replyToReview 는
+            // 문장만 받는다. 보낸 척 지나치면 붙인 그림이 필드 비움과 함께
+            // 조용히 사라진다. 거절로 돌려 보내면 Composer 는 말을 지우지
+            // 않고 경고 줄에 이유를 세운다.
+            if (attachments.length > 0) {
+              throw new Error("답장에는 그림을 첨부할 수 없습니다");
+            }
             try {
               await api.replyToReview(replyTo.id, text);
             } catch (e) {
@@ -869,8 +835,7 @@ export function ChatColumn({
               : [],
           );
           // 핀으로 처음 열리는 대화는 첫 핀의 화면 이름을 얻는다.
-          const name =
-            !sessions.activeId && sentPins.length > 0 ? sentPins[0]!.screen : undefined;
+          const name = !sessions.activeId && sentPins.length > 0 ? sentPins[0]!.screen : undefined;
           await sessions.submit(
             sentPins.length > 0 ? pinsToTurn(sentPins, text, () => null) : text,
             [...pinImages, ...attachments],
@@ -900,11 +865,9 @@ export function ChatColumn({
             handoff={handoff}
             running={sessions.running}
             shelf={repo?.shelf ?? null}
-            onScrollToSave={scrollToSaveCard}
-            onSaveNow={() => {
-              scrollToSaveCard();
-              runSave();
-            }}
+            savingInFlight={savingInFlight}
+            onSaveNow={runSave}
+            onHandoff={() => setHandoffOpen(true)}
           />
         }
       />

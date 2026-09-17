@@ -1,10 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
+import { waitedFor } from "../../lib/format";
 import { toolLabel } from "../../lib/labels";
 import { isToolRunning } from "../../lib/progress";
 import { CheckIcon, ChevronRightIcon, CloseIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 import { preview, type TaskControls, type ToolStatus, toolHeadline } from "./shared";
+
+/**
+ * 도는 도구의 경과 시계 — "몇 분째인가"는 심장박동(`tool.progress`)이 오기
+ * 전부터 뜻이 있으니, 행이 뜬 시각(`startedAt`)에서 창이 직접 센다. 1초
+ * tick 은 이 글자만 다시 그린다(TurnClock 과 같은 이유로 컴포넌트를 나눴다).
+ */
+function ToolElapsed({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+  return <>{waitedFor(now - startedAt)}</>;
+}
 
 function ToolBlock({
   block,
@@ -41,15 +56,22 @@ function ToolBlock({
           {headline && <span className="tool__headline">{headline}</span>}
           {block.agentId && <span className="tag">하위 작업</span>}
           <span className={`tool__status tool__status--${status}`}>
-            {status === "error"
-              ? "실패"
-              : running
-                ? // 몇 초째인지는 도는 동안에만 뜻이 있다: 끝난 행에
-                  // 남으면 지금 도는 것처럼 읽힌다.
-                  elapsed > 0
-                  ? `${Math.round(elapsed)}초`
-                  : "실행 중…"
-                : ""}
+            {status === "error" ? (
+              "실패"
+            ) : running ? (
+              // 몇 초째인지는 도는 동안에만 뜻이 있다: 끝난 행에
+              // 남으면 지금 도는 것처럼 읽힌다. 시계는 행이 뜬 시각에서
+              // 센다 — 심장박동이 안 오는 도구도 멈춘 것처럼 보이지 않게.
+              block.startedAt !== undefined ? (
+                <ToolElapsed startedAt={block.startedAt} />
+              ) : elapsed > 0 ? (
+                `${Math.round(elapsed)}초`
+              ) : (
+                "실행 중…"
+              )
+            ) : (
+              ""
+            )}
           </span>
         </button>
         {/* 작업 버튼은 머리 버튼 바깥에 산다 — 버튼 안의 버튼은 클릭이 겹친다. */}

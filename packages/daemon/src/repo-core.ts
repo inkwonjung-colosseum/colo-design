@@ -6,6 +6,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type ChangedFileLite,
   type ChatEvent,
   type DiffFile,
   type DiffStatus,
@@ -20,13 +21,15 @@ import {
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
 import { killTree } from "./preview-claim.js";
+import { type RepoConfig, type RepoRegistry, resolveRepoConfig } from "./repo-config.js";
 import {
-  type RepoConfig,
-  type RepoRegistry,
-  readDeclaredPreviewPort,
-  resolveRepoConfig,
-} from "./repo-config.js";
-import { parseUnifiedDiff, untrackedAsAdded } from "./repo-diff.js";
+  numstatCounts,
+  parseStatusRows,
+  parseUnifiedDiff,
+  sameChangedFiles,
+  unquoteGitPath,
+  untrackedAsAdded,
+} from "./repo-diff.js";
 import { safeRepoPath } from "./repo-paths.js";
 export const INSTALL_MARKER = "colo-design-install-hash";
 /**
@@ -79,8 +82,6 @@ export const SHELF_REF = "refs/colo-design/shelf";
 /** Forensics only — the planner's words for the slot live in the UI. */
 export const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
 
-/** D51: how long the summary.s one agent turn may take before the fallback. */
-export const SUMMARY_TIMEOUT_MS = 3_000;
 /** The machine turns' model (비개발자 저장): reading a diff and saying what it
  * did is haiku's job — fast enough for the leashes above and below, and a
  * planner's model stays for planning. */
@@ -372,6 +373,12 @@ export class RepoCore {
    */
   pendingChanges = 0;
 
+  /**
+   * The same count's rows, light — the 변경 점 strip lists exactly what the
+   * chip counts, so the number and the list move in one emit or not at all.
+   */
+  changedFiles: ChangedFileLite[] = [];
+
   openHandoff: HandoffStatus | null;
 
   /**
@@ -479,24 +486,6 @@ export class RepoCore {
     return this.phase === "ready" && this.preview !== null;
   }
 
-  /**
-   * The port colo-design.json declares, when the clone can say — the switch
-   * fence compares these. Unknown (not cloned, or no config yet) is `null`.
-   */
-  declaredPreviewPort(): number | null {
-    if (this.config) return this.config.preview.port ?? null;
-    if (!this.isCloned()) return null;
-    return readDeclaredPreviewPort(this.root);
-  }
-
-  /**
-   * The port this workspace's preview occupies — declared, or the one the
-   * running server was detected on. The switch fence compares these.
-   */
-  occupiedPreviewPort(): number | null {
-    return this.declaredPreviewPort() ?? previewPortOf(this.previewUrl);
-  }
-
   get remoteUrl(): string | null {
     return this.url;
   }
@@ -562,8 +551,8 @@ export class RepoCore {
       return {};
     }
     // The PAT is GitHub's: a non-github.com remote (a mirror, a proxy, a
-    // typo'd host) must never receive the header. There is no GHE host
-    // config — colo-design.json's registry is a package host, not a git one.
+    // typo'd host) must never receive the header. The registry the repo's
+    // committed .npmrc declares is a package host, not a git one.
     if (scope !== "https://github.com" && scope !== "https://www.github.com") return {};
     const basic = Buffer.from(`x-access-token:${this.pat}`).toString("base64");
     return {
@@ -613,9 +602,13 @@ export class RepoCore {
     // contract as runSave: wait the pull out, then read.
     while (this.refreshing) await this.refreshing.catch(() => undefined);
     if (!this.isCloned()) return [];
-    const tracked = parseUnifiedDiff(await this.git(["diff", "HEAD", "--no-color"]));
+    const tracked = parseUnifiedDiff(
+      await this.git(["-c", "core.quotepath=false", "diff", "HEAD", "--no-color"]),
+    );
     const files = [...tracked];
-    for (const rel of (await this.git(["ls-files", "--others", "--exclude-standard"]))
+    for (const rel of (
+      await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"])
+    )
       .split(/\r?\n/)
       .filter(Boolean)) {
       files.push(untrackedAsAdded(this.root, rel));
@@ -642,6 +635,8 @@ export class RepoCore {
     // A clone that never fetched the base reads as an empty history, not as
     // an error: the drawer opens, it just has nothing to list yet.
     const output = await this.git([
+      "-c",
+      "core.quotepath=false",
       "log",
       "--pretty=format:%x1e%H%x1f%s%x1f%cI",
       "--name-only",
@@ -680,7 +675,7 @@ export class RepoCore {
     // Tracked paths go back to HEAD (bringing a deleted file back included);
     // paths HEAD never knew are un-staged and deleted from the worktree.
     const inHead = new Set(
-      (await this.git(["ls-tree", "-r", "--name-only", "HEAD"]))
+      (await this.git(["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "HEAD"]))
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean),
@@ -707,8 +702,12 @@ export class RepoCore {
       if (line.length < 4) continue;
       const body = line.slice(3);
       const rename = body.match(/^(.*) -> (.*)$/);
-      if (rename) paths.push((rename[1] ?? "").trim(), (rename[2] ?? "").trim());
-      else paths.push(body.trim());
+      if (rename)
+        paths.push(
+          unquoteGitPath((rename[1] ?? "").trim()),
+          unquoteGitPath((rename[2] ?? "").trim()),
+        );
+      else paths.push(unquoteGitPath(body.trim()));
     }
     return paths.filter(Boolean);
   }
@@ -881,7 +880,13 @@ export class RepoCore {
 
   /** Paths git could not combine by itself — the only real conflict here. */
   async conflictedFiles(): Promise<string[]> {
-    const out = await this.git(["diff", "--name-only", "--diff-filter=U"]);
+    const out = await this.git([
+      "-c",
+      "core.quotepath=false",
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+    ]);
     return out
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -1027,14 +1032,12 @@ export class RepoCore {
   async cycleAnchor(): Promise<string | null> {
     if (this.commentsSince) return this.commentsSince;
     if (!this.branch) return null;
-    const out = await this
-      .git([
-        "log",
-        "--reverse",
-        "--format=%cI",
-        `origin/${this.baseBranch}..${this.branch}`,
-      ])
-      .catch(() => "");
+    const out = await this.git([
+      "log",
+      "--reverse",
+      "--format=%cI",
+      `origin/${this.baseBranch}..${this.branch}`,
+    ]).catch(() => "");
     return out.split("\n")[0]?.trim() || null;
   }
 
@@ -1238,13 +1241,13 @@ export class RepoCore {
       detail: this.detail,
       previewUrl: url,
       previewPort: port,
-      previewOrigins: this.config?.preview.origins ?? [],
       previewEpoch: port === null ? null : this.previewEpoch,
       url: this.url,
       branch: this.branch,
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       pendingChanges: this.pendingChanges,
+      changedFiles: this.changedFiles,
       shelf: this.shelfAt === null ? null : { at: this.shelfAt },
       errorKind: this.errorKind,
       commands: this.config
@@ -1269,17 +1272,42 @@ export class RepoCore {
    */
   async refreshPendingChanges(): Promise<void> {
     if (!this.isCloned()) return;
-    let next = 0;
+    let rows: Array<{ path: string; status: ChangedFileLite["status"] }> = [];
     try {
-      const out = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
-      next = out.split("\n").filter((line) => line.trim().length > 0).length;
+      // -uall: a wholly-untracked folder would fold into one `dir/` row and
+      // the strip would name a directory where a review later names files.
+      // Every file, its own row — the count's "files" stays literal.
+      const out = await this.git(["-c", "core.quotepath=false", "status", "--porcelain", "-uall"]);
+      rows = parseStatusRows(out);
     } catch {
       return;
     }
+    // The ± sizes need one more read — status says what changed, numstat says
+    // how much. A failure here still cannot take the recount down: the rows
+    // keep their word and stay quiet about size.
+    let counts: Record<string, { added: number; removed: number }> = {};
+    try {
+      counts = numstatCounts(
+        await this.git(["-c", "core.quotepath=false", "diff", "--numstat", "HEAD"]),
+      );
+    } catch {
+      // Sizeless rows are the honest answer for this recount.
+    }
+    const files: ChangedFileLite[] = rows.map((row) => ({
+      ...row,
+      added: counts[row.path]?.added ?? null,
+      removed: counts[row.path]?.removed ?? null,
+    }));
     const shelf = await this.readShelfAt();
     this.shelfRead = true;
-    if (next === this.pendingChanges && shelf === this.shelfAt) return;
-    this.pendingChanges = next;
+    if (
+      files.length === this.pendingChanges &&
+      shelf === this.shelfAt &&
+      sameChangedFiles(files, this.changedFiles)
+    )
+      return;
+    this.pendingChanges = files.length;
+    this.changedFiles = files;
     this.shelfAt = shelf;
     this.emit();
   }
@@ -1340,22 +1368,6 @@ function previewPortOf(url: string | null): number | null {
 /**
  * 서버는 떴지만 어느 포트에서 듣는지 끝내 알지 못했을 때의 오류 — errorKind
  * "port-undetected". 출력에 URL 이 없고 소켓 스캔도 못 찾은 경우다. 카드의
- * 다음 과제는 서버가 주소를 출력하게 하거나 preview.port 를 적는 것이다.
+ * 다음 과제는 서버가 뜬 주소를 출력하게 하는 것이다.
  */
 export class PreviewPortUndetectedError extends Error {}
-/**
- * 선언된 미리보기 포트를 정리하려 했지만 정리하지 못했을 때의 오류 — errorKind
- * "port-busy". 평범한 충돌은 활성 프로젝트가 이겨 자동 정리되지만, 이 오류는
- * 그 정리가 실패한 경우다(권한 부재 · 즉시 되살아남). 카드의 다음 과제는
- * 직접 종료나 colo-design.json 의 포트 변경이다. 종류는 던지는 자리가 밝힌다
- * (PLAN D41).
- */
-export class PreviewPortBusyError extends Error {}
-
-/**
- * 살아 있는 다른 인스턴스의 미리보기를 발견했을 때의 오류 — errorKind
- * "held-elsewhere". 점유자가 고아가 아니라 다른 창(패키지 앱 또는 데몬)의 산
- * 서버라는 뜻이고, 죽이는 대신 이쪽이 멈춘다. 종류는 던지는 자리가 밝힌다
- * (PLAN D41).
- */
-export class PreviewHeldElsewhereError extends Error {}

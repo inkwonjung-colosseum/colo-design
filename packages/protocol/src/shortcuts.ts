@@ -38,18 +38,6 @@ export const APP_SHORTCUTS: AppShortcut[] = [
   },
   { id: "back", label: "뒤로", keys: "⌘[", accelerator: "CmdOrCtrl+[" },
   { id: "forward", label: "앞으로", keys: "⌘]", accelerator: "CmdOrCtrl+]" },
-  {
-    id: "tab-previous",
-    label: "이전 탭",
-    keys: "⌘⇧[",
-    accelerator: "CmdOrCtrl+Shift+[",
-  },
-  {
-    id: "tab-next",
-    label: "다음 탭",
-    keys: "⌘⇧]",
-    accelerator: "CmdOrCtrl+Shift+]",
-  },
   { id: "zoom-in", label: "확대", keys: "⌘=", accelerator: "CmdOrCtrl+=" },
   { id: "zoom-out", label: "축소", keys: "⌘-", accelerator: "CmdOrCtrl+-" },
   {

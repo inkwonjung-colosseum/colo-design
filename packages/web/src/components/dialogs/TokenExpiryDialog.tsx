@@ -6,13 +6,13 @@ import { GITHUB_TOKEN_URL } from "../onboarding/GitHubTokenForm";
 import { Tip } from "../shell/Tip";
 
 /**
- * 토큰 만료 카드 (modals.html "연결이 끊겼어요") — 데몬 자신의 GitHub 읽기가
+ * 토큰 만료 카드 — 데몬 자신의 GitHub 읽기가
  * 401 을 본 순간(status.githubAuthExpired) 열리고, 새 토큰의 게이트가 통과하면
  * 닫힌다. 저장 검토의 `push-auth` 실패 줄과 설정 연결 그룹이 같은 수정을
  * 제공하므로 이 카드는 그 자리를 대지 않는다 — 나머지 한 종(401)을 묻지 않고
  * 눈앞에 두는 일이 이 카드의 전부다.
  *
- * 셋을 구분해 말한다(states.md §5-3): 이 카드는 GitHub 토큰의 만료다. 게이트
+ * 셋을 구분해 말한다: 이 카드는 GitHub 토큰의 만료다. 게이트
  * 자체의 부재(토큰 없음)는 마법사·첫 화면의 토큰 단계가, 데몬 페어링 토큰의
  * 끊김은 연결 화면이 각자 말한다 — 푸터의 한 줄이 그 경계를 명시해 잘못된
  * 토큰을 붙여넣는 일을 막는다.

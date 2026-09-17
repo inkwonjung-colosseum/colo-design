@@ -13,7 +13,8 @@ export interface PinAttachment {
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
   screen: string;
-  state: string;
+  /** 표식 없는 페이지의 핀은 null — 되돌릴 때도 null 그대로다. */
+  state: string | null;
   element: ColoDesignCommentTarget;
   /** The crop the view took at pin time — "what the planner saw". */
   shot?: { mediaType: string; data: string };
@@ -97,7 +98,10 @@ function loadPins(slug: string): PinAttachment[] {
           row !== null &&
           typeof (row as PinAttachment).id === "string" &&
           typeof (row as PinAttachment).screen === "string" &&
-          typeof (row as PinAttachment).state === "string" &&
+          // 표식 없는 페이지의 핀은 state 가 null 이다 — 문자열만 받으면
+          // 저장된 무표식 핀이 불러오기마다 사라진다.
+          (typeof (row as PinAttachment).state === "string" ||
+            (row as PinAttachment).state === null) &&
           typeof (row as PinAttachment).element === "object" &&
           (row as PinAttachment).element !== null,
       )
@@ -149,7 +153,7 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
       // Quota or private mode: pins stay in memory, they just do not survive a reload.
     }
   }, [slug, list]);
-  // The overlay's projection moved to useMarks (preview.md §1-C): the marks
+  // The overlay's projection moved to useMarks: the marks
   // registry owns `pinsSync` now — numbering, done marks, and screen marks
   // all ride the same channel from one place.
 

@@ -8,10 +8,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AcpDriver } from "../dist/agent/drivers/acp/driver.js";
+import { OMP_ACP } from "../dist/agent/drivers/acp/omp.js";
 import { OPENCODE_ACP } from "../dist/agent/drivers/acp/opencode.js";
 import { ClaudeDriver } from "../dist/agent/drivers/claude/driver.js";
 import { CodexDriver } from "../dist/agent/drivers/codex/driver.js";
-import { OmpDriver } from "../dist/agent/drivers/omp/omp.js";
 
 const TIERS = new Set(["safe", "moderate", "planning", "dangerous"]);
 
@@ -19,7 +19,7 @@ const drivers = [
   new ClaudeDriver(() => null),
   new CodexDriver(),
   new AcpDriver(OPENCODE_ACP),
-  new OmpDriver(),
+  new AcpDriver(OMP_ACP),
 ];
 
 test("every driver describes a well-formed descriptor", () => {
@@ -87,6 +87,20 @@ test("listModels exists exactly where a session-less catalog does", () => {
       typeof driver.listModels === "function",
       withCatalog.includes(driver.id),
       `${driver.id}: listModels presence must match its session-less catalog`,
+    );
+  }
+});
+
+test("every provider declares browser tool injectability", () => {
+  // The in-app browser is a flagship feature: each driver must consciously
+  // own its mcpServers injection path (claude·codex record/table fields, ACP
+  // agents the session/new array). A new provider flipping this false hides
+  // the browser from its users — this pin makes that a decision, not a drift.
+  for (const driver of drivers) {
+    assert.equal(
+      driver.describe().capabilities.browserTools,
+      true,
+      `${driver.id}: browserTools must be declared`,
     );
   }
 });

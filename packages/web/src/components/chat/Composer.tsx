@@ -15,8 +15,6 @@ import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import {
   EFFORT_LABEL,
   EFFORT_MENU_HINT,
-  FAST_BLOCKED_WORDS,
-  FAST_HARD_BLOCKS,
   MODE_LABEL_KO,
   MODE_MENU_HINT,
   modelOptions,
@@ -29,6 +27,7 @@ import { composing } from "../../lib/ime";
 import type { MidTurnSend, SendKey } from "../../lib/settings";
 import {
   ArrowUpIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   CloseIcon,
   FileIcon,
@@ -42,7 +41,6 @@ import {
   ShieldPlainIcon,
   SparkIcon,
   StopIcon,
-  ZapIcon,
 } from "../icons";
 import { PinTray } from "../preview/PinTray";
 import { Tip } from "../shell/Tip";
@@ -248,6 +246,7 @@ function saveHistory(rows: string[]): void {
 export function Composer({
   commands,
   disabled,
+  disabledReason = null,
   draftKey,
   placeholder,
   usage,
@@ -275,7 +274,6 @@ export function Composer({
   midTurnSend = "queue",
   onOpenSendSettings,
   selector,
-  onToggleFastMode,
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
@@ -297,6 +295,9 @@ export function Composer({
   composerChips,
 }: {
   disabled: boolean;
+  /** 잠긴 이유 한 줄 — ChatColumn 이 연결 상태에서 읽어 내린다. 잠겨 있는데
+      사유가 없으면 "지금은 보낼 수 없어요" 만 선다. */
+  disabledReason?: string | null;
   /** Which conversation this field is the draft for; swapping keys swaps drafts. */
   draftKey: string;
   /** /command palette rows, straight from the CLI. */
@@ -376,12 +377,6 @@ export function Composer({
    * workspace is still connecting.
    */
   selector: SessionSelectors;
-  /**
-   * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 턴 한정이 아닌
-   * 세션의 자세라 한 번 켜면 끌 때까지 간다. 지금 모델이 받지 않거나 CLI 가
-   * 막아 두었으면 토글 자체가 오지 않는다 — 아래 fast 를 보라.
-   */
-  onToggleFastMode?: (fast: boolean) => void;
   onSetModel: (model: string | null) => void;
   onSetEffort: (effort: EffortLevel | null) => void;
   onSetPermissionMode: (mode: PermissionMode) => void;
@@ -437,7 +432,7 @@ export function Composer({
   onSend: (text: string, attachments: Attachment[], pins: PinAttachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
-  /** ComposerChips 의 자리 — 입력 상자 위 한 줄(docs/plan/chat.md §2.3). 로직은
+  /** ComposerChips 의 자리 — 입력 상자 위 한 줄. 로직은
       호출부(ChatColumn)의 ComposerChips 가 쥔다; 여기는 자리만 마련한다. */
   composerChips?: ReactNode;
 }) {
@@ -466,8 +461,20 @@ export function Composer({
   const [highlight, setHighlight] = useState(0);
   const filePicker = useRef<HTMLInputElement>(null);
   const rejected = useFoldNotice();
+  /** 보내기·되돌리기 실패의 자리 — 첨부 안내(rejected)와 슬롯을 나눠 한 쪽이
+      다른 쪽을 지우지 않게 한다. 새 입력·재시도·성공이 거둔다. */
+  const sendError = useFoldNotice();
   /** 모두 빼기의 두 번 누르기 — 첫 클릭이 묻고, 3초 안의 두 번째가 버린다. */
   const [clearArmed, setClearArmed] = useState(false);
+  /**
+   * 상태 스트립의 접개 — 핀·대기가 네 줄을 넘으면 접힌 채로 시작한다
+   * (목록이 필드를 밑으로 누르지 않게). 머리 줄의 눈금이 한 번 눌리면
+   * 그 선택이 자동 판정을 이긴다. null 은 아직 손이 안 닿았다는 말이다.
+   */
+  const [pinsFold, setPinsFold] = useState<boolean | null>(null);
+  const [queueFold, setQueueFold] = useState<boolean | null>(null);
+  const pinsFolded = pinsFold ?? pins.length > 4;
+  const queueFolded = queueFold ?? queue.length > 4;
 
   /**
    * A draft belongs to the conversation it was typed in, not to the field
@@ -511,6 +518,7 @@ export function Composer({
     seedNonce.current = seed.nonce;
     if (seed.text.trim() === "") return;
     setEditor((prev) => ({ text: seed.text, attachments: prev.attachments }));
+    sendError.clear();
     area.current?.focus();
   }, [seed]);
 
@@ -730,6 +738,8 @@ export function Composer({
       saveHistory(rows);
     }
     historyAt.current = null;
+    // 재시도는 지난 실패 문구를 거둔다 — 새 시도가 낡은 사유와 함께 서지 않게.
+    sendError.clear();
     // The field empties when the daemon has ACCEPTED the turn, not
     // when the button fired — a failed send leaves the words, attachments and
     // pins in place, with the reason in the warning strip. 핀의 비움은
@@ -744,11 +754,28 @@ export function Composer({
         } else {
           drafts.current.set(sentKey, EMPTY_EDITOR);
           saveDraft(sentKey, "");
+          // sentKey 의 첨부 셈도 거둔다 — 남으면 그 대화를 다시 열 때
+          // 사라진 첨부를 다시 붙이라는 거짓 알림이 선다.
+          try {
+            localStorage.removeItem(`${DRAFT_PREFIX}${sentKey}.attach`);
+          } catch {
+            // 비공개 모드 — 메모리 지도만 남는다.
+          }
+          // 새 작업실의 첫 보내기: 자리 옮김 효과가 보낸 말을 새 세션의
+          // 초안 키로 나른다 — sentKey 만 비우면 그 나른 짝이 필드에 남고,
+          // 다음 Enter 가 같은 말을 또 보낸다. 아직 보낸 본문 그대로일 때만
+          // 그 짝도 비운다 (보낸 뒤에 더 쓴 말은 삶는다).
+          if (drafts.current.get(draftKeyRef.current)?.text === text) {
+            drafts.current.set(draftKeyRef.current, EMPTY_EDITOR);
+            saveDraft(draftKeyRef.current, "");
+            setEditor(EMPTY_EDITOR);
+          }
         }
         setSuggestions([]);
         rejected.clear();
+        sendError.clear();
       })
-      .catch((e) => rejected.show(failureWords(e, "보내지지 못했습니다")))
+      .catch((e) => sendError.show(failureWords(e, "보내지 못했습니다")))
       .finally(() => {
         sendingRef.current = false;
         setSending(false);
@@ -782,6 +809,8 @@ export function Composer({
       text: prev.text.trim() ? `${text}\n\n${prev.text}` : text,
       attachments: [...attachments, ...prev.attachments],
     }));
+    // 되살린 말은 새 입력이다 — 지난 보내기 실패 문구는 여기서 거둔다.
+    sendError.clear();
     area.current?.focus();
     parkCaretAtEnd();
   };
@@ -793,13 +822,13 @@ export function Composer({
         // Null: it went out before the click landed — the row is gone with it.
         if (payload) restore(payload.text, payload.attachments);
       })
-      .catch((e) => rejected.show(failureWords(e, "대기 중인 말을 되돌리지 못했습니다")));
+      .catch((e) => sendError.show(failureWords(e, "대기 중인 말을 되돌리지 못했습니다")));
   };
 
   const sendQueuedNow = (item: QueuedSend) => {
     if (!onSendQueuedNow) return;
     void onSendQueuedNow(item.id).catch((e) =>
-      rejected.show(failureWords(e, "지금 보내지 못했습니다")),
+      sendError.show(failureWords(e, "지금 보내지 못했습니다")),
     );
   };
 
@@ -811,7 +840,7 @@ export function Composer({
         restore(payload.text, payload.attachments);
         onDismissDropped?.(item.id);
       })
-      .catch((e) => rejected.show(failureWords(e, "잃은 말을 되돌리지 못했습니다")));
+      .catch((e) => sendError.show(failureWords(e, "잃은 말을 되돌리지 못했습니다")));
   };
 
   const lostWords = (item: LostSend): string | null =>
@@ -913,31 +942,6 @@ export function Composer({
   // which levels it takes gets the full set.
   const effortLevels =
     modelRow?.supportedEffortLevels ?? (Object.keys(EFFORT_LABEL) as EffortLevel[]);
-  /**
-   * 빠르게 토글이 지금 무엇을 말해야 하는지.
-   *
-   * 켜짐의 근거는 CLI 가 보내온 `fastMode` 뿐이다 — 누른 순간이 아니라
-   * 받아들여진 순간에 켜진다. 모델이 받지 않는다고 알려졌을 때만 숨기고
-   * (효과 칩이 supportsEffort 를 다루는 방식 그대로), 모르는 동안에는
-   * 보인다: 눌러 봐야 알 수 있는 일을 미리 지우지 않는다.
-   */
-  const fastReason = selector.fastModeBlocked;
-  const fastBlocked = fastReason != null && FAST_HARD_BLOCKS.has(fastReason);
-  const fast = {
-    shown:
-      !!onToggleFastMode &&
-      (modelRow ? modelRow.supportsFastMode : true) &&
-      fastReason !== "model_not_allowed",
-    on: selector.fastMode,
-    // 켜져 있는데 사유가 왔다면 잠그지 않는다 — 끄는 길은 늘 열려 있어야
-    // 한다. 잠금은 켤 수 없는 자리에서만.
-    blocked: fastBlocked && !selector.fastMode,
-    title: fastBlocked
-      ? (FAST_BLOCKED_WORDS[fastReason] ?? "지금은 빠르게를 쓸 수 없습니다")
-      : selector.fastMode
-        ? "빠르게 — 켜져 있습니다. 다시 누르면 보통 속도로 돌아갑니다"
-        : "빠르게 — 같은 모델을 더 빠른 응답으로 돌립니다",
-  };
   const providerRows = providers ?? [];
   // 프로바이더 단계의 문이 열리는 조건 — 열린 대화는 태어난 프로바이더에
   // 묶여 있으므로 ChatColumn 이 세션이 없는 자리에만 providers 를 건네고,
@@ -1121,315 +1125,389 @@ export function Composer({
       <div className="composer__usage">
         <UsageChip plan={plan} providerLabel={planProviderLabel} onRefresh={onRefreshUsage} />
       </div>
-      {suggestions.length > 0 && (
-        <div className="autocomplete" role="listbox" id="composer-suggestions" ref={palette}>
-          {suggestions.map((suggestion, index) => (
-            <button
-              key={suggestion.insert}
-              id={`composer-suggestion-${index}`}
-              type="button"
-              role="option"
-              aria-selected={index === highlight}
-              className={
-                index === highlight
-                  ? "autocomplete__row autocomplete__row--on"
-                  : "autocomplete__row"
-              }
-              onMouseEnter={() => setHighlight(index)}
-              onClick={() => applySuggestion(suggestion)}
-            >
-              {suggestion.kind !== "command" && (
-                <span className="autocomplete__icon">
-                  {suggestion.kind === "dir" ? <FolderIcon /> : <FileIcon />}
-                </span>
-              )}
-              <span className="autocomplete__label">{suggestion.label}</span>
-              {suggestion.hint && <span className="autocomplete__hint">{suggestion.hint}</span>}
-            </button>
-          ))}
-        </div>
-      )}
 
-      {rejected.text && (
-        <Fold closing={rejected.closing} onCollapsed={rejected.clear}>
-          <div className="notice notice--warn">
-            <span className="notice__text">{rejected.text}</span>
-            <button
-              type="button"
-              className="notice__close"
-              aria-label="첨부 안내 닫기"
-              disabled={rejected.closing}
-              onClick={rejected.close}
-            >
-              ×
-            </button>
+      {/* 상태 밴드 — 카드 밖의 한 열. 대기·핀·작업·제안이 살아 있을 때만
+          존재하고, 비면 아무것도 남지 않는 것이 이 층의 조용함이다. */}
+      <div className="composer__status">
+        {rejected.text && (
+          <Fold closing={rejected.closing} onCollapsed={rejected.clear}>
+            <div className="notice notice--warn">
+              <span className="notice__text">{rejected.text}</span>
+              <button
+                type="button"
+                className="notice__close"
+                aria-label="첨부 안내 닫기"
+                disabled={rejected.closing}
+                onClick={rejected.close}
+              >
+                ×
+              </button>
+            </div>
+          </Fold>
+        )}
+        {/* 보내기·되돌리기 실패는 첨부 안내와 다른 슬롯 — 한 쪽의 닫기·
+            새 소식이 다른 쪽을 지우지 않는다(실사 결함: 첨부가 전송 실패
+            문구를 지웠다). */}
+        {sendError.text && (
+          <Fold closing={sendError.closing} onCollapsed={sendError.clear}>
+            <div className="notice notice--error">
+              <span className="notice__text">{sendError.text}</span>
+              <button
+                type="button"
+                className="notice__close"
+                aria-label="오류 닫기"
+                disabled={sendError.closing}
+                onClick={sendError.close}
+              >
+                ×
+              </button>
+            </div>
+          </Fold>
+        )}
+        {pins.length > 0 && (
+          // 메모 입력의 Enter 는 전송이 아니라 본문으로 — capture 에서 입력창을
+          // 데려 오고, 행의 onKeyDown 이 메모를 저장한 뒤 이벤트를 삼킨다.
+          <div
+            onKeyDownCapture={(event) => {
+              if (composing(event)) return;
+              if (event.key !== "Enter") return;
+              if (!(event.target as HTMLElement).matches("input.pintray__note")) return;
+              event.preventDefault();
+              area.current?.focus();
+            }}
+          >
+            <PinTray
+              pins={pins}
+              numberStart={pinNumberStart}
+              focusPinId={focusPinId}
+              onPinRemove={(id) => onPinRemove?.(id)}
+              onPinNote={(id, note) => onPinNote?.(id, note)}
+              onPinIntent={(id, intent) => onPinIntent?.(id, intent)}
+              onPinFocus={(id) => onPinFocus?.(id)}
+              titleFor={titleForScreen}
+              fold={{ folded: pinsFolded, onToggle: () => setPinsFold(!pinsFolded) }}
+            />
           </div>
-        </Fold>
-      )}
-      {pins.length > 0 && (
-        // 메모 입력의 Enter 는 전송이 아니라 본문으로 — capture 에서 입력창을
-        // 데려 오고, 행의 onKeyDown 이 메모를 저장한 뒤 이벤트를 삼킨다.
-        <div
-          onKeyDownCapture={(event) => {
-            if (composing(event)) return;
-            if (event.key !== "Enter") return;
-            if (!(event.target as HTMLElement).matches("input.pintray__note")) return;
-            event.preventDefault();
-            area.current?.focus();
-          }}
-        >
-          <PinTray
-            pins={pins}
-            numberStart={pinNumberStart}
-            focusPinId={focusPinId}
-            onPinRemove={(id) => onPinRemove?.(id)}
-            onPinNote={(id, note) => onPinNote?.(id, note)}
-            onPinIntent={(id, intent) => onPinIntent?.(id, intent)}
-            onPinFocus={(id) => onPinFocus?.(id)}
-            titleFor={titleForScreen}
-          />
-        </div>
-      )}
-      {editor.attachments.length > 0 && (
-        <div className="chips">
-          {editor.attachments.map((attachment, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
-            <span key={`${attachment.name}-${index}`} className="chip">
-              <img
-                className="chip__thumb"
-                src={`data:${attachment.mediaType};base64,${attachment.data}`}
-                alt=""
-              />
-              {attachment.name}
-              <Tip label={`${attachment.name} 첨부 취소`}>
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label={`${attachment.name} 첨부 취소`}
-                  onClick={() =>
-                    setEditor((prev) => ({
-                      text: prev.text,
-                      attachments: prev.attachments.filter((_, i) => i !== index),
-                    }))
-                  }
-                >
-                  ×
-                </button>
-              </Tip>
-            </span>
-          ))}
-        </div>
-      )}
-
-
-      {/* 뒤에서 도는 작업: 턴이 끝나도 남아 있을 수 있으니 대기
+        )}
+        {editor.attachments.length > 0 && (
+          <div className="chips">
+            {editor.attachments.map((attachment, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
+              <span key={`${attachment.name}-${index}`} className="chip">
+                <img
+                  className="chip__thumb"
+                  src={`data:${attachment.mediaType};base64,${attachment.data}`}
+                  alt=""
+                />
+                {attachment.name}
+                <Tip label={`${attachment.name} 첨부 취소`}>
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label={`${attachment.name} 첨부 취소`}
+                    onClick={() =>
+                      setEditor((prev) => ({
+                        text: prev.text,
+                        attachments: prev.attachments.filter((_, i) => i !== index),
+                      }))
+                    }
+                  >
+                    ×
+                  </button>
+                </Tip>
+              </span>
+            ))}
+          </div>
+        )}
+        {/* 뒤에서 도는 작업: 턴이 끝나도 남아 있을 수 있으니 대기
           줄과 따로 산다. 각 줄의 버튼은 그 작업 하나만 세운다 — 중지 버튼은
           턴의 것이고 이것은 작업의 것이다. */}
-      {tasks.length > 0 && (
-        <div className="composer__tasks" role="status">
-          <div className="queued__head">뒤에서 도는 작업 {tasks.length}건</div>
-          <ul className="queued__list">
-            {tasks.map((task) => (
-              <li key={task.taskId} className="queued__row">
-                <span className="queued__text" title={task.description}>
-                  {task.description || task.type}
-                </span>
-                {onStopTask && (
-                  <Tip label="이 작업만 세웁니다 — 대화는 그대로 이어집니다">
+        {tasks.length > 0 && (
+          <div className="composer__tasks" role="status">
+            <div className="queued__head">뒤에서 도는 작업 {tasks.length}건</div>
+            <ul className="queued__list">
+              {tasks.map((task) => (
+                <li key={task.taskId} className="queued__row">
+                  <span className="queued__text" title={task.description}>
+                    {task.description || task.type}
+                  </span>
+                  {onStopTask && (
+                    <Tip label="이 작업만 세웁니다 — 대화는 그대로 이어집니다">
+                      <button
+                        type="button"
+                        className="ghost queued__action"
+                        aria-label="이 작업만 중지"
+                        onClick={() => onStopTask(task.taskId)}
+                      >
+                        <CloseIcon />
+                      </button>
+                    </Tip>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* 대기 줄: what a mid-turn send means — the sends themselves,
+          above the field, oldest first; gone the moment they go out. Each row
+          can come back for an edit or jump the running turn. */}
+        {queue.length > 0 && (
+          <div className="composer__queued" role="status">
+            <div className="queued__head">
+              <span>다음 턴에 보냅니다 · {queue.length}건 대기</span>
+              {onClearQueue && queue.length > 1 && (
+                <button
+                  type="button"
+                  className="ghost queued__clear"
+                  disabled={disabled}
+                  onClick={() => {
+                    // 두 번 누르는 확인 — 대기 중인 말은 되돌릴 수 없이 버려진다.
+                    if (clearArmed) {
+                      setClearArmed(false);
+                      onClearQueue();
+                    } else {
+                      setClearArmed(true);
+                      window.setTimeout(() => setClearArmed(false), 3000);
+                    }
+                  }}
+                >
+                  {clearArmed ? "정말 모두 뺍니다" : "모두 빼기"}
+                </button>
+              )}
+              <button
+                type="button"
+                className="ghost queued__fold"
+                aria-expanded={!queueFolded}
+                aria-label={queueFolded ? "대기 줄 펼치기" : "대기 줄 접기"}
+                onClick={() => setQueueFold(!queueFolded)}
+              >
+                <ChevronDownIcon />
+              </button>
+            </div>
+            {!queueFolded && (
+              <ul className="queued__list">
+                {queue.map((item) => (
+                  <li key={item.id} className="queued__row">
+                    <span className="queued__text" title={item.text}>
+                      {item.text || "(첨부만)"}
+                    </span>
+                    {attachmentWords(item) && (
+                      <span className="queued__meta">
+                        <FileIcon size={11} /> {attachmentWords(item)}
+                      </span>
+                    )}
+                    <Tip label="입력창으로 되돌려 고칩니다">
+                      <button
+                        type="button"
+                        className="ghost queued__action"
+                        aria-label="고쳐서 보내기"
+                        disabled={disabled}
+                        onClick={() => takeQueued(item)}
+                      >
+                        <PencilIcon />
+                      </button>
+                    </Tip>
+                    <Tip label="지금 답변을 멈추고 이 말부터 보냅니다">
+                      <button
+                        type="button"
+                        className="ghost queued__action queued__action--now"
+                        disabled={disabled || stopping || hurrying === item.id}
+                        onClick={() => sendQueuedNow(item)}
+                      >
+                        지금 보내기
+                      </button>
+                    </Tip>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* The room's losses: sends the dead query never delivered. Never in the
+          transcript, so they wait here — the words come back for a resend,
+          the attachments must be picked again. */}
+        {dropped.length > 0 && (
+          <div className="composer__lost" role="alert">
+            <div className="queued__head">
+              전달되지 못한 말 {dropped.length}건 — 되살려 다시 보내 주세요
+            </div>
+            <ul className="queued__list">
+              {dropped.map((item) => (
+                <li key={item.id} className="queued__row">
+                  <span className="queued__text" title={item.text}>
+                    {item.text || "(첨부만)"}
+                  </span>
+                  {lostWords(item) && (
+                    <span className="queued__meta">
+                      <FileIcon size={11} /> {lostWords(item)}
+                    </span>
+                  )}
+                  <Tip label="첨부까지 되돌려 집어넣습니다">
                     <button
                       type="button"
                       className="ghost queued__action"
-                      aria-label="이 작업만 중지"
-                      onClick={() => onStopTask(task.taskId)}
+                      aria-label="되살리기"
+                      disabled={disabled}
+                      onClick={() => takeDropped(item)}
+                    >
+                      <PencilIcon />
+                    </button>
+                  </Tip>
+                  <Tip label="이 말을 지웁니다">
+                    <button
+                      type="button"
+                      className="ghost queued__action"
+                      aria-label="지우기"
+                      onClick={() => onDismissDropped?.(item.id)}
                     >
                       <CloseIcon />
                     </button>
                   </Tip>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* 대기 줄: what a mid-turn send means — the sends themselves,
-          above the field, oldest first; gone the moment they go out. Each row
-          can come back for an edit or jump the running turn. */}
-      {queue.length > 0 && (
-        <div className="composer__queued" role="status">
-          <div className="queued__head">
-            <span>다음 턴에 보냅니다 · {queue.length}건 대기</span>
-            {onClearQueue && queue.length > 1 && (
-              <button
-                type="button"
-                className="ghost queued__clear"
-                disabled={disabled}
-                onClick={() => {
-                  // 두 번 누르는 확인 — 대기 중인 말은 되돌릴 수 없이 버려진다.
-                  if (clearArmed) {
-                    setClearArmed(false);
-                    onClearQueue();
-                  } else {
-                    setClearArmed(true);
-                    window.setTimeout(() => setClearArmed(false), 3000);
-                  }
-                }}
-              >
-                {clearArmed ? "정말 모두 뺍니다" : "모두 빼기"}
-              </button>
-            )}
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="queued__list">
-            {queue.map((item) => (
-              <li key={item.id} className="queued__row">
-                <span className="queued__text" title={item.text}>
-                  {item.text || "(첨부만)"}
-                </span>
-                {attachmentWords(item) && (
-                  <span className="queued__meta">
-                    <FileIcon size={11} /> {attachmentWords(item)}
-                  </span>
-                )}
-                <Tip label="입력창으로 되돌려 고칩니다">
-                  <button
-                    type="button"
-                    className="ghost queued__action"
-                    aria-label="고쳐서 보내기"
-                    disabled={disabled}
-                    onClick={() => takeQueued(item)}
-                  >
-                    <PencilIcon />
-                  </button>
-                </Tip>
-                <Tip label="지금 답변을 멈추고 이 말부터 보냅니다">
-                  <button
-                    type="button"
-                    className="ghost queued__action queued__action--now"
-                    disabled={disabled || stopping || hurrying === item.id}
-                    onClick={() => sendQueuedNow(item)}
-                  >
-                    지금 보내기
-                  </button>
-                </Tip>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+        )}
 
-      {/* The room's losses: sends the dead query never delivered. Never in the
-          transcript, so they wait here — the words come back for a resend,
-          the attachments must be picked again. */}
-      {dropped.length > 0 && (
-        <div className="composer__lost" role="alert">
-          <div className="queued__head">
-            전달되지 못한 말 {dropped.length}건 — 되살려 다시 보내 주세요
-          </div>
-          <ul className="queued__list">
-            {dropped.map((item) => (
-              <li key={item.id} className="queued__row">
-                <span className="queued__text" title={item.text}>
-                  {item.text || "(첨부만)"}
-                </span>
-                {lostWords(item) && (
-                  <span className="queued__meta">
-                    <FileIcon size={11} /> {lostWords(item)}
-                  </span>
-                )}
-                <Tip label="첨부까지 되돌려 집어넣습니다">
-                  <button
-                    type="button"
-                    className="ghost queued__action"
-                    aria-label="되살리기"
-                    disabled={disabled}
-                    onClick={() => takeDropped(item)}
-                  >
-                    <PencilIcon />
-                  </button>
-                </Tip>
-                <Tip label="이 말을 지웁니다">
-                  <button
-                    type="button"
-                    className="ghost queued__action"
-                    aria-label="지우기"
-                    onClick={() => onDismissDropped?.(item.id)}
-                  >
-                    <CloseIcon />
-                  </button>
-                </Tip>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* 다음 칩: 답이 끝난 자리에서 CLI 가 예측한 한 문장. 누르면
+        {/* 다음 칩: 답이 끝난 자리에서 CLI 가 예측한 한 문장. 누르면
           입력창으로 들어갈 뿐 — 보내는 것은 언제나 사람이다. 쓰던 말이 있으면
           칩은 비켜선다(그 자리의 주인은 계획자의 문장이다). */}
-      {suggestion && !running && !editor.text.trim() && (
-        <div className="composer__next">
-          <Tip label="이 말을 입력창에 넣습니다">
-            <button
-              type="button"
-              className="composer__nextchip"
-              disabled={disabled}
-              onClick={() => {
-                restore(suggestion, []);
-                onDismissSuggestion?.();
-              }}
-            >
-              <SparkIcon size={12} />
-              {`다음: ${suggestion}`}
-            </button>
-          </Tip>
-          <Tip label="제안 닫기">
-            <button
-              type="button"
-              className="ghost composer__nextclose"
-              aria-label="제안 닫기"
-              onClick={() => onDismissSuggestion?.()}
-            >
-              <CloseIcon />
-            </button>
-          </Tip>
-        </div>
-      )}
+        {suggestion && !running && !editor.text.trim() && (
+          <div className="composer__next">
+            <Tip label="이 말을 입력창에 넣습니다">
+              <button
+                type="button"
+                className="composer__nextchip"
+                disabled={disabled}
+                onClick={() => {
+                  restore(suggestion, []);
+                  onDismissSuggestion?.();
+                }}
+              >
+                <SparkIcon size={12} />
+                {`다음: ${suggestion}`}
+              </button>
+            </Tip>
+            <Tip label="제안 닫기">
+              <button
+                type="button"
+                className="ghost composer__nextclose"
+                aria-label="제안 닫기"
+                onClick={() => onDismissSuggestion?.()}
+              >
+                <CloseIcon />
+              </button>
+            </Tip>
+          </div>
+        )}
 
-      {composerChips}
+        {composerChips}
+      </div>
 
-      <textarea
-        ref={area}
-        value={editor.text}
-        placeholder={
-          editor.attachments.length > 0
-            ? "그림을 붙였습니다 — 어떻게 쓸지 한마디만 적어 주세요"
-            : placeholder
-        }
-        aria-label="메시지"
-        /* @/… 자동완성의 콤보박스 선언 — 목록은 위의 listbox, 하이라이트는
+      {/* 입력 카드 — 컴포저의 유일한 카드. 말과 보내는 손만 산다.
+          자동완성은 필드의 손위에 뜬다 — @ 를 친 곳에서 가까운 쪽이 답이다. */}
+      <div className="composer__field">
+        {suggestions.length > 0 && (
+          <div className="autocomplete" role="listbox" id="composer-suggestions" ref={palette}>
+            {suggestions.map((suggestion, index) => (
+              <button
+                key={suggestion.insert}
+                id={`composer-suggestion-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === highlight}
+                className={
+                  index === highlight
+                    ? "autocomplete__row autocomplete__row--on"
+                    : "autocomplete__row"
+                }
+                onMouseEnter={() => setHighlight(index)}
+                onClick={() => applySuggestion(suggestion)}
+              >
+                {suggestion.kind !== "command" && (
+                  <span className="autocomplete__icon">
+                    {suggestion.kind === "dir" ? <FolderIcon /> : <FileIcon />}
+                  </span>
+                )}
+                <span className="autocomplete__label">{suggestion.label}</span>
+                {suggestion.hint && <span className="autocomplete__hint">{suggestion.hint}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        <textarea
+          ref={area}
+          value={editor.text}
+          placeholder={
+            editor.attachments.length > 0
+              ? "그림을 붙였습니다 — 어떻게 쓸지 한마디만 적어 주세요"
+              : placeholder
+          }
+          aria-label="메시지"
+          /* @/… 자동완성의 콤보박스 선언 — 목록은 위의 listbox, 하이라이트는
            activedescendant 가 가리킨다(팔레트·RepoPicker 와 같은 패턴). */
-        role="combobox"
-        aria-haspopup="listbox"
-        aria-expanded={suggestions.length > 0}
-        aria-controls={suggestions.length > 0 ? "composer-suggestions" : undefined}
-        aria-activedescendant={
-          suggestions.length > 0 ? `composer-suggestion-${highlight}` : undefined
-        }
-        disabled={disabled}
-        rows={1}
-        onChange={(e) => {
-          // Typing is a decision: whatever row the walk sat on, these are
-          // the planner's own words now.
-          historyAt.current = null;
-          const text = e.target.value;
-          setEditor((prev) => ({ text, attachments: prev.attachments }));
-        }}
-        onPaste={(e) => {
-          const files = [...e.clipboardData.files];
-          if (files.length) void readAttachments(files);
-        }}
-        onKeyDown={onKeyDown}
-      />
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-expanded={suggestions.length > 0}
+          aria-controls={suggestions.length > 0 ? "composer-suggestions" : undefined}
+          aria-activedescendant={
+            suggestions.length > 0 ? `composer-suggestion-${highlight}` : undefined
+          }
+          disabled={disabled}
+          rows={1}
+          onChange={(e) => {
+            // Typing is a decision: whatever row the walk sat on, these are
+            // the planner's own words now.
+            historyAt.current = null;
+            // 새 입력이 시작되면 지난 보내기 실패 문구는 낡은 소식이다.
+            sendError.clear();
+            const text = e.target.value;
+            setEditor((prev) => ({ text, attachments: prev.attachments }));
+          }}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files];
+            if (files.length) void readAttachments(files);
+          }}
+          onKeyDown={onKeyDown}
+        />
+
+        <div className="composer__sendrow">
+          {running && (
+            <Tip label={stopping ? "정리 중…" : "중지"}>
+              <button
+                type="button"
+                className="toolbar__stop"
+                aria-label={stopping ? "정리 중…" : "중지"}
+                disabled={stopping}
+                onClick={onInterrupt}
+              >
+                <StopIcon size={11} />
+                {stopping ? "정리 중…" : null}
+              </button>
+            </Tip>
+          )}
+          {/* 도는 동안에도 보내기는 남는다 — Enter 와 같은 길을 포인터에도
+            둔다. 무엇을 하는 버튼인지는 그때의 실행 중 보내기 설정이
+            정한다: queue 면 다음 턴의 줄로, interrupt 면 도는 턴을 끊는다.
+            도는 동안엔 버튼이 그 이름을 입는다 — 같은 ↑ 가 두 일을 하는데
+            겉모습만 같으면 누르는 사람이 모른다. */}
+          <button
+            disabled={
+              disabled ||
+              sending ||
+              (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+            }
+            className={running ? "composer__send composer__send--verb" : "composer__send"}
+            aria-label={sendVerb}
+            onClick={sendClick}
+          >
+            <ArrowUpIcon size={15} />
+            {running && <span className="composer__sendverb">{sendVerb}</span>}
+          </button>
+        </div>
+      </div>
 
       <div className="toolbar">
         <input
@@ -1443,16 +1521,14 @@ export function Composer({
             e.target.value = "";
           }}
         />
-        {/* 글자 없는 + 는 첨부를 발견하는 길이 아니었다 —
-            도구줄의 첫 칸이 이름을 가진다. */}
         <button
           type="button"
           className="toolbar__attach"
+          aria-label="첨부"
           disabled={disabled}
           onClick={() => filePicker.current?.click()}
         >
           <PlusIcon size={14} />
-          첨부
         </button>
         {chips.map((chip) => (
           <SelectorChip
@@ -1492,79 +1568,42 @@ export function Composer({
             alwaysSearch={chip.alwaysSearch}
           />
         ))}
-        {fast.shown && (
-          <Tip label={fast.title}>
-            <button
-              type="button"
-              className={fast.on ? "toolbar__fast toolbar__fast--on" : "toolbar__fast"}
-              aria-pressed={fast.on}
-              aria-label="빠르게"
-              disabled={disabled || fast.blocked}
-              onClick={() => onToggleFastMode?.(!fast.on)}
-            >
-              <ZapIcon />
-            </button>
-          </Tip>
-        )}
         <div className="toolbar__end">
           <ContextRing usage={usage} />
-          {running && (
-            <Tip label={stopping ? "정리 중…" : "중지"}>
-              <button
-                type="button"
-                className="toolbar__stop"
-                aria-label={stopping ? "정리 중…" : "중지"}
-                disabled={stopping}
-                onClick={onInterrupt}
-              >
-                <StopIcon size={11} />
-                {stopping ? "정리 중…" : null}
-              </button>
-            </Tip>
-          )}
-          {/* 도는 동안에도 보내기는 남는다 — Enter 와 같은 길을 포인터에도
-              둔다. 무엇을 하는 버튼인지는 그때의 실행 중 보내기 설정이
-              정한다: queue 면 다음 턴의 줄로, interrupt 면 도는 턴을 끊는다.
-              도는 동안엔 버튼이 그 이름을 입는다 — 같은 ↑ 가 두 일을 하는데
-              겉모습만 같으면 누르는 사람이 모른다. */}
-          <button
-            disabled={
-              disabled ||
-              sending ||
-              (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
-            }
-            className={running ? "composer__send composer__send--verb" : "composer__send"}
-            aria-label={sendVerb}
-            onClick={sendClick}
-          >
-            <ArrowUpIcon size={15} />
-            {running && <span className="composer__sendverb">{sendVerb}</span>}
-          </button>
+          {/* 보내는 법은 스트립 끝 한 줄 — 전부 tooltip 뒤에 있던 Enter 규칙을
+              겉으로 내온다. 설정(sendKey)이 다르면 그 사실을 말한다: false인
+              안내문은 없는 것이 낫다. 같은 줄이 / 와 @ 의 존재도 가르친다.
+              도는 동안에는 그 자리가 ⌥Enter 를 말한다: 끊고 보내는 손은
+              필요한 순간에만 보이면 된다. 잠긴 동안에는 보내는 법 대신 잠긴
+              이유가 선다 — disabled 는 말하지 않으니 이 줄이 말한다. */}
+          <p className="composer__hint">
+            {disabled ? (
+              `지금은 보낼 수 없어요${disabledReason ? ` — ${disabledReason}` : ""}`
+            ) : (
+              <>
+                {running
+                  ? "⌥Enter로 끊고 보내기"
+                  : sendKey === "enter"
+                    ? "Enter로 보내기 · Shift+Enter 줄바꿈"
+                    : "⌘/Ctrl+Enter로 보내기 · Enter 줄바꿈"}
+                {" · "}/ 명령 · @ 파일
+                {onOpenSendSettings && (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      className="composer__hintlink"
+                      onClick={onOpenSendSettings}
+                    >
+                      바꾸기
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </p>
         </div>
       </div>
-
-      {/* 보내는 법은 카드 아래 한 줄(cycle/_skeleton.html composer__hint) —
-          전부 tooltip 뒤에 있던 Enter 규칙을 겉으로 내온다. 설정(sendKey)이
-          다르면 그 사실을 말한다: false인 안내문은 없는 것이 낫다. 같은 줄이
-          / 와 @ 의 존재도 가르친다 — 둘 다 쳐 보기 전에는 없는 기능이다.
-          도는 동안에는 그 자리가 ⌥Enter 를 말한다: 끊고 보내는 손은
-          필요한 순간에만 보이면 된다. */}
-      <p className="composer__hint">
-        {running
-          ? "⌥Enter로 끊고 보내기"
-          : sendKey === "enter"
-            ? "Enter로 보내기 · Shift+Enter 줄바꿈"
-            : "⌘/Ctrl+Enter로 보내기 · Enter 줄바꿈"}
-        {" · "}/ 명령 · @ 파일
-        {onOpenSendSettings && (
-          <>
-            {" · "}
-            <button type="button" className="composer__hintlink" onClick={onOpenSendSettings}>
-              바꾸기
-            </button>
-          </>
-        )}
-      </p>
     </footer>
   );
 }

@@ -5,8 +5,8 @@
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
- *                      5402 sidebar, 5403 midturn-send, 5407 port-busy,
- *                      5409 thread-delete, 5411 clear-all) — all distinct
+ *                      5402 sidebar, 5403 midturn-send, 5409
+ *                      thread-delete, 5411 clear-all, 5413 changed-strip) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns,
  *                      so they are opt-in: `pnpm test` skips them, CI never
@@ -61,6 +61,7 @@ const LANES = {
       "test:permission-repeat",
       "test:rewind",
       "test:repo",
+      "test:preview-detect",
       "test:publish",
       "test:onboarding",
       "test:plan",
@@ -80,8 +81,8 @@ const LANES = {
       "test:clear-all-ui",
       "test:sidebar-ui",
       "test:status-menu-ui",
+      "test:changed-strip-ui",
       "test:onboarding-ui",
-      "test:port-busy-ui",
     ],
   },
   L4: {
@@ -112,6 +113,8 @@ const LANES = {
       "test:desktop-smoke",
       "test:desktop-switch",
       "test:desktop-cover",
+      "test:pane",
+      "test:browser-driver",
     ],
   },
 };

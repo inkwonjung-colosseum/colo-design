@@ -266,6 +266,9 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
   };
   for (const line of lines) {
     const payload = (line.payload ?? {}) as Wire;
+    // 재생되는 도구 행의 경과 시계가 대화록의 시각에서 이어지도록.
+    const lineAt = Date.parse(String(line.timestamp ?? ""));
+    const startedAt = Number.isFinite(lineAt) ? { startedAt: lineAt } : {};
     if (line.type === "response_item") {
       switch (payload.type) {
         case "message": {
@@ -322,7 +325,14 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
               // Keep the raw string — the card shows it fine.
             }
           }
-          out.push({ kind: "tool.start", toolUseId: callId, name, input, agentId: null });
+          out.push({
+            kind: "tool.start",
+            toolUseId: callId,
+            name,
+            input,
+            agentId: null,
+            ...startedAt,
+          });
           break;
         }
         case "function_call_output":
@@ -347,6 +357,7 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
             name: "webSearch",
             input: { query },
             agentId: null,
+            ...startedAt,
           });
           out.push({
             kind: "tool.end",
@@ -391,6 +402,7 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
           name: "commandExecution",
           input: { command: item.command ?? "", cwd: item.cwd ?? null },
           agentId: null,
+          ...startedAt,
         });
         const exitCode = typeof item.exitCode === "number" ? item.exitCode : null;
         out.push({
@@ -407,6 +419,7 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
           name: "fileChange",
           input: { changes: item.changes ?? [] },
           agentId: null,
+          ...startedAt,
         });
         out.push({
           kind: "tool.end",
@@ -422,6 +435,7 @@ export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
           name: `${item.server ?? "mcp"}/${item.tool ?? "tool"}`,
           input: item.arguments ?? {},
           agentId: null,
+          ...startedAt,
         });
         out.push({
           kind: "tool.end",

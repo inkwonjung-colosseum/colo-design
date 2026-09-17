@@ -60,8 +60,12 @@ export interface ColoDesignPinEnvelope {
     id: string;
     /** The screen the pin sat on, as `screenContext` read it. */
     screen: string;
-    /** The screen state the pin sat on. */
-    state: string;
+    /**
+     * The screen state the pin sat on — `data-state` 표식이 없는 페이지는
+     * null 이다(합성값은 만들지 않는다: 표식 없음을 표식으로 사칭하면 게이트의
+     * 자리 잡음 판정이 유령을 기다린다). null 의 확인은 문서 로드까지다.
+     */
+    state: string | null;
     element: ColoDesignCommentTarget;
     /**
      * What the planner was looking at (PLAN D87): the view crops the element
@@ -85,7 +89,8 @@ export interface ColoDesignPinsSync {
   pins: Array<{
     id: string;
     screen: string;
-    state: string;
+    /** 표식 없는 페이지의 핀은 null 로 오고, 그대로 되돌아간다 — 정규화 금지. */
+    state: string | null;
     /**
      * The element path the badge re-anchors on. A `screenMark` row has no
      * element — it carries "" and the overlay anchors on the screen frame.
@@ -94,7 +99,7 @@ export interface ColoDesignPinsSync {
     /** Sent pins grey out for the turn's life (재설계 C10). */
     sent: boolean;
     /**
-     * 고침 표시 (preview.md §1-C): the mark registry's number — stable for
+     * 고침 표시: the mark registry's number — stable for
      * the cycle, so a done mark keeps the number its pin was sent with and
      * the conversation's ③④⑤⑥ references resolve 1:1. Absent on old webs;
      * the overlay falls back to the row's place in the list.
@@ -135,50 +140,6 @@ export interface ColoDesignErrorEnvelope {
   message: string;
   /** The route that was up when it failed. */
   route: string;
-  /** The state the screen was showing. */
-  state: string;
-}
-
-/**
- * The 💬 코멘트 toggle's word to the overlay (PLAN D58 → D67): the web keeps
- * the truth and the main process re-tells the preview preload
- * (`colo-overlay:mode`). Tool-internal — the repo never sees it; the overlay
- * has no toggle of its own, so the two can never disagree.
- */
-export interface ColoDesignCommentsModeEnvelope {
-  type: "colo-design.comments.mode";
-  on: boolean;
-}
-
-
-/**
- * 스트립이 그리는 탭 한 칸의 계약(인앱 브라우저 1단계, §3 규칙 3). 데스크톱이
- * `colo-preview:tabs` 로 푸는 사실이자 `preview:tabs` 가 돌려주는 것 — 웹의
- * 스트립이 그릴 전부다. WebContents 를 담지 않는다: 버려진(discarded) 탭도
- * 메타로는 살아 있어, 다시 골랐을 때 `url` 로 되살아난다.
- */
-export interface PreviewTabMeta {
-  /** 스트립 id — "t1"부터. 닫혀도 재활용하지 않는다. */
-  id: string;
-  /** repo 가 선언한 origin 위면 `preview`(오버레이 무장), 그 밖의 http(s) 면 `web`. */
-  kind: "preview" | "web";
-  /** 페이지가 마지막으로 보고한 제목 — 스트립 라벨. */
-  title: string;
-  /** 마지막 주소 — 버려진 탭이 되살아날 때 이 주소로 다시 시작한다. */
-  url: string | null;
-  /** WebContents 는 파기됐고 메타만 남았다 — 재활성화가 재로드를 부른다. */
-  discarded: boolean;
-}
-
-
-/**
- * The one message that goes the other way: show this route in this state.
- * Sent when the planner picks a screen in the list, or taps a state chip.
- * The preview app routes; the tool does not touch its url.
- */
-export interface ColoDesignNavigateEnvelope {
-  type: "colo-design.navigate";
-  route: string;
-  /** Omitted or null means the screen's default. */
-  state?: string | null;
+  /** 표식 없는 페이지는 null — 합성 상태는 만들지 않는다. */
+  state: string | null;
 }

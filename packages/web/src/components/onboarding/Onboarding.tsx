@@ -99,8 +99,14 @@ export function Onboarding({
   const [error, setError] = useState<string | null>(null);
   /** The fix's own words. The daemon answers every fix with `{started, guidance}` —
       on macOS the installer opens no window and drops its stdio, so this sentence
-      is the ONLY feedback a press produces. Dropping it made the button look dead. */
-  const [notice, setNotice] = useState<{ started: boolean; guidance: string } | null>(null);
+      is the ONLY feedback a press produces. Dropping it made the button look dead.
+      `step` 은 그 말이 어떤 행의 것인지 기억한다 — 그렇지 않으면 고침이 있는
+      실패 행마다 같은 안내가 반복해서 선다. */
+  const [notice, setNotice] = useState<{
+    step: string;
+    started: boolean;
+    guidance: string;
+  } | null>(null);
   /** Re-opens the token form on a github line that already passed. */
   const [editingToken, setEditingToken] = useState(false);
 
@@ -126,6 +132,7 @@ export function Onboarding({
         typeof reply.guidance === "string"
       ) {
         setNotice({
+          step: label,
           started: !("started" in reply) || reply.started !== false,
           guidance: reply.guidance,
         });
@@ -281,7 +288,10 @@ export function Onboarding({
                         onProviderChange(pickedProvider);
                         return;
                       }
-                      void run("recheck", () => daemon.api.onboardingCheck(provider));
+                      // run 은 마지막에 검사를 한 번 더 돌린다 — 행동으로도
+                      // 검사를 넘기면 같은 게이트가 두 번 돈다. 재확인은
+                      // 행동 없이 run 의 마지막 검사 한 번에 맡긴다.
+                      void run("recheck", () => Promise.resolve());
                     }}
                   >
                     {checkRunning ? "확인 중…" : "다시 확인"}
@@ -341,13 +351,15 @@ export function Onboarding({
                     type="button"
                     className="ghost"
                     disabled={busyKind !== null || checking}
-                    onClick={() => void run("recheck", () => daemon.api.onboardingCheck(provider))}
+                    // run 이 마지막에 검사를 돌린다 — 행동 자리에도 검사를
+                    // 넘기면 같은 게이트가 두 번 돈다.
+                    onClick={() => void run("recheck", () => Promise.resolve())}
                   >
                     {busyKind === "recheck" ? "확인 중…" : "다시 확인"}
                   </button>
                 </div>
               )}
-              {step.fix && step.status !== "pass" && notice && (
+              {step.fix && step.status !== "pass" && notice?.step === step.fix.kind && (
                 <div
                   className={`notice ${notice.started ? "notice--info" : "notice--error"}`}
                   role="status"

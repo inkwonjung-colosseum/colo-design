@@ -1,7 +1,7 @@
 import { resultLine, type SelfUpdatePlan } from "./self-update.js";
 
 /**
- * Windows 자가 교체의 교체 스크립트(DESIGN §7): 앱이 죽은 뒤에 도는 PowerShell
+ * Windows 자가 교체의 교체 스크립트: 앱이 죽은 뒤에 도는 PowerShell
  * 한 장. mac 처럼 파일을 손으로 갈아 치우지 않는다 — NSIS 설치 프로그램을 무인
  * (/S)으로 돌리는 것이 교체다. 설치 위치는 설치 프로그램이 레지스트리에서
  * 그대로 읽으므로 /D= 는 넘기지 않는다(셸을 통과하는 /D 의 따옴표 규칙은

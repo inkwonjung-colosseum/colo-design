@@ -2,7 +2,7 @@
  * 컨텍스트 윈도우 — how full this conversation has grown, as one ring beside
  * the send button: the place the eye already is when it decides whether to
  * spend one more turn. The percent rides beside the ring now
- * (cycle/_skeleton.html `컨텍스트 18%`) — a hover-only reading was the
+ * (`컨텍스트 18%`) — a hover-only reading was the
  * tooltip-blindness the review called out; the fuller Tip below keeps the
  * reading's name. Token counts and session cost stay out:
  * the product's promise is one subscription,

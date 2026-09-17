@@ -13,7 +13,7 @@ type RepoCommands = NonNullable<RepoStatus["commands"]>;
 /**
  * 나를 기다리는 일의 카드 한 장. 세 변형을 갖는다 — 질문형(인용 + 즉답 칩),
  * 권한형(헤드라인 + 허용/거절), 코멘트형(인용 + "대화에서 보기"). 클릭 가능한
- * 영역은 "칩 이외"뿐이라(§4), 칩이 있는 카드는 그 부분을 별도 `<button>`으로
+ * 영역은 "칩 이외"뿐이라, 칩이 있는 카드는 그 부분을 별도 `<button>`으로
  * 두고(중첩 버튼 금지) 나머지만 열기 버튼으로 감싼다.
  */
 export function DecisionCard({
@@ -25,7 +25,7 @@ export function DecisionCard({
   onRespondPermission,
 }: {
   item: AskingItem;
-  /** 레포가 아직 준비되지 않으면 열기를 막고 배지로 알린다(§1). */
+  /** 레포가 아직 준비되지 않으면 열기를 막고 배지로 알린다. */
   repoReady: boolean;
   commands?: RepoCommands;
   onOpenThread: () => void;

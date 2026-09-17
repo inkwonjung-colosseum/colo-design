@@ -183,7 +183,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${pagePort}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".planner__empty", { timeout: 60000 });
+    await page.waitForSelector(".onboarding--start", { timeout: 60000 });
 
     // One project, cloned and ready — and never handed off. Every delivery
     // row from here (변경 없음, and 저장됨 once a branch exists) answers

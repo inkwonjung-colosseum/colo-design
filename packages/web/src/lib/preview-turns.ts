@@ -69,7 +69,7 @@ export function pinsToTurn(
   const marker: TurnMarker = {
     kind: "comments",
     screen: spread ? `화면 ${screens.size}곳` : (titleFor(first.screen) ?? first.screen),
-    state: spread ? "" : stateLabel(first.state),
+    state: spread ? "" : first.state === null ? "" : stateLabel(first.state),
     // The element's own text is what the planner clicked and recognises;
     // its component name is the fallback nobody should normally read.
     ...(sentence ? { note: sentence } : {}),
@@ -92,7 +92,7 @@ export function pinsToTurn(
     const rows = [
       `${index + 1}. ${pinLabel(pin)}${pin.element.text ? ` — "${pin.element.text}"` : ""}${
         spread ? ` · ${titleFor(pin.screen) ?? pin.screen}` : ""
-      } (${stateLabel(pin.state)} 상태)`,
+      }${pin.state === null ? "" : ` (${stateLabel(pin.state)} 상태)`}`,
     ];
     // 레포가 새긴 출처 — the file the agent would edit, when the
     // repo stamps one.

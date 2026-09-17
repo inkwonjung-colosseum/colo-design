@@ -12,27 +12,17 @@
  * Usage: node packages/daemon/test/repo-e2e.mjs
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
-import { portListenerPids, RepoWorkspace, readPreviewClaim } from "../dist/repo.js";
+import { RepoWorkspace } from "../dist/repo.js";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
 const DIR = join(tmpdir(), "colo-design-repo-e2e");
 const ROOT = join(DIR, "work");
-
-/**
- * A foreign process holding the preview port — the holder 다시 시작 must be
- * able to kill. Its own process on purpose: port-killer kills the PID, and
- * the holder must not be this suite.
- */
-function spawnSquatter(port) {
-  const script = `require("node:http").createServer((_, res) => res.end("squatter")).listen(${port}, "127.0.0.1");`;
-  return spawn(process.execPath, ["-e", script], { stdio: "ignore" });
-}
 
 // Trust and PAT storage must never touch the real home during the run. The
 // project registry is part of that: left on the default path the daemon would
@@ -42,7 +32,6 @@ process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 process.env.COLO_DESIGN_REPO_SETTINGS = join(DIR, "settings.json");
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
 process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
-process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 
 const results = [];
@@ -112,14 +101,11 @@ async function main() {
   );
 
   check(
-    "preview url points at the declared port",
+    "preview url points at the seeded port",
     first.previewUrl === `http://127.0.0.1:${port}` && first.previewPort === port,
     String(first.previewUrl),
   );
-  check(
-    "the clone exists and colo-design.json came with it",
-    existsSync(join(ROOT, "colo-design.json")),
-  );
+  check("the clone exists and package.json came with it", existsSync(join(ROOT, "package.json")));
   const response = await fetch(first.previewUrl);
   const body = await response.text();
   check(
@@ -163,97 +149,16 @@ async function main() {
     pulled.phase === "ready" && broadcasts.some((s) => s.phase === "pulling"),
     [...new Set(broadcasts.map((s) => s.phase))].join(" → "),
   );
-
-  // --- 4. 포트 충돌: 활성 프로젝트가 이긴다 ---------------------------------
-  // The active project owns its declared port. The usual culprit of a busy
-  // port is an orphan a killed daemon left behind, so a plain sync reclaims
-  // the port — kills the holder, serves in its place — without asking. The
-  // kill is listener-only: a blanket port kill also hits the port's clients
-  // (a naive port-killer killed this runner). Surviving to the next check is
-  // part of the assertion.
-  await workspace.stop();
-  const squatter = spawnSquatter(port);
-  await waitFor(() => portAccepts(port), 10_000, "the squatter to hold the port");
-
-  const reclaimed = await workspace.sync();
-  check(
-    "a plain sync reclaims the port from the holder and reaches ready",
-    reclaimed.phase === "ready",
-    `${reclaimed.phase}: ${reclaimed.detail ?? ""}`,
-  );
-  check(
-    "what answers the port now is the preview, not the squatter",
-    (await fetch(`http://127.0.0.1:${port}`).then((r) => r.text())).includes("회원 관리"),
-  );
-  await waitFor(
-    () => squatter.exitCode !== null || squatter.signalCode !== null,
-    5_000,
-    "the foreign holder to die",
-  );
-  check("the foreign holder process is gone", squatter.signalCode === "SIGKILL");
   await checkWireProtocol(port, fixture.remote, workspace);
 
-  // --- 4b. 살아 있는 다른 인스턴스의 미리보기는 죽이지 않는다 -----------------
-  // 실사 전쟁: 패키지 앱과 개발 데몬이 한 프로젝트의 포트를 두고 서로의 서버를
-  // 1~2분마다 죽였다. 소유 기록(preview-<포트>.json)이 가리키는 점유자는 고아가
-  // 아니라 산 남의 인스턴스다 — 이쪽은 죽이지 않고 held-elsewhere 로 앉는다.
-  // 기록의 주인이 죽으면 (아래) 고아 정리가 예전처럼 이긴다.
-  await workspace.stop();
-  const heldSquatter = spawnSquatter(port);
-  await waitFor(() => portAccepts(port), 10_000, "the squatter to hold the port");
-  const stranger = spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], {
-    stdio: "ignore",
-  });
-  writeFileSync(
-    join(DIR, "run", `preview-${port}.json`),
-    JSON.stringify({
-      instancePid: stranger.pid,
-      listenerPid: (await portListenerPids(port))[0] ?? null,
-      port,
-      at: new Date().toISOString(),
-    }),
-  );
-  const held = await workspace.sync();
-  check(
-    "a live stranger's preview is refused, not killed",
-    held.phase === "error" && held.errorKind === "held-elsewhere",
-    `${held.phase}/${held.errorKind ?? "?"}: ${held.detail ?? ""}`,
-  );
-  check("the stranger's holder still answers", await portAccepts(port));
-  check("the stranger instance still lives", stranger.exitCode === null);
-  stranger.kill("SIGKILL");
-  await waitFor(
-    () => stranger.exitCode !== null || stranger.signalCode !== null,
-    5_000,
-    "the stranger to die",
-  );
-
-  const stale = await workspace.sync();
-  check(
-    "a stale claim (dead owner) reclaims the port as before",
-    stale.phase === "ready",
-    `${stale.phase}: ${stale.detail ?? ""}`,
-  );
-  await waitFor(
-    () => heldSquatter.exitCode !== null || heldSquatter.signalCode !== null,
-    5_000,
-    "the stale claim's holder to die",
-  );
-  check("the stale claim did not protect the squatter", heldSquatter.signalCode === "SIGKILL");
-  // The reclaim left a preview serving; nothing below needs it, and the
-  // `process.exit(0)` at the end would otherwise orphan it on the port.
-  await workspace.stop();
-
-  // --- 5. 판정은 그 자리를 지킨다 ------------------------------------------
+  // --- 4. 판정은 그 자리를 지킨다 ------------------------------------------
   // 실사 결함: 포트 충돌로 실패한 뒤 뒤에서 돈 git fetch 의 진행 출력
   // (`* branch main -> FETCH_HEAD`)이 에러 문구를 덮어 써, 사용자는 실패
   // 이유로 git 의 말을 읽게 됐다. 진행 줄은 phase 가 다시 움직이는 순간부터
   // 흐른다 — 여기서는 부팅하자마자 죽는 미리보기로 error 에 앉힌 뒤, 대화가
   // 열릴 때 돌아가는 pull 로 그 자리를 확인한다.
-  const dyingPort = await freePort();
   const dying = await createFixtureRepo({
     dir: join(DIR, "fixture-dying"),
-    port: dyingPort,
     previewCommand: 'node -e "setTimeout(() => process.exit(1), 300)"',
   });
   const dyingWorkspace = new RepoWorkspace({
@@ -275,55 +180,6 @@ async function main() {
     `${afterPull.phase}: ${afterPull.detail ?? ""}`,
   );
   await dyingWorkspace.stop();
-
-  // --- 6. 말이 없는 설치는 영원히 기다리지 않는다 ---------------------------
-  // `capture` 는 `close` 만 기다렸다 — 응답 없는 레지스트리를 만난 설치는
-  // 끝나지 않고, 비개발자가 보는 것은 굳어 버린 `설치 중` 한 줄뿐이었다.
-  // 기준은 벽시계가 아니라 침묵이다: 말을 계속하는 설치는 절대 끊기지 않고
-  // (아래 두 번째 검사), 말을 멈춘 설치만 제 프로세스 그룹째 끊긴다.
-  process.env.COLO_DESIGN_COMMAND_STALL_MS = "1500";
-  const mutePort = await freePort();
-  const mute = await createFixtureRepo({
-    dir: join(DIR, "fixture-mute"),
-    port: mutePort,
-    installCommand: 'node -e "setInterval(() => {}, 1 << 30)"',
-  });
-  const muteWorkspace = new RepoWorkspace({
-    root: join(DIR, "work-mute"),
-    url: mute.remote,
-    onStatus: () => undefined,
-  });
-  const muted = await muteWorkspace.sync();
-  check(
-    "an install that stops talking is cut and says so in Korean",
-    muted.phase === "error" && (muted.detail ?? "").includes("아무 말도 하지 않아 중단했습니다"),
-    `${muted.phase}: ${muted.detail ?? ""}`,
-  );
-  await muteWorkspace.stop();
-
-  // Talking longer than the stall window: every line rearms the watchdog, so
-  // a slow-but-live install must survive to its own exit. (No backticks or
-  // `${}` in the command — a shell would read them as substitutions.)
-  const talkerPort = await freePort();
-  const talker = await createFixtureRepo({
-    dir: join(DIR, "fixture-talker"),
-    port: talkerPort,
-    installCommand:
-      "node -e \"let n = 0; const t = setInterval(() => { console.log('step ' + ++n); if (n === 6) { clearInterval(t); require('node:fs').mkdirSync('node_modules', { recursive: true }); } }, 600)\"",
-  });
-  const talkerWorkspace = new RepoWorkspace({
-    root: join(DIR, "work-talker"),
-    url: talker.remote,
-    onStatus: () => undefined,
-  });
-  const talked = await talkerWorkspace.sync();
-  check(
-    "an install that keeps talking past the window is never cut",
-    talked.phase === "ready",
-    `${talked.phase}: ${talked.detail ?? ""}`,
-  );
-  await talkerWorkspace.stop();
-  process.env.COLO_DESIGN_COMMAND_STALL_MS = "";
 
   rmSync(DIR, { recursive: true, force: true });
 

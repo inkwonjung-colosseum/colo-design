@@ -1,31 +1,54 @@
 import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
-import type { ImportableSession, RewindCutoff } from "../../driver.js";
+import type { ImportableSession } from "../../driver.js";
 
 type Wire = Record<string, any>;
 
 /**
  * The omp transcript store: `~/.omp/agent/sessions/<encoded-cwd>/`. Each
  * session is one JSONL file named `<timestamp>_<sessionId>.jsonl`; a
- * `session` header line carries the cwd, the rest are entries in an
- * append-only tree (`id`/`parentId`).
+ * `title` line precedes the `session` header line, which carries the cwd;
+ * the rest are entries in an append-only tree (`id`/`parentId`).
  *
- * The encoding mirrors the CLI's own session dir naming: strip the
- * leading slash, turn every `/ \ :` into `-`, wrap in `--…--`.
+ * The encoding is the CLI's own (pi-coding-agent's session-dir rule), and it
+ * must match byte for byte or every listing comes up empty: realpath the
+ * cwd, then — under $HOME → `-<home-relative path>`, under the OS temp dir →
+ * `-tmp-<tmp-relative path>`, anywhere else → the old whole-path wrap
+ * (`--<path with separators as dashes>--`).
  */
 async function sessionDirFor(agentDir: string, cwd: string): Promise<string> {
   let real = cwd;
   try {
     real = await realpath(cwd);
   } catch {
-    // The clone may not exist yet — encode the spelling we were given.
+    // omp resolves too; a missing dir encodes as spelled.
   }
-  const safe = `--${resolve(real)
-    .replace(/^[/\\]/, "")
-    .replace(/[/\\:]/g, "-")}--`;
-  return join(agentDir, "sessions", safe);
+  const resolved = resolve(real);
+  const section = (value: string): string => value.replace(/[/\\:]/g, "-");
+  const under = (base: string): boolean => {
+    const rel = relative(base, resolved);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  let temp = tmpdir();
+  try {
+    temp = await realpath(temp);
+  } catch {
+    // Without a resolvable temp dir the tmp branch can't be trusted — keep
+    // the spelling; omp sees the same env and lands in the same place.
+  }
+  let name: string;
+  if (under(homedir())) {
+    const rel = section(relative(homedir(), resolved));
+    name = rel ? `-${rel}` : "-";
+  } else if (under(temp)) {
+    const rel = section(relative(temp, resolved));
+    name = rel ? `-tmp-${rel}` : "-tmp";
+  } else {
+    name = `--${resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  }
+  return join(agentDir, "sessions", name);
 }
 
 export function ompAgentDir(): string {
@@ -95,8 +118,17 @@ async function branchEntries(file: StoredFile): Promise<Wire[]> {
   for (const entry of file.entries) {
     if (typeof entry?.id === "string") byId.set(entry.id, entry);
   }
-  // The leaf is the last entry in append order — the file is append-only.
-  let leaf: Wire | null = file.entries[file.entries.length - 1] ?? null;
+  // The leaf is the last entry in append order — the file is append-only. A
+  // tail entry without a string id can't anchor the parentId walk, so skip
+  // back to the last one that can.
+  let leaf: Wire | null = null;
+  for (let i = file.entries.length - 1; i >= 0; i--) {
+    const entry = file.entries[i];
+    if (typeof entry?.id === "string") {
+      leaf = entry;
+      break;
+    }
+  }
   const chain: Wire[] = [];
   const seen = new Set<string>();
   while (leaf && typeof leaf.id === "string" && !seen.has(leaf.id)) {
@@ -224,31 +256,6 @@ export async function storedPromptCount(
   const file = await findFile(agentDir, cwd, id);
   if (!file) return 0;
   return (await branchEntries(file)).filter(isPrompt).length;
-}
-
-/**
- * 되감기의 절단점: the k-th prompt's own entry id is the fork point —
- * omp's `branch` keeps everything BEFORE that entry and hands its text
- * back for resending, which is exactly "drop this answer, keep the memory
- * before it".
- */
-export async function resolveOmpRewindCutoff(
-  agentDir: string,
-  cwd: string,
-  id: string,
-  turn: number,
-): Promise<RewindCutoff | null> {
-  const file = await findFile(agentDir, cwd, id);
-  if (!file) return null;
-  const branch = await branchEntries(file);
-  const prompts = branch.filter(isPrompt);
-  if (turn < 1 || turn > prompts.length) return null;
-  const target = prompts[turn - 1] ?? {};
-  return {
-    cut: typeof target.id === "string" ? target.id : null,
-    drops: typeof target.id === "string" ? target.id : null,
-    answerCount: prompts.length,
-  };
 }
 
 /**

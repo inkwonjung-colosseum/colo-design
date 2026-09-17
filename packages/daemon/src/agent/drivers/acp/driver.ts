@@ -42,6 +42,22 @@ export interface AcpDriverConfig {
   /** A session-less model listing (`opencode models`); absent = the cache
       waits for the first live session's report. */
   listModels?(): Promise<SessionModelInfo[]>;
+  /**
+   * The agent's reasoning-effort config option id, when effort rides the
+   * ACP `configOptions` channel (omp: "thinking"). Declared → the session
+   * pins `launch.effort` at handshake and answers `setEffort` through
+   * `session/set_config_option`; absent → this provider has no effort wire
+   * and `capabilities.effort` must be false.
+   */
+  effortConfigId?: string;
+  /**
+   * Live model rows run through this before the cache remembers them. A
+   * configOptions "model" list knows which models exist but often lacks the
+   * per-model traits the CLI catalog carries (effort levels); the config
+   * restores those from its own session-less source so the picker does not
+   * degrade after the first live session reports.
+   */
+  enrichModels?(rows: SessionModelInfo[]): SessionModelInfo[] | Promise<SessionModelInfo[]>;
 }
 
 /**
@@ -117,6 +133,9 @@ export class AcpDriver implements AgentDriver {
   createSession(launch: LaunchConfig, hooks: DriverHooks): AgentSession {
     const executable = this.exe();
     if (!executable) throw new Error(`${this.config.label} CLI 를 찾지 못했습니다.`);
-    return new AcpAgentSession(this.id, executable, this.config.acpArgs, launch, hooks);
+    return new AcpAgentSession(this.id, executable, this.config.acpArgs, launch, hooks, {
+      effortConfigId: this.config.effortConfigId,
+      enrichModels: this.config.enrichModels,
+    });
   }
 }

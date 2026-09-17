@@ -1,16 +1,12 @@
-import type {
-  ColoDesignPinEnvelope,
-  ColoDesignPinsSync,
-  PreviewTabMeta,
-} from "@colo-design/protocol";
+import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 
 /**
  * 데스크톱의 미리보기 칸: an empty slot the main process lays its
  * `WebContentsView` over. All knowing flows through the IPC channels — bounds
- * up (`ResizeObserver` → `preview:bounds`), location · tabs · pins ·
- * errors · freeze · keys down. The slot shows the freeze frame while a
+ * up (`ResizeObserver` → `preview:bounds`), location · pins · errors ·
+ * freeze · keys down. The slot shows the freeze frame while a
  * modal covers the view, so the pane never reads as a hole.
  *
  * The view is above every DOM node — nothing may be drawn over the slot
@@ -20,8 +16,6 @@ import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 export function NativeHost({
   url,
   epoch,
-  origins,
-  activeTab,
   target,
   reloadKey,
   width,
@@ -39,8 +33,6 @@ export function NativeHost({
   url: string | null;
   /** The server process behind `url` (RepoStatus.previewEpoch) — a kept page under a new one reloads. */
   epoch: number | null;
-  /** Extra origins the repo allows the pane to open (RepoStatus.previewOrigins). */
-  origins?: string[];
   /** The last ask — a screen rides the bridge, a path rides `open`. */
   target: PreviewTarget | null;
   reloadKey: number;
@@ -53,12 +45,6 @@ export function NativeHost({
    * SPA move re-anchors the badges (region pins on their page rect).
    */
   sync: ColoDesignPinsSync;
-  /**
-   * 활성 탭 (인앱 브라우저 1단계): web 탭이 활성이면 mount·ask 는 쉰다 —
-   * preview 탭을 앞으로 끌어내는 일은 스트립과 `미리보기` 버튼의 몫이다.
-   * 위치 보고는 이 탭의 것만 받는다.
-   */
-  activeTab: PreviewTabMeta | null;
   /** A pin landed from the overlay; a repeated id is usePins's to ignore. */
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
   /** 배지 클릭 — the planner wants that pin's memo input (PageWorkspace holds the state). */
@@ -124,27 +110,27 @@ export function NativeHost({
   // would sit under the NEXT project's modal as if it were that project's
   // screen — and hiding the view before the capture widens the moment
   // where that stale frame is exactly what shows.
-  // web 탭이 활성이면 mount 는 쉰다 — preview 탭을 앞으로 끌어내는 일은
-  // 스트립과 `미리보기` 버튼의 몫이지, url·epoch 이 바뀌었다고 덮어쓰지 않는다.
-  const webActive = activeTab?.kind === "web";
   useEffect(() => {
-    if (!url || webActive) return;
+    // 얼린 얼굴은 그 페이지에서 찍은 것이므로 페이지가 바뀌기 전에 거둔다.
+    // 가드 뒤에 두면 url 이 없어지는 전환에서 얼음이 지나가고, 남은 프레임이
+    // 다음 프로젝트의 모달 밑에 그 프로젝트의 화면인 양 앉는다.
     setFreeze(null);
-    void window.coloDesignDesktop?.preview?.mount?.(url, epoch, origins);
+    if (!url) return;
+    void window.coloDesignDesktop?.preview?.mount?.(url, epoch);
     return () => void window.coloDesignDesktop?.preview?.unmount?.();
-  }, [url, epoch, origins, webActive]);
+  }, [url, epoch]);
 
   // The last ask re-rides on every change — the prop IS the ask. Mount
   // first: a link page may be on screen (설정 `앱에서 링크 열기`), and the
-  // ask belongs to the preview page — mount parks the link page and brings
-  // the project's page back before the route lands on it.
+  // ask belongs to the preview page — mount discards the link page and
+  // brings the project's page back before the route lands on it.
   useEffect(() => {
-    if (!url || !target || webActive) return;
+    if (!url || !target) return;
     const bridge = window.coloDesignDesktop?.preview;
-    void bridge?.mount?.(url, epoch, origins).then(() => {
+    void bridge?.mount?.(url, epoch).then(() => {
       void bridge?.open?.(target.path);
     });
-  }, [url, epoch, origins, target, webActive]);
+  }, [url, epoch, target]);
 
   useEffect(() => {
     if (reloadKey > 0) void window.coloDesignDesktop?.preview?.reload?.();
@@ -172,7 +158,6 @@ export function NativeHost({
     onError,
     onLoading,
     onZoom,
-    activeTab,
   });
   handlers.current = {
     onLocation,
@@ -181,7 +166,6 @@ export function NativeHost({
     onError,
     onLoading,
     onZoom,
-    activeTab,
   };
   useEffect(() => {
     const bridge = window.coloDesignDesktop?.preview;
@@ -191,16 +175,10 @@ export function NativeHost({
         (payload: {
           path: string;
           url?: string;
-          external?: boolean;
-          tabId: string;
           kind: "preview" | "web";
           canGoBack: boolean;
           canGoForward: boolean;
         }) => {
-          // 탭 전환 직후 날아드는 지난 탭의 보고는 버린다 — 주소창·뒤로/앞으로
-          // 칩은 활성 탭의 것만 반영한다.
-          const active = handlers.current.activeTab;
-          if (payload.tabId && active && payload.tabId !== active.id) return;
           handlers.current.onLocation(payload);
           // 리로드·SPA 이동 뒤 재앵커 — the page just forgot
           // its badges; the sync is the only thing that brings them back.

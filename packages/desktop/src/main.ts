@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer } from "@colo-design/daemon/server";
-import { app, BrowserWindow, dialog, Menu, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, Menu, safeStorage, shell } from "electron";
 import { PlannerNotices } from "./app-notify.js";
 import { SelfUpdates } from "./app-updates.js";
 import { registerDesktopBridge } from "./bridge.js";
@@ -21,7 +21,7 @@ import { daemonUrl, guardNavigations, MainWindowHost, windowUrl } from "./window
 export { createBrowserDriverFactory, createPreviewDriverFactory } from "./preview-driver.js";
 
 /**
- * Colo Design 데스크톱 앱의 메인 프로세스(DESIGN §7):
+ * Colo Design 데스크톱 앱의 메인 프로세스:
  * - 데몬을 in-process 로 호스팅한다 — 별도 Node 사이드카가 없다. 포트는
  *   임시 포트, 페어링 토큰은 실행마다 새로 만들어 url 로만 전달한다.
  * - 웹 UI 는 데몬이 직접 정적 서빙한다(webDist). 렌더러는
@@ -93,7 +93,18 @@ if (underTest || app.requestSingleInstanceLock()) {
   // reach createPreviewDriverFactory() — the daemon boot below belongs to the
   // app entry only (PLAN D61).
   if (process.env.COLO_DESIGN_DESKTOP_UNIT !== "1") {
-    void app.whenReady().then(() => bootApp());
+    void app
+      .whenReady()
+      .then(() => bootApp())
+      .catch((error: unknown) => {
+        // 준비 중 폭발한 오류는 창도 오류 상자도 없이 조용히 사라진다 —
+        // 잡아서 보여주고 끝낸다.
+        dialog.showErrorBox(
+          "Colo Design",
+          `시작하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        app.quit();
+      });
   }
 } else {
   // 두 번째 인스턴스 — 첫째에 합쳐지고 여기서 끝난다.
@@ -107,6 +118,27 @@ if (underTest || app.requestSingleInstanceLock()) {
 // has logged in. setPath must precede every userData reader below.
 if (process.env.COLO_DESIGN_DESKTOP_SMOKE) {
   app.setPath("userData", process.env.COLO_DESIGN_DESKTOP_SMOKE);
+}
+
+/**
+ * 저장 포트로 먼저 뜨고, 그 자리가 점유돼 있으면 임시 포트로 물러난다.
+ * 점유(EADDRINUSE)가 아닌 실패는 그대로 던진다 — bootApp 이 오류 상자로 바꾼다.
+ */
+async function startDaemonServer(
+  makeServer: (port: number) => DaemonServer,
+  storedPort: number | null,
+): Promise<DaemonServer> {
+  let server = makeServer(storedPort ?? 0);
+  try {
+    await server.start();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || storedPort === null) {
+      throw error;
+    }
+    server = makeServer(0);
+    await server.start();
+  }
+  return server;
 }
 
 async function bootApp(): Promise<void> {
@@ -161,15 +193,22 @@ async function bootApp(): Promise<void> {
    * 수렴하게 한다.
    */
   const storedPort = loadStoredPort(desktopSettingsPath());
-  let server = makeServer(storedPort ?? 0);
+  let server: DaemonServer;
   try {
-    await server.start();
+    server = await startDaemonServer(makeServer, storedPort);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || storedPort === null) {
-      throw error;
+    // 데몬이 뜨지 못하면 창을 띄워도 빈 화면이다 — 원인과 기록 폴더를 알리고
+    // 끝낸다. showErrorBox 는 닫힐 때까지 막는 대화상자라 exit 이 뒤에서 기다린다.
+    // 기록 폴더는 bridge 의 desktop:open-home("logs") 이 여는 것과 같은 자리다.
+    if (!underTest) {
+      const reason = error instanceof Error ? error.message : String(error);
+      dialog.showErrorBox(
+        "Colo Design을 시작하지 못했습니다",
+        `원인: ${reason}\n\n자세한 기록은 이 폴더에 있습니다:\n${LOGS_DIR}`,
+      );
     }
-    server = makeServer(0);
-    await server.start();
+    app.exit(1);
+    return;
   }
   const boundPort = server.address().port;
   if (boundPort !== storedPort) saveDesktopSettings(desktopSettingsPath(), { port: boundPort });
@@ -186,12 +225,9 @@ async function bootApp(): Promise<void> {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildMenuTemplate({
-        // 탭 전환(계획 §3 규칙 8)만 뷰 계약의 cycleActiveTab 로 이름이 어긋난다
-        // — 나머지 보기 메서드는 뷰 그대로라 곧장 닿는다.
         preview: {
           reload: () => plannerPreview.reload(),
           history: (delta) => plannerPreview.history(delta),
-          cycleTab: (delta) => plannerPreview.cycleActiveTab(delta),
           zoomIn: () => plannerPreview.zoomIn(),
           zoomOut: () => plannerPreview.zoomOut(),
           zoomReset: () => plannerPreview.zoomReset(),
@@ -211,6 +247,12 @@ async function bootApp(): Promise<void> {
             key: "t",
             meta: true,
           }),
+        // 도움말의 `기록 폴더 열기` — bridge 의 desktop:open-home("logs") 이
+        // 여는 것과 같은 폴더를 메인이 직접 연다(렌더러가 죽어 있어도 닿는다).
+        openLogs: () => {
+          mkdirSync(LOGS_DIR, { recursive: true });
+          void shell.openPath(LOGS_DIR);
+        },
         packaged: app.isPackaged,
       }),
     ),

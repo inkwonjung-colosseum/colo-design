@@ -122,7 +122,7 @@ async function main() {
       hello.status.authMethod === "claude.ai",
     `authMethod=${hello.status.authMethod} plan=${hello.status.subscriptionType} apiKeyInEnv=${hello.status.apiKeyInEnv}`,
   );
-  // The throwaway root has no colo-design.json, so no registry is declared and
+  // The throwaway root has no committed .npmrc, so no registry is declared and
   // the CDS registry probe stays out of the picture. That is repo-e2e's
   // subject, not this one's.
   const blocking = hello.status.warnings.filter((w) => !w.includes("@colosseumcoinckr/cds"));

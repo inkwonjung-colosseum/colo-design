@@ -1,6 +1,6 @@
 // Bring-up: clone → config → install → preview. Owns the preview
-// process itself (startPreview/killPreview) and the port fence around it,
-// plus the install short-circuit and the bring-up error taxonomy.
+// process itself (startPreview/killPreview), plus the install short-circuit
+// and the bring-up error taxonomy.
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,20 +14,8 @@ import {
   detectsRegistryAuthFailure,
   resolvePnpmExecutable,
 } from "./environment.js";
+import { descendantPids, killTree, pidListeningPorts, probePreviewUrl } from "./preview-claim.js";
 import {
-  clearPreviewClaim,
-  descendantPids,
-  foreignLivePreviewClaim,
-  killTree,
-  pidListeningPorts,
-  portAccepts,
-  portListenerPids,
-  portRefused,
-  probePreviewUrl,
-  writePreviewClaim,
-} from "./preview-claim.js";
-import {
-  CONFIG_FILE,
   PREVIEW_COMMAND_UNKNOWN,
   type RepoConfig,
   resolveRepoConfig,
@@ -40,8 +28,6 @@ import {
   GATE_OUTPUT_TAIL_LINES,
   INSTALL_MARKER,
   PNPM_MISSING_DETAIL,
-  PreviewHeldElsewhereError,
-  PreviewPortBusyError,
   PreviewPortUndetectedError,
   READY_TIMEOUT_MS,
   RECOVER_CONFLICT_DETAIL,
@@ -96,7 +82,7 @@ export class BringUp {
       // verdict, a reviewer reads the evidence.
       if (!this.core.commandsApproved) {
         throw new Error(
-          `${COMMANDS_UNAPPROVED_DETAIL} 실행하려는 명령 — 설치: ${config.install ?? "(선언되지 않음)"} · 미리보기: ${config.preview.command} (포트 ${config.preview.port ?? "자동 감지"})`,
+          `${COMMANDS_UNAPPROVED_DETAIL} 실행하려는 명령 — 설치: ${config.install ?? "(선언되지 않음)"} · 미리보기: ${config.preview.command}`,
         );
       }
       // The switch race's fence: a bring-up this project no longer owns
@@ -236,50 +222,17 @@ export class BringUp {
   private async startPreview(config: RepoConfig): Promise<void> {
     // Second fence, closer to the metal: the window between bootstrap's gate
     // and this spawn is exactly where a fast B→C switch lands. An inactive
-    // project must neither kill the port's holder nor START a server of its
-    // own past the switch (the one it already has stays warm — the server's
-    // switch fence decides that one).
+    // project must not START a server of its own past the switch (the one it
+    // already has stays warm — the server's switch fence decides that one).
     if (!this.core.active) return;
     await this.killPreview();
     this.core.setPhase("starting", null);
-    const { command, port } = config.preview;
+    const { command } = config.preview;
     await this.requirePnpmIfReferenced(command);
 
-    // 선언 포트가 있는 레포만 포트 전쟁을 치른다. 없는 레포는 서버가 빈 포트를
-    // 스스로 고르고 우리는 뜬 곳을 읽기만 하면 된다 — 점유자를 죽일 일이 없다.
-    // 활성 프로젝트가 선언한 포트의 주인은 활성 프로젝트다. 충돌의 보통 원인은
-    // 강제 종료된 데몬이 남긴 고아 서버고, 전환 때 이전 프로젝트의 잔여분은 이미
-    // 정리되므로 — 묻지 않고 점유자를 정리하고 이 자리에서 다시 띄운다. 명명된
-    // 실패는 정리가 실패했을 때만 남는다: 그때는 다시 시작도 소용이 없으니
-    // 직접 종료나 포트 변경이 다음 과제다. The kill is listener-only: a blanket
-    // port kill also hits the port's clients.
-    // The reclaimer runs unconditionally: a probe gate ("is the port busy?")
-    // reads the same flaky 1s connect that the verdict below refuses to
-    // trust — a starved runner can time it out against a live listener and
-    // skip the kill, spawning the preview into EADDRINUSE. With nothing
-    // listening, lsof finds no pid and the first refusal clears instantly —
-    // the free-port path pays one lookup, nothing more.
-    // 살아 있는 다른 인스턴스의 미리보기는 죽이지 않는다. 이 기록이 가리키는
-    // 점유자는 고아가 아니라 다른 창(패키지 앱 또는 데몬)의 살아 있는 서버다 —
-    // 죽이는 순간 두 인스턴스는 서로의 미리보기를 번갈아 죽이는 전쟁에 들어간다
-    // (실사: 앱+개발 데몬이 포트 3000을 두고 1~2분마다 서버를 교체). 여기서는
-    // 멈추고 카드로 말한다. 해법은 이 창 밖에 있다.
-    if (port !== undefined) {
-      const held = await foreignLivePreviewClaim(port);
-      if (held)
-        throw new PreviewHeldElsewhereError(
-          `포트 ${port}에서 다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있습니다 — ` +
-            `서로의 미리보기를 죽이지 않도록 이쪽에서는 기다립니다. ` +
-            `다른 인스턴스를 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꾼 뒤 다시 시도해 주세요.`,
-        );
-      if (!(await this.killPortHolder(port)))
-        throw new PreviewPortBusyError(
-          `포트 ${port}를 종료하려 했지만 여전히 다른 프로그램이 쓰고 있어 미리보기를 켤 수 없습니다 — ` +
-            `권한이 없거나 프로그램이 곧바로 되살아났을 수 있습니다. ` +
-            `그 프로그램을 직접 끄거나 연결 레포의 colo-design.json에서 preview.port를 바꿔 주세요.`,
-        );
-    }
-
+    // The dev server picks its own free port and the verdict below reads
+    // where it landed — first the address the server printed, then the
+    // process tree's LISTEN sockets.
     const child = spawn(command, this.spawnOptions());
     this.core.preview = child;
     this.core.previewEpoch += 1;
@@ -307,11 +260,7 @@ export class BringUp {
     child.once("exit", (code, signal) => {
       if (this.core.preview !== child) return; // stop() already took it down
       this.core.preview = null;
-      // 죽은 미리보기의 기록은 곧바로 거둔다 — 남은 기록은 낡은 리스너를
-      // 가리켜 판정 때 스스로 지워지지만, 여기서 지우는 것이 정확하다.
-      const claimed = this.core.occupiedPreviewPort();
       this.core.previewUrl = null;
-      if (claimed !== null) clearPreviewClaim(claimed);
       const how = signal ? `signal ${signal}` : `exit ${code}`;
       this.core.setPhase(
         "error",
@@ -325,36 +274,20 @@ export class BringUp {
     });
 
     try {
-      this.core.previewUrl =
-        port !== undefined
-          ? await this.waitDeclared(port)
-          : await this.detectPreviewUrl(child, urlCandidates, tail);
+      this.core.previewUrl = await this.detectPreviewUrl(child, urlCandidates, tail);
     } catch (error) {
       // 늦게라도 뜰 예정이던 서버를 죽은 것으로 선고한 채 두면, 실제로는 살아
       // 포트를 쥔 유령이 남는다 (실사 목격). 선고가 서면 서버도 내려야 한다.
       await this.killPreview();
       throw error;
     }
-    // 부팅이 확인된 리스너를 기록해 둔다 — 다음 포트 충돌 때 이 기록이 살아 있는
-    // 다른 인스턴스의 미리보기를 말해 준다(위의 울타리). 감지 포트도 같은 기록을
-    // 남겨, 이 포트를 선언한 다른 프로젝트가 held-elsewhere 로 읽게 한다.
-    const claimed = this.core.occupiedPreviewPort();
-    if (claimed !== null) {
-      const holders = await portListenerPids(claimed);
-      writePreviewClaim({
-        instancePid: process.pid,
-        listenerPid: holders[0] ?? null,
-        port: claimed,
-        at: new Date().toISOString(),
-      });
-    }
   }
 
   /**
-   * 포트 미선언 레포의 준비 판정: 서버가 찍은 URL 을 먼저 믿고, 출력이 없으면
-   * 프로세스 트리의 LISTEN 소켓에서 찾는다. HTML 응답이 곧 미리보기다 — API
-   * 전용 포트가 함께 뜨는 레포에서도 화면을 서는 쪽을 고른다. 끝까지 못 찾으면
-   * port-undetected 로 던져 AI 가 서버 출력이나 선언을 고치게 한다.
+   * 준비 판정: 서버가 찍은 URL 을 먼저 믿고, 출력이 없으면 프로세스 트리의
+   * LISTEN 소켓에서 찾는다. HTML 응답이 곧 미리보기다 — API 전용 포트가 함께
+   * 뜨는 레포에서도 화면을 서는 쪽을 고른다. 끝까지 못 찾으면
+   * port-undetected 로 던져 AI 가 서버 출력을 고치게 한다.
    */
   private async detectPreviewUrl(
     child: ChildProcess,
@@ -362,8 +295,16 @@ export class BringUp {
     tail: string[],
   ): Promise<string> {
     const deadline = Date.now() + READY_TIMEOUT_MS;
-    const probed = new Set<string>();
-    const scanned = new Set<number>();
+    /** 후보별 마지막 시도 — 한 번의 null 은 "죽음"이 아니라 "아직"이다. */
+    const probedAt = new Map<string, number>();
+    const scannedAt = new Map<number, number>();
+    /**
+     * 실패 판정의 재시도 간격 — 매 틱 다시 찌르지 않되, 영구 제외도 하지 않는다.
+     * 출력된 주소는 틱 간격(250ms)으로 다시 보고, 소켓 스캔은 2초로 늦춘다 —
+     * 서버가 찍은 주소가 스캔보다 이기는 것이 이 판정의 우선순위다.
+     */
+    const CANDIDATE_RETRY_MS = 250;
+    const SCAN_RETRY_MS = 2_000;
     /** HTML 이 아니어도 응답한 첫 포트 — 더 나은 후보가 없을 때의 답. */
     let fallback: string | null = null;
     while (Date.now() < deadline) {
@@ -375,20 +316,36 @@ export class BringUp {
         // say `localhost` while binding [::1] alone, and normalizing to
         // 127.0.0.1 would probe a dead address (the port-undetected 실사).
         for (const url of loopbackUrlVariants(candidate)) {
-          if (probed.has(url)) continue;
-          probed.add(url);
+          // URL 을 찍은 뒤 바인드·응답 준비까지의 창이 있다 — 한 번의 null 로
+          // 후보를 영구 제외하면 준비 느린 서버는 죽는다.
+          const seen = probedAt.get(url);
+          if (seen !== undefined && Date.now() - seen < CANDIDATE_RETRY_MS) continue;
+          probedAt.set(url, Date.now());
           if ((await probePreviewUrl(url)) !== null) return url;
         }
       }
       const pids = [...(child.pid ? [child.pid] : []), ...(await descendantPids(child.pid ?? -1))];
       for (const port of await pidListeningPorts(pids)) {
-        if (scanned.has(port)) continue;
-        scanned.add(port);
+        // 소켓 스캔도 같은 규율: LISTEN 이 떴어도 HTTP 응답 전의 포트는
+        // 첫 스캔에서 null 이고, 그렇다고 영구 제외하면 영원히 못 찾는다.
+        const seen = scannedAt.get(port);
+        if (seen !== undefined && Date.now() - seen < SCAN_RETRY_MS) continue;
+        scannedAt.set(port, Date.now());
         for (const scheme of ["http", "https"] as const) {
           for (const host of ["127.0.0.1", "[::1]"] as const) {
             const url = `${scheme}://${host}:${port}/`;
             const verdict = await probePreviewUrl(url);
-            if (verdict === "html") return url;
+            if (verdict === "html") {
+              // The scan only names the port — when the server's own output
+              // already named it too, the printed spelling wins (URL 을 먼저
+              // 믿는다).
+              for (const candidate of urlCandidates) {
+                if (new URL(candidate).port === String(port)) {
+                  if ((await probePreviewUrl(candidate)) !== null) return candidate;
+                }
+              }
+              return url;
+            }
             if (verdict === "ok" && fallback === null) fallback = url;
           }
         }
@@ -398,52 +355,23 @@ export class BringUp {
     if (fallback !== null) return fallback;
     throw new PreviewPortUndetectedError(
       `미리보기 서버는 시작됐지만 어느 주소에서 듣는지 찾지 못했습니다 — ` +
-        `서버가 뜬 주소를 출력하게 하거나 ${CONFIG_FILE} 의 preview.port 로 포트를 적어 주세요.` +
+        `서버가 뜬 주소를 출력하게 해 주세요 (예: \`Local: http://localhost:PORT\`).` +
         (tail.length > 0 ? `\n마지막 출력:\n${tail.slice(-10).join("\n")}` : ""),
     );
   }
 
-  /** 선언 포트의 준비 판정 — 포트가 열리고 앱이 응답할 때까지. */
-  private async waitDeclared(port: number): Promise<string> {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (!this.core.preview)
-        throw new Error(this.core.detail ?? "미리보기 서버가 시작되지 않았습니다");
-      const url = await this.servingUrl(port);
-      if (url !== null) return url;
-      await sleep(250);
-    }
-    throw new Error(
-      `미리보기 서버가 ${READY_TIMEOUT_MS / 1000}초 안에 응답하지 않았습니다 (포트 ${port})`,
-    );
-  }
-
   /** Ready means the port is open *and* the app answers, not just listening. */
-  private async isServing(port?: number): Promise<boolean> {
-    if (port !== undefined) return (await this.servingUrl(port)) !== null;
+  private async isServing(): Promise<boolean> {
     const url = this.core.previewUrl;
     if (url === null) return false;
     return (await probePreviewUrl(url)) !== null;
-  }
-
-  /**
-   * 선언 포트가 실제로 서는 주소 — 어느 루프백 패밀리든 응답하는 쪽을 그대로
-   * 돌린다. [::1] 에만 바인드한 서버는 127.0.0.1 프로브가 전부 거절하므로,
-   * 한 패밀리만 보는 판정은 살아 있는 서버를 못 찾는다.
-   */
-  private async servingUrl(port: number): Promise<string | null> {
-    if (!(await portAccepts(port))) return null;
-    for (const host of ["127.0.0.1", "[::1]"] as const) {
-      const url = `http://${host}:${port}`;
-      if ((await probePreviewUrl(url)) !== null) return url;
-    }
-    return null;
   }
 
   async killPreview(): Promise<void> {
     const child = this.core.preview;
     if (!child) return;
     this.core.preview = null;
+    this.core.previewUrl = null;
 
     const { promise: exited, resolve } = Promise.withResolvers<void>();
     child.once("exit", () => resolve());
@@ -451,25 +379,13 @@ export class BringUp {
     const hard = setTimeout(() => killTree(child, "SIGKILL"), 3_000);
     await exited;
     clearTimeout(hard);
-
-    // The command may start its server as its own child; the port is only
-    // free once that process is gone, and a re-start would fail on a busy port.
-    const port = this.core.occupiedPreviewPort();
-    this.core.previewUrl = null;
-    if (port === null) return;
-    const deadline = Date.now() + 3_000;
-    while (!(await portRefused(port))) {
-      if (Date.now() > deadline) break;
-      await sleep(100);
-    }
-    clearPreviewClaim(port);
   }
 
   private spawnOptions(): SpawnOptions {
     const windows = currentPlatform() === "win32";
     return {
       cwd: this.core.root,
-      // colo-design.json commands are strings ("pnpm dev"), so a shell parses
+      // The repo's commands are strings ("pnpm dev"), so a shell parses
       // them. `detached` on POSIX puts the tree in one process group we can
       // signal together when the preview must stop.
       shell: true,
@@ -488,36 +404,6 @@ export class BringUp {
   }
 
   /**
-   * 다시 시작's mandate: whatever LISTENS on the declared preview port dies —
-   * and only the listener. lsof without the LISTEN filter also matches the
-   * port's clients (a browser tab on the old preview, this app's own iframe),
-   * and a restart that kill -9s the planner's browser is no fix. The lookup's
-   * exit status is not trusted — bind-ability is the verdict.
-   */
-  private async killPortHolder(port: number): Promise<boolean> {
-    this.core.setProgressLine(`포트 ${port}를 쓰는 프로그램을 종료하는 중…`);
-    for (const pid of await portListenerPids(port)) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone, or not ours to signal — the verdict below says
-        // whether the port actually freed.
-      }
-    }
-    // The OS retires the listener asynchronously; a re-start before the port
-    // truly frees would fail on the very bind this kill was for. Only an
-    // explicit refusal is "free": a probe timeout can fire against a still-
-    // bound listener on a starved runner, and a verdict read from it spawns
-    // the preview into EADDRINUSE while the holder lives on.
-    const deadline = Date.now() + 5_000;
-    while (!(await portRefused(port))) {
-      if (Date.now() > deadline) return false;
-      await sleep(100);
-    }
-    return true;
-  }
-
-  /**
    * Why a bring-up failed, from the constants this class itself threw (PLAN
    * D41) — the same words `classifyError` used to substring-match on the web
    * side, now decided where the throw happened.
@@ -527,8 +413,6 @@ export class BringUp {
     // The refusal names the commands it blocks (the card shows the evidence),
     // so the sentence CONTINUES past the constant — prefix, not equality.
     if (message.startsWith(COMMANDS_UNAPPROVED_DETAIL)) return "commands";
-    if (error instanceof PreviewPortBusyError) return "port-busy";
-    if (error instanceof PreviewHeldElsewhereError) return "held-elsewhere";
     if (error instanceof PreviewPortUndetectedError) return "port-undetected";
     // PREVIEW_COMMAND_UNKNOWN 은 preview.command 를 말하므로 아래의 포트·
     // 미리보기 매칭보다 먼저 읽는다 — 명령 부재는 설정 문제가 아니라 레포의
@@ -545,12 +429,8 @@ export class BringUp {
     ) {
       return "conflict";
     }
-    // 깨진 colo-design.json 도 미리보기 카드로 — AI 가 파일을 고치는 길.
-    if (
-      message.includes("미리보기 서버") ||
-      message.includes("preview.port") ||
-      message.includes(CONFIG_FILE)
-    ) {
+    // 미리보기 자리의 실패도 미리보기 카드로 — AI 가 서버를 고치는 길.
+    if (message.includes("미리보기 서버") || message.includes("미리보기 명령을 찾지 못했습니다")) {
       return "preview";
     }
     return this.core.isCloned() ? "install" : "clone";

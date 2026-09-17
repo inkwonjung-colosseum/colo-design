@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react";
 /**
  * 브라우저 개발 경로의 미리보기: the repo's dev server framed
  * as-is. Comments, the address bar and the error banner are the native
- * view's and are simply absent here; a plain browser is the developer's
- * path, and it is not told what it lacks.
+ * view's and are simply absent here — the pane's toolbar says so in one
+ * line, and the pane also owns the "늦게 뜬다" wording: `onLoading` is the
+ * one truth both hosts feed, so the 10s/30s escalation lives up there.
  */
 export function IframeHost({
   url,

@@ -23,7 +23,7 @@ export function ProgressCard({
   onOpen: () => void;
 }) {
   useTick(10_000);
-  // turnStartedAt 이 null 인데 running 인 레이스(§5)는 "방금 시작"으로 폴백한다.
+  // turnStartedAt 이 null 인데 running 인 레이스는 "방금 시작"으로 폴백한다.
   const elapsed = item.turnStartedAt ? waitedFor(Date.now() - item.turnStartedAt) : null;
 
   return (

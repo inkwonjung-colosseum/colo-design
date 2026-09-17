@@ -17,7 +17,10 @@ test("toolLabel names known tools in Korean", () => {
 // folds them anymore: a stale screen_* name must stay raw.
 test("toolLabel strips the mcp__ prefix, then looks the bare name up", () => {
   assert.equal(toolLabel("mcp__anything__Bash"), "명령 실행");
-  assert.equal(toolLabel("mcp__colo-preview__screen_screenshot"), "mcp__colo-preview__screen_screenshot");
+  assert.equal(
+    toolLabel("mcp__colo-preview__screen_screenshot"),
+    "mcp__colo-preview__screen_screenshot",
+  );
 });
 
 test("toolLabel passes an unknown tool through", () => {
@@ -31,7 +34,7 @@ test("objectParticle picks 을 after a final consonant", () => {
   assert.equal(objectParticle("SomeTool"), "를");
 });
 
-// A command that IS the repo's own colo-design.json command reads as the job.
+// A command that IS the repo's own declared command reads as the job.
 test("bashHeadline names a declared gate command", () => {
   const commands = {
     install: "pnpm install",

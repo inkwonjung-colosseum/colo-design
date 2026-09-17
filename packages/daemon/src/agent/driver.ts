@@ -52,10 +52,11 @@ export interface Capabilities {
   /** stopTask/backgroundTask subagent controls. */
   subtasks: boolean;
   /**
-   * 브라우저 도구(`browser_*`)를 와이어에 주입할 수 있는 공급자인가 — claude·
-   * acp·codex는 true, omp는 주입 wire가 없어 false다(계획 §3). 공급자 선언일
-   * 뿐 실제 제공 여부는 host의 browserDriverFactory 주입이 정하고, UI에는
-   * server의 status가 둘을 AND해 보인다.
+   * 브라우저 도구(`browser_*`)를 와이어에 주입할 수 있는 공급자인가 — 네
+   * 공급자 모두 true다(claude·codex는 각자의 mcpServers 필드, ACP 에이전트는
+   * session/new의 mcpServers). 공급자 선언일 뿐 실제 제공 여부는 host의
+   * browserDriverFactory 주입이 정하고, UI에는 server의 status가 둘을
+   * AND해 보인다.
    */
   browserTools: boolean;
 }
@@ -162,7 +163,7 @@ export interface LaunchConfig {
   /**
    * 브라우저 MCP 서버의 기동 명세(browser-launch.ts, 3단계). session-manager가
    * host의 browserDriverFactory 주입 여부를 보고 채운다 — 받은 세션은 이걸
-   * 각자 와이어 형태로 바꿔 넣고, 받지 못한 세션(omp 포함)은 건드리지 않는다.
+   * 각자 와이어 형태로 바꿔 넣는다.
    */
   browserMcp?: BrowserMcpEntry;
   /** Provider-specific extras (Claude: executable/…). */

@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { basename, join } from "node:path";
 
 /**
- * 자가 교체의 플랫폼 공통부(DESIGN §7): 계획 · sha256 검증 · 디스크 여유 ·
+ * 자가 교체의 플랫폼 공통부: 계획 · sha256 검증 · 디스크 여유 ·
  * 결과 파일의 모양. 실제 교체 스크립트는 플랫폼마다 다르다 —
  * `mac-self-update.ts`(bash) · `win-self-update.ts`(PowerShell).
  *

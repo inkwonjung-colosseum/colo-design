@@ -81,8 +81,6 @@ export interface Sessions {
   setPermissionMode: (mode: PermissionMode) => Promise<void>;
   /** The provider's own mode ids (ACP agents) — routed to session.setMode. */
   setMode: (mode: string) => Promise<void>;
-  /** 빠르게 — 이 대화에만 걸리는 자세라 설정에 남지 않는다. */
-  setFastMode: (fast: boolean) => Promise<void>;
   /**
    * 새 대화가 어느 프로바이더로 돌지 골라 둔다 — 설정의 프로바이더 목록과 같은
    * 한 군데를 쓴다(switchProviderPatch): 컴포저의 칩도 설정도 다음 세션의
@@ -256,15 +254,8 @@ export function useSessions(
   const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [selector, setSelector] = useState<SessionSelectors | null>(null);
   /**
-   * 세션이 아직 없을 때 눌러 둔 빠르게 — 다른 칩(모델·권한)과 달리 설정에
-   * 남지 않으므로 다음 세션 한 번에만 실어 보낸다. 눌러도 아무 일도 없던
-   * 칩이 되지 않게 하는 게 이 상태의 전부다.
-   */
-  const [pendingFast, setPendingFast] = useState(false);
-  /**
-   * 세션이 아직 없을 때 눌러 둔 프로바이더 모드 — pendingFast 와 같은
-   * 자리다. 프로바이더 자체 모드는 설정 어휘(Claude enum)가 아니라서
-   * settings 에 남기지 않고 다음 세션 한 번에만 실어 보낸다.
+   * 세션이 아직 없을 때 눌러 둔 프로바이더 모드 — 설정 어휘(Claude enum)가
+   * 아니라 settings 에 남기지 않고 다음 세션 한 번에만 실어 보낸다.
    */
   const [pendingMode, setPendingMode] = useState<string | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
@@ -307,12 +298,8 @@ export function useSessions(
    * changing a chip while the first session is still being created would run
    * the create effect again and open a second thread.
    */
-  const startRef = useRef({ chat, pendingFast: false, pendingMode: null as string | null });
-  startRef.current = { chat, pendingFast, pendingMode };
-  /** status.providers 를 콜백 안에서 읽기 위한 ref — startSession 의 identity 는 고정이다. */
-  const providersRef = useRef(daemon.status?.providers);
-  providersRef.current = daemon.status?.providers;
-
+  const startRef = useRef({ chat, pendingMode: null as string | null });
+  startRef.current = { chat, pendingMode };
   /**
    * 프로바이더가 바뀌면 칩의 어휘도 바뀐다: 그 프로바이더의 카탈로그로
    * 갈아끼우고, 이전 프로바이더의 어휘로 눌러 둔 모드 부탁은 버린다 —
@@ -344,7 +331,7 @@ export function useSessions(
   }, []);
   const startSession = useCallback(
     async (resume?: string, title?: string): Promise<string> => {
-      const { chat: picked, pendingFast: fast, pendingMode: mode } = startRef.current;
+      const { chat: picked, pendingMode: mode } = startRef.current;
       const provider = picked.provider ?? "claude";
       // Claude-only picks (the Claude permission enum) are new-session
       // picks — a resumed thread keeps the provider its store recorded,
@@ -368,23 +355,17 @@ export function useSessions(
       // Claude rides its enum; every other provider answers setMode with its
       // own ids, and a pick made before the session existed rides pendingMode.
       if (claude && picked.permissionMode !== "default") {
-        await api.setPermissionMode(sessionId, picked.permissionMode);
+        // 모드 쓰기 실패는 세션 생성의 실패가 아니다 — setMode 분기와 같은
+        // 관용으로 흘려보낸다. 그렇지 않으면 create 가 실패를 보고하는 동안
+        // 대화는 이미 열려 있다.
+        await api.setPermissionMode(sessionId, picked.permissionMode).catch(() => undefined);
       } else if (!claude && mode) {
         await api.setMode(sessionId, mode).catch(() => undefined);
       }
-      // 세션이 없는 동안 눌러 둔 빠르게 — 다른 칩(모델·권한)과 같은 자세로
-      // 다음 세션에 실어 보낸다. 눌러도 아무 일도 없던 칩이 되지 않게.
-      // 프로바이더가 빠르게를 모르면 부탁은 조용히 버린다.
-      const fastCapable =
-        providersRef.current?.find((p) => p.id === provider)?.capabilities?.fastMode !== false;
-      if (fast && fastCapable) {
-        await api.setFastMode(sessionId, true).catch(() => undefined);
-      }
       // 눌러 둔 부탁은 이 세션이 소비했다 — 남겨 두면 다음 세션이 같은
       // 부탁을 또 물려받는다. ref 도 함께 맞춰 둔다 (렌더 전 재호출 대비).
-      setPendingFast(false);
       setPendingMode(null);
-      startRef.current = { ...startRef.current, pendingFast: false, pendingMode: null };
+      startRef.current = { ...startRef.current, pendingMode: null };
       // The selector probe fired by setActiveId can land BEFORE the mode
       // write above finishes — it then paints the CLI's "default" over the
       // mode this session actually runs in until the next turn refetches.
@@ -399,10 +380,22 @@ export function useSessions(
     [api, ensureSession, markLive, applySelectors],
   );
 
+  /** 이 연결로 이미 재적재를 물었는지 — 끊김마다 한 번만 묻는다. */
+  const seenOpen = useRef(false);
   useEffect(() => {
-    if (connection !== "open" || !ready) return;
+    if (connection !== "open" || !ready) {
+      seenOpen.current = false;
+      return;
+    }
     void refresh();
-  }, [connection, ready, refresh]);
+    // 소켓이 끊긴 동안의 session.event 는 영구히 사라진다 — 도구 시작이
+    // 사라지면 그 끝도 버려진다. 다시 이어진 첫 순간에 열린 대화의 기록을
+    // 다시 읽어 그 사이의 턴을 채운다.
+    if (seenOpen.current !== true) {
+      seenOpen.current = true;
+      if (activeId) void loadHistory(activeId);
+    }
+  }, [connection, ready, activeId, refresh, loadHistory]);
 
   // The thread list is the active project's, so a switch that kept the old
   // project's rows left a clickable conversation the daemon would answer in
@@ -421,6 +414,9 @@ export function useSessions(
     listedSlug.current = activeSlug;
     setList([]);
     setActiveId(null);
+    // 마커와 함께 기록 실패 깃발도 거둔다 — 낡은 대화의 '대화 기록을 읽지
+    // 못했습니다' 카드가 새 프로젝트의 빈 대화 위에 남지 않게.
+    setHistoryFailed(false);
     if (connection === "open") void refresh();
   }, [activeSlug, connection, refresh]);
 
@@ -522,11 +518,17 @@ export function useSessions(
    * right now — this answers it. The daemon remembers whatever comes back,
    * so every screen's chip catches up through the status broadcast too.
    */
+  /** 이 세션의 사용량인지 — 늦게 돌아온 답이 다른 대화의 칩을 칠하지 않게. */
+  const usageFor = useRef<string | null>(null);
   const refreshUsage = useCallback(() => {
     if (!activeId) return;
+    usageFor.current = activeId;
     void api
       .contextUsage(activeId)
-      .then((next) => setUsage(next))
+      .then((next) => {
+        if (usageFor.current !== activeId) return;
+        setUsage(next);
+      })
       .catch(() => undefined);
   }, [activeId, api]);
 
@@ -613,6 +615,8 @@ export function useSessions(
     selectorFor.current = null;
     setSelector(null);
     setUsage(null);
+    // 새 대화의 빈 자리 위에 이전 대화의 실패 카드가 남지 않게.
+    setHistoryFailed(false);
   }, [activeId, activeSlug, discardIfUnused]);
 
   /**
@@ -816,6 +820,9 @@ export function useSessions(
         ensureSession(sessionId);
         markLive(sessionId);
         setActiveId(sessionId);
+        // 갈라진 세션도 열기와 같은 적재를 지난다 — 읽지 않으면 테이프는
+        // 이전 턴을 잃고, 다음 되감기의 k 셈도 저장 대화 전체로 어긋난다.
+        await loadHistory(sessionId);
       }
       void refresh();
     } catch (e) {
@@ -901,19 +908,22 @@ export function useSessions(
   useEffect(() => {
     const last = pushed.current;
     pushed.current = chat;
-    if (!activeId || !last) return;
+    // selector 응답이 아직 오지 않았으면 이 세션의 프로바이더를 모른다 —
+    // Claude 기본값으로 착각하면 비(非)Claude 대화에 Claude 모델을 밀어 넣는다.
+    // 모르면 밀지 않는다.
+    if (!activeId || !last || !selector) return;
     const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
     // A settings edit reaches the live thread only when the thread's
     // provider is the one the dialog is editing — a Codex session must not
     // receive a Claude alias, and the Claude enum must not reach a provider
     // that names its own modes.
-    const same = (selector?.provider ?? "claude") === chat.provider;
+    const same = (selector.provider ?? "claude") === chat.provider;
     if (same && last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
     if (same && last.effort !== chat.effort) void api.setEffort(activeId, chat.effort).catch(fail);
     if (same && chat.provider === "claude" && last.permissionMode !== chat.permissionMode) {
       void api.setPermissionMode(activeId, chat.permissionMode).catch(fail);
     }
-  }, [activeId, chat, api]);
+  }, [activeId, chat, selector, api]);
 
   const switchPermissionMode = async (permissionMode: PermissionMode) => {
     const prev = selector?.permissionMode ?? "default";
@@ -935,8 +945,8 @@ export function useSessions(
    */
   const switchMode = async (mode: string) => {
     const prev = selector?.mode ?? selector?.permissionMode ?? "default";
-    // 세션이 없으면 다음 세션에 실어 보낼 부탁으로 눌러 둔다 — pendingFast
-    // 와 같은 자세다. 칩은 fallback selector 의 mode 가 그린다.
+    // 세션이 없으면 다음 세션에 실어 보낼 부탁으로 눌러 둔다.
+    // 칩은 fallback selector 의 mode 가 그린다.
     if (!activeId) {
       setPendingMode(mode);
       return;
@@ -951,28 +961,6 @@ export function useSessions(
       setSelector((current) =>
         current ? { ...current, mode: prev, permissionMode: prev as PermissionMode } : current,
       );
-    }
-  };
-
-  /**
-   * 빠르게는 부탁이지 명령이 아니다: 눌린 자리를 먼저 그려 두되, 다음
-   * 메시지의 `fast_mode_state` 가 데몬을 통해 돌아오면 그 말이 이긴다.
-   * 요청 자체가 실패하면 눌리기 전으로 돌려놓는다.
-   */
-  const switchFastMode = async (fast: boolean) => {
-    // 세션이 없으면 다음 세션에 실어 보낼 부탁으로 눌러 둔다 — 칩은 눌린
-    // 자리를 그리고, startSession 이 세션을 만들 때 적용한다.
-    if (!activeId) {
-      setPendingFast(fast);
-      return;
-    }
-    const prev = selector?.fastMode ?? false;
-    setSelector((current) => (current ? { ...current, fastMode: fast } : current));
-    try {
-      await api.setFastMode(activeId, fast);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setSelector((current) => (current ? { ...current, fastMode: prev } : current));
     }
   };
 
@@ -1059,10 +1047,8 @@ export function useSessions(
             };
           })()
         : {}),
-      // 빠르게는 세션이 태어날 때 꺼진 채 시작한다(SDK 의
-      // fastModePerSessionOptIn 과 같은 자세) — 설정에 남지 않는다. 세션이
-      // 없는 동안 눌러 둔 부탁(pendingFast)만이 이 칩을 켠 채로 보여 준다.
-      fastMode: pendingFast,
+      // 빠르게는 세션이 태어날 때 꺼진 채 시작한다.
+      fastMode: false,
       fastModeBlocked: null,
       // Local cache first (it matches what this planner last saw), then the
       // daemon's own copy so a fresh browser still gets a real picker —
@@ -1075,7 +1061,6 @@ export function useSessions(
     setEffort: switchEffort,
     setPermissionMode: switchPermissionMode,
     setMode: switchMode,
-    setFastMode: switchFastMode,
     pickProvider,
     remove,
     confirmRemove,

@@ -1,4 +1,4 @@
-// 시점 빌드 재현 (preview.md §3 2단계): 보낸 화면 동결의 2번째 얼굴. 1단계가
+// 시점 빌드 재현: 보낸 화면 동결의 2번째 얼굴. 1단계가
 // 커밋된 캡처(.colo-design/shots/)를 보여준다면, 이 모듈은 '넘긴 시점의 실제
 // 빌드'를 띄운다 — 열린 넘김의 브랜치 꼭지를 별도 워크트리에 체크아웃하고,
 // 레포가 선언한 미리보기 명령을 그 워크트리에서 두 번째 포트로 띄운다.
@@ -15,24 +15,14 @@
 //   4. 데몬이 내려갈 때 (stop()).
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { HandoffPreviewInfo, HandoffStatus } from "@colo-design/protocol";
 import { extraPathPrefix } from "./claude-trust.js";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
-import {
-  clearPreviewClaim,
-  descendantPids,
-  killTree,
-  pidListeningPorts,
-  portListenerPids,
-  portRefused,
-  probePreviewUrl,
-  writePreviewClaim,
-} from "./preview-claim.js";
-import { CONFIG_FILE } from "./repo-config.js";
+import { descendantPids, killTree, pidListeningPorts, probePreviewUrl } from "./preview-claim.js";
 
 /** The open handoff this build serves — 넘긴 요청이 열려 있을 때만 존재한다. */
 export type HandoffPreviewSource = () => {
@@ -125,7 +115,6 @@ export class HandoffPreviews {
     this.live = null;
     if (!live) return;
     await stopServer(live);
-    if (live.port !== null) clearPreviewClaim(live.port);
     await removeWorktree(live.repoRoot, live.worktree);
     if (reason) this.log(`handoff-preview 해체: ${reason}`);
   }
@@ -149,7 +138,7 @@ export class HandoffPreviews {
     if (!previewCommand) {
       return notReady(
         null,
-        "이 레포는 미리보기 명령을 찾지 못했습니다 — colo-design.json 을 확인해 주세요.",
+        "이 레포는 미리보기 명령을 찾지 못했습니다 — package.json 의 scripts 를 확인해 주세요.",
       );
     }
     const branch = handoff.branch;
@@ -253,12 +242,11 @@ export class HandoffPreviews {
       url: null,
       opener: null,
     };
-    // 포트 힌트: 아무도 안 쓰는 포트를 하나 골라 두 길로 흘린다 — PORT 환경과
-    // 워크트리의 colo-design.json. 힌트를 무시하고 제 포트를 고집하는 서버의
-    // 진짜 리스너는 아래 준비 판정의 소켓 스캔이 찾는다.
+    // 포트 힌트: 아무도 안 쓰는 포트를 하나 골라 PORT 환경으로 흘린다. 힌트를
+    // 무시하고 제 포트를 고집하는 서버의 진짜 리스너는 아래 준비 판정의 소켓
+    // 스캔이 찾는다.
     const hint = await freePort();
     live.port = hint;
-    patchDeclaredPort(worktree, hint);
     const failure = await this.startServer(live, input.previewCommand, hint);
     if (typeof failure === "string") {
       await stopServer(live);
@@ -282,7 +270,7 @@ export class HandoffPreviews {
     const windows = currentPlatform() === "win32";
     const child = spawn(previewCommand, {
       cwd: live.worktree,
-      // colo-design.json 의 명령은 문자열("pnpm dev")이라 셀이 읽는다.
+      // 레포의 명령은 문자열("pnpm dev")이라 셀이 읽는다.
       // detached는 POSIX에서 프로세스 그룹 하나로 묶어 거둠을 가능하게 한다.
       shell: true,
       detached: !windows,
@@ -323,7 +311,6 @@ export class HandoffPreviews {
           if (url !== null) {
             live.port = hint;
             live.url = url;
-            await claim(live);
             return null;
           }
         }
@@ -339,7 +326,6 @@ export class HandoffPreviews {
           if (url !== null) {
             live.port = port;
             live.url = url;
-            await claim(live);
             return null;
           }
         }
@@ -424,28 +410,6 @@ async function freePort(): Promise<number> {
   return await promise;
 }
 
-/**
- * 워크트리의 colo-design.json 이 선언 포트를 고쳐 쓴다 — 이 파일은 '레포가
- * 데몬에게 말하는 계약'이고, 그것을 읽고 따르는 레포(본 제품의 참조 관례)는
- * 덕에 두 번째 포트에서 정확히 뜬다. 파일을 고쳐 쓴 워크트리는 어차피
- * 버려질 체크아웃이라 지저분함이 값인 일이 아니다. 실패는 조용하다 — 힌트의
- * 나머지 절반(PORT 환경)과 소켓 스캔이 남아 있다.
- */
-function patchDeclaredPort(worktree: string, port: number): void {
-  const file = join(worktree, CONFIG_FILE);
-  if (!existsSync(file)) return;
-  try {
-    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
-      preview?: { port?: number; command?: string; origins?: string[] };
-    };
-    if (typeof parsed.preview !== "object" || parsed.preview === null) return;
-    parsed.preview.port = port;
-    writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`);
-  } catch {
-    // 깨진 선언은 힌트의 절반이기도 없다 — 준비 판정의 스캔이 대신 찾는다.
-  }
-}
-
 /** 어느 루프백 패밀리든 응답하는 쪽의 주소를 그대로 돌린다 (본 미리보기와 같다). */
 async function servingUrl(port: number): Promise<string | null> {
   for (const host of ["127.0.0.1", "[::1]"] as const) {
@@ -453,18 +417,6 @@ async function servingUrl(port: number): Promise<string | null> {
     if ((await probePreviewUrl(url)) !== null) return url;
   }
   return null;
-}
-
-/** 부팅이 확인된 리스너를 기록한다 — 포트 울타리가 이 빌드를 알아보게. */
-async function claim(live: LivePreview): Promise<void> {
-  if (live.port === null) return;
-  const holders = await portListenerPids(live.port);
-  writePreviewClaim({
-    instancePid: process.pid,
-    listenerPid: holders[0] ?? null,
-    port: live.port,
-    at: new Date().toISOString(),
-  });
 }
 
 /** 서버 거둠 — 본 미리보기의 killPreview 와 같은 두 단계 (SIGTERM 뒤 SIGKILL). */
@@ -478,15 +430,6 @@ async function stopServer(live: LivePreview): Promise<void> {
   const hard = setTimeout(() => killTree(child, "SIGKILL"), 3_000);
   await exited;
   clearTimeout(hard);
-  // 포트는 프로세스가 진짜 사라진 뒤에야 비워진다 — 바로 이어지는 워크트리
-  // 삭제와 데몬 종료가 자원 놓고 가는 것을 기다리는 자리다.
-  if (live.port !== null) {
-    const deadline = Date.now() + 3_000;
-    while (!(await portRefused(live.port))) {
-      if (Date.now() > deadline) break;
-      await sleep(100);
-    }
-  }
 }
 
 /**

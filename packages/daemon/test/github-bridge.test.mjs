@@ -1,5 +1,5 @@
 /**
- * GitHubBridge 의 인증 감시 (states.md §5-3): 데몬 자신의 GitHub 읽기가 본
+ * GitHubBridge 의 인증 감시: 데몬 자신의 GitHub 읽기가 본
  * 401 이 status.githubAuthExpired 로 나가 만료 카드를 연다. 판정은 전이에서만
  * 방송되고, 그 뒤의 성공 응답이 되돌린다 — 숨긴 레포의 404 도 인증을 마친
  * 뒤의 대답이라 401 만이 만료의 증거다.

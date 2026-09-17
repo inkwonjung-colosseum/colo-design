@@ -104,8 +104,8 @@ console.log("check: 통과");
 `;
 
 /** A private-registry fixture + a PAT, for the npmrc-leak checks. The host
- * is the real GitHub endpoint — the override parser refuses anything a repo
- * could aim at a server of its own choosing. */
+ * is the real GitHub endpoint — the derivation refuses a registry line a
+ * repo could aim at a server of its own choosing. */
 async function registryFixture(dir, home) {
   const fixture = await createFixtureRepo({
     dir: join(dir, "fixture"),
@@ -120,7 +120,7 @@ async function registryFixture(dir, home) {
   return { fixture, npmrc };
 }
 
-test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-level", async () => {
+test("B1: a registry repo's committed .npmrc never gains the PAT — creds stay user-level", async () => {
   const dir = workdir("hub-publish-npmrc-");
   const home = join(dir, "home");
   mkdirSync(home, { recursive: true });
@@ -135,7 +135,10 @@ test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-le
     await workspace.sync(); // install runs (fresh clone) → registry merge lands user-level
     await workspace.stop();
 
-    assert.ok(!existsSync(join(dir, "work", ".npmrc")), "the clone must not carry an npmrc");
+    // The repo's own .npmrc is the registry line and nothing else — the PAT
+    // must never be written into the clone.
+    const committedNpmrc = readFileSync(join(dir, "work", ".npmrc"), "utf8");
+    assert.equal(committedNpmrc, "@leaktest:registry=https://npm.pkg.github.com/\n");
     const user = readFileSync(npmrc, "utf8");
     assert.ok(
       user.includes("@leaktest:registry=https://npm.pkg.github.com/"),
@@ -154,25 +157,17 @@ test("B1: a registry repo saves with no .npmrc and no PAT — creds stay user-le
     const published = await workspace.save({ message: "npmrc 누출 검증" });
     assert.equal(published.stage, "published", published.detail ?? "");
 
-    const tree = await promisifiedRun("git", [
+    const pushedNpmrc = await promisifiedRun("git", ["-C", fixture.remote, "show", "HEAD:.npmrc"]);
+    assert.equal(pushedNpmrc, "@leaktest:registry=https://npm.pkg.github.com/\n");
+    const pushedPat = await promisifiedRun("git", [
       "-C",
       fixture.remote,
-      "ls-tree",
-      "-r",
-      "--name-only",
+      "grep",
+      "-c",
+      "ghp_npmrc_leak_probe",
       "HEAD",
-    ]);
-    assert.ok(!tree.split("\n").includes(".npmrc"), "the pushed tree has no .npmrc");
-    assert.ok(!tree.includes("ghp_npmrc_leak_probe"), "the pushed tree has no PAT");
-    const localTree = await promisifiedRun("git", [
-      "-C",
-      join(dir, "work"),
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "HEAD",
-    ]);
-    assert.ok(!localTree.split("\n").includes(".npmrc"));
+    ]).catch(() => "");
+    assert.ok(!String(pushedPat).includes("1"), "the pushed tree has no PAT");
   } finally {
     delete process.env.COLO_DESIGN_NPMRC;
     rmSync(dir, { recursive: true, force: true });
@@ -199,9 +194,10 @@ test("F5: a save does not run the repo's check — a broken gate no longer block
     // leaves one: the save must put the work up anyway — problems are the
     // developer's to catch in the pull request, not a wall in front of the
     // planner (실사).
-    const config = JSON.parse(readFileSync(join(dir, "work", "colo-design.json"), "utf8"));
-    config.check = "node -e \"console.error('NEWGATE-RAN'); process.exit(7)\"";
-    writeFileSync(join(dir, "work", "colo-design.json"), `${JSON.stringify(config, null, 2)}\n`);
+    const manifest = join(dir, "work", "package.json");
+    const pkg = JSON.parse(readFileSync(manifest, "utf8"));
+    pkg.scripts.check = "node -e \"console.error('NEWGATE-RAN'); process.exit(7)\"";
+    writeFileSync(manifest, `${JSON.stringify(pkg, null, 2)}\n`);
 
     writeFileSync(join(dir, "work", "index.html"), "<p>게이트 확인</p>\n");
     const status = await workspace.save({ message: "게이트" });

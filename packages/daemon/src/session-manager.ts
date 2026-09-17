@@ -68,6 +68,11 @@ export class SessionManager {
      * 클로저로 받는다 — 미주입 host(브라우저 개발 경로)에서는 undefined.
      */
     private readonly browserMcpFor?: (sessionId: string) => BrowserMcpEntry | null,
+    /**
+     * createSession 이 던졌을 때 발급된 시크릿을 회수하는 훅 — 세션이
+     * 못 열렸는데 시크릿이 맵에 남으면 닫힌 세션의 자격이 살아남는다.
+     */
+    private readonly browserMcpRevoke?: (sessionId: string) => void,
   ) {
     this.drivers = drivers;
     this.events = {
@@ -138,7 +143,12 @@ export class SessionManager {
       // options.launch로 넣은 값이 있어도 덮는다(시크릿은 세션 소유).
       browserMcp: this.browserMcpFor?.(session.id) ?? undefined,
     };
-    session.attach(driver.createSession(launch, session.driverHooks));
+    try {
+      session.attach(driver.createSession(launch, session.driverHooks));
+    } catch (error) {
+      this.browserMcpRevoke?.(session.id);
+      throw error;
+    }
     this.live.set(session.id, session);
 
     // A resumed or forked session should keep the name of the thread it came
@@ -587,25 +597,30 @@ export class SessionManager {
       },
       shim,
     );
-    fork.attach(
-      driver.createSession(
-        {
-          cwd: fork.cwd,
-          sessionId: fork.id,
-          model: input.base.launch?.model ?? null,
-          effort: input.base.launch?.effort ?? null,
-          modeId: driver.describe().defaultModeId || "default",
-          appendSystemPrompt: input.base.launch?.appendSystemPrompt ?? null,
-          ...input.base.launch,
-          resume: input.sessionId,
-          forkSession: true,
-          resumeSessionAt: cutoff.cut,
-          resumeDropsTurn: cutoff.drops ?? cutoff.cut,
-          browserMcp: this.browserMcpFor?.(fork.id) ?? undefined,
-        },
-        fork.driverHooks,
-      ),
-    );
+    try {
+      fork.attach(
+        driver.createSession(
+          {
+            cwd: fork.cwd,
+            sessionId: fork.id,
+            model: input.base.launch?.model ?? null,
+            effort: input.base.launch?.effort ?? null,
+            modeId: driver.describe().defaultModeId || "default",
+            appendSystemPrompt: input.base.launch?.appendSystemPrompt ?? null,
+            ...input.base.launch,
+            resume: input.sessionId,
+            forkSession: true,
+            resumeSessionAt: cutoff.cut,
+            resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+            browserMcp: this.browserMcpFor?.(fork.id) ?? undefined,
+          },
+          fork.driverHooks,
+        ),
+      );
+    } catch (error) {
+      this.browserMcpRevoke?.(fork.id);
+      throw error;
+    }
     this.live.set(fork.id, fork);
     // The refusal surfaces within the first exchange; a healthy fork answers
     // with its `init` and then sits idle waiting for input. `idle` itself is

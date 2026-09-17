@@ -137,7 +137,6 @@ test("게이트는 핀이 가리킨 화면만 다시 열어 판정을 실어 보
     factory: () => ({ for: () => driver, forIsolated: () => driver }),
     activeRepo: () => ({
       status: async () => ({ previewUrl: "http://127.0.0.1:4173/" }),
-      repoConfig: () => ({ preview: { origins: [] } }),
     }),
     session: (id) => ({ title: "대화", state: "idle", send: (text) => sent.push(text) }),
     sessions: () => [],

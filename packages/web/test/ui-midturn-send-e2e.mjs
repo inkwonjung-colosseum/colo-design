@@ -233,10 +233,11 @@ async function main() {
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
     // The wizard gate is gone from the first run: a project-less app draws
-    // the 2-step start flow in the workspace's place, so .planner__empty is
-    // the boot receipt. The wire call below is what stands the workspace up —
-    // Shell swaps StartFlow out the moment projects.length > 0.
-    await page.waitForSelector(".planner__empty", { timeout: 60000 });
+    // the full-window start wizard in the workspace's place, so
+    // .onboarding--start is the boot receipt. The wire call below is what
+    // stands the workspace up — Shell swaps the wizard out the moment
+    // projects.length > 0.
+    await page.waitForSelector(".onboarding--start", { timeout: 60000 });
 
     await call({
       type: "project.create",
@@ -255,21 +256,21 @@ async function main() {
     // The UI's own single path into a conversation (PageWorkspace
     // startNewThread): the click turns the view — the session itself is lazy
     // (`fresh()` opens the column with no session; the first send creates
-    // it), so no head draws yet. The save card below is repo-level and
+    // it), so no head draws yet. The save chip below is repo-level and
     // renders without one.
     await page.locator(".leaf--start").first().click();
     // A raw write plus a wire refresh moves pendingChanges the way the publish
-    // suite does it; the card appears, and with no turn running its 저장
-    // button must stand OPEN — the baseline the lock below would regress from
-    // (an always-locked regression fails HERE, not at the lock checks).
+    // suite does it; the 저장 chip appears, and with no turn running it must
+    // stand OPEN — the baseline the lock below would regress from (an
+    // always-locked regression fails HERE, not at the lock checks).
     const worktree = join(DIR, "projects", "미드턴", "repo");
     mkdirSync(join(worktree, "src", "screens"), { recursive: true });
     writeFileSync(join(worktree, "src", "screens", "LockCheck.tsx"), "export {};\n");
     await call({ type: "repo.refresh" }, 30000);
-    await page.locator("#live-savecard.savecard--pending").waitFor({ timeout: 20000 });
-    const saveButton = page.locator("#live-savecard button.primary");
+    const saveButton = page.locator(".inbox-chips .chip--now");
+    await saveButton.waitFor({ timeout: 20000 });
     check(
-      "with changes pending and no turn, the card's save button stands open",
+      "with changes pending and no turn, the save chip stands open",
       !(await saveButton.isDisabled()),
     );
 
@@ -280,17 +281,17 @@ async function main() {
     const stop = page.locator(".toolbar__stop");
     await stop.waitFor({ timeout: 30000 });
     check("a marker turn really runs", (await stop.count()) === 1);
-    // The promise the top bar, ⌘S and the 지금 저장하기 chip already keep —
-    // the card's button locks with the ONE sentence every surface reads
-    // (delivery.ts BUSY_SAVE). Pinned on the wire because the daemon's save
-    // has no turn guard of its own (repo.ts save() serializes only).
+    // The promise the top bar, ⌘S and the 저장 chip already keep — the chip
+    // locks with the ONE sentence every surface reads (delivery.ts BUSY_SAVE).
+    // Pinned on the wire because the daemon's save has no turn guard of its
+    // own (repo.ts save() serializes only).
     await page.waitForFunction(
-      () => document.querySelector("#live-savecard button.primary")?.hasAttribute("disabled"),
+      () => document.querySelector(".inbox-chips .chip--now")?.hasAttribute("disabled"),
       null,
       { timeout: 15000 },
     );
-    check("while a turn runs, the card's save button locks", await saveButton.isDisabled());
-    const cardReason = await saveButton.evaluate((element) => {
+    check("while a turn runs, the save chip locks", await saveButton.isDisabled());
+    const chipReason = await saveButton.evaluate((element) => {
       const id = (element.getAttribute("aria-describedby") ?? "")
         .split(/\s+/)
         .filter(Boolean)
@@ -299,9 +300,9 @@ async function main() {
       return tip?.textContent?.trim() || "";
     });
     check(
-      "the locked card says the one busy sentence",
-      cardReason === "AI가 고치는 중 — 끝나면 저장할 수 있습니다",
-      cardReason,
+      "the locked chip says the one busy sentence",
+      chipReason === "AI가 고치는 중 — 끝나면 저장할 수 있습니다",
+      chipReason,
     );
     const topReason = await page
       .locator(".screenpanel__bar")
@@ -337,7 +338,7 @@ async function main() {
     await page.getByRole("button", { name: "설정" }).click();
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', { timeout: 5000 });
     // The choice lives in the 동작 room — the dialog opens on 화면.
-    await page.getByRole("tab", { name: "동작" }).click();
+    await page.getByTestId("settings-nav-behavior").click();
     // Two options render as a segcontrol (radiogroup), not a select.
     await page.getByTestId("choice-실행 중 보내기-interrupt").click();
     const storedBlob = await page.evaluate(() =>
@@ -372,17 +373,17 @@ async function main() {
       "nothing is left waiting for the next turn",
       (await page.locator(".composer__queued").count()) === 0,
     );
-    // The promise's other half: the cut ends the turn and the still-pending
-    // card reopens — a lock that never releases fails HERE.
+    // The promise's other half: the cut ends the turn and the save chip
+    // reopens — a lock that never releases fails HERE.
     await page.waitForFunction(
       () => {
-        const button = document.querySelector("#live-savecard button.primary");
+        const button = document.querySelector(".inbox-chips .chip--now");
         return Boolean(button) && !button.hasAttribute("disabled");
       },
       null,
       { timeout: 15000 },
     );
-    check("when the turn ends, the card's save button reopens", !(await saveButton.isDisabled()));
+    check("when the turn ends, the save chip reopens", !(await saveButton.isDisabled()));
     const bubbles = await page.locator(".bubble--user").allInnerTexts();
     check(
       "the cutting words reached the transcript",

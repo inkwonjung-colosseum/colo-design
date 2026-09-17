@@ -94,35 +94,6 @@ export const SETTINGS_MODES: PermissionMode[] = [
 ];
 
 /**
- * 빠르게를 지금 쓸 수 없는 이유를 사람의 말로. 키는 CLI 의
- * `fast_mode_disabled_reason` 그대로다 — 모르는 사유가 오면 옮기지 않고
- * 일반적인 한 줄로 말한다(지어낸 번역보다 낫다).
- */
-export const FAST_BLOCKED_WORDS: Record<string, string> = {
-  free: "지금 요금제로는 빠르게를 쓸 수 없습니다",
-  extra_usage_disabled: "추가 사용이 꺼져 있어 빠르게를 쓸 수 없습니다",
-  not_first_party: "이 API 제공자에서는 빠르게를 쓸 수 없습니다",
-  disabled_by_env: "환경 설정이 빠르게를 막아 두었습니다",
-  model_not_allowed: "이 모델은 빠르게를 받지 않습니다",
-};
-
-/**
- * 버튼이 풀 수 없는 사유들 — 여기 있는 것만 토글을 잠근다.
- *
- * 나머지는 잠글 이유가 없다: `preference` 와 `sdk_opt_in_required` 는 이
- * 버튼이 하는 일이 바로 그것이고(누르면 풀린다), `pending` 은 아직 답이
- * 오지 않은 것이며, `network_error` 와 `unknown` 은 지나간다. 그것들까지
- * 잠갔다면 빠르게는 켤 방법이 없는 기능이 된다.
- */
-export const FAST_HARD_BLOCKS = new Set([
-  "free",
-  "extra_usage_disabled",
-  "not_first_party",
-  "disabled_by_env",
-  "model_not_allowed",
-]);
-
-/**
  * What the conversation starts on when nobody has chosen. Bypass
  * (`--dangerously-skip-permissions`) is the owner's call: a planner's first
  * turn must not stall on a 확인 카드 they never knew about. Anyone who wants

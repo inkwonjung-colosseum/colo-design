@@ -3,7 +3,7 @@ import { type DeliveryInput, deriveDelivery } from "./delivery";
 
 /**
  * 여정 띠의 진실 — `deriveDelivery` 의 state 를 4정류장 지도로 기계 번역한다
- * (docs/plan/preview.md §1-A). 지도는 대화가 아니라 프로젝트 사이클의 것:
+ * 지도는 대화가 아니라 프로젝트 사이클의 것:
  * `repo.handoff`·`pendingChanges` 는 프로젝트 단위라 같은 프로젝트의 모든
  * 대화가 같은 지도를 본다. 시계·타이머는 없다 — `delivery.state` 와
  * `pendingChanges`·`running` 만으로 결정되는 순수 함수.

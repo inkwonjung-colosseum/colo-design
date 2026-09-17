@@ -16,20 +16,14 @@ import {
   repoSettingsWarning,
   trustWorkspace,
 } from "../dist/repo.js";
-import {
-  deriveRegistry,
-  parseRepoOverrides,
-  readDeclaredPreviewPort,
-  resolveRepoConfig,
-} from "../dist/repo-config.js";
+import { deriveRegistry, resolveRepoConfig } from "../dist/repo-config.js";
 import { repoRoot, workdir } from "./repo-test-kit.mjs";
 
 // ---------------------------------------------------------------------------
-// 연결 계약 — 레포가 이미 말한 것에서 추론하고, 파일은 포트와 예외만 적는다
+// 연결 계약 — 레포가 이미 말한 것에서만 추론한다
 // ---------------------------------------------------------------------------
-test("the contract is derived from the repo's own files — the config names only the port", () => {
+test("the contract is derived from the repo's own files", () => {
   const root = repoRoot("repo-derive-", {
-    "colo-design.json": { preview: { port: 5274 } },
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
     "package.json": { scripts: { dev: "vite", check: "tsc --noEmit", build: "vite build" } },
     ".npmrc": "@colosseumcoinckr:registry=https://npm.pkg.github.com/\n",
@@ -40,7 +34,7 @@ test("the contract is derived from the repo's own files — the config names onl
       check: "pnpm run check",
       build: "pnpm run build",
       registry: { host: "npm.pkg.github.com", scope: "@colosseumcoinckr" },
-      preview: { command: "pnpm run dev", port: 5274, origins: [] },
+      preview: { command: "pnpm run dev" },
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -56,7 +50,6 @@ test("the lockfile decides the package manager and the install command", () => {
   ]) {
     const root = repoRoot("repo-lock-", {
       [lockfile]: "",
-      "colo-design.json": { preview: { port: 3000 } },
       "package.json": { scripts: { dev: "x", check: "y" } },
     });
     try {
@@ -73,7 +66,6 @@ test("the lockfile decides the package manager and the install command", () => {
 
 test("only the scripts the repo has become commands — the preview name falls back", () => {
   const bare = repoRoot("repo-bare-", {
-    "colo-design.json": { preview: { port: 3000 } },
     "package.json": { scripts: { start: "node server.mjs" } },
   });
   try {
@@ -91,7 +83,6 @@ test("only the scripts the repo has become commands — the preview name falls b
   }
 
   const both = repoRoot("repo-both-", {
-    "colo-design.json": { preview: { port: 3000 } },
     "package.json": { scripts: { start: "next start", dev: "next dev" } },
   });
   try {
@@ -102,66 +93,12 @@ test("only the scripts the repo has become commands — the preview name falls b
   }
 
   const none = repoRoot("repo-nopreview-", {
-    "colo-design.json": { preview: { port: 3000 } },
     "package.json": { scripts: { check: "tsc" } },
   });
   try {
     assert.throws(() => resolveRepoConfig(none), /미리보기 명령을 찾지 못했습니다/);
   } finally {
     rmSync(none, { recursive: true, force: true });
-  }
-});
-
-test("an undeclared port still resolves — the address is detected once the server is up", () => {
-  const root = repoRoot("repo-noport-", { "package.json": { scripts: { dev: "vite" } } });
-  const file = join(root, "colo-design.json");
-  try {
-    // 파일이 아예 없는 레포도, 빈 파일인 레포도 같은 답을 듣는다 — 포트는
-    // 미리보기가 뜬 뒤 서버 출력·소켓에서 감지한다. 락파일이 없으면 pnpm 이다.
-    for (const setup of ["missing", "empty"]) {
-      if (setup === "empty") writeFileSync(file, "{}");
-      const config = resolveRepoConfig(root);
-      assert.equal(config.preview.command, "pnpm run dev", setup);
-      assert.equal(config.preview.port, undefined, setup);
-      assert.equal(readDeclaredPreviewPort(root), null, setup);
-    }
-    writeFileSync(file, JSON.stringify({ preview: { port: 4000 } }));
-    assert.equal(readDeclaredPreviewPort(root), 4000);
-    assert.equal(resolveRepoConfig(root).preview.port, 4000);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-
-  // 스크립트도 오버라이드도 없는 레포는 여전히 거절이다 — 명령 없이는 띄울 수 없다.
-  const bare = repoRoot("repo-noscript-", { "package.json": { scripts: { check: "tsc" } } });
-  try {
-    assert.throws(() => resolveRepoConfig(bare), /미리보기 명령을 찾지 못했습니다/);
-  } finally {
-    rmSync(bare, { recursive: true, force: true });
-  }
-});
-
-test("an override beats the derivation, key by key — the monorepo escape hatch", () => {
-  const root = repoRoot("repo-override-", {
-    "pnpm-lock.yaml": "",
-    "package.json": { scripts: { dev: "vite", check: "tsc", build: "vite build" } },
-    "colo-design.json": {
-      install: "pnpm install --filter web...",
-      check: "pnpm --filter web check",
-      preview: { command: "pnpm --filter web dev", port: 5274 },
-      shots: false,
-    },
-  });
-  try {
-    const config = resolveRepoConfig(root);
-    assert.equal(config.install, "pnpm install --filter web...");
-    assert.equal(config.check, "pnpm --filter web check");
-    assert.equal(config.preview.command, "pnpm --filter web dev");
-    assert.equal(config.shots, false);
-    // 덮지 않은 키는 그대로 추론된다.
-    assert.equal(config.build, "pnpm run build");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -188,67 +125,6 @@ test("the private registry comes from the repo's .npmrc, GitHub package hosts on
   } finally {
     rmSync(ok, { recursive: true, force: true });
   }
-});
-
-test("override validation errors are Korean, name the field, and say what it should be", () => {
-  // 빈 파일은 합법이다 — 추론이 나머지를 전부 답한다.
-  assert.deepEqual(parseRepoOverrides("{}"), {});
-  for (const port of [0, 65536, "5274", 5274.5]) {
-    assert.throws(
-      () => parseRepoOverrides(JSON.stringify({ preview: { port } })),
-      /preview\.port가 잘못되었습니다/,
-      `port ${JSON.stringify(port)} must be rejected`,
-    );
-  }
-  assert.throws(
-    () => parseRepoOverrides('{"install":3}'),
-    /install는 실행할 명령을 문자열로 적어야 합니다/,
-  );
-  assert.throws(
-    () => parseRepoOverrides('{"preview":{"command":"  "}}'),
-    /preview\.command는 실행할 명령을 문자열로 적어야 합니다/,
-  );
-  assert.throws(() => parseRepoOverrides('{"preview":5274}'), /preview는 \{ "port" \} 형태/);
-  assert.throws(
-    () => parseRepoOverrides('{"registry":{}}'),
-    /registry는 \{ "host", "scope" \} 형태여야 합니다/,
-  );
-  assert.throws(() => parseRepoOverrides('{"shots":"no"}'), /shots는 true 또는 false여야 합니다/);
-  assert.throws(
-    () => parseRepoOverrides('{"preview":{"origins":"http://localhost:6006"}}'),
-    /preview\.origins는 주소 문자열의 배열/,
-  );
-  assert.throws(
-    () => parseRepoOverrides('{"preview":{"origins":["file:///etc/passwd"]}}'),
-    /preview\.origins 항목이 http\(s\) 주소가 아닙니다/,
-  );
-  // 경로까지 적어도 origin 으로 정규화되고, 중복은 한 번만 남는다.
-  assert.deepEqual(
-    parseRepoOverrides(
-      JSON.stringify({
-        preview: { origins: ["http://localhost:6006/iframe.html", "http://localhost:6006"] },
-      }),
-    ).preview?.origins,
-    ["http://localhost:6006"],
-  );
-  assert.throws(() => parseRepoOverrides("{not json"), /colo-design\.json을 해석할 수 없습니다/);
-  assert.throws(() => parseRepoOverrides("[]"), /colo-design\.json은 객체여야 합니다/);
-  for (const host of [
-    "evil.example.com",
-    "npm.pkg.github.com.evil.example.com",
-    "npm-pkg-github.com",
-  ]) {
-    assert.throws(
-      () => parseRepoOverrides(JSON.stringify({ registry: { host, scope: "@x" } })),
-      /registry\.host는 GitHub 패키지 호스트/,
-      `host ${host} must be refused`,
-    );
-  }
-  assert.deepEqual(
-    parseRepoOverrides(JSON.stringify({ registry: { host: "NPM.PKG.GITHUB.COM", scope: "@team" } }))
-      .registry,
-    { host: "npm.pkg.github.com", scope: "@team" },
-  );
 });
 
 test("a repo that ships Claude Code project settings gets a header warning", () => {

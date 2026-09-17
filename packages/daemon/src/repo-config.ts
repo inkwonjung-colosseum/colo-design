@@ -1,53 +1,26 @@
 /**
- * 연결 레포의 계약 — 레포가 이미 말한 것에서 읽어 내고, `colo-design.json` 은
- * 그 추론이 틀린 자리만 덮는다. 락파일이 패키지 매니저와 설치 명령을,
- * `package.json` 의 scripts 가 검사 · 빌드 · 미리보기 명령을, 커밋된 `.npmrc`
- * 가 private 레지스트리를 말한다 — 넷 다 어느 레포나 이미 가지고 있으므로 파일에
- * 다시 적을 이유가 없고, 적힌 복사본은 언젠가 원본과 어긋난다.
- *
- * 파일에 남는 필수 항목은 하나다: 미리보기가 뜨는 포트. 그것만은 레포의 어느
- * 파일도 기계가 읽을 수 있게 말하지 않는다 — 개발 서버의 포트는 스크립트 인자나
- * 프레임워크 설정 안에 있고, 도구는 그 포트에 연결이 될 때까지 기다려야 한다.
+ * 연결 레포의 계약 — 레포가 이미 말한 것에서만 읽어 낸다. 락파일이 패키지
+ * 매니저와 설치 명령을, `package.json` 의 scripts 가 검사 · 빌드 · 미리보기
+ * 명령을, 커밋된 `.npmrc` 가 private 레지스트리를 말한다 — 셋 다 어느 레포나
+ * 이미 가지고 있으므로 설정 파일 하나를 더 요구할 이유가 없다.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-
-/** 레포 루트의 오버라이드 파일 — 포트와, 추론이 틀린 자리만 적는다. */
-export const CONFIG_FILE = "colo-design.json";
 
 export interface RepoRegistry {
   host: string;
   scope: string;
 }
 
-/** 데몬이 실제로 돌리는 계약 — 추론과 오버라이드를 합친 결과. 포트는 없을 수 있다: 뜬 뒤 감지한다. */
+/** 데몬이 실제로 돌리는 계약 — 레포가 말한 것에서 추론한 결과. */
 export interface RepoConfig {
   install?: string;
   check?: string;
   build?: string;
   preview: {
     command: string;
-    /** 선언된 포트 — 없으면 서버가 뜬 뒤 출력·소켓에서 감지한다. */
-    port?: number;
-    /**
-     * 미리보기 서버 외에 열어도 되는 origin 들 — 스토리북·별도 admin 같은
-     * 같은 레포의 다른 로컬 서버. 비워 두면 preview 서버 하나뿐이다.
-     */
-    origins: string[];
   };
   registry?: RepoRegistry;
-  /** D56: `false` refuses the handoff's screen captures - no files, no PR section. */
-  shots?: boolean;
-}
-
-/** `colo-design.json` 이 적을 수 있는 것 — 전부 선택이다. */
-interface RepoOverrides {
-  install?: string;
-  check?: string;
-  build?: string;
-  preview?: { command?: string; port?: number; origins?: string[] };
-  registry?: RepoRegistry;
-  shots?: boolean;
 }
 
 type PackageManager = "pnpm" | "npm" | "yarn" | "bun";
@@ -82,12 +55,12 @@ const PREVIEW_SCRIPTS = ["dev", "start", "serve", "preview"] as const;
 
 export const PREVIEW_COMMAND_UNKNOWN =
   "미리보기 명령을 찾지 못했습니다 — package.json 의 scripts 에 dev · start · serve · preview 중 " +
-  `하나가 있어야 하거나, ${CONFIG_FILE} 의 preview.command 로 직접 적어야 합니다.`;
+  "하나가 있어야 합니다.";
 
 /**
- * JSON 이 준 값이 키를 읽어도 되는 객체인지 판정한다 — 파일에서 온 값은 무엇이든
- * 될 수 있으므로, 읽기 전에 한 번 통과시킨다. 통과한 뒤의 값은 여전히 unknown
- * 이고, 각 필드는 제 자리에서 검사한다.
+ * JSON 이 준 값이 키를 읽어도 되는 객체인지 판정한다 — package.json 이 준 값은
+ * 무엇이든 될 수 있으므로, 읽기 전에 한 번 통과시킨다. 통과한 뒤의 값은 여전히
+ * unknown 이고, 각 필드는 제 자리에서 검사한다.
  */
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -171,159 +144,32 @@ export function deriveRegistry(root: string): RepoRegistry | null {
 }
 
 /**
- * 오버라이드 파일을 읽어 형태만 검증한다. 모든 거절은 필드 이름과 무엇이어야
- * 하는지를 한국어로 말한다: 이것을 고치는 사람은 사용자이고, "invalid config"
- * 로는 아무것도 할 수 없다. 무엇이 없는지는 여기서 판정하지 않는다 — 빈 파일도
- * 합법이고, 빠진 포트는 resolveRepoConfig 가 말한다.
- */
-export function parseRepoOverrides(source: string): RepoOverrides {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(source);
-  } catch (error) {
-    throw new Error(
-      `${CONFIG_FILE}을 해석할 수 없습니다: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  const config = asRecord(raw);
-  if (!config) throw new Error(`${CONFIG_FILE}은 객체여야 합니다`);
-  const overrides: RepoOverrides = {};
-
-  for (const key of ["install", "check", "build"] as const) {
-    const value = config[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value.trim() === "") {
-      throw new Error(`${CONFIG_FILE}의 ${key}는 실행할 명령을 문자열로 적어야 합니다`);
-    }
-    overrides[key] = value;
-  }
-
-  if (config.preview !== undefined) {
-    const preview = asRecord(config.preview);
-    if (!preview) throw new Error(`${CONFIG_FILE}의 preview는 { "port" } 형태여야 합니다`);
-    overrides.preview = {};
-    if (preview.command !== undefined) {
-      if (typeof preview.command !== "string" || preview.command.trim() === "") {
-        throw new Error(`${CONFIG_FILE}의 preview.command는 실행할 명령을 문자열로 적어야 합니다`);
-      }
-      overrides.preview.command = preview.command;
-    }
-    if (preview.port !== undefined) {
-      const port = preview.port;
-      if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error(
-          `${CONFIG_FILE}의 preview.port가 잘못되었습니다 — 1~65535 사이의 포트 번호여야 합니다`,
-        );
-      }
-      overrides.preview.port = port;
-    }
-    if (preview.origins !== undefined) {
-      if (!Array.isArray(preview.origins)) {
-        throw new Error(`${CONFIG_FILE}의 preview.origins는 주소 문자열의 배열이어야 합니다`);
-      }
-      const origins: string[] = [];
-      for (const entry of preview.origins) {
-        if (typeof entry !== "string" || entry.trim() === "") {
-          throw new Error(`${CONFIG_FILE}의 preview.origins 항목은 주소 문자열이어야 합니다`);
-        }
-        let origin: string;
-        try {
-          const parsed = new URL(entry);
-          if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            throw new Error("not-http");
-          }
-          origin = parsed.origin;
-        } catch {
-          throw new Error(
-            `${CONFIG_FILE}의 preview.origins 항목이 http(s) 주소가 아닙니다: ${entry}`,
-          );
-        }
-        if (!origins.includes(origin)) origins.push(origin);
-      }
-      overrides.preview.origins = origins;
-    }
-  }
-
-  if (config.shots !== undefined) {
-    if (typeof config.shots !== "boolean") {
-      throw new Error(`${CONFIG_FILE}의 shots는 true 또는 false여야 합니다`);
-    }
-    overrides.shots = config.shots;
-  }
-
-  if (config.registry !== undefined) {
-    const registry = asRecord(config.registry);
-    if (
-      !registry ||
-      typeof registry.host !== "string" ||
-      registry.host.trim() === "" ||
-      typeof registry.scope !== "string" ||
-      registry.scope.trim() === ""
-    ) {
-      throw new Error(`${CONFIG_FILE}의 registry는 { "host", "scope" } 형태여야 합니다`);
-    }
-    const host = registry.host.trim().toLowerCase();
-    if (!isPackageHost(host)) {
-      throw new Error(
-        `${CONFIG_FILE}의 registry.host는 GitHub 패키지 호스트(npm.pkg.github.com)여야 합니다`,
-      );
-    }
-    overrides.registry = { host, scope: registry.scope };
-  }
-
-  return overrides;
-}
-
-/** 오버라이드 파일이 있으면 읽고, 없으면 빈 오버라이드. */
-function readRepoOverrides(root: string): RepoOverrides {
-  const file = join(root, CONFIG_FILE);
-  if (!existsSync(file)) return {};
-  return parseRepoOverrides(readFileSync(file, "utf8"));
-}
-
-/**
- * 레포가 말하는 것 + 오버라이드 = 데몬이 돌릴 계약. 포트나 미리보기 명령을 끝내
- * 알 수 없으면 던진다 — 그 둘 없이는 미리보기가 뜰 수 없고, 사용자가 읽는 카드는
- * 무엇을 적어야 하는지 말해야 한다.
+ * 레포가 말하는 것 = 데몬이 돌릴 계약. 미리보기 명령을 끝내 알 수 없으면
+ * 던진다 — 그것 없이는 미리보기가 뜰 수 없고, 사용자가 읽는 카드는 무엇을
+ * 적어야 하는지 말해야 한다.
  */
 export function resolveRepoConfig(root: string): RepoConfig {
-  const overrides = readRepoOverrides(root);
-
   const locked = lockedManager(root);
   const manager = locked ?? "pnpm";
   const scripts = readPackageScripts(root);
   const declares = (name: string): boolean => typeof scripts[name] === "string";
 
   const script = PREVIEW_SCRIPTS.find(declares);
-  const command = overrides.preview?.command ?? (script ? runScript(manager, script) : null);
-  if (command === null) throw new Error(PREVIEW_COMMAND_UNKNOWN);
+  if (script === undefined) throw new Error(PREVIEW_COMMAND_UNKNOWN);
+  const command = runScript(manager, script);
 
-  const install = overrides.install ?? (locked ? INSTALL[locked] : undefined);
-  const check = overrides.check ?? (declares("check") ? runScript(manager, "check") : undefined);
-  const build = overrides.build ?? (declares("build") ? runScript(manager, "build") : undefined);
-  const registry = overrides.registry ?? deriveRegistry(root) ?? undefined;
+  const install = locked ? INSTALL[locked] : undefined;
+  const check = declares("check") ? runScript(manager, "check") : undefined;
+  const build = declares("build") ? runScript(manager, "build") : undefined;
+  const registry = deriveRegistry(root) ?? undefined;
 
   return {
     ...(install !== undefined ? { install } : {}),
     ...(check !== undefined ? { check } : {}),
     ...(build !== undefined ? { build } : {}),
     ...(registry !== undefined ? { registry } : {}),
-    ...(overrides.shots !== undefined ? { shots: overrides.shots } : {}),
-    preview: {
-      command,
-      ...(overrides.preview?.port !== undefined ? { port: overrides.preview.port } : {}),
-      origins: overrides.preview?.origins ?? [],
-    },
+    preview: { command },
   };
-}
-
-/** 파일이 선언한 미리보기 포트, 말하지 않았거나 읽을 수 없으면 null. */
-export function readDeclaredPreviewPort(root: string): number | null {
-  try {
-    return readRepoOverrides(root).preview?.port ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** The npm scope form with a leading @, whatever the source wrote. */

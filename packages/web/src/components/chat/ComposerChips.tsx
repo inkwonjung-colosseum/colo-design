@@ -1,9 +1,9 @@
 /**
- * 컴포저 상태 칩 (docs/plan/chat.md §1.3, §4.3): "저장 안 함 상태의
- * 심장박동" — 입력창 위, 두 칩뿐이다. 계산은 `lib/delivery.ts` 의
- * `deriveDelivery` 를 그대로 빌려 쓴다(잠금 규칙 재사용 계약); 상태 칩
- * 자체의 글자는 이 목업 어휘가 새로 쓴 것으로, 제목바(product 슬라이스)의
- * 더 자세한 문장과는 다른, 일부러 뭉툭한 심장박동이다.
+ * 컴포저 상태 칩: 저장 · 넘기기의 실행 자리. 카드는 없다 — 대기 상태의
+ * 심장박동(상태 칩)과 실행 버튼(변경사항 저장 → 개발자에게 보내기)이
+ * 입력창 위에 나란히 선다. 계산은 `lib/delivery.ts` 의 `deriveDelivery`
+ * 를 그대로 빌려 쓴다(잠금 규칙 재사용 계약) — 칩이 판정을 다시 쓰지
+ * 않는다.
  */
 import type { HandoffStatus, RepoPhase } from "@colo-design/protocol";
 import { deriveDelivery } from "../../lib/delivery";
@@ -16,10 +16,12 @@ export interface ComposerChipsProps {
   handoff: HandoffStatus | null;
   running: boolean;
   shelf: { at: string } | null;
-  /** "저장하지 않은 변경 N개" 클릭 → 살아있는 저장 카드로 스크롤 + flash. */
-  onScrollToSave: () => void;
-  /** "지금 저장하기" 클릭 → 스크롤 + 저장(§4.1 과 같은 핸들러). */
+  /** 저장·넘기기가 오가는 중(computing · pushing · handing-off) — 버튼이 진행을 말한다. */
+  savingInFlight: boolean;
+  /** "변경사항 저장" 클릭 → 저장(상단바·⌘S 와 같은 핸들러). */
   onSaveNow: () => void;
+  /** "개발자에게 보내기" 클릭 → 대화 안의 넘기기 카드를 연다. */
+  onHandoff: () => void;
 }
 
 export function ComposerChips({
@@ -29,11 +31,11 @@ export function ComposerChips({
   handoff,
   running,
   shelf,
-  onScrollToSave,
+  savingInFlight,
   onSaveNow,
+  onHandoff,
 }: ComposerChipsProps) {
   const delivery = deriveDelivery({ pendingChanges, branch, phase, handoff, running, shelf });
-  if (!delivery) return null;
 
   // 상태 칩: repo.pendingChanges·repo.shelf 로 기계적으로 정해진다 — 개발자
   // 검토 중·변경 요청 같은 더 자세한 말은 제목바(product 슬라이스)의 몫이고,
@@ -41,38 +43,39 @@ export function ComposerChips({
   const statusChip =
     pendingChanges > 0 ? "unsaved" : shelf ? "shelf" : branch || handoff ? "saved" : null;
 
-  // "지금 저장하기": 변경이 있고 도는 중이 아닐 때만 나타난다. 잠금 이유는
-  // deriveDelivery 의 save 액션을 그대로 읽는다 — 판정을 다시 쓰지 않는다.
-  const showSaveNow = pendingChanges > 0 && !running;
-  const saveAction = delivery.actions.save;
+  // 실행 버튼은 상태가 정한다: 변경이 있으면 저장, 저장만 끝난 사이클
+  // (열린 요청 없음)이면 넘기기. 나머지 상태(검토 중·반려·반영됨)는
+  // 상태 칩과 상단 바의 몫이다.
+  const saveAction = delivery?.actions.save;
+  const handoffAction = delivery?.actions.handoff;
 
-  if (!statusChip && !showSaveNow) return null;
+  if (!statusChip) return null;
 
   return (
     <div className="inbox-chips">
       {statusChip === "unsaved" && (
-        <button type="button" className="chip chip--save" onClick={onScrollToSave}>
+        <span className="chip chip--save">
           <span className="dot dot--ask" />
           저장하지 않은 변경 {pendingChanges}개
-        </button>
+        </span>
       )}
-      {statusChip === "shelf" && (
-        <Tip label="더 보기 메뉴에서 꺼내면 이어서 작업합니다">
-          <span className="chip chip--shelf">치워둔 작업</span>
-        </Tip>
-      )}
-      {statusChip === "saved" && <span className="chip chip--saved">모두 저장됨</span>}
-      {showSaveNow && (
-        <Tip label={saveAction.enabled ? undefined : saveAction.reason}>
+      {pendingChanges > 0 && saveAction && (
+        <Tip label={saveAction.enabled && !savingInFlight ? undefined : saveAction.reason}>
           <button
             type="button"
             className="chip chip--now"
-            disabled={!saveAction.enabled}
+            disabled={!saveAction.enabled || savingInFlight}
             onClick={onSaveNow}
           >
-            지금 저장하기
+            {savingInFlight ? "저장하는 중…" : "변경사항 저장"}
           </button>
         </Tip>
+      )}
+      {statusChip === "saved" && <span className="chip chip--saved">모두 저장됨</span>}
+      {handoffAction?.enabled && (
+        <button type="button" className="chip chip--now" onClick={onHandoff}>
+          개발자에게 보내기
+        </button>
       )}
     </div>
   );
