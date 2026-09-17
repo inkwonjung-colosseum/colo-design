@@ -671,22 +671,21 @@ test("넘기기의 미리보기는 개발자가 받을 자동 첨부를 그대�
 
     const draft = await workspace.handoffDraft({
       commentsFile,
-      screenTitles: [{ route: "/member/MemberList", title: "회원 목록" }],
       shotCount: 3,
     });
 
     // 미리보기가 보여 주는 절은 넘기기가 실제로 붙이는 절과 같은 문장이다 —
-    // 선언된 제목으로, 사용자의 말 그대로.
+    // 핀이 가리킨 화면 id 로, 사용자의 말 그대로.
     assert.ok(draft.extras, "자동 첨부가 보고되지 않았다");
     assert.match(draft.extras.commentsSection ?? "", /### 수정 요청/);
-    assert.match(draft.extras.commentsSection ?? "", /- 회원 목록 · 기본 — "제목을 줄여"/);
+    assert.match(draft.extras.commentsSection ?? "", /- member\/MemberList · 기본 — "제목을 줄여"/);
     assert.equal(draft.extras.shotCount, 3);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("buildCommentsSection: 선언된 제목·20건 넘김", async () => {
+test("buildCommentsSection: 사이클 행·20건 넘김", async () => {
   const { buildCommentsSection } = await import("../dist/repo.js");
   const rows = [
     {
@@ -704,16 +703,12 @@ test("buildCommentsSection: 선언된 제목·20건 넘김", async () => {
     // 이전 사이클(브랜치 이전)의 항목은 절에 들지 않는다.
     { screen: "pay/PayFailed", state: "error", text: "옛것", at: "2026-09-10T09:00:00.000Z" },
   ];
-  const section = buildCommentsSection(
-    rows,
-    (screen) => (screen === "member/MemberList" ? "회원 목록" : null),
-    "2026-09-11T00:00:00Z",
-  );
+  const section = buildCommentsSection(rows, "2026-09-11T00:00:00Z");
   assert.ok(section.includes("### 수정 요청"));
-  assert.ok(section.includes('- 회원 목록 · 기본 — "제목을 줄여"'), section);
+  assert.ok(section.includes('- member/MemberList · 기본 — "제목을 줄여"'), section);
   assert.ok(
     section.includes('- pay/PayFailed · 오류 — "문구를 다시"'),
-    "선언 없는 화면은 id 로 남는다",
+    "핀이 가리킨 화면 id 로 남는다",
   );
   assert.ok(!section.includes("옛것"), "브랜치 이전 항목은 제외");
   assert.ok(
@@ -728,7 +723,6 @@ test("buildCommentsSection: 선언된 제목·20건 넘김", async () => {
       text: `코멘트 ${index + 1}`,
       at: `2026-09-11T10:${String(index).padStart(2, "0")}:00.000Z`,
     })),
-    () => null,
     "2026-09-11T00:00:00Z",
   );
   assert.ok(overflow.includes("외 5건"), overflow.slice(-120));

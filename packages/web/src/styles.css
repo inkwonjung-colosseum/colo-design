@@ -6144,9 +6144,6 @@ select {
 
 /* 저장 검토 -------------------------------------------------------------------*/
 
-.modal__panel--diff {
-  max-width: 720px;
-}
 /* 검토의 몸통은 카드의 안쪽 여백을 따른다 — 머리(15px)·힌트·버튼 줄과 같은
    자리. 몸통이 카드 테두리에 붙으면 내용이 카드 안이 아니라 옆으로 읽힌다. */
 .savereview {
@@ -8246,6 +8243,73 @@ select {
   background: transparent;
 }
 
+/* 저장 기록 도킹 — 덮지 않고 나란히 선다. "이 시점"과 "지금"의 비교가 이
+   화면의 본질이므로 미리보기는 얼지 않고 폭만 양보한다. TalkSheet 의 도킹
+   규칙: 네이티브 뷰는 DOM 위에 그려지므로, 나란히 설 수 있는 길은 덮는
+   것이 아니라 slot 의 rect 을 줄여 뷰의 bounds 이 따라 오게 하는 것. */
+.previewcol__row {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.histdock {
+  flex: 0 1 348px;
+  min-width: 280px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  outline: none;
+  animation: histdockin 0.22s var(--spring);
+}
+@keyframes histdockin {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+}
+.histdock__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 6px;
+}
+.histdock__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font: 650 var(--font-ui-135) var(--sans);
+  letter-spacing: -0.012em;
+}
+.histdock__head .ghost {
+  margin-left: auto;
+}
+.histdock__body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 14px 14px;
+}
+/* 좁은 행(700px 미만)의 폴백: 나란히 설 폭이 없으면 무대를 얼려 덮는다
+   (data-cover-stage — cover-reconciler 규약). 모달의 몸만 남은 모양. */
+.histdock--cover {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  flex: none;
+  width: min(348px, 100%);
+  min-width: 0;
+  box-shadow: -12px 0 24px rgba(0, 0, 0, 0.12);
+}
+/* 모달 너비에서 쓰던 행 어휘를 좁은 도킹에서도 읽히게 — 버튼이 내려앉는다. */
+.histdock .diff__filerow {
+  flex-wrap: wrap;
+}
+
 /* AI 시점 보기: the PiP rides the preview column's stage —
    a thumbnail in the iframe's corner while the agent.s driver is at work, a
    click spreads it over the planner's iframe, and the turn's settle folds
@@ -8730,6 +8794,7 @@ select {
   }
   .modal,
   .modal__panel,
+  .histdock,
   .selector__menu,
   .autocomplete {
     animation: none;

@@ -9,7 +9,7 @@ import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
 /**
  * 데스크톱의 미리보기 칸: an empty slot the main process lays its
  * `WebContentsView` over. All knowing flows through the IPC channels — bounds
- * up (`ResizeObserver` → `preview:bounds`), location · screens · pins ·
+ * up (`ResizeObserver` → `preview:bounds`), location · tabs · pins ·
  * errors · freeze · keys down. The slot shows the freeze frame while a
  * modal covers the view, so the pane never reads as a hole.
  *
@@ -142,8 +142,7 @@ export function NativeHost({
     if (!url || !target || webActive) return;
     const bridge = window.coloDesignDesktop?.preview;
     void bridge?.mount?.(url, epoch, origins).then(() => {
-      if (target.kind === "screen") void bridge?.navigate?.(target.route, target.state);
-      else void bridge?.open?.(target.path);
+      void bridge?.open?.(target.path);
     });
   }, [url, epoch, origins, target, webActive]);
 

@@ -102,10 +102,9 @@ flowchart LR
 기억되어 다시 묻지 않는다. 왼쪽 사이드바의 프로젝트를 고르면 그 서비스의 대화 ·
 미리보기 · 변경 사항이 오른쪽에 뜬다.
 
-목록에는 토큰이 **쓸 수 있는** 저장소가 나온다. 고르면 클론 전에 확인 줄이 뜨는데,
-`✗ 이 레포에는 화면 제작 설정이 없습니다` 라면 그 저장소가 아직 도구에 연결되지 않은
-것이다 — 개발자에게 [연결 레포 만들기](#연결-레포-만들기)를 넘기거나, 같은 화면의
-`AI 가 연결 준비하기` 로 도구가 준비하게 할 수 있다.
+목록에는 토큰이 **쓸 수 있는** 저장소가 나온다. 연결 준비는 필요 없다 — 레포를
+고르면 도구가 클론하고, 설치하고, 개발 서버까지 스스로 띄운다. 핀과 미리보기는
+어느 레포에서나 처음부터 동작한다.
 
 ### 3. 화면 만들기 — 말로 시작하기
 
@@ -235,8 +234,8 @@ OS 자격 증명 저장소(맥 키체인 등)에만 있다. 토큰은 기계에 
 고른다.
 
 **우리 서비스 저장소를 이 도구에 연결하려면요?**
-개발자가 한 번 준비하면 된다 — [연결 레포 만들기](#연결-레포-만들기). 준비되지 않은
-저장소를 골랐을 때 피커의 `AI 가 연결 준비하기` 를 쓰면 도구가 대신 준비한다.
+준비가 필요 없다 — `프로젝트 추가` 에서 저장소를 고르면 클론 · 설치 · 개발 서버
+기동까지 도구가 한다. 자세한 동작은 [연결 레포 만들기](#연결-레포-만들기)에.
 
 ---
 
@@ -417,8 +416,8 @@ CSS 경로, 자기 텍스트, rect)와 그 순간의 crop 을 실어 컴포저�
 담긴 턴은 "고치지 말고 설명해 주세요" 로 나간다 — 카드 제목도 `질문 N건` 으로 읽는다.
 보낸 핀은 턴이 도는 동안 회색 배지로 남아 무엇이 나갔는지 보여 주고, 턴이 끝나면
 사라진다. 요소 핀은 HTML · 계산된 스타일 · 접근성 이름 · React 컴포넌트 이름을 함께
-싣는다. 레포가 개발 빌드에 `data-colo-src="<파일>:<줄>"` 를 남기면(연결 준비 브리프의
-선택 항목) 핀은 화면이 아니라 **소스 위치**를 가리킨다.
+싣는다. 레포가 개발 빌드에 `data-colo-src="<파일>:<줄>"` 를 남기면(아래
+[소스 표식](#2-소스-표식-—-선택) 참고) 핀은 화면이 아니라 **소스 위치**를 가리킨다.
 
 ### 사용자가 치지 않은 턴
 
@@ -516,9 +515,8 @@ mac 알림에는 서명이 필수다. Electron 44 의 알림은 UNNotification �
 
 ## 연결 레포 만들기
 
-개발자가 한 번 하는 일이다. 레포가 도구에 줄 것은 셋 — 화면 브리지,
-화면 래퍼, `CLAUDE.md`. 개발 서버는 도구가 스스로 띄우고 주소를 읽어 낸다.
-손으로 쓰지 않고 [AI 에게 맡길](#claude-에게-준비를-맡기기)수도 있다 — 그쪽이 기본이다.
+준비란 거의 없다. 도구가 클론 · 설치 · 개발 서버 기동을 전부 하고, 핀과 미리보기는
+어느 레포에서나 처음부터 동작한다. 이 절은 무엇이 자동이고 무엇이 선택인지를 정리한다.
 
 ### 0. 준비물
 
@@ -548,111 +546,61 @@ mac 알림에는 서명이 필수다. Electron 44 의 알림은 UNNotification �
 선언 포트가 있으면 도구는 그 포트를 쓴다 — 점유자를 정리하고 그 자리에서 띄운다.
 포트 외의 오버라이드(명령 · 레지스트리 · 캡처 거부)는 [아래](#추론이-틀렸을-때-—-오버라이드)에 있다.
 
-### 2. 화면 브리지 — 개발 미리보기에만
+### 2. 소스 표식 — 선택
 
-도구는 레포의 코드를 읽지 않는다. 어떤 화면이 있는지 아는 길은 **앱이 스스로 말해 주는
-것** 하나뿐이다. 개발 전용 모듈 하나를 붙인다.
+미리보기의 코멘트 핀은 어느 페이지에나 찍힌다 — `[data-screen]` 래퍼가 없어도
+그 페이지의 경로가 화면 id 가 된다. 레포가 개발 빌드에
+`data-colo-src="<파일>:<줄>"` 를 남기면 핀은 화면이 아니라 **소스 위치**를 가리켜
+AI 의 수정이 바로 그 줄로 향한다.
 
-```ts
-// src/dev/colo-bridge.ts — 개발 전용. 프로덕션 번들에 들어가지 않게 한다.
-declare global {
-  interface Window {
-    coloDesign?: { post(envelope: unknown): void };
-  }
-}
+개발 전용 JSX 변환 하나로 붙인다 — 소문자로 시작하는 태그(실제 DOM 요소)만,
+개발 빌드에만:
 
-/** 이 레포가 렌더할 수 있는 것 전부. */
-const SCREENS = [
-  { route: "/member/MemberList", title: "회원 목록", states: ["default", "empty"] },
-];
-
-/** 데스크톱 네이티브 뷰는 window.coloDesign, 브라우저 개발 경로는 부모 iframe. */
-function post(envelope: unknown): void {
-  if (window.coloDesign) window.coloDesign.post(envelope);
-  else if (window.parent !== window) window.parent.postMessage(envelope, "*");
-}
-
-const announce = () => post({ type: "colo-design.screens", screens: SCREENS });
-announce();
-
-window.addEventListener("message", (event) => {
-  const data = event.data;
-  // 도구가 목록을 다시 묻는다 (오버레이가 다시 붙었을 때).
-  if (data?.type === "colo-design.screens?") return announce();
-  // 도구가 화면을 하나 열라고 한다.
-  if (data?.type !== "colo-design.navigate" || typeof data.route !== "string") return;
-  const state = typeof data.state === "string" && data.state ? data.state : null;
-  // 이동은 레포의 라우터가 한다 — react-router 면 navigate(), 직접 라우팅이면
-  // history.pushState + 리렌더. 도구는 레포의 url 에 관여하지 않는다.
-  navigateTo(data.route + (state ? `?state=${state}` : ""));
+```js
+// babel-plugin-colo-src.cjs — 개발 전용.
+module.exports = ({ types: t }) => ({
+  visitor: {
+    JSXOpeningElement(path, state) {
+      const name = path.node.name;
+      if (name.type !== "JSXIdentifier" || !/^[a-z]/.test(name.name)) return;
+      const line = path.node.loc?.start.line;
+      const file = state.filename?.replace(`${state.cwd}/`, "");
+      if (!line || !file) return;
+      path.node.attributes.push(
+        t.jsxAttribute(t.jsxIdentifier("data-colo-src"), t.stringLiteral(`${file}:${line}`)),
+      );
+    },
+  },
 });
 ```
 
-진입점에서 개발일 때만 불러온다.
-
 ```ts
-if (import.meta.env.DEV) void import("./dev/colo-bridge");
+react({ babel: { plugins: command === "serve" ? ["./babel-plugin-colo-src.cjs"] : [] } })
 ```
 
-브리지가 해야 하는 일은 하나다 — **내려오는 봉투 `colo-design.navigate` 를 받아
-화면을 이동한다.** 이동은 레포의 라우터가 한다 — 도구는 레포의 url 을 직접 만지지
-않는다. 봉투는 `packages/protocol` 의 타입이다.
-
-브리지가 없어도 미리보기는 뜬다 — 화면 이동은 도구가 주소를 바꿔 페이지를 다시
-읽는 방식이 된다(클라이언트 라우팅이 아니다). 동작하는 최소
-구현은 `packages/daemon/test/fixture-repo.mjs` 의 `INDEX_HTML` 에 있다.
-
-### 3. 화면 래퍼 — `data-screen` · `data-state`
-
-미리보기의 코멘트 핀은 사용자가 찍은 곳이 **어느 화면의 어느 상태인지** 알아야 한다.
-각 화면 최상위에 속성 둘을 붙인다.
-
-```tsx
-export function MemberList() {
-  const state = new URLSearchParams(location.search).get("state") ?? "default";
-  return (
-    <main data-screen="member/MemberList" data-state={state}>
-      …
-    </main>
-  );
-}
-```
-
-화면 주소 규칙은 `/<feature>/<Screen>?state=<state>` 로 고정이다. 상태를 주지 않으면
-그 화면의 기본 상태다.
-
-### 4. `CLAUDE.md` — 레포의 규칙
+### 3. `CLAUDE.md` — 레포의 규칙
 
 레포가 Claude 에게 들려주는 것도 레포가 정한다. 터미널의 Claude Code 가 읽는 것과 같은
 파일을 클론에서 같은 방식으로 읽는다 — 스택, 관습, 화면이 사는 곳. 스크린 파일이 import
 할 수 있는 것(react, `@colosseumcoinckr/*`, 같은 폴더), 데이터는 `<화면이름>.mock.ts`
 에만 두는 규칙 같은 것들이 여기 적힌다.
 
-### 5. 스스로 한 번 확인
+### 4. 스스로 한 번 확인
 
 커밋하기 전에 개발자가 직접 본다 — 도구 없이도 성립해야 하는 것들이다.
 
 ```bash
 pnpm run dev                         # 뜨는 주소를 출력하거나 빈 포트를 골라야 한다 (npm·yarn·bun 도 같다)
 curl -sI http://127.0.0.1:5274/      # 도구가 준비됐다고 부르는 조건 — 출력된 주소로 확인
-open 'http://127.0.0.1:5274/member/MemberList?state=empty'   # 래퍼와 라우팅
+open 'http://127.0.0.1:5274/member/MemberList?state=empty'   # 라우팅과 상태
 ```
 
-### 6. 앱에서 추가
+### 5. 앱에서 추가
 
 GitHub 에 밀고, 작업 화면의 `프로젝트 추가` 목록에서 고른다(목록에 없으면 `주소로 추가`).
-피커가 클론 전에 한 번 판정한다 — 개발 서버 스크립트가 있는지, 화면 관례(`CLAUDE.md`
-표식)가 있는지, 이 토큰으로 넘길 수 있는지, 넘기기가 겨눌 기본 브랜치가 무엇인지.
-데몬이 클론하고, 설치하고, 미리보기 명령을 돌린다. 테스트가 fixture 원격으로 돌리는
-것과 같은 코드 경로다.
-
-### AI 에게 준비를 맡기기
-
-위 셋을 손으로 쓰지 않아도 된다 — 관례 표식이 없는 레포는 미리보기가 뜬 뒤 준비 턴이
-저절로 열린다. AI 가 레포를 살펴보고 브리지 · 래퍼 · `CLAUDE.md` 를 쓰고, 그
-변경은 첫 저장이 실어 첫 넘기기 PR 이 되므로 개발자의 수용 게이트는 그대로다. 준비
-턴은 설정 파일을 쓰지 않는다 — 명령은 레포의 락파일과 scripts 가 말하고, 포트는 뜬
-서버에서 읽는다. 준비 턴이 실패해도 미리보기는 살아 있다 — 실패는 대화 카드가 말한다.
+피커가 클론 전에 한 번 판정한다 — 개발 서버 스크립트가 있는지, 이 토큰으로 넘길 수
+있는지, 넘기기가 겨눌 기본 브랜치가 무엇인지. 데몬이 클론하고, 설치하고, 미리보기
+명령을 돌린다. 테스트가 fixture 원격으로 돌리는 것과 같은 코드 경로다.
 
 ### 도구가 값을 읽는 곳
 
@@ -707,7 +655,7 @@ flowchart LR
         preview["미리보기<br/>레포의 앱 그대로"]
         daemon["daemon<br/>프로젝트 · 세션 · 자격 증명"]
     end
-    repo["연결 레포<br/>CLAUDE.md (+ 선택적 colo-design.json)"]
+    repo["연결 레포<br/>(선택적 CLAUDE.md · colo-design.json)"]
     daemon -->|"clone · pull<br/>저장 = check → commit·push"| repo
     repo -->|"preview.command"| preview
     preview -->|"코멘트 핀"| design
@@ -801,7 +749,6 @@ pnpm test:unit            # 오프라인 — 플랫폼 분기, 보안/격리 회
 pnpm test:onboard-unit    # 오프라인 — 온보딩 게이트와 OS 자격 증명 저장소(이주, 키체인, npmrc 병합)
 pnpm test:projects        # 오프라인 — 두 레포에 두 프로젝트, 활성 전환(떠난 서버는 따뜻하게 · 돌아오면 준비 단계 없이 ready · 같은 포트는 울타리), 화면 밖 턴의 변경 수, 지우기와 세션 닫기, 전환 직렬화, 레지스트리가 재시작을 살아남는다
 pnpm test:rewind          # 오프라인 — 다시 요청의 절차: 체크포인트 복원 · 대화의 새 id 포크 · 같은 말 재전송 · 목록 정리
-pnpm test:bootstrap       # 오프라인 — 계약 없는 레포의 연결 준비: 준비 턴(brief 마커) → 계약 작성 → 기계 검증 → 미리보기; 준비 커밋은 첫 저장을 기다리는 미해결 변경으로 남는다
 pnpm test:sidebar-ui      # 오프라인 — 브라우저: 사이드바 행과 표식, 전환(앞 포트는 따뜻하게 남고 · 뒤 ready), 이름 바꾸기, 지우기 대화상자, 960 폭 접힘
 pnpm test:midturn-send    # 오프라인 — 브라우저: 실행 중 보내기 — 기본은 대기 줄에 쌓여 다음 턴으로 가고, 설정의 끊고 보내기는 도는 턴을 끊고 새로 시작한다
 pnpm test:repo            # 오프라인 — 로컬 bare 원격에 대한 clone/pull/install-skip/preview 수명 주기

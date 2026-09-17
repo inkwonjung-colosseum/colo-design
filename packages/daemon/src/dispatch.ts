@@ -7,7 +7,6 @@ import {
   type ServerMessage,
 } from "@colo-design/protocol";
 import { type DriverRegistry } from "./agent/registry.js";
-import { REFRESH_BRIEF, REFRESH_TITLE } from "./bootstrap-brief.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
 import { browseFiles, listFiles } from "./environment.js";
 import type { GitHubBridge } from "./github-bridge.js";
@@ -95,10 +94,6 @@ export class RequestRouter {
 
   private announceProjects(): void {
     this.deps.fleet.announceProjects();
-  }
-
-  private announceProjectsThrottled(): void {
-    this.deps.fleet.announceProjectsThrottled();
   }
 
   private refreshThreads(): void {
@@ -504,42 +499,6 @@ export class RequestRouter {
           activeSlug: this.deps.registry.activeSlug(),
         };
       }
-      case "project.refreshConventions": {
-        // 관례 최신화(커미티 2026-09-14): 재주입이 아니라 제안이다 — 쓰는
-        // 주체는 앱이 아니라 세션이고, 바뀐 파일은 저장 → 넘기기 파이프라인을
-        // 타 개발자의 PR 리뷰로 확정된다. 이 대화는 그 첫 턴일 뿐이다.
-        const executable = this.deps.claudeExecutable();
-        if (!executable) {
-          throw new Error(
-            "Claude Code CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.",
-          );
-        }
-        const workspaces = this.deps.fleet.workspaces.get(message.slug);
-        if (!workspaces?.repo.isCloned()) {
-          throw new Error("아직 내려받지 않은 프로젝트입니다 — 연결이 끝난 뒤 다시 시도해 주세요.");
-        }
-        const cwd = realpathBestEffort(this.deps.registry.paths(message.slug).repoRoot);
-        const instructions = this.projectInstructions(cwd);
-        const session = this.deps.manager.create({
-          cwd,
-          queueDiskFor: this.deps.queueDiskFor,
-          writePolicy: repoWritePolicy(cwd),
-          title: REFRESH_TITLE,
-          launch: {
-            executable,
-            ...(instructions ? { appendSystemPrompt: instructions } : {}),
-          },
-        });
-        session.send(
-          markTurn({ kind: "brief", title: REFRESH_TITLE, purpose: "conventions" }, REFRESH_BRIEF),
-        );
-        // The tree gains a child row (PLAN D59), same as any daemon-opened thread.
-        this.deps.manager.invalidateThreads(cwd);
-        this.refreshThreads();
-        this.announceProjectsThrottled();
-        return { sessionId: session.id };
-      }
-
       case "project.remove": {
         const paths = this.deps.registry.paths(message.slug);
         // Transcripts are keyed by the clone's realpath (see workspaceCwd) —

@@ -30,18 +30,13 @@ import { IframeHost } from "./IframeHost";
 import { NativeHost } from "./NativeHost";
 
 /**
- * Which screen, in which state, the planner asked to see. A free path (the
- * address bar) is an ask too — the native view `open`s it.
+ * Which path the planner asked to see (the address bar's ask — the native
+ * view `open`s it).
  */
-export type PreviewTarget =
-  | { kind: "screen"; route: string; state: string | null }
-  | { kind: "path"; path: string };
+export type PreviewTarget = { kind: "path"; path: string };
 /** Two asks land at the same place — the trail's consecutive-dedup. */
 function sameTarget(a: PreviewTarget, b: PreviewTarget): boolean {
-  if (a.kind !== b.kind) return false;
-  if (a.kind === "screen" && b.kind === "screen") return a.route === b.route && a.state === b.state;
-  if (a.kind === "path" && b.kind === "path") return a.path === b.path;
-  return false;
+  return a.kind === b.kind && a.path === b.path;
 }
 
 /** Where the native view actually is — its truth, not the tool's ask. */
@@ -153,8 +148,8 @@ const NO_DRIVING: ReadonlySet<string | null> = new Set();
  * the stage are common; the stage itself is a host. `native` picks
  * `NativeHost` — the desktop's own view, with the address bar, back ·
  * forward, the error banner, real 폭 emulation and the 💬 toggle — and a
- * plain browser keeps the iframe — the declared screens, the ask's address
- * in the pill, and a back·forward that walks the asks themselves.
+ * plain browser keeps the iframe — the ask's address in the pill, and a
+ * back·forward that walks the asks themselves.
  */
 export function PreviewHost({
   url,
@@ -343,8 +338,6 @@ export function PreviewHost({
     const full = (path: string) => (origin === "" ? path : `${origin}${path}`);
     if (location) setAddress(full(location.path));
     else if (target?.kind === "path") setAddress(full(target.path));
-    else if (target?.kind === "screen")
-      setAddress(full(target.state ? `${target.route}?state=${target.state}` : target.route));
     else setAddress(full("/"));
   }, [url, location, target, addressFocused, externalUrl]);
 
@@ -442,7 +435,6 @@ export function PreviewHost({
     const verdict = parseAddress(raw, {
       origin: new URL(url).origin,
       currentPath: location?.path ?? "/",
-      routes: [],
     });
     if (verdict.kind === "error") {
       setAddressError(verdict.message);
@@ -451,11 +443,7 @@ export function PreviewHost({
       return;
     }
     setAddressError(null);
-    onNavigate(
-      verdict.kind === "screen"
-        ? { kind: "screen", route: verdict.route, state: verdict.state }
-        : { kind: "path", path: verdict.path },
-    );
+    onNavigate({ kind: "path", path: verdict.path });
   };
 
   // 서버 중단 카드는 preview 탭의 얼굴 — web 탭이 활성이면 pane 은 그 탭의
@@ -492,8 +480,8 @@ export function PreviewHost({
                 className="ghost"
                 onClick={() =>
                   onFixError({
-                    route: target?.kind === "screen" ? target.route : "",
-                    state: target?.kind === "screen" ? (target.state ?? "") : "",
+                    route: location?.path ?? "/",
+                    state: "",
                     kind: "build",
                     message: stoppedDetail || "화면을 그리는 서버가 멈췄습니다.",
                   })
@@ -770,7 +758,6 @@ export function PreviewHost({
                     data-testid="preview-address"
                     spellCheck={false}
                     value={address}
-                    list="colo-frame-routes"
                     ref={addressInput}
                     onFocus={() => setAddressFocused(true)}
                     onBlur={() => setAddressFocused(false)}
@@ -878,7 +865,6 @@ export function PreviewHost({
             ) : url ? (
               <IframeHost
                 url={url}
-                target={target}
                 reloadKey={reloadNonce}
                 onLoading={setLoading}
               />

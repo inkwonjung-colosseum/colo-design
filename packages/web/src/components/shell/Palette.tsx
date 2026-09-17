@@ -44,8 +44,7 @@ type Row =
 
 /**
  * One overlay the frame's every jump lives behind (⌘K): every project's
- * conversations (the daemon's threads), the repo's declared screens
- * (a search that reaches the preview), the other projects, and the few
+ * conversations (the daemon's threads), the other projects, and the few
  * commands that exist.
  */
 export function Palette({

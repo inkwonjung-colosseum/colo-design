@@ -126,7 +126,6 @@
 | 저장 요약 | `api.summarizeDiff()` → `{lines, memo}` | 카드 서브 문장·저장 메모 초안 |
 | 칩 상태 계산 | `lib/delivery.ts` `deriveDelivery`(tone·잠금 이유 상수 포함) | ComposerChips 가 그대로 호출 |
 | 고치기 턴 발송 | `sessions.submit` + `lib/preview-turns.ts` `reviewToTurn`(현재는 ScreenPanel 이 배치로 부름) | 인용 행 `대화에서 고치기`의 단건판 |
-| 화면 목록 | `screens: ColoDesignScreen[]`(route, title, states) | 화면 카드 제목·주소 대조(ScreenChips 알고리즘) |
 | 즉답 | `api.respondQuestion(respondId, answers, annotations)` | 결정 카드 칩 |
 
 ### 3.2 새로 필요한 것 — 대화 기록화 (이 슬라이스의 핵심 데이터 과제)

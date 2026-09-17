@@ -118,26 +118,14 @@ export class BringUp {
       // the UI out of `ready` for no gain.
       if (!installed && this.core.preview && (await this.isServing())) {
         this.core.setPhase("ready", null);
-        this.maybePrepareConventions();
         return this.core.snapshot();
       }
       await this.startPreview(config);
       this.core.setPhase("ready", null);
-      this.maybePrepareConventions();
     } catch (error) {
       this.core.setPhase("error", detailOf(error, this.core.pat), this.bringUpErrorKind(error));
     }
     return this.core.snapshot();
-  }
-
-  /**
-   * ready 에 도달한 뒤 한 번 — 컨벤션(브리지 · 래퍼 · CLAUDE.md)이 없는 레포에
-   * AI 가 그것들을 설치하는 턴을 연다. 실패는 세션 카드가 말하고 준비
-   * 상태를 바꾸지 않는다 — 미리보기는 이미 떠 있다.
-   */
-  private maybePrepareConventions(): void {
-    if (!this.core.prepareConventions) return;
-    void this.core.prepareConventions().catch(() => undefined);
   }
 
   /**

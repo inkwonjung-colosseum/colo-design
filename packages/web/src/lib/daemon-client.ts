@@ -656,8 +656,6 @@ interface DaemonApi {
   ) => Promise<ProjectList>;
   /** Switch the active project; the outgoing preview stays warm unless its port is needed. */
   projectActivate: (slug: string) => Promise<ProjectList>;
-  /** 관례 최신화 — starts the conventions refresh brief turn. */
-  projectRefreshConventions: (slug: string) => Promise<{ sessionId: string }>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
   repoStatus: () => Promise<RepoStatus>;
@@ -690,11 +688,13 @@ interface DaemonApi {
     sessionId?: string | null;
   }) => Promise<DiffStatus>;
   /**
-   * Re-read the handed-off request from GitHub. Asked for by the planner, never
-   * polled — the state only moves when a developer acts on it.
+   * 상태 확인 — the pull request plus the developer's comments. Asked for by
+   * the planner, never polled — the state only moves when a developer acts on
+   * it. Null is the "nothing to check" answer (no open handoff): the read
+   * itself DID happen, so the caller records it as a check instead of
+   * failing it.
    */
-  /** 상태 확인 — the pull request plus the developer's comments. */
-  handoffStatus: () => Promise<HandoffStatusReport>;
+  handoffStatus: () => Promise<HandoffStatusReport | null>;
   /**
    * 보낸 화면 동결 (preview.md §1-E): one committed capture read out of the
    * handoff branch — the frozen stage's '보낸 그대로'. `state` null is the
@@ -1541,9 +1541,6 @@ export function useDaemon(url: string | null): Daemon {
           // A moved url re-clones.
           600_000,
         ).then(keepProjects),
-      /** 관례 최신화 — opens the refresh brief turn. */
-      projectRefreshConventions: (slug: string) =>
-        call<{ sessionId: string }>({ type: "project.refreshConventions", slug }, 120_000),
       projectRemove: (slug: string, deleteFiles?: boolean) =>
         call<ProjectList>(
           {
@@ -1612,7 +1609,8 @@ export function useDaemon(url: string | null): Daemon {
         call<GitHubRepoInspection>({ type: "github.repo.inspect", owner, repo }, 60_000),
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
-      handoffStatus: () => call<HandoffStatusReport>({ type: "repo.handoffStatus" }, 120_000),
+      handoffStatus: () =>
+        call<HandoffStatusReport | null>({ type: "repo.handoffStatus" }, 120_000),
       // One committed capture out of the handoff branch — a `git show`
       // read, so the window a remote read gets. The wire wants a state
       // name; a screen's default look is committed under "default".

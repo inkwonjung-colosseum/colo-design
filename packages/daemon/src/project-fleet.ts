@@ -1,22 +1,13 @@
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   type ChatEvent,
   type DiffStatus,
   type HandoffStatusReport,
-  markTurn,
   type ProjectSummary,
   type ServerMessage,
   type SessionCommand,
 } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
-import {
-  BOOTSTRAP_BRIEF,
-  BOOTSTRAP_TITLE,
-  CONVENTIONS_REVISION,
-  conventionsRevision,
-} from "./bootstrap-brief.js";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import type { GitHubClient } from "./github.js";
@@ -85,11 +76,6 @@ export class ProjectFleet {
   readonly workspaces = new Map<string, ProjectWorkspaces>();
   /** The switch in flight — see `activateProject`. */
   private activating: Promise<ProjectWorkspaces> | null = null;
-  /**
-   * 관례 준비를 한 번 시도한 클론들 (repoRoot). 실패든 부재든 데몬 수명 안에서는
-   * 다시 돌지 않는다 — 매 동기화마다 준비 턴을 여는 것보다 조용한 편이 낫다.
-   */
-  private readonly conventionsAttempted = new Set<string>();
   /** The announce coalescer's pending send — see announceProjectsThrottled. */
   private announceTimer: NodeJS.Timeout | null = null;
   /** The last threads each project announced with, as JSON — the guard that
@@ -154,9 +140,6 @@ export class ProjectFleet {
         active: slug === this.deps.registry.activeSlug(),
         // The registry owns the planner's word on this repo's commands.
         commandsApproved,
-        // 관례 준비 — 표식이 없는 클론은 준비 턴이 관례를 쓴다. 콜백은 늘
-        // 넘기고 돌릴지는 runConventionsPrepare 가 표식으로 판단한다.
-        prepareConventions: () => this.runConventionsPrepare(paths.repoRoot),
         onCycleChange: (cycle) => this.deps.registry.setCycle(slug, cycle),
         gitHubClient: () => this.deps.gitHubClient(),
         // The summarizer's one turn rides the same CLI the sessions do
@@ -316,12 +299,6 @@ export class ProjectFleet {
         ? realpathBestEffort(workspaces.paths.repoRoot)
         : null;
       const threads = cwd ? this.deps.manager.cachedThreads(cwd) : null;
-      // 관례 최신화(커미티 2026-09-14): the clone's CLAUDE.md marker names the
-      // revision its conventions were written for. No marker — or no CLAUDE.md
-      // at all — means a repo connected before conventions were versioned; a
-      // clone still on disk is the only one a refresh could help.
-      const conventionsStale =
-        cwd !== null && this.conventionsRevisionAt(cwd) !== CONVENTIONS_REVISION;
       const lastEvent = this.lastHandoffEvent.get(project.slug);
       return {
         slug: project.slug,
@@ -338,7 +315,6 @@ export class ProjectFleet {
         handoff: repo?.currentHandoff ?? project.repo.handoff,
         ...(threads ? { threads } : {}),
         ...(project.instructions ? { instructions: project.instructions } : {}),
-        conventionsStale,
         // 홈 크로스 프로젝트 인박스(PLAN P3-2): 질문+권한 모두 스레드를
         // "awaiting" 으로 세우므로, 비활성 프로젝트라도 이 카운트만으로
         // 답을 기다리는 일의 수를 안다 — 세션이 살아 있는 한 값이 있다.
@@ -346,19 +322,6 @@ export class ProjectFleet {
         ...(lastEvent ? { lastEventKind: lastEvent.kind, lastEventAt: lastEvent.at } : {}),
       };
     });
-  }
-
-  /**
-   * The revision this clone's CLAUDE.md marker names. A clone with no marker
-   * (or no CLAUDE.md — connected before conventions were versioned) answers
-   * null: honest "unknown", which the summary reads as stale.
-   */
-  private conventionsRevisionAt(root: string): number | null {
-    try {
-      return conventionsRevision(readFileSync(join(root, "CLAUDE.md"), "utf8"));
-    } catch {
-      return null;
-    }
   }
 
   /**
@@ -499,58 +462,6 @@ export class ProjectFleet {
     if (!cwd) return;
     this.deps.manager.invalidateThreads(cwd);
     this.refreshThreads();
-  }
-
-  /**
-   * 관례 준비 턴 — a daemon-opened conversation (the comment envelope's path,
-   * server-side) sends the brief and waits for the turn to settle. The turn's
-   * output is repo files reviewed via the normal save→PR pipeline, so there
-   * is nothing to machine-validate afterward. Failure is a log line plus the
-   * session's own error state — never a repo error, never a throw.
-   */
-  private async runConventionsPrepare(repoRoot: string): Promise<void> {
-    const cwd = realpathBestEffort(repoRoot);
-    // 표식이 이미 있으면 할 일이 없다 — CLAUDE.md 가 없거나 표식만 없으면 준비 대상.
-    if (this.conventionsRevisionAt(cwd) !== null) return;
-    // 한 클론당 한 번 — 실패한 준비가 매 동기화마다 턴을 열지 않게.
-    if (this.conventionsAttempted.has(cwd)) return;
-    this.conventionsAttempted.add(cwd);
-    const executable = this.deps.claudeExecutable();
-    if (!executable) {
-      this.deps.logger.warn("관례 준비 건너뜀 — Claude Code 실행 파일이 없습니다", { cwd });
-      return;
-    }
-    const instructions = this.projectInstructions(cwd);
-    const session = this.deps.manager.create({
-      cwd,
-      queueDiskFor: this.deps.queueDiskFor,
-      title: BOOTSTRAP_TITLE,
-      launch: {
-        executable,
-        ...(instructions ? { appendSystemPrompt: instructions } : {}),
-      },
-    });
-    session.send(
-      markTurn({ kind: "brief", title: BOOTSTRAP_TITLE, purpose: "bootstrap" }, BOOTSTRAP_BRIEF),
-    );
-    // The turn ends when the session settles back to idle; a stalled CLI
-    // gives up rather than hanging the post-ready hook forever.
-    for (let attempt = 0; attempt < 300; attempt += 1) {
-      const live = this.deps.manager.get(session.id);
-      if (!live || live.state === "error") {
-        this.deps.logger.warn("관례 준비 턴이 끝나지 못했습니다", {
-          sessionId: session.id,
-          cwd,
-        });
-        return;
-      }
-      if (live.state === "idle" || live.state === "closed") return;
-      await new Promise((ok) => setTimeout(ok, 500));
-    }
-    this.deps.logger.warn("관례 준비 턴이 시간 안에 끝나지 않았습니다", {
-      sessionId: session.id,
-      cwd,
-    });
   }
 
   /**

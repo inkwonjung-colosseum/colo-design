@@ -17,7 +17,6 @@ import {
   HomeIcon,
   NewChatIcon,
   PencilIcon,
-  RefreshIcon,
   SearchIcon,
   ShieldIcon,
   TrashIcon,
@@ -208,22 +207,6 @@ export function Sidebar({
     setPopoverFor(null);
     setGuarding(project);
     setGuardDraft(project.instructions ?? "");
-  };
-
-  /**
-   * 관례 최신화: 낡은 관례 표식을 단 프로젝트에만 뜨는
-   * 메뉴 항목. 한 턴의 대화를 열고, 결과는 저장 → 넘기기로 개발자 PR 승인을
-   * 받는다 — 여기서 하는 일은 그 대화를 여는 것까지다.
-   */
-  const refreshConventions = async (project: ProjectSummary) => {
-    setMenuFor(null);
-    setPopoverFor(null);
-    try {
-      await api.projectRefreshConventions(project.slug);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      setFailed(true);
-    }
   };
 
   /** 저장은 다음 대화부터 적용된다 — 돌고 있는 대화의 프롬프트는 그대로다. */
@@ -687,19 +670,6 @@ export function Sidebar({
                                 </span>
                                 <span className="selector__label">지켜 줄 것</span>
                               </button>
-                              {project.conventionsStale && (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="selector__row"
-                                  onClick={() => void refreshConventions(project)}
-                                >
-                                  <span className="ic ic--quiet ic--sm">
-                                    <RefreshIcon />
-                                  </span>
-                                  <span className="selector__label">관례 최신화</span>
-                                </button>
-                              )}
                               {threads.length > 0 && (
                                 <button
                                   type="button"

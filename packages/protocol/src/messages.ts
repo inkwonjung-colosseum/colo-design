@@ -310,18 +310,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     instructions: z.string().max(10_000).nullable().optional(),
   }),
   /**
-   * 관례 최신화 (커미티 판정 2026-09-14): opens one brief turn in this
-   * project's clone that rewrites the connection conventions (bridge,
-   * wrappers, CLAUDE.md marker) to the current revision. The changes stay
-   * unsaved — the existing save → handoff pipeline takes them to the
-   * developer's PR, which is the approval gate.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("project.refreshConventions"),
-    slug: z.string().min(1).max(64),
-  }),
-  /**
    * Forgets a project. Its folder survives unless `deleteFiles` — unpushed
    * screen work lives in the clone, and a mis-click must not take it.
    */

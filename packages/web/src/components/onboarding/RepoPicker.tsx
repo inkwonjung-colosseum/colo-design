@@ -206,11 +206,9 @@ export function RepoPicker({
 
   /**
    * The 만들기 gate: the inspection must have answered, and the repo's own
-   * commands need one explicit yes. 준비(규약 · 미리보기 명령)는 AI 가
+   * commands need one explicit yes. 준비(미리보기 명령)는 AI 가
    * 이어 받으므로 만들기 자체를 막는 문은 없다.
    */
-  const needsConventions =
-    inspection !== null && inspection.phase === "ready" && !inspection.result.hasConventions;
   /** The one explicit yes a new repo's install · preview commands need. */
   const [approveRun, setApproveRun] = useState(false);
   /** Same explicit yes, for the address-typed path. */
@@ -391,14 +389,7 @@ export function RepoPicker({
           ) : inspection.phase === "error" ? (
             <p className="onboarding__detail">{inspection.error}</p>
           ) : (
-            <p
-              className={`onboarding__detail repopicker__inspect repopicker__inspect--${
-                inspection.result.hasConventions ? "ok" : "miss"
-              }`}
-            >
-              {inspection.result.hasConventions
-                ? "✓ 화면 제작 준비가 된 레포입니다"
-                : "✗ 이 레포에는 화면 제작 규약이 없습니다 — 미리보기가 뜨면 AI가 알아서 준비합니다."}
+            <p className="onboarding__detail repopicker__inspect">
               {!inspection.result.hasDevScript && (
                 <span className="repopicker__warnline">
                   ! 미리보기 명령이 없습니다 — 준비 중에 AI가 추가합니다.
@@ -443,9 +434,7 @@ export function RepoPicker({
             </p>
           )}
           <p className="hint">
-            {needsConventions
-              ? "미리보기가 뜨면 AI가 화면 제작 규약을 알아서 준비합니다."
-              : "레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다."}
+            레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다.
           </p>
           {createError && (
             <div className="notice notice--error">

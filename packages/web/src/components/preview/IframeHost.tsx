@@ -1,30 +1,18 @@
-import type { ColoDesignNavigateEnvelope } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { PreviewTarget } from "./PreviewHost";
 
 /**
  * 브라우저 개발 경로의 미리보기: the repo's dev server framed
- * as-is, speaking the repo bridge contract only — `colo-design.navigate`
- * out. Comments, the address bar and the error banner are the native
+ * as-is. Comments, the address bar and the error banner are the native
  * view's and are simply absent here; a plain browser is the developer's
  * path, and it is not told what it lacks.
- *
- * NAVIGATION IS A PROP, NOT A HANDLE — `target` comes down because nothing in
- * this package exposes an imperative handle (PreviewHost's rule). The re-send
- * below keeps a navigate posted at a booting page from looking broken: the
- * planner picks a screen while the repo is still starting, and every load
- * re-delivers the last ask.
  */
 export function IframeHost({
   url,
-  target,
   reloadKey,
   /** 로드의 시작과 끝을 프레임 머리에 알린다 — 스핀과 진행 바의 iframe 절반. */
   onLoading,
 }: {
   url: string;
-  /** The last screen asked for; free paths cannot be followed here. */
-  target: PreviewTarget | null;
   /** Bumped by 새로 고침 — remounts the iframe for a clean reload. */
   reloadKey: number;
   onLoading?: (busy: boolean) => void;
@@ -33,7 +21,6 @@ export function IframeHost({
   /** 스킵 링크의 착지점 — iframe 바로 뒤의 빈 자리. 포커스가 여기 오면
       다음 Tab 은 미리보기 앱이 아니라 도구의 나머지로 이어진다. */
   const afterFrame = useRef<HTMLSpanElement>(null);
-  const [loads, setLoads] = useState(0);
   /** 로드가 끝나 페이드인 — 리마운트(새로 고침)마다 다시 0. */
   const [loaded, setLoaded] = useState(false);
 
@@ -45,22 +32,6 @@ export function IframeHost({
     onLoading?.(true);
     return () => onLoading?.(false);
   }, [onLoading, reloadKey]);
-
-
-  const screen = target?.kind === "screen" ? target : null;
-
-  useEffect(() => {
-    if (!url || !screen || loads === 0) return;
-    const contentWindow = frame.current?.contentWindow;
-    if (!contentWindow) return;
-    const envelope: ColoDesignNavigateEnvelope = {
-      type: "colo-design.navigate",
-      route: screen.route,
-      state: screen.state,
-    };
-    // Addressed to the preview's own origin, never "*".
-    contentWindow.postMessage(envelope, new URL(url).origin);
-  }, [url, screen, loads]);
 
   return (
     <>
@@ -80,7 +51,6 @@ export function IframeHost({
           // 로드가 끝났다 — 머리의 스핀과 진행 바를 거둔다.
           onLoading?.(false);
           setLoaded(true);
-          setLoads((count) => count + 1);
         }}
       />
       <span ref={afterFrame} tabIndex={-1} className="skippreview__after" />

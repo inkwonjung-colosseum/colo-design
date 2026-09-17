@@ -305,9 +305,24 @@ export function ScreenPanel({
       return next;
     });
   }, [visitPath]);
-  /** 저장·넘기기는 대화 안 카드로 갔다 — 이 패널이 여는 모달은 없다. */
-  /** 저장 기록 드로어 — 더 보기 ▾ 메뉴에서 연다. */
+  /** 저장 기록 도킹 패널 — 더 보기 ▾ 메뉴에서 열고 닫는다(토글). */
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 도킹이 무대와 나란히 설 폭 — 좁으면 패널이 무대를 덮는 폴백(cover)으로. */
+  const [historyCover, setHistoryCover] = useState(false);
+  const stageRowRef = useRef<HTMLDivElement>(null);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  // The stage floor is ~320px and the pane ~348px — below ~700px of row the
+  // two cannot stand side by side, and the pane joins the cover convention
+  // instead: data-cover-stage freezes the view, honestly, like a modal did.
+  useEffect(() => {
+    const node = stageRowRef.current;
+    if (!node) return;
+    const measure = () => setHistoryCover(node.clientWidth < 700);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   /** 더 보기 ▾ 메뉴 — 점검·기록·버리기의 자리. */
   const [menuOpen, setMenuOpen] = useState(false);
   /** 변경 버리기 확인 — this app's dialog, with the file list it names. */
@@ -468,7 +483,14 @@ export function ScreenPanel({
       void api
         .handoffStatus()
         .then(async (report) => {
-          setDevReviews(report.reviews ?? []);
+          // 열린 넘김이 없으면 데몬의 답은 null 이다 — "확인할 것이 없다"까지가
+          // 대답이지 확인의 실패가 아니다. null 을 그대로 읽으면 이 읽기는 매번
+          // 예외로 끝나고, 조용한 재사용(마운트·포커스)은 예외를 삼키므로 마지막
+          // 확인 시각이 영영 비게 된다 — 넘기기 없는 프로젝트의 칩 메뉴가
+          // "이 창에서는 아직 확인하지 않았습니다"를 못 빠져 나온 이유다.
+          const reviews = report?.reviews ?? [];
+          const state = report?.state ?? null;
+          setDevReviews(reviews);
           setLastCheckAt(new Date());
           setHandledTick((tick) => tick + 1);
           if (!quiet) {
@@ -476,16 +498,22 @@ export function ScreenPanel({
             // 그대로면 모달을 열지 않는다 — 빈 모달은 "내가 뭘 잘못 눌렀나"로
             // 읽힌다. 병합 착지는 여전히 이 버튼(과 데몬의 handoffStatus)이
             // 수행한다; 여기서 줄어드는 것은 패널을 여는 일뿐이다.
-            const prKey = report.reviews?.[0]?.pr;
+            const prKey = reviews[0]?.pr;
             const handled =
               prKey !== undefined
                 ? new Set(loadHandledReviews(prKey).map((id) => Number(id)))
                 : new Set<number>();
-            const unhandled = (report.reviews ?? []).filter(
-              (review) => !handled.has(review.id),
-            ).length;
-            if (unhandled > 0 || report.state !== prevState) setDevPanelOpen(true);
-            else {
+            const unhandled = reviews.filter((review) => !handled.has(review.id)).length;
+            if (unhandled > 0) {
+              // 읽을 말이 있을 때만 방이 열린다 — 상태 확인의 답이 코멘트라면
+              // 모달이 곧 답이다.
+              setDevPanelOpen(true);
+            } else if (state !== prevState) {
+              // 상태만의 이동 — 방은 열지 않는다. 새 말은 칩이 입고
+              // (role=status 라이브 리전), 이 띠는 어디를 보라는지만 말한다.
+              setCheckNote("상태가 바뀌었습니다 — 위의 상태 칩을 확인해 주세요");
+              window.setTimeout(() => setCheckNote(null), 6_000);
+            } else {
               setCheckNote("방금 확인함 · 변화 없음");
               window.setTimeout(() => setCheckNote(null), 6_000);
             }
@@ -745,15 +773,7 @@ export function ScreenPanel({
       window.setTimeout(() => setLookBlocked(null), 2500);
       return;
     }
-    const where =
-      location?.path ??
-      (target?.kind === "path"
-        ? target.path
-        : target?.kind === "screen"
-          ? target.state
-            ? `${target.route}?state=${target.state}`
-            : target.route
-          : "/");
+    const where = location?.path ?? (target?.kind === "path" ? target.path : "/");
     const [route = "/", query = ""] = where.split("?");
     const state = new URLSearchParams(query).get("state");
     setLookBusy(true);
@@ -805,7 +825,11 @@ export function ScreenPanel({
   /** 칩 순회: 아직 안 본 첫 자리로 옮긴다 — 전부 보면 칩이 먼저 사라진다. */
   const cycleFollowSpot = useCallback(() => {
     const next = followSpots.find((spot) => !visited.has(`${spot.screen}|${spot.state}`));
-    if (next) setTarget({ kind: "screen", route: `/${next.screen}`, state: next.state });
+    if (next)
+      setTarget({
+        kind: "path",
+        path: `/${next.screen}${next.state ? `?state=${next.state}` : ""}`,
+      });
   }, [followSpots, visited]);
 
   /** The planner's own moves are marked — a turn's end may not steal them. */
@@ -1222,7 +1246,7 @@ export function ScreenPanel({
                           onClick={() => {
                             if (!workable) return;
                             setMenuOpen(false);
-                            setHistoryOpen(true);
+                            setHistoryOpen((value) => !value);
                           }}
                         >
                           <span className="ic ic--sm ic--quiet">
@@ -1373,275 +1397,285 @@ export function ScreenPanel({
           <span className="notice__text">{checkNote}</span>
         </div>
       )}
-      {/* The stage wrapper gives the PiP its coordinates: the
+      {/* The row lets the history pane stand BESIDE the stage — docking
+          (not overlaying) is how a DOM layer shares the column with the
+          native view: the slot's rect shrinks and the view's bounds follow.
+          The stage wrapper gives the PiP its coordinates: the
           thumbnail lives in this iframe's corner, and the enlarged look
           covers exactly this iframe — not the bars around it. */}
-      <div className={`previewcol__stage${settleFlash ? " previewcol__stage--settled" : ""}`}>
-        {bringUpCardInPreview ? (
-          <ProgressPanel
-            phase={phase ?? "missing"}
-            detail={repo?.detail ?? null}
-            errorKind={errorKind}
-            note={askNote}
-            onRetry={sync}
-            onForceRestart={restart}
-            onAskAgent={() => void askAgent()}
-            onApproveCommands={
-              activeSlug
-                ? () =>
-                    void api
-                      .projectUpdate(activeSlug, { approveCommands: true })
-                      .catch(() => undefined)
-                : undefined
-            }
-            onOpenSettings={onOpenSettings}
-          />
-        ) : (
-          <PreviewHost
-            url={repo?.previewUrl ?? null}
-            epoch={repo?.previewEpoch ?? null}
-            origins={repo?.previewOrigins ?? []}
-            stopped={previewStopped}
-            stoppedDetail={repo?.detail ?? null}
-            onRestart={restart}
-            onPin={onPin}
-            onPinFocus={onPinFocus}
-            onFixError={forwardError}
-            target={target}
-            sync={pinsSync(pins.ghosts, pins.list)}
-            onNavigate={handleNavigate}
-            onLocation={setLocation}
-            location={location}
-            commentsOn={commentsOn}
-            onCommentsMode={onCommentsMode}
-            onLook={(note) => void sendLook(note)}
-            lookBusy={lookBusy}
-            drivingTabs={daemon.browserDriving}
-          />
-        )}
-      </div>
-      {historyOpen && <HistoryDrawer open onClose={() => setHistoryOpen(false)} daemon={daemon} />}
-      {discardConfirm && (
-        <ConfirmDialog
-          title="변경 버리기"
-          body={
-            <>
-              <span className="ic ic--danger">
-                <WarnIcon />
-              </span>{" "}
-              저장하지 않은 변경 <strong>{repo?.pendingChanges ?? 0}개</strong>를 모두 버릴까요?
-            </>
-          }
-          hint="버린 변경은 되돌릴 수 없습니다."
-          confirmLabel="버리기"
-          alt={
-            repo?.shelf
-              ? undefined
-              : {
-                  label: "잠깐 치워두기",
-                  onAlt: () => {
-                    setDiscardConfirm(false);
-                    putAway();
-                  },
-                }
-          }
-          onConfirm={discard}
-          onClose={() => setDiscardConfirm(false)}
-        >
-          {discardFiles && discardFiles.length > 0 && (
-            <ul className="discard__files">
-              {discardFiles.map((file) => {
-                const { added, removed } = diffCounts(file);
-                return (
-                  <li className="dfile" key={file.path}>
-                    <span className={`dfile__tag dfile__tag--${file.status}`}>
-                      {FILE_STATUS_LABEL[file.status]}
-                    </span>
-                    <span className="dfile__name">{file.path}</span>
-                    {(added > 0 || removed > 0) && (
-                      <span className="discard__count">
-                        {added > 0 && <span className="plus">+{added}</span>}
-                        {removed > 0 && <span className="minus">−{removed}</span>}
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+      <div
+        ref={stageRowRef}
+        className={`previewcol__row${historyCover ? " previewcol__row--cover" : ""}`}
+      >
+        <div className={`previewcol__stage${settleFlash ? " previewcol__stage--settled" : ""}`}>
+          {bringUpCardInPreview ? (
+            <ProgressPanel
+              phase={phase ?? "missing"}
+              detail={repo?.detail ?? null}
+              errorKind={errorKind}
+              note={askNote}
+              onRetry={sync}
+              onForceRestart={restart}
+              onAskAgent={() => void askAgent()}
+              onApproveCommands={
+                activeSlug
+                  ? () =>
+                      void api
+                        .projectUpdate(activeSlug, { approveCommands: true })
+                        .catch(() => undefined)
+                  : undefined
+              }
+              onOpenSettings={onOpenSettings}
+            />
+          ) : (
+            <PreviewHost
+              url={repo?.previewUrl ?? null}
+              epoch={repo?.previewEpoch ?? null}
+              origins={repo?.previewOrigins ?? []}
+              stopped={previewStopped}
+              stoppedDetail={repo?.detail ?? null}
+              onRestart={restart}
+              onPin={onPin}
+              onPinFocus={onPinFocus}
+              onFixError={forwardError}
+              target={target}
+              sync={pinsSync(pins.ghosts, pins.list)}
+              onNavigate={handleNavigate}
+              onLocation={setLocation}
+              location={location}
+              commentsOn={commentsOn}
+              onCommentsMode={onCommentsMode}
+              onLook={(note) => void sendLook(note)}
+              lookBusy={lookBusy}
+              drivingTabs={daemon.browserDriving}
+            />
           )}
-        </ConfirmDialog>
-      )}
-      {devPanelOpen && (
-        <div
-          className="modal"
-          onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}
-        >
-          <div
-            className="modal__panel"
-            role="dialog"
-            aria-modal="true"
-            aria-label="개발자 코멘트"
-            tabIndex={-1}
-            ref={devPanelRef}
-          >
-            <header className="modal__head">
-              <h2 className="modal__title">개발자 코멘트</h2>
-              <button
-                type="button"
-                className="ghost"
-                aria-label="개발자 코멘트 닫기"
-                onClick={() => setDevPanelOpen(false)}
-              >
-                <CloseIcon />
-              </button>
-            </header>
-            <div className="modal__body">
-              <p className="hint">
-                {devReviews === null
-                  ? "개발자의 말을 읽어 오는 중…"
-                  : unhandledDevReviews.length > 0
-                    ? "고치기는 AI에게 화면을 고쳐 달라는 뜻이고, 답하기는 개발자에게 답을 남기는 뜻입니다."
-                    : "모두 처리한 목록입니다."}
-              </p>
-              {devReviews !== null && unhandledDevReviews.length > 0 && (
-                <Tip
-                  label={
-                    unreadReviews.length > 0
-                      ? "먼저 각 코멘트를 펼쳐 읽어 주세요 — 개발자의 말에 '이 방향은 접자'가 섞여 있을 수 있습니다"
-                      : undefined
+          {historyOpen && (
+            <HistoryDrawer open onClose={closeHistory} daemon={daemon} cover={historyCover} />
+          )}
+        </div>
+        {discardConfirm && (
+          <ConfirmDialog
+            title="변경 버리기"
+            body={
+              <>
+                <span className="ic ic--danger">
+                  <WarnIcon />
+                </span>{" "}
+                저장하지 않은 변경 <strong>{repo?.pendingChanges ?? 0}개</strong>를 모두 버릴까요?
+              </>
+            }
+            hint="버린 변경은 되돌릴 수 없습니다."
+            confirmLabel="버리기"
+            alt={
+              repo?.shelf
+                ? undefined
+                : {
+                    label: "잠깐 치워두기",
+                    onAlt: () => {
+                      setDiscardConfirm(false);
+                      putAway();
+                    },
                   }
-                  side="bottom"
-                >
-                  <button
-                    type="button"
-                    className="ghost dev__all"
-                    aria-disabled={devBusy || unreadReviews.length > 0}
-                    onClick={() => {
-                      if (devBusy || unreadReviews.length > 0) return;
-                      handleReview(unhandledDevReviews);
-                      setDevPanelOpen(false);
-                    }}
-                  >
-                    모두 AI에게 ({unhandledDevReviews.length})
-                  </button>
-                </Tip>
-              )}
-              <ul className="diff__files">
-                {(devReviews ?? []).map((review) => {
-                  const handled = handledIds.has(review.id);
+            }
+            onConfirm={discard}
+            onClose={() => setDiscardConfirm(false)}
+          >
+            {discardFiles && discardFiles.length > 0 && (
+              <ul className="discard__files">
+                {discardFiles.map((file) => {
+                  const { added, removed } = diffCounts(file);
                   return (
-                    <li
-                      key={review.id}
-                      className={`diff__file${handled ? " diff__file--resolved" : ""}`}
-                    >
-                      <div className="diff__filerow">
-                        <span className="diff__path">
-                          {review.author}
-                          {review.path
-                            ? ` · ${review.path}${review.line ? `:${review.line}` : ""}`
-                            : ""}
+                    <li className="dfile" key={file.path}>
+                      <span className={`dfile__tag dfile__tag--${file.status}`}>
+                        {FILE_STATUS_LABEL[file.status]}
+                      </span>
+                      <span className="dfile__name">{file.path}</span>
+                      {(added > 0 || removed > 0) && (
+                        <span className="discard__count">
+                          {added > 0 && <span className="plus">+{added}</span>}
+                          {removed > 0 && <span className="minus">−{removed}</span>}
                         </span>
-                        {!handled && (
-                          <>
-                            <Tip label="이 코멘트를 AI에게 넘겨 화면을 고칩니다">
-                              <button
-                                type="button"
-                                className="primary"
-                                disabled={devBusy}
-                                onClick={() => {
-                                  handleReview([review]);
-                                  setDevPanelOpen(false);
-                                }}
-                              >
-                                고치기
-                              </button>
-                            </Tip>
-                            <button
-                              type="button"
-                              className="ghost"
-                              onClick={() => {
-                                if (!isReplyConfirmed()) {
-                                  setReplyConfirmFor(review.id);
-                                  return;
-                                }
-                                setDevReplyFor(devReplyFor === review.id ? null : review.id);
-                              }}
-                            >
-                              답하기
-                            </button>
-                          </>
-                        )}
-                        {handled && <span className="hint">AI에게 보냄</span>}
-                      </div>
-                      {(handled || readReviews.has(review.id)) && (
-                        <p className="hint">{review.body}</p>
-                      )}
-                      {!handled && !readReviews.has(review.id) && (
-                        <Tip label="개발자가 남긴 말을 펼쳐 읽습니다">
-                          <button
-                            type="button"
-                            className="ghost dev__read"
-                            onClick={() => setReadReviews((prev) => new Set(prev).add(review.id))}
-                          >
-                            펼쳐 읽기
-                          </button>
-                        </Tip>
-                      )}
-                      {devReplyFor === review.id && (
-                        <form
-                          className="dev__reply"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            void sendDevReply(review);
-                          }}
-                        >
-                          <input
-                            type="text"
-                            aria-label="답변"
-                            placeholder="개발자에게 남길 말을 한 줄 적어 주세요"
-                            value={devReplyText}
-                            autoFocus
-                            onChange={(event) => setDevReplyText(event.target.value)}
-                          />
-                          <button
-                            type="submit"
-                            className="primary"
-                            disabled={devBusy || devReplyText.trim() === ""}
-                          >
-                            보내기
-                          </button>
-                        </form>
                       )}
                     </li>
                   );
                 })}
               </ul>
-              {devReviews !== null && devReviews.length === 0 && (
-                <p className="hint">아직 개발자 코멘트가 없습니다.</p>
-              )}
+            )}
+          </ConfirmDialog>
+        )}
+        {devPanelOpen && (
+          <div
+            className="modal"
+            onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}
+          >
+            <div
+              className="modal__panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="개발자 코멘트"
+              tabIndex={-1}
+              ref={devPanelRef}
+            >
+              <header className="modal__head">
+                <h2 className="modal__title">개발자 코멘트</h2>
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label="개발자 코멘트 닫기"
+                  onClick={() => setDevPanelOpen(false)}
+                >
+                  <CloseIcon />
+                </button>
+              </header>
+              <div className="modal__body">
+                <p className="hint">
+                  {devReviews === null
+                    ? "개발자의 말을 읽어 오는 중…"
+                    : unhandledDevReviews.length > 0
+                      ? "고치기는 AI에게 화면을 고쳐 달라는 뜻이고, 답하기는 개발자에게 답을 남기는 뜻입니다."
+                      : "모두 처리한 목록입니다."}
+                </p>
+                {devReviews !== null && unhandledDevReviews.length > 0 && (
+                  <Tip
+                    label={
+                      unreadReviews.length > 0
+                        ? "먼저 각 코멘트를 펼쳐 읽어 주세요 — 개발자의 말에 '이 방향은 접자'가 섞여 있을 수 있습니다"
+                        : undefined
+                    }
+                    side="bottom"
+                  >
+                    <button
+                      type="button"
+                      className="ghost dev__all"
+                      aria-disabled={devBusy || unreadReviews.length > 0}
+                      onClick={() => {
+                        if (devBusy || unreadReviews.length > 0) return;
+                        handleReview(unhandledDevReviews);
+                        setDevPanelOpen(false);
+                      }}
+                    >
+                      모두 AI에게 ({unhandledDevReviews.length})
+                    </button>
+                  </Tip>
+                )}
+                <ul className="diff__files">
+                  {(devReviews ?? []).map((review) => {
+                    const handled = handledIds.has(review.id);
+                    return (
+                      <li
+                        key={review.id}
+                        className={`diff__file${handled ? " diff__file--resolved" : ""}`}
+                      >
+                        <div className="diff__filerow">
+                          <span className="diff__path">
+                            {review.author}
+                            {review.path
+                              ? ` · ${review.path}${review.line ? `:${review.line}` : ""}`
+                              : ""}
+                          </span>
+                          {!handled && (
+                            <>
+                              <Tip label="이 코멘트를 AI에게 넘겨 화면을 고칩니다">
+                                <button
+                                  type="button"
+                                  className="primary"
+                                  disabled={devBusy}
+                                  onClick={() => {
+                                    handleReview([review]);
+                                    setDevPanelOpen(false);
+                                  }}
+                                >
+                                  고치기
+                                </button>
+                              </Tip>
+                              <button
+                                type="button"
+                                className="ghost"
+                                onClick={() => {
+                                  if (!isReplyConfirmed()) {
+                                    setReplyConfirmFor(review.id);
+                                    return;
+                                  }
+                                  setDevReplyFor(devReplyFor === review.id ? null : review.id);
+                                }}
+                              >
+                                답하기
+                              </button>
+                            </>
+                          )}
+                          {handled && <span className="hint">AI에게 보냄</span>}
+                        </div>
+                        {(handled || readReviews.has(review.id)) && (
+                          <p className="hint">{review.body}</p>
+                        )}
+                        {!handled && !readReviews.has(review.id) && (
+                          <Tip label="개발자가 남긴 말을 펼쳐 읽습니다">
+                            <button
+                              type="button"
+                              className="ghost dev__read"
+                              onClick={() => setReadReviews((prev) => new Set(prev).add(review.id))}
+                            >
+                              펼쳐 읽기
+                            </button>
+                          </Tip>
+                        )}
+                        {devReplyFor === review.id && (
+                          <form
+                            className="dev__reply"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void sendDevReply(review);
+                            }}
+                          >
+                            <input
+                              type="text"
+                              aria-label="답변"
+                              placeholder="개발자에게 남길 말을 한 줄 적어 주세요"
+                              value={devReplyText}
+                              autoFocus
+                              onChange={(event) => setDevReplyText(event.target.value)}
+                            />
+                            <button
+                              type="submit"
+                              className="primary"
+                              disabled={devBusy || devReplyText.trim() === ""}
+                            >
+                              보내기
+                            </button>
+                          </form>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {devReviews !== null && devReviews.length === 0 && (
+                  <p className="hint">아직 개발자 코멘트가 없습니다.</p>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
-      {replyConfirmFor !== null && (
-        <ConfirmDialog
-          title="GitHub에 답하기"
-          body={
-            <>
-              이 도구가 <strong>사용자의 이름</strong>으로 GitHub에 답을 남깁니다.
-            </>
-          }
-          hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."
-          confirmLabel="확인했어요"
-          onConfirm={() => {
-            markReplyConfirmed();
-            const review = (devReviews ?? []).find((entry) => entry.id === replyConfirmFor);
-            setReplyConfirmFor(null);
-            if (review) setDevReplyFor(review.id);
-          }}
-          onClose={() => setReplyConfirmFor(null)}
-        />
-      )}
+        )}
+        {replyConfirmFor !== null && (
+          <ConfirmDialog
+            title="GitHub에 답하기"
+            body={
+              <>
+                이 도구가 <strong>사용자의 이름</strong>으로 GitHub에 답을 남깁니다.
+              </>
+            }
+            hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."
+            confirmLabel="확인했어요"
+            onConfirm={() => {
+              markReplyConfirmed();
+              const review = (devReviews ?? []).find((entry) => entry.id === replyConfirmFor);
+              setReplyConfirmFor(null);
+              if (review) setDevReplyFor(review.id);
+            }}
+            onClose={() => setReplyConfirmFor(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }

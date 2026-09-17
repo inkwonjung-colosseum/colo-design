@@ -182,10 +182,8 @@ async function main() {
     );
 
     // The picker judges one repo before any clone: a repo without a
-    // dev-family script has no preview the tool can start, and one whose
-    // CLAUDE.md lacks the conventions marker gets the contract installed by
-    // the post-ready prepare turn — saying so here is what saves the planner
-    // the download. The recorded payments-web answers both probes true.
+    // dev-family script has no preview the tool can start. The recorded
+    // payments-web answers the probe true.
     const inspection = await request({
       id: "i1",
       type: "github.repo.inspect",
@@ -193,9 +191,8 @@ async function main() {
       repo: "payments-web",
     });
     check(
-      "inspect answers the dev script, conventions, push access and the base branch",
+      "inspect answers the dev script, push access and the base branch",
       inspection.hasDevScript === true &&
-        inspection.hasConventions === true &&
         inspection.canPush === true &&
         inspection.defaultBranch === "main",
       JSON.stringify(inspection),

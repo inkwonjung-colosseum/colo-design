@@ -58,10 +58,8 @@ const LANES = {
     suites: [
       "test:projects",
       "test:common-instructions",
-      "test:conventions",
       "test:permission-repeat",
       "test:rewind",
-      "test:bootstrap",
       "test:repo",
       "test:publish",
       "test:onboarding",
@@ -81,6 +79,7 @@ const LANES = {
       "test:thread-delete-ui",
       "test:clear-all-ui",
       "test:sidebar-ui",
+      "test:status-menu-ui",
       "test:onboarding-ui",
       "test:port-busy-ui",
     ],

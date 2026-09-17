@@ -131,6 +131,11 @@ async function main() {
   try {
     let page = await app.firstWindow();
     await page.setViewportSize({ width: 1720, height: 1000 });
+    // v3 홈이 곧 기본 뷰다 — 프레임(.planner__work)이 뜨면 사이드바의
+    // 새 대화 잎(.leaf--start)이 작업대로 들어가는 문이고, 작업대가 그리는
+    // .planner__body · .screenpanel__bar 가 이 검사의 무대다.
+    await page.waitForSelector(".planner__work", { timeout: 60000 });
+    await page.locator(".leaf--start").first().click();
     await page.waitForSelector(".planner__body", { timeout: 60000 });
     await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
     const booted = await waitForPage(app);
@@ -212,6 +217,10 @@ async function main() {
       await sleep(800);
       await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
       page = await app.waitForEvent("window", { timeout: 30000 });
+      // 재오픈한 창도 v3 홈에서 시작한다 — 같은 문(새 대화 잎)으로 작업대에
+      // 들어가야 pane 의 재부착이 검사된다.
+      await page.waitForSelector(".planner__work", { timeout: 60000 });
+      await page.locator(".leaf--start").first().click();
       await page.waitForSelector(".planner__body", { timeout: 60000 });
       await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
       const reopened = await waitForPage(app);

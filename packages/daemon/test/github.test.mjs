@@ -334,21 +334,19 @@ test("listRepos throws with the picker's line when a page fails", async () => {
   await assert.rejects(unauthorized.listRepos(), /토큰이 유효하지 않거나 만료/);
 });
 
-test("the contents probes read dev script and conventions marker before any clone", async () => {
-  const withBoth = new GitHubClient(
+test("the contents probes read the dev script before any clone", async () => {
+  const withDev = new GitHubClient(
     TOKEN,
-    new FixtureTransport([byName("contents-package-json"), byName("contents-claude-md")]),
+    new FixtureTransport([byName("contents-package-json")]),
   );
   const both = { owner: "colo-org", repo: "payments-web" };
-  assert.equal(await withBoth.hasDevScript(both), true);
-  assert.equal(await withBoth.hasConventions(both), true);
+  assert.equal(await withDev.hasDevScript(both), true);
 
   const without = new GitHubClient(
     TOKEN,
-    new FixtureTransport([byName("contents-package-missing"), byName("contents-claude-missing")]),
+    new FixtureTransport([byName("contents-package-missing")]),
   );
   assert.equal(await without.hasDevScript(both), false);
-  assert.equal(await without.hasConventions(both), false);
 });
 
 test("the contents probes refuse to answer a non-200/404 with a guess", async () => {
@@ -361,10 +359,6 @@ test("the contents probes refuse to answer a non-200/404 with a guess", async ()
   await assert.rejects(
     serverError.hasDevScript({ owner: "colo-org", repo: "payments-web" }),
     /package.json 확인/,
-  );
-  await assert.rejects(
-    serverError.hasConventions({ owner: "colo-org", repo: "payments-web" }),
-    /CLAUDE.md 확인/,
   );
 
   const unauthorized = new GitHubClient(TOKEN, {
@@ -379,7 +373,7 @@ test("the contents probes refuse to answer a non-200/404 with a guess", async ()
   );
 });
 
-test("inspectRepo judges one repo from the three calls the picker needs", async () => {
+test("inspectRepo judges one repo from the two calls the picker needs", async () => {
   const calls = [];
   const client = new GitHubClient(TOKEN, {
     request: async (input) => {
@@ -416,13 +410,11 @@ test("inspectRepo judges one repo from the three calls the picker needs", async 
   });
   assert.deepEqual(inspection, {
     hasDevScript: true,
-    hasConventions: false,
     canPush: false,
     defaultBranch: "develop",
   });
   assert.deepEqual(calls, [
     "/repos/colo-org/payments-web",
     "/repos/colo-org/payments-web/contents/package.json",
-    "/repos/colo-org/payments-web/contents/CLAUDE.md",
   ]);
 });
