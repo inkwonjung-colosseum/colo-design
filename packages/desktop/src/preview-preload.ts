@@ -57,7 +57,7 @@ function cssPath(element: Element, root: Element | null): string {
   // A declared screen anchors on its wrapper — the spelling the log and the
   // fix turn re-match. A wrapper-less page anchors from the body: the path
   // is the only identity the page offers, and `body > …` reads the same DOM
-  // Claude edits.
+  // the agent edits.
   if (root?.hasAttribute("data-screen")) {
     return [`div[data-screen="${root.getAttribute("data-screen")}"]`, ...parts].join(" > ");
   }
@@ -261,8 +261,19 @@ interface Badge {
   /** Page coordinates (재설계 C9) — a region pin's anchor. */
   rect?: { x: number; y: number; width: number; height: number };
   number: number;
-  sent: boolean;
+  /**
+   * 고침 표시 (preview.md §1-C): live is the accent pin, sent the turn's
+   * grey, done the settled 수정 마크 — solid green, it outlives its turn.
+   */
+  tone: "live" | "sent" | "done";
 }
+
+/** The badge's one color per tone — done reads as settled, not as sent. */
+const BADGE_COLORS: Record<Badge["tone"], string> = {
+  live: "#e05252",
+  sent: "#9ca3af",
+  done: "#16a34a",
+};
 
 const Z = "2147483000";
 const root = document.createElement("div");
@@ -285,8 +296,57 @@ let altHeld = false;
 let badges: Badge[] = [];
 let hover: HTMLDivElement | null = null;
 let hoverTarget: Element | null = null;
-/** The hover box's name tab — lives and dies with `hover`. */
-let hoverLabel: HTMLElement | null = null;
+/**
+ * The hover box's name tag — a stacked column over the element: the
+ * planner's words (the red tab, the same words the tray row and the card
+ * use) and the element's own facts under it (kind · component · size, and
+ * 이름 없음 when an interactive element carries no accessible name). Lives
+ * and dies with `hover`.
+ */
+let hoverTag: {
+  box: HTMLElement;
+  label: HTMLElement;
+  meta: HTMLElement;
+  warn: HTMLElement;
+} | null = null;
+
+/** The tags a planner can pin asking "this does not say what it does" —
+    the only ones where a missing accessible name is the pin's own story.
+    The check follows `closest`, so a hover on an icon svg answers for the
+    button it sits in. */
+const INTERACTIVE_SELECTOR = "button, a, input, select, textarea";
+
+/**
+ * The meta line: the facts a DevTools tooltip would quote, minus the class
+ * noise — utility classes tell a planner nothing and the agent reads them
+ * from the pin's HTML anyway. An interactive element whose name is nowhere
+ * (no aria-label/title/alt, no own words, no placeholder/value) says
+ * 이름 없음: that gap is the one thing a planner can pin and ask fixed in
+ * the same breath. The name is asked of the nearest interactive element —
+ * the hover usually lands on the icon or label inside it.
+ */
+function hoverMeta(element: Element): { text: string; unnamed: boolean } {
+  const tag = element.tagName.toLowerCase();
+  const rect = element.getBoundingClientRect();
+  const parts = [tag];
+  const component = element.getAttribute("data-component");
+  if (component && component !== tag) parts.push(component);
+  parts.push(`${Math.round(rect.width)}×${Math.round(rect.height)}`);
+  let unnamed = false;
+  const interactive = element.closest(INTERACTIVE_SELECTOR);
+  if (interactive) {
+    const it = interactive.tagName.toLowerCase();
+    const named =
+      ownText(interactive) !== "" ||
+      interactive.getAttribute("aria-label") !== null ||
+      interactive.getAttribute("title") !== null ||
+      (it !== "input" && it !== "textarea" && interactive.getAttribute("alt") !== null) ||
+      interactive.getAttribute("placeholder") !== null ||
+      (it === "input" && interactive.getAttribute("value") !== null);
+    unnamed = !named;
+  }
+  return { text: parts.join(" · "), unnamed };
+}
 /** The region drag in flight (재설계 C9) — a picking press that may yet
     become a drag; null while no press is down. */
 let drag: {
@@ -327,6 +387,7 @@ function setMode(on: boolean): void {
   if (!on) {
     hover?.remove();
     hover = null;
+    hoverTag = null;
     hoverTarget = null;
     stopHoverLoop();
   }
@@ -375,9 +436,13 @@ function layoutHover(): void {
     width: `${rect.width}px`,
     height: `${rect.height}px`,
   });
-  // The tab sits above the box, or inside it when the box is against the
-  // top of the viewport — a label the planner cannot read is no label.
-  if (hoverLabel) hoverLabel.style.top = rect.y >= 18 ? "-18px" : "0px";
+  // The tag hangs above the box, its bottom on the element's top edge — or
+  // inside it when the element is against the top of the viewport. A tag
+  // the planner cannot read is no tag.
+  if (hoverTag) {
+    const height = hoverTag.box.offsetHeight;
+    hoverTag.box.style.top = rect.y >= height + 2 ? `${-height - 1}px` : "0px";
+  }
 }
 
 /** Badges ride their held element — the element's top-right corner, pulled
@@ -450,7 +515,7 @@ document.addEventListener(
     if (!hoverTarget) {
       hover?.remove();
       hover = null;
-      hoverLabel = null;
+      hoverTag = null;
       stopHoverLoop();
       return;
     }
@@ -459,24 +524,45 @@ document.addEventListener(
       hover.setAttribute("data-colo-hover", "");
       hover.style.cssText =
         "position:fixed;outline:2px solid #e05252;outline-offset:1px;pointer-events:none;";
-      // What the click would actually take: the same words the composer's
-      // pin row and the transcript card use. Any element can take a pin
-      // (D79), so aiming at a table row means guessing between the cell,
-      // the row and the table unless the highlight says which one is under
-      // the cursor.
-      hoverLabel = el(
-        "span",
-        "position:absolute;left:0;background:#e05252;color:#fff;border-radius:4px 4px 0 0;padding:1px 6px;font-size:10px;line-height:1.5;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
+      // The tag is a column, not one tab: the planner's words on top, the
+      // element's facts under them — aiming at a table row means guessing
+      // between the cell, the row and the table unless both lines say which
+      // one is under the cursor. The meta strip reads like the badge it will
+      // become: dark, monospace, small.
+      const box = el(
+        "div",
+        "position:absolute;left:0;display:flex;flex-direction:column;align-items:flex-start;pointer-events:none;",
       );
-      hover.appendChild(hoverLabel);
+      const label = el(
+        "span",
+        "background:#e05252;color:#fff;border-radius:4px 4px 0 0;padding:1px 6px;font-size:10px;line-height:1.5;font-weight:600;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
+      );
+      const meta = el(
+        "span",
+        "background:rgba(17,17,17,.88);color:rgba(255,255,255,.78);border-radius:0;padding:1px 6px;font-size:10px;line-height:1.5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;",
+      );
+      const warn = el(
+        "span",
+        "background:rgba(17,17,17,.88);color:#fbbf24;border-radius:0 0 4px 4px;padding:1px 6px;font-size:10px;line-height:1.5;white-space:nowrap;",
+        "이름 없음",
+      );
+      box.appendChild(label);
+      box.appendChild(meta);
+      box.appendChild(warn);
+      hover.appendChild(box);
+      hoverTag = { box, label, meta, warn };
       root.appendChild(hover);
       startHoverLoop();
     }
-    if (hoverLabel) {
-      hoverLabel.textContent =
+    if (hoverTag && hoverTarget) {
+      hoverTag.label.textContent =
         ownText(hoverTarget) ||
         hoverTarget.getAttribute("data-component") ||
         hoverTarget.tagName.toLowerCase();
+      const { text, unnamed } = hoverMeta(hoverTarget);
+      hoverTag.meta.textContent = text;
+      hoverTag.meta.style.borderRadius = unnamed ? "0" : "0 0 4px 4px";
+      hoverTag.warn.style.display = unnamed ? "" : "none";
     }
   },
   true,
@@ -519,7 +605,7 @@ document.addEventListener(
       }
     }, 3000);
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
-    badges = [...badges, { id: pin.id, anchor: element, number: badges.length + 1, sent: false }];
+    badges = [...badges, { id: pin.id, anchor: element, number: badges.length + 1, tone: "live" }];
     renderOverlay();
   },
   true,
@@ -569,7 +655,7 @@ document.addEventListener(
       // The drag takes the gesture over — hover highlighting steps aside.
       hover?.remove();
       hover = null;
-      hoverLabel = null;
+      hoverTag = null;
       hoverTarget = null;
       stopHoverLoop();
       drag.box = el(
@@ -655,7 +741,7 @@ function setAlt(on: boolean): void {
   if (!on) {
     hover?.remove();
     hover = null;
-    hoverLabel = null;
+    hoverTag = null;
     hoverTarget = null;
     stopHoverLoop();
   }
@@ -698,18 +784,21 @@ function renderOverlay(): void {
     if (badge.rect) {
       const box = el(
         "div",
-        `position:fixed;border:1px dashed ${badge.sent ? "#9ca3af" : "#e05252"};pointer-events:none;`,
+        `position:fixed;border:1px dashed ${BADGE_COLORS[badge.tone]};pointer-events:none;`,
       );
       box.dataset.pinBox = badge.id;
       root.appendChild(box);
     }
     const circle = el(
       "button",
-      `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${badge.sent ? "#9ca3af" : "#e05252"};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
+      `pointer-events:auto;position:fixed;width:24px;height:24px;padding:0;border:2px solid #fff;border-radius:999px;background:${BADGE_COLORS[badge.tone]};color:#fff;font-size:12px;font-weight:700;line-height:20px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);`,
       String(badge.number),
     );
     circle.dataset.pin = badge.id;
-    circle.setAttribute("aria-label", `핀 ${badge.number}${badge.sent ? " (보냄)" : ""}`);
+    circle.setAttribute(
+      "aria-label",
+      `핀 ${badge.number}${badge.tone === "sent" ? " (보냄)" : badge.tone === "done" ? " (고침)" : ""}`,
+    );
     // The badge is a handle: clicking it asks the web to focus the pin's
     // row in the composer — its memo field.
     circle.addEventListener("click", (event) => {
@@ -735,8 +824,8 @@ function readRect(
 
 /**
  * The web's whole pin list (재설계 C1) — the truth, redrawn from scratch.
- * Only THIS screen's pins draw badges (재설계 C5); the number is the row's
- * place in the list.
+ * Only THIS screen's pins draw badges (재설계 C5); the number is the mark
+ * registry's `n` when the web sends one, else the row's place in the list.
  */
 ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
   const here = pageContext();
@@ -747,14 +836,28 @@ ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
     // view — the tray row keeps saying `회원 목록 · 기본` and the badge must
     // not contradict it from another state's page.
     if (pin.screen !== here.screen || pin.state !== here.state) return [];
+    // 고침 표시 (preview.md §1-C): the registry's `n` is the badge's number —
+    // the list index is only the fallback for a web that predates it.
+    const number = typeof pin.n === "number" ? pin.n : index + 1;
+    const tone: Badge["tone"] =
+      pin.tone === "done" || pin.tone === "sent" || pin.tone === "live"
+        ? pin.tone
+        : pin.sent
+          ? "sent"
+          : "live";
+    // 화면 마크: no element, no rect — the badge docks on the screen frame's
+    // own corner. A page with no [data-screen] wrapper has no frame to dock
+    // on; the mark still lives in the registry.
+    if (pin.screenMark) {
+      const frame = currentScreenRoot();
+      return frame ? [{ id: pin.id, anchor: frame, number, tone }] : [];
+    }
     // A region pin (빈 path, 재설계 C9) has no element to find — its rect in
     // page coordinates IS the anchor; without a usable rect there is nothing
     // to draw, same as an element whose path no longer parses.
     if (pin.path === "") {
       const rect = readRect(pin.rect);
-      return rect
-        ? [{ id: pin.id, anchor: null, rect, number: index + 1, sent: Boolean(pin.sent) }]
-        : [];
+      return rect ? [{ id: pin.id, anchor: null, rect, number, tone }] : [];
     }
     // A live anchor beats the path — the element may have moved since the
     // web last heard of it. A path the changed page no longer parses draws
@@ -768,7 +871,7 @@ ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
         // An unparseable path is no anchor.
       }
     }
-    return anchor ? [{ id: pin.id, anchor, number: index + 1, sent: Boolean(pin.sent) }] : [];
+    return anchor ? [{ id: pin.id, anchor, number, tone }] : [];
   });
   renderOverlay();
 });

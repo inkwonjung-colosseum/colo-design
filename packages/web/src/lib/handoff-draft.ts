@@ -40,10 +40,10 @@ function bodyFor(screens: ColoDesignScreen[]): string {
 }
 
 /**
- * What the 넘기기 dialog shows once Claude's draft lands (비개발자 넘기기).
+ * What the 넘기기 dialog shows once the agent.s draft lands (비개발자 넘기기).
  *
  * Two halves with two authors, and the order is the point: the sentences a
- * developer reads first are Claude's, and under them the screen list stays
+ * developer reads first are the agent.s, and under them the screen list stays
  * exactly what the running app declared. Routes and states are mechanical
  * facts — a composed line about them would be a place to be wrong — so the
  * draft never rewrites this half, it only sits above it.

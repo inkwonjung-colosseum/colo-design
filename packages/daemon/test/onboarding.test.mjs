@@ -508,3 +508,51 @@ test("install-pnpm runs corepack enable through the runner and quotes its failur
   assert.match(refused.detail, /EACCES/);
   assert.match(refused.detail, /npm i -g pnpm/);
 });
+
+// ---------------------------------------------------------------------------
+// The provider-aware agent gate
+// ---------------------------------------------------------------------------
+
+test("a non-claude provider checks its driver and names the label", async () => {
+  const dir = workdir("hub-onboard-provider-");
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = stubPath(dir);
+    const fakeDriver = {
+      id: "codex",
+      describe: () => ({ id: "codex", label: "Codex" }),
+      isAvailable: async () => ({ ok: true, version: "1.0" }),
+    };
+    const steps = await runOnboardingChecks({
+      provider: "codex",
+      driverFor: (id) => (id === "codex" ? fakeDriver : undefined),
+      pnpmResolver: async () => null,
+    });
+    const agent = find(steps, "claude");
+    assert.equal(agent.status, "pass");
+    assert.match(agent.detail, /Codex 준비됨 \(1\.0\)/);
+  } finally {
+    process.env.PATH = previousPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a provider the daemon does not know fails without a fix", async () => {
+  const dir = workdir("hub-onboard-unknown-");
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = stubPath(dir);
+    const steps = await runOnboardingChecks({
+      provider: "codex",
+      driverFor: () => undefined,
+      pnpmResolver: async () => null,
+    });
+    const agent = find(steps, "claude");
+    assert.equal(agent.status, "fail");
+    assert.match(agent.detail, /codex/);
+    assert.equal(agent.fix, undefined);
+  } finally {
+    process.env.PATH = previousPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

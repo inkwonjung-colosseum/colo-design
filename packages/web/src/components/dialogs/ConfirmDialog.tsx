@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { CloseIcon, WarnIcon } from "../icons";
-import { Tip } from "../shell/Tip";
 
 /**
  * The one confirm dialog. `window.confirm` 은 이 앱의
@@ -42,14 +41,10 @@ export function ConfirmDialog({
 }) {
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
+  useModalEscape(panel, onClose);
   useEffect(() => {
     panel.current?.focus();
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [onClose]);
+  }, []);
   return (
     <div
       className="modal"
@@ -70,11 +65,9 @@ export function ConfirmDialog({
             </span>
             {title}
           </h2>
-          <Tip label={`${title} 닫기`} side="left">
-            <button type="button" className="ghost" aria-label={`${title} 닫기`} onClick={onClose}>
-              <CloseIcon />
-            </button>
-          </Tip>
+          <button type="button" className="ghost" aria-label={`${title} 닫기`} onClick={onClose}>
+            <CloseIcon />
+          </button>
         </header>
         <p className="sidebar__removetext">{body}</p>
         {children}

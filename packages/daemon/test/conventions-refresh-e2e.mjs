@@ -3,11 +3,14 @@
  *
  * 이 스위트가 지키는 계약:
  *
- *   - 표식 없는 CLAUDE.md(판이 생기기 전에 연결된 레포)는
- *     conventionsStale 로 보인다 — 프로젝트 요약이 그 사실을 실어 나른다.
+ *   - 낡은 판의 표식을 단 CLAUDE.md 는 conventionsStale 로 보인다 —
+ *     프로젝트 요약이 그 사실을 실어 나른다. (표식이 아예 없는 클론은
+ *     ready 직후의 자동 준비 턴이 표식을 달아 버리므로, 최신화의 대상은
+ *     옛 판의 표식을 단 레포다.)
  *   - project.refreshConventions 는 그 클론에 "관례 최신화" 대화를 열고
  *     첫 턴으로 현행 브리프를 내린다: 이미 연결돼 있다는 전제, 표식
- *     갱신 지시, colo-design.json 금지가 그 안에 있어야 한다.
+ *     갱신 지시, colo-design.json 은 있어도 그대로 두라는 지시가 그 안에
+ *     있어야 한다.
  *   - 세션이 표식을 달아 CLAUDE.md 를 다시 쓰면 stale 이 거짓이 되고,
  *     바뀐 파일은 저장을 기다리는 미해결 변경으로 남는다 — 승인 게이트는
  *     개발자의 PR 이다(재주입이 아니라 제안).
@@ -24,7 +27,7 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { CONVENTIONS_REVISION, conventionsMarker, REFRESH_BRIEF } from "../dist/bootstrap-brief.js";
 import { DaemonServer } from "../dist/server.js";
-import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
+import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 
 const DIR = join(tmpdir(), "colo-design-conventions-refresh-e2e");
 const TURNS = join(DIR, "turns");
@@ -54,7 +57,7 @@ async function waitFor(predicate, timeoutMs, label) {
 }
 
 /**
- * 브리프를 받으면 그 전문을 TURNS 에 덤프하고, 'Claude 가 한 일'을 흉내
+ * 브리프를 받으면 그 전문을 TURNS 에 덤프하고, 'AI 가 한 일'을 흉내
  * 낸다 — CLAUDE.md 를 현행 표식과 함께 다시 쓴다. 바뀐 파일은 커밋되지
  * 않고 미해결 변경으로 남는다(저장 → 넘기기가 다음 관문이다).
  */
@@ -112,6 +115,11 @@ async function main() {
   mkdirSync(TURNS, { recursive: true });
 
   const fixture = await createFixtureRepo({ dir: join(DIR, "fixture"), port: await freePort() });
+  // 표식이 없는 클론은 ready 직후 자동 준비가 표식을 달아 버린다 — 최신화의
+  // 대상은 옛 판의 표식을 단 레포다. v0 표식으로 시드한다.
+  await pushFixtureChange(fixture.seed, fixture.remote, {
+    "CLAUDE.md": `${conventionsMarker(0)}\n# fixture colo-design 레포\n\n옛 판의 관례입니다.\n`,
+  });
 
   const port = await freePort();
   const server = new DaemonServer({
@@ -157,11 +165,11 @@ async function main() {
     );
     if (ready.phase !== "ready") throw new Error(String(ready.detail ?? ready.phase));
 
-    // --- 1. 표식 없는 CLAUDE.md 는 낡은 것으로 보인다 -----------------------
+    // --- 1. 옛 판의 표식을 단 CLAUDE.md 는 낡은 것으로 보인다 ---------------
     const listed = await request({ type: "project.list" });
     const before = listed.projects.find((entry) => entry.slug === project.slug);
     check(
-      "a CLAUDE.md with no conventions marker reads as stale",
+      "a CLAUDE.md marked at an old conventions revision reads as stale",
       before?.conventionsStale === true,
     );
 
@@ -187,10 +195,10 @@ async function main() {
       "the refresh brief turn",
     );
     check(
-      "the first turn is the refresh brief: already-connected premise, marker, config fence",
+      "the first turn is the refresh brief: already-connected premise, marker, config untouched",
       brief.includes("이미 Colo Design 도구와 연결되어") &&
         brief.includes(MARKER) &&
-        brief.includes("colo-design.json` 고치기") &&
+        brief.includes("colo-design.json` 이 있어도 그대로 둡니다") &&
         brief.includes("PR 승인"),
       REFRESH_BRIEF.slice(0, 30),
     );

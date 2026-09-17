@@ -1,3 +1,6 @@
+import { realpath, rm } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   deleteSession,
   getSessionInfo,
@@ -34,7 +37,6 @@ function presentableTitle(summary: string | undefined | null): string {
 }
 
 const CLAUDE_CAPABILITIES = {
-  steer: true,
   rewind: true,
   usage: true,
   contextUsage: true,
@@ -42,8 +44,6 @@ const CLAUDE_CAPABILITIES = {
   effort: true,
   modelSelect: true,
   slashCommands: true,
-  mcpServers: true,
-  inProcessMcp: true,
   planMode: "plan",
   subtasks: true,
 } as const;
@@ -76,7 +76,10 @@ export class ClaudeDriver implements AgentDriver {
   async isAvailable(): Promise<Diagnostic> {
     const executable = this.executable();
     if (!executable) {
-      return { ok: false };
+      return {
+        ok: false,
+        reason: "Claude Code CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
+      };
     }
     const version = await readClaudeVersion(executable);
     const auth = await readAuthStatus(executable).catch(() => null);
@@ -103,7 +106,13 @@ export class ClaudeDriver implements AgentDriver {
         id: info.sessionId,
         title: info.customTitle || presentableTitle(info.summary) || "제목 없는 대화",
         lastModified: info.lastModified,
+        provider: "claude",
       }));
+    },
+
+    has: async (id, cwd) => {
+      const info = await getSessionInfo(id, { dir: cwd }).catch(() => null);
+      return info !== null;
     },
 
     title: async (id, cwd) => {
@@ -134,6 +143,24 @@ export class ClaudeDriver implements AgentDriver {
 
     delete: async (id, cwd) => {
       await deleteSession(id, { dir: cwd });
+    },
+
+    /**
+     * A removed project's sweep: `~/.claude/projects` keys each clone's
+     * transcripts under one directory named after the cwd — dropping it is
+     * O(1) where list+delete walks the whole store.
+     */
+    deleteAll: async (cwd) => {
+      const configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+      let real = cwd;
+      try {
+        real = await realpath(cwd);
+      } catch {
+        // The clone may already be gone — encode the spelling we were given.
+      }
+      // The CLI's own naming: every non-alphanumeric in the cwd becomes `-`.
+      const encoded = resolve(real).replace(/[^a-zA-Z0-9]/g, "-");
+      await rm(join(configDir, "projects", encoded), { recursive: true, force: true });
     },
   };
 }

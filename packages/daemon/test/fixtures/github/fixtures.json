@@ -558,23 +558,54 @@
     }
   },
   {
-    "name": "contents-colo-design",
+    "name": "contents-package-json",
     "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
     "request": {
       "method": "GET",
-      "url": "/repos/colo-org/payments-web/contents/colo-design.json"
+      "url": "/repos/colo-org/payments-web/contents/package.json"
     },
     "response": {
       "status": 200,
-      "json": { "name": "colo-design.json", "path": "colo-design.json" }
+      "json": {
+        "name": "package.json",
+        "path": "package.json",
+        "encoding": "base64",
+        "content": "eyJuYW1lIjoicGF5bWVudHMtd2ViIiwic2NyaXB0cyI6eyJkZXYiOiJ2aXRlIiwiYnVpbGQiOiJ2aXRlIGJ1aWxkIn19"
+      }
     }
   },
   {
-    "name": "contents-missing",
+    "name": "contents-package-missing",
     "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
     "request": {
       "method": "GET",
-      "url": "/repos/colo-org/payments-web/contents/colo-design.json"
+      "url": "/repos/colo-org/payments-web/contents/package.json"
+    },
+    "response": { "status": 404, "json": { "message": "Not Found" } }
+  },
+  {
+    "name": "contents-claude-md",
+    "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colo-org/payments-web/contents/CLAUDE.md"
+    },
+    "response": {
+      "status": 200,
+      "json": {
+        "name": "CLAUDE.md",
+        "path": "CLAUDE.md",
+        "encoding": "base64",
+        "content": "PCEtLSBjb2xvLWRlc2lnbi1jb252ZW50aW9uczogdjEgLS0+CgojIHBheW1lbnRzLXdlYgoK7ZmU66m0IOu4jOumrOyngOyZgCDrnpjtjbwg6rSA66GALgo="
+      }
+    }
+  },
+  {
+    "name": "contents-claude-missing",
+    "cite": "GET /repos/{owner}/{repo}/contents/{path} — https://docs.github.com/rest/repos/contents#get-repository-content",
+    "request": {
+      "method": "GET",
+      "url": "/repos/colo-org/payments-web/contents/CLAUDE.md"
     },
     "response": { "status": 404, "json": { "message": "Not Found" } }
   },

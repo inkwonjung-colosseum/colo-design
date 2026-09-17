@@ -454,14 +454,18 @@ async function main() {
     // 이 전송은 열린 대화 없이 시작된다 — create 가 지은 스레드가 코멘트를
     // 받아야 한다. 옛 결함은 두 번째 이름 없는 스레드가 실어 가고, 이름 있는
     // 첫 스레드는 빈 채 목록에 남았다.
+    // The conventions-prep turn (연결 준비) auto-opens a thread post-ready
+    // now — a legitimate sibling, not the unnamed second thread this check
+    // guards against, so it is filtered out of the count.
     const threadRow = page.locator(".leaf[data-thread-id]").first();
     await threadRow.waitFor({ timeout: 15000 });
     await threadRow.locator(".leaf__title", { hasText: "회원 목록" }).waitFor({ timeout: 15000 });
-    const threadCount = await page.locator(".leaf[data-thread-id]").count();
+    const threadTitles = await page.locator(".leaf[data-thread-id] .leaf__title").allInnerTexts();
+    const pinThreads = threadTitles.filter((title) => title.trim() !== "연결 준비");
     check(
       "the pin opened exactly one thread, named after the screen",
-      threadCount === 1,
-      `threads:${threadCount}`,
+      pinThreads.length === 1 && pinThreads[0].includes("회원 목록"),
+      `threads:${threadTitles.join(", ")}`,
     );
 
     // --- ⓖ 봉투가 shot 을 실어 온다 (D87): the card draws the crop ----------
@@ -855,7 +859,7 @@ async function main() {
     );
 
     // --- ⓛ 화면 보여 주기 (D89) ---------------------------------------------
-    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 AI에게 보여 주기" }).click();
     await page.getByLabel("화면 보여 주기에 덧붙이는 말").fill("가운데 정렬이 풀려 있어요");
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const lookCard = page.locator(".machine--error").last();
@@ -882,7 +886,7 @@ async function main() {
     // The stop button is the running turn's own lamp: waiting for it makes
     // the precondition explicit instead of racing the send pipeline.
     await page.locator(".toolbar__stop").waitFor({ timeout: 30000 });
-    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 AI에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     const blocked = await page
       .locator(".notice--info")
@@ -896,7 +900,7 @@ async function main() {
     await page.locator(".toolbar__stop").click();
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     // Settled: the real repeat carries the 두 번째 요청 mark.
-    await page.getByRole("button", { name: "이 화면 Claude에게 보여 주기" }).click();
+    await page.getByRole("button", { name: "이 화면 AI에게 보여 주기" }).click();
     await page.locator(".frame__lookform").getByRole("button", { name: "보내기" }).click();
     await page.waitForFunction(
       () => document.querySelectorAll(".machine--error").length >= 2,
@@ -1052,17 +1056,23 @@ async function main() {
 
     // --- the address bar's line (D66) — kept from the previous suite --------
     const foreign = page.locator('[data-testid="preview-address"]');
+    const tabsBefore = await page.evaluate(() => window.coloDesignDesktop.preview.tabs());
     await foreign.fill("https://example.com");
     await foreign.press("Enter");
-    await page.waitForSelector(".frame__addrerror", { timeout: 5000 });
-    const refused = await page.locator(".frame__addrerror").innerText();
+    // 인앱 브라우저 1단계(규칙 9): 활성 preview 탭의 off-origin 전체 주소는
+    // 거절 배너 대신 새 web 탭으로 열린다 — 거절은 경로 입력의 몫으로 남는다.
+    await page.waitForTimeout(500);
+    const tabsAfter = await page.evaluate(() => window.coloDesignDesktop.preview.tabs());
+    const roamed = tabsAfter.tabs.find((tab) => tab.id === tabsAfter.activeTabId);
     const urlAfter = await viewUrl(app);
     check(
-      "another origin is refused in place",
-      refused.includes("미리보기 서버 안의 주소만") &&
+      "an off-origin address opens a web tab instead of being refused",
+      tabsAfter.tabs.length === tabsBefore.tabs.length + 1 &&
+        roamed?.kind === "web" &&
+        (roamed.url ?? "").includes("example.com") &&
         typeof urlAfter === "string" &&
-        urlAfter.includes("member/MemberList"),
-      `${refused} · ${urlAfter ?? ""}`,
+        urlAfter.includes("example.com"),
+      `${JSON.stringify(roamed)} · ${urlAfter ?? ""}`,
     );
 
     check("no uncaught renderer errors", errors.length === 0, errors.slice(0, 2).join(" | "));

@@ -42,6 +42,8 @@ export class JsonRpcTransport {
     });
     // The agent's own log stream — useful in the daemon log, never parsed.
     this.proc.stderr?.on("data", () => undefined);
+    // An EPIPE racing the agent's exit must not become an uncaughtException.
+    this.proc.stdin?.on("error", () => undefined);
     this.lines = createInterface({ input: this.proc.stdout ?? process.stdout });
     this.lines.on("line", (line) => this.onLine(line));
     const end = (exitCode: number | null) => {
@@ -109,14 +111,32 @@ export class JsonRpcTransport {
     this.proc.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  /** A client → agent request; resolves with the result or rejects on error/close. */
-  request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  /**
+   * A client → agent request; resolves with the result or rejects on
+   * error/close. `timeoutMs` bounds control-plane calls — a wedged agent
+   * that never answers must not hang an interrupt forever. Omit it for
+   * turn-length calls (`session/prompt`, `turn/*` work).
+   */
+  request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T> {
     if (this.ended) return Promise.reject(new Error("JSON-RPC transport closed"));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
+      const timer =
+        timeoutMs !== undefined
+          ? setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error(`JSON-RPC ${method} timed out after ${timeoutMs}ms`));
+            }, timeoutMs)
+          : undefined;
       this.pending.set(id, {
-        resolve: resolve as (value: unknown) => void,
-        reject,
+        resolve: (value: unknown) => {
+          clearTimeout(timer);
+          resolve(value as T);
+        },
+        reject: (error: Error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
       });
       this.write({ jsonrpc: "2.0", id, method, params: params ?? {} });
     });

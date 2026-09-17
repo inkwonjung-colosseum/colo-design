@@ -49,7 +49,15 @@ function tone(pct: number): "" | "warn" | "danger" {
   return pct >= 85 ? "danger" : pct >= 60 ? "warn" : "";
 }
 
-export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefresh?: () => void }) {
+export function UsageChip({
+  plan,
+  providerLabel,
+  onRefresh,
+}: {
+  plan: PlanUsage | null;
+  providerLabel?: string | null;
+  onRefresh?: () => void;
+}) {
   const [open, setOpen] = useState(false);
 
   /**
@@ -154,7 +162,7 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
             ? undefined
             : lead.resetsAt
               ? `${faceWord} · ${lead.label} 한도는 ${clockTime(lead.resetsAt)}에 다시 채워집니다`
-              : `${faceWord} — Claude를 얼마나 썼는지 봅니다`
+              : `${faceWord} — AI를 얼마나 썼는지 봅니다`
         }
       >
         <button
@@ -216,6 +224,12 @@ export function UsageChip({ plan, onRefresh }: { plan: PlanUsage | null; onRefre
               {worst.pct >= 85 ? "거의 찼어요" : worst.pct >= 60 ? "차오르는 중" : "여유로워요"}
             </span>
           </span>
+          {plan?.provider && (
+            <span className="usage__note">
+              {providerLabel ?? plan.provider} 계정
+              {plan.subscriptionType ? ` · ${plan.subscriptionType}` : ""}
+            </span>
+          )}
           {entries.map((row) => (
             <span key={row.label} className="usage__metric">
               <span className="usage__metric-head">

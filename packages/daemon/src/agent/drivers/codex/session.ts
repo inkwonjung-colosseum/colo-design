@@ -10,7 +10,6 @@ import type {
   DriverHooks,
   LaunchConfig,
   PermissionVerdict,
-  SessionHandle,
   ToolClass,
   Turn,
 } from "../../driver.js";
@@ -34,6 +33,21 @@ const CODEX_MODES: Record<string, { approvalPolicy: string; sandbox: string }> =
   bypass: { approvalPolicy: "never", sandbox: "danger-full-access" },
 };
 
+/**
+ * The mode rows both surfaces share — the descriptor's tiered table and the
+ * composer's chip rows. One list, two shapes.
+ */
+export const CODEX_MODE_ROWS: Array<{
+  id: string;
+  label: string;
+  tier: "safe" | "moderate" | "planning" | "dangerous";
+  description: string;
+}> = [
+  { id: "default", label: "Default", tier: "moderate", description: "Ask before running commands" },
+  { id: "plan", label: "Plan", tier: "planning", description: "Read-only — never runs or writes" },
+  { id: "bypass", label: "Bypass", tier: "dangerous", description: "Full access, never asks" },
+];
+
 /** `thread/*` takes a SandboxMode string; `turn/start` takes the full policy. */
 function sandboxPolicy(modeId: string, cwd: string): Wire {
   switch (CODEX_MODES[modeId]?.sandbox ?? "workspace-write") {
@@ -50,6 +64,65 @@ function sandboxPolicy(modeId: string, cwd: string): Wire {
         excludeSlashTmp: false,
       };
   }
+}
+
+/**
+ * The `account/rateLimits/read` answer as the protocol's plan reading. Codex
+ * names its own windows, so the buckets are classified by duration: ≤12h is
+ * the short window, longer is weekly, and every extra metered limit lands in
+ * modelWeekly under its own name. Pure, and exported for the mapper test —
+ * this classification is the only bridge between the app-server's answer and
+ * the chip's rows, so it is tested without an app-server in the way.
+ */
+export function toPlanUsage(result: Wire): PlanUsage {
+  const snapshots: Wire[] = [];
+  if (result?.rateLimits) snapshots.push(result.rateLimits as Wire);
+  const byId = result?.rateLimitsByLimitId as Wire | null | undefined;
+  if (byId) {
+    for (const [key, snapshot] of Object.entries(byId)) {
+      if (key !== (result.rateLimits as Wire)?.limitId) snapshots.push(snapshot as Wire);
+    }
+  }
+  const plan: PlanUsage = {
+    provider: "codex",
+    subscriptionType: null,
+    fiveHour: null,
+    sevenDay: null,
+    modelWeekly: [],
+  };
+  for (const snapshot of snapshots) {
+    if (typeof snapshot?.planType === "string" && !plan.subscriptionType) {
+      plan.subscriptionType = snapshot.planType;
+    }
+    const windows: Array<{ window: Wire; label: string | null }> = [];
+    if (snapshot?.primary) {
+      windows.push({ window: snapshot.primary as Wire, label: null });
+    }
+    if (snapshot?.secondary) {
+      windows.push({ window: snapshot.secondary as Wire, label: null });
+    }
+    for (const { window } of windows) {
+      const mapped = {
+        utilization: typeof window.usedPercent === "number" ? window.usedPercent : null,
+        resetsAt:
+          typeof window.resetsAt === "number"
+            ? new Date(window.resetsAt * 1000).toISOString()
+            : null,
+      };
+      const mins = Number(window.windowDurationMins ?? 0);
+      if (mins > 0 && mins <= 720 && !plan.fiveHour) {
+        plan.fiveHour = mapped;
+      } else if (mins > 0 && mins <= 11000 && !plan.sevenDay) {
+        plan.sevenDay = mapped;
+      } else {
+        plan.modelWeekly.push({
+          ...mapped,
+          label: String(snapshot?.limitName ?? snapshot?.limitId ?? "limit"),
+        });
+      }
+    }
+  }
+  return plan;
 }
 
 /**
@@ -70,17 +143,15 @@ export class CodexAgentSession implements AgentSession {
   private threadId: string | null = null;
   private closed = false;
   private turnStartedAt = 0;
-  /** The turn the server says is in progress — steer's precondition. */
+  /** The turn the server says is in progress — interrupt's target. */
   private activeTurnId: string | null = null;
   /** Resolves when the in-flight `turn/start`'s turn completes. */
   private turnDone: Promise<void> | null = null;
   private markTurnDone: (() => void) | null = null;
   /**
-   * Resolves once the in-flight `turn/start` has answered — steer must not
-   * read `activeTurnId` while the server is still naming the turn, or a
-   * steer sent moments after a send would open a SECOND turn instead of
-   * joining the first. The core fires `send()` without awaiting it, so that
-   * window is reachable by a fast planner.
+   * Resolves once the in-flight `turn/start` has answered — interrupt must
+   * not read `activeTurnId` while the server is still naming the turn. The
+   * core fires `send()` without awaiting it, so that window is reachable.
    */
   private turnAccepted: Promise<void> | null = null;
   private markTurnAccepted: (() => void) | null = null;
@@ -93,9 +164,14 @@ export class CodexAgentSession implements AgentSession {
   /** Items whose deltas already streamed — completed items don't re-emit. */
   private readonly streamedItems = new Set<string>();
   private readonly launch: LaunchConfig;
+  /** One `turn/start` at a time — concurrent sends would clobber the slots. */
+  private sendChain: Promise<void> = Promise.resolve();
+
+  get alive(): boolean {
+    return !this.closed && this.transport.alive;
+  }
 
   constructor(
-    private readonly providerId: string,
     command: string,
     launch: LaunchConfig,
     private readonly hooks: DriverHooks,
@@ -112,23 +188,23 @@ export class CodexAgentSession implements AgentSession {
     this.ready = this.handshake();
   }
 
-  handle(): SessionHandle {
-    return { provider: this.providerId, vendorSessionId: this.threadId ?? "" };
-  }
-
   // -------------------------------------------------------------------------
   // Handshake — initialize, then start/resume/fork the thread.
   // -------------------------------------------------------------------------
 
   private async handshake(): Promise<void> {
-    await this.transport.request("initialize", {
-      clientInfo: { name: "colo-design", title: null, version: "0" },
-      capabilities: {
-        // steer, item/* approvals and skills/list live behind this flag.
-        experimentalApi: true,
-        requestAttestation: false,
+    await this.transport.request(
+      "initialize",
+      {
+        clientInfo: { name: "colo-design", title: null, version: "0" },
+        capabilities: {
+          // steer, item/* approvals and skills/list live behind this flag.
+          experimentalApi: true,
+          requestAttestation: false,
+        },
       },
-    });
+      15_000,
+    );
     this.transport.notify("initialized");
 
     const resumeId = typeof this.launch.resume === "string" ? this.launch.resume : null;
@@ -141,22 +217,34 @@ export class CodexAgentSession implements AgentSession {
     if (resumeId && fork && cut) {
       // D95 truncating fork: keep the source thread through `cut`, drop the
       // rest, continue as a fresh thread id.
-      response = (await this.transport.request("thread/fork", {
-        threadId: resumeId,
-        lastTurnId: cut,
-        ...overrides,
-      })) as Wire;
+      response = (await this.transport.request(
+        "thread/fork",
+        {
+          threadId: resumeId,
+          lastTurnId: cut,
+          ...overrides,
+        },
+        30_000,
+      )) as Wire;
     } else if (resumeId && !fork) {
-      response = (await this.transport.request("thread/resume", {
-        threadId: resumeId,
-        ...overrides,
-      })) as Wire;
+      response = (await this.transport.request(
+        "thread/resume",
+        {
+          threadId: resumeId,
+          ...overrides,
+        },
+        30_000,
+      )) as Wire;
     } else {
       // fork without a cut means "keep nothing" — a fresh thread IS that fork.
-      response = (await this.transport.request("thread/start", {
-        cwd: this.launch.cwd,
-        ...overrides,
-      })) as Wire;
+      response = (await this.transport.request(
+        "thread/start",
+        {
+          cwd: this.launch.cwd,
+          ...overrides,
+        },
+        30_000,
+      )) as Wire;
     }
 
     const thread = (response?.thread ?? {}) as Wire;
@@ -177,7 +265,6 @@ export class CodexAgentSession implements AgentSession {
   /** The per-thread overrides every thread/* call carries. */
   private threadOverrides(): Wire {
     const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
-    const config = this.configOverlay();
     return {
       ...(this.launch.model ? { model: this.launch.model } : {}),
       approvalPolicy: mode.approvalPolicy,
@@ -185,25 +272,6 @@ export class CodexAgentSession implements AgentSession {
       ...(this.launch.appendSystemPrompt
         ? { developerInstructions: this.launch.appendSystemPrompt }
         : {}),
-      ...(config ? { config } : {}),
-    };
-  }
-
-  /**
-   * Launch-time MCP servers ride the thread's config overlay — codex keeps
-   * its own `mcp_servers` table, so the capability stays off but a launch
-   * that carries servers still tries to hand them over.
-   */
-  private configOverlay(): Wire | null {
-    const servers = Object.entries(this.launch.mcpServers ?? {});
-    if (servers.length === 0) return null;
-    return {
-      mcp_servers: Object.fromEntries(
-        servers.map(([name, s]) => [
-          name,
-          { url: s.url, ...(s.headers ? { http_headers: s.headers } : {}) },
-        ]),
-      ),
     };
   }
 
@@ -212,6 +280,12 @@ export class CodexAgentSession implements AgentSession {
   // -------------------------------------------------------------------------
 
   async send(turn: Turn): Promise<void> {
+    const run = this.sendChain.then(() => this.doSend(turn));
+    this.sendChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doSend(turn: Turn): Promise<void> {
     await this.ready;
     if (this.closed || !this.transport.alive) throw new Error("Codex transport closed");
     const threadId = this.threadId;
@@ -234,7 +308,7 @@ export class CodexAgentSession implements AgentSession {
         // The acceptance answer names the turn before turn/started lands.
         this.activeTurnId = String(result?.turn?.id ?? "") || this.activeTurnId;
       } finally {
-        // Open the gate even on rejection — a waiting steer must not hang.
+        // Open the gate even on rejection — a waiting interrupt must not hang.
         this.markTurnAccepted?.();
         this.markTurnAccepted = null;
       }
@@ -258,32 +332,8 @@ export class CodexAgentSession implements AgentSession {
   }
 
   /**
-   * Mid-turn input. `turn/steer` needs the live turn id as a precondition;
-   * with no active turn the words are simply the next turn.
-   */
-  async steer(turn: Turn): Promise<void> {
-    await this.ready;
-    // A send issued moments ago may still be learning its turn id.
-    if (this.turnAccepted) await this.turnAccepted;
-    const threadId = this.threadId;
-    if (!threadId || this.closed) return;
-    const expectedTurnId = this.activeTurnId;
-    if (expectedTurnId) {
-      await this.transport.request("turn/steer", {
-        threadId,
-        expectedTurnId,
-        input: this.userInput(turn),
-      });
-      return;
-    }
-    await this.transport.request("turn/start", this.turnStartParams(threadId, turn));
-  }
-
-  /**
    * `turn/start`'s params. Mode, model and effort are per-turn overrides, so
-   * this is where a stored pick becomes real — and why both callers share it:
-   * a steer that opens its own turn must run under the same settings a plain
-   * send would, or the mode chip would be lying for that one turn.
+   * this is where a stored pick becomes real.
    */
   private turnStartParams(threadId: string, turn: Turn): Wire {
     const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
@@ -300,11 +350,13 @@ export class CodexAgentSession implements AgentSession {
   async interrupt(): Promise<"answered" | "timeout" | "dead"> {
     await this.ready.catch(() => undefined);
     if (!this.transport.alive) return "dead";
+    // A send in flight is still naming its turn — wait for the answer.
+    if (this.turnAccepted) await this.turnAccepted;
     const threadId = this.threadId;
     const turnId = this.activeTurnId;
     if (!threadId || !turnId) return "answered";
     try {
-      await this.transport.request("turn/interrupt", { threadId, turnId });
+      await this.transport.request("turn/interrupt", { threadId, turnId }, 10_000);
     } catch {
       // The turn may have completed as the request flew — that IS the answer.
       if (!this.transport.alive) return "dead";
@@ -342,20 +394,30 @@ export class CodexAgentSession implements AgentSession {
     this.currentEffort = effort;
   }
 
-  async modes(): Promise<Array<{ id: string; label: string; description?: string }> | null> {
-    return [
-      { id: "default", label: "Default", description: "Ask before running commands" },
-      { id: "plan", label: "Plan", description: "Read-only — never runs or writes" },
-      { id: "bypass", label: "Bypass", description: "Full access, never asks" },
-    ];
+  async modes(): Promise<Array<{
+    id: string;
+    label: string;
+    description?: string;
+    tier?: string;
+  }> | null> {
+    return CODEX_MODE_ROWS.map(({ id, label, description, tier }) => ({
+      id,
+      label,
+      description,
+      tier,
+    }));
   }
 
   async commands(): Promise<SessionCommand[]> {
     await this.ready;
     try {
-      const result = (await this.transport.request("skills/list", {
-        cwds: [this.launch.cwd],
-      })) as Wire;
+      const result = (await this.transport.request(
+        "skills/list",
+        {
+          cwds: [this.launch.cwd],
+        },
+        10_000,
+      )) as Wire;
       const entries = Array.isArray(result?.data) ? (result.data as Wire[]) : [];
       return entries.flatMap((entry) =>
         (Array.isArray(entry?.skills) ? (entry.skills as Wire[]) : [])
@@ -378,9 +440,13 @@ export class CodexAgentSession implements AgentSession {
       const rows: Wire[] = [];
       let cursor: string | null = null;
       do {
-        const page = (await this.transport.request("model/list", {
-          ...(cursor ? { cursor } : {}),
-        })) as Wire;
+        const page = (await this.transport.request(
+          "model/list",
+          {
+            ...(cursor ? { cursor } : {}),
+          },
+          10_000,
+        )) as Wire;
         rows.push(...(Array.isArray(page?.data) ? (page.data as Wire[]) : []));
         cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
       } while (cursor);
@@ -406,61 +472,15 @@ export class CodexAgentSession implements AgentSession {
   }
 
   /**
-   * `account/rateLimits/read` — codex names its own windows, so the buckets
-   * are classified by duration: ≤12h is the short window, longer is weekly,
-   * and every extra metered limit lands in modelWeekly under its own name.
+   * `account/rateLimits/read` — the window classification lives in the pure
+   * `toPlanUsage` above; this only asks and maps.
    */
   async usage(): Promise<PlanUsage | null> {
     await this.ready;
     try {
-      const result = (await this.transport.request("account/rateLimits/read")) as Wire;
-      const snapshots: Wire[] = [];
-      if (result?.rateLimits) snapshots.push(result.rateLimits as Wire);
-      const byId = result?.rateLimitsByLimitId as Wire | null | undefined;
-      if (byId) {
-        for (const [key, snapshot] of Object.entries(byId)) {
-          if (key !== (result.rateLimits as Wire)?.limitId) snapshots.push(snapshot as Wire);
-        }
-      }
-      const plan: PlanUsage = {
-        subscriptionType: null,
-        fiveHour: null,
-        sevenDay: null,
-        modelWeekly: [],
-      };
-      for (const snapshot of snapshots) {
-        if (typeof snapshot?.planType === "string" && !plan.subscriptionType) {
-          plan.subscriptionType = snapshot.planType;
-        }
-        const windows: Array<{ window: Wire; label: string | null }> = [];
-        if (snapshot?.primary) {
-          windows.push({ window: snapshot.primary as Wire, label: null });
-        }
-        if (snapshot?.secondary) {
-          windows.push({ window: snapshot.secondary as Wire, label: null });
-        }
-        for (const { window } of windows) {
-          const mapped = {
-            utilization: typeof window.usedPercent === "number" ? window.usedPercent : null,
-            resetsAt:
-              typeof window.resetsAt === "number"
-                ? new Date(window.resetsAt * 1000).toISOString()
-                : null,
-          };
-          const mins = Number(window.windowDurationMins ?? 0);
-          if (mins > 0 && mins <= 720 && !plan.fiveHour) {
-            plan.fiveHour = mapped;
-          } else if (mins > 0 && mins <= 11000 && !plan.sevenDay) {
-            plan.sevenDay = mapped;
-          } else {
-            plan.modelWeekly.push({
-              ...mapped,
-              label: String(snapshot?.limitName ?? snapshot?.limitId ?? "limit"),
-            });
-          }
-        }
-      }
-      return plan;
+      return toPlanUsage(
+        (await this.transport.request("account/rateLimits/read", undefined, 10_000)) as Wire,
+      );
     } catch {
       return null;
     }
@@ -477,7 +497,10 @@ export class CodexAgentSession implements AgentSession {
       percentage: size > 0 ? Math.min(100, Math.round((used / size) * 100)) : 0,
       sessionCostUsd: null,
       model: this.currentModel ?? "",
-      plan: null,
+      // The plan reading rides along, claude-parity (one extra account read
+      // per settle, and only for a thread that has answered at least once —
+      // the guard above is what keeps a fresh thread from asking).
+      plan: await this.usage(),
     };
   }
 

@@ -101,6 +101,39 @@
   --code-scale: 1.1;
 }
 
+/* Every scaled size in the stylesheet is a token from this block, never a
+   bare calc: the axis decision (which knob a size rides) lives here and
+   nowhere else. The suffix is the base px × 10 — --font-ui-115 is 11.5px
+   at 보통 — so a rename is an audit, and a later ladder normalization is
+   an edit to this one block. */
+:root {
+  --font-ui-90: calc(9px * var(--ui-scale));
+  --font-ui-95: calc(9.5px * var(--ui-scale));
+  --font-ui-100: calc(10px * var(--ui-scale));
+  --font-ui-105: calc(10.5px * var(--ui-scale));
+  --font-ui-110: calc(11px * var(--ui-scale));
+  --font-ui-115: calc(11.5px * var(--ui-scale));
+  --font-ui-120: calc(12px * var(--ui-scale));
+  --font-ui-125: calc(12.5px * var(--ui-scale));
+  --font-ui-130: calc(13px * var(--ui-scale));
+  --font-ui-135: calc(13.5px * var(--ui-scale));
+  --font-ui-140: calc(14px * var(--ui-scale));
+  --font-ui-150: calc(15px * var(--ui-scale));
+  --font-ui-160: calc(16px * var(--ui-scale));
+  --font-ui-170: calc(17px * var(--ui-scale));
+  --font-ui-200: calc(20px * var(--ui-scale));
+  --font-ui-240: calc(24px * var(--ui-scale));
+  --font-ui-340: calc(34px * var(--ui-scale));
+  --font-content-120: calc(12px * var(--content-scale));
+  --font-content-125: calc(12.5px * var(--content-scale));
+  --font-content-130: calc(13px * var(--content-scale));
+  --font-content-135: calc(13.5px * var(--content-scale));
+  --font-content-140: calc(14px * var(--content-scale));
+  --font-code-110: calc(11px * var(--code-scale));
+  --font-code-115: calc(11.5px * var(--code-scale));
+  --font-code-120: calc(12px * var(--code-scale));
+}
+
 /* Light theme. The same console, on paper: identical structure, one palette
    swap. `data-theme` is set by the settings panel — "system" resolves to
    dark or light before it lands on the element, so no media query here. */
@@ -766,7 +799,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: calc(15px * var(--ui-scale)) / 1.6 var(--sans);
+  font: var(--font-ui-150) / 1.6 var(--sans);
   letter-spacing: -0.006em;
   /* Korean reads in words, not syllables: lines break at word edges, and an
      unbreakable token (a long path, a url) still gives way instead of pushing
@@ -785,7 +818,7 @@ body {
 /* Buttons are words a planner reads, so they are set in the reading face.
    Monospace on a button was a console affectation. */
 button {
-  font: 500 calc(13.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-135) var(--sans);
   cursor: pointer;
   color: inherit;
 }
@@ -1006,16 +1039,16 @@ select {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
 }
 .connect h1 {
   margin: 0;
-  font: 600 calc(17px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-170) var(--sans);
   color: var(--text);
   letter-spacing: -0.01em;
 }
 .connect h1 .brand-name {
-  font: 700 calc(17px * var(--ui-scale)) var(--sans);
+  font: 700 var(--font-ui-170) var(--sans);
   letter-spacing: -0.01em;
 }
 .connect p {
@@ -1033,7 +1066,7 @@ select {
 .connect__stepnum {
   flex: none;
   color: var(--muted);
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
 }
 .connect__cmd {
   flex: 1;
@@ -1045,7 +1078,7 @@ select {
   border-radius: var(--r-md);
   padding: 8px 11px;
   font-family: var(--mono);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   margin: 0;
   color: var(--text-2);
 }
@@ -1069,7 +1102,7 @@ select {
 .connect__inputrow input {
   flex: 1;
   font-family: var(--mono);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
 }
 
 /* ---------------------------------------------------------------- layout */
@@ -1078,7 +1111,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font: 700 calc(13.5px * var(--ui-scale)) var(--sans);
+  font: 700 var(--font-ui-135) var(--sans);
   letter-spacing: -0.01em;
   color: var(--text);
 }
@@ -1111,7 +1144,7 @@ select {
 }
 .hint {
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   margin: 0;
 }
 /* Counts and clocks read in columns: timestamps, badges and change numbers
@@ -1125,7 +1158,7 @@ select {
 }
 
 .tag {
-  font: 500 calc(10px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-100) var(--mono);
   background: transparent;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -1178,7 +1211,7 @@ select {
   background: var(--panel);
   box-shadow: var(--shadow-card);
   animation: livebreathe 2.4s ease-in-out infinite;
-  font: 600 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-125) var(--sans);
   color: var(--text-2);
 }
 .turnlive .spinner {
@@ -1267,14 +1300,14 @@ select {
 }
 .empty__lead {
   margin: 0;
-  font: 600 calc(16px * var(--ui-scale)) / 1.6 var(--sans);
+  font: 600 var(--font-ui-160) / 1.6 var(--sans);
   color: var(--text);
   letter-spacing: -0.012em;
 }
 .empty__sub {
   max-width: 44ch;
   margin: 7px auto 0;
-  font: 400 calc(13px * var(--ui-scale)) / 1.65 var(--sans);
+  font: 400 var(--font-ui-130) / 1.65 var(--sans);
   color: var(--muted);
 }
 /* The one-click starts: three sentences that become the draft verbatim.
@@ -1297,7 +1330,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--text-2);
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   letter-spacing: -0.005em;
   transition:
     color 0.15s,
@@ -1309,7 +1342,7 @@ select {
 .empty__starter::before {
   content: "❯";
   margin-right: 7px;
-  font: 600 calc(10px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-100) var(--mono);
   color: var(--muted);
   transition: color 0.15s;
 }
@@ -1350,7 +1383,7 @@ select {
   max-width: none;
   position: relative;
   color: var(--text);
-  font-size: calc(13.5px * var(--content-scale));
+  font-size: var(--font-content-135);
   line-height: 1.62;
   /* The planner typed the line breaks; the tape keeps them. */
   white-space: pre-wrap;
@@ -1370,7 +1403,7 @@ select {
   height: 17px;
   display: grid;
   place-items: center;
-  font: 600 calc(9.5px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-95) var(--mono);
   color: var(--accent);
   background: var(--accent-soft);
   border-radius: 6px;
@@ -1392,7 +1425,7 @@ select {
 .sysline {
   margin: 0;
   padding: 2px 0 2px 20px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   color: var(--muted);
 }
 
@@ -1403,13 +1436,12 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
   padding: 4px 11px 4px 9px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   transition:
     color 0.12s,
     border-color 0.12s,
@@ -1419,7 +1451,7 @@ select {
 .revert::before {
   content: "↺";
   font-family: var(--mono);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   line-height: 1;
 }
 .revert:hover:not(:disabled) {
@@ -1441,7 +1473,7 @@ select {
   background: transparent;
   border: 0;
   color: var(--text-2);
-  font-size: calc(14px * var(--content-scale));
+  font-size: var(--font-content-140);
   line-height: 1.72;
 }
 
@@ -1516,7 +1548,7 @@ select {
   background: none;
   border: 0;
   padding: 0;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   line-height: 1.55;
   color: var(--text-2);
 }
@@ -1578,7 +1610,7 @@ select {
   border-radius: var(--r-lg);
   padding: 7px 11px 8px;
   background: color-mix(in srgb, var(--panel) 55%, transparent);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 .thinking summary {
   cursor: pointer;
@@ -1586,7 +1618,7 @@ select {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   color: var(--muted);
   list-style: none;
   user-select: none;
@@ -1598,7 +1630,7 @@ select {
   content: "▸";
   flex: none;
   color: var(--muted);
-  font-size: calc(9px * var(--ui-scale));
+  font-size: var(--font-ui-90);
   transition: transform 0.15s var(--drift);
 }
 .thinking[open] summary::before {
@@ -1636,7 +1668,7 @@ select {
 .thinking pre {
   white-space: pre-wrap;
   font-family: var(--mono);
-  font-size: calc(11.5px * var(--code-scale));
+  font-size: var(--font-code-115);
   line-height: 1.6;
   margin: 8px 0 2px;
   padding: 9px 11px;
@@ -1689,7 +1721,7 @@ select {
   height: 15px;
   display: grid;
   place-items: center;
-  font-size: calc(10px * var(--ui-scale));
+  font-size: var(--font-ui-100);
 }
 .tool__sign--running {
   color: var(--ok);
@@ -1713,12 +1745,12 @@ select {
 }
 
 .tool__name {
-  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-115) var(--mono);
   color: var(--accent);
   flex-shrink: 0;
 }
 .tool__headline {
-  font: 400 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 400 var(--font-ui-115) var(--mono);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1727,12 +1759,12 @@ select {
 }
 .tool__status--running {
   color: var(--muted);
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   flex: none;
 }
 .tool__status--error {
   color: var(--danger);
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   flex: none;
 }
 
@@ -1754,7 +1786,7 @@ select {
   flex: none;
 }
 .tool__act {
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   color: var(--muted);
   padding: 2px 6px;
   border-radius: var(--r-sm);
@@ -1772,14 +1804,14 @@ select {
   border-top: 1px solid var(--line-soft);
 }
 .tool__tasktext {
-  font: 400 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-115) var(--sans);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tool__taskmeta {
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--muted-2, var(--muted));
   flex: none;
 }
@@ -1802,12 +1834,12 @@ select {
   text-align: left;
 }
 .subagent__label {
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--muted);
   flex: none;
 }
 .subagent__peek {
-  font: 400 calc(11px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-110) var(--sans);
   color: var(--muted);
   opacity: 0.8;
   overflow: hidden;
@@ -1821,7 +1853,7 @@ select {
   padding: 4px 0 6px;
 }
 .subagent__say {
-  font-size: calc(12.5px * var(--content-scale));
+  font-size: var(--font-content-125);
   line-height: 1.6;
   color: var(--fg);
   padding: 2px 4px;
@@ -1833,7 +1865,7 @@ select {
   background: var(--bg);
 }
 .tool__label {
-  font: 500 calc(9.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-95) var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--muted);
@@ -1845,7 +1877,7 @@ select {
 .tool pre,
 .card pre {
   font-family: var(--mono);
-  font-size: calc(11.5px * var(--code-scale));
+  font-size: var(--font-code-115);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1860,7 +1892,7 @@ select {
 .notice {
   border-radius: var(--r-lg);
   padding: 8px 12px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   border: 1px solid var(--line);
   background: var(--bg-2);
   display: flex;
@@ -1881,6 +1913,28 @@ select {
   border-color: var(--danger-line);
   background: var(--danger-soft);
 }
+
+/* 요약 경계 — a divider, not a banner: hairlines carry the line, the
+   sentence sits in the gap. No border, no tint; it marks time, not state. */
+.notice--compact {
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  background: none;
+  padding: 4px 12px;
+  color: var(--faint);
+}
+.notice--compact::before,
+.notice--compact::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+.notice--compact .notice__text {
+  flex: none;
+}
 .notice__text {
   flex: 1;
   word-break: break-word;
@@ -1899,7 +1953,7 @@ select {
   align-items: center;
   justify-content: center;
   padding: 0;
-  font-size: calc(14px * var(--ui-scale));
+  font-size: var(--font-ui-140);
   line-height: 1;
 }
 .notice__close:hover {
@@ -1952,7 +2006,7 @@ select {
 }
 .plan__lead {
   margin: 0;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   color: var(--text-2);
 }
 .card__plan {
@@ -1965,7 +2019,7 @@ select {
 }
 
 .card__title {
-  font: 600 calc(13px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-130) var(--sans);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1974,7 +2028,7 @@ select {
 .card__title strong {
   color: var(--accent);
   font-family: var(--mono);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
 }
 .card--question .card__title strong {
   color: var(--warn);
@@ -1990,7 +2044,7 @@ select {
 
 .card__headline {
   font-family: var(--mono);
-  font-size: calc(11.5px * var(--code-scale));
+  font-size: var(--font-code-115);
   line-height: 1.55;
   background: var(--bg);
   border: 1px solid var(--line-soft);
@@ -2004,7 +2058,7 @@ select {
   color: var(--text-2);
 }
 .card__details summary {
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -2042,13 +2096,26 @@ select {
   gap: 6px;
 }
 .question__header {
-  font: 500 calc(10px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-100) var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--muted);
 }
+.question__multi,
+.question__unanswered {
+  margin-left: 8px;
+  font: 500 var(--font-ui-105) var(--sans);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.question__multi {
+  color: var(--muted);
+}
+.question__unanswered {
+  color: var(--warn);
+}
 .question__text {
-  font-size: calc(13.5px * var(--content-scale));
+  font-size: var(--font-content-135);
   font-weight: 550;
   color: var(--text);
 }
@@ -2081,11 +2148,11 @@ select {
   background: var(--accent-soft);
 }
 .option__label {
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   font-weight: 600;
 }
 .option__description {
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
   color: var(--muted);
   line-height: 1.45;
 }
@@ -2111,7 +2178,7 @@ select {
 .option__previewtext {
   margin: 6px 0 0;
   padding: 8px;
-  font: 400 calc(11px * var(--code-scale)) var(--mono);
+  font: 400 var(--font-code-110) var(--mono);
   color: var(--muted);
   background: var(--bg);
   border: 1px solid var(--line-soft);
@@ -2158,7 +2225,7 @@ select {
   background: transparent;
   border: 0;
   padding: 2px 0;
-  font-size: calc(14px * var(--ui-scale));
+  font-size: var(--font-ui-140);
   line-height: 1.55;
   color: var(--text);
 }
@@ -2194,8 +2261,21 @@ select {
   background: var(--warn-soft);
 }
 .queued__head {
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font: 500 var(--font-ui-115) var(--sans);
   color: var(--muted);
+}
+.queued__clear {
+  flex: none;
+  padding: 0 4px;
+  font-size: var(--font-ui-110);
+}
+.queued__action--now {
+  font: 600 var(--font-ui-110) var(--sans);
+  white-space: nowrap;
 }
 .composer__lost .queued__head {
   color: var(--warn);
@@ -2209,7 +2289,7 @@ select {
   align-items: center;
   gap: 7px;
   margin: 0 2px 6px;
-  font: 400 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-115) var(--sans);
   color: var(--muted);
 }
 .composer__tasks {
@@ -2233,7 +2313,7 @@ select {
   gap: 6px;
   max-width: 100%;
   padding: 5px 10px;
-  font: 400 calc(12px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-120) var(--sans);
   color: var(--muted);
   background: var(--panel-2);
   border: 1px dashed var(--line);
@@ -2254,6 +2334,12 @@ select {
 .composer__nextclose {
   flex: none;
   color: var(--muted);
+}
+.composer__hint {
+  margin: 0 2px;
+  text-align: center;
+  font: 400 var(--font-ui-115) var(--sans);
+  color: var(--faint);
 }
 .queued__list {
   list-style: none;
@@ -2280,12 +2366,12 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-125) var(--sans);
   color: var(--text-2);
 }
 .queued__meta {
   flex: none;
-  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-110) var(--mono);
   color: var(--muted);
 }
 .queued__action {
@@ -2306,7 +2392,7 @@ select {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   padding: 2px 5px 2px 3px;
-  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-110) var(--mono);
   color: var(--text-2);
 }
 .chip__thumb {
@@ -2327,7 +2413,7 @@ select {
   justify-content: center;
   padding: 0;
   margin-right: -6px;
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
   line-height: 1;
   color: var(--muted);
 }
@@ -2355,13 +2441,13 @@ select {
 }
 .pintray__title {
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   font-weight: 600;
 }
 .pintray__clear {
   margin-left: auto;
   padding: 0 4px;
-  font-size: calc(11.5px * var(--ui-scale));
+  font-size: var(--font-ui-115);
   color: var(--muted);
 }
 .pintray__clear:hover {
@@ -2385,7 +2471,7 @@ select {
   width: 16px;
   text-align: center;
   color: var(--muted);
-  font: 600 calc(11px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-110) var(--mono);
 }
 .pintray__thumb {
   flex: none;
@@ -2407,7 +2493,7 @@ select {
   justify-content: center;
   color: var(--muted);
   border-style: dashed;
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
 }
 .pintray__what {
   flex: none;
@@ -2418,14 +2504,14 @@ select {
 }
 .pintray__label {
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pintray__where {
   color: var(--muted);
-  font-size: calc(10.5px * var(--ui-scale));
+  font-size: var(--font-ui-105);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2435,7 +2521,7 @@ select {
 .pintray__source {
   margin-right: 6px;
   font-family: var(--mono);
-  font-size: calc(9.5px * var(--ui-scale));
+  font-size: var(--font-ui-95);
 }
 .pintray__source::after {
   content: "·";
@@ -2450,7 +2536,7 @@ select {
   min-width: 140px;
   padding: 4px 8px;
   border-radius: 6px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 /* 의도 칩: a two-way segment — the pressed side carries the
    accent, the idle side stays as quiet as the row. */
@@ -2467,7 +2553,7 @@ select {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
   line-height: 1;
   cursor: pointer;
 }
@@ -2537,7 +2623,7 @@ select {
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-2);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   white-space: nowrap;
   transition:
     background 0.1s,
@@ -2576,8 +2662,8 @@ select {
   bottom: calc(100% + 8px);
   left: 0;
   z-index: 45;
-  /* Names only now that the hints are gone, so the menu is as wide as its
-     longest row rather than reserving a column for prose. */
+  /* Rows are name-first; model rows add a muted id at the right edge, so the
+     menu still sizes to its longest row rather than reserving a column. */
   min-width: 150px;
   max-width: 320px;
   max-height: 300px;
@@ -2599,7 +2685,107 @@ select {
   border-radius: var(--r-sm);
   padding: 6px 8px;
   color: var(--text);
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
+}
+/* 찾기가 있는 메뉴: 필드는 제자리에 붙고 목록만 스크롤된다 — 필드가
+   행과 함께 굴러가면 무엇을 찾는 중이었는지 눈이 잃는다. 팔레트의
+   searchrow 와 같은 걸음. */
+.selector__menu--search {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow-y: hidden;
+}
+.selector__searchrow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 7px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+}
+.selector__search {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+}
+.selector__search:focus {
+  /* 팔레트의 검색과 같은 이유: 필드가 메뉴의 유일한 초점이고, 전역
+     :focus-visible 링은 모서리에 걸리기만 한다. */
+  outline: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.selector__search::placeholder {
+  color: var(--muted);
+}
+/* 드릴다운 헤더 (통합 모델 메뉴): ← 에이전트·⚙ 설정이 사는 메뉴
+   최상단 한 줄 — 목록과 같은 카드 안에 붙고, searchrow 위에 선다. */
+.selector__head {
+  flex: none;
+  border-bottom: 1px solid var(--line-soft);
+}
+.selector__headrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+}
+.selector__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 3px 6px;
+  color: var(--text-2);
+  font: 600 var(--font-ui-120) var(--sans);
+  cursor: pointer;
+}
+.selector__back:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.selector__headtitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 6px;
+  color: var(--text-2);
+  font: 600 var(--font-ui-120) var(--sans);
+}
+.selector__gear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.selector__gear:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.selector__menu--search .selector__list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 5px;
 }
 .selector__row:hover {
   background: var(--accent-soft);
@@ -2617,12 +2803,44 @@ select {
   flex: none;
   white-space: nowrap;
 }
+/* The model menu's row: id rides the right edge (omp picker's shape) —
+   label fixed, hint takes what remains and ellipsizes. The modifier class
+   keeps Sidebar's thread popover (a bare label+hint row) at its own flow. */
+.selector__row--hint .selector__hint {
+  /* The id is the row's identity — it never shrinks; the label does. */
+  margin-left: auto;
+  flex: none;
+  max-width: 70%;
+}
+.selector__row--hint .selector__label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .selector__hint {
   color: var(--muted);
-  font: 400 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-105) var(--sans);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 제목+설명 두 줄 행 (더 보기 메뉴): 설명은 tooltip 이 아니라 행 안에 —
+   "행동 옆 설명은 인라인" 원칙. */
+.selector__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.selector__text .selector__label {
+  white-space: normal;
+}
+.selector__desc {
+  color: var(--muted);
+  font: 400 var(--font-ui-105) / 1.4 var(--sans);
+  white-space: normal;
 }
 .toolbar {
   display: flex;
@@ -2700,7 +2918,7 @@ select {
   display: inline-flex;
   align-items: center;
   color: var(--muted);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   letter-spacing: -0.01em;
@@ -2765,6 +2983,31 @@ select {
   box-shadow: none;
 }
 
+/* 도는 동안 보내기는 자기 이름을 입는다 — 같은 ↑ 가 줄 넣기와 끊기 둘을
+   하는데, 겉모습이 같으면 누르는 사람이 모른다. */
+.composer__send--verb {
+  width: auto;
+  padding: 0 12px 0 9px;
+  gap: 5px;
+}
+.composer__sendverb {
+  font: 600 var(--font-ui-115) var(--sans);
+  white-space: nowrap;
+}
+
+/* 힌트 줄의 `바꾸기` — 읽는 문장 안의 유일한 손. */
+.composer__hintlink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.composer__hintlink:hover {
+  text-decoration: underline;
+}
+
 /* usage ---------------------------------------------------------------------*/
 
 /* One chip for everything the planner spends. The dot is the only
@@ -2779,7 +3022,7 @@ select {
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   white-space: nowrap;
 }
 .usage__chip:hover,
@@ -2810,7 +3053,7 @@ select {
 }
 .usage__reading {
   color: var(--text-2);
-  font: 500 calc(12px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-120) var(--mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -2852,7 +3095,7 @@ select {
   margin-bottom: 10px;
 }
 .usage__title {
-  font: 600 calc(11px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-110) var(--sans);
   letter-spacing: 0.02em;
   color: var(--muted);
 }
@@ -2860,7 +3103,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--muted);
 }
 .usage__statedot {
@@ -2895,12 +3138,12 @@ select {
 }
 .usage__label {
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   white-space: nowrap;
 }
 .usage__pct {
   color: var(--text);
-  font: 600 calc(12px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-120) var(--mono);
   font-variant-numeric: tabular-nums;
 }
 .usage__pct--warn {
@@ -2968,7 +3211,7 @@ select {
   display: block;
   margin-top: 6px;
   color: var(--muted);
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
   line-height: 1.45;
 }
 
@@ -2993,7 +3236,7 @@ select {
   background: var(--panel-3);
   box-shadow: var(--shadow-float);
   color: var(--text);
-  font: 500 calc(11.5px * var(--ui-scale)) / 1.45 var(--sans);
+  font: 500 var(--font-ui-115) / 1.45 var(--sans);
   pointer-events: none;
   opacity: 0;
   visibility: hidden;
@@ -3034,15 +3277,21 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  gap: 5px;
   height: 28px;
-  padding: 0;
+  padding: 0 8px 0 6px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
   cursor: default;
   transition: background 0.12s;
+}
+.ctx__pct {
+  font: 500 var(--font-ui-115) var(--sans);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .ctx:hover .ctx__ring,
 .ctx:focus-within .ctx__ring {
@@ -3070,19 +3319,19 @@ select {
 .ctx__tip {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 168px;
-  padding: 10px 12px 11px;
+  gap: 1px;
+  min-width: 132px;
+  padding: 7px 10px 8px;
 }
 .ctx__tiptitle {
-  color: var(--text);
-  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+  color: var(--muted);
+  font: 600 var(--font-ui-110) var(--sans);
   white-space: nowrap;
 }
 .ctx__tipreading {
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--text);
-  font: 600 calc(14px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-125) var(--sans);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3111,12 +3360,12 @@ select {
 }
 .machine__title {
   color: var(--text);
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
   font-weight: 600;
 }
 .machine__lead {
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 
 /* The planner's own sentence on a 핀 turn — a small paragraph
@@ -3124,7 +3373,7 @@ select {
 .machine__note {
   margin: 0;
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   line-height: 1.5;
 }
 .machine__rows {
@@ -3144,11 +3393,11 @@ select {
 }
 .machine__label {
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 .machine__text {
   color: var(--text);
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
   line-height: 1.5;
 }
 /* 코멘트 카드의 썸네일: what the planner saw beside what they
@@ -3173,7 +3422,7 @@ select {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -3211,7 +3460,7 @@ select {
   border-color: var(--line-hover);
   color: var(--text);
 }
-/* The text Claude actually received. Monospace here is right: this is the one
+/* The text the agent actually received. Monospace here is right: this is the one
    place in the transcript that is deliberately showing machine input. */
 .machine__body {
   margin: 0;
@@ -3221,11 +3470,11 @@ select {
   border-radius: var(--r-md);
   background: var(--bg-2);
   color: var(--text-2);
-  font: calc(11.5px * var(--code-scale)) / 1.55 var(--mono);
+  font: var(--font-code-115) / 1.55 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* Claude's plan as a card. The signs ✓ ● ○ do the state work, so
+/* the agent.s plan as a card. The signs ✓ ● ○ do the state work, so
    the rows stay quiet; the current item is the loud one. */
 .todo__list {
   display: flex;
@@ -3240,7 +3489,7 @@ select {
   align-items: baseline;
   gap: 7px;
   color: var(--text-2);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   line-height: 1.5;
 }
 .todo__item--current {
@@ -3260,7 +3509,7 @@ select {
   border: 0;
   background: transparent;
   color: var(--text-2);
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-125) var(--sans);
   text-align: left;
 }
 .todo__done:hover {
@@ -3321,12 +3570,12 @@ select {
   align-self: center;
 }
 .autocomplete__label {
-  font: 500 calc(12px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-120) var(--mono);
   flex-shrink: 0;
 }
 .autocomplete__hint {
   color: var(--muted);
-  font: 400 calc(11px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-110) var(--sans);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3367,9 +3616,16 @@ select {
   max-height: 84vh;
 }
 /* 설정 carries the theme gallery and six groups — the one dialog that is a
-   small room rather than a question, so it takes the wider frame. */
+   small room rather than a question, so it takes the wider frame, and now
+   the two-pane shape: the sidebar picks the room, the pane shows only it. */
 .modal__panel--settings {
-  max-width: 680px;
+  max-width: 860px;
+  /* 방의 크기가 패널의 크기다 — 고정 높이였을 때 1~3행짜리 방(동작·알림)이
+     70% 공백을 보여 줬다. 420px 바닥은 방을 옮길 때 패널이 펄럭이는 것을
+     막고, cap 넘는 방(화면·에이전트)은 판 안에서 굴린다. */
+  height: auto;
+  min-height: min(420px, 78vh);
+  max-height: min(620px, 78vh);
 }
 .modal__panel:focus {
   outline: none;
@@ -3397,7 +3653,7 @@ select {
 }
 .modal__title {
   margin: 0;
-  font: 650 calc(15px * var(--ui-scale)) var(--sans);
+  font: 650 var(--font-ui-150) var(--sans);
   letter-spacing: -0.012em;
 }
 .modal__head .ghost {
@@ -3419,6 +3675,17 @@ select {
   padding: 4px 20px 20px;
   display: flex;
   flex-direction: column;
+}
+.modal__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 20px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--panel);
+  border-radius: 0 0 var(--r-dialog) var(--r-dialog);
 }
 
 /* The ⌘K palette: the frame's every jump behind one overlay — threads,
@@ -3469,6 +3736,10 @@ select {
   padding-left: 0;
 }
 .palette__search:focus {
+  /* The field is the panel's only focusable and holds focus the whole time
+     the palette is open — the global :focus-visible ring would just clip
+     against the panel's overflow:hidden edge (mockup: outline none). */
+  outline: none;
   background: transparent;
   border-color: var(--line-soft);
   box-shadow: none;
@@ -3483,7 +3754,7 @@ select {
 .palette__group {
   padding: 8px 8px 2px;
   color: var(--muted);
-  font: 600 calc(11px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-110) var(--mono);
   letter-spacing: 0.02em;
 }
 .palette__row {
@@ -3491,7 +3762,7 @@ select {
   align-items: center;
   gap: 8px;
   padding: 7px 8px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   border-radius: var(--r-sm);
   cursor: pointer;
 }
@@ -3513,19 +3784,141 @@ select {
 .palette__hint {
   flex: none;
   color: var(--muted);
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
 }
-.palette__empty {
-  padding: 14px 10px;
+.palette__foot {
+  display: flex;
+  gap: 14px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line-soft);
   color: var(--muted);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-110);
+}
+.palette__foot kbd {
+  font: 600 var(--font-ui-105) var(--mono);
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0 5px;
+  margin-right: 3px;
 }
 .palette__error {
   margin: 0 6px;
 }
 
+/* 설정의 두 칸 — 사이드바가 방을 고르고, 패널은 고른 방만 보여 준다.
+   head 아래 패널 몸통을 통째로 가져가는 grid 이다. */
+.settings {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 192px minmax(0, 1fr);
+  overflow: hidden;
+  border-radius: 0 0 0 var(--r-dialog);
+}
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 10px 10px 12px;
+  border-right: 1px solid var(--line-soft);
+  background: var(--panel-2);
+}
+.settings__navList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 검색 칸 — 목록 위의 한 줄. 타이핑이 곧 좁힘이다. */
+.settings__search {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--text);
+  font: 400 var(--font-ui-125) var(--sans);
+}
+.settings__search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.settings__search::placeholder {
+  color: var(--muted);
+}
+.settings__navEmpty {
+  padding: 8px 10px;
+  font: 400 var(--font-ui-120) var(--sans);
+  color: var(--muted);
+}
+.settings__navItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: var(--text-2);
+  font: 500 var(--font-ui-130) var(--sans);
+  text-align: left;
+  cursor: pointer;
+}
+.settings__navItem svg {
+  flex: none;
+  color: var(--muted);
+}
+.settings__navItem:hover {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.settings__navItem[aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.settings__navItem[aria-selected="true"] svg {
+  color: var(--accent);
+}
+.settings__navFoot {
+  margin-top: auto;
+  padding: 8px 10px 0;
+  font-size: var(--font-ui-110);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.settings__pane {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 22px 22px;
+}
+/* 좁은 창에서는 사이드바가 위쪽 가로 줄로 눕는다 — Orca 의 좁은 창 규칙. */
+@media (max-width: 640px) {
+  .settings {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings__nav {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .settings__navList {
+    flex-direction: row;
+  }
+  .settings__navFoot {
+    display: none;
+  }
+  .settings__pane {
+    padding: 2px 16px 16px;
+  }
+}
+
 .settings__group {
-  padding: 16px 0 18px;
+  padding: 14px 0 14px;
   border-bottom: 1px solid var(--line-soft);
 }
 .settings__group:last-child {
@@ -3539,7 +3932,7 @@ select {
   gap: 7px;
   /* Korean words, not machine text — the reading face, and 10px hangul was
      the hardest text on the panel to actually read. */
-  font: 600 calc(11px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-110) var(--sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
@@ -3560,8 +3953,10 @@ select {
    밝은 패널 위에서도 정확히 그 팔레트로 보인다. */
 .themegrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: 10px;
+  /* 96px 여섯 열 — 18 타일이 세 줄이 되어 크기 세 행과 한 화면에 산다.
+     112px 다섯 열이었을 때는 넷째 줄이 크기 설정을 화면 밖으로 밀었다. */
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
 }
 .themegrid__tile {
   display: flex;
@@ -3609,7 +4004,7 @@ select {
   gap: 4px;
   min-width: 0;
   padding: 0 2px;
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--text-2);
   white-space: nowrap;
 }
@@ -3623,11 +4018,11 @@ select {
 /* 미리보기 아트: 레일 · 헤드 · 본문 줄 · 액센트 버튼 — 이 앱의 뼈대 네 조각. */
 .tg {
   display: flex;
-  height: 64px;
+  height: 52px;
   background: var(--bg-2);
 }
 .themegrid__half .tg {
-  height: 32px;
+  height: 26px;
 }
 .tg__rail {
   width: 15px;
@@ -3699,12 +4094,12 @@ select {
   flex: 1;
 }
 .setting__label {
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
   font-weight: 500;
   color: var(--text);
 }
 .setting__hint {
-  font-size: calc(11.5px * var(--ui-scale));
+  font-size: var(--font-ui-115);
   color: var(--muted);
   line-height: 1.5;
 }
@@ -3716,7 +4111,7 @@ select {
   gap: 6px;
 }
 .setting__control select {
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   padding: 6px 9px;
   /* one width for every picker, so the column of controls reads as a column */
   min-width: 230px;
@@ -3725,24 +4120,48 @@ select {
 /* A classless button here (테스트 알림 보내기) should read like every other
    panel button instead of the browser's native bevel — same treatment as
    .settings__row button below. */
-.setting__control button:not(.primary):not(.danger) {
+.setting__control button:not(.primary):not(.danger):not(.providerlist__row) {
   background: var(--panel-2);
   color: var(--text-2);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 7px 14px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   transition:
     background 0.12s,
     border-color 0.12s;
 }
-.setting__control button:not(.primary):not(.danger):hover:not(:disabled) {
+.setting__control button:not(.primary):not(.danger):not(.providerlist__row):hover:not(:disabled) {
   background: var(--panel-3);
   border-color: var(--line-hover);
   color: var(--text);
 }
-.setting__control button:not(.primary):not(.danger):active:not(:disabled) {
+.setting__control button:not(.primary):not(.danger):not(.providerlist__row):active:not(:disabled) {
   transform: scale(0.98);
+}
+/* 2~3 태 고르기 — 목업의 .seg. select 두 번 클릭을 한 번으로 되돌린 것.
+   겉모양은 위의 classless 버튼 규칙이 입히고, 여기는 배열과 선택 표지만
+   더한다. 고른 조각은 테마 타일과 같은 말 — 액센트 테두리 + 물들인 판. */
+.segcontrol {
+  display: inline-flex;
+  gap: 4px;
+}
+.segcontrol__opt {
+  white-space: nowrap;
+}
+/* 고른 조각은 채운다 — 액센트로 꽉 찬 조각이 곧 '지금 이것'. 스위치의 켬과
+   같은 말이고, 글자는 바닥색을 뒤집어 쓴다(.primary 잉크 규칙과 한 방식) —
+   팔레트가 밝든 어두든 액센트 위에서 읽힌다. 위의 classless 버튼 규칙(클래스
+   넷)보다 한 수 높아야 이긴다 — 그 규칙에 지면 액센트가 통째로 지워졌었다. */
+.setting__control button:not(.primary):not(.danger):not(.providerlist__row)[aria-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.segcontrol__opt:disabled {
+  opacity: 0.55;
 }
 /* A switch, not a bare 15px checkbox: a behaviour toggle reads as on/off.
    The real input stays on top of the track — invisible, full-size — so
@@ -3802,6 +4221,204 @@ select {
   align-items: stretch;
   gap: 8px;
 }
+/* The 프로바이더 picker is a list, not a select: each card carries the
+   provider's own credentials (version, login, why it cannot run), which a
+   dropdown's option text cannot hold. The card is the item; inside it the
+   radio button owns the body and the on/off switch owns the right edge. */
+.providerlist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.providerlist__item {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel-2);
+  color: var(--text-2);
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+.providerlist__item:hover {
+  background: var(--panel-3);
+  border-color: var(--line-hover);
+}
+.providerlist__item--picked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--text);
+}
+.providerlist__item--off .providerlist__name,
+.providerlist__item--off .providerlist__mark {
+  opacity: 0.55;
+}
+/* the card's body is the radio itself — name, credentials, state */
+.providerlist__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.providerlist__row:disabled {
+  cursor: default;
+}
+.providerlist__row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-md);
+}
+/* the provider's own mark in a small tile — the card names the engine with
+   its glyph before its words */
+.providerlist__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--text-2);
+}
+.providerlist__item--picked .providerlist__mark {
+  color: var(--text);
+  border-color: var(--line-hover);
+}
+.providerlist__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.providerlist__topline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.providerlist__name {
+  font-size: var(--font-ui-130);
+  font-weight: 600;
+  flex: none;
+}
+/* 자격 칩 — 버전·모델 수·로그인. 문장으로 늘어놓으면 읽는 눈이 여섯 번
+   왔다 갔다 하니, 자격은 작은 표창으로 접는다. */
+.providerlist__chip {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--font-ui-105);
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.providerlist__chip--warn {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.providerlist__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.providerlist__item--picked .providerlist__meta {
+  color: var(--text-2);
+}
+.providerlist__switch {
+  flex: none;
+  align-self: center;
+}
+/* 상태 점 — 켜진 프로바이더만 초록이다. 꺼짐·설치 필요는 같은 회색 자리. */
+.providerlist__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--line-hover);
+  flex: none;
+}
+.providerlist__dot--ok {
+  background: var(--ok);
+}
+/* 목록이 비었을 때의 한 줄 — 연결 전이거나 이 기기에 프로바이더가 없을
+   때. 빈 판 대신 다음 일을 말한다. */
+.providerlist__empty {
+  margin: 0;
+  padding: 12px 2px 2px;
+  font-size: var(--font-ui-120);
+  color: var(--muted);
+}
+/* 누른 프로바이더의 기본값 판 — 목록 아래의 한 판. 머리가 누구 몫인지
+   이름으로 말하고, 고르개 둘은 그 판 안에서 그 핀을 고친다. 핀이
+   프로바이더별로 따로 저장된다는 것도 머리의 한 줄이 행을 누르기 전에
+   말한다. */
+.providerdefaults {
+  margin-top: 14px;
+  padding: 4px 14px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel-2);
+}
+.providerdefaults__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.providerdefaults__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-2);
+  align-self: center;
+}
+.providerdefaults__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: var(--font-ui-125);
+  font-weight: 600;
+  color: var(--text);
+}
+.providerdefaults__note {
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+}
+
 .settings__url {
   display: flex;
   gap: 8px;
@@ -3811,7 +4428,7 @@ select {
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 
 /* Diagnostics stay reachable and stop being the first thing in the group:
@@ -3822,7 +4439,7 @@ select {
 .settings__fold > summary {
   cursor: pointer;
   color: var(--muted);
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   padding: 4px 0;
   list-style: none;
 }
@@ -3844,7 +4461,7 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 6px 16px;
-  font-size: calc(11.5px * var(--ui-scale));
+  font-size: var(--font-ui-115);
 }
 .settings__facts > div {
   display: flex;
@@ -3929,10 +4546,12 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 16px;
-  /* the brand row beside it is 48px tall (styles.css .sidebar__brand) — one
-     header line across both columns, or the seam reads as a layout bug. */
+  /* 7px vertical: the journey map (dot + label column) shares this row and
+     must fit inside the 48px brand line — one header line across both
+     columns, or the seam reads as a layout bug. */
+  padding: 7px 16px;
   min-height: 48px;
+  flex: none;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
   background: var(--glass);
   backdrop-filter: blur(12px) saturate(1.25);
@@ -3942,7 +4561,7 @@ select {
   flex: 1;
 }
 .planner__project {
-  font: 650 calc(13.5px * var(--ui-scale)) var(--sans);
+  font: 650 var(--font-ui-135) var(--sans);
   letter-spacing: -0.012em;
   color: var(--text);
   overflow: hidden;
@@ -3983,7 +4602,7 @@ select {
   background: var(--panel-3);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-2);
-  font: 600 calc(13px * var(--ui-scale)) / 1 var(--sans);
+  font: 600 var(--font-ui-130) / 1 var(--sans);
   animation: tilein 0.18s var(--spring) backwards;
 }
 .sidebar--collapsed .node__row:hover:not(:disabled) {
@@ -4087,8 +4706,14 @@ select {
   width: 26px;
   height: 26px;
   padding: 0;
-  font-size: calc(14px * var(--ui-scale));
+  font-size: var(--font-ui-140);
   line-height: 1;
+}
+.sidebar__brandtools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
 }
 /* The tree: project rows that unfold into their conversations.
    Ported from the proposal mockup's .tree/.node/.leaf onto this app's tokens —
@@ -4137,7 +4762,7 @@ select {
 .node__chev {
   width: 14px;
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   line-height: 1;
   text-align: center;
   flex: none;
@@ -4163,7 +4788,7 @@ select {
   min-width: 0;
   /* One step above its conversations (13px vs the leaf's 12px): the tree
      reads parent over child by size first, weight second. */
-  font: 600 calc(13px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-130) var(--sans);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -4173,7 +4798,7 @@ select {
    a bare "변경 133" used to fight the repo name for the same weight. */
 .node__badge {
   flex: none;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.005em;
   color: var(--muted);
@@ -4229,20 +4854,20 @@ select {
   background: currentColor;
   animation: askpulse 2s ease-in-out infinite;
 }
-/* Hover reveals the row's two small moves: another conversation, and the
-   row menu. Focus keeps them, the way the fold button does. */
+/* ＋ 새 대화는 언제나 보인다 — hover 를 기다리는 발견성은 길을 숨긴다.
+   행 메뉴(···)만 hover·focus 가 드러낸다. */
 .node__add,
 .node__menu-btn {
   flex: none;
   align-self: center;
   padding: 2px 5px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   color: var(--muted);
+}
+.node__menu-btn {
   opacity: 0;
 }
-.node__rowwrap:hover .node__add,
 .node__rowwrap:hover .node__menu-btn,
-.node__add:focus-visible,
 .node__menu-btn:focus-visible {
   opacity: 1;
 }
@@ -4260,7 +4885,7 @@ select {
 .node__rename {
   width: 100%;
   padding: 7px 8px;
-  font: 500 calc(13px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-130) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line-hover);
@@ -4292,7 +4917,7 @@ select {
   border-radius: var(--r-md);
   background: none;
   color: var(--muted);
-  font: 400 calc(12px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-120) var(--sans);
   text-align: left;
   width: 100%;
   cursor: pointer;
@@ -4343,6 +4968,35 @@ select {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
+/* 대화의 사이클 위치 (P3-1) — 조용한 leaf 의 점이 그 대화의 마지막 테이프
+   행을 말한다: 저장됨(빈 accent 링) → 넘김·검토 중(accent) → 반영(ok) ·
+   코멘트 도착(warn). 라이브·확인 대기·미읽음 링이 먼저다 — 이 점들은
+   조용한 행의 것. */
+.leaf__dot--saved {
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.leaf--active .leaf__dot--saved {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.leaf__dot--handed,
+.leaf--active .leaf__dot--handed {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.leaf__dot--merged,
+.leaf--active .leaf__dot--merged {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.leaf__dot--review,
+.leaf--active .leaf__dot--review {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
 @keyframes askpulse {
   50% {
     box-shadow: 0 0 0 6px var(--warn-soft);
@@ -4359,7 +5013,7 @@ select {
   text-align: left;
 }
 .leaf__meta {
-  font: 400 calc(11px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-110) var(--sans);
   color: var(--muted);
   flex: none;
 }
@@ -4377,7 +5031,7 @@ select {
   margin: 2px 0 4px;
   padding-left: 20px;
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 .leaf--start:hover {
   color: var(--text);
@@ -4389,7 +5043,7 @@ select {
   margin: 2px 0 4px;
   padding-left: 20px;
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 .leaf--more:hover {
   color: var(--text);
@@ -4398,7 +5052,7 @@ select {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line-hover);
@@ -4408,7 +5062,7 @@ select {
 .leaf__menu-btn {
   flex: none;
   padding: 2px 5px;
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
   color: var(--muted);
   opacity: 0;
 }
@@ -4514,7 +5168,7 @@ select {
   border: 1px dashed var(--line-strong);
   border-radius: 9px;
   color: var(--text-2);
-  font-size: calc(14px * var(--ui-scale));
+  font-size: var(--font-ui-140);
   transition:
     border-color 0.15s,
     background 0.15s,
@@ -4535,7 +5189,7 @@ select {
 .sidebar__removetext {
   margin: 0;
   padding: 12px 14px 0;
-  font: 400 calc(13px * var(--ui-scale)) / 1.6 var(--sans);
+  font: 400 var(--font-ui-130) / 1.6 var(--sans);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -4547,7 +5201,7 @@ select {
   align-items: center;
   gap: 6px;
   margin: 8px 14px 0;
-  font: 500 calc(12.5px * var(--ui-scale)) / 1.5 var(--sans);
+  font: 500 var(--font-ui-125) / 1.5 var(--sans);
   color: var(--warn);
 }
 .sidebar__removewarn svg {
@@ -4555,7 +5209,7 @@ select {
 }
 .sidebar__removehint {
   margin: 8px 14px 0;
-  font: 400 calc(12px * var(--ui-scale)) / 1.55 var(--sans);
+  font: 400 var(--font-ui-120) / 1.55 var(--sans);
   color: var(--muted);
 }
 .sidebar__removebtns {
@@ -4574,9 +5228,53 @@ select {
   border-radius: var(--r-md);
   background: var(--bg-2);
   list-style: none;
-  font: 400 calc(12px * var(--code-scale)) / 1.6 var(--mono);
+  font: 400 var(--font-code-120) / 1.6 var(--mono);
   color: var(--text-2);
   overflow-wrap: anywhere;
+}
+/* 버리기 확인의 파일 행 — 무슨 일이 일어난 파일인지 태그가 말하고,
+   ±수가 크기를 말한다 (mockup discard). */
+.dfile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.dfile__tag {
+  flex: none;
+  font: 500 var(--font-ui-100) var(--sans);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.dfile__tag--added {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.dfile__tag--deleted {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+.dfile__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discard__count {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--mono);
+}
+.discard__count .plus {
+  color: var(--ok);
+}
+.discard__count .minus {
+  color: var(--danger);
 }
 
 /* Narrow windows fold the rail by themselves: three columns
@@ -4638,6 +5336,149 @@ select {
   grid-template-columns: minmax(0, 1fr) minmax(380px, 50%);
   flex: 1;
   min-height: 0;
+}
+
+/* The work surface: the title row (project name + journey map) over the two
+   columns. The journey is the project's truth, not the open conversation's,
+   so the map rides the full-width row (preview.md §1-A). */
+.planner__work {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 여정 지도 (mockups/hero/journey.html → 프로젝트 토큰) ─────────────
+   스테퍼가 아니라 '지금 어디인가'의 지도: 읽기 전용이라 hover·cursor·
+   클릭 affordance를 두지 않는다. 전환은 delivery.state 변화에만 반응 —
+   점·세그먼트가 transition으로 채워진다. 지도는 프레임 제목 행
+   (.planner__header)의 오른쪽 끝에 산다 — 캡션 줄은 없어졌다. */
+.jmap {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  max-width: 430px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+.jstopwrap {
+  display: flex;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 0;
+}
+.jstopwrap:first-child {
+  flex: none;
+}
+.jstop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+.jmap__thread {
+  font-size: var(--font-ui-115);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+}
+.jdot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  background: var(--panel);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #fff;
+  transition: all 0.45s var(--drift);
+}
+.jstop--done .jdot {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+.jstop--now .jdot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.jstop--warn .jdot {
+  background: var(--warn);
+  border-color: var(--warn);
+  box-shadow: 0 0 0 4px var(--warn-soft);
+}
+.jstop--arrived .jdot {
+  background: var(--ok);
+  border-color: var(--ok);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.jnm {
+  font-size: var(--font-ui-105);
+  /* 고정 12px — dot 16 + gap 5 + 12 = 33. 헤더가 border-bottom 1px 를 포함한
+     border-box 48px 이므로 내용은 47px 이하가 되어야 행이 그대로 유지된다
+     (48 유지). 비율 값(1.3 등)은 --ui-scale 에 따라 홀수·소수 높이를 만들어
+     지도 열을 반(半) 픽셀 어긋나게 하고, 2px 세그먼트가 픽셀 사이에 걸려
+     흐릿해진다. */
+  line-height: 12px;
+  color: var(--muted);
+  transition: color 0.3s;
+}
+.jstop--done .jnm {
+  color: var(--muted);
+}
+.jstop--now .jnm {
+  color: var(--accent);
+  font-weight: 600;
+}
+.jstop--warn .jnm {
+  color: var(--warn);
+  font-weight: 600;
+}
+.jstop--arrived .jnm {
+  color: var(--ok);
+  font-weight: 600;
+}
+.jseg {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line);
+  /* 7px: 점(16px, border-box)의 중심 8px에 정확히 걸리는 정수 오프셋 —
+     6.5px 의 반 픽셀은 어느 레이아웃에서든 선을 흐릿하게 만들었다. */
+  margin: 7px 5px 0;
+  position: relative;
+  overflow: hidden;
+}
+.jseg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.7s var(--drift);
+}
+.jseg--done::after {
+  transform: scaleX(1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .jdot,
+  .jnm,
+  .jseg::after {
+    transition: none;
+  }
 }
 
 /* The draggable boundaries (Splitter). A 9px hit area over the 1px border the
@@ -4734,7 +5575,7 @@ select {
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--line-strong);
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   box-shadow: var(--shadow-card);
   transition:
     background 0.12s,
@@ -4834,7 +5675,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 6%, transparent);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -4946,14 +5787,14 @@ select {
 }
 .progress__head h2 {
   margin: 0;
-  font: 600 calc(15px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-150) var(--sans);
   color: var(--text);
 }
 .progress__body {
   margin: 0;
   max-width: 400px;
   color: var(--text-2);
-  font-size: calc(13px * var(--ui-scale));
+  font-size: var(--font-ui-130);
   line-height: 1.6;
 }
 .progress__cmd {
@@ -4967,7 +5808,7 @@ select {
   background: var(--bg-2);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
-  font: 500 calc(11.5px * var(--code-scale)) var(--mono);
+  font: 500 var(--font-code-115) var(--mono);
   color: var(--text-2);
   text-align: left;
   overflow-x: auto;
@@ -4978,14 +5819,14 @@ select {
 }
 .progress__detail {
   max-width: 100%;
-  font: 500 calc(11.5px * var(--code-scale)) var(--mono);
+  font: 500 var(--font-code-115) var(--mono);
   color: var(--text-2);
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The conflict card's two doors — Claude 요청이 첫 동작, 다시 시도는
+/* The conflict card's two doors — AI 요청이 첫 동작, 다시 시도는
    그 옆의 조용한 하나. 진행 표식은 요청 뒤의 기다림을 한 줄로 읽는다. */
 /* Two doors, each keeping its words on one line: a dragged-narrow column
    wraps the ROW, never a button's sentence mid-phrase. */
@@ -5002,7 +5843,7 @@ select {
 .progress__note {
   margin: 0;
   color: var(--text-2);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   line-height: 1.5;
 }
 .progress .primary {
@@ -5012,7 +5853,7 @@ select {
    column becomes — the difference between an empty room and a stage. */
 .progress__after {
   margin: 2px 0 0;
-  font: 400 calc(12px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-120) var(--sans);
   color: color-mix(in srgb, var(--muted) 78%, transparent);
 }
 
@@ -5078,12 +5919,12 @@ select {
   border-bottom-right-radius: 0;
 }
 .activity__text {
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   letter-spacing: -0.003em;
   flex: 1;
 }
 .activity__flag {
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--danger);
 }
 .activity__body {
@@ -5125,7 +5966,7 @@ select {
   cursor: pointer;
   background: none;
   color: var(--muted);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   text-decoration: none;
   padding: 4px 8px;
   display: inline-flex;
@@ -5169,7 +6010,7 @@ select {
   border-radius: 6px;
   background: var(--panel);
   color: var(--text);
-  font: 600 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-115) var(--sans);
 }
 .skippreview:focus-visible {
   width: auto;
@@ -5202,16 +6043,37 @@ select {
   flex-wrap: wrap;
   justify-content: center;
 }
-/* The error banner above the frame: the title says what happened,
-   the message is clamped until 자세히 opens it. */
+/* The error banner inside the frame: it overlays the stage's bottom edge —
+   the title says what happened, the message is clamped until 자세히 opens
+   it. danger-soft is a tint, so the panel colour sits under it. */
 .preview__error {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 6;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 9px 12px;
   border: 1px solid var(--danger-line);
   border-radius: var(--r-md);
-  background: var(--danger-soft);
+  background: var(--panel);
+  box-shadow: var(--shadow-float);
+}
+/* 얼린 얼굴의 해제 힌트 — 스테이지 왼쪽 아래의 조용한 칩. */
+.preview__unpin {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 5;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line-soft);
+  color: var(--muted);
+  font: 500 var(--font-ui-105) var(--mono);
+  pointer-events: none;
 }
 .preview__error__text {
   flex: 1;
@@ -5221,13 +6083,13 @@ select {
   gap: 2px;
 }
 .preview__error__text strong {
-  font: 600 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-125) var(--sans);
   color: var(--text);
 }
 .preview__error__message {
   margin: 0;
   color: var(--text-2);
-  font: calc(11.5px * var(--code-scale)) / 1.5 var(--mono);
+  font: var(--font-code-115) / 1.5 var(--mono);
   white-space: pre-wrap;
   word-break: break-word;
   display: -webkit-box;
@@ -5252,8 +6114,23 @@ select {
 .modal__panel--diff {
   max-width: 720px;
 }
+/* 검토의 몸통은 카드의 안쪽 여백을 따른다 — 머리(15px)·힌트·버튼 줄과 같은
+   자리. 몸통이 카드 테두리에 붙으면 내용이 카드 안이 아니라 옆으로 읽힌다. */
+.savereview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 15px 10px;
+}
+/* 몸통의 간격은 gap 이 맡는다 — 접기·설정 행의 자체 여백은 여기서는 뗀다. */
+.savereview .settings__fold {
+  margin-top: 0;
+}
+.savereview .setting {
+  padding: 0;
+}
 
-/* 요약은 검토의 본문이다 (비개발자 저장 검토): Claude 가 쓴 문장이 각주
+/* 요약은 검토의 본문이다 (비개발자 저장 검토): AI 가 쓴 문장이 각주
    (.hint)로 흐려져 있으면 읽을 것의 위계가 없어진다 — 강조색 왼쪽 선 하나에
    본문 크기의 글, 캡션은 누가 썼는지. 설정 그룹의 제목이 쓰는 3px 레일과
    같은 어휘다 (settings__groupTitle::before). */
@@ -5271,7 +6148,7 @@ select {
   display: flex;
   align-items: center;
   gap: 5px;
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   letter-spacing: 0.01em;
   color: var(--accent);
 }
@@ -5285,12 +6162,12 @@ select {
   gap: 4px;
 }
 .diff__summarylines > li {
-  font: 400 calc(13px * var(--ui-scale)) / 1.55 var(--sans);
+  font: 400 var(--font-ui-130) / 1.55 var(--sans);
   color: var(--text);
 }
 /* 요약을 기다리는 자리 — 빈 칸이 아니라 곧 채워질 줄로 보이게. */
 .diff__skel {
-  height: calc(13px * var(--ui-scale));
+  height: var(--font-ui-130);
   border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--text) 12%, transparent);
   animation: diffskel 1.4s ease-in-out infinite;
@@ -5338,7 +6215,7 @@ select {
   align-items: center;
   gap: 8px;
   color: var(--text-2);
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
 }
 
 .diff__files {
@@ -5376,15 +6253,23 @@ select {
 .diff__file--resolved .hint {
   color: var(--muted);
 }
-
-/* 되감기: the answer's action row and the planner bubble's own —
-   요청 복사 and 고쳐서 다시 보내기. Both act on the sentence the planner
-   typed, so they share one row rather than stacking under it. */
-.answer__actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+/* 저장 기록의 최신 행 — 되돌릴 곳이 아니라 지금 서 있는 곳. accent 점이
+   말하고 되돌리기 버튼은 없다. */
+.hist--now .diff__path::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
+
+/* 되감기: the planner bubble's own action row — 요청 복사 and
+   고쳐서 다시 보내기 act on the sentence the planner typed, so they
+   share one row rather than stacking under it. The answer's own
+   actions(되돌리기 · 다시 요청) ride the turn's receipt line instead. */
 .bubble--user {
   position: relative;
 }
@@ -5400,7 +6285,7 @@ select {
   padding: 0;
   border: 0;
   background: transparent;
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: color-mix(in srgb, var(--text) 62%, transparent);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -5426,14 +6311,14 @@ select {
   gap: 12px;
   padding: 5px 0;
   border-bottom: 1px solid var(--line-soft);
-  font: 400 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-125) var(--sans);
   color: var(--text-2);
 }
 .shortcuts__row:last-child {
   border-bottom: 0;
 }
 .shortcuts__keys {
-  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-115) var(--mono);
   color: var(--text);
   background: var(--bg-2);
   border: 1px solid var(--line);
@@ -5446,7 +6331,7 @@ select {
   align-self: flex-start;
   margin-bottom: 10px;
   padding: 6px 14px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
 }
 .dev__reply {
   display: flex;
@@ -5458,7 +6343,7 @@ select {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  font: 400 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-125) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -5470,12 +6355,12 @@ select {
 }
 .dev__reply .primary {
   padding: 5px 12px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 
 .diff__badge {
   flex: none;
-  font: 500 calc(10px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-100) var(--sans);
   letter-spacing: 0.04em;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -5483,12 +6368,14 @@ select {
   color: var(--muted);
 }
 .diff__badge--added {
-  color: var(--ok, var(--text));
-  border-color: var(--line);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
 .diff__badge--deleted {
   color: var(--danger);
   border-color: var(--danger-line);
+  background: var(--danger-soft);
 }
 .diff__badge--modified {
   color: var(--text-2);
@@ -5513,8 +6400,12 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-125) var(--sans);
   color: var(--text);
+}
+.diff__file--deleted .diff__basename {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-line);
 }
 .diff__dir {
   min-width: 0;
@@ -5523,7 +6414,7 @@ select {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-  font: 400 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 400 var(--font-ui-105) var(--mono);
   color: var(--muted);
 }
 /* 펼침 표식 — 행이 열린다는 사실은 글리프가 말한다. */
@@ -5536,7 +6427,7 @@ select {
 }
 .diff__count {
   flex: none;
-  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-110) var(--mono);
   color: var(--muted);
 }
 
@@ -5546,12 +6437,33 @@ select {
 }
 .diff__hunk {
   margin: 0;
-  padding: 8px 10px;
+  padding: 6px 0;
   overflow-x: auto;
   border-bottom: 1px solid var(--line-soft);
-  font: 400 calc(11px * var(--code-scale)) / 1.5 var(--mono);
+  font: 400 var(--font-code-110) / 1.5 var(--mono);
   color: var(--text-2);
   white-space: pre;
+}
+/* diff 의 줄 색은 git 의 어휘 그대로다 — 더해진 줄은 ok, 지워진 줄은
+   danger, 머리글·`\` 메모는 흐리게. 줄 전체 폭으로 칠해 덩어리로 읽힌다. */
+.diff__line {
+  display: block;
+  padding: 0 10px;
+}
+.diff__line--head {
+  color: var(--muted);
+}
+.diff__line--add {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+}
+.diff__line--del {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.diff__line--meta {
+  color: var(--muted);
+  font-style: italic;
 }
 .diff__file:last-child .diff__hunks .diff__hunk:last-child {
   border-bottom: 0;
@@ -5565,7 +6477,7 @@ select {
   border: 1px solid var(--danger-line);
   border-radius: var(--r-sm);
   background: var(--bg-2);
-  font: 400 calc(11px * var(--code-scale)) / 1.5 var(--mono);
+  font: 400 var(--font-code-110) / 1.5 var(--mono);
   color: var(--danger);
   white-space: pre-wrap;
   word-break: break-word;
@@ -5575,6 +6487,45 @@ select {
 
 .modal__panel--handoff {
   max-width: 640px;
+}
+/* 대화 안의 넘기기 카드는 저장 카드와 같은 옷을 입는다 — 테두리·그림자·
+   머리 줄이 없으면 대화 위에 뜬 문장 더미로 읽힌다. */
+.handoffcard {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  margin: 6px 0 10px 20px;
+  width: calc(100% - 20px);
+}
+.handoffcard__head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line-soft);
+}
+/* 접기 버튼은 머리의 오른쪽 끝 — 저장 카드의 태그 자리. */
+.handoffcard__head .tip {
+  margin-left: auto;
+  flex: none;
+}
+.handoffcard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 15px 10px;
+}
+.handoffcard__body .settings__fold {
+  margin-top: 0;
+}
+.handoffcard__body .setting {
+  padding: 0;
+}
+/* 버튼 줄은 몸통의 여백 안에서 끝난다 — 자체 패딩은 카드 밖 기준이다. */
+.handoffcard__body .savecard__actions {
+  padding: 0;
 }
 
 /* 개발자가 받을 모습 (비개발자 넘기기) — the dialog opens on this card, not on
@@ -5599,7 +6550,7 @@ select {
 }
 /* The one line a developer sees in their queue — it earns the weight. */
 .handoff__previewtitle {
-  font: 600 calc(13.5px * var(--ui-scale)) / 1.4 var(--sans);
+  font: 600 var(--font-ui-135) / 1.4 var(--sans);
   color: var(--text);
   word-break: break-word;
 }
@@ -5607,7 +6558,7 @@ select {
    are, and a loud badge would read as a warning about doing so. */
 .handoff__drafted {
   flex: none;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   color: var(--muted);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-sm);
@@ -5625,14 +6576,14 @@ select {
   gap: 6px;
 }
 .handoff__autolabel {
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   color: var(--muted);
   letter-spacing: 0.02em;
 }
 /* The preview renders a document, not a chat turn: one notch down, and the
    daemon's `### 수정 요청` heading sits at the size of a section label. */
 .handoff__preview .md {
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -5659,7 +6610,7 @@ select {
 .handoff__body {
   min-height: 110px;
   resize: vertical;
-  font: 400 calc(12.5px * var(--ui-scale)) / 1.6 var(--sans);
+  font: 400 var(--font-ui-125) / 1.6 var(--sans);
 }
 
 .handoff__done {
@@ -5670,8 +6621,34 @@ select {
   padding: 6px 0 10px;
 }
 .handoff__state {
-  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-110) var(--mono);
   color: var(--muted);
+}
+/* 넘긴 요청의 판정은 색으로 읽힌다 — 반영됨 ok · 변경 요청 warn · 닫힘
+   danger · 검토 중 muted. 톤이 붙은 것만 알약을 입는다 (대화 안 카드의
+   평문은 그대로). */
+.handoff__state--ok,
+.handoff__state--warn,
+.handoff__state--danger,
+.handoff__state--muted {
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+}
+.handoff__state--ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.handoff__state--warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+.handoff__state--danger {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.handoff__state--muted {
+  color: var(--muted);
+  background: var(--panel-2);
 }
 
 /* The state chip in the 넘기기 dialog: the only place the developer's answer
@@ -5684,7 +6661,7 @@ select {
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   color: var(--muted);
   text-decoration: none;
 }
@@ -5749,7 +6726,7 @@ select {
 }
 .onboarding__head h1 {
   margin: 0 0 6px;
-  font: 600 calc(20px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-200) var(--sans);
   color: var(--text);
   text-wrap: balance;
 }
@@ -5786,12 +6763,12 @@ select {
 }
 .onboarding__stephead h2 {
   margin: 0;
-  font: 600 calc(13.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-135) var(--sans);
   color: var(--text);
   flex: 1;
 }
 .onboarding__stepnum {
-  font: 600 calc(11px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-110) var(--mono);
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -5802,7 +6779,7 @@ select {
   justify-content: center;
 }
 .onboarding__glyph {
-  font: 600 calc(13px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-130) var(--sans);
   width: 18px;
   text-align: center;
 }
@@ -5823,7 +6800,7 @@ select {
   vertical-align: -2px;
 }
 .onboarding__status {
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -5831,7 +6808,7 @@ select {
 }
 .onboarding__detail {
   margin: 0;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -5854,12 +6831,12 @@ select {
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   color: var(--text-2);
   line-height: 1.6;
 }
 .onboarding__note code {
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -5869,6 +6846,18 @@ select {
   display: flex;
   justify-content: center;
   margin-top: 18px;
+}
+.onboarding__pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.onboarding__pick select {
+  min-width: 200px;
+}
+.onboarding__done {
+  gap: 10px;
+  align-items: center;
 }
 
 /* preview comment pins -----------------------------------------------------------*/
@@ -5887,7 +6876,7 @@ select {
   gap: 10px;
 }
 .pins__head strong {
-  font: 600 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-125) var(--sans);
   color: var(--text);
 }
 .pins__list {
@@ -5898,7 +6887,7 @@ select {
   gap: 3px;
 }
 .pins__list li {
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   color: var(--text-2);
   display: flex;
   gap: 8px;
@@ -5906,7 +6895,7 @@ select {
 }
 .pins__component {
   flex: none;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--accent);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -5969,7 +6958,7 @@ select {
   padding: 2px 4px;
   border: 0;
   background: none;
-  font: 700 calc(14px * var(--ui-scale)) var(--sans);
+  font: 700 var(--font-ui-140) var(--sans);
   letter-spacing: -0.012em;
   color: var(--text);
   white-space: nowrap;
@@ -5982,7 +6971,7 @@ select {
 }
 .thread__more {
   color: var(--muted);
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
   padding: 4px 8px;
 }
 .thread__more:hover {
@@ -6000,7 +6989,7 @@ select {
   min-width: 0;
   max-width: 360px;
   padding: 4px 8px;
-  font: 600 calc(13px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-130) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line-hover);
@@ -6052,7 +7041,7 @@ select {
   min-width: 200px;
 }
 .ghlink {
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--accent);
   text-underline-offset: 2px;
   white-space: nowrap;
@@ -6083,7 +7072,7 @@ select {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   cursor: pointer;
 }
 .repopicker__row--on {
@@ -6103,7 +7092,7 @@ select {
 }
 .repopicker__owner {
   color: var(--muted);
-  font: 500 calc(12px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-120) var(--mono);
   flex: none;
 }
 .repopicker__name {
@@ -6117,11 +7106,11 @@ select {
   margin-left: auto;
   flex: none;
   color: var(--muted);
-  font: 400 calc(11px * var(--ui-scale)) var(--mono);
+  font: 400 var(--font-ui-110) var(--mono);
 }
 .repopicker__badge {
   flex: none;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -6135,7 +7124,7 @@ select {
   flex-direction: column;
   gap: 6px;
   padding: 14px 12px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   color: var(--text-2);
 }
 .repopicker__listerror {
@@ -6189,7 +7178,7 @@ select {
   display: flex;
   gap: 7px;
   align-items: flex-start;
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--text-2);
   cursor: pointer;
 }
@@ -6201,7 +7190,7 @@ select {
   align-self: flex-start;
 }
 .settings__account {
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-125) var(--sans);
   color: var(--text-2);
   flex: 1;
   min-width: 0;
@@ -6233,7 +7222,7 @@ select {
 }
 .planner__emptyTitle {
   margin: 0;
-  font: 600 calc(17px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-170) var(--sans);
   color: var(--text);
   text-wrap: balance;
 }
@@ -6252,17 +7241,14 @@ select {
   border: 0;
 }
 
-/* 빈 작업 화면은 한 줄로 읽힌다: 히어로 · 제목 · 픽커가 하나의 좁은 컬럼.
-   (픽커가 컨테이너 폭 전체를 쓰면 히어로와 어긋난다) */
+/* 빈 작업 화면은 한 줄로 읽힌다: 제목 · 부제 · 폼이 하나의 좁은 컬럼.
+   (폼이 컨테이너 폭 전체를 쓰면 시선이 넓게 흩어진다) */
 .planner__empty {
   align-items: center;
 }
 .planner__empty > * {
   width: 100%;
   max-width: 480px;
-}
-.planner__empty .emptyhero {
-  max-width: none;
 }
 
 @media (max-width: 880px) {
@@ -6317,7 +7303,7 @@ select {
 }
 .preview__state {
   padding: 2px 8px;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
@@ -6368,7 +7354,7 @@ select {
 }
 .preview__mempty {
   margin: 4px 0 8px;
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--muted);
 }
 .preview__mrow {
@@ -6377,7 +7363,7 @@ select {
   gap: 4px;
 }
 .preview__mtitle {
-  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-120) var(--sans);
   color: var(--text);
 }
 .preview__mstates {
@@ -6396,7 +7382,7 @@ select {
 }
 .notice__row {
   color: var(--muted);
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
 }
 
 .preview__width {
@@ -6410,7 +7396,7 @@ select {
 }
 .preview__widthbtn {
   padding: 2px 8px;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
@@ -6457,6 +7443,16 @@ select {
   width: 768px;
   flex: none;
   border-radius: 16px;
+}
+/* 데스크톱 폭은 무대를 꽉 채운다 — 여백·둥근 모서리·그림자는 좁은 폭을
+   기기로 읽게 하는 장치라, 전체 폭에서는 버리는 쪽이 화면을 더 크게 보여 준다. */
+.preview__stage--desktop {
+  padding: 0;
+}
+.preview__stage--desktop .preview__device {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* 프레임 머리: 브라우저 줄 — 신호등 · 이동 · 새로 고침 · 주소
@@ -6571,12 +7567,12 @@ select {
   color: var(--text);
   background: var(--panel-3);
 }
-/* 이 화면 Claude 에게 보여 주기 — the frame-head button and its
+/* 이 화면 AI 에게 보여 주기 — the frame-head button and its
    one-line form. Small on purpose: a quiet door, not a second composer. */
 .frame__look {
   flex: none;
   padding: 2px 8px;
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--muted);
   background: transparent;
   border: 1px solid var(--line);
@@ -6601,7 +7597,7 @@ select {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  font: 400 calc(12px * var(--ui-scale)) var(--sans);
+  font: 400 var(--font-ui-120) var(--sans);
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -6613,11 +7609,11 @@ select {
 }
 .frame__lookform .primary {
   padding: 4px 12px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 .frame__lookform .ghost {
   padding: 4px 8px;
-  font-size: calc(12px * var(--ui-scale));
+  font-size: var(--font-ui-120);
 }
 /* 로딩 중 새로 고침 버튼이 돌고, 그때 클릭은 중단이다. */
 .frame__toolsbtn--busy {
@@ -6645,7 +7641,7 @@ select {
 .frame__zoom {
   flex: none;
   padding: 1px 8px;
-  font: 600 calc(11px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-110) var(--mono);
   color: var(--accent);
   background: transparent;
   border: 1px solid var(--accent);
@@ -6657,7 +7653,7 @@ select {
 .frame__width {
   flex: none;
   padding: 1px 7px;
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--muted);
   border: 1px solid var(--line-soft);
   border-radius: 999px;
@@ -6730,7 +7726,7 @@ select {
   flex: 1;
   min-width: 0;
   padding: 0;
-  font: 500 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-115) var(--mono);
   color: var(--text);
   background: transparent;
   border: none;
@@ -6740,7 +7736,7 @@ select {
 }
 .frame__addrerror {
   flex: none;
-  font: 500 calc(11px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-110) var(--sans);
   color: var(--danger);
   white-space: nowrap;
 }
@@ -6754,7 +7750,7 @@ select {
   min-width: 0;
   height: 26px;
   padding: 0 12px;
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--muted);
   background: var(--panel-2);
   border: 1px solid var(--line);
@@ -6778,7 +7774,7 @@ select {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 160px;
-  font: 500 calc(12px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-120) var(--sans);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -6821,6 +7817,108 @@ select {
   to {
     transform: translateX(245%);
   }
+}
+/* 탭 스트립 (인앱 브라우저 1단계): 진행 바 아래·크롬 줄 위의 브라우저 탭
+   자리. 활성 탭은 알약의 재질(panel-2)을 입고 스트립의 경계선을 지우며
+   크롬 줄과 이어진다 — fakeapp__tab 의 밑줄 어휘를 탭 모양으로 옮긴 것. */
+.frame__tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 5px 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.frame__tabs::-webkit-scrollbar {
+  display: none;
+}
+.frame__tab {
+  display: flex;
+  align-items: center;
+  flex: 0 1 180px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+}
+.frame__tab--on {
+  background: var(--panel-2);
+  border-color: var(--line);
+  /* 스트립의 경계선이 활성 탭 아래를 지나가지 않게 한 픽셀 덮는다. */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+/* 파기된 탭(discarded)은 메타만 남은 잠든 탭 — 누르면 lastUrl 로 깨어난다. */
+.frame__tab--asleep {
+  opacity: 0.55;
+}
+.frame__tabbtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px 0 9px;
+  font: 500 var(--font-ui-115) var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px 0 0 0;
+  cursor: pointer;
+}
+.frame__tabbtn svg {
+  flex: none;
+}
+.frame__tab--on .frame__tabbtn {
+  color: var(--text);
+}
+.frame__tabtitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frame__tabclose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.frame__tabclose:hover {
+  color: var(--text);
+  background: var(--panel-3);
+}
+.frame__tabnew {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 0 3px 2px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.frame__tabnew:hover {
+  color: var(--text);
+  background: var(--panel-3);
 }
 /* 로드가 끝난 화면이 한 번 뜬다 — 새로 고침(리마운트) 때마다 다시. */
 .preview__frame--in {
@@ -6882,7 +7980,126 @@ select {
   background: #fff;
 }
 
-/* Claude 시점 썸네일의 자리: 무대 구석은 뷰 밑이므로 프레임 머리
+/* --- 보낸 화면 동결 (preview.md §1-E) — 스테이지의 얼린 얼굴 -------------
+   frozenbar 는 슬롯 위쪽 flex 열의 머리다(뷰의 bounds 를 정직하게 줄인다).
+   frozenshot 은 data-cover-stage 를 단는 덮개 — usePreviewCover 가 네이티브
+   뷰를 가리고, 그 위에 캡처(바닥)와 실제 빌드의 iframe(§3 2단계)이 얹힌다. */
+/* 슬롯 본체 — 네이티브 뷰가 얹히는 자리. 덮개의 absolute 의 기준이 되려면
+   위치를 잡아 둔다 (.preview__slot 과 같은 본질, 동결의 감싼 이름). */
+.preview__viewwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.frozenbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+  flex: none;
+}
+.frozenbar__stamp {
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  font: 500 var(--font-ui-105) var(--mono);
+  white-space: nowrap;
+}
+.frozenbar__stamp--info {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.frozenbar__stamp--ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.frozenbar__stamp--warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.frozenbar__seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.frozenbar__segbtn {
+  padding: 2px 8px;
+  font: 500 var(--font-ui-105) var(--mono);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.frozenbar__segbtn:hover {
+  color: var(--text);
+}
+.frozenbar__segbtn--on {
+  color: var(--text);
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+/* 실제로 열기 (§3 2단계) — 넘긴 시점의 빌드를 그 자리에 띄우는 누름.
+   오른쪽 끝에 붙는다: 도장·세그먼트가 읽는 자리를 빼앗지 않게. */
+.frozenbar__real {
+  margin-left: auto;
+  padding: 2px 9px;
+  font: 500 var(--font-ui-105) var(--mono);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.frozenbar__real:hover:not(:disabled) {
+  color: var(--text);
+}
+.frozenbar__real--on {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+.frozenbar__real:disabled {
+  cursor: default;
+  color: var(--muted);
+  border-color: var(--line-soft);
+}
+.frozenshot {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #fff;
+}
+.frozenshot__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* 실제 빌드의 창 — 캡처 바로 위, 같은 덮개 안. 캡처는 그 밑에 깔려
+   로딩 중과 실패 때의 얼굴로 남는다. */
+.frozenshot__real {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.frozenshot__realwait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  padding: 14px;
+  font: 500 var(--font-ui-110) var(--mono);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* AI 시점 썸네일의 자리: 무대 구석은 뷰 밑이므로 프레임 머리
    끝에 도킹한다. 크게 보기(.pip--large)는 cover 규칙을 탄다. 머리가 좁아지는
    때는 라벨이 먼저 줄어든다 — 라벨의 말줄임이 살아 있으려면 도킹 알약 자체가
    줄어들 수 있어야 하므로 flex: none 이 아니다. 썸네일은 늘 밝기를 지킨다. */
@@ -6906,7 +8123,7 @@ select {
   border-radius: 2px;
 }
 .pip--docked__label {
-  font: 500 calc(10px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-100) var(--mono);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -6925,26 +8142,37 @@ select {
   bottom: auto;
   right: 0;
   left: auto;
+  /* 설명 줄이 들어간 만큼 넓어진다 — 두 줄 행의 자리. */
+  min-width: 240px;
 }
-/* 유틸 쌍(최신 변경 받아오기 · 더 보기)은 hairline 칩 — 유리 바 위에서
+.screenpanel__menu .selector__row {
+  align-items: center;
+}
+/* 유틸 셋(최신 변경 받아오기 · 더 보기 · 확인 칩)은 hairline 칩 — 유리 바 위에서
    테두리 없는 ghost 는 글자로 읽혔다. 테두리가 "버튼"임을 말한다. */
 .screenpanel__refresh,
-.screenpanel__morebtn {
+.screenpanel__morebtn,
+.screenpanel__followchip {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text-2);
   padding: 5px 10px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
   transition:
     background 0.12s,
     border-color 0.12s,
     color 0.12s;
 }
 .screenpanel__refresh:hover:not([aria-disabled="true"]),
-.screenpanel__morebtn:hover {
+.screenpanel__morebtn:hover,
+.screenpanel__followchip:hover {
   border-color: var(--line-hover);
   background: var(--panel-2);
   color: var(--text);
+}
+/* 확인 N/M 칩: 토스트가 접힌 뒤에도 사는 목록의 뷰 — 숫자가 흔들리지 않게. */
+.screenpanel__followchip {
+  font-variant-numeric: tabular-nums;
 }
 /* 잠긴 새로 고침도 몸통은 유지 — 버튼으로 읽히고, 잠긴 이유(title)가
    도달하려면 hover 가 막히면 안 된다 (저장 · 넘기기의 규칙과 같다). */
@@ -6982,8 +8210,8 @@ select {
   background: transparent;
 }
 
-/* Claude 시점 보기: the PiP rides the preview column's stage —
-   a thumbnail in the iframe's corner while Claude's driver is at work, a
+/* AI 시점 보기: the PiP rides the preview column's stage —
+   a thumbnail in the iframe's corner while the agent.s driver is at work, a
    click spreads it over the planner's iframe, and the turn's settle folds
    it back. The browser path has no frames and renders none of this. */
 .previewcol__stage {
@@ -7038,7 +8266,7 @@ select {
 .pip__label {
   padding: 4px 8px;
   border-top: 1px solid var(--line-soft);
-  font: 500 calc(10.5px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-105) var(--mono);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -7063,11 +8291,18 @@ select {
   align-items: center;
   gap: 8px;
 }
+/* 잠긴 저장·넘기기의 이유 — tooltip 이 아니라 버튼 옆의 한 줄. */
+.screenpanel__locknote {
+  flex: none;
+  color: var(--muted);
+  font: 400 var(--font-ui-110) var(--sans);
+  white-space: nowrap;
+}
 .screenpanel__action {
   flex: none;
   white-space: nowrap;
   padding: 5px 14px;
-  font-size: calc(12.5px * var(--ui-scale));
+  font-size: var(--font-ui-125);
 }
 .screenpanel__action.primary {
   background-color: var(--brand);
@@ -7106,7 +8341,7 @@ select {
 @media (max-width: 1280px) {
   .screenpanel__action {
     padding: 5px 10px;
-    font-size: calc(12px * var(--ui-scale));
+    font-size: var(--font-ui-120);
   }
   .screenpanel__bar {
     gap: 8px;
@@ -7119,7 +8354,7 @@ select {
   }
   .screenpanel__action {
     padding: 5px 8px;
-    font-size: calc(11.5px * var(--ui-scale));
+    font-size: var(--font-ui-115);
   }
   /* The fixed 88px cap hard-clipped mid-glyph — an
      anonymous flex text node never gets text-overflow, and the `[title]`
@@ -7255,100 +8490,34 @@ select {
   filter: brightness(1.06);
 }
 
-/* 빈 작업 화면 — 제품의 이야기 한 번, 축으로 -------------------------------- */
+/* 첫 화면의 2단 흐름 (onboarding.html) — 토큰 → 레포, 같은 자리에서
+   단계만 바뀐다. 꾸밈은 없다: 폼과 목록이 곧 내용이다. */
+.startflow__sub {
+  margin: 0 0 4px;
+  font: 400 var(--font-ui-135) var(--sans);
+  line-height: 1.65;
+  color: var(--text-2);
+}
 
-.emptyhero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 0 16px;
-  animation: risefade 0.5s ease-out backwards;
+/* 토큰 만료 카드 (modals.html "연결이 끊겼어요") — 한 질문의 작은 방. */
+.modal__panel--token {
+  max-width: 460px;
 }
-.emptyhero__ask {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 88%;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-float);
-  background: var(--panel);
-  box-shadow: var(--shadow-card);
-  padding: 8px 13px;
-  font: 500 calc(12.5px * var(--ui-scale)) var(--sans);
-  color: var(--text-2);
+.tokencard {
+  gap: 12px;
+  padding-top: 14px;
 }
-.emptyhero__attach {
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--panel-2);
-  padding: 2px 8px;
-  font-size: calc(11.5px * var(--ui-scale));
+.tokencard__lede {
+  margin: 0;
+  font: 400 var(--font-ui-135) var(--sans);
+  line-height: 1.65;
+  color: var(--text);
 }
-.emptyhero__prompt {
-  font-family: var(--mono);
-  color: var(--muted);
+.tokencard__lede strong {
+  font-weight: 650;
 }
-.emptyhero__link {
-  width: 1px;
-  height: 14px;
-  background: var(--line-strong);
-}
-.emptyhero__screen {
-  position: relative;
-  overflow: hidden;
-  width: min(320px, 100%);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-float);
-  background: var(--panel);
-  box-shadow: var(--shadow-pop);
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.emptyhero__dots {
-  display: flex;
-  gap: 5px;
-  margin-bottom: 2px;
-}
-.emptyhero__dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--panel-3);
-}
-.emptyhero__line {
-  display: block;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--panel-3);
-}
-.emptyhero__line--short {
-  width: 42%;
-}
-.emptyhero__chips {
-  display: flex;
-  gap: 5px;
-  margin-top: 3px;
-}
-.emptyhero__chips i {
-  font: 500 calc(10px * var(--ui-scale)) var(--sans);
-  font-style: normal;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 1px 8px;
-}
-.emptyhero__chips i:first-child {
-  color: var(--accent);
-  border-color: var(--accent-glow);
-  background: var(--accent-soft);
-}
-.emptyhero__caption {
-  margin: 2px 0 0;
-  font: 400 calc(12px * var(--ui-scale)) var(--sans);
-  color: var(--text-2);
+.tokencard__foot {
+  margin: 0;
 }
 
 /* 클론 준비 레일 — 내려받기 → 설치 → 미리보기 ------------------------------ */
@@ -7362,7 +8531,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   color: var(--muted);
 }
 .progress__step:not(:first-child)::before {
@@ -7380,7 +8549,7 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font: 600 calc(9px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-90) var(--sans);
 }
 .progress__step--done {
   color: var(--ok);
@@ -7423,7 +8592,7 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font: 500 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-115) var(--sans);
   color: var(--text-2);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -7509,14 +8678,9 @@ select {
   .onboarding__step,
   .onboarding__cta,
   .onboarding__glyph--pass,
-  .emptyhero,
   .planner__previewcol--live::before,
   .previewcol__stage--settled {
     animation: none;
-  }
-  .emptyhero__screen::after {
-    animation: none;
-    content: none;
   }
   .previewcol__stage--settled::after {
     content: none;
@@ -7556,17 +8720,37 @@ select {
 }
 
 /* A settled turn's own waiting, read at a glance. Quiet on
-   purpose: the planner should feel it as rhythm, not as another card. */
+   purpose: the planner should feel it as rhythm, not as another card.
+   되돌리기 · 다시 요청이 실리면 같은 한 줄이다 — 행동 왼쪽, 시간과 복사
+   오른쪽. 행동 없는 정산 줄은 오늘까지처럼 가운데에만 있다. */
 .turndone {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   margin: 6px 0 2px;
-  font-size: calc(11px * var(--ui-scale));
+  font-size: var(--font-ui-110);
   color: var(--muted);
   text-align: center;
   user-select: none;
+}
+/* 행동이 실린 정산 줄 — 두 묶음을 한 행의 양끝으로 벌린다. 좁으면 포개지지
+   않고 포장된다: 행동이 먼저 내려앉는다. */
+.turndone--actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  text-align: left;
+}
+.turndone__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.turndone__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 /* 전체 복사 — the duration line's quiet plus-one: only the copy glyph, so
    it reads as something to press rather than something to read. The padding
@@ -7599,7 +8783,7 @@ select {
 .sidebar__guardbox {
   width: 100%;
   resize: vertical;
-  font: 400 calc(13px * var(--content-scale)) var(--sans);
+  font: 400 var(--font-content-130) var(--sans);
   line-height: 1.6;
   color: var(--text);
   background: var(--bg-2);
@@ -7616,14 +8800,14 @@ select {
 .sidebar__common summary {
   cursor: default;
   color: var(--text-2);
-  font: 500 calc(12px * var(--content-scale)) var(--sans);
+  font: 500 var(--font-content-120) var(--sans);
 }
 .sidebar__commontext {
   margin: 8px 0 0;
   max-height: 160px;
   overflow: auto;
   white-space: pre-wrap;
-  font: 400 calc(12px * var(--content-scale)) var(--sans);
+  font: 400 var(--font-content-120) var(--sans);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -7693,7 +8877,7 @@ button .ic {
   gap: 8px;
   padding: 22px 14px 18px;
   color: var(--muted);
-  font: 400 calc(12.5px * var(--ui-scale)) / 1.6 var(--sans);
+  font: 400 var(--font-ui-125) / 1.6 var(--sans);
   text-align: center;
 }
 .menuempty .ic {
@@ -7727,7 +8911,7 @@ button .ic {
   border-radius: 999px;
   background: var(--panel);
   color: var(--text);
-  font: 600 calc(12px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-120) var(--sans);
   box-shadow: var(--shadow-float);
   pointer-events: none;
   z-index: 5;
@@ -7747,7 +8931,7 @@ button .ic {
   border-radius: 999px;
   background: transparent;
   color: var(--text-2);
-  font: 600 calc(11.5px * var(--ui-scale)) var(--sans);
+  font: 600 var(--font-ui-115) var(--sans);
 }
 .toolbar__attach:hover:not(:disabled) {
   background: var(--panel-2);
@@ -7766,32 +8950,16 @@ button .ic {
 }
 .empty__starter--attach::before {
   content: "+";
-  font: 700 calc(11px * var(--ui-scale)) var(--mono);
+  font: 700 var(--font-ui-110) var(--mono);
 }
 
-/* 답변의 만든 화면 → 미리보기. 액션 행과는 다른 행(탐색 ≠ 파괴). */
+/* 답변의 만든 화면 카드 — 칩이 카드로 승격되며 세로로 쌓인다
+   (탐색 ≠ 파괴: 액션 행과는 다른 행). 카드 스스로의 여백이
+   답변 아래 들여쓰기(20px)까지 맡는다. */
 .answer__screens {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
   margin: 2px 0 6px;
-}
-.answer__screen {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--text);
-  font: 600 calc(12px * var(--ui-scale)) var(--sans);
-}
-.answer__screen:hover {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-}
-.answer__screen .ic {
-  color: var(--accent);
 }
 
 /* 영수증의 행이 과거의 가리킴을 회수하는 문이 된다. */
@@ -7855,47 +9023,1013 @@ button .ic {
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 280px;
   max-width: 340px;
+  /* selector__menu 의 5px 는 행 목록의 패딩 — 이 팝오버는 대화 상자라
+     카드의 숨을 갖는다. */
+  padding: 10px 12px;
 }
 .screenpanel__statusline {
   color: var(--text);
-  font: 500 calc(12.5px * var(--ui-scale)) / 1.55 var(--sans);
+  font: 500 var(--font-ui-125) / 1.55 var(--sans);
 }
 .screenpanel__destination {
   color: var(--text-2);
-  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-115) var(--mono);
+}
+/* 넘긴 요청이 있으면 행선이 그 요청으로 가는 문이다 — owner/repo 는
+   한 덩어리로 줄바꿈하고(단어 중간에서 끊지 않는다), 정말 긴 이름만
+   anywhere 가 받는다. 아이콘은 마지막 단어 뒤에 흘러 붙는다. */
+.screenpanel__destinationlink {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: inherit;
+  text-decoration: none;
+}
+.screenpanel__destinationname {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+  text-underline-offset: 3px;
+}
+.screenpanel__destinationlink svg {
+  display: inline;
+  vertical-align: -0.12em;
+  margin-left: 3px;
+}
+.screenpanel__destinationlink:hover {
+  color: var(--text);
+}
+.screenpanel__destinationlink:hover .screenpanel__destinationname {
+  text-decoration-color: var(--accent);
 }
 .screenpanel__statusrow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  /* 마지막 확인 시각과 지금 확인 버튼은 카드의 푸터 — 위의 문장과
+     가는 선 하나로 나뉜다. */
+  margin: 0 -12px -10px;
+  padding: 9px 12px 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.screenpanel__statusrow .primary {
+  padding: 5px 12px;
+  font-size: var(--font-ui-120);
 }
 
 /* 되돌릴 수 없는 동작의 행선 — 모달 제목 옆 조용한 한 줄. */
 .modal__destination {
   margin-left: 8px;
   color: var(--text-2);
-  font: 600 calc(11.5px * var(--ui-scale)) var(--mono);
+  font: 600 var(--font-ui-115) var(--mono);
 }
 
 /* 사이드바의 같은 이름 둘 — 부제로 회사가 부르는 이름을. */
 .node__owner {
   color: var(--text-2);
-  font: 500 calc(10.5px * var(--ui-scale)) var(--sans);
+  font: 500 var(--font-ui-105) var(--sans);
 }
 
 /* 온보딩의 제목은 쓸모, 도구 이름은 부제. */
 .onboarding__tool {
   margin-left: 6px;
   color: var(--text-2);
-  font: 500 calc(11px * var(--ui-scale)) var(--mono);
+  font: 500 var(--font-ui-110) var(--mono);
 }
 
 /* 핀 트레이 행의 탄생 — 집의 등장 어휘(risefade)를 따른다. 오버레이
  * 안무는 핀 개편 2단계와 같은 PR 에서 한다(충돌 회피). */
 .pintray__row {
   animation: risefade 0.28s var(--drift);
+}
+
+/* =============================================================================
+   대화면 카드 어휘 (docs/plan/chat.md) — mockups/hero/chat.html ·
+   mockups/mockup.css · mockups/final/final.css 에서 프로젝트 토큰으로 포팅.
+   savecard · scard · state-chip · devmsg · cmt · milestone · day ·
+   inbox-chips · chip--* 가 여기 산다.
+   ============================================================================= */
+
+/* ── 날짜 구분선 ─────────────────────────────────────────────────────── */
+.day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 20px;
+  color: var(--muted);
+  font: 600 var(--font-ui-115) var(--sans);
+  letter-spacing: 0.05em;
+}
+.day::before,
+.day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+/* ── 진행 한 줄: 넘김·반영이 남기는 채팅 상태줄 ───────────────────────── */
+.milestone {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: -2px 0 14px 20px;
+  color: var(--muted);
+  font: 500 var(--font-ui-125) var(--sans);
+}
+.milestone .mic {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--panel-3);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.milestone .mic svg {
+  width: 10px;
+  height: 10px;
+}
+.milestone--ok .mic {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+.milestone--send .mic {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.milestone--danger .mic {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.milestone .t {
+  margin-left: auto;
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+  flex: none;
+}
+
+/* ── 사람 메시지: 대화에 도착한 개발자의 말 ───────────────────────────── */
+.devmsg {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 16px 20px;
+}
+.devmsg__ava {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font: 600 var(--font-ui-115) var(--sans);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-top: 2px;
+}
+.devmsg__body {
+  flex: 1;
+  min-width: 0;
+}
+.devmsg__who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.devmsg__who b {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.devmsg__text {
+  font: 400 var(--font-ui-130) / 1.6 var(--sans);
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 10px 13px;
+}
+.devmsg__text--danger {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+}
+
+/* 코멘트 인용: 화면의 이 자리에 대한 사람의 말 — 핀 매핑 없이(§5#5), 번호만. */
+.cmt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  margin-top: 7px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+}
+.cmt:hover {
+  border-color: var(--line-hover);
+}
+.cmt__n {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font: 700 var(--font-ui-105) var(--sans);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin-top: 1px;
+}
+.cmt__tx {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-ui-125);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.cmt__tx b {
+  color: var(--text);
+  font-weight: 600;
+}
+.cmt__go {
+  flex: none;
+  font: 600 var(--font-ui-115) var(--sans);
+  color: var(--accent);
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.cmt__go:hover {
+  text-decoration: underline;
+}
+
+/* ── 화면 카드: 미니스샷 + 제목 + 상태 칩 ──────────────────────────────── */
+.scard {
+  display: flex;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  padding: 10px;
+  margin: 6px 0 10px 20px;
+  width: calc(100% - 20px);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.12s,
+    transform 0.12s;
+}
+.scard:hover {
+  border-color: var(--line-hover);
+  transform: translateY(-1px);
+}
+.scard--open {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 3px var(--accent-soft);
+}
+.scard__shot {
+  position: relative;
+  width: 108px;
+  height: 76px;
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+  flex: none;
+}
+.scard__shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scard__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+}
+.scard__title {
+  font: 600 var(--font-ui-135) var(--sans);
+  color: var(--text);
+}
+.scard__route {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 400 var(--font-ui-115) var(--mono);
+  color: var(--muted);
+}
+.scard__states {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 1px;
+}
+.state-chip {
+  font: 500 var(--font-ui-110) var(--sans);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+}
+.state-chip.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.state-chip--ok {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+/* 확인 중 — 테마에 info 토큰이 없으므로 accent(steel) 조리법으로. */
+.state-chip--info {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* 반려(§5.4) — 그 어휘가 사는 곳은 칩뿐이다. */
+.state-chip--danger {
+  border-color: transparent;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 대화 안 미니 스크린샷 플레이스홀더 — 진짜 스냅샷이 없을 때의 최소 도식. */
+.mini {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mini__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.mini__row .d {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+}
+.d--ok {
+  background: var(--ok);
+}
+.d--mut {
+  background: var(--line-strong);
+}
+.d--warn {
+  background: var(--warn);
+}
+.mini__row .ln {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--panel-3);
+  flex: 1;
+}
+
+/* ── 상태 카드: 저장 · 넘기기의 대기/진행/완료/실패 ───────────────────── */
+.savecard {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  margin: 6px 0 10px 20px;
+  width: calc(100% - 20px);
+}
+.savecard__head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.savecard__ic {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.savecard__ic svg {
+  width: 14px;
+  height: 14px;
+}
+.savecard__ic--ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+.savecard__ic--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.savecard__tt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.savecard__tt strong {
+  font: 600 var(--font-ui-135) var(--sans);
+  color: var(--text);
+}
+.savecard__sub {
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+}
+.savecard__head .tag {
+  margin-left: auto;
+  flex: none;
+}
+.savecard__files {
+  padding: 5px 7px;
+}
+.frow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+}
+.frow:hover {
+  background: var(--panel-2);
+}
+.frow__ic {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.frow__tx {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.frow__tx strong {
+  font: 500 var(--font-ui-125) var(--sans);
+  color: var(--text);
+}
+.frow__d {
+  font-size: var(--font-ui-115);
+  color: var(--muted);
+}
+.frow .tag {
+  margin-left: auto;
+  flex: none;
+}
+.savecard__hint {
+  padding: 0 15px 10px;
+  font-size: var(--font-ui-120);
+  color: var(--muted);
+}
+.savecard__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 11px 11px;
+}
+.savecard--done .savecard__head,
+.savecard--failed .savecard__head {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+@keyframes cardflash {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.savecard.flash {
+  animation: cardflash 0.9s var(--drift) 2;
+}
+.devmsg.flash {
+  animation: cardflash 0.9s var(--drift) 2;
+  border-radius: var(--r-lg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .savecard.flash,
+  .devmsg.flash {
+    animation: none;
+  }
+}
+
+/* ── 태그 색조: 상태 카드·화면 카드가 공유하는 어휘 ───────────────────── */
+.tag--ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+  border-color: transparent;
+}
+.tag--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
+.tag--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+.tag--accent {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-color: transparent;
+}
+
+/* ── 컴포저 상태 칩(inbox-chips): 저장 안 함 상태의 심장박동 ──────────── */
+.inbox-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.inbox-chips .chip {
+  border-radius: 999px;
+  padding: 4px 12px 4px 10px;
+  font: 500 var(--font-ui-115) var(--sans);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.chip--save {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 600;
+}
+button.chip--save:hover {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.chip--now {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+button.chip--now:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.chip--now:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chip--saved {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+  cursor: default;
+}
+.chip--shelf {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 55%, var(--text-2));
+  cursor: default;
+}
+.dot--ask {
+  background: var(--warn);
+}
+
+/* ── 홈 인박스 (P1 홈 인박스): mockups/hero/home.html 의 .ret-* 구조를
+   프로젝트 토큰으로 이식 — --panel/--line/--warn 등 기존 팔레트, .dot/.tag/
+   .chip 은 기존 클래스를 그대로 쓴다 ────────────────────────────────── */
+.home-work {
+  flex: 1;
+  display: block;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.home-col {
+  max-width: 660px;
+  margin: 0 auto;
+  padding: var(--font-ui-340) var(--font-ui-240) 90px;
+  transition: opacity 0.2s;
+}
+.home-col--stale {
+  opacity: 0.55;
+}
+
+.home-back {
+  margin-bottom: 22px;
+}
+.home-back--skeleton {
+  height: 96px;
+  border-radius: var(--r-lg);
+  background: var(--panel-2);
+}
+.home-back__reconnect {
+  display: inline-flex;
+  align-items: center;
+  font: 600 var(--font-ui-120) var(--sans);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-sm);
+  padding: 4px 10px;
+  margin-bottom: 10px;
+}
+.home-back__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 var(--font-ui-120) var(--sans);
+  color: var(--warn);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+.home-back__title {
+  font: 700 var(--font-ui-200) var(--sans);
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.home-back__sub {
+  font: 400 var(--font-ui-130) var(--sans);
+  color: var(--muted);
+  line-height: 1.6;
+}
+.home-recap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.home-recap span {
+  font: 500 var(--font-ui-120) var(--sans);
+  color: var(--text-2);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.home-glabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 var(--font-ui-120) var(--sans);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin: 30px 2px 10px;
+}
+.home-glabel:first-of-type {
+  margin-top: 26px;
+}
+.home-gcount {
+  font: 500 var(--font-ui-110) var(--mono);
+  color: var(--faint, var(--muted));
+}
+.home-gline {
+  flex: 1;
+  height: 1px;
+  background: var(--line-soft);
+}
+
+.home-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  margin-bottom: 9px;
+  cursor: pointer;
+  transition:
+    border-color 0.16s,
+    box-shadow 0.16s;
+}
+.home-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card);
+}
+.home-card:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.home-card--ask {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+.home-card--ask:hover {
+  border-color: var(--warn);
+}
+.home-card--quiet {
+  background: transparent;
+  border-color: transparent;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  margin-bottom: 0;
+  padding: 12px 4px;
+}
+.home-card--quiet:hover {
+  border-color: var(--line-soft);
+  box-shadow: none;
+  background: var(--panel-2);
+}
+.home-card--skeleton {
+  height: 64px;
+  background: var(--panel-2);
+  border-color: transparent;
+  cursor: default;
+}
+
+.home-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.home-row .dot {
+  margin-top: 5px;
+  flex: none;
+}
+.home-body {
+  min-width: 0;
+  flex: 1;
+}
+.home-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.home-hit:disabled {
+  cursor: default;
+}
+.home-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.home-name {
+  font: 600 var(--font-ui-140) var(--sans);
+  color: var(--text);
+}
+.home-time {
+  margin-left: auto;
+  flex: none;
+  font: 400 var(--font-ui-120) var(--sans);
+  color: var(--faint, var(--muted));
+}
+.home-line {
+  margin-top: 4px;
+  font: 400 var(--font-ui-130) var(--sans);
+  color: var(--text-2);
+  line-height: 1.55;
+}
+.home-card--quiet .home-name {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.home-card--quiet .home-line {
+  color: var(--muted);
+}
+
+.home-quote {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--warn);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: var(--panel);
+  font: 400 var(--font-ui-130) var(--sans);
+  color: var(--text);
+  line-height: 1.55;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.home-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+}
+.home-quick--reason {
+  align-items: stretch;
+}
+.home-reason {
+  flex: 1 1 160px;
+  min-width: 0;
+  font: 400 var(--font-ui-130) var(--sans);
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-hover);
+  border-radius: var(--r-sm);
+  padding: 5px 9px;
+}
+.home-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+}
+.home-run {
+  margin-left: auto;
+  flex: none;
+  font: 500 var(--font-ui-120) var(--mono);
+  color: var(--accent);
+}
+
+.home-empty {
+  text-align: center;
+  color: var(--faint, var(--muted));
+  font: 400 var(--font-ui-125) var(--sans);
+  margin-top: 26px;
+}
+
+/* ── 완전히 빈 상태(§1)의 영웅 블록 ─────────────────────────────────
+   배너와 home-empty 문장이 같은 말을 두 번 하던 자리를 한 덩어리로 접는다.
+   새 대화 시작이 이 화면의 유일한 잉크 버튼이라 다음 행동이 문장이 아니라
+   누르는 것으로 명시된다. eyebrow·제목·sub 는 배너의 클래스를 그대로 쓴다. */
+.home-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: clamp(56px, 16vh, 150px) 24px 60px;
+}
+.home-hero__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin: 18px 0 14px;
+}
+.home-hero__cta {
+  margin-top: 22px;
+  padding: 9px 18px;
+  font-size: var(--font-ui-135);
+}
+.home-hero__cta kbd {
+  font: 600 var(--font-ui-110) var(--mono);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 5px;
+  opacity: 0.72;
+}
+
+/* ── 레일의 "홈" 행: 결정 카드가 쌓이면 벨 뱃지로(§4, pending.length) ── */
+.sidebar__home {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  margin: 2px 0 6px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  font: 500 var(--font-ui-125) var(--sans);
+  cursor: pointer;
+}
+.sidebar--collapsed .sidebar__home {
+  justify-content: center;
+  padding: 7px 0;
+}
+.sidebar__home:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.sidebar__home-label {
+  flex: 1;
+  text-align: left;
+}
+.sidebar__home-badge {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--panel);
+  font: 700 var(--font-ui-100) var(--mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+/* 접힌 레일의 찾기 타일 — 홈 타일과 같은 몸, 아이콘만. */
+.sidebar__search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 7px 0;
+  margin: 0 0 6px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sidebar__search:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+/* 답장 배너 + 저장 복도 — 사람 메시지의 답하기와 저장 카드의 나가는 길. */
+.replybanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin: 0 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md, 10px);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  font-size: 13px;
+}
+.replybanner__text {
+  flex: 1;
+  color: var(--text-2);
+}
+.replybanner__cancel {
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.replybanner__cancel:hover {
+  color: var(--text);
+}
+.corridor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 0 4px;
+}
+.corridor__go {
+  font-size: 13px;
+  color: var(--accent-ink, var(--accent));
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.corridor__later {
+  font-size: 12px;
+  color: var(--faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
 }

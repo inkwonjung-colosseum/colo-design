@@ -5,14 +5,12 @@ import type { DiffFile, DiffHunk } from "@colo-design/protocol";
 /**
  * 저장 검토가 읽는 diff — `git diff HEAD` 의 글자를 파일과 hunk 로 바꾸고,
  * 아직 추적되지 않는 파일을 "전부 추가된 파일"로 읽어 같은 모양에 세운다.
- * 그리고 Claude 의 요약 한 턴이 실패했을 때 대신 쓰는 폴더 묶음까지.
+ * AI 의 요약 한 턴이 실패했을 때 대신 쓰는 문장은 프로토콜의
+ * `fallbackSummary` 가 쓴다 — 데몬과 웹의 3초 바닥이 같은 규칙을 읽도록.
  *
  * `this` 가 하나도 없다 — 워크스페이스의 상태 기계를 빌리지 않으므로 파일
  * 하나와 문자열 하나로 검사된다.
  */
-
-/** 폴더로 묶을 수 없는 파일들이 모이는 이름. */
-const FALLBACK_ROOT_GROUP = "기타";
 
 const DIFF_HEADER = /^diff --git a\/(.*) b\/(.*)$/;
 
@@ -84,48 +82,4 @@ export function untrackedAsAdded(root: string, rel: string): DiffFile {
     },
   ];
   return file;
-}
-
-// ---------------------------------------------------------------------------
-// 요약 폴백 · 되돌리기 경로 규칙 (PLAN D51 · D52 · D53 — pure, unit tested)
-// ---------------------------------------------------------------------------
-
-/**
- * The folder a changed path is read as, for the summary's fallback (PLAN
- * D51): `src/screens/member/PayFailed.screen.tsx` → `member`. The folder
- * directly above the file is the one the repo's own convention names a
- * screen group with; a file with no folder above it lands in `기타`. This is
- * string cutting, not repo-convention reading — the daemon never decides
- * what a "screens" folder means.
- */
-export function fallbackGroup(path: string): string {
-  const segments = path.split("/");
-  return segments.length >= 2
-    ? (segments[segments.length - 2] ?? FALLBACK_ROOT_GROUP)
-    : FALLBACK_ROOT_GROUP;
-}
-
-/**
- * The summary when Claude's turn cannot land (PLAN D51): the changed paths
- * grouped by their folder, `폴더: 수정 N · 추가 M` per group. Deterministic —
- * same diff, same lines — because this is what the planner reads when the
- * fancy version failed.
- */
-export function fallbackSummary(files: Array<Pick<DiffFile, "path" | "status">>): string[] {
-  const groups = new Map<string, { modified: number; added: number }>();
-  for (const file of files) {
-    const group = fallbackGroup(file.path);
-    const counts = groups.get(group) ?? { modified: 0, added: 0 };
-    if (file.status === "added") counts.added += 1;
-    else counts.modified += 1;
-    groups.set(group, counts);
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([group, counts]) => {
-      const parts: string[] = [];
-      if (counts.modified > 0) parts.push(`수정 ${counts.modified}`);
-      if (counts.added > 0) parts.push(`추가 ${counts.added}`);
-      return `${group}: ${parts.join(" · ")}`;
-    });
 }

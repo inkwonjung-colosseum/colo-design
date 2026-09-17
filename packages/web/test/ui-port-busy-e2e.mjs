@@ -116,6 +116,9 @@ async function main() {
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
     COLO_DESIGN_CLAUDE_BIN: writeStubClaude(join(DIR, "bin")),
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
+    // The page comes from this file's static server, not the daemon — the
+    // upgrade's Origin must be named or the daemon 403s it.
+    COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -193,13 +196,16 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".onboarding", { timeout: 60000 });
-    const start = page.getByRole("button", { name: "시작하기", exact: true });
-    await start.waitFor({ timeout: 30000 });
-    await start.click();
-    await page.waitForSelector(".planner__body", { timeout: 60000 });
+    // The wizard gate is gone from the first run: a project-less app draws
+    // the 2-step start flow in the workspace's place, so .planner__empty is
+    // the boot receipt. The wire call below is what stands the workspace up.
+    await page.waitForSelector(".planner__empty", { timeout: 60000 });
 
     // --- 1. a busy declared port heals itself --------------------------------
+    // DEBT (화면 구성 재설계): the reload below waits `.planner__body`, but the
+    // post-redesign app lands on home every load — the conversation has to be
+    // re-entered (`.leaf--start`) after each reload. Deeper staleness lives
+    // past that point; re-map when the redesign slice lands.
     await call({
       type: "project.create",
       name: "포트실험",

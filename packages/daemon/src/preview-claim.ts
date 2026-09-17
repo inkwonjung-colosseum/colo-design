@@ -1,7 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { get as httpGet } from "node:http";
+import { get as httpsGet } from "node:https";
 import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { COLO_DESIGN_DIR, currentPlatform } from "./environment.js";
@@ -13,6 +14,12 @@ import { COLO_DESIGN_DIR, currentPlatform } from "./environment.js";
  * 읽히고 검사된다. 포트 전쟁의 울타리(두 인스턴스가 서로의 미리보기를 죽이던
  * 실사 결함)가 사는 자리이기도 하다.
  */
+/**
+ * Both loopback families a dev server may bind. Probes that try only
+ * 127.0.0.1 miss a server bound to [::1] alone — react-router dev does
+ * exactly that, which is how a live preview read as port-undetected.
+ */
+const LOOPBACK_HOSTS = ["127.0.0.1", "::1"] as const;
 
 export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
   try {
@@ -34,24 +41,43 @@ export function portAccepts(port: number): Promise<boolean> {
     // reclaimer and spawns the preview into EADDRINUSE. One immediate retry
     // turns that coin flip back into a fact; a dead port still refuses
     // instantly, so the free-side verdict pays nothing.
-    const attempt = (retriesLeft: number) => {
-      const socket = createConnection({ port, host: "127.0.0.1" });
-      socket.setTimeout(1_000);
-      socket.once("connect", () => {
-        socket.destroy();
+    // Both loopback families are tried: a dev server bound to [::1] only
+    // (react-router dev does this) accepts nothing on 127.0.0.1, and a
+    // v4-only read would call its port free.
+    let pending = LOOPBACK_HOSTS.length;
+    let answered = false;
+    const settle = (accepts: boolean) => {
+      if (answered) return;
+      if (accepts) {
+        answered = true;
         resolve(true);
-      });
-      socket.once("error", () => {
-        socket.destroy();
+        return;
+      }
+      if (--pending === 0) {
+        answered = true;
         resolve(false);
-      });
-      socket.once("timeout", () => {
-        socket.destroy();
-        if (retriesLeft > 0) attempt(retriesLeft - 1);
-        else resolve(false);
-      });
+      }
     };
-    attempt(1);
+    for (const host of LOOPBACK_HOSTS) {
+      const attempt = (retriesLeft: number) => {
+        const socket = createConnection({ port, host });
+        socket.setTimeout(1_000);
+        socket.once("connect", () => {
+          socket.destroy();
+          settle(true);
+        });
+        socket.once("error", () => {
+          socket.destroy();
+          settle(false);
+        });
+        socket.once("timeout", () => {
+          socket.destroy();
+          if (retriesLeft > 0) attempt(retriesLeft - 1);
+          else settle(false);
+        });
+      };
+      attempt(1);
+    }
   });
 }
 
@@ -62,8 +88,16 @@ export function portAccepts(port: number): Promise<boolean> {
  * listener is still bound, so it reads as NOT free and the caller waits on.
  */
 export function portRefused(port: number): Promise<boolean> {
+  // Free means EVERY loopback family refuses — a listener on [::1] alone
+  // still owns the port even though 127.0.0.1 refuses instantly.
+  return Promise.all(LOOPBACK_HOSTS.map((host) => portRefusedOn(port, host))).then((verdicts) =>
+    verdicts.every(Boolean),
+  );
+}
+
+function portRefusedOn(port: number, host: string): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  const socket = createConnection({ port, host: "127.0.0.1" });
+  const socket = createConnection({ port, host });
   socket.setTimeout(1_000);
   socket.once("error", () => {
     socket.destroy();
@@ -91,6 +125,29 @@ export function respondsOk(url: string): Promise<boolean> {
     resolve(false);
   });
   request.once("error", () => resolve(false));
+  return promise;
+}
+/**
+ * 주어진 URL 이 실제로 응답하는지 — respondsOk 의 판별을 세 가지로 넓힌 것.
+ * "html" 은 브라우저가 열 수 있는 페이지(5xx 미만 + text/html), "ok" 는 그
+ * 외의 5xx 미만 응답(API·리다이렉트·정적 파일), null 은 오류·타임아웃.
+ * https 의 자체서명 인증서는 개발 서버의 일상이라 검증을 끈다.
+ */
+export function probePreviewUrl(url: string): Promise<"html" | "ok" | null> {
+  const { promise, resolve } = Promise.withResolvers<"html" | "ok" | null>();
+  const get = url.startsWith("https:") ? httpsGet : httpGet;
+  const request = get(url, { rejectUnauthorized: false }, (response) => {
+    response.resume();
+    const status = response.statusCode ?? 0;
+    if (status >= 500 || status === 0) return resolve(null);
+    const type = response.headers["content-type"] ?? "";
+    resolve(type.includes("text/html") ? "html" : "ok");
+  });
+  request.setTimeout(2_000, () => {
+    request.destroy();
+    resolve(null);
+  });
+  request.once("error", () => resolve(null));
   return promise;
 }
 
@@ -180,6 +237,86 @@ export async function portListenerPids(port: number): Promise<number[]> {
   }
   return [...pids];
 }
+/** 주어진 pid 들이 쥐고 있는 TCP LISTEN 포트들 — portListenerPids 의 역방향. */
+export async function pidListeningPorts(pids: number[]): Promise<number[]> {
+  if (pids.length === 0) return [];
+  const wanted = new Set(pids);
+  const windows = currentPlatform() === "win32";
+  const args = windows
+    ? ["-a", "-n", "-o"]
+    : ["-a", "-p", pids.join(","), "-iTCP", "-sTCP:LISTEN", "-Fn"];
+  const stdout = await new Promise<string>((resolve, reject) =>
+    execFile(
+      windows ? "netstat" : "lsof",
+      args,
+      { timeout: 10_000, shell: windows },
+      (error, out) => (error ? reject(error) : resolve(String(out))),
+    ),
+  ).catch(() => "");
+  const ports = new Set<number>();
+  for (const line of stdout.split(/\r?\n/)) {
+    if (windows) {
+      // `TCP  0.0.0.0:3000  0.0.0.0:0  LISTENING  4321` — the local address
+      // names the port, the last column owns it.
+      const columns = line.trim().split(/\s+/);
+      if (columns.length < 5 || columns[3] !== "LISTENING") continue;
+      const pid = Number(columns[4] ?? NaN);
+      if (!wanted.has(pid)) continue;
+      const port = Number((columns[1] ?? "").split(":").pop());
+      if (Number.isInteger(port) && port > 0) ports.add(port);
+    } else {
+      // `-Fn` prints one field per line: `p<pid>` then `n<host>:<port>` —
+      // the port sits after the last colon of each `n` line.
+      if (!line.startsWith("n")) continue;
+      const port = Number(line.slice(1).split(":").pop()?.replace(/]$/, ""));
+      if (Number.isInteger(port) && port > 0) ports.add(port);
+    }
+  }
+  return [...ports];
+}
+
+/** pid 아래의 전체 프로세스 트리 — 자식, 손자… (pid 자신은 제외). */
+export async function descendantPids(pid: number): Promise<number[]> {
+  const windows = currentPlatform() === "win32";
+  const stdout = await new Promise<string>((resolve, reject) =>
+    execFile(
+      windows ? "powershell" : "ps",
+      windows
+        ? [
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId",
+          ]
+        : ["-axo", "pid=,ppid="],
+      { timeout: 10_000, shell: windows },
+      (error, out) => (error ? reject(error) : resolve(String(out))),
+    ),
+  ).catch(() => "");
+  const children = new Map<number, number[]>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const columns = line.trim().split(/\s+/).map(Number);
+    const child = columns[0];
+    const parent = columns[1];
+    if (child === undefined || parent === undefined) continue;
+    if (!Number.isInteger(child) || !Number.isInteger(parent)) continue;
+    const list = children.get(parent) ?? [];
+    list.push(child);
+    children.set(parent, list);
+  }
+  const found: number[] = [];
+  const queue = [pid];
+  const seen = new Set<number>([pid]);
+  while (queue.length > 0) {
+    const current = queue.shift() as number;
+    for (const child of children.get(current) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
+      found.push(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
 
 /**
  * 이 포트의 기록이 살아 있는 다른 인스턴스의 미리보기를 가리키면 그 기록을
@@ -210,4 +347,47 @@ export async function foreignLivePreviewClaim(
   if (holders.includes(claim.listenerPid)) return claim;
   clearPreviewClaim(port, env);
   return null;
+}
+
+/**
+ * 주인이 죽은 채 남은 미리보기 기록들을 거둔다 — 기록을 남긴 인스턴스가
+ * 죽었는데 그 미리보기 서버만 살아 있으면, 다음 인스턴스가 그 포트를
+ * "남의 것"으로 읽고 멈추는 길을 막기 위해 리스너를 죽이고 기록을 지운다.
+ * 파일 하나의 실패가 나머지를 막지 않는다.
+ */
+export async function sweepOrphanedPreviewClaims(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const dir = env.COLO_DESIGN_RUN_DIR ?? join(COLO_DESIGN_DIR, "run");
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return; // 기록 폴더가 없으면 거둘 것도 없다.
+  }
+  for (const name of names) {
+    const match = /^preview-(\d+)\.json$/.exec(name);
+    if (!match) continue;
+    try {
+      const port = Number(match[1]);
+      const claim = readPreviewClaim(port, env);
+      if (!claim || pidAlive(claim.instancePid)) continue;
+      // A dead owner's listener pid may have been recycled by a stranger —
+      // only kill it while it still holds THIS port (foreignLivePreviewClaim
+      // makes the same check before trusting the record).
+      if (claim.listenerPid !== null && pidAlive(claim.listenerPid)) {
+        const holders = await portListenerPids(port);
+        if (holders.includes(claim.listenerPid)) {
+          try {
+            process.kill(claim.listenerPid, "SIGKILL");
+          } catch {
+            // 이미 죽은 리스너 — 기록만 거두면 된다.
+          }
+        }
+      }
+      clearPreviewClaim(port, env);
+    } catch {
+      // 깨진 기록 하나가 나머지 청소를 막지 않는다.
+    }
+  }
 }

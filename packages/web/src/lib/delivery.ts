@@ -44,6 +44,13 @@ export interface Delivery {
     tone: DeliveryTone;
     /** 마우스를 올릴 때의 한 문장 — 칩이 말 못한 것을 말한다. */
     title?: string;
+    /**
+     * 문서앱 제목바 문법(`바꿈 N · 저장 안 됨` — docs/plan/preview.md §1-B,
+     * README D6). N 은 "화면을 바꾼 턴 수"가 목표지만 지금 데이터로는
+     * `pendingChanges`로 근사한다 — 필드명을 docLabel 로 둔 것은 나중에
+     * 정확한 수(`pendingScreens` 등)로 갈아 끼우기 위해서다.
+     */
+    docLabel: string;
   };
   /**
    * 그 순간 가장 자연스러운 다음 수 하나.
@@ -80,7 +87,7 @@ export interface DeliveryInput {
   phase: RepoPhase | null;
   /** The open (or merged) pull request of this save cycle. */
   handoff: HandoffStatus | null;
-  /** A Claude turn is running in the open thread. */
+  /** An agent turn is running in the open thread. */
   running: boolean;
   /**
    * 치워둔 작업: the ONE shelf slot, or null.
@@ -91,7 +98,7 @@ export interface DeliveryInput {
   shelf?: { at: string } | null;
 }
 
-const BUSY_SAVE = "Claude가 고치는 중 — 끝나면 저장할 수 있습니다";
+export const BUSY_SAVE = "AI가 고치는 중 — 끝나면 저장할 수 있습니다";
 const NOTHING_TO_SAVE = "저장할 변경이 없습니다";
 /**
  * 치워둔 작업이 있을 때의 저장·넘기기 잠금 이유: "없다"는
@@ -122,14 +129,15 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
   const { pendingChanges, phase, running } = input;
   if (phase !== "ready" && phase !== "error") return null;
   const row = cycleRow(input);
+  const chip = { ...row.chip, docLabel: docLabel(row, input) };
   // 행과 칩이 어긋나면 안 된다: 턴이 도는 동안 사이드바 행은 넘김 ·
   // 반영됨 대신 작업 중을 말하는데, 오른쪽 칩이 반영됨을 말하고 있으면 둘이
   // 어긋난다. 말만 바뀐다 — 저장 · 넘기기의 잠김은 표가 정한 그대로다.
-  if (!running) return row;
+  if (!running) return { ...row, chip };
   return {
     ...row,
     chip: {
-      ...row.chip,
+      ...chip,
       label: pendingChanges > 0 ? "고치는 중" : WORKING_LABEL,
       tone: "pending",
     },
@@ -137,11 +145,44 @@ export function deriveDelivery(input: DeliveryInput): Delivery | null {
 }
 
 /**
+ * 문서앱 칩의 한 줄 — 표의 행마다 정해진다(문자열 생성은 이 파일의 일,
+ * 컴포넌트에 분기를 두지 않는다). `바꿈 N` 의 N 은 바뀐 화면 수가 목표지만
+ * 그 데이터가 오기 전까지 pendingChanges 로 근사한다.
+ */
+function docLabel(row: CycleRow, input: DeliveryInput): string {
+  const unsaved = input.pendingChanges > 0;
+  if (input.running && unsaved) return "고치는 중";
+  switch (row.state) {
+    case "unsaved":
+      return `바꿈 ${input.pendingChanges} · 저장 안 됨`;
+    case "saved":
+      return "모두 저장됨";
+    case "handed":
+      return "검토 중";
+    case "changes_requested":
+      return "변경 요청";
+    case "closed":
+      return "개발자가 반려함";
+    case "merged":
+      // unsaved 가 앞선다 — 머지 뒤에 쌓인 바꿈은 `반영됨` 이 가리지 않는다.
+      return unsaved ? `바꿈 ${input.pendingChanges} · 저장 안 됨` : "반영됨";
+    case "clean":
+      return input.shelf ? "치워둔 작업 1건" : "변경 없음";
+  }
+}
+
+/**
+ * cycleRow 가 채우는 행 — docLabel 은 아직 없다: 그 문자열은 행이 정해진
+ * 뒤 deriveDelivery 가 docLabel() 로 덧붙인다(문법이 한 곳에 모이게).
+ */
+type CycleRow = Omit<Delivery, "chip"> & { chip: Omit<Delivery["chip"], "docLabel"> };
+
+/**
  * 어느 행에 서는지는 전부 기계적으로 정해진다. `unsaved` 가 PR
  * 상태보다 앞선다 — 칩은 하나고 "지금 눌러야 할 것"은 저장이기 때문이다; PR 은
  * 상태 확인 버튼의 존재와 칩의 title 로 남는다.
  */
-function cycleRow(input: DeliveryInput): Delivery {
+function cycleRow(input: DeliveryInput): CycleRow {
   const { pendingChanges, branch, handoff, running } = input;
   const unsaved = pendingChanges > 0;
   const saveLocked = unsaved && running;
@@ -227,7 +268,7 @@ function cycleRow(input: DeliveryInput): Delivery {
       },
       next: {
         line: running
-          ? "Claude가 고치는 중입니다 — 끝나면 남은 작업을 저장으로 묶으세요"
+          ? "AI가 고치는 중입니다 — 끝나면 남은 작업을 저장으로 묶으세요"
           : "저장하지 않은 작업이 있습니다 — 저장을 눌러 검토하고 이번 작업에 묶으세요",
       },
       primary: "save",

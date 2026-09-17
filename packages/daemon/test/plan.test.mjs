@@ -26,6 +26,8 @@ function planSession({ mode = "plan", modeBeforePlan = "bypassPermissions" } = {
     },
     permissionMode: mode,
     modeBeforePlan,
+    planModeId: "plan",
+    defaultModeId: "default",
     pending: new Map([
       [
         "req-1",
@@ -98,6 +100,8 @@ test("setPermissionMode stashes on entering plan and clears on leaving it", asyn
   const stub = {
     agent: { setMode: async () => {} },
     permissionMode: "bypassPermissions",
+    planModeId: "plan",
+    defaultModeId: "default",
   };
   await Session.prototype.setPermissionMode.call(stub, "plan");
   assert.equal(stub.modeBeforePlan, "bypassPermissions");

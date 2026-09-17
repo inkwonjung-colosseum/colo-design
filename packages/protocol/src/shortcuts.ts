@@ -38,6 +38,18 @@ export const APP_SHORTCUTS: AppShortcut[] = [
   },
   { id: "back", label: "뒤로", keys: "⌘[", accelerator: "CmdOrCtrl+[" },
   { id: "forward", label: "앞으로", keys: "⌘]", accelerator: "CmdOrCtrl+]" },
+  {
+    id: "tab-previous",
+    label: "이전 탭",
+    keys: "⌘⇧[",
+    accelerator: "CmdOrCtrl+Shift+[",
+  },
+  {
+    id: "tab-next",
+    label: "다음 탭",
+    keys: "⌘⇧]",
+    accelerator: "CmdOrCtrl+Shift+]",
+  },
   { id: "zoom-in", label: "확대", keys: "⌘=", accelerator: "CmdOrCtrl+=" },
   { id: "zoom-out", label: "축소", keys: "⌘-", accelerator: "CmdOrCtrl+-" },
   {
@@ -48,4 +60,8 @@ export const APP_SHORTCUTS: AppShortcut[] = [
   },
   { id: "pin", label: "핀 찍기", keys: "⌥+클릭" },
   { id: "interrupt-send", label: "끊고 보내기", keys: "⌥Enter" },
+  // 시트 자신의 행 — 가속키가 없다: ⌘/ 는 웹(워크스페이스 keydown)이
+  // 혼자 처리하고, 데스크톱 메뉴에는 앉지 않는다(메뉴가 읽어도 click 이
+  // 없는 항목이 되니 일부러 밖에 둔다).
+  { id: "shortcuts", label: "단축키", keys: "⌘/" },
 ];

@@ -55,7 +55,7 @@ test("the draft does not say 화면 twice", () => {
   assert.equal(handoffDraft("", []).title, "");
 });
 
-test("Claude가 채운 문장은 위, 화면 목록은 아래 — 기계적인 줄은 다시 쓰이지 않는다", () => {
+test("AI가 채운 문장은 위, 화면 목록은 아래 — 기계적인 줄은 다시 쓰이지 않는다", () => {
   const screens = handoffDraft("재고 실사 화면", [screen()]).body;
   const merged = mergeHandoffBody("목록과 빈 상태를 만들었습니다.", screens);
 

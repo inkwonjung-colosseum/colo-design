@@ -53,25 +53,48 @@ test("errorKindOf: 갈라진 거부는 포트 충돌이 아니다", () => {
     status({
       errorKind: null,
       detail:
-        "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 Claude가 확인합니다.",
+        "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 AI가 확인합니다.",
     }),
   );
   assert.equal(kind, "unknown");
 });
 
-test("errorKindOf: clone · install · bootstrap 실패는 각자의 종류로 — 카드는 detail 을 그대로 보여 준다", () => {
+test("errorKindOf: clone · install · 미리보기 명령 실패는 각자의 종류로 — 카드는 detail 을 그대로 보여 준다", () => {
   assert.equal(
     errorKindOf(status({ errorKind: "install", detail: "설치가 실패했습니다" })),
     "install",
   );
   assert.equal(
-    errorKindOf(status({ errorKind: "bootstrap", detail: "준비 턴이 끝나지 않았습니다" })),
-    "bootstrap",
+    errorKindOf(
+      status({ errorKind: "no-preview-command", detail: "띄울 명령이 없습니다" }),
+    ),
+    "no-preview-command",
+  );
+  assert.equal(
+    errorKindOf(
+      status({ errorKind: "port-undetected", detail: "주소를 찾지 못했습니다" }),
+    ),
+    "port-undetected",
   );
   assert.equal(
     errorKindOf(status({ errorKind: "clone", detail: "내려받기가 실패했습니다" })),
     "clone",
   );
+});
+
+test("guidanceFor: 미리보기 명령 없음 · 주소 미감지 카드는 AI 의 준비 과제를 밝힌다", () => {
+  const noCommand = guidanceFor("no-preview-command", null);
+  assert.equal(noCommand.title, "미리보기 명령이 없습니다");
+  assert.match(noCommand.body, /package\.json/);
+  assert.equal(noCommand.agent?.step, "미리보기 띄우기");
+  assert.equal(noCommand.agent?.thread, "미리보기 명령 준비");
+  assert.match(noCommand.agent?.brief ?? "", /package\.json/);
+
+  const undetected = guidanceFor("port-undetected", null);
+  assert.equal(undetected.title, "미리보기 주소를 찾지 못했습니다");
+  assert.equal(undetected.agent?.step, "미리보기 띄우기");
+  assert.equal(undetected.agent?.thread, "미리보기 주소 감지");
+  assert.match(undetected.agent?.brief ?? "", /preview\.port/);
 });
 
 test("guidanceFor: 포트 정리 실패 카드는 다음 과제(직접 종료·포트 변경)를 밝힌다", () => {
@@ -110,40 +133,43 @@ test("held-elsewhere: 산 남의 인스턴스는 그 종류로 알아보고, 카
   assert.equal(withDetail.body, "포트 3000에서 다른 Colo Design 인스턴스가…");
 });
 
-test("guidanceFor: commands · preview 를 뺀 모든 실패가 Claude 요청을 안다", () => {
+test("guidanceFor: commands · preview 를 뺀 모든 실패가 AI 요청을 안다", () => {
   // commands 는 사람의 동의가 곧 해결이고, preview 는 미리보기 자리의 자체
-  // 버튼이 답한다 — 이 둘만 카드의 첫 동작이 Claude 가 아니다.
+  // 버튼이 답한다 — 이 둘만 카드의 첫 동작이 AI 가 아니다.
   for (const kind of [
     "auth",
     "pnpm",
     "port-busy",
+    "port-undetected",
+    "no-preview-command",
     "conflict",
     "clone",
     "install",
-    "bootstrap",
     "held-elsewhere",
     "unknown",
   ] as const) {
-    const claude = guidanceFor(kind, "데몬의 자세한 출력").claude;
-    assert.ok(claude, `${kind} 카드에 Claude 요청이 없습니다`);
-    assert.ok(claude.step && claude.thread, `${kind}: 카드 제목·대화 이름이 비었습니다`);
+    const agent = guidanceFor(kind, "데몬의 자세한 출력").agent;
+    assert.ok(agent, `${kind} 카드에 AI 요청이 없습니다`);
+    assert.ok(agent.step && agent.thread, `${kind}: 카드 제목·대화 이름이 비었습니다`);
     assert.match(
-      claude.brief,
+      agent.brief,
       /데몬의 자세한 출력/,
       `${kind}: 브리프가 detail 을 증거로 싣지 않습니다`,
     );
   }
-  assert.equal(guidanceFor("commands", null).claude, undefined);
-  assert.equal(guidanceFor("preview", null).claude, undefined);
+  assert.equal(guidanceFor("commands", null).agent, undefined);
+  assert.equal(guidanceFor("preview", null).agent, undefined);
 });
 
 test("guidanceFor: 충돌 요청의 브리프는 옛 카드가내던 문구 그대로다 (회귀)", () => {
-  const claude = guidanceFor("conflict", "충돌한 파일: app.tsx").claude;
-  assert.ok(claude);
-  assert.equal(claude.step, "최신 변경 받아오기");
-  assert.equal(claude.thread, "최신화 충돌 정리");
-  assert.match(claude.brief, /준비가 최신화 충돌로 멈춰 있습니다/);
-  assert.match(claude.brief, /충돌한 파일: app\.tsx/);
+  const agent = guidanceFor("conflict", "충돌한 파일: app.tsx").agent;
+  assert.ok(agent);
+  assert.equal(agent.step, "최신 변경 받아오기");
+  assert.equal(agent.thread, "최신화 충돌 정리");
+  assert.match(
+      agent.brief, /준비가 최신화 충돌로 멈춰 있습니다/);
+  assert.match(
+      agent.brief, /충돌한 파일: app\.tsx/);
   // detail 없는 브리프는 리드 문장만이다 — 빈 꼬리표를 달지 않는다.
-  assert.equal(guidanceFor("conflict", null).claude?.brief.endsWith("마쳐 주세요."), true);
+  assert.equal(guidanceFor("conflict", null).agent?.brief.endsWith("마쳐 주세요."), true);
 });

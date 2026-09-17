@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { SessionModelInfo } from "@colo-design/protocol";
 import type {
   AgentDriver,
   AgentSession,
@@ -38,6 +39,9 @@ export interface AcpDriverConfig {
   loggedIn?(): boolean;
   /** The transcript store, bound to the resolved executable. */
   store?(executable: string): TranscriptStore;
+  /** A session-less model listing (`opencode models`); absent = the cache
+      waits for the first live session's report. */
+  listModels?(): Promise<SessionModelInfo[]>;
 }
 
 /**
@@ -68,6 +72,16 @@ export class AcpDriver implements AgentDriver {
     return this.executable;
   }
 
+  /**
+   * The config's session-less listing, or nothing — an agent whose CLI
+   * cannot answer without a session leaves the cache to the first live
+   * session's report.
+   */
+  async listModels(): Promise<SessionModelInfo[]> {
+    if (!this.config.listModels) return [];
+    return this.config.listModels().catch(() => []);
+  }
+
   get store(): TranscriptStore | undefined {
     if (this.boundStore === undefined) {
       const executable = this.exe();
@@ -79,7 +93,10 @@ export class AcpDriver implements AgentDriver {
   async isAvailable(): Promise<Diagnostic> {
     const executable = this.exe();
     if (!executable) {
-      return { ok: false };
+      return {
+        ok: false,
+        reason: `${this.config.label} CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.`,
+      };
     }
     let version: string | null = null;
     try {

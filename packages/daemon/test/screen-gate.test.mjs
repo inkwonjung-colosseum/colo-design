@@ -10,17 +10,10 @@
  */
 
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { test } from "node:test";
 import { readTurn } from "../../protocol/dist/turn-marker.js";
-import { createPreviewTools } from "../dist/preview-tools.js";
+import { PreviewDrivers } from "../dist/preview-drivers.js";
 import { gateBrief, inspectScreens, MAX_GATE_SCREENS } from "../dist/screen-gate.js";
-
-// 세션이 실제로 쓰는 길로 `screen_open` 을 부르기 위한 MCP 짝 — 데몬이
-// zod 를 가져오는 곳과 같은 의존 그래프에서 온다(preview-tools.ts).
-const requireFromSdk = createRequire(import.meta.resolve("@anthropic-ai/claude-agent-sdk"));
-const { Client } = requireFromSdk("@modelcontextprotocol/sdk/client/index.js");
-const { InMemoryTransport } = requireFromSdk("@modelcontextprotocol/sdk/inMemory.js");
 
 /** 화면마다 다른 답을 주는 드라이버 — 연 순서도 기록한다. */
 function fakeDriver(answers, opened = []) {
@@ -116,47 +109,50 @@ test("브리프는 gate 마커를 달고 화면마다 이유를 싣는다", () =
   assert.ok(!read.body.includes(".tsx"), read.body);
 });
 
-test("세션이 연 화면 그대로가 게이트의 판정 대상이 된다", async () => {
-  // 데몬이 세션에 거는 배선 그대로: `screen_open` 이 실제로 열렸을 때만
-  // onOpened 가 울고(server.ts 의 openSink), 그 목록이 게이트의 입력이다.
-  const seen = new Map();
-  const tools = createPreviewTools(
-    {
-      open: async (route) =>
-        route === "/gone" ? { ok: false, reason: "없음" } : { ok: true, settled: true },
-      screenshot: async () => "",
-      axTree: async () => [],
-      click: async () => undefined,
-      type: async () => undefined,
-      press: async () => undefined,
-      scroll: async () => undefined,
-      hover: async () => undefined,
-      consoleLines: async () => [],
-      destroy: async () => undefined,
+test("핀이 없는 턴은 게이트가 아무 화면도 다시 열지 않는다", async () => {
+  // 게이트 재배선: AI 가 연 화면 같은 옛 입력은 게이트를 부르지 않는다 —
+  // 사람이 pin·캡처로 가리킨 화면만 입력이다.
+  const { driver, opened } = fakeDriver({});
+  const drivers = new PreviewDrivers({
+    factory: () => ({ for: () => driver, forIsolated: () => driver }),
+    activeRepo: () => null,
+    session: () => undefined,
+    sessions: () => [],
+    notice: () => undefined,
+  });
+  await drivers.runGate("s1");
+  assert.deepEqual(opened, []);
+});
+
+test("게이트는 핀이 가리킨 화면만 다시 열어 판정을 실어 보낸다", async () => {
+  const { driver, opened } = fakeDriver({
+    "/pay/PayFailed": {
+      settled: true,
+      lines: [{ level: "error", text: "Cannot read properties of undefined" }],
     },
-    () => [],
-    (route, state) => seen.set(`${route}\n${state ?? ""}`, { route, state }),
-  );
-  const client = new Client({ name: "test", version: "0" });
-  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await Promise.all([client.connect(clientSide), tools.config.instance.connect(serverSide)]);
-  try {
-    await client.callTool({
-      name: "screen_open",
-      arguments: { route: "/member/MemberList", state: "비어 있음" },
-    });
-    await client.callTool({
-      name: "screen_open",
-      arguments: { route: "/member/MemberList", state: "비어 있음" },
-    });
-    await client.callTool({ name: "screen_open", arguments: { route: "/gone" } });
-  } finally {
-    await client.close();
-    await tools.config.instance.close();
-  }
-  assert.deepEqual(
-    [...seen.values()],
-    [{ route: "/member/MemberList", state: "비어 있음" }],
-    "같은 화면을 두 번 열어도 한 번 보고, 열리지 않은 화면은 목록에 없다",
-  );
+  });
+  const sent = [];
+  const notices = [];
+  const drivers = new PreviewDrivers({
+    factory: () => ({ for: () => driver, forIsolated: () => driver }),
+    activeRepo: () => ({
+      status: async () => ({ previewUrl: "http://127.0.0.1:4173/" }),
+      repoConfig: () => ({ preview: { origins: [] } }),
+    }),
+    session: (id) => ({ title: "대화", state: "idle", send: (text) => sent.push(text) }),
+    sessions: () => [],
+    notice: (n) => notices.push(n),
+  });
+  // 같은 화면·상태를 두 번 가리켜도 한 번 본다.
+  drivers.notePinned("s1", "/member/MemberList", "기본");
+  drivers.notePinned("s1", "/member/MemberList", "기본");
+  drivers.notePinned("s1", "/pay/PayFailed", null);
+  // preview origin 밖의 주소는 재검증 대상이 아니다.
+  drivers.notePinned("s1", "http://elsewhere.example/steal", null);
+  await drivers.runGate("s1");
+  assert.deepEqual(opened, ["/member/MemberList?기본", "/pay/PayFailed"]);
+  // 문제가 난 화면이 있으면 AI 에게 게이트 턴으로 돌아온다.
+  assert.equal(sent.length, 1);
+  assert.equal(readTurn(sent[0]).marker?.kind, "gate");
+  assert.equal(notices[0]?.kind, "gate");
 });

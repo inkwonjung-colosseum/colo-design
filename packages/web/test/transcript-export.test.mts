@@ -12,7 +12,7 @@ test("a quiet transcript is a title and nothing to read", () => {
   assert.equal(md.includes("**나**"), false);
 });
 
-test("the planner's words and Claude's answer keep their order and speakers", () => {
+test("the planner's words and the agent's answer keep their order and speakers", () => {
   const events: ChatEvent[] = [
     { kind: "user.echo", text: "로그인 화면 만들어 줘", images: 1 },
     {
@@ -26,7 +26,7 @@ test("the planner's words and Claude's answer keep their order and speakers", ()
   const order = md.indexOf("로그인 화면 만들어 줘") < md.indexOf("로그인 화면을 만들었습니다");
   assert.equal(order, true);
   assert.match(md, /\*\*나\*\* \(이미지 1장\)/);
-  assert.match(md, /\*\*Claude\*\*/);
+  assert.match(md, /\*\*AI\*\*/);
 });
 
 test("machine traffic — tools, thinking, retries — never reaches the file", () => {

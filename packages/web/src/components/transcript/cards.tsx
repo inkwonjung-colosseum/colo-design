@@ -18,7 +18,7 @@ type RepoCommands = NonNullable<RepoStatus["commands"]>;
 /**
  * 계획의 승인 카드 (계획 모드 완결): 권한 카드의 형식을 빌리되 물는 것이
  * 다르다 — "이 수행을 허용할까요"가 아니라 "이것을 만들까요". 본문은
- * 계획 그 자체(Claude 가 ExitPlanMode 에 실어 보낸 마크다운)이고, 승인은
+ * 계획 그 자체(AI 가 ExitPlanMode 에 실어 보낸 마크다운)이고, 승인은
  * 착수이며 거절은 수정 요청이다. 본문이 없는 요청은 있는 셈 치고 그리지
  * 않고 본래의 권한 카드로 돌려 보낸다.
  */
@@ -47,7 +47,7 @@ export function PlanCard({
         </span>
       </div>
       <p className="plan__lead">
-        Claude 가 화면을 만들기 전에 무엇을 만들지 보여 드립니다 — 승인하면 바로 만듭니다.
+        AI가 화면을 만들기 전에 무엇을 만들지 보여 드립니다 — 승인하면 바로 만듭니다.
       </p>
       <div className="card__plan">
         <Markdown text={plan} />
@@ -128,7 +128,7 @@ export function PermissionCard({
             onChange={(e) => setReason(e.target.value)}
             onKeyDown={(e) => {
               // Composition keys pass straight through: Enter would hand
-              // Claude half a sentence as the refusal.
+              // the agent half a sentence as the refusal.
               if (composing(e)) return;
               if (e.key === "Enter") onRespond("deny", reason || undefined);
             }}
@@ -142,16 +142,26 @@ export function PermissionCard({
         </div>
       ) : (
         <div className="card__actions">
+          {/* 선택지가 결과를 말한다(cycle/permission.html perm__opt): 범위·의미는
+              버튼 글자에 있고, 목업의 보조 줄(.d)은 이 마크업의 한 줄 버튼에
+              맞지 않아 접미사로 옮겼다. */}
           <button type="button" className="primary" onClick={() => onRespond("allow")}>
-            이번만 허용
+            허용 · 이번 한 번만
           </button>
-          <Tip label={suggestion ? suggestion.label : "이 동작은 계속 물어볼 수밖에 없습니다"}>
-            <button type="button" disabled={!suggestion} onClick={() => onRespond("allowAlways")}>
-              {suggestion ? suggestion.label : "항상 허용"}
+          {suggestion ? (
+            <Tip label={suggestion.label}>
+              <button type="button" onClick={() => onRespond("allowAlways")}>
+                항상 허용 · 이 프로젝트에서
+              </button>
+            </Tip>
+          ) : (
+            // 이유는 hover 가 아니라 행이 말한다 — 터치·키보드는 Tip 을 못 연다.
+            <button type="button" disabled>
+              항상 허용 — 이 동작은 매번 물어봐야 합니다
             </button>
-          </Tip>
+          )}
           <button type="button" className="danger" onClick={() => setShowReason(true)}>
-            거절…
+            거절 · 다른 방법 찾기
           </button>
         </div>
       )}
@@ -256,9 +266,17 @@ export function QuestionCard({
         const pickedPreview = q.options.find(
           (option) => isPicked(q, option.label) && option.preview,
         )?.preview;
+        const answered = (() => {
+          const value = merged()[q.question];
+          return Array.isArray(value) ? value.length > 0 : Boolean(value);
+        })();
         return (
           <div key={q.question} className="question">
-            <div className="question__header">{q.header}</div>
+            <div className="question__header">
+              {q.header}
+              {q.multiSelect && <span className="question__multi">여러 개 고를 수 있어요</span>}
+              {!answered && <span className="question__unanswered">아직 답하지 않음</span>}
+            </div>
             <div className="question__text">{q.question}</div>
             <div
               className={

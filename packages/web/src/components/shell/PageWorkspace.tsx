@@ -10,20 +10,26 @@ import {
 import { usePins } from "../../hooks/usePins";
 import { useSessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
+import { deriveJourney, deriveThreadJourney } from "../../lib/journey";
 import {
   type ChatSettings,
   type LayoutSettings,
   PREVIEW_WIDTH_BOUNDS,
   type Settings,
 } from "../../lib/settings";
+import { visibleThreads } from "../../lib/thread-visibility";
 import { downloadTranscript, transcriptToMarkdown } from "../../lib/transcript-export";
 import { ChatColumn } from "../chat/ChatColumn";
+import { JourneyMap } from "../chat/JourneyMap";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
+import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { ShortcutsSheet } from "../dialogs/ShortcutsSheet";
+import { HomeInbox } from "../home/HomeInbox";
 import { ScreenPanel } from "../panels/ScreenPanel";
 import type { PreviewTarget } from "../preview/PreviewHost";
 import { Palette } from "./Palette";
 import { Splitter } from "./Splitter";
+import { Tip } from "./Tip";
 
 /** The chat column's floor, in px. The preview's drag may squeeze the chat;
  * it may never squeeze the conversation the planner is reading. */
@@ -65,10 +71,15 @@ export interface WorkspaceHandle {
   newThread: (slug: string) => void;
   /** 지우기, from a leaf's `···`. */
   deleteThread: (slug: string, thread: ThreadSummary) => void;
+  /** 대화 모두 지우기, from a project row's `···` — every thread of that
+      project at once, active or not. */
+  clearThreads: (slug: string) => void;
   /** 대화 내보내기 — the transcript leaves as a markdown file. */
   exportThread: (slug: string, thread: ThreadSummary) => void;
   /** The tree's `이전 대화 더 보기` — the palette, scoped to that project. */
   browseThreads: (slug: string) => void;
+  /** 레일의 "홈" 행 — 지금 보는 대화가 무엇이든 홈 인박스로. */
+  goHome: () => void;
 }
 
 /**
@@ -94,11 +105,11 @@ export function PageWorkspace({
   ref?: React.Ref<WorkspaceHandle>;
   daemon: Daemon;
   settings: Settings;
-  /** 설정 owns how Claude answers; threads start on it. */
+  /** 설정 owns how the agent answers; threads start on it. */
   onChatChange: (patch: Partial<ChatSettings>) => void;
   /** Same store, same shape: the dragged column width. */
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (category?: SettingsCategory) => void;
   /** Shell owns the 추가 dialog; the palette's 명령 just opens it. */
   onAddProject: () => void;
   /** The planner renames threads; 설정's store keeps them by session id. */
@@ -109,7 +120,7 @@ export function PageWorkspace({
   /**
    * One session list: every thread is about screens, so there is
    * nothing to split. `ready` is the connected repo having a clone — the
-   * daemon needs it before it can give Claude a cwd.
+   * daemon needs it before it can give the agent a cwd.
    */
   const sessions = useSessions(daemon, {
     ready: daemon.repo?.phase === "ready",
@@ -136,6 +147,24 @@ export function PageWorkspace({
   );
 
   /**
+   * 홈 ↔ 대화: 앱을 열 때·프로젝트를 막 활성화했을 때는 늘 홈이 기본값이다
+   * (P1 홈 인박스 스펙 §2) — 특정 스레드를 연 순간에만(openThreadById ·
+   * startNewThread) "thread"로 넘어간다.
+   */
+  const [view, setView] = useState<"home" | "thread">("home");
+  /**
+   * 새 대화 버튼·⌘T 의 단일 통로 — "thread" 로 넘어가되 세션은 만들지 않는다
+   * (fresh). 첫 입력 전까지 컴포저의 에이전트 칩이 살아 있어 연결되고 켠
+   * 에이전트 중에 고를 수 있고, 세션은 첫 문장이 나갈 때 submit 이 만든다.
+   * 곧장 보내는 길(화면 넘김·기계 턴)은 세션 id 가 곧 필요하므로
+   * `sessions.create` 를 직접 쓴다 — 그 자리엔 이미 문장이 있다.
+   */
+  const startNewThread = useCallback(() => {
+    setView("thread");
+    sessions.fresh();
+  }, [sessions]);
+
+  /**
    * The keyboard's frame jumps (⌘K 팔레트 · ⌘T 새 대화 · ⌘, 설정). One
    * subscription; the handlers read through a ref so the newest closures run
    * without resubscribing on every render. These are the app's own chords —
@@ -157,6 +186,23 @@ export function PageWorkspace({
    * panel has turned (the effect's null early-return makes that a no-op).
    */
   const [jumpRequest, setJumpRequest] = useState<PreviewTarget | null>(null);
+  /**
+   * 사이클 동작의 단일 통로 — 상단 바의 저장·넘기기 버튼, ⌘S, 팔레트의
+   * 상태 확인이 전부 이 요청으로 간다. 모달이던 시절의 setSaveOpen 대신
+   * 대화 열의 카드가 응답한다: nonce 가 오르면 ChatColumn·ScreenPanel 이
+   * 각자의 몫을 집는다.
+   */
+  const [cycleRequest, setCycleRequest] = useState<{
+    kind: "save" | "handoff" | "check";
+    nonce: number;
+  } | null>(null);
+  const askCycle = (kind: "save" | "handoff" | "check") => {
+    setView("thread");
+    setCycleRequest((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
+  };
+  /** 개발자 코멘트의 처리 표식 — 대화(고치기·답하기)가 쓰고 상단 바의
+      `· 개발자 코멘트 N` 배지가 읽는다. 한 창의 두 열이 같은 수를 본다. */
+  const [reviewsTick, setReviewsTick] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   /**
    * 핀 모드: the preview toolbar's toggle, lifted HERE so
@@ -170,21 +216,34 @@ export function PageWorkspace({
     newSession: () => {},
     settings: () => {},
     sheet: () => {},
+    save: () => {},
   });
   shortcuts.current = {
     palette: () => {
       setPaletteSlug(null);
       setPalette((open) => !open);
     },
-    newSession: () => void sessions.create(),
+    newSession: () => void startNewThread(),
     settings: onOpenSettings,
     sheet: () => setSheetOpen((open) => !open),
+    save: () => {
+      // 저장할 게 없으면 카드도 없다 — 요청을 만들지 않는다.
+      if ((daemon.repo?.pendingChanges ?? 0) > 0) askCycle("save");
+    },
   };
 
   /** The active thread, reported up for the tree's active mark. */
   useEffect(() => {
     onActiveThreadChange(sessions.activeId);
   }, [sessions.activeId, onActiveThreadChange]);
+
+  // 활성 프로젝트가 바뀌면 늘 홈부터: 같은 커밋에서 뒤이어 실행되는 아래
+  // jump 이펙트가 실제로 스레드를 열면(openThreadById 가 "thread"로 다시
+  // 되돌린다) 그 결과가 이 setView 를 덮어쓴다 — 순서는 선언 순서다.
+  useEffect(() => {
+    setView("home");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daemon.activeSlug]);
 
   /**
    * A jump across projects: the click landed while another
@@ -202,7 +261,7 @@ export function PageWorkspace({
     if (!pending || daemon.activeSlug !== pending.slug) return;
     jump.current = null;
     if (pending.threadId) void openThreadById(pending.threadId);
-    else if (pending.fresh) void sessions.create();
+    else if (pending.fresh) void startNewThread();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [daemon.activeSlug]);
 
@@ -214,6 +273,7 @@ export function PageWorkspace({
    * (`session.create { resume }`).
    */
   const openThreadById = async (threadId: string) => {
+    setView("thread");
     const listed = sessions.list.find((session) => session.sessionId === threadId);
     if (listed) {
       await sessions.open(listed);
@@ -278,13 +338,23 @@ export function PageWorkspace({
 
   // Rebuilt without a dep array on purpose: every render hands the tree the
   // newest closures, so a click never runs against a stale session list.
+  /** The transcript is the planner's deliverable — one click takes it out of
+      the machine and into a markdown file they can keep. The tree's row and
+      the thread head's menu share this one hand. */
+  const exportThreadById = (id: string, title: string) => {
+    void daemon.api
+      .history(id)
+      .then((events) => downloadTranscript(transcriptToMarkdown(events, title), title))
+      .catch(() => undefined);
+  };
+
   useImperativeHandle(ref, () => ({
     openThread: (slug, thread) => {
       if (slug === daemon.activeSlug) void openThreadById(thread.id);
       else jumpTo({ slug, threadId: thread.id });
     },
     newThread: (slug) => {
-      if (slug === daemon.activeSlug) void sessions.create();
+      if (slug === daemon.activeSlug) void startNewThread();
       else jumpTo({ slug, fresh: true });
     },
     deleteThread: (slug, thread) => {
@@ -303,24 +373,20 @@ export function PageWorkspace({
         },
       );
     },
+    clearThreads: (slug) => {
+      // 대화 모두 지우기는 slug 를 들고 데몬에 간다 — 비활성 프로젝트도
+      // 지울 수 있는 게 단건 지우기와 다른 점이다.
+      sessions.clearAll(slug);
+    },
     exportThread: (slug, thread) => {
-      // The transcript is the planner's deliverable — one click takes
-      // it out of the machine and into a markdown file they can keep.
       if (slug !== daemon.activeSlug) return;
-      void daemon.api
-        .history(thread.id)
-        .then((events) =>
-          downloadTranscript(
-            transcriptToMarkdown(events, titleForThread(thread)),
-            titleForThread(thread),
-          ),
-        )
-        .catch(() => undefined);
+      exportThreadById(thread.id, titleForThread(thread));
     },
     browseThreads: (slug) => {
       setPaletteSlug(slug);
       setPalette(true);
     },
+    goHome: () => setView("home"),
   }));
 
   useEffect(() => {
@@ -345,6 +411,11 @@ export function PageWorkspace({
       } else if (event.key === "t" || event.key === "T") {
         event.preventDefault();
         shortcuts.current.newSession();
+      } else if (event.key === "s" || event.key === "S") {
+        // ⌘S 저장 — 상단 바의 저장 버튼과 같은 통로. 저장할 게 없으면
+        // 카드가 없으니 요청도 없다; 브라우저의 저장 대화상자는 언제나 막는다.
+        event.preventDefault();
+        shortcuts.current.save();
       } else if (event.key === ",") {
         event.preventDefault();
         shortcuts.current.settings();
@@ -366,7 +437,12 @@ export function PageWorkspace({
    * 보내고 markSent 가 기록한다.
    */
   const forwardMachineTurn = useCallback(
-    async (turn: string, name?: string, images?: Array<{ mediaType: string; data: string }>) => {
+    async (
+      turn: string,
+      name?: string,
+      images?: Array<{ mediaType: string; data: string }>,
+      pins?: Array<{ screen: string; state: string | null }>,
+    ) => {
       try {
         // The thread this turn lands in is the one create just named — the
         // closure's activeId still reads the pre-create null, and resolving
@@ -375,7 +451,7 @@ export function PageWorkspace({
         // tool).
         const target = sessions.activeId ?? (await sessions.create(name));
         if (!target) return false;
-        await sessions.sendTurn(turn, images, target);
+        await sessions.sendTurn(turn, images, target, pins);
         return true;
       } catch {
         // sendTurn already put the reason in the error strip.
@@ -415,6 +491,37 @@ export function PageWorkspace({
     turnState === "waiting_permission" ||
     turnState === "waiting_question";
   const settledEmpty = !turnLive && (sessions.active?.queue?.length ?? 0) === 0;
+  /**
+   * 여정 띠 — 두 단위의 지도 (P3-1). 열린 대화의 테이프에 사이클 블록이
+   * 있으면(이 대화가 저장·넘김·반영·코멘트를 받았으면) 그 대화의 지도를
+   * 보여 주고, 없으면 프로젝트 사이클의 지도다 — `repo` 필드는 프로젝트
+   * 단위라 어느 대화가 열려 있든 같은 그림이다. `delivery === null`
+   * (준비 중)이면 띠 자체가 숨는다.
+   */
+  const threadJourney = sessions.active
+    ? deriveThreadJourney(sessions.active.blocks, turnState === "running")
+    : null;
+  const journey =
+    threadJourney ??
+    deriveJourney({
+      pendingChanges: daemon.repo?.pendingChanges ?? 0,
+      branch: daemon.repo?.branch ?? null,
+      phase: daemon.repo?.phase ?? null,
+      handoff: daemon.repo?.handoff ?? null,
+      running: turnState === "running",
+      shelf: daemon.repo?.shelf ?? null,
+    });
+  const journeyTitle =
+    threadJourney && sessions.activeId
+      ? (() => {
+          const active = sessions.list.find((session) => session.sessionId === sessions.activeId);
+          return active ? titleFor(active) : undefined;
+        })()
+      : undefined;
+  /** 제목바의 이름 — 활성 프로젝트. 프레임의 헤더가 이 행으로 흡수됐다. */
+  const projectName =
+    daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? null;
+
   const ghostCount = pins.ghosts.length;
   const ghostArmedAt = useRef<number | null>(null);
   if (ghostCount > 0 && ghostArmedAt.current === null) ghostArmedAt.current = Date.now();
@@ -515,73 +622,113 @@ export function PageWorkspace({
     setPreviewWidth(defaultPreviewWidth());
     onLayoutChange({ previewWidth: null });
   };
-
   return (
-    <div
-      ref={bodyRef}
-      className={`planner__body${drag ? " planner__body--resizing" : ""}`}
-      style={{ gridTemplateColumns: `minmax(0, 1fr) ${previewShown}px` }}
-    >
-      <div className="planner__chatcol">
-        <ChatColumn
+    <div className="planner__work">
+      {/* 프레임의 제목바와 여정 띠가 한 행으로 합쳐졌다 — 프로젝트 이름이
+          왼쪽을, 여정 지도가 오른쪽 끝을 쓴다. 상태 문장(캡션)은 없다: 지도의
+          점과 색이 그 말을 한다. 지도가 숨는 준비 중(phase ≠ ready/error)엔
+          이름 행만 남는다. */}
+      <header className="planner__header">
+        {projectName && <span className="planner__project">{projectName}</span>}
+        {view === "thread" && journey ? (
+          <JourneyMap journey={journey} title={journeyTitle} />
+        ) : (
+          <span className="planner__spacer" />
+        )}
+        {daemon.connection !== "open" && (
+          <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
+            <span className="hint">연결하는 중…</span>
+          </Tip>
+        )}
+      </header>
+      {view === "home" ? (
+        <HomeInbox
           daemon={daemon}
-          sessions={sessions}
-          sendKey={settings.sendKey}
-          midTurnSend={settings.midTurnSend}
-          // 빈 대화의 placeholder 가
-          // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
-          // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
-          // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
-          placeholder={
-            sessions.activeId
-              ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
-              : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
-          }
-          disabled={false}
-          titleFor={titleFor}
-          onRenameSession={onRenameSession}
-          onDeleteSession={(session) => void sessions.remove(session)}
-          screens={screens}
-          showThinking={settings.chat.showThinking}
-          showTools={settings.chat.showTools}
-          pins={pins}
-          focusPinId={focusPinId}
-          onOpenScreen={(route, state) => setJumpRequest({ kind: "screen", route, state })}
+          onOpenThread={(thread) => void openThreadById(thread.id)}
+          onNewThread={() => void startNewThread()}
         />
-      </div>
-      <Splitter
-        side="right"
-        width={previewShown}
-        bounds={PREVIEW_WIDTH_BOUNDS}
-        label="미리보기 너비"
-        active={drag !== null}
-        onPointerDown={beginResize}
-        onPointerMove={moveResize}
-        onPointerUp={endResize}
-        onNudge={nudgeWidth}
-        onReset={resetWidth}
-      />
+      ) : (
+        <div
+          ref={bodyRef}
+          className={`planner__body${drag ? " planner__body--resizing" : ""}`}
+          style={{ gridTemplateColumns: `minmax(0, 1fr) ${previewShown}px` }}
+        >
+          <div className="planner__chatcol">
+            <ChatColumn
+              daemon={daemon}
+              sessions={sessions}
+              sendKey={settings.sendKey}
+              midTurnSend={settings.midTurnSend}
+              // 빈 대화의 placeholder 가
+              // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
+              // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
+              // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
+              placeholder={
+                sessions.activeId
+                  ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
+                  : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
+              }
+              disabled={false}
+              titleFor={titleFor}
+              onRenameSession={onRenameSession}
+              onDeleteSession={(session) => void sessions.remove(session)}
+              screens={screens}
+              showThinking={settings.chat.showThinking}
+              showTools={settings.chat.showTools}
+              // 설정에서 끈 에이전트 — 새 대화의 칩에서도 빠진다.
+              disabledProviders={settings.chat.disabledProviders ?? []}
+              pins={pins}
+              focusPinId={focusPinId}
+              onOpenScreen={(route, state) => setJumpRequest({ kind: "screen", route, state })}
+              onExportThread={() => {
+                const id = sessions.activeId;
+                if (!id) return;
+                const summary = sessions.list.find((session) => session.sessionId === id);
+                exportThreadById(id, summary ? titleFor(summary) : "conversation");
+              }}
+              onChatChange={onChatChange}
+              onOpenSendSettings={() => onOpenSettings("behavior")}
+              onOpenProviderSettings={() => onOpenSettings("providers")}
+              cycleRequest={cycleRequest}
+              onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
+            />
+          </div>
+          <Splitter
+            side="right"
+            width={previewShown}
+            bounds={PREVIEW_WIDTH_BOUNDS}
+            label="미리보기 너비"
+            active={drag !== null}
+            onPointerDown={beginResize}
+            onPointerMove={moveResize}
+            onPointerUp={endResize}
+            onNudge={nudgeWidth}
+            onReset={resetWidth}
+          />
 
-      <ScreenPanel
-        daemon={daemon}
-        onOpenSettings={onOpenSettings}
-        onMachineTurn={forwardMachineTurn}
-        turnState={sessions.active?.state ?? "idle"}
-        sessionId={sessions.activeId}
-        showPip={settings.chat.showPip}
-        followClaude={settings.chat.followClaude}
-        screens={screens}
-        onScreens={setScreens}
-        jumpRequest={jumpRequest}
-        commentsOn={commentsOn}
-        onCommentsMode={setCommentsOn}
-        pins={pins}
-        onPin={(pin) => {
-          pins.add(pin);
-          focusPin(pin.id);
-        }}
-        onPinFocus={focusPin}
-      />
+          <ScreenPanel
+            daemon={daemon}
+            onOpenSettings={onOpenSettings}
+            onMachineTurn={forwardMachineTurn}
+            turnState={sessions.active?.state ?? "idle"}
+            sessionId={sessions.activeId}
+            screens={screens}
+            onScreens={setScreens}
+            jumpRequest={jumpRequest?.kind === "screen" ? jumpRequest : null}
+            commentsOn={commentsOn}
+            onCommentsMode={setCommentsOn}
+            pins={pins}
+            onPin={(pin) => {
+              pins.add(pin);
+              focusPin(pin.id);
+            }}
+            onPinFocus={focusPin}
+            onCycleAction={askCycle}
+            cycleRequest={cycleRequest}
+            reviewsTick={reviewsTick}
+          />
+        </div>
+      )}
 
       {palette && (
         <Palette
@@ -602,10 +749,19 @@ export function PageWorkspace({
             if (slug === daemon.activeSlug) void openThreadById(thread.id);
             else jumpTo({ slug, threadId: thread.id });
           }}
-          onCreateSession={() => void sessions.create()}
+          onCreateSession={() => {
+            // A scoped palette's 새 대화 belongs to the project it names —
+            // the same jump the tree's own new-conversation row makes.
+            if (paletteSlug && paletteSlug !== daemon.activeSlug) {
+              jumpTo({ slug: paletteSlug, fresh: true });
+            } else {
+              void startNewThread();
+            }
+          }}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
           onAddProject={onAddProject}
           onOpenSettings={onOpenSettings}
+          onCheckState={() => askCycle("check")}
           onClose={() => setPalette(false)}
         />
       )}
@@ -620,10 +776,34 @@ export function PageWorkspace({
               <strong>{titleFor(sessions.confirmRemove)}</strong> 대화를 삭제할까요?
             </>
           }
-          hint="대화 기록이 영구히 사라집니다."
+          hint="대화 기록이 영구히 사라집니다. 화면 작업과 저장 기록은 그대로 남습니다."
           confirmLabel="삭제"
           onConfirm={() => void sessions.acceptRemove()}
           onClose={sessions.cancelRemove}
+        />
+      )}
+
+      {sessions.confirmClear && (
+        <ConfirmDialog
+          title="대화 모두 삭제"
+          body={(() => {
+            const project = daemon.projects.find((p) => p.slug === sessions.confirmClear);
+            const count = visibleThreads(
+              project?.threads,
+              daemon.hiddenThreads,
+              sessions.confirmClear ?? "",
+            ).length;
+            return (
+              <>
+                <strong>{project?.name ?? sessions.confirmClear}</strong> 프로젝트의 대화
+                {count ? ` ${count}개를` : "를"} 모두 삭제할까요?
+              </>
+            );
+          })()}
+          hint="대화 기록이 영구히 사라집니다. 화면 작업과 저장 기록은 그대로 남습니다."
+          confirmLabel="모두 삭제"
+          onConfirm={() => void sessions.acceptClear()}
+          onClose={sessions.cancelClear}
         />
       )}
     </div>

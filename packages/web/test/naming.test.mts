@@ -11,25 +11,13 @@ test("toolLabel names known tools in Korean", () => {
   assert.equal(toolLabel("MultiEdit"), "파일 고치기");
 });
 
-// The colo-preview 도구는 하나의 동작으로 읽힌다. The names
-// arrive with the MCP server prefix on (`mcp__colo-preview__screen_*`), so the
-// dictionary is keyed on the tool's own name and the prefix is stripped.
-test("toolLabel folds the screen tools into 화면 보기", () => {
-  for (const name of [
-    "screen_list",
-    "screen_open",
-    "screen_screenshot",
-    "screen_read",
-    "screen_click",
-    "screen_type",
-    "screen_press",
-    "screen_scroll",
-    "screen_hover",
-    "screen_console",
-  ]) {
-    assert.equal(toolLabel(name), "화면 보기");
-    assert.equal(toolLabel(`mcp__colo-preview__${name}`), "화면 보기");
-  }
+// The MCP prefix is plumbing — the dictionary keys on the tool's own name,
+// and an unknown tool passes through with its full name untouched. The
+// colo-preview screen tools are gone (the in-process server was), so nothing
+// folds them anymore: a stale screen_* name must stay raw.
+test("toolLabel strips the mcp__ prefix, then looks the bare name up", () => {
+  assert.equal(toolLabel("mcp__anything__Bash"), "명령 실행");
+  assert.equal(toolLabel("mcp__colo-preview__screen_screenshot"), "mcp__colo-preview__screen_screenshot");
 });
 
 test("toolLabel passes an unknown tool through", () => {
@@ -61,6 +49,6 @@ test("bashHeadline keeps an unknown command raw", () => {
 
 // Error ids become sentences; unknown ids fall through.
 test("errorWords maps known ids and passes unknown ones", () => {
-  assert.equal(errorWords("overloaded"), "Claude가 붐빕니다");
+  assert.equal(errorWords("overloaded"), "AI가 붐빕니다");
   assert.equal(errorWords("mystery_code"), null);
 });

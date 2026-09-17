@@ -219,6 +219,8 @@ function PlannerShell({
   // 진행 시계의 자리: 이 창이 열린 순간을 턴의 시작으로 삼는다 — 미리보기는
   // 실제로 초가 도는 모습까지 보여야 그 자리가 맞는지 알 수 있다.
   const [startedAt] = useState(() => Date.now() - 95_000);
+  /** 에이전트 칩의 재료 — 데몬 없이도 칩의 모양과 고르기를 본다. */
+  const [provider, setProvider] = useState("claude");
   return (
     <main className="planner__chat">
       <header className="thread">
@@ -241,6 +243,7 @@ function PlannerShell({
             showTools={showTools}
             checkpoints={[{ id: "cp1", turn: 1 }]}
             onRestoreCheckpoint={() => undefined}
+            onRewind={() => undefined}
           />
         </section>
         {live && (
@@ -274,6 +277,7 @@ function PlannerShell({
           sessionCostUsd: 1.66,
         }}
         plan={{
+          provider: "claude",
           subscriptionType: "max",
           fiveHour: { utilization: 42, resetsAt: null },
           sevenDay: { utilization: 21, resetsAt: null },
@@ -288,6 +292,7 @@ function PlannerShell({
         running={live}
         sendKey="enter"
         selector={{
+          provider,
           model: "opus",
           effort: "high",
           permissionMode: "bypassPermissions",
@@ -314,6 +319,42 @@ function PlannerShell({
             },
           ],
         }}
+        providers={[
+          {
+            id: "claude",
+            label: "Claude",
+            available: true,
+            modes: [],
+            defaultModeId: "default",
+            capabilities: {},
+          },
+          {
+            id: "codex",
+            label: "Codex",
+            available: true,
+            modes: [],
+            defaultModeId: "default",
+            capabilities: {},
+          },
+          {
+            id: "opencode",
+            label: "OpenCode",
+            available: false,
+            reason: "OpenCode CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
+            modes: [],
+            defaultModeId: "build",
+            capabilities: {},
+          },
+          {
+            id: "omp",
+            label: "omp",
+            available: true,
+            modes: [],
+            defaultModeId: "default",
+            capabilities: {},
+          },
+        ]}
+        onPickProvider={setProvider}
         onToggleFastMode={() => undefined}
         commands={[]}
         onSetModel={() => undefined}

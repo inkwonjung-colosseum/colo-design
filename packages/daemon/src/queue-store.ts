@@ -77,6 +77,12 @@ export class QueueStore {
   }
 
   private file(sessionId: string): string {
+    // The id becomes a filename: sessions mint UUIDs (and providers' resume
+    // ids are word-safe too), so anything outside that alphabet — a `/`, a
+    // `..` — is a wire value trying to leave this directory.
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+      throw new Error(`잘못된 세션 id 입니다: ${sessionId.slice(0, 32)}`);
+    }
     return join(this.dir, `queue-${sessionId}.json`);
   }
 

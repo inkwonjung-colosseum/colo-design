@@ -2,42 +2,9 @@ import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { toolLabel } from "../../lib/labels";
 import { isToolRunning } from "../../lib/progress";
-import { CheckIcon, ChevronRightIcon, CloseIcon, SparkIcon } from "../icons";
+import { CheckIcon, ChevronRightIcon, CloseIcon } from "../icons";
 import { Tip } from "../shell/Tip";
-import {
-  preview,
-  screenshotImage,
-  type TaskControls,
-  type ToolStatus,
-  toolHeadline,
-} from "./shared";
-
-/**
- * 캡처 카드: a screen turn leaves its evidence behind. What Claude
- * saw through the screen driver renders as the picture it is, under one tag —
- * not as a folded tool row a planner would have to open.
- */
-function CaptureCard({ block }: { block: Extract<Block, { type: "tool" }> }) {
-  const image = block.done && !block.isError ? screenshotImage(block.result) : null;
-  if (!image) return <ToolBlock block={block} />;
-  return (
-    <div className="card">
-      <div className="card__title">
-        <span className="card__badge">
-          <SparkIcon />
-        </span>
-        <span>
-          <strong>Claude가 본 화면</strong>
-        </span>
-      </div>
-      <img
-        className="card__shot"
-        src={`data:${image.mimeType};base64,${image.data}`}
-        alt="Claude가 본 화면"
-      />
-    </div>
-  );
-}
+import { preview, type TaskControls, type ToolStatus, toolHeadline } from "./shared";
 
 function ToolBlock({
   block,
@@ -149,7 +116,7 @@ function ToolBlock({
 }
 
 /**
- * Claude's private reasoning — off unless 설정's `생각 과정 보기` asks for it
+ * the agent.s private reasoning — off unless 설정's `생각 과정 보기` asks for it
  * (Transcript drops the blocks before grouping). When it is on the fold is
  * still closed: while the turn is running it reads as live ("생각 중…"); once
  * the turn ends the same fold reads as a record ("생각 과정") — a finished
@@ -170,4 +137,4 @@ function ThinkingBlock({ block }: { block: Extract<Block, { type: "thinking" }> 
   );
 }
 
-export { CaptureCard, ThinkingBlock, ToolBlock };
+export { ThinkingBlock, ToolBlock };

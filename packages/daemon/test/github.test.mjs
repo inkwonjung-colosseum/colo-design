@@ -334,15 +334,24 @@ test("listRepos throws with the picker's line when a page fails", async () => {
   await assert.rejects(unauthorized.listRepos(), /토큰이 유효하지 않거나 만료/);
 });
 
-test("hasColoDesign reads presence off one request, before any clone", async () => {
-  const withIt = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-colo-design")]));
-  assert.equal(await withIt.hasColoDesign({ owner: "colo-org", repo: "payments-web" }), true);
+test("the contents probes read dev script and conventions marker before any clone", async () => {
+  const withBoth = new GitHubClient(
+    TOKEN,
+    new FixtureTransport([byName("contents-package-json"), byName("contents-claude-md")]),
+  );
+  const both = { owner: "colo-org", repo: "payments-web" };
+  assert.equal(await withBoth.hasDevScript(both), true);
+  assert.equal(await withBoth.hasConventions(both), true);
 
-  const without = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-missing")]));
-  assert.equal(await without.hasColoDesign({ owner: "colo-org", repo: "payments-web" }), false);
+  const without = new GitHubClient(
+    TOKEN,
+    new FixtureTransport([byName("contents-package-missing"), byName("contents-claude-missing")]),
+  );
+  assert.equal(await without.hasDevScript(both), false);
+  assert.equal(await without.hasConventions(both), false);
 });
 
-test("hasColoDesign refuses to answer a non-200/404 with a guess", async () => {
+test("the contents probes refuse to answer a non-200/404 with a guess", async () => {
   const serverError = new GitHubClient(TOKEN, {
     request: async () => ({
       status: 500,
@@ -350,8 +359,12 @@ test("hasColoDesign refuses to answer a non-200/404 with a guess", async () => {
     }),
   });
   await assert.rejects(
-    serverError.hasColoDesign({ owner: "colo-org", repo: "payments-web" }),
-    /colo-design.json 확인/,
+    serverError.hasDevScript({ owner: "colo-org", repo: "payments-web" }),
+    /package.json 확인/,
+  );
+  await assert.rejects(
+    serverError.hasConventions({ owner: "colo-org", repo: "payments-web" }),
+    /CLAUDE.md 확인/,
   );
 
   const unauthorized = new GitHubClient(TOKEN, {
@@ -361,12 +374,12 @@ test("hasColoDesign refuses to answer a non-200/404 with a guess", async () => {
     }),
   });
   await assert.rejects(
-    unauthorized.hasColoDesign({ owner: "colo-org", repo: "payments-web" }),
+    unauthorized.hasDevScript({ owner: "colo-org", repo: "payments-web" }),
     /토큰이 유효하지 않거나 만료/,
   );
 });
 
-test("inspectRepo judges one repo from the two calls the picker needs", async () => {
+test("inspectRepo judges one repo from the three calls the picker needs", async () => {
   const calls = [];
   const client = new GitHubClient(TOKEN, {
     request: async (input) => {
@@ -382,10 +395,18 @@ test("inspectRepo judges one repo from the two calls the picker needs", async ()
           ),
         };
       }
-      return {
-        status: 200,
-        body: new TextEncoder().encode(JSON.stringify({ name: "colo-design.json" })),
-      };
+      if (input.url.endsWith("/contents/package.json")) {
+        return {
+          status: 200,
+          body: new TextEncoder().encode(
+            JSON.stringify({
+              encoding: "base64",
+              content: Buffer.from(JSON.stringify({ scripts: { dev: "vite" } })).toString("base64"),
+            }),
+          ),
+        };
+      }
+      return { status: 404, body: new TextEncoder().encode("{}") };
     },
   });
 
@@ -394,12 +415,14 @@ test("inspectRepo judges one repo from the two calls the picker needs", async ()
     repo: "payments-web",
   });
   assert.deepEqual(inspection, {
-    hasColoDesign: true,
+    hasDevScript: true,
+    hasConventions: false,
     canPush: false,
     defaultBranch: "develop",
   });
   assert.deepEqual(calls, [
     "/repos/colo-org/payments-web",
-    "/repos/colo-org/payments-web/contents/colo-design.json",
+    "/repos/colo-org/payments-web/contents/package.json",
+    "/repos/colo-org/payments-web/contents/CLAUDE.md",
   ]);
 });

@@ -17,7 +17,7 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
  * Builds the `### 수정 요청` section from this cycle's recorded comments:
  * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
  * 선언된 제목으로, 요소 이름과 경로는 쓰지 않는다(D38). 자동 정리 뒤 모든 행은
- * Claude에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
+ * AI에게 전달된 것 — 해결 표식은 없다, 목록 자체가 요청의 기록이다.
  * 의도가 제목을 정한다 (재설계 C10 · 커미티 2차 판정 4): 전부 질문이면 섹션
  * 자체가 질문이고, 섞였으면 행마다 (질문)을 새긴다 — 사용자의 질문이 개발자
  * 에게 변경 지시로 읽혀선 안 된다. 빈 메모는 빈 메모다 (커미티 2차 판정 3):
@@ -66,9 +66,9 @@ export function buildCommentsSection(
         : "### 수정 요청";
   const lead =
     questions > 0 && changes === 0
-      ? "사용자가 미리보기에서 찍어 Claude에게 보낸 질문입니다."
+      ? "사용자가 미리보기에서 찍어 AI에게 보낸 질문입니다."
       : questions > 0
-        ? "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청과 질문입니다."
-        : "사용자가 미리보기에서 찍어 Claude에게 보낸 수정 요청입니다.";
+        ? "사용자가 미리보기에서 찍어 AI에게 보낸 수정 요청과 질문입니다."
+        : "사용자가 미리보기에서 찍어 AI에게 보낸 수정 요청입니다.";
   return `${title}\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }

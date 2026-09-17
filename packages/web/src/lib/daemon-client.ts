@@ -3,11 +3,13 @@ import type {
   ChatEvent,
   ContextUsage,
   DaemonStatus,
+  DeveloperReview,
   DiffFile,
   DiffStatus,
   EffortLevel,
   GitHubRepoInspection,
   GitHubRepoList,
+  HandoffPreviewInfo,
   HandoffStatusReport,
   LostSend,
   OnboardingFixKind,
@@ -31,10 +33,19 @@ import type {
   SessionState,
   SessionSummary,
 } from "@colo-design/protocol";
+import { PROTOCOL_VERSION } from "@colo-design/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorWords } from "./error-words";
 import { attachProgress, type ToolProgress } from "./progress";
 import { currentNoticePrefs, LONG_TURN_MS } from "./settings";
+import {
+  type HiddenThreads,
+  hideAllThreads as hideAllThreadsIn,
+  hideThread as hideThreadIn,
+  pruneHidden,
+  unhideAllThreads as unhideAllThreadsIn,
+  unhideThread as unhideThreadIn,
+} from "./thread-visibility";
 
 // ---------------------------------------------------------------------------
 // Transcript model: ChatEvents folded into renderable blocks
@@ -95,6 +106,38 @@ export type Block =
       id: string;
       level: "info" | "warn" | "error";
       text: string;
+      /** 요약 경계(compacting.html cp-fold) — 양쪽 선 구분선으로 그린다. */
+      subtype?: "compact";
+    }
+  | {
+      /** 저장 한 건의 기록 (cycle.saved, hero-synthesis D1): 창의 휘발 상태가
+       * 아니라 세션 테이프에 남는 것 — 상태 카드가 그릴 내용을 사건 필드
+       * 그대로 운반한다(시각·커밋·문구·파일·화면). */
+      type: "save";
+      id: string;
+      at: string;
+      commit: string;
+      message: string;
+      files: string[];
+      screens: Array<{ route: string; title: string; note?: string }>;
+    }
+  | {
+      /** 넘김·반영의 진행 한 줄 (cycle.handed·cycle.merged): subtype 이 어느
+       * 쪽인지 고른다. 같은 PR 의 재검토 라운드마다 줄이 쌓이는 것이
+       * 목업의 의도다 — 대화의 연대기. */
+      type: "milestone";
+      id: string;
+      subtype: "handed" | "merged";
+      at: string;
+      pr: number;
+      reviewer?: string;
+    }
+  | {
+      /** 개발자 코멘트 도착 (review.arrived): 하나의 이벤트에 달려온 리뷰들을
+       * 통째로 담는다 — 시각은 각 리뷰의 `at` 이 안다(이벤트 꼭대기엔 없음). */
+      type: "human";
+      id: string;
+      reviews: DeveloperReview[];
     };
 
 let noticeSeq = 0;
@@ -281,13 +324,68 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       ];
 
     case "compact":
+      // 요약 경계는 새로운 말이 아니다 — 이전 대화가 어디서 접혔는지의
+      // 표식이다(compacting.html cp-fold). 문구도 고정이고 level 도 info
+      // 의 색조가 아니라 표식의 것이다.
       return [
         ...blocks,
         {
           type: "notice",
           id: `n${++noticeSeq}`,
           level: "info",
-          text: `길어진 대화를 정리하고 이어갑니다 (${event.trigger}).`,
+          subtype: "compact",
+          text: "이전 대화가 요약으로 이어졌습니다",
+        },
+      ];
+
+    case "cycle.saved":
+      // 사이클 기록 (hero-synthesis D1): 상태가 아니라 남는 이야기이므로
+      // 블록으로 접는다 — 재생 테이프에서도 같은 길로 접힌다.
+      return [
+        ...settleThinking(blocks),
+        {
+          type: "save",
+          id: `s${++noticeSeq}`,
+          at: event.at,
+          commit: event.commit,
+          message: event.message,
+          files: event.files,
+          screens: event.screens,
+        },
+      ];
+
+    case "cycle.handed":
+      return [
+        ...settleThinking(blocks),
+        {
+          type: "milestone",
+          id: `m${++noticeSeq}`,
+          subtype: "handed",
+          at: event.at,
+          pr: event.pr,
+          ...(event.reviewer !== undefined ? { reviewer: event.reviewer } : {}),
+        },
+      ];
+
+    case "cycle.merged":
+      return [
+        ...settleThinking(blocks),
+        {
+          type: "milestone",
+          id: `m${++noticeSeq}`,
+          subtype: "merged",
+          at: event.at,
+          pr: event.pr,
+        },
+      ];
+
+    case "review.arrived":
+      return [
+        ...settleThinking(blocks),
+        {
+          type: "human",
+          id: `h${++noticeSeq}`,
+          reviews: event.reviews,
         },
       ];
 
@@ -300,7 +398,6 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
       return attachProgress(blocks, event);
 
     case "init":
-    case "preview.opened":
     case "queued":
     case "queue.lost":
     case "tasks":
@@ -308,14 +405,16 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
     case "status":
     case "shutdown":
     case "ratelimit":
-      // `preview.opened` is not a transcript event — the session view
-      // keeps it as `lastOpened` (below), and no block is built. The wait
-      // room's `queued` and `queue.lost` are the same kind of news: what is
-      // waiting above the field, and what fell out of the room — neither has
-      // entered the transcript (a waiting send echoes only when delivered).
-      // 칩·상태·작업 목록도 같은 성질이다: 지금의 상태이지
-      // 나중에 다시 읽을 기록이 아니다 (applyEvent 가 뷰에 담는다).
-      // The exhaustive switch is why none slips through unhandled.
+      // The wait room's `queued` and `queue.lost` are the same kind of
+      // news: what is waiting above the field, and what fell out of the
+      // room — neither has entered the transcript (a waiting send echoes
+      // only when delivered). 칩·상태·작업 목록도 같은 성질이다: 지금의
+      // 상태이지 나중에 다시 읽을 기록이 아니다 (applyEvent 가 뷰에 담는다).
+      return blocks;
+
+    default:
+      // A daemon newer than this client may send kinds this build does not
+      // know — an unknown event folds to nothing, never a crash.
       return blocks;
   }
 }
@@ -329,10 +428,6 @@ function applyEvent(view: SessionView, event: ChatEvent): SessionView {
   switch (event.kind) {
     case "init":
       return { ...view, model: event.model };
-    case "preview.opened":
-      // The screen Claude is actually looking at — kept beside the view,
-      // not in the transcript.
-      return { ...view, lastOpened: { route: event.route, state: event.state } };
     case "queued":
       // 대기 줄 — 기록이 아니라 입력창 위 목록.
       return { ...view, queue: event.items };
@@ -377,6 +472,13 @@ export interface PendingPermission {
   toolName: string;
   input: unknown;
   suggestions: PermissionSuggestion[];
+  /**
+   * 이 요청이 답 없이는 일이 못 가는가 — 데몬이 내린 판정을 그대로 싣는다.
+   * 3단계 알림 위계(로그→뱃지→네이티브)의 세 번째 단계가 이 필드만 읽는다.
+   */
+  blocking?: boolean;
+  /** 요청이 만들어진 시각 (epoch ms) — 홈 카드의 "N분 전". */
+  requestedAt?: number;
 }
 
 export interface PendingQuestion {
@@ -384,6 +486,10 @@ export interface PendingQuestion {
   requestId: string;
   sessionId: string;
   questions: AskQuestion[];
+  /** PendingPermission.blocking 과 같은 판정, 같은 소비자. */
+  blocking?: boolean;
+  /** PendingPermission.requestedAt 과 같은 시계. */
+  requestedAt?: number;
 }
 
 type Pending = PendingPermission | PendingQuestion;
@@ -396,12 +502,6 @@ interface SessionView {
   model: string | null;
   /** True once this daemon holds a live query for the session. */
   live: boolean;
-  /**
-   * The screen Claude last opened in the hidden preview — the
-   * truth the 따라가기 and the PiP label read, where the planner's own view
-   * position used to be guessed.
-   */
-  lastOpened?: { route: string; state: string | null };
   /**
    * 다음 턴에 보내기: the sends waiting in the DAEMON's wait
    * room, oldest first. The daemon owns this list because it owns the wait —
@@ -471,8 +571,7 @@ interface DaemonApi {
   /**
    * Omit `resume` for a fresh thread. `model` and `effort` carry the
    * composer's chips into the new session — the daemon otherwise starts every
-   * thread on the CLI's own defaults. `previewTools` decides
-   * whether the thread gets the colo-preview 도구 at all; 생략은 켬이다.
+   * thread on the CLI's own defaults.
    */
   createSession: (opts?: {
     provider?: string;
@@ -480,12 +579,12 @@ interface DaemonApi {
     model?: string;
     effort?: EffortLevel;
     title?: string;
-    previewTools?: boolean;
   }) => Promise<{ sessionId: string }>;
   send: (
     sessionId: string,
     text: string,
     images?: Array<{ mediaType: string; data: string }>,
+    pins?: Array<{ screen: string; state: string | null }>,
   ) => Promise<unknown>;
   interrupt: (sessionId: string) => Promise<unknown>;
   /**
@@ -518,6 +617,8 @@ interface DaemonApi {
   findFiles: (query: string, limit?: number) => Promise<string[]>;
   closeSession: (sessionId: string) => Promise<unknown>;
   deleteSession: (sessionId: string) => Promise<unknown>;
+  /** A project's every thread at once — the tree's 대화 모두 지우기. */
+  deleteAllSessions: (slug: string) => Promise<unknown>;
   respondPermission: (
     requestId: string,
     decision: "allow" | "allowAlways" | "deny",
@@ -548,7 +649,6 @@ interface DaemonApi {
     name: string;
     repoUrl: string | null;
     baseBranch?: string;
-    bootstrap?: boolean;
     approveCommands?: boolean;
   }) => Promise<ProjectSummary>;
   /** Rename, or re-point the repo url/base branch. */
@@ -579,11 +679,9 @@ interface DaemonApi {
   /**
    * 레포 최신화: pull the developer's merged work into the clone, with
    * unsaved changes riding along. A conflict goes to the named thread as
-   * Claude's next turn.
+   * the agent.s next turn.
    */
   repoRefresh: (sessionId?: string | null) => Promise<RepoStatus>;
-  /** Change the connected repo's url. */
-  repoUpdate: (url: string | null) => Promise<RepoStatus>;
   /** Worktree changes not saved yet, for the 저장 review panel. */
   diff: () => Promise<DiffFile[]>;
   /**
@@ -607,12 +705,30 @@ interface DaemonApi {
   /** 상태 확인 — the pull request plus the developer's comments. */
   handoffStatus: () => Promise<HandoffStatusReport>;
   /**
-   * 저장 검토의 요약: one no-tool Claude turn over the diff,
+   * 보낸 화면 동결 (preview.md §1-E): one committed capture read out of the
+   * handoff branch — the frozen stage's '보낸 그대로'. `state` null is the
+   * screen's default look; null back means no shot was committed.
+   */
+  handoffShot: (
+    route: string,
+    state: string | null,
+  ) => Promise<{ mediaType: string; data: string } | null>;
+  /**
+   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's REAL
+   * build — the handoff branch's tip in a throwaway worktree, served on a
+   * second port. `ready:false` is the honest answer (no open handoff, a
+   * server that would not come up) and the frozen stage falls back to the
+   * committed capture. The `sessionId` ties the build's life to the
+   * conversation that opened it — its close reaps the worktree.
+   */
+  handoffPreview: (sessionId?: string | null) => Promise<HandoffPreviewInfo>;
+  /**
+   * 저장 검토의 요약: one no-tool agent turn over the diff,
    * answered in the planner's words. Asked once per diff, cached above this.
    */
   summarizeDiff: () => Promise<DiffSummary>;
   /**
-   * 개발자에게 넘기기의 초안 (비개발자 넘기기): one no-tool Claude turn over
+   * 개발자에게 넘기기의 초안 (비개발자 넘기기): one no-tool agent turn over
    * this cycle's 저장 메모, answered as the title and the paragraph the
    * developer reads first. Empty strings keep the browser's own proposal.
    */
@@ -644,7 +760,7 @@ interface DaemonApi {
   /**
    * 치워둔 작업 꺼내기: re-apply the shelved work onto the current HEAD —
    * never a rewind. Refused while the worktree is dirty; a conflict is
-   * Claude's brief in the named thread and the slot survives it. The
+   * the agent.s brief in the named thread and the slot survives it. The
    * `sessionId` is where that brief lands — without it a conflict has
    * nowhere to go and the planner gets only the refusal sentence.
    */
@@ -684,8 +800,8 @@ interface DaemonApi {
     text: string,
     images?: Array<{ mediaType: string; data: string }>,
   ) => Promise<{ sessionId: string; memoryKept: boolean }>;
-  /** The four onboarding checks; read-only. */
-  onboardingCheck: () => Promise<OnboardingStep[]>;
+  /** The four onboarding checks; read-only. `provider` picks the agent gate. */
+  onboardingCheck: (provider?: string) => Promise<OnboardingStep[]>;
   /**
    * Store (or clear) the machine-wide GitHub token; resolves with the
    * recomputed `github` step.
@@ -711,6 +827,16 @@ export interface Daemon {
    */
   projects: ProjectSummary[];
   activeSlug: string | null;
+  /**
+   * 대화 지우기의 낙관 숨김 (thread-visibility 참조). 확인 대화상자가 승인한
+   * 순간 행을 먼저 거두고, 데몬의 `project.changed`가 따라오면 조정으로
+   * 거둔다 — 저장 스캔과 브로드캐스트의 한 바퀴를 화면이 기다리지 않게.
+   */
+  hiddenThreads: HiddenThreads;
+  hideThread: (slug: string, sessionId: string) => void;
+  unhideThread: (slug: string, sessionId: string) => void;
+  hideAllThreads: (slug: string) => void;
+  unhideAllThreads: (slug: string) => void;
   sessions: Record<string, SessionView>;
   pending: Pending[];
   api: DaemonApi;
@@ -723,6 +849,11 @@ export interface Daemon {
   diffStatus: DiffStatus | null;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
+  /**
+   * The provider `onboarding` was computed for — the cache's or the latest
+   * check's. 설정에서 에이전트를 바꾼 창이 이 값으로 재검사를 걸어 둔다.
+   */
+  onboardingProvider: string | null;
   resolvePending: (requestId: string) => void;
   ensureSession: (sessionId: string) => void;
   hydrate: (sessionId: string, events: ChatEvent[]) => void;
@@ -768,28 +899,38 @@ function backgroundNotice(
     case "idle":
       return {
         title: `${title} · 완료`,
-        body: "Claude가 답을 마쳤습니다. 열어서 확인해 보세요.",
+        body: "AI가 답을 마쳤습니다. 열어서 확인해 보세요.",
       };
     case "error":
       return {
         title: `${title} · 중단`,
-        body: "Claude가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다.",
+        body: "AI가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다.",
       };
     case "waiting_permission":
       return {
         title: `${title} · 확인 필요`,
-        body: "Claude가 진행 허락을 기다리고 있습니다.",
+        body: "AI가 진행 허락을 기다리고 있습니다.",
       };
     case "waiting_question":
       return {
         title: `${title} · 답 필요`,
-        body: "Claude가 질문에 대한 답을 기다리고 있습니다.",
+        body: "AI가 질문에 대한 답을 기다리고 있습니다.",
       };
     default:
       return null;
   }
 }
-
+/**
+ * 3단계 알림 위계(홈 계획 P3-3)의 세 번째 문: 기다림 상태는 그 원인인 요청의
+ * `blocking` 판정이 true일 때만 사람을 부른다. 완료(idle)·중단(error)는 판정
+ * 없이 언제나 지나간다 — 조용한 요청은 홈의 로그와 뱃지에만 남는다. 데몬이
+ * 요청을 상태보다 먼저 방송하므로(pending 생성 지점), 이 전환을 읽는 시점엔
+ * 판정이 이미 도착해 있다.
+ */
+function blockingAsk(state: SessionState, sessionId: string, pending: Pending[]): boolean {
+  if (state !== "waiting_permission" && state !== "waiting_question") return true;
+  return pending.some((item) => item.sessionId === sessionId && item.blocking === true);
+}
 /**
  * A background thread finished or started waiting: look its name up and
  * raise the browser notification. Permission never granted (or a browser
@@ -828,13 +969,27 @@ async function notifyBackgroundThread(
  *  overwrites this — a gate that broke since is caught a beat later. */
 const ONBOARDING_CACHE_KEY = "colo-design.onboarding";
 
-function readOnboardingCache(): OnboardingStep[] | null {
+interface OnboardingCache {
+  provider: string | null;
+  steps: OnboardingStep[];
+}
+
+function readOnboardingCache(): OnboardingCache {
   try {
     const raw = localStorage.getItem(ONBOARDING_CACHE_KEY);
-    return raw ? (JSON.parse(raw) as OnboardingStep[]) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<OnboardingCache> | OnboardingStep[] | null;
+      // A pre-provider cache was a bare step list and always Claude's — the
+      // only agent the gate knew then.
+      if (Array.isArray(parsed)) return { provider: "claude", steps: parsed };
+      if (parsed && Array.isArray(parsed.steps))
+        return { provider: parsed.provider ?? null, steps: parsed.steps };
+    }
   } catch {
-    return null;
+    // Storage can be unavailable (private mode); the session works without
+    // the cache — it only costs the reload a wizard beat.
   }
+  return { provider: null, steps: [] };
 }
 
 export function useDaemon(url: string | null): Daemon {
@@ -849,11 +1004,18 @@ export function useDaemon(url: string | null): Daemon {
   const [status, setStatus] = useState<DaemonStatus | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
+  const [hiddenThreads, setHiddenThreads] = useState<HiddenThreads>({});
   const [sessions, setSessions] = useState<Record<string, SessionView>>({});
   const [pending, setPending] = useState<Pending[]>([]);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   const [diffStatus, setDiffStatus] = useState<DiffStatus | null>(null);
-  const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(readOnboardingCache);
+  const [onboarding, setOnboarding] = useState<OnboardingStep[] | null>(() => {
+    const cached = readOnboardingCache();
+    return cached.steps.length > 0 ? cached.steps : null;
+  });
+  const [onboardingProvider, setOnboardingProvider] = useState<string | null>(
+    () => readOnboardingCache().provider,
+  );
   /**
    * The thread the planner is looking at: the last one they opened or spoke
    * into. A DIFFERENT thread settling is what a notification is for;
@@ -864,6 +1026,25 @@ export function useDaemon(url: string | null): Daemon {
   const prevStates = useRef<Record<string, SessionState>>({});
   /** 세션별 최근 running 진입 시각 — 완료 알림의 "오래 걸린 턴"을 재는 시계. */
   const runningSince = useRef<Record<string, number>>({});
+
+  // --- 낙관 숨김 (대화 지우기) --------------------------------------------
+  // 지우기 승인의 같은 커밋에서 행을 거둔다. 데몬의 목록(`projects`)이
+  // 따라올 때마다 이미 무의미해진 숨김을 거둔다 — thread-visibility의 규칙.
+  const hideThread = useCallback((slug: string, sessionId: string) => {
+    setHiddenThreads((current) => hideThreadIn(current, slug, sessionId));
+  }, []);
+  const unhideThread = useCallback((slug: string, sessionId: string) => {
+    setHiddenThreads((current) => unhideThreadIn(current, slug, sessionId));
+  }, []);
+  const hideAllThreads = useCallback((slug: string) => {
+    setHiddenThreads((current) => hideAllThreadsIn(current, slug));
+  }, []);
+  const unhideAllThreads = useCallback((slug: string) => {
+    setHiddenThreads((current) => unhideAllThreadsIn(current, slug));
+  }, []);
+  useEffect(() => {
+    setHiddenThreads((current) => pruneHidden(current, projects));
+  }, [projects]);
 
   useEffect(() => {
     if (!url) return;
@@ -929,7 +1110,17 @@ export function useDaemon(url: string | null): Daemon {
     };
 
     const handleMessage = (raw: MessageEvent) => {
-      const message = JSON.parse(raw.data as string) as ServerMessage;
+      let message: ServerMessage;
+      try {
+        message = JSON.parse(raw.data as string) as ServerMessage;
+      } catch {
+        // A frame that is not JSON is not ours — drop it silently.
+        return;
+      }
+      // The minimal envelope: an object carrying a string `type`. Anything
+      // else on the wire is dropped without a word.
+      if (typeof message !== "object" || message === null || typeof message.type !== "string")
+        return;
 
       if (message.type === "ok" || message.type === "error") {
         const call = pendingCalls.current.get(message.id ?? "");
@@ -942,6 +1133,14 @@ export function useDaemon(url: string | null): Daemon {
       }
 
       if (message.type === "hello" || message.type === "status") {
+        if (message.type === "hello" && message.protocolVersion !== PROTOCOL_VERSION) {
+          // 선로 버전이 어긋난다 — 이 창이 아는 말과 데몬이 보내는 말이
+          // 다르다. 연결은 둔 채 로그에만 남긴다: 모르는 프레임은 위에서
+          // 조용히 버려지므로 대화는 이어진다.
+          console.warn(
+            `[daemon] protocol mismatch — daemon v${message.protocolVersion}, app v${PROTOCOL_VERSION}`,
+          );
+        }
         setStatus(message.status);
         // Status carries the registry, so a reconnect re-points the switcher
         // without a round trip of its own.
@@ -967,6 +1166,14 @@ export function useDaemon(url: string | null): Daemon {
       }
 
       if (message.type === "session.event") {
+        // The envelope's inner half: `event` must be an object carrying a
+        // string `kind` before applyEvent reads it.
+        if (
+          typeof message.event !== "object" ||
+          message.event === null ||
+          typeof message.event.kind !== "string"
+        )
+          return;
         setSessions((prev) => {
           const view = prev[message.sessionId] ?? EMPTY_SESSION;
           const next = applyEvent(view, message.event);
@@ -986,6 +1193,11 @@ export function useDaemon(url: string | null): Daemon {
             turnStartedAt: message.startedAt ?? null,
           },
         }));
+        // 죽은 세션의 확인·질문 카드는 답을 받을 곳이 없다 — 세션과 함께
+        // 걷어 낸다. 남겨 두면 답할 수 없는 카드가 화면에 남는다.
+        if (message.state === "error" || message.state === "closed") {
+          setPending((prev) => prev.filter((p) => p.sessionId !== message.sessionId));
+        }
         return;
       }
 
@@ -1005,12 +1217,16 @@ export function useDaemon(url: string | null): Daemon {
                   toolName: message.toolName,
                   input: message.input,
                   suggestions: message.suggestions,
+                  blocking: message.blocking,
+                  requestedAt: message.requestedAt,
                 }
               : {
                   kind: "question",
                   requestId,
                   sessionId: message.sessionId,
                   questions: message.questions,
+                  blocking: message.blocking,
+                  requestedAt: message.requestedAt,
                 };
           return [...prev, entry];
         });
@@ -1025,6 +1241,9 @@ export function useDaemon(url: string | null): Daemon {
       if (ws) {
         ws.onclose = null;
         ws.onmessage = null;
+        // In-flight calls must hear the end now — onclose is already
+        // detached, so without this they would hang to their timeouts.
+        flushPending();
         ws.close();
       }
       socket.current = null;
@@ -1103,6 +1322,14 @@ export function useDaemon(url: string | null): Daemon {
                 turnStartedAt: summary.turnStartedAt,
               };
             }
+            // The list is the daemon's truth in both directions: a session
+            // it no longer names was deleted, and its view is a ghost.
+            const alive = new Set(list.map((summary) => summary.sessionId));
+            for (const sessionId of Object.keys(next)) {
+              if (alive.has(sessionId)) continue;
+              if (next === prev) next = { ...prev };
+              delete next[sessionId];
+            }
             return next;
           });
           return list;
@@ -1118,7 +1345,6 @@ export function useDaemon(url: string | null): Daemon {
         model?: string;
         effort?: EffortLevel;
         title?: string;
-        previewTools?: boolean;
       }) =>
         call<{ sessionId: string }>({
           type: "session.create",
@@ -1127,14 +1353,12 @@ export function useDaemon(url: string | null): Daemon {
           ...(opts?.model ? { model: opts.model } : {}),
           ...(opts?.effort ? { effort: opts.effort } : {}),
           ...(opts?.title ? { title: opts.title } : {}),
-          // false is the meaningful value, so it rides even when every other
-          // field is absent — `previewTools === undefined` is the only skip.
-          ...(opts?.previewTools === undefined ? {} : { previewTools: opts.previewTools }),
         }),
       send: (
         sessionId: string,
         text: string,
         images?: Array<{ mediaType: string; data: string }>,
+        pins?: Array<{ screen: string; state: string | null }>,
       ) => {
         // Speaking into a thread is looking at it, and the first send
         // is the one moment the browser may ask about notifications.
@@ -1145,6 +1369,7 @@ export function useDaemon(url: string | null): Daemon {
           sessionId,
           text,
           ...(images?.length ? { images } : {}),
+          ...(pins?.length ? { pins } : {}),
         });
       },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
@@ -1192,7 +1417,20 @@ export function useDaemon(url: string | null): Daemon {
           { type: "session.delete", sessionId },
           // A stored transcript is removed with the session.
           120_000,
-        ),
+        ).then((result) => {
+          // The daemon forgot it; the window forgets it too — the view, the
+          // transition memory, and the running clock all die with it.
+          setSessions((prev) => {
+            if (!prev[sessionId]) return prev;
+            const next = { ...prev };
+            delete next[sessionId];
+            return next;
+          });
+          delete prevStates.current[sessionId];
+          delete runningSince.current[sessionId];
+          return result;
+        }),
+      deleteAllSessions: (slug: string) => call({ type: "session.deleteAll", slug }, 120_000),
       respondQuestion: (
         requestId: string,
         answers: Record<string, string | string[]>,
@@ -1208,7 +1446,14 @@ export function useDaemon(url: string | null): Daemon {
         call({ type: "session.stopTask", sessionId, taskId }),
       backgroundTask: (sessionId: string, toolUseId: string) =>
         call<{ moved: boolean }>({ type: "session.backgroundTask", sessionId, toolUseId }),
-      refreshStatus: () => call<DaemonStatus>({ type: "daemon.status" }).then(setStatus),
+      refreshStatus: () =>
+        call<DaemonStatus>({ type: "daemon.status" }).then((status) => {
+          // The status carries the registry like the broadcast does — a
+          // refresh that skipped it would leave the switcher stale.
+          setStatus(status);
+          setProjects(status.projects);
+          setActiveSlug(status.activeProject);
+        }),
       projectList: () => call<ProjectList>({ type: "project.list" }).then(keepProjects),
       // Creating clones the repo and installs when needed: a first run is
       // minutes, not the minute a normal request gets.
@@ -1216,7 +1461,6 @@ export function useDaemon(url: string | null): Daemon {
         name: string;
         repoUrl: string | null;
         baseBranch?: string;
-        bootstrap?: boolean;
         approveCommands?: boolean;
       }) =>
         call<ProjectSummary>(
@@ -1225,7 +1469,6 @@ export function useDaemon(url: string | null): Daemon {
             name: input.name,
             repoUrl: input.repoUrl,
             ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
-            ...(input.bootstrap ? { bootstrap: true } : {}),
             // Absent reads as not approved daemon-side — the gate's default
             // is "nobody has vouched for these commands yet".
             ...(input.approveCommands ? { approveCommands: true } : {}),
@@ -1288,8 +1531,6 @@ export function useDaemon(url: string | null): Daemon {
           { type: "repo.refresh", ...(sessionId ? { sessionId } : {}) },
           120_000,
         ).then(keepRepo),
-      repoUpdate: (url: string | null) =>
-        call<RepoStatus>({ type: "repo.update", url }, 600_000).then(keepRepo),
       diff: () => call<DiffFile[]>({ type: "diff.get" }, 120_000),
       // A save runs the repo's own check and build before pushing: the
       // same minutes a first sync is given.
@@ -1335,10 +1576,27 @@ export function useDaemon(url: string | null): Daemon {
       // One read of one pull request — no gate, no push. The window a remote
       // read gets, not the one a transfer does.
       handoffStatus: () => call<HandoffStatusReport>({ type: "repo.handoffStatus" }, 120_000),
-      // The summary runs one short Claude turn on the daemon: the window a
+      // One committed capture out of the handoff branch — a `git show`
+      // read, so the window a remote read gets. The wire wants a state
+      // name; a screen's default look is committed under "default".
+      handoffShot: (route: string, state: string | null) =>
+        call<{ mediaType: string; data: string } | null>(
+          { type: "repo.handoffShot", route, state: state ?? "default" },
+          120_000,
+        ),
+      // The worktree build re-runs the repo's own preview command from a cold
+      // checkout: the window a first bring-up gets, not the minute a read is
+      // given. Pressing the button again while it runs rides the same ask —
+      // the daemon queues opens, it never builds two worktrees.
+      handoffPreview: (sessionId?: string | null) =>
+        call<HandoffPreviewInfo>(
+          { type: "repo.handoffPreview", ...(sessionId ? { sessionId } : {}) },
+          180_000,
+        ),
+      // The summary runs one short agent turn on the daemon: the window a
       // generation gets, not the minutes a gate takes.
       summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
-      // The draft runs the same short Claude turn the summary does.
+      // The draft runs the same short agent turn the summary does.
       handoffDraft: () => call<HandoffDraft>({ type: "repo.handoffDraft" }, 120_000),
       saveHistory: () => call<SaveHistory>({ type: "repo.history" }, 60_000),
       // A restore commits and pushes, and the repo's checks may run on the
@@ -1382,15 +1640,23 @@ export function useDaemon(url: string | null): Daemon {
           },
           300_000,
         ),
-      onboardingCheck: () =>
-        call<OnboardingStep[]>({ type: "onboarding.check" }, 120_000).then((steps) => {
+      onboardingCheck: (provider?: string) =>
+        call<OnboardingStep[]>(
+          { type: "onboarding.check", ...(provider ? { provider } : {}) },
+          120_000,
+        ).then((steps) => {
+          const forProvider = provider ?? "claude";
           try {
-            localStorage.setItem(ONBOARDING_CACHE_KEY, JSON.stringify(steps));
+            localStorage.setItem(
+              ONBOARDING_CACHE_KEY,
+              JSON.stringify({ provider: forProvider, steps } satisfies OnboardingCache),
+            );
           } catch {
             // Storage can be unavailable (private mode); the session works
             // without the cache — it only costs the reload a wizard beat.
           }
           setOnboarding(steps);
+          setOnboardingProvider(forProvider);
           return steps;
         }),
       onboardingFix: (kind: OnboardingFixKind) =>
@@ -1418,7 +1684,7 @@ export function useDaemon(url: string | null): Daemon {
       if (prevStates.current[sessionId] === "running" && view.state !== "running") {
         const startedAt = runningSince.current[sessionId];
         delete runningSince.current[sessionId];
-        if (sessionId !== watched.current) {
+        if (sessionId !== watched.current && blockingAsk(view.state, sessionId, pending)) {
           void notifyBackgroundThread(
             (id) =>
               call<SessionSummary[]>({ type: "session.list" }).then(
@@ -1432,7 +1698,7 @@ export function useDaemon(url: string | null): Daemon {
       }
     }
     prevStates.current = next;
-  }, [sessions, call]);
+  }, [sessions, pending, call]);
 
   const resolvePending = useCallback((requestId: string) => {
     setPending((prev) => prev.filter((p) => p.requestId !== requestId));
@@ -1496,6 +1762,11 @@ export function useDaemon(url: string | null): Daemon {
     status,
     projects,
     activeSlug,
+    hiddenThreads,
+    hideThread,
+    unhideThread,
+    hideAllThreads,
+    unhideAllThreads,
     sessions,
     pending,
     api,
@@ -1507,6 +1778,7 @@ export function useDaemon(url: string | null): Daemon {
     repo,
     diffStatus,
     onboarding,
+    onboardingProvider,
   };
 }
 

@@ -661,29 +661,24 @@ const here = dirname(fileURLToPath(import.meta.url));
 const electronBinary = join(here, "..", "node_modules", ".bin", "electron");
 
 /**
- * The page the driver visits: a button that answers with text, a field to
- * type into, a width readout (so 폭 emulation is observable through the
- * accessibility tree alone), a `data-state` marker for the settle wait, and
- * a console error plus a failing request on load.
+ * The page the driver visits: a width readout logged to the console (so 폭
+ * emulation is observable through the console bridge alone), a `data-state`
+ * marker for the settle wait, and a console error plus a failing request on
+ * load.
  */
 const DRIVER_PAGE = `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head><body>
 <div data-screen="unit/Driver" data-state="기본">
-  <button onclick="pressed()">나를 눌러</button>
-  <label>카드번호 <input id="card" /></label>
   <p id="w">?</p>
 </div>
 <script>
   console.error("열자마자의 콘솔 오류");
   fetch("/missing").catch(function () {});
-  function pressed() {
-    const p = document.createElement("p");
-    p.id = "done";
-    p.textContent = "눌렀다";
-    document.body.appendChild(p);
+  function report() {
+    document.getElementById("w").textContent = String(window.innerWidth);
+    console.log("innerWidth=" + window.innerWidth);
   }
-  function report() { document.getElementById("w").textContent = String(window.innerWidth); }
   report();
   window.addEventListener("resize", report);
 </script>
@@ -703,16 +698,6 @@ app.whenReady().then(async () => {
     app.exit(0);
   };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  // ref 트리는 계층이다 — 평탄하게 펴서 찾는다.
-  const flatten = (nodes, out = []) => {
-    for (const node of nodes) {
-      out.push(node);
-      flatten(node.children, out);
-    }
-    return out;
-  };
-  const findRef = (nodes, role, name) =>
-    flatten(nodes).find((node) => node.role === role && node.name.includes(name)) ?? null;
   try {
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
     const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL, [
@@ -733,92 +718,38 @@ app.whenReady().then(async () => {
       if (shot && typeof shot.data === "string" && shot.data.startsWith("UklGR")) break;
       await sleep(200);
     }
-    // 접근성 트리가 페이지 내용을 반영할 때까지 잠깐 기다린다.
-    let before = [];
-    for (let i = 0; i < 15; i++) {
-      before = await driver.axTree();
-      if (findRef(before, "button", "나를 눌러")) break;
-      await sleep(200);
-    }
-    const button = findRef(before, "button", "나를 눌러");
-    let clickWorked = false;
-    let clickError = null;
-    let staleRefRefused = false;
-    let typed = null;
-    let cropOk = false;
-    try {
-      if (!button) throw new Error("버튼을 트리에서 찾지 못했다");
-      // ref 로 찍으면 그 요소만 잘린다 — 전체보다 작아야 한다.
-      const crop = await driver.screenshot({ ref: button.ref, longEdge: 600 });
-      cropOk =
-        crop.mediaType === "image/webp" &&
-        crop.data.startsWith("UklGR") &&
-        crop.data.length < shot.data.length;
-      const field = findRef(before, "textbox", "카드번호");
-      if (field) {
-        await driver.type({ ref: field.ref, text: "4242", clear: true });
-        await sleep(200);
-        const after = await driver.axTree();
-        const again = flatten(after).find((node) => node.role === "textbox");
-        typed = again ? (again.value ?? null) : null;
-      }
-      await driver.click({ ref: button.ref });
-      await sleep(400);
-      const after = await driver.axTree();
-      clickWorked =
-        !!findRef(after, "paragraph", "눌렀다") || !!findRef(after, "StaticText", "눌렀다");
-      // 앞 세대의 ref 는 죽었다 — 엉뚱한 곳을 누르지 않고 거절한다.
-      try {
-        await driver.click({ ref: "e99999" });
-      } catch (error) {
-        staleRefRefused = /screen_read/.test(error && error.message ? error.message : "");
-      }
-    } catch (error) {
-      clickError = error && error.message ? error.message : String(error);
-    }
-    // 폭은 진짜로 좁아진다 — 페이지가 스스로 읽은 innerWidth 가 증거다.
+    // 폭은 진짜로 좁아진다 — 페이지가 스스로 콘솔에 말한 innerWidth 가 증거다.
     let mobileWidth = null;
     await driver.open("/", "기본", { viewport: "mobile", colorScheme: "dark" });
     for (let i = 0; i < 15; i++) {
-      const nodes = await driver.axTree();
-      const readout = flatten(nodes).find((node) => /^\\d{3,4}$/.test(node.name));
-      if (readout) {
-        mobileWidth = Number(readout.name);
+      const probe = await driver.consoleLines();
+      const found = probe
+        .map((line) => line.text.match(/innerWidth=(\\d+)/))
+        .find(Boolean);
+      if (found) {
+        mobileWidth = Number(found[1]);
         if (mobileWidth === 390) break;
       }
       await sleep(200);
     }
+    // 404 의 net 기록은 응답이 떨어진 뒤에 온다 — 폭 프로브가 빨리 끝나도
+    // 기록이 다 모인 뒤에 읽는다.
+    await sleep(500);
     const lines = await driver.consoleLines();
     await driver.destroy();
     const afterWindows = BrowserWindow.getAllWindows().length;
-    // pane 드라이버: 사용자가 보는 pane 의 페이지를 그대로 drive 한다 — 창을
-    // 새로 세우지 않고, 세션이 끝나도 페이지는 사용자의 것이라 살아 있다.
+    // pane 드라이버: 사용자가 보는 pane 의 페이지를 그대로 찍는다 — 창을
+    // 새로 세우지 않고, 드라이버가 끝나도 페이지는 사용자의 것이라 살아 있다.
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
     const paneWindow = new BrowserWindow({ show: true, width: 1280, height: 800 });
     const pane = new PlannerPreviewView(() => paneWindow);
     pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null, ["http://localhost:6006"]);
     pane.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
-    const paneDriver = createPreviewDriverFactory(() => paneWindow, () => pane).for(
+    const paneDriver = createPreviewDriverFactory(() => pane).for(
       process.env.COLO_DRIVER_UNIT_URL,
       ["http://localhost:6006"],
     );
     const paneOpened = await paneDriver.open("/", "기본");
-    let paneNodes = [];
-    for (let i = 0; i < 15; i++) {
-      paneNodes = await paneDriver.axTree();
-      if (findRef(paneNodes, "button", "나를 눌러")) break;
-      await sleep(200);
-    }
-    const paneButton = findRef(paneNodes, "button", "나를 눌러");
-    let paneClicked = false;
-    if (paneButton) {
-      await paneDriver.click({ ref: paneButton.ref });
-      await sleep(400);
-      const paneAfter = await paneDriver.axTree();
-      paneClicked =
-        !!findRef(paneAfter, "paragraph", "눌렀다") ||
-        !!findRef(paneAfter, "StaticText", "눌렀다");
-    }
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });
     await paneDriver.destroy();
     const paneContents = pane.webContents();
@@ -831,21 +762,11 @@ app.whenReady().then(async () => {
       refusedReason: refused ? refused.reason ?? null : null,
       hidden,
       webpOk: !!shot && shot.mediaType === "image/webp" && shot.data.startsWith("UklGR"),
-      axTreeHasButton: !!button,
-      buttonHasRef: !!button && /^e\\d+$/.test(button.ref),
-      cropOk,
-      typed,
-      clickWorked,
-      clickError,
-      staleRefRefused,
-      clickResolved: true,
       mobileWidth,
       consoleHasError: lines.some((line) => line.text.includes("콘솔 오류")),
       consoleHasNet: lines.some((line) => line.level === "net"),
       windowDestroyed: afterWindows === 0,
       paneOpenedOk: paneOpened && paneOpened.ok === true,
-      paneHasButton: !!paneButton,
-      paneClicked,
       paneShotOk:
         !!paneShot && paneShot.mediaType === "image/webp" && paneShot.data.startsWith("UklGR"),
       panePageAlive,
@@ -895,7 +816,7 @@ async function runDriverUnit(url) {
   return line;
 }
 
-test("미리보기 드라이버: 숨은 창, 거절하는 open, ref 로 읽고 누르고 입력한다", async (t) => {
+test("미리보기 드라이버: 숨은 창, 거절하는 open, 캡처와 콘솔 다리", async (t) => {
   const server = createServer((request, response) => {
     // 실패하는 요청 하나 — screen_console 의 `net` 줄이 여기서 온다.
     if (request.url?.startsWith("/missing")) {
@@ -922,41 +843,14 @@ test("미리보기 드라이버: 숨은 창, 거절하는 open, ref 로 읽고 �
     // 넘어가면 도구가 모델에게 거짓말을 한다.
     assert.equal(result.refusedOk, true);
     assert.match(result.refusedReason, /허용되지 않은 서버/);
-    // 폭 에뮬레이션은 페이지가 스스로 읽은 innerWidth 로만 증명된다.
+    // 폭 에뮬레이션은 페이지가 스스로 콘솔에 말한 innerWidth 로 증명된다.
     assert.equal(result.mobileWidth, 390);
-    // pane 드라이버: 같은 WebContents 를 drive 하고, 세션이 끝나도 페이지는 산다.
+    // pane 드라이버: 캡처는 사용자가 보는 같은 WebContents 를 찍고, 드라이버가
+    // 끝나도 페이지는 사용자의 것이라 살아 있다.
     assert.equal(result.paneOpenedOk, true);
-    assert.equal(result.paneHasButton, true);
-    assert.equal(result.paneClicked, true);
     assert.equal(result.paneShotOk, true);
     assert.equal(result.panePageAlive, true);
-    // 접근성 트리 · 클릭 · 콘솔 다리는 오프스크린 AX 합성 시점에 좌우된다 —
-    // 핵심(숨은 창 + 진짜 JPEG + 거절 + 폭)은 여기서, 나머지는 desktop-smoke
-    // 로 (PLAN §8 5단계).
-    if (result.axTreeHasButton !== true) {
-      t.skip("이 머신에서 접근성 트리가 늦게 채워진다 — desktop-smoke 에서 재확인");
-      return;
-    }
-    assert.equal(result.buttonHasRef, true, "트리의 모든 요소는 ref 로 주소가 있다");
-    assert.equal(result.clickResolved, true);
-    assert.equal(result.clickError, null);
-    // 잘라 찍은 사진은 전체보다 작다 — 예산이 실제로 싸지는 이유다.
-    assert.equal(result.cropOk, true);
-    // 낡은 ref 는 엉뚱한 곳을 누르지 않고 "다시 읽으십시오" 로 돌아온다.
-    assert.equal(result.staleRefRefused, true);
-    // ref 로 누르면 화면이 응답하고, 입력은 필드에 들어가고, 콘솔 error 와
-    // 실패한 요청이 기록된다. 오프스크린 창의 입력·콘솔 다리는 머신 성향을
-    // 타는 — 그 조각만 desktop-smoke (pack 앱, 실사용 경로)로 넘긴다.
-    if (
-      result.clickWorked !== true ||
-      result.consoleHasError !== true ||
-      result.consoleHasNet !== true
-    ) {
-      t.skip("이 머신의 오프스크린 입력·콘솔 다리가 미확인 — desktop-smoke 에서 재확인");
-      return;
-    }
-    assert.equal(result.clickWorked, true);
-    assert.equal(result.typed, "4242");
+    // 콘솔 error 와 실패한 요청이 기록된다.
     assert.equal(result.consoleHasError, true);
     assert.equal(result.consoleHasNet, true);
     assert.equal(result.windowDestroyed, true);
@@ -974,10 +868,12 @@ import { buildMenuTemplate } from "../dist/menu.js";
 const noop = () => {};
 
 test("buildMenuTemplate aims the view items at the preview, with the plan's accelerators", () => {
+  const deltas = [];
   const template = buildMenuTemplate({
     preview: {
       reload: noop,
       history: noop,
+      cycleTab: (delta) => deltas.push(delta),
       zoomIn: noop,
       zoomOut: noop,
       zoomReset: noop,
@@ -995,6 +891,11 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
   assert.equal(byAccelerator("CmdOrCtrl+[").label, "뒤로");
   assert.equal(byAccelerator("CmdOrCtrl+]").label, "앞으로");
   assert.equal(byAccelerator("CmdOrCtrl+L").label, "주소로 이동");
+  // 탭 전환(인앱 브라우저 계획 §3 규칙 8): 메뉴에 오는 것은 ⌘⇧[/⌘⇧] 쌍뿐이다
+  // — ⌘T(새 탭)·⌘W(탭 닫기)는 뷰 포커스 스코프라 before-input-event 채널로
+  // 가고, 메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
+  assert.equal(byAccelerator("CmdOrCtrl+Shift+[").label, "이전 탭");
+  assert.equal(byAccelerator("CmdOrCtrl+Shift+]").label, "다음 탭");
   assert.equal(byAccelerator("CmdOrCtrl+=").label, "확대");
   assert.equal(byAccelerator("CmdOrCtrl+-").label, "축소");
   assert.equal(byAccelerator("CmdOrCtrl+0").label, "실제 크기");
@@ -1006,6 +907,10 @@ test("buildMenuTemplate aims the view items at the preview, with the plan's acce
   assert.ok(!roles.includes("zoomIn"), "no role:zoomIn");
   assert.ok(!roles.includes("zoomOut"), "no role:zoomOut");
   assert.ok(!roles.includes("resetZoom"), "no role:resetZoom");
+  // 탭 전환 클릭은 방향을 그대로 뷰로 옮긴다 — 이전/다음이 뒤집히면 여기서 걸린다.
+  byAccelerator("CmdOrCtrl+Shift+[").click();
+  byAccelerator("CmdOrCtrl+Shift+]").click();
+  assert.deepEqual(deltas, [-1, 1]);
 });
 
 test("buildMenuTemplate keeps the edit roles the composer lives on", () => {
@@ -1053,6 +958,7 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
     preview: {
       reload: noop,
       history: noop,
+      cycleTab: noop,
       zoomIn: noop,
       zoomOut: noop,
       zoomReset: noop,
@@ -1080,6 +986,14 @@ test("buildMenuTemplate's accelerators come from the same constant as the ⌘/ s
     if (accelerator === "Alt+CmdOrCtrl+I") continue;
     assert.ok(constantAccelerators.has(accelerator), `${accelerator} comes from the constant`);
   }
+  // 새 엔트리(⌘⇧[/⌘⇧], 탭 전환)도 같은 규칙 안에 산다 — ⊆ 루프는 빠진 것을
+  // 증명하지 못하니, 메뉴에 실제로 도착했는지를 먼저 확인한다.
+  for (const accelerator of ["CmdOrCtrl+Shift+[", "CmdOrCtrl+Shift+]"]) {
+    assert.ok(menuAccelerators.includes(accelerator), `${accelerator} is a menu item`);
+  }
+  // ⌘T(새 탭)·⌘W(탭 닫기)는 일부러 메뉴 항목이 아니다(인앱 브라우저 계획
+  // §3 규칙 8): preview 뷰 포커스에서만 뜻이 있는 키라 before-input-event
+  // 채널로 가고, 상수·메뉴의 ⌘T는 앱 전역 '새 대화' 그대로다.
 });
 
 // ---------------------------------------------------------------------------

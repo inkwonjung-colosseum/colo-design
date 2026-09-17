@@ -16,6 +16,12 @@
  * What does NOT come here: a title that exists only to reveal truncated text
  * (queued__text, leaf names, diff paths) stays a native title — that is a
  * content reveal, not an explanation, and the OS already does it.
+ *
+ * Nor on the controls that already explain themselves: a universal glyph
+ * (✕ 닫기, ⧉ 복사, ←→ 뒤로/앞으로, ⚙ 설정) or a button whose visible label
+ * names it gets no bubble — aria-label carries the name, and a bubble that
+ * repeats it is noise. A Tip earns its mount by adding what the control
+ * cannot show: a locked reason, a consequence, a changed meaning, a shortcut.
  */
 
 import {
@@ -23,6 +29,7 @@ import {
   cloneElement,
   type ReactElement,
   type ReactNode,
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -67,6 +74,15 @@ export function Tip({
   const bubble = useRef<HTMLSpanElement>(null);
   const [shown, setShown] = useState(false);
   const [at, setAt] = useState<CSSProperties>({ left: -9999, top: -9999 });
+
+  // A gated tip (an open menu flips label to undefined) unmounts the wrapper
+  // that hides on leave/blur, so the hide never arrives. Forgetting `shown`
+  // here keeps the label's return from replaying a hover that is long gone —
+  // otherwise the bubble floated over the confirm dialog opened from that
+  // very menu.
+  useEffect(() => {
+    if (!label) setShown(false);
+  }, [label]);
 
   const place = () => {
     const host = anchor.current;

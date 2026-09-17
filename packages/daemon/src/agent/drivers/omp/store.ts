@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
@@ -15,10 +15,10 @@ type Wire = Record<string, any>;
  * The encoding mirrors the CLI's own session dir naming: strip the
  * leading slash, turn every `/ \ :` into `-`, wrap in `--…--`.
  */
-function sessionDirFor(agentDir: string, cwd: string): string {
+async function sessionDirFor(agentDir: string, cwd: string): Promise<string> {
   let real = cwd;
   try {
-    real = realpathSync(cwd);
+    real = await realpath(cwd);
   } catch {
     // The clone may not exist yet — encode the spelling we were given.
   }
@@ -40,10 +40,10 @@ interface StoredFile {
   mtime: number;
 }
 
-function loadFile(path: string): StoredFile | null {
+async function loadFile(path: string): Promise<StoredFile | null> {
   let text: string;
   try {
-    text = readFileSync(path, "utf8");
+    text = await readFile(path, "utf8");
   } catch {
     return null;
   }
@@ -76,7 +76,7 @@ function loadFile(path: string): StoredFile | null {
   }
   let mtime = 0;
   try {
-    mtime = statSync(path).mtimeMs;
+    mtime = (await stat(path)).mtimeMs;
   } catch {
     // Keep 0 — the row sorts last.
   }
@@ -90,7 +90,7 @@ function loadFile(path: string): StoredFile | null {
 }
 
 /** The active branch: walk parentId links back from the leaf. */
-function branchEntries(file: StoredFile): Wire[] {
+async function branchEntries(file: StoredFile): Promise<Wire[]> {
   const byId = new Map<string, Wire>();
   for (const entry of file.entries) {
     if (typeof entry?.id === "string") byId.set(entry.id, entry);
@@ -134,37 +134,36 @@ function promptText(entry: Wire): string {
   return "";
 }
 
-function titleOf(file: StoredFile): string {
+async function titleOf(file: StoredFile): Promise<string> {
   const name = file.entries.find((e) => e?.type === "session_name" || e?.type === "name");
   if (typeof (name as Wire | undefined)?.name === "string" && (name as Wire).name.trim()) {
     return String((name as Wire).name);
   }
-  const first = branchEntries(file).find(isPrompt);
+  const first = (await branchEntries(file)).find(isPrompt);
   const text = first ? promptText(first).trim() : "";
   return text ? text.slice(0, 80) : "제목 없는 대화";
 }
 
-export function listStoredSessions(
+export async function listStoredSessions(
   agentDir: string,
   provider: string,
   cwd: string,
   limit = 50,
-): ImportableSession[] {
-  const dir = sessionDirFor(agentDir, cwd);
-  if (!existsSync(dir)) return [];
+): Promise<ImportableSession[]> {
+  const dir = await sessionDirFor(agentDir, cwd);
   let names: string[];
   try {
-    names = readdirSync(dir).filter((n) => n.endsWith(".jsonl"));
+    names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl"));
   } catch {
     return [];
   }
+  const files = await Promise.all(names.map((name) => loadFile(join(dir, name))));
   const rows: ImportableSession[] = [];
-  for (const name of names) {
-    const file = loadFile(join(dir, name));
+  for (const file of files) {
     if (!file?.id) continue;
     rows.push({
       id: file.id,
-      title: titleOf(file),
+      title: await titleOf(file),
       lastModified: file.mtime,
       provider,
     });
@@ -172,17 +171,20 @@ export function listStoredSessions(
   return rows.sort((a, b) => b.lastModified - a.lastModified).slice(0, limit);
 }
 
-function findFile(agentDir: string, cwd: string, id: string): StoredFile | null {
-  const dir = sessionDirFor(agentDir, cwd);
-  if (!existsSync(dir)) return null;
+export async function findFile(
+  agentDir: string,
+  cwd: string,
+  id: string,
+): Promise<StoredFile | null> {
+  const dir = await sessionDirFor(agentDir, cwd);
   let names: string[];
   try {
-    names = readdirSync(dir).filter((n) => n.endsWith(".jsonl"));
+    names = (await readdir(dir)).filter((n) => n.endsWith(".jsonl"));
   } catch {
     return null;
   }
   for (const name of names) {
-    const file = loadFile(join(dir, name));
+    const file = await loadFile(join(dir, name));
     if (file?.id === id) return file;
     // The id is also the filename suffix — a cheap second chance when the
     // header's id field moved.
@@ -191,20 +193,37 @@ function findFile(agentDir: string, cwd: string, id: string): StoredFile | null 
   return null;
 }
 
-export function storedSessionTitle(agentDir: string, cwd: string, id: string): string | null {
-  const file = findFile(agentDir, cwd, id);
+export async function storedSessionTitle(
+  agentDir: string,
+  cwd: string,
+  id: string,
+): Promise<string | null> {
+  const file = await findFile(agentDir, cwd, id);
   return file ? titleOf(file) : null;
 }
 
-export function deleteStoredSession(agentDir: string, cwd: string, id: string): void {
-  const file = findFile(agentDir, cwd, id);
-  if (file) rmSync(file.path, { force: true });
+export async function deleteStoredSession(
+  agentDir: string,
+  cwd: string,
+  id: string,
+): Promise<void> {
+  const file = await findFile(agentDir, cwd, id);
+  if (file) await rm(file.path, { force: true });
 }
 
-export function storedPromptCount(agentDir: string, cwd: string, id: string): number {
-  const file = findFile(agentDir, cwd, id);
+/** The clone's whole session directory — a removed project's sweep. */
+export async function deleteAllStoredSessions(agentDir: string, cwd: string): Promise<void> {
+  await rm(await sessionDirFor(agentDir, cwd), { recursive: true, force: true });
+}
+
+export async function storedPromptCount(
+  agentDir: string,
+  cwd: string,
+  id: string,
+): Promise<number> {
+  const file = await findFile(agentDir, cwd, id);
   if (!file) return 0;
-  return branchEntries(file).filter(isPrompt).length;
+  return (await branchEntries(file)).filter(isPrompt).length;
 }
 
 /**
@@ -213,15 +232,15 @@ export function storedPromptCount(agentDir: string, cwd: string, id: string): nu
  * back for resending, which is exactly "drop this answer, keep the memory
  * before it".
  */
-export function resolveOmpRewindCutoff(
+export async function resolveOmpRewindCutoff(
   agentDir: string,
   cwd: string,
   id: string,
   turn: number,
-): RewindCutoff | null {
-  const file = findFile(agentDir, cwd, id);
+): Promise<RewindCutoff | null> {
+  const file = await findFile(agentDir, cwd, id);
   if (!file) return null;
-  const branch = branchEntries(file);
+  const branch = await branchEntries(file);
   const prompts = branch.filter(isPrompt);
   if (turn < 1 || turn > prompts.length) return null;
   const target = prompts[turn - 1] ?? {};
@@ -237,13 +256,17 @@ export function resolveOmpRewindCutoff(
  * text, thinking, tool calls already complete — so like the other
  * importers this emits finished blocks, not deltas.
  */
-export function replayOmpSession(agentDir: string, cwd: string, id: string): ChatEvent[] {
-  const file = findFile(agentDir, cwd, id);
+export async function replayOmpSession(
+  agentDir: string,
+  cwd: string,
+  id: string,
+): Promise<ChatEvent[]> {
+  const file = await findFile(agentDir, cwd, id);
   if (!file) return [];
   const out: ChatEvent[] = [];
   const toolNames = new Map<string, string>();
 
-  for (const entry of branchEntries(file)) {
+  for (const entry of await branchEntries(file)) {
     if (entry?.type !== "message") continue;
     const message = entry.message as Wire | undefined;
     if (!message) continue;

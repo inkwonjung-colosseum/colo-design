@@ -236,7 +236,7 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
 
 test("an open merge lets the conflict card's git commit through; push never", async () => {
   const { Session } = await import("../dist/session.js");
-  // 최신화 충돌의 회복 카드는 Claude 에게 [conflict] 커밋을 시킨다 — 그 지시를
+  // 최신화 충돌의 회복 카드는 AI 에게 [conflict] 커밋을 시킨다 — 그 지시를
   // 게이트가 거부하면 도구가 제 손발을 묶는다(브리프 ↔ 게이트 모순). MERGE_HEAD
   // 가 열려 있을 때만 커밋이 열리고, push 는 병합 중에도 도구의 동사다.
   const dir = workdir("hub-git-gate-merge-");

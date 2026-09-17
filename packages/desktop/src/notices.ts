@@ -13,42 +13,42 @@ export function noticeCopy(notice: DaemonNotice): {
     case "done":
       return {
         title: `${notice.title} · 완료`,
-        body: "Claude가 화면 작업을 마쳤습니다. 미리보기를 확인해 보세요.",
+        body: "AI가 화면 작업을 마쳤습니다. 미리보기를 확인해 보세요.",
       };
     case "crashed":
       return {
         title: `${notice.title} · 중단`,
-        body: "Claude가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다.",
+        body: "AI가 중단됐습니다. 대화에서 이유를 확인할 수 있습니다.",
       };
     case "ask":
       return notice.what === "question"
         ? {
             title: `${notice.title} · 답 필요`,
-            body: "Claude가 질문에 대한 답을 기다리고 있습니다.",
+            body: "AI가 질문에 대한 답을 기다리고 있습니다.",
           }
         : {
             title: `${notice.title} · 확인 필요`,
-            body: "Claude가 진행 허락을 기다리고 있습니다.",
+            body: "AI가 진행 허락을 기다리고 있습니다.",
           };
     case "gate":
       return notice.stage === "save"
         ? {
             title: `${notice.title} · 저장 실패`,
-            body: "저장이 끝나지 못했습니다. Claude에게 고치도록 맡겼습니다.",
+            body: "저장이 끝나지 못했습니다. AI에게 고치도록 맡겼습니다.",
           }
         : notice.stage === "handoff"
           ? {
               title: `${notice.title} · 넘기기 실패`,
-              body: "넘기기가 끝나지 못했습니다. Claude에게 고치도록 맡겼습니다.",
+              body: "넘기기가 끝나지 못했습니다. AI에게 고치도록 맡겼습니다.",
             }
           : notice.stage === "screen"
             ? {
                 title: `${notice.title} · 화면 확인`,
-                body: "만든 화면에서 오류를 찾았습니다. Claude에게 고치도록 맡겼습니다.",
+                body: "만든 화면에서 오류를 찾았습니다. AI에게 고치도록 맡겼습니다.",
               }
             : {
                 title: `${notice.title} · 최신화 충돌`,
-                body: "최신 변경과 저장하지 않은 변경이 겹쳤습니다. Claude에게 정리를 맡겼습니다.",
+                body: "최신 변경과 저장하지 않은 변경이 겹쳤습니다. AI에게 정리를 맡겼습니다.",
               };
     case "handoff":
       // 커미티 B1+A (2026-09-15): 단위는 프로젝트다 — 한 사이클에 화면이

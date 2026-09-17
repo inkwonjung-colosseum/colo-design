@@ -2,6 +2,7 @@ import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
   ColoDesignScreen,
+  PreviewTabMeta,
   UpdateCheckResult,
 } from "@colo-design/protocol";
 
@@ -56,8 +57,8 @@ declare global {
       /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
       preview?: {
-        /** Claude 시점 보기 — 8fps JPEG(base64), 구독만. */
-        onFrame: (callback: (jpeg: string) => void) => void;
+        /** AI 시점 보기 — 8fps JPEG(base64); 해제 함수를 돌려준다. */
+        onFrame: (callback: (jpeg: string) => void) => Unsubscribe;
         /** The native view exists — NativeHost, not the iframe. */
         native?: boolean;
         /**
@@ -78,9 +79,23 @@ declare global {
         }) => Promise<unknown>;
         cover?: (on: boolean) => Promise<unknown>;
         open?: (path: string) => Promise<unknown>;
+        /**
+         * 설정 `앱에서 링크 열기`: a clicked link browses in the pane — any
+         * http(s) origin, no repo overlay — or the OS browser when no slot
+         * is on screen.
+         */
+        openExternal?: (url: string) => Promise<unknown>;
         navigate?: (route: string, state: string | null) => Promise<unknown>;
         history?: (delta: -1 | 1) => Promise<unknown>;
         reload?: () => Promise<unknown>;
+        /**
+         * 탭 스트립 (인앱 브라우저 1단계): the view owns the tab list — the
+         * web only asks. `tabClose`·`tabNew` 생략 인자는 활성 탭·빈 탭을 뜻한다.
+         */
+        tabs?: () => Promise<{ tabs: PreviewTabMeta[]; activeTabId: string | null }>;
+        tabActivate?: (tabId: string) => Promise<unknown>;
+        tabClose?: (tabId?: string) => Promise<unknown>;
+        tabNew?: (url?: string) => Promise<unknown>;
         /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단. */
         stop?: () => Promise<unknown>;
         /** 배율. */
@@ -94,7 +109,23 @@ declare global {
         /** 화면 보여 주기: the frame plus the recent console lines. */
         snapshot?: () => Promise<{ jpeg: string | null; console: string[] }>;
         onLocation?: (
-          callback: (payload: { path: string; canGoBack: boolean; canGoForward: boolean }) => void,
+          callback: (payload: {
+            /** The preview-relative path of the loaded page. */
+            path: string;
+            /** The full address — web 탭은 주소창에 통째로 보여 준다. */
+            url?: string;
+            /** The pane is browsing a clicked link, not the preview. */
+            external?: boolean;
+            /** 어느 탭의 보고인지 — 늦게 도착한 비활성 탭의 보고를 걸러 낸다. */
+            tabId: string;
+            kind: "preview" | "web";
+            canGoBack: boolean;
+            canGoForward: boolean;
+          }) => void,
+        ) => Unsubscribe;
+        /** 탭 목록이 바뀔 때마다 통째로 — 스트립은 이 한 채널로 그린다. */
+        onTabs?: (
+          callback: (payload: { tabs: PreviewTabMeta[]; activeTabId: string | null }) => void,
         ) => Unsubscribe;
         onScreens?: (callback: (payload: { screens: ColoDesignScreen[] }) => void) => Unsubscribe;
         onPin?: (callback: (payload: ColoDesignPinEnvelope) => void) => Unsubscribe;

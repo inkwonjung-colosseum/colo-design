@@ -18,33 +18,12 @@ export function toolHeadline(input: unknown): string {
 }
 
 /**
- * The colo-preview 도구 이름은 `mcp__colo-preview__screen_*` 로 온다:
- * the server prefix is plumbing, so the recognisers key on the tool's
- * own name. The capture pattern itself lives beside the tape-visibility rule
- * — both the renderer and the filter must agree on what a capture is.
+ * 사람 메시지 · 진행 한 줄이 읽는 시각 — 개발자의 검토 결과가 대화에 남을 때
+ * "언제"를 계획자의 로캘로 읽는다. 날짜 구분("어제"/"오늘")은 이 함수의
+ * 몫이 아니다 — 그건 트랜스크립트의 day 구분선(§1.1, P7)이 진다.
  */
-export const SCREEN_LOOK_TOOL = /screen_(?:read|click|open)$/;
-
-/**
- * The image a finished screen_screenshot carries, read defensively out of
- * the tool result: an MCP image content item (`{ type: "image", data,
- * mimeType }`) inside an array, or alone. Anything else — a running call, a
- * failure, a plain string — is not a capture.
- */
-export function screenshotImage(result: unknown): { data: string; mimeType: string } | null {
-  const items = Array.isArray(result) ? result : [result];
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    const record = item as Record<string, unknown>;
-    if (record.type === "image" && typeof record.data === "string" && record.data) {
-      return {
-        data: record.data,
-        mimeType:
-          typeof record.mimeType === "string" && record.mimeType ? record.mimeType : "image/jpeg",
-      };
-    }
-  }
-  return null;
+export function clockTime(at: string): string {
+  return new Date(at).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
 }
 
 export type ToolStatus = "running" | "done" | "error";

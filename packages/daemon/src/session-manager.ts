@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
-import type { AgentDriver } from "./agent/driver.js";
+import type { ChatEvent, SessionSummary, ThreadCycle, ThreadSummary } from "@colo-design/protocol";
+import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 
@@ -29,6 +29,26 @@ export class SessionManager {
   >();
   private readonly diskStale = new Set<string>();
   private readonly threadCache = new Map<string, ThreadSummary[]>();
+  /**
+   * 스캔 겸침 (SCAN COALESCE): a session event marks the clone stale on every
+   * turn edge, and a store sweep is not free — the codex rollout walk reads a
+   * store that grows for years, and the opencode list spawns a CLI. Callers
+   * arriving while one scan is in flight await the same promise instead of
+   * stacking another identical sweep behind it. The entry carries the scan's
+   * generation (scanEpoch): a removeWhere bumps the generation and drops the
+   * entry, so nobody joins a scan whose answer is already deleted rows.
+   */
+  private readonly scanning = new Map<
+    string,
+    { epoch: number; scan: Promise<ImportableSession[]> }
+  >();
+  /**
+   * 스캔 세대 (SCAN EPOCH): `removeWhere` 가 저장을 쓸어 버린 뒤에도 그 클론의
+   * 스캔이 도는 중이었다면, 그 결과는 이미 지워진 대화를 `disk` 에 되살린다 —
+   * 지웠는데 나무에 행이 남아 있는 최악의 그림. 지워질 때 세대를 올리고,
+   * 스캔의 되돌아온 결과는 세대가 같을 때만 캐시에 적는다.
+   */
+  private readonly scanEpoch = new Map<string, number>();
   /**
    * Which provider's store a stored session id lives in — filled by every
    * `list` scan so history/resume/delete route to the right driver without
@@ -70,8 +90,12 @@ export class SessionManager {
     const known = this.storedProvider.get(sessionId);
     if (known) return known;
     for (const driver of this.drivers.all()) {
-      const stored = await driver.store?.list(cwd, 200).catch(() => []);
-      if (stored?.some((s) => s.id === sessionId)) {
+      // A targeted `has` answers without the list's recency cap — a resume
+      // must find a thread no scan has surfaced, however old it is.
+      const found = driver.store?.has
+        ? await driver.store.has(sessionId, cwd).catch(() => false)
+        : (await driver.store?.list(cwd, 200).catch(() => []))?.some((s) => s.id === sessionId);
+      if (found) {
         this.storedProvider.set(sessionId, driver.id);
         return driver.id;
       }
@@ -80,8 +104,18 @@ export class SessionManager {
   }
 
   create(options: SessionOptions): Session {
-    const session = new Session(options, this.events);
-    const driver = this.driverFor(session.provider);
+    const driver = this.driverFor(options.provider);
+    const descriptor = driver.describe();
+    const session = new Session(
+      {
+        ...options,
+        provider: driver.id,
+        providerLabel: descriptor.label,
+        planModeId: descriptor.capabilities.planMode,
+        defaultModeId: descriptor.defaultModeId || "default",
+      },
+      this.events,
+    );
     const launch = {
       cwd: session.cwd,
       sessionId: session.id,
@@ -89,7 +123,6 @@ export class SessionManager {
       modeId: driver.describe().defaultModeId,
       effort: options.launch?.effort ?? null,
       appendSystemPrompt: options.launch?.appendSystemPrompt ?? null,
-      mcpServers: {},
       ...options.launch,
     };
     session.attach(driver.createSession(launch, session.driverHooks));
@@ -156,9 +189,19 @@ export class SessionManager {
   async remove(sessionId: string, cwd: string): Promise<void> {
     const live = this.live.get(sessionId);
     if (live) await this.close(sessionId);
-    const driver = this.driverFor(
-      live?.provider ?? (await this.findStoredProvider(sessionId, cwd)),
-    );
+    const provider = live?.provider ?? (await this.findStoredProvider(sessionId, cwd));
+    this.storedProvider.delete(sessionId);
+    if (provider === undefined) {
+      // The id belongs to no store we know — sweep every driver's delete so
+      // a phantom row still dies; a store that never held it no-ops.
+      await Promise.all(
+        this.drivers
+          .all()
+          .map((driver) => driver.store?.delete?.(sessionId, cwd).catch(() => undefined)),
+      );
+      return;
+    }
+    const driver = this.driverFor(provider);
     try {
       await driver.store?.delete?.(sessionId, cwd);
     } catch (error) {
@@ -228,15 +271,37 @@ export class SessionManager {
   async removeWhere(cwd: string): Promise<void> {
     await this.closeWhere(cwd);
     // Every registered driver's store gets a sweep — a clone may hold
-    // transcripts from more than one provider.
-    for (const driver of this.drivers.all()) {
-      const stored = await driver.store?.list(cwd, 200).catch(() => []);
-      await Promise.all(
-        (stored ?? []).map((info) => driver.store?.delete?.(info.id, cwd).catch(() => undefined)),
-      );
-    }
+    // transcripts from more than one provider. `deleteAll` drops the clone's
+    // whole store dir where the vendor keys by cwd; the list+delete fallback
+    // stays for stores that cannot. All drivers run together — a slow store
+    // must not serialize the rest behind it.
+    await Promise.all(
+      this.drivers.all().map(async (driver) => {
+        if (driver.store?.deleteAll) {
+          // A stale cache entry is harmless: `findStoredProvider` re-verifies
+          // with `has` before a resume trusts it.
+          await driver.store.deleteAll(cwd).catch(() => undefined);
+          return;
+        }
+        const stored = await driver.store?.list(cwd, 200).catch(() => []);
+        await Promise.all(
+          (stored ?? []).map((info) => {
+            this.storedProvider.delete(info.id);
+            return driver.store?.delete?.(info.id, cwd).catch(() => undefined);
+          }),
+        );
+      }),
+    );
     this.disk.delete(cwd);
     this.diskStale.delete(cwd);
+    // The tree-shaped cache dies with the store: a summary reading between
+    // the sweep and the next refresh must not serve deleted rows as threads.
+    this.threadCache.delete(cwd);
+    // A sweep mid-scan must not let the in-flight result re-arm the cache
+    // with the rows this sweep just deleted — see scanEpoch. Dropping the
+    // entry also stops later callers from joining the poisoned scan.
+    this.scanEpoch.set(cwd, (this.scanEpoch.get(cwd) ?? 0) + 1);
+    this.scanning.delete(cwd);
   }
 
   get pendingCount(): number {
@@ -273,16 +338,31 @@ export class SessionManager {
       // Failure keeps the previous answer and the staleness marker, so the
       // next call rescans instead of trusting the accident.
       // Every registered driver's store contributes — a clone may hold
-      // threads from more than one provider.
-      const scanned = (
-        await Promise.all(
+      // threads from more than one provider. Concurrent readers share one
+      // in-flight scan (this.scanning) instead of each stacking a sweep.
+      let entry = this.scanning.get(cwd);
+      const epoch = this.scanEpoch.get(cwd) ?? 0;
+      if (!entry || entry.epoch !== epoch) {
+        // The epoch snapshot must precede the sweep: a removeWhere that lands
+        // mid-scan bumps the generation and this result then writes nothing.
+        const scanEpoch = epoch;
+        const scan = Promise.all(
           this.drivers.all().map((driver) => driver.store?.list(cwd, limit).catch(() => []) ?? []),
-        )
-      ).flat();
+        ).then((groups) => {
+          const rows = groups.flat();
+          if ((this.scanEpoch.get(cwd) ?? 0) === scanEpoch) {
+            this.disk.set(cwd, rows);
+            this.diskStale.delete(cwd);
+          }
+          return rows;
+        });
+        scan.catch(() => undefined); // a rejected scan must not stay attached
+        entry = { epoch: scanEpoch, scan };
+        this.scanning.set(cwd, entry);
+      }
+      const scanned = await entry.scan;
       if (scanned.length > 0 || onDisk === undefined) {
         onDisk = scanned;
-        this.disk.set(cwd, scanned);
-        this.diskStale.delete(cwd);
       } else {
         onDisk = onDisk ?? [];
       }
@@ -334,7 +414,11 @@ export class SessionManager {
    * or question up → `awaiting`; a turn that ended with nothing after it →
    * `finished`; everything else — old stored threads mostly — `idle`.
    */
-  async refreshThreads(cwd: string, limit = 50): Promise<ThreadSummary[]> {
+  async refreshThreads(
+    cwd: string,
+    limit = 50,
+    cycles?: Map<string, ThreadCycle>,
+  ): Promise<ThreadSummary[]> {
     const threads = (await this.list(cwd, limit)).map((summary): ThreadSummary => {
       const state: ThreadSummary["state"] =
         summary.state === "running" || summary.state === "starting"
@@ -344,11 +428,13 @@ export class SessionManager {
             : summary.live && this.settledTurns.has(summary.sessionId)
               ? "finished"
               : "idle";
+      const cycle = cycles?.get(summary.sessionId);
       return {
         id: summary.sessionId,
         title: summary.title,
         state,
         updatedAt: new Date(summary.lastModified).toISOString(),
+        ...(cycle ? { cycle } : {}),
       };
     });
     this.threadCache.set(cwd, threads);
@@ -399,7 +485,7 @@ export class SessionManager {
    * before that answer, re-sending `text`. When the provider refuses the
    * truncating fork (a deterministic refusal — never retried), the fallback
    * is a fresh conversation on the restored files, and `memoryKept` comes
-   * back false so the card can say `Claude 의 기억은 그대로입니다`.
+   * back false so the card can say `AI 의 기억은 그대로입니다`.
    */
   async rewind(input: {
     sessionId: string;
@@ -445,9 +531,14 @@ export class SessionManager {
     const outcomeBox: {
       value: { type: "end"; subtype: string; resultText: string | null } | { type: "error" } | null;
     } = { value: null };
+    // The fork's first event — the handshake's `init` — is the "healthy fork
+    // sits idle" signal: a fresh Session is born `idle`, so the state alone
+    // can never say the provider answered.
+    let forkAnswered = false;
     const shim: SessionEvents = {
       ...this.events,
       onEvent: (id, event) => {
+        forkAnswered = true;
         if (event.kind === "turn.end" && outcomeBox.value === null) {
           outcomeBox.value = {
             type: "end",
@@ -463,11 +554,16 @@ export class SessionManager {
       },
     };
     const forkId = randomUUID();
+    const forkDescriptor = driver.describe();
     const fork = new Session(
       {
         ...input.base,
         title,
         sessionId: forkId,
+        provider: driver.id,
+        providerLabel: forkDescriptor.label,
+        planModeId: forkDescriptor.capabilities.planMode,
+        defaultModeId: forkDescriptor.defaultModeId || "default",
         launch: {
           ...input.base.launch,
           resume: input.sessionId,
@@ -485,9 +581,8 @@ export class SessionManager {
           sessionId: fork.id,
           model: input.base.launch?.model ?? null,
           effort: input.base.launch?.effort ?? null,
-          modeId: "default",
+          modeId: driver.describe().defaultModeId || "default",
           appendSystemPrompt: input.base.launch?.appendSystemPrompt ?? null,
-          mcpServers: {},
           ...input.base.launch,
           resume: input.sessionId,
           forkSession: true,
@@ -498,11 +593,13 @@ export class SessionManager {
       ),
     );
     this.live.set(fork.id, fork);
-    // The refusal surfaces within the first exchange; a healthy fork sits
-    // idle waiting for input. Either way the wait is bounded.
+    // The refusal surfaces within the first exchange; a healthy fork answers
+    // with its `init` and then sits idle waiting for input. `idle` itself is
+    // no signal — a fresh Session starts there — so the wait ends on the
+    // first event, a settled outcome, or a dead fork. Either way it is bounded.
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (outcomeBox.value !== null) break;
-      if (fork.state === "idle" || fork.state === "closed") break;
+      if (outcomeBox.value !== null || forkAnswered) break;
+      if (fork.state === "closed" || fork.state === "error") break;
       await new Promise((ok) => setTimeout(ok, 250));
     }
     const outcome = outcomeBox.value;

@@ -50,6 +50,21 @@ function serveDist() {
 const theme = (page) => page.evaluate(() => document.documentElement.dataset.theme);
 const stored = (page) =>
   page.evaluate(() => JSON.parse(localStorage.getItem("colo-design.settings") ?? "null"));
+/** The sidebar is the index now — most checks name the room they visit. */
+const openCategory = (page, name) => page.getByRole("tab", { name }).click();
+/** 두세 태 고르기는 APG 라디오가 되었다 — 조각 이름으로 고르고, aria-checked
+    로 읽는다. select 의 selectOption/inputValue 자리를 대신한다. */
+const pick = (page, group, option) =>
+  page
+    .getByRole("radiogroup", { name: group })
+    .getByRole("radio", { name: option, exact: true })
+    .click();
+const picked = (page, group, option) =>
+  page
+    .getByRole("radiogroup", { name: group })
+    .getByRole("radio", { name: option, exact: true })
+    .getAttribute("aria-checked")
+    .then((v) => v === "true");
 
 async function main() {
   if (!existsSync(webDist))
@@ -97,13 +112,13 @@ async function main() {
       timeout: 5000,
     });
     await page.screenshot({ path: join(here, "ui-settings-dark.png") });
-    const groups = await page.locator(".settings__groupTitle").allInnerTexts();
+    const nav = await page.locator(".settings__navItem").allInnerTexts();
     check(
       "the panel offers only what a planner sets",
-      ["화면", "대화", "동작", "알림", "GITHUB", "연결 레포", "문제 해결"].every((g) =>
-        groups.includes(g),
-      ) && groups.length === 7,
-      groups.join(", "),
+      ["화면", "프로바이더", "대화", "동작", "알림", "연결", "문제 해결"].every((g) =>
+        nav.includes(g),
+      ) && nav.length === 7,
+      nav.join(", "),
     );
     // The word belongs to the program, not the planner's settings —
     // the diagnostics fold (where a developer debugs) is the only home left.
@@ -111,26 +126,28 @@ async function main() {
       "the planner's settings never say 데몬",
       !(await page.locator('[role="dialog"][aria-label="설정"]').innerText()).includes("데몬"),
     );
-    // No daemon yet: the GitHub token form and the repo url field wait for
-    // one instead of pretending.
+    // No daemon yet: the GitHub token form waits for one instead of pretending.
+    await openCategory(page, "연결");
     check(
-      "the token input and repo url wait for a daemon",
-      (await page.getByLabel("GitHub 개인 액세스 토큰").isDisabled()) === true &&
-        (await page.getByLabel("연결 레포 주소").isDisabled()) === true,
+      "the token input waits for a daemon",
+      (await page.getByLabel("GitHub 개인 액세스 토큰").isDisabled()) === true,
     );
     // A fresh profile starts on 전부 맡기기 (--dangerously-skip-permissions):
     // the first turn must not stall on a 확인 카드 nobody chose.
+    await openCategory(page, "대화");
     check(
       "확인 방식 starts on 전부 맡기기",
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
+    await openCategory(page, "동작");
     check(
       "실행 중 보내기 starts on 다음 턴에 보내기",
-      (await page.getByLabel("실행 중 보내기").inputValue()) === "queue",
+      await picked(page, "실행 중 보내기", "다음 턴에 보내기"),
     );
 
     // 3. theme applies live and persists. The picker is a gallery of live
     //    palette tiles now, not a select — a palette is chosen by its colour.
+    await openCategory(page, "화면");
     await page.locator('[data-testid="theme-dark"]').click();
     await page
       .waitForFunction(() => document.documentElement.dataset.theme === "dark", undefined, {
@@ -230,8 +247,9 @@ async function main() {
     check("dropping the request hands control back to light/dark", (await theme(page)) === "light");
 
     // 5. behaviour choices survive a reload.
-    await page.getByLabel("보내기 키").selectOption("modEnter");
-    await page.getByLabel("실행 중 보내기").selectOption("interrupt");
+    await openCategory(page, "동작");
+    await pick(page, "보내기 키", "⌘/Ctrl+Enter");
+    await pick(page, "실행 중 보내기", "끊고 보내기");
     const before = await stored(page);
     check(
       "behaviour choices are stored together and the delete-confirm row is gone",
@@ -253,12 +271,13 @@ async function main() {
       "type scale starts on 보통 across the three knobs",
       (await scales()).join() === "normal,normal,normal",
     );
+    await openCategory(page, "화면");
     const labelSize = () =>
       page.evaluate(() =>
         parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize),
       );
     const uiBase = await labelSize();
-    await page.getByLabel("인터페이스 크기").selectOption("large");
+    await pick(page, "인터페이스 크기", "크게");
     await page.waitForFunction(
       (base) =>
         parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize) > base,
@@ -271,8 +290,8 @@ async function main() {
       uiScaled > uiBase,
       `${uiBase}px → ${uiScaled}px`,
     );
-    await page.getByLabel("콘텐츠 크기").selectOption("small");
-    await page.getByLabel("코드 크기").selectOption("large");
+    await pick(page, "콘텐츠 크기", "작게");
+    await pick(page, "코드 크기", "크게");
     check(
       "the three choices land on <html> and persist together",
       (await scales()).join() === "large,small,large" &&
@@ -288,19 +307,17 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "동작");
     check(
       "the panel reopens on the stored values",
-      (await page.getByLabel("보내기 키").inputValue()) === "modEnter" &&
-        (await page.getByLabel("실행 중 보내기").inputValue()) === "interrupt",
+      (await picked(page, "보내기 키", "⌘/Ctrl+Enter")) &&
+        (await picked(page, "실행 중 보내기", "끊고 보내기")),
     );
-
     // 5c. 알림: 완료 알림만 시점을 고르고, 소리는 그 옆에
     //     산다. 기본은 "오래 걸린 턴만" — 모든 턴마다 울리지 않는다.
-    check(
-      "완료 알림 starts on 오래 걸린 턴만",
-      (await page.getByLabel("완료 알림").inputValue()) === "long",
-    );
-    await page.getByLabel("완료 알림").selectOption("all");
+    await openCategory(page, "알림");
+    check("완료 알림 starts on 오래 걸린 턴만", await picked(page, "완료 알림", "오래 걸린 턴만"));
+    await pick(page, "완료 알림", "모든 턴");
     await page.getByLabel("알림 소리").click();
     check(
       "the notification policy is stored like every other preference",
@@ -309,9 +326,11 @@ async function main() {
       JSON.stringify((await stored(page))?.notifications),
     );
 
-    // 6. the 대화 group: the three chips that used to live in the composer.
-    //    They persist like any other preference — except one.
+    // 6. the 프로바이더 room pins the provider's own defaults; 대화 keeps the
+    //    conversation behaviour. They persist like any other preference.
+    await openCategory(page, "프로바이더");
     await page.getByLabel("생각 시간").selectOption("high");
+    await openCategory(page, "대화");
     await page.getByLabel("확인 방식").selectOption("plan");
     const chat = (await stored(page))?.chat;
     check(
@@ -326,12 +345,13 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "프로바이더");
+    const effortBack = (await page.getByLabel("생각 시간").inputValue()) === "high";
+    await openCategory(page, "대화");
     check(
       "they come back on the values that were chosen",
-      (await page.getByLabel("생각 시간").inputValue()) === "high" &&
-        (await page.getByLabel("확인 방식").inputValue()) === "plan",
+      effortBack && (await page.getByLabel("확인 방식").inputValue()) === "plan",
     );
-
     // acceptEdits 는 메뉴로 돌아왔다(소유자 결정): 저장값은 이사 가지 않고
     // 고른 그대로 돌아온다. 대신 그 줄이 무엇을 여는지 — 편집만이 아니라
     // CLI 가 안전하다고 본 명령까지 — 설정이 한 줄로 말해야 한다.
@@ -346,6 +366,7 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "대화");
     check(
       "a stored acceptEdits comes back as acceptEdits",
       (await page.getByLabel("확인 방식").inputValue()) === "acceptEdits",
@@ -374,15 +395,14 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "대화");
     check(
       "and a reload keeps it, like every other choice",
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
 
-    // "생각·작업 과정" 스위치는 고급 fold 안이다 — 기계의 작업 로그를 여는
-    // 구현자용 스위치를 매일 만지는 행과 나누기로 한 감사 결정. 열면 행의
-    // 말과 동작은 그대로다.
-    await page.getByText("고급 · 대화에 남길 작업 기록", { exact: true }).click();
+    // "생각·작업 과정" 스위치는 대화 고르기의 평지에 있다 — 접지 않기로
+    // 한 결정. 기본은 꺼짐이라 평지에 있어도 대화를 어지럽히지 않는다.
 
     // 생각 과정은 기본으로 보이지 않는다: 사용자가 읽어야 하는 것은 답이다.
     // 켜고 끄는 자리는 여기뿐이고, 켠 사실은 다른 선택처럼 남는다.
@@ -403,13 +423,12 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "대화");
     check("and a reload brings it back on", await page.getByLabel("생각 과정 보기").isChecked());
 
     // 작업 과정(도구 호출 묶음)도 생각 과정과 같은 기본값이다: 꺼져 있어야
     // 하고, 켠 사실은 다른 선택처럼 남는다. 계획 카드 · 캡처 카드는 이
     // 스위치와 무관하다는 것이 이 검사의 밑에 깔린 규칙이다(tape-visibility).
-    // 재연 다이얼로그에서 fold 는 다시 접혀 있으니 켜기 전에 한 번 연다.
-    await page.getByText("고급 · 대화에 남길 작업 기록", { exact: true }).click();
     check(
       "작업 과정 is off until the planner asks for it",
       (await page.getByLabel("작업 과정 보기").isChecked()) === false &&
@@ -427,13 +446,15 @@ async function main() {
     await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
       timeout: 5000,
     });
+    await openCategory(page, "대화");
     check("and a reload brings it back on", await page.getByLabel("작업 과정 보기").isChecked());
 
     // 7. the diagnostics are reachable and no longer the first thing in view.
-    //    fold 는 두 개 — 대화의 "작업 기록" 과 여기 "연결 정보".
+    //    fold 는 패널에 하나 — 문제 해결의 "연결 정보".
+    await openCategory(page, "문제 해결");
     check(
       "connection details sit behind a fold",
-      (await page.locator(".settings__fold").count()) === 2 &&
+      (await page.locator(".settings__pane .settings__fold").count()) === 1 &&
         (await page.getByLabel("접속 주소").isVisible()) === false,
     );
     await page.getByText("고급 · 연결 정보", { exact: true }).click();
@@ -469,7 +490,11 @@ async function main() {
           ).length
         : 0;
     });
-    await page.getByLabel("보내기 키").focus();
+    await openCategory(page, "동작");
+    await page
+      .getByRole("radiogroup", { name: "보내기 키" })
+      .getByRole("radio", { name: "Enter", exact: true })
+      .focus();
     let escaped = false;
     for (let step = 0; step < focusableCount + 2 && !escaped; step += 1) {
       await page.keyboard.press("Tab");
@@ -485,6 +510,19 @@ async function main() {
       "Tab stays inside the dialog however far it walks",
       escaped === false,
       `focusables: ${focusableCount}`,
+    );
+    // TEMP-DIAG
+    console.log(
+      "DIAG",
+      JSON.stringify(
+        await page.evaluate(() => ({
+          active: `${document.activeElement?.tagName}.${document.activeElement?.className}`,
+          text: (document.activeElement?.textContent ?? "").slice(0, 30),
+          overlays: [...document.querySelectorAll(".modal, .palette, .onboarding")].map(
+            (el) => `${el.tagName}.${String(el.className).slice(0, 60)}`,
+          ),
+        })),
+      ),
     );
     await page.keyboard.press("Escape");
     await page
@@ -505,13 +543,11 @@ async function main() {
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("nonsense in storage falls back to the defaults", (await theme(page)) === "light");
     await page.getByRole("button", { name: "설정" }).click();
-    check(
-      "a non-string send key falls back too",
-      (await page.getByLabel("보내기 키").inputValue()) === "enter",
-    );
+    await openCategory(page, "동작");
+    check("a non-string send key falls back too", await picked(page, "보내기 키", "Enter"));
     check(
       "an absent 실행 중 보내기 falls back to the queue default",
-      (await page.getByLabel("실행 중 보내기").inputValue()) === "queue",
+      await picked(page, "실행 중 보내기", "다음 턴에 보내기"),
     );
     check(
       "an absent type scale falls back to 보통",

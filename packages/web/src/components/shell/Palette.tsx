@@ -1,7 +1,9 @@
 import type { ColoDesignScreen, ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
+import { timeAgo } from "../../lib/format";
 import { composing } from "../../lib/ime";
+import { CATEGORIES, type SettingsCategory } from "../dialogs/SettingsDialog";
 import { FolderIcon, GearIcon, PlusIcon, SearchIcon } from "../icons";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
@@ -13,12 +15,13 @@ type Row =
       group: Group;
       key: string;
       label: string;
-      /** Which project the conversation belongs to — the cross-project
-          row's hint, and what its run jumps through. */
-      slug: string;
-      projectName: string;
-      live: boolean;
-      now: boolean;
+      /** The sidebar's state mark: a turn on, a question up, an answer that
+          landed while the planner looked elsewhere. */
+      dot: "live" | "ask" | "done" | null;
+      /** Right of the title: the state word or how long ago the conversation
+          moved — plus the project's name when the frame-wide walk reaches
+          into another project. */
+      hint: string;
       run: () => void | Promise<void>;
     }
   | {
@@ -26,6 +29,7 @@ type Row =
       group: Group;
       key: string;
       label: string;
+      hint: string;
       run: () => void | Promise<void>;
     }
   | {
@@ -65,6 +69,7 @@ export function Palette({
   onActivateProject,
   onAddProject,
   onOpenSettings,
+  onCheckState,
   onOpenScreen,
   onClose,
 }: {
@@ -87,11 +92,18 @@ export function Palette({
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
   onAddProject: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (category?: SettingsCategory) => void;
+  /** 개발자의 판정을 GitHub 에서 다시 읽는다 — 상단 바의 상태 확인과 같은 통로. */
+  onCheckState: () => void;
   /** Points the preview at a declared screen (the palette's 화면 rows). */
   onOpenScreen: (screen: ColoDesignScreen) => void;
   onClose: () => void;
 }) {
+  // The scoped walk names its project once — in the group header — instead
+  // of repeating it on every row.
+  const scopedName = projectSlug
+    ? (projects.find((entry) => entry.slug === projectSlug)?.name ?? null)
+    : null;
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -105,14 +117,9 @@ export function Palette({
   }, []);
 
   // Esc 닫기는 입력칸의 onKeyDown 에 갇혀 있지 않다 (실사 결함): 화살표로
-  // 목록을 걷다 포커스가 입력칸을 벗어나도 팔레트는 닫혀야 한다.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // 목록을 걷다 포커스가 입력칸을 벗어나도 팔레트는 닫혀야 한다. 위에
+  // 대화상자가 떠 있으면 그쪽의 몫이다 — 최상단 규칙이 그린다.
+  useModalEscape(panelRef, onClose);
 
   const rows: Row[] = useMemo(() => {
     /**
@@ -134,26 +141,53 @@ export function Palette({
       return -1;
     };
 
-    const out: Row[] = [];
+    const out: Array<{ row: Row; rank: number }> = [];
     // Every project's conversations — or, when the palette was
     // opened for one project (the tree's 더 보기 row), that project's alone.
     const scope = projectSlug ? projects.filter((entry) => entry.slug === projectSlug) : projects;
     for (const project of scope) {
       for (const thread of project.threads ?? []) {
         const label = titleForThread(thread);
-        if (rank(label) < 0) continue;
+        const at = rank(label);
+        if (at < 0) continue;
+        const now = project.slug === activeSlug && thread.id === activeSessionId;
+        // A scoped walk already named its project in the search box, so the
+        // row's right side carries the state word or the clock — the project
+        // name only where the frame-wide walk leaves the active project.
+        const hint = now
+          ? "지금 열림"
+          : [
+              projectSlug || project.slug === activeSlug ? null : project.name,
+              thread.state === "running"
+                ? "작업 중"
+                : thread.state === "awaiting"
+                  ? "확인 대기"
+                  : thread.state === "finished"
+                    ? "답이 왔습니다"
+                    : timeAgo(Date.parse(thread.updatedAt)),
+            ]
+              .filter(Boolean)
+              .join(" · ");
         out.push({
-          kind: "session",
-          group: "대화",
-          key: `${project.slug}:${thread.id}`,
-          slug: project.slug,
-          projectName: project.name,
-          label,
-          live: thread.state === "running",
-          now: project.slug === activeSlug && thread.id === activeSessionId,
-          run: async () => {
-            onOpenThread(project.slug, thread);
-            onClose();
+          rank: at,
+          row: {
+            kind: "session",
+            group: "대화",
+            key: `${project.slug}:${thread.id}`,
+            label,
+            dot:
+              thread.state === "running"
+                ? "live"
+                : thread.state === "awaiting"
+                  ? "ask"
+                  : thread.state === "finished" && !now
+                    ? "done"
+                    : null,
+            hint,
+            run: async () => {
+              onOpenThread(project.slug, thread);
+              onClose();
+            },
           },
         });
       }
@@ -163,16 +197,22 @@ export function Palette({
     // frame-wide walk — the picker beside the preview still owns them there.
     if (!projectSlug) {
       for (const screen of screens) {
-        if (rank(screen.title) < 0) continue;
+        const at = rank(screen.title);
+        if (at < 0) continue;
         out.push({
-          kind: "screen",
-          group: "화면",
-          key: `screen:${screen.route}`,
-          label: screen.title,
-          hint: [screen.route, ...screen.states.filter((state) => state !== "default")].join(" · "),
-          run: async () => {
-            onOpenScreen(screen);
-            onClose();
+          rank: at,
+          row: {
+            kind: "screen",
+            group: "화면",
+            key: `screen:${screen.route}`,
+            label: screen.title,
+            hint: [screen.route, ...screen.states.filter((state) => state !== "default")].join(
+              " · ",
+            ),
+            run: async () => {
+              onOpenScreen(screen);
+              onClose();
+            },
           },
         });
       }
@@ -180,19 +220,24 @@ export function Palette({
     // A scoped palette already knows its project, so the switch rows would
     // only repeat what the tree just said.
     for (const project of projects) {
-      if (projectSlug || project.slug === activeSlug || rank(project.name) < 0) continue;
+      const at = rank(project.name);
+      if (projectSlug || project.slug === activeSlug || at < 0) continue;
       out.push({
-        kind: "project",
-        group: "프로젝트",
-        key: project.slug,
-        label: project.name,
-        run: async () => {
-          try {
-            await onActivateProject(project.slug);
-            onClose();
-          } catch {
-            setError("프로젝트로 옮기지 못했습니다 — 잠시 뒤 다시 시도해 주세요.");
-          }
+        rank: at,
+        row: {
+          kind: "project",
+          group: "프로젝트",
+          key: project.slug,
+          label: project.name,
+          hint: "프로젝트",
+          run: async () => {
+            try {
+              await onActivateProject(project.slug);
+              onClose();
+            } catch {
+              setError("프로젝트로 옮기지 못했습니다 — 잠시 뒤 다시 시도해 주세요.");
+            }
+          },
         },
       });
     }
@@ -215,29 +260,68 @@ export function Palette({
         icon: FolderIcon,
       },
       {
+        label: "상태 확인",
+        hint: "개발자의 판정과 코멘트를 다시 읽어 옵니다",
+        run: onCheckState,
+        icon: SearchIcon,
+      },
+      {
         label: "설정",
         hint: "연결 · 대화 · 문제 해결",
         run: onOpenSettings,
         icon: GearIcon,
       },
     ];
-    const q = query.trim().toLowerCase();
+    // 설정의 방 행 — 검색이 방의 이름을 가리킬 때만 줄에 선다. 빈 검색의
+    // 명령 그룹을 일곱 행이 밀어내지 않고, `동작` `연결` 을 친 그 순간에
+    // 그 방으로 곧장 닿는다.
+    if (query.trim()) {
+      for (const category of CATEGORIES) {
+        const at = rank(`설정 ${category.label}`);
+        if (at < 0) continue;
+        const Icon = category.icon;
+        out.push({
+          rank: at + 1,
+          row: {
+            kind: "action",
+            group: "명령",
+            key: `settings:${category.id}`,
+            label: `설정 · ${category.label}`,
+            hint: `설정을 ${category.label} 칸으로 엽니다`,
+            icon: Icon,
+            run: async () => {
+              onOpenSettings(category.id);
+              onClose();
+            },
+          },
+        });
+      }
+    }
     for (const action of actions) {
-      if (q && !action.label.toLowerCase().includes(q)) continue;
+      const at = rank(action.label);
+      if (at < 0) continue;
       out.push({
-        kind: "action",
-        group: "명령",
-        key: action.label,
-        label: action.label,
-        hint: action.hint,
-        icon: action.icon,
-        run: async () => {
-          action.run();
-          onClose();
+        rank: at,
+        row: {
+          kind: "action",
+          group: "명령",
+          key: action.label,
+          label: action.label,
+          hint: action.hint,
+          icon: action.icon,
+          run: async () => {
+            action.run();
+            onClose();
+          },
         },
       });
     }
-    return out;
+    // Groups keep their walk order; inside one, the better match leads —
+    // the sort is stable, so equal ranks keep the daemon's recency order.
+    const order: Record<Group, number> = { 대화: 0, 화면: 1, 프로젝트: 2, 명령: 3 };
+    return out
+      .sort((a, b) => order[a.row.group] - order[b.row.group] || a.rank - b.rank)
+      .map((entry) => entry.row);
   }, [
     projects,
     activeSlug,
@@ -251,6 +335,7 @@ export function Palette({
     onActivateProject,
     onAddProject,
     onOpenSettings,
+    onCheckState,
     onOpenScreen,
     onClose,
   ]);
@@ -316,11 +401,20 @@ export function Palette({
               <span className="ic">
                 <SearchIcon />
               </span>
-              <span>&apos;{query.trim()}&apos;와 맞는 것이 없습니다.</span>
+              <span>
+                {query.trim()
+                  ? `'${query.trim()}'와 맞는 것이 없습니다.`
+                  : "이 프로젝트에 아직 대화가 없습니다."}
+              </span>
             </li>
           )}
           {rows.map((row, i) => {
-            const header = i === 0 || rows[i - 1]?.group !== row.group ? row.group : null;
+            const header =
+              i === 0 || rows[i - 1]?.group !== row.group
+                ? row.group === "대화" && scopedName
+                  ? `${scopedName}의 대화`
+                  : row.group
+                : null;
             const Icon = row.kind === "action" ? row.icon : null;
             return (
               <Fragment key={row.kind + row.key}>
@@ -333,32 +427,35 @@ export function Palette({
                   id={`palette-opt-${i}`}
                   data-index={i}
                   role="option"
-                  aria-selected={row.kind === "session" ? row.now : undefined}
+                  aria-selected={i === index}
                   className={i === index ? "palette__row palette__row--on" : "palette__row"}
                   onMouseEnter={() => setHighlight(i)}
                   onClick={() => run(row)}
                 >
-                  {row.kind === "session" && row.live && <span className="dot dot--live" />}
+                  {row.kind === "session" && row.dot && <span className={`dot dot--${row.dot}`} />}
                   {Icon && (
                     <span className="palette__icon">
                       <Icon />
                     </span>
                   )}
                   <span className="palette__label">{row.label}</span>
-                  {row.kind === "session" && row.now && (
-                    <span className="palette__hint">지금 열림</span>
-                  )}
-                  {row.kind === "session" && !row.now && row.slug !== activeSlug && (
-                    <span className="palette__hint">{row.projectName}</span>
-                  )}
-                  {row.kind === "project" && <span className="palette__hint">프로젝트</span>}
-                  {row.kind === "action" && <span className="palette__hint">{row.hint}</span>}
-                  {row.kind === "screen" && <span className="palette__hint">{row.hint}</span>}
+                  {row.hint && <span className="palette__hint">{row.hint}</span>}
                 </li>
               </Fragment>
             );
           })}
         </ul>
+        <div className="palette__foot" aria-hidden="true">
+          <span>
+            <kbd>↑↓</kbd> 이동
+          </span>
+          <span>
+            <kbd>↵</kbd> 열기
+          </span>
+          <span>
+            <kbd>esc</kbd> 닫기
+          </span>
+        </div>
       </div>
     </div>
   );

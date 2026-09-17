@@ -29,7 +29,7 @@ export { createPreviewDriverFactory } from "./preview-driver.js";
  * - 자격 증명은 safeStorage 저장소를 데몬에 주입한다.
  * - 번들 런타임(포터블 node·pnpm, win 은 MinGit)이 resources 에 있으면
  *   COLO_DESIGN_EXTRA_PATH 로 데몬에 알려준다(repo-core.ts 가 PATH 앞에 붙인다).
- * - Claude 의 미리보기 창(PLAN D61 · D63)은 preview-driver.ts 가 든다 —
+ * - AI 의 미리보기 창(PLAN D61 · D63)은 preview-driver.ts 가 든다 —
  *   숨은 오프스크린 `BrowserWindow` 가 데몬의 `previewDriverFactory` 로
  *   들어가고, paint 는 PiP 프레임으로 렌더러에 흐른다.
  *
@@ -133,13 +133,10 @@ async function bootApp(): Promise<void> {
     ? join(app.getAppPath(), "web-dist")
     : undefined;
 
-  // Claude 의 미리보기 (PLAN D61): 세션 도구는 pane 의 페이지를 drive 하고,
-  // 게이트·넘기기는 숨은 창을 쓴다. pane 은 아래에서 만들어진다 — getter 는
-  // 세션이 드라이버를 처음 요구할 때까지 부르지 않는다.
-  const previewDriverFactory = createPreviewDriverFactory(
-    () => host.window,
-    () => plannerPreview,
-  );
+  // AI 의 미리보기 (PLAN D61): 세션 도구는 pane 의 페이지를 drive 하고,
+  // 창은 모두 이 파일이 만든다 — pane 을 찾는 getter 를 넘기면
+  // 드라이버는 Electron 을 몰라도 된다 (PLAN D61).
+  const previewDriverFactory = createPreviewDriverFactory(() => plannerPreview);
   const onNotice = (notice: DaemonNotice) => {
     notices.notifyPlanner(notice);
     // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.
@@ -192,7 +189,16 @@ async function bootApp(): Promise<void> {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildMenuTemplate({
-        preview: plannerPreview,
+        // 탭 전환(계획 §3 규칙 8)만 뷰 계약의 cycleActiveTab 로 이름이 어긋난다
+        // — 나머지 보기 메서드는 뷰 그대로라 곧장 닿는다.
+        preview: {
+          reload: () => plannerPreview.reload(),
+          history: (delta) => plannerPreview.history(delta),
+          cycleTab: (delta) => plannerPreview.cycleActiveTab(delta),
+          zoomIn: () => plannerPreview.zoomIn(),
+          zoomOut: () => plannerPreview.zoomOut(),
+          zoomReset: () => plannerPreview.zoomReset(),
+        },
         gotoAddress: () =>
           host.window?.webContents.send("colo-preview:key", {
             key: "l",
@@ -213,7 +219,8 @@ async function bootApp(): Promise<void> {
     ),
   );
   // 새 창과 같은 창 네비게이션을 전부 가둔다 — guardNavigations 가 두 잠금을
-  // 든다. 채팅의 링크도 window.open 을 지나 OS 브라우저로 나간다.
+  // 든다. 채팅의 링크도 window.open 을 지나 OS 브라우저로 나간다 — 설정
+  // `앱에서 링크 열기`가 켜진 클릭만 렌더러가 preview:open-external 로 돌린다.
   guardNavigations(window, new URL(url).origin);
   // 데스크톱 스위트의 손잡이(desktop-comments.mjs 가 app.evaluate 로 닿는다).
   // main 의 globalThis 는 렌더러에서 보이지 않으니 제품 면에는 나오지 않는다.
@@ -263,7 +270,7 @@ function guardStopUnderTurn(event: { preventDefault(): void }, proceed: () => vo
     .showMessageBox({
       type: "question",
       title: "작업이 진행 중입니다",
-      message: "Claude가 작업 중입니다. 지금 끝내면 이 작업은 멈춥니다.",
+      message: "AI가 작업 중입니다. 지금 끝내면 이 작업은 멈춥니다.",
       buttons: ["그만두고 끝내기", "취소"],
       defaultId: 1,
       cancelId: 1,

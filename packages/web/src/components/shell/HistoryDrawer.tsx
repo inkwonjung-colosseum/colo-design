@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useModalFocus } from "../../hooks/use-modal-focus";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon, SaveHistoryEntry } from "../../lib/daemon-client";
 import { timeAgo } from "../../lib/format";
 import { CloseIcon, HistoryIcon } from "../icons";
 import { RUNNING, stageLine } from "../panels/DiffPanel";
-import { Tip } from "./Tip";
 
 /**
  * 저장 기록: the saved commits of this cycle, and — per entry —
@@ -48,18 +47,10 @@ export function HistoryDrawer({
     };
   }, [open, api]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKeydown);
-    return () => document.removeEventListener("keydown", onKeydown);
-  }, [open, onClose]);
-
   /** Opening hands focus to the panel, so Tab and a screen reader start inside. */
   const panelRef = useRef<HTMLDivElement>(null);
   useModalFocus(panelRef, open);
+  useModalEscape(panelRef, onClose, open);
   useEffect(() => {
     if (open) panelRef.current?.focus();
   }, [open]);
@@ -106,14 +97,16 @@ export function HistoryDrawer({
             </span>{" "}
             저장 기록
           </h2>
-          <Tip label="저장 기록 닫기" side="left">
-            <button type="button" className="ghost" aria-label="저장 기록 닫기" onClick={onClose}>
-              <CloseIcon />
-            </button>
-          </Tip>
+          <button type="button" className="ghost" aria-label="저장 기록 닫기" onClick={onClose}>
+            <CloseIcon />
+          </button>
         </header>
 
         <div className="modal__body">
+          <p className="hint">
+            이 사이클의 저장 차례입니다. 되돌리기는 그 시점을 새 저장으로 얹습니다 — 지우지
+            않습니다.
+          </p>
           {/* The stage line is for work IN flight — a 저장 or the 되돌리기 this
               drawer started. A settled outcome (saved / handed off / failed)
               already told its story in the flow that produced it; repeating it
@@ -137,26 +130,34 @@ export function HistoryDrawer({
           )}
           {entries !== null && entries.length > 0 && (
             <ul className="diff__files">
-              {entries.map((entry) => (
-                <li className="diff__file" key={entry.sha}>
-                  <div className="diff__filerow">
-                    <span className="diff__path" title={entry.message}>
-                      {entry.message.split("\n")[0]}
-                    </span>
-                    <span className="diff__count">
-                      {timeAgo(Date.parse(entry.at))} · 파일 {entry.files.length}개
-                    </span>
-                    <button
-                      type="button"
-                      className="ghost"
-                      disabled={busy || restoring !== null}
-                      onClick={() => void restore(entry)}
-                    >
-                      {restoring === entry.sha ? "되돌리는 중…" : "이 시점으로 되돌리기"}
-                    </button>
-                  </div>
-                </li>
-              ))}
+              {entries.map((entry, index) => {
+                /* git log 순서 — 첫 행이 최신. 최신은 되돌릴 곳이 아니라 지금
+                   서 있는 곳이라 accent 점과 `지금 상태`가 말하고 버튼은 없다. */
+                const now = index === 0;
+                return (
+                  <li className={`diff__file${now ? " hist--now" : ""}`} key={entry.sha}>
+                    <div className="diff__filerow">
+                      <span className="diff__path" title={entry.message}>
+                        {entry.message.split("\n")[0]}
+                      </span>
+                      <span className="diff__count">
+                        {timeAgo(Date.parse(entry.at))} · 파일 {entry.files.length}개
+                        {now ? " · 지금 상태" : ""}
+                      </span>
+                      {!now && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={busy || restoring !== null}
+                          onClick={() => void restore(entry)}
+                        >
+                          {restoring === entry.sha ? "되돌리는 중…" : "이 시점으로 되돌리기"}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
 

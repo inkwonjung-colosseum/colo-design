@@ -11,6 +11,7 @@ import { REFRESH_BRIEF, REFRESH_TITLE } from "./bootstrap-brief.js";
 import { recordComments } from "./comments.js";
 import { browseFiles, listFiles } from "./environment.js";
 import type { GitHubBridge } from "./github-bridge.js";
+import type { HandoffPreviews } from "./handoff-preview.js";
 import type { DaemonLogger } from "./log.js";
 import type { DaemonNotice } from "./notices.js";
 import {
@@ -29,6 +30,7 @@ import type { QueueDisk, QueueStore } from "./queue-store.js";
 import { assertClonableRepoUrl, type RepoWorkspace } from "./repo.js";
 import type { Session } from "./session.js";
 import type { SessionManager } from "./session-manager.js";
+import { dropTape, readTape, spliceTape } from "./session-tape.js";
 import { undoLog } from "./undo-log.js";
 import { repoWritePolicy } from "./workspaces.js";
 
@@ -40,6 +42,11 @@ export interface RouterDeps {
   manager: SessionManager;
   fleet: ProjectFleet;
   previewDrivers: PreviewDrivers;
+  /**
+   * 시점 빌드 재현 (preview.md §3 2단계) — the handed-off moment's worktree
+   * build. The server owns its lifetime; the router only relays.
+   */
+  handoffPreviews: HandoffPreviews;
   /** The agent provider registry — session.create resolves its driver here. */
   agentDrivers: DriverRegistry;
   plans: PlanTracker;
@@ -151,17 +158,22 @@ export class RequestRouter {
       }
 
       case "session.history": {
-        const events0 = await this.deps.manager.history(
-          message.sessionId,
-          await this.resolveSessionCwd(message.sessionId),
-        );
+        const sessionCwd = await this.resolveSessionCwd(message.sessionId);
+        const events0 = await this.deps.manager.history(message.sessionId, sessionCwd);
+        // hero-synthesis D1: the daemon's own cycle events (저장 · 넘김 ·
+        // 반영 · 코멘트 도착) live on the session tape, not the vendor
+        // transcript — splice them in at the turn they followed.
+        const tape = this.deps.fleet.workspacesForCwd(sessionCwd);
+        const replayed = tape
+          ? spliceTape(events0, readTape(tape.paths.root, message.sessionId))
+          : events0;
         // 대기 줄과 lost room 은 기록이 아니라 지금의 상태 (PLAN D86 의
         // 확장): a window opened — or reloaded — must see both above the
         // field, so they ride at the tail of the replay. The tail is
         // AUTHORITATIVE, empty rooms included — a window that kept rows the
         // daemon no longer holds must lose them here, not keep the ghosts.
         const events = [
-          ...events0,
+          ...replayed,
           { kind: "queued", items: this.deps.manager.get(message.sessionId)?.heldItems() ?? [] },
         ];
         const lost = this.deps.queueStore.lostItems(message.sessionId);
@@ -171,12 +183,16 @@ export class RequestRouter {
       case "session.create": {
         // A resume names the thread, not the provider — the store that owns
         // the id decides which driver continues it.
-        const provider =
-          message.provider ??
-          (message.resume
-            ? ((await this.deps.manager.findStoredProvider(message.resume, this.workspaceCwd())) ??
-              "claude")
-            : "claude");
+        const storedProvider = message.resume
+          ? await this.deps.manager.findStoredProvider(message.resume, this.workspaceCwd())
+          : undefined;
+        if (message.resume && !message.provider && storedProvider === undefined) {
+          // Guessing a driver for a foreign id corrupts the resume — say so.
+          throw new Error(
+            "이 대화를 저장한 에이전트를 찾지 못했습니다 — 목록에서 다시 열어 주세요.",
+          );
+        }
+        const provider = message.provider ?? storedProvider ?? "claude";
         const driver = this.deps.agentDrivers.get(provider);
         if (!driver) {
           throw new Error(`알 수 없는 에이전트입니다: ${provider}`);
@@ -199,24 +215,8 @@ export class RequestRouter {
         // driver with it. A healthy live thread is left exactly as it was.
         const dead = message.resume ? this.deps.manager.get(message.resume) : undefined;
         if (dead && (dead.state === "error" || dead.state === "closed")) {
-          this.deps.previewDrivers.destroy(dead.id);
           await this.deps.manager.close(dead.id);
         }
-        // The preview tools ride the session when a driver is injected and
-        // the active preview is up (PLAN D61); `previewTools: false` opts
-        // out. Only providers that can host an in-process MCP server get
-        // them — an ACP subprocess cannot.
-        const openSink: {
-          current: ((route: string, state: string | null) => void) | null;
-        } = {
-          current: null,
-        };
-        const preview = driver.describe().capabilities.inProcessMcp
-          ? await this.deps.previewDrivers.toolsFor(
-              message.previewTools !== false,
-              (route, state) => openSink.current?.(route, state),
-            )
-          : null;
         const sessionCwd = this.workspaceCwd();
         const instructions = this.projectInstructions(sessionCwd);
         const session = this.deps.manager.create({
@@ -231,20 +231,8 @@ export class RequestRouter {
             ...(message.resume ? { resume: message.resume } : {}),
             ...(message.model ? { model: message.model } : {}),
             ...(message.effort ? { effort: message.effort } : {}),
-            ...(preview ? { previewTools: preview.tools } : {}),
           },
         });
-        if (preview) {
-          this.deps.previewDrivers.register(session.id, preview.driver);
-          openSink.current = (route, state) => {
-            this.deps.previewDrivers.noteOpened(session.id, route, state);
-            this.deps.broadcast({
-              type: "session.event",
-              sessionId: session.id,
-              event: { kind: "preview.opened", route, state },
-            });
-          };
-        }
         // A session start is the moment the 화면 half goes back to the remote.
         // Mid-cycle that is a merge of the developer's base branch, and a
         // conflict lands as this session's first task — which is why it runs
@@ -274,6 +262,12 @@ export class RequestRouter {
         // 사람이 다시 말을 걸었다 — 화면 확인 게이트의 한 번 제한이 풀린다.
         // 게이트는 사람의 턴마다 한 번이지, 대화마다 한 번이 아니다.
         this.deps.previewDrivers.gatedSessions.delete(message.sessionId);
+        // 사람이 가리킨 화면이 게이트의 입력이다 (게이트 재배선): pin·화면
+        // 캡처가 실은 route·state 를 이 턴의 목록에 담는다. 턴이 끝나면
+        // runGate 가 그 화면들을 기계가 다시 열어 본다.
+        for (const pin of message.pins ?? []) {
+          this.deps.previewDrivers.notePinned(message.sessionId, pin.screen, pin.state);
+        }
         // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
         // manager's onEvent); this only seeds the count, before anything can
         // be handed over — so the transcript is read while it still holds
@@ -347,9 +341,33 @@ export class RequestRouter {
       case "session.delete": {
         const cwd = await this.resolveSessionCwd(message.sessionId);
         await this.deps.manager.remove(message.sessionId, cwd);
-        // The thread is gone; its wait room and lost room go with it.
+        // The thread is gone; its wait room, lost room and tape rows go with
+        // it — 사람 메시지도 세션 소속이다 (hero-synthesis D1).
         this.deps.queueStore.clear(message.sessionId);
+        const tape = this.deps.fleet.workspacesForCwd(cwd);
+        if (tape) dropTape(tape.paths.root, message.sessionId);
         this.touchThreadsCwd(cwd);
+        return { ok: true };
+      }
+      case "session.deleteAll": {
+        // The tree's 대화 모두 지우기: unlike session.delete this names its
+        // project, so a non-active clone's transcripts die too (D77's store
+        // is keyed by the clone's realpath).
+        const paths = this.deps.registry.paths(message.slug);
+        const repoRoot = realpathBestEffort(paths.repoRoot);
+        // The wait rooms, lost rooms and tape rows go with the threads —
+        // collect the ids first; removeWhere closes live sessions and
+        // sweeps every driver's store in one pass.
+        const ids = (await this.deps.manager.list(repoRoot, 500)).map(
+          (summary) => summary.sessionId,
+        );
+        await this.deps.manager.removeWhere(repoRoot);
+        for (const sessionId of ids) {
+          this.deps.queueStore.clear(sessionId);
+          dropTape(paths.root, sessionId);
+        }
+        this.touchThreadsCwd(repoRoot);
+        this.announceProjects();
         return { ok: true };
       }
       case "session.contextUsage": {
@@ -386,8 +404,9 @@ export class RequestRouter {
         return { ok: true };
 
       case "session.selectors": {
-        const selectors = await this.deps.manager.require(message.sessionId).selectors();
-        this.deps.plans.rememberModels(selectors.models);
+        const session = this.deps.manager.require(message.sessionId);
+        const selectors = await session.selectors();
+        this.deps.plans.rememberModels(session.provider, selectors.models);
         return selectors;
       }
       case "session.commands":
@@ -566,7 +585,7 @@ export class RequestRouter {
         // lands as words on the screen instead of a silent no-op.
         const { onSessionTurn } = this.briefTo(message.sessionId, "refresh");
         // 사이클 브랜치에서 대화 없이 눌린 최신화는 병합을 하지 않는다(충돌의
-        // 첫 과제는 Claude 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는
+        // 첫 과제는 AI 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는
         // 지 버튼을 누른 사람에게 말한다.
         const behind = await this.repo.refreshNeedsThread();
         if (behind !== null && !message.sessionId)
@@ -601,16 +620,12 @@ export class RequestRouter {
         return await this.repo.status();
       }
 
-      case "repo.update":
-        if (message.url) assertClonableRepoUrl(message.url);
-        return await this.repo.update({
-          ...(message.url !== undefined ? { url: message.url } : {}),
-        });
-
       case "onboarding.check":
         return await runOnboardingChecks({
           claudeExecutableOverride: this.deps.claudeExecutableOverride(),
           gitHubClient: () => this.deps.github.client(),
+          provider: message.provider,
+          driverFor: (id) => this.deps.agentDrivers.get(id),
         });
 
       case "onboarding.fix":
@@ -641,6 +656,13 @@ export class RequestRouter {
       case "repo.save":
         return await this.repo.save({
           ...(message.message ? { message: message.message } : {}),
+          // hero-synthesis D1: the calling conversation owns the saved card;
+          // declared screens let it name which ones the files touch.
+          ...(message.sessionId ? { sessionId: message.sessionId } : {}),
+          screens: this.deps.previewDrivers.screens.map((screen) => ({
+            route: screen.route,
+            title: screen.title,
+          })),
           ...this.briefTo(message.sessionId, "save"),
         });
 
@@ -660,12 +682,48 @@ export class RequestRouter {
             route: screen.route,
             title: screen.title,
           })),
+          ...(message.sessionId ? { sessionId: message.sessionId } : {}),
           ...this.briefTo(message.sessionId, "handoff"),
         });
       }
 
-      case "repo.handoffStatus":
-        return await this.repo.refreshHandoff();
+      case "repo.handoffStatus": {
+        // refreshHandoff can land a finished cycle — fetch, checkout, reset —
+        // so while a writer owns the worktree the answer is the poller's
+        // passive read instead (pollOpenHandoffs' fence, 판정 1·2). A publish
+        // in flight shows in diffStage; a pull in busyRefreshing.
+        const workspaces = this.requireActive();
+        if (
+          workspaces.diffStage === "computing" ||
+          workspaces.diffStage === "pushing" ||
+          workspaces.diffStage === "handing-off" ||
+          workspaces.repo.busyRefreshing
+        ) {
+          return await workspaces.repo.peekHandoff();
+        }
+        return await workspaces.repo.refreshHandoff();
+      }
+
+      // 보낸 화면 동결 (preview.md §1-E): the frozen stage asks for one
+      // committed capture at a time — null is the "no shot" answer, not an
+      // error, so the panel falls back to the live preview with the stamp.
+      case "repo.handoffShot":
+        return await this.repo.handoffShot(message.route, message.state);
+
+      // 시점 빌드 재현 (preview.md §3 2단계): the frozen stage's 실제로
+      // 열기 — the handoff branch's tip in a throwaway worktree, served on
+      // a second port. Absence answers as a ready:false info, not an error,
+      // so the stage falls back to the committed capture. The sessionId is
+      // what ties the build's life to the conversation that asked for it.
+      case "repo.handoffPreview":
+        return await this.deps.handoffPreviews.open(message.sessionId ?? null);
+
+      // 화면 캡처 (게이트 재배선): the planner's "이 화면" button — the
+      // daemon borrows a preview driver, shoots, and the web attaches the
+      // picture to the next turn. Desktop only; the browser dev path has
+      // no window to shoot.
+      case "preview.capture":
+        return await this.deps.previewDrivers.capture(message.route, message.state);
 
       // 답하기 (PLAN D88): the planner's words to one developer comment —
       // the daemon picks the endpoint by the id's kind.
@@ -683,17 +741,7 @@ export class RequestRouter {
             candidate.sessionId === message.sessionId && candidate.turn === message.turn,
         );
         if (entry) await this.repo.checkpointRestore(entry.id);
-        const openSink: {
-          current: ((route: string, state: string | null) => void) | null;
-        } = {
-          current: null,
-        };
         const targetDriver = this.deps.agentDrivers.get(target.provider);
-        const preview = targetDriver?.describe().capabilities.inProcessMcp
-          ? await this.deps.previewDrivers.toolsFor(true, (route, state) =>
-              openSink.current?.(route, state),
-            )
-          : null;
         // The fork's binary is the TARGET provider's — a codex thread must
         // not be handed the claude path just because the field used to be
         // named after it.
@@ -716,17 +764,6 @@ export class RequestRouter {
             },
           },
         });
-        if (preview) {
-          this.deps.previewDrivers.register(result.sessionId, preview.driver);
-          openSink.current = (route, state) => {
-            this.deps.previewDrivers.noteOpened(result.sessionId, route, state);
-            this.deps.broadcast({
-              type: "session.event",
-              sessionId: result.sessionId,
-              event: { kind: "preview.opened", route, state },
-            });
-          };
-        }
         this.deps.manager.invalidateThreads(target.cwd);
         undoLog().record({
           kind: "retry",
@@ -822,11 +859,10 @@ export class RequestRouter {
    * the stored transcript resumed — the planner's words ride the
    * conversation they belong to, which is the promise the crash card made
    * ("다시내면 이어집니다"). The dead object is torn down FIRST, under
-   * its own id, so its late `closed` broadcast cannot take the
-   * replacement's preview driver with it.
+   * its own id, so its late `closed` broadcast cannot shadow the
+   * replacement.
    */
   private async resurrectSession(dead: Session): Promise<Session> {
-    this.deps.previewDrivers.destroy(dead.id);
     await this.deps.manager.close(dead.id);
     const provider = dead.provider;
     const driver = this.deps.agentDrivers.get(provider);
@@ -834,16 +870,6 @@ export class RequestRouter {
     const executable = availability?.executable;
     if (!executable) return dead;
     const chosen = dead.chosen;
-    const openSink: {
-      current: ((route: string, state: string | null) => void) | null;
-    } = {
-      current: null,
-    };
-    const preview = driver?.describe().capabilities.inProcessMcp
-      ? await this.deps.previewDrivers.toolsFor(true, (route, state) =>
-          openSink.current?.(route, state),
-        )
-      : null;
     const instructions = this.projectInstructions(dead.cwd);
     const session = this.deps.manager.create({
       cwd: dead.cwd,
@@ -857,20 +883,8 @@ export class RequestRouter {
         resume: dead.id,
         ...(chosen.model ? { model: chosen.model } : {}),
         ...(chosen.effort ? { effort: chosen.effort } : {}),
-        ...(preview ? { previewTools: preview.tools } : {}),
       },
     });
-    if (preview) {
-      this.deps.previewDrivers.register(session.id, preview.driver);
-      openSink.current = (route, state) => {
-        this.deps.previewDrivers.noteOpened(session.id, route, state);
-        this.deps.broadcast({
-          type: "session.event",
-          sessionId: session.id,
-          event: { kind: "preview.opened", route, state },
-        });
-      };
-    }
     // The tree's child row points at the same id; a rescan picks the new life up.
     this.deps.manager.invalidateThreads(session.cwd);
     this.refreshThreads();
@@ -879,15 +893,15 @@ export class RequestRouter {
 
   /**
    * Routes a failing gate's output to a live session as a user turn — the same
-   * path a typed message takes, so Claude sees the planner asking for a fix.
+   * path a typed message takes, so the agent sees the planner asking for a fix.
    * The failure itself is news the planner clicked for — the step never
-   * reached the developer and Claude is now on the fix — so it also fires a
+   * reached the developer and the agent is now on the fix — so it also fires a
    * notice before the turn starts.
    *
-   * 게이트 실패는 Claude 의 과제다(README) — 열린 대화가 없어도 과제는 태어나야
+   * 게이트 실패는 AI 의 과제다(README) — 열린 대화가 없어도 과제는 태어나야
    * 한다: 저장·넘기기는 도구가 대화를 열고 브리프를 내려놓는다(준비 턴
-   * runBootstrapPrepare 와 같은 길). 최신화 충돌만 예외다 — 대화가 없을 때의 그
-   * 상태는 오류 카드가 자기 버튼(Claude 에게 해결 요청)으로 대화를 고르는 자리다.
+   * runConventionsPrepare 와 같은 길). 최신화 충돌만 예외다 — 대화가 없을 때의 그
+   * 상태는 오류 카드가 자기 버튼(AI 에게 해결 요청)으로 대화를 고르는 자리다.
    */
   private briefTo(sessionId: string | undefined, stage: "save" | "handoff" | "refresh") {
     if (!sessionId && stage === "refresh") return { onSessionTurn: undefined };

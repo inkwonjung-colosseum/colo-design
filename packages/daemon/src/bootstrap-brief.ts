@@ -1,18 +1,19 @@
 /**
- * 연결 준비 브리프 (PLAN D94) — `colo-design.json` 이 없는 레포를 Claude 가
- * 살펴보고 도구의 계약 넷을 쓰게 하는 한 턴. 이 판의 울타리는 하나다: 준비 턴이
- * 설정 파일에 적는 것은 미리보기 포트 하나이고, 명령이 적힌 파일은 데몬이
- * `validateBootstrapOverrides` 로 거부한다 — 설치 · 검사 · 빌드 · 미리보기
- * 명령은 레포의 락파일과 `package.json` 의 scripts 에서 읽는다(repo-config.ts).
+ * 연결 준비 브리프 (PLAN D94) — 관례 표식이 없는 레포를 AI 가 살펴보고
+ * 도구의 계약을 쓰게 하는 한 턴. 이 턴은 설정 파일을 쓰지 않는다: 미리보기
+ * 포트는 데몬이 뜬 서버에서 읽고, 설치 · 검사 · 빌드 · 미리보기 명령은 레포의
+ * 락파일과 `package.json` 의 scripts 에서 읽는다(repo-config.ts).
  *
- * 관례 최신화 (커미티 판정 2026-09-14): bootstrap 은 계약이 없는 레포에만
- * 돌고 재실행 길이 없으므로, 한 번 연결된 레포의 관례는 연결 시점의 판에
- * 영구 고정된다. CONVENTIONS_REVISION 와 CLAUDE.md 첫 줄의 표식이 그 드리프트를
+ * 관례 최신화 (커미티 판정 2026-09-14): 준비는 표식이 없는 클론에만 돌고
+ * 재실행 길이 없으므로, 한 번 연결된 레포의 관례는 연결 시점의 판에 영구
+ * 고정된다. CONVENTIONS_REVISION 와 CLAUDE.md 첫 줄의 표식이 그 드리프트를
  * 읽게 하고, REFRESH_BRIEF 턴이 현행 판으로 다시 쓴다 — 결과는 저장 → 넘기기
  * 파이프라인을 타므로 승인자는 개발자의 PR 리뷰다.
  */
 
-export const BOOTSTRAP_TITLE = "연결 준비";
+import { BOOTSTRAP_THREAD_TITLE } from "@colo-design/protocol";
+
+export const BOOTSTRAP_TITLE = BOOTSTRAP_THREAD_TITLE;
 
 /**
  * 연결 관례의 판. 브리프가 관례에 대해 하는 말이 바뀌면 이 숫자를 올린다 —
@@ -107,27 +108,19 @@ module.exports = ({ types: t }) => ({
 react({ babel: { plugins: command === "serve" ? ["./babel-plugin-colo-src.cjs"] : [] } })
 \`\`\``;
 
-export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연결되어 있지 않습니다. 레포를 살펴보고 아래 다섯(마지막은 선택)을 작성해 연결을 준비해 주세요.
+export const BOOTSTRAP_BRIEF = `이 레포는 아직 Colo Design 도구와 연결되어 있지 않습니다. 레포를 살펴보고 아래 넷(마지막은 선택)을 작성해 연결을 준비해 주세요.
 
-1. \`colo-design.json\` (레포 루트) — 딱 한 줄입니다:
-   \`{ "preview": { "port": <개발 서버가 뜨는 포트> } }\`
-   설치 · 검사 · 빌드 · 미리보기 명령은 적지 마세요 — 도구가 락파일과
-   package.json 의 scripts 에서 읽습니다. 명령이 적힌 파일은 거부됩니다.
-   그래서 개발 서버가 package.json 의 scripts 에 \`dev\`(없으면 start · serve ·
-   preview 중 하나)로 있어야 하고, 위에 적은 포트에서 떠야 합니다 — 없으면
-   그 스크립트를 추가해 주세요. 검사 · 빌드 명령은 scripts 의 \`check\` · \`build\` 를
-   그대로 읽습니다 — 도구가 스스로 돌리지는 않습니다.
-2. 화면 브리지 — 개발 미리보기에만 붙는 작은 스크립트로, 앱이 떠 있을 때
+1. 화면 브리지 — 개발 미리보기에만 붙는 작은 스크립트로, 앱이 떠 있을 때
    \`colo-design.screens\` 봉투로 화면 목록을 알려 주고 \`colo-design.navigate\`
    메시지를 받아 화면을 이동합니다. 아래 템플릿을 참고해 이 레포의 라우팅에
    맞게 붙여 주세요. 프로덕션 번들에 포함되지 않게 개발 전용 경로로 넣어 주세요.
-3. 화면 래퍼 — 각 화면 최상위에 \`data-screen="<feature>/<Screen>"\`,
+2. 화면 래퍼 — 각 화면 최상위에 \`data-screen="<feature>/<Screen>"\`,
    \`data-state="<상태>"\` 속성을 붙여 주세요. 경로 규칙은
    \`/<feature>/<Screen>?state=<상태>\` 입니다.
-4. \`CLAUDE.md\` — 위 브리지와 래퍼 규칙, 화면 추가 관례를 한두 문단으로.
+3. \`CLAUDE.md\` — 위 브리지와 래퍼 규칙, 화면 추가 관례를 한두 문단으로.
    문서 첫 줄에 \`${conventionsMarker(CONVENTIONS_REVISION)}\` 주석을 그대로
    넣어 주세요 — 도구가 관례의 판을 읽는 표식입니다.
-5. (선택) 소스 표식 — 개발 빌드의 JSX 소문자 태그에
+4. (선택) 소스 표식 — 개발 빌드의 JSX 소문자 태그에
    \`data-colo-src="<src/ 아래 파일 경로>:<줄>"\` 속성을 붙여 주면, 사용자가
    미리보기에서 찍은 핀이 화면만이 아니라 소스 위치를 가리킵니다. 아래
    템플릿을 이 레포의 JSX 파이프라인에 맞게 고쳐 주세요 — 소문자로 시작하는
@@ -157,8 +150,8 @@ export const REFRESH_BRIEF = `이 레포는 이미 Colo Design 도구와 연결�
    문서 첫 줄에 \`${conventionsMarker(CONVENTIONS_REVISION)}\` 주석을 그대로
    넣어 주세요 — 도구가 관례의 판을 읽는 표식입니다.
 
-절대 하지 말 것: \`colo-design.json\` 고치기(연결은 이미 살아 있습니다),
-네트워크 내려받기(curl … | sh 등), 비밀키·토큰 다루기.
+절대 하지 말 것: \`colo-design.json\` 이 있어도 그대로 둡니다(의도된 덮어쓰기가
+실려 있을 수 있습니다), 네트워크 내려받기(curl … | sh 등), 비밀키·토큰 다루기.
 바뀐 파일은 저장 → 넘기기 흐름으로 개발자의 PR 승인을 받습니다 —
 스스로 커밋하거나 푸시하지 마세요.
 

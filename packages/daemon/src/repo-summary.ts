@@ -1,9 +1,14 @@
-// The summary and 넘기기-draft voices (PLAN D51): one Claude turn on the
+// The summary and 넘기기-draft voices (PLAN D51): one agent turn on the
 // same SDK the sessions ride, cached against the diff it answered for.
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DiffFile, RepoHandoffDraft, RepoSummary } from "@colo-design/protocol";
+import {
+  type DiffFile,
+  fallbackSummary,
+  type RepoHandoffDraft,
+  type RepoSummary,
+} from "@colo-design/protocol";
 import { claudeOneShot } from "./agent/drivers/claude/one-shot.js";
 import { readComments } from "./comments.js";
 import { buildCommentsSection } from "./handoff-body.js";
@@ -14,7 +19,6 @@ import {
   type RepoCore,
   SUMMARY_TIMEOUT_MS,
 } from "./repo-core.js";
-import { fallbackSummary } from "./repo-diff.js";
 import {
   HANDOFF_BODY_MAX_CHARS,
   HANDOFF_FILE_LIMIT,
@@ -33,7 +37,7 @@ export class RepoSummarizer {
   /**
    * The summary's memory (PLAN D51): the diff hash its lines answer for.
    * One entry, in daemon memory on purpose — reopening the save review on
-   * an unchanged diff must not pay for another Claude turn, and a moved
+   * an unchanged diff must not pay for another agent turn, and a moved
    * diff must not show yesterday's words.
    */
   private summaryCache: {
@@ -59,7 +63,7 @@ export class RepoSummarizer {
 
   /**
    * 저장 검토의 요약 (PLAN D51): what changed, in the planner's words. One
-   * Claude turn — `maxTurns: 1`, no tools, three seconds — over the diff
+   * agent turn — `maxTurns: 1`, no tools, three seconds — over the diff
    * itself; anywhere it cannot land (no CLI, timeout, refusal, empty answer)
    * falls back to grouping the changed paths. Answered from memory when the
    * diff has not moved since the last ask, so re-opening the review is free.
@@ -99,7 +103,7 @@ export class RepoSummarizer {
    * 개발자에게 넘기기의 초안 (비개발자 넘기기): the title and the paragraph a
    * developer reads first, written from what this cycle already said about
    * itself — its 저장 메모 and the files those saves moved, never the whole
-   * diff. One Claude turn on the same leash as the save memo's; anywhere it
+   * diff. One agent turn on the same leash as the save memo's; anywhere it
    * cannot land the answer is empty, and the dialog keeps the browser's own
    * proposal, which is what it opened with before this existed.
    */
@@ -116,7 +120,7 @@ export class RepoSummarizer {
     const tip = (await this.core.git(["rev-parse", this.core.branch]).catch(() => "")).trim();
     if (!tip) return empty;
     // The extras are the daemon's own appended sections, computed fresh every
-    // time — the draft's cache is about Claude's words, not the pin list's.
+    // time — the draft's cache is about the agent.s words, not the pin list's.
     const extras = await this.handoffExtras(options);
     if (this.handoffDraftCache?.tip === tip) {
       return { ...this.handoffDraftCache.draft, extras };

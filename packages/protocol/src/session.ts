@@ -1,3 +1,4 @@
+import type { DeveloperReview } from "./repo.js";
 import type { EffortLevel, PermissionMode, SessionState } from "./shared.js";
 
 // ---------------------------------------------------------------------------
@@ -214,12 +215,24 @@ export type ChatEvent =
    */
   | { kind: "ratelimit"; status: string; resetsAt: number | null }
   /**
-   * Claude opened a screen in the hidden preview (`screen_open`, PLAN D91).
-   * Not a transcript event — `foldEvent` must NOT build a chat block from
-   * it; the web keeps it as the session's `lastOpened` and follows at
-   * turn end.
+   * 사이클 사건의 기록 (hero-synthesis D1): 저장 · 넘김 · 반영 · 개발자 코멘트
+   * 도착이 세션 테이프에 영구로 남는다 — 지금까지 `diffStatus`·`devReviews`
+   * 는 창의 휘발 상태라 리로드하면 대화에서 사라졌다. `foldEvent` 는 이 네
+   * 종류를 블록으로 접는다(기록이므로). 발송은 기존 호출의 부수효과 —
+   * `api.save`/`api.handoff` 가 받은 `sessionId` 로, 없으면 마지막 활성
+   * 세션으로 귀속된다.
    */
-  | { kind: "preview.opened"; route: string; state: string | null };
+  | {
+      kind: "cycle.saved";
+      at: string;
+      commit: string;
+      message: string;
+      files: string[];
+      screens: Array<{ route: string; title: string; note?: string }>;
+    }
+  | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string }
+  | { kind: "cycle.merged"; at: string; pr: number }
+  | { kind: "review.arrived"; reviews: DeveloperReview[] };
 
 // ---------------------------------------------------------------------------
 // Session summaries and replies
@@ -294,6 +307,14 @@ export interface PlanUsage {
    * the plan has none — a Pro account, or a server that does not emit them.
    */
   modelWeekly: PlanModelWindow[];
+  /**
+   * Which provider's account this reading belongs to (`claude`, `codex`, …)
+   * — the same 43% means a different budget from a different account, so the
+   * usage chip says whose numbers these are. Stamped by the producing
+   * driver; a reading without one is a pre-tag cache the tracker stamps at
+   * load, and the chip then omits the line.
+   */
+  provider?: string;
 }
 
 export interface ContextUsage {
@@ -351,9 +372,10 @@ export interface SessionSelectors {
   /**
    * The provider's own mode rows (ACP agents name their own modes). When
    * present the mode chip lists these instead of the Claude enum, and
-   * `mode` holds the current row's id.
+   * `mode` holds the current row's id. `tier` is the descriptor's danger
+   * classification — the chip's shield glyph reads it.
    */
-  modes?: Array<{ id: string; label: string; description?: string }>;
+  modes?: Array<{ id: string; label: string; description?: string; tier?: string }>;
   /** The current provider-mode id — equals `permissionMode` for Claude. */
   mode?: string;
 }

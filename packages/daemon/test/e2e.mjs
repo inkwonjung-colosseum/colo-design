@@ -156,6 +156,11 @@ async function main() {
     `tool=${permission.toolName}`,
   );
   check(
+    "permission request carries the blocking verdict and its clock",
+    permission.blocking === true && Number.isFinite(permission.requestedAt),
+    `blocking=${permission.blocking} requestedAt=${permission.requestedAt}`,
+  );
+  check(
     "state moved to waiting_permission",
     inbox.some((m) => m.type === "session.state" && m.state === "waiting_permission"),
   );
@@ -182,6 +187,11 @@ async function main() {
       10000,
       "replayed permission.request",
       inbox2,
+    );
+    check(
+      "the replayed card keeps the verdict and the clock",
+      replay.blocking === permission.blocking && replay.requestedAt === permission.requestedAt,
+      `blocking=${replay.blocking} requestedAt=${replay.requestedAt}`,
     );
     check(
       "a reconnecting socket receives the pending card again",

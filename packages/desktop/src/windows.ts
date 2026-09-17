@@ -142,12 +142,18 @@ export class MainWindowHost {
     if (this.pendingOpenSession) {
       const sessionId = this.pendingOpenSession;
       this.pendingOpenSession = null;
-      setTimeout(() => window.webContents.send(OPEN_SESSION_CHANNEL, sessionId), 1200);
+      setTimeout(() => {
+        if (window.isDestroyed()) return;
+        window.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
+      }, 1200);
     }
     if (this.pendingOpenProject) {
       const slug = this.pendingOpenProject;
       this.pendingOpenProject = null;
-      setTimeout(() => window.webContents.send(OPEN_PROJECT_CHANNEL, slug), 1200);
+      setTimeout(() => {
+        if (window.isDestroyed()) return;
+        window.webContents.send(OPEN_PROJECT_CHANNEL, slug);
+      }, 1200);
     }
   }
 

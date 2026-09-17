@@ -1,11 +1,11 @@
 /**
  * 연결 준비 end-to-end (PLAN D94), fully offline: `colo-design.json` 이 없는
- * 레포를 `project.create {bootstrap: true}` 로 추가하면 — 준비 턴(brief 마커)
- * 이 열리고, 스텁 Claude 가 포트를 적고 개발 서버 스크립트를 붙이고, 데몬의
- * 기계 검증이 통과시켜 미리보기까지 간다. 설치 · 검사 · 빌드 · 미리보기 명령은
- * 준비 턴이 적지 않는다 — 레포의 락파일과 package.json 의 scripts 가 말한다.
- * 준비 커밋은 저장을 기다리는 미해결 변경으로 남는다 — 첫 넘기기 PR 이
- * 개발자의 수용 게이트다.
+ * 레포를 `project.create` 로 추가하면 — 브링업은 레포의 package.json scripts
+ * 만으로 ready 까지 가고(미리보기 포트는 뜬 서버의 출력에서 감지), 그 뒤에
+ * 관례 준비 턴(brief 마커, purpose bootstrap)이 자동으로 열린다. 스텁 Claude 는
+ * CLAUDE.md 에 관례 표식을 달고 화면 브리지 파일을 쓴다 — 그 파일들은 저장을
+ * 기다리는 미해결 변경으로 남고, 첫 넘기기 PR 이 개발자의 수용 게이트다.
+ * 준비는 클론당 한 번이다: 표식이 달린 뒤의 sync 는 턴을 다시 열지 않는다.
  *
  * Usage: node packages/daemon/test/bootstrap-e2e.mjs
  */
@@ -13,10 +13,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
+import { BOOTSTRAP_BRIEF, BOOTSTRAP_TITLE, conventionsMarker } from "../dist/bootstrap-brief.js";
 import { DaemonServer } from "../dist/server.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 
 const DIR = join(tmpdir(), "colo-design-bootstrap-e2e");
+const MARKER = conventionsMarker(1);
 
 process.env.COLO_DESIGN_CREDENTIAL_STORE = "memory";
 process.env.COLO_DESIGN_PROJECTS_SETTINGS = join(DIR, "projects.json");
@@ -41,46 +43,57 @@ async function waitFor(predicate, timeoutMs, label) {
   throw new Error(`timeout waiting for ${label}`);
 }
 
-/** 준비 턴의 스텁: brief 를 받으면 포트를 적고 dev 스크립트를 붙인다. */
-function bootstrapStub(dir, port) {
+/**
+ * 준비 턴의 스텁: brief 를 받으면 'AI 가 한 일'을 흉내 낸다 — CLAUDE.md 를
+ * 현행 관례 표식과 함께 다시 쓰고 화면 브리지 파일을 둔다. 설정 파일은 쓰지
+ * 않는다: 포트는 데몬이 뜬 서버에서 읽고, 명령은 레포의 scripts 가 말한다.
+ * 바뀐 파일은 커밋되지 않고 미해결 변경으로 남는다(저장 → 넘기기가 다음 관문).
+ */
+function bootstrapStub(dir) {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "claude");
   writeFileSync(
     path,
     [
       "#!/usr/bin/env node",
-      'const fs = require("fs");',
-      'if (process.argv[2] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
-      'if (process.argv[2] === "auth") {',
-      '  console.log(\'{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"team","email":"p@x.com"}\');',
+      'const fs = require("node:fs");',
+      'const pathMod = require("node:path");',
+      "const args = process.argv.slice(2);",
+      'if (args[0] === "--version") { console.log("1.0.0-stub"); process.exit(0); }',
+      'if (args[0] === "auth") {',
+      '  console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "team", email: "p@x.com" }));',
       "  process.exit(0);",
       "}",
-      'let buf = "";',
-      'process.stdin.setEncoding("utf8");',
-      'process.stdin.on("data", (chunk) => {',
-      "  buf += chunk;",
+      "let buf = '';",
+      "let sessionId = 'stub';",
+      "const send = (o) => process.stdout.write(JSON.stringify(o) + '\\n');",
+      "const seen = () => {",
       "  let idx;",
       '  while ((idx = buf.indexOf("\\n")) !== -1) {',
       "    const line = buf.slice(0, idx); buf = buf.slice(idx + 1);",
-      '    if (line.includes(\'"type":"user"\') && line.includes("연결 준비")) {',
-      "      const port = process.env.COLO_BOOTSTRAP_PORT;",
-      '      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));',
-      "      pkg.scripts = pkg.scripts || {};",
-      '      pkg.scripts.dev = "node server.mjs";',
-      '      fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));',
-      '      fs.writeFileSync("colo-design.json", JSON.stringify({',
-      "        preview: { port: Number(port) },",
-      "      }, null, 2));",
-      "      process.stdout.write(JSON.stringify({",
+      "    let o = null; try { o = JSON.parse(line); } catch { continue; }",
+      '    if (o.type === "control_request") {',
+      "      const sub = String(o.request && o.request.subtype);",
+      "      const id = String(o.request_id);",
+      '      if (sub === "initialize" || sub === "set_permission_mode") {',
+      '        send({ type: "control_response", response: { subtype: "success", request_id: id, response: {} } });',
+      "      }",
+      "      continue;",
+      "    }",
+      '    if (o.type === "user") {',
+      "      if (typeof o.session_id === 'string') sessionId = o.session_id;",
+      `      fs.writeFileSync('CLAUDE.md', ${JSON.stringify(MARKER)} + "\\n# fixture colo-design 레포\\n\\n화면 브리지와 래퍼 관례를 적었습니다.\\n");`,
+      "      fs.mkdirSync(pathMod.join('src', 'dev'), { recursive: true });",
+      "      fs.writeFileSync(pathMod.join('src', 'dev', 'colo-bridge.js'), '// stub bridge\\n');",
+      "      setTimeout(() => send({",
       '        type: "result", subtype: "success", is_error: false,',
-      '        session_id: "stub", result: "연결 준비를 마쳤습니다", num_turns: 1, duration_ms: 5,',
-      '      }) + "\\n");',
-      "      setTimeout(() => process.exit(0), 150);",
-      "      return;",
+      '        session_id: sessionId, result: "연결 준비를 마쳤습니다", num_turns: 1, duration_ms: 5,',
+      "      }), 200);",
       "    }",
       "  }",
-      "});",
-      'process.stdin.on("end", () => process.exit(0));',
+      "};",
+      'process.stdin.setEncoding("utf8");',
+      'process.stdin.on("data", (chunk) => { buf += chunk; seen(); });',
       "",
     ].join("\n"),
   );
@@ -91,16 +104,15 @@ function bootstrapStub(dir, port) {
 async function main() {
   rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
-  const previewPort = await freePort();
-  process.env.COLO_BOOTSTRAP_PORT = String(previewPort);
+
+  // 포트를 선언하지 않는다 — 서버가 빈 포트를 고르고 출력이 그 주소를 말한다.
   const fixture = await createFixtureRepo({
     dir: join(DIR, "fixture"),
-    port: previewPort,
     omitConfig: true,
   });
   check(
     "the fixture seeds without colo-design.json",
-    !existsSync(join(fixture.remote, "colo-design.json")),
+    !existsSync(join(fixture.seed, "colo-design.json")),
   );
 
   const port = await freePort();
@@ -108,7 +120,7 @@ async function main() {
     host: "127.0.0.1",
     port,
     token: "bootstrap-e2e",
-    claudeExecutable: bootstrapStub(join(DIR, "bin"), previewPort),
+    claudeExecutable: bootstrapStub(join(DIR, "bin")),
   });
   await server.start();
 
@@ -130,12 +142,10 @@ async function main() {
   };
 
   try {
-    const briefs = [];
     await request({
       type: "project.create",
       name: "연결 준비",
       repoUrl: fixture.remote,
-      bootstrap: true,
       approveCommands: true,
     });
     const status = await waitFor(
@@ -144,37 +154,85 @@ async function main() {
         return current.phase === "ready" || current.phase === "error" ? current : null;
       },
       180_000,
-      "prepare → ready",
+      "bring-up → ready",
     );
     check(
-      "the connection prepares all the way to ready",
+      "a repo with no colo-design.json brings itself up to ready",
       status.phase === "ready",
       `${status.phase} · ${status.detail ?? ""}`,
     );
     check(
-      "the contract file exists in the clone",
-      existsSync(join(status.root, "colo-design.json")),
+      "the preview serves the app on the auto-detected port",
+      status.previewUrl !== null && (await fetch(status.previewUrl)).status === 200,
+      status.previewUrl ?? "(none)",
+    );
+
+    // 준비 턴은 브링업의 관문이 아니라 ready 뒤에 오는 훅이다 — 순서가 계약이다.
+    const briefEcho = await waitFor(
+      () =>
+        inbox.findIndex(
+          (m) =>
+            m.type === "session.event" &&
+            m.event.kind === "user.echo" &&
+            m.event.text.includes('"purpose":"bootstrap"'),
+        ),
+      60_000,
+      "the conventions-prep brief echo",
+    );
+    const readyAt = inbox.findIndex((m) => m.type === "repo.status" && m.status?.phase === "ready");
+    check(
+      "the conventions turn opens after ready, not as a bring-up gate",
+      readyAt !== -1 && briefEcho > readyAt,
+      `ready@${readyAt} brief@${briefEcho}`,
+    );
+    check(
+      "the prep turn carries the 연결 준비 brief marker",
+      inbox[briefEcho].event.text.includes(`"title":"${BOOTSTRAP_TITLE}"`) &&
+        inbox[briefEcho].event.text.includes(BOOTSTRAP_BRIEF.slice(0, 40)),
+    );
+
+    // 스텁이 쓴 파일들은 커밋되지 않은 채 저장 → 넘기기 파이프라인을 기다린다.
+    const pending = await waitFor(
+      async () => {
+        const current = await request({ type: "repo.status" });
+        return current.pendingChanges >= 2 ? current : null;
+      },
+      60_000,
+      "the stub's writes to count as pending",
     );
     check(
       "the preparation waits as unsaved changes — the first PR is the gate",
-      status.pendingChanges > 0,
-      String(status.pendingChanges),
+      pending.pendingChanges >= 2,
+      String(pending.pendingChanges),
+    );
+    const claudeMd = readFileSync(join(status.root, "CLAUDE.md"), "utf8");
+    check("the stub's CLAUDE.md carries the conventions marker", claudeMd.startsWith(MARKER));
+    check(
+      "the stub's bridge file landed in the clone",
+      existsSync(join(status.root, "src", "dev", "colo-bridge.js")),
     );
     check(
-      "the preview serves on the prepared port",
-      (status.previewUrl ?? "").includes(String(previewPort)),
-      status.previewUrl ?? "(none)",
+      "no colo-design.json was written — the port is detected, not declared",
+      !existsSync(join(status.root, "colo-design.json")),
     );
-    for (const m of inbox) {
-      if (
+
+    // 표식이 달린 뒤(그리고 클론당 한 번의 시도 뒤) 두 번째 sync 는 준비 턴을
+    // 다시 열지 않는다.
+    await request({ type: "repo.sync" });
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const briefEchoes = inbox.filter(
+      (m) =>
         m.type === "session.event" &&
         m.event.kind === "user.echo" &&
-        m.event.text.includes("연결 준비")
-      ) {
-        briefs.push(m.event.text);
-      }
-    }
-    check("the brief turn opened as 연결 준비", briefs.length === 1, `${briefs.length} brief(s)`);
+        m.event.text.includes('"purpose":"bootstrap"'),
+    ).length;
+    const sessions = await request({ type: "session.list" });
+    const prepSessions = sessions.filter((s) => s.title === BOOTSTRAP_TITLE).length;
+    check(
+      "a second sync does not re-run conventions prep",
+      briefEchoes === 1 && prepSessions === 1,
+      `${briefEchoes} brief echo(es) · ${prepSessions} prep session(s)`,
+    );
   } finally {
     ws.close();
     await server.stop();

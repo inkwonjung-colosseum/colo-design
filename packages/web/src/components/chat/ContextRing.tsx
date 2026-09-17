@@ -1,8 +1,10 @@
 /**
  * 컨텍스트 윈도우 — how full this conversation has grown, as one ring beside
  * the send button: the place the eye already is when it decides whether to
- * spend one more turn. Hover or focus opens the reading behind it — the
- * percent, and nothing else. Token counts and session cost stay out:
+ * spend one more turn. The percent rides beside the ring now
+ * (cycle/_skeleton.html `컨텍스트 18%`) — a hover-only reading was the
+ * tooltip-blindness the review called out; the fuller Tip below keeps the
+ * reading's name. Token counts and session cost stay out:
  * the product's promise is one subscription,
  * and the transcript's own rule is "Cost stays invisible."
  *
@@ -55,6 +57,9 @@ export function ContextRing({ usage }: { usage: ContextUsage | null }) {
             transform="rotate(-90 10 10)"
           />
         </svg>
+        {/* 링 옆의 숫자(skeleton의 컨텍스트 18%): 눈이 이미 있는 자리에서
+            읽는다 — hover 를 요구하지 않는다. */}
+        <span className="ctx__pct">{pct}%</span>
       </button>
     </Tip>
   );

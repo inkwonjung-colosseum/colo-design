@@ -9,10 +9,10 @@ import type { RepoPhase } from "@colo-design/protocol";
 import { CopyButton } from "../../components";
 import { daemonLine } from "../../lib/format";
 import { type ErrorKind, errorKindOf, guidanceFor } from "../../lib/repo-guidance";
+import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { RestartIcon, SparkIcon } from "../icons";
 
 const PHASE_LABEL: Record<RepoPhase, string> = {
-  preparing: "Claude가 레포를 살펴보고 연결을 준비하는 중",
   missing: "연결 레포를 연결해 주세요",
   cloning: "연결 레포를 내려받는 중",
   pulling: "최신 변경을 받아오는 중",
@@ -35,14 +35,14 @@ export function ProgressPanel({
   note,
   onRetry,
   onForceRestart,
-  onAskClaude,
+  onAskAgent,
   onApproveCommands,
   onOpenSettings,
 }: {
   phase: RepoPhase;
   detail: string | null;
   errorKind: ErrorKind;
-  /** 진행 표식 한 줄 — Claude 요청 뒤의 기다림을 읽는다. */
+  /** 진행 표식 한 줄 — AI 요청 뒤의 기다림을 읽는다. */
   note?: string | null;
   onRetry: () => void;
   /**
@@ -52,14 +52,14 @@ export function ProgressPanel({
    */
   onForceRestart?: () => void;
   /**
-   * 실패 카드의 첫 동작: 이 실패를 Claude의 과제로 넘긴다. 어떤 종류가
-   * 이 문을 여는지는 guidance 가 든 `claude` 가 정한다 — `commands`(사람의
+   * 실패 카드의 첫 동작: 이 실패를 AI의 과제로 넘긴다. 어떤 종류가
+   * 이 문을 여는지는 guidance 가 든 `agent` 가 정한다 — `commands`(사람의
    * 동의가 곧 해결)와 `preview`(미리보기 자리의 자체 버튼)만 뺀 전부다.
    */
-  onAskClaude?: () => void;
+  onAskAgent?: () => void;
   /** 승인 오류의 첫 동작: 이 레포의 install · preview 명령 실행을 허용한다. */
   onApproveCommands?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (category?: SettingsCategory) => void;
 }) {
   const failed = phase === "error";
   const guidance = failed ? guidanceFor(errorKind, detail) : null;
@@ -67,9 +67,9 @@ export function ProgressPanel({
   const needsSetup = phase === "missing";
   /** Where the wait sits on the rail; -1 for the setup and failure states. */
   const railIndex = PROGRESS_RAIL.findIndex((entry) => entry.phases.includes(phase));
-  const claudeFirst = Boolean(guidance?.claude && onAskClaude);
+  const agentFirst = Boolean(guidance?.agent && onAskAgent);
   const primaryTaken =
-    claudeFirst ||
+    agentFirst ||
     (errorKind === "commands" && onApproveCommands) ||
     (errorKind === "port-busy" && onForceRestart);
 
@@ -103,7 +103,7 @@ export function ProgressPanel({
           {guidance
             ? guidance.body
             : needsSetup
-              ? "설정에서 연결 레포 주소와 개인 액세스 토큰을 입력해 주세요."
+              ? "새 프로젝트로 연결 레포를 연결하고, 설정에서 개인 액세스 토큰을 입력해 주세요."
               : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
         </p>
         {guidance?.command && (
@@ -116,10 +116,10 @@ export function ProgressPanel({
         {failed && note && <p className="progress__note">{note}</p>}
         {failed && (
           <div className="progress__actions">
-            {claudeFirst && (
-              <button type="button" className="primary" onClick={onAskClaude}>
+            {agentFirst && (
+              <button type="button" className="primary" onClick={onAskAgent}>
                 <SparkIcon size={13} />
-                Claude에게 해결 요청
+                AI에게 해결 요청
               </button>
             )}
             {errorKind === "commands" && onApproveCommands && (
@@ -130,7 +130,7 @@ export function ProgressPanel({
             {errorKind === "port-busy" && onForceRestart && (
               <button
                 type="button"
-                className={claudeFirst ? "ghost" : "primary"}
+                className={agentFirst ? "ghost" : "primary"}
                 onClick={onForceRestart}
               >
                 <RestartIcon />
@@ -159,7 +159,7 @@ export function ProgressPanel({
           </div>
         )}
         {!failed && needsSetup && (
-          <button type="button" className="primary" onClick={onOpenSettings}>
+          <button type="button" className="primary" onClick={() => onOpenSettings("connection")}>
             설정 열기
           </button>
         )}

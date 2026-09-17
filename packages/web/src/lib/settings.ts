@@ -92,35 +92,38 @@ export const PREVIEW_WIDTH_BOUNDS = { min: 340, max: 1100 } as const;
 export const SIDEBAR_WIDTH_BOUNDS = { min: 200, max: 360 } as const;
 
 /**
- * How Claude answers in this planner's conversations.
+ * How the agent answers in this planner's conversations.
  *
  * These used to be three chips in the composer, stored per workspace. They are
  * one shared preference now: 설정 is a single dialog, and a planner asked to
- * choose "어떤 Claude를 쓸지" twice — once for 기획, once for 화면 — is being
+ * choose "어떤 모델을 쓸지" twice — once for 기획, once for 화면 — is being
  * asked a question they have no way to answer differently.
  */
 export interface ChatSettings {
   /** Which agent provider new sessions run on; "claude" is the default. */
   provider: string;
+  /**
+   * The pinned model for `provider` — a Claude alias or that provider's own
+   * model id. Other providers' pins wait in `byProvider`; the vocabularies
+   * differ, so one slot cannot hold them all.
+   */
   model: string | null;
+  /** The pinned effort for `provider`; other providers' pins ride `byProvider`. */
   effort: EffortLevel | null;
+  /**
+   * Model/effort pins for providers other than `provider`. Switching the
+   * 에이전트 picker swaps the top-level fields with this map's entry, so a
+   * Codex id never reaches a Claude session or vice versa.
+   */
+  byProvider?: Record<string, { model: string | null; effort: EffortLevel | null }>;
+  /**
+   * 새 대화의 에이전트 목록에서 숨긴 프로바이더. 설치 여부(`available`)와
+   * 별개의 사용자 선택이다 — 끈 에이전트는 컴포저의 칩에도 나오지 않고,
+   * 설정의 목록에서만 다시 켠다. 기본 에이전트를 끄면 목록의 다른 켜진
+   * 에이전트로 옮겨 심는다.
+   */
+  disabledProviders: string[];
   permissionMode: PermissionMode;
-  /**
-   * Claude 가 화면을 직접 볼지. A session.create choice, not a
-   * live-session switch: 새 세션부터 적용되고, 열려 있는 대화는 그대로다 —
-   * a running thread's tool set is not renegotiated underneath it.
-   */
-  previewTools: boolean;
-  /**
-   * Claude 가 보는 화면을 PiP 로 표시할지. 브라우저 경로에는
-   * 프레임이 아예 없으므로 이 값은 데스크톱에서만 무언가를 가린다.
-   */
-  showPip: boolean;
-  /**
-   * 턴이 끝나면 Claude 가 본 화면으로 따라갈지. 기본은 따라감 —
-   * "고쳤습니다" 뒤 사용자가 화면을 찾아 헤매지 않도록. 끄면 토스트만 온다.
-   */
-  followClaude: boolean;
   /**
    * 작업 과정(도구 호출 묶음)을 대화에 남길지. 기본은 끔 — 생각 과정과 같은
    * 이유다. 접힌 활동 카드라 해도 답과 답 사이마다 한 줄씩 끼면 테이프가
@@ -137,10 +140,65 @@ export interface ChatSettings {
   showThinking: boolean;
 }
 
+/**
+ * The settings patch that writes a model/effort pin for `provider` — the
+ * top-level fields when it is the selected provider, its `byProvider` entry
+ * otherwise. An all-null entry is dropped so the map does not fill with
+ * empty rows.
+ */
+export function withChatPick(
+  chat: ChatSettings,
+  provider: string,
+  pick: { model?: string | null; effort?: EffortLevel | null },
+): Partial<ChatSettings> {
+  if (provider === chat.provider) {
+    return {
+      ...(pick.model !== undefined ? { model: pick.model } : {}),
+      ...(pick.effort !== undefined ? { effort: pick.effort } : {}),
+    };
+  }
+  const current = chat.byProvider?.[provider] ?? { model: null, effort: null };
+  const next = {
+    model: pick.model !== undefined ? pick.model : current.model,
+    effort: pick.effort !== undefined ? pick.effort : current.effort,
+  };
+  const byProvider = { ...(chat.byProvider ?? {}) };
+  if (next.model || next.effort) byProvider[provider] = next;
+  else delete byProvider[provider];
+  return { byProvider };
+}
+
+/**
+ * The settings patch for switching the 에이전트 picker: the outgoing
+ * provider's top-level pins are stashed under its id, and the incoming
+ * provider's stashed pins become the top-level fields. What the dialog shows
+ * after the switch is exactly what the next session of that provider gets.
+ */
+export function switchProviderPatch(chat: ChatSettings, next: string): Partial<ChatSettings> {
+  const byProvider = { ...(chat.byProvider ?? {}) };
+  if (chat.model || chat.effort)
+    byProvider[chat.provider] = { model: chat.model, effort: chat.effort };
+  else delete byProvider[chat.provider];
+  const incoming = byProvider[next] ?? { model: null, effort: null };
+  delete byProvider[next];
+  return {
+    provider: next,
+    model: incoming.model,
+    effort: incoming.effort,
+    byProvider,
+  };
+}
+
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
   midTurnSend: MidTurnSend;
+  /**
+   * 앱에서 링크 열기: 데스크톱에서 누른 http(s) 링크가 OS 브라우저 대신
+   * 미리보기 칸에서 열린다. 기본은 꺼짐 — 칸은 원래 미리보기 서버만의
+   * 자리다. 데스크톱이 아니면(plain 브라우저) 읽혀도 아무 일도 안 한다.
+   */
+  openLinksInApp: boolean;
   /** Three-step type scales. Each rides a data
       attribute on <html> that the stylesheet turns into a CSS variable. */
   uiScale: Scale;
@@ -164,10 +222,8 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   provider: "claude",
   model: null,
   effort: null,
+  disabledProviders: [],
   permissionMode: DEFAULT_PERMISSION_MODE,
-  previewTools: true,
-  showPip: true,
-  followClaude: true,
   showTools: false,
   showThinking: false,
 };
@@ -183,6 +239,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   sendKey: "enter",
   midTurnSend: "queue",
+  openLinksInApp: false,
   uiScale: "normal",
   contentScale: "normal",
   codeScale: "normal",
@@ -249,6 +306,7 @@ function loadSettings(): Settings {
       stored.midTurnSend,
       DEFAULT_SETTINGS.midTurnSend,
     ),
+    openLinksInApp: stored.openLinksInApp === true,
     uiScale: oneOf(SCALE_LEVELS, stored.uiScale, DEFAULT_SETTINGS.uiScale),
     contentScale: oneOf(SCALE_LEVELS, stored.contentScale, DEFAULT_SETTINGS.contentScale),
     codeScale: oneOf(SCALE_LEVELS, stored.codeScale, DEFAULT_SETTINGS.codeScale),
@@ -354,23 +412,59 @@ function loadChat(raw: unknown): ChatSettings {
   // acceptEdits 가 메뉴로 돌아왔으므로(chat-options) 이사도 함께 물러났다:
   // 저장된 값은 고른 그대로 돌아온다.
   const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
+  const provider =
+    typeof stored.provider === "string" && stored.provider ? stored.provider : "claude";
+  const byProvider = loadByProvider(stored.byProvider);
+  // The stored model must belong to the stored provider's vocabulary — a
+  // Codex id pinned while Codex was selected must not greet the next Claude
+  // session. When that provider's catalog is known, a value it does not list
+  // is a leftover from another provider and is dropped.
+  const storedModel =
+    typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null);
+  const knownModels = loadModelCatalog(provider);
+  const model =
+    storedModel && knownModels.length > 0 && !knownModels.some((m) => m.value === storedModel)
+      ? null
+      : storedModel;
   return {
-    provider: typeof stored.provider === "string" && stored.provider ? stored.provider : "claude",
-    model: typeof stored.model === "string" && stored.model ? stored.model : (legacy.model ?? null),
+    provider,
+    model,
     effort: EFFORT_LEVELS.includes(stored.effort as EffortLevel)
       ? (stored.effort as EffortLevel)
       : (legacy.effort ?? null),
+    ...(byProvider ? { byProvider } : {}),
+    // 손으로 고친 기록의 쓰레기 값(문자열 아닌 항목, 중복)은 목록에 들어오지
+    // 못한다 — 이 필드는 '숨김'이므로 오염된 값은 에이전트를 조용히 지운다.
+    disabledProviders: Array.isArray(stored.disabledProviders)
+      ? [...new Set(stored.disabledProviders.filter((v): v is string => typeof v === "string"))]
+      : [],
     permissionMode: mode,
-    // 기본 켬: an older blob that predates the toggles — or a
-    // hand-edited one that wrote anything but a boolean — reads as on.
-    previewTools: stored.previewTools === undefined ? true : stored.previewTools === true,
-    showPip: stored.showPip === undefined ? true : stored.showPip === true,
-    followClaude: stored.followClaude === undefined ? true : stored.followClaude === true,
     // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정과 작업 과정은
     // 켜 달라고 말한 사용자에게만 보인다.
     showTools: stored.showTools === true,
     showThinking: stored.showThinking === true,
   };
+}
+
+/**
+ * The per-provider pin map, restored field by field — a hand-edited blob's
+ * garbage entry must not poison a provider's next session.
+ */
+function loadByProvider(
+  raw: unknown,
+): Record<string, { model: string | null; effort: EffortLevel | null }> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, { model: string | null; effort: EffortLevel | null }> = {};
+  for (const [provider, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const model = typeof row.model === "string" && row.model ? row.model : null;
+    const effort = EFFORT_LEVELS.includes(row.effort as EffortLevel)
+      ? (row.effort as EffortLevel)
+      : null;
+    if (model || effort) out[provider] = { model, effort };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -547,19 +641,30 @@ export function useSettings(): {
 const MODELS_KEY = "colo-design.models";
 
 /**
- * The model rows the daemon last served. Only a live session can be asked for
- * them, so caching the list is what lets the 모델 chip offer real choices
- * before a workspace is connected — instead of an empty menu.
+ * The model rows the daemon last served, per provider. Only a live session
+ * can be asked for them, so caching the list is what lets the 모델 chip
+ * offer real choices before a workspace is connected — instead of an empty
+ * menu. Each provider keeps its own rows: a Claude alias and a Codex model
+ * id are different vocabularies, and one shared list would offer a model
+ * the session cannot run.
  */
-export function loadModelCatalog(): SessionModelInfo[] {
+export function loadModelCatalog(provider?: string): SessionModelInfo[] {
   let raw: unknown;
   try {
     raw = JSON.parse(localStorage.getItem(MODELS_KEY) ?? "null");
   } catch {
     return [];
   }
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((entry): SessionModelInfo[] => {
+  // A cache written by the single-list build is one provider's rows — that
+  // provider was Claude, the only one the picker knew then.
+  const byProvider: Record<string, unknown> = Array.isArray(raw)
+    ? { claude: raw }
+    : raw && typeof raw === "object"
+      ? (raw as Record<string, unknown>)
+      : {};
+  const rows = provider ? byProvider[provider] : undefined;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((entry): SessionModelInfo[] => {
     if (!entry || typeof entry !== "object") return [];
     const row = entry as Record<string, unknown>;
     if (typeof row.value !== "string" || typeof row.displayName !== "string") return [];
@@ -585,9 +690,21 @@ export function loadModelCatalog(): SessionModelInfo[] {
   });
 }
 
-export function saveModelCatalog(models: SessionModelInfo[]): void {
+export function saveModelCatalog(provider: string, models: SessionModelInfo[]): void {
   try {
-    localStorage.setItem(MODELS_KEY, JSON.stringify(models));
+    let raw: unknown;
+    try {
+      raw = JSON.parse(localStorage.getItem(MODELS_KEY) ?? "null");
+    } catch {
+      raw = null;
+    }
+    const byProvider: Record<string, unknown> = Array.isArray(raw)
+      ? { claude: raw }
+      : raw && typeof raw === "object"
+        ? (raw as Record<string, unknown>)
+        : {};
+    byProvider[provider] = models;
+    localStorage.setItem(MODELS_KEY, JSON.stringify(byProvider));
   } catch {
     // A cache that cannot be written just means the next reload asks again.
   }
@@ -619,7 +736,15 @@ export function saveHandledReview(pr: number, id: number): void {
     const raw = JSON.parse(localStorage.getItem(HANDLED_KEY) ?? "{}") as Record<string, string[]>;
     const stored: string[] = Array.isArray(raw[String(pr)]) ? (raw[String(pr)] as string[]) : [];
     const list = new Set([...stored, String(id)]);
-    localStorage.setItem(HANDLED_KEY, JSON.stringify({ ...raw, [String(pr)]: [...list] }));
+    // The map only ever grows — a planner who hands off for years would
+    // carry every dead PR's keys. Keep the most recent few.
+    const merged = { ...raw, [String(pr)]: [...list] };
+    const keys = Object.keys(merged);
+    const trimmed =
+      keys.length > 20
+        ? Object.fromEntries(keys.slice(-20).map((key) => [key, merged[key]!]))
+        : merged;
+    localStorage.setItem(HANDLED_KEY, JSON.stringify(trimmed));
   } catch {
     // 사적 모드 등에서 저장이 막혀도 표식은 메모리의 몫으로 끝난다.
   }
@@ -667,7 +792,10 @@ export function loadReadRepoWarnings(): string[] {
 export function rememberReadRepoWarning(fingerprint: string): void {
   try {
     const stored = loadReadRepoWarnings();
-    localStorage.setItem(REPO_WARNINGS_KEY, JSON.stringify([...new Set([...stored, fingerprint])]));
+    // Append-only would grow without end — the newest few dozen
+    // fingerprints are the only ones a warning can still collide with.
+    const next = [...new Set([...stored, fingerprint])].slice(-50);
+    localStorage.setItem(REPO_WARNINGS_KEY, JSON.stringify(next));
   } catch {
     // 사적 모드 등에서 저장이 막혀도 닫기는 이 탭의 몫으로 끝난다.
   }

@@ -104,6 +104,9 @@ async function main() {
     COLO_DESIGN_PROJECTS_SETTINGS: join(DIR, "projects.json"),
     COLO_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
+    // The page comes from this file's static server, not the daemon — the
+    // upgrade's Origin must be named or the daemon 403s it.
+    COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
   };
   delete env.ANTHROPIC_API_KEY;
   const daemon = spawn(process.execPath, [daemonEntry], {
@@ -155,9 +158,12 @@ async function main() {
   await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
   await page.getByRole("button", { name: "연결" }).click();
 
-  // --- 1. connecting lands straight in the workspace ------------------------
+  // --- 1. connecting lands on the home inbox; a conversation opens the workspace ---
+  //     홈 인박스가 기본 뷰다(P1 §2) — 대화 화면은 새 대화 leaf 가 연다.
+  await page.waitForSelector(".planner__work", { timeout: 60000 });
+  await page.locator(".leaf--start").first().click();
   await page.waitForSelector(".planner__body", { timeout: 60000 });
-  check("connecting opens the workspace, with no mode to choose", true);
+  check("connecting opens the workspace through a new conversation", true);
   // --- 2. the connected repo bootstraps itself ----------------------------
   const progress = page.locator(".progress__head h2");
   if (await progress.count()) {
@@ -227,7 +233,8 @@ async function main() {
         timeout: 30000,
       });
     } else if (await page.locator(".card--permission").count()) {
-      await page.getByRole("button", { name: "이번만 허용" }).click();
+      // 라벨이 결과를 말한다(cards.tsx perm__opt 접미사) — 의도된 계약 변경.
+      await page.getByRole("button", { name: "허용 · 이번 한 번만" }).click();
       approved += 1;
     }
     await page.waitForTimeout(5000);

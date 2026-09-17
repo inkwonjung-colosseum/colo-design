@@ -43,8 +43,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
      * path inside it.
      */
     title: z.string().min(1).max(80).optional(),
-    /** Preview tools (PLAN D61) for this session. Omitted means on. */
-    previewTools: z.boolean().optional(),
     /** Continue an existing thread by id. */
     resume: z.string().optional(),
   }),
@@ -55,6 +53,19 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     text: z.string(),
     /** Optional base64 image attachments — pasted or dropped pictures. */
     images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
+    /**
+     * The screens this turn points at — pins and 화면 캡처 (게이트 재배선
+     * 2026-09-17). The screen gate re-opens exactly these after the turn;
+     * a turn that names none is a turn the gate skips.
+     */
+    pins: z.array(z.object({ screen: z.string().min(1), state: z.string().nullable() })).optional(),
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("preview.capture"),
+    /** The screen to shoot; omitted shoots the view the preview shows now. */
+    route: z.string().min(1).optional(),
+    state: z.string().nullable().optional(),
   }),
   z.object({
     ...withId,
@@ -122,6 +133,17 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     ...withId,
     type: z.literal("session.delete"),
     sessionId: z.string().min(1),
+  }),
+  /**
+   * A project's every conversation at once — the tree's 대화 모두 지우기.
+   * `slug` names the project so the delete lands in that clone's transcript
+   * store even when it is not the active one (session.delete alone resolves
+   * inside the active clone).
+   */
+  z.object({
+    ...withId,
+    type: z.literal("session.deleteAll"),
+    slug: z.string().min(1),
   }),
   z.object({
     ...withId,
@@ -259,13 +281,6 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     /** What a handoff PR will target. Defaults to `main`. */
     baseBranch: z.string().min(1).max(128).optional(),
     /**
-     * D94: the repo has no `colo-design.json` — instead of blocking on a
-     * developer, Claude prepares the connection (brief turn → JSON · bridge ·
-     * CLAUDE.md → machine validation) and the developer receives it as the
-     * first PR.
-     */
-    bootstrap: z.boolean().optional(),
-    /**
      * The planner saw this repo's `install`/`preview` commands and said they
      * may run on this machine. Absent means not yet approved: the workspace
      * stops after clone with errorKind `commands` until an update approves.
@@ -347,21 +362,14 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
     /** Live thread that receives a conflict brief; absent = report only. */
     sessionId: z.string().min(1).optional(),
   }),
-  /**
-   * Change the connected repo's clone url. The daemon persists it and
-   * re-clones when the url moved. Authentication rides on the machine-wide
-   * GitHub token (`github.token.set`), never on the project.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("repo.update"),
-    /** Repository url; `null` clears it. */
-    url: z.string().min(1).nullable().optional(),
-  }),
   /** Uncommitted worktree changes vs HEAD, for the publish review panel. */
   z.object({ ...withId, type: z.literal("diff.get") }),
-  /** Runs the three machine-wide onboarding checks; read-only. */
-  z.object({ ...withId, type: z.literal("onboarding.check") }),
+  /** Runs the machine-wide onboarding checks; read-only. `provider` picks the agent gate. */
+  z.object({
+    ...withId,
+    type: z.literal("onboarding.check"),
+    provider: z.string().min(1).optional(),
+  }),
   z.object({
     ...withId,
     type: z.literal("onboarding.fix"),
@@ -403,6 +411,36 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
    * a state that only moves when a human acts on it.
    */
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
+  /**
+   * 보낸 화면 동결 (preview.md §1-E): read one committed handoff capture —
+   * `.colo-design/shots/<route>--<state>.<ext>` — out of the handoff branch
+   * with `git show`, so the frozen stage shows what was sent even after the
+   * worktree moved on. Null when the shot was never committed.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.handoffShot"),
+    /** The screen's route, as `colo-design.screens` declared it. */
+    route: z.string().min(1),
+    /** The state the shot was captured in. */
+    state: z.string().min(1),
+  }),
+  /**
+   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's REAL
+   * build. The daemon checks the open handoff's branch tip out into a
+   * throwaway worktree and serves the repo's own preview command on a second
+   * port. Absence answers as a `ready:false` info (HandoffPreviewInfo), not
+   * an error — the committed capture is the frozen stage's floor.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.handoffPreview"),
+    /**
+     * The conversation asking — its close is what reaps the worktree and
+     * the port, so the build outlives no conversation that nobody reads.
+     */
+    sessionId: z.string().min(1).optional(),
+  }),
   /**
    * 저장 검토의 요약 한 번 (PLAN D51). The daemon asks Claude one turn — no
    * tools, a 3-second leash — to say what changed in planner's words and to
@@ -655,12 +693,25 @@ export type ServerMessage =
       toolName: string;
       input: unknown;
       suggestions: PermissionSuggestion[];
+      /**
+       * 이 요청이 답 없이는 일이 못 가는가 — 도구 호출이 이 응답을 기다리며
+       * 멈춰 있는가. 알림 위계(조용한 로그 → 뱃지 → 네이티브 알림)의 세 번째
+       * 단계는 이 판정만 읽는다: 판정은 데몬이 내리고, 화면은 데이터로
+       * 분기한다(홈 계획 P3-3).
+       */
+      blocking?: boolean;
+      /** 요청이 만들어진 시각 (epoch ms) — 홈 카드의 "N분 전"이 읽는다. */
+      requestedAt?: number;
     }
   | {
       type: "question.request";
       requestId: string;
       sessionId: string;
       questions: AskQuestion[];
+      /** permission.request 의 `blocking` 과 같은 판정, 같은 소비자. */
+      blocking?: boolean;
+      /** permission.request 의 `requestedAt` 과 같은 시계. */
+      requestedAt?: number;
     }
   | { type: "status"; status: DaemonStatus }
   | { type: "repo.status"; status: RepoStatus }

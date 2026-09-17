@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import type { SessionModelInfo } from "@colo-design/protocol";
 import type {
   AgentDriver,
   AgentSession,
@@ -12,9 +13,12 @@ import type {
   ProviderDescriptor,
   TranscriptStore,
 } from "../../driver.js";
-import { OmpAgentSession } from "./session.js";
+import { ompModelRows } from "./catalog.js";
+import { OMP_MODE_ROWS, OmpAgentSession } from "./session.js";
 import {
+  deleteAllStoredSessions,
   deleteStoredSession,
+  findFile,
   listStoredSessions,
   ompAgentDir,
   replayOmpSession,
@@ -55,11 +59,9 @@ export class OmpDriver implements AgentDriver {
     return {
       id: this.id,
       label: "Oh My Pi",
-      // No permission modes — tools run as the CLI is configured.
-      modes: [{ id: "default", label: "Default", tier: "moderate" }],
+      modes: OMP_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier })),
       defaultModeId: "default",
       capabilities: {
-        steer: true,
         rewind: true,
         usage: false,
         contextUsage: true,
@@ -67,8 +69,6 @@ export class OmpDriver implements AgentDriver {
         effort: true,
         modelSelect: true,
         slashCommands: true,
-        mcpServers: false,
-        inProcessMcp: false,
         planMode: null,
         subtasks: false,
       },
@@ -83,7 +83,10 @@ export class OmpDriver implements AgentDriver {
   async isAvailable(): Promise<Diagnostic> {
     const executable = this.exe();
     if (!executable) {
-      return { ok: false };
+      return {
+        ok: false,
+        reason: "Oh My Pi CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
+      };
     }
     let version: string | null = null;
     try {
@@ -102,6 +105,32 @@ export class OmpDriver implements AgentDriver {
     return new OmpAgentSession(executable, launch, hooks);
   }
 
+  /**
+   * `omp models --json` — the CLI's own catalog, no session needed. This is
+   * what fills the daemon's per-provider cache before any thread exists, so
+   * a fresh planner picking omp sees real rows (and omp's `provider/id`
+   * selectors ride the same vocabulary a live session reports).
+   */
+  async listModels(): Promise<SessionModelInfo[]> {
+    const executable = this.exe();
+    if (!executable) return [];
+    try {
+      const { stdout } = await run(executable, ["models", "--json"], {
+        // The catalog spans every provider omp knows — the payload is the
+        // big part, the spawn the slow part. Once per run, off the status path.
+        timeout: 20_000,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      const wire = JSON.parse(stdout) as { models?: unknown };
+      const rows = Array.isArray(wire.models) ? wire.models : [];
+      return ompModelRows(rows as Record<string, unknown>[]);
+    } catch {
+      // No catalog is better than a wrong one — the cache keeps serving
+      // whatever a live session last reported.
+      return [];
+    }
+  }
+
   // -------------------------------------------------------------------------
   // The transcript store — the CLI's own JSONL session files.
   // -------------------------------------------------------------------------
@@ -111,8 +140,12 @@ export class OmpDriver implements AgentDriver {
     import: async (id, cwd) => replayOmpSession(ompAgentDir(), cwd, id),
     promptCount: async (id, cwd) => storedPromptCount(ompAgentDir(), cwd, id),
     rewind: async (id, cwd, turn) => resolveOmpRewindCutoff(ompAgentDir(), cwd, id, turn),
+    has: async (id, cwd) => (await findFile(ompAgentDir(), cwd, id)) !== null,
     delete: async (id, cwd) => {
-      deleteStoredSession(ompAgentDir(), cwd, id);
+      await deleteStoredSession(ompAgentDir(), cwd, id);
+    },
+    deleteAll: async (cwd) => {
+      await deleteAllStoredSessions(ompAgentDir(), cwd);
     },
   };
 }

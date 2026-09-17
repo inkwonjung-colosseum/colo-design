@@ -23,7 +23,7 @@ export const HANDOFF_BODY_MAX_CHARS = 2_000;
 /**
  * The diff as the summarizer reads it: `git diff`-shaped lines, each file
  * capped at SUMMARY_HUNK_CHAR_LIMIT so one wholesale rewrite cannot crowd
- * the rest out of the prompt. The cap is on what Claude is handed — the
+ * the rest out of the prompt. The cap is on what the agent is handed — the
  * planner's `자세히 보기` still gets every hunk.
  */
 export function renderSummaryFile(file: DiffFile): string {

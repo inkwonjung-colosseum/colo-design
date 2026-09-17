@@ -17,6 +17,9 @@ import type {
   RepoSummary,
 } from "@colo-design/protocol";
 
+// 순수 절차는 옮겼고 표면은 그대로다 — 검사들이 `dist/repo.js` 에서 이
+// 이름들을 가져간다.
+export { fallbackSummary } from "@colo-design/protocol";
 // 셋 다 이 모듈이 쓰면서 동시에 이 모듈의 표면이다 — 검사와 온보딩이
 // `dist/repo.js` 에서 이 이름들을 가져간다.
 export { extraPathPrefix, repoSettingsWarning, trustWorkspace } from "./claude-trust.js";
@@ -34,9 +37,7 @@ export {
 } from "./preview-claim.js";
 // 상수와 URL 게이트는 repo-core.ts 로 옮겼다 — 표면은 여기서 다시보낸다.
 export { assertClonableRepoUrl, PUSH_AUTH_FAILURE, REPO_URL_MISSING_DETAIL } from "./repo-core.js";
-// 순수 절차는 옮겼고 표면은 그대로다 — 검사들이 `dist/repo.js` 에서 이
-// 이름들을 가져간다.
-export { fallbackGroup, fallbackSummary, parseUnifiedDiff } from "./repo-diff.js";
+export { parseUnifiedDiff } from "./repo-diff.js";
 export { restorePlan, safeRepoPath } from "./repo-paths.js";
 
 import { BringUp } from "./repo-bringup.js";
@@ -90,6 +91,7 @@ export class RepoWorkspace {
     this.publish = new PublishCycle(this.core, {
       claudeMemo: (files) => this.summarizer.claudeMemo(files),
       clearCheckpoints: () => this.checkpointStore.clearCheckpoints(),
+      onCycleEvent: options.onCycleEvent,
     });
     this.root = options.root;
     this.baseBranch = options.baseBranch ?? "main";
@@ -124,6 +126,14 @@ export class RepoWorkspace {
    */
   declaredPreviewPort(): number | null {
     return this.core.declaredPreviewPort();
+  }
+
+  /**
+   * The port this workspace's preview occupies — declared, or the one the
+   * running server was detected on. The switch fence compares these.
+   */
+  occupiedPreviewPort(): number | null {
+    return this.core.occupiedPreviewPort();
   }
 
   get remoteUrl(): string | null {
@@ -243,7 +253,7 @@ export class RepoWorkspace {
   ): Promise<"clean" | "conflict" | undefined> {
     if (!this.core.isCloned()) return;
     // 준비가 충돌로 멈춘 상태(phase error)에서도 문은 열려 있어야 한다(D96):
-    // 오류 카드의 Claude 요청이 읽을 것은 바로 그 상태고, 새 대화가 태어날 때의
+    // 오류 카드의 AI 요청이 읽을 것은 바로 그 상태고, 새 대화가 태어날 때의
     // 이 pull 이 충돌을 첫 과제로 넣는다. error 이후의 상태는 어차피 없고,
     // clone 이 없는 실패(내려받기 실패)는 위에서 걸린다.
     if (this.core.phase !== "ready" && this.core.phase !== "error") return;
@@ -253,6 +263,9 @@ export class RepoWorkspace {
     // the planner's save can read a worktree that is momentarily parked.
     if (this.core.publishing) await this.core.publishing.catch(() => undefined);
     if (this.core.shelving) await this.core.shelving.catch(() => undefined);
+    // A refresh already in flight owns the worktree the same way — a second
+    // pull queues behind it instead of racing its stash-move-replay window.
+    if (this.core.refreshing) await this.core.refreshing.catch(() => undefined);
     const run = this.core
       .refreshFromRemote(onSessionTurn)
       .then(async (outcome) => {
@@ -287,7 +300,7 @@ export class RepoWorkspace {
 
   /**
    * 최신화 버튼이 열린 대화 없이 눌렸을 때의 사전 확인 (실사 P0 — 조용한
-   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 Claude 의 첫 과제가
+   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 AI 의 첫 과제가
    * 되야 하므로 혼자 하지 않는다 — 대신 fetch 로 원격을 확인해 무엇이 기다리는
    * 지 알려준다. null 이면 막을 이유가 없다: 베이스 브랜치 위의 fast-forward 는
    * 혼자서도 안전하고, 새 커밋이 없으면 할 일 자체가 없다.
@@ -348,11 +361,18 @@ export class RepoWorkspace {
    *
    * The repo's own `check` does not gate this anymore (실사: a save stuck at
    * 레포 검사 left work the planner could not put up). Problems are the
-   * developer's to catch in the pull request 넘기기 opens; Claude can still
+   * developer's to catch in the pull request 넘기기 opens; the agent can still
    * run the check inside a turn when it wants one.
    */
   save(
-    options: { message?: string; onSessionTurn?: (brief: string) => void } = {},
+    options: {
+      message?: string;
+      onSessionTurn?: (brief: string) => void;
+      /** hero-synthesis D1: the conversation this save belongs to. */
+      sessionId?: string;
+      /** Declared screens — the saved card names which ones the files touch. */
+      screens?: Array<{ route: string; title: string }>;
+    } = {},
   ): Promise<DiffStatus> {
     if (!this.core.publishing) {
       this.core.publishing = this.publish.runSave(options).finally(() => {
@@ -369,6 +389,8 @@ export class RepoWorkspace {
       /** The server's preview-driver captures (PLAN D56), already taken. */
       shots?: HandoffShot[];
       onSessionTurn?: (brief: string) => void;
+      /** hero-synthesis D1: the conversation this handoff belongs to. */
+      sessionId?: string;
       /** D93: the project's comment store + declared titles, for the PR body. */
       commentsFile?: string;
       screenTitles?: Array<{ route: string; title: string }>;
@@ -386,6 +408,14 @@ export class RepoWorkspace {
     return this.publish.refreshHandoff();
   }
 
+  /**
+   * 보낸 화면 동결 (preview.md §1-E): the committed capture for one
+   * screen·state, read off the handoff branch — the frozen stage's picture.
+   */
+  handoffShot(route: string, state: string): Promise<{ mediaType: string; data: string } | null> {
+    return this.publish.handoffShot(route, state);
+  }
+
   peekHandoff(): Promise<HandoffStatusReport | null> {
     return this.publish.peekHandoff();
   }
@@ -399,7 +429,7 @@ export class RepoWorkspace {
   }
 
   // -------------------------------------------------------------------------
-  // Summaries — the summarizer's one Claude turn (PLAN D51)
+  // Summaries — the summarizer.s one agent turn (PLAN D51)
   // -------------------------------------------------------------------------
 
   summarize(screenTitles: Array<{ route: string; title: string }> = []): Promise<RepoSummary> {
@@ -456,6 +486,9 @@ export class RepoWorkspace {
     }
     let subject: string;
     try {
+      // The sha comes over the wire: only a hex object name may reach
+      // `git log`/`checkout` — anything else is a flag or a ref expression.
+      if (!/^[0-9a-f]{4,64}$/i.test(sha)) throw new Error("not a commit sha");
       subject = (await this.core.git(["log", "-1", "--pretty=%s", sha])).trim();
     } catch {
       return this.core.setDiff({

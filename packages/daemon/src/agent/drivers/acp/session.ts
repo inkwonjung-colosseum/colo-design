@@ -1,12 +1,5 @@
 import type { ContextUsage, SessionCommand, SessionModelInfo } from "@colo-design/protocol";
-import type {
-  AgentSession,
-  DriverHooks,
-  LaunchConfig,
-  SessionHandle,
-  ToolClass,
-  Turn,
-} from "../../driver.js";
+import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { JsonRpcTransport } from "../../jsonrpc.js";
 
 /** The ACP wire shapes this driver reads — kept loose, the spec evolves. */
@@ -46,12 +39,20 @@ export class AcpAgentSession implements AgentSession {
   private turnCostUsd: number | null = null;
   private lastUsage: { used: number; size: number; costUsd: number | null } | null = null;
   private configOptions: AcpConfigOption[] = [];
+  private agentCapabilities: Wire = {};
+  private readonly abort = new AbortController();
   private modeOptions: AcpModeInfo[] = [];
   private currentModeId: string;
   private availableCommands: SessionCommand[] = [];
   private readonly toolCalls = new Map<string, Wire>();
+
+  get alive(): boolean {
+    return !this.closed && this.transport.alive;
+  }
   private readonly launch: LaunchConfig;
   private instructionsSent = false;
+  /** One `session/prompt` at a time — the wire forbids a second in flight. */
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly providerId: string,
@@ -70,38 +71,43 @@ export class AcpAgentSession implements AgentSession {
     this.ready = this.handshake();
   }
 
-  handle(): SessionHandle {
-    return { provider: this.providerId, vendorSessionId: this.vendorSessionId ?? "" };
-  }
-
   // -------------------------------------------------------------------------
   // Handshake
   // -------------------------------------------------------------------------
 
   private async handshake(): Promise<void> {
-    await this.transport.request("initialize", {
-      protocolVersion: 1,
-      clientCapabilities: {
-        // The agent keeps its own file tools — we only answer permissions.
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: false,
+    const init = (await this.transport.request(
+      "initialize",
+      {
+        protocolVersion: 1,
+        clientCapabilities: {
+          // The agent keeps its own file tools — we only answer permissions.
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+        clientInfo: { name: "colo-design", version: "0" },
       },
-      clientInfo: { name: "colo-design", version: "0" },
-    });
+      15_000,
+    )) as Wire;
+    this.agentCapabilities = (init?.agentCapabilities ?? {}) as Wire;
 
-    const mcpServers = Object.entries(this.launch.mcpServers ?? {}).map(([name, s]) => ({
-      name,
-      type: "http",
-      url: s.url,
-      headers: Object.entries(s.headers ?? {}).map(([k, v]) => ({ name: k, value: v })),
-    }));
-
+    // ACP's session/new requires the field — the daemon injects no MCP
+    // servers (게이트 재배선: the in-process colo-preview server is gone),
+    // so it is always the empty list.
+    const mcpServers: Wire[] = [];
     const resumeId = typeof this.launch.resume === "string" ? this.launch.resume : null;
-    const created = (await this.transport.request(resumeId ? "session/resume" : "session/new", {
-      cwd: this.launch.cwd,
-      mcpServers,
-      ...(resumeId ? { sessionId: resumeId } : {}),
-    })) as Wire;
+    if (resumeId && this.agentCapabilities.loadSession === false) {
+      throw new Error(`${this.providerId} 에이전트는 대화 재개를 지원하지 않습니다.`);
+    }
+    const created = (await this.transport.request(
+      resumeId ? "session/resume" : "session/new",
+      {
+        cwd: this.launch.cwd,
+        mcpServers,
+        ...(resumeId ? { sessionId: resumeId } : {}),
+      },
+      30_000,
+    )) as Wire;
 
     // `session/resume` answers without a sessionId — the resumed id IS the
     // vendor id; only `session/new` names a fresh one.
@@ -131,7 +137,22 @@ export class AcpAgentSession implements AgentSession {
       await this.setConfig("model", this.launch.model).catch(() => undefined);
     }
     if (this.launch.modeId && this.launch.modeId !== this.currentModeId) {
-      await this.setMode(this.launch.modeId).catch(() => undefined);
+      // setMode's own `await this.ready` would deadlock here — this IS the
+      // handshake — so the pin is applied inline with the same branch.
+      try {
+        if (this.modeOptions.length > 0) {
+          await this.transport.request(
+            "session/set_mode",
+            { sessionId: this.vendorSessionId, modeId: this.launch.modeId },
+            10_000,
+          );
+        } else {
+          await this.setConfig("mode", this.launch.modeId);
+        }
+        this.currentModeId = this.launch.modeId;
+      } catch {
+        // A pin the agent refuses is not fatal — the session runs its own mode.
+      }
     }
   }
 
@@ -140,11 +161,21 @@ export class AcpAgentSession implements AgentSession {
   // -------------------------------------------------------------------------
 
   async send(turn: Turn): Promise<void> {
+    const run = this.sendChain.then(() => this.doSend(turn));
+    this.sendChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async doSend(turn: Turn): Promise<void> {
     await this.ready;
     if (this.closed || !this.transport.alive) throw new Error("ACP transport closed");
     const sessionId = this.vendorSessionId;
     if (!sessionId) throw new Error("ACP session not established");
 
+    const promptCaps = (this.agentCapabilities.promptCapabilities ?? {}) as Wire;
+    if (turn.images?.length && promptCaps.image === false) {
+      throw new Error(`${this.providerId} 에이전트는 이미지 입력을 지원하지 않습니다.`);
+    }
     const prompt: Wire[] = [];
     // The app's instruction block rides as embedded context on the first
     // turn — ACP has no system-prompt field, and a resource block is the
@@ -236,7 +267,7 @@ export class AcpAgentSession implements AgentSession {
     const sessionId = this.vendorSessionId;
     if (!sessionId) return;
     if (this.modeOptions.length > 0) {
-      await this.transport.request("session/set_mode", { sessionId, modeId });
+      await this.transport.request("session/set_mode", { sessionId, modeId }, 10_000);
     } else {
       await this.setConfig("mode", modeId);
     }
@@ -306,10 +337,11 @@ export class AcpAgentSession implements AgentSession {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.abort.abort();
     const sessionId = this.vendorSessionId;
     if (sessionId && this.transport.alive) {
       // session/close is a courtesy — the process dies either way.
-      await this.transport.request("session/close", { sessionId }).catch(() => undefined);
+      await this.transport.request("session/close", { sessionId }, 5_000).catch(() => undefined);
     }
     this.transport.close();
   }
@@ -321,11 +353,15 @@ export class AcpAgentSession implements AgentSession {
   private async setConfig(configId: string, value: string): Promise<void> {
     const sessionId = this.vendorSessionId;
     if (!sessionId) return;
-    const result = (await this.transport.request("session/set_config_option", {
-      sessionId,
-      configId,
-      value,
-    })) as Wire;
+    const result = (await this.transport.request(
+      "session/set_config_option",
+      {
+        sessionId,
+        configId,
+        value,
+      },
+      10_000,
+    )) as Wire;
     if (Array.isArray(result?.configOptions)) {
       this.configOptions = result.configOptions as AcpConfigOption[];
     }
@@ -348,7 +384,7 @@ export class AcpAgentSession implements AgentSession {
     const input = (toolCall.rawInput ?? {}) as Record<string, unknown>;
 
     const verdict = await this.hooks.decidePermission(tool, input, {
-      signal: new AbortController().signal,
+      signal: this.abort.signal,
       // The option list rides as suggestions so the card can offer
       // "always allow" only when the agent actually has such an option.
       suggestions: options,
@@ -496,6 +532,7 @@ export class AcpAgentSession implements AgentSession {
   private onTransportEnd(_code: number | null): void {
     if (this.closed) return;
     this.closed = true;
+    this.abort.abort();
     this.hooks.onTransportEnd(null);
   }
 }

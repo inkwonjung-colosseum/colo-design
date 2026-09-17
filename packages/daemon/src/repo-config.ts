@@ -20,14 +20,15 @@ export interface RepoRegistry {
   scope: string;
 }
 
-/** 데몬이 실제로 돌리는 계약 — 추론과 오버라이드를 합친 결과. */
+/** 데몬이 실제로 돌리는 계약 — 추론과 오버라이드를 합친 결과. 포트는 없을 수 있다: 뜬 뒤 감지한다. */
 export interface RepoConfig {
   install?: string;
   check?: string;
   build?: string;
   preview: {
     command: string;
-    port: number;
+    /** 선언된 포트 — 없으면 서버가 뜬 뒤 출력·소켓에서 감지한다. */
+    port?: number;
     /**
      * 미리보기 서버 외에 열어도 되는 origin 들 — 스토리북·별도 admin 같은
      * 같은 레포의 다른 로컬 서버. 비워 두면 preview 서버 하나뿐이다.
@@ -39,7 +40,7 @@ export interface RepoConfig {
   shots?: boolean;
 }
 
-/** `colo-design.json` 이 적을 수 있는 것 - 전부 선택이고 preview.port 만 필수다. */
+/** `colo-design.json` 이 적을 수 있는 것 — 전부 선택이다. */
 interface RepoOverrides {
   install?: string;
   check?: string;
@@ -79,11 +80,7 @@ const INSTALL: Record<PackageManager, string> = {
  */
 const PREVIEW_SCRIPTS = ["dev", "start", "serve", "preview"] as const;
 
-const PREVIEW_PORT_UNKNOWN =
-  `미리보기 포트를 알 수 없습니다 — 연결 레포 루트의 ${CONFIG_FILE} 에 ` +
-  '{ "preview": { "port": 5274 } } 처럼 개발 서버가 뜨는 포트를 적어야 합니다.';
-
-const PREVIEW_COMMAND_UNKNOWN =
+export const PREVIEW_COMMAND_UNKNOWN =
   "미리보기 명령을 찾지 못했습니다 — package.json 의 scripts 에 dev · start · serve · preview 중 " +
   `하나가 있어야 하거나, ${CONFIG_FILE} 의 preview.command 로 직접 적어야 합니다.`;
 
@@ -291,8 +288,6 @@ function readRepoOverrides(root: string): RepoOverrides {
  */
 export function resolveRepoConfig(root: string): RepoConfig {
   const overrides = readRepoOverrides(root);
-  const port = overrides.preview?.port;
-  if (port === undefined) throw new Error(PREVIEW_PORT_UNKNOWN);
 
   const locked = lockedManager(root);
   const manager = locked ?? "pnpm";
@@ -314,7 +309,11 @@ export function resolveRepoConfig(root: string): RepoConfig {
     ...(build !== undefined ? { build } : {}),
     ...(registry !== undefined ? { registry } : {}),
     ...(overrides.shots !== undefined ? { shots: overrides.shots } : {}),
-    preview: { command, port, origins: overrides.preview?.origins ?? [] },
+    preview: {
+      command,
+      ...(overrides.preview?.port !== undefined ? { port: overrides.preview.port } : {}),
+      origins: overrides.preview?.origins ?? [],
+    },
   };
 }
 
@@ -330,32 +329,4 @@ export function readDeclaredPreviewPort(root: string): number | null {
 /** The npm scope form with a leading @, whatever the source wrote. */
 export function scopeOf(registry: RepoRegistry): string {
   return registry.scope.startsWith("@") ? registry.scope : `@${registry.scope}`;
-}
-
-/**
- * 연결 준비 (PLAN D94) 의 울타리. 준비 턴이 쓰는 것은 포트 하나다 — 명령은 레포가
- * 이미 말한 것에서 읽으므로 Claude 가 명령을 적을 자리가 없고, 적힌 파일은 한 번도
- * 실행되지 않고 거부된다. "그래도 실행" 버튼은 없다.
- */
-export function validateBootstrapOverrides(source: string): string | null {
-  let overrides: RepoOverrides;
-  try {
-    overrides = parseRepoOverrides(source);
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  const commands: string[] = (["install", "check", "build"] as const).filter(
-    (key) => overrides[key] !== undefined,
-  );
-  if (overrides.preview?.command !== undefined) commands.push("preview.command");
-  if (commands.length > 0) {
-    return `연결 준비는 명령을 적지 않습니다 — ${commands.join(" · ")}를 지우고 preview.port 만 남겨 주세요.`;
-  }
-  if (overrides.registry !== undefined) {
-    return "연결 준비는 registry 를 적지 않습니다 — 레포의 .npmrc 가 말합니다.";
-  }
-  if (overrides.preview?.port === undefined) {
-    return "preview.port 가 없습니다 — 미리보기 개발 서버가 뜨는 포트를 적어야 합니다.";
-  }
-  return null;
 }

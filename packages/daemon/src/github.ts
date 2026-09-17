@@ -14,9 +14,11 @@
  *   GET   /repos/{owner}/{repo}                                — permissions.push probe · repo inspection
  *   GET   /user                                                — token identity (github gate)
  *   GET   /user/repos                                          — the project picker's list
- *   GET   /repos/{owner}/{repo}/contents/colo-design.json       — can this repo become a project
+ *   GET   /repos/{owner}/{repo}/contents/package.json            — dev-family script probe
+ *   GET   /repos/{owner}/{repo}/contents/CLAUDE.md               — conventions marker probe
  */
 import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
+import { conventionsRevision } from "./bootstrap-brief.js";
 import { FixtureTransport, loadFixturePairs, type RestTransport } from "./rest-transport.js";
 
 export interface PullRequestRef {
@@ -132,38 +134,79 @@ export class GitHubClient {
   }
 
   /**
-   * One repo, judged before any clone: whether it carries a `colo-design.json`
-   * at its root (a repo without one cannot become a project, and saying so
-   * before the clone saves the planner minutes), whether this token may push
+   * One repo, judged before any clone: whether its package.json scripts carry
+   * a dev-family script (dev · start · serve · preview — the preview server
+   * the tool can start), whether its CLAUDE.md carries the conventions marker
+   * (the bridge/wrapper contract is installed), whether this token may push
    * (넘기기 opens the pull request), and what branch a handoff PR targets.
    */
   async inspectRepo(input: { owner: string; repo: string }): Promise<GitHubRepoInspection> {
     const data = await this.getJson(`/repos/${input.owner}/${input.repo}`, "레포 확인");
     return {
-      hasColoDesign: await this.hasColoDesign(input),
+      hasDevScript: await this.hasDevScript(input),
+      hasConventions: await this.hasConventions(input),
       canPush: data.permissions?.push === true,
       defaultBranch: String(data.default_branch ?? "main"),
     };
   }
 
   /**
-   * Whether the repo carries a `colo-design.json` at its root. 404 means
-   * "absent"; anything else is news the caller shows — to a token, a real
-   * absence and a 404-for-a-hidden-repo read the same, and both mean a
-   * project cannot be made from this repo.
+   * Whether the repo's package.json declares a dev-family script — the one
+   * command the preview bring-up runs. 404 means "absent"; anything else is
+   * news the caller shows — to a token, a real absence and a
+   * 404-for-a-hidden-repo read the same.
    */
-  async hasColoDesign(input: { owner: string; repo: string }): Promise<boolean> {
+  async hasDevScript(input: { owner: string; repo: string }): Promise<boolean> {
+    const data = await this.contentsOrNull(input, "package.json");
+    if (data === null) return false;
+    try {
+      const scripts = JSON.parse(decodeContents(data)).scripts;
+      return ["dev", "start", "serve", "preview"].some(
+        (name) => typeof scripts?.[name] === "string",
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether the repo's CLAUDE.md carries the conventions marker — the sign
+   * the bridge/wrapper contract was installed. Same tolerance as the
+   * package.json probe: 404 is "absent", anything else throws.
+   */
+  async hasConventions(input: { owner: string; repo: string }): Promise<boolean> {
+    const data = await this.contentsOrNull(input, "CLAUDE.md");
+    return data !== null && conventionsRevision(decodeContents(data)) !== null;
+  }
+
+  /**
+   * The contents API's JSON for one root file, or null at 404. Every other
+   * status is news the caller shows — a guess would read a hidden repo as an
+   * absent file.
+   */
+  private async contentsOrNull(
+    input: { owner: string; repo: string },
+    path: string,
+  ): Promise<Record<string, any> | null> {
     const { status, body } = await this.transport.request({
       method: "GET",
-      url: `/repos/${input.owner}/${input.repo}/contents/colo-design.json`,
+      url: `/repos/${input.owner}/${input.repo}/contents/${path}`,
       headers: this.headers(),
     });
-    if (status === 200) return true;
-    if (status === 404) return false;
+    if (status === 200) {
+      try {
+        return JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        // A proxy's html login page answers 200 — an absent file is the wrong
+        // story for that, so it reads as the error it is (whoAmI's tolerance).
+        throw new Error(httpError(`${path} 확인`, status, body));
+      }
+    }
+    if (status === 404) return null;
     if (status === 401) {
       throw new Error("토큰이 유효하지 않거나 만료됐습니다 — 새 토큰을 넣어 주세요.");
     }
-    throw new Error(httpError("colo-design.json 확인", status, body));
+    throw new Error(httpError(`${path} 확인`, status, body));
   }
 
   /**
@@ -493,7 +536,13 @@ export class GitHubClient {
       headers: this.headers(),
     });
     if (status < 200 || status >= 300) throw new Error(httpError(label, status, body));
-    return JSON.parse(new TextDecoder().decode(body));
+    try {
+      return JSON.parse(new TextDecoder().decode(body));
+    } catch {
+      // A 2xx that is not JSON (a proxy's login page) is a failed call, not
+      // a parse crash — the label and the body's first line say which.
+      throw new Error(httpError(label, status, body));
+    }
   }
 
   private async sendJson(
@@ -509,7 +558,11 @@ export class GitHubClient {
       body: new TextEncoder().encode(JSON.stringify(payload)),
     });
     if (status < 200 || status >= 300) throw new Error(httpError(label, status, body));
-    return JSON.parse(new TextDecoder().decode(body));
+    try {
+      return JSON.parse(new TextDecoder().decode(body));
+    } catch {
+      throw new Error(httpError(label, status, body));
+    }
   }
 }
 
@@ -548,6 +601,17 @@ function nextLink(header: string | undefined): string | null {
 /** The first line of a transport error; fetch writes whole sentences per line. */
 function firstLine(text: string): string {
   return (text.split("\n").find((line) => line.trim() !== "") ?? text).slice(0, 160);
+}
+
+/**
+ * The contents API answers a file's text as base64 (`encoding: "base64"`);
+ * anything else — a directory listing, a missing field — reads as no text.
+ */
+function decodeContents(data: Record<string, any>): string {
+  if (typeof data?.content !== "string") return "";
+  return data.encoding === "base64"
+    ? Buffer.from(data.content, "base64").toString("utf8")
+    : data.content;
 }
 
 /**
@@ -648,7 +712,7 @@ function refOf(data: Record<string, any>): Omit<PullRequestRef, "state"> {
 /**
  * The API's own `message` (plus the per-field `errors` a 422 adds), never the
  * request: the token only ever rides in a header, and nothing from `headers`
- * reaches this text, so a failure the planner or Claude reads cannot carry it.
+ * reaches this text, so a failure the planner or the agent reads cannot carry it.
  */
 function httpError(label: string, status: number, body: Uint8Array): string {
   const text = new TextDecoder().decode(body.subarray(0, 1000));

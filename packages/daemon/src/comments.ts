@@ -3,7 +3,7 @@
  * the project's own `comments.json` (`~/.colo-design/projects/<slug>/`), one
  * row per comment. 자동 정리 made delivery the row's birth: every row is
  * written resolved, because the turn carrying the words IS the delivery. The
- * store is an append-only log of what went to Claude — a second send of the
+ * store is an append-only log of what went to the agent — a second send of the
  * same words is a second request, and both stay. Old stores with
  * `resolved: false` rows read fine; nothing writes that state again.
  */

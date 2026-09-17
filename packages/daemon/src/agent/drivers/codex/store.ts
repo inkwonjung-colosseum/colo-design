@@ -1,4 +1,5 @@
-import { closeSync, type Dirent, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import type { Dirent } from "node:fs";
+import { type FileHandle, open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
@@ -22,14 +23,14 @@ export interface RolloutMeta {
  * instructions — tens of KB — so a truncated first-line read falls back to
  * the streaming reader rather than failing.
  */
-export function listRolloutFiles(root: string, cap = 2000): string[] {
+export async function listRolloutFiles(root: string, cap = 2000): Promise<string[]> {
   const sessions = join(root, "sessions");
   const out: string[] = [];
-  const walk = (dir: string, depth: number) => {
+  const walk = async (dir: string, depth: number): Promise<void> => {
     if (out.length >= cap || depth > 3) return;
     let entries: Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = await readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -38,30 +39,58 @@ export function listRolloutFiles(root: string, cap = 2000): string[] {
     for (const entry of entries) {
       if (out.length >= cap) return;
       const path = join(dir, entry.name);
-      if (entry.isDirectory()) walk(path, depth + 1);
+      if (entry.isDirectory()) await walk(path, depth + 1);
       else if (entry.name.startsWith("rollout-") && entry.name.endsWith(".jsonl")) out.push(path);
     }
   };
-  walk(sessions, 0);
+  await walk(sessions, 0);
   return out;
 }
 
-/** Line one, parsed — null when the file is not a rollout or unreadable. */
-export function readSessionMeta(path: string): RolloutMeta | null {
-  let first: string | null = null;
-  let fd: number | null = null;
+/**
+ * session_meta reads are the sweep's whole cost — one 256KB head read per
+ * file, per scan, over a store that grows for years (2,988 rollouts ≈ 15s
+ * on one machine). The daemon rescans on every session event, and the same
+ * files answer every time: memoize by (mtime, size) so a rescan costs one
+ * stat per file and only brand-new rollouts pay the read.
+ */
+const metaMemo = new Map<string, { key: string; meta: RolloutMeta | null }>();
+const META_MEMO_CAP = 6000;
+
+export async function readSessionMeta(path: string): Promise<RolloutMeta | null> {
+  let key: string;
   try {
-    fd = openSync(path, "r");
+    const s = await stat(path);
+    key = `${s.mtimeMs}:${s.size}`;
+  } catch {
+    // Gone from disk — a memoized answer for a missing file is a lie.
+    metaMemo.delete(path);
+    return null;
+  }
+  const hit = metaMemo.get(path);
+  if (hit && hit.key === key) return hit.meta;
+  const meta = await readSessionMetaFromDisk(path);
+  if (metaMemo.size >= META_MEMO_CAP) metaMemo.clear();
+  metaMemo.set(path, { key, meta });
+  return meta;
+}
+
+/** Line one, parsed — null when the file is not a rollout or unreadable. */
+async function readSessionMetaFromDisk(path: string): Promise<RolloutMeta | null> {
+  let first: string | null = null;
+  let handle: FileHandle | null = null;
+  try {
+    handle = await open(path, "r");
     const buffer = Buffer.alloc(256 * 1024);
-    const read = readSync(fd, buffer, 0, buffer.length, 0);
-    const newline = buffer.subarray(0, read).indexOf(0x0a);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
     if (newline > 0) first = buffer.subarray(0, newline).toString("utf8");
   } catch {
     first = null;
   } finally {
-    if (fd !== null) {
+    if (handle !== null) {
       try {
-        closeSync(fd);
+        await handle.close();
       } catch {
         // Nothing to close.
       }
@@ -69,7 +98,7 @@ export function readSessionMeta(path: string): RolloutMeta | null {
   }
   if (first === null) {
     try {
-      first = readFileSync(path, "utf8").split("\n", 1)[0] ?? null;
+      first = (await readFile(path, "utf8")).split("\n", 1)[0] ?? null;
     } catch {
       return null;
     }
@@ -89,17 +118,17 @@ export function readSessionMeta(path: string): RolloutMeta | null {
 }
 
 /** The rollout file for a stored thread id — the id is the filename's tail. */
-export function findRollout(root: string, id: string): string | null {
-  for (const path of listRolloutFiles(root)) {
+export async function findRollout(root: string, id: string): Promise<string | null> {
+  for (const path of await listRolloutFiles(root)) {
     if (path.includes(id)) return path;
   }
   return null;
 }
 
-export function readRolloutLines(path: string): Wire[] {
+export async function readRolloutLines(path: string): Promise<Wire[]> {
   let raw: string;
   try {
-    raw = readFileSync(path, "utf8");
+    raw = await readFile(path, "utf8");
   } catch {
     return [];
   }
@@ -159,7 +188,7 @@ export interface StoredPrompt {
  * the prompt. Consecutive duplicates (the same prompt seen through two
  * envelopes) merge, preferring the entry that knows its turn.
  */
-export function collectPrompts(lines: Wire[]): StoredPrompt[] {
+export async function collectPrompts(lines: Wire[]): Promise<StoredPrompt[]> {
   const prompts: StoredPrompt[] = [];
   let pendingTurnId: string | null = null;
   let awaitingContext = false;
@@ -227,7 +256,7 @@ export function collectPrompts(lines: Wire[]): StoredPrompt[] {
  * item kinds `response_item` never persists (commandExecution, fileChange,
  * mcpToolCall) — PascalCase there, camelCase on the wire.
  */
-export function replayRollout(lines: Wire[]): ChatEvent[] {
+export async function replayRollout(lines: Wire[]): Promise<ChatEvent[]> {
   const out: ChatEvent[] = [];
   let blockSeq = 0;
   /** The twin envelope repeats the message we just emitted — drop it. */

@@ -80,7 +80,7 @@ test("unsaved + running: 저장이 잠기고 칩은 고치는 중으로 말한�
   const d = at({ pendingChanges: 3, running: true });
   assert.equal(d?.chip.label, "고치는 중");
   assert.equal(d?.actions.save.enabled, false);
-  assert.equal(d?.actions.save.reason, "Claude가 고치는 중 — 끝나면 저장할 수 있습니다");
+  assert.equal(d?.actions.save.reason, "AI가 고치는 중 — 끝나면 저장할 수 있습니다");
 });
 
 test("unsaved 가 넘긴 요청보다 앞선다 — 요청은 칩 title 과 상태 확인으로 남는다", () => {
@@ -175,7 +175,7 @@ test("반영됨에서 턴이 도는 동안 칩도 작업 중을 말한다 — �
     "말이 바뀌어도 칩이 말 못한 사이클의 사실은 title 이 전한다",
   );
   assert.equal(redrawing?.actions.save.enabled, false, "도는 동안 저장은 잠긴다");
-  assert.equal(redrawing?.actions.save.reason, "Claude가 고치는 중 — 끝나면 저장할 수 있습니다");
+  assert.equal(redrawing?.actions.save.reason, "AI가 고치는 중 — 끝나면 저장할 수 있습니다");
 
   const handedTurn = at({ handoff: pr("open"), running: true });
   assert.equal(handedTurn?.chip.label, "작업 중", "규칙은 넘김 행에도 같다");

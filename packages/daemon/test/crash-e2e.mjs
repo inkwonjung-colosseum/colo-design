@@ -80,7 +80,12 @@ function stubClaude(dir) {
       "      continue;",
       "    }",
       '    if (o.type === "user") {',
-      "      if (!fs.existsSync(marker)) {",
+      // The conventions-prepare turn can send first (repo.sync opens it on
+      // ready) — crashing on the first message ever would let it eat the
+      // crash. The crash belongs to the test's own words.
+      "      const content = o.message && o.message.content;",
+      '      const text = typeof content === "string" ? content : JSON.stringify(content);',
+      '      if (text.includes("회원가입 화면") && !fs.existsSync(marker)) {',
       "        fs.writeFileSync(marker, String(Date.now()));",
       "        process.stderr.write('stub: unexpected condition in turn\\n');",
       "        process.exit(1);",

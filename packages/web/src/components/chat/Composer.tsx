@@ -1,5 +1,6 @@
 import type {
   ContextUsage,
+  DaemonStatus,
   EffortLevel,
   LostSend,
   PermissionMode,
@@ -8,14 +9,16 @@ import type {
   SessionCommand,
   SessionSelectors,
 } from "@colo-design/protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Fold, useFoldNotice } from "../../components";
 import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import {
   EFFORT_LABEL,
+  EFFORT_MENU_HINT,
   FAST_BLOCKED_WORDS,
   FAST_HARD_BLOCKS,
   MODE_LABEL_KO,
+  MODE_MENU_HINT,
   modelOptions,
   modelRowOf,
   modelWords,
@@ -26,12 +29,15 @@ import { composing } from "../../lib/ime";
 import type { MidTurnSend, SendKey } from "../../lib/settings";
 import {
   ArrowUpIcon,
+  ChevronLeftIcon,
   CloseIcon,
   FileIcon,
   FolderIcon,
   GaugeIcon,
+  GearIcon,
   PencilIcon,
   PlusIcon,
+  ProviderIcon,
   ShieldOffIcon,
   ShieldPlainIcon,
   SparkIcon,
@@ -54,10 +60,32 @@ export interface Attachment {
 }
 
 /**
+ * 툴바 칩 한 개의 재료 — SelectorChip 이 먹는 모양 그대로. 모델 칩만
+ * 드릴다운(header·levelKey·alwaysSearch)을 입는다: 통합 메뉴의 에이전트
+ * 단계도 같은 SelectorChip 이 그린다.
+ */
+type Chip = {
+  key: "model" | "effort" | "mode";
+  label: string;
+  icon: ReactNode;
+  title: string;
+  disabled: boolean;
+  options: Array<{
+    value: string | null;
+    label: string;
+    hint?: string;
+    picked: boolean;
+    disabled?: boolean;
+  }>;
+  header?: ReactNode;
+  levelKey?: string;
+  alwaysSearch?: boolean;
+};
+
+/**
  * 붙여넣은 그림의 긴 변 상한 — 비전 입력이 실질적으로 쓰는 한계(1568)에 맞춘다.
- * 기계 캡처는 전부 다운스케일(preview-tools 의 fitInside)되는데 사람 첨부만
- * 무제한이던 관습의 구멍을 메운다: 수 MB 짜리 원본은 API 가 거절하고, 큰
- * base64 는 소켓 프레임과 대기열 저장소를 무겁게 했다.
+ * 수 MB 짜리 원본은 API 가 거절하고, 큰 base64 는 소켓 프레임과 대기열
+ * 저장소를 무겁게 했다.
  */
 const PASTE_IMAGE_LONG_EDGE = 1568;
 
@@ -200,7 +228,7 @@ function saveDraft(key: string, text: string): void {
 
 function loadHistory(): string[] {
   try {
-    const parsed: unknown = JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "[]");
+    const parsed: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((row): row is string => typeof row === "string").slice(-HISTORY_MAX);
   } catch {
@@ -210,9 +238,11 @@ function loadHistory(): string[] {
 
 function saveHistory(rows: string[]): void {
   try {
-    sessionStorage.setItem(HISTORY_KEY, JSON.stringify(rows.slice(-HISTORY_MAX)));
+    // localStorage, not sessionStorage: a reload must not take the walk back
+    // through sent turns with it — the draft beside it already survives.
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(rows.slice(-HISTORY_MAX)));
   } catch {
-    // Same story as the draft: losing the walk on a reload is tolerable.
+    // Quota or private mode: losing the walk is tolerable, the draft is not.
   }
 }
 
@@ -223,6 +253,7 @@ export function Composer({
   placeholder,
   usage,
   plan,
+  planProviderLabel,
   onRefreshUsage,
   running,
   stopping = false,
@@ -230,9 +261,10 @@ export function Composer({
   dropped = [],
   hurrying = null,
   onTakeDropped,
+  onDismissDropped,
   onTakeQueued,
   onSendQueuedNow,
-  onDismissDropped,
+  onClearQueue,
   onDismissSuggestion,
   suggestion = null,
   activity,
@@ -244,12 +276,16 @@ export function Composer({
   registerAttach,
   sendKey,
   midTurnSend = "queue",
+  onOpenSendSettings,
   selector,
   onToggleFastMode,
   onSetModel,
   onSetEffort,
   onSetPermissionMode,
   onSetMode,
+  providers,
+  onPickProvider,
+  onOpenProviderSettings,
   onSend,
   onInterrupt,
   onFindFiles,
@@ -261,6 +297,7 @@ export function Composer({
   onPinFocus,
   onPinIntent,
   titleForScreen = () => null,
+  composerChips,
 }: {
   disabled: boolean;
   /** Which conversation this field is the draft for; swapping keys swaps drafts. */
@@ -268,9 +305,14 @@ export function Composer({
   /** /command palette rows, straight from the CLI. */
   commands: SessionCommand[];
   placeholder: string;
+  /** This thread's own context ring — the send row's budget, not the account's. */
   usage: ContextUsage | null;
   /** Account-wide limits from the daemon; shown even with no thread open. */
   plan: PlanUsage | null;
+  /** Resolved display name for `plan.provider` ("Claude", "Codex"). Null
+      when the reading carries no provider (pre-tag cache) or the daemon's
+      provider list has not arrived yet. */
+  planProviderLabel?: string | null;
   /** Called when the usage popover opens, so the numbers are read now, not
       whenever the last turn happened to land. */
   onRefreshUsage?: () => void;
@@ -328,6 +370,8 @@ export function Composer({
    * bytes included when they survived the persist cap.
    */
   onTakeDropped?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
+  /** 대기 줄의 모두 빼기 — 줄에 든 말 전부를 보내지 않고 버린다. */
+  onClearQueue?: () => void;
   /** An undelivered send is restored into the field, or simply let go of. */
   onDismissDropped?: (itemId: string) => void;
   /**
@@ -357,6 +401,19 @@ export function Composer({
   onSetPermissionMode: (mode: PermissionMode) => void;
   /** The provider's own mode ids (ACP agents) — when `selector.modes` is set, the chip calls this instead. */
   onSetMode?: (mode: string) => void;
+  /**
+   * 통합 모델 메뉴의 프로바이더 단계 재료 — status.providers. 열려 있는 대화는
+   * 태어난 프로바이더에 묶여 있으므로 이 재료는 세션이 없는 자리(다음 대화의
+   * 준비 칩)에만 온다 — ChatColumn 이 그렇게만 건네준다. 한 개뿐인 목록은
+   * 선택이 아니므로 그때는 메뉴의 ← 프로바이더 단계도 없다.
+   */
+  providers?: DaemonStatus["providers"];
+  onPickProvider?: (id: string) => void;
+  /**
+   * 메뉴 헤더의 ⚙ — 설정의 프로바이더 방(설치·로그인·새 대화 목록)을 바로
+   * 연다. 없으면 ⚙도 없다 — dev harness 가 건네지 않는 자리.
+   */
+  onOpenProviderSettings?: () => void;
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
   /**
@@ -365,6 +422,11 @@ export function Composer({
    * plain send: a mid-turn send cuts the running turn and starts over.
    */
   midTurnSend?: MidTurnSend;
+  /**
+   * 보내기 키 힌트의 `바꾸기` — 설정의 동작 칸으로 바로 연다. 없으면 힌트는
+   * 읽기 전용 문장으로 남는다.
+   */
+  onOpenSendSettings?: () => void;
   /**
    * The pin attachments — the tray above the attachment chips
    * draws them. Optional: the dev harness renders the composer without pins.
@@ -389,6 +451,9 @@ export function Composer({
   onSend: (text: string, attachments: Attachment[], pins: PinAttachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
+  /** ComposerChips 의 자리 — 입력 상자 위 한 줄(docs/plan/chat.md §2.3). 로직은
+      호출부(ChatColumn)의 ComposerChips 가 쥔다; 여기는 자리만 마련한다. */
+  composerChips?: ReactNode;
 }) {
   const [editor, setEditor] = useState<Editor>(() => ({
     text: storedDraft(draftKey),
@@ -415,6 +480,8 @@ export function Composer({
   const [highlight, setHighlight] = useState(0);
   const filePicker = useRef<HTMLInputElement>(null);
   const rejected = useFoldNotice();
+  /** 모두 빼기의 두 번 누르기 — 첫 클릭이 묻고, 3초 안의 두 번째가 버린다. */
+  const [clearArmed, setClearArmed] = useState(false);
 
   /**
    * A draft belongs to the conversation it was typed in, not to the field
@@ -681,9 +748,17 @@ export function Composer({
     // when the button fired — a failed send leaves the words, attachments and
     // pins in place, with the reason in the warning strip. 핀의 비움은
     // 성공 뒤 markSent 의 몫이다.
+    // 보내는 동안 탭이 바뀌면 필드는 이미 다른 대화의 초안이다 — 비우는
+    // 것은 보낸 쪽의 초안만이다.
+    const sentKey = draftKeyRef.current;
     void Promise.resolve(onSend(text, editor.attachments, pins))
       .then(() => {
-        setEditor(EMPTY_EDITOR);
+        if (draftKeyRef.current === sentKey) {
+          setEditor(EMPTY_EDITOR);
+        } else {
+          drafts.current.set(sentKey, EMPTY_EDITOR);
+          saveDraft(sentKey, "");
+        }
         setSuggestions([]);
         rejected.clear();
       })
@@ -877,39 +952,112 @@ export function Composer({
         ? "빠르게 — 켜져 있습니다. 다시 누르면 보통 속도로 돌아갑니다"
         : "빠르게 — 같은 모델을 더 빠른 응답으로 돌립니다",
   };
+  const providerRows = providers ?? [];
+  // 프로바이더 단계의 문이 열리는 조건 — 열린 대화는 태어난 프로바이더에
+  // 묶여 있으므로 ChatColumn 이 세션이 없는 자리에만 providers 를 건네고,
+  // 한 개뿐인 목록은 선택이 아니므로 둘 이상일 때만 단계가 온다.
+  const canPickProvider = Boolean(providers && onPickProvider && providerRows.length > 1);
+  const providerRow = providerRows.find((p) => p.id === selector.provider);
+  const providerLabel = providerRow?.label ?? selector.provider ?? "프로바이더";
+  // 통합 모델 메뉴의 단계 — 칩은 모델명을 입고, 메뉴 안 ← 로 프로바이더를
+  // 고른다. 열림마다 모델 단계부터 (onToggle/onClose 에서 되돌린다).
+  const [modelMenuLevel, setModelMenuLevel] = useState<"models" | "providers">("models");
 
-  const chips = [
+  const chips: Chip[] = [
     {
       key: "model" as const,
-      label: modelRow ? modelWords(modelRow).label : "모델 자동",
-      icon: <SparkIcon size={13} />,
+      label: modelRow ? modelWords(modelRow).label : "모델 미선택",
+      // The chip wears the connected provider's own mark — the spark reads as
+      // Claude, so a Codex or omp thread must not wear it.
+      icon: <ProviderIcon provider={selector.provider} size={13} />,
       title: "모델",
       // The list is the CLI's, and only a session (or an earlier one, cached)
-      // can supply it. Until then the chip states the default and stays shut.
-      disabled: selector.models.length === 0,
-      options: [
-        { value: null, label: "모델 자동", picked: selector.model == null },
-        ...modelOptions(selector.models, modelRow).map(({ value, label, picked }) => ({
-          value,
-          label,
-          picked,
-        })),
-      ],
+      // can supply it. An empty list no longer shuts the chip: the 프로바이더
+      // 단계는 살아 있어야 처음 프로바이더를 고를 수 있다 — the model slot is
+      // the seeder's job (useSessions), not an 자동 row to pick back.
+      disabled: selector.models.length === 0 && !canPickProvider,
+      // 드릴다운 헤더: 모델 단계는 ← 프로바이더(전환)와 ⚙ 설정, 프로바이더
+      // 단계는 ← 모델. 헤더는 열려 있을 때만 SelectorChip 이 그린다.
+      header: (() => {
+        if (modelMenuLevel === "providers") {
+          return (
+            <div className="selector__headrow">
+              <button
+                type="button"
+                className="selector__back"
+                onClick={() => setModelMenuLevel("models")}
+              >
+                <ChevronLeftIcon size={12} />
+                모델
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="selector__headrow">
+            {canPickProvider ? (
+              <button
+                type="button"
+                className="selector__back"
+                onClick={() => setModelMenuLevel("providers")}
+                title="프로바이더 바꾸기"
+              >
+                <ChevronLeftIcon size={12} />
+                {providerLabel}
+              </button>
+            ) : (
+              <span className="selector__headtitle">{providerLabel}</span>
+            )}
+            {onOpenProviderSettings && (
+              <button
+                type="button"
+                className="selector__gear"
+                aria-label="프로바이더 설정"
+                title="프로바이더 설정"
+                onClick={() => {
+                  setMenu(null);
+                  setModelMenuLevel("models");
+                  onOpenProviderSettings();
+                }}
+              >
+                <GearIcon size={13} />
+              </button>
+            )}
+          </div>
+        );
+      })(),
+      levelKey: modelMenuLevel,
+      alwaysSearch: true,
+      options:
+        modelMenuLevel === "providers" && canPickProvider
+          ? providerRows.map((p) => ({
+              value: p.id,
+              label: p.label,
+              ...(p.available ? {} : { hint: p.reason ?? "이 기기에 없음" }),
+              picked: p.id === selector.provider,
+              disabled: !p.available,
+            }))
+          : modelOptions(selector.models, modelRow).map(({ value, label, hint, picked }) => ({
+              value,
+              label,
+              // 공급자까지 붙은 id — omp 목록은 표시 이름이 겹치는 행을 구별하는
+              // 유일한 단서다. 다른 칩의 행엔 없는 선택 사항.
+              ...(hint ? { hint } : {}),
+              picked,
+            })),
     },
     {
       key: "effort" as const,
-      label: selector.effort ? EFFORT_LABEL[selector.effort] : "생각 자동",
+      label: selector.effort ? EFFORT_LABEL[selector.effort] : "생각 미선택",
       icon: <GaugeIcon />,
       title: "생각 시간",
       disabled: modelRow ? !modelRow.supportsEffort : false,
-      options: [
-        { value: null, label: "생각 자동", picked: selector.effort == null },
-        ...effortLevels.map((level) => ({
-          value: level,
-          label: EFFORT_LABEL[level],
-          picked: selector.effort === level,
-        })),
-      ],
+      options: effortLevels.map((level) => ({
+        value: level,
+        label: EFFORT_LABEL[level],
+        hint: EFFORT_MENU_HINT[level],
+        picked: selector.effort === level,
+      })),
     },
     {
       key: "mode" as const,
@@ -921,12 +1069,17 @@ export function Composer({
           selector.permissionMode)
         : MODE_LABEL_KO[selector.permissionMode],
       // The one chip whose glyph says something the label does not: a struck
-      // shield is a mode that asks nothing before it acts.
-      icon: ASKS_NOTHING.includes(selector.permissionMode) ? (
-        <ShieldOffIcon />
-      ) : (
-        <ShieldPlainIcon />
-      ),
+      // shield is a mode that asks nothing before it acts. A provider's own
+      // rows carry the descriptor's tier; the Claude enum reads its list.
+      icon: (() => {
+        const row = selector.modes?.find(
+          (m) => m.id === (selector.mode ?? selector.permissionMode),
+        );
+        const asksNothing = row
+          ? row.tier === "dangerous"
+          : ASKS_NOTHING.includes(selector.permissionMode);
+        return asksNothing ? <ShieldOffIcon /> : <ShieldPlainIcon />;
+      })(),
       title: "확인 방식",
       disabled: false,
       // A mode already set to Bypass still shows as this chip's label, so the
@@ -940,6 +1093,7 @@ export function Composer({
         : SETTINGS_MODES.map((mode) => ({
             value: mode,
             label: modeMenuLabel(mode),
+            hint: MODE_MENU_HINT[mode],
             picked: selector.permissionMode === mode,
           })),
     },
@@ -979,7 +1133,7 @@ export function Composer({
           conversation's own length is not an account reading: it rides the
           send row, beside the button it is a reason to press or not. */}
       <div className="composer__usage">
-        <UsageChip plan={plan} onRefresh={onRefreshUsage} />
+        <UsageChip plan={plan} providerLabel={planProviderLabel} onRefresh={onRefreshUsage} />
       </div>
       {suggestions.length > 0 && (
         <div className="autocomplete" role="listbox" id="composer-suggestions" ref={palette}>
@@ -1014,17 +1168,15 @@ export function Composer({
         <Fold closing={rejected.closing} onCollapsed={rejected.clear}>
           <div className="notice notice--warn">
             <span className="notice__text">{rejected.text}</span>
-            <Tip label="첨부 안내 닫기">
-              <button
-                type="button"
-                className="notice__close"
-                aria-label="첨부 안내 닫기"
-                disabled={rejected.closing}
-                onClick={rejected.close}
-              >
-                ×
-              </button>
-            </Tip>
+            <button
+              type="button"
+              className="notice__close"
+              aria-label="첨부 안내 닫기"
+              disabled={rejected.closing}
+              onClick={rejected.close}
+            >
+              ×
+            </button>
           </div>
         </Fold>
       )}
@@ -1137,7 +1289,28 @@ export function Composer({
           can come back for an edit or jump the running turn. */}
       {queue.length > 0 && (
         <div className="composer__queued" role="status">
-          <div className="queued__head">다음 턴에 보냅니다 · {queue.length}건 대기</div>
+          <div className="queued__head">
+            <span>다음 턴에 보냅니다 · {queue.length}건 대기</span>
+            {onClearQueue && queue.length > 1 && (
+              <button
+                type="button"
+                className="ghost queued__clear"
+                disabled={disabled}
+                onClick={() => {
+                  // 두 번 누르는 확인 — 대기 중인 말은 되돌릴 수 없이 버려진다.
+                  if (clearArmed) {
+                    setClearArmed(false);
+                    onClearQueue();
+                  } else {
+                    setClearArmed(true);
+                    window.setTimeout(() => setClearArmed(false), 3000);
+                  }
+                }}
+              >
+                {clearArmed ? "정말 모두 뺍니다" : "모두 빼기"}
+              </button>
+            )}
+          </div>
           <ul className="queued__list">
             {queue.map((item) => (
               <li key={item.id} className="queued__row">
@@ -1163,12 +1336,11 @@ export function Composer({
                 <Tip label="지금 답변을 멈추고 이 말부터 보냅니다">
                   <button
                     type="button"
-                    className="ghost queued__action"
-                    aria-label="지금 보내기"
+                    className="ghost queued__action queued__action--now"
                     disabled={disabled || stopping || hurrying === item.id}
                     onClick={() => sendQueuedNow(item)}
                   >
-                    <ArrowUpIcon size={13} />
+                    지금 보내기
                   </button>
                 </Tip>
               </li>
@@ -1239,7 +1411,7 @@ export function Composer({
               }}
             >
               <SparkIcon size={12} />
-              {suggestion}
+              {`다음: ${suggestion}`}
             </button>
           </Tip>
           <Tip label="제안 닫기">
@@ -1255,10 +1427,16 @@ export function Composer({
         </div>
       )}
 
+      {composerChips}
+
       <textarea
         ref={area}
         value={editor.text}
-        placeholder={placeholder}
+        placeholder={
+          editor.attachments.length > 0
+            ? "그림을 붙였습니다 — 어떻게 쓸지 한마디만 적어 주세요"
+            : placeholder
+        }
         aria-label="메시지"
         /* @/… 자동완성의 콤보박스 선언 — 목록은 위의 listbox, 하이라이트는
            activedescendant 가 가리킨다(팔레트·RepoPicker 와 같은 패턴). */
@@ -1299,17 +1477,15 @@ export function Composer({
         />
         {/* 글자 없는 + 는 첨부를 발견하는 길이 아니었다 —
             도구줄의 첫 칸이 이름을 가진다(빠르게 칩과 같은 알약 어휘). */}
-        <Tip label="그림 첨부">
-          <button
-            type="button"
-            className="toolbar__attach"
-            disabled={disabled}
-            onClick={() => filePicker.current?.click()}
-          >
-            <PlusIcon size={14} />
-            첨부
-          </button>
-        </Tip>
+        <button
+          type="button"
+          className="toolbar__attach"
+          disabled={disabled}
+          onClick={() => filePicker.current?.click()}
+        >
+          <PlusIcon size={14} />
+          첨부
+        </button>
         {chips.map((chip) => (
           <SelectorChip
             key={chip.key}
@@ -1318,13 +1494,34 @@ export function Composer({
             tip={chip.title}
             disabled={chip.disabled}
             open={menu === chip.key}
-            onToggle={() => setMenu(menu === chip.key ? null : chip.key)}
-            onClose={() => setMenu(null)}
+            onToggle={() => {
+              // 모델 메뉴는 닫힘마다 모델 단계로 되돌린다 — 다음 열림은
+              // 늘 모델 목록부터 (Paseo의 모델 메뉴와 같은 걸음).
+              if (chip.key === "model") setModelMenuLevel("models");
+              setMenu(menu === chip.key ? null : chip.key);
+            }}
+            onClose={() => {
+              if (chip.key === "model") setModelMenuLevel("models");
+              setMenu(null);
+            }}
             onPick={(value) => {
+              // 에이전트 단계의 고름은 메뉴를 닫지 않는다 — 고른 에이전트의
+              // 모델 목록이 이어서 보여야 고르기가 끊기지 않는다. 행은 언제
+              // 이름이 있다 — null 은 모델 해제의 말이라 이 단계엔 없다.
+              if (chip.key === "model" && modelMenuLevel === "providers") {
+                if (value) {
+                  onPickProvider?.(value);
+                  setModelMenuLevel("models");
+                }
+                return;
+              }
               pickChip(chip.key, value);
               setMenu(null);
             }}
             options={chip.options}
+            header={chip.header}
+            levelKey={chip.levelKey}
+            alwaysSearch={chip.alwaysSearch}
           />
         ))}
         {fast.shown && (
@@ -1360,23 +1557,47 @@ export function Composer({
           )}
           {/* 도는 동안에도 보내기는 남는다 — Enter 와 같은 길을 포인터에도
               둔다. 무엇을 하는 버튼인지는 그때의 실행 중 보내기 설정이
-              정한다: queue 면 다음 턴의 줄로, interrupt 면 도는 턴을 끊는다. */}
-          <Tip label={`${sendVerb} · ${sendKey === "enter" ? "Enter" : "⌘/Ctrl+Enter"}`}>
-            <button
-              disabled={
-                disabled ||
-                sending ||
-                (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
-              }
-              className="composer__send"
-              aria-label={sendVerb}
-              onClick={sendClick}
-            >
-              <ArrowUpIcon size={15} />
-            </button>
-          </Tip>
+              정한다: queue 면 다음 턴의 줄로, interrupt 면 도는 턴을 끊는다.
+              도는 동안엔 버튼이 그 이름을 입는다 — 같은 ↑ 가 두 일을 하는데
+              겉모습만 같으면 누르는 사람이 모른다. */}
+          <button
+            disabled={
+              disabled ||
+              sending ||
+              (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+            }
+            className={running ? "composer__send composer__send--verb" : "composer__send"}
+            aria-label={sendVerb}
+            onClick={sendClick}
+          >
+            <ArrowUpIcon size={15} />
+            {running && <span className="composer__sendverb">{sendVerb}</span>}
+          </button>
         </div>
       </div>
+
+      {/* 보내는 법은 카드 아래 한 줄(cycle/_skeleton.html composer__hint) —
+          전부 tooltip 뒤에 있던 Enter 규칙을 겉으로 내온다. 설정(sendKey)이
+          다르면 그 사실을 말한다: false인 안내문은 없는 것이 낫다. 같은 줄이
+          / 와 @ 의 존재도 가르친다 — 둘 다 쳐 보기 전에는 없는 기능이다.
+          도는 동안에는 그 자리가 ⌥Enter 를 말한다: 끊고 보내는 손은
+          필요한 순간에만 보이면 된다. */}
+      <p className="composer__hint">
+        {running
+          ? "⌥Enter로 끊고 보내기"
+          : sendKey === "enter"
+            ? "Enter로 보내기 · Shift+Enter 줄바꿈"
+            : "⌘/Ctrl+Enter로 보내기 · Enter 줄바꿈"}
+        {" · "}/ 명령 · @ 파일
+        {onOpenSendSettings && (
+          <>
+            {" · "}
+            <button type="button" className="composer__hintlink" onClick={onOpenSendSettings}>
+              바꾸기
+            </button>
+          </>
+        )}
+      </p>
     </footer>
   );
 }

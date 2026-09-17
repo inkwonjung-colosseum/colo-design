@@ -26,7 +26,7 @@ export function transcriptToMarkdown(
         "",
       );
     } else if (event.kind === "text.done") {
-      out.push("**Claude**", "", event.text.trim(), "");
+      out.push("**AI**", "", event.text.trim(), "");
     } else if (event.kind === "turn.end") {
       out.push("---", "");
     }
