@@ -19,14 +19,12 @@ export type ErrorKind =
   | "auth"
   | "pnpm"
   | "preview"
-  | "port-busy"
   | "port-undetected"
   | "no-preview-command"
   | "conflict"
   | "commands"
   | "clone"
   | "install"
-  | "held-elsewhere"
   | "unknown";
 
 export function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
@@ -36,20 +34,14 @@ export function errorKindOf(repo: RepoStatus | null | undefined): ErrorKind {
   if (kind === "conflict") return "conflict";
   if (kind === "commands") return "commands";
   if (kind === "preview") return "preview";
-  if (kind === "port-busy") return "port-busy";
   if (kind === "clone") return "clone";
   if (kind === "install") return "install";
   if (kind === "no-preview-command") return "no-preview-command";
   if (kind === "port-undetected") return "port-undetected";
-  if (kind === "held-elsewhere") return "held-elsewhere";
   if (!kind) {
     const detail = repo?.detail ?? null;
     if (detail?.includes("GitHub 패키지 인증")) return "auth";
     if (detail?.includes("pnpm이 없습니다")) return "pnpm";
-    // Same age, same gap: a daemon that predates the kind names the busy port
-    // in its detail — its card must still offer the force 다시 시작. The
-    // specific sentence wins over the generic 미리보기 below it.
-    if (detail?.includes("다른 프로그램이 이미 쓰고 있어")) return "port-busy";
     if (detail?.includes("미리보기")) return "preview";
     // A daemon older than the conflict kind still names the conflict in the
     // detail; the diverged refusal says 갈라진 and must not match.
@@ -141,41 +133,6 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
       body: detail ?? "이 레포가 정의한 설치 · 미리보기 명령의 실행을 허용하면 준비를 계속합니다.",
     };
   }
-  if (kind === "port-busy") {
-    // 이 카드는 이제 정리가 실패한 경우만 만난다: 평범한 충돌은 활성 프로젝트가
-    // 이겨 자동 정리된다 (사용자 결정). 그러므로 첫 과제는 AI 의 정리이고,
-    // preview.port 변경은 그 다음의 손수 해법이다.
-    return {
-      title: "미리보기 포트를 정리하지 못했어요",
-      body:
-        detail ??
-        "선언된 포트를 쓰는 프로그램을 종료하려 했지만 실패했습니다 — AI에게 정리를 요청하거나, 연결 레포의 colo-design.json에서 preview.port를 바꾼 뒤 다시 시도해 주세요.",
-      agent: ask(
-        "미리보기 띄우기",
-        "미리보기 포트 정리",
-        "선언된 미리보기 포트를 다른 프로그램이 쓰고 있어 자동 정리도 실패했습니다. 그 포트를 쓰는 프로세스를 찾아 정리하거나, 연결 레포의 colo-design.json의 preview.port를 비어 있는 포트로 바꿔 주세요.",
-        detail,
-      ),
-    };
-  }
-  if (kind === "held-elsewhere") {
-    // 두 인스턴스 전쟁의 울타리(실사): 다른 창(앱·데몬)의 살아 있는 미리보기를
-    // 발견하면 이쪽은 죽이지 않고 멈춘다. 해법은 이 창 밖에 있다 — 다른
-    // 인스턴스를 끄는 일이라, AI 도 그 프로세스를 죽이는 대신 이
-    // 프로젝트의 포트를 옮기는 쪽으로 정리한다.
-    return {
-      title: "다른 Colo Design이 미리보기를 쓰고 있어요",
-      body:
-        detail ??
-        "다른 Colo Design 인스턴스(데스크톱 앱 또는 데몬)가 이 프로젝트의 미리보기를 이미 돌리고 있습니다. 다른 인스턴스를 끄거나, 이 프로젝트의 preview.port를 옮긴 뒤 다시 시도해 주세요.",
-      agent: ask(
-        "미리보기 띄우기",
-        "미리보기 포트 정리",
-        "다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있어 이 창의 준비가 멈췄습니다. 그쪽 프로세스를 죽이지는 말고, 이 프로젝트가 다른 포트를 쓰도록 연결 레포의 colo-design.json의 preview.port를 바꾸는 식으로 정리해 주세요.",
-        detail,
-      ),
-    };
-  }
   if (kind === "install") {
     // 클론은 살아 있고 설치만 넘어진 자리 — 출력이 곧 증거다.
     return {
@@ -192,9 +149,8 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
     };
   }
   if (kind === "no-preview-command") {
-    // 띄울 명령 자체가 없는 레포 — package.json 에 dev 계열 스크립트가 없고
-    // colo-design.json 의 preview.command 도 없다. 명령을 마련하는 일은
-    // AI 의 과제다.
+    // 띄울 명령 자체가 없는 레포 — package.json 에 dev 계열 스크립트가 없다.
+    // 명령을 마련하는 일은 AI 의 과제다.
     return {
       title: "미리보기 명령이 없습니다",
       body:
@@ -203,7 +159,7 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
       agent: ask(
         "미리보기 띄우기",
         "미리보기 명령 준비",
-        "연결 레포에 미리보기를 띄울 명령이 없어 준비가 멈춰 있습니다. 레포를 살펴 개발 서버를 띄우는 적절한 스크립트를 package.json에 추가해 주세요 — 명령이 package 스크립트가 아니라면 colo-design.json의 preview.command로 지정해 주세요.",
+        "연결 레포에 미리보기를 띄울 명령이 없어 준비가 멈춰 있습니다. 레포를 살펴 개발 서버를 띄우는 적절한 스크립트를 package.json에 추가해 주세요.",
         detail,
       ),
     };
@@ -219,7 +175,7 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
       agent: ask(
         "미리보기 띄우기",
         "미리보기 주소 감지",
-        "미리보기 서버는 시작됐지만 주소를 자동으로 찾지 못해 준비가 멈춰 있습니다. 개발 서버가 뜨는 주소를 출력에 남기도록(예: `Local: http://localhost:PORT`) 고치거나, 연결 레포의 colo-design.json에 preview.port를 지정해 주세요.",
+        "미리보기 서버는 시작됐지만 주소를 자동으로 찾지 못해 준비가 멈춰 있습니다. 개발 서버가 뜨는 주소를 출력에 남기도록(예: `Local: http://localhost:PORT`) 고쳐 주세요.",
         detail,
       ),
     };

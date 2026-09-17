@@ -80,12 +80,16 @@ export function replayHistory(messages: unknown[]): ChatEvent[] {
             agentId,
           });
         } else if (block?.type === "tool_use") {
+          // 대화록의 시각을 실어 보낸다 — 다시 연 창에서도 도는 도구의
+          // 경과 시계가 0 부터 다시 세지 않게.
+          const startedAt = Date.parse(String(m.timestamp ?? ""));
           out.push({
             kind: "tool.start",
             toolUseId: String(block.id),
             name: String(block.name),
             input: block.input,
             agentId,
+            ...(Number.isFinite(startedAt) ? { startedAt } : {}),
           });
         }
       });

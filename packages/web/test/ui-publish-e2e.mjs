@@ -3,16 +3,14 @@
  *
  * The connected repo is a local fixture remote; the "work to publish" is
  * written straight into the clone (what Claude's Write tool would have left
- * there), and the test drives the surface the planner uses: the live save
- * card in the conversation (changed-file list with expandable hunks, a
- * commit message, 저장하기), then the published result — and verifies the
- * commit actually reached the bare remote. 저장 검토·넘기기 are in-chat
- * cards now (states.md §2.1), not dialogs.
+ * there), and the test drives the surface the planner uses: the composer's
+ * 저장 chip (변경사항 저장 — one click, no review body), then the published
+ * result — and verifies the commit actually reached the bare remote. 넘기기
+ * is an in-chat card, not a dialog.
  *
  * Prerequisites: `pnpm build`
  */
-import { execFile, spawn } from "node:child_process";
-import { execSync } from "node:child_process";
+import { execFile, execSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -303,9 +301,9 @@ async function main() {
     );
     const indexHtml = readFileSync(join(WORK_ROOT, "index.html"), "utf8");
     writeFileSync(join(WORK_ROOT, "index.html"), `${indexHtml}<p>회원 관리 목록 추가</p>\n`);
-    // 삭제도 저장에 실려 간다 — 되돌리기 어려운 변경이므로 검토 화면이 먼저
-    // 말해야 한다 (비개발자 저장 검토). CLAUDE.md 는 이 스텁 CLI 가 읽지
-    // 않으므로 이 뒤의 어느 단계도 이 삭제에 걸리지 않는다.
+    // 삭제도 저장에 실려 간다 — 아래 워크트리 세 검사(status)가 이 삭제를
+    // 기다린다. CLAUDE.md 는 이 스텁 CLI 가 읽지 않으므로 이 뒤의 어느
+    // 단계도 이 삭제에 걸리지 않는다.
     rmSync(join(WORK_ROOT, "CLAUDE.md"), { force: true });
 
     // The change count is event-driven: a turn finishing or a save
@@ -334,8 +332,7 @@ async function main() {
           const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
           const refresh = buttons.find(
             (b) =>
-              b.textContent?.includes("받아 오는 중") ||
-              b.getAttribute("aria-disabled") === "true",
+              b.textContent?.includes("받아 오는 중") || b.getAttribute("aria-disabled") === "true",
           );
           return refresh !== undefined;
         },
@@ -392,143 +389,29 @@ async function main() {
       );
       throw new Error("worktree never settled");
     }
-    // the code is one deliberate click away.
-    await page
-      .getByText("자세히 보기 (파일 3개)")
-      .waitFor({ timeout: 10000 })
-      .catch(async () => {
-        console.error(
-          "FOLD DUMP:",
-          (
-            await page
-              .locator(".modal, .diff, #live-savecard")
-              .first()
-              .innerText()
-              .catch(() => "(none)")
-          )
-            .slice(0, 800)
-            .replace(/\n+/g, " | "),
-        );
-        console.error(
-          "FOLD FILES:",
-          await page.locator(".diff__file .diff__path").evaluateAll((els) =>
-            els.map((el) => el.getAttribute("title") ?? el.textContent),
-          ),
-        );
-        console.error(
-          "GIT DUMP status:",
-          execSync(`git -C ${JSON.stringify(WORK_ROOT)} status --porcelain`, {
-            encoding: "utf8",
-          }).trim() || "(clean)",
-        );
-        console.error(
-          "GIT DUMP stash:",
-          execSync(`git -C ${JSON.stringify(WORK_ROOT)} stash list`, {
-            encoding: "utf8",
-          }).trim() || "(none)",
-        );
-        console.error(
-          "GIT LS-FILES:",
-          execSync(`git -C ${JSON.stringify(WORK_ROOT)} ls-files --others --exclude-standard`, {
-            encoding: "utf8",
-          }).trim() || "(none)",
-        );
-        console.error(
-          "GIT DIFF:",
-          execSync(`git -C ${JSON.stringify(WORK_ROOT)} diff HEAD --name-only`, {
-            encoding: "utf8",
-          }).trim() || "(none)",
-        );
-        throw new Error("fold never appeared");
-      });
-    check(
-      "the summary is on top and the raw file list stays folded",
-      (await page.getByText("자세히 보기 (파일 3개)").isVisible()) === true &&
-        (await page.locator(".diff__file").first().isVisible()) === false,
-    );
-    // 비개발자 저장 검토: 요약은 각주가 아니라 검토의 본문이다 — 이 스텁의
-    // Claude 턴은 실패하므로 폴백 묶음이 그 카드에 선다. 카드가 없으면
-    // 기획자가 코드를 펼치기 전에 읽을 것이 화면에 없다. 뼈대(.diff__skel)
-    // 가 아니라 글자가 선 것을 본다 — 기다리는 자리에 속으면 이 검사는
-    // 아무것도 지키지 않는다.
-    const summaryCard = page.getByTestId("diff-summary");
-    const summaryLines = summaryCard.locator(".diff__summarylines > li");
-    await summaryLines
-      .first()
-      .waitFor({ timeout: 20000 })
-      .catch(async () => {
-        console.error(
-          "SUMMARY DUMP:",
-          (await summaryCard.innerText().catch(() => "(no card)"))
-            .slice(0, 600)
-            .replace(/\n+/g, " | "),
-        );
-        throw new Error("summary lines never rendered");
-      });
-    const summaryText = await summaryCard.innerText();
-    check(
-      "the summary stands as a card above the fold, in words",
-      (await summaryLines.count()) > 0 &&
-        (await summaryLines.first().innerText()).trim().length > 0 &&
-        // 폴백이든 Claude 든, 누가 썼는지를 카드가 말한다.
-        (summaryText.includes("AI가 바뀐 점을 읽고 적었습니다") ||
-          summaryText.includes("바뀐 파일을 묶어 적었습니다")),
-      summaryText.replace(/\n+/g, " | "),
-    );
-    // 삭제 경고는 요약이 말하지 않아도 선다 — 기계적 사실이므로.
-    check(
-      "a deletion is named before the save",
-      (await page.locator(".notice--warn").innerText()).includes("파일 1개가 삭제됩니다"),
-      await page.locator(".notice--warn").innerText(),
-    );
-    await page.getByText("자세히 보기 (파일 3개)").click();
-    const rows = page.locator(".diff__file");
-    check(
-      "every changed file is listed with its status",
-      (await rows.count()) === 3,
-      (await page.locator(".diff__path").allInnerTexts()).join(", "),
-    );
-    check(
-      "a new screen reads 추가, an edit reads 수정, a removal reads 삭제",
-      (await page.locator(".diff__badge").allInnerTexts()).sort().join(",") === "삭제,수정,추가",
-    );
-    // 기획자는 경로가 아니라 이름을 읽는다 — 파일의 이름이 행의 머리에 선다.
-    check(
-      "the row leads with the file's own name, the folder follows",
-      (await page.locator(".diff__basename").allInnerTexts()).includes("MemberList.screen.tsx") &&
-        (await page
-          .locator(".diff__file", { hasText: "MemberList.screen.tsx" })
-          .locator(".diff__dir")
-          .innerText()) === "src/screens/member",
-      (await page.locator(".diff__basename").allInnerTexts()).join(", "),
-    );
 
-    // Even a single-hunk file keeps its code folded until the row is pressed.
-    const addedRow = page.locator(".diff__file", { hasText: "MemberList.screen.tsx" });
-    check(
-      "the hunk stays folded until the row is pressed",
-      (await addedRow.locator(".diff__hunk").isVisible()) === false,
-    );
-    await addedRow.locator(".diff__filerow").click();
-    const hunk = await addedRow.locator(".diff__hunk").innerText();
-    check(
-      "the hunk shows the added content",
-      hunk.includes("+export default function MemberListScreen"),
-      hunk.split("\n")[0] ?? "",
-    );
-
-    // --- save, and watch it land on its own branch ------------------------
-    await page.getByLabel("저장 메모").fill("회원 관리 화면 추가");
-    await saveCard.getByRole("button", { name: "저장하기", exact: true }).click();
-    // 저장이 끝나면 살아있는 카드는 자리를 기록의 `저장했어요` 카드에 넘기고,
-    // 그 밑에 넘기기로 이어가는 복도가 선다(states.md §2.2).
+    // --- 저장은 칩 한 번 — 검토 몸통은 없다 (비개발자 저장) ------------------
+    // 저장 전 diff 펼침보기는 없다: 바뀐 파일의 목록은 화면 패널의 변경 점
+    // 스트립이 이미 들고, 코드 검토는 개발자가 PR 에서 한다.
+    const saveChip = page.getByRole("button", { name: "변경사항 저장", exact: true });
+    await saveChip.waitFor({ timeout: 20000 });
+    // 메모는 비워 보낸다: 이 스텁의 메모 턴은 실패하므로 커밋은 기본 메시지로
+    // 쓰인다.
+    await saveChip.click();
+    // 저장이 끝나면 기록의 `저장했어요` 카드가 자리에 남고, 그 밑에 넘기기로
+    // 이어가는 복도가 선다.
     await page
       .getByText("저장했어요")
       .waitFor({ timeout: 120000 })
       .catch(async () => {
         console.error(
           "SAVE DUMP:",
-          (await page.locator("body").innerText().catch(() => "(none)"))
+          (
+            await page
+              .locator("body")
+              .innerText()
+              .catch(() => "(none)")
+          )
             .slice(0, 1500)
             .replace(/\n+/g, " | "),
         );
@@ -550,13 +433,6 @@ async function main() {
     await corridor.waitFor({ timeout: 10000 });
     check("the settled save hands its seat to the record card and the corridor", true);
 
-    await page.waitForFunction(
-      () => document.querySelectorAll(".diff__file").length === 0,
-      undefined,
-      { timeout: 10000 },
-    );
-    check("the review body leaves with the live card", true);
-
     const branch = await cycleBranch(fixture.remote);
     check("the save created its own branch on the remote", branch !== null, `${branch}`);
     check(
@@ -573,8 +449,8 @@ async function main() {
       branch,
     ]);
     check(
-      "the planner's message is the commit subject",
-      subject.trim() === "회원 관리 화면 추가",
+      "the memo turn's answer — here the stub's failure default — is the commit subject",
+      subject.trim() === "Colo Design 화면 변경",
       subject.trim(),
     );
 
@@ -588,6 +464,14 @@ async function main() {
       () => !document.body.innerText.includes("개발자가 읽을 제목과 내용을 만드는 중"),
       undefined,
       { timeout: 20000 },
+    );
+    // 목업 02: 미리보기의 자동 첨부가 실제 본문에 붙는 `### 바뀐 파일` 절을
+    // 그대로 보여 준다 — 개발자가 받을 규모가 카드에서 읽힌다.
+    const previewText = await handoffCard.innerText();
+    check(
+      "the handoff preview carries the cycle's file summary",
+      previewText.includes("바뀐 파일") && previewText.includes("index.html"),
+      previewText.split("\n").slice(0, 12).join(" / "),
     );
     // 제목 필드는 `직접 고치기` 폴드 안에 있다 — 읽기 우선 카드의 규칙.
     await handoffCard.getByText("직접 고치기", { exact: true }).click();

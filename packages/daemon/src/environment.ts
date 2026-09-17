@@ -546,8 +546,12 @@ export async function listFiles(cwd: string): Promise<string[]> {
 
   let files: string[] = [];
   try {
+    // GUI 로 띄워진 데몬의 PATH 에 git 이 없을 수 있다 — resolver 가 찾은 실행
+    // 파일을 쓴다. 그림자 없는 "git" 은 walk 로 떨어지고, walk 는 .gitignore 를
+    // 모른다(.env 가 @-목록에 새어 나온다).
+    const git = (await resolveGitExecutable()) ?? "git";
     const { stdout } = await run(
-      "git",
+      git,
       ["-C", cwd, "ls-files", "--cached", "--others", "--exclude-standard"],
       { maxBuffer: 32 * 1024 * 1024 },
     );

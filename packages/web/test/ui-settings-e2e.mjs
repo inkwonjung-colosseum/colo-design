@@ -50,8 +50,21 @@ function serveDist() {
 const theme = (page) => page.evaluate(() => document.documentElement.dataset.theme);
 const stored = (page) =>
   page.evaluate(() => JSON.parse(localStorage.getItem("colo-design.settings") ?? "null"));
-/** The sidebar is the index now — most checks name the room they visit. */
-const openCategory = (page, name) => page.getByRole("tab", { name }).click();
+/** The accordion row is the index now — most checks name the room they visit.
+    이미 열린 방을 다시 누르면 접힌다는 아코디언 규칙이라, 열려 있으면 건너뛴다. */
+const ROOM_ID = {
+  화면: "screen",
+  프로바이더: "providers",
+  대화: "chat",
+  동작: "behavior",
+  알림: "notice",
+  연결: "connection",
+  "문제 해결": "troubleshoot",
+};
+const openCategory = async (page, name) => {
+  const head = page.locator(`[data-testid="settings-nav-${ROOM_ID[name]}"]`);
+  if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+};
 /** 두세 태 고르기는 APG 라디오가 되었다 — 조각 이름으로 고르고, aria-checked
     로 읽는다. select 의 selectOption/inputValue 자리를 대신한다. */
 const pick = (page, group, option) =>
@@ -112,13 +125,21 @@ async function main() {
       timeout: 5000,
     });
     await page.screenshot({ path: join(here, "ui-settings-dark.png") });
-    const nav = await page.locator(".settings__navItem").allInnerTexts();
+    const heads = await page.locator(".acc__head .acc__name").allInnerTexts();
     check(
       "the panel offers only what a planner sets",
       ["화면", "프로바이더", "대화", "동작", "알림", "연결", "문제 해결"].every((g) =>
-        nav.includes(g),
-      ) && nav.length === 7,
-      nav.join(", "),
+        heads.includes(g),
+      ) && heads.length === 7,
+      heads.join(", "),
+    );
+    // The accordion's one-line summaries: a folded room introduces itself with
+    // its current values — 화면 names the theme and the px it runs at.
+    check(
+      "a folded room reads its current values before being opened",
+      (await page.locator('[data-testid="settings-nav-screen"] .acc__sum').innerText()) ===
+        "밝게 · 13px",
+      await page.locator('[data-testid="settings-nav-screen"] .acc__sum').innerText(),
     );
     // The word belongs to the program, not the planner's settings —
     // the diagnostics fold (where a developer debugs) is the only home left.
@@ -174,8 +195,6 @@ async function main() {
     // 3b. The extra palettes are full themes: each applies live, persists,
     // and really swaps the page surface, not just the attribute.
     const palettes = [
-      ["sepia", "rgb(247, 241, 228)"],
-      ["midnight", "rgb(13, 18, 32)"],
       ["contrast", "rgb(0, 0, 0)"],
       ["dracula", "rgb(40, 42, 54)"],
       ["solarized", "rgb(0, 43, 54)"],
@@ -189,6 +208,13 @@ async function main() {
       ["github", "rgb(13, 17, 23)"],
       ["monokai", "rgb(39, 40, 34)"],
       ["latte", "rgb(239, 241, 245)"],
+      ["claude", "rgb(250, 249, 245)"],
+      ["codex", "rgb(33, 33, 33)"],
+      ["cursor", "rgb(26, 25, 23)"],
+      ["vscode", "rgb(31, 31, 31)"],
+      ["linear", "rgb(8, 9, 10)"],
+      ["jetbrains", "rgb(30, 31, 34)"],
+      ["slack", "rgb(63, 14, 64)"],
     ];
     for (const [id, surface] of palettes) {
       await page.locator(`[data-testid="theme-${id}"]`).click();
@@ -208,7 +234,7 @@ async function main() {
     const chrome = await page.evaluate(
       () => document.querySelector('meta[name="theme-color"]')?.content,
     );
-    check("the chrome tint follows the last palette onto paper", chrome === "#eff1f5", chrome);
+    check("the chrome tint follows the last palette onto aubergine", chrome === "#3f0e40", chrome);
 
     // 4. "system" follows the OS, in both directions, without a reload.
     await page.locator('[data-testid="theme-system"]').click();
@@ -257,19 +283,32 @@ async function main() {
         before?.midTurnSend === "interrupt" &&
         (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
     );
-
-    // 5b. the type scale: three 3-step knobs that ride
-    //     <html> attributes into CSS variables — and move real text, not
-    //     just state.
-    const scales = () =>
-      page.evaluate(() => [
-        document.documentElement.dataset.ui,
-        document.documentElement.dataset.content,
-        document.documentElement.dataset.code,
-      ]);
+    // The row's summary is the value's echo — a change rewrites it in place.
     check(
-      "type scale starts on 보통 across the three knobs",
-      (await scales()).join() === "normal,normal,normal",
+      "the 동작 summary echoes the choice just made",
+      (await page.locator('[data-testid="settings-nav-behavior"] .acc__sum').innerText()) ===
+        "⌘/Ctrl+Enter · 끊고 보내기",
+      await page.locator('[data-testid="settings-nav-behavior"] .acc__sum').innerText(),
+    );
+
+    // 5b. the type scale: three px knobs that land on <html> as inline
+    //     --*-scale custom properties — and move real text, not just state.
+    const scaleVar = (name) =>
+      page.evaluate(
+        (n) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)),
+        name,
+      );
+    const sizeField = (label) => page.getByRole("spinbutton", { name: label });
+    const setSize = async (label, px) => {
+      await sizeField(label).fill(String(px));
+      await sizeField(label).press("Tab");
+    };
+    const sizeValue = (label) => sizeField(label).inputValue().then(Number);
+    check(
+      "type sizes start on each axis' base px",
+      (await scaleVar("--ui-scale")) === 1 &&
+        (await scaleVar("--content-scale")) === 1 &&
+        (await scaleVar("--code-scale")) === 1,
     );
     await openCategory(page, "화면");
     const labelSize = () =>
@@ -277,7 +316,7 @@ async function main() {
         parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize),
       );
     const uiBase = await labelSize();
-    await pick(page, "인터페이스 크기", "크게");
+    await setSize("인터페이스 크기", 15);
     await page.waitForFunction(
       (base) =>
         parseFloat(getComputedStyle(document.querySelector(".setting__label")).fontSize) > base,
@@ -286,18 +325,17 @@ async function main() {
     );
     const uiScaled = await labelSize();
     check(
-      "인터페이스 크기 크게 resizes the controls",
+      "인터페이스 크기 15px resizes the controls",
       uiScaled > uiBase,
       `${uiBase}px → ${uiScaled}px`,
     );
-    await pick(page, "콘텐츠 크기", "작게");
-    await pick(page, "코드 크기", "크게");
+    await setSize("콘텐츠 크기", 12);
+    await setSize("코드 크기", 14);
     check(
-      "the three choices land on <html> and persist together",
-      (await scales()).join() === "large,small,large" &&
-        (await stored(page))?.uiScale === "large" &&
-        (await stored(page))?.contentScale === "small" &&
-        (await stored(page))?.codeScale === "large",
+      "the three px values persist together",
+      (await stored(page))?.uiSize === 15 &&
+        (await stored(page))?.contentSize === 12 &&
+        (await stored(page))?.codeSize === 14,
     );
 
     // 5b-2. the token ladder: every scaled size in the stylesheet is a
@@ -315,11 +353,11 @@ async function main() {
         return px;
       }, name);
     const near = (a, b) => Math.abs(a - b) < 0.01;
-    await pick(page, "인터페이스 크기", "보통");
-    await pick(page, "콘텐츠 크기", "보통");
-    await pick(page, "코드 크기", "보통");
+    await setSize("인터페이스 크기", 13);
+    await setSize("콘텐츠 크기", 13.5);
+    await setSize("코드 크기", 11.5);
     check(
-      "at 보통 every token resolves to its base px",
+      "at base px every token resolves to its own base",
       near(await tokenPx("--font-ui-130"), 13) &&
         near(await tokenPx("--font-ui-90"), 9) &&
         near(await tokenPx("--font-ui-340"), 34) &&
@@ -328,40 +366,59 @@ async function main() {
         near(await tokenPx("--font-code-115"), 11.5) &&
         near(await tokenPx("--font-code-120"), 12),
     );
-    await pick(page, "인터페이스 크기", "크게");
+    await setSize("인터페이스 크기", 15);
     check(
-      "인터페이스 크게 rides only the interface knob",
-      near(await tokenPx("--font-ui-130"), 14.3) &&
+      "인터페이스 px rides only the interface knob",
+      near(await tokenPx("--font-ui-130"), 15) &&
+        near(await tokenPx("--font-ui-115"), 15 * (11.5 / 13)) &&
         near(await tokenPx("--font-content-135"), 13.5) &&
         near(await tokenPx("--font-code-115"), 11.5),
     );
-    await pick(page, "콘텐츠 크기", "크게");
+    await setSize("콘텐츠 크기", 15);
     check(
-      "콘텐츠 크게 moves prose and leaves the other knobs alone",
-      near(await tokenPx("--font-content-135"), 14.85) &&
-        near(await tokenPx("--font-ui-130"), 14.3) &&
+      "콘텐츠 px moves prose and leaves the other knobs alone",
+      near(await tokenPx("--font-content-135"), 15) &&
+        near(await tokenPx("--font-ui-130"), 15) &&
         near(await tokenPx("--font-code-115"), 11.5),
     );
-    await pick(page, "코드 크기", "크게");
+    await setSize("코드 크기", 14);
     check(
-      "코드 크게 moves machine text and leaves the other knobs alone",
-      near(await tokenPx("--font-code-115"), 12.65) &&
-        near(await tokenPx("--font-ui-130"), 14.3) &&
-        near(await tokenPx("--font-content-135"), 14.85),
+      "코드 px moves machine text and leaves the other knobs alone",
+      near(await tokenPx("--font-code-115"), 14) &&
+        near(await tokenPx("--font-ui-130"), 15) &&
+        near(await tokenPx("--font-content-135"), 15),
     );
-    await pick(page, "인터페이스 크기", "작게");
-    await pick(page, "콘텐츠 크기", "작게");
-    await pick(page, "코드 크기", "작게");
+    // The −/+ steppers move on the 0.5px grid; a typed value outside the
+    // axis' bounds clamps instead of breaking the page.
+    await setSize("코드 크기", 11.5);
+    await page.getByRole("button", { name: "코드 크기 키우기" }).click();
+    check("the + stepper moves half a px", (await sizeValue("코드 크기")) === 12);
+    await setSize("코드 크기", 99);
+    check("a typed value clamps to the axis ceiling", (await sizeValue("코드 크기")) === 16);
+    // A blob from the three-step build migrates: 크게 was base × 1.1.
+    await page.evaluate(() => {
+      const blob = JSON.parse(localStorage.getItem("colo-design.settings"));
+      delete blob.uiSize;
+      blob.uiScale = "large";
+      localStorage.setItem("colo-design.settings", JSON.stringify(blob));
+    });
+    await page.reload();
+    await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check(
-      "작게 shrinks every axis by the same step",
-      near(await tokenPx("--font-ui-130"), 11.7) &&
-        near(await tokenPx("--font-content-135"), 12.15) &&
-        near(await tokenPx("--font-code-115"), 10.35),
+      "a stored 크게 reads back as the px it meant",
+      near(await scaleVar("--ui-scale"), 1.1),
+      `--ui-scale = ${await scaleVar("--ui-scale")}`,
     );
-    // The rest of the panel reads at the stored sizes — put 보통 back.
-    await pick(page, "인터페이스 크기", "보통");
-    await pick(page, "콘텐츠 크기", "보통");
-    await pick(page, "코드 크기", "보통");
+    await page.getByRole("button", { name: "설정" }).click();
+    await page.waitForSelector('[role="dialog"][aria-label="설정"]', {
+      timeout: 5000,
+    });
+    await openCategory(page, "화면");
+    check("the migrated 크게 shows as 14.3px", (await sizeValue("인터페이스 크기")) === 14.3);
+    // The rest of the panel reads at the stored sizes — put the bases back.
+    await setSize("인터페이스 크기", 13);
+    await setSize("콘텐츠 크기", 13.5);
+    await setSize("코드 크기", 11.5);
 
     await page.reload();
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
@@ -517,7 +574,7 @@ async function main() {
     await openCategory(page, "문제 해결");
     check(
       "connection details sit behind a fold",
-      (await page.locator(".settings__pane .settings__fold").count()) === 1 &&
+      (await page.locator(".settings__acc .settings__fold").count()) === 1 &&
         (await page.getByLabel("접속 주소").isVisible()) === false,
     );
     await page.getByText("고급 · 연결 정보", { exact: true }).click();
@@ -600,8 +657,10 @@ async function main() {
       await picked(page, "실행 중 보내기", "다음 턴에 보내기"),
     );
     check(
-      "an absent type scale falls back to 보통",
-      (await scales()).join() === "normal,normal,normal",
+      "an absent type size falls back to each axis' base",
+      (await scaleVar("--ui-scale")) === 1 &&
+        (await scaleVar("--content-scale")) === 1 &&
+        (await scaleVar("--code-scale")) === 1,
     );
 
     // 9. Escape closes without touching anything.

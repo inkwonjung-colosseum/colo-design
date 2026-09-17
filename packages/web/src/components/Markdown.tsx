@@ -1,8 +1,9 @@
-import type { ComponentPropsWithoutRef } from "react";
-import { isValidElement, useEffect, useId, useState } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { isValidElement, useEffect, useId, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { linkClick } from "../lib/open-link";
+import { CopyButton } from "./CopyButton";
 
 /**
  * A link the chat renders must never replace the tool itself: a plain <a>
@@ -135,10 +136,24 @@ function Mermaid({ source }: { source: string }) {
   );
 }
 
+/** 코드 펜스의 텍스트 — 복사 버튼이 들고 나갈 원본. */
+function codeText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(codeText).join("");
+  if (isValidElement<{ children?: unknown }>(value)) return codeText(value.props.children);
+  return "";
+}
+
 /**
  * 블록 코드의 `pre`. 자식 코드 펜스가 mermaid 면 다이어그램으로 바꿔 그리고
- * 나머지는 평범한 코드 블록으로 남긴다.
+ * 나머지는 평범한 코드 블록으로 남긴다 — 다만 머리 바를 얹어 복사 버튼과,
+ * 내용이 잘려 보일 때만, 전체 보기 토글을 단다. 잘림 판정은 CSS 의
+ * max-height(420px)와 같은 숫자다 — 펼친 뒤에도 scrollHeight 로 재면
+ * 토글이 사라지므로 고정 상수와 비교한다.
  */
+const CODE_FOLD_PX = 420;
+
 function ChatPre({ node: _node, children }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
   const child = Array.isArray(children) ? children[0] : children;
   const isMermaid =
@@ -149,7 +164,49 @@ function ChatPre({ node: _node, children }: ComponentPropsWithoutRef<"pre"> & { 
     const source = String(child.props.children ?? "").replace(/\n$/, "");
     return <Mermaid source={source} />;
   }
-  return <pre>{children}</pre>;
+  const lang = isValidElement<ComponentPropsWithoutRef<"code">>(child)
+    ? (/language-(\S+)/.exec(String(child.props.className ?? ""))?.[1] ?? null)
+    : null;
+  return (
+    <CodeBlock lang={lang} source={codeText(child)}>
+      {children}
+    </CodeBlock>
+  );
+}
+
+function CodeBlock({
+  lang,
+  source,
+  children,
+}: {
+  lang: string | null;
+  /** 복사가 들고 나갈 코드 원문 — 렌더된 children 과 같은 내용의 문자열. */
+  source: string;
+  children: ReactNode;
+}) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const [tall, setTall] = useState(false);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const el = preRef.current;
+    if (el) setTall(el.scrollHeight > CODE_FOLD_PX);
+  });
+  return (
+    <div className={`md__code${open ? " md__code--open" : ""}`}>
+      <div className="md__codehead">
+        {lang && <span className="md__codelang">{lang}</span>}
+        <span className="md__codeacts">
+          {tall && (
+            <button type="button" className="ghost" onClick={() => setOpen((v) => !v)}>
+              {open ? "접기" : "전체 보기"}
+            </button>
+          )}
+          <CopyButton value={source} label="복사" />
+        </span>
+      </div>
+      <pre ref={preRef}>{children}</pre>
+    </div>
+  );
 }
 
 /**

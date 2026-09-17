@@ -1,6 +1,7 @@
 import { alignThumbs, readTurn, type TurnMarker } from "@colo-design/protocol";
 import { type ReactNode, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
+import { LIMIT_WORDS } from "../../lib/error-words";
 import { waitedFor } from "../../lib/format";
 import { CopyButton } from "../CopyButton";
 import { ChevronRightIcon } from "../icons";
@@ -186,9 +187,10 @@ const TURN_SUBTYPE_WORDS: Record<string, string> = {
  * got no answer must see WHY the silence, and have the cheapest recovery —
  * sending the very same words again — one click away.
  */
-/** The subscription's refusal names itself in the SDK's closing line: the
-    card must NOT invite an immediate resend that fails again — the
-    limit refills on the clock, not on attempts. */
+/** The subscription's refusal names itself in the SDK's closing line. The
+    limit refills on the clock, not on attempts — so the card says 잠시 뒤
+    이어할 수 있다, and `다시 보내기` stays as the hand for the moment it
+    has refilled. */
 const LIMIT_RESULT = /usage limit|rate limit|limit reached|weekly limit|capacity/i;
 
 function FailedTurn({
@@ -216,8 +218,11 @@ function FailedTurn({
   const limit = resultText !== null && LIMIT_RESULT.test(resultText);
   const interrupted = subtype === "interrupted";
   const reason = limit
-    ? "구독 사용량이 채워졌습니다 — 채워지면 같은 말로 이어하면 됩니다"
+    ? "구독 사용량을 채웠습니다 — 잠시 뒤 같은 말로 이어할 수 있어요"
     : (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요");
+  // 자세히가 여는 영어 원문 앞에 서는 한국어 한 줄 — 한도는 전용 문장,
+  // 나머지 실패는 카드가 이미 말한 이유가 그대로 요약이다.
+  const detail = limit ? LIMIT_WORDS : reason;
   return (
     <div className="machine turnfail">
       <div className="machine__head">
@@ -227,22 +232,35 @@ function FailedTurn({
       <div className="turnfail__actions">
         {/* 스스로 멈춘 사람에게 "같은 말 재발사"는 이상한 첫 제안 —
             고쳐서 다시 보내기(입력창으로 돌아온다)가 그 자리를 대신한다.
-            다른 실패에서도 같은 손이 옆에 선다 — 같은 말 재발사만으로는
-            고칠 말이 있는 사람이 버블까지 올라가야 했다. */}
-        {interrupted && !limit && retryText && onResendEdit && (
-          <button type="button" className="turnfail__retry" onClick={() => onResendEdit(retryText)}>
-            고쳐서 다시 보내기
-          </button>
+            두 버튼이 나란히 설 때는 위계가 말을 한다: 같은 말 재발사가
+            primary, 고쳐서 보내기는 ghost. 한도 카드도 같은 손을 가진다 —
+            채워진 뒤의 재발사는 결국 성공한다. */}
+        {interrupted && retryText && onResendEdit && (
+          <Tip label="보낸 말이 입력창으로 돌아갑니다 — 고친 뒤 다시 보내세요">
+            <button type="button" className="ghost" onClick={() => onResendEdit(retryText)}>
+              고쳐서 다시 보내기
+            </button>
+          </Tip>
         )}
-        {!interrupted && !limit && onRetry && retryText && (
-          <button type="button" className="turnfail__retry" onClick={() => onRetry(retryText)}>
-            다시 보내기
-          </button>
+        {!interrupted && onRetry && retryText && (
+          <Tip
+            label={
+              limit
+                ? "사용량이 다시 채워진 뒤 같은 말을 보냅니다"
+                : "마지막으로 보낸 말을 그대로 다시 보냅니다"
+            }
+          >
+            <button type="button" className="primary" onClick={() => onRetry(retryText)}>
+              다시 보내기
+            </button>
+          </Tip>
         )}
-        {!interrupted && !limit && retryText && onResendEdit && (
-          <button type="button" className="turnfail__retry" onClick={() => onResendEdit(retryText)}>
-            고쳐서 다시 보내기
-          </button>
+        {!interrupted && retryText && onResendEdit && (
+          <Tip label="같은 말 그대로가 아니라, 입력창에서 고친 말을 보냅니다">
+            <button type="button" className="ghost" onClick={() => onResendEdit(retryText)}>
+              고쳐서 다시 보내기
+            </button>
+          </Tip>
         )}
         {/* 텍스트 없이 도구만 돌다 멈춘 턴은 되돌릴 버튼이 답변에만 있어 여기까지
             못 미쳤다 — 중지 카드가 스스로의 체크포인트로 돌리는 손을 가진다. */}
@@ -267,11 +285,15 @@ function FailedTurn({
           {open ? "접기" : "자세히"}
         </button>
       </div>
-      {open && <pre className="machine__body">{resultText ?? (subtype || "turn")}</pre>}
+      {open && (
+        <>
+          <p className="hint">{detail}</p>
+          <pre className="machine__body">{resultText ?? (subtype || "turn")}</pre>
+        </>
+      )}
     </div>
   );
 }
-
 
 /** The planner's last own words — what `다시 보내기` resends. */
 function lastUserText(blocks: Block[]): string | null {

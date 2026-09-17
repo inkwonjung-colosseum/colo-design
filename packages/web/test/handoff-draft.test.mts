@@ -20,7 +20,10 @@ test("the browser contributes no body — the daemon's proposal is the whole tex
 });
 
 test("the draft is the whole proposal — merged as the planner typed it", () => {
-  assert.equal(mergeHandoffBody("목록과 빈 상태를 만들었습니다."), "목록과 빈 상태를 만들었습니다.\n");
+  assert.equal(
+    mergeHandoffBody("목록과 빈 상태를 만들었습니다."),
+    "목록과 빈 상태를 만들었습니다.\n",
+  );
   // One trailing newline so the daemon's own sections start on their own line.
   assert.doesNotMatch(mergeHandoffBody("만들었습니다."), /\n{2}/);
 });

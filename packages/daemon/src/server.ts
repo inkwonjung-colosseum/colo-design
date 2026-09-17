@@ -10,10 +10,10 @@ import {
 import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
 import { AcpDriver } from "./agent/drivers/acp/driver.js";
+import { OMP_ACP } from "./agent/drivers/acp/omp.js";
 import { OPENCODE_ACP } from "./agent/drivers/acp/opencode.js";
 import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
 import { CodexDriver } from "./agent/drivers/codex/driver.js";
-import { OmpDriver } from "./agent/drivers/omp/omp.js";
 import { DriverRegistry } from "./agent/registry.js";
 import { browserMcpEntry } from "./browser-launch.js";
 import {
@@ -69,16 +69,11 @@ export type {
  */
 const HANDOFF_POLL_MS = 10 * 60_000;
 /**
- * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 20개). 와이어에
- * 노출하지 않는 것: destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자 탭이
- * 망가진다), getActiveTabId(listTabs 응답으로 대체 가능).
+ * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 15개). 와이어에
+ * 노출하지 않는 것: destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자
+ * 페이지가 망가진다).
  */
 const BROWSER_OPS: Record<string, true> = {
-  listTabs: true,
-  openTab: true,
-  closeTab: true,
-  activateTab: true,
-  cycleActiveTab: true,
   navigate: true,
   back: true,
   forward: true,
@@ -99,6 +94,38 @@ const BROWSER_OPS: Record<string, true> = {
 /** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
 const BROWSER_BODY_LIMIT = 1_000_000;
 
+/**
+ * op 하나가 데몬을 붙들 수 있는 상한 — evaluate 의 awaitPromise 가 영원히
+ * 이행하지 않는 Promise 를 만나도 세션의 브라우저가 죽지 않게 한다. MCP
+ * 자식의 60s 유예보다 길게 둔다(자식이 먼저 포기하는 게 정상 경로).
+ */
+const BROWSER_OP_TIMEOUT_MS = 90_000;
+
+/**
+ * 읽기 전용 op — 이것들은 "브라우저 조작 중" 표시를 켜지 않는다(조작이
+ * 아니라 관찰이다).
+ */
+const BROWSER_QUIET_OPS: Record<string, true> = {
+  snapshot: true,
+  screenshot: true,
+  consoleLines: true,
+  waitFor: true,
+};
+
+/**
+ * 권한 카드 유예 — MCP 자식이 포기하는 60s 유예 직전까지. 답이 없으면
+ * 거절로 정산된다(무응답 = 안 함).
+ */
+const BROWSER_ASK_TIMEOUT_MS = 55_000;
+
+/**
+ * 이동(navigate·back·forward)이 레포 바깥에 내려앉았을 때 스냅샷 대신
+ * 내리는 안내 — 이동 자체는 카드 없이 허용하지만, 착지한 화면의 내용은
+ * 권한 카드를 지나야 읽힌다.
+ */
+const BROWSER_EXTERNAL_NOTE =
+  "레포 바깥 화면에 내려앉았다 — 내용은 권한 없이 읽지 않는다. 필요하면 browser_snapshot 을 다시 부르면 권한 카드가 온다.";
+
 /** 와이어의 JSON 값을 시그니처 형태로 좁힌다 — 엔드포인트는 임의 JSON이 닿는 경계라 믿지 않는다. */
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -109,82 +136,59 @@ function asNumber(value: unknown): number | undefined {
 }
 
 /**
- * 와이어의 flat 인자(params, tabId 포함)를 BrowserDriver의 위치 인자로 풀어
- * 부른다 — MCP 자식은 하나의 params 객체만 알고, 호출 규약은 드라이버 소유다.
+ * 와이어의 flat 인자(params)를 BrowserDriver의 위치 인자로 풀어 부른다 —
+ * MCP 자식은 하나의 params 객체만 알고, 호출 규약은 드라이버 소유다.
  */
 async function callBrowserOp(
   driver: BrowserDriver,
   op: string,
   params: Record<string, unknown>,
 ): Promise<unknown> {
-  const tabId = asString(params.tabId);
   switch (op) {
-    case "listTabs":
-      return driver.listTabs();
-    case "openTab":
-      return driver.openTab(String(params.url ?? ""), {
-        background: params.background === true,
-      });
-    case "closeTab":
-      return driver.closeTab(tabId);
-    case "activateTab":
-      return driver.activateTab(String(params.tabId ?? ""));
-    case "cycleActiveTab":
-      return driver.cycleActiveTab(params.delta === -1 ? -1 : 1);
     case "navigate":
-      return driver.navigate(String(params.url ?? ""), tabId);
+      return driver.navigate(String(params.url ?? ""));
     case "back":
-      return driver.back(tabId);
+      return driver.back();
     case "forward":
-      return driver.forward(tabId);
+      return driver.forward();
     case "snapshot":
-      return driver.snapshot(tabId);
+      return driver.snapshot();
     case "screenshot":
       return driver.screenshot({
-        tabId,
         ref: asString(params.ref),
         longEdge: asNumber(params.longEdge),
       });
     case "click":
-      return driver.click({ ref: String(params.ref ?? "") }, tabId);
+      return driver.click({ ref: String(params.ref ?? "") });
     case "type":
-      return driver.type(
-        {
-          ref: String(params.ref ?? ""),
-          text: String(params.text ?? ""),
-          clear: params.clear === false ? false : true,
-        },
-        tabId,
-      );
+      return driver.type({
+        ref: asString(params.ref),
+        text: String(params.text ?? ""),
+        clear: params.clear !== false,
+      });
     case "press":
-      return driver.press(String(params.key ?? ""), tabId);
+      return driver.press(String(params.key ?? ""));
     case "scroll":
-      return driver.scroll({ ref: asString(params.ref), dy: asNumber(params.dy) ?? 0 }, tabId);
+      return driver.scroll({ ref: asString(params.ref), dy: asNumber(params.dy) ?? 0 });
     case "hover":
-      return driver.hover({ ref: String(params.ref ?? "") }, tabId);
+      return driver.hover({ ref: String(params.ref ?? "") });
     case "select":
-      return driver.select(
-        { ref: String(params.ref ?? ""), value: String(params.value ?? "") },
-        tabId,
-      );
+      return driver.select({ ref: String(params.ref ?? ""), value: String(params.value ?? "") });
     case "drag":
-      return driver.drag(
-        { fromRef: String(params.fromRef ?? ""), toRef: String(params.toRef ?? "") },
-        tabId,
-      );
+      return driver.drag({
+        fromRef: String(params.fromRef ?? ""),
+        toRef: String(params.toRef ?? ""),
+      });
     case "consoleLines":
-      return driver.consoleLines(tabId);
+      return driver.consoleLines();
     case "evaluate":
-      return driver.evaluate(String(params.fn ?? ""), tabId);
+      return driver.evaluate(String(params.fn ?? ""));
     case "waitFor":
-      return driver.waitFor(
-        {
-          text: asString(params.text),
-          url: asString(params.url),
-          ms: asNumber(params.ms),
-        },
-        tabId,
-      );
+      return driver.waitFor({
+        text: asString(params.text),
+        url: asString(params.url),
+        ms: asNumber(params.ms),
+      });
     default:
       throw new Error(`알 수 없는 브라우저 op: ${op}`);
   }
@@ -230,11 +234,11 @@ export interface DaemonConfig {
    */
   previewDriverFactory?: PreviewDriverFactory;
   /**
-   * The desktop's shared browser (인앱 브라우저 2단계, 계획 §4-2): the driver
-   * the agent's browser tools will go through — the pane's tabs, the same
-   * one the user watches. The capture path rides the SAME instance so each
-   * tab keeps a single debugger owner (§3 규칙 10). The browser dev path
-   * injects nothing and the tools answer 404.
+   * The desktop's shared browser (인앱 브라우저): the driver the agent's
+   * browser tools will go through — the pane's page, the same one the user
+   * watches. The capture path rides the SAME instance so the page keeps a
+   * single debugger owner. The browser dev path injects nothing and the
+   * tools answer 404.
    */
   browserDriverFactory?: BrowserDriverFactory;
 }
@@ -293,6 +297,11 @@ export class DaemonServer {
    */
   private readonly browserSecrets = new Map<string, { sessionId: string; issuedAt: number }>();
   /**
+   * 세션별 브라우저 op 직렬화 큐 — 같은 세션의 명령이 겹치면 pane 의 ref
+   * 세대가 경합한다. 값은 "지금까지의 꼬리"다.
+   */
+  private readonly browserOps = new Map<string, Promise<unknown>>();
+  /**
    * Aborted the moment `stop()` begins. Unattended CLI probes ride it: a CLI
    * that never answers must not hold the process open for the probe's full
    * grace after the daemon is down — the offline suites each paid that grace
@@ -312,7 +321,7 @@ export class DaemonServer {
    */
   private readonly drivers: PreviewDrivers;
   /**
-   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's worktree
+   * 시점 빌드 재현: the handed-off moment's worktree
    * build — one at a time, for the active project's open handoff. Its
    * lifetime is this server's to enforce: the conversation that opened it
    * reaps it on close (onState below), the daemon reaps it on stop, and the
@@ -368,7 +377,7 @@ export class DaemonServer {
     this.agentDrivers.register(new ClaudeDriver(() => this.claudeExecutable));
     this.agentDrivers.register(new CodexDriver());
     this.agentDrivers.register(new AcpDriver(OPENCODE_ACP));
-    this.agentDrivers.register(new OmpDriver());
+    this.agentDrivers.register(new AcpDriver(OMP_ACP));
     this.manager = new SessionManager(
       {
         onEvent: (sessionId, event) => {
@@ -464,7 +473,8 @@ export class DaemonServer {
             for (const [secret, candidate] of this.browserSecrets) {
               if (candidate.sessionId === sessionId) this.browserSecrets.delete(secret);
             }
-            // 수명 규칙 (preview.md §3 2단계): the worktree build's life is
+            this.browserOps.delete(sessionId);
+            // 수명 규칙: the worktree build's life is
             // tied to the conversation that opened it — its close reaps the
             // worktree and the port. The store ignores strangers itself.
             this.handoffPreviews.closeSession(sessionId);
@@ -473,15 +483,25 @@ export class DaemonServer {
         onPermissionRequest: (payload) =>
           this.broadcast({ type: "permission.request", ...payload }),
         onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
+        onPinned: (sessionId, pins) => {
+          for (const pin of pins) this.drivers.notePinned(sessionId, pin.screen, pin.state);
+        },
       },
       this.agentDrivers,
       // 세션별 브라우저 MCP 명세(3단계): 팩토리가 없으면(브라우저 개발 경로)
       // 시크릿도 발급하지 않는다. URL은 루프백 고정 — 자식은 같은 호스트의
       // 프로세스라 바인딩 호스트가 무엇이든 127.0.0.1로 닿는다.
       (sessionId) => {
-        if (this.config.browserDriverFactory === undefined || this.http === undefined) return null;
+        if (this.config.browserDriverFactory === undefined || !this.http) return null;
         const secret = this.issueBrowserSecret(sessionId);
         return browserMcpEntry(true, `http://127.0.0.1:${this.address().port}`, secret);
+      },
+      // createSession 이 던지면 발급된 시크릿을 회수한다 — 못 열린 세션의
+      // 자격이 맵에 남는 일을 막는다.
+      (sessionId) => {
+        for (const [secret, candidate] of this.browserSecrets) {
+          if (candidate.sessionId === sessionId) this.browserSecrets.delete(secret);
+        }
       },
     );
     this.plans = new PlanTracker({
@@ -509,6 +529,9 @@ export class DaemonServer {
     this.drivers = new PreviewDrivers({
       factory: () => this.config.previewDriverFactory,
       activeRepo: () => this.activeOrNull()?.repo ?? null,
+      // 게이트의 재검증은 세션이 사는 프로젝트 기준 — 전환 뒤 끝난 턴의 핀을
+      // 활성 레포의 주소로 다시 열지 않는다(preview-drivers 의존 주석 참조).
+      repoForSession: (id) => this.workspaceOfSession(id)?.repo ?? null,
       session: (id) => this.manager.get(id),
       sessions: () => this.manager.all(),
       notice: (n) => this.config.onNotice?.(n),
@@ -656,7 +679,19 @@ export class DaemonServer {
         socket.destroy();
         return;
       }
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      // A malformed Host (or url) throws inside `new URL` — left alone that is
+      // an uncaughtException in the daemon's own process. Reject the handshake.
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+      } catch {
+        this.logger.warn("잘못된 업그레이드 요청 거부", {
+          remote: req.socket.remoteAddress ?? "unknown",
+        });
+        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       const given = Buffer.from(url.searchParams.get("token") ?? "");
       const expected = Buffer.from(this.config.token);
       // Constant-time: this token guards every message the daemon accepts.
@@ -946,26 +981,91 @@ export class DaemonServer {
       return;
     }
     // 에이전트가 pane을 조작하는 동안 탭 스트립에 표시한다(4단계) — 시작과
-    // 끝을 같은 자리에서 방송하므로 실패해도 표시가 남지 않는다.
-    const tabId =
-      typeof (params as Record<string, unknown>).tabId === "string"
-        ? ((params as Record<string, unknown>).tabId as string)
-        : null;
-    this.broadcast({ type: "browser.driving", sessionId, tabId, on: true });
+    // 끝을 같은 자리에서 방송하므로 실패해도 표시가 남지 않는다. 읽기 op는
+    // 조작이 아니라 관찰이라 표시를 켜지 않는다.
+    const quiet = BROWSER_QUIET_OPS[op] === true;
+    if (!quiet) this.broadcast({ type: "browser.driving", sessionId, on: true });
+    // 타임아웃 판별용 센티넬 — catch 에서 이것과 같은 오류면 op 가 아직
+    // 끝나지 않은 채 떠 있다는 뜻이라 큐 꼬리 회수와 드라이버 복구가 따라간다.
+    const opTimeout = new Error("브라우저 명령이 시간을 넘겼습니다.");
     try {
-      const result = await callBrowserOp(driver, op, params as Record<string, unknown>);
-      // navigate·openTab이 가리킨 주소는 이 턴의 게이트 입력이다 — 사람의
-      // pin과 같은 자리(notePinned)에 담고, preview origin 판별은 runGate가
-      // 한다. state는 ?state= 쿼리로 실리므로 route에서 떼어 낸다.
-      if (
-        (op === "navigate" || op === "openTab") &&
-        typeof (params as Record<string, unknown>).url === "string"
-      ) {
+      // 같은 세션의 op는 한 줄로 세운다 — 병렬이면 ref 세대가 경합해 가짜
+      // "다시 읽으십시오"가 난다. 타임아웃은 호출자만 놓아 준다 — 큐 꼬리는
+      // op 의 실제 끝을 기다리므로, 시간을 넘긴 op 가 뒤에서 계속 돌아도
+      // 다음 op 와 겹치지 않는다.
+      const run = this.browserOps.get(sessionId) ?? Promise.resolve();
+      const opDone = run.then(async () => {
+        // 권한은 op 종류가 아니라 실행 시점의 표면이 정한다 — 레포 바깥
+        // 화면에서는 scroll{dy:0} 한 줄도 페이지 전체를 실어 나르므로,
+        // 비-레포 표면의 모든 op 가 카드를 지난다. 판정을 큐 안(실행
+        // 직전)에 두는 것이 TOCTOU 를 닫는 길이다: 요청과 실행 사이에
+        // 사용자가 화면을 옮겼을 수 있다. 카드는 세션의 권한 흐름 그
+        // 자체라 항상 허용 메모리가 통하고, 무응답은 유예 뒤 거절로
+        // 정산된다.
+        const repoSurface = driver.isRepoSurface();
+        if (!repoSurface) {
+          const session = this.manager.get(sessionId);
+          if (!session) throw new Error("대화가 이미 닫혔습니다.");
+          const ask = new AbortController();
+          const askTimer = setTimeout(() => ask.abort(), BROWSER_ASK_TIMEOUT_MS);
+          askTimer.unref();
+          let verdict: { allowed: boolean; message: string | null };
+          try {
+            verdict = await session.decideBrowserOp(`browser_${op}`, ask.signal);
+          } finally {
+            clearTimeout(askTimer);
+          }
+          if (!verdict.allowed) {
+            throw new Error(verdict.message ?? "사용자가 이 화면에 대한 접근을 거절했습니다.");
+          }
+        }
+        const result = await callBrowserOp(driver, op, params as Record<string, unknown>);
+        // 레포 표면에서 떠난 이동(navigate·back·forward)은 카드 없이
+        // 허용했다 — 하지만 착지한 곳이 레포 바깥이면 그 화면의 내용까지
+        // 약속한 것은 아니다. 스냅샷을 내리지 않는다: 다시 읽고 싶으면
+        // 권한 카드를 지나는 읽기 op 를 부르게 한다.
+        if (
+          repoSurface &&
+          !driver.isRepoSurface() &&
+          (op === "navigate" || op === "back" || op === "forward")
+        ) {
+          // navigate 의 settled 만 살린다(도착 사실) — 결과가 계약 밖
+          // 형태면 정착 실패로 답하는 쪽이 안전하다.
+          if (
+            op === "navigate" &&
+            result !== null &&
+            typeof result === "object" &&
+            "settled" in result
+          ) {
+            return { settled: result.settled === true, note: BROWSER_EXTERNAL_NOTE };
+          }
+          return { note: BROWSER_EXTERNAL_NOTE };
+        }
+        return result;
+      });
+      this.browserOps.set(
+        sessionId,
+        opDone.catch(() => undefined),
+      );
+      let timer: NodeJS.Timeout | undefined;
+      const result = await Promise.race([
+        opDone,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(opTimeout), BROWSER_OP_TIMEOUT_MS);
+          timer.unref();
+        }),
+      ]).finally(() => clearTimeout(timer));
+      // navigate 가 가리킨 주소는 이 턴의 게이트 입력이다 — 사람의 pin과
+      // 같은 자리(notePinned)에 담고, preview origin 판별은 runGate가 한다.
+      // state는 ?state= 쿼리로 실리므로 route에서 떼어 낸다. 전체 URL을
+      // 남긴다 — origin을 벗기면 외부 탐색이 preview 경로로 둔갑해 게이트가
+      // 뜬 적 없는 화면을 재검증한다.
+      if (op === "navigate" && typeof (params as Record<string, unknown>).url === "string") {
         try {
           const u = new URL((params as Record<string, unknown>).url as string);
           const state = u.searchParams.get("state");
           u.searchParams.delete("state");
-          this.drivers.notePinned(sessionId, u.pathname + u.search + u.hash, state);
+          this.drivers.notePinned(sessionId, u.toString(), state);
         } catch {
           // 못 읽는 주소는 게이트 입력이 아니다.
         }
@@ -976,8 +1076,20 @@ export class DaemonServer {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
+      if (error === opTimeout) {
+        // op 가 끝나지 않은 채 떠 있다 — 꼬리를 이미 해결된 Promise 로
+        // 갈아치워 다음 op 가 멈춘 op 를 기다리지 않게 하고, 드라이버를
+        // 복구해 디버거 점유(사용자의 DevTools 봉쇄)를 푼다. 멈춘 op 자체는
+        // 계속 떠 있을 수 있지만 큐와 붙임은 회수됐다.
+        this.browserOps.set(sessionId, Promise.resolve());
+        try {
+          driver.recover();
+        } catch {
+          // 복구 실패가 타임아웃 보고를 가리면 안 된다 — 다음 op 가 다시 시도한다.
+        }
+      }
     } finally {
-      this.broadcast({ type: "browser.driving", sessionId, tabId, on: false });
+      if (!quiet) this.broadcast({ type: "browser.driving", sessionId, on: false });
     }
   }
 

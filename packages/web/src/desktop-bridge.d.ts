@@ -1,7 +1,6 @@
 import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  PreviewTabMeta,
   UpdateCheckResult,
 } from "@colo-design/protocol";
 
@@ -32,7 +31,8 @@ declare global {
       selfUpdate: () => Promise<
         | { planned: unknown; guarded: string } // 개발 실행 — 계획만
         | { deferred: true; version: string } // 세션이 돌고 있어 모두 끝나는 순간으로 연기
-        | { started: boolean; downloadPath: string; steps: string[] } // 내려받기·검증 끝, 곧 종료
+        | { prepared: true; version: string } // 내려받기·검증 끝 — 재시작 동의를 기다림
+        | { started: boolean; downloadPath: string; steps: string[] } // 재시작 동의됨, 곧 종료
         | { error: string }
       >;
       /** Opens ~/.colo-design in the OS file manager; `logs` opens
@@ -56,18 +56,14 @@ declare global {
       /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
       preview?: {
-        /** AI 시점 보기 — 8fps JPEG(base64); 해제 함수를 돌려준다. */
-        onFrame: (callback: (jpeg: string) => void) => Unsubscribe;
         /** The native view exists — NativeHost, not the iframe. */
         native?: boolean;
         /**
          * Puts the page for this preview on screen; `epoch` names the server
          * process behind it (RepoStatus.previewEpoch). A page kept from an
          * earlier visit comes back as it was — under a new epoch it reloads.
-         * `origins` are the extra servers the repo allows the pane to open
-         * (RepoStatus.previewOrigins).
          */
-        mount?: (url: string, epoch: number | null, origins?: string[]) => Promise<unknown>;
+        mount?: (url: string, epoch: number | null) => Promise<unknown>;
         /** Takes the page off screen; it stays alive for the return. */
         unmount?: () => Promise<unknown>;
         bounds?: (rect: {
@@ -87,14 +83,6 @@ declare global {
         navigate?: (route: string, state: string | null) => Promise<unknown>;
         history?: (delta: -1 | 1) => Promise<unknown>;
         reload?: () => Promise<unknown>;
-        /**
-         * 탭 스트립 (인앱 브라우저 1단계): the view owns the tab list — the
-         * web only asks. `tabClose`·`tabNew` 생략 인자는 활성 탭·빈 탭을 뜻한다.
-         */
-        tabs?: () => Promise<{ tabs: PreviewTabMeta[]; activeTabId: string | null }>;
-        tabActivate?: (tabId: string) => Promise<unknown>;
-        tabClose?: (tabId?: string) => Promise<unknown>;
-        tabNew?: (url?: string) => Promise<unknown>;
         /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단. */
         stop?: () => Promise<unknown>;
         /** 배율. */
@@ -111,20 +99,13 @@ declare global {
           callback: (payload: {
             /** The preview-relative path of the loaded page. */
             path: string;
-            /** The full address — web 탭은 주소창에 통째로 보여 준다. */
+            /** The full address — 외부 페이지는 주소창에 통째로 보여 준다. */
             url?: string;
-            /** The pane is browsing a clicked link, not the preview. */
-            external?: boolean;
-            /** 어느 탭의 보고인지 — 늦게 도착한 비활성 탭의 보고를 걸러 낸다. */
-            tabId: string;
+            /** repo origin 위면 preview, 링크의 나라면 web — 외부 페이지 표시의 자리. */
             kind: "preview" | "web";
             canGoBack: boolean;
             canGoForward: boolean;
           }) => void,
-        ) => Unsubscribe;
-        /** 탭 목록이 바뀔 때마다 통째로 — 스트립은 이 한 채널로 그린다. */
-        onTabs?: (
-          callback: (payload: { tabs: PreviewTabMeta[]; activeTabId: string | null }) => void,
         ) => Unsubscribe;
         onPin?: (callback: (payload: ColoDesignPinEnvelope) => void) => Unsubscribe;
         onPinFocus?: (callback: (payload: { id: string }) => void) => Unsubscribe;

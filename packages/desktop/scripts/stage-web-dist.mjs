@@ -1,6 +1,6 @@
 /**
  * 웹 산출물 스테이징: packages/web/dist → packages/desktop/web-dist.
- * 데스크톱 메인이 데몬으로 서비할 파일이며(DESIGN §7), electron-builder 의
+ * 데스크톱 메인이 데몬으로 서비할 파일이며, electron-builder 의
  * files(web-dist/**) 도 이 경로를 패키징한다. dev 실행(dev.mjs)과 릴리스
  * 빌드(CI)가 같은 스크립트를 쓴다 — 두 번째 복사 관례를 만들지 않는다.
  *

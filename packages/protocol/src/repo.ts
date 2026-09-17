@@ -17,8 +17,8 @@ export interface CommentItem {
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
   screen: string;
-  /** The screen state the pin sat on. */
-  state: string;
+  /** 표식 없는 페이지의 핀은 null — 자리 잡음 판정은 문서 로드까지만 한다. */
+  state: string | null;
   /** What the planner wrote on this pin — empty means no memo was written. */
   text: string;
   /** The commented element's own text, as the overlay captured it. */
@@ -46,11 +46,6 @@ export interface CommentItem {
    * survives because stores written before 자동 정리 carry it.
    */
   resolved: boolean;
-}
-
-/** `comments.record` — the batch landed; the count is the receipt. */
-export interface CommentsRecorded {
-  recorded: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +93,7 @@ export interface HandoffStatus {
 
 /**
  * One screen capture riding a 넘기기 (PLAN D56). The daemon's server opens
- * each declared screen·state in the preview driver — a desktop host injects
+ * each pinned screen·state in the preview driver — a desktop host injects
  * one; the browser dev path has none — and hands the captures to the
  * workspace, which commits them under `.colo-design/shots/` and links them
  * from the pull request body's `### 화면 미리보기` section.
@@ -106,8 +101,8 @@ export interface HandoffStatus {
 export interface HandoffShot {
   /** Route the screen is served at — the pin's `data-screen` id, slash-restored. */
   route: string;
-  /** The state the screen was captured in, as the repo declared it. */
-  state: string;
+  /** The state the screen was captured in — 표식 없는 화면은 null. */
+  state: string | null;
   /** The capture's bytes; `Buffer` on the daemon side, `Uint8Array` here. */
   image: Uint8Array;
   /**
@@ -125,12 +120,10 @@ export type RepoErrorKind =
   | "registry-auth"
   | "pnpm-missing"
   | "preview"
-  | "port-busy"
   | "port-undetected"
   | "no-preview-command"
   | "conflict"
-  | "commands"
-  | "held-elsewhere";
+  | "commands";
 
 export interface RepoStatus {
   /** Absolute path of the clone on this machine. */
@@ -145,9 +138,8 @@ export interface RepoStatus {
   errorKind?: RepoErrorKind | null;
   /**
    * The commands the clone resolved to (PLAN D37) — derived from the repo's
-   * lockfile and `package.json` scripts, or whatever `colo-design.json`
-   * overrode. The transcript matches a Bash call against these to say
-   * `검사 실행` instead of printing the command line.
+   * lockfile and `package.json` scripts. The transcript matches a Bash call
+   * against these to say `검사 실행` instead of printing the command line.
    */
   commands?: {
     install?: string;
@@ -155,16 +147,10 @@ export interface RepoStatus {
     build?: string;
     preview?: string;
   };
-  /** Preview origin once the preview port accepts connections — declared or detected. */
+  /** Preview origin once the preview port accepts connections. */
   previewUrl: string | null;
-  /** The port the preview is serving on — declared in `colo-design.json` or detected at startup. */
+  /** The port the preview is serving on — detected at startup. */
   previewPort: number | null;
-  /**
-   * Extra origins the repo allows the preview to open
-   * (`colo-design.json` preview.origins) — 스토리북 같은 같은 레포의 다른
-   * 로컬 서버. 비어 있으면 previewUrl 하나뿐이다.
-   */
-  previewOrigins: string[];
   /**
    * Which server process answers at `previewUrl` — a new number every time
    * the preview is started. The desktop keeps a page per preview across
@@ -193,6 +179,13 @@ export interface RepoStatus {
    * would leave the button lying for up to a minute.
    */
   pendingChanges: number;
+  /**
+   * The unsaved-change files themselves, light (no hunks) — the same recount
+   * that fills `pendingChanges`, so the preview column's 변경 점 strip lists
+   * exactly what the chip counts. Empty when the worktree is clean; a strip
+   * with zero rows does not exist.
+   */
+  changedFiles: ChangedFileLite[];
   /**
    * 치워둔 작업 — null when the slot is empty. While it is filled the
    * `변경 없음` chip must not exist: parked is a state, not an absence
@@ -224,8 +217,8 @@ export interface HandoffStatusReport extends HandoffStatus {
 }
 
 /**
- * `repo.handoffPreview` — the handed-off moment's REAL build (preview.md
- * §3 2단계): the open handoff's branch tip checked out into a throwaway
+ * `repo.handoffPreview` — the handed-off moment's REAL build: the open
+ * handoff's branch tip checked out into a throwaway
  * worktree and served by the repo's own preview command on a second port.
  * `ready: false` is the honest answer for every absence — no open handoff,
  * a worktree that would not check out, a server that would not come up —
@@ -249,11 +242,6 @@ export interface HandoffPreviewInfo {
   detail?: string;
 }
 
-/** `comments.reply` — the answer went out under the planner's own name. */
-export interface DeveloperReviewReplied {
-  ok: true;
-}
-
 // ---------------------------------------------------------------------------
 // Publish path (diff review → gates → commit → push)
 // ---------------------------------------------------------------------------
@@ -272,6 +260,25 @@ export interface DiffFile {
   hunks: DiffHunk[];
   /** True when git reported the file as binary; no hunks to show. */
   binary?: boolean;
+}
+
+/**
+ * 저장하지 않은 변경 한 줄 — the 변경 점 strip's row. The same recount that
+ * fills `RepoStatus.pendingChanges`, listed beside it so the chip's number
+ * and the strip's rows can never disagree. No hunks: the full `DiffFile[]`
+ * stays behind `diff.get`, which reads it only when someone opens a review.
+ */
+export interface ChangedFileLite {
+  /** Path relative to the repo root, forward slashes. */
+  path: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  /**
+   * ± counts against HEAD. Null where git cannot count without reading
+   * content: untracked files, renames, binaries — the row shows its word
+   * and stays quiet about size instead of guessing one.
+   */
+  added: number | null;
+  removed: number | null;
 }
 
 /** Where a 저장 or a 넘기기 stands. Broadcast as `diff.status` while it moves. */
@@ -304,66 +311,9 @@ export interface DiffStatus {
   handoff?: HandoffStatus | null;
 }
 
-/** `repo.summarize` — the save review's opening lines (PLAN D51). */
-export interface RepoSummary {
-  /** Up to three Korean sentences, no file names. Empty when nothing changed. */
-  lines: string[];
-  /**
-   * The save memo the same turn proposed (비개발자 저장): the review's memo
-   * field opens filled with it instead of borrowing a summary sentence. Only
-   * a Claude answer carries one — the fallback's folder counts are no memo.
-   */
-  memo?: string;
-  /** Who wrote them: the one Claude turn, or the path-grouping fallback. */
-  source: "claude" | "fallback";
-}
-
 // ---------------------------------------------------------------------------
-// 요약 폴백 (PLAN D51) — 데몬의 한 턴이 못 닿을 때와 웹의 3초 바닥이 같은
-// 문장을 쓰도록, 규칙은 프로토콜에 하나만 산다.
+// 넘기기 (비개발자 넘기기)
 // ---------------------------------------------------------------------------
-
-/** 한 줄에 이름을 나열하는 파일 수 — 넘으면 `외 N개` 로 접는다. */
-const FALLBACK_NAME_LIMIT = 3;
-
-/** 파일 상태가 폴백 문장에서 입는 말 — `자세히 보기` 행의 배지 어휘와 짝을 맞춘다. */
-const FALLBACK_STATUS_LABEL: Record<DiffFile["status"], string> = {
-  added: "새로 만든 파일",
-  modified: "고친 파일",
-  renamed: "이름 바꾼 파일",
-  deleted: "지운 파일",
-};
-
-const FALLBACK_STATUS_ORDER: DiffFile["status"][] = ["added", "modified", "renamed", "deleted"];
-
-/**
- * The summary when the agent's turn cannot land (PLAN D51): what changed,
- * said with the file's own names — `새로 만든 파일: colo-bridge.tsx` —
- * grouped by kind of change, not by folder. A folder name is the repo's
- * jargon (`routes: 수정 2`); a file's name is the thing the planner can
- * point at. Deterministic — same diff, same lines — because this is what
- * the planner reads when the fancy version failed, on either side of the
- * socket.
- */
-export function fallbackSummary(files: Array<Pick<DiffFile, "path" | "status">>): string[] {
-  const groups: Record<DiffFile["status"], string[]> = {
-    added: [],
-    modified: [],
-    renamed: [],
-    deleted: [],
-  };
-  for (const file of files) {
-    const slash = file.path.lastIndexOf("/");
-    groups[file.status].push(slash === -1 ? file.path : file.path.slice(slash + 1));
-  }
-  return FALLBACK_STATUS_ORDER.filter((status) => groups[status].length > 0).map((status) => {
-    const names = groups[status];
-    const shown = names.slice(0, FALLBACK_NAME_LIMIT).join(", ");
-    const rest =
-      names.length > FALLBACK_NAME_LIMIT ? ` 외 ${names.length - FALLBACK_NAME_LIMIT}개` : "";
-    return `${FALLBACK_STATUS_LABEL[status]} ${names.length}개: ${shown}${rest}`;
-  });
-}
 
 /** `repo.handoffDraft` — what the 넘기기 dialog opens filled with. */
 export interface RepoHandoffDraft {
@@ -378,12 +328,15 @@ export interface RepoHandoffDraft {
   /**
    * 미리보기의 자동 첨부 (비개발자 넘기기): the sections the daemon appends to
    * the pull request body on its own — the planner's pin history as
-   * `### 수정 요청`, and the count of screen captures that ride along as
-   * `### 화면 미리보기`. The dialog shows them so what the developer receives
-   * is never a surprise; `null`/`0` means that section does not ship.
+   * `### 수정 요청`, the cycle branch's own numstat as `### 바뀐 파일`, and
+   * the count of screen captures that ride along as `### 화면 미리보기`.
+   * The dialog shows them so what the developer receives is never a
+   * surprise; `null`/`0` means that section does not ship.
    */
   extras?: {
     commentsSection: string | null;
+    /** `### 바뀐 파일` — the same string the body carries, or null. */
+    filesSection: string | null;
     shotCount: number;
   };
   /** Who wrote it: the one Claude turn, or nothing at all. */

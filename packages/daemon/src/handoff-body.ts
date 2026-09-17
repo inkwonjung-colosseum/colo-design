@@ -26,7 +26,7 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
 export function buildCommentsSection(
   rows: Array<{
     screen: string;
-    state: string;
+    state: string | null;
     text: string;
     at: string;
     intent?: "change" | "question";
@@ -51,10 +51,14 @@ export function buildCommentsSection(
   const changes = shown.length - questions;
   const lines = shown.map((row) => {
     const screen = row.screen;
-    const state = COMMENT_STATE_LABEL[row.state] ?? row.state;
+    // 표식 없는 페이지의 행은 상태 절을 생략한다 — "null" 은 사람의 말이 아니다.
+    const state = row.state === null ? null : (COMMENT_STATE_LABEL[row.state] ?? row.state);
     const ask = row.intent === "question" ? " (질문)" : "";
-    const words = row.text ? `"${row.text}"` : "(메모 없음)";
-    return `- ${screen} · ${state}${ask} — ${words}`;
+    // 핀 본문은 한 행에 눌러 담는다 — 새 줄이 그대로 들어가면 목록의 행이
+    // 깨져 절의 끝이 어긋난다.
+    const text = row.text.replace(/[\r\n\t]+/g, " ").trim();
+    const words = text ? `"${text}"` : "(메모 없음)";
+    return `- ${screen}${state === null ? "" : ` · ${state}`}${ask} — ${words}`;
   });
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
   const title =
@@ -70,4 +74,49 @@ export function buildCommentsSection(
         ? "사용자가 미리보기에서 찍어 AI에게 보낸 수정 요청과 질문입니다."
         : "사용자가 미리보기에서 찍어 AI에게 보낸 수정 요청입니다.";
   return `${title}\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
+}
+
+/**
+ * `### 바뀐 파일` 절 (저장·넘기기 목업 02): 이 사이클 브랜치의 numstat 을
+ * 개발자가 읽는 목록으로 — 행마다 ±수, 머리줄에 합계. 개발자는 PR 의
+ * Files 탭을 열기 전에 규모를 읽는다. 바이너리·이름 바꿈처럼 git 이 수를
+ * 주지 않는 행은 ± 없이 경로만 말한다 — 추측한 크기는 거짓말이다.
+ * 미리보기와 실제 본문이 같은 빌더를 지나므로 카드가 보여 준 것이 곧
+ * 개발자에게 간다.
+ */
+export function buildFilesSection(numstat: string, max = 60): string | null {
+  const rows = numstat
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const fields = line.split("\t");
+      const path = fields.slice(2).join("\t").trim();
+      if (!path) return null;
+      const added = Number.parseInt(fields[0] ?? "", 10);
+      const removed = Number.parseInt(fields[1] ?? "", 10);
+      return {
+        path,
+        added: Number.isNaN(added) ? null : added,
+        removed: Number.isNaN(removed) ? null : removed,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+  if (rows.length === 0) return null;
+  const shown = rows.slice(0, max);
+  const overflow = rows.length - shown.length;
+  const counted = rows.filter((row) => row.added !== null && row.removed !== null);
+  const totalAdded = counted.reduce((sum, row) => sum + (row.added ?? 0), 0);
+  const totalRemoved = counted.reduce((sum, row) => sum + (row.removed ?? 0), 0);
+  const lead =
+    counted.length > 0
+      ? `바뀐 파일 ${rows.length}개 · +${totalAdded} −${totalRemoved}`
+      : `바뀐 파일 ${rows.length}개`;
+  const lines = shown.map((row) =>
+    row.added === null || row.removed === null
+      ? `- ${row.path}`
+      : `- ${row.path} (+${row.added} −${row.removed})`,
+  );
+  const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
+  return `### 바뀐 파일\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }

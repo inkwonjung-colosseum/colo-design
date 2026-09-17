@@ -24,6 +24,7 @@ import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { ShortcutsSheet } from "../dialogs/ShortcutsSheet";
 import { HomeInbox } from "../home/HomeInbox";
+import { JourneyBoard } from "../journey/JourneyBoard";
 import { ScreenPanel } from "../panels/ScreenPanel";
 import { Palette } from "./Palette";
 import { Splitter } from "./Splitter";
@@ -78,6 +79,8 @@ export interface WorkspaceHandle {
   browseThreads: (slug: string) => void;
   /** 레일의 "홈" 행 — 지금 보는 대화가 무엇이든 홈 인박스로. */
   goHome: () => void;
+  /** 홈 아래의 "여정" 행 — 활성 프로젝트의 여정 허브로. */
+  goJourney: () => void;
 }
 
 /**
@@ -146,10 +149,10 @@ export function PageWorkspace({
 
   /**
    * 홈 ↔ 대화: 앱을 열 때·프로젝트를 막 활성화했을 때는 늘 홈이 기본값이다
-   * (P1 홈 인박스 스펙 §2) — 특정 스레드를 연 순간에만(openThreadById ·
+   * (P1 홈 인박스) — 특정 스레드를 연 순간에만(openThreadById ·
    * startNewThread) "thread"로 넘어간다.
    */
-  const [view, setView] = useState<"home" | "thread">("home");
+  const [view, setView] = useState<"home" | "thread" | "journey">("home");
   /**
    * 새 대화 버튼·⌘T 의 단일 통로 — "thread" 로 넘어가되 세션은 만들지 않는다
    * (fresh). 첫 입력 전까지 컴포저의 프로바이더 칩이 살아 있어 연결되고 켠
@@ -244,7 +247,13 @@ export function PageWorkspace({
   } | null>(null);
   useEffect(() => {
     const pending = jump.current;
-    if (!pending || daemon.activeSlug !== pending.slug) return;
+    if (!pending) return;
+    if (daemon.activeSlug !== pending.slug) {
+      // 등록부가 다른 슬러그에 정착했다 — 이 요청은 거둔다. 남겨 두면 나중에
+      // 그 슬러그로 돌아왔을 때 낡은 점프가 갑자기 재생된다.
+      jump.current = null;
+      return;
+    }
     jump.current = null;
     if (pending.threadId) void openThreadById(pending.threadId);
     else if (pending.fresh) void startNewThread();
@@ -289,7 +298,8 @@ export function PageWorkspace({
   };
 
   const jumpTo = (pending: { slug: string; threadId?: string; fresh?: boolean }) => {
-    if (jump.current) return;
+    // 기다린 점프가 이미 있어도 갈아끼운다 — 새 요청이 낡은 것보다 사용자의
+    // 최신 뜻이다. 조기 반환으로 버리면 두 번째 클릭이 소실된다.
     jump.current = pending;
     void daemon.api.projectActivate(pending.slug).catch(() => {
       jump.current = null;
@@ -373,11 +383,21 @@ export function PageWorkspace({
       setPalette(true);
     },
     goHome: () => setView("home"),
+    goJourney: () => setView("journey"),
   }));
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      // 오버레이가 열려 있는 동안 전역 조합은 물러선다 — 대화상자는 z-70
+      // 스크림 아래에 마운트되어 보이지 않는 채 포커스만 훔친다. 팔레트의
+      // 자기 토글(⌘K)만 예외다 — 그 키는 닫는 길이기도 하니까.
+      if (
+        document.querySelector(".modal, .palette") !== null &&
+        event.key !== "k" &&
+        event.key !== "K"
+      )
+        return;
       // ⌘⇧P: 핀 모드 토글 — shift 가 붙은 조합은 여기서 갈린다.
       // 미리보기에 포커스가 있는 동안에도 키 릴레이가 shiftKey 를 살려
       // 이 창으로 되말리므로, 워크스페이스의 이 한 곳이면 충분하다.
@@ -577,6 +597,13 @@ export function PageWorkspace({
 
   const moveResize = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!drag) return;
+    // 버튼이 이미 떼졌는데 move 가 흘러온다 — 포인터 캡처가 실패(혹은 브라우저가
+    // 조기에 놓은) 자리다. 끝으로 본다: 그렇지 않으면 drag 가 붙은 채 남아
+    // 나중의 hover 만으로 미리보기 폭이 흔들린다.
+    if (event.buttons === 0) {
+      endResize(event);
+      return;
+    }
     const bodyWidth = bodyRef.current?.clientWidth;
     if (!bodyWidth) return;
     const delta = event.clientX - drag.startX;
@@ -629,6 +656,13 @@ export function PageWorkspace({
           daemon={daemon}
           onOpenThread={(thread) => void openThreadById(thread.id)}
           onNewThread={() => void startNewThread()}
+        />
+      ) : view === "journey" ? (
+        <JourneyBoard
+          daemon={daemon}
+          sessionTitles={settings.sessionTitles}
+          activeThreadId={sessions.activeId}
+          onOpenThread={(thread) => void openThreadById(thread.id)}
         />
       ) : (
         <div
@@ -716,6 +750,7 @@ export function PageWorkspace({
           titleForThread={titleForThread}
           activeSessionId={sessions.activeId}
           projects={daemon.projects}
+          hiddenThreads={daemon.hiddenThreads}
           activeSlug={daemon.activeSlug}
           projectSlug={paletteSlug}
           onOpenThread={(slug, thread) => {

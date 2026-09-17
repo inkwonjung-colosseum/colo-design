@@ -2,7 +2,7 @@
  * 브라우저 MCP stdio 서버(browser-mcp.ts)와 기동 명세 빌더(browser-launch.ts)의
  * 단위 검사 — 가짜 데몬 HTTP 서버 위에서 돈다.
  *
- * 계약: initialize 악수 / tools/list 17개 / tools/call이 /internal/browser로
+ * 계약: initialize 악수 / tools/list 16개 / tools/call이 /internal/browser로
  * 올바른 op·params·Bearer 시크릿으로 중계 / 데몬의 401·404·ok:false가 isError
  * 도구 결과로 매핑 / 빌더의 3형태(claude 레코드·acp 배열·codex config 객체)가
  * 계약과 정확히 일치.
@@ -29,21 +29,20 @@ const MCP_SCRIPT = fileURLToPath(new URL("../dist/browser-mcp.js", import.meta.u
 const SECRET = "test-secret-0123456789";
 
 const TOOL_NAMES = [
-  "browser_list_tabs",
-  "browser_new_tab",
   "browser_navigate",
   "browser_snapshot",
   "browser_screenshot",
   "browser_click",
   "browser_fill",
+  "browser_type",
   "browser_press",
   "browser_scroll",
   "browser_hover",
   "browser_select",
+  "browser_drag",
   "browser_wait",
   "browser_console",
   "browser_evaluate",
-  "browser_close_tab",
   "browser_back",
   "browser_forward",
 ];
@@ -110,7 +109,7 @@ function startMcp(daemonUrl, secret) {
   };
 }
 
-test("initialize 악수와 tools/list의 17개 도구", async () => {
+test("initialize 악수와 tools/list의 16개 도구", async () => {
   const daemon = await startFakeDaemon((_req, res) => res.writeHead(404).end());
   const mcp = startMcp(daemon.url, SECRET);
   try {
@@ -127,7 +126,7 @@ test("initialize 악수와 tools/list의 17개 도구", async () => {
     assert.deepEqual(ping.result, {});
     const list = await mcp.rpc("tools/list");
     const names = list.result.tools.map((tool) => tool.name);
-    assert.equal(names.length, 17);
+    assert.equal(names.length, 16);
     assert.deepEqual(new Set(names), new Set(TOOL_NAMES));
     for (const tool of list.result.tools) {
       assert.equal(tool.inputSchema.type, "object", `${tool.name}의 inputSchema`);
@@ -148,7 +147,7 @@ test("tools/call이 /internal/browser로 op·params·시크릿을 중계한다",
     await mcp.rpc("initialize", {});
     const call = await mcp.rpc("tools/call", {
       name: "browser_navigate",
-      arguments: { url: "http://localhost:3000/members", tabId: "tab-2" },
+      arguments: { url: "http://localhost:3000/members" },
     });
     assert.equal(daemon.calls.length, 1);
     const seen = daemon.calls[0];
@@ -157,7 +156,7 @@ test("tools/call이 /internal/browser로 op·params·시크릿을 중계한다",
     assert.equal(seen.auth, `Bearer ${SECRET}`);
     assert.deepEqual(seen.body, {
       op: "navigate",
-      params: { url: "http://localhost:3000/members", tabId: "tab-2" },
+      params: { url: "http://localhost:3000/members" },
     });
     assert.equal(call.result.isError, undefined);
     assert.deepEqual(JSON.parse(call.result.content[0].text), { settled: true });
@@ -167,7 +166,7 @@ test("tools/call이 /internal/browser로 op·params·시크릿을 중계한다",
   }
 });
 
-test("이름이 다른 도구의 op 매핑 — fill→type, new_tab→openTab, wait→waitFor, console→consoleLines", async () => {
+test("이름이 다른 도구의 op 매핑 — fill→type, wait→waitFor, console→consoleLines", async () => {
   const daemon = await startFakeDaemon((_req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true, result: null }));
@@ -177,24 +176,19 @@ test("이름이 다른 도구의 op 매핑 — fill→type, new_tab→openTab, w
     await mcp.rpc("initialize", {});
     await mcp.rpc("tools/call", {
       name: "browser_fill",
-      arguments: { ref: "e3", text: "안녕", clear: false, tabId: "t9" },
-    });
-    await mcp.rpc("tools/call", {
-      name: "browser_new_tab",
-      arguments: { url: "http://example.com/", background: true },
+      arguments: { ref: "e3", text: "안녕", clear: false },
     });
     await mcp.rpc("tools/call", {
       name: "browser_wait",
       arguments: { text: "완료", ms: 500 },
     });
-    await mcp.rpc("tools/call", { name: "browser_console", arguments: { tabId: "t9" } });
+    await mcp.rpc("tools/call", { name: "browser_console", arguments: {} });
     assert.deepEqual(
       daemon.calls.map((call) => call.body),
       [
-        { op: "type", params: { ref: "e3", text: "안녕", clear: false, tabId: "t9" } },
-        { op: "openTab", params: { url: "http://example.com/", background: true } },
+        { op: "type", params: { ref: "e3", text: "안녕", clear: false } },
         { op: "waitFor", params: { text: "완료", ms: 500 } },
-        { op: "consoleLines", params: { tabId: "t9" } },
+        { op: "consoleLines", params: {} },
       ],
     );
   } finally {
@@ -237,7 +231,7 @@ test("시크릿 불일치 401과 pane 없음 404가 isError로 매핑된다", as
   const wrong = startMcp(daemon.url, "wrong-secret");
   try {
     const call = await wrong.rpc("tools/call", {
-      name: "browser_list_tabs",
+      name: "browser_snapshot",
       arguments: {},
     });
     assert.equal(call.result.isError, true);
@@ -248,7 +242,7 @@ test("시크릿 불일치 401과 pane 없음 404가 isError로 매핑된다", as
   const right = startMcp(daemon.url, SECRET);
   try {
     const call = await right.rpc("tools/call", {
-      name: "browser_list_tabs",
+      name: "browser_snapshot",
       arguments: {},
     });
     assert.equal(call.result.isError, true);
@@ -269,6 +263,7 @@ test("빌더의 3형태가 계약과 정확히 일치한다", () => {
   assert.deepEqual(entry.env, {
     COLO_DAEMON_URL: "http://127.0.0.1:7823",
     COLO_BROWSER_SECRET: "s3cret",
+    ELECTRON_RUN_AS_NODE: "1",
   });
 
   // claude — query options.mcpServers의 레코드 값.
@@ -276,7 +271,11 @@ test("빌더의 3형태가 계약과 정확히 일치한다", () => {
     type: "stdio",
     command: entry.command,
     args: entry.args,
-    env: { COLO_DAEMON_URL: "http://127.0.0.1:7823", COLO_BROWSER_SECRET: "s3cret" },
+    env: {
+      COLO_DAEMON_URL: "http://127.0.0.1:7823",
+      COLO_BROWSER_SECRET: "s3cret",
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   });
   // acp — session/new mcpServers의 배열 원소: command 절대경로·args·env 필수.
   assert.deepEqual(acpBrowserMcpServer(entry), {
@@ -287,13 +286,18 @@ test("빌더의 3형태가 계약과 정확히 일치한다", () => {
     env: [
       { name: "COLO_DAEMON_URL", value: "http://127.0.0.1:7823" },
       { name: "COLO_BROWSER_SECRET", value: "s3cret" },
+      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
     ],
   });
   // codex — thread/start config.mcp_servers의 표 객체.
   assert.deepEqual(codexBrowserMcpServer(entry), {
     command: entry.command,
     args: entry.args,
-    env: { COLO_DAEMON_URL: "http://127.0.0.1:7823", COLO_BROWSER_SECRET: "s3cret" },
+    env: {
+      COLO_DAEMON_URL: "http://127.0.0.1:7823",
+      COLO_BROWSER_SECRET: "s3cret",
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   });
   // 팩토리 미주입 → null — 세션은 브라우저 도구 없이 열린다.
   assert.equal(browserMcpEntry(false, "http://127.0.0.1:7823", "s3cret"), null);

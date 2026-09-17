@@ -1,24 +1,16 @@
-import type { ThreadSummary } from "@colo-design/protocol";
-import { useEffect, useMemo, useRef } from "react";
+import { BOOTSTRAP_THREAD_TITLE, type ThreadSummary } from "@colo-design/protocol";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { buildHomeFeed } from "../../lib/home-feed";
 import { markSeenNow, readLastSeen } from "../../lib/last-seen";
+import { visibleThreads } from "../../lib/thread-visibility";
+import { ChevronRightIcon } from "../icons";
 import { DecisionCard } from "./DecisionCard";
+import { DigestBanner } from "./DigestBanner";
 import { DoneCard } from "./DoneCard";
 import { EmptyHome } from "./EmptyHome";
 import { OtherProjectsCard } from "./OtherProjectsCard";
 import { ProgressCard } from "./ProgressCard";
-import { ReturnBanner } from "./ReturnBanner";
-
-/** 그룹 헤더 한 줄 — 카운트가 0이면 그룹째로 숨기므로(§1) 여기선 항상 1 이상. */
-function GroupHeader({ label, count }: { label: string; count: number }) {
-  return (
-    <div className="home-glabel">
-      {label} <span className="home-gcount">{count}</span>
-      <span className="home-gline" />
-    </div>
-  );
-}
 
 function HomeSkeleton() {
   return (
@@ -37,6 +29,10 @@ function HomeSkeleton() {
  * 앱의 문 — 켤 때마다, 또는 자리를 비웠다 돌아왔을 때 랜딩하는 화면
  * (`mockups/hero/home.html`). v1은 활성 프로젝트로 스코프를 좁힌다: 비활성
  * 프로젝트는 살아 있는 세션이 없어 웹소켓 브로드캐스트가 오지 않는다(§3).
+ *
+ * 구조는 목업 13: 위에는 이름을 부르는 요약 문단(DigestBanner), 그 아래 답을
+ * 기다리는 결정 카드만 온전히 서고, 진행 중·완료·다른 프로젝트는 한 단 접힌
+ * 폴드 안에 둔다 — 결정이 필요한 것만 첫 화면에 남기기 위해서.
  */
 export function HomeInbox({
   daemon,
@@ -60,9 +56,9 @@ export function HomeInbox({
   const lastSeenAt = useRef<number | null>(null);
   if (lastSeenAt.current === null) lastSeenAt.current = readLastSeen();
   useEffect(() => {
-    markSeenNow();
     // 마운트 시 한 번만 — 이 방문이 끝나기 전에 배너 기준이 앞으로 밀리면
     // "0분 만에 돌아오셨어요"가 된다.
+    markSeenNow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -70,6 +66,8 @@ export function HomeInbox({
     () => buildHomeFeed(daemon.pending, daemon.sessions, daemon.projects, daemon.activeSlug),
     [daemon.pending, daemon.sessions, daemon.projects, daemon.activeSlug],
   );
+
+  const [restOpen, setRestOpen] = useState(false);
 
   const openSession = (sessionId: string) => {
     const thread = activeProject?.threads?.find((entry) => entry.id === sessionId);
@@ -87,6 +85,26 @@ export function HomeInbox({
   // 영웅 블록의 "쌓인 일이 없어요"는 정말 아무 데도 없을 때만 정직하다(§5).
   const fullyEmpty = empty && feed.otherProjects.length === 0;
 
+  // 이어하기 카드의 원천 — 준비 기록 스레드는 대화가 아니라 scaffold 라 뺀다.
+  // 낙관 삭제의 숨김도 같은 규칙으로 거둔다 — 사이드바가 안 보여주는 행이
+  // 홈의 카드에 남으면 지운 대화가 되살아난다.
+  const recentThreads = visibleThreads(
+    activeProject.threads,
+    daemon.hiddenThreads,
+    activeProject.slug,
+  )
+    .filter((thread) => thread.title !== BOOTSTRAP_THREAD_TITLE)
+    .slice(0, 3);
+
+  const restCount = feed.running.length + feed.done.length + feed.otherProjects.length;
+  const foldLabel = [
+    feed.running.length > 0 && "지금 진행 중",
+    feed.done.length > 0 && "방금 있던 일",
+    feed.otherProjects.length > 0 && "다른 프로젝트",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="home-work">
       <div className={connectionLost ? "home-col home-col--stale" : "home-col"}>
@@ -95,80 +113,75 @@ export function HomeInbox({
             lastSeenAt={lastSeenAt.current}
             connectionLost={connectionLost}
             onNewThread={onNewThread}
-            hasThreads={(activeProject.threads?.length ?? 0) > 0}
+            threads={recentThreads}
+            onOpenThread={onOpenThread}
           />
         ) : (
-          <ReturnBanner
+          <DigestBanner
             lastSeenAt={lastSeenAt.current}
-            counts={{
-              asking: feed.asking.length,
-              running: feed.running.length,
-              done: feed.done.length,
-            }}
+            feed={feed}
             connectionLost={connectionLost}
+            onOpenSession={openSession}
           />
         )}
 
-        {feed.asking.length > 0 && (
-          <>
-            <GroupHeader label="나를 기다리는 일" count={feed.asking.length} />
-            {feed.asking.map((item) => (
-              <DecisionCard
-                key={item.kind === "review" ? `review-${item.sessionId}` : item.requestId}
-                item={item}
-                repoReady={repoReady}
-                commands={daemon.repo?.commands}
-                onOpenThread={() => openSession(item.sessionId)}
-                onQuickPick={(label) => {
-                  if (item.kind !== "question" || !item.quote) return;
-                  void daemon.api.respondQuestion(item.requestId, { [item.quote]: label }, {});
-                  daemon.resolvePending(item.requestId);
-                }}
-                onRespondPermission={(decision, message) => {
-                  if (item.kind !== "permission") return;
-                  void daemon.api.respondPermission(item.requestId, decision, message);
-                  daemon.resolvePending(item.requestId);
-                }}
-              />
-            ))}
-          </>
-        )}
+        {feed.asking.map((item) => (
+          <DecisionCard
+            key={item.kind === "review" ? `review-${item.sessionId}` : item.requestId}
+            item={item}
+            repoReady={repoReady}
+            commands={daemon.repo?.commands}
+            onOpenThread={() => openSession(item.sessionId)}
+            onQuickPick={(label) => {
+              if (item.kind !== "question" || !item.quote) return;
+              void daemon.api.respondQuestion(item.requestId, { [item.quote]: label }, {});
+              daemon.resolvePending(item.requestId);
+            }}
+            onRespondPermission={(decision, message) => {
+              if (item.kind !== "permission") return;
+              void daemon.api.respondPermission(item.requestId, decision, message);
+              daemon.resolvePending(item.requestId);
+            }}
+          />
+        ))}
 
-        {feed.running.length > 0 && (
-          <>
-            <GroupHeader label="지금 진행 중" count={feed.running.length} />
-            {feed.running.map((item) => (
-              <ProgressCard
-                key={item.sessionId}
-                item={item}
-                repoReady={repoReady}
-                onOpen={() => openSession(item.sessionId)}
-              />
-            ))}
-          </>
-        )}
-
-        {feed.done.length > 0 && (
-          <>
-            <GroupHeader label="방금 있던 일" count={feed.done.length} />
-            {feed.done.map((item) => (
-              <DoneCard
-                key={item.sessionId}
-                item={item}
-                repoReady={repoReady}
-                onOpen={() => openSession(item.sessionId)}
-              />
-            ))}
-          </>
-        )}
-
-        <OtherProjectsCard
-          items={feed.otherProjects}
-          onOpen={(slug) => void daemon.api.projectActivate(slug).catch(() => undefined)}
-        />
-
-        {!fullyEmpty && (
-          <p className="home-empty">여기까지예요. 새 일이 생기면 맨 위에 쌓아 둘게요.</p>
+        {!fullyEmpty && restCount > 0 && (
+          <div className="home-fold">
+            <button
+              type="button"
+              className="home-fold__head"
+              aria-expanded={restOpen}
+              onClick={() => setRestOpen((open) => !open)}
+            >
+              <ChevronRightIcon />
+              {foldLabel}
+              <span className="home-fold__count">{restCount}</span>
+            </button>
+            {restOpen && (
+              <div className="home-fold__body">
+                {feed.running.map((item) => (
+                  <ProgressCard
+                    key={item.sessionId}
+                    item={item}
+                    repoReady={repoReady}
+                    onOpen={() => openSession(item.sessionId)}
+                  />
+                ))}
+                {feed.done.map((item) => (
+                  <DoneCard
+                    key={item.sessionId}
+                    item={item}
+                    repoReady={repoReady}
+                    onOpen={() => openSession(item.sessionId)}
+                  />
+                ))}
+                <OtherProjectsCard
+                  items={feed.otherProjects}
+                  onOpen={(slug) => void daemon.api.projectActivate(slug).catch(() => undefined)}
+                />
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

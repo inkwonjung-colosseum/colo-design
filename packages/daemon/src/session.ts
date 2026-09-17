@@ -59,11 +59,23 @@ interface PendingRequest {
   blocking: boolean;
 }
 
-/** A send waiting for the next turn (PLAN D86), exactly as `send` received it. */
+/** 핀 하나 — 세션은 봉투만 알고 화면 게이트는 서버가 옮긴다. */
+export interface SessionPin {
+  screen: string;
+  state: string | null;
+}
+
+/**
+ * A send waiting for the next turn (PLAN D86), exactly as `send` received it —
+ * pins 포함. 핀은 받은 시점이 아니라 `deliver` 되는 시점에 게이트 입력이
+ * 된다: 대기 핀을 턴 시작 때 미리 지우면, 그 핀을 실어 보낼 턴의 게이트
+ * 입력이 사라진다(실사 결함 — 대기 줄의 핀이 영구 미검증).
+ */
 interface HeldSend {
   id: string;
   text: string;
   images: Array<{ mediaType: string; data: string }>;
+  pins: SessionPin[];
 }
 
 /** The wire shape of a waiting send: words and counts, never the bytes. */
@@ -114,6 +126,12 @@ export class PermissionMemory {
 export interface SessionEvents {
   onEvent: (sessionId: string, event: ChatEvent) => void;
   onState: (sessionId: string, state: SessionState, detail?: string) => void;
+  /**
+   * 말이 실제로 CLI 로 나가는 시점(deliver)의 핀 목록 — 서버가 화면 게이트의
+   * 입력으로 옮겨 적는다. 받은 시점이 아닌 나가는 시점인 이유는 HeldSend 의
+   * 주석: 대기 중인 말의 핀은 그 말을 실은 턴의 것이어야 한다.
+   */
+  onPinned?: (sessionId: string, pins: SessionPin[]) => void;
   onPermissionRequest: (payload: {
     requestId: string;
     sessionId: string;
@@ -226,13 +244,22 @@ const GIT_WRITE_REFUSAL =
 function writesGitHistory(command: string): boolean {
   if (!/\bgit\b/.test(command)) return false;
   // 상태를 바꾸는 동사는 전부 막는다 — 커밋·푸시만이 아니라 reset·checkout·
-  // merge·config(hooks 경로를 바꿀 수 있다)도 저장 검토가 읽는 상태를 흔든다.
+  // merge 도 저장 검토가 읽는 상태를 흔든다.
   if (
-    /\b(commit|push|reset|rebase|update-ref|clean|checkout|restore|switch|am|cherry-pick|revert|merge|pull|apply|config|rm|mv|init)\b/.test(
+    /\b(commit|push|reset|rebase|update-ref|clean|checkout|restore|switch|am|cherry-pick|revert|merge|pull|apply|rm|mv|init)\b/.test(
       command,
     )
   ) {
     return true;
+  }
+  // config 도 읽기 형태가 있다 — --get·--list 같은 조회는 열어 두고(hooks
+  // 경로를 읽는 일은 무해하다), 그 밖은 전부 쓰기로 본다: 값을 심는 기본형
+  // 부터 --unset·--edit 까지. 깃발 앞에 \b 를 못 붙인다 — `-` 는 비단어라
+  // 경계가 서지 않는다.
+  if (/\bconfig\b/.test(command)) {
+    return !/\bconfig\b[\s\S]*?(?:--get(?:-all|-regexp|-urlmatch|-color|-colorbool)?|--list|-l)\b/.test(
+      command,
+    );
   }
   // stash·tag·branch 는 읽기 형태가 있다 — list·show·나열은 열어 두고,
   // 쓰기 형태(pop·drop·생성·삭제)만 막는다.
@@ -267,8 +294,9 @@ export class Session {
    * the driver's own ids (ACP `build`/`plan`/…) for everyone else.
    */
   permissionMode: string = "default";
-  /** The provider's display name for crash/error strings. */
-  private readonly providerLabel: string;
+  /** The provider's display name for crash/error strings — dispatch's
+   *  resurrect path reads it off a dead session. */
+  readonly providerLabel: string;
   /** The provider's plan-mode id; null = the provider has no plan mode. */
   private readonly planModeId: string | null;
   /** The mode a fresh session starts on — the plan-approval restore target. */
@@ -320,7 +348,7 @@ export class Session {
    * 질의가 저 혼자 죽었다 — 중지도 종료도 아닌 예외(CLI 크래시). aborted 와
    * 같은 규칙이 이 사유에도 걸린다: 죽은 질의의 큐를 소비할 이는 없으니
    * 직접 send 하면 조용히 삼켜지는 대신 거절로 돌아간다. 서버는 이 사유를
-   * 알아차려 같은 id 의 재개로 대신 전달한다(deliverTurn) — 크래시 카드의
+   * 알아차려 같은 id 의 재개로 대신 전달한다(resurrectSession) — 크래시 카드의
    * "다시 보내면 이어집니다" 약속을 데몬이 이행하는 길이다.
    */
   private crashed = false;
@@ -419,6 +447,11 @@ export class Session {
     if (event.kind === "init") {
       this.model = event.model;
       this.permissionMode = event.permissionMode;
+    }
+    if (event.kind === "tool.start") {
+      // 도는 도구의 경과 시계는 여기서 뜬다 — 재생된 기록은 이 길을 지나지
+      // 않으니(드라이버 store 가 대화록 시각을 직접 싣는다) 덮어쓸 일이 없다.
+      event = { ...event, startedAt: event.startedAt ?? Date.now() };
     }
     if (event.kind === "turn.end" && event.costUsd != null) {
       this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
@@ -580,9 +613,10 @@ export class Session {
     this.disk?.saveHeld(this.held);
     // 대기 줄이 여는 턴은 새 요청이다 — 새 시계를 받는다.
     this.turnStartedAt = Date.now();
+    // send 와 같은 이유 — 핀이 onPinned 로 적힌 뒤 지워지지 않게 상태를 먼저 본다.
+    this.setState("running");
     for (const item of batch) this.deliver(item);
     this.announceHeld();
-    this.setState("running");
   }
 
   /**
@@ -630,7 +664,13 @@ export class Session {
     this.held.splice(this.held.indexOf(item), 1);
     this.disk?.saveHeld(this.held);
     this.announceHeld();
-    return { text: item.text, images: item.images };
+    // pins 는 프로토콜 타입에 아직 자리가 없다(회귀 보고에 기록) — 되살린 말이
+    // 다시 나갈 때 게이트 입력을 잃지 않게 바이트로만 동행한다.
+    return {
+      text: item.text,
+      images: item.images,
+      ...(item.pins.length > 0 ? { pins: item.pins } : {}),
+    };
   }
 
   /**
@@ -715,6 +755,27 @@ export class Session {
     return this.handlePermission(tool, input, opts);
   }
 
+  /**
+   * The browser gate (인앱 브라우저의 표면 판정): an agent browser op aimed
+   * OUTSIDE the repo's own surface — a page the planner merely roamed to —
+   * asks before it runs. Every op can carry that page's content out (a
+   * scroll answers with the whole tree), so the ask is not per-op; the
+   * repo's own dev server needs no ask (the DevTools console is the same
+   * tier). The card IS the tool-permission flow, so 항상 허용 memory
+   * applies. A turn need not be running: settle 가 running 으로 놓은 상태는
+   * 턴이 없으면 여기서 거둔다.
+   */
+  async decideBrowserOp(
+    op: string,
+    signal: AbortSignal,
+  ): Promise<{ allowed: boolean; message: string | null }> {
+    const verdict = await this.handlePermission({ kind: "other", name: op }, { op }, { signal });
+    if (this.turnStartedAt === null && this.state === "running") this.setState("idle");
+    return verdict.behavior === "allow"
+      ? { allowed: true, message: null }
+      : { allowed: false, message: verdict.message };
+  }
+
   private handlePermission(
     tool: ToolClass,
     input: Record<string, unknown>,
@@ -731,9 +792,12 @@ export class Session {
     const requestedAt = Date.now();
 
     return new Promise<PermissionVerdict>((resolve) => {
+      const onAbort = () => settle({ behavior: "deny", message: "Request cancelled" });
       const settle = (outcome: PermissionVerdict) => {
         if (!this.pending.has(requestId)) return;
         this.pending.delete(requestId);
+        // 정상 정산에도 청취를 거둔다 — 세션 수명의 signal 위에 리스너가 쌓이는 것을 막는다.
+        opts.signal.removeEventListener("abort", onAbort);
         if (this.pending.size === 0 && this.state !== "closed" && this.state !== "error") {
           this.setState("running");
         }
@@ -755,11 +819,7 @@ export class Session {
       });
 
       // If the query is torn down while a human is deciding, stop waiting.
-      opts.signal.addEventListener(
-        "abort",
-        () => settle({ behavior: "deny", message: "Request cancelled" }),
-        { once: true },
-      );
+      opts.signal.addEventListener("abort", onAbort, { once: true });
 
       // 요청 먼저, 상태는 나중: "기다림" 상태를 읽는 소비자(웹의 네이티브
       // 알림 판정)는 그 상태의 원인인 요청 데이터를 이미 갖고 있어야 한다.
@@ -951,7 +1011,11 @@ export class Session {
     return true;
   }
 
-  send(text: string, images?: Array<{ mediaType: string; data: string }>): void {
+  send(
+    text: string,
+    images?: Array<{ mediaType: string; data: string }>,
+    pins?: SessionPin[],
+  ): void {
     if (this.closed) throw new Error("닫힌 대화입니다 — 목록에서 다시 열면 이어갑니다.");
     if (this.aborted)
       throw new Error("중지 요청에 답하지 않은 CLI를 끊었습니다 — 대화를 다시 열면 이어갑니다");
@@ -960,7 +1024,7 @@ export class Session {
         `${this.providerLabel}가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다`,
       );
     this.lastActivity = Date.now();
-    const item: HeldSend = { id: randomUUID(), text, images: images ?? [] };
+    const item: HeldSend = { id: randomUUID(), text, images: images ?? [], pins: pins ?? [] };
     // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
     // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
     if (this.turnStartedAt !== null) {
@@ -970,8 +1034,10 @@ export class Session {
       return;
     }
     this.turnStartedAt = Date.now();
-    this.deliver(item);
+    // 상태가 먼저: deliver 가 부르는 onPinned 이 서버의 pinnedThisTurn 에 적힌
+    // 뒤 running 진입이 그 판을 지우면 화면 게이트는 판정을 못 받는다.
     this.setState("running");
+    this.deliver(item);
   }
 
   /**
@@ -980,10 +1046,13 @@ export class Session {
    * none of this yet, so taking it back out of the room leaves no trace, and
    * the running turn keeps its own quota and interrupt flag until its end.
    */
-  private deliver({ text, images }: HeldSend): void {
+  private deliver({ text, images, pins }: HeldSend): void {
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
+    // 이 턴이 가리킨 화면이 곧 게이트의 입력이다 — 받을 때가 아니라 나갈 때
+    // 기록되므로, 대기 줄에 섞였던 핀은 자기 턴의 판정을 받는다.
+    if (pins.length > 0) this.events.onPinned?.(this.id, pins);
 
     /**
      * A thread names itself after its first turn — unless the tool wrote that
@@ -1000,7 +1069,29 @@ export class Session {
       this.title = title.slice(0, 80);
     }
 
-    void this.agent?.send({ text, images }).catch(() => undefined);
+    void this.agent?.send({ text, images }).catch((error: unknown) => {
+      // 전송이 살아 있어도 보내기가 거절될 수 있다(codex 의 turn/start 거절,
+      // 방금 닫힌 SDK 입력 큐). 삼키면 turnStartedAt 만 남고 turn.end 는
+      // 영원히 오지 않는다 — 시계가 도는 죽은 턴. 여기서 스스로 턴을 닫는다:
+      // 에러 턴 끝은 handleDriverEvent 의 endTurn 을 타고 대기 줄까지 정산한다.
+      const detail = error instanceof Error ? error.message : String(error);
+      this.events.onEvent(this.id, {
+        kind: "notice",
+        level: "error",
+        text: `${this.providerLabel}에게 말을 전달하지 못했습니다 — 다시 보내 주세요.${
+          detail ? `\n\n${detail.slice(0, 200)}` : ""
+        }`,
+      });
+      this.handleDriverEvent({
+        kind: "turn.end",
+        subtype: "error",
+        isError: true,
+        costUsd: null,
+        numTurns: null,
+        durationMs: this.turnStartedAt !== null ? Date.now() - this.turnStartedAt : null,
+        resultText: null,
+      });
+    });
 
     // The echo carries the person's own words. D87: the pin crops ride back
     // (capped) so the chat card can draw its thumbnails — live only; a

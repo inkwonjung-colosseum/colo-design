@@ -13,7 +13,7 @@ import {
   markTurn,
 } from "@colo-design/protocol";
 import { readComments } from "./comments.js";
-import { buildCommentsSection } from "./handoff-body.js";
+import { buildCommentsSection, buildFilesSection } from "./handoff-body.js";
 import type { RepoCore } from "./repo-core.js";
 import {
   BRANCH_PREFIX,
@@ -150,7 +150,11 @@ export class PublishCycle {
       // A push retry carries no fresh diff — the saved card names the files
       // the waiting commits already hold.
       if (retryPush) {
-        retryFiles = (await this.core.git(["diff", "--name-only", range]).catch(() => ""))
+        retryFiles = (
+          await this.core
+            .git(["-c", "core.quotepath=false", "diff", "--name-only", range])
+            .catch(() => "")
+        )
           .split("\n")
           .map((path) => path.trim())
           .filter(Boolean);
@@ -180,9 +184,16 @@ export class PublishCycle {
     // Commit exactly the paths the planner approved — never `git add -A`, so
     // unreviewed output cannot ride along in the save.
     this.core.setDiff({ stage: "pushing" });
+    // 브랜치 준비와 커밋은 push 와 다른 단계다 — 둘을 한 gate 로 보내면
+    // 커밋 실패의 원인을 "올리기" 에서 찾게 된다.
+    let branch: string;
     try {
-      const branch = await this.ensureCycleBranch();
+      branch = await this.ensureCycleBranch();
       if (memo !== null) await this.commitApproved(memo, approved);
+    } catch (error) {
+      return this.failGate("commit", error, options.onSessionTurn);
+    }
+    try {
       await this.core.git(["push", "--set-upstream", "origin", branch]);
     } catch (error) {
       return this.failGate("push", error, options.onSessionTurn);
@@ -298,6 +309,24 @@ export class PublishCycle {
     this.core.setDiff({ stage: "handing-off" });
     const title = options.title?.trim() || DEFAULT_HANDOFF_TITLE;
     let body = options.body ?? "";
+    // 저장·넘기기 목업 02: the cycle's own numstat rides the body — the
+    // developer reads the scale before opening the Files tab, and the
+    // preview card shows this same string so nothing is promised that does
+    // not ship. A range that will not diff costs only the section.
+    try {
+      const filesSection = buildFilesSection(
+        await this.core.git([
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--numstat",
+          `origin/${this.core.baseBranch}..${branch}`,
+        ]),
+      );
+      if (filesSection) body = `${body.replace(/\n*$/, "")}\n\n${filesSection}`;
+    } catch {
+      // The handoff itself carries the work.
+    }
     // D93: the planner's comment history rides the pull request body — the
     // developer reads what changed and why without leaving the PR.
     // D93 후속: the anchor is the CYCLE's birth (project creation or the
@@ -320,20 +349,24 @@ export class PublishCycle {
       // D56: the captures join the branch first, so the body can link files
       // the developer will really find in it.
       body = await this.attachShots(body, options.shots, branch);
-      const pull = this.core.openHandoff
-        ? await client.updatePullRequest({
-            ...slug,
-            number: this.core.openHandoff.number,
-            title,
-            body,
-          })
-        : await client.createPullRequest({
-            ...slug,
-            head: branch,
-            base: this.core.baseBranch,
-            title,
-            body,
-          });
+      // 열린 요청의 head 가 지금 브랜치일 때만 덮어쓴다 — 새 사이클 브랜치에서
+      // reopened 요청의 옛 head 를 고쳐 쓰면 보이지 않는 곳의 커밋을 고른다.
+      const open = this.core.openHandoff;
+      const pull =
+        open && open.branch === branch
+          ? await client.updatePullRequest({
+              ...slug,
+              number: open.number,
+              title,
+              body,
+            })
+          : await client.createPullRequest({
+              ...slug,
+              head: branch,
+              base: this.core.baseBranch,
+              title,
+              body,
+            });
       const handoff: HandoffStatus = pull;
       this.core.setCycle(branch, handoff);
       const status = this.core.setDiff({ stage: "handed-off", handoff });
@@ -357,9 +390,8 @@ export class PublishCycle {
    * D56: writes the server's captures under `.colo-design/shots/`, commits and
    * pushes them on this cycle's branch, and returns the body with a
    * `### 화면 미리보기` section linking each one. Nothing here can fail the
-   * handoff: the work is already saved — a set the repo refused
-   * (`shots: false`) or a commit that would not land quietly leaves the body
-   * without the section.
+   * handoff: the work is already saved — an empty set or a commit that would
+   * not land quietly leaves the body without the section.
    */
   private async attachShots(
     body: string,
@@ -368,7 +400,7 @@ export class PublishCycle {
   ): Promise<string> {
     if (!shots || shots.length === 0) return body;
     const slug = this.core.repoSlug();
-    if (!slug || this.core.repoConfig()?.shots === false) return body;
+    if (!slug) return body;
     const links: string[] = [];
     try {
       // The captures must join the branch the pull request is from — a
@@ -380,15 +412,20 @@ export class PublishCycle {
         // A route keeps its Korean; only its path separators become dashes.
         // Route AND state pass the same gate — a state is a wire value too,
         // and `..` or a separator would walk the name out of SHOTS_DIR.
-        // The extension is the capture's own — see HandoffShot.
-        const name = `${shotNamePart(shot.route)}--${shotNamePart(shot.state)}${shot.extension}`;
+        // The extension is the capture's own — see HandoffShot. 파일 이름에서만
+        // null 이 "default" 로 정착한다 — 커밋과 조회가 같은 규칙을 쓰면 된다.
+        const name = `${shotNamePart(shot.route)}--${shotNamePart(shot.state ?? "default")}${shot.extension}`;
         writeFileSync(join(this.core.root, SHOTS_DIR, name), shot.image);
         await this.core.git(["add", "--", `${SHOTS_DIR}/${name}`]);
         // Only the url's spaces are escaped — a Korean route reads as itself.
         const url =
           `https://github.com/${slug.owner}/${slug.repo}/blob/${branch}/` +
           `${SHOTS_DIR}/${name.replaceAll(" ", "%20")}`;
-        links.push(`- [\`${shot.route} · ${shot.state}\`](${url})`);
+        links.push(
+          shot.state === null
+            ? `- [\`${shot.route}\`](${url})`
+            : `- [\`${shot.route} · ${shot.state}\`](${url})`,
+        );
       }
       // An identical set is a no-op: a re-handoff after a mere retitle must
       // not invent an empty commit.
@@ -408,27 +445,28 @@ export class PublishCycle {
   }
 
   /**
-   * 보낸 화면 동결 (preview.md §1-E): one committed capture, read out of the
+   * 보낸 화면 동결: one committed capture, read out of the
    * handoff branch with `git show` — never the worktree, so the frozen stage
    * keeps showing '보낸 그대로' after the work moved on, was 반려'd, or the
    * clone went back to the base. The remote ref is tried first: a merged
    * cycle's local branch may already be gone while `origin/` still holds it.
-   * Null is the honest answer for every absence — a repo that refused shots
-   * (`shots: false`), a capture that failed, a branch nobody pushed.
+   * Null is the honest answer for every absence — a capture that failed, a
+   * branch nobody pushed.
    */
   async handoffShot(
     route: string,
-    state: string,
+    state: string | null,
   ): Promise<{ mediaType: string; data: string } | null> {
     if (!this.core.isCloned()) return null;
     const branch = this.core.openHandoff?.branch ?? this.endedHandoff?.branch ?? null;
     if (!branch) return null;
     // The same name attachShots wrote — route and state pass the same
-    // normalization so the lookup matches what was committed.
-    const name = `${shotNamePart(route)}--${shotNamePart(state)}`;
+    // normalization so the lookup matches what was committed. null 도 커밋
+    // 쪽과 같은 규칙으로 "default" 에 정착한다.
+    const name = `${shotNamePart(route)}--${shotNamePart(state ?? "default")}`;
     for (const ref of [`origin/${branch}`, branch]) {
       const listing = await this.core
-        .git(["ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
+        .git(["-c", "core.quotepath=false", "ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
         .catch(() => "");
       const file = listing
         .split("\n")
@@ -542,6 +580,20 @@ export class PublishCycle {
    * 요청으로 다시 제안한다** (커미티 2026-09-15 판정 2).
    */
   private async landCycle(handoff: HandoffStatus): Promise<void> {
+    // 재착지 금지: branch 가 비었고 같은 요청이 이미 같은 끝 상태로 열려 있으면
+    // 착지는 지난번에 끝났다 — refreshHandoff 가 매번 다시 부를 때마다
+    // rotateCommentsCycle 이 핀 앵커를 옮기고 clearCheckpoints 가 새 턴의
+    // 체크포인트를 지우는 일을 막는다.
+    const seated = this.core.openHandoff;
+    if (
+      this.core.branch === null &&
+      seated !== null &&
+      (seated.state === "merged" || seated.state === "closed") &&
+      seated.state === handoff.state &&
+      seated.number === handoff.number
+    ) {
+      return;
+    }
     try {
       await this.core.git(["fetch", "origin", this.core.baseBranch]);
       // 저장 안 한 변경은 실어 나르지 않는다: 병합 직후엔 양쪽 블롭이 같아
@@ -552,9 +604,12 @@ export class PublishCycle {
       await this.core.git(["checkout", this.core.baseBranch]);
       if (!dirty) await this.core.git(["reset", "--hard", `origin/${this.core.baseBranch}`]);
     } catch (error) {
-      // A dirty worktree can refuse the checkout. The request really did end,
-      // so report that; the next session-start merge picks the base up anyway.
+      // A dirty worktree can refuse the checkout. Forgetting the cycle here
+      // would strand HEAD on the ended branch — the next save's `checkout -B`
+      // would carry its rejected commits into a new PR. The cycle stays, so
+      // the next landing attempt retries the move to the base first.
       this.core.setDetail(detailOf(error, this.core.pat));
+      return;
     }
     this.endedHandoff = null;
     this.core.setCycle(null, handoff);

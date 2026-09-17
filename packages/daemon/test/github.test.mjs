@@ -335,10 +335,7 @@ test("listRepos throws with the picker's line when a page fails", async () => {
 });
 
 test("the contents probes read the dev script before any clone", async () => {
-  const withDev = new GitHubClient(
-    TOKEN,
-    new FixtureTransport([byName("contents-package-json")]),
-  );
+  const withDev = new GitHubClient(TOKEN, new FixtureTransport([byName("contents-package-json")]));
   const both = { owner: "colo-org", repo: "payments-web" };
   assert.equal(await withDev.hasDevScript(both), true);
 

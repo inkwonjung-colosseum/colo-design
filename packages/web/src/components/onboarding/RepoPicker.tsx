@@ -6,12 +6,14 @@ import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { FolderIcon, FolderPlusIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
-/** `https://github.com/o/r(.git)` → `o/r`, for matching a project's stored url. */
+/** `https://github.com/o/r(.git)(/)` → `o/r`, for matching a project's stored url. */
 function normalizeUrl(url: string): string {
+  // 꼬리 슬래시를 먼저 깎는다 — .git 을 먼저 깎으면 `…/r.git/` 이 그대로 남아
+  // 같은 레포가 둘로 읽힌다.
   return url
     .trim()
-    .replace(/\.git$/i, "")
-    .replace(/\/+$/, "");
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "");
 }
 
 /** The picker's one timestamp, in the coarse units a planner scans by. */
@@ -29,8 +31,8 @@ function relativeTime(iso: string | null): string {
 /**
  * A github.com url's owner/repo, or null for anything else. The manual path
  * uses it to run the same pre-clone inspection the list rows get:
- * a url the token can inspect is a url whose `colo-design.json` we can check
- * before the download, and whose default branch we can name.
+ * a url whose dev script, push access and default branch we can name
+ * before the download.
  */
 function githubSlugOf(url: string): { owner: string; repo: string } | null {
   const match = /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(url.trim());
@@ -53,7 +55,7 @@ type Inspection =
  * Adding a project: not a url field but the list of repos the stored token
  * can push to — a read-only clone could start work but never hand it over,
  * so those rows never render. Picking one judges it before any
- * clone — `colo-design.json` presence is what separates a project from
+ * clone — a dev script and push access are what separate a project from
  * minutes of downloading into a dead end — and a repo the list cannot see
  * still gets in through the folded manual url.
  *
@@ -65,12 +67,16 @@ export function RepoPicker({
   daemon,
   onCreated,
   onOpenSettings,
+  onInspection,
 }: {
   daemon: Daemon;
   /** Runs once `project.create` answered — the dialog closes on it. */
   onCreated?: () => void;
   /** Opens 설정 where a missing token is entered. */
   onOpenSettings?: (category?: SettingsCategory) => void;
+  /** 검사가 답하면 호스트에 알린다 — 시작 마법사가 레포 단계의 주의 배지를
+      붙이는 근거. 고르기 전·해제 때는 null. */
+  onInspection?: (result: Pick<GitHubRepoInspection, "hasDevScript" | "canPush"> | null) => void;
 }) {
   // A token that never passed the gate cannot list anything; saying so beats
   // an empty list that looks like "no repos".
@@ -166,13 +172,17 @@ export function RepoPicker({
     setName(repo.name);
     setCreateError(null);
     setInspection({ phase: "checking" });
+    onInspection?.(null);
     daemon.api
       .githubRepoInspect(repo.owner, repo.name)
       .then((result) => {
         // Only the still-selected repo may paint the answer; a fast earlier
         // response must not outrun a slower one for a repo picked later.
         setSelected((current) => {
-          if (current?.fullName === repo.fullName) setInspection({ phase: "ready", result });
+          if (current?.fullName === repo.fullName) {
+            setInspection({ phase: "ready", result });
+            onInspection?.({ hasDevScript: result.hasDevScript, canPush: result.canPush });
+          }
           return current;
         });
       })
@@ -238,8 +248,12 @@ export function RepoPicker({
       const repo = rows[highlight];
       if (!addedUrls.has(normalizeUrl(repo.cloneUrl))) pick(repo);
     } else if (e.key === "Escape") {
+      // 검색창의 지움은 검색의 몫이다 — 같은 키가 위 대화상자까지 닫지 않게
+      // 전파를 끊는다.
+      e.stopPropagation();
       setSelected(null);
       setInspection(null);
+      onInspection?.(null);
     }
   };
 
@@ -248,13 +262,20 @@ export function RepoPicker({
     setManualError(null);
     const url = manualUrl.trim();
     try {
-      // A GitHub url gets the list rows' inspection first: the
-      // colo-design.json check and the default branch cost one request and
-      // save a planner from a download that could not have worked.
+      // A GitHub url gets the list rows' inspection first: the dev-script
+      // check and the default branch cost one request and save a planner
+      // from a download that could not have worked. 다만 검사의 실패는
+      // 만들기의 실패가 아니다 — baseBranch 를 비워 두면 데몬의 뒤스캔이
+      // 기본 가지를 대신 밝힌다.
       const slug = githubSlugOf(url);
-      const baseBranch = slug
-        ? (await daemon.api.githubRepoInspect(slug.owner, slug.repo)).defaultBranch
-        : undefined;
+      let baseBranch: string | undefined;
+      if (slug) {
+        try {
+          baseBranch = (await daemon.api.githubRepoInspect(slug.owner, slug.repo)).defaultBranch;
+        } catch {
+          baseBranch = undefined;
+        }
+      }
       await daemon.api.projectCreate({
         name: nameFromUrl(url) || url,
         repoUrl: url,
@@ -423,7 +444,13 @@ export function RepoPicker({
               onChange={(e) => setName(e.target.value)}
             />
             <Tip label={blocked ? blockedReason : undefined}>
-              <button type="button" disabled={Boolean(blocked)} onClick={() => void create()}>
+              <button
+                type="button"
+                className="primary"
+                disabled={Boolean(blocked)}
+                onClick={() => void create()}
+              >
+                <FolderPlusIcon />
                 {creating ? "만드는 중…" : "프로젝트 만들기"}
               </button>
             </Tip>

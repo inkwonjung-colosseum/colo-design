@@ -6,7 +6,17 @@ import type { SessionState } from "@colo-design/protocol";
  * a git word — so the receiver can paint it without re-deriving anything.
  */
 export type DaemonNotice =
-  | { kind: "done"; sessionId: string; title: string; durationMs?: number }
+  | {
+      kind: "done";
+      sessionId: string;
+      title: string;
+      durationMs?: number;
+      /**
+       * 붙을 수 있는 한 줄 — 지금은 게이트가 확인을 실행하지 못한 턴의 고지.
+       * 없으면 평소의 완료 알림 그대로다.
+       */
+      detail?: string;
+    }
   | { kind: "crashed"; sessionId: string; title: string }
   | {
       kind: "ask";

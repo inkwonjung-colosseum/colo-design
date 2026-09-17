@@ -4,7 +4,7 @@ import { extname, join } from "node:path";
 import { containsPath } from "./paths.js";
 
 /**
- * 데스크톱이 웹 UI 를 따로 띄우지 않는 이유 (DESIGN §7): 데몬이 지어진 번들을
+ * 데스크톱이 웹 UI 를 따로 띄우지 않는 이유: 데몬이 지어진 번들을
  * 스스로 서빙한다. 정적 서빙은 데몬의 다른 일과 아무것도 나누지 않으므로
  * 여기 혼자 산다 — 이 파일이 아는 것은 폴더 하나와 확장자 표뿐이다.
  */

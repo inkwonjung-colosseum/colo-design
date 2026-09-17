@@ -33,9 +33,9 @@ const SIDEBAR_DEFAULT_WIDTH = 264;
 const NARROW_QUERY = "(max-width: 1100px)";
 
 /**
- * The frame: the project rail on the left, and on the
- * right the header, the daemon's warnings, and the workspace — or, with no
- * project yet, the picker itself.
+ * The frame: the project rail on the left, and on the right the header, the
+ * daemon's warnings, and the workspace — or, with no project yet, the
+ * full-window start wizard (token → repo → 준비).
  *
  * There is one workspace now. The 기획/디자인 tabs that used to
  * live here were the daemon's two cwds showing through — a planner works on
@@ -136,7 +136,7 @@ export function Shell({
       return;
     }
     // github 의 warn(토큰 없음)은 마법사를 세우지 않는다 — 그 수정은 첫 화면
-    // 그 자체다(StartFlow 의 1단, onboarding.html). 기계 게이트의 warn은 오늘
+    // 그 자체다(StartFlow 의 1단). 기계 게이트의 warn은 오늘
     // 처럼 마법사를 세운다: 고칠 행이 여기밖에 없다.
     if (daemon.onboarding?.some((step) => step.status !== "pass" && step.id !== "github"))
       setWizardNeeded(true);
@@ -153,8 +153,8 @@ export function Shell({
   // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
   // 으로 지운다 — 터미널은 끝까지 사용자의 몫으로 남지 않는다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
-  // GitHub 토큰 만료 카드(states.md §5-3, modals.html "연결이 끊겼어요") —
-  // 데몬이 자신의 GitHub 읽기에서 401 을 볼 때만 열린다. 닫기는 이 만료 국면에만
+  // GitHub 토큰 만료 카드 — 데몬이 자신의 GitHub 읽기에서 401 을 볼 때만
+  // 열린다. 닫기는 이 만료 국면에만
   // 먹는다: 회복 뒤 새 401 은 새 소식이라 카드는 다시 선다. 데몬이 판정을
   // 되돌리면(토큰 재연결·성공 읽기) 국면 자체가 끝난다.
   const [expiryDismissed, setExpiryDismissed] = useState(false);
@@ -265,6 +265,7 @@ export function Shell({
     workspace.current?.exportThread(slug, thread);
   const browseThreads = (slug: string) => workspace.current?.browseThreads(slug);
   const goHome = () => workspace.current?.goHome();
+  const goJourney = () => workspace.current?.goJourney();
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
@@ -316,6 +317,18 @@ export function Shell({
     );
   }
 
+  // 프로젝트가 없으면 시작 마법사가 화면 전부다 — 창을 통째로 쓰는 3단
+  // (mockups/onboarding/02-wizard.html). 첫 실행엔 사이드바에 보여줄
+  // 대화도 프로젝트도 없으므로 껍데기는 소음이다.
+  if (daemon.projects.length === 0) {
+    return (
+      <div className="planner planner--onboarding">
+        <StartFlow daemon={daemon} onOpenSettings={onOpenSettings} />
+        {expiryCard}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`planner${folded ? " planner--rail" : ""}${drag ? " planner--resizing" : ""}`}
@@ -347,6 +360,7 @@ export function Shell({
         onRenameThread={onRenameSession}
         onBrowseThreads={browseThreads}
         onGoHome={goHome}
+        onGoJourney={goJourney}
         boundary={
           !folded && (
             <Splitter
@@ -367,6 +381,17 @@ export function Shell({
               }}
               onPointerMove={(event) => {
                 if (!drag) return;
+                // 버튼이 이미 떼졌는데 move 가 흘러온다 — 포인터 캡처 실패
+                // 자리다. 끝으로 본다: drag 가 붙은 채 남으면 나중의 hover
+                // 만으로 사이드바 폭이 흔들린다.
+                if (event.buttons === 0) {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }
+                  setDrag(null);
+                  onLayoutChange({ sidebarWidth });
+                  return;
+                }
                 setSidebarWidth(clampWidth(drag.startWidth + (event.clientX - drag.startX)));
               }}
               onPointerUp={(event) => {
@@ -395,7 +420,7 @@ export function Shell({
 
       <div className="planner__main">
         {/* 프로젝트가 있으면 제목 행은 PageWorkspace 의 것이 다 — 프로젝트
-            이름과 여정 지도가 한 행을 쓴다(preview.md). 이 자리의 헤더는
+            이름과 여정 지도가 한 행을 쓴다. 이 자리의 헤더는
             프로젝트가 없을 때만 남는다: 시작 흐름 동안 연결 상태를 오른쪽에
             비추는 최소한의 행. 브랜드는 왼쪽 레일이 이미 읽는다. */}
         {daemon.projects.length === 0 && (
@@ -416,12 +441,27 @@ export function Shell({
           </header>
         )}
 
-        {(visibleWarnings.length > 0 || loggedOut) && (
+        {(visibleWarnings.length > 0 || loggedOut || connection === "closed") && (
           <div
             className={
               stripClosing ? "planner__warnings planner__warnings--closing" : "planner__warnings"
             }
           >
+            {/* 붙었던 선이 끊긴 상태 — ConnectScreen은 첫 연결 실패 전용이라
+                여기서는 스트립이 알린다. 백오프 재시도는 클라이언트가 계속
+                돌리고, 버튼은 그 대기를 건너뛰는 지름길. 닫기 버튼은 없다:
+                연결은 경고가 아니라 상태라, 거둬도 사라지지 않는다. */}
+            {connection === "closed" && (
+              <div className="notice notice--warn">
+                <span className="ic ic--sm ic--warn">
+                  <WarnIcon />
+                </span>
+                <span className="notice__text">연결이 끊겼어요 — 다시 연결하는 중…</span>
+                <button type="button" className="ghost" onClick={() => daemon.reconnect()}>
+                  지금 다시 시도
+                </button>
+              </div>
+            )}
             {visibleWarnings.map((warning) => (
               <Fold
                 key={warning.text}
@@ -478,28 +518,21 @@ export function Shell({
           </div>
         )}
 
-        {/* With no project there is nothing to show and nothing to ask the agent
-            about — the 2-step start flow IS the workspace until one exists
-            (onboarding.html): 토큰 → 레포, 같은 자리에서 단계만 바뀐다.
-            `PageWorkspace` cannot stand in for it: its screen rail calls
-            `repo.*`, which refuses without an active project. */}
-        {daemon.projects.length === 0 ? (
-          <StartFlow daemon={daemon} onOpenSettings={onOpenSettings} />
-        ) : (
-          /* The workspace owns its own .planner__body — the three columns and
-             their draggable boundaries are its business, not the frame's. */
-          <PageWorkspace
-            ref={workspace}
-            daemon={daemon}
-            settings={settings}
-            onChatChange={onChatChange}
-            onLayoutChange={onLayoutChange}
-            onOpenSettings={onOpenSettings}
-            onRenameSession={onRenameSession}
-            onActiveThreadChange={setActiveThreadId}
-            onAddProject={() => setAddOpen(true)}
-          />
-        )}
+        {/* Here only with a project — the project-less face is the start
+            wizard above. `PageWorkspace` owns its own .planner__body — the
+            three columns and their draggable boundaries are its business,
+            not the frame's. */}
+        <PageWorkspace
+          ref={workspace}
+          daemon={daemon}
+          settings={settings}
+          onChatChange={onChatChange}
+          onLayoutChange={onLayoutChange}
+          onOpenSettings={onOpenSettings}
+          onRenameSession={onRenameSession}
+          onActiveThreadChange={setActiveThreadId}
+          onAddProject={() => setAddOpen(true)}
+        />
       </div>
       {addOpen && (
         <AddProjectDialog

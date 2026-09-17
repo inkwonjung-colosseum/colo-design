@@ -3,12 +3,11 @@
 // (ElectronPreviewDriver) — 세션이 쓰던 화면을 다시 열면 재검증이 아니라
 // 재방문이 된다. pane 이 화면에 있으면 화면 캡처는 그 탭을 그대로 찍는데
 // (PaneCaptureDriver), 이제 그 경로는 에이전트의 PaneBrowserDriver 를 그대로
-// 경유한다 — 탭마다 디버거를 붙이는 손은 하나뿐이어야 한다(§3 규칙 10).
+// 경유한다 — 탭마다 디버거를 붙이는 손은 하나뿐이어야 한다.
 //
-// 인앱 브라우저 2단계(계획 §4-2): PaneBrowserDriver 는 사용자와 에이전트가
-// 같은 탭을 쓰는 브라우저다. 07bd3bf 의 PanePreviewDriver 에서 접근성 트리
-// (ref 세대)·ref 액션·actionability·settle 을 이식했고, 1단계 탭 모델 위에
-// tabId 주소를 얹었다 — tabId 생략은 언제나 활성 탭이다.
+// 같은 페이지를 쓰는 브라우저다. 07bd3bf 의 PanePreviewDriver 에서 접근성 트리
+// (ref 세대)·ref 액션·actionability·settle 을 이식했다 — pane 은 프로젝트당
+// 페이지 하나라 탭 주소는 없고, 모든 명령은 화면의 페이지를 겨눈다.
 
 import type {
   BrowserDriver,
@@ -22,7 +21,6 @@ import type {
   PreviewOpenResult,
   PreviewViewport,
 } from "@colo-design/daemon/server";
-import type { PreviewTabMeta } from "@colo-design/protocol";
 import { BrowserWindow, type WebContents } from "electron";
 import { VIEWPORT_METRICS } from "./emulation.js";
 import type { PlannerPreviewView } from "./preview-view.js";
@@ -186,10 +184,7 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
   /** 세우는 중인 창 — 동시 호출이 창 두 개를 만들지 않게. */
   private booting: Promise<BrowserWindow> | null = null;
 
-  constructor(
-    private readonly baseUrl: string,
-    private readonly allowedOrigins: readonly string[] = [],
-  ) {
+  constructor(private readonly baseUrl: string) {
     super();
   }
 
@@ -296,15 +291,15 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     } catch {
       return { ok: false, reason: `route 를 주소로 읽을 수 없습니다: ${route}` };
     }
-    // A declared screen must stay inside the preview server (or an origin the
-    // repo explicitly allowed) — an absolute route would otherwise carry this
-    // hidden window (and its debugger) to an origin the repo never picked.
-    // PlannerPreviewView.open checks the same thing.
+    // A declared screen must stay inside the preview server — an absolute
+    // route would otherwise carry this hidden window (and its debugger) to
+    // an origin the repo never picked. PlannerPreviewView.open checks the
+    // same thing.
     const baseOrigin = new URL(this.baseUrl).origin;
-    if (url.origin !== baseOrigin && !this.allowedOrigins.includes(url.origin)) {
+    if (url.origin !== baseOrigin) {
       return {
         ok: false,
-        reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${[baseOrigin, ...this.allowedOrigins].join(", ")} 안의 경로를 쓰십시오)`,
+        reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
       };
     }
     if (state) url.searchParams.set("state", state);
@@ -338,10 +333,10 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
 }
 
 // ---------------------------------------------------------------------------
-// 인앱 브라우저 (계획 §4-2): PaneBrowserDriver — 사용자와 에이전트가 같은 탭을
+// 인앱 브라우저: PaneBrowserDriver — 사용자와 에이전트가 같은 페이지를
 // 쓰는 브라우저. 아래 상수·함수·클래스의 뼈대는 07bd3bf 의 preview-driver.ts
-// (PanePreviewDriver, ~907줄 판)에서 이식했다 — 그때의 pane 은 페이지 하나였고,
-// 지금은 탭 모델(1단계) 위라 탭별 상태(TabState)와 tabId 주소가 덧붙었다.
+// (PanePreviewDriver, ~907줄 판)에서 이식했다 — 그때의 pane 과 마찬가지로
+// 페이지 하나를 drive 한다.
 // ---------------------------------------------------------------------------
 
 /** 접근성 트리에서 건너뛰지만 아이들은 살리는 역할. (07bd3bf 이식) */
@@ -432,22 +427,28 @@ const ACTIONABLE_RECT_OF_SELF = `async function () {
   return { error: last ?? "invisible" };
 }`;
 
-/** evaluate 반환의 JSON 한도(계획 §4-2) — 모델의 눈 크기이자 실수의 폭탄 한도. */
+/** evaluate 반환의 JSON 한도 — 모델의 눈 크기이자 실수의 폭탄 한도. */
 const BROWSER_EVALUATE_JSON_LIMIT = 8 * 1024;
-/** waitFor 의 기본 예산과 폭 (계획 §4-2: 폴링 100ms, 기본 5s). */
+/** waitFor 의 기본 예산과 폭 (폴링 100ms, 기본 5s). */
 const BROWSER_WAIT_TIMEOUT_MS = 5000;
 const BROWSER_WAIT_POLL_MS = 100;
-/** 탭별 콘솔 링의 상한 — 게이트 드라이버의 200줄과 같은 식이다. */
-
-/** url 의 origin — 파싱이 안 되면 "" (던지지 않는다). 뷰의 safeOrigin 과 같은 모양. */
-function browserOrigin(url: string): string {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return "";
-  }
-}
-
+/**
+ * waitFor 의 ms 상한 — 모델이 넣은 기다림이 세션의 브라우저 큐를 무한히
+ * 붙들지 않게 한다. 넘는 값은 오류가 아니라 이 값으로 깎는다(기다림은
+ * 줄어들 뿐 거절되지 않는다).
+ */
+const BROWSER_WAIT_MAX_MS = 30_000;
+/**
+ * evaluate 의 페이지 측 데드라인 — awaitPromise 는 취소가 없으므로, fn 의
+ * 결과와 타임아웃을 경주시켜 늦게 오는 Promise 는 버린다. 데몬의 op 상한
+ * (90s)보다 짧아야 페이지 측이 먼저 답하고 큐가 스스로 풀린다.
+ */
+const BROWSER_EVALUATE_TIMEOUT_MS = 30_000;
+/**
+ * 붙임 뒤 디버거를 스스로 떼는 유예 — op 사이의 짧은 틈에는 붙어 있되,
+ * 에이전트가 손을 뗀 뒤에는 사용자의 DevTools·다이얼로그를 돌려준다.
+ */
+const BROWSER_IDLE_DETACH_MS = 30_000;
 /** http(s) 인가 — 에이전트의 브라우저가 열 수 있는 유일한 스킴. */
 function browserHttpUrl(url: string): boolean {
   try {
@@ -471,16 +472,29 @@ interface CdpAxNode {
 }
 
 /**
- * 한 탭에 대해 이 드라이버가 아는 것. `refs` 는 지금 세대의 ref → backend 노드
- * 번호(스냅샷이 비우고 다시 채우고, 이동이 지운다), `console` 은 붙어 있는
- * 동안 모은 링. `contents` 는 리스너가 걸려 있는 WebContents — 탭이 버려졌다
- * 되살아나면 같은 tabId 로 새 WebContents 가 태어나므로, 그때 리스너와 ref
- * 세대를 갈아엎는다. `handlers` 는 붙인 리스너들 — 뗄 때 같은 참조로 지운다.
+ * 화면의 페이지에 대해 이 드라이버가 아는 것. `refs` 는 지금 세대의 ref →
+ * backend 노드 번호(스냅샷이 비우고 다시 채우고, 이동이 지운다), `console`
+ * 은 붙어 있는 동안 모은 링. `contents` 는 리스너가 걸려 있는 WebContents —
+ * 페이지가 파기됐다 다시 서면 새 WebContents 가 태어나므로, 그때 리스너와
+ * ref 세대를 갈아엎는다. `handlers` 는 붙인 리스너들 — 뗄 때 같은 참조로
+ * 지운다.
  */
-interface TabState {
+interface PageState {
   readonly refs: Map<string, number>;
+  /** ref 번호 — 세대를 넘어 단조 증가한다. 매 세대 e1 부터 다시 세면 옛 ref 가 새 노드를 가리키는 충돌이 난다. */
+  refSeq: number;
   readonly console: PreviewConsoleLine[];
   contents: WebContents | null;
+  /**
+   * 붙임 뒤의 유예 타이머 — op 가 잠깐 쉬면 디버거를 떼어 사용자의
+   * DevTools·다이얼로그를 돌려준다. 다음 op 의 attach 가 다시 붙인다.
+   */
+  idleDetach: NodeJS.Timeout | null;
+  /**
+   * 살아 있는 keepAttached 인터벌 — op 가 응답 없이 멈추면 돌아오는 stop
+   * 함수가 영원히 불리지 않으므로, recover 가 여기서 직접 거둬낸다.
+   */
+  readonly keepAlive: Set<NodeJS.Timeout>;
   handlers: {
     onDebuggerMessage: (event: Electron.Event, method: string, params: unknown) => void;
     onConsoleMessage: (
@@ -490,12 +504,11 @@ interface TabState {
     onGone: () => void;
   } | null;
 }
-
 /**
- * 사용자가 보는 pane 의 탭을 그대로 drive 한다 — 에이전트와 사용자가 같은
- * WebContents 를 본다. 창을 만들지 않는다: 탭의 생성·전환·닫기는 전부 뷰의
- * 장치(openTab·activateTab·closeTab)를 빌린다. 디버거는 탭의 WebContents 마다
- * 붙였다가, 탭이 죽거나 드라이버가 끝나면 뗀다 — 사용자가 DevTools 를 열면
+ * 사용자가 보는 pane 의 페이지를 그대로 drive 한다 — 에이전트와 사용자가 같은
+ * WebContents 를 본다. 창을 만들지 않는다: 페이지의 생성·이동은 전부 뷰의
+ * 장치(openTab·mount)를 빌린다. 디버거는 페이지의 WebContents 에 붙였다가,
+ * 페이지가 죽거나 드라이버가 끝나면 뗀다 — 사용자가 DevTools 를 열면
  * 붙임이 떨어지고, 다음 명령이 다시 붙는다. (07bd3bf PanePreviewDriver 계승)
  *
  * 주소는 ref 다 (PLAN D61): `snapshot` 이 걸어간 노드마다 `e12` 를 붙이고
@@ -504,10 +517,26 @@ interface TabState {
  * 없다. 액션 메서드는 성공의 답으로 새 스냅샷을 돌려준다 — 세대 갱신 겸용.
  */
 class PaneBrowserDriver implements BrowserDriver {
-  /** 탭별 상태 — 탭이 닫히면(또는 WebContents 가 죽으면) 비운다. */
-  private readonly tabs = new Map<string, TabState>();
+  /** 화면의 페이지 하나의 상태 — 페이지가 파기되면(또는 WebContents 가 죽으면) 비운다. */
+  private state: PageState = {
+    keepAlive: new Set(),
+    refs: new Map(),
+    refSeq: 0,
+    console: [],
+    contents: null,
+    idleDetach: null,
+    handlers: null,
+  };
 
   constructor(private readonly pane: () => PlannerPreviewView | null) {}
+
+  /**
+   * 계약의 판정 재료 — pane 의 지금 페이지가 레포의 것(home origin 위)인지.
+   * pane 이 사라진 짧은 창은 거짓으로 답한다: 게이트가 물어보는 쪽이 안전하다.
+   */
+  isRepoSurface(): boolean {
+    return this.pane()?.isRepoSurface() ?? false;
+  }
 
   // ── 대상 해석과 붙임 ──────────────────────────────────────────
 
@@ -521,44 +550,27 @@ class PaneBrowserDriver implements BrowserDriver {
   }
 
   /**
-   * 명령이 향하는 탭 한 벌(id, WebContents, 상태). tabId 생략은 활성 탭이다
-   * (계약). 다른 탭을 지명하면 먼저 화면에 세운다 — 공유 브라우저라 에이전트가
-   * 보는 탭이 곧 사용자의 화면이다. 죽은 id 는 오류로 돌아간다. 붙임(디버거)
-   * 은 모든 명령의 첫걸음 — 07bd3bf 의 ready() 가 그랬던 것처럼.
+   * 명령이 향하는 페이지 한 벌(WebContents, 상태). pane 에는 늘 페이지
+   * 하나뿐이라 지명할 탭이 없다 — 화면의 것이 곧 대상이다. 붙임(디버거)은
+   * 모든 명령의 첫걸음 — 07bd3bf 의 ready() 가 그랬던 것처럼.
    */
-  private async target(
-    tabId?: string,
-  ): Promise<{ tabId: string; contents: WebContents; state: TabState }> {
-    const pane = this.view();
-    const id = tabId ?? pane.getActiveTabId();
-    if (id === null) {
-      throw new Error("열려 있는 탭이 없습니다 — openTab 으로 먼저 탭을 여십시오.");
-    }
-    if (id !== pane.getActiveTabId()) {
-      pane.activateTab(id);
-      if (pane.getActiveTabId() !== id) throw new Error(`그런 탭이 없습니다: ${id}`);
-    }
-    const contents = pane.webContents();
+  private async target(): Promise<{ contents: WebContents; state: PageState }> {
+    const contents = this.view().webContents();
     if (!contents) {
       throw new Error("미리보기 화면이 없습니다 — 화면이 보이는 상태에서 다시 시도하십시오.");
     }
-    const state = this.stateOf(id, contents);
+    const state = this.stateOf(contents);
     await this.attach(contents);
-    return { tabId: id, contents, state };
+    return { contents, state };
   }
 
   /**
-   * 탭의 상태를 내용물에 맞춘다. 되살림(discard 후 activate)은 같은 tabId 로
-   * 새 WebContents 를 낳는다 — 문서가 갈아엎어졌으니 리스너도 ref 세대도 새로
+   * 페이지의 상태를 내용물에 맞춘다. 페이지가 파기됐다 다시 서면 새
+   * WebContents 가 태어난다 — 문서가 갈아엎어졌으니 리스너도 ref 세대도 새로
    * 단다.
    */
-  private stateOf(tabId: string, contents: WebContents): TabState {
-    let entry = this.tabs.get(tabId);
-    if (!entry) {
-      entry = { refs: new Map(), console: [], contents: null, handlers: null };
-      this.tabs.set(tabId, entry);
-    }
-    const state: TabState = entry;
+  private stateOf(contents: WebContents): PageState {
+    const state = this.state;
     if (state.contents === contents) return state;
     this.unbind(state);
     state.refs.clear();
@@ -571,7 +583,7 @@ class PaneBrowserDriver implements BrowserDriver {
       // 이동은 ref 세대의 죽음이다 — 옛 문서의 backend 노드 번호가 새 문서를
       // 가리킬 수는 없다. 드라이버가 navigate 하든 사용자가 누르든 같은 길이다.
       onDidNavigate: () => state.refs.clear(),
-      onGone: () => this.drop(tabId),
+      onGone: () => this.drop(),
     };
     contents.debugger.on("message", state.handlers.onDebuggerMessage);
     contents.on("console-message", state.handlers.onConsoleMessage);
@@ -582,11 +594,14 @@ class PaneBrowserDriver implements BrowserDriver {
 
   /**
    * 디버거를 붙인다 — 이미 붙어 있으면 아무것도 하지 않는다. 붙임의 소유자는
-   * 이 드라이버 하나뿐이다(§3 규칙 10): preview.capture 도 이 인스턴스를
+   * 이 드라이버 하나뿐이다: preview.capture 도 이 인스턴스를
    * 경유하므로, 여기서 실패한다는 것은 사용자의 DevTools 가 열려 있다는
    * 뜻이다 — 도구가 그 말을 그대로 모델에게 전한다. (07bd3bf 이식)
    */
   private async attach(contents: WebContents): Promise<void> {
+    // 붙임마다 유예 타이머를 다시 건다 — op 가 잠깐 쉬어도 디버거가 사용자의
+    // DevTools·다이얼로그를 계속 잠그지 않게, 잠시 뒤 스스로 뗀다.
+    if (this.state.contents === contents) this.armIdleDetach(this.state, contents);
     if (contents.debugger.isAttached()) return;
     try {
       contents.debugger.attach("1.3");
@@ -602,14 +617,48 @@ class PaneBrowserDriver implements BrowserDriver {
     }
   }
 
+  /**
+   * 유예 타이머를 다시 건다 — 붙임 시점에 걸리므로 타이머보다 긴 op 는 도중에
+   * 디버거를 잃는다. 그런 op(waitFor·evaluate 의 awaitPromise)는
+   * keepAttached 가 붙임을 살려 둔다.
+   */
+  private armIdleDetach(state: PageState, contents: WebContents): void {
+    if (state.idleDetach) clearTimeout(state.idleDetach);
+    state.idleDetach = setTimeout(() => {
+      state.idleDetach = null;
+      if (!contents.isDestroyed() && contents.debugger.isAttached()) {
+        try {
+          contents.debugger.detach();
+        } catch {
+          // 이미 떨어져 나갔다 — 지울 게 없을 뿐이다.
+        }
+      }
+    }, BROWSER_IDLE_DETACH_MS);
+    state.idleDetach.unref();
+  }
+
+  /**
+   * 유예보다 오래 걸릴 수 있는 op 의 붙임 지킴이 — 돌아오는 함수를 op 의
+   * 끝에서 부른다.
+   */
+  private keepAttached(state: PageState, contents: WebContents): () => void {
+    const beat = setInterval(() => this.armIdleDetach(state, contents), BROWSER_IDLE_DETACH_MS / 2);
+    beat.unref();
+    // recover 가 멈춘 op 를 대신 거둘 수 있게 상태에 새긴다.
+    state.keepAlive.add(beat);
+    return () => {
+      clearInterval(beat);
+      state.keepAlive.delete(beat);
+    };
+  }
   /** 디버거 이벤트의 갈래길 — 다이얼로그 처리와 실패한 네트워크 수집. */
   private handleDebuggerMessage(
-    state: TabState,
+    state: PageState,
     contents: WebContents,
     method: string,
     params: Record<string, unknown>,
   ): void {
-    // 다이얼로그 자동 처리(계획 §4-2): alert 은 수락, confirm·prompt·
+    // 다이얼로그 자동 처리: alert 은 수락, confirm·prompt·
     // beforeunload 는 거절 — 아무도 대답하지 않으면 페이지가 영원히 멈춘다.
     // 대답은 콘솔에 보고해 모델이 읽을 수 있게 한다.
     if (method === "Page.javascriptDialogOpening") {
@@ -639,24 +688,27 @@ class PaneBrowserDriver implements BrowserDriver {
     this.noteConsole(state, { level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
   }
 
-  /** 탭의 콘솔 링 한 줄 — 링은 200줄로 bound 된다(게이트 드라이버와 같은 상한). */
-  private noteConsole(state: TabState, entry: PreviewConsoleLine): void {
+  /** 페이지의 콘솔 링 한 줄 — 링은 200줄로 bound 된다(게이트 드라이버와 같은 상한). */
+  private noteConsole(state: PageState, entry: PreviewConsoleLine): void {
     state.console.push(entry);
     if (state.console.length > BROWSER_CONSOLE_RING) {
       state.console.splice(0, state.console.length - BROWSER_CONSOLE_RING);
     }
   }
 
-  /** 탭 상태를 통째로 버린다 — 탭이 닫혔거나 WebContents 가 죽었을 때. */
-  private drop(tabId: string): void {
-    const state = this.tabs.get(tabId);
-    if (!state) return;
+  /** 페이지 상태를 통째로 비운다 — 페이지가 파기됐거나 WebContents 가 죽었을 때. */
+  private drop(): void {
+    const state = this.state;
+    if (state.idleDetach) {
+      clearTimeout(state.idleDetach);
+      state.idleDetach = null;
+    }
+    this.sweepKeepAlive(state);
     this.unbind(state);
-    this.tabs.delete(tabId);
   }
 
   /** 리스너만 내린다 — 콘솔·ref 는 살려 둔다(다음 붙임이 이어 쓴다). */
-  private unbind(state: TabState): void {
+  private unbind(state: PageState): void {
     const contents = state.contents;
     const handlers = state.handlers;
     state.contents = null;
@@ -676,9 +728,13 @@ class PaneBrowserDriver implements BrowserDriver {
    * 디버거까지 뗀다 — 완전한 뒷정리(destroy) 또는 캡처의 뒷수습. 페이지는
    * 사용자의 것이라 그대로 둔다. (07bd3bf PanePreviewDriver.destroy 계승)
    */
-  private release(tabId: string): void {
-    const state = this.tabs.get(tabId);
-    if (!state) return;
+  private release(): void {
+    const state = this.state;
+    if (state.idleDetach) {
+      clearTimeout(state.idleDetach);
+      state.idleDetach = null;
+    }
+    this.sweepKeepAlive(state);
     const contents = state.contents;
     this.unbind(state);
     if (contents && !contents.isDestroyed() && contents.debugger.isAttached()) {
@@ -690,99 +746,62 @@ class PaneBrowserDriver implements BrowserDriver {
     }
   }
 
-  // ── 탭 ───────────────────────────────────────────────────────
-
-  async listTabs(): Promise<PreviewTabMeta[]> {
-    return this.view().listTabs();
+  /**
+   * 멈춘 op 가 놓고 간 keepAttached 인터벌을 거둔다 — stop 함수가 불리지
+   * 않는 경로(강제 복구·페이지 파기)에서도 인터벌이 유예 타이머를 영원히
+   * 재무장하지 못하게 한다.
+   */
+  private sweepKeepAlive(state: PageState): void {
+    for (const beat of state.keepAlive) clearInterval(beat);
+    state.keepAlive.clear();
   }
 
-  async getActiveTabId(): Promise<string | null> {
-    return this.view().getActiveTabId();
-  }
+  // ── 이동 ─────────────────────────────────────────────────────
 
-  async openTab(
-    url: string,
-    opts?: { background?: boolean },
-  ): Promise<{ tabId: string; settled: boolean }> {
-    if (!browserHttpUrl(url)) throw new Error(`http(s) 주소만 열 수 있습니다: ${url}`);
-    const pane = this.view();
-    const before = new Set(pane.listTabs().map((tab) => tab.id));
-    const activeBefore = pane.getActiveTabId();
-    // pane 의 openTab 이 판단한다 — repo origin 은 mount 경로로 위임(기존 탭
-    // 재사용), 그 밖의 http(s) 는 새 web 탭, 슬롯이 없으면 OS 폴백(아래에서
-    // 탭이 생기지 않았다는 것으로 잡힌다).
-    pane.openTab(url);
-    const after = pane.listTabs();
-    const created = after.find((tab) => !before.has(tab.id));
-    let tabId: string | null;
-    if (created) {
-      tabId = created.id;
-    } else {
-      // 새 탭이 없으면 기존 탭을 데워 쓴 경우(repo origin 은 mount 경로로
-      // 위임된다)다 — 같은 origin 의 탭이 그 증거다.
-      const origin = browserOrigin(url);
-      tabId =
-        after.find((tab) => tab.url !== null && browserOrigin(tab.url) === origin)?.id ?? null;
-    }
-    if (tabId === null) {
-      // 슬롯이 없어 OS 로 넘겨졌거나 가드에 걸렸다 — 에이전트에게는 실패다.
-      throw new Error(`탭을 열지 못했습니다: ${url}`);
-    }
-    if (opts?.background === true && activeBefore !== null && activeBefore !== tabId) {
-      // 백그라운드 요청 — 열어 둔 탭을 다시 뒤로 보낸다. park 은 WebContents 를
-      // 살려 두므로 탭은 숨은 채 로드를 끝낸다. 화면을 다녀온 사이 정산할 방법이
-      // 없으므로 settled 은 false 로 답한다 — 다음 명령이 다시 본다.
-      pane.activateTab(activeBefore);
-      return { tabId, settled: false };
-    }
-    const dest = await this.target(tabId);
-    return { tabId, settled: await this.settleOn(dest.contents, null) };
-  }
-
-  async closeTab(tabId?: string): Promise<void> {
-    const pane = this.view();
-    const id = tabId ?? pane.getActiveTabId();
-    pane.closeTab(tabId);
-    // 뷰가 WebContents 를 파기한다 — destroyed 리스너가 상태를 비우지만, 활성
-    // 생략의 경우 어느 id 가 죽었는지 여기서 확실히 계산해 둔다.
-    if (typeof id === "string") this.drop(id);
-  }
-
-  async activateTab(tabId: string): Promise<void> {
-    const pane = this.view();
-    pane.activateTab(tabId);
-    if (pane.getActiveTabId() !== tabId) throw new Error(`그런 탭이 없습니다: ${tabId}`);
-  }
-
-  async cycleActiveTab(delta: -1 | 1): Promise<void> {
-    this.view().cycleActiveTab(delta);
-  }
-
-  async navigate(url: string, tabId?: string): Promise<{ settled: boolean }> {
+  /**
+   * 화면의 페이지를 주소로 옮긴다 — 페이지가 하나도 없으면 뷰가 loose
+   * 페이지를 세운다(openTab 이 판단한다: repo origin 은 그 프로젝트의
+   * 페이지로, 그 밖은 제자리 이동, 슬롯이 없으면 OS 폴백). 이동 이벤트를
+   * 먼저 듣기 시작해야 openTab 직후의 did-navigate 를 놓치지 않는다.
+   */
+  async navigate(url: string): Promise<{ settled: boolean; snapshot: PreviewAxNode[] }> {
     if (!browserHttpUrl(url)) throw new Error(`http(s) 주소만 탐색할 수 있습니다: ${url}`);
-    const dest = await this.target(tabId);
-    try {
-      await dest.contents.loadURL(url);
-    } catch (error) {
-      throw new Error(
-        `화면을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    const pane = this.view();
+    const before = pane.webContents();
+    const moved = before ? this.settleAfterNav(before) : null;
+    pane.openTab(url);
+    const dest = await this.target();
+    if (dest.contents === before) await moved;
+    const settled = await this.settleOn(dest.contents, null);
+    return { settled, snapshot: await this.axTree(dest.contents, dest.state) };
+  }
+
+  async back(): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
+    if (!dest.contents.navigationHistory.canGoBack()) {
+      throw new Error("뒤로 갈 화면이 없습니다.");
     }
-    return { settled: await this.settleOn(dest.contents, null) };
+    const moved = this.settleAfterNav(dest.contents);
+    dest.contents.navigationHistory.goBack();
+    await moved;
+    return this.axTree(dest.contents, dest.state);
   }
 
-  async back(tabId?: string): Promise<void> {
-    (await this.target(tabId)).contents.navigationHistory.goBack();
-  }
-
-  async forward(tabId?: string): Promise<void> {
-    (await this.target(tabId)).contents.navigationHistory.goForward();
+  async forward(): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
+    if (!dest.contents.navigationHistory.canGoForward()) {
+      throw new Error("앞으로 갈 화면이 없습니다.");
+    }
+    const moved = this.settleAfterNav(dest.contents);
+    dest.contents.navigationHistory.goForward();
+    await moved;
+    return this.axTree(dest.contents, dest.state);
   }
 
   // ── 읽기 ─────────────────────────────────────────────────────
 
-  async snapshot(tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async snapshot(): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     return this.axTree(dest.contents, dest.state);
   }
 
@@ -791,7 +810,7 @@ class PaneBrowserDriver implements BrowserDriver {
    * 발급한다 — 이 호출이 곧 ref 의 세대다. 이름 없는 구조 노드까지 그대로
    * 담고, 무엇을 접을지는 도구가 정한다.
    */
-  private async axTree(contents: WebContents, state: TabState): Promise<PreviewAxNode[]> {
+  private async axTree(contents: WebContents, state: PageState): Promise<PreviewAxNode[]> {
     const result = (await contents.debugger.sendCommand("Accessibility.getFullAXTree", {})) as {
       nodes?: CdpAxNode[];
     };
@@ -802,7 +821,6 @@ class PaneBrowserDriver implements BrowserDriver {
     for (const node of nodes) for (const child of node.childIds ?? []) childOf.add(child);
 
     state.refs.clear();
-    let minted = 0;
     const build = (ids: string[]): PreviewAxNode[] => {
       const out: PreviewAxNode[] = [];
       for (const id of ids) {
@@ -826,8 +844,8 @@ class PaneBrowserDriver implements BrowserDriver {
         const backendId = node.backendDOMNodeId;
         let ref = "";
         if (backendId !== undefined) {
-          minted += 1;
-          ref = `e${minted}`;
+          state.refSeq += 1;
+          ref = `e${state.refSeq}`;
           state.refs.set(ref, backendId);
         }
         out.push({
@@ -853,15 +871,14 @@ class PaneBrowserDriver implements BrowserDriver {
    * 형식은 값을 바꾸지 않지만, JPEG 의 크로마 서브샘플링이 UI 의 얇은 색
    * 글자를 흐리게 만든다.
    */
-  async screenshot(opts?: {
-    tabId?: string;
-    ref?: string;
-    longEdge?: number;
-  }): Promise<PreviewCapture> {
-    const dest = await this.target(opts?.tabId);
+  async screenshot(opts?: { ref?: string; longEdge?: number }): Promise<PreviewCapture> {
+    const dest = await this.target();
     const longEdge = opts?.longEdge ?? CAPTURE_LONG_EDGE;
+    // clip 은 페이지 좌표다 — rectOfRef 는 뷰포트 좌표를 주므로 스크롤
+    // 오프셋(pageX·pageY)을 더해 문서 좌표로 맞춘다. 뷰포트 캡처는 이미
+    // 페이지 좌표다.
     const area = opts?.ref
-      ? await this.rectOfRef(dest.contents, dest.state, opts.ref)
+      ? await this.pageRectOfRef(dest.contents, dest.state, opts.ref)
       : await this.viewportRect(dest.contents);
     const scale = Math.min(1, longEdge / Math.max(area.width, area.height));
     const result = (await dest.contents.debugger.sendCommand("Page.captureScreenshot", {
@@ -899,63 +916,90 @@ class PaneBrowserDriver implements BrowserDriver {
     };
   }
 
-  /** 탭이 말한 것들 — 붙어 있는 동안 모은다. 읽기가 붙임을 일으키지 않는다:
-   *  한 번도 만진 적 없는 탭의 목록은 텅 비어 있다. (링은 200줄.) */
-  async consoleLines(tabId?: string): Promise<PreviewConsoleLine[]> {
-    const pane = this.view();
-    const id = tabId ?? pane.getActiveTabId();
-    if (id === null) return [];
-    return [...(this.tabs.get(id)?.console ?? [])];
+  /**
+   * ref 의 rect 를 페이지 좌표로 돌려준다 — `Page.captureScreenshot` 의
+   * `clip` 이 요구하는 좌표계다. 뷰포트 rect 에 시각 뷰포트의 페이지
+   * 오프셋을 더한다.
+   */
+  private async pageRectOfRef(
+    contents: WebContents,
+    state: PageState,
+    ref: string,
+  ): Promise<PreviewRect> {
+    const rect = await this.rectOfRef(contents, state, ref);
+    const view = await this.viewportRect(contents);
+    return { x: rect.x + view.x, y: rect.y + view.y, width: rect.width, height: rect.height };
+  }
+
+  /** 페이지가 말한 것들 — 붙어 있는 동안 모은다. 읽기가 붙임을 일으키지
+   *  않는다: 한 번도 만진 적 없으면 목록은 텅 비어 있다. (링은 200줄.) */
+  async consoleLines(): Promise<PreviewConsoleLine[]> {
+    return [...this.state.console];
   }
 
   /**
    * 페이지의 세계에서 함수를 돌린다 — `fn` 은 함수 한 개의 소스다. 반환은 값으로
-   * 돌아오며(비동기면 기다린다), JSON 8KB 를 넘는 답은 오류다(계획 §4-2) —
-   * 잘린 덩어리를 모델이 읽게 하는 것보다 더 좁게 물어보게 하는 편이 낫다.
+   * 돌아오며(비동기면 기다린다), JSON 8KB 를 넘는 답은 오류다 — 잘린 덩어리를
+   * 모델이 읽게 하는 것보다 더 좁게 물어보게 하는 편이 낫다. awaitPromise 는
+   * 취소가 없으므로 페이지 안에서 데드라인과 경주시킨다 — 늦게 오는 Promise 는
+   * 버리고 데드라인 도달을 오류로 답한다.
    */
-  async evaluate(fn: string, tabId?: string): Promise<unknown> {
-    const dest = await this.target(tabId);
-    const result = (await dest.contents.debugger.sendCommand("Runtime.evaluate", {
-      expression: `(${fn})()`,
-      returnByValue: true,
-      awaitPromise: true,
-    })) as {
-      result?: { value?: unknown };
-      exceptionDetails?: { exception?: { description?: string; value?: unknown } };
-    };
-    if (result.exceptionDetails) {
-      const detail = result.exceptionDetails.exception;
-      throw new Error(
-        `페이지의 함수가 던졌습니다: ${typeof detail?.value === "string" ? detail.value : (detail?.description ?? "알 수 없는 오류")}`,
-      );
-    }
-    const value = result.result?.value;
-    if (value === undefined || value === null) return value;
-    let json: string;
+  async evaluate(fn: string): Promise<unknown> {
+    const dest = await this.target();
+    // awaitPromise 가 유예보다 오래 걸릴 수 있다 — 붙임을 살려 둔다.
+    const stop = this.keepAttached(dest.state, dest.contents);
     try {
-      json = JSON.stringify(value) ?? "";
-    } catch {
-      throw new Error("반환값을 JSON 으로 만들 수 없습니다 — 값만 돌려주십시오.");
+      const result = (await dest.contents.debugger.sendCommand("Runtime.evaluate", {
+        expression: `(() => {
+          const deadline = Promise.withResolvers();
+          setTimeout(
+            () => deadline.reject(new Error("함수가 ${BROWSER_EVALUATE_TIMEOUT_MS / 1000}초 안에 끝나지 않았습니다 — evaluate 데드라인")),
+            ${BROWSER_EVALUATE_TIMEOUT_MS},
+          );
+          return Promise.race([(${fn})(), deadline.promise]);
+        })()`,
+        returnByValue: true,
+        awaitPromise: true,
+      })) as {
+        result?: { value?: unknown };
+        exceptionDetails?: { exception?: { description?: string; value?: unknown } };
+      };
+      if (result.exceptionDetails) {
+        const detail = result.exceptionDetails.exception;
+        throw new Error(
+          `페이지의 함수가 던졌습니다: ${typeof detail?.value === "string" ? detail.value : (detail?.description ?? "알 수 없는 오류")}`,
+        );
+      }
+      const value = result.result?.value;
+      if (value === undefined || value === null) return value;
+      let json: string;
+      try {
+        json = JSON.stringify(value) ?? "";
+      } catch {
+        throw new Error("반환값을 JSON 으로 만들 수 없습니다 — 값만 돌려주십시오.");
+      }
+      if (json.length > BROWSER_EVALUATE_JSON_LIMIT) {
+        throw new Error(
+          `반환값이 JSON ${BROWSER_EVALUATE_JSON_LIMIT}B 를 넘습니다 (${json.length}B) — 더 좁게 물으십시오.`,
+        );
+      }
+      return value;
+    } finally {
+      stop();
     }
-    if (json.length > BROWSER_EVALUATE_JSON_LIMIT) {
-      throw new Error(
-        `반환값이 JSON ${BROWSER_EVALUATE_JSON_LIMIT}B 를 넘습니다 (${json.length}B) — 더 좁게 물으십시오.`,
-      );
-    }
-    return value;
   }
 
   /**
-   * 기다림 — text 는 본문 글자로, url 은 지금 주소의 앞부분으로 본다. 둘 다
-   * 주어지면 둘 다를 본다. (계획 §4-2: 폴링 100ms, 기본 예산 5s.)
+   * 기다림 — text 는 본문 글자로, url 은 지금 주소의 부분 일치로 본다. 둘 다
+   * 주어지면 둘 다를 본다. 조건이 하나도 없으면 ms 만큼 잔다 — 그것이
+   * 도구의 "이 밀리초만 기다린다" 다. (폴링 100ms, 기본 예산 5s.)
    */
-  async waitFor(
-    target: { text?: string; url?: string; ms?: number },
-    tabId?: string,
-  ): Promise<boolean> {
-    const dest = await this.target(tabId);
+  async waitFor(target: { text?: string; url?: string; ms?: number }): Promise<boolean> {
+    const dest = await this.target();
     const budget =
-      typeof target.ms === "number" && target.ms >= 0 ? target.ms : BROWSER_WAIT_TIMEOUT_MS;
+      typeof target.ms === "number" && target.ms >= 0
+        ? Math.min(target.ms, BROWSER_WAIT_MAX_MS)
+        : BROWSER_WAIT_TIMEOUT_MS;
     const deadline = Date.now() + budget;
     const url = target.url;
     const textProbe =
@@ -965,27 +1009,41 @@ class PaneBrowserDriver implements BrowserDriver {
             const body = document.body;
             return body !== null && body.innerText.indexOf(${JSON.stringify(target.text)}) !== -1;
           })()`;
-    for (;;) {
-      let ok = true;
-      if (ok && url !== undefined) ok = dest.contents.getURL().startsWith(url);
-      if (ok && textProbe !== null) {
-        const result = (await dest.contents.debugger
-          .sendCommand("Runtime.evaluate", { expression: textProbe, returnByValue: true })
-          .catch(() => null)) as { result?: { value?: unknown } } | null;
-        ok = result?.result?.value === true;
+    if (url === undefined && textProbe === null) {
+      // 조건 없는 기다림 — 그냥 잔다. 폴링 루프는 조건이 있을 때만 의미가 있다.
+      // 자는 동안 디버거가 떨어져도 아무것도 잃지 않는다 — keepAttached 불필요.
+      const rest = Promise.withResolvers<void>();
+      setTimeout(rest.resolve, budget);
+      await rest.promise;
+      return true;
+    }
+    // 예산이 유예보다 길 수 있다 — 폴링이 sendCommand 를 쓰는 동안 붙임을 살려 둔다.
+    const stop = this.keepAttached(dest.state, dest.contents);
+    try {
+      for (;;) {
+        let ok = true;
+        if (ok && url !== undefined) ok = dest.contents.getURL().includes(url);
+        if (ok && textProbe !== null) {
+          const result = (await dest.contents.debugger
+            .sendCommand("Runtime.evaluate", { expression: textProbe, returnByValue: true })
+            .catch(() => null)) as { result?: { value?: unknown } } | null;
+          ok = result?.result?.value === true;
+        }
+        if (ok) return true;
+        if (Date.now() >= deadline) return false;
+        const poll = Promise.withResolvers<void>();
+        setTimeout(poll.resolve, BROWSER_WAIT_POLL_MS);
+        await poll.promise;
       }
-      if (ok) return true;
-      if (Date.now() >= deadline) return false;
-      const poll = Promise.withResolvers<void>();
-      setTimeout(poll.resolve, BROWSER_WAIT_POLL_MS);
-      await poll.promise;
+    } finally {
+      stop();
     }
   }
 
   // ── 액션 — 성공의 답은 언제나 새 스냅샷이다(계약: ref 세대 갱신 겸용) ────
 
-  async click(target: { ref: string }, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async click(target: { ref: string }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     this.wake(dest.contents);
     await this.clickRect(
       dest.contents,
@@ -994,18 +1052,18 @@ class PaneBrowserDriver implements BrowserDriver {
     return this.axTree(dest.contents, dest.state);
   }
 
-  async type(
-    input: { ref: string; text: string; clear?: boolean },
-    tabId?: string,
-  ): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     this.wake(dest.contents);
     const dbg = dest.contents.debugger;
     // 입력의 첫걸음은 클릭이다 — 포커스가 흐르는 유일한 자연스러운 길이다.
-    await this.clickRect(
-      dest.contents,
-      await this.rectOfRef(dest.contents, dest.state, input.ref, true),
-    );
+    // ref 가 없으면 지금 포커스된 곳에 바로 쓴다(07bd3bf 의 선택적 ref 계승).
+    if (input.ref !== undefined) {
+      await this.clickRect(
+        dest.contents,
+        await this.rectOfRef(dest.contents, dest.state, input.ref, true),
+      );
+    }
     if (input.clear === true) {
       // (07bd3bf 이식) 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의
       // onChange 가 흐르는 유일한 길이다(값을 직접 넣으면 React 는 모른다).
@@ -1024,8 +1082,8 @@ class PaneBrowserDriver implements BrowserDriver {
     return this.axTree(dest.contents, dest.state);
   }
 
-  async press(key: string, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async press(key: string): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     const mapped = PRESS_KEY_CODES[key];
     if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
     const dbg = dest.contents.debugger;
@@ -1045,16 +1103,20 @@ class PaneBrowserDriver implements BrowserDriver {
     return this.axTree(dest.contents, dest.state);
   }
 
-  async scroll(target: { ref?: string; dy: number }, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async scroll(target: { ref?: string; dy: number }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     // (07bd3bf 이식) ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것
     // 자체가 그 일이다.
     const rect = target.ref ? await this.rectOfRef(dest.contents, dest.state, target.ref) : null;
     if (target.dy !== 0) {
+      // ref 가 없으면 뷰포트 한가운데로 굴린다 — 마우스 이벤트는 뷰포트
+      // 좌표라 pane 의 실제 너비·높이를 쓴다(고정 desktop 프리셋은 pane 이
+      // 좁을 때 화면 밖을 찍는다).
+      const view = rect ? null : await this.viewportRect(dest.contents);
       await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseWheel",
-        x: rect ? rect.x + rect.width / 2 : VIEWPORT_METRICS.desktop.size[0] / 2,
-        y: rect ? rect.y + rect.height / 2 : VIEWPORT_METRICS.desktop.size[1] / 2,
+        x: rect ? rect.x + rect.width / 2 : (view?.width ?? 0) / 2,
+        y: rect ? rect.y + rect.height / 2 : (view?.height ?? 0) / 2,
         deltaX: 0,
         deltaY: target.dy,
       });
@@ -1062,8 +1124,8 @@ class PaneBrowserDriver implements BrowserDriver {
     return this.axTree(dest.contents, dest.state);
   }
 
-  async hover(target: { ref: string }, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async hover(target: { ref: string }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     const rect = await this.rectOfRef(dest.contents, dest.state, target.ref, true);
     await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
       type: "mouseMoved",
@@ -1080,8 +1142,8 @@ class PaneBrowserDriver implements BrowserDriver {
    * 대입이 아니라 setter 를 거치는 이유는 type 의 clear 와 같다: React 의
    * onChange 는 setter 를 통해서만 흐른다.
    */
-  async select(target: { ref: string; value: string }, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async select(target: { ref: string; value: string }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     this.wake(dest.contents);
     const backendNodeId = dest.state.refs.get(target.ref);
     if (backendNodeId === undefined) {
@@ -1130,8 +1192,8 @@ class PaneBrowserDriver implements BrowserDriver {
    * 드래그 세션을 요구해 CDP 마우스 이벤트로는 흐르지 않는다(그 경로는 후속
    * 과제). 중간 점을 밟는 이유: 이동 이벤트가 흘러야 페이지가 드래그로 본다.
    */
-  async drag(target: { fromRef: string; toRef: string }, tabId?: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target(tabId);
+  async drag(target: { fromRef: string; toRef: string }): Promise<PreviewAxNode[]> {
+    const dest = await this.target();
     this.wake(dest.contents);
     // 두 rect 를 먼저 받는다 — from 을 누른 뒤의 scrollIntoView 는 잡은 것을
     // 뜯어 낼 수 있다.
@@ -1174,9 +1236,19 @@ class PaneBrowserDriver implements BrowserDriver {
     return this.axTree(dest.contents, dest.state);
   }
 
-  /** 모든 탭의 디버거를 뗀다 — 페이지는 사용자의 것이라 그대로 둔다. */
+  /** 페이지의 디버거를 뗀다 — 페이지는 사용자의 것이라 그대로 둔다. */
   async destroy(): Promise<void> {
-    this.releaseAll();
+    this.release();
+  }
+
+  /**
+   * 데몬의 op 타임아웃 뒤 강제 복구 — 디버거를 떼고 붙임 지킴이와 ref 세대를
+   * 비운다. 멈춘 op 의 sendCommand 는 계속 떠 있을 수 있지만 붙임은 끊겼으니
+   * 사용자의 DevTools 는 풀리고, 다음 op 는 새 붙임으로 정상 경로를 탄다.
+   */
+  recover(): void {
+    this.release();
+    this.state.refs.clear();
   }
 
   // ── 내부 장치 ─────────────────────────────────────────────────
@@ -1218,7 +1290,7 @@ class PaneBrowserDriver implements BrowserDriver {
    */
   private async rectOfRef(
     contents: WebContents,
-    state: TabState,
+    state: PageState,
     ref: string,
     actionable = false,
   ): Promise<PreviewRect> {
@@ -1315,6 +1387,28 @@ class PaneBrowserDriver implements BrowserDriver {
     return false;
   }
 
+  /**
+   * 뒤로·앞으로 가기의 정산 — goBack·goForward 는 비동기라, 이동 이벤트가
+   * 오거나 예산이 다할 때까지 기다린 뒤 문서 완성을 본다. 이벤트를 먼저
+   * 듣기 시작해야 호출 직후의 이동을 놓치지 않는다.
+   */
+  private async settleAfterNav(contents: WebContents): Promise<boolean> {
+    const moved = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => finish(false), SETTLE_TIMEOUT_MS);
+      const finish = (ok: boolean): void => {
+        clearTimeout(timer);
+        contents.off("did-navigate", onNav);
+        contents.off("did-navigate-in-page", onNav);
+        resolve(ok);
+      };
+      const onNav = (): void => finish(true);
+      contents.on("did-navigate", onNav);
+      contents.on("did-navigate-in-page", onNav);
+    });
+    await moved;
+    return this.settleOn(contents, null);
+  }
+
   // ── 캡처 어댑터의 손잡이 (같은 모듈의 PaneCaptureDriver 만 부른다) ────────
 
   /** pane 이 살아 있으면 돌려준다 — 팩토리의 forPane 과 같은 판정이다. */
@@ -1323,42 +1417,51 @@ class PaneBrowserDriver implements BrowserDriver {
     return pane !== null && pane.webContents() !== null ? pane : null;
   }
 
-  /** 지금 활성 탭에 붙는다 — 붙어 있으면 아무것도 하지 않는다. */
-  async attachActive(): Promise<void> {
-    await this.target(undefined);
+  /**
+   * 화면의 페이지에 붙는다 — 붙어 있으면 아무것도 하지 않는다. 페이지가
+   * 없으면 null. `fresh` 는 이 호출이 디버거를 새로 붙였을 때만 참이다 —
+   * 캡처가 "자기가 붙인 것"과 "이미 붙어 있던 것"을 가르는 자리다.
+   */
+  async attachActive(): Promise<{ fresh: boolean } | null> {
+    const pane = this.view();
+    const contents = pane.webContents();
+    if (contents === null) return null;
+    const fresh = !contents.debugger.isAttached();
+    await this.target();
+    return { fresh };
   }
 
-  /** 활성 탭에서 문서·표식을 기다린다 — 붙어 있지 않으면 false 다. */
+  /** 페이지의 디버거를 뗀다 — 캡처가 자기가 붙인 것만 돌려놓는 길이다. */
+  releasePage(): void {
+    this.release();
+  }
+
+  /** 콘솔 링을 비운다 — 캡처의 open 이 "지난 open 이후" 계약을 지키는 자리. */
+  resetConsole(): void {
+    this.state.console.length = 0;
+  }
+
+  /** 화면의 페이지에서 문서·표식을 기다린다 — 붙어 있지 않으면 false 다. */
   async settleActive(marker: string | null): Promise<boolean> {
-    const pane = this.view();
-    const id = pane.getActiveTabId();
-    const state = id === null ? undefined : this.tabs.get(id);
-    const contents = state?.contents ?? null;
+    const contents = this.state.contents;
     if (!contents || contents.isDestroyed()) return false;
     return this.settleOn(contents, marker);
-  }
-
-  /**
-   * 이 드라이버가 붙인 탭의 디버거를 전부 뗀다 — 캡처 뒤 페이지는 사용자의
-   * 것이다. driveTo 가 활성 탭을 갈아탔을 수 있으므로 "활성 것만"이 아니라
-   * 붙인 것 전부다.
-   */
-  releaseAll(): void {
-    for (const tabId of [...this.tabs.keys()]) this.release(tabId);
   }
 }
 
 /**
  * preview.capture 의 pane 경로(게이트 재배선의 `for`)가 쓰는 어댑터 — 같은
- * PaneBrowserDriver 를 경유해 디버거 붙임을 한 곳에 묶는다(§3 규칙 10).
+ * PaneBrowserDriver 를 경유해 디버거 붙임을 한 곳에 묶는다.
  * PanePreviewDriver 는 이 어댑터에 흡수됐다: 캡처는 이제 탐색·settle 을
  * 드라이버의 장치로 하고, 창은 세우지 않는다.
  */
 class PaneCaptureDriver implements PreviewDriver {
+  /** 이 캡처가 새로 붙였는가 — destroy 는 그때만 뗀다(이미 붙어 있던 붙임은 건드리지 않는다). */
+  private attachedByMe = false;
+
   constructor(
     private readonly browser: PaneBrowserDriver,
     private readonly baseUrl: string,
-    private readonly allowedOrigins: readonly string[],
   ) {}
 
   async open(route: string, state: string | null): Promise<PreviewOpenResult> {
@@ -1368,15 +1471,14 @@ class PaneCaptureDriver implements PreviewDriver {
     } catch {
       return { ok: false, reason: `route 를 주소로 읽을 수 없습니다: ${route}` };
     }
-    // (07bd3bf 이식) A declared screen must stay inside the preview server (or
-    // an origin the repo explicitly allowed) — an absolute route would
-    // otherwise carry the pane (and its debugger) to an origin the repo
-    // never picked.
+    // (07bd3bf 이식) A declared screen must stay inside the preview server —
+    // an absolute route would otherwise carry the pane (and its debugger) to
+    // an origin the repo never picked.
     const baseOrigin = new URL(this.baseUrl).origin;
-    if (url.origin !== baseOrigin && !this.allowedOrigins.includes(url.origin)) {
+    if (url.origin !== baseOrigin) {
       return {
         ok: false,
-        reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${[baseOrigin, ...this.allowedOrigins].join(", ")} 안의 경로를 쓰십시오)`,
+        reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
       };
     }
     if (state) url.searchParams.set("state", state);
@@ -1387,13 +1489,20 @@ class PaneCaptureDriver implements PreviewDriver {
         reason: "미리보기 화면이 없습니다 — 화면이 보이는 상태에서 다시 시도하십시오.",
       };
     }
-    // 이동 전에 붙는다 — 콘솔 수집이 여기서 시작된다.
-    await this.browser.attachActive();
+    // 이동 전에 붙는다 — 콘솔 수집이 여기서 시작된다. "지난 open 이후" 계약을
+    // 위해 이전 기록은 비운다(07bd3bf 의 open 선례).
+    const first = await this.browser.attachActive();
+    if (first === null) {
+      return { ok: false, reason: "화면에 페이지가 없습니다 — 화면을 연 뒤 다시 시도하십시오." };
+    }
+    this.attachedByMe ||= first.fresh;
+    this.browser.resetConsole();
     if (!(await pane.driveTo(url.toString()))) {
       return { ok: false, reason: `화면을 불러오지 못했습니다: ${url}` };
     }
     // driveTo 가 다른 origin 의 페이지를 올렸을 수 있다 — 새 페이지에 다시 붙는다.
-    await this.browser.attachActive();
+    const second = await this.browser.attachActive();
+    this.attachedByMe ||= second?.fresh === true;
     return { ok: true, settled: await this.browser.settleActive(state) };
   }
 
@@ -1405,18 +1514,18 @@ class PaneCaptureDriver implements PreviewDriver {
     return this.browser.consoleLines();
   }
 
-  /** 캡처 뒤엔 디버거만 뗀다 — 페이지는 사용자의 것이라 그대로 둔다. */
+  /** 캡처 뒤엔 자기가 붙인 디버거만 뗀다 — 에이전트가 쓰는 페이지의 붙임은 남는다. */
   async destroy(): Promise<void> {
-    this.browser.releaseAll();
+    if (this.attachedByMe) this.browser.releasePage();
+    this.attachedByMe = false;
   }
 }
-
 /**
  * 데몬에 주입되는 드라이버 공장. 데몬은 Electron 을 모른다 — 이 모듈만이
  * 창을 만든다. 게이트·넘기기의 재검증은 세션이 쓰던 화면과 무관한 숨은 창에서
  * 돈다(`forIsolated`) — 같은 인스턴스를 다시 열면 세션의 콘솔 기록과 ref
  * 세대가 오염된다. `for`(preview.capture)는 pane 이 있으면 에이전트의
- * PaneBrowserDriver 를 그대로 경유한다(§3 규칙 10) — 탭마다 디버거를 붙이는
+ * PaneBrowserDriver 를 그대로 경유한다 — 페이지에 디버거를 붙이는
  * 손은 하나뿐이다. pane 이 접혀 있으면 예전처럼 숨은 창이 대신 찍는다.
  * `browserDrivers` 를 안 넘기는 옛 호출자는 그 자리에서 공장 하나를 세운다 —
  * 그 공장의 드라이버가 그 pane 의 유일한 붙임 소유자다.
@@ -1426,22 +1535,21 @@ export function createPreviewDriverFactory(
   browserDrivers: BrowserDriverFactory = createBrowserDriverFactory(pane),
 ): PreviewDriverFactory {
   return {
-    for: (baseUrl, allowedOrigins = []) => {
+    for: (baseUrl) => {
       const browser = browserDrivers.forPane();
       if (browser instanceof PaneBrowserDriver) {
-        return new PaneCaptureDriver(browser, baseUrl, allowedOrigins);
+        return new PaneCaptureDriver(browser, baseUrl);
       }
-      return new ElectronPreviewDriver(baseUrl, allowedOrigins);
+      return new ElectronPreviewDriver(baseUrl);
     },
-    forIsolated: (baseUrl, allowedOrigins = []) =>
-      new ElectronPreviewDriver(baseUrl, allowedOrigins),
+    forIsolated: (baseUrl) => new ElectronPreviewDriver(baseUrl),
   };
 }
 
 /**
- * 데몬에 주입되는 브라우저 공장(계획 §4-2). 같은 pane 에는 같은 드라이버 —
- * 인스턴스가 둘로 갈라지면 같은 탭에 디버거를 두 번 붙이는 일이 된다(§3
- * 규칙 10). pane 이 없으면 null 을 답한다 — 숨은 창 폴백은 이 계약에 없다.
+ * 데몬에 주입되는 브라우저 공장. 같은 pane 에는 같은 드라이버 —
+ * 인스턴스가 둘로 갈라지면 같은 페이지에 디버거를 두 번 붙이는 일이 된다.
+ * pane 이 없으면 null 을 답한다 — 숨은 창 폴백은 이 계약에 없다.
  */
 export function createBrowserDriverFactory(
   pane: () => PlannerPreviewView | null = () => null,
@@ -1449,7 +1557,9 @@ export function createBrowserDriverFactory(
   let driver: PaneBrowserDriver | null = null;
   return {
     forPane() {
-      if (!pane()?.webContents()) return null;
+      // pane 객체가 살아 있으면 드라이버를 돌려준다 — 페이지가 하나도 없어도
+      // navigate 가 페이지를 세울 수 있으므로(없으면 도구가 영원히 못 닿는다).
+      if (pane() === null) return null;
       driver ??= new PaneBrowserDriver(pane);
       return driver;
     },

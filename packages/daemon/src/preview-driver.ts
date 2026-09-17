@@ -3,10 +3,9 @@
  * daemon borrows to LOOK at the connected repo's running app. Its consumers
  * are the screen gate (턴 끝 재검증), the handoff captures and the 화면
  * 캡처 — the desktop injects a factory, the browser dev path injects nothing
- * and a gate simply never fires. 인앱 브라우저 2단계(계획 §4-2)부터 이 모듈은
- * 두 번째 계약 — 에이전트가 pane 탭을 만지는 `BrowserDriver` — 도 선언한다.
+ * and a gate simply never fires. 인앱 브라우저부터 이 모듈은 두 번째 계약 —
+ * 에이전트가 pane 의 페이지를 만지는 `BrowserDriver` — 도 선언한다.
  */
-import type { PreviewTabMeta } from "@colo-design/protocol";
 
 /** The widths a screen can be looked at in — the 폭 toggle's, shared. */
 export type PreviewViewport = "mobile" | "tablet" | "desktop";
@@ -66,24 +65,23 @@ export interface PreviewDriver {
 
 export interface PreviewDriverFactory {
   /**
-   * `baseUrl` is the preview server; `allowedOrigins` are the extra origins
-   * the repo declared (`colo-design.json` preview.origins) that this window
-   * may also open. The pane's driver when one is on screen.
+   * `baseUrl` is the preview server. The pane's driver when one is on
+   * screen.
    */
-  for(baseUrl: string, allowedOrigins?: string[]): PreviewDriver;
+  for(baseUrl: string): PreviewDriver;
   /**
    * A driver for verification work (the screen gate, handoff captures) —
    * always an isolated window, never the pane the user is driving:
    * re-opening the user's own screen would steal their view.
    */
-  forIsolated(baseUrl: string, allowedOrigins?: string[]): PreviewDriver;
+  forIsolated(baseUrl: string): PreviewDriver;
 }
 
 // ---------------------------------------------------------------------------
-// 인앱 브라우저 (계획 §4-2): 에이전트와 사용자가 같은 탭을 쓰는 드라이버
+// 인앱 브라우저: 에이전트와 사용자가 같은 탭을 쓰는 드라이버
 // 계약. 게이트용 `PreviewDriver` 가 화면을 "본다" 면, 이쪽은 "만진다" —
 // 접근성 스냅샷과 ref 액션. 07bd3bf 의 화면 도구(PreviewAxNode · ref 세대 ·
-// 액션 뒤 스냅샷)가 모태이며, 1단계의 탭 모델 위에 tabId 주소를 얹었다.
+// 액션 뒤 스냅샷)가 모태다 — pane 은 프로젝트당 페이지 하나라 탭 주소는 없다.
 // 구현은 데스크톱(PaneBrowserDriver)만 한다 — 데몬은 Electron 을 모른다.
 // ---------------------------------------------------------------------------
 
@@ -101,36 +99,39 @@ export interface PreviewAxNode {
   children: PreviewAxNode[];
 }
 
-/** The browser the agent shares with the user. `tabId` 생략은 언제나 활성 탭. */
+/** The browser the agent shares with the user — 화면의 페이지 하나를 겨눈다. */
 export interface BrowserDriver {
-  listTabs(): Promise<PreviewTabMeta[]>;
-  getActiveTabId(): Promise<string | null>;
-  openTab(
-    url: string,
-    opts?: { background?: boolean },
-  ): Promise<{ tabId: string; settled: boolean }>;
-  closeTab(tabId?: string): Promise<void>;
-  activateTab(tabId: string): Promise<void>;
-  cycleActiveTab(delta: -1 | 1): Promise<void>;
-  navigate(url: string, tabId?: string): Promise<{ settled: boolean }>;
-  back(tabId?: string): Promise<void>;
-  forward(tabId?: string): Promise<void>;
-  snapshot(tabId?: string): Promise<PreviewAxNode[]>;
-  screenshot(opts?: { tabId?: string; ref?: string; longEdge?: number }): Promise<PreviewCapture>;
-  click(target: { ref: string }, tabId?: string): Promise<PreviewAxNode[]>;
-  type(
-    input: { ref: string; text: string; clear?: boolean },
-    tabId?: string,
-  ): Promise<PreviewAxNode[]>;
-  press(key: string, tabId?: string): Promise<PreviewAxNode[]>;
-  scroll(target: { ref?: string; dy: number }, tabId?: string): Promise<PreviewAxNode[]>;
-  hover(target: { ref: string }, tabId?: string): Promise<PreviewAxNode[]>;
-  select(target: { ref: string; value: string }, tabId?: string): Promise<PreviewAxNode[]>;
-  drag(target: { fromRef: string; toRef: string }, tabId?: string): Promise<PreviewAxNode[]>;
-  consoleLines(tabId?: string): Promise<PreviewConsoleLine[]>;
-  evaluate(fn: string, tabId?: string): Promise<unknown>;
-  waitFor(target: { text?: string; url?: string; ms?: number }, tabId?: string): Promise<boolean>;
+  navigate(url: string): Promise<{ settled: boolean; snapshot: PreviewAxNode[] }>;
+  back(): Promise<PreviewAxNode[]>;
+  forward(): Promise<PreviewAxNode[]>;
+  snapshot(): Promise<PreviewAxNode[]>;
+  screenshot(opts?: { ref?: string; longEdge?: number }): Promise<PreviewCapture>;
+  click(target: { ref: string }): Promise<PreviewAxNode[]>;
+  type(input: { ref?: string; text: string; clear?: boolean }): Promise<PreviewAxNode[]>;
+  press(key: string): Promise<PreviewAxNode[]>;
+  scroll(target: { ref?: string; dy: number }): Promise<PreviewAxNode[]>;
+  hover(target: { ref: string }): Promise<PreviewAxNode[]>;
+  select(target: { ref: string; value: string }): Promise<PreviewAxNode[]>;
+  drag(target: { fromRef: string; toRef: string }): Promise<PreviewAxNode[]>;
+  consoleLines(): Promise<PreviewConsoleLine[]>;
+  evaluate(fn: string): Promise<unknown>;
+  waitFor(target: { text?: string; url?: string; ms?: number }): Promise<boolean>;
+  /**
+   * op 가 데몬의 타임아웃을 넘겨도 끝나지 않을 때의 강제 복구 — 디버거를
+   * 떼고 붙임 지킴이(keepAttached 인터벌)와 ref 세대를 비운다. 데몬의 큐
+   * 꼬리 회수와 짝이다 — 둘이 없으면 한 번의 hang 이 세션의 브라우저와
+   * 사용자의 DevTools 를 영구 봉쇄한다. 다음 op 는 새 붙임으로 정상 경로를
+   * 다시 탄다.
+   */
+  recover(): void;
   destroy(): Promise<void>;
+  /**
+   * 지금 드라이버가 겨누는 페이지가 연결 레포의 것인지 — origin 지식은
+   * 구현만 쥔다(미리보기 서버·선언 origins). 사용자가 링크를 타고 밖으로
+   * 내보낸 페이지면 거짓이고, 그 표면에서의 모든 op 는 실행 직전 세션의
+   * 권한 카드를 지난다.
+   */
+  isRepoSurface(): boolean;
 }
 
 export interface BrowserDriverFactory {

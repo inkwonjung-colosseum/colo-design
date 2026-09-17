@@ -1,5 +1,5 @@
 /**
- * Daemon-side credential storage (DESIGN §7): secrets live in the OS store,
+ * Daemon-side credential storage: secrets live in the OS store,
  * never in settings files. The Electron desktop story moves this behind
  * safeStorage; until then macOS uses the `security` CLI (Keychain generic
  * passwords) and Windows reports a typed Korean "not yet available" — the

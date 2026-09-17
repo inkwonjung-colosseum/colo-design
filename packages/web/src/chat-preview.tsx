@@ -4,11 +4,15 @@
  * daemon or a Claude session. Not part of the build — delete or keep out of
  * dist freely.
  */
+
+import type { LostSend, QueuedSend } from "@colo-design/protocol";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PermissionCard, QuestionCard, Transcript } from "./components";
 import { Composer } from "./components/chat/Composer";
+import type { PinAttachment } from "./hooks/usePins";
 import type { Block } from "./lib/daemon-client";
+import { THEMES } from "./lib/settings";
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./styles.css";
 
@@ -141,6 +145,7 @@ const runningBlocks: Block[] = [
     input: { file_path: "src/screens/member/MemberList.screen.tsx" },
     agentId: null,
     done: false,
+    startedAt: Date.now() - 5_000,
   },
   {
     // 보조 작업이 도는 중 — 근황 한 줄, 경과, 뒤로 보내기·중지 버튼.
@@ -150,8 +155,8 @@ const runningBlocks: Block[] = [
     input: { description: "CDS 목록 화면 관례 조사" },
     agentId: null,
     done: false,
+    startedAt: Date.now() - 42_000,
     progress: {
-      elapsedSeconds: 42,
       task: {
         id: "task_1",
         description: "CDS 목록 화면 관례 조사",
@@ -191,6 +196,7 @@ const runningBlocks: Block[] = [
     agentId: null,
     done: true,
     result: "백그라운드에서 계속 실행 중",
+    startedAt: Date.now() - 300_000,
     progress: {
       task: {
         id: "task_2",
@@ -211,13 +217,55 @@ function PlannerShell({
   live,
   showThinking,
   showTools,
+  crowded = false,
 }: {
   live: boolean;
   showThinking: boolean;
   showTools: boolean;
+  /** 상태 가득 — 핀·대기·유실을 다 채워 밴드와 접개의 모양을 본다. */
+  crowded?: boolean;
 }) {
   /** 에이전트 칩의 재료 — 데몬 없이도 칩의 모양과 고르기를 본다. */
   const [provider, setProvider] = useState("claude");
+  // 핀·대기는 다섯 줄 — 접개의 자동 판정(네 줄 초과)이 걸리는 양.
+  const crowdPins: PinAttachment[] = crowded
+    ? ["로그인 버튼", "회원가입 링크", "검색창", "상단 내비게이션", "푸터 안내 문구"].map(
+        (text, index) => ({
+          id: `pin-${index + 1}`,
+          screen: "login",
+          state: "기본",
+          note: index === 0 ? "누르고 나서 반응이 늦어요" : "",
+          intent: index % 2 === 0 ? "change" : "question",
+          element: {
+            component: "button",
+            text,
+            path: `main > form > button:nth-of-type(${index + 1})`,
+            rect: { x: 120, y: 320, width: 160, height: 40 },
+            kind: "element",
+            source: "src/screens/Login.screen.tsx:42",
+          },
+        }),
+      )
+    : [];
+  const crowdQueue: QueuedSend[] = crowded
+    ? [
+        "세션 확인이랑 토큰 갱신이 겹쳐 도는 것 같아요",
+        "로그인 버튼 누르고 반응까지 시간도 재 주세요",
+        "새로고침해도 상태가 유지되는지 확인해 주세요",
+        "콘솔에 찍히는 경고도 같이 정리해 주세요",
+        "다 끝나면 바뀐 파일 목록만 요약해 주세요",
+      ].map((text, index) => ({ id: `q-${index + 1}`, text, images: index === 1 ? 1 : 0 }))
+    : [];
+  const crowdDropped: LostSend[] = crowded
+    ? [
+        {
+          id: "lost-1",
+          text: "로그아웃 후에도 토큰이 남는 시나리오도 봐 주세요",
+          images: 0,
+          lostAt: Date.now() - 60_000,
+        },
+      ]
+    : [];
   return (
     <main className="planner__chat">
       <header className="thread">
@@ -284,6 +332,19 @@ function PlannerShell({
         onDismissSuggestion={() => undefined}
         tasks={live ? [{ taskId: "task_2", type: "shell", description: "pnpm -s build" }] : []}
         onStopTask={() => undefined}
+        pins={crowdPins}
+        queue={crowdQueue}
+        dropped={crowdDropped}
+        onTakeQueued={async () => null}
+        onSendQueuedNow={async () => undefined}
+        onClearQueue={() => undefined}
+        onTakeDropped={async () => null}
+        onDismissDropped={() => undefined}
+        onPinRemove={() => undefined}
+        onPinNote={() => undefined}
+        onPinIntent={() => undefined}
+        onPinFocus={() => undefined}
+        titleForScreen={(screen) => (screen === "login" ? "로그인" : null)}
         running={live}
         sendKey="enter"
         selector={{
@@ -350,7 +411,6 @@ function PlannerShell({
           },
         ]}
         onPickProvider={setProvider}
-        onToggleFastMode={() => undefined}
         commands={[]}
         onSetModel={() => undefined}
         onSetEffort={() => undefined}
@@ -395,13 +455,15 @@ function Preview() {
                 {showTools ? "작업 과정 숨기기" : "작업 과정 보기"}
               </button>
               <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-                <option value="dark">dark</option>
-                <option value="light">light</option>
-                <option value="catppuccin">catppuccin</option>
-                <option value="nord">nord</option>
+                {THEMES.filter((t) => t !== "system").map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
               </select>
               <select value={surface} onChange={(e) => setSurface(e.target.value)}>
                 <option value="chat">대화</option>
+                <option value="full">상태 가득</option>
                 <option value="turnlive">첫 초</option>
                 <option value="permission">허용 카드</option>
                 <option value="question">질문 카드</option>
@@ -413,6 +475,15 @@ function Preview() {
                 live={live}
                 showThinking={showThinking}
                 showTools={showTools}
+              />
+            )}
+            {surface === "full" && (
+              <PlannerShell
+                key="full"
+                live={false}
+                showThinking={showThinking}
+                showTools={showTools}
+                crowded
               />
             )}
             {surface === "turnlive" && (

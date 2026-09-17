@@ -16,7 +16,6 @@ const status = (patch: Partial<RepoStatus>): RepoStatus =>
     detail: null,
     previewUrl: null,
     previewPort: null,
-    previewOrigins: [],
     previewEpoch: null,
     url: "https://example.invalid/org/repo.git",
     branch: null,
@@ -25,28 +24,6 @@ const status = (patch: Partial<RepoStatus>): RepoStatus =>
     pendingChanges: 0,
     ...patch,
   }) as RepoStatus;
-
-test("errorKindOf: 포트 충돌은 kind 로 알아본다 — 메시지에 '미리보기 서버'가 없어도", () => {
-  const kind = errorKindOf(
-    status({
-      errorKind: "port-busy",
-      detail:
-        "포트 3000를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — 다시 시작을 누르면 그 프로그램을 종료하고 미리보기를 다시 켭니다.",
-    }),
-  );
-  assert.equal(kind, "port-busy");
-});
-
-test("errorKindOf: kind 없는 옛 데몬은 detail 의 다른 프로그램 문구로 포트 충돌을 읽는다", () => {
-  const kind = errorKindOf(
-    status({
-      errorKind: null,
-      detail:
-        "포트 3000를 다른 프로그램이 이미 쓰고 있어 미리보기를 켤 수 없습니다 — 다시 시작을 누르면 그 프로그램을 종료하고 미리보기를 다시 켭니다.",
-    }),
-  );
-  assert.equal(kind, "port-busy");
-});
 
 test("errorKindOf: 갈라진 거부는 포트 충돌이 아니다", () => {
   const kind = errorKindOf(
@@ -65,15 +42,11 @@ test("errorKindOf: clone · install · 미리보기 명령 실패는 각자의 �
     "install",
   );
   assert.equal(
-    errorKindOf(
-      status({ errorKind: "no-preview-command", detail: "띄울 명령이 없습니다" }),
-    ),
+    errorKindOf(status({ errorKind: "no-preview-command", detail: "띄울 명령이 없습니다" })),
     "no-preview-command",
   );
   assert.equal(
-    errorKindOf(
-      status({ errorKind: "port-undetected", detail: "주소를 찾지 못했습니다" }),
-    ),
+    errorKindOf(status({ errorKind: "port-undetected", detail: "주소를 찾지 못했습니다" })),
     "port-undetected",
   );
   assert.equal(
@@ -94,16 +67,7 @@ test("guidanceFor: 미리보기 명령 없음 · 주소 미감지 카드는 AI �
   assert.equal(undetected.title, "미리보기 주소를 찾지 못했습니다");
   assert.equal(undetected.agent?.step, "미리보기 띄우기");
   assert.equal(undetected.agent?.thread, "미리보기 주소 감지");
-  assert.match(undetected.agent?.brief ?? "", /preview\.port/);
-});
-
-test("guidanceFor: 포트 정리 실패 카드는 다음 과제(직접 종료·포트 변경)를 밝힌다", () => {
-  const guidance = guidanceFor("port-busy", null);
-  assert.equal(guidance.title, "미리보기 포트를 정리하지 못했어요");
-  assert.match(guidance.body, /preview\.port/);
-  // 데몬이 준 문장이 있으면 그 문장이 본문이다 — 한국어 리드가 살아 있는 한.
-  const withDetail = guidanceFor("port-busy", "포트 3000를 종료하려 했지만 실패했습니다…");
-  assert.equal(withDetail.body, "포트 3000를 종료하려 했지만 실패했습니다…");
+  assert.match(undetected.agent?.brief ?? "", /주소를 출력/);
 });
 
 test("guidanceFor: 충돌·승인 카드의 첫 동작 문구는 그대로다 (회귀)", () => {
@@ -116,36 +80,17 @@ test("guidanceFor: 충돌·승인 카드의 첫 동작 문구는 그대로다 (�
   assert.equal(guidanceFor("pnpm", null).command, "corepack enable");
 });
 
-test("held-elsewhere: 산 남의 인스턴스는 그 종류로 알아보고, 카드는 다른 인스턴스를 가리킨다", () => {
-  const kind = errorKindOf(
-    status({
-      errorKind: "held-elsewhere",
-      detail:
-        "포트 3000에서 다른 Colo Design 인스턴스가 이 프로젝트의 미리보기를 이미 돌리고 있습니다…",
-    }),
-  );
-  assert.equal(kind, "held-elsewhere");
-  const guidance = guidanceFor("held-elsewhere", null);
-  assert.equal(guidance.title, "다른 Colo Design이 미리보기를 쓰고 있어요");
-  assert.match(guidance.body, /다른 인스턴스/);
-  // 데몬이 준 문장이 있으면 그 문장이 본문이다 — 포트 충돌 카드와 같은 규칙.
-  const withDetail = guidanceFor("held-elsewhere", "포트 3000에서 다른 Colo Design 인스턴스가…");
-  assert.equal(withDetail.body, "포트 3000에서 다른 Colo Design 인스턴스가…");
-});
-
 test("guidanceFor: commands · preview 를 뺀 모든 실패가 AI 요청을 안다", () => {
   // commands 는 사람의 동의가 곧 해결이고, preview 는 미리보기 자리의 자체
   // 버튼이 답한다 — 이 둘만 카드의 첫 동작이 AI 가 아니다.
   for (const kind of [
     "auth",
     "pnpm",
-    "port-busy",
     "port-undetected",
     "no-preview-command",
     "conflict",
     "clone",
     "install",
-    "held-elsewhere",
     "unknown",
   ] as const) {
     const agent = guidanceFor(kind, "데몬의 자세한 출력").agent;
@@ -166,10 +111,8 @@ test("guidanceFor: 충돌 요청의 브리프는 옛 카드가내던 문구 그�
   assert.ok(agent);
   assert.equal(agent.step, "최신 변경 받아오기");
   assert.equal(agent.thread, "최신화 충돌 정리");
-  assert.match(
-      agent.brief, /준비가 최신화 충돌로 멈춰 있습니다/);
-  assert.match(
-      agent.brief, /충돌한 파일: app\.tsx/);
+  assert.match(agent.brief, /준비가 최신화 충돌로 멈춰 있습니다/);
+  assert.match(agent.brief, /충돌한 파일: app\.tsx/);
   // detail 없는 브리프는 리드 문장만이다 — 빈 꼬리표를 달지 않는다.
   assert.equal(guidanceFor("conflict", null).agent?.brief.endsWith("마쳐 주세요."), true);
 });

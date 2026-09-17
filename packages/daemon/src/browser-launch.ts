@@ -32,9 +32,7 @@ const browserMcpScript = (() => {
   const inside = fileURLToPath(new URL("./browser-mcp.js", import.meta.url));
   // 패키징된 앱에서는 asar 안의 경로가 나온다 — plain node 자식은 asar 를
   // 못 읽으므로 electron-builder 의 asarUnpack 이 놓은 .unpacked 로 돌린다.
-  return inside.includes("app.asar")
-    ? inside.replace("app.asar", "app.asar.unpacked")
-    : inside;
+  return inside.includes("app.asar") ? inside.replace("app.asar", "app.asar.unpacked") : inside;
 })();
 
 /** MCP 자식의 node 바이너리 가리기 — 배포 번들 → 실행 중인 node → PATH 순. */
@@ -45,7 +43,9 @@ function resolveNodeBinary(): string {
     .filter(Boolean)
     .map((dir) => join(dir, binary));
   const candidates = [...extraDirs, join(dirname(process.execPath), binary)];
-  return candidates.find((candidate) => existsSync(candidate)) ?? binary;
+  // 마지막 폴백은 실행 중인 바이너리 자신 — Electron 메인에서는 execPath 가
+  // 앱 실행 파일이라 ELECTRON_RUN_AS_NODE=1 로 node 처럼 쓴다(아래 env).
+  return candidates.find((candidate) => existsSync(candidate)) ?? process.execPath;
 }
 
 /**
@@ -62,7 +62,13 @@ export function browserMcpEntry(
   return {
     command: resolveNodeBinary(),
     args: [browserMcpScript],
-    env: { COLO_DAEMON_URL: daemonUrl, COLO_BROWSER_SECRET: secret },
+    env: {
+      COLO_DAEMON_URL: daemonUrl,
+      COLO_BROWSER_SECRET: secret,
+      // execPath 폴백이 Electron 바이너리일 때 node 로 돌게 하는 스위치 —
+      // 진짜 node 에게는 무해하다.
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   };
 }
 

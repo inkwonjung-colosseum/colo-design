@@ -3,7 +3,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 
 /**
- * 보낸 화면 동결 (preview.md §1-E): the stage's frozen face. The host —
+ * 보낸 화면 동결: the stage's frozen face. The host —
  * `children` — always renders underneath so the native view's slot never
  * moves; what changes is what sits over it.
  *
@@ -12,7 +12,7 @@ import type { Daemon } from "../../lib/daemon-client";
  *   the native view hides and freezes behind it, and the iframe path just
  *   gets an `<img>` on top. The picture is '보낸 그대로': a later commit on
  *   the branch does not move it.
- * - `mode: "sent"` + 실제로 열기: 시점 빌드 재현 (§3 2단계) — the daemon
+ * - `mode: "sent"` + 실제로 열기: 시점 빌드 재현 — the daemon
  *   serves the handoff branch's tip in a throwaway worktree on a second
  *   port, and an `<iframe>` rides ABOVE the capture in the same cover. The
  *   capture stays underneath the whole time: it paints while the build

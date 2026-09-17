@@ -1,14 +1,16 @@
 /**
- * Browser-level check of the project sidebar and its conversation tree,
+ * Browser-level check of the status rail and its grouped conversations,
  * fully offline.
  *
  * Two projects are created over the daemon socket (the same WebSocket the
- * browser uses), then the test drives the tree the planner uses: the project
- * rows with their conversations as children, the active mark, a one-click
- * jump into another project's conversation (the workspace switches while the
- * old project's preview stays warm on its port), a background turn reading
- * 작업 중 → 다시 조용해짐, a fold that survives a reload, and the folded
- * rail's conversation popover.
+ * browser uses), then the test drives the rail the planner uses: every
+ * project's conversations grouped by state (확인 대기 · 작업 중 · 완료) with
+ * the project as a tail chip, the project jump rows beneath them, the active
+ * mark, a one-click jump into another project's conversation (the workspace
+ * switches while the old project's preview stays warm on its port), a
+ * background turn reading 작업 중 → 다시 조용해짐, the 완료 group's five-row
+ * budget turning overflow into a count row, and the folded rail's
+ * conversation popover.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
@@ -216,10 +218,10 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    // 첫 화면은 마법사가 아니라 2단 시작 흐름이다(states.md §2.2) — 기계
+    // 첫 화면은 마법사가 아니라 2단 시작 흐름이다 — 기계
     // 게이트는 조용히 통과하고, 소켓 호출은 사이드바가 서 있는 이 자리에서
     // 바로 간다.
-    await page.waitForSelector(".planner__empty", { timeout: 60000 });
+    await page.waitForSelector(".onboarding--start", { timeout: 60000 });
     // --- a. two projects, over the same socket the browser uses -----------
     await call({
       type: "project.create",
@@ -335,10 +337,12 @@ async function main() {
       sessionId: paymentsSecond,
       text: "스텁 턴",
     });
-    await leaf(paymentsSecond).locator(".leaf__meta--live").waitFor({ timeout: 30000 });
+    await leaf(paymentsSecond).locator(".leaf__dot--live").waitFor({ timeout: 30000 });
+    await page.locator(".gsec", { hasText: "작업 중" }).waitFor({ timeout: 10000 });
     check(
-      "a turn on a background row reads 작업 중",
-      (await leaf(paymentsSecond).innerText()).includes("작업 중"),
+      "a turn on a background row sits in the 작업 중 group, chip on the row",
+      (await leaf(paymentsSecond).locator(".leaf__dot--live").count()) === 1 &&
+        (await leaf(paymentsSecond).locator(".leaf__proj").innerText()) === "결제",
     );
     // A settled conversation is the steady state, so the row returns to
     // recency words and the ring carries the answer-arrived mark alone.
@@ -364,26 +368,17 @@ async function main() {
     await titleInput.fill("회원 화면 작업");
     await page.keyboard.press("Enter");
     await page.locator(".thread__title", { hasText: "회원 화면 작업" }).waitFor({ timeout: 5000 });
-    check("clicking the thread title renames it in place", true);
-
-    // --- g. a fold survives a reload ---------------------------------------
-    await page.locator(".node", { hasText: "환불" }).locator(".node__chev").click();
-    const refundsNode = page.locator(".node", { hasText: "환불" });
-    await refundsNode.waitFor({ state: "visible", timeout: 5000 });
-    check(
-      "the chevron folds a project's conversations away",
-      (await refundsNode.getAttribute("class"))?.includes("node--folded") === true &&
-        (await page.locator(".node--folded").count()) === 1,
-    );
+    // --- g. the grouped rail stands again after a reload --------------------
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator(".planner__main").waitFor({ timeout: 30000 });
+    await page.locator(".gsec", { hasText: "완료" }).waitFor({ timeout: 30000 });
+    await leaf(paymentsSecond).waitFor({ timeout: 30000 });
     await page.locator(".node", { hasText: "환불" }).waitFor({ timeout: 30000 });
-    const foldedAfterReload = page.locator(".node", { hasText: "환불" });
     check(
-      "the fold survives a reload",
-      (await foldedAfterReload.getAttribute("class"))?.includes("node--folded") === true,
+      "the groups and the project rows survive a reload",
+      (await page.locator(".leaf[data-thread-id]").count()) >= 2,
+      (await page.locator(".leaf__title").allInnerTexts()).join(", "),
     );
-    await foldedAfterReload.locator(".node__chev").click();
 
     // --- h. the row menu renames a project in place ------------------------
     const paymentsRow = page.locator(".node", { hasText: "결제" });
@@ -431,35 +426,37 @@ async function main() {
     );
     await page.getByRole("button", { name: "취소" }).click();
 
-    // --- h2. a sixth conversation becomes a count row into the palette ----
-    // Five rows are all the tree holds; the sixth must not
-    // read as gone — the count row names it and opens the palette, already
-    // narrowed to this project's conversations.
-    // The conventions-prep thread (연결 준비) may still be a sibling leaf —
-    // it is a conversation too, so the count row's number absorbs it. What
-    // this step proves is the cap (5 rows) plus a count row that names the
-    // overflow, whatever the prep leaf does to the exact figure.
+    // --- h2. overflow past the 완료 budget becomes a count row -------------
+    // The 완료 group holds five rows across every project; the rest must
+    // not read as gone — the count row names them and opens the palette,
+    // unscoped now that the rows themselves come from every project.
+    // The conventions-prep thread (연결 준비) may still be around — it is a
+    // conversation too, so the count row's number absorbs it. What this step
+    // proves is the cap (5 rows) plus a count row that names the overflow,
+    // whatever the prep leaf does to the exact figure.
     for (let extra = 0; extra < 4; extra += 1) await call({ type: "session.create" });
-    const paymentsKids = page.locator(".node", { hasText: "결제 시스템" });
-    const moreRow = paymentsKids.locator(".leaf--more");
+    const moreRow = page.locator(".leaf--more");
     await moreRow.waitFor({ timeout: 30000 });
     check(
       "a sixth conversation turns into a count row, not silence",
-      (await paymentsKids.locator(".leaf[data-thread-id]").count()) === 5 &&
+      (await page.locator(".leaf[data-thread-id]").count()) === 5 &&
         /이전 대화 \d+개 더 보기/.test(await moreRow.innerText()),
       await moreRow.innerText(),
     );
     await moreRow.click();
     await page.locator(".palette__panel").waitFor({ timeout: 10000 });
     check(
-      "the count row opens the palette scoped to this project",
+      "the count row opens the palette unscoped",
       (await page.locator(".palette__search").getAttribute("placeholder")) ===
-        "이 프로젝트의 대화 찾기" && (await page.locator(".palette__row").count()) >= 6,
+        "대화, 화면, 프로젝트, 명령 찾기" && (await page.locator(".palette__row").count()) >= 6,
       `rows: ${await page.locator(".palette__row").count()}`,
     );
     await page.keyboard.press("Escape");
     await page.locator(".palette__panel").waitFor({ state: "detached", timeout: 10000 });
-    check("the scoped palette answers Escape like every menu", true);
+    check("the palette answers Escape like every menu", true);
+    // The expanded rail's own portrait — the rail screenshot at the end of
+    // this file is the folded one, so this one is the grouped view's.
+    await page.screenshot({ path: join(here, "ui-sidebar-groups.png"), fullPage: true });
 
     // --- i. removing from the list keeps the folders -----------------------
     const workRootsBefore = (await call({ type: "project.list" }, 15000)).projects.length;

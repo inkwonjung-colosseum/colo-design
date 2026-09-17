@@ -8,7 +8,7 @@ import type { DiffFile, DiffStatus } from "@colo-design/protocol";
  * 함께 쓰는 수입 경로를 지키려고 그대로 두었다.
  */
 
-/** 파일 한 줄의 상태 단어 — 검토 카드의 `자세히 보기` 행과 묶음 셈이 입는다. */
+/** 파일 한 줄의 상태 단어 — 화면 패널의 개발자 검토 행이 입는다. */
 export const FILE_STATUS_LABEL: Record<DiffFile["status"], string> = {
   added: "추가",
   modified: "수정",
@@ -60,25 +60,4 @@ export function stageLine(status: DiffStatus | null): string {
   const settled = status.stage === "published" || status.stage === "handed-off";
   if (!status.gate || settled) return label;
   return `${label} · ${GATE_LABEL[status.gate]}`;
-}
-
-/**
- * 저장의 세 걸음 (비개발자 저장 검토): the rail the save card shows while a
- * save moves — 모으기 → 올리기 → 완료. A failed stage marks the step it
- * stopped at instead of ending at "멈췄습니다": `diff` failures never left the
- * review, `commit`/`push` died on the way up. The 넘기기 stages share this
- * channel but the save card hands off to the 넘기기 card before they arrive.
- */
-export const SAVE_STEPS = ["바뀐 점 모으기", "저장소에 올리기", "완료"] as const;
-
-/** Which rail step a status stands on; -1 when the status is not a save's. */
-export function saveStep(status: DiffStatus): { index: number; failed: boolean } {
-  if (status.stage === "computing") return { index: 0, failed: false };
-  if (status.stage === "pushing") return { index: 1, failed: false };
-  if (status.stage === "published") return { index: 2, failed: false };
-  if (status.stage === "failed") {
-    const index = status.gate === "commit" || status.gate === "push" ? 1 : 0;
-    return { index, failed: true };
-  }
-  return { index: -1, failed: false };
 }

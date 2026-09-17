@@ -15,8 +15,6 @@ import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 export type ThemeId =
   | "dark"
   | "light"
-  | "sepia"
-  | "midnight"
   | "contrast"
   | "dracula"
   | "solarized"
@@ -29,7 +27,14 @@ export type ThemeId =
   | "onedark"
   | "github"
   | "monokai"
-  | "latte";
+  | "latte"
+  | "claude"
+  | "codex"
+  | "cursor"
+  | "vscode"
+  | "linear"
+  | "jetbrains"
+  | "slack";
 /** What the picker stores: a palette, or "follow the OS". */
 export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
@@ -50,12 +55,39 @@ const NOTICE_TIMINGS: NoticeTiming[] = ["off", "long", "all"];
 /** "오래 걸린 턴"의 기준 — 데스크톱 메인의 알림과 같은 값이다. */
 export const LONG_TURN_MS = 60_000;
 
-/** The three-step type scale. 보통 is the stylesheet's
-    own sizes; 작게/크게 multiply one knob — UI chrome, conversation content,
-    or machine text — by 0.9/1.1. */
-export type Scale = "small" | "normal" | "large";
+/** The type-size knobs, in px. Each axis names the size its base token
+    resolves to — 인터페이스 13px means --font-ui-130 computes to 13px — and
+    the stylesheet multiplies every token on that axis by px/base, so the
+    ladder keeps its proportions. The step is 0.5px: the bases themselves
+    are half-pixel sizes. */
+interface SizeSpec {
+  base: number;
+  min: number;
+  max: number;
+}
 
-export const SCALE_LEVELS: Scale[] = ["small", "normal", "large"];
+export const SIZE_PX = {
+  ui: { base: 13, min: 10, max: 18 },
+  content: { base: 13.5, min: 10, max: 18 },
+  code: { base: 11.5, min: 9, max: 16 },
+} as const satisfies Record<string, SizeSpec>;
+
+/** Snap a typed or stepped value to the 0.5px grid, inside the axis'
+    bounds — the loader and the stepper both land here. */
+export function clampSizePx(axis: keyof typeof SIZE_PX, px: number): number {
+  const spec = SIZE_PX[axis];
+  return Math.min(spec.max, Math.max(spec.min, Math.round(px * 2) / 2));
+}
+
+/** Stored px, or a blob from the three-step build. */
+function loadSizePx(axis: keyof typeof SIZE_PX, value: unknown): number {
+  const spec = SIZE_PX[axis];
+  if (typeof value === "number") return clampSizePx(axis, value);
+  // 작게/보통/크게 were base × 0.9/1/1.1 — migrate to the exact px they
+  // meant (14.3 stays 14.3; the 0.5 grid is for the stepper, not storage).
+  const legacy = value === "small" ? 0.9 : value === "large" ? 1.1 : 1;
+  return Math.min(spec.max, Math.max(spec.min, spec.base * legacy));
+}
 
 /**
  * 알림 정책. 확인 요청·중단·게이트 실패는 시점과 무관하게 언제나 오므로,
@@ -199,23 +231,18 @@ export interface Settings {
    * 자리다. 데스크톱이 아니면(plain 브라우저) 읽혀도 아무 일도 안 한다.
    */
   openLinksInApp: boolean;
-  /** Three-step type scales. Each rides a data
-      attribute on <html> that the stylesheet turns into a CSS variable. */
-  uiScale: Scale;
-  contentScale: Scale;
-  codeScale: Scale;
+  /** Type sizes in px — the size each axis' base token resolves to. They
+      land on <html> as --*-scale custom properties (px ÷ base) that the
+      stylesheet's font tokens multiply by. */
+  uiSize: number;
+  contentSize: number;
+  codeSize: number;
   notifications: NotificationSettings;
   chat: ChatSettings;
   layout: LayoutSettings;
   /** The planner's own names for threads, by session id. The daemon's
       summary stays the fallback; an entry the planner emptied is dropped. */
   sessionTitles: Record<string, string>;
-  /**
-   * Which project's tree is folded, by slug. Written by the
-   * sidebar outside this hook's state, so `update` carries the stored copy
-   * over and nothing can silently unfold a project the planner folded.
-   */
-  treeFolded?: Record<string, boolean>;
 }
 
 const DEFAULT_CHAT_SETTINGS: ChatSettings = {
@@ -240,23 +267,20 @@ const DEFAULT_SETTINGS: Settings = {
   sendKey: "enter",
   midTurnSend: "queue",
   openLinksInApp: false,
-  uiScale: "normal",
-  contentScale: "normal",
-  codeScale: "normal",
+  uiSize: SIZE_PX.ui.base,
+  contentSize: SIZE_PX.content.base,
+  codeSize: SIZE_PX.code.base,
   /** 기본은 "오래 걸린 턴만 + 소리" — 모든 턴마다 알림이 울리는 것부터 막는다. */
   notifications: { done: "long", sound: true },
   chat: DEFAULT_CHAT_SETTINGS,
   layout: { previewWidth: null, sidebarWidth: null, sidebarCollapsed: false },
   sessionTitles: {},
-  treeFolded: {},
 };
 
 export const THEMES: ThemeChoice[] = [
   "system",
   "dark",
   "light",
-  "sepia",
-  "midnight",
   "contrast",
   "dracula",
   "solarized",
@@ -270,6 +294,13 @@ export const THEMES: ThemeChoice[] = [
   "github",
   "monokai",
   "latte",
+  "claude",
+  "codex",
+  "cursor",
+  "vscode",
+  "linear",
+  "jetbrains",
+  "slack",
 ];
 
 const KEY = "colo-design.settings";
@@ -307,14 +338,13 @@ function loadSettings(): Settings {
       DEFAULT_SETTINGS.midTurnSend,
     ),
     openLinksInApp: stored.openLinksInApp === true,
-    uiScale: oneOf(SCALE_LEVELS, stored.uiScale, DEFAULT_SETTINGS.uiScale),
-    contentScale: oneOf(SCALE_LEVELS, stored.contentScale, DEFAULT_SETTINGS.contentScale),
-    codeScale: oneOf(SCALE_LEVELS, stored.codeScale, DEFAULT_SETTINGS.codeScale),
+    uiSize: loadSizePx("ui", stored.uiSize ?? stored.uiScale),
+    contentSize: loadSizePx("content", stored.contentSize ?? stored.contentScale),
+    codeSize: loadSizePx("code", stored.codeSize ?? stored.codeScale),
     notifications: normalizeNotificationSettings(stored.notifications),
     chat: loadChat(stored.chat),
     layout: loadLayout(stored.layout),
     sessionTitles: loadSessionTitles(stored.sessionTitles),
-    treeFolded: loadTreeFolded(stored.treeFolded),
   };
 }
 
@@ -340,48 +370,6 @@ export function currentNoticePrefs(): NotificationSettings {
     raw = null;
   }
   return normalizeNotificationSettings(raw);
-}
-
-/** Project slug → whether its tree is folded. Slugs and booleans
-    only; anything else in a hand-edited blob is dropped. */
-function loadTreeFolded(raw: unknown): Record<string, boolean> {
-  if (!raw || typeof raw !== "object") return {};
-  const out: Record<string, boolean> = {};
-  for (const [slug, folded] of Object.entries(raw)) {
-    if (!slug || typeof folded !== "boolean") continue;
-    out[slug] = folded;
-  }
-  return out;
-}
-
-/** The stored fold of one project's tree, read fresh — the sidebar writes
-    this key outside any settings dialog, so no component may hold a stale
-    copy. Unfolded until this planner says otherwise. */
-export function loadTreeFoldedFor(slug: string | null): boolean {
-  if (!slug) return false;
-  return loadSettings().treeFolded?.[slug] ?? false;
-}
-
-/**
- * Persist one project's tree fold. The stored blob is read whole and
- * rewritten, so a stale React copy can never undo another key's newer write.
- */
-export function saveTreeFolded(slug: string | null, folded: boolean): void {
-  if (!slug) return;
-  let base: Record<string, unknown> = {};
-  try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? "null");
-    if (raw && typeof raw === "object") base = raw as Record<string, unknown>;
-  } catch {
-    // An unreadable blob starts a fresh one; the fold below is what matters.
-  }
-  const treeFolded = { ...loadSettings().treeFolded, [slug]: folded };
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ ...base, treeFolded }));
-  } catch {
-    // Private-browsing quotas can refuse the write; the fold still applies
-    // to this tab's state.
-  }
 }
 
 /** Session-id → the planner's name for it. Anything that is not a non-empty
@@ -541,13 +529,21 @@ export function applyStoredTheme(): void {
 
 /**
  * Paint the stored type scale before React mounts — the same first-frame
- * argument as the theme: a client set to 크게 must not render one 보통 frame.
+ * argument as the theme: a client set to 16px must not render one 13px frame.
  */
 export function applyStoredTypeScale(): void {
-  const { uiScale, contentScale, codeScale } = loadSettings();
-  document.documentElement.dataset.ui = uiScale;
-  document.documentElement.dataset.content = contentScale;
-  document.documentElement.dataset.code = codeScale;
+  const { uiSize, contentSize, codeSize } = loadSettings();
+  applyTypeScale(uiSize, contentSize, codeSize);
+}
+
+/** The knobs land as inline custom properties — a number cannot ride a
+    data attribute into calc(), and the inline property wins over the
+    stylesheet's :root default the same way the attribute rules did. */
+function applyTypeScale(uiSize: number, contentSize: number, codeSize: number): void {
+  const style = document.documentElement.style;
+  style.setProperty("--ui-scale", String(uiSize / SIZE_PX.ui.base));
+  style.setProperty("--content-scale", String(contentSize / SIZE_PX.content.base));
+  style.setProperty("--code-scale", String(codeSize / SIZE_PX.code.base));
 }
 
 /** The browser chrome (mobile Safari toolbar, installed-window frame) tints
@@ -575,16 +571,7 @@ export function useSettings(): {
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => {
-      // The tree fold writes its key from the sidebar, outside
-      // this hook's state — carry the stored copy over, or a settings save
-      // made later in the same sitting would unfold the project the planner
-      // folded minutes ago.
-      const stored = loadSettings();
-      const next = {
-        ...prev,
-        ...patch,
-        treeFolded: stored.treeFolded,
-      };
+      const next = { ...prev, ...patch };
       try {
         localStorage.setItem(KEY, JSON.stringify(next));
       } catch {
@@ -626,14 +613,11 @@ export function useSettings(): {
     return () => clearTimeout(timer);
   }, [theme]);
 
-  // The stylesheet keys each type-scale knob off these attributes; a choice
-  // made in the dialog moves the page without a reload.
+  // The stylesheet multiplies each axis' tokens by these custom
+  // properties; a px typed in the dialog moves the page without a reload.
   useEffect(() => {
-    const root = document.documentElement;
-    root.dataset.ui = settings.uiScale;
-    root.dataset.content = settings.contentScale;
-    root.dataset.code = settings.codeScale;
-  }, [settings.uiScale, settings.contentScale, settings.codeScale]);
+    applyTypeScale(settings.uiSize, settings.contentSize, settings.codeSize);
+  }, [settings.uiSize, settings.contentSize, settings.codeSize]);
 
   return { settings, update, theme };
 }
@@ -798,5 +782,29 @@ export function rememberReadRepoWarning(fingerprint: string): void {
     localStorage.setItem(REPO_WARNINGS_KEY, JSON.stringify(next));
   } catch {
     // 사적 모드 등에서 저장이 막혀도 닫기는 이 탭의 몫으로 끝난다.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 첫 준비의 교육 줄 — 한 번 끝낸 기기에는 대기 카드가 이름만 말한다
+// ---------------------------------------------------------------------------
+
+const REPO_PREP_SEEN_KEY = "colo-design.repo-prep-seen";
+
+/** 준비 스택의 대기 카드 힌트("내려받기가 끝나면 이어서 합니다" 등)는 첫 준비의
+    교육용이다 — 준비가 한 번 끝난 기기에서는 이름만 서는 게 더 조용하다. */
+export function isRepoPrepSeen(): boolean {
+  try {
+    return localStorage.getItem(REPO_PREP_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markRepoPrepSeen(): void {
+  try {
+    localStorage.setItem(REPO_PREP_SEEN_KEY, "1");
+  } catch {
+    // 사적 모드 등에서 저장이 막혀도 힌트가 계속 보일 뿐이다.
   }
 }

@@ -1,10 +1,11 @@
 /**
  * A local fixture "connected repo": a bare git remote plus a seed commit
- * carrying a minimal but valid colo-design app — package.json with no-op
- * install/check scripts, a tiny node static server as the preview, and a
- * colo-design.json that declares the preview command and a free port picked at
- * seed time. Everything runs offline: git remotes are local paths, commands
- * are node/npm, and no registry is contacted.
+ * carrying a minimal but valid colo-design app — package.json whose scripts
+ * carry the dev server and the check gate, a pnpm lockfile so the derived
+ * install runs, a tiny node static server as the preview. When `port` is
+ * given the server bakes it in; otherwise it follows PORT (the handoff
+ * build's hint) or picks a free one. Everything runs offline: git remotes
+ * are local paths, commands are node/npm, and no registry is contacted.
  *
  * Shared by the daemon repo e2e and the browser planner e2e so both boot the
  * exact same repo contract.
@@ -54,18 +55,14 @@ export function freePort() {
   return promise;
 }
 
-const SERVER_MJS = `import { createServer } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
+const serverMjs = (port) => `import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
-// Port: declared colo-design.json preview.port > FIXTURE_PORT > auto (0).
-const configPath = join(root, "colo-design.json");
-const declared = existsSync(configPath)
-  ? JSON.parse(readFileSync(configPath, "utf8")).preview?.port
-  : undefined;
-const port = declared ?? (process.env.FIXTURE_PORT ? Number(process.env.FIXTURE_PORT) : 0);
+// PORT first — the handoff build's hint — then the seed-baked port, then free.
+const port = Number(process.env.PORT) || ${port ?? 0};
 
 const server = createServer((req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -92,6 +89,16 @@ const INDEX_HTML = `<!doctype html>
   </div></main>
   <script>
     (function () {
+      var applyState = function (state) {
+        var wrapper = document.querySelector("[data-screen]");
+        wrapper.setAttribute("data-state", state);
+        var rows = wrapper.querySelectorAll("tbody tr");
+        for (var i = 0; i < rows.length; i++) rows[i].style.display = state === "empty" ? "none" : "";
+      };
+      // 도구는 평범한 URL 이동으로도 화면 상태를 정한다(?state=) — 문서화된
+      // 계약이라 레퍼런스 구현이 그 자리에서 읽는다. 메시지 경로와 같은 규칙.
+      var initial = new URLSearchParams(location.search).get("state");
+      if (initial) applyState(initial);
       if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
       var post = function (envelope) {
         if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
@@ -106,31 +113,13 @@ const INDEX_HTML = `<!doctype html>
         // 실제 브리지는 클라이언트 라우팅을 한다 — 도구의 뷰는
         // did-navigate-in-page 로 그 자리를 따라간다.
         history.pushState(null, "", data.route + (state !== "default" ? "?state=" + state : ""));
-        var wrapper = document.querySelector("[data-screen]");
-        wrapper.setAttribute("data-state", state);
-        var rows = wrapper.querySelectorAll("tbody tr");
-        for (var i = 0; i < rows.length; i++) rows[i].style.display = state === "empty" ? "none" : "";
+        applyState(state);
       });
     })();
   </script>
 </body>
 </html>
 `;
-
-const PACKAGE_JSON = JSON.stringify(
-  {
-    name: "fixture-colo-design-app",
-    private: true,
-    version: "0.0.0",
-    scripts: {
-      install: 'node -e ""',
-      check: 'node -e ""',
-      dev: "node server.mjs",
-    },
-  },
-  null,
-  2,
-);
 
 // The repo's own publish gate. The seed ships the passing version; a test
 // overwrites the clone's copy to make a publish fail on purpose.
@@ -154,31 +143,24 @@ const CLAUDE_MD = `# fixture colo-design 레포
 /**
  * Creates the remote and pushes the seed commit.
  *
- * `port` declares preview.port in colo-design.json; null (default) leaves it
- * undeclared so the daemon auto-detects the preview from the dev server's
- * output/listen port. `overrides.previewCommand` swaps what `preview.command`
- * runs (unit tests use a command that exits immediately to observe the
- * failure phases).
+ * `port` bakes a fixed preview port into the seed's server; null (default)
+ * lets it follow PORT (the handoff build's hint) or pick a free one so the
+ * daemon auto-detects the preview from the dev server's output/listen port.
+ * `previewCommand` swaps the dev script (unit tests use a command that exits
+ * immediately to observe the failure phases).
  */
 export async function createFixtureRepo({
   dir,
   port = null,
   previewCommand = "node server.mjs",
-  // `installUpToDate()` requires node_modules to exist, so the no-op install
-  // must create it — a real repo's install always does.
-  installCommand = "mkdir -p node_modules",
-  checkCommand = "node scripts/check.mjs",
   // Replaces scripts/check.mjs entirely — security regressions use a check
   // that passes while writing files the planner never reviewed.
   checkMjs = CHECK_MJS,
-  // { host, scope } — a private-registry-declaring repo (npmrc leak checks).
+  // { host, scope } — seeds the committed .npmrc registry line the derivation
+  // reads (npmrc leak checks).
   registry = null,
   // Swaps index.html — a suite that needs a different bridge seeds its own page.
   indexHtml = INDEX_HTML,
-  // D94: seeds the repo WITHOUT colo-design.json — the connection-preparation
-  // flow's starting line. The preview server reads the config at ITS startup,
-  // which only happens after the config exists.
-  omitConfig = false,
 }) {
   const seed = join(dir, "seed");
   const remote = join(dir, "remote.git");
@@ -186,24 +168,46 @@ export async function createFixtureRepo({
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(seed, "src", "screens"), { recursive: true });
 
-  if (!omitConfig)
-    writeFileSync(
-      join(seed, "colo-design.json"),
-      JSON.stringify(
-        {
-          install: installCommand,
-          check: checkCommand,
-          preview: port === null ? { command: previewCommand } : { command: previewCommand, port },
-          ...(registry ? { registry } : {}),
+  writeFileSync(
+    join(seed, "package.json"),
+    JSON.stringify(
+      {
+        name: "fixture-colo-design-app",
+        private: true,
+        version: "0.0.0",
+        scripts: {
+          check: "node scripts/check.mjs",
+          dev: previewCommand,
         },
-        null,
-        2,
-      ),
-    );
-  writeFileSync(join(seed, "package.json"), PACKAGE_JSON);
+      },
+      null,
+      2,
+    ),
+  );
+  // The lockfile is what makes the derivation run an install at all — and it
+  // is the exact shape `pnpm install` itself settles on, so the install is a
+  // no-op that leaves the worktree clean.
+  writeFileSync(
+    join(seed, "pnpm-lock.yaml"),
+    [
+      "lockfileVersion: '9.0'",
+      "",
+      "settings:",
+      "  autoInstallPeers: true",
+      "  excludeLinksFromLockfile: false",
+      "",
+      "importers:",
+      "",
+      "  .: {}",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(seed, ".gitignore"), "node_modules\n");
+  if (registry)
+    writeFileSync(join(seed, ".npmrc"), `${registry.scope}:registry=https://${registry.host}/\n`);
   mkdirSync(join(seed, "scripts"), { recursive: true });
   writeFileSync(join(seed, "scripts", "check.mjs"), checkMjs);
-  writeFileSync(join(seed, "server.mjs"), SERVER_MJS);
+  writeFileSync(join(seed, "server.mjs"), serverMjs(port));
   writeFileSync(join(seed, "index.html"), indexHtml);
   writeFileSync(join(seed, "CLAUDE.md"), CLAUDE_MD);
 

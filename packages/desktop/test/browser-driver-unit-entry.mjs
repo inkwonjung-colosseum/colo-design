@@ -1,16 +1,16 @@
 /**
- * 인앱 브라우저 2단계 — PaneBrowserDriver 유닛(docs/in-app-browser-plan.md §4-2).
- * tabs-unit-entry.mjs 의 패턴: 진짜 Electron 위에서 dist/preview-view.js 의
+ * 인앱 브라우저 — PaneBrowserDriver 유닛.
+ * pane-unit-entry.mjs 의 패턴: 진짜 Electron 위에서 dist/preview-view.js 의
  * PlannerPreviewView 와 dist/preview-driver.js 의 createBrowserDriverFactory 를
- * 몰고, 한 줄 JSON 으로 답한다. 케이스는 계획 §4-2: snapshot ref 세대
+ * 몰고, 한 줄 JSON 으로 답한다. 케이스는 snapshot ref 세대
  * (스냅샷→click→새 스냅샷·이동 뒤 옛 ref 거절), actionability(가려진 버튼
  * 대기 후 클릭), 다이얼로그 자동 처리, evaluate 반환+8KB 캡, waitFor(text),
- * 탭 지명 vs active, pane 없으면 null.
+ * navigate 가 화면의 페이지를 옮기는 것, pane 없으면 null.
  *
  * COLO_BROWSER_UNIT_VIEW — dist/preview-view.js 의 file URL.
  * COLO_BROWSER_UNIT_DRIVER — dist/preview-driver.js 의 file URL.
  * COLO_BROWSER_UNIT_A / COLO_BROWSER_UNIT_B — fixture 서버 둘의 base url.
- *   A 는 상호작용 페이지들, B 는 두 번째 탭용 평범한 페이지다.
+ *   A 는 상호작용 페이지들, B 는 로밍 목적지용 평범한 페이지다.
  */
 import { app, BrowserWindow } from "electron";
 
@@ -63,12 +63,18 @@ app.whenReady().then(async () => {
     // ── pane 없으면 null (숨은 창 폴백 금지) ─────────────────────────
     out.paneNull = createBrowserDriverFactory(() => null).forPane() === null;
     const factory = createBrowserDriverFactory(() => view);
-    // pane 은 있어도 탭이 하나도 없으면 null — 화면에 페이지가 없는 pane 은
-    // drive 할 것이 없다.
-    out.factoryNullBeforeTabs = factory.forPane() === null;
+    // pane 은 있어도 페이지가 하나도 없으면 드라이버는 돌아오지만 페이지가
+    // 필요한 명령은 실패한다 — navigate 가 페이지를 세울 수 있어야 하므로.
+    out.factoryDriverBeforePage = factory.forPane() !== null;
+    try {
+      await factory.forPane().snapshot();
+      out.noPageSnapshotFails = false;
+    } catch {
+      out.noPageSnapshotFails = true;
+    }
 
-    // 사용자가 탭을 여는 것과 같다 — 드라이버는 탭이 생긴 뒤에야 손에 잡힌다.
-    view.newTab(`${baseA}/one`);
+    // 사용자가 링크를 여는 것과 같다 — 드라이버는 페이지가 생긴 뒤에야 손에 잡힌다.
+    view.openTab(`${baseA}/one`);
     // 숨은 창의 페이지는 쓰로틀을 풀어 준다 — rAF 가 멈추면 actionability 의
     // 프레임 쌍이 영원히 기다린다.
     const unthrottle = () => view.webContents()?.setBackgroundThrottling(false);
@@ -77,8 +83,7 @@ app.whenReady().then(async () => {
     out.factoryReturnsDriver = driver !== null;
     out.sameInstance = factory.forPane() === driver;
 
-    const t1 = (await driver.listTabs())[0]?.id;
-    out.activeIsT1 = (await driver.getActiveTabId()) === t1;
+    out.pageOnScreen = view.webContents() !== null;
     await waitFor(() => (view.webContents()?.getURL() ?? "").startsWith(`${baseA}/one`));
 
     // AX 트리는 렌더러가 늦게 채울 수 있다 — 비어 있으면 다시 본다.
@@ -134,8 +139,11 @@ app.whenReady().then(async () => {
       (await driver.evaluate("() => document.getElementById('name').value")) === "hello";
     await driver.press("Enter");
     out.pressWorks = (await driver.evaluate("() => document.body.dataset.pressed")) === "1";
-    const pick = findByName(s3, "고르기");
-    out.pickNodes = flatten(s3)
+    // type·press 가 새 ref 세대를 발급했으므로 s3 의 ref 는 이미 낡았다 —
+    // select 는 방금 세대(press 의 반환 스냅샷)에서 다시 찾는다.
+    const s3b = await snapshotRetry();
+    const pick = findByName(s3b, "고르기");
+    out.pickNodes = flatten(s3b)
       .filter((node) => node.name === "고르기")
       .map((node) => `${node.role}:${node.ref}`);
     await driver.select({ ref: pick.ref, value: "b" });
@@ -171,17 +179,14 @@ app.whenReady().then(async () => {
     out.waitForTextTrue = await driver.waitFor({ text: "늦게 왔다", ms: 5000 });
     out.waitForTextFalse = (await driver.waitFor({ text: "없는 글자", ms: 300 })) === false;
 
-    // ── 탭 지명 vs active ────────────────────────────────────────────
-    const opened2 = await driver.openTab(`${baseB}/two`);
+    // ── navigate 는 화면의 페이지를 옮긴다 — 다른 origin 도 제자리다 ──
+    await driver.navigate(`${baseB}/two`);
     unthrottle();
-    const t2 = opened2.tabId;
-    out.secondTabActive = (await driver.getActiveTabId()) === t2;
-    // 지명된 탭은 화면에 세워지고 거기서 명령이 돈다 — 공유 브라우저의 규칙.
-    await driver.navigate(`${baseA}/third`, t1);
-    unthrottle();
-    out.tabTargeted = (await driver.getActiveTabId()) === t1;
-    out.tabTargetedUrl = (await driver.evaluate("() => location.pathname", t1)) === "/third";
-    out.consoleOfOtherTab = Array.isArray(await driver.consoleLines(t2));
+    out.navigateRoams = (view.webContents()?.getURL() ?? "").startsWith(`${baseB}/two`);
+    out.consoleStillWorks = Array.isArray(await driver.consoleLines());
+    // 뒤로 가기는 온 길을 되짚는다 — 같은 페이지, 같은 history.
+    await driver.back();
+    out.backReturns = (view.webContents()?.getURL() ?? "").startsWith(`${baseA}/delayed`);
 
     // ── screenshot ───────────────────────────────────────────────────
     const shot = await driver.screenshot({ longEdge: 200 });
@@ -193,7 +198,6 @@ app.whenReady().then(async () => {
     unthrottle();
     const s5 = await snapshotRetry();
     const alertButton = findByName(s5, "Alert");
-    const confirmButton = findByName(s5, "Confirm");
     // alert 은 수락 — 처리가 없으면 페이지가 멈춰 클릭이 돌아오지 않는다.
     const alertClick = await Promise.race([
       driver.click({ ref: alertButton.ref }).then(
@@ -204,8 +208,11 @@ app.whenReady().then(async () => {
     ]);
     out.dialogAlertHandled = alertClick === "ok";
     if (out.dialogAlertHandled) {
+      // alert 클릭이 새 세대를 발급했다 — confirm 은 방금 세대에서 다시 찾는다.
+      const s5b = await snapshotRetry();
+      const confirmNow = findByName(s5b, "Confirm");
       const confirmClick = await Promise.race([
-        driver.click({ ref: confirmButton.ref }).then(
+        driver.click({ ref: confirmNow.ref }).then(
           () => "ok",
           (error) => String(error?.message ?? error),
         ),
@@ -224,9 +231,14 @@ app.whenReady().then(async () => {
       out.dialogReported = false;
     }
 
-    // ── closeTab · destroy ───────────────────────────────────────────
-    await driver.closeTab(t2);
-    out.closeTabWorks = (await driver.listTabs()).every((tab) => tab.id !== t2);
+    // ── waitFor 예산 클램프 ───────────────────────────────────────────
+    // 60초를 청해도 실제 예산은 30초로 깎인다 — 영원히 안 오는 글자의
+    // false 도달이 30초 안착(클램프)인지 60초 만전(무클램프)인지로 판정한다.
+    const clampAt = Date.now();
+    out.waitClampResult = await driver.waitFor({ text: "영원히 없는 글자", ms: 60_000 });
+    out.waitClampElapsed = Date.now() - clampAt;
+
+    // ── destroy ──────────────────────────────────────────────────────
     await driver.destroy();
     out.destroyOk = true;
   } catch (error) {

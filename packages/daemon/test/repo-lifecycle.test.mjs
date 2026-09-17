@@ -1,26 +1,16 @@
 /**
- * Workspace bring-up phases and preview-ownership claims — the sync state machine, the clone debris sweep, and the port-war fence between instances.
+ * Workspace bring-up phases — the sync state machine and the clone debris
+ * sweep.
  *
  * Split out of repo.test.mjs — the bodies are verbatim; shared scaffolding
  * (workdir · repoRoot · clone · bringUp · promisifiedRun · stub client) lives
  * in ./repo-test-kit.mjs.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
-import {
-  clearPreviewClaim,
-  foreignLivePreviewClaim,
-  pidAlive,
-  portListenerPids,
-  REPO_URL_MISSING_DETAIL,
-  RepoWorkspace,
-  readPreviewClaim,
-  writePreviewClaim,
-} from "../dist/repo.js";
+import { REPO_URL_MISSING_DETAIL, RepoWorkspace } from "../dist/repo.js";
 import { createFixtureRepo, freePort } from "./fixture-repo.mjs";
 import { clone, workdir } from "./repo-test-kit.mjs";
 
@@ -136,7 +126,6 @@ test("a seeded repo walks cloning → installing → starting, and a dead previe
       dir: join(dir, "fixture"),
       port,
       previewCommand: 'node -e "process.exit(3)"',
-      installCommand: 'node -e ""',
     });
 
     const phases = [];
@@ -170,7 +159,6 @@ test("a bring-up in flight reads as running, so the onboarding check can tell pr
     const fixture = await createFixtureRepo({
       dir: join(dir, "fixture"),
       port,
-      installCommand: "sleep 0.5",
     });
 
     const workspace = new RepoWorkspace({
@@ -247,88 +235,3 @@ test("changing the url discards the old clone, re-clones, and reports the move o
   }
 });
 // ---------------------------------------------------------------------------
-// Preview ownership claims — 두 인스턴스 포트 전쟁의 울타리
-// ---------------------------------------------------------------------------
-
-/** 살아 있는 남의 인스턴스 흉내 — 검사가 끝날 때까지 사는 짧은 프로세스. */
-function spawnStranger() {
-  return spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], { stdio: "ignore" });
-}
-
-test("claims: 쓰고 읽으면 같은 기록이고, 지우면 없어진다", () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  const claim = { instancePid: process.pid, listenerPid: null, port: 41023, at: "now" };
-  writePreviewClaim(claim, env);
-  assert.deepEqual(readPreviewClaim(41023, env), claim);
-  clearPreviewClaim(41023, env);
-  assert.equal(readPreviewClaim(41023, env), null);
-});
-
-test("claims: 기록이 없으면 아무도 막지 않는다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  assert.equal(await foreignLivePreviewClaim(41024, env), null);
-});
-
-test("claims: 우리 인스턴스의 기록은 살아 있어도 막지 않는다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  writePreviewClaim({ instancePid: process.pid, listenerPid: 1, port: 41025, at: "now" }, env);
-  assert.equal(await foreignLivePreviewClaim(41025, env), null);
-});
-
-test("claims: 주인이 죽은 기록은 고아 — 지우고 지나간다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  const dead = spawnStranger();
-  const pid = dead.pid;
-  assert.ok(typeof pid === "number");
-  dead.kill("SIGKILL");
-  await new Promise((ok) => dead.once("exit", ok));
-  assert.equal(pidAlive(pid), false);
-  writePreviewClaim({ instancePid: pid, listenerPid: 1, port: 41026, at: "now" }, env);
-  assert.equal(await foreignLivePreviewClaim(41026, env), null);
-  assert.equal(readPreviewClaim(41026, env), null);
-});
-
-test("claims: 산 남의 인스턴스가 리스너를 쥐고 있으면 그 기록이 답이다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  const stranger = spawnStranger();
-  const server = createServer();
-  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-  const port = server.address().port;
-  const holders = await portListenerPids(port);
-  assert.ok(holders.includes(process.pid), "lsof finds this suite's own listener");
-  writePreviewClaim({ instancePid: stranger.pid, listenerPid: process.pid, port, at: "now" }, env);
-  const held = await foreignLivePreviewClaim(port, env);
-  assert.equal(held?.instancePid, stranger.pid);
-  stranger.kill("SIGKILL");
-  server.close();
-});
-
-test("claims: 기록이 가리킨 리스너가 없으면 낡은 기록 — 지우고 지나간다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  const stranger = spawnStranger();
-  const server = createServer();
-  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-  const port = server.address().port;
-  // 리스너가 살아 있어도 기록이 가리키는 pid 가 그 포트에 없으면 낡은 것이다 —
-  // 기록의 주인이 이미 그 서버를 잃었고, 포트의 지금 주인은 따로 있다.
-  writePreviewClaim({ instancePid: stranger.pid, listenerPid: stranger.pid, port, at: "now" }, env);
-  assert.equal(await foreignLivePreviewClaim(port, env), null);
-  assert.equal(readPreviewClaim(port, env), null);
-  stranger.kill("SIGKILL");
-  server.close();
-});
-
-test("claims: 리스너 조회가 실패한 기록도 산 주인이 있으면 지킨다", async () => {
-  const env = { COLO_DESIGN_RUN_DIR: workdir("colo-claims-") };
-  const stranger = spawnStranger();
-  const server = createServer();
-  await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-  const port = server.address().port;
-  // listenerPid null — 기록 시점의 lsof 가 순간 놓쳤을 때의 모양 (실사 목격).
-  // 오류의 방향은 살아 있는 남의 미리보기를 죽이는 쪽이 아니어야 한다.
-  writePreviewClaim({ instancePid: stranger.pid, listenerPid: null, port, at: "now" }, env);
-  const held = await foreignLivePreviewClaim(port, env);
-  assert.equal(held?.instancePid, stranger.pid);
-  stranger.kill("SIGKILL");
-  server.close();
-});

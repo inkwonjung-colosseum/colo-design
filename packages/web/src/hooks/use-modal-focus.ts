@@ -69,9 +69,11 @@ export function useModalFocus(panel: RefObject<HTMLElement | null>, open: boolea
  * The Escape side of `aria-modal="true"`: only the TOPMOST overlay answers.
  * Every dialog used to listen on `document` unconditionally, so a confirm
  * stacked on a settings or review surface closed both at once — the planner
- * pressed Escape once and lost two layers. The rule is positional, not
- * registration order: the overlay whose root is the last `.modal` /
- * `.palette` / `.onboarding` in the DOM is the one Escape dismisses.
+ * pressed Escape once and lost two layers. The rule is stacking, not
+ * registration order: the palette (z-70) paints above a dialog (z-60) even
+ * when the markup puts the modal last, so an open palette is the layer
+ * Escape dismisses; with no palette open, the last `.modal` / `.palette` /
+ * `.onboarding` in the DOM is.
  *
  * Menus and folds are not overlays — they keep their own Escape handlers.
  */
@@ -85,8 +87,12 @@ export function useModalEscape(
     const onKeydown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const overlays = document.querySelectorAll(".modal, .palette, .onboarding");
-      const top = overlays[overlays.length - 1];
-      if (!top) return;
+      if (overlays.length === 0) return;
+      // 규칙은 겹침이다, 마크 순서가 아니다 — 팔레트(z-70)는 대화상자(z-60)보다
+      // 위에 칠해지는데 마크에서는 앞에 설 수 있다. 팔레트가 열려 있기만 해도
+      // 그것이 맨 위 층이다; 없을 때만 DOM 마지막이 맨 위다.
+      const palette = [...overlays].find((el) => el.classList.contains("palette"));
+      const top = palette ?? overlays[overlays.length - 1]!;
       const root = panel.current?.closest(".modal, .palette, .onboarding");
       if (root !== top) return;
       onClose();

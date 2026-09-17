@@ -94,10 +94,10 @@ function slowStubClaude(dir, logPath) {
       "    } catch {}",
       '    if (line.includes(\'"subtype":"set_permission_mode"\')) {',
       '      const id = (line.match(/"request_id":"([^"]*)"/) || [])[1];',
-      "      // 거부 주입 (커밋 게이트 §3.12-2): the marker file primes ONE error",
+      "      // 거부 주입: the marker file primes ONE error",
       "      // answer — 계획 먼저가 그 거부를 submit 안으로 나르던 도구였다.",
-      "      // 지금은 부르는 자리가 없다(아래 §3.12 수용 기준 2 의 빈 자리를",
-      "      // 보라). 문은 열어 둔다: 거부를 다시 꽂을 길이 생기면 표식 하나로",
+      "      // 지금은 부르는 자리가 없다(아래 비워 둔 e2e 자리를 보라).",
+      "      // 문은 열어 둔다: 거부를 다시 꽂을 길이 생기면 표식 하나로",
       "      // 돌아온다.",
       "      let refuse = false;",
       "      try {",
@@ -319,15 +319,9 @@ async function main() {
     check("the planner workspace renders with the fixture project", true);
 
     // --- the bridge speaks through the preload (D68) -----------------------
-    // The picker is gone; the address bar is the screens' door. The bridge's
-    // arrival shows as the datalist filling with the declared route.
+    // The picker is gone; the address bar is the screens' door.
     const address = page.getByTestId("preview-address");
     await address.waitFor({ timeout: 60000 });
-    await page.waitForFunction(
-      () =>
-        Boolean(document.querySelector('#colo-frame-routes option[value="/member/MemberList"]')),
-      { timeout: 60000 },
-    );
     await address.click();
     await address.fill("/member/MemberList");
     await address.press("Enter");
@@ -614,7 +608,7 @@ async function main() {
       rowSurvives === true && whereText.includes("기본"),
       `row:${rowSurvives} where:${whereText}`,
     );
-    // §3.10 ⓕ · 커미티 차단 4: while the OTHER state is on, the badge hides —
+    // ⓕ · 커미티 차단 4: while the OTHER state is on, the badge hides —
     // the row keeps saying `회원 목록 · 기본` and the screen must not
     // contradict it by re-anchoring the same CSS path on the error view.
     const badgesOnOtherState = await inView(
@@ -649,7 +643,7 @@ async function main() {
     );
     check("the swapped wrapper's pin clears on demand", (await clearTray(page)) === true);
 
-    // --- 거부된 전송의 e2e 자리는 계획 먼저와 함께 비었다 (§3.12 수용 기준 2) --
+    // --- 거부된 전송의 e2e 자리는 계획 먼저와 함께 비었다 ----------------
     // 이 자리에는 "거부된 전송은 말·핀·배지를 지키고 경고 띠 하나로 말한다"
     // 가 있었다. 그 거부를 실선에 꽂던 도구가 계획 먼저였다 — 그 칩만이
     // submit 안에 제어 요청(set_permission_mode)을 무조건 하나 넣었고,
@@ -754,7 +748,7 @@ async function main() {
       (await trayRows.count()) === 2 && badgesHere === 1,
       `rows:${await trayRows.count()} badges:${badgesHere}`,
     );
-    // 핀만의 전송 — 문장이 없어도 목록 하나로 성립한다 (재설계 §3.9). The
+    // 핀만의 전송 — 문장이 없어도 목록 하나로 성립한다. The
     // count comes FIRST: the echo card renders the moment the send lands,
     // and one taken after would already count the card we are waiting for.
     const cardsBefore = await page.locator(".machine--comments").count();
@@ -1004,17 +998,6 @@ async function main() {
       uiMarker === "alive" && viewAfterKey !== "set",
       `ui:${uiMarker} view:${viewAfterKey}`,
     );
-    // ⓞ the address bar proposes the declared routes (D85 ⓓ).
-    const options = await page.evaluate(() =>
-      [...document.querySelectorAll("#colo-frame-routes option")].map((o) =>
-        o.getAttribute("value"),
-      ),
-    );
-    check(
-      "ⓞ the address datalist offers the declared route",
-      options.includes("/member/MemberList"),
-      options.join(", "),
-    );
     // ⓟ 배율: 두 번 확대 → 칩 140%, 모바일 폭 → 100% 복귀 (D85 ⓔ).
     await page.evaluate(() => void window.coloDesignDesktop.preview.zoom("in"));
     await page.waitForTimeout(400);
@@ -1056,23 +1039,20 @@ async function main() {
 
     // --- the address bar's line (D66) — kept from the previous suite --------
     const foreign = page.locator('[data-testid="preview-address"]');
-    const tabsBefore = await page.evaluate(() => window.coloDesignDesktop.preview.tabs());
     await foreign.fill("https://example.com");
     await foreign.press("Enter");
-    // 인앱 브라우저 1단계(규칙 9): 활성 preview 탭의 off-origin 전체 주소는
-    // 거절 배너 대신 새 web 탭으로 열린다 — 거절은 경로 입력의 몫으로 남는다.
+    // 페이지 하나 모델: off-origin 전체 주소는 거절 배너 대신 화면의 페이지를
+    // 제자리에서 옮긴다 — 거절은 경로 입력의 몫으로 남는다.
     await page.waitForTimeout(500);
-    const tabsAfter = await page.evaluate(() => window.coloDesignDesktop.preview.tabs());
-    const roamed = tabsAfter.tabs.find((tab) => tab.id === tabsAfter.activeTabId);
-    const urlAfter = await viewUrl(app);
+    // mountedUrl 은 load() 가 동기적으로 세팅한다 — 외부망 응답 여부와
+    // 무관하게 "그 주소로 옮겼다"는 사실만 단언한다.
+    const mountedAfter = await app.evaluate(
+      () => globalThis.coloDesignPlannerPreview?.page?.mountedUrl ?? null,
+    );
     check(
-      "an off-origin address opens a web tab instead of being refused",
-      tabsAfter.tabs.length === tabsBefore.tabs.length + 1 &&
-        roamed?.kind === "web" &&
-        (roamed.url ?? "").includes("example.com") &&
-        typeof urlAfter === "string" &&
-        urlAfter.includes("example.com"),
-      `${JSON.stringify(roamed)} · ${urlAfter ?? ""}`,
+      "an off-origin address roams the page instead of being refused",
+      typeof mountedAfter === "string" && mountedAfter.includes("example.com"),
+      `${mountedAfter ?? ""}`,
     );
 
     check("no uncaught renderer errors", errors.length === 0, errors.slice(0, 2).join(" | "));

@@ -25,7 +25,6 @@ import type {
   RepoHistory,
   RepoHistoryEntry,
   RepoStatus,
-  RepoSummary,
   ServerMessage,
   SessionCommand,
   SessionLocation,
@@ -83,6 +82,12 @@ export type Block =
       result?: unknown;
       isError?: boolean;
       done: boolean;
+      /**
+       * 도구가 뜬 시각 — 도는 동안의 경과 시계가 여기서 센다. 라이브는
+       * 데몬이 찍고, 재생은 대화록의 시각이 온다; 둘 다 없으면 이 창이
+       * 받은 시각이 밑값이다.
+       */
+      startedAt?: number;
       /**
        * 도는 동안의 진행 — 라이브 전용. 재생된 기록에는 없다(도구 행의
        * 입력·결과만 남는다), 그러니 없는 것이 정상이다.
@@ -264,6 +269,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           input: event.input,
           agentId: event.agentId,
           done: false,
+          startedAt: event.startedAt ?? Date.now(),
         },
       ];
 
@@ -545,9 +551,7 @@ const EMPTY_SESSION: SessionView = {
  * re-declared them by hand and the copies drifted: `at` was a number here
  * while the daemon sends ISO 8601 strings, so the save history read
  * "Invalid Date". The web keeps its own names; the shape lives in one place.
- *   DiffSummary       ← RepoSummary      (the 저장 review's lines)
  *   SaveHistoryEntry  ← RepoHistoryEntry (one saved commit) */
-export type DiffSummary = RepoSummary;
 export type SaveHistoryEntry = RepoHistoryEntry;
 type HandoffDraft = RepoHandoffDraft;
 type SaveHistory = RepoHistory;
@@ -696,7 +700,7 @@ interface DaemonApi {
    */
   handoffStatus: () => Promise<HandoffStatusReport | null>;
   /**
-   * 보낸 화면 동결 (preview.md §1-E): one committed capture read out of the
+   * 보낸 화면 동결: one committed capture read out of the
    * handoff branch — the frozen stage's '보낸 그대로'. `state` null is the
    * screen's default look; null back means no shot was committed.
    */
@@ -705,7 +709,7 @@ interface DaemonApi {
     state: string | null,
   ) => Promise<{ mediaType: string; data: string } | null>;
   /**
-   * 시점 빌드 재현 (preview.md §3 2단계): the handed-off moment's REAL
+   * 시점 빌드 재현: the handed-off moment's REAL
    * build — the handoff branch's tip in a throwaway worktree, served on a
    * second port. `ready:false` is the honest answer (no open handoff, a
    * server that would not come up) and the frozen stage falls back to the
@@ -713,11 +717,6 @@ interface DaemonApi {
    * conversation that opened it — its close reaps the worktree.
    */
   handoffPreview: (sessionId?: string | null) => Promise<HandoffPreviewInfo>;
-  /**
-   * 저장 검토의 요약: one no-tool agent turn over the diff,
-   * answered in the planner's words. Asked once per diff, cached above this.
-   */
-  summarizeDiff: () => Promise<DiffSummary>;
   /**
    * 개발자에게 넘기기의 초안 (비개발자 넘기기): one no-tool agent turn over
    * this cycle's 저장 메모, answered as the title and the paragraph the
@@ -766,7 +765,8 @@ interface DaemonApi {
       /** The pin's overlay UUID — the row joins the tray/badge/card on it. */
       id?: string;
       screen: string;
-      state: string;
+      /** 표식 없는 페이지의 핀은 null — 데몬 스키마도 nullable 이다. */
+      state: string | null;
       /** The pin's own memo, verbatim — empty when none was written. */
       text: string;
       elementText: string;
@@ -810,6 +810,11 @@ interface DaemonApi {
 export interface Daemon {
   connection: ConnectionState;
   connectionError: string | null;
+  /**
+   * 지금 다시 시도 — 예약된 백오프를 버리고 즉시 connect()를 다시 돌린다.
+   * url이 없어 연결 루프가 선 적 없으면 조용한 no-op.
+   */
+  reconnect: () => void;
   status: DaemonStatus | null;
   /**
    * Every registered project, and which one everything else means. Seeded
@@ -839,12 +844,11 @@ export interface Daemon {
    */
   diffStatus: DiffStatus | null;
   /**
-   * 에이전트가 조작 중인 브라우저 탭 id들 (인앱 브라우저 4단계) — 탭 스트립의
-   * "에이전트 조작 중" 표시가 읽는다. null은 "활성 탭"이라는 뜻으로, 그 해석은
-   * 스트립의 몫이다. `browser.driving` 브로드캐스트가 켜고 끄고, 세션 종료·
-   * 연결 끊김에 함께 거둔다.
+   * "에이전트 조작 중" 표시가 읽는다 — 조작 중인 세션 id 들.
+   * `browser.driving` 브로드캐스트가 켜고 끄고, 세션 종료·연결 끊김에 함께
+   * 거둔다.
    */
-  browserDriving: ReadonlySet<string | null>;
+  browserDriving: ReadonlySet<string>;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
   /**
@@ -1015,11 +1019,10 @@ export function useDaemon(url: string | null): Daemon {
     () => readOnboardingCache().provider,
   );
   /**
-   * 에이전트가 조작 중인 브라우저 탭 (인앱 브라우저 4단계): `browser.driving`
-   * 브로드캐스트가 켜고 끄는, 세션별 탭 id 목록. null 탭 id는 "활성 탭"을
-   * 뜻하고 그 해석은 탭 스트립의 몫이다 — 여기서는 있는 그대로 보관한다.
+   * 에이전트가 브라우저를 조작 중인 세션들: `browser.driving` 브로드캐스트가
+   * 켜고 끄는 세션 id 목록.
    */
-  const [driving, setDriving] = useState<Map<string, Set<string | null>>>(new Map());
+  const [driving, setDriving] = useState<Set<string>>(new Set());
   /**
    * The thread the planner is looking at: the last one they opened or spoke
    * into. A DIFFERENT thread settling is what a notification is for;
@@ -1030,6 +1033,11 @@ export function useDaemon(url: string | null): Daemon {
   const prevStates = useRef<Record<string, SessionState>>({});
   /** 세션별 최근 running 진입 시각 — 완료 알림의 "오래 걸린 턴"을 재는 시계. */
   const runningSince = useRef<Record<string, number>>({});
+  /**
+   * 연결 루프 안의 즉시 재시도 진입점 — effect가 닫힌 뒤에도 마지막 루프를
+   * 가리키게 ref로 둔다. 루프가 없으면(null url) null이라 호출이 no-op.
+   */
+  const reconnectRef = useRef<(() => void) | null>(null);
 
   // --- 낙관 숨김 (대화 지우기) --------------------------------------------
   // 지우기 승인의 같은 커밋에서 행을 거둔다. 데몬의 목록(`projects`)이
@@ -1063,7 +1071,7 @@ export function useDaemon(url: string | null): Daemon {
 
     const flushPending = () => {
       for (const call of pendingCalls.current.values())
-        call.reject(new Error("연결이 끊어졌습니다 — 다시 연결하는 중"));
+        call.reject(new Error("연결이 끊어졌습니다 — 잠시 뒤 대화나 화면을 다시 확인해 주세요"));
       pendingCalls.current.clear();
     };
 
@@ -1095,18 +1103,25 @@ export function useDaemon(url: string | null): Daemon {
         // lives in onclose so nothing has to be duplicated here.
       };
       sock.onclose = () => {
+        // reconnect()가 새 소켓을 세운 뒤 늦게 도착한 옛 소켓의 onclose는
+        // 무시한다 — 그대로 두면 새 소켓을 지우고 재시도를 한 번 더 건다.
+        if (ws !== sock) return;
         socket.current = null;
         if (disposed) return;
         flushPending();
         // 데몬이 끊기면 조작 중 표시의 끝 신호도 함께 죽는다 — 재연결 뒤에도
         // 스피너가 남지 않게 여기서 전부 거둔다.
-        setDriving(new Map());
+        setDriving(new Set());
         if (!everOpen) {
           // First attempt never got in: most likely a wrong url or the daemon
           // is genuinely down. Show the connect screen; the retry below still
           // brings the app back if the daemon appears afterwards.
           setConnection("error");
           setConnectionError("데몬에 연결하지 못했습니다 — 자동으로 다시 연결합니다.");
+        } else {
+          // 한 번은 붙었던 선이 끊긴 것 — 화면은 살아 있으니 ConnectScreen이
+          // 아니라 "closed" 배너가 알린다. 백오프 재시도는 아래에서 계속 돈다.
+          setConnection("closed");
         }
         const delay = Math.min(1000 * 2 ** attempt, 5000);
         attempt += 1;
@@ -1189,23 +1204,11 @@ export function useDaemon(url: string | null): Daemon {
         return;
       }
       if (message.type === "browser.driving") {
-        // 탭 스트립의 "에이전트 조작 중" 표시 (4단계). on:true는 그 세션의
-        // 조작 시작, on:false는 끝 — 끝은 시작과 같은 (세션, 탭) 짝을 지운다.
+        // "에이전트 조작 중" 표시. on:true는 그 세션의 조작 시작, on:false는 끝.
         setDriving((prev) => {
-          const next = new Map(prev);
-          if (message.on) {
-            const tabs = new Set(next.get(message.sessionId) ?? []);
-            tabs.add(message.tabId);
-            next.set(message.sessionId, tabs);
-          } else {
-            const tabs = next.get(message.sessionId);
-            if (tabs) {
-              const kept = new Set(tabs);
-              kept.delete(message.tabId);
-              if (kept.size > 0) next.set(message.sessionId, kept);
-              else next.delete(message.sessionId);
-            }
-          }
+          const next = new Set(prev);
+          if (message.on) next.add(message.sessionId);
+          else next.delete(message.sessionId);
           return next;
         });
         return;
@@ -1222,15 +1225,18 @@ export function useDaemon(url: string | null): Daemon {
             turnStartedAt: message.startedAt ?? null,
           },
         }));
-        // 죽은 세션의 확인·질문 카드는 답을 받을 곳이 없다 — 세션과 함께
-        // 걷어 낸다. 남겨 두면 답할 수 없는 카드가 화면에 남는다.
-        if (message.state === "error" || message.state === "closed") {
+        // 기다림이 사라진 세션의 확인·질문 카드는 답을 받을 곳이 없다 —
+        // 다른 창이 답했거나, 소켓이 끊긴 동안 답이 나갔다. 데몬의 방송에는
+        // '해결됨'이 따로 없으므로 기다리지 않는 상태가 곧 해결의 신호다.
+        if (message.state !== "waiting_permission" && message.state !== "waiting_question") {
           setPending((prev) => prev.filter((p) => p.sessionId !== message.sessionId));
-          // 끝난 세션의 조작 표시도 함께 거둔다 — on:false를 놓친 채 죽은
-          // 세션이 탭 스트립에 스피너를 남기지 않게.
+        }
+        // 죽은 세션의 조작 표시도 함께 걷어 낸다 — on:false를 놓친 채 죽은
+        // 세션이 스피너를 남기지 않게.
+        if (message.state === "error" || message.state === "closed") {
           setDriving((prev) => {
             if (!prev.has(message.sessionId)) return prev;
-            const next = new Map(prev);
+            const next = new Set(prev);
             next.delete(message.sessionId);
             return next;
           });
@@ -1270,10 +1276,28 @@ export function useDaemon(url: string | null): Daemon {
       }
     };
 
+    // 지금 다시 시도: 예약된 백오프를 버리고 곧장 connect()를 돌린다. 살아
+    // 있는 소켓이 있으면 먼저 닫는다 — 그 onclose는 위의 ws!==sock 가드가
+    // 걸러 이중 재시도가 생기지 않는다.
+    reconnectRef.current = () => {
+      if (disposed) return;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      attempt = 0;
+      if (ws) {
+        flushPending();
+        ws.close();
+      }
+      connect();
+    };
+
     connect();
 
     return () => {
       disposed = true;
+      reconnectRef.current = null;
       if (retryTimer) clearTimeout(retryTimer);
       if (ws) {
         ws.onclose = null;
@@ -1286,6 +1310,12 @@ export function useDaemon(url: string | null): Daemon {
       socket.current = null;
     };
   }, [url]);
+
+  // "지금 다시 시도" 버튼이 부른다 — 실제 재시도는 연결 루프(effect) 안에
+  // 살고, 여기서는 그 진입점을 안정된 콜백으로 보낸다.
+  const reconnect = useCallback(() => {
+    reconnectRef.current?.();
+  }, []);
 
   const call = useCallback(
     <T>(payload: Record<string, unknown>, timeoutMs = 60_000): Promise<T> => {
@@ -1628,10 +1658,7 @@ export function useDaemon(url: string | null): Daemon {
           { type: "repo.handoffPreview", ...(sessionId ? { sessionId } : {}) },
           180_000,
         ),
-      // The summary runs one short agent turn on the daemon: the window a
-      // generation gets, not the minutes a gate takes.
-      summarizeDiff: () => call<DiffSummary>({ type: "repo.summarize" }, 120_000),
-      // The draft runs the same short agent turn the summary does.
+      // The draft runs one short agent turn on the daemon.
       handoffDraft: () => call<HandoffDraft>({ type: "repo.handoffDraft" }, 120_000),
       saveHistory: () => call<SaveHistory>({ type: "repo.history" }, 60_000),
       // A restore commits and pushes, and the repo's checks may run on the
@@ -1651,7 +1678,8 @@ export function useDaemon(url: string | null): Daemon {
         items: Array<{
           id?: string;
           screen: string;
-          state: string;
+          /** 표식 없는 페이지의 핀은 null — 데몬 스키마도 nullable 이다. */
+          state: string | null;
           text: string;
           elementText: string;
           intent?: "change" | "question";
@@ -1713,8 +1741,10 @@ export function useDaemon(url: string | null): Daemon {
     for (const [sessionId, view] of Object.entries(sessions)) {
       next[sessionId] = view.state;
       // 시계: running 진입에 놓고, 세션이 running 을 벗어나면 회수한다.
+      // 새로고침 뒤에는 데몬이 기억한 시작 시각으로 심는다 — Date.now 로
+      // 심으면 10분짜리 턴이 1분 미만으로 읽혀 알림이 씹힌다.
       if (view.state === "running" && prevStates.current[sessionId] !== "running") {
-        runningSince.current[sessionId] = Date.now();
+        runningSince.current[sessionId] = view.turnStartedAt ?? Date.now();
       }
       if (prevStates.current[sessionId] === "running" && view.state !== "running") {
         const startedAt = runningSince.current[sessionId];
@@ -1791,16 +1821,10 @@ export function useDaemon(url: string | null): Daemon {
     [api],
   );
 
-  /** 탭 스트립이 읽는 납작한 모습 — 어느 세션이든 조작 중이면 그 탭에 표시. */
-  const browserDriving = useMemo(() => {
-    const tabs = new Set<string | null>();
-    for (const set of driving.values()) for (const tabId of set) tabs.add(tabId);
-    return tabs;
-  }, [driving]);
-
   return {
     connection,
     connectionError,
+    reconnect,
     status,
     projects,
     activeSlug,
@@ -1819,7 +1843,7 @@ export function useDaemon(url: string | null): Daemon {
     dismissDropped,
     repo,
     diffStatus,
-    browserDriving,
+    browserDriving: driving,
     onboarding,
     onboardingProvider,
   };

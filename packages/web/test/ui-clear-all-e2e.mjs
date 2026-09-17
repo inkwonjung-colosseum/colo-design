@@ -201,7 +201,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();
-    await page.waitForSelector(".planner__empty", { timeout: 60000 });
+    await page.waitForSelector(".onboarding--start", { timeout: 60000 });
 
     await call({
       type: "project.create",

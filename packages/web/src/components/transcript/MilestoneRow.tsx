@@ -1,5 +1,5 @@
 /**
- * 진행 한 줄 (docs/plan/chat.md §1.1 #6): 넘김·반영이 대화에 남기는 시스템의
+ * 진행 한 줄: 넘김·반영이 대화에 남기는 시스템의
  * 채팅 상태줄. 도구 확인 한 줄(`.tool`)과는 다른 어휘 — 접히지 않고, 원 아이콘
  * 하나 + 문장 + 오른쪽 시각으로 끝난다. 같은 PR 을 여러 라운드 돌면 이 줄이
  * 여러 개 쌓이는 것이 의도다(대화가 사이클의 연대기).
@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { CheckIcon } from "../icons";
 
-export type MilestoneTone = "send" | "ok" | "danger" | "default";
+type MilestoneTone = "send" | "ok" | "danger" | "default";
 
 export interface MilestoneRowProps {
   /** 원 아이콘 안의 글리프 — 기본은 넘김(↑)/반영(✓)에 맞는 아이콘을 호출부가 고른다. */

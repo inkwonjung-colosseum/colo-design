@@ -1,5 +1,5 @@
 /**
- * 포터블 런타임 번들(DESIGN §7 런타임 번들): 연결 레포의 install·preview·
+ * 포터블 런타임 번들: 연결 레포의 install·preview·
  * build 가 요구하는 node + corepack(pnpm 활성화)을 resources/bin 으로
  * 모은다. Windows 빌드에서는 MinGit 도 같은 폴더에 둔다(config — 이 머신
  * 에서는 실행하지 않는다).
@@ -85,7 +85,7 @@ writeFileSync(
 );
 console.log(`corepack: ${pkg} (package + own shims)`);
 
-// MinGit(Windows 만, DESIGN §7): 번들 파일을 수동으로 resources/bin 에
+// MinGit(Windows 만): 번들 파일을 수동으로 resources/bin 에
 // 두었을 때 목록만 남긴다. CI 는 winget/직접 내려받기로 채운다.
 if (withMinGit) {
   if (!win) {

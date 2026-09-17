@@ -240,12 +240,12 @@ async function main() {
       "the newest project is the active one and its clone is its own folder",
       refundsStatus.root === join(DIR, "projects", refunds.slug, "repo") &&
         refundsStatus.url === refundsFixture.remote &&
-        existsSync(join(DIR, "projects", refunds.slug, "repo", "colo-design.json")),
+        existsSync(join(DIR, "projects", refunds.slug, "repo", "package.json")),
       `${refundsStatus.root}`,
     );
     check(
       "each project's clone lives only in its own folder",
-      existsSync(join(DIR, "projects", payments.slug, "repo", "colo-design.json")) &&
+      existsSync(join(DIR, "projects", payments.slug, "repo", "package.json")) &&
         join(DIR, "projects", payments.slug, "repo") !==
           join(DIR, "projects", refunds.slug, "repo"),
       `${payments.slug} | ${refunds.slug}`,
@@ -346,64 +346,8 @@ async function main() {
     await request({ type: "project.activate", slug: refunds.slug });
     await waitReady("the 환불 clone restored after 자유");
 
-    // --- 3.2 the port fence: two repos on one port cannot both stay warm ----
-    // 쌍둥이 declares 결제's port. Its own bring-up takes that port (결제 is
-    // cold from here); later, activating 결제 must stop the warm 쌍둥이 — and
-    // only it: 환불, on another port, stays warm through the fence.
-    const twinFixture = await createFixtureRepo({
-      dir: join(DIR, "fixture-twin"),
-      port: paymentsFixture.port,
-    });
-    const twin = await request({
-      type: "project.create",
-      name: "쌍둥이",
-      repoUrl: twinFixture.remote,
-      approveCommands: true,
-    });
-    const twinStatus = await waitReady("the 쌍둥이 clone on 결제's port");
-    check(
-      "a project declaring another's port takes it for its own bring-up",
-      twinStatus.previewUrl !== null &&
-        new URL(twinStatus.previewUrl).port === String(paymentsFixture.port),
-      `${twinStatus.previewUrl}`,
-    );
-    await request({ type: "project.activate", slug: refunds.slug });
-    await waitReady("the 환불 clone beside the warm 쌍둥이");
-    const beforeFence = inbox.length;
     await request({ type: "project.activate", slug: payments.slug });
-    const fenced = await waitReady("결제 back on the port 쌍둥이 held");
-    const fencePhases = inbox
-      .slice(beforeFence)
-      .filter((m) => m.type === "repo.status")
-      .map((m) => m.status.phase);
-    check(
-      "a project whose port a warm twin holds brings itself up on it (the twin stopped first)",
-      fenced.previewUrl !== null &&
-        new URL(fenced.previewUrl).port === String(paymentsFixture.port) &&
-        fencePhases.includes("starting"),
-      `${fenced.previewUrl} phases ${fencePhases.join("·")}`,
-    );
-    check(
-      "a warm project on another port survives that fence",
-      await serving(previewPort),
-      `port ${previewPort}`,
-    );
-    const beforeTwinReturn = inbox.length;
-    await request({ type: "project.activate", slug: twin.slug });
-    await waitReady("쌍둥이 back after the fence");
-    const twinPhases = inbox
-      .slice(beforeTwinReturn)
-      .filter((m) => m.type === "repo.status")
-      .map((m) => m.status.phase);
-    check(
-      "the twin the fence stopped comes back through a bring-up, not a repaint",
-      twinPhases.includes("starting"),
-      twinPhases.join("·"),
-    );
-    // Leave the stage as section 3 found it: 쌍둥이 gone, 결제 on screen.
-    await request({ type: "project.remove", slug: twin.slug, deleteFiles: true });
-    await request({ type: "project.activate", slug: payments.slug });
-    await waitReady("the 결제 clone restored after the twin");
+    await waitReady("the 결제 clone before the session check");
 
     // A thread opened in 결제 belongs to 결제: listing 환불's threads must
     // not carry it over, and sending into it from the wrong project is

@@ -1,10 +1,10 @@
 /**
- * 인앱 브라우저 2단계 — PaneBrowserDriver 유닛(docs/in-app-browser-plan.md §4-2).
- * tabs.test.mjs 의 runTabsUnit 패턴: 진짜 Electron 을 띄워
+ * 인앱 브라우저 — PaneBrowserDriver 유닛.
+ * pane.test.mjs 의 runPaneUnit 패턴: 진짜 Electron 을 띄워
  * browser-driver-unit-entry.mjs 가 dist/preview-view.js 의 PlannerPreviewView 와
  * dist/preview-driver.js 의 createBrowserDriverFactory 를 몰고 시나리오를
  * 돌리게 하고, 한 줄 JSON 답을 케이스별로 단언한다. 오프라인 — 서버 둘은
- * 로컬 fixture 다(A 는 상호작용 페이지들, B 는 두 번째 탭용).
+ * 로컬 fixture 다(A 는 상호작용 페이지들, B 는 로밍 목적지).
  *
  * Run: node --test packages/desktop/test/browser-driver.test.mjs
  */
@@ -51,7 +51,7 @@ function startServerA() {
   return server;
 }
 
-/** 서버 B — 두 번째 탭용. 무슨 경로든 같은 페이지. */
+/** 서버 B — 로밍 목적지. 무슨 경로든 같은 페이지. */
 function startServerB() {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -104,7 +104,7 @@ async function runBrowserUnit(urlA, urlB) {
   return line;
 }
 
-test("브라우저 드라이버: ref 세대, actionability, 다이얼로그, evaluate, waitFor, 탭 지명, pane 없으면 null", async () => {
+test("브라우저 드라이버: ref 세대, actionability, 다이얼로그, evaluate, waitFor, 로밍, pane 없으면 null", async () => {
   const serverA = startServerA();
   const serverB = startServerB();
   try {
@@ -113,10 +113,14 @@ test("브라우저 드라이버: ref 세대, actionability, 다이얼로그, eva
     const suffix = result.error ? ` — entry: ${result.error}` : "";
     const cases = [
       [result.paneNull, "pane getter 가 null 이면 forPane 은 null 이다"],
-      [result.factoryNullBeforeTabs, "탭이 하나도 없으면 forPane 은 null 이다"],
-      [result.factoryReturnsDriver, "탭이 있으면 forPane 이 드라이버를 돌려준다"],
+      [
+        result.factoryDriverBeforePage,
+        "페이지가 없어도 forPane 은 드라이버를 돌려준다(navigate 가 페이지를 세운다)",
+      ],
+      [result.noPageSnapshotFails, "페이지가 없으면 snapshot 은 실패한다"],
+      [result.factoryReturnsDriver, "페이지가 있으면 forPane 이 드라이버를 돌려준다"],
       [result.sameInstance, "같은 pane 에는 같은 드라이버 인스턴스다"],
-      [result.activeIsT1, "첫 탭이 활성 탭이다"],
+      [result.pageOnScreen, "openTab 이 화면에 페이지를 세운다"],
       [result.snapshotHasRefs, "스냅샷이 eN 형태의 ref 를 발급한다"],
       [result.clickReturnsFreshSnapshot, "click 의 답은 새 스냅샷이다(새 노드가 보인다)"],
       [result.freshRefUsable, "새 세대의 ref 는 다시 읽지 않고 곧장 쓸 수 있다"],
@@ -132,16 +136,20 @@ test("브라우저 드라이버: ref 세대, actionability, 다이얼로그, eva
       [result.evaluateCapThrows, "evaluate 반환은 JSON 8KB 를 넘으면 오류다"],
       [result.waitForTextTrue, "waitFor(text) 가 늦게 오는 글자를 기다린다"],
       [result.waitForTextFalse, "waitFor 는 없는 글자를 예산 안에 false 로 답한다"],
-      [result.secondTabActive, "openTab 은 새 탭을 포그라운드로 연다"],
-      [result.tabTargeted, "tabId 지명은 그 탭을 화면에 세운다"],
-      [result.tabTargetedUrl, "지명된 탭에서 navigate 가 돈다"],
-      [result.consoleOfOtherTab, "뒤편 탭의 consoleLines 도 읽힌다"],
+      [
+        result.waitClampResult === false &&
+          result.waitClampElapsed >= 25_000 &&
+          result.waitClampElapsed < 48_000,
+        `waitFor(ms: 60000) 은 예산이 30초로 클램프된다 (${result.waitClampElapsed}ms)`,
+      ],
+      [result.navigateRoams, "navigate 는 다른 origin 으로 화면의 페이지를 제자리에서 옮긴다"],
+      [result.consoleStillWorks, "로밍 뒤에도 consoleLines 가 읽힌다"],
+      [result.backReturns, "back 이 온 길을 되짚는다"],
       [result.screenshotWorks, "screenshot 이 webp 를 돌려준다"],
       [result.dialogAlertHandled, "alert 은 자동 수락된다"],
       [result.dialogConfirmHandled, "confirm 도 자동 처리된다"],
       [result.dialogConfirmDismissed, "confirm 의 답은 거절(false)이다"],
       [result.dialogReported, "다이얼로그 처리는 콘솔에 보고된다"],
-      [result.closeTabWorks, "closeTab 이 지명된 탭을 닫는다"],
       [result.destroyOk, "destroy 가 끝까지 돈다"],
     ];
     for (const [ok, label] of cases) {

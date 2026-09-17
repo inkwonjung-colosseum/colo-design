@@ -117,7 +117,7 @@ AI 의 첫 답은 `만들 것` 카드로 오고, 승인하면 착수한다. `바
 ### 4. 미리보기에서 확인
 
 미리보기는 그 서비스의 앱을 그대로 띄운 것이다. 주소창에 화면 주소를 치면 그 화면으로
-이동하고 — 선언된 화면은 입력할 때 자동 완성으로 제안된다 — 상태 칩(`기본` · `비어 있음` ·
+이동하고, 상태 칩(`기본` · `비어 있음` ·
 `오류`)은 실제 목 데이터로 화면을 그린다.
 뒤로 · 앞으로 · 새로 고침, 주소창, 모바일 · 태블릿 화면, 배율 조절이 다 있다. 앱이 뜨지
 않으면 오류 배너가 이유를 말한다.
@@ -376,15 +376,11 @@ Codex, OpenCode, omp), git, 그리고 Claude 를 쓸 때는 데몬 환경에
 활성이다. 미리보기 서버는 활성 프로젝트만 새로 띄울 수 있지만, 떠난 프로젝트의 서버는
 따뜻하게 남는다 — 돌아오면 준비 단계 없이 곧바로 `ready` 고(레포 최신화는 서버를
 건드리지 않는 조용한 pull), 데스크톱은 그 프로젝트의 페이지를 숨겨 두었다가 보던 자리
-그대로 다시 보여 준다(reload 없음). 전환의 울타리는 둘이다: 두 레포가 같은
-`preview.port` 를 선언할 수 있으므로 들어오는 프로젝트가 선언한 포트를 잡고 있는
-우리 서버는 먼저 멈추고, 따뜻한 서버는 최근 두 개까지만 남는다(그 너머는 오래된 것부터
-멈춘다). 페이지 쪽도 같은 상한(세 장)을 두고, `RepoStatus.previewEpoch`(서버 시작마다
-새 번호)가 바뀐 페이지는 낡은 앱을 보이지 않도록 돌아올 때 다시 읽는다.
-인스턴스끼리는 같은 포트를 두고 싸우지 않는다 — 어느 인스턴스가 미리보기를 띄웠는지
-`~/.colo-design/run/` 에 한 줄 기록해 두고, 그 기록의 주인(데스크톱 앱 또는 다른
-데몬)이 살아 있으면 점유자를 죽이지 않고 이쪽 준비는 `held-elsewhere` 카드로 멈춘다.
-주인이 죽어 남은 고아 서버는 예전처럼 묻지 않고 정리한다.
+그대로 다시 보여 준다(reload 없음). 전환의 울타리는 하나다: 따뜻한 서버는 최근 두
+개까지만 남고, 그 너머는 오래된 것부터 멈춘다. 들어오는 프로젝트의 개발 서버는 빈
+포트를 스스로 고르므로 따뜻한 서버와 부딪히지 않는다. 페이지 쪽도 같은 상한(세 장)을
+두고, `RepoStatus.previewEpoch`(서버 시작마다 새 번호)가 바뀐 페이지는 낡은 앱을
+보이지 않도록 돌아올 때 다시 읽는다.
 AI 세션은 죽지 않는다 — 다른 프로젝트에서 도는 턴은 끝까지 돌고, 행의
 표식(작업 중 → 변경 N)과 OS 알림이 그것을 말한다. 소켓이 끊겨 다시 붙어도 잃는
 것이 없다 — 대기 중이던 확인 카드는 새 소켓에만 다시 내려앉아 이중으로 쌓이지
@@ -528,7 +524,7 @@ mac 알림에는 서명이 필수다. Electron 44 의 알림은 UNNotification �
   주소를 출력과 소켓에서 읽어 내고, 그 주소를 iframe · 네이티브 뷰에 그대로 띄운다.
 - **커밋된 락파일** — 있으면 도구가 설치를 대신 돌린다. 없으면 설치를 돌리지 않는다.
 
-### 1. `colo-design.json` — 없어도 된다
+### 1. 설정 파일은 없다
 
 아무 파일도 새로 만들 필요가 없다. 도구는 락파일과 `package.json` 의 scripts 에서
 설치 · 미리보기 명령을 읽고([아래 표](#도구가-값을-읽는-곳)), 서버가 뜬 포트는
@@ -536,15 +532,8 @@ mac 알림에는 서명이 필수다. Electron 44 의 알림은 UNNotification �
 응답할 때까지 기다린 뒤에야 `준비됨`이라고 부른다.
 
 서버가 주소를 출력하지 않고 소켓 스캔도 못 찾으면 준비가 `미리보기 주소를 찾지
-못했습니다` 카드로 멈추고, `AI에게 해결 요청` 이 그 실패를 대화로 넘긴다.
-포트를 고정하고 싶거나 감지가 틀리는 레포만 루트에 한 줄을 적는다:
-
-```json
-{ "preview": { "port": 5274 } }
-```
-
-선언 포트가 있으면 도구는 그 포트를 쓴다 — 점유자를 정리하고 그 자리에서 띄운다.
-포트 외의 오버라이드(명령 · 레지스트리 · 캡처 거부)는 [아래](#추론이-틀렸을-때-—-오버라이드)에 있다.
+못했습니다` 카드로 멈추고, `AI에게 해결 요청` 이 그 실패를 대화로 넘겨 서버가
+주소를 출력하게 고친다.
 
 ### 2. 소스 표식 — 선택
 
@@ -607,11 +596,10 @@ GitHub 에 밀고, 작업 화면의 `프로젝트 추가` 목록에서 고른다
 | 값 | 어디서 읽는가 |
 | --- | --- |
 | 패키지 매니저 | 커밋된 락파일 — `pnpm-lock.yaml` · `package-lock.json` · `yarn.lock` · `bun.lock(b)` |
-| `install` | 그 락파일이 정한다(`pnpm install` · `npm ci` · `yarn install` · `bun install`). 락파일이 없으면 설치는 돌지 않는다 — 없는 락파일을 만드는 변경을 사용자의 저장 검토에 올리지 않는다 |
+| `install` | 그 락파일이 정한다(`pnpm install` · `npm ci` · `yarn install` · `bun install`). 락파일이 없으면 설치는 돌지 않는다 — 없는 락파일을 만드는 변경을 사용자의 저장에 몰래 올리지 않는다 |
 | `check` · `build` | `package.json` 의 scripts 에 그 이름이 있으면 `<pm> run check` · `<pm> run build`. 없으면 도구가 그 명령을 모른다 |
 | `preview.command` | scripts 의 `dev` → `start` → `serve` → `preview` 중 처음 있는 것 |
 | `registry` | 레포가 커밋한 `.npmrc` 의 `@scope:registry=` 줄. GitHub 패키지 호스트만 받는다 — 이 값이 기계의 PAT 를 겨눈다 |
-| `preview.port` | **없어도 된다.** 서버가 찍은 주소를 읽고, 없으면 프로세스 트리의 LISTEN 소켓에서 찾는다. `colo-design.json` 에 적으면 그 값이 이긴다 — 고정이 필요한 레포의 핀이다 |
 
 - `install` 은 매니페스트/락파일 해시가 움직일 때 돈다 — 도구가 스스로 돌리는 명령은
   이것과 `preview.command` 둘뿐이다.
@@ -621,30 +609,6 @@ GitHub 에 밀고, 작업 화면의 `프로젝트 추가` 목록에서 고른다
   돈다 — 프로젝트 추가 화면의 확인란이거나, 승인 없이 멈춘 준비 화면의 `실행 허용`
   버튼이고, 승인은 프로젝트 레지스트리에 남아 다시 묻지 않는다. 승인 카드는 돌릴
   명령을 문장으로 보여 준다.
-- 그 밖의 키는 도구가 읽지 않는다 — 화면 레지스트리를 생성 · 검증하는 스크립트를
-  `screens` 키로 달 수 있고, 그 목록이 도구에 닿는 길은 위의 브리지 엔벨로프뿐이다.
-
-### 추론이 틀렸을 때 — 오버라이드
-
-같은 파일에 적으면 그 값이 이긴다. 관례를 벗어난 레포가 쓰는 문이다.
-
-```json
-{
-  "preview": { "command": "pnpm --filter web dev", "port": 5274 },
-  "install":  "pnpm install --filter web...",
-  "check":    "pnpm --filter web typecheck",
-  "build":    "pnpm --filter web build",
-  "registry": { "host": "npm.pkg.github.com", "scope": "@colosseumcoinckr" },
-  "shots":    false
-}
-```
-
-| 막히는 곳 | 적을 것 |
-| --- | --- |
-| 모노레포 — 루트 `dev` 가 전체를 띄운다 | `preview.command` |
-| 검사 스크립트 이름이 `check` 가 아니다 | `check` · `build` |
-| `.npmrc` 없이 private 패키지를 쓴다 | `registry` (`read:packages` 권한 토큰도 기계에 필요하다) |
-| 넘기기 PR 에 화면 캡처를 넣고 싶지 않다 | `shots: false` |
 
 ## 전체 구조
 
@@ -655,7 +619,7 @@ flowchart LR
         preview["미리보기<br/>레포의 앱 그대로"]
         daemon["daemon<br/>프로젝트 · 세션 · 자격 증명"]
     end
-    repo["연결 레포<br/>(선택적 CLAUDE.md · colo-design.json)"]
+    repo["연결 레포<br/>(선택적 CLAUDE.md)"]
     daemon -->|"clone · pull<br/>저장 = check → commit·push"| repo
     repo -->|"preview.command"| preview
     preview -->|"코멘트 핀"| design
@@ -754,14 +718,14 @@ pnpm test:midturn-send    # 오프라인 — 브라우저: 실행 중 보내기 
 pnpm test:repo            # 오프라인 — 로컬 bare 원격에 대한 clone/pull/install-skip/preview 수명 주기
 pnpm test:publish         # 오프라인 — 저장 게이트, check 실패 → 세션 브리프, main 을 건드리지 않는 자기 브랜치 colo-design/*, build 는 넘기기에만 게이트, PR → 병합 → 새 사이클
 pnpm test:plan            # 오프라인 — 스텁 CLI 의 ExitPlanMode 와이어: 만들 것 카드, 승인의 작업 모드 복귀, 거절의 이유 전달과 계획 모드 잔류
-pnpm test:publish-ui      # 오프라인 — 브라우저: 저장 검토 → 저장 → 브랜치가 원격에 닿고 베이스는 닿지 않는다
+pnpm test:publish-ui      # 오프라인 — 브라우저: 저장 버튼 한 번 → 브랜치가 원격에 닿고 베이스는 닿지 않는다
 pnpm test:settings        # 오프라인 — 테마/환경설정; 데몬 없이도 열린다
 pnpm test:port-busy-ui    # 오프라인 — 브라우저: 포트 충돌 회복 — 활성 프로젝트가 선언한 포트의 점유자를 묻지 않고 정리하고 미리보기를 띄운다; .claude/settings.json 을 싣는 레포의 머리 경고도 한국어로
 pnpm test:onboarding      # 오프라인 — 스텁 PATH/CLI · 녹화된 GitHub 픽스처로 진짜 소켓 위의 네 게이트, 토큰 저장 → 레포 목록 → 레포 검사 → 프로젝트 생성 → 클론 ready
 pnpm test:onboarding-ui   # 오프라인 — 브라우저: 마법사 네 게이트(토큰 연결) → 시작하기 → 프로젝트 없는 작업 화면의 레포 목록 → 선택·검사 → 만들기 → 작업 공간; `+ 새 프로젝트` 대화상자
 pnpm test:daemon          # REAL CLAUDE — 선상의 세션: 권한, 스트리밍, 문맥 이어받기
 pnpm test:planner         # REAL CLAUDE — 제품 주장: 요구사항을 채팅에 말하면 화면이 나와 미리보기에 렌더링된다
-pnpm test:comments-ui     # 오프라인 — 레포 자체의 dev 미리보기 안의 화면 축 전체: 선언된 화면 → 주소창 자동 완성, 주소 이동 → 그 화면, 상태 칩 → 실제 목 데이터, 오버레이 → 엔벌로프 → 세션 턴 → 보낸 핀은 곧바로 화면을 떠난다
+pnpm test:comments-ui     # 오프라인 — 레포 자체의 dev 미리보기 안의 화면 축 전체: 주소 이동 → 그 화면, 상태 칩 → 실제 목 데이터, 오버레이 → 엔벌로프 → 세션 턴 → 보낸 핀은 곧바로 화면을 떠난다
 pnpm test:desktop-unit    # 오프라인 — 업데이트 확인/semver/sha256, 가짜를 넣은 safeStorage 저장소, PATH 접두어
 pnpm test:desktop-smoke   # 오프라인 — Electron: 창, in-process 데몬 /health, 마법사, 업데이트 브리지(패키징된 앱에도 돈다)
 pnpm test:desktop-switch  # 오프라인 — Electron: 프로젝트 전환 — 떠난 페이지는 숨겨 둔 그대로 돌아온다(reload 없음, 표식 생존, 수십 ms), 주소창은 보이는 페이지를 따른다
@@ -800,8 +764,9 @@ real-Claude 두 스위트는 구독을 쓰고 머신·계정 성향을 타므로
 프로세스·로그·진행 감지 상한을 가진다 — 출력이 멈춘 스위트만 시간 초과로
 죽고, 실패한 스위트가 뒤 스위트의 결과를 삼키지 않는다.
 
-fixture 설계를 한 문단으로 — git 원격은 최소 `colo-design.json` 앱을 담은 bare
-레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude Code CLI 는 전부 스텁 스크립트다.
+fixture 설계를 한 문단으로 — git 원격은 최소 `package.json` 앱(dev 스크립트와 검사
+게이트)을 담은 bare 레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude Code CLI 는
+전부 스텁 스크립트다.
 
 ## 정책
 

@@ -565,11 +565,10 @@ export async function probeCommands(options: {
 /**
  * The SDK's usage answer as the protocol's plan reading. API-key, Bedrock and
  * Vertex sessions answer `rate_limits_available: false` and get null — plan
- * limits do not apply there at all. Pure, and exported for the mapper test:
- * the classification is the only bridge between the SDK's answer and the
- * chip's rows, so it is tested without a session in the way.
+ * limits do not apply there at all. Pure — the classification is the only
+ * bridge between the SDK's answer and the chip's rows.
  */
-export function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
+function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
   const limits = usage.rate_limits;
   if (!usage.rate_limits_available || !limits) return null;
   return {

@@ -1,4 +1,4 @@
-/** 프로토콜 v3 — 업데이트 확인(공유 로직, DESIGN §7). */
+/** 프로토콜 v3 — 업데이트 확인(공유 로직). */
 /**
  * 업데이트 확인: 릴리스 페이지(GitHub Releases)의 latest.json 과 현재 버전을 비교.
  * fetch 는 주입받는다 — 데스크톱은 Electron 의 net, 브라우저는 window.fetch,
@@ -9,8 +9,8 @@
  * 이 모듈은 순수 로직만 담아 데몬·웹·데스크톱이 한 곳에서 공유한다.
  */
 
-// 릴리스 저장소("owner/repo"). GitHub Releases 가 곧 배포 채널이다(DESIGN §7
-// 의 별도 releases 레포 대신 이 레포의 릴리스 페이지에 설치 파일을 올린다).
+// 릴리스 저장소("owner/repo"). GitHub Releases 가 곧 배포 채널이다(이 레포의
+// 릴리스 페이지에 설치 파일을 올린다).
 //
 // 확인 요청은 무인증 fetch 다 — 소스가 private 여도 상관없지만 **설치 파일을
 // 올린 릴리스는 공개**여야 읽힌다. 아직 공개 릴리스가 없으면 피드는 404 이고,
@@ -18,7 +18,7 @@
 export const RELEASES_REPO = "inkwonjung-colosseum/colo-design";
 export const RELEASES_FEED_URL = `https://github.com/${RELEASES_REPO}/releases/latest/download/latest.json`;
 
-export interface LatestFeed {
+interface LatestFeed {
   version: string;
   notes?: string;
   url?: string;
@@ -51,7 +51,7 @@ export interface UpdateCheckResult {
  * 함수형 구현도 삼켜 0.3.3 까지의 깨진 확인·설치가 게이트를 통과하게 했으므로
  * 값의 모양을 계약으로 못박는다.
  */
-export type FetchLike = (
+type FetchLike = (
   url: string,
 ) => Promise<{ ok: boolean; json?: Record<string, unknown>; status: number }>;
 

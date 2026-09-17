@@ -1,8 +1,4 @@
-import type {
-  ColoDesignCommentTarget,
-  ColoDesignNavigateEnvelope,
-  ColoDesignPinsSync,
-} from "@colo-design/protocol";
+import type { ColoDesignCommentTarget, ColoDesignPinsSync } from "@colo-design/protocol";
 import { contextBridge, ipcRenderer } from "electron";
 
 /**
@@ -12,25 +8,24 @@ import { contextBridge, ipcRenderer } from "electron";
  * 안에 인라인이다.
  *
  * 네 몫:
- * 1. 레포 브리지의 문 (D68): `window.coloDesign.post` — 브리지가
- *    `colo-design.screens` 를 올리는 길. `colo-overlay:navigate` 는 반대로
- *    메인이 주면 페이지의 window 로 돌려 보낸다(postMessage). DOM 이벤트는
- *    world 를 넘으므로 메인 월드의 브리지 리스너가 받는다.
+ * 1. 레포 브리지의 문 (D68): `window.coloDesign.post` — 핀 봉투가 나가는
+ *    유일한 통로다(예전의 `colo-overlay:navigate` 역방향 문은 브리지의
+ *    screens 계약이 폐지되며 함께 닫혔다).
  * 2. 핀 피커 오버레이 (재설계 C1·C9): 클릭은 요소 핀, 6px 넘는 드래그는
  *    영역 핀 — 봉투 하나씩이다. 초안·전송·영수증은 여기 없다(재설계 C3),
  *    크롬은 뷰가 찍는 순간에 채운다(재설계 C4). 핀 상태의 진실은 웹이 쥐고,
  *    웹의 전체 동기화(`colo-overlay:pins`)를 번호 배지로 투영한다 — 영역 핀은
  *    배지와 점선 테두리를 좌표(rect)로 다시 앵커한다. 봉투는 요소의
- *    HTML·스타일·a11y·속성·`data-colo-src` 를 옵션으로 싣고(§4.2), 클릭
+ *    HTML·스타일·a11y·속성·`data-colo-src` 를 옵션으로 싣고, 클릭
  *    요소의 `data-colo-pick` 스탬프로 뷰가 main world 에서 React owner
- *    이름을 읽는다(§4.3 — fiber 는 이 isolated world 에서 보이지 않는다).
+ *    이름을 읽는다(fiber 는 이 isolated world 에서 보이지 않는다).
  */
 
 // ---------------------------------------------------------------------------
-// Element identity (DESIGN §6) — the isolated world cannot see the page's
+// Element identity — the isolated world cannot see the page's
 // React fiber expandos, so the component name is `data-component` or the tag,
 // and the owner chain is the view's job (the `data-colo-pick` stamp + the
-// main-world script, §4.3). Everything else (own text, CSS path anchored on
+// main-world script). Everything else (own text, CSS path anchored on
 // the [data-screen] wrapper — or the body when the page declares none — rect,
 // html, styles, a11y, attrs, source) is plain DOM.
 // ---------------------------------------------------------------------------
@@ -178,8 +173,8 @@ function describeElement(element: Element | null): ColoDesignCommentTarget | nul
     path: cssPath(element, screenRoot ?? document.body),
     rect: roundRect(element.getBoundingClientRect()),
   };
-  // §4.2's enrichment — every field optional, a failure costs its field,
-  // never the pin. `source` is an element pin's stamp only (§5).
+  // The enrichment — every field optional, a failure costs its field,
+  // never the pin. `source` is an element pin's stamp only.
   const html = describeHtml(element);
   if (html) target.html = html;
   const styles = describeStyles(element);
@@ -197,26 +192,29 @@ function describeElement(element: Element | null): ColoDesignCommentTarget | nul
  * The screen the page is showing right now — the context every envelope
  * carries. A declared page reads its wrapper. A wrapper-less page IS its
  * path — the route without the leading slash is the screen id (`index` at
- * the root), `default` its state — and the daemon stores that id verbatim.
+ * the root) — and the daemon stores that id verbatim. The state is the
+ * declared `data-state` verbatim too: a page that declares none carries
+ * null, not a synthesized "default" — the gate waits on the marker only
+ * when the page declared one, so a made-up state reads as unsettled.
  */
-function pageContext(): { screen: string; state: string } {
+function pageContext(): { screen: string; state: string | null } {
   const current = currentScreenRoot();
   if (current) {
     return {
       screen: current.getAttribute("data-screen") ?? "",
-      state: current.getAttribute("data-state") ?? "default",
+      state: current.getAttribute("data-state"),
     };
   }
   const id = window.location.pathname.replace(/^\/+/, "");
-  return { screen: id === "" ? "index" : id, state: "default" };
+  return { screen: id === "" ? "index" : id, state: null };
 }
 
-function screenContext(element: Element): { screen: string; state: string } {
+function screenContext(element: Element): { screen: string; state: string | null } {
   const root = element.closest("[data-screen]");
   if (!root) return pageContext();
   return {
     screen: root.getAttribute("data-screen") ?? "",
-    state: root.getAttribute("data-state") ?? "default",
+    state: root.getAttribute("data-state"),
   };
 }
 
@@ -226,17 +224,6 @@ function screenContext(element: Element): { screen: string; state: string } {
 
 contextBridge.exposeInMainWorld("coloDesign", {
   post: (envelope: unknown) => ipcRenderer.send("colo-overlay:post", envelope),
-});
-
-ipcRenderer.on("colo-overlay:navigate", (_event, payload: { route?: unknown; state?: unknown }) => {
-  if (typeof payload?.route !== "string") return;
-  const envelope: ColoDesignNavigateEnvelope = {
-    type: "colo-design.navigate",
-    route: payload.route,
-    state: typeof payload.state === "string" ? payload.state : null,
-  };
-  // Addressed to our own origin; the page's bridge listens on window.
-  window.postMessage(envelope, window.location.origin);
 });
 
 // ---------------------------------------------------------------------------
@@ -262,7 +249,7 @@ interface Badge {
   rect?: { x: number; y: number; width: number; height: number };
   number: number;
   /**
-   * 고침 표시 (preview.md §1-C): live is the accent pin, sent the turn's
+   * 고침 표시: live is the accent pin, sent the turn's
    * grey, done the settled 수정 마크 — solid green, it outlives its turn.
    */
   tone: "live" | "sent" | "done";
@@ -595,7 +582,7 @@ document.addEventListener(
     // the web parks the pin as a composer attachment. The badge below is
     // optimistic; the web's sync redraws the truth (and the numbering).
     const pin = { id: crypto.randomUUID(), ...screenContext(element), element: target };
-    // §4.3: the view reads the React owner chain off this stamp in the main
+    // The view reads the React owner chain off this stamp in the main
     // world (fibers are invisible from this isolated world) and removes it —
     // the timer below is only this side's safety net.
     element.setAttribute("data-colo-pick", pin.id);
@@ -612,7 +599,7 @@ document.addEventListener(
 );
 
 // ---------------------------------------------------------------------------
-// Region drag (재설계 §4.1·C9). While picking, a press that travels past 6px
+// Region drag (재설계 C9). While picking, a press that travels past 6px
 // is a region, not a sloppy click: the mouseup posts the drag's envelope in
 // scroll-invariant page coordinates, and the trailing click is swallowed.
 // The root is pointer-events:none — the page's own elements receive every
@@ -620,7 +607,7 @@ document.addEventListener(
 // drags die by preventDefault, not by CSS.
 // ---------------------------------------------------------------------------
 
-/** Past this many pixels a picking press is a drag (재설계 §4.1). */
+/** Past this many pixels a picking press is a drag. */
 const DRAG_PX = 6;
 
 document.addEventListener(
@@ -831,12 +818,12 @@ ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
   const here = pageContext();
   const rows = Array.isArray(sync?.pins) ? sync.pins : [];
   badges = rows.flatMap((pin, index): Badge[] => {
-    // A badge belongs to the screen AND state it was pinned on (§3.10 ⓕ,
-    // 커미티 차단 4): the same CSS path on the error state is a different
+    // A badge belongs to the screen AND state it was pinned on
+    // (커미티 차단 4): the same CSS path on the error state is a different
     // view — the tray row keeps saying `회원 목록 · 기본` and the badge must
     // not contradict it from another state's page.
     if (pin.screen !== here.screen || pin.state !== here.state) return [];
-    // 고침 표시 (preview.md §1-C): the registry's `n` is the badge's number —
+    // 고침 표시: the registry's `n` is the badge's number —
     // the list index is only the fallback for a web that predates it.
     const number = typeof pin.n === "number" ? pin.n : index + 1;
     const tone: Badge["tone"] =
@@ -959,7 +946,7 @@ ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {
   const on = Boolean(payload?.on);
   const boot = () => {
     // Hidden FIRST, then two frames: the same tick would shoot the pins in
-    // (PLAN §9 틀리기 쉬운 자리 — the capture waits for the paint).
+    // (틀리기 쉬운 자리 — the capture waits for the paint).
     root.style.visibility = on ? "hidden" : "";
     requestAnimationFrame(() =>
       requestAnimationFrame(() => ipcRenderer.send("colo-overlay:capture-done")),

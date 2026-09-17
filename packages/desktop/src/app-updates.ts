@@ -2,6 +2,8 @@
 // next run delivers, and the install itself. A running session defers an
 // install until every turn lands — the daemon tells us through
 // `sessionsBusy`, and quitting cleanly mid-update needs `allowQuit`.
+// 내려받기·검증이 끝나도 교체는 사용자가 재시작을 고를 때까지 기다린다 —
+// 준비된 설치는 `prepared` 에 서고, 알림 클릭(또는 설치 재요청)이 마지막 걸음.
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { readFile, rm, statfs, writeFile } from "node:fs/promises";
@@ -17,6 +19,7 @@ import {
   parseSwapResult,
   planSelfUpdate,
   requireDiskSpace,
+  type SelfUpdatePlan,
   verifyDownload,
 } from "./self-update.js";
 import { buildSwapScript as buildWinSwapScript } from "./win-self-update.js";
@@ -43,10 +46,14 @@ async function netFetch(
 ): Promise<{ ok: boolean; status: number; json?: Record<string, unknown> }> {
   const request = net.request(feedUrl);
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-    let body = "";
+    // 청크마다 디코드하면 UTF-8 다중 바이트가 청크 경계에서 갈라진다 — 한국어
+    // 릴리스 노트의 latest.json 이 간헐적으로 깨진다. 버퍼로 모아 한 번에 디코드한다.
+    const chunks: Buffer[] = [];
     request.on("response", (incoming) => {
-      incoming.on("data", (chunk: Buffer) => (body += String(chunk)));
-      incoming.on("end", () => resolve({ statusCode: incoming.statusCode, body }));
+      incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+      incoming.on("end", () =>
+        resolve({ statusCode: incoming.statusCode, body: Buffer.concat(chunks).toString("utf8") }),
+      );
     });
     request.once("error", reject);
     request.end();
@@ -97,6 +104,14 @@ interface UpdateDeps {
 export class SelfUpdates {
   /** 연기된 자가 교체 — 실행 중 세션이 있는 동안의 설치는 그들이 내려앉는 순간으로 미룬다(P0#6). */
   private pending: { url: string; sha256: string; version: string } | null = null;
+  /**
+   * 내려받고 검증까지 끝난 설치 — 사용자가 재시작을 고를 때까지 기다린다.
+   * 교체 스크립트는 아직 띄우지 않는다: 띄운 스크립트는 앱이 죽기만 하면
+   * 돌기 때문에, 먼저 띄워 두면 일반 종료도 업데이트로 바뀌어 버린다.
+   */
+  private prepared: { plan: SelfUpdatePlan; version: string } | null = null;
+  /** 준비된 설치에 사용자가 재시작을 골랐지만 세션이 아직 돌고 있다 — 모두 내려앉으면 설치한다. */
+  private installOnIdle = false;
   /** 마지막으로 피드를 물은 시각 — 포커스 확인의 스로틀 기준. */
   private lastCheckAt = 0;
   /** 이미 알림을 띄운 버전 — 확인이 거듭돼도 한 번만 부른다. */
@@ -105,7 +120,7 @@ export class SelfUpdates {
   constructor(private readonly deps: UpdateDeps) {}
 
   /**
-   * 자동 업데이트 확인(DESIGN §7): 새 버전이 있으면 알림을 띄워 설정까지 찾아가게
+   * 자동 업데이트 확인: 새 버전이 있으면 알림을 띄워 설정까지 찾아가게
    * 하지 않는다 — 버전마다 한 번만. 실패는 언제나 조용히: 자동으로 떠드는 오류는
    * 없고 다음 확인이 다시 온다. 개발 실행은 피드를 묻지 않는다.
    *
@@ -196,9 +211,13 @@ export class SelfUpdates {
    * desktop:self-update — 설치 요청. 무엇을 내려받고 무엇으로 검증할지는
    * 피드가 정한다 — 렌더러가 건넨 url·sha256 은 받지 않는다. 이 다리는 침해된
    * 렌더러가 앱을 제 zip 으로 바꾸는 통로가 되어서는 안 된다: 요청은 요청일
-   * 뿐, 출처는 피드다.
+   * 뿐, 출처는 피드다. 준비(내려받기·검증)가 끝나면 재시작 동의를 기다린다 —
+   * 준비된 설치가 있는 상태의 재요청이 그 동의다.
    */
   async install(): Promise<Record<string, unknown>> {
+    // 이미 준비된 설치가 있으면 이 클릭이 곧 재시작 동의다 — 피드를 다시
+    // 묻지 않고 바로 교체로 간다(알림을 놓친 사용자의 두 번째 경로).
+    if (this.prepared) return await this.installPrepared();
     let feed: UpdateCheckResult;
     try {
       feed = await checkForUpdate(app.getVersion(), RELEASES_FEED_URL, netFetch);
@@ -237,33 +256,62 @@ export class SelfUpdates {
       };
     }
     // 실행 중 세션이 있으면 설치를 연기한다(P0#6) — 돌아가는 턴을 업데이트가
-    // 끊지 않는다. 모든 세션이 내려앉는 순간 알림과 함께 설치된다.
+    // 끊지 않는다. 모든 세션이 내려앉는 순간 준비(내려받기·검증)가 끝나고,
+    // 실제 교체는 사용자의 재시작을 기다린다.
     if (this.deps.sessionsBusy()) {
       this.pending = { url: asset.url, sha256: asset.sha256, version: feed.version };
       return { deferred: true, version: feed.version };
     }
-    return await this.run({ url: asset.url, sha256: asset.sha256 });
+    // 이 요청이 직접 준비까지 간다 — 남아 있는 연기분은 지워 두 번 준비하지 않는다.
+    this.pending = null;
+    return await this.prepare({ url: asset.url, sha256: asset.sha256, version: feed.version });
   }
 
-  /** 세션 상태가 움직일 때마다: 연기된 설치가 있고 모두 내려앉았으면 지금 한다. */
+  /** 세션 상태가 움직일 때마다: 연기된 설치가 있고 모두 내려앉았으면 지금 준비한다. */
   async maybeRunDeferred(): Promise<void> {
-    if (!this.pending || this.deps.sessionsBusy()) return;
+    if (this.deps.sessionsBusy()) return;
+    // 사용자가 이미 재시작을 골랐다 — 준비가 끝난 설치를 지금 실행한다.
+    if (this.installOnIdle && this.prepared) {
+      this.installOnIdle = false;
+      await this.installPrepared();
+      return;
+    }
+    if (!this.pending) return;
     const feed = this.pending;
     this.pending = null;
-    void this.deps.notify(
-      "작업이 끝났습니다",
-      `이제 Colo Design ${feed.version} 업데이트를 설치합니다 — 잠시 앱이 닫혔다가 다시 열립니다.`,
-      this.deps.focusMain,
-    );
-    await this.run(feed);
+    const result = await this.prepare(feed);
+    if ("error" in result) {
+      void this.deps.notify(
+        "업데이트를 준비하지 못했습니다",
+        `${result.error} — 설정 → 문제 해결에서 다시 시도할 수 있습니다.`,
+        this.deps.focusMain,
+      );
+    }
   }
 
-  /** 실제 교체: 내려받기·검증·스크립트·종료. 세션이 조용한 때에만 불린다. */
-  private async run(feed: {
+  /**
+   * 준비된 설치를 알린다 — 클릭이 곧 재시작 동의다. 알림이 OS 에서 거절돼도
+   * 설정의 설치 버튼이 같은 자리(prepared)로 이어 준다.
+   */
+  private announcePrepared(version: string): void {
+    void this.deps.notify(
+      "새 버전이 준비됐습니다",
+      `Colo Design ${version} — 재시작하면 설치됩니다. 클릭하면 지금 재시작합니다.`,
+      () => {
+        void this.installPrepared();
+      },
+    );
+  }
+
+  /**
+   * 내려받기·검증까지 — 교체 스크립트는 아직 띄우지 않는다. 끝나면 알림으로
+   * 재시작을 묻고, 실제 교체는 installPrepared 가 사용자의 동의 뒤에 한다.
+   */
+  private async prepare(feed: {
     url: string;
     sha256: string;
-  }): Promise<{ started: boolean; downloadPath: string; steps: string[] } | { error: string }> {
-    const version = app.getVersion();
+    version: string;
+  }): Promise<{ prepared: true; version: string } | { error: string }> {
     const downloadsDir = app.getPath("downloads");
     const windows = process.platform === "win32";
     try {
@@ -276,7 +324,8 @@ export class SelfUpdates {
         url: feed.url,
         sha256: feed.sha256,
         downloadsDir,
-        version,
+        // 계획은 내려받을 대상 버전의 이름을 짓는다 — 실행 중 버전이 아니라.
+        version: feed.version,
         platform: process.platform,
         target: windows ? process.execPath : macTarget,
       });
@@ -294,9 +343,36 @@ export class SelfUpdates {
       });
       await downloadFile(feed.url, plan.downloadPath);
       await verifyDownload(plan.downloadPath, plan.expectedSha256);
+      this.prepared = { plan, version: feed.version };
+      this.announcePrepared(feed.version);
+      return { prepared: true, version: feed.version };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * 사용자가 고른 재시작: 준비된 설치의 교체 스크립트를 띄우고 종료한다.
+   * 세션이 돌고 있으면 종료를 강행하지 않는다 — 동의를 installOnIdle 에
+   * 새겨 두고 모두 내려앉는 순간으로 미룬다(P0#6).
+   */
+  private async installPrepared(): Promise<Record<string, unknown>> {
+    const prepared = this.prepared;
+    if (!prepared) return { error: "준비된 업데이트가 없습니다 — 업데이트 확인을 눌러 주세요." };
+    if (this.deps.sessionsBusy()) {
+      this.installOnIdle = true;
+      this.deps.focusMain();
+      return { deferred: true, version: prepared.version };
+    }
+    // 스크립트가 결과 파일에 찍는 version 은 갈아입은 대상이다 — 다음 실행이
+    // 자기 버전과 겨루므로(reportSwapResult) 실행 중 버전을 찍으면 완료 보고가
+    // 영원히 닿지 않는다.
+    const version = prepared.version;
+    const windows = process.platform === "win32";
+    try {
       const logPath = join(app.getPath("temp"), "colo-design-update.log");
       const script = {
-        plan,
+        plan: prepared.plan,
         pid: process.pid,
         logPath,
         resultPath: updateResultPath(),
@@ -326,12 +402,13 @@ export class SelfUpdates {
       // 않는다. Windows 에서는 이 한 줄이 교체의 성립 조건이다: 세션이 돌고
       // 있으면 guardStopUnderTurn 의 `세션 실행 중` 확인 창이 quit 을 막아
       // 앱이 살아 있고, 잠긴 exe 앞에서 스크립트는 30초를 기다리다 실패로 끝난다.
+      this.prepared = null;
       this.deps.allowQuit();
       setTimeout(() => app.quit(), 500);
       return {
         started: true,
-        downloadPath: plan.downloadPath,
-        steps: plan.steps,
+        downloadPath: prepared.plan.downloadPath,
+        steps: prepared.plan.steps,
       };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };

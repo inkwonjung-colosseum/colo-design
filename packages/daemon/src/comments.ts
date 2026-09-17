@@ -24,7 +24,8 @@ function isCommentItem(value: unknown): value is CommentItem {
   return (
     typeof row.id === "string" &&
     typeof row.screen === "string" &&
-    typeof row.state === "string" &&
+    // 표식 없는 페이지의 핀은 state 가 null 이다 — 합성값으로 되살리지 않는다.
+    (row.state === null || typeof row.state === "string") &&
     typeof row.text === "string" &&
     typeof row.elementText === "string" &&
     // 재설계 C10: `intent` is optional — absent reads as change — but a row
@@ -63,8 +64,8 @@ export function readComments(file: string): CommentItem[] {
 
 /**
  * Appends delivered rows — one per pin, whichever screen it sat on. `screen`
- * is normalized to the `[data-screen]` spelling — no leading slash (PLAN §9
- * 틀리기 쉬운 자리): the row must match what the overlay read off the DOM.
+ * is normalized to the `[data-screen]` spelling — no leading slash
+ * (틀리기 쉬운 자리): the row must match what the overlay read off the DOM.
  */
 export function recordComments(
   file: string,
@@ -72,7 +73,8 @@ export function recordComments(
     /** The pin's overlay UUID (커미티 2차 판정 5) — kept when carried, minted when not. */
     id?: string;
     screen: string;
-    state: string;
+    /** 표식 없는 페이지의 핀은 null — 합성값으로 되살리지 않는다. */
+    state: string | null;
     text: string;
     elementText: string;
     intent?: CommentItem["intent"];
@@ -108,17 +110,19 @@ export function recordComments(
 export function captureTargets(
   rows: Array<Pick<CommentItem, "screen" | "state" | "at">>,
   sinceIso: string | null,
-): Array<{ route: string; state: string }> {
+): Array<{ route: string; state: string | null }> {
   const sinceMs = sinceIso === null ? null : Date.parse(sinceIso);
   const seen = new Set<string>();
-  const targets: Array<{ route: string; state: string }> = [];
+  const targets: Array<{ route: string; state: string | null }> = [];
   for (const row of rows) {
     if (!row.screen) continue;
     const at = Date.parse(row.at);
     if (Number.isNaN(at)) continue;
     if (sinceMs !== null && !Number.isNaN(sinceMs) && at < sinceMs) continue;
     const route = `/${row.screen.replace(/^\/+/, "")}`;
-    const state = row.state || "default";
+    // 표식 없는 화면은 null 그대로 간다 — "default" 로 사칭하면 게이트·드라이버의
+    // 자리 잡음 판정이 없는 표식을 3초 기다린다. 파일 이름은 쓰는 곳에서 정한다.
+    const state = row.state;
     const key = `${route}\n${state}`;
     if (seen.has(key)) continue;
     seen.add(key);

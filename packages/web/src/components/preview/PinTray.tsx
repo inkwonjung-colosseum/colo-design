@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import { stateLabel } from "../../lib/format";
 import { composing } from "../../lib/ime";
+import { ChevronDownIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
 /**
@@ -19,6 +20,7 @@ export function PinTray({
   onPinIntent,
   onPinFocus,
   titleFor,
+  fold,
 }: {
   pins: PinAttachment[];
   /**
@@ -38,15 +40,30 @@ export function PinTray({
   onPinFocus: (id: string) => void;
   /** 화면 id → 제목. 못 찾으면 null — 원 id 로 읽는다. */
   titleFor: (screen: string) => string | null;
+  /**
+   * 접개 — 목록이 필드를 누르기 전에 접는 손. 건네지 않으면 트레이는
+   * 늘 펼쳐 있다. 접힌 동안에는 머리의 숫자만 말한다.
+   */
+  fold?: { folded: boolean; onToggle: () => void };
 }) {
   // 배지 → 메모 입력의 다리. PinTray 의 행은 지워졌다 붙을 수 있어서
   // index 가 아니라 pin id 로 찾는다.
   const noteInputs = useRef(new Map<string, HTMLInputElement>());
   /** 모두 지우기의 두 번 누르기 — 첫 클릭이 묻고, 3초 안의 두 번째가 지운다. */
   const [clearArmed, setClearArmed] = useState(false);
+  /** 접개의 최신 값 — 효과의 재실행 조건은 focusPinId 하나로 좁힌다. */
+  const foldRef = useRef(fold);
+  foldRef.current = fold;
   useEffect(() => {
     if (!focusPinId) return;
-    noteInputs.current.get(focusPinId.id)?.focus();
+    // 접힌 트레이에는 행이 없어 포커스가 빗나간다 — 먼저 펼치고, 행이 그려진
+    // 뒤(다음 프레임) 입력으로 간다.
+    const foldNow = foldRef.current;
+    if (foldNow?.folded) foldNow.onToggle();
+    const frame = requestAnimationFrame(() => {
+      noteInputs.current.get(focusPinId.id)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [focusPinId]);
   // 행 번호는 트레이 순서 그대로 — 레지스트리 번호 매기기는 useMarks 와 함께 갔다.
 
@@ -78,111 +95,125 @@ export function PinTray({
         >
           {clearArmed ? "정말 모두 지웁니다" : "모두 지우기"}
         </button>
+        {fold && (
+          <button
+            type="button"
+            className="ghost pintray__fold"
+            aria-expanded={!fold.folded}
+            aria-label={fold.folded ? "핀 목록 펼치기" : "핀 목록 접기"}
+            onClick={fold.onToggle}
+          >
+            <ChevronDownIcon />
+          </button>
+        )}
       </div>
-      <ul className="pintray__list">
-        {pins.map((pin, index) => {
-          const n = numberStart + index;
-          return (
-            <li
-              key={pin.id}
-              className="pintray__row"
-              onClick={(event) => {
-                // 메모 입력과 × 의 클릭은 그것 자체의 동작이다 — 나머지는 배지를 가리킨다.
-                if ((event.target as HTMLElement).closest("input, button")) return;
-                onPinFocus(pin.id);
-              }}
-            >
-              <span className="pintray__num" aria-hidden="true">
-                {n}
-              </span>
-              {pin.shot ? (
-                <img
-                  className="pintray__thumb"
-                  src={`data:${pin.shot.mediaType};base64,${pin.shot.data}`}
-                  alt=""
+      {!fold?.folded && (
+        <ul className="pintray__list">
+          {pins.map((pin, index) => {
+            const n = numberStart + index;
+            return (
+              <li
+                key={pin.id}
+                className="pintray__row"
+                onClick={(event) => {
+                  // 메모 입력과 × 의 클릭은 그것 자체의 동작이다 — 나머지는 배지를 가리킨다.
+                  if ((event.target as HTMLElement).closest("input, button")) return;
+                  onPinFocus(pin.id);
+                }}
+              >
+                <span className="pintray__num" aria-hidden="true">
+                  {n}
+                </span>
+                {pin.shot ? (
+                  <img
+                    className="pintray__thumb"
+                    src={`data:${pin.shot.mediaType};base64,${pin.shot.data}`}
+                    alt=""
+                  />
+                ) : pin.element.kind === "region" ? (
+                  // 영역 핀 — 찍은 좌표가 있을 뿐 요소는 없다. 점선
+                  // 사각이 그 경계를, 라벨이 그 크기를 말한다.
+                  <span className="pintray__thumb pintray__thumb--region" aria-hidden="true" />
+                ) : (
+                  <span className="pintray__thumb pintray__thumb--empty" aria-hidden="true">
+                    —
+                  </span>
+                )}
+                <span className="pintray__what">
+                  <span className="pintray__label">
+                    {pin.element.kind === "region"
+                      ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
+                      : pin.element.text || pin.element.component}
+                  </span>
+                  <span className="pintray__where">
+                    {/* 레포가 새긴 출처 — path:line 의 파일 부분만 회색으로. */}
+                    {pin.element.source && (
+                      <span className="pintray__source">
+                        {pin.element.source.replace(/:\d+$/, "")}
+                      </span>
+                    )}
+                    {titleFor(pin.screen) ?? pin.screen}
+                    {pin.state !== null && <> · {stateLabel(pin.state)}</>}
+                  </span>
+                </span>
+                {/* 이 핀이 바라는 것: 고치라는 말인가, 설명을 원하는 말인가. */}
+                <span className="pintray__intent" aria-label={`${n}번 핀 의도`} role="group">
+                  <Tip label="이 요소를 고쳐 달라는 핀입니다">
+                    <button
+                      type="button"
+                      className="pintray__intentbtn"
+                      aria-pressed={pin.intent !== "question"}
+                      onClick={() => onPinIntent(pin.id, "change")}
+                    >
+                      수정
+                    </button>
+                  </Tip>
+                  <Tip label="이 요소가 왜 이런지 묻는 핀입니다">
+                    <button
+                      type="button"
+                      className="pintray__intentbtn"
+                      aria-pressed={pin.intent === "question"}
+                      onClick={() => onPinIntent(pin.id, "question")}
+                    >
+                      질문
+                    </button>
+                  </Tip>
+                </span>
+                <input
+                  className="pintray__note"
+                  type="text"
+                  placeholder="이 요소에 바라는 점 (선택)"
+                  value={pin.note}
+                  ref={(el) => {
+                    if (el) noteInputs.current.set(pin.id, el);
+                    else noteInputs.current.delete(pin.id);
+                  }}
+                  onChange={(event) => onPinNote(pin.id, event.target.value)}
+                  onKeyDown={(event) => {
+                    if (composing(event)) return;
+                    if (event.key !== "Enter") return;
+                    // 전송 아님 — 메모를 붙이고 이벤트를 삼킨다. 본문으로의
+                    // 포커스 이동은 Composer 가 capture 에서 한다.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onPinNote(pin.id, event.currentTarget.value);
+                  }}
                 />
-              ) : pin.element.kind === "region" ? (
-                // 영역 핀 — 찍은 좌표가 있을 뿐 요소는 없다. 점선
-                // 사각이 그 경계를, 라벨이 그 크기를 말한다.
-                <span className="pintray__thumb pintray__thumb--region" aria-hidden="true" />
-              ) : (
-                <span className="pintray__thumb pintray__thumb--empty" aria-hidden="true">
-                  —
-                </span>
-              )}
-              <span className="pintray__what">
-                <span className="pintray__label">
-                  {pin.element.kind === "region"
-                    ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
-                    : pin.element.text || pin.element.component}
-                </span>
-                <span className="pintray__where">
-                  {/* 레포가 새긴 출처 — path:line 의 파일 부분만 회색으로. */}
-                  {pin.element.source && (
-                    <span className="pintray__source">
-                      {pin.element.source.replace(/:\d+$/, "")}
-                    </span>
-                  )}
-                  {titleFor(pin.screen) ?? pin.screen} · {stateLabel(pin.state)}
-                </span>
-              </span>
-              {/* 이 핀이 바라는 것: 고치라는 말인가, 설명을 원하는 말인가. */}
-              <span className="pintray__intent" aria-label={`${n}번 핀 의도`} role="group">
-                <Tip label="이 요소를 고쳐 달라는 핀입니다">
+                <Tip label={`${n}번 핀 지우기`}>
                   <button
                     type="button"
-                    className="pintray__intentbtn"
-                    aria-pressed={pin.intent !== "question"}
-                    onClick={() => onPinIntent(pin.id, "change")}
+                    className="ghost"
+                    aria-label={`${n}번 핀 지우기`}
+                    onClick={() => onPinRemove(pin.id)}
                   >
-                    수정
+                    ×
                   </button>
                 </Tip>
-                <Tip label="이 요소가 왜 이런지 묻는 핀입니다">
-                  <button
-                    type="button"
-                    className="pintray__intentbtn"
-                    aria-pressed={pin.intent === "question"}
-                    onClick={() => onPinIntent(pin.id, "question")}
-                  >
-                    질문
-                  </button>
-                </Tip>
-              </span>
-              <input
-                className="pintray__note"
-                type="text"
-                placeholder="이 요소에 바라는 점 (선택)"
-                value={pin.note}
-                ref={(el) => {
-                  if (el) noteInputs.current.set(pin.id, el);
-                  else noteInputs.current.delete(pin.id);
-                }}
-                onChange={(event) => onPinNote(pin.id, event.target.value)}
-                onKeyDown={(event) => {
-                  if (composing(event)) return;
-                  if (event.key !== "Enter") return;
-                  // 전송 아님 — 메모를 붙이고 이벤트를 삼킨다. 본문으로의
-                  // 포커스 이동은 Composer 가 capture 에서 한다.
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onPinNote(pin.id, event.currentTarget.value);
-                }}
-              />
-              <Tip label={`${n}번 핀 지우기`}>
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label={`${n}번 핀 지우기`}
-                  onClick={() => onPinRemove(pin.id)}
-                >
-                  ×
-                </button>
-              </Tip>
-            </li>
-          );
-        })}
-      </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

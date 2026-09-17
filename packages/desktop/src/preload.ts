@@ -1,12 +1,8 @@
-import type {
-  ColoDesignPinEnvelope,
-  ColoDesignPinsSync,
-  PreviewTabMeta,
-} from "@colo-design/protocol";
+import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { contextBridge, ipcRenderer } from "electron";
 
 /**
- * 렌더러에 노출되는 데스크톱 다리: 수동 업데이트 확인(DESIGN §7)과 `폴더
+ * 렌더러에 노출되는 데스크톱 다리: 수동 업데이트 확인과 `폴더
  * 열기`(PLAN D2[폴더 열기]). 자격 증명·페어링 토큰은 절대 건너가지 않는다 — 렌더러는
  * 존재만 안다.
  *
@@ -61,18 +57,6 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     openExternal: (url: string) => ipcRenderer.invoke("preview:open-external", { url }),
     navigate: (route: string, state: string | null) =>
       ipcRenderer.invoke("preview:navigate", { route, state }),
-    /**
-     * 탭 스트립 (인앱 브라우저 1단계): the view owns the tab list — the web
-     * only asks. `tabClose`·`tabNew` 생략 인자는 활성 탭·빈 탭을 뜻한다.
-     */
-    tabs: () =>
-      ipcRenderer.invoke("preview:tabs") as Promise<{
-        tabs: PreviewTabMeta[];
-        activeTabId: string | null;
-      }>,
-    tabActivate: (tabId: string) => ipcRenderer.invoke("preview:tab-activate", { tabId }),
-    tabClose: (tabId?: string) => ipcRenderer.invoke("preview:tab-close", { tabId }),
-    tabNew: (url?: string) => ipcRenderer.invoke("preview:tab-new", { url }),
     history: (delta: -1 | 1) => ipcRenderer.invoke("preview:history", { delta }),
     reload: () => ipcRenderer.invoke("preview:reload"),
     /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
@@ -90,16 +74,12 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     snapshot: () => ipcRenderer.invoke("preview:snapshot"),
     onLocation: subscribe<{
       path: string;
-      /** The full address — web 탭은 주소창에 통째로 보여 준다. */
+      /** The full address — 외부 페이지는 주소창에 통째로 보여 준다. */
       url?: string;
-      /** 어느 탭의 보고인지 — 늦게 도착한 비활성 탭의 보고를 걸러 낸다. */
-      tabId: string;
       kind: "preview" | "web";
       canGoBack: boolean;
       canGoForward: boolean;
     }>("colo-preview:location"),
-    /** 탭 목록이 바뀔 때마다 통째로 — 스트립은 이 한 채널로 그린다. */
-    onTabs: subscribe<{ tabs: PreviewTabMeta[]; activeTabId: string | null }>("colo-preview:tabs"),
     onPin: subscribe<ColoDesignPinEnvelope>("colo-preview:pin"),
     onPinFocus: subscribe<{ id: string }>("colo-preview:pin-focus"),
     onError: subscribe<{

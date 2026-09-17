@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
-import {
-  type ChatEvent,
-  type DiffStatus,
-  type HandoffStatusReport,
-  type ProjectSummary,
-  type ServerMessage,
-  type SessionCommand,
+import type {
+  ChatEvent,
+  DiffStatus,
+  HandoffStatusReport,
+  ProjectSummary,
+  ServerMessage,
+  SessionCommand,
 } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
@@ -86,7 +86,7 @@ export class ProjectFleet {
   /**
    * 커미티 P3-2: slug → 폴러가 마지막으로 감지한 개발자 쪽 사건과 그 발견
    * 시각. `projectSummaries()`가 그대로 내보낸다 — 비활성 프로젝트도 이
-   * 값으로 홈의 요약 행을 그린다(§4 크로스 프로젝트 인박스).
+   * 값으로 홈의 요약 행을 그린다(크로스 프로젝트 인박스).
    */
   private readonly lastHandoffEvent = new Map<
     string,
@@ -380,7 +380,9 @@ export class ProjectFleet {
       }
       if (!report) continue;
       const reviews = report.reviews?.length ?? 0;
-      this.lastReviewCount.set(workspaces.slug, reviews);
+      // 읽기 실패의 빈 목록은 기준이 아니다 — 0 으로 세워 두면 다음 성공 읽기가
+      // 옛 코멘트 전부를 '새 코멘트' 로 울린다. 실제 목록이 왔을 때만 옮긴다.
+      if (report.reviews !== undefined) this.lastReviewCount.set(workspaces.slug, reviews);
       const projectName = this.deps.registry.get(workspaces.slug)?.name ?? workspaces.slug;
       const handoffNotice = (
         event: "merged" | "closed" | "changes_requested" | "comments",
@@ -479,9 +481,12 @@ export class ProjectFleet {
   activateProject(slug: string): Promise<ProjectWorkspaces> {
     const run = this.activating ?? Promise.resolve();
     const next = run.catch(() => undefined).then(() => this.activateProjectInner(slug));
-    this.activating = next.finally(() => {
-      if (this.activating === next) this.activating = null;
+    // finally 가 새 Promise 를 만든다 — `next` 를 세워 두면 `activating ===
+    // next` 가 영원히 거짓이라 끝나도 지워지지 않았다. 지우는 쪽이 세워진 객체.
+    const tracked = next.finally(() => {
+      if (this.activating === tracked) this.activating = null;
     });
+    this.activating = tracked;
     return next;
   }
 
@@ -549,27 +554,19 @@ export class ProjectFleet {
   }
 
   /**
-   * 전환의 울타리. Of the servers still up in inactive projects, two kinds
-   * stop before the incoming project brings itself up: whatever holds the
-   * port the incoming repo will take, and the oldest beyond the warm cap.
+   * 전환의 울타리. Of the servers still up in inactive projects, the oldest
+   * beyond the warm cap stops before the incoming project brings itself up.
    * Every other warm server survives the switch — that is what makes a
-   * return instant.
-   *
-   * An incoming repo with no declared port never collides: its dev server
-   * picks a free port and the bring-up detects it. A warm server whose port
-   * is not yet detected (null) is kept — stopping it on a guess would kill
-   * the very return the warm cap exists for.
+   * return instant. The incoming dev server picks its own free port, so a
+   * warm server never collides with it.
    */
   private async fenceWarmPreviews(next: ProjectWorkspaces): Promise<void> {
-    const incoming = next.repo.declaredPreviewPort();
     const warm = [...this.workspaces.values()]
       .filter((workspaces) => workspaces !== next && workspaces.repo.previewRunning)
       .sort((a, b) => b.shownAt - a.shownAt);
     let kept = 0;
     for (const workspaces of warm) {
-      const port = workspaces.repo.occupiedPreviewPort();
-      const collides = incoming !== null && port === incoming;
-      if (!collides && kept < WARM_PREVIEWS) {
+      if (kept < WARM_PREVIEWS) {
         kept += 1;
         continue;
       }
@@ -671,7 +668,7 @@ export class ProjectFleet {
   }
 
   /**
-   * DESIGN §5: a repo that declares a private registry gets the machine-wide
+   * A repo that declares a private registry gets the machine-wide
    * token into the user's ~/.npmrc (merged, never clobbering other lines).
    * Runs after a bring-up, because the declaration lives in the clone that
    * the bring-up just produced.

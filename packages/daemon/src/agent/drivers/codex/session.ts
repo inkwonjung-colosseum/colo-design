@@ -143,6 +143,8 @@ export class CodexAgentSession implements AgentSession {
   private readonly ready: Promise<void>;
   private threadId: string | null = null;
   private closed = false;
+  /** 세션 수명의 승인 신호 — 전송이 죽으면 기다리던 카드도 함께 끊긴다(acp 와 같은 모양). */
+  private readonly abort = new AbortController();
   private turnStartedAt = 0;
   /** The turn the server says is in progress — interrupt's target. */
   private activeTurnId: string | null = null;
@@ -554,7 +556,7 @@ export class CodexAgentSession implements AgentSession {
     input: Record<string, unknown>,
   ): Promise<PermissionVerdict> {
     return await this.hooks.decidePermission(tool, input, {
-      signal: new AbortController().signal,
+      signal: this.abort.signal,
     });
   }
 
@@ -855,7 +857,10 @@ export class CodexAgentSession implements AgentSession {
         const text =
           item.type === "plan"
             ? String(item.text ?? "")
-            : [...(item.summary ?? []), ...(item.content ?? [])].map(String).join("\n");
+            : [...(item.summary ?? []), ...(item.content ?? [])]
+                .map((part) => String(part?.text ?? ""))
+                .filter(Boolean)
+                .join("\n");
         if (text) {
           this.hooks.onEvent({ kind: "thinking.delta", blockId: id, text, agentId: null });
         }
@@ -925,6 +930,8 @@ export class CodexAgentSession implements AgentSession {
   private onTransportEnd(_code: number | null): void {
     if (this.closed) return;
     this.closed = true;
+    // 죽은 전송 위에 승인 카드가 영원히 pending 으로 남지 않게 — hooks 알림보다 먼저.
+    this.abort.abort();
     this.markTurnDone?.();
     for (const settle of this.turnSettlers) settle("dead");
     this.turnSettlers.clear();

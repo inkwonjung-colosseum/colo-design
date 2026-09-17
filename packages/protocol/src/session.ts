@@ -38,6 +38,8 @@ export interface LostSend {
 export type QueuedSendPayload = {
   text: string;
   images: Array<{ mediaType: string; data: string }>;
+  /** 표식과 함께 보낸 말 — 되살릴 때 같이 돌려준다(게이트의 입력). */
+  pins?: Array<{ screen: string; state: string | null }>;
 } | null;
 
 export type ChatEvent =
@@ -70,6 +72,12 @@ export type ChatEvent =
       name: string;
       input: unknown;
       agentId: string | null;
+      /**
+       * 도구가 뜬 시각 (데몬 시계, ms) — 도는 동안의 경과 시계가 여기서
+       * 센다. 재생된 기록에는 대화록의 시각이, 아주 오래된 대화록에는 없을
+       * 수 있다(그때는 창이 받은 시각으로 센다).
+       */
+      startedAt?: number;
     }
   | {
       kind: "tool.end";
@@ -263,13 +271,6 @@ export interface SessionLocation {
   slug: string | null;
 }
 
-/** `session.rewind` — the forked (or fresh) conversation to carry on in. */
-export interface SessionRewound {
-  sessionId: string;
-  /** True when the fork was refused and only the FILES went back (D95). */
-  memoryKept: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Plan, context, model and command surfaces
 // ---------------------------------------------------------------------------
@@ -287,7 +288,7 @@ export interface PlanWindow {
  * the Fable/Opus row of the usage dialog. The server names its own buckets,
  * so the label travels with the numbers instead of being spelled here.
  */
-export interface PlanModelWindow extends PlanWindow {
+interface PlanModelWindow extends PlanWindow {
   /** Server-supplied bucket name, e.g. 'Fable'. */
   label: string;
 }

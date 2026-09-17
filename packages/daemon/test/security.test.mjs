@@ -223,7 +223,15 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
     assert.match(verdict.message, /저장 버튼/, `${command} names the tool's own verb`);
   }
   // Status reads and conflict cleanup (add·stash) are the session's to use.
-  for (const command of ["git status --porcelain", "git add -A", "git stash list"]) {
+  // config 의 조회형(--get·--list)도 읽기다 — hooks 경로를 읽는 일은 무해.
+  for (const command of [
+    "git status --porcelain",
+    "git add -A",
+    "git stash list",
+    "git config --get user.name",
+    "git config --list --show-origin",
+    "git config --global -l",
+  ]) {
     const verdict = await Session.prototype.decidePermission.call(
       ask,
       { ...exec, command },
@@ -231,6 +239,21 @@ test("Bash git commit·push are refused before 항상 허용; reads and stash st
       { signal },
     );
     assert.equal(verdict.behavior, "allow", command);
+  }
+  // config 의 값 심기·해제는 여전히 도구의 동사다.
+  for (const command of [
+    "git config user.name 개발자",
+    "git config --global user.name 개발자",
+    "git config --unset user.name",
+  ]) {
+    const verdict = await Session.prototype.decidePermission.call(
+      ask,
+      { ...exec, command },
+      { command },
+      { signal },
+    );
+    assert.equal(verdict.behavior, "deny", command);
+    assert.match(verdict.message, /저장 버튼/, `${command} names the tool's own verb`);
   }
 });
 

@@ -112,14 +112,28 @@ export function trustWorkspace(root: string, home = homedir()): void {
     // Not created yet; the literal path is the best we can do.
   }
 
-  // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
-  const projects = (config.projects ??= {});
+  // 실사: 파일이 최상위에 primitive 를 담아 두면 그 자리에 쓰는 순간 TypeError
+  // 로 터져 데몬 기동이 죽는다 — 깨진 파일의 처리는 위의 parse 와 같은 갈래다.
+  if (typeof config !== "object" || config === null) return;
+  // 같은 충돌이 projects 자리와 행마다의 자리에서도난다 — ??= 관용구를 만나기
+  // 전에 모양을 고쳐 놓는다.
+  if (
+    typeof config.projects !== "object" ||
+    config.projects === null ||
+    Array.isArray(config.projects)
+  ) {
+    config.projects = {};
+  }
+  const projects = config.projects;
   let changed = false;
   for (const key of keys) {
-    // biome-ignore lint/suspicious/noAssignInExpressions: 없으면 만들고 그 값을 곧 쓰는 ??= 관용구다.
-    const project = (projects[key] ??= {});
-    if (project.hasTrustDialogAccepted !== true) {
-      project.hasTrustDialogAccepted = true;
+    const project = projects[key];
+    if (typeof project !== "object" || project === null || Array.isArray(project)) {
+      projects[key] = {};
+    }
+    const target = projects[key]!;
+    if (target.hasTrustDialogAccepted !== true) {
+      target.hasTrustDialogAccepted = true;
       changed = true;
     }
   }

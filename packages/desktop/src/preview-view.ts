@@ -4,34 +4,36 @@ import type {
   ColoDesignErrorEnvelope,
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
-  PreviewTabMeta,
 } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
 import { VIEWPORT_METRICS } from "./emulation.js";
 
 /**
- * 사용자의 미리보기 뷰 (PLAN D64 — D60 개봉; 인앱 브라우저 1단계로 탭 모델).
- * The planner's preview pane is the app's own browser view: a
- * `WebContentsView` laid over the web UI's stage slot, so the address ·
+ * 사용자의 미리보기 뷰 (PLAN D64 — D60 개봉; 탭 모델은 걷어내고 프로젝트당
+ * 페이지 하나). The planner's preview pane is the app's own browser view:
+ * a `WebContentsView` laid over the web UI's stage slot, so the address ·
  * history · errors · the comment-pin overlay (D67, in the preload) are the
  * tool's, not the connected repo's.
  *
- * TABS, WITH THE STRIP'S METALIST SEPARATE FROM THE BODIES(§3 규칙 3).
- * `tabList` 는 스트립이 그리는 순서 있는 메타, `livePages` 는 WebContents 를
- * 쥔 몸통 — 최대 8개(`MAX_LIVE_TABS`), 넘치는 것부터 LRU 로 discard 한다
- * (WebContents 만 죽고 메타는 남는다). 화면에는 늘 한 탭: a project switch
- * parks the preview tab it leaves (hidden, alive, exactly where the planner
- * was) and shows the tab of the project it goes to. Coming back is a
- * repaint, never a reload; the daemon keeps the servers warm for the same
- * reason. Only the tab on screen speaks to the renderer; a parked tab keeps
- * its own facts for the return. kind 는 URL 이 정한다 — repo 레지스트리
- * origin 위면 `preview`(repo 오버레이가 무장), 그 밖의 http(s) 로밍이면 `web`.
+ * ONE PAGE PER PROJECT. `pages` 는 마운트 origin 을 열쇠로 WebContents 를 쥔다
+ * — 프로젝트 전환은 떠나는 페이지를 park 하고(숨김, 살아 있음, 사용자가 두고 온
+ * 그 자리) 가는 쪽의 페이지를 세운다. 돌아오는 것은 repaint 이지 reload 가
+ * 아니다; 데몬이 서버를 데워 두는 이유와 같다. 살아 있는 페이지는 최대
+ * `MAX_LIVE_PAGES` — 넘치는 것부터 LRU 로 파기한다(메타를 남길 스트립이 없으니
+ * 파기는 곧 망각이다). 화면에는 늘 페이지 하나; 페이지가 화면에 있는 동안만
+ * 렌더러에 말한다.
+ *
+ * 링크의 나라는 탭이 아니라 그 페이지 안에서 논다: 외부 http(s) 로의 이동은
+ * 제자리에서 일어나고 kind 가 `web` 으로 바뀐다 — 뒤로 가기가 프로젝트로
+ * 돌아오는 길이다. 팝업(window.open)만은 pane 을 넘기지 않고 OS 브라우저가
+ * 본다. 프로젝트가 하나도 마운트되지 않았을 때 에이전트·링크가 여는 페이지는
+ * `loose` 하나뿐 — 화면을 떠나는 순간 파기된다.
  *
  * The view is ALWAYS above renderer DOM (D65) — `cover()` hides it behind a
  * captured freeze frame whenever a modal-like layer opens. 페이지가 스스로
  * 하는 이동은 http(s) 인지만 `will-navigate` 가 가드하고(`loadURL` 과 history
- * 는 이 이벤트를 끄지 않는다 — Electron docs), 어느 종류의 탭이 됐는지는
- * `did-navigate` 가 레지스트리로 다시 정한다.
+ * 는 이 이벤트를 끄지 않는다 — Electron docs), kind 는 `did-navigate` 가
+ * 레지스트리로 다시 정한다.
  *
  * The repo bridge contract (D68) is `colo-design.navigate`: a pin's 화면
  * 이동이 이 한 봉투로 간다 — the screens envelope that once marked the
@@ -56,7 +58,7 @@ const SNAPSHOT_LONG_SIDE = 1200;
 const CAPTURE_ACK_MS = 400;
 
 /**
- * 재설계 §4.3: the pinned element's React owner chain, read in the page's
+ * The pinned element's React owner chain, read in the page's
  * main world — the isolated preload cannot see fiber expandos. A constant
  * function; the call site interpolates the pin id as a JSON string literal —
  * and only after the UUID gate, so nothing else ever reaches the code string.
@@ -173,13 +175,15 @@ function navigate(contents: WebContents, url: string): void {
 }
 
 /**
- * OS 에 넘긴다 — pane 이 보여줄 수 없거나(슬롯이 없다) 보여주면 안 되는
- * 스킴(mailto: 같은 웹의 일상 동작)을 브라우저·메일 앱이 대신 연다.
- * file: 만은 웹 콘텐츠가 로컬 파일을 겨냥하지 못하도록 막는다.
+ * OS 에 넘긴다 — pane 이 보여주지 못하는 스킴(슬롯이 없거나 웹의 일상
+ * 동작인 mailto)을 브라우저·메일 앱이 대신 연다. 화이트리스트다: OS 에
+ * 등록된 임의 핸들러(smb·vnc 같은)로 웹 콘텐츠가 손을 뻗지 못하게 하고,
+ * file: 은 처음부터 없다.
  */
 function openInOs(url: string): void {
   try {
-    if (new URL(url).protocol === "file:") return;
+    const protocol = new URL(url).protocol;
+    if (protocol !== "https:" && protocol !== "http:" && protocol !== "mailto:") return;
     void shell.openExternal(url).catch(() => undefined);
   } catch {
     // 파싱이 안 되는 url 에는 열어줄 스킴도 없다
@@ -187,42 +191,32 @@ function openInOs(url: string): void {
 }
 
 /**
- * 이 pane 이 한 번에 살려 두는 탭 수 — 화면의 것과 뒤에 대기 중인 것까지.
+ * 이 pane 이 한 번에 살려 두는 페이지 수 — 화면의 것과 뒤에 park 된 것까지.
  * 하나하나가 렌더러 프로세스라 이 cap 이 사이드바 클릭의 비용을 묶는다.
- * 넘치는 것은 LRU 로 버린다(discard) — WebContents 만 죽고 메타는 스트립에
- * 남아, 다시 활성화되면 lastUrl 로 되살아난다.
+ * 넘치는 것은 LRU 로 파기한다 — 스트립이 없으니 메타도 남지 않고, 다음
+ * 마운트가 새 페이지를 로드한다.
  */
-const MAX_LIVE_TABS = 8;
+const MAX_LIVE_PAGES = 8;
 
-/** 탭의 종류 — repo 가 선언한 origin 위면 `preview`, 그 밖의 http(s) 로밍이면 `web`. */
+/** 페이지의 종류 — repo origin 위면 `preview`(오버레이 무장), 그 밖의 http(s) 로밍이면 `web`. */
 type PreviewKind = "preview" | "web";
 
 /**
- * 스트립이 그리는 탭 한 칸. 계약의 `PreviewTabMeta` 에 파비콘 하나를 얹었다 —
- * §4-1 이 `page-favicon-updated` 를 탭 메타 갱신으로 돌리기 때문이다. 메타는
- * 뷰가 소유하고 WebContents 를 함께 보유하지 않는다(버려진 탭도 메타뿐).
- */
-interface TabMeta extends PreviewTabMeta {
-  /** 페이지가 마지막으로 말한 파비콘 — 스트립 장식. 계약 밖의 덧붙임. */
-  favicon: string | null;
-}
-
-/**
- * 한 탭의 살아 있는 전부: 뷰와, 이 탭에 대해 pane 이 아는 것. `meta` 는
- * tabList 와 함께 보는 한 벌 — kind·title·url·discarded 는 여기서만 바꾸면
- * 스트립과 실제 페이지가 어긋나지 않는다.
+ * 한 페이지의 살아 있는 전부: 뷰와, 이 페이지에 대해 pane 이 아는 것.
+ * `home` 은 이 페이지를 세운 마운트 origin — 로밍으로 `origin` 이 바뀌어도
+ * `home` 은 pages 의 열쇠 그대로다. loose 페이지(프로젝트 없이 열린 것)는
+ * home 이 null 이고 화면을 떠나면 파기된다.
  */
 interface PreviewPage {
-  /** 스트립 id("t1"…) — livePages 의 열쇠이자 명령의 대상. */
-  readonly id: string;
-  /** 스트립이 그리는 메타 — tabList 의 원소와 같은 객체다. */
-  readonly meta: TabMeta;
+  /** 이 페이지를 세운 마운트 origin — pages 의 열쇠. loose 페이지는 null 이었다가 repo origin 에 착지하면 입양된다. */
+  home: string | null;
   /**
-   * 지금 머무는 origin. preview 탭은 마운트 origin 에 닿으면 고정되지만 web
-   * 탭은 did-navigate 마다 다시 정해진다 — kind 도 그때 repo 레지스트리로
-   * 재계산한다(§3 규칙 5).
+   * 지금 머무는 origin — did-navigate 마다 다시 정해지고 kind 도 그때
+   * 레지스트리로 재계산한다. 로밍 중이면 home 과 어긋난다.
    */
   origin: string;
+  /** repo origin 위면 `preview`, 그 밖이면 `web` — 오버레이 무장의 자리를 대신한다. */
+  kind: PreviewKind;
   readonly view: WebContentsView;
   /** The server process the page was loaded from (RepoStatus.previewEpoch). */
   epoch: number | null;
@@ -236,31 +230,30 @@ interface PreviewPage {
   readonly consoleLog: string[];
   /** When the page was last on screen — the cap ends the ones left longest ago. */
   shownAt: number;
-  /**
-   * 규칙 6: 이 탭이 마지막으로 마운트/활성화된 시점의 allowedOrigins. 뷰 전역
-   * 값이 낡아 프로젝트 전환 뒤 parked 탭을 오분류하는 일을 탭 스냅샷이 막는다.
-   */
-  originSnapshot: string[];
 }
 
 export class PlannerPreviewView {
-  /** WebContents 를 쥔 탭들 — tabId 가 열쇠. 버려진 탭은 여기서 빠지고 메타만 남는다. */
-  private readonly livePages = new Map<string, PreviewPage>();
-  /** 스트립의 순서 있는 메타 — livePages 와 짝을 이루는 이중 구조(§3 규칙 3). */
-  private readonly tabList: TabMeta[] = [];
   /**
-   * 화면에 올라와 있는 탭 — 곧 스트립의 활성 선택. null 은 pane 이 접힌 상태다
-   * (카드가 서 있거나 마지막 탭이 닫혔다). park/discard 가 이 id 를 지우고
-   * show() 가 다시 세운다 — "스트립의 활성"과 "실제로 보이는 탭"을 한 값이
-   * 함께 말한다.
+   * 프로젝트 페이지들 — 마운트 origin 이 열쇠. origin 당 페이지 하나라
+   * 중복 금지·kind 재계산·park/복귀가 전부 이 맵 위에 선다.
    */
-  private activeTabId: string | null = null;
-  /** 다음 스트립 id — "t1"부터. 닫힌 id 는 재활용하지 않는다. */
-  private tabSeq = 0;
+  private readonly pages = new Map<string, PreviewPage>();
   /**
-   * repo 레지스트리(§3 규칙 4·5): 마운트된 origin 과 그때의 epoch·뿌리 url.
-   * kind 재계산, 중복 탭 금지, did-navigate 때의 epoch 정산이 전부 이 맵 하나를
-   * 본다 — 마운트가 유일한 쓰는 곳이라 프로젝트가 바뀌면 저절로 다시 쓰인다.
+   * 프로젝트 없이 열린 페이지 — 에이전트의 navigate 나 `앱에서 링크 열기`가
+   * 마운트된 프로젝트 없이 부를 때의 유일한 몸통. 화면에 있거나 없거나다:
+   * park 되는 순간 파기된다(링크의 나라를 데워 둘 이유가 없다).
+   */
+  private loose: PreviewPage | null = null;
+  /**
+   * 화면에 올라와 있는 페이지. null 은 pane 이 접힌 상태다(카드가 서 있거나
+   * 아직 아무것도 마운트되지 않았다). park/파기가 이 참조를 지우고 show() 가
+   * 다시 세운다.
+   */
+  private activePage: PreviewPage | null = null;
+  /**
+   * repo 레지스트리: 마운트된 origin 과 그때의 epoch·뿌리 url. kind 재계산과
+   * did-navigate 때의 epoch 정산이 이 맵을 본다 — 마운트가 유일한 쓰는 곳이라
+   * 프로젝트가 바뀌면 저절로 다시 쓰인다.
    */
   private readonly mounts = new Map<string, { epoch: number | null; url: string }>();
   /** The slot's rect as the renderer last measured it — a page shown later takes it. */
@@ -276,14 +269,6 @@ export class PlannerPreviewView {
   constructor(private readonly window: () => BrowserWindow | null) {}
 
   /**
-   * Extra origins the repo allows (`colo-design.json` preview.origins),
-   * refreshed by every mount — a project switch rewrites the list with the
-   * page. Empty means the pane shows the preview server alone. 가드는 이 값을
-   * 직접 읽지 않는다: 각 탭이 활성화 시점의 스냅샷을 따로 쥔다(규칙 6).
-   */
-  private allowedOrigins: string[] = [];
-
-  /**
    * Puts the page for a serving preview url on screen. A page the pane kept
    * from an earlier visit comes back exactly where the planner left it — no
    * load, the switch costs a repaint. A page the pane has not met is created
@@ -294,32 +279,61 @@ export class PlannerPreviewView {
    * effect (a repo status flap remounts the pane), and a reload to the root
    * would throw away where the planner had navigated.
    */
-  mount(url: string, epoch: number | null, origins?: string[]): void {
-    // Renderer-supplied, both: origins keep only http(s) entries, and a url
-    // that is neither loopback nor http(s) never reaches the view.
-    this.allowedOrigins = (origins ?? this.allowedOrigins).filter(httpUrl);
-    if (!httpUrl(url)) return;
+  mount(url: string, epoch: number | null): void {
+    // A url that is neither loopback nor http(s) never reaches the view.
+    if (!loopbackHttp(url)) return;
     const origin = new URL(url).origin;
-    if (!loopbackHttp(url) && !this.allowedOrigins.includes(origin)) return;
     // 레지스트리에 올라간 순간부터 이 origin 은 repo 의 것 — 이후의 kind
-    // 재계산과 중복 탭 금지가 이 한 줄 위에 선다(§3 규칙 4·5).
+    // 재계산이 이 한 줄 위에 선다.
     this.mounts.set(origin, { epoch, url });
-    // repo origin 은 탭 하나뿐이다: 있는 탭은 (버려진 메타라도) 데워 쓰고,
-    // 없을 때만 만든다. driveTo·mount idempotency 가 이 유일성 위에 서 있다.
-    const existing = this.findTabAtOrigin(origin);
+    // repo origin 은 페이지 하나뿐이다: 있는 페이지는 데워 쓰고, 없을 때만
+    // 만든다. driveTo·mount idempotency 가 이 유일성 위에 서 있다. 로밍으로
+    // home 과 다른 origin 에 서 있는 페이지도 그 origin 의 것으로 찾는다 —
+    // 아니면 같은 origin 의 페이지가 둘로 갈라진다.
+    const existing = this.pages.get(origin) ?? this.pageAt(origin);
     if (existing) {
-      this.activateTab(existing.id);
-      const page = this.livePages.get(existing.id);
-      if (page) {
-        page.meta.kind = "preview";
-        this.refresh(page, url, epoch);
+      // loose 페이지가 repo origin 에 걸어 들어왔다 — 프로젝트 페이지로
+      // 입양한다(park·복귀가 이제 이 페이지를 살려 둔다).
+      if (existing.home === null) {
+        existing.home = origin;
+        this.pages.set(origin, existing);
+        this.loose = null;
       }
+      // 입양 직후의 kind — did-navigate 은 이미 지나갔다. origin 이 마운트되기
+      // 전에 먼저 도착한 페이지는 kind 이 "web" 인 채였고, 다시 로드되기 전엔
+      // 재계산이 없다. 제 집 origin 이 레지스트리에 오른 지금 그 위에 서 있으면
+      // repo 의 페이지다(오버레이 무장의 자리).
+      if (
+        this.mounts.has(existing.home) &&
+        existing.origin === existing.home &&
+        existing.kind !== "preview"
+      ) {
+        existing.kind = "preview";
+        // 이미 화면의 페이지면 show 의 재무장을 못 받는다 — 지금 다시 말한다.
+        if (this.activePage === existing) {
+          const contents = existing.view.webContents;
+          contents.send("colo-overlay:mode", { on: this.commentsOn });
+          contents.send("colo-overlay:pins", this.lastPins ?? { pins: [] });
+        }
+      }
+      this.show(existing);
+      this.refresh(existing, url, epoch);
       return;
     }
-    const page = this.createTab(url, "preview", origin, epoch);
-    this.activateTab(page.id);
+    const page = this.buildPage(origin, origin, epoch);
+    this.pages.set(origin, page);
+    this.show(page);
     this.evictParked();
     this.load(page, url);
+  }
+
+  /** 지금 그 origin 에 서 있는 페이지 — 로밍한 것까지 잡는다. */
+  private pageAt(origin: string): PreviewPage | null {
+    for (const page of this.pages.values()) {
+      if (page.origin === origin) return page;
+    }
+    if (this.loose?.origin === origin) return this.loose;
+    return null;
   }
 
   /**
@@ -327,8 +341,13 @@ export class PlannerPreviewView {
    * different process — the app behind the port may be another project's,
    * so the page starts over at the root; a failed last load (the server was
    * down, the renderer died) retries where it was. Otherwise the page is
-   * already right and nothing loads. 탭 단위로 정산된다 — 옆 탭의 epoch 은
-   * 이 판정에 못 끼난다.
+   * already right and nothing loads. 페이지 단위로 정산된다 — 옆 페이지의
+   * epoch 은 이 판정에 못 끼난다.
+   *
+   * 로밍 중인 페이지(origin ≠ home)도 그 자리에 둔다 — mount 는 "이
+   * 프로젝트를 보여 달라"는 말이지 "뿌리로 돌아가라"는 말이 아니다. 돌아오는
+   * 길은 페이지의 history(뒤로 가기)다. 다만 epoch 이동은 예외다: 서버가
+   * 갈아끼워진 로밍 자리는 낡았으므로 뿌리로 다시 시작한다.
    */
   private refresh(page: PreviewPage, url: string, epoch: number | null): void {
     const moved = epoch !== null && page.epoch !== null && page.epoch !== epoch;
@@ -336,7 +355,6 @@ export class PlannerPreviewView {
     if (moved) {
       page.failed = false;
       page.mountedUrl = url;
-      page.meta.url = url;
       navigate(page.view.webContents, url);
     } else if (page.failed) {
       page.failed = false;
@@ -345,11 +363,12 @@ export class PlannerPreviewView {
   }
 
   /**
-   * A link the planner clicked (설정 `앱에서 링크 열기`) or a popup a page
-   * raised. repo 레지스트리의 origin 이면 mount 경로에 위임한다 — 중복 탭 없이
-   * 기존 탭이 activate+refresh 된다(규칙 4). 그 밖의 http(s) 는 항상 새 web 탭,
-   * 포그라운드로. 슬롯이 없으면(카드가 서 있으면) pane 이 그릴 면이 없으므로
-   * OS 브라우저가 대신 본다.
+   * A link the planner clicked (설정 `앱에서 링크 열기`), a popup the agent
+   * opened, or the driver's navigate. repo 레지스트리의 origin 이면 mount
+   * 경로에 위임한다 — 그 프로젝트의 페이지가 앞으로 온다. 그 밖의 http(s) 는
+   * 화면의 페이지를 제자리에서 이동시키고(로밍), 페이지가 하나도 없으면
+   * loose 페이지를 세운다. 슬롯이 없으면(카드가 서 있으면) pane 이 그릴 면이
+   * 없으므로 OS 브라우저가 대신 본다.
    */
   openTab(url: string): void {
     if (!httpUrl(url)) return;
@@ -358,155 +377,38 @@ export class PlannerPreviewView {
       openInOs(url);
       return;
     }
-    if (this.isRepoOrigin(new URL(url).origin)) {
+    const origin = new URL(url).origin;
+    if (this.mounts.has(origin)) {
+      // repo origin 은 그 프로젝트의 페이지로 간다 — 단, mount 는 epoch 이동만
+      // 다시 읽으므로 요청한 경로가 페이지의 지금 주소와 다르면 명시적으로
+      // 데려간다. 에이전트의 navigate("…/settings") 가 "/" 에 머무는 사고를
+      // 막는다.
       this.mount(url, null);
+      const page = this.pages.get(origin) ?? null;
+      // mount 는 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 페이지의
+      // 목표 주소와 다르면 명시적으로 데려간다. 에이전트의 navigate("…/settings")
+      // 가 "/" 에 머무는 사고를 막는다.
+      if (page && page.mountedUrl !== url) {
+        page.mountedUrl = url;
+        navigate(page.view.webContents, url);
+      }
       return;
     }
-    this.newTab(url);
-  }
-
-  /** ⌘T·popup·주소창의 새 탭 — web 으로 태어나 스트립 끝에, 포그라운드로 선다. */
-  newTab(url?: string): void {
-    const target = url && httpUrl(url) ? url : null;
-    const page = this.createTab(target, "web", target ? safeOrigin(target) : "about:blank", null);
-    this.activateTab(page.id);
-    this.evictParked();
-    if (target) this.load(page, target);
-  }
-
-  /** 스트립의 그 탭을 화면에 세운다 — 버려진 탭이면 lastUrl 로 되살린다. */
-  activateTab(tabId: string): void {
-    const meta = this.tabList.find((tab) => tab.id === tabId);
-    if (!meta) return;
-    let page = this.livePages.get(tabId) ?? null;
-    if (!page) {
-      page = this.resurrect(meta);
-      // 버려진 탭의 재로드(§3 규칙 3): 마지막 주소로 돌아간다. 버려진 동안의
-      // epoch 은 메타에 없으므로 레지스트리의 것을 새로 받는 것이 곧 epoch 검사다
-      // — 서버가 다시 시작했어도 이 판은 그 사실을 받으며 시작한다.
-      const mount = this.mounts.get(page.origin);
-      const url = page.meta.url ?? mount?.url ?? `${page.origin}/`;
-      this.refresh(page, url, mount ? mount.epoch : null);
-      this.load(page, url);
-    }
-    // 규칙 6: 활성화되는 시점의 스냅샷 — 이미 활성인 탭도 다시 마운트되며
-    // 허용 목록이 바뀌었을 수 있으니 조건 없이 다시 찍는다.
-    page.originSnapshot = [...this.allowedOrigins];
-    if (meta.id === this.activeTabId && this.attached(page)) return;
-    this.show(page);
-  }
-
-  /**
-   * 탭 닫기 — discard 와 다르다: WebContents 파기에 메타 제거까지. 생략하면
-   * 활성 탭. 마지막 탭이 닫히면 pane 은 앉을 자리를 잃는다(unmount 상태).
-   * 활성을 닫았을 때의 새 활성은 스트립의 관례를 따른다 — 오른쪽, 끝이면 왼쪽.
-   */
-  closeTab(tabId?: string): void {
-    const id = tabId ?? this.activeTabId;
-    if (!id) return;
-    const index = this.tabList.findIndex((tab) => tab.id === id);
-    if (index === -1) return;
-    // discard 가 활성을 지우기 전에 기억한다 — 활성을 닫았을 때만 이웃이 뒤를
-    // 잇는다. 접힌 pane 에서 뒤편 탭을 닫는 일이 화면을 세우면 안 된다.
-    const closingActive = this.activeTabId === id;
-    const page = this.livePages.get(id) ?? null;
-    if (page) this.discard(page);
-    this.tabList.splice(index, 1);
-    if (this.tabList.length === 0) {
-      this.activeTabId = null;
-      this.sendTabs();
-      return;
-    }
-    if (closingActive) {
-      const next = this.tabList[Math.min(index, this.tabList.length - 1)];
-      if (next) this.activateTab(next.id);
-      return;
-    }
-    this.sendTabs();
-  }
-
-  /**
-   * ⌘⇧[ / ⌘⇧] 의 몸통 — 스트립에서 앞뒤 탭으로, 끝에서는 돌아 간다. 접힌
-   * pane 은 건드리지 않는다: 메뉴 가속키는 pane 밖에서도 불린다.
-   */
-  cycleActiveTab(delta: -1 | 1): void {
-    if (this.tabList.length < 2 || this.activeTabId === null) return;
-    const index = this.tabList.findIndex((tab) => tab.id === this.activeTabId);
-    const next = this.tabList[(index + delta + this.tabList.length) % this.tabList.length];
-    if (next) this.activateTab(next.id);
-  }
-
-  /** 스트립이 그리는 목록 그대로 — 사본을 내준다(호출자가 못 고치게). */
-  listTabs(): PreviewTabMeta[] {
-    return this.tabList.map((tab) => ({ ...tab }));
-  }
-
-  /** 지금 화면의 탭 id — `preview:tabs` 응답의 절반이다. */
-  getActiveTabId(): string | null {
-    return this.activeTabId;
-  }
-
-  /** The live webContents of the page on screen — the desktop suite drives the overlay through it. */
-  webContents(): WebContents | null {
-    const contents = this.active()?.view.webContents;
-    return contents && !contents.isDestroyed() ? contents : null;
-  }
-
-  /** 화면의 탭 — activeTabId 로 livePages 를 조회하는 헬퍼(this.page 의 후임). */
-  private active(): PreviewPage | null {
-    return this.activeTabId ? (this.livePages.get(this.activeTabId) ?? null) : null;
-  }
-
-  /**
-   * 데스크톱 스위트의 손잡이(desktop-cover.mjs `paneState` 가 app.evaluate 로
-   * 읽는다) — 탭 모델이 `this.page` 를 갈아엎으면서 사라진 공개 이름이다.
-   * 화면의 탭 한 장이 곧 옛 `page` 다.
-   */
-  get page(): PreviewPage | null {
-    return this.active();
-  }
-
-  /**
-   * 레지스트리에 오른 origin, 또는 지금 preview 탭이 머무는 origin — repo 의
-   * 것으로 인정한다(규칙 4). kind 재계산과 openTab 의 위임 판정이 함께 쓴다.
-   * `except` 는 지금 판정 중인 탭 자신 — origin 을 먼저 채워 놓고 부르면
-   * 스스로를 근거로 자기 새 origin 을 repo 것으로 인정하는 자기 부합에 빠진다.
-   */
-  private isRepoOrigin(origin: string, except?: PreviewPage): boolean {
-    if (this.mounts.has(origin)) return true;
-    for (const page of this.livePages.values()) {
-      if (page === except) continue;
-      if (page.meta.kind === "preview" && page.origin === origin) return true;
-    }
-    return false;
-  }
-
-  /**
-   * 규칙 4: repo origin 은 탭 하나. 산 탭을 먼저, 없으면 버려진 메타를 —
-   * activateTab 이 버려진 탭을 되살리므로 호출자는 id 만 받아 쓴다.
-   */
-  private findTabAtOrigin(origin: string): TabMeta | null {
-    for (const page of this.livePages.values()) {
-      if (page.origin === origin) return page.meta;
-    }
-    for (const tab of this.tabList) {
-      if (tab.discarded && tab.url && safeOrigin(tab.url) === origin) return tab;
-    }
-    return null;
+    const page = this.activePage ?? this.makeLoose();
+    this.load(page, url);
   }
 
   /**
    * Takes the pane off screen — the slot is gone (a project switch, a card in
-   * the pane's place, the server died). park 은 활성이 preview 탭일 때만:
+   * the pane's place, the server died). park 은 프로젝트 페이지일 때만:
    * 사용자가 있던 곳이 프로젝트 화면일 때만 '그대로 돌아옴'을 약속한다.
-   * 활성이 web 탭이면 버린다(discard) — 링크의 나라는 메타만 스트립에 남기고
-   * WebContents 는 놓아준다. 뒤에 대기 중이던 탭들은 애초에 화면 밖이다.
+   * loose 페이지는 버린다 — 링크의 나라는 WebContents 를 놓아준다.
    */
   unmount(): void {
-    const page = this.active();
+    const page = this.activePage;
     if (!page) return;
-    if (page.meta.kind === "preview") this.park(page);
-    else this.discard(page);
+    if (page.home !== null) this.park(page);
+    else this.destroy(page);
   }
 
   setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
@@ -516,7 +418,7 @@ export class PlannerPreviewView {
       width: Math.max(0, Math.round(bounds.width)),
       height: Math.max(0, Math.round(bounds.height)),
     };
-    this.active()?.view.setBounds(this.bounds);
+    this.activePage?.view.setBounds(this.bounds);
   }
 
   /**
@@ -540,7 +442,7 @@ export class PlannerPreviewView {
   cover(on: boolean): void {
     const edge = on && !this.covered;
     this.covered = on;
-    const page = this.active();
+    const page = this.activePage;
     if (!page || page.view.webContents.isDestroyed()) return;
     page.view.setVisible(!on);
     // One capture per false→true edge — a re-assertion is not a new modal.
@@ -555,24 +457,37 @@ export class PlannerPreviewView {
   private async freeze(page: PreviewPage): Promise<void> {
     try {
       const image = await page.view.webContents.capturePage();
-      if (image.isEmpty() || !this.covered || this.activeTabId !== page.id) return;
+      if (image.isEmpty() || !this.covered || this.activePage !== page) return;
       this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
     } catch {
       // A paint that never happened; the slot shows the pane background.
     }
   }
+
   /**
-   * The address bar's word (규칙 9) — the ACTIVE tab carries it. 같은 origin
-   * 이면 그 탭 안에서, 활성이 web 탭이면 http(s) 어디든 그 탭 안에서 논다.
-   * 활성이 preview 탭일 때의 건너편은 둘로 갈린다: repo 레지스트리(또는 이번
-   * 프로젝트가 허용한) origin 이면 mount 경로로, 그 밖의 전체 URL 은 새 web 탭.
+   * 화면의 지금 페이지가 연결 레포의 것인지 — home origin 위에 서 있으면
+   * 참, 사용자가 링크를 타고 밖으로 나가 로밍 중이면 거짓이다. 에이전트
+   * 브라우저의 민감 op(evaluate·screenshot·snapshot)가 레포 바깥을 겨눌 때
+   * 권한 카드로 가는 판정 재료다(BrowserDriver.isRepoSurface 계약).
+   */
+  isRepoSurface(): boolean {
+    const page = this.activePage;
+    return page !== null && page.home !== null && page.origin === page.home;
+  }
+
+  /**
+   * The address bar's word — 화면의 페이지가 옮는다. 같은 origin 이면 그
+   * 페이지 안에서, 로밍 중이거나 loose 페이지면 http(s) 어디든 그 자리에서
+   * 논다. 프로젝트 페이지가 home 에 있는 동안의 건너편은 둘로 갈린다:
+   * repo 레지스트리(또는 이번 프로젝트가 허용한) origin 이면 mount 경로로,
+   * 그 밖의 전체 URL 은 제자리 로밍이다.
    */
   open(path: string): void {
-    const page = this.active();
+    const page = this.activePage;
     if (!page) return;
     let url: URL;
     try {
-      url = new URL(path, page.origin);
+      url = new URL(path, page.home ?? page.origin);
     } catch {
       return;
     }
@@ -581,47 +496,54 @@ export class PlannerPreviewView {
       return;
     }
     if (!httpUrl(url.toString())) return;
-    if (page.meta.kind === "web") {
-      // web 탭은 이미 링크의 나라 — 주소창도 같은 탭에서 갈아탄다.
+    if (page.home === null || page.origin !== page.home) {
+      // 로밍 중이거나 프로젝트 없이 떠 있는 페이지 — 주소창은 브라우저처럼
+      // 제자리에서 갈아탄다.
       this.load(page, url.toString());
       return;
     }
-    if (this.isRepoOrigin(url.origin) || this.allowedOrigins.includes(url.origin)) {
+    if (this.mounts.has(url.origin)) {
       this.mount(url.toString(), null);
+      // mount 은 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 그
+      // 프로젝트 페이지의 지금 주소와 다르면 명시적으로 데려간다(openTab 과
+      // 같은 보상). 주소창이 가리킨 경로가 사라지는 사고를 막는다.
+      const target = this.pages.get(url.origin);
+      if (target && target.mountedUrl !== url.toString()) {
+        target.mountedUrl = url.toString();
+        navigate(target.view.webContents, url.toString());
+      }
       return;
     }
-    this.newTab(url.toString());
+    // 프로젝트 페이지의 외출 — 같은 페이지가 링크의 나라를 걷는다. 뒤로
+    // 가기가 돌아오는 길이다.
+    this.load(page, url.toString());
   }
 
   /**
    * A pin's 화면 이동 (D66): a plain load — the screens envelope that once
    * marked the bridge `present` is gone, so client routing is too. 주소창과
-   * 달리 여기서 새 탭을 만들지 않는다: 이 말은 repo 의 것이라 repo 의 origin
-   * 밖으로 나가지 않는다.
+   * 달리 여기서 로밍하지 않는다: 이 말은 repo 의 것이라 프로젝트 페이지의
+   * home origin 위에서만 논다 — 페이지가 외출 중이면 home 으로 되돌아오는
+   * 것이 곧 그 화면으로 가는 길이다.
    */
   navigate(route: string, state: string | null): void {
-    const page = this.active();
-    if (!page) return;
+    const page = this.activePage;
+    if (!page || page.home === null) return;
     let url: URL;
     try {
-      url = new URL(route, page.origin);
+      url = new URL(route, page.home);
     } catch {
       return;
     }
-    // open() refuses off-origin urls; a pin's route must not slip past that
-    // by carrying an absolute route. A repo-allowed origin is the one
-    // exception: it mounts as its own page.
-    if (url.origin !== page.origin) {
-      if (this.allowedOrigins.includes(url.origin)) {
-        this.mount(url.toString(), null, this.allowedOrigins);
-      }
-      return;
-    }
+    // A pin's route must not slip past open()'s guard by carrying an
+    // absolute route — the pin plays on the project page's home origin only.
+    if (url.origin !== page.home) return;
     if (state) url.searchParams.set("state", state);
     this.load(page, url.toString());
   }
+
   /**
-   * The agent's navigation (PanePreviewDriver): a real load, awaited — never
+   * The agent's navigation (PaneCaptureDriver): a real load, awaited — never
    * the bridge's client routing, because the driver needs a document it can
    * wait on. A repo-allowed foreign origin mounts as its own page, same as
    * `open`. Returns false when the load failed or the url is not allowed.
@@ -633,22 +555,38 @@ export class PlannerPreviewView {
     } catch {
       return false;
     }
-    const page = this.active();
+    const page = this.activePage;
     if (!page) return false;
     if (parsed.origin !== page.origin) {
-      // A link page is on screen: the agent's drive pulls the pane back to
-      // the project — mount refits the page for the preview origin. web 탭은
-      // loopback(다른 프로젝트의 서버 포함)까지 받는다 — 링크를 타고 온 탭이
-      // 에이전트의 drive 로 repo 쪽으로 걸어 들어오는 길이다.
+      // The agent's drive pulls the pane back to the project — mount refits
+      // the page for the preview origin. loose 페이지는 loopback(다른
+      // 프로젝트의 서버 포함)까지 받는다 — 링크를 타고 온 페이지가 에이전트의
+      // drive 로 repo 쪽으로 걸어 들어오는 길이다. repo 페이지가 로밍한 뒤엔
+      // 제 집(origin)과 레지스트리(mounts)에 등록된 origin 이 돌아오는 길이다.
       const allowed =
-        page.meta.kind === "web"
-          ? loopbackHttp(url) || this.allowedOrigins.includes(parsed.origin)
-          : this.allowedOrigins.includes(parsed.origin);
+        page.home === null
+          ? loopbackHttp(url)
+          : parsed.origin === page.home || this.mounts.has(parsed.origin);
       if (!allowed) return false;
-      this.mount(url, null, this.allowedOrigins);
-      const mounted = this.active();
-      if (!mounted || mounted.origin !== parsed.origin) return false;
+      this.mount(url, null);
+      const mounted = this.activePage;
+      if (!mounted) return false;
       const contents = mounted.view.webContents;
+      // mount 은 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 페이지의
+      // 지금 주소와 다르면 openTab 처럼 명시적으로 데려간다. 로밍 중 붙들린
+      // 프로젝트 페이지(origin 이 아직 목적지가 아니다)와 앞으로 데워진
+      // 대기 페이지(다른 경로에 서 있다)가 이 한 갈래로 목적지에 닿는다.
+      if (mounted.home !== null && mounted.mountedUrl !== url) {
+        mounted.mountedUrl = url;
+        mounted.failed = false;
+        try {
+          await contents.loadURL(url);
+          return true;
+        } catch {
+          mounted.failed = true;
+          return false;
+        }
+      }
       if (!contents.isLoading()) return !mounted.failed;
       return await new Promise<boolean>((resolve) => {
         const onFinish = () => settle(true);
@@ -695,7 +633,6 @@ export class PlannerPreviewView {
   private load(page: PreviewPage, url: string): void {
     if (page.mountedUrl === url && !page.failed) return;
     page.mountedUrl = url;
-    page.meta.url = url;
     page.failed = false;
     navigate(page.view.webContents, url);
   }
@@ -721,11 +658,11 @@ export class PlannerPreviewView {
    * 이 필요한 건 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
    */
   zoomIn(): void {
-    this.setZoom((this.active()?.zoomFactor ?? 1) + 0.2);
+    this.setZoom((this.activePage?.zoomFactor ?? 1) + 0.2);
   }
 
   zoomOut(): void {
-    this.setZoom((this.active()?.zoomFactor ?? 1) - 0.2);
+    this.setZoom((this.activePage?.zoomFactor ?? 1) - 0.2);
   }
 
   zoomReset(): void {
@@ -733,7 +670,7 @@ export class PlannerPreviewView {
   }
 
   private setZoom(factor: number): void {
-    const page = this.active();
+    const page = this.activePage;
     if (!page || page.view.webContents.isDestroyed()) return;
     const clamped = Math.min(2, Math.max(0.5, factor));
     page.view.webContents.setZoomFactor(clamped);
@@ -743,14 +680,29 @@ export class PlannerPreviewView {
 
   /** The preview origin on screen — the main window's popup gate. */
   getOrigin(): string | null {
-    return this.active()?.origin ?? null;
+    return this.activePage?.origin ?? null;
+  }
+
+  /** The live webContents of the page on screen — the desktop suite drives the overlay through it. */
+  webContents(): WebContents | null {
+    const contents = this.activePage?.view.webContents;
+    return contents && !contents.isDestroyed() ? contents : null;
+  }
+
+  /**
+   * 데스크톱 스위트의 손잡이(desktop-cover.mjs `paneState` 가 app.evaluate 로
+   * 읽는다) — 화면의 페이지 한 장이 곧 옛 `page` 다.
+   */
+  get page(): PreviewPage | null {
+    return this.activePage;
   }
 
   commentsMode(on: boolean): void {
     this.commentsOn = on;
-    // 오버레이는 repo 의 말 — web 탭에는 닿지 않는다(kind 가 external 의 자리를
-    // 대신한다). 다시 preview 탭이 활성되면 show/did-navigate 가 재무장한다.
-    if (this.active()?.meta.kind !== "preview") return;
+    // 오버레이는 repo 의 말 — 로밍 중인 페이지에는 닿지 않는다(kind 가
+    // external 의 자리를 대신한다). 다시 preview 로 돌아오면 show/did-navigate
+    // 가 재무장한다.
+    if (this.activePage?.kind !== "preview") return;
     this.webContents()?.send("colo-overlay:mode", { on });
   }
 
@@ -761,13 +713,13 @@ export class PlannerPreviewView {
    */
   syncPins(sync: ColoDesignPinsSync): void {
     this.lastPins = sync;
-    if (this.active()?.meta.kind !== "preview") return;
+    if (this.activePage?.kind !== "preview") return;
     this.webContents()?.send("colo-overlay:pins", sync);
   }
 
   /** 재설계 C1: the web's chip click — the matching badge on the page flashes. */
   pinFlash(id: string): void {
-    if (this.active()?.meta.kind !== "preview") return;
+    if (this.activePage?.kind !== "preview") return;
     this.webContents()?.send("colo-overlay:flash", { id });
   }
 
@@ -808,7 +760,7 @@ export class PlannerPreviewView {
    * no page or no size yet — then a crop is taken on trust, as before.
    */
   private viewportCss(): { width: number; height: number } | null {
-    const page = this.active();
+    const page = this.activePage;
     if (!page) return null;
     const bounds = page.view.getBounds();
     const factor = page.zoomFactor > 0 ? page.zoomFactor : 1;
@@ -827,7 +779,7 @@ export class PlannerPreviewView {
       await this.withOverlayHidden(async () => {
         const contents = this.webContents();
         if (!contents) return;
-        // §4.3 first — the order against the crop is free, but the stamp
+        // The owner stamp first — the order against the crop is free, but the stamp
         // must come off (the script's own finally sees to it) either way.
         try {
           if (OWNER_UUID.test(payload.pin.id)) {
@@ -892,7 +844,7 @@ export class PlannerPreviewView {
   async snapshot(): Promise<{ jpeg: string | null; console: string[] }> {
     const result: { jpeg: string | null; console: string[] } = {
       jpeg: null,
-      console: [...(this.active()?.consoleLog ?? [])],
+      console: [...(this.activePage?.consoleLog ?? [])],
     };
     const contents = this.webContents();
     if (!contents) return result;
@@ -936,40 +888,39 @@ export class PlannerPreviewView {
    */
   onOverlayPost(sender: WebContents, payload: { type?: unknown }): void {
     const page = this.pageOf(sender);
-    // web 탭도 preload 를 함께 실어 다니지만 bridge 는 repo 의 것이 아니다:
-    // 링크 너머 페이지의 "pin" 은 통째로 버린다(kind 가 external 의 자리를
-    // 대신한다).
-    if (!page || page.meta.kind !== "preview") return;
+    // loose 페이지도 preload 를 함께 실어 다니지만 bridge 는 repo 의 것이
+    // 아니다: 링크 너머 페이지의 "pin" 은 통째로 버린다(kind 가 external 의
+    // 자리를 대신한다).
+    if (page?.kind !== "preview") return;
     const type = typeof payload?.type === "string" ? payload.type : "";
-    if (type === "colo-design.pin" && this.activeTabId === page.id) {
+    if (type === "colo-design.pin" && this.activePage === page) {
       // inside is logged, never an unhandled rejection.
       void this.relayPin(payload as ColoDesignPinEnvelope).catch((error) => {
         console.error("preview pin relay failed", error);
       });
-    } else if (type === "colo-design.pin-focus" && this.activeTabId === page.id) {
+    } else if (type === "colo-design.pin-focus" && this.activePage === page) {
       this.send("colo-preview:pin-focus", payload);
     }
   }
 
   // ------------------------------------------------------------------ internals
 
-  /** sender → 탭. 버려진 탭의 sender 는 죽었으므로 산 탭만 돌면 그만이다. */
+  /** sender → 페이지. 파기된 페이지의 sender 는 죽었으므로 산 것만 돌면 그만이다. */
   private pageOf(sender: WebContents): PreviewPage | null {
-    for (const page of this.livePages.values()) {
+    for (const page of this.pages.values()) {
       if (page.view.webContents === sender) return page;
     }
+    if (this.loose?.view.webContents === sender) return this.loose;
     return null;
   }
 
   /**
-   * 탭의 몸통을 짓는다 — WebContentsView 와 PreviewPage. 메타는 이미 있는
-   * 것을 받는다(새 탭이면 createTab 이, 되살림이면 resurrect 가 쥔다).
-   * partition 은 이제 "persist:preview" 다: 예전엔 접두 없는 "preview" 라서
-   * in-memory 세션이었고 재시작마다 로그인이 증발했다. persist 전환의 목적은
-   * 임의 사이트의 로그인이 탭과 함께 남는 것(§3 규칙 2) — 파티션은 preview·web
-   * 탭이 같이 쓴다.
+   * 페이지의 몸통을 짓는다 — WebContentsView 와 PreviewPage. partition 은
+   * "persist:preview" 다: 예전엔 접두 없는 "preview" 라서 in-memory 세션이었고
+   * 재시작마다 로그인이 증발했다. persist 전환의 목적은 임의 사이트의 로그인이
+   * 페이지와 함께 남는 것 — 파티션은 preview·web 모두가 같이 쓴다.
    */
-  private buildPage(meta: TabMeta, origin: string, epoch: number | null): PreviewPage {
+  private buildPage(home: string | null, origin: string, epoch: number | null): PreviewPage {
     const view = new WebContentsView({
       webPreferences: {
         partition: "persist:preview",
@@ -981,9 +932,9 @@ export class PlannerPreviewView {
     view.setVisible(false);
     view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     const page: PreviewPage = {
-      id: meta.id,
-      meta,
+      home,
       origin,
+      kind: home !== null ? "preview" : "web",
       view,
       epoch,
       mountedUrl: null,
@@ -991,70 +942,50 @@ export class PlannerPreviewView {
       zoomFactor: 1,
       consoleLog: [],
       shownAt: 0,
-      originSnapshot: [...this.allowedOrigins],
     };
-    // 등록이 곧 산 것이다 — active()·pageOf·evictParked 가 livePages 로 탭을
-    // 찾는다. 이 한 줄이 빠지면 cover() 가 화면의 탭을 못 찾아 네이티브 뷰가
-    // 모달 위에 계속 그려진다(D65 의 규칙이 무너진 채로).
-    this.livePages.set(meta.id, page);
-    // 되살림도 여기를 지난다 — 버려진 메타는 몸통이 다시 섰으면 산 것이다.
-    meta.discarded = false;
     this.attach(page);
     return page;
   }
 
-  /** 새 탭 — 스트립 끝에 메타를 세우고 몸통을 짓는다. */
-  private createTab(
-    url: string | null,
-    kind: PreviewKind,
-    origin: string,
-    epoch: number | null,
-  ): PreviewPage {
-    const meta: TabMeta = {
-      id: `t${++this.tabSeq}`,
-      kind,
-      title: "새 탭",
-      url,
-      discarded: false,
-      favicon: null,
-    };
-    this.tabList.push(meta);
-    return this.buildPage(meta, origin, epoch);
-  }
-
   /**
-   * 버려진 탭의 되살림 — createPage + lastUrl 재로드의 절반. 몸통만 새로 짓고
-   * 주소 재로드는 activateTab 이 이어서 한다(레지스트리 epoch 을 받으면서).
-   * kind 는 버려진 그때의 값이 아니라 지금 레지스트리로 다시 정한다: 프로젝트가
-   * 바뀌어 낡은 preview 탭이 web 이 될 수 있다(규칙 6의 스냅샷 취지).
+   * 프로젝트 없이 열리는 페이지 — 에이전트의 navigate·`앱에서 링크 열기`가
+   * 마운트된 것 없이 부를 때의 몸통. 하나뿐이다: 이미 있으면 그 페이지가
+   * 새 주소를 삼키고, 없으면 지금 짓는다.
    */
-  private resurrect(meta: TabMeta): PreviewPage {
-    const origin = meta.url ? safeOrigin(meta.url) : "about:blank";
-    const mount = origin === "about:blank" ? null : (this.mounts.get(origin) ?? null);
-    return this.buildPage(meta, origin, mount ? mount.epoch : null);
+  private makeLoose(): PreviewPage {
+    if (this.loose) return this.loose;
+    const page = this.buildPage(null, "about:blank", null);
+    this.loose = page;
+    this.show(page);
+    return page;
   }
 
   /**
    * Puts a page on screen: topmost in the window (`addChildView` reorders a
    * child it already holds), sized to the slot, visible unless a modal
-   * covers the pane. 먼저 서 있던 탭은 park 해 두고 — 화면에는 늘 한 탭.
-   * The overlay is re-told the mode (D67) and the last pin sync (재설계 C1)
-   * it may have missed while parked, and the renderer's picture of the pane
-   * — where it is, its screens, whether it loads, its zoom — is replayed
-   * from this page's facts. 스트립 이벤트는 activateTab 이 따로 푼다.
+   * covers the pane. 먼저 서 있던 페이지는 park 해 두고 — 화면에는 늘 한
+   * 페이지. loose 페이지가 앞에 있으면 park 대신 파기다(링크의 나라는 데워
+   * 두지 않는다). The overlay is re-told the mode (D67) and the last pin
+   * sync (재설계 C1) it may have missed while parked, and the renderer's
+   * picture of the pane — where it is, whether it loads, its zoom — is
+   * replayed from this page's facts.
    */
   private show(page: PreviewPage): void {
-    const previous = this.active();
-    if (previous && previous !== page) this.park(previous);
-    this.activeTabId = page.id;
+    const previous = this.activePage;
+    if (previous === page && this.attached(page)) return;
+    if (previous && previous !== page) {
+      if (previous.home !== null) this.park(previous);
+      else this.destroy(previous);
+    }
+    this.activePage = page;
     page.shownAt = Date.now();
     const window = this.window();
     if (window && !window.isDestroyed()) window.contentView.addChildView(page.view);
     if (this.bounds) page.view.setBounds(this.bounds);
     page.view.setVisible(!this.covered);
     const contents = page.view.webContents;
-    const preview = page.meta.kind === "preview";
-    // The repo overlay stays out of web tabs: comments mode off, and
+    const preview = page.kind === "preview";
+    // The repo overlay stays out of roamed pages: comments mode off, and
     // an empty pin list sweeps any badge a repo page left drawn.
     contents.send("colo-overlay:mode", { on: this.commentsOn && preview });
     contents.send("colo-overlay:pins", preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
@@ -1066,7 +997,7 @@ export class PlannerPreviewView {
   /**
    * Whether a page is alive AND a child of the window on screen now. The
    * pane outlives the window — on mac ⌘W destroys it and the dock icon
-   * builds another — so the active tab can belong to a contentView that is
+   * builds another — so the active page can belong to a contentView that is
    * gone. `show()` is the only place that attaches a view, so a mount
    * taking the fast path on an orphan would leave the slot empty for the
    * rest of the run.
@@ -1078,85 +1009,90 @@ export class PlannerPreviewView {
     return window.contentView.children.includes(page.view);
   }
 
-  /** 화면에서 내리되 살려 둔다: 숨기고, 활성 선택도 함께 내린다. */
+  /** 화면에서 내리되 살려 둔다: 숨기고, 활성 참조도 함께 내린다. */
   private park(page: PreviewPage): void {
     // A page whose window was destroyed took its webContents with it —
     // the view is already gone, so only the selection moves.
     page.view.setVisible(false);
-    if (this.activeTabId === page.id) this.activeTabId = null;
+    if (this.activePage === page) {
+      this.activePage = null;
+      // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
+      // 것을 들고 있지 않게 지운다.
+      this.send("colo-preview:location", null);
+    }
   }
 
   /**
-   * WebContents 파기, 메타 생존(§3 규칙 3) — evict 와 unmount 시의 web 탭이
-   * 이 길을 간다. 스트립에는 버려진 탭으로 남아 재활성화 때 lastUrl 로 돌아온다.
+   * WebContents 파기 — evict·unmount 시의 loose 페이지·프로젝트 페이지의
+   * 최후가 이 길을 간다. 스트립이 없으니 메타도 남지 않는다: 다음 마운트는
+   * 새 페이지를 로드한다.
    */
-  private discard(page: PreviewPage): void {
-    this.livePages.delete(page.id);
-    page.meta.discarded = true;
-    if (this.activeTabId === page.id) this.activeTabId = null;
+  private destroy(page: PreviewPage): void {
+    if (page.home !== null) this.pages.delete(page.home);
+    if (this.loose === page) this.loose = null;
+    if (this.activePage === page) {
+      this.activePage = null;
+      // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
+      // 것을 들고 있지 않게 지운다.
+      this.send("colo-preview:location", null);
+    }
     const window = this.window();
     if (window && !window.isDestroyed()) window.contentView.removeChildView(page.view);
     if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
   }
 
   /**
-   * Cap 을 넘으면 마지막으로 봤지 오래된 parked 탭부터 버린다 — 버린다는 것은
-   * destroy(메타까지)가 아니라 discard(WebContents 만)다. 메타는 스트립에
-   * 남으니 되살릴 수 있고, 창이 닫혀 전 탭이 사라져도 같은 길로 자연 흡수된다.
+   * Cap 을 넘으면 마지막으로 본 지 오래된 parked 페이지부터 파기한다. 창이
+   * 닫혀 전 페이지가 사라져도 같은 길로 자연 흡수된다.
    */
   private evictParked(): void {
-    const parked = [...this.livePages.values()]
-      .filter((page) => page.id !== this.activeTabId)
+    const parked = [...this.pages.values()]
+      .filter((page) => page !== this.activePage)
       .sort((a, b) => b.shownAt - a.shownAt);
-    for (const page of parked.slice(MAX_LIVE_TABS - 1)) this.discard(page);
+    for (const page of parked.slice(MAX_LIVE_PAGES - 1)) this.destroy(page);
   }
 
   /**
    * A page's own ears, for its whole life. Every handler updates the page's
    * facts; only the page on screen relays them to the renderer — a parked
    * page reloading itself must not move the address bar or raise a banner
-   * over the project the planner is looking at. 스트립 사실(title·favicon·
-   * kind)은 예외로, 어느 탭이든 그대로 스트립에 푼다 — 뒷편 탭의 제목도
-   * 스트립이 그려야 한다.
+   * over the project the planner is looking at.
    */
   private attach(page: PreviewPage): void {
     const contents = page.view.webContents;
-    // 팝업은 이제 전부 탭(§4-1): http(s) 면 openTab — repo origin 은 mount
-    // 경로로 위임돼 중복 탭이 없고, 그 밖은 새 web 탭이 포그라운드로 선다.
-    // 그 밖의 스킴은 pane 이 띄우지 않고 OS 에 넘긴다.
+    // 팝업은 pane 을 넘기지 않는다 — 페이지 하나가 화면의 전부라 window.open
+    // 이 프로젝트 화면을 삼키는 일은 없다. http(s) 는 OS 브라우저가, 그 밖의
+    // 스킴도 OS 가 본다.
     contents.setWindowOpenHandler(({ url }) => {
-      if (httpUrl(url)) this.openTab(url);
-      else openInOs(url);
+      openInOs(url);
       return { action: "deny" };
     });
 
-    // will-navigate 는 http(s) 가드만 남는다(§3 규칙 5). 어느 origin 으로의
-    // 이동이든 그 자리에서 하게 두고, 그 판이 어떤 종류의 탭인지는
-    // did-navigate 가 레지스트리로 다시 정한다 — 분기는 삭제됐다.
+    // will-navigate 는 http(s) 가드만 남는다. 어느 origin 으로의 이동이든 그
+    // 자리에서 하게 두고, 그 판이 어떤 종류의 페이지인지는 did-navigate 가
+    // 레지스트리로 다시 정한다.
     contents.on("will-navigate", (event, url) => {
       if (!httpUrl(url)) event.preventDefault();
     });
     contents.on("did-navigate", (_event, url) => {
       page.mountedUrl = url;
-      page.meta.url = url;
       page.failed = false;
-      // ① kind 재계산 — URL 이 결정한다(§3 규칙 5). web 탭이 repo origin 에
-      // 착지하면 preview 로, preview 탭이 링크를 타고 나가면 web 으로.
+      // ① kind 재계산 — URL 이 결정한다. repo origin 에 착지하면 preview 로,
+      // 링크를 타고 나가면 web 으로.
       const origin = safeOrigin(url);
       if (origin !== "") {
         page.origin = origin;
-        page.meta.kind = this.isRepoOrigin(origin, page) ? "preview" : "web";
+        page.kind = this.mounts.has(origin) ? "preview" : "web";
       }
-      this.sendTabs();
-      if (this.activeTabId !== page.id) return;
+      if (this.activePage !== page) return;
       this.sendLocation(page);
       // ② 오버레이 재무장 — the overlay never announces itself; a fresh load
-      // is re-told everything it needs. preview 탭은 모드와 마지막 핀 동기,
-      // web 탭은 모드 off 와 빈 핀 스윕(앞 문서가 남긴 배지를 지운다).
-      if (page.meta.kind === "preview") {
+      // is re-told everything it needs. preview 페이지는 모드와 마지막 핀 동기,
+      // 로밍 중인 페이지는 모드 off 와 빈 핀 스윕(앞 문서가 남긴 배지를 지운다).
+      if (page.kind === "preview") {
         contents.send("colo-overlay:mode", { on: this.commentsOn });
         contents.send("colo-overlay:pins", this.lastPins ?? { pins: [] });
-        // ③ preview 탭이 낡은 epoch 위에 서 있으면 그 뿌리로 다시 시작한다 —
+        // ③ 페이지가 낡은 epoch 위에 서 있으면 그 뿌리로 다시 시작한다 —
         // 포트가 다른 프로젝트에 넘어갔을 수 있다. 재로드의 did-navigate 가
         // 다시 여기로 와 재무장한다.
         const mount = this.mounts.get(page.origin);
@@ -1170,30 +1106,20 @@ export class PlannerPreviewView {
     });
     contents.on("did-navigate-in-page", (_event, url) => {
       page.mountedUrl = url;
-      page.meta.url = url;
-      if (this.activeTabId !== page.id) return;
+      if (this.activePage !== page) return;
       this.sendLocation(page);
       // A SPA move swaps the screen without a load; replaying the sync lets
       // the overlay refilter its badges at once (재설계 C5) — the web's
       // onLocation resend confirms with the fresh list. kind 재계산은 필요
       // 없다(origin 은 안 바뀐다) — 핀 리플레이만 kind 가드로 통과한다.
-      if (page.meta.kind !== "preview") return;
+      if (page.kind !== "preview") return;
       if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
     });
-    // 스트립 사실 — 화면 밖 탭의 것도 그대로 푼다.
-    contents.on("page-title-updated", (_event, title) => {
-      page.meta.title = title;
-      this.sendTabs();
-    });
-    contents.on("page-favicon-updated", (_event, icons) => {
-      page.meta.favicon = icons.length > 0 ? (icons[icons.length - 1] ?? null) : null;
-      this.sendTabs();
-    });
     contents.on("did-start-loading", () => {
-      if (this.activeTabId === page.id) this.send("colo-preview:loading", { on: true });
+      if (this.activePage === page) this.send("colo-preview:loading", { on: true });
     });
     contents.on("did-stop-loading", () => {
-      if (this.activeTabId === page.id) this.send("colo-preview:loading", { on: false });
+      if (this.activePage === page) this.send("colo-preview:loading", { on: false });
     });
     // D69: the pane's own ears — no repo hook. 44 의 형태: 첫 인자가 details
     // 이벤트다(level 은 "info"|"warning"|"error"|"debug"). D89: every line
@@ -1202,7 +1128,7 @@ export class PlannerPreviewView {
       const line = `[${details.level}] ${details.message}`.slice(0, 500);
       page.consoleLog.push(line);
       if (page.consoleLog.length > 20) page.consoleLog.splice(0, page.consoleLog.length - 20);
-      if (details.level !== "error" || this.activeTabId !== page.id) return;
+      if (details.level !== "error" || this.activePage !== page) return;
       this.reportError(page, "runtime", details.message);
     });
     contents.on(
@@ -1211,7 +1137,7 @@ export class PlannerPreviewView {
         // -3 ERR_ABORTED is a navigation superseding itself, not a failure.
         if (!isMainFrame || errorCode === -3) return;
         page.failed = true;
-        if (this.activeTabId !== page.id) return;
+        if (this.activePage !== page) return;
         this.reportError(
           page,
           "build",
@@ -1222,7 +1148,7 @@ export class PlannerPreviewView {
     );
     contents.on("render-process-gone", (_event, details) => {
       page.failed = true;
-      if (this.activeTabId !== page.id) return;
+      if (this.activePage !== page) return;
       this.reportError(
         page,
         "runtime",
@@ -1231,23 +1157,9 @@ export class PlannerPreviewView {
     });
     // D71: while the view holds focus the renderer DOM hears no keys — the
     // two the whole UI hangs on are forwarded and replayed as synthetic
-    // keydowns (NativeHost), so the palette and 설정 still open. 탭 단축키는
-    // 그 위에서 이 판이 먼저 쪼개 가진다(§3 규칙 8): 뷰 포커스 동안 ⌘T 는 새
-    // 탭, ⌘W 는 탭 닫기 — 메뉴(새 대화·창 닫기)로는 흘려보내지 않는다. 탭이
-    // 하나뿐인 ⌘W 는 가로채지 않아 창 닫기가 본래 뜻으로 통한다.
+    // keydowns (NativeHost), so the palette and 설정 still open.
     contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
-      const plainMeta = Boolean(input.meta) && !input.shift && !input.alt && !input.control;
-      if (plainMeta && (input.key === "t" || input.key === "T")) {
-        event.preventDefault();
-        this.newTab();
-        return;
-      }
-      if (plainMeta && (input.key === "w" || input.key === "W") && this.livePages.size >= 2) {
-        event.preventDefault();
-        this.closeTab();
-        return;
-      }
       const forward =
         (input.meta && (input.key === "k" || input.key === "K" || input.key === ",")) ||
         input.key === "Escape";
@@ -1287,14 +1199,6 @@ export class PlannerPreviewView {
     });
   }
 
-  /** 스트립의 사실 한 벌 — 탭이 만들어지고 닫히고 자랄 때마다 웹으로 푼다. */
-  private sendTabs(): void {
-    this.send("colo-preview:tabs", {
-      tabs: this.listTabs(),
-      activeTabId: this.activeTabId,
-    });
-  }
-
   private sendLocation(page: PreviewPage): void {
     const contents = page.view.webContents;
     let path = "/";
@@ -1306,13 +1210,12 @@ export class PlannerPreviewView {
     } catch {
       // Keep "/" — an unparseable url still deserves a back button state.
     }
-    // ⌘T 로 태어난 탭의 주소는 about:blank 다 — 주소창엔 빈 칸이 어울린다.
+    // loose 페이지가 막 태어났을 때의 주소는 about:blank 다 — 주소창엔 빈 칸이
+    // 어울린다.
     if (url === "about:blank") path = "/";
     this.send("colo-preview:location", {
-      /** 어느 탭의 말인지 — 웹은 활성 탭의 것만 주소창에 비춘다(1단계 웹 쪽). */
-      tabId: page.id,
       /** preview 인지 web 인지 — external 불리어의 자리를 대신한다. */
-      kind: page.meta.kind,
+      kind: page.kind,
       path,
       url,
       canGoBack: contents.navigationHistory.canGoBack(),
@@ -1328,7 +1231,7 @@ export class PlannerPreviewView {
 }
 
 // ---------------------------------------------------------------------------
-// IPC surface (§2 of the plan): renderer → main commands. The renderer's
+// IPC surface: renderer → main commands. The renderer's
 // preload exposes these only when `preview.native` is true, so the browser
 // path never calls them.
 // ---------------------------------------------------------------------------
@@ -1348,13 +1251,7 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
       return { ok: true };
     }
     const epoch = "epoch" in input && typeof input.epoch === "number" ? input.epoch : null;
-    const origins =
-      "origins" in input && Array.isArray(input.origins)
-        ? input.origins.filter(
-            (origin): origin is string => typeof origin === "string" && httpUrl(origin),
-          )
-        : [];
-    view.mount(input.url, epoch, origins);
+    view.mount(input.url, epoch);
     return { ok: true };
   });
   ipcMain.handle("preview:unmount", () => {
@@ -1391,28 +1288,11 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     return { ok: true };
   });
   // A link the planner clicked (설정 `앱에서 링크 열기`): openTab 이 판한다 —
-  // repo origin 이면 mount 경로로 위임, 그 밖의 http(s) 는 새 web 탭, 슬롯이
-  // 없으면 OS 브라우저. the view decides, the renderer only asks.
+  // repo origin 이면 그 프로젝트의 페이지로, 그 밖의 http(s) 는 화면의 페이지를
+  // 제자리에서 이동, 슬롯이 없으면 OS 브라우저. the view decides, the renderer
+  // only asks.
   ipcMain.handle("preview:open-external", (_event, input: { url?: unknown }) => {
     if (typeof input?.url === "string") view.openTab(input.url);
-    return { ok: true };
-  });
-  // 탭 스트립의 명령 4종(§4-1) — 스트립의 현재 사실과, 만들기·고르기·닫기.
-  // tabId 생략은 활성 탭을 뜻한다(규칙 11의 취지: 생략=active).
-  ipcMain.handle("preview:tabs", () => ({
-    tabs: view.listTabs(),
-    activeTabId: view.getActiveTabId(),
-  }));
-  ipcMain.handle("preview:tab-new", (_event, input: { url?: unknown }) => {
-    view.newTab(typeof input?.url === "string" ? input.url : undefined);
-    return { ok: true };
-  });
-  ipcMain.handle("preview:tab-activate", (_event, input: { tabId?: unknown }) => {
-    if (typeof input?.tabId === "string") view.activateTab(input.tabId);
-    return { ok: true };
-  });
-  ipcMain.handle("preview:tab-close", (_event, input: { tabId?: unknown }) => {
-    view.closeTab(typeof input?.tabId === "string" ? input.tabId : undefined);
     return { ok: true };
   });
   ipcMain.handle("preview:navigate", (_event, input: { route?: string; state?: string | null }) => {

@@ -31,7 +31,10 @@ export function splitPath(path: string): {
   return { route, state: state && state !== "" ? state : null };
 }
 
-export function parseAddress(raw: string, opts: { origin: string; currentPath: string }): AddressTarget {
+export function parseAddress(
+  raw: string,
+  opts: { origin: string; currentPath: string },
+): AddressTarget {
   const input = raw.trim();
   if (input === "") return { kind: "error", message: "주소를 입력해 주세요" };
 

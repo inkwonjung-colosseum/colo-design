@@ -25,6 +25,8 @@ export interface StoredSend {
   id: string;
   text: string;
   images: Array<{ mediaType: string; data: string }>;
+  /** 화면 게이트 입력 — deliver 때 소비된다. 옛 파일엔 없다(없으면 없는 대로). */
+  pins?: Array<{ screen: string; state: string | null }>;
   /** 쓰는 시점에 첨부가 상한을 넘어 바이트가 버려졌다는 표식. */
   truncated?: boolean;
 }
@@ -147,7 +149,12 @@ export class QueueStore {
       lost: file.lost.filter((lost) => lost.id !== itemId),
     });
     if (item.truncated) return { text: item.text, images: [] };
-    return { text: item.text, images: item.images };
+    // removeHeld 과 같은 이유 — 프로토콜 타입 밖의 동행 바이트(회귀 보고).
+    return {
+      text: item.text,
+      images: item.images,
+      ...(item.pins?.length ? { pins: item.pins } : {}),
+    };
   }
 
   dismissLost(sessionId: string, itemId: string): void {

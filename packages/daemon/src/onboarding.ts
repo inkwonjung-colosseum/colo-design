@@ -1,5 +1,5 @@
 /**
- * Onboarding (DESIGN §8, reshaped by PLAN M1, D6, and the GitHub-token pass):
+ * Onboarding (reshaped by PLAN M1, D6, and the GitHub-token pass):
  * the four machine-wide gates a first run answers once — Claude Code, git,
  * Node·pnpm, and the GitHub token whose repo list the project picker shows.
  *
