@@ -8,39 +8,49 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { RepoSettingsWarning } from "@colo-design/protocol";
-import { currentPlatform } from "./environment.js";
+import { CONFIG_DIR, currentPlatform } from "./environment.js";
 
 /**
- * 클론과 Claude Code 사이의 세 가지 — 레포가 스스로 넓힌 권한을 사용자에게
+ * 클론과 Claude Code 사이의 네 가지 — 레포가 스스로 넓힌 권한을 잘라 내고
+ * 원본을 보관하는 일(`sanitizeRepoAgentSettings`), 잘라 낸 사실을 사용자에게
  * 보이게 하는 경고(`repoSettingsWarning`), 데스크톱이 실어 온 런타임을 레포
  * 명령의 PATH 앞에 붙이는 일(`extraPathPrefix`), 그리고 대화형 신뢰 대화상자가
  * 없는 데몬이 클론을 신뢰로 등록하는 일(`trustWorkspace`).
  *
- * `RepoWorkspace` 에서 떼어 둔 이유: 셋 다 워크스페이스의 상태를 읽지 않고,
- * 셋 다 온보딩 쪽에서도 쓰인다. `extraPathPrefix` 가 여기 있으면
+ * `RepoWorkspace` 에서 떼어 둔 이유: 앞의 셋은 워크스페이스의 상태를 읽지
+ * 않고, 온보딩 쪽에서도 쓰인다. `extraPathPrefix` 가 여기 있으면
  * `server → onboarding → repo` 순환도 끊긴다.
  */
 
+/** The settings files a repo can ship that the project tier loads verbatim. */
+const AGENT_SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"] as const;
+
+interface QuarantineEntry {
+  /** Repo-relative path the entry was cut from. */
+  file: string;
+  /** The widening keys that were removed, in field order. */
+  removed: string[];
+  /** The file's bytes exactly as the repo shipped them. */
+  originalRaw: string;
+}
+
+interface QuarantineRecord {
+  root: string;
+  /** When the last cut happened (ISO) — a record is written only on a cut. */
+  at: string;
+  files: QuarantineEntry[];
+}
+
 /**
- * A connected repo can ship Claude Code project settings — and with them
- * `permissions.allow` rules that pre-approve tools no card will ever ask
- * about. Loading the project tier is deliberate (it is also how the repo's
- * CLAUDE.md reaches the session), so this does not block: it makes the
- * repo's ask visible, as one header warning line. The fingerprint (repo
- * root + raw bytes) is how a client files the news as read without
- * mistaking an edited file — or another repo — for news it already saw.
+ * The keys a repo must not get to set. `hooks` runs shell commands on
+ * lifecycle events; `env` owns `ANTHROPIC_BASE_URL` and friends — a
+ * repo-held faucet for every prompt and credential the session touches;
+ * `permissions.allow` pre-approves tools no card will ever ask about.
+ * `permissions.deny` and `permissions.ask` only narrow, so they survive.
  */
-export function repoSettingsWarning(root: string): RepoSettingsWarning | null {
-  const file = join(root, ".claude", "settings.json");
-  let raw: string;
-  try {
-    raw = readFileSync(file, "utf8");
-  } catch {
-    // Absent (the normal repo) or unreadable — nothing to report either way.
-    return null;
-  }
+function stripWideningSettings(raw: string): { stripped: string; removed: string[] } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -48,14 +58,118 @@ export function repoSettingsWarning(root: string): RepoSettingsWarning | null {
     // A broken file is the CLI's news, not ours.
     return null;
   }
-  if (!parsed || typeof parsed !== "object") return null;
-  const widening = (["permissions", "env", "hooks"] as const).filter((key) => key in parsed);
-  if (widening.length === 0) return null;
-  // 실사 결함: 보안 의도는 좋았지만 영어 한 줄이었다 — 이 도구를 읽는 사용자는
-  // 한국어다. 무엇이 사전 승인되는지 그 자리에서 알려 준다.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const removed: string[] = [];
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (key === "hooks" || key === "env") {
+      removed.push(key);
+      continue;
+    }
+    if (key === "permissions" && value && typeof value === "object" && !Array.isArray(value)) {
+      const rest: Record<string, unknown> = {};
+      for (const [rule, rules] of Object.entries(value as Record<string, unknown>)) {
+        if (rule === "allow") {
+          removed.push("permissions.allow");
+          continue;
+        }
+        rest[rule] = rules;
+      }
+      if (Object.keys(rest).length > 0) out[key] = rest;
+      continue;
+    }
+    out[key] = value;
+  }
+  if (removed.length === 0) return null;
+  return { stripped: `${JSON.stringify(out, null, 2)}\n`, removed };
+}
+
+function readQuarantine(root: string, configDir: string): QuarantineRecord | null {
+  // 파일명은 레포 루트의 sha256 — 루트 경로가 그대로 파일명이 되지 않게 한다.
+  const id = createHash("sha256").update(root).digest("hex");
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(configDir, "settings-quarantine", `${id}.json`), "utf8"),
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as QuarantineRecord;
+    return Array.isArray(record.files) ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cut the widening keys out of a clone's Claude Code project settings before
+ * any session loads them. The project tier itself is deliberate — it is how
+ * the repo's CLAUDE.md reaches the session — but the tier's trust is auto-
+ * accepted here (see `trustWorkspace`), so a repo shipping `hooks` would
+ * otherwise run shell commands at session start, or pre-approve tools past
+ * every card, with a passive warning line as the only trace. Now the keys
+ * are gone before the CLI reads the file; the original bytes go to a 0600
+ * quarantine record under the daemon's config dir, and
+ * `repoSettingsWarning` speaks from that record.
+ *
+ * Runs at clone, at every bring-up refresh (a pull can restore the file),
+ * at daemon start for every cloned project, and at every session launch —
+ * a mid-turn edit of settings.json by the agent meets the cut on the next
+ * query. Idempotent: an already-clean file touches nothing, so the record
+ * and its timestamps survive restarts unchanged.
+ */
+export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
+  const record = readQuarantine(root, configDir) ?? { root, at: "", files: [] };
+  const entries = new Map(record.files.map((entry) => [entry.file, entry]));
+  let changed = false;
+  for (const rel of AGENT_SETTINGS_FILES) {
+    let raw: string;
+    try {
+      raw = readFileSync(join(root, rel), "utf8");
+    } catch {
+      continue; // Absent (the normal repo) or unreadable — nothing to cut.
+    }
+    const cut = stripWideningSettings(raw);
+    if (!cut) continue;
+    // temp+rename — a crash never leaves half a settings file behind.
+    const file = join(root, rel);
+    const temporary = `${file}.colo-design-${process.pid}`;
+    writeFileSync(temporary, cut.stripped, { mode: 0o644 });
+    renameSync(temporary, file);
+    entries.set(rel, { file: rel, removed: cut.removed, originalRaw: raw });
+    changed = true;
+  }
+  if (!changed) return false;
+  record.files = [...entries.values()];
+  record.at = new Date().toISOString();
+  const id = createHash("sha256").update(root).digest("hex");
+  const target = join(configDir, "settings-quarantine", `${id}.json`);
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = `${target}.colo-design-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, target);
+  return true;
+}
+
+/**
+ * The header warning for a repo whose widening settings were cut — reads
+ * from the quarantine record, so it stays truthful after the file on disk
+ * is already clean, and re-arming it (the same fingerprint again) is a
+ * client's "seen it" rather than news. The fingerprint hashes the repo root
+ * and the ORIGINAL bytes: new dangerous content is a new fingerprint.
+ */
+export function repoSettingsWarning(
+  root: string,
+  configDir: string = CONFIG_DIR,
+): RepoSettingsWarning | null {
+  const record = readQuarantine(root, configDir);
+  if (!record || record.files.length === 0) return null;
+  const named = record.files
+    .map((entry) => `${entry.file}(${entry.removed.join(", ")})`)
+    .join(" · ");
+  const hash = createHash("sha256").update(root).update("\0");
+  for (const entry of record.files) hash.update(entry.originalRaw).update("\0");
   return {
-    text: `이 레포가 보낸 .claude/settings.json(${widening.join(", ")})이 일부 도구를 미리 승인합니다 — 권한 카드 없이 실행될 수 있어요.`,
-    fingerprint: createHash("sha256").update(root).update("\0").update(raw).digest("hex"),
+    text: `이 레포가 보낸 설정의 권한 확장 키(${named})를 잘라 냈습니다 — 권한 카드 없이는 실행되지 않아요. 원본은 데몬 설정 디렉터리의 settings-quarantine 에 있습니다.`,
+    fingerprint: hash.digest("hex"),
   };
 }
 

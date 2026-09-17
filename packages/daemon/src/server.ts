@@ -39,7 +39,7 @@ import { PreviewDrivers } from "./preview-drivers.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
-import { repoSettingsWarning, trustWorkspace } from "./repo.js";
+import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
 import { serveWeb } from "./web-static.js";
@@ -623,6 +623,7 @@ export class DaemonServer {
       workspaces.repo.setPat(this.github.token);
       if (workspaces.repo.isCloned()) {
         trustWorkspace(workspaces.paths.repoRoot);
+        sanitizeRepoAgentSettings(workspaces.paths.repoRoot);
         // Awaited, not fired-and-forgotten: the first announce and every
         // client's first status read must see the counted clone, or a
         // restart blanks the counts for exactly the moment the tree also

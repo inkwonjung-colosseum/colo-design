@@ -122,7 +122,7 @@ export interface Turn {
   images?: Array<{ mediaType: string; data: string }>;
 }
 
-export interface RewindCutoff {
+interface RewindCutoff {
   /** The chain uuid the truncated resume keeps up to; null = keep nothing. */
   cut: string | null;
   /** The discarded turn's prompt uuid. */
