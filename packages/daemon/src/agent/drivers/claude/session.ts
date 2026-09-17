@@ -17,6 +17,7 @@ import type {
 } from "@colo-design/protocol";
 import { PLAN_TOOL } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
+import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { MessageTranslator } from "./event-mapper.js";
 
@@ -137,6 +138,10 @@ export class ClaudeAgentSession implements AgentSession {
   constructor(launch: ClaudeLaunch, hooks: DriverHooks) {
     this.hooks = hooks;
     this.id = launch.sessionId;
+    // 프로젝트 티어가 적재되기 직전의 마지막 방어선: 턴 도중 에이전트가
+    // .claude/settings.json 을 고쳐 권한을 넓혀도, 다음 질의는 잘려 나간
+    // 파일을 본다(클론·갱신·기동 스윕과 같은 칼, 이미 깨끗하면 무동작).
+    sanitizeRepoAgentSettings(launch.cwd);
     this.run = query({
       prompt: this.queue,
       options: {
@@ -177,8 +182,8 @@ export class ClaudeAgentSession implements AgentSession {
         // Load the same user/project configuration the terminal would, so
         // CLAUDE.md, skills, and permission rules behave identically. (The
         // project tier is the repo's own files — a repo that ships
-        // pre-approved tool rules surfaces as a header warning; see
-        // repoSettingsWarning.)
+        // pre-approved tool rules gets those keys cut before this query
+        // reads anything; see sanitizeRepoAgentSettings.)
         settingSources: ["user", "project", "local"],
         // 브라우저 도구(3단계): host가 브라우저 팩토리를 주입한 세션만 세션
         // 시크릿을 든 stdio MCP 서버를 받는다 — 메인 query에만 주입하고,

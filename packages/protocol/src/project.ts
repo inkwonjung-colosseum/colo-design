@@ -100,9 +100,9 @@ export interface ProjectList {
  * and warns again.
  */
 export interface RepoSettingsWarning {
-  /** Korean, one line: what the file pre-approves. */
+  /** Korean, one line: which keys were cut from which settings file. */
   text: string;
-  /** sha256 over the repo root and the settings file's raw bytes. */
+  /** sha256 over the repo root and the quarantined settings' raw bytes. */
   fingerprint: string;
 }
 export interface DaemonStatus {

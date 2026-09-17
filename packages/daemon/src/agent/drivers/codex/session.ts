@@ -27,6 +27,13 @@ const EFFORT_LEVELS: readonly string[] = ["low", "medium", "high", "xhigh", "max
  * two ways — `approvalPolicy` (does the agent ask?) and `sandbox` (what may
  * it touch without asking) — and both are per-turn params, so a mode switch
  * lands on the next `turn/start`, never mid-turn.
+ *
+ * In-sandbox commands never produce an approval request — the daemon's card
+ * flow only sees escalations. The workspace-write sandbox restricts WRITES
+ * only: reads are unrestricted (~/ .npmrc, ~/.ssh, daemon.json) and with
+ * networkAccess on, exfiltration needs no card at all. So `default` and
+ * `plan` run with the network OFF — a network command must escalate, which
+ * is exactly what the UI label ("Ask before running commands") promises.
  */
 const CODEX_MODES: Record<string, { approvalPolicy: string; sandbox: string }> = {
   default: { approvalPolicy: "on-request", sandbox: "workspace-write" },
@@ -53,14 +60,18 @@ export const CODEX_MODE_ROWS: Array<{
 function sandboxPolicy(modeId: string, cwd: string): Wire {
   switch (CODEX_MODES[modeId]?.sandbox ?? "workspace-write") {
     case "read-only":
-      return { type: "readOnly", networkAccess: true };
+      // 읽기전용 턴도 유출은 할 수 있다 — 네트워크는 default 와 같이 끈다.
+      return { type: "readOnly", networkAccess: false };
     case "danger-full-access":
       return { type: "dangerFullAccess" };
     default:
       return {
         type: "workspaceWrite",
         writableRoots: [cwd],
-        networkAccess: true,
+        // 샌드박스 밖으로 나가는 유일한 통로. true 였던 판: 안에서는 curl
+        // 하나가 카드 없이 ~/.npmrc · ~/.ssh · daemon.json 을 밖으로 가져갔
+        // 다. false 면 네트워크 명령이 escalation 이 되어 카드가 낀다.
+        networkAccess: false,
         excludeTmpdirEnvVar: false,
         excludeSlashTmp: false,
       };

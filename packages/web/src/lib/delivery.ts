@@ -98,7 +98,7 @@ export interface DeliveryInput {
   shelf?: { at: string } | null;
 }
 
-export const BUSY_SAVE = "AI가 고치는 중 — 끝나면 저장할 수 있습니다";
+const BUSY_SAVE = "AI가 고치는 중 — 끝나면 저장할 수 있습니다";
 const NOTHING_TO_SAVE = "저장할 변경이 없습니다";
 /**
  * 치워둔 작업이 있을 때의 저장·넘기기 잠금 이유: "없다"는

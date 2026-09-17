@@ -7,7 +7,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RepoErrorKind, RepoStatus } from "@colo-design/protocol";
-import { extraPathPrefix, trustWorkspace } from "./claude-trust.js";
+import { extraPathPrefix, sanitizeRepoAgentSettings, trustWorkspace } from "./claude-trust.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import {
   currentPlatform,
@@ -60,6 +60,7 @@ export class BringUp {
         // so neither `.git/config` nor `ps` ever sees it.
         await this.core.git(["clone", this.core.url, this.core.root], dirname(this.core.root));
         trustWorkspace(this.core.root);
+        sanitizeRepoAgentSettings(this.core.root);
       } else {
         this.core.setPhase("pulling", null);
         await this.core.scrubOriginCredential();
@@ -67,6 +68,9 @@ export class BringUp {
         // move off-cycle, and a conflict left by an earlier run resurfaces
         // with its Korean reason instead of a raw git error.
         await this.core.refreshFromRemote();
+        // 원격이 .claude/settings.json 을 갱신해 권한 확장이 돌아왔을 수
+        // 있다 — 클론 길에서와 같은 칼을 다시 댄다(이미 깨끗하면 무동작).
+        sanitizeRepoAgentSettings(this.core.root);
       }
 
       // 설정이 못 읽는 것(명령 없음 · 깨진 JSON)은 그대로 오류 카드로 —

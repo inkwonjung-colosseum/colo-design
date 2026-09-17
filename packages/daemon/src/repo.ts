@@ -18,7 +18,12 @@ import type {
 
 // 셋 다 이 모듈이 쓰면서 동시에 이 모듈의 표면이다 — 검사와 온보딩이
 // `dist/repo.js` 에서 이 이름들을 가져간다.
-export { extraPathPrefix, repoSettingsWarning, trustWorkspace } from "./claude-trust.js";
+export {
+  extraPathPrefix,
+  repoSettingsWarning,
+  sanitizeRepoAgentSettings,
+  trustWorkspace,
+} from "./claude-trust.js";
 export { buildCommentsSection } from "./handoff-body.js";
 // 상수와 URL 게이트는 repo-core.ts 로 옮겼다 — 표면은 여기서 다시보낸다.
 export { assertClonableRepoUrl, PUSH_AUTH_FAILURE, REPO_URL_MISSING_DETAIL } from "./repo-core.js";

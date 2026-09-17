@@ -3,7 +3,7 @@
 > **개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는
 > 도구 — git, Claude Code, 터미널 같은 건 몰라도 쓴다.**
 
-![version](https://img.shields.io/badge/version-0.3.8-blue)
+![version](https://img.shields.io/badge/version-0.3.9-blue)
 ![platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-lightgrey)
 ![stack](https://img.shields.io/badge/stack-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-9feaf9?labelColor=1e1e2e)
 ![monorepo](https://img.shields.io/badge/monorepo-pnpm-orange)
