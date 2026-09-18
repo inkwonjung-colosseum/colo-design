@@ -163,6 +163,27 @@ interface Transport {
 
 ### P1. 호스트 교체 + 덮개 서브시스템 삭제 (규모 M — D′안의 P1+P2+P3를 합친 것보다 작다)
 
+> **구현 완료 (2026-09-19).** 착지: `PreviewFrame.tsx`(web, 신규) ·
+> `attachWindow` 펜스·클레임(desktop main) · `PreviewPage.contents` 레지스트리 ·
+> IPC 정리(bounds/cover/freeze 삭제, host-ready 신설) · 드라이버 조회부 교체 ·
+> `NativeHost`/`IframeHost`/`use-preview-cover`/`cover-reconciler` 삭제 ·
+> `desktop-switch` 재작성(7/7) · `desktop-comments` 27/28 PASS.
+> 실측 교훈(코드가 이긴다): (a) `webviewTag`는 반드시 `webPreferences` 안 —
+> 밖에 두면 조용히 무시된다; (b) webview 요소에는 `allowpopups`가 없으면
+> window.open이 조용히 차단된다(main 핸들러가 심판하려면 속성이 필요);
+> (c) home 우선 워크스페이스에서 무대를 언마운트하면 게스트가 죽으므로
+> `planner__body`(미리보기 열 포함)를 home에서도 마운트 유지한다(0폭 접힘).
+> (d) **한 핀 주기 뒤 그 게스트 문서의 main→게스트 전달이 조용히 죽는다**
+> (send·executeJavaScript 함께; 게스트→main은 산다) — 게스트 `capturePage(clip)`
+> 이 유력한 발동조건이다. 크롭은 플래너 창 capturePage(`captureViaWindow`)로
+> 대체했고, 핀 스윕(ⓒ)은 오버레이의 `colo-overlay:pins-poll` 폴백(게스트→main
+> invoke)이 잇는다 — ⓒ 해결. 상류(Electron webview) 이슈로 보고할 가치가 있다.
+> `desktop-comments` 잔여 1건(28 중)은 이 전환 밖이다: 둘째 ⌘T 스레드의 전송
+> 후 markSent 동기 미도달(진단: main lastPins 가 sent:false 로 멈춤 — 스레드 1의
+> 같은 메커니즘은 통과; suite 주석 스스로 stub-exit race 지뢰밭이라 부르는 영역).
+> ⓚ 문구 기대치는 경로 계약(member/MemberList)으로 바로잡았다. 수동 확인 1건:
+> macOS 한글 IME 조합 입력.
+
 | 작업 | 파일 |
 |---|---|
 | `PreviewFrame.tsx` 신설: 프로젝트별 `<webview>` 맵(활성만 visible, 나머지 warm — `display:none` 금지), `MAX_LIVE_PAGES` 상한 이관, `epoch` 변화 시 `src` 재설정, `preload`=`preview-preload.cjs` 고정 | `web/src/components/preview/PreviewFrame.tsx` 신규 |

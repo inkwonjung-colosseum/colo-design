@@ -9,8 +9,8 @@ import type {
  * one surface the renderer reaches the main process through. Absent in a
  * plain browser; every access guards on it.
  *
- * `preview` grows with the native preview view: `native` is
- * how PreviewHost picks NativeHost over the iframe, and the rest are
+ * `preview` grows with the native preview host: `native` is
+ * how PreviewHost picks PreviewFrame's <webview> over the iframe, and the rest are
  * the IPC channels — commands down, subscriptions up (each returns its
  * unsubscribe).
  */
@@ -56,7 +56,7 @@ declare global {
       /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
       preview?: {
-        /** The native view exists — NativeHost, not the iframe. */
+        /** The desktop hosts the preview — PreviewFrame's <webview>, not the iframe. */
         native?: boolean;
         /**
          * Puts the page for this preview on screen; `epoch` names the server
@@ -66,13 +66,9 @@ declare global {
         mount?: (url: string, epoch: number | null) => Promise<unknown>;
         /** Takes the page off screen; it stays alive for the return. */
         unmount?: () => Promise<unknown>;
-        bounds?: (rect: {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        }) => Promise<unknown>;
-        cover?: (on: boolean) => Promise<unknown>;
+        /** PreviewFrame이 무대를 쥐고 있음을 알린다 — 거짓이면 링크·외부 열기가
+            OS 브라우저로 넘어간다(옛 bounds 0 판정의 자리). */
+        hostReady?: (on: boolean) => Promise<unknown>;
         open?: (path: string) => Promise<unknown>;
         /**
          * 설정 `앱에서 링크 열기`: a clicked link browses in the pane — any
@@ -117,7 +113,11 @@ declare global {
             state: string;
           }) => void,
         ) => Unsubscribe;
-        onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
+        /** main이 loose 페이지(활성 페이지 없이 열린 링크)의 요소를 부탁한다 —
+            PreviewFrame이 <webview src=url>을 무대에 세운다. */
+        onHost?: (callback: (payload: { url: string }) => void) => Unsubscribe;
+        /** loose 페이지 닫기(주소창의 닫기 버튼) — PreviewFrame이 그 요소를 거둔다. */
+        onClose?: (callback: (payload: { url: string }) => void) => Unsubscribe;
         onKey?: (
           callback: (payload: {
             key: string;

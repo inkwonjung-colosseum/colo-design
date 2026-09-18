@@ -628,88 +628,97 @@ export function PageWorkspace({
           </Tip>
         )}
       </header>
-      {view === "home" ? (
-        <HomeInbox
-          daemon={daemon}
-          onOpenThread={(thread) => void openThreadById(thread.id)}
-          onNewThread={() => void startNewThread()}
-        />
-      ) : (
-        <div
-          ref={bodyRef}
-          className={`planner__body${drag ? " planner__body--resizing" : ""}`}
-          style={{ gridTemplateColumns: `minmax(0, 1fr) ${previewShown}px` }}
-        >
-          <div className="planner__chatcol">
-            <ChatColumn
-              daemon={daemon}
-              sessions={sessions}
-              sendKey={settings.sendKey}
-              // 빈 대화의 placeholder 가
-              // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
-              // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
-              // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
-              placeholder={
-                sessions.activeId
-                  ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
-                  : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
-              }
-              disabled={false}
-              titleFor={titleFor}
-              onRenameSession={onRenameSession}
-              onDeleteSession={(session) => void sessions.remove(session)}
-              showThinking={settings.chat.showThinking}
-              showTools={settings.chat.showTools}
-              // 설정에서 끈 프로바이더 — 새 대화의 칩에서도 빠진다.
-              disabledProviders={settings.chat.disabledProviders ?? []}
-              pins={pins}
-              onExportThread={() => {
-                const id = sessions.activeId;
-                if (!id) return;
-                const summary = sessions.list.find((session) => session.sessionId === id);
-                exportThreadById(id, summary ? titleFor(summary) : "conversation");
-              }}
-              focusPinId={focusPinId}
-              onChatChange={onChatChange}
-              onOpenProviderSettings={() => onOpenSettings("providers")}
-              cycleRequest={cycleRequest}
-              onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
-            />
-          </div>
-          <Splitter
-            side="right"
-            width={previewShown}
-            bounds={PREVIEW_WIDTH_BOUNDS}
-            label="미리보기 너비"
-            active={drag !== null}
-            onPointerDown={beginResize}
-            onPointerMove={moveResize}
-            onPointerUp={endResize}
-            onNudge={nudgeWidth}
-            onReset={resetWidth}
-          />
-
-          <ScreenPanel
-            barSlot={barSlot}
+      {/* home·thread 양쪽에서 planner__body(미리보기 열 포함)는 항상 마운트된
+          채 둔다 — <webview> 게스트는 요소가 철거되는 순간 죽고, 죽으면
+          warm(돌아오면 그 자리) 약속이 무너진다. home 에서는 대화 열 자리에
+          홈 수신함이 서고 미리보기 열은 0 으로 접힌다(게스트는 살아 있는 채
+          숨는다). */}
+      <div
+        ref={bodyRef}
+        className={`planner__body${drag ? " planner__body--resizing" : ""}`}
+        style={{
+          gridTemplateColumns:
+            view === "home" ? "minmax(0, 1fr) 0px" : `minmax(0, 1fr) ${previewShown}px`,
+        }}
+      >
+        {view === "home" ? (
+          <HomeInbox
             daemon={daemon}
-            onOpenSettings={onOpenSettings}
-            onMachineTurn={forwardMachineTurn}
-            turnState={sessions.active?.state ?? "idle"}
-            sessionId={sessions.activeId}
-            commentsOn={commentsOn}
-            onCommentsMode={setCommentsOn}
-            pins={pins}
-            onPin={(pin) => {
-              pins.add(pin);
-              focusPin(pin.id);
-            }}
-            onPinFocus={focusPin}
-            onCycleAction={askCycle}
-            cycleRequest={cycleRequest}
-            reviewsTick={reviewsTick}
+            onOpenThread={(thread) => void openThreadById(thread.id)}
+            onNewThread={() => void startNewThread()}
           />
-        </div>
-      )}
+        ) : (
+          <>
+            <div className="planner__chatcol">
+              <ChatColumn
+                daemon={daemon}
+                sessions={sessions}
+                sendKey={settings.sendKey}
+                // 빈 대화의 placeholder 가
+                // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
+                // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
+                // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
+                placeholder={
+                  sessions.activeId
+                    ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
+                    : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
+                }
+                disabled={false}
+                titleFor={titleFor}
+                onRenameSession={onRenameSession}
+                onDeleteSession={(session) => void sessions.remove(session)}
+                showThinking={settings.chat.showThinking}
+                showTools={settings.chat.showTools}
+                // 설정에서 끈 프로바이더 — 새 대화의 칩에서도 빠진다.
+                disabledProviders={settings.chat.disabledProviders ?? []}
+                pins={pins}
+                onExportThread={() => {
+                  const id = sessions.activeId;
+                  if (!id) return;
+                  const summary = sessions.list.find((session) => session.sessionId === id);
+                  exportThreadById(id, summary ? titleFor(summary) : "conversation");
+                }}
+                focusPinId={focusPinId}
+                onChatChange={onChatChange}
+                onOpenProviderSettings={() => onOpenSettings("providers")}
+                cycleRequest={cycleRequest}
+                onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
+              />
+            </div>
+            <Splitter
+              side="right"
+              width={previewShown}
+              bounds={PREVIEW_WIDTH_BOUNDS}
+              label="미리보기 너비"
+              active={drag !== null}
+              onPointerDown={beginResize}
+              onPointerMove={moveResize}
+              onPointerUp={endResize}
+              onNudge={nudgeWidth}
+              onReset={resetWidth}
+            />
+          </>
+        )}
+        <ScreenPanel
+          barSlot={barSlot}
+          daemon={daemon}
+          onOpenSettings={onOpenSettings}
+          onMachineTurn={forwardMachineTurn}
+          turnState={sessions.active?.state ?? "idle"}
+          sessionId={sessions.activeId}
+          commentsOn={commentsOn}
+          onCommentsMode={setCommentsOn}
+          pins={pins}
+          onPin={(pin) => {
+            pins.add(pin);
+            focusPin(pin.id);
+          }}
+          onPinFocus={focusPin}
+          onCycleAction={askCycle}
+          cycleRequest={cycleRequest}
+          reviewsTick={reviewsTick}
+        />
+      </div>
 
       {palette && (
         <Palette

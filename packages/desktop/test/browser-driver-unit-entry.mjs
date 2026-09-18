@@ -12,6 +12,9 @@
  * COLO_BROWSER_UNIT_A / COLO_BROWSER_UNIT_B — fixture 서버 둘의 base url.
  *   A 는 상호작용 페이지들, B 는 로밍 목적지용 평범한 페이지다.
  */
+
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,19 +51,46 @@ app.whenReady().then(async () => {
     app.exit(0);
   };
   const out = {};
+  const step = (n) => process.stdout.write(`[entry] ${n}\n`);
   try {
     // 한 번도 표시된 적 없는 창은 프레임을 만들지 않아 rAF 가 죽는다 —
     // actionability 의 프레임 쌍이 영원히 기다리게 되므로 창을 띄운다
     // (구 desktop.test.mjs 의 show:true 선례).
-    const win = new BrowserWindow({ show: true, width: 1280, height: 800 });
+    const win = new BrowserWindow({
+      show: true,
+      width: 1280,
+      height: 800,
+      webPreferences: { webviewTag: true },
+    });
     const { PlannerPreviewView } = await import(process.env.COLO_BROWSER_UNIT_VIEW);
     const { createBrowserDriverFactory } = await import(process.env.COLO_BROWSER_UNIT_DRIVER);
     const view = new PlannerPreviewView(() => win);
-    view.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+    view.attachWindow(win);
+    // 게스트 요소를 얹을 문서가 필요하다 — about:blank 에 두면 attach 가
+    // 시작되지 않는다(실측). 최소 호스트 페이지를 로드한다.
+    const hostPage = join(app.getPath("temp"), `colo-driver-unit-${Date.now()}.html`);
+    writeFileSync(hostPage, "<!doctype html><meta charset='utf-8'><body></body>");
+    await win.loadFile(hostPage);
+    // PreviewFrame의 몫 — 무대가 살아 있음을 main에 알린다.
+    view.setHostReady(true);
+    // PreviewFrame의 몫 — 요소를 얹는다(클레임이 페이지를 세운다).
+    const addGuest = (src) =>
+      win.webContents.executeJavaScript(
+        `(() => {
+          const w = document.createElement("webview");
+          w.src = ${JSON.stringify(src)};
+          w.setAttribute("allowpopups", "");
+          w.style.cssText = "width:900px;height:700px";
+          w.dataset.key = "g" + String(document.querySelectorAll("webview").length);
+          document.body.appendChild(w);
+          return w.dataset.key;
+        })()`,
+      );
     const baseA = process.env.COLO_BROWSER_UNIT_A;
     const baseB = process.env.COLO_BROWSER_UNIT_B;
 
     // ── pane 없으면 null (숨은 창 폴백 금지) ─────────────────────────
+    step("paneNull");
     out.paneNull = createBrowserDriverFactory(() => null).forPane() === null;
     const factory = createBrowserDriverFactory(() => view);
     // pane 은 있어도 페이지가 하나도 없으면 드라이버는 돌아오지만 페이지가
@@ -74,7 +104,11 @@ app.whenReady().then(async () => {
     }
 
     // 사용자가 링크를 여는 것과 같다 — 드라이버는 페이지가 생긴 뒤에야 손에 잡힌다.
+    // 활성 페이지가 없으므로 openTab은 loose 요소를 부탁하고, 여기서 그 몫을
+    // 대신한다(PreviewFrame 흉내).
+    step("openTab");
     view.openTab(`${baseA}/one`);
+    await addGuest(`${baseA}/one`);
     // 숨은 창의 페이지는 쓰로틀을 풀어 준다 — rAF 가 멈추면 actionability 의
     // 프레임 쌍이 영원히 기다린다.
     const unthrottle = () => view.webContents()?.setBackgroundThrottling(false);
@@ -97,9 +131,11 @@ app.whenReady().then(async () => {
     };
 
     // ── snapshot → click → 새 스냅샷 (ref 세대) ──────────────────────
+    step("s1");
     const s1 = await snapshotRetry();
     const go = findByName(s1, "Go");
     out.snapshotHasRefs = go !== null && /^e\d+$/.test(go.ref);
+    step("click1");
     const s2 = await driver.click({ ref: go.ref });
     const after = findByName(s2, "After");
     out.clickReturnsFreshSnapshot = after !== null;
@@ -119,6 +155,7 @@ app.whenReady().then(async () => {
       );
     }
     // 이동 뒤 옛 ref 는 거절된다 — 옛 문서의 노드 번호가 새 문서를 가리키지 않게.
+    step("nav3");
     await driver.navigate(`${baseA}/third`);
     unthrottle();
     let staleError = "";
@@ -134,6 +171,7 @@ app.whenReady().then(async () => {
     unthrottle();
     const s3 = await snapshotRetry();
     const name = findByName(s3, "이름");
+    step("type");
     await driver.type({ ref: name.ref, text: "hello", clear: true });
     out.typeWorks =
       (await driver.evaluate("() => document.getElementById('name').value")) === "hello";
@@ -153,6 +191,7 @@ app.whenReady().then(async () => {
     // ── actionability: 가려진 버튼은 덮개가 걷힐 때까지 기다린다 ──────
     await driver.navigate(`${baseA}/covered`);
     unthrottle();
+    step("s4");
     const s4 = await snapshotRetry();
     const late = findByName(s4, "Late");
     const coveredAt = Date.now();
@@ -163,6 +202,7 @@ app.whenReady().then(async () => {
     out.coveredElapsed = Date.now() - coveredAt;
 
     // ── evaluate 반환 + JSON 8KB 캡 ──────────────────────────────────
+    step("eval");
     const value = await driver.evaluate("() => ({ a: 1, b: '둘' })");
     out.evaluateValue = value?.a === 1 && value?.b === "둘";
     let capError = "";
@@ -176,10 +216,12 @@ app.whenReady().then(async () => {
     // ── waitFor(text) ────────────────────────────────────────────────
     await driver.navigate(`${baseA}/delayed`);
     unthrottle();
+    step("waitText");
     out.waitForTextTrue = await driver.waitFor({ text: "늦게 왔다", ms: 5000 });
     out.waitForTextFalse = (await driver.waitFor({ text: "없는 글자", ms: 300 })) === false;
 
     // ── navigate 는 화면의 페이지를 옮긴다 — 다른 origin 도 제자리다 ──
+    step("navB");
     await driver.navigate(`${baseB}/two`);
     unthrottle();
     out.navigateRoams = (view.webContents()?.getURL() ?? "").startsWith(`${baseB}/two`);
@@ -189,11 +231,13 @@ app.whenReady().then(async () => {
     out.backReturns = (view.webContents()?.getURL() ?? "").startsWith(`${baseA}/delayed`);
 
     // ── screenshot ───────────────────────────────────────────────────
+    step("shot");
     const shot = await driver.screenshot({ longEdge: 200 });
     out.screenshotWorks = shot.mediaType === "image/webp" && shot.data.length > 0;
 
     // ── 다이얼로그 자동 처리 (마지막에 둔다 — 처리가 안 되면 페이지가
     //    멈추므로, 이후 케이스가 같이 멈추지 않게) ──────────────────────
+    step("dialog");
     await driver.navigate(`${baseA}/dialog`);
     unthrottle();
     const s5 = await snapshotRetry();

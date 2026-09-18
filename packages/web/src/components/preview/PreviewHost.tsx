@@ -18,8 +18,7 @@ import {
 } from "../icons";
 import { Tip } from "../shell/Tip";
 import { FrozenStage } from "./FrozenStage";
-import { IframeHost } from "./IframeHost";
-import { NativeHost } from "./NativeHost";
+import { PreviewFrame } from "./PreviewFrame";
 
 /**
  * Which path the planner asked to see (the address bar's ask — the native
@@ -64,7 +63,7 @@ type PreviewWidth = "mobile" | "tablet" | "desktop";
 /**
  * The preview pane: the toolbar, the browser-bar frame head and
  * the stage are common; the stage itself is a host. `native` picks
- * `NativeHost` — the desktop's own view, with the address bar, back ·
+ * `PreviewFrame` — the desktop's `<webview>` guests, with the address bar, back ·
  * forward, the error banner, real 폭 emulation and the 💬 toggle — and a
  * plain browser keeps the iframe — the ask's address in the pill, and a
  * back·forward that walks the asks themselves.
@@ -99,7 +98,7 @@ export function PreviewHost({
   /** Why it is not running, in the daemon's own words. */
   stoppedDetail?: string | null;
   onRestart: () => void;
-  /** The live pins — NativeHost projects them onto the overlay. */
+  /** The live pins — PreviewFrame projects them onto the overlay. */
   sync: ColoDesignPinsSync;
   /** A pin landed from the overlay; the workspace's usePins owns the list. */
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
@@ -765,7 +764,7 @@ export function PreviewHost({
           )}
           {(() => {
             const host = native ? (
-              <NativeHost
+              <PreviewFrame
                 url={url}
                 epoch={epoch}
                 target={target}
@@ -790,12 +789,20 @@ export function PreviewHost({
                 onZoom={setZoom}
               />
             ) : url ? (
-              <IframeHost url={url} reloadKey={reloadNonce} onLoading={setLoading} />
+              // 브라우저 개발 경로 — 일반 <webview>가 없는 세계라 iframe으로
+              // 그대로 프레임한다. 핀·주소창의 화면 이동은 네이티브의 것이라
+              // 여기엔 없다(상단의 결손 고지가 말한다).
+              <iframe
+                key={reloadNonce}
+                className="preview__frame"
+                title="미리보기"
+                src={url}
+                onLoad={() => setLoading(false)}
+              />
             ) : null;
-            // 동결: the frozen face wraps the host — the
-            // host always renders so the native view's slot never moves; the
-            // capture covers it through `data-cover-stage`, and 실제로 열기
-            // rides in the same cover when frozenApi is wired.
+            // 동결: the frozen face wraps the host — the host always renders
+            // so the stage never moves; the frozen capture is an ordinary
+            // layer above the <webview> now — no cover call, just DOM.
             return frozen ? (
               <FrozenStage
                 shot={frozen.shot}

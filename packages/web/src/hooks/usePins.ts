@@ -71,7 +71,7 @@ const SHOT_STORE_MAX = 6;
  * numbers hold the front so the pins behind them keep their numbers while
  * the turn runs — then the live list. Region pins carry their page rect:
  * they have no path for the overlay to re-anchor on. The reactive effect in
- * `usePins` and NativeHost's after-navigation resend both send THIS shape.
+ * `usePins` and PreviewFrame's after-navigation resend both send THIS shape.
  */
 export function pinsSync(ghosts: PinAttachment[], list: PinAttachment[]): ColoDesignPinsSync {
   const row = (pin: PinAttachment, sent: boolean): ColoDesignPinsSync["pins"][number] => ({
@@ -153,10 +153,6 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
       // Quota or private mode: pins stay in memory, they just do not survive a reload.
     }
   }, [slug, list]);
-  // The overlay's projection moved to useMarks: the marks
-  // registry owns `pinsSync` now — numbering, done marks, and screen marks
-  // all ride the same channel from one place.
-
   const add = (pin: ColoDesignPinEnvelope["pin"]) => {
     setList((current) =>
       current.some((row) => row.id === pin.id)

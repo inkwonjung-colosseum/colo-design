@@ -594,6 +594,7 @@ document.addEventListener(
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
     badges = [...badges, { id: pin.id, anchor: element, number: badges.length + 1, tone: "live" }];
     renderOverlay();
+    armPinsPoll();
   },
   true,
 );
@@ -813,8 +814,14 @@ function readRect(
  * The web's whole pin list (재설계 C1) — the truth, redrawn from scratch.
  * Only THIS screen's pins draw badges (재설계 C5); the number is the mark
  * registry's `n` when the web sends one, else the row's place in the list.
+ *
+ * 도착은 두 갈래로 듣는다: ipcRenderer 채널과, main이 게스트 안에서
+ * 발사하는 CustomEvent("colo-pins-sync"). 한 핀을 찍고 나면(실측, Electron
+ * 44 webview) 그 문서의 main→게스트 ipcRenderer 전달이 조용히 죽는다 —
+ * CustomEvent 갈래가 그 뒤를 잇는다(main→게스트 executeJavaScript 는
+ * 살아 있다).
  */
-ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
+function applyPinsSync(sync: ColoDesignPinsSync | undefined | null): void {
   const here = pageContext();
   const rows = Array.isArray(sync?.pins) ? sync.pins : [];
   badges = rows.flatMap((pin, index): Badge[] => {
@@ -861,10 +868,36 @@ ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => {
     return anchor ? [{ id: pin.id, anchor, number, tone }] : [];
   });
   renderOverlay();
-});
+  armPinsPoll();
+}
+
+ipcRenderer.on("colo-overlay:pins", (_event, sync: ColoDesignPinsSync) => applyPinsSync(sync));
 
 /**
- * 칩 클릭 → 배지 (재설계 C1): a 600ms ring over the element and a glow on
+ * 스윕의 폴백(ⓒ): 핀을 찍고 난 뒤(실측, Electron 44 webview) 그 문서의
+ * main→게스트 전달이 조용히 죽는다 — 위 채널이 도착하지 못한 채 배지가
+ * 화면에 남는다. 게스트→main invoke 는 살아 있으므로(핀 post가 그 증거),
+ * 배지가 남아 있는 동안 진실(lastPins)을 당겨온다. 도착한 위 채널과 같은
+ * 값을 다시 그릴 뿐 — 잉여지만 무해하다.
+ */
+let pinsPollTimer: number | null = null;
+function armPinsPoll(): void {
+  if (pinsPollTimer !== null || badges.length === 0) return;
+  const tick = () => {
+    pinsPollTimer = null;
+    if (badges.length === 0) return;
+    void ipcRenderer
+      .invoke("colo-overlay:pins-poll")
+      .then((sync) => {
+        applyPinsSync(sync as ColoDesignPinsSync);
+      })
+      .catch(() => undefined);
+    window.setTimeout(armPinsPoll, 600);
+  };
+  pinsPollTimer = window.setTimeout(tick, 600);
+}
+
+/** 칩 클릭 → 배지 (재설계 C1): a 600ms ring over the element and a glow on
  * the badge — "여기"를 눈으로 찾게 한다.
  */
 ipcRenderer.on("colo-overlay:flash", (_event, payload: { id?: unknown }) => {

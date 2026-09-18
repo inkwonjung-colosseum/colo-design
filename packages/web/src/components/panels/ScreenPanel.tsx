@@ -253,7 +253,7 @@ export function ScreenPanel({
   /**
    * The ask and the view's word are facts about ONE preview. A project
    * switch changes `repo.root` in the same message that changes the url, so
-   * both reset HERE, during render — before NativeHost's effects could
+   * both reset HERE, during render — before PreviewFrame's effects could
    * re-ride a stale ask onto the page of the project the planner switched
    * to. The page that comes back (kept by the desktop, exactly where it
    * was) reports its own location; nothing yanks it back to an older ask.
@@ -344,7 +344,7 @@ export function ScreenPanel({
     void api.repoSync().catch((e: Error) => syncError.show(e.message));
   }, [api]);
 
-  // 오버레이의 핀 그릇은 렌더마다 새로 만들지 않는다 — NativeHost 는 이
+  // 오버레이의 핀 그릇은 렌더마다 새로 만들지 않는다 — PreviewFrame 은 이
   // sync 객체가 바뀔 때마다 preview.pins 를 쏜다. 매 렌더의 새 배열은
   // 바뀌지 않아도 될 IPC 를 매번 일으킨다.
   const pinsFrame = useMemo(() => pinsSync(pins.ghosts, pins.list), [pins.ghosts, pins.list]);

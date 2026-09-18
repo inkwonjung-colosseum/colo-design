@@ -755,11 +755,31 @@ app.whenReady().then(async () => {
     const afterWindows = BrowserWindow.getAllWindows().length;
     // pane 드라이버: 사용자가 보는 pane 의 페이지를 그대로 찍는다 — 창을
     // 새로 세우지 않고, 드라이버가 끝나도 페이지는 사용자의 것이라 살아 있다.
+    // webview 전환: 요소는 렌더러(PreviewFrame)의 몫 — 이 유닛이 그 자리를
+    // 대신한다(webPreferences.webviewTag + attachWindow + setHostReady +
+    // 호스트 문서에 <webview> 얹기).
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
-    const paneWindow = new BrowserWindow({ show: true, width: 1280, height: 800 });
+    const fs = await import("node:fs");
+    const pathMod = await import("node:path");
+    const paneWindow = new BrowserWindow({
+      show: true,
+      width: 1280,
+      height: 800,
+      webPreferences: { webviewTag: true },
+    });
+    const hostPage = pathMod.join(app.getPath("temp"), "colo-driver-unit-pane.html");
+    fs.writeFileSync(
+      hostPage,
+      "<!doctype html><meta charset='utf-8'><body><script>window.__add = (src) => { const w = document.createElement('webview'); w.src = src; w.setAttribute('allowpopups', ''); w.style.cssText = 'width:900px;height:700px'; document.body.appendChild(w); return w.src; };</script></body>",
+    );
+    await paneWindow.loadFile(hostPage);
     const pane = new PlannerPreviewView(() => paneWindow);
+    pane.attachWindow(paneWindow);
+    pane.setHostReady(true);
+    await paneWindow.webContents.executeJavaScript(
+      'window.__add(' + JSON.stringify(process.env.COLO_DRIVER_UNIT_URL + "/") + ')',
+    );
     pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null);
-    pane.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
     const paneDriver = createPreviewDriverFactory(() => pane).for(process.env.COLO_DRIVER_UNIT_URL);
     const paneOpened = await paneDriver.open("/", "기본");
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });

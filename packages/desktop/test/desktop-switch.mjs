@@ -159,36 +159,12 @@ async function main() {
     const betaOrigin = new URL(betaStatus.previewUrl).origin;
     const alphaOrigin = `http://127.0.0.1:${alpha.port}`;
 
-    // The pane shows 베타 (the newest project is active).
-    try {
-      await page.waitForSelector(".planner__body", { timeout: 60000 });
-    } catch (e) {
-      console.log("DEBUG pageerror:", JSON.stringify(errors));
-      console.log(
-        "DEBUG probes:",
-        JSON.stringify({
-          body: await page.locator(".planner__body").count(),
-          onboarding: await page.locator(".onboarding").count(),
-          wizard: await page.locator("[class*=wizard]").count(),
-          home: await page.locator("[class*=home]").count(),
-          plannerChildren: await page.evaluate(() =>
-            [...(document.querySelector(".planner")?.children ?? [])].map((el) =>
-              `${el.tagName}.${el.className}`.slice(0, 80),
-            ),
-          ),
-          mainHtml: await page.evaluate(() => {
-            const planner = document.querySelector(".planner");
-            const nav = planner?.querySelector("nav");
-            const rest = planner ? [...planner.children].filter((el) => el !== nav) : [];
-            return rest
-              .map((el) => el.outerHTML)
-              .join("\n")
-              .slice(0, 2500);
-          }),
-        }),
-      );
-      throw e;
-    }
+    // The pane shows 베타 (the newest project is active). 홈 우선 워크스페이스
+    // (2026-09) — 스레드를 열어야 무대(.planner__body)가 선다: ⌘T 가 새 대화
+    // 자리를 연다(세션은 첫 입력 때 만들어진다).
+    await page.waitForSelector(".planner__header", { timeout: 60000 });
+    await page.keyboard.press("Meta+t");
+    await page.waitForSelector(".planner__body", { timeout: 60000 });
     await waitFor(async () => (await viewUrl(app))?.startsWith(betaOrigin), 60_000, "베타 page");
     await waitFor(
       async () => (await inView(app, "document.readyState")) === "complete",
@@ -201,7 +177,26 @@ async function main() {
     // Switch to 알파: its page is created and loaded once.
     let t0 = Date.now();
     await request({ type: "project.activate", slug: a.slug });
-    await waitFor(async () => (await viewUrl(app))?.startsWith(alphaOrigin), 60_000, "알파 page");
+    await waitFor(
+      async () => (await viewUrl(app))?.startsWith(alphaOrigin),
+      60_000,
+      JSON.stringify({
+        url: await viewUrl(app),
+        webviews: await page.evaluate(() => document.querySelectorAll("webview").length),
+        project: await page.evaluate(
+          () => document.querySelector(".planner__project")?.textContent ?? null,
+        ),
+        main: await app.evaluate(() => {
+          const v = globalThis.coloDesignPlannerPreview;
+          return {
+            page: v?.page
+              ? { home: v.page.home, origin: v.page.origin, mountedUrl: v.page.mountedUrl }
+              : null,
+            url: v?.webContents()?.getURL() ?? null,
+          };
+        }),
+      }),
+    );
     const firstSwitch = Date.now() - t0;
     await waitFor(
       async () => (await inView(app, "document.readyState")) === "complete",

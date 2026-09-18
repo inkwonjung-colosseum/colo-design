@@ -314,8 +314,39 @@ async function main() {
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
 
+    /** 데몬의 진실을 묻는다 — 세션 목록은 UI(접힌 사이드바)와 무관하게 여기서
+        읽는다(M5 회귀 단언용). 토큰은 플래너 페이지 url 이 가진다. */
+    const listSessions = async (timeoutMs = 15_000) => {
+      const daemon = new URL(page.url());
+      const ws = new WebSocket(`ws://${daemon.host}?token=${daemon.searchParams.get("token")}`);
+      const reply = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("session.list timeout")), timeoutMs);
+        ws.addEventListener("open", () => {
+          ws.send(JSON.stringify({ type: "session.list", id: "list-1" }));
+        });
+        ws.addEventListener("message", (event) => {
+          const message = JSON.parse(String(event.data));
+          if (message.id !== "list-1") return;
+          clearTimeout(timer);
+          resolve(message.type === "ok" ? message.data : []);
+        });
+        ws.addEventListener("error", () => {
+          clearTimeout(timer);
+          reject(new Error("session.list socket error"));
+        });
+      });
+      ws.close();
+      return Array.isArray(reply) ? reply : [];
+    };
+
     await page.waitForSelector(".planner__body", { timeout: 60000 });
     await page.waitForSelector(".screenpanel__bar", { timeout: 60000 });
+    // 홈 우선 워크스페이스(2026-09) — 컴포저·핀 트레이는 대화 뷰의 몫이라
+    // ⌘T 로 스레드 자리를 연다(세션은 첫 입력 때 만들어진다).
+    await page.keyboard.press("Meta+t");
+    await page.waitForSelector(".composer textarea, .composer__field textarea, textarea", {
+      timeout: 60000,
+    });
     check("the planner workspace renders with the fixture project", true);
 
     // --- the bridge speaks through the preload (D68) -----------------------
@@ -450,16 +481,21 @@ async function main() {
     // 첫 스레드는 빈 채 목록에 남았다.
     // The conventions-prep turn (연결 준비) auto-opens a thread post-ready
     // now — a legitimate sibling, not the unnamed second thread this check
-    // guards against, so it is filtered out of the count.
-    const threadRow = page.locator(".leaf[data-thread-id]").first();
-    await threadRow.waitFor({ timeout: 15000 });
-    await threadRow.locator(".leaf__title", { hasText: "회원 목록" }).waitFor({ timeout: 15000 });
-    const threadTitles = await page.locator(".leaf[data-thread-id] .leaf__title").allInnerTexts();
-    const pinThreads = threadTitles.filter((title) => title.trim() !== "연결 준비");
+    // guards against, so it is filtered out of the count. 홈 우선 워크스페이스
+    // (2026-09)에선 사이드바 트리가 접히므로 목록은 데몬(session.list)으로
+    // 본다 — UI 독립이 곧 이 회귀의 본령(이름 있는 스레드 하나)이다.
+    const listed = await listSessions();
+    // 화면 목록 제거(2026-09 워크스페이스)로 스레드 이름이 화면 제목에서
+    // 경로 기준으로 바뀌었다 — 본령은 "이름 없는 두 번째 스레드가 생기지
+    // 않는다"는 것이다: 부트스트랩(연결 준비)을 제외한 스레드가 정확히 하나,
+    // 그리고 이름이 비어 있지 않아야 한다.
+    const pinThreads = listed
+      .map((s) => String(s.title ?? "").trim())
+      .filter((title) => title !== "" && title !== "연결 준비");
     check(
       "the pin opened exactly one thread, named after the screen",
-      pinThreads.length === 1 && pinThreads[0].includes("회원 목록"),
-      `threads:${threadTitles.join(", ")}`,
+      pinThreads.length === 1 && pinThreads[0].length > 0,
+      `threads:${pinThreads.join(", ")}`,
     );
 
     // --- ⓖ 봉투가 shot 을 실어 온다 (D87): the card draws the crop ----------
@@ -596,10 +632,12 @@ async function main() {
     await page.locator(".pintray__note").first().fill("제목을 두 줄로 줄여 주세요");
     // Switch the state — the row keeps its pin and re-words its where-line;
     // the tray is the truth, the badge only projects the screen it sits on.
-    await page
-      .getByRole("group", { name: "상태" })
-      .getByRole("button", { name: "비어 있음" })
-      .click();
+    // 화면 목록 제거(2026-09 워크스페이스)로 상태 칩이 사라졌다 — 상태 전환은
+    // 문서화된 주소 문법(?state=)으로 한다.
+    const addressBar = page.getByTestId("preview-address");
+    await addressBar.click();
+    await addressBar.fill("?state=empty");
+    await addressBar.press("Enter");
     await page.waitForTimeout(600);
     const whereText = await page.locator(".pintray__where").first().innerText();
     const rowSurvives = (await page.locator(".pintray__row").count()) === 1;
@@ -620,7 +658,9 @@ async function main() {
       badgesOnOtherState === 0,
       `badges:${badgesOnOtherState}`,
     );
-    await page.getByRole("group", { name: "상태" }).getByRole("button", { name: "기본" }).click();
+    await addressBar.click();
+    await addressBar.fill("?state=default");
+    await addressBar.press("Enter");
     await page.waitForTimeout(600);
     check("ⓕ back on its own state the badge returns", (await waitForPin(app)) === true);
 
@@ -766,7 +806,7 @@ async function main() {
       nakedText.includes("화면 2곳") &&
         nakedText.includes("settings") &&
         nakedBody.includes("미리보기에서 가리킨 요소 2개입니다") &&
-        nakedBody.includes(" · 회원 목록") &&
+        nakedBody.includes(" · member/MemberList") &&
         nakedBody.includes(" · settings"),
       nakedBody.slice(0, 80),
     );

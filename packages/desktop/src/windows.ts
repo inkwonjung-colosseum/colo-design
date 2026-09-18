@@ -121,6 +121,9 @@ export class MainWindowHost {
       webPreferences: {
         // 업데이트 확인 다리 — 이 preload 가 렌더러에 노출하는 전부다.
         preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs"),
+        // 미리보기 무대(PreviewFrame)가 쓰는 <webview> — 이 창에만 켠다.
+        // 게스트의 src·preload·파티션은 PlannerPreviewView의 펜스가 심판한다.
+        webviewTag: true,
       },
     });
   }

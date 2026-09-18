@@ -7,7 +7,7 @@ import { contextBridge, ipcRenderer } from "electron";
  * 존재만 안다.
  *
  * `preview` 는 사용자의 미리보기 뷰(PLAN D64–D71): `native` 가 있으면 웹은
- * `NativeHost` 를 고르고, 없는 브라우저는 iframe 을 유지한다(D70). 구독은 모두
+ * `PreviewFrame` 를 고르고, 없는 브라우저는 iframe 을 유지한다(D70). 구독은 모두
  * 해제 함수를 돌려준다 — 호스트가 언마운트된다.
  */
 type Unsubscribe = () => void;
@@ -48,9 +48,9 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       ipcRenderer.invoke("preview:mount", { url, epoch, origins }),
     /** Takes the page off screen — it stays alive for the planner's return. */
     unmount: () => ipcRenderer.invoke("preview:unmount"),
-    bounds: (rect: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke("preview:bounds", rect),
-    cover: (on: boolean) => ipcRenderer.invoke("preview:cover", { on }),
+    /** PreviewFrame이 무대를 쥐고 있음을 알린다 — 거짓이면 링크·외부 열기가
+        OS 브라우저로 넘어간다. */
+    hostReady: (on: boolean) => ipcRenderer.invoke("preview:host-ready", { on }),
     open: (path: string) => ipcRenderer.invoke("preview:open", { path }),
     /** 설정 `앱에서 링크 열기` — a clicked link browses in the pane, or the
         OS browser when no slot is on screen. */
@@ -88,7 +88,11 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       route: string;
       state: string;
     }>("colo-preview:error"),
-    onFreeze: subscribe<string>("colo-preview:freeze"),
+    /** main이 loose 페이지(활성 페이지 없이 열린 링크)의 요소를 부탁한다 —
+        PreviewFrame이 <webview src=url>을 무대에 세운다. */
+    onHost: subscribe<{ url: string }>("colo-preview:host"),
+    /** loose 페이지 닫기(주소창의 닫기 버튼) — PreviewFrame이 그 요소를 거둔다. */
+    onClose: subscribe<{ url: string }>("colo-preview:close"),
     onKey: subscribe<{ key: string; meta: boolean; shift: boolean; control: boolean }>(
       "colo-preview:key",
     ),

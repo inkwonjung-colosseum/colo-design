@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Colo Design — 안 F · 화면 지도형 목업 (새 제안)</title>
+<style>
+  [data-theme="light"] {
+    --bg: #ffffff; --bg-2: #f6f6f8; --panel: #f8f8fa; --panel-2: #f1f1f4; --panel-3: #e8e8ed;
+    --line: #dcdce2; --line-soft: #e6e6ea; --line-strong: #cbcbd3; --line-hover: #b5b5be;
+    --text: #17171a; --text-2: #45454d; --muted: #54545e;
+    --accent: #4a6b8f; --accent-soft: rgba(74,107,143,.1);
+    --warn: #855312; --warn-soft: rgba(133,83,18,.08); --warn-line: rgba(133,83,18,.38);
+    --ok: #3f8a3a; --ok-soft: rgba(63,138,58,.08);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.06), 0 12px 32px -16px rgba(0,0,0,.18);
+    --shadow-float: 0 2px 6px -2px rgba(0,0,0,.12), 0 24px 56px -20px rgba(0,0,0,.25);
+    color-scheme: light;
+  }
+  [data-theme="dark"] {
+    --bg: #0d0d0f; --bg-2: #111114; --panel: #151518; --panel-2: #1b1b1f; --panel-3: #212126;
+    --line: #2e2e35; --line-soft: #1e1e22; --line-strong: #34343b; --line-hover: #3a3a42;
+    --text: #e4e4e7; --text-2: #b6b6bc; --muted: #a4a4b0;
+    --accent: #9db1c7; --accent-soft: rgba(157,177,199,.09);
+    --warn: #d4a55f; --warn-soft: rgba(212,165,95,.08); --warn-line: rgba(212,165,95,.38);
+    --ok: #79b874; --ok-soft: rgba(121,184,116,.1);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.22), 0 12px 32px -16px rgba(0,0,0,.5);
+    --shadow-float: 0 2px 6px -2px rgba(0,0,0,.4), 0 24px 56px -20px rgba(0,0,0,.55);
+    color-scheme: dark;
+  }
+  :root {
+    --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+    --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-dialog: 16px;
+    --top-h: 44px; --rail-w: 44px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 13px/1.45 var(--sans); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  .app { height: 100vh; display: grid; grid-template-columns: var(--rail-w) 1fr; grid-template-rows: var(--top-h) 1fr; grid-template-areas: "top top" "rail body"; }
+
+  .top { grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 10px; border-bottom: 1px solid var(--line); }
+  .top__project { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--r-md); font-weight: 600; font-size: 13.5px; }
+  .top__project:hover { background: var(--panel-2); }
+  .top__project .caret { color: var(--muted); font-size: 11px; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .top__actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .btn { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--bg); color: var(--text); font-size: 12.5px; white-space: nowrap; }
+  .btn:hover { border-color: var(--line-hover); background: var(--panel); }
+  .btn.is-primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+  .btn.is-locked { color: var(--muted); border-color: var(--line); background: var(--panel); cursor: default; }
+  .btn[data-tip]:hover::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; padding: 6px 9px; border-radius: var(--r-md); background: var(--text); color: var(--bg); font-size: 11.5px; font-weight: 400; white-space: nowrap; box-shadow: var(--shadow-float); }
+
+  .rail { grid-area: rail; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0; border-right: 1px solid var(--line); background: var(--panel); }
+  .rail button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--r-md); color: var(--muted); }
+  .rail button:hover { background: var(--panel-3); color: var(--text); }
+  .rail .avatar { width: 28px; height: 28px; border-radius: 7px; background: var(--panel-3); color: var(--text-2); font-size: 12px; font-weight: 700; }
+  .rail .avatar.is-active { background: var(--text); color: var(--bg); }
+  .rail .sep { width: 18px; height: 1px; background: var(--line); margin: 4px 0; }
+  .rail .grow { flex: 1; }
+
+  .body { grid-area: body; overflow: auto; padding: 22px 28px 40px; }
+  .head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .head h1 { margin: 0; font-size: 18px; }
+  .head .cnt { color: var(--muted); font-size: 12.5px; }
+  .lede { margin: 0 0 18px; color: var(--muted); font-size: 12.5px; }
+
+  .map { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; max-width: 1240px; }
+  .scard {
+    position: relative; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg);
+    box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column;
+    transition: transform .15s cubic-bezier(.22,.61,.36,1), box-shadow .15s;
+  }
+  .scard:hover { transform: translateY(-2px); box-shadow: var(--shadow-float); border-color: var(--line-hover); }
+  .shot { position: relative; height: 130px; background: #fff; border-bottom: 1px solid var(--line-soft); overflow: hidden; }
+  [data-theme="dark"] .shot { background: #fafafa; }
+  /* 살아 있는 서버의 축소판 — warm preview 가 있으니 새로 그리지 않는다 */
+  .thumb { position: absolute; inset: 12px 14px 0; font-size: 8px; color: #333; }
+  .thumb .bar { height: 10px; border-bottom: 1px solid #ececec; display: flex; align-items: center; gap: 4px; padding: 0 6px; color: #999; font-size: 7px; }
+  .thumb .row { display: flex; gap: 5px; align-items: center; padding: 5px 6px; border-bottom: 1px solid #f3f3f3; }
+  .thumb .row .nm { width: 34%; height: 4px; border-radius: 2px; background: #d9d9de; }
+  .thumb .row .dt { width: 26%; height: 4px; border-radius: 2px; background: #e6e6ea; }
+  .thumb .row .pill { margin-left: auto; width: 22px; height: 7px; border-radius: 3px; background: #dfe7f2; }
+  .thumb .row .pill.gray { background: #e3e3e8; }
+  .thumb--policies .doc { margin: 8px 10px; display: grid; gap: 5px; }
+  .thumb--policies .doc i { display: block; height: 4px; border-radius: 2px; background: #e6e6ea; }
+  .thumb--policies .doc i.w60 { width: 60%; } .thumb--policies .doc i.w80 { width: 80%; } .thumb--policies .doc i.w40 { width: 40%; }
+  .thumb--settings .opts { margin: 10px 12px; display: grid; gap: 7px; }
+  .thumb--settings .opt { display: flex; align-items: center; gap: 5px; font-size: 7.5px; color: #666; }
+  .thumb--settings .opt b { width: 8px; height: 8px; border-radius: 2px; background: #c9d4e2; }
+  .thumb--dash .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 10px; }
+  .thumb--dash .col { height: 44px; border-radius: 4px; background: #eef1f5; border: 1px solid #e2e6ec; }
+
+  .meta { padding: 9px 12px 10px; display: grid; gap: 6px; }
+  .meta .t { display: flex; align-items: center; gap: 8px; }
+  .meta .t b { font-size: 13px; }
+  .meta .t .route { font: 10.5px var(--mono); color: var(--muted); }
+  .state { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; margin-left: auto; border: 1px solid var(--line); color: var(--text-2); }
+  .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .state--changed { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  .state--changed::before { background: var(--accent); }
+  .state--review { border-color: var(--warn-line); color: var(--warn); background: var(--warn-soft); }
+  .state--review::before { background: var(--warn); }
+  .state--merged { border-color: transparent; color: var(--ok); background: var(--ok-soft); }
+  .state--merged::before { background: var(--ok); }
+  .open { display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+  .scard:hover .open { opacity: 1; }
+  .open .btn { height: 25px; font-size: 11.5px; padding: 0 8px; }
+  .scard--new { border-style: dashed; box-shadow: none; background: var(--panel); align-items: stretch; justify-content: center; min-height: 178px; }
+  .scard--new:hover { transform: none; }
+  .new__in { padding: 14px; display: grid; gap: 8px; align-content: center; }
+  .new__in .ph { color: var(--muted); font-size: 12.5px; border-bottom: 1px dashed var(--line-strong); padding-bottom: 5px; }
+  .new__in .row { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11.5px; }
+  .foot { margin-top: 16px; color: var(--muted); font-size: 11.5px; max-width: 70ch; }
+  .foot code { font: 11px var(--mono); background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 4px; }
+
+  .mock { position: fixed; z-index: 50; right: 14px; bottom: 12px; display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 10px; border-radius: 999px; background: #111; color: #ddd; font-size: 11.5px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .mock .lbl { color: #888; margin-right: 4px; }
+  .mock button { padding: 4px 9px; border-radius: 999px; color: #bbb; }
+  .mock button:hover { background: #222; color: #fff; }
+  .mock button.is-on { background: #eee; color: #111; font-weight: 600; }
+  .mock .div { width: 1px; height: 14px; background: #333; margin: 0 4px; }
+</style>
+</head>
+<body data-focus="off">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-7.2 7-12a7 7 0 1 0-14 0c0 4.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21 11.5-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 4a3.5 3.5 0 1 1 5 5l-8.3 8.2a1.5 1.5 0 0 1-2.1-2.1L15 8"/></symbol>
+</svg>
+
+<div class="app">
+  <header class="top">
+    <button class="top__project">내 프로젝트 <span class="caret">▾</span></button>
+    <span class="chip"><span class="dot"></span>저장 안 함 · 변경 3</span>
+    <div class="top__actions">
+      <button class="btn is-primary">저장</button>
+      <button class="btn is-locked" data-tip="먼저 저장해 주세요">개발자에게 넘기기</button>
+      <button class="btn is-locked" data-tip="넘긴 요청이 없습니다">상태 확인</button>
+      <button class="btn" style="width:28px;padding:0;justify-content:center" title="더 보기"><svg class="i"><use href="#i-more"/></svg></button>
+    </div>
+  </header>
+
+  <nav class="rail">
+    <button title="대화 — 답을 기다리는 것"><svg class="i"><use href="#i-home"/></svg></button>
+    <div class="sep"></div>
+    <button class="avatar is-active" title="내 프로젝트">내</button>
+    <button class="avatar" title="주문 서비스">주</button>
+    <button title="프로젝트 추가"><svg class="i"><use href="#i-plus"/></svg></button>
+    <div class="grow"></div>
+    <button title="설정"><svg class="i"><use href="#i-gear"/></svg></button>
+  </nav>
+
+  <main class="body">
+    <div class="head"><h1>화면</h1><span class="cnt">연결 레포가 선언한 12개 · 미리보기 서버 살아 있음</span></div>
+    <p class="lede">고르면 그 화면의 대화 · 미리보기로 열립니다. 상태는 저장 · 넘긴 요청에서 기계적으로 따라 옵니다.</p>
+
+    <div class="map">
+      <div class="scard">
+        <div class="shot"><div class="thumb">
+          <div class="bar">회원 관리 · 이름으로 찾기 · [회원 추가]</div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill gray"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>회원 관리</b><span class="route">/members</span><span class="state state--changed">변경 있음 3</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard">
+        <div class="shot"><div class="thumb thumb--policies">
+          <div class="bar">주문 정책</div>
+          <div class="doc"><i class="w80"></i><i class="w60"></i><i class="w80"></i><i class="w40"></i><i class="w60"></i></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>주문 정책</b><span class="route">/policies</span><span class="state state--review">넘김 #42 검토 중</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard">
+        <div class="shot"><div class="thumb thumb--settings">
+          <div class="bar">설정</div>
+          <div class="opts">
+            <div class="opt"><b></b>알림 받기</div>
+            <div class="opt"><b></b>주간 요약</div>
+            <div class="opt"><b></b>자동 저장</div>
+          </div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>설정</b><span class="route">/settings</span><span class="state state--merged">반영됨</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard">
+        <div class="shot"><div class="thumb thumb--dash">
+          <div class="bar">대시보드</div>
+          <div class="cols"><div class="col"></div><div class="col"></div></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>대시보드</b><span class="route">/</span><span class="state">변경 없음</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard scard--new">
+        <div class="new__in">
+          <div class="ph">만들고 싶은 화면을 말해 주세요</div>
+          <div class="row"><svg class="i" style="width:12px;height:12px"><use href="#i-clip"/></svg>그림 · 문서를 붙여도 됩니다</div>
+          <div class="row">뼈대부터 보려면 Plan 으로</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="foot">
+      화면 목록은 연결 레포가 선언한 것입니다 — 레포의 미리보기 브리지가 <code>colo-design.screens</code> 로 올리는
+      라우트 · 제목 · 상태 목록. 이 도구로 만지지 않은 원래 화면도 경로만으로 카드가 서고, <code>[data-screen]</code> 이 없어도
+      ⌥+클릭 핀은 그 경로를 화면 id 로 삼습니다.
+    </p>
+  </main>
+</div>
+
+<div class="mock" aria-label="목업 컨트롤 (제품 UI 아님)">
+  <span class="lbl">보기</span>
+  <button class="is-on" id="grid">지도</button>
+  <button id="list">목록</button>
+  <span class="div"></span>
+  <button data-theme>어둡게</button>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme');
+  document.getElementById('grid').addEventListener('click', () => {
+    document.querySelector('.map').style.gridTemplateColumns = '';
+    document.getElementById('grid').classList.add('is-on');
+    document.getElementById('list').classList.remove('is-on');
+  });
+  document.getElementById('list').addEventListener('click', () => {
+    document.querySelector('.map').style.gridTemplateColumns = '1fr';
+    document.getElementById('list').classList.add('is-on');
+    document.getElementById('grid').classList.remove('is-on');
+  });
+  document.querySelector('.mock [data-theme]').addEventListener('click', (e) => {
+    const html = document.documentElement;
+    html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+    e.target.textContent = html.dataset.theme === 'dark' ? '밝게' : '어둡게';
+  });
+</script>
+</body>
+</html>

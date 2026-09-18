@@ -1,7 +1,6 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { Fold } from "../../components";
-import { usePreviewCover } from "../../hooks/use-preview-cover";
 import type { Daemon } from "../../lib/daemon-client";
 import {
   type ChatSettings,
@@ -68,9 +67,6 @@ export function Shell({
   const { connection, status, api } = daemon;
   /** 프로젝트 추가 — the sidebar's `+ 새 프로젝트` opens it. */
   const [addOpen, setAddOpen] = useState(false);
-  // The native preview view hides behind a freeze frame whenever a
-  // modal-like layer opens — one watcher for the whole frame, mounted here.
-  usePreviewCover();
   /** 시작하기 was pressed this session — warns stop re-opening the wizard. */
   const [wizardDismissed, setWizardDismissed] = useState(false);
 
