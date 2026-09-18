@@ -18,11 +18,10 @@ import { RUNNING, stageLine } from "../panels/DiffPanel";
  * shrinks the view's bounds honestly — the slot's ResizeObserver follows.
  *
  * 좁은 열의 폴백: when the row cannot hold stage + pane, the pane covers
- * the stage instead — `data-cover-stage` joins the cover convention
- * (cover-reconciler.ts), the stage freezes, and the pane reads like the
- * old modal minus the scrim. Escape answers only when the planner's
- * attention is inside the pane; a focus in the chat or the preview keeps
- * its own Escape.
+ * the stage instead — the drawer is an ordinary DOM layer above the
+ * preview guests, and the pane reads like the old modal minus the scrim.
+ * Escape answers only when the planner's attention is inside the pane; a
+ * focus in the chat or the preview keeps its own Escape.
  */
 export function HistoryDrawer({
   open,

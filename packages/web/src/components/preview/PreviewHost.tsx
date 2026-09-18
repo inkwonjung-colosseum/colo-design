@@ -368,63 +368,55 @@ export function PreviewHost({
   // 화면으로 그대로 간다.
   const coachOn = pinCoach && commentsOn;
 
-  // 서버 중단 카드는 프로젝트 페이지의 얼굴 — 외부 페이지가 떠 있으면 pane 은
-  // 그 페이지의 것이니 정상 경로로 내려보낸다.
-  if (stopped && !webMode) {
-    const stoppedLine = daemonLine(stoppedDetail);
-    // The 준비/실패 card's language (progress__card): one framed surface
-    // centered in the column. The daemon's own words drop to a clipped mono
-    // line under the human sentence — never the headline.
-    return (
-      <div className="preview">
-        <div className="progress progress--error">
-          <div className="progress__card">
-            <div className="progress__head">
-              <span className="preview__stopglyph">
-                <ServerOffIcon />
-              </span>
-              <h2>미리보기 서버 중단</h2>
-            </div>
-            <p className="progress__body">
-              화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
-            </p>
-            {stoppedLine && <div className="progress__detail">{stoppedLine}</div>}
-            <div className="preview__stopactions">
-              <button type="button" className="primary" onClick={onRestart}>
-                <RestartIcon />
-                다시 시작
-              </button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={() =>
-                  onFixError({
-                    route: location?.path ?? "/",
-                    state: "",
-                    kind: "build",
-                    message: stoppedDetail || "화면을 그리는 서버가 멈췄습니다.",
-                  })
-                }
-              >
-                AI에게 고쳐 달라고 하기
-              </button>
-            </div>
+  // 서버 중단 카드와 빈 무대는 덮개로 그린다 — PreviewFrame(게스트 요소의
+  // 소유자)을 언마운트하면 warm 페이지가 모두 죽는다(webview 전환 실측).
+  // 카드·빈 화면은 무대 위의 불투명 덮개로, 게스트는 그 아래 살아 있는 채
+  // 숨는다(visibility 규약 — display:none 은 문서를 언로드한다).
+  const stoppedLine = daemonLine(stoppedDetail);
+  const stoppedNotice =
+    stopped && !webMode ? (
+      <div className="progress progress--error">
+        <div className="progress__card">
+          <div className="progress__head">
+            <span className="preview__stopglyph">
+              <ServerOffIcon />
+            </span>
+            <h2>미리보기 서버 중단</h2>
+          </div>
+          <p className="progress__body">
+            화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
+          </p>
+          {stoppedLine && <div className="progress__detail">{stoppedLine}</div>}
+          <div className="preview__stopactions">
+            <button type="button" className="primary" onClick={onRestart}>
+              <RestartIcon />
+              다시 시작
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() =>
+                onFixError({
+                  route: location?.path ?? "/",
+                  state: "",
+                  kind: "build",
+                  message: stoppedDetail || "화면을 그리는 서버가 멈췄습니다.",
+                })
+              }
+            >
+              AI에게 고쳐 달라고 하기
+            </button>
           </div>
         </div>
       </div>
-    );
-  }
-
-  // 프로젝트도 외부 페이지도 없으면 pane 은 비어 있다.
-  if (!url && !webMode) {
-    return (
-      <div className="preview">
-        <div className="preview__blank">
-          <p className="hint">화면이 바뀌면 여기에 뜹니다</p>
-        </div>
+    ) : null;
+  const blankNotice =
+    !url && !webMode ? (
+      <div className="preview__blank">
+        <p className="hint">화면이 바뀌면 여기에 뜹니다</p>
       </div>
-    );
-  }
+    ) : null;
+  const earlyNotice = stoppedNotice ?? blankNotice;
 
   return (
     <div className="preview">
@@ -900,6 +892,9 @@ export function PreviewHost({
           {/* 얼린 얼굴이 떠 있을 때만: 해제 손잡이(세그먼트의 지금 화면)가
               있으면 Esc 도 같은 일을 한다고 표면에 말한다. */}
           {frozenSent && frozenOnMode && <span className="preview__unpin">Esc로 고정 해제</span>}
+          {/* 중단 카드·빈 화면 — 무대 위의 불투명 덮개. 게스트 요소는 그 아래
+              마운트된 채 살아 있다(warm park, PreviewFrame 참조). */}
+          {earlyNotice && <div className="preview__shade">{earlyNotice}</div>}
         </div>
       </div>
     </div>

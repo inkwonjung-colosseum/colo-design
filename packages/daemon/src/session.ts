@@ -1226,7 +1226,11 @@ export class Session {
         const hadTurn = this.turnStartedAt !== null;
         this.interrupting = false;
         this.turnStartedAt = null;
-        this.dropHeld();
+        // 죽은 전송의 뒤처리는 다른 사망 경로와 같다 — pending 권한·질문은
+        // 거절로 정산하고 held는 lost로 옮긴다. 이 분기가 settleTransport 를
+        // 건너뛰던 실측 결함: waiting_permission 이 잔존해 anyBusy 가 영원히
+        // 참이 되어 데스크톱 종료 가드가 막혔다.
+        this.settleTransport();
         if (hadTurn) {
           this.events.onEvent(this.id, {
             kind: "turn.end",

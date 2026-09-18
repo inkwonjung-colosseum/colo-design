@@ -747,7 +747,6 @@ pnpm test:comments-ui     # 오프라인 — 레포 자체의 dev 미리보기 �
 pnpm test:desktop-unit    # 오프라인 — 업데이트 확인/semver/sha256, 가짜를 넣은 safeStorage 저장소, PATH 접두어
 pnpm test:desktop-smoke   # 오프라인 — Electron: 창, in-process 데몬 /health, 마법사, 업데이트 브리지(패키징된 앱에도 돈다)
 pnpm test:desktop-switch  # 오프라인 — Electron: 프로젝트 전환 — 떠난 페이지는 숨겨 둔 그대로 돌아온다(reload 없음, 표식 생존, 수십 ms), 주소창은 보이는 페이지를 따른다
-pnpm test:desktop-cover   # 오프라인 — Electron: 무대의 덮개(D65) — cover 의 답은 "이미 숨겼다"는 뜻이고, ⌘, 로 연 설정은 뷰를 덮은 채 유지되며, ⌘W 뒤 재오픈한 창에 미리보기가 다시 붙는다
 pnpm test:crash           # 오프라인 — 죽은 CLI 로부터의 회복: 크래시 카드 · 그 이후 send 는 거절 · 같은 id 의 resume 이 새 CLI 에서 대화를 이어받는다
 pnpm test:midturn-queue   # 오프라인 — 다음 턴에 보내기: 도는 턴에 보낸 말이 스텁 CLI 의 stdin 에 닿지 않고, 턴이 끝난 뒤에야 제 턴으로 나간다
 pnpm test:turn-clock      # 오프라인 — 진행 시계의 와이어: 보내기가 시계를 놓고, 확인 카드 앞에서도 같은 시작을 유지하며(목록으로 새 창도 같은 시작을 읽는다), 턴이 끝나면 사라진다

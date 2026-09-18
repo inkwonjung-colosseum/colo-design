@@ -1045,10 +1045,12 @@ export class PlannerPreviewView {
     const mounted = this.mounts.get(origin);
     let page = this.pageAt(origin);
     if (page) {
-      // 같은 origin의 요소가 다시 태어났다(개발 모드의 재마운트) — 새 게스트로
-      // 갈아탄다. 옛 게스트는 요소가 철거되며 스스로 정리되고, 그 destroyed는
-      // 아래 가드(식별 비교)가 이 페이지를 건드리지 못하게 한다.
+      // 같은 origin의 요소가 다시 태어났다(개발 모드의 재마운트) — 새 게스트로 갈아탄다.
+      // 옛 게스트는 요소가 철거되며 스스로 정리되고, 그 destroyed는 아래 가드(식별
+      // 비교)가 이 페이지를 건드리지 못하게 한다. 리스너는 새 게스트에 다시 건다 —
+      // 거둔 채 두면 팝업 핸들러·이동 가드·콘솔·키 전달이 전부 없는 몸통이 된다.
       page.contents = guest;
+      this.attach(page);
       if (mounted && page.home === null) {
         page.home = origin;
         this.pages.set(origin, page);

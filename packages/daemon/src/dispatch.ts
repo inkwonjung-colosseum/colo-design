@@ -219,7 +219,8 @@ export class RequestRouter {
         // driver with it. A healthy live thread is left exactly as it was.
         const dead = message.resume ? this.deps.manager.get(message.resume) : undefined;
         if (dead && (dead.state === "error" || dead.state === "closed")) {
-          await this.deps.manager.close(dead.id);
+          // 교체 close 도 "shutdown" — lost 방은 복구 패널의 몫이라 지우지 않는다.
+          await this.deps.manager.close(dead.id, "shutdown");
         }
         const sessionCwd = this.workspaceCwd();
         const instructions = this.projectInstructions(sessionCwd);
@@ -733,6 +734,14 @@ export class RequestRouter {
         if (target.cwd !== this.workspaceCwd()) {
           throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 시도해 주세요.");
         }
+        // 도는 턴 위에서 워크트리를 되돌리면 복원 뒤에 에이전트의 쓰기가 섞인다 —
+        // "파일이 먼저 돌아가고 기억이 뒤따른다"는 rewind 계약이 깨진다. 거절이
+        // 정직한 답이다(중지는 사용자의 몫).
+        if (target.state === "running" || target.state === "starting") {
+          throw new Error(
+            "돌고 있는 턴이 있습니다 — 중지한 뒤에 되감을 수 있습니다. 먼저 중지해 주세요.",
+          );
+        }
         const checkpoints = await this.repo.checkpoints();
         const entry = checkpoints.entries.find(
           (candidate) =>
@@ -859,7 +868,9 @@ export class RequestRouter {
    * replacement.
    */
   private async resurrectSession(dead: Session): Promise<Session> {
-    await this.deps.manager.close(dead.id);
+    // 되감기·재개를 위 교체 close 는 "shutdown" 으로 — "user" 는 disk.clear() 를
+    // 달고 있어 크래시 복구 패널이 기다리는 lost 방까지 통째로 지웠다(실측).
+    await this.deps.manager.close(dead.id, "shutdown");
     const provider = dead.provider;
     const driver = this.deps.agentDrivers.get(provider);
     const availability = driver ? await driver.isAvailable().catch(() => null) : null;

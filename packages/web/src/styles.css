@@ -6411,10 +6411,22 @@ button.pcard__row {
 /* preview column ------------------------------------------------------------*/
 
 .preview {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+
+/* 중단 카드·빈 화면의 덮개 — 무대(게스트 포함) 위의 불투명 층. 게스트
+   요소는 그 아래 마운트된 채 살아 있다(warm park). */
+.preview__shade {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel, #fff);
 }
 
 .preview__toolbar {
@@ -8384,8 +8396,8 @@ button.pcard__row {
   overflow-y: auto;
   padding: 0 14px 14px;
 }
-/* 좁은 행(700px 미만)의 폴백: 나란히 설 폭이 없으면 무대를 얼려 덮는다
-   (data-cover-stage — cover-reconciler 규약). 모달의 몸만 남은 모양. */
+/* 좁은 행(700px 미만)의 폴백: 나란히 설 폭이 없으면 뒤로 단추·제목만
+   남은 모양. */
 .histdock--cover {
   position: absolute;
   top: 0;
