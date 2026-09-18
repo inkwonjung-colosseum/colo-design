@@ -136,6 +136,9 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
     setLoadedSlug(slug);
     setList(slug ? loadPins(slug) : []);
     setGhosts([]);
+    // 이전 프로젝트의 기록 실패가 새 프로젝트의 경고 띠를 누르지 않게 —
+    // 실패는 프로젝트 스코프다.
+    setRecordError(null);
   }
 
   // Every change is written back, crops included up to the sixth pin;

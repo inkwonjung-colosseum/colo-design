@@ -86,6 +86,13 @@ export function PreviewFrame({
     void window.coloDesignDesktop?.preview?.pins?.(syncRef.current);
   }, []);
 
+  // The web's whole pin list is the truth — re-send it whenever it changes
+  // (add · remove · note · intent · sent-ghosts), not only on navigation.
+  // ScreenPanel memoizes pinsFrame, so this fires exactly on real changes.
+  useEffect(() => {
+    syncPins();
+  }, [sync, syncPins]);
+
   // The active project's origin — guests are keyed by it.
   const origin = url ? new URL(url).origin : null;
 
@@ -144,9 +151,13 @@ export function PreviewFrame({
   useEffect(() => {
     if (!url || !target) return;
     const bridge = window.coloDesignDesktop?.preview;
-    void bridge?.mount?.(url, epoch).then(() => {
-      void bridge?.open?.(target.path);
-    });
+    void bridge
+      ?.mount?.(url, epoch)
+      .then(() => bridge?.open?.(target.path))
+      .catch(() => {
+        // mount·open 의 실패는 main 의 오류 배너·게이트가 이미 말한다 —
+        // 여기서는 조용히 거둔다(무음 재시도는 target 변화가 다시 건다).
+      });
   }, [url, epoch, target]);
 
   useEffect(() => {
