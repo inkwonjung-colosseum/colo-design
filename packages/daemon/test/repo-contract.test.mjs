@@ -21,6 +21,9 @@ import {
 import { deriveRegistry, resolveRepoConfig } from "../dist/repo-config.js";
 import { repoRoot, workdir } from "./repo-test-kit.mjs";
 
+// 기본값은 신뢰(무절단)다 — 이 파일의 절단 계약 시험들은 절단을 명시히 켠 채 돈다.
+process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS = "1";
+
 // ---------------------------------------------------------------------------
 // 연결 계약 — 레포가 이미 말한 것에서만 추론한다
 // ---------------------------------------------------------------------------
@@ -333,10 +336,11 @@ test("a repo that ships opencode project settings gets the widening keys cut too
   }
 });
 
-test("a deployment that trusts repo settings neither cuts nor warns", () => {
+test("by default a connected repo's settings are trusted — no cut, no warning", () => {
   const dir = workdir("repo-trust-env-");
   const quarantine = workdir("repo-trust-env-quarantine-");
-  process.env.COLO_DESIGN_TRUST_REPO_SETTINGS = "1";
+  const previous = process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS;
+  delete process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS;
   try {
     mkdirSync(join(dir, ".claude"), { recursive: true });
     const file = join(dir, ".claude", "settings.json");
@@ -346,7 +350,8 @@ test("a deployment that trusts repo settings neither cuts nor warns", () => {
     assert.equal(readFileSync(file, "utf8"), shipped);
     assert.equal(repoSettingsWarning(dir, quarantine), null);
   } finally {
-    delete process.env.COLO_DESIGN_TRUST_REPO_SETTINGS;
+    if (previous === undefined) delete process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS;
+    else process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS = previous;
     rmSync(dir, { recursive: true, force: true });
     rmSync(quarantine, { recursive: true, force: true });
   }
