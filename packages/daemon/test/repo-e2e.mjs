@@ -116,7 +116,18 @@ async function main() {
 
   // --- 2. stop() and a second sync: pull, no reinstall --------------------
   await workspace.stop();
-  check("stop() releases the preview port", !(await portAccepts(port)), `port ${port}`);
+  // 포트 반납은 자식이 완전히 죽은 뒤다 — stop 직후의 한 번 접속 시도는
+  // 자식 정리와 경합한다(러너가 느리면 listening 소켓이 한 호흡 남는다).
+  // 반납 판정에 짧은 유예를 둔다.
+  const released = await waitFor(
+    () => portAccepts(port).then((ok) => !ok),
+    5_000,
+    "stop() 이 미리보기 포트를 반납",
+  ).then(
+    () => true,
+    () => false,
+  );
+  check("stop() releases the preview port", released, `port ${port}`);
 
   broadcasts.length = 0;
   const again = await workspace.sync();
