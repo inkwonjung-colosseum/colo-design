@@ -9,9 +9,17 @@
  * Usage: node --test packages/daemon/test/browser-gate.test.mjs
  */
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 
 const { Session } = await import("../dist/session.js");
+
+// 이 파일의 시험은 전부 마이크로태스크 위에서 끝난다 — 같은 프로세스의 앞
+// 파일(acp 세션의 자식 프로세스)이 늦게 죽어 루프가 비는 순간과 겹치면,
+// 러너 판본에 따라 pending 인 시험이 '루프가 이미 끝났다' 로 일괄 취소된다.
+// 파일 수명 만큼의 참조 걸린 타이머가 루프를 붙들고 있는다 — 러너의
+// --test-force-exit 이 프로세스 종료를 책임진다.
+const keepLoopAlive = setTimeout(() => {}, 3_600_000);
+after(() => clearTimeout(keepLoopAlive));
 
 /**
  * The prototype-call stub pattern security.test.mjs established: the gate is
