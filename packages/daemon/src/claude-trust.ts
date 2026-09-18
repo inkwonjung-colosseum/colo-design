@@ -396,11 +396,12 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
  * and its timestamps survive restarts unchanged.
  */
 export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
-  // 운영자가 연결 레포 설정을 신뢰하기로한 배포(사내 전용 — docs/repo-settings-trust.md):
-  // 파일을 건드리지도, 경고를 내지도 않는다.
+  // 기본은 연결 레포 설정을 신뢰하는 것(사내 전용 — docs/repo-settings-trust.md):
+  // 파일을 건드리지도, 경고를 내지도 않는다. 절단은 명시히 켜야 한다
+  // (COLO_DESIGN_ENFORCE_REPO_SETTINGS=1 — 외부 레포를 받는 배포가 생길 때).
   if (
-    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "1" ||
-    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "true"
+    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
+    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
   ) {
     return false;
   }
@@ -456,11 +457,11 @@ export function repoSettingsWarning(
   root: string,
   configDir: string = CONFIG_DIR,
 ): RepoSettingsWarning | null {
-  // 절단이 켜져 있을 때만 경고가 존재한다 — 신뢰 모드(docs/repo-settings-trust.md)는
-  // 건드린 것도 없으면서 유령 경고를 내지 않는다.
+  // 절단이 켜져 있을 때만 경고가 존재한다 — 기본(신뢰)에선 건드린 것도 없으면서
+  // 유령 경고를 내지 않는다(docs/repo-settings-trust.md).
   if (
-    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "1" ||
-    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "true"
+    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
+    process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "true"
   ) {
     return null;
   }

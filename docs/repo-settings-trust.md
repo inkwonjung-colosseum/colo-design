@@ -4,11 +4,11 @@
 
 연결 레포는 사내 전용이고 개발자가 사전에 구성한 것이므로, **운영자는 연결 레포가 싣는 에이전트 설정을 신뢰한다.** 레포가 실어 보내는 훅·플러그인·프로젝트 MCP 중 아래 "열어둔 벡터"는 의도적으로 차단하지 않는다.
 
-## 이미 배포된 절단 (유지 · 끄는 스위치 있음)
+## 이미 배포된 절단 (기본은 꺼짐 — 켜는 스위치)
 
-`sanitizeRepoAgentSettings`(`packages/daemon/src/claude-trust.ts`)는 클론·갱신·기동·세션 시작마다 프로젝트 설정의 권한 확장 키를 잘라내고 원본을 `~/.colo-design/config/settings-quarantine/` 에 0600 으로 보관한다. 잘라낸 내역은 헤더 경고로 호명된다.
+`sanitizeRepoAgentSettings`(`packages/daemon/src/claude-trust.ts`)는 클론·갱신·기동·세션 시작마다 프로젝트 설정의 권한 확장 키를 잘라내고 원본을 `~/.colo-design/config/settings-quarantine/` 에 0600 으로 보관하도록 되어 있다. 잘라낸 내역은 헤더 경고로 호명된다.
 
-**끄는 법**: 데몬 환경에 `COLO_DESIGN_TRUST_REPO_SETTINGS=1` 을 주면 절단도 경고도 전부 건너뛴다 — 레포 파일을 아예 건드리지 않는다. 이 결정(위 "결정" 절)의 운영 배포에서는 이 값을 켠다.
+**기본값은 꺼짐이다**(2026-09-18 결정): 위 "결정"에 따라, 환경변수가 없으면 절단도 경고도 없고 레포 파일은 개발자가 커밋한 그대로 둔다. 외부 레포를 받는 배포가 생겨 절단을 다시 켜려면 데몬 환경에 `COLO_DESIGN_ENFORCE_REPO_SETTINGS=1` 을 준다.
 
 - claude: `permissions.allow` · `hooks` · `env`
 - omp: `tools.approval` allow 항목 · `approvalMode: write|yolo` · `bash.patterns` allow 항목 · `bash.allowCompoundCommands` · `extensions`
