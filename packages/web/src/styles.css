@@ -4951,9 +4951,13 @@ select {
   -webkit-backdrop-filter: blur(12px) saturate(1.25);
   /* the glass makes this bar its own stacking context, so the 사이클 바's
      menus would paint under the body that follows it — the header rides
-     above instead (same rule as .thread · .screenpanel__bar) */
+     above instead. One step above .thread(31) is not a tie-break nicety:
+     both bars are positioned z31, and equal z falls to DOM order, which
+     put .thread later — its glass bar painted over the status popup's
+     first line. The popup's z40 lives inside this context, so this bar,
+     not the popup, is what must win. */
   position: relative;
-  z-index: 31;
+  z-index: 32;
 }
 .planner__spacer {
   flex: 1;

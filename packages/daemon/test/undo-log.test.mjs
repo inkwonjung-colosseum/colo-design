@@ -65,3 +65,19 @@ test("깨진 줄은 없던 것으로 읽고 새 기록을 막지 않는다", () 
   log.record({ kind: "retry", slug: "shop", sessionId: "s-2", turn: 1 });
   assert.equal(log.countOf("retry"), 1);
 });
+
+test("덧붙이다 찢어진 꼬리 줄이 앞의 온전한 줄을 함께 묻지 않는다", () => {
+  const file = join(workdir("undo-torn-"), "undo.jsonl");
+  appendFileSync(
+    file,
+    `${JSON.stringify({ ts: 1, kind: "retry", slug: "shop", sessionId: "s-3", turn: 1 })}\n`,
+  );
+  // 정전·강제 종료로 append 도중에 끊긴 줄 — 그 줄만 없던 것으로 하고 앞의
+  // 줄은 살아 있어야 한다. 파일 전체를 한 번에 try/catch 하던 세계에서는
+  // 온전한 줄까지 빈 배열로 사라졌다.
+  appendFileSync(file, '{"ts":2,"kind":"tur');
+  const log = new UndoLog(file);
+  assert.equal(log.countOf("retry"), 1, "온전한 줄은 산다");
+  log.record({ kind: "turn", slug: "shop", sessionId: "s-3", turn: 2 });
+  assert.equal(log.countOf("turn"), 1, "깨진 줄 뒤에서도 기록은 계속된다");
+});

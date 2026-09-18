@@ -384,10 +384,13 @@ export class PlannerPreviewView {
       // 데려간다. 에이전트의 navigate("…/settings") 가 "/" 에 머무는 사고를
       // 막는다.
       this.mount(url, null);
-      const page = this.pages.get(origin) ?? null;
-      // mount 는 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 페이지의
-      // 목표 주소와 다르면 명시적으로 데려간다. 에이전트의 navigate("…/settings")
+      // mount 은 pageAt 까지 뒤져 온 페이지를 새 열쇠로 옮기지 않는다 — 입양은
+      // loose 페이지의 몫이고, 프로젝트 페이지는 로밍해도 pages 의 열쇠가 제
+      // home 이다. 화면의 페이지를 직접 찾아야 보상 이동이 닿는다. mount 는
+      // 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 페이지의 목표
+      // 주소와 다르면 명시적으로 데려간다. 에이전트의 navigate("…/settings")
       // 가 "/" 에 머무는 사고를 막는다.
+      const page = this.pages.get(origin) ?? this.pageAt(origin);
       if (page && page.mountedUrl !== url) {
         page.mountedUrl = url;
         navigate(page.view.webContents, url);
@@ -419,6 +422,16 @@ export class PlannerPreviewView {
       height: Math.max(0, Math.round(bounds.height)),
     };
     this.activePage?.view.setBounds(this.bounds);
+  }
+
+  /**
+   * pane 가 화면을 그릴 자리가 있는지 — openTab 은 이 판정이 거짓일 때 OS
+   * 브라우저에 넘긴다. 에이전트 브라우저의 navigate 은 그 폴백에 맡기지
+   * 않으려고 먼저 이 한 말을 본다.
+   */
+  hasBounds(): boolean {
+    const bounds = this.bounds;
+    return bounds !== null && bounds.width > 0 && bounds.height > 0;
   }
 
   /**
@@ -506,8 +519,10 @@ export class PlannerPreviewView {
       this.mount(url.toString(), null);
       // mount 은 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 그
       // 프로젝트 페이지의 지금 주소와 다르면 명시적으로 데려간다(openTab 과
-      // 같은 보상). 주소창이 가리킨 경로가 사라지는 사고를 막는다.
-      const target = this.pages.get(url.origin);
+      // 같은 보상). 로밍한 프로젝트 페이지는 pages 의 열쇠(home)가 여기
+      // origin 과 어긋나므로 pageAt 까지 뒤져 실제 페이지를 찾는다 — 못
+      // 찾으면 보상 이동이 통째로 빠지고 주소창이 가리킨 경로가 사라진다.
+      const target = this.pages.get(url.origin) ?? this.pageAt(url.origin);
       if (target && target.mountedUrl !== url.toString()) {
         target.mountedUrl = url.toString();
         navigate(target.view.webContents, url.toString());
@@ -1156,13 +1171,24 @@ export class PlannerPreviewView {
       );
     });
     // D71: while the view holds focus the renderer DOM hears no keys — the
-    // two the whole UI hangs on are forwarded and replayed as synthetic
-    // keydowns (NativeHost), so the palette and 설정 still open.
+    // chords the web keymap owns (PageWorkspace: 팔레트 ⌘K, 설정 ⌘,, 저장 ⌘S,
+    // 바로 가기 ⌘/, 핀 모드 ⌘⇧P) are forwarded and replayed as synthetic
+    // keydowns (NativeHost), so the features stay reachable. control is
+    // Windows/Linux's ⌘ slot — the gate treats it as the same modifier, or
+    // the palette chord never leaves the pane there.
     contents.on("before-input-event", (event, input) => {
       if (input.type !== "keyDown") return;
+      const mod = Boolean(input.meta) || Boolean(input.control);
       const forward =
-        (input.meta && (input.key === "k" || input.key === "K" || input.key === ",")) ||
-        input.key === "Escape";
+        input.key === "Escape" ||
+        (mod &&
+          (input.key === "k" ||
+            input.key === "K" ||
+            input.key === "," ||
+            input.key === "/" ||
+            input.key === "s" ||
+            input.key === "S" ||
+            ((input.key === "p" || input.key === "P") && Boolean(input.shift))));
       if (!forward) return;
       event.preventDefault();
       this.send("colo-preview:key", {
@@ -1250,7 +1276,12 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     if (!input || typeof input !== "object" || !("url" in input) || typeof input.url !== "string") {
       return { ok: true };
     }
-    const epoch = "epoch" in input && typeof input.epoch === "number" ? input.epoch : null;
+    // structured clone 은 NaN 을 그대로 건넨다 — typeof 숫자여도 스탯 체크
+    // (NaN !== NaN) 가 늘 참이 되어 마운트마다 재적재 무한 고리에 빠진다.
+    const epoch =
+      "epoch" in input && typeof input.epoch === "number" && Number.isFinite(input.epoch)
+        ? input.epoch
+        : null;
     view.mount(input.url, epoch);
     return { ok: true };
   });

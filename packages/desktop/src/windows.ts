@@ -92,6 +92,11 @@ export class MainWindowHost {
    * first one did.
    */
   onCreated: ((window: BrowserWindow) => void) | null = null;
+  /**
+   * 창이 닫힐 때의 정리 — 첫 창과 reopen 이 만드는 창이 같은 몫을 받는다
+   * (미리보기 페이지 주차·덮개 내리기). main.ts 가 한 번 단다.
+   */
+  onClosed: (() => void) | null = null;
 
   /**
    * The one window recipe, shared by boot and reopen: a window made without it
@@ -126,6 +131,7 @@ export class MainWindowHost {
     this.url = url;
     window.on("closed", () => {
       if (this.window === window) this.window = null;
+      this.onClosed?.();
     });
   }
 
@@ -136,7 +142,11 @@ export class MainWindowHost {
     this.adopt(window, url);
     guardNavigations(window, new URL(url).origin);
     this.onCreated?.(window);
-    await window.loadURL(url);
+    // 데몬 포트가 죽어 loadURL 이 실패해도 호출자는 void 로 버린다 — 삼키지
+    // 말고 기록해 두지 않으면 unhandled rejection 이 된다.
+    await window.loadURL(url).catch((error: unknown) => {
+      console.error("planner window load failed", error);
+    });
     // 리뷰 B7: a notification clicked while no window existed — the renderer
     // was not mounted to hear the session id, so it rides after the load.
     if (this.pendingOpenSession) {
@@ -160,10 +170,22 @@ export class MainWindowHost {
   /** 알림 클릭의 프로젝트 판본 — 창을 앞으로, 그 프로젝트로. */
   focusProject(slug: string): void {
     if (this.window) {
-      if (this.window.isMinimized()) this.window.restore();
-      this.window.show();
-      this.window.focus();
-      this.window.webContents.send(OPEN_PROJECT_CHANNEL, slug);
+      const window = this.window;
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      // focusMain 과 같은 경쟁 — 로드 중인 렌더러에는 리스너가 없으니
+      // 보내도 새카맣게 사라진다. 로드가 끝난 뒤로 미룬다.
+      if (window.webContents.isLoading()) {
+        window.webContents.once("did-finish-load", () => {
+          setTimeout(() => {
+            if (window.isDestroyed()) return;
+            window.webContents.send(OPEN_PROJECT_CHANNEL, slug);
+          }, 1200);
+        });
+      } else {
+        window.webContents.send(OPEN_PROJECT_CHANNEL, slug);
+      }
     } else if (this.url) {
       this.pendingOpenProject = slug;
       void this.reopen();
@@ -172,11 +194,25 @@ export class MainWindowHost {
 
   /** 알림 클릭의 공통 행동 — 창을 앞으로, 그 대화로. 창이 없으면 다시 연다. */
   focusMain(sessionId?: string): void {
-    if (this.window) {
-      if (this.window.isMinimized()) this.window.restore();
-      this.window.show();
-      this.window.focus();
-      if (sessionId) this.window.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
+    const window = this.window;
+    if (window) {
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+      if (sessionId) {
+        // 막 만든 창(loadURL 진행 중)이나 죽었다 다시 로드 중인 렌더러에는
+        // 리스너가 아직 없다 — 보내도 새카맣게 사라지니 로드가 끝난 뒤로 미룬다.
+        if (window.webContents.isLoading()) {
+          window.webContents.once("did-finish-load", () => {
+            setTimeout(() => {
+              if (window.isDestroyed()) return;
+              window.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
+            }, 1200);
+          });
+        } else {
+          window.webContents.send(OPEN_SESSION_CHANNEL, sessionId);
+        }
+      }
     } else if (this.url) {
       this.pendingOpenSession = sessionId ?? null;
       void this.reopen();

@@ -128,7 +128,11 @@ export default function App() {
         updateSettings({ notifications: normalizeNotificationSettings(prefs) });
         setNotifyPrefsReady(true);
       })
-      .catch(() => setNotifyPrefsReady(true));
+      .catch(() => {
+        // 읽기가 실패했으면 메인의 정책을 아직 모른다 — 여기서 준비로 표시하는
+        // 순간 아래 효과가 렌더러 기본값을 desktop-settings.json 에 되밀어 넣는다.
+        // 문은 잠긴 채로 둔다. 모르는 정책을 쓰는 것은 정책을 지우는 것이다.
+      });
     return () => {
       disposed = true;
     };

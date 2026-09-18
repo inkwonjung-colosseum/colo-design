@@ -36,10 +36,15 @@ export class ShelfStore {
     if (!this.core.isCloned()) {
       throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
     }
-    await this.core.publishing?.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
+    // 같은 틱의 두 호출(더블 클릭 · 두 창)이 둘 다 빈 슬롯을 보고 지나가면
+    // 늦은 스냅샷이 먼저 치워둔 작업을 덮어쓴다 — shelving 은 첫 await 전에
+    // 세워 두고, 기다림은 run 안에서 이전 것을 읽는다(저장·넘기기의
+    // publishing 과 같은 규칙).
+    const previous = this.core.shelving;
     const run = (async () => {
+      await this.core.publishing?.catch(() => undefined);
+      await this.core.refreshing?.catch(() => undefined);
+      await previous?.catch(() => undefined);
       if (await this.core.shelfExists()) throw new Error(SHELF_ALREADY_DETAIL);
       if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
         throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
@@ -86,7 +91,8 @@ export class ShelfStore {
     try {
       return await run;
     } finally {
-      this.core.shelving = null;
+      // 뒤에 온 호출이 이미 shelving 을 이어받았을 수 있다 — 자기 것만 내린다.
+      if (this.core.shelving === run) this.core.shelving = null;
     }
   }
 
@@ -104,10 +110,13 @@ export class ShelfStore {
     if (!this.core.isCloned()) {
       throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
     }
-    await this.core.publishing?.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
+    // shelve 와 같은 규칙: 같은 틱의 두 꺼내기가 둘 다 같은 패치를 얹지
+    // 못하게 shelving 은 첫 await 전에 세우고, 기다림은 run 안에서 읽는다.
+    const previous = this.core.shelving;
     const run = (async () => {
+      await this.core.publishing?.catch(() => undefined);
+      await this.core.refreshing?.catch(() => undefined);
+      await previous?.catch(() => undefined);
       if (!(await this.core.shelfExists())) throw new Error(SHELF_NONE_DETAIL);
       if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
         throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
@@ -162,7 +171,7 @@ export class ShelfStore {
     try {
       return await run;
     } finally {
-      this.core.shelving = null;
+      if (this.core.shelving === run) this.core.shelving = null;
     }
   }
 

@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveRewindCutoff } from "../dist/agent/drivers/claude/rewind.js";
+import { DriverRegistry } from "../dist/agent/registry.js";
+import { SessionManager } from "../dist/session-manager.js";
 
 /** A synthetic transcript: prompts and answers with tool-result carriers. */
 const msg = (type, uuid, extra = {}) => ({ type, uuid, ...extra });
@@ -46,4 +48,50 @@ test("resolveRewindCutoff: 마지막 답도 버릴 수 있고, 캐리어 뒤의 
 test("resolveRewindCutoff: 없는 답은 null — 호출자가 한국어로 거절한다", () => {
   assert.equal(resolveRewindCutoff(TAPE, 0), null);
   assert.equal(resolveRewindCutoff(TAPE, 4), null);
+});
+
+/**
+ * 같은 id 를 두 번 여는 요청(더블클릭, 두 창의 재개)은 새 세션이 아니라 이미
+ * 살아 있는 그 세션이다 — 덮어쓰면 첫 Session 의 CLI 가 맵 밖에서 살아남아
+ * 훅을 통해 계속 방송한다. 두 번째 create 는 드라이버에 새 transport 를
+ * 만들지 않고 첫 세션을 그대로 돌려줘야 한다.
+ */
+test("create: 같은 id 의 두 번째 create 는 살아 있는 세션을 돌려준다", () => {
+  const registry = new DriverRegistry();
+  let created = 0;
+  registry.register({
+    id: "fake",
+    describe: () => ({
+      id: "fake",
+      label: "가짜",
+      modes: [],
+      defaultModeId: "default",
+      capabilities: {},
+    }),
+    isAvailable: async () => ({ ok: true, executable: "/bin/true" }),
+    createSession: () => {
+      created += 1;
+      return {
+        alive: true,
+        send: async () => {},
+        interrupt: async () => "dead",
+        setMode: async () => {},
+        close: async () => {},
+      };
+    },
+  });
+  const manager = new SessionManager(
+    {
+      onEvent: () => {},
+      onState: () => {},
+      onPermissionRequest: () => {},
+      onQuestionRequest: () => {},
+    },
+    registry,
+  );
+  const options = { cwd: "/tmp/clone", provider: "fake", launch: { resume: "thread-1" } };
+  const first = manager.create(options);
+  const second = manager.create(options);
+  assert.equal(second, first);
+  assert.equal(created, 1);
 });

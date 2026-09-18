@@ -20,7 +20,14 @@
  * 사용자의 말도, 화면의 내용도, 파일 경로도 남기지 않는다.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR } from "./environment.js";
 
@@ -67,20 +74,24 @@ export class UndoLog {
 
   private trim(): void {
     this.lines = this.lines.slice(Math.floor(MAX_LINES / 2));
-    writeFileSync(this.file, `${this.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+    // 통째로 다시 쓰는 순간에도 찢어짐은 없게 — tmp+rename 으로 원자적으로.
+    const temporary = `${this.file}.colo-design-${process.pid}`;
+    writeFileSync(temporary, `${this.lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+    renameSync(temporary, this.file);
   }
 
   private static read(file: string): UndoEvent[] {
     if (!existsSync(file)) return [];
-    try {
-      return readFileSync(file, "utf8")
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => JSON.parse(line) as UndoEvent);
-    } catch {
-      // 깨진 줄 하나가 측정 전부를 죽이지 않게 — 없던 것으로 한다.
-      return [];
+    const events: UndoEvent[] = [];
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      try {
+        events.push(JSON.parse(line) as UndoEvent);
+      } catch {
+        // 깨진 줄 하나가 측정 전부를 죽이지 않게 — 없던 것으로 한다.
+      }
     }
+    return events;
   }
 }
 

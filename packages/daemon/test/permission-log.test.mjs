@@ -6,7 +6,7 @@
  * 상한을 넘으면 최근 절반만 남되, 살아남은 "항상 허용"은 계속 씨앗이다.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -63,4 +63,26 @@ test("깨진 파일은 없던 것이 되어 측정을 죽이지 않는다", () =
   const log = new PermissionRepeatLog(file);
   log.ask("Bash", "Bash:command:ok", "/work/repo");
   assert.equal(log.repeatsOf("Bash:command:ok"), 0);
+});
+
+test("덧붙이다 찢어진 꼬리 줄이 앞의 온전한 줄을 함께 묻지 않는다", () => {
+  const file = join(workdir("perm-repeat-torn-"), "log.jsonl");
+  const always = JSON.stringify({
+    ts: 1,
+    kind: "always",
+    tool: "Bash",
+    signature: "Bash:command:pnpm run check",
+    cwd: "/work/repo",
+  });
+  // append 도중 끊긴 꼬리 줄 — 앞의 "항상 허용"은 살아남아야 한다. 파일
+  // 전체를 한 번에 try/catch 하던 세계에서는 always 씨앗까지 빈 배열로
+  // 사라져 같은 카드가 계속 반복 없이 떴을 것이다.
+  appendFileSync(file, `${always}\n{"ts":2,"kind":"as`);
+  const log = new PermissionRepeatLog(file);
+  log.ask("Bash", "Bash:command:pnpm run check", "/work/repo");
+  assert.equal(
+    log.repeatsOf("Bash:command:pnpm run check"),
+    1,
+    "살아남은 '항상 허용'이 씨앗이 된다",
+  );
 });

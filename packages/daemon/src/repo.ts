@@ -70,7 +70,9 @@ export class RepoWorkspace {
   private readonly shelfStore: ShelfStore;
   private readonly summarizer: RepoSummarizer;
   private readonly bringup: BringUp;
-  private readonly publish: PublishCycle;
+  private publish: PublishCycle;
+  /** 사이클 사건의 손잡이 — 레포가 바뀌면 사이클의 기억도 새 것으로 세운다. */
+  private readonly onCycleEvent: RepoWorkspaceOptions["onCycleEvent"];
 
   constructor(options: RepoWorkspaceOptions) {
     this.core = new RepoCore(options);
@@ -78,13 +80,19 @@ export class RepoWorkspace {
     this.shelfStore = new ShelfStore(this.core);
     this.summarizer = new RepoSummarizer(this.core);
     this.bringup = new BringUp(this.core);
-    this.publish = new PublishCycle(this.core, {
-      claudeMemo: (files) => this.summarizer.claudeMemo(files),
-      clearCheckpoints: () => this.checkpointStore.clearCheckpoints(),
-      onCycleEvent: options.onCycleEvent,
-    });
+    this.onCycleEvent = options.onCycleEvent;
+    this.publish = this.makePublish();
     this.root = options.root;
     this.baseBranch = options.baseBranch ?? "main";
+  }
+
+  /** The cycle's own memory — rebuilt when the url moves (see update). */
+  private makePublish(): PublishCycle {
+    return new PublishCycle(this.core, {
+      claudeMemo: (files) => this.summarizer.claudeMemo(files),
+      clearCheckpoints: () => this.checkpointStore.clearCheckpoints(),
+      onCycleEvent: this.onCycleEvent,
+    });
   }
 
   /**
@@ -187,6 +195,15 @@ export class RepoWorkspace {
       await this.settle();
       await this.stop();
       rmSync(this.root, { recursive: true, force: true });
+      // 옛 클론의 사이클은 새 레포로 따라오지 않는다 — 남겨 두면
+      // ensureCycleBranch 가 새 클론에서 옛 브랜치를 체크아웃하고 상태
+      // 확인 · 넘기기가 옛 PR 번호를 새 레포에 묻는다. 코어와 레지스트리를
+      // 함께 지우고(setCycle 이 onCycleChange 로 나른다), 핀 앵커는 새
+      // 사이클의 태생으로 돌린다. 사이클의 기억(세워 둔 끝 · 읽은 코멘트)도
+      // 옛 레포의 것이니 함께 새로 세운다.
+      this.core.setCycle(null, null);
+      this.core.rotateCommentsCycle();
+      this.publish = this.makePublish();
     } else if (this.core.isCloned()) {
       // Auth rides the environment now, but a clone made before that still
       // carries the PAT inside its remote url — the one place the keychain
@@ -556,9 +573,21 @@ export class RepoWorkspace {
   }
 
   async checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
+    if (!this.core.isCloned()) return { restored: [] };
     // The worktree is the snapshot's subject: a save mid-flight owns it, and
-    // restoring under that save would mix two different moments.
+    // restoring under that save would mix two different moments. 최신화의
+    // stash-pop 창과 치워두기도 같은 손이다 — 되돌리는 파일을 그 사이에
+    // 다시 얹거나 지우면 어느 쪽의 순간도 아닌 트리가 남는다.
     while (this.core.publishing) await this.core.publishing.catch(() => undefined);
+    await this.core.refreshing?.catch(() => undefined);
+    await this.core.shelving?.catch(() => undefined);
+    // 열린 병합 위의 되돌리기는 AI 의 정리 과제를 더 꼬이게 한다 — 저장 ·
+    // 치워두기와 같은 문으로 거절한다.
+    if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
+      throw new Error(
+        "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 시도해 주세요.",
+      );
+    }
     return this.checkpointStore.checkpointRestore(id);
   }
 

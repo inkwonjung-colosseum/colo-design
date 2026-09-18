@@ -6,7 +6,8 @@
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
  *                      5402 sidebar, 5403 midturn-send, 5409
- *                      thread-delete, 5411 clear-all, 5413 changed-strip) — all distinct
+ *                      thread-delete, 5411 clear-all, 5413 changed-strip,
+ *                      5415 first-send) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns,
  *                      so they are opt-in: `pnpm test` skips them, CI never
@@ -77,6 +78,7 @@ const LANES = {
       "test:publish-ui",
       "test:settings",
       "test:midturn-send",
+      "test:first-send",
       "test:thread-delete-ui",
       "test:clear-all-ui",
       "test:sidebar-ui",
@@ -180,7 +182,11 @@ if (laneIds.some((id) => LANES[id].stagesWebDist)) {
 
 mkdirSync(LOG_DIR, { recursive: true });
 
-const CONCURRENCY = Math.max(1, Number(process.env.COLO_TEST_LANE_CONCURRENCY ?? 1));
+// Number() quietly makes NaN of a non-numeric value — which would flow into
+// Math.min and Array.from({length: NaN}), run ZERO workers per lane, and end
+// with a green summary over suites that never ran.
+const laneConcurrency = Number(process.env.COLO_TEST_LANE_CONCURRENCY ?? 1);
+const CONCURRENCY = Math.max(1, Number.isFinite(laneConcurrency) ? laneConcurrency : 1);
 
 /** Suites still running — killed with their groups on interrupt. */
 const running = new Set();
@@ -210,7 +216,11 @@ function killSuiteGroup(child) {
  * slow-but-moving suite (the slowest suite on a cold runner, Electron
  * 내려받기 포함, is minutes, not tens of them).
  */
-const SUITE_TIMEOUT_MS = Number(process.env.COLO_TEST_LANE_TIMEOUT_MIN ?? 15) * 60_000;
+// Same NaN trap as CONCURRENCY: Number("abc") * 60_000 is NaN, and
+// setTimeout(NaN) fires in 1ms — every suite would instantly "TIMEOUT".
+const laneTimeoutMin = Number(process.env.COLO_TEST_LANE_TIMEOUT_MIN ?? 15);
+const SUITE_TIMEOUT_MS =
+  (Number.isFinite(laneTimeoutMin) && laneTimeoutMin > 0 ? laneTimeoutMin : 15) * 60_000;
 
 /** SIGTERM first, then a hard kill for whatever ignored it. */
 function killSuiteGroupHard(child) {

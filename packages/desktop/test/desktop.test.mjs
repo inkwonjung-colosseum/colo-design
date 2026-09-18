@@ -543,6 +543,23 @@ test("an undecryptable blob reads as null — a changed keychain key loses nothi
   }
 });
 
+test("a non-object credentials file reads empty and the next save still lands", async () => {
+  const dir = workdir("hub-desktop-store3-");
+  try {
+    const file = join(dir, "credentials.json");
+    // 손 편집·부분 쓰기가 남긴 원시값·배열 — 저장이 깨지거나 조용히 증발하면 안 된다.
+    for (const body of ["null", "42", '"string"', '["a","b"]']) {
+      writeFileSync(file, body);
+      const store = new SafeStorageCredentialStore(fakeSafeStorage(), file);
+      assert.equal(await store.load("pat"), null, `${body} reads as empty`);
+      await store.save("pat", "ghp_secret");
+      assert.equal(await store.load("pat"), "ghp_secret", `save survives ${body}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // bundled-runtime PATH prefix (daemon side, used by the desktop)
 // ---------------------------------------------------------------------------

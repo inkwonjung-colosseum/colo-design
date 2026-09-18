@@ -119,6 +119,13 @@ export class SessionManager {
   }
 
   create(options: SessionOptions): Session {
+    // 같은 id 를 두 번 여는 요청(더블클릭, 두 창의 재개)은 새 세션이 아니라
+    // 이미 살아 있는 그 세션이다 — 덮어쓰면 첫 Session 의 CLI 가 맵 밖에서
+    // 살아남아 훅을 통해 계속 방송한다. id 는 Session 과 같은 규칙으로 잡는다
+    // (sessionId → resume → 새 uuid).
+    const wantedId = options.sessionId ?? options.launch?.resume;
+    const existing = wantedId === undefined ? undefined : this.live.get(wantedId);
+    if (existing) return existing;
     const driver = this.driverFor(options.provider);
     const descriptor = driver.describe();
     const session = new Session(

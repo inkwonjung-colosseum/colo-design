@@ -119,7 +119,12 @@ declare global {
         ) => Unsubscribe;
         onFreeze?: (callback: (jpeg: string) => void) => Unsubscribe;
         onKey?: (
-          callback: (payload: { key: string; meta: boolean; shift: boolean }) => void,
+          callback: (payload: {
+            key: string;
+            meta: boolean;
+            shift: boolean;
+            control: boolean;
+          }) => void,
         ) => Unsubscribe;
         onLoading?: (callback: (payload: { on: boolean }) => void) => Unsubscribe;
         /** 배율 되알림 — the menu changed it, the web redraws. */

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
@@ -159,7 +159,8 @@ async function bootApp(): Promise<void> {
   if (extraPath) process.env.COLO_DESIGN_EXTRA_PATH = extraPath;
   // 데스크톱 앱이 데몬을 감싸므로 데몬의 자식들도 이 프로세스의 PATH 를
   // 물려받는다 — 번들 런타임을 앞에 두고 시작한다.
-  if (extraPath) process.env.PATH = `${extraPath}:${process.env.PATH}`;
+  // 구분자는 플랫폼 것을 쓴다 — win32 에서 `:` 로 붙이면 첫 PATH 항목이 깨진다.
+  if (extraPath) process.env.PATH = `${extraPath}${delimiter}${process.env.PATH}`;
 
   const webDist = existsSync(join(app.getAppPath(), "web-dist"))
     ? join(app.getAppPath(), "web-dist")
@@ -266,16 +267,17 @@ async function bootApp(): Promise<void> {
   const suiteHandle = globalThis as Record<string, unknown>;
   suiteHandle.coloDesignPlannerPreview = plannerPreview;
   await window.loadURL(url);
-  window.on("closed", () => {
-    // The pane outlives the window — on mac ⌘W destroys it and the dock
-    // icon builds another (createWindow's closure follows `host.window`).
-    // Its page belongs to a contentView that is gone and its cover state
-    // to a renderer that is gone: park the page so the next mount attaches
-    // one to the NEW window, and drop the cover so the fresh renderer's
-    // first assertion — not a dead one's — decides what may be seen.
+  // The pane outlives the window — on mac ⌘W destroys it and the dock
+  // icon builds another (createWindow's closure follows `host.window`).
+  // Its page belongs to a contentView that is gone and its cover state
+  // to a renderer that is gone: park the page so the next mount attaches
+  // one to the NEW window, and drop the cover so the fresh renderer's
+  // first assertion — not a dead one's — decides what may be seen.
+  // host 가 들고 reopen 이 만드는 창에도 같은 정리가 닿는다.
+  host.onClosed = () => {
     plannerPreview.unmount();
     plannerPreview.cover(false);
-  });
+  };
   registerCloseGuard(window);
 
   registerDesktopBridge({
@@ -302,7 +304,13 @@ app.on("browser-window-focus", () => {
 });
 
 function guardStopUnderTurn(event: { preventDefault(): void }, proceed: () => void): void {
-  if (stopUnderTurnAllowed || stopDialogOpen || !daemonServer?.anySessionBusy()) return;
+  if (stopUnderTurnAllowed || !daemonServer?.anySessionBusy()) return;
+  // 다이얼로그가 이미 떠 있는 두 번째 종료 시도도 막는다 — 통과시키면 확인
+  // 없이 실행 중인 턴을 죽이는 뒷문이 된다.
+  if (stopDialogOpen) {
+    event.preventDefault();
+    return;
+  }
   event.preventDefault();
   stopDialogOpen = true;
   void dialog

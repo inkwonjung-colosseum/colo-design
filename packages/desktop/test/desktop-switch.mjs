@@ -160,7 +160,36 @@ async function main() {
     const alphaOrigin = `http://127.0.0.1:${alpha.port}`;
 
     // The pane shows 베타 (the newest project is active).
-    await page.waitForSelector(".planner__body", { timeout: 60000 });
+    try {
+      await page.waitForSelector(".planner__body", { timeout: 60000 });
+    } catch (e) {
+      console.log("DEBUG pageerror:", JSON.stringify(errors));
+      console.log(
+        "DEBUG probes:",
+        JSON.stringify({
+          body: await page.locator(".planner__body").count(),
+          onboarding: await page.locator(".onboarding").count(),
+          journey: await page.locator(".journey").count(),
+          wizard: await page.locator("[class*=wizard]").count(),
+          home: await page.locator("[class*=home]").count(),
+          plannerChildren: await page.evaluate(() =>
+            [...(document.querySelector(".planner")?.children ?? [])].map((el) =>
+              `${el.tagName}.${el.className}`.slice(0, 80),
+            ),
+          ),
+          mainHtml: await page.evaluate(() => {
+            const planner = document.querySelector(".planner");
+            const nav = planner?.querySelector("nav");
+            const rest = planner ? [...planner.children].filter((el) => el !== nav) : [];
+            return rest
+              .map((el) => el.outerHTML)
+              .join("\n")
+              .slice(0, 2500);
+          }),
+        }),
+      );
+      throw e;
+    }
     await waitFor(async () => (await viewUrl(app))?.startsWith(betaOrigin), 60_000, "베타 page");
     await waitFor(
       async () => (await inView(app, "document.readyState")) === "complete",

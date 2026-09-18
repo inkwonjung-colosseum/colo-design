@@ -782,9 +782,15 @@ export class RepoCore {
     // Mid-cycle, merging the developer's base needs the agent within reach — a
     // conflict has to land as a first task, not as an error nobody can read.
     // A bare bring-up mid-cycle stays put on the merge, but the fetch still
-    // runs: the planner who pressed 최신화 deserves to learn that something
-    // is waiting instead of watching a silent no-op.
-    if (this.branch && !onSessionTurn) return "clean";
+    // runs BEFORE the early return: bootstrap·활성화는 brief 받을 대화 없이
+    // 지나가는 자리이므로, 여기서 origin 을 새로 읽지 않으면
+    // aheadBehindBase() 가 지난 원격을 읽고 위에 쌓인 커밋이 있어도 조용히
+    // 넘어간다. 못 읽은 fetch 는 지난 origin 을 남길 뿐 — 예전의 조용한
+    // no-op 그대로다.
+    if (this.branch && !onSessionTurn) {
+      await this.git(["fetch", "origin", this.baseBranch]).catch(() => undefined);
+      return "clean";
+    }
 
     const stashed = await this.stashUnsavedWork();
     try {

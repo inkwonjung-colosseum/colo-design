@@ -384,27 +384,36 @@ export function ScreenPanel({
   const [askNote, setAskNote] = useState<string | null>(null);
   const askArmed = useRef(false);
   const askTurnRan = useRef(false);
+  const askBusy = useRef(false);
   const askAgent = async () => {
-    const live = sessionId ? (daemon.sessions[sessionId]?.live ?? false) : false;
-    const agent = guidanceFor(errorKind, repo?.detail ?? null).agent;
-    if (!agent) return;
-    setAskNote("AI에게 정리를 요청했습니다 — 대화에서 정리합니다.");
-    if (errorKind === "conflict" && live) {
-      void api.repoRefresh(sessionId).catch((e: Error) => syncError.show(e.message));
-    } else {
-      const delivered = await onMachineTurn(
-        markTurn({ kind: "gate", step: agent.step }, agent.brief),
-        agent.thread,
-      );
-      // 거절(클론 뿌리가 아예 없어 대화를 못 여는 경우 등)의 말은 이미
-      // 대화쪽 오류 스트립이 한다 — 카드의 표식이 가지 않은 요청을 갔다고
-      // 말하게 두지 않는다.
-      if (!delivered) {
-        setAskNote(null);
-        return;
+    // 연타는 막는다 — 보내는 동안의 다시 누름은 겹친 요청이 거절로 돌아와
+    // 앞 요청이 세워 둔 표식을 지우는 낙차를 남긴다(lookBusy 와 같은 규칙).
+    if (askBusy.current) return;
+    askBusy.current = true;
+    try {
+      const live = sessionId ? (daemon.sessions[sessionId]?.live ?? false) : false;
+      const agent = guidanceFor(errorKind, repo?.detail ?? null).agent;
+      if (!agent) return;
+      setAskNote("AI에게 정리를 요청했습니다 — 대화에서 정리합니다.");
+      if (errorKind === "conflict" && live) {
+        void api.repoRefresh(sessionId).catch((e: Error) => syncError.show(e.message));
+      } else {
+        const delivered = await onMachineTurn(
+          markTurn({ kind: "gate", step: agent.step }, agent.brief),
+          agent.thread,
+        );
+        // 거절(클론 뿌리가 아예 없어 대화를 못 여는 경우 등)의 말은 이미
+        // 대화쪽 오류 스트립이 한다 — 카드의 표식이 가지 않은 요청을 갔다고
+        // 말하게 두지 않는다.
+        if (!delivered) {
+          setAskNote(null);
+          return;
+        }
       }
+      askArmed.current = true;
+    } finally {
+      askBusy.current = false;
     }
-    askArmed.current = true;
   };
   useEffect(() => {
     if (phase === "ready") {
@@ -526,9 +535,14 @@ export function ScreenPanel({
   }, [readHandoffState, daemon.activeSlug]);
 
   // PageWorkspace 의 사이클 요청 — 이 패널은 `check` 만 집는다
-  // (저장·넘기기는 대화 안 카드의 몫).
+  // (저장·넘기기는 대화 안 카드의 몫). 마지막 nonce 를 기억해 재생을
+  // 묵살한다 — 이 패널도 홈·여정에서 내렸다 다시 타는데, 다시 탈 때마다
+  // 조용하지 않은 확인(false)이 코멘트 모달까지 열어버리던 결함.
+  const checkNonce = useRef(-1);
   useEffect(() => {
-    if (cycleRequest?.kind === "check") readHandoffState(false);
+    if (cycleRequest?.kind !== "check" || cycleRequest.nonce === checkNonce.current) return;
+    checkNonce.current = cycleRequest.nonce;
+    readHandoffState(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycleRequest]);
 

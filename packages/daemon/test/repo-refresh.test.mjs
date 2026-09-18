@@ -593,3 +593,49 @@ test("a base branch that diverged is named, never rewritten", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("mid-cycle bare bring-up still fetches origin — the waiting base is not hidden", async () => {
+  const dir = workdir("hub-refresh-midcycle-fetch-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({
+      dir: join(dir, "fixture"),
+      port: await freePort(),
+    });
+    const workspace = await bringUp(dir, fixture);
+
+    // 저장 opens the cycle branch — the state the bare bring-up's early
+    // return sits on. The developer merges upstream afterwards.
+    writeFileSync(join(dir, "work", "index.html"), "<p>사이클의 변경</p>\n");
+    const saved = await workspace.save({ message: "사이클의 변경" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    const seedHtml = readFileSync(join(fixture.seed, "index.html"), "utf8");
+    await pushFixtureChange(fixture.seed, fixture.remote, {
+      "index.html": seedHtml.replace(
+        "<p>연결 레포가 렌더하는 미리보기입니다.</p>",
+        "<p>개발자의 줄</p>",
+      ),
+    });
+
+    // bootstrap·활성화 길 — brief 받을 대화가 없는 최신화. 병합은 못 해도
+    // fetch 는 해야 한다: origin 이 오래되면 위에 쌓인 커밋이 있는지 묻는
+    // 읽기들이 전부 조용해진다.
+    const status = await workspace.sync();
+    assert.equal(status.phase, "ready", status.detail ?? "");
+
+    const remoteTip = (
+      await promisifiedRun("git", ["-C", fixture.seed, "rev-parse", "HEAD"])
+    ).trim();
+    const originBase = (
+      await promisifiedRun("git", [
+        "-C",
+        join(dir, "work"),
+        "rev-parse",
+        "refs/remotes/origin/main",
+      ])
+    ).trim();
+    assert.equal(originBase, remoteTip, "origin main was read fresh before the early return");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

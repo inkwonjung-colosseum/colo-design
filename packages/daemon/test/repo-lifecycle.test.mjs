@@ -234,4 +234,46 @@ test("changing the url discards the old clone, re-clones, and reports the move o
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a moved url forgets the old repository's cycle — the fresh clone starts its own", async () => {
+  const dir = workdir("hub-repo-move-cycle-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const port = await freePort();
+    const first = await createFixtureRepo({ dir: join(dir, "a"), port });
+    const second = await createFixtureRepo({ dir: join(dir, "b"), port });
+
+    // What the project registry hears; the cycle lives only there.
+    const cycles = [];
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: first.remote,
+      onStatus: () => undefined,
+      cycle: {
+        branch: "colo-design/20260918-1",
+        handoff: {
+          number: 7,
+          url: "https://example.test/pull/7",
+          title: "옛 레포의 요청",
+          state: "open",
+          branch: "colo-design/20260918-1",
+        },
+      },
+      onCycleChange: (cycle) => cycles.push(cycle),
+    });
+    assert.equal((await workspace.sync()).phase, "ready");
+
+    const moved = await workspace.update({ url: second.remote });
+    assert.equal(moved.phase, "ready", moved.detail ?? "");
+    assert.equal(workspace.currentBranch, null, "the old cycle's branch stays behind");
+    assert.equal(workspace.currentHandoff, null, "the old PR is not the new repo's");
+    const last = cycles.at(-1);
+    assert.equal(last?.branch, null, "the registry heard the clear");
+    assert.equal(last?.handoff, null);
+    await workspace.stop();
+  } finally {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 // ---------------------------------------------------------------------------

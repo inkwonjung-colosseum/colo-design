@@ -10,7 +10,7 @@
  * settings files into the store and rewrites the files without them.
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -69,16 +69,32 @@ export class KeychainCredentialStore implements CredentialStore {
   constructor(private readonly service: string = CREDENTIAL_SERVICE) {}
 
   async save(item: string, secret: string): Promise<void> {
-    await run(this.security, [
-      "add-generic-password",
-      "-s",
-      this.service,
-      "-a",
-      item,
-      "-w",
-      secret,
-      "-U",
-    ]);
+    // -w 를 맨 끝에 값 없이 두면 security 가 같은 값을 두 번 물어 긇줄에서
+    // 읽는다(실측 — 파이프만 있으면 tty 가 없어도 읽힌다). 비밀을 argv 에
+    // 실어 ps 창에 드러내던 창을 없애는 선택이다. 프롬프트는 두 답이 어긋나면
+    // 다시 물어 EOF 에 빈 값을 넣고 성공이라 답하니, 저장 뒤 읽어 돌려 진짜
+    // 들어갔는지 확인한다.
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        this.security,
+        ["add-generic-password", "-U", "-s", this.service, "-a", item, "-w"],
+        { stdio: ["pipe", "ignore", "pipe"] },
+      );
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk;
+      });
+      child.stdin.on("error", () => undefined); // 일찍 닫힌 긇줄 — 결과는 exit 코드로 온다
+      child.stdin.end(`${secret}\n${secret}\n`);
+      child.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `security add-generic-password exited ${code}`));
+      });
+    });
+    const stored = await this.load(item);
+    if ((stored ?? "") !== secret) {
+      throw new Error("키체인에 저장한 값을 다시 읽어 확인하지 못했습니다.");
+    }
   }
 
   async load(item: string): Promise<string | null> {
@@ -275,14 +291,40 @@ export function npmrcPath(env: NodeJS.ProcessEnv = process.env): string {
 /**
  * Merges registry lines into an npmrc without clobbering anything else:
  * same-key lines are replaced in place, new ones appended.
+ *
+ * 활성화는 병합을 기다리지 않고 던진다(fleet 의 void sync().then …). 두
+ * 병합이 겹쳐 같은 밑바탕을 읽으면 나중 쓰기가 먼저 쓰기의 레지스트리·토큰
+ * 줄을 지워 다음 설치가 401 을 맞으므로, 모듈 고리로 각 병합을 앞 병합의
+ * 뒤에 세운다. 고리가 비어 있으면 부른 자리에서 곧장 끝낸다 — 병합이 끝난
+ * 파일을 곧바로 읽는 동기 관찰자(테스트, install 직전의 병합)의 계약.
  */
-export function mergeNpmrc(file: string, lines: Array<{ key: string; value: string }>): void {
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const kept = existing
-    .split("\n")
-    .filter(
-      (line) => line.trim() !== "" && !lines.some((entry) => line.startsWith(`${entry.key}=`)),
-    );
-  const merged = [...kept, ...lines.map((entry) => `${entry.key}=${entry.value}`)];
-  writeAtomic(file, `${merged.join("\n")}\n`);
+let npmrcMerge: Promise<void> = Promise.resolve();
+let npmrcMergeBusy = false;
+
+export function mergeNpmrc(
+  file: string,
+  lines: Array<{ key: string; value: string }>,
+): Promise<void> {
+  const merge = (): void => {
+    const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+    const kept = existing
+      .split("\n")
+      .filter(
+        (line) => line.trim() !== "" && !lines.some((entry) => line.startsWith(`${entry.key}=`)),
+      );
+    const merged = [...kept, ...lines.map((entry) => `${entry.key}=${entry.value}`)];
+    writeAtomic(file, `${merged.join("\n")}\n`);
+  };
+  if (!npmrcMergeBusy) {
+    npmrcMergeBusy = true;
+    try {
+      merge();
+    } finally {
+      npmrcMergeBusy = false;
+    }
+    return npmrcMerge;
+  }
+  const queued = npmrcMerge.then(merge);
+  npmrcMerge = queued.catch(() => undefined); // 한 병합이 넘어져도 뒤 병합은 선다
+  return queued;
 }

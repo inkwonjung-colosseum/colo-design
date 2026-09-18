@@ -1,4 +1,15 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { LostSend, QueuedSendPayload } from "@colo-design/protocol";
 import { COLO_DESIGN_DIR } from "./environment.js";
@@ -99,7 +110,20 @@ export class QueueStore {
           ? [...lost].sort((a, b) => b.lostAt - a.lostAt).slice(0, MAX_LOST_ITEMS)
           : lost;
       return { held: parsed.held ?? [], lost: kept };
-    } catch {
+    } catch (error) {
+      // 파일이 없는 것은 첫 대화의 빈 방이다. 그러나 존재하는데 읽지 못하는
+      // 것은 소식이다 — 정전이 남긴 조각에 약속한 턴이 남아 있을 수 있으므로
+      // 빈 방인 척하면 다음 저장이 그렇게 봉인한다. projects.json.corrupt 와
+      // 같은 자세로 옆에 옮겨 둔다: 회복은 계획자의 손으로.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        try {
+          const path = this.file(sessionId);
+          if (existsSync(path)) renameSync(path, `${path}.corrupt`);
+        } catch {
+          // The quarantine is best effort — an unwritable disk has bigger
+          // problems, and refusing to boot helps nobody.
+        }
+      }
       return { held: [], lost: [] };
     }
   }
@@ -108,7 +132,15 @@ export class QueueStore {
     mkdirSync(this.dir, { recursive: true });
     const target = this.file(sessionId);
     const temporary = `${target}.colo-design-${process.pid}`;
-    writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
+    const fd = openSync(temporary, "w", 0o600);
+    try {
+      // rename은 이름만 옮길 뿐이므로 내용이 먼저 디스크에 봉인돼야 한다 —
+      // fsync 가 없으면 정전이 이름은 온전하고 내용은 없는 방을 남긴다.
+      writeSync(fd, `${JSON.stringify(file, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     // Between the two writes a reader sees the old file — no half-written room.
     renameSync(temporary, target);
   }

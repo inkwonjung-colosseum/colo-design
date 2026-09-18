@@ -183,6 +183,8 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
   private window: BrowserWindow | null = null;
   /** 세우는 중인 창 — 동시 호출이 창 두 개를 만들지 않게. */
   private booting: Promise<BrowserWindow> | null = null;
+  /** 파괴됐음 — 부팅 도중의 파괴가 창을 몰래 남기지 않게 부팅이 확인한다. */
+  private dead = false;
 
   constructor(private readonly baseUrl: string) {
     super();
@@ -229,7 +231,13 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
       },
     });
     const contents = window.webContents;
-    contents.debugger.attach("1.3");
+    try {
+      contents.debugger.attach("1.3");
+    } catch (error) {
+      // 붙임에 실패한 창을 그대로 두면 숨은 창이 남는다 — 세운 즉시 거둔다.
+      window.destroy();
+      throw error;
+    }
     // 실패한 요청은 콘솔에 남지 않는다 — 빈 화면의 절반이 여기서 온다 (D61).
     contents.debugger.on("message", (_event, method, params) => {
       this.onDebuggerMessage(method, params as Record<string, unknown>);
@@ -245,8 +253,24 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     for (const domain of ["Runtime.enable", "Network.enable"]) {
       await contents.debugger.sendCommand(domain, {}).catch(() => undefined);
     }
+    // 부팅 도중의 파괴 — 기다림 너머에서 확인하지 않으면 파괴 뒤에도 이 창이
+    // this.window 로 남는다(디버거까지 붙은 채로, 영원히 거두어지지 못한).
+    if (this.dead) {
+      this.teardownWindow(window);
+      throw new Error("미리보기 창이 닫혔습니다.");
+    }
     this.window = window;
     return window;
+  }
+
+  /** 창 하나의 뒷수습 — 디버거를 떼고 창을 거둔다. destroy 와 부팅의 취소가 같은 길을 탄다. */
+  private teardownWindow(window: BrowserWindow): void {
+    try {
+      window.webContents.debugger.detach();
+    } catch {
+      // 이미 떨어져 나갔거나 창이 닫히는 중이다 — 지울 게 없을 뿐이다.
+    }
+    window.destroy();
   }
 
   /**
@@ -319,16 +343,15 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
   }
 
   async destroy(): Promise<void> {
+    // 부팅 도중의 파괴 — bootWindow 의 기다림 너머 확인이 이 깃발을 보고
+    // 방금 세운 창을 거둔다. 깃발이 없으면 this.window = null 뒤에도 부팅이
+    // 창을 몰래 남긴다(디버거까지 붙은 채로).
+    this.dead = true;
     const window = this.window;
     this.window = null;
     this.applied = null;
     if (!window || window.isDestroyed()) return;
-    try {
-      window.webContents.debugger.detach();
-    } catch {
-      // 이미 떨어져 나갔거나 창이 닫히는 중이다 — 지울 게 없을 뿐이다.
-    }
-    window.destroy();
+    this.teardownWindow(window);
   }
 }
 
@@ -486,15 +509,18 @@ interface PageState {
   readonly console: PreviewConsoleLine[];
   contents: WebContents | null;
   /**
-   * 붙임 뒤의 유예 타이머 — op 가 잠깐 쉬면 디버거를 떼어 사용자의
-   * DevTools·다이얼로그를 돌려준다. 다음 op 의 attach 가 다시 붙인다.
+   * 붙임 뒤의 유예 타이머 — 내용물별로 건다. 한 칸짜리 슬롯은 페이지가
+   * 갈아엉칠 때 새 페이지의 붙임이 옛 페이지의 타이머를 지워 버리고, 옛
+   * 페이지의 지킴이가 슬롯을 계속 탈취하는 사고를 낳는다. 다음 op 의
+   * attach 가 다시 붙인다.
    */
-  idleDetach: NodeJS.Timeout | null;
+  readonly idleDetach: Map<WebContents, NodeJS.Timeout>;
   /**
-   * 살아 있는 keepAttached 인터벌 — op 가 응답 없이 멈추면 돌아오는 stop
-   * 함수가 영원히 불리지 않으므로, recover 가 여기서 직접 거둬낸다.
+   * 살아 있는 keepAttached 인터벌 — 내용물별로 묶는다. op 가 응답 없이
+   * 멈추면 돌아오는 stop 함수가 영원히 불리지 않으므로, recover 가 여기서
+   * 직접 거둬낸다.
    */
-  readonly keepAlive: Set<NodeJS.Timeout>;
+  readonly keepAlive: Map<WebContents, Set<NodeJS.Timeout>>;
   handlers: {
     onDebuggerMessage: (event: Electron.Event, method: string, params: unknown) => void;
     onConsoleMessage: (
@@ -519,12 +545,12 @@ interface PageState {
 class PaneBrowserDriver implements BrowserDriver {
   /** 화면의 페이지 하나의 상태 — 페이지가 파기되면(또는 WebContents 가 죽으면) 비운다. */
   private state: PageState = {
-    keepAlive: new Set(),
+    idleDetach: new Map(),
+    keepAlive: new Map(),
     refs: new Map(),
     refSeq: 0,
     console: [],
     contents: null,
-    idleDetach: null,
     handlers: null,
   };
 
@@ -623,9 +649,9 @@ class PaneBrowserDriver implements BrowserDriver {
    * keepAttached 가 붙임을 살려 둔다.
    */
   private armIdleDetach(state: PageState, contents: WebContents): void {
-    if (state.idleDetach) clearTimeout(state.idleDetach);
-    state.idleDetach = setTimeout(() => {
-      state.idleDetach = null;
+    clearTimeout(state.idleDetach.get(contents));
+    const timer = setTimeout(() => {
+      state.idleDetach.delete(contents);
       if (!contents.isDestroyed() && contents.debugger.isAttached()) {
         try {
           contents.debugger.detach();
@@ -634,7 +660,8 @@ class PaneBrowserDriver implements BrowserDriver {
         }
       }
     }, BROWSER_IDLE_DETACH_MS);
-    state.idleDetach.unref();
+    timer.unref();
+    state.idleDetach.set(contents, timer);
   }
 
   /**
@@ -644,11 +671,15 @@ class PaneBrowserDriver implements BrowserDriver {
   private keepAttached(state: PageState, contents: WebContents): () => void {
     const beat = setInterval(() => this.armIdleDetach(state, contents), BROWSER_IDLE_DETACH_MS / 2);
     beat.unref();
-    // recover 가 멈춘 op 를 대신 거둘 수 있게 상태에 새긴다.
-    state.keepAlive.add(beat);
+    // recover 가 멈춘 op 를 대신 거둘 수 있게 상태에 새긴다 — 내용물별로
+    // 묶는다. 페이지가 갈아엉쳐도 옛 페이지의 인터벌은 옛 페이지의 유예만
+    // 재무장하고, 새 페이지의 타이머를 지우지 못한다.
+    const beats = state.keepAlive.get(contents) ?? new Set<NodeJS.Timeout>();
+    beats.add(beat);
+    state.keepAlive.set(contents, beats);
     return () => {
       clearInterval(beat);
-      state.keepAlive.delete(beat);
+      state.keepAlive.get(contents)?.delete(beat);
     };
   }
   /** 디버거 이벤트의 갈래길 — 다이얼로그 처리와 실패한 네트워크 수집. */
@@ -699,20 +730,26 @@ class PaneBrowserDriver implements BrowserDriver {
   /** 페이지 상태를 통째로 비운다 — 페이지가 파기됐거나 WebContents 가 죽었을 때. */
   private drop(): void {
     const state = this.state;
-    if (state.idleDetach) {
-      clearTimeout(state.idleDetach);
-      state.idleDetach = null;
-    }
+    for (const idle of state.idleDetach.values()) clearTimeout(idle);
+    state.idleDetach.clear();
     this.sweepKeepAlive(state);
     this.unbind(state);
   }
 
-  /** 리스너만 내린다 — 콘솔·ref 는 살려 둔다(다음 붙임이 이어 쓴다). */
+  /**
+   * 리스너와 디버거를 내린다 — 콘솔·ref 는 살려 둔다(다음 붙임이 이어 쓴다).
+   * 페이지가 갈아엉치는 자리(stateOf)에서도 불리므로 디버거를 여기서 떼어
+   * 둔다. 붙임을 놓아두면 옛 페이지의 DevTools·다이얼로그가 영원히 잠기고,
+   * 다음 붙임이 다시 붙이므로 드라이버의 손은 잃지 않는다.
+   */
   private unbind(state: PageState): void {
     const contents = state.contents;
     const handlers = state.handlers;
     state.contents = null;
     state.handlers = null;
+    // 옛 내용물의 유예 타이머와 붙임 지킴이도 여기서 거둔다 — 남은 인터벌은
+    // 새 페이지의 타이머를 지우고 옛 페이지를 겨누는 재무장을 영원히 이어간다.
+    if (contents) this.clearTimers(state, contents);
     if (!contents || contents.isDestroyed() || !handlers) return;
     try {
       contents.debugger.off("message", handlers.onDebuggerMessage);
@@ -722,22 +759,7 @@ class PaneBrowserDriver implements BrowserDriver {
     contents.off("console-message", handlers.onConsoleMessage);
     contents.off("did-navigate", handlers.onDidNavigate);
     contents.off("destroyed", handlers.onGone);
-  }
-
-  /**
-   * 디버거까지 뗀다 — 완전한 뒷정리(destroy) 또는 캡처의 뒷수습. 페이지는
-   * 사용자의 것이라 그대로 둔다. (07bd3bf PanePreviewDriver.destroy 계승)
-   */
-  private release(): void {
-    const state = this.state;
-    if (state.idleDetach) {
-      clearTimeout(state.idleDetach);
-      state.idleDetach = null;
-    }
-    this.sweepKeepAlive(state);
-    const contents = state.contents;
-    this.unbind(state);
-    if (contents && !contents.isDestroyed() && contents.debugger.isAttached()) {
+    if (contents.debugger.isAttached()) {
       try {
         contents.debugger.detach();
       } catch {
@@ -747,12 +769,42 @@ class PaneBrowserDriver implements BrowserDriver {
   }
 
   /**
+   * 완전한 뒷정리(destroy) 또는 캡처의 뒷수습 — unbind 가 리스너와 디버거를
+   * 함께 내린다. 페이지는 사용자의 것이라 그대로 둔다. (07bd3bf
+   * PanePreviewDriver.destroy 계승)
+   */
+  private release(): void {
+    const state = this.state;
+    for (const idle of state.idleDetach.values()) clearTimeout(idle);
+    state.idleDetach.clear();
+    this.sweepKeepAlive(state);
+    this.unbind(state);
+  }
+
+  /**
+   * 한 내용물의 유예 타이머와 붙임 지킴이를 거둔다 — 페이지가 갈아엉칠 때의
+   * 옛 내용물 몫이다. 내용물별로 건 이유가 여기 있다: 옛 페이지의 몫만
+   * 지우고, 새 페이지의 붙임은 건드리지 않는다.
+   */
+  private clearTimers(state: PageState, contents: WebContents): void {
+    clearTimeout(state.idleDetach.get(contents));
+    state.idleDetach.delete(contents);
+    const beats = state.keepAlive.get(contents);
+    if (beats) {
+      for (const beat of beats) clearInterval(beat);
+      state.keepAlive.delete(contents);
+    }
+  }
+
+  /**
    * 멈춘 op 가 놓고 간 keepAttached 인터벌을 거둔다 — stop 함수가 불리지
    * 않는 경로(강제 복구·페이지 파기)에서도 인터벌이 유예 타이머를 영원히
    * 재무장하지 못하게 한다.
    */
   private sweepKeepAlive(state: PageState): void {
-    for (const beat of state.keepAlive) clearInterval(beat);
+    for (const beats of state.keepAlive.values()) {
+      for (const beat of beats) clearInterval(beat);
+    }
     state.keepAlive.clear();
   }
 
@@ -767,6 +819,14 @@ class PaneBrowserDriver implements BrowserDriver {
   async navigate(url: string): Promise<{ settled: boolean; snapshot: PreviewAxNode[] }> {
     if (!browserHttpUrl(url)) throw new Error(`http(s) 주소만 탐색할 수 있습니다: ${url}`);
     const pane = this.view();
+    // pane 이 그릴 면이 없으면(카드가 서 있거나 슬롯이 아직 없으면) openTab 의
+    // OS 폴백에 맡기지 않는다 — 에이전트의 탐색이 사용자의 브라우저를 여는
+    // 일은 부수 효과고, 이 명령은 엉뚱한 페이지의 스냅샷으로 답하게 된다.
+    if (!pane.hasBounds()) {
+      throw new Error(
+        "미리보기 화면이 그릴 자리가 없습니다 — 슬롯이 자리를 잡은 뒤 다시 시도하십시오.",
+      );
+    }
     const before = pane.webContents();
     const moved = before ? this.settleAfterNav(before) : null;
     pane.openTab(url);
