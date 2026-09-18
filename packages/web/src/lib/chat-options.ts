@@ -21,31 +21,13 @@ export const EFFORT_LABEL: Record<EffortLevel, string> = {
   max: "Max",
 };
 
-const MODE_LABEL: Record<PermissionMode, string> = {
+export const MODE_LABEL: Record<PermissionMode, string> = {
   default: "Default",
   plan: "Plan",
   acceptEdits: "Accept Edits",
   dontAsk: "Don't Ask",
   bypassPermissions: "Bypass",
 };
-
-/**
- * 확인 방식의 사람 말 — 칩과 설정이 쓰는 어휘다. CLI 원명은 버리지 않는다 —
- * 메뉴 행에서 괄호 안 부제로 남아 검색·붙여넣기·터미널 매칭이 계속 먹히게
- * (위 MODE_LABEL 주석의 근거는 유효하다).
- */
-export const MODE_LABEL_KO: Record<PermissionMode, string> = {
-  default: "물어보고 실행",
-  plan: "계획만 세우기",
-  acceptEdits: "편집은 바로 실행",
-  dontAsk: "물어보지 않기",
-  bypassPermissions: "바로 실행",
-};
-
-/** 메뉴 행이 말하는 이름: 사람 말이 앞서고 CLI 원명이 조용히 따라간다. */
-export function modeMenuLabel(mode: PermissionMode): string {
-  return `${MODE_LABEL_KO[mode]} (${MODE_LABEL[mode]})`;
-}
 
 /**
  * 확인 방식 메뉴 행의 한 줄 설명 — 칩 팝오버가 읽는다(설정의 Choice 는

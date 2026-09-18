@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import {
   EFFORT_LABEL,
+  MODE_LABEL,
   modelOptions,
   modelRowOf,
-  modeMenuLabel,
   SETTINGS_MODES,
 } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
@@ -14,7 +14,6 @@ import {
   type ChatSettings,
   clampSizePx,
   loadModelCatalog,
-  type MidTurnSend,
   type NoticeTiming,
   type SendKey,
   type Settings,
@@ -83,12 +82,6 @@ const SEND_LABEL: Record<SendKey, string> = {
 const SEND_SHORT: Record<SendKey, string> = {
   enter: "Enter",
   modEnter: "⌘/Ctrl+Enter",
-};
-
-/** 실행 중 보내기: what a send means while a turn is still running. */
-const MID_TURN_LABEL: Record<MidTurnSend, string> = {
-  queue: "다음 턴에 보내기",
-  interrupt: "끊고 보내기",
 };
 
 /** 완료 알림의 세 상태 — 고르는 행과 접힌 방의 요약이 같은 말을 한다. */
@@ -187,7 +180,7 @@ const CATEGORY_KEYWORDS: Record<CategoryId, string> = {
   screen: "테마 배율 글자 크기 화면 크기 다크모드 다크 모드 밝기 ui scale font",
   providers: "프로바이더 에이전트 모델 생각 시간 노력 effort provider claude codex 기본",
   chat: "대화 생각 과정 작업 과정 보기 도구 컴포저 임시 저장 초안",
-  behavior: "동작 보내기 키 Enter 실행 중 끊고 보내기 다음 턴 링크 열기 midturn",
+  behavior: "동작 보내기 키 Enter 링크 열기",
   notice: "알림 소리 배지 완료 확인 요청 데스크톱 notification",
   connection: "연결 깃허브 github 토큰 레포 주소 저장 위치 계정 token repo url",
   troubleshoot: "문제 해결 재시작 로그 업데이트 업그레이드 초기화 복구 다시",
@@ -722,8 +715,8 @@ export function SettingsDialog({
         .filter(Boolean)
         .join(" · ");
     })(),
-    chat: modeMenuLabel(settings.chat.permissionMode),
-    behavior: `${SEND_SHORT[settings.sendKey]} · ${MID_TURN_LABEL[settings.midTurnSend]}`,
+    chat: MODE_LABEL[settings.chat.permissionMode],
+    behavior: SEND_SHORT[settings.sendKey],
     notice: `${NOTICE_DONE_LABEL[settings.notifications.done]} · 소리 ${settings.notifications.sound ? "켬" : "끔"}`,
     connection: (() => {
       if (!connected) return "연결되지 않았습니다";
@@ -1171,11 +1164,9 @@ export function SettingsDialog({
                             label="확인 방식"
                             hint="AI가 화면을 바꾸기 전에 물어볼지 정합니다 — 화면 파일 편집은 확인 방식과 관계없이 자동으로 적용되고, 명령 실행만 물어봅니다"
                             value={settings.chat.permissionMode}
-                            /* 네 태 — 세그먼트의 몸집을 넘는다. 메뉴 행이 사람 말과 CLI
-                     원명을 함께 입는 것은 그대로다(modeMenuLabel). */
                             options={SETTINGS_MODES.map((mode) => ({
                               value: mode,
-                              label: modeMenuLabel(mode),
+                              label: MODE_LABEL[mode],
                             }))}
                             onChange={(permissionMode) => onChatChange({ permissionMode })}
                           />
@@ -1234,23 +1225,6 @@ export function SettingsDialog({
                               hint: SEND_LABEL[key],
                             }))}
                             onChange={(sendKey) => onChange({ sendKey })}
-                          />
-                          <Choice<MidTurnSend>
-                            label="실행 중 보내기"
-                            value={settings.midTurnSend}
-                            options={[
-                              {
-                                value: "queue",
-                                label: MID_TURN_LABEL.queue,
-                                hint: "실행 중 보낸 말은 지금 답변이 끝난 뒤 다음 답변으로 전달됩니다",
-                              },
-                              {
-                                value: "interrupt",
-                                label: MID_TURN_LABEL.interrupt,
-                                hint: "실행 중 보내면 지금 답변을 멈추고 그 말로 새 답변을 시작합니다",
-                              },
-                            ]}
-                            onChange={(midTurnSend) => onChange({ midTurnSend })}
                           />
                           {/* 데스크톱에서만 뜻이 있는 스위치 — plain 브라우저에는
                     미리보기 칸이 없으니 행 자체를 숨긴다. */}
