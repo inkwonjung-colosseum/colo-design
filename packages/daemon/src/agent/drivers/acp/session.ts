@@ -5,6 +5,8 @@ import type {
   SessionModelInfo,
 } from "@colo-design/protocol";
 import { acpBrowserMcpServer } from "../../../browser-launch.js";
+import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
+import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { JsonRpcTransport } from "../../jsonrpc.js";
 
@@ -82,6 +84,10 @@ export class AcpAgentSession implements AgentSession {
   ) {
     this.launch = launch;
     this.currentModeId = launch.modeId || "default";
+    // 프로젝트 티어가 적재되기 직전의 마지막 방어선: omp 는 <cwd>/.omp/config.yml 을,
+    // opencode 는 opencode.json 을 신뢰 대화상자 없이 verbatim 으로 읽는다. 클론·
+    // 갱신·기동 스윕과 같은 칼이며, 이미 깨끗하면 무동작이다.
+    sanitizeRepoAgentSettings(launch.cwd);
     this.transport = new JsonRpcTransport(command, args, launch.cwd, {
       onRequest: (method, params) => this.onAgentRequest(method, params),
       onNotify: (method, params) => this.onAgentNotify(method, params),
@@ -217,7 +223,8 @@ export class AcpAgentSession implements AgentSession {
     if (!sessionId) throw new Error("ACP session not established");
 
     const promptCaps = (this.agentCapabilities.promptCapabilities ?? {}) as Wire;
-    if (turn.images?.length && promptCaps.image === false) {
+    const prepared = prepareAttachments(this.launch.cwd, turn.attachments);
+    if (prepared.images.length && promptCaps.image === false) {
       throw new Error(`${this.providerId} 에이전트는 이미지 입력을 지원하지 않습니다.`);
     }
     const prompt: Wire[] = [];
@@ -236,8 +243,8 @@ export class AcpAgentSession implements AgentSession {
         },
       });
     }
-    prompt.push({ type: "text", text: turn.text });
-    for (const image of turn.images ?? []) {
+    prompt.push({ type: "text", text: composeTurnText(turn.text, prepared) });
+    for (const image of prepared.images) {
       prompt.push({ type: "image", data: image.data, mimeType: image.mediaType });
     }
 

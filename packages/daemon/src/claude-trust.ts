@@ -10,22 +10,42 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RepoSettingsWarning } from "@colo-design/protocol";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_DIR, currentPlatform } from "./environment.js";
 
 /**
- * 클론과 Claude Code 사이의 네 가지 — 레포가 스스로 넓힌 권한을 잘라 내고
- * 원본을 보관하는 일(`sanitizeRepoAgentSettings`), 잘라 낸 사실을 사용자에게
- * 보이게 하는 경고(`repoSettingsWarning`), 데스크톱이 실어 온 런타임을 레포
- * 명령의 PATH 앞에 붙이는 일(`extraPathPrefix`), 그리고 대화형 신뢰 대화상자가
- * 없는 데몬이 클론을 신뢰로 등록하는 일(`trustWorkspace`).
+ * 클론과 각 에이전트(Claude Code · omp · opencode) 사이의 네 가지 — 레포가
+ * 스스로 넓힌 권한을 잘라 내고 원본을 보관하는 일(`sanitizeRepoAgentSettings`),
+ * 잘라 낸 사실을 사용자에게 보이게 하는 경고(`repoSettingsWarning`), 데스크톱이
+ * 실어 온 런타임을 레포 명령의 PATH 앞에 붙이는 일(`extraPathPrefix`), 그리고
+ * 대화형 신뢰 대화상자가 없는 데몬이 클론을 신뢰로 등록하는 일
+ * (`trustWorkspace`). Codex 는 정책이 파일이 아니라 턴 파라미터
+ * (`drivers/codex/session.ts`)라 절단이 없다.
  *
  * `RepoWorkspace` 에서 떼어 둔 이유: 앞의 셋은 워크스페이스의 상태를 읽지
  * 않고, 온보딩 쪽에서도 쓰인다. `extraPathPrefix` 가 여기 있으면
  * `server → onboarding → repo` 순환도 끊긴다.
  */
 
-/** The settings files a repo can ship that the project tier loads verbatim. */
-const AGENT_SETTINGS_FILES = [".claude/settings.json", ".claude/settings.local.json"] as const;
+/** How a driver's project settings file parses (and therefore re-serializes). */
+type SettingsFormat = "json" | "jsonc" | "yaml";
+
+/** What one file gave up: the widening keys removed, and the object left behind. */
+interface SettingsCut {
+  removed: string[];
+  next: unknown;
+}
+
+/**
+ * One settings file a repo can ship that a driver's project tier loads
+ * verbatim — plus how to parse it and which of its keys widen.
+ */
+interface AgentSettingsFile {
+  rel: string;
+  format: SettingsFormat;
+  /** null = nothing widening present, or the file is broken (the CLI's news). */
+  strip: (parsed: unknown) => SettingsCut | null;
+}
 
 interface QuarantineEntry {
   /** Repo-relative path the entry was cut from. */
@@ -44,20 +64,23 @@ interface QuarantineRecord {
 }
 
 /**
- * The keys a repo must not get to set. `hooks` runs shell commands on
- * lifecycle events; `env` owns `ANTHROPIC_BASE_URL` and friends — a
- * repo-held faucet for every prompt and credential the session touches;
- * `permissions.allow` pre-approves tools no card will ever ask about.
- * `permissions.deny` and `permissions.ask` only narrow, so they survive.
+ * The invariant every driver's cut enforces: a repo may NARROW (deny · ask ·
+ * prompt rules survive everywhere) but must not WIDEN — pre-approve tools
+ * past every card, run code at startup, or own the endpoint/env faucet the
+ * session's prompts and credentials flow through.
  */
-function stripWideningSettings(raw: string): { stripped: string; removed: string[] } | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // A broken file is the CLI's news, not ours.
-    return null;
-  }
+
+/**
+ * Claude Code — `.claude/settings.json` · `.claude/settings.local.json`.
+ * `hooks` runs shell commands on lifecycle events; `env` owns
+ * `ANTHROPIC_BASE_URL` and friends — a repo-held faucet for every prompt and
+ * credential the session touches; `permissions.allow` pre-approves tools no
+ * card will ever ask about. `permissions.deny` and `permissions.ask` only
+ * narrow, so they survive. `permissions.defaultMode` survives too — the
+ * session's `managedSettings` clamp (`drivers/claude/session.ts`) is the
+ * enforcement there, not the file.
+ */
+function stripClaudeSettings(parsed: unknown): SettingsCut | null {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const removed: string[] = [];
   const out: Record<string, unknown> = {};
@@ -81,7 +104,263 @@ function stripWideningSettings(raw: string): { stripped: string; removed: string
     out[key] = value;
   }
   if (removed.length === 0) return null;
-  return { stripped: `${JSON.stringify(out, null, 2)}\n`, removed };
+  return { removed, next: out };
+}
+
+/**
+ * omp — `.omp/config.yml` · `.omp/config.yaml` · `.omp/settings.json`. The
+ * settings schema's own words: `tools.approval` allow entries "auto-approve"
+ * and are "honored in every approval mode"; `approvalMode: write|yolo`
+ * auto-approves whole tiers (`ask` narrows, so it survives); `bash.patterns`
+ * allow rules pre-approve bash commands; `bash.allowCompoundCommands: true`
+ * lets an allow rule cover a whole `&&` chain. `extensions` loads code at
+ * startup. `bash.patterns` deny/prompt entries and per-tool prompt/deny
+ * entries only narrow, so they survive.
+ */
+function stripOmpSettings(parsed: unknown): SettingsCut | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const src = parsed as Record<string, unknown>;
+  const removed: string[] = [];
+  const out: Record<string, unknown> = { ...src };
+  const approval = src.tools;
+  if (approval && typeof approval === "object" && !Array.isArray(approval)) {
+    const rest: Record<string, unknown> = {};
+    let toolsCut = false;
+    for (const [tool, policy] of Object.entries(approval as Record<string, unknown>)) {
+      if (tool === "approval") {
+        if (policy && typeof policy === "object" && !Array.isArray(policy)) {
+          const kept: Record<string, unknown> = {};
+          for (const [name, rule] of Object.entries(policy as Record<string, unknown>)) {
+            if (rule === "allow") toolsCut = true;
+            else kept[name] = rule;
+          }
+          if (toolsCut) {
+            if (!removed.includes("tools.approval:allow")) removed.push("tools.approval:allow");
+            if (Object.keys(kept).length > 0) rest.approval = kept;
+          } else {
+            rest.approval = policy;
+          }
+        } else {
+          rest.approval = policy;
+        }
+        continue;
+      }
+      if (tool === "approvalMode" && (policy === "write" || policy === "yolo")) {
+        if (!removed.includes("tools.approvalMode")) removed.push("tools.approvalMode");
+        toolsCut = true;
+        continue;
+      }
+      rest[tool] = policy;
+    }
+    if (toolsCut) {
+      if (Object.keys(rest).length > 0) out.tools = rest;
+      else delete out.tools;
+    }
+  }
+  const bash = src.bash;
+  if (bash && typeof bash === "object" && !Array.isArray(bash)) {
+    const rest: Record<string, unknown> = {};
+    let bashCut = false;
+    for (const [key, value] of Object.entries(bash as Record<string, unknown>)) {
+      if (key === "allowCompoundCommands" && value === true) {
+        if (!removed.includes("bash.allowCompoundCommands")) {
+          removed.push("bash.allowCompoundCommands");
+        }
+        bashCut = true;
+        continue;
+      }
+      if (key === "patterns" && Array.isArray(value)) {
+        const kept: unknown[] = [];
+        let allowCut = false;
+        for (const pattern of value) {
+          const entry = pattern as Record<string, unknown> | null;
+          if (entry && typeof entry === "object" && entry.approval === "allow") {
+            allowCut = true;
+            continue;
+          }
+          kept.push(pattern);
+        }
+        if (allowCut) {
+          removed.push("bash.patterns:allow");
+          if (kept.length > 0) rest.patterns = kept;
+        } else {
+          rest.patterns = value;
+        }
+        continue;
+      }
+      rest[key] = value;
+    }
+    if (bashCut) {
+      if (Object.keys(rest).length > 0) out.bash = rest;
+      else delete out.bash;
+    }
+  }
+  if (Array.isArray(src.extensions)) {
+    removed.push("extensions");
+    delete out.extensions;
+  }
+  if (removed.length === 0) return null;
+  return { removed, next: out };
+}
+
+/**
+ * opencode — `opencode.json` · `opencode.jsonc`. `permission` (top level and
+ * per agent) with any "allow" — the string form, a per-tool action, or a
+ * pattern map entry — pre-approves those tools; "ask"/"deny" survive.
+ * `mcp.<name>` entries with `type: "local"` spawn a command at startup
+ * (remote entries only add later-carded tools, so they survive); `plugin`
+ * loads code. opencode also auto-loads `<repo>/.opencode/plugin/*.ts` — a
+ * directory convention, not a key, so it stays outside this cut.
+ */
+function stripOpencodeSettings(parsed: unknown): SettingsCut | null {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const src = parsed as Record<string, unknown>;
+  const removed: string[] = [];
+  const out: Record<string, unknown> = { ...src };
+
+  const stripPermission = (rule: unknown): { kept: unknown; cut: boolean } => {
+    if (rule === "allow") return { kept: undefined, cut: true };
+    if (rule && typeof rule === "object" && !Array.isArray(rule)) {
+      const kept: Record<string, unknown> = {};
+      let cut = false;
+      for (const [name, action] of Object.entries(rule as Record<string, unknown>)) {
+        if (action === "allow") {
+          cut = true;
+          continue;
+        }
+        if (action && typeof action === "object" && !Array.isArray(action)) {
+          const keptPatterns: Record<string, unknown> = {};
+          for (const [pattern, verdict] of Object.entries(action as Record<string, unknown>)) {
+            if (verdict === "allow") cut = true;
+            else keptPatterns[pattern] = verdict;
+          }
+          if (Object.keys(keptPatterns).length > 0) kept[name] = keptPatterns;
+          continue;
+        }
+        kept[name] = action;
+      }
+      return { kept: Object.keys(kept).length > 0 ? kept : undefined, cut };
+    }
+    return { kept: rule, cut: false };
+  };
+
+  const applyPermission = (holder: Record<string, unknown>, key: string): boolean => {
+    const result = stripPermission(holder[key]);
+    if (!result.cut) return false;
+    if (!removed.includes("permission:allow")) removed.push("permission:allow");
+    if (result.kept === undefined) delete holder[key];
+    else holder[key] = result.kept;
+    return true;
+  };
+
+  applyPermission(out, "permission");
+  const agents = out.agent;
+  if (agents && typeof agents === "object" && !Array.isArray(agents)) {
+    for (const agent of Object.values(agents as Record<string, unknown>)) {
+      if (agent && typeof agent === "object" && !Array.isArray(agent)) {
+        applyPermission(agent as Record<string, unknown>, "permission");
+      }
+    }
+  }
+
+  const mcp = out.mcp;
+  if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) {
+    const kept: Record<string, unknown> = {};
+    let localCut = false;
+    for (const [name, server] of Object.entries(mcp as Record<string, unknown>)) {
+      const entry = server as Record<string, unknown> | null;
+      if (entry && typeof entry === "object" && entry.type === "local" && entry.enabled !== false) {
+        localCut = true;
+        continue;
+      }
+      kept[name] = server;
+    }
+    if (localCut) {
+      removed.push("mcp:local");
+      if (Object.keys(kept).length > 0) out.mcp = kept;
+      else delete out.mcp;
+    }
+  }
+  if (Array.isArray(out.plugin) && out.plugin.length > 0) {
+    removed.push("plugin");
+    delete out.plugin;
+  }
+  if (removed.length === 0) return null;
+  return { removed, next: out };
+}
+
+/** Every project settings file a repo can ship, per driver, with its format. */
+const REPO_AGENT_SETTINGS: AgentSettingsFile[] = [
+  { rel: ".claude/settings.json", format: "json", strip: stripClaudeSettings },
+  { rel: ".claude/settings.local.json", format: "json", strip: stripClaudeSettings },
+  { rel: ".omp/config.yml", format: "yaml", strip: stripOmpSettings },
+  { rel: ".omp/config.yaml", format: "yaml", strip: stripOmpSettings },
+  { rel: ".omp/settings.json", format: "json", strip: stripOmpSettings },
+  { rel: "opencode.json", format: "json", strip: stripOpencodeSettings },
+  { rel: "opencode.jsonc", format: "jsonc", strip: stripOpencodeSettings },
+];
+
+/**
+ * JSONC = JSON plus comments (line and block) plus trailing commas. A
+ * string-aware one-pass stripper: outside strings it drops comments, and a
+ * comma is kept only when the next non-comment, non-whitespace character is
+ * not a closing bracket. Parse failure is the CLI's news, not ours.
+ */
+function parseJsonc(raw: string): unknown {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        if (i + 1 < raw.length) out += raw[++i];
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "/" && raw[i + 1] === "/") {
+      while (i < raw.length && raw[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && raw[i + 1] === "*") {
+      i += 2;
+      while (i + 1 < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < raw.length && /\s/.test(raw.charAt(j))) j++;
+      if (raw.charAt(j) === "}" || raw.charAt(j) === "]") continue;
+    }
+    out += ch;
+  }
+  return JSON.parse(out);
+}
+
+function parseSettings(raw: string, format: SettingsFormat): unknown {
+  try {
+    if (format === "json") return JSON.parse(raw);
+    if (format === "jsonc") return parseJsonc(raw);
+    return parseYaml(raw);
+  } catch {
+    // A broken file is the CLI's news, not ours.
+    return null;
+  }
+}
+
+function serializeSettings(value: unknown, format: SettingsFormat): string {
+  if (format === "yaml") return stringifyYaml(value);
+  // A cut jsonc file rewrites as plain JSON — the comments it carried sat on
+  // keys we are about to name in the warning anyway, and JSON is valid input.
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 function readQuarantine(root: string, configDir: string): QuarantineRecord | null {
@@ -100,14 +379,14 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
 }
 
 /**
- * Cut the widening keys out of a clone's Claude Code project settings before
- * any session loads them. The project tier itself is deliberate — it is how
- * the repo's CLAUDE.md reaches the session — but the tier's trust is auto-
- * accepted here (see `trustWorkspace`), so a repo shipping `hooks` would
- * otherwise run shell commands at session start, or pre-approve tools past
- * every card, with a passive warning line as the only trace. Now the keys
- * are gone before the CLI reads the file; the original bytes go to a 0600
- * quarantine record under the daemon's config dir, and
+ * Cut the widening keys out of a clone's project settings — Claude Code,
+ * omp, and opencode — before any session loads them. The project tier itself
+ * is deliberate — it is how the repo's CLAUDE.md reaches the session — but
+ * the tier's trust is auto-accepted here (see `trustWorkspace`), so a repo
+ * shipping `hooks` would otherwise run shell commands at session start, or
+ * pre-approve tools past every card, with a passive warning line as the only
+ * trace. Now the keys are gone before the CLI reads the file; the original
+ * bytes go to a 0600 quarantine record under the daemon's config dir, and
  * `repoSettingsWarning` speaks from that record.
  *
  * Runs at clone, at every bring-up refresh (a pull can restore the file),
@@ -118,27 +397,36 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
  */
 export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
   const record = readQuarantine(root, configDir) ?? { root, at: "", files: [] };
-  const entries = new Map(record.files.map((entry) => [entry.file, entry]));
+  const entries = record.files.slice();
   let changed = false;
-  for (const rel of AGENT_SETTINGS_FILES) {
+  for (const settings of REPO_AGENT_SETTINGS) {
     let raw: string;
     try {
-      raw = readFileSync(join(root, rel), "utf8");
+      raw = readFileSync(join(root, settings.rel), "utf8");
     } catch {
       continue; // Absent (the normal repo) or unreadable — nothing to cut.
     }
-    const cut = stripWideningSettings(raw);
+    const parsed = parseSettings(raw, settings.format);
+    if (!parsed) continue;
+    const cut = settings.strip(parsed);
     if (!cut) continue;
     // temp+rename — a crash never leaves half a settings file behind.
-    const file = join(root, rel);
+    const file = join(root, settings.rel);
     const temporary = `${file}.colo-design-${process.pid}`;
-    writeFileSync(temporary, cut.stripped, { mode: 0o644 });
+    writeFileSync(temporary, serializeSettings(cut.next, settings.format), { mode: 0o644 });
     renameSync(temporary, file);
-    entries.set(rel, { file: rel, removed: cut.removed, originalRaw: raw });
+    const fresh = { file: settings.rel, removed: cut.removed, originalRaw: raw };
+    const existing = entries.find((entry) => entry.file === settings.rel);
+    if (existing) {
+      existing.removed = fresh.removed;
+      existing.originalRaw = fresh.originalRaw;
+    } else {
+      entries.push(fresh);
+    }
     changed = true;
   }
   if (!changed) return false;
-  record.files = [...entries.values()];
+  record.files = entries;
   record.at = new Date().toISOString();
   const id = createHash("sha256").update(root).digest("hex");
   const target = join(configDir, "settings-quarantine", `${id}.json`);
