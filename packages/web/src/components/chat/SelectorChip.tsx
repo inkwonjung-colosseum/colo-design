@@ -84,6 +84,10 @@ export function SelectorChip({
     value: string | null;
     label: string;
     hint?: string;
+    /** 행 앞의 작은 표시 — 프로바이더 행은 각자의 마크를 단다. */
+    icon?: ReactNode;
+    /** 라벨 아래 두 번째 줄 — 못 고르는 이유처럼 잘리면 안 되는 말이 선다. */
+    desc?: string;
     picked: boolean;
     /** A row the planner may read but not pick — an agent this machine lacks. */
     disabled?: boolean;
@@ -105,24 +109,25 @@ export function SelectorChip({
   const searchable = alwaysSearch || options.length >= SEARCH_MIN_ROWS;
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLSpanElement>(null);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
 
   // 메뉴가 열릴 때마다 새 필드 — 이전에 반쯤 친 검색어가 다음 열림에
   // 남아 있으면, 지금 고르려는 것과 다른 목록을 보여 준다.
   useEffect(() => {
-    if (!open) return;
     setQuery("");
     setHighlight(0);
-    if (searchable) search.current?.focus();
-  }, [open, searchable]);
+  }, [open, levelKey]);
 
-  // 단계가 바뀔 때도 같은 리셋 — 모델 목록에서 친 찾기가 프로바이더 목록을
-  // 그대로 걸러 버리는 일이 없게.
+  // 초점은 열림과 찾기 유무가 정한다 — 찾기가 있는 메뉴는 필드로, 없는
+  // 메뉴는 목록 자체로. 단계가 바뀌면 찾기 유무가 함께 바뀌므로 같은
+  // 이펙트가 두 단계 모두의 키보드 손을 잡아 준다.
   useEffect(() => {
-    setQuery("");
-    setHighlight(0);
-  }, [levelKey]);
+    if (!open) return;
+    if (searchable) search.current?.focus();
+    else menu.current?.focus();
+  }, [open, searchable]);
 
   // 찾기는 행이 말하는 것으로만: 이름과, 모델 행이라면 오른쪽 가장자리의
   // 공급자·id. 대소문자는 잡아 주되 그 이상의 지능은 없다 — 팔레트와 같은
@@ -139,23 +144,35 @@ export function SelectorChip({
   // 줄어든 목록이 끝을 지나쳐도 강조가 남지 않게.
   const at = Math.min(highlight, Math.max(0, rows.length - 1));
   useEffect(() => {
-    if (!open || !searchable) return;
-    list.current?.querySelector(`[data-index="${at}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [open, searchable, at]);
-  const onSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    // Composition keys pass straight through: Enter would run a half-typed
-    // search and the arrows would yank the IME's candidate list.
-    if (composing(event)) return;
+    if (!open) return;
+    const scroller = list.current ?? menu.current;
+    scroller?.querySelector(`[data-index="${at}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [open, at]);
+  // 화살표·Enter 는 찾기 필드와 맨 메뉴가 같은 걸음으로 나눠 쓴다 —
+  // 프로바이더 단계처럼 필드가 없는 목록도 키보드로 고를 수 있어야 한다.
+  const onMenuKey = (event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setHighlight(Math.min(at + 1, rows.length - 1));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setHighlight(Math.max(at - 1, 0));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setHighlight(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setHighlight(Math.max(0, rows.length - 1));
     } else if (event.key === "Enter" && rows[at] && !rows[at].disabled) {
       event.preventDefault();
       onPick(rows[at].value);
     }
+  };
+  const onSearchKey = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // Composition keys pass straight through: Enter would run a half-typed
+    // search and the arrows would yank the IME's candidate list.
+    if (composing(event)) return;
+    onMenuKey(event);
   };
 
   // Escape closes — the one dismissal a keyboard-only planner will try first.
@@ -172,6 +189,36 @@ export function SelectorChip({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  const renderRow = (option: (typeof options)[number], index: number) => (
+    <button
+      key={String(option.value)}
+      id={`selector-opt-${index}`}
+      data-index={index}
+      type="button"
+      role="option"
+      aria-selected={option.picked}
+      disabled={option.disabled}
+      title={option.disabled ? option.desc : option.hint}
+      className={`selector__row${index === at ? " selector__row--on" : ""}${
+        option.hint ? " selector__row--hint" : ""
+      }${option.desc ? " selector__row--desc" : ""}`}
+      onMouseEnter={() => setHighlight(index)}
+      onClick={() => onPick(option.value)}
+    >
+      <span className="selector__check">{option.picked ? <CheckIcon size={11} /> : null}</span>
+      {option.icon && <span className="selector__rowicon">{option.icon}</span>}
+      {option.desc ? (
+        <span className="selector__text">
+          <span className="selector__label">{option.label}</span>
+          <span className="selector__desc">{option.desc}</span>
+        </span>
+      ) : (
+        <span className="selector__label">{option.label}</span>
+      )}
+      {option.hint && <span className="selector__hint">{option.hint}</span>}
+    </button>
+  );
 
   return (
     <span className="selector">
@@ -233,51 +280,22 @@ export function SelectorChip({
                 </span>
               </span>
             )}
-            {rows.map((option, index) => (
-              <button
-                key={String(option.value)}
-                id={`selector-opt-${index}`}
-                data-index={index}
-                type="button"
-                role="option"
-                aria-selected={option.picked}
-                disabled={option.disabled}
-                className={`selector__row${index === at ? " selector__row--on" : ""}${
-                  option.hint ? " selector__row--hint" : ""
-                }`}
-                onMouseEnter={() => setHighlight(index)}
-                onClick={() => onPick(option.value)}
-              >
-                <span className="selector__check">
-                  {option.picked ? <CheckIcon size={11} /> : null}
-                </span>
-                <span className="selector__label">{option.label}</span>
-                {option.hint && <span className="selector__hint">{option.hint}</span>}
-              </button>
-            ))}
+            {rows.map(renderRow)}
           </span>
         </span>
       )}
       {open && !searchable && (
-        <span className="selector__menu" role="listbox">
+        <span
+          ref={menu}
+          className="selector__menu"
+          role="listbox"
+          id="selector-list"
+          tabIndex={-1}
+          aria-activedescendant={rows[at] ? `selector-opt-${at}` : undefined}
+          onKeyDown={onMenuKey}
+        >
           {header && <div className="selector__head">{header}</div>}
-          {options.map((option) => (
-            <button
-              key={String(option.value)}
-              type="button"
-              role="option"
-              aria-selected={option.picked}
-              disabled={option.disabled}
-              className={`selector__row${option.hint ? " selector__row--hint" : ""}`}
-              onClick={() => onPick(option.value)}
-            >
-              <span className="selector__check">
-                {option.picked ? <CheckIcon size={11} /> : null}
-              </span>
-              <span className="selector__label">{option.label}</span>
-              {option.hint && <span className="selector__hint">{option.hint}</span>}
-            </button>
-          ))}
+          {rows.map(renderRow)}
         </span>
       )}
     </span>

@@ -1,30 +1,7 @@
 import { useState } from "react";
+import { readTodoList, type TodoItem } from "../../lib/todo-plan";
 import { ToolBlock } from "./blocks";
 import type { TodoToolBlock } from "./shared";
-
-interface TodoItem {
-  text: string;
-  status: "completed" | "in_progress" | "pending";
-}
-
-/**
- * the agent.s plan, read defensively out of a TodoWrite input: `content` is the
- * CLI's current shape, `activeForm` and `subject` are shapes other senders
- * used. Something that is not a todo list at all gets no card.
- */
-function todoItems(block: TodoToolBlock): TodoItem[] | null {
-  const input = block.input as { todos?: unknown } | null;
-  if (!input || !Array.isArray(input.todos)) return null;
-  return input.todos.map((entry): TodoItem => {
-    const item = (entry && typeof entry === "object" ? entry : {}) as Record<string, unknown>;
-    const text = [item.content, item.activeForm, item.subject].find(
-      (value): value is string => typeof value === "string" && value.trim() !== "",
-    );
-    const status =
-      item.status === "completed" || item.status === "in_progress" ? item.status : "pending";
-    return { text: text ?? "", status };
-  });
-}
 
 function TodoList({ todos }: { todos: TodoItem[] }) {
   return (
@@ -55,7 +32,7 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
  */
 function TodoCard({ block, ended }: { block: TodoToolBlock; ended: boolean }) {
   const [open, setOpen] = useState(false);
-  const todos = todoItems(block);
+  const todos = readTodoList(block.input);
   if (!todos || todos.length === 0) return <ToolBlock block={block} />;
 
   if (ended) {
@@ -89,4 +66,4 @@ function TodoCard({ block, ended }: { block: TodoToolBlock; ended: boolean }) {
   );
 }
 
-export { TodoCard };
+export { TodoCard, TodoList };

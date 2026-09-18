@@ -56,6 +56,7 @@ export function Tip({
   className,
   bubbleClass,
   open = false,
+  interactive = false,
   children,
 }: {
   /** What the element does. Falsy renders the bare child — callers can gate
@@ -72,6 +73,10 @@ export function Tip({
       While open the bubble takes pointer events so a 닫기 inside can be
       pressed (hover tips stay pointer-transparent). */
   open?: boolean;
+  /** A hover card the pointer may enter: the bubble takes events and stays
+      while it is hovered, so links and buttons inside can be used. Plain
+      tips stay pointer-transparent and die on leave. */
+  interactive?: boolean;
   children: ReactElement;
 }) {
   const id = useId();
@@ -79,6 +84,30 @@ export function Tip({
   const bubble = useRef<HTMLSpanElement>(null);
   const [shown, setShown] = useState(false);
   const [at, setAt] = useState<CSSProperties>({ left: -9999, top: -9999 });
+  // An interactive card survives the gap between trigger and bubble: the
+  // leave only schedules a hide, and entering the bubble cancels it. Plain
+  // tips keep the instant hide — nothing inside them can be reached anyway.
+  // The ref and its cleanup live with the other hooks: the falsy-label
+  // early return below means a Tip may render as the bare child, and a hook
+  // past that return would break the render's hook count (React #300).
+  const hideTimer = useRef<number | null>(null);
+  const cancelHide = () => {
+    if (hideTimer.current !== null) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  };
+  // Unmount with a hide still scheduled: drop it, or it fires on a dead
+  // component. The local holds the stable ref so the cleanup needs no deps.
+  useEffect(() => {
+    const timer = hideTimer;
+    return () => {
+      if (timer.current !== null) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+    };
+  }, []);
 
   // A gated tip (an open menu flips label to undefined) unmounts the wrapper
   // that hides on leave/blur, so the hide never arrives. Forgetting `shown`
@@ -134,6 +163,20 @@ export function Tip({
 
   const show = () => setShown(true);
   const hide = () => setShown(false);
+  const scheduleHide = () => {
+    if (!interactive) return hide();
+    cancelHide();
+    hideTimer.current = window.setTimeout(hide, 120);
+  };
+  // Focus leaving the trigger for a control inside the card is not a hide —
+  // the bubble's own blur closes it once focus leaves the card entirely.
+  const blurAnchor = (event: React.FocusEvent) => {
+    if (interactive && bubble.current?.contains(event.relatedTarget as Node | null)) return;
+    hide();
+  };
+  const blurBubble = (event: React.FocusEvent) => {
+    if (!bubble.current?.contains(event.relatedTarget as Node | null)) hide();
+  };
 
   const child = cloneElement(children, {
     "aria-describedby": [(children.props as Record<string, unknown>)["aria-describedby"], id]
@@ -147,12 +190,13 @@ export function Tip({
       ref={anchor}
       className={className ? `tip ${className}` : "tip"}
       onMouseEnter={show}
-      onMouseLeave={hide}
+      onMouseLeave={scheduleHide}
       onFocus={show}
-      onBlur={hide}
+      onBlur={blurAnchor}
     >
       {child}
       {createPortal(
+        // biome-ignore lint/a11y/noNoninteractiveElementInteractions: an interactive card takes the pointer so its rows are usable — role stays tooltip.
         <span
           ref={bubble}
           id={id}
@@ -162,7 +206,10 @@ export function Tip({
               ? `tip__bubble${shown || open ? " tip__bubble--shown" : ""} ${bubbleClass}`
               : `tip__bubble${shown || open ? " tip__bubble--shown" : ""}`
           }
-          style={open ? { ...at, pointerEvents: "auto" } : at}
+          style={open || interactive ? { ...at, pointerEvents: "auto" } : at}
+          onMouseEnter={interactive ? cancelHide : undefined}
+          onMouseLeave={interactive ? scheduleHide : undefined}
+          onBlur={interactive ? blurBubble : undefined}
         >
           {label}
         </span>,

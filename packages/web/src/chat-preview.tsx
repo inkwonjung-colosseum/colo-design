@@ -5,10 +5,10 @@
  * dist freely.
  */
 
-import type { LostSend, QueuedSend } from "@colo-design/protocol";
+import type { LostSend } from "@colo-design/protocol";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { PermissionCard, QuestionCard, Transcript } from "./components";
+import { PermissionCard, QuestionCard, Transcript, WorkStrip } from "./components";
 import { Composer } from "./components/chat/Composer";
 import type { PinAttachment } from "./hooks/usePins";
 import type { Block } from "./lib/daemon-client";
@@ -211,6 +211,22 @@ const runningBlocks: Block[] = [
       },
     },
   },
+  {
+    // 스트립이 셀 할 일 — 도는 중인 턴의 최신 목록.
+    type: "tool",
+    id: "k8",
+    name: "TodoWrite",
+    input: {
+      todos: [
+        { content: "네 화면 관례 조사", status: "completed" },
+        { content: "목록 화면 만들기", status: "in_progress" },
+        { content: "상세 · 수정 화면 만들기", status: "pending" },
+        { content: "미리보기에서 검증", status: "pending" },
+      ],
+    },
+    agentId: null,
+    done: false,
+  },
 ];
 
 function PlannerShell({
@@ -247,21 +263,13 @@ function PlannerShell({
         }),
       )
     : [];
-  const crowdQueue: QueuedSend[] = crowded
-    ? [
-        "세션 확인이랑 토큰 갱신이 겹쳐 도는 것 같아요",
-        "로그인 버튼 누르고 반응까지 시간도 재 주세요",
-        "새로고침해도 상태가 유지되는지 확인해 주세요",
-        "콘솔에 찍히는 경고도 같이 정리해 주세요",
-        "다 끝나면 바뀐 파일 목록만 요약해 주세요",
-      ].map((text, index) => ({ id: `q-${index + 1}`, text, images: index === 1 ? 1 : 0 }))
-    : [];
   const crowdDropped: LostSend[] = crowded
     ? [
         {
           id: "lost-1",
           text: "로그아웃 후에도 토큰이 남는 시나리오도 봐 주세요",
           images: 0,
+          files: 1,
           lostAt: Date.now() - 60_000,
         },
       ]
@@ -309,6 +317,8 @@ function PlannerShell({
           </button>
         )}
       </div>
+      {/* 컴포저 위의 목차 스트립 — ChatColumn 이 놓는 자리와 같다. */}
+      <WorkStrip blocks={live ? runningBlocks : blocks} />
       <Composer
         disabled={false}
         draftKey="preview"
@@ -321,23 +331,34 @@ function PlannerShell({
           plan: null,
           sessionCostUsd: 1.66,
         }}
-        plan={{
-          provider: "claude",
-          subscriptionType: "max",
-          fiveHour: { utilization: 42, resetsAt: null },
-          sevenDay: { utilization: 21, resetsAt: null },
-          modelWeekly: [{ label: "Fable", utilization: 68, resetsAt: null }],
-        }}
+        plans={[
+          {
+            plan: {
+              provider: "claude",
+              subscriptionType: "max",
+              fiveHour: { utilization: 42, resetsAt: null },
+              sevenDay: { utilization: 21, resetsAt: null },
+              modelWeekly: [{ label: "Fable 주간", utilization: 68, resetsAt: null }],
+            },
+            label: "Claude",
+          },
+          {
+            plan: {
+              provider: "codex",
+              subscriptionType: "free",
+              fiveHour: null,
+              sevenDay: null,
+              modelWeekly: [{ label: "이번 달", utilization: 0, resetsAt: null }],
+            },
+            label: "Codex",
+          },
+        ]}
         suggestion={live ? null : "정지 회원 안내 문구를 Alert 로 바꿔 줄까요?"}
         onDismissSuggestion={() => undefined}
         tasks={live ? [{ taskId: "task_2", type: "shell", description: "pnpm -s build" }] : []}
         onStopTask={() => undefined}
         pins={crowdPins}
-        queue={crowdQueue}
         dropped={crowdDropped}
-        onTakeQueued={async () => null}
-        onSendQueuedNow={async () => undefined}
-        onClearQueue={() => undefined}
         onTakeDropped={async () => null}
         onDismissDropped={() => undefined}
         onPinRemove={() => undefined}
@@ -511,7 +532,7 @@ function Preview() {
                     plan: null,
                     sessionCostUsd: 0.42,
                   }}
-                  plan={null}
+                  plans={[]}
                   running={true}
                   sendKey="enter"
                   selector={{

@@ -18,6 +18,7 @@ import type {
 import { PLAN_TOOL } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
+import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { MessageTranslator } from "./event-mapper.js";
 
@@ -134,10 +135,15 @@ export class ClaudeAgentSession implements AgentSession {
   private shutdownReason: string | null = null;
   /** SDK 질의의 취소 수단 — 생성자에서 질의에 묶는다. */
   private readonly abort = new AbortController();
-
+  /** 바이너리 첨부가 놓이는 작업실 — 세션의 cwd. */
+  private readonly cwd: string;
+  /** 기동 때 박은 모델 — 상속된 환경변수의 에코와 구별하는 근거. */
+  private readonly pinnedModel: string | null | undefined;
   constructor(launch: ClaudeLaunch, hooks: DriverHooks) {
     this.hooks = hooks;
     this.id = launch.sessionId;
+    this.cwd = launch.cwd;
+    this.pinnedModel = launch.model;
     // 프로젝트 티어가 적재되기 직전의 마지막 방어선: 턴 도중 에이전트가
     // .claude/settings.json 을 고쳐 권한을 넓혀도, 다음 질의는 잘려 나간
     // 파일을 본다(클론·갱신·기동 스윕과 같은 칼, 이미 깨끗하면 무동작).
@@ -268,12 +274,12 @@ export class ClaudeAgentSession implements AgentSession {
   }
 
   async send(turn: Turn): Promise<void> {
-    const images = turn.images ?? [];
+    const prepared = prepareAttachments(this.cwd, turn.attachments);
     const content =
-      images.length > 0
+      prepared.images.length > 0 || prepared.sections.length > 0
         ? [
-            { type: "text" as const, text: turn.text },
-            ...images.map((image) => ({
+            { type: "text" as const, text: composeTurnText(turn.text, prepared) },
+            ...prepared.images.map((image) => ({
               type: "image" as const,
               source: {
                 type: "base64" as const,
@@ -441,15 +447,17 @@ export class ClaudeAgentSession implements AgentSession {
     } catch {
       models = [];
     }
-    return models.map((model) => ({
-      value: model.value,
-      displayName: model.displayName,
-      resolvedModel: model.resolvedModel ?? null,
-      description: model.description,
-      supportsEffort: model.supportsEffort ?? false,
-      supportedEffortLevels: model.supportedEffortLevels ?? null,
-      supportsFastMode: model.supportsFastMode ?? false,
-    }));
+    return models
+      .map((model) => ({
+        value: model.value,
+        displayName: model.displayName,
+        resolvedModel: model.resolvedModel ?? null,
+        description: model.description,
+        supportsEffort: model.supportsEffort ?? false,
+        supportedEffortLevels: model.supportedEffortLevels ?? null,
+        supportsFastMode: model.supportsFastMode ?? false,
+      }))
+      .filter((row) => !isAmbientModelEcho(row, this.pinnedModel));
   }
 
   /** The composer's /command palette: names, descriptions, argument hints. */
@@ -477,6 +485,22 @@ export class ClaudeAgentSession implements AgentSession {
     if ((await this.settleInterrupt(CLOSE_GRACE_MS)) === "timeout") this.abort.abort();
     await this.consumer.catch(() => undefined);
   }
+}
+
+/**
+ * The CLI echoes whatever `ANTHROPIC_MODEL` its process inherited back as one
+ * extra "Custom model" row at the list's tail. The daemon often wakes inside
+ * an agent harness's terminal that exported the variable for its own routed
+ * models, so the picker would offer a row naming a model the subscription
+ * API cannot run — picking it breaks turns. That echo is ambient config, not
+ * a capability, and loses its row; a model pinned at launch keeps its row,
+ * because that spelling was chosen for this session, not inherited.
+ */
+function isAmbientModelEcho(row: SessionModelInfo, pinned: string | null | undefined): boolean {
+  const ambient = process.env.ANTHROPIC_MODEL;
+  if (ambient === undefined || row.description !== "Custom model") return false;
+  if (row.value !== ambient && row.resolvedModel !== ambient) return false;
+  return pinned == null || (row.value !== pinned && row.resolvedModel !== pinned);
 }
 
 /**
@@ -588,9 +612,10 @@ function toPlanUsage(usage: SDKControlGetUsageResponse): PlanUsage | null {
     // The per-model weekly rows (Fable, Opus, …) are additive and named by
     // the server, so they are carried through as they arrive rather than
     // picked one by one — a bucket this build has never heard of still gets
-    // its row.
+    // its row. The label spells the period too: the chip renders it
+    // verbatim, and "Fable" alone would not say the row is a week.
     modelWeekly: (limits.model_scoped ?? []).map((row) => ({
-      label: row.display_name,
+      label: `${row.display_name} 주간`,
       utilization: row.utilization,
       resetsAt: row.resets_at,
     })),

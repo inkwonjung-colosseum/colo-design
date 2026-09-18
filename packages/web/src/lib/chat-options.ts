@@ -43,18 +43,6 @@ export const MODE_MENU_HINT: Record<PermissionMode, string> = {
 };
 
 /**
- * 생각 시간 행의 한 줄 — Low/High 만으로는 무엇이 달라지는지 알 수 없어서,
- * 오를수록 꼼꼼하고 느려진다는 축을 각 행이 말한다.
- */
-export const EFFORT_MENU_HINT: Record<EffortLevel, string> = {
-  low: "빠르게 답합니다",
-  medium: "보통의 꼼꼼함",
-  high: "더 오래, 더 꼼꼼하게",
-  xhigh: "가장 꼼꼼한 단계 아래",
-  max: "가장 오래, 가장 꼼꼼하게",
-};
-
-/**
  * The 확인 방식 choices both menus offer — 설정 and the composer popover
  * alike, in widening order. `dontAsk` stays reachable through the API but off
  * the menus.

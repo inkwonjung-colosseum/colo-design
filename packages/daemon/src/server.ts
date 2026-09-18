@@ -512,7 +512,7 @@ export class DaemonServer {
       idleSession: (provider) =>
         [...this.manager.all()]
           .filter((candidate) => candidate.state === "idle")
-          .filter((candidate) => provider === undefined || candidate.provider === provider)
+          .filter((candidate) => candidate.provider === provider)
           .sort((a, b) => b.lastActivity - a.lastActivity)[0] ?? null,
       claudeExecutable: () => this.claudeExecutable,
       probeCwd: () => {
@@ -1146,7 +1146,7 @@ export class DaemonServer {
     return {
       ...base,
       repoSettingsWarning: repoSettings,
-      planUsage: this.plans.current(),
+      planUsageByProvider: this.plans.currentAll(this.agentDrivers.all().map((d) => d.id)),
       modelsByProvider: this.plans.models,
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,

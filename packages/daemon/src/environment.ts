@@ -416,7 +416,11 @@ export async function buildStatus(input: {
 }): Promise<
   Omit<
     DaemonStatus,
-    "planUsage" | "modelsByProvider" | "projects" | "activeProject" | "repoSettingsWarning"
+    | "planUsageByProvider"
+    | "modelsByProvider"
+    | "projects"
+    | "activeProject"
+    | "repoSettingsWarning"
   >
 > {
   const warnings: string[] = [];

@@ -160,11 +160,6 @@ async function main() {
       "확인 방식 starts on 전부 맡기기",
       (await page.getByLabel("확인 방식").inputValue()) === "bypassPermissions",
     );
-    await openCategory(page, "동작");
-    check(
-      "실행 중 보내기 starts on 다음 턴에 보내기",
-      await picked(page, "실행 중 보내기", "다음 턴에 보내기"),
-    );
 
     // 3. theme applies live and persists. The picker is a gallery of live
     //    palette tiles now, not a select — a palette is chosen by its colour.
@@ -275,20 +270,17 @@ async function main() {
     // 5. behaviour choices survive a reload.
     await openCategory(page, "동작");
     await pick(page, "보내기 키", "⌘/Ctrl+Enter");
-    await pick(page, "실행 중 보내기", "끊고 보내기");
     const before = await stored(page);
     check(
-      "behaviour choices are stored together and the delete-confirm row is gone",
+      "the behaviour choice is stored and the delete-confirm row is gone",
       before?.sendKey === "modEnter" &&
-        before?.midTurnSend === "interrupt" &&
         (await page.getByLabel("기획을 삭제하기 전에 확인").count()) === 0,
     );
     // The row's summary is the value's echo — a change rewrites it in place.
     check(
       "the 동작 summary echoes the choice just made",
       (await page.locator('[data-testid="settings-nav-behavior"] .acc__sum').innerText()) ===
-        "⌘/Ctrl+Enter · 끊고 보내기",
-      await page.locator('[data-testid="settings-nav-behavior"] .acc__sum').innerText(),
+        "⌘/Ctrl+Enter",
     );
 
     // 5b. the type scale: three px knobs that land on <html> as inline
@@ -430,8 +422,7 @@ async function main() {
     await openCategory(page, "동작");
     check(
       "the panel reopens on the stored values",
-      (await picked(page, "보내기 키", "⌘/Ctrl+Enter")) &&
-        (await picked(page, "실행 중 보내기", "끊고 보내기")),
+      await picked(page, "보내기 키", "⌘/Ctrl+Enter"),
     );
     // 5c. 알림: 완료 알림만 시점을 고르고, 소리는 그 옆에
     //     산다. 기본은 "오래 걸린 턴만" — 모든 턴마다 울리지 않는다.
@@ -652,10 +643,6 @@ async function main() {
     await page.getByRole("button", { name: "설정" }).click();
     await openCategory(page, "동작");
     check("a non-string send key falls back too", await picked(page, "보내기 키", "Enter"));
-    check(
-      "an absent 실행 중 보내기 falls back to the queue default",
-      await picked(page, "실행 중 보내기", "다음 턴에 보내기"),
-    );
     check(
       "an absent type size falls back to each axis' base",
       (await scaleVar("--ui-scale")) === 1 &&

@@ -12,14 +12,6 @@ import type { PlanUsage, SessionModelInfo } from "./session.js";
  */
 
 /**
- * 이 대화의 사이클 위치 (P3-1): the session tape's LAST cycle row, read per
- * session — `saved` a cycle.saved landed here, `handed` a cycle.handed,
- * `merged` a cycle.merged, `review` a review.arrived. The leaf's status dot
- * wears it; absent means this conversation has no cycle rows at all.
- */
-export type ThreadCycle = "saved" | "handed" | "merged" | "review";
-
-/**
  * 연결 준비 대화의 이름 — the tool opens it itself once on a repo whose
  * conventions are not written yet (PLAN D94). The tree reads the words to
  * tell the tool's own record from the planner's conversations; the constant
@@ -34,8 +26,6 @@ export interface ThreadSummary {
      a turn ended and nothing has followed it; `idle` everything else. */
   state: "running" | "awaiting" | "finished" | "idle";
   updatedAt: string;
-  /** The tape's last cycle row for this conversation — 대화별 여정의 원천. */
-  cycle?: ThreadCycle;
 }
 
 /**
@@ -49,6 +39,13 @@ export interface ProjectSummary {
   name: string;
   /** What a handoff PR targets. */
   baseBranch: string;
+  /** The branch 저장 pushes to this cycle — null until the first save. */
+  branch?: string | null;
+  /** The preview the clone's server answers on — only while a workspace is
+      live and ready; an inactive or never-touched project omits it. */
+  previewUrl?: string | null;
+  /** The clone's folder on this machine — the hover card's 폴더 열기 target. */
+  repoRoot?: string;
   /** The clone url this project works on — 등록 목록의 재등록 방지가 읽는다. */
   repoUrl?: string | null;
   /** Disk/process state. Only the active project climbs past `ready`; an inactive cloned one reports `ready` from disk alone. */
@@ -157,11 +154,15 @@ export interface DaemonStatus {
    */
   cdsRegistryAuth: "ok" | "unauthenticated" | "unknown";
   /**
-   * The plan's rolling limits as the daemon last saw them. Cached daemon-wide
-   * so the composer can show them without a session open; null until some
-   * session has reported once (and for API-key sessions, which have no plan).
+   * The plan's rolling limits per provider's account, as the daemon last saw
+   * them. One machine signs into one account per provider — claude's 43% and
+   * codex's are different budgets, so the readings live side by side and the
+   * composer reads the row of the provider it is about to spend. Cached
+   * daemon-wide so the composer can show them without a session open; a
+   * provider missing from the map has not reported yet (and for API-key
+   * sessions, which have no plan, it never will).
    */
-  planUsage: PlanUsage | null;
+  planUsageByProvider: Record<string, PlanUsage>;
   /**
    * The model rows each provider's CLI offers, cached daemon-wide so the
    * composer can offer a choice before any thread exists. Keyed by provider

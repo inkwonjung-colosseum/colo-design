@@ -5,7 +5,7 @@ import { probePlanUsage } from "./agent/drivers/claude/session.js";
 import { CONFIG_DIR } from "./environment.js";
 import type { Session } from "./session.js";
 
-/** Where the last plan-limit reading waits for the next start. */
+/** Where the last plan-limit readings wait for the next start. */
 function planUsageFile(env: NodeJS.ProcessEnv = process.env): string {
   return env.COLO_DESIGN_PLAN_USAGE ?? join(CONFIG_DIR, "plan-usage.json");
 }
@@ -32,11 +32,13 @@ function refilled<T extends PlanWindow>(window: T, now: number): T {
 
 export interface PlanTrackerDeps {
   /**
-   * The most recently active idle session — a live reading rides it. With a
-   * provider, only that provider's most recent idle session answers: a
-   * codex rate-limit hit must not be answered by reading claude.
+   * The most recently active idle session of one provider — a live reading
+   * rides it. A codex rate-limit hit must not be answered by reading claude:
+   * the limits are the account's, and one machine signs into one account per
+   * provider, so every ask names its provider and only that provider's
+   * session answers.
    */
-  idleSession: (provider?: string) => Pick<Session, "usage"> | null;
+  idleSession: (provider: string) => Pick<Session, "usage"> | null;
   claudeExecutable: () => string | null;
   /** Where a probe CLI runs when no session can be asked. */
   probeCwd: () => string;
@@ -53,29 +55,27 @@ export interface PlanTrackerDeps {
 }
 
 /**
- * The account's plan limits and the CLI's model catalog — both belong to the
- * account, not to one thread: whatever reading lands last stands for every
- * client, so the composer can show them with no session open at all. The last
- * reading also survives a restart (each rides a file under CONFIG_DIR), and it
- * settles what the run still owes — one fresh reading per run, because the
- * cache on disk is only as complete as the build that wrote it and the
- * account's numbers move whether this daemon is running or not.
+ * Each provider account's plan limits, and the CLI's model catalog — both
+ * belong to the account, not to one thread. One machine signs into one
+ * account per provider, so the readings live in a map keyed by provider and
+ * the composer reads the row of the provider it is about to spend: a planner
+ * working in codex must see codex's budget, not claude's.
  */
 export class PlanTracker {
-  /** Minimum spacing between re-reads of the plan's limits. */
+  /** Minimum spacing between re-reads of one provider's limits. */
   private static readonly REFRESH_BACKOFF_MS = 120_000;
-  /** Last time `refresh` actually asked, epoch ms. */
-  private lastPlanRefresh = 0;
-  /** Account-wide plan limits: last reading, restored across restarts. */
-  private planUsage: PlanUsage | null;
+  /** Last time each provider was actually asked, epoch ms. */
+  private lastPlanRefresh: Record<string, number> = {};
+  /** Per-provider plan limits: last reading, restored across restarts. */
+  private planUsage: Record<string, PlanUsage>;
   /**
-   * One fresh reading is owed per run. The cache on disk is only as complete
-   * as the build that wrote it — one from before per-model weeks carries no
-   * Fable row at all — and the account's numbers move whether this daemon is
-   * running or not, so the chip opens on a reading of its own rather than on
-   * whatever the last turn happened to leave behind.
+   * One fresh reading is owed per provider. The cache on disk is only as
+   * complete as the build that wrote it — one from before per-model weeks
+   * carries no Fable row at all — and the account's numbers move whether
+   * this daemon is running or not, so the chip opens on a reading of its own
+   * rather than on whatever the last turn happened to leave behind.
    */
-  private planReadingOwed = true;
+  private readonly planReadingOwed = new Set<string>(["claude"]);
   /** Each provider's model rows, cached so the picker works before any thread. */
   private modelRows: Record<string, SessionModelInfo[]>;
   /** Providers whose session-less catalog this run already asked for. */
@@ -83,6 +83,7 @@ export class PlanTracker {
 
   constructor(private readonly deps: PlanTrackerDeps) {
     this.planUsage = this.loadPlanUsage();
+    for (const provider of Object.keys(this.planUsage)) this.planReadingOwed.add(provider);
     this.modelRows = this.loadModels();
   }
 
@@ -116,30 +117,32 @@ export class PlanTracker {
    * 세션으로. 다른 계정을 읽어 대신하는 건 "맞는 모양의 틀린 답"이라 침묵이
    * 낫다.
    */
-  noteRateLimit(provider = "claude"): void {
-    this.planReadingOwed = true;
-    this.lastPlanRefresh = 0;
+  noteRateLimit(provider: string): void {
+    this.planReadingOwed.add(provider);
+    this.lastPlanRefresh[provider] = 0;
     this.refresh(provider);
   }
 
   /**
    * Plan limits belong to the account, not to one thread: whatever reading
-   * lands last stands for every client, so the composer can show them with no
-   * session open at all. The last reading also survives a restart, and it
-   * settles what the run still owes — one reading has now been had.
+   * lands last stands for that provider's every client, so the composer can
+   * show them with no session open at all. The last reading also survives a
+   * restart, and it settles what the run still owes — one reading has now
+   * been had.
    */
   rememberPlanUsage(plan: PlanUsage | null): void {
     if (!plan) return;
-    this.planReadingOwed = false;
+    const provider = plan.provider ?? "claude";
+    this.planReadingOwed.delete(provider);
     // The account was just asked, however the answer travelled — the next
     // backoff window starts at the answer, so a reading that raced a refresh
     // collapses into it instead of paying for a second ask.
-    this.lastPlanRefresh = Date.now();
-    if (JSON.stringify(plan) === JSON.stringify(this.planUsage)) return;
-    this.planUsage = plan;
+    this.lastPlanRefresh[provider] = Date.now();
+    if (JSON.stringify(plan) === JSON.stringify(this.planUsage[provider])) return;
+    this.planUsage = { ...this.planUsage, [provider]: plan };
     try {
       mkdirSync(CONFIG_DIR, { recursive: true });
-      writeFileSync(planUsageFile(), `${JSON.stringify(plan, null, 2)}\n`);
+      writeFileSync(planUsageFile(), `${JSON.stringify(this.planUsage, null, 2)}\n`);
     } catch {
       // A cache that cannot be written just means the next start shows nothing.
     }
@@ -147,65 +150,71 @@ export class PlanTracker {
   }
 
   /**
-   * The cached reading as the composer may see it now. A window whose reset
-   * has passed is refilled here, not just on load — a daemon that sits for
-   * hours would otherwise keep saying 43% about a window that no longer
+   * Every provider's reading as the composer may see it now. A window whose
+   * reset has passed is refilled here, not just on load — a daemon that sits
+   * for hours would otherwise keep saying 43% about a window that no longer
    * exists — and the row keeps its place either way, because a planner
    * checking whether the weekly Fable cap is near must find it there whatever
    * the answer turns out to be. A reset also asks for a fresh reading: it is
    * exactly when the number matters again, and the next turn is not the only
    * moment one can land.
+   *
+   * A provider with no reading yet owes one — the first codex session to go
+   * idle is asked even before its first turn, which is the whole point: the
+   * planner who just opened codex is exactly the one who needs its numbers
+   * now. A provider that can never answer (the session-less drivers) pays
+   * for that with one no-op ask per backoff window — a resolved null, no
+   * subprocess — until its first reading retires the debt.
    */
-  current(): PlanUsage | null {
-    const plan = this.planUsage;
-    if (!plan) {
-      this.refresh();
-      return null;
-    }
+  currentAll(providers: readonly string[]): Record<string, PlanUsage> {
     const now = Date.now();
-    const fiveHour = plan.fiveHour ? refilled(plan.fiveHour, now) : null;
-    const sevenDay = plan.sevenDay ? refilled(plan.sevenDay, now) : null;
-    const modelWeekly = plan.modelWeekly.map((row) => refilled(row, now));
-    // `refilled` hands back the same object when nothing moved, so identity
-    // is the whole test for "a window reset since this reading".
-    const reset =
-      fiveHour !== plan.fiveHour ||
-      sevenDay !== plan.sevenDay ||
-      modelWeekly.some((row, index) => row !== plan.modelWeekly[index]);
-    if (reset || this.planReadingOwed) this.refresh();
-    if (!reset) return plan;
-    return { ...plan, fiveHour, sevenDay, modelWeekly };
+    const out: Record<string, PlanUsage> = {};
+    for (const provider of providers) {
+      const plan = this.planUsage[provider];
+      if (!plan) {
+        this.planReadingOwed.add(provider);
+        this.refresh(provider);
+        continue;
+      }
+      const fiveHour = plan.fiveHour ? refilled(plan.fiveHour, now) : null;
+      const sevenDay = plan.sevenDay ? refilled(plan.sevenDay, now) : null;
+      const modelWeekly = plan.modelWeekly.map((row) => refilled(row, now));
+      // `refilled` hands back the same object when nothing moved, so identity
+      // is the whole test for "a window reset since this reading".
+      const reset =
+        fiveHour !== plan.fiveHour ||
+        sevenDay !== plan.sevenDay ||
+        modelWeekly.some((row, index) => row !== plan.modelWeekly[index]);
+      if (reset || this.planReadingOwed.has(provider)) this.refresh(provider);
+      out[provider] = reset ? { ...plan, fiveHour, sevenDay, modelWeekly } : plan;
+    }
+    return out;
   }
 
   /**
-   * Re-read the plan's limits, through the most recently active idle session
-   * when there is one and a probe CLI when there is not — the limits are the
-   * account's, so a planner who has opened no thread is exactly the planner
-   * most in need of being told. Failures stay silent: the cache keeps serving
-   * whatever it still has. Spaced out because status() runs on every
-   * broadcast, and a CLI that cannot answer must not turn those broadcasts
-   * into a request storm.
+   * Re-read one provider's limits, through the most recently active idle
+   * session of that provider — claude falls back to a probe CLI when no
+   * session is idle, because the limits are the account's and a planner who
+   * has opened no thread is exactly the planner most in need of being told.
+   * Failures stay silent: the cache keeps serving whatever it still has.
+   * Spaced out because status() runs on every broadcast, and a CLI that
+   * cannot answer must not turn those broadcasts into a request storm.
    *
    * A scoped ask (a rate-limit hit naming its account) stays scoped: with
    * none of that provider's sessions idle, the reading stays owed and the
    * next natural window tries again — silence beats the right shape of the
-   * wrong answer, and the tag would only caption the substitution.
+   * wrong answer, and the row would only caption the substitution.
    */
-  refresh(provider?: string): void {
+  refresh(provider: string): void {
     const now = Date.now();
-    if (now - this.lastPlanRefresh < PlanTracker.REFRESH_BACKOFF_MS) return;
+    if (now - (this.lastPlanRefresh[provider] ?? 0) < PlanTracker.REFRESH_BACKOFF_MS) return;
     const session = this.deps.idleSession(provider);
-    if (provider && !session) return;
-    // Before `start` has resolved the CLI there is nothing to ask and nothing
-    // to record: leave the reading owed rather than spending the window on a
-    // question that cannot be put. And the probe reads claude, so it may only
-    // answer for an account the slot already speaks — an empty one or a
-    // claude one; a codex reading must not be overwritten from the wrong
-    // account just because the claude CLI happens to be signed in.
+    // The probe reads claude, so only claude may fall back to it; every other
+    // provider waits for one of its own sessions to go idle.
     if (!session) {
-      if ((this.planUsage?.provider ?? "claude") !== "claude") return;
+      if (provider !== "claude") return;
       if (!this.deps.claudeExecutable()) return;
-      this.lastPlanRefresh = now;
+      this.lastPlanRefresh[provider] = now;
       void probePlanUsage({
         cwd: this.deps.probeCwd(),
         executable: this.deps.claudeExecutable(),
@@ -215,31 +224,57 @@ export class PlanTracker {
         .catch(() => undefined);
       return;
     }
-    this.lastPlanRefresh = now;
+    this.lastPlanRefresh[provider] = now;
     void session
       .usage()
       .then((plan) => this.rememberPlanUsage(plan))
       .catch(() => undefined);
   }
 
-  /** The last reading from disk, with every window that has since reset refilled. */
-  private loadPlanUsage(): PlanUsage | null {
+  /**
+   * The last readings from disk, with every window that has since reset
+   * refilled. The file holds a map keyed by provider; a cache written by an
+   * older build is one provider's single reading — the only writer back then
+   * spoke claude (session or probe), so it lands under `claude`, stamped
+   * when the tag was missing. An entry with no window at all is not a
+   * reading — it would only make the chip say nothing with confidence.
+   */
+  private loadPlanUsage(): Record<string, PlanUsage> {
     try {
-      const stored = JSON.parse(readFileSync(planUsageFile(), "utf8")) as PlanUsage;
+      const stored = JSON.parse(readFileSync(planUsageFile(), "utf8")) as unknown;
+      const entries = Object.entries(
+        // A pre-map cache is a single reading; its own provider tag (or the
+        // claude inference) names the slot it lands in.
+        stored !== null &&
+          typeof stored === "object" &&
+          !Array.isArray(stored) &&
+          !("fiveHour" in stored)
+          ? (stored as Record<string, PlanUsage>)
+          : { [(stored as PlanUsage).provider ?? "claude"]: stored as PlanUsage },
+      );
       const now = Date.now();
-      const fiveHour = stored.fiveHour ? refilled(stored.fiveHour, now) : null;
-      const sevenDay = stored.sevenDay ? refilled(stored.sevenDay, now) : null;
-      // A cache written by an older build has no `modelWeekly` at all; the
-      // reading this run owes fills the rows in.
-      const modelWeekly = (stored.modelWeekly ?? []).map((row) => refilled(row, now));
-      if (!fiveHour && !sevenDay) return null;
-      // A cache written by the pre-tag build has no `provider` on it; the
-      // only writer back then was claude (session or probe), so the same
-      // truth-inference `loadModels` applies to its single-list catalog
-      // names the account here.
-      return { ...stored, provider: stored.provider ?? "claude", fiveHour, sevenDay, modelWeekly };
+      const out: Record<string, PlanUsage> = {};
+      for (const [provider, raw] of entries) {
+        if (!raw || typeof raw !== "object") continue;
+        const fiveHour = raw.fiveHour ? refilled(raw.fiveHour, now) : null;
+        const sevenDay = raw.sevenDay ? refilled(raw.sevenDay, now) : null;
+        // A cache written by an older build has no `modelWeekly` at all; the
+        // reading this run owes fills the rows in.
+        const modelWeekly = (raw.modelWeekly ?? []).map((row) => refilled(row, now));
+        const plan: PlanUsage = {
+          ...raw,
+          provider: raw.provider ?? provider,
+          fiveHour,
+          sevenDay,
+          modelWeekly,
+        };
+        if (plan.fiveHour === null && plan.sevenDay === null && plan.modelWeekly.length === 0)
+          continue;
+        out[provider] = plan;
+      }
+      return out;
     } catch {
-      return null;
+      return {};
     }
   }
 

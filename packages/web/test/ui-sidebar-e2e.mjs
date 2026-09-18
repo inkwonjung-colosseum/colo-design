@@ -120,6 +120,15 @@ async function main() {
     port: await freePort(),
   });
 
+  // The hover card's 폴더 열기 must not raise a real Finder window — the
+  // daemon's COLO_DESIGN_OPEN_BIN override points at this stub, which logs
+  // the path it was asked to open.
+  const openStub = join(DIR, "bin", "open-stub");
+  const openedLog = join(DIR, "opened.log");
+  mkdirSync(join(DIR, "bin"), { recursive: true });
+  writeFileSync(openStub, `#!/bin/sh\necho "$1" >> ${JSON.stringify(openedLog)}\n`);
+  chmodSync(openStub, 0o755);
+
   const env = {
     ...process.env,
     COLO_DESIGN_PORT: String(await freePort()),
@@ -127,6 +136,7 @@ async function main() {
     COLO_DESIGN_PROJECTS_DIR: join(DIR, "projects"),
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
     COLO_DESIGN_CLAUDE_BIN: writeTurnStubClaude(join(DIR, "bin")),
+    COLO_DESIGN_OPEN_BIN: openStub,
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
     // The page comes from this file's static server, not the daemon — the
     // upgrade's Origin must be named or the daemon 403s it.
@@ -236,6 +246,41 @@ async function main() {
       approveCommands: true,
     });
     await waitReady("the 환불 clone");
+
+    // --- b1. the project row's hover card: branch, port, folder ------------
+    // The card is interactive — the pointer may cross onto it and its rows
+    // open what they name (repo → GitHub, preview → its port, folder → the
+    // OS file manager, stubbed above).
+    const refundsStatus = await call({ type: "repo.status" }, 15000);
+    const refundsRow = page.locator(".node", { hasText: "환불" }).locator(".node__row");
+    await refundsRow.hover();
+    const card = page.locator(".tip__bubble--shown .pcard");
+    await card.waitFor({ timeout: 10000 });
+    const cardText = await card.innerText();
+    check(
+      "the hover card names the branch, the preview port, and the clone folder",
+      cardText.includes("main") &&
+        cardText.includes(new URL(refundsStatus.previewUrl).port) &&
+        cardText.includes("환불"),
+      cardText.split("\n").join(" · "),
+    );
+    // Crossing onto the card must not close it — the rows inside are links.
+    await card.hover();
+    check("the card survives the pointer crossing onto it", await card.isVisible());
+    await card.locator("button.pcard__row").click();
+    const expectedRoot = join(DIR, "projects", "환불", "repo");
+    let openedPath = "";
+    for (let i = 0; i < 50 && !openedPath; i++) {
+      await sleep(100);
+      if (existsSync(openedLog)) openedPath = readFileSync(openedLog, "utf8").trim();
+    }
+    check(
+      "폴더 열기 asks the OS opener for the clone's folder",
+      openedPath === expectedRoot,
+      `${openedPath} vs ${expectedRoot}`,
+    );
+    await page.mouse.move(40, 400);
+    await card.waitFor({ state: "hidden", timeout: 10000 });
     check("two projects created over the socket, both cloning", true);
 
     // --- b. one node per project, the active one marked --------------------

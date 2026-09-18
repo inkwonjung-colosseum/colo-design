@@ -35,7 +35,7 @@ import { COLO_DESIGN_DIR } from "./environment.js";
 export interface StoredSend {
   id: string;
   text: string;
-  images: Array<{ mediaType: string; data: string }>;
+  attachments: Array<{ name: string; mediaType: string; data: string }>;
   /** 화면 게이트 입력 — deliver 때 소비된다. 옛 파일엔 없다(없으면 없는 대로). */
   pins?: Array<{ screen: string; state: string | null }>;
   /** 쓰는 시점에 첨부가 상한을 넘어 바이트가 버려졌다는 표식. */
@@ -63,16 +63,17 @@ function summarize(send: StoredSend): Omit<LostSend, "lostAt"> {
   return {
     id: send.id,
     text: send.text,
-    images: send.images.length,
+    images: send.attachments.filter((part) => part.mediaType.startsWith("image/")).length,
+    files: send.attachments.filter((part) => !part.mediaType.startsWith("image/")).length,
     ...(send.truncated ? { truncated: true } : {}),
   };
 }
 
 /** Attachment bytes beyond the budget are dropped at WRITE time — the file stays bounded. */
 function budget(item: StoredSend): StoredSend {
-  const bytes = item.images.reduce((sum, part) => sum + (part.data.length * 3) / 4, 0);
+  const bytes = item.attachments.reduce((sum, part) => sum + (part.data.length * 3) / 4, 0);
   if (bytes <= MAX_ITEM_BYTES) return item;
-  return { ...item, images: [], truncated: true };
+  return { ...item, attachments: [], truncated: true };
 }
 
 /** What a live Session needs from the disk — already bound to its own file. */
@@ -109,7 +110,22 @@ export class QueueStore {
         lost.length > MAX_LOST_ITEMS
           ? [...lost].sort((a, b) => b.lostAt - a.lostAt).slice(0, MAX_LOST_ITEMS)
           : lost;
-      return { held: parsed.held ?? [], lost: kept };
+      // 옛 파일은 `images` 로 적혔다 — 이름만 다른 같은 바이트라 읽을 때 옮긴다.
+      const migrate = <
+        T extends StoredSend & { images?: Array<{ mediaType: string; data: string }> },
+      >(
+        item: T,
+      ): T => ({
+        ...item,
+        attachments:
+          item.attachments ??
+          (item.images ?? []).map((image, index) => ({
+            name: `이미지 ${index + 1}`,
+            mediaType: image.mediaType,
+            data: image.data,
+          })),
+      });
+      return { held: (parsed.held ?? []).map(migrate), lost: kept.map(migrate) };
     } catch (error) {
       // 파일이 없는 것은 첫 대화의 빈 방이다. 그러나 존재하는데 읽지 못하는
       // 것은 소식이다 — 정전이 남긴 조각에 약속한 턴이 남아 있을 수 있으므로
@@ -180,11 +196,11 @@ export class QueueStore {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
     });
-    if (item.truncated) return { text: item.text, images: [] };
+    if (item.truncated) return { text: item.text, attachments: [] };
     // removeHeld 과 같은 이유 — 프로토콜 타입 밖의 동행 바이트(회귀 보고).
     return {
       text: item.text,
-      images: item.images,
+      attachments: item.attachments,
       ...(item.pins?.length ? { pins: item.pins } : {}),
     };
   }

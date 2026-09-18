@@ -61,44 +61,7 @@ export function readTape(projectRoot: string, sessionId: string): TapeRow[] {
   return rows;
 }
 
-/**
- * Every session's last cycle row, one file read (P3-1): the sidebar's leaf
- * dot and the 대화별 여정 both ask "where did THIS conversation leave the
- * cycle" — the answer is the newest tape row of each kind-bearing session.
- * `review.arrived` reads as `review` — 코멘트 도착은 넘기기 정류장의 경고다.
- */
-const CYCLE_OF_KIND: Record<string, "saved" | "handed" | "merged" | "review"> = {
-  "cycle.saved": "saved",
-  "cycle.handed": "handed",
-  "cycle.merged": "merged",
-  "review.arrived": "review",
-};
-
-export function tapeCycles(
-  projectRoot: string,
-): Map<string, "saved" | "handed" | "merged" | "review"> {
-  const cycles = new Map<string, "saved" | "handed" | "merged" | "review">();
-  let text: string;
-  try {
-    text = readFileSync(tapeFile(projectRoot), "utf8");
-  } catch {
-    return cycles;
-  }
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const row = JSON.parse(line) as TapeRow;
-      if (!row?.sessionId || !row.event) continue;
-      const kind = CYCLE_OF_KIND[row.event.kind];
-      if (kind) cycles.set(row.sessionId, kind);
-    } catch {
-      // A torn tail line is not a reason to drop the whole tape.
-    }
-  }
-  return cycles;
-}
-
-/** 세션 삭제: the thread's cycle rows go with it — 대화가 단위다. */
+/** 세션 삭제: the thread's rows go with it — 대화가 단위다. */
 export function dropTape(projectRoot: string, sessionId: string): void {
   const file = tapeFile(projectRoot);
   let kept: string[];

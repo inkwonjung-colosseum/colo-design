@@ -56,6 +56,8 @@ export type Block =
       id: string;
       text: string;
       images: number;
+      /** Non-image attachment names — the card lists what it cannot thumb. */
+      files?: string[];
       /** The pin crops, live-echo only; a replayed transcript has none. */
       thumbs?: string[];
     }
@@ -169,6 +171,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           id: `u${++noticeSeq}`,
           text: event.text,
           images: event.images,
+          ...(event.files && event.files.length > 0 ? { files: event.files } : {}),
           ...(event.thumbs && event.thumbs.length > 0 ? { thumbs: event.thumbs } : {}),
         },
       ];
@@ -578,20 +581,15 @@ interface DaemonApi {
   send: (
     sessionId: string,
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
     pins?: Array<{ screen: string; state: string | null }>,
   ) => Promise<unknown>;
   interrupt: (sessionId: string) => Promise<unknown>;
   /**
-   * 대기 줄 다루기. `queueRemove` takes a waiting send back out
-   * and resolves with what was sent (null once it has already gone out);
-   * `queueSendNow` cuts the running turn and delivers that send first.
-   * `queueTakeDropped` hands a lost send back whole; `queueDismissDropped`
-   * lets it go — the daemon's store is the one truth, so both work whether
-   * or not the thread has been reopened.
+   * 잃은 말 되살리기. `queueTakeDropped` hands a lost send back whole;
+   * `queueDismissDropped` lets it go — the daemon's store is the one truth,
+   * so both work whether or not the thread has been reopened.
    */
-  queueRemove: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
-  queueSendNow: (sessionId: string, itemId: string) => Promise<unknown>;
   queueTakeDropped: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
   queueDismissDropped: (sessionId: string, itemId: string) => Promise<unknown>;
   contextUsage: (sessionId: string) => Promise<ContextUsage | null>;
@@ -662,6 +660,8 @@ interface DaemonApi {
   projectActivate: (slug: string) => Promise<ProjectList>;
   /** Forget a project; its folder survives unless `deleteFiles`. */
   projectRemove: (slug: string, deleteFiles?: boolean) => Promise<ProjectList>;
+  /** Open the project's clone folder in the OS file manager (hover card). */
+  projectOpenFolder: (slug: string) => Promise<{ ok: boolean }>;
   repoStatus: () => Promise<RepoStatus>;
   /**
    * Clone when missing, pull, install when needed, start the preview. `force`
@@ -789,7 +789,7 @@ interface DaemonApi {
     sessionId: string,
     turn: number,
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
   ) => Promise<{ sessionId: string; memoryKept: boolean }>;
   /** The four onboarding checks; read-only. `provider` picks the agent gate. */
   onboardingCheck: (provider?: string) => Promise<OnboardingStep[]>;
@@ -1424,7 +1424,7 @@ export function useDaemon(url: string | null): Daemon {
       send: (
         sessionId: string,
         text: string,
-        images?: Array<{ mediaType: string; data: string }>,
+        attachments?: Array<{ name: string; mediaType: string; data: string }>,
         pins?: Array<{ screen: string; state: string | null }>,
       ) => {
         // Speaking into a thread is looking at it, and the first send
@@ -1435,15 +1435,11 @@ export function useDaemon(url: string | null): Daemon {
           type: "session.send",
           sessionId,
           text,
-          ...(images?.length ? { images } : {}),
+          ...(attachments?.length ? { attachments } : {}),
           ...(pins?.length ? { pins } : {}),
         });
       },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
-      queueRemove: (sessionId: string, itemId: string) =>
-        call<QueuedSendPayload>({ type: "session.queue.remove", sessionId, itemId }),
-      queueSendNow: (sessionId: string, itemId: string) =>
-        call({ type: "session.queue.sendNow", sessionId, itemId }),
       queueTakeDropped: (sessionId: string, itemId: string) =>
         call<QueuedSendPayload>({ type: "session.queue.takeDropped", sessionId, itemId }),
       queueDismissDropped: (sessionId: string, itemId: string) =>
@@ -1580,6 +1576,8 @@ export function useDaemon(url: string | null): Daemon {
           },
           120_000,
         ).then(keepProjects),
+      projectOpenFolder: (slug: string) =>
+        call<{ ok: boolean }>({ type: "project.openFolder", slug }),
       repoStatus: () => call<RepoStatus>({ type: "repo.status" }).then(keepRepo),
       // A first run clones and installs the connected repo: minutes, not the
       // minute a normal request is given before it is declared lost. `force`
@@ -1692,14 +1690,14 @@ export function useDaemon(url: string | null): Daemon {
       }) => call<{ recorded: number }>({ type: "comments.record", items: input.items }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
-      rewind: (sessionId, turn, text, images) =>
+      rewind: (sessionId, turn, text, attachments) =>
         call<{ sessionId: string; memoryKept: boolean }>(
           {
             type: "session.rewind",
             sessionId,
             turn,
             text,
-            ...(images ? { images } : {}),
+            ...(attachments ? { attachments } : {}),
           },
           300_000,
         ),

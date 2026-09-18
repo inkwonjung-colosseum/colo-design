@@ -1,0 +1,6 @@
+2026/09/18-10:21:06.875 1dbade5 Reusing MANIFEST /Users/developjik/.paseo/worktrees/37blf94g/durable-spider/packages/desktop/.dev-userData/Local Storage/leveldb/MANIFEST-000001
+2026/09/18-10:21:06.878 1dbade5 Recovering log #28
+2026/09/18-10:21:06.878 1dbade5 Reusing old log /Users/developjik/.paseo/worktrees/37blf94g/durable-spider/packages/desktop/.dev-userData/Local Storage/leveldb/000028.log 
+2026/09/18-10:52:00.098 1dbade5 Level-0 table #33: started
+2026/09/18-10:52:00.104 1dbade5 Level-0 table #33: 29288 bytes OK
+2026/09/18-10:52:00.111 1dbade5 Delete type=0 #28

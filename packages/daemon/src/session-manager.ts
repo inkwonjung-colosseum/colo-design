@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ChatEvent, SessionSummary, ThreadCycle, ThreadSummary } from "@colo-design/protocol";
+import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { BrowserMcpEntry } from "./browser-launch.js";
@@ -444,11 +444,7 @@ export class SessionManager {
    * or question up → `awaiting`; a turn that ended with nothing after it →
    * `finished`; everything else — old stored threads mostly — `idle`.
    */
-  async refreshThreads(
-    cwd: string,
-    limit = 50,
-    cycles?: Map<string, ThreadCycle>,
-  ): Promise<ThreadSummary[]> {
+  async refreshThreads(cwd: string, limit = 50): Promise<ThreadSummary[]> {
     const threads = (await this.list(cwd, limit)).map((summary): ThreadSummary => {
       const state: ThreadSummary["state"] =
         summary.state === "running" || summary.state === "starting"
@@ -458,13 +454,11 @@ export class SessionManager {
             : summary.live && this.settledTurns.has(summary.sessionId)
               ? "finished"
               : "idle";
-      const cycle = cycles?.get(summary.sessionId);
       return {
         id: summary.sessionId,
         title: summary.title,
         state,
         updatedAt: new Date(summary.lastModified).toISOString(),
-        ...(cycle ? { cycle } : {}),
       };
     });
     this.threadCache.set(cwd, threads);
@@ -522,7 +516,7 @@ export class SessionManager {
     cwd: string;
     turn: number;
     text: string;
-    images?: Array<{ mediaType: string; data: string }>;
+    attachments?: Array<{ name: string; mediaType: string; data: string }>;
     /** The new session's construction options (cwd · CLI · policy · title). */
     base: SessionOptions;
   }): Promise<{ sessionId: string; memoryKept: boolean }> {
@@ -540,7 +534,7 @@ export class SessionManager {
       this.live.delete(input.sessionId);
       this.settledTurns.delete(input.sessionId);
       const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.images);
+      fresh.send(input.text, input.attachments);
       return { sessionId: fresh.id, memoryKept: false };
     }
 
@@ -551,7 +545,7 @@ export class SessionManager {
     if (cutoff.cut === null) {
       // k = 1: nothing to keep — a fresh conversation carries the title on.
       const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.images);
+      fresh.send(input.text, input.attachments);
       return { sessionId: fresh.id, memoryKept: false };
     }
 
@@ -651,11 +645,11 @@ export class SessionManager {
       await fork.close().catch(() => undefined);
       this.live.delete(fork.id);
       const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.images);
+      fresh.send(input.text, input.attachments);
       return { sessionId: fresh.id, memoryKept: false };
     }
 
-    fork.send(input.text, input.images);
+    fork.send(input.text, input.attachments);
     // The fork won: the old transcript goes (D76's path) — the planner just
     // decided that answer never happened.
     await this.remove(input.sessionId, input.cwd).catch(() => undefined);

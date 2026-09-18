@@ -4,8 +4,8 @@
  *
  * 첫 보내기는 draftKey 가 new:* 에서 세션 id 로 바뀐다 — 비움의 성공 판정이
  * 이 키 전환을 안 거치면 보낸 말이 필드에 남는다(두 번째 Enter 가 같은 말을
- * 또 보낸다). 실행 중 보내기 스위트(ui-midturn-send-e2e)와 달리 여기선 세션
- * 태생의 키 전환 하나만 본다: 스텁 CLI 는 모든 턴에 곧바로 답한다.
+ * 또 보낸다). 스텁 CLI 는 모든 턴에 곧바로 답한다 — 세션 태생의 키 전환
+ * 하나만 본다.
  *
  * Free: no real Claude turn. Offline end to end — daemon, SDK, stub CLI.
  *
