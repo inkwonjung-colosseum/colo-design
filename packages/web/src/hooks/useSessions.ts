@@ -3,7 +3,6 @@ import type {
   EffortLevel,
   LostSend,
   PermissionMode,
-  QueuedSend,
   QueuedSendPayload,
   SessionCommand,
   SessionModelInfo,
@@ -179,37 +178,21 @@ export interface Sessions {
   rewindAnswer: (
     turn: number,
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
   ) => Promise<void>;
   /**
-   * Machine-authored turn: no composer, no attachments. `images` rides the
-   * same wire a composer attachment does — the pin crops, the
+   * Machine-authored turn: no composer, no attachments. `attachments` rides
+   * the same wire a composer attachment does — the pin crops, the
    * 화면 보여 주기 frame.
    */
   sendTurn: (
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
     target?: string,
     pins?: Array<{ screen: string; state: string | null }>,
   ) => Promise<void>;
-  /**
-   * 다음 턴에 밀려 있는 것: 데몬의 대기 줄, 오래된 것부터. 턴이
-   * 끝나면 빈다. The composer's list above the field draws it.
-   */
-  queue: QueuedSend[];
   /** Sends the room lost without delivering — the composer's 되살리기 rows. */
   dropped: LostSend[];
-  /**
-   * 고쳐서 보내기: take a waiting send back out of the daemon's room, as the
-   * composer's own attachments. Null when it already went out.
-   */
-  takeQueued: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
-  /** 지금 보내기: cut the running turn and deliver this send first. */
-  sendQueuedNow: (itemId: string) => Promise<void>;
-  /** 모두 빼기: 대기 중인 말 전부를 보내지 않고 버린다. */
-  clearQueue: () => Promise<void>;
-  /** The send a 지금 보내기 click is currently cutting for — its row waits too. */
-  hurrying: string | null;
   /**
    * 되살리기: hand one lost send back into the field, attachments included
    * when their bytes survived the persist cap.
@@ -414,6 +397,12 @@ export function useSessions(
     listedSlug.current = activeSlug;
     setList([]);
     setActiveId(null);
+    // fresh() 와 같은 리셋 — 떠난 프로젝트 대화의 selector·usage·commands 가
+    // 새 프로젝트의 빈 자리 칩을 칠하지 않게 (칩은 selector 를 먼저 입는다).
+    selectorFor.current = null;
+    setSelector(null);
+    setUsage(null);
+    setCommands([]);
     // 마커와 함께 기록 실패 깃발도 거둔다 — 낡은 대화의 '대화 기록을 읽지
     // 못했습니다' 카드가 새 프로젝트의 빈 대화 위에 남지 않게.
     setHistoryFailed(false);
@@ -509,7 +498,7 @@ export function useSessions(
     return () => {
       cancelled = true;
     };
-  }, [activeId, running, api, connection, active?.blocks.length, applySelectors]);
+  }, [activeId, running, api, connection, activeSlug, active?.blocks.length, applySelectors]);
 
   /**
    * The settle-time read above only fires when a turn lands, so a 5-hour
@@ -644,6 +633,12 @@ export function useSessions(
       // 때는 포인터가 이미 없어 갱신 전의 낡은 목록이 지워진 스레드를
       // 되살릴 수 없다.
       forgetLastThread(activeSlug, session.sessionId);
+      // fresh() 와 같은 리셋 — 지운 대화의 selector·usage 가 빈 자리의
+      // 칩을 칠하면 프로바이더를 바꿔도 칩이 옛 것을 입은 채로 남는다.
+      selectorFor.current = null;
+      setSelector(null);
+      setUsage(null);
+      setHistoryFailed(false);
     }
     try {
       await api.deleteSession(session.sessionId);
@@ -669,6 +664,12 @@ export function useSessions(
       // 단건 삭제의 setActiveId·forgetLastThread 와 같은 동기 순서.
       setActiveId(null);
       forgetLastThreads(slug);
+      // 단건 삭제와 같은 리셋 — 지운 대화의 selector·usage 가 빈 자리의
+      // 칩을 칠하면 프로바이더를 바꿔도 칩이 옛 것을 입은 채로 남는다.
+      selectorFor.current = null;
+      setSelector(null);
+      setUsage(null);
+      setHistoryFailed(false);
     }
     try {
       await api.deleteAllSessions(slug);
@@ -698,56 +699,18 @@ export function useSessions(
     return id;
   };
 
-  /**
-   * 대기 줄 — 데몬이 쥔 목록을 그대로 읽는다.
-   *
-   * 화면이 직접 세던 때에는 "보냈다" 만 알고 "언제 나갔다" 는 몰랐다: 말을
-   * 붙들고 있는 쪽은 데몬이고(Session.held), 그 줄이 언제 풀리는지도 데몬만
-   * 안다. 턴 끝에 비는 것도 그쪽에서 온다.
-   */
-  const queue = active?.queue ?? [];
   const dropped = active?.dropped ?? [];
 
   const toAttachments = (payload: NonNullable<QueuedSendPayload>): Attachment[] =>
-    payload.images.map(
-      (image, index): Attachment => ({
-        name: `이미지 ${index + 1}`,
-        mediaType: image.mediaType,
-        data: image.data,
-        size: Math.floor((image.data.length * 3) / 4),
+    payload.attachments.map(
+      (part): Attachment => ({
+        kind: part.mediaType.startsWith("image/") ? "image" : "file",
+        name: part.name,
+        mediaType: part.mediaType,
+        data: part.data,
+        size: Math.floor((part.data.length * 3) / 4),
       }),
     );
-
-  const takeQueued = async (itemId: string) => {
-    if (!activeId) return null;
-    const payload = await api.queueRemove(activeId, itemId);
-    if (!payload) return null;
-    return { text: payload.text, attachments: toAttachments(payload) };
-  };
-
-  /** 모두 빼기: 줄에 든 말을 하나씩 꺼내 버린다 — 되돌려 넣을 곳이 없으니
-      payload 는 읽지 않는다. 한 건이 먼저 나가도 나머지는 계속 빠진다. */
-  const clearQueue = async () => {
-    if (!activeId) return;
-    for (const item of queue) {
-      try {
-        await api.queueRemove(activeId, item.id);
-      } catch {
-        // 이미 나간 행은 무시 — 나머지를 계속 뺀다.
-      }
-    }
-  };
-
-  const [hurrying, setHurrying] = useState<string | null>(null);
-  const sendQueuedNow = async (itemId: string) => {
-    if (!activeId) return;
-    setHurrying(itemId);
-    try {
-      await api.queueSendNow(activeId, itemId);
-    } finally {
-      setHurrying(null);
-    }
-  };
 
   const takeDropped = async (itemId: string) => {
     if (!activeId) return null;
@@ -759,7 +722,6 @@ export function useSessions(
   const dismissDropped = (itemId: string) => {
     if (activeId) forgetDropped(activeId, itemId);
   };
-
   const submit = async (
     text: string,
     attachments: Attachment[],
@@ -771,7 +733,7 @@ export function useSessions(
       await api.send(
         target,
         text,
-        attachments.map(({ mediaType, data }) => ({ mediaType, data })),
+        attachments.map(({ name, mediaType, data }) => ({ name, mediaType, data })),
         pins,
       );
       void refresh();
@@ -787,18 +749,17 @@ export function useSessions(
   /** 계획 승인 직후: 데몬이 되돌린 작업 모드를 칩과 대화의 선택에 반영한다. */
   const afterPlanApproval = useCallback(() => {
     if (!activeId) return;
+    // 이 요청의 주인을 찍는다 — 대화가 닫히거나 갈아탄 뒤 돌아온 답은
+    // applySelectors 의 칸막이가 걸러 빈 자리의 칩을 칠하지 못한다.
+    selectorFor.current = activeId;
     void api
       .selectors(activeId)
       .then((next) => {
-        setSelector(next);
-        if (next.models.length > 0) {
-          const provider = next.provider ?? "claude";
-          saveModelCatalog(provider, next.models);
-          if (provider === chat.provider) setCatalog(next.models);
-        }
+        applySelectors(activeId, next);
         // The enum write-back is Claude's own — another provider's mode id
         // stored as permissionMode would corrupt the settings pick.
         if (
+          selectorFor.current === activeId &&
           (next.provider ?? "claude") === "claude" &&
           next.permissionMode !== chat.permissionMode
         ) {
@@ -806,16 +767,16 @@ export function useSessions(
         }
       })
       .catch(() => undefined);
-  }, [activeId, api, chat.provider, chat.permissionMode, onChatChange]);
+  }, [activeId, api, chat.permissionMode, onChatChange, applySelectors]);
 
   const rewindAnswer = async (
     turn: number,
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
   ) => {
     if (!activeId) return;
     try {
-      const { sessionId } = await api.rewind(activeId, turn, text, images);
+      const { sessionId } = await api.rewind(activeId, turn, text, attachments);
       if (sessionId !== activeId) {
         ensureSession(sessionId);
         markLive(sessionId);
@@ -832,7 +793,7 @@ export function useSessions(
 
   /**
    * A machine-authored turn (the comment envelope): the same wire a typed
-   * message uses, minus the composer. `images` rides along. The target
+   * message uses, minus the composer. `attachments` rides along. The target
    * resolves through targetSession for the same reason a typed word does — a
    * crashed query must be resumed, not fed. A caller that just created the
    * thread passes its id: the closure's `activeId` still reads the pre-create
@@ -840,13 +801,13 @@ export function useSessions(
    */
   const sendTurn = async (
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
     target?: string,
     pins?: Array<{ screen: string; state: string | null }>,
   ) => {
     try {
       const id = await targetSession(target);
-      await api.send(id, text, images, pins);
+      await api.send(id, text, attachments, pins);
       void refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1074,12 +1035,7 @@ export function useSessions(
     afterPlanApproval,
     rewindAnswer,
     sendTurn,
-    queue,
     dropped,
-    takeQueued,
-    clearQueue,
-    sendQueuedNow,
-    hurrying,
     takeDropped,
     dismissDropped,
     refresh,

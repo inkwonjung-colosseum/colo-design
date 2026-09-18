@@ -87,7 +87,7 @@ export function Palette({
   titleForThread: (thread: ThreadSummary) => string;
   activeSessionId: string | null;
   projects: ProjectSummary[];
-  /** 낙관 삭제가 이미 거둔 행 — 사이드바·홈·여정과 같은 규칙이 팔레트에도
+  /** 낙관 삭제가 이미 거둔 행 — 사이드바·홈과 같은 규칙이 팔레트에도
       산다. 숨김을 모르면 지운 대화가 ⌘K 걸음에 되살아난다. */
   hiddenThreads: HiddenThreads;
   activeSlug: string | null;

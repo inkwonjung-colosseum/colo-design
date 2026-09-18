@@ -117,6 +117,14 @@ export class RepoWorkspace {
   get previewLive(): boolean {
     return this.core.previewLive;
   }
+  /**
+   * The URL the preview answers on while this workspace is ready — the
+   * project hover card's 미리보기 row. Null the moment the server is gone:
+   * a stale address is worse than no row.
+   */
+  get previewUrl(): string | null {
+    return this.core.phase === "ready" ? this.core.previewUrl : null;
+  }
 
   get remoteUrl(): string | null {
     return this.core.remoteUrl;

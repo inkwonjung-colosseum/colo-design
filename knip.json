@@ -15,14 +15,7 @@
       "project": ["src/**/*.ts", "test/**/*.mjs", "scripts/**/*.mjs"]
     },
     "packages/web": {
-      "entry": [
-        "index.html",
-        "chatpreview.html",
-        "journeypreview.html",
-        "src/chat-preview.tsx",
-        "src/journey-preview.tsx",
-        "test/**/*.{mjs,mts}"
-      ],
+      "entry": ["index.html", "chatpreview.html", "src/chat-preview.tsx", "test/**/*.{mjs,mts}"],
       "project": ["src/**/*.{ts,tsx}", "test/**/*.{mjs,mts}"]
     },
     "packages/protocol": {

@@ -6,6 +6,7 @@ import type {
   SessionModelInfo,
 } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, codexBrowserMcpServer } from "../../../browser-launch.js";
+import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type {
   AgentSession,
   DriverHooks,
@@ -82,9 +83,11 @@ function sandboxPolicy(modeId: string, cwd: string): Wire {
  * The `account/rateLimits/read` answer as the protocol's plan reading. Codex
  * names its own windows, so the buckets are classified by duration: ≤12h is
  * the short window, longer is weekly, and every extra metered limit lands in
- * modelWeekly under its own name. Pure, and exported for the mapper test —
- * this classification is the only bridge between the app-server's answer and
- * the chip's rows, so it is tested without an app-server in the way.
+ * modelWeekly under its own name — or, when the server names nothing, under
+ * the period the window actually runs on ("이번 달" for the free plan's
+ * monthly budget). Pure, and exported for the mapper test — this
+ * classification is the only bridge between the app-server's answer and the
+ * chip's rows, so it is tested without an app-server in the way.
  */
 export function toPlanUsage(result: Wire): PlanUsage {
   const snapshots: Wire[] = [];
@@ -103,6 +106,9 @@ export function toPlanUsage(result: Wire): PlanUsage {
     modelWeekly: [],
   };
   for (const snapshot of snapshots) {
+    // The first snapshot is the plan's own budget row; the rest are metered
+    // extras that may carry their own names.
+    const isPrimary = snapshot === result?.rateLimits;
     if (typeof snapshot?.planType === "string" && !plan.subscriptionType) {
       plan.subscriptionType = snapshot.planType;
     }
@@ -127,9 +133,22 @@ export function toPlanUsage(result: Wire): PlanUsage {
       } else if (mins > 0 && mins <= 11000 && !plan.sevenDay) {
         plan.sevenDay = mapped;
       } else {
+        // The server names metered extras itself; an unnamed long window is
+        // the plan's own budget, so the row spells its period — "이번 달" for
+        // the free plan's monthly window, not the weekly word the chip used
+        // to append to every row. The primary snapshot's limitId is the
+        // provider's own id ("codex"), which the account line already says.
+        const named = isPrimary ? snapshot?.limitName : (snapshot?.limitName ?? snapshot?.limitId);
         plan.modelWeekly.push({
           ...mapped,
-          label: String(snapshot?.limitName ?? snapshot?.limitId ?? "limit"),
+          label:
+            named != null
+              ? String(named)
+              : mins >= 28 * 1440
+                ? "이번 달"
+                : mins > 0
+                  ? `${Math.round(mins / 1440)}일`
+                  : "limit",
         });
       }
     }
@@ -952,8 +971,11 @@ export class CodexAgentSession implements AgentSession {
   }
 
   private userInput(turn: Turn): Wire[] {
-    const input: Wire[] = [{ type: "text", text: turn.text, text_elements: [] }];
-    for (const image of turn.images ?? []) {
+    const prepared = prepareAttachments(this.launch.cwd, turn.attachments);
+    const input: Wire[] = [
+      { type: "text", text: composeTurnText(turn.text, prepared), text_elements: [] },
+    ];
+    for (const image of prepared.images) {
       input.push({ type: "image", url: `data:${image.mediaType};base64,${image.data}` });
     }
     return input;

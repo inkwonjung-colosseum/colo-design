@@ -14,7 +14,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Block } from "../src/lib/daemon-client.ts";
-import { attachProgress, isToolRunning, type ProgressEvent } from "../src/lib/progress.ts";
+import {
+  agentBriefs,
+  attachProgress,
+  isToolRunning,
+  type ProgressEvent,
+} from "../src/lib/progress.ts";
 
 type ToolBlock = Extract<Block, { type: "tool" }>;
 
@@ -141,4 +146,111 @@ test("경과 초와 재시도는 도구 행의 것이고, 작업 정보를 지�
   assert.equal(progress?.elapsedSeconds, 42);
   assert.equal(progress?.retry?.attempt, 2);
   assert.equal(progress?.task?.id, "task_1", "심장 박동이 작업을 지워서는 안 된다");
+});
+
+// ---------------------------------------------------------------------------
+// agentBriefs — 하위 작업의 목차. 스트립의 접힌 머리가 세는 숫자의 셈이다.
+// ---------------------------------------------------------------------------
+
+test("Task 도구 호출 하나가 에이전트 하나다 — 시작 사건 전에도 센다", () => {
+  const spawn: ToolBlock = {
+    ...tool("toolu_1"),
+    input: { description: "화면 파일 훑기", subagent_type: "scout", prompt: "…" },
+  };
+  const agents = agentBriefs([spawn]);
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].id, "toolu_1");
+  assert.equal(agents[0].label, "화면 파일 훑기");
+  assert.equal(agents[0].type, "scout");
+  assert.equal(agents[0].status, "running", "끝나지 않은 행은 도는 중이다");
+});
+
+test("Task 가 아닌 도구는 progress.task 가 붙어도 에이전트가 아니다", () => {
+  const bash: ToolBlock = {
+    type: "tool",
+    id: "toolu_b",
+    name: "Bash",
+    input: { command: "pnpm build" },
+    agentId: null,
+    done: true,
+    progress: {
+      task: {
+        id: "task_b",
+        description: "pnpm build",
+        summary: null,
+        lastTool: null,
+        subagentType: null,
+        tokens: 0,
+        toolUses: 0,
+        backgrounded: true,
+        status: "running",
+      },
+    },
+  };
+  assert.equal(agentBriefs([bash]).length, 0);
+});
+
+test("뒤로 보낸 작업은 행이 끝나도 도는 중이고, 끝난 작업은 end 의 말을 따른다", () => {
+  const backgrounded: ToolBlock = {
+    ...tool("toolu_1"),
+    done: true,
+    progress: {
+      task: {
+        id: "task_1",
+        description: "화면 파일 훑기",
+        summary: "미리보기 검증 중",
+        lastTool: "Read",
+        subagentType: "scout",
+        tokens: 1200,
+        toolUses: 4,
+        backgrounded: true,
+        status: "running",
+      },
+    },
+  };
+  const stopped: ToolBlock = {
+    ...tool("toolu_2"),
+    done: true,
+    progress: {
+      task: {
+        id: "task_2",
+        description: "고치기",
+        summary: null,
+        lastTool: null,
+        subagentType: null,
+        tokens: 0,
+        toolUses: 0,
+        backgrounded: false,
+        status: "stopped",
+      },
+    },
+  };
+  const agents = agentBriefs([backgrounded, stopped]);
+  assert.equal(agents[0].status, "running");
+  assert.equal(agents[0].backgrounded, true);
+  assert.equal(agents[0].toolUses, 4);
+  assert.equal(agents[1].status, "stopped");
+});
+
+test("실패한 도구 행은 실패 에이전트다 — end 가 말하지 않아도", () => {
+  const failed: ToolBlock = {
+    ...tool("toolu_1"),
+    done: true,
+    isError: true,
+    progress: {
+      task: {
+        id: "task_1",
+        description: "고치기",
+        summary: null,
+        lastTool: null,
+        subagentType: null,
+        tokens: 0,
+        toolUses: 0,
+        backgrounded: false,
+        status: "completed",
+      },
+    },
+  };
+  const agents = agentBriefs([failed]);
+  assert.equal(agents[0].status, "failed");
 });

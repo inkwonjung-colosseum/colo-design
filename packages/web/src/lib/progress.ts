@@ -174,3 +174,60 @@ export function attachProgress(blocks: Block[], event: ProgressEvent): Block[] {
   next[index] = { ...block, progress };
   return next;
 }
+
+/**
+ * 하위 작업의 목차 — 테이프의 `Task` 도구 호출 하나가 에이전트 하나다. 스트립
+ * (WorkStrip)이 접힌 머리에 세는 숫자와 펼쳤을 때 읽는 목록이 이 한 셈에서
+ * 나온다. `progress.task` 가 아직 안 붙은 호출(시작 사건보다 도구 행이 먼저
+ * 온 경우)도 설명은 입력에서 읽어 채운다 — 도는 중 판정은 위의 `isToolRunning`
+ * 하나만 믿는다. 하위 대화(`agentId` 로 물린 조각)는 활동 카드의 몫이고,
+ * 여기는 목차만 셈한다.
+ */
+export interface AgentBrief {
+  /** 그 에이전트를 띄운 도구 호출의 id — 하위 대화의 `agentId` 와 같은 값. */
+  id: string;
+  /** 에이전트 종별("scout", "swe-2"…). 시작 사건이 아직 없으면 null. */
+  type: string | null;
+  /** 무엇을 하러 보냈는가 — 작업 설명. 아직 모르면 빈 문자열. */
+  label: string;
+  /** 모델이 30초마다 쓴 최근 근황 한 줄. */
+  summary: string | null;
+  status: "running" | "completed" | "failed" | "stopped";
+  /** 턴을 붙잡지 않고 뒤에서 도는 작업. */
+  backgrounded: boolean;
+  toolUses: number;
+}
+
+export function agentBriefs(blocks: Block[]): AgentBrief[] {
+  const agents: AgentBrief[] = [];
+  for (const block of blocks) {
+    if (block.type !== "tool" || block.name !== "Task") continue;
+    const task = block.progress?.task ?? null;
+    const input = (block.input ?? {}) as Record<string, unknown>;
+    const description =
+      task?.description ||
+      (typeof input.description === "string" && input.description.trim()) ||
+      "";
+    const type =
+      task?.subagentType ||
+      (typeof input.subagent_type === "string" && input.subagent_type.trim()) ||
+      null;
+    const status: AgentBrief["status"] = isToolRunning(block)
+      ? "running"
+      : block.isError || task?.status === "failed"
+        ? "failed"
+        : task?.status === "stopped"
+          ? "stopped"
+          : "completed";
+    agents.push({
+      id: block.id,
+      type,
+      label: description,
+      summary: task?.summary ?? null,
+      status,
+      backgrounded: task?.backgrounded ?? false,
+      toolUses: task?.toolUses ?? 0,
+    });
+  }
+  return agents;
+}

@@ -265,7 +265,6 @@ export function Shell({
     workspace.current?.exportThread(slug, thread);
   const browseThreads = (slug: string) => workspace.current?.browseThreads(slug);
   const goHome = () => workspace.current?.goHome();
-  const goJourney = () => workspace.current?.goJourney();
 
   // The drag in flight, mirrored from PageWorkspace's preview boundary: the
   // pointer capture is what keeps it alive across the project list.
@@ -360,7 +359,6 @@ export function Shell({
         onRenameThread={onRenameSession}
         onBrowseThreads={browseThreads}
         onGoHome={goHome}
-        onGoJourney={goJourney}
         boundary={
           !folded && (
             <Splitter
@@ -420,7 +418,7 @@ export function Shell({
 
       <div className="planner__main">
         {/* 프로젝트가 있으면 제목 행은 PageWorkspace 의 것이 다 — 프로젝트
-            이름과 여정 지도가 한 행을 쓴다. 이 자리의 헤더는
+            이름이 한 행을 쓴다. 이 자리의 헤더는
             프로젝트가 없을 때만 남는다: 시작 흐름 동안 연결 상태를 오른쪽에
             비추는 최소한의 행. 브랜드는 왼쪽 레일이 이미 읽는다. */}
         {daemon.projects.length === 0 && (

@@ -1,7 +1,6 @@
 import { type DeveloperReview, readTurn } from "@colo-design/protocol";
 import { Fragment, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
-import { GENERIC_STARTERS } from "../../lib/suggestions";
 import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
 import {
   lastAnswerPerTurn,
@@ -39,9 +38,6 @@ export function Transcript({
   onRetry,
   onRewind,
   onResendEdit,
-  onStarter,
-  onStarterAttach,
-  starters,
   checkpoints,
   onRestoreCheckpoint,
   showThinking = false,
@@ -63,12 +59,6 @@ export function Transcript({
   onRewind?: (turn: number, text: string) => void;
   /** 고쳐서 다시 보내기: the planner's words return to the composer. */
   onResendEdit?: (text: string) => void;
-  /** 첨부로 시작하기 — 컴포저의 파일 고르기를 연다. */
-  onStarterAttach?: () => void;
-  /** A starter chip was pressed — its sentence becomes the composer's draft. */
-  onStarter?: (text: string) => void;
-  /** 시작 칩의 문장들 — 선언 화면이 없으니 언제나 generic 문장(suggestions.ts). */
-  starters?: string[];
   /** This session's turn-start snapshots, oldest first. */
   checkpoints?: Array<{ id: string; turn: number }>;
   /** Puts the worktree back the way it stood before that answer. */
@@ -128,32 +118,6 @@ export function Transcript({
           만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
           들어옵니다.
         </p>
-        {onStarter && (
-          <div className="empty__starters">
-            {/* 첫 문장의 초대는 타이핑만이 아니라 첨부다 —
-                "입력은 뭐든 된다"(README)를 빈 대화의 첫 동작으로 지킨다. 문장
-                칩들보다 앞에 서되, 같은 어휘의 칩이다(메뉴가 아니라 문턱). */}
-            {onStarterAttach && (
-              <button
-                type="button"
-                className="empty__starter empty__starter--attach"
-                onClick={onStarterAttach}
-              >
-                그림을 붙여 시작하기
-              </button>
-            )}
-            {(starters ?? GENERIC_STARTERS).map((starter) => (
-              <button
-                key={starter}
-                type="button"
-                className="empty__starter"
-                onClick={() => onStarter(starter)}
-              >
-                {starter}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
     );
   }
@@ -312,6 +276,11 @@ export function Transcript({
                   <div key={block.id} className="bubble bubble--user">
                     {block.text}
                     {block.images > 0 && <span className="tag">이미지 {block.images}장</span>}
+                    {block.files?.map((name) => (
+                      <span key={name} className="tag">
+                        {name}
+                      </span>
+                    ))}
                     {block.text.trim() !== "" && (
                       <div className="bubble__actions">
                         {/* 요청 복사: the planner's own sentence is as worth

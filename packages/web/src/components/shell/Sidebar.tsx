@@ -6,17 +6,19 @@ import type { Daemon } from "../../lib/daemon-client";
 import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "../../lib/delivery";
 import { ownerRepoOf } from "../../lib/format";
 import { composing } from "../../lib/ime";
-import { trailFor, trailWords } from "../../lib/journey-board";
 
 import { visibleThreads } from "../../lib/thread-visibility";
 import {
   BranchIcon,
   CloseIcon,
+  DesktopIcon,
   ExportIcon,
+  FolderIcon,
   FolderPlusIcon,
   GearIcon,
   HistoryIcon,
   HomeIcon,
+  LinkIcon,
   NewChatIcon,
   PencilIcon,
   SearchIcon,
@@ -69,7 +71,6 @@ export function Sidebar({
   onRenameThread,
   onBrowseThreads,
   onGoHome,
-  onGoJourney,
 }: {
   daemon: Daemon;
   /** 앱이 늘 하는 말 — 읽기 전용 표시의 원천. */
@@ -111,8 +112,6 @@ export function Sidebar({
   onBrowseThreads(slug: string | null): void;
   /** 레일 상단의 "홈" 행 — 홈 화면으로. */
   onGoHome: () => void;
-  /** 홈 아래의 "여정" 행 — mockups/journey/02-stepper 가 문서라 부르는 허브로. */
-  onGoJourney: () => void;
 }) {
   const { projects, activeSlug, api } = daemon;
   const [switching, setSwitching] = useState<string | null>(null);
@@ -383,9 +382,7 @@ export function Sidebar({
   /** The child row's leading mark: a spinner for a turn on,
      the orange dot for a permission or question, a ring for an answer that
      landed while the planner was elsewhere. The open thread never wears
-     the ring — the planner is reading it. The conversation's journey
-     position rides the row's trail (`LeafTrail`) — 여정은 행 끝의 4점이
-     읽는다. */
+     the ring — the planner is reading it. */
   const leafDot = (thread: ThreadSummary) => {
     if (thread.state === "running") return <span className="leaf__dot leaf__dot--live" />;
     if (thread.state === "awaiting") return <span className="leaf__dot leaf__dot--ask" />;
@@ -447,7 +444,6 @@ export function Sidebar({
             >
               {leafDot(thread)}
               <span className="leaf__title">{threadTitle(thread)}</span>
-              <LeafTrail thread={thread} />
               {leafMeta(project, thread)}
             </button>
             <Tip label={leafMenuFor === thread.id ? undefined : "대화 메뉴"} side="right">
@@ -582,17 +578,6 @@ export function Sidebar({
             )}
           </button>
         </Tip>
-        <Tip label={rail ? "여정" : undefined} side="right">
-          <button
-            type="button"
-            className="sidebar__journey"
-            aria-label="여정"
-            onClick={onGoJourney}
-          >
-            <BranchIcon size={rail ? 15 : 13} />
-            {!rail && <span className="sidebar__home-label">여정</span>}
-          </button>
-        </Tip>
         {rail && (
           <Tip label="대화·화면 찾기 — ⌘K" side="right">
             <button
@@ -631,7 +616,19 @@ export function Sidebar({
                   <div className="node__rowwrap">
                     <Tip
                       side="right"
-                      label={`${project.name} 대화${badge ? ` · ${badge.label}` : ""}`}
+                      interactive
+                      bubbleClass="pcard__bubble"
+                      label={
+                        switching === project.slug ? (
+                          `${project.name} 대화 · 전환 중…`
+                        ) : (
+                          <ProjectCard
+                            project={project}
+                            badge={badge}
+                            onOpenFolder={(slug) => void api.projectOpenFolder(slug)}
+                          />
+                        )
+                      }
                     >
                       <button
                         type="button"
@@ -846,15 +843,18 @@ export function Sidebar({
                       <div className="node__rowwrap">
                         <Tip
                           side="right"
+                          interactive
+                          bubbleClass="pcard__bubble"
                           label={
-                            switching === project.slug
-                              ? "전환 중…"
-                              : // The row already shows its name — a tooltip may
-                                // only add to it (owner/repo). A name over its
-                                // own name was noise.
-                                ownerRepoOf(project.repoUrl)
-                                ? `${project.name} — ${ownerRepoOf(project.repoUrl)}`
-                                : undefined
+                            switching === project.slug ? (
+                              "전환 중…"
+                            ) : (
+                              <ProjectCard
+                                project={project}
+                                badge={badge}
+                                onOpenFolder={(slug) => void api.projectOpenFolder(slug)}
+                              />
+                            )
                           }
                         >
                           <button
@@ -1173,6 +1173,89 @@ function monogram(name: string): string {
   return first ? first.toUpperCase() : "·";
 }
 
+/**
+ * The project row's hover card (Tip interactive): what the row cannot show —
+ * the repo it clones, the branch this cycle pushes to, the preview's port
+ * while its server is up, and the clone's folder. Every row opens its
+ * target; a fact with nowhere to go stays a row, not a link.
+ */
+function ProjectCard({
+  project,
+  badge,
+  onOpenFolder,
+}: {
+  project: ProjectSummary;
+  badge: { kind: string; label: string } | null;
+  onOpenFolder: (slug: string) => void;
+}) {
+  const ownerRepo = ownerRepoOf(project.repoUrl);
+  const repoHref = ownerRepo ? `https://github.com/${ownerRepo}` : null;
+  const branch = project.branch ?? project.baseBranch;
+  return (
+    <span className="pcard">
+      <span className="pcard__title">
+        {project.name}
+        {badge ? <span className="pcard__state"> · {badge.label}</span> : null}
+      </span>
+      {ownerRepo && (
+        <a
+          className="pcard__row"
+          href={repoHref ?? undefined}
+          target="_blank"
+          rel="noreferrer"
+          title={repoHref ?? undefined}
+        >
+          <span className="ic ic--quiet ic--sm">
+            <LinkIcon />
+          </span>
+          <span className="pcard__value">{ownerRepo}</span>
+        </a>
+      )}
+      {branch && (
+        <a
+          className="pcard__row"
+          href={repoHref ? `${repoHref}/tree/${encodeURIComponent(branch)}` : undefined}
+          target="_blank"
+          rel="noreferrer"
+          title={repoHref ? `${repoHref}/tree/${branch}` : branch}
+        >
+          <span className="ic ic--quiet ic--sm">
+            <BranchIcon />
+          </span>
+          <span className="pcard__value">{branch}</span>
+        </a>
+      )}
+      {project.previewUrl && (
+        <a
+          className="pcard__row"
+          href={project.previewUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={project.previewUrl}
+        >
+          <span className="ic ic--quiet ic--sm">
+            <DesktopIcon />
+          </span>
+          <span className="pcard__value">{project.previewUrl}</span>
+        </a>
+      )}
+      {project.repoRoot && (
+        <button
+          type="button"
+          className="pcard__row"
+          title={project.repoRoot}
+          onClick={() => onOpenFolder(project.slug)}
+        >
+          <span className="ic ic--quiet ic--sm">
+            <FolderIcon />
+          </span>
+          <bdi className="pcard__value pcard__value--path">{project.repoRoot}</bdi>
+        </button>
+      )}
+    </span>
+  );
+}
+
 /** The popover's short state word — the same words the row's meta uses, minus
     the markup (a menu row has no room for the dot diagram). */
 function leafMetaText(thread: ThreadSummary): string {
@@ -1180,30 +1263,6 @@ function leafMetaText(thread: ThreadSummary): string {
   if (thread.state === "awaiting") return "확인 대기";
   if (thread.title === BOOTSTRAP_THREAD_TITLE) return "준비 기록";
   return timeAgo(thread.updatedAt);
-}
-
-/** The trail's four stops, in walking order — the row's dots and the key
-    that names each dot's place in the journey. */
-const TRAIL_STOPS = ["만들기", "저장", "넘기기", "반영"] as const;
-
-/**
- * The leaf row's 4-point trail (P3-1 · mockups/journey 06-dots): the row IS
- * the journey. 사이클에 기여한 대화와 도는 턴만 점을 든다 — 빈 네 점은
- * "아직 못 갔다"로 오독되니, 기여가 없는 조용한 행은 트레일도 없다. 점의
- * 뜻은 툴팁이 대신 읽는다.
- */
-function LeafTrail({ thread }: { thread: ThreadSummary }) {
-  const trail = trailFor(thread);
-  if (!trail) return null;
-  return (
-    <Tip label={trailWords(thread)} side="right">
-      <span className="trail" aria-hidden="true">
-        {trail.map((stop, index) => (
-          <i key={TRAIL_STOPS[index]} className={stop === "empty" ? undefined : `trail__${stop}`} />
-        ))}
-      </span>
-    </Tip>
-  );
 }
 
 /** The tool's own 연결 준비 record — opened by the daemon, not the planner.

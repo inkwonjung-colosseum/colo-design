@@ -909,7 +909,9 @@ async function main() {
     );
 
     await page.locator(".machine--comments").last().waitFor({ timeout: 30000 });
-    // While the turn runs, send one more pin — the wait-line must appear (D86).
+    // While the turn runs a pin can still be picked and noted — but the
+    // composer no longer sends mid-turn: Enter waits, no wait-line appears,
+    // and the unsent pin's badge never greys.
     check(
       "ⓘ-setup second pin accepted mid-turn",
       (await altClick(app, "[data-screen] p")) === true,
@@ -919,28 +921,22 @@ async function main() {
     const queuedComposer = page.getByLabel("메시지");
     await queuedComposer.click();
     await queuedComposer.press("Enter");
-    const queuedLine = page.locator(".composer__queued");
-    await queuedLine.waitFor({ timeout: 15000 });
-    const queuedText = await queuedLine.innerText();
-    check("ⓘ a mid-turn send shows the wait-line", queuedText.includes("대기"), queuedText);
-    // The queued batch is SENT — its badges grey out for the turn's life
-    // (재설계 C10), whatever the wait-line is doing.
-    let ghostGrey = false;
-    const ghostDeadline = Date.now() + 10000;
-    while (Date.now() < ghostDeadline && !ghostGrey) {
-      ghostGrey = await inView(
+    await new Promise((ok) => setTimeout(ok, 1500));
+    check(
+      "ⓘ Enter mid-turn sends nothing — no wait-line",
+      (await page.locator(".composer__queued").count()) === 0,
+    );
+    check(
+      "ⓘ' the unsent pin's badge never greys",
+      !(await inView(
         app,
         `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')]
           .find((b) => (b.getAttribute("aria-label") || "").includes("보냄")))`,
-      );
-      if (!ghostGrey) await new Promise((ok) => setTimeout(ok, 250));
-    }
-    check("ⓘ' the queued batch's badges grey out as sent", ghostGrey === true);
-    // The stub CLI serves one turn per process, so the queued message cannot
-    // complete here — 중지 is the planner's way out, and the wait-line must go
-    // with it (D86), no error band left behind (결함①).
+      )),
+    );
+    // 중지 is still the way out of a look turn — no error band left behind
+    // (결함①), and the unsent pin stays in the tray.
     await page.locator(".toolbar__stop").click();
-    await queuedLine.waitFor({ state: "detached", timeout: 15000 });
     // The band is what must NOT be there, so it is counted, not awaited: an
     // `innerText()` on an absent locator sits out Playwright's full 30s
     // auto-wait before its catch — half this suite's runtime for a string
@@ -949,30 +945,13 @@ async function main() {
     const bandCount = await bands.count();
     const bandText = bandCount === 0 ? "(none)" : await bands.first().innerText();
     check(
-      "ⓘ 중지 clears the wait-line without an error band",
+      "ⓘ 중지 leaves no error band",
       bandCount === 0,
       `band:${bandText.slice(0, 96).replace(/\n/g, " ")}`,
     );
-    // The turn left without answering — the grey badges go with it.
-    let ghostGone = false;
-    const goneDeadline = Date.now() + 10000;
-    while (Date.now() < goneDeadline && !ghostGone) {
-      ghostGone = !(await inView(
-        app,
-        `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')]
-          .find((b) => (b.getAttribute("aria-label") || "").includes("보냄")))`,
-      ));
-      if (!ghostGone) await new Promise((ok) => setTimeout(ok, 250));
-    }
     check(
-      "ⓘ' 중지 takes the grey sent badges with the wait-line",
-      ghostGone === true,
-      `badges:${JSON.stringify(
-        await inView(
-          app,
-          `[...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')].map((b) => b.getAttribute("aria-label"))`,
-        ),
-      )}`,
+      "ⓘ' the unsent pin survives 중지 in the tray",
+      (await page.locator(".pintray__row").count()) > 0,
     );
 
     await page

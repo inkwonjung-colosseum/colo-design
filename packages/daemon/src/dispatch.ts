@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -8,7 +9,7 @@ import {
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
-import { browseFiles, listFiles } from "./environment.js";
+import { browseFiles, currentPlatform, listFiles } from "./environment.js";
 import type { GitHubBridge } from "./github-bridge.js";
 import type { HandoffPreviews } from "./handoff-preview.js";
 import type { DaemonLogger } from "./log.js";
@@ -236,6 +237,11 @@ export class RequestRouter {
             ...(message.effort ? { effort: message.effort } : {}),
           },
         });
+        // The plan reading is owed per provider, and a fresh session is
+        // already idle — ask it now rather than waiting for a status
+        // broadcast nothing schedules. A codex thread's first composer
+        // render is exactly when its account's numbers matter.
+        this.deps.plans.refresh(provider);
         // A session start is the moment the 화면 half goes back to the remote.
         // Mid-cycle that is a merge of the developer's base branch, and a
         // conflict lands as this session's first task — which is why it runs
@@ -303,7 +309,7 @@ export class RequestRouter {
           }
           await seeding;
         }
-        carrier.send(message.text, message.images, message.pins);
+        carrier.send(message.text, message.attachments, message.pins);
         return { ok: true };
       }
 
@@ -559,6 +565,14 @@ export class RequestRouter {
         this.announceProjects();
         return { projects: this.projectSummaries(), activeSlug: next };
       }
+      case "project.openFolder": {
+        if (!this.deps.registry.get(message.slug)) {
+          throw new Error(`프로젝트를 찾을 수 없습니다: ${message.slug}`);
+        }
+        const paths = this.deps.registry.paths(message.slug);
+        openInFileManager(paths.repoRoot);
+        return { ok: true };
+      }
 
       case "repo.status":
         return await this.repo.status();
@@ -744,7 +758,7 @@ export class RequestRouter {
           cwd: this.workspaceCwd(),
           turn: message.turn,
           text: message.text,
-          images: message.images,
+          attachments: message.attachments,
           base: {
             cwd: this.workspaceCwd(),
             provider: target.provider,
@@ -962,4 +976,27 @@ export class RequestRouter {
     this.refreshThreads();
     return session;
   }
+}
+
+/**
+ * 폴더 열기 — the OS file manager on the clone's path. Detached like the
+ * onboarding fix spawns: nobody reads the outcome, and an opener that
+ * errors must never crash the daemon. `explorer` is an exe, so no shell is
+ * needed even on Windows.
+ */
+function openInFileManager(path: string): void {
+  const platform = currentPlatform();
+  // COLO_DESIGN_OPEN_BIN pins the opener — the e2e suite points it at a
+  // stub that logs the path instead of raising a real Finder window.
+  const pinned = process.env.COLO_DESIGN_OPEN_BIN;
+  const [command, args] = pinned
+    ? [pinned, [path]]
+    : platform === "win32"
+      ? ["explorer", [path]]
+      : platform === "darwin"
+        ? ["open", [path]]
+        : ["xdg-open", [path]];
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.on("error", () => undefined);
+  child.unref();
 }

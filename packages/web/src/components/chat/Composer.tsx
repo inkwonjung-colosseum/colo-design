@@ -13,7 +13,6 @@ import { Fold, useFoldNotice } from "../../components";
 import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import {
   EFFORT_LABEL,
-  EFFORT_MENU_HINT,
   MODE_LABEL,
   MODE_MENU_HINT,
   modelOptions,
@@ -265,8 +264,7 @@ export function Composer({
   draftKey,
   placeholder,
   usage,
-  plan,
-  planProviderLabel,
+  plans,
   onRefreshUsage,
   running,
   stopping = false,
@@ -310,12 +308,12 @@ export function Composer({
   placeholder: string;
   /** This thread's own context ring — the send row's budget, not the account's. */
   usage: ContextUsage | null;
-  /** Account-wide limits from the daemon; shown even with no thread open. */
-  plan: PlanUsage | null;
-  /** Resolved display name for `plan.provider` ("Claude", "Codex"). Null
-      when the reading carries no provider (pre-tag cache) or the daemon's
-      provider list has not arrived yet. */
-  planProviderLabel?: string | null;
+  /**
+   * Account-wide limits from the daemon, one reading per enabled provider —
+   * the composer's own first. Shown even with no thread open; each reading
+   * carries its account's resolved display name.
+   */
+  plans: Array<{ plan: PlanUsage; label: string | null }>;
   /** Called when the usage popover opens, so the numbers are read now, not
       whenever the last turn happened to land. */
   onRefreshUsage?: () => void;
@@ -892,58 +890,51 @@ export function Composer({
       // 단계는 살아 있어야 처음 프로바이더를 고를 수 있다 — the model slot is
       // the seeder's job (useSessions), not an 자동 row to pick back.
       disabled: selector.models.length === 0 && !canPickProvider,
-      // 드릴다운 헤더: 모델 단계는 ← 프로바이더(전환)와 ⚙ 설정, 프로바이더
-      // 단계는 ← 모델. 헤더는 열려 있을 때만 SelectorChip 이 그린다.
-      header: (() => {
-        if (modelMenuLevel === "providers") {
-          return (
-            <div className="selector__headrow">
-              <button
-                type="button"
-                className="selector__back"
-                onClick={() => setModelMenuLevel("models")}
-              >
-                <ChevronLeftIcon size={12} />
-                모델
-              </button>
-              <span className="selector__headtitle">프로바이더</span>
-            </div>
-          );
-        }
-        return (
-          <div className="selector__headrow">
-            {canPickProvider ? (
-              <button
-                type="button"
-                className="selector__drill"
-                onClick={() => setModelMenuLevel("providers")}
-                title="프로바이더 바꾸기"
-              >
-                <span className="selector__drillname">프로바이더</span>
-                <span className="selector__drillval">{providerLabel}</span>
-                <ChevronRightIcon size={12} />
-              </button>
-            ) : (
-              <span className="selector__headtitle">{providerLabel}</span>
-            )}
-            {onOpenProviderSettings && (
-              <button
-                type="button"
-                className="selector__gear"
-                aria-label="프로바이더 설정"
-                title="프로바이더 설정"
-                onClick={() => {
-                  setMenu(null);
-                  setModelMenuLevel("models");
-                  onOpenProviderSettings();
-                }}
-              >
-                <GearIcon size={13} />
-              </button>
-            )}
-          </div>
-        );
-      })(),
+      // 드릴다운 헤더: 모델 단계는 › 프로바이더(전환), 프로바이더 단계는
+      // ← 모델. ⚙ 설정은 두 단계 모두에 선다 — 못 쓰는 프로바이더의 이유를
+      // 읽는 자리가 곧 설정으로 가야 할 자리다. 헤더는 열려 있을 때만 그린다.
+      header: (
+        <div className="selector__headrow">
+          {modelMenuLevel === "providers" ? (
+            <button
+              type="button"
+              className="selector__back"
+              onClick={() => setModelMenuLevel("models")}
+            >
+              <ChevronLeftIcon size={12} />
+              모델
+            </button>
+          ) : canPickProvider ? (
+            <button
+              type="button"
+              className="selector__drill"
+              onClick={() => setModelMenuLevel("providers")}
+              title="프로바이더 바꾸기"
+            >
+              <span className="selector__drillname">프로바이더</span>
+              <span className="selector__drillval">{providerLabel}</span>
+              <ChevronRightIcon size={12} />
+            </button>
+          ) : (
+            <span className="selector__headtitle">{providerLabel}</span>
+          )}
+          {onOpenProviderSettings && (
+            <button
+              type="button"
+              className="selector__gear"
+              aria-label="프로바이더 설정"
+              title="프로바이더 설정"
+              onClick={() => {
+                setMenu(null);
+                setModelMenuLevel("models");
+                onOpenProviderSettings();
+              }}
+            >
+              <GearIcon size={13} />
+            </button>
+          )}
+        </div>
+      ),
       alwaysSearch: modelMenuLevel === "models",
       options:
         modelMenuLevel === "providers" && canPickProvider
@@ -975,7 +966,6 @@ export function Composer({
       options: effortLevels.map((level) => ({
         value: level,
         label: EFFORT_LABEL[level],
-        hint: EFFORT_MENU_HINT[level],
         picked: selector.effort === level,
       })),
     },
@@ -1041,7 +1031,7 @@ export function Composer({
           conversation's own length is not an account reading: it rides the
           send row, beside the button it is a reason to press or not. */}
       <div className="composer__usage">
-        <UsageChip plan={plan} providerLabel={planProviderLabel} onRefresh={onRefreshUsage} />
+        <UsageChip plans={plans} onRefresh={onRefreshUsage} />
       </div>
 
       {/* 상태 밴드 — 카드 밖의 한 열. 대기·핀·작업·제안이 살아 있을 때만

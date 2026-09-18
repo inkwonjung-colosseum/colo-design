@@ -10,7 +10,6 @@ import {
 import { usePins } from "../../hooks/usePins";
 import { useSessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
-import { deriveJourney, deriveThreadJourney } from "../../lib/journey";
 import {
   type ChatSettings,
   type LayoutSettings,
@@ -24,7 +23,6 @@ import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { ShortcutsSheet } from "../dialogs/ShortcutsSheet";
 import { HomeInbox } from "../home/HomeInbox";
-import { JourneyBoard } from "../journey/JourneyBoard";
 import { ScreenPanel } from "../panels/ScreenPanel";
 import { Palette } from "./Palette";
 import { Splitter } from "./Splitter";
@@ -79,8 +77,6 @@ export interface WorkspaceHandle {
   browseThreads: (slug: string) => void;
   /** 레일의 "홈" 행 — 지금 보는 대화가 무엇이든 홈 인박스로. */
   goHome: () => void;
-  /** 홈 아래의 "여정" 행 — 활성 프로젝트의 여정 허브로. */
-  goJourney: () => void;
 }
 
 /**
@@ -152,7 +148,7 @@ export function PageWorkspace({
    * (P1 홈 인박스) — 특정 스레드를 연 순간에만(openThreadById ·
    * startNewThread) "thread"로 넘어간다.
    */
-  const [view, setView] = useState<"home" | "thread" | "journey">("home");
+  const [view, setView] = useState<"home" | "thread">("home");
   /**
    * 새 대화 버튼·⌘T 의 단일 통로 — "thread" 로 넘어가되 세션은 만들지 않는다
    * (fresh). 첫 입력 전까지 컴포저의 프로바이더 칩이 살아 있어 연결되고 켠
@@ -383,7 +379,6 @@ export function PageWorkspace({
       setPalette(true);
     },
     goHome: () => setView("home"),
-    goJourney: () => setView("journey"),
   }));
 
   useEffect(() => {
@@ -451,7 +446,7 @@ export function PageWorkspace({
     async (
       turn: string,
       name?: string,
-      images?: Array<{ mediaType: string; data: string }>,
+      attachments?: Array<{ name: string; mediaType: string; data: string }>,
       pins?: Array<{ screen: string; state: string | null }>,
     ) => {
       if (forwardBusyRef.current) return false;
@@ -464,7 +459,7 @@ export function PageWorkspace({
         // tool).
         const target = sessions.activeId ?? (await sessions.create(name));
         if (!target) return false;
-        await sessions.sendTurn(turn, images, target, pins);
+        await sessions.sendTurn(turn, attachments, target, pins);
         return true;
       } catch {
         // sendTurn already put the reason in the error strip.
@@ -506,33 +501,6 @@ export function PageWorkspace({
     turnState === "waiting_permission" ||
     turnState === "waiting_question";
   const settledEmpty = !turnLive && (sessions.active?.queue?.length ?? 0) === 0;
-  /**
-   * 여정 띠 — 두 단위의 지도 (P3-1). 열린 대화의 테이프에 사이클 블록이
-   * 있으면(이 대화가 저장·넘김·반영·코멘트를 받았으면) 그 대화의 지도를
-   * 보여 주고, 없으면 프로젝트 사이클의 지도다 — `repo` 필드는 프로젝트
-   * 단위라 어느 대화가 열려 있든 같은 그림이다. `delivery === null`
-   * (준비 중)이면 띠 자체가 숨는다.
-   */
-  const threadJourney = sessions.active
-    ? deriveThreadJourney(sessions.active.blocks, turnState === "running")
-    : null;
-  const journey =
-    threadJourney ??
-    deriveJourney({
-      pendingChanges: daemon.repo?.pendingChanges ?? 0,
-      branch: daemon.repo?.branch ?? null,
-      phase: daemon.repo?.phase ?? null,
-      handoff: daemon.repo?.handoff ?? null,
-      running: turnState === "running",
-      shelf: daemon.repo?.shelf ?? null,
-    });
-  const journeyTitle =
-    threadJourney && sessions.activeId
-      ? (() => {
-          const active = sessions.list.find((session) => session.sessionId === sessions.activeId);
-          return active ? titleFor(active) : undefined;
-        })()
-      : undefined;
   /** 제목바의 이름 — 활성 프로젝트. 프레임의 헤더가 이 행으로 흡수됐다. */
   const projectName =
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? null;
@@ -648,7 +616,7 @@ export function PageWorkspace({
   return (
     <div className="planner__work">
       {/* 프레임의 한 헤더 줄 — 프로젝트 이름이 왼쪽을 쓰고, ScreenPanel 이
-          그린 사이클 바(지도 → 상태 → 행동)가 이 슬롯으로 올라와 나머지를
+          그린 사이클 바(상태 → 행동)가 이 슬롯으로 올라와 나머지를
           채운다. 바의 상태는 전부 패널의 것이라 끌어올리는 대신 자리만
           내준다. */}
       <header className="planner__header">
@@ -666,13 +634,6 @@ export function PageWorkspace({
           onOpenThread={(thread) => void openThreadById(thread.id)}
           onNewThread={() => void startNewThread()}
         />
-      ) : view === "journey" ? (
-        <JourneyBoard
-          daemon={daemon}
-          sessionTitles={settings.sessionTitles}
-          activeThreadId={sessions.activeId}
-          onOpenThread={(thread) => void openThreadById(thread.id)}
-        />
       ) : (
         <div
           ref={bodyRef}
@@ -684,7 +645,6 @@ export function PageWorkspace({
               daemon={daemon}
               sessions={sessions}
               sendKey={settings.sendKey}
-              midTurnSend={settings.midTurnSend}
               // 빈 대화의 placeholder 가
               // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
               // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
@@ -711,7 +671,6 @@ export function PageWorkspace({
               }}
               focusPinId={focusPinId}
               onChatChange={onChatChange}
-              onOpenSendSettings={() => onOpenSettings("behavior")}
               onOpenProviderSettings={() => onOpenSettings("providers")}
               cycleRequest={cycleRequest}
               onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
@@ -745,8 +704,6 @@ export function PageWorkspace({
               focusPin(pin.id);
             }}
             onPinFocus={focusPin}
-            journey={view === "thread" ? journey : null}
-            journeyTitle={journeyTitle}
             onCycleAction={askCycle}
             cycleRequest={cycleRequest}
             reviewsTick={reviewsTick}

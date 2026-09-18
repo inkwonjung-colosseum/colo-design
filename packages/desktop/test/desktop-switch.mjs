@@ -169,7 +169,6 @@ async function main() {
         JSON.stringify({
           body: await page.locator(".planner__body").count(),
           onboarding: await page.locator(".onboarding").count(),
-          journey: await page.locator(".journey").count(),
           wizard: await page.locator("[class*=wizard]").count(),
           home: await page.locator("[class*=home]").count(),
           plannerChildren: await page.evaluate(() =>

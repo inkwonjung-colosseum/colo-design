@@ -47,7 +47,6 @@ export const APP_SHORTCUTS: AppShortcut[] = [
     accelerator: "CmdOrCtrl+0",
   },
   { id: "pin", label: "핀 찍기", keys: "⌥+클릭" },
-  { id: "interrupt-send", label: "끊고 보내기", keys: "⌥Enter" },
   // 시트 자신의 행 — 가속키가 없다: ⌘/ 는 웹(워크스페이스 keydown)이
   // 혼자 처리하고, 데스크톱 메뉴에는 앉지 않는다(메뉴가 읽어도 click 이
   // 없는 항목이 되니 일부러 밖에 둔다).

@@ -7,24 +7,28 @@ import type { EffortLevel, PermissionMode, SessionState } from "./shared.js";
 
 /**
  * One send waiting in the daemon's wait room (PLAN D86), as the composer's
- * list shows it: the planner's own words, plus how many pictures rode along.
+ * list shows it: the planner's own words, plus how many pictures and other
+ * files rode along.
  */
 export interface QueuedSend {
   id: string;
   text: string;
   images: number;
+  /** Non-image attachments — text files, documents, binaries. */
+  files: number;
 }
 
 /**
  * One send the wait room lost without delivering (the query died, the daemon
  * was restarted under it). The words survive on the daemon's disk; the
- * pictures survive too unless they exceeded the persist cap, where
+ * attachments survive too unless they exceeded the persist cap, where
  * `truncated` says the composer must ask for them again.
  */
 export interface LostSend {
   id: string;
   text: string;
   images: number;
+  files: number;
   truncated?: boolean;
   /** Epoch ms — when the room lost it. The 30-day prune reads this. */
   lostAt: number;
@@ -37,7 +41,7 @@ export interface LostSend {
  */
 export type QueuedSendPayload = {
   text: string;
-  images: Array<{ mediaType: string; data: string }>;
+  attachments: Array<{ name: string; mediaType: string; data: string }>;
   /** 표식과 함께 보낸 말 — 되살릴 때 같이 돌려준다(게이트의 입력). */
   pins?: Array<{ screen: string; state: string | null }>;
 } | null;
@@ -95,6 +99,8 @@ export type ChatEvent =
       kind: "user.echo";
       text: string;
       images: number;
+      /** Non-image attachment names — the card lists what it cannot thumb. */
+      files?: string[];
       thumbs?: string[];
     }
   | {
@@ -284,12 +290,14 @@ export interface PlanWindow {
 }
 
 /**
- * A weekly window that belongs to one model rather than to the whole plan —
- * the Fable/Opus row of the usage dialog. The server names its own buckets,
- * so the label travels with the numbers instead of being spelled here.
+ * A budget window that is neither the plan's 5-hour nor its whole-week row —
+ * a per-model cap (the Fable/Opus row of the usage dialog) or a provider's
+ * own longer window. The label travels with the numbers fully spelled
+ * ("Fable 주간", "이번 달"), because only the producing driver knows the
+ * period the row actually runs on.
  */
 interface PlanModelWindow extends PlanWindow {
-  /** Server-supplied bucket name, e.g. 'Fable'. */
+  /** Fully spelled row label, e.g. 'Fable 주간'. */
   label: string;
 }
 

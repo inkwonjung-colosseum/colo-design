@@ -20,7 +20,7 @@ import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
 import type { SessionManager } from "./session-manager.js";
-import { appendTape, tapeCycles } from "./session-tape.js";
+import { appendTape } from "./session-tape.js";
 
 /**
  * Inactive projects whose preview server stays up beside the active one, so
@@ -305,6 +305,12 @@ export class ProjectFleet {
         name: project.name,
         repoUrl: project.repo.url,
         baseBranch: project.repo.baseBranch,
+        // The hover card's facts: the cycle branch rides the registry so a
+        // never-touched project still names it; the preview url exists only
+        // while this workspace's server is actually up.
+        branch: repo?.currentBranch ?? project.repo.branch,
+        previewUrl: repo?.previewUrl ?? null,
+        repoRoot: this.deps.registry.paths(project.slug).repoRoot,
         // No workspace means the daemon never touched this project since its
         // last restart: disk state is all a summary may claim.
         phase: repo ? repo.syncState().phase : "missing",
@@ -441,10 +447,8 @@ export class ProjectFleet {
       const workspaces = this.workspaces.get(project.slug);
       if (!workspaces?.repo.isCloned()) continue;
       const cwd = realpathBestEffort(workspaces.paths.repoRoot);
-      // P3-1: one tape read per clone stamps every leaf's cycle position —
-      // the dot that says where THIS conversation left the cycle.
       void this.deps.manager
-        .refreshThreads(cwd, 50, tapeCycles(workspaces.paths.root))
+        .refreshThreads(cwd, 50)
         .then((threads) => {
           const key = JSON.stringify(threads);
           if (this.announcedThreads.get(project.slug) === key) return;

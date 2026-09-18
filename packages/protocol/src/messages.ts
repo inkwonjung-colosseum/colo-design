@@ -51,8 +51,15 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("session.send"),
     sessionId: z.string().min(1),
     text: z.string(),
-    /** Optional base64 image attachments — pasted or dropped pictures. */
-    images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
+    /**
+     * Optional base64 attachments — pasted or dropped files. `mediaType`
+     * decides the delivery: `image/*` rides as a vision block, decodable
+     * text is inlined into the turn, and anything else is staged on disk
+     * for the agent to read.
+     */
+    attachments: z
+      .array(z.object({ name: z.string().min(1), mediaType: z.string(), data: z.string().min(1) }))
+      .optional(),
     /**
      * The screens this turn points at — pins and 화면 캡처 (게이트 재배선
      * 2026-09-17). The screen gate re-opens exactly these after the turn;
@@ -127,7 +134,10 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     turn: z.number().int().positive(),
     text: z.string().min(1),
-    images: z.array(z.object({ mediaType: z.string().min(1), data: z.string().min(1) })).optional(),
+    /** The same payload as session.send — a re-sent turn keeps its files. */
+    attachments: z
+      .array(z.object({ name: z.string().min(1), mediaType: z.string(), data: z.string().min(1) }))
+      .optional(),
   }),
   z.object({
     ...withId,
@@ -318,6 +328,16 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("project.remove"),
     slug: z.string().min(1).max(64),
     deleteFiles: z.boolean().optional(),
+  }),
+  /**
+   * Opens the project's clone folder in the OS file manager — the hover
+   * card's 폴더 열기 row. The daemon spawns the platform's opener detached;
+   * the reply only says the request was accepted.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("project.openFolder"),
+    slug: z.string().min(1).max(64),
   }),
   /** Connected repo state. Reads disk and process state; no side effects. */
   z.object({ ...withId, type: z.literal("repo.status") }),

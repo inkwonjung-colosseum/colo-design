@@ -226,7 +226,7 @@ async function main() {
     // --- a thread with a transcript, open in the chat pane ------------------
     // DEBT (화면 구성 재설계, 2026-09-17): the leaf below never draws on the
     // current tree — wire-created threads don't surface (same failure in
-    // ui-midturn-send-e2e / ui-sidebar-e2e). Blocked on the redesign's
+    // ui-sidebar-e2e). Blocked on the redesign's
     // thread-list plumbing; the rest of this suite is untouched.
     const doomed = await call({ type: "session.create" });
     await page.locator(`.leaf[data-thread-id="${doomed.sessionId}"]`).click();

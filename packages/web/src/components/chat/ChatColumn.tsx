@@ -1,4 +1,4 @@
-import type { DeveloperReview, SessionSummary } from "@colo-design/protocol";
+import type { DeveloperReview, PlanUsage, SessionSummary } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "../../components";
 import type { Pins } from "../../hooks/usePins";
@@ -9,8 +9,7 @@ import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
 import { PLAN_TOOL } from "../../lib/labels";
 import { pinsToTurn, reviewToTurn } from "../../lib/preview-turns";
-import { type MidTurnSend, type SendKey, saveHandledReview } from "../../lib/settings";
-import { GENERIC_STARTERS } from "../../lib/suggestions";
+import { type SendKey, saveHandledReview } from "../../lib/settings";
 import { blockOnTape } from "../../lib/tape-visibility";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
@@ -18,8 +17,8 @@ import { TurnClock } from "../preview/TurnClock";
 import { StateBanner } from "../StateBanner";
 import { Tip } from "../shell/Tip";
 import { type Attachment, Composer } from "./Composer";
-import { ComposerChips } from "./ComposerChips";
 import { HandoffCard } from "./HandoffCard";
+import { WorkStrip } from "./WorkStrip";
 
 /**
  * The middle column: one transcript, the cards that interrupt it, and the
@@ -31,7 +30,6 @@ export function ChatColumn({
   daemon,
   sessions,
   sendKey,
-  midTurnSend,
   placeholder,
   disabled,
   titleFor,
@@ -46,13 +44,11 @@ export function ChatColumn({
   onReviewsHandled,
   onExportThread,
   onChatChange,
-  onOpenSendSettings,
   onOpenProviderSettings,
 }: {
   daemon: Daemon;
   sessions: Sessions;
   sendKey: SendKey;
-  midTurnSend: MidTurnSend;
   placeholder: string;
   disabled: boolean;
   /** The name a thread wears: the planner's rename, else the daemon's summary. */
@@ -88,8 +84,6 @@ export function ChatColumn({
   onExportThread?: () => void;
   /** ··· 메뉴의 보기 스위치 — 설정의 대화 칸에도 있는 같은 값. */
   onChatChange?: (patch: { showThinking?: boolean; showTools?: boolean }) => void;
-  /** 컴포저 힌트의 `바꾸기` — 설정의 동작 칸으로 바로 연다. */
-  onOpenSendSettings?: () => void;
   /** 모델 메뉴 헤더의 ⚙ — 설정의 프로바이더 칸으로 바로 연다. */
   onOpenProviderSettings?: () => void;
 }) {
@@ -105,18 +99,6 @@ export function ChatColumn({
     attachFiles.current = fn;
   }, []);
   const [dragDepth, setDragDepth] = useState(0);
-  const [attachNonce, setAttachNonce] = useState(0);
-  /** 빈 대화의 "붙여 시작하기" 칩 — 파일 고르기 + 문장 초안 한 번에. */
-  const startWithAttachment = () => {
-    setAttachNonce((nonce) => nonce + 1);
-    setSeed({ text: "이걸 화면으로 만들어 줘", nonce: seed.nonce + 1 });
-  };
-  // 고쳐서 다시 보내기: the planner's own words return to the
-  // composer for an edit; the nonce re-fires the seed on every click.
-  const [seed, setSeed] = useState<{ text: string; nonce: number }>({
-    text: "",
-    nonce: 0,
-  });
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
   // 다시 보내기 이중 실행 가드: the failed-turn card's button
@@ -222,7 +204,7 @@ export function ChatColumn({
    * 누른다), 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라
    * 여기선 무시한다.
    */
-  // 이 열은 홈·여정에서 내렸다 다시 탄다 — 마지막으로 본 nonce 만 기억해
+  // 이 열은 홈에서 내렸다 다시 탄다 — 마지막으로 본 nonce 만 기억해
   // 재생을 묵살한다. 같은 nonce 를 다시 보는 것은 사용자 손이 아니라
   // 리마운트이니, nonce 가 실제로 바뀐 때만 응답한다.
   const cycleNonce = useRef(-1);
@@ -247,12 +229,6 @@ export function ChatColumn({
   const { title: proposedTitle, body: proposedBody } = handoffDraft(
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? "",
   );
-  // 저장·넘기기가 오가는 중 — 칩의 "저장하는 중…" 이 읽는다.
-  const savingInFlight =
-    savingNow ||
-    diffStage === "computing" ||
-    diffStage === "pushing" ||
-    diffStage === "handing-off";
   // 저장은 됐고 넘기기만 멈춘 실패(gate:"pr")는 저장을 다시 돌리지 않는다.
   const handoffFailed = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
   // 실패 배너의 한 줄 — 카드가 없는 지금, 데몬이 diff.status 로 말하는
@@ -283,6 +259,25 @@ export function ChatColumn({
   const activeSummary = activeId
     ? (sessions.list.find((session) => session.sessionId === activeId) ?? null)
     : null;
+  /**
+   * The account the composer is about to spend: the open session's provider,
+   * or the one picked for the next session when no thread is open. The usage
+   * chip reads that provider's budget first — claude's 43% and codex's are
+   * different accounts, so the chip follows the composer, not whichever
+   * account happened to be read last.
+   */
+  const composerProvider = sessions.selector?.provider ?? "claude";
+  /**
+   * One reading per enabled provider — the settings' "새 대화 목록" switch
+   * decides which accounts the chip may show at all, and a provider whose
+   * CLI is missing or whose account was never read simply has no row.
+   */
+  const planRows = (daemon.status?.providers ?? [])
+    .filter((p) => p.available && !disabledProviders.includes(p.id))
+    .map((p) => ({ id: p.id, plan: daemon.status?.planUsageByProvider?.[p.id], label: p.label }))
+    .filter((row): row is { id: string; plan: PlanUsage; label: string } => row.plan != null)
+    .sort((a, b) => Number(b.id === composerProvider) - Number(a.id === composerProvider));
+  const plans = planRows.map(({ plan, label }) => ({ plan, label }));
   const beginRename = () => {
     if (!activeSummary) return;
     setMenuOpen(false);
@@ -599,9 +594,6 @@ export function ChatColumn({
             blocks={active?.blocks ?? []}
             live={sessions.running || restoring}
             onRetry={retry}
-            starters={GENERIC_STARTERS}
-            onStarterAttach={startWithAttachment}
-            onStarter={(text) => setSeed({ text, nonce: seed.nonce + 1 })}
             checkpoints={checkpoints}
             onRestoreCheckpoint={(id) => setConfirmRestore(id)}
             showTools={showTools}
@@ -738,6 +730,10 @@ export function ChatColumn({
         )}
       </div>
 
+      {/* 하위 작업 · 할 일의 목차 — 컴포저 위에 고정으로 선다. 테이프가
+          아무리 길어져도 "몇 개가 도는지"는 여기서 한 번에 읽힌다. */}
+      <WorkStrip blocks={active?.blocks ?? []} />
+
       {replyTo && (
         <div className="replybanner" role="status">
           <span className="replybanner__text">
@@ -755,14 +751,7 @@ export function ChatColumn({
         draftKey={draftKey}
         placeholder={placeholder}
         usage={sessions.usage}
-        plan={daemon.status?.planUsage ?? null}
-        planProviderLabel={
-          daemon.status?.planUsage?.provider
-            ? ((daemon.status?.providers ?? []).find(
-                (p) => p.id === daemon.status?.planUsage?.provider,
-              )?.label ?? null)
-            : null
-        }
+        plans={plans}
         onRefreshUsage={sessions.refreshUsage}
         selector={sessions.selector}
         commands={sessions.commands}
@@ -778,24 +767,15 @@ export function ChatColumn({
         onPickProvider={sessions.activeId ? undefined : sessions.pickProvider}
         running={sessions.running}
         stopping={stopping}
-        queue={sessions.queue}
         dropped={sessions.dropped}
-        onTakeQueued={sessions.takeQueued}
-        onSendQueuedNow={sessions.sendQueuedNow}
-        onClearQueue={() => void sessions.clearQueue()}
         onTakeDropped={sessions.takeDropped}
         onDismissDropped={sessions.dismissDropped}
-        hurrying={sessions.hurrying}
         suggestion={suggestion}
         onDismissSuggestion={() => setHiddenSuggestion(active?.suggestion ?? null)}
         tasks={active?.tasks ?? []}
         onStopTask={stopTask}
-        seed={seed}
-        seedAttach={attachNonce}
         registerAttach={registerAttach}
         sendKey={sendKey}
-        midTurnSend={midTurnSend}
-        onOpenSendSettings={onOpenSendSettings}
         onOpenProviderSettings={onOpenProviderSettings}
         onSend={async (text, attachments, sentPins) => {
           // 답장 모드: 사람 메시지의 `답하기`가 연 상태 — 컴포저의 말은
@@ -806,7 +786,7 @@ export function ChatColumn({
             // 조용히 사라진다. 거절로 돌려 보내면 Composer 는 말을 지우지
             // 않고 경고 줄에 이유를 세운다.
             if (attachments.length > 0) {
-              throw new Error("답장에는 그림을 첨부할 수 없습니다");
+              throw new Error("답장에는 파일을 첨부할 수 없습니다");
             }
             try {
               await api.replyToReview(replyTo.id, text);
@@ -862,19 +842,6 @@ export function ChatColumn({
         onPinFocus={(id) => void window.coloDesignDesktop?.preview?.pinFlash?.(id)}
         onInterrupt={stop}
         onFindFiles={(query) => api.findFiles(query)}
-        composerChips={
-          <ComposerChips
-            pendingChanges={pendingChanges}
-            branch={repo?.branch ?? null}
-            phase={repo?.phase ?? null}
-            handoff={handoff}
-            running={sessions.running}
-            shelf={repo?.shelf ?? null}
-            savingInFlight={savingInFlight}
-            onSaveNow={runSave}
-            onHandoff={() => setHandoffOpen(true)}
-          />
-        }
       />
       {confirmRestore && (
         <ConfirmDialog

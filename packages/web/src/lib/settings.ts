@@ -39,14 +39,6 @@ export type ThemeId =
 export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
 export type SendKey = "enter" | "modEnter";
-/**
- * 실행 중 보내기. A send while a turn runs either waits
- * for that turn to end (queue — the DAEMON holds it; the SDK would not, it
- * hands a mid-turn send straight to the CLI, which folds it into the running
- * turn) or cuts the running one and starts over with the new words
- * (interrupt — the ⌥Enter "끊고 보내기" path, promoted to the plain send).
- */
-export type MidTurnSend = "queue" | "interrupt";
 /** 완료 알림의 시점: 끔 / 오래 걸린 턴만(기본) / 모든 턴. */
 export type NoticeTiming = "off" | "long" | "all";
 
@@ -224,7 +216,6 @@ export function switchProviderPatch(chat: ChatSettings, next: string): Partial<C
 export interface Settings {
   theme: ThemeChoice;
   sendKey: SendKey;
-  midTurnSend: MidTurnSend;
   /**
    * 앱에서 링크 열기: 데스크톱에서 누른 http(s) 링크가 OS 브라우저 대신
    * 미리보기 칸에서 열린다. 기본은 꺼짐 — 칸은 원래 미리보기 서버만의
@@ -265,7 +256,6 @@ const DEFAULT_SETTINGS: Settings = {
    */
   theme: "light",
   sendKey: "enter",
-  midTurnSend: "queue",
   openLinksInApp: false,
   uiSize: SIZE_PX.ui.base,
   contentSize: SIZE_PX.content.base,
@@ -332,11 +322,6 @@ function loadSettings(): Settings {
   return {
     theme: oneOf(THEMES, stored.theme, DEFAULT_SETTINGS.theme),
     sendKey: oneOf(["enter", "modEnter"] as const, stored.sendKey, DEFAULT_SETTINGS.sendKey),
-    midTurnSend: oneOf(
-      ["queue", "interrupt"] as const,
-      stored.midTurnSend,
-      DEFAULT_SETTINGS.midTurnSend,
-    ),
     openLinksInApp: stored.openLinksInApp === true,
     uiSize: loadSizePx("ui", stored.uiSize ?? stored.uiScale),
     contentSize: loadSizePx("content", stored.contentSize ?? stored.contentScale),

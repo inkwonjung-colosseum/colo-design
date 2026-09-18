@@ -5,7 +5,7 @@
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
  *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
  *                      port (5397 settings, 5398 publish, 5401 onboarding,
- *                      5402 sidebar, 5403 midturn-send, 5409
+ *                      5402 sidebar, 5409
  *                      thread-delete, 5411 clear-all, 5413 changed-strip,
  *                      5415 first-send) — all distinct
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
@@ -77,7 +77,6 @@ const LANES = {
     suites: [
       "test:publish-ui",
       "test:settings",
-      "test:midturn-send",
       "test:first-send",
       "test:thread-delete-ui",
       "test:clear-all-ui",

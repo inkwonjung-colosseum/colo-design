@@ -1,0 +1,7 @@
+{
+  "port": 65195,
+  "notifications": {
+    "done": "all",
+    "sound": false
+  }
+}

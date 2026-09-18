@@ -48,6 +48,22 @@ test("toPlanUsage lands extra metered limits in modelWeekly under their own name
   assert.equal(plan.modelWeekly[0].label, "Fable");
   assert.equal(plan.modelWeekly[0].utilization, 68);
 });
+test("toPlanUsage names the plan's unnamed monthly window by its period", () => {
+  const plan = toPlanUsage({
+    rateLimits: {
+      limitId: "codex",
+      planType: "free",
+      primary: { usedPercent: 0, resetsAt: 1_800_000_000, windowDurationMins: 43200 },
+      secondary: null,
+    },
+  });
+  assert.equal(plan.subscriptionType, "free");
+  assert.equal(plan.fiveHour, null);
+  assert.equal(plan.sevenDay, null);
+  assert.equal(plan.modelWeekly.length, 1);
+  assert.equal(plan.modelWeekly[0].label, "이번 달");
+});
+
 test("toPlanUsage returns a null-window plan when the answer carries no limits", () => {
   const plan = toPlanUsage({});
   assert.equal(plan.provider, "codex");

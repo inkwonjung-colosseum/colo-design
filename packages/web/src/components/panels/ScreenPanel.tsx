@@ -14,7 +14,6 @@ import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf, timeAgo } from "../../lib/format";
-import type { Journey } from "../../lib/journey";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn, reviewToTurn } from "../../lib/preview-turns";
 import { guidanceFor } from "../../lib/repo-guidance";
@@ -44,7 +43,6 @@ import {
   TrashIcon,
   WarnIcon,
 } from "../icons";
-import { JourneyDots } from "../journey/JourneyDots";
 import { errorKindOf, ProgressPanel } from "../onboarding/RepoProgress";
 import {
   type PreviewError,
@@ -156,8 +154,6 @@ export function ScreenPanel({
   onCycleAction,
   cycleRequest,
   reviewsTick,
-  journey,
-  journeyTitle,
 }: {
   /** 프레임 헤더가 내준 자리 — 사이클 바는 여기로 올라가 프로젝트 이름 옆에
       선다. null 이면 바는 그려지지 않는다(헤더가 없는 호출은 없다). */
@@ -168,8 +164,8 @@ export function ScreenPanel({
    * Forward a machine-authored turn — the error banner's 고치기, a review's
    * 고치기, 화면 보여 주기, a failing gate's brief — into the working screen
    * thread. The panel does not know which thread that is; the shell resolves
-   * it, creating one named after the ask if there is none yet. `images` rides
-   * along: the look's frame. 이 길이 실은 화면은 게이트의 입력이 된다 —
+   * it, creating one named after the ask if there is none yet. `attachments`
+   * rides along: the look's frame. 이 길이 실은 화면은 게이트의 입력이 된다 —
    * 턴이 끝나면 기계가 그 화면을 다시 열어 본다 (게이트 재배선).
    *
    * Resolves true when the turn reached the thread; false when it did not
@@ -178,7 +174,7 @@ export function ScreenPanel({
   onMachineTurn: (
     turn: string,
     name?: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
     pins?: Array<{ screen: string; state: string | null }>,
   ) => Promise<boolean>;
   pins: Pins;
@@ -214,13 +210,6 @@ export function ScreenPanel({
   cycleRequest: { kind: "save" | "handoff" | "check"; nonce: number } | null;
   /** 대화 열에서 처리된 개발자 코멘트 — 배지의 수를 다시 읽는 신호. */
   reviewsTick: number;
-  /**
-   * 여정 지도 — 제목 행에서 내려와 이 바의 첫 요소로 산다: 지도 → 상태 →
-   * 행동이 한 줄로 읽힌다. `null`(준비 중·홈)이면 지도 자리가 없다.
-   */
-  journey: Journey | null;
-  /** 대화 지도일 때만 읽힌다 — 그 대화의 이름. */
-  journeyTitle?: string;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
@@ -536,7 +525,7 @@ export function ScreenPanel({
 
   // PageWorkspace 의 사이클 요청 — 이 패널은 `check` 만 집는다
   // (저장·넘기기는 대화 안 카드의 몫). 마지막 nonce 를 기억해 재생을
-  // 묵살한다 — 이 패널도 홈·여정에서 내렸다 다시 타는데, 다시 탈 때마다
+  // 묵살한다 — 이 패널도 홈에서 내렸다 다시 타는데, 다시 탈 때마다
   // 조용하지 않은 확인(false)이 코멘트 모달까지 열어버리던 결함.
   const checkNonce = useRef(-1);
   useEffect(() => {
@@ -903,8 +892,8 @@ export function ScreenPanel({
       const count = lookKey.current === key ? lookCount.current + 1 : 1;
       lookKey.current = key;
       lookCount.current = count;
-      const images = snapshot?.jpeg
-        ? [{ mediaType: "image/jpeg", data: snapshot.jpeg }]
+      const attachments = snapshot?.jpeg
+        ? [{ name: "화면 캡처.jpeg", mediaType: "image/jpeg", data: snapshot.jpeg }]
         : undefined;
       const lines = [
         "이 화면이 이렇게 보입니다. 무엇이 잘못됐는지 보고 고쳐 주세요.",
@@ -916,7 +905,7 @@ export function ScreenPanel({
       const delivered = await onMachineTurn(
         lookToTurn(route, state ?? "default", lines.join("\n\n"), count),
         undefined,
-        images,
+        attachments,
         // 게이트 재배선: 이 캡처가 가리킨 화면이 턴의 게이트 입력이다.
         [{ screen: route, state: state ?? null }],
       );
@@ -1008,12 +997,11 @@ export function ScreenPanel({
   return (
     <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
       {/* 사이클 바는 프레임 헤더의 슬롯으로 올라간다 — 프로젝트 이름 옆에서
-          지도 → 상태 → 행동이 한 줄로 읽힌다. 상태는 전부 이 패널의 것이라
+          상태 → 행동이 한 줄로 읽힌다. 상태는 전부 이 패널의 것이라
           끌어올리는 대신 포털로 그린다. */}
       {barSlot
         ? createPortal(
             <div className="screenpanel__bar">
-              {journey ? <JourneyDots journey={journey} title={journeyTitle} /> : null}
               {delivery ? (
                 <span className="selector screenpanel__statuswrap">
                   {statusOpen && (

@@ -3,9 +3,9 @@
  *
  * The connected repo is a local fixture remote; the "work to publish" is
  * written straight into the clone (what Claude's Write tool would have left
- * there), and the test drives the surface the planner uses: the composer's
- * 저장 chip (변경사항 저장 — one click, no review body), then the published
- * result — and verifies the commit actually reached the bare remote. 넘기기
+ * there), and the test drives the surface the planner uses: the top bar's
+ * 저장 button (one click, no review body), then the published result — and
+ * verifies the commit actually reached the bare remote. 넘기기
  * is an in-chat card, not a dialog.
  *
  * Prerequisites: `pnpm build`
@@ -390,14 +390,26 @@ async function main() {
       throw new Error("worktree never settled");
     }
 
-    // --- 저장은 칩 한 번 — 검토 몸통은 없다 (비개발자 저장) ------------------
+    // --- 저장은 상단 바 한 번 — 검토 몸통은 없다 (비개발자 저장) ------------
     // 저장 전 diff 펼침보기는 없다: 바뀐 파일의 목록은 화면 패널의 변경 점
     // 스트립이 이미 들고, 코드 검토는 개발자가 PR 에서 한다.
-    const saveChip = page.getByRole("button", { name: "변경사항 저장", exact: true });
-    await saveChip.waitFor({ timeout: 20000 });
+    const saveButton = page
+      .locator(".screenpanel__bar")
+      .getByRole("button", { name: "저장", exact: true });
+    await saveButton.waitFor({ timeout: 20000 });
     // 메모는 비워 보낸다: 이 스텁의 메모 턴은 실패하므로 커밋은 기본 메시지로
-    // 쓰인다.
-    await saveChip.click();
+    // 쓰인다. aria-disabled 는 클릭을 막지 않으므로 열릴 때까지 기다린다.
+    await page.waitForFunction(
+      () => {
+        const button = [...document.querySelectorAll(".screenpanel__bar button")].find(
+          (b) => b.textContent?.trim() === "저장",
+        );
+        return button?.getAttribute("aria-disabled") !== "true";
+      },
+      null,
+      { timeout: 20000 },
+    );
+    await saveButton.click();
     // 저장이 끝나면 기록의 `저장했어요` 카드가 자리에 남고, 그 밑에 넘기기로
     // 이어가는 복도가 선다.
     await page

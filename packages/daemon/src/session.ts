@@ -74,13 +74,18 @@ export interface SessionPin {
 interface HeldSend {
   id: string;
   text: string;
-  images: Array<{ mediaType: string; data: string }>;
+  attachments: Array<{ name: string; mediaType: string; data: string }>;
   pins: SessionPin[];
 }
 
 /** The wire shape of a waiting send: words and counts, never the bytes. */
-function summarize({ id, text, images }: HeldSend): QueuedSend {
-  return { id, text, images: images.length };
+function summarize({ id, text, attachments }: HeldSend): QueuedSend {
+  return {
+    id,
+    text,
+    images: attachments.filter((part) => part.mediaType.startsWith("image/")).length,
+    files: attachments.filter((part) => !part.mediaType.startsWith("image/")).length,
+  };
 }
 
 /** The same wire shape, stamped — the no-store fallback for the lost room. */
@@ -755,7 +760,7 @@ export class Session {
     // 다시 나갈 때 게이트 입력을 잃지 않게 바이트로만 동행한다.
     return {
       text: item.text,
-      images: item.images,
+      attachments: item.attachments,
       ...(item.pins.length > 0 ? { pins: item.pins } : {}),
     };
   }
@@ -1097,10 +1102,9 @@ export class Session {
     request.resolve({ behavior: "allow", updatedInput });
     return true;
   }
-
   send(
     text: string,
-    images?: Array<{ mediaType: string; data: string }>,
+    attachments?: Array<{ name: string; mediaType: string; data: string }>,
     pins?: SessionPin[],
   ): void {
     if (this.closed) throw new Error("닫힌 대화입니다 — 목록에서 다시 열면 이어갑니다.");
@@ -1111,7 +1115,12 @@ export class Session {
         `${this.providerLabel}가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다`,
       );
     this.lastActivity = Date.now();
-    const item: HeldSend = { id: randomUUID(), text, images: images ?? [], pins: pins ?? [] };
+    const item: HeldSend = {
+      id: randomUUID(),
+      text,
+      attachments: attachments ?? [],
+      pins: pins ?? [],
+    };
     // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
     // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
     if (this.turnStartedAt !== null) {
@@ -1133,7 +1142,7 @@ export class Session {
    * none of this yet, so taking it back out of the room leaves no trace, and
    * the running turn keeps its own quota and interrupt flag until its end.
    */
-  private deliver({ text, images, pins }: HeldSend): void {
+  private deliver({ text, attachments, pins }: HeldSend): void {
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
@@ -1156,7 +1165,7 @@ export class Session {
       this.title = title.slice(0, 80);
     }
 
-    void this.agent?.send({ text, images }).catch((error: unknown) => {
+    void this.agent?.send({ text, attachments }).catch((error: unknown) => {
       // 전송이 살아 있어도 보내기가 거절될 수 있다(codex 의 turn/start 거절,
       // 방금 닫힌 SDK 입력 큐). 삼키면 turnStartedAt 만 남고 turn.end 는
       // 영원히 오지 않는다 — 시계가 도는 죽은 턴. 여기서 스스로 턴을 닫는다:
@@ -1183,14 +1192,18 @@ export class Session {
     // The echo carries the person's own words. D87: the pin crops ride back
     // (capped) so the chat card can draw its thumbnails — live only; a
     // replayed transcript keeps the words.
-    const thumbs = images
-      .filter((image) => image.mediaType === "image/jpeg")
+    const thumbs = attachments
+      .filter((part) => part.mediaType === "image/jpeg")
       .slice(0, 6)
-      .map((image) => image.data);
+      .map((part) => part.data);
+    const files = attachments
+      .filter((part) => !part.mediaType.startsWith("image/"))
+      .map((part) => part.name);
     this.events.onEvent(this.id, {
       kind: "user.echo",
       text,
-      images: images.length,
+      images: attachments.length - files.length,
+      ...(files.length > 0 ? { files } : {}),
       ...(thumbs.length > 0 ? { thumbs } : {}),
     });
   }
