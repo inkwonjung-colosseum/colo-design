@@ -1,7 +1,7 @@
 {
   "name": "colo-design",
   "private": true,
-  "version": "0.3.9",
+  "version": "0.3.10",
   "description": "Screen design in a chat for people with zero developer tooling knowledge. Connect your team's repo, ask for a screen in words, a pasted image, or an attached document, verify it against a live preview of the real app, and hand it off to developers. Each user runs their own daemon and signs in with their own Claude subscription.",
   "type": "module",
   "scripts": {
