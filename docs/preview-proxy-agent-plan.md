@@ -178,11 +178,14 @@ interface Transport {
 > 이 유력한 발동조건이다. 크롭은 플래너 창 capturePage(`captureViaWindow`)로
 > 대체했고, 핀 스윕(ⓒ)은 오버레이의 `colo-overlay:pins-poll` 폴백(게스트→main
 > invoke)이 잇는다 — ⓒ 해결. 상류(Electron webview) 이슈로 보고할 가치가 있다.
-> `desktop-comments` 잔여 1건(28 중)은 이 전환 밖이다: 둘째 ⌘T 스레드의 전송
-> 후 markSent 동기 미도달(진단: main lastPins 가 sent:false 로 멈춤 — 스레드 1의
-> 같은 메커니즘은 통과; suite 주석 스스로 stub-exit race 지뢰밭이라 부르는 영역).
-> ⓚ 문구 기대치는 경로 계약(member/MemberList)으로 바로잡았다. 수동 확인 1건:
-> macOS 한글 IME 조합 입력.
+> `desktop-comments` 잔여 1건(28 중, 재현율 100%): 둘째 ⌘T 스레드의 전송 뒤
+> markSent 동기가 렌더러에서 아예 발화하지 않는다(진단: 렌더러 동기 카운터가
+> 핀 추가 동기에서 동결, main lastPins 는 sent:false 로 멈춤 — 스레드 1의 같은
+> 체인은 통과; 단일 usePins 인스턴스 확인, applyPinsSync 내부 예외 없음).
+> 스윕 전달로 자체는 폴링 폴백으로 해결됐다(ⓒ 통과). 남은 조사는 웹측
+> usePins/PageWorkspace 의 상태 전파 — suite 주석 스스로 stub-exit race
+> 지뢰밭이라 부르는 영역. ⓚ 문구 기대치는 경로 계약(member/MemberList)으로
+> 바로잡았다. 수동 확인 1건: macOS 한글 IME 조합 입력.
 
 | 작업 | 파일 |
 |---|---|
