@@ -396,6 +396,14 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
  * and its timestamps survive restarts unchanged.
  */
 export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
+  // 운영자가 연결 레포 설정을 신뢰하기로한 배포(사내 전용 — docs/repo-settings-trust.md):
+  // 파일을 건드리지도, 경고를 내지도 않는다.
+  if (
+    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "1" ||
+    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "true"
+  ) {
+    return false;
+  }
   const record = readQuarantine(root, configDir) ?? { root, at: "", files: [] };
   const entries = record.files.slice();
   let changed = false;
@@ -448,6 +456,14 @@ export function repoSettingsWarning(
   root: string,
   configDir: string = CONFIG_DIR,
 ): RepoSettingsWarning | null {
+  // 절단이 켜져 있을 때만 경고가 존재한다 — 신뢰 모드(docs/repo-settings-trust.md)는
+  // 건드린 것도 없으면서 유령 경고를 내지 않는다.
+  if (
+    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "1" ||
+    process.env.COLO_DESIGN_TRUST_REPO_SETTINGS === "true"
+  ) {
+    return null;
+  }
   const record = readQuarantine(root, configDir);
   if (!record || record.files.length === 0) return null;
   const named = record.files
