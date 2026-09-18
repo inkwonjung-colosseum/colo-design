@@ -5,7 +5,6 @@ import type {
   LostSend,
   PermissionMode,
   PlanUsage,
-  QueuedSend,
   SessionCommand,
   SessionSelectors,
 } from "@colo-design/protocol";
@@ -15,20 +14,19 @@ import type { PinAttachment, PinIntent } from "../../hooks/usePins";
 import {
   EFFORT_LABEL,
   EFFORT_MENU_HINT,
-  MODE_LABEL_KO,
+  MODE_LABEL,
   MODE_MENU_HINT,
   modelOptions,
   modelRowOf,
   modelWords,
-  modeMenuLabel,
   SETTINGS_MODES,
 } from "../../lib/chat-options";
 import { composing } from "../../lib/ime";
-import type { MidTurnSend, SendKey } from "../../lib/settings";
+import type { SendKey } from "../../lib/settings";
 import {
   ArrowUpIcon,
-  ChevronDownIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
   CloseIcon,
   FileIcon,
   FolderIcon,
@@ -49,6 +47,8 @@ import { COMMAND_FALLBACK, COMMAND_LABEL, SelectorChip } from "./SelectorChip";
 import { UsageChip } from "./UsageChip";
 
 export interface Attachment {
+  /** `image` rides as a vision block; `file` is inlined or staged by the daemon. */
+  kind: "image" | "file";
   name: string;
   mediaType: string;
   /** base64, without the data-url prefix. */
@@ -82,12 +82,21 @@ type Chip = {
 /**
  * 붙여넣은 그림의 긴 변 상한 — 비전 입력이 실질적으로 쓰는 한계(1568)에 맞춘다.
  * 수 MB 짜리 원본은 API 가 거절하고, 큰 base64 는 소켓 프레임과 대기열
- * 저장소를 무겁게 했다.
  */
 const PASTE_IMAGE_LONG_EDGE = 1568;
 
 /** canvas 로 다시 인코드해도 의미가 보존되는 형식 — gif·svg 등은 건드리지 않는다. */
-const RESIZABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const RESIZABLE_IMAGE_TYPES: Record<string, true> = {
+  "image/png": true,
+  "image/jpeg": true,
+  "image/webp": true,
+};
+
+/**
+ * 첨부 한 건의 바이트 상한 — 대기열 저장소의 항목 예산(8MB)과 같은 값이다.
+ * 그 너머의 파일은 첨부가 아니라 @ 멘션의 경로가 운반한다.
+ */
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 function decodeImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -99,9 +108,10 @@ function decodeImage(dataUrl: string): Promise<HTMLImageElement> {
 }
 
 /**
- * 한 장을 첨부로 읽는다. 상한을 넘는 래스터는 같은 형식으로 줄여서, 디코드·
- * 인코드가 안 되는 것(움짤·벡터·손상)은 원본 그대로 둔다 — 줄이기가 그림을
- * 바꿔버리는 쪽이 거절당하는 쪽보다 나쁘다.
+ * 한 건을 첨부로 읽는다. 그림은 상한을 넘는 래스터를 같은 형식으로 줄이고,
+ * 디코드·인코드가 안 되는 것(움짤·벡터·손상)은 원본 그대로 둔다 — 줄이기가
+ * 그림을 바꿔버리는 쪽이 거절당하는 쪽보다 나쁘다. 그림이 아닌 파일은
+ * 바이트 그대로다 — 데몬이 텍스트는 인라인으로, 나머지는 디스크로 나눈다.
  */
 async function toAttachment(file: File): Promise<Attachment> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -110,13 +120,14 @@ async function toAttachment(file: File): Promise<Attachment> {
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
-  const original = {
+  const original: Attachment = {
+    kind: file.type.startsWith("image/") ? "image" : "file",
     name: file.name || "pasted image",
     mediaType: file.type,
     data: dataUrl.slice(dataUrl.indexOf(",") + 1),
     size: file.size,
   };
-  if (!RESIZABLE_IMAGE_TYPES.has(file.type)) return original;
+  if (!RESIZABLE_IMAGE_TYPES[file.type]) return original;
   try {
     const image = await decodeImage(dataUrl);
     const longEdge = Math.max(image.naturalWidth, image.naturalHeight);
@@ -139,9 +150,13 @@ async function toAttachment(file: File): Promise<Attachment> {
 /** The modes that act without asking — the ones the chip marks with a slash. */
 const ASKS_NOTHING: PermissionMode[] = ["dontAsk", "bypassPermissions"];
 
-/** What rode along with a waiting send, as the row's small print — or null for words alone. */
-function attachmentWords({ images }: QueuedSend): string | null {
-  return images > 0 ? `이미지 ${images}장` : null;
+/** What rode along with a lost send, as the row's small print — or null for words alone. */
+function attachmentWords({ images, files }: { images: number; files: number }): string | null {
+  const parts = [
+    images > 0 ? `이미지 ${images}장` : null,
+    files > 0 ? `파일 ${files}개` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
@@ -255,24 +270,15 @@ export function Composer({
   onRefreshUsage,
   running,
   stopping = false,
-  queue = [],
   dropped = [],
-  hurrying = null,
   onTakeDropped,
   onDismissDropped,
-  onTakeQueued,
-  onSendQueuedNow,
-  onClearQueue,
   onDismissSuggestion,
   suggestion = null,
   tasks = [],
   onStopTask,
-  seed,
-  seedAttach,
   registerAttach,
   sendKey,
-  midTurnSend = "queue",
-  onOpenSendSettings,
   selector,
   onSetModel,
   onSetEffort,
@@ -292,7 +298,6 @@ export function Composer({
   onPinFocus,
   onPinIntent,
   titleForScreen = () => null,
-  composerChips,
 }: {
   disabled: boolean;
   /** 잠긴 이유 한 줄 — ChatColumn 이 연결 상태에서 읽어 내린다. 잠겨 있는데
@@ -333,42 +338,17 @@ export function Composer({
   /** 그 작업 하나만 세운다 — 턴은 그대로 둔다. */
   onStopTask?: (taskId: string) => void;
   /**
-   * 다음 턴에 밀려 있는 것: the daemon's wait room, oldest first —
-   * the list above the field. Empties when the turn ends and they go out.
-   */
-  queue?: QueuedSend[];
-  /**
    * Sends the room lost without delivering. They never reached the
    * transcript, so they stay above the field until restored or let go of.
    */
   dropped?: LostSend[];
   /**
-   * 고쳐서 보내기 on a waiting send: take it back out of the room, whole —
-   * the words and the attachments return to the field. Resolves null when it
-   * already went out (the turn ended first); the row is gone by then anyway.
-   */
-  onTakeQueued?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
-  /** 지금 보내기 on a waiting send: cut the running turn, deliver this first. */
-  onSendQueuedNow?: (itemId: string) => Promise<void>;
-  /** The send a 지금 보내기 click is currently cutting for — its row waits. */
-  hurrying?: string | null;
-  /**
    * 되살리기 on a lost send: the daemon hands the send back from its store,
    * bytes included when they survived the persist cap.
    */
   onTakeDropped?: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
-  /** 대기 줄의 모두 빼기 — 줄에 든 말 전부를 보내지 않고 버린다. */
-  onClearQueue?: () => void;
   /** An undelivered send is restored into the field, or simply let go of. */
   onDismissDropped?: (itemId: string) => void;
-  /**
-   * 고쳐서 다시 보내기: the planner's own words re-enter the
-   * field for an edit. The nonce re-applies the same text on repeat clicks.
-   */
-  seed?: { text: string; nonce: number };
-  /** 논스가 오르면 파일 고르기가 열린다 — 빈 대화의
-      "붙여 시작하기" 칩이 문장 초안과 함께 쓰는 손. */
-  seedAttach?: number;
   /** 대화 열 전체 드롭존이 컴포저의 첨부 손을 등록받는다. */
   registerAttach?: (fn: ((files: FileList | File[]) => void) | null) => void;
   /**
@@ -398,17 +378,6 @@ export function Composer({
   /** Which keypress sends; the other one inserts a newline. */
   sendKey: SendKey;
   /**
-   * 실행 중 보내기 (설정): "queue" keeps the wait-line — a mid-turn send
-   * rides to the next turn. "interrupt" promotes ⌥Enter's 끊고 보내기 to the
-   * plain send: a mid-turn send cuts the running turn and starts over.
-   */
-  midTurnSend?: MidTurnSend;
-  /**
-   * 보내기 키 힌트의 `바꾸기` — 설정의 동작 칸으로 바로 연다. 없으면 힌트는
-   * 읽기 전용 문장으로 남는다.
-   */
-  onOpenSendSettings?: () => void;
-  /**
    * The pin attachments — the tray above the attachment chips
    * draws them. Optional: the dev harness renders the composer without pins.
    */
@@ -432,9 +401,6 @@ export function Composer({
   onSend: (text: string, attachments: Attachment[], pins: PinAttachment[]) => void | Promise<void>;
   onInterrupt: () => void;
   onFindFiles: (query: string) => Promise<string[]>;
-  /** ComposerChips 의 자리 — 입력 상자 위 한 줄. 로직은
-      호출부(ChatColumn)의 ComposerChips 가 쥔다; 여기는 자리만 마련한다. */
-  composerChips?: ReactNode;
 }) {
   const [editor, setEditor] = useState<Editor>(() => ({
     text: storedDraft(draftKey),
@@ -464,17 +430,13 @@ export function Composer({
   /** 보내기·되돌리기 실패의 자리 — 첨부 안내(rejected)와 슬롯을 나눠 한 쪽이
       다른 쪽을 지우지 않게 한다. 새 입력·재시도·성공이 거둔다. */
   const sendError = useFoldNotice();
-  /** 모두 빼기의 두 번 누르기 — 첫 클릭이 묻고, 3초 안의 두 번째가 버린다. */
-  const [clearArmed, setClearArmed] = useState(false);
   /**
-   * 상태 스트립의 접개 — 핀·대기가 네 줄을 넘으면 접힌 채로 시작한다
+   * 상태 스트립의 접개 — 핀이 네 줄을 넘으면 접힌 채로 시작한다
    * (목록이 필드를 밑으로 누르지 않게). 머리 줄의 눈금이 한 번 눌리면
    * 그 선택이 자동 판정을 이긴다. null 은 아직 손이 안 닿았다는 말이다.
    */
   const [pinsFold, setPinsFold] = useState<boolean | null>(null);
-  const [queueFold, setQueueFold] = useState<boolean | null>(null);
   const pinsFolded = pinsFold ?? pins.length > 4;
-  const queueFolded = queueFold ?? queue.length > 4;
 
   /**
    * A draft belongs to the conversation it was typed in, not to the field
@@ -509,18 +471,6 @@ export function Composer({
       // Same story as the words: private mode keeps the in-memory map only.
     }
   }, [editor]);
-
-  // 되감기의 씨앗: every click re-writes the field — the planner
-  // edits there and sends by the usual key.
-  const seedNonce = useRef(-1);
-  useEffect(() => {
-    if (!seed || seed.nonce === seedNonce.current) return;
-    seedNonce.current = seed.nonce;
-    if (seed.text.trim() === "") return;
-    setEditor((prev) => ({ text: seed.text, attachments: prev.attachments }));
-    sendError.clear();
-    area.current?.focus();
-  }, [seed]);
 
   // Grow the textarea with its content, up to the CSS max-height.
   useEffect(() => {
@@ -678,11 +628,13 @@ export function Composer({
     const accepted: File[] = [];
     const refused: string[] = [];
     for (const file of [...files]) {
-      if (file.type.startsWith("image/")) accepted.push(file);
+      // 소켓 프레임과 대기열 저장소가 나눠 쓰는 건당 상한 — 그 너머의 파일은
+      // 첨부가 아니라 경로로 가리키는 게 맞다(@ 멘션).
+      if (file.size <= MAX_ATTACHMENT_BYTES) accepted.push(file);
       else refused.push(file.name);
     }
     if (refused.length > 0) {
-      rejected.show(`${refused.join(", ")} — 그림만 붙일 수 있습니다.`);
+      rejected.show(`${refused.join(", ")} — 8MB 를 넘는 파일은 붙일 수 없습니다.`);
     } else {
       rejected.clear();
     }
@@ -707,13 +659,6 @@ export function Composer({
     registerAttach?.(attachFiles);
     return () => registerAttach?.(null);
   }, [registerAttach, attachFiles]);
-  // 붙여 시작하기 칩: 파일 고르기 + 문장 초안 — 사용자 활동 창 안에서 열린다.
-  const attachNonceRef = useRef(0);
-  useEffect(() => {
-    if (seedAttach === undefined || seedAttach === attachNonceRef.current) return;
-    attachNonceRef.current = seedAttach;
-    filePicker.current?.click();
-  }, [seedAttach]);
 
   // 보내기 진행 중 잠금: the field empties only
   // when the daemon accepts, so a second Enter while the first send is
@@ -821,23 +766,6 @@ export function Composer({
     parkCaretAtEnd();
   };
 
-  const takeQueued = (item: QueuedSend) => {
-    if (!onTakeQueued) return;
-    void onTakeQueued(item.id)
-      .then((payload) => {
-        // Null: it went out before the click landed — the row is gone with it.
-        if (payload) restore(payload.text, payload.attachments);
-      })
-      .catch((e) => sendError.show(failureWords(e, "대기 중인 말을 되돌리지 못했습니다")));
-  };
-
-  const sendQueuedNow = (item: QueuedSend) => {
-    if (!onSendQueuedNow) return;
-    void onSendQueuedNow(item.id).catch((e) =>
-      sendError.show(failureWords(e, "지금 보내지 못했습니다")),
-    );
-  };
-
   const takeDropped = (item: LostSend) => {
     if (!onTakeDropped) return;
     void onTakeDropped(item.id)
@@ -923,22 +851,14 @@ export function Composer({
       return;
     }
     if (event.key !== "Enter") return;
-    // ⌥Enter: 끊고 보내기 — interrupt the running turn, then send
-    // what was typed. The plain send paths are untouched.
-    if (event.altKey) {
-      event.preventDefault();
-      if (running) onInterrupt();
-      submit();
-      return;
-    }
     // With "enter", a bare Enter sends and Shift+Enter is a newline. With
     // "modEnter" it is the other way round, and the modifier is what sends.
     const sends = sendKey === "enter" ? !event.shiftKey : event.metaKey || event.ctrlKey;
     if (!sends) return;
     event.preventDefault();
-    // 실행 중 보내기 (설정): with "interrupt", the ordinary send IS the cut —
-    // ⌥Enter stays the same either way, so the shortcut outlives the choice.
-    if (running && midTurnSend === "interrupt") onInterrupt();
+    // 도는 턴에는 보내기가 없다 — 중지가 끊는 손이고, 보내는 손은 턴이
+    // 끝난 뒤에야 선다. Enter 는 그 사이 아무 일도 하지 않는다.
+    if (running) return;
     submit();
   };
 
@@ -986,6 +906,7 @@ export function Composer({
                 <ChevronLeftIcon size={12} />
                 모델
               </button>
+              <span className="selector__headtitle">프로바이더</span>
             </div>
           );
         }
@@ -994,12 +915,13 @@ export function Composer({
             {canPickProvider ? (
               <button
                 type="button"
-                className="selector__back"
+                className="selector__drill"
                 onClick={() => setModelMenuLevel("providers")}
                 title="프로바이더 바꾸기"
               >
-                <ChevronLeftIcon size={12} />
-                {providerLabel}
+                <span className="selector__drillname">프로바이더</span>
+                <span className="selector__drillval">{providerLabel}</span>
+                <ChevronRightIcon size={12} />
               </button>
             ) : (
               <span className="selector__headtitle">{providerLabel}</span>
@@ -1022,14 +944,16 @@ export function Composer({
           </div>
         );
       })(),
-      levelKey: modelMenuLevel,
-      alwaysSearch: true,
+      alwaysSearch: modelMenuLevel === "models",
       options:
         modelMenuLevel === "providers" && canPickProvider
           ? providerRows.map((p) => ({
               value: p.id,
               label: p.label,
-              ...(p.available ? {} : { hint: p.reason ?? "이 기기에 없음" }),
+              icon: <ProviderIcon provider={p.id} size={13} />,
+              // 못 고르는 이유는 잘리는 한 줄이 아니라 행 아래 두 번째 줄로 —
+              // "설치한…" 처럼 끊긴 말은 고르는 데 아무 도움이 안 된다.
+              ...(p.available ? {} : { desc: p.reason ?? "이 기기에 없습니다." }),
               picked: p.id === selector.provider,
               disabled: !p.available,
             }))
@@ -1063,7 +987,7 @@ export function Composer({
         ? (selector.modes.find((m) => m.id === (selector.mode ?? selector.permissionMode))?.label ??
           selector.mode ??
           selector.permissionMode)
-        : MODE_LABEL_KO[selector.permissionMode],
+        : MODE_LABEL[selector.permissionMode],
       // The one chip whose glyph says something the label does not: a struck
       // shield is a mode that asks nothing before it acts. A provider's own
       // rows carry the descriptor's tier; the Claude enum reads its list.
@@ -1088,7 +1012,7 @@ export function Composer({
           }))
         : SETTINGS_MODES.map((mode) => ({
             value: mode,
-            label: modeMenuLabel(mode),
+            label: MODE_LABEL[mode],
             hint: MODE_MENU_HINT[mode],
             picked: selector.permissionMode === mode,
           })),
@@ -1100,18 +1024,6 @@ export function Composer({
     else if (key === "effort") onSetEffort((value as EffortLevel | null) ?? null);
     else if (value && selector.modes && onSetMode) onSetMode(value);
     else if (value) onSetPermissionMode(value as PermissionMode);
-  };
-
-  // 도는 동안 보내기가 이름을 바꾼다 — interrupt 면 도는 턴을 끊는 손,
-  // queue 면 다음 턴의 줄에 넣는 손. 쉬는 동안엔 그냥 보내기다.
-  const sendVerb = running
-    ? midTurnSend === "interrupt"
-      ? "끊고 보내기"
-      : "다음 턴에 보내기"
-    : "보내기";
-  const sendClick = () => {
-    if (running && midTurnSend === "interrupt") onInterrupt();
-    submit();
   };
 
   return (
@@ -1200,11 +1112,17 @@ export function Composer({
             {editor.attachments.map((attachment, index) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
               <span key={`${attachment.name}-${index}`} className="chip">
-                <img
-                  className="chip__thumb"
-                  src={`data:${attachment.mediaType};base64,${attachment.data}`}
-                  alt=""
-                />
+                {attachment.kind === "image" ? (
+                  <img
+                    className="chip__thumb"
+                    src={`data:${attachment.mediaType};base64,${attachment.data}`}
+                    alt=""
+                  />
+                ) : (
+                  <span className="chip__thumb chip__thumb--file">
+                    <FileIcon />
+                  </span>
+                )}
                 {attachment.name}
                 <Tip label={`${attachment.name} 첨부 취소`}>
                   <button
@@ -1252,82 +1170,6 @@ export function Composer({
                 </li>
               ))}
             </ul>
-          </div>
-        )}
-
-        {/* 대기 줄: what a mid-turn send means — the sends themselves,
-          above the field, oldest first; gone the moment they go out. Each row
-          can come back for an edit or jump the running turn. */}
-        {queue.length > 0 && (
-          <div className="composer__queued" role="status">
-            <div className="queued__head">
-              <span>다음 턴에 보냅니다 · {queue.length}건 대기</span>
-              {onClearQueue && queue.length > 1 && (
-                <button
-                  type="button"
-                  className="ghost queued__clear"
-                  disabled={disabled}
-                  onClick={() => {
-                    // 두 번 누르는 확인 — 대기 중인 말은 되돌릴 수 없이 버려진다.
-                    if (clearArmed) {
-                      setClearArmed(false);
-                      onClearQueue();
-                    } else {
-                      setClearArmed(true);
-                      window.setTimeout(() => setClearArmed(false), 3000);
-                    }
-                  }}
-                >
-                  {clearArmed ? "정말 모두 뺍니다" : "모두 빼기"}
-                </button>
-              )}
-              <button
-                type="button"
-                className="ghost queued__fold"
-                aria-expanded={!queueFolded}
-                aria-label={queueFolded ? "대기 줄 펼치기" : "대기 줄 접기"}
-                onClick={() => setQueueFold(!queueFolded)}
-              >
-                <ChevronDownIcon />
-              </button>
-            </div>
-            {!queueFolded && (
-              <ul className="queued__list">
-                {queue.map((item) => (
-                  <li key={item.id} className="queued__row">
-                    <span className="queued__text" title={item.text}>
-                      {item.text || "(첨부만)"}
-                    </span>
-                    {attachmentWords(item) && (
-                      <span className="queued__meta">
-                        <FileIcon size={11} /> {attachmentWords(item)}
-                      </span>
-                    )}
-                    <Tip label="입력창으로 되돌려 고칩니다">
-                      <button
-                        type="button"
-                        className="ghost queued__action"
-                        aria-label="고쳐서 보내기"
-                        disabled={disabled}
-                        onClick={() => takeQueued(item)}
-                      >
-                        <PencilIcon />
-                      </button>
-                    </Tip>
-                    <Tip label="지금 답변을 멈추고 이 말부터 보냅니다">
-                      <button
-                        type="button"
-                        className="ghost queued__action queued__action--now"
-                        disabled={disabled || stopping || hurrying === item.id}
-                        onClick={() => sendQueuedNow(item)}
-                      >
-                        지금 보내기
-                      </button>
-                    </Tip>
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
         )}
 
@@ -1408,8 +1250,6 @@ export function Composer({
             </Tip>
           </div>
         )}
-
-        {composerChips}
       </div>
 
       {/* 입력 카드 — 컴포저의 유일한 카드. 말과 보내는 손만 산다.
@@ -1494,24 +1334,22 @@ export function Composer({
               </button>
             </Tip>
           )}
-          {/* 도는 동안에도 보내기는 남는다 — Enter 와 같은 길을 포인터에도
-            둔다. 무엇을 하는 버튼인지는 그때의 실행 중 보내기 설정이
-            정한다: queue 면 다음 턴의 줄로, interrupt 면 도는 턴을 끊는다.
-            도는 동안엔 버튼이 그 이름을 입는다 — 같은 ↑ 가 두 일을 하는데
-            겉모습만 같으면 누르는 사람이 모른다. */}
-          <button
-            disabled={
-              disabled ||
-              sending ||
-              (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
-            }
-            className={running ? "composer__send composer__send--verb" : "composer__send"}
-            aria-label={sendVerb}
-            onClick={sendClick}
-          >
-            <ArrowUpIcon size={15} />
-            {running && <span className="composer__sendverb">{sendVerb}</span>}
-          </button>
+          {/* 도는 동안 보내는 손은 물러난다 — 중지만 남는다. 보내기는
+            턴이 끝난 뒤에야 선다. */}
+          {!running && (
+            <button
+              disabled={
+                disabled ||
+                sending ||
+                (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+              }
+              className="composer__send"
+              aria-label="보내기"
+              onClick={submit}
+            >
+              <ArrowUpIcon size={15} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1519,7 +1357,6 @@ export function Composer({
         <input
           ref={filePicker}
           type="file"
-          accept="image/*"
           multiple
           hidden
           onChange={(e) => {
@@ -1576,38 +1413,16 @@ export function Composer({
         ))}
         <div className="toolbar__end">
           <ContextRing usage={usage} />
-          {/* 보내는 법은 스트립 끝 한 줄 — 전부 tooltip 뒤에 있던 Enter 규칙을
-              겉으로 내온다. 설정(sendKey)이 다르면 그 사실을 말한다: false인
-              안내문은 없는 것이 낫다. 같은 줄이 / 와 @ 의 존재도 가르친다.
-              도는 동안에는 그 자리가 ⌥Enter 를 말한다: 끊고 보내는 손은
-              필요한 순간에만 보이면 된다. 잠긴 동안에는 보내는 법 대신 잠긴
-              이유가 선다 — disabled 는 말하지 않으니 이 줄이 말한다. */}
-          <p className="composer__hint">
-            {disabled ? (
-              `지금은 보낼 수 없어요${disabledReason ? ` — ${disabledReason}` : ""}`
-            ) : (
-              <>
-                {running
-                  ? "⌥Enter로 끊고 보내기"
-                  : sendKey === "enter"
-                    ? "Enter로 보내기 · Shift+Enter 줄바꿈"
-                    : "⌘/Ctrl+Enter로 보내기 · Enter 줄바꿈"}
-                {" · "}/ 명령 · @ 파일
-                {onOpenSendSettings && (
-                  <>
-                    {" · "}
-                    <button
-                      type="button"
-                      className="composer__hintlink"
-                      onClick={onOpenSendSettings}
-                    >
-                      바꾸기
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-          </p>
+          {/* 상태가 말할 것이 있을 때만 스트립 끝에 선다 — 도는 동안엔
+              보내기가 물러난 이유를, 잠긴 동안엔 disabled 가 말하지 않는
+              잠긴 이유를 이 줄이 말한다. */}
+          {(disabled || running) && (
+            <p className="composer__hint">
+              {disabled
+                ? `지금은 보낼 수 없어요${disabledReason ? ` — ${disabledReason}` : ""}`
+                : "답변이 끝나면 보낼 수 있어요"}
+            </p>
+          )}
         </div>
       </div>
     </footer>
