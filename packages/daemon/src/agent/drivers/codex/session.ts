@@ -199,7 +199,20 @@ export class CodexAgentSession implements AgentSession {
       onNotify: (method, params) => this.onAgentNotify(method, params),
       onEnd: (code) => this.onTransportEnd(code),
     });
-    this.ready = this.handshake();
+    const handshake = this.handshake();
+    // 핸드셰이크 거절(initialize·thread/* 타임아웃)은 자식을 죽이지 않는다 —
+    // 그대로 두면 좀비 프로세스 위에서 alive 가 참으로 남아 코어가 크래시로
+    // 표시하지 못하고 부활 경로도 영원히 못 탄다. 전송을 끊고 거절을 전송
+    // 오류로 올려 크래시 기계가 닫게 한다. ready 자체는 원래 거절을 유지해
+    // 뒤에 선 await 가 같은 사유를 받게 한다.
+    handshake.catch((error) => {
+      if (this.closed) return;
+      this.closed = true;
+      this.abort.abort();
+      this.transport.close();
+      this.hooks.onTransportError(error instanceof Error ? error.message : String(error));
+    });
+    this.ready = handshake;
   }
 
   // -------------------------------------------------------------------------
@@ -376,9 +389,17 @@ export class CodexAgentSession implements AgentSession {
 
   async interrupt(): Promise<"answered" | "timeout" | "dead"> {
     await this.ready.catch(() => undefined);
-    if (!this.transport.alive) return "dead";
-    // A send in flight is still naming its turn — wait for the answer.
-    if (this.turnAccepted) await this.turnAccepted;
+    if (!this.alive) return "dead";
+    // A send in flight is still naming its turn — wait for the answer, but
+    // bounded: turn/start carries no timeout, so an app-server that never
+    // answers would park the stop button forever (아래 settle race 와 같은
+    // 10초).
+    if (this.turnAccepted) {
+      await Promise.race([
+        this.turnAccepted,
+        new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+    }
     const threadId = this.threadId;
     const turnId = this.activeTurnId;
     if (!threadId || !turnId) return "answered";
@@ -386,7 +407,7 @@ export class CodexAgentSession implements AgentSession {
       await this.transport.request("turn/interrupt", { threadId, turnId }, 10_000);
     } catch {
       // The turn may have completed as the request flew — that IS the answer.
-      if (!this.transport.alive) return "dead";
+      if (!this.alive) return "dead";
       if (!this.activeTurnId) return "answered";
     }
     if (!this.activeTurnId) return "answered";

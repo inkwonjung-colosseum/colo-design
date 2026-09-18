@@ -190,3 +190,19 @@ test("the macOS Keychain round-trips under a run-unique service", async (t) => {
     await store.delete(REPO_PAT_ITEM).catch(() => undefined);
   }
 });
+
+test("npmrc merges fired without awaiting keep each other's lines", () => {
+  const dir = workdir("hub-cred-npmrc-race-");
+  try {
+    const file = join(dir, ".npmrc");
+    // 프로젝트 활성화처럼 기다리지 않고 던진 두 병합 — 뒤 병합이 앞 병합이 쓴
+    // 줄 위에 쌓여야 한다. 어느 쪽의 레지스트리 줄도 지워지지 않는다.
+    mergeNpmrc(file, [{ key: "@a:registry", value: "https://a.example.org/" }]);
+    mergeNpmrc(file, [{ key: "@b:registry", value: "https://b.example.org/" }]);
+    const merged = readFileSync(file, "utf8");
+    assert.ok(merged.includes("@a:registry=https://a.example.org/"), "first merge survives");
+    assert.ok(merged.includes("@b:registry=https://b.example.org/"), "second merge survives");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

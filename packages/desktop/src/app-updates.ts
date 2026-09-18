@@ -28,6 +28,14 @@ const UPDATE_MIN_FREE_BYTES = 1024 ** 3;
 const UPDATE_FIRST_CHECK_DELAY_MS = 15_000;
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_MIN_CHECK_GAP_MS = 60 * 60 * 1000;
+// 멈춰 선 연결이 확인 버튼·연기된 설치를 영원히 잡아두지 않게 하는 마감.
+const UPDATE_CHECK_TIMEOUT_MS = 30_000;
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** 진행 중인 install — 빠른 재호출은 첫 호출에 합류한다(SelfUpdates 는 앱에 하나). */
+let installFlight: Promise<Record<string, unknown>> | null = null;
+/** 진행 중인 교체 스크립트 띄우기 — 알림 클릭과 설정 버튼이 겹쳐도 한 번만. */
+let swapFlight: Promise<Record<string, unknown>> | null = null;
 
 function updateResultPath(): string {
   return join(COLO_DESIGN_DIR, "update-result.json");
@@ -45,6 +53,8 @@ async function netFetch(
   feedUrl: string,
 ): Promise<{ ok: boolean; status: number; json?: Record<string, unknown> }> {
   const request = net.request(feedUrl);
+  // net.request 는 AbortSignal 을 받지 않는다 — 멈춰 선 연결은 스스로 끊는다.
+  let timer: NodeJS.Timeout | undefined;
   const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
     // 청크마다 디코드하면 UTF-8 다중 바이트가 청크 경계에서 갈라진다 — 한국어
     // 릴리스 노트의 latest.json 이 간헐적으로 깨진다. 버퍼로 모아 한 번에 디코드한다.
@@ -56,8 +66,12 @@ async function netFetch(
       );
     });
     request.once("error", reject);
+    timer = setTimeout(() => {
+      request.abort();
+      reject(new Error("업데이트 확인이 시간 안에 끝나지 않았습니다"));
+    }, UPDATE_CHECK_TIMEOUT_MS);
     request.end();
-  });
+  }).finally(() => clearTimeout(timer));
   // json 은 파싱된 값이다(FetchLike 계약). 몸통이 JSON 이 아니면 undefined 로
   // 둔다 — fetchLatest 의 "형식이 올바르지 않습니다" 가 그 모양을 말하게.
   let json: Record<string, unknown> | undefined;
@@ -77,7 +91,9 @@ async function netFetch(
 /** zip 내려받기 — net.fetch 로 받아 파일로 흘려보낸다(큰 zip 도 메모리에 올리지 않는다). */
 async function downloadFile(url: string, destPath: string): Promise<void> {
   // 릴리스 에셋 → CDN 넘겨주기는 net 이 기본으로 따라간다.
-  const response = await net.fetch(url);
+  const response = await net.fetch(url, {
+    signal: AbortSignal.timeout(UPDATE_DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok || !response.body) {
     throw new Error(`업데이트 파일을 내려받지 못했습니다 (HTTP ${response.status})`);
   }
@@ -116,6 +132,9 @@ export class SelfUpdates {
   private lastCheckAt = 0;
   /** 이미 알림을 띄운 버전 — 확인이 거듭돼도 한 번만 부른다. */
   private notifiedVersion: string | null = null;
+  /** 진행 중인 준비(내려받기·검증) — 연기분과 직접 요청이 겹쳐도 한 번만 돈다. */
+  private prepareFlight: Promise<{ prepared: true; version: string } | { error: string }> | null =
+    null;
 
   constructor(private readonly deps: UpdateDeps) {}
 
@@ -215,6 +234,15 @@ export class SelfUpdates {
    * 준비된 설치가 있는 상태의 재요청이 그 동의다.
    */
   async install(): Promise<Record<string, unknown>> {
+    // 두 번째 클릭은 첫 준비에 합류한다 — 같은 downloadPath 로 pipeline 이
+    // 겹치면 깨진 zip 이 sha256 검증에서 죽는다.
+    installFlight ??= this.runInstall().finally(() => {
+      installFlight = null;
+    });
+    return await installFlight;
+  }
+
+  private async runInstall(): Promise<Record<string, unknown>> {
     // 이미 준비된 설치가 있으면 이 클릭이 곧 재시작 동의다 — 피드를 다시
     // 묻지 않고 바로 교체로 간다(알림을 놓친 사용자의 두 번째 경로).
     if (this.prepared) return await this.installPrepared();
@@ -312,6 +340,19 @@ export class SelfUpdates {
     sha256: string;
     version: string;
   }): Promise<{ prepared: true; version: string } | { error: string }> {
+    // 연기된 설치의 준비와 직접 요청의 준비가 겹치면 같은 downloadPath 로
+    // pipeline 이 둘씩 달린다 — 두 번째는 진행 중인 준비에 합류한다.
+    this.prepareFlight ??= this.runPrepare(feed).finally(() => {
+      this.prepareFlight = null;
+    });
+    return await this.prepareFlight;
+  }
+
+  private async runPrepare(feed: {
+    url: string;
+    sha256: string;
+    version: string;
+  }): Promise<{ prepared: true; version: string } | { error: string }> {
     const downloadsDir = app.getPath("downloads");
     const windows = process.platform === "win32";
     try {
@@ -357,6 +398,15 @@ export class SelfUpdates {
    * 새겨 두고 모두 내려앉는 순간으로 미룬다(P0#6).
    */
   private async installPrepared(): Promise<Record<string, unknown>> {
+    // 알림 클릭과 설정 버튼이 겹쳐도 교체 스크립트는 한 번만 뜬다 — 두 번째
+    // 호출은 진행 중인 교체에 합류한다.
+    swapFlight ??= this.runInstallPrepared().finally(() => {
+      swapFlight = null;
+    });
+    return await swapFlight;
+  }
+
+  private async runInstallPrepared(): Promise<Record<string, unknown>> {
     const prepared = this.prepared;
     if (!prepared) return { error: "준비된 업데이트가 없습니다 — 업데이트 확인을 눌러 주세요." };
     if (this.deps.sessionsBusy()) {

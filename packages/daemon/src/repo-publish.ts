@@ -349,6 +349,35 @@ export class PublishCycle {
       // D56: the captures join the branch first, so the body can link files
       // the developer will really find in it.
       body = await this.attachShots(body, options.shots, branch);
+      // The pull request is the REMOTE's word: a save whose push died after
+      // the commit (runSave 의 push 재시도가 아는 상태) leaves cycle commits
+      // origin never got, and a request opened from that stale head shows old
+      // commits while the body lists files it does not contain — landCycle
+      // could merge it as-is. 원격 추적 ref 가 기준이다(runSave 의 재시도와
+      // 같은 잣대) — 없으면 첫 push 를 아직 못 받은 것이고, 밀렸으면 지금
+      // 민다. 못 민 넘기기는 넘기기의 실패로 끝난다.
+      const onRemote = (
+        await this.core
+          .git(["rev-parse", "--verify", `refs/remotes/origin/${branch}`])
+          .catch(() => "")
+      ).trim();
+      // 못 센 밀림은 민 것으로 본다 — 확인 없이 요청을 여는 쪽이 더 비싸다.
+      const waiting = Number(
+        (
+          await this.core
+            .git(["rev-list", "--count", `origin/${branch}..${branch}`])
+            .catch(() => "-1")
+        ).trim(),
+      );
+      try {
+        if (onRemote === "" || waiting !== 0) {
+          await this.core.git(["push", "--set-upstream", "origin", branch]);
+        }
+      } catch (error) {
+        // pr 이 아니라 push 다 — 인증 거절은 설정 안내로, 나머지는 AI 의
+        // 과제로 갈라지는 failGate 의 판정을 그대로 받는다.
+        return this.failGate("push", error, options.onSessionTurn);
+      }
       // 열린 요청의 head 가 지금 브랜치일 때만 덮어쓴다 — 새 사이클 브랜치에서
       // reopened 요청의 옛 head 를 고쳐 쓰면 보이지 않는 곳의 커밋을 고른다.
       const open = this.core.openHandoff;

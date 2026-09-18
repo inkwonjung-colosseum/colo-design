@@ -61,6 +61,13 @@ export class AcpAgentSession implements AgentSession {
   private instructionsSent = false;
   /** One `session/prompt` at a time — the wire forbids a second in flight. */
   private sendChain: Promise<void> = Promise.resolve();
+  /**
+   * Resolves when the in-flight `session/prompt` settles — session/cancel is
+   * fire-and-forget, so interrupt waits on this to learn whether the agent
+   * honoured the cancel before escalating.
+   */
+  private promptDone: Promise<void> | null = null;
+  private markPromptDone: (() => void) | null = null;
 
   constructor(
     private readonly providerId: string,
@@ -80,7 +87,20 @@ export class AcpAgentSession implements AgentSession {
       onNotify: (method, params) => this.onAgentNotify(method, params),
       onEnd: (code) => this.onTransportEnd(code),
     });
-    this.ready = this.handshake();
+    const handshake = this.handshake();
+    // 핸드셰이크 거절(initialize·session/new 타임아웃, loadSession 거부)은
+    // 자식을 죽이지 않는다 — 그대로 두면 좀비 프로세스 위에서 alive 가 참으로
+    // 남아 코어가 크래시로 표시하지 못하고 부활 경로도 영원히 못 탄다. 전송을
+    // 끊고 거절을 전송 오류로 올려 크래시 기계가 닫게 한다. ready 자체는 원래
+    // 거절을 유지해 뒤에 선 await 가 같은 사유를 받게 한다.
+    handshake.catch((error) => {
+      if (this.closed) return;
+      this.closed = true;
+      this.abort.abort();
+      this.transport.close();
+      this.hooks.onTransportError(error instanceof Error ? error.message : String(error));
+    });
+    this.ready = handshake;
   }
 
   // -------------------------------------------------------------------------
@@ -223,6 +243,9 @@ export class AcpAgentSession implements AgentSession {
 
     this.turnStartedAt = Date.now();
     this.turnCostUsd = null;
+    this.promptDone = new Promise<void>((resolve) => {
+      this.markPromptDone = resolve;
+    });
     try {
       const result = (await this.transport.request("session/prompt", {
         sessionId,
@@ -240,6 +263,10 @@ export class AcpAgentSession implements AgentSession {
         durationMs: Date.now() - this.turnStartedAt,
         resultText: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      this.markPromptDone?.();
+      this.markPromptDone = null;
+      this.promptDone = null;
     }
   }
 
@@ -277,12 +304,39 @@ export class AcpAgentSession implements AgentSession {
   }
 
   async interrupt(): Promise<"answered" | "timeout" | "dead"> {
-    if (!this.transport.alive) return "dead";
+    if (!this.alive) return "dead";
+    if (!this.vendorSessionId) {
+      // 부팅 창(initialize + session/new 는 수십 초 걸릴 수 있다)에는 아직
+      // sessionId 가 없다 — 그걸 dead 로 읽으면 코어가 멀쩡히 뜨는 세션을
+      // 닫아 버린다. codex 드라이버처럼 ready 를 기다리되, 짧은 유예로 묶어
+      // 중지 버튼이 부팅만큼 잠기지 않게 한다.
+      await Promise.race([
+        this.ready,
+        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+      ]).catch(() => undefined);
+      if (!this.alive) return "dead";
+    }
     const sessionId = this.vendorSessionId;
-    if (!sessionId) return "dead";
-    // The in-flight prompt resolves with stopReason "cancelled" — that IS
-    // the answer; nothing further is waited on.
+    // 아직 부팅 중이면 취소할 프롬프트도 없다 — 그 자체가 답이다.
+    if (!sessionId) return "answered";
     this.transport.notify("session/cancel", { sessionId });
+    // session/cancel 은 fire-and-forget — 응하는 에이전트는 in-flight
+    // session/prompt 를 stopReason "cancelled" 로 풀고, 그 해결이 곧 답이다.
+    // 유예 안에 풀리지 않으면 wedged — 프롬프트가 sendChain 을 영원히 막기
+    // 전에 전송을 끊어 크래시 기계가 닫게 한다(claude 의 interrupt 유예와
+    // 같은 5초).
+    const settled = await Promise.race([
+      this.promptDone ?? Promise.resolve(),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 5_000)),
+    ]);
+    if (settled === "timeout") {
+      this.transport.close();
+      return "timeout";
+    }
+    // 유예 안에 풀렸어도 전송이 죽어 풀린 거면 answered 가 아니다 — dead 를
+    // 돌려 코어가 크래시 상태를 idle 로 덮지 않고 닫게 한다(codex 의
+    // turnSettlers 가 전송 종료에 dead 로 푸는 것과 같은 판정).
+    if (!this.alive) return "dead";
     return "answered";
   }
 

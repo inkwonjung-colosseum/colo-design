@@ -72,6 +72,14 @@ export interface RouterDeps {
 export class RequestRouter {
   /** The last thread a failing gate briefed, when it had to open one itself. */
   private gateThreadId: string | null = null;
+  /**
+   * 재시작 뒤 첫 턴의 밑값 읽기 — 진행 중인 promptCount 프로미스를 세션별로
+   * 나눠 쥔다. 읽기는 대화록 파일을 디스크에서 다시 읽으므로 await 가 끼고,
+   * 그 사이에 도착한 같은 세션의 두 번째 send 가 또 읽으면 둘이 같은 밑값을
+   * 적어 같은 턴 번호의 체크포인트가 두 번 찍힌다(뒤것이 앞것을 덮는다).
+   * 늦게 온 send 는 새로 읽지 않고 이미 도는 읽기에 합류한다.
+   */
+  private readonly checkpointSeeding = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: RouterDeps) {}
 
@@ -261,25 +269,40 @@ export class RequestRouter {
         // 않는 이유는 대기 줄 때문이다. 도는 턴에 온 말은 held 로 기다리는데,
         // 그 핀을 미리 적으면 턴이 바뀔 때 지워져 그 말을 실은 턴의 게이트
         // 입력이 영영 사라진다. 핀은 deliver 시점(session 쪽)에 적힌다.
+        // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의
+        // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
+        // Refusals answer through the dispatch-wide Korean boundary above.
+        const carrier = target.sendable ? target : await this.resurrectSession(target);
         // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
         // manager's onEvent); this only seeds the count, before anything can
         // be handed over — so the transcript is read while it still holds
-        // exactly the prompts that came before this one.
+        // exactly the prompts that came before this one. The seed sits AFTER
+        // the resurrect: the dead session's `closed` prunes the counter, and
+        // a count planted before it would die with the old object.
         if (this.deps.checkpointTurns.get(message.sessionId) === undefined) {
           // 재시작 뒤 첫 턴: 카운터는 프로세스와 함께 사라지지만 대화록은
           // 남는다. 되감기의 k 번째 프롬프트는 대화록 기준이므로 이미 있는
           // 프롬프트 수부터 이어 셀 수밖에 없다 — 1부터 다시 세면 첫 되감기가
           // 전체 기억을 버리고, 두 번째는 남의 턴을 자른 채 memoryKept 를
-          // 보고하던 것.
-          this.deps.checkpointTurns.set(
-            message.sessionId,
-            await this.deps.manager.promptCount(message.sessionId, target.cwd),
-          );
+          // 보고하던 것. 읽기가 도는 동안 온 같은 세션의 send 는 새로 읽지
+          // 않고 그 읽기에 합류한다 — 둘이 같은 밑값을 적으면 같은 턴 번호의
+          // 체크포인트가 두 번 찍혀 뒤것이 앞것을 덮는다.
+          let seeding = this.checkpointSeeding.get(message.sessionId);
+          if (!seeding) {
+            seeding = this.deps.manager
+              .promptCount(message.sessionId, target.cwd)
+              .then((count) => {
+                this.deps.checkpointTurns.set(message.sessionId, count);
+              })
+              .finally(() => {
+                if (this.checkpointSeeding.get(message.sessionId) === seeding) {
+                  this.checkpointSeeding.delete(message.sessionId);
+                }
+              });
+            this.checkpointSeeding.set(message.sessionId, seeding);
+          }
+          await seeding;
         }
-        // 죽은 질의에 말을 흘리지 않는다: 크래시 카드가 약속한대로, 같은 id 의
-        // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
-        // Refusals answer through the dispatch-wide Korean boundary above.
-        const carrier = target.sendable ? target : await this.resurrectSession(target);
         carrier.send(message.text, message.images, message.pins);
         return { ok: true };
       }
@@ -350,10 +373,19 @@ export class RequestRouter {
         const repoRoot = realpathBestEffort(paths.repoRoot);
         // The wait rooms, lost rooms and tape rows go with the threads —
         // collect the ids first; removeWhere closes live sessions and
-        // sweeps every driver's store in one pass.
-        const ids = (await this.deps.manager.list(repoRoot, 500)).map(
-          (summary) => summary.sessionId,
-        );
+        // sweeps every driver's store in one pass. The id set must cover
+        // what the sweep deletes: manager.list 의 상한(그리고 그 캐시)을
+        // 믿으면 상한 너머의 대화는 지워지면서 방과 테이프만 남는다 — 저장소마다
+        // 사실상 전부(사이드바 상한의 2000배)를 읽어 모으고, 아직 대화록을
+        // 쓰지 않은 라이브 세션은 따로 더한다.
+        const ids = new Set<string>();
+        for (const session of this.deps.manager.all()) {
+          if (session.cwd === repoRoot) ids.add(session.id);
+        }
+        for (const driver of this.deps.agentDrivers.all()) {
+          const stored = await driver.store?.list(repoRoot, 100_000).catch(() => []);
+          for (const info of stored ?? []) ids.add(info.id);
+        }
         await this.deps.manager.removeWhere(repoRoot);
         for (const sessionId of ids) {
           this.deps.queueStore.clear(sessionId);
@@ -692,7 +724,14 @@ export class RequestRouter {
           (candidate) =>
             candidate.sessionId === message.sessionId && candidate.turn === message.turn,
         );
-        if (entry) await this.repo.checkpointRestore(entry.id);
+        // 체크포인트가 없는 턴은 되감을 수 없다: 파일이 먼저 돌아가고 기억이
+        // 뒤따르는 약속인데, 파일 없이 기억만 자르면 워크트리는 그 턴 이후의
+        // 것을 든 채 대화만 과거로 간다. 재시작 뒤 다시 센 번호나 정리된 ref
+        // 로 엇갈린 요청은 거절이 정직한 답이다.
+        if (!entry) {
+          throw new Error("그 턴의 체크포인트를 찾지 못했습니다 — 아무것도 되돌리지 않았습니다.");
+        }
+        await this.repo.checkpointRestore(entry.id);
         const targetDriver = this.deps.agentDrivers.get(target.provider);
         // The fork's binary is the TARGET provider's — a codex thread must
         // not be handed the claude path just because the field used to be

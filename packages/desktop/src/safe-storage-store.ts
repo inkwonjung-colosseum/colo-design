@@ -49,7 +49,12 @@ export class SafeStorageCredentialStore implements CredentialStore {
 
   private read(): Record<string, string> {
     try {
-      return JSON.parse(readFileSync(this.file, "utf8")) as Record<string, string>;
+      const raw = JSON.parse(readFileSync(this.file, "utf8")) as unknown;
+      // 손으로 고친 파일이 객체가 아니면 빈 지도로 본다 — 원시값은 저장 때
+      // TypeError, 배열은 항목이 JSON.stringify 에서 조용히 증발한다.
+      return raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, string>)
+        : {};
     } catch {
       return {};
     }

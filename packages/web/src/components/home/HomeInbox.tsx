@@ -134,13 +134,20 @@ export function HomeInbox({
             onOpenThread={() => openSession(item.sessionId)}
             onQuickPick={(label) => {
               if (item.kind !== "question" || !item.quote) return;
-              void daemon.api.respondQuestion(item.requestId, { [item.quote]: label }, {});
-              daemon.resolvePending(item.requestId);
+              // 카드는 데몬이 답을 받아들일 때까지 남는다 — 응답이 길에서
+              // 죽었는데도 카드부터 거둔 결함(대화 열의 카드들과 같은 규칙).
+              // 홈에는 오류 스트립이 없으니 실패는 카드가 남은 것으로 말한다.
+              void daemon.api
+                .respondQuestion(item.requestId, { [item.quote]: label }, {})
+                .then(() => daemon.resolvePending(item.requestId))
+                .catch(() => undefined);
             }}
             onRespondPermission={(decision, message) => {
               if (item.kind !== "permission") return;
-              void daemon.api.respondPermission(item.requestId, decision, message);
-              daemon.resolvePending(item.requestId);
+              void daemon.api
+                .respondPermission(item.requestId, decision, message)
+                .then(() => daemon.resolvePending(item.requestId))
+                .catch(() => undefined);
             }}
           />
         ))}

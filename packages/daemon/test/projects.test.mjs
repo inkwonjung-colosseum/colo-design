@@ -70,6 +70,29 @@ test("every save keeps the previous good copy one rename away (.bak)", () => {
   }
 });
 
+test("점만 남는 이름은 slug가 . · ..이 되지 않는다 — 삭제가 projects 밖을 지우지 않게", () => {
+  const dir = workdir("hub-projects-dot-");
+  try {
+    const env = envFor(dir);
+    const registry = ProjectRegistry.load(env);
+    for (const name of [" .. ", " . ", "..", "...", "\t . \n"]) {
+      const project = registry.create({ name, repoUrl: "https://github.com/org/one.git" });
+      assert.doesNotMatch(
+        project.slug,
+        /^\.{1,2}$/,
+        `slug는 점만으로 이뤄지지 않는다: ${JSON.stringify(name)} → ${project.slug}`,
+      );
+      const root = registry.paths(project.slug).root;
+      assert.ok(
+        root.startsWith(join(dir, "projects")),
+        `프로젝트 루트는 projects 안에 있다: ${root}`,
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("지켜 줄 것은 저장되고, 비우면 지워진다", () => {
   const dir = workdir("hub-projects-guard-");
   try {

@@ -110,8 +110,12 @@ function slugify(name: string, taken: ReadonlySet<string>): string {
     name
       // biome-ignore lint/suspicious/noControlCharactersInRegex: 제어 문자가 경로에 못 쓰이게 strip 하는 게 이 정규식의 목적이다.
       .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, "")
-      .replace(/^\.+/, "")
       .trim()
+      // 점 벗기기는 trim 뒤여야 한다 — " .. " 같은 이름을 trim 전에 벗기면
+      // 문자열이 공백으로 시작해 strip 이 비고, slug 가 "." 또는 ".." 로 남아
+      // join 이 projects 부모(=~/.colo-design)를 가리키고, 삭제가 전체를
+      // 지우는 자리가 된다.
+      .replace(/^\.+/, "")
       .replace(/\s+/g, "-")
       .toLowerCase()
       .slice(0, 32) || "project";

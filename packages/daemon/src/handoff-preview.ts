@@ -75,6 +75,8 @@ export class HandoffPreviews {
    * overwrite it when it finishes.
    */
   private lastOpener: string | null = null;
+  /** build 이 도는 동안 닫힌 대화 — runOpen 이 기록을 세운 뒤 주인이면 거둔다. */
+  private closedOpeners = new Set<string>();
 
   constructor(
     private readonly source: HandoffPreviewSource,
@@ -101,7 +103,13 @@ export class HandoffPreviews {
 
   /** 수명 규칙 1번 — 그 빌드를 연 대화가 닫혔다. */
   closeSession(sessionId: string): void {
-    if (this.live?.opener !== sessionId) return;
+    if (this.live?.opener !== sessionId) {
+      // build 이 도는 동안의 닫힘 — live 가 아직 없어 위의 판정이 여기서
+      // 끊긴다. 닫힘을 기억해 두고, runOpen 이 기록을 세운 뒤 대신 거둔다.
+      // 이미 닫힌 대화의 closeSession 은 다시 오지 않는다.
+      if (this.opening) this.closedOpeners.add(sessionId);
+      return;
+    }
     void this.dispose("빌드를 연 대화가 닫혔습니다");
   }
 
@@ -110,6 +118,16 @@ export class HandoffPreviews {
 
   async dispose(reason: string): Promise<void>;
   async dispose(reason?: string): Promise<void> {
+    // build 진행 중의 거둠도 산다 — runOpen 은 build 가 돌아온 뒤에야
+    // this.live 를 세운다. 기다리지 않으면 이 거둠 뒤에 살아 있는 기록이
+    // 설치되어 서버와 워크트리가 데몬이 내린 뒤에도 남는다. runOpen 안에서
+    // 부른 거둠은 teardown 이다: opening 자신을 기다리면 영원히 막힌다.
+    await this.opening?.catch(() => undefined);
+    await this.teardown(reason);
+  }
+
+  /** 실제 거둠 — 서버와 워크트리를 치우고 기록을 비운다. */
+  private async teardown(reason?: string): Promise<void> {
     this.disarmIdleTimer();
     const live = this.live;
     this.live = null;
@@ -122,14 +140,15 @@ export class HandoffPreviews {
   private async runOpen(): Promise<HandoffPreviewInfo> {
     const context = this.source();
     if (!context) {
-      await this.dispose();
+      await this.teardown();
       return notReady(null, "연결 레포가 아직 준비되지 않았습니다.");
     }
     const { slug, repoRoot, projectRoot, previewCommand, handoff } = context;
     // 수명 규칙 2번: 넘김이 착지해 사라졌다면 빌드도 함께 거둔다 — '넘긴
-    // 시점'은 넘긴 요청이 열려 있는 동안만 존재하는 약속이다.
+    // 시점'은 넘긴 요청이 열려 있는 동안만 존재하는 약속이다. (dispose 가
+    // 아니라 teardown — opening 자신을 기다리면 영원히 막힌다.)
     if (!handoff) {
-      await this.dispose("열린 넘김이 없습니다");
+      await this.teardown("열린 넘김이 없습니다");
       return notReady(
         null,
         "열려 있는 넘김이 없습니다 — 넘긴 요청이 열려 있을 때만 실제 빌드를 띄울 수 있습니다.",
@@ -153,7 +172,7 @@ export class HandoffPreviews {
     // 다른 프로젝트·다른 브랜치의 남은 빌드는 처음부터 — 같은 자리를 쓰므로
     // 먼저 거두고 새로 짓는다.
     if (this.live && (this.live.slug !== slug || this.live.branch !== branch)) {
-      await this.dispose("넘김이 바뀌었습니다");
+      await this.teardown("넘김이 바뀌었습니다");
     }
     if (!this.live) {
       const built = await this.build({
@@ -169,6 +188,16 @@ export class HandoffPreviews {
     }
     const live = this.live;
     live.opener = this.lastOpener;
+    // build 동안 주인 대화가 닫혔다면 지금 거둔다 — 이미 닫힌 대화의
+    // closeSession 은 다시 오지 않고, 세워 둔 기록은 아무도 거두지 못한 채
+    // TTL 까지 남는다. (build 뒤에 주인이 바뀌었다면 새 주인이 살아 있는
+    // 것이다.) 여기서 채점 끝 — 기억은 비운다.
+    const closedOwner = live.opener !== null && this.closedOpeners.has(live.opener);
+    this.closedOpeners.clear();
+    if (closedOwner) {
+      await this.teardown("빌드를 연 대화가 닫혔습니다");
+      return notReady(live.commit, "빌드를 연 대화가 닫혔습니다 — 다시 열어 주세요.");
+    }
     this.armIdleTimer();
 
     // 같은 브랜치의 꼭지만 옮겨갔다(이어 저장) — 서버는 살려 두고 워크트리만
@@ -182,8 +211,9 @@ export class HandoffPreviews {
 
     // 서버가 죽어 있으면(핫 리로드가 견디지 못한 자리 등) 같은 워크트리에서
     // 다시 띄운다 — 워크트리를 다시 짓는 일은 없다. 지난 포트·주소는 이전
-    // 서버의 것이라 새 판정 전에 비워 둔다.
-    if (live.child === null || live.child.exitCode !== null) {
+    // 서버의 것이라 새 판정 전에 비워 둔다. spawn 이 실패한 자식(pid 부재)은
+    // exitCode 가 null 로 살아 있는 것처럼 보이므로 pid 로도 판정한다.
+    if (live.child === null || live.child.exitCode !== null || live.child.pid === undefined) {
       live.child = null;
       live.port = null;
       live.url = null;
@@ -297,13 +327,29 @@ export class HandoffPreviews {
     child.stdout?.on("data", absorb);
     child.stderr?.on("data", absorb);
 
-    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    // spawn 의 실패(명령·cwd 부재)는 exit 없이 error·close 만 낸다 — 듣는
+    // 이가 없으면 미처리 예외가 되고, exited 가 풀리지 않아 준비 루프와
+    // stopServer 의 대기가 영원히 산다. error 를 같은 문에 세워 둔다.
+    /** spawn 자체의 실패 — exit 없이 error 로만 도착한다. */
+    const failure: { error: Error | null } = { error: null };
+    const exited = new Promise<void>((resolve) => {
+      child.once("exit", () => resolve());
+      child.once("error", (err) => {
+        failure.error = err;
+        resolve();
+      });
+    });
     const deadline = Date.now() + READY_TIMEOUT_MS;
     const scanned = new Set<number>();
     try {
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
           return `넘긴 시점의 미리보기 서버가 종료되었습니다${lastLine ? ` — ${lastLine}` : ""}`;
+        }
+        if (failure.error) {
+          return `넘긴 시점의 미리보기 명령을 띄우지 못했습니다${
+            failure.error.message ? ` — ${failure.error.message}` : ""
+          }`;
         }
         // 힌트 포트부터 — 명령이 힌트를 따랐다면 첫 판정으로 끝난다.
         if (hint !== undefined && !scanned.has(hint)) {
@@ -423,7 +469,9 @@ async function servingUrl(port: number): Promise<string | null> {
 async function stopServer(live: LivePreview): Promise<void> {
   const child = live.child;
   live.child = null;
-  if (!child || child.exitCode !== null) return;
+  // spawn 자체가 실패한 자식(pid 부재)은 exit 가 오지 않는다 — 기다리면
+  // 영원히 산다. 죽일 대상도 없으니 곧장 반환한다.
+  if (!child || child.exitCode !== null || child.pid === undefined) return;
   const { promise: exited, resolve } = Promise.withResolvers<void>();
   child.once("exit", () => resolve());
   killTree(child, "SIGTERM");

@@ -431,6 +431,11 @@ export function PageWorkspace({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // 한 번에 하나의 기계 턴 — create 가 끝나 activeId 가 앉기 전의 창에
+  // 두 번째 부름이 겹치면 같은 요청이 두 대화에 실려 간다(화면 패널의
+  // lookBusy 와 같은 규칙). 겹친 부름은 거절로 돌려 보낸다 — 부른 쪽의
+  // 재시도 규칙(거절 표식을 새기지 않음)이 이미 그 뜻을 알고 있다.
+  const forwardBusyRef = useRef(false);
   /**
    * A machine-authored turn — the error banner's 고치기, a review's 고치기,
    * 화면 보여 주기, a failing gate's brief — lands in the working thread,
@@ -449,6 +454,8 @@ export function PageWorkspace({
       images?: Array<{ mediaType: string; data: string }>,
       pins?: Array<{ screen: string; state: string | null }>,
     ) => {
+      if (forwardBusyRef.current) return false;
+      forwardBusyRef.current = true;
       try {
         // The thread this turn lands in is the one create just named — the
         // closure's activeId still reads the pre-create null, and resolving
@@ -462,6 +469,8 @@ export function PageWorkspace({
       } catch {
         // sendTurn already put the reason in the error strip.
         return false;
+      } finally {
+        forwardBusyRef.current = false;
       }
     },
     [sessions],

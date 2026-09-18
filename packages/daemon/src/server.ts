@@ -466,6 +466,10 @@ export class DaemonServer {
           // 게이트의 판정 상태는 세션과 함께 간다 — close, delete, remove,
           // daemon stop all land here as `closed`.
           if (state === "closed") {
+            // 화면 턴 카운터도 세션과 함께 간다 — 치우지 않으면 맵이 닫힌
+            // 세션만큼 계속 자라고, 같은 id 로 다시 열린 대화는 남의 밑값을
+            // 이어 써 체크포인트 번호가 git ref 와 어긋난다.
+            this.checkpointTurns.delete(sessionId);
             this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
             // 브라우저 시크릿도 세션과 함께 간다(3단계) — 남은 자식의 비밀로
@@ -784,8 +788,10 @@ export class DaemonServer {
     await this.manager.closeAll();
     // Every project the daemon touched this run, not just the active one: an
     // inactive project may still hold a warm preview server, and every
-    // preview process is ours to take down.
-    for (const workspaces of this.fleet.workspaces.values()) {
+    // preview process is ours to take down. The fleet itself may not exist —
+    // a start() that failed before building it still owes stop() a clean
+    // shutdown, not a TypeError that caches the rejection in `stopping`.
+    for (const workspaces of this.fleet?.workspaces.values() ?? []) {
       // Writers settle BEFORE the preview dies: a 최신화 killed between its
       // stash and its pop parks the planner's unsaved work in `git stash`.
       await workspaces.repo.settle();

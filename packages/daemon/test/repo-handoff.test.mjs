@@ -246,6 +246,32 @@ test("잠깐 치워두기: 미저장 작업을 치워 두고 워크트리를 깨
   }
 });
 
+test("같은 틱의 두 치워두기는 하나만 채운다 — 늦은 스냅샷이 먼저 것을 덮지 않는다", async () => {
+  const dir = workdir("hub-shelve-race-");
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const workspace = await bringUp(dir, fixture);
+
+    const claude = readFileSync(join(dir, "work", "CLAUDE.md"), "utf8");
+    writeFileSync(join(dir, "work", "CLAUDE.md"), `${claude}\n치워둘 한 줄\n`);
+
+    // 더블 클릭 · 두 창: 두 호출이 같은 마이크로태스크에서 출발한다.
+    const [first, second] = await Promise.allSettled([workspace.shelve(), workspace.shelve()]);
+    const winner = [first, second].find((outcome) => outcome.status === "fulfilled");
+    const loser = [first, second].find((outcome) => outcome.status === "rejected");
+    assert.ok(winner?.status === "fulfilled", "one shelve fills the slot");
+    assert.ok(loser?.status === "rejected", "the other must wait its turn, not overwrite");
+    assert.match(loser.reason.message, /이미 치워둔 작업이 있습니다/);
+
+    // 이긴 쪽의 스냅샷은 온전하다 — 꺼내면 그대로 돌아온다.
+    const { applied } = await workspace.unshelve();
+    assert.ok(applied.includes("CLAUDE.md"), `the winner's work is intact: ${applied}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("꺼내기는 최신화된 머리 위에 다시 얹는다 — 되감기가 아니다", async () => {
   const dir = workdir("hub-unshelve-3way-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -374,6 +400,70 @@ test("치워둔 작업은 재시작을 건너온다 — 첫 status 가 ref 를 �
     const { applied } = await restarted.unshelve();
     assert.ok(applied.includes("CLAUDE.md"), `the parked work comes back: ${applied}`);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("넘기기는 원격에 밀린 브랜치를 먼저 민다 — 저장의 push 가 죽은 자리의 요청이 옛 커밋을 보지 않게", async () => {
+  const dir = workdir("hub-handoff-stale-push-");
+  const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
+  process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
+  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
+  try {
+    const fixture = await createFixtureRepo({ dir: join(dir, "fixture"), port: await freePort() });
+    const requests = [];
+    const workspace = new RepoWorkspace({
+      root: join(dir, "work"),
+      url: fixture.remote,
+      onStatus: () => undefined,
+      gitHubClient: () => stubPullRequestClient(requests),
+    });
+    await workspace.sync();
+    await workspace.stop();
+
+    // 저장: 커밋과 push 가 다 성공한 자리에서 시작한다 — 그리고 push 가 죽었던
+    // 모양으로 되돌린다. 커밋은 로컬에 남고, 원격 브랜치와 원격 추적 ref 는
+    // 베이스 끝에 머문다.
+    writeFileSync(join(dir, "work", "index.html"), "<p>밀린 저장</p>\n");
+    const saved = await workspace.save({ message: "밀린 저장" });
+    assert.equal(saved.stage, "published", saved.detail ?? "");
+    const branch = (
+      await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "--abbrev-ref", "HEAD"])
+    ).trim();
+    const baseTip = (
+      await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", "origin/main"])
+    ).trim();
+    await promisifiedRun("git", [
+      "-C",
+      fixture.remote,
+      "update-ref",
+      `refs/heads/${branch}`,
+      baseTip,
+    ]);
+    await promisifiedRun("git", [
+      "-C",
+      join(dir, "work"),
+      "update-ref",
+      `refs/remotes/origin/${branch}`,
+      baseTip,
+    ]);
+
+    const handed = await workspace.handoff({ title: "결제 화면" });
+    assert.equal(handed.stage, "handed-off", handed.detail ?? handed.stage);
+
+    // 요청의 head 는 로컬 끝이다 — 넘기기가 먼저 민 브랜치 끝이고, 베이스에
+    // 머문 옛 origin 이 아니다.
+    const localTip = (
+      await promisifiedRun("git", ["-C", join(dir, "work"), "rev-parse", branch])
+    ).trim();
+    const remoteTip = (
+      await promisifiedRun("git", ["-C", fixture.remote, "rev-parse", `refs/heads/${branch}`])
+    ).trim();
+    assert.equal(remoteTip, localTip, "the request's head is the local tip, not the stale origin");
+    assert.equal(requests[0].head, branch);
+  } finally {
+    if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
+    else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
     rmSync(dir, { recursive: true, force: true });
   }
 });

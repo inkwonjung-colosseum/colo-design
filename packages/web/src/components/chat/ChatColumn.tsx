@@ -222,8 +222,13 @@ export function ChatColumn({
    * 누른다), 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라
    * 여기선 무시한다.
    */
+  // 이 열은 홈·여정에서 내렸다 다시 탄다 — 마지막으로 본 nonce 만 기억해
+  // 재생을 묵살한다. 같은 nonce 를 다시 보는 것은 사용자 손이 아니라
+  // 리마운트이니, nonce 가 실제로 바뀐 때만 응답한다.
+  const cycleNonce = useRef(-1);
   useEffect(() => {
-    if (!cycleRequest) return;
+    if (!cycleRequest || cycleRequest.nonce === cycleNonce.current) return;
+    cycleNonce.current = cycleRequest.nonce;
     if (cycleRequest.kind === "save") runSave();
     else if (cycleRequest.kind === "handoff") setHandoffOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps

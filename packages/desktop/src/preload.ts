@@ -89,7 +89,9 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       state: string;
     }>("colo-preview:error"),
     onFreeze: subscribe<string>("colo-preview:freeze"),
-    onKey: subscribe<{ key: string; meta: boolean; shift: boolean }>("colo-preview:key"),
+    onKey: subscribe<{ key: string; meta: boolean; shift: boolean; control: boolean }>(
+      "colo-preview:key",
+    ),
     onLoading: subscribe<{ on: boolean }>("colo-preview:loading"),
     /** 배율 되알림 (PLAN D85 ⓔ) — the menu changed it, the web redraws. */
     onZoom: subscribe<{ factor: number }>("colo-preview:zoom"),

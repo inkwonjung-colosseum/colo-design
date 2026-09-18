@@ -221,6 +221,31 @@ async function main() {
       await hint.innerText(),
     );
 
+    // The popup opens downward across the chat column's thread bar. Both bars
+    // are glass stacking contexts, and while they shared z31 the DOM order —
+    // .thread comes later — let the thread bar paint over the menu's first
+    // line. The popup's own z-index cannot leave the header's context, so the
+    // hit test at the menu's first line is the contract: the menu, or whatever
+    // covers it, is what a click would actually meet.
+    const stacking = await page.evaluate(() => {
+      const menu = document.querySelector(".screenpanel__statusmenu");
+      if (!menu) return { ok: false, detail: "menu not found" };
+      const line = menu.querySelector(".screenpanel__statusline");
+      const r = (line ?? menu).getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + 10, r.top + r.height / 2);
+      return {
+        ok: hit !== null && menu.contains(hit),
+        detail: hit
+          ? `${hit.tagName.toLowerCase()}${hit.classList.length ? "." + [...hit.classList].join(".") : ""}`
+          : "nothing hit",
+      };
+    });
+    check(
+      "the menu paints over the thread bar — its first line is hit-testable",
+      stacking.ok,
+      stacking.detail,
+    );
+
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({
       path: join(here, "ui-status-menu-e2e.png"),

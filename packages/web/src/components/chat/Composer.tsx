@@ -747,11 +747,13 @@ export function Composer({
     // 보내는 동안 탭이 바뀌면 필드는 이미 다른 대화의 초안이다 — 비우는
     // 것은 보낸 쪽의 초안만이다.
     const sentKey = draftKeyRef.current;
+    // 보내기 시작 때의 필드 스냅샷 — 같은 초안의 성공 뒤 비움도 필드가 아직
+    // 이 스냅샷 그대로일 때만이다. 보내는 동안 더 쓴 말·붙인 첨부는 살린다
+    // (옆 초안의 규칙과 같다); 달라진 필드를 통째로 비워 날리던 결함.
+    const sentEditor = editor;
     void Promise.resolve(onSend(text, editor.attachments, pins))
       .then(() => {
-        if (draftKeyRef.current === sentKey) {
-          setEditor(EMPTY_EDITOR);
-        } else {
+        if (draftKeyRef.current !== sentKey) {
           drafts.current.set(sentKey, EMPTY_EDITOR);
           saveDraft(sentKey, "");
           // sentKey 의 첨부 셈도 거둔다 — 남으면 그 대화를 다시 열 때
@@ -761,16 +763,20 @@ export function Composer({
           } catch {
             // 비공개 모드 — 메모리 지도만 남는다.
           }
-          // 새 작업실의 첫 보내기: 자리 옮김 효과가 보낸 말을 새 세션의
-          // 초안 키로 나른다 — sentKey 만 비우면 그 나른 짝이 필드에 남고,
-          // 다음 Enter 가 같은 말을 또 보낸다. 아직 보낸 본문 그대로일 때만
-          // 그 짝도 비운다 (보낸 뒤에 더 쓴 말은 삶는다).
-          if (drafts.current.get(draftKeyRef.current)?.text === text) {
-            drafts.current.set(draftKeyRef.current, EMPTY_EDITOR);
-            saveDraft(draftKeyRef.current, "");
-            setEditor(EMPTY_EDITOR);
-          }
         }
+        // 성공 뒤 비움은 한 규칙으로 담는다 — 지금 필드가 아직 보낸 스냅샷
+        // 그대로면 비운다. 같은 자리에서의 성공이든, 새 작업실의 첫
+        // 보내기(draftKey 가 new:* 에서 세션 id 로 바뀌고 자리 옮김 효과가
+        // 보낸 말을 필드에 나른다)든 같다. 지도에서 새 키의 짝을 찾던 옛
+        // 비움은 그 결함을 다시 만난다: 옮김이 setEditor 에 같은 객체를
+        // 돌려 보내면 React 가 변화로 치지 않아 지도에 새 키의 흔적이
+        // 아예 남지 않기 때문이다. 보낸 뒤 더 쓴 말·다른 대화의 초안은
+        // 스냅샷과 달라 살린다.
+        setEditor((prev) =>
+          prev.text === sentEditor.text && prev.attachments === sentEditor.attachments
+            ? EMPTY_EDITOR
+            : prev,
+        );
         setSuggestions([]);
         rejected.clear();
         sendError.clear();

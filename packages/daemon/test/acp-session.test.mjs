@@ -235,3 +235,179 @@ test("models() rows pass through enrichModels", async () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// interrupt() 회귀 — 부팅 창의 오판과 wedged 취소. 각각 전용 가짜 에이전트가
+// 필요하다: session/new 를 늦게 답하는 것, session/prompt 를 영원히 안 답는
+// 것, loadSession 을 거부하는 것.
+// ---------------------------------------------------------------------------
+
+const SLOW_AGENT_SCRIPT = join(dir, "slow-agent.mjs");
+writeFileSync(
+  SLOW_AGENT_SCRIPT,
+  `
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin, terminal: false });
+lines.on("line", (line) => {
+  const t = line.trim();
+  if (!t) return;
+  let m; try { m = JSON.parse(t); } catch { return; }
+  if (m.id === undefined) return;
+  let result = {};
+  if (m.method === "initialize") {
+    result = { protocolVersion: 1, agentCapabilities: {} };
+  } else if (m.method === "session/new") {
+    // 부팅 창을 연다 — initialize 는 즉시, session/new 는 300ms 뒤에 답한다.
+    result = { sessionId: "slow-session-1" };
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+    }, 300);
+    return;
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+});
+lines.on("close", () => process.exit(0));
+`,
+);
+
+const WEDGED_AGENT_SCRIPT = join(dir, "wedged-agent.mjs");
+writeFileSync(
+  WEDGED_AGENT_SCRIPT,
+  `
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+const LOG = ${JSON.stringify(LOG)};
+const lines = createInterface({ input: process.stdin, terminal: false });
+lines.on("line", (line) => {
+  const t = line.trim();
+  if (!t) return;
+  let m; try { m = JSON.parse(t); } catch { return; }
+  appendFileSync(LOG, JSON.stringify({ method: m.method, params: m.params }) + "\\n");
+  if (m.id === undefined) return;
+  let result = {};
+  if (m.method === "initialize") {
+    result = { protocolVersion: 1, agentCapabilities: {} };
+  } else if (m.method === "session/new") {
+    result = { sessionId: "wedged-session-1" };
+  } else if (m.method === "session/prompt") {
+    return; // wedged — session/cancel 이 와도 프롬프트는 영원히 안 풀린다.
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+});
+lines.on("close", () => process.exit(0));
+`,
+);
+
+const REFUSING_AGENT_SCRIPT = join(dir, "refusing-agent.mjs");
+writeFileSync(
+  REFUSING_AGENT_SCRIPT,
+  `
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin, terminal: false });
+lines.on("line", (line) => {
+  const t = line.trim();
+  if (!t) return;
+  let m; try { m = JSON.parse(t); } catch { return; }
+  if (m.id === undefined) return;
+  let result = {};
+  if (m.method === "initialize") {
+    // loadSession: false — resume 요청은 핸드셰이크 안에서 거절된다.
+    result = { protocolVersion: 1, agentCapabilities: { loadSession: false } };
+  }
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+});
+lines.on("close", () => process.exit(0));
+`,
+);
+
+function makeHooks(events) {
+  const state = { transportEnded: false, transportError: null };
+  const hooks = {
+    onEvent: (event) => events.push(event),
+    onTransportEnd: () => {
+      state.transportEnded = true;
+    },
+    onTransportError: (detail) => {
+      state.transportError = detail;
+    },
+    decidePermission: async () => ({ behavior: "deny", message: "테스트 거절" }),
+  };
+  return { hooks, state };
+}
+
+function makeSession(script, launch) {
+  const events = [];
+  const { hooks, state } = makeHooks(events);
+  const session = new AcpAgentSession(
+    "omp",
+    process.execPath,
+    [script],
+    {
+      cwd: dir,
+      sessionId: "core-1",
+      model: null,
+      effort: null,
+      modeId: "default",
+      appendSystemPrompt: null,
+      ...launch,
+    },
+    hooks,
+    {},
+  );
+  return { session, events, state };
+}
+
+async function waitFor(cond, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error("waitFor timed out");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+test("interrupt during the boot window waits for ready instead of judging dead", async () => {
+  const { session } = makeSession(SLOW_AGENT_SCRIPT, {});
+  try {
+    // session/new 가 아직 안 답한 창 — vendorSessionId 는 null 이지만 전송은
+    // 살아 있다. dead 로 읽으면 코어가 멀쩡한 부팅 세션을 닫아 버린다.
+    const outcome = await session.interrupt();
+    assert.equal(outcome, "answered");
+    assert.equal(session.alive, true);
+  } finally {
+    await session.close();
+  }
+});
+
+test("interrupt on a wedged prompt escalates to transport close after the grace", async () => {
+  resetLog();
+  const { session, state } = makeSession(WEDGED_AGENT_SCRIPT, {});
+  try {
+    await waitFor(() => calls(readLog(), "session/new").length > 0);
+    void session.send({ text: "hello" });
+    await waitFor(() => calls(readLog(), "session/prompt").length > 0);
+    const outcome = await session.interrupt();
+    assert.equal(outcome, "timeout");
+    // 전송이 끊겨 크래시 기계(onTransportEnd)가 돌고, 막혀 있던 프롬프트도
+    // 함께 풀려 sendChain 이 서지 않는다.
+    await waitFor(() => state.transportEnded);
+    assert.equal(session.alive, false);
+  } finally {
+    await session.close();
+  }
+});
+
+test("handshake rejection kills the child and surfaces as a transport error", async () => {
+  const { session, state } = makeSession(REFUSING_AGENT_SCRIPT, { resume: "vendor-old" });
+  try {
+    await waitFor(() => state.transportError !== null);
+    assert.match(state.transportError, /재개를 지원하지 않습니다/);
+    // 자식은 죽고 alive 는 거짓 — 코어가 이 세션을 sendable 로 보지 않는다.
+    assert.equal(session.alive, false);
+    // 보고는 onTransportError 한 번 — 죽은 뒤 onTransportEnd 가 겹치지 않는다.
+    assert.equal(state.transportEnded, false);
+    // 뒤에 선 await 도 같은 거절을 받는다.
+    await assert.rejects(() => session.send({ text: "x" }), /재개를 지원하지 않습니다/);
+  } finally {
+    await session.close();
+  }
+});
