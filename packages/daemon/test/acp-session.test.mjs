@@ -236,6 +236,92 @@ test("models() rows pass through enrichModels", async () => {
   );
 });
 
+test("bypass rides the mode picker and never reaches the wire as set_mode", async () => {
+  resetLog();
+  await withSession({ launch: {}, wiring: {} }, async (session) => {
+    const rows = await session.modes();
+    assert.deepEqual(
+      rows.map((r) => r.id),
+      ["default", "plan", "bypass"],
+    );
+    await session.setMode("bypass");
+    // 와이어로 set_mode 는 하나도 안 간다 — default 는 이미 현재 모드고,
+    // bypass 는 데몬이 집행하는 방식이라 에이전트에 보낼 게 없다.
+    assert.deepEqual(calls(readLog(), "session/set_mode"), []);
+  });
+});
+
+function permissionSession(modeId, onDecision) {
+  const events = [];
+  const hooks = {
+    onEvent: (event) => events.push(event),
+    onTransportEnd: () => {},
+    onTransportError: () => {},
+    decidePermission: async () => {
+      onDecision();
+      return { behavior: "deny", message: "테스트 거절" };
+    },
+  };
+  const session = new AcpAgentSession(
+    "omp",
+    process.execPath,
+    [PERMISSION_AGENT_SCRIPT],
+    {
+      cwd: dir,
+      sessionId: "core-1",
+      model: null,
+      effort: null,
+      modeId,
+      appendSystemPrompt: null,
+    },
+    hooks,
+    {},
+  );
+  return { session, events };
+}
+
+test("bypass mode answers permissions with allow and never opens a card", async () => {
+  resetLog();
+  let decisions = 0;
+  const { session, events } = permissionSession("bypass", () => {
+    decisions += 1;
+  });
+  try {
+    await new Promise((resolve) => {
+      const poll = () => (events.some((e) => e.kind === "init") ? resolve() : setTimeout(poll, 25));
+      poll();
+    });
+    await session.send({ text: "고쳐줘" });
+    const answers = readLog().filter((e) => e.permissionAnswer);
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].permissionAnswer.outcome.optionId, "allow-once");
+    assert.equal(decisions, 0);
+  } finally {
+    await session.close();
+  }
+});
+
+test("default mode asks the card flow and honors its denial", async () => {
+  resetLog();
+  let decisions = 0;
+  const { session, events } = permissionSession("default", () => {
+    decisions += 1;
+  });
+  try {
+    await new Promise((resolve) => {
+      const poll = () => (events.some((e) => e.kind === "init") ? resolve() : setTimeout(poll, 25));
+      poll();
+    });
+    await session.send({ text: "고쳐줘" });
+    const answers = readLog().filter((e) => e.permissionAnswer);
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].permissionAnswer.outcome.optionId, "reject-once");
+    assert.equal(decisions, 1);
+  } finally {
+    await session.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // interrupt() 회귀 — 부팅 창의 오판과 wedged 취소. 각각 전용 가짜 에이전트가
 // 필요하다: session/new 를 늦게 답하는 것, session/prompt 를 영원히 안 답는
@@ -293,6 +379,57 @@ lines.on("line", (line) => {
     return; // wedged — session/cancel 이 와도 프롬프트는 영원히 안 풀린다.
   }
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+});
+lines.on("close", () => process.exit(0));
+`,
+);
+
+const PERMISSION_AGENT_SCRIPT = join(dir, "permission-agent.mjs");
+writeFileSync(
+  PERMISSION_AGENT_SCRIPT,
+  `
+import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+const LOG = ${JSON.stringify(LOG)};
+const lines = createInterface({ input: process.stdin, terminal: false });
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+let pendingPrompt = null;
+lines.on("line", (line) => {
+  const t = line.trim();
+  if (!t) return;
+  let m; try { m = JSON.parse(t); } catch { return; }
+  appendFileSync(LOG, JSON.stringify(m) + "\\n");
+  if (m.id !== undefined && m.method) {
+    let result = {};
+    if (m.method === "initialize") {
+      result = { protocolVersion: 1, agentCapabilities: {} };
+    } else if (m.method === "session/new") {
+      result = {
+        sessionId: "fake-session-1",
+        modes: { availableModes: [{ id: "default", name: "Default" }], currentModeId: "default" },
+      };
+    } else if (m.method === "session/prompt") {
+      pendingPrompt = m.id;
+      send({
+        jsonrpc: "2.0", id: "perm-1", method: "session/request_permission",
+        params: {
+          options: [
+            { kind: "allow_once", optionId: "allow-once", name: "Allow" },
+            { kind: "reject_once", optionId: "reject-once", name: "Reject" },
+          ],
+          toolCall: { kind: "execute", title: "bash", rawInput: { command: "rm -rf /" } },
+        },
+      });
+      return;
+    }
+    send({ jsonrpc: "2.0", id: m.id, result });
+    return;
+  }
+  if (m.id === "perm-1") {
+    appendFileSync(LOG, JSON.stringify({ permissionAnswer: m.result }) + "\\n");
+    send({ jsonrpc: "2.0", id: pendingPrompt, result: { stopReason: "end_turn" } });
+    pendingPrompt = null;
+  }
 });
 lines.on("close", () => process.exit(0));
 `,

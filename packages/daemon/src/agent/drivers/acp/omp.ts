@@ -127,6 +127,7 @@ export const OMP_ACP: AcpDriverConfig = {
   modes: [
     { id: "default", label: "Default", tier: "moderate" },
     { id: "plan", label: "Plan", tier: "planning" },
+    { id: "bypass", label: "Bypass", tier: "dangerous" },
   ],
   defaultModeId: "default",
   capabilities: {

@@ -29,6 +29,15 @@ interface AcpModeInfo {
 }
 
 /**
+ * bypass(바로 실행) — 에이전트의 모드가 아니라 데몬의 집행 방식. ACP 에이전트의
+ * 모든 승인은 session/request_permission 으로 데몬 카드에 도달하므로, 이 모드에서는
+ * 카드를 열지 않고 allow 로 자동 응답한다(codex bypass(approvalPolicy never)의
+ * ACP 동등물). 에이전트에게 set_mode 할 것이 아니라 데몬이 답을 바꾸는 것이다.
+ */
+const BYPASS_MODE_ID = "bypass";
+const BYPASS_MODE_ROW = { id: BYPASS_MODE_ID, label: "Bypass" };
+
+/**
  * An AgentSession over the Agent Client Protocol: one child process per
  * session, JSON-RPC on stdio. The handshake is async, so calls made before
  * `session/new` (or `session/resume`) resolves queue behind `ready` — the
@@ -178,21 +187,26 @@ export class AcpAgentSession implements AgentSession {
       await this.setConfig("model", this.launch.model).catch(() => undefined);
     }
     if (this.launch.modeId && this.launch.modeId !== this.currentModeId) {
-      // setMode's own `await this.ready` would deadlock here — this IS the
-      // handshake — so the pin is applied inline with the same branch.
-      try {
-        if (this.modeOptions.length > 0) {
-          await this.transport.request(
-            "session/set_mode",
-            { sessionId: this.vendorSessionId, modeId: this.launch.modeId },
-            10_000,
-          );
-        } else {
-          await this.setConfig("mode", this.launch.modeId);
-        }
+      // bypass 는 데몬이 집행하는 모드라 에이전트에 set_mode 하지 않는다.
+      if (this.launch.modeId === BYPASS_MODE_ID) {
         this.currentModeId = this.launch.modeId;
-      } catch {
-        // A pin the agent refuses is not fatal — the session runs its own mode.
+      } else {
+        // setMode's own `await this.ready` would deadlock here — this IS the
+        // handshake — so the pin is applied inline with the same branch.
+        try {
+          if (this.modeOptions.length > 0) {
+            await this.transport.request(
+              "session/set_mode",
+              { sessionId: this.vendorSessionId, modeId: this.launch.modeId },
+              10_000,
+            );
+          } else {
+            await this.setConfig("mode", this.launch.modeId);
+          }
+          this.currentModeId = this.launch.modeId;
+        } catch {
+          // A pin the agent refuses is not fatal — the session runs its own mode.
+        }
       }
     }
     // 노력 수준 핀 — 에이전트가 effort를 configOption으로 노출할 때만. null
@@ -351,10 +365,14 @@ export class AcpAgentSession implements AgentSession {
     await this.ready;
     const sessionId = this.vendorSessionId;
     if (!sessionId) return;
-    if (this.modeOptions.length > 0) {
-      await this.transport.request("session/set_mode", { sessionId, modeId }, 10_000);
-    } else {
-      await this.setConfig("mode", modeId);
+    // bypass 는 에이전트 모드가 아니라 데몬의 승인 응답 방식(아래
+    // answerPermission)이라 — set_mode 로 에이전트를 설득할 게 없다.
+    if (modeId !== BYPASS_MODE_ID) {
+      if (this.modeOptions.length > 0) {
+        await this.transport.request("session/set_mode", { sessionId, modeId }, 10_000);
+      } else {
+        await this.setConfig("mode", modeId);
+      }
     }
     this.currentModeId = modeId;
   }
@@ -378,20 +396,28 @@ export class AcpAgentSession implements AgentSession {
 
   async modes(): Promise<Array<{ id: string; label: string; description?: string }> | null> {
     await this.ready;
+    // bypass 행은 에이전트가 말하는 모드가 아니라 데몬이 집행하는 방식이라
+    // 어느 목록에든 항상 얹는다 — 픽커는 세션 모드에서 그것을 본다.
     if (this.modeOptions.length > 0) {
-      return this.modeOptions.map((m) => ({
-        id: m.id,
-        label: m.name ?? m.id,
-        ...(m.description ? { description: m.description } : {}),
-      }));
+      return [
+        ...this.modeOptions.map((m) => ({
+          id: m.id,
+          label: m.name ?? m.id,
+          ...(m.description ? { description: m.description } : {}),
+        })),
+        BYPASS_MODE_ROW,
+      ];
     }
     const option = this.configOptions.find((o) => o.category === "mode" || o.id === "mode");
     if (option?.options?.length) {
-      return option.options.map((o) => ({
-        id: o.value,
-        label: o.name ?? o.value,
-        ...(o.description ? { description: o.description } : {}),
-      }));
+      return [
+        ...option.options.map((o) => ({
+          id: o.value,
+          label: o.name ?? o.value,
+          ...(o.description ? { description: o.description } : {}),
+        })),
+        BYPASS_MODE_ROW,
+      ];
     }
     return null;
   }
@@ -479,6 +505,15 @@ export class AcpAgentSession implements AgentSession {
   private async answerPermission(params: Wire): Promise<unknown> {
     const toolCall = (params?.toolCall ?? {}) as Wire;
     const options = (params?.options ?? []) as Wire[];
+    // bypass(바로 실행): 카드를 열지 않고 허용으로 응답한다 — codex bypass
+    // (approvalPolicy never)의 ACP 쪽 동등물. 판단을 코어에 보내지 않는 것이지
+    // 도구 실행 자체는 에이전트의 몫이다.
+    if (this.currentModeId === BYPASS_MODE_ID) {
+      const allow =
+        options.find((o) => o.kind === "allow_once") ??
+        options.find((o) => /allow/i.test(String(o.kind ?? o.optionId ?? "")));
+      return { outcome: { outcome: "selected", optionId: String(allow?.optionId ?? "allow") } };
+    }
     const tool = this.classifyTool(toolCall);
     const input = (toolCall.rawInput ?? {}) as Record<string, unknown>;
 
