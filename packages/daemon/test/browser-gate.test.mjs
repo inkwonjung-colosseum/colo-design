@@ -332,13 +332,27 @@ test("op가 시간을 넘기면 큐 꼬리를 갈아치우고 드라이버를 �
   const realSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (fn, ms, ...rest) =>
     realSetTimeout(fn, Math.min(Number(ms) || 0, 25), ...rest);
+  // 데몬의 op 타임아웃 타이머는 unref 라 루프를 붙들지 못한다 — 이 시험의
+  // 마지막 await 가 그 타이머를 기다리는 순간 루프가 먼저 비면(러너 판본에
+  // 따라 그렇다) 판정이 'pending 인 채로 취소'가 된다. 참조 걸린 타이머 하나가
+  // 시험 창 동안 루프를 붙들고 있는다.
+  const keepAlive = realSetTimeout(() => {}, 60_000);
+  // 끝없이 pending 인 약속은 시험 프로세스가 끝날 때까지 남는다 — 새
+  // 러너는 그대로 두면 "pending 인 채로 표가 났다" 고 해당 파일의 나머지
+  // 시험을 취소한다. 타임아웃이 늦게라도 풀 수 있게 풀개를 쥐어 둔다.
+  let releaseHung = null;
   try {
     const driver = fakeDriver();
     let snapshotCalls = 0;
     driver.snapshot = () => {
       snapshotCalls += 1;
       // 첫 op는 영원히 — 90초 상한에 걸려야 할 몸종. 둘째 op는 곧 답한다.
-      return snapshotCalls === 1 ? new Promise(() => {}) : Promise.resolve([]);
+      if (snapshotCalls === 1) {
+        return new Promise((resolve) => {
+          releaseHung = () => resolve([]);
+        });
+      }
+      return Promise.resolve([]);
     };
     const server = endpointStub({ driver, session: null });
 
@@ -375,5 +389,9 @@ test("op가 시간을 넘기면 큐 꼬리를 갈아치우고 드라이버를 �
     );
   } finally {
     globalThis.setTimeout = realSetTimeout;
+    clearTimeout(keepAlive);
+    // 타임아웃으로 버려진 첫 op의 약속을 푼다 — pending 인 채로 남으면
+    // 시험 프로세스의 자리가 끝나지 않는다(새 러너의 취소 사유).
+    releaseHung?.();
   }
 });
