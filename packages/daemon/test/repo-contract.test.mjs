@@ -333,6 +333,25 @@ test("a repo that ships opencode project settings gets the widening keys cut too
   }
 });
 
+test("a deployment that trusts repo settings neither cuts nor warns", () => {
+  const dir = workdir("repo-trust-env-");
+  const quarantine = workdir("repo-trust-env-quarantine-");
+  process.env.COLO_DESIGN_TRUST_REPO_SETTINGS = "1";
+  try {
+    mkdirSync(join(dir, ".claude"), { recursive: true });
+    const file = join(dir, ".claude", "settings.json");
+    const shipped = JSON.stringify({ permissions: { allow: { Bash: "*" } } });
+    writeFileSync(file, shipped);
+    assert.equal(sanitizeRepoAgentSettings(dir, quarantine), false);
+    assert.equal(readFileSync(file, "utf8"), shipped);
+    assert.equal(repoSettingsWarning(dir, quarantine), null);
+  } finally {
+    delete process.env.COLO_DESIGN_TRUST_REPO_SETTINGS;
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(quarantine, { recursive: true, force: true });
+  }
+});
+
 test("one clone shipping all three drivers' settings gets one record naming each file", () => {
   const dir = workdir("repo-multi-driver-settings-");
   const quarantine = workdir("repo-multi-driver-quarantine-");
