@@ -89,7 +89,7 @@ async function runPaneUnit(urlA, urlB) {
   return line;
 }
 
-test("미리보기 페이지 모델: mount·로밍·history, park·복귀, loose 생애, window.open, epoch, evict", async () => {
+test("미리보기 페이지 모델: mount·로밍·history, park·복귀, loose 생애, window.open, epoch", async () => {
   const serverA = startServerA();
   const serverB = startServerB();
   try {
@@ -117,7 +117,7 @@ test("미리보기 페이지 모델: mount·로밍·history, park·복귀, loose
       [result.paneStaysPut, "팝업이 떠도 pane 은 제자리다"],
       [result.osFallbackTaken, "비-http(s) 팝업도 OS 폴백으로 넘어간다"],
       [result.epochMoveReloads, "epoch 이동은 페이지를 뿌리로 다시 시작시킨다"],
-      [result.evictedOldest, "8을 넘으면 제일 오래된 parked 페이지가 파기된다"],
+      [result.evictedGuests, "철거된 요소의 게스트는 죽고 레지스트리에서 잊힌다"],
       [result.strayIsLoose, "프로젝트 없이 뜬 페이지는 loose 다"],
       [result.looseAdopted, "repo origin 에 착지한 loose 페이지는 입양된다"],
       [result.survivorReused, "살아 있는 페이지는 재마운트가 같은 몸통을 쓴다"],

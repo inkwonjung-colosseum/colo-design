@@ -65,7 +65,7 @@ export function PinTray({
     });
     return () => cancelAnimationFrame(frame);
   }, [focusPinId]);
-  // 행 번호는 트레이 순서 그대로 — 레지스트리 번호 매기기는 useMarks 와 함께 갔다.
+  // 행 번호는 트레이 순서 그대로다.
 
   const screens = new Set(pins.map((pin) => pin.screen));
   const first = pins[0]!;

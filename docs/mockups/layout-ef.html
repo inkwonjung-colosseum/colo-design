@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Colo Design — 최종 안 · 화면 지도 → 2단 집중형 목업</title>
+<style>
+  /* 토큰은 packages/web/src/styles.css 의 light · dark 팔레트를 그대로 옮겼다 (안 E · F 와 동일). */
+  [data-theme="light"] {
+    --bg: #ffffff; --bg-2: #f6f6f8; --panel: #f8f8fa; --panel-2: #f1f1f4; --panel-3: #e8e8ed;
+    --line: #dcdce2; --line-soft: #e6e6ea; --line-strong: #cbcbd3; --line-hover: #b5b5be;
+    --text: #17171a; --text-2: #45454d; --muted: #54545e;
+    --accent: #4a6b8f; --accent-soft: rgba(74,107,143,.1); --accent-glow: rgba(74,107,143,.28);
+    --warn: #855312; --warn-soft: rgba(133,83,18,.08); --warn-line: rgba(133,83,18,.38);
+    --danger: #a93b3b; --danger-soft: rgba(169,59,59,.08); --danger-line: rgba(169,59,59,.42);
+    --ok: #3f8a3a; --ok-soft: rgba(63,138,58,.08); --brand: #4a6b8f;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.06), 0 12px 32px -16px rgba(0,0,0,.18);
+    --shadow-float: 0 2px 6px -2px rgba(0,0,0,.12), 0 24px 56px -20px rgba(0,0,0,.25);
+    color-scheme: light;
+  }
+  [data-theme="dark"] {
+    --bg: #0d0d0f; --bg-2: #111114; --panel: #151518; --panel-2: #1b1b1f; --panel-3: #212126;
+    --line: #2e2e35; --line-soft: #1e1e22; --line-strong: #34343b; --line-hover: #3a3a42;
+    --text: #e4e4e7; --text-2: #b6b6bc; --muted: #a4a4b0;
+    --accent: #9db1c7; --accent-soft: rgba(157,177,199,.09); --accent-glow: rgba(157,177,199,.35);
+    --warn: #d4a55f; --warn-soft: rgba(212,165,95,.08); --warn-line: rgba(212,165,95,.38);
+    --danger: #e07a7a; --danger-soft: rgba(224,122,122,.08); --danger-line: rgba(224,122,122,.42);
+    --ok: #79b874; --ok-soft: rgba(121,184,116,.1); --brand: #7e97b5;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.22), 0 12px 32px -16px rgba(0,0,0,.5);
+    --shadow-float: 0 2px 6px -2px rgba(0,0,0,.4), 0 24px 56px -20px rgba(0,0,0,.55);
+    color-scheme: dark;
+  }
+  :root {
+    --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+    --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-float: 12px; --r-dialog: 16px;
+    --top-h: 44px; --rail-w: 44px; --chat-w: 400px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.45 var(--sans); color: var(--text); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  svg.i { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+  /* ── 프레임 ───────────────────────────────────────────
+     지도(안 F 그리드)와 작업 화면(안 E 그리드)이 같은 top · rail 을 공유한다.
+     보기 전환은 js 로 data-view 만 갈아끼운다 — 다시 띄우지 않는다. */
+  .app {
+    height: 100vh; display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+    grid-template-rows: var(--top-h) 1fr;
+    grid-template-areas: "top top" "rail body";
+  }
+  body[data-view="work"] .app {
+    grid-template-columns: var(--rail-w) var(--chat-w) 1fr;
+    grid-template-areas: "top top top" "rail chat preview";
+  }
+  body[data-view="map"] .chat, body[data-view="map"] .preview { display: none; }
+  body[data-view="work"] .app > .body { display: none; }
+
+  /* ── 상단 바: 상태 칩 하나 + 버튼 셋(다음 할 일만 채움) ── 안 E 와 동일 */
+  .top {
+    grid-area: top; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 10px;
+    border-bottom: 1px solid var(--line); background: var(--bg);
+  }
+  .top__project {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--r-md);
+    font-weight: 600; font-size: 13.5px;
+  }
+  .top__project:hover { background: var(--panel-2); }
+  .top__project .caret { color: var(--muted); font-size: 11px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px 0 8px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text-2);
+    font-size: 12px; white-space: nowrap;
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .chip--warn { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn); }
+  .chip--warn .dot { background: var(--warn); }
+  .chip--ok { color: var(--ok); }
+  .chip--ok .dot { background: var(--ok); }
+
+  /* 작업 화면에서만: 지도로 되돌아가기 — 상단 바는 좁은 창에서도 남는다 */
+  .backtop {
+    display: none; align-items: center; gap: 5px; height: 28px; padding: 0 9px;
+    border-radius: var(--r-md); color: var(--muted); font-size: 12.5px; white-space: nowrap;
+  }
+  .backtop:hover { background: var(--panel-2); color: var(--text); }
+  body[data-view="work"] .backtop { display: inline-flex; }
+
+  .top__actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .btn {
+    position: relative; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px;
+    border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--bg); color: var(--text);
+    font-size: 12.5px; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--line-hover); background: var(--panel); }
+  .btn.is-primary { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+  .btn.is-locked { color: var(--muted); border-color: var(--line); background: var(--panel); cursor: default; }
+  .btn.is-locked:hover { border-color: var(--line); }
+  .btn--icon { width: 28px; padding: 0; justify-content: center; }
+  /* 잠긴 버튼은 지워지지 않는다 — 마우스를 올리면 이유가 뜬다 */
+  .btn[data-tip]:hover::after {
+    content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; z-index: 5;
+    padding: 6px 9px; border-radius: var(--r-md); background: var(--text); color: var(--bg);
+    font-size: 11.5px; font-weight: 400; white-space: nowrap; box-shadow: var(--shadow-float);
+  }
+
+  /* 좁은 창에서만 보이는 대화/화면 전환 — 안 E 와 동일 */
+  .seg { display: none; margin-left: 4px; border: 1px solid var(--line); border-radius: var(--r-md); padding: 2px; background: var(--panel); }
+  .seg button { position: relative; padding: 3px 10px; border-radius: 4px; font-size: 12px; color: var(--muted); }
+  .seg button.is-on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+  /* ── 레일: 트리 대신 아이콘 열 ───────────────────────── 안 E 와 동일 */
+  .rail {
+    grid-area: rail; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0;
+    border-right: 1px solid var(--line); background: var(--panel);
+  }
+  .rail button { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--r-md); color: var(--muted); }
+  .rail button:hover { background: var(--panel-3); color: var(--text); }
+  .rail .avatar {
+    width: 28px; height: 28px; border-radius: 7px; background: var(--panel-3); color: var(--text-2);
+    font-size: 12px; font-weight: 700; letter-spacing: -.02em;
+  }
+  .rail .avatar.is-active { background: var(--text); color: var(--bg); }
+  .rail .avatar.is-active:hover { background: var(--text); color: var(--bg); }
+  .rail .sep { width: 18px; height: 1px; background: var(--line); margin: 4px 0; }
+  .rail .grow { flex: 1; }
+
+  /* ── 지도: 화면 카드 ─────────────────────────────────── 안 F 를 그대로 */
+  .app > .body { grid-area: body; overflow: auto; padding: 22px 28px 40px; }
+  .head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .head h1 { margin: 0; font-size: 18px; }
+  .head .cnt { color: var(--muted); font-size: 12.5px; }
+  .lede { margin: 0 0 18px; color: var(--muted); font-size: 12.5px; }
+
+  .map { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; max-width: 1240px; }
+  .scard {
+    position: relative; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg);
+    box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column; cursor: pointer;
+    transition: transform .15s cubic-bezier(.22,.61,.36,1), box-shadow .15s;
+  }
+  .scard:hover { transform: translateY(-2px); box-shadow: var(--shadow-float); border-color: var(--line-hover); }
+  .scard:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .shot { position: relative; height: 130px; background: #fff; border-bottom: 1px solid var(--line-soft); overflow: hidden; }
+  [data-theme="dark"] .shot { background: #fafafa; }
+  /* 살아 있는 서버의 축소판 — warm preview 가 있으니 새로 그리지 않는다 */
+  .thumb { position: absolute; inset: 12px 14px 0; font-size: 8px; color: #333; }
+  .thumb .bar { height: 10px; border-bottom: 1px solid #ececec; display: flex; align-items: center; gap: 4px; padding: 0 6px; color: #999; font-size: 7px; }
+  .thumb .row { display: flex; gap: 5px; align-items: center; padding: 5px 6px; border-bottom: 1px solid #f3f3f3; }
+  .thumb .row .nm { width: 34%; height: 4px; border-radius: 2px; background: #d9d9de; }
+  .thumb .row .dt { width: 26%; height: 4px; border-radius: 2px; background: #e6e6ea; }
+  .thumb .row .pill { margin-left: auto; width: 22px; height: 7px; border-radius: 3px; background: #dfe7f2; }
+  .thumb .row .pill.gray { background: #e3e3e8; }
+  .thumb--policies .doc { margin: 8px 10px; display: grid; gap: 5px; }
+  .thumb--policies .doc i { display: block; height: 4px; border-radius: 2px; background: #e6e6ea; }
+  .thumb--policies .doc i.w60 { width: 60%; } .thumb--policies .doc i.w80 { width: 80%; } .thumb--policies .doc i.w40 { width: 40%; }
+  .thumb--settings .opts { margin: 10px 12px; display: grid; gap: 7px; }
+  .thumb--settings .opt { display: flex; align-items: center; gap: 5px; font-size: 7.5px; color: #666; }
+  .thumb--settings .opt b { width: 8px; height: 8px; border-radius: 2px; background: #c9d4e2; }
+  .thumb--dash .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 10px; }
+  .thumb--dash .col { height: 44px; border-radius: 4px; background: #eef1f5; border: 1px solid #e2e6ec; }
+
+  .meta { padding: 9px 12px 10px; display: grid; gap: 6px; }
+  .meta .t { display: flex; align-items: center; gap: 8px; }
+  .meta .t b { font-size: 13px; }
+  .meta .t .route { font: 10.5px var(--mono); color: var(--muted); }
+  .state { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; margin-left: auto; border: 1px solid var(--line); color: var(--text-2); }
+  .state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .state--changed { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+  .state--changed::before { background: var(--accent); }
+  /* 저장됨 — 아직 개발자에게 넘기기 전 (안 F 의 반영됨 과 구분) */
+  .state--saved { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+  .state--saved::before { background: var(--ok); }
+  .state--review { border-color: var(--warn-line); color: var(--warn); background: var(--warn-soft); }
+  .state--review::before { background: var(--warn); }
+  .state--merged { border-color: transparent; color: var(--ok); background: var(--ok-soft); }
+  .state--merged::before { background: var(--ok); }
+  .open { display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+  .scard:hover .open, .scard:focus-visible .open { opacity: 1; }
+  .open .btn { height: 25px; font-size: 11.5px; padding: 0 8px; }
+  .scard--new { border-style: dashed; box-shadow: none; background: var(--panel); align-items: stretch; justify-content: center; min-height: 178px; cursor: default; }
+  .scard--new:hover { transform: none; }
+  .new__in { padding: 14px; display: grid; gap: 8px; align-content: center; }
+  .new__in .ph { color: var(--muted); font-size: 12.5px; border-bottom: 1px dashed var(--line-strong); padding-bottom: 5px; }
+  .new__in .row { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11.5px; }
+  .foot { margin-top: 16px; color: var(--muted); font-size: 11.5px; max-width: 70ch; }
+  .foot code { font: 11px var(--mono); background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 4px; }
+
+  /* ── 대화 열 ─────────────────────────────────────────── 안 E 를 그대로, 화면별 묶음만 갈아 끼운다 */
+  .chat { grid-area: chat; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: var(--bg); }
+  .chat__head { display: flex; align-items: center; height: 40px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--line-soft); }
+  .chat__head .back {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; margin: 0 6px 0 -4px;
+    border-radius: var(--r-md); color: var(--muted); font-size: 12.5px;
+  }
+  .chat__head .back:hover { background: var(--panel-2); color: var(--text); }
+  .chat__head .back svg { width: 12px; height: 12px; }
+  .chat__title { font-weight: 600; font-size: 13.5px; }
+  .chat__head .more { margin-left: auto; width: 26px; height: 26px; border-radius: var(--r-sm); color: var(--muted); display: grid; place-items: center; }
+  .chat__head .more:hover { background: var(--panel-2); }
+  .transcript { flex: 1; overflow: auto; padding: 14px 14px 6px; display: flex; flex-direction: column; gap: 14px; }
+  .chatset { display: none; flex-direction: column; gap: 14px; }
+  .chatset.is-on { display: flex; }
+
+  .msg { display: grid; grid-template-columns: 24px 1fr; gap: 10px; }
+  .msg .who {
+    width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
+    font-size: 11px; font-weight: 700; color: var(--text-2); background: var(--panel-2);
+  }
+  .msg--me .who { background: var(--text); color: var(--bg); }
+  .msg .body { min-width: 0; font-size: 13.5px; line-height: 1.55; }
+  .msg--me .body { color: var(--text); font-weight: 500; }
+  .msg .body p { margin: 2px 0 0; }
+  .msg code { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 3px; padding: 0 4px; }
+
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .actions a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; cursor: pointer; }
+  .actions a:hover { color: var(--text); }
+  .actions .right { margin-left: auto; display: flex; gap: 10px; }
+
+  .card { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); padding: 10px 12px; box-shadow: var(--shadow-card); }
+  .card__title { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .card__title .k { font: 11px var(--mono); color: var(--accent); }
+  .card ol { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 6px; }
+  .card ol li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; font-size: 13px; }
+  .badge {
+    width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+    font: 700 10.5px var(--mono); background: var(--accent); color: #fff;
+  }
+  .badge.is-sent { background: var(--line-strong); color: var(--bg); }
+  .fold { margin-top: 8px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+  .card--handoff .row, .card--merged .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--text-2); }
+  .card--handoff .row .chip, .card--merged .row .chip { height: 22px; font-size: 11.5px; }
+  .quote { margin: 8px 0 0; padding: 6px 10px; border-left: 2px solid var(--line-strong); color: var(--text-2); font-size: 12.5px; }
+  .card__btns { display: flex; gap: 6px; margin-top: 10px; }
+  .card__btns .btn { height: 30px; }
+
+  /* 핀 트레이 — 입력창 위: "지금 보낼 것". 회원 관리 화면에만 남아 있다 */
+  .tray { display: none; margin: 0 14px; gap: 4px; }
+  body[data-view="work"][data-screen="members"] .tray { display: grid; }
+  body[data-view="work"][data-screen="members"] .tray + .composer { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .tray__row {
+    display: grid; grid-template-columns: 18px 1fr auto auto; align-items: center; gap: 8px;
+    padding: 6px 8px 6px 8px; border: 1px solid var(--line); border-bottom: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--panel);
+    font-size: 12.5px;
+  }
+  .tray__row .what { min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+  .tray__row .what b { font-weight: 600; }
+  .tray__row .what span { color: var(--muted); font-size: 12px; }
+  .tray__row .kind { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .tray__row .kind button { padding: 1px 7px; font-size: 11.5px; color: var(--muted); }
+  .tray__row .kind button.is-on { background: var(--text); color: var(--bg); }
+  .tray__row .x { width: 20px; height: 20px; border-radius: 4px; color: var(--muted); display: grid; place-items: center; }
+  .tray__row .x:hover { background: var(--panel-3); color: var(--text); }
+
+  .composer { margin: 0 14px 6px; border: 1px solid var(--line-strong); border-radius: var(--r-dialog); background: var(--bg); box-shadow: var(--shadow-card); }
+  .composer__input { display: block; width: 100%; min-height: 58px; padding: 12px 14px 6px; color: var(--muted); font-size: 13.5px; }
+  .composer__bar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px 8px; }
+  .composer__bar .send { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; background: var(--panel-2); color: var(--muted); display: grid; place-items: center; }
+  .composer__bar .send.is-ready { background: var(--text); color: var(--bg); }
+  .tool { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border-radius: var(--r-md); color: var(--muted); font-size: 12px; }
+  .tool:hover { background: var(--panel-2); color: var(--text); }
+  .tool .caret { font-size: 10px; }
+  .hint { margin: 0 14px 10px; font-size: 11px; color: var(--muted); text-align: right; }
+
+  /* ── 미리보기 ─────────────────────────────────────────── 안 E 를 그대로 */
+  .preview { grid-area: preview; display: flex; flex-direction: column; min-width: 0; background: var(--bg-2); }
+  .pv__bar { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; border-bottom: 1px solid var(--line-soft); background: var(--bg); }
+  .pv__bar .nav { display: flex; gap: 2px; }
+  .pv__bar .nav button, .pv__bar .ic { width: 26px; height: 26px; border-radius: var(--r-sm); color: var(--muted); display: grid; place-items: center; }
+  .pv__bar .nav button:hover, .pv__bar .ic:hover { background: var(--panel-2); color: var(--text); }
+  .pv__bar .nav button:disabled { opacity: .35; cursor: default; }
+  .addr {
+    flex: 1; min-width: 120px; max-width: 360px; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 10px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text-2); font: 12px var(--mono);
+    overflow: hidden; white-space: nowrap;
+  }
+  .addr .path { color: var(--text); }
+  .devices { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-md); padding: 2px; background: var(--panel); margin-left: auto; }
+  .devices button { padding: 2px 9px; border-radius: 4px; font-size: 12px; color: var(--muted); display: inline-flex; gap: 5px; align-items: center; }
+  .devices button.is-on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .point { height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--line); border-radius: var(--r-md); font-size: 12px; color: var(--text-2); }
+  .point.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+  .pv__stage { position: relative; flex: 1; overflow: hidden; }
+
+  /* 연결 레포의 앱(가짜) — 미리보기는 그 앱을 그대로 띄운 것이다. 화면별로 한 장씩 */
+  .page { position: absolute; inset: 0; overflow: auto; padding: 28px 32px; background: #fff; color: #1a1a1a; font-family: var(--sans); display: none; }
+  .page.is-on { display: block; }
+  [data-theme="dark"] .page { background: #fafafa; }
+  .page h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -.02em; }
+  .page .sub { margin: 0 0 18px; color: #666; font-size: 13px; }
+  .page .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .page .toolbar input { height: 32px; width: 220px; border: 1px solid #d6d6d6; border-radius: 6px; padding: 0 10px; font: inherit; font-size: 13px; background: #fff; color: #1a1a1a; color-scheme: light; }
+  .page .toolbar .b { height: 32px; padding: 0 12px; border: 1px solid #d6d6d6; border-radius: 6px; background: #fff; font-size: 13px; }
+  .page .toolbar .b.p { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+  .page table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .page th, .page td { text-align: left; padding: 10px 10px; border-bottom: 1px solid #ececec; }
+  .page th { color: #666; font-weight: 600; font-size: 12px; }
+  .page .st { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .page .st::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #2f9e44; }
+  .page .st.off::before { background: #adb5bd; }
+  .page .detail { position: relative; height: 26px; padding: 0 10px; border: 1px solid #cfcfcf; border-radius: 6px; background: #fff; font-size: 12.5px; }
+  .page .detail.blue { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+
+  /* 주문 정책 — 문서 */
+  .page .doc { max-width: 620px; display: grid; gap: 20px; }
+  .page .doc h2 { margin: 0 0 6px; font-size: 15px; }
+  .page .doc p { margin: 0; color: #444; font-size: 13.5px; line-height: 1.7; }
+
+  /* 설정 — 스위치 */
+  .page .opts { max-width: 560px; border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; }
+  .page .opt { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid #f0f0f0; }
+  .page .opt:last-child { border-bottom: 0; }
+  .page .opt > div { min-width: 0; }
+  .page .opt > div b { display: block; font-size: 13.5px; }
+  .page .opt > div span { display: block; margin-top: 2px; color: #777; font-size: 12px; }
+  .page .tg { margin-left: auto; flex: none; width: 34px; height: 20px; border-radius: 999px; background: #d9d9de; position: relative; transition: background .15s; }
+  .page .tg::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .15s; }
+  .page .tg.is-on { background: #2f9e44; }
+  .page .tg.is-on::after { left: 16px; }
+
+  /* 대시보드 — 지표 카드 */
+  .page .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; max-width: 780px; }
+  .page .tile { border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; padding: 13px 15px; display: grid; gap: 3px; }
+  .page .tile .k { color: #777; font-size: 12px; }
+  .page .tile .v { font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+  .page .tile .d { font-size: 12px; color: #2f9e44; }
+  .page .tile .d.dn { color: #adb5bd; }
+  .page .chart { margin-top: 16px; max-width: 780px; height: 120px; border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; display: flex; align-items: flex-end; gap: 8px; padding: 12px 14px; }
+  .page .chart i { flex: 1; border-radius: 3px 3px 0 0; background: #dfe7f2; }
+  .page .chart i:last-child { background: #c9d4e2; }
+
+  /* 핀 배지 — 보내지 않은 핀은 accent */
+  .pin { position: absolute; z-index: 2; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+         font: 700 11px var(--mono); color: #fff; background: var(--accent); box-shadow: 0 0 0 2px #fff, 0 2px 8px rgba(0,0,0,.25); }
+  .pin.is-sent { background: #9a9aa4; }
+  .pin--1 { top: -9px; right: -9px; }
+  .pin--2 { top: 10px; left: 10px; }
+  .pin--3 { top: -8px; left: 118px; }
+  .region { position: absolute; inset: 0; border: 1.5px dashed #9a9aa4; border-radius: 8px; background: rgba(154,154,164,.06); }
+  .region--3 { inset: 20px auto auto 22px; width: 124px; height: 40px; border-color: var(--accent); background: var(--accent-soft); border-radius: 6px; }
+
+  /* ── 좁은 창(<900px): 한 칸씩, 대화 ⇄ 화면 ──────────── 안 E 와 동일 */
+  @media (max-width: 900px) {
+    body[data-view="map"] .app { grid-template-columns: 1fr; grid-template-areas: "top" "body"; }
+    body[data-view="work"] .app { grid-template-columns: 1fr; grid-template-areas: "top" "pane"; }
+    .rail { display: none; }
+    body[data-view="work"] .seg { display: inline-flex; }
+    body[data-view="work"] .chat, body[data-view="work"] .preview { grid-area: pane; border-right: 0; }
+    body[data-pane="preview"][data-view="work"] .chat { display: none; }
+    body[data-pane="chat"][data-view="work"] .preview { display: none; }
+    body[data-view="work"] .backtop { display: none; }
+    .top__project { font-size: 13px; }
+    .addr { max-width: none; }
+    .devices { display: none; }
+  }
+
+  /* ── 목업 컨트롤 — 제품 UI 아님 ──────────────────────── */
+  .mock {
+    position: fixed; z-index: 50; right: 14px; bottom: 12px;
+    display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 10px; border-radius: 999px;
+    background: #111; color: #ddd; font-size: 11.5px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  }
+  .mock .lbl { color: #888; margin-right: 4px; }
+  .mock button { padding: 4px 9px; border-radius: 999px; color: #bbb; }
+  .mock button:hover { background: #222; color: #fff; }
+  .mock button.is-on { background: #eee; color: #111; font-weight: 600; }
+  .mock .div { width: 1px; height: 14px; background: #333; margin: 0 4px; }
+</style>
+</head>
+<body data-view="map" data-pane="preview">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 22s7-7.2 7-12a7 7 0 1 0-14 0c0 4.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 14v6H4V6h6"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21 11.5-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 4a3.5 3.5 0 1 1 5 5l-8.3 8.2a1.5 1.5 0 0 1-2.1-2.1L15 8"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2"/></symbol>
+  <symbol id="i-tablet" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/></symbol>
+  <symbol id="i-desk" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+</svg>
+
+<div class="app">
+
+  <!-- 상단 바 — 지도에서는 프로젝트 전체, 작업 화면에서는 그 화면의 상태 -->
+  <header class="top">
+    <button class="top__project">내 프로젝트 <span class="caret">▾</span></button>
+    <button class="backtop" id="backTop" title="화면 지도로 돌아가기"><svg class="i" style="width:12px;height:12px"><use href="#i-back"/></svg>화면 지도</button>
+
+    <span class="chip" id="topChip"><span class="dot" style="background:var(--accent)"></span>저장 안 함 · 변경 3</span>
+
+    <div class="seg" role="tablist">
+      <button data-pane="chat">대화</button>
+      <button data-pane="preview" class="is-on">화면</button>
+    </div>
+
+    <div class="top__actions">
+      <!-- 셋 다 항상 그려진다. 상태 칩이 가리키는 다음 할 일만 채워진다. -->
+      <button class="btn" id="btnSave">저장</button>
+      <button class="btn" id="btnHandoff">개발자에게 넘기기</button>
+      <button class="btn" id="btnStatus">상태 확인</button>
+      <button class="btn btn--icon" title="더 보기 — 최신 변경 받아오기 · 저장 기록 · 잠깐 치워두기 · 지켜 줄 것"><svg class="i"><use href="#i-more"/></svg></button>
+    </div>
+  </header>
+
+  <!-- 레일 -->
+  <nav class="rail" aria-label="프로젝트">
+    <button id="railHome" title="화면 지도 — 프로젝트의 모든 화면"><svg class="i"><use href="#i-home"/></svg></button>
+    <div class="sep"></div>
+    <button class="avatar is-active" title="내 프로젝트">내</button>
+    <button class="avatar" title="주문 서비스">주</button>
+    <button title="프로젝트 추가"><svg class="i"><use href="#i-plus"/></svg></button>
+    <div class="grow"></div>
+    <button title="설정"><svg class="i"><use href="#i-gear"/></svg></button>
+  </nav>
+
+  <!-- 지도 — 안 F 의 몸통 -->
+  <main class="body">
+    <div class="head"><h1>화면</h1><span class="cnt">연결 레포가 선언한 12개 · 미리보기 서버 살아 있음</span></div>
+    <p class="lede">고르면 그 화면의 대화 · 미리보기로 열립니다. 상태는 저장 · 넘긴 요청에서 기계적으로 따라 옵니다.</p>
+
+    <div class="map">
+      <div class="scard" data-screen="members" role="button" tabindex="0" aria-label="회원 관리 화면 열기">
+        <div class="shot"><div class="thumb">
+          <div class="bar">회원 관리 · 이름으로 찾기 · [회원 추가]</div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill gray"></span></div>
+          <div class="row"><span class="nm"></span><span class="dt"></span><span class="pill"></span></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>회원 관리</b><span class="route">/members</span><span class="state state--changed">변경 있음 3</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn pinbtn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard" data-screen="policies" role="button" tabindex="0" aria-label="주문 정책 화면 열기">
+        <div class="shot"><div class="thumb thumb--policies">
+          <div class="bar">주문 정책</div>
+          <div class="doc"><i class="w80"></i><i class="w60"></i><i class="w80"></i><i class="w40"></i><i class="w60"></i></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>주문 정책</b><span class="route">/policies</span><span class="state state--review">넘김 #42 검토 중</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn pinbtn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard" data-screen="settings" role="button" tabindex="0" aria-label="설정 화면 열기">
+        <div class="shot"><div class="thumb thumb--settings">
+          <div class="bar">설정</div>
+          <div class="opts">
+            <div class="opt"><b></b>알림 받기</div>
+            <div class="opt"><b></b>주간 요약</div>
+            <div class="opt"><b></b>자동 저장</div>
+          </div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>설정</b><span class="route">/settings</span><span class="state state--merged">반영됨</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn pinbtn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard" data-screen="dash" role="button" tabindex="0" aria-label="대시보드 화면 열기">
+        <div class="shot"><div class="thumb thumb--dash">
+          <div class="bar">대시보드</div>
+          <div class="cols"><div class="col"></div><div class="col"></div></div>
+        </div></div>
+        <div class="meta">
+          <div class="t"><b>대시보드</b><span class="route">/</span><span class="state">변경 없음</span></div>
+          <div class="open"><button class="btn">열기</button><button class="btn pinbtn"><svg class="i" style="width:11px;height:11px"><use href="#i-pin"/></svg>가리키기</button></div>
+        </div>
+      </div>
+
+      <div class="scard scard--new">
+        <div class="new__in">
+          <div class="ph">만들고 싶은 화면을 말해 주세요</div>
+          <div class="row"><svg class="i" style="width:12px;height:12px"><use href="#i-clip"/></svg>그림 · 문서를 붙여도 됩니다</div>
+          <div class="row">뼈대부터 보려면 Plan 으로</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="foot">
+      화면 목록은 연결 레포가 선언한 것입니다 — 레포의 미리보기 브리지가 <code>colo-design.screens</code> 로 올리는
+      라우트 · 제목 · 상태 목록. 이 도구로 만지지 않은 원래 화면도 경로만으로 카드가 서고, <code>[data-screen]</code> 이 없어도
+      ⌥+클릭 핀은 그 경로를 화면 id 로 삼습니다.
+    </p>
+  </main>
+
+  <!-- 작업 화면의 대화 — 안 E 의 칸. 화면별 묶음을 js 가 갈아 끼운다 -->
+  <section class="chat" aria-label="대화">
+    <div class="chat__head">
+      <button class="back" id="backChat" title="화면 지도로 돌아가기"><svg class="i"><use href="#i-back"/></svg>화면 지도</button>
+      <span class="chat__title" id="chatTitle">회원 관리 화면</span>
+      <button class="more" title="이름 바꾸기 · 내보내기 · 지우기"><svg class="i"><use href="#i-more"/></svg></button>
+    </div>
+
+    <div class="transcript">
+      <div class="chatset" data-screen="members">
+        <div class="msg msg--me">
+          <div class="who">나</div>
+          <div class="body"><p>회원 관리 화면 만들어 줘. 이름 · 가입일 · 상태 표, 행마다 상세 버튼.</p></div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <p>회원 관리 화면을 만들었습니다. 이름 · 상태 표와 행마다 <b>상세</b> 버튼을 넣었고, 미리보기 주소 <code>/members</code> 에서 볼 수 있어요. 가입일은 데이터에 아직 없어 비워 두었습니다.</p>
+            <div class="actions">
+              <a>답변 복사</a><a>이 요청 이전으로 되돌리기</a><a>다시 요청</a>
+              <span class="right"><span>걸렸습니다 48초</span><a>전체 복사</a></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg msg--me">
+          <div class="who">나</div>
+          <div class="body">
+            <div class="card">
+              <div class="card__title">수정 2건 <span class="k">/members</span></div>
+              <ol>
+                <li><span class="badge is-sent">1</span><span><b>상세</b> 버튼 — 파란색으로 바꿔 주세요</span></li>
+                <li><span class="badge is-sent">2</span><span>표 오른쪽 여백 — <b>가입일</b> 열을 추가해 주세요</span></li>
+              </ol>
+              <div class="fold">▸ AI 가 받은 본문</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chatset" data-screen="policies">
+        <div class="msg msg--me">
+          <div class="who">나</div>
+          <div class="body"><p>주문 정책 안내 화면 만들어 줘. 취소 · 환불 규칙이 한눈에 읽혔으면 좋겠어.</p></div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <p>주문 정책 화면을 만들었습니다. <b>주문 확정 · 배송 · 취소와 환불</b> 세 단락으로 정리했고, 미리보기 주소 <code>/policies</code> 에서 볼 수 있어요.</p>
+            <div class="actions">
+              <a>답변 복사</a><a>이 요청 이전으로 되돌리기</a><a>다시 요청</a>
+              <span class="right"><span>걸렸습니다 36초</span><a>전체 복사</a></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <div class="card card--handoff">
+              <div class="card__title">개발자에게 넘겼습니다 <span class="k">요청 #42</span></div>
+              <div class="row"><span class="chip chip--warn"><span class="dot"></span>변경 요청</span><span>개발자 코멘트 2 · 방금</span></div>
+              <div class="quote">"취소 마감은 시간대를 함께 적어 주세요 — 서버 시간 기준인가요, 한국 시간 기준인가요?"</div>
+              <div class="card__btns"><button class="btn is-primary">이대로 고쳐 달라고 보내기</button><button class="btn">코멘트 전부 보기</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chatset" data-screen="settings">
+        <div class="msg msg--me">
+          <div class="who">나</div>
+          <div class="body"><p>설정 화면에 주간 요약 이메일을 끄는 스위치 추가해 줘.</p></div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <p><b>주간 요약 이메일</b> 스위치를 설정 화면에 추가했습니다. 꺼진 상태로 두었고, 미리보기 주소 <code>/settings</code> 에서 확인할 수 있어요.</p>
+            <div class="actions">
+              <a>답변 복사</a><a>이 요청 이전으로 되돌리기</a><a>다시 요청</a>
+              <span class="right"><span>걸렸습니다 22초</span><a>전체 복사</a></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <div class="card card--merged">
+              <div class="card__title">개발자가 반영했습니다 <span class="k">요청 #41</span></div>
+              <div class="row"><span class="chip chip--ok"><span class="dot"></span>반영됨</span><span>3일 전</span></div>
+              <div class="quote">"주간 요약 토글을 추가했습니다. 기본값은 꺼짐입니다."</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chatset" data-screen="dash">
+        <div class="msg msg--me">
+          <div class="who">나</div>
+          <div class="body"><p>대시보드 맨 위에 이번 주 지표 카드 네 개 넣어 줘.</p></div>
+        </div>
+
+        <div class="msg">
+          <div class="who">AI</div>
+          <div class="body">
+            <p>지표 카드 네 개를 맨 위에 넣었습니다 — <b>이번 주 주문 · 신규 회원 · 환불 요청 · 문의 대기</b>. 첫 화면 주소 <code>/</code> 에서 바로 보여요.</p>
+            <div class="actions">
+              <a>답변 복사</a><a>이 요청 이전으로 되돌리기</a><a>다시 요청</a>
+              <span class="right"><span>걸렸습니다 29초</span><a>전체 복사</a></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 핀 트레이: 입력창 위 — 회원 관리 화면에 "지금 보낼 것" 이 남아 있다 -->
+    <div class="tray">
+      <div class="tray__row">
+        <span class="badge">3</span>
+        <span class="what"><b>회원 관리</b> 제목<span>— 메모를 남길 수 있어요</span></span>
+        <span class="kind"><button class="is-on">수정</button><button>질문</button></span>
+        <button class="x" title="핀 지우기"><svg class="i" style="width:12px;height:12px"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer__input"><span id="composerHint">고칠 곳을 말해 주세요 — 핀 1개와 함께 나갑니다</span></div>
+      <div class="composer__bar">
+        <button class="tool" title="그림 · 문서 첨부"><svg class="i"><use href="#i-clip"/></svg></button>
+        <button class="tool">확인 방식 · 물어보고 실행 <span class="caret">▾</span></button>
+        <button class="tool" title="모델 · 생각 시간 · 빠르게"><svg class="i"><use href="#i-more"/></svg></button>
+        <button class="send is-ready" id="sendBtn" title="보내기"><svg class="i"><use href="#i-up"/></svg></button>
+      </div>
+    </div>
+    <div class="hint">Enter 로 보내기 · Shift+Enter 줄바꿈</div>
+  </section>
+
+  <!-- 미리보기 — 안 E 의 칸 -->
+  <section class="preview" aria-label="미리보기">
+    <div class="pv__bar">
+      <div class="nav">
+        <button title="뒤로"><svg class="i"><use href="#i-back"/></svg></button>
+        <button title="앞으로" disabled><svg class="i"><use href="#i-fwd"/></svg></button>
+        <button title="새로 고침"><svg class="i"><use href="#i-reload"/></svg></button>
+      </div>
+      <div class="addr"><svg class="i" style="width:12px;height:12px"><use href="#i-lock"/></svg>http://127.0.0.1:54842<span class="path" id="addrPath">/members</span></div>
+      <div class="devices">
+        <button><svg class="i"><use href="#i-phone"/></svg>모바일</button>
+        <button><svg class="i"><use href="#i-tablet"/></svg>태블릿</button>
+        <button class="is-on"><svg class="i"><use href="#i-desk"/></svg>데스크톱</button>
+      </div>
+      <button class="point is-on" title="켜져 있으면 클릭이 화면에 가지 않고 핀만 찍힙니다. ⌥+클릭은 언제든 핀."><svg class="i"><use href="#i-pin"/></svg>가리키기</button>
+      <button class="ic" title="새 창에서 열기"><svg class="i"><use href="#i-ext"/></svg></button>
+    </div>
+
+    <div class="pv__stage">
+      <div class="page" data-screen="members">
+        <h1>회원 관리</h1>
+        <p class="sub">연결 레포가 렌더하는 미리보기입니다 — 레포의 앱 그대로.</p>
+        <div class="toolbar">
+          <input placeholder="이름으로 찾기" />
+          <button class="b">상태 ▾</button>
+          <button class="b p">회원 추가</button>
+        </div>
+        <table>
+          <thead><tr><th>이름</th><th>가입일</th><th>상태</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>홍길동</td><td>2026-08-02</td><td><span class="st">활성</span></td><td style="text-align:right"><button class="detail blue">상세</button></td></tr>
+            <tr><td>김철수</td><td>2026-08-19</td><td><span class="st">활성</span></td><td style="text-align:right"><button class="detail blue">상세</button></td></tr>
+            <tr><td>이영희</td><td>2026-09-01</td><td><span class="st off">휴면</span></td><td style="text-align:right"><button class="detail blue">상세</button></td></tr>
+            <tr><td>박민수</td><td>2026-09-14</td><td><span class="st">활성</span></td><td style="text-align:right"><button class="detail blue">상세</button></td></tr>
+          </tbody>
+        </table>
+        <span class="pin pin--3" style="top:12px;left:136px">3</span>
+        <div class="region region--3"></div>
+      </div>
+
+      <div class="page" data-screen="policies">
+        <h1>주문 정책</h1>
+        <p class="sub">연결 레포가 렌더하는 미리보기입니다 — 레포의 앱 그대로.</p>
+        <div class="doc">
+          <section>
+            <h2>주문 확정</h2>
+            <p>오후 2시까지 접수된 주문은 당일 확정되고, 그 이후 접수분은 다음 날 확정됩니다. 확정된 주문은 회원 페이지에서 단계를 확인할 수 있습니다.</p>
+          </section>
+          <section>
+            <h2>배송</h2>
+            <p>확정 후 1–2 영업일 안에 출고됩니다. 도서산간 지역은 하루 더 걸릴 수 있습니다.</p>
+          </section>
+          <section>
+            <h2>취소 · 환불</h2>
+            <p>출고 전에는 언제든 취소할 수 있고, 환불은 취소 뒤 3–5 영업일 안에 결제 수단으로 돌아갑니다. 출고 뒤에는 반품 절차를 따릅니다.</p>
+          </section>
+        </div>
+      </div>
+
+      <div class="page" data-screen="settings">
+        <h1>설정</h1>
+        <p class="sub">연결 레포가 렌더하는 미리보기입니다 — 레포의 앱 그대로.</p>
+        <div class="opts">
+          <div class="opt"><div><b>알림 받기</b><span>주문 · 문의 알림을 받습니다</span></div><span class="tg is-on"></span></div>
+          <div class="opt"><div><b>주간 요약 이메일</b><span>매주 월요일 오전에 한 주를 정리해 보냅니다</span></div><span class="tg"></span></div>
+          <div class="opt"><div><b>2단계 인증</b><span>로그인할 때 코드를 추가로 입력합니다</span></div><span class="tg"></span></div>
+          <div class="opt"><div><b>자동 저장</b><span>작성 중인 문의를 임시 저장합니다</span></div><span class="tg is-on"></span></div>
+        </div>
+      </div>
+
+      <div class="page" data-screen="dash">
+        <h1>대시보드</h1>
+        <p class="sub">연결 레포가 렌더하는 미리보기입니다 — 레포의 앱 그대로.</p>
+        <div class="tiles">
+          <div class="tile"><span class="k">이번 주 주문</span><span class="v">1,284</span><span class="d">+12% 지난주보다</span></div>
+          <div class="tile"><span class="k">신규 회원</span><span class="v">86</span><span class="d">+8% 지난주보다</span></div>
+          <div class="tile"><span class="k">환불 요청</span><span class="v">7</span><span class="d dn">-3 지난주보다</span></div>
+          <div class="tile"><span class="k">문의 대기</span><span class="v">12</span><span class="d dn">-2 지난주보다</span></div>
+        </div>
+        <div class="chart" aria-hidden="true">
+          <i style="height:34%"></i><i style="height:52%"></i><i style="height:41%"></i><i style="height:68%"></i><i style="height:60%"></i><i style="height:86%"></i><i style="height:47%"></i>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- 목업 컨트롤 -->
+<div class="mock" aria-label="목업 컨트롤 (제품 UI 아님)">
+  <span class="lbl">보기</span>
+  <button id="mockMap" class="is-on">지도</button>
+  <button id="mockWork">작업 화면</button>
+  <span class="div"></span>
+  <button data-theme>어둡게</button>
+</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  /* 화면별 상태 — 지도 칩 · 상단 바 · 카드 칩이 전부 여기서 기계적으로 따라 온다.
+     changed(변경 있음) → saved(저장됨) → review(넘김 검토 중) → merged(반영됨). clean 은 그대로. */
+  const screens = {
+    members:  { title: '회원 관리', route: '/members',  state: 'changed', changes: 3 },
+    policies: { title: '주문 정책', route: '/policies', state: 'review',  req: 42 },
+    settings: { title: '설정',     route: '/settings', state: 'merged' },
+    dash:     { title: '대시보드', route: '/',          state: 'clean' },
+  };
+  let reqNo = 43;   // 다음 넘김 요청 번호
+  let view = 'map'; // 'map' | 'work'
+  let cur = 'members';
+
+  const cardState = (s) => ({
+    changed: { cls: 'state--changed', txt: `변경 있음 ${s.changes}` },
+    saved:   { cls: 'state--saved',   txt: '저장됨' },
+    review:  { cls: 'state--review',  txt: `넘김 #${s.req} 검토 중` },
+    merged:  { cls: 'state--merged',  txt: '반영됨' },
+    clean:   { cls: '',               txt: '변경 없음' },
+  })[s.state];
+
+  const chipEl = $('#topChip');
+  const btnSave = $('#btnSave'), btnHandoff = $('#btnHandoff'), btnStatus = $('#btnStatus');
+
+  const setChip = (cls, dot, label) => {
+    chipEl.className = 'chip' + (cls ? ' ' + cls : '');
+    chipEl.innerHTML = `<span class="dot"${dot ? ` style="background:var(${dot})"` : ''}></span>${label}`;
+  };
+  const setBtn = (b, { primary = false, locked = false, tip = '' }) => {
+    b.classList.toggle('is-primary', primary);
+    b.classList.toggle('is-locked', locked);
+    if (tip) b.dataset.tip = tip; else b.removeAttribute('data-tip');
+  };
+
+  function renderBar() {
+    if (view === 'work') {
+      const s = screens[cur];
+      if (s.state === 'changed') {
+        setChip('', '--accent', `저장 안 함 · 변경 ${s.changes}`);
+        setBtn(btnSave, { primary: true });
+        setBtn(btnHandoff, { locked: true, tip: '먼저 저장해 주세요' });
+        setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 없습니다' });
+      } else if (s.state === 'saved') {
+        setChip('chip--ok', null, '저장됨');
+        setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+        setBtn(btnHandoff, { primary: true });
+        setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 없습니다' });
+      } else if (s.state === 'review') {
+        setChip('chip--warn', null, `넘김 #${s.req} 검토 중`);
+        setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+        setBtn(btnHandoff, { locked: true, tip: `넘긴 요청 #${s.req} 가 열려 있습니다 — 저장하면 그 요청에 쌓입니다` });
+        setBtn(btnStatus, { primary: true });
+      } else if (s.state === 'merged') {
+        setChip('chip--ok', null, '반영됨');
+        setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+        setBtn(btnHandoff, { locked: true, tip: '넘길 변경이 없습니다' });
+        setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 모두 반영되었습니다' });
+      } else {
+        setChip('', null, '변경 없음');
+        setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+        setBtn(btnHandoff, { locked: true, tip: '넘길 변경이 없습니다' });
+        setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 없습니다' });
+      }
+      return;
+    }
+    /* 지도: 프로젝트 전체 상태는 화면 상태를 모은 것 — 저장 안 함 > 검토 중 > 저장됨 > 없음 */
+    const ids = Object.keys(screens);
+    const changed = ids.filter((id) => screens[id].state === 'changed');
+    const review = ids.filter((id) => screens[id].state === 'review');
+    const saved = ids.filter((id) => screens[id].state === 'saved');
+    if (changed.length) {
+      const total = changed.reduce((n, id) => n + screens[id].changes, 0);
+      setChip('', '--accent', `저장 안 함 · 변경 ${total}`);
+      setBtn(btnSave, { primary: true });
+      setBtn(btnHandoff, { locked: true, tip: '먼저 저장해 주세요' });
+      setBtn(btnStatus, review.length ? {} : { locked: true, tip: '넘긴 요청이 없습니다' });
+    } else if (review.length) {
+      setChip('chip--warn', null, `검토 중인 요청 ${review.length}`);
+      setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+      setBtn(btnHandoff, { locked: true, tip: '넘길 변경이 없습니다' });
+      setBtn(btnStatus, { primary: true });
+    } else if (saved.length) {
+      setChip('chip--ok', null, '저장됨');
+      setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+      setBtn(btnHandoff, { primary: true });
+      setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 없습니다' });
+    } else {
+      setChip('', null, '변경 없음');
+      setBtn(btnSave, { locked: true, tip: '저장할 변경이 없습니다' });
+      setBtn(btnHandoff, { locked: true, tip: '넘길 변경이 없습니다' });
+      setBtn(btnStatus, { locked: true, tip: '넘긴 요청이 없습니다' });
+    }
+  }
+
+  function renderMap() {
+    $$('.scard[data-screen]').forEach((card) => {
+      const m = cardState(screens[card.dataset.screen]);
+      const st = card.querySelector('.state');
+      st.className = 'state' + (m.cls ? ' ' + m.cls : '');
+      st.textContent = m.txt;
+    });
+  }
+
+  function renderWork() {
+    $('#chatTitle').textContent = `${screens[cur].title} 화면`;
+    $('#addrPath').textContent = screens[cur].route;
+    $('#composerHint').textContent = cur === 'members'
+      ? '고칠 곳을 말해 주세요 — 핀 1개와 함께 나갑니다'
+      : '다음에 만들거나 고칠 것을 말해 주세요';
+    $('#sendBtn').classList.toggle('is-ready', screens[cur].state === 'changed');
+    $$('.chatset').forEach((el) => el.classList.toggle('is-on', el.dataset.screen === cur));
+    $$('.page').forEach((el) => el.classList.toggle('is-on', el.dataset.screen === cur));
+  }
+
+  function render() {
+    document.body.dataset.view = view;
+    document.body.dataset.screen = cur;
+    renderBar();
+    renderMap();
+    $('#mockMap').classList.toggle('is-on', view === 'map');
+    $('#mockWork').classList.toggle('is-on', view === 'work');
+    if (view === 'work') renderWork();
+  }
+
+  const url = () => {
+    const q = new URLSearchParams({ view });
+    if (view === 'work') q.set('screen', cur);
+    if (document.documentElement.dataset.theme === 'dark') q.set('theme', 'dark');
+    return '?' + q;
+  };
+
+  function go(v, id, push = true) {
+    view = v;
+    if (id && screens[id]) cur = id;
+    render();
+    if (push) { try { history.pushState({ view, cur }, '', url()); } catch (e) { /* file:// 에서 거부하는 브라우저가 있다 */ } }
+  }
+
+  /* 저장 — 상태 칩과 다음 할 일이 바뀐다: 저장됨 → 개발자에게 넘기기가 채워진다 */
+  const save = (id) => { const s = screens[id]; if (s.state === 'changed') s.state = 'saved'; };
+  const handoff = (id) => {
+    const s = screens[id];
+    if (s.state === 'saved') { s.req = reqNo++; s.state = 'review'; addHandoffMsg(id, s.req); }
+  };
+  function addHandoffMsg(id, req) {
+    const set = $(`.chatset[data-screen="${id}"]`);
+    if (!set || set.querySelector('.card--handoff')) return;
+    set.insertAdjacentHTML('beforeend', `
+      <div class="msg">
+        <div class="who">AI</div>
+        <div class="body">
+          <div class="card card--handoff">
+            <div class="card__title">개발자에게 넘겼습니다 <span class="k">요청 #${req}</span></div>
+            <div class="row"><span class="chip"><span class="dot"></span>검토 중</span><span>방금</span></div>
+          </div>
+        </div>
+      </div>`);
+  }
+
+  btnSave.addEventListener('click', () => {
+    (view === 'work' ? [cur] : Object.keys(screens).filter((id) => screens[id].state === 'changed')).forEach(save);
+    render();
+  });
+  btnHandoff.addEventListener('click', () => {
+    (view === 'work' ? [cur] : Object.keys(screens).filter((id) => screens[id].state === 'saved')).forEach(handoff);
+    render();
+  });
+  btnStatus.addEventListener('click', () => {
+    if (view === 'work') {
+      const card = $(`.chatset[data-screen="${cur}"] .card--handoff`);
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      const id = Object.keys(screens).find((k) => screens[k].state === 'review');
+      if (id) go('work', id);
+    }
+  });
+
+  /* 지도 ↔ 작업 화면 — 카드 · 뒤로 가기 · 목업 컨트롤 어디서든 */
+  const toMap = () => go('map');
+  $('#backTop').addEventListener('click', toMap);
+  $('#backChat').addEventListener('click', toMap);
+  $('#railHome').addEventListener('click', toMap);
+  $('#mockMap').addEventListener('click', toMap);
+  $('#mockWork').addEventListener('click', () => go('work', cur));
+
+  $$('.scard[data-screen]').forEach((card) => {
+    const open = () => go('work', card.dataset.screen);
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    card.querySelector('.pinbtn').addEventListener('click', (e) => e.stopPropagation());
+  });
+
+  /* 좁은 창 대화 ⇄ 화면 — 안 E 와 동일 */
+  $$('.seg [data-pane]').forEach((b) => b.addEventListener('click', () => {
+    document.body.dataset.pane = b.dataset.pane;
+    $$('.seg [data-pane]').forEach((x) => x.classList.toggle('is-on', x === b));
+  }));
+
+  /* 목업 컨트롤 — 테마 */
+  document.querySelector('.mock [data-theme]').addEventListener('click', (e) => {
+    const html = document.documentElement;
+    html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+    e.target.textContent = html.dataset.theme === 'dark' ? '밝게' : '어둡게';
+  });
+
+  /* 브라우저 뒤로 가기 — 상태를 못 실는 file:// 브라우저면 그냥 지도로 */
+  addEventListener('popstate', (e) => {
+    const st = e.state || {};
+    go(st.view === 'work' && screens[st.cur] ? 'work' : 'map', st.cur, false);
+  });
+
+  /* 초기 상태 — ?view=map|work&screen=…&theme=dark */
+  if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme');
+  if (document.documentElement.dataset.theme === 'dark') document.querySelector('.mock [data-theme]').textContent = '밝게';
+  go(params.get('view') === 'work' ? 'work' : 'map', params.get('screen'), false);
+</script>
+</body>
+</html>

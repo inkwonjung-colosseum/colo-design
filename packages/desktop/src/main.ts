@@ -218,9 +218,16 @@ async function bootApp(): Promise<void> {
 
   const window = host.create();
   host.adopt(window, url);
-  // 사용자의 미리보기 뷰 (PLAN D64): 같은 창 위에 얹고, 렌더러의 다리를 단다.
+  // 사용자의 미리보기 (PLAN D64 → webview): 렌더러의 <webview> 게스트를
+  // 클레임하는 주인이다 — 펜스와 클레임을 창의 webContents에 건다.
   const plannerPreview = new PlannerPreviewView(() => host.window);
   registerPreviewIpc(plannerPreview);
+  plannerPreview.attachWindow(window);
+  // reopen 이 만드는 창도 같은 닫기 가드·같은 펜스를 단다.
+  host.onCreated = (created) => {
+    registerCloseGuard(created);
+    plannerPreview.attachWindow(created);
+  };
   // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
   // 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 를 건드리던 시절은 끝난다.
   Menu.setApplicationMenu(
@@ -269,14 +276,11 @@ async function bootApp(): Promise<void> {
   await window.loadURL(url);
   // The pane outlives the window — on mac ⌘W destroys it and the dock
   // icon builds another (createWindow's closure follows `host.window`).
-  // Its page belongs to a contentView that is gone and its cover state
-  // to a renderer that is gone: park the page so the next mount attaches
-  // one to the NEW window, and drop the cover so the fresh renderer's
-  // first assertion — not a dead one's — decides what may be seen.
+  // Its guests die with the old window and the registry forgets them
+  // (`destroyed`), so all the new page needs is the park itself.
   // host 가 들고 reopen 이 만드는 창에도 같은 정리가 닿는다.
   host.onClosed = () => {
     plannerPreview.unmount();
-    plannerPreview.cover(false);
   };
   registerCloseGuard(window);
 

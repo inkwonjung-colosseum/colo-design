@@ -5,35 +5,32 @@ import type {
   ColoDesignPinEnvelope,
   ColoDesignPinsSync,
 } from "@colo-design/protocol";
-import { type BrowserWindow, ipcMain, shell, type WebContents, WebContentsView } from "electron";
+import { type BrowserWindow, ipcMain, nativeImage, shell, type WebContents } from "electron";
 import { VIEWPORT_METRICS } from "./emulation.js";
 
 /**
- * 사용자의 미리보기 뷰 (PLAN D64 — D60 개봉; 탭 모델은 걷어내고 프로젝트당
- * 페이지 하나). The planner's preview pane is the app's own browser view:
- * a `WebContentsView` laid over the web UI's stage slot, so the address ·
- * history · errors · the comment-pin overlay (D67, in the preload) are the
- * tool's, not the connected repo's.
+ * 사용자의 미리보기 (PLAN D64 → webview 전환). The planner's preview pane is
+ * the connected repo's app, hosted in a `<webview>` element the web UI owns
+ * (PreviewFrame) — so the address · history · errors · the comment-pin
+ * overlay (D67, in the preload) are the tool's, and every planner layer
+ * (modals, popovers) draws above the pane as ordinary DOM.
  *
- * ONE PAGE PER PROJECT. `pages` 는 마운트 origin 을 열쇠로 WebContents 를 쥔다
- * — 프로젝트 전환은 떠나는 페이지를 park 하고(숨김, 살아 있음, 사용자가 두고 온
- * 그 자리) 가는 쪽의 페이지를 세운다. 돌아오는 것은 repaint 이지 reload 가
- * 아니다; 데몬이 서버를 데워 두는 이유와 같다. 살아 있는 페이지는 최대
- * `MAX_LIVE_PAGES` — 넘치는 것부터 LRU 로 파기한다(메타를 남길 스트립이 없으니
- * 파기는 곧 망각이다). 화면에는 늘 페이지 하나; 페이지가 화면에 있는 동안만
- * 렌더러에 말한다.
+ * 이 프로세스는 요소를 만들지 않는다. 렌더러가 `<webview src>`를 만들고,
+ * 여기서는 `did-attach-webview`로 게스트를 클레임해 페이지 레지스트리에
+ * 세운 뒤 오늘과 같은 리레이(위치·오류·콘솔·핀)와 드라이버 표면을 쥔다.
+ * 요소의 보이기·숨기기·수명은 렌더러의 몫 — `MAX_LIVE_PAGES`의 park 상한도
+ * PreviewFrame이 진다. 펜스(`will-attach-webview`)가 렌더러가 겨눌 수 있는
+ * 주소를 loopback 미리보기로 가두고, preload·파티션·보안 등급을 강제한다.
+ *
+ * ONE PAGE PER PROJECT. `pages` 는 마운트 origin 을 열쇠로 게스트를 쥔다 —
+ * 프로젝트 전환은 요소를 가리는 것일 뿐 게스트는 살아 있고, 돌아오는 것은
+ * repaint 이지 reload 가 아니다.
  *
  * 링크의 나라는 탭이 아니라 그 페이지 안에서 논다: 외부 http(s) 로의 이동은
  * 제자리에서 일어나고 kind 가 `web` 으로 바뀐다 — 뒤로 가기가 프로젝트로
- * 돌아오는 길이다. 팝업(window.open)만은 pane 을 넘기지 않고 OS 브라우저가
- * 본다. 프로젝트가 하나도 마운트되지 않았을 때 에이전트·링크가 여는 페이지는
- * `loose` 하나뿐 — 화면을 떠나는 순간 파기된다.
- *
- * The view is ALWAYS above renderer DOM (D65) — `cover()` hides it behind a
- * captured freeze frame whenever a modal-like layer opens. 페이지가 스스로
- * 하는 이동은 http(s) 인지만 `will-navigate` 가 가드하고(`loadURL` 과 history
- * 는 이 이벤트를 끄지 않는다 — Electron docs), kind 는 `did-navigate` 가
- * 레지스트리로 다시 정한다.
+ * 돌아오는 길이다. 프로젝트가 하나도 마운트되지 않았을 때 에이전트·링크가
+ * 여는 페이지는 `loose` 하나뿐 — 렌더러에 `colo-preview:host`로 요소를
+ * 부탁하고, 요소가 사라지면(닫기·전환) `destroyed`로 잊는다.
  *
  * The repo bridge contract (D68) is `colo-design.navigate`: a pin's 화면
  * 이동이 이 한 봉투로 간다 — the screens envelope that once marked the
@@ -190,14 +187,6 @@ function openInOs(url: string): void {
   }
 }
 
-/**
- * 이 pane 이 한 번에 살려 두는 페이지 수 — 화면의 것과 뒤에 park 된 것까지.
- * 하나하나가 렌더러 프로세스라 이 cap 이 사이드바 클릭의 비용을 묶는다.
- * 넘치는 것은 LRU 로 파기한다 — 스트립이 없으니 메타도 남지 않고, 다음
- * 마운트가 새 페이지를 로드한다.
- */
-const MAX_LIVE_PAGES = 8;
-
 /** 페이지의 종류 — repo origin 위면 `preview`(오버레이 무장), 그 밖의 http(s) 로밍이면 `web`. */
 type PreviewKind = "preview" | "web";
 
@@ -217,7 +206,8 @@ interface PreviewPage {
   origin: string;
   /** repo origin 위면 `preview`, 그 밖이면 `web` — 오버레이 무장의 자리를 대신한다. */
   kind: PreviewKind;
-  readonly view: WebContentsView;
+  /** PreviewFrame이 만든 `<webview>`의 게스트 — did-attach-webview 로 클레임한 것. */
+  contents: WebContents;
   /** The server process the page was loaded from (RepoStatus.previewEpoch). */
   epoch: number | null;
   /** What the page is showing — a repeat mount or open must not reload. */
@@ -240,8 +230,9 @@ export class PlannerPreviewView {
   private readonly pages = new Map<string, PreviewPage>();
   /**
    * 프로젝트 없이 열린 페이지 — 에이전트의 navigate 나 `앱에서 링크 열기`가
-   * 마운트된 프로젝트 없이 부를 때의 유일한 몸통. 화면에 있거나 없거나다:
-   * park 되는 순간 파기된다(링크의 나라를 데워 둘 이유가 없다).
+   * 마운트된 프로젝트 없이 부를 때의 유일한 몸통. 요소는 렌더러에
+   * `colo-preview:host`로 부탁하고, 요소가 사라지면(닫기·무대 철거)
+   * `destroyed`가 이 참조를 지운다.
    */
   private loose: PreviewPage | null = null;
   /**
@@ -256,9 +247,21 @@ export class PlannerPreviewView {
    * 프로젝트가 바뀌면 저절로 다시 쓰인다.
    */
   private readonly mounts = new Map<string, { epoch: number | null; url: string }>();
-  /** The slot's rect as the renderer last measured it — a page shown later takes it. */
-  private bounds: Electron.Rectangle | null = null;
-  private covered = false;
+  /**
+   * 렌더러(PreviewFrame)가 지금 보여 달라고 말한 origin — 클레임(did-attach)
+   * 이 늦게 올 때를 위한 약속. mount 가 쓰고 클레임이 소비한다.
+   */
+  private wantedOrigin: string | null = null;
+  /**
+   * 활성 페이지 없이 링크·에이전트가 열어 달라 한 주소 — 렌더러에 loose
+   * 요소를 부탁해 두고, 그 게스트가 붙으면 이 주소로 세운다.
+   */
+  private pendingLooseUrl: string | null = null;
+  /**
+   * 렌더러가 미리보기 무대를 그릴 수 있는지 — PreviewFrame이 mount/unmount로
+   * 말한다. 거짓이면 링크·외부 열기가 OS 브라우저로 넘어간다(옛 bounds 0 판정).
+   */
+  private hostReady = false;
   /** The last 💬 state — a fresh load, or a returning page, is re-told it (D67). */
   private commentsOn = false;
   /** The web's last pin sync (재설계 C1) — a page that loads or returns is re-told it. */
@@ -286,6 +289,9 @@ export class PlannerPreviewView {
     // 레지스트리에 올라간 순간부터 이 origin 은 repo 의 것 — 이후의 kind
     // 재계산이 이 한 줄 위에 선다.
     this.mounts.set(origin, { epoch, url });
+    this.wantedOrigin = origin;
+    // 프로젝트 mount 는 대기 중인 loose 요청을 대신한다.
+    this.pendingLooseUrl = null;
     // repo origin 은 페이지 하나뿐이다: 있는 페이지는 데워 쓰고, 없을 때만
     // 만든다. driveTo·mount idempotency 가 이 유일성 위에 서 있다. 로밍으로
     // home 과 다른 origin 에 서 있는 페이지도 그 origin 의 것으로 찾는다 —
@@ -311,20 +317,23 @@ export class PlannerPreviewView {
         existing.kind = "preview";
         // 이미 화면의 페이지면 show 의 재무장을 못 받는다 — 지금 다시 말한다.
         if (this.activePage === existing) {
-          const contents = existing.view.webContents;
+          const contents = existing.contents;
           contents.send("colo-overlay:mode", { on: this.commentsOn });
-          contents.send("colo-overlay:pins", this.lastPins ?? { pins: [] });
+          this.sendPins(contents, this.lastPins ?? { pins: [] });
         }
       }
-      this.show(existing);
+      this.activate(existing);
       this.refresh(existing, url, epoch);
       return;
     }
-    const page = this.buildPage(origin, origin, epoch);
-    this.pages.set(origin, page);
-    this.show(page);
-    this.evictParked();
-    this.load(page, url);
+    // 요소는 PreviewFrame이 url prop으로 만들고, 클레임(did-attach)이 오면
+    // wantedOrigin 으로 활성화된다. 붙기 전까지는 지난 페이지의 릴레이가 새
+    // 프로젝트의 주소창에 흘러 들지 않게 활성 참조를 내린다(옛 park의 자리).
+    this.wantedOrigin = origin;
+    if (this.activePage?.home !== origin) {
+      this.activePage = null;
+      this.send("colo-preview:location", null);
+    }
   }
 
   /** 지금 그 origin 에 서 있는 페이지 — 로밍한 것까지 잡는다. */
@@ -355,10 +364,10 @@ export class PlannerPreviewView {
     if (moved) {
       page.failed = false;
       page.mountedUrl = url;
-      navigate(page.view.webContents, url);
+      navigate(page.contents, url);
     } else if (page.failed) {
       page.failed = false;
-      navigate(page.view.webContents, page.mountedUrl ?? url);
+      navigate(page.contents, page.mountedUrl ?? url);
     }
   }
 
@@ -372,8 +381,9 @@ export class PlannerPreviewView {
    */
   openTab(url: string): void {
     if (!httpUrl(url)) return;
-    const bounds = this.bounds;
-    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    // 무대가 접혀 있으면(PreviewFrame이 없으면) pane 이 그릴 면이 없으므로
+    // OS 브라우저가 대신 본다 — 옛 bounds 0 판정의 자리.
+    if (!this.hostReady) {
       openInOs(url);
       return;
     }
@@ -393,12 +403,18 @@ export class PlannerPreviewView {
       const page = this.pages.get(origin) ?? this.pageAt(origin);
       if (page && page.mountedUrl !== url) {
         page.mountedUrl = url;
-        navigate(page.view.webContents, url);
+        navigate(page.contents, url);
       }
       return;
     }
-    const page = this.activePage ?? this.makeLoose();
-    this.load(page, url);
+    if (this.activePage) {
+      this.load(this.activePage, url);
+      return;
+    }
+    // 활성 페이지가 없다 — loose 요소를 렌더러에 부탁하고, 게스트가 붙으면
+    // 이 주소로 세운다(클레임 경로).
+    this.pendingLooseUrl = url;
+    this.send("colo-preview:host", { url });
   }
 
   /**
@@ -408,73 +424,40 @@ export class PlannerPreviewView {
    * loose 페이지는 버린다 — 링크의 나라는 WebContents 를 놓아준다.
    */
   unmount(): void {
+    // wanted 원망은 활성 참조와 무관하게 늘 지운다 — 비어 있는 무대 위의
+    // 오래된 원망이 다음 클레임을 잘못 활성화하는 일을 막는다.
+    this.wantedOrigin = null;
     const page = this.activePage;
     if (!page) return;
-    if (page.home !== null) this.park(page);
-    else this.destroy(page);
-  }
-
-  setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
-    this.bounds = {
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.max(0, Math.round(bounds.width)),
-      height: Math.max(0, Math.round(bounds.height)),
-    };
-    this.activePage?.view.setBounds(this.bounds);
+    if (page.home !== null) {
+      // park — 요소는 PreviewFrame이 살려 둔다(게스트도 살아 있다). 활성
+      // 참조와 원망(wanted)만 내린다.
+      this.activePage = null;
+      this.wantedOrigin = null;
+      // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
+      // 것을 들고 있지 않게 지운다.
+      this.send("colo-preview:location", null);
+      return;
+    }
+    // loose — 닫기를 렌더러에 부탁한다. 요소가 철거되면 destroyed가 잊는다.
+    this.send("colo-preview:close", { url: page.contents.getURL() });
+    this.forget(page);
   }
 
   /**
    * pane 가 화면을 그릴 자리가 있는지 — openTab 은 이 판정이 거짓일 때 OS
    * 브라우저에 넘긴다. 에이전트 브라우저의 navigate 은 그 폴백에 맡기지
-   * 않으려고 먼저 이 한 말을 본다.
+   * 않으려고 먼저 이 한 말을 본다. 요소가 DOM 위에 살므로(모달도 그 위에
+   * 그려진다) 무대의 존재가 곧 호스팅 가능이다 — PreviewFrame이 mount
+   * 여부로 말한다.
    */
   hasBounds(): boolean {
-    const bounds = this.bounds;
-    return bounds !== null && bounds.width > 0 && bounds.height > 0;
+    return this.hostReady;
   }
 
-  /**
-   * D65: hide the view, THEN photograph it. The hide is synchronous — the
-   * view draws above every renderer pixel, so every millisecond spent
-   * awaiting a capture is a millisecond the planner's modal is covered by
-   * the stage (measured: an overlap on all 120 opens of a soak, up to
-   * 751ms while a page was loading). The freeze frame is decoration and
-   * rides behind: a hidden view answers `capturePage()` with its last
-   * composited frame, and where it does not, the slot shows the pane
-   * background under the scrim — a cost that is cosmetic, one-sided and
-   * gone at the next cover. The old order paid for that decoration with
-   * the correctness of the layer above it.
-   *
-   * Every call APPLIES. The renderer asserts the layer state it can see
-   * and this obeys — no dedupe guard, so an assertion that never landed is
-   * repaired by the next one instead of being taken for the truth.
-   * Covered is a fact about the pane, not a page: a page shown while a
-   * modal is open comes up hidden (`show`) and appears when it closes.
-   */
-  cover(on: boolean): void {
-    const edge = on && !this.covered;
-    this.covered = on;
-    const page = this.activePage;
-    if (!page || page.view.webContents.isDestroyed()) return;
-    page.view.setVisible(!on);
-    // One capture per false→true edge — a re-assertion is not a new modal.
-    if (edge) void this.freeze(page);
-  }
-
-  /**
-   * The slot's freeze frame (D65) — best-effort by contract: a capture that
-   * fails, comes back empty, or lands after the modal closed or another
-   * page took the screen is dropped rather than painted as this one.
-   */
-  private async freeze(page: PreviewPage): Promise<void> {
-    try {
-      const image = await page.view.webContents.capturePage();
-      if (image.isEmpty() || !this.covered || this.activePage !== page) return;
-      this.send("colo-preview:freeze", image.toJPEG(70).toString("base64"));
-    } catch {
-      // A paint that never happened; the slot shows the pane background.
-    }
+  /** PreviewFrame의 마운트 보고 — openTab의 OS 브라우저 폴백 판정 재료. */
+  setHostReady(on: boolean): void {
+    this.hostReady = on;
   }
 
   /**
@@ -525,7 +508,7 @@ export class PlannerPreviewView {
       const target = this.pages.get(url.origin) ?? this.pageAt(url.origin);
       if (target && target.mountedUrl !== url.toString()) {
         target.mountedUrl = url.toString();
-        navigate(target.view.webContents, url.toString());
+        navigate(target.contents, url.toString());
       }
       return;
     }
@@ -586,7 +569,7 @@ export class PlannerPreviewView {
       this.mount(url, null);
       const mounted = this.activePage;
       if (!mounted) return false;
-      const contents = mounted.view.webContents;
+      const contents = mounted.contents;
       // mount 은 같은 주소의 재요청을 no-op 로 본다 — 요청한 경로가 페이지의
       // 지금 주소와 다르면 openTab 처럼 명시적으로 데려간다. 로밍 중 붙들린
       // 프로젝트 페이지(origin 이 아직 목적지가 아니다)와 앞으로 데워진
@@ -632,7 +615,7 @@ export class PlannerPreviewView {
     page.mountedUrl = url;
     page.failed = false;
     try {
-      await page.view.webContents.loadURL(url);
+      await page.contents.loadURL(url);
       return true;
     } catch {
       page.failed = true;
@@ -649,7 +632,7 @@ export class PlannerPreviewView {
     if (page.mountedUrl === url && !page.failed) return;
     page.mountedUrl = url;
     page.failed = false;
-    navigate(page.view.webContents, url);
+    navigate(page.contents, url);
   }
 
   history(delta: -1 | 1): void {
@@ -686,9 +669,9 @@ export class PlannerPreviewView {
 
   private setZoom(factor: number): void {
     const page = this.activePage;
-    if (!page || page.view.webContents.isDestroyed()) return;
+    if (!page || page.contents.isDestroyed()) return;
     const clamped = Math.min(2, Math.max(0.5, factor));
-    page.view.webContents.setZoomFactor(clamped);
+    page.contents.setZoomFactor(clamped);
     page.zoomFactor = clamped;
     this.send("colo-preview:zoom", { factor: clamped });
   }
@@ -700,12 +683,12 @@ export class PlannerPreviewView {
 
   /** The live webContents of the page on screen — the desktop suite drives the overlay through it. */
   webContents(): WebContents | null {
-    const contents = this.activePage?.view.webContents;
+    const contents = this.activePage?.contents;
     return contents && !contents.isDestroyed() ? contents : null;
   }
 
   /**
-   * 데스크톱 스위트의 손잡이(desktop-cover.mjs `paneState` 가 app.evaluate 로
+   * 데스크톱 스위트의 손잡이(desktop-switch·desktop-comments 가 app.evaluate 로
    * 읽는다) — 화면의 페이지 한 장이 곧 옛 `page` 다.
    */
   get page(): PreviewPage | null {
@@ -729,7 +712,7 @@ export class PlannerPreviewView {
   syncPins(sync: ColoDesignPinsSync): void {
     this.lastPins = sync;
     if (this.activePage?.kind !== "preview") return;
-    this.webContents()?.send("colo-overlay:pins", sync);
+    if (this.webContents()) this.sendPins(this.webContents() as WebContents, sync);
   }
 
   /** 재설계 C1: the web's chip click — the matching badge on the page flashes. */
@@ -762,6 +745,31 @@ export class PlannerPreviewView {
     }
   }
 
+  /**
+   * 핀 동기화를 게스트에 보낸다. 이 채널은 핀을 찍기 전까지는 잘 도는데,
+   * 한 핀 주기가 지나면(실측, Electron 44 webview) 그 문서의 main→게스트
+   * 전달이 조용히 죽는다 — 스윕은 오버레이의 pins-poll 폴백이 잇는다
+   * (게스트→main invoke 는 살아 있다).
+   */
+  private sendPins(contents: WebContents, sync: ColoDesignPinsSync): void {
+    try {
+      contents.send("colo-overlay:pins", sync);
+    } catch {
+      // A dead contents reports nothing — the overlay's poll pulls the truth.
+    }
+  }
+
+  /**
+   * 오버레이의 pins-poll 답 — 이 게스트가 repo 페이지일 때만 진실을 준다.
+   * 로밍 중인 페이지에게 스윕 진실을 주면 남의 핀을 지운다.
+   */
+  pinsFor(sender: WebContents): ColoDesignPinsSync {
+    const page = this.pageOf(sender);
+    return page !== null && page.kind === "preview"
+      ? (this.lastPins ?? { pins: [] })
+      : { pins: [] };
+  }
+
   /** The overlay's ack for a capture hide/show. */
   onCaptureDone(): void {
     this.captureAck?.();
@@ -769,19 +777,76 @@ export class PlannerPreviewView {
 
   /**
    * The page's visible box in CSS pixels — the frame a pin's `element.rect`
-   * (a getBoundingClientRect) was measured against. The view's bounds are
-   * device-independent pixels; a zoomed page (D85 ⓔ) shows fewer CSS pixels
-   * in the same box, so the factor divides back out. Null while the pane has
-   * no page or no size yet — then a crop is taken on trust, as before.
+   * (a getBoundingClientRect) was measured against. The guest's own
+   * innerWidth/innerHeight IS that frame, in the page's CSS pixels — 배율
+   * (D85 ⓔ)도 에뮬레이션 폭도 이미 반영된 값이라 나눌 것도 없다. Null while
+   * the pane has no page or the read fails — then a crop is taken on trust,
+   * as before.
    */
-  private viewportCss(): { width: number; height: number } | null {
+  private async viewportCss(): Promise<{ width: number; height: number } | null> {
     const page = this.activePage;
-    if (!page) return null;
-    const bounds = page.view.getBounds();
-    const factor = page.zoomFactor > 0 ? page.zoomFactor : 1;
-    const width = bounds.width / factor;
-    const height = bounds.height / factor;
-    return width >= 1 && height >= 1 ? { width, height } : null;
+    if (!page || page.contents.isDestroyed()) return null;
+    try {
+      const view = (await page.contents.executeJavaScript(
+        "({ w: window.innerWidth, h: window.innerHeight })",
+        true,
+      )) as { w?: unknown; h?: unknown } | null;
+      if (typeof view?.w !== "number" || typeof view?.h !== "number") return null;
+      return view.w >= 1 && view.h >= 1 ? { width: view.w, height: view.h } : null;
+    } catch {
+      // 읽지 못한 만큼만 잃는다 — 크롭은 없는 것보다 낫다.
+      return null;
+    }
+  }
+
+  /**
+   * 게스트 문서의 한 조각을 찍는다 — 플래너 창 capturePage 로. 게스트
+   * `capturePage(clip)`는 (Electron 44 실측) 호출 뒤 main→게스트 `send`
+   * 전달을 조용히 끊어 버린다 — 핀 스윕이 그 피해자다. 플래너 창은 보통
+   * 창이라 capturePage 가 검증돼 있고, 웹뷰 요소는 그 합성에 포함된다
+   * (스파이크 W3 픽셀 실측). 좌표는 CSS px (DIP) — 에뮬레이션 폭일 때는
+   * 슬롯 폭 / 뷰포트 폭의 배율로 되돌린다.
+   */
+  private async captureViaWindow(
+    crop: { x: number; y: number; width: number; height: number },
+    viewport: { width: number; height: number } | null,
+  ): Promise<Electron.NativeImage> {
+    const window = this.window();
+    if (!window || window.isDestroyed()) return nativeImage.createEmpty();
+    const slot = (await window.webContents.executeJavaScript(
+      `(() => {
+        const el = document.querySelector("[data-testid=preview-slot]");
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      })()`,
+    )) as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null;
+    if (
+      !slot ||
+      typeof slot.x !== "number" ||
+      typeof slot.y !== "number" ||
+      typeof slot.width !== "number" ||
+      typeof slot.height !== "number"
+    ) {
+      return nativeImage.createEmpty();
+    }
+    // 슬롯보다 큰 크기는 슬롯 전체(풀프레임)를 뜻한다.
+    const full = crop.width >= slot.width && crop.height >= slot.height;
+    const scale = viewport && viewport.width >= 1 ? Math.min(4, slot.width / viewport.width) : 1;
+    const rect = full
+      ? {
+          x: Math.round(slot.x),
+          y: Math.round(slot.y),
+          width: Math.max(1, Math.round(slot.width)),
+          height: Math.max(1, Math.round(slot.height)),
+        }
+      : {
+          x: Math.round(slot.x + crop.x * scale),
+          y: Math.round(slot.y + crop.y * scale),
+          width: Math.max(1, Math.round(crop.width * scale)),
+          height: Math.max(1, Math.round(crop.height * scale)),
+        };
+    return window.webContents.capturePage(rect);
   }
 
   /**
@@ -830,11 +895,12 @@ export class PlannerPreviewView {
             // never crashes.
           }
         }
-        const crop = cropRect(rect, this.viewportCss());
+        const viewport = await this.viewportCss();
+        const crop = cropRect(rect, viewport);
         // Wholly off screen (scrolled past, or beside the frame): no photo.
         if (!crop) return;
         try {
-          const image = await contents.capturePage(crop);
+          const image = await this.captureViaWindow(crop, viewport);
           if (image.isEmpty()) return;
           payload.pin.shot = {
             mediaType: "image/jpeg",
@@ -865,7 +931,12 @@ export class PlannerPreviewView {
     if (!contents) return result;
     try {
       await this.withOverlayHidden(async () => {
-        const image = await contents.capturePage();
+        // 게스트 capturePage 는 쓰지 않는다(전달 끊김, captureViaWindow 비고) —
+        // 플래너 창으로 슬롯 전체를 찍는다.
+        const image = await this.captureViaWindow(
+          { x: 0, y: 0, width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER },
+          await this.viewportCss(),
+        );
         if (!image.isEmpty()) {
           result.jpeg = fitInside(image, SNAPSHOT_LONG_SIDE).toJPEG(70).toString("base64");
         }
@@ -923,148 +994,131 @@ export class PlannerPreviewView {
   /** sender → 페이지. 파기된 페이지의 sender 는 죽었으므로 산 것만 돌면 그만이다. */
   private pageOf(sender: WebContents): PreviewPage | null {
     for (const page of this.pages.values()) {
-      if (page.view.webContents === sender) return page;
+      if (page.contents === sender) return page;
     }
-    if (this.loose?.view.webContents === sender) return this.loose;
+    if (this.loose?.contents === sender) return this.loose;
     return null;
   }
 
   /**
-   * 페이지의 몸통을 짓는다 — WebContentsView 와 PreviewPage. partition 은
-   * "persist:preview" 다: 예전엔 접두 없는 "preview" 라서 in-memory 세션이었고
-   * 재시작마다 로그인이 증발했다. persist 전환의 목적은 임의 사이트의 로그인이
-   * 페이지와 함께 남는 것 — 파티션은 preview·web 모두가 같이 쓴다.
+   * 플래너 창을 이 미리보기에 물린다 — `webviewTag` 창 설정은 windows.ts 가
+   * 이미 켰다. 여기서는 펜스(`will-attach-webview`)와 클레임
+   * (`did-attach-webview`)을 창의 webContents에 건다. ⌘W로 창이 닫혔다 다시
+   * 열리면 호출자가 다시 건다 — 게스트도 창과 함께 죽으니 레지스트리는
+   * `destroyed`로 스스로 비운다.
    */
-  private buildPage(home: string | null, origin: string, epoch: number | null): PreviewPage {
-    const view = new WebContentsView({
-      webPreferences: {
-        partition: "persist:preview",
-        sandbox: true,
-        contextIsolation: true,
-        preload: PREVIEW_PRELOAD,
-      },
+  attachWindow(window: BrowserWindow): void {
+    const host = window.webContents;
+    /** will-attach → did-attach 짝짓기 — 생성 순서(FIFO). 펜스가 거절한
+     * 게스트는 did-attach가 아예 오지 않는다(스파이크 W4 실측). */
+    const attachSrcQueue: string[] = [];
+    // 렌더러가 겨눌 수 있는 주소를 loopback 미리보기로 가둔다 — 웹 UI가
+    // 침해당해도 임의 origin·임의 preload의 게스트가 생기지 않는다.
+    host.on("will-attach-webview", (event, webPreferences, params) => {
+      if (params.src === undefined || !loopbackHttp(params.src)) {
+        event.preventDefault();
+        return;
+      }
+      // preload·파티션·보안 등급은 이 프로세스가 정한다 — 렌더러가 넘긴
+      // 값은 무시한다. 파티션은 preview·web 모두가 같이 쓰는 단일 공유
+      // 세션(오늘과 동일): 재시작에도 임의 사이트의 로그인이 살아 있다.
+      webPreferences.preload = PREVIEW_PRELOAD;
+      webPreferences.partition = "persist:preview";
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      attachSrcQueue.push(params.src);
     });
-    view.setVisible(false);
-    view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    const page: PreviewPage = {
-      home,
-      origin,
-      kind: home !== null ? "preview" : "web",
-      view,
-      epoch,
-      mountedUrl: null,
-      failed: false,
-      zoomFactor: 1,
-      consoleLog: [],
-      shownAt: 0,
-    };
-    this.attach(page);
-    return page;
+    host.on("did-attach-webview", (_event, guest) => {
+      const src = attachSrcQueue.shift();
+      if (src === undefined) return;
+      this.claim(guest, src);
+    });
   }
 
   /**
-   * 프로젝트 없이 열리는 페이지 — 에이전트의 navigate·`앱에서 링크 열기`가
-   * 마운트된 것 없이 부를 때의 몸통. 하나뿐이다: 이미 있으면 그 페이지가
-   * 새 주소를 삼키고, 없으면 지금 짓는다.
+   * 붙어 온 게스트를 페이지로 세운다. 요소의 src가 열쇠다 — 마운트 레지스트리
+   * 에 있으면 프로젝트 페이지, 없으면 loose. wantedOrigin·pendingLooseUrl 이
+   * 가리키던 것이면 지금이 활성화 시점이다.
    */
-  private makeLoose(): PreviewPage {
-    if (this.loose) return this.loose;
-    const page = this.buildPage(null, "about:blank", null);
-    this.loose = page;
-    this.show(page);
-    return page;
-  }
-
-  /**
-   * Puts a page on screen: topmost in the window (`addChildView` reorders a
-   * child it already holds), sized to the slot, visible unless a modal
-   * covers the pane. 먼저 서 있던 페이지는 park 해 두고 — 화면에는 늘 한
-   * 페이지. loose 페이지가 앞에 있으면 park 대신 파기다(링크의 나라는 데워
-   * 두지 않는다). The overlay is re-told the mode (D67) and the last pin
-   * sync (재설계 C1) it may have missed while parked, and the renderer's
-   * picture of the pane — where it is, whether it loads, its zoom — is
-   * replayed from this page's facts.
-   */
-  private show(page: PreviewPage): void {
-    const previous = this.activePage;
-    if (previous === page && this.attached(page)) return;
-    if (previous && previous !== page) {
-      if (previous.home !== null) this.park(previous);
-      else this.destroy(previous);
+  private claim(guest: WebContents, src: string): void {
+    const origin = safeOrigin(src) || src;
+    const mounted = this.mounts.get(origin);
+    let page = this.pageAt(origin);
+    if (page) {
+      // 같은 origin의 요소가 다시 태어났다(개발 모드의 재마운트) — 새 게스트로
+      // 갈아탄다. 옛 게스트는 요소가 철거되며 스스로 정리되고, 그 destroyed는
+      // 아래 가드(식별 비교)가 이 페이지를 건드리지 못하게 한다.
+      page.contents = guest;
+      if (mounted && page.home === null) {
+        page.home = origin;
+        this.pages.set(origin, page);
+        this.loose = null;
+      }
+    } else {
+      page = {
+        home: mounted ? origin : null,
+        origin,
+        kind: mounted ? "preview" : "web",
+        contents: guest,
+        epoch: mounted?.epoch ?? null,
+        mountedUrl: src,
+        failed: false,
+        zoomFactor: 1,
+        consoleLog: [],
+        shownAt: 0,
+      };
+      if (page.home !== null) this.pages.set(origin, page);
+      else this.loose = page;
+      this.attach(page);
     }
+    guest.once("destroyed", () => {
+      // 요소 재생성으로 갈아탄 게스트 — 이 페이지의 몸이 아니면 잊지 않는다.
+      if (page.contents !== guest) return;
+      this.forget(page);
+    });
+    // 활성 대정렬 — 프로젝트 페이지는 mount가 원한 origin일 때, loose는
+    // 활성 페이지 없이 부탁해 둔 바로 그 주소일 때 활성화된다.
+    const wantedLoose = page.home === null && this.pendingLooseUrl === src;
+    const wantedProject = page.home !== null && this.wantedOrigin === origin;
+    if (wantedLoose || wantedProject) {
+      this.pendingLooseUrl = null;
+      this.activate(page);
+    }
+  }
+
+  /**
+   * 게스트가 죽었다(요소 철거·요소 재생성) — 레지스트리에서 잊는다. 화면의
+   * 페이지였다면 pane이 빈 화면이 됐다는 말도 함께 간다.
+   */
+  private forget(page: PreviewPage): void {
+    if (page.home !== null && this.pages.get(page.home) === page) this.pages.delete(page.home);
+    if (this.loose === page) this.loose = null;
+    if (this.activePage === page) {
+      this.activePage = null;
+      // 주소창·뒤로/앞으로 칩이 지난 페이지의 것을 들고 있지 않게 지운다.
+      this.send("colo-preview:location", null);
+    }
+  }
+
+  /**
+   * 화면의 페이지를 바꾼다 — 요소의 보이기는 PreviewFrame이 이미 정했으므로
+   * 여기서는 활성 참조와 오버레이 재무장·릴레이만 정렬한다. The overlay is
+   * re-told the mode (D67) and the last pin sync (재설계 C1) it may have
+   * missed while parked, and the renderer's picture of the pane — where it
+   * is, whether it loads, its zoom — is replayed from this page's facts.
+   */
+  private activate(page: PreviewPage): void {
     this.activePage = page;
     page.shownAt = Date.now();
-    const window = this.window();
-    if (window && !window.isDestroyed()) window.contentView.addChildView(page.view);
-    if (this.bounds) page.view.setBounds(this.bounds);
-    page.view.setVisible(!this.covered);
-    const contents = page.view.webContents;
+    const contents = page.contents;
     const preview = page.kind === "preview";
     // The repo overlay stays out of roamed pages: comments mode off, and
     // an empty pin list sweeps any badge a repo page left drawn.
     contents.send("colo-overlay:mode", { on: this.commentsOn && preview });
-    contents.send("colo-overlay:pins", preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
+    this.sendPins(contents, preview ? (this.lastPins ?? { pins: [] }) : { pins: [] });
     this.sendLocation(page);
     this.send("colo-preview:loading", { on: contents.isLoading() });
     this.send("colo-preview:zoom", { factor: page.zoomFactor });
-  }
-
-  /**
-   * Whether a page is alive AND a child of the window on screen now. The
-   * pane outlives the window — on mac ⌘W destroys it and the dock icon
-   * builds another — so the active page can belong to a contentView that is
-   * gone. `show()` is the only place that attaches a view, so a mount
-   * taking the fast path on an orphan would leave the slot empty for the
-   * rest of the run.
-   */
-  private attached(page: PreviewPage): boolean {
-    if (page.view.webContents.isDestroyed()) return false;
-    const window = this.window();
-    if (!window || window.isDestroyed()) return false;
-    return window.contentView.children.includes(page.view);
-  }
-
-  /** 화면에서 내리되 살려 둔다: 숨기고, 활성 참조도 함께 내린다. */
-  private park(page: PreviewPage): void {
-    // A page whose window was destroyed took its webContents with it —
-    // the view is already gone, so only the selection moves.
-    page.view.setVisible(false);
-    if (this.activePage === page) {
-      this.activePage = null;
-      // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
-      // 것을 들고 있지 않게 지운다.
-      this.send("colo-preview:location", null);
-    }
-  }
-
-  /**
-   * WebContents 파기 — evict·unmount 시의 loose 페이지·프로젝트 페이지의
-   * 최후가 이 길을 간다. 스트립이 없으니 메타도 남지 않는다: 다음 마운트는
-   * 새 페이지를 로드한다.
-   */
-  private destroy(page: PreviewPage): void {
-    if (page.home !== null) this.pages.delete(page.home);
-    if (this.loose === page) this.loose = null;
-    if (this.activePage === page) {
-      this.activePage = null;
-      // pane 이 빈 화면이 됐다는 말 — 주소창·뒤로/앞으로 칩이 지난 페이지의
-      // 것을 들고 있지 않게 지운다.
-      this.send("colo-preview:location", null);
-    }
-    const window = this.window();
-    if (window && !window.isDestroyed()) window.contentView.removeChildView(page.view);
-    if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
-  }
-
-  /**
-   * Cap 을 넘으면 마지막으로 본 지 오래된 parked 페이지부터 파기한다. 창이
-   * 닫혀 전 페이지가 사라져도 같은 길로 자연 흡수된다.
-   */
-  private evictParked(): void {
-    const parked = [...this.pages.values()]
-      .filter((page) => page !== this.activePage)
-      .sort((a, b) => b.shownAt - a.shownAt);
-    for (const page of parked.slice(MAX_LIVE_PAGES - 1)) this.destroy(page);
   }
 
   /**
@@ -1074,7 +1128,7 @@ export class PlannerPreviewView {
    * over the project the planner is looking at.
    */
   private attach(page: PreviewPage): void {
-    const contents = page.view.webContents;
+    const contents = page.contents;
     // 팝업은 pane 을 넘기지 않는다 — 페이지 하나가 화면의 전부라 window.open
     // 이 프로젝트 화면을 삼키는 일은 없다. http(s) 는 OS 브라우저가, 그 밖의
     // 스킴도 OS 가 본다.
@@ -1106,7 +1160,7 @@ export class PlannerPreviewView {
       // 로밍 중인 페이지는 모드 off 와 빈 핀 스윕(앞 문서가 남긴 배지를 지운다).
       if (page.kind === "preview") {
         contents.send("colo-overlay:mode", { on: this.commentsOn });
-        contents.send("colo-overlay:pins", this.lastPins ?? { pins: [] });
+        this.sendPins(contents, this.lastPins ?? { pins: [] });
         // ③ 페이지가 낡은 epoch 위에 서 있으면 그 뿌리로 다시 시작한다 —
         // 포트가 다른 프로젝트에 넘어갔을 수 있다. 재로드의 did-navigate 가
         // 다시 여기로 와 재무장한다.
@@ -1116,7 +1170,7 @@ export class PlannerPreviewView {
         }
       } else {
         contents.send("colo-overlay:mode", { on: false });
-        contents.send("colo-overlay:pins", { pins: [] });
+        this.sendPins(contents, { pins: [] });
       }
     });
     contents.on("did-navigate-in-page", (_event, url) => {
@@ -1128,7 +1182,7 @@ export class PlannerPreviewView {
       // onLocation resend confirms with the fresh list. kind 재계산은 필요
       // 없다(origin 은 안 바뀐다) — 핀 리플레이만 kind 가드로 통과한다.
       if (page.kind !== "preview") return;
-      if (this.lastPins) contents.send("colo-overlay:pins", this.lastPins);
+      if (this.lastPins) this.sendPins(contents, this.lastPins);
     });
     contents.on("did-start-loading", () => {
       if (this.activePage === page) this.send("colo-preview:loading", { on: true });
@@ -1173,7 +1227,7 @@ export class PlannerPreviewView {
     // D71: while the view holds focus the renderer DOM hears no keys — the
     // chords the web keymap owns (PageWorkspace: 팔레트 ⌘K, 설정 ⌘,, 저장 ⌘S,
     // 바로 가기 ⌘/, 핀 모드 ⌘⇧P) are forwarded and replayed as synthetic
-    // keydowns (NativeHost), so the features stay reachable. control is
+    // keydowns (PreviewFrame), so the features stay reachable. control is
     // Windows/Linux's ⌘ slot — the gate treats it as the same modifier, or
     // the palette chord never leaves the pane there.
     contents.on("before-input-event", (event, input) => {
@@ -1210,7 +1264,7 @@ export class PlannerPreviewView {
     let route = "";
     let state = "default";
     try {
-      const url = new URL(at ?? page.view.webContents.getURL());
+      const url = new URL(at ?? page.contents.getURL());
       route = url.pathname.replace(/^\//, "");
       state = url.searchParams.get("state") ?? "default";
     } catch {
@@ -1226,7 +1280,7 @@ export class PlannerPreviewView {
   }
 
   private sendLocation(page: PreviewPage): void {
-    const contents = page.view.webContents;
+    const contents = page.contents;
     let path = "/";
     let url = "";
     try {
@@ -1272,6 +1326,8 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     if (event.sender !== view.webContents()) return;
     view.onCaptureDone();
   });
+  // 오버레이의 스윕 폴백(ⓒ) — 배지가 남아 있는 동안 진실을 당겨간다.
+  ipcMain.handle("colo-overlay:pins-poll", (event) => view.pinsFor(event.sender));
   ipcMain.handle("preview:mount", (_event, input: unknown) => {
     if (!input || typeof input !== "object" || !("url" in input) || typeof input.url !== "string") {
       return { ok: true };
@@ -1289,29 +1345,10 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     view.unmount();
     return { ok: true };
   });
-  ipcMain.handle("preview:bounds", (_event, input: unknown) => {
-    if (
-      input &&
-      typeof input === "object" &&
-      ["x", "y", "width", "height"].every(
-        (key) => typeof input[key as keyof typeof input] === "number",
-      )
-    ) {
-      const rect = input as {
-        x: number;
-        y: number;
-        width: number;
-        height: number;
-      };
-      view.setBounds(rect);
-    }
-    return { ok: true };
-  });
-  // The assertion is applied before this returns (the capture rides behind),
-  // so the renderer's ack means "the view is already hidden" — that contract
-  // is what lets the web side treat a resolved call as confirmed state.
-  ipcMain.handle("preview:cover", (_event, input: { on?: boolean }) => {
-    view.cover(Boolean(input?.on));
+  // PreviewFrame이 무대를 쥐고 있음을 알린다 — 거짓이면 링크·외부 열기가 OS
+  // 브라우저로 넘어간다(옛 bounds 0 판정의 자리).
+  ipcMain.handle("preview:host-ready", (_event, input: { on?: boolean }) => {
+    view.setHostReady(Boolean(input?.on));
     return { ok: true };
   });
   ipcMain.handle("preview:open", (_event, input: { path?: string }) => {
