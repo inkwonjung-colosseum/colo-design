@@ -176,6 +176,7 @@ export const OPENCODE_ACP: AcpDriverConfig = {
   modes: [
     { id: "build", label: "Build", tier: "moderate" },
     { id: "plan", label: "Plan", tier: "planning" },
+    { id: "bypass", label: "Bypass", tier: "dangerous" },
   ],
   defaultModeId: "build",
   capabilities: {
