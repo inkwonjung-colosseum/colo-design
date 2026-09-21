@@ -11,12 +11,12 @@ pre-commit:
       stage_fixed: true
 
 # 푸시 직전, CI 와 같은 문(배포 검증)을 한 번 더 로컬에서 지나간다.
-# 2026-09-21: knip 게이트는 걷었다 — 테스트가 진입점이었는데 스위트가
-# 사라져 제품 export 전부가 '미사용'으로 보였다.
+# typecheck 단독은 깨끗한 체크아웃에서 protocol/dist 가 없어 실패한다 —
+# 빌드가 위상 정렬로 같은 검증을 맡는다(릴리스와 같은 경로). knip 게이트는
+# 걷었다(2026-09-21): 테스트가 진입점이었는데 스위트가 사라져 제품 export
+# 전부가 '미사용'으로 보였다.
 pre-push:
   parallel: true
   commands:
-    typecheck:
-      run: pnpm -r typecheck
     build:
       run: pnpm -r build
