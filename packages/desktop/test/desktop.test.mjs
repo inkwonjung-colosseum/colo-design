@@ -715,15 +715,35 @@ app.whenReady().then(async () => {
     app.exit(0);
   };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // CI 러너 디버깅: 어느 단계까지 왔는지(stderr → 실패 시 출력)와 모든
+  // webContents 의 로드 실패(-3 제외)를 모은다. ERR_FAILED(-2) 가 어디서
+  // 나는지 로그가 이름 짓게 한다.
+  const step = (n) => process.stderr.write("[unit-step] " + n + "\\n");
+  const loadFails = [];
+  app.on("web-contents-created", (_event, contents) => {
+    contents.on(
+      "did-fail-load",
+      (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3) return;
+        loadFails.push(errorCode + " " + (errorDescription ?? "?") + " " + validatedURL);
+      },
+    );
+    contents.on("render-process-gone", (_e, details) => {
+      loadFails.push("gone:" + (details?.reason ?? "?"));
+    });
+  });
   try {
+    step("driver-created");
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
     const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
     // 표식은 없다 — 문서가 완전히 읽히면 열림은 자리를 잡은 열림이다(settle
     // 은 readyState complete 를 기다린다).
     const opened = await driver.open("/");
+    step("open-done");
     // 미리보기 서버도 레포가 허용한 서버도 아닌 주소는 열지 않는다 — 조용히
     // 넘어가지 않고 말한다.
     const refused = await driver.open("https://example.invalid/x");
+    step("refuse-done");
     const windows = BrowserWindow.getAllWindows();
     const hidden = windows.length === 1 && windows.every((w) => !w.isVisible());
     // 첫 프레임이 칠해질 때까지 캡처를 재시도한다 — 오프스크린 paint 는 첫 로드 뒤에 온다.
@@ -759,6 +779,7 @@ app.whenReady().then(async () => {
     // webview 전환: 요소는 렌더러(PreviewFrame)의 몫 — 이 유닛이 그 자리를
     // 대신한다(webPreferences.webviewTag + attachWindow + setHostReady +
     // 호스트 문서에 <webview> 얹기).
+    step("hidden-driver-done");
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
     const paneWindow = new BrowserWindow({
       show: true,
@@ -778,13 +799,16 @@ app.whenReady().then(async () => {
     });
     await new Promise((ok) => hostServer.listen(0, "127.0.0.1", () => ok()));
     await paneWindow.loadURL("http://127.0.0.1:" + hostServer.address().port + "/");
+    step("host-loaded");
     const pane = new PlannerPreviewView(() => paneWindow);
     pane.attachWindow(paneWindow);
     pane.setHostReady(true);
+    step("pane-wired");
     await paneWindow.webContents.executeJavaScript(
       'window.__add(' + JSON.stringify(process.env.COLO_DRIVER_UNIT_URL + "/") + ')',
     );
     pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null);
+    step("guest-added");
     const paneDriver = createPreviewDriverFactory(() => pane).for(process.env.COLO_DRIVER_UNIT_URL);
     const paneOpened = await paneDriver.open("/");
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });
@@ -808,9 +832,13 @@ app.whenReady().then(async () => {
       paneShotOk:
         !!paneShot && paneShot.mediaType === "image/webp" && paneShot.data.startsWith("UklGR"),
       panePageAlive,
+      loadFails,
     });
   } catch (error) {
-    answer({ error: error && error.message ? error.message : String(error) });
+    answer({
+      error: error && error.message ? error.message : String(error),
+      loadFails,
+    });
   }
 });
 `;

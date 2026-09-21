@@ -196,6 +196,9 @@ async function main() {
       async () => (await viewUrl(app))?.startsWith(alphaOrigin),
       60_000,
       async () => ({
+        daemonRepo: await request({ type: "repo.status" }, 15_000).catch((error) => ({
+          error: String(error),
+        })),
         url: await viewUrl(app),
         webviews: await page.evaluate(() =>
           Array.from(document.querySelectorAll("webview")).map((w) => w.getAttribute("src")),
