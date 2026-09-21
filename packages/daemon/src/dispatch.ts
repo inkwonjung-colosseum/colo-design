@@ -446,6 +446,11 @@ export class RequestRouter {
       case "session.selectors": {
         const session = this.deps.manager.require(message.sessionId);
         const selectors = await session.selectors();
+        // 진단(CI): 칩 요약이 안 찰 때 무엇이 비었는지 로그가 말한다 —
+        // 스텁 initialize 실험의 러너 검증 자리다. 조용한 stderr 한 줄.
+        console.error(
+          `[selectors] provider=${session.provider} models=${selectors.models.length} model=${selectors.model ?? null} effort=${selectors.effort ?? null}`,
+        );
         this.deps.plans.rememberModels(session.provider, selectors.models);
         return selectors;
       }

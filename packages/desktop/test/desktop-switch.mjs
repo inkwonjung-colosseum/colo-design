@@ -196,6 +196,8 @@ async function main() {
       async () => (await viewUrl(app))?.startsWith(alphaOrigin),
       60_000,
       async () => ({
+        wantAlpha: alphaOrigin,
+        beta: betaOrigin,
         daemonRepo: await request({ type: "repo.status" }, 15_000).catch((error) => ({
           error: String(error),
         })),

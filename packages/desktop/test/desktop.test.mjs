@@ -897,7 +897,7 @@ test("미리보기 드라이버: 숨은 창, 거절하는 open, 캡처와 콘솔
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
     const result = await runDriverUnit(url);
-    assert.equal(result.error, undefined);
+    assert.equal(result.error, undefined, `loadFails=${JSON.stringify(result.loadFails ?? [])}`);
     // 보이는 창은 사용자의 것뿐 — Claude 의 창은 화면에 없다 (PLAN D61).
     assert.equal(result.hidden, true);
     // 캡처는 컴포지터가 한 번에 구운 진짜 WebP 다 — 재인코딩 세대가 없다.
