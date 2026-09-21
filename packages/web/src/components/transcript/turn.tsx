@@ -52,7 +52,7 @@ function MachineTurn({
           : changes === 0
             ? `질문 ${marker.items.length}건`
             : `수정 ${changes} · 질문 ${questions}`;
-      lead = [marker.screen, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
+      lead = marker.screen;
       rows = marker.items.map((item, index) => {
         // 여러 화면을 한 턴에 찍은 배치는 머리글이 화면 N곳 요약이라 —
         // 행마다 각자의 화면을 새긴다. 번호 접두는 턴 본문이 "1. 2. 3."으로
@@ -99,7 +99,7 @@ function MachineTurn({
           : marker.count && marker.count > 1
             ? `아직 같은 오류 · ${marker.count}번째`
             : "화면 오류 고치기";
-      lead = [marker.route, marker.state && `${marker.state} 상태`].filter(Boolean).join(" · ");
+      lead = marker.route;
       break;
     case "review":
       // The planner pressed 고치기 on a developer comment — the card
@@ -177,7 +177,7 @@ function MachineTurn({
 }
 
 const TURN_SUBTYPE_WORDS: Record<string, string> = {
-  error_max_turns: "정한 대화 길이를 채웠습니다 — 새 대화에서 이어 가면 됩니다",
+  error_max_turns: "정한 답변 걸음을 채웠습니다 — 다시 보내면 이어서 계속합니다",
   error_during_execution: "잠시 문제가 있었습니다 — 다시 보내 주세요",
   interrupted: "멈추었습니다 — 고치던 화면이 반쯤 남았을 수 있습니다. 이어서 말하거나 되돌리세요",
 };
@@ -199,8 +199,6 @@ function FailedTurn({
   retryText,
   onRetry,
   onResendEdit,
-  checkpointId,
-  onRestoreCheckpoint,
   live,
 }: {
   subtype: string;
@@ -209,17 +207,19 @@ function FailedTurn({
   onRetry?: (text: string) => void;
   /** 중지 카드의 회수 — 같은 말의 수정 재전송. */
   onResendEdit?: (text: string) => void;
-  /** 같은 턴 시작의 스냅샷 — 텍스트 없이 도구만 돌다 멈춘 턴의 되돌림 손. */
-  checkpointId?: string;
-  onRestoreCheckpoint?: (id: string) => void;
   live?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const limit = resultText !== null && LIMIT_RESULT.test(resultText);
   const interrupted = subtype === "interrupted";
+  // 행동이 있을 때만 행동을 묻는 문장이 선다 — 버튼이 잘린 옛 실패 카드가
+  // "다시 보내 주세요"를 말해 놓고 손을 내밀지 않는 꼴을 막는다.
+  const actionable = !interrupted && retryText !== null;
   const reason = limit
     ? "구독 사용량을 채웠습니다 — 잠시 뒤 같은 말로 이어할 수 있어요"
-    : (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요");
+    : actionable || interrupted || subtype === "error_max_turns"
+      ? (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요")
+      : "잠시 문제가 있었습니다";
   // 자세히가 여는 영어 원문 앞에 서는 한국어 한 줄 — 한도는 전용 문장,
   // 나머지 실패는 카드가 이미 말한 이유가 그대로 요약이다.
   const detail = limit ? LIMIT_WORDS : reason;
@@ -245,12 +245,19 @@ function FailedTurn({
         {!interrupted && onRetry && retryText && (
           <Tip
             label={
-              limit
-                ? "사용량이 다시 채워진 뒤 같은 말을 보냅니다"
-                : "마지막으로 보낸 말을 그대로 다시 보냅니다"
+              live
+                ? "지금은 스스로 다시 시도하는 중입니다 — 턴이 끝나면 누를 수 있습니다"
+                : limit
+                  ? "사용량이 다시 채워진 뒤 같은 말을 보냅니다"
+                  : "마지막으로 보낸 말을 그대로 다시 보냅니다"
             }
           >
-            <button type="button" className="primary" onClick={() => onRetry(retryText)}>
+            <button
+              type="button"
+              className="primary"
+              disabled={live}
+              onClick={() => onRetry(retryText)}
+            >
               다시 보내기
             </button>
           </Tip>
@@ -259,20 +266,6 @@ function FailedTurn({
           <Tip label="같은 말 그대로가 아니라, 입력창에서 고친 말을 보냅니다">
             <button type="button" className="ghost" onClick={() => onResendEdit(retryText)}>
               고쳐서 다시 보내기
-            </button>
-          </Tip>
-        )}
-        {/* 텍스트 없이 도구만 돌다 멈춘 턴은 되돌릴 버튼이 답변에만 있어 여기까지
-            못 미쳤다 — 중지 카드가 스스로의 체크포인트로 돌리는 손을 가진다. */}
-        {interrupted && checkpointId && onRestoreCheckpoint && (
-          <Tip label="이 요청이 바꾼 화면 파일을, 이 요청이 시작하기 전 모습으로 되돌립니다">
-            <button
-              type="button"
-              className="revert"
-              disabled={live}
-              onClick={() => onRestoreCheckpoint(checkpointId)}
-            >
-              이 요청 이전으로 되돌리기
             </button>
           </Tip>
         )}
@@ -324,34 +317,34 @@ function isLastFailedTurn(blocks: Block[], block: Block): boolean {
 }
 
 /**
- * 정산된 턴의 한 줄 — 그리고 답이 도구 사이에서 조각으로 올 때
- * 그 요청의 output 전부를 한 번에 복사해 나르는 유일한 자리다. 복사는 이
- * 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에 건넨다. 되돌리기 · 다시
- * 요청(턴 단위 행동)도 같은 줄을 탄다 — 행동 왼쪽, 시간과 복사 오른쪽,
- * 한 턴의 마침표가 행 하나로 찍힌다. 액션과 시간이 모두 없으면 아무것도
- * 남기지 않는다(부르는 쪽 Transcript 이 이미 걸러내지만, 줄 자체도 안다).
+ * 정산된 턴의 한 줄 — ChatGPT 의 마침표 행과 같은 형태다: 복사 아이콘 ·
+ * 분기 아이콘이 왼쪽에 나란히 서고 「N 걸렸습니다」가 이어진다. 복사는 이
+ * 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에 건넨다. 시간을 못 남긴
+ * 턴이라도 답이 있으면 복사는 선다. 분기는 이 답까지의 기억을 이어받은 새
+ * 대화를 만드는 손 — 답이 흐른 조각 없이 결과만 온 턴에도 붙는다. 셋이 모두
+ * 없으면 아무것도 남기지 않는다(부르는 쪽 Transcript 이 이미 걸러내지만,
+ * 줄 자체도 안다).
  */
 function TurnDone({
   durationMs,
   whole,
-  actions,
+  branch,
 }: {
   durationMs: number | null;
   whole?: string;
-  /** 되돌리기 · 다시 요청 — 답 카드 아래 행을 따로 두르지 않고 정산 줄이
-      대신 실어 나른다. */
-  actions?: ReactNode;
+  /** 여기서 새 대화 — 정산 줄의 아이콘 하나로 찍힌다. 없으면 자리도 없다. */
+  branch?: ReactNode;
 }) {
-  if (durationMs == null && actions == null) return null;
+  if (durationMs == null && whole == null && branch == null) return null;
   return (
-    <div className={`turndone${actions != null ? " turndone--actions" : ""}`}>
-      {actions != null && <div className="turndone__actions">{actions}</div>}
-      {durationMs != null && (
-        <div className="turndone__meta">
-          {waitedFor(durationMs)} 걸렸습니다
-          {whole && <CopyButton value={whole} label="전체 복사" className="turndone__copy" />}
-        </div>
-      )}
+    <div className="turndone">
+      <div className="turndone__meta">
+        {whole && <CopyButton value={whole} label="전체 복사" className="turndone__act" />}
+        {branch}
+        {durationMs != null && (
+          <span className="turndone__took">{waitedFor(durationMs)} 걸렸습니다</span>
+        )}
+      </div>
     </div>
   );
 }

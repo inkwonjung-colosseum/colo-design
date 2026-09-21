@@ -4,7 +4,11 @@ pre-commit:
   commands:
     biome:
       glob: "*.{js,mjs,cjs,ts,tsx,json,jsonc,css}"
-      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      # {staged_files} 는 삭제된 경로도 넘기고 biome 은 없는 파일을 읽다
+      # internalError/io 로 죽는다 — 삭제 커밋을 영구히 막는다. 삭제(D)를 뺀
+      # 목록을 직접 만든다.
+      files: git diff --cached --name-only --diff-filter=ACMR
+      run: pnpm exec biome check --write --no-errors-on-unmatched {files}
       stage_fixed: true
 
 # 푸시 직전, CI 와 같은 문을 한 번 더 로컬에서 지나간다. 두 검사는 서로

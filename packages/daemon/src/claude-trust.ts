@@ -14,7 +14,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { CONFIG_DIR, currentPlatform } from "./environment.js";
 
 /**
- * 클론과 각 에이전트(Claude Code · omp · opencode) 사이의 네 가지 — 레포가
+ * 클론과 각 에이전트(Claude Code · omp) 사이의 네 가지 — 레포가
  * 스스로 넓힌 권한을 잘라 내고 원본을 보관하는 일(`sanitizeRepoAgentSettings`),
  * 잘라 낸 사실을 사용자에게 보이게 하는 경고(`repoSettingsWarning`), 데스크톱이
  * 실어 온 런타임을 레포 명령의 PATH 앞에 붙이는 일(`extraPathPrefix`), 그리고
@@ -28,7 +28,7 @@ import { CONFIG_DIR, currentPlatform } from "./environment.js";
  */
 
 /** How a driver's project settings file parses (and therefore re-serializes). */
-type SettingsFormat = "json" | "jsonc" | "yaml";
+type SettingsFormat = "json" | "yaml";
 
 /** What one file gave up: the widening keys removed, and the object left behind. */
 interface SettingsCut {
@@ -203,92 +203,6 @@ function stripOmpSettings(parsed: unknown): SettingsCut | null {
   return { removed, next: out };
 }
 
-/**
- * opencode — `opencode.json` · `opencode.jsonc`. `permission` (top level and
- * per agent) with any "allow" — the string form, a per-tool action, or a
- * pattern map entry — pre-approves those tools; "ask"/"deny" survive.
- * `mcp.<name>` entries with `type: "local"` spawn a command at startup
- * (remote entries only add later-carded tools, so they survive); `plugin`
- * loads code. opencode also auto-loads `<repo>/.opencode/plugin/*.ts` — a
- * directory convention, not a key, so it stays outside this cut.
- */
-function stripOpencodeSettings(parsed: unknown): SettingsCut | null {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const src = parsed as Record<string, unknown>;
-  const removed: string[] = [];
-  const out: Record<string, unknown> = { ...src };
-
-  const stripPermission = (rule: unknown): { kept: unknown; cut: boolean } => {
-    if (rule === "allow") return { kept: undefined, cut: true };
-    if (rule && typeof rule === "object" && !Array.isArray(rule)) {
-      const kept: Record<string, unknown> = {};
-      let cut = false;
-      for (const [name, action] of Object.entries(rule as Record<string, unknown>)) {
-        if (action === "allow") {
-          cut = true;
-          continue;
-        }
-        if (action && typeof action === "object" && !Array.isArray(action)) {
-          const keptPatterns: Record<string, unknown> = {};
-          for (const [pattern, verdict] of Object.entries(action as Record<string, unknown>)) {
-            if (verdict === "allow") cut = true;
-            else keptPatterns[pattern] = verdict;
-          }
-          if (Object.keys(keptPatterns).length > 0) kept[name] = keptPatterns;
-          continue;
-        }
-        kept[name] = action;
-      }
-      return { kept: Object.keys(kept).length > 0 ? kept : undefined, cut };
-    }
-    return { kept: rule, cut: false };
-  };
-
-  const applyPermission = (holder: Record<string, unknown>, key: string): boolean => {
-    const result = stripPermission(holder[key]);
-    if (!result.cut) return false;
-    if (!removed.includes("permission:allow")) removed.push("permission:allow");
-    if (result.kept === undefined) delete holder[key];
-    else holder[key] = result.kept;
-    return true;
-  };
-
-  applyPermission(out, "permission");
-  const agents = out.agent;
-  if (agents && typeof agents === "object" && !Array.isArray(agents)) {
-    for (const agent of Object.values(agents as Record<string, unknown>)) {
-      if (agent && typeof agent === "object" && !Array.isArray(agent)) {
-        applyPermission(agent as Record<string, unknown>, "permission");
-      }
-    }
-  }
-
-  const mcp = out.mcp;
-  if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) {
-    const kept: Record<string, unknown> = {};
-    let localCut = false;
-    for (const [name, server] of Object.entries(mcp as Record<string, unknown>)) {
-      const entry = server as Record<string, unknown> | null;
-      if (entry && typeof entry === "object" && entry.type === "local" && entry.enabled !== false) {
-        localCut = true;
-        continue;
-      }
-      kept[name] = server;
-    }
-    if (localCut) {
-      removed.push("mcp:local");
-      if (Object.keys(kept).length > 0) out.mcp = kept;
-      else delete out.mcp;
-    }
-  }
-  if (Array.isArray(out.plugin) && out.plugin.length > 0) {
-    removed.push("plugin");
-    delete out.plugin;
-  }
-  if (removed.length === 0) return null;
-  return { removed, next: out };
-}
-
 /** Every project settings file a repo can ship, per driver, with its format. */
 const REPO_AGENT_SETTINGS: AgentSettingsFile[] = [
   { rel: ".claude/settings.json", format: "json", strip: stripClaudeSettings },
@@ -296,59 +210,11 @@ const REPO_AGENT_SETTINGS: AgentSettingsFile[] = [
   { rel: ".omp/config.yml", format: "yaml", strip: stripOmpSettings },
   { rel: ".omp/config.yaml", format: "yaml", strip: stripOmpSettings },
   { rel: ".omp/settings.json", format: "json", strip: stripOmpSettings },
-  { rel: "opencode.json", format: "json", strip: stripOpencodeSettings },
-  { rel: "opencode.jsonc", format: "jsonc", strip: stripOpencodeSettings },
 ];
-
-/**
- * JSONC = JSON plus comments (line and block) plus trailing commas. A
- * string-aware one-pass stripper: outside strings it drops comments, and a
- * comma is kept only when the next non-comment, non-whitespace character is
- * not a closing bracket. Parse failure is the CLI's news, not ours.
- */
-function parseJsonc(raw: string): unknown {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (inString) {
-      out += ch;
-      if (ch === "\\") {
-        if (i + 1 < raw.length) out += raw[++i];
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-      continue;
-    }
-    if (ch === "/" && raw[i + 1] === "/") {
-      while (i < raw.length && raw[i] !== "\n") i++;
-      continue;
-    }
-    if (ch === "/" && raw[i + 1] === "*") {
-      i += 2;
-      while (i + 1 < raw.length && !(raw[i] === "*" && raw[i + 1] === "/")) i++;
-      i++;
-      continue;
-    }
-    if (ch === ",") {
-      let j = i + 1;
-      while (j < raw.length && /\s/.test(raw.charAt(j))) j++;
-      if (raw.charAt(j) === "}" || raw.charAt(j) === "]") continue;
-    }
-    out += ch;
-  }
-  return JSON.parse(out);
-}
 
 function parseSettings(raw: string, format: SettingsFormat): unknown {
   try {
     if (format === "json") return JSON.parse(raw);
-    if (format === "jsonc") return parseJsonc(raw);
     return parseYaml(raw);
   } catch {
     // A broken file is the CLI's news, not ours.
@@ -358,8 +224,6 @@ function parseSettings(raw: string, format: SettingsFormat): unknown {
 
 function serializeSettings(value: unknown, format: SettingsFormat): string {
   if (format === "yaml") return stringifyYaml(value);
-  // A cut jsonc file rewrites as plain JSON — the comments it carried sat on
-  // keys we are about to name in the warning anyway, and JSON is valid input.
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
@@ -379,8 +243,8 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
 }
 
 /**
- * Cut the widening keys out of a clone's project settings — Claude Code,
- * omp, and opencode — before any session loads them. The project tier itself
+ * Cut the widening keys out of a clone's project settings — Claude Code and
+ * omp — before any session loads them. The project tier itself
  * is deliberate — it is how the repo's CLAUDE.md reaches the session — but
  * the tier's trust is auto-accepted here (see `trustWorkspace`), so a repo
  * shipping `hooks` would otherwise run shell commands at session start, or
@@ -396,7 +260,7 @@ function readQuarantine(root: string, configDir: string): QuarantineRecord | nul
  * and its timestamps survive restarts unchanged.
  */
 export function sanitizeRepoAgentSettings(root: string, configDir: string = CONFIG_DIR): boolean {
-  // 기본은 연결 레포 설정을 신뢰하는 것(사내 전용 — docs/repo-settings-trust.md):
+  // 기본은 연결 레포 설정을 신뢰하는 것(사내 전용):
   // 파일을 건드리지도, 경고를 내지도 않는다. 절단은 명시히 켜야 한다
   // (COLO_DESIGN_ENFORCE_REPO_SETTINGS=1 — 외부 레포를 받는 배포가 생길 때).
   if (
@@ -458,7 +322,7 @@ export function repoSettingsWarning(
   configDir: string = CONFIG_DIR,
 ): RepoSettingsWarning | null {
   // 절단이 켜져 있을 때만 경고가 존재한다 — 기본(신뢰)에선 건드린 것도 없으면서
-  // 유령 경고를 내지 않는다(docs/repo-settings-trust.md).
+  // 유령 경고를 내지 않는다.
   if (
     process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "1" &&
     process.env.COLO_DESIGN_ENFORCE_REPO_SETTINGS !== "true"

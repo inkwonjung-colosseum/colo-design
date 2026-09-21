@@ -24,25 +24,6 @@ export function waitedFor(ms: number): string {
 }
 
 /**
- * Screen states, in the planner's language.
- *
- * The four names below are the ones `CLAUDE.md` asks a connected repo to use,
- * so they cover what the preview will normally offer. A repo that declares
- * something else keeps its own word — inventing a Korean gloss for a state we
- * have never seen would put a label on the chip that the repo does not use.
- */
-const STATE_LABEL: Record<string, string> = {
-  default: "기본",
-  empty: "비어 있음",
-  loading: "불러오는 중",
-  error: "오류",
-};
-
-export function stateLabel(state: string): string {
-  return STATE_LABEL[state] ?? state;
-}
-
-/**
  * 되돌릴 수 없는 동작의 행선: 연결 레포
  * 주소에서 `owner/repo` 만을 딴다 — 회사가 저장소를 부르는 이름이고, git
  * 어휘가 아니다. GitHub 주소가 아니면 아무 말도 하지 않는다(null).

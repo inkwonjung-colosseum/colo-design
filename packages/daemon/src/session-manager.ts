@@ -5,6 +5,13 @@ import type { DriverRegistry } from "./agent/registry.js";
 import type { BrowserMcpEntry } from "./browser-launch.js";
 import { NEW_SESSION_TITLE, Session, type SessionEvents, type SessionOptions } from "./session.js";
 
+/** A bounded handshake wait's tick — resolvers kept, no executor nesting. */
+function pause(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
 export class SessionManager {
   private readonly live = new Map<string, Session>();
   /**
@@ -33,7 +40,7 @@ export class SessionManager {
   /**
    * 스캔 겸침 (SCAN COALESCE): a session event marks the clone stale on every
    * turn edge, and a store sweep is not free — the codex rollout walk reads a
-   * store that grows for years, and the opencode list spawns a CLI. Callers
+   * store that grows for years. Callers
    * arriving while one scan is in flight await the same promise instead of
    * stacking another identical sweep behind it. The entry carries the scan's
    * generation (scanEpoch): a removeWhere bumps the generation and drops the
@@ -50,6 +57,16 @@ export class SessionManager {
    * 스캔의 되돌아온 결과는 세대가 같을 때만 캐시에 적는다.
    */
   private readonly scanEpoch = new Map<string, number>();
+  /**
+   * Clones a 대화 모두 지우기 is still erasing (실사 결함). The erase takes
+   * seconds — live sessions close under a grace, the store sweep retries —
+   * and until it lands the caches still name the doomed rows. A window that
+   * connected in that window (a reload, a second display) read them and the
+   * deleted conversations stood in the tree until the sweep's own announce
+   * corrected it. While a clone is marked, `list` answers empty: the planner
+   * already said these threads are gone.
+   */
+  private readonly deleting = new Set<string>();
   /**
    * Which provider's store a stored session id lives in — filled by every
    * `list` scan so history/resume/delete route to the right driver without
@@ -162,6 +179,19 @@ export class SessionManager {
     // from, otherwise it shows up in the list as an untitled new session until
     // the next message happens to rename it.
     if (options.launch?.resume) {
+      // 재개는 활동이 아니다 — 저장된 대화록의 마지막 쓰임으로 되돌리지
+      // 않으면 목록의 시간 라벨이 "방금"부터 다시 세어 나간다. 다만 재개
+      // 직후의 대화록 재생 이벤트가 lastActivity 를 지금으로 밀어 내므로,
+      // 재생이 가라앉은 뒤에 되돌린다(그 사이의 실제 전송은 backdate 가
+      // 스스로 거절한다).
+      void driver.store
+        ?.list(session.cwd, 200)
+        .catch(() => [])
+        .then((rows) => {
+          const row = rows.find((candidate) => candidate.id === options.launch?.resume);
+          if (row) setTimeout(() => session.backdate(row.lastModified), 5_000);
+        })
+        .catch(() => undefined);
       void driver.store
         ?.title?.(options.launch.resume, session.cwd)
         .then((inherited) => {
@@ -218,6 +248,9 @@ export class SessionManager {
    */
   async remove(sessionId: string, cwd: string): Promise<void> {
     const live = this.live.get(sessionId);
+    // Resolve the store key BEFORE close(): the vendor names its own
+    // transcript id (ACP), and close() tears the live session down.
+    const storeId = live?.vendorSessionId ?? sessionId;
     if (live) await this.close(sessionId);
     const provider = live?.provider ?? (await this.findStoredProvider(sessionId, cwd));
     this.storedProvider.delete(sessionId);
@@ -227,13 +260,13 @@ export class SessionManager {
       await Promise.all(
         this.drivers
           .all()
-          .map((driver) => driver.store?.delete?.(sessionId, cwd).catch(() => undefined)),
+          .map((driver) => driver.store?.delete?.(storeId, cwd).catch(() => undefined)),
       );
       return;
     }
     const driver = this.driverFor(provider);
     try {
-      await driver.store?.delete?.(sessionId, cwd);
+      await driver.store?.delete?.(storeId, cwd);
     } catch (error) {
       // A live session that never sent a message wrote no transcript, so
       // closing it above already removed every trace.
@@ -264,6 +297,14 @@ export class SessionManager {
    */
   anyBusy(): boolean {
     for (const session of this.live.values()) {
+      // 유령 대기는 바쁨이 아니다 (E2E 2026-09-20) — 카드 없는 waiting_* 는
+      // 정산 어긋남의 흔적일 뿐, 종료 가드를 영원히 막아서는 안 된다.
+      if (
+        (session.state === "waiting_permission" || session.state === "waiting_question") &&
+        session.pendingCount === 0
+      ) {
+        continue;
+      }
       if (
         session.state === "running" ||
         session.state === "starting" ||
@@ -291,6 +332,24 @@ export class SessionManager {
   }
 
   /**
+   * The synchronous half of `removeWhere` (실사 결함): the erase itself takes
+   * seconds — live sessions close under a grace, the store sweep retries —
+   * and the dispatcher answers 대화 모두 지우기 without waiting for it. From
+   * this moment every read of the clone answers empty, so a window that
+   * connects mid-erase (a reload, a second display) never sees the doomed
+   * rows: the caches that carried them die here, and any in-flight scan's
+   * result is a superseded generation.
+   */
+  beginRemoveWhere(cwd: string): void {
+    this.deleting.add(cwd);
+    this.threadCache.delete(cwd);
+    this.disk.delete(cwd);
+    this.diskStale.delete(cwd);
+    this.scanEpoch.set(cwd, (this.scanEpoch.get(cwd) ?? 0) + 1);
+    this.scanning.delete(cwd);
+  }
+
+  /**
    * A removed project's conversations go with its folder (PLAN D77). The
    * transcript store is keyed by the clone's path, so once the folder is
    * gone nothing can render these again — and a same-named re-add of the
@@ -299,6 +358,7 @@ export class SessionManager {
    * already forgotten an id is a no-op, not a failure.
    */
   async removeWhere(cwd: string): Promise<void> {
+    this.beginRemoveWhere(cwd);
     await this.closeWhere(cwd);
     // Every registered driver's store gets a sweep — a clone may hold
     // transcripts from more than one provider. `deleteAll` drops the clone's
@@ -332,6 +392,8 @@ export class SessionManager {
     // entry also stops later callers from joining the poisoned scan.
     this.scanEpoch.set(cwd, (this.scanEpoch.get(cwd) ?? 0) + 1);
     this.scanning.delete(cwd);
+    // The erase has landed — reads see the swept store from here on.
+    this.deleting.delete(cwd);
   }
 
   get pendingCount(): number {
@@ -360,82 +422,106 @@ export class SessionManager {
    * served stale.
    */
   async list(cwd: string, limit = 50): Promise<SessionSummary[]> {
-    let onDisk = this.disk.get(cwd);
-    if (!onDisk || this.diskStale.has(cwd)) {
-      // A failed scan is not an empty machine: swallowing it here cached "no
-      // conversations" until some session event happened to invalidate it —
-      // the planner's sidebar went blank (or stale) for no visible reason.
-      // Failure keeps the previous answer and the staleness marker, so the
-      // next call rescans instead of trusting the accident.
-      // Every registered driver's store contributes — a clone may hold
-      // threads from more than one provider. Concurrent readers share one
-      // in-flight scan (this.scanning) instead of each stacking a sweep.
-      let entry = this.scanning.get(cwd);
-      const epoch = this.scanEpoch.get(cwd) ?? 0;
-      if (!entry || entry.epoch !== epoch) {
-        // The epoch snapshot must precede the sweep: a removeWhere that lands
-        // mid-scan bumps the generation and this result then writes nothing.
-        const scanEpoch = epoch;
-        const scan = Promise.all(
-          this.drivers.all().map((driver) => driver.store?.list(cwd, limit).catch(() => []) ?? []),
-        ).then((groups) => {
-          const rows = groups.flat();
-          if ((this.scanEpoch.get(cwd) ?? 0) === scanEpoch) {
-            this.disk.set(cwd, rows);
-            this.diskStale.delete(cwd);
-          }
-          return rows;
+    // A clone mid-erase answers empty — the planner already said these
+    // threads are gone, and a window that connected during the erase must
+    // not read them back from the caches or the not-yet-swept store.
+    if (this.deleting.has(cwd)) return [];
+    // The resolution restarts when its scan's generation was superseded
+    // mid-flight (removeWhere): the awaited rows may include conversations
+    // the sweep just deleted, and returning them let a refresh re-arm the
+    // thread cache with deleted rows — the tree resurrected them on the
+    // next connect. Same rule the scan's own disk-write guard applies;
+    // applied to the RETURN value too.
+    for (;;) {
+      let onDisk = this.disk.get(cwd);
+      if (!onDisk || this.diskStale.has(cwd)) {
+        // A failed scan is not an empty machine: swallowing it here cached "no
+        // conversations" until some session event happened to invalidate it —
+        // the planner's sidebar went blank (or stale) for no visible reason.
+        // Failure keeps the previous answer and the staleness marker, so the
+        // next call rescans instead of trusting the accident.
+        // Every registered driver's store contributes — a clone may hold
+        // threads from more than one provider. Concurrent readers share one
+        // in-flight scan (this.scanning) instead of each stacking a sweep.
+        let entry = this.scanning.get(cwd);
+        const epoch = this.scanEpoch.get(cwd) ?? 0;
+        if (!entry || entry.epoch !== epoch) {
+          // The epoch snapshot must precede the sweep: a removeWhere that lands
+          // mid-scan bumps the generation and this result then writes nothing.
+          const scanEpoch = epoch;
+          const scan = Promise.all(
+            this.drivers
+              .all()
+              .map((driver) => driver.store?.list(cwd, limit).catch(() => []) ?? []),
+          ).then((groups) => {
+            const rows = groups.flat();
+            if ((this.scanEpoch.get(cwd) ?? 0) === scanEpoch) {
+              this.disk.set(cwd, rows);
+              this.diskStale.delete(cwd);
+            }
+            return rows;
+          });
+          scan.catch(() => undefined); // a rejected scan must not stay attached
+          entry = { epoch: scanEpoch, scan };
+          this.scanning.set(cwd, entry);
+        }
+        const scanned = await entry.scan;
+        // Superseded mid-scan — the answer may name rows the sweep deleted.
+        // Restart: the fresh generation's scan reads the swept store.
+        if ((this.scanEpoch.get(cwd) ?? 0) !== epoch) continue;
+        if (scanned.length > 0 || onDisk === undefined) {
+          onDisk = scanned;
+        } else {
+          onDisk = onDisk ?? [];
+        }
+      }
+      const summaries = new Map<string, SessionSummary>();
+      const untitled = "제목 없는 대화";
+
+      for (const info of onDisk) {
+        if (info.provider) this.storedProvider.set(info.id, info.provider);
+        summaries.set(info.id, {
+          sessionId: info.id,
+          title: info.title || untitled,
+          lastModified: info.lastModified,
+          live: false,
+          state: "closed",
+          turnStartedAt: null,
+          ...(info.provider ? { provider: info.provider } : {}),
         });
-        scan.catch(() => undefined); // a rejected scan must not stay attached
-        entry = { epoch: scanEpoch, scan };
-        this.scanning.set(cwd, entry);
       }
-      const scanned = await entry.scan;
-      if (scanned.length > 0 || onDisk === undefined) {
-        onDisk = scanned;
-      } else {
-        onDisk = onDisk ?? [];
+
+      for (const session of this.live.values()) {
+        // A session of another project must not surface here: its transcript
+        // and its turns belong to a different clone, and listing it let a tab
+        // from the previous project survive a project switch.
+        if (session.cwd !== cwd) continue;
+        const stored = summaries.get(session.id);
+        // Prefer the transcript's own summary. The store keeps it current as the
+        // conversation moves, so using it for live and stored sessions alike stops
+        // a session from being labelled one way while open and another once closed.
+        const title = stored && stored.title !== untitled ? stored.title : session.title;
+        // 유령 대기 판정 (E2E 2026-09-20): `waiting_*` 인데 기다리는 카드가
+        // 없으면 정산·재생이 어긋난 흔적일 뿐 — 배지는 대기가 아니라 쉼으로 답한다.
+        const liveState =
+          (session.state === "waiting_permission" || session.state === "waiting_question") &&
+          session.pendingCount === 0
+            ? "idle"
+            : session.state;
+        summaries.set(session.id, {
+          sessionId: session.id,
+          title,
+          lastModified: session.lastActivity,
+          live: true,
+          state: liveState,
+          // 재접속한 창의 진행 시계가 0 부터 다시 세지 않도록 (없으면 null).
+          turnStartedAt: session.turnStartedAt,
+          provider: session.provider,
+        });
       }
-    }
-    const summaries = new Map<string, SessionSummary>();
-    const untitled = "제목 없는 대화";
 
-    for (const info of onDisk) {
-      if (info.provider) this.storedProvider.set(info.id, info.provider);
-      summaries.set(info.id, {
-        sessionId: info.id,
-        title: info.title || untitled,
-        lastModified: info.lastModified,
-        live: false,
-        state: "closed",
-        turnStartedAt: null,
-        ...(info.provider ? { provider: info.provider } : {}),
-      });
+      return [...summaries.values()].sort((a, b) => b.lastModified - a.lastModified);
     }
-
-    for (const session of this.live.values()) {
-      // A session of another project must not surface here: its transcript
-      // and its turns belong to a different clone, and listing it let a tab
-      // from the previous project survive a project switch.
-      if (session.cwd !== cwd) continue;
-      const stored = summaries.get(session.id);
-      // Prefer the transcript's own summary. The store keeps it current as the
-      // conversation moves, so using it for live and stored sessions alike stops
-      // a session from being labelled one way while open and another once closed.
-      const title = stored && stored.title !== untitled ? stored.title : session.title;
-      summaries.set(session.id, {
-        sessionId: session.id,
-        title,
-        lastModified: session.lastActivity,
-        live: true,
-        state: session.state,
-        // 재접속한 창의 진행 시계가 0 부터 다시 세지 않도록 (없으면 null).
-        turnStartedAt: session.turnStartedAt,
-        provider: session.provider,
-      });
-    }
-
-    return [...summaries.values()].sort((a, b) => b.lastModified - a.lastModified);
   }
 
   /**
@@ -486,83 +572,65 @@ export class SessionManager {
   async history(sessionId: string, cwd: string): Promise<ChatEvent[]> {
     // The live session's provider owns the store; a stored-only thread is
     // routed by the provider the last list scan recorded for its id.
-    const provider =
-      this.live.get(sessionId)?.provider ?? (await this.findStoredProvider(sessionId, cwd));
+    const live = this.live.get(sessionId);
+    const provider = live?.provider ?? (await this.findStoredProvider(sessionId, cwd));
     const driver = this.driverFor(provider);
-    return (await driver.store?.import?.(sessionId, cwd, 1000)) ?? [];
+    // An ACP session/new answer names the agent's own uuid — the transcript
+    // on disk is keyed by THAT, so a live session's lookup asks with it.
+    const storeId = live?.vendorSessionId ?? sessionId;
+    return (await driver.store?.import?.(storeId, cwd, 1000)) ?? [];
   }
 
   /**
-   * 대화록에 이미 있는 프롬프트 수 — 재시작 뒤 턴 번호를 이어 셀 때의 밑값.
-   * 읽기가 실패하면 0(빈 대화): 이전 동작과 같은 보수적 귀결이다.
+   * 대화록에 이미 있는 프롬프트 수 — 사이클 테이프 행의 afterTurn 셈.
+   * 읽기가 실패하면 0(빈 대화): 보수적 귀결이다.
    */
   async promptCount(sessionId: string, dir: string): Promise<number> {
-    const provider =
-      this.live.get(sessionId)?.provider ?? (await this.findStoredProvider(sessionId, dir));
+    const live = this.live.get(sessionId);
+    const provider = live?.provider ?? (await this.findStoredProvider(sessionId, dir));
     const driver = this.driverFor(provider);
-    return (await driver.store?.promptCount?.(sessionId, dir)) ?? 0;
+    // Same key as history(): the vendor names its own transcript id (ACP).
+    const storeId = live?.vendorSessionId ?? sessionId;
+    return (await driver.store?.promptCount?.(storeId, dir)) ?? 0;
   }
 
   /**
-   * 되감기 (PLAN D95): discard the k-th answer — files are ALREADY restored
-   * by the caller — and carry on in a forked session whose memory stops
-   * before that answer, re-sending `text`. When the provider refuses the
-   * truncating fork (a deterministic refusal — never retried), the fallback
-   * is a fresh conversation on the restored files, and `memoryKept` comes
-   * back false so the card can say `AI 의 기억은 그대로입니다`.
+   * 대화 분기: keep this answer and everything before it as the memory of a
+   * NEW conversation. The OLD thread survives — no close, no
+   * transcript removal, no re-sent prompt — and the fork is born idle: the
+   * next words are the user's. Files are nobody's business here — one
+   * worktree cannot hold two file states, so the branch cuts memory only
+   * and the worktree keeps its present state. A store that cannot cut
+   * (ACP) or an empty transcript falls back to a fresh conversation with
+   * `memoryKept: false` — the honest report.
    */
-  async rewind(input: {
+  async branch(input: {
     sessionId: string;
     cwd: string;
     turn: number;
-    text: string;
-    attachments?: Array<{ name: string; mediaType: string; data: string }>;
     /** The new session's construction options (cwd · CLI · policy · title). */
     base: SessionOptions;
   }): Promise<{ sessionId: string; memoryKept: boolean }> {
     const old = this.live.get(input.sessionId);
     const title = old?.title ?? input.base.title ?? NEW_SESSION_TITLE;
     const driver = this.driverFor(old?.provider ?? input.base.provider);
-    const cutoff = driver.store?.rewind
-      ? await driver.store.rewind(input.sessionId, input.cwd, input.turn)
+    const cutoff = driver.store?.branchCut
+      ? await driver.store.branchCut(input.sessionId, input.cwd, input.turn).catch(() => null)
       : null;
     if (cutoff === null) {
-      // 대화록이 비어 있어 어디를 남길지 모른다 — 기억을 못 찾은 것이니
-      // 폴백이 정직한 답이다: 새 대화로 문장만 다시 보낸다(파일은 이미
-      // 돌아갔다).
-      await old?.close();
-      this.live.delete(input.sessionId);
-      this.settledTurns.delete(input.sessionId);
+      // 어디를 남길지 모른다 — 기억 없는 새 대화가 정직한 분기다.
       const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.attachments);
       return { sessionId: fresh.id, memoryKept: false };
     }
 
-    await old?.close();
-    this.live.delete(input.sessionId);
-    this.settledTurns.delete(input.sessionId);
-
-    if (cutoff.cut === null) {
-      // k = 1: nothing to keep — a fresh conversation carries the title on.
-      const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.attachments);
-      return { sessionId: fresh.id, memoryKept: false };
-    }
-
-    // The fork: keep the transcript up to `cut`, drop the turn whose prompt
-    // is `drops`. The provider validates the range and refuses deterministically —
-    // that refusal (or any first-turn failure) falls back, it never retries.
+    const forkAnswered = { value: false };
     const outcomeBox: {
       value: { type: "end"; subtype: string; resultText: string | null } | { type: "error" } | null;
     } = { value: null };
-    // The fork's first event — the handshake's `init` — is the "healthy fork
-    // sits idle" signal: a fresh Session is born `idle`, so the state alone
-    // can never say the provider answered.
-    let forkAnswered = false;
     const shim: SessionEvents = {
       ...this.events,
       onEvent: (id, event) => {
-        forkAnswered = true;
+        forkAnswered.value = true;
         if (event.kind === "turn.end" && outcomeBox.value === null) {
           outcomeBox.value = {
             type: "end",
@@ -592,8 +660,9 @@ export class SessionManager {
           ...input.base.launch,
           resume: input.sessionId,
           forkSession: true,
-          resumeSessionAt: cutoff.cut,
-          resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+          ...(cutoff.cut
+            ? { resumeSessionAt: cutoff.cut, resumeDropsTurn: cutoff.drops ?? cutoff.cut }
+            : {}),
         },
       },
       shim,
@@ -611,8 +680,9 @@ export class SessionManager {
             ...input.base.launch,
             resume: input.sessionId,
             forkSession: true,
-            resumeSessionAt: cutoff.cut,
-            resumeDropsTurn: cutoff.drops ?? cutoff.cut,
+            ...(cutoff.cut
+              ? { resumeSessionAt: cutoff.cut, resumeDropsTurn: cutoff.drops ?? cutoff.cut }
+              : {}),
             browserMcp: this.browserMcpFor?.(fork.id) ?? undefined,
           },
           fork.driverHooks,
@@ -623,14 +693,14 @@ export class SessionManager {
       throw error;
     }
     this.live.set(fork.id, fork);
-    // The refusal surfaces within the first exchange; a healthy fork answers
-    // with its `init` and then sits idle waiting for input. `idle` itself is
-    // no signal — a fresh Session starts there — so the wait ends on the
-    // first event, a settled outcome, or a dead fork. Either way it is bounded.
+    // The handshake's `init` is the healthy-fork signal — a bounded
+    // wait. A deterministic refusal (Resume rejected) here means
+    // the provider refused the cut; the branch falls back fresh instead of
+    // advertising a memory it does not have.
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (outcomeBox.value !== null || forkAnswered) break;
+      if (forkAnswered.value || outcomeBox.value !== null) break;
       if (fork.state === "closed" || fork.state === "error") break;
-      await new Promise((ok) => setTimeout(ok, 250));
+      await pause(250);
     }
     const outcome = outcomeBox.value;
     const rejected =
@@ -640,19 +710,12 @@ export class SessionManager {
           outcome.subtype !== "success" &&
           (outcome.resultText ?? "").startsWith("Resume rejected")));
     if (outcome !== null && rejected) {
-      // Deterministic refusal: close the failed fork, go fresh, keep the
-      // evidence — the files are already back.
       await fork.close().catch(() => undefined);
       this.live.delete(fork.id);
       const fresh = this.create({ ...input.base, title });
-      fresh.send(input.text, input.attachments);
       return { sessionId: fresh.id, memoryKept: false };
     }
-
-    fork.send(input.text, input.attachments);
-    // The fork won: the old transcript goes (D76's path) — the planner just
-    // decided that answer never happened.
-    await this.remove(input.sessionId, input.cwd).catch(() => undefined);
+    // 분기는 옛 대화를 살려 둔다 — 닫지도, 지우지도, 말을 보내지도 않는다.
     return { sessionId: fork.id, memoryKept: true };
   }
 }

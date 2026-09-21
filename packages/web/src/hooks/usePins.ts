@@ -13,8 +13,9 @@ export interface PinAttachment {
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
   screen: string;
-  /** 표식 없는 페이지의 핀은 null — 되돌릴 때도 null 그대로다. */
-  state: string | null;
+  /* 2026-09-21 상태 축 철거 — 표식(state) 필드는 이 자리에 있었다. */
+  /* 2026-09-21 레포 마커 철거 — pagePath 필드는 이 자리에 있었다
+     (screen 이 항상 경로 신원이 되며 폐지). */
   element: ColoDesignCommentTarget;
   /** The crop the view took at pin time — "what the planner saw". */
   shot?: { mediaType: string; data: string };
@@ -77,7 +78,6 @@ export function pinsSync(ghosts: PinAttachment[], list: PinAttachment[]): ColoDe
   const row = (pin: PinAttachment, sent: boolean): ColoDesignPinsSync["pins"][number] => ({
     id: pin.id,
     screen: pin.screen,
-    state: pin.state,
     path: pin.element.path,
     sent,
     ...(pin.element.kind === "region" ? { rect: pin.element.rect } : {}),
@@ -98,10 +98,8 @@ function loadPins(slug: string): PinAttachment[] {
           row !== null &&
           typeof (row as PinAttachment).id === "string" &&
           typeof (row as PinAttachment).screen === "string" &&
-          // 표식 없는 페이지의 핀은 state 가 null 이다 — 문자열만 받으면
-          // 저장된 무표식 핀이 불러오기마다 사라진다.
-          (typeof (row as PinAttachment).state === "string" ||
-            (row as PinAttachment).state === null) &&
+          // 2026-09-21 상태 축 철거 — 옛 저장 행이 실어 온 state 키는 필요
+          // 필드가 아니므로 그냥 딸려올 뿐(무시된다), 검사에는 없다.
           typeof (row as PinAttachment).element === "object" &&
           (row as PinAttachment).element !== null,
       )
@@ -189,7 +187,6 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
           // meets the tray row, the badge and the card on the same id.
           id: pin.id,
           screen: pin.screen,
-          state: pin.state,
           text: pin.note.trim(),
           elementText: pin.element.text || pin.element.component,
           intent: pin.intent,

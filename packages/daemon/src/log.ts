@@ -26,7 +26,7 @@ const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.log$/;
 const RETENTION_DAYS = 7;
 
 /** 기록 위치. e2e 스위트가 임시 폴더로 돌리는 오버라이드. */
-function logDir(): string {
+export function daemonLogDir(): string {
   return process.env.COLO_DESIGN_LOG_DIR ?? join(homedir(), ".colo-design", "logs");
 }
 
@@ -72,7 +72,7 @@ function serializable(fields: Record<string, unknown>): Record<string, unknown> 
  * 쓰기에서 보존 창을 넘긴 파일을 치운다.
  */
 export function createFileLogger(options?: { dir?: string; now?: () => Date }): DaemonLogger {
-  const dir = options?.dir ?? logDir();
+  const dir = options?.dir ?? daemonLogDir();
   const now = options?.now ?? ((): Date => new Date());
   let lastDay: string | null = null;
   let complained = false;

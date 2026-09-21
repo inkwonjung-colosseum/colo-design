@@ -679,16 +679,16 @@ const electronBinary = join(here, "..", "node_modules", ".bin", "electron");
 
 /**
  * The page the driver visits: a width readout logged to the console (so 폭
- * emulation is observable through the console bridge alone), a `data-state`
- * marker for the settle wait, and a console error plus a failing request on
- * load.
+ * emulation is observable through the console bridge alone) and a console
+ * error plus a failing request on load. 정착을 위한 표식은 없다 — 문서가
+ * 완전히 읽혔다는 사실만이 유일한 신호다(2026-09-21 상태 축 철거).
  */
 const DRIVER_PAGE = `<!doctype html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head><body>
-<div data-screen="unit/Driver" data-state="기본">
+<main id="app">
   <p id="w">?</p>
-</div>
+</main>
 <script>
   console.error("열자마자의 콘솔 오류");
   fetch("/missing").catch(function () {});
@@ -718,11 +718,12 @@ app.whenReady().then(async () => {
   try {
     const { createPreviewDriverFactory } = await import(process.env.COLO_DRIVER_UNIT_MAIN);
     const driver = createPreviewDriverFactory().for(process.env.COLO_DRIVER_UNIT_URL);
-    // 선언한 상태의 표식을 기다리므로, 여기서 돌아오면 화면은 자리를 잡았다.
-    const opened = await driver.open("/", "기본");
+    // 표식은 없다 — 문서가 완전히 읽히면 열림은 자리를 잡은 열림이다(settle
+    // 은 readyState complete 를 기다린다).
+    const opened = await driver.open("/");
     // 미리보기 서버도 레포가 허용한 서버도 아닌 주소는 열지 않는다 — 조용히
     // 넘어가지 않고 말한다.
-    const refused = await driver.open("https://example.invalid/x", null);
+    const refused = await driver.open("https://example.invalid/x");
     const windows = BrowserWindow.getAllWindows();
     const hidden = windows.length === 1 && windows.every((w) => !w.isVisible());
     // 첫 프레임이 칠해질 때까지 캡처를 재시도한다 — 오프스크린 paint 는 첫 로드 뒤에 온다.
@@ -735,7 +736,7 @@ app.whenReady().then(async () => {
     }
     // 폭은 진짜로 좁아진다 — 페이지가 스스로 콘솔에 말한 innerWidth 가 증거다.
     let mobileWidth = null;
-    await driver.open("/", "기본", { viewport: "mobile", colorScheme: "dark" });
+    await driver.open("/", { viewport: "mobile", colorScheme: "dark" });
     for (let i = 0; i < 15; i++) {
       const probe = await driver.consoleLines();
       const found = probe
@@ -781,7 +782,7 @@ app.whenReady().then(async () => {
     );
     pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null);
     const paneDriver = createPreviewDriverFactory(() => pane).for(process.env.COLO_DRIVER_UNIT_URL);
-    const paneOpened = await paneDriver.open("/", "기본");
+    const paneOpened = await paneDriver.open("/");
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });
     await paneDriver.destroy();
     const paneContents = pane.webContents();
@@ -868,7 +869,8 @@ test("미리보기 드라이버: 숨은 창, 거절하는 open, 캡처와 콘솔
     assert.equal(result.hidden, true);
     // 캡처는 컴포지터가 한 번에 구운 진짜 WebP 다 — 재인코딩 세대가 없다.
     assert.equal(result.webpOk, true);
-    // 선언한 상태의 표식을 기다렸으므로 열림은 자리를 잡은 열림이다.
+    // 표식 없이 문서 완료만으로 settled — 페이지가 따로 알리는 것 없이도
+    // 열림은 자리를 잡은 열림이다.
     assert.equal(result.openedOk, true);
     assert.equal(result.openedSettled, true);
     // 허용 목록 밖의 주소는 "열었습니다" 가 아니라 거절이다 — 조용히

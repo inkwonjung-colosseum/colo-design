@@ -5,14 +5,6 @@
  * 목록으로 그리지 않는다.
  */
 
-/** The planner's words for a screen state, matching the web's stateLabel. */
-const COMMENT_STATE_LABEL: Record<string, string> = {
-  default: "기본",
-  empty: "비어 있음",
-  loading: "불러오는 중",
-  error: "오류",
-};
-
 /**
  * Builds the `### 수정 요청` section from this cycle's recorded comments:
  * 브랜치가 생긴 시각(sinceIso) 이후의 항목, 최대 20건(넘으면 `외 N건`), 화면은
@@ -26,7 +18,6 @@ const COMMENT_STATE_LABEL: Record<string, string> = {
 export function buildCommentsSection(
   rows: Array<{
     screen: string;
-    state: string | null;
     text: string;
     at: string;
     intent?: "change" | "question";
@@ -51,14 +42,12 @@ export function buildCommentsSection(
   const changes = shown.length - questions;
   const lines = shown.map((row) => {
     const screen = row.screen;
-    // 표식 없는 페이지의 행은 상태 절을 생략한다 — "null" 은 사람의 말이 아니다.
-    const state = row.state === null ? null : (COMMENT_STATE_LABEL[row.state] ?? row.state);
     const ask = row.intent === "question" ? " (질문)" : "";
     // 핀 본문은 한 행에 눌러 담는다 — 새 줄이 그대로 들어가면 목록의 행이
-    // 깨져 절의 끝이 어긋난다.
+    // 깨져 절의 끝이 어긋난다. (2026-09-21 상태 축 철거 — 행은 화면만 담는다.)
     const text = row.text.replace(/[\r\n\t]+/g, " ").trim();
     const words = text ? `"${text}"` : "(메모 없음)";
-    return `- ${screen}${state === null ? "" : ` · ${state}`}${ask} — ${words}`;
+    return `- ${screen}${ask} — ${words}`;
   });
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
   const title =

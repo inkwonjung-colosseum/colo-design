@@ -43,6 +43,7 @@ type RealBuild =
 export function FrozenStage({
   shot,
   stamp,
+  stampGone = false,
   tone,
   mode,
   onMode,
@@ -54,6 +55,8 @@ export function FrozenStage({
   shot: { mediaType: string; data: string } | null;
   /** The stamp's words — `{시각}에 보낸 화면`, `실제 앱 · 반영된 화면`, … */
   stamp: string;
+  /** The stamp's greeting is over — the bar keeps the walk-back, not the words. */
+  stampGone?: boolean;
   /** The stamp's color — `info` while waiting, `ok` for 반영됨, `warn` for 반려. */
   tone: "info" | "ok" | "warn";
   /** Which face the stage wears. `sent` without a shot still shows live. */
@@ -125,14 +128,16 @@ export function FrozenStage({
   return (
     <>
       <div className="frozenbar">
-        <span
-          className={`frozenbar__stamp frozenbar__stamp--${tone}`}
-          title={
-            mode === "sent" && !shot ? "보낸 화면 캡처 없음 — 지금 화면을 보고 있어요" : undefined
-          }
-        >
-          {stamp}
-        </span>
+        {!stampGone && (
+          <span
+            className={`frozenbar__stamp frozenbar__stamp--${tone}`}
+            title={
+              mode === "sent" && !shot ? "보낸 화면 캡처 없음 — 지금 화면을 보고 있어요" : undefined
+            }
+          >
+            {stamp}
+          </span>
+        )}
         {shot !== null && onMode && (
           <div className="frozenbar__seg" role="group" aria-label="보기 전환">
             <button
@@ -161,7 +166,11 @@ export function FrozenStage({
           <button
             type="button"
             className={
-              real.phase === "on" ? "frozenbar__real frozenbar__real--on" : "frozenbar__real"
+              real.phase === "failed"
+                ? "frozenbar__real frozenbar__real--failed"
+                : real.phase === "on"
+                  ? "frozenbar__real frozenbar__real--on"
+                  : "frozenbar__real"
             }
             title={
               real.phase === "failed"
@@ -175,9 +184,11 @@ export function FrozenStage({
           >
             {real.phase === "starting"
               ? "띄우는 중…"
-              : real.phase === "on"
-                ? "실제 앱 닫기"
-                : "실제로 열기"}
+              : real.phase === "failed"
+                ? "빌드 실패 — 다시 시도"
+                : real.phase === "on"
+                  ? "실제 앱 닫기"
+                  : "실제로 열기"}
           </button>
         )}
       </div>

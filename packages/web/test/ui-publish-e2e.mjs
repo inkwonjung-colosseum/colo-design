@@ -463,6 +463,53 @@ async function main() {
       (await corridor.count()) === 0,
     );
 
+    // --- 미리보기는 얼린 얼굴 아래에서도 무대를 꽉 채운다 -----------------
+    // 회귀: FrozenStage 가 끼워 넣는 래퍼가 flex 열이 아니면 slot 이 접혀
+    // 게스트가 intrinsic 높이로 눕고 화면이 위쪽만 그려졌다. device 의
+    // 0.35s 전이가 끝날 때까지 기다려 잰다 — 중간값을 재면 허위 실패다.
+    const stageFill = await page
+      .waitForFunction(
+        () => {
+          const frames = [...document.querySelectorAll(".preview__frame")];
+          return (
+            frames.length > 0 &&
+            frames.every((frame) => {
+              const parent = frame.parentElement;
+              return (
+                parent !== null &&
+                Math.abs(
+                  frame.getBoundingClientRect().height - parent.getBoundingClientRect().height,
+                ) <= 2
+              );
+            })
+          );
+        },
+        null,
+        { timeout: 5000 },
+      )
+      .then(() => true)
+      .catch(async () => {
+        console.error(
+          "STAGE FILL DUMP:",
+          JSON.stringify(
+            await page.evaluate(() =>
+              [...document.querySelectorAll(".preview__frame")].map((frame) => {
+                const chain = [];
+                for (let n = frame.parentElement; n && chain.length < 6; n = n.parentElement) {
+                  chain.push(`${n.className}@${Math.round(n.getBoundingClientRect().height)}`);
+                }
+                return {
+                  frame: Math.round(frame.getBoundingClientRect().height),
+                  chain: chain.join(" < "),
+                };
+              }),
+            ),
+          ),
+        );
+        return false;
+      });
+    check("the preview fills its stage under the frozen face", stageFill);
+
     const branch = await cycleBranch(fixture.remote);
     check("the save created its own branch on the remote", branch !== null, `${branch}`);
     check(

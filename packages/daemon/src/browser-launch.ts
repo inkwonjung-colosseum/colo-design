@@ -82,26 +82,6 @@ export function claudeBrowserMcpServer(entry: BrowserMcpEntry): {
   return { type: "stdio", command: entry.command, args: entry.args, env: { ...entry.env } };
 }
 
-/**
- * acp — session/new mcpServers의 배열 원소. command는 절대경로, args·env는
- * 생략 불가다(ACP v1 스키마의 stdio 서버 필수 필드).
- */
-export function acpBrowserMcpServer(entry: BrowserMcpEntry): {
-  type: "stdio";
-  name: string;
-  command: string;
-  args: string[];
-  env: Array<{ name: string; value: string }>;
-} {
-  return {
-    type: "stdio",
-    name: BROWSER_MCP_SERVER_NAME,
-    command: entry.command,
-    args: entry.args,
-    env: Object.entries(entry.env).map(([name, value]) => ({ name, value })),
-  };
-}
-
 /** codex — thread/start config.mcp_servers의 표 객체(config.toml의 mcp_servers 표와 같은 형태). */
 export function codexBrowserMcpServer(entry: BrowserMcpEntry): {
   command: string;

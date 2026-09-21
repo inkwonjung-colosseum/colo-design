@@ -1,5 +1,5 @@
 /**
- * Comments, checkpoints and the save/draft turn — comments.json durability, fallback summaries, discard, and the Claude one-turn that writes save memos and handoff drafts.
+ * Comments and the save/draft turn — comments.json durability, fallback summaries, discard, and the Claude one-turn that writes save memos and handoff drafts.
  *
  * Split out of repo.test.mjs — the bodies are verbatim; shared scaffolding
  * (workdir · repoRoot · clone · bringUp · promisifiedRun · stub client) lives
@@ -17,8 +17,9 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { ClaudeDriver } from "../dist/agent/drivers/claude/driver.js";
 import { readComments, recordComments } from "../dist/comments.js";
-import { RepoWorkspace, restorePlan, safeRepoPath } from "../dist/repo.js";
+import { RepoWorkspace, safeRepoPath } from "../dist/repo.js";
 import { createFixtureRepo, freePort, pushFixtureChange } from "./fixture-repo.mjs";
 import { bringUp, promisifiedRun, workdir } from "./repo-test-kit.mjs";
 
@@ -31,7 +32,7 @@ test("comments.record appends delivered rows — a second send of the same words
   const file = join(dir, "comments.json");
   try {
     recordComments(file, [
-      { screen: "/member/MemberList", state: "default", text: "첫 코멘트", elementText: "목록" },
+      { screen: "/member/MemberList", text: "첫 코멘트", elementText: "목록" },
     ]);
     // 자동 정리: delivery is the row's birth — every row lands resolved,
     // because the turn carrying the words IS the delivery.
@@ -45,13 +46,11 @@ test("comments.record appends delivered rows — a second send of the same words
     recordComments(file, [
       {
         screen: "/member/MemberList",
-        state: "default",
         text: "다시 쓴 코멘트",
         elementText: "목록",
       },
       {
         screen: "/member/MemberList",
-        state: "default",
         text: "하나 더",
         elementText: "페이지 제목",
       },
@@ -68,14 +67,10 @@ test("comments.record appends delivered rows — a second send of the same words
   }
 });
 
-test("one pair's re-send never touches another screen·state's rows", () => {
+test("one pair's re-send never touches another screen's rows", () => {
   const file = join(workdir("hub-comments-pair-"), "comments.json");
-  recordComments(file, [
-    { screen: "/member/MemberList", state: "default", text: "회원", elementText: "목록" },
-  ]);
-  recordComments(file, [
-    { screen: "/pay/PayFailed", state: "error", text: "결제", elementText: "실패" },
-  ]);
+  recordComments(file, [{ screen: "/member/MemberList", text: "회원", elementText: "목록" }]);
+  recordComments(file, [{ screen: "/pay/PayFailed", text: "결제", elementText: "실패" }]);
   const rows = readComments(file);
   assert.equal(rows.length, 2, JSON.stringify(rows));
 });
@@ -84,15 +79,15 @@ test("recordComments keeps the pin's element and normalizes the screen spelling"
   const file = join(workdir("hub-comments-element-"), "comments.json");
   const element = {
     component: "button",
-    path: 'div[data-screen="pay/PayFailed"] > div > button:nth-of-type(1)',
+    path: "body > main > div > div > button:nth-of-type(1)",
     rect: { x: 40, y: 120, width: 96, height: 32 },
   };
-  // The fixture once wrote route-shaped spellings; the store keeps the
-  // `[data-screen]` one, or the recorded pin would strand on every screen.
+  // The client may write route-shaped spellings; the store keeps the 경로
+  // 신원 철자(앞 슬래시 없음), or the recorded pin would strand on every
+  // screen.
   recordComments(file, [
     {
       screen: "/pay/PayFailed",
-      state: "error",
       text: "고쳐 주세요",
       elementText: "다시 시도",
       element,
@@ -113,7 +108,8 @@ test("an old row without element survives; a broken element row is dropped", () 
     writeFileSync(
       file,
       JSON.stringify([
-        // A legacy row: no element, still a comment.
+        // A legacy row: no element, still a comment. Its `state` key is the
+        // demolished axis's leftover — ignored, and the row still reads.
         {
           id: "old",
           screen: "pay/PayFailed",
@@ -128,7 +124,6 @@ test("an old row without element survives; a broken element row is dropped", () 
         {
           id: "broken",
           screen: "pay/PayFailed",
-          state: "error",
           text: "깨진 위치",
           elementText: "제목",
           element: { component: "div" },
@@ -163,7 +158,6 @@ test("a comments.json a hand mangled reads as whatever survives", () => {
         {
           id: "1",
           screen: "s",
-          state: "t",
           text: "x",
           elementText: "y",
           at: "2026-09-11T00:00:00Z",
@@ -179,91 +173,6 @@ test("a comments.json a hand mangled reads as whatever survives", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-// ---------------------------------------------------------------------------
-// 되돌리기 — offline: the restore plan and the snapshot mechanics. The
-// machine turns' Claude path is test:daemon's stub case.
-// ---------------------------------------------------------------------------
-
-test("복원 계획은 허용 경로 밖의 파일을 손대지 않는다", () => {
-  const plan = restorePlan(
-    [
-      "M\tindex.html",
-      "A\tsrc/screens/new/New.screen.tsx",
-      // A snapshot tree is git's own output — but the plan is what executes,
-      // and both of these are escapes, not paths inside a worktree.
-      "D\t../outside/secret.txt",
-      "A\t/etc/evil",
-    ].join("\n"),
-  );
-  assert.ok(safeRepoPath("src/screens/new/New.screen.tsx") !== null);
-  assert.equal(safeRepoPath("../outside/secret.txt"), null);
-  assert.equal(safeRepoPath("/etc/evil"), null);
-  assert.deepEqual(plan.checkout, ["index.html"]);
-  assert.deepEqual(plan.remove, ["src/screens/new/New.screen.tsx"]);
-});
-
-test("체크포인트는 추적 안 된 새 파일을 담고 HEAD · 인덱스를 안 건드린다", async () => {
-  const dir = workdir("hub-checkpoint-");
-  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-    });
-    const workspace = await bringUp(dir, fixture);
-    const work = join(dir, "work");
-    const git = (args) => promisifiedRun("git", ["-C", work, ...args]);
-
-    // The planner's unsaved half, the exact shape a turn starts with: a
-    // tracked edit staged in the real index, and a brand-new screen file
-    // git has never heard of.
-    const html = readFileSync(join(work, "index.html"), "utf8");
-    writeFileSync(join(work, "index.html"), `${html}<p>저장 전 마지막 모습</p>\n`);
-    await git(["add", "index.html"]);
-    mkdirSync(join(work, "src", "screens", "new"), { recursive: true });
-    writeFileSync(
-      join(work, "src", "screens", "new", "New.screen.tsx"),
-      "export const New = () => null;\n",
-    );
-
-    const headBefore = (await git(["rev-parse", "HEAD"])).trim();
-    const checkpoint = await workspace.checkpoint("session-a", 1);
-    assert.equal(checkpoint.id, "session-a/1");
-    assert.equal(checkpoint.sessionId, "session-a");
-    assert.equal(checkpoint.turn, 1);
-    assert.ok(checkpoint.at !== "", "the snapshot is dated");
-
-    assert.equal((await git(["rev-parse", "HEAD"])).trim(), headBefore, "HEAD never moved");
-    const status = await git(["status", "--porcelain"]);
-    assert.match(status, /^M {2}index\.html/m, "the real index kept its staged edit");
-    // git collapses a fully-untracked directory to `?? src/`; the invariant
-    // is that the real index never absorbed the new screen.
-    assert.match(status, /^\?\? src\//m, "the new screen stayed untracked");
-    assert.equal(
-      (await git(["ls-files", "src/screens/new/New.screen.tsx"])).trim(),
-      "",
-      "the real index never absorbed the new screen",
-    );
-
-    // `stash create` could not have done this: the snapshot holds the file
-    // too, which is the whole point for a first screen before its first 저장.
-    const tree = await git([
-      "ls-tree",
-      "-r",
-      "--name-only",
-      "refs/colo-design/checkpoints/session-a/1",
-    ]);
-    assert.match(
-      tree,
-      /src\/screens\/new\/New\.screen\.tsx/,
-      "the snapshot holds the untracked screen",
-    );
-    assert.match(tree, /index\.html/, "and the tracked file");
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test("변경 버리기는 미추적 화면 폴더째 지우고 죽지 않는다", async () => {
   const dir = workdir("hub-discard-dir-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
@@ -359,6 +268,16 @@ const writeAnswerStubClaude = (stubDir, answer) => {
   return path;
 };
 
+/**
+ * RepoWorkspace 의 기계 턴 — 담당 후보 드라이버(Claude)에 스텁 CLI 를
+ * 물려 실제 oneShot 경로를 그대로 돈다. 서버가 machine-provider 로 잇는
+ * 그 손을 테스트가 직접 쥐는 것뿐이다.
+ */
+const claudeMachineTurn = (executable) => {
+  const driver = new ClaudeDriver(() => executable);
+  return (prompt, opts) => driver.oneShot(prompt, opts);
+};
+
 /** The cycle branch's own subject, read straight off the bare remote. */
 const remoteSubject = async (remote) => {
   const branch = (
@@ -389,7 +308,9 @@ test("빈 메모의 저장은 Claude가 쓴 한 문장을 저장 메모로 커�
       root: join(dir, "work"),
       url: fixture.remote,
       onStatus: () => undefined,
-      claudeExecutable: writeAnswerStubClaude(join(dir, "bin"), "회원 목록에 페이지 추가"),
+      machineTurn: claudeMachineTurn(
+        writeAnswerStubClaude(join(dir, "bin"), "회원 목록에 페이지 추가"),
+      ),
     });
     await workspace.sync();
     await workspace.stop();
@@ -413,7 +334,7 @@ test("빈 메모의 저장은 Claude가 못 내면 기본 문구로 저장한다
       dir: join(dir, "fixture"),
       port: await freePort(),
     });
-    // bringUp carries no claudeExecutable — the memo turn cannot land.
+    // bringUp carries no machineTurn — the memo turn cannot land.
     const workspace = await bringUp(dir, fixture);
 
     writeFileSync(join(dir, "work", "index.html"), "<p>기본 문구의 저장</p>\n");
@@ -464,10 +385,22 @@ test("올리기에서 멈춘 저장은 다시 누르면 올리기만 다시 한�
     ).trim();
     assert.equal(count, "1", "the retry pushed the one commit, it did not add another");
 
-    // 올릴 것도 저장할 것도 없으면 예전 그대로 거절한다.
+    // 아무것도 저장할 게 없는 다시 저장은 조용한 no-op 성공이다 — 방금 원격에
+    // 올라간 저장을 그대로 이름할 뿐이다. 실패로 보내면 방금 저장한 사람의
+    // 화면에 "저장에 실패했어요" 가 깔리는 결함이었다 (2026-09-21 실사).
     const nothing = await workspace.save();
-    assert.equal(nothing.stage, "failed");
-    assert.match(nothing.detail ?? "", /저장할 변경사항이 없습니다/);
+    assert.equal(nothing.stage, "published", nothing.detail ?? "");
+    assert.equal(nothing.message, "회원 목록 화면 추가");
+    const countAfterNothing = (
+      await promisifiedRun("git", [
+        "-C",
+        join(dir, "work"),
+        "rev-list",
+        "--count",
+        "origin/main..HEAD",
+      ])
+    ).trim();
+    assert.equal(countAfterNothing, "1", "the no-op save did not add another commit");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -485,9 +418,11 @@ test("넘기기의 초안은 이 사이클의 저장 메모에서 제목과 내�
       root: join(dir, "work"),
       url: fixture.remote,
       onStatus: () => undefined,
-      claudeExecutable: writeAnswerStubClaude(
-        join(dir, "bin"),
-        "회원 관리 화면 넘김\n\n목록과 빈 상태를 만들었습니다.\n빈 상태 문구를 봐 주세요.",
+      machineTurn: claudeMachineTurn(
+        writeAnswerStubClaude(
+          join(dir, "bin"),
+          "회원 관리 화면 넘김\n\n목록과 빈 상태를 만들었습니다.\n빈 상태 문구를 봐 주세요.",
+        ),
       ),
     });
     await workspace.sync();
@@ -505,7 +440,7 @@ test("넘기기의 초안은 이 사이클의 저장 메모에서 제목과 내�
     assert.equal(saved.stage, "published", saved.detail ?? "");
 
     const draft = await workspace.handoffDraft();
-    assert.equal(draft.source, "claude");
+    assert.equal(draft.source, "machine");
     // 첫 줄은 제목, 나머지는 개발자가 읽을 내용 — 두 쪽이 섞이지 않는다.
     assert.equal(draft.title, "회원 관리 화면 넘김");
     assert.equal(draft.body, "목록과 빈 상태를 만들었습니다.\n빈 상태 문구를 봐 주세요.");
@@ -525,7 +460,7 @@ test("넘기기의 초안은 Claude가 못 내면 비어 있어 브라우저의 
       dir: join(dir, "fixture"),
       port: await freePort(),
     });
-    // bringUp carries no claudeExecutable — the draft turn cannot land.
+    // bringUp carries no machineTurn — the draft turn cannot land.
     const workspace = await bringUp(dir, fixture);
 
     writeFileSync(join(dir, "work", "index.html"), "<p>초안 없는 넘기기</p>\n");
@@ -565,7 +500,7 @@ test("넘기기의 미리보기는 개발자가 받을 자동 첨부를 그대�
     // 사이클이 열린 뒤에 찍은 핀 — 넘기기 본문의 `### 수정 요청` 이 될 것.
     const commentsFile = join(dir, "comments.json");
     recordComments(commentsFile, [
-      { screen: "/member/MemberList", state: "default", text: "제목을 줄여", elementText: "목록" },
+      { screen: "/member/MemberList", text: "제목을 줄여", elementText: "목록" },
     ]);
 
     const draft = await workspace.handoffDraft({
@@ -577,7 +512,7 @@ test("넘기기의 미리보기는 개발자가 받을 자동 첨부를 그대�
     // 핀이 가리킨 화면 id 로, 사용자의 말 그대로.
     assert.ok(draft.extras, "자동 첨부가 보고되지 않았다");
     assert.match(draft.extras.commentsSection ?? "", /### 수정 요청/);
-    assert.match(draft.extras.commentsSection ?? "", /- member\/MemberList · 기본 — "제목을 줄여"/);
+    assert.match(draft.extras.commentsSection ?? "", /- member\/MemberList — "제목을 줄여"/);
     // 같은 규칙의 새 절: 사이클 브랜치의 numstat 이 미리보기에 그대로 온다.
     assert.match(draft.extras.filesSection ?? "", /### 바뀐 파일/);
     assert.match(draft.extras.filesSection ?? "", /index\.html/);
@@ -592,36 +527,27 @@ test("buildCommentsSection: 사이클 행·20건 넘김", async () => {
   const rows = [
     {
       screen: "member/MemberList",
-      state: "default",
       text: "제목을 줄여",
       at: "2026-09-11T09:00:00.000Z",
     },
     {
       screen: "pay/PayFailed",
-      state: "error",
       text: "문구를 다시",
       at: "2026-09-11T09:05:00.000Z",
     },
     // 이전 사이클(브랜치 이전)의 항목은 절에 들지 않는다.
-    { screen: "pay/PayFailed", state: "error", text: "옛것", at: "2026-09-10T09:00:00.000Z" },
+    { screen: "pay/PayFailed", text: "옛것", at: "2026-09-10T09:00:00.000Z" },
   ];
   const section = buildCommentsSection(rows, "2026-09-11T00:00:00Z");
   assert.ok(section.includes("### 수정 요청"));
-  assert.ok(section.includes('- member/MemberList · 기본 — "제목을 줄여"'), section);
-  assert.ok(
-    section.includes('- pay/PayFailed · 오류 — "문구를 다시"'),
-    "핀이 가리킨 화면 id 로 남는다",
-  );
+  assert.ok(section.includes('- member/MemberList — "제목을 줄여"'), section);
+  assert.ok(section.includes('- pay/PayFailed — "문구를 다시"'), "핀이 가리킨 화면 id 로 남는다");
   assert.ok(!section.includes("옛것"), "브랜치 이전 항목은 제외");
-  assert.ok(
-    !section.includes("data-component") && !section.includes(".css"),
-    "경로·컴포넌트명은 쓰지 않는다",
-  );
+  assert.ok(!section.includes(".css"), "파일 경로는 섞지 않는다");
 
   const overflow = buildCommentsSection(
     Array.from({ length: 25 }, (_, index) => ({
       screen: "s",
-      state: "default",
       text: `코멘트 ${index + 1}`,
       at: `2026-09-11T10:${String(index).padStart(2, "0")}:00.000Z`,
     })),

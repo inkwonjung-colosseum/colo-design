@@ -262,8 +262,11 @@ export class PlannerPreviewView {
    * 말한다. 거짓이면 링크·외부 열기가 OS 브라우저로 넘어간다(옛 bounds 0 판정).
    */
   private hostReady = false;
+
   /** The last 💬 state — a fresh load, or a returning page, is re-told it (D67). */
   private commentsOn = false;
+  /** 무대의 폭 에뮬레이션 — 활성 페이지가 바뀌어도 무대의 선택이므로 activate 가 다시 입힌다. */
+  private emulateWidth: "mobile" | "tablet" | null = null;
   /** The web's last pin sync (재설계 C1) — a page that loads or returns is re-told it. */
   private lastPins: ColoDesignPinsSync | null = null;
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
@@ -524,7 +527,7 @@ export class PlannerPreviewView {
    * home origin 위에서만 논다 — 페이지가 외출 중이면 home 으로 되돌아오는
    * 것이 곧 그 화면으로 가는 길이다.
    */
-  navigate(route: string, state: string | null): void {
+  navigate(route: string): void {
     const page = this.activePage;
     if (!page || page.home === null) return;
     let url: URL;
@@ -536,7 +539,6 @@ export class PlannerPreviewView {
     // A pin's route must not slip past open()'s guard by carrying an
     // absolute route — the pin plays on the project page's home origin only.
     if (url.origin !== page.home) return;
-    if (state) url.searchParams.set("state", state);
     this.load(page, url.toString());
   }
 
@@ -948,8 +950,20 @@ export class PlannerPreviewView {
   }
 
   emulate(width: "mobile" | "tablet" | null): void {
-    const contents = this.webContents();
-    if (!contents) return;
+    this.emulateWidth = width;
+    const page = this.activePage;
+    if (page) this.applyEmulation(page);
+  }
+
+  /**
+   * 무대의 폭을 게스트에 입힌다 — activate 가 페이지마다 다시 부르므로
+   * 프로젝트를 오가도 에뮬레이션은 무대의 선택을 따른다(이전에는 활성
+   * 페이지에만 걸려, 돌아온 페이지가 낡은 뷰포트를 쥐었다).
+   */
+  private applyEmulation(page: PreviewPage): void {
+    const contents = page.contents;
+    if (contents.isDestroyed()) return;
+    const width = this.emulateWidth;
     if (!width) {
       contents.disableDeviceEmulation();
       return;
@@ -1114,6 +1128,9 @@ export class PlannerPreviewView {
     page.shownAt = Date.now();
     const contents = page.contents;
     const preview = page.kind === "preview";
+    // 무대의 폭 에뮬레이션은 페이지가 아니라 무대의 선택 — 돌아온 페이지에
+    // 다시 입힌다(데스크톱이면 남은 에뮬레이션을 벗긴다).
+    this.applyEmulation(page);
     // The repo overlay stays out of roamed pages: comments mode off, and
     // an empty pin list sweeps any badge a repo page left drawn.
     contents.send("colo-overlay:mode", { on: this.commentsOn && preview });
@@ -1264,11 +1281,9 @@ export class PlannerPreviewView {
     at?: string,
   ): void {
     let route = "";
-    let state = "default";
     try {
       const url = new URL(at ?? page.contents.getURL());
       route = url.pathname.replace(/^\//, "");
-      state = url.searchParams.get("state") ?? "default";
     } catch {
       // A URL that will not parse has no screen to name; the message stands.
     }
@@ -1277,7 +1292,6 @@ export class PlannerPreviewView {
       kind,
       message,
       route,
-      state,
     });
   }
 
@@ -1365,8 +1379,8 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
     if (typeof input?.url === "string") view.openTab(input.url);
     return { ok: true };
   });
-  ipcMain.handle("preview:navigate", (_event, input: { route?: string; state?: string | null }) => {
-    if (typeof input?.route === "string") view.navigate(input.route, input.state ?? null);
+  ipcMain.handle("preview:navigate", (_event, input: { route?: string }) => {
+    if (typeof input?.route === "string") view.navigate(input.route);
     return { ok: true };
   });
   ipcMain.handle("preview:history", (_event, input: { delta?: number }) => {

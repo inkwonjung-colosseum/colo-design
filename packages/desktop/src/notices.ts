@@ -66,11 +66,16 @@ export function noticeCopy(notice: DaemonNotice): {
           : notice.event === "changes_requested"
             ? {
                 title: `${notice.projectName} · 변경 요청`,
-                body: "개발자가 넘긴 요청에 코멘트를 남겼습니다 — 상태 확인에서 이어 가세요.",
+                body: "개발자가 코멘트를 남겼습니다. AI에게 반영을 맡겼습니다 — 끝나면 알려 드립니다.",
               }
-            : {
-                title: `${notice.projectName} · 개발자 코멘트`,
-                body: `개발자 코멘트 ${notice.count ?? 1}건이 새로 달렸습니다 — 상태 확인에서 읽어 보세요.`,
-              };
+            : notice.event === "replied"
+              ? {
+                  title: `${notice.projectName} · 다시 보냄`,
+                  body: "개발자 코멘트를 AI가 반영해 같은 요청에 실어 보냈습니다.",
+                }
+              : {
+                  title: `${notice.projectName} · 개발자 코멘트`,
+                  body: `개발자 코멘트 ${notice.count ?? 1}건 — AI에게 반영을 맡겼습니다.`,
+                };
   }
 }

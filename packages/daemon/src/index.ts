@@ -136,7 +136,13 @@ async function main(): Promise<void> {
     logger.error("미처리 거부", { err: reason instanceof Error ? reason : String(reason) }),
   );
 
-  const server = new DaemonServer({ ...config, logger });
+  const server = new DaemonServer({
+    ...config,
+    logger,
+    // 개발용 에이전트(omp)는 이 변수로만 열린다 — 브라우저 개발
+    // 경로(`pnpm dev:daemon`)가 켠다. 데스크톱은 자기 `app.isPackaged` 로 정한다.
+    devAgents: process.env.COLO_DESIGN_DEV_AGENTS === "1",
+  });
   try {
     await server.start();
   } catch (error) {

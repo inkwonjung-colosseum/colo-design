@@ -14,7 +14,14 @@ import {
   detectsRegistryAuthFailure,
   resolvePnpmExecutable,
 } from "./environment.js";
-import { descendantPids, killTree, pidListeningPorts, probePreviewUrl } from "./preview-claim.js";
+import {
+  descendantPids,
+  killPidTree,
+  killTree,
+  pidCommandLine,
+  pidListeningPorts,
+  probePreviewUrl,
+} from "./preview-claim.js";
 import {
   PREVIEW_COMMAND_UNKNOWN,
   type RepoConfig,
@@ -230,6 +237,7 @@ export class BringUp {
     // already has stays warm — the server's switch fence decides that one).
     if (!this.core.active) return;
     await this.killPreview();
+    await this.reclaimStalePreview();
     this.core.setPhase("starting", null);
     const { command } = config.preview;
     await this.requirePnpmIfReferenced(command);
@@ -240,6 +248,15 @@ export class BringUp {
     const child = spawn(command, this.spawnOptions());
     this.core.preview = child;
     this.core.previewEpoch += 1;
+    // 다음 생의 bring-up 이 이 트리를 거둘 수 있게 — .git 아래는 워크트리를
+    // 더럽히지 않는다. 동기 쓰기: 스폰 직후의 hard-die 도 기록을 남기게.
+    if (child.pid) {
+      try {
+        writeFileSync(join(this.core.root, ".git", "colo-design-preview.pid"), String(child.pid));
+      } catch {
+        // 기록에 실패해도 서버는 뜬다 — 좀비 정리만 다음 기회로 넘어간다.
+      }
+    }
     /** Last output line, so an exit can quote what the command actually said. */
     let lastLine: string | null = null;
     /** The recent output tail — a failed detection quotes it as evidence. */
@@ -383,6 +400,56 @@ export class BringUp {
     const hard = setTimeout(() => killTree(child, "SIGKILL"), 3_000);
     await exited;
     clearTimeout(hard);
+  }
+
+  /**
+   * 데몬이 hard-die 하면 detached 미리보기 트리는 살아 남아 포트를 계속 쥔다
+   * — 손에 핸들이 없는 다음 생의 killPreview 는 그 좀비를 못 거둔다 (실사:
+   * 오래된 next dev 가 3000 을 쥔 채 새 서버가 엉뚱한 포트로 새는 꼴). 마지막
+   * spawn 의 pid 기록(.git 아래 — 워크트리를 더럽히지 않는다)이 가리키는
+   * 트리의 명령줄이 이 클론을 말하면 우리 것임이 확실하므로 거둔다. Windows 는
+   * 명령줄 앵커가 없어 보수적으로 건너뛴다.
+   */
+  private async reclaimStalePreview(): Promise<void> {
+    if (currentPlatform() === "win32") return;
+    const pidFile = join(this.core.root, ".git", "colo-design-preview.pid");
+    let recorded = 0;
+    try {
+      recorded = Number(readFileSync(pidFile, "utf8").trim());
+    } catch {
+      return;
+    }
+    if (!Number.isInteger(recorded) || recorded <= 1) return;
+    const tree = [recorded, ...(await descendantPids(recorded).catch(() => []))];
+    const lines = await Promise.all(tree.map((pid) => pidCommandLine(pid)));
+    const ours = lines.some((line) => line?.includes(this.core.root) === true);
+    if (!ours) {
+      // 기록이 남의 것이 됐다(pid 재활용 등) — 지워 다음 생이 다시 판단하게.
+      rmSync(pidFile, { force: true });
+      return;
+    }
+    killPidTree(recorded, "SIGTERM");
+    const hard = setTimeout(() => killPidTree(recorded, "SIGKILL"), 3_000);
+    // 프로세스 소멸 대기 — 포트가 풀려야 다음 스폰이 그 자리를 얻는다.
+    const settled = Promise.withResolvers<void>();
+    const poll = setInterval(() => {
+      try {
+        process.kill(recorded, 0);
+      } catch {
+        clearInterval(poll);
+        clearTimeout(hard);
+        settled.resolve();
+      }
+    }, 100);
+    const giveUp = setTimeout(() => {
+      clearInterval(poll);
+      settled.resolve();
+    }, 8_000);
+    await settled.promise;
+    clearInterval(poll);
+    clearTimeout(giveUp);
+    clearTimeout(hard);
+    rmSync(pidFile, { force: true });
   }
 
   private spawnOptions(): SpawnOptions {

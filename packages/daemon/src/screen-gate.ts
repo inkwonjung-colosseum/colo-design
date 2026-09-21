@@ -5,42 +5,41 @@ import type { PreviewConsoleLine, PreviewDriver } from "./preview-driver.js";
  * 화면 확인 게이트 — 턴이 끝나면 기계가 그 화면을 열어 본다.
  *
  * 게이트의 입력은 사람이 가리킨 화면이다 (게이트 재배선 2026-09-17): pin
- * 과 화면 캡처가 실은 route·state 가 `notePinned` 로 모이고, 턴이 끝나면
+ * 과 화면 캡처가 실은 route 가 `notePinned` 로 모이고, 턴이 끝나면
  * 그 화면들을 다시 열어 본다. 없는 것은 **반드시 본다**는 보장이다:
  * 지금은 AI 가 화면을 고치고 열어 보지 않은 채 답할 수 있고, 그러면
  * 콘솔에서 죽은 화면을 **비개발자가** 발견한다. 그 사람에게는 고칠 말이
  * 없다 — 그게 이 게이트가 있는 이유다.
  *
- * 판정은 기계의 것이다: 이 턴이 가리킨 화면을 다시 열어, 그 화면이
- * 자리를 잡았는지(`settled`)와 콘솔의 error·실패한 요청만 본다. 경고는
+ * 판정은 기계의 것이다: 이 턴이 가리킨 화면을 다시 열어, 문서가 완전히
+ * 로드되었는지(`settled`)와 콘솔의 error·실패한 요청만 본다. 경고는
  * 세지 않는다 — 레포의 개발 빌드는 원래 경고를 뱉고, 그것은 이 도구가
- * 만든 문제가 아니다.
+ * 만든 문제가 아니다. (2026-09-21 상태 축 철거: 표식 대기가 사라지고
+ * settle 은 문서의 완전한 로드만을 뜻한다.)
  *
  * 범위가 "이 턴이 가리킨 화면" 인 이유: 바뀐 파일에서 화면 주소를 끌어낼
  * 길이 없다(경로↔라우트 지도가 어디에도 없다). 선언된 화면 전부를 쓸면
  * 이번 턴과 무관한 화면의 문제까지 AI 에게 떠넘기게 된다.
  */
 
-/** 이 턴이 연 화면 하나. */
+/** 이 턴이 연 화면 하나. (2026-09-21 상태 축 철거 — 주소만 남는다.) */
 export interface GateScreen {
   route: string;
-  state: string | null;
 }
 
-/** 한 화면에서 기계가 본 것. */
+/** 한 화면에서 기계가 본 것. (2026-09-21 상태 축 철거 — 주소만 남는다.) */
 export interface ScreenTrouble {
   route: string;
-  state: string | null;
-  /** 문서는 왔는데 그 화면의 표식이 끝내 나타나지 않았다. */
+  /** 문서가 끝내 완전히 로드되지 못했다. */
   unsettled: boolean;
   /** error·실패한 요청만 — 경고는 세지 않는다. */
   lines: PreviewConsoleLine[];
 }
 
 /** 게이트가 문제로 세는 줄. `warn` 은 빠진다(레포 개발 빌드의 기본 소음). */
-const TROUBLE_LEVELS: Record<string, true> = { error: true, net: true };
+export const TROUBLE_LEVELS: Record<string, true> = { error: true, net: true };
 /** 한 화면이 실어 보낼 수 있는 줄 수 — 같은 오류의 반복이 브리프를 삼키지 않게. */
-const MAX_LINES_PER_SCREEN = 8;
+export const MAX_LINES_PER_SCREEN = 8;
 /** 한 번에 다시 열어 보는 화면 수의 상한 — 게이트가 턴만큼 길어지지 않게. */
 export const MAX_GATE_SCREENS = 6;
 /**
@@ -55,7 +54,7 @@ export async function inspectScreens(
 ): Promise<ScreenTrouble[]> {
   const troubles: ScreenTrouble[] = [];
   for (const screen of screens.slice(0, MAX_GATE_SCREENS)) {
-    const opened = await driver.open(screen.route, screen.state).catch(() => null);
+    const opened = await driver.open(screen.route).catch(() => null);
     // 열지 못한 것은 게이트의 판정이 아니다 — 미리보기 서버가 방금 죽었거나
     // 주소가 사라진 것이고, 그 사실은 다른 자리(레포 상태)가 이미 말한다.
     if (opened === null || opened.ok !== true) continue;
@@ -65,7 +64,6 @@ export async function inspectScreens(
     if (opened.settled && lines.length === 0) continue;
     troubles.push({
       route: screen.route,
-      state: screen.state,
       unsettled: !opened.settled,
       lines,
     });
@@ -80,12 +78,10 @@ export async function inspectScreens(
  */
 export function gateBrief(troubles: ScreenTrouble[]): string {
   const blocks = troubles.map((trouble) => {
-    const head = trouble.state ? `${trouble.route} · ${trouble.state}` : trouble.route;
+    const head = trouble.route;
     const reasons: string[] = [];
     if (trouble.unsettled) {
-      reasons.push(
-        "화면이 자리를 잡지 못했습니다 — 요청한 상태의 표식이 끝내 나타나지 않았습니다.",
-      );
+      reasons.push("화면이 끝내 로드되지 못했습니다 — 문서가 완전히 오지 않았습니다.");
     }
     for (const line of trouble.lines) reasons.push(`${line.level}: ${line.text}`);
     return [`### ${head}`, ...reasons].join("\n");

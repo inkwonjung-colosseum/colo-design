@@ -43,7 +43,7 @@ export type QueuedSendPayload = {
   text: string;
   attachments: Array<{ name: string; mediaType: string; data: string }>;
   /** 표식과 함께 보낸 말 — 되살릴 때 같이 돌려준다(게이트의 입력). */
-  pins?: Array<{ screen: string; state: string | null }>;
+  pins?: Array<{ screen: string }>;
 } | null;
 
 export type ChatEvent =
@@ -362,6 +362,13 @@ export interface SessionSelectors {
   /** Currently pinned model, or the CLI's own choice when never pinned. */
   model: string | null;
   effort: EffortLevel | null;
+  /**
+   * The Claude permission enum, and ONLY ever one of its five words. A
+   * session running a provider's own mode (ACP `build`, codex `bypass`)
+   * reports `default` here and names its real mode in `mode` — the daemon
+   * used to cast the driver's id into this field, so a chip reading it as
+   * an enum key rendered nothing (감사 2026-09-19 C5). Read `mode` first.
+   */
   permissionMode: PermissionMode;
   /**
    * 빠르게가 지금 켜져 있는지. CLI 가 말해 준 상태이지 우리가 보낸 요청이
@@ -384,7 +391,13 @@ export interface SessionSelectors {
    * classification — the chip's shield glyph reads it.
    */
   modes?: Array<{ id: string; label: string; description?: string; tier?: string }>;
-  /** The current provider-mode id — equals `permissionMode` for Claude. */
+  /**
+   * The current provider-mode id — the one truth about what mode this
+   * session runs in, always present. Equals `permissionMode` for Claude;
+   * for everyone else it is the driver's own word and `permissionMode`
+   * falls back to `default`. (Optional on the wire only because a daemon
+   * older than this field may omit it.)
+   */
   mode?: string;
 }
 

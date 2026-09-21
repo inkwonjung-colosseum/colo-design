@@ -16,11 +16,13 @@ import type {
   SessionSelectors,
   SessionState,
 } from "@colo-design/protocol";
-import { readTurn } from "@colo-design/protocol";
+import { permissionModeSchema, readTurn } from "@colo-design/protocol";
 import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
+import { pinEffortFor } from "./pin-effort.js";
 import type { QueueDisk } from "./queue-store.js";
+import { classifyRetry, looksLikeStreamError, RETRY_DELAYS_MS } from "./turn-retry.js";
 
 /**
  * A send refusal the planner can read. The daemon's own guards answer in
@@ -59,10 +61,10 @@ interface PendingRequest {
   blocking: boolean;
 }
 
-/** 핀 하나 — 세션은 봉투만 알고 화면 게이트는 서버가 옮긴다. */
+/** 핀 하나 — 세션은 봉투만 알고 화면 게이트는 서버가 옮긴다. (2026-09-21
+ *  상태 축 철거 — 핀이 실는 것은 화면 주소뿐이다.) */
 export interface SessionPin {
   screen: string;
-  state: string | null;
 }
 
 /**
@@ -128,15 +130,39 @@ export class PermissionMemory {
   }
 }
 
+/**
+ * Claude 열거형의 다섯 말 중 하나인가 — 선로의 스키마가 진실이므로 그것을
+ * 그대로 묻는다(목록을 손으로 다시 적으면 언젠가 둘이 엇갈린다).
+ */
+function isClaudePermissionMode(mode: string): mode is PermissionMode {
+  return permissionModeSchema.safeParse(mode).success;
+}
+
 export interface SessionEvents {
   onEvent: (sessionId: string, event: ChatEvent) => void;
   onState: (sessionId: string, state: SessionState, detail?: string) => void;
+  /**
+   * 턴이 실제로 시작하는 유일한 순간 — send 와 release 가 turnStartedAt 을
+   * 세우는 바로 그 자리(한 턴당 한 번, 대기 줄의 batch 가 여러 건이어도).
+   * 화면 게이트의 목록은 여기서 비워진다: `running` 방송은 턴 시작의 동의어가
+   * 아니다(확인 카드 하나를 답해도 방송된다), 그래서 상태에 걸어 두었던 지난
+   * 판은 현 턴의 핀을 지웠고 게이트가 조용히 생략됐다. 턴의 시작을 아는 것은
+   */
+  onTurnStart?: (sessionId: string) => void;
   /**
    * 말이 실제로 CLI 로 나가는 시점(deliver)의 핀 목록 — 서버가 화면 게이트의
    * 입력으로 옮겨 적는다. 받은 시점이 아닌 나가는 시점인 이유는 HeldSend 의
    * 주석: 대기 중인 말의 핀은 그 말을 실은 턴의 것이어야 한다.
    */
   onPinned?: (sessionId: string, pins: SessionPin[]) => void;
+  /**
+   * 죽은 질의를 같은 id 의 재개로 되살려 달라는 요청 — 턴이 도는 중에 CLI 가
+   * 죽었고 마지막 말이 아직 답을 받지 못했다. 세션 스스로는 못 하는 일이다
+   * (새 CLI 띄우기는 매니저와 드라이버의 몫): "무조건 처리" 설계(2026-09-19)
+   * — 크래시 카드가 약속한 "다시 보내면 이어집니다"를 사용자의 재입력 대신
+   * 데몬이 이행한다. 살릴 수 없으면 조용히 돌아온다(카드가 남는다).
+   */
+  onRevive?: (sessionId: string) => void;
   onPermissionRequest: (payload: {
     requestId: string;
     sessionId: string;
@@ -233,6 +259,11 @@ export interface SessionOptions {
    * purely in memory.
    */
   queueDiskFor?: (sessionId: string) => QueueDisk;
+  /**
+   * 감독(2026-09-19)의 재시도 간격 — 백오프(ms). 생략하면 RETRY_DELAYS_MS
+   * (4초 · 16초). 테스트만 짧은 값을 넣는다.
+   */
+  retryDelays?: readonly number[];
 }
 
 /**
@@ -382,10 +413,18 @@ export class Session {
   readonly provider: string;
   state: SessionState = "idle";
   /**
-   * The provider's own mode id — Claude's four values for Claude sessions,
-   * the driver's own ids (ACP `build`/`plan`/…) for everyone else.
+   * The provider's own mode id — the ONE truth about what mode this session
+   * runs in. Claude's four enum values for Claude sessions, the driver's own
+   * ids (omp `bypass`, codex `bypass`, …) for everyone else.
+   *
+   * Kept apart from the Claude enum on purpose (감사 2026-09-19 C5): this used
+   * to be one `permissionMode: string` field that `selectors()` then cast to
+   * `PermissionMode`, so a non-Claude session shipped its own word (`bypass`)
+   * under a type that promises one of five. The web read it as an enum key
+   * (`MODE_LABEL[…]` → undefined) and only two accidental guards kept it out
+   * of the stored settings.
    */
-  permissionMode: string = "default";
+  providerModeId: string = "default";
   /** The provider's display name for crash/error strings — dispatch's
    *  resurrect path reads it off a dead session. */
   readonly providerLabel: string;
@@ -412,9 +451,37 @@ export class Session {
   /** Composer chip selections; `null` = the provider's own default. */
   private selectedModel: string | null = null;
   private selectedEffort: EffortLevel | null = null;
+  /** 사용자가 노력 칩으로 직접 고른 값인가 — 자동 기본값과 갈라 읽는다. */
+  private effortExplicit = false;
+  /** 이 세션이 이미 첫 턴을 내보냈는가 — 핀 자세는 첫 턴 앞에서만 묻는다. */
+  private deliveredAny = false;
   lastActivity = Date.now();
+  /**
+   * 마지막으로 나간 보내기의 말(P2-1) — 자동 저장의 커밋 제목 ①이 읽는다:
+   * "그 턴을 연 사용자 말의 첫 줄". 대기줄·바로 실어보내기 모두 send() 를
+   * 지나므로 여기 한 곳만 기억하면 된다.
+   */
+  lastSentText: string | null = null;
+  /** 사람의 말이 나간 적이 있는가 — backdate 무효화 판정 재료. */
+  private userSent = false;
   /** Replaced by the first turn's own words; also the "untouched" sentinel. */
   title: string;
+
+  /**
+   * 재개한 대화의 실제 마지막 활동 시각으로 되돌린다 — 재개와 대화록 재생은
+   * 활동이 아니다. 재생 이벤트가 `lastActivity` 를 지금으로 밀어 내므로,
+   * 호출은 재생이 가라앉은 뒤에 이뤄진다. 그 사이 사람의 말이 나갔다면
+   * (`markUserSent`) 지금 시각이 진짜 활동이므로 아무것도 하지 않는다.
+   */
+  backdate(ts: number): void {
+    if (ts <= 0 || this.userSent) return;
+    if (ts < this.lastActivity) this.lastActivity = ts;
+  }
+
+  /** 사람의 말이 실제로 나갔는가 — backdate 의 전송 후 무효화 판정 재료. */
+  markUserSent(): void {
+    this.userSent = true;
+  }
 
   private readonly writePolicy: WritePolicy;
 
@@ -451,11 +518,11 @@ export class Session {
   private readonly disk: QueueDisk | null;
   private readonly held: HeldSend[] = [];
   /**
-   * 지금 보내기: how many of `held` the next release may deliver. `null`
-   * empties the room (the turn's end); `1` delivers the front send alone
-   * and the rest keep waiting for the turn it starts.
+   * 지금 보내기가 걸어 둔 급함 — 이 말을 앞세워 도는 턴을 끊었다는 표.
+   * 턴 끝에서 소진된다: 급함이 남은 채 방이 비면 뒤따르는 지금 보내기가
+   * 같은 말을 다시 끊으려 하므로, release 는 비었을 때도 거둔다.
    */
-  private releaseLimit: number | null = null;
+  private hurrying = false;
   /**
    * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 두 가지를 한
    * 필드로 말한다: 턴이 돌고 있는가(`!== null`), 그리고 언제부터인가.
@@ -481,6 +548,21 @@ export class Session {
    * until a turn settles — an unanswered thread has no price to report.
    */
   private costUsd: number | null = null;
+  // -------------------------------------------------------------------------
+  // 감독 (2026-09-19 "무조건 처리"): 실패한 턴의 자기치유 상태
+  // -------------------------------------------------------------------------
+  /** 마지막으로 나간 말 — 실패한 턴의 재시도와 죽은 질의의 재개가 다시 쓴다. */
+  private lastDelivered: HeldSend | null = null;
+  /** 지금의 논리적 턴이 이미 쓴 재시도 수 — 상한은 retryDelays 의 길이다. */
+  private retryAttempt = 0;
+  /** 예약된 재시도 — 사람의 중지 · 닫힘이 언제나 우선한다. */
+  private retryTimer: NodeJS.Timeout | null = null;
+  /** 한도의 마지막 관측(ratelimit 이벤트) — wait 판정의 재충전 시계. */
+  private lastRateLimit: { status: string; resetsAt: number | null } | null = null;
+  /** 턴이 도는 중에 질의가 죽었다 — 재개 요청(onRevive)의 조건. */
+  private diedMidTurn = false;
+  /** 재시도 간격 — 기본 RETRY_DELAYS_MS, 테스트가 짧게 줄인다. */
+  private readonly retryDelays: readonly number[];
 
   /**
    * The hooks the driver calls back into. Exposed so the manager can hand
@@ -514,6 +596,7 @@ export class Session {
       options.writePolicy ?? ((path) => (containsPath(this.cwd, path) ? "allow" : "ask"));
     this.selectedModel = options.launch?.model ?? null;
     this.selectedEffort = options.launch?.effort ?? null;
+    this.effortExplicit = options.launch?.effort !== undefined;
 
     this.providerLabel = options.providerLabel ?? "에이전트";
     this.planModeId = options.planModeId ?? null;
@@ -523,11 +606,22 @@ export class Session {
     // user turn is pushed.
     this.id = options.sessionId ?? options.launch?.resume ?? randomUUID();
     this.disk = options.queueDiskFor?.(this.id) ?? null;
+    this.retryDelays = options.retryDelays ?? RETRY_DELAYS_MS;
   }
 
   /** The manager attaches the driver's transport once `createSession` returns. */
   attach(agent: AgentSession): void {
     this.agent = agent;
+  }
+
+  /**
+   * The transcript id the provider's store actually keys this session by —
+   * an ACP `session/new` answer names the agent's own uuid, which differs
+   * from ours. Store lookups (history · prompt count · delete) must ask
+   * with it; null = the ids match.
+   */
+  get vendorSessionId(): string | null {
+    return this.agent?.vendorId ?? null;
   }
 
   // -------------------------------------------------------------------------
@@ -538,7 +632,13 @@ export class Session {
     this.lastActivity = Date.now();
     if (event.kind === "init") {
       this.model = event.model;
-      this.permissionMode = event.permissionMode;
+      this.providerModeId = event.permissionMode;
+    }
+    if (event.kind === "ratelimit") {
+      // 감독(2026-09-19): 한도 상태는 이벤트로 그대로 흘러간다(요금 칩이
+      // 읽는다) — 재시도 판정을 위한 한 부만 여기 남는다. 실패한 턴이 한도
+      // 때문인지, 돌아올 시각은 언제인지를 scheduleSelfRetry 가 여기서 읽는다.
+      this.lastRateLimit = { status: event.status, resetsAt: event.resetsAt };
     }
     if (event.kind === "tool.start") {
       // 도는 도구의 경과 시계는 여기서 뜬다 — 재생된 기록은 이 길을 지나지
@@ -569,10 +669,22 @@ export class Session {
         return;
       }
       if (event.isError) this.interrupting = false;
+      // 공급자의 스트림 오류는 답변 옷을 입고 온다 — 드라이버가 isError 를
+      // 못 달면 오류 문구가 resultText 로 흘러들어 턴이 성공으로 닫힌다
+      // (E2E 2026-09-20: "Devin stream error unavailable" 가 답변 카드로).
+      // 실패로 갈라 자기 재시도·실패 카드의 기존 길에 태운다.
+      if (!event.isError && looksLikeStreamError(event.resultText)) {
+        event = { ...event, isError: true, subtype: "error" };
+      }
       // 턴 끝을 먼저 알리고, 그 다음에 대기 줄을 푼다 — 다음 턴은 앞
       // 턴이 닫힌 뒤에 열려야 기록도 램프도 순서대로 읽힌다.
       this.events.onEvent(this.id, event);
       this.endTurn();
+      // 감독(2026-09-19): 실패한 턴은 상한 안에서 스스로 다시 시도한다.
+      // 중지(interrupted)는 사람의 뜻이라 위에서 이미 갈라졌다 — 여기 오는
+      // 것은 진짜 고장뿐이다.
+      if (event.isError) this.scheduleSelfRetry(event.resultText);
+      else this.retryAttempt = 0;
       return;
     }
     this.events.onEvent(this.id, event);
@@ -586,6 +698,8 @@ export class Session {
    * never running ends quietly.
    */
   private handleTransportEnd(shutdownReason: string | null): void {
+    // 감독: 턴이 도는 중에 죽었는지는 상태가 내려앉기 전에만 읽을 수 있다.
+    this.diedMidTurn = this.turnStartedAt !== null && this.lastDelivered !== null;
     if (this.state === "running") {
       this.crashed = true;
       // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
@@ -606,6 +720,7 @@ export class Session {
       this.setState("closed");
     }
     this.settleTransport();
+    this.requestRevive();
   }
 
   private handleTransportError(detail: string): void {
@@ -629,6 +744,7 @@ export class Session {
       // feeding sends to a dead query.
       this.setState(this.aborted ? "closed" : "idle");
     } else if (!this.closed && this.state !== "closed") {
+      this.diedMidTurn = this.turnStartedAt !== null && this.lastDelivered !== null;
       this.crashed = true;
       this.events.onEvent(this.id, {
         kind: "notice",
@@ -641,6 +757,19 @@ export class Session {
       this.setState("error", detail);
     }
     this.settleTransport();
+    this.requestRevive();
+  }
+
+  /**
+   * 죽은 질의의 자동 재개 요청 — 세션은 사실만 말하고, 실제 일으킴은
+   * onRevive 를 받는 쪽(dispatch)이 한다. 깃발은 지우지 않는다: 재개를
+   * 시동하는 쪽이 revivePayload 로 같은 말을 읽어야 하므로, 깃발은 죽은
+   * 세션이 대체될 때까지 그대로 산다. 두 번 불리는 일(전송 오류 뒤의
+   * 스트림 끝)은 받는 쪽이 상태 검사로 이미 걸러 낸다.
+   */
+  private requestRevive(): void {
+    if (!this.diedMidTurn || this.closed) return;
+    this.events.onRevive?.(this.id);
   }
 
   /**
@@ -685,29 +814,92 @@ export class Session {
     this.release();
   }
 
+  // -------------------------------------------------------------------------
+  // 감독 (2026-09-19 "무조건 처리"): 실패한 턴의 자기치유
+  // -------------------------------------------------------------------------
+
   /**
-   * 대기 줄을 CLI 로 — 턴 끝에서만 부른다. 여러 건이면 CLI 가 한 턴으로 묶을
-   * 수 있지만(SDK 의 prompt batch), 어느 쪽이든 도는 턴에 끼어들지는 않는다.
-   * 지금 보내기가 한도를 걸어 두었으면 앞의 그만큼만 나가고 나머지는 이 턴의
-   * 끝을 다시 기다린다.
+   * 실패한 턴을 스스로 다시 시도한다 — 판정은 classifyRetry(순수), 실행은
+   * 이곳. 상한은 retryDelays 의 길이가 지키고, 사람의 중지 · 닫힘은 예약을
+   * 즉시 거둔다. 알림은 조용히: 재시도 사실만 기록에 남고, 상한을 넘긴 실패는
+   * 기존의 실패 카드가 사람의 손으로 남긴다.
+   */
+  private scheduleSelfRetry(resultText: string | null): void {
+    if (this.closed || this.crashed || this.aborted) return;
+    if (!this.sendable || this.turnStartedAt !== null || this.state !== "idle") return;
+    const item = this.lastDelivered;
+    if (!item) return;
+    const decision = classifyRetry({
+      attempt: this.retryAttempt,
+      resultText,
+      rateLimit: this.lastRateLimit,
+      now: Date.now(),
+      delays: this.retryDelays,
+    });
+    if (decision.action === "stop") return;
+    this.retryAttempt += 1;
+    this.events.onEvent(this.id, {
+      kind: "notice",
+      level: "info",
+      text:
+        decision.action === "wait"
+          ? "사용량이 다시 채워지는대로 스스로 이어서 합니다 — 잠시만 기다려 주세요."
+          : `일시적인 문제입니다 — 같은 말로 스스로 다시 시도합니다 (${this.retryAttempt}/${this.retryDelays.length}).`,
+    });
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.selfRedeliver();
+    }, decision.delayMs);
+    this.retryTimer.unref?.();
+  }
+
+  /**
+   * 예약된 재시도가 실제로 나가는 길 — 대기 줄과 같은 질서(turnStartedAt ·
+   * onTurnStart · running)로, 그러나 말은 화면에 다시 울리지 않는다(replay).
+   * 그 사이 사람이 다음 말을 보내 턴이 이미 돌면 조용히 물러난다: 새 말이
+   * 실패한 말보다 우선이며, 실패 카드는 여전히 그 자리에 있다.
+   */
+  private selfRedeliver(): void {
+    if (this.closed || !this.sendable || this.turnStartedAt !== null) return;
+    const item = this.lastDelivered;
+    if (!item) return;
+    this.turnStartedAt = Date.now();
+    this.events.onTurnStart?.(this.id);
+    this.setState("running");
+    this.deliver(item, true);
+  }
+
+  /** 예약된 재시도를 거둔다 — 사람의 중지 · 닫힘은 재시도보다 우선한다. */
+  private cancelSelfRetry(): void {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  /**
+   * 대기 줄을 CLI 로 — 턴 끝에서만 부른다. 방이 여러 건이어도 맨 앞의 한
+   * 건만 나간다: 각 말이 제 턴·제 답변을 받고, 나머지는 방에 남아 그 턴의
+   * 끝을 기다렸다 차례로 나간다. 지금 보내기의 급함은 여기서 소진된다 —
+   * 방이 비었을 때도 거둔다(위 hurrying 의 주석).
    */
   private release(): void {
     // 내려가는 대화에는 보내지 않는다: 닫는 중에 온 턴 끝(중지의 응답)이
     // 대기 줄을 죽어 가는 질의로 밀면, 그 말들은 CLI 에 닿지도 못한 채 방에서
     // 사라진다. 닫힘이 이긴 방은 디스크에 그대로 남아 재시작 뒤 회복된다.
     if (this.closed) return;
-    // The hurry is spent at this turn's end whether or not anything is left
-    // to hurry — a limit outliving an emptied room would starve a later one.
-    const limit = this.releaseLimit ?? this.held.length;
-    this.releaseLimit = null;
+    this.hurrying = false;
     if (this.held.length === 0) return;
-    const batch = this.held.splice(0, limit);
+    const [item] = this.held.splice(0, 1);
+    if (!item) return;
     this.disk?.saveHeld(this.held);
     // 대기 줄이 여는 턴은 새 요청이다 — 새 시계를 받는다.
     this.turnStartedAt = Date.now();
+    // 지난 턴의 화면 목록은 여기서 비워진다 — 한 턴에 한 번이면 충분하다.
+    this.events.onTurnStart?.(this.id);
     // send 와 같은 이유 — 핀이 onPinned 로 적힌 뒤 지워지지 않게 상태를 먼저 본다.
     this.setState("running");
-    for (const item of batch) this.deliver(item);
+    this.deliver(item);
     this.announceHeld();
   }
 
@@ -719,7 +911,7 @@ export class Session {
   private dropHeld(): void {
     if (this.held.length === 0) return;
     const lost = this.held.splice(0);
-    this.releaseLimit = null;
+    this.hurrying = false;
     if (this.closed) return;
     // 두 패널에 같은 말이 서지 않게: 방을 잃었다는 말은 대기 줄이 비었다는
     // 말이기도 하다. 비움을 먼저 알리고, 그 다음 어디로 갔는지 말한다.
@@ -751,8 +943,8 @@ export class Session {
     const item = this.held.find((held) => held.id === itemId);
     if (!item) return null;
     // Taking back the hurried send (the front) ends the hurry: the cut turn's
-    // end drains the room as any turn's end does.
-    if (this.held[0] === item) this.releaseLimit = null;
+    // end releases the next front like every turn's end does.
+    if (this.held[0] === item) this.hurrying = false;
     this.held.splice(this.held.indexOf(item), 1);
     this.disk?.saveHeld(this.held);
     this.announceHeld();
@@ -776,12 +968,12 @@ export class Session {
     // Already hurrying exactly this send — the click landed twice inside the
     // interrupt's grace. A second cut here would slice the turn the FIRST
     // click just started.
-    if (this.releaseLimit === 1 && this.held[0]?.id === itemId) return;
+    if (this.hurrying && this.held[0]?.id === itemId) return;
     const item = this.held.find((held) => held.id === itemId);
     if (!item) return;
     this.held.splice(this.held.indexOf(item), 1);
     this.held.unshift(item);
-    this.releaseLimit = 1;
+    this.hurrying = true;
     this.disk?.saveHeld(this.held);
     this.announceHeld();
     await this.interrupt();
@@ -854,15 +1046,14 @@ export class Session {
    * scroll answers with the whole tree), so the ask is not per-op; the
    * repo's own dev server needs no ask (the DevTools console is the same
    * tier). The card IS the tool-permission flow, so 항상 허용 memory
-   * applies. A turn need not be running: settle 가 running 으로 놓은 상태는
-   * 턴이 없으면 여기서 거둔다.
+   * applies. A turn need not be running — settle 은 도는 턴이 있을 때만
+   * running 을 다시 놓으므로 턴 밖의 카드는 상태를 건드리지 않는다.
    */
   async decideBrowserOp(
     op: string,
     signal: AbortSignal,
   ): Promise<{ allowed: boolean; message: string | null }> {
     const verdict = await this.handlePermission({ kind: "other", name: op }, { op }, { signal });
-    if (this.turnStartedAt === null && this.state === "running") this.setState("idle");
     return verdict.behavior === "allow"
       ? { allowed: true, message: null }
       : { allowed: false, message: verdict.message };
@@ -888,10 +1079,20 @@ export class Session {
       const settle = (outcome: PermissionVerdict) => {
         if (!this.pending.has(requestId)) return;
         this.pending.delete(requestId);
-        // 정상 정산에도 청취를 거둔다 — 세션 수명의 signal 위에 리스너가 쌓이는 것을 막는다.
+        // 정산에도 청취를 거둔다 — 세션 수명의 signal 위에 리스너가 쌓이는 것을 막는다.
         opts.signal.removeEventListener("abort", onAbort);
+        // 도는 턴이 있을 때만 다시 `running` 이다. 턴 밖의 카드(브라우저 op 의
+        // 접근 허락)를 답했다고 일이 도는 것은 아니다 — 예전엔 그 허위 전이가
+        // 사이드바의 "작업 중"을 점멸시켰고, decideBrowserOp 이 그걸 뒤에서
+        // 되돌려 놓고 있었다(원인을 막았으므로 그 교정은 사라졌다).
+        // 마지막 대기가 풀렸는데 턴이 이미 정산됐으면(답이 늦게 온 경우 —
+        // E2E 2026-09-20 실측: waiting_permission 인 채 턴이 끝나 상태가
+        // 영원히 내려앉지 않았다) `idle` 로 내려앉는다 — 유령 대기 방지.
         if (this.pending.size === 0 && this.state !== "closed" && this.state !== "error") {
-          this.setState("running");
+          if (this.turnStartedAt !== null) this.setState("running");
+          else if (this.state === "waiting_permission" || this.state === "waiting_question") {
+            this.setState("idle");
+          }
         }
         resolve(outcome);
       };
@@ -966,6 +1167,20 @@ export class Session {
     );
   }
 
+  /**
+   * 죽은 질의가 되살아날 때 실어야 할 마지막 말 — 턴이 도는 중에 죽었을 때만.
+   * 재개를 시동하는 쪽(dispatch.revive)이 읽는다: 같은 말을 새 CLI 에 다시
+   * 내려놓는 것이 크래시 카드의 약속을 사용자의 재입력 대신 이행하는 길이다.
+   */
+  get revivePayload(): {
+    text: string;
+    attachments: Array<{ name: string; mediaType: string; data: string }>;
+    pins: SessionPin[];
+  } | null {
+    if (!this.diedMidTurn || !this.lastDelivered) return null;
+    const { text, attachments, pins } = this.lastDelivered;
+    return { text, attachments, pins };
+  }
   /** The chips the session is running on — what a resurrection must carry. */
   get chosen(): { model: string | null; effort: EffortLevel | null } {
     return { model: this.selectedModel, effort: this.selectedEffort };
@@ -1044,8 +1259,10 @@ export class Session {
       // 승인은 곧 착수다: 모드를 먼저 작업 모드로 되돌린 뒤 승인을 내린다 —
       // CLI 가 승인 직후의 편집에 들어가도 계획 모드의 제약 아래 갇히지 않게.
       // 복귀가 거절돼도 승인은 나간다: 갇힌 계획보다 조심스러운 착수가 낫다.
+      // 복귀 대상은 이 공급자의 모드 id 다 — Claude 열거형이 아니므로
+      // 드라이버에 그대로 가는 `setMode` 로 간다.
       const restore = this.modeBeforePlan ?? this.defaultModeId;
-      return this.setPermissionMode(restore)
+      return this.setMode(restore)
         .catch(() => undefined)
         .then(() => {
           request.resolve({ behavior: "allow", updatedInput: input });
@@ -1106,6 +1323,7 @@ export class Session {
     text: string,
     attachments?: Array<{ name: string; mediaType: string; data: string }>,
     pins?: SessionPin[],
+    mode: "queue" | "steer" = "queue",
   ): void {
     if (this.closed) throw new Error("닫힌 대화입니다 — 목록에서 다시 열면 이어갑니다.");
     if (this.aborted)
@@ -1114,6 +1332,8 @@ export class Session {
       throw new Error(
         `${this.providerLabel}가 예상 밖으로 멈춰 이 대화의 연결이 끊겼습니다 — 대화를 다시 열면 이어갑니다`,
       );
+    this.userSent = true;
+    this.lastSentText = text;
     this.lastActivity = Date.now();
     const item: HeldSend = {
       id: randomUUID(),
@@ -1123,14 +1343,33 @@ export class Session {
     };
     // 다음 턴에 보내기: 턴이 도는 중에 온 말은 여기서 기다린다(`held`) — 아직
     // 아무 일도 일어나지 않은 채로. CLI 로 곧장 가는 건 도는 턴이 없을 때뿐이다.
+    // 바로 실어 보내기(steer)는 그 사이의 길이다 — 드라이버가 도는 턴에 실을
+    // 와이어를 내주면 그 턴에 그대로 실리고(codex turn/steer), 그런 길이 없는
+    // 에이전트는 '지금 보내기'와 같은 기계로 '바로'를 이행한다: 도는 턴을
+    // 끊고 이 말을 첫 번째 새 턴으로 세운다(omp 는 스스로도 도는 중 프롬프트를
+    // cancel + 새 턴으로 다루므로, 그 에이전트의 말투와 같은 길이다).
     if (this.turnStartedAt !== null) {
+      if (mode === "steer" && this.agent?.steer) {
+        this.steer(item);
+        return;
+      }
+      if (mode === "steer") {
+        this.held.unshift(item);
+        this.hurrying = true;
+        this.disk?.saveHeld(this.held);
+        this.announceHeld();
+        void this.interrupt();
+        return;
+      }
       this.held.push(item);
       this.disk?.saveHeld(this.held);
       this.announceHeld();
       return;
     }
     this.turnStartedAt = Date.now();
-    // 상태가 먼저: deliver 가 부르는 onPinned 이 서버의 pinnedThisTurn 에 적힌
+    // 턴의 시작 — 지난 턴이 가리킨 화면 목록은 여기서 비워진다(onPinned 보다 먼저).
+    this.events.onTurnStart?.(this.id);
+    // 상태가 먼저: deliver 가 부르는 onPinned 이 서버의 pinnedThisTurn 에 적힐
     // 뒤 running 진입이 그 판을 지우면 화면 게이트는 판정을 못 받는다.
     this.setState("running");
     this.deliver(item);
@@ -1142,56 +1381,98 @@ export class Session {
    * none of this yet, so taking it back out of the room leaves no trace, and
    * the running turn keeps its own quota and interrupt flag until its end.
    */
-  private deliver({ text, attachments, pins }: HeldSend): void {
+  private deliver(item: HeldSend, replay = false): void {
+    const { text, attachments, pins } = item;
+    // 감독: 마지막으로 나간 말 — 실패한 턴의 재시도와 죽은 질의의 재개가 읽는다.
+    this.lastDelivered = item;
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
     // 이 턴이 가리킨 화면이 곧 게이트의 입력이다 — 받을 때가 아니라 나갈 때
-    // 기록되므로, 대기 줄에 섞였던 핀은 자기 턴의 판정을 받는다.
+    // 기록되므로, 대기 줄에 섞였던 핀은 자기 턴의 판정을 받는다. 재시도의
+    // 핀도 다시 적는다: 같은 논리적 턴이므로 게이트 입력은 이어져야 한다.
     if (pins.length > 0) this.events.onPinned?.(this.id, pins);
 
-    /**
-     * A thread names itself after its first turn — unless the tool wrote that
-     * turn. A marked turn (PLAN D9) is a bundle of pins, a brief, a gate
-     * failure: text composed for the agent, in the provider.s vocabulary. The tab strip
-     * is the one place a planner navigates by reading, so it keeps its
-     * placeholder rather than taking a machine's words. A thread the tool
-     * opens on purpose is named at `session.create` instead.
-     */
-    const machine = readTurn(text).marker !== null;
-    const title = text.trim();
-    const unnamed = this.title === NEW_SESSION_TITLE;
-    if (unnamed && title && !machine) {
-      this.title = title.slice(0, 80);
+    const marked = readTurn(text).marker;
+    if (!replay) {
+      /**
+       * A thread names itself after its first turn — unless the tool wrote that
+       * turn. A marked turn (PLAN D9) is a bundle of pins, a brief, a gate
+       * failure: text composed for the agent, in the provider's vocabulary. The
+       * tab strip is the one place a planner navigates by reading, so it keeps
+       * its placeholder rather than taking a machine's words. A thread the tool
+       * opens on purpose is named at `session.create` instead.
+       */
+      const machine = marked !== null;
+      const title = text.trim();
+      const unnamed = this.title === NEW_SESSION_TITLE;
+      if (unnamed && title && !machine) {
+        this.title = title.slice(0, 80);
+      }
     }
-
-    void this.agent?.send({ text, attachments }).catch((error: unknown) => {
-      // 전송이 살아 있어도 보내기가 거절될 수 있다(codex 의 turn/start 거절,
-      // 방금 닫힌 SDK 입력 큐). 삼키면 turnStartedAt 만 남고 turn.end 는
-      // 영원히 오지 않는다 — 시계가 도는 죽은 턴. 여기서 스스로 턴을 닫는다:
-      // 에러 턴 끝은 handleDriverEvent 의 endTurn 을 타고 대기 줄까지 정산한다.
-      const detail = error instanceof Error ? error.message : String(error);
-      this.events.onEvent(this.id, {
-        kind: "notice",
-        level: "error",
-        text: `${this.providerLabel}에게 말을 전달하지 못했습니다 — 다시 보내 주세요.${
-          detail ? `\n\n${detail.slice(0, 200)}` : ""
-        }`,
+    // 핀으로 여는 첫 턴의 자세(2' 측정, pin-effort.ts) — 사람이 고르지
+    // 않았을 때만, 첫 턴이 모델을 부르기 *앞에* 한 번. 대화 중간 조절은
+    // 메시지 프리픽스 캐시를 깨므로 없다. 재시도(replay)는 첫 턴이 아니므로
+    // 묻지 않는다.
+    const pinEffort = replay
+      ? null
+      : pinEffortFor(process.env, {
+          first: !this.deliveredAny,
+          markerKind: marked?.kind ?? null,
+          effort: this.selectedEffort,
+          explicit: this.effortExplicit,
+        });
+    if (!replay) this.deliveredAny = true;
+    const send = (): void => {
+      void this.agent?.send({ text, attachments }).catch((error: unknown) => {
+        // 전송이 살아 있어도 보내기가 거절될 수 있다(codex 의 turn/start 거절,
+        // 방금 닫힌 SDK 입력 큐). 삼키면 turnStartedAt 만 남고 turn.end 는
+        // 영원히 오지 않는다 — 시계가 도는 죽은 턴. 여기서 스스로 턴을 닫는다:
+        // 에러 턴 끝은 handleDriverEvent 의 endTurn 을 타고 대기 줄까지 정산한다.
+        const detail = error instanceof Error ? error.message : String(error);
+        this.events.onEvent(this.id, {
+          kind: "notice",
+          level: "error",
+          text: `${this.providerLabel}에게 말을 전달하지 못했습니다 — 다시 보내 주세요.${
+            detail ? `\n\n${detail.slice(0, 200)}` : ""
+          }`,
+        });
+        this.handleDriverEvent({
+          kind: "turn.end",
+          subtype: "error",
+          isError: true,
+          costUsd: null,
+          numTurns: null,
+          durationMs: this.turnStartedAt !== null ? Date.now() - this.turnStartedAt : null,
+          resultText: null,
+        });
       });
-      this.handleDriverEvent({
-        kind: "turn.end",
-        subtype: "error",
-        isError: true,
-        costUsd: null,
-        numTurns: null,
-        durationMs: this.turnStartedAt !== null ? Date.now() - this.turnStartedAt : null,
-        resultText: null,
-      });
-    });
+    };
+    if (pinEffort !== null && this.agent?.setEffort) {
+      void this.agent
+        .setEffort(pinEffort)
+        .then(() => {
+          this.selectedEffort = pinEffort;
+        })
+        .catch(() => undefined)
+        .then(send);
+    } else {
+      send();
+    }
 
     // The echo carries the person's own words. D87: the pin crops ride back
     // (capped) so the chat card can draw its thumbnails — live only; a
-    // replayed transcript keeps the words.
+    // replayed transcript keeps the words. A retry is not news: the words are
+    // already on the tape once.
+    if (!replay) this.echoSend(item);
+  }
+
+  /**
+   * The person's own words on the tape — every send that leaves (or rides a
+   * running turn) announces itself once, thumbs and file names included.
+   */
+  private echoSend(item: HeldSend): void {
+    const { text, attachments } = item;
     const thumbs = attachments
       .filter((part) => part.mediaType === "image/jpeg")
       .slice(0, 6)
@@ -1208,7 +1489,38 @@ export class Session {
     });
   }
 
+  /**
+   * 바로 실어 보내기(steer): 도는 턴에 말을 실는 순간. 새 턴이 열리지
+   * 않으므로 시계·상태·재시도 도메인은 도는 턴의 것이 그대로 살고, 이 말은
+   * 대기 줄을 거치지 않는다 — 핀은 지금 이 턴의 게이트 입력이 되고, 에코는
+   * 실은 순간 울린다. 실어 주지 못하면(거절·죽은 전송) 턴은 그대로 두고
+   * 말만 대기 줄로 물러난다: 다음 턴이 그 말을 데려간다.
+   */
+  private steer(item: HeldSend): void {
+    const { text, attachments, pins } = item;
+    if (pins.length > 0) this.events.onPinned?.(this.id, pins);
+    void this.agent
+      ?.steer?.({ text, attachments })
+      .then(() => this.echoSend(item))
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.held.push(item);
+        this.disk?.saveHeld(this.held);
+        this.announceHeld();
+        this.events.onEvent(this.id, {
+          kind: "notice",
+          level: "warn",
+          text: `도는 턴에 실지 못해 대기 줄에 두었습니다 — 턴이 끝나면 나갑니다.${
+            detail ? `\n\n${detail.slice(0, 200)}` : ""
+          }`,
+        });
+      });
+  }
+
   async interrupt(): Promise<void> {
+    // 감독: 사람이 멈췄다 — 예약된 재시도도 함께 멈춘다. 멈춘 턴의 말을
+    // 스스로 다시 보내는 것은 중지를 무시하는 것이다.
+    this.cancelSelfRetry();
     // Mark first: the abort the transport throws back reads as THIS planner
     // action, and the catch must turn it into `멈추었습니다` (결함①).
     this.interrupting = true;
@@ -1291,22 +1603,34 @@ export class Session {
   async setEffort(effort: EffortLevel | null): Promise<void> {
     if (!this.agent?.setEffort) throw new Error("이 에이전트는 노력 수준을 지원하지 않습니다.");
     await this.agent.setEffort(effort);
-    this.selectedEffort = effort;
+    // 칩에서 온 호출은 사람의 뜻이다 — 고른 적이 있으면 이후 자동 기본값이
+    // 덮지 않는다(null 로 되돌려도 손대던 사실은 남는다).
+    if (effort !== null) this.effortExplicit = true;
   }
 
-  /** Widening past `default` is the planner's own explicit choice here. */
-  async setPermissionMode(mode: string): Promise<void> {
+  /**
+   * The Claude permission enum — `session.setPermissionMode` 의 집. 드라이버가
+   * 자기 모드 이름을 가진 공급자(ACP · codex)는 `setMode` 로 간다 — 두
+   * 메시지를 따로 둔 이유가 그것이므로 데몬 쪽도 둘로 갈라져 있어야 한다.
+   * Widening past `default` is the planner's own explicit choice here.
+   */
+  async setPermissionMode(mode: PermissionMode): Promise<void> {
+    await this.setMode(mode);
+  }
+
+  /** The provider's own mode id (ACP `build`, codex `bypass`, …). */
+  async setMode(mode: string): Promise<void> {
     if (!this.agent) throw new Error("대화가 아직 준비되지 않았습니다.");
     await this.agent.setMode(mode);
     // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
     // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
     // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
     if (this.planModeId !== null && mode === this.planModeId) {
-      if (this.permissionMode !== this.planModeId) this.modeBeforePlan = this.permissionMode;
+      if (this.providerModeId !== this.planModeId) this.modeBeforePlan = this.providerModeId;
     } else {
       this.modeBeforePlan = null;
     }
-    this.permissionMode = mode;
+    this.providerModeId = mode;
   }
 
   /**
@@ -1363,15 +1687,22 @@ export class Session {
         modes = null;
       }
     }
+    // `mode` 는 언제나 진실이다 — 모드 목록을 내놓지 않는 공급자라도 그렇다.
+    // `permissionMode` 는 Claude 열거형의 자리이므로 그 다섯 말 중 하나일
+    // 때만 채운다: 예전엔 드라이버 id 를 `as PermissionMode` 로 기울여
+    // 담았고(감사 C5), 그 거짓 단언이 칩의 라벨을 undefined 로 만들었다.
+    // 열거형 밖의 모드에서는 `default` 를 싣는다 — 칩은 `mode`·`modes` 를
+    // 먼저 읽고, 이것은 그쪽을 모르는 소비자의 안전한 밑값이다.
     return {
       model: this.selectedModel ?? this.model,
       effort: this.selectedEffort,
-      permissionMode: this.permissionMode as PermissionMode,
+      permissionMode: isClaudePermissionMode(this.providerModeId) ? this.providerModeId : "default",
       fastMode: this.fastMode,
       fastModeBlocked: this.fastModeBlocked,
       models,
       provider: this.provider,
-      ...(modes ? { modes, mode: this.permissionMode } : {}),
+      mode: this.providerModeId,
+      ...(modes ? { modes } : {}),
     };
   }
 
@@ -1399,6 +1730,8 @@ export class Session {
   async close(reason: "user" | "shutdown" = "user"): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // 감독: 닫힌 대화는 스스로 다시 시도하지 않는다.
+    this.cancelSelfRetry();
     for (const request of this.pending.values()) {
       request.resolve({ behavior: "deny", message: "Session closed by user" });
     }

@@ -11,11 +11,6 @@
 
 import type { Block } from "./daemon-client";
 
-/** Every user block is one sent prompt — planner's words and machine turns alike. */
-export function promptTotal(blocks: Block[]): number {
-  return blocks.filter((block) => block.type === "user").length;
-}
-
 /**
  * 각 assistant 답 블록의 턴 번호 — 그 답에 앞선(그 답을 낸) 프롬프트의 수.
  * 프롬프트 없이 홀로 남은 답(불완전한 복원)은 1로 매겨 유효한 번호를 지킨다.

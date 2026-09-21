@@ -69,7 +69,7 @@ export interface OtherProjectItem {
   slug: string;
   name: string;
   pendingCount: number;
-  lastEventKind?: "merged" | "closed" | "changes_requested" | "comments";
+  lastEventKind?: "merged" | "closed" | "changes_requested" | "comments" | "replied";
   lastEventAt?: string;
 }
 

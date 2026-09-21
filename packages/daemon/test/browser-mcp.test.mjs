@@ -1,10 +1,9 @@
 /**
  * 브라우저 MCP stdio 서버(browser-mcp.ts)와 기동 명세 빌더(browser-launch.ts)의
  * 단위 검사 — 가짜 데몬 HTTP 서버 위에서 돈다.
- *
- * 계약: initialize 악수 / tools/list 16개 / tools/call이 /internal/browser로
+ * 계약: initialize 악수 / tools/list 17개 / tools/call이 /internal/browser로
  * 올바른 op·params·Bearer 시크릿으로 중계 / 데몬의 401·404·ok:false가 isError
- * 도구 결과로 매핑 / 빌더의 3형태(claude 레코드·acp 배열·codex config 객체)가
+ * 도구 결과로 매핑 / 빌더의 두 형태(claude 레코드 · codex config 객체)가
  * 계약과 정확히 일치.
  *
  * Run: node --test packages/daemon/test/browser-mcp.test.mjs
@@ -18,8 +17,6 @@ import { createInterface } from "node:readline";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  acpBrowserMcpServer,
-  BROWSER_MCP_SERVER_NAME,
   browserMcpEntry,
   claudeBrowserMcpServer,
   codexBrowserMcpServer,
@@ -45,6 +42,7 @@ const TOOL_NAMES = [
   "browser_evaluate",
   "browser_back",
   "browser_forward",
+  "screen_check",
 ];
 
 /** 가짜 데몬 — /internal/browser 요청을 기록하고 handler가 답을 정한다. */
@@ -109,7 +107,7 @@ function startMcp(daemonUrl, secret) {
   };
 }
 
-test("initialize 악수와 tools/list의 16개 도구", async () => {
+test("initialize 악수와 tools/list의 17개 도구", async () => {
   const daemon = await startFakeDaemon((_req, res) => res.writeHead(404).end());
   const mcp = startMcp(daemon.url, SECRET);
   try {
@@ -126,7 +124,7 @@ test("initialize 악수와 tools/list의 16개 도구", async () => {
     assert.deepEqual(ping.result, {});
     const list = await mcp.rpc("tools/list");
     const names = list.result.tools.map((tool) => tool.name);
-    assert.equal(names.length, 16);
+    assert.equal(names.length, 17);
     assert.deepEqual(new Set(names), new Set(TOOL_NAMES));
     for (const tool of list.result.tools) {
       assert.equal(tool.inputSchema.type, "object", `${tool.name}의 inputSchema`);
@@ -253,7 +251,7 @@ test("시크릿 불일치 401과 pane 없음 404가 isError로 매핑된다", as
   }
 });
 
-test("빌더의 3형태가 계약과 정확히 일치한다", () => {
+test("빌더의 두 형태가 계약과 정확히 일치한다", () => {
   const entry = browserMcpEntry(true, "http://127.0.0.1:7823", "s3cret");
   assert.ok(entry);
   assert.ok(entry.command.length > 0);
@@ -276,18 +274,6 @@ test("빌더의 3형태가 계약과 정확히 일치한다", () => {
       COLO_BROWSER_SECRET: "s3cret",
       ELECTRON_RUN_AS_NODE: "1",
     },
-  });
-  // acp — session/new mcpServers의 배열 원소: command 절대경로·args·env 필수.
-  assert.deepEqual(acpBrowserMcpServer(entry), {
-    type: "stdio",
-    name: BROWSER_MCP_SERVER_NAME,
-    command: entry.command,
-    args: entry.args,
-    env: [
-      { name: "COLO_DAEMON_URL", value: "http://127.0.0.1:7823" },
-      { name: "COLO_BROWSER_SECRET", value: "s3cret" },
-      { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-    ],
   });
   // codex — thread/start config.mcp_servers의 표 객체.
   assert.deepEqual(codexBrowserMcpServer(entry), {

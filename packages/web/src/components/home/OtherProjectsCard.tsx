@@ -6,6 +6,7 @@ const EVENT_LABEL: Record<NonNullable<OtherProjectItem["lastEventKind"]>, string
   closed: "반려됨",
   changes_requested: "반려됨",
   comments: "코멘트 도착",
+  replied: "다시 보냄",
 };
 
 /** 요약 행 한 줄 — pending 수와 마지막 사건을 가운뎃점으로 잇는다. 어느 쪽도

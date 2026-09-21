@@ -8,6 +8,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +30,11 @@ import { COLO_DESIGN_DIR } from "./environment.js";
  * 크기 상한: 첨부 base64가 항목당 `MAX_ITEM_BYTES`(디코딩 추정)를 넘으면
  * 바이트는 버리고 `truncated` 만 남긴다 — 단어는 언제나 온전히 저장된다.
  * lost 방은 세션당 `MAX_LOST_ITEMS` 건, 30일 — 읽을 때 정리한다.
+ *
+ * 방이 비면 파일도 남지 않는다(결함 4 — E2E 2026-09-20 실측: 소비·폐기된
+ * 방 파일이 `queue-*.json` 180건으로 쌓였다). 저장소 디렉터리의 방 파일 수는
+ * `MAX_QUEUE_FILES` 를 넘지 않게 정리한다 — 넘치면 가장 오래된 방부터 lost 로
+ * 편입해 회복 가능성은 남기되, 오래된 대기가 배달을 노리는 일은 없게 한다.
  */
 
 /** `Session.held` 와 같은 모양 — bytes 포함. 구조적으로만 계약한다. */
@@ -36,8 +42,9 @@ export interface StoredSend {
   id: string;
   text: string;
   attachments: Array<{ name: string; mediaType: string; data: string }>;
-  /** 화면 게이트 입력 — deliver 때 소비된다. 옛 파일엔 없다(없으면 없는 대로). */
-  pins?: Array<{ screen: string; state: string | null }>;
+  /** 화면 게이트 입력 — deliver 때 소비된다. 옛 파일엔 없다(없으면 없는 대로).
+   *  옛 행이 실은 state 키는 그냥 무시된다(2026-09-21 상태 축 철거). */
+  pins?: Array<{ screen: string }>;
   /** 쓰는 시점에 첨부가 상한을 넘어 바이트가 버려졌다는 표식. */
   truncated?: boolean;
 }
@@ -55,6 +62,8 @@ interface QueueFile {
 const MAX_ITEM_BYTES = 8 * 1024 * 1024;
 /** lost 방의 깊이 — 가장 오래된 것부터 잘린다. */
 const MAX_LOST_ITEMS = 20;
+/** 저장소 디렉터리의 방 파일 수 상한 — 넘치면 가장 오래된 방부터 정리한다. */
+const MAX_QUEUE_FILES = 200;
 /** 회복 대기의 수명. 그 너머의 말은 계획자가 이미 잊었다고 본다. */
 const LOST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -161,13 +170,24 @@ export class QueueStore {
     renameSync(temporary, target);
   }
 
+  /**
+   * 쓰기의 문 — 방이 완전히 비었으면 파일도 지운다. 빈 방 파일은 아무도 읽지
+   * 않으면서 저장소 디렉터리에 쌓여 결함 4(E2E 2026-09-20)의 180건이 됐다.
+   */
+  private persist(sessionId: string, file: QueueFile): void {
+    if (file.held.length === 0 && file.lost.length === 0) {
+      rmSync(this.file(sessionId), { force: true });
+      return;
+    }
+    this.write(sessionId, file);
+  }
+
   /** The live room's mirror. Emptying the room empties the held side, not the lost one. */
   saveHeld(sessionId: string, held: StoredSend[]): void {
     const file = this.load(sessionId);
     const bounded = held.map(budget);
-    const nothing = file.held.length === 0 && bounded.length === 0;
-    if (nothing && file.lost.length === 0) return;
-    this.write(sessionId, { held: bounded, lost: file.lost });
+    this.persist(sessionId, { held: bounded, lost: file.lost });
+    this.enforceFileCap();
   }
 
   /** The room's contents become recovery rows. Returns the lost room as the wire sees it. */
@@ -179,7 +199,7 @@ export class QueueStore {
       lost.length > MAX_LOST_ITEMS
         ? [...lost].sort((a, b) => b.lostAt - a.lostAt).slice(0, MAX_LOST_ITEMS)
         : lost;
-    this.write(sessionId, { held: [], lost: kept });
+    this.persist(sessionId, { held: [], lost: kept });
     return kept.map((item) => ({ ...summarize(item), lostAt: item.lostAt }));
   }
 
@@ -192,22 +212,26 @@ export class QueueStore {
     const file = this.load(sessionId);
     const item = file.lost.find((lost) => lost.id === itemId);
     if (!item) return null;
-    this.write(sessionId, {
+    this.persist(sessionId, {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
     });
-    if (item.truncated) return { text: item.text, attachments: [] };
+    // 핀은 말의 일부이지 첨부가 아니다 — 상한을 넘어 바이트를 버린 말에서도
+    // 글자와 함께 살아남는다. 그것이 화면 확인 게이트의 입력이므로,
+    // 여기서 떨굴 핀은 되살린 말의 턴을 검증 밖으로 내보낸다(감사 C4).
+    const pins = item.pins?.length ? { pins: item.pins } : {};
+    if (item.truncated) return { text: item.text, attachments: [], ...pins };
     // removeHeld 과 같은 이유 — 프로토콜 타입 밖의 동행 바이트(회귀 보고).
     return {
       text: item.text,
       attachments: item.attachments,
-      ...(item.pins?.length ? { pins: item.pins } : {}),
+      ...pins,
     };
   }
 
   dismissLost(sessionId: string, itemId: string): void {
     const file = this.load(sessionId);
-    this.write(sessionId, {
+    this.persist(sessionId, {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
     });
@@ -221,7 +245,9 @@ export class QueueStore {
   /**
    * 기동 때의 청소: 프로세스가 죽어도 파일에 남아 있던 held는 그 턴이 죽었다는
    * 뜻이다 — lost로 전환해 재접속한 창이 회복 패널로 되찾을 수 있게 한다.
-   * Returns how many files carried orphans.
+   * 배달 대상 세션은 이 데몬에 살아 있지 않으므로 새 세션·스레드를 만들어
+   * 배달하는 일은 없다 — lost 방이 답이고, 되살리기는 언제나 계획자의 손으로
+   * 입력창을 거친다. Returns how many files carried orphans.
    */
   sweepOrphans(): number {
     let swept = 0;
@@ -238,7 +264,59 @@ export class QueueStore {
       this.moveHeldToLost(sessionId, file.held);
       swept += 1;
     }
+    this.enforceFileCap();
     return swept;
+  }
+
+  /**
+   * 저장소 디렉터리의 방 파일 수 상한(결함 4 — E2E 2026-09-20 실측: 180건
+   * 누적). 상한을 넘으면 초과분만큼 가장 오래된 방부터 정리한다 — 수명이
+   * 지난 lost 만 남은 죽은 방은 파일까지 치우고, 대기가 남은 방은 lost 로
+   * 편입해 회복 가능성은 남기되 오래된 대기가 배달을 노리는 일은 없게 한다.
+   * 이미 회복 대기인 방은 유일하게 그대로 둘 수 있는 방이다 — 편입도 삭제도
+   * 회복 가능성을 침해한다. 편입은 방 파일 수를 줄이지 못하므로(방금 잃은
+   * 말은 회복 패널의 몫) 한 번의 검사에 초과분만큼만 옮긴다 — 다음 쓰기와
+   * 기동 청소가 이어서 걷는다.
+   */
+  private enforceFileCap(): void {
+    let entries: string[];
+    try {
+      entries = readdirSync(this.dir).filter((name) => /^queue-.+\.json$/.test(name));
+    } catch {
+      return;
+    }
+    let count = entries.length;
+    let budget = count - MAX_QUEUE_FILES;
+    if (budget <= 0) return;
+    const oldest = entries
+      .map((name) => {
+        try {
+          return { name, mtime: statSync(join(this.dir, name)).mtimeMs };
+        } catch {
+          return { name, mtime: 0 };
+        }
+      })
+      .sort((a, b) => a.mtime - b.mtime);
+    for (const { name } of oldest) {
+      if (count <= MAX_QUEUE_FILES || budget <= 0) break;
+      const sessionId = name.slice("queue-".length, -".json".length);
+      try {
+        // load 가 이미 수명이 지난 lost 는 걸러 둔다.
+        const file = this.load(sessionId);
+        if (file.held.length === 0 && file.lost.length > 0) continue;
+        if (file.held.length === 0) {
+          // 죽은 방 — 빈 방 파일이 쌓이는 길이다. persist 가 파일을 지운다.
+          this.persist(sessionId, file);
+          count -= 1;
+          continue;
+        }
+        this.moveHeldToLost(sessionId, file.held);
+        budget -= 1;
+      } catch {
+        // 파일 이름이 세션 id 의 자격을 벗어났으면(와이어 값) 편입 대상이
+        // 아니다 — 한 방의 실패가 저장소 정리를 멈추게 두지 않는다.
+      }
+    }
   }
 
   /** A session-shaped handle — the Session takes one at birth. */

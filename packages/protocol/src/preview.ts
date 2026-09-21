@@ -15,16 +15,16 @@
 // ---------------------------------------------------------------------------
 /**
  * One pinned element in the repo's preview app, described by the tool's own
- * overlay (D67) from the DOM it shares with the page: a `data-component`
- * name or the tag, the element's own text, a CSS path from the
- * `[data-screen]` wrapper, and the viewport rect at pin time.
+ * overlay (D67) from the DOM it shares with the page: the tag, the element's
+ * own text, a CSS path from the page's `body`, and the viewport rect at pin
+ * time(2026-09-21 레포 마커 철거 — 신원은 경로뿐이다).
  */
 export interface ColoDesignCommentTarget {
-  /** `data-component` when the repo sets one, else the tag name. */
+  /** The tag name — the element's own kind. */
   component: string;
   /** The element's own text (direct text nodes), trimmed and capped. */
   text: string;
-  /** CSS path from the [data-screen] wrapper down to the element. */
+  /** CSS path from the page's `body` down to the element. */
   path: string;
   /** Viewport rect of the element at pin time. */
   rect: { x: number; y: number; width: number; height: number };
@@ -43,8 +43,6 @@ export interface ColoDesignCommentTarget {
   attrs?: { id?: string; testId?: string; classes?: string[] };
   /** React component names, nearest first, ≤3 (재설계 C9). Dev builds only. */
   owners?: string[];
-  /** The repo's own `data-colo-src` stamp: `path:line` of the JSX (재설계 C8). */
-  source?: string;
 }
 
 /**
@@ -60,12 +58,7 @@ export interface ColoDesignPinEnvelope {
     id: string;
     /** The screen the pin sat on, as `screenContext` read it. */
     screen: string;
-    /**
-     * The screen state the pin sat on — `data-state` 표식이 없는 페이지는
-     * null 이다(합성값은 만들지 않는다: 표식 없음을 표식으로 사칭하면 게이트의
-     * 자리 잡음 판정이 유령을 기다린다). null 의 확인은 문서 로드까지다.
-     */
-    state: string | null;
+
     element: ColoDesignCommentTarget;
     /**
      * What the planner was looking at (PLAN D87): the view crops the element
@@ -89,8 +82,6 @@ export interface ColoDesignPinsSync {
   pins: Array<{
     id: string;
     screen: string;
-    /** 표식 없는 페이지의 핀은 null 로 오고, 그대로 되돌아간다 — 정규화 금지. */
-    state: string | null;
     /**
      * The element path the badge re-anchors on. A `screenMark` row has no
      * element — it carries "" and the overlay anchors on the screen frame.
@@ -140,6 +131,17 @@ export interface ColoDesignErrorEnvelope {
   message: string;
   /** The route that was up when it failed. */
   route: string;
-  /** 표식 없는 페이지는 null — 합성 상태는 만들지 않는다. */
-  state: string | null;
+}
+
+/**
+ * `preview.screenCheck` — the isolated verification window's verdict for one
+ * screen (게이트 `inspectScreens` 와 같은 드라이버·같은 기준): did the page
+ * settle, and what did its console count as trouble (`error`·네트워크 실패
+ * 만 — `warn` 은 레포 개발 빌드의 기본 소음이라 세지 않는다).
+ */
+export interface ScreenCheckReport {
+  /** The page's settle marker appeared in time. */
+  settled: boolean;
+  /** Trouble lines, `level: text`, at most `MAX_LINES_PER_SCREEN`. */
+  errors: string[];
 }

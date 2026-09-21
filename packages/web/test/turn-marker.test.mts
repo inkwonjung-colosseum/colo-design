@@ -17,13 +17,14 @@ import {
   type CommentMarkerItem,
   markTurn,
   readTurn,
+  reviewToTurn,
   type TurnMarker,
 } from "../../protocol/src/turn-marker.ts";
+import type { DeveloperReview } from "../../protocol/src/repo.ts";
 
 const COMMENTS: TurnMarker = {
   kind: "comments",
   screen: "member/MemberList",
-  state: "default",
   items: [
     { label: "정진수", comment: "이름 열을 가입일 역순으로 정렬해 주세요." },
     { label: "검색", comment: "상세 버튼을 보조 스타일로 바꿔 주세요." },
@@ -31,7 +32,7 @@ const COMMENTS: TurnMarker = {
 };
 
 test("round trips a marker and leaves the body untouched", () => {
-  const body = "화면 수정 요청 2건 — member/MemberList (default 상태)\n위치: div > table";
+  const body = "화면 수정 요청 2건 — member/MemberList\n위치: div > table";
   const read = readTurn(markTurn(COMMENTS, body));
   assert.deepEqual(read.marker, COMMENTS);
   assert.equal(read.body, body);
@@ -41,7 +42,6 @@ test("note and per-item screen round trip; older markers read without them", () 
   const noted: TurnMarker = {
     kind: "comments",
     screen: "화면 2곳",
-    state: "기본",
     note: "두 화면을 한 번에 봐 주세요.",
     items: [
       { label: "목록", comment: "여백이 좁아요", screen: "회원 목록", shot: true },
@@ -64,13 +64,11 @@ test("every kind survives the round trip", () => {
     {
       kind: "error",
       route: "/member/MemberList",
-      state: "오류",
       errorKind: "runtime",
     },
     {
       kind: "error",
-      route: "/member/MemberList",
-      state: "기본",
+      route: "/member/MemberDetail",
       errorKind: "build",
     },
   ];
@@ -80,25 +78,23 @@ test("every kind survives the round trip", () => {
 });
 
 test("the plan's literal error marker parses — its kind is the failure, not the card", () => {
-  // The payload is written as {"route","state","kind"}: the tag already said
+  // The payload is written as {"route","kind"}: the tag already said
   // "error", so the payload's kind is free to mean runtime vs build.
   const text =
-    '<!-- colo-design:error {"route":"/member/MemberList","state":"오류","kind":"build"} -->\n' +
+    '<!-- colo-design:error {"route":"/member/MemberList","kind":"build"} -->\n' +
     "Module build failed: …";
   assert.deepEqual(readTurn(text).marker, {
     kind: "error",
     route: "/member/MemberList",
-    state: "오류",
     errorKind: "build",
   });
 });
 
 test("an error marker without a usable kind degrades to runtime", () => {
-  const text = '<!-- colo-design:error {"route":"/a","state":"default"} -->\nTypeError: …';
+  const text = '<!-- colo-design:error {"route":"/a"} -->\nTypeError: …';
   assert.deepEqual(readTurn(text).marker, {
     kind: "error",
     route: "/a",
-    state: "default",
     errorKind: "runtime",
   });
 });
@@ -124,7 +120,7 @@ test("an unknown kind is not a marker", () => {
 test("the wrong shape for a known kind is not a marker", () => {
   // `items` missing entirely: a comments card with nothing to list is a lie
   // about what the planner sent.
-  const text = '<!-- colo-design:comments {"screen":"a","state":"b"} -->\n본문';
+  const text = '<!-- colo-design:comments {"screen":"a"} -->\n본문';
   assert.equal(readTurn(text).marker, null);
 });
 
@@ -144,9 +140,28 @@ test("an older build's extra fields are ignored, missing ones blank out", () => 
   assert.deepEqual(readTurn(bare).marker, { kind: "gate", step: "" });
 });
 
+test("a marker from the state era reads without its state — no card wears one now", () => {
+  // 2026-09-21 상태 축 철거: 재개된 대화록은 저장된 문장을 그대로 되돌려
+  // 읽는다. 상태를 실고 갔던 마커도 카드가 되되, 그 필드는 어디에도
+  // 돌아오지 않는다.
+  const text =
+    '<!-- colo-design:comments {"screen":"member/MemberList","state":"기본","items":[{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
+  assert.deepEqual(readTurn(text).marker, {
+    kind: "comments",
+    screen: "member/MemberList",
+    items: [{ label: "검색", comment: "고쳐 주세요" }],
+  });
+  const errored = '<!-- colo-design:error {"route":"/a","state":"오류","kind":"build"} -->\n본문';
+  assert.deepEqual(readTurn(errored).marker, {
+    kind: "error",
+    route: "/a",
+    errorKind: "build",
+  });
+});
+
 test("a comment item that is not an object is dropped, not fatal", () => {
   const text =
-    '<!-- colo-design:comments {"screen":"s","state":"default","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
+    '<!-- colo-design:comments {"screen":"s","items":["나쁨",{"label":"검색","comment":"고쳐 주세요"}]} -->\n본문';
   const marker = readTurn(text).marker;
   assert.equal(marker?.kind, "comments");
   assert.deepEqual(marker?.kind === "comments" ? marker.items : null, [
@@ -162,7 +177,6 @@ test("the crop flag survives the round trip, and its absence is not an empty one
   const marker: TurnMarker = {
     kind: "comments",
     screen: "member/MemberList",
-    state: "default",
     items: [
       { label: "정진수", comment: "정렬해 주세요.", shot: true },
       { label: "검색", comment: "보조 스타일로." },
@@ -173,7 +187,7 @@ test("the crop flag survives the round trip, and its absence is not an empty one
 
 test("a marker from before the crop flag reads as flagless, never half-flagged", () => {
   const text =
-    '<!-- colo-design:comments {"screen":"s","state":"default","items":[{"label":"검색","comment":"고쳐 주세요","shot":"yes"}]} -->\n본문';
+    '<!-- colo-design:comments {"screen":"s","items":[{"label":"검색","comment":"고쳐 주세요","shot":"yes"}]} -->\n본문';
   const marker = readTurn(text).marker;
   assert.deepEqual(marker?.kind === "comments" ? marker.items : null, [
     { label: "검색", comment: "고쳐 주세요" },
@@ -230,4 +244,33 @@ test("a replayed transcript has no crops at all, and no rows break", () => {
   const items: CommentMarkerItem[] = [{ label: "정진수", comment: "a", shot: true }];
   assert.deepEqual(alignThumbs(items, []), [null]);
   assert.deepEqual(alignThumbs(items, undefined), [null]);
+});
+
+test("고치기 턴: 데몬이 내려놓는 문장도 카드로 돌아온다 (슬라이스 2)", () => {
+  const reviews: DeveloperReview[] = [
+    {
+      id: 1,
+      kind: "inline",
+      author: "정진수",
+      body: "가입일 역순으로 정렬해 주세요.",
+      pr: 12,
+      at: "2026-09-19T00:00:00Z",
+      path: "src/screens/Members.tsx",
+      line: 10,
+    },
+    {
+      id: 2,
+      kind: "review",
+      author: "정진수",
+      body: "정렬이 빠졌습니다.",
+      pr: 12,
+      at: "2026-09-19T00:00:00Z",
+    },
+  ];
+  const turn = reviewToTurn(reviews);
+  const read = readTurn(turn);
+  assert.equal(read.marker?.kind, "review");
+  assert.match(read.body, /개발자 코멘트 2건에 답합니다/);
+  assert.match(read.body, /1\. 정진수 \(src\/screens\/Members.tsx:10\): 가입일 역순/);
+  assert.match(read.body, /2\. 정진수: 정렬이 빠졌습니다/);
 });

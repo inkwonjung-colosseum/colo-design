@@ -41,7 +41,7 @@ export type DaemonNotice =
       slug: string;
       /** The project's own name — the notification's unit (커미티 A 수정). */
       projectName: string;
-      event: "merged" | "closed" | "changes_requested" | "comments";
+      event: "merged" | "closed" | "changes_requested" | "comments" | "replied";
       /** `comments` 만: 새로 읽힌 개수. */
       count?: number;
     };

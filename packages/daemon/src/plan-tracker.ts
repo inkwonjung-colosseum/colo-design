@@ -48,7 +48,7 @@ export interface PlanTrackerDeps {
   onChanged: () => void;
   /**
    * Session-less model catalogs a driver can answer without a thread —
-   * `omp models --json`, `opencode models`. Each is read once per run; the
+   * `omp models --json`. Each is read once per run; the
    * disk cache covers the rest.
    */
   catalogSources: Array<{ provider: string; read: () => Promise<SessionModelInfo[]> }>;

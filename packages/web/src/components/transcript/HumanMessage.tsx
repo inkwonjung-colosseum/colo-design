@@ -1,8 +1,8 @@
 /**
  * 사람 메시지: 개발자의 검토 결과가 대화 안의
- * 메시지로 도착한다. 본문 버블 아래 코멘트 인용 행(`.cmt`)이 번호로 늘어서고,
- * 각 행의 `대화에서 고치기` 는 그 코멘트 하나만을 새 턴으로 내보낸다 — 반려조차
- * 새 화면이 아니라 이 메시지 하나(+ 진행 한 줄)로 표현된다.
+ * 메시지로 도착한다. 본문 버블 아래 코멘트 인용 행(`.cmt`)이 번호로 늘어선다 —
+ * 반려조차 새 화면이 아니라 이 메시지 하나(+ 진행 한 줄)로 표현된다. 고치기
+ * 턴은 데몬이 스스로 내려놓는다(슬라이스 2): 이 카드는 읽는 자리다.
  *
  * 코멘트 ↔ 핀 매핑은 아직 없다: 인용 행은 핀 없이,
  * 라벨은 코드 위치(path:line, 없으면 "코드 위치")로 렌더한다 — 화면 이름을
@@ -13,7 +13,6 @@ export interface HumanMessageQuote {
   /** 코드 위치(`path:line`) — 핀 매핑이 없는 1차 렌더의 라벨. */
   label: string;
   body: string;
-  onFix?: () => void;
 }
 
 export interface HumanMessageProps {
@@ -51,7 +50,6 @@ export function HumanMessage({
   body,
   quotes = [],
   onReply,
-  onFixAll,
   live,
   danger,
   flash,
@@ -65,33 +63,20 @@ export function HumanMessage({
           {live && <span className="dot dot--live" />}
         </div>
         <div className={`devmsg__text${danger ? " devmsg__text--danger" : ""}`}>{body}</div>
-        {/* 읽으려는 클릭이 곧 발사가 되면 안 된다 — 행은 읽는 자리,
-            `대화에서 고치기` 버튼만 새 턴을 낸다. */}
+        {/* 행은 읽는 자리 — 고치기 턴은 데몬이 스스로 낸다(슬라이스 2). */}
         {quotes.map((quote, index) => (
           <div key={quote.id} className="cmt">
             <span className="cmt__n">{index + 1}</span>
             <span className="cmt__tx">
               <b>{quote.label}</b> — {quote.body}
             </span>
-            {quote.onFix && (
-              <button type="button" className="cmt__go" onClick={quote.onFix}>
-                대화에서 고치기
-              </button>
-            )}
           </div>
         ))}
-        {(onReply || onFixAll) && (
+        {onReply && (
           <div className="devmsg__acts">
-            {onReply && (
-              <button type="button" className="devmsg__reply" onClick={onReply}>
-                {author}님에게 답하기
-              </button>
-            )}
-            {onFixAll && (
-              <button type="button" className="devmsg__reply" onClick={onFixAll}>
-                모두 고치기
-              </button>
-            )}
+            <button type="button" className="devmsg__reply" onClick={onReply}>
+              {author}님에게 답하기
+            </button>
           </div>
         )}
       </div>

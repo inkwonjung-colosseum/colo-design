@@ -21,7 +21,7 @@ import {
 } from "../icons";
 import { Tip } from "../shell/Tip";
 import { FrozenStage } from "./FrozenStage";
-import { PreviewFrame } from "./PreviewFrame";
+import { PreviewFrame, repairPreviewStageChain } from "./PreviewFrame";
 
 /**
  * Which path the planner asked to see (the address bar's ask — the native
@@ -186,6 +186,15 @@ export function PreviewHost({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [frozenSent, frozenOnMode]);
+  /** 무대 체인 보장 — frozen 얼굴이 끼워 넣는 래퍼(또는 앞으로 생길 래퍼)가
+      flex 열이 아니면 slot 이 접혀 화면이 위쪽만 그려진다. webview 경로는
+      Guest 의 검증이 매번 고치고, iframe 경로는 여기서 고친다. */
+  const deviceRef = useRef<HTMLDivElement | null>(null);
+  const frozenOn = frozen !== null;
+  useEffect(() => {
+    const slot = deviceRef.current?.querySelector(".preview__slot");
+    if (slot) repairPreviewStageChain(slot);
+  }, [frozenOn]);
   /** The banner's `자세히`: the message starts clamped to one line. */
   const [detail, setDetail] = useState(false);
   /** 보기 팝오버 — 폭 전환과 새 창이 사는 자리. 현재 폭은 칩 요약이 말한다. */
@@ -487,7 +496,7 @@ export function PreviewHost({
               : "preview__stage preview__stage--desktop"
         }
       >
-        <div className="preview__device">
+        <div className="preview__device" ref={deviceRef}>
           {/* 프레임 머리: a browser bar now — back ·
               forward · reload, the address on both hosts (the iframe pill
               shows the ask's address, its back·forward walks the trail of

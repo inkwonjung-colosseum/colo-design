@@ -27,6 +27,40 @@ export function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 /**
+ * 우리가 예전에 띄웠던 서버의 흔적(pid 기록)을 거둔다 — 데몬이 hard-die 하면
+ * detached 트리는 살아 남아 포트를 계속 쥐고, 다음 bring-up 의 killPreview 는
+ * 손에 쥔 핸들이 없어 아무것도 못 한다 (좀비 서버 실사).
+ */
+export function killPidTree(pid: number, signal: NodeJS.Signals): void {
+  try {
+    if (currentPlatform() !== "win32") process.kill(-pid, signal);
+    else if (signal === "SIGKILL") {
+      const taskkill = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+      });
+      taskkill.unref();
+    } else process.kill(pid, signal);
+  } catch {
+    // 이미 죽은 pid — 거둘 것이 없다.
+  }
+}
+
+/**
+ * pid 의 명령줄 — 기록된 pid 가 지금도 우리 미리보기 트리인지의 앵커다.
+ * 읽지 못하면(죽었거나 플랫폼이 말을 안 듣거나) null.
+ */
+export async function pidCommandLine(pid: number): Promise<string | null> {
+  if (currentPlatform() === "win32") return null; // wmc 제거 이후의 Windows 는 앵커 없이 보수 간다
+  const stdout = await new Promise<string>((resolve, reject) =>
+    execFile("ps", ["-p", String(pid), "-o", "command="], { timeout: 5_000 }, (error, out) =>
+      error ? reject(error) : resolve(String(out)),
+    ),
+  ).catch(() => "");
+  const line = stdout.trim();
+  return line === "" ? null : line;
+}
+
+/**
  * 주어진 URL 이 실제로 응답하는지 — 판별을 세 가지로 나눈 것.
  * "html" 은 브라우저가 열 수 있는 페이지(5xx 미만 + text/html), "ok" 는 그
  * 외의 5xx 미만 응답(API·리다이렉트·정적 파일), null 은 오류·타임아웃.

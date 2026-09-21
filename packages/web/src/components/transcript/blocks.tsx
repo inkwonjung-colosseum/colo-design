@@ -39,7 +39,12 @@ function ToolBlock({
   return (
     <div className={`tool tool--${status}`}>
       <div className="tool__bar">
-        <button className="tool__head" onClick={() => setOpen((v) => !v)} type="button">
+        <button
+          className="tool__head"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          type="button"
+        >
           <span className={`tool__chevron${open ? " tool__chevron--open" : ""}`}>
             <ChevronRightIcon />
           </span>

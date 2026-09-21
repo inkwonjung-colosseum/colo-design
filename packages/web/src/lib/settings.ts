@@ -16,16 +16,20 @@ export type ThemeId =
   | "dark"
   | "light"
   | "contrast"
+  | "contrast-light"
   | "dracula"
   | "solarized"
+  | "solarized-light"
   | "catppuccin"
   | "nord"
   | "gruvbox"
   | "tokyonight"
   | "rosepine"
+  | "rosepine-dawn"
   | "everforest"
   | "onedark"
   | "github"
+  | "github-light"
   | "monokai"
   | "latte"
   | "claude"
@@ -110,7 +114,7 @@ export interface LayoutSettings {
  * older or hand-edited blob stored, so a stored 5000px preview can never
  * come back and eat the window.
  */
-export const PREVIEW_WIDTH_BOUNDS = { min: 340, max: 1100 } as const;
+export const PREVIEW_WIDTH_BOUNDS = { min: 340, max: 1440 } as const;
 
 /** The sidebar's drag bounds. */
 export const SIDEBAR_WIDTH_BOUNDS = { min: 200, max: 360 } as const;
@@ -148,6 +152,13 @@ export interface ChatSettings {
    */
   disabledProviders: string[];
   permissionMode: PermissionMode;
+  /**
+   * 턴이 도는 중에 온 말의 길. "queue"(기본)는 대기 줄에 세워 다음 턴에
+   * 보내고, "steer"는 도는 턴에 그대로 실어 보낸다 — 길을 내주는 드라이버
+   * (Codex)에서만 실제로 실리며, 그 외 에이전트는 데몬이 대기 줄로
+   * 물러나게 한다.
+   */
+  midturn: "queue" | "steer";
   /**
    * 작업 과정(도구 호출 묶음)을 대화에 남길지. 기본은 끔 — 생각 과정과 같은
    * 이유다. 접힌 활동 카드라 해도 답과 답 사이마다 한 줄씩 끼면 테이프가
@@ -244,6 +255,7 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   permissionMode: DEFAULT_PERMISSION_MODE,
   showTools: false,
   showThinking: false,
+  midturn: "queue",
 };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -272,16 +284,20 @@ export const THEMES: ThemeChoice[] = [
   "dark",
   "light",
   "contrast",
+  "contrast-light",
   "dracula",
   "solarized",
+  "solarized-light",
   "catppuccin",
   "nord",
   "gruvbox",
   "tokyonight",
   "rosepine",
+  "rosepine-dawn",
   "everforest",
   "onedark",
   "github",
+  "github-light",
   "monokai",
   "latte",
   "claude",
@@ -416,6 +432,7 @@ function loadChat(raw: unknown): ChatSettings {
     // 켜 달라고 말한 사용자에게만 보인다.
     showTools: stored.showTools === true,
     showThinking: stored.showThinking === true,
+    midturn: stored.midturn === "steer" ? "steer" : "queue",
   };
 }
 
@@ -491,10 +508,13 @@ const CONTRAST_QUERY = "(prefers-contrast: more)";
 function systemTheme(): ThemeId {
   const media = window.matchMedia?.(DARK_QUERY);
   // No matchMedia at all (an old embedded webview): keep the native palette.
-  if (!media) return "dark";
-  // A request for more contrast outranks the light/dark preference — the
-  // contrast palette exists precisely for that request.
-  if (window.matchMedia(CONTRAST_QUERY).matches) return "contrast";
+  if (!media) return "light";
+  // A request for more contrast outranks the light/dark preference — each
+  // direction has its own contrast palette, so the request never flips a
+  // light-mode user onto a dark screen.
+  if (window.matchMedia(CONTRAST_QUERY).matches) {
+    return media.matches ? "contrast" : "contrast-light";
+  }
   return media.matches ? "dark" : "light";
 }
 

@@ -299,7 +299,7 @@ async function main() {
     const taken = await request("session.queue.remove", { sessionId, itemId: secondId });
     check(
       "taking a send back returns what was sent",
-      taken?.text === SECOND && Array.isArray(taken.images),
+      taken?.text === SECOND && Array.isArray(taken.attachments),
       JSON.stringify(taken),
     );
     check(
@@ -432,7 +432,7 @@ async function main() {
     });
     check(
       "되살리기 hands the lost send back whole",
-      restored?.text === LOST && Array.isArray(restored.images),
+      restored?.text === LOST && Array.isArray(restored.attachments),
       JSON.stringify(restored),
     );
     const emptied = await request("session.history", { sessionId });

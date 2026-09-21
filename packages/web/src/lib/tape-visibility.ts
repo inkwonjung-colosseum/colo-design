@@ -8,10 +8,10 @@ import type { Block } from "./daemon-client";
  * (TodoWrite) keeps its place either way — the plan is what the planner
  * reads, not the log of how.
  *
- * ChatColumn's 첫 초 line (turnlive) asks the same question of the same
- * blocks: "is there anything on the tape yet?" The two call sites must agree,
- * or a turn that only runs hidden tools would go quiet on the tape while the
- * start line already believes blocks have landed.
+ * ChatColumn's 대기 줄 (turnlive) asks the same filter through `tailMoving`:
+ * "is the tape's tail producing anything the planner can see?" The two call
+ * sites must agree, or a turn that only runs hidden tools would show neither
+ * a moving tape nor the waiting line — a running session that looks frozen.
  */
 export function blockOnTape(block: Block, showThinking: boolean, showTools: boolean): boolean {
   if (block.type === "thinking") return showThinking;
@@ -24,6 +24,34 @@ export function blockOnTape(block: Block, showThinking: boolean, showTools: bool
   // 남는다(이 파일이 막으려고 있는 바로 그것).
   if (block.type === "text" && block.agentId) return showTools;
   return true;
+}
+
+/**
+ * 테이프 꼬리가 지금 움직이는가 — 대기 표시(turnlive)의 판정 한 줄. 보일
+ * 것이 하나도 없는 첫 초뿐 아니라, 도구와 도구 사이 모델이 생각만 하는
+ * 구간(생각 과정은 기본 숨김)에도 테이프는 새로 그리는 것이 없다 — 실사에서
+ * 그 빈 자리마다 화면이 통째로 조용해졌다(스피너도 시계도 없는 턴). 꼬리에
+ * 도는 도구나 흐르는 말이면 참이 아니다 — 테이프 자체가 말하는 중이니 줄은
+ * 비켜 선다.
+ *
+ * 도는 판정의 주인은 progress 의 `isToolRunning` 이다 — 이 모듈은 node 의
+ * `.mts` 테스트가 직접 잦는 순수 자리라 런타임 상대 import 를 갖지 않으므로,
+ * 주입받아 쓴다(호출부 ChatColumn 이 잇는다).
+ */
+export function tailMoving(
+  blocks: Block[],
+  showThinking: boolean,
+  showTools: boolean,
+  isRunning: (block: Extract<Block, { type: "tool" }>) => boolean,
+): boolean {
+  // Transcript 가 그리는 것과 같은 테이프를 물어야 한다 — 같은 거르기,
+  // 같은 이어 붙이기. 그러지 않으면 화면엔 움직임이 있는데 줄이 서거나 그 반대다.
+  const tape = mergeThinking(blocks.filter((block) => blockOnTape(block, showThinking, showTools)));
+  const last = tape.at(-1);
+  if (!last) return false;
+  if (last.type === "tool") return isRunning(last);
+  if (last.type === "text" || last.type === "thinking") return last.streaming;
+  return false;
 }
 
 /**

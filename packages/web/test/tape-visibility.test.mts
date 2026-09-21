@@ -10,7 +10,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Block } from "../src/lib/daemon-client.ts";
-import { blockOnTape, mergeThinking } from "../src/lib/tape-visibility.ts";
+import { isToolRunning } from "../src/lib/progress.ts";
+import { blockOnTape, mergeThinking, tailMoving } from "../src/lib/tape-visibility.ts";
+
+/** 호출부(ChatColumn)가 잇는 바로 그 조합 — 검사도 같은 조합을 문의한다. */
+const moving = (tape: Block[], showThinking = false, showTools = false): boolean =>
+  tailMoving(tape, showThinking, showTools, isToolRunning);
 
 const tool = (name: string, id = "k1"): Block =>
   ({ type: "tool", id, name, input: {}, done: true }) as unknown as Block;
@@ -79,4 +84,57 @@ test("사이에 읽을 것이 서면 생각은 잇지 않는다", () => {
 test("하위 작업의 속말은 본 스레드의 생각에 붙지 않는다", () => {
   const tape = [thinking("t1", "음", false, null), thinking("t2", "음", false, "k6")];
   assert.equal(mergeThinking(tape).length, 2);
+});
+
+/**
+ * 대기 표시(turnlive)의 판정 — 꼬리가 움직이지 않는 매 순간에 줄이 선다.
+ * 첫 보이는 블록 전의 빈 자리뿐 아니라, 도구와 도구 사이 생각만 흐르는
+ * 침묵(생각 과정은 기본 숨김)도 그 자리다 — 그 빈 자리마다 도는 턴이
+ * 스피너도 시계도 없는 화면으로 열렸다(실사 결함).
+ */
+test("아무것도 안 온 테이프와 사람 말 하나뿐인 테이프는 움직이지 않는다", () => {
+  assert.equal(moving([]), false);
+  assert.equal(moving([other("user", "u1")]), false);
+});
+
+test("도는 도구와 흐르는 말은 움직임이다 — 줄은 비켜 선다", () => {
+  const running = { type: "tool", id: "k1", name: "Bash", input: {}, done: false };
+  assert.equal(moving([other("user", "u1"), running as Block], false, true), true);
+  assert.equal(
+    moving([
+      other("user", "u1"),
+      { type: "text", id: "a1", text: "답", agentId: null, streaming: true },
+    ]),
+    true,
+  );
+});
+
+test("끝난 도구 뒤의 침묵은 움직임이 아니다 — 줄이 다시 선다", () => {
+  // 도구는 끝났는데 턴은 도는 중 — 생각(숨김)만 흐르는 구간. 활동 막대는
+  // ✓를 보이고 화면엔 아는 표시가 하나도 없었는데, 이 판정이 그 자리를 채운다.
+  const tape = [other("user", "u1"), tool("Bash", "k1")];
+  assert.equal(moving(tape, false, true), false);
+});
+
+test("숨긴 생각만 흐르는 턴도 움직이지 않은 것으로 읽는다", () => {
+  const tape = [other("user", "u1"), thinking("t1", "음", true), tool("Bash", "k2")];
+  assert.equal(moving(tape), false);
+  assert.equal(moving(tape, false, true), false, "끝난 도구는 켜도 움직임이 아니다");
+  // 생각 과정을 켜면 흐르는 생각 자체가 움직임이다.
+  assert.equal(moving(tape, true), true);
+});
+
+test("뒤에서 도는 작업은 보이는 테이프 위에서만 움직임이다", () => {
+  const backgrounded = {
+    type: "tool",
+    id: "k3",
+    name: "Bash",
+    input: {},
+    done: true,
+    progress: { task: { backgrounded: true, status: "running" } },
+  } as unknown as Block;
+  // 작업 과정이 켜진 화면에선 도는 막대 자체가 움직임이다.
+  assert.equal(moving([other("user", "u1"), backgrounded], false, true), true);
+  // 꺼진 화면에선 막대가 없고, 그 몫은 WorkStrip 칩이 대신 본다.
+  assert.equal(moving([other("user", "u1"), backgrounded]), false);
 });

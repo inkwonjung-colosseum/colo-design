@@ -114,7 +114,7 @@ export function ChatColumn({
   // 첫 실행 투어의 걸음(P3-2) — 한 번에 하나만 선다. 컴포저 걸음은 첫
   // 보내기가 졸업시키고, 그 자리를 핀 코치가 이어받는다.
   const tour = useTourStep();
-  // 빈 대화의 예시 칩(P3-2)이 빌리는 손 — 되살리기와 달리 컴포저를 덮어쓴다.
+  // 빈 대화의 예시 문장 창(P3-2)이 빌리는 손 — 되살리기와 달리 컴포저를 덮어쓴다.
   const promptRef = useRef<((text: string) => void) | null>(null);
   const registerPrompt = useCallback((fn: ((text: string) => void) | null) => {
     promptRef.current = fn;
@@ -560,6 +560,9 @@ export function ChatColumn({
             />
           )}
           <Transcript
+            /* 대화 신원이 곧 리마운트다 — 빈 대화를 열 때마다 예시 문장 창이
+               다시 서고, 닫은 상태가 다른 대화로 새지 않는다. */
+            key={activeId ?? "new"}
             blocks={active?.blocks ?? []}
             live={sessions.running}
             onRetry={retry}

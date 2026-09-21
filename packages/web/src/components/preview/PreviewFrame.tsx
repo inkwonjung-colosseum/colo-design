@@ -65,12 +65,7 @@ export function PreviewFrame({
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
   /** 배지 클릭 — the planner wants that pin's memo input (PageWorkspace holds the state). */
   onPinFocus: (id: string) => void;
-  onError: (error: {
-    kind: "runtime" | "build";
-    message: string;
-    route: string;
-    state: string;
-  }) => void;
+  onError: (error: { kind: "runtime" | "build"; message: string; route: string }) => void;
   /** The view is loading — the frame's reload button spins. */
   onLoading: (on: boolean) => void;
   /** The zoom moved (the menu can move it) — the chip follows. */
@@ -218,15 +213,10 @@ export function PreviewFrame({
       // id is usePins's to ignore.
       bridge.onPin?.((payload: ColoDesignPinEnvelope) => handlers.current.onPin(payload.pin)),
       bridge.onPinFocus?.((payload: { id: string }) => handlers.current.onPinFocus(payload.id)),
-      bridge.onError?.(
-        (payload: { kind: "runtime" | "build"; message: string; route: string; state: string }) =>
-          handlers.current.onError(payload),
+      bridge.onError?.((payload: { kind: "runtime" | "build"; message: string; route: string }) =>
+        handlers.current.onError(payload),
       ),
-      bridge.onLoading?.((payload: { on: boolean }) => handlers.current.onLoading(payload.on)),
       bridge.onZoom?.((payload: { factor: number }) => handlers.current.onZoom(payload.factor)),
-      // 활성 페이지 없이 열린 링크 — loose 요소를 세운다. 프로젝트 무대가
-      // 이미 있으면 main이 부탁하지 않는다(제자리 로밍이니까).
-      bridge.onHost?.((payload: { url: string }) => setLooseSrc(payload.url)),
       bridge.onClose?.(() => setLooseSrc(null)),
       // The guest holds the keys while focused — replayed here so the
       // window's own listeners (⌘K, ⌘,) fire as if the planner never left.
@@ -267,9 +257,17 @@ export function PreviewFrame({
           key={liveOrigin}
           initialSrc={liveOrigin === origin && url ? url : liveOrigin}
           live={active === liveOrigin && looseSrc === null}
+          emulated={width !== "desktop"}
         />
       ))}
-      {looseSrc !== null && <Guest key={looseSrc} initialSrc={looseSrc} live={origin === null} />}
+      {looseSrc !== null && (
+        <Guest
+          key={looseSrc}
+          initialSrc={looseSrc}
+          live={origin === null}
+          emulated={width !== "desktop"}
+        />
+      )}
     </div>
   );
 }
@@ -279,12 +277,147 @@ export function PreviewFrame({
  * main이 게스트에 한다. park은 visibility로 한다(display:none 금지 —
  * 문서가 언로드되어 warm이 깨진다).
  */
-function Guest({ initialSrc, live }: { initialSrc: string; live: boolean }) {
+function Guest({
+  initialSrc,
+  live,
+  emulated,
+}: {
+  initialSrc: string;
+  live: boolean;
+  /** 무대가 모바일·태블릿 에뮬레이션 중 — 게스트 뷰포트는 의도적으로 고정 크기다. */
+  emulated: boolean;
+}) {
   // The element's src is written once at birth; prop changes are ignored on
   // purpose (see the component comment).
   const [src] = useState(initialSrc);
+  const elRef = useRef<GuestElement | null>(null);
+  const emulatedRef = useRef(emulated);
+  emulatedRef.current = emulated;
+
+  // 게스트 뷰포트 검증 — Chromium 은 숨은(park·0폭 열) <webview> 의 리사이즈
+  // 전달을 가끔 삼킨다. 게스트가 낡은 뷰포트를 쥐면 페이지는 그 높이로
+  // 레이아웃되고 요소의 나머지는 게스트의 흰 배경이 된다 — 화면이 위쪽만
+  // 그려지고 아래가 잘려 보이는 결함. 요소 크기가 바뀔 때마다(그리고 화면에
+  // 돌아올 때) 게스트가 보고하는 뷰포트와 요소 크기를 맞춰 본다.
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    let timer: NodeJS.Timeout | undefined;
+    let reloadedAt = 0;
+    // verify 는 직렬화한다 — async 본문이 인터리브하면 넛지의 스타일 복원이
+    // 엇갈려 요소가 1px 좁은 채 남을 수 있다.
+    let running = false;
+    let queued = false;
+    /** 게스트가 보고하는 뷰포트. 네비게이션·attach 직후에는 읽기가 거절되므로
+        짧게 재시도한다 — 한 번의 거절이 검증 전체를 포기시키면 유실된
+        리사이즈가 그대로 남는다. */
+    const readViewport = async () => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const view = await el
+          .executeJavaScript("({ w: window.innerWidth, h: window.innerHeight })", false)
+          .then((v) => v as { w: number; h: number })
+          .catch(() => null);
+        if (view !== null) return view;
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, 300);
+        await promise;
+      }
+      return null;
+    };
+    const verifyOnce = async () => {
+      // 무대 체인 보장 — slot 을 감싼 래퍼가 flex 열이 아니면 게스트가
+      // intrinsic 높이로 눕는다. 뷰포트 대조보다 먼저, 그리고 에뮬레이션·
+      // 접힘 여부와 무관하게 고친다.
+      const slot = el.closest(".preview__slot");
+      if (slot) repairPreviewStageChain(slot);
+      // 에뮬레이션 중에는 게스트 뷰포트가 의도적으로 고정이고, 접힌 열의
+      // 0 크기는 검증할 진실이 아니다.
+      if (emulatedRef.current || el.clientWidth < 2 || el.clientHeight < 2) return;
+      const view = await readViewport();
+      if (view === null) {
+        // 재시도까지 거절되는 게스트는 네비게이션 중이 아니라 죽은 쪽 — 화면의
+        // 것만, 그리고 한 번만 다시 읽는다.
+        if (live && Date.now() - reloadedAt > 60_000) {
+          reloadedAt = Date.now();
+          el.reload();
+        }
+        return;
+      }
+      if (Math.abs(view.w - el.clientWidth) <= 1 && Math.abs(view.h - el.clientHeight) <= 1) return;
+      // 삼킨 리사이즈를 다시 배달한다 — 양축 1px 넛지가 embedder 의 리사이즈
+      // 경로를 다시 태운다(한 축만 흔들면 물리 픽셀 반올림으로 이벤트가 안
+      // 생길 수 있다). 강제 레이아웃으로 중간 크기가 반드시 등록되게 한다.
+      const width = el.style.width;
+      const height = el.style.height;
+      el.style.width = "calc(100% - 1px)";
+      el.style.height = "calc(100% - 1px)";
+      void el.offsetWidth;
+      void el.offsetHeight;
+      el.style.width = width;
+      el.style.height = height;
+      void el.offsetWidth;
+      void el.offsetHeight;
+      const after = await readViewport();
+      // after === null 은 넛지 직후의 일시 거절 — 네비게이션 이벤트가 검증을
+      // 다시 건다.
+      if (
+        after === null ||
+        (Math.abs(after.w - el.clientWidth) <= 1 && Math.abs(after.h - el.clientHeight) <= 1)
+      )
+        return;
+      // 넛지로도 못 고치는 게스트는 리사이즈 경로 자체가 깨진 것 — 화면의
+      // 것만, 그리고 한 번만 다시 읽는다.
+      if (live && Date.now() - reloadedAt > 60_000) {
+        reloadedAt = Date.now();
+        el.reload();
+      }
+    };
+    const verify = async () => {
+      if (running) {
+        queued = true;
+        return;
+      }
+      running = true;
+      try {
+        do {
+          queued = false;
+          await verifyOnce();
+        } while (queued);
+      } finally {
+        running = false;
+      }
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+
+      timer = setTimeout(() => {
+        timer = undefined;
+        void verify();
+      }, 150);
+    };
+    const observer = new ResizeObserver(schedule);
+    observer.observe(el);
+    // dom-ready 만으로는 부족하다 — SPA 이동(did-navigate-in-page)은 dom-ready 를
+    // 다시 쏘지 않고, 네비게이션 직후가 읽기 거절과 리사이즈 유실이 겹치는
+    // 자리라 로드 완료마다 다시 맞춰 본다.
+    el.addEventListener("dom-ready", schedule);
+    el.addEventListener("did-navigate", schedule);
+    el.addEventListener("did-navigate-in-page", schedule);
+    el.addEventListener("did-finish-load", schedule);
+    schedule();
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+      el.removeEventListener("dom-ready", schedule);
+      el.removeEventListener("did-navigate", schedule);
+      el.removeEventListener("did-navigate-in-page", schedule);
+      el.removeEventListener("did-finish-load", schedule);
+    };
+  }, [live, emulated]);
+
   return (
     <webview
+      ref={elRef}
       src={src}
       /** 팝업은 main의 setWindowOpenHandler가 심판한다(OS 브라우저로 넘기고
           게스트는 막는다) — 이 속성이 없으면 window.open이 조용히 무시되어
@@ -296,6 +429,28 @@ function Guest({ initialSrc, live }: { initialSrc: string; live: boolean }) {
     />
   );
 }
+/** 무대 체인 보장 — slot 과 .preview__device 사이의 래퍼가 flex 열이 아니면
+    slot 의 flex:1 이 무력화되어 게스트가 intrinsic 높이로 눕는다(보낸 화면
+    상태에서 화면이 위쪽만 그려지던 결함). 래퍼가 또 끼어들어도 여기서
+    바로잡는다 — 미리보기가 무대를 꽉 채우는 것은 이 함수가 보증한다. */
+export function repairPreviewStageChain(slot: Element): void {
+  const device = slot.closest(".preview__device");
+  if (!device) return;
+  for (let node = slot.parentElement; node !== null && node !== device; node = node.parentElement) {
+    if (getComputedStyle(node).display === "flex") continue;
+    node.style.display = "flex";
+    node.style.flexDirection = "column";
+    node.style.flex = "1";
+    node.style.minHeight = "0";
+  }
+}
+
+/** <webview> 요소 — React 타입의 HTMLWebViewElement 는 Electron 전역이 아니라
+    여기서는 필요한 두 멤버만 이름한다. */
+type GuestElement = HTMLElement & {
+  executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
+  reload(): void;
+};
 
 /** 이 pane 이 한 번에 살려 두는 요소 수 — 화면의 것과 뒤에 park 된 것까지.
     하나하나가 게스트 프로세스라 이 cap 이 사이드바 클릭의 비용을 묶는다

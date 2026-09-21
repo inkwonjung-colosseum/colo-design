@@ -91,20 +91,36 @@ export function Tip({
   // early return below means a Tip may render as the bare child, and a hook
   // past that return would break the render's hook count (React #300).
   const hideTimer = useRef<number | null>(null);
+  const showTimer = useRef<number | null>(null);
+  // Why the bubble is up: "hover" dies on mouseleave, "focus" on blur. The
+  // two are independent — a mouse click focuses without hovering intent, and
+  // focus restored by a closing dialog must not resurrect a hover tip.
+  const cause = useRef<"hover" | "focus">("hover");
   const cancelHide = () => {
     if (hideTimer.current !== null) {
       clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
   };
-  // Unmount with a hide still scheduled: drop it, or it fires on a dead
-  // component. The local holds the stable ref so the cleanup needs no deps.
+  const cancelShow = () => {
+    if (showTimer.current !== null) {
+      clearTimeout(showTimer.current);
+      showTimer.current = null;
+    }
+  };
+  // Unmount with a hide or show still scheduled: drop it, or it fires on a
+  // dead component. The local holds the stable ref so the cleanup needs no deps.
   useEffect(() => {
-    const timer = hideTimer;
+    const hide = hideTimer;
+    const show = showTimer;
     return () => {
-      if (timer.current !== null) {
-        clearTimeout(timer.current);
-        timer.current = null;
+      if (hide.current !== null) {
+        clearTimeout(hide.current);
+        hide.current = null;
+      }
+      if (show.current !== null) {
+        clearTimeout(show.current);
+        show.current = null;
       }
     };
   }, []);
@@ -157,26 +173,98 @@ export function Tip({
     if (shown || open) place();
   });
 
-  // Falsy label renders the bare child — hooks above already ran, so this
-  // early return is safe.
-  if (!label) return children;
-
-  const show = () => setShown(true);
-  const hide = () => setShown(false);
-  const scheduleHide = () => {
-    if (!interactive) return hide();
+  // 지나가는 포인터와 머무는 포인터를 가른다 — 열기는 잠깐 기다리고(350ms,
+  // 훑기만 한 행이 말을 걸지 않는다), 닫기는 예전의 그대로다. 초점은 기다리지
+  // 않는다: 키보드 탐색은 훑기가 아니라 도착이므로 즉시 말한다.
+  const scheduleShow = () => {
+    cancelShow();
     cancelHide();
-    hideTimer.current = window.setTimeout(hide, 120);
+    showTimer.current = window.setTimeout(() => {
+      showTimer.current = null;
+      setShown(true);
+    }, 350);
+  };
+  const scheduleHide = () => {
+    cancelShow();
+    // A focus-shown tip ignores the pointer leaving — blur owns its hide.
+    if (cause.current === "focus") return;
+    if (!interactive) {
+      setShown(false);
+      return;
+    }
+    // The watchdog calls this on every outside move — arming a fresh timer
+    // each time would postpone the hide forever.
+    if (hideTimer.current !== null) return;
+    hideTimer.current = window.setTimeout(() => {
+      hideTimer.current = null;
+      setShown(false);
+    }, 120);
+  };
+  // Focus arriving by mouse (a click, or focus restored when the menu/dialog
+  // the click opened closes) is not a request to see the tip — only
+  // :focus-visible (keyboard intent) shows it. Without the gate the restored
+  // focus re-arms a tip whose pointer left long ago, and nothing hides it
+  // until blur: the "가끔 남아 있는" bubble.
+  const focusAnchor = (event: React.FocusEvent) => {
+    if (!(event.target as Element).matches?.(":focus-visible")) return;
+    cause.current = "focus";
+    setShown(true);
   };
   // Focus leaving the trigger for a control inside the card is not a hide —
   // the bubble's own blur closes it once focus leaves the card entirely.
   const blurAnchor = (event: React.FocusEvent) => {
     if (interactive && bubble.current?.contains(event.relatedTarget as Node | null)) return;
-    hide();
+    // Pointer still on the trigger: the blur is a click's focus leaving, not
+    // the user leaving — hand the tip back to hover so mouseleave still ends it.
+    if (anchor.current?.matches(":hover")) {
+      cause.current = "hover";
+      return;
+    }
+    cancelShow();
+    setShown(false);
   };
   const blurBubble = (event: React.FocusEvent) => {
-    if (!bubble.current?.contains(event.relatedTarget as Node | null)) hide();
+    if (!bubble.current?.contains(event.relatedTarget as Node | null)) {
+      if (anchor.current?.matches(":hover") || bubble.current?.matches(":hover")) {
+        cause.current = "hover";
+        return;
+      }
+      cancelShow();
+      setShown(false);
+    }
   };
+
+  // Watchdog: a shown tip dies the moment the pointer is provably elsewhere.
+  // mouseleave alone misses two real cases — a layout shift slides the
+  // trigger out from under a stationary cursor (Chromium fires boundary
+  // events only on the next mousemove), and the pointer diving into the
+  // <webview> guest delivers only a pointerout to null. Runs only while
+  // shown; `open` coach marks are pinned and exempt.
+  useEffect(() => {
+    if (!shown || open) return;
+    const onMove = (event: PointerEvent) => {
+      if (cause.current !== "hover") return;
+      const target = event.target as Node | null;
+      if (anchor.current?.contains(target) || bubble.current?.contains(target)) return;
+      scheduleHide();
+    };
+    const onOut = (event: PointerEvent) => {
+      // Leaving the document entirely (null) or diving into an embed — the
+      // preview's <webview>/iframe swallows every event after this one.
+      const to = event.relatedTarget as Element | null;
+      if (to === null || to.tagName === "WEBVIEW" || to.tagName === "IFRAME") scheduleHide();
+    };
+    document.addEventListener("pointermove", onMove, true);
+    document.addEventListener("pointerout", onOut, true);
+    return () => {
+      document.removeEventListener("pointermove", onMove, true);
+      document.removeEventListener("pointerout", onOut, true);
+    };
+  });
+
+  // Falsy label renders the bare child — every hook above already ran, so
+  // this early return keeps the hook order intact.
+  if (!label) return children;
 
   const child = cloneElement(children, {
     "aria-describedby": [(children.props as Record<string, unknown>)["aria-describedby"], id]
@@ -189,9 +277,14 @@ export function Tip({
     <span
       ref={anchor}
       className={className ? `tip ${className}` : "tip"}
-      onMouseEnter={show}
+      onMouseEnter={() => {
+        // A focus-shown tip keeps its owner — the pointer passing over and
+        // off must not end what only blur should end.
+        if (!shown) cause.current = "hover";
+        scheduleShow();
+      }}
       onMouseLeave={scheduleHide}
-      onFocus={show}
+      onFocus={focusAnchor}
       onBlur={blurAnchor}
     >
       {child}

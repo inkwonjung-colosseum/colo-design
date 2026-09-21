@@ -49,16 +49,20 @@ const THEME_LABEL: Record<ThemeChoice, string> = {
   dark: "어둡게",
   light: "밝게",
   contrast: "고대비",
+  "contrast-light": "고대비 밝게",
   dracula: "드라큘라",
   solarized: "솔라라이즈드",
+  "solarized-light": "솔라라이즈드 밝게",
   catppuccin: "캣푸친",
   nord: "노르드",
   gruvbox: "그럽박스",
   tokyonight: "도쿄나이트",
   rosepine: "로즈파인",
+  "rosepine-dawn": "로즈파인 돈",
   everforest: "에버포레스트",
   onedark: "원다크",
   github: "깃허브",
+  "github-light": "깃허브 밝게",
   monokai: "모노카이",
   latte: "캣푸친 라떼",
   claude: "클로드",
@@ -422,7 +426,7 @@ function Switch({
 }
 
 // ---------------------------------------------------------------------------
-// Theme gallery — 18 palettes chosen by their colour, not by their name.
+// Theme gallery — palettes chosen by their colour, not by their name.
 // ---------------------------------------------------------------------------
 
 /**
@@ -460,7 +464,7 @@ function ThemeGallery({
   /**
    * 라디오그룹의 키보드 규칙: Tab 은 그룹에 한 번만 멈추고(선택된 타일),
    * 화살표가 안에서 옮긴다 — 옮기는 것이 곧 고르는 것(APG radio).
-   * 18개 타일이 전부 Tab 스톱이면 다른 설정까지 18번을 걸어야 했다.
+   * THEMES.length 개 타일이 전부 Tab 스톱이면 다른 설정까지 그만큼 걸어야 했다.
    */
   const move = (from: number, dir: 1 | -1) => {
     const to = (from + dir + THEMES.length) % THEMES.length;

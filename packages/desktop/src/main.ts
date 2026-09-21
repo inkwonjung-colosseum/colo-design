@@ -186,6 +186,10 @@ async function bootApp(): Promise<void> {
       previewDriverFactory,
       browserDriverFactory: browserDrivers,
       onNotice,
+      // 개발용 에이전트(omp)는 패키징되지 않은 실행(`pnpm dev:desktop` ·
+      // `pnpm --filter @colo-design/desktop dev`)에만 — 실사용자의 앱은 Claude
+      // Code · Codex 두 native 선로만 받는다(DaemonConfig.devAgents).
+      devAgents: !app.isPackaged,
     });
 
   /**

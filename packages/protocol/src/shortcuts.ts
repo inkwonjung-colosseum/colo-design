@@ -2,7 +2,8 @@
  * 단축키 상수 (PLAN D92) — 데스크톱의 앱 메뉴(menu.ts)와 웹의 ⌘/ 시트가
  * **같은 배열**을 읽는다. 두 벌이 어긋날 길이 없다: 메뉴의 가속키 집합은 이
  * 상수의 accelerator 들이고, 시트의 행은 이 상수의 순서 그대로다.
- * `accelerator` 이 없는 행은 마우스·키 조합(⌥+클릭)이라 메뉴에 없는 것이다.
+ * `accelerator` 이 없는 행은 포인터 조합(⌥+클릭)이거나 웹 워크스페이스가
+ * 혼자 처리하는 코드(⌘/, ⌘⇧P)라 메뉴에 없는 것이다.
  */
 
 export interface AppShortcut {
@@ -47,6 +48,10 @@ export const APP_SHORTCUTS: AppShortcut[] = [
     accelerator: "CmdOrCtrl+0",
   },
   { id: "pin", label: "핀 찍기", keys: "⌥+클릭" },
+  // 웹 워크스페이스가 혼자 처리하는 코드(PageWorkspace keydown의 ⌘⇧P)라
+  // 가속키가 없다 — 데스크톱 메뉴가 읽어도 click 없는 항목이 되니 일부러
+  // 밖에 둔다. 아래 ⌘/ 와 같은 판이다.
+  { id: "pin-mode", label: "핀 모드", keys: "⌘⇧P" },
   // 시트 자신의 행 — 가속키가 없다: ⌘/ 는 웹(워크스페이스 keydown)이
   // 혼자 처리하고, 데스크톱 메뉴에는 앉지 않는다(메뉴가 읽어도 click 이
   // 없는 항목이 되니 일부러 밖에 둔다).

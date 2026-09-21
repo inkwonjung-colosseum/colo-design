@@ -25,6 +25,8 @@
  * not a data structure.
  */
 
+import type { DeveloperReview } from "./repo.js";
+
 type TurnMarkerKind = "comments" | "brief" | "gate" | "error" | "review";
 
 /**
@@ -75,8 +77,6 @@ interface CommentsMarker {
   kind: "comments";
   /** The screen title — or `화면 N곳` when one batch spans several. */
   screen: string;
-  /** 표식 없는 페이지의 핀은 null — 카드 머리글은 상태 절을 생략한다. */
-  state: string | null;
   items: CommentMarkerItem[];
   /** The planner's own sentence on the turn (재설계 C2); absent when they sent pins alone. */
   note?: string;
@@ -121,8 +121,6 @@ export interface ErrorMarker {
   kind: "error";
   /** The route that was up when the preview failed. */
   route: string;
-  /** 표식 없는 페이지의 오류는 null — 카드 머리글은 상태 절을 생략한다. */
-  state: string | null;
   /**
    * Runtime exception, dev build failure, or the D89 `look` (a screen with
    * nothing wrong the console can name). The PLAN writes this payload key
@@ -131,7 +129,7 @@ export interface ErrorMarker {
    */
   errorKind: ErrorMarkerKind;
   /**
-   * D89: how many times the SAME ask has gone up — the same route·state
+   * D89: how many times the SAME ask has gone up — the same route
    * (`look`) or the same banner message (runtime/build). 2 이상이면 카드가
    * `두 번째 요청` / `아직 같은 오류 · N번째` 를 말해 같은 버튼 연타를
    * 가린다. The count lives with the web (화면이 바뀌면 0).
@@ -197,7 +195,6 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return {
         kind,
         screen: str(data.screen),
-        state: data.state === null ? null : str(data.state),
         ...(data.note ? { note: str(data.note) } : {}),
         items: data.items.flatMap((entry): CommentMarkerItem[] => {
           if (!entry || typeof entry !== "object") return [];
@@ -246,7 +243,6 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
       return {
         kind,
         route: str(data.route),
-        state: data.state === null ? null : str(data.state),
         errorKind: errorKind === "build" ? "build" : errorKind === "look" ? "look" : "runtime",
         ...(typeof data.count === "number" && data.count > 1 ? { count: data.count } : {}),
       };
@@ -281,4 +277,30 @@ export function readTurn(text: string): MarkedTurn {
   const marker = hydrate(kind, parsed as Record<string, unknown>);
   if (!marker) return { marker: null, body: text };
   return { marker, body: text.slice(match[0].length) };
+}
+
+/**
+ * 고치기 의 턴 (D88): the bundled developer comments, as the agent should
+ * read them. The marker keeps one author and one path for the card; the body
+ * carries every comment's words. 프로토콜에 사는 이유 (슬라이스 2, 2026-09-19):
+ * 데몬이 폴링에서 스스로 이 턴을 내려놓는다 — 웹이 아닌 쪽에서도 같은 문장이
+ * 나와야 화면의 카드와 데몬의 턴이 어긋나지 않는다.
+ */
+export function reviewToTurn(reviews: DeveloperReview[]): string {
+  const first = reviews[0];
+  const marker: TurnMarker = {
+    kind: "review",
+    pr: first?.pr ?? 0,
+    author: first?.author ?? "",
+    ...(first?.path ? { path: first.path } : {}),
+  };
+  const lines = [
+    `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
+    "",
+    ...reviews.map((review, index) => {
+      const at = review.path ? `${review.path}${review.line ? `:${review.line}` : ""}` : "";
+      return `${index + 1}. ${review.author}${at ? ` (${at})` : ""}: ${review.body}`;
+    }),
+  ];
+  return markTurn(marker, lines.join("\n"));
 }
