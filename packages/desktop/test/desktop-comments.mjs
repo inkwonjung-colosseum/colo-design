@@ -443,6 +443,24 @@ async function main() {
     );
     check("the view is on the fixture screen", true);
 
+    // 주소창 값은 메인 창의 DOM 이다 — 게스트가 그 문서를 다 읽었는지는 별개
+    // 다. 느린 러너에서 클릭이 표보다 먼저 가면 querySelector 가 빈손이었다
+    // (CI 2026-09-21). 게스트가 화면을 갖춘 뒤에 클릭한다.
+    let guestState = null;
+    for (let deadline = Date.now() + 30_000; Date.now() < deadline; ) {
+      guestState = await inView(
+        app,
+        "(() => ({ ready: document.readyState, hasTd: Boolean(document.querySelector('main tbody td')) }))()",
+      );
+      if (guestState?.ready === "complete" && guestState.hasTd === true) break;
+      await new Promise((ok) => setTimeout(ok, 250));
+    }
+    check(
+      "the guest finished loading the screen",
+      guestState?.ready === "complete" && guestState?.hasTd === true,
+      JSON.stringify(guestState),
+    );
+
     // The overlay is ALWAYS there now (D79) — no mode needed to mount it.
     const overlayAlways = await inView(
       app,

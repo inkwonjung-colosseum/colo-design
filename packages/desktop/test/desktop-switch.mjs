@@ -74,7 +74,10 @@ async function waitFor(predicate, timeoutMs, label) {
     if (hit) return hit;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`timeout waiting for ${label}`);
+  // 함수 라벨은 던지는 순간의 상태를 담는다 — 호출 시점의 스냅샷은 기다림
+  // 시작 전의 옛 상태라 원인을 말해 주지 못했다(CI 2026-09-21).
+  const detail = typeof label === "function" ? JSON.stringify(await label()) : label;
+  throw new Error(`timeout waiting for ${detail}`);
 }
 
 async function main() {
@@ -192,9 +195,11 @@ async function main() {
     await waitFor(
       async () => (await viewUrl(app))?.startsWith(alphaOrigin),
       60_000,
-      JSON.stringify({
+      async () => ({
         url: await viewUrl(app),
-        webviews: await page.evaluate(() => document.querySelectorAll("webview").length),
+        webviews: await page.evaluate(() =>
+          Array.from(document.querySelectorAll("webview")).map((w) => w.getAttribute("src")),
+        ),
         project: await page.evaluate(
           () => document.querySelector(".planner__project")?.textContent ?? null,
         ),

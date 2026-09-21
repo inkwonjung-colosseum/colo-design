@@ -760,20 +760,24 @@ app.whenReady().then(async () => {
     // 대신한다(webPreferences.webviewTag + attachWindow + setHostReady +
     // 호스트 문서에 <webview> 얹기).
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
-    const fs = await import("node:fs");
-    const pathMod = await import("node:path");
     const paneWindow = new BrowserWindow({
       show: true,
       width: 1280,
       height: 800,
       webPreferences: { webviewTag: true },
     });
-    const hostPage = pathMod.join(app.getPath("temp"), "colo-driver-unit-pane.html");
-    fs.writeFileSync(
-      hostPage,
-      "<!doctype html><meta charset='utf-8'><body><script>window.__add = (src) => { const w = document.createElement('webview'); w.src = src; w.setAttribute('allowpopups', ''); w.style.cssText = 'width:900px;height:700px'; document.body.appendChild(w); return w.src; };</script></body>",
-    );
-    await paneWindow.loadFile(hostPage);
+    // 호스트 문서는 임시 http 서버에서 — file:// 호스트는 mac 에서는 열리지만
+    // Linux 러너에서 ERR_FAILED(-2) 로 거절된다(CI 2026-09-21). pane ·
+    // browser-driver 스위트의 호스트도 전부 http 다.
+    const { createServer } = await import("node:http");
+    const hostServer = createServer((req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(
+        "<!doctype html><meta charset='utf-8'><body><script>window.__add = (src) => { const w = document.createElement('webview'); w.src = src; w.setAttribute('allowpopups', ''); w.style.cssText = 'width:900px;height:700px'; document.body.appendChild(w); return w.src; };</script></body>",
+      );
+    });
+    await new Promise((ok) => hostServer.listen(0, "127.0.0.1", () => ok()));
+    await paneWindow.loadURL("http://127.0.0.1:" + hostServer.address().port + "/");
     const pane = new PlannerPreviewView(() => paneWindow);
     pane.attachWindow(paneWindow);
     pane.setHostReady(true);
@@ -788,6 +792,7 @@ app.whenReady().then(async () => {
     const paneContents = pane.webContents();
     const panePageAlive = paneContents !== null && !paneContents.isDestroyed();
     paneWindow.destroy();
+    await new Promise((ok) => hostServer.close(() => ok()));
     answer({
       openedOk: opened && opened.ok === true,
       openedSettled: opened && opened.settled === true,

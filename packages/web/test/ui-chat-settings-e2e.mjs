@@ -224,10 +224,23 @@ async function main() {
     // --- 1. the chip opens at the root: four summary drills, no rows -----
     // 모델·생각은 session.selectors 응답이 와야 칩에 선다 — 턴 종료보다 늦을
     // 수 있으므로(느린 러너) 요약이 채워질 때까지 기다린 뒤 읽는다.
-    await page.waitForFunction(
-      () => /·/.test(document.querySelector(".composer .selector__chiplabel")?.textContent ?? ""),
-      { timeout: 15000 },
-    );
+    // waitForFunction 의 둘째 인자는 pageFunction 의 arg 다 — options 를
+    // 둘째에 넘기면 timeout 은 조용히 무시되고 기본 30초가 돌았다(CI 로그의
+    // "Timeout 30000ms exceeded"). options 는 셋째 자리다.
+    try {
+      await page.waitForFunction(
+        () => /·/.test(document.querySelector(".composer .selector__chiplabel")?.textContent ?? ""),
+        undefined,
+        { timeout: 45_000 },
+      );
+    } catch (error) {
+      const stuck = await page
+        .locator(".composer .selector__chiplabel")
+        .innerText({ timeout: 2000 })
+        .catch(() => "(칩을 읽지 못했다)");
+      console.error(`[chat-settings] 칩 요약이 45초 안에 안 찼다 — 칩: ${stuck.trim()}`);
+      throw error;
+    }
     const chipLabel = (await page.locator(".composer .selector__chiplabel").innerText()).trim();
     check("chip still reads the three-value summary", /·/.test(chipLabel), chipLabel);
     await page.locator(".composer .selector__chip").click();
