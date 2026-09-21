@@ -2,7 +2,6 @@ import type { GitHubRepo, GitHubRepoInspection } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { composing } from "../../lib/ime";
-import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { FolderIcon, FolderPlusIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
@@ -66,14 +65,10 @@ type Inspection =
 export function RepoPicker({
   daemon,
   onCreated,
-  onOpenSettings,
   onInspection,
 }: {
   daemon: Daemon;
-  /** Runs once `project.create` answered — the dialog closes on it. */
   onCreated?: () => void;
-  /** Opens 설정 where a missing token is entered. */
-  onOpenSettings?: (category?: SettingsCategory) => void;
   /** 검사가 답하면 호스트에 알린다 — 시작 마법사가 레포 단계의 주의 배지를
       붙이는 근거. 고르기 전·해제 때는 null. */
   onInspection?: (result: Pick<GitHubRepoInspection, "hasDevScript" | "canPush"> | null) => void;
@@ -94,15 +89,6 @@ export function RepoPicker({
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  /**
-   * Whether the planner folded or opened the manual form themselves; null
-   * until they touch it. The default follows hasToken live rather than its
-   * mount-time value: a fast 시작하기 can land this picker before the
-   * token's status arrives, and a stale no would pin the address form open
-   * under a token that already works.
-   */
-  const [manualPreference, setManualPreference] = useState<boolean | null>(null);
-  const manualOpen = manualPreference ?? !hasToken;
   const [manualUrl, setManualUrl] = useState("");
   const [manualBusy, setManualBusy] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
@@ -204,7 +190,6 @@ export function RepoPicker({
         name: name.trim(),
         repoUrl: selected.cloneUrl,
         ...(inspection?.phase === "ready" ? { baseBranch: inspection.result.defaultBranch } : {}),
-        ...(approveRun ? { approveCommands: true } : {}),
       });
       onCreated?.();
     } catch (e) {
@@ -215,24 +200,10 @@ export function RepoPicker({
   };
 
   /**
-   * The 만들기 gate: the inspection must have answered, and the repo's own
-   * commands need one explicit yes. 준비(미리보기 명령)는 AI 가
-   * 이어 받으므로 만들기 자체를 막는 문은 없다.
+   * 만들기 문은 검사 응답 하나다 — 준비(설치 · 미리보기) 명령의 동의는
+   * 만들기 클릭이 곧 담는다.
    */
-  /** The one explicit yes a new repo's install · preview commands need. */
-  const [approveRun, setApproveRun] = useState(false);
-  /** Same explicit yes, for the address-typed path. */
-  const [manualApprove, setManualApprove] = useState(false);
-  const blocked = inspection === null || inspection.phase !== "ready" || !approveRun;
-  /**
-   * 잠긴 이유는 조건마다 다르다 — 같은 문장을 걸면
-   * "확인하는 중"에 "체크해 주세요"가 거짓말을 한다. 주소 경로가 이미 갖고
-   * 있던 교훈(:493-499)을 목록 경로에 적용한다.
-   */
-  const blockedReason =
-    inspection === null || inspection.phase !== "ready"
-      ? "레포를 확인하는 중입니다"
-      : "위 명령 실행 동의에 체크하면 켜집니다";
+  const blocked = inspection === null || inspection.phase !== "ready";
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
     // Composition keys pass straight through: Enter would pick a repo off a
     // half-typed word.
@@ -280,7 +251,6 @@ export function RepoPicker({
         name: nameFromUrl(url) || url,
         repoUrl: url,
         ...(baseBranch ? { baseBranch } : {}),
-        ...(manualApprove ? { approveCommands: true } : {}),
       });
       setManualUrl("");
       onCreated?.();
@@ -298,20 +268,7 @@ export function RepoPicker({
           <span className="ic ic--quiet">
             <FolderIcon />
           </span>
-          <span>
-            GitHub에 연결하면 목록에서 고를 수 있습니다 —{" "}
-            {onOpenSettings ? (
-              <button
-                type="button"
-                className="ghost repopicker__settingslink"
-                onClick={() => onOpenSettings("connection")}
-              >
-                설정 → GitHub
-              </button>
-            ) : (
-              "설정 → GitHub"
-            )}
-          </span>
+          <span>개발자에게 초대 파일을 요청하세요 — 받은 파일을 시작 화면에서 열면 연결됩니다</span>
         </div>
       ) : phase === "error" ? (
         <div className="repopicker__listerror">
@@ -363,7 +320,8 @@ export function RepoPicker({
                 <span className="ic ic--lg ic--quiet">
                   <FolderIcon />
                 </span>
-                &apos;{query.trim()}&apos;와 맞는 레포가 없습니다 — 아래에서 주소로 추가하세요.
+                &apos;{query.trim()}&apos;와 맞는 레포가 없습니다 — 아래 개발자용에서 주소로
+                추가하세요.
               </li>
             )}
             {rows.map((repo, index) => {
@@ -426,18 +384,6 @@ export function RepoPicker({
               )}
             </p>
           )}
-          {inspection?.phase === "ready" && (
-            <label className="repopicker__approve">
-              <input
-                type="checkbox"
-                data-testid="approve-commands"
-                checked={approveRun}
-                disabled={creating}
-                onChange={(e) => setApproveRun(e.target.checked)}
-              />
-              이 컴퓨터에서 이 서비스를 준비(설치 · 미리보기 실행)하는 것을 허용합니다
-            </label>
-          )}
           <div className="repopicker__confirmrow">
             <input
               value={name}
@@ -446,7 +392,7 @@ export function RepoPicker({
               disabled={creating}
               onChange={(e) => setName(e.target.value)}
             />
-            <Tip label={blocked ? blockedReason : undefined}>
+            <Tip label={blocked ? "레포를 확인하는 중입니다" : undefined}>
               <button
                 type="button"
                 className="primary"
@@ -458,11 +404,6 @@ export function RepoPicker({
               </button>
             </Tip>
           </div>
-          {inspection?.phase === "ready" && !approveRun && !creating && (
-            <p className="hint" data-testid="create-needed-hint">
-              {blockedReason}
-            </p>
-          )}
           <p className="hint">
             레포를 내려받고 설치·미리보기까지 합니다 — 처음에는 몇 분 걸립니다.
           </p>
@@ -474,7 +415,10 @@ export function RepoPicker({
         </div>
       )}
 
-      {manualOpen ? (
+      {/* 주소로 추가는 개발자의 길이다 — 비개발자가 밟을 단계가 아니므로
+          개발자용 폴드 안에 접어 둔다(기본 닫힘). */}
+      <details className="repopicker__devnote">
+        <summary>개발자용 ▾</summary>
         <div className="repopicker__manual">
           <div className="ghtoken__row">
             <input
@@ -485,7 +429,7 @@ export function RepoPicker({
               disabled={manualBusy}
               onChange={(e) => setManualUrl(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && manualUrl.trim() && !manualBusy && manualApprove) {
+                if (e.key === "Enter" && manualUrl.trim() && !manualBusy) {
                   void addManually();
                 }
               }}
@@ -493,32 +437,15 @@ export function RepoPicker({
             <button
               type="button"
               className="primary"
-              disabled={!manualUrl.trim() || manualBusy || !manualApprove}
+              disabled={!manualUrl.trim() || manualBusy}
               onClick={() => void addManually()}
             >
               {manualBusy ? "만드는 중…" : "추가"}
             </button>
           </div>
-          {/* 잠긴 '추가'의 이유를 여기서 말한다 — 실사 결함: 첫 클릭이 이유 없이
-              실패처럼 보여 신규 사용자가 주소를 의심했다. */}
-          {!manualBusy && manualUrl.trim() && !manualApprove && (
-            <p className="hint" data-testid="approve-needed-hint">
-              추가하려면 아래 준비 동의에 먼저 체크해 주세요.
-            </p>
-          )}
           {!manualBusy && !manualUrl.trim() && (
             <p className="hint">연결 레포의 git 주소를 입력하면 추가 버튼이 켜집니다.</p>
           )}
-          <label className="repopicker__approve">
-            <input
-              type="checkbox"
-              data-testid="approve-commands-manual"
-              checked={manualApprove}
-              disabled={manualBusy}
-              onChange={(e) => setManualApprove(e.target.checked)}
-            />
-            이 컴퓨터에서 이 서비스를 준비(설치 · 미리보기 실행)하는 것을 허용합니다
-          </label>
           <p className="hint">코드 없이 접근할 수 있는 주소나, GitHub 밖의 git 주소를 쓸 때만.</p>
           {manualError && (
             <div className="notice notice--error">
@@ -526,20 +453,7 @@ export function RepoPicker({
             </div>
           )}
         </div>
-      ) : (
-        phase !== "loading" && (
-          <button
-            type="button"
-            className="ghost repopicker__manualtoggle"
-            onClick={() => setManualPreference(true)}
-          >
-            <span className="ic ic--sm ic--quiet">
-              <FolderPlusIcon />
-            </span>
-            목록에 없나요? 주소로 추가
-          </button>
-        )
-      )}
+      </details>
     </div>
   );
 }

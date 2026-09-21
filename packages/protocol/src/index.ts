@@ -20,6 +20,7 @@ export * from "./messages.js";
 export * from "./preview.js";
 export * from "./project.js";
 export * from "./repo.js";
+export * from "./repo-guidance.js";
 export * from "./session.js";
 export * from "./shared.js";
 export * from "./shortcuts.js";

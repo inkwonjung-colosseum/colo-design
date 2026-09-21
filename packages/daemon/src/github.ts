@@ -7,7 +7,7 @@
  * same transport when COLO_DESIGN_GITHUB_FIXTURE points at a fixture directory.
  *
  * Endpoints used (cite in every fixture):
- *   POST  /repos/{owner}/{repo}/pulls                          — open a pull request
+ *   POST  /repos/{owner}/{repo}/pulls/{number}/requested_reviewers — ask for reviews (E4)
  *   PATCH /repos/{owner}/{repo}/pulls/{number}                 — retitle/rewrite a standing one
  *   GET   /repos/{owner}/{repo}/pulls/{number}                 — state + merged flag
  *   GET   /repos/{owner}/{repo}/pulls/{number}/reviews         — latest verdict per reviewer
@@ -270,6 +270,30 @@ export class GitHubClient {
       "개발자에게 넘기기",
     );
     return { ...refOf(data), state: stateOf(data) };
+  }
+
+  /**
+   * E4(초대 v2): 넘긴 요청의 리뷰를 부탁한다 — POST
+   * /repos/{owner}/{repo}/pulls/{number}/requested_reviewers. 최선의 노력이다:
+   * 실패는 넘기기를 막지 않는다(칩의 리뷰어 줄이 조용히 비는 것뿐).
+   */
+  async requestReviewers(input: {
+    owner: string;
+    repo: string;
+    number: number;
+    reviewers: string[];
+  }): Promise<boolean> {
+    try {
+      await this.sendJson(
+        "POST",
+        `/repos/${input.owner}/${input.repo}/pulls/${input.number}/requested_reviewers`,
+        { reviewers: input.reviewers },
+        "리뷰 요청",
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Retitles/rewrites a standing pull request as later saves add pages to it. */

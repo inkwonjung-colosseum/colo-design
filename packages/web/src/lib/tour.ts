@@ -3,31 +3,31 @@ import { useSyncExternalStore } from "react";
 /**
  * 첫 실행 투어(P3-2) — 새 프레임워크가 아니라 **순서표** 하나다.
  *
- * 이 앱에는 이미 손수 만든 코치마크가 셋 있다: 빈 대화의 예시 문장 창, 핀 버튼의
- * 코치, 제출 버튼의 코치. 셋이 각자의 localStorage 키로 "봤는가"를 기억하는
- * 것은 그대로 두고 — 그것이 그 키들이 말하는 사실이다 — 이 파일은 하나만
- * 더한다: **한 번에 하나만**, 그리고 순서대로.
+ * 이 앱에는 이미 손수 만든 코치마크가 둘 있다: 핀 버튼의 코치, 제출 버튼의
+ * 코치. 둘이 각자의 localStorage 키로 "봤는가"를 기억하는 것은 그대로 두고 —
+ * 그것이 그 키들이 말하는 사실이다 — 이 파일은 하나만 더한다: **한 번에
+ * 하나만**, 그리고 순서대로.
  *
- * 셋이 동시에 서면 첫 화면이 안내로 뒤덮인다. 무엇을 먼저 하라는 것인지
+ * 둘이 동시에 서면 첫 화면이 안내로 뒤덮인다. 무엇을 먼저 하라는 것인지
  * 알 수 없는 안내는 없느니만 못하다.
  *
- * 걸음은 한 방향으로만 간다: `composer` → `pin` → `submit` → `done`.
+ * 걸음은 한 방향으로만 간다: `pin` → `submit` → `done`.
  * 뒤로 가는 길은 없다 — 되돌릴 이유가 있다면 그것은 투어가 아니라 도움말이다.
  */
 
 const KEY = "colo-design.tour-step";
 
-export type TourStep = "composer" | "pin" | "submit" | "done";
+export type TourStep = "pin" | "submit" | "done";
 
-const ORDER: TourStep[] = ["composer", "pin", "submit", "done"];
+const ORDER: TourStep[] = ["pin", "submit", "done"];
 
 function read(): TourStep {
   try {
     const raw = localStorage.getItem(KEY);
-    return ORDER.includes(raw as TourStep) ? (raw as TourStep) : "composer";
+    return ORDER.includes(raw as TourStep) ? (raw as TourStep) : "pin";
   } catch {
     // 저장소가 막힌 기기 — 투어는 이번 실행에서만 산다.
-    return "composer";
+    return "pin";
   }
 }
 
@@ -67,5 +67,5 @@ function subscribeTour(listener: () => void): () => void {
  * 그려진다(하나가 졸업하면 다음이 그 자리에서 곧바로 선다).
  */
 export function useTourStep(): TourStep {
-  return useSyncExternalStore(subscribeTour, tourStep, () => "composer" as TourStep);
+  return useSyncExternalStore(subscribeTour, tourStep, () => "pin" as TourStep);
 }

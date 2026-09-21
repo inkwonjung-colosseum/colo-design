@@ -58,6 +58,12 @@ export interface Project {
    */
   commandsApproved?: boolean;
   /**
+   * E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들(GitHub 로그인). 초대
+   * 파일이 실어 오고, 넘기기가 GitHub 에 요청한다. 비면 아무에게도 부탁하지
+   * 않는다 — 레포의 CODEOWNERS 같은 자기 규칙이 있는 곳이다.
+   */
+  reviewers?: string[];
+  /**
    * 이 프로젝트에서 AI 가 지켜 줄 것(설정 문서 P1#8) — 브랜치·커밋·PR
    * 규칙을 사용자의 말로 적는 한 줄 상자. 세션의 시스템 프롬프트 끝에
    * 붙는다. 비면 붙지 않는다.
@@ -176,6 +182,13 @@ function parseProject(raw: unknown): Project | null {
   return {
     slug,
     name: cleanString(value.name) ?? slug,
+    ...(Array.isArray(value.reviewers)
+      ? {
+          reviewers: value.reviewers
+            .map((login) => cleanString(login) ?? "")
+            .filter((login) => login !== ""),
+        }
+      : {}),
     ...(typeof value.commandsApproved === "boolean"
       ? { commandsApproved: value.commandsApproved }
       : {}),
@@ -314,6 +327,8 @@ export class ProjectRegistry {
     repoUrl: string | null;
     baseBranch?: string;
     commandsApproved?: boolean;
+    /** E4(초대 v2): 리뷰를 부탁할 개발자들. */
+    reviewers?: string[];
   }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
@@ -329,6 +344,11 @@ export class ProjectRegistry {
       // picker says the planner saw the commands. `undefined` never persists
       // from here — only legacy entries carry it.
       commandsApproved: input.commandsApproved === true,
+      ...(input.reviewers && input.reviewers.length > 0
+        ? {
+            reviewers: input.reviewers.map((login) => login.trim()).filter((login) => login !== ""),
+          }
+        : {}),
       repo: {
         url: input.repoUrl,
         baseBranch,
@@ -355,6 +375,8 @@ export class ProjectRegistry {
       baseBranch?: string;
       commandsApproved?: boolean;
       instructions?: string | null;
+      /** E4(초대 v2): null 은 지우기, 배열은 새 목록이다. */
+      reviewers?: string[] | null;
     },
   ): Project {
     const project = this.get(slug);
@@ -381,6 +403,12 @@ export class ProjectRegistry {
         throw new Error(`브랜치 이름이 올바르지 않습니다: ${baseBranch.slice(0, 64)}`);
       }
       project.repo.baseBranch = baseBranch;
+    }
+    if (changes.reviewers !== undefined) {
+      project.reviewers =
+        changes.reviewers === null
+          ? undefined
+          : changes.reviewers.map((login) => login.trim()).filter((login) => login !== "");
     }
     this.save();
     return project;

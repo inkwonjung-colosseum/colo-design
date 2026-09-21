@@ -1,4 +1,5 @@
 import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
+import { BOOTSTRAP_THREAD_TITLE } from "@colo-design/protocol";
 
 /**
  * 대화 지우기의 낙관 상태 (OPTIMISTIC DELETE).
@@ -13,6 +14,23 @@ import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
  * 이 모듈은 순수 함수만 담는다 — 상태 소유는 useDaemon, 소비는 Sidebar.
  */
 export type HiddenThreads = Record<string, "all" | string[]>;
+
+/**
+ * 도구가 스스로 여는 대화의 고정 제목들 — 데몬이 사람의 손 없이 만든다:
+ * 연결 준비(BOOTSTRAP_THREAD_TITLE), 리뷰 반영·최신화 문제 해결
+ * (project-fleet.autoFixThreadFor), 저장·넘기기·최신화 문제 해결
+ * (dispatch.gateThreadFor). 사이드바는 이 대화들을 기획자의 대화와 섞지
+ * 않고 프로젝트 목록 맨 아래 「도구가 한 일」 접힌 그룹으로 묶는다.
+ * 판정은 데몬의 제목으로 한다 — 이름 바꾸기는 sessionTitles 의 표시만
+ * 바꾸므로, 도구가 만든 기록은 이름을 바꿔도 이 그룹에 남는다.
+ */
+export const SYSTEM_THREAD_TITLES: Record<string, true> = {
+  [BOOTSTRAP_THREAD_TITLE]: true,
+  "리뷰 반영": true,
+  "최신화 문제 해결": true,
+  "저장 문제 해결": true,
+  "넘기기 문제 해결": true,
+};
 
 export function hideThread(hidden: HiddenThreads, slug: string, sessionId: string): HiddenThreads {
   const current = hidden[slug];

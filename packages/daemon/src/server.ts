@@ -443,8 +443,14 @@ export class DaemonServer {
             this.plans.noteRateLimit(this.manager.get(sessionId)?.provider ?? "claude");
             return;
           }
+          // D1: 답변에 적힌 하이퍼링크도 이 턴의 게이트 입력이다 — 사람이
+          // 누를 링크가 죽어 있으면 그것을 발견하는 쪽은 다시 사용자다.
+          // navigate 가 그렇듯 답변의 preview 주소를 notePinned 에 모으고,
+          // origin 판별·중복 접기는 runGate 가 한다.
+          if (event.kind === "text.done") {
+            for (const url of linksOf(event.text)) this.drivers.notePinned(sessionId, url);
+          }
           // 감독(2026-09-19): 턴이 답을 냈다 — 자동 재개의 상한은 돌려놓는다.
-          // 다음 고장은 새 사건이고, 다시 두 번의 스스로 재기를 얻는다.
           // 슬라이스 2: 답을 낸 턴이 자동 브리프가 연 턴이면 저장까지 정산한다.
           // 중지는 사람의 뜻 — 반쯤 고쳐진 화면을 저장하지 않는다.
           // P2-1: 답을 낸 턴은 자동 저장의 후보다 — 표만 올리고, 커밋은 아래
@@ -1339,8 +1345,13 @@ export class DaemonServer {
           ok: true,
           // 2026-09-21: 화면의 전체 주소 — 답변의 하이퍼링크가 이 주소로
           // 맺어진다. 경로만 아는 패인에게 미리보기 서버의 주소를 가르쳐
-          // 주는 유일한 자리다.
-          result: { settled: opened.settled, errors, url: target.toString() },
+          // 주는 유일한 자리다. D2: 빈 화면 판정도 실어 나간다.
+          result: {
+            settled: opened.settled,
+            blank: opened.blank === true,
+            errors,
+            url: target.toString(),
+          },
         },
       };
     } finally {
@@ -1438,4 +1449,11 @@ export class DaemonServer {
       });
     }
   }
+}
+
+/** D1: 답변 한 덩이에서 http(s) 주소를 걷는다 — 문장 부호를 뗀 채로. */
+function linksOf(text: string): string[] {
+  return [...text.matchAll(/https?:\/\/[^\s<>)\]]+/g)].map((match) =>
+    match[0].replace(/[.,;:!?"'`]+$/, ""),
+  );
 }

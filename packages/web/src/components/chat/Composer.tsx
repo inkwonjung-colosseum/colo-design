@@ -11,7 +11,7 @@ import type {
 } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Fold, useFoldNotice } from "../../components";
-import type { PinAttachment, PinIntent } from "../../hooks/usePins";
+import type { PinAttachment } from "../../hooks/usePins";
 import {
   EFFORT_HINT,
   EFFORT_LABEL,
@@ -47,7 +47,6 @@ import {
 import { PinTray } from "../preview/PinTray";
 import { StateBanner } from "../StateBanner";
 import { Tip } from "../shell/Tip";
-import { ContextRing } from "./ContextRing";
 import { COMMAND_FALLBACK, COMMAND_LABEL } from "./command-names";
 
 /**
@@ -212,11 +211,11 @@ const HISTORY_KEY = "colo-design.history";
 /** A walk back through sent turns stops somewhere; 25 rows of peeking is plenty. */
 const HISTORY_MAX = 25;
 /**
- * 가득 참의 문턱(결함 5, 실사 2026-09-20) — 링의 붉은 톤(85%)보다 조금 전인
- * 98%. 한 턴을 더 실으면 거의 확실히 창에 닿는 지점부터 새 대화의 길을
- * 알려 준다.
+ * 가득 참의 문턱(결함 5) — 링이 물러난 지금(B2) 이 문장이 창의 붉은 톤을
+ * 대신 읽는다. 85%: 한 턴을 더 쌓으면 창의 첫머리가 요약으로 눌릴 수 있는
+ * 지점부터 새 대화의 길을 알려 준다.
  */
-const CONTEXT_FULL_PCT = 98;
+const CONTEXT_FULL_PCT = 85;
 
 function storedDraft(key: string): string {
   try {
@@ -278,7 +277,6 @@ export function Composer({
   onStopTask,
   registerAttach,
   registerResend,
-  registerPrompt,
   dev = false,
   sendKey,
   selector,
@@ -300,7 +298,6 @@ export function Composer({
   onPinRemove,
   onPinNote,
   onPinFocus,
-  onPinIntent,
   titleForScreen = () => null,
 }: {
   disabled: boolean;
@@ -312,7 +309,7 @@ export function Composer({
   /** /command palette rows, straight from the CLI. */
   commands: SessionCommand[];
   placeholder: string;
-  /** This thread's own context ring — the send row's budget, not the account's. */
+  /** This thread's own context reading — the send row's budget, not the account's. */
   usage: ContextUsage | null;
   /**
    * Account-wide limits from the daemon, one reading per enabled provider —
@@ -376,8 +373,6 @@ export function Composer({
   /** 테이프의 `고쳐서 다시 보내기`(요청 버블·중단 카드)가 컴포저의
       restore 손을 등록받는다 — 말의 진실은 컴포저 한 곳에 있다. */
   registerResend?: (fn: ((text: string) => void) | null) => void;
-  /** 빈 대화의 예시 문장 창이 빌리는 손(P3-2) — 덮어쓰고 포커스한다. */
-  registerPrompt?: (fn: ((text: string) => void) | null) => void;
   /**
    * 개발 실행인가(`DaemonStatus.dev`) — `/` 슬래시 자동완성은 여기서만 선다.
    * `import.meta.env.DEV` 로 대신할 수 없다: 패키징된 Electron 의 웹 번들은
@@ -439,8 +434,6 @@ export function Composer({
   focusPinId?: { id: string; nonce: number } | null;
   onPinRemove?: (id: string) => void;
   onPinNote?: (id: string, note: string) => void;
-  /** 수정 ↔ 질문 칩 — the tray's toggle writes the pin's ask. */
-  onPinIntent?: (id: string, intent: PinIntent) => void;
   onPinFocus?: (id: string) => void;
   /** 화면 id → 제목; PinTray 의 머리글과 행 표기가 읽는다. */
   titleForScreen?: (screen: string) => string | null;
@@ -504,8 +497,7 @@ export function Composer({
 
   // 결함 5(실사 2026-09-20): 이 대화의 컨텍스트 읽기가 문턱을 넘으면 입력창
   // 위에 새 대화의 길을 한 줄로 알려 준다. 보내기는 막지 않는다 — 막힌
-  // 보내기가 늦은 안내보다 나쁘고, 이 대화가 최선일 수도 있다. 읽기는 링
-  // (ContextRing)이 이미 갖고 있는 것과 같은 usage 다.
+  // 보내기가 늦은 안내보다 나쁘고, 이 대화가 최선일 수도 있다.
   const contextFull = usage !== null && Math.round(usage.percentage) >= CONTEXT_FULL_PCT;
 
   /**
@@ -848,24 +840,6 @@ export function Composer({
     parkCaretAtEnd();
   };
 
-  /**
-   * 빈 대화의 예시 문장 창이 빌리는 손(P3-2) — `restore` 와 달리 **덮어쓴다**.
-   * 되살리기는 사람이 쓰던 말을 지키려고 앞에 덧붙이지만, 예시는 "이렇게
-   * 말하면 됩니다" 의 본보기라 덧붙이면 두 문장이 한 턴으로 나간다.
-   */
-  const prompt = useCallback((text: string) => {
-    historyAt.current = null;
-    setEditor({ text, attachments: [] });
-    sendError.clear();
-    area.current?.focus();
-    parkCaretAtEnd();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    registerPrompt?.(prompt);
-    return () => registerPrompt?.(null);
-  }, [registerPrompt, prompt]);
-
   /** 테이프의 고쳐서 다시 보내기가 빌리는 손 — 말의 복귀는 restore 한 곳이다. */
   const resend = useCallback(
     (text: string) => restore(text, []),
@@ -1003,11 +977,11 @@ export function Composer({
   const effortLevels =
     modelRow?.supportedEffortLevels ?? (Object.keys(EFFORT_LABEL) as EffortLevel[]);
   const providerRows = providers ?? [];
-  // 프로바이더 단계의 문 — 재료가 있는 자리면 언제나 연다. 뿌리 카드의
-  // 프로바이더 행은 누가 돌지(그리고 무엇을 고를 수 있는지) 메뉴를 열기
-  // 전에 말해야 하고, 한 개뿐인 목록도 지금 값의 근거(설치·로그인 이유)를
-  // 읽게 하는 자리다. 스레드에 묶인 고름의 범위는 단계의 노트가 말한다.
-  const canPickProvider = Boolean(providers && onPickProvider && providerRows.length > 0);
+  // 프로바이더 단계의 문 — 쓸 수 있는(설치·로그인이 다 된) 프로바이더가 둘
+  // 이상일 때만 연다(B1): 선택지가 하나 이하면 고를 것도 없고, 그 근거를
+  // 읽게 하는 행도 소음이다. 스레드에 묶인 고름의 범위는 단계의 노트가 말한다.
+  const usableProviders = providerRows.filter((p) => p.available && p.loggedIn !== false);
+  const canPickProvider = Boolean(providers && onPickProvider && usableProviders.length >= 2);
   // 프로바이더 행·단계가 읽는 값 — 다음 새 대화의 프로바이더다. 열린 대화는
   // `selector.provider` 를 유지하므로 두 값이 갈라지고, 행은 갈라진 쪽
   // (고름)을 따라간다: 고른 뒤에도 행이 움직이지 않으면 고름이 먹었다는
@@ -1148,7 +1122,7 @@ export function Composer({
             것은 상태의 말이지 새 소식이 아니기 때문이다. */}
         {contextFull && (
           <p className="composer__ctxfull" role="status" data-testid="ctx-full">
-            이 대화는 가득 찼어요 — 새 대화로 옮겨 같은 맥락을 이어 받으세요
+            대화가 길어졌어요 — 새 대화에서 이어가면 더 빨라요
           </p>
         )}
         {rejected.text && (
@@ -1419,7 +1393,6 @@ export function Composer({
               focusPinId={focusPinId}
               onPinRemove={(id) => onPinRemove?.(id)}
               onPinNote={(id, note) => onPinNote?.(id, note)}
-              onPinIntent={(id, intent) => onPinIntent?.(id, intent)}
               onPinFocus={(id) => onPinFocus?.(id)}
               titleFor={titleForScreen}
               fold={{ folded: pinsFolded, onToggle: () => setPinsFold(!pinsFolded) }}
@@ -1795,7 +1768,7 @@ export function Composer({
                           )}
                         </>
                       )}
-                      {onOpenProviderSettings && (
+                      {canPickProvider && onOpenProviderSettings && (
                         <button
                           type="button"
                           className="selector__gear"
@@ -1919,7 +1892,6 @@ export function Composer({
           )}
         </span>
         <div className="toolbar__end">
-          <ContextRing usage={usage} />
           {/* 잠긴 동안엔 disabled 가 말하지 않는 잠긴 이유를 이 줄이 말한다.
               도는 동안엔 아무것도 선지 않는다. */}
           {disabled && (

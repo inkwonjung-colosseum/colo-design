@@ -13,8 +13,7 @@ import { Tip } from "../shell/Tip";
  *
  * 셋을 구분해 말한다: 이 카드는 GitHub 연결 코드의 만료다. 게이트 자체의
  * 부재(코드 없음)는 마법사·첫 화면의 코드 단계가, 데몬 페어링 토큰의 끊김은
- * 연결 화면이 각자 말한다 — 푸터의 한 줄이 그 경계를 명시해 잘못된 코드를
- * 붙여넣는 일을 막는다.
+ * 연결 화면이 각자 말한다.
  */
 export function TokenExpiryDialog({
   daemon,
@@ -110,9 +109,7 @@ export function TokenExpiryDialog({
               <span className="notice__text">{error}</span>
             </div>
           )}
-          <p className="hint tokencard__foot">
-            새 코드는 개발자에게 요청하세요. 앱 화면을 여는 연결 토큰(페어링)과는 별개예요.
-          </p>
+          <p className="hint tokencard__foot">새 코드는 개발자에게 요청하세요.</p>
         </div>
       </div>
     </div>

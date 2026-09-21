@@ -3,7 +3,6 @@ import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
 import { CloseIcon, FolderPlusIcon } from "../icons";
 import { RepoPicker } from "../onboarding/RepoPicker";
-import type { SettingsCategory } from "./SettingsDialog";
 
 /**
  * 프로젝트 추가, for a planner who already has one. The same
@@ -11,15 +10,7 @@ import type { SettingsCategory } from "./SettingsDialog";
  * `+ 새 프로젝트` opens — one component, two places, so the second project
  * is added exactly the way the first one was.
  */
-export function AddProjectDialog({
-  daemon,
-  onClose,
-  onOpenSettings,
-}: {
-  daemon: Daemon;
-  onClose: () => void;
-  onOpenSettings?: (category?: SettingsCategory) => void;
-}) {
+export function AddProjectDialog({ daemon, onClose }: { daemon: Daemon; onClose: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
 
@@ -52,11 +43,7 @@ export function AddProjectDialog({
         </header>
         <div className="modal__body">
           <p className="hint">화면을 만들 레포를 고르세요.</p>
-          <RepoPicker
-            daemon={daemon}
-            onCreated={onClose}
-            {...(onOpenSettings ? { onOpenSettings } : {})}
-          />
+          <RepoPicker daemon={daemon} onCreated={onClose} />
         </div>
       </div>
     </div>

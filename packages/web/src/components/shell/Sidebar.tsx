@@ -7,13 +7,11 @@ import { changesBadge, HANDOFF_BADGE, MERGED_BADGE, WORKING_LABEL } from "../../
 import { ownerRepoOf } from "../../lib/format";
 import { composing } from "../../lib/ime";
 
-import { visibleThreads } from "../../lib/thread-visibility";
+import { SYSTEM_THREAD_TITLES, visibleThreads } from "../../lib/thread-visibility";
 import {
-  BranchIcon,
   CloseIcon,
   DesktopIcon,
   ExportIcon,
-  FolderIcon,
   FolderPlusIcon,
   GearIcon,
   HistoryIcon,
@@ -211,6 +209,10 @@ export function Sidebar({
   const treeOpen = (slug: string): boolean => folds[slug] ?? slug === activeSlug;
   const toggleTree = (slug: string) =>
     setFolds((prev) => ({ ...prev, [slug]: !(prev[slug] ?? slug === activeSlug) }));
+
+  /** 「도구가 한 일」 그룹의 펼침 — 기본 접힘. 프로젝트 폴드와 달리
+      기억하지 않는다: 도구의 기록은 열어볼 때만 잠깐 필요한 서랍이다. */
+  const [systemFolds, setSystemFolds] = useState<Record<string, boolean>>({});
 
   /** A project's finished conversations — the tree's children. Live ones
       belong to the top zone only, so a row exists in exactly one place. */
@@ -694,11 +696,7 @@ export function Sidebar({
                         switching === project.slug ? (
                           `${project.name} 대화 · 전환 중…`
                         ) : (
-                          <ProjectCard
-                            project={project}
-                            badge={badge}
-                            onOpenFolder={(slug) => void api.projectOpenFolder(slug)}
-                          />
+                          <ProjectCard project={project} badge={badge} />
                         )
                       }
                     >
@@ -887,9 +885,14 @@ export function Sidebar({
                   visibleThreads(project.threads, daemon.hiddenThreads, project.slug),
                 );
                 /** The tree's children: this project's finished
-                    conversations, prep records sunk, its own scope. */
+                    conversations, its own scope. 도구가 연 대화는 기획자의
+                    목록과 섞지 않고 맨 아래 「도구가 한 일」 접힌 그룹으로
+                    간다 — orderedThreads 가 이미 끝으로 밀어 두었다. */
                 const kids = projectThreads(project);
+                const plannerKids = kids.filter((thread) => !SYSTEM_THREAD_TITLES[thread.title]);
+                const systemKids = kids.filter((thread) => SYSTEM_THREAD_TITLES[thread.title]);
                 const open = treeOpen(project.slug);
+                const systemOpen = systemFolds[project.slug] === true;
                 return (
                   <div key={project.slug} className={`node${active ? " node--active" : ""}`}>
                     {renaming === project.slug ? (
@@ -939,11 +942,7 @@ export function Sidebar({
                             switching === project.slug ? (
                               "전환 중…"
                             ) : (
-                              <ProjectCard
-                                project={project}
-                                badge={badge}
-                                onOpenFolder={(slug) => void api.projectOpenFolder(slug)}
-                              />
+                              <ProjectCard project={project} badge={badge} />
                             )
                           }
                         >
@@ -1082,13 +1081,15 @@ export function Sidebar({
                     )}
                     {/* The project's own history: finished conversations,
                         capped — the count row hands the rest to the
-                        project-scoped palette, not the unscoped one. */}
+                        project-scoped palette, not the unscoped one. 도구가
+                        연 대화는 목록 맨 아래 접힌 「도구가 한 일」 그룹에
+                        산다 — 기획자의 대화와 같은 행 높이로 읽히지 않게. */}
                     {open && kids.length > 0 && (
                       <div className="node__kids">
-                        {kids
+                        {plannerKids
                           .slice(0, DONE_THREADS)
                           .map((thread) => renderThreadRow({ project, thread }))}
-                        {kids.length > DONE_THREADS && (
+                        {plannerKids.length > DONE_THREADS && (
                           <Tip label="이 프로젝트의 대화를 팔레트에서 찾습니다" side="right">
                             <button
                               type="button"
@@ -1098,9 +1099,35 @@ export function Sidebar({
                               <span className="ic ic--quiet ic--sm">
                                 <HistoryIcon />
                               </span>
-                              이전 대화 {kids.length - DONE_THREADS}개 더 보기
+                              이전 대화 {plannerKids.length - DONE_THREADS}개 더 보기
                             </button>
                           </Tip>
+                        )}
+                        {systemKids.length > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              className="leaf leaf--more"
+                              aria-expanded={systemOpen}
+                              onClick={() =>
+                                setSystemFolds((prev) => ({
+                                  ...prev,
+                                  [project.slug]: !systemOpen,
+                                }))
+                              }
+                            >
+                              <span
+                                className={`node__caret${systemOpen ? " node__caret--open" : ""}`}
+                                aria-hidden="true"
+                              >
+                                ▸
+                              </span>
+                              <span className="leaf__title">도구가 한 일</span>
+                              <span className="leaf__meta">{systemKids.length}</span>
+                            </button>
+                            {systemOpen &&
+                              systemKids.map((thread) => renderThreadRow({ project, thread }))}
+                          </>
                         )}
                       </div>
                     )}
@@ -1291,22 +1318,18 @@ function monogram(name: string): string {
 
 /**
  * The project row's hover card (Tip interactive): what the row cannot show —
- * the repo it clones, the branch this cycle pushes to, the preview's port
- * while its server is up, and the clone's folder. Every row opens its
- * target; a fact with nowhere to go stays a row, not a link.
+ * the repo it clones and the preview's port while its server is up. Every
+ * row opens its target; a fact with nowhere to go stays a row, not a link.
  */
 function ProjectCard({
   project,
   badge,
-  onOpenFolder,
 }: {
   project: ProjectSummary;
   badge: { kind: string; label: string } | null;
-  onOpenFolder: (slug: string) => void;
 }) {
   const ownerRepo = ownerRepoOf(project.repoUrl);
   const repoHref = ownerRepo ? `https://github.com/${ownerRepo}` : null;
-  const branch = project.branch ?? project.baseBranch;
   return (
     <span className="pcard">
       <span className="pcard__title">
@@ -1327,20 +1350,6 @@ function ProjectCard({
           <span className="pcard__value">{ownerRepo}</span>
         </a>
       )}
-      {branch && (
-        <a
-          className="pcard__row"
-          href={repoHref ? `${repoHref}/tree/${encodeURIComponent(branch)}` : undefined}
-          target="_blank"
-          rel="noreferrer"
-          title={repoHref ? `${repoHref}/tree/${branch}` : branch}
-        >
-          <span className="ic ic--quiet ic--sm">
-            <BranchIcon />
-          </span>
-          <span className="pcard__value">{branch}</span>
-        </a>
-      )}
       {project.previewUrl && (
         <a
           className="pcard__row"
@@ -1355,19 +1364,6 @@ function ProjectCard({
           <span className="pcard__value">{project.previewUrl}</span>
         </a>
       )}
-      {project.repoRoot && (
-        <button
-          type="button"
-          className="pcard__row"
-          title={project.repoRoot}
-          onClick={() => onOpenFolder(project.slug)}
-        >
-          <span className="ic ic--quiet ic--sm">
-            <FolderIcon />
-          </span>
-          <bdi className="pcard__value pcard__value--path">{project.repoRoot}</bdi>
-        </button>
-      )}
     </span>
   );
 }
@@ -1381,12 +1377,13 @@ function leafMetaText(thread: ThreadSummary): string {
   return timeAgo(thread.updatedAt);
 }
 
-/** The tool's own 연결 준비 record — opened by the daemon, not the planner.
-    It sinks below the real conversations and its row explains itself. */
+/** 도구가 스스로 연 대화(연결 준비 · 리뷰 반영 · 문제 해결)는 기획자의
+    대화 아래로 가라앉는다 — 트리에서는 「도구가 한 일」 그룹이, 레일
+    팝오버에서는 이 순서가 그 자리를 만든다. */
 function orderedThreads(threads: ThreadSummary[]): ThreadSummary[] {
-  const planner = threads.filter((thread) => thread.title !== BOOTSTRAP_THREAD_TITLE);
-  const prep = threads.filter((thread) => thread.title === BOOTSTRAP_THREAD_TITLE);
-  return [...planner, ...prep];
+  const planner = threads.filter((thread) => !SYSTEM_THREAD_TITLES[thread.title]);
+  const tool = threads.filter((thread) => SYSTEM_THREAD_TITLES[thread.title]);
+  return [...planner, ...tool];
 }
 
 /** One badge per row, decided once (the chip's words).

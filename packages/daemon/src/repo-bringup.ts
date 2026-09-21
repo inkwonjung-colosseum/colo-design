@@ -49,6 +49,9 @@ import {
 export class BringUp {
   constructor(private readonly core: RepoCore) {}
 
+  /** C5: 서버가 저절로 꺼졌을 때 남은 저절로 다시 켜기 시도 수. */
+  private previewRestarts = 0;
+
   // -------------------------------------------------------------------------
   // Bootstrap
   // -------------------------------------------------------------------------
@@ -284,19 +287,20 @@ export class BringUp {
       this.core.preview = null;
       this.core.previewUrl = null;
       const how = signal ? `signal ${signal}` : `exit ${code}`;
-      this.core.setPhase(
-        "error",
-        // The command's own last line is what says WHY; an exit code alone
-        // sends the planner to a terminal they were promised they would not need.
-        lastLine
-          ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}`
-          : `미리보기 서버가 종료되었습니다 (${how})`,
-        "preview",
-      );
+      // The command's own last line is what says WHY; an exit code alone
+      // sends the planner to a terminal they were promised they would not need.
+      const detail = lastLine
+        ? `미리보기 서버가 종료되었습니다 (${how}) — ${lastLine}`
+        : `미리보기 서버가 종료되었습니다 (${how})`;
+      // C5: 사람보다 도구가 먼저 다시 켠다 — 카드는 재시도 문장으로 말하고,
+      // 다 못 켤 때 비로소 실패 문장이 선다(그때부터는 D4 가 대화로 넘긴다).
+      void this.restartPreview(detail);
     });
 
     try {
       this.core.previewUrl = await this.detectPreviewUrl(child, urlCandidates, tail);
+      // 살아 남은 서버 — 다음 죽음은 다시 두 번의 기회를 가진다.
+      this.previewRestarts = 0;
     } catch (error) {
       // 늦게라도 뜰 예정이던 서버를 죽은 것으로 선고한 채 두면, 실제로는 살아
       // 포트를 쥔 유령이 남는다 (실사 목격). 선고가 서면 서버도 내려야 한다.
@@ -510,6 +514,31 @@ export class BringUp {
       return "preview";
     }
     return this.core.isCloned() ? "install" : "clone";
+  }
+
+  /**
+   * C5: 미리보기가 저절로 꺼지면 도구가 먼저 다시 켠다 — 두 번까지, 5 초
+   * 간격. 다시 켜는 동안 상태는 `화면을 다시 켜는 중` 으로 시작한다(웹의
+   * 중단 카드가 이 접두를 스핀너로 읽는다 — 계약). 두 번을 다 쓰면 원래
+   * 실패 문장을 내려놓는다: 그 실패를 대화로 넘기는 것은 fleet 의 몫(D4)이지
+   * 이 자리에서 다시 도는 것이 아니다.
+   */
+  private async restartPreview(detail: string): Promise<void> {
+    if (this.previewRestarts >= 2) {
+      this.core.setPhase("error", detail, "preview");
+      return;
+    }
+    this.previewRestarts += 1;
+    this.core.setPhase("error", `화면을 다시 켜는 중 — ${detail}`, "preview");
+    await sleep(5_000);
+    // 기다리는 사이 누군가(전환 · 동기화)가 이미 다시 켰다 — 중복으로 켜지
+    // 않는다. 이미 켜진 쪽의 성공이 횟수를 초기화한다.
+    if (this.core.preview) return;
+    try {
+      await this.bootstrap();
+    } catch {
+      // bootstrap 은 스스로 phase 를 적는다 — 여기서 할 말이 없다.
+    }
   }
 }
 

@@ -17,7 +17,6 @@ import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
 import { type SendKey, saveHandledReview } from "../../lib/settings";
 import { tailMoving } from "../../lib/tape-visibility";
-import { advanceTour, useTourStep } from "../../lib/tour";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
 import { TurnClock } from "../preview/TurnClock";
 import { StateBanner } from "../StateBanner";
@@ -111,14 +110,6 @@ export function ChatColumn({
   const registerResend = useCallback((fn: ((text: string) => void) | null) => {
     resendRef.current = fn;
   }, []);
-  // 첫 실행 투어의 걸음(P3-2) — 한 번에 하나만 선다. 컴포저 걸음은 첫
-  // 보내기가 졸업시키고, 그 자리를 핀 코치가 이어받는다.
-  const tour = useTourStep();
-  // 빈 대화의 예시 문장 창(P3-2)이 빌리는 손 — 되살리기와 달리 컴포저를 덮어쓴다.
-  const promptRef = useRef<((text: string) => void) | null>(null);
-  const registerPrompt = useCallback((fn: ((text: string) => void) | null) => {
-    promptRef.current = fn;
-  }, []);
   const [dragDepth, setDragDepth] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLElement>(null);
@@ -199,6 +190,12 @@ export function ChatColumn({
               status.stage === "published" ? api.handoff({ sessionId: activeId }) : status,
             )
     )
+      .then((status) => {
+        // E5: 영수증 — 제출이 무사히 끝나면 같은 자리에 카드가 '넘긴 내용'으로
+        // 선다. 누른 손이 어디로 갔는지 한눈에: 링크·리뷰어·다음 소식.
+        if (status.stage === "handed-off") setHandoffOpen(true);
+        return status;
+      })
       .catch((e: Error) => showError(e.message))
       .finally(() => setSavingNow(false));
   }, [activeId, savingNow, sessions.running, api, showError, diffStage, daemon.diffStatus]);
@@ -239,7 +236,7 @@ export function ChatColumn({
   const saveFailDetail = handoffFailed
     ? (daemon.diffStatus?.detail ?? "넘기지 못했습니다.")
     : daemon.diffStatus?.reason === "push-auth"
-      ? "GitHub 인증에 실패했습니다 — 설정에서 토큰을 확인해 주세요."
+      ? "연결 코드가 만료됐어요 — 개발자에게 새 코드를 요청하세요"
       : (daemon.diffStatus?.detail ?? "제출하지 못했습니다.");
 
   /**
@@ -560,8 +557,8 @@ export function ChatColumn({
             />
           )}
           <Transcript
-            /* 대화 신원이 곧 리마운트다 — 빈 대화를 열 때마다 예시 문장 창이
-               다시 서고, 닫은 상태가 다른 대화로 새지 않는다. */
+            /* 대화 신원이 곧 리마운트다 — 버블의 펼침·접힘 같은 로컬 상태가
+               다른 대화로 새지 않는다. */
             key={activeId ?? "new"}
             blocks={active?.blocks ?? []}
             live={sessions.running}
@@ -577,8 +574,10 @@ export function ChatColumn({
                 : undefined
             }
             onReplyReview={(review) => setReplyTo(review)}
+            onDevReply={async (reviewId, text) => {
+              await api.replyToReview(reviewId, text);
+            }}
             onOpenHistory={onOpenHistory}
-            onPickExample={tour === "composer" ? (text) => promptRef.current?.(text) : undefined}
           />
           {/* 제출 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
               말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
@@ -749,14 +748,10 @@ export function ChatColumn({
         onStopTask={stopTask}
         registerAttach={registerAttach}
         registerResend={registerResend}
-        registerPrompt={registerPrompt}
         dev={daemon.status?.dev === true}
         sendKey={sendKey}
         onOpenProviderSettings={onOpenProviderSettings}
         onSend={async (text, attachments, sentPins, restoredScreens) => {
-          // 첫 보내기가 컴포저 걸음을 졸업시킨다(P3-2) — 말을 낼 줄 아는
-          // 사람에게 예시는 더 이상 도움이 아니다. 다음 걸음은 핀 버튼이다.
-          advanceTour("composer");
           // 답장 모드: 사람 메시지의 `답하기`가 연 상태 — 컴포저의 말은
           // 새 턴이 아니라 개발자에게 가는 답이다.
           if (replyTo) {
@@ -836,7 +831,6 @@ export function ChatColumn({
         focusPinId={focusPinId}
         onPinRemove={pins.remove}
         onPinNote={pins.setNote}
-        onPinIntent={pins.setIntent}
         // 행 클릭 → 오버레이 배지 강조.
         onPinFocus={(id) => void window.coloDesignDesktop?.preview?.pinFlash?.(id)}
         onInterrupt={stop}

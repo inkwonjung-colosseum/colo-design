@@ -20,13 +20,9 @@ import type { PinAttachment } from "../hooks/usePins";
  * when the batch spans screens); the body is the sentence, one guide
  * line, and one readable block per pin — what was pinned, the repo's own
  * source stamp, the memo, the React owner chain and the CSS path with
- * the pin-time rect, which is all the agent ever needed the json fence for.
- *
- * The intent words the batch: all questions ask to be explained
- * — never fixed — and a mixed batch prefixes each memo so the agent knows
- * which rows order and which rows ask. `titleFor` resolves what the repo
- * called a screen; a screen the registry no longer declares falls back to
- * its raw id.
+ * the pin-time rect, which is all the agent ever needed the json fence
+ * for. `titleFor` resolves what the repo called a screen; a screen the
+ * registry no longer declares falls back to its raw id.
  */
 export function pinsToTurn(
   pins: PinAttachment[],
@@ -37,9 +33,6 @@ export function pinsToTurn(
   const screens = new Set(pins.map((pin) => pin.screen));
   const spread = screens.size > 1;
   const first = pins[0]!;
-  const questions = pins.filter((pin) => pin.intent === "question").length;
-  const allQuestion = questions > 0 && questions === pins.length;
-  const mixed = questions > 0 && questions < pins.length;
   // 영역 핀의 이름표: a region has no words of its own — its
   // size is what the planner recognises.
   const pinLabel = (pin: PinAttachment) =>
@@ -63,8 +56,6 @@ export function pinsToTurn(
       ...(pin.shot ? { shot: true as const } : {}),
       // 여러 화면을 한 턴에 — 행마다 화면을 새긴다; 머리글은 요약일 뿐이다.
       ...(spread ? { screen: titleFor(pin.screen) ?? pin.screen } : {}),
-      // The card titles the mix; absent reads as change.
-      ...(pin.intent === "question" ? { intent: "question" as const } : {}),
     })),
   };
   const blocks = pins.map((pin, index) => {
@@ -74,10 +65,7 @@ export function pinsToTurn(
       }`,
     ];
     if (pin.note.trim()) {
-      // 혼합 배치는 행마다 말의 종류를 새긴다; 한쪽으로 몰린
-      // 배치는 안내줄이 이미 말한다.
-      const prefix = mixed ? (pin.intent === "question" ? "질문" : "요청") : "메모";
-      rows.push(`   ${prefix}: ${pin.note.trim()}`);
+      rows.push(`   ${pin.note.trim()}`);
     }
     // React owner 체인 — dev 빌드에서만 온다.
     if (pin.element.owners?.length) rows.push(`   컴포넌트: ${pin.element.owners.join(" › ")}`);
@@ -120,9 +108,7 @@ export function pinsToTurn(
   const lines = [
     // 문장이 있으면 첫 줄 — 마커의 note 와 같은 말이다.
     ...(sentence ? [sentence, ""] : []),
-    allQuestion
-      ? "아래 요소에 대한 질문입니다 — 고치지 말고 설명해 주세요."
-      : `미리보기에서 가리킨 요소 ${pins.length}개입니다. 아래 위치를 기준으로 고친 뒤 화면을 다시 보여 주세요.`,
+    "아래는 사용자가 가리킨 자리입니다 — 사용자의 말대로 해 주세요.",
     "",
     blocks.join("\n\n"),
   ];

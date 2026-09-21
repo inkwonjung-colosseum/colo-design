@@ -327,7 +327,25 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
         reason: `화면을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    return { ok: true, settled: await this.settle() };
+    const settled = await this.settle();
+    // D2: 다 로드된 문서가 글자도 그림도 없으면 빈 화면이다 — 콘솔이 조용한
+    // 죽음(빈 라우트 · 렌더 실패)을 게이트가 대신 잡는다.
+    const blank = settled && (await this.blankProbe());
+    return { ok: true, settled, ...(blank ? { blank: true } : {}) };
+  }
+
+  /** D2: 문서가 내용을 가졌는가 — 글자·그림·틀이 하나도 없으면 빈 화면이다. */
+  private async blankProbe(): Promise<boolean> {
+    const probe = `(function () {
+      var body = document.body;
+      if (!body) return true;
+      if ((body.textContent || "").trim().length > 0) return false;
+      return body.querySelectorAll("img,svg,canvas,video,iframe").length === 0;
+    })()`;
+    const result = (await this.debugger()
+      .sendCommand("Runtime.evaluate", { expression: probe, returnByValue: true })
+      .catch(() => null)) as { result?: { value?: unknown } } | null;
+    return result?.result?.value === true;
   }
 
   async destroy(): Promise<void> {

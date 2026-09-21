@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import type { PinAttachment, PinIntent } from "../../hooks/usePins";
+import type { PinAttachment } from "../../hooks/usePins";
 import { composing } from "../../lib/ime";
 import { ChevronDownIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
 /**
  * The composer's pin tray: one row per pin — the number the
- * overlay's badge wears, the crop the view took at pin time, the
- * element's own words, and the memo that rides the turn. The tray only
- * stacks and annotates: 전송은 컴포저의 몫이다.
+ * overlay's badge wears, the crop the view took at pin time, and the
+ * element's own words. The row memo lives only on a batch of two or more —
+ * a lone pin's memo is the composer's sentence itself (재설계 C6). The tray
+ * only stacks and annotates: 전송은 컴포저의 몫이다.
  */
 export function PinTray({
   pins,
@@ -16,7 +17,6 @@ export function PinTray({
   focusPinId,
   onPinRemove,
   onPinNote,
-  onPinIntent,
   onPinFocus,
   titleFor,
   fold,
@@ -33,8 +33,6 @@ export function PinTray({
   focusPinId?: { id: string; nonce: number } | null;
   onPinRemove: (id: string) => void;
   onPinNote: (id: string, note: string) => void;
-  /** 수정 ↔ 질문 칩 — the turn's wording and card title read it. */
-  onPinIntent: (id: string, intent: PinIntent) => void;
   /** 행 클릭 — 오버레이의 배지를 깜빡여 그 핀을 다시 가리킨다. */
   onPinFocus: (id: string) => void;
   /** 화면 id → 제목. 못 찾으면 null — 원 id 로 읽는다. */
@@ -115,7 +113,7 @@ export function PinTray({
             return (
               <li key={pin.id} className="pintray__row">
                 {/* 행의 몸통은 버튼이다 — 배지 가리키기가 포인터의 전유물이지
-                    않게. 의도 칩·메모·지우기는 각자의 손으로 남는다. */}
+                    않게. 메모·지우기는 각자의 손으로 남는다. */}
                 <button
                   type="button"
                   className="pintray__focusbtn"
@@ -149,49 +147,30 @@ export function PinTray({
                     <span className="pintray__where">{titleFor(pin.screen) ?? pin.screen}</span>
                   </span>
                 </button>
-                {/* 이 핀이 바라는 것: 고치라는 말인가, 설명을 원하는 말인가. */}
-                <span className="pintray__intent" aria-label={`${n}번 핀 의도`} role="group">
-                  <Tip label="이 요소를 고쳐 달라는 핀입니다">
-                    <button
-                      type="button"
-                      className="pintray__intentbtn"
-                      aria-pressed={pin.intent !== "question"}
-                      onClick={() => onPinIntent(pin.id, "change")}
-                    >
-                      수정
-                    </button>
-                  </Tip>
-                  <Tip label="이 요소가 왜 이런지 묻는 핀입니다">
-                    <button
-                      type="button"
-                      className="pintray__intentbtn"
-                      aria-pressed={pin.intent === "question"}
-                      onClick={() => onPinIntent(pin.id, "question")}
-                    >
-                      질문
-                    </button>
-                  </Tip>
-                </span>
-                <input
-                  className="pintray__note"
-                  type="text"
-                  placeholder="이 요소에 바라는 점 (선택)"
-                  value={pin.note}
-                  ref={(el) => {
-                    if (el) noteInputs.current.set(pin.id, el);
-                    else noteInputs.current.delete(pin.id);
-                  }}
-                  onChange={(event) => onPinNote(pin.id, event.target.value)}
-                  onKeyDown={(event) => {
-                    if (composing(event)) return;
-                    if (event.key !== "Enter") return;
-                    // 전송 아님 — 메모를 붙이고 이벤트를 삼킨다. 본문으로의
-                    // 포커스 이동은 Composer 가 capture 에서 한다.
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onPinNote(pin.id, event.currentTarget.value);
-                  }}
-                />
+                {/* 행 메모는 둘 이상의 묶음에서만 산다(C6) — 핀이 하나면
+                    문장이 곧 메모다. */}
+                {pins.length > 1 && (
+                  <input
+                    className="pintray__note"
+                    type="text"
+                    placeholder="이 요소에 바라는 점 (선택)"
+                    value={pin.note}
+                    ref={(el) => {
+                      if (el) noteInputs.current.set(pin.id, el);
+                      else noteInputs.current.delete(pin.id);
+                    }}
+                    onChange={(event) => onPinNote(pin.id, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (composing(event)) return;
+                      if (event.key !== "Enter") return;
+                      // 전송 아님 — 메모를 붙이고 이벤트를 삼킨다. 본문으로의
+                      // 포커스 이동은 Composer 가 capture 에서 한다.
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onPinNote(pin.id, event.currentTarget.value);
+                    }}
+                  />
+                )}
                 <Tip label={`${n}번 핀 지우기`}>
                   <button
                     type="button"

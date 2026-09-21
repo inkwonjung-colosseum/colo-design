@@ -329,7 +329,7 @@ export function Shell({
   if (daemon.projects.length === 0) {
     return (
       <div className="planner planner--onboarding">
-        <StartFlow daemon={daemon} onOpenSettings={onOpenSettings} />
+        <StartFlow daemon={daemon} />
         {expiryCard}
       </div>
     );
@@ -536,13 +536,7 @@ export function Shell({
           onAddProject={() => setAddOpen(true)}
         />
       </div>
-      {addOpen && (
-        <AddProjectDialog
-          daemon={daemon}
-          onClose={() => setAddOpen(false)}
-          onOpenSettings={onOpenSettings}
-        />
-      )}
+      {addOpen && <AddProjectDialog daemon={daemon} onClose={() => setAddOpen(false)} />}
       {expiryCard}
     </div>
   );

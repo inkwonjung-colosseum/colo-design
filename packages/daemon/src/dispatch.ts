@@ -289,6 +289,15 @@ export class RequestRouter {
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
         // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
+        // 최신화는 사람의 몫이 아니게 됐다(E1): 말이 나가기 전에 도구가
+        // 스스로 받아 온다. 무인화가 가능한 이유는 두 부품이 이미 있기
+        // 때문이다 — refreshNeedsThread 가 안전 판정을 하고(사이클 브랜치
+        // 위 병합만 대화를 필요로 한다), 충돌 브리프는 이 대화의 첫 과제로
+        // 떨어진다(briefTo). 그 브리프 턴이 먼저 열리면 지금의 말은 대기
+        // 줄로 물러나고, 정리가 끝난 뒤 실행된다 — 세션이 도는 턴에 온 말을
+        // held 로 미뤄두는 기존 질서가 순서를 잡는다. 실패·20초 경과는 말을
+        // 막지 않는다: pull 은 조용히 이어진다(repo.refreshing).
+        await this.pullBeforeSend(message.sessionId);
         // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
         // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
         // 여기서(intake) 얹으므로 대기 줄·복원 모두 강화된 텍스트를 물고
@@ -531,6 +540,7 @@ export class RequestRouter {
           // 지침(P1#8): 다음 대화부터 적용된다 — 돌고 있는 세션의 시스템
           // 프롬프트를 중간에 바꾸지 않는다(SDK 의 스냅샷 계약).
           ...(message.instructions !== undefined ? { instructions: message.instructions } : {}),
+          ...(message.reviewers !== undefined ? { reviewers: message.reviewers } : {}),
         });
         // A url change is a repo change: the workspace re-points (and
         // re-clones when the url moved) through its own update path.
@@ -1062,6 +1072,24 @@ export class RequestRouter {
     };
   }
 
+  /**
+   * E1: 말이 나가기 전의 조용한 최신화. 받아올 것이 없으면 fetch 한 번으로
+   * 돌아가고, 있으면 pull — 사이클 브랜치 위 병합의 충돌 브리프는 이 대화의
+   * 첫 과제로 떨어진다(briefTo). 20초를 넘기면 기다림을 포기하고 말을 먼저
+   * 보낸다: pull 은 뒤에서 이어되고(repo.refreshing), 최신화가 사용자의 말을
+   * 지연시켜서는 안 되기 때문이다.
+   */
+  private async pullBeforeSend(sessionId: string): Promise<void> {
+    const brief = this.briefTo(sessionId, "refresh");
+    const work = (async () => {
+      const behind = await this.repo.refreshNeedsThread();
+      if (behind === null || behind === 0) return;
+      await this.repo.pull(brief.onSessionTurn);
+    })().catch(() => undefined);
+    const { promise: cap, resolve: capped } = Promise.withResolvers<void>();
+    setTimeout(capped, 20_000);
+    await Promise.race([work, cap]);
+  }
   /**
    * The thread a failing gate briefs when none is (or none living one is)
    * open. One per run: a planner who presses 저장 twice with no thread open

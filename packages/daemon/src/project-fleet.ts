@@ -4,10 +4,11 @@ import type {
   DiffStatus,
   HandoffStatusReport,
   ProjectSummary,
+  RepoStatus,
   ServerMessage,
   SessionCommand,
 } from "@colo-design/protocol";
-import { reviewToTurn } from "@colo-design/protocol";
+import { errorKindOf, guidanceFor, markTurn, reviewToTurn } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
@@ -21,6 +22,7 @@ import type { ProjectPaths, ProjectRegistry } from "./projects.js";
 import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
+import { readReviewLedger, reviewLedgerFile, writeReviewLedger } from "./review-ledger.js";
 import type { SessionManager } from "./session-manager.js";
 import { appendTape } from "./session-tape.js";
 import { repoWritePolicy } from "./workspaces.js";
@@ -32,12 +34,20 @@ import { repoWritePolicy } from "./workspaces.js";
  */
 const WARM_PREVIEWS = 2;
 
+/** E1: 폴 틱의 무인 최신화 스로틀 — 사람의 자리와 무관하게 도구가 받아 온다. */
+const QUIET_PULL_MS = 10 * 60_000;
+
 export interface ProjectWorkspaces {
   slug: string;
   paths: ProjectPaths;
   repo: RepoWorkspace;
   /** When this project was last put on screen — the warm cap keeps the newest. */
   shownAt: number;
+  /**
+   * E1: 폴 틱의 무인 최신화(pull)를 마지막으로 돌린 시각. 받아올 것이
+   * 없어도 fetch 자체가 네트워크를 타므로 10분 스로틀에 묶는다.
+   */
+  lastQuietPull: number;
   /**
    * 커미티 B1 (2026-09-15): the workspace's last diff stage, recorded off the
    * same callback the bar listens to. The handoff poll refuses to touch a
@@ -104,7 +114,9 @@ export class ProjectFleet {
   /**
    * 슬라이스 2 (2026-09-19 "무조건 처리"): slug → 데몬이 이미 AI 에 내려준
    * 리뷰 id 들. 자동 브리프의 단일 장부다 — 웹의 고치기 문은 걷혔고, 같은
-   * 코멘트가 두 번 턴으로 나가는 일은 이 곳에서만 막는다.
+   * 코멘트가 두 번 턴으로 나가는 일은 이 곳에서만 막는다. 디스크 장부
+   * (review-ledger.ts, P0) 의 메모리 캐시이기도 하다: 재시동 후 첫 읽기가
+   * 디스크에서 씨를 뿌린다.
    */
   private readonly briefedReviewIds = new Map<string, Set<number>>();
   /**
@@ -151,6 +163,7 @@ export class ProjectFleet {
       slug,
       paths,
       shownAt: 0,
+      lastQuietPull: 0,
       diffStage: null,
       repo: new RepoWorkspace({
         root: paths.repoRoot,
@@ -168,6 +181,8 @@ export class ProjectFleet {
         machineTurn: this.deps.machineTurn,
         // PR 본문의 `> 작성:` 줄과 커밋 fallback 이름이 읽는다(P1-3).
         authorName: () => this.deps.authorName(),
+        // E4(초대 v2): 리뷰를 부탁할 개발자들 — 레지스트리가 기억한 목록.
+        reviewers: () => this.deps.registry.get(slug)?.reviewers ?? [],
         onUrlChange: (url) => this.deps.registry.update(slug, { repoUrl: url }),
         onStatus: (status) => {
           // repaint somebody else's preview column.
@@ -175,6 +190,8 @@ export class ProjectFleet {
           if (slug === this.deps.registry.activeSlug()) {
             this.deps.broadcast({ type: "repo.status", status });
           }
+          // D4: 준비가 끝내 멈춘 실패는 사람의 버튼을 기다리지 않는다.
+          this.autoBriefBringUpFailure(workspaces, status);
         },
         onDiffStatus: (status) => {
           workspaces.diffStage = status.stage;
@@ -438,21 +455,29 @@ export class ProjectFleet {
       // 슬라이스 2 (무조건 처리): 새 리뷰는 알림으로 끝나지 않는다 — 데몬이
       // 스스로 고치기 턴을 내려놓고, 그 턴이 답을 내면 저장까지 마무리한다.
       // 장부(브리프된 id)를 먼저 보고 성공을 확인하며 되돌린다: 보내기가
-      // 거절된 리뷰를 먹으면 다음 틱이 다시는 손대지 못한다.
+      // 거절된 리뷰를 먹으면 다음 틱이 다시는 손대지 못한다. 장부는 디스크에
+      // 있다(P0) — 메모리뿐이던 시절에는 재시동마다 옛 코멘트가 다시 브리프됐다.
       if (report.reviews !== undefined && report.state !== "merged" && report.state !== "closed") {
-        const seen = this.briefedReviewIds.get(workspaces.slug);
-        const unseen = report.reviews.filter((review) => !seen?.has(review.id));
+        const seen = this.briefedReviewsFor(workspaces, current.number);
+        const unseen = report.reviews.filter((review) => !seen.has(review.id));
         if (unseen.length > 0) {
           const target = this.autoFixThreadFor(workspaces);
           if (target) {
-            const ids = seen ?? new Set<number>();
-            for (const review of unseen) ids.add(review.id);
-            this.briefedReviewIds.set(workspaces.slug, ids);
+            for (const review of unseen) seen.add(review.id);
             try {
               target.send(reviewToTurn(unseen));
               this.autoSaveAfter.set(target.id, { slug: workspaces.slug, count: unseen.length });
+              writeReviewLedger(
+                reviewLedgerFile(workspaces.paths.root),
+                new Map([[current.number, [...seen]]]),
+              );
+              this.deps.logger.warn("[review-ledger] 브리프 기록", {
+                slug: workspaces.slug,
+                pr: current.number,
+                reviews: unseen.length,
+              });
             } catch {
-              for (const review of unseen) ids.delete(review.id);
+              for (const review of unseen) seen.delete(review.id);
               this.autoSaveAfter.delete(target.id);
             }
           }
@@ -475,6 +500,25 @@ export class ProjectFleet {
     // 당기기를 기다리지 않게.
     this.announceProjectsThrottled();
     const active = this.activeOrNull();
+    // E1: 폴 틱의 무인 최신화 — 활성 프로젝트만, 10분 스로틀. 폴의 머리가
+    // anyBusy 를 지켰으므로 도는 턴과 겹치지 않고, 사이클 브랜치 위 병합의
+    // 충돌 브리프는 사람의 대화(없으면 도구가 여는 대화)의 첫 과제가 된다.
+    // 버튼이 하던 일을 타이머가 대신한다 — 받아오기를 눌러야 할 이유가
+    // 사라졌으므로 버튼도 웹에서 걷혔다.
+    if (active && Date.now() - active.lastQuietPull >= QUIET_PULL_MS) {
+      active.lastQuietPull = Date.now();
+      void active.repo
+        .pull((brief) => {
+          const target = this.autoFixThreadFor(active, "최신화 문제 해결");
+          if (!target) return;
+          try {
+            target.send(brief);
+          } catch {
+            // 죽은 질의 — 충돌 상태 자체는 repo.status 가 이미 말한다.
+          }
+        })
+        .catch(() => undefined);
+    }
     if (active) {
       void active.repo
         .status()
@@ -484,12 +528,30 @@ export class ProjectFleet {
   }
 
   /**
+   * 이 프로젝트가 이미 브리프한 리뷰 id 들 — 메모리 캐시 앞에 디스크 장부가
+   * 있다. 첫 읽기에서 열린 넘김의 번호가 아닌 항목은 그 사이클이 끝난
+   * 것이므로 덜어내고, 덜어낸 것이 있으면 되돌려 쓴다.
+   */
+  private briefedReviewsFor(workspaces: ProjectWorkspaces, pr: number): Set<number> {
+    const cached = this.briefedReviewIds.get(workspaces.slug);
+    if (cached) return cached;
+    const file = reviewLedgerFile(workspaces.paths.root);
+    const ledger = readReviewLedger(file);
+    const ids = new Set<number>(ledger.get(pr) ?? []);
+    if ([...ledger.keys()].some((key) => key !== pr)) {
+      writeReviewLedger(file, new Map([[pr, [...ids]]]));
+      this.deps.logger.warn("[review-ledger] 끝난 사이클 정리", { slug: workspaces.slug, pr });
+    }
+    this.briefedReviewIds.set(workspaces.slug, ids);
+    return ids;
+  }
+  /**
    * 슬라이스 2: 리뷰 반영 턴이 갈 살아 있는 대화 — 그 프로젝트 클론에서
    * 가장 최근에 움직인 살아 있는 대화. 없으면 도구가 "리뷰 반영" 대화를
    * 연다(게이트 실패 스레드와 같은 길): 사람의 손이 없어도 반영이
    * 시작되는 것이 이 흐름의 계약이다.
    */
-  private autoFixThreadFor(workspaces: ProjectWorkspaces) {
+  private autoFixThreadFor(workspaces: ProjectWorkspaces, title = "리뷰 반영") {
     const cwd = realpathBestEffort(workspaces.paths.repoRoot);
     const live = [...this.deps.manager.all()]
       .filter((session) => session.cwd === cwd && session.sendable)
@@ -502,7 +564,7 @@ export class ProjectFleet {
       cwd,
       queueDiskFor: this.deps.queueDiskFor,
       writePolicy: repoWritePolicy(cwd),
-      title: "리뷰 반영",
+      title,
       launch: {
         executable,
         ...(instructions ? { appendSystemPrompt: instructions } : {}),
@@ -511,6 +573,40 @@ export class ProjectFleet {
     this.deps.manager.invalidateThreads(cwd);
     this.refreshThreads();
     return session;
+  }
+  /** D4: 같은 실패를 두 번 브리프하지 않는다 — 키는 종류와 실패 문장이다. */
+  private briefedFailures = new Map<string, string>();
+
+  /**
+   * D4: 자동 분기가 연 고침 턴이 끝나면 준비를 다시 돌린다 — 웹의 카드가
+   * 하던 재시도 루프를 데몬이 이어받는다. 사람은 결과만 본다.
+   */
+  private readonly recoveryResync = new Set<string>();
+
+  /**
+   * D4: 준비가 끝내 멈추면 `AI에게 해결 요청` 을 기다리지 않고 도구가 실패를
+   * 읽은 표(repo-guidance)로 대화를 열어 넘긴다. 웹의 카드가 쓰던 브리프와
+   * 같은 문장이다 — 표가 protocol 로 옮겨진 이유. 사람의 결정이 필요한
+   * 실패(commands — 첫 실행의 동의)만 버튼에 남고, C5 의 재시도 중 문장은
+   * 아직 실패가 아니므로 건너뛴다.
+   */
+  private autoBriefBringUpFailure(workspaces: ProjectWorkspaces, status: RepoStatus): void {
+    if (status.phase !== "error" || !status.errorKind) return;
+    if (status.errorKind === "commands") return;
+    if (status.detail?.startsWith("화면을 다시 켜는 중") === true) return;
+    const key = `${status.errorKind}::${status.detail ?? ""}`;
+    if (this.briefedFailures.get(workspaces.slug) === key) return;
+    this.briefedFailures.set(workspaces.slug, key);
+    const agent = guidanceFor(errorKindOf(status), status.detail ?? null).agent;
+    if (!agent) return;
+    const thread = this.autoFixThreadFor(workspaces, agent.thread);
+    if (!thread) return;
+    try {
+      thread.send(markTurn({ kind: "gate", step: agent.step }, agent.brief));
+      this.recoveryResync.add(workspaces.slug);
+    } catch {
+      // 죽은 질의 — 실패 상태는 이미 방송됐으므로 다음 실패가 다시 연다.
+    }
   }
 
   /**
@@ -573,6 +669,11 @@ export class ProjectFleet {
     const workspaces = this.workspaceOfSession(sessionId);
     const session = this.deps.manager.get(sessionId);
     if (!workspaces || !session) return;
+    // D4: 이 턴이 준비 실패를 고치던 턴이면 고침이 끝난 지금 준비를 다시
+    // 돌린다 — 저장 판정보다 앞선다(고침이 없었어도 재시도는 약속이다).
+    if (this.recoveryResync.delete(workspaces.slug)) {
+      void workspaces.repo.sync().catch(() => undefined);
+    }
     // 출발 판정: 재검사가 최신이다(턴 끝의 refreshPendingChanges 를 다시 돌려
     // 확정한다). 커밋할 것이 없으면 저장조차 돌리지 않는다 — 깨끗한 트리의
     // 저장은 실패 상태를 만들고, 그것이 방금 끝난 턴의 기분을 더럽힌다.
@@ -766,6 +867,8 @@ export class ProjectFleet {
     repoUrl: string | null;
     baseBranch?: string;
     approveCommands?: boolean;
+    /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들. */
+    reviewers?: string[];
   }): Promise<ProjectSummary> {
     // The url reaches `git clone` — the ext:: family is a command executor
     // wearing a url, so the wire's word passes through the guard first.
@@ -778,6 +881,7 @@ export class ProjectFleet {
       // and said they may run here. Without it the workspace stops after the
       // clone with errorKind `commands` until 실행 허용 is pressed.
       commandsApproved: message.approveCommands === true,
+      ...(message.reviewers ? { reviewers: message.reviewers } : {}),
     });
     await this.activateProject(project.slug);
     // activateProject sees no switch and stays silent — but a wizard waiting

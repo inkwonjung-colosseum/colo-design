@@ -1,11 +1,10 @@
 /**
- * 주소창의 판정 — 순수 함수. The bar DISPLAYS the full address —
- * origin included, PreviewHost 가 붙여 보여 준다 — but what may be typed
+ * 주소창의 판정 — 순수 함수. The bar DISPLAYS the path only — origin·port 는
+ * 개발자 도구의 어휘라 PreviewHost 가 붙이지 않는다 — but what may be typed
  * stays inside the preview server: a bar that can name another server is a
  * browser this tool refuses to be. What may be typed:
  *
- * - `/member/MemberList` — a path inside the origin. Anything inside the
- *   origin rides `open` (`loadURL`).
+ * - `/member/MemberList` — a path inside the origin.
  * - `member/MemberList` — the leading slash is typed for you.
  * - `?after=…` — a query alone, riding the current path (2026-09-21 상태
  *   축 철거 — 특별한 취급을 받던 상태 쿼리는 이제 그냥 쿼리다).
@@ -13,13 +12,13 @@
  *   reduced to its path.
  *
  * Everything else — `//host`, `javascript:`, another origin — is refused with
- * one sentence. The main process enforces the same line; this check is
- * the answer, not the gate.
+ * one sentence (`ONLY_PREVIEW`). The main process enforces the same line;
+ * this check is the answer, not the gate.
  */
 
 export type AddressTarget = { kind: "path"; path: string } | { kind: "error"; message: string };
 
-const ONLY_PREVIEW = "미리보기 서버 안의 주소만 열 수 있습니다";
+const ONLY_PREVIEW = "미리보기 안의 화면 주소만 열 수 있어요";
 
 export function parseAddress(
   raw: string,

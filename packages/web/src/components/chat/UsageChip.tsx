@@ -2,8 +2,7 @@
  * Everything the planner's ACCOUNT spends, behind one chip — ex `Composer`
  * head. Pure presentation: numbers arrive as props,
  * the face reads the 5-hour window, the popover carries the whole budget
- * picture. The conversation's own length is not an account budget and rides
- * the send row instead (`ContextRing`).
+ * picture.
  */
 
 import type { PlanUsage } from "@colo-design/protocol";
@@ -135,9 +134,9 @@ export function UsageChip({
    * it instead of pointing at nothing.
    */
   const [tab, setTab] = useState<string | null>(null);
-  // 칩의 얼굴은 말이다 — 숫자(퍼센트·시간)는 팝오버의
-  // 몫. 여유로울 때는 링만 남는 계량기(감동판 구조), 경고 톤부터 말이 돌아온다.
-  const faceWord = badge === "" ? "여유로워요" : badge === "warn" ? "차오르는 중" : "거의 찼어요";
+  // 칩의 얼굴은 말이다 — 숫자(퍼센트·시간)는 팝오버의 몫. 여유 구간에는 칩이
+  // 아예 서지 않는다(B3): 계량은 `차오르는 중`부터 말을 시작한다.
+  const faceWord = badge === "warn" ? "차오르는 중" : "거의 찼어요";
   // Time left is computed from `now`, so a rendered countdown goes stale;
   // re-render on the half-minute while one is on screen.
   const counting = Boolean(lead?.resetsAt);
@@ -162,7 +161,8 @@ export function UsageChip({
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  if (!lead || !worst) return null;
+  // 여유 구간(badge 가 빈 칸)엔 칩이 아예 없다(B3) — 아래 렌더는 경고 톤부터다.
+  if (!lead || !worst || badge === "") return null;
   const shown = groups.find((group) => (group.plan.provider ?? "") === tab) ?? groups[0];
   if (!shown) return null;
   const moveTab = (step: number) => {
@@ -232,7 +232,7 @@ export function UsageChip({
               )}
             </svg>
           </span>
-          {badge === "" ? null : badge === "warn" ? (
+          {badge === "warn" ? (
             "차오르는 중"
           ) : (
             <>

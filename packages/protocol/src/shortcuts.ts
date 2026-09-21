@@ -47,7 +47,7 @@ export const APP_SHORTCUTS: AppShortcut[] = [
     keys: "⌘0",
     accelerator: "CmdOrCtrl+0",
   },
-  { id: "pin", label: "핀 찍기", keys: "⌥+클릭" },
+  { id: "pin", label: "핀 찍기", keys: "⌥+클릭 · 끌면 영역" },
   // 웹 워크스페이스가 혼자 처리하는 코드(PageWorkspace keydown의 ⌘⇧P)라
   // 가속키가 없다 — 데스크톱 메뉴가 읽어도 click 없는 항목이 되니 일부러
   // 밖에 둔다. 아래 ⌘/ 와 같은 판이다.
