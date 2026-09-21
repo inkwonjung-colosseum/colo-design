@@ -151,7 +151,7 @@ async function main() {
     await openCategory(page, "연결");
     check(
       "the token input waits for a daemon",
-      (await page.getByLabel("GitHub 개인 액세스 토큰").isDisabled()) === true,
+      (await page.getByLabel("GitHub 연결 코드").isDisabled()) === true,
     );
     // A fresh profile starts on 전부 맡기기 (--dangerously-skip-permissions):
     // the first turn must not stall on a 확인 카드 nobody chose.
@@ -440,6 +440,23 @@ async function main() {
     // 6. the 프로바이더 room pins the provider's own defaults; 대화 keeps the
     //    conversation behaviour. They persist like any other preference.
     await openCategory(page, "프로바이더");
+    // 저장 메모 담당 — 데몬 없는 이 화면에서도 행은 선다: 자동이 기본이고,
+    // 상태가 없으니 지금 담당의 줄은 정직하게 '건너뜁니다'로 답한다.
+    const memoSelect = page.getByLabel("저장 메모 담당");
+    check(
+      "the machine-memo row opens on 자동 without a daemon",
+      (await memoSelect.inputValue()) === "auto",
+    );
+    check(
+      "the machine-memo row offers only the auto choice before any daemon",
+      (await memoSelect.locator("option").count()) === 1 &&
+        (await memoSelect.locator("option").first().innerText()) === "자동 (권장)",
+    );
+    check(
+      "the machine-memo row answers the no-candidate state honestly",
+      (await page.getByText("쓸 수 있는 에이전트가 없어 메모를 건너뜁니다").count()) === 1,
+    );
+    await page.screenshot({ path: join(here, "ui-settings-memo-row.png") });
     await page.getByLabel("생각 시간").selectOption("high");
     await openCategory(page, "대화");
     await page.getByLabel("확인 방식").selectOption("plan");

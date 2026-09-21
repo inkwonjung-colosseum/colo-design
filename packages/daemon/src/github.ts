@@ -87,7 +87,8 @@ export class GitHubClient {
       return {
         ok: false,
         reason: "unauthorized",
-        detail: "토큰이 유효하지 않거나 만료됐습니다 — 새 토큰을 만들어 다시 넣어 주세요.",
+        detail:
+          "연결 코드가 유효하지 않거나 만료됐습니다 — 개발자에게 새 코드를 요청해 다시 넣어 주세요.",
       };
     }
     if (status < 200 || status >= 300) {

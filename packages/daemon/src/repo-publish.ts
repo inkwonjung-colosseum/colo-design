@@ -40,9 +40,9 @@ const SHOT_MEDIA_TYPES: Record<string, string> = {
 };
 
 /**
- * A route or state becomes part of a committed filename: separators and
- * `..` would let it walk out of `.colo-design/shots/` (or simply fail to
- * match on read-back). Korean stays — the route keeps its own words.
+ * A route becomes part of a committed filename: separators and `..` would
+ * let it walk out of `.colo-design/shots/` (or simply fail to match on
+ * read-back). Korean stays — the route keeps its own words.
  */
 function shotNamePart(value: string): string {
   return value
@@ -161,6 +161,25 @@ export class PublishCycle {
       }
     }
     if (approved.length === 0 && !retryPush) {
+      // 이미 저장된 것의 다시 저장 (2026-09-21 실사): 성공한 저장 직후에 도는
+      // 두 번째 저장 — 다시 누르기, 칩 카운트가 늦게 닫힌 창, 리뷰 정산 저장과
+      // 손 저장의 경주 — 는 깨끗한 트리를 읽는다. 그것을 실패로 보내면 방금
+      // 저장한 사람에게 "먼저 화면을 만들거나 고쳐 주세요" 가 뜬다. 사이클
+      // 브랜치가 존재하고 밀릴 커밋도 없다는 것은 전부 저장돼 있다는 뜻이므로,
+      // 저장은 멱등한 no-op 성공으로 끝난다 — 메모 턴도 커밋도 푸시도, 테이프
+      // 카드의 재사도 없다. 실패는 한 번도 저장된 적 없는 깨끗한 트리에만 남는
+      // 다 — 거기서만 이 안내가 참이다.
+      if (this.core.branch) {
+        const tip = (
+          await this.core.git(["rev-parse", "--verify", this.core.branch]).catch(() => "")
+        ).trim();
+        if (tip) {
+          const savedMessage = (
+            await this.core.git(["log", "-1", "--pretty=%s", this.core.branch]).catch(() => "")
+          ).trim();
+          return this.core.setDiff({ stage: "published", commit: tip, message: savedMessage });
+        }
+      }
       return this.core.setDiff({
         stage: "failed",
         gate: "diff",
@@ -178,7 +197,7 @@ export class PublishCycle {
     const memo = retryPush
       ? null
       : options.message?.trim() ||
-        (await this.deps.claudeMemo(files).catch(() => null)) ||
+        (await this.deps.machineMemo(files).catch(() => null)) ||
         DEFAULT_COMMIT_MESSAGE;
 
     // Commit exactly the paths the planner approved — never `git add -A`, so
@@ -309,7 +328,10 @@ export class PublishCycle {
     this.core.setDiff({ stage: "handing-off" });
     const title = options.title?.trim() || DEFAULT_HANDOFF_TITLE;
     let body = options.body ?? "";
-    // 저장·넘기기 목업 02: the cycle's own numstat rides the body — the
+    // P1-3: 작성자 줄 — 요청은 봇 계정으로 열리므로 이름이 없으면 개발자가 누구
+    // 작업인지 모른다. 본문 서두 다음, `### 바뀐 파일` 절보다 앞에 인용문 한 줄로.
+    const author = this.core.authorName?.();
+    if (author) body = `${body.replace(/\n*$/, "")}\n\n> 작성: ${author}`;
     // developer reads the scale before opening the Files tab, and the
     // preview card shows this same string so nothing is promised that does
     // not ship. A range that will not diff costs only the section.
@@ -439,22 +461,18 @@ export class PublishCycle {
       mkdirSync(join(this.core.root, SHOTS_DIR), { recursive: true });
       for (const shot of shots) {
         // A route keeps its Korean; only its path separators become dashes.
-        // Route AND state pass the same gate — a state is a wire value too,
-        // and `..` or a separator would walk the name out of SHOTS_DIR.
-        // The extension is the capture's own — see HandoffShot. 파일 이름에서만
-        // null 이 "default" 로 정착한다 — 커밋과 조회가 같은 규칙을 쓰면 된다.
-        const name = `${shotNamePart(shot.route)}--${shotNamePart(shot.state ?? "default")}${shot.extension}`;
+        // The route passes the same gate as ever — `..` or a separator would
+        // walk the name out of SHOTS_DIR. The extension is the capture's
+        // own — see HandoffShot. (2026-09-21 상태 축 철거: `--state` 접미가
+        // 사라지고 화면 하나에 이름 하나다.)
+        const name = `${shotNamePart(shot.route)}${shot.extension}`;
         writeFileSync(join(this.core.root, SHOTS_DIR, name), shot.image);
         await this.core.git(["add", "--", `${SHOTS_DIR}/${name}`]);
         // Only the url's spaces are escaped — a Korean route reads as itself.
         const url =
           `https://github.com/${slug.owner}/${slug.repo}/blob/${branch}/` +
           `${SHOTS_DIR}/${name.replaceAll(" ", "%20")}`;
-        links.push(
-          shot.state === null
-            ? `- [\`${shot.route}\`](${url})`
-            : `- [\`${shot.route} · ${shot.state}\`](${url})`,
-        );
+        links.push(`- [\`${shot.route}\`](${url})`);
       }
       // An identical set is a no-op: a re-handoff after a mere retitle must
       // not invent an empty commit.
@@ -482,17 +500,14 @@ export class PublishCycle {
    * Null is the honest answer for every absence — a capture that failed, a
    * branch nobody pushed.
    */
-  async handoffShot(
-    route: string,
-    state: string | null,
-  ): Promise<{ mediaType: string; data: string } | null> {
+  async handoffShot(route: string): Promise<{ mediaType: string; data: string } | null> {
     if (!this.core.isCloned()) return null;
     const branch = this.core.openHandoff?.branch ?? this.endedHandoff?.branch ?? null;
     if (!branch) return null;
-    // The same name attachShots wrote — route and state pass the same
-    // normalization so the lookup matches what was committed. null 도 커밋
-    // 쪽과 같은 규칙으로 "default" 에 정착한다.
-    const name = `${shotNamePart(route)}--${shotNamePart(state ?? "default")}`;
+    // The same name attachShots wrote — the route passes the same
+    // normalization so the lookup matches what was committed
+    // (2026-09-21 상태 축 철거 — 주소만이 이름이다).
+    const name = shotNamePart(route);
     for (const ref of [`origin/${branch}`, branch]) {
       const listing = await this.core
         .git(["-c", "core.quotepath=false", "ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
@@ -611,8 +626,7 @@ export class PublishCycle {
   private async landCycle(handoff: HandoffStatus): Promise<void> {
     // 재착지 금지: branch 가 비었고 같은 요청이 이미 같은 끝 상태로 열려 있으면
     // 착지는 지난번에 끝났다 — refreshHandoff 가 매번 다시 부를 때마다
-    // rotateCommentsCycle 이 핀 앵커를 옮기고 clearCheckpoints 가 새 턴의
-    // 체크포인트를 지우는 일을 막는다.
+    // rotateCommentsCycle 이 핀 앵커를 옮기는 일을 한 번만 치른다.
     const seated = this.core.openHandoff;
     if (
       this.core.branch === null &&
@@ -647,13 +661,6 @@ export class PublishCycle {
     // 주지 않으니 착지의 순간이 앵커다 — 반영 전의 늦은 핀 한두 개가 다음
     // 요청으로 넘어가는 것이 저장 때마다 묻는 것보다 싸다.
     this.core.rotateCommentsCycle();
-    if (handoff.state === "merged") {
-      // 반영됨 (PLAN D52): the cycle's checkpoints snapshot a worktree the
-      // developer has already absorbed — restoring them now would move the work
-      // backwards past a merge. Their refs go, quietly. 반려는 다르다: 흡수된
-      // 적이 없으니 되돌릴 가치가 남는다 — 체크포인트를 유지한다 (판정 2).
-      await this.deps.clearCheckpoints().catch(() => undefined);
-    }
   }
 
   /**
@@ -770,8 +777,13 @@ export class PublishCycle {
           `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
         ),
       );
+    } else {
+      // 슬라이스 5: AI 도 기획자도 고칠 수 없는 실패다 — 개발자 채널로.
+      // 브랜치는 이 사이클의 이름이고 detail 은 PAT 가 이미 걷힌 한국어 문장.
+      this.deps.escalate?.(
+        `[Colo Design] ${GATE_BRIEF[gate]} (${this.core.branch ?? "?"})\n${detail}\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.`,
+      );
     }
-    // 리뷰 C5: push 인증 거절은 화면이 다음 행동(토큰 확인)을 말해야 한다 —
     // reason 이 없으면 저장 검토는 "멈췄습니다" 로만 끝났다.
     return this.core.setDiff({
       stage: "failed",
@@ -791,13 +803,16 @@ export class PublishCycle {
 /** Cross-module services the cycle needs — wired by the facade. */
 export interface PublishDeps {
   /** The save-time memo the PR body quotes — the summarizer's one turn. */
-  claudeMemo(files: DiffFile[]): Promise<string | null>;
-  /** A merged cycle's snapshots are history, not exits. */
-  clearCheckpoints(): Promise<void>;
+  machineMemo(files: DiffFile[]): Promise<string | null>;
   /**
    * 사이클 사건의 기록 (hero-synthesis D1): 저장 · 넘김 · 반영 · 코멘트 도착을
    * 세션 채널로 보내고 테이프에 남긴다. `sessionId` 는 저장·넘기기를 부른
    * 대화 — 없으면 붙이는 쪽이 마지막 활성 세션으로 귀속한다.
    */
   onCycleEvent?(event: ChatEvent, sessionId?: string): void;
+  /**
+   * 슬라이스 5: 인증·권한 게이트 실패를 개발자 채널(Slack 웹훅)로 흘리는 문.
+   * 없으면 조용히 지나간다 — 에스컬레이션은 언제나 부가물이다.
+   */
+  escalate?(text: string): void;
 }

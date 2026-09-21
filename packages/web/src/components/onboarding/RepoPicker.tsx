@@ -347,12 +347,15 @@ export function RepoPicker({
                 <span className="ic ic--lg ic--quiet">
                   <FolderIcon />
                 </span>
-                이 토큰에 쓰기 권한이 있는 레포가 없습니다.
-                <span className="hint">
-                  읽기만 가능한 레포는 개발자에게 넘길 수 없어 목록에서 제외됩니다. fine-grained
-                  토큰이라면 레포 접근 범위와 Contents: Read and write 권한을, 조직이 SSO를 쓴다면
-                  토큰 승인을 확인해 주세요. 아래에서 주소로 직접 추가할 수도 있습니다.
-                </span>
+                개발자에게 받은 코드가 이 레포에 닿지 않습니다 — 개발자에게 다시 요청하세요.
+                <details className="repopicker__devnote">
+                  <summary>개발자용 ▾</summary>
+                  <span className="hint">
+                    읽기만 가능한 레포는 개발자에게 넘길 수 없어 목록에서 제외됩니다. 코드를 만들 때
+                    레포 접근 범위와 Contents: Read and write 권한을, 조직이 SSO를 쓴다면 코드
+                    승인을 확인해 주세요.
+                  </span>
+                </details>
               </li>
             )}
             {phase === "ready" && rows.length === 0 && query.trim() !== "" && (
@@ -418,7 +421,7 @@ export function RepoPicker({
               )}
               {!inspection.result.canPush && (
                 <span className="repopicker__warnline">
-                  ! 이 토큰으로는 개발자에게 넘길 수 없습니다 — 화면 작업은 계속할 수 있습니다.
+                  ! 이 코드로는 개발자에게 넘길 수 없습니다 — 화면 작업은 계속할 수 있습니다.
                 </span>
               )}
             </p>
@@ -516,7 +519,7 @@ export function RepoPicker({
             />
             이 레포가 정의한 설치 · 미리보기 명령을 이 기기에서 실행하는 것을 허용합니다
           </label>
-          <p className="hint">토큰 없이 접근할 수 있는 주소나, GitHub 밖의 git 주소를 쓸 때만.</p>
+          <p className="hint">코드 없이 접근할 수 있는 주소나, GitHub 밖의 git 주소를 쓸 때만.</p>
           {manualError && (
             <div className="notice notice--error">
               <span className="notice__text">{manualError}</span>

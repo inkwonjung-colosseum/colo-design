@@ -41,6 +41,8 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       url: fixture.remote,
       onStatus: () => undefined,
       gitHubClient: () => stubPullRequestClient(requests),
+      // P1-3: 온보딩이 저장한 작성자 이름 — 본문의 `> 작성:` 줄이 이 테스트의 단언거리다.
+      authorName: () => "김기획",
     });
     await workspace.sync();
     await workspace.stop();
@@ -54,14 +56,12 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       shots: [
         {
           route: "/member/MemberList",
-          state: "default",
-          image: Buffer.from("webp-기본"),
+          image: Buffer.from("webp-회원 목록"),
           extension: ".webp",
         },
         {
           route: "/결제 완료",
-          state: "빈 상태",
-          image: Buffer.from("webp-빈 상태"),
+          image: Buffer.from("webp-결제 완료"),
           extension: ".webp",
         },
       ],
@@ -87,13 +87,10 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       .split("\n")
       .filter(Boolean);
     assert.ok(
-      committed.includes(".colo-design/shots/-member-MemberList--default.webp"),
+      committed.includes(".colo-design/shots/-member-MemberList.webp"),
       committed.join(", "),
     );
-    assert.ok(
-      committed.includes(".colo-design/shots/-결제 완료--빈 상태.webp"),
-      committed.join(", "),
-    );
+    assert.ok(committed.includes(".colo-design/shots/-결제 완료.webp"), committed.join(", "));
     const remoteTree = await promisifiedRun("git", [
       "-c",
       "core.quotepath=false",
@@ -105,13 +102,19 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
       branch,
     ]);
     assert.ok(
-      remoteTree.includes(".colo-design/shots/-결제 완료--빈 상태.webp"),
+      remoteTree.includes(".colo-design/shots/-결제 완료.webp"),
       "the captures reached the remote",
     );
-
     // The section rides at the END of the body; Korean reads as itself, only
     // the url's spaces escape.
     const body = requests[0].body;
+    // P1-3: 작성자 줄 — 봇 계정으로 열리는 요청에서 이름이 유일한 구분이다.
+    // 본문 서두 다음, `### 바뀐 파일` 절보다 앞에 인용문 한 줄로 선다.
+    assert.ok(body.includes("> 작성: 김기획"), body);
+    assert.ok(
+      body.indexOf("> 작성: 김기획") < body.indexOf("### 바뀐 파일"),
+      "author line before the files section",
+    );
     // 목업 02: 사이클 브랜치의 numstat 이 본문에 실린다 — 미리보기가 약속한
     // 그 절이다. 캡처 절보다 앞: 무엇이 바뀌었는지가 먼저 읽힌다.
     assert.ok(body.indexOf("### 바뀐 파일") > 0, "appended, not prepended");
@@ -122,13 +125,10 @@ test("넘기기 commits the captures under .colo-design/shots and links them at 
     );
     assert.ok(body.indexOf("### 화면 미리보기") > 0, "appended, not prepended");
     const section = body.slice(body.indexOf("### 화면 미리보기"));
-    assert.ok(
-      section.includes(`blob/${branch}/.colo-design/shots/-결제%20완료--빈%20상태.webp`),
-      section,
-    );
-    assert.ok(section.includes("`/member/MemberList · default`"), section);
+    assert.ok(section.includes(`blob/${branch}/.colo-design/shots/-결제%20완료.webp`), section);
+    assert.ok(section.includes("`/member/MemberList`"), section);
     // Nothing follows the links — the section is the body's tail.
-    assert.ok(section.trimEnd().endsWith("-결제%20완료--빈%20상태.webp)"), section);
+    assert.ok(section.trimEnd().endsWith("-결제%20완료.webp)"), section);
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
     else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
@@ -169,7 +169,6 @@ test("첫 저장 전에 찍힌 핀도 넘긴 요청 본문의 수정 요청 절�
         {
           id: "pin-1",
           screen: "member/MemberList",
-          state: "default",
           text: "이 버튼은 더 크게",
           elementText: "div",
           at: new Date().toISOString(),

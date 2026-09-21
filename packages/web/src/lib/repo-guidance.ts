@@ -86,7 +86,7 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
   if (kind === "auth") {
     return {
       title: "GitHub 패키지 인증이 필요합니다",
-      body: "연결 레포의 의존성을 사내 GitHub 패키지에서 받아옵니다. 설정의 개인 액세스 토큰(read:packages 권한)을 확인한 뒤 다시 시도해 주세요.",
+      body: "연결 레포의 의존성을 사내 GitHub 패키지에서 받아옵니다. 설정의 연결 코드(패키지 읽기 권한)를 확인한 뒤 다시 시도해 주세요.",
       command: "pnpm config set //npm.pkg.github.com/:_authToken <PAT>",
       agent: ask(
         "의존성 설치",

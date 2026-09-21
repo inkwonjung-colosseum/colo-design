@@ -117,10 +117,25 @@ export class GitHubBridge {
     const steps = await runOnboardingChecks({
       claudeExecutableOverride: this.deps.claudeExecutableOverride(),
       gitHubClient: () => this.client(),
+      // 폼이 다시 채색되는 이 같은 판정이 쓰기 레포 0개도 말하게 한다(P1-2).
+      githubWriteRepoCount: () => this.writeRepoCount(),
     });
     return steps.find((step) => step.id === "github") ?? null;
   }
 
+  /**
+   * 이 토큰으로 접근 가능한 쓰기 레포 수(P1-2) — onboarding.check 의 github 게이트가
+   * 묻는다. listRepos 와 같은 캐시를 읽으므로 피커가 열리기 전의 이 한 번이
+   * 유일한 비용이다. 목록을 못 읽으면 null — 게이트는 판정을 유보한다.
+   */
+  async writeRepoCount(): Promise<number | null> {
+    try {
+      const list = await this.listRepos(false);
+      return list.repos.filter((repo) => repo.canPush).length;
+    } catch {
+      return null;
+    }
+  }
   /** The picker's repo list — cached per token until `refresh` or a setToken. */
   async listRepos(refresh: boolean): Promise<GitHubRepoList> {
     if (!this.pat) {

@@ -77,9 +77,9 @@ export interface ProjectSummary {
    * 코멘트 도착(`comments`) · 반영됨(`merged`) · 반려(`closed`·
    * `changes_requested`) 중 하나. 아직 아무 사건도 못 본 프로젝트는 키가 없다.
    */
-  lastEventKind?: "merged" | "closed" | "changes_requested" | "comments";
+  lastEventKind?: "merged" | "closed" | "changes_requested" | "comments" | "replied";
   /** `lastEventKind`를 폴러가 감지한 시각(ISO) — 사건이 실제로 일어난 시각이
-      아니라 최대 10분 지연된 발견 시각이다. */
+      아니라 최대 2분 지연된 발견 시각이다. */
   lastEventAt?: string;
 }
 
@@ -137,6 +137,8 @@ export interface DaemonStatus {
    * 브로드캐스트는 판정이 바뀔 때만이다.
    */
   githubAuthExpired?: boolean;
+  /** 슬라이스 5: 개발자 에스컬레이션 웹훅이 저장되어 있는가 — URL 자체는 못 나간다. */
+  escalationConfigured?: boolean;
   liveSessions: number;
   pendingPermissions: number;
   warnings: string[];
@@ -186,10 +188,28 @@ export interface DaemonStatus {
     loggedIn?: boolean;
     /** Why the provider cannot run — shown in place of a bare "설치 필요". */
     reason?: string;
+    /** 이 드라이버가 기계 잔일(저장 메모 · 넘기기 초안)의 단답 턴을 맡을 수
+     *  있다 — machine-provider 의 후보. 없으면 설정의 담당 행에 나오지 않는다. */
+    oneShot?: boolean;
     modes: Array<{ id: string; label: string; tier: string }>;
     defaultModeId: string;
     capabilities: Record<string, unknown>;
   }>;
+  /** 설정창의 저장 메모 담당 — 계획자가 고른 값. null(또는 없음) = 자동(기본). */
+  machineProvider?: string | null;
+  /**
+   * 지금 실제 담당 — 설정이 고른 것("setting") 또는 자동 규칙의 것("auto").
+   * null = 후보가 없어 폴백만 남는다 (메모·초안을 건너뛴다).
+   */
+  machineProviderActive?: { id: string; origin: "setting" | "auto" } | null;
+  /**
+   * 이 데몬이 개발 실행인가(COLO_DESIGN_DEV_AGENTS=1 · 패키징 안 된 데스크톱).
+   * 웹 번들은 production 빌드라 import.meta.env.DEV 로 대신 판단하면 패키징된
+   * 앱에서 항상 false 다 — 개발 전용 면(슬래시 메뉴 등)은 이 선로 값을 본다.
+   */
+  dev?: boolean;
+  /** 넘긴 요청에 적을 작성자 이름 — 온보딩이 묻고 machine.json 이 기억한다. */
+  authorName?: string | null;
 }
 
 // ---------------------------------------------------------------------------

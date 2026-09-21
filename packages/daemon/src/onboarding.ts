@@ -51,6 +51,14 @@ export interface OnboardingDeps {
    */
   gitHubClient?: () => GitHubClient | null;
   /**
+   * 이 토큰으로 접근 가능한 쓰기 레포 수(P1-2) — 브리지의 캐시된 목록에서 센다.
+   * 답이 0 이면 게이트는 warn 으로 물러난다: 토큰은 살아 있지만 이 기계가
+   * 넘길 수 있는 레포가 하나도 없다는 뜻이므로. null(목록을 못 읽음)이면
+   * 판정을 유보하고 지난날처럼 pass 로 둔다 — 게이트가 네트워크 탓에 막히는
+   * 일은 없어야 한다.
+   */
+  githubWriteRepoCount?: () => Promise<number | null>;
+  /**
    * Which provider the agent step checks (PLAN: provider-aware gate).
    * Defaults to "claude" — the historical gate.
    */
@@ -141,11 +149,22 @@ async function checkGit(): Promise<OnboardingStep> {
 
 /** One failing step for both "never installed" and "installed but broken". */
 function gitMissing(): OnboardingStep {
-  const detail =
-    currentPlatform() === "darwin"
-      ? "git이 없습니다 — Xcode 명령줄 도구를 설치해 주세요. 터미널에 xcode-select --install 을 실행하면 설치 창이 열립니다."
-      : `git이 없습니다 — 터미널에서 ${gitInstallGuidance().command} 로 설치한 뒤 다시 확인해 주세요.`;
-  return fail("git", detail, { kind: "install-git", label: "설치 안내 보기" });
+  // darwin 은 이 도구가 설치 명령을 직접 띄운다(startGitInstall) — OS 의 설치
+  // 대화상자가 곧 진행 표시다. 다른 플랫폼은 문장이 전부다.
+  if (currentPlatform() === "darwin") {
+    return fail("git", "git이 없습니다 — 설치 버튼을 누르면 설치 창이 열립니다.", {
+      kind: "install-git",
+      label: "git 설치",
+    });
+  }
+  return fail("git", gitMissingGuidanceText(), {
+    kind: "install-git",
+    label: "설치 안내 보기",
+  });
+}
+
+function gitMissingGuidanceText(): string {
+  return `git이 없습니다 — 터미널에서 ${gitInstallGuidance().command} 로 설치한 뒤 다시 확인해 주세요.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +267,28 @@ async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
     return {
       id: "github",
       status: "warn",
-      detail: `${me.detail} 연결하지 않은 것과 같으니, 새 토큰을 다시 넣거나 그대로 시작해도 됩니다 — 주소로 직접 추가한 레포에서는 토큰이 필요 없습니다.`,
+      detail: `${me.detail} 연결하지 않은 것과 같으니, 새 코드를 다시 넣거나 그대로 시작해도 됩니다 — 주소로 직접 추가한 레포에서는 코드가 필요 없습니다.`,
     };
   }
-  return pass("github", `GitHub @${me.login} 로 연결됨`);
+  // warn, not fail: 0개의 쓰기 레포도 "토큰 없음"과 같은 대우다. 개발자에게
+  // 받은 코드가 이 조직의 어떤 레포에도 닿지 않는 상태에서 마법사를 막으면,
+  // 카드가 다시 물을 수 있는 일은 아무것도 없다. 문구는 다시 요청하게 이끈다.
+  const writeCount = deps.githubWriteRepoCount
+    ? await deps.githubWriteRepoCount().catch(() => null)
+    : null;
+  if (writeCount === 0) {
+    return {
+      id: "github",
+      status: "warn",
+      detail:
+        "개발자에게 받은 코드가 이 레포에 닿지 않습니다 — 개발자에게 다시 요청하세요. " +
+        "그 전까지 주소를 직접 넣는 공개 레포로는 작업할 수 있습니다.",
+    };
+  }
+  return pass(
+    "github",
+    `GitHub @${me.login} 로 연결됨${writeCount !== null ? ` · 쓸 수 있는 레포 ${writeCount}개` : ""}`,
+  );
 }
 
 // The project is NOT a gate (PLAN D12[게이트 아님]): which repo a planner works on is
@@ -321,8 +358,6 @@ const installFailed = (platform: string): string =>
   platform === "win32"
     ? "설치를 시작하지 못했습니다 — 터미널에서 irm https://claude.ai/install.ps1 | iex 를 직접 실행해 주세요."
     : "설치를 시작하지 못했습니다 — 터미널에서 curl -fsSL https://claude.ai/install.sh | bash 를 직접 실행해 주세요.";
-const LOGIN_FAILED =
-  "로그인 창을 열지 못했습니다 — 터미널에서 claude /login 을 직접 실행해 주세요.";
 
 /**
  * Runs the Claude Code native installer detached. Nothing here shows the
@@ -366,45 +401,117 @@ export function startClaudeInstall(
   }
 }
 
-/** Opens a Terminal window running `claude /login` (macOS), else spawns it. */
-export function startClaudeLogin(spawnLike: SpawnLike = spawn): {
-  started: boolean;
-  guidance: string;
-} {
-  if (process.platform === "darwin") {
+/**
+ * 터미널 없는 에이전트 로그인 (P1-1): 데몬이 로그인 명령을 stdio 파이프로
+ * 띄워 대신 몰고, 앱은 브라우저와 붙여넣기만 담당한다. 스파이크로 확인한
+ * CLI 의 출력 계약 — `claude auth login` 은 OAuth 주소를 stdout 에 내놓고
+ * `Paste code here if prompted >` 에서 stdin 의 코드를 기다린다(틀린 코드는
+ * stderr 한 줄로 답하고 다시 기다린다). `codex login` 은 주소를 stderr 에
+ * 내놓고 콜백을 기다린다(코드 입력 없음) — 주소는 어느 줄에서 왔든 첫
+ * https URL 로 잡고, "코드 붙여넣기" 칸은 CLI 가 실제로 코드를 청했을 때만
+ * 연다(wantsCode). 주소보다 프롬프트가 늦게 오면 wantsCode=true 로 다시
+ * 방송한다 — 같은 판을 다시 그릴 뿐이다.
+ */
+export interface AgentLoginEvents {
+  onUrl(url: string, wantsCode: boolean): void;
+  onDone(ok: boolean, detail: string): void;
+}
+
+const LOGIN_GUIDANCE =
+  "로그인을 시작했습니다 — 브라우저가 열리면 안내에 따라 로그인하고, 화면에 나온 코드를 붙여넣어 주세요.";
+const LOGIN_FAILED =
+  "로그인을 시작하지 못했습니다 — 에이전트 설치를 먼저 마치고 다시 시도해 주세요.";
+
+export class AgentLogin {
+  private child: ReturnType<SpawnLike> | null = null;
+  /** stop() 이 치운 자식의 close 는 끝이 아니라 교체일 뿐 — 끝을 누른다. */
+  private generation = 0;
+
+  constructor(private readonly spawnLike: SpawnLike = spawn) {}
+
+  get running(): boolean {
+    return this.child !== null && this.child.exitCode === null && !this.child.killed;
+  }
+
+  start(
+    command: string,
+    args: string[],
+    events: AgentLoginEvents,
+  ): {
+    started: boolean;
+    guidance: string;
+  } {
+    this.stop();
+    const generation = this.generation;
     try {
-      detach(
-        spawnLike("osascript", ["-e", 'tell application "Terminal" to do script "claude /login"'], {
-          detached: true,
-          stdio: "ignore",
-        }),
-      );
-      return {
-        started: true,
-        guidance:
-          "터미널 창을 열었습니다 — 브라우저 로그인을 마친 뒤 이 단계를 다시 확인해 주세요.",
+      // Windows: `claude` is a .cmd shim, which is not an executable — a shell
+      // resolves it. Everywhere else the direct spawn is one process fewer.
+      const child = this.spawnLike(command, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
+      this.child = child;
+      let output = "";
+      let url: string | null = null;
+      let wantsCode = false;
+      const feed = (text: string) => {
+        output += text;
+        const found = /(https:\/\/[^\s"']+)/.exec(output)?.[1] ?? null;
+        const asked = /paste (the )?code/i.test(output);
+        // 주소·프롬프트는 한 덩어리로 오기도 하고 갈라져 오기도 한다 — 상태가
+        // 바뀐 만큼만 다시 방송한다(웹은 같은 판을 다시 그린다).
+        if (found !== null && (found !== url || asked !== wantsCode)) {
+          url = found;
+          wantsCode = asked;
+          events.onUrl(url, wantsCode);
+        }
       };
+      child.stdout?.on("data", (chunk: Buffer) => feed(String(chunk)));
+      child.stderr?.on("data", (chunk: Buffer) => feed(String(chunk)));
+      child.once("error", () => {
+        if (generation !== this.generation) return;
+        this.child = null;
+        events.onDone(false, LOGIN_FAILED);
+      });
+      child.once("close", (code) => {
+        if (generation !== this.generation) return;
+        this.child = null;
+        if (code === 0) {
+          events.onDone(true, "로그인이 완료되었습니다.");
+          return;
+        }
+        // 실패의 이유는 자식의 마지막 말 — 프롬프트 잔상보다 정보가 있는 줄이다.
+        const last =
+          output
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && !line.startsWith("https://"))
+            .at(-1) ?? "";
+        events.onDone(
+          false,
+          last ? `로그인이 끝나지 않았습니다 — ${last.slice(0, 160)}` : LOGIN_FAILED,
+        );
+      });
+      return { started: true, guidance: LOGIN_GUIDANCE };
     } catch {
-      // fall through to the detached spawn
+      this.child = null;
+      return { started: false, guidance: LOGIN_FAILED };
     }
   }
-  try {
-    // Windows: `claude` is a .cmd shim, which is not an executable — a shell
-    // resolves it. Everywhere else the direct spawn is one process fewer.
-    detach(
-      spawnLike("claude", ["/login"], {
-        detached: true,
-        stdio: "ignore",
-        shell: process.platform === "win32",
-      }),
-    );
-    return {
-      started: true,
-      guidance:
-        "로그인 절차를 시작했습니다 — 안내를 따라 로그인한 뒤 이 단계를 다시 확인해 주세요.",
-    };
-  } catch {
-    return { started: false, guidance: LOGIN_FAILED };
+
+  /** 웹이 붙여넣은 코드를 자식의 stdin 으로 — 로그인이 살아 있을 때만 true. */
+  submitCode(code: string): boolean {
+    if (!this.running) return false;
+    this.child?.stdin?.write(`${code.trim()}\n`);
+    return true;
+  }
+
+  /** 진행 중인 로그인을 끊는다 — 재시작의 앞단계와 데몬 종료가 부른다. */
+  stop(): void {
+    this.generation += 1;
+    const child = this.child;
+    this.child = null;
+    if (child && child.exitCode === null && !child.killed) child.kill();
   }
 }
 
@@ -437,6 +544,33 @@ export function gitInstallGuidance(platform: Platform = currentPlatform()): {
   };
 }
 
+/**
+ * git 설치 (P1-1): darwin 은 설치 명령을 실제로 띄운다 — OS 가 제 설치
+ * 대화상자를 열므로 그것으로 원클릭이 성립한다. 그 외 플랫폼은 문장만
+ * 돌려준다(Windows 데스크톱 앱은 MinGit 을 함께 배포하므로 이 길에 서는
+ * 일 자체가 드물다). detached · stdio ignore — 결과는 다시 확인이 읽는다.
+ */
+export function startGitInstall(
+  spawnLike: SpawnLike = spawn,
+  platform: Platform = currentPlatform(),
+): { started: boolean; guidance: string } {
+  if (platform === "darwin") {
+    try {
+      detach(spawnLike("xcode-select", ["--install"], { detached: true, stdio: "ignore" }));
+      return {
+        started: true,
+        guidance: "설치 창을 열었습니다 — 설치가 끝나면 이 단계를 다시 확인해 주세요.",
+      };
+    } catch {
+      // 스폰에 실패한 세계는 아래 문장이 직접 실행할 길을 알려 준다.
+    }
+  }
+  const guide = gitInstallGuidance(platform);
+  return {
+    started: false,
+    guidance: `git이 없습니다 — 터미널에 ${guide.command} 로 설치한 뒤 다시 확인해 주세요.`,
+  };
+}
 function pass(id: OnboardingStepId, detail: string): OnboardingStep {
   return { id, status: "pass", detail };
 }

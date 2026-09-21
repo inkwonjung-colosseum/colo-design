@@ -9,11 +9,9 @@ import {
 } from "@colo-design/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { Diagnostic } from "./agent/driver.js";
-import { AcpDriver } from "./agent/drivers/acp/driver.js";
-import { OMP_ACP } from "./agent/drivers/acp/omp.js";
-import { OPENCODE_ACP } from "./agent/drivers/acp/opencode.js";
 import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
 import { CodexDriver } from "./agent/drivers/codex/driver.js";
+import { OmpDriver } from "./agent/drivers/omp/driver.js";
 import { DriverRegistry } from "./agent/registry.js";
 import { browserMcpEntry } from "./browser-launch.js";
 import {
@@ -24,10 +22,14 @@ import {
 } from "./credentials.js";
 import { RequestRouter } from "./dispatch.js";
 import { buildStatus, resolveClaudeExecutable } from "./environment.js";
+import { Escalation } from "./escalation.js";
 import { GitHubBridge } from "./github-bridge.js";
 import { HandoffPreviews } from "./handoff-preview.js";
 import { createFileLogger, type DaemonLogger } from "./log.js";
+import { MachineTurns } from "./machine-provider.js";
+import { MachineSetting } from "./machine-setting.js";
 import { type DaemonNotice, noticeForState } from "./notices.js";
+import { AgentLogin } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
 import { PlanTracker } from "./plan-tracker.js";
 import type {
@@ -40,8 +42,10 @@ import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
+import { MAX_LINES_PER_SCREEN, TROUBLE_LEVELS } from "./screen-gate.js";
 import { asPlannerFacingError, NEW_SESSION_TITLE } from "./session.js";
 import { SessionManager } from "./session-manager.js";
+import { TurnStats } from "./turn-stats.js";
 import { serveWeb } from "./web-static.js";
 
 // The host's notice type (notices.ts) — re-exported so
@@ -64,14 +68,17 @@ export type {
 } from "./preview-driver.js";
 
 /**
- * 커미티 B1 (2026-09-15): 열린 넘김 폴링 주기. 10분 = 프로젝트당 GitHub 읽기
- * 6회/시간(PR 1 + 리뷰 1) — "한 사람·한 대·한 구독"의 개인 규모 안이다.
+ * 커미티 B1 (2026-09-15): 열린 넘김 폴링 주기. 슬라이스 4 (2026-09-19) 가
+ * 10분 → 2분으로 줄였다: 인증 요청 5000/시 예산에서 프로젝트당 분당 1회
+ * 미만이라 "한 사람·한 대·한 구독" 규모에 여유가 있고, 반영 알림이 실제
+ * 병합에서 늦게 도착하는 일은 이제 사용자 경험의 문제였다.
  */
-const HANDOFF_POLL_MS = 10 * 60_000;
+const HANDOFF_POLL_MS = 2 * 60_000;
 /**
- * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 15개). 와이어에
+ * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 16개). 와이어에
  * 노출하지 않는 것: destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자
- * 페이지가 망가진다).
+ * 페이지가 망가진다). `screenCheck` 는 pane 이 아니라 검증 창(forIsolated)
+ * 에서 돈다 — 게이트의 판정을 턴 안에서 앞당겨 보는 길이다.
  */
 const BROWSER_OPS: Record<string, true> = {
   navigate: true,
@@ -89,6 +96,7 @@ const BROWSER_OPS: Record<string, true> = {
   consoleLines: true,
   evaluate: true,
   waitFor: true,
+  screenCheck: true,
 };
 
 /** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
@@ -110,6 +118,7 @@ const BROWSER_QUIET_OPS: Record<string, true> = {
   screenshot: true,
   consoleLines: true,
   waitFor: true,
+  screenCheck: true,
 };
 
 /**
@@ -205,6 +214,13 @@ export interface DaemonConfig {
   token: string;
   claudeExecutable?: string;
   /**
+   * 개발용 에이전트(omp)를 프로바이더 목록에 올린다. 실사용자는 Claude Code ·
+   * Codex 만 쓴다 — omp 는 이 도구의 개발자만 쓰므로 그 길은 개발 실행에만
+   * 열어 둔다: 데스크톱은 `!app.isPackaged`, CLI 는
+   * `COLO_DESIGN_DEV_AGENTS=1`. 패키징된 앱은 절대 켜지 않는다.
+   */
+  devAgents?: boolean;
+  /**
    * Where the web UI's built files live. When set, the daemon serves them
    * itself — the desktop app is one process serving one origin, no pairing
    * screen. The browser dev path (separate vite server + pasted ws url)
@@ -243,6 +259,22 @@ export interface DaemonConfig {
   browserDriverFactory?: BrowserDriverFactory;
 }
 
+/**
+ * The provider registry's contents — registration order is the picker order
+ * (registry.ts). Claude · Codex always; omp only behind `devAgents`
+ * (DaemonConfig 의 주석). 함수로 떼어 둔 이유는 하나다: 어느 실행이 어떤
+ * 프로바이더 목록을 받는지를 데몬을 띄우지 않고 잠그기 위해서다.
+ */
+export function registerAgentDrivers(
+  registry: DriverRegistry,
+  options: { claudeExecutable: () => string | null; devAgents: boolean },
+): void {
+  registry.register(new ClaudeDriver(options.claudeExecutable));
+  registry.register(new CodexDriver());
+  if (!options.devAgents) return;
+  registry.register(new OmpDriver());
+}
+
 export class DaemonServer {
   private readonly clients = new Set<WebSocket>();
   private readonly manager: SessionManager;
@@ -274,21 +306,14 @@ export class DaemonServer {
   private wss: WebSocketServer | null = null;
   private readonly agentDrivers = new DriverRegistry();
   private claudeExecutable: string | null = null;
-  /**
-   * How many 화면 turns each session has started (PLAN D52). The number is
-   * the checkpoint ref's `<turn>` — a turn's snapshot is the worktree as it
-   * stood the moment that turn was handed over. Daemon memory is the right
-   * home: the refs themselves survive in git, and a restart only means the
-   * count starts over on an unused number.
-   *
-   * `session.send` seeds the count (from the transcript, once per process);
-   * the DELIVERY bumps it — the `user.echo` the session emits as it hands the
-   * words to the CLI. A send waiting for the next turn (PLAN D86) is not a
-   * turn yet: snapshotting at send time would freeze the worktree while the
-   * previous turn is still editing it, and a send taken back out of the room
-   * would leave a numbered checkpoint no prompt ever had.
-   */
-  private readonly checkpointTurns = new Map<string, number>();
+  /** 기계 잔일 담당의 설정 — 설정창의 machine.set 이 쓰고 machine.json 에 산다. */
+  private readonly machineSetting = new MachineSetting();
+  /** 기계 잔일(저장 메모 · 넘기기 초안)의 담당 — 레지스트리와 설정에서 고른다. */
+  private readonly machineTurns = new MachineTurns(this.agentDrivers, () =>
+    this.machineSetting.get("provider"),
+  );
+  /** 터미널 없는 에이전트 로그인(P1-1) — 데몬이 파이프로 몰고 방송한다. */
+  private readonly agentLogin = new AgentLogin();
   /**
    * 브라우저 MCP 자식의 세션별 시크릿(3단계): Map<secret, {sessionId,
    * issuedAt}>. 데몬의 config.token은 전역 공유라 자식에게 못 준다 — 세션마다
@@ -350,16 +375,27 @@ export class DaemonServer {
    */
   private readonly notifyClockAt = new Map<string, number>();
   /**
+   * 카드 대기의 시계 (턴 통계): waiting_permission·waiting_question 진입에
+   * 놓고 벗어날 때 구간을 통계에 더한다 — durationMs 에 섞인 사람 대기를
+   * waitMs 로 갈라 내는 재료다.
+   */
+  private readonly waitClockAt = new Map<string, number>();
+  /**
    * 대기 줄의 디스크 절반 (PLAN D86 의 확장): the wait rooms' mirror and the
    * lost room's keeper, keyed by session id under the run dir.
    */
   private readonly queueStore = new QueueStore();
   /** 세션에 하나씩 물려주는 디스크 손잡이 — Session 이 자기 id 로 부른다. */
   private readonly queueDiskFor = (sessionId: string) => this.queueStore.for(sessionId);
+  /** 슬라이스 5: 개발자 에스컬레이션 — 환경 실패를 웹훅으로 흘리는 문. */
+  private readonly escalation: Escalation;
+  /** 턴 통계 (AI 작업 시간 측정) — 종류와 숫자만 남기는 하루 JSONL. */
+  private readonly stats: TurnStats;
 
   constructor(private readonly config: DaemonConfig) {
     this.credentials = config.credentialStore ?? createCredentialStore();
     this.logger = config.logger ?? createFileLogger();
+    this.escalation = new Escalation(this.credentials, this.logger);
     this.github = new GitHubBridge({
       credentials: this.credentials,
       claudeExecutableOverride: () => this.config.claudeExecutable,
@@ -371,16 +407,24 @@ export class DaemonServer {
       // 데몬이 본 GitHub 401(또는 그 뒤의 회복) — 판정이 바뀔 때만 status 를
       // 다시 방송한다. 웹의 만료 카드는 이 방송 하나로 열리고 닫힌다.
       onAuthChange: () => {
+        // 슬라이스 5: 토큰 만료는 AI 가 못 고친다 — 개발자에게 곧장 알린다.
+        if (this.github.authExpired) {
+          void this.escalation.notify(
+            "[Colo Design] GitHub 토큰이 만료된 것 같습니다 — 기획자 컴퓨터에서 토큰을 다시 넣어야 합니다.",
+          );
+        }
         void this.status().then((status) => this.broadcast({ type: "status", status }));
       },
     });
-    this.agentDrivers.register(new ClaudeDriver(() => this.claudeExecutable));
-    this.agentDrivers.register(new CodexDriver());
-    this.agentDrivers.register(new AcpDriver(OPENCODE_ACP));
-    this.agentDrivers.register(new AcpDriver(OMP_ACP));
+    registerAgentDrivers(this.agentDrivers, {
+      claudeExecutable: () => this.claudeExecutable,
+      devAgents: config.devAgents === true,
+    });
     this.manager = new SessionManager(
       {
         onEvent: (sessionId, event) => {
+          // 턴 통계 — 아래의 return 들보다 먼저: 모든 사건이 새겨져야 한다.
+          this.stats.observe(sessionId, event);
           this.broadcast({ type: "session.event", sessionId, event });
           // 한도가 움직였다 (PLAN D100): 요금 칩이 2분 뒤에야 진실을 말하면,
           // 계획자는 이미 막힌 뒤에 그 사실을 안다. 다음 읽기를 앞당긴다 —
@@ -389,18 +433,15 @@ export class DaemonServer {
             this.plans.noteRateLimit(this.manager.get(sessionId)?.provider ?? "claude");
             return;
           }
-          // 화면 턴의 시작점 (PLAN D52): the echo IS the hand-over. The snapshot
-          // must never hold the turn hostage — a failed checkpoint only means
-          // one fewer 되돌리기, so it runs alongside and keeps its failure to
-          // itself. A session the planner never sent into has no count, and
-          // none of its machine turns starts one.
-          if (event.kind !== "user.echo") return;
-          const turn = this.checkpointTurns.get(sessionId);
-          if (turn === undefined) return;
-          this.checkpointTurns.set(sessionId, turn + 1);
-          void this.workspaceOfSession(sessionId)
-            ?.repo.checkpoint(sessionId, turn + 1)
-            .catch(() => undefined);
+          // 감독(2026-09-19): 턴이 답을 냈다 — 자동 재개의 상한은 돌려놓는다.
+          // 다음 고장은 새 사건이고, 다시 두 번의 스스로 재기를 얻는다.
+          // 슬라이스 2: 답을 낸 턴이 자동 브리프가 연 턴이면 저장까지 정산한다.
+          // 중지는 사람의 뜻 — 반쯤 고쳐진 화면을 저장하지 않는다.
+          if (event.kind === "turn.end" && !event.isError && event.subtype !== "interrupted") {
+            this.router?.forgetReviveBudget(sessionId);
+            void this.fleet.settleAutoSave(sessionId);
+            return;
+          }
         },
         onState: (sessionId, state, detail) => {
           // 파일 로그의 뼈대: 턴이 언제 시작해 언제 어떤 상태로 내려앉았는지.
@@ -410,16 +451,27 @@ export class DaemonServer {
           // (화면의 진행 시계는 다른 질문에 답한다 — 아래 `startedAt` 을 보라.)
           let turnDurationMs: number | undefined;
           if (state === "running") {
+            // 이 시계는 `running` 의 것이 맞다: 카드를 기다렸다 재개한 일은
+            // 그때부터 다시 재는 것이 완료 알림의 "오래 걸린 턴" 정의다
+            // (화면의 진행 시계는 Session.turnStartedAt 이 따로 든다).
             this.notifyClockAt.set(sessionId, Date.now());
-            // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 가리킨 화면을
-            // 다시 판정하면 고치지도 않은 화면을 AI 에게 떠넘기게 된다.
-            this.drivers.pinnedThisTurn.delete(sessionId);
           } else if (state === "idle") {
             const startedAt = this.notifyClockAt.get(sessionId);
             this.notifyClockAt.delete(sessionId);
             turnDurationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
           } else if (state === "closed") {
             this.notifyClockAt.delete(sessionId);
+          }
+          // 카드 대기의 시계 (턴 통계): waiting_* 진입에 놓고 벗어날 때 구간을
+          // 통계에 더한다. 세션이 닫혀도 else 가 지우므로 시계는 남지 않는다.
+          if (state === "waiting_permission" || state === "waiting_question") {
+            this.waitClockAt.set(sessionId, Date.now());
+          } else {
+            const waitSince = this.waitClockAt.get(sessionId);
+            if (waitSince !== undefined) {
+              this.waitClockAt.delete(sessionId);
+              this.stats.noteWait(sessionId, Date.now() - waitSince);
+            }
           }
           // 진행 시계 (화면의 `n분 n초`): 시작을 창이 아니라 세션이 들고 있으므로
           // 새로고침해도 두 번째 창에서도 같은 초를 센다. 도는 턴이 없는 세션의
@@ -453,7 +505,21 @@ export class DaemonServer {
           // (runScreenGate 가 둘 중 하나를 내보낸다). 여기서 먼저 부르면
           // 사용자는 `작업이 끝났습니다` 를 읽은 직후 다시 도는 대화를 본다.
           if (state === "idle" && this.drivers.gatePossible(sessionId)) {
-            void this.drivers.runGate(sessionId, turnDurationMs);
+            // 게이트의 한 바퀴를 재서 통계에 남긴다 — 다시 연 여부는
+            // gatedSessions(사람의 다음 보내기 전까지 산다)로 판정이 났을 때
+            // 읽는다. screens 는 runGate 가 지우기 전의 수다.
+            const screens = this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0;
+            const gateStart = Date.now();
+            void this.drivers.runGate(sessionId, turnDurationMs).then(
+              () => {
+                this.stats.noteGateCheck(sessionId, {
+                  ms: Date.now() - gateStart,
+                  screens,
+                  reopened: this.drivers.gatedSessions.has(sessionId),
+                });
+              },
+              () => undefined,
+            );
           } else {
             const notice = noticeForState(
               sessionId,
@@ -466,10 +532,7 @@ export class DaemonServer {
           // 게이트의 판정 상태는 세션과 함께 간다 — close, delete, remove,
           // daemon stop all land here as `closed`.
           if (state === "closed") {
-            // 화면 턴 카운터도 세션과 함께 간다 — 치우지 않으면 맵이 닫힌
-            // 세션만큼 계속 자라고, 같은 id 로 다시 열린 대화는 남의 밑값을
-            // 이어 써 체크포인트 번호가 git ref 와 어긋난다.
-            this.checkpointTurns.delete(sessionId);
+            this.router?.forgetReviveBudget(sessionId);
             this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
             // 브라우저 시크릿도 세션과 함께 간다(3단계) — 남은 자식의 비밀로
@@ -487,8 +550,22 @@ export class DaemonServer {
         onPermissionRequest: (payload) =>
           this.broadcast({ type: "permission.request", ...payload }),
         onQuestionRequest: (payload) => this.broadcast({ type: "question.request", ...payload }),
+        // 새 턴의 화면 목록은 이 턴의 것이다 — 지난 턴이 가리킨 화면을 다시
+        // 판정하면 고치지도 않은 화면을 AI 에게 떠넘기게 된다. 이것이 `running`
+        // 방송에 걸려 있을 때는, 턴 도중 확인 카드 하나를 답한 것만으로도
+        // (settle 이 running 을 재방송한다) 현 턴의 핀이 지워져 화면 게이트가
+        // 조용히 생략됐다. 턴의 시작을 아는 것은 deliver 뿐이므로 그것만이 비운다.
+        onTurnStart: (sessionId) => {
+          this.drivers.pinnedThisTurn.delete(sessionId);
+        },
         onPinned: (sessionId, pins) => {
-          for (const pin of pins) this.drivers.notePinned(sessionId, pin.screen, pin.state);
+          for (const pin of pins) this.drivers.notePinned(sessionId, pin.screen);
+        },
+        // 감독(2026-09-19): 턴이 도는 중에 CLI 가 죽었다 — 라우터가 같은 id 의
+        // 재개로 스스로 일으킨다. start() 전에는 라우터가 없다(그때 세션도
+        // 없다): 없는 문은 조용히 닫혀 있는 것이 옳다.
+        onRevive: (sessionId) => {
+          void this.router?.revive(sessionId);
         },
       },
       this.agentDrivers,
@@ -538,7 +615,39 @@ export class DaemonServer {
       repoForSession: (id) => this.workspaceOfSession(id)?.repo ?? null,
       session: (id) => this.manager.get(id),
       sessions: () => this.manager.all(),
-      notice: (n) => this.config.onNotice?.(n),
+      notice: (n) => {
+        // 게이트가 턴을 다시 열었다는 사실이 그 턴의 통계에 새겨진다.
+        if (n.kind === "gate") this.stats.noteGate(n.sessionId);
+        this.config.onNotice?.(n);
+      },
+    });
+    // 턴 통계 — 서버가 아는 것만 좁은 창으로 내어준다. 사건은 onEvent 에서
+    // 흘러들어오고, 세션·프로젝트 조회는 여기의 콜백이 나중에 답한다.
+    this.stats = new TurnStats({
+      projectOf: (sessionId) => {
+        const workspaces = this.workspaceOfSession(sessionId);
+        if (workspaces === null) return null;
+        const root = realpathBestEffort(workspaces.paths.repoRoot);
+        for (const project of this.registry.list()) {
+          if (realpathBestEffort(this.registry.paths(project.slug).repoRoot) === root) {
+            return project.slug;
+          }
+        }
+        return null;
+      },
+      chipsOf: (sessionId) => {
+        const session = this.manager.get(sessionId);
+        if (session === undefined) return { provider: null, model: null, effort: null };
+        return {
+          provider: session.provider,
+          model: session.model ?? session.chosen.model,
+          effort: session.chosen.effort,
+        };
+      },
+      contextTokens: async (sessionId) => {
+        const usage = await this.manager.get(sessionId)?.contextUsage();
+        return usage?.totalTokens ?? null;
+      },
     });
   }
 
@@ -558,6 +667,7 @@ export class DaemonServer {
     // and its per-project PAT — if the old layout left one — becomes the
     // machine-wide token nobody has to re-enter.
     this.registry = ProjectRegistry.load(process.env);
+    this.machineSetting.load();
     this.fleet = new ProjectFleet({
       registry: this.registry,
       manager: this.manager,
@@ -566,8 +676,12 @@ export class DaemonServer {
       notice: (n) => this.config.onNotice?.(n),
       logger: this.logger,
       claudeExecutable: () => this.claudeExecutable,
+      machineTurn: (prompt, opts) => this.machineTurns.turn(prompt, opts),
+      // 넘긴 요청의 작성자 이름 — 온보딩이 machine.json 에 저장한 값(P1-3).
+      authorName: () => this.machineSetting.get("authorName"),
       closingSignal: this.closing.signal,
       pat: () => this.github.token,
+      escalate: (text) => void this.escalation.notify(text),
       gitHubClient: () => this.github.client(),
       queueDiskFor: this.queueDiskFor,
     });
@@ -577,23 +691,29 @@ export class DaemonServer {
       this.registry.activeSlug(),
     );
     await this.github.load();
+    // 슬라이스 5: 저장된 웹훅을 읽는다 — 상태 방송은 그 뒤에 일어난다.
+    await this.escalation.load();
     this.router = new RequestRouter({
       manager: this.manager,
       fleet: this.fleet,
       previewDrivers: this.drivers,
       handoffPreviews: this.handoffPreviews,
+      stats: this.stats,
       agentDrivers: this.agentDrivers,
       plans: this.plans,
       github: this.github,
       queueStore: this.queueStore,
       registry: this.registry,
+      escalation: this.escalation,
       logger: this.logger,
       broadcast: (m) => this.broadcast(m),
       notice: (n) => this.config.onNotice?.(n),
       claudeExecutable: () => this.claudeExecutable,
       claudeExecutableOverride: () => this.config.claudeExecutable,
+      machineSetting: this.machineSetting,
+      machineTurns: this.machineTurns,
+      agentLogin: this.agentLogin,
       queueDiskFor: this.queueDiskFor,
-      checkpointTurns: this.checkpointTurns,
       status: () => this.status(),
     });
 
@@ -708,15 +828,15 @@ export class DaemonServer {
         socket.destroy();
         return;
       }
-      this.wss!.handleUpgrade(req, socket, head, (ws) => this.attach(ws));
+      this.wss?.handleUpgrade(req, socket, head, (ws) => this.attach(ws));
     });
 
     await new Promise<void>((resolve, reject) => {
       // A bind failure (the stored port is taken) must reach the caller as a
       // rejection, not crash the process on an unhandled 'error' event — the
       // daemon entry prints its Korean guidance from that rejection.
-      this.http!.once("error", reject);
-      this.http!.listen(this.config.port, this.config.host, () => resolve());
+      this.http?.once("error", reject);
+      this.http?.listen(this.config.port, this.config.host, () => resolve());
     });
     const bound = this.address();
     this.logger.info("데몬 시작", {
@@ -728,7 +848,7 @@ export class DaemonServer {
 
   /** Where the HTTP server actually bound (port 0 = ephemeral in desktop). */
   address(): { address: string; port: number } {
-    const bound = this.http!.address() as { address: string; port: number };
+    const bound = this.http?.address() as { address: string; port: number };
     return bound;
   }
 
@@ -782,6 +902,8 @@ export class DaemonServer {
     // First, before any await: the probes this run left unattended must stop
     // waiting on a CLI nobody is listening to any more.
     this.closing.abort();
+    // 진행 중인 에이전트 로그인도 이 데몬의 자식이다 — 데몬이 내려가면 함께 끊는다.
+    this.agentLogin.stop();
     clearInterval(this.handoffTimer ?? undefined);
     this.handoffTimer = null;
     this.logger.info("데몬 종료");
@@ -887,7 +1009,7 @@ export class DaemonServer {
   // Preview tools (PLAN D61) — the desktop's driver, one per session.
   // Ownership lives in preview-drivers.ts; what remains here is the host's
   // entry point and the call sites wiring a fresh driver into session
-  // create / rewind / fork.
+  // create / branch.
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------
@@ -969,6 +1091,15 @@ export class DaemonServer {
     const params = message.params ?? {};
     if (typeof params !== "object" || params === null || Array.isArray(params)) {
       reply(400, { ok: false, error: "params는 객체여야 합니다." });
+      return;
+    }
+    // screen_check 는 pane 이 아니라 검증 창에서 돈다 — 사용자가 보는
+    // 페이지를 건드리지 않고, pane 이 없어도(미리보기를 띄우지 않아도)
+    // 판정할 수 있다. 게이트(runGate)와 같은 드라이버·같은 판정: open 이
+    // 콘솔을 비우므로 읽는 줄은 정확히 그 화면의 것이다.
+    if (op === "screenCheck") {
+      const checked = await this.runScreenCheck(sessionId, params as Record<string, unknown>);
+      reply(checked.status, checked.body);
       return;
     }
     const factory = this.config.browserDriverFactory;
@@ -1064,15 +1195,13 @@ export class DaemonServer {
       ]).finally(() => clearTimeout(timer));
       // navigate 가 가리킨 주소는 이 턴의 게이트 입력이다 — 사람의 pin과
       // 같은 자리(notePinned)에 담고, preview origin 판별은 runGate가 한다.
-      // state는 ?state= 쿼리로 실리므로 route에서 떼어 낸다. 전체 URL을
-      // 남긴다 — origin을 벗기면 외부 탐색이 preview 경로로 둔갑해 게이트가
-      // 뜬 적 없는 화면을 재검증한다.
+      // 전체 URL을 남긴다 — origin을 벗기면 외부 탐색이 preview 경로로
+      // 둔갑해 게이트가 뜬 적 없는 화면을 재검증한다. 주소의 쿼리는
+      // 그냥 주소의 일부로 실린다(2026-09-21 상태 축 철거).
       if (op === "navigate" && typeof (params as Record<string, unknown>).url === "string") {
         try {
           const u = new URL((params as Record<string, unknown>).url as string);
-          const state = u.searchParams.get("state");
-          u.searchParams.delete("state");
-          this.drivers.notePinned(sessionId, u.toString(), state);
+          this.drivers.notePinned(sessionId, u.toString());
         } catch {
           // 못 읽는 주소는 게이트 입력이 아니다.
         }
@@ -1097,6 +1226,89 @@ export class DaemonServer {
       }
     } finally {
       if (!quiet) this.broadcast({ type: "browser.driving", sessionId, on: false });
+    }
+  }
+  /**
+   * `screen_check` 도구의 판정 (빠른 수정, 2026-09-20): 세션이 사는
+   * 프로젝트의 미리보기 주소에서 그 화면을 검증 창으로 열어 본다 —
+   * 게이트(runGate)와 같은 드라이버, 같은 기준(자리 잡음 + error·실패한
+   * 요청), 같은 상한. 돌려주는 것은 정확히 그 두 사실뿐이라 스냅샷 수천
+   * 토큰을 태우지 않는다. 레포 바깥 주소는 원천 봉쇄 — 검증 창이 열 수
+   * 있는 것은 이 세션의 미리보기뿐이다.
+   */
+  private async runScreenCheck(
+    sessionId: string,
+    params: Record<string, unknown>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const factory = this.config.previewDriverFactory;
+    if (factory === undefined) {
+      return {
+        status: 404,
+        body: { ok: false, error: "브라우저 드라이버가 없습니다 — 데스크톱 앱에서만 동작합니다." },
+      };
+    }
+    const route0 = typeof params.route === "string" ? params.route : "";
+    if (route0.trim() === "") {
+      return { status: 400, body: { ok: false, error: "확인할 화면 주소(route)가 필요합니다." } };
+    }
+    // 게이트와 같은 겨냥 — 세션이 사는 프로젝트의 미리보기. 활성 프로젝트가
+    // 아니라 이 세션의 것이다(전환 뒤 끝난 턴과 같은 이유).
+    const repo = this.workspaceOfSession(sessionId)?.repo ?? null;
+    const status = await repo?.status().catch(() => null);
+    const previewUrl = status?.previewUrl;
+    if (!repo || !previewUrl) {
+      return {
+        status: 200,
+        body: {
+          ok: false,
+          error: "미리보기 서버가 아직 뜨지 않았습니다 — 잠시 후 다시 시도해 주세요.",
+        },
+      };
+    }
+    let target: URL;
+    try {
+      target = new URL(route0, previewUrl);
+    } catch {
+      return { status: 400, body: { ok: false, error: `화면 주소를 읽지 못했습니다: ${route0}` } };
+    }
+    const origin = new URL(previewUrl).origin;
+    if (target.origin !== origin) {
+      return {
+        status: 200,
+        body: { ok: false, error: "미리보기 안의 화면만 확인할 수 있습니다." },
+      };
+    }
+    const driver = factory.forIsolated(previewUrl);
+    try {
+      const opened = await driver
+        .open(target.pathname + target.search + target.hash)
+        .catch(() => null);
+      if (opened === null || opened.ok !== true) {
+        return {
+          status: 200,
+          body: {
+            ok: false,
+            error:
+              opened !== null && opened.ok === false ? opened.reason : "화면을 열지 못했습니다.",
+          },
+        };
+      }
+      const errors = (await driver.consoleLines().catch(() => []))
+        .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
+        .slice(0, MAX_LINES_PER_SCREEN)
+        .map((line) => `${line.level}: ${line.text}`);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          // 2026-09-21: 화면의 전체 주소 — 답변의 하이퍼링크가 이 주소로
+          // 맺어진다. 경로만 아는 패인에게 미리보기 서버의 주소를 가르쳐
+          // 주는 유일한 자리다.
+          result: { settled: opened.settled, errors, url: target.toString() },
+        },
+      };
+    } finally {
+      await driver.destroy().catch(() => undefined);
     }
   }
 
@@ -1125,6 +1337,7 @@ export class DaemonServer {
           ...(diagnostic.version ? { version: diagnostic.version } : {}),
           ...(diagnostic.loggedIn !== undefined ? { loggedIn: diagnostic.loggedIn } : {}),
           ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
+          oneShot: driver.oneShot !== undefined,
           modes: descriptor.modes,
           defaultModeId: descriptor.defaultModeId,
           capabilities: {
@@ -1151,6 +1364,11 @@ export class DaemonServer {
       projects: this.projectSummaries(),
       activeProject: this.registry?.activeSlug() ?? null,
       providers,
+      machineProvider: this.machineSetting.get("provider"),
+      machineProviderActive: await this.machineTurns.resolve(),
+      // 개발 전용 면의 판정은 데몬이 내린다 — 웹 번들의 DEV 플래그는 패키징 빌드라 항상 거짓.
+      dev: this.config.devAgents === true,
+      authorName: this.machineSetting.get("authorName"),
       githubAuthExpired: this.github.authExpired,
     };
   }

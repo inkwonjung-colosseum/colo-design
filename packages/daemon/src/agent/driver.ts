@@ -33,8 +33,13 @@ export interface ToolClass {
  * features the driver cannot honor.
  */
 export interface Capabilities {
-  /** D95 truncating fork (Claude: forkSession+resumeSessionAt). */
-  rewind: boolean;
+  /**
+   * 대화 분기: a NEW conversation that keeps this answer's memory
+   * (truncating fork of the same machinery). Providers without a
+   * truncating fork keep this false — a branch advertised where the
+   * memory cannot survive would be a silent lie.
+   */
+  branch: boolean;
   /** Plan/subscription usage windows (Claude only). */
   usage: boolean;
   /** Context-window usage ring. */
@@ -51,6 +56,8 @@ export interface Capabilities {
   planMode: string | null;
   /** stopTask/backgroundTask subagent controls. */
   subtasks: boolean;
+  /** Mid-turn input — the driver can fold a send into the running turn. */
+  steer: boolean;
   /**
    * 브라우저 도구(`browser_*`)를 와이어에 주입할 수 있는 공급자인가 — 네
    * 공급자 모두 true다(claude·codex는 각자의 mcpServers 필드, ACP 에이전트는
@@ -92,8 +99,7 @@ export interface ImportableSession {
 
 /**
  * The provider's on-disk transcript store — the CLI's own session files or
- * commands. A driver whose vendor keeps resumable transcripts exposes one;
- * `capabilities.rewind` must agree with `rewind`'s presence.
+ * commands. A driver whose vendor keeps resumable transcripts exposes one.
  */
 export interface TranscriptStore {
   /** Sessions stored on disk that this provider can resume. */
@@ -102,10 +108,16 @@ export interface TranscriptStore {
   title?(id: string, cwd: string): Promise<string | null>;
   /** A stored transcript replayed as ChatEvents. */
   import?(id: string, cwd: string, limit?: number): Promise<ChatEvent[]>;
-  /** 대화록에 이미 있는 프롬프트 수 — 재시작 뒤 턴 번호의 밑값. */
+  /** 대화록에 이미 있는 프롬프트 수 — 사이클 테이프 행의 afterTurn 셈. */
   promptCount?(id: string, cwd: string): Promise<number>;
-  /** Where the k-th answer's rewind cuts, or null when it cannot. */
-  rewind?(id: string, cwd: string, turn: number): Promise<RewindCutoff | null>;
+  /**
+   * Where a branch at the k-th answer cuts, or null when it cannot
+   * (no transcript, or the provider's store cannot cut at all). The
+   * k-th answer STAYS: `cut` keeps the conversation up to and
+   * including that answer, and null `cut` means keep everything — a full
+   * fork of the last turn.
+   */
+  branchCut?(id: string, cwd: string, turn: number): Promise<CutCutoff | null>;
   /** Whether this store holds the id — a targeted check for resume routing. */
   has?(id: string, cwd: string): Promise<boolean>;
   delete?(id: string, cwd: string): Promise<void>;
@@ -128,7 +140,7 @@ export interface Turn {
   attachments?: Array<{ name: string; mediaType: string; data: string }>;
 }
 
-interface RewindCutoff {
+interface CutCutoff {
   /** The chain uuid the truncated resume keeps up to; null = keep nothing. */
   cut: string | null;
   /** The discarded turn's prompt uuid. */
@@ -214,12 +226,25 @@ export interface DriverHooks {
  */
 export interface AgentSession {
   /**
+   * The transcript id the PROVIDER named for this session, when it differs
+   * from the session id (an ACP `session/new` answer names the agent's own
+   * uuid). Every store lookup for a live session must ask with this id —
+   * the transcript on disk is keyed by it. Null/absent = the ids match.
+   */
+  readonly vendorId?: string | null;
+  /**
    * Whether the transport can still carry a send. False once the stream
    * ended or the process died — a send pushed past this point is swallowed
    * silently, so callers must resurrect instead.
    */
   readonly alive: boolean;
   send(turn: Turn): Promise<void>;
+  /**
+   * 바로 실어 보내기 — fold a mid-turn send into the turn now running
+   * (codex `turn/steer`). Absent on drivers whose protocol has no such
+   * road; the core then keeps the send in the wait room instead.
+   */
+  steer?(turn: Turn): Promise<void>;
   interrupt(): Promise<"answered" | "timeout" | "dead">;
   setMode(modeId: string): Promise<void>;
   setModel?(id: string | null): Promise<void>;
@@ -248,10 +273,26 @@ export interface AgentDriver {
   store?: TranscriptStore;
   /**
    * The CLI's model rows without a thread — a driver whose CLI can list
-   * models on its own (`omp models`, `opencode models`) answers here, so the
+   * models on its own (`omp models --json`) answers here, so the
    * daemon's per-provider cache fills before any session exists. Absent = a
    * live session is the only source (Claude, Codex); the cache then waits
    * for the first session's report as before.
    */
   listModels?(): Promise<SessionModelInfo[]>;
+  /**
+   * 기계 잔일의 단답 턴 (저장 메모 · 넘기기 초안) — machine-provider.ts 가
+   * 담당을 골라 여기로 온다. 계약의 전부는 세 보장이다: ① 도구는 절대
+   * 돌리지 않는다 ② 프롬프트 하나에 답 하나 ③ 시간 안에 못 내면 null —
+   * 호출자의 폴백이 그 빈칸을 쓴다. 이 보장을 자기 CLI 로 내리지 못하는
+   * 드라이버는 이 메서드를 생략한다 — 담당 후보에서 자동으로 빠진다.
+   */
+  oneShot?(prompt: string, opts: { cwd: string; timeoutMs: number }): Promise<string | null>;
+  /**
+   * 이 드라이버의 로그인 명령 (P1-1) — 데몬이 stdio 파이프로 띄워 대신
+   * 몬다: 주소는 stdout·stderr 어느 쪽에서 와도 첫 https URL 로 잡히고,
+   * 코드를 stdin 으로 받는 CLI 는 프롬프트가 확인되면 붙여넣기 칸이 열린다.
+   * CLI 가 없으면 null. 선언하지 않은 드라이버는 앱이 대신 시작할 수 없는
+   * 로그인이다 — 고침 안내가 터미널을 말한다.
+   */
+  loginCommand?(): { command: string; args: string[] } | null;
 }
