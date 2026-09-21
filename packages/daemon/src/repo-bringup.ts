@@ -296,6 +296,11 @@ export class BringUp {
 
     try {
       this.core.previewUrl = await this.detectPreviewUrl(child, urlCandidates, tail);
+      // 감지의 근거를 로그로 — 서버가 찍은 주소와 실제 판정이 어긋날 때(포트
+      // 충돌·출력 없는 서버) 로그가 먼저 말한다.
+      console.error(
+        `[preview] ${this.core.root} detected ${this.core.previewUrl} from output:[${[...urlCandidates].join(" ")}]`,
+      );
     } catch (error) {
       // 늦게라도 뜰 예정이던 서버를 죽은 것으로 선고한 채 두면, 실제로는 살아
       // 포트를 쥔 유령이 남는다 (실사 목격). 선고가 서면 서버도 내려야 한다.

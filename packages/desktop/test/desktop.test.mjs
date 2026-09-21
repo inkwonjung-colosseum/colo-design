@@ -781,34 +781,35 @@ app.whenReady().then(async () => {
     // 호스트 문서에 <webview> 얹기).
     step("hidden-driver-done");
     const { PlannerPreviewView } = await import(process.env.COLO_DRIVER_UNIT_VIEW);
+    // browser-driver 스위트와 같은 레시피 — 그 스위트는 러너에서 통과한다:
+    // 접근성 켜기, 뷰를 먼저 세우고, file:// 최소 호스트를 읽은 뒤,
+    // openTab(=mount) 을 먼저 말하고 게스트 요소를 얹는다.
+    app.setAccessibilitySupportEnabled(true);
     const paneWindow = new BrowserWindow({
       show: true,
       width: 1280,
       height: 800,
       webPreferences: { webviewTag: true },
     });
-    // 호스트 문서는 임시 http 서버에서 — file:// 호스트는 mac 에서는 열리지만
-    // Linux 러너에서 ERR_FAILED(-2) 로 거절된다(CI 2026-09-21). pane ·
-    // browser-driver 스위트의 호스트도 전부 http 다.
-    const { createServer } = await import("node:http");
-    const hostServer = createServer((req, res) => {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(
-        "<!doctype html><meta charset='utf-8'><body><script>window.__add = (src) => { const w = document.createElement('webview'); w.src = src; w.setAttribute('allowpopups', ''); w.style.cssText = 'width:900px;height:700px'; document.body.appendChild(w); return w.src; };</script></body>",
-      );
-    });
-    await new Promise((ok) => hostServer.listen(0, "127.0.0.1", () => ok()));
-    await paneWindow.loadURL("http://127.0.0.1:" + hostServer.address().port + "/");
-    step("host-loaded");
     const pane = new PlannerPreviewView(() => paneWindow);
     pane.attachWindow(paneWindow);
+    const { writeFileSync: writeHostPage } = await import("node:fs");
+    const { join: joinHostPath } = await import("node:path");
+    const hostPage = joinHostPath(
+      app.getPath("temp"),
+      "colo-driver-unit-pane-" + Date.now() + ".html",
+    );
+    writeHostPage(hostPage, "<!doctype html><meta charset='utf-8'><body></body>");
+    await paneWindow.loadFile(hostPage);
+    step("host-loaded");
     pane.setHostReady(true);
     step("pane-wired");
-    await paneWindow.webContents.executeJavaScript(
-      'window.__add(' + JSON.stringify(process.env.COLO_DRIVER_UNIT_URL + "/") + ')',
-    );
     pane.mount(process.env.COLO_DRIVER_UNIT_URL + "/", null);
-    step("guest-added");
+    await paneWindow.webContents.executeJavaScript(
+      '(() => { const w = document.createElement("webview"); w.src = ' +
+        JSON.stringify(process.env.COLO_DRIVER_UNIT_URL + "/") +
+        '; w.setAttribute("allowpopups", ""); w.style.cssText = "width:900px;height:700px"; document.body.appendChild(w); return w.src; })()',
+    );
     const paneDriver = createPreviewDriverFactory(() => pane).for(process.env.COLO_DRIVER_UNIT_URL);
     const paneOpened = await paneDriver.open("/");
     const paneShot = await paneDriver.screenshot({ longEdge: 600 });
@@ -816,7 +817,6 @@ app.whenReady().then(async () => {
     const paneContents = pane.webContents();
     const panePageAlive = paneContents !== null && !paneContents.isDestroyed();
     paneWindow.destroy();
-    await new Promise((ok) => hostServer.close(() => ok()));
     answer({
       openedOk: opened && opened.ok === true,
       openedSettled: opened && opened.settled === true,
