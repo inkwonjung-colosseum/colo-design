@@ -315,6 +315,13 @@ export class DaemonServer {
   /** 터미널 없는 에이전트 로그인(P1-1) — 데몬이 파이프로 몰고 방송한다. */
   private readonly agentLogin = new AgentLogin();
   /**
+   * P2-1 자동 저장의 대기표. 답을 낸 턴(turn.end)이 표를 올리고, 그 턴이
+   * 내려앉은 idle 에서 — 화면 확인 게이트가 걸렸다면 그 판정이 끝난 뒤에 —
+   * 한 번만 내려온다. 표를 따로 두는 이유는 하나다: 커밋을 turn.end 에 바로
+   * 걸면 게이트가 여는 고침 턴과 경합해 한 턴이 커밋 둘로 갈린다.
+   */
+  private readonly autoSaveDue = new Set<string>();
+  /**
    * 브라우저 MCP 자식의 세션별 시크릿(3단계): Map<secret, {sessionId,
    * issuedAt}>. 데몬의 config.token은 전역 공유라 자식에게 못 준다 — 세션마다
    * 새 시크릿을 발급해 메모리에 매핑하면 자식이 타 세션의 RPC를 칠 수 없고,
@@ -437,8 +444,11 @@ export class DaemonServer {
           // 다음 고장은 새 사건이고, 다시 두 번의 스스로 재기를 얻는다.
           // 슬라이스 2: 답을 낸 턴이 자동 브리프가 연 턴이면 저장까지 정산한다.
           // 중지는 사람의 뜻 — 반쯤 고쳐진 화면을 저장하지 않는다.
+          // P2-1: 답을 낸 턴은 자동 저장의 후보다 — 표만 올리고, 커밋은 아래
+          // onState 의 idle 에서 치른다(게이트가 있었다면 그 뒤에).
           if (event.kind === "turn.end" && !event.isError && event.subtype !== "interrupted") {
             this.router?.forgetReviveBudget(sessionId);
+            this.autoSaveDue.add(sessionId);
             void this.fleet.settleAutoSave(sessionId);
             return;
           }
@@ -510,6 +520,10 @@ export class DaemonServer {
             // 읽는다. screens 는 runGate 가 지우기 전의 수다.
             const screens = this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0;
             const gateStart = Date.now();
+            // P2-1: 자동 저장의 커밋은 게이트의 판정이 끝난 **뒤**에 건다.
+            // 게이트가 고침 턴을 열면 워크트리가 다시 더러워지므로, 먼저
+            // 커밋하면 한 턴이 커밋 둘로 갈린다. 게이트가 깨져도(reject) 커밋은
+            // 치른다 — 확인 못 한 것이 저장하지 않을 이유는 아니다.
             void this.drivers.runGate(sessionId, turnDurationMs).then(
               () => {
                 this.stats.noteGateCheck(sessionId, {
@@ -517,8 +531,9 @@ export class DaemonServer {
                   screens,
                   reopened: this.drivers.gatedSessions.has(sessionId),
                 });
+                this.runAutoSave(sessionId);
               },
-              () => undefined,
+              () => this.runAutoSave(sessionId),
             );
           } else {
             const notice = noticeForState(
@@ -528,11 +543,17 @@ export class DaemonServer {
               turnDurationMs,
             );
             if (notice) this.config.onNotice?.(notice);
+            // 게이트가 없는 턴의 커밋은 여기서 곧바로 — idle 에만. 다른 상태의
+            // idle 아닌 방송(running · waiting_*)은 아직 턴의 끝이 아니다.
+            if (state === "idle") this.runAutoSave(sessionId);
           }
           // 게이트의 판정 상태는 세션과 함께 간다 — close, delete, remove,
           // daemon stop all land here as `closed`.
           if (state === "closed") {
             this.router?.forgetReviveBudget(sessionId);
+            // P2-1: 주인을 잃은 자동 저장 표는 치르지 않는다 — 닫힌 대화의
+            // 커밋 제목을 그 대화의 말에서 끌어올 수 없다.
+            this.autoSaveDue.delete(sessionId);
             this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
             // 브라우저 시크릿도 세션과 함께 간다(3단계) — 남은 자식의 비밀로
@@ -1003,6 +1024,15 @@ export class DaemonServer {
 
   private workspaceOfSession(sessionId: string): ProjectWorkspaces | null {
     return this.fleet.workspaceOfSession(sessionId);
+  }
+
+  /**
+   * P2-1: 대기표의 이 턴을 치른다 — 표를 뽑아 쓰므로 한 턴은 한 번만 커밋한다
+   * (게이트 경로와 idle 경로가 같은 턴에 둘 다 닿아도).
+   */
+  private runAutoSave(sessionId: string): void {
+    if (!this.autoSaveDue.delete(sessionId)) return;
+    void this.fleet.autoSaveTurn(sessionId);
   }
 
   // -------------------------------------------------------------------------

@@ -558,6 +558,51 @@ export class ProjectFleet {
     }
   }
 
+  /**
+   * P2-1 자동 저장: 답을 낸 턴이 쌓은 변경을 로컬 커밋으로. 저장 버튼이 사라진
+   * 세계에서 이것이 저장이다 — 사람은 제출만 누른다.
+   *
+   * 커밋 제목은 그 턴을 연 말의 첫 줄(①): 메모 턴을 돌리면 턴마다 구독이 두
+   * 배로 타므로, 여기서 절대 돌리지 않는다. 말이 없으면(기계가 연 턴)
+   * runSave 의 폴백(② machineMemo → ③ 기본 문구)에 맡긴다. 푸시는 백그라운드
+   * — 오프라인에서도 턴의 끝이 멈추지 않는다(실패는 제출이 기다려서 민다).
+   * 커밋 게이트가 열리면 세션에 고침 브리프를 보내 화면 확인 게이트와 같은
+   * 루프로 스스로 닫는다.
+   */
+  async autoSaveTurn(sessionId: string): Promise<void> {
+    const workspaces = this.workspaceOfSession(sessionId);
+    const session = this.deps.manager.get(sessionId);
+    if (!workspaces || !session) return;
+    // 출발 판정: 재검사가 최신이다(턴 끝의 refreshPendingChanges 를 다시 돌려
+    // 확정한다). 커밋할 것이 없으면 저장조차 돌리지 않는다 — 깨끗한 트리의
+    // 저장은 실패 상태를 만들고, 그것이 방금 끝난 턴의 기분을 더럽힌다.
+    await workspaces.repo.refreshPendingChanges().catch(() => undefined);
+    if (workspaces.repo.pendingChanges === 0) return;
+    try {
+      await workspaces.repo.save({
+        ...turnSubjectOf(session.lastSentText),
+        sessionId,
+        backgroundPush: true,
+        onSessionTurn: (brief: string) => {
+          this.deps.notice({
+            kind: "gate",
+            sessionId,
+            title: session.title,
+            stage: "save",
+          });
+          try {
+            session.send(brief);
+          } catch {
+            // The DiffStatus the save left behind still tells the story.
+          }
+        },
+      });
+    } catch {
+      // 진행 중 거절(사람의 제출이 먼저 움직인 것)과 실패 모두 조용하다:
+      // DiffStatus 와 브리프가 이미 말한다.
+    }
+  }
+
   announceProjects(): void {
     this.deps.broadcast({
       type: "project.changed",
@@ -819,4 +864,18 @@ export class ProjectFleet {
       { key: `//${registry.host}/:_authToken`, value: pat },
     ]);
   }
+}
+
+/**
+ * 자동 저장의 커밋 제목 ① — 그 턴을 연 말의 첫 줄. 기계 턴의 마커(`<!-- … -->`)
+ * 줄은 제목이 아니므로 건너뛴다: 그 다음 줄이 브리프의 첫 문장이고, 그것이
+ * 이 변경의 가장 정직한 한 줄이다. 80자에서 자른다(계획서 P2-1). 빈 객체는
+ * "말이 없다" — runSave 의 폴백(② machineMemo → ③ 기본 문구)이 이어받는다.
+ */
+function turnSubjectOf(text: string | null): { message: string } | Record<string, never> {
+  const line = (text ?? "")
+    .split(/\r?\n/)
+    .map((row) => row.trim())
+    .find((row) => row !== "" && !row.startsWith("<!--"));
+  return line ? { message: line.slice(0, 80) } : {};
 }

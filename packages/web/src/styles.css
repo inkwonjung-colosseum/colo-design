@@ -8953,6 +8953,43 @@ button.pcard__row {
 /* 전체 복사는 같은 아이콘 손(.turndone__act)을 입는다 — ✓ 교환만 CopyButton
    이 쥔다. */
 
+/* P2-2: 분기가 무엇을 되감는지는 마우스 뒤가 아니라 줄 위에 선다 — 누르기
+   전에 읽혀야 하는 문장이기 때문이다. 회색 잔글씨라 정산 줄의 무게는 그대로. */
+.turndone__branchnote {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-100);
+  color: var(--muted);
+}
+.turndone__restore {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.turndone__restore:hover {
+  opacity: 0.8;
+}
+
+/* P2-1: 자동 저장의 조용한 표식 — 매 턴 서므로 카드가 아니라 글자 하나다.
+   무엇이 담겼는지는 마우스를 올릴 때만 말한다. */
+.savemark {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 6px 20px;
+}
+.savemark__dot {
+  font-size: var(--font-ui-100);
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.65;
+  cursor: default;
+}
+
 /* 지켜 줄 것 — 프로젝트별 지침 상자 ------------------------------------------- */
 
 .sidebar__guard {

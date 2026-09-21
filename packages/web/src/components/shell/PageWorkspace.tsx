@@ -39,8 +39,11 @@ const CHAT_MIN = 320;
  * an inline grid template outranks one.
  */
 function defaultPreviewWidth(): number {
+  // E′ — 미리보기가 이 도구의 무대다. 기본 나눔을 대화 쪽에서 한 끗씩 옮긴
+  // 것이다 (0.45/0.5 → 0.5/0.55 → 0.55/0.6). clampWidth 가 CHAT_MIN 을
+  // 지키므로 좁은 창에서는 어차피 대화 바닥이 이 값을 이긴다.
   const narrow = window.matchMedia("(max-width: 1280px)").matches;
-  return Math.round(window.innerWidth * (narrow ? 0.45 : 0.5));
+  return Math.round(window.innerWidth * (narrow ? 0.55 : 0.6));
 }
 
 /** 미리보기의 절대 바닥 — 대화 바닥과 창이 다투면 미리보기가 먼저 양보한다. */
@@ -172,16 +175,16 @@ export function PageWorkspace({
       the palette answers to the whole frame. ⌘K always opens it unscoped. */
   const [paletteSlug, setPaletteSlug] = useState<string | null>(null);
   /**
-   * 사이클 동작의 단일 통로 — 상단 바의 저장·넘기기 버튼, ⌘S, 팔레트의
-   * 상태 확인이 전부 이 요청으로 간다. 모달이던 시절의 setSaveOpen 대신
-   * 대화 열의 카드가 응답한다: nonce 가 오르면 ChatColumn·ScreenPanel 이
-   * 각자의 몫을 집는다.
+   * 사이클 동작의 단일 통로 — 상단 바의 제출 버튼, 팔레트의 상태 확인이
+   * 전부 이 요청으로 간다. 모달이던 시절의 setSaveOpen 대신 대화 열의 카드가
+   * 응답한다: nonce 가 오르면 ChatColumn·ScreenPanel 이 각자의 몫을 집는다.
+   * `save` 는 P2-1 에서 빠졌다 — 저장은 턴이 끝날 때마다 데몬이 스스로 한다.
    */
   const [cycleRequest, setCycleRequest] = useState<{
-    kind: "save" | "handoff" | "check";
+    kind: "submit" | "handoff" | "check" | "history";
     nonce: number;
   } | null>(null);
-  const askCycle = (kind: "save" | "handoff" | "check") => {
+  const askCycle = (kind: "submit" | "handoff" | "check" | "history") => {
     setView("thread");
     setCycleRequest((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
   };
@@ -201,7 +204,6 @@ export function PageWorkspace({
     newSession: () => {},
     settings: () => {},
     sheet: () => {},
-    save: () => {},
   });
   shortcuts.current = {
     palette: () => {
@@ -211,10 +213,6 @@ export function PageWorkspace({
     newSession: () => void startNewThread(),
     settings: onOpenSettings,
     sheet: () => setSheetOpen((open) => !open),
-    save: () => {
-      // 저장할 게 없으면 카드도 없다 — 요청을 만들지 않는다.
-      if ((daemon.repo?.pendingChanges ?? 0) > 0) askCycle("save");
-    },
   };
 
   /** The active thread, reported up for the tree's active mark. */
@@ -413,10 +411,10 @@ export function PageWorkspace({
         event.preventDefault();
         shortcuts.current.newSession();
       } else if (event.key === "s" || event.key === "S") {
-        // ⌘S 저장 — 상단 바의 저장 버튼과 같은 통로. 저장할 게 없으면
-        // 카드가 없으니 요청도 없다; 브라우저의 저장 대화상자는 언제나 막는다.
+        // ⌘S 는 P2-1 에서 할 일을 잃었다(저장은 턴마다 도구가 한다). 그래도
+        // 삼키는 이유는 하나 — 손에 밴 ⌘S 가 브라우저의 `페이지 저장` 대화
+        // 상자를 열면, 저장이라는 개념을 지운 자리에 OS 가 그것을 되돌려 준다.
         event.preventDefault();
-        shortcuts.current.save();
       } else if (event.key === ",") {
         event.preventDefault();
         shortcuts.current.settings();
@@ -447,7 +445,7 @@ export function PageWorkspace({
       turn: string,
       name?: string,
       attachments?: Array<{ name: string; mediaType: string; data: string }>,
-      pins?: Array<{ screen: string; state: string | null }>,
+      pins?: Array<{ screen: string }>,
     ) => {
       if (forwardBusyRef.current) return false;
       forwardBusyRef.current = true;
@@ -623,7 +621,7 @@ export function PageWorkspace({
         {projectName && <span className="planner__project">{projectName}</span>}
         <div ref={setBarSlot} className="planner__barslot" />
         {daemon.connection !== "open" && (
-          <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
+          <Tip label="연결이 끊기면 대화와 제출이 잠시 멈춥니다" side="bottom">
             <span className="hint">연결하는 중…</span>
           </Tip>
         )}
@@ -658,9 +656,15 @@ export function PageWorkspace({
                 // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
                 // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
                 // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
+                // E′ — 트레이에 핀이 서 있으면 입력창이 "고칠 곳"을 먼저 묻는다:
+                // 핀은 문장과 한 턴으로 나가므로, 물음도 고침의 말이 먼저다.
+                // 문자열 제약: 첫 턴은 `만들고 싶은 화면을` 접두, 이후는
+                // `메시지를 보내 보세요` 포함 — 두 e2e가 실제로 읽는다.
                 placeholder={
                   sessions.activeId
-                    ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
+                    ? pins.list.length > 0
+                      ? "고칠 곳을 말해 주세요 — 핀이 문장과 한 턴으로 나가요 (@로 파일, /로 명령)"
+                      : "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
                     : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
                 }
                 disabled={false}
@@ -681,6 +685,7 @@ export function PageWorkspace({
                 focusPinId={focusPinId}
                 onChatChange={onChatChange}
                 onOpenProviderSettings={() => onOpenSettings("providers")}
+                onOpenHistory={() => askCycle("history")}
                 cycleRequest={cycleRequest}
                 onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
               />
@@ -759,7 +764,7 @@ export function PageWorkspace({
               <strong>{titleFor(sessions.confirmRemove)}</strong> 대화를 삭제할까요?
             </>
           }
-          hint="대화 기록이 영구히 사라집니다. 화면 작업과 저장 기록은 그대로 남습니다."
+          hint="대화 기록이 영구히 사라집니다. 화면 작업과 작업 기록은 그대로 남습니다."
           confirmLabel="삭제"
           onConfirm={() => void sessions.acceptRemove()}
           onClose={sessions.cancelRemove}
@@ -783,7 +788,7 @@ export function PageWorkspace({
               </>
             );
           })()}
-          hint="대화 기록이 영구히 사라집니다. 화면 작업과 저장 기록은 그대로 남습니다."
+          hint="대화 기록이 영구히 사라집니다. 화면 작업과 작업 기록은 그대로 남습니다."
           confirmLabel="모두 삭제"
           onConfirm={() => void sessions.acceptClear()}
           onClose={sessions.cancelClear}

@@ -1,4 +1,9 @@
-import type { DeveloperReview, PlanUsage, SessionSummary } from "@colo-design/protocol";
+import type {
+  DeveloperReview,
+  PlanUsage,
+  SessionPinHint,
+  SessionSummary,
+} from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "../../components";
 import type { Pins } from "../../hooks/usePins";
@@ -8,10 +13,10 @@ import { ownerRepoOf } from "../../lib/format";
 import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
 import { PLAN_TOOL } from "../../lib/labels";
-import { pinsToTurn, reviewToTurn } from "../../lib/preview-turns";
+import { pinsToTurn } from "../../lib/preview-turns";
+import { isToolRunning } from "../../lib/progress";
 import { type SendKey, saveHandledReview } from "../../lib/settings";
-import { blockOnTape } from "../../lib/tape-visibility";
-import { ConfirmDialog } from "../dialogs/ConfirmDialog";
+import { tailMoving } from "../../lib/tape-visibility";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
 import { TurnClock } from "../preview/TurnClock";
 import { StateBanner } from "../StateBanner";
@@ -45,6 +50,7 @@ export function ChatColumn({
   onExportThread,
   onChatChange,
   onOpenProviderSettings,
+  onOpenHistory,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -69,11 +75,12 @@ export function ChatColumn({
   /** 배지 클릭 → 그 핀 행의 메모 입력 (PageWorkspace 가 흔든 상태). */
   focusPinId: { id: string; nonce: number } | null;
   /**
-   * 사이클 동작 요청 (PageWorkspace 의 단일 통로): 상단 바의 저장·넘기기와
-   * ⌘S 가 여기로 온다 — 모달이던 시절의 setSaveOpen 대신, 대화 안 카드가
-   * 응답한다. nonce 가 오르면 한 번 집는다.
+   * 사이클 동작 요청 (PageWorkspace 의 단일 통로): 상단 바의 제출·넘기기가
+   * 여기로 온다 — 모달이던 시절의 setSaveOpen 대신, 대화 안 카드가 응답한다.
+   * nonce 가 오르면 한 번 집는다. `check`·`history` 는 미리보기 쪽의 몫이라
+   * 이 열은 지나친다.
    */
-  cycleRequest: { kind: "save" | "handoff" | "check"; nonce: number } | null;
+  cycleRequest: { kind: "submit" | "handoff" | "check" | "history"; nonce: number } | null;
   /** 고치기·답하기로 처리한 코멘트 — 상단 바의 `· 개발자 코멘트 N` 배지가
       같은 수를 다시 읽게 PageWorkspace 에 알린다. */
   onReviewsHandled: () => void;
@@ -86,17 +93,22 @@ export function ChatColumn({
   onChatChange?: (patch: { showThinking?: boolean; showTools?: boolean }) => void;
   /** 모델 메뉴 헤더의 ⚙ — 설정의 프로바이더 칸으로 바로 연다. */
   onOpenProviderSettings?: () => void;
+  /** 정산 줄의 `작업 기록에서 되돌리기`(P2-2) — 미리보기 쪽 드로어를 연다. */
+  onOpenHistory?: () => void;
 }) {
   const { api, pending, resolvePending } = daemon;
   const draftKey = sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`;
-  /** This thread's turn-start snapshots, refetched when a turn ends. */
-  const [checkpoints, setCheckpoints] = useState<Array<{ id: string; turn: number }>>([]);
-  const [restoring, setRestoring] = useState(false);
   // 컴포저의 readAttachments 를 등록받아 대화 열 전체가 같은 손을 쓴다.
   // dragleave 는 자식 진입에도 발사되므로 깊이 카운터로 편렬을 잡는다.
   const attachFiles = useRef<((files: FileList | File[]) => void) | null>(null);
   const registerAttach = useCallback((fn: ((files: FileList | File[]) => void) | null) => {
     attachFiles.current = fn;
+  }, []);
+  // 테이프의 `고쳐서 다시 보내기`가 컴포저의 restore 손을 등록받는다 —
+  // 미배선이면 버튼이 그려지지 않는다(Transcript 의 onResendEdit 가드).
+  const resendRef = useRef<((text: string) => void) | null>(null);
+  const registerResend = useCallback((fn: ((text: string) => void) | null) => {
+    resendRef.current = fn;
   }, []);
   const [dragDepth, setDragDepth] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
@@ -150,31 +162,24 @@ export function ChatColumn({
     void api.backgroundTask(activeId, toolUseId).catch((e: Error) => showError(e.message));
   };
 
-  // --- 저장 → (다시) 넘기기: 한 번의 클릭 --------------------------------
-  // 반영·반려 뒤의 새 변경은 새 사이클이라 넘기기를 자동으로 잇지 않는다 —
-  // `merged`·`closed` 는 "저장하기"만, 열린 요청(`open`·`changes_requested`)
-  // 은 저장 뒤 handoff 로 이어 같은 요청을 갱신한다.
-  const repo = daemon.repo;
-  const pendingChanges = repo?.pendingChanges ?? 0;
-  const handoff = repo?.handoff ?? null;
+  // --- 제출: 한 번의 클릭 ------------------------------------------------
   const diffStage = daemon.diffStatus?.stage;
   const [savingNow, setSavingNow] = useState(false);
   /** 답장 모드 — 사람 메시지의 `답하기`가 여는 컴포저 상태. 내면 api.replyToReview. */
   const [replyTo, setReplyTo] = useState<DeveloperReview | null>(null);
   /** 넘기기 카드 — 대화 안의 검토 자리. 상단 바·복도·⌘K 가 연다. */
   const [handoffOpen, setHandoffOpen] = useState(false);
-  const runSave = useCallback(() => {
-    // 도는 턴 중의 저장 잠금 — 상단바·⌘S·저장 칩이 이미 읽는 같은 규칙이다.
-    // 턴이 워크트리에 쓰는 중에 커밋하면 반쯤 쓰인 파일이 저장된다. 데몬의
-    // 저장에는 턴 가드가 없으므로(repo.ts save() 는 직렬화만 한다) 이곳이
-    // 지킨다.
+  /**
+   * 제출 — 이번 작업을 묶어 개발자에게 넘긴다. P2-1 뒤로 계획자에게 남은
+   * 유일한 손이다: 커밋은 턴이 끝날 때마다 데몬이 스스로 하므로 여기서 부르는
+   * save 는 "남은 것까지 담고 푸시를 **기다린다**" 는 뜻이다 — 푸시 실패를
+   * 게이트로 올리는 길은 이것뿐이다(자동 저장의 푸시는 백그라운드라 조용하다).
+   * 넘기기의 제목·본문은 데몬이 정한 기본값으로 나가고, 직접 고치려는 길
+   * (카드)은 파레트의 넘기기가 남긴다.
+   */
+  const runSubmit = useCallback(() => {
     if (savingNow || sessions.running) return;
-    // 저장은 됐고 넘기기만 멈춘 실패의 다시 시도 — 저장을 다시 돌리지 않는다.
     const handoffOnly = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
-    // 열린 요청(open·changes_requested)은 저장 뒤 같은 요청을 갱신한다 —
-    // "저장하고 다시 넘기기". 새 사이클(없음·반영됨·반려)은 저장만 하고
-    // 넘기기는 저장 기록의 복도가 잇는다.
-    const openCycle = handoff?.state === "open" || handoff?.state === "changes_requested";
     setSavingNow(true);
     void (
       handoffOnly
@@ -182,27 +187,16 @@ export function ChatColumn({
         : api
             .save(undefined, activeId)
             .then((status) =>
-              openCycle && status.stage === "published"
-                ? api.handoff({ sessionId: activeId })
-                : status,
+              status.stage === "published" ? api.handoff({ sessionId: activeId }) : status,
             )
     )
       .catch((e: Error) => showError(e.message))
       .finally(() => setSavingNow(false));
-  }, [
-    activeId,
-    savingNow,
-    sessions.running,
-    handoff,
-    api,
-    showError,
-    diffStage,
-    daemon.diffStatus,
-  ]);
+  }, [activeId, savingNow, sessions.running, api, showError, diffStage, daemon.diffStatus]);
   /**
-   * 사이클 요청의 응답 — 저장은 곧 저장(칩·⌘S·상단 바가 같은 핸들러를
-   * 누른다), 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라
-   * 여기선 무시한다.
+   * 사이클 요청의 응답 — 제출은 곧 제출(칩·상단 바가 같은 핸들러를 누른다),
+   * 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라 여기선
+   * 무시한다.
    */
   // 이 열은 홈에서 내렸다 다시 탄다 — 마지막으로 본 nonce 만 기억해
   // 재생을 묵살한다. 같은 nonce 를 다시 보는 것은 사용자 손이 아니라
@@ -211,10 +205,10 @@ export function ChatColumn({
   useEffect(() => {
     if (!cycleRequest || cycleRequest.nonce === cycleNonce.current) return;
     cycleNonce.current = cycleRequest.nonce;
-    if (cycleRequest.kind === "save") runSave();
+    if (cycleRequest.kind === "submit") runSubmit();
     else if (cycleRequest.kind === "handoff") setHandoffOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycleRequest]);
+  }, [cycleRequest, runSubmit]);
   // 넘기기 카드가 열리면 그 자리로 — 카드는 렌더 뒤에 생기니 한 박자 늦춘다.
   useEffect(() => {
     if (!handoffOpen) return;
@@ -237,7 +231,7 @@ export function ChatColumn({
     ? (daemon.diffStatus?.detail ?? "넘기지 못했습니다.")
     : daemon.diffStatus?.reason === "push-auth"
       ? "GitHub 인증에 실패했습니다 — 설정에서 토큰을 확인해 주세요."
-      : (daemon.diffStatus?.detail ?? "저장하지 못했습니다.");
+      : (daemon.diffStatus?.detail ?? "제출하지 못했습니다.");
 
   /**
    * 닫은 제안: 데몬은 한 문장을 한 번 보내고 잊지만, 계획자가 닫은
@@ -247,6 +241,17 @@ export function ChatColumn({
   const suggestion =
     active?.suggestion && active.suggestion !== hiddenSuggestion ? active.suggestion : null;
   const visiblePending = pending.filter((request) => request.sessionId === activeId);
+  /**
+   * 테이프 꼬리의 움직임 — 도는 도구나 흐르는 말이 꼬리에 없으면(=tailMoving 이
+   * 거짓이면) 턴이 도는 한 대기 표시가 선다. 첫 보이는 블록 전의 빈 자리만이
+   * 아니라, 생각 과정이 숨겨진 채 생각만 흐르는 도구 사이의 침묵도 그 자리다
+   * (실사 — 그 구간마다 스피너도 시계도 없이 화면이 통째로 조용해졌다).
+   * 시계의 시작은 데몬의 turnStartedAt 이 주인이고, 방송 전의 빈 자리만
+   * 보낸 순간이 임시로 잡는다.
+   */
+  const tailLive = tailMoving(active?.blocks ?? [], showThinking, showTools, isToolRunning);
+  const awaitingHere = sessions.awaitingTurn?.sessionId === activeId ? sessions.awaitingTurn : null;
+  const clockStart = active?.turnStartedAt ?? awaitingHere?.since ?? null;
   /** Whether the newest message is what the planner is looking at. */
   const pinned = useRef(true);
   /** Mirror of `pinned` for rendering — the pill is the scrolled-up reader's way back. */
@@ -308,7 +313,7 @@ export function ChatColumn({
   // race against its own deltas.
   useEffect(() => {
     if (pinned.current) bottom.current?.scrollIntoView();
-  }, [active?.blocks]);
+  }, []);
 
   // A reader who scrolled up owns the scroll position; the transcript takes
   // it back only when they return to the bottom. Opening another thread is
@@ -316,7 +321,7 @@ export function ChatColumn({
   useEffect(() => {
     pinned.current = true;
     setUnpinned(false);
-  }, [activeId]);
+  }, []);
 
   // The head's menu answers Escape like every menu in the app, and the
   // backdrop under it takes any click that misses the menu — the same rules
@@ -330,45 +335,6 @@ export function ChatColumn({
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
-  // Checkpoints exist per completed turn: refetch when a turn
-  // settles or the thread changes, and offer the matching snapshot on each
-  // answer. A failed fetch just leaves the buttons off.
-  useEffect(() => {
-    if (!activeId || sessions.running) return;
-    let cancelled = false;
-    void api
-      .checkpoints()
-      .then((list) => {
-        if (!cancelled) {
-          setCheckpoints(list.entries.filter((entry) => entry.sessionId === activeId));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [activeId, sessions.running, api]);
-
-  /**
-   * 되돌리기는 대화 삭제보다 조용히 위험하다 — 이후 턴들이 만든 화면까지
-   * 통째로 이전으로 돌아간다. 삭제가 묻는데 되돌리기가 안 묻는 건 위험도가
-   * 뒤집힌 것이니, 같은 ConfirmDialog 로 한 번 묻는다.
-   */
-  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
-  const restoreCheckpoint = (id: string) => {
-    setRestoring(true);
-    void api
-      .restoreCheckpoint(id)
-      .then(() => api.checkpoints())
-      .then((list) => {
-        setCheckpoints(list.entries.filter((entry) => entry.sessionId === activeId));
-        setRestoring(false);
-      })
-      .catch((e: Error) => {
-        setRestoring(false);
-        showError(e.message);
-      });
-  };
   // the very deltas it is trying to catch up on.
   const jumpToLatest = () => {
     pinned.current = true;
@@ -412,7 +378,6 @@ export function ChatColumn({
             <input
               className="thread__rename"
               value={draft}
-              autoFocus
               aria-label="대화 이름"
               onChange={(event) => setDraft(event.target.value)}
               onBlur={commitRename}
@@ -492,7 +457,7 @@ export function ChatColumn({
                     <span className="ic">
                       <ExportIcon />
                     </span>
-                    <span className="selector__label">대화 보내기</span>
+                    <span className="selector__label">대화 내보내기</span>
                   </button>
                 )}
                 {onChatChange && (
@@ -564,18 +529,13 @@ export function ChatColumn({
                 setErrorClosing(false);
               }}
             >
-              <div className="notice notice--error">
-                <span className="notice__text">{error}</span>
-                <button
-                  type="button"
-                  className="notice__close"
-                  aria-label="오류 닫기"
-                  disabled={errorClosing}
-                  onClick={() => setErrorClosing(true)}
-                >
-                  ×
-                </button>
-              </div>
+              <StateBanner
+                tone="danger"
+                role="alert"
+                title={error}
+                closeLabel="오류 닫기"
+                onClose={() => setErrorClosing(true)}
+              />
             </Fold>
           )}
           {/* 실사 결함: 기록 있는 대화가 조용히 빈 대화로 열렸다 — 실패가
@@ -592,44 +552,35 @@ export function ChatColumn({
           )}
           <Transcript
             blocks={active?.blocks ?? []}
-            live={sessions.running || restoring}
+            live={sessions.running}
             onRetry={retry}
-            checkpoints={checkpoints}
-            onRestoreCheckpoint={(id) => setConfirmRestore(id)}
+            onResendEdit={(text) => resendRef.current?.(text)}
             showTools={showTools}
             onBackgroundTask={backgroundTask}
             onStopTask={stopTask}
-            onRewind={
+            onBranch={
               daemon.status?.providers?.find((p) => p.id === sessions.selector?.provider)
-                ?.capabilities?.rewind === true
-                ? (turn, text) => void sessions.rewindAnswer(turn, text)
+                ?.capabilities?.branch === true
+                ? (turn) => void sessions.branchFrom(turn)
                 : undefined
             }
-            onFixReview={(reviews) => {
-              for (const review of reviews) saveHandledReview(review.pr, review.id);
-              onReviewsHandled();
-              void sessions.submit(reviewToTurn(reviews), []);
-            }}
             onReplyReview={(review) => setReplyTo(review)}
-            saveCorridor={
-              pendingChanges === 0 && (!handoff || handoff.state === "closed")
-                ? { onHandoff: () => setHandoffOpen(true) }
-                : null
-            }
+            onOpenHistory={onOpenHistory}
           />
-          {/* 저장 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
+          {/* 제출 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
               말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
               시도가 시작되는 순간에만 사라진다(실패가 조용히 지워졌던 실사
-              결함의 반대 판정). 재시도는 칩의 저장 버튼과 같은 핸들러다. */}
+              결함의 반대 판정). 재시도는 상단 바의 제출과 같은 핸들러다 —
+              P2-1 뒤로 사람이 다시 누를 수 있는 손은 그것 하나다. */}
           {diffStage === "failed" && (
             <StateBanner
               tone="danger"
               role="alert"
-              title={handoffFailed ? "넘기기에 실패했습니다" : "저장에 실패했습니다"}
+              title={handoffFailed ? "넘기기에 실패했습니다" : "제출에 실패했습니다"}
               sub={saveFailDetail}
               action={{
-                label: handoffFailed ? "다시 넘기기" : "다시 저장하기",
-                onClick: runSave,
+                label: handoffFailed ? "다시 넘기기" : "다시 제출하기",
+                onClick: runSubmit,
               }}
             />
           )}
@@ -647,23 +598,23 @@ export function ChatColumn({
               />
             </div>
           )}
-          {/* A turn's first seconds: the tape holds only the planner's words,
-            so the start says itself — spinner + shimmer until blocks land.
-            The tape speaks for itself the moment any agent block exists —
-            any block the planner can actually SEE. 생각 과정이 꺼져 있으면
-            생각만 도착한 턴은 테이프에 아무것도 그리지 않으므로, 그 블록은
-            여기서도 도착한 셈에 들지 않는다. 그러지 않으면 AI 가 생각만
-            하는 동안 화면이 통째로 조용해진다. */}
-          {sessions.running &&
-            !(active?.blocks ?? []).some(
-              (block) => block.type !== "user" && blockOnTape(block, showThinking, showTools),
-            ) && (
-              <div className="turnlive" role="status">
-                <span className="spinner" />
-                작업 중
-                {active?.turnStartedAt != null && <TurnClock startedAt={active.turnStartedAt} />}
-              </div>
-            )}
+          {/* A turn's silence line — from the send click to the first
+            visible block, and again in every quiet stretch after: 도구와
+            도구 사이 모델이 생각만 하는 구간(생각 과정은 기본 숨김)에는
+            테이프가 새로 그리는 것이 없다. The tape speaks for itself the
+            moment a visible block lands or streams — 도는 도구의 막대,
+            흐르는 말 — and this line stands only when nothing on it moves.
+            그렇지 않으면 도는 턴이 스피너도 시계도 없는 화면으로 보인다. */}
+          {(sessions.running || awaitingHere) && !tailLive && (
+            <div className="turnlive" role="status" aria-label="작업 중">
+              <span className="turnlive__dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+              {clockStart != null && <TurnClock startedAt={clockStart} />}
+            </div>
+          )}
           {visiblePending.map((request) =>
             request.kind === "permission" ? (
               request.toolName === PLAN_TOOL ? (
@@ -759,14 +710,18 @@ export function ChatColumn({
         onSetEffort={(effort) => void sessions.setEffort(effort)}
         onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
         onSetMode={(mode) => void sessions.setMode(mode)}
-        providers={
-          sessions.activeId
-            ? undefined
-            : daemon.status?.providers?.filter((p) => !disabledProviders.includes(p.id))
-        }
-        onPickProvider={sessions.activeId ? undefined : sessions.pickProvider}
+        // 프로바이더 재료는 열린 대화에서도 건네진다 — 뿌리 카드의 프로바이더
+        // 행은 언제나 서고, 고름은 다음 새 대화부터 먹는다(스레드는 태어난
+        // 프로바이더에 묶이므로 열린 대화를 바꾸지는 않는다).
+        providers={daemon.status?.providers?.filter((p) => !disabledProviders.includes(p.id))}
+        onPickProvider={sessions.pickProvider}
+        nextProvider={sessions.chatProvider}
+        providerLocked={sessions.activeId != null}
         running={sessions.running}
         stopping={stopping}
+        queue={sessions.queue}
+        onRemoveQueued={sessions.queueRemove}
+        onSendQueuedNow={sessions.queueSendNow}
         dropped={sessions.dropped}
         onTakeDropped={sessions.takeDropped}
         onDismissDropped={sessions.dismissDropped}
@@ -775,9 +730,10 @@ export function ChatColumn({
         tasks={active?.tasks ?? []}
         onStopTask={stopTask}
         registerAttach={registerAttach}
+        registerResend={registerResend}
         sendKey={sendKey}
         onOpenProviderSettings={onOpenProviderSettings}
-        onSend={async (text, attachments, sentPins) => {
+        onSend={async (text, attachments, sentPins, restoredScreens) => {
           // 답장 모드: 사람 메시지의 `답하기`가 연 상태 — 컴포저의 말은
           // 새 턴이 아니라 개발자에게 가는 답이다.
           if (replyTo) {
@@ -820,14 +776,34 @@ export function ChatColumn({
               : [],
           );
           // 핀으로 처음 열리는 대화는 첫 핀의 화면 이름을 얻는다.
-          const name = !sessions.activeId && sentPins.length > 0 ? sentPins[0]!.screen : undefined;
+          const name = !sessions.activeId && sentPins.length > 0 ? sentPins[0]?.screen : undefined;
+          // 빠른 수정: 핀의 정체를 데이터로도 실어 보낸다 — 데몬이 클론에서
+          // `파일 후보:`를 찾아 턴에 얹는다. prose(마커 턴 본문)와 같은 말이지만
+          // 데몬이 읽는 쪽이다. 영역 핀은 정체가 없다 — id 만 가면 검색이
+          // 저절로 비워진다.
+          const pinHints: SessionPinHint[] = sentPins.map((pin) => ({
+            id: pin.id,
+            ...(pin.element.kind === "region"
+              ? {}
+              : {
+                  ...(pin.element.text ? { text: pin.element.text } : {}),
+                  ...(pin.element.owners?.length ? { owners: pin.element.owners } : {}),
+                  ...(pin.element.attrs?.testId ? { testId: pin.element.attrs.testId } : {}),
+                }),
+          }));
           await sessions.submit(
             sentPins.length > 0 ? pinsToTurn(sentPins, text, () => null) : text,
             [...pinImages, ...attachments],
             { name },
             // 게이트 재배선: 이 턴이 가리킨 화면들 — 턴이 끝나면 기계가
             // 다시 열어 본다. 핀의 몫은 여기서, 캡처의 몫은 sendLook 에서.
-            sentPins.map((pin) => ({ screen: pin.screen, state: pin.state })),
+            // 방에서 꺼낸·되살린 말의 화면도 같은 자리로 돌아온다(감사 C4) —
+            // 그러지 않으면 되살린 말의 턴은 게이트 없이 끝난다.
+            dedupeScreens([
+              ...sentPins.map((pin) => ({ screen: pin.screen })),
+              ...(restoredScreens ?? []),
+            ]),
+            sentPins.length > 0 ? pinHints : undefined,
           );
           // 턴이 나갔으면 핀을 기록하고 비운다 — 실패해도 턴은 이미 나갔다.
           if (sentPins.length > 0) void pins.markSent(sentPins);
@@ -843,19 +819,20 @@ export function ChatColumn({
         onInterrupt={stop}
         onFindFiles={(query) => api.findFiles(query)}
       />
-      {confirmRestore && (
-        <ConfirmDialog
-          title="이 요청 이전으로 되돌리기"
-          body={<>이 요청이 바꾼 화면 파일을, 이 요청이 시작하기 전 모습으로 되돌릴까요?</>}
-          hint="그 뒤에 이어진 작업이 만든 화면까지 함께 돌아갑니다. 대화 기록은 그대로 남습니다."
-          confirmLabel="되돌리기"
-          onConfirm={() => {
-            restoreCheckpoint(confirmRestore);
-            setConfirmRestore(null);
-          }}
-          onClose={() => setConfirmRestore(null)}
-        />
-      )}
     </main>
   );
+}
+
+/**
+ * 같은 화면을 두 번 보내지 않는다 — 핀과 되살린 말이 같은 화면을
+ * 가리킬 수 있고, 게이트는 어차피 한 번만 열어 본다(보내는 쪽에서도
+ * 같은 화면은 한 번만 실운다 — 2026-09-21 상태 축 철거로 키는 화면뿐이다).
+ */
+function dedupeScreens(screens: Array<{ screen: string }>): Array<{ screen: string }> {
+  const seen = new Set<string>();
+  return screens.filter((row) => {
+    if (seen.has(row.screen)) return false;
+    seen.add(row.screen);
+    return true;
+  });
 }

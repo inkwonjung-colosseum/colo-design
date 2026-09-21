@@ -1,9 +1,11 @@
 /**
- * 변경 점 스트립의 데이터 절반 — the recount that moves the chip's number now
- * also lists the files (`RepoStatus.changedFiles`). These tests pin the
- * contract the strip renders: the list always equals the count, sizes come
- * from numstat only where git can count, and a same-count content edit still
- * moves the rows (the old count-only guard would have frozen the strip).
+ * 재검수가 세는 수와, 그것을 읽는 파서의 계약.
+ *
+ * P2-1 에서 파일 **목록**(`RepoStatus.changedFiles`)은 선로를 떠났다 — 그것을
+ * 그리던 변경 점 스트립이 사라져 읽는 화면이 하나도 없다. 남는 계약은 둘:
+ * 칩이 읽는 `pendingChanges` 가 정확하다는 것과, 그 수를 만드는 porcelain ·
+ * numstat 파서가 git 의 글자를 제대로 읽는다는 것(`api.diff()` 의 버리기
+ * 확인이 같은 파서를 쓴다).
  *
  * Prerequisites: `pnpm --filter @colo-design/daemon build`
  */
@@ -17,7 +19,7 @@ import { bringUp, promisifiedRun, workdir } from "./repo-test-kit.mjs";
 
 const git = (root, ...args) => promisifiedRun("git", ["-C", root, ...args]);
 
-test("재검수는 칩이 세는 파일을 그대로 나른다 — 수정·추가·삭제와 ±수", async () => {
+test("재검수의 수는 워크트리 그대로 — 수정·추가·삭제 셋", async () => {
   const dir = workdir("hub-changed-files-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
   try {
@@ -45,89 +47,11 @@ test("재검수는 칩이 세는 파일을 그대로 나른다 — 수정·추�
     await workspace.refreshPendingChanges();
     const status = await workspace.status();
     assert.equal(status.pendingChanges, 3);
-    assert.equal(status.changedFiles.length, status.pendingChanges, "list equals the count");
-
-    const modified = status.changedFiles.find((row) => row.path === "CLAUDE.md");
-    assert.equal(modified?.status, "modified");
-    assert.equal(modified?.added, 2);
-    assert.equal(modified?.removed, 1);
-
-    const deleted = status.changedFiles.find((row) => row.path === "index.html");
-    assert.equal(deleted?.status, "deleted");
-    assert.ok((deleted?.removed ?? 0) > 0, "a deletion names its size");
-
-    const added = status.changedFiles.find((row) => row.path === "src/screens/new/New.screen.tsx");
-    assert.equal(added?.status, "added");
-    assert.equal(added?.added, null, "untracked has no numstat row — no guessed size");
-    assert.equal(added?.removed, null);
-
-    await workspace.stop().catch(() => undefined);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("개수가 같은 내용 편집도 행을 다시 움직인다 — ±가 먼저 늙으면 안 된다", async () => {
-  const dir = workdir("hub-changed-same-count-");
-  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-    });
-    const workspace = await bringUp(dir, fixture);
-    const root = join(dir, "work");
-
-    const claude = await git(root, "show", "HEAD:CLAUDE.md");
-    writeFileSync(join(root, "CLAUDE.md"), `${claude}첫 편집\n`);
-    await workspace.refreshPendingChanges();
-    const first = (await workspace.status()).changedFiles.find((row) => row.path === "CLAUDE.md");
-    assert.equal(first?.added, 1);
-
-    // Same file, same count (1) — only the ± moved.
-    writeFileSync(join(root, "CLAUDE.md"), `${claude}첫 편집\n둘째 편집\n셋째 편집\n`);
-    await workspace.refreshPendingChanges();
-    const second = (await workspace.status()).changedFiles.find((row) => row.path === "CLAUDE.md");
-    assert.equal((await workspace.status()).pendingChanges, 1, "the count did not move");
-    assert.equal(second?.added, 3, "but the strip's sizes did");
-    assert.equal(sameChangedFiles([first], [second]), false);
-
-    await workspace.stop().catch(() => undefined);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("개명 행은 새 경로로, ±는 조용히 — git 이 셀 수 없는 크기는 비워 둔다", async () => {
-  const dir = workdir("hub-changed-rename-");
-  process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
-  try {
-    const fixture = await createFixtureRepo({
-      dir: join(dir, "fixture"),
-      port: await freePort(),
-    });
-    const workspace = await bringUp(dir, fixture);
-    const root = join(dir, "work");
-
-    writeFileSync(join(root, "notes.txt"), "메모\n");
-    await git(root, "add", "notes.txt");
-    await git(
-      root,
-      "-c",
-      "user.email=test@example.com",
-      "-c",
-      "user.name=test",
-      "commit",
-      "-m",
-      "memo",
+    assert.equal(
+      status.changedFiles,
+      undefined,
+      "파일 목록은 선로를 떠났다 — 읽는 화면이 없는 값을 매 방송마다 나르지 않는다",
     );
-    await git(root, "mv", "notes.txt", "memos.txt");
-
-    await workspace.refreshPendingChanges();
-    const renamed = (await workspace.status()).changedFiles.find((row) => row.path === "memos.txt");
-    assert.equal(renamed?.status, "renamed", "the row names the path that exists now");
-    assert.equal(renamed?.added, null);
-    assert.equal(renamed?.removed, null);
 
     await workspace.stop().catch(() => undefined);
   } finally {
@@ -135,7 +59,7 @@ test("개명 행은 새 경로로, ±는 조용히 — git 이 셀 수 없는 �
   }
 });
 
-test("깨끗한 워크트리의 목록은 비어 있다", async () => {
+test("깨끗한 워크트리의 수는 0", async () => {
   const dir = workdir("hub-changed-clean-");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude-config");
   try {
@@ -147,7 +71,6 @@ test("깨끗한 워크트리의 목록은 비어 있다", async () => {
     await workspace.refreshPendingChanges();
     const status = await workspace.status();
     assert.equal(status.pendingChanges, 0);
-    assert.deepEqual(status.changedFiles, []);
     await workspace.stop().catch(() => undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });

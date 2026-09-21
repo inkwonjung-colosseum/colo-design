@@ -5,10 +5,13 @@ import { CloseIcon, HistoryIcon } from "../icons";
 import { RUNNING, stageLine } from "../panels/DiffPanel";
 
 /**
- * 저장 기록: the saved commits of this cycle, and — per entry —
+ * 작업 기록: the commits of this cycle, and — per entry —
  * going back to that moment as a NEW commit. No reset, no force-push: a
  * developer may be reading the branch on the other side. The words are
- * `저장 기록 · 되돌리기`; commit and reset never surface.
+ * `작업 기록 · 되돌리기`; commit and reset never surface.
+ *
+ * P2-1 뒤로 이름이 `저장 기록` 이 아닌 이유: 저장 버튼이 사라져 여기 쌓이는
+ * 차례는 사람이 누른 순간이 아니라 **턴** 이다. 되돌리기만이 본체로 남는다.
  *
  * 도킹, 덮지 않는다. This surface's whole job is comparing "이 시점" against
  * "지금" — a centered modal froze the very thing being compared. So the
@@ -52,6 +55,16 @@ export function HistoryDrawer({
   // 상태" moves), so it asks for one re-read. The bump rides the effect's
   // deps instead of a second fetch path: one reader, one loading grammar.
   const [readTick, setReadTick] = useState(0);
+  // A failed 되돌리기's words outlive their moment: the note describes the
+  // worktree as it was refused, and once another writer (저장 · 넘기기 ·
+  // a later 되돌리기) settles the same worktree, it describes nothing. A
+  // settled, healthy status retires it; a failed one keeps its reason.
+  useEffect(() => {
+    if (error === null) return;
+    if (diffStatus && !RUNNING.includes(diffStatus.stage) && diffStatus.stage !== "failed") {
+      setError(null);
+    }
+  }, [error, diffStatus]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: readTick 은 되돌리기 뒤 같은 읽기를 다시 돌리는 손잡이다 — 이 효과 안에서 쓰이지 않는다.
   useEffect(() => {
     if (!open) return;
@@ -111,7 +124,7 @@ export function HistoryDrawer({
   return (
     <aside
       className={`histdock${cover ? " histdock--cover" : ""}`}
-      aria-label="저장 기록"
+      aria-label="작업 기록"
       tabIndex={-1}
       ref={panelRef}
       {...(cover ? { "data-cover-stage": "" } : {})}
@@ -121,18 +134,18 @@ export function HistoryDrawer({
           <span className="ic ic--quiet">
             <HistoryIcon />
           </span>{" "}
-          저장 기록
+          작업 기록
         </h2>
-        <button type="button" className="ghost" aria-label="저장 기록 닫기" onClick={onClose}>
+        <button type="button" className="ghost" aria-label="작업 기록 닫기" onClick={onClose}>
           <CloseIcon />
         </button>
       </header>
 
       <div className="histdock__body">
         <p className="hint">
-          이 사이클의 저장 차례입니다. 되돌리기는 그 시점을 새 저장으로 얹습니다 — 지우지 않습니다.
+          이번 작업의 차례입니다. 되돌리기는 그 시점을 지금 위에 새로 얹습니다 — 지우지 않습니다.
         </p>
-        {/* The stage line is for work IN flight — a 저장 or the 되돌리기 this
+        {/* The stage line is for work IN flight — a commit or the 되돌리기 this
             pane started. A settled outcome (saved / handed off / failed)
             already told its story in the flow that produced it; repeating it
             here made every later visit to the history open on an old
@@ -150,7 +163,7 @@ export function HistoryDrawer({
             <span className="ic ic--lg">
               <HistoryIcon />
             </span>{" "}
-            아직 저장한 것이 없습니다. 저장하면 여기에 쌓입니다.
+            아직 만든 것이 없습니다. 화면을 만들면 한 차례씩 여기에 쌓입니다.
           </p>
         )}
         {entries !== null && entries.length > 0 && (

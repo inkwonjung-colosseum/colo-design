@@ -84,8 +84,15 @@ export class PublishCycle {
   async runSave(options: {
     message?: string;
     onSessionTurn?: (brief: string) => void;
-    /** hero-synthesis D1: the conversation this save belongs to (세션 테이프). */
+    /** hero-synthesis D1: the conversation this save belongs to. */
     sessionId?: string;
+    /**
+     * P2-1 자동 저장의 푸시 — 백그라운드(실패 무시). 커밋은 로컬에 끝난 것으로
+     * 저장이 성립하고, 푸시는 조용히 따라간다: 오프라인에서도 턴의 끝이 멈추지
+     * 않게. 밀린 커밋은 제출(넘기기)이 기다렸다 민다 — 푸시 실패를 게이트로
+     * 올리는 길은 제출 쪽뿐이다.
+     */
+    backgroundPush?: boolean;
   }): Promise<DiffStatus> {
     if (!this.core.isCloned()) {
       return this.core.setDiff({
@@ -212,10 +219,17 @@ export class PublishCycle {
     } catch (error) {
       return this.failGate("commit", error, options.onSessionTurn);
     }
-    try {
-      await this.core.git(["push", "--set-upstream", "origin", branch]);
-    } catch (error) {
-      return this.failGate("push", error, options.onSessionTurn);
+    // 푸시 단계(P2-1): 자동 저장은 백그라운드 — 커밋이 로컬에 있으면 저장은
+    // 끝난 것이고, 원격 백업은 되는 대로 따라간다. 실패를 기다리는 것은 제출의
+    // 몫이니 여기선 삼킨다(밀린 커밋은 넘기기가 민다).
+    if (options.backgroundPush === true) {
+      void this.core.git(["push", "--set-upstream", "origin", branch]).catch(() => undefined);
+    } else {
+      try {
+        await this.core.git(["push", "--set-upstream", "origin", branch]);
+      } catch (error) {
+        return this.failGate("push", error, options.onSessionTurn);
+      }
     }
 
     const commit = (await this.core.git(["rev-parse", "HEAD"])).trim();
@@ -225,7 +239,7 @@ export class PublishCycle {
       memo ?? (await this.core.git(["log", "-1", "--pretty=%s"]).catch(() => "")).trim();
     const status = this.core.setDiff({ stage: "published", commit, message });
     // hero-synthesis D1: the save lands on the session tape — a reloaded
-    // window replays the card instead of losing it with `diffStatus`.
+    // window replays the quiet marker instead of losing it with `diffStatus`.
     this.deps.onCycleEvent?.(
       {
         kind: "cycle.saved",
