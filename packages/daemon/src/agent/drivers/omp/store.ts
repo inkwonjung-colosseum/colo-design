@@ -259,6 +259,35 @@ export async function storedPromptCount(
 }
 
 /**
+ * 분기가 어디를 자르는가 — k 번째 답을 남기려면 그 다음 프롬프트를 버려야
+ * 한다. omp 의 `branch{entryId}` 는 지정한 사용자 엔트리와 그 뒤를 전부
+ * 버리고 새 세션 id 를 발급하므로(검증됨), 버릴 프롬프트의 엔트리 id 가
+ * 드라이버가 받을 값이다 — 계약의 `drops`.
+ *
+ * 마지막 답에서 분기하면 버릴 프롬프트가 없다: `cut: null` 이 곧 "전부
+ * 남긴다"이고, 세션은 `--fork` 로 대화록을 통째 복사해 열린다.
+ */
+export async function resolveOmpBranchCut(
+  agentDir: string,
+  cwd: string,
+  id: string,
+  turn: number,
+): Promise<{ cut: string | null; drops: string | null; answerCount: number } | null> {
+  const file = await findFile(agentDir, cwd, id);
+  if (!file) return null;
+  const prompts = (await branchEntries(file)).filter(isPrompt);
+  if (turn < 1 || turn > prompts.length) return null;
+  const keep = prompts[turn - 1];
+  const drop = prompts[turn];
+  if (!drop) return { cut: null, drops: null, answerCount: prompts.length };
+  return {
+    cut: typeof keep?.id === "string" ? keep.id : null,
+    drops: typeof drop.id === "string" ? drop.id : null,
+    answerCount: prompts.length,
+  };
+}
+
+/**
  * Replay a stored session as ChatEvents. Entries hold whole messages —
  * text, thinking, tool calls already complete — so like the other
  * importers this emits finished blocks, not deltas.

@@ -12,7 +12,6 @@ import type { Block } from "../src/lib/daemon-client.ts";
 import {
   answerTurnNumbers,
   lastAnswerPerTurn,
-  promptTotal,
   turnAnswerText,
   turnBlockNumbers,
 } from "../src/lib/turn-numbering.ts";
@@ -33,17 +32,6 @@ const turnDone = (id: string): Block =>
   }) as unknown as Block;
 const prompt = (id: string, text: string): Block =>
   ({ type: "user", id, text, images: 0 }) as unknown as Block;
-
-test("promptTotal: 사용자의 말과 기계 턴을 모두 센다", () => {
-  const blocks = [
-    block("user", "u1"),
-    block("text", "a1"),
-    block("user", "u2"), // 기계 턴(코멘트 묶음)도 프롬프트다
-    block("tool", "t1"),
-    block("text", "a2"),
-  ];
-  assert.equal(promptTotal(blocks), 2);
-});
 
 test("답의 턴은 그 답을 낸 프롬프트의 순번 — 한 턴에 답이 둘여도 같은 턴", () => {
   const blocks = [
@@ -72,16 +60,14 @@ test("도구만 돈 턴 뒤의 답은 프롬프트 순번을 잃지 않는다", 
   const turns = answerTurnNumbers(blocks);
   // 옛 셈은 a3 를 2로 셌다(text 2개째) — u2 의 존재가 사라졌다.
   assert.equal(turns.get("a3"), 3);
-  assert.equal(promptTotal(blocks), 3);
 });
 
 test("프롬프트 없이 홀로 남은 답은 1로 매겨 유효한 번호를 지킨다", () => {
   const turns = answerTurnNumbers([block("text", "orphan")]);
   assert.equal(turns.get("orphan"), 1);
-  assert.equal(promptTotal([block("text", "orphan")]), 0);
 });
 
-test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지 않는다", () => {
+test("하위 작업이 한 말은 답이 아니다 — 분기의 k 를 밀지 않는다", () => {
   const subagentSay = { type: "text", id: "s1", agentId: "toolu_9" } as unknown as Block;
   const blocks = [
     block("user", "u1"),
@@ -97,7 +83,7 @@ test("하위 작업이 한 말은 답이 아니다 — 되감기의 k 를 밀지
   assert.equal(turns.get("a2"), 2);
 });
 
-test("한 턴의 마지막 답 — 되돌리기 · 다시 요청은 그 자리에만 둔다", () => {
+test("한 턴의 마지막 답 — 분기는 그 자리에만 둔다", () => {
   const blocks = [
     block("user", "u1"),
     block("text", "a1"),

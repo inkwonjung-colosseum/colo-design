@@ -191,16 +191,20 @@ async function main() {
     // and really swaps the page surface, not just the attribute.
     const palettes = [
       ["contrast", "rgb(0, 0, 0)"],
+      ["contrast-light", "rgb(255, 255, 255)"],
       ["dracula", "rgb(40, 42, 54)"],
       ["solarized", "rgb(0, 43, 54)"],
+      ["solarized-light", "rgb(253, 246, 227)"],
       ["catppuccin", "rgb(30, 30, 46)"],
       ["nord", "rgb(46, 52, 64)"],
       ["gruvbox", "rgb(40, 40, 40)"],
       ["tokyonight", "rgb(26, 27, 38)"],
       ["rosepine", "rgb(25, 23, 36)"],
+      ["rosepine-dawn", "rgb(250, 244, 237)"],
       ["everforest", "rgb(45, 53, 59)"],
       ["onedark", "rgb(40, 44, 52)"],
       ["github", "rgb(13, 17, 23)"],
+      ["github-light", "rgb(255, 255, 255)"],
       ["monokai", "rgb(39, 40, 34)"],
       ["latte", "rgb(239, 241, 245)"],
       ["claude", "rgb(250, 249, 245)"],
@@ -248,18 +252,30 @@ async function main() {
     check("switching the OS to dark moves the app with it", (await theme(page)) === "dark");
     await page.emulateMedia({ colorScheme: "light" });
 
-    // A request for more contrast outranks light/dark, both ways, live.
+    // A request for more contrast outranks light/dark, both ways, live —
+    // and each direction has its own palette, so a light-mode user gets the
+    // light contrast theme, not a dark screen.
     await page.emulateMedia({ contrast: "more" });
+    await page.waitForFunction(
+      () => document.documentElement.dataset.theme === "contrast-light",
+      undefined,
+      { timeout: 3000 },
+    );
+    check(
+      "a high-contrast request on light pulls in the light contrast palette",
+      (await theme(page)) === "contrast-light",
+    );
+    await page.emulateMedia({ colorScheme: "dark" });
     await page.waitForFunction(
       () => document.documentElement.dataset.theme === "contrast",
       undefined,
       { timeout: 3000 },
     );
     check(
-      "a high-contrast request pulls in the contrast palette",
+      "the same request on dark pulls in the dark contrast palette",
       (await theme(page)) === "contrast",
     );
-    await page.emulateMedia({ contrast: null });
+    await page.emulateMedia({ contrast: null, colorScheme: "light" });
     await page.waitForFunction(
       () => document.documentElement.dataset.theme === "light",
       undefined,

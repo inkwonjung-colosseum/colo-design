@@ -235,7 +235,10 @@ async function main() {
     );
 
     // --- project ··· → 대화 모두 지우기 -------------------------------------
-    await page.locator(".node", { hasText: "일괄삭제" }).first().locator(".node__menu-btn").click();
+    // ··· 는 hover 까지 visibility:hidden — pointer 를 행에 먼저 세운다.
+    const clearRow = page.locator(".node", { hasText: "일괄삭제" }).first();
+    await clearRow.locator(".node__rowwrap").hover();
+    await clearRow.locator(".node__menu-btn").click();
     await page.getByRole("menuitem", { name: "대화 모두 지우기" }).click();
     const dialog = page.locator('[role="dialog"][aria-label="대화 모두 삭제"]');
     await dialog.waitFor({ timeout: 10000 });

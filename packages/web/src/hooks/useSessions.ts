@@ -3,14 +3,29 @@ import type {
   EffortLevel,
   LostSend,
   PermissionMode,
+  QueuedSend,
   QueuedSendPayload,
   SessionCommand,
   SessionModelInfo,
+  SessionPinHint,
   SessionSelectors,
   SessionSummary,
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Attachment } from "../components/chat/Composer";
+
+/**
+ * 방에서 돌아온 보내기 하나 — 입력창을 그때 그대로 되살리는 데 필요한 전부.
+ * `pins` 까지 들고 오는 것이 계약이다: 그 말이 가리킨 화면이 곧 다음 턴의
+ * 화면 확인 게이트 입력이므로, 여기서 떨굴 핀은 다시 보낸 말을 검증 밖으로
+ * 내보낸다.
+ */
+interface QueuedRestore {
+  text: string;
+  attachments: Attachment[];
+  pins?: Array<{ screen: string }>;
+}
+
 import { modelRowOf } from "../lib/chat-options";
 import { type Daemon, EMPTY_SESSION, type SessionView } from "../lib/daemon-client";
 import {
@@ -66,6 +81,14 @@ export interface Sessions {
   /** Transcript of the active thread; null when none is open. */
   active: SessionView | null;
   running: boolean;
+  /**
+   * 낙관 구간 — 보낸 말이 데몬에 수락되어 running 방송이 오기까지의 빈 자리.
+   * 대기 표시가 이 구간에서도 사라지지 않게 하는 것이 존재의 이유다: 세션
+   * 탄생(targetSession)과 send 왕복은 데몬의 시계 밖에서 일어난다. `since` 는
+   * 보낸 순간의 창 시계 — 데몬의 turnStartedAt 이 도착하면 시계의 주인이
+   * 그쪽으로 갈아탄다.
+   */
+  awaitingTurn: { sessionId: string; since: number } | null;
   usage: ContextUsage | null;
   /**
    * 모델·추론·권한 chips. Always present: until a session can answer, the
@@ -87,6 +110,12 @@ export interface Sessions {
    * 않는다 — 스레드는 태어난 프로바이더에 묶인다.
    */
   pickProvider: (id: string) => void;
+  /**
+   * 설정에 골라 둔 다음 새 대화의 프로바이더 — `pickProvider`가 쓴 값의 읽는
+   * 쪽. 열린 대화의 프로바이더(`selector.provider`)와 갈라질 수 있다: 스레드는
+   * 태어난 프로바이더에 묶이고, 고름은 다음 대화부터 먹는다.
+   */
+  chatProvider: string;
   error: string | null;
   setError: (error: string | null) => void;
   /**
@@ -162,7 +191,8 @@ export interface Sessions {
     text: string,
     attachments: Attachment[],
     thread?: { name?: string },
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
+    pinHints?: SessionPinHint[],
   ) => Promise<void>;
   /**
    * 계획 승인의 뒷정리: 데몬이 작업 모드로 되돌린 직후, 칩과 대화의 권한
@@ -171,15 +201,10 @@ export interface Sessions {
    */
   afterPlanApproval: () => void;
   /**
-   * 되감기: discard the k-th answer — files and memory go back —
-   * and send `text` again. The daemon forks the conversation; this side
-   * adopts the new id (제목은 데몬이 물려준다) and refreshes the list.
+   * 여기서 새 대화(분기): 이 답까지의 기억을 이어받은 새 대화로 갈아탄다 —
+   * 원래 대화는 목록에 그대로 남는다. 답은 하나도 나가지 않는다.
    */
-  rewindAnswer: (
-    turn: number,
-    text: string,
-    attachments?: Array<{ name: string; mediaType: string; data: string }>,
-  ) => Promise<void>;
+  branchFrom: (turn: number) => Promise<void>;
   /**
    * Machine-authored turn: no composer, no attachments. `attachments` rides
    * the same wire a composer attachment does — the pin crops, the
@@ -189,15 +214,26 @@ export interface Sessions {
     text: string,
     attachments?: Array<{ name: string; mediaType: string; data: string }>,
     target?: string,
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
+    pinHints?: SessionPinHint[],
   ) => Promise<void>;
+  /** 다음 턴에 보낼 말들 — 데몬의 대기 줄, 오래된 것부터. */
+  queue: QueuedSend[];
+  /**
+   * 고쳐서 보내기: take one waiting send back out of the room, whole —
+   * the composer puts the words and the files back in the field.
+   */
+  queueRemove: (itemId: string) => Promise<QueuedRestore | null>;
+  /** 지금 보내기: cut the running turn and deliver THAT send first. */
+  queueSendNow: (itemId: string) => Promise<void>;
   /** Sends the room lost without delivering — the composer's 되살리기 rows. */
   dropped: LostSend[];
   /**
    * 되살리기: hand one lost send back into the field, attachments included
-   * when their bytes survived the persist cap.
+   * when their bytes survived the persist cap. 핀도 함께 돌아온다 — 그것이
+   * 화면 게이트의 입력이라, 버리면 되살린 말의 턴은 검증 없이 끝난다.
    */
-  takeDropped: (itemId: string) => Promise<{ text: string; attachments: Attachment[] } | null>;
+  takeDropped: (itemId: string) => Promise<QueuedRestore | null>;
   /** Let go of one undelivered send (restored into the field, or unwanted). */
   dismissDropped: (itemId: string) => void;
   refresh: () => Promise<void>;
@@ -248,6 +284,22 @@ export function useSessions(
 
   const active = activeId ? (sessions[activeId] ?? EMPTY_SESSION) : null;
   const running = active?.state === "running";
+  /**
+   * 데몬이 아직 말하기 전의 대기 — 보내기 수락(running 방송)을 기다리는 낙관
+   * 표시의 상태다. 한 번에 하나만 잡는다: 컴포저의 보내기가 유일한 발화 길이고,
+   * 기계 턴(sendTurn)도 같은 길을 지난다.
+   */
+  const [awaitingTurn, setAwaitingTurn] = useState<{
+    sessionId: string;
+    since: number;
+  } | null>(null);
+  // 데몬의 첫 신호(idle 이 아닌 상태 방송, 또는 그보다 먼저 도착한 블록)가
+  // 오면 낙관은 물러난다 — 이후의 시계와 표시는 데몬의 진실이 운영한다.
+  useEffect(() => {
+    if (!awaitingTurn) return;
+    const view = sessions[awaitingTurn.sessionId];
+    if (view && (view.state !== "idle" || view.blocks.length > 0)) setAwaitingTurn(null);
+  }, [awaitingTurn, sessions]);
 
   const refresh = useCallback(async () => {
     setList(await api.listSessions().catch(() => [] as SessionSummary[]));
@@ -498,7 +550,7 @@ export function useSessions(
     return () => {
       cancelled = true;
     };
-  }, [activeId, running, api, connection, activeSlug, active?.blocks.length, applySelectors]);
+  }, [activeId, running, api, connection, applySelectors]);
 
   /**
    * The settle-time read above only fires when a turn lands, so a 5-hour
@@ -530,7 +582,7 @@ export function useSessions(
     (sessionId: string | null) => {
       if (!sessionId) return;
       const view = sessions[sessionId];
-      if (!view || !view.live || view.blocks.length > 0) return;
+      if (!view?.live || view.blocks.length > 0) return;
       void api.closeSession(sessionId).catch(() => undefined);
     },
     [api, sessions],
@@ -700,6 +752,7 @@ export function useSessions(
   };
 
   const dropped = active?.dropped ?? [];
+  const queue = active?.queue ?? [];
 
   const toAttachments = (payload: NonNullable<QueuedSendPayload>): Attachment[] =>
     payload.attachments.map(
@@ -712,11 +765,34 @@ export function useSessions(
       }),
     );
 
+  /**
+   * 되살린 말의 전부 — 글자·파일만이 아니다. `pins` 는 그 말이 가리킨
+   * 화면이고 화면 확인 게이트의 입력이므로(데몬은 이미 실어 보낸다),
+   * 여기서 버리면 되살린 말의 턴은 아무도 검증하지 않은 채 끝난다.
+   */
+  const restored = (payload: NonNullable<QueuedSendPayload>): QueuedRestore => ({
+    text: payload.text,
+    attachments: toAttachments(payload),
+    ...(payload.pins?.length ? { pins: payload.pins } : {}),
+  });
+
   const takeDropped = async (itemId: string) => {
     if (!activeId) return null;
     const payload = await api.queueTakeDropped(activeId, itemId);
     if (!payload) return null;
-    return { text: payload.text, attachments: toAttachments(payload) };
+    return restored(payload);
+  };
+
+  const queueRemove = async (itemId: string) => {
+    if (!activeId) return null;
+    const payload = await api.queueRemove(activeId, itemId);
+    if (!payload) return null;
+    return restored(payload);
+  };
+
+  const queueSendNow = async (itemId: string) => {
+    if (!activeId) return;
+    await api.queueSendNow(activeId, itemId);
   };
 
   const dismissDropped = (itemId: string) => {
@@ -726,18 +802,29 @@ export function useSessions(
     text: string,
     attachments: Attachment[],
     thread?: { name?: string },
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
+    pinHints?: SessionPinHint[],
   ) => {
     try {
       const target = await targetSession(undefined, thread?.name);
+      // 조용한 세션만 낙관을 얻는다 — 도는 중·대기 중인 세션엔 표시의 주인이
+      // 이미 있다(진행 시계·확인 카드·대기 줄), 거기 겹치면 거짓말이 둘이 된다.
+      const view = sessions[target];
+      const wake = !view || view.state === "idle";
+      if (wake) setAwaitingTurn({ sessionId: target, since: Date.now() });
       await api.send(
         target,
         text,
         attachments.map(({ name, mediaType, data }) => ({ name, mediaType, data })),
         pins,
+        chat.midturn === "steer" ? "steer" : undefined,
+        pinHints,
       );
       void refresh();
     } catch (e) {
+      // 수락이 거절된 보내기엔 대기 표시의 근거가 없다 — 컴포저의 경고 줄이
+      // 유일한 이야기꾼이다(위의 계약). 낙관도 함께 거둔다.
+      setAwaitingTurn(null);
       // The composer keeps the words AND the attachments unless the
       // daemon accepted the turn. Its warning strip is also the ONE surface a
       // refused send speaks from — the banner would read the same news twice,
@@ -769,20 +856,19 @@ export function useSessions(
       .catch(() => undefined);
   }, [activeId, api, chat.permissionMode, onChatChange, applySelectors]);
 
-  const rewindAnswer = async (
-    turn: number,
-    text: string,
-    attachments?: Array<{ name: string; mediaType: string; data: string }>,
-  ) => {
+  /**
+   * 여기서 새 대화(분기): 이 답까지의 기억을 이어받은 대화로 갈아탄다 —
+   * 원래 대화는 목록에 그대로 남는다. 갈아탄 뒤의 적재는 열기와 같은
+   * 이유다: 읽지 않으면 테이프가 비어 보이고, 다음 분기의 k 셈도 어긋난다.
+   */
+  const branchFrom = async (turn: number) => {
     if (!activeId) return;
     try {
-      const { sessionId } = await api.rewind(activeId, turn, text, attachments);
+      const { sessionId } = await api.branch(activeId, turn);
       if (sessionId !== activeId) {
         ensureSession(sessionId);
         markLive(sessionId);
         setActiveId(sessionId);
-        // 갈라진 세션도 열기와 같은 적재를 지난다 — 읽지 않으면 테이프는
-        // 이전 턴을 잃고, 다음 되감기의 k 셈도 저장 대화 전체로 어긋난다.
         await loadHistory(sessionId);
       }
       void refresh();
@@ -803,13 +889,18 @@ export function useSessions(
     text: string,
     attachments?: Array<{ name: string; mediaType: string; data: string }>,
     target?: string,
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
+    pinHints?: SessionPinHint[],
   ) => {
     try {
       const id = await targetSession(target);
-      await api.send(id, text, attachments, pins);
-      void refresh();
+      // 컴포저의 보내기와 같은 낙관 — 사람의 말이 아니어도 턴은 턴이다.
+      const view = sessions[id];
+      const wake = !view || view.state === "idle";
+      if (wake) setAwaitingTurn({ sessionId: id, since: Date.now() });
+      await api.send(id, text, attachments, pins, undefined, pinHints);
     } catch (e) {
+      setAwaitingTurn(null);
       setError(e instanceof Error ? e.message : String(e));
       // Rejected on purpose: a machine turn the daemon did not
       // accept must be retryable — the caller decides what survives on
@@ -888,14 +979,21 @@ export function useSessions(
 
   const switchPermissionMode = async (permissionMode: PermissionMode) => {
     const prev = selector?.permissionMode ?? "default";
+    const prevMode = selector?.mode ?? prev;
     onChatChange({ permissionMode });
-    setSelector((current) => (current ? { ...current, permissionMode } : current));
+    // Claude 세션에서는 두 자리가 같은 말을 든다 — 칩은 `mode` 를 먼저
+    // 읽으므로 둘 다 움직여야 낙관적 표시가 제자리를 찾는다.
+    setSelector((current) =>
+      current ? { ...current, permissionMode, mode: permissionMode } : current,
+    );
     if (!activeId) return;
     try {
       await api.setPermissionMode(activeId, permissionMode);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setSelector((current) => (current ? { ...current, permissionMode: prev } : current));
+      setSelector((current) =>
+        current ? { ...current, permissionMode: prev, mode: prevMode } : current,
+      );
     }
   };
 
@@ -906,21 +1004,23 @@ export function useSessions(
    */
   const switchMode = async (mode: string) => {
     const prev = selector?.mode ?? selector?.permissionMode ?? "default";
+    const prevEnum = selector?.permissionMode ?? "default";
     // 세션이 없으면 다음 세션에 실어 보낼 부탁으로 눌러 둔다.
     // 칩은 fallback selector 의 mode 가 그린다.
     if (!activeId) {
       setPendingMode(mode);
       return;
     }
-    setSelector((current) =>
-      current ? { ...current, mode, permissionMode: mode as PermissionMode } : current,
-    );
+    // 드라이버의 모드 id 는 `mode` 의 것이다 — Claude 열거형 칸에 `build`
+    // 같은 말을 기울여 담으면 그것을 enum 으로 읽는 칩·설정이 무너진다
+    // (감사 C5 — 데몬이 같은 거짓말을 멈췄으므로 창도 멈춘다).
+    setSelector((current) => (current ? { ...current, mode } : current));
     try {
       await api.setMode(activeId, mode);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSelector((current) =>
-        current ? { ...current, mode: prev, permissionMode: prev as PermissionMode } : current,
+        current ? { ...current, mode: prev, permissionMode: prevEnum } : current,
       );
     }
   };
@@ -975,13 +1075,14 @@ export function useSessions(
     // switchModel·switchEffort는 매 렌더 새 몸이지만 위의 한 번 guards가
     // 재시도를 막는다 — 의존성에서 일부러 뺀다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selector, chat, catalog, daemon.status]);
+  }, [selector, chat, catalog, daemon.status, switchModel, switchEffort]);
 
   return {
     activeId,
     list,
     active,
     running,
+    awaitingTurn,
     open,
     resume,
     usage,
@@ -1023,6 +1124,7 @@ export function useSessions(
     setPermissionMode: switchPermissionMode,
     setMode: switchMode,
     pickProvider,
+    chatProvider: chat.provider,
     remove,
     confirmRemove,
     cancelRemove,
@@ -1033,8 +1135,11 @@ export function useSessions(
     acceptClear,
     submit,
     afterPlanApproval,
-    rewindAnswer,
+    branchFrom,
     sendTurn,
+    queue,
+    queueRemove,
+    queueSendNow,
     dropped,
     takeDropped,
     dismissDropped,

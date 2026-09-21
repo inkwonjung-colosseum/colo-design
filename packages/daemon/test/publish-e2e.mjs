@@ -13,11 +13,9 @@
  * remote; a publish with nothing to commit is rejected. From PLAN D51–D53
  * on: `repo.history` reads the saves, `repo.restore` lands a 되돌리기 commit
  * instead of rewriting, a dirty worktree refuses it, `repo.discard` throws
- * away exactly the unsaved work, and two turn starts leave two checkpoint
- * refs — the first of which puts the worktree back — until the merge clears
- * them all. The session is real (it is the same wire a typed message uses)
- * but is closed the moment its failure turn is observed, so no model turn is
- * spent.
+ * away exactly the unsaved work. The session is real (it is the same wire a
+ * typed message uses) but is closed the moment its failure turn is observed,
+ * so no model turn is spent.
  *
  * Usage: node packages/daemon/test/publish-e2e.mjs
  */
@@ -114,8 +112,7 @@ const PASSING_CHECK = `console.log("check: 통과");
  * the same machine-independent check everywhere: a dev box with a real CLI
  * installed must not quietly exercise the real one (that was the only reason
  * this suite ever passed locally — CI, with no CLI at all, died at
- * session.create). Every user line gets a plain result and the process stays
- * up: the checkpoint section sends a second turn through the SAME session.
+ * session.create). Every user line gets a plain result.
  */
 function stubClaude(dir) {
   const path = join(dir, "claude");
@@ -492,20 +489,18 @@ async function main() {
       (await remoteBranches(fixture.remote)).join(", "),
     );
 
-    // --- 6. nothing left to save is a clear rejection ---------------------
+    // --- 6. a second save over a clean tree is a quiet no-op --------------
     const empty = await request({ id: "8", type: "diff.get" });
     check("a saved worktree has an empty diff", empty.length === 0);
-    const rejected = await request({
+    const noop = await request({
       id: "9",
       type: "repo.save",
       message: "빈 저장",
     });
     check(
-      "saving nothing is rejected in Korean",
-      rejected.stage === "failed" &&
-        rejected.gate === "diff" &&
-        (rejected.detail ?? "").includes("저장할 변경사항이 없습니다"),
-      rejected.detail ?? "",
+      "a second save names the saved state — it neither fails nor adds a commit",
+      noop.stage === "published" && noop.commit === again.commit && noop.message === "문구 수정",
+      `${noop.stage}: ${noop.detail ?? ""}`,
     );
 
     // --- 6.5 저장 기록 · 되돌리기 · 변경 버리기 (PLAN D53) -----------------
@@ -603,85 +598,6 @@ async function main() {
       cleanAfterDiscard.stdout,
     );
 
-    // --- 6.6 체크포인트: every turn start is a snapshot (PLAN D52) ---------
-    const cpSession = await request({ id: "u5", type: "session.create" });
-    await request({
-      id: "u6",
-      type: "session.send",
-      sessionId: cpSession.sessionId,
-      text: "파일을 만지지 말고 한 문장으로만 답해 주세요.",
-    });
-    let pollId = 0;
-    const myCheckpoints = async () => {
-      pollId += 1;
-      const listed = await request({
-        id: `u6-${pollId}`,
-        type: "repo.checkpoints",
-      });
-      return listed.entries.filter((entry) => entry.sessionId === cpSession.sessionId);
-    };
-    await waitFor(
-      async () => (await myCheckpoints()).length >= 1,
-      30_000,
-      "the first turn's checkpoint",
-    );
-
-    // The turn's own unsaved half: a screen born after the snapshot, and a
-    // file that existed before it, deleted. Restoring must do both halves.
-    writeFileSync(
-      join(ROOT, "src", "screens", "member", "UndoMe.screen.tsx"),
-      "export default function UndoMe() { return null; }\n",
-    );
-    rmSync(join(ROOT, "scripts", "check.mjs"));
-    await request({
-      id: "u7",
-      type: "session.send",
-      sessionId: cpSession.sessionId,
-      text: "여전히 파일을 만지지 말고 짧게만 답해 주세요.",
-    });
-    await waitFor(
-      async () => (await myCheckpoints()).length >= 2,
-      60_000,
-      "the second turn's checkpoint",
-    );
-    await request({
-      id: "u8",
-      type: "session.close",
-      sessionId: cpSession.sessionId,
-    });
-
-    const mine = await myCheckpoints();
-    check(
-      "two turns read as two snapshots, turns numbered from one",
-      mine.length === 2 &&
-        mine
-          .map((entry) => entry.turn)
-          .sort()
-          .join(",") === "1,2" &&
-        mine[0].at !== "",
-      JSON.stringify(mine),
-    );
-    const firstCheckpoint = mine.find((entry) => entry.turn === 1);
-    const rewound = await request({
-      id: "rewind-1",
-      type: "repo.checkpoint.restore",
-      checkpoint: firstCheckpoint.id,
-    });
-    check(
-      "the screen born after the snapshot is gone",
-      !existsSync(join(ROOT, "src", "screens", "member", "UndoMe.screen.tsx")),
-    );
-    check(
-      "the file deleted after the snapshot is back",
-      existsSync(join(ROOT, "scripts", "check.mjs")),
-    );
-    const rewoundStatus = await run("git", ["-C", ROOT, "status", "--porcelain"]);
-    check(
-      "and the worktree stands at the turn's first instant",
-      rewoundStatus.stdout.trim() === "",
-      rewoundStatus.stdout,
-    );
-
     // --- 7. 저장과 넘기기는 그대로 간다 ------------------------------------
     // 빌드 · 검사 게이트는 없다 — 넘기기가 연 PR 에서 개발자가 문제를 본다(실사).
     writeFileSync(join(ROOT, "gate-note.txt"), "게이트 없이도 저장은 간다\n");
@@ -742,18 +658,6 @@ async function main() {
       head.trim() === "main",
       head.trim(),
     );
-    const leftoverRefs = await run("git", [
-      "-C",
-      ROOT,
-      "for-each-ref",
-      "refs/colo-design/checkpoints",
-    ]);
-    check(
-      "반영됨 clears the cycle's checkpoint refs (PLAN D52)",
-      leftoverRefs.stdout.trim() === "",
-      leftoverRefs.stdout.trim(),
-    );
-
     // --- 9.5 코멘트 저장소 (PLAN D57) ----------------------------------------
 
     // The overlay's pins land in the project's comments.json — the planner
@@ -764,7 +668,6 @@ async function main() {
       items: [
         {
           screen: "/member/MemberList",
-          state: "default",
           text: "여백이 좁아요",
           elementText: "회원 목록",
         },
@@ -773,9 +676,7 @@ async function main() {
     await request({
       id: "c2",
       type: "comments.record",
-      items: [
-        { screen: "/pay/PayFailed", state: "error", text: "문구를 다시", elementText: "결제 실패" },
-      ],
+      items: [{ screen: "/pay/PayFailed", text: "문구를 다시", elementText: "결제 실패" }],
     });
     // 코멘트 목록 UI 는 없다 — 핀은 대화에서 소비되고, 저장소의 유일한 독자는
     // 풀 리퀘스트 본문이다. 그래서 이 검사는 파일 그 자체를 읽는다.
@@ -788,12 +689,12 @@ async function main() {
       stored.length === 2 && stored.every((item) => item.id !== "" && item.at !== ""),
       JSON.stringify(stored),
     );
-    // D78 + 자동 정리: the store normalizes the screen to the [data-screen]
-    // spelling — no leading slash, whatever spelling the client used — and
+    // D78 + 자동 정리: the store normalizes the screen to the path spelling
+    // — no leading slash, whatever spelling the client used — and
     // every row is born resolved: the turn carrying the words IS the
     // delivery, so no resolve step exists.
     check(
-      "recorded rows land delivered, on the [data-screen] spelling",
+      "recorded rows land delivered, on the path spelling (no leading slash)",
       stored.some((item) => item.screen === "member/MemberList") &&
         stored.some((item) => item.screen === "pay/PayFailed") &&
         stored.every((item) => item.resolved === true),
@@ -831,9 +732,7 @@ async function main() {
     await request({
       id: "16a",
       type: "comments.record",
-      items: [
-        { screen: "member/MemberList", state: "default", text: "코멘트 하나", elementText: "제목" },
-      ],
+      items: [{ screen: "member/MemberList", text: "코멘트 하나", elementText: "제목" }],
     });
     // Both pay/PayFailed comments ride ONE record — the store appends, but
     // one batch is one moment's request, and the section reads cleaner for it.
@@ -841,8 +740,8 @@ async function main() {
       id: "16b",
       type: "comments.record",
       items: [
-        { screen: "pay/PayFailed", state: "error", text: "코멘트 둘", elementText: "문구" },
-        { screen: "pay/PayFailed", state: "error", text: "코멘트 셋", elementText: "문구" },
+        { screen: "pay/PayFailed", text: "코멘트 둘", elementText: "문구" },
+        { screen: "pay/PayFailed", text: "코멘트 셋", elementText: "문구" },
       ],
     });
     const secondHanded = await request({

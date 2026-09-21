@@ -3,11 +3,9 @@
  * five lanes that share no resources while running:
  *   L1 unit          — `node --test` suites; no port, no window, no display
  *   L2 daemon e2e    — offline WebSocket suites; free ports + own tmpdirs
- *   L3 browser e2e   — Playwright UI suites; each binds its own fixed web
- *                      port (5397 settings, 5398 publish, 5401 onboarding,
- *                      5402 sidebar, 5409
- *                      thread-delete, 5411 clear-all, 5413 changed-strip,
- *                      5415 first-send) — all distinct
+ *   L3 browser e2e   — Playwright UI suites; each binds its own web port —
+ *                      a few older suites pin theirs (5397 settings,
+ *                      5398 publish), the rest pick free ports
  *   L4 real Claude   — screen-build (fixed web 5396 + daemon 7834) and
  *                      daemon status suites; they spend subscription turns,
  *                      so they are opt-in: `pnpm test` skips them, CI never
@@ -60,10 +58,11 @@ const LANES = {
       "test:projects",
       "test:common-instructions",
       "test:permission-repeat",
-      "test:rewind",
+      "test:branch",
       "test:repo",
       "test:preview-detect",
       "test:publish",
+      "test:auto-save",
       "test:onboarding",
       "test:plan",
       "test:crash",
@@ -82,8 +81,11 @@ const LANES = {
       "test:clear-all-ui",
       "test:sidebar-ui",
       "test:status-menu-ui",
-      "test:changed-strip-ui",
       "test:onboarding-ui",
+      "test:branch-ui",
+      "test:chat-settings-ui",
+      "test:selector-chain",
+      "test:silence",
     ],
   },
   L4: {

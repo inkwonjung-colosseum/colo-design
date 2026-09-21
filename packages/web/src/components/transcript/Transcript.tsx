@@ -1,10 +1,11 @@
 import { type DeveloperReview, readTurn } from "@colo-design/protocol";
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Block } from "../../lib/daemon-client";
 import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
 import { lastAnswerPerTurn, turnAnswerText, turnBlockNumbers } from "../../lib/turn-numbering";
 import { CopyButton } from "../CopyButton";
-import { BranchIcon } from "../icons";
+import { BranchIcon, CloseIcon, NewChatIcon } from "../icons";
 import { Markdown } from "../Markdown";
 import { Tip } from "../shell/Tip";
 import { ActivitySummary, groupActivity } from "./activity";
@@ -30,7 +31,8 @@ const BRANCH_MEANS = "대화만 이 답까지로 이어받아요. 화면은 지�
 /**
  * 빈 대화가 권하는 세 마디(P3-2). 이 레포가 무엇으로 지어졌는지는 도구가
  * 모르므로, 예시는 **말하는 방식**만 보여 준다 — 화면 이름과 그 안에 무엇이
- * 있으면 좋겠는지. 누르면 컴포저에 담기고, 그대로 보내도 되고 고쳐도 된다.
+ * 있으면 좋겠는지. 가운데 창의 행을 누르면 컴포저에 담기고, 그대로내도
+ * 되고 고쳐도 된다.
  */
 const EMPTY_EXAMPLES = [
   "회원 목록 화면을 만들어 주세요 — 검색창과 표가 있으면 좋겠어요",
@@ -129,37 +131,92 @@ export function Transcript({
    */
   onOpenHistory?: () => void;
   /**
-   * 빈 대화의 예시 칩(P3-2) — 누르면 그 말이 컴포저에 담긴다. 없으면 칩도
-   * 없다(컴포저가 없는 자리에서 권할 말은 없다).
+   * 빈 대화의 예시 문장 창(P3-2) — 행을 누르면 그 말이 컴포저에 담긴다.
+   * 없으면 창도 없다(컴포저가 없는 자리에서 권할 말은 없다).
    */
   onPickExample?: (text: string) => void;
 }) {
+  /**
+   * 예시 문장 창 — 빈 대화가 열리면 세 마디를 가운데 창으로 띄운다.
+   * onPickExample 을 빌리므로 창은 예시가 서는 걸음(투어의 composer)에서만
+   * 선다. 닫기는 이 대화를 보는 동안만이다 — 다시 열면 다시 선다.
+   */
+  const [examplesOpen, setExamplesOpen] = useState(true);
+  const examplesPanel = useRef<HTMLDivElement>(null);
+  const examplesShowing = examplesOpen && onPickExample !== undefined && blocks.length === 0;
+  useModalFocus(examplesPanel, examplesShowing);
+  useModalEscape(examplesPanel, () => setExamplesOpen(false), examplesShowing);
+  useEffect(() => {
+    if (examplesShowing) examplesPanel.current?.focus();
+  }, [examplesShowing]);
+
   if (blocks.length === 0) {
     return (
-      <div className="empty">
-        <p className="empty__lead">메시지를 내면 대화가 여기에 이어집니다.</p>
-        {/* P3-2: 빈 칸 앞에서 가장 어려운 일은 첫 문장을 쓰는 것이다. 예시는
-            설명이 아니라 **누를 수 있는 말**이라야 한다 — 누르면 컴포저에 그대로
-            담기고, 고쳐서 보내면 그것이 자기 말이 된다. */}
-        {onPickExample && (
-          <div className="empty__examples">
-            {EMPTY_EXAMPLES.map((example) => (
-              <button
-                key={example}
-                type="button"
-                className="empty__example"
-                onClick={() => onPickExample(example)}
-              >
-                {example}
-              </button>
-            ))}
+      <>
+        <div className="empty">
+          <p className="empty__lead">메시지를 내면 대화가 여기에 이어집니다.</p>
+          {/* P3-2: 빈 칸 앞에서 가장 어려운 일은 첫 문장을 쓰는 것이다. 예시는
+              설명이 아니라 **누를 수 있는 말**이라야 한다 — 창의 행을 누르면
+              컴포저에 그대로 담기고, 고쳐서내면 그것이 자기 말이 된다. */}
+          <p className="empty__sub">
+            만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
+            들어옵니다.
+          </p>
+        </div>
+        {/* 예시 문장 창 — .empty 의 형제로 둔다: .empty 는 risefade 진입
+            애니메이션을 입어 그 안의 fixed 자손은 뷰포트가 아니라 .empty 를
+            containing block 으로 삼는다(스크림이 대화 칼럼에 갇히던 결함). */}
+        {examplesShowing && (
+          <div
+            className="modal"
+            onMouseDown={(event) => event.target === event.currentTarget && setExamplesOpen(false)}
+          >
+            <div
+              className="modal__panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="메시지 고르기"
+              tabIndex={-1}
+              ref={examplesPanel}
+            >
+              <header className="modal__head">
+                <h2 className="modal__title">
+                  <span className="ic">
+                    <NewChatIcon />
+                  </span>
+                  메시지 고르기
+                </h2>
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label="메시지 고르기 닫기"
+                  onClick={() => setExamplesOpen(false)}
+                >
+                  <CloseIcon />
+                </button>
+              </header>
+              <div className="modal__body">
+                <p className="hint">고른 말이 입력창에 담깁니다 — 고쳐서내도 됩니다.</p>
+                <div className="empty__examples">
+                  {EMPTY_EXAMPLES.map((example) => (
+                    <button
+                      key={example}
+                      type="button"
+                      className="empty__example"
+                      onClick={() => {
+                        onPickExample?.(example);
+                        setExamplesOpen(false);
+                      }}
+                    >
+                      {example}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
-        <p className="empty__sub">
-          만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
-          들어옵니다.
-        </p>
-      </div>
+      </>
     );
   }
   // A reloaded history replays its events without a guarantee that the last

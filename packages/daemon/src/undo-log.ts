@@ -1,23 +1,15 @@
 /**
  * 되돌리기 측정 — 측정이 먼저다(권한 카드 로그와 같은 자세, permission-log.ts).
  *
- * 되돌리기는 이 제품의 품질을 직접 말하는 유일한 사용자 행동이다: 답이
- * 맞았으면 아무도 되돌리지 않는다. 그런데 지금 도구는 그것을 세지 않아
- * "AI 가 얼마나 자주 빗나가는가"에 답할 근거가 없다 — 사용자가 불평한
- * 기억뿐이다. 세 개의 문이 모두 여기로 들어온다:
- *
- *   - `retry`  다시 요청 (session.rewind) — 답을 통째로 버리고 같은 말을 다시
- *   - `turn`   이 요청 이전으로 되돌리기 (repo.checkpoint.restore)
- *   - `save`   저장 기록의 되돌리기 (repo.restore)
+ * 저장 기록의 되돌리기(repo.restore)가 이 로그의 유일한 문이다. 요청
+ * 되돌리기(다시 요청 · 체크포인트 복원)는 기능이 은퇴하며 함께 빠졌다 —
+ * `retry` · `turn` 종류는 더 오지 않는다.
  *
  * 읽는 법:
  *   jq -r .kind ~/.colo-design/config/undo.jsonl | sort | uniq -c | sort -rn
- *   # 첫 답이 자주 빗나가는가 — 되돌린 턴 번호의 분포
- *   jq -r 'select(.kind!="save") | .turn' ~/.colo-design/config/undo.jsonl \
- *     | sort -n | uniq -c
  *
- * 기록하는 것은 행동의 사실뿐이다(종류 · 프로젝트 · 대화 id · 턴 번호) —
- * 사용자의 말도, 화면의 내용도, 파일 경로도 남기지 않는다.
+ * 기록하는 것은 행동의 사실뿐이다(종류 · 프로젝트) — 사용자의 말도,
+ * 화면의 내용도, 파일 경로도 남기지 않는다.
  */
 
 import {
@@ -34,17 +26,13 @@ import { CONFIG_DIR } from "./environment.js";
 /** 유지하는 줄의 상한. 넘으면 최근 절반만 남긴다 — 측정이 골동품이 되지 않게. */
 const MAX_LINES = 4000;
 
-export type UndoKind = "retry" | "turn" | "save";
+export type UndoKind = "save";
 
 export interface UndoEvent {
   ts: number;
   kind: UndoKind;
   /** 되돌린 프로젝트 — 레포마다 빗나가는 정도가 다를 수 있다. */
   slug: string;
-  /** 대화 id (`save` 에는 없다 — 저장은 대화의 것이 아니다). */
-  sessionId?: string;
-  /** 되돌린 턴 번호, k 번째 프롬프트 (`save` 에는 없다). */
-  turn?: number;
 }
 
 /** `COLO_DESIGN_UNDO_LOG` 가 테스트를 일회용 파일로 가리키게 한다. */

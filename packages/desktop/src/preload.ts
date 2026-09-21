@@ -55,8 +55,7 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
     /** 설정 `앱에서 링크 열기` — a clicked link browses in the pane, or the
         OS browser when no slot is on screen. */
     openExternal: (url: string) => ipcRenderer.invoke("preview:open-external", { url }),
-    navigate: (route: string, state: string | null) =>
-      ipcRenderer.invoke("preview:navigate", { route, state }),
+    navigate: (route: string) => ipcRenderer.invoke("preview:navigate", { route }),
     history: (delta: -1 | 1) => ipcRenderer.invoke("preview:history", { delta }),
     reload: () => ipcRenderer.invoke("preview:reload"),
     /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단 (PLAN D85 ⓐ). */
@@ -86,7 +85,6 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
       kind: string;
       message: string;
       route: string;
-      state: string;
     }>("colo-preview:error"),
     /** main이 loose 페이지(활성 페이지 없이 열린 링크)의 요소를 부탁한다 —
         PreviewFrame이 <webview src=url>을 무대에 세운다. */

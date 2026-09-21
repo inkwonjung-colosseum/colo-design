@@ -16,18 +16,17 @@ import { contextBridge, ipcRenderer } from "electron";
  *    크롬은 뷰가 찍는 순간에 채운다(재설계 C4). 핀 상태의 진실은 웹이 쥐고,
  *    웹의 전체 동기화(`colo-overlay:pins`)를 번호 배지로 투영한다 — 영역 핀은
  *    배지와 점선 테두리를 좌표(rect)로 다시 앵커한다. 봉투는 요소의
- *    HTML·스타일·a11y·속성·`data-colo-src` 를 옵션으로 싣고, 클릭
+ *    HTML·스타일·a11y·속성 을 옵션으로 싣고, 클릭
  *    요소의 `data-colo-pick` 스탬프로 뷰가 main world 에서 React owner
  *    이름을 읽는다(fiber 는 이 isolated world 에서 보이지 않는다).
  */
 
 // ---------------------------------------------------------------------------
 // Element identity — the isolated world cannot see the page's
-// React fiber expandos, so the component name is `data-component` or the tag,
+// React fiber expandos, so the component name is the tag,
 // and the owner chain is the view's job (the `data-colo-pick` stamp + the
-// main-world script). Everything else (own text, CSS path anchored on
-// the [data-screen] wrapper — or the body when the page declares none — rect,
-// html, styles, a11y, attrs, source) is plain DOM.
+// main-world script). Everything else (own text, CSS path from the body,
+// rect, html, styles, a11y, attrs) is plain DOM.
 // ---------------------------------------------------------------------------
 
 function ownText(element: Element): string {
@@ -38,9 +37,13 @@ function ownText(element: Element): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-function cssPath(element: Element, root: Element | null): string {
+function cssPath(element: Element): string {
   const parts: string[] = [];
-  for (let node: Element | null = element; node && node !== root; node = node.parentElement) {
+  for (
+    let node: Element | null = element;
+    node && node !== document.body;
+    node = node.parentElement
+  ) {
     const tag = node.tagName.toLowerCase();
     const siblings = Array.from(node.parentElement?.children ?? []).filter(
       (candidate) => candidate.tagName === node!.tagName,
@@ -49,13 +52,8 @@ function cssPath(element: Element, root: Element | null): string {
     const id = node.id ? `#${node.id}` : "";
     parts.unshift(`${tag}${id}${index}`);
   }
-  // A declared screen anchors on its wrapper — the spelling the log and the
-  // fix turn re-match. A wrapper-less page anchors from the body: the path
-  // is the only identity the page offers, and `body > …` reads the same DOM
-  // the agent edits.
-  if (root?.hasAttribute("data-screen")) {
-    return [`div[data-screen="${root.getAttribute("data-screen")}"]`, ...parts].join(" > ");
-  }
+  // 레포 마커 철거(2026-09-21): 닻은 언제나 body 다 — `body > …` 는
+  // 에이전트가 고치는 바로 그 DOM 을 읽는다.
   return ["body", ...parts].join(" > ");
 }
 
@@ -166,15 +164,14 @@ function describeAttrs(element: Element): ColoDesignCommentTarget["attrs"] | und
 
 function describeElement(element: Element | null): ColoDesignCommentTarget | null {
   if (!element) return null;
-  const screenRoot = element.closest("[data-screen]");
   const target: ColoDesignCommentTarget = {
-    component: element.getAttribute("data-component") ?? element.tagName.toLowerCase(),
+    component: element.tagName.toLowerCase(),
     text: ownText(element),
-    path: cssPath(element, screenRoot ?? document.body),
+    path: cssPath(element),
     rect: roundRect(element.getBoundingClientRect()),
   };
   // The enrichment — every field optional, a failure costs its field,
-  // never the pin. `source` is an element pin's stamp only.
+  // never the pin.
   const html = describeHtml(element);
   if (html) target.html = html;
   const styles = describeStyles(element);
@@ -183,39 +180,18 @@ function describeElement(element: Element | null): ColoDesignCommentTarget | nul
   if (a11y) target.a11y = a11y;
   const attrs = describeAttrs(element);
   if (attrs) target.attrs = attrs;
-  const source = element.closest("[data-colo-src]")?.getAttribute("data-colo-src") ?? undefined;
-  if (source) target.source = source;
   return target;
 }
 
 /**
  * The screen the page is showing right now — the context every envelope
- * carries. A declared page reads its wrapper. A wrapper-less page IS its
- * path — the route without the leading slash is the screen id (`index` at
- * the root) — and the daemon stores that id verbatim. The state is the
- * declared `data-state` verbatim too: a page that declares none carries
- * null, not a synthesized "default" — the gate waits on the marker only
- * when the page declared one, so a made-up state reads as unsettled.
+ * carries. The page IS its path: the route without the leading slash is the
+ * screen id (`index` at the root), and the daemon stores that id verbatim
+ * (2026-09-21 레포 마커 철거 — `[data-screen]` 은 더 읽지 않는다).
  */
-function pageContext(): { screen: string; state: string | null } {
-  const current = currentScreenRoot();
-  if (current) {
-    return {
-      screen: current.getAttribute("data-screen") ?? "",
-      state: current.getAttribute("data-state"),
-    };
-  }
+function pageContext(): { screen: string } {
   const id = window.location.pathname.replace(/^\/+/, "");
-  return { screen: id === "" ? "index" : id, state: null };
-}
-
-function screenContext(element: Element): { screen: string; state: string | null } {
-  const root = element.closest("[data-screen]");
-  if (!root) return pageContext();
-  return {
-    screen: root.getAttribute("data-screen") ?? "",
-    state: root.getAttribute("data-state"),
-  };
+  return { screen: id === "" ? "index" : id };
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +292,6 @@ function hoverMeta(element: Element): { text: string; unnamed: boolean } {
   const tag = element.tagName.toLowerCase();
   const rect = element.getBoundingClientRect();
   const parts = [tag];
-  const component = element.getAttribute("data-component");
-  if (component && component !== tag) parts.push(component);
   parts.push(`${Math.round(rect.width)}×${Math.round(rect.height)}`);
   let unnamed = false;
   const interactive = element.closest(INTERACTIVE_SELECTOR);
@@ -360,10 +334,6 @@ const HINT_SEEN = "colo-design.pin-hint";
 
 function isOverlayUi(target: EventTarget | null): boolean {
   return target instanceof Node && root.contains(target);
-}
-
-function currentScreenRoot(): HTMLElement | null {
-  return document.querySelector<HTMLElement>("[data-screen]");
 }
 
 function setMode(on: boolean): void {
@@ -542,10 +512,7 @@ document.addEventListener(
       startHoverLoop();
     }
     if (hoverTag && hoverTarget) {
-      hoverTag.label.textContent =
-        ownText(hoverTarget) ||
-        hoverTarget.getAttribute("data-component") ||
-        hoverTarget.tagName.toLowerCase();
+      hoverTag.label.textContent = ownText(hoverTarget) || hoverTarget.tagName.toLowerCase();
       const { text, unnamed } = hoverMeta(hoverTarget);
       hoverTag.meta.textContent = text;
       hoverTag.meta.style.borderRadius = unnamed ? "0" : "0 0 4px 4px";
@@ -581,7 +548,11 @@ document.addEventListener(
     // NOW — the view crops this instant, not a send-moment re-measure — and
     // the web parks the pin as a composer attachment. The badge below is
     // optimistic; the web's sync redraws the truth (and the numbering).
-    const pin = { id: crypto.randomUUID(), ...screenContext(element), element: target };
+    const pin = {
+      id: crypto.randomUUID(),
+      ...pageContext(),
+      element: target,
+    };
     // The view reads the React owner chain off this stamp in the main
     // world (fibers are invisible from this isolated world) and removes it —
     // the timer below is only this side's safety net.
@@ -679,8 +650,6 @@ document.addEventListener(
     window.setTimeout(() => {
       swallowClick = false;
     }, 250);
-    const under =
-      event.target instanceof Element && !isOverlayUi(event.target) ? event.target : null;
     // Page coordinates, scroll deliberately left in (재설계 C9): the badge
     // re-anchors on scroll and the web redraws the same numbers.
     const rect = {
@@ -691,7 +660,7 @@ document.addEventListener(
     };
     const pin = {
       id: crypto.randomUUID(),
-      ...(under ? screenContext(under) : pageContext()),
+      ...pageContext(),
       element: { kind: "region", component: "영역", text: "", path: "", rect },
     };
     ipcRenderer.send("colo-overlay:post", { type: "colo-design.pin", pin });
@@ -825,11 +794,13 @@ function applyPinsSync(sync: ColoDesignPinsSync | undefined | null): void {
   const here = pageContext();
   const rows = Array.isArray(sync?.pins) ? sync.pins : [];
   badges = rows.flatMap((pin, index): Badge[] => {
-    // A badge belongs to the screen AND state it was pinned on
-    // (커미티 차단 4): the same CSS path on the error state is a different
-    // view — the tray row keeps saying `회원 목록 · 기본` and the badge must
-    // not contradict it from another state's page.
-    if (pin.screen !== here.screen || pin.state !== here.state) return [];
+    // A badge belongs to the screen it was pinned on(커미티 차단 4 계승):
+    // the same CSS path on another screen is a different view — the tray row
+    // keeps saying its own screen and the badge must not contradict it from
+    // another screen's page.
+    if (pin.screen !== here.screen) return [];
+    // (2026-09-21 레포 마커 철거 — screen 이 항상 경로 신원이므로 위의
+    // 화면 비교가 곧 페이지 비교다. 별도의 pagePath 근거는 없다.)
     // 고침 표시: the registry's `n` is the badge's number —
     // the list index is only the fallback for a web that predates it.
     const number = typeof pin.n === "number" ? pin.n : index + 1;
@@ -839,12 +810,11 @@ function applyPinsSync(sync: ColoDesignPinsSync | undefined | null): void {
         : pin.sent
           ? "sent"
           : "live";
-    // 화면 마크: no element, no rect — the badge docks on the screen frame's
-    // own corner. A page with no [data-screen] wrapper has no frame to dock
-    // on; the mark still lives in the registry.
+    // 화면 마크: no element, no rect — the badge docks on the page's own
+    // corner(2026-09-21 레포 마커 철거 — 닻은 body 다).
     if (pin.screenMark) {
-      const frame = currentScreenRoot();
-      return frame ? [{ id: pin.id, anchor: frame, number, tone }] : [];
+      const frame = document.body;
+      return [{ id: pin.id, anchor: frame, number, tone }];
     }
     // A region pin (빈 path, 재설계 C9) has no element to find — its rect in
     // page coordinates IS the anchor; without a usable rect there is nothing

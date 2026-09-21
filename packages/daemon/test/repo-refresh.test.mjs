@@ -261,11 +261,10 @@ const endedCycleWorkspace = async (dir, state) => {
   const saved = await workspace.save({ message: "사이클의 변경" });
   assert.equal(saved.stage, "published", saved.detail ?? "");
   await workspace.handoff({ title: "결제 화면" });
-  await workspace.checkpoint("session-a", 1);
   return workspace;
 };
 
-test("폴링의 재판독은 착지하지 않는다 — 사람이 올 때까지 사이클도 되돌리기도 그대로", async () => {
+test("폴링의 재판독은 착지하지 않는다 — 사람이 올 때까지 사이클은 그대로", async () => {
   const dir = workdir("hub-peek-merged-");
   const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
   process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
@@ -282,22 +281,12 @@ test("폴링의 재판독은 착지하지 않는다 — 사람이 올 때까지 
     assert.equal(workspace.currentHandoff?.state, "open", "칩은 아직 넘김 그대로다");
     assert.equal(workspace.currentBranch, branch, "사이클은 아직 닫히지 않았다");
     assert.equal(workspace.handoffLandingDue, true, "내려앉을 끝이 세워졌다");
-    assert.match(
-      await git(["for-each-ref", "refs/colo-design/checkpoints"]),
-      /session-a\/1/,
-      "타이머는 되돌리기 기록을 지우지 않는다",
-    );
 
     // 사람이 왔다 — 그제야 내려앉는다.
     await workspace.landHandoffIfDue();
     assert.equal(workspace.currentBranch, null, "사이클이 닫혀 다음 저장이 새 브랜치를 연다");
     assert.equal(workspace.currentHandoff?.state, "merged", "이제 칩이 반영됨을 말한다");
     assert.equal(workspace.handoffLandingDue, false);
-    assert.equal(
-      (await git(["for-each-ref", "refs/colo-design/checkpoints"])).trim(),
-      "",
-      "반영된 사이클의 스냅샷은 착지와 함께 간다",
-    );
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;
     else process.env.COLO_DESIGN_GITHUB_SLUG = previousSlug;
@@ -305,7 +294,7 @@ test("폴링의 재판독은 착지하지 않는다 — 사람이 올 때까지 
   }
 });
 
-test("반려된 사이클은 베이스로 돌아가되 되돌리기 기록은 남는다", async () => {
+test("반려된 사이클은 베이스로 돌아간다", async () => {
   const dir = workdir("hub-closed-cycle-");
   const previousSlug = process.env.COLO_DESIGN_GITHUB_SLUG;
   process.env.COLO_DESIGN_GITHUB_SLUG = "colosseumcoinckr/colo-design-e2e";
@@ -322,11 +311,6 @@ test("반려된 사이클은 베이스로 돌아가되 되돌리기 기록은 �
       (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim(),
       "main",
       "워크트리가 베이스로 돌아와야 다음 저장이 반려된 커밋을 다시 제안하지 않는다",
-    );
-    assert.match(
-      await git(["for-each-ref", "refs/colo-design/checkpoints"]),
-      /session-a\/1/,
-      "합쳐진 적 없는 작업이므로 되돌아갈 자리는 남는다",
     );
   } finally {
     if (previousSlug === undefined) delete process.env.COLO_DESIGN_GITHUB_SLUG;

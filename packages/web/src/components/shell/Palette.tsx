@@ -365,7 +365,9 @@ export function Palette({
               <span>
                 {query.trim()
                   ? `'${query.trim()}'와 맞는 것이 없습니다.`
-                  : "이 프로젝트에 아직 대화가 없습니다."}
+                  : projectSlug
+                    ? "이 프로젝트에 아직 대화가 없습니다."
+                    : "아직 아무것도 없습니다 — 첫 프로젝트를 만들어 보세요."}
               </span>
             </li>
           )}
@@ -394,7 +396,9 @@ export function Palette({
                   role="option"
                   aria-selected={i === index}
                   className={i === index ? "palette__row palette__row--on" : "palette__row"}
-                  onMouseEnter={() => setHighlight(i)}
+                  /* move, not enter — a pointer merely resting on the list
+                     must not steal the walk from the keyboard's arrows */
+                  onMouseMove={() => setHighlight(i)}
                   onClick={() => run(row)}
                 >
                   {row.kind === "session" && row.dot && <span className={`dot dot--${row.dot}`} />}

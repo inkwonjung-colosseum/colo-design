@@ -33,20 +33,36 @@ import { Tip } from "./Tip";
  * older conversation stays reachable. */
 const RAIL_THREADS = 5;
 
-/** The 완료 group's row budget. The groups are a status board, not an
- * archive — an older conversation stays reachable through the palette. */
+/** A project tree's row budget: five finished conversations under its own
+ * row — the count row hands the rest to that project's palette scope. */
 const DONE_THREADS = 5;
 
+/** The tree's fold memory — which projects sit open. The active project is
+ * open without a record; a stored value beats that default. */
+const FOLDS_KEY = "colo-design.tree-folds";
+
+/** 행 오른쪽 끝 ··· 손잡이의 땅 — .leafwrap .leaf 의 padding-right(34px)와
+ * .node__row 의 32px 와 한 값. 손잡이는 hover 까지 visibility:hidden 이라,
+ * 빠른 플릭·트랙패드 탭은 hover 물감이 마르기 전에 mousedown hit-test 를
+ * 끝낸다 — 그 판정에서 손잡이가 아직 없으면 행이 눌린다(메뉴 대신 대화·전환
+ * 이 열려버림). 그래서 그 자리의 클릭 판정을 행이 직접 가져간다: 좌표가
+ * 이 값 안이면 보이지 않은 손잡이 대신 행이 메뉴를 토글한다. */
+const LEAF_MENU_ZONE = 34;
+const NODE_MENU_ZONE = 32;
+
 /**
- * The status rail: every connected project's conversations in one list,
- * grouped by what they wait on — 확인 대기 first (the one state that waits
- * on the planner), then 작업 중, then 완료. A turn running or an answer
- * waiting in a clone nobody is looking at is exactly what a project-first
- * tree buried under its folds. Projects are the second axis: a quiet tail
- * chip on each conversation row, and jump rows with their badges at the
- * bottom. Only the active project runs a preview server; clicking another
- * project's row says so in its tooltip, switches in one click, and the
- * preview follows (`켜는 중 → ready`).
+ * The status rail, in two zones. 위 — the live zone: every connected
+ * project's 확인 대기 first (the one state that waits on the planner), then
+ * 작업 중, each row naming its project, for the question "지금 뭐가 나를
+ * 기다리나 / 무엇이 도는 중인가" is not a project's question. 아래 — the
+ * tree: each project keeps its own finished conversations under its row,
+ * capped, overflow handed to the project-scoped palette; the active
+ * project sits open, the rest folded to one row with their badge. A
+ * conversation exists in exactly one zone — a live row surfaces upstairs,
+ * and a finished one lands back in its project. Only the active project
+ * runs a preview server; clicking another project's row says so in its
+ * tooltip, switches in one click, and the preview follows (`켜는 중 →
+ * ready`).
  *
  * One badge per project row, in the plan's priority: 내려받는 중 (a clone
  * coming up) > 작업 중 (an agent turn running) > 넘김 / 반영됨 (the handoff)
@@ -173,6 +189,36 @@ export function Sidebar({
       clearTimeout(mergedPulseTimer.current ?? undefined);
     };
   }, []);
+
+  /** The tree's folds: which projects' finished conversations are open.
+      Undefined means the default — the active project is open, the rest
+      wait folded. Persisted: a fold shapes the room, not a moment. */
+  const [folds, setFolds] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(FOLDS_KEY);
+      return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOLDS_KEY, JSON.stringify(folds));
+    } catch {
+      // 저장 불가는 조용히 견딘다 — 폴드는 취향이지 데이터가 아니다.
+    }
+  }, [folds]);
+  const treeOpen = (slug: string): boolean => folds[slug] ?? slug === activeSlug;
+  const toggleTree = (slug: string) =>
+    setFolds((prev) => ({ ...prev, [slug]: !(prev[slug] ?? slug === activeSlug) }));
+
+  /** A project's finished conversations — the tree's children. Live ones
+      belong to the top zone only, so a row exists in exactly one place. */
+  const projectThreads = (project: ProjectSummary): ThreadSummary[] =>
+    orderedThreads(visibleThreads(project.threads, daemon.hiddenThreads, project.slug)).filter(
+      (thread) => thread.state !== "running" && thread.state !== "awaiting",
+    );
+
   // 목적지: 같은 이름의 프로젝트 둘은 부제로, 나머지는 title 로.
   const duplicatedNames = new Set(
     projects
@@ -205,23 +251,22 @@ export function Sidebar({
     (Date.parse(b.thread.updatedAt) || 0) - (Date.parse(a.thread.updatedAt) || 0);
   const waiting = allThreads.filter(({ thread }) => thread.state === "awaiting").sort(byRecency);
   const running = allThreads.filter(({ thread }) => thread.state === "running").sort(byRecency);
-  /** 완료: quiet rows, newest first — the tool's own 연결 준비 record sinks
-      below the planner's conversations, the same rule the rail's popover
-      keeps. */
-  const done = allThreads
-    .filter(({ thread }) => thread.state !== "awaiting" && thread.state !== "running")
-    .sort(
-      (a, b) =>
-        Number(a.thread.title === BOOTSTRAP_THREAD_TITLE) -
-          Number(b.thread.title === BOOTSTRAP_THREAD_TITLE) || byRecency(a, b),
-    );
 
   const activate = async (slug: string) => {
-    if (slug === activeSlug || switching) return;
+    if (switching) return;
+    if (slug === activeSlug) {
+      // 이미 이 프로젝트의 자리에 섰다 — 행은 그래도 대답한다: 캐럿과 같은
+      // 동사(접기·펼치기). "눌러도 아무 일 없는 행"은 고장으로 읽힌다.
+      toggleTree(slug);
+      return;
+    }
     setSwitching(slug);
     setFailed(false);
     try {
       await api.projectActivate(slug);
+      // 가던 방의 문을 연다 — 활성화는 곧 그 프로젝트의 대화를
+      // 보겠다는 뜻이므로, 접혀 있던 프로젝트도 함께 펼친다.
+      setFolds((prev) => ({ ...prev, [slug]: true }));
       setSwitching(null);
     } catch {
       // The daemon kept the old project: nothing moved, pick again.
@@ -287,6 +332,12 @@ export function Sidebar({
     const name = threadDraft.trim();
     setThreadRenaming(null);
     if (!name) return;
+    // 위 프로젝트 이름 바꾸기와 같은 no-op 가드 — blur 뒤에 오는 커밋이
+    // 같은 제목을 같은 저장소에 다시 쓰지 않는다.
+    const current = projects
+      .find((project) => project.slug === renamingThread.slug)
+      ?.threads?.find((entry) => entry.id === renamingThread.id);
+    if (current && threadTitle(current) === name) return;
     onRenameThread(renamingThread.id, name);
   };
 
@@ -360,6 +411,17 @@ export function Sidebar({
       const project = projects.find((entry) => entry.slug === slug);
       if (project) setRemoving(project);
       event.preventDefault();
+    } else if ((event.key === "ArrowRight" || event.key === "ArrowLeft") && !threadId) {
+      // The tree's own verbs: a project row folds and unfolds from the
+      // keyboard, like every other tree the planner knows.
+      const project = projects.find((entry) => entry.slug === slug);
+      if (project && projectThreads(project).length > 0) {
+        const isOpen = folds[slug] ?? slug === activeSlug;
+        if ((event.key === "ArrowRight" && !isOpen) || (event.key === "ArrowLeft" && isOpen)) {
+          toggleTree(slug);
+        }
+        event.preventDefault();
+      }
     }
   };
 
@@ -369,8 +431,11 @@ export function Sidebar({
       row says only when it last moved: `finished` is every conversation's
       steady state, so "답이 왔습니다" on all of them was an alarm that never
       slept. The ring on the dot (leafDot) keeps the answer-arrived mark;
-      the words are recency's. */
+      the words are recency's. The open conversation says nothing — the
+      planner is reading it, and a timestamp on the row under the cursor is
+      noise, not information. */
   const leafMeta = (project: ProjectSummary, thread: ThreadSummary) => {
+    if (project.slug === activeSlug && thread.id === activeThreadId) return null;
     if (switching === project.slug) return <span className="leaf__meta">전환 중…</span>;
     if (thread.state === "running" || thread.state === "awaiting")
       return <span className="leaf__proj">{project.name}</span>;
@@ -434,8 +499,13 @@ export function Sidebar({
                     ? threadTitle(thread)
                     : `누르면 ${project.name} 이 활성이 되고 미리보기가 그쪽으로 바뀝니다`
               }
-              onClick={() => {
+              onClick={(event) => {
                 if (switching) return;
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (event.clientX >= rect.right - LEAF_MENU_ZONE) {
+                  setLeafMenuFor(leafMenuFor === thread.id ? null : thread.id);
+                  return;
+                }
                 setLeafMenuFor(null);
                 onOpenThread(project.slug, thread);
               }}
@@ -574,7 +644,9 @@ export function Sidebar({
             <HomeIcon size={rail ? 15 : 13} />
             {!rail && <span className="sidebar__home-label">홈</span>}
             {daemon.pending.length > 0 && (
-              <span className="sidebar__home-badge">{daemon.pending.length}</span>
+              <span className="sidebar__home-badge" aria-hidden="true">
+                {rail && daemon.pending.length > 9 ? "9+" : daemon.pending.length}
+              </span>
             )}
           </button>
         </Tip>
@@ -646,13 +718,24 @@ export function Sidebar({
                           // The menu caps at 70vh — anchoring it no lower than
                           // 28vh keeps the whole thing inside the window. The
                           // left edge is the RAIL's right side, not the tile's.
-                          const railRect = event.currentTarget
-                            .closest(".sidebar")
-                            ?.getBoundingClientRect();
+                          // The fold glides (0.22s), so a rect read mid-glide
+                          // anchors the menu INSIDE the rail it is escaping
+                          // (실사: l:38). The planner's inline grid track is
+                          // the fold's destination — anchor there and the
+                          // menu lands at the rail's final edge every time.
+                          const track = /^(\d+(?:\.\d+)?)px/.exec(
+                            (event.currentTarget.closest(".planner") as HTMLElement | null)?.style
+                              .gridTemplateColumns ?? "",
+                          );
+                          const railEdge =
+                            track?.[1] !== undefined
+                              ? Number.parseFloat(track[1])
+                              : (event.currentTarget.closest(".sidebar")?.getBoundingClientRect()
+                                  .right ?? rect.right + 8);
                           const maxTop = window.innerHeight * 0.28;
                           setPopAt({
                             top: Math.min(rect.top, maxTop),
-                            left: railRect ? railRect.right : rect.right + 8,
+                            left: railEdge,
                           });
                           setPopoverFor(project.slug);
                         }}
@@ -778,7 +861,9 @@ export function Sidebar({
             })
           ) : (
             <>
-              {/* 상태가 1차 축: 확인 대기가 맨 위 — 대기가 0이면 말이 없다. */}
+              {/* 위는 주방: 지금 살아있는 상태만, 프로젝트를 섞어 최상위에.
+                  확인 대기가 맨 위(대기가 0이면 말이 없다), 그 다음이 작업
+                  중이다. 행의 프로젝트 칩은 이 구역에서만 식별자가 된다. */}
               {waiting.length > 0 && (
                 <div className="gsec gsec--ask">
                   확인 대기 <span className="n">{waiting.length}</span>
@@ -791,28 +876,7 @@ export function Sidebar({
                 </div>
               )}
               {running.map(renderThreadRow)}
-              {done.length > 0 && (
-                <div className="gsec">
-                  완료 <span className="n">{done.length}</span>
-                </div>
-              )}
-              {done.slice(0, DONE_THREADS).map(renderThreadRow)}
-              {/* 완료가 예산을 넘으면 침묵이 아니라 개수 행이 말한다 —
-                    그릇은 프로젝트 구분 없는 팔레트다. */}
-              {done.length > DONE_THREADS && (
-                <Tip label="명령 팔레트에서 대화를 찾습니다" side="right">
-                  <button
-                    type="button"
-                    className="leaf leaf--more"
-                    onClick={() => onBrowseThreads(null)}
-                  >
-                    <span className="ic ic--quiet ic--sm">
-                      <HistoryIcon />
-                    </span>
-                    이전 대화 {done.length - DONE_THREADS}개 더 보기
-                  </button>
-                </Tip>
-              )}
+              {/* 아래는 서랍: 끝난 대화는 각자 프로젝트의 자리에 산다. */}
               <div className="gsec">
                 프로젝트 <span className="n">{projects.length}</span>
               </div>
@@ -822,6 +886,10 @@ export function Sidebar({
                 const threads = orderedThreads(
                   visibleThreads(project.threads, daemon.hiddenThreads, project.slug),
                 );
+                /** The tree's children: this project's finished
+                    conversations, prep records sunk, its own scope. */
+                const kids = projectThreads(project);
+                const open = treeOpen(project.slug);
                 return (
                   <div key={project.slug} className={`node${active ? " node--active" : ""}`}>
                     {renaming === project.slug ? (
@@ -841,6 +909,28 @@ export function Sidebar({
                       />
                     ) : (
                       <div className="node__rowwrap">
+                        {/* The fold lives left of the row and is its own
+                            button — the row itself still means "switch
+                            there", so opening a project's history must not
+                            pay for a preview switch. A project with no
+                            finished history leaves the slot empty: the
+                            tree's left rail (caret → dot → name) stays one
+                            line instead of wobbling per project. */}
+                        {kids.length > 0 ? (
+                          <Tip label={open ? "대화 접기" : "대화 펼치기"} side="right">
+                            <button
+                              type="button"
+                              className={`node__caret${open ? " node__caret--open" : ""}`}
+                              aria-label={`${project.name} 대화 ${open ? "접기" : "펼치기"}`}
+                              aria-expanded={open}
+                              onClick={() => toggleTree(project.slug)}
+                            >
+                              ▸
+                            </button>
+                          </Tip>
+                        ) : (
+                          <span className="node__caret node__caret--ghost" aria-hidden="true" />
+                        )}
                         <Tip
                           side="right"
                           interactive
@@ -864,7 +954,14 @@ export function Sidebar({
                             role="treeitem"
                             aria-selected={active}
                             disabled={switching !== null}
-                            onClick={() => void activate(project.slug)}
+                            onClick={(event) => {
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              if (event.clientX >= rect.right - NODE_MENU_ZONE) {
+                                setMenuFor(menuFor === project.slug ? null : project.slug);
+                                return;
+                              }
+                              void activate(project.slug);
+                            }}
                             onKeyDown={(event) => onKeyDown(event, project.slug)}
                           >
                             <span className="node__dot" aria-hidden="true" />
@@ -884,16 +981,6 @@ export function Sidebar({
                             {switching === project.slug && !badge && (
                               <span className="node__badge">전환 중…</span>
                             )}
-                          </button>
-                        </Tip>
-                        <Tip label="새 대화" side="right">
-                          <button
-                            type="button"
-                            className="ghost node__add"
-                            aria-label={`${project.name} 에 새 대화`}
-                            onClick={() => onNewThread(project.slug)}
-                          >
-                            ＋
                           </button>
                         </Tip>
                         <Tip
@@ -993,19 +1080,47 @@ export function Sidebar({
                         )}
                       </div>
                     )}
-                    {/* 프로젝트 밑의 마지막 줄은 언제나 시작의 자리 — 대화가
-                          있든 없든 눈이 닿는 곳에 두고, 빈 프로젝트에서는 이
-                          줄 자체가 들어가는 길이다. */}
-                    <button
-                      type="button"
-                      className="leaf leaf--start"
-                      onClick={() => onNewThread(project.slug)}
-                    >
-                      <span className="ic ic--quiet ic--sm">
-                        <NewChatIcon />
-                      </span>
-                      ＋ 새 대화 시작
-                    </button>
+                    {/* The project's own history: finished conversations,
+                        capped — the count row hands the rest to the
+                        project-scoped palette, not the unscoped one. */}
+                    {open && kids.length > 0 && (
+                      <div className="node__kids">
+                        {kids
+                          .slice(0, DONE_THREADS)
+                          .map((thread) => renderThreadRow({ project, thread }))}
+                        {kids.length > DONE_THREADS && (
+                          <Tip label="이 프로젝트의 대화를 팔레트에서 찾습니다" side="right">
+                            <button
+                              type="button"
+                              className="leaf leaf--more"
+                              onClick={() => onBrowseThreads(project.slug)}
+                            >
+                              <span className="ic ic--quiet ic--sm">
+                                <HistoryIcon />
+                              </span>
+                              이전 대화 {kids.length - DONE_THREADS}개 더 보기
+                            </button>
+                          </Tip>
+                        )}
+                      </div>
+                    )}
+                    {/* 프로젝트 밑의 마지막 줄은 시작의 자리 — 펼쳐진(활성)
+                        프로젝트와, 이 줄 자체가 들어가는 길인 빈 프로젝트에만
+                        선다. 접힌 프로젝트마다 CTA 가 반복되면 트리가 목록이
+                        아니라 행동 단추 열로 읽힌다; 접힌 프로젝트의 새 대화는
+                        행 메뉴(··· → 새 대화)가 맡는다. */}
+                    {(open || threads.length === 0) && (
+                      <button
+                        type="button"
+                        className="leaf leaf--start"
+                        onClick={() => onNewThread(project.slug)}
+                      >
+                        <span className="ic ic--quiet ic--sm">
+                          <NewChatIcon />
+                        </span>
+                        ＋ 새 대화 시작
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1046,6 +1161,7 @@ export function Sidebar({
         {failed && (
           <StateBanner
             tone="danger"
+            role="alert"
             className="sidebar__error"
             title={errorMessage ? `${errorMessage} — 다시 시도해 주세요` : "다시 시도해 주세요"}
           />

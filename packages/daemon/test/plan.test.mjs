@@ -24,7 +24,7 @@ function planSession({ mode = "plan", modeBeforePlan = "bypassPermissions" } = {
         seen.modeCalls.push(m);
       },
     },
-    permissionMode: mode,
+    providerModeId: mode,
     modeBeforePlan,
     planModeId: "plan",
     defaultModeId: "default",
@@ -44,9 +44,10 @@ function planSession({ mode = "plan", modeBeforePlan = "bypassPermissions" } = {
       ],
     ]),
   };
-  // respondPermission 은 인스턴스 메서드인 setPermissionMode 로 복귀한다 —
-  // 스텁에도 진짜 프로토타입 메서드를 심어 같은 장부를 쓰게 한다.
-  stub.setPermissionMode = Session.prototype.setPermissionMode;
+  // respondPermission 은 인스턴스 메서드인 setMode 로 복귀한다 — 복귀 대상은
+  // 이 공급자의 모드 id 이지 Claude 열거형이 아니다(감사 C5). 스텁에도 진짜
+  // 프로토타입 메서드를 심어 같은 장부를 쓰게 한다.
+  stub.setMode = Session.prototype.setMode;
   return { stub, seen };
 }
 
@@ -75,7 +76,7 @@ test("respondPermission allow restores the working mode BEFORE resolving the pla
   const ok = await Session.prototype.respondPermission.call(stub, "req-1", "allow");
   assert.equal(ok, true);
   assert.deepEqual(seen.modeCalls, ["bypassPermissions"], "one restore, the stashed mode");
-  assert.equal(stub.permissionMode, "bypassPermissions");
+  assert.equal(stub.providerModeId, "bypassPermissions");
   assert.equal(stub.modeBeforePlan, null, "the stash is spent");
   assert.equal(seen.resolved?.behavior, "allow");
 });
@@ -90,25 +91,52 @@ test("respondPermission deny keeps the plan mode and delivers the reason", async
   );
   assert.equal(ok, true);
   assert.deepEqual(seen.modeCalls, [], "a denial asks for a better plan, not a mode change");
-  assert.equal(stub.permissionMode, "plan");
+  assert.equal(stub.providerModeId, "plan");
   assert.equal(stub.modeBeforePlan, "bypassPermissions", "the stash survives for the next plan");
   assert.equal(seen.resolved?.behavior, "deny");
   assert.match(seen.resolved?.message, /버튼을 더 크게/);
 });
 
-test("setPermissionMode stashes on entering plan and clears on leaving it", async () => {
+test("setMode stashes on entering plan and clears on leaving it", async () => {
   const stub = {
     agent: { setMode: async () => {} },
-    permissionMode: "bypassPermissions",
+    providerModeId: "bypassPermissions",
     planModeId: "plan",
     defaultModeId: "default",
   };
-  await Session.prototype.setPermissionMode.call(stub, "plan");
+  await Session.prototype.setMode.call(stub, "plan");
   assert.equal(stub.modeBeforePlan, "bypassPermissions");
-  await Session.prototype.setPermissionMode.call(stub, "plan");
+  await Session.prototype.setMode.call(stub, "plan");
   assert.equal(stub.modeBeforePlan, "bypassPermissions", "re-entry keeps the first memory");
-  await Session.prototype.setPermissionMode.call(stub, "acceptEdits");
+  await Session.prototype.setMode.call(stub, "acceptEdits");
   assert.equal(stub.modeBeforePlan, null, "an explicit switch out ends the plan era");
+});
+
+/**
+ * 감사 C5: 두 자리는 이제 다른 것을 뜻한다 — `providerModeId` 는 이 세션이
+ * 실제로 도는 모드이고, 선로의 `permissionMode` 는 Claude 열거형의 자리다.
+ * 공급자 자신의 모드 id 는 열거형 칸에 실리지 않는다.
+ */
+test("selectors: 공급자 모드 id 는 열거형 칸을 오염시키지 않는다", async () => {
+  const acp = {
+    provider: "omp",
+    providerModeId: "bypass",
+    selectedModel: null,
+    model: null,
+    selectedEffort: null,
+    fastMode: false,
+    fastModeBlocked: null,
+    sendable: false,
+    agent: null,
+  };
+  const rows = await Session.prototype.selectors.call(acp);
+  assert.equal(rows.mode, "bypass", "실제 모드는 mode 가 든다");
+  assert.equal(rows.permissionMode, "default", "열거형 칸에는 열거형 값만 온다");
+
+  const claude = { ...acp, provider: "claude", providerModeId: "bypassPermissions" };
+  const claudeRows = await Session.prototype.selectors.call(claude);
+  assert.equal(claudeRows.mode, "bypassPermissions");
+  assert.equal(claudeRows.permissionMode, "bypassPermissions", "Claude 는 두 자리가 같다");
 });
 
 test("a restore failure still releases the plan", async () => {

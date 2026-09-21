@@ -76,7 +76,7 @@ declare global {
          * is on screen.
          */
         openExternal?: (url: string) => Promise<unknown>;
-        navigate?: (route: string, state: string | null) => Promise<unknown>;
+        navigate?: (route: string) => Promise<unknown>;
         history?: (delta: -1 | 1) => Promise<unknown>;
         reload?: () => Promise<unknown>;
         /** 로딩 중 새로 고침 버튼의 두 번째 클릭 — 중단. */
@@ -110,7 +110,6 @@ declare global {
             kind: "runtime" | "build";
             message: string;
             route: string;
-            state: string;
           }) => void,
         ) => Unsubscribe;
         /** main이 loose 페이지(활성 페이지 없이 열린 링크)의 요소를 부탁한다 —

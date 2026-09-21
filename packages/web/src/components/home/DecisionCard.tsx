@@ -15,6 +15,10 @@ type RepoCommands = NonNullable<RepoStatus["commands"]>;
  * 권한형(헤드라인 + 허용/거절), 코멘트형(인용 + "대화에서 보기"). 클릭 가능한
  * 영역은 "칩 이외"뿐이라, 칩이 있는 카드는 그 부분을 별도 `<button>`으로
  * 두고(중첩 버튼 금지) 나머지만 열기 버튼으로 감싼다.
+ *
+ * 칩 게이트 규칙 하나: 레포에 무언가를 시키는 손(즉답·허용·거절·열기)은
+ * 전부 repoReady 로 잠근다 — "대화 열기"도 작업대 전환(프로젝트 활성화)을
+ * 부르는 손이므로 같은 몫이다. 순수 UI 상태(되돌리기·입력)만 막지 않는다.
  */
 export function DecisionCard({
   item,
@@ -111,7 +115,7 @@ function QuestionDecisionCard({
                 {label}
               </button>
             ))}
-            <button type="button" className="chip" onClick={onOpenThread}>
+            <button type="button" className="chip" disabled={!repoReady} onClick={onOpenThread}>
               대화에서 답하기
             </button>
           </div>
@@ -193,6 +197,7 @@ function PermissionDecisionCard({
               <button
                 type="button"
                 className="chip"
+                disabled={!repoReady}
                 onClick={() => onRespond("deny", reason || undefined)}
               >
                 {isPlan ? "바꿔 달라 보내기" : "거절 보내기"}
@@ -274,7 +279,7 @@ function ReviewDecisionCard({
           </button>
           <div className="home-foot">
             <span className="tag tag--warn">코멘트 도착</span>
-            <button type="button" className="chip" onClick={onOpenThread}>
+            <button type="button" className="chip" disabled={!repoReady} onClick={onOpenThread}>
               대화에서 보기
             </button>
           </div>

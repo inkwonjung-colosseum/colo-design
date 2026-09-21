@@ -5,11 +5,12 @@
  * dist freely.
  */
 
-import type { LostSend } from "@colo-design/protocol";
-import { StrictMode, useState } from "react";
+import type { EffortLevel, LostSend, PermissionMode } from "@colo-design/protocol";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PermissionCard, QuestionCard, Transcript, WorkStrip } from "./components";
 import { Composer } from "./components/chat/Composer";
+import { TurnClock } from "./components/preview/TurnClock";
 import type { PinAttachment } from "./hooks/usePins";
 import type { Block } from "./lib/daemon-client";
 import { THEMES } from "./lib/settings";
@@ -119,6 +120,59 @@ const blocks: Block[] = [
     isError: false,
     costUsd: null,
     durationMs: 42_000,
+    resultText: null,
+  },
+  {
+    type: "user",
+    id: "u3",
+    text: "목록 화면의 빈 상태도 함께 봐 주세요",
+    images: 0,
+  },
+  {
+    // 사람 메시지 — 검토 본문이 버블, 인라인 코멘트가 인용 행, 아래 답하기.
+    // `devmsg__reply` 는 버튼 어휘의 일원이라 하니스에서 항상 보여야 한다.
+    type: "human",
+    id: "dev1",
+    reviews: [
+      {
+        id: 1,
+        kind: "review",
+        author: "inkwonjung-colosseum",
+        body: "목록 화면의 상태 뱃지 색이 디자인 시스템의 토큰과 다릅니다. 확인 부탁드려요.",
+        pr: 12,
+        at: new Date().toISOString(),
+      },
+      {
+        id: 2,
+        kind: "inline",
+        author: "inkwonjung-colosseum",
+        body: "빈 상태 문구는 두 줄을 넘지 않게",
+        pr: 12,
+        path: "src/screens/member/MemberList.screen.tsx",
+        line: 42,
+        at: new Date().toISOString(),
+      },
+      {
+        id: 3,
+        kind: "inline",
+        author: "inkwonjung-colosseum",
+        body: "검색창 폭은 툴바의 절반 이하로",
+        pr: 12,
+        path: "src/screens/member/MemberList.screen.tsx",
+        line: 57,
+        at: new Date().toISOString(),
+      },
+    ],
+  },
+  {
+    // 중단 카드 — `고쳐서 다시 보내기`(컴포저의 restore 손)의 실물. 이 행이
+    // 보이고 눌리려면 Transcript 의 onResendEdit 에 손이 등록되어 있어야 한다.
+    type: "turn",
+    id: "turn-interrupted",
+    subtype: "interrupted",
+    isError: true,
+    costUsd: null,
+    durationMs: null,
     resultText: null,
   },
 ];
@@ -241,15 +295,23 @@ function PlannerShell({
   /** 상태 가득 — 핀·대기·유실을 다 채워 밴드와 접개의 모양을 본다. */
   crowded?: boolean;
 }) {
-  /** 에이전트 칩의 재료 — 데몬 없이도 칩의 모양과 고르기를 본다. */
   const [provider, setProvider] = useState("claude");
+  // 칩의 고르기 걸음을 하니스 안에서도 진짜처럼 — 고른 값이 selector 로
+  // 되돌아와야 메뉴의 연결 걸음(모델 → 생각 → 확인)과 칩 요약이 검증된다.
+  const [pick, setPick] = useState<{
+    model: string | null;
+    effort: EffortLevel | null;
+    permissionMode: PermissionMode;
+  }>({ model: "opus", effort: "high", permissionMode: "bypassPermissions" });
+  // 실제 ChatColumn 과 같은 등록 패턴 — 컴포저의 restore 손을 빌려
+  // 테이프의 고쳐서 다시 보내기를 살린다.
+  const resendRef = useRef<((text: string) => void) | null>(null);
   // 핀·대기는 다섯 줄 — 접개의 자동 판정(네 줄 초과)이 걸리는 양.
   const crowdPins: PinAttachment[] = crowded
     ? ["로그인 버튼", "회원가입 링크", "검색창", "상단 내비게이션", "푸터 안내 문구"].map(
         (text, index) => ({
           id: `pin-${index + 1}`,
           screen: "login",
-          state: "기본",
           note: index === 0 ? "누르고 나서 반응이 늦어요" : "",
           intent: index % 2 === 0 ? "change" : "question",
           element: {
@@ -294,9 +356,9 @@ function PlannerShell({
             live={live}
             showThinking={showThinking}
             showTools={showTools}
-            checkpoints={[{ id: "cp1", turn: 1 }]}
-            onRestoreCheckpoint={() => undefined}
-            onRewind={() => undefined}
+            onBranch={() => undefined}
+            onResendEdit={(text) => resendRef.current?.(text)}
+            onReplyReview={() => undefined}
           />
         </section>
         {live && (
@@ -322,6 +384,9 @@ function PlannerShell({
       <Composer
         disabled={false}
         draftKey="preview"
+        registerResend={(fn) => {
+          resendRef.current = fn;
+        }}
         placeholder="메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
         usage={{
           totalTokens: 106_000,
@@ -370,16 +435,16 @@ function PlannerShell({
         sendKey="enter"
         selector={{
           provider,
-          model: "opus",
-          effort: "high",
-          permissionMode: "bypassPermissions",
+          model: pick.model,
+          effort: pick.effort,
+          permissionMode: pick.permissionMode,
           fastMode: false,
           fastModeBlocked: null,
           models: [
             {
               value: "opus",
               displayName: "Opus 5",
-              description: "",
+              description: "가장 어려운 작업을 위한 가장 강력한 모델",
               resolvedModel: "claude-opus-5",
               supportsEffort: true,
               supportedEffortLevels: ["low", "medium", "high", "max"],
@@ -388,10 +453,19 @@ function PlannerShell({
             {
               value: "sonnet",
               displayName: "Sonnet 5",
-              description: "",
+              description: "속도와 지능의 균형",
               resolvedModel: "claude-sonnet-5",
               supportsEffort: true,
               supportedEffortLevels: ["low", "medium", "high", "max"],
+              supportsFastMode: false,
+            },
+            {
+              value: "haiku",
+              displayName: "Haiku 5",
+              description: "생각 단계 없이 즉답하는 가장 빠른 모델",
+              resolvedModel: "claude-haiku-5",
+              supportsEffort: false,
+              supportedEffortLevels: null,
               supportsFastMode: false,
             },
           ],
@@ -402,24 +476,16 @@ function PlannerShell({
             label: "Claude",
             available: true,
             modes: [],
-            defaultModeId: "default",
+            defaultModeId: "bypassPermissions",
             capabilities: {},
           },
           {
             id: "codex",
             label: "Codex",
-            available: true,
-            modes: [],
-            defaultModeId: "default",
-            capabilities: {},
-          },
-          {
-            id: "opencode",
-            label: "OpenCode",
             available: false,
-            reason: "OpenCode CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
+            reason: "Codex CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
             modes: [],
-            defaultModeId: "build",
+            defaultModeId: "bypass",
             capabilities: {},
           },
           {
@@ -427,15 +493,21 @@ function PlannerShell({
             label: "omp",
             available: true,
             modes: [],
-            defaultModeId: "default",
+            defaultModeId: "bypass",
             capabilities: {},
           },
         ]}
         onPickProvider={setProvider}
+        // 칩의 두 얼굴을 하니스에서도 — 실행 중(열린 대화)에는 고름의 범위가
+        // 다음 새 대화임을 노트로 말하고, 준비 자리에서는 고름이 곧 이 컴포저의
+        // 프로바이더다. 두 값이 같은 한 곳(setProvider)을 쓰므로 고른 값이
+        // 행과 표식에 그대로 되돌아온다.
+        nextProvider={provider}
+        providerLocked={live}
         commands={[]}
-        onSetModel={() => undefined}
-        onSetEffort={() => undefined}
-        onSetPermissionMode={() => undefined}
+        onSetModel={(model) => setPick((prev) => ({ ...prev, model }))}
+        onSetEffort={(effort) => setPick((prev) => ({ ...prev, effort }))}
+        onSetPermissionMode={(permissionMode) => setPick((prev) => ({ ...prev, permissionMode }))}
         onSend={() => undefined}
         onInterrupt={() => undefined}
         onFindFiles={async () => ["src/screens/MemberList.screen.tsx", "src/screens/"]}
@@ -445,14 +517,16 @@ function PlannerShell({
 }
 
 function Preview() {
-  const [theme, setTheme] = useState("dark");
+  const [theme, setTheme] = useState("light");
   const [live, setLive] = useState(false);
   const [surface, setSurface] = useState("chat");
   /** 설정의 `생각 과정 보기` 자리 — 접힌 생각 블록의 모양을 여기서도 본다. */
   const [showThinking, setShowThinking] = useState(false);
   /** 설정의 `작업 과정 보기` 자리 — 활동 카드의 모양을 여기서도 본다. */
   const [showTools, setShowTools] = useState(false);
-  document.documentElement.dataset.theme = theme;
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
   return (
     <div className="planner" style={{ height: "100vh", gridTemplateColumns: "minmax(0, 1fr)" }}>
       <div className="planner__main">
@@ -514,9 +588,13 @@ function Preview() {
                     <div className="transcript">
                       <div className="bubble bubble--user">회원 목록에 검색창 추가해줘</div>
                     </div>
-                    <div className="turnlive">
-                      <span className="spinner" />
-                      작업 중…
+                    <div className="turnlive" role="status" aria-label="작업 중">
+                      <span className="turnlive__dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                      <TurnClock startedAt={Date.now()} />
                     </div>
                   </section>
                 </div>

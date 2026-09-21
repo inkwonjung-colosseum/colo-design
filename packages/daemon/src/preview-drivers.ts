@@ -1,8 +1,15 @@
-import type { HandoffShot } from "@colo-design/protocol";
+import type { HandoffShot, ScreenCheckReport } from "@colo-design/protocol";
 import { type DaemonNotice, noticeForState } from "./notices.js";
 import type { PreviewCapture, PreviewDriverFactory } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
-import { type GateScreen, gateBrief, inspectScreens, type ScreenTrouble } from "./screen-gate.js";
+import {
+  type GateScreen,
+  gateBrief,
+  inspectScreens,
+  MAX_LINES_PER_SCREEN,
+  type ScreenTrouble,
+  TROUBLE_LEVELS,
+} from "./screen-gate.js";
 import { NEW_SESSION_TITLE, type Session } from "./session.js";
 
 /**
@@ -51,7 +58,8 @@ export class PreviewDrivers {
   /**
    * 이 턴이 가리킨 화면들 (게이트 재배선): 사람이 pin·화면 캡처로 보낸
    * 주소만 모은다. 턴이 시작할 때 비워지므로 언제나 "방금 가리킨 화면"이다.
-   * 키는 `route\nstate` - 같은 화면의 같은 상태를 두 번 가리켜도 한 번 본다.
+   * 키는 route — 같은 화면을 두 번 가리켜도 한 번 본다. (2026-09-21 상태
+   * 축 철거로 주소가 전부다.)
    */
   readonly pinnedThisTurn = new Map<string, Map<string, GateScreen>>();
   /**
@@ -65,9 +73,9 @@ export class PreviewDrivers {
 
   /** pin·캡처 하나 — 이 턴의 목록에 담는다. preview origin 밖의 주소는
    *  게이트가 재검증할 대상이 아니므로 runGate 에서 걸러진다. */
-  notePinned(sessionId: string, route: string, state: string | null): void {
+  notePinned(sessionId: string, route: string): void {
     const pinned = this.pinnedThisTurn.get(sessionId) ?? new Map<string, GateScreen>();
-    pinned.set(`${route}\n${state ?? ""}`, { route, state });
+    pinned.set(route, { route });
     this.pinnedThisTurn.set(sessionId, pinned);
   }
 
@@ -131,10 +139,9 @@ export class PreviewDrivers {
         // 사람의 pin 은 경로로, 에이전트의 navigate·openTab 은 전체 주소로
         // 온다 — 같은 화면을 두 번 열지 않게 경로로 정규화해 중복을 접는다.
         const route = u.pathname + u.search + u.hash;
-        const key = `${route}\n${screen.state ?? ""}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        kept.push({ route, state: screen.state });
+        if (seen.has(route)) continue;
+        seen.add(route);
+        kept.push({ route });
       } catch {
         // 못 읽는 주소는 게이트 입력이 아니다.
       }
@@ -174,15 +181,55 @@ export class PreviewDrivers {
   }
 
   /**
+   * 패인이 쥔 오류 하나의 판정 (`preview.screenCheck`): 게이트와 같은 드라이버·
+   * 같은 기준으로 그 화면 하나만 검증 창에서 다시 열어 본다 — 패인이 보고한
+   * 오류가 지금도 살아 있는지, AI 의 수정이 이미 지나갔는지를 가리는 길이다.
+   * 패인은 활성 프로젝트의 미리보기를 띄우므로 게이트의 세션 기준
+   * (repoForSession) 없이 활성 레포가 곧 출처다. 확인 자체를 못 했으면
+   * (드라이버가 없거나 화면을 열지 못했거나) null — 판정이 아니라 확인
+   * 불능이며, 부르는 쪽이 안전한 쪽으로 떨어진다.
+   */
+  async checkScreen(route: string): Promise<ScreenCheckReport | null> {
+    const factory = this.deps.factory();
+    const repo = this.deps.activeRepo();
+    if (!factory || !repo?.isCloned()) return null;
+    const status = await repo.status().catch(() => null);
+    const previewUrl = status?.previewUrl;
+    if (!previewUrl) return null;
+    let target: URL;
+    try {
+      target = new URL(route, previewUrl);
+    } catch {
+      return null;
+    }
+    if (target.origin !== new URL(previewUrl).origin) return null;
+    const driver = factory.forIsolated(previewUrl);
+    try {
+      // 주소의 쿼리는 그냥 주소의 일부다 — 특별히 떼어 내는 것은 없다
+      // (2026-09-21 상태 축 철거).
+      const opened = await driver
+        .open(target.pathname + target.search + target.hash)
+        .catch(() => null);
+      // 열지 못한 것은 판정이 아니다 — 미리보기 서버가 방금 죽었거나 주소가
+      // 사라진 것이고, 그 사실은 다른 자리(중단 카드·레포 상태)가 말한다.
+      if (opened === null || opened.ok !== true) return null;
+      const errors = (await driver.consoleLines().catch(() => []))
+        .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
+        .slice(0, MAX_LINES_PER_SCREEN)
+        .map((line) => `${line.level}: ${line.text}`);
+      return { settled: opened.settled, errors };
+    } finally {
+      await driver.destroy().catch(() => undefined);
+    }
+  }
+
+  /**
    * 화면 캡처 (preview.capture): the planner's "이 화면" 버튼. `route` 가
    * 오면 그 화면을 먼저 연다 — pane 이 떠 있으면 그 창이, 아니면 숨은 창이
    * 그린다. 창은 쓰고 나면 닫는다(pane 은 디버거만 뗀다 — 페이지는 사용자의
    * 것). 브라우저 개발 경로에는 창 자체가 없으므로 거절한다.
    */
-  async capture(
-    route?: string,
-    state?: string | null,
-  ): Promise<PreviewCapture & { route: string | null; state: string | null }> {
+  async capture(route?: string): Promise<PreviewCapture & { route: string | null }> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) {
@@ -195,11 +242,11 @@ export class PreviewDrivers {
     const driver = factory.for(status.previewUrl);
     try {
       if (route) {
-        const opened = await driver.open(route, state ?? null);
+        const opened = await driver.open(route);
         if (!opened.ok) throw new Error(`화면을 열지 못했습니다: ${opened.reason}`);
       }
       const shot = await driver.screenshot({ longEdge: 900 });
-      return { ...shot, route: route ?? null, state: state ?? null };
+      return { ...shot, route: route ?? null };
     } finally {
       await driver.destroy().catch(() => undefined);
     }
@@ -209,7 +256,7 @@ export class PreviewDrivers {
    * How many captures a 넘기기 would attach — the preview's `### 화면 미리보기`
    * line. Same gates as captureHandoffShots, count only.
    */
-  async handoffShotCount(targets: Array<{ route: string; state: string | null }>): Promise<number> {
+  async handoffShotCount(targets: Array<{ route: string }>): Promise<number> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return 0;
@@ -219,16 +266,15 @@ export class PreviewDrivers {
   }
 
   /**
-   * 넘기기의 화면 캡처 (PLAN D56 · 브리지 폐지): the screen·state pairs the
+   * 넘기기의 화면 캡처 (PLAN D56 · 브리지 폐지): the screens the
    * planner's own pins named this cycle (`captureTargets`), each opened in
    * the preview driver and captured. Desktop only — the browser dev path has
    * no driver — and every failure is quiet: a capture that will not come
    * back simply is not in the set, and an empty set means the pull request
-   * body carries no `### 화면 미리보기` section at all.
+   * body carries no `### 화면 미리보기` section at all. (2026-09-21 상태 축
+   * 철거 — 대상은 주소뿐이다.)
    */
-  async captureHandoffShots(
-    targets: Array<{ route: string; state: string | null }>,
-  ): Promise<HandoffShot[]> {
+  async captureHandoffShots(targets: Array<{ route: string }>): Promise<HandoffShot[]> {
     const factory = this.deps.factory();
     const repo = this.deps.activeRepo();
     if (!factory || !repo?.isCloned()) return [];
@@ -239,7 +285,7 @@ export class PreviewDrivers {
     try {
       for (const target of targets) {
         try {
-          const opened = await driver.open(target.route, target.state);
+          const opened = await driver.open(target.route);
           // A screen that would not come up has no picture to take.
           if (!opened.ok) continue;
           // A handoff picture is read by a person in a pull request, not by
@@ -248,7 +294,6 @@ export class PreviewDrivers {
           const capture = await driver.screenshot({ longEdge: HANDOFF_SHOT_LONG_EDGE });
           shots.push({
             route: target.route,
-            state: target.state,
             image: Buffer.from(capture.data, "base64"),
             extension: SHOT_EXTENSIONS[capture.mediaType] ?? ".bin",
           });

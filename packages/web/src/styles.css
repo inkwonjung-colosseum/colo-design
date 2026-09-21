@@ -73,6 +73,10 @@
      작업 중인 앱의 것이므로 테마가 덮지 않는 유일한 고정 표면이다. */
   --preview-canvas: #fff;
 
+  /* 한 단 더 조용한 글자 — 구분선 위의 시간 표식 · 나중에 보기 같은 자리.
+     팔레트마다 따로 두지 않고 muted 를 한 번 옅게 섞어 모든 테마가 따라간다. */
+  --faint: color-mix(in srgb, var(--muted) 72%, transparent);
+
   color-scheme: dark;
 }
 
@@ -206,6 +210,48 @@
   color-scheme: dark;
 }
 
+/* 고대비 밝게 — prefers-contrast: more 를 밝은 화면에서도 답하는 짝.
+   순수 흰 바탕에 검정 글자, 진한 파랑 액센트. */
+[data-theme="contrast-light"] {
+  --bg: #ffffff;
+  --bg-2: #f2f2f2;
+  --panel: #fafafa;
+  --panel-2: #ebebeb;
+  --panel-3: #dedede;
+
+  --line: #767676;
+  --line-soft: #b0b0b0;
+  --line-strong: #595959;
+  --line-hover: #404040;
+  --line-hover-strong: #2b2b2b;
+  --scroll-thumb: #6e6e6e;
+
+  --text: #000000;
+  --text-2: #1f1f1f;
+  --muted: #333333;
+
+  --accent: #003ecc;
+  --accent-soft: rgba(0, 62, 204, 0.12);
+  --accent-glow: rgba(0, 62, 204, 0.4);
+  --warn: #6b4a00;
+  --warn-soft: rgba(107, 74, 0, 0.1);
+  --danger: #b00020;
+  --danger-soft: rgba(176, 0, 32, 0.1);
+  --ok: #00591f;
+
+  --warn-line: rgba(107, 74, 0, 0.5);
+  --danger-line: rgba(176, 0, 32, 0.5);
+  --select-bg: rgba(0, 62, 204, 0.25);
+
+  --shadow-pop: 0 16px 40px -12px rgba(0, 0, 0, 0.3), 0 4px 12px -4px rgba(0, 0, 0, 0.2);
+  --brand: #003ecc;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.1), 0 12px 32px -16px rgba(0, 0, 0, 0.25);
+  --shadow-float: 0 2px 6px -2px rgba(0, 0, 0, 0.15), 0 24px 56px -20px rgba(0, 0, 0, 0.3);
+
+  color-scheme: light;
+}
+
 /* Dracula — draculatheme.com. bg #282a36, selection #44475a as hairlines,
    comment #6272a4 for muted, purple #bd93f9 accent, official fg/accents. */
 [data-theme="dracula"] {
@@ -285,6 +331,48 @@
   --scrim: rgba(0, 0, 0, 0.5);
 
   color-scheme: dark;
+}
+
+/* Solarized light — the same rebase on paper: base3 canvas, base2/base1
+   surface steps, base00/base01 text, accent colours verbatim. */
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-2: #f4eeda;
+  --panel: #eee8d5;
+  --panel-2: #e4ddc4;
+  --panel-3: #d8d0b3;
+
+  --line: #d3cbae;
+  --line-soft: #e4ddc8;
+  --line-strong: #c0b795;
+  --line-hover: #a89f7f;
+  --line-hover-strong: #8f8666;
+  --scroll-thumb: #c0b795;
+
+  --text: #4a4a3a;
+  --text-2: #50646a;
+  --muted: #52646a;
+
+  --accent: #1e6ca4;
+  --accent-soft: rgba(38, 139, 210, 0.12);
+  --accent-glow: rgba(38, 139, 210, 0.35);
+  --warn: #795c00;
+  --warn-soft: rgba(181, 137, 0, 0.12);
+  --danger: #b72927;
+  --danger-soft: rgba(220, 50, 47, 0.1);
+  --ok: #596700;
+
+  --warn-line: rgba(181, 137, 0, 0.45);
+  --danger-line: rgba(220, 50, 47, 0.42);
+  --select-bg: rgba(38, 139, 210, 0.22);
+
+  --shadow-pop: 0 16px 40px -12px rgba(101, 87, 44, 0.22), 0 4px 12px -4px rgba(101, 87, 44, 0.14);
+  --brand: #268bd2;
+  --scrim: rgba(101, 87, 44, 0.3);
+  --shadow-card: 0 1px 2px rgba(101, 87, 44, 0.07), 0 12px 32px -16px rgba(101, 87, 44, 0.2);
+  --shadow-float: 0 2px 6px -2px rgba(101, 87, 44, 0.1), 0 24px 56px -20px rgba(101, 87, 44, 0.24);
+
+  color-scheme: light;
 }
 
 /* Catppuccin Mocha — catppuccin.com/palette. Base surface ladder, subtext/overlay
@@ -488,8 +576,51 @@
   color-scheme: dark;
 }
 
+/* Rosé Pine Dawn — the light flavour: #faf4ed canvas, surface/overlay
+   ladder, #575279 text, iris accent, the dawn accents verbatim. */
+[data-theme="rosepine-dawn"] {
+  --bg: #faf4ed;
+  --bg-2: #f2e9e1;
+  --panel: #fffaf3;
+  --panel-2: #f2e9e1;
+  --panel-3: #dfdad9;
+
+  --line: #dfdad9;
+  --line-soft: #f0e8e0;
+  --line-strong: #cecacd;
+  --line-hover: #b4b0b4;
+  --line-hover-strong: #98949a;
+  --scroll-thumb: #cecacd;
+
+  --text: #575279;
+  --text-2: #6a6681;
+  --muted: #696680;
+
+  --accent: #6e5aa8;
+  --accent-soft: rgba(144, 122, 169, 0.14);
+  --accent-glow: rgba(144, 122, 169, 0.35);
+  --warn: #8c5e1f;
+  --warn-soft: rgba(234, 157, 52, 0.14);
+  --danger: #9e3a55;
+  --danger-soft: rgba(180, 99, 122, 0.12);
+  --ok: #417079;
+
+  --warn-line: rgba(234, 157, 52, 0.45);
+  --danger-line: rgba(180, 99, 122, 0.45);
+  --select-bg: rgba(144, 122, 169, 0.22);
+
+  --shadow-pop: 0 16px 40px -12px rgba(87, 82, 121, 0.2), 0 4px 12px -4px rgba(87, 82, 121, 0.12);
+  --brand: #907aa9;
+  --scrim: rgba(87, 82, 121, 0.32);
+  --shadow-card: 0 1px 2px rgba(87, 82, 121, 0.06), 0 12px 32px -16px rgba(87, 82, 121, 0.18);
+  --shadow-float: 0 2px 6px -2px rgba(87, 82, 121, 0.09), 0 24px 56px -20px rgba(87, 82, 121, 0.22);
+
+  color-scheme: light;
+}
+
 /* Everforest (dark medium) — sainnhe/everforest palette.md. bg0–bg3 surface
    ladder, fg/grey ladder, green accent, the accent set verbatim. */
+
 [data-theme="everforest"] {
   --bg: #2d353b;
   --bg-2: #232a2e;
@@ -607,6 +738,47 @@
   --scrim: rgba(0, 0, 0, 0.6);
 
   color-scheme: dark;
+}
+
+/* GitHub light — the default light theme: white canvas, #f6f8fa wells,
+   #1f2328 text, scale blues/greens from primer/primitives. */
+[data-theme="github-light"] {
+  --bg: #ffffff;
+  --bg-2: #f6f8fa;
+  --panel: #f6f8fa;
+  --panel-2: #eaeef2;
+  --panel-3: #d1d9e0;
+
+  --line: #d1d9e0;
+  --line-soft: #e8ebee;
+  --line-strong: #b7bec7;
+  --line-hover: #959da5;
+  --line-hover-strong: #818b98;
+  --scroll-thumb: #b7bec7;
+
+  --text: #1f2328;
+  --text-2: #424a53;
+  --muted: #59636e;
+
+  --accent: #0550ae;
+  --accent-soft: rgba(9, 105, 218, 0.1);
+  --accent-glow: rgba(9, 105, 218, 0.3);
+  --warn: #7d4e00;
+  --warn-soft: rgba(154, 103, 0, 0.1);
+  --danger: #a40e26;
+  --danger-soft: rgba(209, 36, 47, 0.08);
+  --ok: #197b35;
+  --warn-line: rgba(154, 103, 0, 0.4);
+  --danger-line: rgba(209, 36, 47, 0.4);
+  --select-bg: rgba(9, 105, 218, 0.18);
+
+  --shadow-pop: 0 16px 40px -12px rgba(31, 35, 40, 0.18), 0 4px 12px -4px rgba(31, 35, 40, 0.1);
+  --brand: #0550ae;
+  --scrim: rgba(31, 35, 40, 0.35);
+  --shadow-card: 0 1px 2px rgba(31, 35, 40, 0.06), 0 12px 32px -16px rgba(31, 35, 40, 0.16);
+  --shadow-float: 0 2px 6px -2px rgba(31, 35, 40, 0.08), 0 24px 56px -20px rgba(31, 35, 40, 0.2);
+
+  color-scheme: light;
 }
 
 /* Monokai — the canonical palette as shipped by VS Code's built-in theme:
@@ -1527,8 +1699,8 @@ select {
   font: 400 var(--font-ui-130) / 1.65 var(--sans);
   color: var(--muted);
 }
-/* 빈 대화의 예시 칩(P3-2) — 첫 문장을 대신 써 주는 세 마디. 누르면 컴포저에
-   담기므로 읽는 글이 아니라 누르는 것으로 보여야 한다. */
+/* 빈 대화의 예시 문장 창(P3-2) — 첫 문장을 대신 써 주는 세 마디. 누르면
+   컴포저에 담기므로 읽는 글이 아니라 누르는 것으로 보여야 한다. */
 .empty__examples {
   display: flex;
   flex-direction: column;
@@ -2693,7 +2865,7 @@ select {
     border-color 0.15s var(--drift);
 }
 .composer__nextchip:hover:not(:disabled) {
-  color: var(--fg);
+  color: var(--text);
   border-color: var(--accent);
   border-style: solid;
 }
@@ -4330,7 +4502,7 @@ button.pcard__row {
 }
 .modal__head .ghost[aria-disabled="true"]:hover {
   background: none;
-  color: var(--ink-mute);
+  color: var(--muted);
 }
 .modal__body {
   overflow-y: auto;
@@ -7418,7 +7590,7 @@ button.pcard__row {
 /* 개발자용 접힘(P1-4) — 직접 발급 길은 기본 눈길 밖에 둔다. */
 .ghtoken__dev,
 .repopicker__devnote {
-  color: var(--fg-quiet);
+  color: var(--muted);
   font-size: 12px;
 }
 .ghtoken__dev summary,
@@ -8145,6 +8317,11 @@ button.pcard__row {
    위치를 잡아 둔다 (.preview__slot 과 같은 본질, 동결의 감싼 이름). */
 .preview__viewwrap {
   position: relative;
+  /* slot 의 flex:1 이 무대 높이를 받으려면 이 래퍼가 flex 열이어야 한다 —
+     block 이면 slot 이 auto 높이로 접혀 게스트가 intrinsic 높이(~150px)로
+     눕는다(보낸 화면 상태에서 화면이 위쪽만 그려지던 결함). */
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
@@ -8689,7 +8866,7 @@ button.pcard__row {
   flex-direction: column;
   gap: 10px;
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   padding: 14px 16px;
   margin: 14px 0 4px;
 }

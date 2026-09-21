@@ -44,7 +44,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Save,
   Search,
   ServerOff,
   Settings,
@@ -95,14 +94,13 @@ export const ShieldOffIcon = make(ShieldOff, 13);
 // the row; the tone (in .ic) carries whether it is ordinary, warning, or a
 // thing that destroys.
 
-export const SaveIcon = make(Save, 13);
 export const HandoffIcon = make(GitPullRequest, 13);
 export const EyeIcon = make(Eye, 12);
 export const HistoryIcon = make(History, 13);
 export const TrashIcon = make(Trash2, 13);
 /** 잠깐 치워두기 — the box the current attempt goes into. */
 export const ArchiveIcon = make(Archive, 13);
-/** 핀 모드 토글 — the picker the preview toolbar wears. */
+/** 핀 모드 토글 — the picker the frame head wears. */
 export const MapPinIcon = make(MapPin, 13);
 export const MinusIcon = make(Minus, 12, 2);
 export const ExportIcon = make(Download, 13);
@@ -184,15 +182,6 @@ function OpenAIIcon({ size = 13 }: IconProps) {
   );
 }
 
-/** OpenCode's mark — the square ring, exactly as the vendor draws it. */
-function OpenCodeIcon({ size = 13 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" d="M22 24H2V0h20zM17 4.8H7v14.4h10z" />
-    </svg>
-  );
-}
-
 /** omp 의 π — the name is the mark, drawn at the house stroke. */
 function PiIcon({ size = 13 }: IconProps) {
   return (
@@ -221,8 +210,6 @@ export function ProviderIcon({ provider, size = 13 }: IconProps & { provider?: s
       return <OpenAIIcon size={size} />;
     case "omp":
       return <PiIcon size={size} />;
-    case "opencode":
-      return <OpenCodeIcon size={size} />;
     default:
       return <SparkIcon size={size} />;
   }

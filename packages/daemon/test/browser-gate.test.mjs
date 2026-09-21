@@ -72,16 +72,18 @@ test("an allow verdict passes with no message", async () => {
   assert.equal(seen.calls[0].tool.name, "browser_screenshot");
 });
 
-test("an idle room settles back to idle; a running turn keeps its lamp", async () => {
-  // 턴 없는 방 — handlePermission 의 settle 이 running 으로 놓은 상태를
-  // decideBrowserOp 가 거둔다. 아니면 램프가 영원히 도는 죽은 방이 된다.
+test("턴 밖의 카드는 상태를 아예 건드리지 않는다", async () => {
+  // 감사 C1: 예전엔 settle 이 턴 유무와 무관하게 running 을 놓고,
+  // decideBrowserOp 가 그것을 idle 로 되돌렸다 — 사이드바의 "작업 중"이
+  // 한 번 점멸하고 notifyClockAt·트리 무효화가 허위로 돌던 자리. 이제는
+  // settle 자신이 도는 턴일 때만 running 을 놓으므로 사후 교정이 없다.
   const idle = gateStub({ verdict: { behavior: "allow", updatedInput: {} } });
   await Session.prototype.decideBrowserOp.call(
     idle.stub,
     "browser_snapshot",
     new AbortController().signal,
   );
-  assert.deepEqual(idle.seen.stateChanges, ["idle"]);
+  assert.deepEqual(idle.seen.stateChanges, [], "턴이 없으면 아무 상태도 방송되지 않는다");
 
   // 도는 턴이 있는 방 — 상태를 건드리지 않는다. 턴의 끝은 턴이 스스로 말한다.
   const busy = gateStub({

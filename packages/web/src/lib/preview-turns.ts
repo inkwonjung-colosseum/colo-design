@@ -4,35 +4,15 @@
  * the marker card it carries. 핀 턴은 다음을 따른다:
  * 문장은 컴포저에서 온 노트 하나, 목록은 마커가 실고, json fence 는 없다.
  */
-import type { DeveloperReview, TurnMarker } from "@colo-design/protocol";
+import type { TurnMarker } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
 import type { PreviewError } from "../components/preview/PreviewHost";
 import type { PinAttachment } from "../hooks/usePins";
-import { stateLabel } from "./format";
 
 /**
- * 고치기 의 턴: the bundled developer comments, as the agent should
- * read them. The marker keeps one author and one path for the card; the body
- * carries every comment's words.
+ * 고치기 의 턴은 프로토콜이 조립한다(슬라이스 2) — 데몬의 폴링이 같은 문장을
+ * 내려놓기 때문이다. 웹은 이제 부르지 않는다: 고치기의 문은 데몬 하나뿐이다.
  */
-export function reviewToTurn(reviews: DeveloperReview[]): string {
-  const first = reviews[0];
-  const marker: TurnMarker = {
-    kind: "review",
-    pr: first?.pr ?? 0,
-    author: first?.author ?? "",
-    ...(first?.path ? { path: first.path } : {}),
-  };
-  const lines = [
-    `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
-    "",
-    ...reviews.map((review, index) => {
-      const at = review.path ? `${review.path}${review.line ? `:${review.line}` : ""}` : "";
-      return `${index + 1}. ${review.author}${at ? ` (${at})` : ""}: ${review.body}`;
-    }),
-  ];
-  return markTurn(marker, lines.join("\n"));
-}
 
 /**
  * The pins turn: N pins plus the composer's sentence become
@@ -69,7 +49,6 @@ export function pinsToTurn(
   const marker: TurnMarker = {
     kind: "comments",
     screen: spread ? `화면 ${screens.size}곳` : (titleFor(first.screen) ?? first.screen),
-    state: spread ? "" : first.state === null ? "" : stateLabel(first.state),
     // The element's own text is what the planner clicked and recognises;
     // its component name is the fallback nobody should normally read.
     ...(sentence ? { note: sentence } : {}),
@@ -92,11 +71,8 @@ export function pinsToTurn(
     const rows = [
       `${index + 1}. ${pinLabel(pin)}${pin.element.text ? ` — "${pin.element.text}"` : ""}${
         spread ? ` · ${titleFor(pin.screen) ?? pin.screen}` : ""
-      }${pin.state === null ? "" : ` (${stateLabel(pin.state)} 상태)`}`,
+      }`,
     ];
-    // 레포가 새긴 출처 — the file the agent would edit, when the
-    // repo stamps one.
-    if (pin.element.source) rows.push(`   파일: ${pin.element.source}`);
     if (pin.note.trim()) {
       // 혼합 배치는 행마다 말의 종류를 새긴다; 한쪽으로 몰린
       // 배치는 안내줄이 이미 말한다.
@@ -163,7 +139,6 @@ export function errorToTurn(error: PreviewError, count = 1): string {
   const marker: TurnMarker = {
     kind: "error",
     route: error.route,
-    state: error.state,
     errorKind: error.kind,
     ...(count > 1 ? { count } : {}),
   };
@@ -175,11 +150,10 @@ export function errorToTurn(error: PreviewError, count = 1): string {
  * The body carries the planner's sentence and the console tail; the picture
  * rides as the turn's image, not in the text.
  */
-export function lookToTurn(route: string, state: string, body: string, count = 1): string {
+export function lookToTurn(route: string, body: string, count = 1): string {
   const marker: TurnMarker = {
     kind: "error",
     route,
-    state,
     errorKind: "look",
     ...(count > 1 ? { count } : {}),
   };

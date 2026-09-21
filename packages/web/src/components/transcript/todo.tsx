@@ -3,7 +3,7 @@ import { readTodoList, type TodoItem } from "../../lib/todo-plan";
 import { ToolBlock } from "./blocks";
 import type { TodoToolBlock } from "./shared";
 
-function TodoList({ todos }: { todos: TodoItem[] }) {
+export function TodoList({ todos }: { todos: TodoItem[] }) {
   return (
     <ul className="todo__list">
       {todos.map((todo, index) => (
@@ -25,45 +25,28 @@ function TodoList({ todos }: { todos: TodoItem[] }) {
 }
 
 /**
- * the agent.s own plan as a card: `진행 N/M`, items ✓ · ● · ○ with
- * the current one bold. Once the turn has ended it folds to a single line —
- * the plan was followed; the reading is over. A write we cannot parse falls
- * back to the plain tool row, which is the honest rendering of noise.
+ * 끝난 턴의 할 일 한 줄 — "할 일 N개 끝". 도는 턴의 할 일은 이 카드가
+ * 그리지 않는다: WorkStrip 이 컴포저 위에 같은 목차를 고정으로 세우므로,
+ * 테이프가 또 그리는 것은 같은 정보의 두 번째 사본이다(라이브 카드는
+ * Transcript 에서 걸러진다). 펼치면 ✓ ● ○ 목록이 남는다 — 기록은 접힌
+ * 한 줄 뒤에 있다. 목록을 쓰지 않은 TodoWrite 는 카드가 아니라 도구 줄로.
  */
-function TodoCard({ block, ended }: { block: TodoToolBlock; ended: boolean }) {
+export function TodoCard({ block }: { block: TodoToolBlock }) {
   const [open, setOpen] = useState(false);
   const todos = readTodoList(block.input);
   if (!todos || todos.length === 0) return <ToolBlock block={block} />;
 
-  if (ended) {
-    return (
-      <div className="machine todo todo--done">
-        <button
-          type="button"
-          className="todo__done"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          할 일 {todos.length}개 끝
-        </button>
-        {open && <TodoList todos={todos} />}
-      </div>
-    );
-  }
-
-  const done = todos.filter((todo) => todo.status === "completed").length;
-  const current = todos.find((todo) => todo.status === "in_progress") ?? null;
   return (
-    <div className="machine todo">
-      <div className="machine__head">
-        <span className="machine__title">
-          진행 {done + (current ? 1 : 0)}/{todos.length}
-        </span>
-        {current && <span className="machine__lead">{current.text}</span>}
-      </div>
-      <TodoList todos={todos} />
+    <div className="machine todo todo--done">
+      <button
+        type="button"
+        className="todo__done"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        할 일 {todos.length}개 끝
+      </button>
+      {open && <TodoList todos={todos} />}
     </div>
   );
 }
-
-export { TodoCard, TodoList };

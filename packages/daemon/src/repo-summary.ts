@@ -1,17 +1,13 @@
-// The 넘기기-draft and save-memo voices: one agent turn on the same SDK the
-// sessions ride, cached against the cycle tip they answered for.
+// The 넘기기-draft and save-memo voices: one machine turn the daemon's
+// machine provider runs (machine-provider.ts), cached against the cycle tip
+// the turn answered for.
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DiffFile, RepoHandoffDraft } from "@colo-design/protocol";
-import { claudeOneShot } from "./agent/drivers/claude/one-shot.js";
 import { readComments } from "./comments.js";
 import { buildCommentsSection, buildFilesSection } from "./handoff-body.js";
-import {
-  HANDOFF_DRAFT_TIMEOUT_MS,
-  MACHINE_MODEL,
-  MEMO_TIMEOUT_MS,
-  type RepoCore,
-} from "./repo-core.js";
+import { type MachineTurn, NO_MACHINE_TURN } from "./machine-provider.js";
+import { HANDOFF_DRAFT_TIMEOUT_MS, MEMO_TIMEOUT_MS, type RepoCore } from "./repo-core.js";
 import {
   HANDOFF_BODY_MAX_CHARS,
   HANDOFF_FILE_LIMIT,
@@ -22,7 +18,10 @@ import {
 } from "./repo-prompts.js";
 
 export class RepoSummarizer {
-  constructor(private readonly core: RepoCore) {}
+  constructor(
+    private readonly core: RepoCore,
+    private readonly machineTurn: MachineTurn = NO_MACHINE_TURN,
+  ) {}
 
   /**
    * The 넘기기 draft's memory (비개발자 넘기기): the cycle tip its title and
@@ -75,7 +74,7 @@ export class RepoSummarizer {
     // pins taken before the first 저장 ride the handoff too.
     if (memos.length === 0 && files.length === 0) return { ...empty, extras };
 
-    const draft = (await this.claudeHandoffDraft(memos, files).catch(() => null)) ?? empty;
+    const draft = (await this.machineHandoffDraft(memos, files).catch(() => null)) ?? empty;
     this.handoffDraftCache = { tip, draft };
     return { ...draft, extras };
   }
@@ -125,7 +124,7 @@ export class RepoSummarizer {
   }
 
   /** The draft's one turn; an empty draft means "keep the browser's". */
-  private async claudeHandoffDraft(
+  private async machineHandoffDraft(
     memos: string[],
     files: string[],
   ): Promise<RepoHandoffDraft | null> {
@@ -148,7 +147,7 @@ export class RepoSummarizer {
       .replace(/^(내용|body)\s*[:：]\s*/i, "")
       .trim()
       .slice(0, HANDOFF_BODY_MAX_CHARS);
-    return { title, body, source: "claude" };
+    return { title, body, source: "machine" };
   }
 
   /**
@@ -168,21 +167,14 @@ export class RepoSummarizer {
   }
 
   /**
-   * One machine turn (비개발자 저장): the same SDK entry the sessions use,
-   * aimed at a single answer-nothing-else turn — no tools to run, no
-   * settings to load, and haiku answering: reading a diff and saying what
-   * it did is haiku's job, and its latency is what the leashes assume. The
-   * prompt is everything this call may read; the transcript lands beside
+   * One machine turn (비개발자 저장): the injected hand the daemon picked —
+   * machine-provider.ts 의 담당 드라이버가 무도구·단답·목줄을 보증한다.
+   * The prompt is everything the call may read; the transcript lands beside
    * the draft's, out of the conversation store. Null means "use the
    * fallback".
    */
   private async oneTurn(prompt: string, timeoutMs: number): Promise<string | null> {
-    return claudeOneShot(prompt, {
-      cwd: this.summaryCwd(),
-      executable: this.core.claudeExecutable,
-      model: MACHINE_MODEL,
-      timeoutMs,
-    });
+    return this.machineTurn(prompt, { cwd: this.summaryCwd(), timeoutMs });
   }
 
   /**
@@ -190,7 +182,7 @@ export class RepoSummarizer {
    * memo, this turn writes one — one Korean sentence from the diff, so
    * pressing 저장 alone is enough. Null means "use the default message".
    */
-  async claudeMemo(files: DiffFile[]): Promise<string | null> {
+  async machineMemo(files: DiffFile[]): Promise<string | null> {
     const answer = await this.oneTurn(memoPrompt(files), MEMO_TIMEOUT_MS);
     const line = (answer ?? "")
       .split(/\r?\n/)

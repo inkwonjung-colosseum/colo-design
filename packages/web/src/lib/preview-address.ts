@@ -4,10 +4,11 @@
  * stays inside the preview server: a bar that can name another server is a
  * browser this tool refuses to be. What may be typed:
  *
- * - `/member/MemberList` — a path inside the origin, `?state=` welcome.
- *   Anything inside the origin rides `open` (`loadURL`).
+ * - `/member/MemberList` — a path inside the origin. Anything inside the
+ *   origin rides `open` (`loadURL`).
  * - `member/MemberList` — the leading slash is typed for you.
- * - `?state=empty` — the state alone, on the current path.
+ * - `?after=…` — a query alone, riding the current path (2026-09-21 상태
+ *   축 철거 — 특별한 취급을 받던 상태 쿼리는 이제 그냥 쿼리다).
  * - a full url — accepted only when its origin is the preview server's,
  *   reduced to its path.
  *
@@ -19,17 +20,6 @@
 export type AddressTarget = { kind: "path"; path: string } | { kind: "error"; message: string };
 
 const ONLY_PREVIEW = "미리보기 서버 안의 주소만 열 수 있습니다";
-
-/** `/a/b?state=x` → route + state, the shape the pane speaks. */
-export function splitPath(path: string): {
-  route: string;
-  state: string | null;
-} {
-  const query = path.split("?")[1] ?? "";
-  const route = path.slice(0, path.length - (query ? query.length + 1 : 0));
-  const state = new URLSearchParams(query).get("state");
-  return { route, state: state && state !== "" ? state : null };
-}
 
 export function parseAddress(
   raw: string,
@@ -51,7 +41,7 @@ export function parseAddress(
   }
 
   const path = input.startsWith("?")
-    ? `${splitPath(opts.currentPath).route}${input}`
+    ? `${opts.currentPath.split("?")[0]}${input}`
     : input.startsWith("/")
       ? input
       : `/${input}`;

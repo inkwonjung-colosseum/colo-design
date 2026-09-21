@@ -17,9 +17,10 @@ export interface PreviewOpenOptions {
 }
 
 /**
- * What `open` answers. `settled` false means the page loaded but the screen's
- * own `data-state` marker never appeared — the check that follows may be of a
- * half-built screen, and the gate says so instead of pretending.
+ * What `open` answers. `settled` false means the document never fully
+ * loaded — the check that follows may be of a half-built screen, and the
+ * gate says so instead of pretending. (2026-09-21 상태 축 철거: 화면마다
+ * 표식을 기다리던 settle 은 물러나고 "문서가 완전히 로드됨" 만이 기준이다.)
  */
 export type PreviewOpenResult = { ok: true; settled: boolean } | { ok: false; reason: string };
 
@@ -46,12 +47,8 @@ export interface PreviewCapture {
  * it with a fake.
  */
 export interface PreviewDriver {
-  /** Show `<baseUrl><route>` (and `?state=` when a state is named). */
-  open(
-    route: string,
-    state: string | null,
-    options?: PreviewOpenOptions,
-  ): Promise<PreviewOpenResult>;
+  /** Show `<baseUrl><route>` — 주소의 쿼리는 그냥 주소의 일부로 전달한다 (2026-09-21 상태 축 철거). */
+  open(route: string, options?: PreviewOpenOptions): Promise<PreviewOpenResult>;
   /**
    * One picture of the window, downscaled so its long edge is `longEdge`.
    * Scaling happens AT capture time — a re-encode after the fact bakes one

@@ -1,16 +1,16 @@
 /**
- * Browser-level check of the status rail and its grouped conversations,
- * fully offline.
+ * Browser-level check of the status rail, fully offline.
  *
  * Two projects are created over the daemon socket (the same WebSocket the
- * browser uses), then the test drives the rail the planner uses: every
- * project's conversations grouped by state (확인 대기 · 작업 중 · 완료) with
- * the project as a tail chip, the project jump rows beneath them, the active
- * mark, a one-click jump into another project's conversation (the workspace
- * switches while the old project's preview stays warm on its port), a
- * background turn reading 작업 중 → 다시 조용해짐, the 완료 group's five-row
- * budget turning overflow into a count row, and the folded rail's
- * conversation popover.
+ * browser uses), then the test drives the rail the planner uses: the live
+ * zone up top (확인 대기 · 작업 중 across projects, the project as a tail
+ * chip), each project's finished conversations folded under its own row,
+ * the active project open by default, the fold hiding and restoring rows,
+ * the active mark, a one-click jump into another project's conversation
+ * (the workspace switches while the old project's preview stays warm on
+ * its port), a background turn reading 작업 중 → 다시 조용해짐, the
+ * per-project tree budget turning overflow into a count row that opens
+ * the project-scoped palette, and the folded rail's conversation popover.
  *
  * Prerequisites: `pnpm build` (daemon + web dist)
  */
@@ -315,6 +315,10 @@ async function main() {
     const refundsPort = Number(new URL(refundsPreview.previewUrl).port);
     await page.locator(".node", { hasText: "결제" }).locator(".node__row").click();
     await page.locator(".planner__project", { hasText: "결제" }).waitFor({ timeout: 15000 });
+    // The activation click leaves the pointer resting on the row, where its
+    // hover card hangs over the tree rows that just unfolded beneath it —
+    // move off before reaching for the child row.
+    await page.mouse.move(40, 400);
     check("the header switches the moment a row is clicked", true);
     const paymentsStatus = await waitReady("the 결제 clone after the switch");
     const paymentsPort = Number(new URL(paymentsStatus.previewUrl).port);
@@ -331,12 +335,18 @@ async function main() {
       .waitFor({ timeout: 30000 });
     check("the preview column serves the new project's fixture port", true, `port ${paymentsPort}`);
 
-    // --- d. one conversation per project, both visible at once -------------
-    // Back to 환불: the tree's point is that 결제's conversation stays visible
-    // while nobody is looking at that project.
+    // --- d. a folded project keeps its history, folded ----------------------
+    // Back to 환불: the switch to 결제 opened its tree, so its rows showed.
+    // Folding is the tree's own move now — fold 결제 and its finished
+    // conversations leave the screen without leaving the project; unfold
+    // and two projects' rows stand at once.
     await page.locator(".node", { hasText: "환불" }).locator(".node__row").click();
     await page.locator(".planner__project", { hasText: "환불" }).waitFor({ timeout: 15000 });
     await waitReady("the 환불 clone after the second switch");
+    await page.locator(".node", { hasText: "결제" }).locator(".node__caret").click();
+    await leaf(paymentsSession).waitFor({ state: "detached", timeout: 15000 });
+    check("a folded project keeps its finished rows out of sight", true);
+    await page.locator(".node", { hasText: "결제" }).locator(".node__caret").click();
     await leaf(paymentsSession).waitFor({ timeout: 30000 });
     check(
       "two projects' conversations show in the tree at the same time",
@@ -413,20 +423,21 @@ async function main() {
     await titleInput.fill("회원 화면 작업");
     await page.keyboard.press("Enter");
     await page.locator(".thread__title", { hasText: "회원 화면 작업" }).waitFor({ timeout: 5000 });
-    // --- g. the grouped rail stands again after a reload --------------------
+    // --- g. the two zones stand again after a reload ------------------------
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.locator(".planner__main").waitFor({ timeout: 30000 });
-    await page.locator(".gsec", { hasText: "완료" }).waitFor({ timeout: 30000 });
     await leaf(paymentsSecond).waitFor({ timeout: 30000 });
     await page.locator(".node", { hasText: "환불" }).waitFor({ timeout: 30000 });
     check(
-      "the groups and the project rows survive a reload",
+      "the folds and the project rows survive a reload",
       (await page.locator(".leaf[data-thread-id]").count()) >= 2,
       (await page.locator(".leaf__title").allInnerTexts()).join(", "),
     );
 
     // --- h. the row menu renames a project in place ------------------------
+    // ··· 는 hover 까지 visibility:hidden — pointer 를 행에 먼저 세운다.
     const paymentsRow = page.locator(".node", { hasText: "결제" });
+    await paymentsRow.locator(".node__rowwrap").hover();
     await paymentsRow.locator(".node__menu-btn").click();
     await paymentsRow.getByRole("menuitem", { name: "이름 바꾸기" }).click();
     await page.getByLabel("프로젝트 이름").fill("결제 시스템");
@@ -442,6 +453,7 @@ async function main() {
     //     The box lives on the project row, not in 설정 —
     //     and what it saves is what the next conversation is told.
     const guarded = page.locator(".node", { hasText: "결제 시스템" });
+    await guarded.locator(".node__rowwrap").hover();
     await guarded.locator(".node__menu-btn").click();
     await guarded.getByRole("menuitem", { name: "지켜 줄 것" }).click();
     await page.locator('[role="dialog"][aria-label="지켜 줄 것"]').waitFor({ timeout: 10000 });
@@ -462,6 +474,7 @@ async function main() {
     );
     // 다시 열면 적어 둔 것이 그대로 있어야 한다 — 상자가 자기 값을 잊으면
     // 사용자는 매번 처음부터 쓴다.
+    await guarded.locator(".node__rowwrap").hover();
     await guarded.locator(".node__menu-btn").click();
     await guarded.getByRole("menuitem", { name: "지켜 줄 것" }).click();
     check(
@@ -471,30 +484,30 @@ async function main() {
     );
     await page.getByRole("button", { name: "취소" }).click();
 
-    // --- h2. overflow past the 완료 budget becomes a count row -------------
-    // The 완료 group holds five rows across every project; the rest must
-    // not read as gone — the count row names them and opens the palette,
-    // unscoped now that the rows themselves come from every project.
-    // The conventions-prep thread (연결 준비) may still be around — it is a
-    // conversation too, so the count row's number absorbs it. What this step
-    // proves is the cap (5 rows) plus a count row that names the overflow,
-    // whatever the prep leaf does to the exact figure.
+    // --- h2. overflow past a project's tree budget becomes a count row -----
+    // A project's tree holds five finished conversations; the rest must not
+    // read as gone — the count row names them and opens the palette scoped
+    // to that project (its history is its own scope now). The
+    // conventions-prep thread may still be around — it is a conversation
+    // too, so the number absorbs it. What this step proves is the
+    // per-project cap plus a count row into the project's scope.
     for (let extra = 0; extra < 4; extra += 1) await call({ type: "session.create" });
-    const moreRow = page.locator(".leaf--more");
+    const paymentsNode = page.locator(".node", { hasText: "결제 시스템" });
+    const moreRow = paymentsNode.locator(".leaf--more");
     await moreRow.waitFor({ timeout: 30000 });
     check(
-      "a sixth conversation turns into a count row, not silence",
-      (await page.locator(".leaf[data-thread-id]").count()) === 5 &&
+      "a sixth finished conversation turns into a count row, not silence",
+      (await paymentsNode.locator(".leaf[data-thread-id]").count()) === 5 &&
         /이전 대화 \d+개 더 보기/.test(await moreRow.innerText()),
       await moreRow.innerText(),
     );
     await moreRow.click();
     await page.locator(".palette__panel").waitFor({ timeout: 10000 });
     check(
-      "the count row opens the palette unscoped",
+      "the count row opens the palette scoped to the project",
       (await page.locator(".palette__search").getAttribute("placeholder")) ===
-        "대화, 화면, 프로젝트, 명령 찾기" && (await page.locator(".palette__row").count()) >= 6,
-      `rows: ${await page.locator(".palette__row").count()}`,
+        "이 프로젝트의 대화 찾기",
+      (await page.locator(".palette__search").getAttribute("placeholder")) ?? "",
     );
     await page.keyboard.press("Escape");
     await page.locator(".palette__panel").waitFor({ state: "detached", timeout: 10000 });
@@ -505,6 +518,7 @@ async function main() {
 
     // --- i. removing from the list keeps the folders -----------------------
     const workRootsBefore = (await call({ type: "project.list" }, 15000)).projects.length;
+    await paymentsRow.locator(".node__rowwrap").hover();
     await paymentsRow.locator(".node__menu-btn").click();
     await paymentsRow.getByRole("menuitem", { name: "프로젝트 지우기" }).click();
     const removeDialog = page.locator('[role="dialog"][aria-label="프로젝트 지우기"]');

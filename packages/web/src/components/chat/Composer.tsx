@@ -376,7 +376,7 @@ export function Composer({
   /** 테이프의 `고쳐서 다시 보내기`(요청 버블·중단 카드)가 컴포저의
       restore 손을 등록받는다 — 말의 진실은 컴포저 한 곳에 있다. */
   registerResend?: (fn: ((text: string) => void) | null) => void;
-  /** 빈 대화의 예시 칩이 빌리는 손(P3-2) — 덮어쓰고 포커스한다. */
+  /** 빈 대화의 예시 문장 창이 빌리는 손(P3-2) — 덮어쓰고 포커스한다. */
   registerPrompt?: (fn: ((text: string) => void) | null) => void;
   /**
    * 개발 실행인가(`DaemonStatus.dev`) — `/` 슬래시 자동완성은 여기서만 선다.
@@ -849,7 +849,7 @@ export function Composer({
   };
 
   /**
-   * 빈 대화의 예시 칩이 빌리는 손(P3-2) — `restore` 와 달리 **덮어쓴다**.
+   * 빈 대화의 예시 문장 창이 빌리는 손(P3-2) — `restore` 와 달리 **덮어쓴다**.
    * 되살리기는 사람이 쓰던 말을 지키려고 앞에 덧붙이지만, 예시는 "이렇게
    * 말하면 됩니다" 의 본보기라 덧붙이면 두 문장이 한 턴으로 나간다.
    */

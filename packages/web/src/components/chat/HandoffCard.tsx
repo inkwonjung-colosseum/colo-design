@@ -52,6 +52,19 @@ export function HandoffCard({
   const [body, setBody] = useState(proposedBody);
   const [error, setError] = useState<string | null>(null);
   const [drafting, setDrafting] = useState(false);
+  /** 첫 넘기기 코치 — 넘긴 뒤 무엇을 기다리면 되는지의 세 걸음. 핀 코치와
+      같은 한 번 패턴(localStorage 가 진실): 닫기를 누르거나 넘기기가
+      성공하면 다시 오지 않는다. 실제로 넘겨 본 사람에게는 소음이고, 검토
+      중의 다음 말은 스테이지 줄과 상태 칩이 이미 하고 있기 때문이다.
+      지움은 두 자리(닫기·성공)에서 같은 세 줄로 인라인 — 핀 코치의
+      선례와 한 모양이다. */
+  const [coachOpen, setCoachOpen] = useState(() => {
+    try {
+      return localStorage.getItem("colo-design.handoff-coach-seen") !== "1";
+    } catch {
+      return true;
+    }
+  });
   /** Whether the text on screen is the agent.s — said out loud on the preview. */
   const [drafted, setDrafted] = useState(false);
   /** The daemon's own appended sections — the preview's 자동 첨부. */
@@ -100,7 +113,7 @@ export function HandoffCard({
         // The extras answer even when the draft itself could not — a pin
         // history and the capture count are mechanical facts, not prose.
         if (draft.extras) setExtras(draft.extras);
-        if (draft.source !== "claude") return;
+        if (draft.source !== "machine") return;
         if (draft.title && !titleTouched.current) setTitle(draft.title);
         if (draft.body && !bodyTouched.current) setBody(mergeHandoffBody(draft.body));
         if (draft.title || draft.body) setDrafted(true);
@@ -132,6 +145,13 @@ export function HandoffCard({
         body: body.trim() || undefined,
         sessionId,
       });
+      // 넘겨 본 사람에게 코치는 다시 오지 않는다 — 닫기와 같은 몫.
+      setCoachOpen(false);
+      try {
+        localStorage.setItem("colo-design.handoff-coach-seen", "1");
+      } catch {
+        // 저장 실패는 치명적이지 않다 — 다음 실행에 한 번 더 보일 뿐.
+      }
     } catch (e) {
       // The card stays open on purpose: the reason is usually something the
       // planner can answer (a gate to fix, a token to renew) and then retry.
@@ -184,6 +204,30 @@ export function HandoffCard({
           아래가 개발자에게 갈 모습입니다. 읽어 보고 그대로 넘기면 됩니다 — 고치고 싶으면 아래 직접
           고치기를 열어 주세요.
         </p>
+
+        {coachOpen && !handedOff && !running && (
+          <div className="notice notice--info handoff__coach">
+            <span className="notice__text">
+              처음 넘기기예요 — 넘기면 ① 회사 저장소에 확인 요청이 열리고, ② 개발자가 검토한 뒤
+              합쳐지면 상태 칩이 「반영됨」이 됩니다. 코멘트가 달리면 이 대화로 다시 돌아와요.
+            </span>
+            <button
+              type="button"
+              className="ghost"
+              aria-label="처음 넘기기 안내 닫기"
+              onClick={() => {
+                setCoachOpen(false);
+                try {
+                  localStorage.setItem("colo-design.handoff-coach-seen", "1");
+                } catch {
+                  // 저장 실패는 치명적이지 않다 — 다음 실행에 한 번 더 보일 뿐.
+                }
+              }}
+            >
+              닫기
+            </button>
+          </div>
+        )}
 
         {stageWorthSaying && diffStatus && (
           <div

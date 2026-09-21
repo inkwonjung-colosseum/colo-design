@@ -73,11 +73,7 @@ abstract class CdpPreviewDriver implements PreviewDriver {
     viewport: PreviewViewport,
     colorScheme: "light" | "dark",
   ): Promise<void>;
-  abstract open(
-    route: string,
-    state: string | null,
-    options?: PreviewOpenOptions,
-  ): Promise<PreviewOpenResult>;
+  abstract open(route: string, options?: PreviewOpenOptions): Promise<PreviewOpenResult>;
   abstract destroy(): Promise<void>;
 
   /** 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않는다. */
@@ -101,15 +97,12 @@ abstract class CdpPreviewDriver implements PreviewDriver {
 
   /**
    * `loadURL` 이 끝난 것은 문서가 왔다는 뜻일 뿐이다 (PLAN D61): SPA 는 그
-   * 뒤에 라우팅하고 `?state=` 를 읽는다. 문서가 완전해지고, 상태를 요청했으면
-   * 그 표식(`data-state`)이 나타날 때까지 기다린다 — 못 기다리면 false 다.
+   * 뒤에 라우팅한다. 문서가 완전히 로드되기를 기다린다 — 못 기다리면
+   * false 다(2026-09-21 상태 축 철거 — 표식 대기는 사라졌다).
    */
-  protected async settle(state: string | null): Promise<boolean> {
-    const selector = state ? `[data-state=${JSON.stringify(state)}]` : null;
+  protected async settle(): Promise<boolean> {
     const probe = `(function () {
-      if (document.readyState !== "complete") return false;
-      const sel = ${JSON.stringify(selector)};
-      return sel === null ? true : !!document.querySelector(sel);
+      return document.readyState === "complete";
     })()`;
     const deadline = Date.now() + SETTLE_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -304,11 +297,7 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
     this.applied = { viewport, colorScheme };
   }
 
-  async open(
-    route: string,
-    state: string | null,
-    options?: PreviewOpenOptions,
-  ): Promise<PreviewOpenResult> {
+  async open(route: string, options?: PreviewOpenOptions): Promise<PreviewOpenResult> {
     let url: URL;
     try {
       url = new URL(route, this.baseUrl);
@@ -326,7 +315,6 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
         reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
       };
     }
-    if (state) url.searchParams.set("state", state);
     // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
     this.consoleHistory.length = 0;
     const window = await this.ensureWindow();
@@ -339,7 +327,7 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
         reason: `화면을 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    return { ok: true, settled: await this.settle(state) };
+    return { ok: true, settled: await this.settle() };
   }
 
   async destroy(): Promise<void> {
@@ -832,7 +820,7 @@ class PaneBrowserDriver implements BrowserDriver {
     pane.openTab(url);
     const dest = await this.target();
     if (dest.contents === before) await moved;
-    const settled = await this.settleOn(dest.contents, null);
+    const settled = await this.settleOn(dest.contents);
     return { settled, snapshot: await this.axTree(dest.contents, dest.state) };
   }
 
@@ -1423,16 +1411,13 @@ class PaneBrowserDriver implements BrowserDriver {
   }
 
   /**
-   * (07bd3bf 이식) `loadURL` 이 끝난 것은 문서가 왔다는 뜻일 뿐이다: SPA 는 그
-   * 뒤에 라우팅한다. 문서가 완전해지고, 표식(`data-state`)을 요청했으면 그것이
-   * 나타날 때까지 기다린다 — 못 기다리면 false 다.
+   * (07bd3bf 이식) `loadURL` 이 끝난 것은 문서가 왔다는 뜻일 뿐이다: SPA 는
+   * 그 뒤에 라우팅한다. 문서가 완전히 로드되기를 기다린다(2026-09-21 상태
+   * 축 철거 — 표식 대기는 사라졌다).
    */
-  private async settleOn(contents: WebContents, marker: string | null): Promise<boolean> {
-    const selector = marker ? `[data-state=${JSON.stringify(marker)}]` : null;
+  private async settleOn(contents: WebContents): Promise<boolean> {
     const probe = `(function () {
-      if (document.readyState !== "complete") return false;
-      const sel = ${JSON.stringify(selector)};
-      return sel === null ? true : !!document.querySelector(sel);
+      return document.readyState === "complete";
     })()`;
     const deadline = Date.now() + SETTLE_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -1466,7 +1451,7 @@ class PaneBrowserDriver implements BrowserDriver {
       contents.on("did-navigate-in-page", onNav);
     });
     await moved;
-    return this.settleOn(contents, null);
+    return this.settleOn(contents);
   }
 
   // ── 캡처 어댑터의 손잡이 (같은 모듈의 PaneCaptureDriver 만 부른다) ────────
@@ -1501,11 +1486,11 @@ class PaneBrowserDriver implements BrowserDriver {
     this.state.console.length = 0;
   }
 
-  /** 화면의 페이지에서 문서·표식을 기다린다 — 붙어 있지 않으면 false 다. */
-  async settleActive(marker: string | null): Promise<boolean> {
+  /** 화면의 페이지에서 문서 완료를 기다린다 — 붙어 있지 않으면 false 다. */
+  async settleActive(): Promise<boolean> {
     const contents = this.state.contents;
     if (!contents || contents.isDestroyed()) return false;
-    return this.settleOn(contents, marker);
+    return this.settleOn(contents);
   }
 }
 
@@ -1524,7 +1509,7 @@ class PaneCaptureDriver implements PreviewDriver {
     private readonly baseUrl: string,
   ) {}
 
-  async open(route: string, state: string | null): Promise<PreviewOpenResult> {
+  async open(route: string): Promise<PreviewOpenResult> {
     let url: URL;
     try {
       url = new URL(route, this.baseUrl);
@@ -1541,7 +1526,6 @@ class PaneCaptureDriver implements PreviewDriver {
         reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
       };
     }
-    if (state) url.searchParams.set("state", state);
     const pane = this.browser.paneNow();
     if (!pane) {
       return {
@@ -1563,7 +1547,7 @@ class PaneCaptureDriver implements PreviewDriver {
     // driveTo 가 다른 origin 의 페이지를 올렸을 수 있다 — 새 페이지에 다시 붙는다.
     const second = await this.browser.attachActive();
     this.attachedByMe ||= second?.fresh === true;
-    return { ok: true, settled: await this.browser.settleActive(state) };
+    return { ok: true, settled: await this.browser.settleActive() };
   }
 
   async screenshot(options?: { longEdge?: number }): Promise<PreviewCapture> {

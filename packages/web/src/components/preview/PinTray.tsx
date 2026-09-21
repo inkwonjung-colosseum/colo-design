@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { PinAttachment, PinIntent } from "../../hooks/usePins";
-import { stateLabel } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { ChevronDownIcon } from "../icons";
 import { Tip } from "../shell/Tip";
@@ -79,7 +78,9 @@ export function PinTray({
       <div className="pintray__head">
         <span className="pintray__title">{head}</span>
         {/* 되돌리기 없다 — 핀은 다시 찍는 게 더 싸다. 그래도 전체를 한
-            클릭에 버리지는 않는다: 첫 클릭이 묻고, 3초 안의 두 번째가 지운다. */}
+            클릭에 버리지는 않는다: 첫 클릭이 묻고, 3초 안의 두 번째가 지운다.
+            묻는 쪽이 유예를 말한다. 라벨이 바뀌는 것도 낭독기에 닿는다 —
+            live 칸은 늘 있는 것이어야 소식이 되므로 span 이 몸이다. */}
         <button
           type="button"
           className="ghost pintray__clear"
@@ -93,7 +94,7 @@ export function PinTray({
             }
           }}
         >
-          {clearArmed ? "정말 모두 지웁니다" : "모두 지우기"}
+          <span aria-live="polite">{clearArmed ? "다시 누르면 모두 지웁니다" : "모두 지우기"}</span>
         </button>
         {fold && (
           <button
@@ -112,50 +113,42 @@ export function PinTray({
           {pins.map((pin, index) => {
             const n = numberStart + index;
             return (
-              <li
-                key={pin.id}
-                className="pintray__row"
-                onClick={(event) => {
-                  // 메모 입력과 × 의 클릭은 그것 자체의 동작이다 — 나머지는 배지를 가리킨다.
-                  if ((event.target as HTMLElement).closest("input, button")) return;
-                  onPinFocus(pin.id);
-                }}
-              >
-                <span className="pintray__num" aria-hidden="true">
-                  {n}
-                </span>
-                {pin.shot ? (
-                  <img
-                    className="pintray__thumb"
-                    src={`data:${pin.shot.mediaType};base64,${pin.shot.data}`}
-                    alt=""
-                  />
-                ) : pin.element.kind === "region" ? (
-                  // 영역 핀 — 찍은 좌표가 있을 뿐 요소는 없다. 점선
-                  // 사각이 그 경계를, 라벨이 그 크기를 말한다.
-                  <span className="pintray__thumb pintray__thumb--region" aria-hidden="true" />
-                ) : (
-                  <span className="pintray__thumb pintray__thumb--empty" aria-hidden="true">
-                    —
+              <li key={pin.id} className="pintray__row">
+                {/* 행의 몸통은 버튼이다 — 배지 가리키기가 포인터의 전유물이지
+                    않게. 의도 칩·메모·지우기는 각자의 손으로 남는다. */}
+                <button
+                  type="button"
+                  className="pintray__focusbtn"
+                  aria-label={`${n}번 핀을 화면에서 가리키기`}
+                  onClick={() => onPinFocus(pin.id)}
+                >
+                  <span className="pintray__num" aria-hidden="true">
+                    {n}
                   </span>
-                )}
-                <span className="pintray__what">
-                  <span className="pintray__label">
-                    {pin.element.kind === "region"
-                      ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
-                      : pin.element.text || pin.element.component}
+                  {pin.shot ? (
+                    <img
+                      className="pintray__thumb"
+                      src={`data:${pin.shot.mediaType};base64,${pin.shot.data}`}
+                      alt=""
+                    />
+                  ) : pin.element.kind === "region" ? (
+                    // 영역 핀 — 찍은 좌표가 있을 뿐 요소는 없다. 점선
+                    // 사각이 그 경계를, 라벨이 그 크기를 말한다.
+                    <span className="pintray__thumb pintray__thumb--region" aria-hidden="true" />
+                  ) : (
+                    <span className="pintray__thumb pintray__thumb--empty" aria-hidden="true">
+                      —
+                    </span>
+                  )}
+                  <span className="pintray__what">
+                    <span className="pintray__label">
+                      {pin.element.kind === "region"
+                        ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
+                        : pin.element.text || pin.element.component}
+                    </span>
+                    <span className="pintray__where">{titleFor(pin.screen) ?? pin.screen}</span>
                   </span>
-                  <span className="pintray__where">
-                    {/* 레포가 새긴 출처 — path:line 의 파일 부분만 회색으로. */}
-                    {pin.element.source && (
-                      <span className="pintray__source">
-                        {pin.element.source.replace(/:\d+$/, "")}
-                      </span>
-                    )}
-                    {titleFor(pin.screen) ?? pin.screen}
-                    {pin.state !== null && <> · {stateLabel(pin.state)}</>}
-                  </span>
-                </span>
+                </button>
                 {/* 이 핀이 바라는 것: 고치라는 말인가, 설명을 원하는 말인가. */}
                 <span className="pintray__intent" aria-label={`${n}번 핀 의도`} role="group">
                   <Tip label="이 요소를 고쳐 달라는 핀입니다">

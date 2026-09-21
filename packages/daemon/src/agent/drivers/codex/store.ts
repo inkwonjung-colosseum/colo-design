@@ -251,7 +251,7 @@ export async function collectPrompts(lines: Wire[]): Promise<StoredPrompt[]> {
  * adjacently and in either order — so each message is emitted once and the
  * twin suppressed by comparing against the tail of `out`. Reading both is
  * what keeps the replayed transcript in step with `collectPrompts`, which
- * also counts either envelope: a prompt the rewind UI can number must be a
+ * also counts either envelope: a prompt the branch UI can number must be a
  * prompt the transcript shows. `item_completed` additionally carries the
  * item kinds `response_item` never persists (commandExecution, fileChange,
  * mcpToolCall) — PascalCase there, camelCase on the wire.

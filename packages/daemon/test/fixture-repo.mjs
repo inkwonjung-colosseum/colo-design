@@ -77,28 +77,19 @@ const INDEX_HTML = `<!doctype html>
 <html lang="ko">
 <head><meta charset="utf-8"><title>연결 레포 미리보기</title></head>
 <body>
-  <!-- 레포 브리지 계약의 참조 구현 (PLAN D72): 화면 선언 + 이동. 도구의 핀
-       오버레이는 preload 가 주입하므로 여기 없다. -->
-  <main id="app"><div data-screen="member/MemberList" data-state="default">
+  <!-- 레포 브리지 계약의 참조 구현 (PLAN D72): 이동(2026-09-21 레포 마커
+       철거 — 화면 신원은 경로가 곧 말한다). 도구의 핀 오버레이는 preload 가
+       주입하므로 여기 없다. -->
+  <main id="app"><div>
     <h1>회원 관리</h1>
     <p>연결 레포가 렌더하는 미리보기입니다.</p>
     <table><tbody>
-      <tr><td data-component="MemberNameCell">홍길동</td><td><button data-component="DetailButton">상세</button></td></tr>
-      <tr><td data-component="MemberNameCell">김철수</td><td><button data-component="DetailButton">상세</button></td></tr>
+      <tr><td>홍길동</td><td><button>상세</button></td></tr>
+      <tr><td>김철수</td><td><button>상세</button></td></tr>
     </tbody></table>
   </div></main>
   <script>
     (function () {
-      var applyState = function (state) {
-        var wrapper = document.querySelector("[data-screen]");
-        wrapper.setAttribute("data-state", state);
-        var rows = wrapper.querySelectorAll("tbody tr");
-        for (var i = 0; i < rows.length; i++) rows[i].style.display = state === "empty" ? "none" : "";
-      };
-      // 도구는 평범한 URL 이동으로도 화면 상태를 정한다(?state=) — 문서화된
-      // 계약이라 레퍼런스 구현이 그 자리에서 읽는다. 메시지 경로와 같은 규칙.
-      var initial = new URLSearchParams(location.search).get("state");
-      if (initial) applyState(initial);
       if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
       var post = function (envelope) {
         if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
@@ -109,11 +100,10 @@ const INDEX_HTML = `<!doctype html>
         var data = event.data || {};
         if (data.type !== "colo-design.navigate" || typeof data.route !== "string") return;
         if (data.route !== "/member/MemberList") return;
-        var state = typeof data.state === "string" && data.state ? data.state : "default";
         // 실제 브리지는 클라이언트 라우팅을 한다 — 도구의 뷰는
-        // did-navigate-in-page 로 그 자리를 따라간다.
-        history.pushState(null, "", data.route + (state !== "default" ? "?state=" + state : ""));
-        applyState(state);
+        // did-navigate-in-page 로 그 자리를 따라간다(2026-09-21 상태 축
+        // 철거 — 봉투는 경로만 실는다).
+        history.pushState(null, "", data.route);
       });
     })();
   </script>

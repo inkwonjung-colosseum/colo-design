@@ -251,7 +251,7 @@ export function QuestionCard({
   });
 
   return (
-    <div className="card card--question">
+    <div className="card card--question" role="alert">
       <div className="card__title">
         <span className="card__badge">
           <SparkIcon size={14} />
