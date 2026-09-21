@@ -35,6 +35,7 @@ import {
   RefreshIcon,
   ThemeIcon,
 } from "../icons";
+import { EscalationForm } from "../onboarding/EscalationForm";
 import { GitHubTokenForm } from "../onboarding/GitHubTokenForm";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -179,7 +180,7 @@ type CategoryId = (typeof CATEGORIES)[number]["id"];
 const CATEGORY_KEYWORDS: Record<CategoryId, string> = {
   screen: "테마 배율 글자 크기 화면 크기 다크모드 다크 모드 밝기 ui scale font",
   providers: "프로바이더 에이전트 모델 생각 시간 노력 effort provider claude codex 기본",
-  chat: "대화 생각 과정 작업 과정 보기 도구 컴포저 임시 저장 초안",
+  chat: "대화 생각 과정 작업 과정 보기 도구 컴포저 임시 저장 초안 턴 도중 보내기 대기 줄 바로 실어 steer",
   behavior: "동작 보내기 키 Enter 링크 열기",
   notice: "알림 소리 배지 완료 확인 요청 데스크톱 notification",
   connection: "연결 깃허브 github 토큰 레포 주소 저장 위치 계정 token repo url",
@@ -317,6 +318,82 @@ function Choice<T extends string>({
           </option>
         ))}
       </select>
+    </Field>
+  );
+}
+
+/** 저장 메모 담당 — 빈 메모의 커밋 문장과 넘기기 초안을 쓰는 에이전트.
+    대화의 프로바이더(새 대화 프로바이더 행)와 무관한 기계의 잔일이라
+    설정도 데몬에 산다(machine.json · machine.set). 후보는 oneShot 계약을
+    구현한 드라이버뿐이고, 지금 담당은 상태의 machineProviderActive 가
+    말한다 — 고른 값이 못 쓰이면 그 사실까지 한 줄로. */
+function MachineProviderField({ daemon, disabled }: { daemon: Daemon; disabled: boolean }) {
+  const status = daemon.status;
+  const candidates = (status?.providers ?? []).filter((p) => p.oneShot);
+  const configured = status?.machineProvider ?? null;
+  const active = status?.machineProviderActive ?? null;
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const choose = (raw: string) => {
+    if (disabled || pending || raw === (configured ?? "auto")) return;
+    setPending(true);
+    setError(null);
+    daemon.api
+      .machineSet(raw === "auto" ? null : raw)
+      .then(() => daemon.api.refreshStatus())
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setPending(false));
+  };
+
+  const labelOf = (id: string | null) =>
+    id === null ? null : ((status?.providers ?? []).find((p) => p.id === id)?.label ?? id);
+
+  // 지금 담당의 한 줄 — 설정과 자동을 구분해 말하고, 고른 값이 못 쓰이는
+  // 동안엔 대체 중임까지 말한다. 상태가 유일한 진실이라 낙관치는 없다.
+  const activeLine =
+    active === null
+      ? "지금: 쓸 수 있는 에이전트가 없어 메모를 건너뜁니다"
+      : `지금: ${labelOf(active.id)} (${active.origin === "setting" ? "내 설정" : "자동"})${
+          configured !== null && active.id !== configured
+            ? " — 고른 에이전트를 지금 쓸 수 없어 자동으로 대체 중"
+            : ""
+        }`;
+
+  return (
+    <Field
+      wide
+      label="저장 메모 담당"
+      hint="빈 메모의 저장과 넘기기 초안을 어느 에이전트가 쓰지 정합니다. 자동이면 설치된 것 중 첫 번째를 씁니다 — 대화의 프로바이더와는 무관합니다."
+    >
+      <span className="settings__stack">
+        <select
+          aria-label="저장 메모 담당"
+          value={configured ?? "auto"}
+          disabled={disabled || pending}
+          onChange={(event) => choose(event.target.value)}
+        >
+          <option value="auto">자동 (권장)</option>
+          {candidates.map((p) => (
+            <option key={p.id} value={p.id} disabled={!p.available}>
+              {p.label}
+              {p.available ? "" : ` — ${p.reason ?? "설치 필요"}`}
+            </option>
+          ))}
+        </select>
+        {pending && (
+          <span className="hint" role="status">
+            바꾸는 중…
+          </span>
+        )}
+        {error !== null ? (
+          <span className="hint" role="alert">
+            {error}
+          </span>
+        ) : (
+          <span className="hint">{activeLine}</span>
+        )}
+      </span>
     </Field>
   );
 }
@@ -482,8 +559,9 @@ export function SettingsDialog({
     loadModelCatalog(settings.chat.provider).length > 0
       ? loadModelCatalog(settings.chat.provider)
       : (status?.modelsByProvider?.[settings.chat.provider] ?? []);
-  /** 누른 프로바이더 — 아래 답변 방식·생각 시간이 누구의 핀을 고치는지 판의
-      머리가 이름으로 말한다. 연결 전엔 목록이 없어 id로 불린다. */
+  /** 누른 프로바이더 — 기본 모델·생각 시간 고르개(행 안의 펼침)가 누구의
+      핀을 고치는지가 이 이름으로 판명된다. 연결 전엔 목록이 없어 id로
+      불린다. */
   const pickedProvider = status?.providers?.find((p) => p.id === settings.chat.provider);
   const providerRows = status?.providers ?? [];
   /** 고를 수 있는 행 — 켜져 있고(available) 스위치가 켜진 프로바이더만
@@ -511,6 +589,103 @@ export function SettingsDialog({
     onChatChange(switchProviderPatch(settings.chat, target.id));
     providerGroup.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[to]?.focus();
   };
+  // 고침 버튼(설치·로그인)의 몫 — 온보딩의 run 과 한 규칙이다. 데몬은
+  // {started, guidance} 로만 답하고, mac 설치 창은 없으니 이 안내 한 줄이
+  // 누름의 유일한 결과다. 행이 기억하는 건 어느 행의 말인지뿐이다.
+  const [fixBusy, setFixBusy] = useState<string | null>(null);
+  const [fixNotice, setFixNotice] = useState<{
+    id: string;
+    started: boolean;
+    guidance: string;
+  } | null>(null);
+  /** 고침은 claude 만이 두는 길이다 — fix 종류(install-claude·login-claude)가
+      그 둘뿐이고, 나머지 에이전트의 설치·로그인 안내는 드라이버의 reason 줄이
+      말한다. 끝나면 다시 검사해 status 를 끌어당긴다 — 행이 스스로
+      준비됨으로 바뀌어야 버튼이 성공한 걸 읽을 수 있다. */
+  const runProviderFix = async (id: string, kind: "install-claude" | "login-claude") => {
+    setFixBusy(id);
+    setFixNotice(null);
+    try {
+      const reply = (await daemon.api.onboardingFix(kind)) as unknown;
+      if (reply !== null && typeof reply === "object" && "guidance" in reply) {
+        setFixNotice({
+          id,
+          started: !("started" in reply) || reply.started !== false,
+          guidance: String(reply.guidance),
+        });
+      }
+      await daemon.api.onboardingCheck(id);
+    } catch (error) {
+      setFixNotice({
+        id,
+        started: false,
+        guidance: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setFixBusy(null);
+    }
+    await daemon.api.refreshStatus();
+  };
+  /** 누른 프로바이더의 기본값 고르개 두 줄 — 행 안의 펼침과 (행이 하나도
+      없는 연결 전) 목록 밑의 예비 판이 같은 것을 쓴다. "기본 모델"은
+      컴포저 칩의 어휘(모델·생각)를 따르고, '방식'이라는 말은 확인 방식에
+      양보한다 — 같은 단어가 두 뜻으로 쓰이지 않게. */
+  const defaultsEditor = (
+    <>
+      <Choice<string>
+        label="기본 모델"
+        hint={
+          models.length > 0
+            ? "어떤 모델이 답할지 고릅니다"
+            : "대화를 한 번 시작하면 고를 수 있는 목록이 채워집니다"
+        }
+        value={settings.chat.model ?? ""}
+        options={[
+          // 카탈로그가 없는 동안의 임시 행 — 고를 수 없고, 첫 대화가
+          // 목록을 채우면 사라진다. '자동' 행은 없다: 비어 있는 자리는
+          // 씨앗(useSessions)이 구체적인 한 행으로 채운다.
+          ...(models.length === 0
+            ? [
+                {
+                  value: "",
+                  label: "대화를 한 번 시작하면 목록이 채워집니다",
+                  disabled: true,
+                },
+              ]
+            : []),
+          ...modelOptions(models, modelRowOf(models, settings.chat.model)).map((option) => ({
+            value: option.value ?? "",
+            label: option.label,
+            ...(option.hint ? { hint: option.hint } : {}),
+          })),
+        ]}
+        onChange={(model) => onChatChange({ model })}
+      />
+      <Choice<string>
+        label="생각 시간"
+        hint="오래 생각할수록 꼼꼼하고, 그만큼 느립니다"
+        value={settings.chat.effort ?? ""}
+        options={[
+          // 노력은 모델이 받는 수준에서만 의미가 있다 — 아직 모르는
+          // 동안의 임시 행이며, 씨앗이 채운 뒤에는 실제 수준만 남는다.
+          ...(settings.chat.effort == null
+            ? [
+                {
+                  value: "",
+                  label: "첫 대화 이후 채워집니다",
+                  disabled: true,
+                },
+              ]
+            : []),
+          ...EFFORT_ORDER.map((level) => ({
+            value: level,
+            label: EFFORT_LABEL[level],
+          })),
+        ]}
+        onChange={(effort) => onChatChange({ effort: effort as EffortLevel })}
+      />
+    </>
+  );
   const panel = useRef<HTMLDivElement>(null);
   useModalFocus(panel);
   /** The room the accordion holds open. 설정 opens on 화면 — the room everyone
@@ -715,7 +890,12 @@ export function SettingsDialog({
         .filter(Boolean)
         .join(" · ");
     })(),
-    chat: MODE_LABEL[settings.chat.permissionMode],
+    chat: [
+      MODE_LABEL[settings.chat.permissionMode],
+      settings.chat.midturn === "steer" ? "바로 실어 보내기" : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
     behavior: SEND_SHORT[settings.sendKey],
     notice: `${NOTICE_DONE_LABEL[settings.notifications.done]} · 소리 ${settings.notifications.sound ? "켬" : "끔"}`,
     connection: (() => {
@@ -866,9 +1046,11 @@ export function SettingsDialog({
                       )}
 
                       {/* The provider room: which provider a new conversation runs on,
-                and that provider's own defaults — 답변 방식·생각 시간은
-                프로바이더별 핀이라(switchProviderPatch) 프로바이더와 한 방에
-                산다. */}
+                and that provider's own defaults — 기본 모델·생각 시간은
+                프로바이더별 핀이라(switchProviderPatch) 한 행에 산다. 행은
+                상태(준비됨·로그인 필요·설치 필요·꺼짐)가 먼저 읽히고, 막힌
+                claude 행은 고치는 버튼을, 누른 행은 자기 기본값을 그 자리에서
+                펼친다 — 목록과 편집 사이의 눈 왕복이 없다. */}
                       {category.id === "providers" && (
                         <>
                           {providerRows.length > 0 ? (
@@ -890,13 +1072,11 @@ export function SettingsDialog({
                                       p.id,
                                     );
                                     const on = p.available && !off;
-                                    const modelCount =
-                                      status?.modelsByProvider?.[p.id]?.length ?? 0;
                                     // 이 프로바이더에 저장된 기본값 — 누른 프로바이더는
                                     // 윗자리 핀을, 나머지는 byProvider 몫을 읽는다. 두 곳은
                                     // switchProviderPatch 가 맞바꾸는 한 저장소의 두 자리다.
-                                    // 카드가 각자의 기본값을 칩으로 보여 주면, 아래 판의
-                                    // 고르개가 누른 프로바이더 것을 고친다는 것도 저절로 읽힌다.
+                                    // 누른 행은 펼침이 그 핀을 곧 보여 주므로 요약 줄에서는
+                                    // 빠지고, 나머지 행의 한 줄이 각자의 기본값을 말한다.
                                     const rowModels =
                                       loadModelCatalog(p.id).length > 0
                                         ? loadModelCatalog(p.id)
@@ -928,16 +1108,43 @@ export function SettingsDialog({
                                           q.available &&
                                           !(settings.chat.disabledProviders ?? []).includes(q.id),
                                       );
-                                    // 상태의 나눔 — 칩이 자격(버전·모델 수·로그인)을 입고,
-                                    // 아래 한 줄은 지금 상태만 말한다. 못 쓰는 프로바이더는
-                                    // 드라이버의 이유를, 꺼진 프로바이더는 숨은 사실을 입는다.
-                                    const metaText = !p.available
+                                    // 계정 한도 — 데몬이 claude·codex 의 플랜 읽기를
+                                    // 들고 있다. 다섯 시간 창이 한도의 얼굴이고(컴포저의
+                                    // UsageChip 도 그렇게 읽는다), 없으면 주간 창이 선다.
+                                    const plan = status?.planUsageByProvider?.[p.id];
+                                    const planWindow = plan?.fiveHour ?? plan?.sevenDay ?? null;
+                                    const planText =
+                                      plan && planWindow
+                                        ? `${plan.fiveHour ? "5시간" : "이번 주"} ${Math.round(planWindow.utilization ?? 0)}%`
+                                        : null;
+                                    // 상태가 먼저 선다 — 한 단어가 행의 첫 읽기다.
+                                    // 칩으로 접던 자격(버전·모델 수)은 문장이 아니라
+                                    // 기본 모델 고르개의 목록이 말할 몫이라 지웠다.
+                                    const statusWord = !p.available
                                       ? (p.reason ?? "설치 필요")
                                       : off
-                                        ? "꺼짐 — 새 대화에 나오지 않습니다"
+                                        ? "꺼짐"
                                         : p.loggedIn === false
-                                          ? "로그인하면 새 대화에서 쓸 수 있습니다"
-                                          : pinText || "사용 가능";
+                                          ? "로그인 필요"
+                                          : "준비됨";
+                                    const metaText = [
+                                      statusWord,
+                                      !p.available
+                                        ? null
+                                        : off
+                                          ? "새 대화에 나오지 않습니다"
+                                          : p.loggedIn === false
+                                            ? "로그인하면 새 대화에서 쓸 수 있습니다"
+                                            : settings.chat.provider === p.id
+                                              ? null
+                                              : pinText || null,
+                                      planText,
+                                      lastUsable
+                                        ? "켜진 다른 프로바이더가 없어 끌 수 없습니다"
+                                        : null,
+                                    ]
+                                      .filter((part): part is string => part !== null)
+                                      .join(" · ");
                                     return (
                                       <div
                                         key={p.id}
@@ -982,36 +1189,20 @@ export function SettingsDialog({
                                           <span className="providerlist__body">
                                             <span className="providerlist__topline">
                                               <span className="providerlist__name">{p.label}</span>
-                                              {settings.chat.provider === p.id && (
-                                                <span className="providerlist__chip providerlist__chip--picked">
-                                                  기본
-                                                </span>
-                                              )}
-                                              {p.version && (
-                                                <span className="providerlist__chip">
-                                                  {p.version}
-                                                </span>
-                                              )}
-                                              {p.available && p.loggedIn === false && (
-                                                <span className="providerlist__chip providerlist__chip--warn">
-                                                  로그인 필요
-                                                </span>
-                                              )}
-                                              {modelCount > 0 && (
-                                                <span className="providerlist__chip">
-                                                  모델 {modelCount}개
-                                                </span>
-                                              )}
                                             </span>
                                             <span className="providerlist__meta">
                                               <span
-                                                className={`providerlist__dot${on ? " providerlist__dot--ok" : ""}${on && p.loggedIn === false ? " providerlist__dot--warn" : ""}`}
+                                                className={`providerlist__dot${on && p.loggedIn !== false ? " providerlist__dot--ok" : ""}${on && p.loggedIn === false ? " providerlist__dot--warn" : ""}`}
                                                 aria-hidden="true"
                                               />
                                               {metaText}
                                             </span>
                                           </span>
                                         </button>
+                                        {/* 스위치는 행 꼭대기의 오른쪽 끝 — 펼침이
+                                            아래로 늘어나도 라디오와 같은 줄에 선다.
+                                            flex-wrap 은 DOM 순서대로 줄을 나누므로
+                                            펼침(basis 100%)보다 먼저 와야 한다. */}
                                         <span
                                           className="switch providerlist__switch"
                                           title={
@@ -1066,6 +1257,63 @@ export function SettingsDialog({
                                             <span className="switch__knob" />
                                           </span>
                                         </span>
+                                        {/* 막힌 claude 행의 다음 걸음 — 설치·로그인의
+                                            fix 종류가 claude 의 것뿐이라 claude 만이
+                                            버튼을 두고, 나머지 에이전트는 reason 줄이
+                                            안내한다. 누름의 답은 행 아래의 안내 한 줄. */}
+                                        {p.id === "claude" && !p.available && (
+                                          <div className="providerlist__fix">
+                                            <button
+                                              type="button"
+                                              className="primary"
+                                              disabled={fixBusy === p.id}
+                                              onClick={() =>
+                                                void runProviderFix(p.id, "install-claude")
+                                              }
+                                            >
+                                              {fixBusy === p.id ? "실행 중…" : "설치하기"}
+                                            </button>
+                                          </div>
+                                        )}
+                                        {p.id === "claude" &&
+                                          p.available &&
+                                          p.loggedIn === false && (
+                                            <div className="providerlist__fix">
+                                              <button
+                                                type="button"
+                                                className="primary"
+                                                disabled={fixBusy === p.id}
+                                                onClick={() =>
+                                                  void runProviderFix(p.id, "login-claude")
+                                                }
+                                              >
+                                                {fixBusy === p.id ? "실행 중…" : "로그인하기"}
+                                              </button>
+                                            </div>
+                                          )}
+                                        {fixNotice?.id === p.id && (
+                                          <p
+                                            className={`providerlist__fixnote${fixNotice.started ? "" : " providerlist__fixnote--warn"}`}
+                                            role="status"
+                                          >
+                                            {fixNotice.guidance}
+                                          </p>
+                                        )}
+                                        {/* 누른 행이 곧 기본값 판 — 라디오로 고른 것이
+                                            펼침이고, 고르개 둘이 그 자리에서 이 행의
+                                            핀을 고친다. 꺼졌거나 못 쓰는 행은 펼치지
+                                            않는다 — 고를 수도 없는 행의 기본값이다. */}
+                                        {settings.chat.provider === p.id && p.available && !off && (
+                                          <div className="providerlist__detail">
+                                            <span className="providerlist__detailhead">
+                                              새 대화 기본값
+                                              <span className="providerlist__detailnote">
+                                                프로바이더마다 따로 저장됩니다
+                                              </span>
+                                            </span>
+                                            {defaultsEditor}
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
@@ -1079,79 +1327,18 @@ export function SettingsDialog({
                                 : "연결하면 이 기기에서 쓸 수 있는 프로바이더가 여기 표시됩니다."}
                             </p>
                           )}
-                          {/* 누른 프로바이더의 기본값 — 판 한 장이 목록과 고르개를
-                    이름으로 묶는다. 핀이 프로바이더마다 따로 저장되는 한
-                    쌍이므로(switchProviderPatch) 머리가 누구 몫인지 말하고,
-                    고르개는 그 아래에서 그 핀을 고친다. */}
-                          <div className="providerdefaults">
-                            <div className="providerdefaults__head">
-                              <span className="providerdefaults__mark">
-                                <ProviderIcon provider={settings.chat.provider} size={13} />
+                          {/* 행이 하나도 없는 연결 전 — 목록이 비어 있어도 기본값
+                    핀은 첫 연결에서 데몬이 읽어 간다. 편집의 자리를 행 안
+                    펼침이 대신할 수 없으니 이 예비 판이 선다. */}
+                          {providerRows.length === 0 && (
+                            <div className="providerlist__standalone">
+                              <span className="providerlist__detailhead">
+                                {pickedProvider?.label ?? settings.chat.provider} · 새 대화 기본값
                               </span>
-                              <span className="providerdefaults__title">
-                                {`${pickedProvider?.label ?? settings.chat.provider} · 새 대화 기본값`}
-                              </span>
-                              <span className="providerdefaults__note">
-                                프로바이더마다 따로 저장됩니다 — 목록에서 다른 프로바이더를 누르면
-                                그 값이 이 자리에 옵니다
-                              </span>
+                              {defaultsEditor}
                             </div>
-                            <Choice<string>
-                              label="답변 방식"
-                              hint={
-                                models.length > 0
-                                  ? "어떤 모델이 답할지 고릅니다"
-                                  : "대화를 한 번 시작하면 고를 수 있는 목록이 채워집니다"
-                              }
-                              value={settings.chat.model ?? ""}
-                              options={[
-                                // 카탈로그가 없는 동안의 임시 행 — 고를 수 없고, 첫 대화가
-                                // 목록을 채우면 사라진다. '자동' 행은 없다: 비어 있는 자리는
-                                // 씨앗(useSessions)이 구체적인 한 행으로 채운다.
-                                ...(models.length === 0
-                                  ? [
-                                      {
-                                        value: "",
-                                        label: "대화를 한 번 시작하면 목록이 채워집니다",
-                                        disabled: true,
-                                      },
-                                    ]
-                                  : []),
-                                ...modelOptions(
-                                  models,
-                                  modelRowOf(models, settings.chat.model),
-                                ).map((option) => ({
-                                  value: option.value ?? "",
-                                  label: option.label,
-                                  ...(option.hint ? { hint: option.hint } : {}),
-                                })),
-                              ]}
-                              onChange={(model) => onChatChange({ model })}
-                            />
-                            <Choice<string>
-                              label="생각 시간"
-                              hint="오래 생각할수록 꼼꼼하고, 그만큼 느립니다"
-                              value={settings.chat.effort ?? ""}
-                              options={[
-                                // 노력은 모델이 받는 수준에서만 의미가 있다 — 아직 모르는
-                                // 동안의 임시 행이며, 씨앗이 채운 뒤에는 실제 수준만 남는다.
-                                ...(settings.chat.effort == null
-                                  ? [
-                                      {
-                                        value: "",
-                                        label: "첫 대화 이후 채워집니다",
-                                        disabled: true,
-                                      },
-                                    ]
-                                  : []),
-                                ...EFFORT_ORDER.map((level) => ({
-                                  value: level,
-                                  label: EFFORT_LABEL[level],
-                                })),
-                              ]}
-                              onChange={(effort) => onChatChange({ effort: effort as EffortLevel })}
-                            />
-                          </div>
+                          )}
+                          <MachineProviderField daemon={daemon} disabled={connection !== "open"} />
                         </>
                       )}
 
@@ -1173,19 +1360,44 @@ export function SettingsDialog({
                           {settings.chat.permissionMode === "acceptEdits" && (
                             <div className="notice notice--warn" aria-live="polite">
                               <span className="notice__text">
-                                Accept Edits는 화면 파일 편집뿐 아니라 CLI가 안전하다고 본 명령까지
-                                묻지 않고 실행합니다. 편집만 조용하면 되면 Default를 고르세요.
+                                `화면 수정은 바로`는 화면 파일 편집뿐 아니라 CLI가 안전하다고 본
+                                명령까지 묻지 않고 실행합니다. 편집만 조용하면 되면 `실행 전에
+                                물어보기`를 고르세요.
                               </span>
                             </div>
                           )}
                           {settings.chat.permissionMode === "bypassPermissions" && (
                             <div className="notice notice--warn" aria-live="polite">
                               <span className="notice__text">
-                                Bypass는 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이
-                                바뀔 수 있으니, 물어볼 필요가 있으면 확인 방식을 Default로 바꾸세요.
+                                `바로 진행`은 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면
+                                파일이 바뀔 수 있으니, 물어볼 필요가 있으면 확인 방식을 `실행 전에
+                                물어보기`로 바꾸세요.
                               </span>
                             </div>
                           )}
+                          {/* 턴 도중 보내기: 도는 턴에 온 말의 길. 기본은
+                대기 줄 — 이 도구의 오래된 약속이다. 바로 실어 보내기는
+                codex 의 turn/steer 로 도는 턴에 그대로 실리고, 와이어가 없는
+                에이전트는 도는 턴을 끊고 그 말로 새 턴을 즉시 열어 같은
+                '바로'를 이행하므로, 선택지는 프로바이더와 무관하게 늘 둘 다
+                보인다. */}
+                          <Choice<"queue" | "steer">
+                            label="턴 도중 보내기"
+                            value={settings.chat.midturn}
+                            options={[
+                              {
+                                value: "queue",
+                                label: "대기 줄",
+                                hint: "AI가 답을 끝낸 뒤, 다음 턴으로 나갑니다",
+                              },
+                              {
+                                value: "steer",
+                                label: "바로 실어 보내기",
+                                hint: "도는 턴에 바로 반영합니다 — Codex는 도는 턴에 그대로 실리고, 그 외 에이전트(Claude·OMP)는 도는 턴을 끊고 이 말로 새 턴을 즉시 시작합니다",
+                              },
+                            ]}
+                            onChange={(midturn) => onChatChange({ midturn })}
+                          />
                           {/* 대화에 남길 기록 두 스위치: "고급" 접기로 숨기지 않고
                 평지에 둔다 — 접어 두면 있는 줄 모르고 지나치기 쉽다.
                 기본은 여전히 꺼짐이라 평지에 있어도 어지럽히지 않고, 행의
@@ -1303,6 +1515,16 @@ export function SettingsDialog({
                                 </p>
                               )}
                             </span>
+                          </Field>
+                          {/* 슬라이스 5: 개발자 에스컬레이션 — AI 도 고칠 수 없는
+                              실패가 나면 슬랙으로. 토큰 만료 알림이 온보딩의
+                              GitHub 게이트보다 먼저 도착하는 팀의 안내망이다. */}
+                          <Field
+                            wide
+                            label="개발자 알림 (Slack)"
+                            hint="토큰 만료 · 넘기기 실패처럼 AI 도 고칠 수 없는 문제가 생기면 슬랙으로 알립니다. 웹훅 주소 또는 봇 토큰+채널로 연결합니다."
+                          >
+                            <EscalationForm daemon={daemon} disabled={!connected} />
                           </Field>
                         </>
                       )}

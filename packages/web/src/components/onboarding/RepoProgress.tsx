@@ -6,7 +6,7 @@
  */
 
 import type { RepoPhase } from "@colo-design/protocol";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { CopyButton } from "../../components";
 import { daemonLine } from "../../lib/format";
 import { type ErrorKind, errorKindOf, guidanceFor } from "../../lib/repo-guidance";
@@ -66,6 +66,7 @@ export function ProgressPanel({
   onRetry,
   onAskAgent,
   onApproveCommands,
+  callDeveloper,
   onOpenSettings,
 }: {
   phase: RepoPhase;
@@ -84,6 +85,11 @@ export function ProgressPanel({
   onAskAgent?: () => void;
   /** 승인 오류의 첫 동작: 이 레포의 install · preview 명령 실행을 허용한다. */
   onApproveCommands?: () => void;
+  /**
+   * 막다른 자리의 마지막 손(P3-3) — `개발자 부르기`. 이 판은 슬랙도 프로젝트
+   * 이름도 모르므로 노드를 통째로 받는다(부르는 쪽이 CallDeveloper 를 짓는다).
+   */
+  callDeveloper?: ReactNode;
   onOpenSettings: (category?: SettingsCategory) => void;
 }) {
   const failed = phase === "error";
@@ -109,7 +115,7 @@ export function ProgressPanel({
       )}
       {errorKind === "commands" && onApproveCommands && (
         <button type="button" className="primary" onClick={onApproveCommands}>
-          실행 허용
+          준비 시작
         </button>
       )}
       <button type="button" className={primaryTaken ? "ghost" : "primary"} onClick={onRetry}>
@@ -118,7 +124,9 @@ export function ProgressPanel({
       </button>
       {/* The way out a non-developer actually has — hand the
           whole card, Korean lead and raw tail, to someone who can read
-          it. The terminal it replaces never was their tool. */}
+          it. P3-3: 이제 그 길은 두 갈래다 — 개발자의 슬랙으로 바로 보내는
+          `개발자 부르기`(연결돼 있을 때)와, 어디든 붙여넣을 수 있는 복사. */}
+      {callDeveloper}
       <CopyButton
         value={
           `Colo Design에서 이 화면이 준비되지 않았습니다.\n` +
@@ -126,7 +134,7 @@ export function ProgressPanel({
           (guidance.command ? `\n실행이 필요한 명령: ${guidance.command}` : "") +
           (detail ? `\n\n--- 자세히 ---\n${detail}` : "")
         }
-        label="이 안내를 개발자에게 보내기"
+        label="안내 복사"
         icon={<SparkIcon size={12} />}
       />
     </div>

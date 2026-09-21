@@ -1,6 +1,6 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import { Fold } from "../../components";
+import { CallDeveloper, Fold } from "../../components";
 import type { Daemon } from "../../lib/daemon-client";
 import {
   type ChatSettings,
@@ -14,9 +14,9 @@ import {
 import { AddProjectDialog } from "../dialogs/AddProjectDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { TokenExpiryDialog } from "../dialogs/TokenExpiryDialog";
-import { WarnIcon } from "../icons";
 import { Onboarding } from "../onboarding/Onboarding";
 import { StartFlow } from "../onboarding/StartFlow";
+import { StateBanner } from "../StateBanner";
 import { PageWorkspace, type WorkspaceHandle } from "./PageWorkspace";
 import { Sidebar } from "./Sidebar";
 import { Splitter } from "./Splitter";
@@ -77,6 +77,17 @@ export function Shell({
     // 바뀌는 경우는 아래의 불일치 effect 가 걷는다.
     void api.onboardingCheck(settings.chat.provider).catch(() => undefined);
   }, [connection, api]);
+
+  // 설정에 남은 프로바이더가 이 데몬에 없으면 — 개발 실행에서 omp 로 쓰다
+  // 패키징된 앱을 켠 경우(DaemonConfig.devAgents) — 첫 쓸 수 있는 프로바이더로
+  // 옮긴다. 두지 않으면 첫 보내기가 `알 수 없는 에이전트입니다` 로 죽는다.
+  // 핀 옮기기는 설정창의 프로바이더 스위치와 같은 patch 다.
+  useEffect(() => {
+    const rows = status?.providers;
+    if (!rows?.length || rows.some((p) => p.id === settings.chat.provider)) return;
+    const fallback = rows.find((p) => p.available) ?? rows[0];
+    if (fallback) onChatChange(switchProviderPatch(settings.chat, fallback.id));
+  }, [status?.providers, settings.chat, onChatChange]);
 
   // 설정에서 고른 프로바이더가 마지막 검사의 프로바이더와 다르면 한 번 다시
   // 묻는다. 기다리는 동안의 판정(stale steps)으로는 작업대를 막지 않는다 —
@@ -446,15 +457,12 @@ export function Shell({
                 돌리고, 버튼은 그 대기를 건너뛰는 지름길. 닫기 버튼은 없다:
                 연결은 경고가 아니라 상태라, 거둬도 사라지지 않는다. */}
             {connection === "closed" && (
-              <div className="notice notice--warn">
-                <span className="ic ic--sm ic--warn">
-                  <WarnIcon />
-                </span>
-                <span className="notice__text">연결이 끊겼어요 — 다시 연결하는 중…</span>
-                <button type="button" className="ghost" onClick={() => daemon.reconnect()}>
-                  지금 다시 시도
-                </button>
-              </div>
+              <StateBanner
+                tone="warn"
+                role="alert"
+                title="연결이 끊겼어요 — 다시 연결하는 중…"
+                action={{ label: "지금 다시 시도", onClick: () => daemon.reconnect() }}
+              />
             )}
             {visibleWarnings.map((warning) => (
               <Fold
@@ -474,40 +482,40 @@ export function Shell({
                   setDismissedWarnings((prev) => new Set(prev).add(warning.text));
                 }}
               >
-                <div className="notice notice--warn">
-                  <span className="ic ic--sm ic--warn">
-                    <WarnIcon />
-                  </span>
-                  <span className="notice__text">{warning.text}</span>
-                  <button
-                    type="button"
-                    className="notice__close"
-                    aria-label="경고 닫기"
-                    disabled={closingWarnings.has(warning.text)}
-                    onClick={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
-                  >
-                    ×
-                  </button>
-                </div>
+                <StateBanner
+                  tone="warn"
+                  role="status"
+                  title={warning.text}
+                  closeLabel="경고 닫기"
+                  onClose={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
+                  /* P3-3: 닫기만 있는 경고는 막다른 길이다 — 데몬 환경의 API
+                     키를 지우는 일은 이 화면의 사용자가 할 수 있는 일이 아니고,
+                     그 사실을 읽은 사람에게 남는 동작이 `닫기` 뿐이면 경고는
+                     없는 것과 같다. 그 한 줄에만 부르는 손을 단다. */
+                  actionSlot={
+                    warning.text.includes("ANTHROPIC_API_KEY") ? (
+                      <CallDeveloper
+                        daemon={daemon}
+                        what="데몬 환경에 ANTHROPIC_API_KEY 가 설정되어 있어 구독 대신 그 키로 결제됩니다 — 키를 지우고 앱을 다시 시작해 주세요."
+                      />
+                    ) : undefined
+                  }
+                />
               </Fold>
             ))}
             {loggedOut && (
-              <div className="notice notice--warn">
-                <span className="ic ic--sm ic--warn">
-                  <WarnIcon />
-                </span>
-                <span className="notice__text">
-                  {loginGuidance ?? "Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다."}
-                </span>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={loginBusy}
-                  onClick={() => void loginPress()}
-                >
-                  {loginBusy ? "확인 중…" : loginStarted ? "다시 확인" : "다시 로그인"}
-                </button>
-              </div>
+              <StateBanner
+                tone="warn"
+                role="alert"
+                title={
+                  loginGuidance ?? "Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다."
+                }
+                action={{
+                  label: loginBusy ? "확인 중…" : loginStarted ? "다시 확인" : "다시 로그인",
+                  onClick: () => void loginPress(),
+                  disabled: loginBusy,
+                }}
+              />
             )}
           </div>
         )}

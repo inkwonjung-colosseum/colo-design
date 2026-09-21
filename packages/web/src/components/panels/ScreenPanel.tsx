@@ -7,7 +7,7 @@ import type {
 import { markTurn } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Fold, useFoldNotice } from "../../components";
+import { CallDeveloper, Fold, useFoldNotice } from "../../components";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
@@ -23,6 +23,7 @@ import {
   markRepoPrepSeen,
   saveHandledReview,
 } from "../../lib/settings";
+import { advanceTour, useTourStep } from "../../lib/tour";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
@@ -283,6 +284,7 @@ export function ScreenPanel({
    * 일어나므로, 그 복도를 그대로 두면 다음 걸음을 턴마다 권하는 잔소리가 된다.
    * 한 번만 — 핀 코치와 같은 localStorage 패턴(HandoffCard 의 선례).
    */
+  const tour = useTourStep();
   const [submitCoach, setSubmitCoach] = useState(() => {
     try {
       return localStorage.getItem("colo-design.submit-coach-seen") !== "1";
@@ -292,6 +294,7 @@ export function ScreenPanel({
   });
   const dismissSubmitCoach = () => {
     setSubmitCoach(false);
+    advanceTour("submit");
     try {
       localStorage.setItem("colo-design.submit-coach-seen", "1");
     } catch {
@@ -611,6 +614,8 @@ export function ScreenPanel({
    */
   const coachSubmit =
     submitCoach &&
+    // 투어의 마지막 걸음(P3-2) — 앞의 둘이 끝난 뒤에야 이 자리가 선다.
+    tour === "submit" &&
     delivery?.actions.submit.enabled === true &&
     delivery.primary === "submit" &&
     // 핀 코치와 달리 이 자리는 아래로 펼쳐지는 면들과 겹친다 — 고정된 말풍선은
@@ -1257,6 +1262,13 @@ export function ScreenPanel({
                     .catch(() => undefined)
               : undefined
           }
+          callDeveloper={
+            <CallDeveloper
+              daemon={daemon}
+              what={`화면 준비가 멈췄습니다 — ${guidanceFor(errorKind, repo?.detail ?? null).title}`}
+              detail={repo?.detail ?? null}
+            />
+          }
           onOpenSettings={onOpenSettings}
         />
       </div>
@@ -1676,6 +1688,13 @@ export function ScreenPanel({
                         .projectUpdate(activeSlug, { approveCommands: true })
                         .catch(() => undefined)
                   : undefined
+              }
+              callDeveloper={
+                <CallDeveloper
+                  daemon={daemon}
+                  what={`화면 준비가 멈췄습니다 — ${guidanceFor(errorKind, repo?.detail ?? null).title}`}
+                  detail={repo?.detail ?? null}
+                />
               }
               onOpenSettings={onOpenSettings}
             />

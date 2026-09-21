@@ -52,9 +52,19 @@ export const CODEX_MODE_ROWS: Array<{
   tier: "safe" | "moderate" | "planning" | "dangerous";
   description: string;
 }> = [
-  { id: "default", label: "Default", tier: "moderate", description: "Ask before running commands" },
-  { id: "plan", label: "Plan", tier: "planning", description: "Read-only — never runs or writes" },
-  { id: "bypass", label: "Bypass", tier: "dangerous", description: "Full access, never asks" },
+  {
+    id: "default",
+    label: "실행 전에 물어보기",
+    tier: "moderate",
+    description: "명령을 돌리기 전에 카드로 물어봅니다",
+  },
+  {
+    id: "plan",
+    label: "계획 먼저 보기",
+    tier: "planning",
+    description: "만들기 전에 무엇을 만들지 보여 줍니다 — 읽기만 합니다",
+  },
+  { id: "bypass", label: "바로 진행", tier: "dangerous", description: "아무것도 묻지 않습니다" },
 ];
 
 /** `thread/*` takes a SandboxMode string; `turn/start` takes the full policy. */
@@ -443,6 +453,34 @@ export class CodexAgentSession implements AgentSession {
     } finally {
       this.turnSettlers.delete(settle);
     }
+  }
+
+  /**
+   * 바로 실어 보내기 — `turn/steer` carries mid-turn input into the turn
+   * now running (experimentalApi). Resolves when the server accepts the
+   * input; the turn's own completion still lands through `turn/completed`,
+   * so nothing here touches the turn bookkeeping `send` owns.
+   */
+  async steer(turn: Turn): Promise<void> {
+    await this.ready;
+    if (this.closed || !this.transport.alive) throw new Error("Codex transport closed");
+    const threadId = this.threadId;
+    if (!threadId) throw new Error("Codex thread not established");
+    // A send in flight is still naming its turn — the same bounded wait
+    // interrupt takes, so a steer never reads a turn id the server dropped.
+    if (this.turnAccepted) {
+      await Promise.race([
+        this.turnAccepted,
+        new Promise<void>((resolve) => setTimeout(resolve, 10_000)),
+      ]);
+    }
+    const turnId = this.activeTurnId;
+    if (!turnId) throw new Error("steer: no live turn");
+    await this.transport.request(
+      "turn/steer",
+      { threadId, turnId, input: this.userInput(turn) },
+      10_000,
+    );
   }
 
   /** Modes are per-turn params — store the pick; the next turn/start applies it. */

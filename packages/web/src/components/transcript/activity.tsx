@@ -22,6 +22,17 @@ const ACTIVITY_BUCKET: Record<string, "file" | "command" | "read"> = {
   Grep: "read",
 };
 
+/**
+ * 접힌 머리의 한 마디(P3-4). 예전에는 여기에 숫자 줄이 섰다
+ * (`화면 파일 3개 작업 · 검사 2회 실행 · 5곳 확인`) — 사실이지만 사용자의
+ * 질문에 대한 답은 아니다. 비개발자가 그 줄에서 알고 싶은 것은 하나다:
+ * 지금 도는가, 끝났는가. 숫자는 펼침 안으로 내려간다(거기서는 진단의
+ * 재료로 쓸모가 있다).
+ */
+function activityStatus(running: boolean): string {
+  return running ? "만드는 중…" : "화면을 고쳤어요";
+}
+
 function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
   let file = 0;
   let command = 0;
@@ -59,7 +70,12 @@ function SubagentThread({ steps, controls }: { steps: ActivityStep[]; controls: 
   const peek = last?.type === "text" ? (last.text.trimStart().split("\n", 1)[0] ?? "") : "";
   return (
     <div className="subagent">
-      <button type="button" className="subagent__head" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="subagent__head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className={`tool__chevron${open ? " tool__chevron--open" : ""}`}>
           <ChevronRightIcon />
         </span>
@@ -120,19 +136,27 @@ function ActivitySummary({ steps, controls }: { steps: ActivityStep[]; controls:
         failed ? "activity activity--error" : running ? "activity activity--running" : "activity"
       }
     >
-      <button type="button" className="activity__head" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="activity__head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className={`tool__chevron${open ? " tool__chevron--open" : ""}`}>
           <ChevronRightIcon />
         </span>
         {running ? <span className="spinner" /> : <CheckIcon size={11} />}
-        {/* 도구 없는 런(하위 작업의 말만 남은 구간)도 빈 막대로 두지 않는다. */}
-        <span className="activity__text">
-          {headline ?? (activityLine(tools) || "하위 작업의 기록")}
-        </span>
+        {/* 도구 없는 런(하위 작업의 말만 남은 구간)도 빈 막대로 두지 않는다.
+            에이전트가 스스로 내놓은 근황(live summary)이 있으면 그것이 이긴다
+            — 기계가 제 말로 하는 것이 도구 셈보다 언제나 낫다. */}
+        <span className="activity__text">{headline ?? activityStatus(running)}</span>
         {failed && <span className="activity__flag">실패 있음</span>}
       </button>
       {open && (
         <div className="activity__body">
+          {/* 숫자 줄은 펼침의 첫 줄로 내려왔다(P3-4) — 무엇을 몇 번 했는지는
+              막힌 턴을 들여다볼 때의 재료이지, 기다리는 동안 읽을 말이 아니다. */}
+          {activityLine(tools) && <div className="activity__counts">{activityLine(tools)}</div>}
           {own.map((step) => {
             const children =
               step.type === "tool"

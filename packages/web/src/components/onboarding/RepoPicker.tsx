@@ -435,7 +435,7 @@ export function RepoPicker({
                 disabled={creating}
                 onChange={(e) => setApproveRun(e.target.checked)}
               />
-              이 레포가 정의한 설치 · 미리보기 명령을 이 기기에서 실행하는 것을 허용합니다
+              이 컴퓨터에서 이 서비스를 준비(설치 · 미리보기 실행)하는 것을 허용합니다
             </label>
           )}
           <div className="repopicker__confirmrow">
@@ -503,7 +503,7 @@ export function RepoPicker({
               실패처럼 보여 신규 사용자가 주소를 의심했다. */}
           {!manualBusy && manualUrl.trim() && !manualApprove && (
             <p className="hint" data-testid="approve-needed-hint">
-              추가하려면 아래 명령 실행 동의에 먼저 체크해 주세요.
+              추가하려면 아래 준비 동의에 먼저 체크해 주세요.
             </p>
           )}
           {!manualBusy && !manualUrl.trim() && (
@@ -517,7 +517,7 @@ export function RepoPicker({
               disabled={manualBusy}
               onChange={(e) => setManualApprove(e.target.checked)}
             />
-            이 레포가 정의한 설치 · 미리보기 명령을 이 기기에서 실행하는 것을 허용합니다
+            이 컴퓨터에서 이 서비스를 준비(설치 · 미리보기 실행)하는 것을 허용합니다
           </label>
           <p className="hint">코드 없이 접근할 수 있는 주소나, GitHub 밖의 git 주소를 쓸 때만.</p>
           {manualError && (

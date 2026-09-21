@@ -70,9 +70,10 @@ test("guidanceFor: 미리보기 명령 없음 · 주소 미감지 카드는 AI �
   assert.match(undetected.agent?.brief ?? "", /주소를 출력/);
 });
 
-test("guidanceFor: 충돌·승인 카드의 첫 동작 문구는 그대로다 (회귀)", () => {
+test("guidanceFor: 충돌·첫 실행 카드의 첫 동작 문구는 그대로다 (회귀)", () => {
   assert.equal(guidanceFor("conflict", null).title, "최신 변경과 충돌이 남았습니다");
-  assert.equal(guidanceFor("commands", null).title, "명령 실행 승인이 필요합니다");
+  // P3-1: 승인 게이트는 실패가 아니라 첫 실행이다 — 제목이 그렇게 읽힌다.
+  assert.equal(guidanceFor("commands", null).title, "이 서비스를 이 컴퓨터에서 처음 켭니다");
   assert.equal(
     guidanceFor("auth", null).command,
     "pnpm config set //npm.pkg.github.com/:_authToken <PAT>",
@@ -80,12 +81,15 @@ test("guidanceFor: 충돌·승인 카드의 첫 동작 문구는 그대로다 (�
   assert.equal(guidanceFor("pnpm", null).command, "corepack enable");
 });
 
-test("guidanceFor: commands · preview 를 뺀 모든 실패가 AI 요청을 안다", () => {
-  // commands 는 사람의 동의가 곧 해결이고, preview 는 미리보기 자리의 자체
-  // 버튼이 답한다 — 이 둘만 카드의 첫 동작이 AI 가 아니다.
+test("guidanceFor: commands 를 뺀 모든 실패가 AI 요청을 안다", () => {
+  // commands 하나만 카드의 첫 동작이 AI 가 아니다 — 첫 실행의 동의는 사람의
+  // 것이라 AI 가 대신할 수 없다. preview 는 P3-3 에서 열렸다: 미리보기 자리의
+  // 멈춤 카드가 서지 않는 길(진행 판으로 떨어지는 경우)에서는 그 카드가 유일한
+  // 자리였고, 거기엔 누를 것이 하나도 없었다.
   for (const kind of [
     "auth",
     "pnpm",
+    "preview",
     "port-undetected",
     "no-preview-command",
     "conflict",
@@ -103,7 +107,6 @@ test("guidanceFor: commands · preview 를 뺀 모든 실패가 AI 요청을 안
     );
   }
   assert.equal(guidanceFor("commands", null).agent, undefined);
-  assert.equal(guidanceFor("preview", null).agent, undefined);
 });
 
 test("guidanceFor: 충돌 요청의 브리프는 옛 카드가내던 문구 그대로다 (회귀)", () => {

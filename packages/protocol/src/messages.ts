@@ -588,6 +588,13 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   /** Sends one test message through the stored config — 설정의 시험 버튼. */
   z.object({ ...withId, type: z.literal("escalation.test") }),
   /**
+   * 사용자의 `개발자 부르기`(P3-3) — 막다른 카드에서 사람이 직접 누르는 길.
+   * 설정의 시험 버튼과 같은 채널을 쓰되, 문구는 화면이 짓는다: 어느
+   * 프로젝트의 어느 실패인지는 화면만 알고, 데몬은 그것을 조립할 자리가 없다.
+   * 미설정이면 거절 — 화면은 `escalationConfigured` 로 버튼을 미리 잠근다.
+   */
+  z.object({ ...withId, type: z.literal("escalation.notify"), text: z.string().min(1).max(4000) }),
+  /**
    * 설정창의 저장 메모 담당: 빈 메모의 커밋 문장과 넘기기 초안을 쓰는
    * 에이전트. `null` 은 자동(기본) — machine-provider 의 등록 순서 규칙.
    * 저장 시점에 검사해 못 쓰는 선택은 한국어 한 줄로 거절한다.

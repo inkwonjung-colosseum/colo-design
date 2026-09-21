@@ -720,6 +720,18 @@ export class RequestRouter {
         this.deps.machineSetting.set("authorName", name === "" ? null : name);
         return { ok: true as const };
       }
+      case "escalation.notify": {
+        // 화면이 지은 문구를 그대로 울린다. 10분 동일 문구 dedupe 는 그대로
+        // 두고(같은 사고가 연달아 슬랙을 때리지 않게), 문구에 프로젝트와
+        // 시각이 들어 있어 두 번째 누름이 조용히 삼켜지지 않는다 — 그 조립은
+        // 화면의 몫이다.
+        const rung = await this.deps.escalation.notify(message.text);
+        if (!rung)
+          throw new Error(
+            "개발자 알림을 보내지 못했습니다 — 설정 → 알림에서 연결을 확인해 주세요.",
+          );
+        return { ok: true as const };
+      }
       case "escalation.test": {
         const sent = await this.deps.escalation.notify(
           "[Colo Design] 개발자 알림 시험 — 이 메시지가 보이면 연결된 것입니다.",
