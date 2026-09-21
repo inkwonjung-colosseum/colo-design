@@ -15,6 +15,7 @@ import {
   resolvePnpmExecutable,
 } from "./environment.js";
 import {
+  daemonOwnedPorts,
   descendantPids,
   killPidTree,
   killTree,
@@ -346,7 +347,11 @@ export class BringUp {
         }
       }
       const pids = [...(child.pid ? [child.pid] : []), ...(await descendantPids(child.pid ?? -1))];
-      for (const port of await pidListeningPorts(pids)) {
+      // 데몬 자신의 포트는 제외한다 — 자식들이 fd 로 물려받은 이 리스너가
+      // lsof 에 자기 소켓처럼 보여, 서버 출력이 없을 때 도구의 웹 UI 를
+      // 미리보기로 판정하는 사고(CI 러너 실측 2026-09-21)를 닫는다.
+      const ports = (await pidListeningPorts(pids)).filter((port) => !daemonOwnedPorts.has(port));
+      for (const port of ports) {
         // 소켓 스캔도 같은 규율: LISTEN 이 떴어도 HTTP 응답 전의 포트는
         // 첫 스캔에서 null 이고, 그렇다고 영구 제외하면 영원히 못 찾는다.
         const seen = scannedAt.get(port);
