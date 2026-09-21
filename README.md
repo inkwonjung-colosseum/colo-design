@@ -822,82 +822,21 @@ git push origin v0.3.6
 
 ## 테스트
 
-real-Claude 로 표시된 두 스위트(구독 사용량을 쓴다)만 빼고 전부 로컬 fixture
-(bare git 원격, 스텁 CLI)로 돈다.
+2026-09-21 운영 판단으로 테스트 스위트를 걷어냈다. CI(릴리스 워크플로우가
+돌리는 것과 같은 트리)는 `typecheck` 와 `build` 만 검증한다 — 이 두 가지가
+깨지면 에셋이 못 나오므로 태그를 밀기 전에 이 문이 잡는다.
+
+배경: 러너(Linux)와 실제 배포 플랫폼(mac·Windows)의 환경이 어긋나, 제품이
+아니라 러너를 탓하는 빨간 신호가 릴리스 2건(v0.3.10·v0.3.11) 동안 지속됐다.
+그 창구에 발견된 제품 결함은 수정해 main 에 들어갔다(미리보기 포트 스캔이
+자식이 물려받은 부모 소켓을 잡던 것 — `daemonOwnedPorts`). 검증은 이제
+사람이 로컬에서 돌리는 개발 실행과 미리보기로 한다.
 
 ```bash
-pnpm test:contrast          # 오프라인 — 테마가 칠한 모든 색 짝이 WCAG AA 대비를 넘는다
-pnpm test:unit              # 오프라인 — 플랫폼 분기, 보안/격리 회귀, 쓰기 정책, 레포 워크스페이스 단위, 넘기기 본문 초안, 턴 마커 파서, 턴 재시도와 바로 실어 보내기(codex 는 도는 턴에 steer 로 실리고, 와이어가 없는 에이전트는 턴을 끊고 그 말로 새 턴을 연다), omp 의 rpc-ui 배선(always-ask 런치 · v2 청크 복원 · select 승인이 직전 호출의 인자를 얻는 짝 · bypass 자동 허용 · host tool 브라우저 · 절단 포크)
-pnpm test:onboard-unit      # 오프라인 — 온보딩 게이트와 OS 자격 증명 저장소(이주, 키체인, npmrc 병합)
-pnpm test:projects          # 오프라인 — 두 레포에 두 프로젝트, 활성 전환(떠난 서버는 따뜻하게 · 돌아오면 준비 단계 없이 ready · 같은 포트는 울타리), 화면 밖 턴의 커밋이 제 프로젝트에 내려앉는다, 지우기와 세션 닫기, 전환 직렬화, 레지스트리가 재시작을 살아남는다
-pnpm test:common-instructions # 오프라인 — 공통 지침(지켜 줄 것 위에 앱이 늘 붙이는 말)이 모든 세션의 시스템 프롬프트 끝에 붙는다
-pnpm test:permission-repeat # 오프라인 — 권한 승인이 턴마다 되묻지 않고 이어진다(반복 측정의 종단)
-pnpm test:branch            # 오프라인 — 여기서 새 대화(분기)의 절차: 기억을 이어받은 새 id 포크 · 원래 대화 보존 · 프롬프트 무전송 · 절단 불가 폴백
-pnpm test:repo              # 오프라인 — 로컬 bare 원격에 대한 clone/pull/install-skip/preview 수명 주기
-pnpm test:preview-detect    # 오프라인 — 미리보기 주소 자동 감지: 서버 출력 → LISTEN 소켓 폴백 → ready 판정
-pnpm test:publish           # 오프라인 — 보관 게이트, check 실패 → 세션 브리프, main 을 건드리지 않는 자기 브랜치 colo-design/*, build 는 넘기기에만 게이트, PR → 병합 → 새 사이클
-pnpm test:auto-save         # 오프라인 — 자동 저장(P2-1)의 종단: 턴 하나가 커밋 하나를 남기고(제목은 그 턴을 연 사용자의 말), 화면 확인 게이트가 걸린 턴은 게이트가 끝난 뒤에 한 번만 커밋한다 — 게이트가 화면을 여는 순간 클론이 아직 더러웠음으로 순서를 잰다
-pnpm test:plan              # 오프라인 — 스텁 CLI 의 ExitPlanMode 와이어: 만들 것 카드, 승인의 작업 모드 복귀, 거절의 이유 전달과 계획 모드 잔류
-pnpm test:publish-ui        # 오프라인 — 브라우저: 제출 한 번 → 브랜치가 원격에 닿고 베이스는 닿지 않는다; 저장 카드도 복도도 없고 조용한 표식만 남는다
-pnpm test:settings          # 오프라인 — 테마/환경설정; 데몬 없이도 열린다
-pnpm test:onboarding        # 오프라인 — 스텁 PATH/CLI · 녹화된 GitHub 픽스처로 진짜 소켓 위의 네 게이트, 토큰 저장 → 레포 목록 → 레포 검사 → 프로젝트 생성 → 클론 ready
-pnpm test:comments-ui       # 오프라인 — 레포 자체의 dev 미리보기 안의 화면 축 전체: 주소 이동 → 그 화면, 실제 목 데이터로 그리는 컨트롤, 오버레이 → 엔벌로프 → 세션 턴 → 보낸 핀은 곧바로 화면을 떠난다
-pnpm test:daemon            # REAL CLAUDE — 선상의 세션: 권한, 스트리밍, 문맥 이어받기
-pnpm test:planner           # REAL CLAUDE — 제품 주장: 요구사항을 채팅에 말하면 화면이 나와 미리보기에 렌더링된다
-pnpm test:desktop-unit      # 오프라인 — 업데이트 확인/semver/sha256, 가짜를 넣은 safeStorage 저장소, PATH 접두어
-pnpm test:desktop-smoke     # 오프라인 — Electron: 창, in-process 데몬 /health, 마법사, 업데이트 브리지(패키징된 앱에도 돈다)
-pnpm test:desktop-switch    # 오프라인 — Electron: 프로젝트 전환 — 떠난 페이지는 숨겨 둔 그대로 돌아온다(reload 없음, 표식 생존, 수십 ms), 주소창은 보이는 페이지를 따른다
-pnpm test:pane              # 오프라인 — Electron: 인앱 브라우저 페이지 모델(한 프로젝트 한 페이지, 클레임·에포크) 유닛
-pnpm test:browser-driver    # 오프라인 — Electron: 페이지를 모는 PaneBrowserDriver 유닛(탐색 · 새로 고침 · 에포크 무효화)
-pnpm test:crash             # 오프라인 — 죽은 CLI 로부터의 회복: 크래시 카드 · 그 이후 send 는 거절 · 같은 id 의 resume 이 새 CLI 에서 대화를 이어받는다
-pnpm test:midturn-queue     # 오프라인 — 다음 턴에 보내기: 도는 턴에 보낸 말이 스텁 CLI 의 stdin 에 닿지 않고, 턴이 끝난 뒤에야 제 턴으로 나간다
-pnpm test:turn-clock        # 오프라인 — 진행 시계의 와이어: 보내기가 시계를 놓고, 확인 카드 앞에서도 같은 시작을 유지하며(목록으로 새 창도 같은 시작을 읽는다), 턴이 끝나면 사라진다
-pnpm test:sidebar-ui        # 오프라인 — 브라우저: 사이드바 행과 표식, 전환(앞 포트는 따뜻하게 남고 · 뒤 ready), 이름 바꾸기, 지우기 대화상자, 960 폭 접힘
-pnpm test:status-menu-ui    # 오프라인 — 브라우저: 상태 칩의 확인 읽기 메뉴 — 넘김이 없는 자리의 문장까지
-pnpm test:thread-delete-ui  # 오프라인 — 브라우저: 지운 대화가 열린 대화창에 되살아나지 않는다
-pnpm test:clear-all-ui      # 오프라인 — 브라우저: 대화 모두 지우기(프로젝트 ··· 메뉴의 일괄 삭제)
-pnpm test:first-send        # 오프라인 — 브라우저: 첫 보내기가 세션을 만들며 컴포저가 비우는지
-pnpm test:branch-ui         # 오프라인 — 브라우저: 정산 줄과 분기 — 걸린 시간 · 전체 복사 · 여기서 새 대화가 함께 서고, `대화만 이 답까지로 이어받아요` 와 `작업 기록에서 되돌리기` 가 줄 위에 있으며, 갈아탄 뒤에도 원래 대화 행은 남는다
-pnpm test:chat-settings-ui  # 오프라인 — 브라우저: 대화 설정 칩 팝오버가 확인 방식 · 모델 · 생각 시간을 한 판에 펼치지 않고 단계별로 걷는다
-pnpm test:selector-chain    # 오프라인 — 브라우저: 프로바이더 → 모델 → 생각 시간 → 확인 방식 고르기 체인
-pnpm test:silence           # 오프라인 — 브라우저: 답 블록이 잠시 뜸해진 도는 턴에도 대기 줄이 살아 남는다
-pnpm test                   # 오프라인 전부를 병렬 레인으로(아래) — real-Claude 는 뺀다
-pnpm test:real              # REAL CLAUDE 두 스위트만 — 구독 사용량을 쓰는 opt-in
-pnpm test:smoke "<url>"     # 이미 도는 데몬에 대한 생존 검사; 아무것도 시작하지 않는다
-pnpm bench:turns            # REAL CLAUDE — 고정 과업을 fixture 레포에 돌려 턴 통계(turn-stats)를 채우고 종류별로 보고한다(--pin-effort <단계> 로 핀 스레드 첫 자세 팔을 잰다)
-pnpm bench:turns:stub       # 같은 벤치의 스텁 CLI — 구독 없이 배선만 확인한다
+pnpm typecheck              # 타입 검사 — CI 와 같은 문
+pnpm build                  # 빌드 — 릴리스와 같은 경로
+pnpm dev:desktop            # 눈으로 보는 검증
 ```
-
-`pnpm test` 는 오프라인 전부를 `scripts/test-parallel.mjs` 로 돌린다 — 네
-레인이 동시에: L1 단위(`node --test`, 창도 포트도 없다), L2 오프라인 데몬
-소켓 e2e, L3 열두 브라우저 스위트(각자 제 포트에서, 레인 안은 순서대로),
-L5 Electron 앱 스위트(단위 드라이버 · comments · smoke · switch · pane · browser-driver —
-각 스위트가 web-dist 를 다시 채우는 복사가 유일한 공유 상태라, 러너가 한 번
-스테이징하고 스위트에는 `COLO_TEST_SKIP_WEBDIST=1` 을 쥐어 준다). L4
-real-Claude 두 스위트는 구독을 쓰고 머신·계정 성향을 타므로 `pnpm test:real`
-로만 돌린다. 스위트별 로그는 `.test-logs/`(gitignored)에 쌓이고,
-`pnpm test:sequential` 은 같은 스위트 집합을 한 번에 하나씩 돌려 준다.
-
-빌드는 러너가 레인보다 먼저 한 번 돌린다 — 요청된 레인이 읽는 패키지만
-(L1·L2 는 web 번들 없이 daemon+protocol). 레인에는 `COLO_TEST_SKIP_BUILD=1`
-을 쥐어 준다. 전에는 Electron 스위트 넷이 저마다 네 패키지를 다시 지었다 —
-같은 컴파일을 반복하는 데 그치지 않고, `tsc` 가 `packages/daemon/dist` 를 다시
-쓰는 동안 L2·L3 가 바로 그 파일을 import 해서 세 스위트가 모듈 로더 오류로
-죽은 판이 있었다. 이미 지어 둔 트리에 대고 한 스위트만 손으로 돌릴 때도 같은
-변수를 앞에 붙이면 재빌드를 건너뛴다. ci 의 레인 잡은 빌드를 제 스텝으로
-돌리므로 그 변수를 그대로 쓴다.
-
-레인 안의 스위트는 기본 순서대로지만, `COLO_TEST_LANE_CONCURRENCY=<n>` 으로
-한 레인 안도 겹쳐 돌릴 수 있다 — L2·L3 는 포트가 서로 다르고(대부분 free
-port) 전용 tmpdir 라
-로컬에서 켜도 충돌하지 않는다(freePort() 의 확인-바인드 사이 창에서 아주
-드물게 같은 포트를 뽑을 수 있어 CI 는 기본값을 지킨다). 각 스위트는 제
-프로세스·로그·진행 감지 상한을 가진다 — 출력이 멈춘 스위트만 시간 초과로
-죽고, 실패한 스위트가 뒤 스위트의 결과를 삼키지 않는다.
-
-fixture 설계를 한 문단으로 — git 원격은 최소 `package.json` 앱(dev 스크립트와 검사
-게이트)을 담은 bare 레포지터리고, 모델 턴이 주제가 아닌 곳의 Claude Code CLI 는
-전부 스텁 스크립트다.
 
 ## 정책
 
