@@ -1,8 +1,9 @@
 # Colo Design 배포 검증 — main 푸시·PR 에서 "릴리스가 막히는 것"만 먼저 본다.
 #
-# 무엇을 돌리는가: 릴리스 워크플로우(desktop-release.yml)가 태그에서
-# 돌리는 것과 같은 트리의 typecheck · build. 이 두 가지가 깨지면 에셋이
-# 못 나오므로 태그를 밀기 전에 이 문에서 잡는다.
+# 무엇을 돌리는가: 릴리스 워크플로우(desktop-release.yml)가 태그에서 돌리는
+# 것과 같은 `pnpm -r build`(위상 정렬 — protocol → daemon·web → desktop).
+# 빌드가 깨지면 에셋이 못 나오므로 태그를 밀기 전에 이 문에서 잡는다.
+# 각 패키지의 build 는 tsc 컴파일 그 자체라 타입 오류도 같은 문에서 걸린다.
 #
 # 2026-09-21: 테스트 레인(L1·L2·L3·L5, 정적 검사)은 운영 판단으로
 # 걷어냈다 — 러너(Linux)와 실제 배포 플랫폼(mac·Windows) 환경이 어긋나
@@ -23,7 +24,7 @@ concurrency:
 
 jobs:
   deploy-gate:
-    name: 배포 검증 (typecheck·build)
+    name: 배포 검증 (빌드)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -40,8 +41,5 @@ jobs:
       - name: 설치
         run: pnpm install --frozen-lockfile
 
-      - name: 타입 검사
-        run: pnpm typecheck
-
       - name: 빌드 (릴리스와 같은 경로)
-        run: pnpm build
+        run: pnpm -r build
