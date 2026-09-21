@@ -227,6 +227,16 @@ async function main() {
     // 첫 실행 투어의 예시 창은 빈 대화마다 선다 — 이 스위트는 투어가
     // 아니라 그 아래의 화면을 본다.
     await page.addInitScript(() => localStorage.setItem("colo-design.tour-step", "done"));
+    // 모델 카탈로그를 심는다 — 세션을 열 때 웹이 실을 모델은 이 카탈로그에서
+    // 고른다. 깨끻한 기계(러너)에서는 첫 세션 전에 아무 카탈로그도 없어
+    // model 이 실리지 않았고, 칩은 "바로 진행"만 말했다(CI 2026-09-21).
+    // 스텁의 initialize 답과 짝을 이뤄 기계 상태와 무관하게 결정적이다.
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        "colo-design.models",
+        JSON.stringify({ claude: [{ value: "stub-model", displayName: "Stub" }] }),
+      ),
+    );
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();

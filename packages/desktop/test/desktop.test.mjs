@@ -879,6 +879,10 @@ async function runDriverUnit(url) {
     });
   });
   rmSync(dir, { recursive: true, force: true });
+  if (line && typeof line === "object" && line.error !== undefined && output.trim()) {
+    // 실패의 문맥 — 스텝 마커와 프로세스 출력을 로그에 남긴다.
+    console.error(`[driver-unit output]\n${output.slice(-2000)}`);
+  }
   return line;
 }
 

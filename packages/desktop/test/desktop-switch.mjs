@@ -110,6 +110,10 @@ async function main() {
       COLO_DESIGN_CREDENTIAL_STORE: "memory",
     },
   });
+  // 앱(과 그 안의 데몬)의 출력을 수트 로그로 — CI 에서 포트 감지·pull·단계
+  // 전환이 눈에 보인다. 실패의 원인이 로그에서 이름 붙게 하려는 자리다.
+  app.process().stdout?.pipe(process.stdout);
+  app.process().stderr?.pipe(process.stderr);
 
   try {
     const page = await app.firstWindow();
