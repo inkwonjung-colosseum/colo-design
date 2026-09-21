@@ -147,6 +147,12 @@ interface ReviewMarker {
   pr: number;
   author: string;
   path?: string;
+  /**
+   * E3: 첫 코멘트의 GitHub id — 카드의 답하기가 이 스레드로 간다. 묶음에
+   * 여러 코멘트가 섞여 있으면 첫 스레드가 대표다(나머지는 상태 확인
+   * 패널에서 각자 답한다). 옛 턴에는 없다 — 카드는 답하기 없이 읽는 자리.
+   */
+  id?: number;
 }
 
 export type TurnMarker = CommentsMarker | BriefMarker | GateMarker | ErrorMarker | ReviewMarker;
@@ -231,6 +237,7 @@ function hydrate(kind: TurnMarkerKind, data: Record<string, unknown>): TurnMarke
         pr: Number.isFinite(pr) ? pr : 0,
         author: str(data.author),
         ...(data.path ? { path: str(data.path) } : {}),
+        ...(Number.isFinite(Number(data.id)) ? { id: Number(data.id) } : {}),
       };
       return marker;
     }
@@ -293,6 +300,7 @@ export function reviewToTurn(reviews: DeveloperReview[]): string {
     pr: first?.pr ?? 0,
     author: first?.author ?? "",
     ...(first?.path ? { path: first.path } : {}),
+    ...(first ? { id: first.id } : {}),
   };
   const lines = [
     `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,

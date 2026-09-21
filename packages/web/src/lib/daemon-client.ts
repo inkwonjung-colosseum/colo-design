@@ -654,6 +654,8 @@ interface DaemonApi {
     repoUrl: string | null;
     baseBranch?: string;
     approveCommands?: boolean;
+    /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들. */
+    reviewers?: string[];
   }) => Promise<ProjectSummary>;
   /** Rename, or re-point the repo url/base branch. */
   projectUpdate: (
@@ -665,6 +667,8 @@ interface DaemonApi {
       approveCommands?: boolean;
       /** 프로젝트별 지침; null 이나 빈 문자열이면 지운다. */
       instructions?: string | null;
+      /** E4(초대 v2): 리뷰를 부탁할 개발자들; null 이면 지운다. */
+      reviewers?: string[] | null;
     },
   ) => Promise<ProjectList>;
   /** Switch the active project; the outgoing preview stays warm unless its port is needed. */
@@ -1582,6 +1586,7 @@ export function useDaemon(url: string | null): Daemon {
         repoUrl: string | null;
         baseBranch?: string;
         approveCommands?: boolean;
+        reviewers?: string[];
       }) =>
         call<ProjectSummary>(
           {
@@ -1592,6 +1597,7 @@ export function useDaemon(url: string | null): Daemon {
             // Absent reads as not approved daemon-side — the gate's default
             // is "nobody has vouched for these commands yet".
             ...(input.approveCommands ? { approveCommands: true } : {}),
+            ...(input.reviewers ? { reviewers: input.reviewers } : {}),
           },
           900_000,
         ),
@@ -1600,13 +1606,14 @@ export function useDaemon(url: string | null): Daemon {
       projectActivate: (slug: string) =>
         call<ProjectList>({ type: "project.activate", slug }, 600_000).then(keepProjects),
       projectUpdate: (
-        slug: string,
+        slug,
         changes: {
           name?: string;
           repoUrl?: string | null;
           baseBranch?: string;
           approveCommands?: boolean;
           instructions?: string | null;
+          reviewers?: string[] | null;
         },
       ) =>
         call<ProjectList>(
@@ -1620,6 +1627,7 @@ export function useDaemon(url: string | null): Daemon {
               ? { approveCommands: changes.approveCommands }
               : {}),
             ...(changes.instructions !== undefined ? { instructions: changes.instructions } : {}),
+            ...(changes.reviewers !== undefined ? { reviewers: changes.reviewers } : {}),
           },
           // A moved url re-clones.
           600_000,

@@ -1,10 +1,5 @@
-import type {
-  ColoDesignPinEnvelope,
-  DeveloperReview,
-  DiffFile,
-  SessionState,
-} from "@colo-design/protocol";
-import { markTurn } from "@colo-design/protocol";
+import type { ColoDesignPinEnvelope, DeveloperReview, SessionState } from "@colo-design/protocol";
+import { guidanceFor } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CallDeveloper, Fold, useFoldNotice } from "../../components";
@@ -15,7 +10,6 @@ import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf, timeAgo } from "../../lib/format";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
-import { guidanceFor } from "../../lib/repo-guidance";
 import {
   isReplyConfirmed,
   loadHandledReviews,
@@ -38,9 +32,6 @@ import {
   HistoryIcon,
   MinusIcon,
   PencilIcon,
-  RefreshIcon,
-  TrashIcon,
-  WarnIcon,
 } from "../icons";
 import { errorKindOf, ProgressPanel } from "../onboarding/RepoProgress";
 import {
@@ -52,7 +43,6 @@ import {
 import { StateBanner } from "../StateBanner";
 import { HistoryDrawer } from "../shell/HistoryDrawer";
 import { Tip } from "../shell/Tip";
-import { FILE_STATUS_LABEL } from "./DiffPanel";
 
 /**
  * 칩의 tone → leading 글리프 타일. delivery.ts 의 DeliveryTone 여섯 개가 전부다:
@@ -106,19 +96,6 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
         </span>
       );
   }
-}
-
-/** 버리기 확인의 ±수 — 헝크 본문의 +/− 줄만 센다 (헤더는 hunk.header 에 따로). */
-function diffCounts(file: DiffFile): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  for (const hunk of file.hunks) {
-    for (const line of hunk.lines) {
-      if (line.startsWith("+")) added += 1;
-      else if (line.startsWith("-")) removed += 1;
-    }
-  }
-  return { added, removed };
 }
 
 /** 한 오류 키가 사람 손 없이 쓸 수 있는 기계 고침 발사 수. 카드는 그다음 문이다. */
@@ -321,10 +298,6 @@ export function ScreenPanel({
   }, [stageRow]);
   /** 더 보기 ▾ 메뉴 — 점검·기록·버리기의 자리. */
   const [menuOpen, setMenuOpen] = useState(false);
-  /** 변경 버리기 확인 — this app's dialog, with the file list it names. */
-  const [discardConfirm, setDiscardConfirm] = useState(false);
-  /** Paths the discard would throw away, read when the dialog opens. */
-  const [discardFiles, setDiscardFiles] = useState<DiffFile[] | null>(null);
   // --- 개발자 코멘트: 상태 확인 이 읽어 온 개발자의 말 ----------
   const [devReviews, setDevReviews] = useState<DeveloperReview[] | null>(null);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
@@ -394,114 +367,13 @@ export function ScreenPanel({
   // 바뀌지 않아도 될 IPC 를 매번 일으킨다.
   const pinsFrame = useMemo(() => pinsSync(pins.ghosts, pins.list), [pins.ghosts, pins.list]);
 
-  /**
-   * The stopped screen's 다시 시작. Every bring-up reclaims the declared port
-   * for the active project now, so a restart is a plain sync — the button
-   * remains because the planner's next move after a stopped screen should
-   * not depend on knowing that.
-   */
-  const restart = useCallback(() => {
-    syncError.clear();
-    void api.repoSync(true).catch((e: Error) => syncError.show(e.message));
-  }, [api]);
-
-  /**
-   * 실패 카드의 AI 요청. 준비가 멈춘 자리는 다시 시도로는 같은 자리를
-   * 도는 경우가 많으므로 해결의 문은 대화다: 카드가 실패를 읽은 표
-   * (repo-guidance 의 agentAsk)를 브리프로 실어 대화에 넘긴다. 최신화
-   * 충돌만 다르다 — 열려 있는 대화에는 repoRefresh 가 데몬의 충돌 브리프를
-   * 실어 보내고(최신화와 같은 회선), 없으면 새 대화를 만들어 요청을 보낸다 —
-   * 새 대화가 태어날 때의 준비 pull 이 충돌을 첫 과제로 넣는다. 정리 턴이
-   * 끝나면 준비를 한 번 다시 시도한다 — 고침 턴 뒤의 자동 재시도와 같은
-   * 형태로, 중지로 끊긴 턴 뒤에는 재시도가 없다.
-   */
-  const [askNote, setAskNote] = useState<string | null>(null);
-  const askArmed = useRef(false);
-  const askTurnRan = useRef(false);
-  const askBusy = useRef(false);
-  const askAgent = async () => {
-    // 연타는 막는다 — 보내는 동안의 다시 누름은 겹친 요청이 거절로 돌아와
-    // 앞 요청이 세워 둔 표식을 지우는 낙차를 남긴다(lookBusy 와 같은 규칙).
-    if (askBusy.current) return;
-    askBusy.current = true;
-    try {
-      const live = sessionId ? (daemon.sessions[sessionId]?.live ?? false) : false;
-      const agent = guidanceFor(errorKind, repo?.detail ?? null).agent;
-      if (!agent) return;
-      setAskNote("AI에게 정리를 요청했습니다 — 대화에서 정리합니다.");
-      if (errorKind === "conflict" && live) {
-        void api.repoRefresh(sessionId).catch((e: Error) => syncError.show(e.message));
-      } else {
-        const delivered = await onMachineTurn(
-          markTurn({ kind: "gate", step: agent.step }, agent.brief),
-          agent.thread,
-        );
-        // 거절(클론 뿌리가 아예 없어 대화를 못 여는 경우 등)의 말은 이미
-        // 대화쪽 오류 스트립이 한다 — 카드의 표식이 가지 않은 요청을 갔다고
-        // 말하게 두지 않는다.
-        if (!delivered) {
-          setAskNote(null);
-          return;
-        }
-      }
-      askArmed.current = true;
-    } finally {
-      askBusy.current = false;
-    }
-  };
   useEffect(() => {
     if (phase === "ready") {
       // 첫 준비가 끝난 기기다 — 다음 준비부터 대기 카드는 이름만 말한다.
       markRepoPrepSeen();
-      askArmed.current = false;
-      setAskNote(null);
-      return;
     }
-    if (turnState === "running") {
-      askTurnRan.current = true;
-      return;
-    }
-    // 아직 살아 있는 턴 — 승인·질문 대기도 턴의 중간이다. 포트 정리나
-    // pnpm 설치처럼 허가를 기다리는 고침 위로 준비 재시도를 쏘지 않는다.
-    if (
-      turnState === "starting" ||
-      turnState === "waiting_permission" ||
-      turnState === "waiting_question"
-    ) {
-      return;
-    }
-    if (!askArmed.current || !askTurnRan.current) return;
-    askTurnRan.current = false;
-    askArmed.current = false;
-    const blocks = sessionId ? (daemon.sessions[sessionId]?.blocks ?? []) : [];
-    const last = blocks[blocks.length - 1];
-    if (last?.type === "turn" && last.subtype === "interrupted") {
-      setAskNote(null);
-      return;
-    }
-    setAskNote("정리가 끝났습니다 — 준비를 다시 시도합니다…");
-    void api
-      .repoSync()
-      .catch((e: Error) => syncError.show(e.message))
-      .finally(() => setAskNote(null));
-    // The gate retry's own shape: refs and the daemon's session views are
-    // read live; the settles this answers are what the deps carry.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turnState, phase, sessionId]);
+  }, [phase]);
 
-  /**
-   * 레포 최신화: the planner's pull of the developer's side, pressed from
-   * this bar. Unsaved changes are the daemon's to carry; a conflict is
-   * the agent.s, briefed into the open thread like a failing gate.
-   */
-  const [refreshing, setRefreshing] = useState(false);
-  const refresh = useCallback(() => {
-    setRefreshing(true);
-    void api
-      .repoRefresh(sessionId)
-      .catch((e: Error) => syncError.show(e.message))
-      .finally(() => setRefreshing(false));
-  }, [api, sessionId]);
   /** 상태 확인의 빈 답 — 내용 영역의 띠 대신 누른 버튼 곁의 한 줄. 같은
    * 말을 다시 싣으면 이전 타이머를 지운다 — 답이 온전히 6 초를 살게. */
   const [checkNote, setCheckNote] = useState<string | null>(null);
@@ -740,7 +612,7 @@ export function ScreenPanel({
   useEffect(() => {
     const reread = () => {
       if (document.visibilityState !== "visible") return;
-      if (turnState === "running" || refreshing) return;
+      if (turnState === "running") return;
       if (Date.now() - lastQuietRead.current < 5 * 60_000) return;
       lastQuietRead.current = Date.now();
       readHandoffState(true);
@@ -751,7 +623,7 @@ export function ScreenPanel({
       window.removeEventListener("focus", reread);
       document.removeEventListener("visibilitychange", reread);
     };
-  }, [readHandoffState, turnState, refreshing]);
+  }, [readHandoffState, turnState]);
 
   // --- 종착의 한 박자, 강조의 이동 목격 -------------
   // 펄스의 키는 state 다 — tone 은 도는 동안 pending 으로 덮어 쓰이므로 tone
@@ -848,29 +720,6 @@ export function ScreenPanel({
     }
   };
 
-  /** 버리기: the confirm dialog's only action — the menu item only opens it. */
-  const discard = useCallback(() => {
-    setDiscardConfirm(false);
-    void api
-      .discard()
-      .then(() => api.repoStatus())
-      .catch((e: Error) => syncError.show(e.message));
-  }, [api]);
-
-  /**
-   * The menu item: opens the dialog and reads the diff beside it, so the
-   * planner sees the list of files the 버리기 would throw away —
-   * not just a count.
-   */
-  const askDiscard = useCallback(() => {
-    setDiscardFiles(null);
-    setDiscardConfirm(true);
-    void api
-      .diff()
-      .then((files) => setDiscardFiles(files))
-      .catch(() => setDiscardFiles(null));
-  }, [api]);
-
   /**
    * Mounting the panel is what readies the repo. `repoSync` is idempotent
    * daemon-side, so it runs at most once per mount — never per render — and
@@ -897,10 +746,6 @@ export function ScreenPanel({
     lastErrorKey.current = key;
     lastErrorCount.current = count;
     void onMachineTurn(errorToTurn(error, count));
-    // 멈춘 서버 카드의 고치기 요청 — 고침 턴이 끝나면 준비를 한 번 다시
-    // 시도한다 (다른 실패 카드의 AI 요청과 같은 형태). 살아 있는
-    // 미리보기의 화면 오류에는 재시도할 준비가 없다.
-    if (previewStopped) askArmed.current = true;
     // 클릭은 판정을 지난 말이다 — 카드를 치우는 것도 클릭의 몫이다. 눌린
     // 보고는 보류 목록에서도 내려온다(사람이 끼었다), 다른 라우트의 살아
     // 남은 보고는 다음 정산이 다시 심사한다.
@@ -1250,10 +1095,8 @@ export function ScreenPanel({
           phase={phase ?? "missing"}
           detail={repo?.detail ?? null}
           errorKind={errorKind}
-          note={askNote}
           connectionLost={connectionLost}
           onRetry={sync}
-          onAskAgent={() => void askAgent()}
           onApproveCommands={
             activeSlug
               ? () =>
@@ -1279,7 +1122,6 @@ export function ScreenPanel({
   // 저장 and 넘기기 act on the worktree and the remote, so gating them on a
   // preview that cannot bind a port would strand work that is already done.
   const workable = phase === "ready" || phase === "error";
-  const refreshLocked = refreshing || phase !== "ready";
 
   return (
     <div className={`planner__previewcol${working ? " planner__previewcol--live" : ""}`}>
@@ -1498,11 +1340,7 @@ export function ScreenPanel({
               </span>
               <span className="screenpanel__divider" />
               <span className="screenpanel__more">
-                <Tip
-                  label={menuOpen ? undefined : "최신 변경 받아오기 · 작업 기록"}
-                  side="bottom"
-                  align="end"
-                >
+                <Tip label={menuOpen ? undefined : "작업 기록"} side="bottom" align="end">
                   <button
                     type="button"
                     className="ghost screenpanel__morebtn"
@@ -1523,44 +1361,11 @@ export function ScreenPanel({
                       onClick={() => setMenuOpen(false)}
                     />
                     <span className="selector__menu screenpanel__menu" role="menu">
-                      {/* 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
-                  그 자리를 갖는다. 최신 변경 · 작업 기록 · 변경 버리기가 남는다.
-                  잠긴 행도 aria-disabled: 진짜 disabled 는 hover 를 막아 title 의
-                  잠긴 이유에 도달할 길이 없다 (상단 바와 같은 규칙). */}
-                      <Tip
-                        label={
-                          refreshing
-                            ? "받아 오는 중…"
-                            : refreshLocked
-                              ? "미리보기가 준비되면 받아올 수 있습니다"
-                              : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
-                        }
-                        side="left"
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row screenpanel__refreshrow"
-                          aria-disabled={refreshLocked}
-                          onClick={() => {
-                            if (refreshLocked) return;
-                            // 행이 곧 진행을 말한다 — 받아 오는 중… 로.
-                            refresh();
-                          }}
-                        >
-                          <span className="ic ic--sm ic--quiet">
-                            <RefreshIcon />
-                          </span>
-                          <span className="selector__text">
-                            <span className="selector__label">
-                              {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
-                            </span>
-                            <span className="selector__desc">
-                              개발자가 반영한 최신 변경을 받아 옵니다
-                            </span>
-                          </span>
-                        </button>
-                      </Tip>
+                      {/* 저장 · 넘기기 · 받아오기는 이 메뉴에 없다 — 받아오기는
+                  도구가 먼저 하고(E1), 저장은 답을 낸 턴마다 스스로 된다.
+                  작업 기록 · 넘긴 내용 열기가 남는다. 잠긴 행도 aria-disabled:
+                  진짜 disabled 는 hover 를 막아 title 의 잠긴 이유에 도달할
+                  길이 없다 (상단 바와 같은 규칙). */}
                       <Tip label="이번 작업의 차례를 보고 하나로 되돌립니다" side="left">
                         <button
                           type="button"
@@ -1580,36 +1385,6 @@ export function ScreenPanel({
                             <span className="selector__label">작업 기록</span>
                             <span className="selector__desc">
                               이번 작업의 차례를 보고 하나로 되돌립니다
-                            </span>
-                          </span>
-                        </button>
-                      </Tip>
-                      <Tip
-                        label={
-                          (repo?.pendingChanges ?? 0) > 0
-                            ? "저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다"
-                            : "버릴 저장하지 않은 변경이 없습니다"
-                        }
-                        side="left"
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          aria-disabled={!workable || (repo?.pendingChanges ?? 0) === 0}
-                          onClick={() => {
-                            if (!workable || (repo?.pendingChanges ?? 0) === 0) return;
-                            setMenuOpen(false);
-                            askDiscard();
-                          }}
-                        >
-                          <span className="ic ic--sm ic--danger">
-                            <TrashIcon />
-                          </span>
-                          <span className="selector__text">
-                            <span className="selector__label">변경 버리기</span>
-                            <span className="selector__desc">
-                              저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다
                             </span>
                           </span>
                         </button>
@@ -1677,10 +1452,8 @@ export function ScreenPanel({
               phase={phase ?? "missing"}
               detail={repo?.detail ?? null}
               errorKind={errorKind}
-              note={askNote}
               connectionLost={connectionLost}
               onRetry={sync}
-              onAskAgent={() => void askAgent()}
               onApproveCommands={
                 activeSlug
                   ? () =>
@@ -1704,7 +1477,6 @@ export function ScreenPanel({
               epoch={repo?.previewEpoch ?? null}
               stopped={previewStopped}
               stoppedDetail={repo?.detail ?? null}
-              onRestart={restart}
               onPin={onPin}
               onPinFocus={onPinFocus}
               onFixError={forwardError}
@@ -1729,45 +1501,6 @@ export function ScreenPanel({
             <HistoryDrawer open onClose={closeHistory} daemon={daemon} cover={historyCover} />
           )}
         </div>
-        {discardConfirm && (
-          <ConfirmDialog
-            title="변경 버리기"
-            body={
-              <>
-                <span className="ic ic--danger">
-                  <WarnIcon />
-                </span>{" "}
-                저장하지 않은 변경 <strong>{repo?.pendingChanges ?? 0}개</strong>를 모두 버릴까요?
-              </>
-            }
-            hint="버린 변경은 되돌릴 수 없습니다."
-            confirmLabel="버리기"
-            onConfirm={discard}
-            onClose={() => setDiscardConfirm(false)}
-          >
-            {discardFiles && discardFiles.length > 0 && (
-              <ul className="discard__files">
-                {discardFiles.map((file) => {
-                  const { added, removed } = diffCounts(file);
-                  return (
-                    <li className="dfile" key={file.path}>
-                      <span className={`dfile__tag dfile__tag--${file.status}`}>
-                        {FILE_STATUS_LABEL[file.status]}
-                      </span>
-                      <span className="dfile__name">{file.path}</span>
-                      {(added > 0 || removed > 0) && (
-                        <span className="discard__count">
-                          {added > 0 && <span className="plus">+{added}</span>}
-                          {removed > 0 && <span className="minus">−{removed}</span>}
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </ConfirmDialog>
-        )}
         {devPanelOpen && (
           <div
             className="modal"

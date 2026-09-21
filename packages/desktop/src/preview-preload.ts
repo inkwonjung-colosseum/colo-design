@@ -977,10 +977,9 @@ const boot = () => {
   try {
     if (!window.localStorage.getItem(HINT_SEEN)) {
       window.localStorage.setItem(HINT_SEEN, "1");
-      const note = toast(
-        "요소를 ⌥+클릭하면 핀이 찍혀 입력창에 붙습니다. 여러 개 찍고 한 번에 말하세요.",
-        { hold: true },
-      );
+      const note = toast("클릭은 요소, 끌면 영역을 가리켜요. 여러 개 찍고 한 번에 말하세요.", {
+        hold: true,
+      });
       setTimeout(() => note.remove(), 6000);
     }
   } catch {

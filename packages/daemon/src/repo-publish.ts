@@ -2,6 +2,7 @@
 // Owns the in-flight cycle's handoff bookkeeping and the review replies.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type ChatEvent,
   type DeveloperReview,
@@ -223,7 +224,11 @@ export class PublishCycle {
     // 끝난 것이고, 원격 백업은 되는 대로 따라간다. 실패를 기다리는 것은 제출의
     // 몫이니 여기선 삼킨다(밀린 커밋은 넘기기가 민다).
     if (options.backgroundPush === true) {
-      void this.core.git(["push", "--set-upstream", "origin", branch]).catch(() => undefined);
+      // D6: 백그라운드 푸시도 바로 포기하지 않는다 — 30 초 간격 세 번. 턴의
+      // 끝이 오프라인 때문에 밀리지 않게 실패를 삼키던 자리(P2-1)에 조용한
+      // 재시도가 대신 선다. 세 번 다 지나면 제출이 기다려서 민다 — 제출만이
+      // 푸시 실패를 게이트로 올리는 유일한 길이다.
+      void this.retryBackgroundPush(branch);
     } else {
       try {
         await this.core.git(["push", "--set-upstream", "origin", branch]);
@@ -264,8 +269,6 @@ export class PublishCycle {
    */
   async ensureCycleBranch(): Promise<string> {
     if (this.core.branch) {
-      const head = (await this.core.git(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-      if (head !== this.core.branch) await this.core.git(["checkout", this.core.branch]);
       return this.core.branch;
     }
 
@@ -433,6 +436,13 @@ export class PublishCycle {
               body,
             });
       const handoff: HandoffStatus = pull;
+      // E4(초대 v2): 리뷰를 부탁할 개발자들이 정해져 있으면 GitHub 에 요청한다
+      // — 최선의 노력. 실패해도 넘기기는 이미 끝났고 칩의 리뷰어 줄이 비는
+      // 것이 전부다(레포의 자기 규칙이 있을 수 있는 자리).
+      const reviewers = this.core.reviewers?.() ?? [];
+      if (reviewers.length > 0) {
+        await client.requestReviewers({ ...slug, number: handoff.number, reviewers });
+      }
       this.core.setCycle(branch, handoff);
       const status = this.core.setDiff({ stage: "handed-off", handoff });
       // hero-synthesis D1: the milestone line — 넘겼어요 — joins the tape.
@@ -768,6 +778,18 @@ export class PublishCycle {
     }
   }
 
+  /** D6: 조용한 푸시 재시도 — 세 번, 30 초 간격. 마지막 실패는 말이 없다. */
+  private async retryBackgroundPush(branch: string): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await sleep(30_000);
+      try {
+        await this.core.git(["push", "--set-upstream", "origin", branch]);
+        return;
+      } catch {
+        // 남은 시도가 있다; 없다면 밀린 커밋은 제출의 게이트가 잡는다.
+      }
+    }
+  }
   private failGate(
     gate: "commit" | "push" | "pr",
     error: unknown,

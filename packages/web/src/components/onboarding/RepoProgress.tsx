@@ -6,10 +6,10 @@
  */
 
 import type { RepoPhase } from "@colo-design/protocol";
+import { type ErrorKind, errorKindOf, guidanceFor } from "@colo-design/protocol";
 import { type ReactNode, useState } from "react";
 import { CopyButton } from "../../components";
 import { daemonLine } from "../../lib/format";
-import { type ErrorKind, errorKindOf, guidanceFor } from "../../lib/repo-guidance";
 import { isRepoPrepSeen } from "../../lib/settings";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { GearIcon, RestartIcon, SparkIcon } from "../icons";
@@ -64,7 +64,6 @@ export function ProgressPanel({
   note,
   connectionLost = false,
   onRetry,
-  onAskAgent,
   onApproveCommands,
   callDeveloper,
   onOpenSettings,
@@ -77,12 +76,6 @@ export function ProgressPanel({
   /** 데몬과의 연결이 끊긴 동안 — 경고 카드가 단계 위에 얹히고 스택은 흐려진다. */
   connectionLost?: boolean;
   onRetry: () => void;
-  /**
-   * 실패 카드의 첫 동작: 이 실패를 AI의 과제로 넘긴다. 어떤 종류가
-   * 이 문을 여는지는 guidance 가 든 `agent` 가 정한다 — `commands`(사람의
-   * 동의가 곧 해결)와 `preview`(미리보기 자리의 자체 버튼)만 뺀 전부다.
-   */
-  onAskAgent?: () => void;
   /** 승인 오류의 첫 동작: 이 레포의 install · preview 명령 실행을 허용한다. */
   onApproveCommands?: () => void;
   /**
@@ -102,16 +95,17 @@ export function ProgressPanel({
   const failedIndex = failed ? (ERROR_STEP[errorKind] ?? -1) : -1;
   // 대기 카드의 힌트 줄은 첫 준비의 교육용 — 마운트 시점의 기록만 본다.
   const [showHints] = useState(() => !isRepoPrepSeen());
-  const agentFirst = Boolean(guidance?.agent && onAskAgent);
-  const primaryTaken = agentFirst || (errorKind === "commands" && onApproveCommands);
+  // D4: 실패를 AI에게 넘기는 일은 도구가 이미 했다(데몬의 자동 분기) — 카드의
+  // 첫 동작은 그 사실을 읽는 한 줄이고, 남는 버튼은 다시 시도뿐이다.
+  const agentBriefed = Boolean(guidance?.agent);
+  const primaryTaken = errorKind === "commands" && onApproveCommands;
 
   const actions = guidance ? (
     <div className="progress__actions">
-      {agentFirst && (
-        <button type="button" className="primary" onClick={onAskAgent}>
-          <SparkIcon size={13} />
-          AI에게 해결 요청
-        </button>
+      {agentBriefed && (
+        <p className="progress__note" role="status">
+          도구가 이 문제를 AI에게 맡겼어요 — 대화에서 고치고 있어요
+        </p>
       )}
       {errorKind === "commands" && onApproveCommands && (
         <button type="button" className="primary" onClick={onApproveCommands}>

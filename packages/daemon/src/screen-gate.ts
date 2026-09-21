@@ -32,6 +32,8 @@ export interface ScreenTrouble {
   route: string;
   /** 문서가 끝내 완전히 로드되지 못했다. */
   unsettled: boolean;
+  /** D2: 다 로드됐지만 글자도 그림도 없다 — 콘솔이 조용한 죽음. */
+  blank: boolean;
   /** error·실패한 요청만 — 경고는 세지 않는다. */
   lines: PreviewConsoleLine[];
 }
@@ -54,17 +56,24 @@ export async function inspectScreens(
 ): Promise<ScreenTrouble[]> {
   const troubles: ScreenTrouble[] = [];
   for (const screen of screens.slice(0, MAX_GATE_SCREENS)) {
-    const opened = await driver.open(screen.route).catch(() => null);
+    let opened = await driver.open(screen.route).catch(() => null);
+    // D3: 열기가 한 번 넘어지는 것은 판정이 아니다 — 창 세우기와 로드의
+    // 일시적 흔들림이 그 자리를 지나가게 한 번만 다시 본다.
+    if (opened === null) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      opened = await driver.open(screen.route).catch(() => null);
+    }
     // 열지 못한 것은 게이트의 판정이 아니다 — 미리보기 서버가 방금 죽었거나
     // 주소가 사라진 것이고, 그 사실은 다른 자리(레포 상태)가 이미 말한다.
     if (opened === null || opened.ok !== true) continue;
     const lines = (await driver.consoleLines().catch(() => []))
       .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
       .slice(0, MAX_LINES_PER_SCREEN);
-    if (opened.settled && lines.length === 0) continue;
+    if (opened.settled && !opened.blank && lines.length === 0) continue;
     troubles.push({
       route: screen.route,
       unsettled: !opened.settled,
+      blank: opened.settled && opened.blank === true,
       lines,
     });
   }
@@ -82,6 +91,9 @@ export function gateBrief(troubles: ScreenTrouble[]): string {
     const reasons: string[] = [];
     if (trouble.unsettled) {
       reasons.push("화면이 끝내 로드되지 못했습니다 — 문서가 완전히 오지 않았습니다.");
+    }
+    if (trouble.blank) {
+      reasons.push("화면이 비어 있습니다 — 글자도 그림도 그려지지 않았습니다.");
     }
     for (const line of trouble.lines) reasons.push(`${line.level}: ${line.text}`);
     return [`### ${head}`, ...reasons].join("\n");

@@ -330,6 +330,11 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     /** What a handoff PR will target. Defaults to `main`. */
     baseBranch: z.string().min(1).max(128).optional(),
     /**
+     * E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들(GitHub 로그인).
+     * 초대 파일이 실어 오고, 넘기기가 GitHub 에 요청한다.
+     */
+    reviewers: z.array(z.string().min(1).max(80)).max(10).optional(),
+    /**
      * The planner saw this repo's `install`/`preview` commands and said they
      * may run on this machine. Absent means not yet approved: the workspace
      * stops after clone with errorKind `commands` until an update approves.
@@ -353,6 +358,8 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     name: z.string().min(1).max(64).optional(),
     repoUrl: z.string().min(1).nullable().optional(),
     baseBranch: z.string().min(1).max(128).optional(),
+    /** E4(초대 v2): 리뷰를 부탁할 개발자들 — 프로젝트 설정에서도 고친다. */
+    reviewers: z.array(z.string().min(1).max(80)).max(10).nullable().optional(),
     /** Approves this repo's commands post-hoc — the error card's button. */
     approveCommands: z.boolean().optional(),
     /** 프로젝트별 지침(설정 문서 P1#8) — 세션의 시스템 프롬프트에 붙는다. */

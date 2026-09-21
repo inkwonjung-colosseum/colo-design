@@ -313,7 +313,6 @@ function PlannerShell({
           id: `pin-${index + 1}`,
           screen: "login",
           note: index === 0 ? "누르고 나서 반응이 늦어요" : "",
-          intent: index % 2 === 0 ? "change" : "question",
           element: {
             component: "button",
             text,
@@ -428,7 +427,6 @@ function PlannerShell({
         onDismissDropped={() => undefined}
         onPinRemove={() => undefined}
         onPinNote={() => undefined}
-        onPinIntent={() => undefined}
         onPinFocus={() => undefined}
         titleForScreen={(screen) => (screen === "login" ? "로그인" : null)}
         running={live}

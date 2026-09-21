@@ -25,7 +25,8 @@ const HANDOFF_STATE_LABEL: Record<HandoffStatus["state"], string> = {
   open: "넘김",
   changes_requested: "변경 요청",
   merged: "반영됨",
-  closed: "닫힘",
+  // E2: 칩과 같은 말 — 개발자가 닫았다는 것을 사용자의 말로.
+  closed: "개발자가 반려함",
 };
 
 export interface HandoffCardProps {
@@ -209,7 +210,7 @@ export function HandoffCard({
           <div className="notice notice--info handoff__coach">
             <span className="notice__text">
               처음 넘기기예요 — 넘기면 ① 회사 저장소에 확인 요청이 열리고, ② 개발자가 검토한 뒤
-              합쳐지면 상태 칩이 「반영됨」이 됩니다. 코멘트가 달리면 이 대화로 다시 돌아와요.
+              합쳐지면 상태 칩이 「반영됐어요」가 됩니다. 코멘트가 달리면 이 대화로 다시 돌아와요.
             </span>
             <button
               type="button"

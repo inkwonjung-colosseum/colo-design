@@ -6,9 +6,13 @@
  * text sniffing the old UI did broke silently whenever a daemon
  * message was reworded, so the kind is the only thing consulted. Pure data
  * and functions only — the card that renders them lives in RepoProgress.
+ *
+ * D4: 이 표는 protocol 에 산다 — 데몬이 준비 실패를 사람의 클릭 없이 대화로
+ * 넘길 때도, 웹이 실패 카드를 그릴 때도 같은 문장을 읽어야 한다. 두 층이
+ * 각자의 사본을 가지면 카드가 말한 것과 AI 가 받은 브리프가 어긋난다.
  */
 
-import type { RepoStatus } from "@colo-design/protocol";
+import type { RepoStatus } from "./repo.js";
 
 /**
  * Which failure this is. A dead preview server still leaves the screen worth
@@ -130,6 +134,7 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
     // The repo's own install · preview commands wait on one explicit yes —
     // the button below is the yes; the body is the daemon's own words.
     // P3-1: 이것은 실패가 아니라 첫 실행이다 — 제목이 그렇게 읽혀야 한다.
+    // A2: 동의 칸은 사라지고 `프로젝트 만들기` 클릭이 곧 그 yes 다.
     return {
       title: "이 서비스를 이 컴퓨터에서 처음 켭니다",
       body: detail ?? "준비에 몇 분 걸립니다. 시작하려면 아래 버튼을 눌러 주세요.",

@@ -8,9 +8,11 @@ import type { HandoffStatus, RepoPhase } from "@colo-design/protocol";
  * 그릴지는 ScreenPanel 의 몫이다.
  *
  * P2-1(자동 저장) 뒤로 이 파일에 `저장` 이라는 단어는 없다. 턴이 끝나면 도구가
- * 스스로 커밋하므로 "저장 안 한 작업" 이라는 상태 자체가 사라졌고, 사용자의
- * 어휘는 `제출` 과 `반영됨` 둘뿐이다 — 칩의 행이 일곱에서 다섯으로 줄어든 것이
- * 그 결과다.
+ * 스스로 커밋하므로 "저장 안 한 작업" 이라는 상태 자체가 사라졌다. E2 로
+ * 칩의 말은 셋으로 접혔다 — `제출 전` · `개발자가 보고 있어요` · `반영됐어요`.
+ * 행(constant `state`)은 여전히 다섯으로 기계적 판정에 쓰이되, 사람이 읽는
+ * 칩은 그 차이를 말하지 않는다: 코멘트 · 반려 같은 세부는 색(tone) 과
+ * title · next.line 이 말한다. 칩은 "어디까지 왔나"만 말한다.
  *
  * 사이드바 행 표식은 이 파일의 단어 상수를 빌려 쓴다 — 행과 칩이 어긋날 길이
  * 없다.
@@ -133,16 +135,14 @@ function docLabel(row: CycleRow, input: DeliveryInput): string {
   if (input.running) return MAKING_LABEL;
   switch (row.state) {
     case "handed":
-      return "검토 중";
     case "changes_requested":
-      return "변경 요청";
     case "closed":
-      return "개발자가 반려함";
+      return "검토 중";
     case "merged":
       // 새 사이클의 작업이 앞선다 — 머지 뒤에 쌓인 것을 `반영됨` 이 가리지 않는다.
       return hasWork(input) ? "제출 전" : "반영됨";
     case "unsubmitted":
-      return hasWork(input) ? "제출 전" : "변경 없음";
+      return "제출 전";
   }
 }
 
@@ -178,7 +178,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
       ? { enabled: true }
       : { enabled: false, reason: NOTHING_TO_SUBMIT };
   if (handoff?.state === "merged") {
-    // 새 사이클의 작업이 앞선다(위의 원칙): 머지 뒤에 쌓인 것을 `반영됨` 이
+    // 새 사이클의 작업이 앞선다(위의 원칙): 머지 뒤에 쌓인 것을 `반영됐어요` 가
     // 가리면 넘길 일감 자체가 칩에서 사라진다.
     return {
       state: "merged",
@@ -189,9 +189,9 @@ function cycleRow(input: DeliveryInput): CycleRow {
             title: "이번 제출은 새 사이클을 시작합니다",
           }
         : {
-            label: "반영됨",
+            label: "반영됐어요",
             tone: "merged",
-            title: "다음 제출은 새 사이클을 시작합니다",
+            title: "다음 제출은 새 작업을 시작합니다",
           },
       next: {
         line: work
@@ -211,10 +211,13 @@ function cycleRow(input: DeliveryInput): CycleRow {
   if (handoff?.state === "closed") {
     return {
       state: "closed",
+      // 반려도 칩은 같은 말을 한다(E2) — "개발자가 보고 있어요". 색(changes) 과
+      // title 이 반려를 정확히 말하고, next.line 이 다음 수를 준다. 칩이 여섯
+      // 번째 말을 배우는 것이 사용자에게 남길 것이 아니다.
       chip: {
-        label: "개발자가 반려함",
+        label: "개발자가 보고 있어요",
         tone: "changes",
-        title: `개발자가 넘긴 요청 ${handoff.number}번을 닫았습니다 — 코멘트를 읽고 이어 가세요`,
+        title: `개발자가 넘긴 요청 ${handoff.number}번을 닫았습니다 — 상태 확인에서 이유를 읽고 이어 가세요`,
       },
       next: {
         line: "개발자가 이번 요청을 닫았습니다 — 상태 확인에서 이유를 읽고, 고쳐 제출하면 새 요청이 열립니다",
@@ -228,7 +231,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
     return {
       state: "handed",
       chip: {
-        label: "개발자 검토 중",
+        label: "개발자가 보고 있어요",
         tone: "handed",
         title: `넘긴 요청 ${handoff.number}번을 개발자가 검토하는 중입니다${
           reviewerNote(handoff) ? ` · ${reviewerNote(handoff)}` : ""
@@ -248,8 +251,10 @@ function cycleRow(input: DeliveryInput): CycleRow {
   if (handoff?.state === "changes_requested") {
     return {
       state: "changes_requested",
+      // 코멘트가 달렸다는 것은 칩의 색(changes) 만이 말한다 — 반영은 도구가
+      // 스스로 맡으므로, 사람이 칩에서 읽을 것은 "개발자가 보고 있다"뿐이다.
       chip: {
-        label: "변경 요청",
+        label: "개발자가 보고 있어요",
         tone: "changes",
         title: `개발자가 넘긴 요청 ${handoff.number}번에 코멘트를 남겼습니다 — 도구가 반영을 맡깁니다`,
       },
@@ -279,7 +284,9 @@ function cycleRow(input: DeliveryInput): CycleRow {
 
   return {
     state: "unsubmitted",
-    chip: { label: "변경 없음", tone: "none" },
+    // 만든 것이 없어도 칩은 `제출 전` 이다(E2) — `변경 없음` 은 일곱 번째
+    // 말을 배우게 할 뿐, 다음 수는 같다: 화면을 만들어 달라고 하는 것.
+    chip: { label: "제출 전", tone: "none", title: "새로 만든 것이 없습니다" },
     next: { line: "새로 만든 것이 없습니다 — 화면을 만들어 달라고 하면 시작됩니다" },
     primary: null,
     actions: { submit: { enabled: false, reason: NOTHING_TO_SUBMIT }, check: null },

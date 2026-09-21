@@ -1,10 +1,11 @@
 import { alignThumbs, readTurn, type TurnMarker } from "@colo-design/protocol";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { LIMIT_WORDS } from "../../lib/error-words";
 import { waitedFor } from "../../lib/format";
+import { composing } from "../../lib/ime";
 import { CopyButton } from "../CopyButton";
-import { ChevronRightIcon } from "../icons";
+import { BranchIcon, ChevronRightIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
 /**
@@ -22,6 +23,7 @@ function MachineTurn({
   body,
   thumbs,
   onOpenItem,
+  onDevReply,
 }: {
   marker: TurnMarker;
   body: string;
@@ -30,28 +32,28 @@ function MachineTurn({
   /** 행 클릭 → 그 핀이 찍힌 화면으로. 항목의 screen
       (경로)이 없는 옛 마커는 클릭이 없다 — 짐작으로 보내지 않는다. */
   onOpenItem?: (screen: string) => void;
+  /** 리뷰 카드의 답하기 — 대화를 떠나지 않는 한 줄. 보내는 길
+      (`api.replyToReview`)은 호출부(ChatColumn)가 잇는다; 없으면 카드는
+      읽는 자리로 그친다. */
+  onDevReply?: (reviewId: number, text: string) => Promise<void>;
 }) {
+  // 자세히의 접힘 — 카드마다 제 것이다.
   const [open, setOpen] = useState(false);
 
   let title: string;
   let lead: string | null = null;
   let rows: Array<{ key: string; label: string; text: string; screen?: string }> = [];
+  // 리뷰 카드의 답하기가 보낼 코멘트의 id — 마커가 싣고 있을 때만 칸이 뜬다.
+  let devReplyId: number | undefined;
   // The crops are fewer than the rows when the view could not
   // photograph a pin, so each image has to be put back on its own row.
   const aligned = marker.kind === "comments" ? alignThumbs(marker.items, thumbs) : null;
 
   switch (marker.kind) {
     case "comments": {
-      // 의도가 제목을 정한다: absent reads as change, so older
-      // markers keep the 수정 요청 title they were written with.
-      const questions = marker.items.filter((item) => item.intent === "question").length;
-      const changes = marker.items.length - questions;
-      title =
-        questions === 0
-          ? `수정 요청 ${marker.items.length}건`
-          : changes === 0
-            ? `질문 ${marker.items.length}건`
-            : `수정 ${changes} · 질문 ${questions}`;
+      // 마커는 뜻(질문/수정)을 싣지 않는다(C1) — 없는 뜻을 건수로 짐작하는
+      // 대신 제목은 그냥 몇 건인지로 말한다.
+      title = `수정 요청 ${marker.items.length}건`;
       lead = marker.screen;
       rows = marker.items.map((item, index) => {
         // 여러 화면을 한 턴에 찍은 배치는 머리글이 화면 N곳 요약이라 —
@@ -107,6 +109,9 @@ function MachineTurn({
       // own file path waits behind 자세히.
       title = "개발자 코멘트에 답하기";
       lead = [marker.author, marker.path].filter(Boolean).join(" · ");
+      // 답하기가 겨눌 코멘트의 id — 프로토콜 타입은 부모 소관이라 아직 몰라도
+      // optional 로 먼저 읽는다. 필드가 없는 마커에서는 칸이 뜨지 않는다.
+      devReplyId = readReviewId(marker);
       break;
   }
 
@@ -118,6 +123,10 @@ function MachineTurn({
       </div>
       {/* The planner's own sentence — the card carries it above the rows. */}
       {marker.kind === "comments" && marker.note && <p className="machine__note">{marker.note}</p>}
+      {/* 답하기(E3) — 개발자에게 가는 한 줄이 카드를 떠나지 않는다. */}
+      {marker.kind === "review" && onDevReply && devReplyId !== undefined && (
+        <ReviewReply reviewId={devReplyId} onSend={onDevReply} />
+      )}
       {rows.length > 0 && (
         <ul className="machine__rows">
           {rows.map((row, index) => (
@@ -172,6 +181,76 @@ function MachineTurn({
         )}
       </div>
       {open && <pre className="machine__body">{body}</pre>}
+    </div>
+  );
+}
+
+/** ReviewMarker 의 `reviewId` — 프로토콜 타입이 아직 몰라도 런타임 가드로
+ * 먼저 읽는다(부모 배치가 마커에 필드를 싣는 대로 카드의 답하기가 산다). */
+function readReviewId(marker: Extract<TurnMarker, { kind: "review" }>): number | undefined {
+  return "reviewId" in marker && typeof marker.reviewId === "number" ? marker.reviewId : undefined;
+}
+
+/**
+ * 리뷰 카드의 답하기 — 한 줄 입력과 보내기. 성공하면 칸을 비우고, 실패는
+ * 카드 안의 한 문장으로 말한다: 방금 쓴 말이 눈앞에 있어야 다시 보낼 마음이
+ * 든다. Enter 도 보내지만 조합 중인 Enter 는 한글 마침일 뿐이다.
+ */
+function ReviewReply({
+  reviewId,
+  onSend,
+}: {
+  reviewId: number;
+  onSend: (reviewId: number, text: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const send = async () => {
+    const text = draft.trim();
+    if (text === "" || sending) return;
+    setSending(true);
+    setFailed(false);
+    try {
+      await onSend(reviewId, text);
+      setDraft("");
+    } catch {
+      setFailed(true);
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    // 한 줄이 카드의 남은 폭을 쓰도록만 인라인으로 — 스타일 파일은 이 배치의
+    // 손 밖이다(dev__reply 는 상태 확인이 쓰던 같은 치수다).
+    <div className="dev__reply" style={{ flex: "1 1 100%" }}>
+      <input
+        type="text"
+        aria-label="답변"
+        placeholder="개발자에게 남길 말을 한 줄 적어 주세요"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (composing(event)) return;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="primary"
+        disabled={sending || draft.trim() === ""}
+        onClick={() => void send()}
+      >
+        보내기
+      </button>
+      {failed && (
+        <span className="hint" role="status">
+          전송에 실패했어요 — 잠시 후 다시
+        </span>
+      )}
     </div>
   );
 }
@@ -316,12 +395,16 @@ function isLastFailedTurn(blocks: Block[], block: Block): boolean {
   return false;
 }
 
+/** P2-2: `여기서 새 대화` 가 실제로 하는 일 한 줄 — 메뉴의 안내 문장이 읽는
+ * 문자열이다(두 자리가 각자 문장을 가지면 하나만 고쳐진다). */
+const BRANCH_MEANS = "대화만 이 답까지로 이어받아요. 화면은 지금 모습 그대로입니다.";
+
 /**
- * 정산된 턴의 한 줄 — ChatGPT 의 마침표 행과 같은 형태다: 복사 아이콘 ·
- * 분기 아이콘이 왼쪽에 나란히 서고 「N 걸렸습니다」가 이어진다. 복사는 이
- * 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에 건넨다. 시간을 못 남긴
- * 턴이라도 답이 있으면 복사는 선다. 분기는 이 답까지의 기억을 이어받은 새
- * 대화를 만드는 손 — 답이 흐른 조각 없이 결과만 온 턴에도 붙는다. 셋이 모두
+ * 정산된 턴의 한 줄 — ChatGPT 의 마침표 행과 같은 형태다: 복사 아이콘과
+ * 「N 걸렸습니다」만 줄에 남고, 나머지 손(여기서 새 대화)은 같은 줄의
+ * `···` 메뉴 안에 접혀 있다(B4) — 매 턴마다 행동이 줄에 늘어서던 무게를
+ * 덜어낸다. 복사는 이 아이콘 하나다: 턴이 낸 답을 이어 붙여 한 번에
+ * 건넨다. 시간을 못 남긴 턴이라도 답이 있으면 복사는 선다. 셋이 모두
  * 없으면 아무것도 남기지 않는다(부르는 쪽 Transcript 이 이미 걸러내지만,
  * 줄 자체도 안다).
  */
@@ -332,17 +415,104 @@ function TurnDone({
 }: {
   durationMs: number | null;
   whole?: string;
-  /** 여기서 새 대화 — 정산 줄의 아이콘 하나로 찍힌다. 없으면 자리도 없다. */
-  branch?: ReactNode;
+  /** 여기서 새 대화 — `···` 메뉴가 접고 있는 손. 없으면(분기 불가
+      프로바이더) 메뉴 항목은커녕 `···` 자리도 없다. */
+  branch?: { live: boolean; onBranch: () => void; onOpenHistory?: () => void };
 }) {
+  /** 열린 메뉴의 자리 — fixed 좌표(.scroll 이 absolute 메뉴를 잘라 먹으므로
+      사이드바의 노드 팝오버와 같은 규칙). 닫힘은 null 이다. */
+  const [menuAt, setMenuAt] = useState<{ top?: number; bottom?: number; left: number } | null>(
+    null,
+  );
   if (durationMs == null && whole == null && branch == null) return null;
   return (
     <div className="turndone">
       <div className="turndone__meta">
         {whole && <CopyButton value={whole} label="전체 복사" className="turndone__act" />}
-        {branch}
         {durationMs != null && (
           <span className="turndone__took">{waitedFor(durationMs)} 걸렸습니다</span>
+        )}
+        {branch && (
+          <>
+            <button
+              type="button"
+              className="turndone__act"
+              aria-label="더 보기"
+              aria-haspopup="menu"
+              aria-expanded={menuAt !== null}
+              onClick={(event) => {
+                if (menuAt) {
+                  setMenuAt(null);
+                  return;
+                }
+                const rect = event.currentTarget.getBoundingClientRect();
+                // 정산 줄은 대화의 아래쪽에 자주 있으니 위가 더 넓은 쪽으로
+                // 연다.
+                const up = rect.top > window.innerHeight - rect.bottom;
+                setMenuAt(
+                  up
+                    ? { bottom: window.innerHeight - rect.top + 6, left: rect.left }
+                    : { top: rect.bottom + 6, left: rect.left },
+                );
+              }}
+            >
+              ···
+            </button>
+            {menuAt && (
+              <>
+                <button
+                  type="button"
+                  className="selector__backdrop"
+                  aria-label="메뉴 닫기"
+                  onClick={() => setMenuAt(null)}
+                />
+                <span
+                  className="selector__menu node__pop--fixed"
+                  role="menu"
+                  style={{ position: "fixed", ...menuAt }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="selector__row"
+                    disabled={branch.live}
+                    onClick={() => {
+                      setMenuAt(null);
+                      branch.onBranch();
+                    }}
+                  >
+                    <span className="ic">
+                      <BranchIcon />
+                    </span>
+                    <span className="selector__label">여기서 새 대화</span>
+                    {branch.live && (
+                      <span className="selector__hint">답변이 끝나면 누를 수 있습니다</span>
+                    )}
+                  </button>
+                  {/* 뜻을 마우스 뒤에 숨기지 않는다(P2-2) — 누르기 **전에**
+                      읽혀야 하는 문장과, 화면까지 되돌리려는 사람의 길이
+                      같은 메뉴 안에 있다. */}
+                  {!branch.live && (
+                    <span className="selector__moreempty">
+                      {BRANCH_MEANS}
+                      {branch.onOpenHistory && (
+                        <button
+                          type="button"
+                          className="turndone__restore"
+                          onClick={() => {
+                            setMenuAt(null);
+                            void branch.onOpenHistory?.();
+                          }}
+                        >
+                          작업 기록에서 되돌리기
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
+          </>
         )}
       </div>
     </div>

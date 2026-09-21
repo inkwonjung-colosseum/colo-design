@@ -1,7 +1,6 @@
 import type { CSSProperties, ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
-import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { CheckIcon, CloseIcon, FolderIcon, KeyIcon, SparkIcon, WarnIcon } from "../icons";
 import { GitHubTokenForm } from "./GitHubTokenForm";
 import { RepoPicker } from "./RepoPicker";
@@ -19,11 +18,16 @@ interface InviteFile {
   baseBranch?: string;
   token: string;
   approveCommands: boolean;
+  /** E4(초대 v2): 이 작업에 적을 이름 — 넘긴 요청의 `> 작성:` 줄이 쓴다. */
+  authorName?: string;
+  /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들(GitHub 로그인). */
+  reviewers?: string[];
   readme?: string;
 }
 
-/** 파일 내용 → 초대장, 또는 사람이 읽는 오류 한 줄. v 가 1 이 아니면 이 앱이
- *  모르는 미래 포맷이다 — 지금은 거절이 유일한 정직한 답이다. */
+/** 파일 내용 → 초대장, 또는 사람이 읽는 오류 한 줄. v 는 1·2 를 안다 — 2 는
+ * 이름(authorName)과 리뷰어(reviewers)를 더 실은 판이다. 그보다 높으면 이
+ * 앱이 모르는 미래 포맷이므로 거절이 정직한 답이다. */
 function parseInvite(fileName: string, raw: string): InviteFile | string {
   let parsed: unknown;
   try {
@@ -32,7 +36,7 @@ function parseInvite(fileName: string, raw: string): InviteFile | string {
     return "초대 파일을 읽지 못했습니다 — 개발자에게 파일을 다시 보내달라고 요청하세요.";
   }
   const file = parsed as Partial<InviteFile> & { v?: unknown };
-  if (file.v !== 1) {
+  if (file.v !== 1 && file.v !== 2) {
     return "지원하지 않는 초대 파일입니다 — 앱을 최신 버전으로 업데이트했는지 확인해 주세요.";
   }
   if (typeof file.repoUrl !== "string" || !file.repoUrl.trim()) {
@@ -41,9 +45,15 @@ function parseInvite(fileName: string, raw: string): InviteFile | string {
   if (typeof file.token !== "string" || !file.token.trim()) {
     return "초대 파일에 연결 코드가 없습니다 — 개발자에게 다시 만들어 달라고 요청하세요.";
   }
+  const reviewers =
+    Array.isArray(file.reviewers) && file.v === 2
+      ? file.reviewers.filter(
+          (login): login is string => typeof login === "string" && login.trim() !== "",
+        )
+      : undefined;
   return {
     fileName,
-    v: 1,
+    v: file.v,
     name: typeof file.name === "string" && file.name.trim() ? file.name.trim() : file.repoUrl,
     repoUrl: file.repoUrl.trim(),
     ...(typeof file.baseBranch === "string" && file.baseBranch.trim()
@@ -51,6 +61,10 @@ function parseInvite(fileName: string, raw: string): InviteFile | string {
       : {}),
     token: file.token.trim(),
     approveCommands: file.approveCommands !== false,
+    ...(file.v === 2 && typeof file.authorName === "string" && file.authorName.trim()
+      ? { authorName: file.authorName.trim() }
+      : {}),
+    ...(reviewers && reviewers.length > 0 ? { reviewers } : {}),
     ...(typeof file.readme === "string" && file.readme.trim() ? { readme: file.readme } : {}),
   };
 }
@@ -74,14 +88,7 @@ const STATUS_GLYPH: Partial<Record<GateStatus, ReactElement>> = {
  * 시작하기는 존재할 자리가 없다(자동 진행). ③준비의 진행 카드도 같은
  * 이유로 여기 그리지 않는다 — 작업대의 미리보기 열이 그 몫이다.
  */
-export function StartFlow({
-  daemon,
-  onOpenSettings,
-}: {
-  daemon: Daemon;
-  /** RepoPicker 의 토큰 없음 안내가 설정으로 건너는 다리. */
-  onOpenSettings: (category?: SettingsCategory) => void;
-}) {
+export function StartFlow({ daemon }: { daemon: Daemon }) {
   const githubStep = daemon.onboarding?.find((step) => step.id === "github");
   const hasToken = githubStep?.status === "pass";
   /** 통과한 토큰을 다시 여는 길 — 만료가 이유다(Onboarding 의 editingToken). */
@@ -134,7 +141,11 @@ export function StartFlow({
         ...(file.baseBranch ? { baseBranch: file.baseBranch } : {}),
         // 초대장의 실행 허용은 개발자의 서명이다 — 피커의 체크칸을 대신한다.
         ...(file.approveCommands ? { approveCommands: true } : {}),
+        ...(file.reviewers ? { reviewers: file.reviewers } : {}),
       });
+      // E4(초대 v2): 초대장이 이름을 실어 왔으면 그것으로 적는다 — 마법사의
+      // 이름 칸을 대신한다(비어 있으면 칸이 그 자리를 지킨다).
+      if (file.authorName) await daemon.api.machineAuthorSet(file.authorName);
       // 성공하면 Shell 이 작업대로 바꿔 낀다 — 이 카드는 다시 그려질 일이 없다.
     } catch (e) {
       setInvite({
@@ -379,11 +390,7 @@ export function StartFlow({
                 코드로 쓸 수 있는 레포를 찾았어요. 어느 레포인지 모르겠으면 개발자에게 레포 이름을
                 물어보세요.
               </p>
-              <RepoPicker
-                daemon={daemon}
-                onOpenSettings={onOpenSettings}
-                onInspection={setRepoNotice}
-              />
+              <RepoPicker daemon={daemon} onInspection={setRepoNotice} />
             </>
           ) : (
             <p className="onboarding__detail">코드를 연결하면 목록이 열려요.</p>

@@ -271,6 +271,11 @@ export interface RepoWorkspaceOptions {
    */
   authorName?: () => string | null;
   /**
+   * E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들(GitHub 로그인) — 레지스트리
+   * 가 기억하고 넘기기가 읽는다. 비면 아무에게도 부탁하지 않는다.
+   */
+  reviewers?: () => string[];
+  /**
    * Whether the planner said this repo's commands may run here. Absent
    * (a direct construction, a pre-gate project) reads as approved — the
    * gate is for repos nobody has vouched for yet.
@@ -414,6 +419,8 @@ export class RepoCore {
   /** 넘긴 요청에 적을 작성자 이름 — 커밋 fallback 이름과 PR 본문이 읽는다(P1-3). */
   readonly authorName: (() => string | null) | null;
 
+  /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들 — 레지스트리가 기억한다. */
+  readonly reviewers: (() => string[]) | null;
   constructor(options: {
     /** Absolute path of the clone. */
     root: string;
@@ -440,6 +447,8 @@ export class RepoCore {
     gitHubClient?: () => GitHubClient | null;
     /** 넘긴 요청에 적을 작성자 이름 — 없으면 도구 이름이 쓰인다(P1-3). */
     authorName?: () => string | null;
+    /** E4(초대 v2): 리뷰를 부탁할 개발자들 — 레지스트리의 목록을 읽어간다. */
+    reviewers?: () => string[];
     /**
      * Whether the planner said this repo's commands may run here. Absent
      * (a direct construction, a pre-gate project) reads as approved — the
@@ -468,6 +477,7 @@ export class RepoCore {
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
     this.authorName = options.authorName ?? null;
+    this.reviewers = options.reviewers ?? null;
     this.active = options.active ?? true;
   }
 

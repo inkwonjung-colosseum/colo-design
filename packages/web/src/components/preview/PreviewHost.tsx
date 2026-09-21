@@ -15,7 +15,6 @@ import {
   MapPinIcon,
   MobileIcon,
   RefreshIcon,
-  RestartIcon,
   ServerOffIcon,
   TabletIcon,
 } from "../icons";
@@ -74,7 +73,6 @@ export function PreviewHost({
   epoch = null,
   stopped,
   stoppedDetail,
-  onRestart,
   onPinFocus,
   sync,
   onPin,
@@ -101,7 +99,10 @@ export function PreviewHost({
   stopped: boolean;
   /** Why it is not running, in the daemon's own words. */
   stoppedDetail?: string | null;
-  onRestart: () => void;
+  /** 받기만 한다 — 중단 카드는 더 이상 다시 시작을 묻지 않는다(재기동은
+      daemon 이 주관하고, 망가진 화면은 AI의 몫이다). 패널이 아직 넘기는
+      동안의 자리. */
+  onRestart?: () => void;
   /** The live pins — PreviewFrame projects them onto the overlay. */
   sync: ColoDesignPinsSync;
   /** A pin landed from the overlay; the workspace's usePins owns the list. */
@@ -218,7 +219,7 @@ export function PreviewHost({
   /** 핀 코치 마크 — 이 기기에서 한 번만 뜬다(last-seen 과 같은 이유로
       localStorage 가 진실: 데몬은 "이 사람이 핀을 써 봤는지"를 모른다).
       첫 핀이 찍히거나 닫기를 누르면 사라지고 다시 오지 않는다. */
-  /** 투어의 걸음(P3-2) — 핀 코치는 컴포저 걸음이 끝난 뒤에만 선다. */
+  /** 투어의 걸음(P3-2) — 핀 코치가 첫 걸음이다. */
   const tour = useTourStep();
   const [pinCoach, setPinCoach] = useState(() => {
     try {
@@ -273,21 +274,20 @@ export function PreviewHost({
   const webMode = location?.kind === "web";
   const externalUrl = webMode ? (location?.url ?? null) : null;
 
-  // What the bar shows when nobody is typing: the view's full address —
-  // origin included, a browser bar's shape — else the ask. Typing stays free:
-  // bare paths, queries, and same-origin urls all parse.
+  // What the bar shows when nobody is typing: the view's path — the server's
+  // origin·port 는 주소창의 어휘가 아니다. 외부 페이지(mode web)에서는 그
+  // 페이지의 주소 전체가 곧 위치다. Typing stays free: bare paths, queries,
+  // and same-origin urls all parse.
   useEffect(() => {
     if (addressFocused) return;
     if (externalUrl) {
       setAddress(externalUrl);
       return;
     }
-    const origin = url ? new URL(url).origin : "";
-    const full = (path: string) => (origin === "" ? path : `${origin}${path}`);
-    if (location) setAddress(full(location.path));
-    else if (target?.kind === "path") setAddress(full(target.path));
-    else setAddress(full("/"));
-  }, [url, location, target, addressFocused, externalUrl]);
+    if (location) setAddress(location.path);
+    else if (target?.kind === "path") setAddress(target.path);
+    else setAddress("/");
+  }, [location, target, addressFocused, externalUrl]);
 
   useEffect(() => {
     return () => {
@@ -344,31 +344,9 @@ export function PreviewHost({
   }, [width]);
 
   const submitAddress = (raw: string) => {
-    // 주소창의 이동은 화면의 페이지 몫이다. web 모드에서는 브라우저처럼
-    // 제자리 이동; preview 모드에서 다른 origin 의 전체 http(s) 주소도
-    // 같은 길로 간다 — 뷰의 openTab 이 repo origin 이면 그 프로젝트의
-    // 페이지로, 그 밖이면 제자리 이동으로 판다. 나머지 — 경로·쿼리·같은
-    // origin 의 주소 — 는 예전 parseAddress 흐름 그대로.
-    const trimmed = raw.trim();
-    if (webMode || /^https?:\/\//i.test(trimmed)) {
-      let target: URL | null = null;
-      try {
-        target = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-      } catch {
-        target = null;
-      }
-      if (target && (target.protocol === "http:" || target.protocol === "https:")) {
-        setAddressError(null);
-        void window.coloDesignDesktop?.preview?.open?.(target.toString());
-        return;
-      }
-      if (webMode) {
-        setAddressError("http(s) 주소만 열 수 있습니다");
-        if (addressTimer.current !== null) window.clearTimeout(addressTimer.current);
-        addressTimer.current = window.setTimeout(() => setAddressError(null), 2500);
-        return;
-      }
-    }
+    // 주소창의 이동은 이 미리보기 안의 화면 몫이다 — 경로·쿼리·같은 origin
+    // 의 주소는 parseAddress 가 길을 낸다. 그 밖의 전부는 한 문장으로 거절:
+    // 다른 서버의 주소를 열어 주는 창은 브라우저지 미리보기가 아니므로.
     if (!url) return;
     const verdict = parseAddress(raw, {
       origin: new URL(url).origin,
@@ -413,41 +391,47 @@ export function PreviewHost({
   // 카드·빈 화면은 무대 위의 불투명 덮개로, 게스트는 그 아래 살아 있는 채
   // 숨는다(visibility 규약 — display:none 은 문서를 언로드한다).
   const stoppedLine = daemonLine(stoppedDetail);
+  // 중단의 두 얼굴: daemon 이 "화면을 다시 켜는 중…"으로 말을 내리면 그건
+  // 고장이 아니라 기다림의 한 줄(starting — 재기동은 daemon 의 몫)이고, 그
+  // 밖은 AI 수정 대기의 카드다. 다시 시작의 손잡이는 없다.
+  const restarting = stoppedLine.startsWith("화면을 다시 켜는 중");
   const stoppedNotice =
     stopped && !webMode ? (
-      <div className="progress progress--error">
-        <div className="progress__card">
-          <div className="progress__head">
-            <span className="preview__stopglyph">
-              <ServerOffIcon />
-            </span>
-            <h2>미리보기 서버 중단</h2>
-          </div>
-          <p className="progress__body">
-            화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
-          </p>
-          {stoppedLine && <div className="progress__detail">{stoppedLine}</div>}
-          <div className="preview__stopactions">
-            <button type="button" className="primary" onClick={onRestart}>
-              <RestartIcon />
-              다시 시작
-            </button>
-            <button
-              type="button"
-              className="ghost"
-              onClick={() =>
-                onFixError({
-                  route: location?.path ?? "/",
-                  kind: "build",
-                  message: stoppedDetail || "화면을 그리는 서버가 멈췄습니다.",
-                })
-              }
-            >
-              AI에게 고쳐 달라고 하기
-            </button>
+      restarting ? (
+        <div className="progress">
+          <div className="progress__card">
+            <div className="progress__head">
+              <span className="spinner" />
+              <p className="progress__body">{stoppedLine}</p>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="progress progress--error">
+          <div className="progress__card">
+            <div className="progress__head">
+              <span className="preview__stopglyph">
+                <ServerOffIcon />
+              </span>
+              <h2>미리보기 서버 중단</h2>
+            </div>
+            <p className="progress__body">
+              화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
+            </p>
+            <p className="progress__body">AI가 고치는 중 — 잠시만 기다려 주세요</p>
+            <div className="preview__stopactions">
+              <button
+                type="button"
+                className="ghost"
+                aria-label="미리보기 새로 고침"
+                onClick={() => setReloadNonce((n) => n + 1)}
+              >
+                <RefreshIcon />
+              </button>
+            </div>
+          </div>
+        </div>
+      )
     ) : null;
   const blankNotice =
     !url && !webMode ? (
@@ -660,10 +644,6 @@ export function PreviewHost({
                 </Tip>
               ) : (
                 <>
-                  {/* 좁혀진 폭은 숫자로 읽힌다 — 모바일·태블릿일 때만. */}
-                  {width !== "desktop" && (
-                    <span className="frame__width">{width === "mobile" ? "390px" : "768px"}</span>
-                  )}
                   {/* 100% 이 아니면 눈에 보인다 — 클릭이 실제 크기. */}
                   {native && zoom !== 1 && (
                     <Tip label="실제 크기로 돌아갑니다" side="bottom">
@@ -682,7 +662,7 @@ export function PreviewHost({
                       label={
                         commentsOn
                           ? "찍기 모드를 끕니다"
-                          : "화면에서 고칠 곳을 클릭하면 핀이 찍힙니다. ⌥+클릭은 언제든 찍습니다"
+                          : "수정할 곳 찍기 (⌘⇧P) — ⌥+클릭은 요소, ⌥+드래그는 영역"
                       }
                       side="bottom"
                     >
@@ -710,7 +690,7 @@ export function PreviewHost({
                     // 막대 안의 한 줄 — 무대를 덮지 않으므로 권하면서 막지
                     // 않는다. 첫 핀이 찍히거나 ×를 누르면 이 기기에서 끝난다.
                     <span className="frame__coach" role="status">
-                      고칠 곳이 보이면 여기서 짚어 주세요
+                      고칠 곳이 보이면 여기서 짚어 주세요 — 클릭은 요소, 끌면 영역이에요
                       <button
                         type="button"
                         className="frame__coach__close"
@@ -779,24 +759,13 @@ export function PreviewHost({
                         </div>
                         {(
                           [
-                            {
-                              value: "mobile",
-                              label: "모바일",
-                              icon: <MobileIcon />,
-                              hint: "390px",
-                            },
-                            {
-                              value: "tablet",
-                              label: "태블릿",
-                              icon: <TabletIcon />,
-                              hint: "768px",
-                            },
+                            { value: "mobile", label: "모바일", icon: <MobileIcon /> },
+                            { value: "tablet", label: "태블릿", icon: <TabletIcon /> },
                             { value: "desktop", label: "데스크톱", icon: <DesktopIcon /> },
                           ] as Array<{
                             value: PreviewWidth;
                             label: string;
                             icon: ReactNode;
-                            hint?: string;
                           }>
                         ).map((option) => (
                           <button
@@ -815,9 +784,6 @@ export function PreviewHost({
                             </span>
                             <span className="selector__rowicon">{option.icon}</span>
                             <span className="selector__label">{option.label}</span>
-                            {option.hint ? (
-                              <span className="selector__hint">{option.hint}</span>
-                            ) : null}
                           </button>
                         ))}
                         <div className="selector__head">

@@ -6,9 +6,6 @@ import type {
 import { useEffect, useState } from "react";
 import type { Daemon } from "../lib/daemon-client";
 
-/** What the planner asked of a pin: have it changed, or have it explained. */
-export type PinIntent = "change" | "question";
-
 export interface PinAttachment {
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
@@ -21,8 +18,6 @@ export interface PinAttachment {
   shot?: { mediaType: string; data: string };
   /** The planner's optional memo on this one element; the turn's sentence does not live here. */
   note: string;
-  /** 수정인가 질문인가 — the turn's guide line and card title read it. */
-  intent: PinIntent;
 }
 
 /** The pin state of one project, as every reader consumes it. */
@@ -38,8 +33,6 @@ export interface Pins {
   add(pin: ColoDesignPinEnvelope["pin"]): void;
   remove(id: string): void;
   setNote(id: string, note: string): void;
-  /** 수정 ↔ 질문 — the tray's toggle chip writes here. */
-  setIntent(id: string, intent: PinIntent): void;
   clear(): void;
   /**
    * After the turn left: record the pins and take them off the tray —
@@ -50,7 +43,7 @@ export interface Pins {
    * panel's warning band — the store's one reader
    * is the pull request body, and the planner must learn that this cycle's
    * `### 수정 요청` will be missing the rows they just sent.
-   * Each row carries the pin's own id and intent, and its memo verbatim —
+   * Each row carries the pin's own id, and its memo verbatim —
    * empty when none was written.
    */
   markSent(sent: PinAttachment[]): Promise<void>;
@@ -106,8 +99,6 @@ function loadPins(slug: string): PinAttachment[] {
       .map((row) => ({
         ...row,
         note: row.note ?? "",
-        // 옛 저장 분엔 intent 가 없다 — 없던 시절의 핀은 전부 수정이다.
-        intent: row.intent === "question" ? ("question" as const) : ("change" as const),
       }));
   } catch {
     return [];
@@ -156,9 +147,7 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
   }, [slug, list]);
   const add = (pin: ColoDesignPinEnvelope["pin"]) => {
     setList((current) =>
-      current.some((row) => row.id === pin.id)
-        ? current
-        : [...current, { ...pin, note: "", intent: "change" as const }],
+      current.some((row) => row.id === pin.id) ? current : [...current, { ...pin, note: "" }],
     );
   };
 
@@ -189,7 +178,6 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
           screen: pin.screen,
           text: pin.note.trim(),
           elementText: pin.element.text || pin.element.component,
-          intent: pin.intent,
           element: {
             component: pin.element.component,
             path: pin.element.path,
@@ -204,15 +192,10 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
       // 그대로이므로 AI 는 이미 들었다.
       setRecordError(
         e instanceof Error && e.message
-          ? `코멘트 기록을 저장하지 못했습니다 — ${e.message}. 넘긴 요청 본문에서 이번 코멘트가 빠집니다.`
-          : "코멘트 기록을 저장하지 못했습니다 — 넘긴 요청 본문에서 이번 코멘트가 빠집니다.",
+          ? `코멘트 기록을 저장하지 못했습니다 — ${e.message}. 요청은 그대로 갔어요 — 개발자에게 보낼 기록에만 남지 않아요`
+          : "코멘트 기록을 저장하지 못했습니다 — 요청은 그대로 갔어요 — 개발자에게 보낼 기록에만 남지 않아요",
       );
     }
-  };
-
-  // 수정 ↔ 질문: the tray's toggle chip, one click either way.
-  const setIntent = (id: string, intent: PinIntent) => {
-    setList((current) => current.map((row) => (row.id === id ? { ...row, intent } : row)));
   };
 
   const clear = () => setList([]);
@@ -228,7 +211,6 @@ export function usePins(slug: string | null, api: Daemon["api"]): Pins {
     add,
     remove,
     setNote,
-    setIntent,
     clear,
     markSent,
     dismissGhosts,

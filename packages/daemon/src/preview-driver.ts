@@ -21,8 +21,13 @@ export interface PreviewOpenOptions {
  * loaded — the check that follows may be of a half-built screen, and the
  * gate says so instead of pretending. (2026-09-21 상태 축 철거: 화면마다
  * 표식을 기다리던 settle 은 물러나고 "문서가 완전히 로드됨" 만이 기준이다.)
+ *
+ * D2: `blank` 는 다 로드된 문서가 글자도 그림도 없다는 뜻이다 — 콘솔이
+ * 조용한 죽음(빈 라우트 · 렌더 실패)을 게이트가 잡게 하는 필드다.
  */
-export type PreviewOpenResult = { ok: true; settled: boolean } | { ok: false; reason: string };
+export type PreviewOpenResult =
+  | { ok: true; settled: boolean; blank?: boolean }
+  | { ok: false; reason: string };
 
 /** One line of what the page said — console levels, plus `net` and `dialog`. */
 export interface PreviewConsoleLine {
