@@ -56,13 +56,10 @@ test("a lone ?query rides the current path", () => {
 });
 
 test("an absolute url of the preview origin reduces to its path", () => {
-  assert.deepEqual(
-    parseAddress("http://127.0.0.1:5400/member/MemberList?after=2026-09-01", opts),
-    {
-      kind: "path",
-      path: "/member/MemberList?after=2026-09-01",
-    },
-  );
+  assert.deepEqual(parseAddress("http://127.0.0.1:5400/member/MemberList?after=2026-09-01", opts), {
+    kind: "path",
+    path: "/member/MemberList?after=2026-09-01",
+  });
 });
 
 test("another origin, protocol-relative and scheme urls are refused", () => {
