@@ -222,6 +222,12 @@ async function main() {
     await page.locator(".turndone").first().waitFor({ timeout: 30000 });
 
     // --- 1. the chip opens at the root: four summary drills, no rows -----
+    // 모델·생각은 session.selectors 응답이 와야 칩에 선다 — 턴 종료보다 늦을
+    // 수 있으므로(느린 러너) 요약이 채워질 때까지 기다린 뒤 읽는다.
+    await page.waitForFunction(
+      () => /·/.test(document.querySelector(".composer .selector__chiplabel")?.textContent ?? ""),
+      { timeout: 15000 },
+    );
     const chipLabel = (await page.locator(".composer .selector__chiplabel").innerText()).trim();
     check("chip still reads the three-value summary", /·/.test(chipLabel), chipLabel);
     await page.locator(".composer .selector__chip").click();
