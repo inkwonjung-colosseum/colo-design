@@ -33,11 +33,9 @@ process.env.COLO_DESIGN_PROJECTS_DIR = join(DIR, "projects");
 process.env.COLO_DESIGN_RUN_DIR = join(DIR, "run");
 process.env.CLAUDE_CONFIG_DIR = join(DIR, "claude-config");
 // The store sweep on project.remove must not walk the developer's real
-// vendor stores — point every one at an empty dir, and opencode at a stub
-// that answers `session list` with nothing.
+// vendor stores — point every one at an empty dir.
 process.env.CODEX_HOME = join(DIR, "codex-home");
 process.env.OMP_CODING_AGENT_DIR = join(DIR, "omp-agent");
-process.env.COLO_DESIGN_OPENCODE_BIN = join(DIR, "bin", "opencode");
 
 const results = [];
 function check(name, passed, detail = "") {
@@ -136,13 +134,6 @@ async function main() {
   });
 
   const stubClaude = writeTurnStubClaude(join(DIR, "bin"));
-  // The opencode store sweep spawns `session list`/`session delete` — a stub
-  // that answers with an empty list keeps the test off the real CLI.
-  writeFileSync(
-    join(DIR, "bin", "opencode"),
-    '#!/usr/bin/env node\nif (process.argv[2] === "session" && process.argv[3] === "list") console.log("[]");\nprocess.exit(0);\n',
-  );
-  chmodSync(join(DIR, "bin", "opencode"), 0o755);
 
   const port = await freePort();
   const server = new DaemonServer({
@@ -415,26 +406,34 @@ async function main() {
       text: "스텁이 파일 하나를 남기는 턴",
     }).catch(() => undefined);
     await request({ type: "project.activate", slug: refunds.slug });
+    // P2-1 자동 저장: 턴이 끝나면 커밋이 걸리므로 `pendingChanges` 의 창은
+    // 방송 한 번 사이에 닫힌다(throttle 이 그것을 삼킨다). 화면 밖 턴의
+    // 산출물이 **자기 프로젝트**에 내려앉았다는 사실은 이제 사이클 브랜치가
+    // 말한다 — 결제가 `colo-design/…` 로 옮겨 서고, 활성 프로젝트인 환불은
+    // 제 베이스에 그대로 있다.
     const offscreenChanged = await waitFor(
       () => {
         const changed = inbox.filter((m) => m.type === "project.changed").at(-1);
-        const paymentsRow = changed?.projects?.find((p) => p.slug === payments.slug);
-        return changed?.activeSlug === refunds.slug &&
-          paymentsRow?.pendingChanges > 0 &&
+        if (changed?.activeSlug !== refunds.slug) return null;
+        const paymentsRow = changed.projects?.find((p) => p.slug === payments.slug);
+        const refundsRow = changed.projects?.find((p) => p.slug === refunds.slug);
+        return paymentsRow?.branch?.startsWith("colo-design/") === true &&
+          refundsRow?.branch?.startsWith("colo-design/") !== true &&
           paymentsRow?.working === false
-          ? paymentsRow
+          ? { payments: paymentsRow, refunds: refundsRow }
           : null;
       },
       // Under the parallel lanes (CI included) the stub turn's settle can
-      // stretch past a quiet-machine budget; the claim is the count MOVES,
+      // stretch past a quiet-machine budget; the claim is the work LANDS,
       // not how fast.
       90_000,
-      "the off-screen project's count",
+      "the off-screen project's own commit",
     );
     check(
-      "a turn finishing off-screen counts its own project, not the active one",
-      offscreenChanged?.pendingChanges > 0,
-      `결제 pendingChanges=${offscreenChanged?.pendingChanges}`,
+      "a turn finishing off-screen commits into its own project, not the active one",
+      offscreenChanged.payments.branch.startsWith("colo-design/") &&
+        !(offscreenChanged.refunds.branch ?? "").startsWith("colo-design/"),
+      `결제 branch=${offscreenChanged.payments.branch} · 환불 branch=${offscreenChanged.refunds.branch}`,
     );
 
     // The tree's state follows (D59): the turn ended and nothing followed it
@@ -674,6 +673,15 @@ async function main() {
     );
 
     // --- 4. the registry survives a restart ---------------------------------
+    // 시작 스윕이 셀 것을 하나 둔다. 화면 밖 턴이 남긴 파일은 P2-1 의 자동
+    // 저장이 이미 커밋했으므로(그것이 저장 버튼이 사라진 세계의 정상 상태다),
+    // "아무도 저장하지 않은 변경" 은 손으로 놓아야 생긴다 — 검사가 묻는 것은
+    // 그 수가 **클릭 전에** 이미 서 있는가이지, 무엇이 그 수를 만들었는가가
+    // 아니다.
+    writeFileSync(
+      join(DIR, "projects", payments.slug, "repo", "시작-스윕이-셀-파일.txt"),
+      "아무도 저장하지 않은 변경\n",
+    );
     await server.stop();
     ws.close();
     const restartPort = await freePort();
@@ -699,8 +707,8 @@ async function main() {
         !hello.status.projects.some((p) => p.slug === refunds.slug),
       `${hello.status.projects.map((p) => p.name).join("·")} → ${hello.status.activeProject}`,
     );
-    // D18: the sidebar's numbers exist before anyone clicks — the off-screen
-    // turn's file in 결제 is counted by the start sweep, not by the first UI.
+    // D18: the sidebar's numbers exist before anyone clicks — the unsaved file
+    // in 결제 is counted by the start sweep, not by the first UI.
     const paymentsAfterRestart = hello.status.projects.find((p) => p.slug === payments.slug);
     check(
       "a restart restores every project's unsaved-change count",

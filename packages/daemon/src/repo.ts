@@ -5,9 +5,6 @@ import type {
   HandoffShot,
   HandoffStatus,
   HandoffStatusReport,
-  RepoCheckpoint,
-  RepoCheckpointRestore,
-  RepoCheckpoints,
   RepoDiscard,
   RepoHandoffDraft,
   RepoHistory,
@@ -28,10 +25,10 @@ export { buildCommentsSection } from "./handoff-body.js";
 // 상수와 URL 게이트는 repo-core.ts 로 옮겼다 — 표면은 여기서 다시보낸다.
 export { assertClonableRepoUrl, PUSH_AUTH_FAILURE, REPO_URL_MISSING_DETAIL } from "./repo-core.js";
 export { parseUnifiedDiff } from "./repo-diff.js";
-export { restorePlan, safeRepoPath } from "./repo-paths.js";
+export { safeRepoPath } from "./repo-paths.js";
 
+import { NO_MACHINE_TURN } from "./machine-provider.js";
 import { BringUp } from "./repo-bringup.js";
-import { CheckpointStore } from "./repo-checkpoints.js";
 import type { RepoRegistry } from "./repo-config.js";
 import {
   detailOf,
@@ -52,7 +49,7 @@ import { RepoSummarizer } from "./repo-summary.js";
  * server — what the preview renders is entirely the repo's business.
  *
  * Facade over five parts: `repo-core.ts` holds the shared state and the
- * git/capture/emit plumbing; `repo-checkpoints.ts`, `repo-shelf.ts`,
+ * git/capture/emit plumbing; `repo-shelf.ts`,
  * `repo-publish.ts`, `repo-summary.ts` and `repo-bringup.ts` own the
  * domains. This class keeps the wire-facing methods — the guards that
  * decide which collaborator runs — and delegates the rest.
@@ -66,19 +63,20 @@ export class RepoWorkspace {
   readonly baseBranch: string;
 
   private readonly core: RepoCore;
-  private readonly checkpointStore: CheckpointStore;
   private readonly shelfStore: ShelfStore;
   private readonly summarizer: RepoSummarizer;
   private readonly bringup: BringUp;
   private publish: PublishCycle;
   /** 사이클 사건의 손잡이 — 레포가 바뀌면 사이클의 기억도 새 것으로 세운다. */
   private readonly onCycleEvent: RepoWorkspaceOptions["onCycleEvent"];
+  private readonly escalate: RepoWorkspaceOptions["escalate"];
 
   constructor(options: RepoWorkspaceOptions) {
+    this.onCycleEvent = options.onCycleEvent;
+    this.escalate = options.escalate;
     this.core = new RepoCore(options);
-    this.checkpointStore = new CheckpointStore(this.core);
     this.shelfStore = new ShelfStore(this.core);
-    this.summarizer = new RepoSummarizer(this.core);
+    this.summarizer = new RepoSummarizer(this.core, options.machineTurn ?? NO_MACHINE_TURN);
     this.bringup = new BringUp(this.core);
     this.onCycleEvent = options.onCycleEvent;
     this.publish = this.makePublish();
@@ -89,9 +87,9 @@ export class RepoWorkspace {
   /** The cycle's own memory — rebuilt when the url moves (see update). */
   private makePublish(): PublishCycle {
     return new PublishCycle(this.core, {
-      claudeMemo: (files) => this.summarizer.claudeMemo(files),
-      clearCheckpoints: () => this.checkpointStore.clearCheckpoints(),
+      machineMemo: (files) => this.summarizer.machineMemo(files),
       onCycleEvent: this.onCycleEvent,
+      escalate: this.escalate,
     });
   }
 
@@ -376,6 +374,8 @@ export class RepoWorkspace {
       onSessionTurn?: (brief: string) => void;
       /** hero-synthesis D1: the conversation this save belongs to. */
       sessionId?: string;
+      /** P2-1 자동 저장 — 푸시를 백그라운드로(실패 무시). */
+      backgroundPush?: boolean;
     } = {},
   ): Promise<DiffStatus> {
     // 날아가는 저장을 돌려주면 새로 온 메시지는 조용히 증발한다 — 거절이 답이다.
@@ -386,6 +386,11 @@ export class RepoWorkspace {
       this.core.publishing = null;
     });
     return this.core.publishing;
+  }
+
+  /** 마지막 재검사가 센, 커밋되지 않은 변경 파일 수 — 자동 저장의 출발 판정. */
+  get pendingChanges(): number {
+    return this.core.pendingChanges;
   }
 
   handoff(
@@ -416,13 +421,10 @@ export class RepoWorkspace {
 
   /**
    * 보낸 화면 동결: the committed capture for one
-   * screen·state, read off the handoff branch — the frozen stage's picture.
+   * screen, read off the handoff branch — the frozen stage's picture.
    */
-  handoffShot(
-    route: string,
-    state: string | null,
-  ): Promise<{ mediaType: string; data: string } | null> {
-    return this.publish.handoffShot(route, state);
+  handoffShot(route: string): Promise<{ mediaType: string; data: string } | null> {
+    return this.publish.handoffShot(route);
   }
 
   peekHandoff(): Promise<HandoffStatusReport | null> {
@@ -465,11 +467,15 @@ export class RepoWorkspace {
         detail: "연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.",
       });
     }
-    // The same worktree contract as a save: a refresh settling underneath a
-    // restore would half-undo two different moments at once.
-    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
+    // The same worktree contract as a save — both halves of it. Waiting for
+    // the other writers was only half: a restore that never takes a slot is
+    // invisible to the NEXT writer, and `pull()` (which a session.create
+    // fires on its own) then lays its stash-move-replay over a half-rewound
+    // tree. The shelf's `previous` capture is the pattern.
+    return this.asWorktreeWriter(() => this.runRestore(sha));
+  }
+
+  private async runRestore(sha: string): Promise<DiffStatus> {
     const dirty = await this.core.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
     if (dirty.trim() !== "") {
       return this.core.setDiff({
@@ -483,7 +489,7 @@ export class RepoWorkspace {
       return this.core.setDiff({
         stage: "failed",
         gate: "diff",
-        detail: "되돌릴 저장 기록이 없습니다 — 먼저 저장해 주세요.",
+        detail: "되돌릴 작업 기록이 없습니다 — 먼저 화면을 만들어 주세요.",
       });
     }
     let subject: string;
@@ -496,7 +502,7 @@ export class RepoWorkspace {
       return this.core.setDiff({
         stage: "failed",
         gate: "diff",
-        detail: "되돌릴 기록을 찾지 못했습니다 — 저장 기록을 다시 열어 확인해 주세요.",
+        detail: "되돌릴 기록을 찾지 못했습니다 — 작업 기록을 다시 열어 확인해 주세요.",
       });
     }
     this.core.setDiff({ stage: "pushing" });
@@ -550,10 +556,39 @@ export class RepoWorkspace {
    */
   async discard(): Promise<RepoDiscard> {
     if (!this.core.isCloned()) return { removed: [] };
-    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
-    return await this.core.clearUnsavedWork();
+    // restore 와 같은 이유로 슬롯을 잡는다 — 기다리기만 하고 등록하지
+    // 않으면 다음 작성자가 빈 워크트리로 알고 끊어든다.
+    return this.asWorktreeWriter(() => this.core.clearUnsavedWork());
+  }
+
+  /**
+   * 워크트리를 손대는 한 사람만 — 앞선 작성자를 기다리고, 자기도 그 줄을
+   * 선다. 슬롯은 `refreshing` 을 쓴다: 부딪히는 진짜 상대가 `pull()` 의
+   * stash-move-replay 이고, 새 슬롯을 하나 더 두면 세 자리를 읽는 모든
+   * 호출부가 네 자리를 읽어야 하고, 빼먹은 한 곳이 같은 결함을 다시 낳는다.
+   * 설정과 해제는 repo-shelf 의 `previous` 패턴 그대로: 뒤에 온 호출이
+   * 이미 슬롯을 이어받았을 수 있으므로 자기 것만 내린다.
+   */
+  private async asWorktreeWriter<T>(work: () => Promise<T>): Promise<T> {
+    const previous = this.core.refreshing;
+    const run = (async () => {
+      while (this.core.publishing) await this.core.publishing.catch(() => undefined);
+      await previous?.catch(() => undefined);
+      await this.core.shelving?.catch(() => undefined);
+      return await work();
+    })();
+    // 슬롯에는 실패를 삼킨 그림자를 둔다 — 기다리는 쪽은 결과가 아니라
+    // "끝났는가"만 알면 되고, 미처리 거부를 만들지도 않는다.
+    const slot = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.core.refreshing = slot;
+    try {
+      return await run;
+    } finally {
+      if (this.core.refreshing === slot) this.core.refreshing = null;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -566,37 +601,6 @@ export class RepoWorkspace {
 
   unshelve(onSessionTurn?: (brief: string) => void): Promise<RepoShelfRestore> {
     return this.shelfStore.unshelve(onSessionTurn);
-  }
-
-  // -------------------------------------------------------------------------
-  // Checkpoints — PLAN D52 snapshots
-  // -------------------------------------------------------------------------
-
-  checkpoint(sessionId: string, turn: number): Promise<RepoCheckpoint> {
-    return this.checkpointStore.checkpoint(sessionId, turn);
-  }
-
-  checkpoints(): Promise<RepoCheckpoints> {
-    return this.checkpointStore.checkpoints();
-  }
-
-  async checkpointRestore(id: string): Promise<RepoCheckpointRestore> {
-    if (!this.core.isCloned()) return { restored: [] };
-    // The worktree is the snapshot's subject: a save mid-flight owns it, and
-    // restoring under that save would mix two different moments. 최신화의
-    // stash-pop 창과 치워두기도 같은 손이다 — 되돌리는 파일을 그 사이에
-    // 다시 얹거나 지우면 어느 쪽의 순간도 아닌 트리가 남는다.
-    while (this.core.publishing) await this.core.publishing.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
-    // 열린 병합 위의 되돌리기는 AI 의 정리 과제를 더 꼬이게 한다 — 저장 ·
-    // 치워두기와 같은 문으로 거절한다.
-    if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
-      throw new Error(
-        "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 시도해 주세요.",
-      );
-    }
-    return this.checkpointStore.checkpointRestore(id);
   }
 
   // -------------------------------------------------------------------------

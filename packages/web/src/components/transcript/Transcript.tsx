@@ -1,22 +1,16 @@
 import { type DeveloperReview, readTurn } from "@colo-design/protocol";
-import { Fragment, useState } from "react";
+import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
-import {
-  lastAnswerPerTurn,
-  promptTotal,
-  turnAnswerText,
-  turnBlockNumbers,
-} from "../../lib/turn-numbering";
+import { lastAnswerPerTurn, turnAnswerText, turnBlockNumbers } from "../../lib/turn-numbering";
 import { CopyButton } from "../CopyButton";
-import { ConfirmDialog } from "../dialogs/ConfirmDialog";
+import { BranchIcon } from "../icons";
 import { Markdown } from "../Markdown";
 import { Tip } from "../shell/Tip";
 import { ActivitySummary, groupActivity } from "./activity";
 import { ThinkingBlock, ToolBlock } from "./blocks";
 import { HumanMessage, type HumanMessageQuote } from "./HumanMessage";
 import { MilestoneRow } from "./MilestoneRow";
-import { SaveCard } from "./SaveCard";
 import { clockTime, dayKey, dayLabel } from "./shared";
 import { TodoCard } from "./todo";
 import { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, TurnDone } from "./turn";
@@ -27,25 +21,59 @@ import { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, TurnDone } fro
  * request, a turn that needed no answer. They render as quiet system lines
  * in the app's one voice instead of posing as somebody's words.
  */
+/**
+ * P2-2: `여기서 새 대화` 가 실제로 하는 일 한 줄. 툴팁과 정산 줄의 눈에 보이는
+ * 한 줄이 같은 문자열을 읽는다 — 두 자리가 각자 문장을 가지면 하나만 고쳐진다.
+ */
+const BRANCH_MEANS = "대화만 이 답까지로 이어받아요. 화면은 지금 모습 그대로입니다.";
+
 const TAPE_LINES: Record<string, string> = {
   "[Request interrupted by user]": "요청을 중단했습니다",
   "No response requested.": "응답이 필요 없는 차례였습니다",
 };
 
+/** 붙여넣기가 길어지면 기둥을 통째로 먹는다 — 코드 블록의 접힘(420px)과 같은
+    계약을 사람의 말에도: 잘림 판정은 CSS max-height와 같은 숫자로 하고,
+    펼친 뒤에도 scrollHeight로 재어 토글이 살아 있게 한다. */
+const BUBBLE_FOLD_PX = 240;
+
+function UserBubbleText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const [tall, setTall] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setTall(el.scrollHeight > BUBBLE_FOLD_PX);
+  }, [text]);
+  return (
+    <>
+      <div ref={ref} className={open ? "bubble__text" : "bubble__text bubble__text--folded"}>
+        {text}
+      </div>
+      {tall && (
+        <button
+          type="button"
+          className="bubble__act bubble__fold"
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "접기" : "전체 보기"}
+        </button>
+      )}
+    </>
+  );
+}
+
 export function Transcript({
   blocks,
   live = true,
   onRetry,
-  onRewind,
+  onBranch,
   onResendEdit,
-  checkpoints,
-  onRestoreCheckpoint,
   showThinking = false,
   showTools = false,
   onBackgroundTask,
   onStopTask,
-  onFixReview,
-  saveCorridor,
+  onOpenHistory,
   onReplyReview,
 }: {
   blocks: Block[];
@@ -53,16 +81,12 @@ export function Transcript({
   /** Offered on a failed turn's card: send the same words again. */
   onRetry?: (text: string) => void;
   /**
-   * 다시 요청: discard the k-th answer — files and memory — and
-   * receive it again. The k is this transcript's answer order.
+   * 여기서 새 대화(분기): keep this answer and everything before it as the
+   * memory of a NEW conversation. The k is this transcript's answer order.
    */
-  onRewind?: (turn: number, text: string) => void;
+  onBranch?: (turn: number) => void;
   /** 고쳐서 다시 보내기: the planner's words return to the composer. */
   onResendEdit?: (text: string) => void;
-  /** This session's turn-start snapshots, oldest first. */
-  checkpoints?: Array<{ id: string; turn: number }>;
-  /** Puts the worktree back the way it stood before that answer. */
-  onRestoreCheckpoint?: (id: string) => void;
   /**
    * 생각 과정 보기 (설정의 스위치). 꺼져 있으면 생각 블록은 접힌 채로도
    * 남지 않고 테이프에서 아예 빠진다 — 사용자가 읽는 것은 답이지 답을
@@ -82,34 +106,17 @@ export function Transcript({
    */
   onBackgroundTask?: (toolUseId: string) => void;
   onStopTask?: (taskId: string) => void;
-  /** 사람 메시지 인용 행의 `대화에서 고치기` — 그 코멘트들을 새 턴으로 낸다. */
-  onFixReview?: (reviews: DeveloperReview[]) => void;
   /**
    * 사람 메시지의 `답하기` — 컴포저를 답장 모드로 연다.
    * 보내는 길(`api.replyToReview`)은 ChatColumn 이 쥔다.
    */
   onReplyReview?: (review: DeveloperReview) => void;
   /**
-   * 게이트 사이의 복도(저장 카드의 나가는 길): 마지막 저장
-   * 카드 밑에 `[개발자에게 넘기기로 이어가기]` 를 그린다. null 이면 넘길 수
-   * 없는 자리(저장 전·이미 넘김·반영됨) — 판정은 호출부가 deriveDelivery 로
-   * 내리고, 이 테이프는 그 결과만 믿는다.
+   * 작업 기록을 여는 손 — P2-2 의 `작업 기록에서 되돌리기` 가 부른다. 없으면
+   * 링크도 없다(홈 인박스처럼 드로어가 없는 자리).
    */
-  saveCorridor?: { onHandoff: () => void } | null;
+  onOpenHistory?: () => void;
 }) {
-  // 되감기 확인 — k 가 마지막 답이 아니면 뒤의 답들도 함께 사라진다는
-  // 말을 한 번 묻는다. 마지막 답이면 곧장. 훅은 빈 테이프 early return 보다
-  // 위에 있어야 한다 — 순서가 render 마다 같아야 하니까.
-  const [rewindAsk, setRewindAsk] = useState<{
-    turn: number;
-    text: string;
-    after: number;
-  } | null>(null);
-  /** 접어 둔 복도 — `아직이요` 를 누른 저장 카드의 id. 창의 기억이다. */
-  const [corridorDismissed, setCorridorDismissed] = useState<Set<string>>(new Set());
-  // 복도는 사이클의 마지막 발자국에만 선다 — 지난 저장들의 카드는 기록이지
-  // 길이가 아니다.
-  const lastSaveId = blocks.filter((block) => block.type === "save").at(-1)?.id ?? null;
   if (blocks.length === 0) {
     return (
       <div className="empty">
@@ -135,35 +142,13 @@ export function Transcript({
       todosSoFar = [];
     }
   }
-  // 되감기 · 체크포인트의 턴 번호는 데몬의 정의를 따른다: k 번째 **프롬프트**
+  // 분기의 턴 번호는 데몬의 정의를 따른다: k 번째 **프롬프트**
   // (기계 턴 포함 — 세션이 보낸 말이면 전부). 답의 턴은 그 답을 낸 프롬프트의
   // 순번이다. text 블록을 세던 옛 셈은 도구만 돈 턴을 잃고 한 턴에 답이 둘이면
-  // 넘쳤다 — 누른 답과 돌아가는 스냅샷이 어긋나던 것은 그 셈의 탓이다.
-  const totalTurns = promptTotal(blocks);
-
-  // 되돌리기 · 다시 요청은 턴 단위 행동이다 — 같은 턴의 답들이 가리키는
-  // 체크포인트는 하나이므로 정산 줄(턴 끝) 하나에만 실린다. 턴이 낸 답의
-  // 전문은 같은 줄의 전체 복사가 대신 들고 나간다.
+  // 넘쳤다 — 누른 답과 돌아가는 새 대화의 자리가 어긋나던 것은 그 셈의 탓이다.
   const lastAnswers = lastAnswerPerTurn(blocks);
   const turnNumbers = turnBlockNumbers(blocks);
   const turnAnswers = turnAnswerText(blocks);
-  // 되감기가 되감을 턴의 원말 — 정산 줄 id → 그 턴을 연 사람의 문장.
-  // lastUserText 는 테이프 끝의 가장 최근 말만 내놓으므로, 오래된 턴의
-  // `다시 요청` 이 최신 말을 되감았다. 셈은 turnAnswerText 의 규칙을 그대로
-  // 거꾸로 든다: 프롬프트(기계 턴 표식은 제외)가 그 턴의 답들보다 앞서므로
-  // 정산 줄을 만날 때의 마지막 사람 말이 그 턴의 원말이다.
-  const turnUserText = new Map<string, string>();
-  {
-    let current: string | null = null;
-    for (const block of blocks) {
-      if (block.type === "user") {
-        const { marker } = readTurn(block.text);
-        if (!marker) current = block.text;
-      } else if (block.type === "turn" && current !== null) {
-        turnUserText.set(block.id, current);
-      }
-    }
-  }
   // 생각 · 작업 과정이 꺼져 있으면 groupActivity 보다 **먼저** 걸러낸다:
   // 묶기까지 마치고 나서 지우면 생각이나 도구만 있던 구간이 아무것도 담지
   // 않은 활동 막대로 남는다. 턴 번호의 셈(answerTurns · totalTurns)은
@@ -179,32 +164,8 @@ export function Transcript({
           block.type === "thinking" && block.streaming ? { ...block, streaming: false } : block,
         ),
   );
-  const askRewind = (turn: number, text: string) => {
-    if (!onRewind) return;
-    const after = totalTurns - turn;
-    if (after > 0) setRewindAsk({ turn, text, after });
-    else onRewind(turn, text);
-  };
   return (
     <div className="transcript">
-      {rewindAsk && onRewind && (
-        <ConfirmDialog
-          title="답 되감기"
-          body={
-            <>
-              이 답을 버릴까요? <strong>이 답 이후의 답 {rewindAsk.after}개</strong>도 함께
-              사라집니다.
-            </>
-          }
-          hint="파일도 이 답 이전으로 돌아갑니다."
-          confirmLabel="버리고 다시 받기"
-          onConfirm={() => {
-            onRewind(rewindAsk.turn, rewindAsk.text);
-            setRewindAsk(null);
-          }}
-          onClose={() => setRewindAsk(null)}
-        />
-      )}
       {(() => {
         /**
          * 그 행이 스스로 아는 시각 (ms) — 대화 블록은 시각을 싣지 않으므로
@@ -246,13 +207,12 @@ export function Transcript({
                 />
               );
             if (row.kind === "todo") {
-              return (
-                <TodoCard
-                  key={row.id}
-                  block={row.block}
-                  ended={!live || endedTodos.has(row.block.id)}
-                />
-              );
+              const ended = !live || endedTodos.has(row.block.id);
+              // 라이브 턴의 할 일은 WorkStrip 이 대표한다 — 같은 목차를
+              // 테이프가 또 그리는 것은 소음이다. 끝난 턴의 것만 한 줄로
+              // 테이프에 남는다.
+              if (!ended) return null;
+              return <TodoCard key={row.id} block={row.block} />;
             }
             const block = row.block;
             switch (block.type) {
@@ -274,7 +234,7 @@ export function Transcript({
                   );
                 return (
                   <div key={block.id} className="bubble bubble--user">
-                    {block.text}
+                    <UserBubbleText text={block.text} />
                     {block.images > 0 && <span className="tag">이미지 {block.images}장</span>}
                     {block.files?.map((name) => (
                       <span key={name} className="tag">
@@ -346,69 +306,59 @@ export function Transcript({
                       retryText={isLastFailedTurn(blocks, block) ? lastUserText(blocks) : null}
                       onRetry={onRetry}
                       onResendEdit={onResendEdit}
-                      checkpointId={
-                        block.subtype === "interrupted" && checkpoints?.length
-                          ? checkpoints[checkpoints.length - 1]?.id
-                          : undefined
-                      }
-                      onRestoreCheckpoint={onRestoreCheckpoint}
                       live={live}
                     />
                   );
                 }
-                // 되돌리기 · 다시 요청은 정산 줄을 탄다 — 턴 단위 행동이 한 행에서
-                // 마침표를 찍는다(행동 왼쪽, 시간과 복사 오른쪽). 답 없이 끝난 턴은
-                // 행동이 없고, 시간이 안 남은 옛 턴은 행동만 남는다. 되감기 번호는
-                // 답의 셈(turnBlockNumbers)을 그대로 산다 — 어긋나면 체크포인트가
-                // 엉뚱한 스냅샷을 고른다.
+                // 분기의 번호는 답의 셈(turnBlockNumbers)을 그대로 산다 —
+                // 어긋나면 새 대화가 엉뚱한 답까지의 기억을 이어받는다.
                 const turnNo = turnNumbers.get(block.id) ?? 1;
                 const answered = lastAnswers.get(turnNo) !== undefined;
-                const checkpoint = checkpoints?.find((entry) => entry.turn === turnNo);
-                const canRestore = answered && checkpoint != null && onRestoreCheckpoint != null;
-                const canRewind = answered && onRewind != null;
-                if (!canRestore && !canRewind && block.durationMs == null) return null;
+                // 전체 복사는 시간과 자리를 같이하지만 같은 조건이 아니다 —
+                // 시간을 못 남긴 턴(오래된 대화록, usage 를 안 실는
+                // 프로바이더)의 답도 복사로는 건져 간다. 답이 흐른 조각 없이
+                // 결과만 온 턴의 말은 resultText 가 대신 든다.
+                const whole = turnAnswers.get(block.id) ?? block.resultText ?? undefined;
+                // 분기는 프롬프트 순번을 자르므로 답의 조각 유무를 묻지 않는다
+                // — 결과만 온 턴도 "이 답까지"의 지점이 된다.
+                const canBranch = (answered || whole != null) && onBranch != null;
+                if (!canBranch && block.durationMs == null && whole == null) return null;
                 return (
                   <TurnDone
                     key={block.id}
                     durationMs={block.durationMs}
-                    whole={turnAnswers.get(block.id)}
-                    actions={
-                      canRestore || canRewind ? (
+                    whole={whole}
+                    branch={
+                      canBranch && onBranch ? (
                         <>
-                          {canRestore && checkpoint && onRestoreCheckpoint && (
-                            <Tip label="이 요청이 바꾼 화면 파일을, 이 요청이 시작하기 전 모습으로 되돌립니다">
-                              <button
-                                type="button"
-                                className="revert"
-                                disabled={live}
-                                onClick={() => onRestoreCheckpoint(checkpoint.id)}
-                              >
-                                이 요청 이전으로 되돌리기
-                              </button>
-                            </Tip>
-                          )}
-                          {canRewind && (
-                            <Tip
-                              label={
-                                live
-                                  ? "답변이 끝나면 누를 수 있습니다"
-                                  : "이 답을 버리고 파일·대화를 그 전으로 돌려 같은 말로 다시 받습니다"
-                              }
+                          <Tip label={live ? "답변이 끝나면 누를 수 있습니다" : BRANCH_MEANS}>
+                            <button
+                              type="button"
+                              className="turndone__act"
+                              aria-label="여기서 새 대화"
+                              disabled={live}
+                              onClick={() => onBranch(turnNo)}
                             >
-                              <button
-                                type="button"
-                                className="revert"
-                                disabled={live}
-                                onClick={() =>
-                                  askRewind(
-                                    turnNo,
-                                    turnUserText.get(block.id) ?? lastUserText(blocks) ?? "",
-                                  )
-                                }
-                              >
-                                다시 요청
-                              </button>
-                            </Tip>
+                              <BranchIcon />
+                            </button>
+                          </Tip>
+                          {/* P2-2: 뜻을 마우스 뒤에 숨기지 않는다 — 분기가
+                              대화만 되감는다는 사실은 누르기 **전에** 읽혀야
+                              하고, 화면까지 되돌리려는 사람에게는 그 자리가
+                              어디인지 같은 줄에서 가리킨다. */}
+                          {!live && (
+                            <span className="turndone__branchnote">
+                              {BRANCH_MEANS}
+                              {onOpenHistory && (
+                                <button
+                                  type="button"
+                                  className="turndone__restore"
+                                  onClick={onOpenHistory}
+                                >
+                                  작업 기록에서 되돌리기
+                                </button>
+                              )}
+                            </span>
                           )}
                         </>
                       ) : null
@@ -425,45 +375,20 @@ export function Transcript({
                     <span className="notice__text">{block.text}</span>
                   </div>
                 );
-              case "save": {
-                const corridor =
-                  saveCorridor && block.id === lastSaveId && !corridorDismissed.has(block.id);
+              case "save":
+                // P2-1: 저장은 사람이 누른 순간이 아니라 턴의 끝마다 도구가
+                // 하는 일이 됐다 — 매 턴 카드가 뜨면 테이프가 도구의 잔일로
+                // 덮인다. 남기는 것은 조용한 표식 한 글자: 무엇이 보관됐는지는
+                // 마우스를 올릴 때만 말하고, 되돌리기는 작업 기록의 몫이다.
                 return (
-                  <div key={block.id}>
-                    <SaveCard
-                      title="저장했어요"
-                      sub={`${clockTime(block.at)} · 바뀐 파일 ${block.files.length}개`}
-                      tagLabel="저장됨"
-                      tagTone="ok"
-                      files={block.files.map((file) => ({
-                        title: file,
-                        detail: "",
-                        tag: "고침",
-                      }))}
-                    />
-                    {corridor && (
-                      <div className="corridor">
-                        <button
-                          type="button"
-                          className="corridor__go"
-                          onClick={saveCorridor.onHandoff}
-                        >
-                          개발자에게 넘기기로 이어가기
-                        </button>
-                        <button
-                          type="button"
-                          className="corridor__later"
-                          onClick={() =>
-                            setCorridorDismissed((prev) => new Set(prev).add(block.id))
-                          }
-                        >
-                          아직이요
-                        </button>
-                      </div>
-                    )}
+                  <div className="savemark" key={block.id}>
+                    <Tip label={`${clockTime(block.at)} · 바뀐 파일 ${block.files.length}개`}>
+                      <span className="savemark__dot" role="img" aria-label="여기까지 보관했습니다">
+                        ✓
+                      </span>
+                    </Tip>
                   </div>
                 );
-              }
               case "milestone":
                 return block.subtype === "merged" ? (
                   <MilestoneRow
@@ -497,7 +422,6 @@ export function Transcript({
                     ? `${review.path}${review.line ? `:${review.line}` : ""}`
                     : "코드 위치",
                   body: review.body,
-                  onFix: onFixReview ? () => onFixReview([review]) : undefined,
                 }));
                 return (
                   <HumanMessage
@@ -509,9 +433,6 @@ export function Transcript({
                     body={reviewBody ? reviewBody.body : "코멘트를 남겼어요"}
                     quotes={quotes}
                     onReply={onReplyReview ? () => onReplyReview(header) : undefined}
-                    onFixAll={
-                      onFixReview && inline.length > 1 ? () => onFixReview(inline) : undefined
-                    }
                   />
                 );
               }

@@ -372,6 +372,11 @@ export class RepoCore {
    * The same count's rows, light — the 변경 점 strip lists exactly what the
    * chip counts, so the number and the list move in one emit or not at all.
    */
+  /**
+   * 재검수가 읽은 파일 목록 — P2-1 에서 선로를 떠났다(그리던 화면이 없다).
+   * 데몬 안에 남는 이유는 하나: 개수가 같은 편집도 방송을 내야 하는지의
+   * 같음 비교가 이 목록을 본다.
+   */
   changedFiles: ChangedFileLite[] = [];
 
   openHandoff: HandoffStatus | null;
@@ -1255,7 +1260,6 @@ export class RepoCore {
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       pendingChanges: this.pendingChanges,
-      changedFiles: this.changedFiles,
       shelf: this.shelfAt === null ? null : { at: this.shelfAt },
       errorKind: this.errorKind,
       commands: this.config

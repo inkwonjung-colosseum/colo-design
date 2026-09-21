@@ -202,9 +202,20 @@ async function main() {
     await page.locator(`.leaf[data-thread-id="${sessionId}"]`).click();
     await page.locator(".screenpanel__bar").waitFor({ timeout: 30000 });
 
+    // E′ — 다음 할 일 문장은 팝오버를 열기 전에 배송 바에 직접 보인다.
+    // 이 시점의 사이클은 변경 없음(새로 만든 것이 없습니다)이고, 문장은
+    // 칩과 더 보기 버튼 사이의 한 줄이다. P2-1 뒤로 이 자리에 `저장` 은 없다.
+    const nextline = page.locator(".screenpanel__nextline");
+    await nextline.waitFor({ timeout: 10000 });
+    check(
+      "the bar names the next chore without opening the menu",
+      (await nextline.innerText()).includes("새로 만든 것이 없습니다"),
+      await nextline.innerText(),
+    );
+
     // The mount read has already fired by now (quiet reuse on activation).
     // Opening the menu must show a real clock, not the never-checked line.
-    await page.locator(".screenpanel__statusmore").click();
+    await page.locator(".screenpanel__statusbtn").click();
     await page.locator(".screenpanel__statusmenu").waitFor({ timeout: 10000 });
     const hint = page.locator(".screenpanel__statusrow .hint");
     await page.waitForFunction(

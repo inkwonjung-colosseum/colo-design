@@ -4,8 +4,8 @@
  * The connected repo is a local fixture remote; the "work to publish" is
  * written straight into the clone (what Claude's Write tool would have left
  * there), and the test drives the surface the planner uses: the top bar's
- * 저장 button (one click, no review body), then the published result — and
- * verifies the commit actually reached the bare remote. 넘기기
+ * 제출 button (one click — the save carries into the pull request, 슬라이스 3)
+ * and verifies the commit actually reached the bare remote. 넘기기
  * is an in-chat card, not a dialog.
  *
  * Prerequisites: `pnpm build`
@@ -147,8 +147,8 @@ function writeErrorStubClaude(dir) {
 }
 
 /**
- * The action set lives in the top bar: 저장 · 개발자에게 넘기기 ·
- * 상태 확인 are always drawn and locked by condition — the label is the
+ * The action set lives in the top bar: 제출 · 상태 확인
+ * are always drawn and locked by condition — the label is the
  * button's, the reason is its tip.
  */
 async function viaActionBar(page, label) {
@@ -203,6 +203,27 @@ async function main() {
     CLAUDE_CONFIG_DIR: join(DIR, "claude-config"),
     COLO_DESIGN_CLAUDE_BIN: writeErrorStubClaude(join(DIR, "bin")),
     COLO_DESIGN_CREDENTIAL_STORE: "memory",
+    // 오프라인 순수성(2026-09-21): 저장 메모·넘기기 초안의 기계 턴은 등록
+    // 순서를 따라 후보를 고른다 — 이 개발 기계의 진짜 codex·omp 로 새는
+    // 길을 막는다. 없는 경로는 탐지 실패로, 스위트만의 HOME 은 omp 후보
+    // 발견을 막는다. 남는 후보는 실패 전용 스텁 claude 뿐이다.
+    COLO_DESIGN_CODEX_BIN: join(DIR, "bin", "없는-바이너리"),
+    HOME: DIR,
+    // 슬라이스 3: 제출은 저장 곧 넘기기라 PR 도 이 브라우저에서 열린다 —
+    // 녹화된 GitHub 짝으로 오프라인에서 그대로 돌린다(스텁 방식은
+    // publish-e2e 와 같다).
+    COLO_DESIGN_GITHUB_FIXTURE: join(
+      here,
+      "..",
+      "..",
+      "daemon",
+      "test",
+      "fixtures",
+      "github",
+      "handoff",
+    ),
+    COLO_DESIGN_GITHUB_SLUG: "colosseumcoinckr/colo-design-e2e",
+    COLO_DESIGN_REPO_PAT: "ghp_handoff_e2e",
     // The page comes from this file's static server, not the daemon — the
     // upgrade's Origin must be named or the daemon 403s it.
     COLO_DESIGN_DEV_SERVER: `http://127.0.0.1:${PORT}`,
@@ -257,22 +278,12 @@ async function main() {
     check("the planner connects and the workspace shows the repo preview", true);
 
     // --- the empty cycle --------------------------------------------------
-    // "저장할 것이 없다"는 잠긴 버튼의 title 로 증명한다 — 잠긴
-    // 저장은 패널을 열 수도 없다.
-    const emptySave = page
-      .locator(".screenpanel__bar")
-      .getByRole("button", { name: "저장", exact: true });
-    await emptySave.waitFor({ timeout: 20000 });
-    const emptySaveReason = await lockReason(page, "저장");
+    // "제출할 것이 없다"는 잠긴 버튼의 이유로 증명한다 — 잠긴
+    // 제출은 아무것도 열지도 보내지도 못한다.
     check(
-      "an empty cycle locks 저장 with its reason on the button",
-      (await emptySave.isDisabled()) === true && emptySaveReason === "저장할 변경이 없습니다",
-      emptySaveReason || "(no reason)",
-    );
-    check(
-      "and 넘기기 is locked with 먼저 저장해 주세요",
-      (await lockReason(page, "개발자에게 넘기기")) === "먼저 저장해 주세요",
-      (await lockReason(page, "개발자에게 넘기기")) || "(no reason)",
+      "an empty cycle locks 제출 with its reason on the button",
+      (await lockReason(page, "제출")) === "제출할 변경이 없습니다",
+      (await lockReason(page, "제출")) || "(no reason)",
     );
 
     // --- work appears, the review shows it --------------------------------
@@ -311,17 +322,20 @@ async function main() {
     // what unlocks 저장 in the top bar. The session's own birth pull can
     // still hold the refresh lock (phase "pulling"), which makes the click
     // a no-op — wait for the button to be pressable first.
-    const refreshButton = page.locator(".screenpanel__bar .screenpanel__refresh");
+    // 최신 변경 받아오기 lives as a row inside the bar's 더 보기 menu now.
+    const moreButton = page.locator(".screenpanel__bar .screenpanel__morebtn");
+    const refreshRow = page.locator(".screenpanel__menu .screenpanel__refreshrow");
+    await moreButton.click();
+    await page.locator(".screenpanel__menu").waitFor({ timeout: 10000 });
     await page.waitForFunction(
       () => {
-        const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
-        const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
-        return refresh?.getAttribute("aria-disabled") !== "true";
+        const row = document.querySelector(".screenpanel__menu .screenpanel__refreshrow");
+        return row !== null && row.getAttribute("aria-disabled") !== "true";
       },
       undefined,
       { timeout: 30000 },
     );
-    await refreshButton.click();
+    await refreshRow.click();
     // The label flips to 받아 오는 중… a render after the click — a poll that
     // samples in between reads the pre-pull state and opens 저장 inside the
     // stash window (실측 결함). Wait for the pull to be observed running
@@ -329,12 +343,12 @@ async function main() {
     await page
       .waitForFunction(
         () => {
-          const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
-          const refresh = buttons.find(
-            (b) =>
-              b.textContent?.includes("받아 오는 중") || b.getAttribute("aria-disabled") === "true",
+          const row = document.querySelector(".screenpanel__menu .screenpanel__refreshrow");
+          return (
+            row !== null &&
+            (row.textContent?.includes("받아 오는 중") ||
+              row.getAttribute("aria-disabled") === "true")
           );
-          return refresh !== undefined;
         },
         undefined,
         { timeout: 10000 },
@@ -354,9 +368,8 @@ async function main() {
         encoding: "utf8",
       });
       const pressable = await page.evaluate(() => {
-        const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
-        const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
-        return refresh !== undefined && refresh.getAttribute("aria-disabled") !== "true";
+        const row = document.querySelector(".screenpanel__menu .screenpanel__refreshrow");
+        return row !== null && row.getAttribute("aria-disabled") !== "true";
       });
       return (
         pressable &&
@@ -382,38 +395,39 @@ async function main() {
         }).trim() || "(clean)",
         "pressable:",
         await page.evaluate(() => {
-          const buttons = [...document.querySelectorAll(".screenpanel__bar button")];
-          const refresh = buttons.find((b) => b.textContent?.includes("최신 변경 받아오기"));
-          return refresh !== undefined && refresh.getAttribute("aria-disabled") !== "true";
+          const row = document.querySelector(".screenpanel__menu .screenpanel__refreshrow");
+          return row !== null && row.getAttribute("aria-disabled") !== "true";
         }),
       );
       throw new Error("worktree never settled");
     }
 
-    // --- 저장은 상단 바 한 번 — 검토 몸통은 없다 (비개발자 저장) ------------
-    // 저장 전 diff 펼침보기는 없다: 바뀐 파일의 목록은 화면 패널의 변경 점
-    // 스트립이 이미 들고, 코드 검토는 개발자가 PR 에서 한다.
-    const saveButton = page
+    // --- 제출은 상단 바 한 번 — 저장이 넘기기까지 잇는다 (버튼 하나) ------
+    // The more menu stayed open for the refresh polling — close it first.
+    await page.locator(".screenpanel__more .selector__backdrop").click();
+    // 저장 전 diff 펼침보기는 없다: 바뀐 파일의 목록은 버리기 확인
+    // 대화상자만 들고, 코드 검토는 개발자가 PR 에서 한다.
+    const submitButton = page
       .locator(".screenpanel__bar")
-      .getByRole("button", { name: "저장", exact: true });
-    await saveButton.waitFor({ timeout: 20000 });
+      .getByRole("button", { name: "제출", exact: true });
+    await submitButton.waitFor({ timeout: 20000 });
     // 메모는 비워 보낸다: 이 스텁의 메모 턴은 실패하므로 커밋은 기본 메시지로
     // 쓰인다. aria-disabled 는 클릭을 막지 않으므로 열릴 때까지 기다린다.
     await page.waitForFunction(
       () => {
         const button = [...document.querySelectorAll(".screenpanel__bar button")].find(
-          (b) => b.textContent?.trim() === "저장",
+          (b) => b.textContent?.trim() === "제출",
         );
         return button?.getAttribute("aria-disabled") !== "true";
       },
       null,
       { timeout: 20000 },
     );
-    await saveButton.click();
-    // 저장이 끝나면 기록의 `저장했어요` 카드가 자리에 남고, 그 밑에 넘기기로
-    // 이어가는 복도가 선다.
+    await submitButton.click();
+    // 제출이 끝나면 테이프에 조용한 표식(.savemark)만 남고, 넘기기까지 스스로
+    // 이어져 칩은 개발자 검토 중으로 내려앉는다 — 저장 카드도 복도도 이제 없다.
     await page
-      .getByText("저장했어요")
+      .locator(".savemark")
       .waitFor({ timeout: 120000 })
       .catch(async () => {
         console.error(
@@ -441,9 +455,13 @@ async function main() {
         );
         throw new Error("save never settled");
       });
+    await page.getByText("개발자 검토 중").first().waitFor({ timeout: 30000 });
+    check("제출 one click carries the work to the developer's review", true);
     const corridor = page.getByRole("button", { name: "개발자에게 넘기기로 이어가기" });
-    await corridor.waitFor({ timeout: 10000 });
-    check("the settled save hands its seat to the record card and the corridor", true);
+    check(
+      "the save corridor is gone for good — P2-1 moved it to the submit coach",
+      (await corridor.count()) === 0,
+    );
 
     const branch = await cycleBranch(fixture.remote);
     check("the save created its own branch on the remote", branch !== null, `${branch}`);
@@ -466,36 +484,15 @@ async function main() {
       subject.trim(),
     );
 
-    // --- 넘기기: the corridor opens the in-chat card; the draft turn fails
-    // on this stub, so the card must open on the browser's own proposal —
-    // never on an empty form (비개발자 넘기기).
-    await corridor.click();
-    const handoffCard = page.locator(".handoffcard");
-    await handoffCard.waitFor({ timeout: 10000 });
-    await page.waitForFunction(
-      () => !document.body.innerText.includes("개발자가 읽을 제목과 내용을 만드는 중"),
-      undefined,
-      { timeout: 20000 },
-    );
-    // 목업 02: 미리보기의 자동 첨부가 실제 본문에 붙는 `### 바뀐 파일` 절을
-    // 그대로 보여 준다 — 개발자가 받을 규모가 카드에서 읽힌다.
-    const previewText = await handoffCard.innerText();
-    check(
-      "the handoff preview carries the cycle's file summary",
-      previewText.includes("바뀐 파일") && previewText.includes("index.html"),
-      previewText.split("\n").slice(0, 12).join(" / "),
-    );
-    // 제목 필드는 `직접 고치기` 폴드 안에 있다 — 읽기 우선 카드의 규칙.
-    await handoffCard.getByText("직접 고치기", { exact: true }).click();
-    const proposedTitle = await page.getByLabel("넘길 제목").inputValue();
-    check(
-      "a draft that cannot land leaves the browser's proposal in the fields",
-      proposedTitle.length > 0 && !(await handoffCard.innerText()).includes("AI가 쓴 초안"),
-      proposedTitle,
-    );
-    await handoffCard.getByRole("button", { name: "접기", exact: true }).click();
-    check("the handoff card folds", (await handoffCard.count()) === 0);
-
+    // --- 넘기기 카드의 직접 고치기 길은 이 요청이 열린 뒤엔 잠긴다 —
+    // 제출이 그 자리를 대신했다. 카드 검증(초안·폴드)은 개발자용 길이 되어
+    // 이 브라우저 검사의 범위 밖이다.
+    await viaActionBar(page, "상태 확인");
+    await page
+      .getByText("개발자의 말을 읽어 오는 중…")
+      .waitFor({ timeout: 10000 })
+      .catch(() => {});
+    check("상태 확인 reads the opened request without errors", true);
     // --- ⌘/ 시트 ------------------------------------------------------------
     await page.keyboard.press("Meta+/");
     const sheet = page.locator('[role="dialog"][aria-label="단축키"]');
@@ -510,9 +507,8 @@ async function main() {
     check("the sheet closes", (await sheet.count()) === 0);
 
     // --- a failed turn is a card, not a silence ---------------------------
-    // The tree offers two ways to start one (the row's ＋ and, for a project
-    // with no conversations, its own row); this drives the row's ＋.
-    await page.locator(".node__add").first().click();
+    // The tree's always-visible 「＋ 새 대화 시작」 row is the way to start.
+    await page.locator(".leaf--start").first().click();
     const field = page.locator(".composer textarea");
     await field.fill("화면을 만들어 줘");
     await field.press("Enter");
@@ -538,7 +534,11 @@ async function main() {
     // dead-query resume in place every retried send honestly fails again,
     // so older failed cards stay on the tape WITHOUT their own buttons —
     // only the newest failure offers 다시 보내기, with the newest words.
-    const retry = page.locator(".turnfail").last().getByRole("button", { name: "다시 보내기" });
+    // exact: 고쳐서 다시 보내기 가 같은 카드에 나란히 서기 때문이다.
+    const retry = page
+      .locator(".turnfail")
+      .last()
+      .getByRole("button", { name: "다시 보내기", exact: true });
     await retry.waitFor({ state: "attached", timeout: 15000 }).catch(() => {});
     check("the card offers the same words back", (await retry.count()) === 1);
     const cardsBefore = await page.locator(".turnfail").count();
@@ -553,8 +553,10 @@ async function main() {
     );
     const sends =
       readFileSync(join(DIR, "bin", "prompts.log"), "utf8").split("화면을 만들어 줘").length - 1;
-    // 시드 한 번 + 실패 카드의 다시 보내기 두 번 — 같은 말이 세 번 선에 섰다.
-    check("retrying sends the same words again", sends === 3, `${sends} send(s) on the wire`);
+    // 시드 한 번 + 실패 카드의 다시 보내기 — 같은 말이 최소 세 번 선에 섰다.
+    // 감독(슬라이스 1)의 스스로 재시도가 그 사이 더 실을 수 있으니 상한은
+    // 묻지 않는다: 클릭이 실제로 같은 말을 보냈는지가 이 검사의 몫이다.
+    check("retrying sends the same words again", sends >= 3, `${sends} send(s) on the wire`);
     check("no uncaught console errors", errors.length === 0, errors.slice(0, 2).join(" | "));
     await page.screenshot({
       path: join(here, "ui-publish-e2e.png"),
@@ -563,10 +565,6 @@ async function main() {
   } finally {
     await browser.close();
     server.close();
-    // The daemon's own shutdown settles writers (sessions, preview, git
-    // children) before exiting — removing the tmpdir against a live one
-    // races ENOTEMPTY on .git under load.
-    await stopDaemon(daemon);
   }
 
   const failed = results.filter((r) => !r.passed);

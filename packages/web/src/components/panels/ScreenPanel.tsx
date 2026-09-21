@@ -1,5 +1,4 @@
 import type {
-  ChangedFileLite,
   ColoDesignPinEnvelope,
   DeveloperReview,
   DiffFile,
@@ -15,7 +14,7 @@ import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf, timeAgo } from "../../lib/format";
 import { linkClick, openLink } from "../../lib/open-link";
-import { errorToTurn, lookToTurn, reviewToTurn } from "../../lib/preview-turns";
+import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
 import { guidanceFor } from "../../lib/repo-guidance";
 import {
   isReplyConfirmed,
@@ -39,7 +38,6 @@ import {
   MinusIcon,
   PencilIcon,
   RefreshIcon,
-  SaveIcon,
   TrashIcon,
   WarnIcon,
 } from "../icons";
@@ -50,9 +48,9 @@ import {
   type PreviewLocation,
   type PreviewTarget,
 } from "../preview/PreviewHost";
+import { StateBanner } from "../StateBanner";
 import { HistoryDrawer } from "../shell/HistoryDrawer";
 import { Tip } from "../shell/Tip";
-import { ChangedFiles } from "./ChangedFiles";
 import { FILE_STATUS_LABEL } from "./DiffPanel";
 
 /**
@@ -109,8 +107,6 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
   }
 }
 
-/** 변경 점의 빈 값 — 같은 이유(렌더마다 새 배열)로 상수 하나. */
-const NO_CHANGED_FILES: ChangedFileLite[] = [];
 /** 버리기 확인의 ±수 — 헝크 본문의 +/− 줄만 센다 (헤더는 hunk.header 에 따로). */
 function diffCounts(file: DiffFile): { added: number; removed: number } {
   let added = 0;
@@ -123,6 +119,19 @@ function diffCounts(file: DiffFile): { added: number; removed: number } {
   }
   return { added, removed };
 }
+
+/** 한 오류 키가 사람 손 없이 쓸 수 있는 기계 고침 발사 수. 카드는 그다음 문이다. */
+const MAX_AUTO_FIXES = 2;
+/** 보류 목록의 상한 — 판정 창 하나가 몇 초씩이므로 정산이 무한히 늘지 않게 묶는다. */
+const MAX_PENDING_ERRORS = 6;
+/**
+ * 성공 턴 뒤의 조용한 창(결함 2, 실사 2026-09-20). 데몬은 게이트 전체
+ * 통과를 방송하지 않으므로(게이트는 문제를 찾았을 때만 말한다), 웹이 혼자
+ * 보는 증거로 해소한다: 성공 턴이 끝난 뒤 이 창 동안 새 오류 보고도 새
+ * 턴도 없으면 미리보기가 오류 없이 이어져 온 것이므로, 확인 불능으로 남은
+ * 보고를 거둔다.
+ */
+const CONVERGE_WINDOW_MS = 10_000;
 
 /**
  * The workspace's right column: the connected repo clone rendered by its own
@@ -175,7 +184,7 @@ export function ScreenPanel({
     turn: string,
     name?: string,
     attachments?: Array<{ name: string; mediaType: string; data: string }>,
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
   ) => Promise<boolean>;
   pins: Pins;
   /**
@@ -205,9 +214,9 @@ export function ScreenPanel({
    * 모달을 열지 않고 이 콜백으로 올라간다 — 저장·넘기기는 대화 안 카드가
    * 응답하고, 상태 확인은 아래 cycleRequest 로 되돌아온다.
    */
-  onCycleAction: (kind: "save" | "handoff" | "check") => void;
+  onCycleAction: (kind: "submit" | "handoff" | "check") => void;
   /** PageWorkspace 가 내린 사이클 요청 — 이 패널은 `check` 만 집는다. */
-  cycleRequest: { kind: "save" | "handoff" | "check"; nonce: number } | null;
+  cycleRequest: { kind: "submit" | "handoff" | "check" | "history"; nonce: number } | null;
   /** 대화 열에서 처리된 개발자 코멘트 — 배지의 수를 다시 읽는 신호. */
   reviewsTick: number;
 }) {
@@ -239,7 +248,7 @@ export function ScreenPanel({
     wasWorking.current = working;
   }, [working]);
   /**
-   * Which screen and state the preview shows. The toolbar is the pins'
+   * Which path the preview shows. The toolbar is the pins'
    * only door, so the ask lives here beside it; the address bar's free
    * paths are asks too.
    */
@@ -266,8 +275,29 @@ export function ScreenPanel({
     setLocation(null);
   }
 
-  /** 저장 기록 도킹 패널 — 더 보기 ▾ 메뉴에서 열고 닫는다(토글). */
+  /** 작업 기록 도킹 패널 — 더 보기 ▾ 메뉴에서 열고 닫는다(토글). */
   const [historyOpen, setHistoryOpen] = useState(false);
+  /**
+   * 제출 코치(P2-1): 저장 카드 밑에 서던 복도(`개발자에게 넘기기로 이어가기`)
+   * 가 옮겨 온 자리다. 자동 저장 뒤로 저장은 사람이 누른 순간이 아니라 매 턴
+   * 일어나므로, 그 복도를 그대로 두면 다음 걸음을 턴마다 권하는 잔소리가 된다.
+   * 한 번만 — 핀 코치와 같은 localStorage 패턴(HandoffCard 의 선례).
+   */
+  const [submitCoach, setSubmitCoach] = useState(() => {
+    try {
+      return localStorage.getItem("colo-design.submit-coach-seen") !== "1";
+    } catch {
+      return true;
+    }
+  });
+  const dismissSubmitCoach = () => {
+    setSubmitCoach(false);
+    try {
+      localStorage.setItem("colo-design.submit-coach-seen", "1");
+    } catch {
+      // 저장소가 없어도 이 창에서는 조용해진다 — 그것으로 충분하다.
+    }
+  };
   /** 도킹이 무대와 나란히 설 폭 — 좁으면 패널이 무대를 덮는 폴백(cover)으로. */
   const [historyCover, setHistoryCover] = useState(false);
   // 무대 줄은 콜백 참조로 받는다 — 패널이 준비 화면으로 먼저 뜨면(ref 를 한
@@ -330,13 +360,25 @@ export function ScreenPanel({
   }, [pins.recordError]);
 
   // The 더 보기 menu answers Escape; the backdrop under it takes missed clicks.
+  // 미리보기 무대(게스트 webview) 안의 클릭은 배경에 닿지 않으므로, 게스트가
+  // 포커스를 가져가는 순간을 "밖"으로 본다 — 상태 팝오버와 같은 규칙.
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setMenuOpen(false);
+      }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const onFocusIn = (event: FocusEvent) => {
+      if ((event.target as HTMLElement | null)?.tagName === "WEBVIEW") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [menuOpen]);
 
   const sync = useCallback(() => {
@@ -534,6 +576,15 @@ export function ScreenPanel({
     readHandoffState(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycleRequest]);
+  // P2-2: 정산 줄의 `작업 기록에서 되돌리기` — 드로어는 이 패널이 쥐고
+  // 있으므로 대화 열의 요청이 같은 통로로 건너온다.
+  const historyNonce = useRef(-1);
+  useEffect(() => {
+    if (cycleRequest?.kind !== "history" || cycleRequest.nonce === historyNonce.current) return;
+    historyNonce.current = cycleRequest.nonce;
+    setHistoryOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cycleRequest]);
 
   // 상태 판정은 이른 계산이다 — 훅들이 early
   // return 보다 먼저 이 값을 본다(merged 펄스·강조 이동). 순수 계산이라
@@ -545,15 +596,27 @@ export function ScreenPanel({
     handoff,
     running: turnState === "running",
     phase,
-    shelf: repo?.shelf ?? null,
   });
   // --- 보낸 화면 동결 (preview.md §1-E) ----------------
   // 넘긴 사이클이 서 있는 동안 스테이지는 얼린 얼굴을 쓴다 — PreviewHost 는
   // 입히기만 하고, 무엇을 얼리는지는 delivery 를 소유한 이 패널이 정한다.
   // 샷의 존재 여부는 따로 묻지 않는다: `handoffShot` 의 null 답이 곧
   // "이 화면은 보낸 캡처가 없다" 이다 — 넘긴 화면 목록은 데몬의
-  // captureTargets(코멘트 경로)이 만들고, 웹은 지금 보는 화면의 route·state
-  // 로 한 장씩 묻는다.
+  // captureTargets(코멘트 경로)이 만들고, 웹은 지금 보는 화면의 route 로
+  // 한 장씩 묻는다(2026-09-21 상태 축 철거 — 주소는 route 하나다).
+  /**
+   * 코치가 서는 자리: 넘길 것이 실제로 있고(제출이 열려 있고) 아직 넘긴
+   * 요청이 없는 첫 순간. 복도가 섰던 조건 그대로다 — 이미 넘겨 본 사람에게는
+   * 소음이므로 한 번 보이면 끝이다.
+   */
+  const coachSubmit =
+    submitCoach &&
+    delivery?.actions.submit.enabled === true &&
+    delivery.primary === "submit" &&
+    // 핀 코치와 달리 이 자리는 아래로 펼쳐지는 면들과 겹친다 — 고정된 말풍선은
+    // 포인터를 먹으므로(Tip 의 open 계약), 다른 면이 열려 있으면 물러난다.
+    !menuOpen &&
+    !historyOpen;
   const handoffState = handoff?.state ?? null;
   const frozenCycle =
     handoffState === "open" ||
@@ -561,10 +624,9 @@ export function ScreenPanel({
     handoffState === "merged" ||
     handoffState === "closed";
   const frozenWhere = location?.path ?? (target?.kind === "path" ? target.path : "/");
-  const [frozenRoute = "/", frozenQuery = ""] = frozenWhere.split("?");
-  const frozenState = new URLSearchParams(frozenQuery).get("state");
+  const frozenRoute = frozenWhere.split("?")[0] ?? "/";
   const [frozenShot, setFrozenShot] = useState<{ mediaType: string; data: string } | null>(null);
-  const frozenShotKey = `${handoff?.number ?? ""}|${frozenRoute}|${frozenState ?? ""}`;
+  const frozenShotKey = `${handoff?.number ?? ""}|${frozenRoute}`;
   useEffect(() => {
     if (!frozenCycle) {
       setFrozenShot(null);
@@ -573,7 +635,7 @@ export function ScreenPanel({
     let cancelled = false;
     setFrozenShot(null);
     void api
-      .handoffShot(frozenRoute, frozenState)
+      .handoffShot(frozenRoute)
       .then((shot) => {
         if (!cancelled) setFrozenShot(shot);
       })
@@ -583,8 +645,8 @@ export function ScreenPanel({
     return () => {
       cancelled = true;
     };
-    // frozenShotKey 가 route·state·PR 번호를 다 품는다 — 셋은 읽기 편의로
-    // 나란히 둔다.
+    // frozenShotKey 가 route·PR 번호를 다 품는다 — 둘은 읽기 편의로 나란히
+    // 둔다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, frozenCycle, frozenShotKey]);
   // 얼굴의 기본값: 넘기고 손 안 댄 사이클은 보낸 화면이 먼저다. 새 작업이
@@ -638,17 +700,20 @@ export function ScreenPanel({
             : `${sentAgo}에 보낸 화면`;
   const frozenTone: "info" | "ok" | "warn" =
     handoffState === "merged" ? "ok" : handoffState === "closed" ? "warn" : "info";
-  // 반영됨 도장은 6 초만 산다 — 종착의 인사지 새 상태가 아니다.
+  // 반영됨 도장은 6 초만 산다 — 종착의 인사지 새 상태가 아니다. 도장만
+  // 거둔다: 실제로 열기로 띄운 실빌드(몇십 초 걸린다)와 보낸↔지금 왕복은
+  // 얼려 둔 무대 위에 살아 있어야 한다 — 열린 넘김과 같은 계약이다.
   useEffect(() => {
     if (handoffState !== "merged") return;
     const timer = window.setTimeout(() => setFrozenStampGone(true), 6_000);
     return () => window.clearTimeout(timer);
   }, [handoffState]);
   const frozen =
-    frozenCycle && !frozenStampGone
+    frozenCycle && (frozenShot !== null || !frozenStampGone)
       ? {
           shot: frozenShot,
           stamp: frozenStamp,
+          stampGone: frozenStampGone,
           tone: frozenTone,
           mode: frozenMode,
           // 눌러도 없는 것은 버튼이 아니다 — 샷이 있을 때만 왕복 손잡이를 단다.
@@ -721,11 +786,26 @@ export function ScreenPanel({
   const [lastCheckAt, setLastCheckAt] = useState<Date | null>(null);
   useEffect(() => {
     if (!statusOpen) return;
+    // window 캡처 단계 — 다른 오버레이의 document 버블 핸들러보다 먼저 와야
+    // 이 팝오버의 Escape 가 삼켜지지 않는다.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setStatusOpen(false);
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setStatusOpen(false);
+      }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // 미리보기 무대(게스트 webview)는 DOM 위에 얹힌 별도 문서다 — 무대
+    // 안의 클릭은 뒷배경(button)에 닿지 않는다. 게스트가 포커스를 가져간
+    // 순간이 곧 "밖을 눌렀다"다.
+    const onFocusIn = (event: FocusEvent) => {
+      if ((event.target as HTMLElement | null)?.tagName === "WEBVIEW") setStatusOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [statusOpen]);
 
   // --- 개발자 코멘트의 동작 ---------------------------------------
@@ -745,17 +825,6 @@ export function ScreenPanel({
   // reviewsTick 이 오르면 배지의 수를 다시 읽는다.
   void reviewsTick;
   const unhandledDevReviews = (devReviews ?? []).filter((review) => !handledIds.has(review.id));
-  const unreadReviews = unhandledDevReviews.filter((review) => !readReviews.has(review.id));
-
-  const handleReview = async (reviews: DeveloperReview[]) => {
-    const delivered = await onMachineTurn(reviewToTurn(reviews));
-    // 거절(아직 대화가 없어 열지 못한 경우 등)에는 표식을 찍지 않는다 —
-    // askAgent 의 규칙과 같다. 표식이 먼저 가면 배지는 줄고 행은 'AI에게
-    // 보냄'으로 읽히는데 정작 나간 것이 없다.
-    if (!delivered) return;
-    for (const review of reviews) saveHandledReview(review.pr, review.id);
-    setHandledTick((tick) => tick + 1);
-  };
 
   const sendDevReply = async (review: DeveloperReview) => {
     const text = devReplyText.trim();
@@ -798,27 +867,6 @@ export function ScreenPanel({
   }, [api]);
 
   /**
-   * 잠깐 치워두기 · 꺼내기: the third door's two
-   * turns — the same error surface 버리기 uses, so a refusal (slot full ·
-   * nothing unsaved · dirty desk) reads as one sentence, not a dead button.
-   */
-  const putAway = useCallback(() => {
-    void api
-      .shelve()
-      .then(() => api.repoStatus())
-      .catch((e: Error) => syncError.show(e.message));
-  }, [api]);
-  // 꺼내기의 충돌은 이 대화의 첫 과제다 — sessionId 를 함께 보내는 것이
-  // 브리프가 갈 곳을 만든다(server.ts briefTo). 빠뜨리면 데몬은 거절 문장만
-  // 돌려주고 충돌한 파일은 아무도 손대지 않은 채 남는다.
-  const takeOut = useCallback(() => {
-    void api
-      .unshelve(sessionId)
-      .then(() => api.repoStatus())
-      .catch((e: Error) => syncError.show(e.message));
-  }, [api, sessionId]);
-
-  /**
    * Mounting the panel is what readies the repo. `repoSync` is idempotent
    * daemon-side, so it runs at most once per mount — never per render — and
    * unmounting deliberately does nothing: the preview server keeps running
@@ -836,7 +884,10 @@ export function ScreenPanel({
    * message twice in a row is marked on the card (아직 같은 오류 · N번째).
    */
   const forwardError = (error: PreviewError) => {
-    const key = `${error.route}|${error.state}|${error.kind}|${error.message}`;
+    // 사람의 클릭은 고리에 끼었다 — 이 키의 기계 예산도 새로 산다. 다만
+    // 무한하진 않다: 예산이 다시 마르면 카드가 다시 마지막 문이 된다.
+    const key = `${error.route}|${error.kind}|${error.message}`;
+    autoFires.current.delete(key);
     const count = lastErrorKey.current === key ? lastErrorCount.current + 1 : 1;
     lastErrorKey.current = key;
     lastErrorCount.current = count;
@@ -845,12 +896,237 @@ export function ScreenPanel({
     // 시도한다 (다른 실패 카드의 AI 요청과 같은 형태). 살아 있는
     // 미리보기의 화면 오류에는 재시도할 준비가 없다.
     if (previewStopped) askArmed.current = true;
+    // 클릭은 판정을 지난 말이다 — 카드를 치우는 것도 클릭의 몫이다. 눌린
+    // 보고는 보류 목록에서도 내려온다(사람이 끼었다), 다른 라우트의 살아
+    // 남은 보고는 다음 정산이 다시 심사한다.
+    retireError(errorKey(error));
+    shownError.current = null;
+    setPreviewError(null);
   };
+
+  // --- 미리보기 오류의 판정 ---------------------------------------------
+  // 오류 보고는 두 갈래로 온다. 턴이 도는 동안의 보고는 대부분 HMR 의 깨진
+  // 중간 상태다 — 카드로 승격시키지 않고 들어 두었다가, 턴이 끝나면 데몬의
+  // 검증 창(preview.screenCheck — 게이트와 같은 드라이버·같은 판정)으로 그
+  // 화면을 다시 열어 본다. 깨끗하면 조용히 거둔다(이미 고쳐진 것), 살아
+  // 있으면 고침 턴을 스스로 내려놓고, 예산이 다 달랐을 때만 비로소 카드가
+  // 된다 — 사람의 클릭은 마지막 문이고, 확인 불능은 언제나 카드다.
+  // 발사가 무한하면 기계 둘이 서로 답하며 구독을 태운다(게이트의
+  // `gatedSessions` 와 같은 이유다). 한 번만 발사하는 것도 답이 못 된다 —
+  // 턴 도중의 파문이 한 발을 삼키고, 진짜 재발이 사람의 클릭을 기다린다.
+  // 그래서 예산은 키별 둘이고, 회복된다: 깨끗한 판정(고침이 성공한 것 —
+  // 다음 오류는 새 오류다)·사람의 클릭(고리에 사람이 끼었다)·새 미리보기
+  // 서버(지난 시절의 오류는 전부 낡은 말이다)가 각각 새 예산을 산다.
+  //
+  // 결함 2(실사 2026-09-20): 이전 몸은 정산에서 보고 하나만 심사했다 —
+  // 턴 도중의 보고는 덮어 쓰이고, 서 있는 카드는 새 보고에 밀려났다. 그래서
+  // 한쪽 라우트의 보고는 성공 턴을 몇 번 견뎌도 해소되지 않았다. 지금은
+  // 보고를 목록으로 들고, 턴의 종착에서 보류된 전부를 같은 파이프로
+  // 심사한다. 데몬이 게이트 전체 통과의 방송을 주지 않으므로, 확인 불능으로
+  // 남은 보고에는 웹만의 해소 길을 더한다 — 성공 턴(idle) 뒤의 조용한 창
+  // (CONVERGE_WINDOW_MS)이다.
+  const [previewError, setPreviewError] = useState<PreviewError | null>(null);
+  /** 아직 거둬지지 않은 보고 전부 — 턴 도중에 들어 둔 것과 살아 남은 카드. */
+  const pendingErrors = useRef<PreviewError[]>([]);
+  /** 지금 그려진 카드 — 파이프가 갱신할 때의 기준점(state 를 읽으면 늦는다). */
+  const shownError = useRef<PreviewError | null>(null);
+  /** 오류 키별로 기계가 쓴 고침 발사 수 — 카드가 마지막 문이 되는 잣대다. */
+  const autoFires = useRef<Map<string, number>>(new Map());
+  /** 마지막 판정이 확인 불능이었던 보고의 키 — 성공 턴 뒤의 조용한 창이 거둔다. */
+  const unverifiable = useRef<Set<string>>(new Set());
+  const convergeTimer = useRef<number | null>(null);
+  const verdicts = useRef<Promise<void>>(Promise.resolve());
+  const turnLive =
+    turnState === "starting" ||
+    turnState === "running" ||
+    turnState === "waiting_permission" ||
+    turnState === "waiting_question";
+
+  const errorKey = (error: PreviewError): string => `${error.route}|${error.kind}|${error.message}`;
+
+  /** 보류 목록에 하나 얹는다 — 같은 보고의 재파문은 하나로 접고, 목록은
+      상한 안에 묶어 둔다(오래된 것부터 내린다). */
+  const holdError = (error: PreviewError): void => {
+    pendingErrors.current = [
+      ...pendingErrors.current.filter((e) => errorKey(e) !== errorKey(error)),
+      error,
+    ].slice(-MAX_PENDING_ERRORS);
+  };
+
+  /** 판정이 끝난 보고를 거둔다 — 목록에서도, 확인 불능 표식에서도. */
+  const retireError = (key: string): void => {
+    pendingErrors.current = pendingErrors.current.filter((e) => errorKey(e) !== key);
+    unverifiable.current.delete(key);
+  };
+
+  /** 이번 판정이 끝난 뒤의 그림을 정한다. 산파(살아 남은 보고)가 있으면
+      마지막 것이 선다. 없을 때는 이번 판정이 서 있던 카드를 거뒀는지 본다 —
+      거뒀다면 남은 보고의 마지막이, 목록이 비었으면 아무것도 그려지지
+      않는다. 이번 판정과 무관한 카드는 손대지 않는다. */
+  const repaintAfter = (survivor: PreviewError | null, judgedShown: boolean): void => {
+    if (survivor) {
+      shownError.current = survivor;
+      setPreviewError(survivor);
+      return;
+    }
+    if (!judgedShown) return;
+    const last = pendingErrors.current[pendingErrors.current.length - 1] ?? null;
+    shownError.current = last;
+    setPreviewError(last);
+  };
+
+  /** The verdict pipeline, serialized — together-arriving reports are
+      judged in order and the last verdict wins the paint. */
+  const adjudicateAll = (reports: PreviewError[]): void => {
+    verdicts.current = verdicts.current.then(async () => {
+      const shownKey = shownError.current ? errorKey(shownError.current) : null;
+      // 한 정산의 발사는 하나다 — 같은 파문이 여러 라우트에서 보고됐을 때
+      // 발사 수만큼 고침 턴이 늘면 기계 둘이 서로 답한다(게이트의
+      // gatedSessions 와 같은 이유다). 나머지 보고는 다음 정산이 심사한다.
+      let fired = false;
+      let survivor: PreviewError | null = null;
+      let judgedShown = false;
+      for (const error of reports) {
+        const key = errorKey(error);
+        // 앞 판정(같은 파이프의 이전 통과)이 이미 거둔 보고다.
+        if (!pendingErrors.current.some((e) => errorKey(e) === key)) continue;
+        if (key === shownKey) judgedShown = true;
+        const report = await api.screenCheck(error.route).catch(() => null);
+        if (report === null) {
+          // 확인 불능 — 판정이 아니라 못 본 것이다. 카드가 안전한 쪽이고,
+          // 성공 턴 뒤의 조용한 창이 이 키를 거둔다.
+          unverifiable.current.add(key);
+          survivor = error;
+          continue;
+        }
+        const broken = !report.settled || report.errors.length > 0;
+        if (!broken) {
+          // 이미 고쳐졌다(혹은 일시적 파문이었다) — 조용히 거둔다. 이 화면의
+          // 예산도 돌려준다: 고침이 성공을 냈으면 다음 오류는 새 오류다.
+          retireError(key);
+          for (const budget of [...autoFires.current.keys()]) {
+            if (budget.startsWith(`${error.route}|`)) autoFires.current.delete(budget);
+          }
+          continue;
+        }
+        unverifiable.current.delete(key);
+        const spent = autoFires.current.get(key) ?? 0;
+        if (!fired && spent < MAX_AUTO_FIXES) {
+          const delivered = await onMachineTurn(errorToTurn(error, spent + 1));
+          if (delivered) {
+            // 고침 턴이 뛰었다 — 카드 대신 턴의 말이 간다. 예산은 전달된
+            // 발사만 쓴다: 거절은 판정의 실패가 아니라 못 건 것이다.
+            autoFires.current.set(key, spent + 1);
+            fired = true;
+            continue;
+          }
+        }
+        survivor = error;
+      }
+      repaintAfter(survivor, judgedShown);
+    });
+  };
+
+  /** Single-report convenience — the pipeline judges one report through the
+      same body the settle pass uses. */
+  const adjudicate = (error: PreviewError): void => adjudicateAll([error]);
+
+  /** 웹만의 해소 창 — 결함 2의 후반. 성공 턴이 끝난 뒤 이 창 동안 새 보고도
+      새 턴도 없으면 미리보기가 오류 없이 이어져 온 것이므로, 확인 불능으로
+      남은 보고를 거둔다. 검증이 살아 있다고 확인한 보고는 거두지 않는다 —
+      카드는 살아 있는 오류의 마지막 문이어야 한다. 판정 창이 창금보다
+      오래 걸려도 해롭지 않다 — 표식은 끝난 판정에만 붙는다. */
+  const disarmConverge = (): void => {
+    if (convergeTimer.current !== null) {
+      window.clearTimeout(convergeTimer.current);
+      convergeTimer.current = null;
+    }
+  };
+  const armConverge = (): void => {
+    disarmConverge();
+    if (pendingErrors.current.length === 0) return;
+    convergeTimer.current = window.setTimeout(() => {
+      convergeTimer.current = null;
+      const quiet = pendingErrors.current.filter((e) => unverifiable.current.has(errorKey(e)));
+      if (quiet.length === 0) return;
+      const shownKey = shownError.current ? errorKey(shownError.current) : null;
+      for (const error of quiet) retireError(errorKey(error));
+      // 그려진 카드가 거둬졌다면 남은 보고의 마지막이, 없으면 조용함이 선다.
+      if (shownKey !== null && quiet.some((e) => errorKey(e) === shownKey)) {
+        const last = pendingErrors.current[pendingErrors.current.length - 1] ?? null;
+        shownError.current = last;
+        setPreviewError(last);
+      }
+    }, CONVERGE_WINDOW_MS);
+  };
+
+  /** The webview's report: held while a turn runs, judged at once otherwise. */
+  const handlePreviewError = (payload: {
+    kind: "runtime" | "build";
+    message: string;
+    route: string;
+  }) => {
+    const reported: PreviewError = {
+      ...payload,
+      kind: payload.kind === "build" ? "build" : "runtime",
+    };
+    // 새 보고는 새 증거다 — 조용한 창이 기다리던 보고보다 이것이 우선이므로
+    // 창은 닫는다(실패의 재확인이 해소를 이긴다).
+    disarmConverge();
+    holdError(reported);
+    if (turnLive) return;
+    adjudicate(reported);
+  };
+
+  // 턴의 종착이 곧 판정의 자리다(결함 2): 들어 둔 보고(이번 턴의 HMR 파문)와
+  // 살아 남은 카드(예전 턴이 남긴 것, 다른 라우트의 것 포함)를 전부 같은
+  // 파이프로 내려보낸다 — 화면이 깨끗하게 수렴했으면 카드는 저절로 사라진다.
+  // 이전 몸은 이 자리에서 보고 하나만 심사했으므로 다른 라우트의 보고가
+  // 성공 턴 뒤에도 남았다. 성공 턴(idle)의 뒤에는 조용한 창까지 연다 —
+  // 확인 불능으로 남은 보고의 해소 길이다.
+  useEffect(() => {
+    if (turnLive) {
+      disarmConverge();
+      return;
+    }
+    const queue = [...pendingErrors.current];
+    if (queue.length > 0) adjudicateAll(queue);
+    if (turnState === "idle") armConverge();
+    // verdicts·adjudicate 는 겉모습일 뿐이다 — state 만 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turnState]);
+
+  // 창의 뒷정리 — 프로젝트를 떠나는 창이 타이머를 남기지 않게 한다.
+  useEffect(() => disarmConverge, []);
+
+  // 서버가 새로 떠오르면(미리보기 주소가 바뀌면) 지난 시절의 오류는 전부
+  // 낡은 말이다 — PreviewHost 가 url 로 지우던 규약이 판정자와 함께 패널로
+  // 옮겨 온 것뿐이다. 핫 리로드는 여전히 보고된 오류를 지우지 못한다.
+  // 발사 예산도 서버와 함께 새로 산다.
+  useEffect(() => {
+    disarmConverge();
+    pendingErrors.current = [];
+    unverifiable.current.clear();
+    autoFires.current.clear();
+    shownError.current = null;
+    setPreviewError(null);
+  }, [repo?.previewUrl]);
+
+  // 서다 있는 카드와 새 이동 — 화면이 다시 열렸다는 것은 새 증거다. 확인
+  // 불능으로 서 있던 카드는 서버가 돌아오면 이 판정에서 스스로 걷히고,
+  // 아직 살아 있는 오류는 남은 예산만큼 기계가 다시 달려든다. 턴이 도는
+  // 동안에는 판정하지 않는다 — 그 보고는 턴의 종착이 심사한다.
+  useEffect(() => {
+    if (turnLive || !previewError) return;
+    adjudicate(previewError);
+    // verdicts·adjudicate 는 겉모습일 뿐이다 — location 이 새 증거다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
   // --- 화면 보여 주기 -------------------------------------------------
   // 오류도 핀도 아닌 화면 — 흰 화면, 무한 로딩 — 를 AI 에게 통째로 보여
   // 준다: 프레임 캡처 한 장 + 콘솔 마지막 20줄 + 사용자의 한 줄(선택).
-  // 같은 라우트·상태의 연타는 `N번째 요청` 표식을 얹고, 턴이 도는 동안의
+  // 같은 라우트의 연타는 `N번째 요청` 표식을 얹고, 턴이 도는 동안의
   // 연타는 막는다(같은 턴이 겹치니까).
   const [lookBusy, setLookBusy] = useState(false);
   const [lookBlocked, setLookBlocked] = useState<string | null>(null);
@@ -882,13 +1158,12 @@ export function ScreenPanel({
       window.setTimeout(() => setLookBlocked(null), 2500);
       return;
     }
-    const where = location?.path ?? (target?.kind === "path" ? target.path : "/");
-    const [route = "/", query = ""] = where.split("?");
-    const state = new URLSearchParams(query).get("state");
+    // 주소의 쿼리는 주소의 일부다 — route 에 통째로 실린다(상태 축 철거).
+    const route = location?.path ?? (target?.kind === "path" ? target.path : "/");
     setLookBusy(true);
     try {
       const snapshot = await window.coloDesignDesktop?.preview?.snapshot?.();
-      const key = `${route}|${state ?? ""}`;
+      const key = route;
       const count = lookKey.current === key ? lookCount.current + 1 : 1;
       lookKey.current = key;
       lookCount.current = count;
@@ -903,11 +1178,11 @@ export function ScreenPanel({
           : "",
       ].filter(Boolean);
       const delivered = await onMachineTurn(
-        lookToTurn(route, state ?? "default", lines.join("\n\n"), count),
+        lookToTurn(route, lines.join("\n\n"), count),
         undefined,
         attachments,
         // 게이트 재배선: 이 캡처가 가리킨 화면이 턴의 게이트 입력이다.
-        [{ screen: route, state: state ?? null }],
+        [{ screen: route }],
       );
       // 거절당한 요청은 '보냈습니다'로 기억하지 않는다 — 다시 누를 수 있어야.
       lookSentThisTurn.current = delivered;
@@ -1012,40 +1287,39 @@ export function ScreenPanel({
                       onClick={() => setStatusOpen(false)}
                     />
                   )}
-                  <Tip label={delivery.chip.title} side="bottom" align="start">
-                    <span
-                      className={`screenpanel__status screenpanel__status--${delivery.chip.tone}${
-                        mergedFlash ? " screenpanel__status--mergedflash" : ""
-                      }`}
-                      role="status"
-                    >
-                      {chipGlyph(delivery.chip.tone)}
-                      {delivery.chip.label}
-                    </span>
-                  </Tip>
-                  {/* 칩은 라이브 리전으로 남고, 지도는 옆의 조용한 트리거. */}
                   <Tip
-                    label={statusOpen ? undefined : "지금 상태와 다음 할 일을 봅니다"}
+                    label={statusOpen ? undefined : delivery.chip.title}
                     side="bottom"
+                    align="start"
                   >
                     <button
                       type="button"
-                      className="ghost screenpanel__statusmore"
+                      className="screenpanel__statusbtn"
                       aria-haspopup="dialog"
                       aria-expanded={statusOpen}
-                      aria-label="사이클 상태 더 보기"
                       onClick={() => setStatusOpen((open) => !open)}
                     >
-                      <ChevronDownIcon />
+                      <span
+                        className={`screenpanel__status screenpanel__status--${delivery.chip.tone}${
+                          mergedFlash ? " screenpanel__status--mergedflash" : ""
+                        }`}
+                        role="status"
+                      >
+                        {chipGlyph(delivery.chip.tone)}
+                        {delivery.chip.label}
+                        <ChevronDownIcon />
+                      </span>
                     </button>
                   </Tip>
+                  {/* 다음 할 일 문장 — 칩 팝오버에서 올라온 것(E′). 칩은 단어를
+                      낭독하는 라이브 리전으로 남고, 문장은 시각 보강이다. */}
+                  <span className="screenpanel__nextline">{delivery.next.line}</span>
                   {statusOpen && (
                     <span
                       className="selector__menu screenpanel__statusmenu"
                       role="dialog"
                       aria-label="사이클 상태"
                     >
-                      <span className="screenpanel__statusline">{delivery.next.line}</span>
                       {destination && (
                         <span className="screenpanel__destination">
                           이 프로젝트 →{" "}
@@ -1106,45 +1380,50 @@ export function ScreenPanel({
                 </span>
               )}
               <span className="screenpanel__spacer" />
-              {/* 동작은 상수다: 저장 · 넘기기는 언제나 그려지고 조건으로만
-            잠긴다 — 잠긴 이유는 title 한 문장. 상태 확인은 PR 이 있을 때만.
-            강조는 그 순간 가장 자연스러운 하나에만. 잠김은 aria-disabled: 진짜
-            disabled 는 hover 도 포커스도 막아 title 이 도달할 길이 없었다. */}
+              {/* 동작은 상수다: 제출 · 상태 확인은 언제나 그려지고 조건으로만
+            잠긴다(슬라이스 3 — 저장과 넘기기를 묶은 계획자의 한 손).
+            잠김은 aria-disabled: 진짜 disabled 는 hover 도 포커스도 막아
+            title 이 도달할 길이 없었다. */}
               <span className="screenpanel__actions">
                 {delivery ? (
                   <>
-                    <Tip label={delivery.actions.save.reason} side="bottom">
+                    <Tip
+                      label={
+                        coachSubmit ? (
+                          <>
+                            만든 것을 개발자에게 보내려면 제출을 누르세요
+                            <button
+                              type="button"
+                              className="notice__close"
+                              aria-label="제출 안내 닫기"
+                              style={{ marginLeft: 6 }}
+                              onClick={dismissSubmitCoach}
+                            >
+                              ×
+                            </button>
+                          </>
+                        ) : (
+                          delivery.actions.submit.reason
+                        )
+                      }
+                      side="bottom"
+                      open={coachSubmit}
+                    >
                       <button
                         type="button"
                         className={`${
-                          delivery.primary === "save" && delivery.actions.save.enabled
+                          delivery.primary === "submit" && delivery.actions.submit.enabled
                             ? "primary screenpanel__action"
                             : "ghost screenpanel__action"
-                        }${beatPrimary === "save" ? " screenpanel__action--beat" : ""}`}
-                        aria-disabled={!delivery.actions.save.enabled}
+                        }${beatPrimary === "submit" ? " screenpanel__action--beat" : ""}`}
+                        aria-disabled={!delivery.actions.submit.enabled}
                         onClick={() => {
-                          if (delivery.actions.save.enabled) onCycleAction("save");
-                        }}
-                      >
-                        <SaveIcon />
-                        <span className="screenpanel__actionlabel">저장</span>
-                      </button>
-                    </Tip>
-                    <Tip label={delivery.actions.handoff.reason} side="bottom">
-                      <button
-                        type="button"
-                        className={`${
-                          delivery.primary === "handoff" && delivery.actions.handoff.enabled
-                            ? "primary screenpanel__action"
-                            : "ghost screenpanel__action"
-                        }${beatPrimary === "handoff" ? " screenpanel__action--beat" : ""}`}
-                        aria-disabled={!delivery.actions.handoff.enabled}
-                        onClick={() => {
-                          if (delivery.actions.handoff.enabled) onCycleAction("handoff");
+                          dismissSubmitCoach();
+                          if (delivery.actions.submit.enabled) onCycleAction("submit");
                         }}
                       >
                         <HandoffIcon />
-                        <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
+                        <span className="screenpanel__actionlabel">제출</span>
                       </button>
                     </Tip>
                     {delivery.actions.check && (
@@ -1189,20 +1468,10 @@ export function ScreenPanel({
                       className="ghost screenpanel__action"
                       aria-disabled="true"
                     >
-                      <SaveIcon />
-                      <span className="screenpanel__actionlabel">저장</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost screenpanel__action"
-                      aria-disabled="true"
-                    >
                       <HandoffIcon />
-                      <span className="screenpanel__actionlabel">개발자에게 넘기기</span>
+                      <span className="screenpanel__actionlabel">제출</span>
                     </button>
-                    <span className="screenpanel__locknote">
-                      저장·넘기기는 답변이 끝난 뒤 열립니다
-                    </span>
+                    <span className="screenpanel__locknote">제출은 답변이 끝난 뒤 열립니다</span>
                   </>
                 )}
                 {/* 상태 확인의 빈 답 — 누른 버튼 아래에서 대답한다. 내용
@@ -1216,36 +1485,9 @@ export function ScreenPanel({
                 )}
               </span>
               <span className="screenpanel__divider" />
-              <Tip
-                label={
-                  refreshing
-                    ? "받아 오는 중…"
-                    : refreshLocked
-                      ? "미리보기가 준비되면 받아올 수 있습니다"
-                      : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
-                }
-                side="bottom"
-                align="end"
-              >
-                <button
-                  type="button"
-                  className="ghost screenpanel__refresh"
-                  aria-disabled={refreshLocked}
-                  onClick={() => {
-                    if (!refreshLocked) refresh();
-                  }}
-                >
-                  <RefreshIcon />
-                  <span className="screenpanel__refreshlabel">
-                    {/* 최신화 is a coinage; the gate step and the progress rail already
-                  say 최신 변경 받아오기 — the button is the odd one out. */}
-                    {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
-                  </span>
-                </button>
-              </Tip>
               <span className="screenpanel__more">
                 <Tip
-                  label={menuOpen ? undefined : "저장 기록 · 변경 버리기"}
+                  label={menuOpen ? undefined : "최신 변경 받아오기 · 작업 기록"}
                   side="bottom"
                   align="end"
                 >
@@ -1270,10 +1512,44 @@ export function ScreenPanel({
                     />
                     <span className="selector__menu screenpanel__menu" role="menu">
                       {/* 저장 · 넘기기는 더 보기에서 뺐다 — 상단 바의 상수 동작이
-                  그 자리를 갖는다. 저장 기록 · 변경 버리기만 남는다.
+                  그 자리를 갖는다. 최신 변경 · 작업 기록 · 변경 버리기가 남는다.
                   잠긴 행도 aria-disabled: 진짜 disabled 는 hover 를 막아 title 의
                   잠긴 이유에 도달할 길이 없다 (상단 바와 같은 규칙). */}
-                      <Tip label="이 사이클의 저장 차례를 보고 하나로 되돌립니다" side="left">
+                      <Tip
+                        label={
+                          refreshing
+                            ? "받아 오는 중…"
+                            : refreshLocked
+                              ? "미리보기가 준비되면 받아올 수 있습니다"
+                              : "개발자가 반영한 최신 변경을 받아 옵니다 — 저장하지 않은 변경은 그대로 보존됩니다"
+                        }
+                        side="left"
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="selector__row screenpanel__refreshrow"
+                          aria-disabled={refreshLocked}
+                          onClick={() => {
+                            if (refreshLocked) return;
+                            // 행이 곧 진행을 말한다 — 받아 오는 중… 로.
+                            refresh();
+                          }}
+                        >
+                          <span className="ic ic--sm ic--quiet">
+                            <RefreshIcon />
+                          </span>
+                          <span className="selector__text">
+                            <span className="selector__label">
+                              {refreshing ? "받아 오는 중…" : "최신 변경 받아오기"}
+                            </span>
+                            <span className="selector__desc">
+                              개발자가 반영한 최신 변경을 받아 옵니다
+                            </span>
+                          </span>
+                        </button>
+                      </Tip>
+                      <Tip label="이번 작업의 차례를 보고 하나로 되돌립니다" side="left">
                         <button
                           type="button"
                           role="menuitem"
@@ -1289,9 +1565,9 @@ export function ScreenPanel({
                             <HistoryIcon />
                           </span>
                           <span className="selector__text">
-                            <span className="selector__label">저장 기록</span>
+                            <span className="selector__label">작업 기록</span>
                             <span className="selector__desc">
-                              이 사이클의 저장 차례를 보고 하나로 되돌립니다
+                              이번 작업의 차례를 보고 하나로 되돌립니다
                             </span>
                           </span>
                         </button>
@@ -1322,56 +1598,6 @@ export function ScreenPanel({
                             <span className="selector__label">변경 버리기</span>
                             <span className="selector__desc">
                               저장하지 않은 변경을 모두 버립니다 — 되돌릴 수 없습니다
-                            </span>
-                          </span>
-                        </button>
-                      </Tip>
-                      <Tip
-                        label={
-                          repo?.shelf
-                            ? turnState === "running"
-                              ? "AI가 고치는 중 — 끝나면 꺼낼 수 있습니다"
-                              : "치워둔 작업을 지금 화면에 다시 얹습니다"
-                            : (repo?.pendingChanges ?? 0) === 0
-                              ? "치워둘 저장하지 않은 변경이 없습니다"
-                              : turnState === "running"
-                                ? "AI가 고치는 중 — 끝나면 치워둘 수 있습니다"
-                                : "지금 작업을 치워 두고 화면을 저장 전 상태로 되돌립니다 — 다시 꺼내 이어합니다"
-                        }
-                        side="left"
-                      >
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="selector__row"
-                          aria-disabled={
-                            !workable ||
-                            turnState === "running" ||
-                            (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
-                          }
-                          onClick={() => {
-                            if (
-                              !workable ||
-                              turnState === "running" ||
-                              (repo?.shelf ? false : (repo?.pendingChanges ?? 0) === 0)
-                            )
-                              return;
-                            setMenuOpen(false);
-                            if (repo?.shelf) takeOut();
-                            else putAway();
-                          }}
-                        >
-                          <span className="ic ic--sm ic--quiet">
-                            <ArchiveIcon />
-                          </span>
-                          <span className="selector__text">
-                            <span className="selector__label">
-                              {repo?.shelf ? "치워둔 작업 꺼내기" : "잠깐 치워두기"}
-                            </span>
-                            <span className="selector__desc">
-                              {repo?.shelf
-                                ? "치워둔 작업을 지금 화면에 다시 얹습니다"
-                                : "치워둔 작업을 나중에 다시 얹습니다"}
                             </span>
                           </span>
                         </button>
@@ -1409,18 +1635,13 @@ export function ScreenPanel({
         : null}
       {syncError.text && (
         <Fold closing={syncError.closing} onCollapsed={syncError.clear}>
-          <div className="notice notice--error">
-            <span className="notice__text">{syncError.text}</span>
-            <button
-              type="button"
-              className="notice__close"
-              aria-label="오류 닫기"
-              disabled={syncError.closing}
-              onClick={syncError.close}
-            >
-              ×
-            </button>
-          </div>
+          <StateBanner
+            tone="danger"
+            role="alert"
+            title={syncError.text}
+            closeLabel="오류 닫기"
+            onClose={syncError.close}
+          />
         </Fold>
       )}
       {lookBlocked && (
@@ -1468,6 +1689,8 @@ export function ScreenPanel({
               onPin={onPin}
               onPinFocus={onPinFocus}
               onFixError={forwardError}
+              onPreviewError={handlePreviewError}
+              error={previewError}
               target={target}
               sync={pinsFrame}
               onNavigate={setTarget}
@@ -1478,6 +1701,7 @@ export function ScreenPanel({
               onLook={(note) => void sendLook(note)}
               lookBusy={lookBusy}
               driving={daemon.browserDriving}
+              turnRunning={turnState === "running"}
               frozen={frozen}
               frozenApi={frozen ? { api, sessionId: sessionId ?? null } : null}
             />
@@ -1499,17 +1723,6 @@ export function ScreenPanel({
             }
             hint="버린 변경은 되돌릴 수 없습니다."
             confirmLabel="버리기"
-            alt={
-              repo?.shelf
-                ? undefined
-                : {
-                    label: "잠깐 치워두기",
-                    onAlt: () => {
-                      setDiscardConfirm(false);
-                      putAway();
-                    },
-                  }
-            }
             onConfirm={discard}
             onClose={() => setDiscardConfirm(false)}
           >
@@ -1565,32 +1778,9 @@ export function ScreenPanel({
                   {devReviews === null
                     ? "개발자의 말을 읽어 오는 중…"
                     : unhandledDevReviews.length > 0
-                      ? "고치기는 AI에게 화면을 고쳐 달라는 뜻이고, 답하기는 개발자에게 답을 남기는 뜻입니다."
+                      ? "도구가 코멘트를 읽고 AI에게 반영을 맡깁니다 — 끝나면 알려 드립니다. 답하기로 개발자에게 직접 답할 수 있습니다."
                       : "모두 처리한 목록입니다."}
                 </p>
-                {devReviews !== null && unhandledDevReviews.length > 0 && (
-                  <Tip
-                    label={
-                      unreadReviews.length > 0
-                        ? "먼저 각 코멘트를 펼쳐 읽어 주세요 — 개발자의 말에 '이 방향은 접자'가 섞여 있을 수 있습니다"
-                        : undefined
-                    }
-                    side="bottom"
-                  >
-                    <button
-                      type="button"
-                      className="ghost dev__all"
-                      aria-disabled={devBusy || unreadReviews.length > 0}
-                      onClick={() => {
-                        if (devBusy || unreadReviews.length > 0) return;
-                        void handleReview(unhandledDevReviews);
-                        setDevPanelOpen(false);
-                      }}
-                    >
-                      모두 AI에게 ({unhandledDevReviews.length})
-                    </button>
-                  </Tip>
-                )}
                 <ul className="diff__files">
                   {(devReviews ?? []).map((review) => {
                     const handled = handledIds.has(review.id);
@@ -1608,19 +1798,6 @@ export function ScreenPanel({
                           </span>
                           {!handled && (
                             <>
-                              <Tip label="이 코멘트를 AI에게 넘겨 화면을 고칩니다">
-                                <button
-                                  type="button"
-                                  className="primary"
-                                  disabled={devBusy}
-                                  onClick={() => {
-                                    void handleReview([review]);
-                                    setDevPanelOpen(false);
-                                  }}
-                                >
-                                  고치기
-                                </button>
-                              </Tip>
                               <button
                                 type="button"
                                 className="ghost"
@@ -1708,10 +1885,6 @@ export function ScreenPanel({
           />
         )}
       </div>
-      {/* 변경 점 — the column's floor (mockup 03 · 분할). Below the row, so
-          the stage yields height to it and the native view's bounds follow
-          the slot's rect: docking, never overlaying. */}
-      <ChangedFiles files={repo?.changedFiles ?? NO_CHANGED_FILES} />
     </div>
   );
 }

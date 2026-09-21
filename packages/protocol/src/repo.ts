@@ -17,8 +17,7 @@ export interface CommentItem {
   id: string;
   /** The screen the pin sat on, as the overlay's envelope named it. */
   screen: string;
-  /** 표식 없는 페이지의 핀은 null — 자리 잡음 판정은 문서 로드까지만 한다. */
-  state: string | null;
+
   /** What the planner wrote on this pin — empty means no memo was written. */
   text: string;
   /** The commented element's own text, as the overlay captured it. */
@@ -99,10 +98,9 @@ export interface HandoffStatus {
  * from the pull request body's `### 화면 미리보기` section.
  */
 export interface HandoffShot {
-  /** Route the screen is served at — the pin's `data-screen` id, slash-restored. */
+  /** Route the screen is served at — the pin's pathname id, slash-restored. */
   route: string;
-  /** The state the screen was captured in — 표식 없는 화면은 null. */
-  state: string | null;
+
   /** The capture's bytes; `Buffer` on the daemon side, `Uint8Array` here. */
   image: Uint8Array;
   /**
@@ -171,21 +169,17 @@ export interface RepoStatus {
   /** The open (or just-merged) pull request, once 넘기기 has run. */
   handoff: HandoffStatus | null;
   /**
-   * How many files in the clone differ from the last 저장 (PLAN D8).
+   * 아직 커밋되지 않은 파일 수 (PLAN D8).
    *
    * Counted with one `git status --porcelain` when a 화면 turn settles and when
-   * a save finishes — never on a timer. It is what tells the planner's chip
-   * that there is something to save, so a number that only moved on a poll
-   * would leave the button lying for up to a minute.
+   * a save finishes — never on a timer. 자동 저장(P2-1) 뒤로 이 수는 턴이 도는
+   * 동안과 커밋이 걸린 순간에만 0 이 아니다.
+   *
+   * 파일 **목록**(`changedFiles`)은 선로에서 빠졌다 — 그것을 그리던 변경 점
+   * 스트립이 사라져 읽는 화면이 하나도 없다. 데몬 안에는 남아 재검수의
+   * 같음 비교에 쓰인다.
    */
   pendingChanges: number;
-  /**
-   * The unsaved-change files themselves, light (no hunks) — the same recount
-   * that fills `pendingChanges`, so the preview column's 변경 점 strip lists
-   * exactly what the chip counts. Empty when the worktree is clean; a strip
-   * with zero rows does not exist.
-   */
-  changedFiles: ChangedFileLite[];
   /**
    * 치워둔 작업 — null when the slot is empty. While it is filled the
    * `변경 없음` chip must not exist: parked is a state, not an absence
@@ -302,9 +296,9 @@ export interface DiffStatus {
   commit?: string | null;
   /**
    * The commit message a 저장 actually used — the planner's memo verbatim,
-   * or the one Claude wrote when the memo was empty (비개발자 저장: the
-   * button alone must be enough, but what was written in their name is
-   * still theirs to read). Present once `stage === "published"`.
+   * or the one the machine turn wrote when the memo was empty (비개발자
+   * 저장: the button alone must be enough, but what was written in their
+   * name is still theirs to read). Present once `stage === "published"`.
    */
   message?: string | null;
   /** The pull request, once `stage === "handed-off"`. */
@@ -317,7 +311,7 @@ export interface DiffStatus {
 
 /** `repo.handoffDraft` — what the 넘기기 dialog opens filled with. */
 export interface RepoHandoffDraft {
-  /** One line for the pull request title. Empty when Claude could not answer. */
+  /** One line for the pull request title. Empty when the machine turn could not answer. */
   title: string;
   /**
    * What was built and what to look at, in the planner's words — the prose
@@ -339,8 +333,8 @@ export interface RepoHandoffDraft {
     filesSection: string | null;
     shotCount: number;
   };
-  /** Who wrote it: the one Claude turn, or nothing at all. */
-  source: "claude" | "fallback";
+  /** Who wrote it: the machine turn (machine-provider 의 담당), or nothing at all. */
+  source: "machine" | "fallback";
 }
 
 /**
@@ -366,25 +360,6 @@ export interface RepoHistory {
   /** What the entries are counted against, e.g. `origin/main`. */
   base: string;
   entries: RepoHistoryEntry[];
-}
-
-/** One turn-start snapshot (PLAN D52). */
-export interface RepoCheckpoint {
-  /** Opaque to clients; passed back to `repo.checkpoint.restore`. */
-  id: string;
-  sessionId: string;
-  /** The 화면 turn this snapshot was taken before, counted from 1. */
-  turn: number;
-  at: string;
-}
-
-export interface RepoCheckpoints {
-  entries: RepoCheckpoint[];
-}
-
-export interface RepoCheckpointRestore {
-  /** Paths the restore touched, relative to the repo root. */
-  restored: string[];
 }
 
 export interface RepoDiscard {
