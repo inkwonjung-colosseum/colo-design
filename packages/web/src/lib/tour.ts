@@ -36,7 +36,7 @@ const listeners = new Set<() => void>();
 
 let current: TourStep | null = null;
 
-export function tourStep(): TourStep {
+function tourStep(): TourStep {
   if (current === null) current = read();
   return current;
 }
@@ -57,7 +57,7 @@ export function advanceTour(from: TourStep): void {
   for (const listener of [...listeners]) listener();
 }
 
-export function subscribeTour(listener: () => void): () => void {
+function subscribeTour(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }

@@ -6,7 +6,7 @@ import { KeyIcon } from "../icons";
  * GitHub 의 fine-grained 토큰 만들기 페이지 — 개발자용 접힘 안의 링크가 쓴다.
  * 코드를 개발자가 발급해 주는 세계가 이 도구의 기본이므로 링크는 예비 길이다.
  */
-export const GITHUB_FINE_GRAINED_URL = "https://github.com/settings/personal-access-tokens/new";
+const GITHUB_FINE_GRAINED_URL = "https://github.com/settings/personal-access-tokens/new";
 
 /**
  * 기계 전체의 GitHub 연결 코드 — 마법사의 github 게이트와 설정이 같은 폼으로

@@ -74,7 +74,7 @@ function rateLimitBlocked(rateLimit: RetryInput["rateLimit"]): boolean {
 const STREAM_ERROR_HEADLINE = /\bstream error\b/i;
 const STREAM_ERROR_DETAIL =
   /\b(unavailable|not available|try (this |the )?model again|again later|error id:)\b/i;
-export const STREAM_ERROR_MAX_CHARS = 600;
+const STREAM_ERROR_MAX_CHARS = 600;
 
 export function looksLikeStreamError(resultText: string | null): boolean {
   if (!resultText || resultText.length > STREAM_ERROR_MAX_CHARS) return false;

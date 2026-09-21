@@ -66,7 +66,7 @@ function ompCandidates(home: string): string[] {
   ];
 }
 
-export function resolveOmpExecutable(): string | null {
+function resolveOmpExecutable(): string | null {
   const override = process.env.COLO_DESIGN_OMP_BIN;
   if (override && existsSync(override)) return override;
   for (const candidate of ompCandidates(homedir())) {
