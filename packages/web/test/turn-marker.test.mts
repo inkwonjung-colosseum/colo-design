@@ -12,6 +12,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DeveloperReview } from "../../protocol/src/repo.ts";
 import {
   alignThumbs,
   type CommentMarkerItem,
@@ -20,7 +21,6 @@ import {
   reviewToTurn,
   type TurnMarker,
 } from "../../protocol/src/turn-marker.ts";
-import type { DeveloperReview } from "../../protocol/src/repo.ts";
 
 const COMMENTS: TurnMarker = {
   kind: "comments",
