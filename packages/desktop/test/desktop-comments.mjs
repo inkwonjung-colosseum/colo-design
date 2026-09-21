@@ -6,7 +6,7 @@
  * 자리에서 화면을 떠난다(ⓒ) — 새로 고침 뒤에도 보내지 않은 핀의 배지는 돌아온다
  * (ⓓ). 보낸 코멘트는 대화에서 소비된다 — 도구에 되읽는 목록은 없고, 저장소는
  * 넘길 때 개발자가 읽을 본문의 재료로만 남는다(ⓔ).
- * 화면(상태)을 옮겨도 핀 행은 살아 남는다(ⓕ). 크롭과 rect 는 찍는 순간의 것이다
+ * 화면을 옮겨도 핀 행은 살아 남는다(ⓕ). 크롭과 rect 는 찍는 순간의 것이다
  * (ⓖ'), 턴 중에 보내면 대기 줄이 보인다(ⓘ), 래퍼 없는 페이지에서도 ⌥+클릭은 핀을
  * 남기고 그 경로가 화면 id 가 된다(ⓚ), 화면 보여 주기는 카드가 되고(ⓛ) 같은 화면의
  * 연타는 두 번째 요청으로 표식이 붙는다(ⓜ).
@@ -271,6 +271,68 @@ async function clearTray(page, timeout = 8000) {
   return (await page.locator(".pintray__row").count()) === 0;
 }
 
+/**
+ * The page this suite's fixture serves — the shared fixture's member list,
+ * plus a SECOND screen the address bar can walk to (2026-09-21 상태 축 철거:
+ * 배지의 필터가 화면 신원뿐이므로, 다른 화면 위에 배지가 그려지지 않는다는
+ * 것을 검증하려면 진짜 다른 화면이 있어야 한다 — 2026-09-21 레포 마커
+ * 철거: 화면 신원은 경로다). 경로가 살릴 화면을 고르는 작은 라우터다 —
+ * template 내용은 문서 트리가 아니므로 문서 안에는 언제나 한 화면의
+ * 내용만 산다(도구가 모르는 경로로 가는 ⓚ 가 그 사실에 기댄다).
+ * createFixtureRepo 의 indexHtml 치환은 이 스위트에만 적용된다 — 다른
+ * 스위트는 기본 페이지를 그대로 쓴다.
+ */
+const COMMENTS_INDEX_HTML = `<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>연결 레포 미리보기</title></head>
+  <!-- 레포 브리지 계약의 참조 구현 (PLAN D72): 이동(2026-09-21 레포 마커
+       철거 — 화면 신원은 경로가 곧 말한다). 도구의 핀 오버레이는 preload 가
+       주입하므로 여기 없다. -->
+  <main id="app"></main>
+  <template id="screen-member-list"><div>
+    <h1>회원 관리</h1>
+    <p>연결 레포가 렌더하는 미리보기입니다.</p>
+    <table><tbody>
+      <tr><td>홍길동</td><td><button>상세</button></td></tr>
+      <tr><td>김철수</td><td><button>상세</button></td></tr>
+    </tbody></table>
+  </div></template>
+  <template id="screen-member-detail"><div>
+    <h1>회원 상세</h1>
+    <p>한 건의 회원을 여는 화면입니다.</p>
+  </div></template>
+  <script>
+    (function () {
+      // 라우터: 경로가 화면을 고른다. 문서 안 내용은 언제나 한 화면의 것뿐이다.
+      var id = location.pathname === "/member/MemberDetail"
+        ? "screen-member-detail"
+        : "screen-member-list";
+      document.getElementById("app").appendChild(
+        document.getElementById(id).content.cloneNode(true)
+      );
+    })();
+    (function () {
+      if (!window.coloDesign && window.parent === window) return; // 받을 도구가 없다
+      var post = function (envelope) {
+        if (window.coloDesign && window.coloDesign.post) window.coloDesign.post(envelope);
+        else window.parent.postMessage(envelope, "*");
+      };
+      window.addEventListener("message", function (event) {
+        if (event.source !== window.parent && event.source !== window) return;
+        var data = event.data || {};
+        if (data.type !== "colo-design.navigate" || typeof data.route !== "string") return;
+        if (data.route !== "/member/MemberList") return;
+        // 실제 브리지는 클라이언트 라우팅을 한다 — 도구의 뷰는
+        // did-navigate-in-page 로 그 자리를 따라간다(2026-09-21 상태 축
+        // 철거 — 봉투는 경로만 실는다).
+        history.pushState(null, "", data.route);
+      });
+    })();
+  </script>
+</body>
+</html>
+`;
+
 async function main() {
   buildDesktopBundle();
 
@@ -280,6 +342,8 @@ async function main() {
   const fixture = await createFixtureRepo({
     dir: join(dir, "fixture"),
     port: await freePort(),
+    // 이 스위트의 페이지 — COMMENTS_INDEX_HTML (위 주석).
+    indexHtml: COMMENTS_INDEX_HTML,
   });
   // The daemon's active project points here — a clone of the fixture remote,
   // the same shape ui-publish-e2e boots.
@@ -379,7 +443,7 @@ async function main() {
       app,
       `(() => { window.__pageClicks = 0; document.addEventListener("click", () => { window.__pageClicks += 1; }); return true; })()`,
     );
-    check("⌥+클릭 hit the element", (await altClick(app, "[data-screen] tbody td")) === true);
+    check("⌥+클릭 hit the element", (await altClick(app, "main tbody td")) === true);
     // The row is the main window's composer; the badge is the view's overlay.
     const trayRow = page.locator(".pintray__row");
     await trayRow.waitFor({ timeout: 15000 });
@@ -532,7 +596,7 @@ async function main() {
     // --- ⓓ 새로 고침 뒤에도 보내지 않은 핀은 돌아온다 (재설계 C5) ------------
     // The web's list outlives the page — sessionStorage holds it, and the
     // sync re-anchors the badge once the reloaded page reports its location.
-    await altClick(app, "[data-screen] tbody td");
+    await altClick(app, "main tbody td");
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await page.getByRole("button", { name: "미리보기 새로 고침" }).click();
     await page.waitForTimeout(1200);
@@ -546,23 +610,22 @@ async function main() {
     const pinnedY = await inView(
       app,
       `(() => {
-        const h1 = document.querySelector("[data-screen] h1");
+        const h1 = document.querySelector("main h1");
         return Math.round(h1.getBoundingClientRect().y);
       })()`,
     );
-    await altClick(app, "[data-screen] h1");
-    await page.locator(".pintray__row").waitFor({ timeout: 15000 });
+    await altClick(app, "main h1");
     await inView(
       app,
       `(() => {
-        document.querySelector("[data-screen] h1").style.marginTop = "160px";
+        document.querySelector("main h1").style.marginTop = "160px";
         return true;
       })()`,
     );
     // Where the element sits by send time — the number the rect must NOT be.
     const movedY = await inView(
       app,
-      `Math.round(document.querySelector("[data-screen] h1").getBoundingClientRect().y)`,
+      `Math.round(document.querySelector("main h1").getBoundingClientRect().y)`,
     );
     await page.locator(".pintray__note").first().fill("제목 글씨를 키워 주세요");
     const movedComposer = page.getByLabel("메시지");
@@ -588,7 +651,7 @@ async function main() {
     await page.locator(".toolbar__stop").waitFor({ state: "detached", timeout: 30000 });
     await inView(
       app,
-      `(() => { document.querySelector("[data-screen] h1").style.marginTop = ""; return true; })()`,
+      `(() => { document.querySelector("main h1").style.marginTop = ""; return true; })()`,
     );
 
     // --- ⓔ 보낸 코멘트는 대화에서 소비된다 — 도구에 목록은 없다 --------------
@@ -626,52 +689,49 @@ async function main() {
       JSON.stringify(storedRows.map((row) => [row.screen, row.resolved])),
     );
 
-    // --- ⓕ 화면(상태)을 옮겨도 핀 행은 살아 남는다 (재설계 C5) ---------------
-    await altClick(app, "[data-screen] h1");
+    // --- ⓕ 화면을 옮겨도 핀 행은 살아 남는다 (재설계 C5) ---------------
+    await altClick(app, "main h1");
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await page.locator(".pintray__note").first().fill("제목을 두 줄로 줄여 주세요");
-    // Switch the state — the row keeps its pin and re-words its where-line;
-    // the tray is the truth, the badge only projects the screen it sits on.
-    // 화면 목록 제거(2026-09 워크스페이스)로 상태 칩이 사라졌다 — 상태 전환은
-    // 문서화된 주소 문법(?state=)으로 한다.
+    // Move to ANOTHER SCREEN — the address bar is the screens' door. The row
+    // keeps its pin and keeps naming its own screen; the tray is the truth,
+    // the badge only projects the screen it sits on. 화면의 신원은 경로가
+    // 전부다(2026-09-21 레포 마커 철거 — 신원 문법은 없다).
     const addressBar = page.getByTestId("preview-address");
     await addressBar.click();
-    await addressBar.fill("?state=empty");
+    await addressBar.fill("/member/MemberDetail");
     await addressBar.press("Enter");
     await page.waitForTimeout(600);
     const whereText = await page.locator(".pintray__where").first().innerText();
     const rowSurvives = (await page.locator(".pintray__row").count()) === 1;
     check(
-      "ⓕ the state switch keeps the pin row with its own state",
-      rowSurvives === true && whereText.includes("기본"),
+      "ⓕ the screen move keeps the pin row with its own screen",
+      rowSurvives === true && whereText.includes("member/MemberList"),
       `row:${rowSurvives} where:${whereText}`,
     );
-    // ⓕ · 커미티 차단 4: while the OTHER state is on, the badge hides —
-    // the row keeps saying `회원 목록 · 기본` and the screen must not
-    // contradict it by re-anchoring the same CSS path on the error view.
-    const badgesOnOtherState = await inView(
-      app,
-      `document.querySelectorAll('[data-colo-design-overlay] [data-pin]').length`,
-    );
+    // ⓕ · 커미티 차단 4: while ANOTHER screen is on, the badge hides —
+    // the row keeps saying its own screen and the page must not contradict
+    // it by re-anchoring the same CSS path on a screen the pin never sat on.
+    const badgesOnOtherScreen = await waitForNoPin(app);
     check(
-      "ⓕ the state switch hides the badge that belongs to another state",
-      badgesOnOtherState === 0,
-      `badges:${badgesOnOtherState}`,
+      "ⓕ another screen draws no badge for this pin",
+      badgesOnOtherScreen === "",
+      `still:${badgesOnOtherScreen}`,
     );
     await addressBar.click();
-    await addressBar.fill("?state=default");
+    await addressBar.fill("/member/MemberList");
     await addressBar.press("Enter");
     await page.waitForTimeout(600);
-    check("ⓕ back on its own state the badge returns", (await waitForPin(app)) === true);
+    check("ⓕ back on its own screen the badge returns", (await waitForPin(app)) === true);
 
     // --- 래퍼가 통째로 바뀌어도 핀 행은 남는다 (재설계 C5) -------------------
-    // A router replaces the screen wrapper instead of rewriting its
-    // attributes. The overlay's anchor dies with the old node — the next
-    // sync re-anchors by path — and the web's row never blinked.
+    // A router replaces the mounted screen's node wholesale. The overlay's
+    // anchor dies with the old node — the next sync re-anchors by path —
+    // and the web's row never blinked.
     await inView(
       app,
       `(() => {
-        const wrapper = document.querySelector("[data-screen]");
+        const wrapper = document.querySelector("#app > div");
         wrapper.replaceWith(wrapper.cloneNode(true));
         return true;
       })()`,
@@ -710,7 +770,7 @@ async function main() {
     // one new turn line, and NO new mode request: ⌘T 가 대화를 만들면서 전부
     // 맡기기는 그때 이미 밀렸다. 한 번의 보내기가 한 번의 턴이라는 것이
     // 이 줄이 지키는 전부다.
-    await altClick(app, "[data-screen] tbody td");
+    await altClick(app, "main tbody td");
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await page.locator(".pintray__note").first().fill("간격도 함께 손봐 주세요");
     const pinComposer = page.getByLabel("메시지");
@@ -750,24 +810,23 @@ async function main() {
     const trayLeftBehind = await waitForNoPin(app);
     check("the pin send empties the tray", trayLeftBehind === "", `still:${trayLeftBehind}`);
 
-    // --- ⓚ 래퍼 없는 페이지에서도 핀은 찍힌다 — 경로가 화면 id ---------------
-    // The claude-design loop: comment → fix must not wait for a declared
-    // screen. A page with no [data-screen] wrapper — 아직 이 도구로 만지지
-    // 않은 레포의 원래 화면 — pins by its path, and the turn names it.
-    // 회원 목록의 핀 하나를 남겨 둔 채 래퍼를 벗긴다 — 두 화면의 핀이 한
-    // 트레이에서 한 턴으로 나가는 것이 수용 기준의 핵심 경로다 (재설계 C6).
-    await altClick(app, "[data-screen] tbody td");
+    // --- ⓚ 이 도구가 모르는 경로에서도 핀은 찍힌다 — 경로가 화면 id ---------
+    // The claude-design loop: comment → fix must not wait for a prepared
+    // screen. 레포 마커 철거(2026-09-21) 뒤 화면 신원은 경로뿐이다 — 이
+    // 도구로 만진 적 없는 경로(아직 손 안 댄 레포의 원래 페이지)도 경로로
+    // 핀을 남기고, 턴은 그 경로를 이름으로 부른다. 회원 목록의 핀 하나를
+    // 남겨 둔 채 경로만 옮긴다 — 두 화면의 핀이 한 트레이에서 한 턴으로
+    // 나가는 것이 수용 기준의 핵심 경로다 (재설계 C6).
+    await altClick(app, "main tbody td");
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
     await inView(
       app,
       `(() => {
-        const wrapper = document.querySelector("[data-screen]");
-        wrapper.removeAttribute("data-screen");
         history.pushState(null, "", "/settings");
         return true;
       })()`,
     );
-    check("ⓚ ⌥+클릭 hit the wrapper-less page", (await altClick(app, "h1")) === true);
+    check("ⓚ ⌥+클릭 pins the untouched path's page", (await altClick(app, "main h1")) === true);
     const trayRows = page.locator(".pintray__row");
     // The h1 pin lands one crop round trip behind the click — wait for the
     // SECOND row, not for the first one that is already there.
@@ -818,7 +877,6 @@ async function main() {
     await inView(
       app,
       `(() => {
-        document.querySelector("#app > div").setAttribute("data-screen", "member/MemberList");
         history.pushState(null, "", "/member/MemberList");
         return true;
       })()`,
@@ -878,7 +936,7 @@ async function main() {
     check("ⓣ the question turn settled", true);
 
     // ⌘⇧P — the pin mode's own chord, from the chat column's keyboard.
-    const pinToggle = page.getByRole("button", { name: /핀/ }).first();
+    const pinToggle = page.getByRole("button", { name: /수정할 곳 찍기/ }).first();
     const pressedBefore = await pinToggle.getAttribute("aria-pressed");
     await page.keyboard.press("Meta+Shift+P");
     await page.waitForTimeout(300);
@@ -949,33 +1007,30 @@ async function main() {
     );
 
     await page.locator(".machine--comments").last().waitFor({ timeout: 30000 });
-    // While the turn runs a pin can still be picked and noted — but the
-    // composer no longer sends mid-turn: Enter waits, no wait-line appears,
-    // and the unsent pin's badge never greys.
-    check(
-      "ⓘ-setup second pin accepted mid-turn",
-      (await altClick(app, "[data-screen] p")) === true,
-    );
+    // While the turn runs a pin can still be picked and noted — and Enter
+    // lives too now('턴 도중 보내기'): the send waits in the room for the
+    // next turn, and the pin is the daemon's from the moment the words are
+    // accepted — badge greys, tray empties, 중지 hands the room its turn.
+    check("ⓘ-setup second pin accepted mid-turn", (await altClick(app, "main p")) === true);
     await page.locator(".pintray__row").waitFor({ timeout: 15000 });
-    await page.locator(".pintray__note").first().fill("설명 문장은 반영해 주세요");
+    const commentsBefore = await page.locator(".machine--comments").count();
     const queuedComposer = page.getByLabel("메시지");
     await queuedComposer.click();
     await queuedComposer.press("Enter");
-    await new Promise((ok) => setTimeout(ok, 1500));
+    await page.locator(".composer__queued").waitFor({ timeout: 15000 });
+    const queuedRow = await page.locator(".composer__queued .queued__row").count();
+    check("ⓘ Enter mid-turn lands in the wait-line", queuedRow === 1, `rows:${queuedRow}`);
     check(
-      "ⓘ Enter mid-turn sends nothing — no wait-line",
-      (await page.locator(".composer__queued").count()) === 0,
-    );
-    check(
-      "ⓘ' the unsent pin's badge never greys",
-      !(await inView(
+      "ⓘ' the sent pin's badge greys",
+      await inView(
         app,
         `Boolean([...document.querySelectorAll('[data-colo-design-overlay] [data-pin]')]
           .find((b) => (b.getAttribute("aria-label") || "").includes("보냄")))`,
-      )),
+      ),
     );
+    check("ⓘ'' the sent pin leaves the tray", (await page.locator(".pintray__row").count()) === 0);
     // 중지 is still the way out of a look turn — no error band left behind
-    // (결함①), and the unsent pin stays in the tray.
+    // (결함①), and the room's send takes the freed turn as its own.
     await page.locator(".toolbar__stop").click();
     // The band is what must NOT be there, so it is counted, not awaited: an
     // `innerText()` on an absent locator sits out Playwright's full 30s
@@ -989,9 +1044,23 @@ async function main() {
       bandCount === 0,
       `band:${bandText.slice(0, 96).replace(/\n/g, " ")}`,
     );
+    await page
+      .locator(".composer__queued")
+      .waitFor({ state: "detached", timeout: 30000 })
+      .catch(() => {});
+    // This stub's 중지 settles as a dead query — and a dead query must not
+    // spend the room: the mid-turn words land in the lost room, preserved
+    // for a revive(전달되지 못한 말), never silently dropped.
+    const lostPanel = page.locator(".composer__lost");
+    const lostCount = await lostPanel.count();
+    const lostHead =
+      lostCount === 0 ? "(none)" : (await lostPanel.first().innerText()).split("\n")[0];
     check(
-      "ⓘ' the unsent pin survives 중지 in the tray",
-      (await page.locator(".pintray__row").count()) > 0,
+      "ⓘ' the queued words survive 중지 in the lost room",
+      lostCount === 1 &&
+        lostHead.includes("전달되지 못한 말") &&
+        (await page.locator(".composer__queued").count()) === 0,
+      lostHead,
     );
 
     await page
@@ -1025,10 +1094,20 @@ async function main() {
       .innerText()
       .catch(() => "(none)");
     check("ⓟ zooming shows the percent chip", zoomChip === "120%", zoomChip);
-    await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "모바일" }).click();
+    // 폭 전환은 보기 메뉴의 몫이다 — 옆 세그먼트(옛 group "폭")는 메뉴로
+    // 흡수됐다. 칩을 열고 menuitemradio 를 고른다.
+    const openViewMenu = async () => {
+      // 좁은 폭(≤620)에선 칩의 " · 모바일" 접미사가 물러나 이름이 "보기" 만
+      // 남는다 — 접두사로 둘 다 잡는다(더 보기·새로 고침과 안 겹치게).
+      await page.getByRole("button", { name: /^보기/ }).click();
+      await page.getByRole("menu", { name: "보기" }).waitFor({ timeout: 5000 });
+    };
+    await openViewMenu();
+    await page.getByRole("menuitemradio", { name: "모바일" }).click();
     await page.waitForTimeout(400);
     const chipGone = (await page.getByTestId("preview-zoom").count()) === 0;
-    await page.getByRole("group", { name: "폭" }).getByRole("button", { name: "데스크톱" }).click();
+    await openViewMenu();
+    await page.getByRole("menuitemradio", { name: "데스크톱" }).click();
     check("ⓟ a width change resets the zoom to 100%", chipGone === true);
     // ⓠ 새 창은 보던 곳을 OS 브라우저에 (D85 ⓑ) — shell.openExternal 을 엿본다.
     await app.evaluate((electronModule) => {
@@ -1040,7 +1119,8 @@ async function main() {
         return original(url).catch(() => undefined);
       };
     });
-    await page.getByRole("button", { name: "새 창" }).click();
+    await openViewMenu();
+    await page.getByRole("menuitem", { name: "새 창" }).click();
     await page.waitForTimeout(500);
     const external = await app.evaluate((electronModule) => electronModule.shell.__lastExternal);
     check(

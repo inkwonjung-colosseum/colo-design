@@ -75,11 +75,14 @@ export class ClaudeDriver implements AgentDriver {
     return {
       id: this.id,
       label: "Claude",
+      // 이름은 결과의 말이다(P3-1) — 값(`bypassPermissions` …)은 그대로 선로로
+      // 나가고, 바뀐 것은 사람이 읽는 글자뿐이다. 드라이버가 준 라벨이 웹의
+      // 표를 이기므로(Composer 의 modeRow), 두 자리가 같은 말을 해야 한다.
       modes: [
-        { id: "default", label: "Default", tier: "safe" },
-        { id: "acceptEdits", label: "Accept Edits", tier: "moderate" },
-        { id: "plan", label: "Plan", tier: "planning" },
-        { id: "bypassPermissions", label: "Bypass Permissions", tier: "dangerous" },
+        { id: "default", label: "실행 전에 물어보기", tier: "safe" },
+        { id: "acceptEdits", label: "화면 수정은 바로", tier: "moderate" },
+        { id: "plan", label: "계획 먼저 보기", tier: "planning" },
+        { id: "bypassPermissions", label: "바로 진행", tier: "dangerous" },
       ],
       // 새 대화의 기본 모드 — 사용자가 확인 방식을 고르지 않으면 전부 맡기기로
       // 시작한다(web DEFAULT_PERMISSION_MODE 와 같은 기본). 플래너 승인 뒤의

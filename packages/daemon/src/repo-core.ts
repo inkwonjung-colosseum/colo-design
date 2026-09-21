@@ -162,9 +162,14 @@ export const SHELF_CONFLICT_DETAIL =
 export const SAVE_CONFLICT_OPEN_DETAIL =
   "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 저장해 주세요.";
 
-/** What the planner reads when a repo's commands have not been approved here. */
+/**
+ * What the planner reads when a repo's commands have not been approved here.
+ * P3-1: 문장은 사용자가 서 있는 자리의 말이다 — "승인되지 않은 명령" 은
+ * 거절당한 기분을 주지만, 실제로 일어난 일은 이 컴퓨터에서 이 서비스를
+ * 처음 켜는 것뿐이다.
+ */
 export const COMMANDS_UNAPPROVED_DETAIL =
-  "이 레포가 실행하기로 한 설치 · 미리보기 명령이 아직 승인되지 않았습니다 — 실행 허용을 누르면 준비를 계속합니다.";
+  "이 서비스를 이 컴퓨터에서 처음 켭니다 — 준비에 몇 분 걸립니다. 시작하려면 아래 버튼을 눌러 주세요.";
 
 /**
  * The one refresh this tool refuses to do alone: the base branch carries

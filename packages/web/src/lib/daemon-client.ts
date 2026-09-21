@@ -812,6 +812,8 @@ interface DaemonApi {
       | null,
   ) => Promise<{ ok: true }>;
   escalationTest: () => Promise<{ ok: true }>;
+  /** 막다른 카드의 `개발자 부르기`(P3-3) — 화면이 지은 한 문장을 슬랙으로. */
+  escalationNotify: (text: string) => Promise<{ ok: true }>;
   /** 설정창의 저장 메모 담당 — null 은 자동(기본). 거절은 한국어 한 줄이다. */
   machineSet: (provider: string | null) => Promise<{ ok: true }>;
   /** 넘긴 요청에 적을 작성자 이름 — null 이면 지운다(P1-3). */
@@ -1690,6 +1692,8 @@ export function useDaemon(url: string | null): Daemon {
           | null,
       ) => call<{ ok: true }>({ type: "escalation.set", config }, 60_000),
       escalationTest: () => call<{ ok: true }>({ type: "escalation.test" }, 30_000),
+      escalationNotify: (text: string) =>
+        call<{ ok: true }>({ type: "escalation.notify", text }, 30_000),
       machineSet: (provider: string | null) =>
         call<{ ok: true }>({ type: "machine.set", provider }, 15_000),
       machineAuthorSet: (name: string | null) =>

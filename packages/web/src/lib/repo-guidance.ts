@@ -69,9 +69,10 @@ export interface Guidance {
   command?: string;
   /**
    * 카드의 첫 동작 — 이 실패를 AI 의 과제로 넘긴다. 없는 종류는
-   * `commands` 하나다: 승인은 사람의 동의라 AI 의 몫이 될 수 없고,
-   * 실행 허용 버튼이 그 자리를 지킨다. `preview` 도 없다 — 죽은 서버의
-   * 카드는 미리보기 자리가 자기 AI 버튼을 이미 그린다.
+   * `commands` 하나다: 첫 실행의 동의는 사람의 것이라 AI 의 몫이 될 수 없고,
+   * `준비 시작` 버튼이 그 자리를 지킨다. (P3-3 전까지는 `preview` 도 비어
+   * 있었다 — 미리보기 자리의 멈춤 카드가 자기 버튼을 그린다는 이유였지만,
+   * 그 카드가 서지 않는 길에서는 누를 것이 하나도 없었다.)
    */
   agent?: AgentAsk;
 }
@@ -128,9 +129,10 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
   if (kind === "commands") {
     // The repo's own install · preview commands wait on one explicit yes —
     // the button below is the yes; the body is the daemon's own words.
+    // P3-1: 이것은 실패가 아니라 첫 실행이다 — 제목이 그렇게 읽혀야 한다.
     return {
-      title: "명령 실행 승인이 필요합니다",
-      body: detail ?? "이 레포가 정의한 설치 · 미리보기 명령의 실행을 허용하면 준비를 계속합니다.",
+      title: "이 서비스를 이 컴퓨터에서 처음 켭니다",
+      body: detail ?? "준비에 몇 분 걸립니다. 시작하려면 아래 버튼을 눌러 주세요.",
     };
   }
   if (kind === "install") {
@@ -181,12 +183,22 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
     };
   }
   if (kind === "preview") {
-    // 죽은 미리보기는 진행 판이 아니라 미리보기 자리의 멈춤 카드가 답한다 —
-    // 그 카드가 자기 "AI에게 고쳐 달라고 하기" 를 이미 그리므로 여기의
-    // agent 는 비워 둔다 (두 문이 하나의 실패를 두고 다투지 않게).
+    // 죽은 미리보기는 보통 미리보기 자리의 멈춤 카드가 답한다 — 그 카드가
+    // 자기 "AI에게 고쳐 달라고 하기" 를 그린다. 그러나 그 카드는
+    // `previewStopped` 일 때만 서고, 같은 종류가 진행 판으로 떨어지는 길이
+    // 있다(P3-3 실사: 그 자리에는 누를 것이 하나도 없었다). 두 문이 하나의
+    // 실패를 두고 다투는 것보다, 막다른 카드가 남는 쪽이 나쁘다.
     return {
-      title: "준비하지 못했습니다",
-      body: detail ?? "원인을 알 수 없습니다. 다시 시도해 주세요.",
+      title: "미리보기 서버가 멈췄습니다",
+      body:
+        detail ??
+        "미리보기 서버가 죽어 화면을 띄우지 못했습니다 — AI에게 해결을 요청하면 대화에서 원인을 찾아 고칩니다.",
+      agent: ask(
+        "미리보기 띄우기",
+        "미리보기 복구",
+        "미리보기 서버가 죽어 화면이 뜨지 않습니다. 아래 출력에서 원인을 찾아 고치고, 서버가 다시 뜨도록 해 주세요.",
+        detail,
+      ),
     };
   }
   if (kind === "clone") {

@@ -208,7 +208,7 @@ async function main() {
   // lands in the fold, so any folded Korean counter counts — not just 개.
   check(
     "tool work folds into one Korean activity line",
-    /(개|회 실행|곳 확인|가지)/.test(activity),
+    /(만드는 중|화면을 고쳤어요)/.test(activity),
     activity,
   );
 
@@ -306,8 +306,9 @@ async function main() {
   // 구독 하나가 이 제품의 약속이므로 숫자로 재는 자리를 두지 않는다.
   await ring.hover();
   // The tip is a CSS disclosure that fades in (0.12s) — reading before the
-  // visibility transition has flipped computes an empty innerText.
-  const tip = page.locator(`${VISIBLE}.ctx__tip`);
+  // visibility transition has flipped computes an empty innerText. The bubble
+  // is a portal on document.body (Tip의 규약) — planner__body 안을 보면 안 된다.
+  const tip = page.locator(".ctx__tip");
   await tip.waitFor({ state: "visible", timeout: 2000 });
   const reading = await tip.innerText();
   check(

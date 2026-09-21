@@ -17,6 +17,7 @@ import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
 import { type SendKey, saveHandledReview } from "../../lib/settings";
 import { tailMoving } from "../../lib/tape-visibility";
+import { advanceTour, useTourStep } from "../../lib/tour";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
 import { TurnClock } from "../preview/TurnClock";
 import { StateBanner } from "../StateBanner";
@@ -109,6 +110,14 @@ export function ChatColumn({
   const resendRef = useRef<((text: string) => void) | null>(null);
   const registerResend = useCallback((fn: ((text: string) => void) | null) => {
     resendRef.current = fn;
+  }, []);
+  // 첫 실행 투어의 걸음(P3-2) — 한 번에 하나만 선다. 컴포저 걸음은 첫
+  // 보내기가 졸업시키고, 그 자리를 핀 코치가 이어받는다.
+  const tour = useTourStep();
+  // 빈 대화의 예시 칩(P3-2)이 빌리는 손 — 되살리기와 달리 컴포저를 덮어쓴다.
+  const promptRef = useRef<((text: string) => void) | null>(null);
+  const registerPrompt = useCallback((fn: ((text: string) => void) | null) => {
+    promptRef.current = fn;
   }, []);
   const [dragDepth, setDragDepth] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
@@ -566,6 +575,7 @@ export function ChatColumn({
             }
             onReplyReview={(review) => setReplyTo(review)}
             onOpenHistory={onOpenHistory}
+            onPickExample={tour === "composer" ? (text) => promptRef.current?.(text) : undefined}
           />
           {/* 제출 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
               말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
@@ -640,6 +650,11 @@ export function ChatColumn({
                 <PermissionCard
                   key={request.requestId}
                   request={request}
+                  // 레포가 정한 명령은 이름으로 읽힌다(P3-1): 이 prop 이 없으면
+                  // 같은 카드가 날 셸 줄(`pnpm run check`)을 머리에 세우고,
+                  // 비개발자에게 그것은 허용할지 말지를 정할 근거가 못 된다.
+                  // 홈 인박스는 이미 같은 값을 넘긴다 — 두 자리가 같은 말을 한다.
+                  commands={daemon.repo?.commands}
                   onRespond={(decision, message) => {
                     void api
                       .respondPermission(request.requestId, decision, message)
@@ -731,9 +746,14 @@ export function ChatColumn({
         onStopTask={stopTask}
         registerAttach={registerAttach}
         registerResend={registerResend}
+        registerPrompt={registerPrompt}
+        dev={daemon.status?.dev === true}
         sendKey={sendKey}
         onOpenProviderSettings={onOpenProviderSettings}
         onSend={async (text, attachments, sentPins, restoredScreens) => {
+          // 첫 보내기가 컴포저 걸음을 졸업시킨다(P3-2) — 말을 낼 줄 아는
+          // 사람에게 예시는 더 이상 도움이 아니다. 다음 걸음은 핀 버튼이다.
+          advanceTour("composer");
           // 답장 모드: 사람 메시지의 `답하기`가 연 상태 — 컴포저의 말은
           // 새 턴이 아니라 개발자에게 가는 답이다.
           if (replyTo) {

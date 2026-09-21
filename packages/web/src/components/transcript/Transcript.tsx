@@ -27,6 +27,17 @@ import { FailedTurn, isLastFailedTurn, lastUserText, MachineTurn, TurnDone } fro
  */
 const BRANCH_MEANS = "대화만 이 답까지로 이어받아요. 화면은 지금 모습 그대로입니다.";
 
+/**
+ * 빈 대화가 권하는 세 마디(P3-2). 이 레포가 무엇으로 지어졌는지는 도구가
+ * 모르므로, 예시는 **말하는 방식**만 보여 준다 — 화면 이름과 그 안에 무엇이
+ * 있으면 좋겠는지. 누르면 컴포저에 담기고, 그대로 보내도 되고 고쳐도 된다.
+ */
+const EMPTY_EXAMPLES = [
+  "회원 목록 화면을 만들어 주세요 — 검색창과 표가 있으면 좋겠어요",
+  "결제 실패 화면을 만들어 주세요 — 왜 실패했는지 알려 주는 안내와 다시 시도 버튼",
+  "지금 화면의 여백을 조금 넓혀 주세요",
+];
+
 const TAPE_LINES: Record<string, string> = {
   "[Request interrupted by user]": "요청을 중단했습니다",
   "No response requested.": "응답이 필요 없는 차례였습니다",
@@ -74,6 +85,7 @@ export function Transcript({
   onBackgroundTask,
   onStopTask,
   onOpenHistory,
+  onPickExample,
   onReplyReview,
 }: {
   blocks: Block[];
@@ -116,11 +128,33 @@ export function Transcript({
    * 링크도 없다(홈 인박스처럼 드로어가 없는 자리).
    */
   onOpenHistory?: () => void;
+  /**
+   * 빈 대화의 예시 칩(P3-2) — 누르면 그 말이 컴포저에 담긴다. 없으면 칩도
+   * 없다(컴포저가 없는 자리에서 권할 말은 없다).
+   */
+  onPickExample?: (text: string) => void;
 }) {
   if (blocks.length === 0) {
     return (
       <div className="empty">
         <p className="empty__lead">메시지를 내면 대화가 여기에 이어집니다.</p>
+        {/* P3-2: 빈 칸 앞에서 가장 어려운 일은 첫 문장을 쓰는 것이다. 예시는
+            설명이 아니라 **누를 수 있는 말**이라야 한다 — 누르면 컴포저에 그대로
+            담기고, 고쳐서 보내면 그것이 자기 말이 된다. */}
+        {onPickExample && (
+          <div className="empty__examples">
+            {EMPTY_EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className="empty__example"
+                onClick={() => onPickExample(example)}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        )}
         <p className="empty__sub">
           만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
           들어옵니다.
