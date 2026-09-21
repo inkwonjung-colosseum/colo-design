@@ -4,7 +4,7 @@ import { delimiter, join } from "node:path";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
-import { DaemonServer } from "@colo-design/daemon/server";
+import { DaemonServer, daemonOwnedPorts } from "@colo-design/daemon/server";
 import { app, BrowserWindow, dialog, Menu, safeStorage, shell } from "electron";
 import { PlannerNotices } from "./app-notify.js";
 import { SelfUpdates } from "./app-updates.js";
@@ -147,6 +147,12 @@ async function bootApp(): Promise<void> {
   // 하던 자동 맞춤이 NSIS 에는 없고, 어긋난 채 띄운 알림은 Windows 가 조용히
   // 유실시킨다. mac·linux 에서는 이 호출이 아무 일도 하지 않는다.
   app.setAppUserModelId(APP_BUNDLE_ID);
+  // 이 프로세스의 모든 리스너는 미리보기 자식(pnpm·node)이 fd 로 물려받는다 —
+  // 포트 스캔이 그들을 미리보기로 착각하지 않게 등록한다(preview-claim 참조).
+  for (const arg of process.argv) {
+    const port = /^--remote-debugging-port=(\d+)$/.exec(arg)?.[1];
+    if (port) daemonOwnedPorts.add(Number(port));
+  }
   notices.prefs = loadNotificationPrefs(desktopSettingsPath());
   const token = randomBytes(24).toString("hex");
   const credentials = new SafeStorageCredentialStore(

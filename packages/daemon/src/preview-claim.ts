@@ -84,6 +84,14 @@ export function probePreviewUrl(url: string): Promise<"html" | "ok" | null> {
   return promise;
 }
 
+/**
+ * 이 데몬이 직접 듣는 포트들 — 미리보기 포트 스캔에서 제외한다. 자식
+ * 프로세스(pnpm·node)는 부모의 리스닝 소켓을 fd 로 물려받아 lsof 에 자기
+ * 소켓처럼 보이는데(CI 러너 실측 2026-09-21 — 서버 출력이 없으면 스캔이
+ * 데몬 자신의 웹 UI 를 미리보기로 판정했다), 그 함정을 아예 닫는다.
+ */
+export const daemonOwnedPorts = new Set<number>();
+
 /** 주어진 pid 들이 쥐고 있는 TCP LISTEN 포트들 — 프로세스 트리의 소켓 스캔. */
 export async function pidListeningPorts(pids: number[]): Promise<number[]> {
   if (pids.length === 0) return [];

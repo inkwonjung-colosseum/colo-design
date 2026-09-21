@@ -1,3 +1,5 @@
+export { daemonOwnedPorts } from "./preview-claim.js";
+
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
@@ -32,6 +34,7 @@ import { type DaemonNotice, noticeForState } from "./notices.js";
 import { AgentLogin } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
 import { PlanTracker } from "./plan-tracker.js";
+import { daemonOwnedPorts } from "./preview-claim.js";
 import type {
   BrowserDriver,
   BrowserDriverFactory,
@@ -859,6 +862,9 @@ export class DaemonServer {
       this.http?.once("error", reject);
       this.http?.listen(this.config.port, this.config.host, () => resolve());
     });
+    // 미리보기 포트 스캔은 이 포트를 못 본다 — 자식들이 fd 로 물려받은 이
+    // 리스너를 자기 소켓으로 착각하는 함정을 닫는다(preview-claim 참조).
+    daemonOwnedPorts.add(this.address().port);
     const bound = this.address();
     this.logger.info("데몬 시작", {
       host: bound.address,
