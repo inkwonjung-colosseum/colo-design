@@ -16,9 +16,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",
     "concurrently": "^10.0.5",
-    "knip": "^6.35.1",
     "lefthook": "^2.1.12",
-    "playwright": "1.62.0",
     "typescript": "^5.9.2"
   },
   "packageManager": "pnpm@11.20.0"
