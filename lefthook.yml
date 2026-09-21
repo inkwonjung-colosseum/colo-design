@@ -1,5 +1,4 @@
 # 커밋은 빠르게: 스테이징된 파일의 포맷·린트만 고쳐 되돌려 놓는다.
-# 무거운 검사(typecheck·knip)는 pre-push 로 넘긴다.
 pre-commit:
   commands:
     biome:
@@ -11,12 +10,13 @@ pre-commit:
       run: pnpm exec biome check --write --no-errors-on-unmatched {files}
       stage_fixed: true
 
-# 푸시 직전, CI 와 같은 문을 한 번 더 로컬에서 지나간다. 두 검사는 서로
-# 독립이라 같은 시간에 돌린다.
+# 푸시 직전, CI 와 같은 문(배포 검증)을 한 번 더 로컬에서 지나간다.
+# 2026-09-21: knip 게이트는 걷었다 — 테스트가 진입점이었는데 스위트가
+# 사라져 제품 export 전부가 '미사용'으로 보였다.
 pre-push:
   parallel: true
   commands:
     typecheck:
       run: pnpm -r typecheck
-    knip:
-      run: pnpm knip
+    build:
+      run: pnpm -r build
