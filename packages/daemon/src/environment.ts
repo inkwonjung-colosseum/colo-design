@@ -83,7 +83,15 @@ export function gitCandidates(platform: Platform, env: NodeJS.ProcessEnv = proce
   if (platform === "win32") {
     const programFiles = env["ProgramFiles"] ?? "C:\\Program Files";
     const localAppData = env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    // 번들 MinGit 이 먼저다(P1-1): 데스크톱 앱이 resources/bin 에 실어 나르고
+    // git.exe 는 그 안의 cmd/ 아래에 있다 — PATH 의 resources/bin 만으로는
+    // `where` 가 못 찾는 자리다. 번들이 없는 브라우저 개발 경로는 건너뛴다.
+    const bundled = (env.COLO_DESIGN_EXTRA_PATH ?? "")
+      .split(";")
+      .filter(Boolean)
+      .map((dir) => join(dir, "cmd", "git.exe"));
     return [
+      ...bundled,
       join(programFiles, "Git", "cmd", "git.exe"),
       join(localAppData, "Programs", "Git", "cmd", "git.exe"),
     ];

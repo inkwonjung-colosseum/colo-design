@@ -17,12 +17,13 @@ import { mergeNpmrc, npmrcPath } from "../dist/credentials.js";
 import { gitCandidates, resolveGitExecutable, resolveNodeVersion } from "../dist/environment.js";
 import { GitHubClient } from "../dist/github.js";
 import {
+  AgentLogin,
   checkRuntime,
   gitInstallGuidance,
   runOnboardingChecks,
   runPnpmInstall,
   startClaudeInstall,
-  startClaudeLogin,
+  startGitInstall,
 } from "../dist/onboarding.js";
 import { writeStubClaude } from "./fixture-repo.mjs";
 
@@ -180,14 +181,17 @@ test("git passes through the stub and fails with CLT guidance when missing", asy
       const without = await runOnboardingChecks(deps);
       const step = find(without, "git");
       assert.equal(step.status, "fail");
-      // gitMissing() speaks the current platform's installer — darwin's CLT
-      // one-liner, apt elsewhere. Expect the same branch the machine runs.
+      // gitMissing() speaks the current platform's installer — darwin 은 이제
+      // 버튼이 설치 창을 직접 연다(startGitInstall), 다른 플랫폼은 문장이 전부.
       const expectedGuidance =
         process.platform === "darwin"
-          ? /xcode-select --install/
+          ? /설치 버튼을 누르면 설치 창이 열립니다/
           : new RegExp(gitInstallGuidance().command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
       assert.match(step.detail, expectedGuidance);
       assert.equal(step.fix?.kind, "install-git");
+      if (process.platform === "darwin") {
+        assert.equal(step.fix?.label, "git 설치", "darwin 의 버튼은 설치다");
+      }
     } finally {
       if (previousPin === undefined) delete process.env.COLO_DESIGN_GIT_BIN;
       else process.env.COLO_DESIGN_GIT_BIN = previousPin;
@@ -244,6 +248,36 @@ test("the github gate: no token warns without blocking, a working token names th
   assert.ok(!passStep.detail.includes("ghp_onboard_unit"), "the token never rides the detail");
 });
 
+test("쓰기 레포 0개면 warn — 개발자에게 다시 요청하는 문구로 물러난다 (P1-2)", async () => {
+  const client = new GitHubClient("ghp_onboard_unit", {
+    request: async () => ({
+      status: 200,
+      body: new TextEncoder().encode(JSON.stringify({ login: "jik-dev" })),
+    }),
+  });
+  const deps = (count) => ({
+    gitHubClient: () => client,
+    githubWriteRepoCount: () => Promise.resolve(count),
+  });
+
+  // 0개: 토큰은 살아 있지만 이 기계가 넘길 수 있는 레포가 없다. fail 이면
+  // 마법사가 막히고 카드가 다시 물을 수 있는 일이 없다 — warn 이어야 한다.
+  const zero = find(await runOnboardingChecks(deps(0)), "github");
+  assert.equal(zero.status, "warn", zero.detail);
+  assert.match(zero.detail, /개발자에게 받은 코드가 이 레포에 닿지 않습니다/);
+  assert.match(zero.detail, /다시 요청하세요/);
+
+  // 1개 이상: 지난날의 pass 에 쓸 수 있는 레포 수가 붙는다.
+  const some = find(await runOnboardingChecks(deps(3)), "github");
+  assert.equal(some.status, "pass", some.detail);
+  assert.match(some.detail, /쓸 수 있는 레포 3개/);
+
+  // null(목록을 못 읽음): 판정 유보 — 네트워크 탓에 게이트가 말을 바꾸지 않는다.
+  const unknown = find(await runOnboardingChecks(deps(null)), "github");
+  assert.equal(unknown.status, "pass", unknown.detail);
+  assert.ok(!unknown.detail.includes("쓸 수 있는"), unknown.detail);
+});
+
 test("the github gate: a stored but refused token warns — the wizard must stay escapable", async () => {
   // 실사 결함: a pasted-and-rejected token judged fail, and fail hides
   // 시작하기. Nothing on the card can un-store a token, so the planner was
@@ -255,7 +289,7 @@ test("the github gate: a stored but refused token warns — the wizard must stay
   const steps = await runOnboardingChecks({ gitHubClient: () => rejected });
   const step = find(steps, "github");
   assert.equal(step.status, "warn", step.detail);
-  assert.match(step.detail, /토큰이 유효하지 않거나 만료됐습니다/);
+  assert.match(step.detail, /연결 코드가 유효하지 않거나 만료됐습니다/);
   assert.ok(step.detail.includes("시작"), "the detail must say the workspace stays reachable");
   assert.equal(step.fix, undefined, "the token form is the fix, not a button");
 });
@@ -299,31 +333,141 @@ test("B3: a failing installer spawn returns guidance instead of throwing", () =>
   assert.equal(result.started, false);
   assert.match(result.guidance, /직접 실행해 주세요/);
 });
-
 test("B3: a failing login spawn returns guidance instead of throwing", () => {
-  const originalPlatform = process.platform;
-  if (originalPlatform === "darwin") {
-    // The darwin branch tries osascript first; the double throws for it too
-    // and falls through to the plain spawn, which throws again → guidance.
-    const result = startClaudeLogin(throwingSpawn);
-    assert.equal(result.started, false);
-    assert.match(result.guidance, /직접 실행해 주세요/);
-  } else {
-    const result = startClaudeLogin(throwingSpawn);
-    assert.equal(result.started, false);
-  }
+  const login = new AgentLogin(throwingSpawn);
+  const result = login.start("claude", ["auth", "login"], noopEvents());
+  assert.equal(result.started, false);
+  assert.match(result.guidance, /에이전트 설치를 먼저 마치고/);
 });
 
 test("B3: an async spawn error is absorbed, never an unhandled crash", async () => {
   const factory = eventingSpawn();
-  const install = startClaudeInstall(factory);
-  assert.equal(install.started, true);
+  const login = new AgentLogin(factory);
+  const done = [];
+  const result = login.start("claude", ["auth", "login"], {
+    ...noopEvents(),
+    onDone: (ok, detail) => done.push({ ok, detail }),
+  });
+  assert.equal(result.started, true);
   assert.ok(factory.children.length >= 1, "a child was spawned");
-  // The detached child dies asynchronously; without the error listener this
+  // The piped child dies asynchronously; without the error listener this
   // would crash the process. The double throws when no listener is attached,
   // so dropping the once("error", …) registration fails this test loudly.
   for (const child of factory.children) child.emitError();
   await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(
+    done.map((entry) => entry.ok),
+    [false],
+    "the error is reported as a failed end, not a crash",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 터미널 없는 에이전트 로그인 (P1-1) — 파이프 플로우의 출력 계약
+// ---------------------------------------------------------------------------
+
+/** 이벤트를 기록하는 로그인 더블 — stdout/stderr/string stdin 을 흉내 낸다. */
+function scriptedLoginChild() {
+  const listeners = new Map();
+  const writes = [];
+  const streams = {
+    stdout: { on: (event, handler) => listeners.set(`stdout:${event}`, handler) },
+    stderr: { on: (event, handler) => listeners.set(`stderr:${event}`, handler) },
+  };
+  const child = {
+    exitCode: null,
+    killed: false,
+    stdin: { write: (text) => writes.push(text) },
+    stdout: streams.stdout,
+    stderr: streams.stderr,
+    once: (event, handler) => listeners.set(event, handler),
+    kill: () => {
+      child.killed = true;
+    },
+    emit: (stream, text) => listeners.get(`${stream}:data`)?.(Buffer.from(text)),
+    exit: (code) => {
+      child.exitCode = code;
+      listeners.get("close")?.(code);
+    },
+  };
+  return { child, writes };
+}
+
+function noopEvents() {
+  return { onUrl: () => undefined, onDone: () => undefined };
+}
+
+test("AgentLogin: stdout 의 OAuth 주소를 방송하고 코드 프롬프트를 알린다", () => {
+  const { child } = scriptedLoginChild();
+  const login = new AgentLogin(() => child);
+  const urls = [];
+  login.start("claude", ["auth", "login"], {
+    onUrl: (url, wantsCode) => urls.push({ url, wantsCode }),
+    onDone: () => undefined,
+  });
+
+  // 스파이크로 본 claude auth login 의 실제 출력 순서 — 주소가 먼저, 프롬프트가
+  // 같은 덩어리 뒤에. 주소만 먼저 오는 세계(codex)도 같은 코드가 잡는다.
+  child.emit(
+    "stdout",
+    "Opening browser to sign in…\nIf the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=x\n",
+  );
+  assert.equal(urls.length, 1, "주소는 처음 본 순간 방송된다");
+  assert.match(urls[0].url, /^https:\/\/claude\.com\//);
+  assert.equal(urls[0].wantsCode, false, "아직 코드를 청하지 않았다");
+
+  child.emit("stdout", "Paste code here if prompted > ");
+  assert.equal(urls.length, 2, "프롬프트가 늦게 오면 wantsCode 로 다시 방송한다");
+  assert.equal(urls.at(-1).wantsCode, true);
+});
+
+test("AgentLogin: 코드를 stdin 으로, 끝나면 onDone 으로", async () => {
+  const { child, writes } = scriptedLoginChild();
+  const login = new AgentLogin(() => child);
+  const done = [];
+  login.start("codex", ["login"], {
+    onUrl: () => undefined,
+    onDone: (ok, detail) => done.push({ ok, detail }),
+  });
+  assert.equal(login.running, true);
+
+  assert.equal(login.submitCode(" abcd1234 \n"), true);
+  assert.deepEqual(writes, ["abcd1234\n"], "코드는 잘라내고 줄바꿈을 붙인다");
+
+  child.exit(0);
+  assert.equal(login.running, false);
+  assert.equal(login.submitCode("again"), false, "끝난 로그인에는 쓰지 않는다");
+  assert.deepEqual(done, [{ ok: true, detail: "로그인이 완료되었습니다." }]);
+});
+
+test("AgentLogin: 실패의 이유는 자식의 마지막 말 — 틀린 코드 뒤의 종료", () => {
+  const { child } = scriptedLoginChild();
+  const login = new AgentLogin(() => child);
+  const done = [];
+  login.start("claude", ["auth", "login"], {
+    onUrl: () => undefined,
+    onDone: (ok, detail) => done.push({ ok, detail }),
+  });
+  child.emit("stdout", "Paste code here if prompted > ");
+  child.emit("stderr", "Invalid code. Please make sure the full code was copied.\n");
+  child.exit(1);
+  assert.equal(done[0].ok, false);
+  assert.match(done[0].detail, /Invalid code/);
+});
+
+test("AgentLogin: 재시작은 진행 중인 자식을 끊고 그 끝을 방송하지 않는다", () => {
+  const { child } = scriptedLoginChild();
+  const second = scriptedLoginChild();
+  const login = new AgentLogin((command) => (command === "claude" ? child : second.child));
+  const done = [];
+  login.start("claude", ["auth", "login"], {
+    onUrl: () => undefined,
+    onDone: (ok, detail) => done.push({ ok, detail }),
+  });
+  login.start("codex", ["login"], noopEvents());
+  assert.equal(child.killed, true, "이전 자식은 끊긴다");
+  child.exit(1);
+  assert.deepEqual(done, [], "교체로 끊긴 자식의 종료는 사건이 아니다");
 });
 
 // ---------------------------------------------------------------------------
@@ -336,6 +480,20 @@ test("the git guidance names each platform's own installer", () => {
   assert.match(gitInstallGuidance("linux").command, /apt/);
 });
 
+test("darwin 은 xcode-select --install 을 직접 띄운다(P1-1) — 다른 플랫폼은 문장", () => {
+  const mac = recordingSpawn();
+  const macResult = startGitInstall(mac, "darwin");
+  assert.equal(macResult.started, true);
+  assert.equal(mac.calls[0].command, "xcode-select");
+  assert.deepEqual(mac.calls[0].args, ["--install"]);
+  assert.match(macResult.guidance, /설치 창을 열었습니다/);
+
+  const win = recordingSpawn();
+  const winResult = startGitInstall(win, "win32");
+  assert.equal(winResult.started, false);
+  assert.deepEqual(win.calls, [], "win32 는 스폰하지 않는다");
+  assert.match(winResult.guidance, /winget/);
+});
 /** A spawn double that records what it was asked to run. */
 function recordingSpawn() {
   const calls = [];
@@ -394,6 +552,12 @@ test("the git candidate list covers the installers per platform", () => {
   assert.ok(mac.includes("/opt/homebrew/bin/git") && mac.includes("/usr/bin/git"));
   const win = gitCandidates("win32", {});
   assert.ok(win.every((candidate) => candidate.endsWith("git.exe")));
+  // 번들 MinGit 이 먼저다(P1-1) — resources/bin/cmd/git.exe. 번들 경로가 없으면
+  // 예전 그대로의 설치자 후보만 남는다. join 은 이 머신의 구분자를 쓰므로
+  // 기대값도 같은 join 으로 만든다.
+  const bundled = gitCandidates("win32", { COLO_DESIGN_EXTRA_PATH: "C:\\app\\resources\\bin" });
+  assert.equal(bundled[0], join("C:\\app\\resources\\bin", "cmd", "git.exe"));
+  assert.deepEqual(bundled.slice(1), win, "번들이 있으면 앞에 서고 없으면 설치자 후보만");
 });
 
 // ---------------------------------------------------------------------------

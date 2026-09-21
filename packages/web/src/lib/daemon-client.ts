@@ -20,14 +20,15 @@ import type {
   ProjectSummary,
   QueuedSend,
   QueuedSendPayload,
-  RepoCheckpoints,
   RepoHandoffDraft,
   RepoHistory,
   RepoHistoryEntry,
   RepoStatus,
+  ScreenCheckReport,
   ServerMessage,
   SessionCommand,
   SessionLocation,
+  SessionPinHint,
   SessionSelectors,
   SessionState,
   SessionSummary,
@@ -558,7 +559,6 @@ const EMPTY_SESSION: SessionView = {
 export type SaveHistoryEntry = RepoHistoryEntry;
 type HandoffDraft = RepoHandoffDraft;
 type SaveHistory = RepoHistory;
-type CheckpointList = RepoCheckpoints;
 
 interface DaemonApi {
   /** Every thread of the one workspace, newest first. */
@@ -582,9 +582,20 @@ interface DaemonApi {
     sessionId: string,
     text: string,
     attachments?: Array<{ name: string; mediaType: string; data: string }>,
-    pins?: Array<{ screen: string; state: string | null }>,
+    pins?: Array<{ screen: string }>,
+    mode?: "queue" | "steer",
+    pinHints?: SessionPinHint[],
   ) => Promise<unknown>;
   interrupt: (sessionId: string) => Promise<unknown>;
+  /**
+   * 대기 줄 다루기 (PLAN D86). `queueRemove` takes a waiting send back out
+   * of the daemon's room and returns its payload, so the composer can put the
+   * words — and the files — back in the field. `queueSendNow` cuts the running
+   * turn and delivers THAT send first; the rest keep waiting for the turn it
+   * starts.
+   */
+  queueRemove: (sessionId: string, itemId: string) => Promise<QueuedSendPayload>;
+  queueSendNow: (sessionId: string, itemId: string) => Promise<unknown>;
   /**
    * 잃은 말 되살리기. `queueTakeDropped` hands a lost send back whole;
    * `queueDismissDropped` lets it go — the daemon's store is the one truth,
@@ -701,13 +712,10 @@ interface DaemonApi {
   handoffStatus: () => Promise<HandoffStatusReport | null>;
   /**
    * 보낸 화면 동결: one committed capture read out of the
-   * handoff branch — the frozen stage's '보낸 그대로'. `state` null is the
-   * screen's default look; null back means no shot was committed.
+   * handoff branch — the frozen stage's '보낸 그대로'. Null back means no
+   * shot was committed. (2026-09-21 상태 축 철거 — 주소는 route 하나다.)
    */
-  handoffShot: (
-    route: string,
-    state: string | null,
-  ) => Promise<{ mediaType: string; data: string } | null>;
+  handoffShot: (route: string) => Promise<{ mediaType: string; data: string } | null>;
   /**
    * 시점 빌드 재현: the handed-off moment's REAL
    * build — the handoff branch's tip in a throwaway worktree, served on a
@@ -736,10 +744,6 @@ interface DaemonApi {
   restore: (sha: string) => Promise<DiffStatus>;
   /** 변경 버리기: drop unsaved changes on the allowed paths. */
   discard: () => Promise<{ removed: string[] }>;
-  /** Turn-answer snapshots of this session. */
-  checkpoints: () => Promise<CheckpointList>;
-  /** Move the worktree back to one snapshot's tree. */
-  restoreCheckpoint: (id: string) => Promise<{ restored: string[] }>;
   /**
    * 잠깐 치워두기: park every unsaved change in the
    * ONE shelf slot and clear the worktree — the non-destructive third door
@@ -756,6 +760,14 @@ interface DaemonApi {
    */
   unshelve: (sessionId?: string | null) => Promise<{ applied: string[] }>;
   /**
+   * 패인 오류의 판정: re-open one screen in the daemon's isolated
+   * verification window (게이트와 같은 드라이버·같은 판정) — did the page
+   * settle, and what did its console count as trouble. Null is "확인
+   * 불능" (no driver, the server just died, the route is gone): not a
+   * verdict, and the caller falls to the safe side — the card.
+   */
+  screenCheck: (route: string) => Promise<ScreenCheckReport | null>;
+  /**
    * 코멘트 기록: a pin batch lands in the project's comments.json
    * at send time as DELIVERED — the turn carrying the words is the delivery,
    * so every row is born resolved and the store is an append-only log.
@@ -765,8 +777,6 @@ interface DaemonApi {
       /** The pin's overlay UUID — the row joins the tray/badge/card on it. */
       id?: string;
       screen: string;
-      /** 표식 없는 페이지의 핀은 null — 데몬 스키마도 nullable 이다. */
-      state: string | null;
       /** The pin's own memo, verbatim — empty when none was written. */
       text: string;
       elementText: string;
@@ -782,15 +792,11 @@ interface DaemonApi {
   /** 답하기: the planner's answer to one developer comment. */
   replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
   /**
-   * 되감기: discard the k-th answer — files AND memory — and send
-   * `text` again. The reply is the NEW session id to carry on in.
+   * 여기서 새 대화(분기): keep this answer's memory in a NEW conversation —
+   * the old one stays. The reply is the NEW session id; `memoryKept: false`
+   * names the provider that could not fork the transcript.
    */
-  rewind: (
-    sessionId: string,
-    turn: number,
-    text: string,
-    attachments?: Array<{ name: string; mediaType: string; data: string }>,
-  ) => Promise<{ sessionId: string; memoryKept: boolean }>;
+  branch: (sessionId: string, turn: number) => Promise<{ sessionId: string; memoryKept: boolean }>;
   /** The four onboarding checks; read-only. `provider` picks the agent gate. */
   onboardingCheck: (provider?: string) => Promise<OnboardingStep[]>;
   /**
@@ -798,12 +804,30 @@ interface DaemonApi {
    * recomputed `github` step.
    */
   githubTokenSet: (token: string | null) => Promise<OnboardingStep>;
+  /** 슬라이스 5: 개발자 에스컬레이션(Slack) 설정 — 값은 돌아오지 않는다. */
+  escalationSet: (
+    config:
+      | { kind: "webhook"; url: string }
+      | { kind: "bot"; token: string; channel: string }
+      | null,
+  ) => Promise<{ ok: true }>;
+  escalationTest: () => Promise<{ ok: true }>;
+  /** 설정창의 저장 메모 담당 — null 은 자동(기본). 거절은 한국어 한 줄이다. */
+  machineSet: (provider: string | null) => Promise<{ ok: true }>;
+  /** 넘긴 요청에 적을 작성자 이름 — null 이면 지운다(P1-3). */
+  machineAuthorSet: (name: string | null) => Promise<{ ok: true }>;
   /** Repos the token can reach — the project picker's list. */
   githubReposList: (refresh?: boolean) => Promise<GitHubRepoList>;
   /** Judge one repo before any clone. */
   githubRepoInspect: (owner: string, repo: string) => Promise<GitHubRepoInspection>;
   /** Run a fix; resolves with whatever the fix returns (status/guidance). */
-  onboardingFix: (kind: OnboardingFixKind) => Promise<unknown>;
+  onboardingFix: (
+    kind: OnboardingFixKind,
+    /** 로그인 고침이 어느 에이전트의 것인지 — 드라이버가 자기 명령을 선언한다. */
+    provider?: string,
+  ) => Promise<unknown>;
+  /** 로그인 코드 붙여넣기 — 데몬이 자식 stdin 으로 흘려 보낸다(P1-1). */
+  agentLoginCode: (code: string) => Promise<{ ok: true }>;
 }
 
 /** One connection to one daemon, as the views consume it. */
@@ -849,6 +873,12 @@ export interface Daemon {
    * 거둔다.
    */
   browserDriving: ReadonlySet<string>;
+  /**
+   * 데몬이 몰고 있는 에이전트 로그인의 판(P1-1) — 주소와 코드 붙여넣기 칸
+   * 여부. 진행 중이 아닐 때 null. `loginDone` 은 마지막 끝의 알림.
+   */
+  login: { url: string; wantsCode: boolean } | null;
+  loginDone: { ok: boolean; detail: string } | null;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
   /**
@@ -1018,6 +1048,14 @@ export function useDaemon(url: string | null): Daemon {
   const [onboardingProvider, setOnboardingProvider] = useState<string | null>(
     () => readOnboardingCache().provider,
   );
+  /**
+   * 터미널 없는 에이전트 로그인(P1-1): 데몬이 파이프로 몰고 있는 로그인의
+   * 판 — 주소와 코드 붙여넣기 칸 여부. `agent.login.url` 이 그리고
+   * `agent.login.done` 이 지운다.
+   */
+  const [login, setLogin] = useState<{ url: string; wantsCode: boolean } | null>(null);
+  /** 로그인의 끝 — ok 면 게이트 재검사가 뒤따르고, 아니면 detail 이 이유다. */
+  const [loginDone, setLoginDone] = useState<{ ok: boolean; detail: string } | null>(null);
   /**
    * 에이전트가 브라우저를 조작 중인 세션들: `browser.driving` 브로드캐스트가
    * 켜고 끄는 세션 id 목록.
@@ -1213,7 +1251,16 @@ export function useDaemon(url: string | null): Daemon {
         });
         return;
       }
-
+      if (message.type === "agent.login.url") {
+        // 데몬이 몰고 있는 로그인의 판 — 주소(wantsCode 일 때 코드 칸 포함).
+        setLogin({ url: message.url, wantsCode: message.wantsCode });
+        return;
+      }
+      if (message.type === "agent.login.done") {
+        setLogin(null);
+        setLoginDone({ ok: message.ok, detail: message.detail });
+        return;
+      }
       if (message.type === "session.state") {
         setSessions((prev) => ({
           ...prev,
@@ -1425,7 +1472,9 @@ export function useDaemon(url: string | null): Daemon {
         sessionId: string,
         text: string,
         attachments?: Array<{ name: string; mediaType: string; data: string }>,
-        pins?: Array<{ screen: string; state: string | null }>,
+        pins?: Array<{ screen: string }>,
+        mode?: "queue" | "steer",
+        pinHints?: SessionPinHint[],
       ) => {
         // Speaking into a thread is looking at it, and the first send
         // is the one moment the browser may ask about notifications.
@@ -1437,9 +1486,15 @@ export function useDaemon(url: string | null): Daemon {
           text,
           ...(attachments?.length ? { attachments } : {}),
           ...(pins?.length ? { pins } : {}),
+          ...(mode ? { mode } : {}),
+          ...(pinHints?.length ? { pinHints } : {}),
         });
       },
       interrupt: (sessionId: string) => call({ type: "session.interrupt", sessionId }),
+      queueRemove: (sessionId: string, itemId: string) =>
+        call<QueuedSendPayload>({ type: "session.queue.remove", sessionId, itemId }),
+      queueSendNow: (sessionId: string, itemId: string) =>
+        call({ type: "session.queue.sendNow", sessionId, itemId }),
       queueTakeDropped: (sessionId: string, itemId: string) =>
         call<QueuedSendPayload>({ type: "session.queue.takeDropped", sessionId, itemId }),
       queueDismissDropped: (sessionId: string, itemId: string) =>
@@ -1626,6 +1681,19 @@ export function useDaemon(url: string | null): Daemon {
           );
           return step;
         }),
+      // 슬라이스 5: 개발자 에스컬레이션(Slack) 설정 — 웹훅 또는 봇 토큰+채널.
+      // 값은 저장소에만 살고 돌아오지 않는다(토큰과 같은 길).
+      escalationSet: (
+        config:
+          | { kind: "webhook"; url: string }
+          | { kind: "bot"; token: string; channel: string }
+          | null,
+      ) => call<{ ok: true }>({ type: "escalation.set", config }, 60_000),
+      escalationTest: () => call<{ ok: true }>({ type: "escalation.test" }, 30_000),
+      machineSet: (provider: string | null) =>
+        call<{ ok: true }>({ type: "machine.set", provider }, 15_000),
+      machineAuthorSet: (name: string | null) =>
+        call<{ ok: true }>({ type: "machine.author.set", name }, 15_000),
       // Listing walks up to five pages of GitHub: the window a few network
       // reads get, not the one a local request does.
       githubReposList: (refresh?: boolean) =>
@@ -1640,16 +1708,12 @@ export function useDaemon(url: string | null): Daemon {
       handoffStatus: () =>
         call<HandoffStatusReport | null>({ type: "repo.handoffStatus" }, 120_000),
       // One committed capture out of the handoff branch — a `git show`
-      // read, so the window a remote read gets. The wire wants a state
-      // name; a screen's default look is committed under "default".
-      handoffShot: (route: string, state: string | null) =>
+      // read, so the window a remote read gets.
+      handoffShot: (route: string) =>
         call<{ mediaType: string; data: string } | null>(
-          { type: "repo.handoffShot", route, state: state ?? "default" },
+          { type: "repo.handoffShot", route },
           120_000,
         ),
-      // The worktree build re-runs the repo's own preview command from a cold
-      // checkout: the window a first bring-up gets, not the minute a read is
-      // given. Pressing the button again while it runs rides the same ask —
       // the daemon queues opens, it never builds two worktrees.
       handoffPreview: (sessionId?: string | null) =>
         call<HandoffPreviewInfo>(
@@ -1669,15 +1733,14 @@ export function useDaemon(url: string | null): Daemon {
           { type: "repo.unshelve", ...(sessionId ? { sessionId } : {}) },
           120_000,
         ),
-      checkpoints: () => call<CheckpointList>({ type: "repo.checkpoints" }, 60_000),
-      restoreCheckpoint: (checkpoint: string) =>
-        call<{ restored: string[] }>({ type: "repo.checkpoint.restore", checkpoint }, 120_000),
+      // 검증 창이 화면을 열고 문서가 완전히 로드되기를 기다리는 시간 —
+      // 게이트의 한 화면과 같은 길이다. null 은 판정이 아니라 확인 불능이다.
+      screenCheck: (route: string) =>
+        call<ScreenCheckReport | null>({ type: "preview.screenCheck", route }, 120_000),
       recordComments: (input: {
         items: Array<{
           id?: string;
           screen: string;
-          /** 표식 없는 페이지의 핀은 null — 데몬 스키마도 nullable 이다. */
-          state: string | null;
           text: string;
           elementText: string;
           intent?: "change" | "question";
@@ -1690,16 +1753,12 @@ export function useDaemon(url: string | null): Daemon {
       }) => call<{ recorded: number }>({ type: "comments.record", items: input.items }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
-      rewind: (sessionId, turn, text, attachments) =>
+      // 대화 분기: 답을 하나도 보내지 않는다 — 포크의 악수(절단 재개)만
+      // 기다린다.
+      branch: (sessionId, turn) =>
         call<{ sessionId: string; memoryKept: boolean }>(
-          {
-            type: "session.rewind",
-            sessionId,
-            turn,
-            text,
-            ...(attachments ? { attachments } : {}),
-          },
-          300_000,
+          { type: "session.branch", sessionId, turn },
+          120_000,
         ),
       onboardingCheck: (provider?: string) =>
         call<OnboardingStep[]>(
@@ -1720,16 +1779,25 @@ export function useDaemon(url: string | null): Daemon {
           setOnboardingProvider(forProvider);
           return steps;
         }),
-      onboardingFix: (kind: OnboardingFixKind) =>
+      onboardingFix: (kind: OnboardingFixKind, provider?: string) =>
         call(
-          { type: "onboarding.fix", kind },
+          { type: "onboarding.fix", kind, ...(provider ? { provider } : {}) },
           // install-pnpm runs corepack to completion; the others only
-          // launch an installer or a login window.
+          // launch an installer or start a login the daemon drives.
           600_000,
         ),
+      agentLoginCode: (code: string) =>
+        call<{ ok: true }>({ type: "agent.login.code", code }, 30_000),
     }),
     [call, keepProjects, keepRepo],
   );
+
+  // 로그인의 끝(P1-1): 성공이면 게이트가 다시 채색해야 한다 — 마법사의 다시
+  // 확인을 기다리지 않고 스스로 다시 묻는다. 실패는 loginDone.detail 로 마법사
+  // 카드가 말한다.
+  useEffect(() => {
+    if (loginDone?.ok) void api.onboardingCheck(onboardingProvider ?? undefined);
+  }, [loginDone, api, onboardingProvider]);
 
   // A background thread that finished its turn — or stopped to
   // ask — calls. Derived from the session map, so a reconnect that replays
@@ -1842,6 +1910,8 @@ export function useDaemon(url: string | null): Daemon {
     repo,
     diffStatus,
     browserDriving: driving,
+    login,
+    loginDone,
     onboarding,
     onboardingProvider,
   };

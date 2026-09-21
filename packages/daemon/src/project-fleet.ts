@@ -7,11 +7,13 @@ import type {
   ServerMessage,
   SessionCommand,
 } from "@colo-design/protocol";
+import { reviewToTurn } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import type { GitHubClient } from "./github.js";
 import type { DaemonLogger } from "./log.js";
+import type { MachineTurn } from "./machine-provider.js";
 import type { DaemonNotice } from "./notices.js";
 import { realpathBestEffort } from "./paths.js";
 import type { PreviewDrivers } from "./preview-drivers.js";
@@ -21,6 +23,7 @@ import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
 import type { SessionManager } from "./session-manager.js";
 import { appendTape } from "./session-tape.js";
+import { repoWritePolicy } from "./workspaces.js";
 
 /**
  * Inactive projects whose preview server stays up beside the active one, so
@@ -55,8 +58,14 @@ export interface FleetDeps {
   notice(notice: DaemonNotice): void;
   logger: DaemonLogger;
   claudeExecutable(): string | null;
+  /** 기계 잔일(저장 메모 · 넘기기 초안)의 턴 — machine-provider 가 담당을 골라 서버가 넣는다. */
+  machineTurn: MachineTurn;
+  /** 넘긴 요청에 적을 작성자 이름 — machine.json 이 기억한다(P1-3). */
+  authorName(): string | null;
   closingSignal: AbortSignal;
   pat(): string | null;
+  /** 슬라이스 5: 환경 실패를 개발자 채널(Slack 웹훅)로 흘리는 문. */
+  escalate(text: string): void;
   gitHubClient(): GitHubClient | null;
   queueDiskFor(sessionId: string): QueueDisk;
 }
@@ -90,8 +99,20 @@ export class ProjectFleet {
    */
   private readonly lastHandoffEvent = new Map<
     string,
-    { kind: "merged" | "closed" | "changes_requested" | "comments"; at: string }
+    { kind: "merged" | "closed" | "changes_requested" | "comments" | "replied"; at: string }
   >();
+  /**
+   * 슬라이스 2 (2026-09-19 "무조건 처리"): slug → 데몬이 이미 AI 에 내려준
+   * 리뷰 id 들. 자동 브리프의 단일 장부다 — 웹의 고치기 문은 걷혔고, 같은
+   * 코멘트가 두 번 턴으로 나가는 일은 이 곳에서만 막는다.
+   */
+  private readonly briefedReviewIds = new Map<string, Set<number>>();
+  /**
+   * 슬라이스 2: sessionId → 자동 브리프가 연 턴이 끝나면 치러야 할 자동 저장.
+   * 사람의 턴에는 붙지 않는다 — 오직 폴링이 내려놓은 리뷰 반영 턴만이
+   * 저장까지 스스로 마무리한다.
+   */
+  private readonly autoSaveAfter = new Map<string, { slug: string; count: number }>();
   /**
    * The `/` palette with no thread open: one CLI boot per repo, cached, so an
    * empty workspace still lists every command the terminal would. A live
@@ -142,14 +163,13 @@ export class ProjectFleet {
         commandsApproved,
         onCycleChange: (cycle) => this.deps.registry.setCycle(slug, cycle),
         gitHubClient: () => this.deps.gitHubClient(),
-        // The summarizer's one turn rides the same CLI the sessions do
-        // (PLAN D51) — one login, one resolution, no second source of truth.
-        claudeExecutable: this.deps.claudeExecutable(),
+        // The machine turn rides whichever driver the daemon picked
+        // (machine-provider.ts) — the workspace stays provider-blind.
+        machineTurn: this.deps.machineTurn,
+        // PR 본문의 `> 작성:` 줄과 커밋 fallback 이름이 읽는다(P1-3).
+        authorName: () => this.deps.authorName(),
         onUrlChange: (url) => this.deps.registry.update(slug, { repoUrl: url }),
         onStatus: (status) => {
-          // ANY workspace's phase or count movement re-announces the whole
-          // registry, throttled. The typed `repo.status` stream stays the
-          // active project's only — a background clone finishing must not
           // repaint somebody else's preview column.
           this.announceProjectsThrottled();
           if (slug === this.deps.registry.activeSlug()) {
@@ -163,6 +183,8 @@ export class ProjectFleet {
         // hero-synthesis D1: 저장 · 넘김 · 반영 · 코멘트 도착 — 세션 채널 +
         // 테이프. The cycle names its session when the call carried one.
         onCycleEvent: (event, sessionId) => this.emitCycleEvent(workspaces, event, sessionId),
+        // 슬라이스 5: 환경 실패(토큰 · 권한 · 첫 넘기기)는 개발자 채널로.
+        escalate: (text) => this.deps.escalate(text),
       }),
     };
     this.workspaces.set(slug, workspaces);
@@ -351,11 +373,12 @@ export class ProjectFleet {
    * 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 다시 읽어,
    * 개발자 쪽 사건(반영됨·반려·변경 요청·새 코멘트)을 알림으로 보낸다.
    *
-   * 읽기만 한다 (판정 1·2). `peekHandoff` 는 open↔changes_requested 만 칩에
-   * 반영하고, 사이클을 끝내는 판정(반영됨·반려)은 세워 두기만 한다 — 착지는
-   * fetch·checkout·reset 에 체크포인트 삭제까지 가는 일이라 사람 없는 자리에서
-   * 타이머가 할 일이 아니다. 알림이 사람을 부르고, 그 사람이 프로젝트를 열거나
-   * 상태 확인을 누르거나 저장을 누르는 순간 내려앉는다.
+   * 슬라이스 4 (2026-09-19) 가 판정 1·2 의 반쪽을 고쳤다: 끝난 사이클의
+   * 착지(fetch·checkout·reset·체크포인트 삭제)는 조건이 안전하면 타이머가
+   * 스스로 내려앉힌다 — 변경 없음·최신화 유휴일 때뿐이고(anyBusy 는 폴링의
+   * 머리가 지킨다), 하나라도 걸리면 여전히 사람이 있는 자리(상태 확인 ·
+   * 활성화 · 다음 저장의 머리)로 미룬다. 알림은 여전히 사람을 부르지만,
+   * 돌아왔을 때 정리가 이미 끝나 있어야 비개발자의 한 바퀴가 짧다.
    *
    * 그래도 도는 턴·저장·넘기기·최신화 중에는 읽지 않는다: GitHub 한 번 더
    * 부르는 값보다 그 손길들이 조용한 편이 낫다. 실패는 조용히 넘어간다 —
@@ -412,6 +435,41 @@ export class ProjectFleet {
       } else if (report.state === "open" && beforeReviews !== null && reviews > beforeReviews) {
         handoffNotice("comments", reviews - beforeReviews);
       }
+      // 슬라이스 2 (무조건 처리): 새 리뷰는 알림으로 끝나지 않는다 — 데몬이
+      // 스스로 고치기 턴을 내려놓고, 그 턴이 답을 내면 저장까지 마무리한다.
+      // 장부(브리프된 id)를 먼저 보고 성공을 확인하며 되돌린다: 보내기가
+      // 거절된 리뷰를 먹으면 다음 틱이 다시는 손대지 못한다.
+      if (report.reviews !== undefined && report.state !== "merged" && report.state !== "closed") {
+        const seen = this.briefedReviewIds.get(workspaces.slug);
+        const unseen = report.reviews.filter((review) => !seen?.has(review.id));
+        if (unseen.length > 0) {
+          const target = this.autoFixThreadFor(workspaces);
+          if (target) {
+            const ids = seen ?? new Set<number>();
+            for (const review of unseen) ids.add(review.id);
+            this.briefedReviewIds.set(workspaces.slug, ids);
+            try {
+              target.send(reviewToTurn(unseen));
+              this.autoSaveAfter.set(target.id, { slug: workspaces.slug, count: unseen.length });
+            } catch {
+              for (const review of unseen) ids.delete(review.id);
+              this.autoSaveAfter.delete(target.id);
+            }
+          }
+        }
+      }
+      // 슬라이스 4: 끝난 사이클의 자동 착지 — 워크트리가 깨끗할 때만. 변경이
+      // 남았으면 사람이 있는 자리의 착지가 그 일감과 함께 간다(치워두기가
+      // 붙는 것도 그 자리다). anyBusy 는 폴링의 머리에서 이미 지켰다.
+      if (
+        (report.state === "merged" || report.state === "closed") &&
+        workspaces.repo.handoffLandingDue
+      ) {
+        const status = await workspaces.repo.status().catch(() => null);
+        if (status !== null && status.pendingChanges === 0) {
+          await workspaces.repo.refreshHandoff().catch(() => undefined);
+        }
+      }
     }
     // 사이드바 배지와 활성 프로젝트의 칩이 폴링의 결과를 본다 — UI 가 다시
     // 당기기를 기다리지 않게.
@@ -422,6 +480,81 @@ export class ProjectFleet {
         .status()
         .then((status) => this.deps.broadcast({ type: "repo.status", status }))
         .catch(() => undefined);
+    }
+  }
+
+  /**
+   * 슬라이스 2: 리뷰 반영 턴이 갈 살아 있는 대화 — 그 프로젝트 클론에서
+   * 가장 최근에 움직인 살아 있는 대화. 없으면 도구가 "리뷰 반영" 대화를
+   * 연다(게이트 실패 스레드와 같은 길): 사람의 손이 없어도 반영이
+   * 시작되는 것이 이 흐름의 계약이다.
+   */
+  private autoFixThreadFor(workspaces: ProjectWorkspaces) {
+    const cwd = realpathBestEffort(workspaces.paths.repoRoot);
+    const live = [...this.deps.manager.all()]
+      .filter((session) => session.cwd === cwd && session.sendable)
+      .sort((a, b) => b.lastActivity - a.lastActivity)[0];
+    if (live) return live;
+    const executable = this.deps.claudeExecutable();
+    if (!executable) return null;
+    const instructions = this.projectInstructions(cwd);
+    const session = this.deps.manager.create({
+      cwd,
+      queueDiskFor: this.deps.queueDiskFor,
+      writePolicy: repoWritePolicy(cwd),
+      title: "리뷰 반영",
+      launch: {
+        executable,
+        ...(instructions ? { appendSystemPrompt: instructions } : {}),
+      },
+    });
+    this.deps.manager.invalidateThreads(cwd);
+    this.refreshThreads();
+    return session;
+  }
+
+  /**
+   * 슬라이스 2: 자동 브리프가 연 턴의 정산 — 답이 나왔으면 저장까지 스스로.
+   * 실패한 턴은 정산하지 않는다: 감독(슬라이스 1)이 다시 시도하고, 그 재시도가
+   * 성공한 턴 끝이 여기에 다시 온다. 중지된 턴은 사람의 뜻이므로 저장하지
+   * 않고 기다린다 — 칩과 저장 버튼이 여전히 그 자리에 있다.
+   */
+  async settleAutoSave(sessionId: string): Promise<void> {
+    const pending = this.autoSaveAfter.get(sessionId);
+    if (!pending) return;
+    this.autoSaveAfter.delete(sessionId);
+    const workspaces = this.workspacesFor(pending.slug);
+    const session = this.deps.manager.get(sessionId);
+    if (!workspaces || !session) return;
+    const projectName = this.deps.registry.get(pending.slug)?.name ?? pending.slug;
+    try {
+      const status = await workspaces.repo.save({
+        message: `개발자 요청 자동 반영 — 리뷰 코멘트 ${pending.count}건`,
+        sessionId,
+        onSessionTurn: (brief: string) => {
+          this.deps.notice({
+            kind: "gate",
+            sessionId,
+            title: session.title,
+            stage: "save",
+          });
+          try {
+            session.send(brief);
+          } catch {
+            // The DiffStatus the save left behind still tells the story.
+          }
+        },
+      });
+      if (status.stage === "published") {
+        this.lastHandoffEvent.set(pending.slug, {
+          kind: "replied",
+          at: new Date().toISOString(),
+        });
+        this.deps.notice({ kind: "handoff", slug: pending.slug, projectName, event: "replied" });
+        this.announceProjectsThrottled();
+      }
+    } catch {
+      // 저장의 실패는 DiffStatus 와 게이트 브리프가 이미 말한다.
     }
   }
 

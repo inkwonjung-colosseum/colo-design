@@ -16,8 +16,9 @@ import type {
   ProviderDescriptor,
   TranscriptStore,
 } from "../../driver.js";
+import { HISTORY_LIMIT, isPrompt, resolveBranchCutoff } from "./cutoff.js";
 import { replayHistory } from "./import.js";
-import { isPrompt, REWIND_HISTORY_LIMIT, resolveRewindCutoff } from "./rewind.js";
+import { claudeOneShot } from "./one-shot.js";
 import { ClaudeAgentSession, type ClaudeLaunch } from "./session.js";
 
 /**
@@ -35,9 +36,8 @@ function presentableTitle(summary: string | undefined | null): string {
     .find((line) => line.length > 0 && !line.startsWith("<!--"));
   return (human ?? "").replace(/\s+/g, " ").trim();
 }
-
 const CLAUDE_CAPABILITIES = {
-  rewind: true,
+  branch: true,
   usage: true,
   contextUsage: true,
   fastMode: true,
@@ -46,10 +46,20 @@ const CLAUDE_CAPABILITIES = {
   slashCommands: true,
   planMode: "plan",
   subtasks: true,
+  // SDK 의 interrupt 는 턴을 자를 뿐 도는 턴에 실어 넣는 길이 없다.
+  steer: false,
   // 브라우저 도구 주입 가능. 공급자 선언일 뿐 실제 제공은 host의
   // browserDriverFactory 주입이 정하고, status가 둘을 AND해 UI에 보인다.
   browserTools: true,
 } as const;
+
+/**
+ * The machine turns' model (비개발자 저장): reading a diff and saying what it
+ * did is haiku's job — fast enough for the 8-second leashes the memo and the
+ * draft run on, and a planner's model stays for planning. A property of the
+ * driver, not the repo layer: each provider names its own cheap answer.
+ */
+const MACHINE_MODEL = "haiku";
 
 /**
  * The Claude Code driver: SDK query transport plus the `~/.claude/projects`
@@ -71,7 +81,11 @@ export class ClaudeDriver implements AgentDriver {
         { id: "plan", label: "Plan", tier: "planning" },
         { id: "bypassPermissions", label: "Bypass Permissions", tier: "dangerous" },
       ],
-      defaultModeId: "default",
+      // 새 대화의 기본 모드 — 사용자가 확인 방식을 고르지 않으면 전부 맡기기로
+      // 시작한다(web DEFAULT_PERMISSION_MODE 와 같은 기본). 플래너 승인 뒤의
+      // 복귀 지점이기도 하다. 실제 CLI 기동 모드는 session.ts 가 "default" 로
+      // 깔고 web 의 post-create 쓰기가 여기를 채운다.
+      defaultModeId: "bypassPermissions",
       capabilities: { ...CLAUDE_CAPABILITIES },
     };
   }
@@ -92,6 +106,31 @@ export class ClaudeDriver implements AgentDriver {
       ...(version ? { version } : {}),
       loggedIn: auth?.loggedIn ?? false,
     };
+  }
+
+  /**
+   * 기계 잔일의 단답 턴 (비개발자 저장): 세션이 쓰는 같은 SDK 입구를 한 번만
+   * 돌게 — 도구 없음, 설정 없음, haiku 응답(machine-provider.ts 가 이 드라이버를
+   * 담당으로 골라 부른다). 프롬프트가 읽을 수 있는 전부이고 대화록은 요약
+   * 폴더에 남는다. null 이면 폴백 — 시간 초과든 CLI 부재든 같은 길이다.
+   */
+  oneShot(prompt: string, opts: { cwd: string; timeoutMs: number }): Promise<string | null> {
+    return claudeOneShot(prompt, {
+      cwd: opts.cwd,
+      executable: this.executable(),
+      model: MACHINE_MODEL,
+      timeoutMs: opts.timeoutMs,
+    });
+  }
+
+  /**
+   * `claude auth login` (P1-1, 스파이크 검증): OAuth 주소는 stdout 에, 코드는
+   * stdin 의 "Paste code here" 프롬프트로 받는다 — `/login` 은 TTY 를
+   * 요구해 파이프에서는 거절된다("isn't available in this environment").
+   */
+  loginCommand(): { command: string; args: string[] } | null {
+    const executable = this.executable();
+    return executable ? { command: executable, args: ["auth", "login"] } : null;
   }
 
   createSession(launch: ClaudeLaunch, hooks: DriverHooks): AgentSession {
@@ -134,12 +173,12 @@ export class ClaudeDriver implements AgentDriver {
       return raw.filter((message) => isPrompt(message)).length;
     },
 
-    rewind: async (id, cwd, turn) => {
+    branchCut: async (id, cwd, turn) => {
       const raw = await rawMessages(id, cwd);
-      const cutoff = resolveRewindCutoff(raw, turn);
+      const cutoff = resolveBranchCutoff(raw, turn);
       // 존재하는 대화에서 k 가 넘친다 — 호출자 오류. 빈 대화록은 null 그대로.
       if (cutoff === null && raw.length > 0) {
-        throw new Error(`되돌릴 ${turn}번째 답이 이 대화에 없습니다.`);
+        throw new Error(`분기할 ${turn}번째 답이 이 대화에 없습니다.`);
       }
       return cutoff;
     },
@@ -168,11 +207,11 @@ export class ClaudeDriver implements AgentDriver {
   };
 }
 
-/** Raw stored messages — the rewind cutoff computation reads these. */
+/** Raw stored messages — the branch cutoff computation reads these. */
 async function rawMessages(
   id: string,
   cwd: string,
-  limit = REWIND_HISTORY_LIMIT,
+  limit = HISTORY_LIMIT,
 ): Promise<Array<Record<string, unknown>>> {
   const raw = await getSessionMessages(id, { dir: cwd, limit }).catch(() => []);
   return raw as Array<Record<string, unknown>>;

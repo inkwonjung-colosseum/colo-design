@@ -68,6 +68,55 @@ const STEP_ICON: Record<OnboardingStepId, ReactElement> = {
   github: <KeyIcon />,
 };
 
+/** 로그인 코드 붙여넣기(P1-1) — 데몬이 자식의 stdin 으로 흘려 보낸다. */
+function LoginCodeForm({ daemon }: { daemon: Daemon }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const send = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await daemon.api.agentLoginCode(code.trim());
+      setCode("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="ghtoken__row onboarding__logincode">
+      <input
+        type="password"
+        value={code}
+        spellCheck={false}
+        autoComplete="off"
+        placeholder="브라우저에 나온 코드 붙여넣기"
+        aria-label="로그인 코드"
+        disabled={busy}
+        onChange={(e) => setCode(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && code.trim() && !busy) void send();
+        }}
+      />
+      <button
+        type="button"
+        className="primary"
+        disabled={!code.trim() || busy}
+        onClick={() => void send()}
+      >
+        {busy ? "보내는 중…" : "코드 보내기"}
+      </button>
+      {error && (
+        <div className="notice notice--error">
+          <span className="notice__text">{error}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Onboarding({
   daemon,
   provider = "claude",
@@ -257,9 +306,29 @@ export function Onboarding({
               {id === "claude" && open && step.status !== "pass" && provider === "claude" && (
                 <p className="hint">
                   화면을 만드는 Claude의 도구입니다 — 설치와 로그인에는 본인의 Claude 계정(유료
-                  구독)이 필요합니다. 로그인하면 터미널 창이 열립니다. macOS가 'Terminal이 이 앱을
-                  제어하려고 합니다'라고 물으면 허용해 주세요.
+                  구독)이 필요합니다.
                 </p>
+              )}
+
+              {/* 터미널 없는 로그인(P1-1): 데몬이 로그인을 파이프로 몰고 있는
+                  동안의 판 — 주소와, 코드를 청하는 CLI 라면 붙여넣기 칸.
+                  터미널은 이제 열리지 않는다. */}
+              {id === "claude" && open && step.status !== "pass" && daemon.login && (
+                <div className="onboarding__login">
+                  <p className="hint">
+                    브라우저에서 로그인 창이 열립니다 — 열리지 않으면{" "}
+                    <a className="ghlink" href={daemon.login.url} target="_blank" rel="noreferrer">
+                      이 주소
+                    </a>
+                    로 직접 여세요.
+                  </p>
+                  {daemon.login.wantsCode && <LoginCodeForm daemon={daemon} />}
+                </div>
+              )}
+              {id === "claude" && open && daemon.loginDone && !daemon.loginDone.ok && (
+                <div className="notice notice--error" role="status">
+                  <span className="notice__text">{daemon.loginDone.detail}</span>
+                </div>
               )}
 
               {/* 실패했지만 고칠 fix 가 없는 에이전트 행: 설치된 다른
@@ -304,7 +373,7 @@ export function Onboarding({
               {id === "github" && step.status === "pass" && !editingToken && (
                 <div className="onboarding__fixrow">
                   <button type="button" className="ghost" onClick={() => setEditingToken(true)}>
-                    토큰 바꾸기
+                    코드 바꾸기
                   </button>
                 </div>
               )}
@@ -312,11 +381,6 @@ export function Onboarding({
               {id === "github" && (open || editingToken) && (
                 <>
                   <GitHubTokenForm daemon={daemon} onDone={() => setEditingToken(false)} />
-                  {/* 누르는 곳이 앱 밖이라는 예고(onboarding-gates.html og-note) —
-                      새 창이 열리는 놀람을 덜어 둔다. */}
-                  <p className="onboarding__note">
-                    토큰 입력은 GitHub에서 열립니다 — 브라우저로 이동합니다 ↗
-                  </p>
                 </>
               )}
 
@@ -339,7 +403,13 @@ export function Onboarding({
                       className="primary"
                       disabled={busyKind !== null || checking}
                       onClick={() =>
-                        void run(step.fix!.kind, () => daemon.api.onboardingFix(step.fix!.kind))
+                        void run(step.fix!.kind, () =>
+                          daemon.api.onboardingFix(
+                            step.fix!.kind,
+                            // 로그인은 에이전트마다 제 명령이 있다(loginCommand).
+                            step.fix!.kind === "login-claude" ? provider : undefined,
+                          ),
+                        )
                       }
                     >
                       {busyKind === step.fix.kind ? "실행 중…" : step.fix.label}

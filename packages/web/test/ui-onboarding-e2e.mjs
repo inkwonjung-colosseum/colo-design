@@ -175,23 +175,23 @@ async function main() {
     );
 
     // --- 2. the token passes: its card folds to a line, the repo card opens
-    await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
+    await page.getByLabel("GitHub 연결 코드").fill(REPO_PAT);
     await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".onboarding--start .repopicker", { timeout: 20000 });
     const tokenLine = page.locator(".onboarding--start .onboarding__step--line", {
-      hasText: "토큰 연결",
+      hasText: "연결 코드",
     });
     check(
       "the token step folds into a line and the repo step opens",
       (await page.locator(".onboarding--start .ghtoken").count()) === 0 &&
         (await tokenLine.count()) === 1 &&
-        (await tokenLine.getByRole("button", { name: "토큰 바꾸기" }).count()) === 1,
+        (await tokenLine.getByRole("button", { name: "코드 바꾸기" }).count()) === 1,
     );
 
-    // --- 2b. 토큰 바꾸기 re-opens the form; a pass folds the line back -----
-    await tokenLine.getByRole("button", { name: "토큰 바꾸기" }).click();
+    // --- 2b. 코드 바꾸기 re-opens the form; a pass folds the line back -----
+    await tokenLine.getByRole("button", { name: "코드 바꾸기" }).click();
     await page.waitForSelector(".onboarding--start .ghtoken", { timeout: 15000 });
-    await page.getByLabel("GitHub 개인 액세스 토큰").fill(REPO_PAT);
+    await page.getByLabel("GitHub 연결 코드").fill(REPO_PAT);
     await page.locator(".ghtoken").getByRole("button", { name: "연결" }).click();
     await page.waitForSelector(".onboarding--start .ghtoken", {
       state: "detached",
@@ -280,8 +280,10 @@ async function main() {
 
     // --- 6. the wizard still exists — behind 설정, for the machine gates --
     //     첫 화면이 2단으로 바뀐 뒤에도 마법사는 기계 게이트의 자리로 남는다
-    //     (설정 → 처음 설정 다시 보기).
+    //     (설정 → 처음 설정 다시 보기). 설정은 화면 방에서 열리고, 마법사
+    //     행은 문제 해결 방에 산다 — 방을 먼저 연다.
     await page.locator(".sidebar__gear").click();
+    await page.getByTestId("settings-nav-troubleshoot").click();
     await page.getByRole("button", { name: "처음 설정 다시 보기" }).click();
     await page.waitForSelector(".onboarding", { timeout: 15000 });
     await page
@@ -345,7 +347,7 @@ async function main() {
     );
 
     // A brand new project starts with no threads: the tree row where the eye
-    // lands IS the way to begin, next to the row's own ＋.
+    // lands IS the way to begin.
     const tree = page.locator(".tree");
     await tree.waitFor({ timeout: 15000 });
     const startButtons = await tree.getByRole("button", { name: "새 대화" }).count();

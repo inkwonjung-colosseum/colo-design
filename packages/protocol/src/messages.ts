@@ -10,6 +10,27 @@ import { effortLevelSchema, permissionModeSchema, type SessionState } from "./sh
 
 const withId = { id: z.string().min(1) };
 
+/**
+ * 핀 하나의 정체 (빠른 수정, 2026-09-20): what the daemon greps the clone
+ * with. A comments-marked turn already NAMES each pinned element in prose the
+ * planner reads; this is the same identity as data, so the daemon can find
+ * `파일 후보` lines before the turn reaches the agent — the search the
+ * agent's first tool calls would otherwise repeat. `id` joins the hint to
+ * the turn marker's item rows(2026-09-21 레포 마커 철거 — `data-colo-src`
+ * 의 `file` 힌트는 폐지했다; 정체는 글자·owners·testId 뿐이다).
+ */
+const sessionPinHintSchema = z.object({
+  id: z.string().min(1),
+  /** The element's own text — a JSX-text or string-literal needle. */
+  text: z.string().optional(),
+  /** React component names, nearest first (the pin envelope's own order). */
+  owners: z.array(z.string().min(1)).optional(),
+  /** The repo's test id, when the element carries one. */
+  testId: z.string().min(1).optional(),
+});
+
+export type SessionPinHint = z.infer<typeof sessionPinHintSchema>;
+
 const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ ...withId, type: z.literal("daemon.status") }),
   z.object({
@@ -65,14 +86,35 @@ const clientMessageSchema = z.discriminatedUnion("type", [
      * 2026-09-17). The screen gate re-opens exactly these after the turn;
      * a turn that names none is a turn the gate skips.
      */
-    pins: z.array(z.object({ screen: z.string().min(1), state: z.string().nullable() })).optional(),
+    pins: z.array(z.object({ screen: z.string().min(1) })).optional(),
+    /**
+     * The pins' element identity (빠른 수정, 2026-09-20) — the daemon greps
+     * the clone with this and appends `파일 후보:` to each block of the
+     * marked turn before the agent reads it. Absent on plain sends.
+     */
+    pinHints: z.array(sessionPinHintSchema).optional(),
+    /**
+     * 도는 턴에 온 말의 길. `queue`(기본)는 대기 줄에 세워 다음 턴에
+     * 보내고, `steer`는 도는 턴에 그대로 실어 보낸다 — 드라이버가 그 길을
+     * 내주지 않으면(codex 외) 데몬이 대기 줄로 물러난다.
+     */
+    mode: z.enum(["queue", "steer"]).optional(),
   }),
   z.object({
     ...withId,
     type: z.literal("preview.capture"),
     /** The screen to shoot; omitted shoots the view the preview shows now. */
     route: z.string().min(1).optional(),
-    state: z.string().nullable().optional(),
+  }),
+  z.object({
+    ...withId,
+    type: z.literal("preview.screenCheck"),
+    /**
+     * The screen the pane's error banner is holding — re-opened in the
+     * daemon's isolated verification window (게이트와 같은 드라이버·같은
+     * 판정) so the pane can tell a fixed transient from a real break.
+     */
+    route: z.string().min(1),
   }),
   z.object({
     ...withId,
@@ -122,22 +164,19 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
   }),
   /**
-   * 되감기 (PLAN D95): discard the k-th answer and receive it again — files
-   * (the turn's checkpoint) and memory (a truncating fork) go back together.
-   * `turn` is the 1-based answer index; `text` is what goes out again (the
-   * same words for 다시 요청, edited words for 고쳐서 다시 보내기). The reply
-   * carries the NEW session id.
+   * 대화 분기: keep this answer and everything before it as the memory of a
+   * NEW conversation — the current one stays as it is. `turn` is the 1-based
+   * answer index (되감기의 셈과 같다). Files are not touched: one worktree
+   * cannot hold two file states, so a branch carries the memory cut alone.
+   * The reply carries the NEW session id and whether its memory survived
+   * (false = the provider cannot fork the transcript, so the branch starts
+   * empty — 되감기의 폴백과 같은 정직함).
    */
   z.object({
     ...withId,
-    type: z.literal("session.rewind"),
+    type: z.literal("session.branch"),
     sessionId: z.string().min(1),
     turn: z.number().int().positive(),
-    text: z.string().min(1),
-    /** The same payload as session.send — a re-sent turn keeps its files. */
-    attachments: z
-      .array(z.object({ name: z.string().min(1), mediaType: z.string(), data: z.string().min(1) }))
-      .optional(),
   }),
   z.object({
     ...withId,
@@ -382,6 +421,20 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     ...withId,
     type: z.literal("onboarding.fix"),
     kind: z.enum(["install-claude", "login-claude", "install-git", "install-node", "install-pnpm"]),
+    /**
+     * 로그인 고침이 어느 에이전트의 것인지(P1-1) — 각 드라이버가 자기 로그인
+     * 명령을 선언한다(loginCommand). 없으면 claude 게이트의 역사적 기본.
+     */
+    provider: z.string().min(1).optional(),
+  }),
+  /**
+   * 로그인 코드 붙여넣기 (P1-1): 웹이 받은 코드를 데몬이 로그인 자식의 stdin
+   * 으로 흘려 보낸다. 진행 중인 로그인이 없으면 데몬이 한국어로 거절한다.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("agent.login.code"),
+    code: z.string().min(1).max(400),
   }),
   /**
    * 저장 (PLAN D5[넘기기]): gate, commit and push the reviewed worktree diff onto the
@@ -421,17 +474,15 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ ...withId, type: z.literal("repo.handoffStatus") }),
   /**
    * 보낸 화면 동결: read one committed handoff capture —
-   * `.colo-design/shots/<route>--<state>.<ext>` — out of the handoff branch
+   * `.colo-design/shots/<route>.<ext>` — out of the handoff branch
    * with `git show`, so the frozen stage shows what was sent even after the
    * worktree moved on. Null when the shot was never committed.
    */
   z.object({
     ...withId,
     type: z.literal("repo.handoffShot"),
-    /** The screen's route — the pin's `data-screen` id, slash-restored. */
+    /** The screen's route — the pin's pathname id, slash-restored. */
     route: z.string().min(1),
-    /** The state the shot was captured in — 표식 없는 화면의 커밋은 null. */
-    state: z.string().min(1).nullable(),
   }),
   /**
    * 시점 빌드 재현: the handed-off moment's REAL
@@ -483,28 +534,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
    */
   z.object({ ...withId, type: z.literal("repo.discard") }),
   /**
-   * The turn-start snapshots (PLAN D52): one per 화면 turn, oldest last.
-   * The planner sees these as `이 답변 이전으로 되돌리기` on a turn card.
-   */
-  z.object({ ...withId, type: z.literal("repo.checkpoints") }),
-  /**
-   * Put the worktree back the way it stood when a turn started (PLAN D52).
-   * Only paths the write policy allows move; files the snapshot never had
-   * are removed.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("repo.checkpoint.restore"),
-    /**
-     * The `id` of one `repo.checkpoints` entry. Named apart from the
-     * correlation `id` on purpose (실사 결함): one field carrying both erased
-     * the reply's return address — the daemon did the restore, the reply
-     * matched no pending call, and every 되돌리기 timed out as
-     * "daemon did not respond" while the worktree had already moved.
-     */
-    checkpoint: z.string().min(1),
-  }),
-  /**
    * 잠깐 치워두기: snapshot every unsaved worktree change into the ONE shelf
    * ref and clear the worktree through 버리기's path rule. One slot — a
    * second call is refused until the first is 꺼내기'd. The clear, not the
@@ -534,6 +563,48 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("github.token.set"),
     /** `null` forgets the stored token. */
     token: z.string().min(1).nullable(),
+  }),
+  /**
+   * 개발자 에스컬레이션 (슬라이스 5): AI 가 고칠 수 없는 환경 실패를 도구
+   * 밖(Slack)으로 보내는 길. 두 가지 붙는 법 — incoming webhook URL 하나,
+   * 또는 bot token + 채널. 비밀은 GitHub 토큰과 같은 저장소에 살고 화면으로
+   * 절대 돌아오지 않는다 — 상태는 `DaemonStatus.escalationConfigured` 한 단어다.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("escalation.set"),
+    /** `null` forgets the stored config. */
+    config: z
+      .union([
+        z.object({ kind: z.literal("webhook"), url: z.string().min(1).max(2000) }),
+        z.object({
+          kind: z.literal("bot"),
+          token: z.string().min(1).max(500),
+          channel: z.string().min(1).max(200),
+        }),
+      ])
+      .nullable(),
+  }),
+  /** Sends one test message through the stored config — 설정의 시험 버튼. */
+  z.object({ ...withId, type: z.literal("escalation.test") }),
+  /**
+   * 설정창의 저장 메모 담당: 빈 메모의 커밋 문장과 넘기기 초안을 쓰는
+   * 에이전트. `null` 은 자동(기본) — machine-provider 의 등록 순서 규칙.
+   * 저장 시점에 검사해 못 쓰는 선택은 한국어 한 줄로 거절한다.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("machine.set"),
+    provider: z.string().min(1).max(64).nullable(),
+  }),
+  /**
+   * 넘긴 요청에 적을 작성자 이름(P1-3): 모든 요청이 봇 계정으로 열리므로
+   * 본문의 `> 작성:` 줄과 커밋 이름이 유일한 구분이다. `null` 이면 지운다.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("machine.author.set"),
+    name: z.string().min(1).max(80).nullable(),
   }),
   /**
    * Repos the stored token can reach, most recently pushed first. Answered
@@ -567,7 +638,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
    * planner's "what I asked", not a courier's receipt. The store is an
    * append-only log: a second send of the same words is a second request,
    * and both stay. A batch may span screens — each item carries its own
-   * `screen`/`state` (재설계 C6). Nothing in the tool reads the store back —
+   * `screen` (재설계 C6). Nothing in the tool reads the store back —
    * the pins were consumed in the conversation; the pull request body is the
    * one reader, for the developer who never saw that conversation.
    */
@@ -577,10 +648,8 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     items: z
       .array(
         z.object({
-          /** The screen the pin sat on — `[data-screen]` or the pathname id. */
+          /** The screen the pin sat on — the pathname id. */
           screen: z.string().min(1),
-          /** The screen state the pin sat on — 표식 없는 페이지의 핀은 null. */
-          state: z.string().min(1).nullable(),
           /**
            * The pin's overlay UUID (커미티 2차 판정 5): the one stable key the
            * pin is born with — chip, badge, marker item and store row all
@@ -702,6 +771,18 @@ export type ServerMessage =
       /** 요청이 만들어진 시각 (epoch ms) — 홈 카드의 "N분 전"이 읽는다. */
       requestedAt?: number;
     }
+  /**
+   * 에이전트 로그인의 진행 (P1-1): 데몬이 파이프로 띄운 로그인 CLI 가 내놓은
+   * 주소 — 앱은 브라우저로 열어 주고, `wantsCode` 일 때만 코드 붙여넣기 칸을
+   * 보인다(claude 는 코드를 stdin 으로 받고, codex 는 콜백만 기다린다).
+   * 주소보다 코드 프롬프트가 늦게 오면 같은 판이 다시 방송된다.
+   */
+  | { type: "agent.login.url"; url: string; wantsCode: boolean }
+  /**
+   * 로그인의 끝(P1-1): ok 면 클라이언트가 게이트를 다시 묻고, 아니면 detail
+   * 이 이유로 선다(자식의 마지막 출력 줄).
+   */
+  | { type: "agent.login.done"; ok: boolean; detail: string }
   | {
       type: "question.request";
       requestId: string;

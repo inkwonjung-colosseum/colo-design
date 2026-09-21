@@ -14,6 +14,7 @@ import type {
   ProviderDescriptor,
   TranscriptStore,
 } from "../../driver.js";
+import { codexOneShot } from "./one-shot.js";
 import { CODEX_MODE_ROWS, CodexAgentSession } from "./session.js";
 import {
   codexHome,
@@ -27,7 +28,7 @@ import {
 
 const run = promisify(execFile);
 const CODEX_CAPABILITIES = {
-  rewind: true,
+  branch: true,
   usage: true,
   contextUsage: true,
   fastMode: false,
@@ -36,8 +37,10 @@ const CODEX_CAPABILITIES = {
   slashCommands: true,
   planMode: "plan",
   subtasks: false,
+  // turn/steer — 도는 턴에 말을 실을 수 있는 유일한 와이어(experimentalApi).
+  steer: true,
   // 브라우저 도구 주입 가능. 공급자 선언일 뿐 실제 제공은 host의
-  // browserDriverFactory 주입이 정하고, status가 둘을 AND해 UI에 보인다.
+  // browserDriverFactory 주입을 정하고, status가 둘을 AND해 UI에 보인다.
   browserTools: true,
 } as const;
 
@@ -86,7 +89,7 @@ function codexLoggedIn(): boolean {
  * for the transcript side. The wire protocol was probed live: `thread/start`
  * takes a SandboxMode string while `turn/start` takes the full SandboxPolicy,
  * approvals arrive as server→client requests, and `thread/fork` with
- * `lastTurnId` is the truncating fork that powers rewind.
+ * `lastTurnId` is the truncating fork that powers the branch.
  */
 export class CodexDriver implements AgentDriver {
   readonly id = "codex";
@@ -97,7 +100,10 @@ export class CodexDriver implements AgentDriver {
       id: this.id,
       label: "Codex",
       modes: CODEX_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier })),
-      defaultModeId: "default",
+      // 새 대화의 기본 모드 — codex 고유의 기본 대신 전부 맡기기(bypass:
+      // approvalPolicy never, danger-full-access)로 시작한다. 사용자가 모드를
+      // 고르면 그 값이 이긴다. 플래너 승인 뒤의 복귀 지점이기도 하다.
+      defaultModeId: "bypass",
       capabilities: { ...CODEX_CAPABILITIES },
     };
   }
@@ -134,6 +140,23 @@ export class CodexDriver implements AgentDriver {
     return new CodexAgentSession(executable, launch, hooks);
   }
 
+  /**
+   * 기계 잔일의 단답 턴 — codex exec 의 읽기 전용 샌드박스 길. 무도구는
+   * 못 지키지만 무해는 지킨다(읽기 전용 · 네트워크 없음 · 세션 기록 없음).
+   * 세부 계약은 codex/one-shot.ts 머리에.
+   */
+  oneShot(prompt: string, opts: { cwd: string; timeoutMs: number }): Promise<string | null> {
+    return codexOneShot(prompt, { ...opts, executable: this.exe() });
+  }
+
+  /**
+   * `codex login` (P1-1): 주소를 stderr 에 내고 로컬 콜백을 기다린다 — 코드
+   * 붙여넣기 없음(AgentLogin 은 주소만 방송하고 wantsCode 는 켜지 않는다).
+   */
+  loginCommand(): { command: string; args: string[] } | null {
+    const executable = this.exe();
+    return executable ? { command: executable, args: ["login"] } : null;
+  }
   // -------------------------------------------------------------------------
   // The transcript store — `~/.codex/sessions` rollout files.
   // -------------------------------------------------------------------------
@@ -187,20 +210,24 @@ export class CodexDriver implements AgentDriver {
     },
 
     /**
-     * k 번째 프롬프트를 버리는 절단점: `thread/fork` 의 `lastTurnId` 는
-     * inclusive 이므로 cut = 직전 턴의 id, drops = 버릴 턴의 id. 첫 턴을
-     * 버릴 때는 cut 이 null — 세션 쪽은 그때 빈 스레드를 새로 연다.
+     * k 번째 답까지 남기는 절단점: `thread/fork` 의 `lastTurnId` 는 한 턴
+     * (프롬프트와 그 답) 을 통째로 세므로 남기는 마지막 턴은 prompt[k] 그
+     * 자체다. 중간 분기는 그다음 턴을 drops 로 적는다 — cut+drops 짝.
+     * 마지막 답에서의 분기는 잘릴 것이 없으므로 같은 cut 으로
+     * 전체를 남긴다.
      */
-    rewind: async (id, _cwd, turn) => {
+    branchCut: async (id, _cwd, turn) => {
       const path = await findRollout(codexHome(), id);
       if (!path) return null;
       const prompts = await collectPrompts(await readRolloutLines(path));
       if (turn < 1 || turn > prompts.length) return null;
-      const drops = prompts[turn - 1]?.turnId ?? null;
-      const cut = turn > 1 ? (prompts[turn - 2]?.turnId ?? null) : null;
-      // turn > 1 인데 이어 줄 이전 턴 id 를 못 찾았다 — 잘라낼 수 없는 대화록.
-      if (turn > 1 && cut === null) return null;
-      return { cut, drops, answerCount: prompts.length };
+      const cut = prompts[turn - 1]?.turnId ?? null;
+      if (cut === null) return null;
+      return {
+        cut,
+        drops: turn < prompts.length ? (prompts[turn]?.turnId ?? null) : null,
+        answerCount: prompts.length,
+      };
     },
 
     has: async (id, _cwd) => (await findRollout(codexHome(), id)) !== null,

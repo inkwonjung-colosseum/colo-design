@@ -10,18 +10,20 @@ import {
 import type { DriverRegistry } from "./agent/registry.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
 import { browseFiles, currentPlatform, listFiles } from "./environment.js";
+import type { Escalation } from "./escalation.js";
 import type { GitHubBridge } from "./github-bridge.js";
 import type { HandoffPreviews } from "./handoff-preview.js";
 import type { DaemonLogger } from "./log.js";
 import type { DaemonNotice } from "./notices.js";
 import {
-  gitInstallGuidance,
+  type AgentLogin,
   runOnboardingChecks,
   runPnpmInstall,
   startClaudeInstall,
-  startClaudeLogin,
+  startGitInstall,
 } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
+import { enrichCommentsTurn } from "./pin-files.js";
 import type { PlanTracker } from "./plan-tracker.js";
 import type { PreviewDrivers } from "./preview-drivers.js";
 import type { ProjectFleet, ProjectWorkspaces } from "./project-fleet.js";
@@ -31,6 +33,8 @@ import { assertClonableRepoUrl, type RepoWorkspace } from "./repo.js";
 import type { Session } from "./session.js";
 import type { SessionManager } from "./session-manager.js";
 import { dropTape, readTape, spliceTape } from "./session-tape.js";
+import { MAX_AUTO_REVIVES, REVIVE_GRACE_MS } from "./turn-retry.js";
+import type { TurnStats } from "./turn-stats.js";
 import { undoLog } from "./undo-log.js";
 import { repoWritePolicy } from "./workspaces.js";
 
@@ -53,17 +57,25 @@ export interface RouterDeps {
   github: GitHubBridge;
   queueStore: QueueStore;
   registry: ProjectRegistry;
-  logger: DaemonLogger;
-  broadcast(message: ServerMessage): void;
+  /** 슬라이스 5: 환경 실패를 개발자 채널로 흘리는 문 — 저장된 웹훅의 주인. */
+  escalation: Escalation;
+  /** 기계 잔일의 설정(machine.json) — machine.set · machine.author.set 이 쓰고 상태가 읽는다. */
+  machineSetting: { get(key: string): string | null; set(key: string, value: string | null): void };
+  /** 담당의 캐시 — 설정이 바뀌면 지운다(invalidate). */
+  machineTurns: { invalidate(): void };
   notice(notice: DaemonNotice): void;
+  logger: DaemonLogger;
+  /** 터미널 없는 에이전트 로그인(P1-1) — 데몬이 파이프로 몰고 방송한다. */
+  agentLogin: AgentLogin;
+  broadcast(message: ServerMessage): void;
   /** 해석된 CLI 경로 — start() 가 채운다. */
   claudeExecutable(): string | null;
   /** 설정의 CLI 경로 오버라이드 — 온보딩 체크가 읽는다. */
   claudeExecutableOverride(): string | undefined;
   queueDiskFor(sessionId: string): QueueDisk;
-  /** 세션별 화면 턴 번호 (PLAN D52) — echo 콜백(서버)과 session.send(여기)가 나눠 쓴다. */
-  checkpointTurns: Map<string, number>;
   status(): Promise<unknown>;
+  /** 턴 통계 — 보내기 문에서 잰 핀 강화 시간만 흘려 준다. */
+  stats: TurnStats;
 }
 
 /**
@@ -74,14 +86,11 @@ export class RequestRouter {
   /** The last thread a failing gate briefed, when it had to open one itself. */
   private gateThreadId: string | null = null;
   /**
-   * 재시작 뒤 첫 턴의 밑값 읽기 — 진행 중인 promptCount 프로미스를 세션별로
-   * 나눠 쥔다. 읽기는 대화록 파일을 디스크에서 다시 읽으므로 await 가 끼고,
-   * 그 사이에 도착한 같은 세션의 두 번째 send 가 또 읽으면 둘이 같은 밑값을
-   * 적어 같은 턴 번호의 체크포인트가 두 번 찍힌다(뒤것이 앞것을 덮는다).
-   * 늦게 온 send 는 새로 읽지 않고 이미 도는 읽기에 합류한다.
+   * 감독(2026-09-19): 대화별 자동 재개 상한 — 고장난 CLI 가 뜰 때마다 죽는
+   * 세계에서 무한 재기를 막는다. 턴이 성공적으로 끝나거나 대화가 닫히면
+   * 지운다: 다음 고장은 새로운 사건이다.
    */
-  private readonly checkpointSeeding = new Map<string, Promise<void>>();
-
+  private readonly reviveBudget = new Map<string, number>();
   constructor(private readonly deps: RouterDeps) {}
 
   /** The active project's repo — every repo.* case's "the repo". */
@@ -280,37 +289,21 @@ export class RequestRouter {
         // 재개(resume)가 새 CLI 에서 대화를 이어받아 지금의 말을 전달한다.
         // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
-        // 화면 턴의 시작점 (PLAN D52) is the delivery (the echo, see the
-        // manager's onEvent); this only seeds the count, before anything can
-        // be handed over — so the transcript is read while it still holds
-        // exactly the prompts that came before this one. The seed sits AFTER
-        // the resurrect: the dead session's `closed` prunes the counter, and
-        // a count planted before it would die with the old object.
-        if (this.deps.checkpointTurns.get(message.sessionId) === undefined) {
-          // 재시작 뒤 첫 턴: 카운터는 프로세스와 함께 사라지지만 대화록은
-          // 남는다. 되감기의 k 번째 프롬프트는 대화록 기준이므로 이미 있는
-          // 프롬프트 수부터 이어 셀 수밖에 없다 — 1부터 다시 세면 첫 되감기가
-          // 전체 기억을 버리고, 두 번째는 남의 턴을 자른 채 memoryKept 를
-          // 보고하던 것. 읽기가 도는 동안 온 같은 세션의 send 는 새로 읽지
-          // 않고 그 읽기에 합류한다 — 둘이 같은 밑값을 적으면 같은 턴 번호의
-          // 체크포인트가 두 번 찍혀 뒤것이 앞것을 덮는다.
-          let seeding = this.checkpointSeeding.get(message.sessionId);
-          if (!seeding) {
-            seeding = this.deps.manager
-              .promptCount(message.sessionId, target.cwd)
-              .then((count) => {
-                this.deps.checkpointTurns.set(message.sessionId, count);
-              })
-              .finally(() => {
-                if (this.checkpointSeeding.get(message.sessionId) === seeding) {
-                  this.checkpointSeeding.delete(message.sessionId);
-                }
-              });
-            this.checkpointSeeding.set(message.sessionId, seeding);
-          }
-          await seeding;
+        // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
+        // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
+        // 여기서(intake) 얹으므로 대기 줄·복원 모두 강화된 텍스트를 물고
+        // 간다. 실패는 조용하다(원문 그대로).
+        let text = message.text;
+        if (message.pinHints !== undefined && message.pinHints.length > 0) {
+          const scanStart = Date.now();
+          text = await enrichCommentsTurn(message.text, message.pinHints, carrier.cwd).catch(
+            () => message.text,
+          );
+          // 측정: 강화가 보내기 문에서 얼마나 걸렸는지 — 턴 행의 scanMs 로
+          // 내려앉는다(모델이 시작되기 전의 시간이다).
+          this.deps.stats.noteScan(message.sessionId, Date.now() - scanStart);
         }
-        carrier.send(message.text, message.attachments, message.pins);
+        carrier.send(text, message.attachments, message.pins, message.mode);
         return { ok: true };
       }
 
@@ -378,6 +371,14 @@ export class RequestRouter {
         // is keyed by the clone's realpath).
         const paths = this.deps.registry.paths(message.slug);
         const repoRoot = realpathBestEffort(paths.repoRoot);
+        // The erase takes seconds (live sessions close under a grace, the
+        // store sweep retries) and the planner's tree empties the moment
+        // they press the button — so the reply carries the ACCEPTANCE, not
+        // the completion. `beginRemoveWhere` invalidates every cache and
+        // marks the clone synchronously: reads from any window — a reload
+        // mid-erase included — answer empty from the first message after
+        // this one, and the background pass below lands the sweep.
+        this.deps.manager.beginRemoveWhere(repoRoot);
         // The wait rooms, lost rooms and tape rows go with the threads —
         // collect the ids first; removeWhere closes live sessions and
         // sweeps every driver's store in one pass. The id set must cover
@@ -393,13 +394,17 @@ export class RequestRouter {
           const stored = await driver.store?.list(repoRoot, 100_000).catch(() => []);
           for (const info of stored ?? []) ids.add(info.id);
         }
-        await this.deps.manager.removeWhere(repoRoot);
         for (const sessionId of ids) {
           this.deps.queueStore.clear(sessionId);
           dropTape(paths.root, sessionId);
         }
-        this.touchThreadsCwd(repoRoot);
-        this.announceProjects();
+        void this.deps.manager
+          .removeWhere(repoRoot)
+          .catch(() => undefined)
+          .then(() => {
+            this.touchThreadsCwd(repoRoot);
+            this.announceProjects();
+          });
         return { ok: true };
       }
       case "session.contextUsage": {
@@ -415,8 +420,11 @@ export class RequestRouter {
         return browseFiles(files, message.query ?? "", message.limit ?? 40);
       }
 
+      // 두 메시지는 서로 다른 어휘를 실어 온다 — 이쪽은 드라이버 자신의 모드
+      // id(ACP `build`, codex `bypass`, …), 아래 setPermissionMode 는 Claude
+      // 열거형. 한 핸들러로 접어 두면 메시지를 둘로 둔 의미가 없다(감사 C5).
       case "session.setMode":
-        await this.deps.manager.require(message.sessionId).setPermissionMode(message.mode);
+        await this.deps.manager.require(message.sessionId).setMode(message.mode);
         return { ok: true };
 
       case "session.setModel":
@@ -587,15 +595,24 @@ export class RequestRouter {
         // conflict briefs the named thread like a failing gate does. The
         // button's failures report — the planner pressed it, so the reason
         // lands as words on the screen instead of a silent no-op.
-        const { onSessionTurn } = this.briefTo(message.sessionId, "refresh");
+        let threadId = message.sessionId;
         // 사이클 브랜치에서 대화 없이 눌린 최신화는 병합을 하지 않는다(충돌의
-        // 첫 과제는 AI 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는
-        // 지 버튼을 누른 사람에게 말한다.
+        // 첫 과제는 AI 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는지
+        // 본다. 받아올 것이 있으면 대화가 필요하다: 슬라이스 6 (2026-09-19) 부터
+        // 도구가 "최신화 문제 해결" 대화를 스스로 열어 막다른 문장 대신 그
+        // 대화로 진행한다. 열 수 없는 세계(CLI 없음)만 예전 문장으로 말한다.
         const behind = await this.repo.refreshNeedsThread();
-        if (behind !== null && !message.sessionId)
-          throw new Error(
-            `개발자의 최신 변경 ${behind}건이 원격에 있습니다 — 대화를 하나 연 뒤 최신화를 누르면 지금 화면 위로 받아 옵니다.`,
-          );
+        if (behind !== null && !threadId) {
+          const thread = this.gateThreadFor("refresh");
+          if (thread) {
+            threadId = thread.id;
+          } else {
+            throw new Error(
+              `개발자의 최신 변경 ${behind}건이 원격에 있습니다 — 대화를 하나 연 뒤 최신화를 누르면 지금 화면 위로 받아 옵니다.`,
+            );
+          }
+        }
+        const { onSessionTurn } = this.briefTo(threadId, "refresh");
         // 받아올 게 없으면 pull 도 부르지 않는다 — 새 커밋 0건의 병합은
         // 아무도 모른 채 끝나는 일이고, 그것이 정직한 결과다.
         if (behind === 0) return await this.repo.status();
@@ -603,11 +620,11 @@ export class RequestRouter {
         // 실사 결함: 최신화가 사이클 브랜치에 merge 커밋을 묵시적으로 쌓는
         // 사실을 아무도 말하지 않았다. 병합이 실제로 일어났으면 그 기록이
         // 대화에 남는다 — 충돌 브리프와 같은 자리, 같은 어휘로.
-        if (behind !== null && behind > 0 && outcome === "clean" && message.sessionId) {
+        if (behind !== null && behind > 0 && outcome === "clean" && threadId) {
           // The record is news, not cargo: a thread that died mid-refresh
           // must not turn the report into an error reply.
           try {
-            this.deps.manager.get(message.sessionId)?.send(
+            this.deps.manager.get(threadId)?.send(
               markTurn(
                 {
                   kind: "brief",
@@ -630,24 +647,90 @@ export class RequestRouter {
           gitHubClient: () => this.deps.github.client(),
           provider: message.provider,
           driverFor: (id) => this.deps.agentDrivers.get(id),
+          // 쓰기 레포 수(P1-2): 브리지의 캐시를 읽는다 — 피커가 곧 같은 목록을
+          // 요청하므로 이 판정의 추가 비용은 첫 한 번뿐이다.
+          githubWriteRepoCount: () => this.deps.github.writeRepoCount(),
         });
 
       case "onboarding.fix":
         switch (message.kind) {
           case "install-claude":
             return startClaudeInstall();
-          case "login-claude":
-            return startClaudeLogin();
+          case "login-claude": {
+            // P1-1: 데몬이 로그인을 대신 몰고, 주소·끝은 방송으로 나간다.
+            // 각 드라이버가 자기 로그인 명령을 선언한다(loginCommand) — claude 는
+            // `auth login`(스파이크로 확인: 주소는 stdout, 코드는 stdin), codex 는
+            // `login`(주소는 stderr, 콜백 대기).
+            const provider = message.provider ?? "claude";
+            const driver = this.deps.agentDrivers.get(provider);
+            const command = driver?.loginCommand?.();
+            if (!command) {
+              return {
+                started: false,
+                guidance:
+                  "이 에이전트는 로그인을 앱이 대신 시작할 수 없습니다 — 터미널에서 직접 로그인한 뒤 다시 확인해 주세요.",
+              };
+            }
+            return this.deps.agentLogin.start(command.command, command.args, {
+              onUrl: (url, wantsCode) =>
+                this.deps.broadcast({ type: "agent.login.url", url, wantsCode }),
+              onDone: (ok, detail) => this.deps.broadcast({ type: "agent.login.done", ok, detail }),
+            });
+          }
           case "install-git":
-            return gitInstallGuidance();
+            return startGitInstall();
           case "install-pnpm":
             return await runPnpmInstall();
         }
         return { started: false, guidance: "알 수 없는 수정 요청입니다." };
+      case "agent.login.code": {
+        if (!this.deps.agentLogin.submitCode(message.code)) {
+          throw new Error("진행 중인 로그인이 없습니다 — 로그인 버튼을 다시 눌러 주세요.");
+        }
+        return { ok: true as const };
+      }
+      case "escalation.set":
+        await this.deps.escalation.set(message.config);
+        return { ok: true as const };
+      case "machine.set": {
+        const provider = message.provider;
+        if (provider !== null) {
+          const driver = this.deps.agentDrivers.get(provider);
+          if (!driver) throw new Error(`알 수 없는 에이전트입니다: ${provider}`);
+          if (!driver.oneShot) {
+            throw new Error(
+              `${driver.describe().label} 는 저장 메모를 맡을 수 없습니다 — 자동으로 두거나 다른 에이전트를 골라 주세요.`,
+            );
+          }
+          const diagnostic = await driver.isAvailable().catch(() => null);
+          if (!diagnostic?.ok || !diagnostic.executable) {
+            throw new Error(
+              `${driver.describe().label} CLI 를 찾지 못했습니다 — 설치를 마친 뒤 다시 시도해 주세요.`,
+            );
+          }
+        }
+        this.deps.machineSetting.set("provider", provider);
+        this.deps.machineTurns.invalidate();
+        return { ok: true as const };
+      }
+      case "machine.author.set": {
+        // 이름은 문서로 흘러가는 문자열이라 잘라내는 것으로 충분하다 — 빈 칸은
+        // 지우기(null 과 같은 길)로 읽는다. 상태의 authorName 이 다음 방송에 실린다.
+        const name = message.name === null ? null : message.name.trim();
+        this.deps.machineSetting.set("authorName", name === "" ? null : name);
+        return { ok: true as const };
+      }
+      case "escalation.test": {
+        const sent = await this.deps.escalation.notify(
+          "[Colo Design] 개발자 알림 시험 — 이 메시지가 보이면 연결된 것입니다.",
+        );
+        if (!sent)
+          throw new Error("알림을 보내지 못했습니다 — 웹훅 주소나 봇 토큰·채널을 확인해 주세요.");
+        return { ok: true as const };
+      }
 
       case "github.token.set":
         return await this.deps.github.setToken(message.token);
-
       case "github.repos.list":
         return await this.deps.github.listRepos(message.refresh === true);
 
@@ -707,7 +790,7 @@ export class RequestRouter {
       // committed capture at a time — null is the "no shot" answer, not an
       // error, so the panel falls back to the live preview with the stamp.
       case "repo.handoffShot":
-        return await this.repo.handoffShot(message.route, message.state);
+        return await this.repo.handoffShot(message.route);
 
       // 시점 빌드 재현: the frozen stage's 실제로
       // 열기 — the handoff branch's tip in a throwaway worktree, served on
@@ -722,52 +805,35 @@ export class RequestRouter {
       // picture to the next turn. Desktop only; the browser dev path has
       // no window to shoot.
       case "preview.capture":
-        return await this.deps.previewDrivers.capture(message.route, message.state);
+        return await this.deps.previewDrivers.capture(message.route);
+
+      // 패인 오류의 판정: the error banner's held report, re-opened in the
+      // isolated verification window. The pane decides what the verdict
+      // means — a fixed transient is put away quietly, a live break becomes
+      // the auto fix turn. 확인 불능(null)도 판정의 하나다.
+      case "preview.screenCheck":
+        return await this.deps.previewDrivers.checkScreen(message.route);
 
       // 답하기 (PLAN D88): the planner's words to one developer comment —
       // the daemon picks the endpoint by the id's kind.
-      // 되감기 (PLAN D95): files (the turn's checkpoint) go back first, then
-      // the daemon forks the conversation's memory before that answer and
-      // sends the words again. A refused fork falls back inside the manager.
-      case "session.rewind": {
+      case "session.branch": {
         const target = this.deps.manager.require(message.sessionId);
         if (target.cwd !== this.workspaceCwd()) {
           throw new Error("다른 프로젝트의 대화입니다 — 프로젝트를 전환한 뒤 시도해 주세요.");
         }
-        // 도는 턴 위에서 워크트리를 되돌리면 복원 뒤에 에이전트의 쓰기가 섞인다 —
-        // "파일이 먼저 돌아가고 기억이 뒤따른다"는 rewind 계약이 깨진다. 거절이
-        // 정직한 답이다(중지는 사용자의 몫).
+        // 도는 턴의 대화록은 아직 정산되지 않았다 — 그 위에서 자르면 k 셈과
+        // 저장 대화록이 어긋난다. 되감기의 실행 중 거절과 같은 정직함이다.
         if (target.state === "running" || target.state === "starting") {
-          throw new Error(
-            "돌고 있는 턴이 있습니다 — 중지한 뒤에 되감을 수 있습니다. 먼저 중지해 주세요.",
-          );
+          throw new Error("돌고 있는 턴이 있습니다 — 턴이 끝난 뒤 분기할 수 있습니다.");
         }
-        const checkpoints = await this.repo.checkpoints();
-        const entry = checkpoints.entries.find(
-          (candidate) =>
-            candidate.sessionId === message.sessionId && candidate.turn === message.turn,
-        );
-        // 체크포인트가 없는 턴은 되감을 수 없다: 파일이 먼저 돌아가고 기억이
-        // 뒤따르는 약속인데, 파일 없이 기억만 자르면 워크트리는 그 턴 이후의
-        // 것을 든 채 대화만 과거로 간다. 재시작 뒤 다시 센 번호나 정리된 ref
-        // 로 엇갈린 요청은 거절이 정직한 답이다.
-        if (!entry) {
-          throw new Error("그 턴의 체크포인트를 찾지 못했습니다 — 아무것도 되돌리지 않았습니다.");
-        }
-        await this.repo.checkpointRestore(entry.id);
         const targetDriver = this.deps.agentDrivers.get(target.provider);
-        // The fork's binary is the TARGET provider's — a codex thread must
-        // not be handed the claude path just because the field used to be
-        // named after it.
         const targetExecutable = targetDriver
           ? ((await targetDriver.isAvailable().catch(() => null))?.executable ?? null)
           : null;
-        const result = await this.deps.manager.rewind({
+        const result = await this.deps.manager.branch({
           sessionId: message.sessionId,
           cwd: this.workspaceCwd(),
           turn: message.turn,
-          text: message.text,
-          attachments: message.attachments,
           base: {
             cwd: this.workspaceCwd(),
             provider: target.provider,
@@ -779,12 +845,6 @@ export class RequestRouter {
           },
         });
         this.deps.manager.invalidateThreads(target.cwd);
-        undoLog().record({
-          kind: "retry",
-          slug: this.requireActive().slug,
-          sessionId: message.sessionId,
-          turn: message.turn,
-        });
         this.refreshThreads();
         return result;
       }
@@ -813,12 +873,14 @@ export class RequestRouter {
         return await this.repo.history();
 
       case "repo.restore": {
+        this.refuseWhileTurnRuns();
         const restored = await this.repo.restore(message.sha);
         undoLog().record({ kind: "save", slug: this.requireActive().slug });
         return restored;
       }
 
       case "repo.discard":
+        this.refuseWhileTurnRuns();
         return await this.repo.discard();
 
       // 잠깐 치워두기 · 꺼내기 (보관함 토론 2026-09-15): one slot per repo.
@@ -830,23 +892,6 @@ export class RequestRouter {
       case "repo.unshelve":
         return await this.repo.unshelve(this.briefTo(message.sessionId, "save").onSessionTurn);
 
-      case "repo.checkpoints":
-        return await this.repo.checkpoints();
-
-      case "repo.checkpoint.restore": {
-        const restored = await this.repo.checkpointRestore(message.checkpoint);
-        // 체크포인트 id 는 `<sessionId>/<turn>` 그대로다 — 되돌린 턴의 번호를
-        // 알아내려고 git 을 한 번 더 부를 이유가 없다.
-        const [sessionId, turn] = message.checkpoint.split("/");
-        undoLog().record({
-          kind: "turn",
-          slug: this.requireActive().slug,
-          ...(sessionId ? { sessionId } : {}),
-          ...(Number.isFinite(Number(turn)) ? { turn: Number(turn) } : {}),
-        });
-        return restored;
-      }
-
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,
       // exactly because the planner is looking at one project's preview.
@@ -856,6 +901,22 @@ export class RequestRouter {
         return { recorded: message.items.length };
       }
     }
+  }
+
+  /**
+   * 도는 턴 위에서 워크트리를 되돌리지 않는다 — 저장 · 되돌리기가 세운
+   * 계약을 인접 엔드포인트에도 같은 문구로 적용한다(감사 2026-09-19 C2ⓐ). 복원과
+   * 에이전트의 쓰기가 섞이면 어느 순간의 것도 아닌 트리가 남고, 그 트리가
+   * 그대로 사이클 브랜치에 실린다. 거절이 정직한 답이다(중지는 사용자의 몫).
+   *
+   * 판정은 활성 클론 기준이다 — 이 세 메시지는 slug 를 실지 않고 활성
+   * 프로젝트의 워크트리를 뜻하므로, 그 클론에서 도는 턴만이 위험하다.
+   */
+  private refuseWhileTurnRuns(): void {
+    if (!this.deps.manager.anyRunning(this.workspaceCwd())) return;
+    throw new Error(
+      "돌고 있는 턴이 있습니다 — 중지한 뒤에 되돌릴 수 있습니다. 먼저 중지해 주세요.",
+    );
   }
 
   /**
@@ -902,6 +963,49 @@ export class RequestRouter {
     this.deps.manager.invalidateThreads(session.cwd);
     this.refreshThreads();
     return session;
+  }
+
+  /**
+   * 죽은 질의를 스스로 되살린다 — 세션의 onRevive 가 부르는 문(커밋
+   * 2026-09-19 "무조건 처리"). 사람의 재입력을 기다리는 대신, 같은 id 의
+   * 재개(resurrectSession)로 새 CLI 를 띄워 마지막 말을 다시 내려놓는다.
+   *
+   * 유예를 먼저 센다: 세션은 아직 제 스레드를 정리하는 중이고, 죽는 CLI 의
+   * 마지막 방송과 경합하면 안 된다. 그 사이 사람이 먼저 다시 보냈거나 대화를
+   * 다시 열었다면 물러난다(상태가 error 가 아니다). 상한을 넘었거나 살릴 말이
+   * 없어도 물러난다 — 그 자리엔 크래시 카드가 이미 사람의 손을 적어 두었다.
+   */
+  async revive(sessionId: string): Promise<void> {
+    if ((this.reviveBudget.get(sessionId) ?? 0) >= MAX_AUTO_REVIVES) return;
+    const grace = Promise.withResolvers<void>();
+    setTimeout(grace.resolve, REVIVE_GRACE_MS);
+    await grace.promise;
+    const dead = this.deps.manager.get(sessionId);
+    if (dead?.state !== "error") return;
+    const item = dead.revivePayload;
+    if (!item) return;
+    this.reviveBudget.set(sessionId, (this.reviveBudget.get(sessionId) ?? 0) + 1);
+    try {
+      const session = await this.resurrectSession(dead);
+      this.deps.logger.warn("크래시 자동 재개", { sessionId });
+      this.deps.broadcast({
+        type: "session.event",
+        sessionId,
+        event: {
+          kind: "notice",
+          level: "info",
+          text: `새 ${session.providerLabel} 프로그램이 대화를 이어받아 방금 하던 일을 계속합니다.`,
+        },
+      });
+      session.send(item.text, item.attachments, item.pins);
+    } catch {
+      // CLI 가 없다든가 — 사람의 손(크래시 카드)이 여전히 정답이다.
+    }
+  }
+
+  /** 감독: 턴이 답을 내거나 대화가 닫혔다 — 재개 상한은 돌려놓는다. */
+  forgetReviveBudget(sessionId: string): void {
+    this.reviveBudget.delete(sessionId);
   }
 
   /**

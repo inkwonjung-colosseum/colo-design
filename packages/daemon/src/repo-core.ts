@@ -20,6 +20,7 @@ import {
 } from "@colo-design/protocol";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
+import type { MachineTurn } from "./machine-provider.js";
 import { killTree } from "./preview-claim.js";
 import { type RepoConfig, type RepoRegistry, resolveRepoConfig } from "./repo-config.js";
 import {
@@ -64,35 +65,21 @@ export const GATE_OUTPUT_TAIL_LINES = 30;
  */
 export const COMMAND_STALL_MS = 300_000;
 /**
- * Where every turn-start snapshot lives (PLAN D52). A namespace of its own
- * under `refs/`, so a developer's `git for-each-ref` never trips over it by
- * accident and one `refs/colo-design/checkpoints` listing sweeps it.
- */
-export const CHECKPOINT_REF_PREFIX = "refs/colo-design/checkpoints";
-/** D52: a session keeps its most recent snapshots; older ones are deleted. */
-export const CHECKPOINTS_PER_SESSION = 20;
-/**
- * 잠깐 치워두기 (보관함 토론 2026-09-15): the worktree's unsaved work, parked
- * in ONE ref of its own — a sibling of the checkpoints namespace, so 반영됨's
- * clearCheckpoints never sweeps it, and never a `git stash`, whose namespace
- * the refresh's transit stash and its recovery machinery own. A sibling ref
- * also means the agent Bash gate's open `git stash` verbs cannot reach it.
+ * The one shelf slot's ref. A ref of its own (never a `git stash`, whose
+ * namespace the refresh's transit stash and its recovery machinery own) also
+ * means the agent Bash gate's open `git stash` verbs cannot reach it.
  */
 export const SHELF_REF = "refs/colo-design/shelf";
 /** Forensics only — the planner's words for the slot live in the UI. */
 export const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
 
-/** The machine turns' model (비개발자 저장): reading a diff and saying what it
- * did is haiku's job — fast enough for the leashes above and below, and a
- * planner's model stays for planning. */
-export const MACHINE_MODEL = "haiku";
 /** How long the save-time memo turn may take before the default message. */
 export const MEMO_TIMEOUT_MS = 8_000;
 /** How long the 넘기기 draft's turn may take before the browser's proposal wins. */
 export const HANDOFF_DRAFT_TIMEOUT_MS = 8_000;
 
 /**
- * What the agent is told when a step fails, named the way the planner's own
+ * The planner's own word for each gate — the step as the planner's own
  * button is. "push 단계가 실패했습니다" would send it looking for a git
  * problem when the planner pressed 저장.
  */
@@ -265,8 +252,19 @@ export interface RepoWorkspaceOptions {
   }) => void;
   /** Built per call so a PAT changed mid-run reaches the next request. */
   gitHubClient?: () => GitHubClient | null;
-  /** Claude Code CLI executable for the summarizer's one turn (D51). */
-  claudeExecutable?: string | null;
+  /**
+   * The machine turn that writes the save memo and the handoff draft —
+   * machine-provider.ts picks the driver; the repo layer stays provider-blind.
+   * Absent (a direct construction, doctor, tests) means the fallback is the
+   * only path, exactly as a missing CLI used to mean.
+   */
+  machineTurn?: MachineTurn;
+  /**
+   * 넘긴 요청에 적을 작성자 이름(P1-3) — 온보딩이 machine.json 에 저장한 값.
+   * 읽어가는 곳은 커밋 identity(fallback 이름)과 PR 본문의 `> 작성:` 줄 둘뿐.
+   * 없으면 도구 이름(Colo Design)이 지난날처럼 쓰인다.
+   */
+  authorName?: () => string | null;
   /**
    * Whether the planner said this repo's commands may run here. Absent
    * (a direct construction, a pre-gate project) reads as approved — the
@@ -286,6 +284,11 @@ export interface RepoWorkspaceOptions {
    * 부른 대화 — 없으면 붙이는 쪽(플릿)이 마지막 활성 세션으로 귀속한다.
    */
   onCycleEvent?: (event: ChatEvent, sessionId?: string) => void;
+  /**
+   * 슬라이스 5: AI 가 고칠 수 없는 환경 실패를 개발자 채널로 흘리는 문 —
+   * 저장·넘기기의 인증·권한 게이트가 여기를 부른다.
+   */
+  escalate?: (text: string) => void;
 }
 
 export class RepoCore {
@@ -339,14 +342,6 @@ export class RepoCore {
   active = true;
 
   lastEmit = 0;
-
-  /**
-   * The Claude Code CLI, resolved once by the server from the same source
-   * the sessions get theirs (PLAN D51). The summarizer's one turn rides it;
-   * null means the fallback path is the only path.
-   */
-  readonly claudeExecutable: string | null;
-
   readonly onStatus: (status: RepoStatus) => void;
 
   readonly onDiffStatus: ((status: DiffStatus) => void) | null;
@@ -406,6 +401,9 @@ export class RepoCore {
 
   readonly gitHubClient: (() => GitHubClient | null) | null;
 
+  /** 넘긴 요청에 적을 작성자 이름 — 커밋 fallback 이름과 PR 본문이 읽는다(P1-3). */
+  readonly authorName: (() => string | null) | null;
+
   constructor(options: {
     /** Absolute path of the clone. */
     root: string;
@@ -430,8 +428,8 @@ export class RepoCore {
     }) => void;
     /** Built per call so a PAT changed mid-run reaches the next request. */
     gitHubClient?: () => GitHubClient | null;
-    /** Claude Code CLI executable for the summarizer's one turn (D51). */
-    claudeExecutable?: string | null;
+    /** 넘긴 요청에 적을 작성자 이름 — 없으면 도구 이름이 쓰인다(P1-3). */
+    authorName?: () => string | null;
     /**
      * Whether the planner said this repo's commands may run here. Absent
      * (a direct construction, a pre-gate project) reads as approved — the
@@ -459,7 +457,7 @@ export class RepoCore {
     this.commandsApproved = options.commandsApproved ?? true;
     this.onCycleChange = options.onCycleChange ?? null;
     this.gitHubClient = options.gitHubClient ?? null;
-    this.claudeExecutable = options.claudeExecutable ?? null;
+    this.authorName = options.authorName ?? null;
     this.active = options.active ?? true;
   }
 
@@ -902,15 +900,19 @@ export class RepoCore {
   /**
    * A planner's machine may have no git identity; the commits this tool
    * makes on the planner's behalf (saves, cycle merges, stashes) invent one
-   * rather than fail over a name nobody reads.
+   * rather than fail over a name nobody reads. 온보딩이 작성자 이름을 받아 뒀으면
+   * 그 이름이 도구 이름을 대신한다(P1-3) — 이메일은 여전히 이 도구의 것이고,
+   * 개발자는 PR 의 `> 작성:` 줄과 같은 이름을 커밋에서도 읽는다.
    */
   async identityArgs(): Promise<string[]> {
+    const fallback = () => {
+      const name = this.authorName?.() ?? "Colo Design";
+      return ["-c", `user.name=${name}`, "-c", "user.email=colo-design@localhost"];
+    };
     try {
-      return (await this.git(["config", "user.email"])).trim()
-        ? []
-        : ["-c", "user.name=Colo Design", "-c", "user.email=colo-design@localhost"];
+      return (await this.git(["config", "user.email"])).trim() ? [] : fallback();
     } catch {
-      return ["-c", "user.name=Colo Design", "-c", "user.email=colo-design@localhost"];
+      return fallback();
     }
   }
 

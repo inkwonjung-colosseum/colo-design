@@ -224,7 +224,7 @@ export function ProgressPanel({
                 {guidance
                   ? guidance.body
                   : needsSetup
-                    ? "새 프로젝트로 연결 레포를 연결하고, 설정에서 개인 액세스 토큰을 입력해 주세요."
+                    ? "새 프로젝트로 연결 레포를 연결하고, 설정에서 연결 코드를 입력해 주세요."
                     : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
               </p>
               {guidance?.command && (
