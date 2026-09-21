@@ -225,6 +225,9 @@ async function main() {
   const leaf = (threadId) => page.locator(`.leaf[data-thread-id="${threadId}"]`);
 
   try {
+    // 첫 실행 투어의 예시 창은 빈 대화마다 선다 — 이 스위트는 투어가
+    // 아니라 그 아래의 화면을 본다.
+    await page.addInitScript(() => localStorage.setItem("colo-design.tour-step", "done"));
     await page.goto(`http://127.0.0.1:${PORT}/`);
     await page.getByPlaceholder("ws://127.0.0.1:7823?token=…").fill(daemonUrl);
     await page.getByRole("button", { name: "연결" }).click();

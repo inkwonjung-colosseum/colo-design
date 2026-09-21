@@ -158,6 +158,9 @@ async function main() {
   page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
   try {
+    // 첫 실행 투어의 예시 창은 빈 대화마다 선다 — 이 스위트는 투어가
+    // 아니라 그 아래의 화면을 본다.
+    await page.addInitScript(() => localStorage.setItem("colo-design.tour-step", "done"));
     await page.goto(`http://127.0.0.1:${PORT}/`);
     // --- 1. the first run is the full-window start wizard -----------------
     //     기계 게이트는 조용히 확인된다 — 실패만 기계 마법사를 세운다.

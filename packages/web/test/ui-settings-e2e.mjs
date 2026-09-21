@@ -105,6 +105,9 @@ async function main() {
     //    The default is a decision about the work — reading a document
     //    beside a rendered screen — not about what the OS happens to prefer.
     await page.emulateMedia({ colorScheme: "dark" });
+    // 첫 실행 투어의 예시 창은 빈 대화마다 선다 — 이 스위트는 투어가
+    // 아니라 그 아래의 화면을 본다.
+    await page.addInitScript(() => localStorage.setItem("colo-design.tour-step", "done"));
     await page.goto(APP);
     await page.waitForSelector(".connect__cmd", { timeout: 10000 });
     check("no stored settings means the light palette stands", (await theme(page)) === "light");

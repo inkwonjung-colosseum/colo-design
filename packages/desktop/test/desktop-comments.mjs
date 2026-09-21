@@ -375,6 +375,18 @@ async function main() {
   try {
     const page = await app.firstWindow();
     await page.setViewportSize({ width: 1720, height: 1000 });
+    // 첫 실행 투어의 예시 창은 빈 대화마다 선다 — 이 스위트는 투어가 아니라
+    // 그 아래의 화면을 본다. 창은 이미 로드됐으므로 시드 뒤 webContents 로 다시
+    // 읽는다(page.goto/reload 는 webview 를 품은 이 창에서 load 를 기다리다
+    // 멈춘다).
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      await win.webContents.executeJavaScript(
+        'localStorage.setItem("colo-design.tour-step", "done")',
+      );
+      win.webContents.reload();
+    });
+    await page.waitForLoadState("domcontentloaded");
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
 
