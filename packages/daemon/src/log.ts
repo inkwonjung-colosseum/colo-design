@@ -61,8 +61,46 @@ function pruneOldLogs(dir: string, today: Date, keepDays: number): void {
 function serializable(fields: Record<string, unknown>): Record<string, unknown> {
   const plain: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields)) {
-    plain[key] = value instanceof Error ? { name: value.name, message: value.message } : value;
+    plain[key] = sanitizeValue(value);
   }
+  return plain;
+}
+
+/**
+ * 로그의 값이 되는 말에서 비밀·주소를 눌러 닫는다 — 로그는 지원의 흔적이지
+ * 자료의 사본이 아니다 (zcode error-sanitizer 참조). 오류 문장은 SDK·git·
+ * GitHub 을 지나오며 토큰과 사용자 경로를 그대로 실어 오는 자리라, 여기서
+ * 한 번 걷는 것이 유일한 걸러마다.
+ */
+const SECRET_PATTERN =
+  /(ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{8,}|rk-[A-Za-z0-9_-]{8,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{10,}|xox[bp]-[A-Za-z0-9-]+|hooks\.slack\.com\/services\/[A-Za-z0-9/]+|Bearer\s+[A-Za-z0-9._~+/=-]+)/g;
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+/** 계정 이름이 사는 절대 경로의 머리 — ~ 로 눌러 닫는다. 나머지 경로는 지원의 단서로 남는다. */
+const USER_ROOT_PATTERNS: Array<[RegExp, string]> = [
+  [/\/Users\/[^/\\\s"':]+/g, "~"],
+  [/\/home\/[^/\\\s"':]+/g, "~"],
+  [/C:\\Users\\[^/\\\s"':]+/g, "~"],
+];
+
+function sanitizeText(text: string): string {
+  // Bearer 쪽은 어휘(Bearer )를 남긴다 — 어떤 종류의 비밀인지의 단서다.
+  let out = text.replace(SECRET_PATTERN, (matched) =>
+    matched.startsWith("Bearer ") ? "Bearer {secret}" : "{secret}",
+  );
+  out = out.replace(EMAIL_PATTERN, "{email}");
+  for (const [pattern, replacement] of USER_ROOT_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+function sanitizeValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return sanitizeText(value);
+  if (value instanceof Error) return { name: value.name, message: sanitizeText(value.message) };
+  if (depth >= 4 || value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, depth + 1));
+  const plain: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) plain[key] = sanitizeValue(item, depth + 1);
   return plain;
 }
 
