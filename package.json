@@ -8,9 +8,10 @@
     "prepare": "lefthook install",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "dev:daemon": "node scripts/free-port.mjs daemon && COLO_DESIGN_DEV_AGENTS=1 pnpm --filter @colo-design/daemon dev",
-    "dev:web": "node scripts/free-port.mjs 29173 && pnpm --filter @colo-design/web dev",
-    "dev:desktop": "node scripts/free-port.mjs 29173 && pnpm --filter @colo-design/desktop dev:hmr",
+    "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts",
+    "dev:daemon": "COLO_DESIGN_DEV_AGENTS=1 pnpm --filter @colo-design/daemon dev",
+    "dev:web": "pnpm --filter @colo-design/web dev",
+    "dev:desktop": "pnpm --filter @colo-design/desktop dev:hmr",
     "doctor": "pnpm --filter @colo-design/daemon doctor"
   },
   "devDependencies": {
