@@ -4,6 +4,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import {
+  type ClientMessage,
   PROTOCOL_VERSION,
   type ProjectSummary,
   parseClientMessage,
@@ -16,6 +17,7 @@ import { CodexDriver } from "./agent/drivers/codex/driver.js";
 import { OmpDriver } from "./agent/drivers/omp/driver.js";
 import { DriverRegistry } from "./agent/registry.js";
 import { browserMcpEntry } from "./browser-launch.js";
+import { CommandDedupe } from "./command-dedupe.js";
 import {
   type CredentialStore,
   createCredentialStore,
@@ -280,6 +282,12 @@ export function registerAgentDrivers(
 
 export class DaemonServer {
   private readonly clients = new Set<WebSocket>();
+  /**
+   * 명령 멱등 답변(command-dedupe.ts) — 같은 id 의 실행은 한 번. 웹의
+   * 재전송(타임아웃 뒤 · 재접속 뒤)이 같은 명령을 두 번 실행하지 않게 하는
+   * 데몬 쪽 절반이고, 웹의 절반은 같은 id 를 다시 보내는 것이다.
+   */
+  private readonly dedupe = new CommandDedupe();
   private readonly manager: SessionManager;
   private readonly logger: DaemonLogger;
   private readonly credentials: CredentialStore;
@@ -1432,9 +1440,23 @@ export class DaemonServer {
       return;
     }
     const message = parsed.value;
+    // 멱등 답변(command-dedupe.ts): the same id never runs twice. A resend
+    // that arrives while the first run is in flight joins it, and one that
+    // arrives after it settled gets the remembered reply — so a retried
+    // session.send cannot send twice and a retried save cannot commit twice.
+    const reply = await this.dedupe.run(message.id, () => this.produceReply(message));
+    this.send(ws, reply);
+  }
+
+  /**
+   * 한 명령의 답 하나 — ok 이든 error 이든 dedupe 가 기억하는 정산물이다.
+   * 절대 던지지 않는다: 실패도 실행의 결과라, 재전송은 같은 실패 답을 다시
+   * 본다. 새로 시도하는 것은 새 id 가 하는 일이다.
+   */
+  private async produceReply(message: ClientMessage): Promise<ServerMessage> {
     try {
       const data = await this.router.dispatch(message);
-      this.send(ws, { type: "ok", id: message.id, data });
+      return { type: "ok", id: message.id, data };
     } catch (error) {
       // The one Korean boundary every RPC refusal passes (리뷰 C1·C3): the
       // daemon's own guards already answer in Korean and pass through
@@ -1442,11 +1464,11 @@ export class DaemonServer {
       // response received" once rode the wire to the chat banner — is logged
       // here verbatim and replaced by the recovery sentence.
       this.logger.error("요청 실패", { type: message.type, err: error });
-      this.send(ws, {
+      return {
         type: "error",
         id: message.id,
         message: asPlannerFacingError(error).message,
-      });
+      };
     }
   }
 }

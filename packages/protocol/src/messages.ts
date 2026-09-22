@@ -8,6 +8,12 @@ import { effortLevelSchema, permissionModeSchema, type SessionState } from "./sh
 // Client -> daemon
 // ---------------------------------------------------------------------------
 
+/**
+ * 모든 클라이언트 명령의 신원 — 응답 상관이자 **멱등 키**. 데몬은 같은 id 의
+ * 실행을 한 번만 하고(command-dedupe.ts), 끝난 실행의 답(ok·error 다 함께)을
+ * 기억해 재전송에 되돌려준다. 그러므로 id 는 재시도 사이에 바뀌지 않는 값이어야
+ * 하고, 다른 명령은 다른 id 를 쓴다.
+ */
 const withId = { id: z.string().min(1) };
 
 /**
