@@ -1030,12 +1030,21 @@ function readOnboardingCache(): OnboardingCache {
   return { provider: null, steps: [] };
 }
 
+/**
+ * 요청의 멱등 키 — 응답 상관을 겸한다. 데몬이 id 로 같은 실행을 한 번만 하므로
+ * 전역 유일해야 한다: 창끼리 `c1` 을 재사용하던 옛 발행은 서로의 답을 삼켰다.
+ */
+function mintRequestId(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === "function") return c.randomUUID();
+  return `c${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function useDaemon(url: string | null): Daemon {
   const socket = useRef<WebSocket | null>(null);
   const pendingCalls = useRef(
     new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>(),
   );
-  const counter = useRef(0);
 
   const [connection, setConnection] = useState<ConnectionState>("idle");
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -1375,7 +1384,7 @@ export function useDaemon(url: string | null): Daemon {
       const ws = socket.current;
       if (!ws || ws.readyState !== ws.OPEN)
         return Promise.reject(new Error("아직 연결되지 않았습니다"));
-      const id = `c${++counter.current}`;
+      const id = mintRequestId();
       return new Promise<T>((resolve, reject) => {
         pendingCalls.current.set(id, {
           resolve: resolve as (v: unknown) => void,
@@ -1385,10 +1394,11 @@ export function useDaemon(url: string | null): Daemon {
         // never overwrite the return address the reply is matched by.
         ws.send(JSON.stringify({ ...payload, id }));
         setTimeout(() => {
-          // Not "retry": a save may have landed after the window closed, and
-          // a blind resend would double it. The honest line is that the reply
-          // is late — go look, then decide. (실사 이후: used to be the English
-          // "daemon did not respond", which read as a crash.)
+          // Not "retry": a blind resend here would still double a command the
+          // daemon has not answered yet. The honest line is that the reply is
+          // late — go look, then decide. When a retry IS offered (실패 카드의
+          // 다시 보내기), it must reuse the SAME id: the daemon dedupes by id
+          // and answers the remembered reply instead of running twice.
           if (pendingCalls.current.delete(id))
             reject(new Error("응답이 늦어졌습니다 — 잠시 뒤 대화나 화면을 다시 확인해 주세요."));
         }, timeoutMs);
