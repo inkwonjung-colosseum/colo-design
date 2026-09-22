@@ -17,6 +17,7 @@ import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
 import { daemonLogDir } from "./log.js";
+import { classifyFailure } from "./turn-retry.js";
 
 /** 보존 일수 — 데몬 하루 로그와 같은 창. */
 const RETENTION_DAYS = 7;
@@ -71,8 +72,12 @@ interface InFlight {
   other: number;
   /** user.echo 를 본 데몬 시계(ms) — firstEditMs 의 시작점. */
   startedAt: number;
+  /** 첫 text.delta 가 뜬 시각 — 첫 글자까지의 대기(TTFT). 없던 턴은 null. */
+  firstDeltaAt: number | null;
   /** 첫 편집 도구가 뜬 시각 — 편집이 없던 턴은 null. */
   firstEditAt: number | null;
+  /** 핀 턴이 에이전트에 실어 보낸 말의 바이트 — 핀 페이로드의 크기. 핀 턴만 값이 있다. */
+  pinBytes: number | null;
   /** 카드 대기(waiting_*)의 누적(ms) — 서버가 구간을 밀어 온다. */
   waitMs: number;
   /** 보내기 문에서 잰 핀 강화 시간 — 시작 때 물려받는다. */
@@ -102,6 +107,12 @@ interface TurnStatsRow {
   contextTokens: number | null;
   /** user.echo → 첫 편집 도구 — 방향 잡기 비용. 없으면 null. */
   firstEditMs: number | null;
+  /** user.echo → 첫 text.delta — 첫 글자까지의 대기(TTFT). 없으면 null. */
+  firstDeltaMs: number | null;
+  /** 핀 턴이 에이전트에게 실어 보낸 말의 바이트 — 핀 페이로드의 크기. 핀 턴만. */
+  pinBytes: number | null;
+  /** 실패한 턴의 단계 — 실패 문장의 최선 분류. 성공 턴은 null. */
+  failure: "length" | "limit" | "stream" | "other" | null;
   /** 카드 대기(waiting_*)의 누적 — durationMs 에 섞인 사람 시간. */
   waitMs: number;
   /** 보내기 문에서 핀 강화(파일 후보)가 걸린 시간 — 핀 턴만 값이 있다. */
@@ -159,7 +170,9 @@ function freshTurn(text: string): InFlight {
     browser: 0,
     other: 0,
     startedAt: Date.now(),
+    firstDeltaAt: null,
     firstEditAt: null,
+    pinBytes: kind === "comments" ? Buffer.byteLength(text, "utf8") : null,
     waitMs: 0,
     scanMs: null,
     sincePrevTurnMs: null,
@@ -227,6 +240,13 @@ export class TurnStats {
       const prevEnd = this.lastEndAt.get(sessionId);
       turn.sincePrevTurnMs = prevEnd === undefined ? null : Math.max(0, Date.now() - prevEnd);
       this.flying.set(sessionId, turn);
+      return;
+    }
+    // 첫 글자의 시각 — TTFT. 사람이 보내기를 누른 뒤 첫 답이 오기까지의
+    // 대기를 잰다(user.echo 가 아니라 도착한 첫 delta 기준).
+    if (event.kind === "text.delta") {
+      const turn = this.flying.get(sessionId);
+      if (turn !== undefined && turn.firstDeltaAt === null) turn.firstDeltaAt = Date.now();
       return;
     }
     if (event.kind === "tool.start") {
@@ -337,6 +357,10 @@ export class TurnStats {
       contextTokens: context,
       firstEditMs:
         turn.firstEditAt === null ? null : Math.max(0, turn.firstEditAt - turn.startedAt),
+      firstDeltaMs:
+        turn.firstDeltaAt === null ? null : Math.max(0, turn.firstDeltaAt - turn.startedAt),
+      pinBytes: turn.pinBytes,
+      failure: event.isError ? classifyFailure(event.resultText) : null,
       waitMs: turn.waitMs,
       scanMs: turn.scanMs,
       sincePrevTurnMs: turn.sincePrevTurnMs,
