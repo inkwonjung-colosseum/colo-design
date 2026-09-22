@@ -359,8 +359,8 @@ rpc 에는 모드를 바꿀 명령이 없고, 모든 쓰기·실행이 데몬을
 | 경로 | 무엇이 있는가 |
 | --- | --- |
 | `~/.colo-design/config/` | `daemon.json` (host/port/token), `projects.json` (레지스트리) — 전부 0600, 비밀 없음(그건 OS 저장소로 간다) |
-| `~/.colo-design/logs/` | 데몬의 하루 로그(`daemon-YYYY-MM-DD.log`, 7일 보존) — 설정 → 문제 해결의 `로그 폴더 열기`가 여기를 엽니다 |
-| `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰만. 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
+| `~/.colo-design/logs/` | 데몬의 하루 로그(`daemon-YYYY-MM-DD.log`, 7일 보존) — 값의 비밀·이메일·계정 경로는 `~/{path}` 따위로 눌러 닫힌다. 설정 → 문제 해결의 `로그 폴더 열기`가 여기를 엽니다 |
+| `~/.colo-design/logs/turn-stats-YYYY-MM-DD.jsonl` | 턴 통계 — 한 턴의 종류(사람 말 · 핀 · 게이트) · 길이 · 도구 묶음별 호출 수 · 컨텍스트 토큰 · 첫 답까지(`firstDeltaMs`)·첫 편집까지(`firstEditMs`) · 실패 단계(`failure`) · 핀 턴의 payload 크기(`pinBytes`). 무엇이 턴을 느리게 하는지 재는 잣자리로, 사용자의 말도 화면도 남기지 않는다(7일 보존) |
 | `~/.colo-design/projects/<slug>/repo/` | 그 프로젝트의 연결 레포 클론 |
 
 설정의 `개발자용` 폴드 → 문제 해결 `폴더 열기` 가 이 폴더를 연다(F1) — 진단 도구는
@@ -744,7 +744,11 @@ flowchart LR
 | `packages/desktop` | Electron 메인(데몬 in-process, safeStorage 저장소, 동반 런타임, 업데이트 브리지) + electron-builder 구성. |
 
 데몬과 UI 사이의 선은 `packages/protocol` (v17) 이다. zod 로 검증되는 클라이언트
-메시지, 평범한 타입의 서버 메시지, 접힌 이벤트로 스트리밍되는 세션. 모든 메시지는
+메시지, 평범한 타입의 서버 메시지, 접힌 이벤트로 스트리밍되는 세션. 클라이언트
+명령의 `id` 는 응답 상관을 겸하는 **멱등 키**다 — 데몬은 같은 id 의 실행을 한 번만
+하고(`command-dedupe.ts`, 정산 답 512개·하루 보관), 끝난 답은 ok·error 다 함께
+재전송에 되돌려지므로 타임아웃 뒤의 다시 보내기가 같은 명령을 두 번 실행하지 않는다.
+모든 메시지는
 활성 프로젝트 — 연결 레포 하나 — 스코프다. 어떤 메시지도 디렉터리를 이름하지 않고,
 "그 레포"는 늘 활성 프로젝트의 것이며 `project.activate` 가 그 겨냥을 옮긴다. 세션은
 프로젝트별 화면 스레드다 — SDK 는 디렉터리별로 대화를 저장할 뿐 그 이상은 모른다.
