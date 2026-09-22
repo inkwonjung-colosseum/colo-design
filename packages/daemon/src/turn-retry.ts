@@ -98,3 +98,19 @@ export function classifyRetry(input: RetryInput): RetryDecision {
   }
   return { action: "retry", delayMs: delay };
 }
+
+/** 실패의 단계 — 턴 통계(turn-stats)가 실패 행에 새기는 한 마디. */
+export type FailureStage = "length" | "limit" | "stream" | "other";
+
+/**
+ * 실패 문장의 최선 분류 — 재시도 판정(classifyRetry)이 쓰는 같은 사전으로
+ * 읽는다. 세션의 ratelimit 상태는 여기 없으므로 limit 은 문장에 흔적이 남을
+ * 때만 나온다: 판정이 아니라 측정이다(실패 단계의 분포를 보는 잣대).
+ */
+export function classifyFailure(resultText: string | null): FailureStage {
+  const text = resultText ?? "";
+  if (PERMANENT_RESULT.test(text)) return "length";
+  if (looksLikeStreamError(resultText)) return "stream";
+  if (LIMIT_RESULT.test(text)) return "limit";
+  return "other";
+}
