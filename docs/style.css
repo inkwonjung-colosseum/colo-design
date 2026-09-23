@@ -734,21 +734,21 @@ main {
   color: var(--muted);
 }
 
-/* ---- 스크롤 리빌 ---- */
-.section,
-.appwin {
+/* ---- 스크롤 리빌 — JS 가 살아 있을 때만 숨긴다(모듈 실패 = 그냥 다 보임) ---- */
+.js .section,
+.js .appwin {
   opacity: 0;
   transform: translateY(18px);
   transition: opacity 0.7s var(--drift), transform 0.7s var(--drift);
 }
-.section.in,
-.appwin.in {
+.js .section.in,
+.js .appwin.in {
   opacity: 1;
   transform: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .section,
-  .appwin {
+  .js .section,
+  .js .appwin {
     opacity: 1;
     transform: none;
     transition: none;
