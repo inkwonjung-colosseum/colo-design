@@ -14,6 +14,7 @@
     />
     <link rel="stylesheet" href="style.css?v=2" />
     <script type="module" src="invite.js"></script>
+    <script type="module" src="hero3d.js"></script>
   </head>
   <body>
     <header class="top">
@@ -31,6 +32,8 @@
     <main>
       <!-- ============ 히어로 ============ -->
       <section class="hero">
+        <canvas class="hero__field" aria-hidden="true"></canvas>
+        <div class="hero__grid" aria-hidden="true"></div>
         <p class="hero__kicker"><span class="hero__pulse" aria-hidden="true"></span>비개발자를 위한 화면 만들기 도구</p>
         <h1>말과 문서가<br /><em>화면</em>이 됩니다</h1>
         <p class="hero__sub">
@@ -43,8 +46,9 @@
           <a class="btn" href="#invite">초대장 만들기</a>
         </div>
 
-        <!-- 제품 UI 재현 — 실제 앱의 세 칸 구조 -->
-        <div class="appwin" aria-hidden="true">
+        <!-- 제품 UI 재현 — 실제 앱의 세 칸 구조. 마우스를 따라 기울어지는 3D 무대 -->
+        <div class="appwin-stage" aria-hidden="true">
+          <div class="appwin" id="appwin">
           <div class="appwin__bar">
             <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
             <span class="appwin__title">회원 관리 — Colo Design</span>
@@ -86,6 +90,9 @@
               </div>
             </div>
           </div>
+        </div>
+          <div class="float float--pin">1</div>
+          <div class="float float--chip">⌥+클릭으로 핀 찍기</div>
         </div>
       </section>
 
