@@ -8,24 +8,31 @@
       name="description"
       content="개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는 도구. git, 터미널 같은 건 몰라도 쓴다."
     />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
     <link rel="stylesheet" href="style.css" />
     <script type="module" src="invite.js"></script>
   </head>
   <body>
     <header class="top">
-      <span class="top__mark">Colo Design</span>
+      <a class="top__mark" href="#">
+        <span class="top__dot" aria-hidden="true"></span>Colo Design
+      </a>
       <nav class="top__nav">
         <a href="#how">흐름</a>
         <a href="#install">설치</a>
-        <a href="#invite">초대장 만들기</a>
-        <a href="https://github.com/inkwonjung-colosseum/colo-design">GitHub</a>
+        <a href="#invite">초대장</a>
+        <a class="top__gh" href="https://github.com/inkwonjung-colosseum/colo-design">GitHub</a>
       </nav>
     </header>
 
     <main>
+      <!-- ============ 히어로 ============ -->
       <section class="hero">
-        <p class="hero__kicker">비개발자를 위한 화면 만들기 도구</p>
-        <h1>말과 문서가<br />화면이 됩니다</h1>
+        <p class="hero__kicker"><span class="hero__pulse" aria-hidden="true"></span>비개발자를 위한 화면 만들기 도구</p>
+        <h1>말과 문서가<br /><em>화면</em>이 됩니다</h1>
         <p class="hero__sub">
           개발 지식이 전혀 없는 사람이 — 기획자든 디자이너든 사업·운영 담당자든 —
           작업할 서비스의 저장소를 연결하면, 그 안에서 도는 AI 세션이 말을 화면으로
@@ -35,24 +42,75 @@
           <a class="btn btn--primary" href="https://github.com/inkwonjung-colosseum/colo-design/releases">앱 내려받기</a>
           <a class="btn" href="#invite">초대장 만들기</a>
         </div>
+
+        <!-- 제품 UI 재현 — 실제 앱의 세 칸 구조 -->
+        <div class="appwin" aria-hidden="true">
+          <div class="appwin__bar">
+            <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
+            <span class="appwin__title">회원 관리 — Colo Design</span>
+            <span class="chip chip--ready">제출 전</span>
+            <span class="appwin__submit">제출</span>
+          </div>
+          <div class="appwin__body">
+            <aside class="appwin__side">
+              <div class="side__home">홈</div>
+              <div class="side__proj side__proj--on">회원 관리</div>
+              <div class="side__proj">주문 대시보드</div>
+              <div class="side__sess side__sess--on">로그인 화면</div>
+              <div class="side__sess">회원 목록 표</div>
+              <div class="side__sess">＋ 새 대화 시작</div>
+            </aside>
+            <div class="appwin__chat">
+              <div class="msg msg--user">로그인 화면 만들어 줘. 이메일·비밀번호 입력이랑 로그인 버튼만 있으면 돼</div>
+              <div class="msg msg--ai">
+                <div class="msg__who">Colo</div>
+                로그인 화면을 만들었습니다. 미리보기에서 확인해 보세요 — 고칠 곳이 있으면
+                화면을 ⌥+클릭해서 핀으로 찍어 주세요.
+              </div>
+              <div class="msg__meta">2분 14초 걸렸습니다 · 전체 복사 ···</div>
+            </div>
+            <div class="appwin__preview">
+              <div class="pv__bar">
+                <span class="pv__nav">‹</span><span class="pv__nav">›</span>
+                <span class="pv__url">login</span>
+                <span class="pv__pin">수정할 곳 찍기</span>
+              </div>
+              <div class="pv__screen">
+                <div class="mini">
+                  <div class="mini__logo"></div>
+                  <div class="mini__field"></div>
+                  <div class="mini__field"></div>
+                  <div class="mini__btn"></div>
+                  <span class="pin" style="top: 34%; left: 62%">1</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
+      <!-- ============ 흐름 ============ -->
       <section id="how" class="section">
+        <p class="section__eyebrow">한 바퀴</p>
         <h2>작업은 한 바퀴로 흘러갑니다</h2>
         <ol class="flow">
           <li>
+            <span class="flow__no">01</span>
             <strong>말하기</strong>
             <span>만들고 싶은 화면을 말로 보냅니다. 참고 그림이나 문서 파일을 함께 붙여도 됩니다.</span>
           </li>
           <li>
+            <span class="flow__no">02</span>
             <strong>미리보기</strong>
             <span>그 서비스의 앱을 그대로 띄운 화면에서 결과를 확인합니다. 고칠 곳은 핀으로 찍어 보냅니다.</span>
           </li>
           <li>
+            <span class="flow__no">03</span>
             <strong>제출</strong>
             <span>완성되면 제출 한 번 — 도구가 안전하게 묶어 개발자에게 요청으로 보냅니다.</span>
           </li>
           <li>
+            <span class="flow__no">04</span>
             <strong>반영됨</strong>
             <span>개발자가 합치면 상태 칩이 반영됐어요가 되고, 다음 작업은 새 사이클입니다.</span>
           </li>
@@ -63,31 +121,46 @@
         </p>
       </section>
 
+      <!-- ============ 설치 ============ -->
       <section id="install" class="section">
+        <p class="section__eyebrow">시작하기</p>
         <h2>설치</h2>
-        <ol class="steps">
-          <li>
-            <a href="https://github.com/inkwonjung-colosseum/colo-design/releases">릴리스 페이지</a>에서
-            기계에 맞는 파일을 내려받아 설치합니다 — mac은 <code>colo-design-&lt;버전&gt;-mac-arm64.dmg</code>,
-            Windows는 <code>colo-design-Setup-&lt;버전&gt;-win-x64.exe</code>.
-          </li>
-          <li>
-            첫 실행에 한 번 허가가 필요합니다 — mac은 앱을 우클릭 → 열기, Windows는
-            SmartScreen의 추가 정보 → 실행.
-          </li>
-          <li>
-            준비물은 둘입니다 — 화면을 만드는 AI 에이전트 하나(Claude Code · Codex 중
-            설치하고 로그인한 것)와 git. 실행에 필요한 런타임은 앱에 들어 있습니다.
-          </li>
-          <li>
-            개발자가 보내 준 <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 시작 화면에서
-            열거나 창에 끌어다 놓으면 연결 코드 저장과 프로젝트 만들기가 한 번에 끝납니다.
-          </li>
-        </ol>
+        <div class="install">
+          <ol class="steps">
+            <li>
+              <a href="https://github.com/inkwonjung-colosseum/colo-design/releases">릴리스 페이지</a>에서
+              기계에 맞는 파일을 내려받아 설치합니다 — mac은 <code>colo-design-&lt;버전&gt;-mac-arm64.dmg</code>,
+              Windows는 <code>colo-design-Setup-&lt;버전&gt;-win-x64.exe</code>.
+            </li>
+            <li>
+              첫 실행에 한 번 허가가 필요합니다 — mac은 앱을 우클릭 → 열기, Windows는
+              SmartScreen의 추가 정보 → 실행.
+            </li>
+            <li>
+              준비물은 둘입니다 — 화면을 만드는 AI 에이전트 하나(Claude Code · Codex 중
+              설치하고 로그인한 것)와 git. 실행에 필요한 런타임은 앱에 들어 있습니다.
+            </li>
+            <li>
+              개발자가 보내 준 <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 시작 화면에서
+              열거나 창에 끌어다 놓으면 연결 코드 저장과 프로젝트 만들기가 한 번에 끝납니다.
+            </li>
+          </ol>
+          <aside class="install__card">
+            <p class="install__card-title">터미널은 열지 않습니다</p>
+            <p>
+              에이전트 로그인도 앱 안에서 끝납니다 — 로그인 버튼을 누르면 도구가
+              로그인 명령을 대신 몰고, 브라우저에서 받은 코드를 앱의 칸에 붙여
+              넣으면 됩니다.
+            </p>
+            <p class="install__card-foot">macOS · Windows</p>
+          </aside>
+        </div>
       </section>
 
+      <!-- ============ 초대장 ============ -->
       <section id="invite" class="section section--invite">
-        <h2>초대장 만들기 <span class="badge">개발자용</span></h2>
+        <p class="section__eyebrow">개발자용</p>
+        <h2>초대장 만들기</h2>
         <p class="section__lead">
           사용자에게 보낼 초대 파일(<code>*.colo-invite</code>)을 만듭니다. 파일에는 연결
           코드가 들어 있으니 <strong>사용자만 보는 경로</strong>(슬랙 DM 등)로 보내고,

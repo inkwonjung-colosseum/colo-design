@@ -123,3 +123,22 @@ share.addEventListener("click", async () => {
 });
 
 render();
+
+/* 스크롤 리빌 — 섹션과 제품 창이 뷰포트에 들어오면 .in 을 단다. */
+const revealTargets = document.querySelectorAll(".section, .appwin");
+if ("IntersectionObserver" in window) {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in");
+          observer.unobserve(entry.target);
+        }
+      }
+    },
+    { rootMargin: "0px 0px -8% 0px" }
+  );
+  revealTargets.forEach((el) => observer.observe(el));
+} else {
+  revealTargets.forEach((el) => el.classList.add("in"));
+}
