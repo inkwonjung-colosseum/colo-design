@@ -44,6 +44,7 @@ body {
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overflow-x: clip;
 }
 
 code {
@@ -131,6 +132,7 @@ main {
   position: relative;
   padding: 120px 0 40px;
   text-align: center;
+  overflow: hidden;
 }
 .hero::before {
   /* 제목 뒤의 은은한 청색 광원 */
