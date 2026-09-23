@@ -101,7 +101,8 @@ export function Palette({
   onCreateSession: () => void;
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
-  onAddProject: () => void;
+  /** 프로젝트 추가 — 개발 실행에서만 Shell 이 준다. 없으면 칩이 사라진다. */
+  onAddProject?: () => void;
   onOpenSettings: (category?: SettingsCategory) => void;
   /** 개발자의 판정을 GitHub 에서 다시 읽는다 — 상단 바의 상태 확인과 같은 통로. */
   onCheckState: () => void;
@@ -272,12 +273,16 @@ export function Palette({
     const commands: Array<{ label: string; hint: string; icon: typeof PlusIcon; run: () => void }> =
       [
         { label: "새 대화", hint: "화면 대화를 시작합니다", icon: PlusIcon, run: onCreateSession },
-        {
-          label: "새 프로젝트",
-          hint: "레포를 하나 더 연결합니다",
-          icon: FolderIcon,
-          run: onAddProject,
-        },
+        ...(onAddProject
+          ? [
+              {
+                label: "새 프로젝트",
+                hint: "레포를 하나 더 연결합니다",
+                icon: FolderIcon,
+                run: onAddProject,
+              },
+            ]
+          : []),
         {
           label: "상태 확인",
           hint: "개발자의 판정과 코멘트를 다시 읽어 옵니다",

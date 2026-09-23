@@ -3,20 +3,18 @@ import { type CSSProperties, type ReactElement, useEffect, useRef, useState } fr
 import { useModalEscape } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
 import { BrainIcon, BranchIcon, CheckIcon, CloseIcon, KeyIcon, PlugIcon, WarnIcon } from "../icons";
-import { GitHubTokenForm } from "./GitHubTokenForm";
 
 /**
  * The first-run wizard: machine gates answered once — the agent
- * Code, git, Node·pnpm, the GitHub token — and then it is done. Which repo a
- * planner works on is NOT here: a project is added from the
- * workspace itself, where the clone's own progress is already on screen.
+ * Code, git, Node·pnpm — and then it is done. Which repo a planner works on
+ * is NOT here: the first project comes from an invite file on the start
+ * screen (StartFlow), and later ones from `프로젝트 추가` in the workspace.
  *
  * One card is open at a time: the first step that is not a pass is the thing
  * a planner can act on right now, and everything before it collapses to a
- * single line. A `warn` (GitHub without a token) does not block: 시작하기
- * stays reachable.
+ * single line.
  */
-const STEP_ORDER: OnboardingStepId[] = ["claude", "git", "runtime", "github"];
+const STEP_ORDER: OnboardingStepId[] = ["claude", "git", "runtime"];
 
 const STEP_TITLE: Record<OnboardingStepId, string> = {
   // 제목은 쓸모가 먼저다 — 도구 이름은 조용한 부제로
@@ -43,8 +41,7 @@ const STEP_HINT: Record<OnboardingStepId, string> = {
   claude: "",
   git: "화면 작업을 저장하고 개발자에게 넘기는 데 쓰는 도구입니다 — 이 앱이 대신 다룹니다.",
   runtime: "앱 안에 들어 있습니다 — 없다고 나오면 앱 설치가 깨진 것입니다.",
-  github:
-    "작업을 개발자에게 넘기는 길입니다. 없어도 시작할 수 있습니다 — 공개 저장소로 작업합니다.",
+  github: "",
 };
 
 /** Each gate status's glyph — the seat already carries its tone colour. */
@@ -143,7 +140,10 @@ export function Onboarding({
    */
   onClose?: () => void;
 }) {
-  const steps = daemon.onboarding ?? [];
+  // 데몬은 여전히 github 게이트도 보내지만 화면은 쓰지 않는다 — 첫 화면이 초대
+  // 파일로 서 있으므로 그 행이 설 자리가 없다(연결 코드 관리는 설정과 토큰
+  // 만료 대화상자가 맡는다).
+  const steps = (daemon.onboarding ?? []).filter((step) => STEP_ORDER.includes(step.id));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** The fix's own words. The daemon answers every fix with `{started, guidance}` —
@@ -156,9 +156,6 @@ export function Onboarding({
     started: boolean;
     guidance: string;
   } | null>(null);
-  /** Re-opens the token form on a github line that already passed. */
-  const [editingToken, setEditingToken] = useState(false);
-
   const byId = new Map(steps.map((step) => [step.id, step]));
   const blocked = steps.some((step) => step.status === "fail");
   const busyKind = busy ?? null;
@@ -199,7 +196,7 @@ export function Onboarding({
     steps.find((step) => step.status === "fail")?.id ??
     steps.find((step) => step.status === "warn")?.id ??
     null;
-  const isOpen = (id: OnboardingStepId) => id === firstOpen || (id === "github" && editingToken);
+  const isOpen = (id: OnboardingStepId) => id === firstOpen;
 
   // claude 행의 제목·부제는 에이전트를 따라간다: 목록의 label 이 있으면 그
   // 이름으로, 없으면 id 그대로(onboarding-gates.html og-step__nm/__sub).
@@ -242,7 +239,7 @@ export function Onboarding({
           />
         </div>
         <h1>Colo Design 시작하기</h1>
-        <p className="hint">이 컴퓨터에서 한 번만 확인하는 네 단계입니다.</p>
+        <p className="hint">이 컴퓨터에서 한 번만 확인하는 세 단계입니다.</p>
       </header>
 
       {/* The gates answered so far, as one quiet fill — motion makes the
@@ -368,22 +365,6 @@ export function Onboarding({
                 </div>
               )}
 
-              {/* A passed token is still replaceable — expiry is the reason,
-                  and it is the one thing this line can offer. */}
-              {id === "github" && step.status === "pass" && !editingToken && (
-                <div className="onboarding__fixrow">
-                  <button type="button" className="ghost" onClick={() => setEditingToken(true)}>
-                    코드 바꾸기
-                  </button>
-                </div>
-              )}
-
-              {id === "github" && (open || editingToken) && (
-                <>
-                  <GitHubTokenForm daemon={daemon} onDone={() => setEditingToken(false)} />
-                </>
-              )}
-
               {/* `href` fixes are links, not commands (install-node): the
                   tool installs nothing on somebody's machine by itself. */}
               {step.fix && step.status !== "pass" && (
@@ -447,17 +428,6 @@ export function Onboarding({
           <button type="button" className="primary onboarding__cta" onClick={onDone}>
             시작하기
           </button>
-          {/* github 의 토큰뿐 남았을 때의 나중에(onboarding-gates.html) —
-              없어도 시작할 수 있다는 안내의 회답이다. 막는 단계가 하나라도
-              있으면 onClose 자체가 오지 않는다. */}
-          {onClose &&
-            steps.length > 0 &&
-            steps.some((step) => step.id === "github" && step.status !== "pass") &&
-            steps.every((step) => step.status === "pass" || step.id === "github") && (
-              <button type="button" className="ghost" onClick={onClose}>
-                나중에
-              </button>
-            )}
         </div>
       )}
     </div>

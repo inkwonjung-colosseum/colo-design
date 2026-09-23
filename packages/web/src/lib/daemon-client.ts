@@ -656,6 +656,10 @@ interface DaemonApi {
     approveCommands?: boolean;
     /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들. */
     reviewers?: string[];
+    /** 프로젝트별 지침 — 세션의 시스템 프롬프트에 붙는다. */
+    instructions?: string;
+    /** false 면 등록만 한다 — 초대장이 여러 프로젝트를 한 번에 등록할 때 화면이 튀지 않게. */
+    activate?: boolean;
   }) => Promise<ProjectSummary>;
   /** Rename, or re-point the repo url/base branch. */
   projectUpdate: (
@@ -1597,6 +1601,8 @@ export function useDaemon(url: string | null): Daemon {
         baseBranch?: string;
         approveCommands?: boolean;
         reviewers?: string[];
+        instructions?: string;
+        activate?: boolean;
       }) =>
         call<ProjectSummary>(
           {
@@ -1608,6 +1614,8 @@ export function useDaemon(url: string | null): Daemon {
             // is "nobody has vouched for these commands yet".
             ...(input.approveCommands ? { approveCommands: true } : {}),
             ...(input.reviewers ? { reviewers: input.reviewers } : {}),
+            ...(input.instructions ? { instructions: input.instructions } : {}),
+            ...(input.activate !== undefined ? { activate: input.activate } : {}),
           },
           900_000,
         ),

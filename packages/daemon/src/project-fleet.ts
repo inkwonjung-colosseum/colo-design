@@ -869,10 +869,20 @@ export class ProjectFleet {
     approveCommands?: boolean;
     /** E4(초대 v2): 넘긴 요청의 리뷰를 부탁할 개발자들. */
     reviewers?: string[];
+    /** 프로젝트별 지침(설정 문서 P1#8) — 세션의 시스템 프롬프트에 붙는다. */
+    instructions?: string;
+    /**
+     * false 면 등록만 한다 — 초대장이 프로젝트 여러 개를 한 번에 실을 때, 첫 번째
+     * 외의 등록은 화면을 튀게 하지 않는다(전환도 내려받기도 없음). 활성 프로젝트가
+     * 하나도 없었다면 무시하고 연다 — 빈 화면을 지키는 것은 상태가 아니다.
+     */
+    activate?: boolean;
   }): Promise<ProjectSummary> {
     // The url reaches `git clone` — the ext:: family is a command executor
     // wearing a url, so the wire's word passes through the guard first.
     if (message.repoUrl) assertClonableRepoUrl(message.repoUrl);
+    // 등록만 하는 길의 판정 기준 — 생성 전에 이미 활성 프로젝트가 있었는가.
+    const hadActive = this.deps.registry.activeSlug() !== null;
     const project = this.deps.registry.create({
       name: message.name,
       repoUrl: message.repoUrl,
@@ -882,11 +892,17 @@ export class ProjectFleet {
       // clone with errorKind `commands` until 실행 허용 is pressed.
       commandsApproved: message.approveCommands === true,
       ...(message.reviewers ? { reviewers: message.reviewers } : {}),
+      ...(message.instructions ? { instructions: message.instructions } : {}),
     });
-    await this.activateProject(project.slug);
-    // activateProject sees no switch and stays silent — but a wizard waiting
-    // on `project.changed` to show the switcher needs the announcement.
-    this.announceProjects();
+    if (message.activate === false && hadActive) {
+      // 등록만 — 사이드바 행이 늘었다는 소식만 전한다. 전환도 내려받기도 없다.
+      this.announceProjects();
+    } else {
+      await this.activateProject(project.slug);
+      // activateProject sees no switch and stays silent — but a wizard waiting
+      // on `project.changed` to show the switcher needs the announcement.
+      this.announceProjects();
+    }
 
     const summary = this.projectSummaries().find((entry) => entry.slug === project.slug);
     if (!summary) throw new Error("프로젝트를 만들지 못했습니다");

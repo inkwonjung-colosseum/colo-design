@@ -10,6 +10,7 @@ import {
   SETTINGS_MODES,
 } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
+import { requestInvitePicker } from "../../lib/invite-bus";
 import {
   type ChatSettings,
   clampSizePx,
@@ -891,8 +892,9 @@ export function SettingsDialog({
 
   /** 접속 주소 지우기의 확인 — this app's dialog, not window.confirm. */
   const [forgetConfirm, setForgetConfirm] = useState(false);
-  /** The GitHub group's 토큰 바꾸기 toggle: detail row ↔ the form. */
   const [editingToken, setEditingToken] = useState(false);
+  // 붙여넣기 · 토큰 바꾸기는 개발 실행의 예비 길 — 실사용의 연결 관리는 초대 파일이다.
+  const devMachine = daemon.status?.dev === true;
   const connected = daemon.connection === "open";
 
   // 확인 대화가 위에 떠 있으면 Escape 는 그 대화의 몫이다 — useModalEscape 의
@@ -1500,35 +1502,71 @@ export function SettingsDialog({
               </>
             )}
 
-            {category.id === "connection" &&
-              (daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
-              !editingToken ? (
+            {category.id === "connection" && (
+              <>
+                {devMachine ? (
+                  daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
+                  !editingToken ? (
+                    <Field
+                      wide
+                      label="GitHub 계정"
+                      hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
+                    >
+                      <span className="settings__url">
+                        <span className="settings__account">
+                          {daemon.onboarding?.find((step) => step.id === "github")?.detail}
+                        </span>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={!connected}
+                          onClick={() => setEditingToken(true)}
+                        >
+                          토큰 바꾸기
+                        </button>
+                      </span>
+                    </Field>
+                  ) : (
+                    <GitHubTokenForm
+                      daemon={daemon}
+                      onDone={() => setEditingToken(false)}
+                      disabled={!connected}
+                    />
+                  )
+                ) : (
+                  // 실사용의 연결 관리는 초대 파일 한 장이다 — 상태만 보여 주고
+                  // 새 코드는 개발자의 초대장으로 온다.
+                  <Field wide label="GitHub 연결" hint="연결 코드는 이 컴퓨터에만 저장됩니다">
+                    <span className="settings__url">
+                      <span className="settings__account">
+                        {daemon.onboarding?.find((step) => step.id === "github")?.detail ??
+                          "GitHub 토큰 없음"}
+                      </span>
+                    </span>
+                  </Field>
+                )}
                 <Field
                   wide
-                  label="GitHub 계정"
-                  hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
+                  label="초대 파일"
+                  hint="개발자에게 받은 초대 파일로 연결 코드를 새로 받습니다"
                 >
                   <span className="settings__url">
-                    <span className="settings__account">
-                      {daemon.onboarding?.find((step) => step.id === "github")?.detail}
-                    </span>
                     <button
                       type="button"
                       className="primary"
                       disabled={!connected}
-                      onClick={() => setEditingToken(true)}
+                      onClick={() => {
+                        // 고르기 창이 열리는 동안 설정은 물러난다 — 확인 카드가 이어받는다.
+                        requestInvitePicker();
+                        onClose();
+                      }}
                     >
-                      토큰 바꾸기
+                      초대 파일 열기
                     </button>
                   </span>
                 </Field>
-              ) : (
-                <GitHubTokenForm
-                  daemon={daemon}
-                  onDone={() => setEditingToken(false)}
-                  disabled={!connected}
-                />
-              ))}
+              </>
+            )}
 
             {/* Everything a planner only ever needs when something is broken.
       It used to sit open under the heading 데몬, which is

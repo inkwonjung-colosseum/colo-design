@@ -1,19 +1,17 @@
 import { useRef, useState } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
+import { requestInvitePicker } from "../../lib/invite-bus";
 import { CloseIcon, KeyIcon } from "../icons";
 import { Tip } from "../shell/Tip";
 
 /**
  * 연결 코드 만료 카드 — 데몬 자신의 GitHub 읽기가 401 을 본
  * 순간(status.githubAuthExpired) 열리고, 새 코드의 게이트가 통과하면 닫힌다.
- * 저장 검토의 `push-auth` 실패 줄과 설정 연결 그룹이 같은 수정을 제공하므로 이
- * 카드는 그 자리를 대지 않는다 — 나머지 한 종(401)을 묻지 않고 눈앞에 두는 일이
- * 이 카드의 전부다.
  *
- * 셋을 구분해 말한다: 이 카드는 GitHub 연결 코드의 만료다. 게이트 자체의
- * 부재(코드 없음)는 마법사·첫 화면의 코드 단계가, 데몬 페어링 토큰의 끊김은
- * 연결 화면이 각자 말한다.
+ * 수정의 길은 초대 파일이다: 개발자에게 새 초대장을 받아 이 창에 끌어다 놓거나
+ * 아래 버튼으로 연다(통로가 Shell 의 가져오기 컨트롤러로 넘긴다). 붙여넣기 칸은
+ * 개발 실행에서만 남는다 — 코드 그 자체를 다루는 말은 개발자의 어휘다.
  */
 export function TokenExpiryDialog({
   daemon,
@@ -28,11 +26,12 @@ export function TokenExpiryDialog({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  // 붙여넣기 칸은 개발 실행에서만 — 실사용의 길은 초대 파일이다.
+  const devMachine = daemon.status?.dev === true;
   useModalEscape(panel, onDismiss);
 
-  // 거절돼도 초안은 살려 둔다 — 코드의 오타 고치기가 이 카드가 존재하는 이유의
-  // 절반이다(GitHubTokenForm 의 write-only 규칙과 같은 판정).
+  // 거절돼도 초안은 살려 둔다 — 코드의 오타 고치기가 이 칸이 존재하는 이유의
+  // 절반이다(GitHubTokenForm 의 write-only 규칙과 같은 판정). 개발 실행의 몫이다.
   const reconnect = async () => {
     setBusy(true);
     setError(null);
@@ -74,42 +73,59 @@ export function TokenExpiryDialog({
         </header>
         <div className="modal__body tokencard">
           <p className="tokencard__lede">
-            개발자에게 받은 연결 코드가 만료됐거나 바뀌었어요. 새 코드를 붙여넣으면 바로 이어서
-            작업할 수 있어요 — <strong>대화와 저장된 작업은 그대로 남아 있어요.</strong>
+            개발자에게 받은 연결 코드가 만료됐거나 바뀌었어요. 개발자에게 새 초대 파일을 받아 이
+            창에 끌어다 놓거나 아래 버튼으로 여세요 —{" "}
+            <strong>대화와 저장된 작업은 그대로 남아 있어요.</strong>
           </p>
-          <div className="ghtoken__row">
-            <span className="ic ic--quiet">
-              <KeyIcon />
-            </span>
-            <input
-              type="password"
-              autoFocus
-              value={draft}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="새 연결 코드 붙여넣기"
-              aria-label="새 GitHub 연결 코드"
-              disabled={busy}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && draft.trim() && !busy) void reconnect();
-              }}
-            />
+          <div className="onboarding__fixrow">
             <button
               type="button"
               className="primary"
-              disabled={!draft.trim() || busy}
-              onClick={() => void reconnect()}
+              onClick={() => {
+                // 고르기 창을 연 뒤 이 카드는 물러난다 — 가져오기의 확인 카드가 이어받는다.
+                requestInvitePicker();
+                onDismiss();
+              }}
             >
-              {busy ? "다시 연결하는 중…" : "다시 연결"}
+              초대 파일 열기
             </button>
           </div>
-          {error && (
-            <div className="notice notice--error">
-              <span className="notice__text">{error}</span>
-            </div>
+          {devMachine && (
+            <>
+              <div className="ghtoken__row">
+                <span className="ic ic--quiet">
+                  <KeyIcon />
+                </span>
+                <input
+                  type="password"
+                  value={draft}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="새 연결 코드 붙여넣기"
+                  aria-label="새 GitHub 연결 코드"
+                  disabled={busy}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && draft.trim() && !busy) void reconnect();
+                  }}
+                />
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!draft.trim() || busy}
+                  onClick={() => void reconnect()}
+                >
+                  {busy ? "다시 연결하는 중…" : "다시 연결"}
+                </button>
+              </div>
+              {error && (
+                <div className="notice notice--error">
+                  <span className="notice__text">{error}</span>
+                </div>
+              )}
+            </>
           )}
-          <p className="hint tokencard__foot">새 코드는 개발자에게 요청하세요.</p>
+          <p className="hint tokencard__foot">새 초대 파일은 개발자에게 요청하세요.</p>
         </div>
       </div>
     </div>

@@ -329,6 +329,8 @@ export class ProjectRegistry {
     commandsApproved?: boolean;
     /** E4(초대 v2): 리뷰를 부탁할 개발자들. */
     reviewers?: string[];
+    /** 프로젝트별 지침(설정 문서 P1#8) — update 와 같은 규칙(trim, 비면 저장 안 함). */
+    instructions?: string;
   }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
@@ -349,6 +351,8 @@ export class ProjectRegistry {
             reviewers: input.reviewers.map((login) => login.trim()).filter((login) => login !== ""),
           }
         : {}),
+      // 지침은 update 와 같은 규칙 — trim 해서 비어 있지 않을 때만 싣는다.
+      ...(input.instructions?.trim() ? { instructions: input.instructions.trim() } : {}),
       repo: {
         url: input.repoUrl,
         baseBranch,

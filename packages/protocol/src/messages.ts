@@ -327,6 +327,9 @@ const clientMessageSchema = z.discriminatedUnion("type", [
    * Registers a project and brings it up: clones the repo, installs when the
    * dependency hash moved, starts the preview command. Progress arrives as
    * `repo.status`; the reply is the created project.
+   *
+   * 선택 필드가 늘어나도 선로 버전은 오르지 않는다 — 스키마가 모르는 필드는
+   * 버리고, 앱과 데몬은 함께 배포된다.
    */
   z.object({
     ...withId,
@@ -346,6 +349,14 @@ const clientMessageSchema = z.discriminatedUnion("type", [
      * stops after clone with errorKind `commands` until an update approves.
      */
     approveCommands: z.boolean().optional(),
+    /**
+     * false 면 등록만 하고 전환·내려받기를 하지 않는다 — 초대장이 여러 프로젝트를
+     * 한 번에 등록할 때 화면이 튀지 않고 보던 미리보기를 끄지 않게. 활성 프로젝트가
+     * 하나도 없으면 무시하고 연다.
+     */
+    activate: z.boolean().optional(),
+    /** 프로젝트별 지침(설정 문서 P1#8) — project.update 의 것과 같은 한도·뜻. */
+    instructions: z.string().max(10_000).optional(),
   }),
   /**
    * Switches which project everything else means. The outgoing project's

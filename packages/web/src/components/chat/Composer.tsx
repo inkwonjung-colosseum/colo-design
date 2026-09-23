@@ -22,6 +22,7 @@ import {
   SETTINGS_MODES,
 } from "../../lib/chat-options";
 import { composing } from "../../lib/ime";
+import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import type { SendKey } from "../../lib/settings";
 import {
   ArrowUpIcon,
@@ -690,6 +691,12 @@ export function Composer({
     const accepted: File[] = [];
     const refused: string[] = [];
     for (const file of [...files]) {
+      // 초대 파일은 첨부가 아니라 가져오기다 — 통로(invite-bus)로 넘겨 창에
+      // 열린다. 끌어다 놓기 · 붙여넣기 · 첨부 버튼이 모두 이 한 곳을 지난다.
+      if (isInviteFile(file)) {
+        offerInviteFile(file);
+        continue;
+      }
       // 소켓 프레임과 대기열 저장소가 나눠 쓰는 건당 상한 — 그 너머의 파일은
       // 첨부가 아니라 경로로 가리키는 게 맞다(@ 멘션).
       if (file.size <= MAX_ATTACHMENT_BYTES) accepted.push(file);

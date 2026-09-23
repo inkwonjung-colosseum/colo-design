@@ -8861,6 +8861,111 @@ button.pcard__row {
   position: relative;
 }
 
+/* 초대 확인 카드(InviteCard)의 행 목록 — 프로젝트마다 이름 · 레포 · 배지 한 줄.
+   시작 화면과 작업 화면 대화상자가 같은 카드를 쓰므로 여기도 하나다. */
+.invitecard__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+}
+.invitecard__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.invitecard__rowname {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: var(--font-ui-125);
+  color: var(--text);
+}
+.invitecard__rowrepo {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-ui-110);
+}
+.invitecard__rowwhy {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger);
+  font-size: var(--font-ui-115);
+}
+.invitecard__badge {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--muted);
+  font-size: var(--font-ui-110);
+}
+.invitecard__badge--update {
+  border-style: dashed;
+}
+
+/* 초대 파일 대화상자 — 카드 하나가 전부라 좁게 */
+.modal__panel--invite {
+  max-width: 520px;
+}
+
+/* 확인 카드 안의 이름 라벨 — 카드 본문(onboarding__detail)과 같은 글자 크기로.
+   시작 마법사의 독립 이름 블록이 쓰던 큰 라벨을 카드까지 데리고 오지 않는다. */
+.onboarding__invite .onboarding__authorlabel {
+  font-size: var(--font-ui-125);
+}
+
+/* 시작 화면의 드롭 영역 — 초대 파일이 없을 때 화면의 주인공. 확인 카드
+   (onboarding__invite)가 살아 있으면 그 자리를 대신한다. */
+.onboarding__dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  border: 2px dashed var(--line);
+  border-radius: var(--r-lg);
+  padding: 34px 16px;
+  margin: 14px 0 4px;
+  text-align: center;
+}
+.onboarding__dropzone-title {
+  margin: 0;
+  font: 600 var(--font-ui-135) var(--sans);
+  color: var(--text);
+}
+
+/* 개발 예비 길 — 개발 실행에서만 펼쳐지는 접힘. 실사용 첫 화면에는 없다. */
+.onboarding__devfallback {
+  margin-top: 14px;
+}
+.onboarding__devfallback summary {
+  cursor: pointer;
+  user-select: none;
+  list-style-position: inside;
+  color: var(--muted);
+}
+.onboarding__devfallback[open] summary {
+  margin-bottom: 8px;
+}
+.onboarding__devfallback-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+}
+
 /* 토큰 만료 카드 — 한 질문의 작은 방. */
 .modal__panel--token {
   max-width: 460px;

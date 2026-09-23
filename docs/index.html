@@ -12,8 +12,8 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=4" />
-    <script type="module" src="invite.js"></script>
+    <link rel="stylesheet" href="style.css?v=5" />
+    <script type="module" src="invite.js?v=3"></script>
     <script type="module" src="hero3d.js"></script>
   </head>
   <body>
@@ -148,8 +148,9 @@
               설치하고 로그인한 것)와 git. 실행에 필요한 런타임은 앱에 들어 있습니다.
             </li>
             <li>
-              개발자가 보내 준 <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 시작 화면에서
-              열거나 창에 끌어다 놓으면 연결 코드 저장과 프로젝트 만들기가 한 번에 끝납니다.
+              <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 시작 화면에서 열어야
+              시작됩니다 — 개발자가 보내 준 파일을 열거나 창에 끌어다 놓으면 연결 코드
+              저장과 개발자가 고른 프로젝트 전부의 설정이 한 번에 끝납니다.
             </li>
           </ol>
           <aside class="install__card">
@@ -169,53 +170,69 @@
         <p class="section__eyebrow">개발자용</p>
         <h2>초대장 만들기</h2>
         <p class="section__lead">
-          사용자에게 보낼 초대 파일(<code>*.colo-invite</code>)을 만듭니다. 파일에는 연결
-          코드가 들어 있으니 <strong>사용자만 보는 경로</strong>(슬랙 DM 등)로 보내고,
-          가져오기가 끝나면 지우라고 안내하세요. 입력한 값은 이 브라우저 안에서만
-          쓰입니다 — 어디에도 전송되지 않습니다.
+          연결 코드를 넣고 레포를 고르면, 고른 레포 전부가 초대 파일 하나에
+          실립니다 — 사용자는 파일을 놓기만 하면 모든 프로젝트가 설정됩니다.
+          내려받은 파일의 내용은 앱만 읽을 수 있게 가려집니다 — 편집기로 열면
+          알아볼 수 없는 글자로 보입니다. 그래도 연결 코드가 들어 있으니
+          <strong>사용자만 보는 경로</strong>(슬랙 DM 등)로 보내고, 가져오기가
+          끝나면 지우라고 안내하세요. 입력한 값은 이 브라우저 안에서만
+          쓰입니다 — 어디에도 전송되지 않습니다. 나중에 레포를 더 붙이거나
+          리뷰어를 바꿀 때도 새 초대 파일을 보내면 됩니다 — 사용자는 앱 어디에나
+          끌어다 놓거나 설정 → 연결 → 초대 파일 열기로 받습니다.
         </p>
-
         <form id="invite-form" class="iform" autocomplete="off">
-          <label class="ifield">
-            <span class="ifield__label">레포 주소 <em>필수</em></span>
-            <input name="repoUrl" type="url" required spellcheck="false"
-              placeholder="https://github.com/org/repo.git" />
-            <span class="ifield__hint">사용자가 작업할 서비스의 git 주소</span>
-          </label>
-
-          <label class="ifield">
-            <span class="ifield__label">프로젝트 이름 <em>필수</em></span>
-            <input name="name" required placeholder="회원 관리" />
-            <span class="ifield__hint">사용자의 앱에 보일 이름</span>
-          </label>
-
+          <!-- ① 연결 코드 — 목록을 부르는 열쇠. 메모리에만 둔다. -->
           <label class="ifield">
             <span class="ifield__label">연결 코드 <em>필수</em></span>
             <span class="ifield__secret">
               <input name="token" type="password" required spellcheck="false"
                 autocomplete="off" placeholder="github_pat_…" />
               <button type="button" id="token-toggle" aria-label="연결 코드 보이기">보기</button>
+              <button type="button" class="btn" id="repos-load">레포 불러오기</button>
             </span>
             <span class="ifield__hint">그 사용자용으로 발급한 GitHub 연결 코드(fine-grained PAT)</span>
           </label>
+          <p class="irepos__status" id="repos-status" hidden></p>
 
-          <div class="iform__row">
+          <!-- ② 불러온 레포 — 체크하면 초대장에 실린다. -->
+          <div class="irepos" id="repos-list" hidden>
             <label class="ifield">
-              <span class="ifield__label">기본 가지</span>
-              <input name="baseBranch" spellcheck="false" placeholder="main" />
+              <span class="ifield__label">레포 찾기</span>
+              <input id="repos-search" type="search" placeholder="owner/repo 로 좁히기" spellcheck="false" />
             </label>
+            <ul class="irepos__rows" id="repos-rows"></ul>
+          </div>
+
+          <!-- ③ 고른 프로젝트 — 순서가 초대장 순서, 첫째가 먼저 열린다. -->
+          <div class="ichosen" id="chosen">
+            <p class="ichosen__head">고른 프로젝트 <span id="chosen-count"></span></p>
+            <p class="ifield__hint">고른 순서가 초대장 순서입니다 — 첫 프로젝트가 사용자에게 먼저 열립니다.</p>
+            <div id="chosen-rows"></div>
+          </div>
+
+          <!-- ④ 주소 직접 추가 — 목록에 안 보이는 레포의 길. -->
+          <div class="ifield">
+            <span class="ifield__label">주소로 직접 추가</span>
+            <span class="ifield__secret">
+              <input id="manual-url" type="url" placeholder="https://github.com/org/repo.git" spellcheck="false" />
+              <button type="button" class="btn" id="manual-add">추가</button>
+            </span>
+            <span class="ifield__hint">조직이 승인하지 않은 세밀한 권한 코드는 목록에 레포가 안 보일 수 있어요 — 그럴 때 주소로 넣어 주세요.</span>
+          </div>
+
+          <!-- ⑤ 공통 — 작성자와 리뷰어는 모든 프로젝트가 함께 쓴다. -->
+          <div class="iform__row">
             <label class="ifield">
               <span class="ifield__label">작업 이름</span>
               <input name="author" placeholder="김기획" />
               <span class="ifield__hint">넘긴 요청의 작성 줄에 적힐 이름 — 파일 이름에도 씁니다</span>
             </label>
+            <label class="ifield">
+              <span class="ifield__label">리뷰어</span>
+              <input name="reviewers" spellcheck="false" placeholder="dev1, dev2" />
+              <span class="ifield__hint">넘긴 요청의 리뷰를 부탁할 개발자의 GitHub 로그인 — 모든 프로젝트 공통</span>
+            </label>
           </div>
-
-          <label class="ifield">
-            <span class="ifield__label">리뷰어</span>
-            <input name="reviewers" spellcheck="false" placeholder="dev1, dev2" />
-            <span class="ifield__hint">넘긴 요청의 리뷰를 부탁할 개발자의 GitHub 로그인 — 쉼표로 구분</span>
-          </label>
 
           <div class="iform__actions">
             <button type="submit" class="btn btn--primary" id="invite-download" disabled>
@@ -235,7 +252,7 @@
         <details class="ipreview">
           <summary>파일 내용 미리 보기</summary>
           <pre id="invite-preview">{}</pre>
-          <p class="note">미리 보기에서는 연결 코드를 가립니다 — 내려받은 파일에는 실제 코드가 들어 있습니다.</p>
+          <p class="note">미리 보기에서는 연결 코드를 가립니다 — 내려받은 파일에는 실제 코드가 가려진 봉투 안에 들어 있습니다.</p>
         </details>
       </section>
     </main>

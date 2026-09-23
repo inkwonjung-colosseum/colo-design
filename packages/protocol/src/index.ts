@@ -16,6 +16,7 @@
  * socket. Daemon -> client messages are produced by us, so they are plain types.
  */
 
+export * from "./invite.js";
 export * from "./messages.js";
 export * from "./preview.js";
 export * from "./project.js";

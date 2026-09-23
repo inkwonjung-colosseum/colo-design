@@ -809,6 +809,170 @@ main {
   margin-top: 0;
 }
 
+/* ---- 초대장 만들기 — 레포 목록과 고른 프로젝트 (ifield · iform 패턴의 확장) ---- */
+.irepos__status {
+  margin: -4px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.irepos__status--error {
+  color: var(--danger, #c05656);
+  font-weight: 600;
+}
+.irepos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.irepos__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+.irepos__row {
+  border-bottom: 1px solid var(--line-soft);
+}
+.irepos__row:last-child {
+  border-bottom: none;
+}
+.irepos__row label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.irepos__row:hover {
+  background: var(--bg-soft, rgba(127, 127, 127, 0.06));
+}
+.irepos__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.irepos__branch {
+  flex: none;
+  color: var(--muted);
+}
+.irepos__badge,
+.ichosen__badge {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--muted);
+}
+.irepos__badge--warn {
+  display: inline-block;
+  margin: 0 0 6px 14px;
+  border-color: var(--warn, #b98032);
+  color: var(--warn, #b98032);
+}
+
+.ichosen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ichosen__head {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.ichosen__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.ichosen__rowhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ichosen__num {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+}
+.ichosen__rowhead input {
+  font-family: var(--sans);
+  font-size: 14px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: transparent;
+}
+.ichosen__rowhead input:first-of-type {
+  flex: 1;
+}
+.ichosen__rowhead input:not(:first-of-type) {
+  flex: none;
+  width: 110px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.ichosen__rowhead .btn {
+  flex: none;
+}
+.ichosen__fold {
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 8px;
+}
+.ichosen__fold summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+.ichosen__fold summary::before {
+  content: "▸ ";
+}
+.ichosen__fold[open] summary::before {
+  content: "▾ ";
+}
+.ichosen__fold .ifield {
+  margin-top: 10px;
+}
+.ichosen__fold textarea {
+  font-family: var(--sans);
+  font-size: 13.5px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  resize: vertical;
+}
+
+/* 고른 프로젝트 행의 개발 서버 경고 — 목록 배지의 여백 규칙을 이 자리에 맞게 누른다. */
+.ichosen__devbadge {
+  margin: 0;
+  align-self: flex-start;
+}
+
 /* ---- 바닥 ---- */
 .foot {
   max-width: 1080px;

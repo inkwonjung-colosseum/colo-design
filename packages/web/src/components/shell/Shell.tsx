@@ -1,6 +1,7 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { CallDeveloper, Fold } from "../../components";
+import { useInviteImport } from "../../hooks/use-invite-import";
 import type { Daemon } from "../../lib/daemon-client";
 import {
   type ChatSettings,
@@ -12,6 +13,7 @@ import {
   switchProviderPatch,
 } from "../../lib/settings";
 import { AddProjectDialog } from "../dialogs/AddProjectDialog";
+import { InviteDialog } from "../dialogs/InviteDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { TokenExpiryDialog } from "../dialogs/TokenExpiryDialog";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -65,11 +67,30 @@ export function Shell({
   onOnboardingClose: () => void;
 }) {
   const { connection, status, api } = daemon;
+  // 초대 파일 가져오기 — 앱에 컨트롤러는 하나다. 드롭 · 고르기 창 · 설정의 열기
+  // 버튼이 전부 여기로 모이고, 시작 화면과 작업 화면 대화상자가 이것을 그린다.
+  const inviteImport = useInviteImport(daemon);
+
+  // 첫 실행의 결과가 모두 성공이고 경고도 없으면 결과 화면은 소음이다 — 확인
+  // 카드에서 삭제 안내를 이미 읽었으므로 조용히 닫는다.
+  useEffect(() => {
+    const state = inviteImport.state;
+    if (
+      state.phase === "done" &&
+      state.firstRun &&
+      state.result.tokenError === undefined &&
+      state.result.reachWarnings.length === 0 &&
+      state.result.results.every((entry) => entry.ok)
+    ) {
+      inviteImport.close();
+    }
+  }, [inviteImport.state, inviteImport.close]);
+  // 개발 실행(dev)에서만 프로젝트 추가 길이 산다 — 실사용의 추가는 초대장이 한다.
+  const devMachine = status?.dev === true;
   /** 프로젝트 추가 — the sidebar's `+ 새 프로젝트` opens it. */
   const [addOpen, setAddOpen] = useState(false);
   /** 시작하기 was pressed this session — warns stop re-opening the wizard. */
   const [wizardDismissed, setWizardDismissed] = useState(false);
-
   useEffect(() => {
     if (connection !== "open") return;
     // 연결 직후의 검사는 설정이 고른 프로바이더의 몫이다 — 기본 claude 로
@@ -142,9 +163,9 @@ export function Shell({
       setWizardNeeded(false);
       return;
     }
-    // github 의 warn(토큰 없음)은 마법사를 세우지 않는다 — 그 수정은 첫 화면
-    // 그 자체다(StartFlow 의 1단). 기계 게이트의 warn은 오늘
-    // 처럼 마법사를 세운다: 고칠 행이 여기밖에 없다.
+    // github 의 warn(토큰 없음)은 마법사를 세우지 않는다 — 그 수정은 초대 파일이
+    // 맡는다(시작 화면 · 토큰 만료 카드 · 설정의 초대 파일 열기). 기계 게이트의
+    // warn은 오늘 처럼 마법사를 세운다: 고칠 행이 여기밖에 없다.
     if (daemon.onboarding?.some((step) => step.status !== "pass" && step.id !== "github"))
       setWizardNeeded(true);
   }, [daemon.onboarding, daemon.projects.length]);
@@ -323,13 +344,15 @@ export function Shell({
     );
   }
 
-  // 프로젝트가 없으면 시작 마법사가 화면 전부다 — 창을 통째로 쓰는 3단
-  // (mockups/onboarding/02-wizard.html). 첫 실행엔 사이드바에 보여줄
-  // 대화도 프로젝트도 없으므로 껍데기는 소음이다.
-  if (daemon.projects.length === 0) {
+  // 프로젝트가 없으면 시작 화면이 창 전부다 — 첫 실행엔 사이드바에 보여줄 대화도
+  // 프로젝트도 없으므로 껍데기는 소음이다. 첫 실행의 적용이 도는 동안에도 이
+  // 화면을 지킨다 — 첫 프로젝트가 생기는 순간 작업 화면으로 바뀌면 나머지 진행과
+  // 실패가 안 보이는 일을 막는다(실패한 행의 다시 시도는 이 화면의 카드에 있다).
+  const firstRunApplying = inviteImport.state.phase === "applying" && inviteImport.state.firstRun;
+  if (daemon.projects.length === 0 || firstRunApplying) {
     return (
       <div className="planner planner--onboarding">
-        <StartFlow daemon={daemon} />
+        <StartFlow daemon={daemon} invite={inviteImport} />
         {expiryCard}
       </div>
     );
@@ -354,7 +377,7 @@ export function Shell({
           setCollapsed(next);
           onLayoutChange({ sidebarCollapsed: next });
         }}
-        onAddProject={() => setAddOpen(true)}
+        onAddProject={devMachine ? () => setAddOpen(true) : undefined}
         onOpenSettings={onOpenSettings}
         sessionTitles={settings.sessionTitles}
         activeThreadId={activeThreadId}
@@ -533,10 +556,13 @@ export function Shell({
           onOpenSettings={onOpenSettings}
           onRenameSession={onRenameSession}
           onActiveThreadChange={setActiveThreadId}
-          onAddProject={() => setAddOpen(true)}
+          onAddProject={devMachine ? () => setAddOpen(true) : undefined}
         />
       </div>
       {addOpen && <AddProjectDialog daemon={daemon} onClose={() => setAddOpen(false)} />}
+      {/* 초대 가져오기 — 작업 화면 위의 대화상자. 첫 실행이 모두 성공하고 경고도
+          없으면 아래 effect 가 조용히 닫는다(삭제 안내는 확인 카드가 이미 말했다). */}
+      <InviteDialog daemon={daemon} controller={inviteImport} />
       {expiryCard}
     </div>
   );

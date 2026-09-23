@@ -93,7 +93,8 @@ export function Sidebar({
   /** A narrow window folds the rail no matter what the setting says. */
   collapsedByViewport: boolean;
   onToggleCollapsed: () => void;
-  onAddProject: () => void;
+  /** 프로젝트 추가 길 — 개발 실행에서만 Shell 이 준다(실사용은 초대장이 한다). 없으면 ＋ 길이 사라진다. */
+  onAddProject?: () => void;
   onOpenSettings: () => void;
   /** Rendered between the rail and the drag boundary (Shell composes it —
       the width state and its persistence live there, beside the preview's). */
@@ -1160,22 +1161,24 @@ export function Sidebar({
             one room. The fold keeps both: a 44px rail stacks the ＋ tile
             over the gear, so narrow windows lose neither move. */}
         <div className="sidebar__foot">
-          {rail ? (
-            <Tip label="새 프로젝트" side="right">
-              <button
-                type="button"
-                className="ghost sidebar__plus"
-                aria-label="새 프로젝트"
-                onClick={onAddProject}
-              >
-                ＋
-              </button>
-            </Tip>
-          ) : (
-            <button type="button" className="ghost sidebar__new" onClick={onAddProject}>
-              <FolderPlusIcon />+ 새 프로젝트
-            </button>
-          )}
+          {rail
+            ? onAddProject && (
+                <Tip label="새 프로젝트" side="right">
+                  <button
+                    type="button"
+                    className="ghost sidebar__plus"
+                    aria-label="새 프로젝트"
+                    onClick={onAddProject}
+                  >
+                    ＋
+                  </button>
+                </Tip>
+              )
+            : onAddProject && (
+                <button type="button" className="ghost sidebar__new" onClick={onAddProject}>
+                  <FolderPlusIcon />+ 새 프로젝트
+                </button>
+              )}
           <button
             type="button"
             className="ghost sidebar__gear"
