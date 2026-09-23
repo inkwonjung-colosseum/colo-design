@@ -17,6 +17,7 @@
 
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildInvite, inviteSlug } from "./invite-format.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -54,26 +55,11 @@ if (!repoUrl || !name || !token) {
   process.exit(1);
 }
 
-const slug =
-  name
-    .trim()
-    .replace(/[^\p{L}\p{N}-]+/gu, "-")
-    .replace(/^-+|-+$/g, "") || "invite";
-const target = resolve(out ?? `./${slug}.colo-invite`);
+// 기본 파일 이름은 프로젝트 slug — 스크립트의 기본값이 늘 그랬다(페이지의
+// inviteFileName 은 작업 이름을 먼저 쓰는 같은 규칙의 다른 기본값).
+const target = resolve(out ?? `./${inviteSlug(name)}.colo-invite`);
 
-// readme 는 가져오기 화면에 그대로 보인다 — 전달 경로와 삭제 안내가 본체다.
-const invite = {
-  v: 2,
-  name: name.trim(),
-  repoUrl: repoUrl.trim(),
-  baseBranch,
-  token: token.trim(),
-  approveCommands: true,
-  ...(author ? { authorName: author.trim() } : {}),
-  ...(reviewers.length > 0 ? { reviewers } : {}),
-  readme:
-    "이 파일에는 당신의 GitHub 연결 코드가 들어 있습니다. Colo Design 에서 가져오기한 뒤에는 이 파일을 지워 주세요. 다른 사람에게 보내지 마세요.",
-};
+const invite = buildInvite({ repoUrl, name, token, baseBranch, author, reviewers });
 
 writeFileSync(target, `${JSON.stringify(invite, null, 2)}\n`);
 console.log(`초대 파일: ${target}`);
