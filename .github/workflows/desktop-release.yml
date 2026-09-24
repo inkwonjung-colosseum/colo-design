@@ -80,10 +80,31 @@ jobs:
       # 데몬이 서빙할 웹 산출물을 packages/desktop/web-dist 로 스테이징.
       - run: node packages/desktop/scripts/stage-web-dist.mjs
 
-      # 포터블 런타임 번들 — macOS: node + corepack 만.
+      # macOS 는 이동식 git(dugite-native) 도 번들한다(2단계): 시스템 git 이
+      # 없는 첫 실행 — /usr/bin/git 이 CLT 설치 대화상자를 여는 가짜인 mac —
+      # 에도 복제가 되게. 버전과 sha256 은 v2.53.0-4 릴리스 에셋에 고정한다.
+      - name: 이동식 git 내려받기 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          url="https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz"
+          want="f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe"
+          tgz="$RUNNER_TEMP/dugite-macos.tar.gz"
+          curl -fsSL "$url" -o "$tgz"
+          got=$(shasum -a 256 "$tgz" | awk '{print $1}')
+          if [ "$got" != "$want" ]; then
+            echo "::error::dugite sha256 불일치 — 기대 $want, 실제 $got"
+            exit 1
+          fi
+          dest="packages/desktop/resources/bin/git"
+          mkdir -p "$dest"
+          tar -xzf "$tgz" -C "$dest"
+          rm -f "$tgz"
+
+      # 포터블 런타임 번들 — macOS: node + corepack + 이동식 git 확인.
       - name: 런타임 번들 (macOS)
         if: runner.os == 'macOS'
-        run: node packages/desktop/scripts/bundle-runtimes.mjs
+        run: node packages/desktop/scripts/bundle-runtimes.mjs --with-git
 
       # Windows 는 MinGit 도 번들한다(연결 레포 작업에 git 필요). 버전과
       # sha256 은 git-for-windows v2.55.0.windows.5 릴리스 에셋에 고정한다.

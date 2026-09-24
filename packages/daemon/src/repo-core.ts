@@ -27,8 +27,10 @@ import {
   parseStatusRows,
   parseUnifiedDiff,
   sameChangedFiles,
+  unquoteGitPath,
   untrackedAsAdded,
 } from "./repo-diff.js";
+import { safeRepoPath } from "./repo-paths.js";
 export const INSTALL_MARKER = "colo-design-install-hash";
 /**
  * 실사 결함: fresh clone 의 첫 미리보기 부팅(next dev cold compile)이 30 초를
@@ -836,16 +838,73 @@ export class RepoCore {
   /**
    * Replays the parked work onto the moved branch. Returns the unmerged
    * paths when git could not finish the combine alone; anything else throws.
+   *
+   * pop 이 전쟁 없이 죽는 길이 하나 더 있다 — 임시 보관 때 새 파일(untracked)로
+   * 있던 경로를 받아 온 base 가 추적하기 시작한 충돌(실측: git 은 tracked
+   * 변경을 먼저 깔고 untracked 복원에서 "already exists, no checkout" 으로
+   * 죽는다, stash 는 남는다). 그대로 두면 새 파일은 stash 안에 갇혀 레지스트리만
+   * 참조하는 깨진 커밋이 나가고(베타 테스트 B7), 충돌 브리프의 `git stash drop`
+   * 지시는 갇힌 파일을 파괴한다. stash 의 untracked 판(`^3`)을 직접 깔아
+   * 결정론적으로 마무리한다 — 계획자의 보관이 작업 나무를 이기는 것은 모든
+   * pop 의 결과와 같은 규칙이고, 개발자 판은 HEAD 에 남아 diff 로 보인다.
    */
   async popStash(ref = "stash@{0}"): Promise<string[] | null> {
     try {
       await this.git(["stash", "pop", ref]);
       return null;
     } catch (error) {
+      const salvaged = await this.restoreParkedUntracked(ref);
       const conflicted = await this.conflictedFiles();
-      if (conflicted.length === 0) throw error;
-      return conflicted;
+      // tracked 병합이 남긴 충돌은 여전히 브리프의 것이다 — 단, 이번에는
+      // untracked 가 이미 깔려 있으므로 브리프의 drop 지시가 아무것도 잃지
+      // 않는다.
+      if (conflicted.length > 0) return conflicted;
+      if (salvaged) {
+        // tracked 판은 pop 이 이미 깔았고(깨끗한 경우), untracked 판은
+        // 방금 깔았다 — stash 는 비었으므로 여기서 치운다.
+        await this.git(["stash", "drop", ref]);
+        return null;
+      }
+      throw error;
     }
+  }
+
+  /**
+   * The untracked half of a parked stash, laid onto the worktree by hand.
+   * False when this failure is not the colliding-untracked kind — the caller
+   * keeps its original verdict (brief or throw) for everything else.
+   */
+  private async restoreParkedUntracked(ref: string): Promise<boolean> {
+    const parent = `${ref}^3`;
+    try {
+      await this.git(["rev-parse", "-q", "--verify", parent]);
+    } catch {
+      return false;
+    }
+    const listed = await this.git([
+      "-c",
+      "core.quotepath=false",
+      "ls-tree",
+      "-r",
+      "--name-only",
+      parent,
+    ]);
+    const parked = listed
+      .split(/\r?\n/)
+      .map((line) => unquoteGitPath(line.trim()))
+      .filter(Boolean);
+    if (parked.length === 0) return false;
+    // 이미 자리에 있는 경로가 하나라도 있어야 이 실패가 이 충돌이다 — 없는데
+    // pop 이 죽었다면 다른 병이므로 손대지 않는다.
+    const colliding = parked.filter((path) => {
+      const safe = safeRepoPath(path);
+      return safe !== null && existsSync(join(this.root, safe));
+    });
+    if (colliding.length === 0) return false;
+    // `^3` 의 나무에는 임시 보관 때의 새 파일만 들어 있다 — 통째로 깔아도
+    // 겹치는 경로 외에는 아무것도 덮지 않는다.
+    await this.git(["checkout", parent, "--", "."]);
+    return true;
   }
 
   /**
@@ -1209,6 +1268,30 @@ export class RepoCore {
     this.pendingChanges = files.length;
     this.changedFiles = files;
     this.emit();
+  }
+
+  /**
+   * 방금 선 커밋의 sha 와 그 커밋이 건드린 파일(2026-09-22) — 라우트↔파일
+   * 지도의 재료. 클론이 살아 있고 git 이 답할 때만 값이 있다. 경로는 클론
+   * 루트 상대(지도와 핀 후보가 쓰는 모양 그대로)다.
+   */
+  async headCommitFiles(): Promise<{ sha: string; files: string[] } | null> {
+    if (!this.isCloned()) return null;
+    try {
+      const sha = (await this.git(["rev-parse", "HEAD"])).trim();
+      const numstat = await this.git([
+        "-c",
+        "core.quotepath=false",
+        "diff-tree",
+        "--numstat",
+        "-r",
+        "--no-commit-id",
+        "HEAD",
+      ]);
+      return { sha, files: Object.keys(numstatCounts(numstat)) };
+    } catch {
+      return null;
+    }
   }
 
   setPhase(phase: RepoPhase, detail: string | null, kind: RepoErrorKind | null = null): void {

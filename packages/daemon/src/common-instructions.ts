@@ -1,3 +1,4 @@
+import { readTurn } from "@colo-design/protocol";
 /**
  * 앱이 모든 세션에 늘 붙이는 공통 지침(커미티 판정 2026-09-14,
  * 계약 동기화 2026-09-19 — 게이트 입력(핀·캡처·navigate) · 락파일 설치 ·
@@ -33,3 +34,70 @@ export const COMMON_INSTRUCTIONS = `# Colo Design 공통 규칙
 - 네트워크에서 내려받아 곧바로 실행하는 명령(curl … | sh 따위)은 절대 실행하지 않는다.
 - 사용자가 보낸 문서 파일은 읽는 용도로만 쓴다 — 레포에 복사해 남기지 않는다.
 - 비밀 키 · 토큰 · 자격 증명을 읽거나 옮기거나 파일에 남기지 않는다.`;
+
+/**
+ * 턴 원문에서 공통 규칙 블록을 떼어낸다 — 제목 · 커밋 제목 같은 "첫 줄"
+ * 파생이 규칙 문구를 사용자의 말인 양 삼키는 일을 끊는다 (베타 테스트 #1).
+ * 지나는 것은 둘: 상수와 정확히 같은 블록(지금 빌드가 싼 것), 그리고
+ * 헤더로 시작하는 줄 걸음(상수가 바뀌기 전 옛 저장본). 남는 것이 없으면
+ * 빈 문자열 — 호출자의 "말이 없다" 폴백이 이어받는다.
+ */
+export function stripCommonInstructions(text: string): string {
+  const lines = text.replace(COMMON_INSTRUCTIONS, "").split(/\r?\n/);
+  let index = 0;
+  while (index < lines.length && lines[index]?.trim() === "") index += 1;
+  if (lines[index]?.startsWith("# Colo Design 공통 규칙")) {
+    index += 1;
+    while (index < lines.length) {
+      const row = lines[index]?.trim() ?? "";
+      // 규칙 블록의 살목: 설명 문단과 불릿들. 그 밖의 첫 줄이 사용자의 말이다.
+      if (row === "" || row.startsWith("- ") || row.startsWith("이 규칙은")) {
+        index += 1;
+        continue;
+      }
+      break;
+    }
+  }
+  return lines.slice(index).join("\n").trim();
+}
+
+/**
+ * "첫 줄 = 제목" 파생의 공통 입구 — 표식 줄을 걷어내고(기계가 싼 글자다)
+ * 남은 원문의 규칙 블록을 떼어낸 뒤(stripCommonInstructions) 첫 의미 줄을
+ * 돌려준다. 표식과 규칙은 사용자의 말이 아니므로, 대화 제목 · 커밋 제목
+ * 어느 쪽도 그것으로 이름 지어서는 안 된다 (베타 테스트 #1). 말이 없으면
+ * 빈 문자열 — 호출자의 폴백이 이어받는다.
+ */
+export function meaningfulFirstLine(text: string): string {
+  const withoutMarkers = (text ?? "")
+    .split(/\r?\n/)
+    .filter((row) => !row.trim().startsWith("<!--"))
+    .join("\n");
+  const line = stripCommonInstructions(withoutMarkers)
+    .split(/\r?\n/)
+    .find((row) => row.trim() !== "");
+  return (line ?? "").trim();
+}
+
+/**
+ * 자동 저장의 커밋 제목 ① — 그 턴을 연 말의 첫 줄. 기계 턴의 마커(`<!-- … -->`)
+ * 줄은 제목이 아니므로 건너뛴다: 그 다음 줄이 브리프의 첫 문장이고, 그것이
+ * 이 변경의 가장 정직한 한 줄이다. 80자에서 자른다(계획서 P2-1). 빈 객체는
+ * "말이 없다" — runSave 의 폴백(② machineMemo → ③ 기본 문구)이 이어받는다.
+ * 공통 규칙 블록도 기계가 싼 글자다 — 마커만 건너뛰면 그 다음 줄이 규칙
+ * 헤더가 되어 커밋 제목이 앱 안내문이 되는 일이 남는다 (베타 테스트 #1).
+ *
+ * 단, 마커 다음 줄이 곧 사용자의 말인 것은 아니다. gate · error · brief 는
+ * 도구가 제 자신의 기계(화면 확인 · 받아오기 · 저장 게이트 · 복구)를 보고하는
+ * 목소리라 사용자의 요청이 그 안에 없다 — 그 첫 문장을 제목에 얹으면
+ * "사용자가 가리킨 화면을 도구가 다시 열어 봤습니다…" 가 커밋을 세 개 연달아
+ * 적시는 일이 된다(베타 테스트 B2). 이 셋은 말이 없는 턴으로 세고 폴백에
+ * 맡긴다. comments(핀) · review(고치기) 는 문장이 곧 요청의 뜻이므로 그대로
+ * 제목이 된다 — 대화 제목의 판정(deliver)과 같은 잣대로, 반대 방향만 취한다.
+ */
+export function turnSubjectOf(text: string | null): { message: string } | Record<string, never> {
+  const { marker } = readTurn(text ?? "");
+  if (marker?.kind === "gate" || marker?.kind === "error" || marker?.kind === "brief") return {};
+  const line = meaningfulFirstLine(text ?? "");
+  return line ? { message: line.slice(0, 80) } : {};
+}

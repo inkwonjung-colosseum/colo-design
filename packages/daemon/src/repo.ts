@@ -579,6 +579,11 @@ export class RepoWorkspace {
     return this.shelfStore.recoverShelf();
   }
 
+  /** 방금 선 커밋의 sha 와 파일 — 라우트↔파일 지도의 재료(2026-09-22). */
+  headCommitFiles(): Promise<{ sha: string; files: string[] } | null> {
+    return this.core.headCommitFiles();
+  }
+
   // -------------------------------------------------------------------------
   // Bring-up and lifecycle
   // -------------------------------------------------------------------------

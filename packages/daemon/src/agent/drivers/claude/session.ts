@@ -10,12 +10,10 @@ import {
 import type {
   ContextUsage,
   EffortLevel,
-  PermissionMode,
   PlanUsage,
   SessionCommand,
   SessionModelInfo,
 } from "@colo-design/protocol";
-import { PLAN_TOOL } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
@@ -68,16 +66,31 @@ class PushQueue implements AsyncIterable<SDKUserMessage> {
 }
 
 /**
- * File-edit tools that `acceptEdits` mode used to silence. Under the pinned
- * `default` mode the CLI asks about them like anything else, so the daemon
- * answers here instead, through the session's own `writePolicy`.
+ * File-edit tools the daemon's write policy answers when the CLI asks. The
+ * launch below pins `bypassPermissions` (2026-09-23: 이 도구의 모든 대화는
+ * 바로 진행으로만 돈다), so in practice the CLI checks nothing — the
+ * classification stays for the paths that still ask (questions) and as the
+ * honest vocabulary of the write policy.
  */
-const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const READ_TOOLS = new Set(["Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch"]);
+const EDIT_TOOLS: Record<string, true> = {
+  Write: true,
+  Edit: true,
+  MultiEdit: true,
+  NotebookEdit: true,
+};
+
+const READ_TOOLS: Record<string, true> = {
+  Read: true,
+  Glob: true,
+  Grep: true,
+  LS: true,
+  WebFetch: true,
+  WebSearch: true,
+};
 
 /**
  * The provider's tool name → the core's normalized class. The core's policy
- * (writePolicy, git-write refusal, plan gate) reads `kind`; the card and the
+ * (writePolicy, git-write refusal) reads `kind`; the card and the
  * 항상 허용 signature keep `name`.
  */
 function classifyTool(toolName: string, input: Record<string, unknown>): ToolClass {
@@ -86,7 +99,6 @@ function classifyTool(toolName: string, input: Record<string, unknown>): ToolCla
     return { kind: "mcp", name: toolName, ...(mcpServer ? { mcpServer } : {}) };
   }
   if (toolName === "AskUserQuestion") return { kind: "question", name: toolName };
-  if (toolName === PLAN_TOOL) return { kind: "plan", name: toolName };
   if (toolName === "Bash") {
     return {
       kind: "exec",
@@ -94,13 +106,13 @@ function classifyTool(toolName: string, input: Record<string, unknown>): ToolCla
       ...(typeof input.command === "string" ? { command: input.command } : {}),
     };
   }
-  if (EDIT_TOOLS.has(toolName)) {
+  if (EDIT_TOOLS[toolName]) {
     const paths = [input.file_path, input.notebook_path, input.path].filter(
       (value): value is string => typeof value === "string" && value.length > 0,
     );
     return { kind: "edit", name: toolName, ...(paths.length > 0 ? { paths } : {}) };
   }
-  if (READ_TOOLS.has(toolName)) {
+  if (READ_TOOLS[toolName]) {
     const path = [input.file_path, input.path].find(
       (value): value is string => typeof value === "string" && value.length > 0,
     );
@@ -167,23 +179,14 @@ export class ClaudeAgentSession implements AgentSession {
         // 중지의 이행 보장: 유예 안에 interrupt 가 답하지 못하는 질의는 이
         // 컨트롤러로 끊는다 — SDK 가 자원을 정리하고 CLI 를 내린다.
         abortController: this.abort,
-        // `default` is pinned on purpose: current CLI builds auto-approve
-        // safe Bash under acceptEdits/auto without ever consulting
-        // `canUseTool`, which would let a session run shell commands with no
-        // planner in the loop. The daemon answers edit-class tools itself
-        // (see canUse), so the UX stays "edits are silent, everything else
-        // asks".
-        permissionMode: "default",
-        // The launch flag — not the mode — is what the CLI checks before it
-        // accepts a later `setPermissionMode("bypassPermissions")`; without
-        // it every 전부 맡기기 switch dies with "was not launched with
-        // --dangerously-skip-permissions". The starting mode above stays
-        // `default`, so nothing widens until the planner picks it themselves.
+        // 2026-09-23: 이 도구는 확인 방식을 물지 않는다 — 모든 대화가
+        // bypassPermissions 로 돈다. `allowDangerouslySkipPermissions` 는
+        // 이 값을 받아들이는 조건이고, managedSettings 의 defaultMode 핀은
+        // 사용자·레포 설정(~/.claude/settings.json 의 defaultMode)이 이 자세를
+        // 어느 방향으로든 되돌리지 못하게 하는 같은 말의 두 번째 표현이다.
+        permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        // Policy tier beats a user's own `defaultMode` (e.g. `"auto"`) in
-        // ~/.claude/settings.json — without it that setting silently widens
-        // every hub session.
-        managedSettings: { permissions: { defaultMode: "default" } },
+        managedSettings: { permissions: { defaultMode: "bypassPermissions" } },
         includePartialMessages: true,
         // Load the same user/project configuration the terminal would, so
         // CLAUDE.md, skills, and permission rules behave identically. (The
@@ -376,26 +379,6 @@ export class ClaudeAgentSession implements AgentSession {
   /** Effective from the next response. `null` clears the override. */
   async setEffort(effort: EffortLevel | null): Promise<void> {
     await this.run.applyFlagSettings({ effortLevel: effort ?? null });
-  }
-
-  async setMode(mode: string): Promise<void> {
-    // 갓 살아난 CLI 는 제어 요청을 받아들일 준비가 늦는다 — 방금 만들거나
-    // 되살린 대화의 첫 칩(계획 먼저)이 부팅 창에 부딪히면 계획자는 자기가
-    // 누른 칩이 오류 밴드로 돌아오는 것을 받는다. "준비 안 됨"은 거절이
-    // 아니라 아직이라는 뜻이니, 묻는 것을 잠시 뒤로 미룬다.
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        await this.run.setPermissionMode(mode as PermissionMode);
-        break;
-      } catch (e) {
-        if (attempt >= 5 || !/not ready/i.test(e instanceof Error ? e.message : String(e))) {
-          throw e;
-        }
-        const backoff = Promise.withResolvers<void>();
-        setTimeout(backoff.resolve, 300 * attempt);
-        await backoff.promise;
-      }
-    }
   }
 
   /**

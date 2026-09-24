@@ -11,10 +11,10 @@ import type { BrowserMcpEntry } from "../browser-launch.js";
 /**
  * The normalized tool classes the core session and UI understand. Drivers
  * translate their native tool names into these kinds so the core's policy
- * (writePolicy, git-write refusal, plan-mode gate) and the UI's cards stay
+ * (writePolicy, git-write refusal) and the UI's cards stay
  * provider-agnostic.
  */
-type ToolKind = "edit" | "exec" | "read" | "question" | "plan" | "mcp" | "other";
+type ToolKind = "edit" | "exec" | "read" | "question" | "mcp" | "other";
 
 export interface ToolClass {
   kind: ToolKind;
@@ -52,8 +52,6 @@ export interface Capabilities {
   modelSelect: boolean;
   /** Slash-command palette. */
   slashCommands: boolean;
-  /** Plan-mode id, or null when the provider has no plan mode. */
-  planMode: string | null;
   /** stopTask/backgroundTask subagent controls. */
   subtasks: boolean;
   /** Mid-turn input — the driver can fold a send into the running turn. */
@@ -71,8 +69,6 @@ export interface Capabilities {
 export interface ProviderDescriptor {
   id: string;
   label: string;
-  modes: Array<{ id: string; label: string; tier: "safe" | "moderate" | "planning" | "dangerous" }>;
-  defaultModeId: string;
   capabilities: Capabilities;
 }
 
@@ -168,11 +164,9 @@ export interface LaunchConfig {
   sessionId: string;
   model: string | null;
   effort: EffortLevel | null;
-  modeId: string;
   appendSystemPrompt: string | null;
   /** Resume an existing transcript (the provider's stored session id). */
   resume?: string;
-  /** D95: with `resume` — this session is a fork carrying a new id. */
   forkSession?: boolean;
   /** D95: with `resume` — the point the truncated resume keeps up to. */
   resumeSessionAt?: string;
@@ -246,17 +240,12 @@ export interface AgentSession {
    */
   steer?(turn: Turn): Promise<void>;
   interrupt(): Promise<"answered" | "timeout" | "dead">;
-  setMode(modeId: string): Promise<void>;
   setModel?(id: string | null): Promise<void>;
   setEffort?(e: EffortLevel | null): Promise<void>;
   setFastMode?(on: boolean): Promise<void>;
   usage?(): Promise<PlanUsage | null>;
   contextUsage?(): Promise<ContextUsage | null>;
-  /**
-   * The provider's own mode rows for the composer chip (ACP agents name
-   * their own modes). Null/absent = the UI's built-in mode list applies.
-   */
-  modes?(): Promise<Array<{ id: string; label: string; description?: string }> | null>;
+  /** The composer's /command palette rows from the provider's own CLI. */
   commands?(): Promise<SessionCommand[]>;
   models?(): Promise<SessionModelInfo[]>;
   stopTask?(id: string): Promise<void>;

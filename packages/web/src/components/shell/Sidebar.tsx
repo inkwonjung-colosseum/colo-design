@@ -1154,6 +1154,12 @@ export function Sidebar({
                           <NewChatIcon />
                         </span>
                         ＋ 새 대화 시작
+                        {/* 위의 주방(작업 중 섹션)이 늘었다 줄며 이 줄의 자리가
+                            흔들린다 — 버튼 셋이 같은 문양이면 흔들린 만큼 잘못
+                            누른다(베타 테스트 B11, 실사고 3회). 행이 프로젝트를
+                            밝히는 곳에서만 식별자가 된다는 주방의 원칙을 시작
+                            줄까지 이어 적용한다. */}
+                        <span className="leaf__meta leaf--start__project">{project.name}</span>
                       </button>
                     )}
                   </div>

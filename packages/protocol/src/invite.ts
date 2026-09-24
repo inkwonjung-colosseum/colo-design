@@ -1,14 +1,14 @@
 /**
  * 초대 파일(`*.colo-invite`)의 읽는 쪽 — 바깥 봉투 v3(앱 내장 키의 AES-256-GCM)을
  * 열어 안쪽 JSON 을 돌려주고(normalizeInvite), 정규화된 초대장 모양으로 묶는다.
- * 쓰는 쪽은 docs/invite-format.mjs(sealInvite — 형식의 한 곳: 페이지와 터미널
+ * 쓰는 쪽은 site/invite-format.mjs(sealInvite — 형식의 한 곳: 페이지와 터미널
  * 생성기가 함께 읽는다), 화면 잇기는 packages/web/src/components/onboarding/StartFlow.tsx
  * 의 parseInvite 다.
  * 봉투를 못 열면 이유("sealed")만 말한다 — 비밀은 다루지 않는다.
  */
 
 /**
- * 봉투를 가리는 앱 내장 키(32바이트, base64). docs/invite-format.mjs 의
+ * 봉투를 가리는 앱 내장 키(32바이트, base64). site/invite-format.mjs 의
  * INVITE_KEY 와 같은 값이어야 한다(데몬 테스트가 확인한다). 키가 공개 페이지
  * 소스와 앱에 함께 있으므로 비밀이 아니다 — 편집기로 파일을 열었을 때 내용이
  * 읽히지 않게 하는 가림이 목적이다.

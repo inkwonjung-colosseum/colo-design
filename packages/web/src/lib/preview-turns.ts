@@ -116,7 +116,7 @@ export function pinsToTurn(
 }
 
 /**
- * The error banner's structured turn: the marker names where it
+ * A preview error's fix turn: the marker names where it
  * happened, and the body is the message itself — the stack or build output
  * is what the agent fixes from; prose around it would only be in the way.
  * `count` marks the same message coming back after a fix turn.

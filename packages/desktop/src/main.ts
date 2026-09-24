@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
+import { bundledToolEnv, COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
 import { DaemonServer, daemonOwnedPorts } from "@colo-design/daemon/server";
@@ -163,10 +163,18 @@ async function bootApp(): Promise<void> {
   const resourcesBin = join(process.resourcesPath, "bin");
   const extraPath = existsSync(resourcesBin) ? resourcesBin : undefined;
   if (extraPath) process.env.COLO_DESIGN_EXTRA_PATH = extraPath;
+  // 번들 도구 환경(2단계): 이동식 git(darwin) 과 bash(win32) 를 세계의 맨
+  // 앞에 둔다 — PATH 앞자리는 기존 resources/bin 보다 더 앞이고, 변수는 있는
+  // 값을 덮어쓴다. 데몬·세션·AI 명령이 모두 이 env 를 물려받는다.
+  const tools = bundledToolEnv(resourcesBin, process.platform, process.env);
   // 데스크톱 앱이 데몬을 감싸므로 데몬의 자식들도 이 프로세스의 PATH 를
   // 물려받는다 — 번들 런타임을 앞에 두고 시작한다.
   // 구분자는 플랫폼 것을 쓴다 — win32 에서 `:` 로 붙이면 첫 PATH 항목이 깨진다.
-  if (extraPath) process.env.PATH = `${extraPath}${delimiter}${process.env.PATH}`;
+  const pathFront = [...tools.pathPrefixes, ...(extraPath ? [extraPath] : [])];
+  if (pathFront.length > 0) {
+    process.env.PATH = `${pathFront.join(delimiter)}${delimiter}${process.env.PATH}`;
+  }
+  Object.assign(process.env, tools.env);
 
   const webDist = existsSync(join(app.getAppPath(), "web-dist"))
     ? join(app.getAppPath(), "web-dist")

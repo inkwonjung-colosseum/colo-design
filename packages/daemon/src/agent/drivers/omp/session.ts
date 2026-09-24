@@ -16,46 +16,20 @@ import type {
   Turn,
 } from "../../driver.js";
 import { ompModelRows } from "./catalog.js";
-import { approvalToolName, classifyOmpTool } from "./classify.js";
+import { approvalToolName } from "./classify.js";
 import { OmpRpcTransport } from "./transport.js";
 
 /** The omp wire shapes this driver reads — kept loose, the protocol evolves. */
 type Wire = Record<string, any>;
 
 /**
- * bypass(바로 실행) — 에이전트의 모드가 아니라 데몬의 집행 방식. omp 는 승인
- * 모드를 런타임에 바꾸는 명령이 없으므로(RpcCommand 에 그런 항목이 없다) 세션은
- * 언제나 `--approval-mode always-ask` 로 뜬다: 읽기는 조용하고 쓰기·실행은
- * 전부 승인 요청으로 데몬에 온다. 그 요청에 카드를 열지 않고 Approve 로
- * 답하는 것이 bypass 다 — codex bypass(approvalPolicy never)의 동등물.
+ * 바로 진행(bypass) — 이 도구의 유일한 확인 방식(2026-09-23). omp 는 승인
+ * 모드를 런타임에 바꾸는 명령이 없으므로(RpcCommand 에 그런 항목이 없다)
+ * 세션은 언제나 `--approval-mode always-ask` 로 뜬다: 읽기는 조용하고
+ * 쓰기·실행은 전부 승인 요청으로 데몬에 온다. 그 요청에 카드를 열지 않고
+ * Approve 로 답하는 것이 바로 진행이다 — 이제 유일한 방식이므로 조건도
+ * 없다.
  */
-const BYPASS_MODE_ID = "bypass";
-
-/**
- * 모드 행 — 서술자의 티어 표와 컴포저 칩이 같은 목록을 쓴다. omp 의 rpc 에는
- * 계획 모드 와이어가 없다(`/plan` 은 TUI 전용 슬래시 명령이고 RpcCommand 에
- * 대응이 없다). 없는 자세를 칩에 세우면 고른 순간 아무 일도 일어나지 않으므로
- * 두 줄만 선다.
- */
-export const OMP_MODE_ROWS: Array<{
-  id: string;
-  label: string;
-  tier: "safe" | "moderate" | "planning" | "dangerous";
-  description: string;
-}> = [
-  {
-    id: "default",
-    label: "실행 전에 물어보기",
-    tier: "moderate",
-    description: "쓰기·실행 전에 카드로 물어봅니다",
-  },
-  {
-    id: BYPASS_MODE_ID,
-    label: "바로 진행",
-    tier: "dangerous",
-    description: "아무것도 묻지 않습니다",
-  },
-];
 
 /** 승인을 기다리는 도구 호출 — 어시스턴트 메시지가 실은 순서 그대로. */
 interface PendingCall {
@@ -100,7 +74,6 @@ export class OmpAgentSession implements AgentSession {
   /** Whether THIS turn produced any agent text or tool call — an empty
       "successful" turn is a swallowed provider failure, not an answer. */
   private turnSawContent = false;
-  private currentModeId: string;
   private currentModel: string | null;
   /** The model/effort the CLI opened with — what a null pick restores. */
   private initialModel: string | null = null;
@@ -135,7 +108,6 @@ export class OmpAgentSession implements AgentSession {
     prefixArgs: string[] = [],
   ) {
     this.launch = launch;
-    this.currentModeId = launch.modeId || "default";
     this.currentModel = launch.model;
     // 프로젝트 티어가 적재되기 직전의 마지막 방어선: omp 는 <cwd>/.omp/config.yml 을
     // 신뢰 대화상자 없이 verbatim 으로 읽는다. 클론·갱신·기동 스윕과 같은 칼이며,
@@ -194,7 +166,6 @@ export class OmpAgentSession implements AgentSession {
       cwd: this.launch.cwd,
       tools: [],
       apiKeySource: "none",
-      permissionMode: this.currentModeId,
     });
 
     // 런치 핀 중 CLI 가 이미 적용하지 못한 것. 모델은 `--model` 이 퍼지 매칭을
@@ -327,12 +298,6 @@ export class OmpAgentSession implements AgentSession {
     return this.alive ? "answered" : "dead";
   }
 
-  /** 모드는 데몬의 집행 방식이다 — 에이전트에 보낼 명령이 없다(위 BYPASS 주석). */
-  async setMode(modeId: string): Promise<void> {
-    await this.ready;
-    if (OMP_MODE_ROWS.some((row) => row.id === modeId)) this.currentModeId = modeId;
-  }
-
   async setModel(id: string | null): Promise<void> {
     await this.ready;
     const target = id ?? this.initialModel;
@@ -366,20 +331,6 @@ export class OmpAgentSession implements AgentSession {
     await this.ready;
     const result = (await this.transport.command("set_fast_mode", { enabled: on }, 15_000)) as Wire;
     this.hooks.onFastMode?.(result?.active === true, null);
-  }
-
-  async modes(): Promise<Array<{
-    id: string;
-    label: string;
-    description?: string;
-    tier?: string;
-  }> | null> {
-    return OMP_MODE_ROWS.map(({ id, label, description, tier }) => ({
-      id,
-      label,
-      description,
-      tier,
-    }));
   }
 
   async commands(): Promise<SessionCommand[]> {
@@ -623,7 +574,7 @@ export class OmpAgentSession implements AgentSession {
       await this.answerQuestionSelect(id, title, options, frame);
       return;
     }
-    await this.answerApproval(id, toolName, options);
+    await this.answerApproval(id, options);
   }
 
   private answerUi(id: string, payload: Wire): void {
@@ -637,30 +588,11 @@ export class OmpAgentSession implements AgentSession {
     return want === "allow" ? allow : deny;
   }
 
-  private async answerApproval(id: string, toolName: string, options: string[]): Promise<void> {
-    // bypass(바로 실행): 카드를 열지 않고 허용으로 답한다.
-    if (this.currentModeId === BYPASS_MODE_ID) {
-      this.answerUi(id, { value: this.pick(options, "allow") });
-      return;
-    }
-    // 승인 frame 에는 인자가 없다 — 직전 어시스턴트 메시지가 실은 호출 중
-    // 같은 이름의 첫 건이 이 승인의 주인이다. 목록에 없으면(재시도·복원 경로)
-    // 제목만으로 카드를 연다: 인자 없는 카드가 잘못된 인자보다 낫다.
-    const slot = this.pendingCalls.findIndex((call) => call.name === toolName);
-    const call = slot === -1 ? null : this.pendingCalls.splice(slot, 1)[0];
-    const args = call?.args ?? {};
-    const tool = classifyOmpTool(toolName, args);
-    let verdict: PermissionVerdict;
-    try {
-      verdict = await this.hooks.decidePermission(tool, args, { signal: this.abort.signal });
-    } catch {
-      // 카드를 띄울 수 없으면(세션이 닫히는 중) 거절이 안전한 쪽이다.
-      this.answerUi(id, { value: this.pick(options, "deny") });
-      return;
-    }
-    this.answerUi(id, {
-      value: this.pick(options, verdict.behavior === "allow" ? "allow" : "deny"),
-    });
+  private async answerApproval(id: string, options: string[]): Promise<void> {
+    // 바로 진행: 승인 요청은 카드를 열지 않고 허용으로 답한다(파일 머리
+    // 주석). 실행이 끝나면 dropPending 이 목록을 정리하므로 여기선 답만
+    // 낸다.
+    this.answerUi(id, { value: this.pick(options, "allow") });
   }
 
   /**

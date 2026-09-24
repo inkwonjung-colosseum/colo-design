@@ -150,8 +150,6 @@ export class SessionManager {
         ...options,
         provider: driver.id,
         providerLabel: descriptor.label,
-        planModeId: descriptor.capabilities.planMode,
-        defaultModeId: descriptor.defaultModeId || "default",
       },
       this.events,
     );
@@ -159,7 +157,6 @@ export class SessionManager {
       cwd: session.cwd,
       sessionId: session.id,
       model: options.launch?.model ?? null,
-      modeId: driver.describe().defaultModeId,
       effort: options.launch?.effort ?? null,
       appendSystemPrompt: options.launch?.appendSystemPrompt ?? null,
       ...options.launch,
@@ -654,8 +651,6 @@ export class SessionManager {
         sessionId: forkId,
         provider: driver.id,
         providerLabel: forkDescriptor.label,
-        planModeId: forkDescriptor.capabilities.planMode,
-        defaultModeId: forkDescriptor.defaultModeId || "default",
         launch: {
           ...input.base.launch,
           resume: input.sessionId,
@@ -675,7 +670,6 @@ export class SessionManager {
             sessionId: fork.id,
             model: input.base.launch?.model ?? null,
             effort: input.base.launch?.effort ?? null,
-            modeId: driver.describe().defaultModeId || "default",
             appendSystemPrompt: input.base.launch?.appendSystemPrompt ?? null,
             ...input.base.launch,
             resume: input.sessionId,

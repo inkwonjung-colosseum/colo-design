@@ -164,7 +164,7 @@ function httpUrl(url: string): boolean {
 
 /**
  * Fire-and-forget load: the rejection is already reported — the page's
- * `did-fail-load` handler owns the error banner, so the promise's only job
+ * `did-fail-load` handler owns the error report, so the promise's only job
  * left is not crashing as an unhandled rejection.
  */
 function navigate(contents: WebContents, url: string): void {
@@ -994,12 +994,64 @@ export class PlannerPreviewView {
     if (page?.kind !== "preview") return;
     const type = typeof payload?.type === "string" ? payload.type : "";
     if (type === "colo-design.pin" && this.activePage === page) {
+      // 에이전트 입력 동안의 "핀"은 그 클릭이 삼킨 흔적일 뿐 사용자의 말이
+      // 아니다 — 오버레이 깃발(col·overlay:agent)의 누수 대비 안전망이다
+      // (베타 테스트 #2).
+      if (this.agentInputDepth > 0) return;
       // inside is logged, never an unhandled rejection.
       void this.relayPin(payload as ColoDesignPinEnvelope).catch((error) => {
         console.error("preview pin relay failed", error);
       });
     } else if (type === "colo-design.pin-focus" && this.activePage === page) {
       this.send("colo-preview:pin-focus", payload);
+    }
+  }
+
+  /**
+   * 에이전트 입력의 깊이 — 브라우저 도구가 화면에 손을 대는 op(click · type
+   * · drag …)의 동안만 0 이 아니다. 그 동안 오려내는 것은 둘: 오버레이의
+   * 핀 캡처(preload 의 `colo-overlay:agent` 깃발)와, 여기서 새어 나오는 핀
+   * 봉투(onOverlayPost 의 drop). 도구의 클릭은 화면을 확인하려는 손길이지
+   * 사용자의 가리킴이 아니므로, 핀 모드가 켜져 있어도 그 클릭이 사용자의
+   * 핀으로 쌓이는 일이 없어야 한다 (베타 테스트 #2).
+   */
+  private agentInputDepth = 0;
+  private agentInputAcks = new Set<(sender: WebContents) => void>();
+
+  async beginAgentInput(): Promise<void> {
+    this.agentInputDepth += 1;
+    await this.sendAgentInputState(true);
+  }
+
+  async endAgentInput(): Promise<void> {
+    if (this.agentInputDepth === 0) return;
+    this.agentInputDepth -= 1;
+    await this.sendAgentInputState(false);
+  }
+
+  /** preload 의 준비 답 — 보내기와 그 다음 입력 dispatch 사이의 순서를
+      지키는 유일한 근거라, sender 만 확인하고 넓게 푼다. */
+  onAgentInputAck(sender: WebContents): void {
+    for (const waiter of this.agentInputAcks) waiter(sender);
+  }
+
+  private async sendAgentInputState(on: boolean): Promise<void> {
+    const contents = this.webContents();
+    if (!contents) return;
+    const delivered = Promise.withResolvers<void>();
+    const waiter = (sender: WebContents) => {
+      if (sender === contents) delivered.resolve();
+    };
+    this.agentInputAcks.add(waiter);
+    contents.send("colo-overlay:agent", { on });
+    // 게스트가 죽어 있으면 답도 없다 — op 가 멈추는 것보다 낫다, 유예 뒤에는
+    // 답이 없어도 간다.
+    const timer = setTimeout(() => delivered.resolve(), 500);
+    try {
+      await delivered.promise;
+    } finally {
+      clearTimeout(timer);
+      this.agentInputAcks.delete(waiter);
     }
   }
 
@@ -1337,6 +1389,9 @@ export function registerPreviewIpc(view: PlannerPreviewView): void {
   // must reach its own page's facts, never the renderer.
   ipcMain.on("colo-overlay:post", (event, payload: { type?: unknown }) => {
     view.onOverlayPost(event.sender, payload);
+  });
+  ipcMain.on("colo-overlay:agent-ack", (event) => {
+    view.onAgentInputAck(event.sender);
   });
   ipcMain.on("colo-overlay:capture-done", (event) => {
     if (event.sender !== view.webContents()) return;

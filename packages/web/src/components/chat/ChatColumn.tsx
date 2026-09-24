@@ -5,14 +5,13 @@ import type {
   SessionSummary,
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Fold, PermissionCard, PlanCard, QuestionCard, Transcript } from "../../components";
+import { Fold, PermissionCard, QuestionCard, Transcript } from "../../components";
 import type { Pins } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import { ownerRepoOf } from "../../lib/format";
 import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
-import { PLAN_TOOL } from "../../lib/labels";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
 import { type SendKey, saveHandledReview } from "../../lib/settings";
@@ -238,6 +237,11 @@ export function ChatColumn({
     : daemon.diffStatus?.reason === "push-auth"
       ? "연결 코드가 만료됐어요 — 개발자에게 새 코드를 요청하세요"
       : (daemon.diffStatus?.detail ?? "제출하지 못했습니다.");
+  // 배너의 다시 제출하기가 runSubmit 을 직결로 부른다 — 상단 바 버튼과 달리
+  // 이 길에는 사전 차단이 없어서, 턴 도중·저장 중 클릭이 조용히 묻혔다(베타
+  // 테스트 B6의 잔여). 못 쓰는 순간 버튼이 스스로 이유를 말하게 한다.
+  const retryBlockedByTurn = sessions.running;
+  const retryBusy = savingNow || sessions.running;
 
   /**
    * 닫은 제안: 데몬은 한 문장을 한 번 보내고 잊지만, 계획자가 닫은
@@ -591,7 +595,12 @@ export function ChatColumn({
               title={handoffFailed ? "넘기기에 실패했습니다" : "제출에 실패했습니다"}
               sub={saveFailDetail}
               action={{
-                label: handoffFailed ? "다시 넘기기" : "다시 제출하기",
+                label: retryBlockedByTurn
+                  ? "AI가 고치는 중"
+                  : handoffFailed
+                    ? "다시 넘기기"
+                    : "다시 제출하기",
+                disabled: retryBusy,
                 onClick: runSubmit,
               }}
             />
@@ -629,42 +638,21 @@ export function ChatColumn({
           )}
           {visiblePending.map((request) =>
             request.kind === "permission" ? (
-              request.toolName === PLAN_TOOL ? (
-                // 계획의 승인은 카드가 다르고, 승인의 뒷정리도 다르다 — 데몬이
-                // 작업 모드로 되돌렸으니 칩과 대화의 권한 선택이 그 진실을 따라
-                // 온다(계획만 세우기로 세운 대화는 승인 한 번으로 소비된다).
-                <PlanCard
-                  key={request.requestId}
-                  request={request}
-                  onRespond={(decision, message) => {
-                    // 카드는 데몬이 답을 받아들일 때까지 남는다 — 응답이
-                    // 길에서 죽으면 결정이 사라진 채 카드만 닫히던 결함.
-                    void api
-                      .respondPermission(request.requestId, decision, message)
-                      .then(() => {
-                        resolvePending(request.requestId);
-                        if (decision === "allow") sessions.afterPlanApproval();
-                      })
-                      .catch((e) => showError(e instanceof Error ? e.message : String(e)));
-                  }}
-                />
-              ) : (
-                <PermissionCard
-                  key={request.requestId}
-                  request={request}
-                  // 레포가 정한 명령은 이름으로 읽힌다(P3-1): 이 prop 이 없으면
-                  // 같은 카드가 날 셸 줄(`pnpm run check`)을 머리에 세우고,
-                  // 비개발자에게 그것은 허용할지 말지를 정할 근거가 못 된다.
-                  // 홈 인박스는 이미 같은 값을 넘긴다 — 두 자리가 같은 말을 한다.
-                  commands={daemon.repo?.commands}
-                  onRespond={(decision, message) => {
-                    void api
-                      .respondPermission(request.requestId, decision, message)
-                      .then(() => resolvePending(request.requestId))
-                      .catch((e) => showError(e instanceof Error ? e.message : String(e)));
-                  }}
-                />
-              )
+              <PermissionCard
+                key={request.requestId}
+                request={request}
+                // 레포가 정한 명령은 이름으로 읽힌다(P3-1): 이 prop 이 없으면
+                // 같은 카드가 날 셸 줄(`pnpm run check`)을 머리에 세우고,
+                // 비개발자에게 그것은 허용할지 말지를 정할 근거가 못 된다.
+                // 홈 인박스는 이미 같은 값을 넘긴다 — 두 자리가 같은 말을 한다.
+                commands={daemon.repo?.commands}
+                onRespond={(decision, message) => {
+                  void api
+                    .respondPermission(request.requestId, decision, message)
+                    .then(() => resolvePending(request.requestId))
+                    .catch((e) => showError(e instanceof Error ? e.message : String(e)));
+                }}
+              />
             ) : (
               <QuestionCard
                 key={request.requestId}
@@ -725,8 +713,6 @@ export function ChatColumn({
         commands={sessions.commands}
         onSetModel={(model) => void sessions.setModel(model)}
         onSetEffort={(effort) => void sessions.setEffort(effort)}
-        onSetPermissionMode={(mode) => void sessions.setPermissionMode(mode)}
-        onSetMode={(mode) => void sessions.setMode(mode)}
         // 프로바이더 재료는 열린 대화에서도 건네진다 — 뿌리 카드의 프로바이더
         // 행은 언제나 서고, 고름은 다음 새 대화부터 먹는다(스레드는 태어난
         // 프로바이더에 묶이므로 열린 대화를 바꾸지는 않는다).
@@ -801,6 +787,8 @@ export function ChatColumn({
           // 저절로 비워진다.
           const pinHints: SessionPinHint[] = sentPins.map((pin) => ({
             id: pin.id,
+            // 핀의 화면(2026-09-22) — 정체 검색이 빈손일 때 관찰 지도의 열쇠다.
+            screen: pin.screen,
             ...(pin.element.kind === "region"
               ? {}
               : {

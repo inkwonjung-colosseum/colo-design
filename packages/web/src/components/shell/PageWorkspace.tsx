@@ -24,6 +24,7 @@ import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { ShortcutsSheet } from "../dialogs/ShortcutsSheet";
 import { HomeInbox } from "../home/HomeInbox";
 import { ScreenPanel } from "../panels/ScreenPanel";
+import { StateBanner } from "../StateBanner";
 import { Palette } from "./Palette";
 import { Splitter } from "./Splitter";
 import { Tip } from "./Tip";
@@ -325,14 +326,31 @@ export function PageWorkspace({
 
   // Rebuilt without a dep array on purpose: every render hands the tree the
   // newest closures, so a click never runs against a stale session list.
+  /** 대화를 내보낸 자리의 소식 — 성공은 잠깐 알리고 실패는 사람이 거둔다.
+      이 메뉴의 유일한 피드백이었다(베타 테스트 B13): 거절이 조용히 사라지면
+      누른 손은 버튼이 죽었다고 읽는다. */
+  const [exportNote, setExportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    if (!exportNote?.ok) return;
+    const timer = window.setTimeout(() => setExportNote(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [exportNote]);
   /** The transcript is the planner's deliverable — one click takes it out of
       the machine and into a markdown file they can keep. The tree's row and
       the thread head's menu share this one hand. */
   const exportThreadById = (id: string, title: string) => {
     void daemon.api
       .history(id)
-      .then((events) => downloadTranscript(transcriptToMarkdown(events, title), title))
-      .catch(() => undefined);
+      .then((events) => {
+        downloadTranscript(transcriptToMarkdown(events, title), title);
+        setExportNote({
+          ok: true,
+          text: `${title}.md 파일로 내보냈습니다 — 다운로드 폴더에 있습니다.`,
+        });
+      })
+      .catch((error: Error) => {
+        setExportNote({ ok: false, text: error.message });
+      });
   };
 
   useImperativeHandle(ref, () => ({
@@ -427,7 +445,7 @@ export function PageWorkspace({
   // 재시도 규칙(거절 표식을 새기지 않음)이 이미 그 뜻을 알고 있다.
   const forwardBusyRef = useRef(false);
   /**
-   * A machine-authored turn — the error banner's 고치기, a review's 고치기,
+   * A machine-authored turn — a preview error's fix turn, a review's 고치기,
    * 화면 보여 주기, a failing gate's brief — lands in the working thread,
    * started on the spot if there is none: the ask should not depend on the
    * planner having opened a conversation first. A thread the TOOL opens is
@@ -623,6 +641,15 @@ export function PageWorkspace({
           </Tip>
         )}
       </header>
+      {exportNote && (
+        <StateBanner
+          tone={exportNote.ok ? "accent" : "danger"}
+          role={exportNote.ok ? "status" : "alert"}
+          title={exportNote.ok ? "대화를 내보냈습니다" : "대화를 내보내지 못했습니다"}
+          sub={exportNote.text}
+          onClose={() => setExportNote(null)}
+        />
+      )}
       {/* home·thread 양쪽에서 planner__body(미리보기 열 포함)는 항상 마운트된
           채 둔다 — <webview> 게스트는 요소가 철거되는 순간 죽고, 죽으면
           warm(돌아오면 그 자리) 약속이 무너진다. home 에서는 대화 열 자리에

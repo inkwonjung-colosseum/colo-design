@@ -2,7 +2,6 @@ import type {
   ContextUsage,
   EffortLevel,
   LostSend,
-  PermissionMode,
   QueuedSend,
   QueuedSendPayload,
   SessionCommand,
@@ -100,9 +99,6 @@ export interface Sessions {
   commands: SessionCommand[];
   setModel: (model: string | null) => Promise<void>;
   setEffort: (effort: EffortLevel | null) => Promise<void>;
-  setPermissionMode: (mode: PermissionMode) => Promise<void>;
-  /** The provider's own mode ids (ACP agents) — routed to session.setMode. */
-  setMode: (mode: string) => Promise<void>;
   /**
    * 새 대화가 어느 프로바이더로 돌지 골라 둔다 — 설정의 프로바이더 목록과 같은
    * 한 군데를 쓴다(switchProviderPatch): 컴포저의 칩도 설정도 다음 세션의
@@ -195,12 +191,6 @@ export interface Sessions {
     pinHints?: SessionPinHint[],
   ) => Promise<void>;
   /**
-   * 계획 승인의 뒷정리: 데몬이 작업 모드로 되돌린 직후, 칩과 대화의 권한
-   * 선택을 그 진실에 맞춘다. 계획만 세우기로 세워진 대화는 승인 한 번으로
-   * 소비된다 — 계획 모드는 한 턴의 자세다.
-   */
-  afterPlanApproval: () => void;
-  /**
    * 여기서 새 대화(분기): 이 답까지의 기억을 이어받은 새 대화로 갈아탄다 —
    * 원래 대화는 목록에 그대로 남는다. 답은 하나도 나가지 않는다.
    */
@@ -276,7 +266,6 @@ export function useSessions(
    * 세션이 아직 없을 때 눌러 둔 프로바이더 모드 — 설정 어휘(Claude enum)가
    * 아니라 settings 에 남기지 않고 다음 세션 한 번에만 실어 보낸다.
    */
-  const [pendingMode, setPendingMode] = useState<string | null>(null);
   const [commands, setCommands] = useState<SessionCommand[]>([]);
   const [catalog, setCatalog] = useState<SessionModelInfo[]>(() => loadModelCatalog(chat.provider));
   const [error, setError] = useState<string | null>(null);
@@ -333,16 +322,14 @@ export function useSessions(
    * changing a chip while the first session is still being created would run
    * the create effect again and open a second thread.
    */
-  const startRef = useRef({ chat, pendingMode: null as string | null });
-  startRef.current = { chat, pendingMode };
+  const startRef = useRef({ chat });
+  startRef.current = { chat };
   /**
    * 프로바이더가 바뀌면 칩의 어휘도 바뀐다: 그 프로바이더의 카탈로그로
-   * 갈아끼우고, 이전 프로바이더의 어휘로 눌러 둔 모드 부탁은 버린다 —
-   * 다른 프로바이더의 모드 id 는 의미가 없다.
+   * 갈아끼운다.
    */
   useEffect(() => {
     setCatalog(loadModelCatalog(chat.provider));
-    setPendingMode(null);
   }, [chat.provider]);
 
   /**
@@ -366,14 +353,8 @@ export function useSessions(
   }, []);
   const startSession = useCallback(
     async (resume?: string, title?: string): Promise<string> => {
-      const { chat: picked, pendingMode: mode } = startRef.current;
+      const { chat: picked } = startRef.current;
       const provider = picked.provider ?? "claude";
-      // Claude-only picks (the Claude permission enum) are new-session
-      // picks — a resumed thread keeps the provider its store recorded,
-      // whatever the settings say today. Model and effort are NOT
-      // Claude-only: every driver takes them at launch, and the pick stored
-      // under `provider` is already that provider's own vocabulary.
-      const claude = !resume && provider === "claude";
       const { sessionId } = await api.createSession({
         // A resume names the thread, not the provider — the daemon's store
         // lookup decides which driver continues it.
@@ -386,25 +367,8 @@ export function useSessions(
       ensureSession(sessionId);
       markLive(sessionId);
       setActiveId(sessionId);
-      // Not a create option — the mode has to be applied to the live session.
-      // Claude rides its enum; every other provider answers setMode with its
-      // own ids, and a pick made before the session existed rides pendingMode.
-      if (claude && picked.permissionMode !== "default") {
-        // 모드 쓰기 실패는 세션 생성의 실패가 아니다 — setMode 분기와 같은
-        // 관용으로 흘려보낸다. 그렇지 않으면 create 가 실패를 보고하는 동안
-        // 대화는 이미 열려 있다.
-        await api.setPermissionMode(sessionId, picked.permissionMode).catch(() => undefined);
-      } else if (!claude && mode) {
-        await api.setMode(sessionId, mode).catch(() => undefined);
-      }
-      // 눌러 둔 부탁은 이 세션이 소비했다 — 남겨 두면 다음 세션이 같은
-      // 부탁을 또 물려받는다. ref 도 함께 맞춰 둔다 (렌더 전 재호출 대비).
-      setPendingMode(null);
-      startRef.current = { ...startRef.current, pendingMode: null };
-      // The selector probe fired by setActiveId can land BEFORE the mode
-      // write above finishes — it then paints the CLI's "default" over the
-      // mode this session actually runs in until the next turn refetches.
-      // Ask again once the writes are in, so the chip shows what applies.
+      // The selector probe fired by setActiveId may race the create — ask
+      // again once the thread is in, so the chip shows what applies.
       selectorFor.current = sessionId;
       void api
         .selectors(sessionId)
@@ -833,29 +797,6 @@ export function useSessions(
     }
   };
 
-  /** 계획 승인 직후: 데몬이 되돌린 작업 모드를 칩과 대화의 선택에 반영한다. */
-  const afterPlanApproval = useCallback(() => {
-    if (!activeId) return;
-    // 이 요청의 주인을 찍는다 — 대화가 닫히거나 갈아탄 뒤 돌아온 답은
-    // applySelectors 의 칸막이가 걸러 빈 자리의 칩을 칠하지 못한다.
-    selectorFor.current = activeId;
-    void api
-      .selectors(activeId)
-      .then((next) => {
-        applySelectors(activeId, next);
-        // The enum write-back is Claude's own — another provider's mode id
-        // stored as permissionMode would corrupt the settings pick.
-        if (
-          selectorFor.current === activeId &&
-          (next.provider ?? "claude") === "claude" &&
-          next.permissionMode !== chat.permissionMode
-        ) {
-          onChatChange({ permissionMode: next.permissionMode });
-        }
-      })
-      .catch(() => undefined);
-  }, [activeId, api, chat.permissionMode, onChatChange, applySelectors]);
-
   /**
    * 여기서 새 대화(분기): 이 답까지의 기억을 이어받은 대화로 갈아탄다 —
    * 원래 대화는 목록에 그대로 남는다. 갈아탄 뒤의 적재는 열기와 같은
@@ -972,58 +913,7 @@ export function useSessions(
     const same = (selector.provider ?? "claude") === chat.provider;
     if (same && last.model !== chat.model) void api.setModel(activeId, chat.model).catch(fail);
     if (same && last.effort !== chat.effort) void api.setEffort(activeId, chat.effort).catch(fail);
-    if (same && chat.provider === "claude" && last.permissionMode !== chat.permissionMode) {
-      void api.setPermissionMode(activeId, chat.permissionMode).catch(fail);
-    }
   }, [activeId, chat, selector, api]);
-
-  const switchPermissionMode = async (permissionMode: PermissionMode) => {
-    const prev = selector?.permissionMode ?? "default";
-    const prevMode = selector?.mode ?? prev;
-    onChatChange({ permissionMode });
-    // Claude 세션에서는 두 자리가 같은 말을 든다 — 칩은 `mode` 를 먼저
-    // 읽으므로 둘 다 움직여야 낙관적 표시가 제자리를 찾는다.
-    setSelector((current) =>
-      current ? { ...current, permissionMode, mode: permissionMode } : current,
-    );
-    if (!activeId) return;
-    try {
-      await api.setPermissionMode(activeId, permissionMode);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setSelector((current) =>
-        current ? { ...current, permissionMode: prev, mode: prevMode } : current,
-      );
-    }
-  };
-
-  /**
-   * The provider's own mode ids (ACP agents name their own — `build`,
-   * `plan`, …). Rides `session.setMode`, which the daemon routes to the
-   * driver's setMode; the Claude enum path stays for Claude sessions.
-   */
-  const switchMode = async (mode: string) => {
-    const prev = selector?.mode ?? selector?.permissionMode ?? "default";
-    const prevEnum = selector?.permissionMode ?? "default";
-    // 세션이 없으면 다음 세션에 실어 보낼 부탁으로 눌러 둔다.
-    // 칩은 fallback selector 의 mode 가 그린다.
-    if (!activeId) {
-      setPendingMode(mode);
-      return;
-    }
-    // 드라이버의 모드 id 는 `mode` 의 것이다 — Claude 열거형 칸에 `build`
-    // 같은 말을 기울여 담으면 그것을 enum 으로 읽는 칩·설정이 무너진다
-    // (감사 C5 — 데몬이 같은 거짓말을 멈췄으므로 창도 멈춘다).
-    setSelector((current) => (current ? { ...current, mode } : current));
-    try {
-      await api.setMode(activeId, mode);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setSelector((current) =>
-        current ? { ...current, mode: prev, permissionMode: prevEnum } : current,
-      );
-    }
-  };
 
   /**
    * 새 대화의 프로바이더 — 설정의 프로바이더 목록과 같은 한 군데를 쓴다. 칩에서
@@ -1096,19 +986,6 @@ export function useSessions(
       provider: chat.provider,
       model: chat.model,
       effort: chat.effort,
-      permissionMode: chat.permissionMode,
-      // A provider that names its own modes replaces the Claude enum — the
-      // chip lists the descriptor's rows, and a pick made before the session
-      // existed (pendingMode) is what the chip shows.
-      ...(chat.provider !== "claude"
-        ? (() => {
-            const row = daemon.status?.providers?.find((p) => p.id === chat.provider);
-            return {
-              modes: row?.modes ?? [],
-              mode: pendingMode ?? row?.defaultModeId ?? "default",
-            };
-          })()
-        : {}),
       // 빠르게는 세션이 태어날 때 꺼진 채 시작한다.
       fastMode: false,
       fastModeBlocked: null,
@@ -1121,8 +998,6 @@ export function useSessions(
     commands,
     setModel: switchModel,
     setEffort: switchEffort,
-    setPermissionMode: switchPermissionMode,
-    setMode: switchMode,
     pickProvider,
     chatProvider: chat.provider,
     remove,
@@ -1134,7 +1009,6 @@ export function useSessions(
     cancelClear,
     acceptClear,
     submit,
-    afterPlanApproval,
     branchFrom,
     sendTurn,
     queue,

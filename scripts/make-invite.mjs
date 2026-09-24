@@ -25,7 +25,7 @@
 
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildInvite, inviteSlug, sealInvite } from "../docs/invite-format.mjs";
+import { buildInvite, inviteSlug, sealInvite } from "../site/invite-format.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => {

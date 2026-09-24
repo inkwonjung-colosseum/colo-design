@@ -37,6 +37,77 @@ const SETTLE_TIMEOUT_MS = 3000;
 const SETTLE_POLL_MS = 100;
 /** 탭별 콘솔 링의 상한 — 게이트 드라이버의 200줄과 같은 크기. */
 const BROWSER_CONSOLE_RING = 200;
+/**
+ * 요청의 길을 기억하는 상한(2026-09-22) — `requestWillBeSent` 는 모든 요청에
+ * 오므로 맵은 커지기만 한다. 실패 판정에 쓰이는 것만 남긴다.
+ */
+const NET_URL_CAP = 512;
+/** settle 통과 뒤의 여유 상한 — 폰트·프레임이 못 박는 바깥 시계. */
+const SETTLE_GRACE_MS = 1500;
+
+/** url 의 origin — 못 읽는 주소는 null. */
+function urlOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** 한 대상의 네트워크 기억 — 요청 id → url, 그리고 이 대상의 미리보기 origin. */
+interface NetWatch {
+  readonly urls: Map<string, string>;
+  origin: string | null;
+}
+
+/**
+ * 네트워크 사건 하나를 게이트가 세는 줄로 — **미리보기 서버의 실패만** 센다
+ * (2026-09-22). 외부 이미지·폰트의 실패는 이 화면의 결함이 아니어서 그것을
+ * `net` 으로 세면 멀쩡한 화면에 고침 턴(턴당 한 번의 되돌림 예산)이 열렸다.
+ * `requestWillBeSent` 를 못 본 실패(부착 지연)는 버린다 — 못 센 침묵이 잘못된
+ * 고침보다 싸다. origin 을 모르는 동안은 옛 판정그대로 전부 센다.
+ */
+function netLineOf(
+  watch: NetWatch,
+  method: string,
+  params: Record<string, unknown>,
+): { level: "net"; text: string } | null {
+  const requestId = typeof params.requestId === "string" ? params.requestId : null;
+  if (method === "Network.requestWillBeSent") {
+    const url = (params.request as { url?: unknown } | undefined)?.url;
+    if (requestId !== null && typeof url === "string" && urlOrigin(url) !== null) {
+      if (watch.urls.size >= NET_URL_CAP) {
+        const oldest = watch.urls.keys().next().value;
+        if (oldest !== undefined) watch.urls.delete(oldest);
+      }
+      watch.urls.set(requestId, url);
+    }
+    return null;
+  }
+  if (method === "Network.loadingFinished") {
+    if (requestId !== null) watch.urls.delete(requestId);
+    return null;
+  }
+  if (method === "Network.loadingFailed") {
+    const url = requestId !== null ? watch.urls.get(requestId) : undefined;
+    if (requestId !== null) watch.urls.delete(requestId);
+    if (params.canceled === true) return null;
+    if (!url || (watch.origin !== null && urlOrigin(url) !== watch.origin)) return null;
+    return {
+      level: "net",
+      text: typeof params.errorText === "string" ? params.errorText : "요청 실패",
+    };
+  }
+  if (method === "Network.responseReceived") {
+    const response = params.response as { status?: number; url?: string } | undefined;
+    const status = response?.status ?? 0;
+    if (status < 400) return null;
+    const url = response?.url ?? "";
+    if (watch.origin !== null && urlOrigin(url) !== watch.origin) return null;
+    return { level: "net", text: `${status} ${url}`.trim() };
+  }
+  return null;
+}
 
 interface PreviewRect {
   x: number;
@@ -76,19 +147,19 @@ abstract class CdpPreviewDriver implements PreviewDriver {
   abstract open(route: string, options?: PreviewOpenOptions): Promise<PreviewOpenResult>;
   abstract destroy(): Promise<void>;
 
-  /** 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않는다. */
+  /** 이 대상의 네트워크 기억 — same-origin 판정의 재료(2026-09-22). */
+  protected readonly netWatch: NetWatch = { urls: new Map(), origin: null };
+
+  /** 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않고, 미리보기 서버의
+   *  실패만 문제로 센다(2026-09-22 — 외부 origin 은 이 화면의 결함이 아니다). */
   protected onDebuggerMessage(method: string, params: Record<string, unknown>): void {
-    if (method === "Network.loadingFailed") {
-      const text = typeof params.errorText === "string" ? params.errorText : "요청 실패";
-      if (params.canceled === true) return;
-      this.pushConsole({ level: "net", text });
-      return;
-    }
-    if (method !== "Network.responseReceived") return;
-    const response = params.response as { status?: number; url?: string } | undefined;
-    const status = response?.status ?? 0;
-    if (status < 400) return;
-    this.pushConsole({ level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
+    const line = netLineOf(this.netWatch, method, params);
+    if (line !== null) this.pushConsole(line);
+  }
+
+  /** 화면 이동과 함께 요청의 길을 비운다 — requestId 공간은 문서마다 갈라진다. */
+  protected resetNetRequests(): void {
+    this.netWatch.urls.clear();
   }
 
   protected debugger(): Electron.Debugger {
@@ -109,7 +180,7 @@ abstract class CdpPreviewDriver implements PreviewDriver {
       const result = (await this.debugger()
         .sendCommand("Runtime.evaluate", { expression: probe, returnByValue: true })
         .catch(() => null)) as { result?: { value?: unknown } } | null;
-      if (result?.result?.value === true) return true;
+      if (result?.result?.value === true) return this.settleGrace();
       const poll = Promise.withResolvers<void>();
       setTimeout(poll.resolve, SETTLE_POLL_MS);
       await poll.promise;
@@ -117,6 +188,35 @@ abstract class CdpPreviewDriver implements PreviewDriver {
     return false;
   }
 
+  /**
+   * 문서가 완전히 로드된 뒤의 여유(2026-09-22) — 폰트가 들어서고 두 프레임이
+   * 지나야 화면은 제 모습이다. 판정(blank·콘솔 집계)이 그린 중간 상태를
+   * 보지 않게 한다. 페이지 안에서 스스로 상한(폰트 1s · 프레임 0.5s)을
+   * 지키고, 바깥은 `SETTLE_GRACE_MS` 경쟁으로 못 박는다 — 여유가 판정을
+   * 늦추는 일은 없고, 못 박혀도 true 다(여유는 최선의 노력이다).
+   */
+  private settleGrace(): Promise<boolean> {
+    const expression = `(async function () {
+      try {
+        if (document.fonts) {
+          await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 1000))]);
+        }
+      } catch {}
+      await Promise.race([
+        new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+        new Promise((r) => setTimeout(r, 500)),
+      ]);
+      return true;
+    })()`;
+    const done = this.debugger()
+      .sendCommand("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })
+      .catch(() => undefined)
+      .then(() => true as const);
+    const cap = Promise.withResolvers<true>();
+    const timer = setTimeout(() => cap.resolve(true), SETTLE_GRACE_MS);
+    timer.unref();
+    return Promise.race([done, cap.promise]);
+  }
   /**
    * 한 번만 굽는다. 예전 판은 CDP 가 JPEG 로 구운 것을 `nativeImage` 로 풀어
    * 줄이고 다시 JPEG 로 구웠다 — 같은 토큰을 내고 두 세대의 압축 흔적을 받는
@@ -181,6 +281,8 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
 
   constructor(private readonly baseUrl: string) {
     super();
+    // 이 창이 설험 미리보기 서버 — net 판정의 same-origin 기준(2026-09-22).
+    this.netWatch.origin = urlOrigin(baseUrl);
   }
 
   /**
@@ -315,8 +417,10 @@ class ElectronPreviewDriver extends CdpPreviewDriver {
         reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
       };
     }
-    // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다.
+    // 콘솔 기록과 ref 세대는 화면 이동과 함께 리셋된다 — 요청의 길도 같이
+    // 갈린다(requestId 공간은 문서마다 새로 시작한다).
     this.consoleHistory.length = 0;
+    this.resetNetRequests();
     const window = await this.ensureWindow();
     await this.emulate(options?.viewport ?? "desktop", options?.colorScheme ?? "light");
     try {
@@ -513,6 +617,8 @@ interface PageState {
   /** ref 번호 — 세대를 넘어 단조 증가한다. 매 세대 e1 부터 다시 세면 옛 ref 가 새 노드를 가리키는 충돌이 난다. */
   refSeq: number;
   readonly console: PreviewConsoleLine[];
+  /** 이 페이지의 네트워크 기억 — same-origin 실패 판정의 재료(2026-09-22). */
+  netWatch: NetWatch;
   contents: WebContents | null;
   /**
    * 붙임 뒤의 유예 타이머 — 내용물별로 건다. 한 칸짜리 슬롯은 페이지가
@@ -556,6 +662,7 @@ class PaneBrowserDriver implements BrowserDriver {
     refs: new Map(),
     refSeq: 0,
     console: [],
+    netWatch: { urls: new Map(), origin: null },
     contents: null,
     handlers: null,
   };
@@ -606,6 +713,9 @@ class PaneBrowserDriver implements BrowserDriver {
     if (state.contents === contents) return state;
     this.unbind(state);
     state.refs.clear();
+    // 문서가 갈아엎혔다 — 요청의 길과 same-origin 기준도 새 문서의 것이다.
+    state.netWatch.urls.clear();
+    state.netWatch.origin = urlOrigin(contents.getURL());
     state.contents = contents;
     state.handlers = {
       onDebuggerMessage: (_event, method, params) =>
@@ -614,7 +724,11 @@ class PaneBrowserDriver implements BrowserDriver {
         this.noteConsole(state, { level: details.level, text: details.message }),
       // 이동은 ref 세대의 죽음이다 — 옛 문서의 backend 노드 번호가 새 문서를
       // 가리킬 수는 없다. 드라이버가 navigate 하든 사용자가 누르든 같은 길이다.
-      onDidNavigate: () => state.refs.clear(),
+      onDidNavigate: () => {
+        state.refs.clear();
+        state.netWatch.urls.clear();
+        state.netWatch.origin = urlOrigin(contents.getURL());
+      },
       onGone: () => this.drop(),
     };
     contents.debugger.on("message", state.handlers.onDebuggerMessage);
@@ -710,18 +824,11 @@ class PaneBrowserDriver implements BrowserDriver {
       });
       return;
     }
-    // (07bd3bf 이식) 실패한 요청만 줍는다 — 성공한 트래픽은 기록하지 않는다.
-    if (method === "Network.loadingFailed") {
-      const text = typeof params.errorText === "string" ? params.errorText : "요청 실패";
-      if (params.canceled === true) return;
-      this.noteConsole(state, { level: "net", text });
-      return;
-    }
-    if (method !== "Network.responseReceived") return;
-    const response = params.response as { status?: number; url?: string } | undefined;
-    const status = response?.status ?? 0;
-    if (status < 400) return;
-    this.noteConsole(state, { level: "net", text: `${status} ${response?.url ?? ""}`.trim() });
+    // (07bd3bf 이식 · 2026-09-22 same-origin) 실패한 요청만 줍는다 — 성공한
+    // 트래픽은 기록하지 않고, 미리보기 서버의 실패만 이 페이지의 결함으로
+    // 센다. 외부 리소스의 실패는 잡음이다.
+    const netLine = netLineOf(state.netWatch, method, params);
+    if (netLine !== null) this.noteConsole(state, netLine);
   }
 
   /** 페이지의 콘솔 링 한 줄 — 링은 200줄로 bound 된다(게이트 드라이버와 같은 상한). */
@@ -1107,98 +1214,123 @@ class PaneBrowserDriver implements BrowserDriver {
 
   // ── 액션 — 성공의 답은 언제나 새 스냅샷이다(계약: ref 세대 갱신 겸용) ────
 
+  /**
+   * 입력을 화면에 흘리는 op 의 공통 문 — 그 동안만 오버레이의 핀 캡처를
+   * 거둔다. 도구의 클릭은 화면을 확인하려는 손길이지 사용자의 가리킴이
+   * 아니므로, 핀 모드가 켜져 있어도 그 클릭이 사용자의 핀으로 기록되거나
+   * 링크를 삼키는 일이 없어야 한다 (베타 테스트 #2). 끝남의 보장은 finally
+   * 의 몫이다 — 깃발이 남으면 사용자의 다음 핀이 사라지는 더 나쁜 결함이
+   * 된다.
+   */
+  private async withAgentInput<T>(
+    run: (dest: { contents: WebContents; state: PageState }) => Promise<T>,
+  ): Promise<T> {
+    const view = this.view();
+    await view.beginAgentInput();
+    try {
+      return await run(await this.target());
+    } finally {
+      await view.endAgentInput().catch(() => undefined);
+    }
+  }
+
   async click(target: { ref: string }): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    this.wake(dest.contents);
-    await this.clickRect(
-      dest.contents,
-      await this.rectOfRef(dest.contents, dest.state, target.ref, true),
-    );
-    return this.axTree(dest.contents, dest.state);
+    return this.withAgentInput(async (dest) => {
+      this.wake(dest.contents);
+      await this.clickRect(
+        dest.contents,
+        await this.rectOfRef(dest.contents, dest.state, target.ref, true),
+      );
+      return this.axTree(dest.contents, dest.state);
+    });
   }
 
   async type(input: { ref?: string; text: string; clear?: boolean }): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    this.wake(dest.contents);
-    const dbg = dest.contents.debugger;
-    // 입력의 첫걸음은 클릭이다 — 포커스가 흐르는 유일한 자연스러운 길이다.
-    // ref 가 없으면 지금 포커스된 곳에 바로 쓴다(07bd3bf 의 선택적 ref 계승).
-    if (input.ref !== undefined) {
-      await this.clickRect(
-        dest.contents,
-        await this.rectOfRef(dest.contents, dest.state, input.ref, true),
-      );
-    }
-    if (input.clear === true) {
-      // (07bd3bf 이식) 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의
-      // onChange 가 흐르는 유일한 길이다(값을 직접 넣으면 React 는 모른다).
-      const modifiers = process.platform === "darwin" ? 4 : 2;
-      for (const type of ["rawKeyDown", "keyUp"]) {
-        await dbg.sendCommand("Input.dispatchKeyEvent", {
-          type,
-          modifiers,
-          key: "a",
-          code: "KeyA",
-          windowsVirtualKeyCode: 65,
-        });
+    return this.withAgentInput(async (dest) => {
+      this.wake(dest.contents);
+      const dbg = dest.contents.debugger;
+      // 입력의 첫걸음은 클릭이다 — 포커스가 흐르는 유일한 자연스러운 길이다.
+      // ref 가 없으면 지금 포커스된 곳에 바로 쓴다(07bd3bf 의 선택적 ref 계승).
+      if (input.ref !== undefined) {
+        await this.clickRect(
+          dest.contents,
+          await this.rectOfRef(dest.contents, dest.state, input.ref, true),
+        );
       }
-    }
-    await dbg.sendCommand("Input.insertText", { text: input.text });
-    return this.axTree(dest.contents, dest.state);
+      if (input.clear === true) {
+        // (07bd3bf 이식) 있던 값을 지운다: 선택 후 덮어쓰기 — 프레임워크의
+        // onChange 가 흐르는 유일한 길이다(값을 직접 넣으면 React 는 모른다).
+        const modifiers = process.platform === "darwin" ? 4 : 2;
+        for (const type of ["rawKeyDown", "keyUp"]) {
+          await dbg.sendCommand("Input.dispatchKeyEvent", {
+            type,
+            modifiers,
+            key: "a",
+            code: "KeyA",
+            windowsVirtualKeyCode: 65,
+          });
+        }
+      }
+      await dbg.sendCommand("Input.insertText", { text: input.text });
+      return this.axTree(dest.contents, dest.state);
+    });
   }
 
   async press(key: string): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    const mapped = PRESS_KEY_CODES[key];
-    if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
-    const dbg = dest.contents.debugger;
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: mapped.text ? "keyDown" : "rawKeyDown",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-      ...(mapped.text ? { text: mapped.text } : {}),
+    return this.withAgentInput(async (dest) => {
+      const mapped = PRESS_KEY_CODES[key];
+      if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
+      const dbg = dest.contents.debugger;
+      await dbg.sendCommand("Input.dispatchKeyEvent", {
+        type: mapped.text ? "keyDown" : "rawKeyDown",
+        key: mapped.key,
+        code: mapped.code,
+        windowsVirtualKeyCode: mapped.vk,
+        ...(mapped.text ? { text: mapped.text } : {}),
+      });
+      await dbg.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key: mapped.key,
+        code: mapped.code,
+        windowsVirtualKeyCode: mapped.vk,
+      });
+      return this.axTree(dest.contents, dest.state);
     });
-    await dbg.sendCommand("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: mapped.key,
-      code: mapped.code,
-      windowsVirtualKeyCode: mapped.vk,
-    });
-    return this.axTree(dest.contents, dest.state);
   }
 
   async scroll(target: { ref?: string; dy: number }): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    // (07bd3bf 이식) ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것
-    // 자체가 그 일이다.
-    const rect = target.ref ? await this.rectOfRef(dest.contents, dest.state, target.ref) : null;
-    if (target.dy !== 0) {
-      // ref 가 없으면 뷰포트 한가운데로 굴린다 — 마우스 이벤트는 뷰포트
-      // 좌표라 pane 의 실제 너비·높이를 쓴다(고정 desktop 프리셋은 pane 이
-      // 좁을 때 화면 밖을 찍는다).
-      const view = rect ? null : await this.viewportRect(dest.contents);
-      await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        x: rect ? rect.x + rect.width / 2 : (view?.width ?? 0) / 2,
-        y: rect ? rect.y + rect.height / 2 : (view?.height ?? 0) / 2,
-        deltaX: 0,
-        deltaY: target.dy,
-      });
-    }
-    return this.axTree(dest.contents, dest.state);
+    return this.withAgentInput(async (dest) => {
+      // (07bd3bf 이식) ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것
+      // 자체가 그 일이다.
+      const rect = target.ref ? await this.rectOfRef(dest.contents, dest.state, target.ref) : null;
+      if (target.dy !== 0) {
+        // ref 가 없으면 뷰포트 한가운데로 굴린다 — 마우스 이벤트는 뷰포트
+        // 좌표라 pane 의 실제 너비·높이를 쓴다(고정 desktop 프리셋은 pane 이
+        // 좁을 때 화면 밖을 찍는다).
+        const view = rect ? null : await this.viewportRect(dest.contents);
+        await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: rect ? rect.x + rect.width / 2 : (view?.width ?? 0) / 2,
+          y: rect ? rect.y + rect.height / 2 : (view?.height ?? 0) / 2,
+          deltaX: 0,
+          deltaY: target.dy,
+        });
+      }
+      return this.axTree(dest.contents, dest.state);
+    });
   }
 
   async hover(target: { ref: string }): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    const rect = await this.rectOfRef(dest.contents, dest.state, target.ref, true);
-    await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: rect.x + rect.width / 2,
-      y: rect.y + rect.height / 2,
-      button: "none",
+    return this.withAgentInput(async (dest) => {
+      const rect = await this.rectOfRef(dest.contents, dest.state, target.ref, true);
+      await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        button: "none",
+      });
+      return this.axTree(dest.contents, dest.state);
     });
-    return this.axTree(dest.contents, dest.state);
   }
 
   /**
@@ -1258,47 +1390,48 @@ class PaneBrowserDriver implements BrowserDriver {
    * 과제). 중간 점을 밟는 이유: 이동 이벤트가 흘러야 페이지가 드래그로 본다.
    */
   async drag(target: { fromRef: string; toRef: string }): Promise<PreviewAxNode[]> {
-    const dest = await this.target();
-    this.wake(dest.contents);
-    // 두 rect 를 먼저 받는다 — from 을 누른 뒤의 scrollIntoView 는 잡은 것을
-    // 뜯어 낼 수 있다.
-    const from = await this.rectOfRef(dest.contents, dest.state, target.fromRef, true);
-    const to = await this.rectOfRef(dest.contents, dest.state, target.toRef, true);
-    const dbg = dest.contents.debugger;
-    const fx = from.x + from.width / 2;
-    const fy = from.y + from.height / 2;
-    const tx = to.x + to.width / 2;
-    const ty = to.y + to.height / 2;
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: fx,
-      y: fy,
-      button: "none",
-    });
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: fx,
-      y: fy,
-      button: "left",
-      clickCount: 1,
-    });
-    const STEPS = 5;
-    for (let step = 1; step <= STEPS; step += 1) {
+    return this.withAgentInput(async (dest) => {
+      this.wake(dest.contents);
+      // 두 rect 를 먼저 받는다 — from 을 누른 뒤의 scrollIntoView 는 잡은 것을
+      // 뜯어 낼 수 있다.
+      const from = await this.rectOfRef(dest.contents, dest.state, target.fromRef, true);
+      const to = await this.rectOfRef(dest.contents, dest.state, target.toRef, true);
+      const dbg = dest.contents.debugger;
+      const fx = from.x + from.width / 2;
+      const fy = from.y + from.height / 2;
+      const tx = to.x + to.width / 2;
+      const ty = to.y + to.height / 2;
       await dbg.sendCommand("Input.dispatchMouseEvent", {
         type: "mouseMoved",
-        x: fx + ((tx - fx) * step) / STEPS,
-        y: fy + ((ty - fy) * step) / STEPS,
-        button: "left",
+        x: fx,
+        y: fy,
+        button: "none",
       });
-    }
-    await dbg.sendCommand("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: tx,
-      y: ty,
-      button: "left",
-      clickCount: 1,
+      await dbg.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: fx,
+        y: fy,
+        button: "left",
+        clickCount: 1,
+      });
+      const STEPS = 5;
+      for (let step = 1; step <= STEPS; step += 1) {
+        await dbg.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: fx + ((tx - fx) * step) / STEPS,
+          y: fy + ((ty - fy) * step) / STEPS,
+          button: "left",
+        });
+      }
+      await dbg.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: tx,
+        y: ty,
+        button: "left",
+        clickCount: 1,
+      });
+      return this.axTree(dest.contents, dest.state);
     });
-    return this.axTree(dest.contents, dest.state);
   }
 
   /** 페이지의 디버거를 뗀다 — 페이지는 사용자의 것이라 그대로 둔다. */

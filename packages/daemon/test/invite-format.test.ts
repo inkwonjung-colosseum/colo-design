@@ -8,10 +8,10 @@ import {
   sameRepo,
 } from "@colo-design/protocol";
 
-// 쓰는 쪽은 docs 의 형식 모듈(.mjs)이다 — 패키지 바깥의 파일 경로라 정적 import
+// 쓰는 쪽은 site 의 형식 모듈(.mjs)이다 — 패키지 바깥의 파일 경로라 정적 import
 // 로는 쓸 수 없고, 데몬 테스트는 typecheck 대상이 아니므로 경로로 직접 들어온다.
 const { buildInvite, sealInvite } = await import(
-  new URL("../../../docs/invite-format.mjs", import.meta.url).href
+  new URL("../../../site/invite-format.mjs", import.meta.url).href
 );
 
 function sampleInvite() {

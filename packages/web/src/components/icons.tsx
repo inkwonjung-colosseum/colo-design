@@ -47,9 +47,7 @@ import {
   Search,
   ServerOff,
   Settings,
-  Shield,
   ShieldCheck,
-  ShieldOff,
   Smartphone,
   Tablet,
   Trash2,
@@ -82,12 +80,9 @@ export const ShieldIcon = make(ShieldCheck, 16);
 
 // --- composer toolbar chips -------------------------------------------------
 // Each chip leads with the glyph for what it governs, so the row reads as
-// three controls rather than three words. The 확인 방식 chip is the one whose
-// glyph carries a reading: the slash means nothing is being asked.
+// controls rather than words.
 
 export const GaugeIcon = make(Gauge, 13);
-export const ShieldPlainIcon = make(Shield, 13);
-export const ShieldOffIcon = make(ShieldOff, 13);
 
 // --- action bar & menus (디자인 패스) ---------------------------------------
 // The cycle's verbs and the menus' rows, one glyph each. A row's glyph names

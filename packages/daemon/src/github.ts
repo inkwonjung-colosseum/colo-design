@@ -355,6 +355,28 @@ export class GitHubClient {
     }
   }
 
+  /**
+   * 요청 본문 코멘트 — `gh pr comment` 가 남기는 자리다. 인라인 코멘트와
+   * 달리 화면 한 줄을 가리키지 않지만 개발자의 말임은 같으므로, 폴링이 이
+   * 목록도 읽어야 개발자의 말이 화면에 도착한다 (베타 테스트 #3). 읽기
+   * 실패는 listPullComments 와 같이 빈 목록으로 흘린다.
+   */
+  async listIssueComments(input: {
+    owner: string;
+    repo: string;
+    number: number;
+  }): Promise<Array<Record<string, any>>> {
+    try {
+      const data = await this.getJson(
+        `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments?per_page=50`,
+        "요청 코멘트 읽기",
+      );
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
   /** D88: 인라인 코멘트의 답글 — GitHub 의 스레드 안으로 들어간다. */
   async replyToPullComment(input: {
     owner: string;

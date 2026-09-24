@@ -1,7 +1,6 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
-import { daemonLine } from "../../lib/format";
 import { parseAddress } from "../../lib/preview-address";
 import { advanceTour, useTourStep } from "../../lib/tour";
 import {
@@ -15,7 +14,6 @@ import {
   MapPinIcon,
   MobileIcon,
   RefreshIcon,
-  ServerOffIcon,
   TabletIcon,
 } from "../icons";
 import { Tip } from "../shell/Tip";
@@ -44,13 +42,19 @@ export interface PreviewLocation {
 }
 
 /**
- * An error the planner can hand to the agent. The native view's
+ * An error the preview hands to the agent — never to the planner: the panel's
+ * verdict pipeline turns it into a fix turn or puts it away. The native view's
  * events build it now — the repo hook is gone.
  */
 export interface PreviewError {
   route: string;
   kind: "runtime" | "build";
   message: string;
+  /**
+   * 콘솔의 한 줄이 아니라 패인 스스로 화면을 못 띄운 것(30초 멈춤) — 검증 창도
+   * 못 열었다면 그것이 곧 확인이다(판정 파이프의 확인 불능 규칙).
+   */
+  stalled?: true;
 }
 
 /**
@@ -64,7 +68,7 @@ type PreviewWidth = "mobile" | "tablet" | "desktop";
  * The preview pane: the toolbar, the browser-bar frame head and
  * the stage are common; the stage itself is a host. `native` picks
  * `PreviewFrame` — the desktop's `<webview>` guests, with the address bar, back ·
- * forward, the error banner, real 폭 emulation and the 💬 toggle — and a
+ * forward, real 폭 emulation and the 💬 toggle — and a
  * plain browser keeps the iframe — the ask's address in the pill, and a
  * back·forward that walks the asks themselves.
  */
@@ -76,9 +80,7 @@ export function PreviewHost({
   onPinFocus,
   sync,
   onPin,
-  onFixError,
   onPreviewError,
-  error,
   target,
   onNavigate,
   onLocation,
@@ -109,17 +111,19 @@ export function PreviewHost({
   onPin: (pin: ColoDesignPinEnvelope["pin"]) => void;
   /** 배지 클릭 — the memo input of that pin's tray row takes the focus. */
   onPinFocus: (id: string) => void;
-  /** The banner's `AI에게 고쳐 달라고 하기`. */
-  onFixError: (error: PreviewError) => void;
   /**
-   * The webview's error report, already `kind`-normalized. The state lives
-   * with the panel — it holds reports while a turn runs and answers them
-   * through the daemon's verification window, so the host only paints what
-   * survived that judgment.
+   * The webview's error report, already `kind`-normalized — and the stage's
+   * own "30초 넘게 안 뜬다". The state lives with the panel: it holds reports
+   * while a turn runs and answers them through the daemon's verification
+   * window, and a live break becomes the agent's fix turn. The host paints
+   * nothing for it — 연결 레포의 오류는 사람의 읽을거리가 아니다.
    */
-  onPreviewError: (payload: { kind: "runtime" | "build"; message: string; route: string }) => void;
-  /** The verdict to paint — null paints no banner. See onPreviewError. */
-  error: PreviewError | null;
+  onPreviewError: (payload: {
+    kind: "runtime" | "build";
+    message: string;
+    route: string;
+    stalled?: true;
+  }) => void;
   /** The last ask; the caller answers by handing a new one back. */
   target: PreviewTarget | null;
   onNavigate: (target: PreviewTarget) => void;
@@ -170,7 +174,6 @@ export function PreviewHost({
   const [width, setWidth] = useState<PreviewWidth>("desktop");
   /** Bumped by 새로 고침: a clean reload on whichever host is mounted. */
   const [reloadNonce, setReloadNonce] = useState(0);
-  /** The last `colo-preview:error` — one at a time, the newest wins. */
 
   // 고정 해제 Esc: 얼린 얼굴(보낸 화면)이 떠 있을 때 한 번 누르면 지금 화면으로
   // 돌아온다 — 세그먼트의 `지금 화면`과 같은 동작.
@@ -196,8 +199,6 @@ export function PreviewHost({
     const slot = deviceRef.current?.querySelector(".preview__slot");
     if (slot) repairPreviewStageChain(slot);
   }, [frozenOn]);
-  /** The banner's `자세히`: the message starts clamped to one line. */
-  const [detail, setDetail] = useState(false);
   /** 보기 팝오버 — 폭 전환과 새 창이 사는 자리. 현재 폭은 칩 요약이 말한다. */
   const [viewOpen, setViewOpen] = useState(false);
   /** The 보여 주기 form — the button opens it, the note rides along. */
@@ -228,7 +229,8 @@ export function PreviewHost({
       return true;
     }
   });
-  /** 로딩이 길어질 때의 말: ok → 10초에 late(한 줄) → 30초에 stuck(카드).
+  /** 로딩이 길어질 때의 단계: ok → 10초에 late(한 줄) → 30초에 stuck(도구의
+      새로 고침, 그다음은 판정 — 사람에게 올리는 카드는 없다).
       `loading` 은 iframe 의 onLoad 와 네이티브의 loading 이벤트가 함께
       채우는 하나의 진실이니 이 단계는 어느 호스트든 공통으로 적용된다. */
   const [loadPhase, setLoadPhase] = useState<"ok" | "late" | "stuck">("ok");
@@ -252,8 +254,8 @@ export function PreviewHost({
   }, [native, stopped]);
 
   // 느린 로딩의 말: 스핀은 무한정 돌 수 있지만 사람은 기다리는 이유를
-  // 모른다 — 10초에 한 줄(새로 고침·AI 제안), 30초에 카드(새로 고침·AI에게
-  // 물어보기)로 올린다. 로딩이 끝나거나 새로 고침(nonce)이면 다시 ok 부터.
+  // 모른다 — 10초에 한 줄로 말한다. 로딩이 끝나거나 새로 고침(nonce)이면
+  // 다시 ok 부터.
   useEffect(() => {
     if (!loading) {
       setLoadPhase("ok");
@@ -267,6 +269,31 @@ export function PreviewHost({
       window.clearTimeout(stuck);
     };
   }, [loading, reloadNonce]);
+
+  // 30초의 멈춤은 사람에게 묻지 않는다. 도구가 먼저 한 번 새로 고치고(C5 의
+  // "사람보다 도구가 먼저" — 서버 · 화면마다 한 번), 그래도 멈추면 판정
+  // 파이프로 넘긴다: 검증 창이 그 화면을 다시 열어 보고, 정말 안 뜨면 AI 가
+  // 고친다. 멈춤에 들어서는 순간에 한 번씩이다.
+  const stuckReloads = useRef(new Set<string>());
+  useEffect(() => {
+    if (loadPhase !== "stuck") return;
+    const path = location?.path ?? "/";
+    const key = `${url ?? ""}|${epoch ?? ""}|${path}`;
+    if (!stuckReloads.current.has(key)) {
+      stuckReloads.current.add(key);
+      setReloadNonce((n) => n + 1);
+      return;
+    }
+    onPreviewError({
+      kind: "runtime",
+      message: "미리보기 화면이 새로 고친 뒤에도 30초 넘게 뜨지 않았습니다.",
+      // 웹뷰의 오류 보고와 같은 철자 — 앞 슬래시도 쿼리도 없는 경로.
+      route: path.replace(/[?#].*$/, "").replace(/^\//, ""),
+      stalled: true,
+    });
+    // 멈춤에 들어서는 순간만 본다 — 위치 보고가 바뀌어도 다시 보고하지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadPhase]);
 
   // 외부 페이지 모드 (설정 `앱에서 링크 열기`): 화면의 페이지가 repo origin
   // 밖으로 나가면 pane 은 미리보기가 아니라 브라우저다 — 주소창은 주소
@@ -390,35 +417,21 @@ export function PreviewHost({
   // 소유자)을 언마운트하면 warm 페이지가 모두 죽는다(webview 전환 실측).
   // 카드·빈 화면은 무대 위의 불투명 덮개로, 게스트는 그 아래 살아 있는 채
   // 숨는다(visibility 규약 — display:none 은 문서를 언로드한다).
-  const stoppedLine = daemonLine(stoppedDetail);
   // 중단의 두 얼굴: daemon 이 "화면을 다시 켜는 중…"으로 말을 내리면 그건
-  // 고장이 아니라 기다림의 한 줄(starting — 재기동은 daemon 의 몫)이고, 그
-  // 밖은 AI 수정 대기의 카드다. 다시 시작의 손잡이는 없다.
-  const restarting = stoppedLine.startsWith("화면을 다시 켜는 중");
+  // 도구의 재기동(C5)을 기다리는 것이고, 그 밖은 AI 가 고치는 동안의 기다림이다
+  // (D4 가 이미 넘겼다). 어느 쪽이든 서버의 마지막 출력은 올리지 않는다 —
+  // 연결 레포의 오류는 사람의 읽을거리가 아니다. 다시 시작의 손잡이는 없다.
+  const restarting = stoppedDetail?.startsWith("화면을 다시 켜는 중") === true;
   const stoppedNotice =
     stopped && !webMode ? (
-      restarting ? (
-        <div className="progress">
-          <div className="progress__card">
-            <div className="progress__head">
-              <span className="spinner" />
-              <p className="progress__body">{stoppedLine}</p>
-            </div>
+      <div className="progress">
+        <div className="progress__card">
+          <div className="progress__head">
+            <span className="spinner" />
+            <h2>{restarting ? "화면을 다시 켜는 중이에요" : "AI가 화면을 다시 띄우고 있어요"}</h2>
           </div>
-        </div>
-      ) : (
-        <div className="progress progress--error">
-          <div className="progress__card">
-            <div className="progress__head">
-              <span className="preview__stopglyph">
-                <ServerOffIcon />
-              </span>
-              <h2>미리보기 서버 중단</h2>
-            </div>
-            <p className="progress__body">
-              화면을 그리는 서버가 멈췄습니다. 저장과 넘기기는 그대로입니다 — 화면만 쉬고 있습니다.
-            </p>
-            <p className="progress__body">AI가 고치는 중 — 잠시만 기다려 주세요</p>
+          <p className="progress__body">잠시만 기다려 주세요 — 저장과 넘기기는 그대로예요.</p>
+          {!restarting && (
             <div className="preview__stopactions">
               <button
                 type="button"
@@ -429,9 +442,9 @@ export function PreviewHost({
                 <RefreshIcon />
               </button>
             </div>
-          </div>
+          )}
         </div>
-      )
+      </div>
     ) : null;
   const blankNotice =
     !url && !webMode ? (
@@ -892,75 +905,13 @@ export function PreviewHost({
               host
             );
           })()}
-          {/* 느린 로딩의 말 — 스핀만 무한정 도는 대신 10초에 한 줄,
-              30초에 카드로 올린다. 어느 호스트든 `loading` 하나로 돈다. */}
-          {loadPhase === "late" && (
+          {/* 느린 로딩의 말 — 스핀만 무한정 도는 대신 10초에 한 줄. 사람에게
+              할 일을 주지 않는다: 30초의 멈춤은 도구의 새로 고침과 판정이
+              맡는다. 어느 호스트든 `loading` 하나로 돈다. */}
+          {loadPhase !== "ok" && (
             <span className="preview__unpin" role="status">
-              화면이 늦게 뜨고 있어요 — 새로 고침하거나 AI에게 물어보세요
+              화면이 늦게 뜨고 있어요 — 잠시만 기다려 주세요
             </span>
-          )}
-          {loadPhase === "stuck" && !error && (
-            <div className="preview__error" role="alert" data-testid="load-stuck">
-              <div className="preview__error__text">
-                <strong>화면이 뜨지 않고 있습니다</strong>
-                <span className="hint">
-                  서버가 응답하지 않는 것 같아요 — 새로 고침하거나 AI에게 물어보세요.
-                </span>
-              </div>
-              <div className="preview__error__actions">
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => setReloadNonce((n) => n + 1)}
-                >
-                  새로 고침
-                </button>
-                <button
-                  type="button"
-                  className="machine__more"
-                  onClick={() =>
-                    onFixError({
-                      route: location?.path ?? "/",
-                      kind: "runtime",
-                      message: "미리보기 화면이 30초 넘게 뜨지 않았습니다.",
-                    })
-                  }
-                >
-                  AI에게 물어보기
-                </button>
-              </div>
-            </div>
-          )}
-          {/* 오류 띠는 프레임 안쪽 — 스테이지 바닥에 얹힌다 (프레임 밖 띠는
-              도구줄과 화면 사이에 끼어 화면의 일처럼 읽혔다). */}
-          {error && (
-            <div className="preview__error" role="alert" data-testid="error-banner">
-              <div className="preview__error__text">
-                <strong>화면에 오류가 났습니다</strong>
-                <pre
-                  className={
-                    detail
-                      ? "preview__error__message preview__error__message--open"
-                      : "preview__error__message"
-                  }
-                >
-                  {error.message}
-                </pre>
-              </div>
-              <div className="preview__error__actions">
-                <button type="button" className="primary" onClick={() => onFixError(error)}>
-                  AI에게 고쳐 달라고 하기
-                </button>
-                <button
-                  type="button"
-                  className="machine__more"
-                  aria-expanded={detail}
-                  onClick={() => setDetail((v) => !v)}
-                >
-                  {detail ? "접기" : "자세히"}
-                </button>
-              </div>
-            </div>
           )}
           {/* 얼린 얼굴이 떠 있을 때만: 해제 손잡이(세그먼트의 지금 화면)가
               있으면 Esc 도 같은 일을 한다고 표면에 말한다. */}

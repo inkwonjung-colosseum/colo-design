@@ -1,9 +1,51 @@
+import { cjk } from "@streamdown/cjk";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
-import { isValidElement, useEffect, useId, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { isValidElement, memo, useEffect, useId, useRef, useState } from "react";
+import ReactMarkdown, { defaultUrlTransform, type Options } from "react-markdown";
+import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import remarkGfm from "remark-gfm";
 import { linkClick } from "../lib/open-link";
+import { windowsFileLinkEscapeRemarkPlugin } from "../lib/windowsFileLinkEscapeRemarkPlugin";
 import { CopyButton } from "./CopyButton";
+
+// ---------------------------------------------------------------------------
+// remark 파이프라인 — CJK 줄바꿈과 Windows 경로 복구
+// ---------------------------------------------------------------------------
+
+// `@streamdown/cjk` 의 strikethrough 플러그인에 `singleTilde: false` 를 심는다.
+// 한국어에서 `~` 는 말의 늘임(“안녕~ 좋아~”)이라 흔히 짝을 이루지 않는데,
+// GFM 기본값은 홑물결 한 쌍을 취소선으로 읽는다 — 대화가 하필 그 모양이면
+// 지워진 듯한 밑줄이 생긴다. 쌍물결(`~~`)만 취소선으로 남긴다.
+type RemarkPlugin = NonNullable<Options["remarkPlugins"]>[number];
+
+// react-markdown 의 기본 urlTransform 은 알려진 프로토콜(http 등)과 상대경로만
+// 허용하고 나머지를 지운다 — `C:\…` 는 `c:` 프로토콜로 읽혀 통째로 사라진다.
+// 파서가 넘긴 url 은 백슬래시가 %5C 로 인코딩돼 있으므로 풀어서 판정하고,
+// Windows 절대경로(드라이브·UNC)면 디코드한 원문을 그대로 돌린다 — 경로 복구
+// 플러그인이 되돌려 놓은 값이 여기서 다시 지워지면 복구가 무의미해진다.
+const windowsPathPattern = /^(?:[a-zA-Z]:[\\/]|\\\\)/;
+
+const urlTransform: Options["urlTransform"] = (url) => {
+  if (windowsPathPattern.test(url)) return url;
+  try {
+    const decoded = decodeURIComponent(url);
+    if (windowsPathPattern.test(decoded)) return decoded;
+  } catch {
+    // 깨진 퍼센트 이스케이프 — 디코드 실패는 판정 실패일 뿐, 기록 변환기가 정리한다.
+  }
+  return defaultUrlTransform(url);
+};
+
+const remarkPlugins: Options["remarkPlugins"] = [
+  remarkGfm,
+  ...(cjk.remarkPluginsBefore ?? []),
+  ...(cjk.remarkPluginsAfter ?? []).map((plugin): RemarkPlugin => {
+    const attacher = Array.isArray(plugin) ? plugin[0] : plugin;
+    if (attacher !== remarkCjkFriendlyGfmStrikethrough) return plugin;
+    return [attacher as typeof remarkCjkFriendlyGfmStrikethrough, { singleTilde: false }];
+  }),
+  windowsFileLinkEscapeRemarkPlugin,
+];
 
 /**
  * A link the chat renders must never replace the tool itself: a plain <a>
@@ -215,13 +257,21 @@ function CodeBlock({
  * so streamed prose wraps like a document instead of a pre block. A closed
  * ```mermaid fence becomes a diagram (Mermaid); anything else stays a code
  * block.
+ *
+ * memo — 스트리밍이 끝난 메시지는 text 가 더 변하지 않으므로 다른 턴의 갱신이
+ * 이 메시지를 다시 parse 하지 않는다(완성본은 확정본). 스트리밍 중에는 text 가
+ * 계속 바뀌니 그때만 다시 그린다.
  */
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ChatLink, pre: ChatPre }}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        urlTransform={urlTransform}
+        components={{ a: ChatLink, pre: ChatPre }}
+      >
         {text}
       </ReactMarkdown>
     </div>
   );
-}
+});

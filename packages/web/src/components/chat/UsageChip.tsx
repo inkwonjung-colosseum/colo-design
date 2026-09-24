@@ -48,6 +48,17 @@ function tone(pct: number): "" | "warn" | "danger" {
   return pct >= 85 ? "danger" : pct >= 60 ? "warn" : "";
 }
 
+/** The one word for how full a budget is — chip face, aria label and popover state share it. */
+function fillWord(pct: number): string {
+  return pct >= 100
+    ? "다 찼어요"
+    : pct >= 85
+      ? "거의 찼어요"
+      : pct >= 60
+        ? "차오르는 중"
+        : "여유로워요";
+}
+
 export function UsageChip({
   plans,
   onRefresh,
@@ -136,7 +147,7 @@ export function UsageChip({
   const [tab, setTab] = useState<string | null>(null);
   // 칩의 얼굴은 말이다 — 숫자(퍼센트·시간)는 팝오버의 몫. 여유 구간에는 칩이
   // 아예 서지 않는다(B3): 계량은 `차오르는 중`부터 말을 시작한다.
-  const faceWord = badge === "warn" ? "차오르는 중" : "거의 찼어요";
+  const faceWord = lead ? fillWord(lead.pct) : "여유로워요";
   // Time left is computed from `now`, so a rendered countdown goes stale;
   // re-render on the half-minute while one is on screen.
   const counting = Boolean(lead?.resetsAt);
@@ -232,16 +243,12 @@ export function UsageChip({
               )}
             </svg>
           </span>
-          {badge === "warn" ? (
-            "차오르는 중"
-          ) : (
-            <>
-              거의 찼어요
-              {timeLeft(lead.resetsAt) && (
-                <span className="usage__reading">{timeLeft(lead.resetsAt)}</span>
-              )}
-            </>
-          )}
+          <>
+            {faceWord}
+            {timeLeft(lead.resetsAt) && (
+              <span className="usage__reading">{timeLeft(lead.resetsAt)}</span>
+            )}
+          </>
         </button>
       </Tip>
       {open && (
@@ -255,7 +262,7 @@ export function UsageChip({
             </span>
             <span className={overall ? `usage__state usage__state--${overall}` : "usage__state"}>
               <i className="usage__statedot" aria-hidden />
-              {worst.pct >= 85 ? "거의 찼어요" : worst.pct >= 60 ? "차오르는 중" : "여유로워요"}
+              {fillWord(worst.pct)}
             </span>
           </span>
           {groups.length > 1 && (

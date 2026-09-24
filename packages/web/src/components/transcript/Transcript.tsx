@@ -184,7 +184,8 @@ export function Transcript({
             return null;
           }
           const block = row.block;
-          if (block.type === "save" || block.type === "milestone") return at(block.at);
+          if (block.type === "save" || block.type === "milestone" || block.type === "saveBlocked")
+            return at(block.at);
           if (block.type === "human") return at(block.reviews[0]?.at ?? "");
           if (block.type === "tool") return block.startedAt ?? null;
           return null;
@@ -364,6 +365,18 @@ export function Transcript({
                       </span>
                     </Tip>
                   </div>
+                );
+              case "saveBlocked":
+                // 제출이 저장할 것이 없어 멈춘 자리 — AI 의 과제가 아니라 사람
+                // 안내의 문제라 게이트 카드가 없다. 연대기의 붉은 한 줄이
+                // 흔적의 전부다(배너는 리로드와 함께 사라진다).
+                return (
+                  <MilestoneRow
+                    key={block.id}
+                    tone="danger"
+                    text={block.detail}
+                    time={clockTime(block.at)}
+                  />
                 );
               case "milestone":
                 return block.subtype === "merged" ? (

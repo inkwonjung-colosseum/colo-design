@@ -1,6 +1,6 @@
 /**
  * 초대 파일(`*.colo-invite`)의 형식 — 형식의 한 곳이다: 소개 페이지의 초대장
- * 만들기(docs/invite.js)와 터미널 생성기(scripts/make-invite.mjs)가 함께 읽는다.
+ * 만들기(site/invite.js)와 터미널 생성기(scripts/make-invite.mjs)가 함께 읽는다.
  *
  * 바깥 봉투는 v3 — 안쪽 JSON 을 AES-256-GCM 으로 가린다(sealInvite). 읽는 쪽은
  * packages/protocol/src/invite.ts(readInviteJson · normalizeInvite)와 그것을 쓰는
@@ -107,7 +107,7 @@ function repoKey(url) {
  * [{ repoUrl, name, baseBranch?, reviewers?, instructions? }]다.
  *
  * 예전 단일 인자({ repoUrl, name, baseBranch, reviewers })도 받아 프로젝트
- * 하나짜리로 바꿔 준다 — docs/invite.js 가 다음 단계까지 그대로 돌아야 하므로.
+ * 하나짜리로 바꿔 준다 — site/invite.js 가 다음 단계까지 그대로 돌아야 하므로.
  * 같은 레포는 한 번만 싣는다 — "프로젝트 3개"라고 말했는데 실제로는 중복이라
  * 2개였던 일이 없게 뒤의 것을 버린다(읽는 쪽 normalizeInvite 와 같은 규칙).
  */

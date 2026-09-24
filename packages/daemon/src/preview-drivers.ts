@@ -24,6 +24,48 @@ const SHOT_EXTENSIONS: Record<string, string> = {
   "image/png": ".png",
 };
 
+/** 게이트 한 바퀴의 결과(2026-09-22) — 서버가 통계 행으로 내려앉히는 것. */
+export type GateOutcome =
+  | { status: "trouble"; kept: number; troubles: ScreenTrouble[] }
+  | { status: "ok"; kept: number }
+  | { status: "broken" }
+  | {
+      status: "skipped";
+      reason: "no-driver" | "no-session" | "no-screens" | "no-preview" | "busy";
+    };
+
+/** 게이트 한 바퀴를 통계 행의 칸으로 — kept 는 dedupe·origin 필터를 통과한
+ *  화면 수다. 못 돈 이유와 판정 상세가 같은 모양으로 흘러 noteGateCheck 에
+ *  들어간다. */
+export function gateOutcomeStats(outcome: GateOutcome): {
+  screens: number;
+  skipped?: string;
+  unsettled?: number;
+  blank?: number;
+  consoleLines?: number;
+  netLines?: number;
+  rescued?: number;
+} {
+  if (outcome.status === "trouble") {
+    return {
+      screens: outcome.kept,
+      unsettled: outcome.troubles.filter((trouble) => trouble.unsettled).length,
+      blank: outcome.troubles.filter((trouble) => trouble.blank).length,
+      consoleLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.consoleCount, 0),
+      netLines: outcome.troubles.reduce((sum, trouble) => sum + trouble.netCount, 0),
+      rescued: outcome.troubles.filter((trouble) => trouble.rescued).length,
+    };
+  }
+  if (outcome.status === "ok") return { screens: outcome.kept };
+  return { screens: 0, skipped: outcome.status === "broken" ? "broken" : outcome.reason };
+}
+
+/** 캡처 파일 이름 — 주소를 무난한 조각으로 눌러 쓴다. */
+function captureNameOf(route: string): string {
+  const id = route.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "screen";
+  return id.slice(0, 60);
+}
+
 /**
  * 서버가 주는 것 — 드라이버 클러스터는 이 경계 너머를 모른다. 세션의 창이
  * 서버의 수명주기(닫기·프로젝트 전환·데몬 종료)에 맞춰 죽어야 하므로 조회는
@@ -101,13 +143,13 @@ export class PreviewDrivers {
    * 읽는 줄이 정확히 그 화면의 것이 되고, 사용자가 보고 있는 창도
    * 건드리지 않는다.
    */
-  async runGate(sessionId: string, turnDurationMs?: number): Promise<void> {
+  async runGate(sessionId: string, turnDurationMs?: number): Promise<GateOutcome> {
     const screens = [...(this.pinnedThisTurn.get(sessionId)?.values() ?? [])];
     this.pinnedThisTurn.delete(sessionId);
     const session = this.deps.session(sessionId);
     const done = (detail?: string): void => {
       // 대기 줄이 곧(또는 이미) 새 턴을 열었다면 이 완료 알림은 허위다 — 도는
-      // 턴이 있는데 `작업이 끝났습니다` 가 나간다(턴 끝의 idle 방출과 release
+      // 턴이 있는데 `작업이 끝습니다` 가 나간다(턴 끝의 idle 방출과 release
       // 순서가 만드는 창). 새 턴의 끝이 제 알림을 내므로 여기서는 잠든다.
       if (this.deps.session(sessionId)?.state !== "idle") return;
       const notice = noticeForState(
@@ -120,13 +162,15 @@ export class PreviewDrivers {
         this.deps.notice(detail && notice.kind === "done" ? { ...notice, detail } : notice);
     };
     const factory = this.deps.factory();
-    if (!factory || !session || screens.length === 0) return done();
+    if (!factory) return done(), { status: "skipped", reason: "no-driver" };
+    if (!session) return done(), { status: "skipped", reason: "no-session" };
+    if (screens.length === 0) return done(), { status: "skipped", reason: "no-screens" };
     // 게이트는 이 세션이 사는 프로젝트를 기준으로 판정한다 — 활성 프로젝트가
     // 아니라. 턴 도중 프로젝트를 전환한 뒤 끝난 턴의 핀을 활성 레포의 주소로
     // 다시 열면 전혀 다른 앱의 콘솔이 이 세션의 판정이 된다.
     const repo = this.deps.repoForSession?.(sessionId) ?? this.deps.activeRepo();
     const status = await repo?.status().catch(() => null);
-    if (!status?.previewUrl) return done();
+    if (!status?.previewUrl) return done(), { status: "skipped", reason: "no-preview" };
     // preview origin 밖의 주소는 게이트가 재검증할 대상이 아니다 — 허용된
     // 추가 origin 은 레포의 다른 서버이지, 게이트가 다시 열 화면이 아니다.
     const origin = new URL(status.previewUrl).origin;
@@ -146,7 +190,7 @@ export class PreviewDrivers {
         // 못 읽는 주소는 게이트 입력이 아니다.
       }
     }
-    if (kept.length === 0) return done();
+    if (kept.length === 0) return done(), { status: "ok", kept: 0 };
     const driver = factory.forIsolated(status.previewUrl);
     let troubles: ScreenTrouble[] = [];
     /** 게이트 스스로 깨진 것 — 판정이 아니라 확인 불능이다. */
@@ -161,10 +205,14 @@ export class PreviewDrivers {
       await driver.destroy().catch(() => undefined);
     }
     if (broken) {
-      return done("화면 확인을 실행하지 못했습니다 — 다음 말에 핀을 다시 찍어 확인해 주세요.");
+      done("화면 확인을 실행하지 못했습니다 — 다음 말에 핀을 다시 찍어 확인해 주세요.");
+      return { status: "broken" };
     }
     // 사용자가 그 사이 다시 보냈으면 이 판정은 낡았다 — 도는 턴에 끼어들지 않는다.
-    if (troubles.length === 0 || this.deps.session(sessionId)?.state !== "idle") return done();
+    if (troubles.length === 0) return done(), { status: "ok", kept: kept.length };
+    if (this.deps.session(sessionId)?.state !== "idle") {
+      return done(), { status: "skipped", reason: "busy" };
+    }
     this.gatedSessions.add(sessionId);
     this.deps.notice({
       kind: "gate",
@@ -172,12 +220,26 @@ export class PreviewDrivers {
       title: session.title,
       stage: "screen",
     });
+    // 문제 화면의 그림이 브리프와 함께 간다(2026-09-22) — 글자만 읽고 추측하던
+    // 고침을 눈으로 보게 한다. 첨부는 세션의 send 계약 그대로(이름·형식·bytes).
+    const captures = troubles.flatMap((trouble) =>
+      trouble.capture !== undefined
+        ? [
+            {
+              name: `${captureNameOf(trouble.route)}${SHOT_EXTENSIONS[trouble.capture.mediaType] ?? ".bin"}`,
+              mediaType: trouble.capture.mediaType,
+              data: trouble.capture.data,
+            },
+          ]
+        : [],
+    );
     try {
-      session.send(gateBrief(troubles));
+      session.send(gateBrief(troubles), captures);
     } catch {
       // 질의가 방금 죽었다 — 완료로 닫는 편이 아무 말도 없는 것보다 낫다.
       done();
     }
+    return { status: "trouble", kept: kept.length, troubles };
   }
 
   /**

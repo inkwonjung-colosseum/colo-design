@@ -1,5 +1,4 @@
 import type { RepoStatus } from "@colo-design/protocol";
-import { PLAN_TOOL } from "@colo-design/protocol";
 import { useState } from "react";
 import { timeAgo } from "../../lib/format";
 import type { AskingItem } from "../../lib/home-feed";
@@ -141,7 +140,6 @@ function PermissionDecisionCard({
 }) {
   const [reason, setReason] = useState("");
   const [showReason, setShowReason] = useState(false);
-  const isPlan = item.toolName === PLAN_TOOL;
   const raw = toolHeadline(item.input);
   const headline = item.toolName === "Bash" ? bashHeadline(raw, commands) : raw;
   const action = toolLabel(item.toolName);
@@ -166,16 +164,10 @@ function PermissionDecisionCard({
               )}
             </div>
             <div className="home-line">
-              {isPlan ? (
-                <>
-                  <strong>만들 것</strong>을 승인해 주세요.
-                </>
-              ) : (
-                <>
-                  <strong>{action}</strong>
-                  {objectParticle(action)} 허용할까요?
-                </>
-              )}
+              <>
+                <strong>{action}</strong>
+                {objectParticle(action)} 허용할까요?
+              </>
             </div>
             {headline && <div className="home-quote">{headline}</div>}
           </button>
@@ -185,9 +177,7 @@ function PermissionDecisionCard({
                 autoFocus
                 className="home-reason"
                 value={reason}
-                placeholder={
-                  isPlan ? "무엇을 어떻게 바꿀지 알려 주세요" : "왜 안 되는지 알려 주세요"
-                }
+                placeholder="왜 안 되는지 알려 주세요"
                 onChange={(e) => setReason(e.target.value)}
                 onKeyDown={(e) => {
                   if (composing(e)) return;
@@ -200,7 +190,7 @@ function PermissionDecisionCard({
                 disabled={!repoReady}
                 onClick={() => onRespond("deny", reason || undefined)}
               >
-                {isPlan ? "바꿔 달라 보내기" : "거절 보내기"}
+                거절 보내기
               </button>
               <button type="button" className="chip" onClick={() => setShowReason(false)}>
                 뒤로
@@ -214,25 +204,23 @@ function PermissionDecisionCard({
                 disabled={!repoReady}
                 onClick={() => onRespond("allow")}
               >
-                {isPlan ? "승인하고 만들기" : "이번만 허용"}
+                이번만 허용
               </button>
-              {!isPlan && (
-                <button
-                  type="button"
-                  className="chip"
-                  disabled={!repoReady || !suggestion}
-                  onClick={() => onRespond("allowAlways")}
-                >
-                  {suggestion ? suggestion.label : "항상 허용"}
-                </button>
-              )}
+              <button
+                type="button"
+                className="chip"
+                disabled={!repoReady || !suggestion}
+                onClick={() => onRespond("allowAlways")}
+              >
+                {suggestion ? suggestion.label : "항상 허용"}
+              </button>
               <button
                 type="button"
                 className="chip"
                 disabled={!repoReady}
                 onClick={() => setShowReason(true)}
               >
-                {isPlan ? "바꿔 달라…" : "거절…"}
+                거절…
               </button>
             </div>
           )}

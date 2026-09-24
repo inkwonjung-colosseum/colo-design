@@ -20,15 +20,7 @@ const NAMES: Record<string, string> = {
   TodoWrite: "할 일 정리",
   Task: "보조 작업",
   AskUserQuestion: "질문",
-  ExitPlanMode: "계획 승인",
 };
-
-/**
- * 계획 모드의 승인 도구. 권한 카드가 아니라 '만들 것' 카드로 그려야 하므로
- * 데몬(요청의 종별 판정)과 웹(카드 분기)이 같은 이름을 본다 — 두 표면이
- * 각자의 문자열로 판정하면 카드가 갈라진다(M6 마커의 교훈).
- */
-export const PLAN_TOOL = "ExitPlanMode";
 
 /** The Korean action name for a tool, or the raw name when unknown. */
 export function toolLabel(name: string): string {

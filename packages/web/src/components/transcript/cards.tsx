@@ -4,7 +4,6 @@ import type { PendingPermission, PendingQuestion } from "../../lib/daemon-client
 import { composing } from "../../lib/ime";
 import { bashHeadline, objectParticle, toolLabel } from "../../lib/labels";
 import { ShieldIcon, SparkIcon } from "../icons";
-import { Markdown } from "../Markdown";
 import { Tip } from "../shell/Tip";
 import { preview, toolHeadline } from "./shared";
 
@@ -14,76 +13,6 @@ type RepoCommands = NonNullable<RepoStatus["commands"]>;
 // ---------------------------------------------------------------------------
 // Human-in-the-loop cards
 // ---------------------------------------------------------------------------
-
-/**
- * 계획의 승인 카드 (계획 모드 완결): 권한 카드의 형식을 빌리되 물는 것이
- * 다르다 — "이 수행을 허용할까요"가 아니라 "이것을 만들까요". 본문은
- * 계획 그 자체(AI 가 ExitPlanMode 에 실어 보낸 마크다운)이고, 승인은
- * 착수이며 거절은 수정 요청이다. 본문이 없는 요청은 있는 셈 치고 그리지
- * 않고 본래의 권한 카드로 돌려 보낸다.
- */
-export function PlanCard({
-  request,
-  onRespond,
-}: {
-  request: PendingPermission;
-  onRespond: (decision: "allow" | "allowAlways" | "deny", message?: string) => void;
-}) {
-  const [changes, setChanges] = useState("");
-  const [showChanges, setShowChanges] = useState(false);
-  const plan = (request.input as { plan?: unknown } | null)?.plan;
-  if (typeof plan !== "string" || plan.trim() === "") {
-    return <PermissionCard request={request} onRespond={onRespond} />;
-  }
-
-  return (
-    <div className="card card--plan" role="alert">
-      <div className="card__title">
-        <span className="card__badge">
-          <SparkIcon size={14} />
-        </span>
-        <span>
-          <strong>만들 것</strong>을 승인해 주세요
-        </span>
-      </div>
-      <p className="plan__lead">
-        AI가 화면을 만들기 전에 무엇을 만들지 보여 드립니다 — 승인하면 바로 만듭니다.
-      </p>
-      <div className="card__plan">
-        <Markdown text={plan} />
-      </div>
-      {showChanges ? (
-        <div className="card__reason">
-          <textarea
-            autoFocus
-            value={changes}
-            placeholder="무엇을 어떻게 바꿀지 알려 주세요"
-            onChange={(e) => setChanges(e.target.value)}
-          />
-          <button
-            type="button"
-            className="danger"
-            onClick={() => onRespond("deny", changes || undefined)}
-          >
-            바꿔 달라 보내기
-          </button>
-          <button type="button" className="ghost" onClick={() => setShowChanges(false)}>
-            뒤로
-          </button>
-        </div>
-      ) : (
-        <div className="card__actions">
-          <button type="button" className="primary" onClick={() => onRespond("allow")}>
-            승인하고 만들기
-          </button>
-          <button type="button" className="danger" onClick={() => setShowChanges(true)}>
-            바꿔 달라…
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function PermissionCard({
   request,

@@ -4,6 +4,8 @@ import { realpath, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { meaningfulFirstLine } from "../../../common-instructions.js";
+import { COLO_DESIGN_DIR } from "../../../environment.js";
 import type {
   AgentDriver,
   AgentSession,
@@ -15,7 +17,7 @@ import type {
   TranscriptStore,
 } from "../../driver.js";
 import { codexOneShot } from "./one-shot.js";
-import { CODEX_MODE_ROWS, CodexAgentSession } from "./session.js";
+import { CodexAgentSession } from "./session.js";
 import {
   codexHome,
   collectPrompts,
@@ -35,7 +37,6 @@ const CODEX_CAPABILITIES = {
   effort: true,
   modelSelect: true,
   slashCommands: true,
-  planMode: "plan",
   subtasks: false,
   // turn/steer — 도는 턴에 말을 실을 수 있는 유일한 와이어(experimentalApi).
   steer: true,
@@ -46,7 +47,16 @@ const CODEX_CAPABILITIES = {
 
 /** Where the installers put the binary, in the order we trust them. */
 function codexCandidates(home: string): string[] {
+  // 맨 앞은 이 도구의 설치 진행기가 내려놓은 자리(~/.colo-design/tools/bin,
+  // 1단계) — 환경 변수 오버라이드 다음으로 먼저 본다.
+  const installed = join(
+    COLO_DESIGN_DIR,
+    "tools",
+    "bin",
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
   return [
+    installed,
     join(home, ".local", "bin", "codex"),
     join(home, ".codex", "bin", "codex"),
     "/opt/homebrew/bin/codex",
@@ -55,7 +65,8 @@ function codexCandidates(home: string): string[] {
   ];
 }
 
-function resolveCodexExecutable(): string | null {
+/** 설치 진행기(1단계)가 설치의 성공 판정에 쓰는 같은 규칙. */
+export function resolveCodexExecutable(): string | null {
   const env = process.env.COLO_DESIGN_CODEX_BIN;
   const candidates = [env, ...codexCandidates(homedir())].filter((value): value is string =>
     Boolean(value),
@@ -93,24 +104,21 @@ function codexLoggedIn(): boolean {
  */
 export class CodexDriver implements AgentDriver {
   readonly id = "codex";
-  private executable: string | null | undefined;
 
   describe(): ProviderDescriptor {
     return {
       id: this.id,
       label: "Codex",
-      modes: CODEX_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier })),
-      // 새 대화의 기본 모드 — codex 고유의 기본 대신 전부 맡기기(bypass:
-      // approvalPolicy never, danger-full-access)로 시작한다. 사용자가 모드를
-      // 고르면 그 값이 이긴다. 플래너 승인 뒤의 복귀 지점이기도 하다.
-      defaultModeId: "bypass",
       capabilities: { ...CODEX_CAPABILITIES },
     };
   }
 
+  /**
+   * 호출마다 푼다(2026-09-24): 후보는 existsSync 몇 번뿐이라 싸고, 한 번 null 로
+   * 캐시하면 앱 안에서 설치한 Codex 를 재시작 전까지 못 보는 세계가 된다.
+   */
   private exe(): string | null {
-    if (this.executable === undefined) this.executable = resolveCodexExecutable();
-    return this.executable;
+    return resolveCodexExecutable();
   }
 
   async isAvailable(): Promise<Diagnostic> {
@@ -183,7 +191,8 @@ export class CodexDriver implements AgentDriver {
         }
         rows.push({
           id: meta.id,
-          title: prompts[0]?.text.split("\n", 1)[0]?.slice(0, 80) || "제목 없는 대화",
+          // 표식 · 공통 규칙이 앞에 붙은 첫 프롬프트가 제목이 되지 않게 (베타 테스트 #1)
+          title: meaningfulFirstLine(prompts[0]?.text ?? "").slice(0, 80) || "제목 없는 대화",
           lastModified,
           provider: "codex",
         });
@@ -195,7 +204,7 @@ export class CodexDriver implements AgentDriver {
       const path = await findRollout(codexHome(), id);
       if (!path) return null;
       const prompts = await collectPrompts(await readRolloutLines(path));
-      return prompts[0]?.text.split("\n", 1)[0]?.slice(0, 80) ?? null;
+      return meaningfulFirstLine(prompts[0]?.text ?? "").slice(0, 80) || null;
     },
 
     import: async (id, _cwd) => {

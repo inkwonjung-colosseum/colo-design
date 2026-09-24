@@ -1,4 +1,4 @@
-import type { ChatEvent, PermissionMode } from "@colo-design/protocol";
+import type { ChatEvent } from "@colo-design/protocol";
 import { toolLabel } from "@colo-design/protocol";
 
 /** A wire number, or 0 — nothing here invents a count the CLI did not send. */
@@ -113,7 +113,6 @@ export class MessageTranslator {
           cwd: String(m.cwd ?? ""),
           tools: Array.isArray(m.tools) ? m.tools.map(String) : [],
           apiKeySource: String(m.apiKeySource ?? "unknown"),
-          permissionMode: (m.permissionMode ?? "default") as PermissionMode,
         },
       ];
     }

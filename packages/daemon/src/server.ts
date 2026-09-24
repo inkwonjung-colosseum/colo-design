@@ -16,6 +16,7 @@ import { ClaudeDriver } from "./agent/drivers/claude/driver.js";
 import { CodexDriver } from "./agent/drivers/codex/driver.js";
 import { OmpDriver } from "./agent/drivers/omp/driver.js";
 import { DriverRegistry } from "./agent/registry.js";
+import { AgentInstall } from "./agent-install.js";
 import { browserMcpEntry } from "./browser-launch.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
@@ -42,7 +43,7 @@ import type {
   BrowserDriverFactory,
   PreviewDriverFactory,
 } from "./preview-driver.js";
-import { PreviewDrivers } from "./preview-drivers.js";
+import { gateOutcomeStats, PreviewDrivers } from "./preview-drivers.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
 import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
@@ -317,6 +318,21 @@ export class DaemonServer {
   private wss: WebSocketServer | null = null;
   private readonly agentDrivers = new DriverRegistry();
   private claudeExecutable: string | null = null;
+  /**
+   * 방금 설치가 푼 claude 경로를 심는다(2026-09-24) — 드라이버·상태·fleet 이
+   * 읽는 자리가 이 필드 하나라, 갈아끼우는 것만으로 재시작 없이 새 CLI 가
+   * 보인다. 설치 진행기의 성공 판정이 푼 경로를 그대로 받는다.
+   */
+  private adoptClaudeExecutable(path: string | null): void {
+    this.claudeExecutable = path;
+  }
+
+  /** onboarding.check 의 방어 — 풀린 적 없는(null) 경로를 한 번 다시 푼다. */
+  private async refreshClaudeExecutable(): Promise<void> {
+    if (this.claudeExecutable !== null) return;
+    const resolved = await resolveClaudeExecutable(this.config.claudeExecutable);
+    if (resolved) this.claudeExecutable = resolved;
+  }
   /** 기계 잔일 담당의 설정 — 설정창의 machine.set 이 쓰고 machine.json 에 산다. */
   private readonly machineSetting = new MachineSetting();
   /** 기계 잔일(저장 메모 · 넘기기 초안)의 담당 — 레지스트리와 설정에서 고른다. */
@@ -325,6 +341,8 @@ export class DaemonServer {
   );
   /** 터미널 없는 에이전트 로그인(P1-1) — 데몬이 파이프로 몰고 방송한다. */
   private readonly agentLogin = new AgentLogin();
+  /** 에이전트 설치 진행기(1단계) — Claude Code · Codex 를 끝까지 지켜본다. */
+  private readonly agentInstall = new AgentInstall();
   /**
    * P2-1 자동 저장의 대기표. 답을 낸 턴(turn.end)이 표를 올리고, 그 턴이
    * 내려앉은 idle 에서 — 화면 확인 게이트가 걸렸다면 그 판정이 끝난 뒤에 —
@@ -332,6 +350,11 @@ export class DaemonServer {
    * 걸면 게이트가 여는 고침 턴과 경합해 한 턴이 커밋 둘로 갈린다.
    */
   private readonly autoSaveDue = new Set<string>();
+  /**
+   * 라우트↔파일 지도에 실을 이번 턴의 화면들(2026-09-22) — runGate 가
+   * pinnedThisTurn 을 지우기 전 서버가 스냅샷하고, 커밋 성공 뒤 소비된다.
+   */
+  private readonly screenMapDue = new Map<string, string[]>();
   /**
    * 브라우저 MCP 자식의 세션별 시크릿(3단계): Map<secret, {sessionId,
    * issuedAt}>. 데몬의 config.token은 전역 공유라 자식에게 못 준다 — 세션마다
@@ -534,25 +557,48 @@ export class DaemonServer {
           if (state === "idle" && this.drivers.gatePossible(sessionId)) {
             // 게이트의 한 바퀴를 재서 통계에 남긴다 — 다시 연 여부는
             // gatedSessions(사람의 다음 보내기 전까지 산다)로 판정이 났을 때
-            // 읽는다. screens 는 runGate 가 지우기 전의 수다.
-            const screens = this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0;
+            // 읽는다. 판정 상세는 runGate 의 결과에서 온다(kept 는 필터를
+            // 통과한 화면 수다).
             const gateStart = Date.now();
+            // 라우트↔파일 지도의 재료(2026-09-22): runGate 가 pinnedThisTurn
+            // 을 지우기 전에 화면 집합을 스냅샷한다 — 커밋이 성공한 뒤 sha 와
+            // 함께 한 줄로 내려앉는다.
+            const pinnedNow = this.drivers.pinnedThisTurn.get(sessionId);
+            if (pinnedNow !== undefined && pinnedNow.size > 0) {
+              this.screenMapDue.set(sessionId, [...pinnedNow.keys()]);
+            }
             // P2-1: 자동 저장의 커밋은 게이트의 판정이 끝난 **뒤**에 건다.
             // 게이트가 고침 턴을 열면 워크트리가 다시 더러워지므로, 먼저
             // 커밋하면 한 턴이 커밋 둘로 갈린다. 게이트가 깨져도(reject) 커밋은
             // 치른다 — 확인 못 한 것이 저장하지 않을 이유는 아니다.
             void this.drivers.runGate(sessionId, turnDurationMs).then(
-              () => {
+              (outcome) => {
                 this.stats.noteGateCheck(sessionId, {
                   ms: Date.now() - gateStart,
-                  screens,
                   reopened: this.drivers.gatedSessions.has(sessionId),
+                  ...gateOutcomeStats(outcome),
                 });
                 this.runAutoSave(sessionId);
               },
               () => this.runAutoSave(sessionId),
             );
           } else {
+            // 답을 낸 턴에 게이트가 돌지 않은 이유도 한 줄로 남는다(2026-09-22)
+            // — gateset 행의 분모다. idle 이 아닌 방송은 아직 턴의 끝이 아니므로
+            // 세지 않는다.
+            if (state === "idle" && this.autoSaveDue.has(sessionId)) {
+              const reason = this.drivers.gatedSessions.has(sessionId)
+                ? "once"
+                : (this.drivers.pinnedThisTurn.get(sessionId)?.size ?? 0) > 0
+                  ? "no-driver"
+                  : "no-screens";
+              this.stats.noteGateCheck(sessionId, {
+                ms: 0,
+                screens: 0,
+                reopened: false,
+                skipped: reason,
+              });
+            }
             const notice = noticeForState(
               sessionId,
               state,
@@ -571,6 +617,7 @@ export class DaemonServer {
             // P2-1: 주인을 잃은 자동 저장 표는 치르지 않는다 — 닫힌 대화의
             // 커밋 제목을 그 대화의 말에서 끌어올 수 없다.
             this.autoSaveDue.delete(sessionId);
+            this.screenMapDue.delete(sessionId);
             this.drivers.pinnedThisTurn.delete(sessionId);
             this.drivers.gatedSessions.delete(sessionId);
             // 브라우저 시크릿도 세션과 함께 간다(3단계) — 남은 자식의 비밀로
@@ -748,9 +795,12 @@ export class DaemonServer {
       notice: (n) => this.config.onNotice?.(n),
       claudeExecutable: () => this.claudeExecutable,
       claudeExecutableOverride: () => this.config.claudeExecutable,
+      setClaudeExecutable: (path) => this.adoptClaudeExecutable(path),
+      refreshClaudeExecutable: () => this.refreshClaudeExecutable(),
       machineSetting: this.machineSetting,
       machineTurns: this.machineTurns,
       agentLogin: this.agentLogin,
+      agentInstall: this.agentInstall,
       queueDiskFor: this.queueDiskFor,
       status: () => this.status(),
     });
@@ -956,8 +1006,9 @@ export class DaemonServer {
     // First, before any await: the probes this run left unattended must stop
     // waiting on a CLI nobody is listening to any more.
     this.closing.abort();
-    // 진행 중인 에이전트 로그인도 이 데몬의 자식이다 — 데몬이 내려가면 함께 끊는다.
+    // 진행 중인 에이전트 로그인·설치도 이 데몬의 자식이다 — 데몬이 내려가면 함께 끊는다.
     this.agentLogin.stop();
+    this.agentInstall.stop();
     clearInterval(this.handoffTimer ?? undefined);
     this.handoffTimer = null;
     this.logger.info("데몬 종료");
@@ -1061,11 +1112,15 @@ export class DaemonServer {
 
   /**
    * P2-1: 대기표의 이 턴을 치른다 — 표를 뽑아 쓰므로 한 턴은 한 번만 커밋한다
-   * (게이트 경로와 idle 경로가 같은 턴에 둘 다 닿아도).
+   * (게이트가 판정을 마친 뒤에만 불린다). 지도의 재료는 커밋이 성공해야
+   * 쓴다 — 소비는 autoSaveTurn 안에서고, 표가 없으면 그냥 사라진다(다음
+   * 턴이 제 것을 쌓는다).
    */
   private runAutoSave(sessionId: string): void {
+    const routes = this.screenMapDue.get(sessionId);
+    this.screenMapDue.delete(sessionId);
     if (!this.autoSaveDue.delete(sessionId)) return;
-    void this.fleet.autoSaveTurn(sessionId);
+    void this.fleet.autoSaveTurn(sessionId, routes);
   }
 
   // -------------------------------------------------------------------------
@@ -1406,8 +1461,6 @@ export class DaemonServer {
           ...(diagnostic.loggedIn !== undefined ? { loggedIn: diagnostic.loggedIn } : {}),
           ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
           oneShot: driver.oneShot !== undefined,
-          modes: descriptor.modes,
-          defaultModeId: descriptor.defaultModeId,
           capabilities: {
             ...descriptor.capabilities,
             // 브라우저 도구(3단계): 공급자 선언은 "주입 가능"일 뿐 — 실제

@@ -1,6 +1,6 @@
 import type { RepoStatus } from "@colo-design/protocol";
 
-export { PLAN_TOOL, toolLabel } from "@colo-design/protocol";
+export { toolLabel } from "@colo-design/protocol";
 
 /** The commands the clone resolved to, as RepoStatus carries them. */
 type RepoCommands = NonNullable<RepoStatus["commands"]>;
@@ -13,20 +13,6 @@ export function objectParticle(word: string): string {
   const last = word.codePointAt(word.length - 1) ?? 0;
   const hangul = last >= 0xac00 && last <= 0xd7a3;
   return hangul && (last - 0xac00) % 28 !== 0 ? "을" : "를";
-}
-
-/** 받침 있는 글자 뒤엔 `이`, 없으면 `가` — 주격 조사. */
-export function subjectParticle(word: string): string {
-  const last = word.codePointAt(word.length - 1) ?? 0;
-  const hangul = last >= 0xac00 && last <= 0xd7a3;
-  return hangul && (last - 0xac00) % 28 !== 0 ? "이" : "가";
-}
-
-/** 받침 있는 글자 뒤엔 `과`, 없으면 `와` — 나열 조사. */
-export function withParticle(word: string): string {
-  const last = word.codePointAt(word.length - 1) ?? 0;
-  const hangul = last >= 0xac00 && last <= 0xd7a3;
-  return hangul && (last - 0xac00) % 28 !== 0 ? "과" : "와";
 }
 
 const GATE_LABEL: Record<keyof RepoCommands, string> = {

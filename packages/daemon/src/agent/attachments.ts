@@ -12,7 +12,8 @@ import { basename, join } from "node:path";
  *   동작한다.
  */
 
-/** 인라인으로 실을 수 있는 텍스트 첨부의 상한 — 그 너머는 디스크로 간다. */
+/** 인라인으로 실을 수 있는 텍스트 첨부의 상한 — 넘으면 머리를 이 만큼만 실고
+ * 나머지는 디스크로 간다(잘렸다는 표식과 함께, 아래 참조). */
 const MAX_INLINE_BYTES = 256 * 1024;
 /** 디스크에 적은 첨부의 수명 — 다음 적을 때 함께 거둔다. */
 const STAGED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -111,10 +112,22 @@ export function prepareAttachments(
     }
     const bytes = Buffer.from(attachment.data, "base64");
     const type = attachment.mediaType || "application/octet-stream";
-    if (bytes.length <= MAX_INLINE_BYTES && looksText(bytes)) {
-      const body = bytes.toString("utf8");
+    if (looksText(bytes)) {
+      if (bytes.length <= MAX_INLINE_BYTES) {
+        sections.push(
+          `<attachment name="${attachment.name}" type="${type}">\n${bytes.toString("utf8")}\n</attachment>`,
+        );
+        continue;
+      }
+      // 텍스트가 예산을 넘으면 통째로 디스크행 대신 머리를 실는다 — ZCode
+      // resultBudget 의 truncate 전략: 잘렸다는 표식과 전체 크기를 함께 주면
+      // 모델이 스스로 path 의 파일을 열어 이어 읽는다("전부 못 보았다"와
+      // "앞은 보았고 더 있다"는 다른 턴 값이다). 바이트 단위로 자르므로 경계의
+      // 한 글자가 UTF-8 로 쪼개질 수 있다 — 끝의 U+FFFD 하나뿐이다.
+      const path = stage(cwd, attachment.name, bytes);
+      const head = bytes.subarray(0, MAX_INLINE_BYTES).toString("utf8");
       sections.push(
-        `<attachment name="${attachment.name}" type="${type}">\n${body}\n</attachment>`,
+        `<attachment name="${attachment.name}" type="${type}" path="${path}" originalBytes="${bytes.length}">\n${head}\n</attachment>\n[첨부가 길어 앞부분만 실었다 — 전체 ${bytes.length}바이트 중 앞 ${MAX_INLINE_BYTES}바이트. 나머지는 path 의 파일을 파일 도구로 이어 읽을 수 있다.]`,
       );
       continue;
     }

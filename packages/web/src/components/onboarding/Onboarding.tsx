@@ -1,4 +1,9 @@
-import type { DaemonStatus, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
+import type {
+  AgentInstallKind,
+  DaemonStatus,
+  OnboardingStep,
+  OnboardingStepId,
+} from "@colo-design/protocol";
 import { type CSSProperties, type ReactElement, useEffect, useRef, useState } from "react";
 import { useModalEscape } from "../../hooks/use-modal-focus";
 import type { Daemon } from "../../lib/daemon-client";
@@ -72,6 +77,43 @@ const STEP_ICON: Record<OnboardingStepId, ReactElement> = {
   runtime: <PlugIcon />,
   github: <KeyIcon />,
 };
+
+/** claude 행의 설치 종류 — 고른 프로바이더를 따른다(3단계). */
+function installKindFor(provider: string): AgentInstallKind {
+  return provider === "codex" ? "install-codex" : "install-claude";
+}
+
+/**
+ * policy 실패의 detail 은 안내 문장과 IT 담당자용 복사 한 줄이 개행으로 이어진
+ * 1단계의 형식 그대로다 — 가장 단순하게, 마지막 줄을 떼어 클립보드 문장으로
+ * 쓴다. policy 가 아니면 null(붙일 문장이 없다).
+ */
+function policyCopyLine(detail: string): string | null {
+  if (!detail.includes("IT 담당자에게 보내 주세요")) return null;
+  return detail.split("\n").at(-1) ?? null;
+}
+
+/** IT 담당자에게 보낼 문장 하나를 클립보드에 넣는 버튼 — 눌렀다는 답 한 번. */
+function CopySentenceButton({ line }: { line: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="ghost"
+      onClick={() => {
+        void navigator.clipboard
+          ?.writeText(line)
+          .then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 2500);
+          })
+          .catch(() => undefined);
+      }}
+    >
+      {copied ? "복사했어요" : "문장 복사"}
+    </button>
+  );
+}
 
 /** 로그인 코드 붙여넣기(P1-1) — 데몬이 자식의 stdin 으로 흘려 보낸다. */
 function LoginCodeForm({ daemon }: { daemon: Daemon }) {
@@ -212,6 +254,14 @@ export function Onboarding({
   // claude 행의 제목·부제는 에이전트를 따라간다: 목록의 label 이 있으면 그
   // 이름으로, 없으면 id 그대로(onboarding-gates.html og-step__nm/__sub).
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? provider;
+  // AI 행의 설치 상태(3단계): 데몬이 이 종류의 설치를 지켜보고 있는 동안 버튼은
+  // 물러나고 진행 줄이 그 자리를 지킨다. 실패의 detail 은 곧 이 행의 안내 문장.
+  const rowInstallKind = installKindFor(provider);
+  const rowInstalling = daemon.install?.kind === rowInstallKind;
+  const rowInstallFailed =
+    daemon.installDone?.kind === rowInstallKind && !daemon.installDone.ok
+      ? daemon.installDone
+      : null;
 
   // 통과한 게이트는 행이 아니라 요약 한 줄이다 — 남는 행은 사용자가 지금 할
   // 수 있는 일뿐이고, 번호도 남은 행 안에서 매긴다(1, 3처럼 비지 않게).
@@ -222,6 +272,14 @@ export function Onboarding({
     if (!step) continue;
     (step.status === "pass" ? passedSteps : openSteps).push(step);
   }
+  // 선택 행: Codex(3단계) — 이 데몬이 codex 를 알지만 아직 못 쓸 때만 선다.
+  // blocked · 미터 · 자동 진행 판정에는 들어가지 않는다(별도 렌더일 뿐).
+  const codexMissing = providers.find((p) => p.id === "codex" && !p.available) ?? null;
+  const codexInstalling = daemon.install?.kind === "install-codex";
+  const codexFailed =
+    daemon.installDone?.kind === "install-codex" && !daemon.installDone.ok
+      ? daemon.installDone
+      : null;
 
   // 실패한 에이전트 행에 고칠 fix 가 없을 때(설치된 다른 에이전트가 있다는
   // 뜻) — 고르게 바꿔 다시 검사게 한다. 목록은 이 데몬이 아는 에이전트들.
@@ -230,6 +288,14 @@ export function Onboarding({
     providerStep?.status === "fail" && !providerStep.fix && providers.length > 0;
   const [pickedProvider, setPickedProvider] = useState(provider);
   useEffect(() => setPickedProvider(provider), [provider]);
+
+  // 설치가 끝나면(성공·실패 모두) 시작 안내는 제 몫을 다했다 — 실패 문장
+  // 아래 "설치를 시작했습니다" 가 두 번 안내로 남지 않게 한다(검수 3단계).
+  useEffect(() => {
+    const done = daemon.installDone;
+    if (!done) return;
+    setNotice((prev) => (prev && prev.step === done.kind ? null : prev));
+  }, [daemon.installDone]);
 
   // 다른 모달과 같은 몸통: Escape 도 나가는 길이다. 막는 단계가 있는 동안은
   // onClose 자체가 오지 않으므로 여기서는 그냥 단다. 위에 대화상자가 떠
@@ -333,7 +399,13 @@ export function Onboarding({
                 {/* 도구 이름은 부제다 — 알아야 하는 것은 무엇에 쓰는지다. */}
                 <span className="onboarding__tool">{tool}</span>
                 <span className={`onboarding__status onboarding__status--${step.status}`}>
-                  {checkingRow ? "확인 중…" : STATUS_LABEL[step.status]}
+                  {id === "claude" && rowInstalling
+                    ? "설치하는 중…"
+                    : id === "claude" && daemon.login
+                      ? "로그인하는 중…"
+                      : checkingRow
+                        ? "확인 중…"
+                        : STATUS_LABEL[step.status]}
                 </span>
               </div>
               <p className="onboarding__detail">{step.detail}</p>
@@ -353,19 +425,57 @@ export function Onboarding({
                 </p>
               )}
 
-              {/* 터미널 없는 로그인(P1-1): 데몬이 로그인을 파이프로 몰고 있는
-                  동안의 판 — 주소와, 코드를 청하는 CLI 라면 붙여넣기 칸.
-                  터미널은 이제 열리지 않는다. */}
+              {/* 설치 진행(3단계): 버튼 대신 진행 줄 한 줄 — 데몬이 내놓는 마지막
+                  의미 있는 줄이 그 자리를 지킨다. PATH 문단이나 반복 줄은 오지
+                  않는다(진행기가 이미 걸렀다). */}
+              {id === "claude" && rowInstalling && (
+                <p className="onboarding__installline">설치하는 중… {daemon.install?.line}</p>
+              )}
+              {id === "claude" && !rowInstalling && rowInstallFailed && (
+                <div className="notice notice--error" role="status">
+                  <span className="notice__text">
+                    {policyCopyLine(rowInstallFailed.detail) ?? rowInstallFailed.detail}
+                  </span>
+                </div>
+              )}
+              {id === "claude" &&
+                !rowInstalling &&
+                policyCopyLine(rowInstallFailed?.detail ?? "") && (
+                  <div className="onboarding__copyrow">
+                    <p className="onboarding__copyquote">
+                      {policyCopyLine(rowInstallFailed?.detail ?? "")}
+                    </p>
+                    <CopySentenceButton
+                      line={policyCopyLine(rowInstallFailed?.detail ?? "") ?? ""}
+                    />
+                  </div>
+                )}
+
+              {/* 터미널 없는 로그인(P1-1): 기본은 한 줄 — "저절로 넘어갑니다"가
+                  할 일의 전부다. 주소와 코드 칸은 "브라우저가 열리지 않았나요?"
+                  안에 접혀 있다 — wantsCode 와 상관없이 기본은 닫힌다(Claude CLI
+                  는 콜백 대기 중에도 코드 프롬프트를 늘 찍으므로 펼침은 사실상
+                  항상이었다). 사용자가 열 때만 열린다. */}
               {id === "claude" && open && step.status !== "pass" && daemon.login && (
                 <div className="onboarding__login">
                   <p className="hint">
-                    브라우저에서 로그인 창이 열립니다 — 열리지 않으면{" "}
-                    <a className="ghlink" href={daemon.login.url} target="_blank" rel="noreferrer">
-                      이 주소
-                    </a>
-                    로 직접 여세요.
+                    브라우저에서 로그인 창이 열렸어요 — 로그인을 마치면 저절로 넘어갑니다.
                   </p>
-                  {daemon.login.wantsCode && <LoginCodeForm daemon={daemon} />}
+                  <details className="onboarding__loginhelp">
+                    <summary>브라우저가 열리지 않았나요?</summary>
+                    <p className="hint">
+                      <a
+                        className="ghlink"
+                        href={daemon.login.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        이 주소
+                      </a>
+                      로 직접 여세요.
+                    </p>
+                    {daemon.login.wantsCode && <LoginCodeForm daemon={daemon} />}
+                  </details>
                 </div>
               )}
               {id === "claude" && open && daemon.loginDone && !daemon.loginDone.ok && (
@@ -412,61 +522,121 @@ export function Onboarding({
               )}
 
               {/* `href` fixes are links, not commands (install-node): the
-                  tool installs nothing on somebody's machine by itself. */}
-              {step.fix && step.status !== "pass" && (
-                <div className="onboarding__fixrow">
-                  {step.fix.href ? (
-                    <a
-                      className="primary ghlink"
-                      href={step.fix.href}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {step.fix.label}
-                    </a>
-                  ) : (
+                  tool installs nothing on somebody's machine by itself.
+                  설치가 데몬의 진행기 안에 있거나 로그인이 파이프로 살아 있는
+                  동안에는 통째로 숨는다 — 진행 줄과 로그인 판이 그 자리를
+                  지킨다(3단계). */}
+              {step.fix &&
+                step.status !== "pass" &&
+                !(id === "claude" && (rowInstalling || daemon.login)) && (
+                  <div className="onboarding__fixrow">
+                    {step.fix.href ? (
+                      <a
+                        className="primary ghlink"
+                        href={step.fix.href}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {step.fix.label}
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={busyKind !== null || checking}
+                        onClick={() =>
+                          void run(step.fix!.kind, () =>
+                            daemon.api.onboardingFix(
+                              step.fix!.kind,
+                              // 로그인은 에이전트마다 제 명령이 있다(loginCommand).
+                              step.fix!.kind === "login-claude" ? provider : undefined,
+                            ),
+                          )
+                        }
+                      >
+                        {busyKind === step.fix.kind
+                          ? "실행 중…"
+                          : // 설치가 실패한 뒤의 같은 버튼은 다시 시도다(3단계).
+                            id === "claude" && rowInstallFailed
+                            ? "다시 시도"
+                            : step.fix.label}
+                      </button>
+                    )}
+                    {/* Anything the planner does outside the app — an installer,
+                      a login — ends with the same question: 다시 확인. */}
                     <button
                       type="button"
-                      className="primary"
+                      className="ghost"
                       disabled={busyKind !== null || checking}
-                      onClick={() =>
-                        void run(step.fix!.kind, () =>
-                          daemon.api.onboardingFix(
-                            step.fix!.kind,
-                            // 로그인은 에이전트마다 제 명령이 있다(loginCommand).
-                            step.fix!.kind === "login-claude" ? provider : undefined,
-                          ),
-                        )
-                      }
+                      // run 이 마지막에 검사를 돌린다 — 행동 자리에도 검사를
+                      // 넘기면 같은 게이트가 두 번 돈다.
+                      onClick={() => void run("recheck", () => Promise.resolve())}
                     >
-                      {busyKind === step.fix.kind ? "실행 중…" : step.fix.label}
+                      {busyKind === "recheck" ? "확인 중…" : "다시 확인"}
                     </button>
-                  )}
-                  {/* Anything the planner does outside the app — an installer,
-                      a login — ends with the same question: 다시 확인. */}
-                  <button
-                    type="button"
-                    className="ghost"
-                    disabled={busyKind !== null || checking}
-                    // run 이 마지막에 검사를 돌린다 — 행동 자리에도 검사를
-                    // 넘기면 같은 게이트가 두 번 돈다.
-                    onClick={() => void run("recheck", () => Promise.resolve())}
+                  </div>
+                )}
+              {step.fix &&
+                step.status !== "pass" &&
+                !(id === "claude" && (rowInstalling || daemon.login)) &&
+                notice?.step === step.fix.kind && (
+                  <div
+                    className={`notice ${notice.started ? "notice--info" : "notice--error"}`}
+                    role="status"
                   >
-                    {busyKind === "recheck" ? "확인 중…" : "다시 확인"}
-                  </button>
-                </div>
-              )}
-              {step.fix && step.status !== "pass" && notice?.step === step.fix.kind && (
-                <div
-                  className={`notice ${notice.started ? "notice--info" : "notice--error"}`}
-                  role="status"
-                >
-                  <span className="notice__text">{notice.guidance}</span>
-                </div>
-              )}
+                    <span className="notice__text">{notice.guidance}</span>
+                  </div>
+                )}
             </li>
           );
         })}
+        {/* 선택 행: Codex(3단계) — 필수 행들 아래, 건너뛰어도 되는 한 줄.
+            설치 중·실패 표시는 AI 행과 같은 방식(진행 줄 · notice · 다시 시도). */}
+        {codexMissing && (
+          <li className="onboarding__step onboarding__step--optional">
+            <div className="onboarding__stephead">
+              <span className="ic ic--sm ic--quiet">
+                <BrainIcon />
+              </span>
+              <h2>Codex (선택)</h2>
+              <span className="onboarding__status">
+                {codexInstalling ? "설치하는 중…" : "선택"}
+              </span>
+            </div>
+            <p className="onboarding__detail">
+              다른 AI 로 화면을 만들고 싶을 때만 필요해요. 건너뛰어도 됩니다.
+            </p>
+            {codexInstalling ? (
+              <p className="onboarding__installline">설치하는 중… {daemon.install?.line}</p>
+            ) : (
+              <div className="onboarding__fixrow">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busyKind !== null || checking}
+                  onClick={() =>
+                    void run("install-codex", () => daemon.api.onboardingFix("install-codex"))
+                  }
+                >
+                  {busyKind === "install-codex" ? "실행 중…" : codexFailed ? "다시 시도" : "설치"}
+                </button>
+              </div>
+            )}
+            {codexFailed && !codexInstalling && (
+              <div className="notice notice--error" role="status">
+                <span className="notice__text">
+                  {policyCopyLine(codexFailed.detail) ?? codexFailed.detail}
+                </span>
+              </div>
+            )}
+            {codexFailed && !codexInstalling && policyCopyLine(codexFailed.detail) && (
+              <div className="onboarding__copyrow">
+                <p className="onboarding__copyquote">{policyCopyLine(codexFailed.detail)}</p>
+                <CopySentenceButton line={policyCopyLine(codexFailed.detail) ?? ""} />
+              </div>
+            )}
+          </li>
+        )}
       </ol>
 
       {!blocked && steps.length > 0 && (

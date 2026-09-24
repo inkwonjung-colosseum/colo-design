@@ -7,7 +7,6 @@ import type {
   ContextUsage,
   EffortLevel,
   LostSend,
-  PermissionMode,
   PermissionSuggestion,
   PlanUsage,
   QueuedSend,
@@ -16,7 +15,7 @@ import type {
   SessionSelectors,
   SessionState,
 } from "@colo-design/protocol";
-import { permissionModeSchema, readTurn } from "@colo-design/protocol";
+import { readTurn } from "@colo-design/protocol";
 import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
@@ -44,7 +43,7 @@ export function asPlannerFacingError(error: unknown): Error {
 
 interface PendingRequest {
   requestId: string;
-  kind: "permission" | "question" | "plan";
+  kind: "permission" | "question";
   toolName: string;
   resolve: (result: PermissionVerdict) => void;
   suggestions: unknown[];
@@ -128,14 +127,6 @@ export class PermissionMemory {
   allows(toolName: string, input: Record<string, unknown>): boolean {
     return this.signatures.has(permissionSignature(toolName, input));
   }
-}
-
-/**
- * Claude 열거형의 다섯 말 중 하나인가 — 선로의 스키마가 진실이므로 그것을
- * 그대로 묻는다(목록을 손으로 다시 적으면 언젠가 둘이 엇갈린다).
- */
-function isClaudePermissionMode(mode: string): mode is PermissionMode {
-  return permissionModeSchema.safeParse(mode).success;
 }
 
 export interface SessionEvents {
@@ -227,10 +218,6 @@ export interface SessionOptions {
   provider?: string;
   /** The provider's display name for user-facing strings; omitted = generic wording. */
   providerLabel?: string;
-  /** The provider's plan-mode id (descriptor's capabilities.planMode); null = none. */
-  planModeId?: string | null;
-  /** The mode a fresh session starts on — the plan-approval restore target. */
-  defaultModeId?: string;
   /**
    * A custom session id — with `launch.resume` + `launch.forkSession` it
    * names the FORK (PLAN D95); without a resume it is what a new session is
@@ -412,32 +399,9 @@ export class Session {
   readonly cwd: string;
   readonly provider: string;
   state: SessionState = "idle";
-  /**
-   * The provider's own mode id — the ONE truth about what mode this session
-   * runs in. Claude's four enum values for Claude sessions, the driver's own
-   * ids (omp `bypass`, codex `bypass`, …) for everyone else.
-   *
-   * Kept apart from the Claude enum on purpose (감사 2026-09-19 C5): this used
-   * to be one `permissionMode: string` field that `selectors()` then cast to
-   * `PermissionMode`, so a non-Claude session shipped its own word (`bypass`)
-   * under a type that promises one of five. The web read it as an enum key
-   * (`MODE_LABEL[…]` → undefined) and only two accidental guards kept it out
-   * of the stored settings.
-   */
-  providerModeId: string = "default";
   /** The provider's display name for crash/error strings — dispatch's
    *  resurrect path reads it off a dead session. */
   readonly providerLabel: string;
-  /** The provider's plan-mode id; null = the provider has no plan mode. */
-  private readonly planModeId: string | null;
-  /** The mode a fresh session starts on — the plan-approval restore target. */
-  private readonly defaultModeId: string;
-  /**
-   * 계획 모드로 들어가기 전의 작업 모드. 계획은 한 턴의 자세라 승인 순간
-   * 여기로 되돌아간다(`respondPermission`) — 승인된 계획 뒤의 편집이 계획
-   * 모드의 제약 아래 갇히지 않게. `setPermissionMode` 가 기록하고 지운다.
-   */
-  modeBeforePlan: string | null = null;
   /**
    * 빠르게(fast mode)가 이 세션에서 켜져 있는지. 우리가 보낸 부탁이 아니라
    * CLI 가 매 메시지에 실어 보내는 `fast_mode_state` 가 주인이다 — 요금제나
@@ -599,8 +563,6 @@ export class Session {
     this.effortExplicit = options.launch?.effort !== undefined;
 
     this.providerLabel = options.providerLabel ?? "에이전트";
-    this.planModeId = options.planModeId ?? null;
-    this.defaultModeId = options.defaultModeId ?? "default";
     // `sessionId` lets us name the session up front. Without it the id only
     // arrives with the init event, which the CLI does not emit until the first
     // user turn is pushed.
@@ -632,7 +594,6 @@ export class Session {
     this.lastActivity = Date.now();
     if (event.kind === "init") {
       this.model = event.model;
-      this.providerModeId = event.permissionMode;
     }
     if (event.kind === "ratelimit") {
       // 감독(2026-09-19): 한도 상태는 이벤트로 그대로 흘러간다(요금 칩이
@@ -786,6 +747,10 @@ export class Session {
     }
     this.pending.clear();
     this.turnStartedAt = null;
+    // 죽은 전송의 말은 이미 CLI 에 닿았으므로 벤더 기록이 갖고 있다 — 회복
+    // 후보로 디스크에 남겨 둘 필요가 없다. 되살리기가 이어지면 deliver 가 다시
+    // 쓴다.
+    this.disk?.clearInflight();
     this.dropHeld();
   }
 
@@ -810,6 +775,8 @@ export class Session {
    */
   private endTurn(): void {
     this.turnStartedAt = null;
+    // 턴이 끝났다 — 디스크에 남겨 둔 회복 후보(inflight)는 더 이상 아니다.
+    this.disk?.clearInflight();
     this.setState(this.pending.size > 0 ? this.state : "idle");
     this.release();
   }
@@ -1028,11 +995,6 @@ export class Session {
       }
     }
     // A call the planner answered with 항상 허용 must not become a card again.
-    // 계획의 승인은 그 앞에서 갈라 놓는다 — 읽고 답하는 일이라 기억이 대신
-    // 답하지 못하게 한다(기억은 어차피 이 경로로 채워지지 않는다).
-    if (tool.kind === "plan") {
-      return this.handlePermission(tool, input, opts);
-    }
     if (this.alwaysAllowed.allows(tool.name, input)) {
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
@@ -1066,9 +1028,9 @@ export class Session {
   ): Promise<PermissionVerdict> {
     const requestId = randomUUID();
     const suggestions = opts.suggestions ?? [];
-    // 권한 카드만 잰다(커미티 2026-09-14): 질문·계획 카드는 "항상 허용"이
-    // 없는 세계라 반복이라는 개념이 없다.
-    if (tool.kind !== "question" && tool.kind !== "plan") {
+    // 권한 카드만 잰다(커미티 2026-09-14): 질문 카드는 "항상 허용"이 없는
+    // 세계라 반복이라는 개념이 없다.
+    if (tool.kind !== "question") {
       permissionLog().ask(tool.name, permissionSignature(tool.name, input), this.cwd);
     }
     // 요청의 시계는 이곳에서 시작한다 — 세션 상태와 무관하게 "N분 전"의 기준.
@@ -1099,7 +1061,7 @@ export class Session {
 
       this.pending.set(requestId, {
         requestId,
-        kind: tool.kind === "question" ? "question" : tool.kind === "plan" ? "plan" : "permission",
+        kind: tool.kind === "question" ? "question" : "permission",
         toolName: tool.name,
         resolve: settle,
         suggestions,
@@ -1255,20 +1217,6 @@ export class Session {
     }
 
     const input = updatedInput ?? request.input;
-    if (request.kind === "plan") {
-      // 승인은 곧 착수다: 모드를 먼저 작업 모드로 되돌린 뒤 승인을 내린다 —
-      // CLI 가 승인 직후의 편집에 들어가도 계획 모드의 제약 아래 갇히지 않게.
-      // 복귀가 거절돼도 승인은 나간다: 갇힌 계획보다 조심스러운 착수가 낫다.
-      // 복귀 대상은 이 공급자의 모드 id 다 — Claude 열거형이 아니므로
-      // 드라이버에 그대로 가는 `setMode` 로 간다.
-      const restore = this.modeBeforePlan ?? this.defaultModeId;
-      return this.setMode(restore)
-        .catch(() => undefined)
-        .then(() => {
-          request.resolve({ behavior: "allow", updatedInput: input });
-          return true;
-        });
-    }
     if (decision === "allowAlways") {
       // Remember the exact call so the daemon itself never re-prompts it;
       // the CLI's own suggestions cover future sessions' rules.
@@ -1280,10 +1228,8 @@ export class Session {
         permissionSignature(request.toolName, input),
         this.cwd,
       );
-      // Echo the CLI's own suggestions back so the same call stops prompting.
-      // Bash-style calls offer an `addRules` update destined for
-      // .claude/settings.local.json; Write and Edit instead offer a session
-      // `setMode` switch to acceptEdits. Both are valid "stop asking" answers.
+      // Echo the CLI's own suggestions back so the same call stops prompting —
+      // the suggestion's own words say where it persists.
       request.resolve({
         behavior: "allow",
         updatedInput: input,
@@ -1385,6 +1331,11 @@ export class Session {
     const { text, attachments, pins } = item;
     // 감독: 마지막으로 나간 말 — 실패한 턴의 재시도와 죽은 질의의 재개가 읽는다.
     this.lastDelivered = item;
+    // 이 말이 디스크에도 한 벌 남는다(베타 테스트 B15): 턴이 끝나기 전에
+    // 데몬이 죽으면 벤더 기록이 아직 이 말을 갖고 있지 않을 수 있고 — 질문
+    // 카드에서 멈춘 턴이 정확히 그랬다 — 그러면 카드와 말이 쌍으로 사라진다.
+    // 기동 청소가 이 한 벌을 회복 패널로 옮긴다. 턴이 무사히 끝나면 지워진다.
+    this.disk?.saveInflight(item);
     // A fresh turn is a fresh failure domain: an old interrupt's flag must
     // not swallow this turn's real error (결함①).
     this.interrupting = false;
@@ -1609,31 +1560,6 @@ export class Session {
   }
 
   /**
-   * The Claude permission enum — `session.setPermissionMode` 의 집. 드라이버가
-   * 자기 모드 이름을 가진 공급자(ACP · codex)는 `setMode` 로 간다 — 두
-   * 메시지를 따로 둔 이유가 그것이므로 데몬 쪽도 둘로 갈라져 있어야 한다.
-   * Widening past `default` is the planner's own explicit choice here.
-   */
-  async setPermissionMode(mode: PermissionMode): Promise<void> {
-    await this.setMode(mode);
-  }
-
-  /** The provider's own mode id (ACP `build`, codex `bypass`, …). */
-  async setMode(mode: string): Promise<void> {
-    if (!this.agent) throw new Error("대화가 아직 준비되지 않았습니다.");
-    await this.agent.setMode(mode);
-    // 계획은 자세가 아니라 한 번의 승인이다: 들어갈 때의 작업 모드를 기억해
-    // 두었다가 승인 순간 되돌린다(위 respondPermission). 이미 계획인 채의
-    // 재진입은 첫 기억을 지키고, 다른 모드로의 나들이는 기억을 지운다.
-    if (this.planModeId !== null && mode === this.planModeId) {
-      if (this.providerModeId !== this.planModeId) this.modeBeforePlan = this.providerModeId;
-    } else {
-      this.modeBeforePlan = null;
-    }
-    this.providerModeId = mode;
-  }
-
-  /**
    * 빠르게 (fast mode): 같은 모델을 더 빠른 응답으로 돌린다. 켜 달라는 부탁일
    * 뿐이다 — 받아들여졌는지는 다음 메시지의 `fast_mode_state` 가 말한다.
    */
@@ -1679,30 +1605,13 @@ export class Session {
         models = [];
       }
     }
-    let modes: Awaited<ReturnType<NonNullable<AgentSession["modes"]>>> = null;
-    if (this.sendable && this.agent?.modes) {
-      try {
-        modes = (await this.agent.modes()) ?? null;
-      } catch {
-        modes = null;
-      }
-    }
-    // `mode` 는 언제나 진실이다 — 모드 목록을 내놓지 않는 공급자라도 그렇다.
-    // `permissionMode` 는 Claude 열거형의 자리이므로 그 다섯 말 중 하나일
-    // 때만 채운다: 예전엔 드라이버 id 를 `as PermissionMode` 로 기울여
-    // 담았고(감사 C5), 그 거짓 단언이 칩의 라벨을 undefined 로 만들었다.
-    // 열거형 밖의 모드에서는 `default` 를 싣는다 — 칩은 `mode`·`modes` 를
-    // 먼저 읽고, 이것은 그쪽을 모르는 소비자의 안전한 밑값이다.
     return {
       model: this.selectedModel ?? this.model,
       effort: this.selectedEffort,
-      permissionMode: isClaudePermissionMode(this.providerModeId) ? this.providerModeId : "default",
       fastMode: this.fastMode,
       fastModeBlocked: this.fastModeBlocked,
       models,
       provider: this.provider,
-      mode: this.providerModeId,
-      ...(modes ? { modes } : {}),
     };
   }
 

@@ -1,4 +1,5 @@
 import type {
+  AgentInstallKind,
   AskQuestion,
   ChatEvent,
   ContextUsage,
@@ -13,7 +14,6 @@ import type {
   LostSend,
   OnboardingFixKind,
   OnboardingStep,
-  PermissionMode,
   PermissionSuggestion,
   ProjectList,
   ProjectSummary,
@@ -126,6 +126,15 @@ export type Block =
       commit: string;
       message: string;
       files: string[];
+    }
+  | {
+      /** 제출이 저장 게이트(diff)에서 멈춘 기록 (cycle.saveBlocked): 다른 게이트
+       * 와 달리 AI 의 과제가 아니라 사람 안내라 브리프가 없다 — 배너는 휘발하므로
+       *  테이프의 한 줄이 흔적을 남긴다(베타 테스트 B6). */
+      type: "saveBlocked";
+      id: string;
+      at: string;
+      detail: string;
     }
   | {
       /** 넘김·반영의 진행 한 줄 (cycle.handed·cycle.merged): subtype 이 어느
@@ -359,6 +368,14 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           message: event.message,
           files: event.files,
         },
+      ];
+
+    case "cycle.saveBlocked":
+      // 제출이 저장할 것이 없어 멈춘 자리 — 게이트 카드(AI 의 과제)와 달리
+      // 사람 안내의 문제라 브리프가 없다. 연대기의 붉은 한 줄이 흔적이다.
+      return [
+        ...settleThinking(blocks),
+        { type: "saveBlocked", id: `b${++noticeSeq}`, at: event.at, detail: event.detail },
       ];
 
     case "cycle.handed":
@@ -611,9 +628,6 @@ interface DaemonApi {
   cliCommands: () => Promise<SessionCommand[]>;
   setModel: (sessionId: string, model: string | null) => Promise<unknown>;
   setEffort: (sessionId: string, effort: EffortLevel | null) => Promise<unknown>;
-  setPermissionMode: (sessionId: string, mode: PermissionMode) => Promise<unknown>;
-  /** The provider's own mode ids (ACP agents) — session.setMode. */
-  setMode: (sessionId: string, mode: string) => Promise<unknown>;
   /** 빠르게 — 같은 모델을 더 빠른 응답으로. 이 세션에만 걸린다. */
   setFastMode: (sessionId: string, fast: boolean) => Promise<unknown>;
   /** @-mention autocomplete, over the connected repo's files. */
@@ -863,6 +877,12 @@ export interface Daemon {
    */
   login: { url: string; wantsCode: boolean } | null;
   loginDone: { ok: boolean; detail: string } | null;
+  /**
+   * 데몬이 끝까지 지켜보는 에이전트 설치(1단계)의 마지막 진행 줄 — 진행 중이
+   * 아닐 때 null. `installDone` 은 마지막 끝의 알림.
+   */
+  install: { kind: AgentInstallKind; line: string } | null;
+  installDone: { kind: AgentInstallKind; ok: boolean; detail: string } | null;
   /** Latest onboarding checks; null until first check returns. */
   onboarding: OnboardingStep[] | null;
   /**
@@ -1050,6 +1070,17 @@ export function useDaemon(url: string | null): Daemon {
   /** 로그인의 끝 — ok 면 게이트 재검사가 뒤따르고, 아니면 detail 이 이유다. */
   const [loginDone, setLoginDone] = useState<{ ok: boolean; detail: string } | null>(null);
   /**
+   * 데몬이 지켜보는 에이전트 설치(1단계)의 마지막 진행 줄. 설치 종류마다 하나씩
+   * 도니 kind 를 싣는다. `onboarding.install.progress` 가 쓰고 done 이 지운다.
+   */
+  const [install, setInstall] = useState<{ kind: AgentInstallKind; line: string } | null>(null);
+  /** 설치의 끝 — ok 면 게이트 재검사가 뒤따르고, 아니면 detail 이 이유다. */
+  const [installDone, setInstallDone] = useState<{
+    kind: AgentInstallKind;
+    ok: boolean;
+    detail: string;
+  } | null>(null);
+  /**
    * 에이전트가 브라우저를 조작 중인 세션들: `browser.driving` 브로드캐스트가
    * 켜고 끄는 세션 id 목록.
    */
@@ -1088,6 +1119,16 @@ export function useDaemon(url: string | null): Daemon {
   useEffect(() => {
     setHiddenThreads((current) => pruneHidden(current, projects));
   }, [projects]);
+
+  // 프로젝트가 바뀌면 지난 프로젝트의 저장·넘기기 판정도 지난 것이다. 이 판정은
+  // 전역에 하나뿐인데 데몬은 전환 때 repo.status 만 새로 주므로(diff.status 는
+  // 활성 프로젝트의 저장·넘기기가 움직일 때만 온다), 비우지 않으면 새 프로젝트의
+  // 대화가 옛 프로젝트의 실패 배너와 넘김 수령 화면을 입고 그린다(베타 테스트 B8).
+  // 새 프로젝트의 판정은 그 저장·넘기기가 움직이는 순간 제 판으로 도착한다.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeSlug 는 값이 아니라 트리거다 — 읽지 않고 바뀜에만 반응한다.
+  useEffect(() => {
+    setDiffStatus(null);
+  }, [activeSlug]);
 
   useEffect(() => {
     if (!url) return;
@@ -1252,6 +1293,17 @@ export function useDaemon(url: string | null): Daemon {
       if (message.type === "agent.login.done") {
         setLogin(null);
         setLoginDone({ ok: message.ok, detail: message.detail });
+        return;
+      }
+      if (message.type === "onboarding.install.progress") {
+        // 데몬이 지켜보는 설치의 마지막 의미 있는 줄 — 같은 줄은 다시 오지
+        // 않는다(진행기가 억제한다).
+        setInstall({ kind: message.kind, line: message.line });
+        return;
+      }
+      if (message.type === "onboarding.install.done") {
+        setInstall(null);
+        setInstallDone({ kind: message.kind, ok: message.ok, detail: message.detail });
         return;
       }
       if (message.type === "session.state") {
@@ -1511,11 +1563,6 @@ export function useDaemon(url: string | null): Daemon {
         call({ type: "session.setModel", sessionId, model }),
       setEffort: (sessionId: string, effort: EffortLevel | null) =>
         call({ type: "session.setEffort", sessionId, effort }),
-      setPermissionMode: (sessionId: string, mode: PermissionMode) =>
-        call({ type: "session.setPermissionMode", sessionId, mode }),
-      /** The provider's own mode ids (ACP agents) — setPermissionMode covers only the Claude enum. */
-      setMode: (sessionId: string, mode: string) =>
-        call({ type: "session.setMode", sessionId, mode }),
       setFastMode: (sessionId: string, fast: boolean) =>
         call({ type: "session.setFastMode", sessionId, fast }),
       respondPermission: (
@@ -1783,6 +1830,17 @@ export function useDaemon(url: string | null): Daemon {
     if (loginDone?.ok) void api.onboardingCheck(onboardingProvider ?? undefined);
   }, [loginDone, api, onboardingProvider]);
 
+  // 설치의 끝(1단계): 성공이면 게이트가 다시 채색해야 한다 — 로그인 끝과
+  // 같은 길이다. status 도 다시 읽는다(3단계): 프로바이더 목록의 available
+  // 이 바뀌어야 마법사의 Codex 선택 행과 설정의 미설치 목록이 스스로 물러
+  // 간다. 실패는 installDone.detail 로 마법사 카드가 말한다.
+  useEffect(() => {
+    if (installDone?.ok) {
+      void api.onboardingCheck(onboardingProvider ?? undefined);
+      void api.refreshStatus();
+    }
+  }, [installDone, api, onboardingProvider]);
+
   // A background thread that finished its turn — or stopped to
   // ask — calls. Derived from the session map, so a reconnect that replays
   // the same states fires nothing: the transition is the event.
@@ -1885,6 +1943,10 @@ export function useDaemon(url: string | null): Daemon {
     unhideAllThreads,
     sessions,
     pending,
+    login,
+    loginDone,
+    install,
+    installDone,
     api,
     resolvePending,
     ensureSession,
@@ -1894,8 +1956,6 @@ export function useDaemon(url: string | null): Daemon {
     repo,
     diffStatus,
     browserDriving: driving,
-    login,
-    loginDone,
     onboarding,
     onboardingProvider,
   };

@@ -150,3 +150,101 @@ test("첫 delta 가 없던 턴의 firstDeltaMs 는 null 이다", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("omp 의 도구 이름도 읽기·편집·실행으로 센다 — 첫 편집과 핀 적중이 성립한다", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    // 보내기 문이 핀 후보를 물려준다 — 후보는 클론 루트 기준 절대경로.
+    stats_.noteScan("s1", 12, { cwd: "/repo", candidates: ["/repo/src/a.tsx"] });
+    const marker =
+      '<!-- colo-design:comments {"pins":[],"items":[{}]} -->\n버튼 글자를 고쳐 주세요.';
+    stats_.observe("s1", { kind: "user.echo", text: marker, images: 0 } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t1",
+      name: "read",
+      input: { path: "src/a.tsx" },
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t2",
+      name: "bash",
+      input: { command: "pnpm check" },
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t3",
+      name: "edit",
+      input: { path: "src/a.tsx", oldText: "a", newText: "b" },
+      agentId: null,
+    } as ChatEvent);
+    // 레포 파일이 아닌 것을 고치는 memory_edit 는 편집이 아니다 — other 로 센다.
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t4",
+      name: "memory_edit",
+      input: { path: "notes.md" },
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 900,
+      resultText: "고쳤습니다",
+    } as ChatEvent);
+    const rows = (await untilRows(dir, 1)).filter((row) => row.kind === "comments");
+    assert.equal(rows.length, 1);
+    const row = rows[0] ?? {};
+    assert.deepEqual(row.tools, { read: 1, edit: 1, exec: 1, browser: 0, other: 1 });
+    assert.equal(typeof row.firstEditMs, "number");
+    assert.equal(row.pinHit, true);
+    assert.equal(row.scanMs, 12);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Codex 의 item 이름도 같은 묶음이다 — fileChange 의 changes[] 로 핀 적중을 본다", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteScan("s1", 5, { cwd: "/repo", candidates: ["/repo/src/b.tsx"] });
+    const marker = '<!-- colo-design:comments {"pins":[],"items":[{}]} -->\n칩을 바꿔 주세요.';
+    stats_.observe("s1", { kind: "user.echo", text: marker, images: 0 } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t1",
+      name: "commandExecution",
+      input: { command: "pnpm check" },
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t2",
+      name: "fileChange",
+      input: { changes: [{ path: "src/b.tsx" }] },
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 700,
+      resultText: "바꿨습니다",
+    } as ChatEvent);
+    const rows = (await untilRows(dir, 1)).filter((row) => row.kind === "comments");
+    const row = rows[0] ?? {};
+    assert.deepEqual(row.tools, { read: 0, edit: 1, exec: 1, browser: 0, other: 0 });
+    assert.equal(row.pinHit, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

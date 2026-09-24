@@ -19,6 +19,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import type { SessionPinHint } from "@colo-design/protocol";
+import { observedFilesFor } from "./screen-map.js";
 
 /** 검사하지 않는 폴더 — 클론의 작업실이 아니라 거실이다. */
 const SKIP_DIRS: Record<string, true> = {
@@ -262,34 +263,41 @@ function blockHeads(lines: string[]): Array<{ head: number; hasFile: boolean }> 
  * 힌트의 id 가 item 의 id 와 만나야 한다 — 순서로 짝짓지 않는다(대기줄
  * 복원이 이미 후보가 붙은 턴을 다시 보낼 수 있으므로 멱등이어야 한다:
  * 블록에 `파일 후보:` 가 이미 있으면 그 블록은 그대로 둔다).
+ *
+ * 정체(testid·owners·글자)가 못 찾은 힌트는 관찰 지도의 마지막 길을 얻는다
+ * (2026-09-22): 그 핀의 화면을 고친 커밋이 건드린 파일 — `(관찰)` 표식이 그
+ * 출처를 밝힌다. 어디까지나 후보다.
+ *
+ * 돌려주는 `candidates` 는 이번에 댄 후보의 합집합(루트 상대경로) — 통계가
+ * 에이전트의 편집과 비교해 pinHit 을 매기는 재료다.
  */
 export async function enrichCommentsTurn(
   text: string,
   hints: SessionPinHint[],
   root: string,
-): Promise<string> {
-  if (!text.startsWith("<!-- colo-design:comments ") || hints.length === 0) return text;
+  observed?: { projectRoot: string } | null,
+): Promise<{ text: string; candidates: string[] }> {
+  const untouched = { text, candidates: [] as string[] };
+  if (!text.startsWith("<!-- colo-design:comments ") || hints.length === 0) return untouched;
   const markerEnd = text.indexOf(" -->");
-  if (markerEnd < 0) return text;
+  if (markerEnd < 0) return untouched;
   let marker: { items?: unknown };
   try {
     marker = JSON.parse(
       text.slice("<!-- colo-design:comments ".length, markerEnd),
     ) as typeof marker;
   } catch {
-    return text;
+    return untouched;
   }
   const items = Array.isArray(marker.items) ? (marker.items as Array<{ id?: unknown }>) : [];
-  const wanted = hints;
-  if (wanted.length === 0) return text;
   const found = await huntPinFiles(root, hints);
-  if (found.size === 0) return text;
   const lines = text.split("\n");
   const heads = blockHeads(lines);
   // 줄 삽입은 아래 블록부터 — 앞에서 삽입하면 뒤 머리의 번호가 밀린다.
   const inserts = new Map<number, string[]>();
+  const candidates = new Set<string>();
   let excerptDone = false;
-  for (const hint of wanted) {
+  for (const hint of hints) {
     const block = items.findIndex((item) => item.id === hint.id);
     const head = block >= 0 ? heads[block] : undefined;
     if (head === undefined) continue;
@@ -299,27 +307,39 @@ export async function enrichCommentsTurn(
       .slice(head.head, blockEnd)
       .some((line) => line.startsWith("   파일 후보:"));
     if (already) continue;
-    const hits = found.get(hint.id);
-    if (hits === undefined || hits.length === 0) continue;
-    const blockLines = [`   파일 후보: ${hits.map((hit) => hit.file).join(" · ")}`];
-    // 발췌는 한 턴에 한 번, 첫 정확한 적중(점수 3 이상)의 상위 후보에서 —
-    // 첫 Read 왕복을 대신하는 자리다. 낮은 점수(글자 적중)는 후보로만 쓴다.
-    const top = hits[0];
-    if (!excerptDone && top !== undefined && top.score >= EXCERPT_MIN_SCORE) {
-      const content = await readCodeFile(root, top.file, join(root, top.file));
-      if (content !== null) {
-        blockLines.push(...excerptLines(top.file, content, top.at));
-        excerptDone = true;
+    const hits = found.get(hint.id) ?? [];
+    for (const hit of hits) candidates.add(hit.file);
+    let blockLines: string[] | null = null;
+    if (hits.length > 0) {
+      blockLines = [`   파일 후보: ${hits.map((hit) => hit.file).join(" · ")}`];
+      // 발췌는 한 턴에 한 번, 첫 정확한 적중(점수 3 이상)의 상위 후보에서 —
+      // 첫 Read 왕복을 대신하는 자리다. 낮은 점수(글자 적중)는 후보로만 쓴다.
+      const top = hits[0];
+      if (!excerptDone && top !== undefined && top.score >= EXCERPT_MIN_SCORE) {
+        const content = await readCodeFile(root, top.file, join(root, top.file));
+        if (content !== null) {
+          blockLines.push(...excerptLines(top.file, content, top.at));
+          excerptDone = true;
+        }
+      }
+    } else if (observed && hint.screen !== undefined) {
+      // 관찰 지도의 길 — 최근 커밋부터, 아직 클론에 있는 파일만(상한 3).
+      const files = await observedFilesFor(observed.projectRoot, root, hint.screen).catch(
+        () => [] as string[],
+      );
+      if (files.length > 0) {
+        for (const file of files) candidates.add(file);
+        blockLines = [`   파일 후보: ${files.join(" · ")} (관찰)`];
       }
     }
-    inserts.set(head.head, blockLines);
+    if (blockLines !== null) inserts.set(head.head, blockLines);
   }
-  if (inserts.size === 0) return text;
+  if (inserts.size === 0) return { text, candidates: [...candidates] };
   for (const head of [...inserts.keys()].sort((a, b) => b - a)) {
     const blockLines = inserts.get(head);
     if (blockLines !== undefined) lines.splice(head + 1, 0, ...blockLines);
   }
-  return lines.join("\n");
+  return { text: lines.join("\n"), candidates: [...candidates] };
 }
 
 /** 발췌의 두름(줄) — 적중 줄 위아래로. */

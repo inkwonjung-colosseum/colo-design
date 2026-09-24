@@ -5,7 +5,7 @@ import { timeAgo } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { type HiddenThreads, visibleThreads } from "../../lib/thread-visibility";
 import { CATEGORIES, type SettingsCategory } from "../dialogs/SettingsDialog";
-import { GearIcon, PlusIcon, SearchIcon } from "../icons";
+import { GearIcon, type PlusIcon, SearchIcon } from "../icons";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
 type Group = "대화" | "화면" | "프로젝트" | "명령";
@@ -76,8 +76,8 @@ export function Palette({
   activeSlug,
   projectSlug = null,
   onOpenThread,
-  onCreateSession,
   onActivateProject,
+
   onOpenSettings,
   onCheckState,
   onClose,
@@ -269,7 +269,6 @@ export function Palette({
   const chips = useMemo(() => {
     const commands: Array<{ label: string; hint: string; icon: typeof PlusIcon; run: () => void }> =
       [
-        { label: "새 대화", hint: "화면 대화를 시작합니다", icon: PlusIcon, run: onCreateSession },
         {
           label: "상태 확인",
           hint: "개발자의 판정과 코멘트를 다시 읽어 옵니다",
@@ -284,7 +283,7 @@ export function Palette({
         },
       ];
     return commands.filter((command) => rank(query, command.label) >= 0);
-  }, [query, onCreateSession, onCheckState, onOpenSettings]);
+  }, [query, onCheckState, onOpenSettings]);
 
   // A shrinking list must not keep a highlight past its end.
   const index = Math.min(highlight, Math.max(0, rows.length - 1));

@@ -1,5 +1,5 @@
 import { markTurn } from "@colo-design/protocol";
-import type { PreviewConsoleLine, PreviewDriver } from "./preview-driver.js";
+import type { PreviewCapture, PreviewConsoleLine, PreviewDriver } from "./preview-driver.js";
 
 /**
  * 화면 확인 게이트 — 턴이 끝나면 기계가 그 화면을 열어 본다.
@@ -36,7 +36,21 @@ export interface ScreenTrouble {
   blank: boolean;
   /** error·실패한 요청만 — 경고는 세지 않는다. */
   lines: PreviewConsoleLine[];
+  /** 문제 줄의 전체 수(2026-09-22) — 브리프에 실리는 8줄과는 다른 질문이다. */
+  consoleCount: number;
+  /** 실패한 요청의 전체 수(2026-09-22) — 같은 이유로 slice 전의 수다. */
+  netCount: number;
+  /** D3 재시도로 열린 화면(2026-09-22) — 한 번 넘어져서 일어난 판정이다. */
+  rescued: boolean;
+  /**
+   * 문제 화면의 그림(2026-09-22) — 글자만 있는 브리프가 추측으로 고치던
+   * 자리를 눈으로 본다. 캡처 실패는 판정에 영향 없다(없을 뿐이다).
+   */
+  capture?: PreviewCapture;
 }
+
+/** 한 번에 브리프에 실을 그림 수의 상한 — 브리프 예산을 지킨다. */
+export const MAX_TROUBLE_CAPTURES = 3;
 
 /** 게이트가 문제로 세는 줄. `warn` 은 빠진다(레포 개발 빌드의 기본 소음). */
 export const TROUBLE_LEVELS: Record<string, true> = { error: true, net: true };
@@ -59,22 +73,39 @@ export async function inspectScreens(
     let opened = await driver.open(screen.route).catch(() => null);
     // D3: 열기가 한 번 넘어지는 것은 판정이 아니다 — 창 세우기와 로드의
     // 일시적 흔들림이 그 자리를 지나가게 한 번만 다시 본다.
+    let rescued = false;
     if (opened === null) {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
       opened = await driver.open(screen.route).catch(() => null);
+      rescued = opened !== null;
     }
     // 열지 못한 것은 게이트의 판정이 아니다 — 미리보기 서버가 방금 죽었거나
     // 주소가 사라진 것이고, 그 사실은 다른 자리(레포 상태)가 이미 말한다.
     if (opened === null || opened.ok !== true) continue;
-    const lines = (await driver.consoleLines().catch(() => []))
-      .filter((line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true)
-      .slice(0, MAX_LINES_PER_SCREEN);
+    const troubleLines = (await driver.consoleLines().catch(() => [])).filter(
+      (line) => TROUBLE_LEVELS[line.level.toLowerCase()] === true,
+    );
+    // 세는 수는 slice 전의 전체(2026-09-22) — 브리프에 실리는 8줄과 통계가
+    // 세는 전체는 다른 질문이다.
+    const consoleCount = troubleLines.filter((line) => line.level.toLowerCase() === "error").length;
+    const lines = troubleLines.slice(0, MAX_LINES_PER_SCREEN);
     if (opened.settled && !opened.blank && lines.length === 0) continue;
+    // 문제 화면의 그림(2026-09-22) — 콘솔 링이 갈리기 전(다음 화면을 열기
+    // 전)에 찍는다. 실패는 판정에 영향 없다. 상한을 넘으면 그림 없이 글자만
+    // 간다 — 브리프 예산이 그림보다 먼저다.
+    const capture =
+      troubles.filter((trouble) => trouble.capture !== undefined).length < MAX_TROUBLE_CAPTURES
+        ? await driver.screenshot({ longEdge: 1024 }).catch(() => null)
+        : null;
     troubles.push({
       route: screen.route,
       unsettled: !opened.settled,
       blank: opened.settled && opened.blank === true,
       lines,
+      consoleCount,
+      netCount: troubleLines.length - consoleCount,
+      rescued,
+      ...(capture !== null ? { capture } : {}),
     });
   }
   return troubles;

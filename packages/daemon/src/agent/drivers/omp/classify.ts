@@ -1,35 +1,16 @@
 import { BROWSER_MCP_SERVER_NAME } from "../../../browser-launch.js";
 import { BROWSER_TOOLS } from "../../../browser-tools.js";
+import { OMP_EDIT_TOOLS, OMP_EXEC_TOOLS, OMP_READ_TOOLS } from "../../../tool-names.js";
 import type { ToolClass } from "../../driver.js";
 
 type Wire = Record<string, unknown>;
 
-/** 도구가 읽기만 하는가 — 이 목록 밖은 카드를 받는다(알 수 없는 도구는 위험한 쪽). */
-const READ_TOOLS: Record<string, true> = {
-  read: true,
-  glob: true,
-  grep: true,
-  ast_grep: true,
-  web_search: true,
-  recall: true,
-};
-
-/** 파일 경로를 인자로 드는 편집 도구 — 데몬의 쓰기 정책이 직접 답한다. */
-const EDIT_TOOLS: Record<string, true> = {
-  edit: true,
-  write: true,
-  ast_edit: true,
-  notebook_edit: true,
-  memory_edit: true,
-};
-
-/** 코드를 돌리는 도구 — 카드의 본문에 명령/코드를 싣는다. */
-const EXEC_TOOLS: Record<string, true> = {
-  bash: true,
-  eval: true,
-  computer: true,
-  debug: true,
-};
+// 이름표는 코어(tool-names.ts)에 산다 — 턴 통계가 같은 표를 읽어야 omp 턴의
+// 읽기·편집·실행이 `other` 로 뭉개지지 않는다(2026-09-23). 뜻은 그대로다:
+// READ 는 카드 없이 지나고, EDIT 는 쓰기 정책이 답하고, EXEC 는 카드에 명령을 싣는다.
+const READ_TOOLS = OMP_READ_TOOLS;
+const EDIT_TOOLS = OMP_EDIT_TOOLS;
+const EXEC_TOOLS = OMP_EXEC_TOOLS;
 
 /**
  * `write` · `read` 의 대상이 파일이 아니라 xd:// 도구 장치일 수 있다 —
@@ -56,7 +37,7 @@ function editPaths(args: Wire): string[] {
 
 /**
  * omp 의 도구 이름 → 코어가 아는 정규 분류. 코어의 정책(쓰기 정책, git 이력
- * 거절, 계획 게이트)과 UI 의 카드가 공급자 어휘를 모르게 하는 번역이다.
+ * 거절)과 UI 의 카드가 공급자 어휘를 모르게 하는 번역이다.
  *
  * 브라우저 도구는 데몬이 host tool 로 실어 보낸 자기 도구라 `mcp` 로 읽는다 —
  * claude 의 `mcp__colo-browser__*` 와 같은 카드, 같은 항상 허용 기억.

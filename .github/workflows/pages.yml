@@ -1,0 +1,37 @@
+# 소개 페이지 배포 — site/ 를 GitHub Pages 로 올린다.
+#
+# 2026-09-24: 브랜치 배포(/docs)에서 Actions 배포로 옮겼다 — 사이트 폴더를
+# docs/ 에서 site/ 로 바꾸고 문서 폴더를 비웠다. 브랜치 배포의 path 옵션은
+# /(루트)와 /docs 둘뿐이라 다른 폴더명은 이 길이 유일하다.
+# site/ 가 바뀐 푸시에만 돈다 — legacy 빌드가 모든 main 푸시에 돌던 것과 다르다.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -70,6 +70,62 @@ export function lookupCommand(platform: Platform): {
     : { command: "which", args: ["claude"] };
 }
 
+/** 번들 도구 환경의 결과 — PATH 앞자리와 세울 변수들. */
+export interface BundledToolEnv {
+  /** PATH 의 맨 앞에 붙일 디렉터리(번들 git/bin). 데몬·세션·AI 명령이 물려받는다. */
+  pathPrefixes: string[];
+  /** 세울 환경 변수 — 번들이 신뢰의 근원이므로 있는 값을 덮어쓴다. */
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * 번들 도구 환경(2단계): 데스크톱 앱이 resources/bin 에 실어 온 이동식 git 과
+ * Windows bash 를 이 기계의 세계에서 가장 앞에 둔다.
+ *
+ * - darwin: `<bin>/git/bin/git` 이 있으면 그 폴더를 PATH 맨 앞에, 그리고
+ *   `GIT_EXEC_PATH`·`GIT_TEMPLATE_DIR` 를 번들의 것으로 **덮어쓴다** — 이동식
+ *   git 은 exec path 를 `//libexec/git-core` 로 잡아 HTTPS 복제가
+ *   `remote-https is not a git command` 로 죽으므로(실측). 세웠으면 데몬 자신도
+ *   반드시 번들 git 이어야 한다(다른 git 에 번들의 exec path 가 섞이면 깨진다)
+ *   — PATH 맨 앞이 그 둘을 함께 보증한다. 또한 `/usr/bin/git` 이 CLT 설치
+ *   대화상자를 여는 가짜인 mac 에서, AI 의 git 명령조차 대화상자를 부르지
+ *   않게 한다.
+ * - win32: MinGit 의 `usr/bin/bash.exe` 를 `CLAUDE_CODE_GIT_BASH_PATH` 로
+ *   알린다 — Claude CLI 는 bash.exe 만 찾고 못 찾으면 BashTool 를 내놓지
+ *   않는다. 사용자가 이미 정한 값은 존중해 건드리지 않는다.
+ * - 번들이 없으면 아무것도 안 한다(브라우저 개발 경로).
+ *
+ * Pure in (resourcesBin, platform, env, exists) — 테스트가 exists 를 갈아끼운다.
+ */
+export function bundledToolEnv(
+  resourcesBin: string,
+  platform: string,
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean = existsSync,
+): BundledToolEnv {
+  if (platform === "darwin" && exists(join(resourcesBin, "git", "bin", "git"))) {
+    const root = join(resourcesBin, "git");
+    return {
+      pathPrefixes: [join(root, "bin")],
+      env: {
+        GIT_EXEC_PATH: join(root, "libexec", "git-core"),
+        GIT_TEMPLATE_DIR: join(root, "share", "git-core", "templates"),
+      },
+    };
+  }
+  if (
+    platform === "win32" &&
+    !env.CLAUDE_CODE_GIT_BASH_PATH &&
+    exists(join(resourcesBin, "usr", "bin", "bash.exe"))
+  ) {
+    return {
+      pathPrefixes: [],
+      env: { CLAUDE_CODE_GIT_BASH_PATH: join(resourcesBin, "usr", "bin", "bash.exe") },
+    };
+  }
+  return { pathPrefixes: [], env: {} };
+}
+
 /**
  * Where git's own installers put it, in the order we trust them. Only a
  * fallback: a git on PATH wins, because the PATH stub is what the offline
@@ -96,7 +152,15 @@ export function gitCandidates(platform: Platform, env: NodeJS.ProcessEnv = proce
       join(localAppData, "Programs", "Git", "cmd", "git.exe"),
     ];
   }
-  return ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"];
+  // 번들 이동식 git 이 먼저다(2단계): 데스크톱 앱이 resources/bin/git 에 풀어
+  // 두고 GIT_EXEC_PATH 를 그것으로 세웠으니, 데몬이 다른 git 을 집으면 exec
+  // path 가 섞여 깨진다. EXTRA_PATH 의 각 항목에 대해 `<dir>/git/bin/git` 을
+  // 맨 앞에 둔다(win32 분기의 모양과 같다). 번들이 없는 개발 실행은 그대로.
+  const bundled = (env.COLO_DESIGN_EXTRA_PATH ?? "")
+    .split(":")
+    .filter(Boolean)
+    .map((dir) => join(dir, "git", "bin", "git"));
+  return [...bundled, "/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"];
 }
 
 /** A candidate only counts if it answers `git --version` — an install that

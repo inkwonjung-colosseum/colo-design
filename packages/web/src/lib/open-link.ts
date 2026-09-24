@@ -21,16 +21,29 @@ function prefersInAppLinks(): boolean {
     return false;
   }
 }
+/**
+ * GitHub 페이지는 앱의 미리보기 칸이 아니라 OS 브라우저의 자리다 — 칸은 이
+ * 앱의 GitHub 로그인을 모르므로 private 레포(이 도구의 주 사용례)가 404 로
+ * 열린다(베타 테스트: 넘긴 내용 열기의 GitHub 404). 설정과 무관하게 외부로
+ * 보낸다.
+ */
+function isGithubPage(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "github.com" || hostname.endsWith(".github.com");
+  } catch {
+    return false;
+  }
+}
 
 /**
  * 링크 하나의 행선지 — 설정 `앱에서 링크 열기`가 켜져 있고 데스크톱의
  * 미리보기 칸이 있으면 칸의 페이지가 그 자리에서 열고, 아니면 OS 브라우저가
- * 연다. 칸에 자리가 없을 때(미리보기가 안 떠 있을 때)는 데스크톱 쪽이
- * 스스로 OS 브라우저로 물러난다.
+ * 연다. GitHub 페이지는 칸이 로그인을 모르므로 언제나 OS 브라우저로 보낸다.
  */
 export function openLink(url: string): void {
   const preview = window.coloDesignDesktop?.preview;
-  if (prefersInAppLinks() && preview?.openExternal) {
+  if (!isGithubPage(url) && prefersInAppLinks() && preview?.openExternal) {
     void preview.openExternal(url);
     return;
   }
@@ -38,10 +51,10 @@ export function openLink(url: string): void {
 }
 
 /**
- * <a target="_blank"> 의 onClick: 앱에서 열 때만 기본 동작을 막는다 —
- * 꺼져 있거나 데스크톱이 아니면 브라우저의 평소 길(window.open → OS)을
- * 그대로 탄다. 수식 키 클릭(새 창 의도)과 http(s) 가 아닌 href 도 건드리지
- * 않는다.
+ * <a target="_blank"> 의 onClick: 앱에서 열 때만 기본 동작을 막는다 — 꺼져
+ * 있거나 데스크톱이 아니면, 또는 GitHub 페이지면 브라우저의 평소 길
+ * (window.open → OS)을 그대로 탄다. 수식 키 클릭(새 창 의도)과 http(s) 가
+ * 아닌 href 도 건드리지 않는다.
  */
 export function linkClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
@@ -49,7 +62,7 @@ export function linkClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   }
   const href = event.currentTarget.getAttribute("href") ?? "";
   if (!/^https?:\/\//i.test(href)) return;
-  if (!prefersInAppLinks()) return;
+  if (!prefersInAppLinks() || isGithubPage(href)) return;
   const openExternal = window.coloDesignDesktop?.preview?.openExternal;
   if (!openExternal) return;
   event.preventDefault();

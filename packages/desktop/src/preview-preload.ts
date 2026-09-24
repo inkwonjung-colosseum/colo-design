@@ -255,6 +255,13 @@ toasts.style.cssText =
 root.appendChild(toasts);
 
 let mode = false;
+/**
+ * 도구가 화면에 손을 대는 동안만 참이 되는 깃발(`colo-overlay:agent`) —
+ * pickingNow 의 맨 앞 관문이다. 브라우저 도구의 클릭은 화면을 확인하려는
+ * 손길이지 사용자의 가리킴이 아니므로, 핀 모드가 켜져 있어도 그 클릭이
+ * 핀으로 기록되거나 링크를 삼켜서는 안 된다 (베타 테스트 #2).
+ */
+let agentDriving = false;
 let altHeld = false;
 let badges: Badge[] = [];
 let hover: HTMLDivElement | null = null;
@@ -452,6 +459,7 @@ function layoutOverlay(): void {
 function pickingNow(event?: MouseEvent): boolean {
   // D79: the plan's gate is `mode || event.altKey` — the held-key flag is a
   // third OR for hover highlighting (which has no event in hand).
+  if (agentDriving) return false;
   return mode || Boolean(event?.altKey) || altHeld;
 }
 
@@ -943,6 +951,22 @@ ipcRenderer.on("colo-overlay:mode", (_event, payload: { on?: boolean }) => {
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", boot, { once: true });
   else boot();
+});
+
+// 도구의 손길 깃발 — 보내기(main)와 그 다음 입력 dispatch 사이의 순서를
+// 보장하는 것이 임무의 전부라, 답(ack)만 하면 끝난다.
+ipcRenderer.on("colo-overlay:agent", (_event, payload: { on?: boolean }) => {
+  const on = Boolean(payload?.on);
+  agentDriving = on;
+  if (on) {
+    // 도구의 손길이 어울리지 않는 것들 — 하이라이트는 잡기(circle)의 안내다.
+    hover?.remove();
+    hover = null;
+    hoverTag = null;
+    hoverTarget = null;
+    stopHoverLoop();
+  }
+  ipcRenderer.send("colo-overlay:agent-ack");
 });
 
 ipcRenderer.on("colo-overlay:capture", (_event, payload: { on?: boolean }) => {

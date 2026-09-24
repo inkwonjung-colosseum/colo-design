@@ -7,15 +7,6 @@ export const PROTOCOL_VERSION = 17;
 // Shared enums
 // ---------------------------------------------------------------------------
 
-export const permissionModeSchema = z.enum([
-  "default",
-  "plan",
-  "acceptEdits",
-  "dontAsk",
-  "bypassPermissions",
-]);
-export type PermissionMode = z.infer<typeof permissionModeSchema>;
-
 export const effortLevelSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type EffortLevel = z.infer<typeof effortLevelSchema>;
 

@@ -53,9 +53,17 @@ interface StoredLost extends StoredSend {
   lostAt: number;
 }
 
+/**
+ * 진행 중인 턴이 CLI 에 건넨 말 — 턴이 끝나면 지워진다. 데몬이 턴 도중에
+ * 죽으면 벤더 기록이 그 말을 아직 갖고 있지 않을 수 있다(질문 카드에서
+ * 멈춘 턴이 그랬다 — 카드도 말도 통째로 사라졌다, 베타 테스트 B15).
+ * 기동 청소(sweepOrphans)가 이 면을 lost 로 옮겨 회복 패널이 되살리게
+ * 하는 것이 이 면의 전부다.
+ */
 interface QueueFile {
   held: StoredSend[];
   lost: StoredLost[];
+  inflight?: StoredSend | null;
 }
 
 /** 항목당 첨부 예산 — 디코딩 추정(base64 × 3/4). 상회분은 버려진다. */
@@ -88,6 +96,9 @@ function budget(item: StoredSend): StoredSend {
 /** What a live Session needs from the disk — already bound to its own file. */
 export interface QueueDisk {
   saveHeld(items: StoredSend[]): void;
+  /** 진행 중인 턴의 말 — deliver 가 쓰고 endTurn 이 지운다(베타 테스트 B15). */
+  saveInflight(item: StoredSend): void;
+  clearInflight(): void;
   moveToLost(items: StoredSend[]): LostSend[];
   clear(): void;
 }
@@ -134,7 +145,11 @@ export class QueueStore {
             data: image.data,
           })),
       });
-      return { held: (parsed.held ?? []).map(migrate), lost: kept.map(migrate) };
+      return {
+        held: (parsed.held ?? []).map(migrate),
+        lost: kept.map(migrate),
+        inflight: parsed.inflight ? migrate(parsed.inflight) : null,
+      };
     } catch (error) {
       // 파일이 없는 것은 첫 대화의 빈 방이다. 그러나 존재하는데 읽지 못하는
       // 것은 소식이다 — 정전이 남긴 조각에 약속한 턴이 남아 있을 수 있으므로
@@ -149,7 +164,7 @@ export class QueueStore {
           // problems, and refusing to boot helps nobody.
         }
       }
-      return { held: [], lost: [] };
+      return { held: [], lost: [], inflight: null };
     }
   }
 
@@ -175,7 +190,7 @@ export class QueueStore {
    * 않으면서 저장소 디렉터리에 쌓여 결함 4(E2E 2026-09-20)의 180건이 됐다.
    */
   private persist(sessionId: string, file: QueueFile): void {
-    if (file.held.length === 0 && file.lost.length === 0) {
+    if (file.held.length === 0 && file.lost.length === 0 && !file.inflight) {
       rmSync(this.file(sessionId), { force: true });
       return;
     }
@@ -186,8 +201,21 @@ export class QueueStore {
   saveHeld(sessionId: string, held: StoredSend[]): void {
     const file = this.load(sessionId);
     const bounded = held.map(budget);
-    this.persist(sessionId, { held: bounded, lost: file.lost });
+    this.persist(sessionId, { held: bounded, lost: file.lost, inflight: file.inflight });
     this.enforceFileCap();
+  }
+
+  /** 진행 중인 턴의 말 — deliver 가 쓰고 endTurn 이 지운다. */
+  saveInflight(sessionId: string, item: StoredSend): void {
+    const file = this.load(sessionId);
+    this.persist(sessionId, { held: file.held, lost: file.lost, inflight: budget(item) });
+  }
+
+  /** 턴이 끝났다 — 회복 후보는 더 이상 아니다. */
+  clearInflight(sessionId: string): void {
+    const file = this.load(sessionId);
+    if (!file.inflight) return;
+    this.persist(sessionId, { held: file.held, lost: file.lost, inflight: null });
   }
 
   /** The room's contents become recovery rows. Returns the lost room as the wire sees it. */
@@ -199,7 +227,9 @@ export class QueueStore {
       lost.length > MAX_LOST_ITEMS
         ? [...lost].sort((a, b) => b.lostAt - a.lostAt).slice(0, MAX_LOST_ITEMS)
         : lost;
-    this.persist(sessionId, { held: [], lost: kept });
+    // 방의 내용이 lost 로 가면 진행 중이던 말도 그 안에 있다 — 남겨 두면
+    // 기동 청소가 같은 말을 반복해서 회복 패널에 올린다.
+    this.persist(sessionId, { held: [], lost: kept, inflight: null });
     return kept.map((item) => ({ ...summarize(item), lostAt: item.lostAt }));
   }
 
@@ -215,6 +245,7 @@ export class QueueStore {
     this.persist(sessionId, {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
+      inflight: file.inflight,
     });
     // 핀은 말의 일부이지 첨부가 아니다 — 상한을 넘어 바이트를 버린 말에서도
     // 글자와 함께 살아남는다. 그것이 화면 확인 게이트의 입력이므로,
@@ -234,6 +265,7 @@ export class QueueStore {
     this.persist(sessionId, {
       held: file.held,
       lost: file.lost.filter((lost) => lost.id !== itemId),
+      inflight: file.inflight,
     });
   }
 
@@ -243,11 +275,13 @@ export class QueueStore {
   }
 
   /**
-   * 기동 때의 청소: 프로세스가 죽어도 파일에 남아 있던 held는 그 턴이 죽었다는
-   * 뜻이다 — lost로 전환해 재접속한 창이 회복 패널로 되찾을 수 있게 한다.
-   * 배달 대상 세션은 이 데몬에 살아 있지 않으므로 새 세션·스레드를 만들어
-   * 배달하는 일은 없다 — lost 방이 답이고, 되살리기는 언제나 계획자의 손으로
-   * 입력창을 거친다. Returns how many files carried orphans.
+   * 기동 때의 청소: 프로세스가 죽어도 파일에 남아 있던 held와 inflight는 그
+   * 턴이 죽었다는 뜻이다 — lost로 전환해 재접속한 창이 회복 패널로 되찾을 수
+   * 있게 한다. inflight는 벤더 기록에 아직 적히지 않았을 수 있는 말 그 자체다
+   * (질문 카드에서 멈춘 턴 — 베타 테스트 B15). 배달 대상 세션은 이 데몬에
+   * 살아 있지 않으므로 새 세션·스레드를 만들어 배달하는 일은 없다 — lost 방이
+   * 답이고, 되살리기는 언제나 계획자의 손으로 입력창을 거친다. Returns how
+   * many files carried orphans.
    */
   sweepOrphans(): number {
     let swept = 0;
@@ -260,8 +294,8 @@ export class QueueStore {
     for (const name of entries) {
       const sessionId = name.slice("queue-".length, -".json".length);
       const file = this.load(sessionId);
-      if (file.held.length === 0) continue;
-      this.moveHeldToLost(sessionId, file.held);
+      if (file.held.length === 0 && !file.inflight) continue;
+      this.moveHeldToLost(sessionId, file.inflight ? [...file.held, file.inflight] : file.held);
       swept += 1;
     }
     this.enforceFileCap();
@@ -303,14 +337,15 @@ export class QueueStore {
       try {
         // load 가 이미 수명이 지난 lost 는 걸러 둔다.
         const file = this.load(sessionId);
-        if (file.held.length === 0 && file.lost.length > 0) continue;
-        if (file.held.length === 0) {
+        const waiting = file.held.length > 0 || file.inflight !== null;
+        if (!waiting && file.lost.length > 0) continue;
+        if (!waiting) {
           // 죽은 방 — 빈 방 파일이 쌓이는 길이다. persist 가 파일을 지운다.
           this.persist(sessionId, file);
           count -= 1;
           continue;
         }
-        this.moveHeldToLost(sessionId, file.held);
+        this.moveHeldToLost(sessionId, file.inflight ? [...file.held, file.inflight] : file.held);
         budget -= 1;
       } catch {
         // 파일 이름이 세션 id 의 자격을 벗어났으면(와이어 값) 편입 대상이
@@ -323,6 +358,8 @@ export class QueueStore {
   for(sessionId: string): QueueDisk {
     return {
       saveHeld: (items) => this.saveHeld(sessionId, items),
+      saveInflight: (item) => this.saveInflight(sessionId, item),
+      clearInflight: () => this.clearInflight(sessionId),
       moveToLost: (items) => this.moveHeldToLost(sessionId, items),
       clear: () => this.clear(sessionId),
     };

@@ -7,7 +7,7 @@
 
 import type { RepoPhase } from "@colo-design/protocol";
 import { type ErrorKind, errorKindOf, guidanceFor } from "@colo-design/protocol";
-import { type ReactNode, useState } from "react";
+import { useState } from "react";
 import { CopyButton } from "../../components";
 import { daemonLine } from "../../lib/format";
 import { isRepoPrepSeen } from "../../lib/settings";
@@ -57,15 +57,22 @@ const ERROR_STEP: Partial<Record<ErrorKind, number>> = {
   "no-preview-command": 2,
 };
 
+/**
+ * AI 가 맡은 실패 아래에 서는 한 줄 — 고침 턴이 도는 중이든 끝났든 참인
+ * 말이다(끝난 턴의 설명은 대화에 있고, 고침 턴이 답을 내면 데몬이 준비를 다시
+ * 돌린다 — D4 의 recoveryResync).
+ */
+const AI_NOTE = "무엇이 막혔는지는 AI가 대화에서 살펴봐요 — 고치고 나면 준비가 저절로 다시 돌아요.";
+
 export function ProgressPanel({
   phase,
   detail,
   errorKind,
   note,
   connectionLost = false,
+  aiWorking = false,
   onRetry,
   onApproveCommands,
-  callDeveloper,
   onOpenSettings,
 }: {
   phase: RepoPhase;
@@ -75,14 +82,11 @@ export function ProgressPanel({
   note?: string | null;
   /** 데몬과의 연결이 끊긴 동안 — 경고 카드가 단계 위에 얹히고 스택은 흐려진다. */
   connectionLost?: boolean;
+  /** 이 프로젝트에서 AI 의 턴이 도는 중 — 맡긴 실패를 지금 고치고 있는지. */
+  aiWorking?: boolean;
   onRetry: () => void;
   /** 승인 오류의 첫 동작: 이 레포의 install · preview 명령 실행을 허용한다. */
   onApproveCommands?: () => void;
-  /**
-   * 막다른 자리의 마지막 손(P3-3) — `개발자 부르기`. 이 판은 슬랙도 프로젝트
-   * 이름도 모르므로 노드를 통째로 받는다(부르는 쪽이 CallDeveloper 를 짓는다).
-   */
-  callDeveloper?: ReactNode;
   onOpenSettings: (category?: SettingsCategory) => void;
 }) {
   const failed = phase === "error";
@@ -95,47 +99,37 @@ export function ProgressPanel({
   const failedIndex = failed ? (ERROR_STEP[errorKind] ?? -1) : -1;
   // 대기 카드의 힌트 줄은 첫 준비의 교육용 — 마운트 시점의 기록만 본다.
   const [showHints] = useState(() => !isRepoPrepSeen());
-  // D4: 실패를 AI에게 넘기는 일은 도구가 이미 했다(데몬의 자동 분기) — 카드의
-  // 첫 동작은 그 사실을 읽는 한 줄이고, 남는 버튼은 다시 시도뿐이다.
-  const agentBriefed = Boolean(guidance?.agent);
+  // 연결 레포의 실패는 사람에게 올리지 않는다(2026-09-23): 데몬(D4)이 사람의
+  // 클릭 없이 이미 AI 에게 넘겼으므로, 판은 오류 문장 · 명령 · 복사 대신 "AI 가
+  // 고치는 중" 만 말한다. 원래 카드로 서는 것은 사람의 동의가 필요한 첫
+  // 실행(commands — agent 가 없는 유일한 종류)뿐이다.
+  const aiHandled = Boolean(guidance?.agent);
+  const alarm = failed && !aiHandled;
   const primaryTaken = errorKind === "commands" && onApproveCommands;
 
   const actions = guidance ? (
     <div className="progress__actions">
-      {agentBriefed && (
-        <p className="progress__note" role="status">
-          도구가 이 문제를 AI에게 맡겼어요 — 대화에서 고치고 있어요
-        </p>
-      )}
       {errorKind === "commands" && onApproveCommands && (
         <button type="button" className="primary" onClick={onApproveCommands}>
           준비 시작
         </button>
       )}
-      <button type="button" className={primaryTaken ? "ghost" : "primary"} onClick={onRetry}>
+      {/* 고침 턴이 답을 내면 데몬이 스스로 다시 돌린다 — 이 버튼은 그 길이
+          막혔을 때(고침 턴이 넘어짐)의 조용한 손잡이다. */}
+      <button
+        type="button"
+        className={primaryTaken || aiHandled ? "ghost" : "primary"}
+        onClick={onRetry}
+      >
         <RestartIcon />
         다시 시도
       </button>
-      {/* The way out a non-developer actually has — hand the
-          whole card, Korean lead and raw tail, to someone who can read
-          it. P3-3: 이제 그 길은 두 갈래다 — 개발자의 슬랙으로 바로 보내는
-          `개발자 부르기`(연결돼 있을 때)와, 어디든 붙여넣을 수 있는 복사. */}
-      {callDeveloper}
-      <CopyButton
-        value={
-          `Colo Design에서 이 화면이 준비되지 않았습니다.\n` +
-          `[${guidance.title}]\n${guidance.body}` +
-          (guidance.command ? `\n실행이 필요한 명령: ${guidance.command}` : "") +
-          (detail ? `\n\n--- 자세히 ---\n${detail}` : "")
-        }
-        label="안내 복사"
-        icon={<SparkIcon size={12} />}
-      />
     </div>
   ) : null;
+  const aiGlyph = aiWorking ? <span className="spinner" /> : <SparkIcon size={12} />;
 
   return (
-    <div className={failed ? "progress progress--error" : "progress"}>
+    <div className={alarm ? "progress progress--error" : "progress"}>
       <div className="progress__col">
         {connectionLost && (
           <div className="progress__step progress__step--warn" role="status">
@@ -149,7 +143,15 @@ export function ProgressPanel({
           </div>
         )}
         <div className="progress__head">
-          <h2>{guidance ? guidance.title : PHASE_LABEL[phase]}</h2>
+          <h2>
+            {aiHandled
+              ? aiWorking
+                ? "AI가 막힌 곳을 고치고 있어요"
+                : "막힌 곳을 AI에게 맡겼어요"
+              : guidance
+                ? guidance.title
+                : PHASE_LABEL[phase]}
+          </h2>
         </div>
         {stepIndex >= 0 || failedIndex >= 0 ? (
           <div
@@ -158,27 +160,34 @@ export function ProgressPanel({
             }
           >
             {STEPS.map((entry, index) => {
+              // `fix` — AI 가 맡은 실패의 단계. 오류의 빨강이 아니라 진행의 색을
+              // 입는다(사람이 읽을 것은 "고치는 중" 뿐이다).
               const state = failed
                 ? index < failedIndex
                   ? "done"
                   : index === failedIndex
-                    ? "err"
+                    ? aiHandled
+                      ? "fix"
+                      : "err"
                     : "todo"
                 : index < stepIndex
                   ? "done"
                   : index === stepIndex
                     ? "now"
                     : "todo";
+              const tone = state === "fix" ? "now" : state;
               return (
                 <div
                   key={entry.id}
-                  className={`progress__step${state === "todo" ? "" : ` progress__step--${state}`}`}
+                  className={`progress__step${tone === "todo" ? "" : ` progress__step--${tone}`}`}
                 >
                   <span className="progress__stepicon">
                     {state === "done" ? (
                       "✓"
                     ) : state === "now" ? (
                       <span className="spinner" />
+                    ) : state === "fix" ? (
+                      aiGlyph
                     ) : state === "err" ? (
                       "!"
                     ) : (
@@ -196,6 +205,13 @@ export function ProgressPanel({
                         교육 줄은 잡음이다. */}
                     {!failed && state === "todo" && showHints && entry.hint && (
                       <div className="progress__stepline">{entry.hint}</div>
+                    )}
+                    {state === "fix" && (
+                      <>
+                        <p className="progress__note">{AI_NOTE}</p>
+                        {note && <p className="progress__note">{note}</p>}
+                        {actions}
+                      </>
                     )}
                     {state === "err" && guidance && (
                       <>
@@ -218,18 +234,30 @@ export function ProgressPanel({
         ) : (
           /* 단계가 없는 상태 — 연결 전(missing)과 이름 없는 실패는 카드 한 장이
              말한다. 어느 단계도 거짓으로 물들이지 않는다. */
-          <div className={failed ? "progress__step progress__step--err" : "progress__step"}>
-            <span className="progress__stepicon">{failed ? "!" : <GearIcon />}</span>
+          <div
+            className={
+              aiHandled
+                ? "progress__step progress__step--now"
+                : failed
+                  ? "progress__step progress__step--err"
+                  : "progress__step"
+            }
+          >
+            <span className="progress__stepicon">
+              {aiHandled ? aiGlyph : failed ? "!" : <GearIcon />}
+            </span>
             <div className="progress__stepmain">
               <div className="progress__stepname">{needsSetup ? "연결 레포 연결" : "준비"}</div>
               <p className="progress__note">
-                {guidance
-                  ? guidance.body
-                  : needsSetup
-                    ? "개발자에게 받은 초대 파일을 다시 놓아 주세요."
-                    : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
+                {aiHandled
+                  ? AI_NOTE
+                  : guidance
+                    ? guidance.body
+                    : needsSetup
+                      ? "개발자에게 받은 초대 파일을 다시 놓아 주세요."
+                      : "처음 한 번만 준비하면, 다음부터는 바로 시작합니다."}
               </p>
-              {guidance?.command && (
+              {!aiHandled && guidance?.command && (
                 <pre className="progress__cmd">
                   <code>{guidance.command}</code>
                   <CopyButton value={guidance.command} />

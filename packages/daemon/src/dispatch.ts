@@ -7,6 +7,7 @@ import {
   type ServerMessage,
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
+import type { AgentInstall } from "./agent-install.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
 import { browseFiles, currentPlatform, listFiles } from "./environment.js";
 import type { Escalation } from "./escalation.js";
@@ -18,7 +19,6 @@ import {
   type AgentLogin,
   runOnboardingChecks,
   runPnpmInstall,
-  startClaudeInstall,
   startGitInstall,
 } from "./onboarding.js";
 import { realpathBestEffort } from "./paths.js";
@@ -66,9 +66,18 @@ export interface RouterDeps {
   logger: DaemonLogger;
   /** 터미널 없는 에이전트 로그인(P1-1) — 데몬이 파이프로 몰고 방송한다. */
   agentLogin: AgentLogin;
+  /** 에이전트 설치 진행기(1단계) — 데몬이 끝까지 지켜보고 방송한다. */
+  agentInstall: AgentInstall;
   broadcast(message: ServerMessage): void;
   /** 해석된 CLI 경로 — start() 가 채운다. */
   claudeExecutable(): string | null;
+  /**
+   * 설치 성공이 방금 푼 claude 경로를 데몬에 심는다(2026-09-24) — 드라이버와
+   * 상태가 읽는 자리가 같은 필드라 로그인 버튼이 재시작 없이 새 CLI 를 안다.
+   */
+  setClaudeExecutable(path: string | null): void;
+  /** onboarding.check 의 방어 — 풀린 적 없으면(null) 한 번 다시 푼다. */
+  refreshClaudeExecutable(): Promise<void>;
   /** 설정의 CLI 경로 오버라이드 — 온보딩 체크가 읽는다. */
   claudeExecutableOverride(): string | undefined;
   queueDiskFor(sessionId: string): QueueDisk;
@@ -304,12 +313,28 @@ export class RequestRouter {
         let text = message.text;
         if (message.pinHints !== undefined && message.pinHints.length > 0) {
           const scanStart = Date.now();
-          text = await enrichCommentsTurn(message.text, message.pinHints, carrier.cwd).catch(
-            () => message.text,
-          );
+          // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
+          // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
+          // 여기서(intake) 얹으므로 대기 줄·복원 모두 강화된 텍스트를 물고
+          // 간다. 정체가 빈손이면 핀의 화면을 고친 커밋의 관찰 지도가 마지막
+          // 길이다(그 세션의 프로젝트 폴더에 산다). 실패는 조용하다(원문 그대로).
+          const workspaces = this.workspaceOfSession(message.sessionId);
+          const enriched = await enrichCommentsTurn(
+            message.text,
+            message.pinHints,
+            carrier.cwd,
+            workspaces ? { projectRoot: workspaces.paths.root } : null,
+          ).catch(() => null);
+          text = enriched?.text ?? message.text;
           // 측정: 강화가 보내기 문에서 얼마나 걸렸는지 — 턴 행의 scanMs 로
-          // 내려앉는다(모델이 시작되기 전의 시간이다).
-          this.deps.stats.noteScan(message.sessionId, Date.now() - scanStart);
+          // 내려앉는다(모델이 시작되기 전의 시간이다). 후보는 절대경로로 물려
+          // 준다 — 에이전트의 편집 경로(pinHit)와 비교하는 잣자리다.
+          this.deps.stats.noteScan(message.sessionId, Date.now() - scanStart, {
+            cwd: carrier.cwd,
+            ...(enriched && enriched.candidates.length > 0
+              ? { candidates: enriched.candidates.map((file) => join(carrier.cwd, file)) }
+              : {}),
+          });
         }
         carrier.send(text, message.attachments, message.pins, message.mode);
         return { ok: true };
@@ -428,23 +453,12 @@ export class RequestRouter {
         return browseFiles(files, message.query ?? "", message.limit ?? 40);
       }
 
-      // 두 메시지는 서로 다른 어휘를 실어 온다 — 이쪽은 드라이버 자신의 모드
-      // id(ACP `build`, codex `bypass`, …), 아래 setPermissionMode 는 Claude
-      // 열거형. 한 핸들러로 접어 두면 메시지를 둘로 둔 의미가 없다(감사 C5).
-      case "session.setMode":
-        await this.deps.manager.require(message.sessionId).setMode(message.mode);
-        return { ok: true };
-
       case "session.setModel":
         await this.deps.manager.require(message.sessionId).setModel(message.model);
         return { ok: true };
 
       case "session.setEffort":
         await this.deps.manager.require(message.sessionId).setEffort(message.effort);
-        return { ok: true };
-
-      case "session.setPermissionMode":
-        await this.deps.manager.require(message.sessionId).setPermissionMode(message.mode);
         return { ok: true };
 
       case "session.setFastMode":
@@ -478,8 +492,6 @@ export class RequestRouter {
         const session = this.deps.manager.findByRequest(message.requestId);
         if (!session)
           throw new Error("이미 끝난 권한 요청입니다 — 방금 뜬 카드에서 다시 답해 주세요.");
-        // 계획 승인은 모드 복귀를 승인보다 먼저 맺는다 — ok 답신이 그 순서를
-        // 지나가길 기다린다.
         await session.respondPermission(
           message.requestId,
           message.decision,
@@ -599,6 +611,9 @@ export class RequestRouter {
         return await this.repo.sync(message.force === true);
 
       case "onboarding.check":
+        // 방어(2026-09-24): 시작 때 못 푼 claude 경로는 여기서 한 번 다시 푼다 —
+        // 사용자가 앱 밖에서 직접 설치한 경우도 재시작 없이 잡히게.
+        if (this.deps.claudeExecutable() === null) await this.deps.refreshClaudeExecutable();
         return await runOnboardingChecks({
           claudeExecutableOverride: this.deps.claudeExecutableOverride(),
           gitHubClient: () => this.deps.github.client(),
@@ -612,7 +627,23 @@ export class RequestRouter {
       case "onboarding.fix":
         switch (message.kind) {
           case "install-claude":
-            return startClaudeInstall();
+          case "install-codex": {
+            // 1단계: 데몬이 설치를 끝까지 지켜본다 — 진행 줄과 끝은 방송으로
+            // 나가고, ok 면 웹이 게이트를 다시 묻는다. 종류마다 하나씩만 돈다.
+            const kind = message.kind;
+            return this.deps.agentInstall.start(kind, {
+              onProgress: (line) =>
+                this.deps.broadcast({ type: "onboarding.install.progress", kind, line }),
+              onDone: (ok, detail, executable) => {
+                // 방송 전에 먼저: claude 설치의 성공 판정에 쓴 경로를 심어야
+                // 이어지는 재검사·로그인이 방금 설치한 CLI 를 본다(2026-09-24).
+                if (ok && kind === "install-claude" && executable) {
+                  this.deps.setClaudeExecutable(executable);
+                }
+                this.deps.broadcast({ type: "onboarding.install.done", kind, ok, detail });
+              },
+            });
+          }
           case "login-claude": {
             // P1-1: 데몬이 로그인을 대신 몰고, 주소·끝은 방송으로 나간다.
             // 각 드라이버가 자기 로그인 명령을 선언한다(loginCommand) — claude 는
@@ -767,7 +798,7 @@ export class RequestRouter {
       case "repo.handoffPreview":
         return await this.deps.handoffPreviews.open(message.sessionId ?? null);
 
-      // 패인 오류의 판정: the error banner's held report, re-opened in the
+      // 패인 오류의 판정: the pane's held error report, re-opened in the
       // isolated verification window. The pane decides what the verdict
       // means — a fixed transient is put away quietly, a live break becomes
       // the auto fix turn. 확인 불능(null)도 판정의 하나다.

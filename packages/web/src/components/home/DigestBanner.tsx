@@ -1,6 +1,7 @@
 import { useMemo } from "react";
+import { timeAgo } from "../../lib/format";
 import type { HomeFeed } from "../../lib/home-feed";
-import { subjectParticle, withParticle } from "../../lib/labels";
+import { ChevronRightIcon } from "../icons";
 import { StateBanner } from "../StateBanner";
 
 /** "N분/시간/일 만에 돌아오셨어요" — 방금 막 열었을 때(1분 미만)는 아무 근거도
@@ -16,45 +17,43 @@ export function returnedPhrase(elapsedMs: number): string | null {
   return `${days}일 만에 돌아오셨어요`;
 }
 
-/** 요약 문장 안의 스레드 이름 — 누르면 그 대화로 바로 들어가는 링크 버튼. */
-function DigestLink({
-  sessionId,
+/** 요약 행 한 장 — EmptyHome 의 이어하기 카드와 같은 어휘(dot · 이름 · 줄 ·
+ *  셰브론). 이름은 한 줄로 잘리고, 행 전체가 그 대화로 가는 버튼이다. */
+function DigestRow({
+  dot,
   title,
-  onOpenSession,
+  line,
+  onOpen,
 }: {
-  sessionId: string;
+  dot: string;
   title: string;
-  onOpenSession: (sessionId: string) => void;
+  line: string;
+  onOpen: () => void;
 }) {
   return (
-    <button type="button" className="home-digest__link" onClick={() => onOpenSession(sessionId)}>
-      {title}
+    <button
+      type="button"
+      className="home-resume__card"
+      onClick={onOpen}
+      aria-label={`${title} 대화 열기`}
+    >
+      <span className={`dot ${dot}`} />
+      <span className="home-resume__body">
+        <span className="home-resume__name">{title}</span>
+        <span className="home-resume__line">{line}</span>
+      </span>
+      <ChevronRightIcon />
     </button>
   );
 }
 
-/** 이름 목록을 "A, B와 C" 로 잇는다 — 마지막 둘 사이만 와/과. */
-function joinNames(
-  items: { sessionId: string; title: string }[],
-  onOpenSession: (sessionId: string) => void,
-) {
-  return items.map((item, i) => {
-    const isLast = i === items.length - 1;
-    const prevTitle = items[i - 1]?.title ?? "";
-    return (
-      <span key={item.sessionId}>
-        {i > 0 && (isLast ? `${withParticle(prevTitle)} ` : ", ")}
-        <DigestLink sessionId={item.sessionId} title={item.title} onOpenSession={onOpenSession} />
-      </span>
-    );
-  });
-}
-
 /**
- * 돌아온 순간의 배너 — 카운트를 나열하던 자리를, 무슨 대화가 끝났고 무엇이
- * 아직 도는지 이름으로 말하는 한 문단 요약으로 바꾼다(목업 13). 답을 기다리는
- * 건 문장이 아니라 아래 카드가 맡으므로 문장은 진행·완료·다른 프로젝트만
- * 요약하고, 기다리는 건수는 마지막 절에서 건수로만 짚는다.
+ * 돌아온 순간의 배너 — 문단 안에 스레드 제목을 심던 요약은 제목이 한 문장이
+ * 넘는 순간(첫 말이 통째로 제목이 되는 이 레포에서는 늘 그렇다) 줄이 갈라지고
+ * 조사가 홀로 남었다. 이제 문장은 건수만 말하고, 이름은 한 줄로 잘린 조용한
+ * 행이 부른다 — 누르면 그 대화. 목업 13의 "이름으로 말하기"는 문장이 아니라
+ * 행이 이어받는다. 요약 행은 첫 화면의 재료일 뿐, 전부는 아래 폴드가 기록으로
+ * 갖는다.
  */
 export function DigestBanner({
   lastSeenAt,
@@ -76,6 +75,28 @@ export function DigestBanner({
   const { asking, running, done, otherProjects } = feed;
   const otherPending = otherProjects.reduce((sum, p) => sum + p.pendingCount, 0);
 
+  const digestDone = done.slice(0, 3);
+  const folded = done.length - digestDone.length;
+
+  const summary: string[] = [];
+  if (running.length > 0 && done.length > 0) {
+    summary.push(
+      `자리를 비운 사이 대화 ${done.length}개가 끝나고 ${running.length}개가 돌고 있어요.`,
+    );
+  } else if (running.length > 0) {
+    summary.push(`자리를 비운 사이에도 대화 ${running.length}개가 돌고 있어요.`);
+  } else if (done.length > 0) {
+    summary.push(`자리를 비운 사이 대화 ${done.length}개가 끝났어요.`);
+  }
+  summary.push(
+    asking.length > 0
+      ? `지금 내 확인을 기다리는 일이 아래 ${asking.length}건 있어요.`
+      : "기다리는 답은 없어요.",
+  );
+  if (otherPending > 0) {
+    summary.push(`다른 프로젝트에도 확인할 게 ${otherPending}건 있어요.`);
+  }
+
   return (
     <div className="home-digest">
       {connectionLost && (
@@ -88,29 +109,38 @@ export function DigestBanner({
           sub="연결이 끊기면 대화와 저장이 잠시 멈춥니다"
         />
       )}
-      <p className="home-digest__summary">
-        {phrase && <span className="home-digest__when">{phrase} </span>}
-        {running.length > 0 && (
-          <>
-            자리를 비운 사이 {joinNames(running, onOpenSession)}
-            {subjectParticle(running[running.length - 1]?.title ?? "")} 계속 돌고 있
-            {done.length > 0 ? "고, " : "어요. "}
-          </>
-        )}
-        {done.length > 0 && (
-          <>
-            {running.length === 0 && "자리를 비운 사이 "}
-            {joinNames(done, onOpenSession)}
-            {running.length > 0
-              ? "도 끝났어요. "
-              : `${subjectParticle(done[done.length - 1]?.title ?? "")} 끝났어요. `}
-          </>
-        )}
-        {asking.length > 0
-          ? `지금 답을 기다리는 건 아래 ${asking.length}건이에요.`
-          : "기다리는 답은 없어요."}
-        {otherPending > 0 && ` 다른 프로젝트에도 확인할 게 ${otherPending}건 있어요.`}
-      </p>
+      {phrase && (
+        <div className="home-back__eyebrow">
+          <span className="dot dot--ask" />
+          {phrase}
+        </div>
+      )}
+      <p className="home-digest__summary">{summary.join(" ")}</p>
+      {(running.length > 0 || digestDone.length > 0) && (
+        <div className="home-digest__rows">
+          {running.map((item) => (
+            <DigestRow
+              key={item.sessionId}
+              dot="dot--live"
+              title={item.title}
+              line={item.line}
+              onOpen={() => onOpenSession(item.sessionId)}
+            />
+          ))}
+          {digestDone.map((item) => (
+            <DigestRow
+              key={item.sessionId}
+              dot="dot--done"
+              title={item.title}
+              line={timeAgo(item.at)}
+              onOpen={() => onOpenSession(item.sessionId)}
+            />
+          ))}
+        </div>
+      )}
+      {folded > 0 && (
+        <p className="home-digest__more">나머지 {folded}건은 아래 기록에 정리했어요</p>
+      )}
     </div>
   );
 }

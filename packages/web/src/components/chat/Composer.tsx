@@ -3,7 +3,6 @@ import type {
   DaemonStatus,
   EffortLevel,
   LostSend,
-  PermissionMode,
   PlanUsage,
   QueuedSend,
   SessionCommand,
@@ -12,15 +11,7 @@ import type {
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Fold, useFoldNotice } from "../../components";
 import type { PinAttachment } from "../../hooks/usePins";
-import {
-  EFFORT_HINT,
-  EFFORT_LABEL,
-  MODE_LABEL,
-  MODE_MENU_HINT,
-  modelOptions,
-  modelRowOf,
-  SETTINGS_MODES,
-} from "../../lib/chat-options";
+import { EFFORT_HINT, EFFORT_LABEL, modelOptions, modelRowOf } from "../../lib/chat-options";
 import { composing } from "../../lib/ime";
 import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import type { SendKey } from "../../lib/settings";
@@ -39,10 +30,7 @@ import {
   PencilIcon,
   PlusIcon,
   ProviderIcon,
-  ShieldOffIcon,
-  ShieldPlainIcon,
   SparkIcon,
-  StepsIcon,
   StopIcon,
 } from "../icons";
 import { PinTray } from "../preview/PinTray";
@@ -137,9 +125,6 @@ async function toAttachment(file: File): Promise<Attachment> {
     return original;
   }
 }
-
-/** The modes that act without asking — the ones the chip marks with a slash. */
-const ASKS_NOTHING: PermissionMode[] = ["dontAsk", "bypassPermissions"];
 
 /** What rode along with a lost send, as the row's small print — or null for words alone. */
 function attachmentWords({ images, files }: { images: number; files: number }): string | null {
@@ -283,8 +268,6 @@ export function Composer({
   selector,
   onSetModel,
   onSetEffort,
-  onSetPermissionMode,
-  onSetMode,
   providers,
   onPickProvider,
   nextProvider,
@@ -388,9 +371,6 @@ export function Composer({
   selector: SessionSelectors;
   onSetModel: (model: string | null) => void;
   onSetEffort: (effort: EffortLevel | null) => void;
-  onSetPermissionMode: (mode: PermissionMode) => void;
-  /** The provider's own mode ids (ACP agents) — when `selector.modes` is set, the chip calls this instead. */
-  onSetMode?: (mode: string) => void;
   /**
    * 통합 모델 메뉴의 프로바이더 단계 재료 — status.providers. 열려 있는
    * 대화에서도 온다: 뿌리 카드의 프로바이더 행은 언제나 서야 누가(프로바이더)
@@ -998,14 +978,12 @@ export function Composer({
   const pickedProviderLabel = pickedProviderRow?.label ?? pickedProvider ?? "프로바이더";
   const providerRow = providerRows.find((p) => p.id === selector.provider);
   const providerLabel = providerRow?.label ?? selector.provider ?? "프로바이더";
-  // 대화 설정 메뉴의 단계 — 확인 방식·모델·생각 시간을 한 판에 다 펼치지
-  // 않고, 뿌리에서 좁혀 든다. 뿌리는 셋의 지금값을 한 줄씩 입고, 고른 설정의
+  // 대화 설정 메뉴의 단계 — 모델·생각 시간을 한 판에 다 펼치지
+  // 않고, 뿌리에서 좁혀 든다. 뿌리는 둘의 지금값을 한 줄씩 입고, 고른 설정의
   // 단계에서만 그 행들이 열린다. 모델 단계 안의 ← 프로바이더 걸음은 그대로
   // 이어진다. 열림마다 뿌리부터 — 닫혀 있던 단계를 기억하면 칩의 요약과
   // 메뉴가 다른 층을 가리키게 된다.
-  const [menuStep, setMenuStep] = useState<"root" | "mode" | "models" | "providers" | "effort">(
-    "root",
-  );
+  const [menuStep, setMenuStep] = useState<"root" | "models" | "providers" | "effort">("root");
   // 프로바이더 단계로 든 걸음 — 뿌리 카드에서 든 것과 모델 머리의 단추에서
   // 든 것이 다시 물러나는 곳이 다르다(뿌리 / 모델). ← 는 든 길을 되돌린다.
   const [providerFrom, setProviderFrom] = useState<"root" | "models">("root");
@@ -1027,80 +1005,25 @@ export function Composer({
     return () => document.removeEventListener("keydown", onKey);
   }, [moreOpen]);
 
-  // 통합 설정 칩 — 모델·생각 시간·확인 방식이 칩 한 개의 요약으로 읽힌다
-  // (뿌리 카드와 같은 순서: 무엇으로 · 얼마나 생각 · 얼마나 자유). 방패
-  // 글리프는 확인 방식의 몫: slash 는 묻지 않고 행동하는 방식이다. ACP
-  // 에이전트는 자기 모드 행을 내놓는다.
-  const modeSelection = selector.mode ?? selector.permissionMode;
-  const modeRow = selector.modes?.find((m) => m.id === modeSelection);
-  const modeLabel =
-    modeRow?.label ?? (selector.modes ? modeSelection : MODE_LABEL[selector.permissionMode]);
-  const modeAsksNothing = modeRow
-    ? modeRow.tier === "dangerous"
-    : ASKS_NOTHING.includes(selector.permissionMode);
+  // 통합 설정 칩 — 모델·생각 시간이 칩 한 개의 요약으로 읽힌다(뿌리
+  // 카드와 같은 순서: 무엇으로 · 얼마나 생각). 확인 방식은 칩의 셋째
+  // 말이었으나 이제 대화가 언제나 바로 진행으로 돈다(2026-09-23) — 고를
+  // 것이 없어진 말은 요약에서도 물러났다.
   const modelLabel = modelOptions(selector.models, modelRow).find((o) => o.picked)?.label ?? null;
-  const settingsLabel = [
-    modelLabel,
-    selector.effort ? EFFORT_LABEL[selector.effort] : null,
-    modeLabel,
-  ]
+  const settingsLabel = [modelLabel, selector.effort ? EFFORT_LABEL[selector.effort] : null]
     .filter(Boolean)
     .join(" · ");
-  const modeRows: Array<{
-    value: string;
-    label: string;
-    hint?: string;
-    tier?: string;
-    picked: boolean;
-  }> = selector.modes
-    ? selector.modes.map((m) => ({
-        value: m.id,
-        label: m.label,
-        ...(m.description ? { hint: m.description } : {}),
-        tier: m.tier,
-        picked: modeSelection === m.id,
-      }))
-    : SETTINGS_MODES.map((mode) => ({
-        value: mode,
-        label: MODE_LABEL[mode],
-        hint: MODE_MENU_HINT[mode],
-        picked: selector.permissionMode === mode,
-      }));
-
-  /**
-   * 확인 방식 행의 마크 — 방패가 무엇을 묻는지 색으로 먼저 말한다. Claude
-   * enum 은 값이, ACP 모드는 행의 tier 가 위험 여부를 정한다. 위험한
-   * 방식(아무것도 묻지 않음)만 붉은 방패, 계획은 물음이 아닌 걸음이므로
-   * 자기 글리프를 입는다.
-   */
-  const modeMark = (option: {
-    value: string;
-    tier?: string;
-  }): { tone: string; icon: ReactNode } => {
-    const dangerous = option.tier === "dangerous";
-    if (dangerous || option.value === "bypassPermissions" || option.value === "dontAsk")
-      return { tone: " selector__rowicon--danger", icon: <ShieldOffIcon /> };
-    if (option.value === "acceptEdits")
-      return { tone: " selector__rowicon--warn", icon: <ShieldPlainIcon /> };
-    if (option.value === "plan") return { tone: " selector__rowicon--accent", icon: <StepsIcon /> };
-    return { tone: " selector__rowicon--ok", icon: <ShieldPlainIcon /> };
-  };
 
   // 뿌리 카드의 한 줄 읽기 — 값 옆에 값의 뜻을 한국어로 입힌다. CLI 단어를
   // 번역하지는 않는다(칩·보내는 값은 CLI 의 말): 읽는 줄이 뜻을 담당한다.
-  const modeDesc =
-    (selector.modes ? modeRow?.description : MODE_MENU_HINT[selector.permissionMode]) ??
-    "작업을 진행하기 전에 무엇을 물을지 정합니다";
   const modelDesc = modelRow?.description || "어떤 AI가 답할지 고릅니다";
   const effortDesc = selector.effort
     ? EFFORT_HINT[selector.effort]
     : "답하기 전에 얼마나 생각할지 정합니다";
 
-  const pickChip = (key: "model" | "effort" | "mode", value: string | null) => {
+  const pickChip = (key: "model" | "effort", value: string | null) => {
     if (key === "model") onSetModel(value);
-    else if (key === "effort") onSetEffort((value as EffortLevel | null) ?? null);
-    else if (value && selector.modes && onSetMode) onSetMode(value);
-    else if (value) onSetPermissionMode(value as PermissionMode);
+    else onSetEffort((value as EffortLevel | null) ?? null);
   };
 
   return (
@@ -1510,7 +1433,7 @@ export function Composer({
               onClick={() => setMoreOpen(false)}
             />
           )}
-          <Tip label={moreOpen ? undefined : "모델 · 생각 시간 · 확인 방식"} side="bottom">
+          <Tip label={moreOpen ? undefined : "모델 · 생각 시간"} side="bottom">
             <button
               type="button"
               className="selector__chip"
@@ -1522,7 +1445,7 @@ export function Composer({
               }}
             >
               <span className="selector__chipicon">
-                {modeAsksNothing ? <ShieldOffIcon /> : <ShieldPlainIcon />}
+                <SparkIcon />
               </span>
               <span className="selector__chiplabel">{settingsLabel}</span>
               <ChevronDownIcon size={10} />
@@ -1532,15 +1455,14 @@ export function Composer({
             <span className="selector__menu" role="dialog" aria-label="대화 설정">
               {menuStep === "root" ? (
                 <>
-                  {/* 뿌리 단계 — 네 설정의 지금값을 카드로 입는다. 카드는
+                  {/* 뿌리 단계 — 세 설정의 지금값을 카드로 입는다. 카드는
                       이름과 값만이 아니라 값의 뜻을 한국어 한 줄로 함께
                       읽는다: 값을 모르는 사람도 지금 설정이 무엇을 하는지
                       열어 보기 전에 안다. 줄 순서가 곧 고르는 순서다 —
                       누가(프로바이더) · 무엇으로(모델) · 얼마나 생각할지
-                      (생각 시간) · 얼마나 자유롭게(확인 방식). 고른 카드
-                      하나만 그 행들을 열어 보이고, 행에서 값을 고르면
-                      다음 걸음으로 이어진다 — 마지막 확인 방식을 고르면
-                      비로소 닫힌다. */}
+                      (생각 시간). 행에서 값을 고르면 다음 걸음으로 이어지고,
+                      마지막 걸음인 생각 시간을 고르면 비로소 닫힌다. 확인
+                      방식은 없다 — 모든 대화가 바로 진행으로 돈다. */}
                   {canPickProvider && (
                     <button
                       type="button"
@@ -1607,69 +1529,6 @@ export function Composer({
                     </span>
                     <ChevronRightIcon size={12} />
                   </button>
-                  <button
-                    type="button"
-                    className="selector__drill"
-                    title="확인 방식 바꾸기"
-                    onClick={() => setMenuStep("mode")}
-                  >
-                    <span
-                      className={`selector__drillicon${modeAsksNothing ? " selector__drillicon--warn" : " selector__drillicon--ok"}`}
-                      aria-hidden="true"
-                    >
-                      {modeAsksNothing ? <ShieldOffIcon /> : <ShieldPlainIcon />}
-                    </span>
-                    <span className="selector__drillbody">
-                      <span className="selector__drilltop">
-                        <span className="selector__drillname">확인 방식</span>
-                        <span className="selector__drillval">{modeLabel}</span>
-                      </span>
-                      <span className="selector__drilldesc">{modeDesc}</span>
-                    </span>
-                    <ChevronRightIcon size={12} />
-                  </button>
-                </>
-              ) : menuStep === "mode" ? (
-                <>
-                  <div className="selector__head">
-                    <div className="selector__headrow">
-                      <button
-                        type="button"
-                        className="selector__back"
-                        onClick={() => setMenuStep("root")}
-                      >
-                        <ChevronLeftIcon size={12} />
-                        설정
-                      </button>
-                    </div>
-                  </div>
-                  {modeRows.map((option) => {
-                    const mark = modeMark(option);
-                    return (
-                      <button
-                        key={String(option.value)}
-                        type="button"
-                        className={`selector__row${option.picked ? " selector__row--on" : ""}${
-                          "hint" in option && option.hint ? " selector__row--hint" : ""
-                        }`}
-                        onClick={() => {
-                          pickChip("mode", option.value);
-                          setMoreOpen(false);
-                        }}
-                      >
-                        <span className="selector__check">
-                          {option.picked ? <CheckIcon size={11} /> : null}
-                        </span>
-                        <span className={`selector__rowicon${mark.tone}`} aria-hidden="true">
-                          {mark.icon}
-                        </span>
-                        <span className="selector__label">{option.label}</span>
-                        {"hint" in option && option.hint ? (
-                          <span className="selector__hint">{option.hint}</span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
                 </>
               ) : menuStep === "effort" ? (
                 <>
@@ -1705,9 +1564,8 @@ export function Composer({
                           }`}
                           onClick={() => {
                             pickChip("effort", level);
-                            // 고르는 순서의 다음 걸음 — 생각을 정했으면
-                            // 마지막 걸음인 확인 방식으로 이어진다.
-                            setMenuStep("mode");
+                            // 생각 시간이 마지막 걸음이다 — 고르면 닫는다.
+                            setMoreOpen(false);
                           }}
                         >
                           <span className="selector__check">
@@ -1862,11 +1720,12 @@ export function Composer({
                           }
                           pickChip("model", option.value);
                           // 다음 걸음 — 고른 모델이 생각 시간을 못 정하면
-                          // 그 걸음은 건너뛰고 확인 방식으로 간다.
+                          // 그 걸음은 없으므로 여기서 닫는다.
                           const pickedRow = selector.models.find(
                             (m) => m.value === option.value || m.resolvedModel === option.value,
                           );
-                          setMenuStep(pickedRow?.supportsEffort === false ? "mode" : "effort");
+                          if (pickedRow?.supportsEffort === false) setMoreOpen(false);
+                          else setMenuStep("effort");
                         }}
                       >
                         <span className="selector__check">

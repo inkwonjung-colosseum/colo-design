@@ -24,6 +24,7 @@ const outAt = process.argv.indexOf("--out");
 const bin = outAt === -1 ? join(here, "..", "resources", "bin") : resolve(process.argv[outAt + 1]);
 const win = process.platform === "win32";
 const withMinGit = process.argv.includes("--with-mingit");
+const withGit = process.argv.includes("--with-git");
 
 mkdirSync(bin, { recursive: true });
 
@@ -99,6 +100,43 @@ if (withMinGit) {
     console.error("MinGit 이 resources/bin/cmd/git.exe 에 없습니다 — 번들에서 채워 주세요.");
     process.exit(1);
   }
+  // MinGit 의 bash 는 sh.exe 하나뿐이다(2단계). bash 는 argv[0] 의 이름으로
+  // 동작을 정하므로(POSIX — sh 로 불리면 POSIX 모드, bash 로 불리면 온전한
+  // bash), 복사해 이름을 bash.exe 로 두면 온전한 bash 로 돈다. Claude CLI 는
+  // bash.exe 만 찾고 못 찾으면 BashTool 를 내놓지 않으므로 이 이름이 필요하다.
+  const sh = join(bin, "usr", "bin", "sh.exe");
+  const bash = join(bin, "usr", "bin", "bash.exe");
+  if (!existsSync(sh)) {
+    console.error("MinGit 의 usr/bin/sh.exe 가 없습니다 — 번들이 깨졌습니다.");
+    process.exit(1);
+  }
+  copyFileSync(sh, bash);
+  console.log(`bash: ${bash} (sh.exe 복사)`);
+}
+
+// 이동식 git(macOS 만, 2단계): CI 가 resources/bin/git 에 풀어 둔 dugite-native
+// 를 확인하고 변수를 준 채 한 번 돌려 찍는다. 빠져 있으면 실패 — GIT_EXEC_PATH
+// 없이는 HTTPS 복제가 죽는 번들이 조용히 나가는 일이 없게 한다.
+if (withGit) {
+  if (win) {
+    console.error("--with-git 은 macOS 빌드에서만 씁니다.");
+    process.exit(1);
+  }
+  const git = join(bin, "git", "bin", "git");
+  if (!existsSync(git)) {
+    console.error(
+      "이동식 git 이 resources/bin/git/bin/git 에 없습니다 — 번들 단계에서 채워 주세요.",
+    );
+    process.exit(1);
+  }
+  const { stdout } = await run(git, ["--version"], {
+    env: {
+      ...process.env,
+      GIT_EXEC_PATH: join(bin, "git", "libexec", "git-core"),
+      GIT_TEMPLATE_DIR: join(bin, "git", "share", "git-core", "templates"),
+    },
+  });
+  console.log(`git: ${stdout.trim()}`);
 }
 
 // 무결성 기록: 앱이 시작할 때 존재만 확인한다(버전 고정은 하지 않는다).

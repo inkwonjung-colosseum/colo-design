@@ -2983,6 +2983,13 @@ select {
 .pintray__clear:hover {
   color: var(--danger);
 }
+/* 묻는 중(armed) — 문장만 바뀌어선 놓친다: 색과 무게가 함께 말해야 두 번째
+   클릭이 사건으로 보인다(베타 테스트 B16). 3초의 유예가 지나면 제자리로. */
+.pintray__clear--armed {
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-weight: 600;
+}
 .pintray__list {
   margin: 0;
   padding: 0;
@@ -3173,7 +3180,7 @@ select {
   flex: none;
 }
 /* 요약 칩의 값 — 길어서 칩을 밀지 않고 잘린다. 전체값은 팝오버의 각
-   머리줄(확인 방식 — 바로 진행 …)이 말한다. */
+   머리줄이 말한다. */
 .selector__chip .selector__chiplabel {
   flex: 0 1 auto;
   min-width: 0;
@@ -3234,7 +3241,7 @@ select {
 }
 .selector__row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   width: 100%;
   text-align: left;
@@ -3354,8 +3361,7 @@ select {
   flex: none;
   color: var(--muted);
 }
-/* 카드의 글리프 타일 — 설정마다 제 갈피를 입는다. 확인 방식의 타일은
-   뜻을 가진 유일한 색(물음=초록, 묻지 않음=주황): 나머지는 갈피일 뿐. */
+/* 카드의 글리프 타일 — 설정마다 제 갈피를 입는다. */
 .selector__drillicon {
   flex: none;
   display: inline-flex;
@@ -3366,14 +3372,6 @@ select {
   border-radius: var(--r-sm);
   background: var(--panel-2);
   color: var(--text-2);
-}
-.selector__drillicon--ok {
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-  color: var(--ok);
-}
-.selector__drillicon--warn {
-  background: var(--warn-soft);
-  color: var(--warn);
 }
 .selector__drillicon--accent {
   background: var(--accent-soft);
@@ -3453,25 +3451,12 @@ select {
   font: 400 var(--font-ui-105) / 1.4 var(--sans);
 }
 
-/* 행의 글리프 — 갈피는 text-2, 확인 방식의 방패만 뜻의 색을 입는다. */
+/* 행의 글리프 — 갈피는 text-2. */
 .selector__rowicon {
   flex: none;
   display: inline-flex;
   align-items: center;
-  align-self: center;
   color: var(--text-2);
-}
-.selector__rowicon--ok {
-  color: var(--ok);
-}
-.selector__rowicon--accent {
-  color: var(--accent);
-}
-.selector__rowicon--warn {
-  color: var(--warn);
-}
-.selector__rowicon--danger {
-  color: var(--danger);
 }
 .selector__row:hover {
   background: var(--accent-soft);
@@ -3483,7 +3468,6 @@ select {
   flex: none;
   width: 12px;
   color: var(--accent);
-  align-self: center;
 }
 .selector__label {
   flex: none;
@@ -6013,6 +5997,14 @@ button.pcard__row {
   color: var(--text-2);
   font-size: var(--font-ui-120);
 }
+/* 시작 줄의 프로젝트 이름 — 우측 정렬·muted 로 라벨과 갈라 읽힌다. 긴
+   이름은 말린다: 칸을 넘겨 버튼 전체를 흔들지 않게. */
+.leaf--start__project {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .leaf--start .ic {
   background: none;
   color: inherit;
@@ -6822,35 +6814,11 @@ button.pcard__row {
   gap: 10px;
   padding: 28px;
 }
-/* The stopped card borrows the 준비/실패 card (progress__card) and tints its
-   head glyph; the daemon's last log line sits under the sentence in mono. */
-.preview__stopglyph {
-  display: inline-flex;
-  color: var(--danger);
-}
 .preview__stopactions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-}
-/* The error banner inside the frame: it overlays the stage's bottom edge —
-   the title says what happened, the message is clamped until 자세히 opens
-   it. danger-soft is a tint, so the panel colour sits under it. */
-.preview__error {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
-  z-index: 6;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 9px 12px;
-  border: 1px solid var(--danger-line);
-  border-radius: var(--r-md);
-  background: var(--panel);
-  box-shadow: var(--shadow-float);
 }
 /* 얼린 얼굴의 해제 힌트 — 스테이지 왼쪽 아래의 조용한 칩. */
 .preview__unpin {
@@ -6865,39 +6833,6 @@ button.pcard__row {
   color: var(--muted);
   font: 500 var(--font-ui-105) var(--mono);
   pointer-events: none;
-}
-.preview__error__text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.preview__error__text strong {
-  font: 600 var(--font-ui-125) var(--sans);
-  color: var(--text);
-}
-.preview__error__message {
-  margin: 0;
-  color: var(--text-2);
-  font: var(--font-code-115) / 1.5 var(--mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.preview__error__message--open {
-  display: block;
-  max-height: 200px;
-  overflow: auto;
-}
-.preview__error__actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
 }
 
 .diff__stage {
@@ -8241,9 +8176,6 @@ button.pcard__row {
   /* 설명 줄이 들어간 만큼 넓어진다 — 두 줄 행의 자리. */
   min-width: 240px;
 }
-.screenpanel__menu .selector__row {
-  align-items: center;
-}
 /* 더 보기는 한 단계 아래의 hairline 칩 — 동작 묶음(--line-strong 테두리의
    채운 묶음)보다 얇고 조용하게. 유리 바 위에서 테두리 없는 ghost 는 글자로
    읽혔다. 테두리가 "버튼"임을 말한다. */
@@ -8642,6 +8574,58 @@ button.pcard__row {
 }
 .onboarding__logincode {
   max-width: 420px;
+}
+/* 설치 진행 줄(3단계) — 데몬이 지켜보는 설치의 마지막 의미 있는 한 줄.
+   조용한 글씨에 한 줄만: 흘러넘치면 말줄임이 나머지를 치운다. */
+.onboarding__installline {
+  margin: 0;
+  font: 500 var(--font-ui-115) var(--sans);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 선택 행(Codex, 3단계) — 점선 테두리가 "건너뛰어도 된다"를 읽게 한다. */
+.onboarding__step--optional {
+  border-style: dashed;
+}
+/* 정책 차단의 복사 문장(검수 3단계) — 실패 안내와 줄을 나눠 인용 모양으로
+   보여 무엇을 복사하는지 읽힌다. 버튼은 이웃 버튼들과 같은 ghost. */
+.onboarding__copyrow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.onboarding__copyquote {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: 500 var(--font-ui-115) var(--sans);
+  color: var(--muted);
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+  overflow-wrap: anywhere;
+}
+/* 로그인의 "브라우저가 열리지 않았나요?" 접힘(3단계) — settings__fold 와 같은
+   화살표 어휘를 마법사 안에서도 쓴다. */
+.onboarding__loginhelp > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font: 500 var(--font-ui-120) var(--sans);
+  padding: 2px 0;
+  list-style: none;
+}
+.onboarding__loginhelp > summary::-webkit-details-marker {
+  display: none;
+}
+.onboarding__loginhelp > summary::before {
+  content: "▸ ";
+}
+.onboarding__loginhelp[open] > summary::before {
+  content: "▾ ";
+}
+.onboarding__loginhelp > summary:hover {
+  color: var(--text-2);
 }
 
 /* 초대 파일 가져오기(P1-5) — 확인 카드와 드래그 앤드롭의 장막. */
@@ -9193,11 +9177,6 @@ button .ic {
   flex: none;
 }
 
-/* Menu rows align on baseline; a leading tile centres itself instead. */
-.selector__row > .ic {
-  align-self: center;
-}
-
 /* A quiet column for "nothing here yet" inside menus and small panels —
    the big rooms keep .empty; this is the doorway-sized one. */
 .menuempty {
@@ -9432,6 +9411,22 @@ button .ic {
  * 안무는 핀 개편 2단계와 같은 PR 에서 한다(충돌 회피). */
 .pintray__row {
   animation: risefade 0.28s var(--drift);
+}
+
+/* 핀의 정체 칩(2026-09-22): 컴포넌트 이름이 없으면 testid — 찍은 순간
+ * 무엇을 집었는지 행이 스스로 말한다. mono 소형 — 라벨의 말이 아니라
+ * 코드의 이름이기 때문이다. */
+.pintray__identity {
+  font: 500 10.5px / 1.3 var(--mono, ui-monospace, monospace);
+  color: var(--muted);
+  background: var(--panel-3, rgba(127, 127, 127, 0.14));
+  border-radius: 4px;
+  padding: 1px 5px;
+  align-self: flex-start;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* =============================================================================
@@ -9835,31 +9830,22 @@ button .ic {
   line-height: 1.6;
 }
 .home-digest {
-  margin-bottom: 22px;
+  margin-bottom: 26px;
 }
+/* 문장은 건수만 말한다 — 이름은 아래 행이 부른다. */
 .home-digest__summary {
   font: 400 var(--font-ui-150) var(--sans);
-  color: var(--text);
-  line-height: 1.75;
-  margin: 0;
+  color: var(--text-2);
+  line-height: 1.7;
+  margin: 10px 0 0;
 }
-.home-digest__when {
-  /* context, not an alarm — warn is the waiting state's colour alone */
-  color: var(--muted);
-  font-weight: 500;
+.home-digest__rows {
+  margin-top: 14px;
 }
-/* 문장 안의 스레드 이름은 링크가 아니라 조용한 버튼 — 밑줄 하나만 빌린다. */
-.home-digest__link {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--accent);
-  cursor: pointer;
-  border-bottom: 1px solid var(--accent-glow);
-}
-.home-digest__link:hover {
-  border-bottom-color: var(--accent);
+.home-digest__more {
+  font: 400 var(--font-ui-120) var(--sans);
+  color: var(--faint, var(--muted));
+  margin: 2px 2px 0;
 }
 
 /* 진행 중·완료·다른 프로젝트를 한 단 접는 폴드 — 결정 카드만 첫 화면에
@@ -10135,14 +10121,22 @@ button .ic {
   flex: 1;
 }
 .home-resume__name {
+  display: block;
   font: 600 var(--font-ui-130) var(--sans);
   color: var(--text);
+  /* 첫 말이 통째로 제목이 되는 레포가 많다 — 이름은 늘 한 줄로 잘린다. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .home-resume__line {
   display: block;
   font: 400 var(--font-ui-120) var(--sans);
   color: var(--muted);
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .home-resume__card > svg {
   margin-left: auto;

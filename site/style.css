@@ -809,6 +809,62 @@ main {
   margin-top: 0;
 }
 
+/* ---- 사용자에게 보낼 안내문(4단계) — OS 고르기와 세 줄, 복사 버튼. ---- */
+.iguide {
+  max-width: 620px;
+  margin-top: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg-2);
+  padding: 14px 16px;
+}
+.iguide__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.iguide__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  flex: 1;
+}
+.iguide__os {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.iguide__osbtn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.iguide__osbtn--on {
+  background: var(--text-2);
+  color: var(--bg);
+}
+.iguide__lines {
+  margin: 12px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-2);
+}
+.iguide .note {
+  margin-top: 12px;
+}
+
 /* ---- 초대장 만들기 — 레포 목록과 고른 프로젝트 (ifield · iform 패턴의 확장) ---- */
 .irepos__status {
   margin: -4px 0 0;

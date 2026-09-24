@@ -14,9 +14,11 @@
  */
 
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
 import { daemonLogDir } from "./log.js";
+import { STATS_EDIT_TOOLS, STATS_EXEC_TOOLS, STATS_READ_TOOLS } from "./tool-names.js";
+import { editPathsOf } from "./tool-paths.js";
 import { classifyFailure } from "./turn-retry.js";
 
 /** 보존 일수 — 데몬 하루 로그와 같은 창. */
@@ -30,33 +32,14 @@ const SCAN_TTL_MS = 10 * 60 * 1000;
 /** 세션마다 물려둘 수 있는 강화 시간의 수 — 대기 줄이 길어져도 첫 턴의 것만 산다. */
 const MAX_QUEUED_SCANS = 4;
 
-/** 도구 이름 → 통계 묶음. 프로바이더마다 이름이 다르니 모양으로 잡는다. */
-const READ_TOOLS: Record<string, true> = {
-  Read: true,
-  Grep: true,
-  Glob: true,
-  LS: true,
-  view: true,
-  view_file: true,
-  read_file: true,
-  web_search: true,
-};
-const EDIT_TOOLS: Record<string, true> = {
-  Edit: true,
-  Write: true,
-  MultiEdit: true,
-  NotebookEdit: true,
-  apply_patch: true,
-  edit_file: true,
-  write_file: true,
-};
-const EXEC_TOOLS: Record<string, true> = {
-  Bash: true,
-  Shell: true,
-  shell: true,
-  exec_command: true,
-  run_command: true,
-};
+/**
+ * 도구 이름 → 통계 묶음. 프로바이더마다 이름이 다르니 세 표의 합(tool-names.ts)을
+ * 읽는다 — 옛 표는 omp 의 `read` · `edit` · `bash` 를 몰라 omp 턴을 전부
+ * `other` 로 세고 firstEditMs · pinHit 를 늘 null 로 남겼다(2026-09-23).
+ */
+const READ_TOOLS = STATS_READ_TOOLS;
+const EDIT_TOOLS = STATS_EDIT_TOOLS;
+const EXEC_TOOLS = STATS_EXEC_TOOLS;
 
 /** 한 턴의 측정 — 세션이 말을 내놓는 순간 태어나 turn.end 에서 한 줄이 된다. */
 interface InFlight {
@@ -84,6 +67,12 @@ interface InFlight {
   scanMs: number | null;
   /** 이전 턴이 끝난 뒤 이 턴까지의 틈(ms) — 첫 턴은 null. */
   sincePrevTurnMs: number | null;
+  /** 보내기 문이 알아낸 클론 경로 — 후보 비교의 정규화 기준(2026-09-22). */
+  cwd: string | null;
+  /** 핀의 파일 후보(절대경로) — 후보가 없는 턴은 null(비교 자체가 성립하지 않는다). */
+  candidates: Set<string> | null;
+  /** 에이전트가 후보 파일을 실제로 편집했는가 — 후보가 있던 턴만 true/false. */
+  pinHit: boolean | null;
 }
 
 /** The turn row as it lands in the file — numbers and kinds only. */
@@ -119,6 +108,9 @@ interface TurnStatsRow {
   scanMs: number | null;
   /** 이전 턴 종료 직후의 재보내기라면 작은 수 — 교정 턴의 재료. */
   sincePrevTurnMs: number | null;
+  /** 핀의 후보 파일을 에이전트가 편집했는가(2026-09-22) — 후보가 없던 턴은 null.
+   *  경로는 남기지 않는다: 사용자의 말이 사는 곳에 파일 경로가 끼어들지 않는다. */
+  pinHit: boolean | null;
 }
 
 /** 턴이 끝난 뒤 게이트의 한 바퀴 — 판정이 turn.end 뒤에야 나오므로 제 행이다. */
@@ -128,8 +120,19 @@ interface TurnGateRow {
   project: string | null;
   kind: "gateset";
   gateMs: number;
+  /** 게이트가 다시 열어 본 화면 수 — dedupe·origin 필터를 통과한 수다(2026-09-22). */
   screens: number;
   reopened: boolean;
+  /** 게이트가 돌지 못한 이유 — once(이미 걸었다) · no-driver · no-screens ·
+   *  no-preview · busy · broken. 돌았으면 없다(2026-09-22). */
+  skipped?: string;
+  /** 문제 화면의 내역 — unsettled·blank 화면 수와 문제 줄 합계(slice 전). */
+  unsettled?: number;
+  blank?: number;
+  consoleLines?: number;
+  netLines?: number;
+  /** D3 재시도로 구제된 화면 수. */
+  rescued?: number;
 }
 
 /** 하루 파일의 한 줄 — 턴 행이거나 게이트 행. */
@@ -176,6 +179,9 @@ function freshTurn(text: string): InFlight {
     waitMs: 0,
     scanMs: null,
     sincePrevTurnMs: null,
+    cwd: null,
+    candidates: null,
+    pinHit: null,
   };
 }
 
@@ -205,8 +211,12 @@ function prune(dir: string, today: Date): void {
 /** 측정의 임자 — 서버가 세션 사건을 흘려 보내는 창구. */
 export class TurnStats {
   private readonly flying = new Map<string, InFlight>();
-  /** 보내기 문에서 잰 핀 강화 시간 — 턴 시작(user.echo) 때 하나씩 묻는다. */
-  private readonly scans = new Map<string, Array<{ at: number; ms: number }>>();
+  /** 보내기 문에서 잰 핀 강화 — 시간과 함께 후보(절대경로)와 클론 경로를
+   *  물려준다(2026-09-22). 턴 시작(user.echo) 때 하나씩 소비된다. */
+  private readonly scans = new Map<
+    string,
+    Array<{ at: number; ms: number; cwd: string | null; candidates: string[] | null }>
+  >();
   /** 세션의 마지막 turn.end 정산 시각 — 다음 턴의 sincePrevTurnMs 의 짝. */
   private readonly lastEndAt = new Map<string, number>();
 
@@ -234,9 +244,19 @@ export class TurnStats {
       }
       turn.images = event.images;
       turn.files = event.files?.length ?? 0;
-      // 보내기 문에서 잰 강화 시간과 이전 턴과의 틈을 여기서 묻는다 — 대기 줄이
-      // 여러 건이면 먼저 들어온 쪽이 먼저 나가므로 줄의 머리가 이 턴의 것이다.
-      turn.scanMs = this.takeScan(sessionId);
+      // 보내기 문에서 잰 강화(시간·후보·경로)와 이전 턴과의 틈을 여기서 묻는다
+      // — 대기 줄이 여러 건이면 먼저 들어온 쪽이 먼저 나가므로 줄의 머리가 이
+      // 턴의 것이다.
+      const scan = this.takeScan(sessionId);
+      turn.scanMs = scan?.ms ?? null;
+      turn.cwd = scan?.cwd ?? null;
+      turn.candidates =
+        scan?.candidates !== null && scan?.candidates !== undefined && scan.candidates.length > 0
+          ? new Set(scan.candidates)
+          : null;
+      // 후보가 있던 턴은 이 미터가 성립한다 — 비적중도 답이다(false). 후보가
+      // 없으면 비교 자체가 성립하지 않으므로 null 로 솔직하다.
+      turn.pinHit = turn.candidates !== null ? false : null;
       const prevEnd = this.lastEndAt.get(sessionId);
       turn.sincePrevTurnMs = prevEnd === undefined ? null : Math.max(0, Date.now() - prevEnd);
       this.flying.set(sessionId, turn);
@@ -261,6 +281,18 @@ export class TurnStats {
       // 첫 편집의 시각 — 방향 잡기(읽기만 하던 구간)가 끝난 자리다.
       if (turn.firstEditAt === null && EDIT_TOOLS[event.name] === true)
         turn.firstEditAt = event.startedAt ?? Date.now();
+      // 핀의 후보를 에이전트가 실제로 편집했는가(2026-09-22) — 후보가 있는
+      // 턴만. 세 프로바이더의 도구 모양이 다르니 경로 뽑기는 tool-paths 가
+      // 한다. 절대경로로 정규화해 비교한다(후보는 클론 루트 기준, 도구 경로는
+      // 절대 또는 cwd 상대). 경로는 기록하지 않는다.
+      if (turn.candidates !== null && EDIT_TOOLS[event.name] === true) {
+        for (const path of editPathsOf(event.input)) {
+          if (turn.candidates.has(resolve(turn.cwd ?? process.cwd(), path))) {
+            turn.pinHit = true;
+            break;
+          }
+        }
+      }
       return;
     }
     if (event.kind === "turn.end") {
@@ -274,25 +306,33 @@ export class TurnStats {
     if (turn !== undefined) turn.gate = true;
   }
 
-  /** 보내기 문에서 핀 강화가 걸린 시간 — 턴이 시작될 때 소비된다. */
-  noteScan(sessionId: string, ms: number): void {
+  /** 보내기 문에서 핀 강화가 걸린 시간 — 후보와 클론 경로도 함께 물려준다
+   *  (2026-09-22). 턴이 시작될 때 소비된다. */
+  noteScan(sessionId: string, ms: number, info?: { cwd?: string; candidates?: string[] }): void {
     const queue = this.scans.get(sessionId) ?? [];
     const now = Date.now();
     // 문에서 잰 것이 오래 묵으면 턴에 얹지 않는다 — 잃어낸 보내기의 시간을
     // 나중 턴에 몰래 붙이는 일이 이 줄이 막는 거짓말이다.
     while (queue.length > 0 && now - (queue[0]?.at ?? now) > SCAN_TTL_MS) queue.shift();
-    queue.push({ at: now, ms });
+    queue.push({
+      at: now,
+      ms,
+      cwd: info?.cwd ?? null,
+      candidates: info?.candidates ?? null,
+    });
     if (queue.length > MAX_QUEUED_SCANS) queue.shift();
     this.scans.set(sessionId, queue);
   }
 
-  private takeScan(sessionId: string): number | null {
+  private takeScan(
+    sessionId: string,
+  ): { at: number; ms: number; cwd: string | null; candidates: string[] | null } | null {
     const queue = this.scans.get(sessionId);
     if (queue === undefined) return null;
     const head = queue.shift();
     if (queue.length === 0) this.scans.delete(sessionId);
     if (head === undefined) return null;
-    return Date.now() - head.at > SCAN_TTL_MS ? null : head.ms;
+    return Date.now() - head.at > SCAN_TTL_MS ? null : head;
   }
 
   /** 카드 대기의 한 구간(waiting_* 에 머문 시간) — 도는 턴에 더한다. */
@@ -301,10 +341,21 @@ export class TurnStats {
     if (turn !== undefined) turn.waitMs += ms;
   }
 
-  /** 게이트의 한 바퀴 — 턴 행과는 따로 한 줄로 내려앉는다. */
+  /** 게이트의 한 바퀴 — 턴 행과는 따로 한 줄로 내려앉는다. 판정 상세와
+   *  못 돈 이유(skipped)까지: 못 센 침묵과 통과가 같은 소리를 내지 않게. */
   noteGateCheck(
     sessionId: string,
-    outcome: { ms: number; screens: number; reopened: boolean },
+    outcome: {
+      ms: number;
+      screens: number;
+      reopened: boolean;
+      skipped?: string;
+      unsettled?: number;
+      blank?: number;
+      consoleLines?: number;
+      netLines?: number;
+      rescued?: number;
+    },
   ): void {
     const row: TurnGateRow = {
       at: new Date().toISOString(),
@@ -314,6 +365,12 @@ export class TurnStats {
       gateMs: outcome.ms,
       screens: outcome.screens,
       reopened: outcome.reopened,
+      ...(outcome.skipped !== undefined ? { skipped: outcome.skipped } : {}),
+      ...(outcome.unsettled !== undefined ? { unsettled: outcome.unsettled } : {}),
+      ...(outcome.blank !== undefined ? { blank: outcome.blank } : {}),
+      ...(outcome.consoleLines !== undefined ? { consoleLines: outcome.consoleLines } : {}),
+      ...(outcome.netLines !== undefined ? { netLines: outcome.netLines } : {}),
+      ...(outcome.rescued !== undefined ? { rescued: outcome.rescued } : {}),
     };
     this.write(row);
   }
@@ -364,6 +421,7 @@ export class TurnStats {
       waitMs: turn.waitMs,
       scanMs: turn.scanMs,
       sincePrevTurnMs: turn.sincePrevTurnMs,
+      pinHit: turn.pinHit,
     };
     this.lastEndAt.set(sessionId, Date.now());
     this.write(row);

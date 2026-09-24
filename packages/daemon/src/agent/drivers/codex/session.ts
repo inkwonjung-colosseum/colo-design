@@ -24,69 +24,18 @@ type Wire = Record<string, any>;
 const EFFORT_LEVELS: readonly string[] = ["low", "medium", "high", "xhigh", "max"];
 
 /**
- * The three permission modes this driver exposes. Codex splits the decision
- * two ways — `approvalPolicy` (does the agent ask?) and `sandbox` (what may
- * it touch without asking) — and both are per-turn params, so a mode switch
- * lands on the next `turn/start`, never mid-turn.
- *
- * In-sandbox commands never produce an approval request — the daemon's card
- * flow only sees escalations. The workspace-write sandbox restricts WRITES
- * only: reads are unrestricted (~/ .npmrc, ~/.ssh, daemon.json) and with
- * networkAccess on, exfiltration needs no card at all. So `default` and
- * `plan` run with the network OFF — a network command must escalate, which
- * is exactly what the UI label ("Ask before running commands") promises.
+ * 이 도구의 유일한 확인 방식 — 바로 진행 (2026-09-23). Codex splits the
+ * decision two ways: `approvalPolicy` (does the agent ask?) and `sandbox`
+ * (what may it touch). 바로 진행은 `never` + `danger-full-access` — 묻는
+ * 카드 없이, 샌드박스 없이. Both are per-turn params, so the pin rides every
+ * `thread/*` and `turn/start`.
  */
-const CODEX_MODES: Record<string, { approvalPolicy: string; sandbox: string }> = {
-  default: { approvalPolicy: "on-request", sandbox: "workspace-write" },
-  plan: { approvalPolicy: "never", sandbox: "read-only" },
-  bypass: { approvalPolicy: "never", sandbox: "danger-full-access" },
-};
-
-/**
- * The mode rows both surfaces share — the descriptor's tiered table and the
- * composer's chip rows. One list, two shapes.
- */
-export const CODEX_MODE_ROWS: Array<{
-  id: string;
-  label: string;
-  tier: "safe" | "moderate" | "planning" | "dangerous";
-  description: string;
-}> = [
-  {
-    id: "default",
-    label: "실행 전에 물어보기",
-    tier: "moderate",
-    description: "명령을 돌리기 전에 카드로 물어봅니다",
-  },
-  {
-    id: "plan",
-    label: "계획 먼저 보기",
-    tier: "planning",
-    description: "만들기 전에 무엇을 만들지 보여 줍니다 — 읽기만 합니다",
-  },
-  { id: "bypass", label: "바로 진행", tier: "dangerous", description: "아무것도 묻지 않습니다" },
-];
+const BYPASS_APPROVAL_POLICY = "never";
+const BYPASS_SANDBOX = "danger-full-access";
 
 /** `thread/*` takes a SandboxMode string; `turn/start` takes the full policy. */
-function sandboxPolicy(modeId: string, cwd: string): Wire {
-  switch (CODEX_MODES[modeId]?.sandbox ?? "workspace-write") {
-    case "read-only":
-      // 읽기전용 턴도 유출은 할 수 있다 — 네트워크는 default 와 같이 끈다.
-      return { type: "readOnly", networkAccess: false };
-    case "danger-full-access":
-      return { type: "dangerFullAccess" };
-    default:
-      return {
-        type: "workspaceWrite",
-        writableRoots: [cwd],
-        // 샌드박스 밖으로 나가는 유일한 통로. true 였던 판: 안에서는 curl
-        // 하나가 카드 없이 ~/.npmrc · ~/.ssh · daemon.json 을 밖으로 가져갔
-        // 다. false 면 네트워크 명령이 escalation 이 되어 카드가 낀다.
-        networkAccess: false,
-        excludeTmpdirEnvVar: false,
-        excludeSlashTmp: false,
-      };
-  }
+function bypassSandboxPolicy(): Wire {
+  return { type: "dangerFullAccess" };
 }
 
 /**
@@ -200,7 +149,6 @@ export class CodexAgentSession implements AgentSession {
   private markTurnAccepted: (() => void) | null = null;
   /** interrupt() waiters — resolved "answered" on turn/completed, "dead" on end. */
   private readonly turnSettlers = new Set<(outcome: "answered" | "dead") => void>();
-  private currentModeId: string;
   private currentModel: string | null;
   private currentEffort: EffortLevel | null;
   private lastContext: { used: number; size: number } | null = null;
@@ -220,7 +168,6 @@ export class CodexAgentSession implements AgentSession {
     private readonly hooks: DriverHooks,
   ) {
     this.launch = launch;
-    this.currentModeId = CODEX_MODES[launch.modeId] ? launch.modeId : "default";
     this.currentModel = launch.model;
     this.currentEffort = launch.effort;
     this.transport = new JsonRpcTransport(command, ["app-server"], launch.cwd, {
@@ -314,7 +261,6 @@ export class CodexAgentSession implements AgentSession {
       cwd: this.launch.cwd,
       tools: [],
       apiKeySource: "none",
-      permissionMode: this.currentModeId,
     });
   }
 
@@ -325,12 +271,11 @@ export class CodexAgentSession implements AgentSession {
    * MCP 자식을 함께 기동해야 하므로 예외는 없다.
    */
   private threadOverrides(): Wire {
-    const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
     const browser = this.launch.browserMcp;
     return {
       ...(this.launch.model ? { model: this.launch.model } : {}),
-      approvalPolicy: mode.approvalPolicy,
-      sandbox: mode.sandbox,
+      approvalPolicy: BYPASS_APPROVAL_POLICY,
+      sandbox: BYPASS_SANDBOX,
       ...(this.launch.appendSystemPrompt
         ? { developerInstructions: this.launch.appendSystemPrompt }
         : {}),
@@ -405,12 +350,11 @@ export class CodexAgentSession implements AgentSession {
    * this is where a stored pick becomes real.
    */
   private turnStartParams(threadId: string, turn: Turn): Wire {
-    const mode = CODEX_MODES[this.currentModeId] ?? CODEX_MODES.default!;
     return {
       threadId,
       input: this.userInput(turn),
-      approvalPolicy: mode.approvalPolicy,
-      sandboxPolicy: sandboxPolicy(this.currentModeId, this.launch.cwd),
+      approvalPolicy: BYPASS_APPROVAL_POLICY,
+      sandboxPolicy: bypassSandboxPolicy(),
       ...(this.currentModel ? { model: this.currentModel } : {}),
       ...(this.currentEffort ? { effort: this.currentEffort } : {}),
     };
@@ -483,12 +427,6 @@ export class CodexAgentSession implements AgentSession {
     );
   }
 
-  /** Modes are per-turn params — store the pick; the next turn/start applies it. */
-  async setMode(modeId: string): Promise<void> {
-    await this.ready;
-    if (CODEX_MODES[modeId]) this.currentModeId = modeId;
-  }
-
   async setModel(id: string | null): Promise<void> {
     await this.ready;
     this.currentModel = id;
@@ -497,20 +435,6 @@ export class CodexAgentSession implements AgentSession {
   async setEffort(effort: EffortLevel | null): Promise<void> {
     await this.ready;
     this.currentEffort = effort;
-  }
-
-  async modes(): Promise<Array<{
-    id: string;
-    label: string;
-    description?: string;
-    tier?: string;
-  }> | null> {
-    return CODEX_MODE_ROWS.map(({ id, label, description, tier }) => ({
-      id,
-      label,
-      description,
-      tier,
-    }));
   }
 
   async commands(): Promise<SessionCommand[]> {

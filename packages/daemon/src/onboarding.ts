@@ -15,6 +15,8 @@
  */
 
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
 import type { AgentDriver } from "./agent/driver.js";
@@ -113,6 +115,16 @@ async function checkAgent(deps: OnboardingDeps): Promise<OnboardingStep> {
       label: "Claude Code 설치",
     });
   }
+  // Windows bash(2단계): CLI 는 bash.exe 를 못 찾으면 BashTool 를 아예 내놓지
+  // 않는다 — 로그인이 끝나도 AI 가 명령을 하나도 못 돌리는 세계가 되므로
+  // 게이트에서 먼저 잡는다. 고침은 없다: 번들 앱이라면 앱 재설치가 유일한 길.
+  if (currentPlatform() === "win32" && !windowsBashPath(process.env)) {
+    return fail(
+      "claude",
+      "AI 가 명령을 실행할 준비(bash)를 찾지 못했어요 — 앱을 다시 설치해 주세요.",
+    );
+  }
+
   const auth = await readAuthStatus(executable);
   if (!auth.loggedIn) {
     return fail("claude", "Claude Code 로그인이 필요합니다 — 본인 구독으로 실행됩니다.", {
@@ -131,6 +143,25 @@ async function checkAgent(deps: OnboardingDeps): Promise<OnboardingStep> {
   const version = await readClaudeVersion(executable);
   const plan = auth.subscriptionType ? ` · ${auth.subscriptionType}` : "";
   return pass("claude", `Claude Code 준비됨${version ? ` (${version})` : ""}${plan}`);
+}
+
+/**
+ * Windows 에서 Claude CLI 가 BashTool 로 쓸 bash 를 찾는다(2단계): CLI 가
+ * 읽는 `CLAUDE_CODE_GIT_BASH_PATH`, 그리고 흔한 Git-for-windows 자리 둘.
+ * MinGit 번들은 bash.exe 가 없어 데스크톱 앱이 sh.exe 를 bash.exe 로 복사해
+ * 둔다(bundle-runtimes 참조) — 그 경로는 main 이 변수로 알린다. Pure in
+ * (env, exists) — 테스트가 exists 를 갈아끼운다.
+ */
+export function windowsBashPath(
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean = existsSync,
+): string | null {
+  const candidates = [
+    env.CLAUDE_CODE_GIT_BASH_PATH,
+    env.ProgramFiles ? join(env.ProgramFiles, "Git", "bin", "bash.exe") : undefined,
+    env["ProgramFiles(x86)"] ? join(env["ProgramFiles(x86)"], "Git", "bin", "bash.exe") : undefined,
+  ].filter((value): value is string => Boolean(value));
+  return candidates.find((candidate) => exists(candidate)) ?? null;
 }
 
 async function checkGit(): Promise<OnboardingStep> {
@@ -350,53 +381,6 @@ export async function runPnpmInstall(
   }
 }
 
-const installFailed = (platform: string): string =>
-  platform === "win32"
-    ? "설치를 시작하지 못했습니다 — 터미널에서 irm https://claude.ai/install.ps1 | iex 를 직접 실행해 주세요."
-    : "설치를 시작하지 못했습니다 — 터미널에서 curl -fsSL https://claude.ai/install.sh | bash 를 직접 실행해 주세요.";
-
-/**
- * Runs the Claude Code native installer detached. Nothing here shows the
- * progress — stdio is dropped, and on macOS no window opens — so the reply's
- * guidance is the wizard's only feedback. The wizard checks ONCE right after
- * the press; while the installer works there is no re-check on its own —
- * 다시 확인 is the planner's move when a few minutes have passed.
- */
-export function startClaudeInstall(
-  spawnLike: SpawnLike = spawn,
-  platform: string = process.platform,
-): { started: boolean; guidance: string } {
-  try {
-    if (platform === "win32") {
-      // No sh here: the native installer is a PowerShell one-liner, and the
-      // console window it opens is the progress the planner sees.
-      detach(
-        spawnLike(
-          "powershell",
-          ["-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"],
-          {
-            detached: true,
-            stdio: "ignore",
-          },
-        ),
-      );
-    } else {
-      detach(
-        spawnLike("sh", ["-c", "curl -fsSL https://claude.ai/install.sh | bash"], {
-          detached: true,
-          stdio: "ignore",
-        }),
-      );
-    }
-    return {
-      started: true,
-      guidance: "설치를 시작했습니다 — 몇 분 뒤 이 단계를 다시 확인해 주세요.",
-    };
-  } catch {
-    return { started: false, guidance: installFailed(platform) };
-  }
-}
-
 /**
  * 터미널 없는 에이전트 로그인 (P1-1): 데몬이 로그인 명령을 stdio 파이프로
  * 띄워 대신 몰고, 앱은 브라우저와 붙여넣기만 담당한다. 스파이크로 확인한
@@ -413,8 +397,7 @@ export interface AgentLoginEvents {
   onDone(ok: boolean, detail: string): void;
 }
 
-const LOGIN_GUIDANCE =
-  "로그인을 시작했습니다 — 브라우저가 열리면 안내에 따라 로그인하고, 화면에 나온 코드를 붙여넣어 주세요.";
+const LOGIN_GUIDANCE = "로그인을 시작했습니다 — 브라우저에서 로그인을 마치면 저절로 넘어갑니다.";
 const LOGIN_FAILED =
   "로그인을 시작하지 못했습니다 — 에이전트 설치를 먼저 마치고 다시 시도해 주세요.";
 

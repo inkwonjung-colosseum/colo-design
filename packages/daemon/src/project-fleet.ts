@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+
 import type {
   ChatEvent,
   DiffStatus,
@@ -10,7 +11,8 @@ import type {
 } from "@colo-design/protocol";
 import { errorKindOf, guidanceFor, markTurn, reviewToTurn } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
-import { COMMON_INSTRUCTIONS } from "./common-instructions.js";
+import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
+import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import type { GitHubClient } from "./github.js";
 import type { DaemonLogger } from "./log.js";
@@ -23,6 +25,7 @@ import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
 import { readReviewLedger, reviewLedgerFile, writeReviewLedger } from "./review-ledger.js";
+import { appendScreenMap } from "./screen-map.js";
 import type { SessionManager } from "./session-manager.js";
 import { appendTape } from "./session-tape.js";
 import { repoWritePolicy } from "./workspaces.js";
@@ -574,8 +577,8 @@ export class ProjectFleet {
     this.refreshThreads();
     return session;
   }
-  /** D4: 같은 실패를 두 번 브리프하지 않는다 — 키는 종류와 실패 문장이다. */
-  private briefedFailures = new Map<string, string>();
+  /** D4: 프로젝트별 준비 실패의 한 바퀴 — 장부의 규칙은 bring-up-briefs.ts 에 있다. */
+  private readonly bringUpEpisodes = new Map<string, BringUpEpisode>();
 
   /**
    * D4: 자동 분기가 연 고침 턴이 끝나면 준비를 다시 돌린다 — 웹의 카드가
@@ -584,28 +587,45 @@ export class ProjectFleet {
   private readonly recoveryResync = new Set<string>();
 
   /**
-   * D4: 준비가 끝내 멈추면 `AI에게 해결 요청` 을 기다리지 않고 도구가 실패를
-   * 읽은 표(repo-guidance)로 대화를 열어 넘긴다. 웹의 카드가 쓰던 브리프와
-   * 같은 문장이다 — 표가 protocol 로 옮겨진 이유. 사람의 결정이 필요한
-   * 실패(commands — 첫 실행의 동의)만 버튼에 남고, C5 의 재시도 중 문장은
-   * 아직 실패가 아니므로 건너뛴다.
+   * D4: 준비가 끝내 멈추면 사람을 기다리지 않고 도구가 실패를 읽은
+   * 표(repo-guidance)로 대화를 열어 넘긴다 — 연결 레포의 오류는 사람에게
+   * 올리지 않는다(2026-09-23, 웹의 진행 판은 "AI 가 고치는 중" 만 말한다).
+   * 고친 뒤에도 같은 단계에서 또 멈추면 한 번 더 넘기고, 장부의 상한을 넘으면
+   * AI 는 멈추고 개발자 채널로 한 번 알린다(nextBringUpBrief). 사람의 결정이
+   * 필요한 실패(commands — 첫 실행의 동의)만 버튼에 남는다.
    */
   private autoBriefBringUpFailure(workspaces: ProjectWorkspaces, status: RepoStatus): void {
-    if (status.phase !== "error" || !status.errorKind) return;
-    if (status.errorKind === "commands") return;
-    if (status.detail?.startsWith("화면을 다시 켜는 중") === true) return;
-    const key = `${status.errorKind}::${status.detail ?? ""}`;
-    if (this.briefedFailures.get(workspaces.slug) === key) return;
-    this.briefedFailures.set(workspaces.slug, key);
-    const agent = guidanceFor(errorKindOf(status), status.detail ?? null).agent;
+    const slug = workspaces.slug;
+    const { episode, decision } = nextBringUpBrief(this.bringUpEpisodes.get(slug), status);
+    if (episode) this.bringUpEpisodes.set(slug, episode);
+    else this.bringUpEpisodes.delete(slug);
+    if (decision.action === "none") return;
+    const guidance = guidanceFor(errorKindOf(status), status.detail ?? null);
+    if (decision.action === "escalate") {
+      // 사람의 화면에는 여전히 오류를 올리지 않는다(대화에 AI 의 설명이
+      // 있다) — 개발자 채널에만 한 번 알린다.
+      const projectName = this.deps.registry.get(slug)?.name ?? slug;
+      this.deps.escalate(
+        `[Colo Design] ${projectName} — 화면 준비가 멈췄고 AI가 고치지 못했습니다 (${guidance.title})` +
+          (status.detail ? `\n${status.detail}` : "") +
+          "\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.",
+      );
+      return;
+    }
+    const agent = guidance.agent;
     if (!agent) return;
-    const thread = this.autoFixThreadFor(workspaces, agent.thread);
-    if (!thread) return;
     try {
-      thread.send(markTurn({ kind: "gate", step: agent.step }, agent.brief));
-      this.recoveryResync.add(workspaces.slug);
+      const thread = this.autoFixThreadFor(workspaces, agent.thread);
+      if (!thread) return;
+      // 같은 대화가 앞의 시도를 기억한다 — 되풀이라는 사실만 앞에 얹는다.
+      const brief = decision.repeat
+        ? `고친 뒤 준비를 다시 돌렸지만 같은 단계에서 또 멈췄습니다 — 앞의 방법과 다른 원인을 찾아 주세요.\n\n${agent.brief}`
+        : agent.brief;
+      thread.send(markTurn({ kind: "gate", step: agent.step }, brief));
+      this.recoveryResync.add(slug);
     } catch {
-      // 죽은 질의 — 실패 상태는 이미 방송됐으므로 다음 실패가 다시 연다.
+      // 대화를 못 열었거나 죽은 질의 — 실패 상태는 이미 방송됐다. 다음
+      // 시도(다시 시도 · 재동기화)의 실패가 다시 연다.
     }
   }
 
@@ -665,7 +685,7 @@ export class ProjectFleet {
    * 커밋 게이트가 열리면 세션에 고침 브리프를 보내 화면 확인 게이트와 같은
    * 루프로 스스로 닫는다.
    */
-  async autoSaveTurn(sessionId: string): Promise<void> {
+  async autoSaveTurn(sessionId: string, screenRoutes?: string[]): Promise<void> {
     const workspaces = this.workspaceOfSession(sessionId);
     const session = this.deps.manager.get(sessionId);
     if (!workspaces || !session) return;
@@ -698,6 +718,20 @@ export class ProjectFleet {
           }
         },
       });
+      // 라우트↔파일 지도(2026-09-22): 커밋이 성공했을 때만 한 줄 — sha 와 그
+      // 커밋이 건드린 파일, 그리고 이 턴이 가리킨 화면. 정체 검색이 빈손인
+      // 핀의 마지막 길이 이 기록이다. 실패는 조용하다(지도는 판정이 아니다).
+      if (screenRoutes !== undefined && screenRoutes.length > 0) {
+        const head = await workspaces.repo.headCommitFiles().catch(() => null);
+        if (head !== null && head.files.length > 0) {
+          await appendScreenMap(workspaces.paths.root, {
+            at: new Date().toISOString(),
+            sha: head.sha,
+            routes: screenRoutes,
+            files: head.files,
+          }).catch(() => undefined);
+        }
+      }
     } catch {
       // 진행 중 거절(사람의 제출이 먼저 움직인 것)과 실패 모두 조용하다:
       // DiffStatus 와 브리프가 이미 말한다.
@@ -984,18 +1018,4 @@ export class ProjectFleet {
       { key: `//${registry.host}/:_authToken`, value: pat },
     ]);
   }
-}
-
-/**
- * 자동 저장의 커밋 제목 ① — 그 턴을 연 말의 첫 줄. 기계 턴의 마커(`<!-- … -->`)
- * 줄은 제목이 아니므로 건너뛴다: 그 다음 줄이 브리프의 첫 문장이고, 그것이
- * 이 변경의 가장 정직한 한 줄이다. 80자에서 자른다(계획서 P2-1). 빈 객체는
- * "말이 없다" — runSave 의 폴백(② machineMemo → ③ 기본 문구)이 이어받는다.
- */
-function turnSubjectOf(text: string | null): { message: string } | Record<string, never> {
-  const line = (text ?? "")
-    .split(/\r?\n/)
-    .map((row) => row.trim())
-    .find((row) => row !== "" && !row.startsWith("<!--"));
-  return line ? { message: line.slice(0, 80) } : {};
 }

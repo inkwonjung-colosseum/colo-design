@@ -191,8 +191,6 @@ export interface DaemonStatus {
     /** 이 드라이버가 기계 잔일(저장 메모 · 넘기기 초안)의 단답 턴을 맡을 수
      *  있다 — machine-provider 의 후보. 없으면 설정의 담당 행에 나오지 않는다. */
     oneShot?: boolean;
-    modes: Array<{ id: string; label: string; tier: string }>;
-    defaultModeId: string;
     capabilities: Record<string, unknown>;
   }>;
   /** 설정창의 저장 메모 담당 — 계획자가 고른 값. null(또는 없음) = 자동(기본). */
@@ -227,10 +225,14 @@ export type OnboardingStepId = "claude" | "git" | "runtime" | "github";
 export type OnboardingStatus = "pass" | "warn" | "fail";
 export type OnboardingFixKind =
   | "install-claude"
+  | "install-codex"
   | "login-claude"
   | "install-git"
   | "install-node"
   | "install-pnpm";
+
+/** 데몬이 끝까지 지켜보는 두 설치 — 진행기와 그 방송이 함께 쓰는 종류. */
+export type AgentInstallKind = "install-claude" | "install-codex";
 
 export interface OnboardingFix {
   kind: OnboardingFixKind;

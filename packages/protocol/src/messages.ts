@@ -1,8 +1,8 @@
 import { z } from "zod";
-import type { DaemonStatus, ProjectSummary } from "./project.js";
+import type { AgentInstallKind, DaemonStatus, ProjectSummary } from "./project.js";
 import type { DiffStatus, RepoStatus } from "./repo.js";
 import type { ChatEvent } from "./session.js";
-import { effortLevelSchema, permissionModeSchema, type SessionState } from "./shared.js";
+import { effortLevelSchema, type SessionState } from "./shared.js";
 
 // ---------------------------------------------------------------------------
 // Client -> daemon
@@ -33,6 +33,8 @@ const sessionPinHintSchema = z.object({
   owners: z.array(z.string().min(1)).optional(),
   /** The repo's test id, when the element carries one. */
   testId: z.string().min(1).optional(),
+  /** The pin's screen (route id) — the observed map's key when identity search comes up empty. */
+  screen: z.string().min(1).optional(),
 });
 
 export type SessionPinHint = z.infer<typeof sessionPinHintSchema>;
@@ -110,7 +112,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     ...withId,
     type: z.literal("preview.screenCheck"),
     /**
-     * The screen the pane's error banner is holding — re-opened in the
+     * The screen a held pane error report names — re-opened in the
      * daemon's isolated verification window (게이트와 같은 드라이버·같은
      * 판정) so the pane can tell a fixed transient from a real break.
      */
@@ -207,23 +209,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     /** `null` clears the override. */
     effort: effortLevelSchema.nullable(),
-  }),
-  z.object({
-    ...withId,
-    type: z.literal("session.setPermissionMode"),
-    sessionId: z.string().min(1),
-    mode: permissionModeSchema,
-  }),
-  z.object({
-    ...withId,
-    /**
-     * The provider's own mode ids (ACP `session/set_mode` or a `mode`
-     * config option) — `session.setPermissionMode` covers only the Claude
-     * enum, so drivers with their own modes ride this message.
-     */
-    type: z.literal("session.setMode"),
-    sessionId: z.string().min(1),
-    mode: z.string().min(1),
   }),
   z.object({
     ...withId,
@@ -425,7 +410,14 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("onboarding.fix"),
-    kind: z.enum(["install-claude", "login-claude", "install-git", "install-node", "install-pnpm"]),
+    kind: z.enum([
+      "install-claude",
+      "install-codex",
+      "login-claude",
+      "install-git",
+      "install-node",
+      "install-pnpm",
+    ]),
     /**
      * 로그인 고침이 어느 에이전트의 것인지(P1-1) — 각 드라이버가 자기 로그인
      * 명령을 선언한다(loginCommand). 없으면 claude 게이트의 역사적 기본.
@@ -758,6 +750,16 @@ export type ServerMessage =
    * 이 이유로 선다(자식의 마지막 출력 줄).
    */
   | { type: "agent.login.done"; ok: boolean; detail: string }
+  /**
+   * 에이전트 설치의 진행(1단계) — 데몬이 끝까지 지켜보는 설치가 내놓은 마지막
+   * 의미 있는 줄. PATH 안내 문단은 앱이 절대 경로로 찾으므로 실리지 않는다.
+   */
+  | { type: "onboarding.install.progress"; kind: AgentInstallKind; line: string }
+  /**
+   * 설치의 끝(1단계): ok 면 클라이언트가 게이트를 다시 묻고, 아니면 detail 이
+   * 이유로 선다. 프로토콜 버전은 올리지 않는다 — 앱과 데몬이 함께 배포된다.
+   */
+  | { type: "onboarding.install.done"; kind: AgentInstallKind; ok: boolean; detail: string }
   | {
       type: "question.request";
       requestId: string;

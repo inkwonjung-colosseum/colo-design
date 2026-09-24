@@ -18,6 +18,10 @@
  *   (모든 액션 도구의 결과에 새 스냅샷)은 데몬 쪽 드라이버 계약이 담당한다.
  */
 
+// 이 진입점의 stdout 은 JSON-RPC 전용 채널이다 — 어떤 콘솔 출력보다 먼저 경계를
+// 세운다(ESM import 순서상 이 모듈의 몸통이 아래 의존성들보다 먼저 돈다).
+import "./stderr-console.js";
+
 import { createInterface } from "node:readline";
 import {
   BROWSER_TOOLS,

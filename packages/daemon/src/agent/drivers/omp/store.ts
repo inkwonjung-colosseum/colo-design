@@ -2,6 +2,7 @@ import { readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
+import { meaningfulFirstLine } from "../../../common-instructions.js";
 import type { ImportableSession } from "../../driver.js";
 
 type Wire = Record<string, any>;
@@ -172,7 +173,10 @@ async function titleOf(file: StoredFile): Promise<string> {
     return String((name as Wire).name);
   }
   const first = (await branchEntries(file)).find(isPrompt);
-  const text = first ? promptText(first).trim() : "";
+  // 첫 프롬프트가 곧 제목이다 — 다만 표식 · 공통 규칙은 기계가 싼 글자다.
+  // 그것부터 시작하는 옛 저장본이 그대로 제목이 되면 목록 전체가 같은 문구로
+  // 보인다 (베타 테스트 #1).
+  const text = first ? meaningfulFirstLine(promptText(first)) : "";
   return text ? text.slice(0, 80) : "제목 없는 대화";
 }
 

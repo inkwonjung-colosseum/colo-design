@@ -1,6 +1,5 @@
-import type { EffortLevel, PermissionMode, SessionModelInfo } from "@colo-design/protocol";
+import type { EffortLevel, SessionModelInfo } from "@colo-design/protocol";
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PERMISSION_MODE, SETTINGS_MODES } from "./chat-options";
 
 /**
  * Client-side preferences. Everything here belongs to the browser, not the
@@ -151,7 +150,6 @@ export interface ChatSettings {
    * 프로바이더로 옮겨 심는다.
    */
   disabledProviders: string[];
-  permissionMode: PermissionMode;
   /**
    * 턴이 도는 중에 온 말의 길. "queue"(기본)는 대기 줄에 세워 다음 턴에
    * 보내고, "steer"는 도는 턴에 그대로 실어 보낸다 — 길을 내주는 드라이버
@@ -252,7 +250,6 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   model: null,
   effort: null,
   disabledProviders: [],
-  permissionMode: DEFAULT_PERMISSION_MODE,
   showTools: false,
   showThinking: false,
   midturn: "queue",
@@ -386,21 +383,14 @@ function loadSessionTitles(raw: unknown): Record<string, string> {
 }
 
 /**
- * The conversation settings, restored like every other preference.
- *
- * 전부 맡기기 (`bypassPermissions`) used to be dropped on reload — a stored
- * blob outliving the reason it was turned on. It is the starting default now
- * (see DEFAULT_PERMISSION_MODE), so there is no quieter state to fall back to:
- * the stored mode comes back exactly as chosen, and the daemon's own write
- * policy still bounds what an edit may touch.
+ * The conversation settings, restored like every other preference. 확인 방식은
+ * 설정이 아니다(2026-09-23) — 모든 대화가 바로 진행으로 돌므로 저장된 값도
+ * 없다.
  */
 function loadChat(raw: unknown): ChatSettings {
   const legacy = legacyComposerDefaults();
   if (!raw || typeof raw !== "object") return { ...DEFAULT_CHAT_SETTINGS, ...legacy };
   const stored = raw as Record<string, unknown>;
-  // acceptEdits 가 메뉴로 돌아왔으므로(chat-options) 이사도 함께 물러났다:
-  // 저장된 값은 고른 그대로 돌아온다.
-  const mode = oneOf(SETTINGS_MODES, stored.permissionMode, DEFAULT_PERMISSION_MODE);
   const provider =
     typeof stored.provider === "string" && stored.provider ? stored.provider : "claude";
   const byProvider = loadByProvider(stored.byProvider);
@@ -427,7 +417,6 @@ function loadChat(raw: unknown): ChatSettings {
     disabledProviders: Array.isArray(stored.disabledProviders)
       ? [...new Set(stored.disabledProviders.filter((v): v is string => typeof v === "string"))]
       : [],
-    permissionMode: mode,
     // 기본 끔: 위의 셋과 반대로 없는 값은 꺼짐이다 — 생각 과정과 작업 과정은
     // 켜 달라고 말한 사용자에게만 보인다.
     showTools: stored.showTools === true,

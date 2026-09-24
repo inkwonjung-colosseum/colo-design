@@ -67,7 +67,12 @@ interface AgentAsk {
 }
 
 export interface Guidance {
+  /** 실패의 이름 — 개발자 채널의 알림(D4 의 한도 초과)이 읽는다. */
   title: string;
+  /**
+   * 사람이 읽는 본문. `agent` 가 있는 종류는 웹이 그리지 않는다 — 연결 레포의
+   * 실패는 AI 가 맡고, 판은 "AI 가 고치는 중" 만 말한다(2026-09-23).
+   */
   body: string;
   /** A command the planner can paste into a terminal, if one would fix this. */
   command?: string;
@@ -189,7 +194,7 @@ export function guidanceFor(kind: ErrorKind, detail: string | null): Guidance {
   }
   if (kind === "preview") {
     // 죽은 미리보기는 보통 미리보기 자리의 멈춤 카드가 답한다 — 그 카드가
-    // 자기 "AI에게 고쳐 달라고 하기" 를 그린다. 그러나 그 카드는
+    // "AI 가 화면을 다시 띄우는 중" 을 말한다. 그러나 그 카드는
     // `previewStopped` 일 때만 서고, 같은 종류가 진행 판으로 떨어지는 길이
     // 있다(P3-3 실사: 그 자리에는 누를 것이 하나도 없었다). 두 문이 하나의
     // 실패를 두고 다투는 것보다, 막다른 카드가 남는 쪽이 나쁘다.

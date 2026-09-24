@@ -141,11 +141,19 @@ export function Shell({
   // and an UNANSWERED check blocks too — the checks run real commands and
   // treating "not yet known" as "fine" flashed the whole workspace at a
   // planner who has configured nothing, then yanked it away.
-  // 예외: 프로바이더 불일치 재검사가 도는 동안에는 화면의 steps 가 지난
+  // 예외 둘: 프로바이더 불일치 재검사가 도는 동안에는 화면의 steps 가 지난
   // 프로바이더의 판정이라 그 fail 로는 막지 않는다 — 재검사의 답이 판정이다.
+  // 그리고 프로젝트가 하나 이상 있는 기계의 로그인 만료(login-claude)도 막지
+  // 않는다(3단계) — 작업 화면 상단의 "다시 로그인" 배너가 맡는 자리다. 첫
+  // 실행(프로젝트 0개)은 지금처럼 마법사가 로그인까지 안내한다.
   const onboardingBlocked = recheckingProvider
     ? false
-    : daemon.onboarding === null || daemon.onboarding.some((step) => step.status === "fail");
+    : daemon.onboarding === null ||
+      daemon.onboarding.some(
+        (step) =>
+          step.status === "fail" &&
+          !(daemon.projects.length > 0 && step.fix?.kind === "login-claude"),
+      );
   // A warn does not block. On a FIRST run it still holds the stage — the
   // machine gates are the rows a planner can still act on — and the hold is
   // live, not a latch: the moment every machine gate reads pass the wizard

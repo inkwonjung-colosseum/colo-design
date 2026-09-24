@@ -16,7 +16,7 @@ import type {
 } from "../../driver.js";
 import { runCliOneShot } from "../../one-shot-cli.js";
 import { ompModelRows } from "./catalog.js";
-import { OMP_MODE_ROWS, OmpAgentSession } from "./session.js";
+import { OmpAgentSession } from "./session.js";
 import {
   deleteAllStoredSessions,
   deleteStoredSession,
@@ -42,10 +42,6 @@ const OMP_CAPABILITIES: Capabilities = {
   effort: true,
   modelSelect: true,
   slashCommands: true,
-  // rpc 에는 계획 모드 와이어가 없다 — `/plan` 은 TUI 전용 슬래시 명령이고
-  // RpcCommand 에 대응이 없다. 고른 순간 아무 일도 없는 자세는 거짓말이므로
-  // 칩에서 내린다.
-  planMode: null,
   subtasks: false,
   // `steer` — 도는 턴에 말을 얹는 와이어. omp 는 같은 agent run 안에서
   // 소화한다(검증됨).
@@ -95,10 +91,6 @@ export class OmpDriver implements AgentDriver {
     return {
       id: this.id,
       label: "Oh My Pi",
-      modes: OMP_MODE_ROWS.map(({ id, label, tier }) => ({ id, label, tier })),
-      // 새 대화의 기본 — 사용자가 모드를 고르지 않으면 전부 맡기기로 시작한다
-      // (첫 턴이 모르는 확인 카드에 멈추지 않게).
-      defaultModeId: "bypass",
       capabilities: { ...OMP_CAPABILITIES },
     };
   }

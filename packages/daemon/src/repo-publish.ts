@@ -188,11 +188,15 @@ export class PublishCycle {
           return this.core.setDiff({ stage: "published", commit: tip, message: savedMessage });
         }
       }
-      return this.core.setDiff({
-        stage: "failed",
-        gate: "diff",
-        detail: "저장할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.",
-      });
+      // 이 실패만은 AI 에게 갈 브리프가 없다(failGate 의 게이트와 달리 사람
+      // 안내의 문제) — 배너는 리로드와 함께 사라지므로, 누른 손이 무엇에
+      // 막혔는지를 테이프의 한 줄로 남긴다(cycle.saveBlocked, 베타 테스트 B6).
+      const detail = "저장할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
+      this.deps.onCycleEvent?.(
+        { kind: "cycle.saveBlocked", at: new Date().toISOString(), detail },
+        options.sessionId,
+      );
+      return this.core.setDiff({ stage: "failed", gate: "diff", detail });
     }
 
     // 비개발자 저장: an empty memo is not a question the planner must answer
@@ -582,7 +586,11 @@ export class PublishCycle {
     // state is the guard: a handoff already staged or landed as merged does
     // not announce twice. 반려 has no tape event — the contract names only
     // `cycle.merged`; the notice and the review rows carry that story.
-    if (pull.state === "merged" && target.state !== "merged") {
+    // 폴러가 먼저 본 끝(`endedHandoff` 같은 요청·같은 끝)은 이미 테이프에
+    // 내려앉은 소식이다 — `current` 가 아직 open 모양을 들고 있어도 다시
+    // 울리면 같은 줄이 두 번 쌓인다 (베타 테스트 #5).
+    const seenEnded = ended !== null && ended.number === pull.number && ended.state === pull.state;
+    if (pull.state === "merged" && target.state !== "merged" && !seenEnded) {
       this.deps.onCycleEvent?.(
         { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
         undefined,
@@ -697,11 +705,21 @@ export class PublishCycle {
     const client = this.core.gitHubClient?.() ?? null;
     const reviews: DeveloperReview[] = [];
     if (slug && client) {
+      // 앱 자신의 목소리 — 답하기(commentOnIssue · 답글)가 남긴 코멘트까지
+      // 개발자의 말로 다시 브리프하면 되먹임이 된다. 이 토큰의 로그인과 같은
+      // 행은 세 목록에서 모두 건너뛴다 (베타 테스트 #3).
+      const me = await client
+        .whoAmI()
+        .then((answer) => (answer.ok ? answer.login : ""))
+        .catch(() => "");
+      const own = (row: Record<string, any>): boolean =>
+        me !== "" && String(row.user?.login ?? "") === me;
       const collect = async (): Promise<void> => {
         for (const row of await client.listPullComments({
           ...slug,
           number: handoff.number,
         })) {
+          if (own(row)) continue;
           reviews.push({
             id: Number(row.id),
             kind: "inline",
@@ -718,7 +736,7 @@ export class PublishCycle {
           number: handoff.number,
         })) {
           const text = String(row.body ?? "").trim();
-          if (text === "") continue;
+          if (text === "" || own(row)) continue;
           reviews.push({
             id: Number(row.id),
             kind: "review",
@@ -726,6 +744,24 @@ export class PublishCycle {
             body: text,
             pr: handoff.number,
             at: String(row.submitted_at ?? ""),
+          });
+        }
+        // 요청 본문 코멘트(`gh pr comment`)도 개발자의 말이다 — 인라인이
+        // 아니라 본문형이므로 kind 는 review 답한다: 화면에서 본문 행으로
+        // 읽히고, 답하기도 commentOnIssue 로 향한다 (베타 테스트 #3).
+        for (const row of await client.listIssueComments({
+          ...slug,
+          number: handoff.number,
+        })) {
+          const text = String(row.body ?? "").trim();
+          if (text === "" || own(row)) continue;
+          reviews.push({
+            id: Number(row.id),
+            kind: "review",
+            author: String(row.user?.login ?? ""),
+            body: text,
+            pr: handoff.number,
+            at: String(row.created_at ?? ""),
           });
         }
       };

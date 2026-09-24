@@ -1,8 +1,7 @@
 import type { ColoDesignPinEnvelope, DeveloperReview, SessionState } from "@colo-design/protocol";
-import { guidanceFor } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CallDeveloper, Fold, useFoldNotice } from "../../components";
+import { Fold, useFoldNotice } from "../../components";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
@@ -141,7 +140,7 @@ export function ScreenPanel({
   daemon: Daemon;
   onOpenSettings: (category?: SettingsCategory) => void;
   /**
-   * Forward a machine-authored turn — the error banner's 고치기, a review's
+   * Forward a machine-authored turn — a preview error's fix turn, a review's
    * 고치기, 화면 보여 주기, a failing gate's brief — into the working screen
    * thread. The panel does not know which thread that is; the shell resolves
    * it, creating one named after the ask if there is none yet. `attachments`
@@ -418,7 +417,16 @@ export function ScreenPanel({
               // (role=status 라이브 리전), 이 노트는 어디를 보라는지만 말한다.
               showCheckNote("상태가 바뀌었습니다 — 왼쪽 상태 칩을 확인해 주세요");
             } else {
-              showCheckNote("방금 확인함 · 변화 없음");
+              // 넘긴 요청이 열려 있는 동안엔 이 계정 자신(앱의 답하기 포함)이
+              // 단 코멘트를 필터한다 — 되먹임 방지의 설계다. 소식이 없는 이유를
+              // 모르면 1인 팀은 여기서 길을 잃는다(베타 테스트). 개수는 말하지
+              // 않는다: 앱의 답하기와 개발자 말이 같은 계정으로 섞여 숫자가
+              // 거짓말을 하기 때문이다.
+              showCheckNote(
+                repo?.handoff
+                  ? "방금 확인함 · 변화 없음 — 이 앱과 같은 계정이 남긴 코멘트는 읽지 않습니다"
+                  : "방금 확인함 · 변화 없음",
+              );
             }
           }
           await api.repoStatus();
@@ -724,56 +732,33 @@ export function ScreenPanel({
     sync();
   }, [connection, sync]);
 
-  /**
-   * The error banner's button: the same channel the pins use, so
-   * the shell resolves the thread — the panel never learns which one is
-   * open. the agent gets the message itself as the turn body. The same
-   * message twice in a row is marked on the card (아직 같은 오류 · N번째).
-   */
-  const forwardError = (error: PreviewError) => {
-    // 사람의 클릭은 고리에 끼었다 — 이 키의 기계 예산도 새로 산다. 다만
-    // 무한하진 않다: 예산이 다시 마르면 카드가 다시 마지막 문이 된다.
-    const key = `${error.route}|${error.kind}|${error.message}`;
-    autoFires.current.delete(key);
-    const count = lastErrorKey.current === key ? lastErrorCount.current + 1 : 1;
-    lastErrorKey.current = key;
-    lastErrorCount.current = count;
-    void onMachineTurn(errorToTurn(error, count));
-    // 클릭은 판정을 지난 말이다 — 카드를 치우는 것도 클릭의 몫이다. 눌린
-    // 보고는 보류 목록에서도 내려온다(사람이 끼었다), 다른 라우트의 살아
-    // 남은 보고는 다음 정산이 다시 심사한다.
-    retireError(errorKey(error));
-    shownError.current = null;
-    setPreviewError(null);
-  };
-
   // --- 미리보기 오류의 판정 ---------------------------------------------
+  // 연결 레포의 오류는 사람에게 올리지 않는다(2026-09-23) — 카드도, "AI에게
+  // 고쳐 달라고 하기" 단추도 없다. 보고는 전부 이 파이프를 지나 AI 의 고침
+  // 턴이 되거나, 조용히 거둬진다.
+  //
   // 오류 보고는 두 갈래로 온다. 턴이 도는 동안의 보고는 대부분 HMR 의 깨진
-  // 중간 상태다 — 카드로 승격시키지 않고 들어 두었다가, 턴이 끝나면 데몬의
+  // 중간 상태다 — 곧바로 판정하지 않고 들어 두었다가, 턴이 끝나면 데몬의
   // 검증 창(preview.screenCheck — 게이트와 같은 드라이버·같은 판정)으로 그
   // 화면을 다시 열어 본다. 깨끗하면 조용히 거둔다(이미 고쳐진 것), 살아
-  // 있으면 고침 턴을 스스로 내려놓고, 예산이 다 달랐을 때만 비로소 카드가
-  // 된다 — 사람의 클릭은 마지막 문이고, 확인 불능은 언제나 카드다.
+  // 있으면 고침 턴을 스스로 내려놓는다. 못 건 보고(예산이 말랐다 · 한 발이
+  // 이미 나가 있다 · 대화가 거절했다)는 보류로 남아 다음 정산이 다시 본다.
   // 발사가 무한하면 기계 둘이 서로 답하며 구독을 태운다(게이트의
   // `gatedSessions` 와 같은 이유다). 한 번만 발사하는 것도 답이 못 된다 —
-  // 턴 도중의 파문이 한 발을 삼키고, 진짜 재발이 사람의 클릭을 기다린다.
-  // 그래서 예산은 키별 둘이고, 회복된다: 깨끗한 판정(고침이 성공한 것 —
-  // 다음 오류는 새 오류다)·사람의 클릭(고리에 사람이 끼었다)·새 미리보기
-  // 서버(지난 시절의 오류는 전부 낡은 말이다)가 각각 새 예산을 산다.
+  // 턴 도중의 파문이 한 발을 삼킨다. 그래서 예산은 키별 둘이고, 회복된다:
+  // 깨끗한 판정(고침이 성공한 것 — 다음 오류는 새 오류다)·새 미리보기
+  // 서버(지난 시절의 오류는 전부 낡은 말이다)가 각각 새 예산을 산다. 예산이
+  // 마른 오류는 AI 가 두 번 고쳐 본 것이다 — 그 설명은 대화에 이미 있다.
   //
   // 결함 2(실사 2026-09-20): 이전 몸은 정산에서 보고 하나만 심사했다 —
-  // 턴 도중의 보고는 덮어 쓰이고, 서 있는 카드는 새 보고에 밀려났다. 그래서
-  // 한쪽 라우트의 보고는 성공 턴을 몇 번 견뎌도 해소되지 않았다. 지금은
-  // 보고를 목록으로 들고, 턴의 종착에서 보류된 전부를 같은 파이프로
-  // 심사한다. 데몬이 게이트 전체 통과의 방송을 주지 않으므로, 확인 불능으로
-  // 남은 보고에는 웹만의 해소 길을 더한다 — 성공 턴(idle) 뒤의 조용한 창
-  // (CONVERGE_WINDOW_MS)이다.
-  const [previewError, setPreviewError] = useState<PreviewError | null>(null);
-  /** 아직 거둬지지 않은 보고 전부 — 턴 도중에 들어 둔 것과 살아 남은 카드. */
+  // 턴 도중의 보고는 덮어 쓰였다. 그래서 한쪽 라우트의 보고는 성공 턴을 몇 번
+  // 견뎌도 해소되지 않았다. 지금은 보고를 목록으로 들고, 턴의 종착에서 보류된
+  // 전부를 같은 파이프로 심사한다. 데몬이 게이트 전체 통과의 방송을 주지
+  // 않으므로, 확인 불능으로 남은 보고에는 웹만의 해소 길을 더한다 — 성공
+  // 턴(idle) 뒤의 조용한 창(CONVERGE_WINDOW_MS)이다.
+  /** 아직 거둬지지 않은 보고 전부 — 턴 도중에 들어 둔 것과 못 건 것. */
   const pendingErrors = useRef<PreviewError[]>([]);
-  /** 지금 그려진 카드 — 파이프가 갱신할 때의 기준점(state 를 읽으면 늦는다). */
-  const shownError = useRef<PreviewError | null>(null);
-  /** 오류 키별로 기계가 쓴 고침 발사 수 — 카드가 마지막 문이 되는 잣대다. */
+  /** 오류 키별로 기계가 쓴 고침 발사 수 — MAX_AUTO_FIXES 가 한도다. */
   const autoFires = useRef<Map<string, number>>(new Map());
   /** 마지막 판정이 확인 불능이었던 보고의 키 — 성공 턴 뒤의 조용한 창이 거둔다. */
   const unverifiable = useRef<Set<string>>(new Set());
@@ -784,6 +769,19 @@ export function ScreenPanel({
     turnState === "running" ||
     turnState === "waiting_permission" ||
     turnState === "waiting_question";
+  /**
+   * 한 번에 한 발 — 판정은 판정 창 하나에 몇 초씩 걸리므로, 발사 직전의 진실은
+   * 판정을 시작할 때의 렌더가 아니라 지금의 것이어야 한다. 턴이 돌고 있으면
+   * 쏘지 않는다(그 턴의 종착이 보류된 전부를 다시 심사한다). `fixOut` 은 전달된
+   * 고침 턴이 아직 정산되지 않았다는 표식이다 — 상태 방송이 닿기 전의 틈에
+   * 같은 파문의 다른 보고가 두 번째 고침 턴을 싣지 않게 한다.
+   */
+  const turnLiveNow = useRef(turnLive);
+  turnLiveNow.current = turnLive;
+  const fixOut = useRef(false);
+  /** 확인 불능의 뜻은 데몬이 서버를 어떻게 보는지에 달렸다 — 판정 시점의 레포. */
+  const repoNow = useRef(repo);
+  repoNow.current = repo;
 
   const errorKey = (error: PreviewError): string => `${error.route}|${error.kind}|${error.message}`;
 
@@ -802,48 +800,32 @@ export function ScreenPanel({
     unverifiable.current.delete(key);
   };
 
-  /** 이번 판정이 끝난 뒤의 그림을 정한다. 산파(살아 남은 보고)가 있으면
-      마지막 것이 선다. 없을 때는 이번 판정이 서 있던 카드를 거뒀는지 본다 —
-      거뒀다면 남은 보고의 마지막이, 목록이 비었으면 아무것도 그려지지
-      않는다. 이번 판정과 무관한 카드는 손대지 않는다. */
-  const repaintAfter = (survivor: PreviewError | null, judgedShown: boolean): void => {
-    if (survivor) {
-      shownError.current = survivor;
-      setPreviewError(survivor);
-      return;
-    }
-    if (!judgedShown) return;
-    const last = pendingErrors.current[pendingErrors.current.length - 1] ?? null;
-    shownError.current = last;
-    setPreviewError(last);
-  };
-
   /** The verdict pipeline, serialized — together-arriving reports are
-      judged in order and the last verdict wins the paint. */
+      judged in order, and at most one of them becomes a fix turn. */
   const adjudicateAll = (reports: PreviewError[]): void => {
     verdicts.current = verdicts.current.then(async () => {
-      const shownKey = shownError.current ? errorKey(shownError.current) : null;
       // 한 정산의 발사는 하나다 — 같은 파문이 여러 라우트에서 보고됐을 때
       // 발사 수만큼 고침 턴이 늘면 기계 둘이 서로 답한다(게이트의
       // gatedSessions 와 같은 이유다). 나머지 보고는 다음 정산이 심사한다.
       let fired = false;
-      let survivor: PreviewError | null = null;
-      let judgedShown = false;
       for (const error of reports) {
         const key = errorKey(error);
         // 앞 판정(같은 파이프의 이전 통과)이 이미 거둔 보고다.
         if (!pendingErrors.current.some((e) => errorKey(e) === key)) continue;
-        if (key === shownKey) judgedShown = true;
-        const report = await api.screenCheck(error.route).catch(() => null);
+        // 웹뷰는 루트를 빈 경로("")로 보고하지만 선로는 빈 route 를 거절한다 —
+        // 그 거절이 루트 화면의 모든 오류를 확인 불능으로 만들었다(ENOENT 실사).
+        const report = await api.screenCheck(error.route || "/").catch(() => null);
         if (report === null) {
-          // 확인 불능 — 판정이 아니라 못 본 것이다. 카드가 안전한 쪽이고,
-          // 성공 턴 뒤의 조용한 창이 이 키를 거둔다.
+          // 확인 불능 — 판정이 아니라 못 본 것이다. 성공 턴 뒤의 조용한 창이
+          // 이 키를 거둔다. 콘솔 한 줄의 보고는 그것만으로 고칠 까닭이 못
+          // 된다(로드 중에 스스로 주소를 옮기는 화면도 검증 창에선 못 연 것으로
+          // 읽힌다). 멈춤(stalled)은 다르다 — 패인이 제 눈으로 못 띄운 화면을
+          // 검증 창도 못 열었다면 그것이 곧 확인이다. 다만 서버가 없는
+          // 순간(재기동 · 준비 실패)의 복구는 데몬의 몫(C5 재기동 → D4
+          // 브리프)이라 여기서 또 부르지 않는다 — 같은 사고에 AI 가 두 번 불린다.
           unverifiable.current.add(key);
-          survivor = error;
-          continue;
-        }
-        const broken = !report.settled || report.errors.length > 0;
-        if (!broken) {
+          if (!error.stalled || repoNow.current?.phase !== "ready") continue;
+        } else if (report.settled && report.errors.length === 0) {
           // 이미 고쳐졌다(혹은 일시적 파문이었다) — 조용히 거둔다. 이 화면의
           // 예산도 돌려준다: 고침이 성공을 냈으면 다음 오류는 새 오류다.
           retireError(key);
@@ -851,22 +833,22 @@ export function ScreenPanel({
             if (budget.startsWith(`${error.route}|`)) autoFires.current.delete(budget);
           }
           continue;
+        } else {
+          unverifiable.current.delete(key);
         }
-        unverifiable.current.delete(key);
         const spent = autoFires.current.get(key) ?? 0;
-        if (!fired && spent < MAX_AUTO_FIXES) {
-          const delivered = await onMachineTurn(errorToTurn(error, spent + 1));
-          if (delivered) {
-            // 고침 턴이 뛰었다 — 카드 대신 턴의 말이 간다. 예산은 전달된
-            // 발사만 쓴다: 거절은 판정의 실패가 아니라 못 건 것이다.
-            autoFires.current.set(key, spent + 1);
-            fired = true;
-            continue;
-          }
+        // 못 거는 보고는 보류로 남는다 — 다음 정산(그 턴의 종착 · 새 이동 ·
+        // 새 보고)이 다시 본다. 사람에게 올리는 문은 없다.
+        if (fired || fixOut.current || turnLiveNow.current || spent >= MAX_AUTO_FIXES) continue;
+        const delivered = await onMachineTurn(errorToTurn(error, spent + 1));
+        if (delivered) {
+          // 고침 턴이 뛰었다. 예산은 전달된 발사만 쓴다: 거절은 판정의
+          // 실패가 아니라 못 건 것이다.
+          autoFires.current.set(key, spent + 1);
+          fixOut.current = true;
+          fired = true;
         }
-        survivor = error;
       }
-      repaintAfter(survivor, judgedShown);
     });
   };
 
@@ -877,8 +859,8 @@ export function ScreenPanel({
   /** 웹만의 해소 창 — 결함 2의 후반. 성공 턴이 끝난 뒤 이 창 동안 새 보고도
       새 턴도 없으면 미리보기가 오류 없이 이어져 온 것이므로, 확인 불능으로
       남은 보고를 거둔다. 검증이 살아 있다고 확인한 보고는 거두지 않는다 —
-      카드는 살아 있는 오류의 마지막 문이어야 한다. 판정 창이 창금보다
-      오래 걸려도 해롭지 않다 — 표식은 끝난 판정에만 붙는다. */
+      그것은 다음 정산의 몫이다. 판정 창이 창금보다 오래 걸려도 해롭지
+      않다 — 표식은 끝난 판정에만 붙는다. */
   const disarmConverge = (): void => {
     if (convergeTimer.current !== null) {
       window.clearTimeout(convergeTimer.current);
@@ -890,15 +872,8 @@ export function ScreenPanel({
     if (pendingErrors.current.length === 0) return;
     convergeTimer.current = window.setTimeout(() => {
       convergeTimer.current = null;
-      const quiet = pendingErrors.current.filter((e) => unverifiable.current.has(errorKey(e)));
-      if (quiet.length === 0) return;
-      const shownKey = shownError.current ? errorKey(shownError.current) : null;
-      for (const error of quiet) retireError(errorKey(error));
-      // 그려진 카드가 거둬졌다면 남은 보고의 마지막이, 없으면 조용함이 선다.
-      if (shownKey !== null && quiet.some((e) => errorKey(e) === shownKey)) {
-        const last = pendingErrors.current[pendingErrors.current.length - 1] ?? null;
-        shownError.current = last;
-        setPreviewError(last);
+      for (const error of pendingErrors.current) {
+        if (unverifiable.current.has(errorKey(error))) retireError(errorKey(error));
       }
     }, CONVERGE_WINDOW_MS);
   };
@@ -908,6 +883,7 @@ export function ScreenPanel({
     kind: "runtime" | "build";
     message: string;
     route: string;
+    stalled?: true;
   }) => {
     const reported: PreviewError = {
       ...payload,
@@ -918,20 +894,23 @@ export function ScreenPanel({
     disarmConverge();
     holdError(reported);
     if (turnLive) return;
+    // 예산이 마른 오류의 재보고(렌더마다 같은 콘솔 오류)는 판정 창을 또 열
+    // 까닭이 없다 — 다음 턴의 종착이 목록째 다시 본다.
+    if ((autoFires.current.get(errorKey(reported)) ?? 0) >= MAX_AUTO_FIXES) return;
     adjudicate(reported);
   };
 
   // 턴의 종착이 곧 판정의 자리다(결함 2): 들어 둔 보고(이번 턴의 HMR 파문)와
-  // 살아 남은 카드(예전 턴이 남긴 것, 다른 라우트의 것 포함)를 전부 같은
-  // 파이프로 내려보낸다 — 화면이 깨끗하게 수렴했으면 카드는 저절로 사라진다.
-  // 이전 몸은 이 자리에서 보고 하나만 심사했으므로 다른 라우트의 보고가
-  // 성공 턴 뒤에도 남았다. 성공 턴(idle)의 뒤에는 조용한 창까지 연다 —
-  // 확인 불능으로 남은 보고의 해소 길이다.
+  // 못 건 채 남은 보고(예전 턴이 남긴 것, 다른 라우트의 것 포함)를 전부 같은
+  // 파이프로 내려보낸다 — 화면이 깨끗하게 수렴했으면 목록은 저절로 빈다.
+  // 나가 있던 고침 턴도 여기서 정산된다(fixOut). 성공 턴(idle)의 뒤에는
+  // 조용한 창까지 연다 — 확인 불능으로 남은 보고의 해소 길이다.
   useEffect(() => {
     if (turnLive) {
       disarmConverge();
       return;
     }
+    fixOut.current = false;
     const queue = [...pendingErrors.current];
     if (queue.length > 0) adjudicateAll(queue);
     if (turnState === "idle") armConverge();
@@ -942,26 +921,27 @@ export function ScreenPanel({
   // 창의 뒷정리 — 프로젝트를 떠나는 창이 타이머를 남기지 않게 한다.
   useEffect(() => disarmConverge, []);
 
-  // 서버가 새로 떠오르면(미리보기 주소가 바뀌면) 지난 시절의 오류는 전부
-  // 낡은 말이다 — PreviewHost 가 url 로 지우던 규약이 판정자와 함께 패널로
-  // 옮겨 온 것뿐이다. 핫 리로드는 여전히 보고된 오류를 지우지 못한다.
-  // 발사 예산도 서버와 함께 새로 산다.
+  // 서버가 새로 떠오르면 지난 시절의 오류는 전부 낡은 말이다. 주소만 보면
+  // 같은 포트로 다시 뜬 서버(C5 재기동)를 놓친다 — 죽은 서버 시절의 보고가
+  // 새 서버 위에 남았다(실사 2026-09-23, ENOENT). 서버마다 새 번호인 에포크가
+  // 진실이다. 핫 리로드는 여전히 보고된 오류를 지우지 못한다. 발사 예산도
+  // 서버와 함께 새로 산다.
   useEffect(() => {
     disarmConverge();
     pendingErrors.current = [];
     unverifiable.current.clear();
     autoFires.current.clear();
-    shownError.current = null;
-    setPreviewError(null);
-  }, [repo?.previewUrl]);
+  }, [repo?.previewUrl, repo?.previewEpoch]);
 
-  // 서다 있는 카드와 새 이동 — 화면이 다시 열렸다는 것은 새 증거다. 확인
-  // 불능으로 서 있던 카드는 서버가 돌아오면 이 판정에서 스스로 걷히고,
-  // 아직 살아 있는 오류는 남은 예산만큼 기계가 다시 달려든다. 턴이 도는
-  // 동안에는 판정하지 않는다 — 그 보고는 턴의 종착이 심사한다.
+  // 새 이동 — 화면이 다시 열렸다는 것은 새 증거다. 보류된 보고 중 마지막 것을
+  // 다시 본다(판정 창 하나의 값): 서버가 돌아왔으면 스스로 걷히고, 아직 살아
+  // 있으면 남은 예산만큼 기계가 다시 달려든다. 예산이 마른 보고는 턴의 종착에
+  // 맡긴다. 턴이 도는 동안에는 판정하지 않는다 — 그 보고는 턴의 종착이 심사한다.
   useEffect(() => {
-    if (turnLive || !previewError) return;
-    adjudicate(previewError);
+    if (turnLive) return;
+    const newest = pendingErrors.current[pendingErrors.current.length - 1];
+    if (!newest || (autoFires.current.get(errorKey(newest)) ?? 0) >= MAX_AUTO_FIXES) return;
+    adjudicate(newest);
     // verdicts·adjudicate 는 겉모습일 뿐이다 — location 이 새 증거다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
@@ -976,8 +956,6 @@ export function ScreenPanel({
   const lookKey = useRef<string | null>(null);
   const lookCount = useRef(0);
   const lookSentThisTurn = useRef(false);
-  const lastErrorKey = useRef<string | null>(null);
-  const lastErrorCount = useRef(0);
   useEffect(() => {
     // The 연타 mark lives for ONE turn: armed when a look goes up, cleared
     // when the turn settles. (Arming happens in sendLook; clearing here on
@@ -1079,6 +1057,9 @@ export function ScreenPanel({
     phase === "pulling" ||
     phase === "installing" ||
     phase === "starting";
+  // 준비 실패는 데몬(D4)이 이미 AI 에게 넘겼다 — 그 대화가 지금 도는지가 진행
+  // 판의 한 줄(고치는 중 / 맡겼다)을 가른다.
+  const aiWorking = projects.find((project) => project.slug === activeSlug)?.working === true;
   // Progress renders inside this column, not over the whole planner: the rail
   // and the chat stay usable while the clone runs.
   if (showProgress) {
@@ -1089,6 +1070,7 @@ export function ScreenPanel({
           detail={repo?.detail ?? null}
           errorKind={errorKind}
           connectionLost={connectionLost}
+          aiWorking={aiWorking}
           onRetry={sync}
           onApproveCommands={
             activeSlug
@@ -1097,13 +1079,6 @@ export function ScreenPanel({
                     .projectUpdate(activeSlug, { approveCommands: true })
                     .catch(() => undefined)
               : undefined
-          }
-          callDeveloper={
-            <CallDeveloper
-              daemon={daemon}
-              what={`화면 준비가 멈췄습니다 — ${guidanceFor(errorKind, repo?.detail ?? null).title}`}
-              detail={repo?.detail ?? null}
-            />
           }
           onOpenSettings={onOpenSettings}
         />
@@ -1446,6 +1421,7 @@ export function ScreenPanel({
               detail={repo?.detail ?? null}
               errorKind={errorKind}
               connectionLost={connectionLost}
+              aiWorking={aiWorking}
               onRetry={sync}
               onApproveCommands={
                 activeSlug
@@ -1454,13 +1430,6 @@ export function ScreenPanel({
                         .projectUpdate(activeSlug, { approveCommands: true })
                         .catch(() => undefined)
                   : undefined
-              }
-              callDeveloper={
-                <CallDeveloper
-                  daemon={daemon}
-                  what={`화면 준비가 멈췄습니다 — ${guidanceFor(errorKind, repo?.detail ?? null).title}`}
-                  detail={repo?.detail ?? null}
-                />
               }
               onOpenSettings={onOpenSettings}
             />
@@ -1472,9 +1441,7 @@ export function ScreenPanel({
               stoppedDetail={repo?.detail ?? null}
               onPin={onPin}
               onPinFocus={onPinFocus}
-              onFixError={forwardError}
               onPreviewError={handlePreviewError}
-              error={previewError}
               target={target}
               sync={pinsFrame}
               onNavigate={setTarget}

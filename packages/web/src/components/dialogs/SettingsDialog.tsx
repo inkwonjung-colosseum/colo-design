@@ -1,14 +1,8 @@
-import type { DaemonStatus, EffortLevel, PermissionMode } from "@colo-design/protocol";
+import type { DaemonStatus, EffortLevel } from "@colo-design/protocol";
 import { RELEASES_REPO, type UpdateCheckResult } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
 import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
-import {
-  EFFORT_LABEL,
-  MODE_LABEL,
-  modelOptions,
-  modelRowOf,
-  SETTINGS_MODES,
-} from "../../lib/chat-options";
+import { EFFORT_LABEL, modelOptions, modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { requestInvitePicker } from "../../lib/invite-bus";
 import {
@@ -188,7 +182,7 @@ const CATEGORY_KEYWORDS: Record<CategoryId, string> = {
   behavior: "동작 보내기 키 Enter 링크 열기",
   notice: "알림 소리 배지 완료 확인 요청 데스크톱 notification",
   connection: "연결 깃허브 github 토큰 레포 주소 저장 위치 계정 token repo url",
-  troubleshoot: "문제 해결 재시작 로그 업데이트 업그레이드 초기화 복구 다시",
+  troubleshoot: "문제 해결 재시작 로그 업데이트 업그레이드 초기화 복구 폴더 열기 다시",
 };
 
 /** 개발자의 방 — 첫 화면에는 `개발자용` 접힘 뒤로. 지우는 것이 아니라 치우는
@@ -622,11 +616,13 @@ export function SettingsDialog({
     started: boolean;
     guidance: string;
   } | null>(null);
-  /** 고침은 claude 만이 두는 길이다 — fix 종류(install-claude·login-claude)가
-      그 둘뿐이고, 나머지 에이전트의 설치·로그인 안내는 드라이버의 reason 줄이
-      말한다. 끝나면 다시 검사해 status 를 끌어당긴다 — 행이 스스로
-      준비됨으로 바뀌어야 버튼이 성공한 걸 읽을 수 있다. */
-  const runProviderFix = async (id: string, kind: "install-claude" | "login-claude") => {
+  /** 고침은 claude 만이 두는 길이었다 — 이제 codex 의 설치도 함께 간다(3단계:
+      install-claude · install-codex · login-claude). 끝나면 다시 검사해 status 를
+      끌어당긴다 — 행이 스스로 준비됨으로 바뀌어야 버튼이 성공한 걸 읽을 수 있다. */
+  const runProviderFix = async (
+    id: string,
+    kind: "install-claude" | "install-codex" | "login-claude",
+  ) => {
     setFixBusy(id);
     setFixNotice(null);
     try {
@@ -920,12 +916,7 @@ export function SettingsDialog({
         .filter(Boolean)
         .join(" · ");
     })(),
-    chat: [
-      MODE_LABEL[settings.chat.permissionMode],
-      settings.chat.midturn === "steer" ? "바로 실어 보내기" : null,
-    ]
-      .filter(Boolean)
-      .join(" · "),
+    chat: settings.chat.midturn === "steer" ? "바로 실어 보내기" : null,
     behavior: SEND_SHORT[settings.sendKey],
     notice: `${NOTICE_DONE_LABEL[settings.notifications.done]} · 소리 ${settings.notifications.sound ? "켬" : "끔"}`,
     connection: (() => {
@@ -1104,20 +1095,27 @@ export function SettingsDialog({
             <span className="switch__knob" />
           </span>
         </span>
-        {/* 막힌 claude 행의 다음 걸음 — 설치·로그인의
-            fix 종류가 claude 의 것뿐이라 claude 만이
-            버튼을 두고, 나머지 에이전트는 reason 줄이
-            안내한다. 누름의 답은 행 아래의 안내 한 줄. */}
-        {p.id === "claude" && !p.available && (
+        {/* 막힌 행의 다음 걸음 — 설치는 claude · codex 가, 로그인은 claude 가
+            길을 가진다(3단계: codex 설치도 이 버튼으로). 데몬의 설치 진행기가
+            도는 동안에는 버튼 대신 진행 한 줄, 실패는 installDone.detail 로. */}
+        {!p.available && (p.id === "claude" || p.id === "codex") && (
           <div className="providerlist__fix">
-            <button
-              type="button"
-              className="primary"
-              disabled={fixBusy === p.id}
-              onClick={() => void runProviderFix(p.id, "install-claude")}
-            >
-              {fixBusy === p.id ? "실행 중…" : "설치하기"}
-            </button>
+            {daemon.install?.kind === (p.id === "codex" ? "install-codex" : "install-claude") ? (
+              <p className="providerlist__fixnote" role="status">
+                설치하는 중… {daemon.install.line}
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="primary"
+                disabled={fixBusy === p.id}
+                onClick={() =>
+                  void runProviderFix(p.id, p.id === "codex" ? "install-codex" : "install-claude")
+                }
+              >
+                {fixBusy === p.id ? "실행 중…" : "설치하기"}
+              </button>
+            )}
           </div>
         )}
         {p.id === "claude" && p.available && p.loggedIn === false && (
@@ -1316,37 +1314,12 @@ export function SettingsDialog({
               </>
             )}
 
-            {/* Where the three composer chips went. A planner
+            {/* Where the composer chips went. A planner
       describing a screen should not be choosing a model to do it with;
-      the choice is real, so it is kept, but it is kept here. */}
+      the choice is real, so it is kept, but it is kept here. 확인 방식은
+      방이 아니라 아예 없다 — 모든 대화가 바로 진행으로 돈다. */}
             {category.id === "chat" && (
               <>
-                <Choice<PermissionMode>
-                  label="확인 방식"
-                  hint="AI가 화면을 바꾸기 전에 물어볼지 정합니다 — 화면 파일 편집은 확인 방식과 관계없이 자동으로 적용되고, 명령 실행만 물어봅니다"
-                  value={settings.chat.permissionMode}
-                  options={SETTINGS_MODES.map((mode) => ({
-                    value: mode,
-                    label: MODE_LABEL[mode],
-                  }))}
-                  onChange={(permissionMode) => onChatChange({ permissionMode })}
-                />
-                {settings.chat.permissionMode === "acceptEdits" && (
-                  <div className="notice notice--warn" aria-live="polite">
-                    <span className="notice__text">
-                      `화면 수정은 바로`는 화면 파일 편집뿐 아니라 CLI가 안전하다고 본 명령까지 묻지
-                      않고 실행합니다. 편집만 조용하면 되면 `실행 전에 물어보기`를 고르세요.
-                    </span>
-                  </div>
-                )}
-                {settings.chat.permissionMode === "bypassPermissions" && (
-                  <div className="notice notice--warn" aria-live="polite">
-                    <span className="notice__text">
-                      `바로 진행`은 확인 카드 없이 진행합니다. 자리를 비운 사이에도 화면 파일이 바뀔
-                      수 있으니, 물어볼 필요가 있으면 확인 방식을 `실행 전에 물어보기`로 바꾸세요.
-                    </span>
-                  </div>
-                )}
                 {/* 턴 도중 보내기: 도는 턴에 온 말의 길. 기본은
       대기 줄 — 이 도구의 오래된 약속이다. 바로 실어 보내기는
       codex 의 turn/steer 로 도는 턴에 그대로 실리고, 와이어가 없는

@@ -8,8 +8,8 @@
  * 주소창에 절대 쓰지 않는다), 미리 보기에는 가린 값만 그린다. 보내기 길(메일
  * 초안 · OS 공유 시트)도 파일을 브라우저 밖 서버가 아니라 로컬 앱에 건넨다.
  */
-// ?v=4 — Pages 캐시가 옛 invite-format.mjs를 주지 않게 한다.
-import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=4";
+// ?v=6 — Pages 캐시가 옛 invite-format.mjs를 주지 않게 한다.
+import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=6";
 
 const form = document.getElementById("invite-form");
 const download = document.getElementById("invite-download");
@@ -29,6 +29,9 @@ const chosenCount = document.getElementById("chosen-count");
 const manualUrl = document.getElementById("manual-url");
 const manualAdd = document.getElementById("manual-add");
 const authorStatus = document.getElementById("author-status");
+const guideLines = document.getElementById("guide-lines");
+const guideCopy = document.getElementById("guide-copy");
+const guideOsButtons = [...document.querySelectorAll(".iguide__osbtn")];
 
 /**
  * GitHub API 의 주소 — 기본은 진짜. 127.0.0.1 · localhost 에서 열린 페이지만
@@ -106,22 +109,83 @@ function inviteFile(envelope, name) {
   });
 }
 
-/** 메일 앱에 여는 초안 — 첨부는 브라우저가 못 하니 본문이 그 자리를 안내한다. */
+/** 메일 앱에 여는 초안 — 첨부는 브라우저가 못 하니 본문이 그 자리를 안내한다.
+ *  세 줄은 안내문 블록과 같은 것(4단계) — 고른 OS 만 담는다. */
 function mailtoHref(values) {
   const subject = `[Colo Design] ${values.authorName ?? values.projects[0].name} 초대 파일`;
   const body = [
-    `${values.authorName ?? ""} ${values.projects[0].name} 외 ${values.projects.length}개 프로젝트 작업을 위한 Colo Design 초대 파일을 보냅니다.`.trim(),
+    // "외" 뒤에는 나머지 수(전체 − 1)가 온다 — 1개면 "외" 없이.
+    `${values.authorName ?? ""} ${values.projects[0].name}${
+      values.projects.length > 1 ? ` 외 ${values.projects.length - 1}개 프로젝트` : ""
+    } 작업을 위한 Colo Design 초대 파일을 보냅니다.`.trim(),
     "",
     ...values.projects.map((project) => `- ${project.name} (${project.repoUrl})`),
     "",
-    "1. 첨부한 .colo-invite 파일을 내려받습니다.",
-    "2. Colo Design 시작 화면에 파일을 끌어다 놓습니다.",
-    "3. 가져오기가 끝나면 파일을 지워 주세요 — 연결 코드가 들어 있습니다.",
+    ...guideLinesFor(guideOs),
+    "",
+    "가져오기가 끝나면 초대 파일을 지워 주세요 — 연결 코드가 들어 있습니다.",
     "",
     "※ 이 메일에는 파일이 첨부되지 않았습니다 — 내려받은 초대 파일을 첨부해 보내세요.",
   ].join("\n");
   return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+
+// ---------------------------------------------------------------------------
+// 사용자에게 보낼 안내문(4단계) — 고른 OS 에 맞춘 세 줄. 개발자가 메일에
+// 붙여 넣는 문장이라 비밀은 하나도 없다: 앱 내려받기 링크와 절차만 실린다.
+// ---------------------------------------------------------------------------
+
+const GUIDE_INSTALL_LINE = {
+  mac: "설치: https://github.com/inkwonjung-colosseum/colo-design/releases/latest 에서 colo-design-…-mac-arm64.dmg 를 내려받아 설치하세요. 처음 열 때 막히면 시스템 설정 → 개인정보 보호 및 보안에서 확인 없이 열기를 눌러 주세요.",
+  win: '설치: https://github.com/inkwonjung-colosseum/colo-design/releases/latest 에서 colo-design-Setup-…-win-x64.exe 를 내려받아 설치하세요. 처음 실행할 때 한 번만 "추가 정보" → "실행" 을 눌러 주세요.',
+};
+const GUIDE_COMMON_LINES = [
+  '앱이 필요한 것을 스스로 설치합니다. "Claude Code 로그인" 을 누르고 브라우저에서 본인 계정으로 로그인만 하면 됩니다.',
+  "준비가 끝나면 함께 보낸 초대 파일을 앱 창에 끌어다 놓으세요. 그다음부터는 앱을 켜면 바로 작업 화면이 열립니다.",
+];
+/** 고른 OS 의 세 줄 — 메일 초안과 복사 버튼이 같은 것을 쓴다. */
+const guideLinesFor = (os) => [GUIDE_INSTALL_LINE[os], ...GUIDE_COMMON_LINES];
+
+// 기본은 페이지를 연 개발자의 OS — 받는 사람이 아니라 보내는 쪽의 기계다.
+let guideOs = navigator.userAgent.includes("Win") ? "win" : "mac";
+
+function renderGuide() {
+  guideLines.replaceChildren(
+    ...guideLinesFor(guideOs).map((line) => {
+      const item = document.createElement("li");
+      item.textContent = line;
+      return item;
+    }),
+  );
+  for (const button of guideOsButtons) {
+    const on = button.dataset.os === guideOs;
+    button.classList.toggle("iguide__osbtn--on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+
+for (const button of guideOsButtons) {
+  button.addEventListener("click", () => {
+    guideOs = button.dataset.os;
+    renderGuide();
+    // 메일 초안의 세 줄도 고른 OS 로 다시 만들어 둔다 — 다음에 열리는 초안부터.
+    if (!mailto.hidden) mailto.href = mailtoHref(buildValues());
+  });
+}
+
+guideCopy.addEventListener("click", () => {
+  void navigator.clipboard
+    .writeText(guideLinesFor(guideOs).join("\n"))
+    .then(() => {
+      guideCopy.textContent = "복사했어요";
+      window.setTimeout(() => {
+        guideCopy.textContent = "안내문 복사";
+      }, 2500);
+    })
+    .catch(() => undefined);
+});
+
+renderGuide();
 
 /** OS 공유 시트가 이 파일을 받을 수 있는지 — 지원이 없으면 버튼이 아예 안 선다. */
 function canShare(file) {

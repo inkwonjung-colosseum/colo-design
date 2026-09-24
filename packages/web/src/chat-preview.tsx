@@ -5,7 +5,7 @@
  * dist freely.
  */
 
-import type { EffortLevel, LostSend, PermissionMode } from "@colo-design/protocol";
+import type { EffortLevel, LostSend } from "@colo-design/protocol";
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PermissionCard, QuestionCard, Transcript, WorkStrip } from "./components";
@@ -297,12 +297,11 @@ function PlannerShell({
 }) {
   const [provider, setProvider] = useState("claude");
   // 칩의 고르기 걸음을 하니스 안에서도 진짜처럼 — 고른 값이 selector 로
-  // 되돌아와야 메뉴의 연결 걸음(모델 → 생각 → 확인)과 칩 요약이 검증된다.
+  // 되돌아와야 메뉴의 연결 걸음(모델 → 생각)과 칩 요약이 검증된다.
   const [pick, setPick] = useState<{
     model: string | null;
     effort: EffortLevel | null;
-    permissionMode: PermissionMode;
-  }>({ model: "opus", effort: "high", permissionMode: "bypassPermissions" });
+  }>({ model: "opus", effort: "high" });
   // 실제 ChatColumn 과 같은 등록 패턴 — 컴포저의 restore 손을 빌려
   // 테이프의 고쳐서 다시 보내기를 살린다.
   const resendRef = useRef<((text: string) => void) | null>(null);
@@ -435,7 +434,6 @@ function PlannerShell({
           provider,
           model: pick.model,
           effort: pick.effort,
-          permissionMode: pick.permissionMode,
           fastMode: false,
           fastModeBlocked: null,
           models: [
@@ -473,8 +471,6 @@ function PlannerShell({
             id: "claude",
             label: "Claude",
             available: true,
-            modes: [],
-            defaultModeId: "bypassPermissions",
             capabilities: {},
           },
           {
@@ -482,16 +478,12 @@ function PlannerShell({
             label: "Codex",
             available: false,
             reason: "Codex CLI 를 찾지 못했습니다 — 설치한 뒤 다시 확인해 주세요.",
-            modes: [],
-            defaultModeId: "bypass",
             capabilities: {},
           },
           {
             id: "omp",
             label: "omp",
             available: true,
-            modes: [],
-            defaultModeId: "bypass",
             capabilities: {},
           },
         ]}
@@ -505,7 +497,6 @@ function PlannerShell({
         commands={[]}
         onSetModel={(model) => setPick((prev) => ({ ...prev, model }))}
         onSetEffort={(effort) => setPick((prev) => ({ ...prev, effort }))}
-        onSetPermissionMode={(permissionMode) => setPick((prev) => ({ ...prev, permissionMode }))}
         onSend={() => undefined}
         onInterrupt={() => undefined}
         onFindFiles={async () => ["src/screens/MemberList.screen.tsx", "src/screens/"]}
@@ -614,7 +605,6 @@ function Preview() {
                   selector={{
                     model: null,
                     effort: null,
-                    permissionMode: "acceptEdits",
                     fastMode: true,
                     fastModeBlocked: null,
                     models: [],
@@ -622,7 +612,6 @@ function Preview() {
                   commands={[]}
                   onSetModel={() => undefined}
                   onSetEffort={() => undefined}
-                  onSetPermissionMode={() => undefined}
                   onSend={() => undefined}
                   onInterrupt={() => undefined}
                   onFindFiles={async () => []}

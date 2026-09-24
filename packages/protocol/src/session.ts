@@ -1,5 +1,5 @@
 import type { DeveloperReview } from "./repo.js";
-import type { EffortLevel, PermissionMode, SessionState } from "./shared.js";
+import type { EffortLevel, SessionState } from "./shared.js";
 
 // ---------------------------------------------------------------------------
 // Normalized chat events (daemon translates SDKMessage into these)
@@ -54,8 +54,6 @@ export type ChatEvent =
       cwd: string;
       tools: string[];
       apiKeySource: string;
-      /** Slash commands and agents available, for UI affordances. */
-      permissionMode: string;
     }
   | {
       kind: "text.delta";
@@ -230,11 +228,11 @@ export type ChatEvent =
   | { kind: "ratelimit"; status: string; resetsAt: number | null }
   /**
    * 사이클 사건의 기록 (hero-synthesis D1): 저장 · 넘김 · 반영 · 개발자 코멘트
-   * 도착이 세션 테이프에 영구로 남는다 — 지금까지 `diffStatus`·`devReviews`
-   * 는 창의 휘발 상태라 리로드하면 대화에서 사라졌다. `foldEvent` 는 이 네
-   * 종류를 블록으로 접는다(기록이므로). 발송은 기존 호출의 부수효과 —
-   * `api.save`/`api.handoff` 가 받은 `sessionId` 로, 없으면 마지막 활성
-   * 세션으로 귀속된다.
+   * 도착이, 그리고 저장할 것이 없어 멈춘 제출이 세션 테이프에 영구로 남는다 —
+   * 지금까지 `diffStatus`·`devReviews` 는 창의 휘발 상태라 리로드하면 대화에서
+   * 사라졌다. `foldEvent` 는 이 종류들을 블록으로 접는다(기록이므로). 발송은
+   * 기존 호출의 부수효과 — `api.save`/`api.handoff` 가 받은 `sessionId` 로,
+   * 없으면 마지막 활성 세션으로 귀속된다.
    */
   | {
       kind: "cycle.saved";
@@ -243,6 +241,13 @@ export type ChatEvent =
       message: string;
       files: string[];
     }
+  /**
+   * 제출이 저장 게이트(diff)에서 멈춘 사실 — 다른 게이트(commit · push · pr)와
+   * 달리 이 실패에는 AI 에게 갈 브리프가 없다(사람 안내의 문제다). 배너만으로는
+   * 리로드와 함께 사라져, 누른 손이 무엇에 막혔는지 기록에 남지 않았다(베타
+   * 테스트 B6). 테이프의 한 줄로 남아 연대기의 일부가 된다.
+   */
+  | { kind: "cycle.saveBlocked"; at: string; detail: string }
   | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string }
   | { kind: "cycle.merged"; at: string; pr: number }
   | { kind: "review.arrived"; reviews: DeveloperReview[] };
@@ -357,19 +362,11 @@ export interface SessionModelInfo {
   supportsFastMode: boolean;
 }
 
-/** What the composer's model·노력·권한 chips show and switch, per session. */
+/** What the composer's model·노력 chips show and switch, per session. */
 export interface SessionSelectors {
   /** Currently pinned model, or the CLI's own choice when never pinned. */
   model: string | null;
   effort: EffortLevel | null;
-  /**
-   * The Claude permission enum, and ONLY ever one of its five words. A
-   * session running a provider's own mode (ACP `build`, codex `bypass`)
-   * reports `default` here and names its real mode in `mode` — the daemon
-   * used to cast the driver's id into this field, so a chip reading it as
-   * an enum key rendered nothing (감사 2026-09-19 C5). Read `mode` first.
-   */
-  permissionMode: PermissionMode;
   /**
    * 빠르게가 지금 켜져 있는지. CLI 가 말해 준 상태이지 우리가 보낸 요청이
    * 아니다 — 요금제·모델·쿨다운 때문에 켜 달라는 부탁이 거절될 수 있고,
@@ -384,21 +381,6 @@ export interface SessionSelectors {
   models: SessionModelInfo[];
   /** Which provider this session runs on — the chips read it to pick their vocabulary. */
   provider?: string;
-  /**
-   * The provider's own mode rows (ACP agents name their own modes). When
-   * present the mode chip lists these instead of the Claude enum, and
-   * `mode` holds the current row's id. `tier` is the descriptor's danger
-   * classification — the chip's shield glyph reads it.
-   */
-  modes?: Array<{ id: string; label: string; description?: string; tier?: string }>;
-  /**
-   * The current provider-mode id — the one truth about what mode this
-   * session runs in, always present. Equals `permissionMode` for Claude;
-   * for everyone else it is the driver's own word and `permissionMode`
-   * falls back to `default`. (Optional on the wire only because a daemon
-   * older than this field may omit it.)
-   */
-  mode?: string;
 }
 
 /** One row of the composer's /command palette. */
