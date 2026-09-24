@@ -412,8 +412,11 @@ export function Sidebar({
       else if (project) beginRename(project);
       event.preventDefault();
     } else if (event.key === "Delete" && !threadId) {
+      // 지우기는 메뉴와 같은 규칙을 따른다(PLAN 단계 0): 실사용 판에는 길이
+      // 없어야 한다 — 제출 안 한 작업까지 지우는 Delete 가 누구에게나 열려
+      // 있으면 한 번의 키로 되돌릴 수 없는 일이 생긴다.
       const project = projects.find((entry) => entry.slug === slug);
-      if (project) setRemoving(project);
+      if (project && canRemoveProject) setRemoving(project);
       event.preventDefault();
     } else if ((event.key === "ArrowRight" || event.key === "ArrowLeft") && !threadId) {
       // The tree's own verbs: a project row folds and unfolds from the
