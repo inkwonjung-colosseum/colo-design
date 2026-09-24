@@ -945,9 +945,24 @@ export function useSessions(
       provider === chat.provider
         ? { model: chat.model, effort: chat.effort }
         : (chat.byProvider?.[provider] ?? { model: null, effort: null });
+    // 초대 v4(PLAN 단계 5): 사용자가 이 공급자의 모델·생각 시간을 고른 적이
+    // 없을 때만 프로젝트의 처음 값이 씨앗이 된다 — 고른 값이 있으면 그것이
+    // 이기고, defaults.provider 가 다른 공급자를 겨누면 여기서는 아무 일도
+    // 하지 않는다(데몬의 session.create 도 같은 규칙으로 채운다).
+    const projectDefaults = daemon.status?.projects.find(
+      (project) => project.slug === daemon.status?.activeProject,
+    )?.defaults;
+    const defaultsFit =
+      projectDefaults !== undefined &&
+      (!projectDefaults.provider || projectDefaults.provider === provider);
     if (pick.model == null) {
       if (seededModelFor.current === provider) return;
-      const row = modelRowOf(models, selector?.model ?? null) ?? models[0];
+      const row =
+        (defaultsFit && projectDefaults.model
+          ? modelRowOf(models, projectDefaults.model)
+          : undefined) ??
+        modelRowOf(models, selector?.model ?? null) ??
+        models[0];
       if (!row) return;
       seededModelFor.current = provider;
       void switchModel(row.value);
@@ -957,7 +972,10 @@ export function useSessions(
       if (seededEffortFor.current === provider) return;
       const row = modelRowOf(models, pick.model);
       const levels = row?.supportedEffortLevels ?? [];
-      const level = levels[Math.floor(levels.length / 2)];
+      const level =
+        defaultsFit && projectDefaults.effort && levels.includes(projectDefaults.effort)
+          ? projectDefaults.effort
+          : levels[Math.floor(levels.length / 2)];
       if (!row?.supportsEffort || !level) return;
       seededEffortFor.current = provider;
       void switchEffort(level);

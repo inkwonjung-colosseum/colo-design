@@ -1,5 +1,6 @@
 import {
   type InviteRow,
+  inviteUpdatePatch,
   type NormalizedInvite,
   normalizeInvite,
   readInviteJson,
@@ -102,7 +103,16 @@ export async function applyInvite(
     return { tokenError: errorText(e), results, reachWarnings };
   }
 
-  // 2) 이 작업에 적을 이름 — 저장에 실패해도 연결을 막지 않는다(이름은 부속이다).
+  // 초대 v4(PLAN 단계 5): 개발자 알림이 갈 Slack 길은 기계 몫 — 토큰 다음,
+  // 프로젝트보다 먼저 싣는다. 없으면 지금 설정을 그대로 둔다(지우지 않는다).
+  if (invite.notify?.slack) {
+    try {
+      await daemon.api.escalationSet(invite.notify.slack);
+    } catch {
+      // Slack 길이 안 닿아도 프로젝트 가져오기는 멈추지 않는다 — 알림은
+      // 보조 경로(PLAN L11)라 실패를 조용히 견딘다.
+    }
+  }
   const author =
     invite.authorName ??
     (options.authorDraft && options.authorDraft.trim() !== "" ? options.authorDraft.trim() : null);
@@ -129,14 +139,17 @@ export async function applyInvite(
           ...(row.project.reviewers ? { reviewers: row.project.reviewers } : {}),
           ...(row.project.instructions ? { instructions: row.project.instructions } : {}),
           ...(row.project.approveCommands ? { approveCommands: true } : {}),
+          // 초대 v4(PLAN 단계 5): 개발자가 실어 보낸 처음 값과 수명.
+          ...(row.project.defaults ? { defaults: row.project.defaults } : {}),
+          ...(row.project.lifecycle ? { lifecycle: row.project.lifecycle } : {}),
           activate,
         });
       } else {
         await daemon.api.projectUpdate(row.slug, {
-          baseBranch: row.project.baseBranch,
-          // 리뷰어는 초대장의 말이 우선이다 — 없으면 지운다(null).
-          reviewers: row.project.reviewers ?? null,
-          ...(row.project.approveCommands ? { approveCommands: true } : {}),
+          // 초대 v4(PLAN 단계 5): 개발자의 값(기본 가지 · 리뷰어 · 명령 허용 ·
+          // 처음 값 · 수명)은 덮고, 초대장에 없으면 지우는 값(null)을 보낸다.
+          // 이름·지침은 사용자의 것이라 패치에 없다.
+          ...inviteUpdatePatch(row.project),
         });
       }
       results.push({ row, ok: true });

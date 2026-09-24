@@ -15,6 +15,8 @@ import type {
   OnboardingFixKind,
   OnboardingStep,
   PermissionSuggestion,
+  ProjectDefaults,
+  ProjectLifecycle,
   ProjectList,
   ProjectSummary,
   QueuedSend,
@@ -1623,6 +1625,10 @@ export function useDaemon(url: string | null): Daemon {
         approveCommands?: boolean;
         reviewers?: string[];
         instructions?: string;
+        /** 초대 v4(PLAN 단계 5): 개발자가 실어 보낸 새 대화의 처음 값. */
+        defaults?: ProjectDefaults;
+        /** 초대 v4: 사이클의 수명 규칙. */
+        lifecycle?: ProjectLifecycle;
         activate?: boolean;
       }) =>
         call<ProjectSummary>(
@@ -1636,6 +1642,8 @@ export function useDaemon(url: string | null): Daemon {
             ...(input.approveCommands ? { approveCommands: true } : {}),
             ...(input.reviewers ? { reviewers: input.reviewers } : {}),
             ...(input.instructions ? { instructions: input.instructions } : {}),
+            ...(input.defaults ? { defaults: input.defaults } : {}),
+            ...(input.lifecycle ? { lifecycle: input.lifecycle } : {}),
             ...(input.activate !== undefined ? { activate: input.activate } : {}),
           },
           900_000,
@@ -1653,6 +1661,9 @@ export function useDaemon(url: string | null): Daemon {
           approveCommands?: boolean;
           instructions?: string | null;
           reviewers?: string[] | null;
+          /** 초대 v4(PLAN 단계 5): 개발자의 값이라 덮는다 — null 이면 지운다. */
+          defaults?: ProjectDefaults | null;
+          lifecycle?: ProjectLifecycle | null;
         },
       ) =>
         call<ProjectList>(
@@ -1667,6 +1678,8 @@ export function useDaemon(url: string | null): Daemon {
               : {}),
             ...(changes.instructions !== undefined ? { instructions: changes.instructions } : {}),
             ...(changes.reviewers !== undefined ? { reviewers: changes.reviewers } : {}),
+            ...(changes.defaults !== undefined ? { defaults: changes.defaults } : {}),
+            ...(changes.lifecycle !== undefined ? { lifecycle: changes.lifecycle } : {}),
           },
           // A moved url re-clones.
           600_000,
