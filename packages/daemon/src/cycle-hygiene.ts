@@ -53,6 +53,25 @@ export const DEFAULT_KEEP_REJECTED_DAYS = 14;
 /** 임시 파일의 수명 — 요약 폴더와 그 대화 기록(첨부의 7일과 같다). */
 export const TEMP_TTL_MS = 7 * DAY_MS;
 
+/** 디스크 여유의 문턱 (O8) — 이 아래면 도구의 것부터 치운다. */
+export const DISK_LOW_BYTES = 2 * 1024 ** 3;
+
+/** `fs.statfs` 의 두 값 — 시험이 주입하는 가짜도 이 모양이다. */
+export interface DiskStats {
+  bavail: number | bigint;
+  bsize: number | bigint;
+}
+
+/** 쓸 수 있는 여유(바이트) — 일반 사용자에게 남은 블록 수 × 블록 크기. */
+export function freeBytesOf(stats: DiskStats): number {
+  return Number(stats.bavail) * Number(stats.bsize);
+}
+
+/** 사람이 읽는 크기 — 알림과 로그의 한 조각. */
+export function gigabytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)}GB`;
+}
+
 /**
  * 기한이 지난 위생 항목 — HYGIENE_ORDER 차례로. 시각이 미래에 있으면(시계가
  * 뒤로 갔다) 지난 것으로 친다: 그렇지 않으면 잘못 앞서 있던 시계만큼 위생이

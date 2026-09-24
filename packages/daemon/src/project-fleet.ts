@@ -249,6 +249,10 @@ export class ProjectFleet {
           ...describeProblem(key, reason ?? text),
         }),
       resolveNotice: (key) => void this.deps.developerNotice.resolve(key, slug),
+      // 기계 전체의 문제(disk:low, O8) — slug null 이라 Slack · 로그로만 간다.
+      raiseMachineNotice: (key, detail) =>
+        void this.deps.developerNotice.raise({ key, slug: null, ...describeProblem(key, detail) }),
+      resolveMachineNotice: (key) => void this.deps.developerNotice.resolve(key, null),
       onChange: () => workspaces.repo.repoCore().emit(),
       // PLAN L2 흡수표 — 폴러가 하던 사람에게 보이는 일은 감독자가 이
       // 콜백으로 옮겨 부른다. PR 상태 변화는 사이드바의 마지막 사건과

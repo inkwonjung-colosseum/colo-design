@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { composeAttention } from "@colo-design/protocol";
 
 // 요약 대화 기록은 Claude 의 설정 폴더에 산다 — 시험이 사용자의 ~/.claude 를
 // 건드리지 않게 이 프로세스의 것을 임시 폴더로 돌린다(시험 파일마다 프로세스가
@@ -319,6 +320,54 @@ test("저장소 이동 — full_name 이 바뀌면 origin 과 레지스트리 �
     assert.deepEqual(scene.urlChanges, [moved]);
     assert.equal(readLedger(scene.ledgerPath).hygiene.moveAt, iso(T0 + DAY));
     await scene.git(["remote", "set-url", "origin", scene.remote.path]);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("디스크 여유 부족 — 기한과 무관하게 한 번 치우고, 그래도 모자라면 disk:low 한 번 · 주의 없음 (O8)", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const now = Date.now();
+    // 디스크만 기한이 지났다 — 정리와 gc 는 방금 했다.
+    const { diskAt: _disk, ...hygiene } = stampedAt(now - 60_000);
+    const supervisor = seedLedger(scene, { hygiene });
+    // 7일 넘은 요약 파일 — 기한 전인 정리가 돌았다는 증거.
+    const summary = summaryDirOf(scene.clone.path);
+    mkdirSync(summary, { recursive: true });
+    const old = join(summary, "old.txt");
+    writeFileSync(old, "지난 요약");
+    utimesSync(old, (now - 8 * DAY) / 1000, (now - 8 * DAY) / 1000);
+    // 1GB — 가짜 statfs 라 치워도 늘지 않는다.
+    scene.freeBytes = 1024 ** 3;
+
+    scene.setNow(now);
+    await supervisor.tick("manual");
+    const ledger = readLedger(scene.ledgerPath);
+    assert.equal(ledger.hygiene.pruneAt, iso(now), "기한 전인 정리가 한 번 돌아야 한다");
+    assert.equal(ledger.hygiene.gcAt, iso(now), "기한 전인 gc 도 한 번 돌아야 한다");
+    assert.equal(existsSync(old), false);
+    assert.deepEqual(
+      scene.machineNotices.map((notice) => `${notice.op}:${notice.key}`),
+      ["raise:disk:low"],
+    );
+    assert.ok(scene.machineNotices[0]?.detail?.includes("1.0GB"));
+    // 화면 주의는 서지 않는다 — 프로젝트 원장의 알림에도 없고 합성된 주의도 없다.
+    assert.deepEqual(ledger.notices, {});
+    assert.equal(composeAttention(supervisor.attentionParts()), null);
+
+    // 같은 날 다시 틱 — 디스크는 기한 전이라 알림이 두 번 나가지 않는다.
+    await supervisor.tick("manual");
+    assert.equal(scene.machineNotices.length, 1);
+
+    // 다음 날 여유가 돌아왔다 — 서 있던 알림을 거둔다.
+    scene.freeBytes = 50 * 1024 ** 3;
+    scene.setNow(now + DAY);
+    await supervisor.tick("manual");
+    assert.deepEqual(
+      scene.machineNotices.map((notice) => `${notice.op}:${notice.key}`),
+      ["raise:disk:low", "resolve:disk:low"],
+    );
   } finally {
     await scene.dispose();
   }

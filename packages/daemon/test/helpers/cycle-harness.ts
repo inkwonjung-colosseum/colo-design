@@ -706,6 +706,10 @@ export interface SupervisedScene extends Scene {
   keepRejectedDays: number;
   /** onUrlChange 가 모은 주소 — 레지스트리에 적혔을 것들. */
   urlChanges: Array<string | null>;
+  /** 가짜 statfs 가 답하는 디스크 여유(바이트, 기본 100GB) — 디스크 시험이 바꾼다. */
+  freeBytes: number;
+  /** raiseMachineNotice · resolveMachineNotice 가 모은 기계 전체 알림. */
+  machineNotices: Array<{ op: "raise" | "resolve"; key: string; detail?: string }>;
 }
 
 /**
@@ -741,7 +745,9 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     projectName: "하네스 프로젝트",
     shots: [] as HandoffShot[],
     keepRejectedDays: 14,
+    freeBytes: 100 * 1024 ** 3,
   };
+  const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
   const transitions: Array<{ kind: string; at: string; count?: number }> = [];
@@ -758,6 +764,10 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       installStale: () => false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
       keepRejectedDays: () => scene.keepRejectedDays,
+      // 디스크 (O8) — 시험 기계의 실제 여유를 읽지 않는다.
+      statfs: async () => ({ bavail: Math.floor(scene.freeBytes / 4096), bsize: 4096 }),
+      raiseMachineNotice: (key, detail) => machineNotices.push({ op: "raise", key, detail }),
+      resolveMachineNotice: (key) => machineNotices.push({ op: "resolve", key }),
       // L6 제출 — 장면이 갈아끼우는 재료들.
       projectName: () => scene.projectName,
       commentsFile: () => join(dirname(ledgerPath), "comments.json"),
@@ -835,6 +845,13 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     set keepRejectedDays(v: number) {
       scene.keepRejectedDays = v;
     },
+    get freeBytes() {
+      return scene.freeBytes;
+    },
+    set freeBytes(v: number) {
+      scene.freeBytes = v;
+    },
+    machineNotices,
     setNow: (ms) => {
       nowMs = ms;
     },

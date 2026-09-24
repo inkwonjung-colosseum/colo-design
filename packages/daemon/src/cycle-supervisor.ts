@@ -12,6 +12,7 @@
  *   cycle-hygiene 에 있다 (단계 9).
  */
 import { existsSync, readFileSync } from "node:fs";
+import { statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   type AttentionParts,
@@ -24,9 +25,13 @@ import {
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
 import {
   DEFAULT_KEEP_REJECTED_DAYS,
+  DISK_LOW_BYTES,
+  type DiskStats,
   dueHygiene,
   endedBranchesDue,
+  freeBytesOf,
   fsckClone,
+  gigabytes,
   type HygieneItem,
   type HygieneStamp,
   measureAssets,
@@ -51,6 +56,7 @@ import {
   type CycleSnapshot,
   nextCycleAction,
 } from "./cycle-reconcile.js";
+import { COLO_DESIGN_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
 import { mergeToolBlock, pickHandoffTitle } from "./handoff-body.js";
 import type { DaemonLogger } from "./log.js";
@@ -157,6 +163,16 @@ export interface SupervisorDeps {
   deleteMergedBranches?: () => boolean;
   /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14, O3). 위생이 읽는다. */
   keepRejectedDays?: () => number;
+  /**
+   * 기계 전체의 개발자 알림 — 한 프로젝트의 것이 아닌 문제(disk:low). fleet 이
+   * DeveloperNotice 에 slug null 로 올린다(Slack · 로그). 화면 주의는 서지 않는다.
+   */
+  raiseMachineNotice?: (key: string, detail: string) => void;
+  resolveMachineNotice?: (key: string) => void;
+  /** 디스크 여유를 읽는 손 — 기본은 fs.statfs. 시험이 주입한다. */
+  statfs?: (path: string) => Promise<DiskStats>;
+  /** 여유를 볼 자리 — 기본은 `~/.colo-design`(그 폴더가 든 볼륨). */
+  dataDir?: string;
   logger: DaemonLogger;
   now?: () => number;
 }
@@ -1304,6 +1320,18 @@ export class CycleSupervisor {
     const core = this.deps.core;
     const now = this.now();
     const due = new Set(dueHygiene(this.ledger.hygiene, now));
+    // 디스크 (O8) — 여유가 문턱 아래면 도구의 것(끝난 브랜치 · 임시 파일 · git
+    // 정리)을 기한과 무관하게 한 번 치운다. 다시 본 여유는 맨 끝에서 판정한다.
+    let diskBefore: number | null = null;
+    if (due.has("disk")) {
+      diskBefore = await this.freeDiskBytes();
+      if (diskBefore !== null && diskBefore < DISK_LOW_BYTES) {
+        this.log(`위생: 디스크 여유가 ${gigabytes(diskBefore)} — 도구의 것부터 치웁니다`);
+        due.add("prune");
+        due.add("gc");
+      }
+      this.stampHygiene("disk", now);
+    }
     if (due.has("prune")) {
       await this.pruneEndedBranches(now);
       const removed = pruneTempFolders(core.root, now);
@@ -1347,7 +1375,35 @@ export class CycleSupervisor {
       await this.followRepoMove();
       this.stampHygiene("move", now);
     }
+    if (diskBefore !== null) await this.judgeDisk(diskBefore);
     return true;
+  }
+
+  /**
+   * 치운 뒤의 디스크 판정 (O8) — 그래도 문턱 아래면 기계 전체 알림 disk:low 를
+   * 올린다(개발자 쪽 Slack · 로그만, 화면 주의는 서지 않는다 — 사용자 기계의
+   * 일이라 개발자도 고칠 수 없다). 여유가 돌아왔으면 서 있던 알림을 거둔다.
+   */
+  private async judgeDisk(before: number): Promise<void> {
+    const after = before < DISK_LOW_BYTES ? await this.freeDiskBytes() : before;
+    if (after === null) return;
+    if (after < DISK_LOW_BYTES) {
+      const detail = `디스크 여유 ${gigabytes(after)} (치우기 전 ${gigabytes(before)}) — 문턱 ${gigabytes(DISK_LOW_BYTES)}`;
+      this.log(`위생: 치운 뒤에도 ${detail}`);
+      this.deps.raiseMachineNotice?.("disk:low", detail);
+      return;
+    }
+    this.deps.resolveMachineNotice?.("disk:low");
+  }
+
+  /** 여유 바이트 — 읽지 못하면 null(판정하지 않는다). */
+  private async freeDiskBytes(): Promise<number | null> {
+    const read = this.deps.statfs ?? ((path: string) => statfs(path));
+    try {
+      return freeBytesOf(await read(this.deps.dataDir ?? COLO_DESIGN_DIR));
+    } catch {
+      return null;
+    }
   }
 
   /**
