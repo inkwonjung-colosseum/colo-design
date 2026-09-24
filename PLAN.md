@@ -179,6 +179,7 @@ class GitLane {
 | 9 | PR 이 병합 없이 닫힘 | 랜딩 + 이월 + 반려 이유 반영 턴(L4 · L9) | 도구 → AI | 아니요 | `land` |
 | 10 | 원격 브랜치가 로컬보다 앞섬 — 개발자가 PR 브랜치에 올림 | fetch 후 fast-forward. 갈라졌으면 병합, 충돌은 2행 | 도구 | 아니요 | `conflict:*` |
 | 11 | origin/base 가 사이클 브랜치에 없음, 또는 PR 이 `mergeable_state: dirty` | 브랜치에 origin/base 병합, 충돌은 2행 | 도구 | 아니요 | `conflict:*` |
+| 11b | 사이클 브랜치 없이 HEAD 가 origin/base 보다 뒤처짐(앞선 커밋 없음 · 트리 깨끗함) | fast-forward — 없으면 다음 사이클이 낡은 베이스에서 시작한다 | 도구 | 아니요 | — |
 | 12 | 로컬 브랜치가 원격보다 앞섬 | 푸시. 인증 거절이면 `reconnect`, 그 밖은 백오프로 계속 | 도구 | 예 | `push` |
 | 13 | 제출 의도가 남음(L6) | 다음 멱등 단계 | 도구 | 예 | `submit` |
 | 14 | 새 개발자 코멘트 | 반영 턴(L9) | AI | 예(대기 줄) | `review:<pr>` |
