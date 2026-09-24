@@ -4,6 +4,8 @@ import type {
   ChatEvent,
   DiffStatus,
   HandoffStatusReport,
+  ProjectDefaults,
+  ProjectLifecycle,
   ProjectSummary,
   RepoStatus,
   ServerMessage,
@@ -387,6 +389,10 @@ export class ProjectFleet {
         handoff: repo?.currentHandoff ?? project.repo.handoff,
         ...(threads ? { threads } : {}),
         ...(project.instructions ? { instructions: project.instructions } : {}),
+        // 초대 v4(PLAN 단계 5): 개발자가 정한 처음 값과 수명 — 웹의 칩 씨앗과
+        // 감독자의 브랜치 정리가 읽는다.
+        ...(project.defaults ? { defaults: project.defaults } : {}),
+        ...(project.lifecycle ? { lifecycle: project.lifecycle } : {}),
         // 홈 크로스 프로젝트 인박스(PLAN P3-2): 질문+권한 모두 스레드를
         // "awaiting" 으로 세우므로, 비활성 프로젝트라도 이 카운트만으로
         // 답을 기다리는 일의 수를 안다 — 세션이 살아 있는 한 값이 있다.
@@ -939,6 +945,10 @@ export class ProjectFleet {
     reviewers?: string[];
     /** 프로젝트별 지침(설정 문서 P1#8) — 세션의 시스템 프롬프트에 붙는다. */
     instructions?: string;
+    /** 초대 v4(PLAN 단계 5): 새 대화의 처음 값 — 개발자가 초대 파일에 정한다. */
+    defaults?: ProjectDefaults;
+    /** 초대 v4(PLAN 단계 5): 사이클 수명 설정 — 개발자가 초대 파일에 정한다. */
+    lifecycle?: ProjectLifecycle;
     /**
      * false 면 등록만 한다 — 초대장이 프로젝트 여러 개를 한 번에 실을 때, 첫 번째
      * 외의 등록은 화면을 튀게 하지 않는다(전환도 내려받기도 없음). 활성 프로젝트가
@@ -961,6 +971,8 @@ export class ProjectFleet {
       commandsApproved: message.approveCommands === true,
       ...(message.reviewers ? { reviewers: message.reviewers } : {}),
       ...(message.instructions ? { instructions: message.instructions } : {}),
+      ...(message.defaults ? { defaults: message.defaults } : {}),
+      ...(message.lifecycle ? { lifecycle: message.lifecycle } : {}),
     });
     if (message.activate === false && hadActive) {
       // 등록만 — 사이드바 행이 늘었다는 소식만 전한다. 전환도 내려받기도 없다.

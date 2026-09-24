@@ -4,8 +4,6 @@ import { join } from "node:path";
 import {
   type ClientMessage,
   DEFAULT_HANDOFF_BODY,
-  type ProjectDefaults,
-  type ProjectLifecycle,
   type ServerMessage,
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
@@ -105,24 +103,7 @@ export class RequestRouter {
   /** 지금 되살리는 중인 대화 — 되살리기 자신의 교체 close 가 셈을 지우는
    *  일(옛 결함: 매번 0 에서 다시 시작)을 가르는 표식이다. */
   private readonly reviving = new Set<string>();
-  constructor(private readonly deps: RouterDeps) {
-    // 초대 v4(PLAN 단계 5): ProjectSummary 의 defaults·lifecycle 은 레지스트리가
-    // 들고 요약은 fleet 이 짓는다 — project-fleet.ts 는 이 단계의 다른 갈래가
-    // 고치고 있어, 요약이 나가는 모든 길(방송 · status · 응답)이 지나는 이
-    // 인스턴스 메서드에서 레지스트리의 값을 얹는다.
-    const fleetSummaries = deps.fleet.projectSummaries.bind(deps.fleet);
-    deps.fleet.projectSummaries = () =>
-      fleetSummaries().map((summary) => {
-        const project = deps.registry.get(summary.slug);
-        return project === null
-          ? summary
-          : {
-              ...summary,
-              ...(project.defaults ? { defaults: project.defaults } : {}),
-              ...(project.lifecycle ? { lifecycle: project.lifecycle } : {}),
-            };
-      });
-  }
+  constructor(private readonly deps: RouterDeps) {}
 
   /** The active project's repo — every repo.* case's "the repo". */
   private get repo(): RepoWorkspace {
@@ -161,19 +142,7 @@ export class RequestRouter {
     return this.deps.fleet.activateProject(slug);
   }
   private async createProject(message: Parameters<ProjectFleet["createProject"]>[0]) {
-    const summary = await this.deps.fleet.createProject(message);
-    // 초대 v4(PLAN 단계 5): defaults·lifecycle 은 fleet 의 생성 경로가 모르는
-    // 필드라 레지스트리에 따로 쓴다 — 요약은 얹은 뒤의 것을 다시 읽는다.
-    const wire = message as { defaults?: ProjectDefaults; lifecycle?: ProjectLifecycle };
-    if (wire.defaults !== undefined || wire.lifecycle !== undefined) {
-      this.deps.registry.update(summary.slug, {
-        ...(wire.defaults !== undefined ? { defaults: wire.defaults } : {}),
-        ...(wire.lifecycle !== undefined ? { lifecycle: wire.lifecycle } : {}),
-      });
-      this.announceProjects();
-      return this.projectSummaries().find((entry) => entry.slug === summary.slug) ?? summary;
-    }
-    return summary;
+    return this.deps.fleet.createProject(message);
   }
 
   private workspaceCwd(): string {
