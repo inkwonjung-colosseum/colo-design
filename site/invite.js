@@ -8,8 +8,8 @@
  * 주소창에 절대 쓰지 않는다), 미리 보기에는 가린 값만 그린다. 보내기 길(메일
  * 초안 · OS 공유 시트)도 파일을 브라우저 밖 서버가 아니라 로컬 앱에 건넨다.
  */
-// ?v=6 — Pages 캐시가 옛 invite-format.mjs를 주지 않게 한다.
-import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=6";
+// ?v=7 — Pages 캐시가 옛 invite-format.mjs를 주지 않게 한다.
+import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=7";
 
 const form = document.getElementById("invite-form");
 const download = document.getElementById("invite-download");
