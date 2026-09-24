@@ -20,8 +20,13 @@ import { GIT_WRITE_REFUSAL, gitWriteDenied } from "./git-guard.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
 import { pinEffortFor } from "./pin-effort.js";
-import type { QueueDisk } from "./queue-store.js";
-import { classifyRetry, looksLikeStreamError, RETRY_DELAYS_MS } from "./turn-retry.js";
+import type { QueueDisk, StoredSend } from "./queue-store.js";
+import {
+  classifyRetry,
+  looksLikeStreamError,
+  RETRY_DELAYS_MS,
+  type RetryDecision,
+} from "./turn-retry.js";
 
 /**
  * A send refusal the planner can read. The daemon's own guards answer in
@@ -154,6 +159,18 @@ export interface SessionEvents {
    * 데몬이 이행한다. 살릴 수 없으면 조용히 돌아온다(카드가 남는다).
    */
   onRevive?: (sessionId: string) => void;
+  /**
+   * 로그인 만료로 턴이 멈췄다 (PLAN L12) — 세션은 말을 기억하고 기다린다.
+   * 받는 쪽(서버)은 기계 상태를 다시 읽어 주의를 `reconnect/agent-login` 로
+   * 세우고, 로그인이 돌아오면 session.resumeAfterLogin() 로 한 번 다시
+   * 보내달라고 한다.
+   */
+  onAuthStall?: (sessionId: string) => void;
+  /**
+   * 사다리를 다 쓴 실패 (PLAN L12) — 개발자 알림(turn:failed)을 올릴 자리.
+   * 세션은 결과 문장만 넘기고, 프로젝트 찾기와 배달은 받는 쪽이 한다.
+   */
+  onTurnFailed?: (sessionId: string, resultText: string | null) => void;
   onPermissionRequest: (payload: {
     requestId: string;
     sessionId: string;
@@ -248,9 +265,15 @@ export interface SessionOptions {
   queueDiskFor?: (sessionId: string) => QueueDisk;
   /**
    * 감독(2026-09-19)의 재시도 간격 — 백오프(ms). 생략하면 RETRY_DELAYS_MS
-   * (4초 · 16초). 테스트만 짧은 값을 넣는다.
+   * (다섯 계단, PLAN L7). 테스트만 짧은 값을 넣는다.
    */
   retryDelays?: readonly number[];
+  /**
+   * 이 공급자가 대화를 스스로 요약할 수 있는가 (PLAN L12) — 드라이버의
+   * capabilities.compact. 길이 초과 실패에 /compact 로 한 번 다시 보내는
+   * 길이 열리는 조건이다. 요약 못 하는 공급자는 실패 카드가 그대로 남는다.
+   */
+  canCompact?: boolean;
 }
 
 /**
@@ -272,6 +295,12 @@ export { GIT_WRITE_REFUSAL, gitWriteDenied };
  * stored title only while the placeholder is still in place.
  */
 export const NEW_SESSION_TITLE = "새 화면";
+
+/**
+ * /compact 뒤 재전송의 마지막 파수 — compact 사건도 턴 끝도 오지 않는 세계에서
+ * 3분 안에 원래 말을 다시 세운다 (PLAN L12). 시계의 만료가 곧 신호다.
+ */
+const COMPACT_RESEND_FALLBACK_MS = 3 * 60_000;
 
 /**
  * The core session: provider-agnostic. It owns the state machine, the held
@@ -413,6 +442,22 @@ export class Session {
   private diedMidTurn = false;
   /** 재시도 간격 — 기본 RETRY_DELAYS_MS, 테스트가 짧게 줄인다. */
   private readonly retryDelays: readonly number[];
+  /** 이 공급자가 대화를 스스로 요약하는가 — /compact 재시도의 조건 (PLAN L12). */
+  private readonly canCompact: boolean;
+  /** 데몬 전체의 정상 종료 중 — 회복 후보(inflight · held)를 지우지 않는다. */
+  private shuttingDown = false;
+  /** 로그인 만료로 멈춘 횟수 — 상태가 돌아오면 한 번만 다시 보낸다 (PLAN L12). */
+  private authStops = 0;
+  /** 로그인이 돌아오면 마지막 말을 다시 보내도 되는가 — 보내는 순간 소비한다. */
+  private authStallArmed = false;
+  /** 이 실패에 이미 요약(/compact)을 썼는가 — 한 턴에 한 번이다. */
+  private compactUsed = false;
+  /** 요약 뒤 다시 보낼 원래 말 — /compact 가 돌고 있는 동안만 산다. */
+  private compactPending: HeldSend | null = null;
+  /** /compact 턴이 지금 돌고 있다 — 그 턴의 끝은 재시도 판정의 대상이 아니다. */
+  private compacting = false;
+  /** 어떤 신호도 오지 않는 세계의 파수 — 요약 뒤 재전송을 보증한다. */
+  private compactTimer: NodeJS.Timeout | null = null;
 
   /**
    * The hooks the driver calls back into. Exposed so the manager can hand
@@ -455,6 +500,7 @@ export class Session {
     this.id = options.sessionId ?? options.launch?.resume ?? randomUUID();
     this.disk = options.queueDiskFor?.(this.id) ?? null;
     this.retryDelays = options.retryDelays ?? RETRY_DELAYS_MS;
+    this.canCompact = options.canCompact === true;
   }
 
   /** The manager attaches the driver's transport once `createSession` returns. */
@@ -492,6 +538,14 @@ export class Session {
       // 않으니(드라이버 store 가 대화록 시각을 직접 싣는다) 덮어쓸 일이 없다.
       event = { ...event, startedAt: event.startedAt ?? Date.now() };
     }
+    if (event.kind === "compact") {
+      // 요약 경계 — /compact 요약이 지나갔다는 둘 중 하나의 신호다(다른 하나는
+      // 그 턴의 끝). /compact 턴이 이미 닿했으면 지금이 원래 말을 다시 세울
+      // 때다: 늦은 쪽 신호를 기다린다 (PLAN L12).
+      if (this.compactPending && !this.compacting && this.turnStartedAt === null) {
+        this.resendAfterCompact();
+      }
+    }
     if (event.kind === "turn.end" && event.costUsd != null) {
       this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
     }
@@ -523,15 +577,46 @@ export class Session {
       if (!event.isError && looksLikeStreamError(event.resultText)) {
         event = { ...event, isError: true, subtype: "error" };
       }
+      // 감독(PLAN L12): 실패 판정은 여기서 한 번만 내린다 — 이벤트에 알림
+      // 표식(escalated)을 실으려면 방송보다 먼저 알아야 하고, 밑의 재시도는
+      // 같은 판정을 넘겨받아 두 번 계산하지 않는다.
+      let decision: RetryDecision | null = null;
+      if (event.isError && !this.closed && !this.compacting) {
+        decision = classifyRetry({
+          attempt: this.retryAttempt,
+          resultText: event.resultText,
+          rateLimit: this.lastRateLimit,
+          now: Date.now(),
+          delays: this.retryDelays,
+        });
+        if (
+          decision.action === "stop" &&
+          (decision.reason === "exhausted" || decision.reason === "limit-no-reset")
+        ) {
+          event = { ...event, escalated: true };
+        }
+      }
       // 턴 끝을 먼저 알리고, 그 다음에 대기 줄을 푼다 — 다음 턴은 앞
       // 턴이 닫힌 뒤에 열려야 기록도 램프도 순서대로 읽힌다.
       this.events.onEvent(this.id, event);
       this.endTurn();
-      // 감독(2026-09-19): 실패한 턴은 상한 안에서 스스로 다시 시도한다.
-      // 중지(interrupted)는 사람의 뜻이라 위에서 이미 갈라졌다 — 여기 오는
-      // 것은 진짜 고장뿐이다.
-      if (event.isError) this.scheduleSelfRetry(event.resultText);
-      else this.retryAttempt = 0;
+      // /compact 턴의 끝은 재시도 판정의 대상이 아니다 (PLAN L12): 성공이면
+      // 원래 말을 한 번 다시 세우고, 실패면 조용히 물러난다 — 원래 실패 카드가
+      // 이미 그 자리를 지키고 있다.
+      if (this.compacting) {
+        this.compacting = false;
+        if (!event.isError) this.resendAfterCompact();
+        return;
+      }
+      if (event.isError) {
+        if (decision) this.scheduleSelfRetry(event.resultText, decision);
+      } else {
+        // 턴이 답을 냈다 — 이 실패의 흔적(사다리 · 요약 한 번 · 로그인 대기)을
+        // 지운다. 다음 실패는 새 사건이다.
+        this.retryAttempt = 0;
+        this.compactUsed = false;
+        this.authStops = 0;
+      }
       return;
     }
     this.events.onEvent(this.id, event);
@@ -539,29 +624,22 @@ export class Session {
 
   /**
    * The transport's stream ended on its own. A query that ends while a turn
-   * is in flight is a crash wearing exit code 0: the planner's words got no
-   * result and no card would explain the running lamp dying into an empty
-   * answer. Say the same thing the exception path says; only a turn that was
-   * never running ends quietly.
+   * is in flight is a crash wearing exit code 0. PLAN L12: 세션은 조용히
+   * 내려앉기만 한다 — 턴 도중의 죽음은 되살리기(dispatch)가 한 줄로 말하고,
+   * 그 마지막 안내(예고된 종료의 영어 문장)는 상태 detail 을 타고 기록으로만
+   * 간다. 턴이 돌지 않던 죽음(idle crash)은 아무 말도 하지 않는다: 다음
+   * 보내기가 되살린다.
    */
   private handleTransportEnd(shutdownReason: string | null): void {
     // 감독: 턴이 도는 중에 죽었는지는 상태가 내려앉기 전에만 읽을 수 있다.
     this.diedMidTurn = this.turnStartedAt !== null && this.lastDelivered !== null;
     if (this.state === "running") {
       this.crashed = true;
-      // 예고를 들었으면 "예상 밖"이 아니다 (worker_shutting_down): 같은 복구
-      // 를 말하되 놀라게 하지 않는다.
-      const announced = shutdownReason !== null;
-      const label = this.providerLabel;
-      const text = announced
-        ? `${label} 프로그램이 종료됐습니다 — 대화를 다시 보내면 새 프로그램이 이어받습니다.`
-        : `${label}가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${label} 프로그램이 응답 없이 종료됐습니다.`;
-      this.events.onEvent(this.id, { kind: "notice", level: "error", text });
+      // 원문(영어 종료 사유)은 화면에 올리지 않는다 (PLAN L8) — 상태 detail
+      // 은 서버의 로그로만 흘러간다.
       this.setState(
         "error",
-        announced
-          ? `${label} 프로그램이 종료됐습니다 (${shutdownReason})`
-          : `${label} 프로그램이 응답 없이 종료됐습니다.`,
+        shutdownReason ?? `${this.providerLabel} 프로그램이 응답 없이 종료됐습니다.`,
       );
     } else {
       this.setState("closed");
@@ -593,14 +671,9 @@ export class Session {
     } else if (!this.closed && this.state !== "closed") {
       this.diedMidTurn = this.turnStartedAt !== null && this.lastDelivered !== null;
       this.crashed = true;
-      this.events.onEvent(this.id, {
-        kind: "notice",
-        level: "error",
-        // The transport detail is an English message string, not an error id —
-        // the retry dictionary can't match it (리뷰 C3). A Korean lead rides
-        // in front, the raw line stays below for 자세히.
-        text: `${this.providerLabel}가 예상 밖으로 멈췄습니다 — 대화를 다시 보내면 이어집니다.\n\n${detail}`,
-      });
+      // PLAN L12: 크래시 알림을 내지 않는다 — 턴 도중의 죽음은 되살리기가,
+      // 살리지 못하면 그 자리의 한 줄이 말한다. 영어 원문(detail)은 상태
+      // detail 을 타고 서버 로그로만 흘러간다 (PLAN L8).
       this.setState("error", detail);
     }
     this.settleTransport();
@@ -633,11 +706,14 @@ export class Session {
     }
     this.pending.clear();
     this.turnStartedAt = null;
-    // 죽은 전송의 말은 이미 CLI 에 닿았으므로 벤더 기록이 갖고 있다 — 회복
-    // 후보로 디스크에 남겨 둘 필요가 없다. 되살리기가 이어지면 deliver 가 다시
-    // 쓴다.
-    this.disk?.clearInflight();
-    this.dropHeld();
+    // 정상 종료 중에는 회복 후보를 지우지 않는다 (PLAN L12): 다음 시작이
+    // 2시간 안의 inflight 를 브리프 턴으로 이어받고, 대기 줄도 살려 둔다.
+    // 죽은 전송의 말은 이미 CLI 에 닿았으므로 벤더 기록이 갖고 있다 —
+    // 되살리기가 이어지면 deliver 가 다시 쓴다.
+    if (!this.shuttingDown) {
+      this.disk?.clearInflight();
+      this.dropHeld();
+    }
   }
 
   private setState(state: SessionState, detail?: string): void {
@@ -662,7 +738,9 @@ export class Session {
   private endTurn(): void {
     this.turnStartedAt = null;
     // 턴이 끝났다 — 디스크에 남겨 둔 회복 후보(inflight)는 더 이상 아니다.
-    this.disk?.clearInflight();
+    // 정상 종료 중에 도착한 턴 끝은 예외다 (PLAN L12): 후보를 남겨 다음
+    // 시작의 브리프가 이어받게 한다.
+    if (!this.shuttingDown) this.disk?.clearInflight();
     this.setState(this.pending.size > 0 ? this.state : "idle");
     this.release();
   }
@@ -674,36 +752,60 @@ export class Session {
   /**
    * 실패한 턴을 스스로 다시 시도한다 — 판정은 classifyRetry(순수), 실행은
    * 이곳. 상한은 retryDelays 의 길이가 지키고, 사람의 중지 · 닫힘은 예약을
-   * 즉시 거둔다. 알림은 조용히: 재시도 사실만 기록에 남고, 상한을 넘긴 실패는
-   * 기존의 실패 카드가 사람의 손으로 남긴다.
+   * 즉시 거둔다. 알림은 조용히: 재시도 사실만 기록에 남는다. stop 의 세 갈래
+   * (PLAN L12) — 로그인 만료는 상태를 기다리고(auth), 길이 초과는 요약 뒤 한
+   * 번 다시(compact), 나머지(사다리 소진 · 한도 미회복)는 개발자 알림과 함께
+   * 실패 카드가 사람의 손으로 남는다.
    */
-  private scheduleSelfRetry(resultText: string | null): void {
+  private scheduleSelfRetry(resultText: string | null, decision?: RetryDecision): void {
     if (this.closed || this.crashed || this.aborted) return;
     if (!this.sendable || this.turnStartedAt !== null || this.state !== "idle") return;
     const item = this.lastDelivered;
     if (!item) return;
-    const decision = classifyRetry({
-      attempt: this.retryAttempt,
-      resultText,
-      rateLimit: this.lastRateLimit,
-      now: Date.now(),
-      delays: this.retryDelays,
-    });
-    if (decision.action === "stop") return;
+    // 방송 직전에 내린 판정을 그대로 받는다 — 같은 실패를 두 번 판정하면
+    // 시계 한가운데의 경계에서 다른 답이 나올 수 있다.
+    const verdict =
+      decision ??
+      classifyRetry({
+        attempt: this.retryAttempt,
+        resultText,
+        rateLimit: this.lastRateLimit,
+        now: Date.now(),
+        delays: this.retryDelays,
+      });
+    if (verdict.action === "stop") {
+      if (verdict.reason === "auth") this.stallOnAuth();
+      else if (verdict.reason === "permanent") this.tryCompactRetry(item);
+      else this.events.onTurnFailed?.(this.id, resultText);
+      return;
+    }
     this.retryAttempt += 1;
     this.events.onEvent(this.id, {
       kind: "notice",
       level: "info",
       text:
-        decision.action === "wait"
+        verdict.action === "wait"
           ? "사용량이 다시 채워지는대로 스스로 이어서 합니다 — 잠시만 기다려 주세요."
           : `일시적인 문제입니다 — 같은 말로 스스로 다시 시도합니다 (${this.retryAttempt}/${this.retryDelays.length}).`,
     });
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       this.selfRedeliver();
-    }, decision.delayMs);
+    }, verdict.delayMs);
     this.retryTimer.unref?.();
+  }
+
+  /**
+   * 로그인 만료로 멈췄다 (PLAN L12) — 말은 lastDelivered 에 살아 있으니
+   * 세션은 기다리기만 한다. 받는 쪽(서버)이 기계 상태를 다시 읽어 주의를
+   * `reconnect/agent-login` 로 세운다. 두 번째 auth 실패는 다시 보내지
+   * 않는다: 같은 말이 두 번 로그인에 부딪힌 세계는 사람의 손(실패 카드)이
+   * 정답이다.
+   */
+  private stallOnAuth(): void {
+    this.authStops += 1;
+    this.authStallArmed = this.authStops < 2;
+    this.events.onAuthStall?.(this.id);
   }
 
   /**
@@ -728,6 +830,79 @@ export class Session {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+  }
+
+  /**
+   * 로그인이 돌아왔다 — 멈춰 둔 말을 한 번 스스로 다시 보낸다 (PLAN L12).
+   * 서버의 로그인 감시가 부르는 길이다. 두 번째 auth 실패 뒤(armed 없음)와
+   * 이미 다른 턴이 도는 사이는 조용히 물러난다.
+   */
+  resumeAfterLogin(): void {
+    if (this.closed || !this.authStallArmed) return;
+    this.authStallArmed = false;
+    this.events.onEvent(this.id, {
+      kind: "notice",
+      level: "info",
+      text: "로그인이 돌아왔습니다 — 방금 하던 일을 이어서 합니다.",
+    });
+    this.selfRedeliver();
+  }
+
+  /**
+   * 길이 초과 실패에 대화를 요약하고 한 번 다시 보낸다 (PLAN L12). /compact 는
+   * CLI 의 슬래시 명령이다 — SDK 가 사용자 말로 받아 그대로 실행하고, 요약
+   * 경계(compact 사건) 또는 그 턴의 끝을 알려 온다. 사용자 말로 기록에 울리지
+   * 않게(replay) 보낸다. 요약하지 못하는 공급자(canCompact 없음)와 이미 한 번
+   * 쓴 실패는 그대로 실패 카드가 사람의 손을 말하게 둔다.
+   */
+  private tryCompactRetry(item: HeldSend): void {
+    if (!this.canCompact || this.compactUsed) return;
+    this.compactUsed = true;
+    this.compactPending = item;
+    this.compacting = true;
+    this.events.onEvent(this.id, {
+      kind: "notice",
+      level: "info",
+      text: "대화가 길어져 정리한 뒤 이어서 합니다 — 잠시만 기다려 주세요.",
+    });
+    this.turnStartedAt = Date.now();
+    this.events.onTurnStart?.(this.id);
+    this.setState("running");
+    this.deliver({ id: randomUUID(), text: "/compact", attachments: [], pins: [] }, true);
+    // 어떤 신호도 오지 않는 세계의 파수: 3분 안에 요약이 끝났다는 소식이
+    // 없으면 시계를 내리고 원래 말을 다시 세운다.
+    this.compactTimer = setTimeout(() => {
+      this.compactTimer = null;
+      if (!this.compactPending) return;
+      if (this.compacting && this.turnStartedAt !== null) {
+        this.compacting = false;
+        this.endTurn();
+      }
+      if (!this.compacting && this.turnStartedAt === null) this.resendAfterCompact();
+    }, COMPACT_RESEND_FALLBACK_MS);
+    this.compactTimer.unref?.();
+  }
+
+  /** 요약이 끝났다 — 원래 말을 한 번 다시 세운다 (replay — 기록에 다시 울리지 않는다). */
+  private resendAfterCompact(): void {
+    const item = this.compactPending;
+    this.compactPending = null;
+    if (!item) return;
+    if (this.closed || !this.sendable || this.turnStartedAt !== null) return;
+    this.turnStartedAt = Date.now();
+    this.events.onTurnStart?.(this.id);
+    this.setState("running");
+    this.deliver(item, true);
+  }
+
+  /** 요약 재시도를 거둔다 — 사람의 중지 · 닫힘이 우선한다. */
+  private cancelCompactRetry(): void {
+    if (this.compactTimer !== null) {
+      clearTimeout(this.compactTimer);
+      this.compactTimer = null;
+    }
+    this.compactPending = null;
+    this.compacting = false;
   }
 
   /**
@@ -785,6 +960,19 @@ export class Session {
   /** The wait room as the composer shows it, oldest first. */
   heldItems(): QueuedSend[] {
     return this.held.map(summarize);
+  }
+
+  /**
+   * 시작 브리프의 짝 (PLAN L12) — 정상 종료가 디스크에 살려 둔 대기 줄을
+   * 되살린 대화의 방에 돌려놓는다. 브리프 턴이 먼저 열리므로 이 말들은 그
+   * 턴이 끝난 뒤 차례로 나간다(release).
+   */
+  restoreHeld(items: StoredSend[]): void {
+    if (items.length === 0 || this.closed) return;
+    // 옛 방 파일의 말은 핀이 없을 수 있다 — 없는 것은 빈 목록으로 읽는다.
+    this.held.push(...items.map((item) => ({ ...item, pins: (item.pins ?? []) as SessionPin[] })));
+    this.disk?.saveHeld(this.held);
+    this.announceHeld();
   }
 
   /**
@@ -1349,8 +1537,10 @@ export class Session {
 
   async interrupt(): Promise<void> {
     // 감독: 사람이 멈췄다 — 예약된 재시도도 함께 멈춘다. 멈춘 턴의 말을
-    // 스스로 다시 보내는 것은 중지를 무시하는 것이다.
+    // 스스로 다시 보내는 것은 중지를 무시하는 것이다. 요약(/compact) 뒤의
+    // 재전송도 같은 몫이다 (PLAN L12).
     this.cancelSelfRetry();
+    this.cancelCompactRetry();
     // Mark first: the abort the transport throws back reads as THIS planner
     // action, and the catch must turn it into `멈추었습니다` (결함①).
     this.interrupting = true;
@@ -1512,14 +1702,19 @@ export class Session {
   /**
    * 닫는 이유가 방의 운명을 정한다 (PLAN D86 의 확장). 유저가 스스로 닫은
    * 대화의 대기 줄은 조용히 사라진다 — 닫는 창에 뒷말은 소식이 아니다. 데몬
-   * 전체의 종료(shutdown)는 다르다: 방은 디스크에 그대로 남아 재시작 뒤
-   * sweepOrphans 가 lost room 으로 회복한다.
+   * 전체의 종료(shutdown)는 다르다 (PLAN L12): 방도 진행 중이던 말(inflight)
+   * 도 디스크에 그대로 남는다 — 다음 시작이 2시간 안의 inflight 를 브리프
+   * 턴으로 이어받는다.
    */
   async close(reason: "user" | "shutdown" = "user"): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    // 정상 종료 중임을 먼저 표시한다 — agent.close() 가 도는 질의를 끊으며
+    // 일으키는 뒤처리(settleTransport · endTurn)가 회복 후보를 지우지 않게.
+    this.shuttingDown = reason === "shutdown";
     // 감독: 닫힌 대화는 스스로 다시 시도하지 않는다.
     this.cancelSelfRetry();
+    this.cancelCompactRetry();
     for (const request of this.pending.values()) {
       request.resolve({ behavior: "deny", message: "Session closed by user" });
     }

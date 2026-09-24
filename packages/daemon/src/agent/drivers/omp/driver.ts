@@ -43,6 +43,9 @@ const OMP_CAPABILITIES: Capabilities = {
   modelSelect: true,
   slashCommands: true,
   subtasks: false,
+  // 요약(/compact)을 세션에 보낼 길이 없다 — 길이 초과 실패는 실패 카드가
+  // 사람의 손으로 남는다 (PLAN L12).
+  compact: false,
   // `steer` — 도는 턴에 말을 얹는 와이어. omp 는 같은 agent run 안에서
   // 소화한다(검증됨).
   steer: true,
