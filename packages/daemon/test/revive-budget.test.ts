@@ -73,7 +73,11 @@ function brokenCliWorld() {
     agentDrivers: {
       get: () => ({ isAvailable: async () => ({ ok: true, executable: "/bin/claude" }) }),
     },
-    fleet: { refreshThreads: () => undefined, projectInstructions: () => "" },
+    fleet: {
+      refreshThreads: () => undefined,
+      projectInstructions: () => "",
+      projectSummaries: () => [],
+    },
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
     broadcast: () => undefined,
   } as unknown as RouterDeps);

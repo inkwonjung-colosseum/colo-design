@@ -4,6 +4,8 @@ import { join } from "node:path";
 import {
   type ClientMessage,
   DEFAULT_HANDOFF_BODY,
+  type ProjectDefaults,
+  type ProjectLifecycle,
   type ServerMessage,
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
@@ -103,7 +105,24 @@ export class RequestRouter {
   /** 지금 되살리는 중인 대화 — 되살리기 자신의 교체 close 가 셈을 지우는
    *  일(옛 결함: 매번 0 에서 다시 시작)을 가르는 표식이다. */
   private readonly reviving = new Set<string>();
-  constructor(private readonly deps: RouterDeps) {}
+  constructor(private readonly deps: RouterDeps) {
+    // 초대 v4(PLAN 단계 5): ProjectSummary 의 defaults·lifecycle 은 레지스트리가
+    // 들고 요약은 fleet 이 짓는다 — project-fleet.ts 는 이 단계의 다른 갈래가
+    // 고치고 있어, 요약이 나가는 모든 길(방송 · status · 응답)이 지나는 이
+    // 인스턴스 메서드에서 레지스트리의 값을 얹는다.
+    const fleetSummaries = deps.fleet.projectSummaries.bind(deps.fleet);
+    deps.fleet.projectSummaries = () =>
+      fleetSummaries().map((summary) => {
+        const project = deps.registry.get(summary.slug);
+        return project === null
+          ? summary
+          : {
+              ...summary,
+              ...(project.defaults ? { defaults: project.defaults } : {}),
+              ...(project.lifecycle ? { lifecycle: project.lifecycle } : {}),
+            };
+      });
+  }
 
   /** The active project's repo — every repo.* case's "the repo". */
   private get repo(): RepoWorkspace {
@@ -141,9 +160,20 @@ export class RequestRouter {
   private activateProject(slug: string): Promise<ProjectWorkspaces> {
     return this.deps.fleet.activateProject(slug);
   }
-
   private async createProject(message: Parameters<ProjectFleet["createProject"]>[0]) {
-    return this.deps.fleet.createProject(message);
+    const summary = await this.deps.fleet.createProject(message);
+    // 초대 v4(PLAN 단계 5): defaults·lifecycle 은 fleet 의 생성 경로가 모르는
+    // 필드라 레지스트리에 따로 쓴다 — 요약은 얹은 뒤의 것을 다시 읽는다.
+    const wire = message as { defaults?: ProjectDefaults; lifecycle?: ProjectLifecycle };
+    if (wire.defaults !== undefined || wire.lifecycle !== undefined) {
+      this.deps.registry.update(summary.slug, {
+        ...(wire.defaults !== undefined ? { defaults: wire.defaults } : {}),
+        ...(wire.lifecycle !== undefined ? { lifecycle: wire.lifecycle } : {}),
+      });
+      this.announceProjects();
+      return this.projectSummaries().find((entry) => entry.slug === summary.slug) ?? summary;
+    }
+    return summary;
   }
 
   private workspaceCwd(): string {
@@ -245,6 +275,15 @@ export class RequestRouter {
         }
         const sessionCwd = this.workspaceCwd();
         const instructions = this.projectInstructions(sessionCwd);
+        // 초대 v4(PLAN 단계 5): 칩이 말하지 않은 값은 프로젝트의 기본값이
+        // 채운다 — defaults.provider 가 있으면 그 공급자에게만 적용된다.
+        // 이어 든 스레드(resume)는 태어날 때의 모델을 이미 갖고 있어 기본값이
+        // 끼어들지 않는다.
+        const defaults = message.resume ? undefined : this.deps.registry.active()?.defaults;
+        const defaultsFit =
+          defaults !== undefined && (!defaults.provider || defaults.provider === provider);
+        const model = message.model ?? (defaultsFit ? defaults.model : undefined);
+        const effort = message.effort ?? (defaultsFit ? defaults.effort : undefined);
         const session = this.deps.manager.create({
           cwd: sessionCwd,
           provider,
@@ -255,8 +294,8 @@ export class RequestRouter {
             executable: availability.executable,
             ...(instructions ? { appendSystemPrompt: instructions } : {}),
             ...(message.resume ? { resume: message.resume } : {}),
-            ...(message.model ? { model: message.model } : {}),
-            ...(message.effort ? { effort: message.effort } : {}),
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
           },
         });
         // The plan reading is owed per provider, and a fresh session is
@@ -555,6 +594,9 @@ export class RequestRouter {
           // 지침(P1#8): 다음 대화부터 적용된다 — 돌고 있는 세션의 시스템
           // 프롬프트를 중간에 바꾸지 않는다(SDK 의 스냅샷 계약).
           ...(message.instructions !== undefined ? { instructions: message.instructions } : {}),
+          // 초대 v4(PLAN 단계 5): 개발자의 값은 덮는다 — null 은 지운다.
+          ...(message.defaults !== undefined ? { defaults: message.defaults } : {}),
+          ...(message.lifecycle !== undefined ? { lifecycle: message.lifecycle } : {}),
           ...(message.reviewers !== undefined ? { reviewers: message.reviewers } : {}),
         });
         // A url change is a repo change: the workspace re-points (and

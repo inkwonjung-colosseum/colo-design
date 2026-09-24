@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -65,6 +65,76 @@ test("첫 프로젝트만 active 다 — 둘째는 active 를 바꾸지 않는�
     const second = reg.create({ name: "둘째", repoUrl: "https://github.com/org/b.git" });
     assert.equal(second.slug !== first.slug, true);
     assert.equal(reg.activeSlug(), first.slug);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("초대 v4: defaults·lifecycle 이 projects.json 을 거쳐 살아남는다", () => {
+  const { registry: reg, file, dir } = registry();
+  try {
+    reg.create({
+      name: "회원 관리",
+      repoUrl: "https://github.com/org/repo.git",
+      defaults: { provider: "claude", model: "sonnet", effort: "high" },
+      lifecycle: { deleteMergedBranches: false, keepRejectedDays: 30, autoReply: false },
+    });
+    // 디스크에서 다시 읽은 레지스트리가 같은 값을 돌려준다 — 손편집이 아닌
+    // 정상 왕복의 증거다.
+    const reloaded = ProjectRegistry.load({
+      COLO_DESIGN_PROJECTS_SETTINGS: file,
+      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+    });
+    const project = reloaded.list()[0];
+    assert.deepEqual(project?.defaults, { provider: "claude", model: "sonnet", effort: "high" });
+    assert.deepEqual(project?.lifecycle, {
+      deleteMergedBranches: false,
+      keepRejectedDays: 30,
+      autoReply: false,
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("초대 v4: update 의 null 은 defaults·lifecycle 을 지운다 — 개발자의 값이라 덮는다", () => {
+  const { registry: reg, dir } = registry();
+  try {
+    const project = reg.create({
+      name: "회원 관리",
+      repoUrl: "https://github.com/org/repo.git",
+      defaults: { model: "sonnet" },
+      lifecycle: { autoReply: false },
+    });
+    reg.update(project.slug, { defaults: null, lifecycle: null });
+    const after = reg.get(project.slug);
+    assert.equal(after?.defaults, undefined);
+    assert.equal(after?.lifecycle, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("초대 v4: 손편집으로 깨진 defaults·lifecycle 은 파서가 버린다", () => {
+  const { registry: reg, file, dir } = registry();
+  try {
+    const project = reg.create({ name: "회원 관리", repoUrl: "https://github.com/org/repo.git" });
+    // 디스크의 JSON 을 직접 깨뜨린다 — 잘못된 effort 와 범위 밖 일수.
+    const saved = JSON.parse(readFileSync(file, "utf8")) as {
+      projects: Array<Record<string, unknown>>;
+    };
+    saved.projects[0]!.defaults = { model: "sonnet", effort: "엄청" };
+    saved.projects[0]!.lifecycle = { keepRejectedDays: 9999, autoReply: "yes" };
+    writeFileSync(file, JSON.stringify(saved));
+    const reloaded = ProjectRegistry.load({
+      COLO_DESIGN_PROJECTS_SETTINGS: file,
+      COLO_DESIGN_PROJECTS_DIR: join(dir, "projects"),
+    });
+    const reloadedProject = reloaded.get(project.slug);
+    // 모르는 값은 버리고 나머지는 산다 — effort·days·autoReply 는 떨어지고
+    // model 만 남는다.
+    assert.deepEqual(reloadedProject?.defaults, { model: "sonnet" });
+    assert.equal(reloadedProject?.lifecycle, undefined);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

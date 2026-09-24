@@ -336,6 +336,26 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     activate: z.boolean().optional(),
     /** 프로젝트별 지침(설정 문서 P1#8) — project.update 의 것과 같은 한도·뜻. */
     instructions: z.string().max(10_000).optional(),
+    /**
+     * 초대 v4(PLAN 단계 5): 개발자가 실어 보낸 새 대화의 처음 값 — 칩이나
+     * 선로가 말하지 않았을 때만 쓰인다.
+     */
+    defaults: z
+      .object({
+        provider: z.string().min(1).max(64).optional(),
+        model: z.string().min(1).max(64).optional(),
+        effort: effortLevelSchema.optional(),
+      })
+      .optional(),
+    /** 초대 v4: 사이클의 수명 규칙 — 없으면 각 소비자의 기본값. */
+    lifecycle: z
+      .object({
+        deleteMergedBranches: z.boolean().optional(),
+        keepRejectedDays: z.number().int().min(1).max(365).optional(),
+        autoReply: z.boolean().optional(),
+        submitFromChat: z.boolean().optional(),
+      })
+      .optional(),
   }),
   /**
    * Switches which project everything else means. The outgoing project's
@@ -360,6 +380,24 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     approveCommands: z.boolean().optional(),
     /** 프로젝트별 지침(설정 문서 P1#8) — 세션의 시스템 프롬프트에 붙는다. */
     instructions: z.string().max(10_000).nullable().optional(),
+    /** 초대 v4(PLAN 단계 5): 개발자의 값이라 덮는다 — null 이면 지운다. */
+    defaults: z
+      .object({
+        provider: z.string().min(1).max(64).optional(),
+        model: z.string().min(1).max(64).optional(),
+        effort: effortLevelSchema.optional(),
+      })
+      .nullable()
+      .optional(),
+    lifecycle: z
+      .object({
+        deleteMergedBranches: z.boolean().optional(),
+        keepRejectedDays: z.number().int().min(1).max(365).optional(),
+        autoReply: z.boolean().optional(),
+        submitFromChat: z.boolean().optional(),
+      })
+      .nullable()
+      .optional(),
   }),
   /**
    * Forgets a project. Its folder survives unless `deleteFiles` — unpushed

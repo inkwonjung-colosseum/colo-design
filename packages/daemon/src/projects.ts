@@ -19,7 +19,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { HandoffStatus } from "@colo-design/protocol";
+import {
+  type HandoffStatus,
+  type ProjectDefaults,
+  type ProjectLifecycle,
+  parseProjectDefaults,
+  parseProjectLifecycle,
+} from "@colo-design/protocol";
 import { COLO_DESIGN_DIR, CONFIG_DIR } from "./environment.js";
 
 export interface ProjectRepo {
@@ -69,6 +75,16 @@ export interface Project {
    * 붙는다. 비면 붙지 않는다.
    */
   instructions?: string;
+  /**
+   * 초대 v4(PLAN 단계 5): 새 대화의 처음 값 — 개발자가 초대장에 실어 보낸
+   * 모델·생각 시간·공급자. 사용자가 칩에서 고르면 그것이 이긴다.
+   */
+  defaults?: ProjectDefaults;
+  /**
+   * 초대 v4: 사이클의 수명 규칙 — 병합 브랜치 정리 · 반려 보관 기간 ·
+   * 자동 답장 · 채팅 제출. 없으면 각 소비자의 기본값을 따른다.
+   */
+  lifecycle?: ProjectLifecycle;
 }
 
 /** Every path a project owns. */
@@ -208,6 +224,14 @@ function parseProject(raw: unknown): Project | null {
     ...(typeof value.instructions === "string" && value.instructions.trim()
       ? { instructions: value.instructions.trim() }
       : {}),
+    // 초대 v4(PLAN 단계 5): 개발자가 실어 보낸 기본값과 수명 — 손편집으로
+    // 깨진 값은 파서가 버리고, 남는 것이 없으면 필드 자체가 없어진다.
+    ...(parseProjectDefaults(value.defaults)
+      ? { defaults: parseProjectDefaults(value.defaults) }
+      : {}),
+    ...(parseProjectLifecycle(value.lifecycle)
+      ? { lifecycle: parseProjectLifecycle(value.lifecycle) }
+      : {}),
     repo: {
       url: cleanString(repo.url),
       baseBranch: cleanString(repo.baseBranch) ?? DEFAULT_BASE_BRANCH,
@@ -344,6 +368,10 @@ export class ProjectRegistry {
     reviewers?: string[];
     /** 프로젝트별 지침(설정 문서 P1#8) — update 와 같은 규칙(trim, 비면 저장 안 함). */
     instructions?: string;
+    /** 초대 v4(PLAN 단계 5): 새 대화의 처음 값. */
+    defaults?: ProjectDefaults;
+    /** 초대 v4: 사이클의 수명 규칙. */
+    lifecycle?: ProjectLifecycle;
   }): Project {
     const name = input.name.trim();
     if (!name) throw new Error("프로젝트 이름을 입력해 주세요");
@@ -366,6 +394,10 @@ export class ProjectRegistry {
         : {}),
       // 지침은 update 와 같은 규칙 — trim 해서 비어 있지 않을 때만 싣는다.
       ...(input.instructions?.trim() ? { instructions: input.instructions.trim() } : {}),
+      // 초대 v4(PLAN 단계 5): 개발자가 실어 보낸 값은 그대로 — 이미 정규화된
+      // 모양이 넘어오므로 여기서 다시 가리지 않는다.
+      ...(input.defaults ? { defaults: input.defaults } : {}),
+      ...(input.lifecycle ? { lifecycle: input.lifecycle } : {}),
       repo: {
         url: input.repoUrl,
         baseBranch,
@@ -394,6 +426,9 @@ export class ProjectRegistry {
       instructions?: string | null;
       /** E4(초대 v2): null 은 지우기, 배열은 새 목록이다. */
       reviewers?: string[] | null;
+      /** 초대 v4(PLAN 단계 5): null 은 지우기 — 개발자의 값이라 덮는다. */
+      defaults?: ProjectDefaults | null;
+      lifecycle?: ProjectLifecycle | null;
     },
   ): Project {
     const project = this.get(slug);
@@ -426,6 +461,16 @@ export class ProjectRegistry {
         changes.reviewers === null
           ? undefined
           : changes.reviewers.map((login) => login.trim()).filter((login) => login !== "");
+    }
+    // 초대 v4(PLAN 단계 5): 개발자의 값은 덮는다 — null 은 "초대장에 없다"는
+    // 뜻이므로 지운다. 이름·지침과 달리 사용자의 몫이 아니다.
+    if (changes.defaults !== undefined) {
+      if (changes.defaults === null) delete project.defaults;
+      else project.defaults = changes.defaults;
+    }
+    if (changes.lifecycle !== undefined) {
+      if (changes.lifecycle === null) delete project.lifecycle;
+      else project.lifecycle = changes.lifecycle;
     }
     this.save();
     return project;
