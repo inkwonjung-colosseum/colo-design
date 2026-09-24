@@ -88,7 +88,22 @@ export interface CycleLedger {
       count: number;
     }
   >;
-  branches: Array<{ name: string; endedAt: string; state: "merged" | "closed" }>;
+  /**
+   * 끝난 사이클 브랜치의 기록 — 반려는 keepRejectedDays 정리(단계 9)가,
+   * 병합의 지연 삭제 표식은 12행 푸시가 읽는다.
+   */
+  branches: Array<{
+    name: string;
+    endedAt: string;
+    state: "merged" | "closed";
+    /**
+     * 원격 브랜치 삭제를 미루는 표식 (PLAN L4) — 값은 이월이 올라갈 새
+     * 브랜치 이름. 이월이 있는 병합에서 옛 원격 브랜치를 새 브랜치가
+     * 올라가기 전에 지우면, 푸시가 오래 실패하는 동안 옮긴 커밋이 원격
+     * 어디에도 없다. 12행 푸시가 성공한 뒤에 지운다.
+     */
+    deleteRemoteAfterPush?: string;
+  }>;
   hygiene: { gcAt?: string; fsckAt?: string; pruneAt?: string };
 }
 
@@ -276,7 +291,12 @@ function parseBranches(raw: unknown): CycleLedger["branches"] {
     const endedAt = asString(record.endedAt);
     const state = asString(record.state);
     if (name === null || endedAt === null || (state !== "merged" && state !== "closed")) continue;
-    branches.push({ name, endedAt, state });
+    const deleteRemoteAfterPush = asString(record.deleteRemoteAfterPush);
+    branches.push(
+      deleteRemoteAfterPush === null
+        ? { name, endedAt, state }
+        : { name, endedAt, state, deleteRemoteAfterPush },
+    );
   }
   return branches;
 }

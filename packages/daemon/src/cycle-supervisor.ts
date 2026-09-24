@@ -650,6 +650,16 @@ export class CycleSupervisor {
       newBranch,
       carried,
     });
+    /** 옮길 커밋이 없어진 병합의 끝 — 베이스로 돌아가 handoff 는 merged 로. */
+    const finishMergedOnBase = async (): Promise<boolean> => {
+      await core.git(["checkout", base]);
+      await core.git(["reset", "--hard", `origin/${base}`]);
+      await deleteOldBranch();
+      core.setCycle(null, endedHandoff);
+      core.rotateCommentsCycle();
+      this.log(`랜딩 완료: PR #${action.pr} 병합 — 옮길 커밋이 없어 베이스로 돌아왔습니다`);
+      return true;
+    };
     if (action.outcome === "merged") {
       // 병합 · 남은 것 있음 — PR head 뒤의 커밋만 새 브랜치로 옮긴다.
       // headSha 가 로컬에 없으면(넉넉한 규칙의 세계) 브랜치 전체를 이어
@@ -661,19 +671,53 @@ export class CycleSupervisor {
       try {
         if (headLocal) {
           await core.git(["fetch", "origin", base]);
+          // 옮길 커밋은 병합 커밋을 빼고 골라 하나씩 붙인다 — 범위
+          // cherry-pick 은 병합 커밋에서 "-m 없음" 오류로(예: PR 을 읽기
+          // 전 틱의 11행 mergeBase 가 base 를 합친 경우), 이미 베이스에 들어간
+          // 변경은 빈 커밋에서 멈춘다. 둘 다 충돌이 아니라 실패라 틱마다
+          // 되풀이된다. 병합 커밋의 내용은 베이스에 이미 있다(스쿼시 병합의
+          // 이월이 정확히 이 세계다). --empty=drop 은 git 2.45+ — 이 도구가
+          // 싣는 git(이동식 2.53 · MinGit 2.55)과 시스템 git 이 모두 위다.
+          const picks = (
+            await core.git(["rev-list", "--reverse", "--no-merges", `${action.headSha}..${tip}`])
+          )
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean);
+          if (picks.length === 0) {
+            // 옮길 것이 없다(병합 커밋뿐이거나 이미 베이스에 들어갔다) —
+            // 남은 것 없는 병합처럼 베이스로 돌아간다.
+            return await finishMergedOnBase();
+          }
           await core.git(["checkout", "-b", newBranch, `origin/${base}`]);
-          carried = Number(
-            (await core.git(["rev-list", "--count", `${action.headSha}..${tip}`])).trim(),
-          );
-          if (carried > 0) {
-            await core.git(["cherry-pick", `${action.headSha}..${tip}`]);
+          for (const sha of picks) {
+            try {
+              await core.git([...(await core.identityArgs()), "cherry-pick", "--empty=drop", sha]);
+            } catch (pickError) {
+              if (!(await core.cherryPickInProgress())) throw pickError;
+              carried = await this.countOnBranch(core, base, newBranch);
+              this.setPendingOp({
+                kind: "cherry-pick",
+                files: await core.conflictedFiles(),
+                startedAt: new Date(this.now()).toISOString(),
+                briefs: 0,
+                land: pendingLand(),
+              });
+              return true;
+            }
+          }
+          carried = await this.countOnBranch(core, base, newBranch);
+          if (carried === 0) {
+            // 고른 커밋이 모두 빈 커밋이었다(이미 베이스에 들어간 변경) —
+            // 빈 새 사이클을 열지 않고 베이스로 돌아간다.
+            await core.git(["checkout", base]).catch(() => "");
+            await core.git(["branch", "-D", newBranch]).catch(() => "");
+            return await finishMergedOnBase();
           }
         } else {
           await core.git(["branch", newBranch, tip]);
           await core.git(["checkout", newBranch]);
-          carried = Number(
-            (await core.git(["rev-list", "--count", `origin/${base}..${tip}`])).trim(),
-          );
+          carried = await this.countOnBranch(core, base, newBranch);
           await core.git(["fetch", "origin", base]);
           await core.git([...(await core.identityArgs()), "merge", "--no-edit", `origin/${base}`]);
         }
@@ -689,6 +733,7 @@ export class CycleSupervisor {
           return true;
         }
         if (await core.cherryPickInProgress()) {
+          carried = await this.countOnBranch(core, base, newBranch).catch(() => carried);
           this.setPendingOp({
             kind: "cherry-pick",
             files: await core.conflictedFiles(),
@@ -742,9 +787,22 @@ export class CycleSupervisor {
   private async completeLand(land: NonNullable<CyclePendingOp["land"]>): Promise<void> {
     const core = this.deps.core;
     const oldBranch = land.oldBranch;
+    // 마무리 시점의 실제 커밋 수 — 충돌을 겪은 이월은 멈춘 순간의 셈이
+    // 낡았으므로 끝에서 다시 읽는다.
+    const carried = await this.countOnBranch(core, core.baseBranch, land.newBranch).catch(
+      () => land.carried,
+    );
     if (oldBranch !== null) {
+      // 로컬 옛 브랜치는 곧바로 지운다 — 커밋은 새 브랜치에 있다.
       await core.git(["branch", "-D", oldBranch]).catch(() => "");
-      if (land.outcome === "merged" && (this.deps.deleteMergedBranches?.() ?? true)) {
+      // 이월이 있는 병합의 원격 삭제는 새 브랜치가 올라간 뒤로 미룬다 —
+      // 그 전에 지우면 12행 푸시가 실패하는 동안 옮긴 커밋이 원격 어디에도
+      // 없다(옛 브랜치에 올라가 있던 것까지 지워진다). 미룰 표식은 원장
+      // branches 의 deleteRemoteAfterPush — 푸시 성공 뒤의 정리가 읽는다.
+      const mayDeleteRemote =
+        land.outcome === "merged" && (this.deps.deleteMergedBranches?.() ?? true);
+      const deferRemoteDelete = mayDeleteRemote && carried > 0;
+      if (mayDeleteRemote && !deferRemoteDelete) {
         const remote = await core
           .git(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${oldBranch}`])
           .catch(() => "");
@@ -762,6 +820,7 @@ export class CycleSupervisor {
             name: oldBranch,
             endedAt: new Date(this.now()).toISOString(),
             state: land.outcome,
+            ...(deferRemoteDelete ? { deleteRemoteAfterPush: land.newBranch } : {}),
           },
         ],
       };
@@ -771,15 +830,55 @@ export class CycleSupervisor {
     // (다음 제출이 새 요청을 연다).
     core.setCycle(land.newBranch, null);
     core.rotateCommentsCycle();
-    if (land.carried > 0) {
+    if (carried > 0) {
       const event: ChatEvent = {
         kind: "cycle.carried",
         at: new Date(this.now()).toISOString(),
         from: oldBranch ?? "",
         to: land.newBranch,
-        commits: land.carried,
+        commits: carried,
       };
       core.lane.outside(() => this.deps.cycleEvent?.(event));
+    }
+  }
+
+  /** 새 브랜치에 실제로 있는 커밋 수 — 빈 커밋 버림(--empty=drop)을 셈에
+   *  반영한다. 실패는 호출자의 catch 에 맡긴다. */
+  private async countOnBranch(core: RepoCore, base: string, branch: string): Promise<number> {
+    const out = await core.git(["rev-list", "--count", `origin/${base}..${branch}`]);
+    return Number(out.trim()) || 0;
+  }
+
+  /**
+   * 미뤄 둔 원격 브랜치 삭제 (PLAN L4) — 12행 푸시가 새 브랜치를 무사히
+   * 올린 뒤에야 옛 병합 브랜치를 지운다. 표식을 먼저 지우고 지운다:
+   * 삭제 실패는 삼키고 로그만 남기며, 다음 틱이 같은 실패를 되풀이하지
+   * 않게한다.
+   */
+  private async cleanupDeferredRemoteBranches(pushedBranch: string): Promise<void> {
+    const core = this.deps.core;
+    const due = this.ledger.branches.filter(
+      (entry) => entry.deleteRemoteAfterPush === pushedBranch,
+    );
+    if (due.length === 0) return;
+    if (!(this.deps.deleteMergedBranches?.() ?? true)) return;
+    this.ledger = {
+      ...this.ledger,
+      branches: this.ledger.branches.map((entry) => {
+        if (entry.deleteRemoteAfterPush !== pushedBranch) return entry;
+        const { deleteRemoteAfterPush: _drop, ...rest } = entry;
+        return rest;
+      }),
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+    for (const entry of due) {
+      const remote = await core
+        .git(["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${entry.name}`])
+        .catch(() => "");
+      if (remote.trim() === "") continue;
+      await core.git(["push", "origin", "--delete", entry.name]).catch((error) => {
+        this.log(`원격 브랜치 정리 실패(삼킴): ${detailOf(error, core.pat)}`);
+      });
     }
   }
 
@@ -812,6 +911,7 @@ export class CycleSupervisor {
     this.log(`도구 조작 마무리: ${pending.kind}`);
     if (pending.land) await this.completeLand(pending.land);
   }
+
   /** 12행 — 밀린 커밋을 한 번 민다. 결과는 원장의 push 로 돌아간다. */
   private async pushOnce(): Promise<boolean> {
     const core = this.deps.core;
@@ -821,6 +921,8 @@ export class CycleSupervisor {
       await core.git(["push", "--set-upstream", "origin", branch]);
       this.ledger = recordPushResult(this.ledger, { ok: true }, this.now());
       writeLedger(this.ledgerPath, this.ledger);
+      // 이월이 올라갔다 — 미뤄 둔 옛 원격 브랜치 삭제를 이제 한다(PLAN L4).
+      await this.cleanupDeferredRemoteBranches(branch);
       // 성공은 판정을 다시 돌지 않고도 밀림 알림을 거둔다 — push 가 null 이
       // 되면 조정이 resolve 를 내지 않으므로 여기서 지운다.
       if (this.ledger.notices["push:behind"] || this.ledger.notices["push:auth"]) {

@@ -756,3 +756,142 @@ test("사이클 밖 갈라짐 — 최신화가 던지지 않고 틱이 사이클
     await scene.dispose();
   }
 });
+
+/** 원격의 브랜치 목록 — origin url 이 죽은 세계에서도 진짜 원격을 본다. */
+function remoteHeads(scene: SupervisedScene, branch: string): Promise<string> {
+  return scene.git(["ls-remote", "--heads", scene.remote.path, branch]);
+}
+
+test("이월의 병합 커밋 — cherry-pick 이 멈추지 않고 일반 커밋만 옮긴다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // PR 을 읽기 전 틱이 베이스를 사이클 브랜치에 합친다 — headSha 뒤에
+    // 병합 커밋이 선다(범위 cherry-pick 이 "-m 없음"으로 멈추는 세계).
+    await scene.dev.pushToBase({ "src/base.ts": "개발자\n" }, "베이스 이동");
+    await scene.supervisor.tick("manual");
+    const afterMergeBase = await scene.git(["log", "--format=%s", "-3"]);
+    assert.ok(afterMergeBase.includes("Merge"), "병합 커밋이 사이클 브랜치에 있어야 한다");
+
+    await scene.github.merge(pr, "merge");
+    await commit(scene, { "src/b.ts": "export const b = 1;\n" }, "작업 2");
+
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "병합 커밋 때문에 이월이 멈춰서는 안 된다");
+    const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
+    assert.ok(head.startsWith("colo-design/"));
+    const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
+    assert.deepEqual(log.trim().split("\n"), ["작업 2"], "병합 커밋 없이 일반 커밋만 옮겨야 한다");
+    assert.equal((await remoteHeads(scene, BRANCH)).trim(), "", "옛 원격 브랜치는 지워져야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("이월의 빈 커밋 — 이미 베이스에 들어간 변경은 버려진다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // 스쿼시 병합이 headSha 뒤의 커밋까지 베이스에 넣었다 — 이월하면 빈 커밋.
+    await commit(scene, { "src/b.ts": "export const b = 1;\n" }, "작업 2");
+    await scene.git(["push", "origin", BRANCH]);
+    await scene.github.merge(pr, "squash");
+
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "빈 커밋에 멈춰서는 안 된다");
+    assert.equal(
+      (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim(),
+      "main",
+      "옮길 것이 없으면 베이스로 돌아온다",
+    );
+    assert.equal(
+      (await scene.git(["rev-parse", "HEAD"])).trim(),
+      (await scene.git(["rev-parse", "origin/main"])).trim(),
+      "HEAD 는 origin/main 이다",
+    );
+    assert.equal((await remoteHeads(scene, BRANCH)).trim(), "", "옛 원격 브랜치는 지워진다");
+    assert.equal(scene.core.openHandoff?.state, "merged");
+    assert.equal(
+      scene.chatEvents.some((e) => e.kind === "cycle.carried"),
+      false,
+      "버려진 커밋은 이월 사건을 내지 않는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("이월 병합의 옛 원격 브랜치 — 새 브랜치가 올라갈 때까지 남는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // 밀림의 백오프를 미리 심는다 — 랜딩 틱에서 푸시가 건너뛰기게.
+    await commit(scene, { "src/z.ts": "export const z = 1;\n" }, "밀림 씨앗");
+    await scene.git(["remote", "set-url", "origin", "http://127.0.0.1:1/nope.git"]);
+    scene.setNow(Date.now());
+    await scene.supervisor.tick("manual");
+    const seeded = ledgerOf(scene).push;
+    assert.ok(seeded !== null, "밀림이 심겨야 한다");
+
+    await scene.git(["remote", "set-url", "origin", scene.remote.path]);
+    await scene.github.merge(pr, "merge");
+    await commit(scene, { "src/b.ts": "export const b = 1;\n" }, "작업 2");
+
+    // 랜딩 — 백오프 창 안이라 푸시는 이 틱에서 건너뛴다.
+    await scene.supervisor.tick("manual");
+    const ledger = ledgerOf(scene);
+    const newBranch = scene.core.branch;
+    assert.ok(newBranch !== null && newBranch.startsWith("colo-design/"));
+    assert.ok(
+      ledger.branches.some((b) => b.name === BRANCH && b.deleteRemoteAfterPush === newBranch),
+      "원장이 옛 원격 브랜치 삭제를 미뤄 둬야 한다",
+    );
+    assert.notEqual(
+      (await remoteHeads(scene, BRANCH)).trim(),
+      "",
+      "푸시 전에 옛 원격 브랜치는 남아 있어야 한다",
+    );
+    assert.equal((await scene.git(["branch", "--list", BRANCH])).trim(), "", "로컬은 지운다");
+
+    // 푸시가 계속 실패해도 옛 브랜치는 남는다.
+    await scene.git(["remote", "set-url", "origin", "http://127.0.0.1:1/nope.git"]);
+    scene.setNow(Date.parse(ledgerOf(scene).push?.nextAttemptAt ?? "") + 1000);
+    await scene.supervisor.tick("manual");
+    assert.notEqual(
+      (await remoteHeads(scene, BRANCH)).trim(),
+      "",
+      "푸시 실패 동안 옛 원격 브랜치는 남아 있어야 한다",
+    );
+
+    // 푸시가 성공하는 틱에서 옛 브랜치가 지워진다.
+    await scene.git(["remote", "set-url", "origin", scene.remote.path]);
+    scene.setNow(Date.parse(ledgerOf(scene).push?.nextAttemptAt ?? "") + 1000);
+    await scene.supervisor.tick("manual");
+    assert.equal(
+      (await remoteHeads(scene, BRANCH)).trim(),
+      "",
+      "새 브랜치가 올라간 뒤 옛 원격 브랜치는 지워져야 한다",
+    );
+    assert.notEqual(
+      (await remoteHeads(scene, newBranch)).trim(),
+      "",
+      "새 브랜치가 원격에 있어야 한다",
+    );
+    assert.equal(
+      ledgerOf(scene).branches.some((b) => b.deleteRemoteAfterPush),
+      false,
+      "미룸 표식은 지워져야 한다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
