@@ -21,6 +21,11 @@ export type LaneKind =
   | "hygiene"
   | "supervise";
 
+/** 작업 문맥의 표식 — 차선의 "지금 도는 작업" 목록과 겹쳐야 holding 이다. */
+interface LaneContext {
+  token: symbol;
+}
+
 /** 줄의 항목 — 시작 게이트가 열리기를 기다리는, 아직 시작하지 않은 작업. */
 interface LaneEntry {
   kind: LaneKind;
@@ -29,11 +34,17 @@ interface LaneEntry {
 }
 
 export class GitLane {
-  /** "지금 이 차선의 작업 안" 의 표식 — 재진입 판정의 근거 (PLAN L1). */
-  private readonly inside = new AsyncLocalStorage<{ lane: true }>();
+  /**
+   * "지금 이 차선의 작업 안" 의 문맥 (PLAN L1). 문맥은 작업이 시작한 사슬에
+   * 그대로 번지지만, 표식의 수명은 작업의 수명이다 — 끝난 작업의 문맥을
+   * 물려받은 사슬(콜백이 살려 둔 세션 · 타이머)은 더 이상 holding 이 아니다.
+   */
+  private readonly inside = new AsyncLocalStorage<LaneContext>();
   private readonly queue: LaneEntry[] = [];
   private runningKind: LaneKind | null = null;
   private idleWaiters: Array<() => void> = [];
+  /** 지금 실제로 도는 작업의 표식 — callJob 에서 더하고 작업이 끝나면 뺀다. */
+  private readonly liveTokens = new Set<symbol>();
 
   /**
    * 작업 하나를 줄에 세운다. FIFO — 도는 작업이 없으면 즉시 시작한다.
@@ -47,7 +58,11 @@ export class GitLane {
    *   종류가 같은 결과 모양을 돌려준다는 호출자의 약속 위에 있다.
    */
   run<T>(kind: LaneKind, job: () => Promise<T>, opts?: { join?: boolean }): Promise<T> {
-    if (this.holding) return this.callJob(job);
+    if (this.holding) {
+      // 재진입: 새 표식을 만들지 않는다 — 바깥 작업의 문맥과 수명을 그대로
+      // 탄다. 안쪽 작업이 끝나도 바깥이 도는 동안엔 여전히 holding 이다.
+      return Promise.resolve().then(job);
+    }
     if (opts?.join) {
       const waiting = this.queue.find((entry) => entry.kind === kind);
       if (waiting) return waiting.promise as Promise<T>;
@@ -60,11 +75,12 @@ export class GitLane {
   }
 
   /**
-   * 작업 문맥을 지운 채 뒷일을 시작한다. 작업 안에서 void 로 띄운 재시도(저장의
-   * 배경 푸시)가 재진입 즉시실행의 대상이 되어 차선을 몰래 비켜가는 일을 막는다
-   * — 재시도의 시도 하나는 다시 줄에 서는 작업 하나여야 한다.
+   * 나가는 문 — 차선 작업 안에서 git 밖으로 나가는 콜백을 문맥 없이 부른다.
+   * 콜백이 세션을 만들거나(fleet·dispatch 의 자동 브리프) 사슬을 오래 살리면,
+   * 그 사슬이 작업의 문맥을 물려받아 holding 인 체하며 줄을 비켜가는 일을
+   * 여기서 끊는다. 동기 함수도 받는다 — 반환값은 그대로 흘러간다.
    */
-  outside<T>(fn: () => Promise<T>): Promise<T> {
+  outside<T>(fn: () => T): T {
     return this.inside.exit(fn);
   }
 
@@ -73,9 +89,13 @@ export class GitLane {
     return this.runningKind;
   }
 
-  /** 지금 이 호출이 이 차선의 작업 안에서 돌고 있는가. */
+  /**
+   * 지금 이 호출이 이 차선의 작업 안에서 돌고 있는가. 문맥만으로는 답하지
+   * 않는다: 끝난 작업이 번져 준 문맥(표식이 이미 목록에서 빠졌다)은 거짓이다.
+   */
   get holding(): boolean {
-    return this.inside.getStore() !== undefined;
+    const store = this.inside.getStore();
+    return store !== undefined && this.liveTokens.has(store.token);
   }
 
   /** 줄이 빌 때 풀린다 — 종료·정리(settle)가 기다리는 문. */
@@ -86,9 +106,19 @@ export class GitLane {
     });
   }
 
-  /** 작업 몸통 — 문맥을 심고, 동기 throw 도 약속으로 받는다. */
+  /**
+   * 작업 몸통 — 문맥에 표식을 심고, 동기 throw 도 약속으로 받는다. 표식의
+   * 수명이 작업의 수명이다: 작업이 끝나는(성공이든 실패든) 순간 목록에서
+   * 빼, 그 뒤로 이어지는 사슬이 holding 인 체하지 않게 한다.
+   */
   private callJob<T>(job: () => Promise<T>): Promise<T> {
-    return this.inside.run({ lane: true }, () => Promise.resolve().then(job));
+    const token = Symbol("lane");
+    this.liveTokens.add(token);
+    return this.inside
+      .run({ token }, () => Promise.resolve().then(job))
+      .finally(() => {
+        this.liveTokens.delete(token);
+      });
   }
 
   private pump(): void {

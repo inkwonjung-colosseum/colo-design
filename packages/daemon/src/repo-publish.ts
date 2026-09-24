@@ -241,9 +241,12 @@ export class PublishCycle {
       // 안내의 문제) — 배너는 리로드와 함께 사라지므로, 누른 손이 무엇에
       // 막혔는지를 테이프의 한 줄로 남긴다(cycle.saveBlocked, 베타 테스트 B6).
       const detail = "저장할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
-      this.deps.onCycleEvent?.(
-        { kind: "cycle.saveBlocked", at: new Date().toISOString(), detail },
-        options.sessionId,
+      // 나가는 문 (PLAN L1): 사이클 사건은 세션 테이프 · 방송으로 이어진다.
+      this.core.lane.outside(() =>
+        this.deps.onCycleEvent?.(
+          { kind: "cycle.saveBlocked", at: new Date().toISOString(), detail },
+          options.sessionId,
+        ),
       );
       return this.core.setDiff({ stage: "failed", gate: "diff", detail });
     }
@@ -301,15 +304,17 @@ export class PublishCycle {
     const status = this.core.setDiff({ stage: "published", commit, message });
     // hero-synthesis D1: the save lands on the session tape — a reloaded
     // window replays the quiet marker instead of losing it with `diffStatus`.
-    this.deps.onCycleEvent?.(
-      {
-        kind: "cycle.saved",
-        at: new Date().toISOString(),
-        commit,
-        message,
-        files: approved.length > 0 ? approved : retryFiles,
-      },
-      options.sessionId,
+    this.core.lane.outside(() =>
+      this.deps.onCycleEvent?.(
+        {
+          kind: "cycle.saved",
+          at: new Date().toISOString(),
+          commit,
+          message,
+          files: approved.length > 0 ? approved : retryFiles,
+        },
+        options.sessionId,
+      ),
     );
     return status;
   }
@@ -511,14 +516,16 @@ export class PublishCycle {
       this.core.setCycle(branch, handoff);
       const status = this.core.setDiff({ stage: "handed-off", handoff });
       // hero-synthesis D1: the milestone line — 넘겼어요 — joins the tape.
-      this.deps.onCycleEvent?.(
-        {
-          kind: "cycle.handed",
-          at: new Date().toISOString(),
-          pr: handoff.number,
-          ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
-        },
-        options.sessionId,
+      this.core.lane.outside(() =>
+        this.deps.onCycleEvent?.(
+          {
+            kind: "cycle.handed",
+            at: new Date().toISOString(),
+            pr: handoff.number,
+            ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
+          },
+          options.sessionId,
+        ),
       );
       return status;
     } catch (error) {
@@ -652,9 +659,11 @@ export class PublishCycle {
     // 울리면 같은 줄이 두 번 쌓인다 (베타 테스트 #5).
     const seenEnded = ended !== null && ended.number === pull.number && ended.state === pull.state;
     if (pull.state === "merged" && target.state !== "merged" && !seenEnded) {
-      this.deps.onCycleEvent?.(
-        { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
-        undefined,
+      this.core.lane.outside(() =>
+        this.deps.onCycleEvent?.(
+          { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
+          undefined,
+        ),
       );
     }
     // 사이클을 끝내는 판정은 둘이다: 반영됨과 반려. 반려를 사이클로 계속 들고
@@ -694,9 +703,11 @@ export class PublishCycle {
       // hero-synthesis D1: the poll's fresh read of 반영됨 is the same news —
       // `endedHandoff` already holding a merged pull means it was announced.
       if (pull.state === "merged" && this.endedHandoff?.state !== "merged") {
-        this.deps.onCycleEvent?.(
-          { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
-          undefined,
+        this.core.lane.outside(() =>
+          this.deps.onCycleEvent?.(
+            { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
+            undefined,
+          ),
         );
       }
       this.endedHandoff = pull;
@@ -846,7 +857,9 @@ export class PublishCycle {
         if (known !== null) {
           const arrived = reviews.filter((review) => !known.has(review.id));
           if (arrived.length > 0) {
-            this.deps.onCycleEvent?.({ kind: "review.arrived", reviews: arrived }, undefined);
+            this.core.lane.outside(() =>
+              this.deps.onCycleEvent?.({ kind: "review.arrived", reviews: arrived }, undefined),
+            );
           }
         }
         this.knownReviewIds = new Set(reviews.map((review) => review.id));
@@ -918,17 +931,23 @@ export class PublishCycle {
       // The failure is actionable by the agent, not by the planner: hand it over
       // the same wire a typed message uses, output tail included. The step is
       // named the way the planner's button is, not the way git is.
-      onSessionTurn?.(
-        markTurn(
-          { kind: "gate", step: GATE_STEP[gate] },
-          `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
+      // 나가는 문 (PLAN L1): 브리프가 만드는 세션(게이트 대화)이 이 작업의
+      // 문맥을 물려받지 않게 한다.
+      this.core.lane.outside(() =>
+        onSessionTurn?.(
+          markTurn(
+            { kind: "gate", step: GATE_STEP[gate] },
+            `${GATE_BRIEF[gate]} 아래 출력의 원인을 고친 뒤 다시 시도해 주세요.\n\n${detail}`,
+          ),
         ),
       );
     } else {
       // 슬라이스 5: AI 도 기획자도 고칠 수 없는 실패다 — 개발자 채널로.
       // 브랜치는 이 사이클의 이름이고 detail 은 PAT 가 이미 걷힌 한국어 문장.
-      this.deps.escalate?.(
-        `[Colo Design] ${GATE_BRIEF[gate]} (${this.core.branch ?? "?"})\n${detail}\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.`,
+      this.core.lane.outside(() =>
+        this.deps.escalate?.(
+          `[Colo Design] ${GATE_BRIEF[gate]} (${this.core.branch ?? "?"})\n${detail}\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.`,
+        ),
       );
     }
     // reason 이 없으면 저장 검토는 "멈췄습니다" 로만 끝났다.

@@ -172,6 +172,67 @@ test("outside — 작업 안에서 띄운 뒷일은 차선 문맥을 벗어나 �
   await lane.idle();
 });
 
+test("작업이 끝난 뒤 번진 사슬은 더 이상 holding 이 아니다 — run 은 줄에 선다", async () => {
+  const lane = new GitLane();
+  order.length = 0;
+  const gate = Promise.withResolvers<void>();
+  let holdingAfterEnd: boolean | null = null;
+  // 작업 안에서 시작해 작업보다 오래 사는 사슬 — 콜백이 살려 둔 세션의
+  // 소비 루프 · 타이머의 모양이다. 문맥을 물려받지만 표식의 수명은 아니다.
+  const leaked = lane.run("save", async () => {
+    void (async () => {
+      await gate.promise;
+      holdingAfterEnd = lane.holding;
+      await lane.run("push", async () => {
+        order.push("late");
+      });
+    })();
+    return "saved";
+  });
+  assert.equal(await leaked, "saved");
+  // 앞선 작업 하나가 줄을 잡는다 — 번진 사슬의 run 은 그 뒤에 서야 한다.
+  const blocker = gatedJob("block");
+  const held = lane.run("land", blocker.job);
+  await sleep(10);
+  gate.resolve();
+  await sleep(10);
+  assert.equal(holdingAfterEnd, false); // 문맥은 남았어도 holding 이 아니다
+  // late 는 아직 시작하지 못했다 — 도는 land 뒤에 대기 중이다.
+  assert.deepEqual(order, ["block"]);
+  blocker.gate.resolve();
+  await held;
+  await lane.idle();
+  assert.deepEqual(order, ["block", "late"]);
+});
+
+test("outside 로 벗긴 문맥의 run 은 도는 작업 옆에서도 줄에 선다", async () => {
+  const lane = new GitLane();
+  order.length = 0;
+  const blocker = gatedJob("a");
+  const escapee = gatedJob("b");
+  let escapedHolding: boolean | null = null;
+  let queued: Promise<string> | null = null;
+  const save = lane.run("save", async () => {
+    // 나가는 문으로 벗겨진 문맥 — save 가 아직 도는 동안의 run 도 줄에 선다.
+    queued = lane.outside(() => {
+      escapedHolding = lane.holding;
+      return lane.run("push", escapee.job);
+    });
+    order.push("a");
+    await blocker.gate.promise; // save 작업을 붙잡아 둔다
+    return "saved";
+  });
+  await sleep(10);
+  assert.deepEqual(order, ["a"]); // escapee 는 시작하지 못했다 — 줄에 섰다
+  assert.equal(escapedHolding, false); // 문에서 벗겨진 문맥은 holding 이 아니다
+  blocker.gate.resolve();
+  assert.equal(await save, "saved");
+  assert.notEqual(queued, null);
+  escapee.gate.resolve();
+  assert.equal(await queued, "b");
+  assert.deepEqual(order, ["a", "b"]);
+});
+
 // ---------------------------------------------------------------------------
 // isGitWrite 표 — 이 클론을 바꾸는 동사는 전부 쓰기로 읽힌다
 // ---------------------------------------------------------------------------

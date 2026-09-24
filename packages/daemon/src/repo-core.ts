@@ -792,7 +792,10 @@ export class RepoCore {
     brief: string,
     onSessionTurn: ((brief: string) => void) | undefined,
   ): Promise<"conflict"> {
-    if (onSessionTurn) onSessionTurn(brief);
+    // 나가는 문 (PLAN L1): 브리프는 dispatch(fleet) 로 가서 세션을 만들 수
+    // 있다 — 그 세션의 사슬이 이 작업의 문맥을 물려받으면 이후 저장이 줄을
+    // 비켜간다. 문맥을 벗겨 보낸다.
+    if (onSessionTurn) this.lane.outside(() => onSessionTurn(brief));
     else throw new Error(REFRESH_CONFLICT_DETAIL);
     return "conflict";
   }
@@ -992,7 +995,8 @@ export class RepoCore {
     const conflicted = await this.popStash(ref);
     if (!conflicted) return "restored";
     if (onSessionTurn) {
-      onSessionTurn(this.popConflictBrief(conflicted));
+      // briefOrThrow 와 같은 나가는 문 — 세션을 만드는 콜백에 문맥을 물려주지 않는다.
+      this.lane.outside(() => onSessionTurn(this.popConflictBrief(conflicted)));
       return "conflict";
     }
     this.setPhase("error", RECOVER_CONFLICT_DETAIL, "conflict");
@@ -1069,7 +1073,8 @@ export class RepoCore {
   }
 
   setDiff(status: DiffStatus): DiffStatus {
-    this.onDiffStatus?.(status);
+    // 나가는 문 (PLAN L1): 상태 방송 콜백이 사슬을 살리면 문맥이 번진다.
+    this.lane.outside(() => this.onDiffStatus?.(status));
     return status;
   }
 
@@ -1403,7 +1408,11 @@ export class RepoCore {
 
   emit(): void {
     this.lastEmit = Date.now();
-    this.onStatus(this.snapshot());
+    // 나가는 문 (PLAN L1): 상태 방송은 fleet 의 자동 브리프(autoFixThreadFor
+    // 의 세션 만들기)로 이어진다 — 세션의 사슬이 작업 문맥을 물려받아
+    // holding 인 체하는 일을 여기서 끊는다. setPhase · setCycle · 최신화가
+    // 차선 작업 안에서도 이 문을 지나므로 무조건 벗긴다.
+    this.lane.outside(() => this.onStatus(this.snapshot()));
   }
 }
 
