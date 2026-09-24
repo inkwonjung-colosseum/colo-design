@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  inviteUpdatePatch,
   normalizeInvite,
   planInviteRows,
   readInviteJson,
@@ -119,10 +120,10 @@ test("여러 프로젝트 봉인 왕복 — normalizeInvite 가 같은 모양을
   });
 });
 
-test("옛 단일 인자 buildInvite 는 프로젝트 하나짜리 안쪽 v3 가 된다", () => {
+test("옛 단일 인자 buildInvite 는 프로젝트 하나짜리 안쪽 v4 가 된다", () => {
   const invite = sampleInvite();
   assert.deepEqual(invite, {
-    v: 3,
+    v: 4,
     token: "github_pat_TEST123",
     authorName: "김기획",
     readme: invite.readme,
@@ -382,4 +383,129 @@ test("planInviteRows 는 로컬 경로의 기존 프로젝트도 update 로 짝�
       currentName: "베타 서비스",
     },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// 안쪽 v4 — 기계 몫(notify)과 프로젝트별 defaults·lifecycle (PLAN 단계 5)
+// ---------------------------------------------------------------------------
+
+test("v4 왕복 — notify·defaults·lifecycle 이 봉인과 정규화를 거쳐 살아남는다", async () => {
+  const invite = buildInvite({
+    token: "github_pat_TEST123",
+    author: "김기획",
+    notify: { slack: { kind: "webhook", url: "https://hooks.slack.com/services/T/B/X" } },
+    projects: [
+      {
+        repoUrl: "https://github.com/org/a.git",
+        name: "회원 관리",
+        defaults: { provider: "claude", model: "sonnet", effort: "high" },
+        lifecycle: { deleteMergedBranches: false, keepRejectedDays: 30, autoReply: false },
+      },
+      {
+        repoUrl: "https://github.com/org/b.git",
+        name: "정산",
+        lifecycle: { submitFromChat: false },
+      },
+    ],
+  });
+  const read = await readInviteJson(JSON.stringify(await sealInvite(invite)));
+  assert.ok(read.ok);
+  if (!read.ok) return;
+  const normalized = normalizeInvite(read.value);
+  assert.deepEqual(normalized, {
+    ok: true,
+    invite: {
+      token: "github_pat_TEST123",
+      authorName: "김기획",
+      readme: invite.readme,
+      notify: { slack: { kind: "webhook", url: "https://hooks.slack.com/services/T/B/X" } },
+      projects: [
+        {
+          repoUrl: "https://github.com/org/a.git",
+          name: "회원 관리",
+          baseBranch: "main",
+          approveCommands: true,
+          defaults: { provider: "claude", model: "sonnet", effort: "high" },
+          lifecycle: { deleteMergedBranches: false, keepRejectedDays: 30, autoReply: false },
+        },
+        {
+          repoUrl: "https://github.com/org/b.git",
+          name: "정산",
+          baseBranch: "main",
+          approveCommands: true,
+          lifecycle: { submitFromChat: false },
+        },
+      ],
+    },
+  });
+});
+
+test("v4 의 모르는 값은 버리고 나머지를 살린다 — 잘못된 effort·http 웹훅·범위 밖 일수", () => {
+  const normalized = normalizeInvite({
+    v: 4,
+    token: "t",
+    notify: { slack: { kind: "webhook", url: "http://hooks.slack.com/x" } },
+    projects: [
+      {
+        repoUrl: "https://github.com/org/a.git",
+        name: "a",
+        defaults: { model: "sonnet", effort: "extreme" },
+        lifecycle: { keepRejectedDays: 0, autoReply: false },
+      },
+    ],
+  });
+  assert.ok(normalized.ok);
+  if (!normalized.ok) return;
+  // http 웹훅은 통째로 버린다 — 연결 코드를 실은 알림이 평문으로 새는 일이 없게.
+  assert.equal(normalized.invite.notify, undefined);
+  const project = normalized.invite.projects[0];
+  // 잘못된 effort 만 떨어지고 model 은 산다.
+  assert.deepEqual(project?.defaults, { model: "sonnet" });
+  // 범위 밖 일수만 떨어지고 autoReply 는 산다.
+  assert.deepEqual(project?.lifecycle, { autoReply: false });
+});
+
+test("v4 의 봇 알림은 토큰과 채널이 함께 있을 때만 산다", () => {
+  const bot = normalizeInvite({
+    v: 4,
+    token: "t",
+    notify: { slack: { kind: "bot", token: "xoxb-1", channel: "#dev" } },
+    projects: [{ repoUrl: "https://github.com/org/a.git", name: "a" }],
+  });
+  assert.ok(bot.ok);
+  if (!bot.ok) return;
+  assert.deepEqual(bot.invite.notify, {
+    slack: { kind: "bot", token: "xoxb-1", channel: "#dev" },
+  });
+  // 채널이 빠진 봇은 없는 것이다.
+  const half = normalizeInvite({
+    v: 4,
+    token: "t",
+    notify: { slack: { kind: "bot", token: "xoxb-1" } },
+    projects: [{ repoUrl: "https://github.com/org/a.git", name: "a" }],
+  });
+  assert.ok(half.ok);
+  if (!half.ok) return;
+  assert.equal(half.invite.notify, undefined);
+});
+
+test("inviteUpdatePatch — 이름·지침은 사용자의 것이라 보내지 않고, 없는 개발자 값은 지운다", () => {
+  const patch = inviteUpdatePatch({
+    repoUrl: "https://github.com/org/a.git",
+    name: "초대장의 이름",
+    baseBranch: "develop",
+    approveCommands: true,
+    instructions: "초대장의 지침",
+    defaults: { model: "sonnet" },
+  });
+  assert.deepEqual(patch, {
+    baseBranch: "develop",
+    reviewers: null,
+    defaults: { model: "sonnet" },
+    lifecycle: null,
+    approveCommands: true,
+  });
+  // 이름·지침은 패치에 아예 없다 — 사용자가 고른 값을 덮는 일이 없다.
+  assert.equal("name" in patch, false);
+  assert.equal("instructions" in patch, false);
 });

@@ -7,6 +7,13 @@
  * 봉투를 못 열면 이유("sealed")만 말한다 — 비밀은 다루지 않는다.
  */
 
+import {
+  type ProjectDefaults,
+  type ProjectLifecycle,
+  parseProjectDefaults,
+  parseProjectLifecycle,
+} from "./project.js";
+
 /**
  * 봉투를 가리는 앱 내장 키(32바이트, base64). site/invite-format.mjs 의
  * INVITE_KEY 와 같은 값이어야 한다(데몬 테스트가 확인한다). 키가 공개 페이지
@@ -35,6 +42,16 @@ export interface InviteProject {
   instructions?: string;
   /** 개발자가 이 레포의 설치 · 미리보기 명령 실행을 미리 허용했는가. */
   approveCommands: boolean;
+  /** 초대 v4(PLAN 단계 5): 새 대화의 처음 값 — 사용자의 칩이 이긴다. */
+  defaults?: ProjectDefaults;
+  /** 초대 v4: 사이클의 수명 규칙 — 없으면 각 소비자의 기본값. */
+  lifecycle?: ProjectLifecycle;
+}
+
+/** 초대 v4 의 기계 몫 — 개발자 알림이 갈 Slack 길(PLAN L11). 비밀이라
+ *  가져올 때 자격 증명 저장소로 가고, 화면으로는 다시 나가지 않는다. */
+export interface InviteNotify {
+  slack?: { kind: "webhook"; url: string } | { kind: "bot"; token: string; channel: string };
 }
 
 /** 정규화된 초대장 — 토큰과 프로젝트 목록이 전부다. */
@@ -42,6 +59,8 @@ export interface NormalizedInvite {
   token: string;
   authorName?: string;
   readme?: string;
+  /** 초대 v4: 개발자 알림의 Slack 길 — 없으면 이 초대장은 알림을 건드리지 않는다. */
+  notify?: InviteNotify;
   projects: InviteProject[];
 }
 
@@ -62,6 +81,10 @@ const LIMITS = {
   reviewers: 10,
   reviewerLogin: 80,
   instructions: 10_000,
+  /** 초대 v4 의 notify.slack — escalation.set 의 선로 한도와 같은 값들. */
+  slackUrl: 2_000,
+  slackToken: 500,
+  slackChannel: 80,
 } as const;
 
 /**
@@ -122,6 +145,40 @@ function stringList(value: unknown): string[] | undefined {
   return list.length > 0 ? list : undefined;
 }
 
+/**
+ * 초대 v4 의 notify.slack 판독 — 웹훅은 https 주소만 받고(연결 코드를 실은
+ * 알림이 평문 http 로 새는 일이 없게), 봇은 토큰과 채널이 함께 있을 때만
+ * 산다. 모르는 값은 버린다 — 초대장 하나가 깨진 알림 필드 때문에 전부
+ * 거절되는 일은 없다(PLAN 단계 5).
+ */
+function parseNotify(value: unknown): InviteNotify | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const slack = (value as Record<string, unknown>).slack;
+  if (typeof slack !== "object" || slack === null) return undefined;
+  const record = slack as Record<string, unknown>;
+  const url = trimmed(record.url);
+  if (
+    record.kind === "webhook" &&
+    url &&
+    url.startsWith("https://") &&
+    url.length <= LIMITS.slackUrl
+  ) {
+    return { slack: { kind: "webhook", url } };
+  }
+  const token = trimmed(record.token);
+  const channel = trimmed(record.channel);
+  if (
+    record.kind === "bot" &&
+    token &&
+    token.length <= LIMITS.slackToken &&
+    channel &&
+    channel.length <= LIMITS.slackChannel
+  ) {
+    return { slack: { kind: "bot", token, channel } };
+  }
+  return undefined;
+}
+
 /** trim 한 뒤 비면 undefined — 선택 문자열 필드의 공통 규칙. */
 function trimmed(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
@@ -150,8 +207,9 @@ function fallbackName(repoUrl: string): string {
  *   지금 StartFlow 의 parseInvite 규칙을 그대로: name 이 비면 레포 이름
  *   (fallbackName), approveCommands 는 `!== false`, reviewers·authorName 은
  *   v2 에서만, baseBranch 없으면 "main".
- * - v3 → projects 목록을 그대로 검증한다.
- * - v 가 1·2·3 이 아니면 "version", token 이 비면 "token", 목록이 비었거나
+ * - v3 · v4 → projects 목록을 그대로 검증한다. v4 는 여기에 기계 몫(notify)과
+ *   프로젝트별 defaults·lifecycle 을 더 읽는다 — 모르는 값은 버린다.
+ * - v 가 1·2·3·4 가 아니면 "version", token 이 비면 "token", 목록이 비었거나
  *   repoUrl 없는 항목이 있으면 "projects", 선로 한도를 넘으면 "limit".
  * - 같은 레포(sameRepo)가 목록에 두 번 있으면 뒤의 것을 버린다 — 한도 검사보다
  *   먼저.
@@ -161,7 +219,7 @@ export function normalizeInvite(value: unknown): NormalizeResult {
     return { ok: false, reason: "version" };
   }
   const file = value as Record<string, unknown>;
-  if (file.v !== 1 && file.v !== 2 && file.v !== 3) {
+  if (file.v !== 1 && file.v !== 2 && file.v !== 3 && file.v !== 4) {
     return { ok: false, reason: "version" };
   }
   const token = trimmed(file.token);
@@ -169,7 +227,7 @@ export function normalizeInvite(value: unknown): NormalizeResult {
 
   // 옛 v1/v2 는 프로젝트 필드가 최상위에 펴져 있다 — 하나짜리 목록으로 묶는다.
   const rawProjects: unknown[] =
-    file.v === 3 ? (Array.isArray(file.projects) ? file.projects : []) : [file];
+    file.v === 3 || file.v === 4 ? (Array.isArray(file.projects) ? file.projects : []) : [file];
   if (rawProjects.length === 0) {
     return { ok: false, reason: "projects", detail: "초대장에 프로젝트가 없습니다" };
   }
@@ -190,13 +248,19 @@ export function normalizeInvite(value: unknown): NormalizeResult {
       file.v === 1
         ? undefined // v1 은 리뷰어를 실은 적이 없다 — parseInvite 규칙 그대로.
         : stringList(entry.reviewers);
-    const instructions = file.v === 3 ? trimmed(entry.instructions) : undefined;
+    const instructions = file.v === 3 || file.v === 4 ? trimmed(entry.instructions) : undefined;
+    // 초대 v4(PLAN 단계 5): defaults·lifecycle 은 모르는 값을 버리는 파서가
+    // 읽는다 — 깨진 부분만 떨어지고 나머지는 산다.
+    const defaults = file.v === 4 ? parseProjectDefaults(entry.defaults) : undefined;
+    const lifecycle = file.v === 4 ? parseProjectLifecycle(entry.lifecycle) : undefined;
     projects.push({
       repoUrl,
       name,
       baseBranch,
       ...(reviewers ? { reviewers } : {}),
       ...(instructions ? { instructions } : {}),
+      ...(defaults ? { defaults } : {}),
+      ...(lifecycle ? { lifecycle } : {}),
       approveCommands: entry.approveCommands !== false,
     });
   }
@@ -266,6 +330,8 @@ export function normalizeInvite(value: unknown): NormalizeResult {
       token,
       ...(file.v !== 1 && trimmed(file.authorName) ? { authorName: trimmed(file.authorName) } : {}),
       ...(trimmed(file.readme) ? { readme: trimmed(file.readme) } : {}),
+      // 초대 v4 의 기계 몫 — 개발자 알림의 Slack 길(PLAN L11). 옛 판에는 없다.
+      ...(file.v === 4 && parseNotify(file.notify) ? { notify: parseNotify(file.notify) } : {}),
       projects: unique,
     },
   };
@@ -293,6 +359,28 @@ export function planInviteRows(
       ? { project, action: "update", slug: match.slug, currentName: match.name }
       : { project, action: "add" };
   });
+}
+
+/**
+ * 다시 가져오기의 한 행이 project.update 에 실을 패치(PLAN 단계 5) — 이름과
+ * 지침은 사용자의 몫이라 절대 실리지 않고, defaults · lifecycle · 리뷰어는
+ * 개발자의 것이라 초대장에 없으면 지운다(null). 새 프로젝트(add)는 이 패치가
+ * 아니라 초대장의 값 그대로 만든다.
+ */
+export function inviteUpdatePatch(project: InviteProject): {
+  baseBranch: string;
+  reviewers: string[] | null;
+  defaults: ProjectDefaults | null;
+  lifecycle: ProjectLifecycle | null;
+  approveCommands?: true;
+} {
+  return {
+    baseBranch: project.baseBranch,
+    reviewers: project.reviewers ?? null,
+    defaults: project.defaults ?? null,
+    lifecycle: project.lifecycle ?? null,
+    ...(project.approveCommands ? { approveCommands: true } : {}),
+  };
 }
 
 /** base64 → 바이트. atob 바이트 루프 — 브라우저와 Node 19+ 양쪽에서 돈다. */

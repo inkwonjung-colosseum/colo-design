@@ -58,9 +58,13 @@ export async function sealInvite(invite) {
 }
 
 /** 프로젝트 항목의 빈 값은 싣지 않는다 — 읽는 쪽(normalizeInvite)도 같은 규칙이다. */
-function buildProject({ repoUrl, name, baseBranch, reviewers, instructions }) {
+function buildProject({ repoUrl, name, baseBranch, reviewers, instructions, defaults, lifecycle }) {
   const list = (reviewers ?? []).map((login) => login.trim()).filter((login) => login !== "");
   const guide = instructions?.trim();
+  // 초대 v4(PLAN 단계 5): defaults·lifecycle 은 개발자가 정한 값만 실린다 —
+  // 비어 있으면 읽는 쪽의 기본값이 그대로 선다.
+  const seed = defaults && Object.values(defaults).some((v) => v !== undefined && v !== "");
+  const life = lifecycle && Object.values(lifecycle).some((v) => v !== undefined);
   return {
     repoUrl: repoUrl.trim(),
     name: name.trim(),
@@ -68,6 +72,8 @@ function buildProject({ repoUrl, name, baseBranch, reviewers, instructions }) {
     approveCommands: true,
     ...(list.length > 0 ? { reviewers: list } : {}),
     ...(guide ? { instructions: guide } : {}),
+    ...(seed ? { defaults } : {}),
+    ...(life ? { lifecycle } : {}),
   };
 }
 
@@ -101,17 +107,18 @@ function repoKey(url) {
 }
 
 /**
- * 초대 파일의 내용(봉투 안쪽, v3) — 토큰 하나와 프로젝트 목록이다. token 은
+ * 초대 파일의 내용(봉투 안쪽, v4) — 토큰 하나와 프로젝트 목록이다. token 은
  * 호출자가 trim 해 둔 것을 그대로 싣는다 — 이 함수는 비밀을 가공하지 않는다.
  * author 는 모든 프로젝트가 공유하는 "이 작업에 적을 이름"이고, projects 는
- * [{ repoUrl, name, baseBranch?, reviewers?, instructions? }]다.
+ * [{ repoUrl, name, baseBranch?, reviewers?, instructions?, defaults?,
+ * lifecycle? }]다. notify 는 기계 몫 — 개발자 알림이 갈 Slack 길(PLAN L11).
  *
  * 예전 단일 인자({ repoUrl, name, baseBranch, reviewers })도 받아 프로젝트
  * 하나짜리로 바꿔 준다 — site/invite.js 가 다음 단계까지 그대로 돌아야 하므로.
  * 같은 레포는 한 번만 싣는다 — "프로젝트 3개"라고 말했는데 실제로는 중복이라
  * 2개였던 일이 없게 뒤의 것을 버린다(읽는 쪽 normalizeInvite 와 같은 규칙).
  */
-export function buildInvite({ token, author, projects, ...single }) {
+export function buildInvite({ token, author, projects, notify, ...single }) {
   const seen = new Set();
   const list = (projects ?? [single]).filter((project) => {
     const key = repoKey(project.repoUrl ?? "") ?? project.repoUrl;
@@ -120,10 +127,12 @@ export function buildInvite({ token, author, projects, ...single }) {
     return true;
   });
   return {
-    v: 3,
+    v: 4,
     token: token.trim(),
     ...(author?.trim() ? { authorName: author.trim() } : {}),
     readme: INVITE_README,
+    // 초대 v4 의 기계 몫 — 개발자 알림이 갈 Slack 길(PLAN L11). 없으면 싣지 않는다.
+    ...(notify?.slack ? { notify } : {}),
     projects: list.map((project) => buildProject(project)),
   };
 }

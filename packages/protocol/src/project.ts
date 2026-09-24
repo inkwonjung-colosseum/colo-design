@@ -1,5 +1,6 @@
 import type { HandoffStatus, RepoPhase } from "./repo.js";
 import type { PlanUsage, SessionModelInfo } from "./session.js";
+import type { EffortLevel } from "./shared.js";
 
 // ---------------------------------------------------------------------------
 // Daemon -> client
@@ -81,11 +82,114 @@ export interface ProjectSummary {
   /** `lastEventKind`를 폴러가 감지한 시각(ISO) — 사건이 실제로 일어난 시각이
       아니라 최대 2분 지연된 발견 시각이다. */
   lastEventAt?: string;
+  /**
+   * 초대 v4(PLAN 단계 5): 개발자가 초대장에 실어 보낸 새 대화의 처음 값 —
+   * 사용자가 칩에서 고른 적이 없을 때만 씨앗이 된다.
+   */
+  defaults?: ProjectDefaults;
+  /** 초대 v4: 사이클의 수명 규칙 — 없으면 각 소비자의 기본값을 따른다. */
+  lifecycle?: ProjectLifecycle;
 }
 
 export interface ProjectList {
   projects: ProjectSummary[];
   activeSlug: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// 초대 파일 v4 (PLAN 단계 5) — 개발자가 정하는 프로젝트의 기본값과 수명
+// ---------------------------------------------------------------------------
+
+/** 새 대화의 처음 값(초대 v4) — 칩이나 선로가 말하지 않았을 때만 쓰인다.
+ *  사용자가 고르면 그것이 이긴다(PLAN 0.2 — 사용자는 모델을 안다). */
+export interface ProjectDefaults {
+  /** 이 기본값이 어느 공급자에게만 해당하는가 — 없으면 모든 공급자. */
+  provider?: string;
+  /** 모델 별칭 또는 id — 선로가 그대로 launch 에 싣는 값이다. */
+  model?: string;
+  effort?: EffortLevel;
+}
+
+/** 사이클의 수명 규칙(초대 v4 · PLAN L4) — 값이 없으면 각 소비자의 기본값
+ *  (지운다 · 14일 · 답한다 · 제출할 수 있다)을 따른다. */
+export interface ProjectLifecycle {
+  /** 병합된 사이클 브랜치를 원격에서도 지울까 — 기본 true. */
+  deleteMergedBranches?: boolean;
+  /** 반려된 작업을 브랜치 채로 남기는 날 — 기본 14, 1~365. */
+  keepRejectedDays?: number;
+  /** 개발자 코멘트에 AI 가 스스로 답할까 — 기본 true. */
+  autoReply?: boolean;
+  /** 채팅의 "제출해 줘" 를 받아들일까 — 기본 true. */
+  submitFromChat?: boolean;
+}
+
+/** 초대 v4 의 새 필드가 지키는 한도 — 읽는 쪽(normalizeInvite)과 레지스트리
+ *  (parseProject)가 같은 잣자리를 쓴다. */
+export const PROJECT_FIELD_LIMITS = {
+  provider: 64,
+  model: 64,
+  keepRejectedDays: { min: 1, max: 365 },
+} as const;
+
+const EFFORT_LEVELS: Record<string, true> = {
+  low: true,
+  medium: true,
+  high: true,
+  xhigh: true,
+  max: true,
+};
+
+/**
+ * 알 수 없는 defaults 값을 판독한다 — 초대 v4 의 규칙은 "모르는 값은 버리고
+ * 나머지를 살린다"(PLAN 단계 5): 잘못된 effort 나 한도 밖 문자열은 그 필드만
+ * 버리고, 남는 것이 없으면 필드 자체가 없어진다. 레지스트리의 손편집도 같은
+ * 길로 흡수된다.
+ */
+export function parseProjectDefaults(value: unknown): ProjectDefaults | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const provider =
+    typeof record.provider === "string" && record.provider.trim() !== ""
+      ? record.provider.trim().slice(0, PROJECT_FIELD_LIMITS.provider)
+      : undefined;
+  const model =
+    typeof record.model === "string" && record.model.trim() !== ""
+      ? record.model.trim().slice(0, PROJECT_FIELD_LIMITS.model)
+      : undefined;
+  const effort =
+    typeof record.effort === "string" && EFFORT_LEVELS[record.effort] === true
+      ? (record.effort as EffortLevel)
+      : undefined;
+  const defaults: ProjectDefaults = {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  };
+  return Object.keys(defaults).length > 0 ? defaults : undefined;
+}
+
+/** parseProjectDefaults 의 lifecycle 판 — 같은 규칙으로 모르는 값을 버린다. */
+export function parseProjectLifecycle(value: unknown): ProjectLifecycle | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const days =
+    typeof record.keepRejectedDays === "number" &&
+    Number.isInteger(record.keepRejectedDays) &&
+    record.keepRejectedDays >= PROJECT_FIELD_LIMITS.keepRejectedDays.min &&
+    record.keepRejectedDays <= PROJECT_FIELD_LIMITS.keepRejectedDays.max
+      ? record.keepRejectedDays
+      : undefined;
+  const lifecycle: ProjectLifecycle = {
+    ...(typeof record.deleteMergedBranches === "boolean"
+      ? { deleteMergedBranches: record.deleteMergedBranches }
+      : {}),
+    ...(days !== undefined ? { keepRejectedDays: days } : {}),
+    ...(typeof record.autoReply === "boolean" ? { autoReply: record.autoReply } : {}),
+    ...(typeof record.submitFromChat === "boolean"
+      ? { submitFromChat: record.submitFromChat }
+      : {}),
+  };
+  return Object.keys(lifecycle).length > 0 ? lifecycle : undefined;
 }
 
 /**
