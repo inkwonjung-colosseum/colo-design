@@ -109,3 +109,67 @@ export function buildFilesSection(numstat: string, max = 60): string | null {
   const tail = overflow > 0 ? `\n- 외 ${overflow}건` : "";
   return `### 바뀐 파일\n\n${lead}\n\n${lines.join("\n")}${tail}\n`;
 }
+
+/** PR 본문에서 도구의 구간을 표시하는 말뭉치 (PLAN L6) — 이 안이 도구의
+ *  것이고 바깥은 개발자의 것이다. */
+export const TOOL_BLOCK_START = "<!-- colo-design:start -->";
+export const TOOL_BLOCK_END = "<!-- colo-design:end -->";
+
+/**
+ * PR 본문의 도구 구간만 갱신한다 (PLAN L6) — 순수 함수.
+ *
+ * 구간이 없으면 본문 끝에 붙이고, 있으면 첫 구간의 내용만 바꾸고, 둘 이상이면
+ * 첫 구간만 남기고 나머지는 지운다(옛 버전의 흔적). 구간 밖의 글은 개발자의
+ * 것이므로 어떤 경우에도 그대로 둔다 — 다시 제출이 개발자가 쓴 본문을 덮어
+ * 쓰는 일가지가 이 함수로 막힌다.
+ */
+export function mergeToolBlock(existing: string | null, block: string): string {
+  const base = existing ?? "";
+  const wrapped = `${TOOL_BLOCK_START}\n${block.replace(/\n+$/, "")}\n${TOOL_BLOCK_END}`;
+  const pattern = new RegExp(
+    `${escapeRegExp(TOOL_BLOCK_START)}[\\s\\S]*?${escapeRegExp(TOOL_BLOCK_END)}\\s*`,
+    "g",
+  );
+  const found = base.match(pattern);
+  if (found === null) {
+    // 구간이 없다 — 개발자의 글 뒤에 붙인다. 빈 본문이면 안내 문단 없이
+    // 구간만 선다.
+    return base.trim() === "" ? wrapped : `${base.replace(/\n+$/, "")}\n\n${wrapped}`;
+  }
+  // 첫 구간만 새 것으로 바꾸고 나머지는 지운다. 끝의 여백은 다듬는다 —
+  // 갱신을 거듭할 때마다 빈 줄이 쌓이면 멱등이 아니다 (I5).
+  let first = true;
+  return base
+    .replace(pattern, () => {
+      if (first) {
+        first = false;
+        return `${wrapped}\n\n`;
+      }
+      return "";
+    })
+    .replace(/\s+$/, "");
+}
+/** 정규식 특수문자를 피한다 — 표식은 고정 문장이지만 이스케이프가 재사용을
+ *  안전하게 만든다. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * PR 제목은 생성할 때만 정한다 (PLAN L6) — 순수 함수. 초안(handoffDraft 의
+ * 8초 안에 나온 제목)이 없으면 `<프로젝트 이름> · <첫 커밋 제목>`, 그마저
+ * 없으면 도구의 기본 제목이다. 입양한 PR 이나 다시 제출에서는 이 함수를
+ * 부르지 않는다 — 제목은 개발자의 것이다.
+ */
+export function pickHandoffTitle(input: {
+  draftTitle: string | null;
+  projectName: string;
+  firstCommitSubject: string | null;
+  fallback: string;
+}): string {
+  const draft = input.draftTitle?.trim();
+  if (draft) return draft;
+  const subject = input.firstCommitSubject?.trim();
+  if (subject) return `${input.projectName} · ${subject}`;
+  return input.fallback;
+}
