@@ -5,8 +5,17 @@
  * 감독자(cycle-supervisor)가 쥐고, 여기에는 git 과 파일의 몸통만 있다 — 모두
  * 감독자 틱의 차선 칸 안에서 불린다고 가정한다.
  */
-import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
+import { currentPlatform } from "./environment.js";
 import { realpathBestEffort } from "./paths.js";
 import type { RepoCore } from "./repo-core.js";
 import { detailOf } from "./repo-core.js";
@@ -52,6 +61,26 @@ export function salvageStamp(ms: number): string {
 }
 
 /**
+ * 두 경로가 같은 폴더인가 — 디스크의 철자(realpath native)로 견준다. git 은 폴더를
+ * 디스크의 대소문자로 답하는데 JS 의 realpath 는 받은 철자를 지켜, 철자만 다른
+ * 멀쩡한 클론을 "다른 git 폴더" 로 읽는다(macOS 실측). 대소문자를 가리지 않는
+ * 볼륨(macOS · Windows)에서는 대소문자 없이 한 번 더 너그럽게 견준다 — 이 비교의
+ * 거짓 양성은 멀쩡한 클론을 다시 받게 하므로 너그러운 쪽이 싸다.
+ */
+function samePlace(a: string, b: string): boolean {
+  const canonical = (path: string): string => {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      return realpathBestEffort(path);
+    }
+  };
+  const [left, right] = [canonical(a), canonical(b)];
+  if (left === right) return true;
+  return currentPlatform() !== "linux" && left.toLowerCase() === right.toLowerCase();
+}
+
+/**
  * 손상 탐침 (PLAN 단계 9) — HEAD 와 인덱스를 읽는 세 명령의 말만 본다. 없는
  * sha 를 가리킨 흔한 오류(로컬에 없는 PR head 같은)는 다른 명령에서 나고
  * 여기에는 오지 않는다 — 탐침을 좁힌 이유다. 멀쩡하면 null, 손상이면 git 의 말.
@@ -76,7 +105,7 @@ export async function probeCorruption(core: RepoCore): Promise<string | null> {
   //    저장소를 찾는다. 그때는 오류 대신 남의 git 폴더를 답하므로 자리를 견준다.
   try {
     const answered = (await core.git(["rev-parse", "--absolute-git-dir"])).trim();
-    if (isDir && realpathBestEffort(answered) !== realpathBestEffort(gitDir)) {
+    if (isDir && !samePlace(answered, gitDir)) {
       return `not a git repository — git 이 이 클론의 .git 대신 ${answered} 를 읽습니다`;
     }
   } catch (error) {
@@ -197,6 +226,7 @@ export async function salvageClone(
  * 이유(호출자가 개발자 알림 clone:restore 의 자세히에 싣는다). 실패해도 구해 둔
  * 폴더는 그대로 남는다.
  *
+ * 0. 새 클론이 깨끗하지 않으면 아무것도 얹지 않는다(그 사이 고친 것을 지킨다).
  * 1. 묶음을 fetch 해 사이클 브랜치를 되살리고 checkout(묶음이 HEAD 면 베이스를
  *    fast-forward — 6행이 새 사이클로 입양한다).
  * 2. changes.patch 를 `git apply --binary`, 안 되면 `--3way`. 그래도 안 되면 반쯤
@@ -209,6 +239,13 @@ export async function restoreSalvage(
 ): Promise<string | null> {
   const git = (args: string[]) => core.git(args);
   const bundle = join(record.dir, "unpushed.bundle");
+  // 새 클론이 깨끗할 때만 얹는다 — 재클론의 틈에 새 클론에서 고친 것(그 사이의
+  // 턴)이 있으면 checkout 과 실패 뒤의 reset 이 그것까지 걷는다. 구해 둔 것은
+  // 폴더에 그대로 남으므로 이때는 얹지 않고 이유를 돌려준다.
+  const dirty = (await git(["status", "--porcelain"]).catch(() => "?")).trim();
+  if (dirty !== "") {
+    return "다시 받은 클론에 이미 고친 것이 있어 구해 둔 작업을 얹지 않았습니다";
+  }
   try {
     if (record.bundleRef !== null) {
       if (record.bundleRef.startsWith("refs/heads/")) {

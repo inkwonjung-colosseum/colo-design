@@ -124,7 +124,7 @@ export interface SupervisorDeps {
   ledgerPath: string;
   /** SessionManager.busyIn(root) — 턴이 도는 동안은 기다리는 판정이 앞선다. */
   busy: () => boolean;
-  /** RepoWorkspace 의 bringup.dependenciesMoved — 설치가 낡았는지. */
+  /** 설치가 낡았는지 — fleet 은 `!RepoWorkspace.installUpToDate()`(installStale)를 넣는다. */
   installStale: () => boolean;
   /** RepoCore 의 GitHub 손잡이들 — observeCycle 에 그대로 건넨다. */
   github: () => GitHubClient | null;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
 
 // 재클론은 준비(bootstrap)를 다시 돌고, 준비는 Claude 의 신뢰 목록(.claude.json)에
 // 새 클론을 적는다 — 시험이 사용자의 설정을 건드리지 않게 이 프로세스의 것을
@@ -22,11 +24,18 @@ process.env.COLO_DESIGN_LANE_STRICT = "1";
 
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
-import { corruptionSignal, restoreSalvage, salvageStamp } from "../dist/clone-salvage.js";
+import {
+  corruptionSignal,
+  probeCorruption,
+  restoreSalvage,
+  salvageStamp,
+} from "../dist/clone-salvage.js";
 import { readLedger } from "../dist/cycle-ledger.js";
+import { RepoCore } from "../dist/repo-core.js";
 import { makeScene, makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
 const BRANCH = "colo-design/20260924-1";
+const exec = promisify(execFile);
 
 /** 클론에 커밋 — 도구의 자동 보관이 한 차례 지나간 모양. */
 async function commit(scene: SupervisedScene, files: Record<string, string>, message: string) {
@@ -81,6 +90,30 @@ test("corruptionSignal — 인덱스 · HEAD 를 읽지 못하는 말만 손상�
     "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host",
   ]) {
     assert.equal(corruptionSignal(said), false, said);
+  }
+});
+
+test("탐침 — 클론 경로의 철자가 디스크와 대소문자만 달라도 손상이 아니다", {
+  skip: process.platform === "linux",
+}, async () => {
+  // git 은 폴더를 디스크의 철자로 답한다 — 받은 철자와 견주면 멀쩡한 클론이
+  // "다른 git 폴더" 로 읽혀 날마다 다시 받게 된다(macOS 실측).
+  const root = mkdtempSync(join(tmpdir(), "colo-probe-"));
+  try {
+    const real = join(root, "CaseClone");
+    await exec("git", ["init", "-q", "-b", "main", real]);
+    writeFileSync(join(real, "a.txt"), "a\n");
+    const git = (args: string[]) =>
+      exec("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: real });
+    await git(["add", "-A"]);
+    await git(["commit", "-qm", "첫 커밋"]);
+    const core = new RepoCore({ root: join(root, "caseclone"), url: null, onStatus: () => {} });
+    assert.equal(await probeCorruption(core), null);
+    // 진짜 손상은 그 철자로도 잡는다.
+    writeFileSync(join(real, ".git", "index"), "garbage");
+    assert.match((await probeCorruption(core)) ?? "", /index file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -250,6 +283,30 @@ test("되살리기 실패 — 표식을 남기지 않고 이유를 돌려준다,
     assert.equal((await scene.git(["diff", "HEAD", "--stat"])).trim(), "");
     assert.equal(readFileSync(join(scene.clone.path, "README.md"), "utf8"), "# 하네스\n");
     assert.equal(readFileSync(join(scene.clone.path, "src", "kept.ts"), "utf8"), "살아남는 파일\n");
+    rmSync(dir, { recursive: true, force: true });
+  } finally {
+    scene.dispose();
+  }
+});
+
+test("되살리기 — 새 클론에 이미 고친 것이 있으면 아무것도 얹지 않는다(그 사이의 변경을 지킨다)", async () => {
+  const scene = await makeScene();
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "colo-salvage-"));
+    writeFileSync(join(dir, "changes.patch"), "쓰지 않을 패치\n");
+    mkdirSync(join(dir, "untracked"), { recursive: true });
+    writeFileSync(join(dir, "untracked", "README.md"), "덮으면 안 되는 쪽\n");
+    // 재클론의 틈에 새 클론에서 고친 파일.
+    writeFileSync(join(scene.clone.path, "README.md"), "# 하네스\n그 사이에 고침\n");
+
+    const failure = await scene.core.lane.run("supervise", () =>
+      restoreSalvage(scene.core, { dir, branch: null, bundleRef: null, patch: true }),
+    );
+    assert.ok(failure?.includes("이미 고친 것이 있어"), String(failure));
+    assert.equal(
+      readFileSync(join(scene.clone.path, "README.md"), "utf8"),
+      "# 하네스\n그 사이에 고침\n",
+    );
     rmSync(dir, { recursive: true, force: true });
   } finally {
     scene.dispose();

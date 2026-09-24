@@ -211,8 +211,9 @@ export async function fsckClone(core: RepoCore): Promise<string | null> {
 export async function measureAssets(
   core: RepoCore,
 ): Promise<{ files: number; bytes: number } | null | undefined> {
+  // 전체 ref 이름으로 묻는다 — 짧은 이름은 꼬리 일치라 `x/colo-design-assets` 도 잡는다.
   const listed = await core
-    .git(["ls-remote", "--heads", "origin", ASSETS_BRANCH])
+    .git(["ls-remote", "origin", `refs/heads/${ASSETS_BRANCH}`])
     .catch(() => undefined);
   if (listed === undefined) return undefined;
   const remoteSha = listed.trim().split(/\s+/)[0] ?? "";

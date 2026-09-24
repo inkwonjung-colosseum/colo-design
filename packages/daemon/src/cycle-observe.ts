@@ -29,7 +29,7 @@ import type { RepoCore } from "./repo-core.js";
 export interface ObserveDeps {
   /** 이 클론에서 턴이 도는 중 — SessionManager.busyIn(root) 를 넣는다. */
   turnRunning: () => boolean;
-  /** 설치 해시가 바뀌었거나 node_modules 가 없음 — RepoWorkspace 의 bringup.dependenciesMoved() 같은 것. */
+  /** 설치 해시가 바뀌었거나 node_modules 가 없음 — fleet 은 `!RepoWorkspace.installUpToDate()` 를 넣는다. */
   installStale: () => boolean;
   /** RepoCore 의 gitHubClient 팩토리 — 토큰이 없으면 null. */
   github: () => GitHubClient | null;
