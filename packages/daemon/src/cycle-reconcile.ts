@@ -18,7 +18,7 @@
  */
 
 import { BUDGETS, markEscalated, spend } from "./budgets.js";
-import type { CycleLedger, CyclePendingOp } from "./cycle-ledger.js";
+import { type CycleLedger, type CyclePendingOp, notePushBehind } from "./cycle-ledger.js";
 
 export interface CycleSnapshot {
   now: number;
@@ -298,6 +298,9 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     snapshot.localAheadOfRemote > 0 ||
     (snapshot.registryBranch !== null && !snapshot.remoteBranchExists);
   if (pushDue) {
+    // 밀림이 처음 보이는 순간을 찍는다 — 1시간 알림의 기준점은 첫 실패가
+    // 아니라 첫 관찰이다(L3 12행).
+    if (push === null) push = notePushBehind(ledger, now).push;
     if (push !== null) {
       // 밀림이 1시간을 넘으면 한 번 알린다(L7 푸시) — 서 있는 알림이 잣대다.
       if (
