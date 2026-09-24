@@ -24,6 +24,7 @@ import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { captureTargets, readComments } from "./comments.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
+import { DEFAULT_KEEP_REJECTED_DAYS } from "./cycle-hygiene.js";
 import { cycleLedgerFile } from "./cycle-ledger.js";
 import { CycleSupervisor } from "./cycle-supervisor.js";
 import { type DeveloperNotice, describeProblem } from "./developer-notice.js";
@@ -273,6 +274,9 @@ export class ProjectFleet {
       // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true).
       deleteMergedBranches: () =>
         this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,
+      // 수명 설정 — 반려 브랜치를 남기는 날(O3). 위생의 정리가 읽는다.
+      keepRejectedDays: () =>
+        this.deps.registry.get(slug)?.lifecycle?.keepRejectedDays ?? DEFAULT_KEEP_REJECTED_DAYS,
       // L6 제출 — PR 본문의 재료와 이름.
       projectName: () => this.deps.registry.get(slug)?.name ?? slug,
       commentsFile: () => join(paths.root, "comments.json"),

@@ -695,6 +695,8 @@ export interface SupervisedScene extends Scene {
   shots: HandoffShot[];
   /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
   ledgerPath: string;
+  /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14). 위생 시험이 바꾼다. */
+  keepRejectedDays: number;
 }
 
 /**
@@ -727,6 +729,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     active: true,
     projectName: "하네스 프로젝트",
     shots: [] as HandoffShot[],
+    keepRejectedDays: 14,
   };
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
@@ -743,6 +746,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       busy: () => false,
       installStale: () => false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
+      keepRejectedDays: () => scene.keepRejectedDays,
       // L6 제출 — 장면이 갈아끼우는 재료들.
       projectName: () => scene.projectName,
       commentsFile: () => join(dirname(ledgerPath), "comments.json"),
@@ -813,6 +817,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     set shots(v: HandoffShot[]) {
       scene.shots = v;
+    },
+    get keepRejectedDays() {
+      return scene.keepRejectedDays;
+    },
+    set keepRejectedDays(v: number) {
+      scene.keepRejectedDays = v;
     },
     setNow: (ms) => {
       nowMs = ms;

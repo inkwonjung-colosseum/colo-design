@@ -106,7 +106,9 @@ export interface CycleLedger {
   >;
   /**
    * 끝난 사이클 브랜치의 기록 — 반려는 keepRejectedDays 정리(단계 9)가,
-   * 병합의 지연 삭제 표식은 12행 푸시가 읽는다.
+   * 병합의 지연 삭제 표식은 12행 푸시가 읽는다. 표식 없는 병합 기록은 읽는
+   * 곳이 없으므로 같은 날수 뒤 위생이 원장에서만 걷는다(원장이 사이클마다
+   * 한 줄씩 영원히 자라지 않게).
    */
   branches: Array<{
     name: string;
@@ -120,7 +122,26 @@ export interface CycleLedger {
      */
     deleteRemoteAfterPush?: string;
   }>;
-  hygiene: { gcAt?: string; fsckAt?: string; pruneAt?: string };
+  /**
+   * 위생의 시각 (PLAN 단계 9) — 항목마다 마지막으로 시도한 때. 기한은
+   * cycle-hygiene 의 표가 정한다. assets 는 캡처 브랜치(colo-design-assets)
+   * 끝 트리의 파일 수 · 대략 크기다 — 정리는 하지 않고 기록만 한다(O4).
+   */
+  hygiene: {
+    gcAt?: string;
+    fsckAt?: string;
+    pruneAt?: string;
+    assetsAt?: string;
+    moveAt?: string;
+    diskAt?: string;
+    assets?: { files: number; bytes: number };
+  };
+  /**
+   * 클론 손상 (PLAN 단계 9) — 관찰의 탐침이나 fsck 가 본 신호. 조정 표의
+   * 손상 행이 재클론으로 푼다. 신호가 한 번 서면 재클론이 끝날 때까지 남는다
+   * — fsck 가 본 깊은 손상은 다음 관찰의 탐침에 다시 보이지 않는다.
+   */
+  corrupt: { since: string; detail: string } | null;
 }
 
 export function emptyLedger(): CycleLedger {
@@ -136,6 +157,7 @@ export function emptyLedger(): CycleLedger {
     notices: {},
     branches: [],
     hygiene: {},
+    corrupt: null,
   };
 }
 
@@ -332,11 +354,25 @@ function parseHygiene(raw: unknown): CycleLedger["hygiene"] {
   const record = asRecord(raw);
   if (record === null) return {};
   const hygiene: CycleLedger["hygiene"] = {};
-  for (const field of ["gcAt", "fsckAt", "pruneAt"] as const) {
+  for (const field of ["gcAt", "fsckAt", "pruneAt", "assetsAt", "moveAt", "diskAt"] as const) {
     const value = asString(record[field]);
     if (value !== null) hygiene[field] = value;
   }
+  const assets = asRecord(record.assets);
+  const files = assets === null ? null : asInt(assets.files);
+  const bytes = assets === null ? null : asInt(assets.bytes);
+  if (files !== null && files >= 0 && bytes !== null && bytes >= 0) {
+    hygiene.assets = { files, bytes };
+  }
   return hygiene;
+}
+
+function parseCorrupt(raw: unknown): CycleLedger["corrupt"] {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const since = asString(record.since);
+  const detail = asString(record.detail);
+  return since === null || detail === null ? null : { since, detail };
 }
 
 /** 모르는 모양 · 깨진 필드는 버리고 나머지를 살린다 — 절대 던지지 않는다. */
@@ -355,6 +391,7 @@ export function parseLedger(raw: unknown): CycleLedger {
     notices: parseNotices(record.notices),
     branches: parseBranches(record.branches),
     hygiene: parseHygiene(record.hygiene),
+    corrupt: parseCorrupt(record.corrupt),
   };
 }
 

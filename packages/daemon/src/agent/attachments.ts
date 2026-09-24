@@ -85,6 +85,15 @@ function prune(dir: string): void {
   }
 }
 
+/**
+ * 지난 첨부를 지금 거둔다 — 거둠은 다음 첨부를 적을 때 돌므로, 첨부가 더
+ * 오지 않는 클론에는 7일이 지나도 남는다. 감독자의 위생(PLAN 단계 9)이 하루
+ * 한 번 부른다.
+ */
+export function pruneStagedAttachments(cwd: string): void {
+  prune(attachmentDir(cwd));
+}
+
 /** 바이너리 첨부를 디스크에 적고 절대 경로를 돌려준다. */
 function stage(cwd: string, name: string, bytes: Buffer): string {
   const dir = attachmentDir(cwd);

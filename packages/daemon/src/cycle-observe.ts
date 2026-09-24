@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { DeveloperReview } from "@colo-design/protocol";
 import { conflictMarkers } from "./conflict-markers.js";
+import { hygieneDue } from "./cycle-hygiene.js";
 import type { CycleLedger } from "./cycle-ledger.js";
 import type { CycleSnapshot } from "./cycle-reconcile.js";
 import type { GitHubClient } from "./github.js";
@@ -361,7 +362,7 @@ export async function observeCycle(
     pendingReviews,
     reviewCount,
     installStale: deps.installStale(),
-    hygieneDue: false, // 단계 9 — 위생 기한을 세는 자리가 아직 없다
+    hygieneDue: hygieneDue(ledger, opts.now),
     githubReachable,
     githubAuthExpired: deps.githubAuthExpired(),
   };

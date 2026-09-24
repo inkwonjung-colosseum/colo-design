@@ -52,7 +52,14 @@ function fullLedger(): CycleLedger {
     },
     notices: { "push:behind": { via: "pr", ref: 12, raisedAt: iso(T0), count: 1 } },
     branches: [{ name: "colo-design/20260924-1", endedAt: iso(T0), state: "merged" }],
-    hygiene: { gcAt: iso(T0) },
+    hygiene: {
+      gcAt: iso(T0),
+      assetsAt: iso(T0),
+      moveAt: iso(T0),
+      diskAt: iso(T0),
+      assets: { files: 3, bytes: 4096 },
+    },
+    corrupt: { since: iso(T0), detail: "fatal: index file corrupt" },
   };
 }
 

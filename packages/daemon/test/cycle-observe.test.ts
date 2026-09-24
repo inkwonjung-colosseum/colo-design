@@ -70,7 +70,19 @@ test("깨끗한 클론, 사이클 없음 — 모든 수가 0이고 gitOp 가 없
     assert.equal(snap.handoffState, null);
     assert.equal(snap.githubReachable, true);
     assert.equal(snap.githubAuthExpired, false);
-    assert.equal(snap.hygieneDue, false);
+    // 한 번도 돌지 않은 위생은 기한이 지났다 (PLAN 단계 9) — 항목별 기한 셈은
+    // cycle-hygiene.test.ts 가 본다. 시각이 모두 찍힌 원장이면 아직이다.
+    assert.equal(snap.hygieneDue, true);
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const stamped = await scene.observe({
+      now,
+      ledger: {
+        ...emptyLedger(),
+        hygiene: { gcAt: at, fsckAt: at, pruneAt: at, assetsAt: at, moveAt: at, diskAt: at },
+      },
+    });
+    assert.equal(stamped.hygieneDue, false);
   } finally {
     scene.dispose();
   }

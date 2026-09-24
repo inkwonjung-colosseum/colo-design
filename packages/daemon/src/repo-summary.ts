@@ -17,6 +17,14 @@ import {
   memoPrompt,
 } from "./repo-prompts.js";
 
+/**
+ * 기계 턴의 작업 폴더 — 클론 옆의 `summary/`. 위생(cycle-hygiene)이 같은 자리와
+ * 그 대화 기록을 7일 뒤 치우므로 이름을 한 곳에 둔다.
+ */
+export function summaryDirOf(cloneRoot: string): string {
+  return join(dirname(cloneRoot), "summary");
+}
+
 export class RepoSummarizer {
   constructor(
     private readonly core: RepoCore,
@@ -161,7 +169,7 @@ export class RepoSummarizer {
    * the transcript out of the conversation store.
    */
   private summaryCwd(): string {
-    const dir = join(dirname(this.core.root), "summary");
+    const dir = summaryDirOf(this.core.root);
     mkdirSync(dir, { recursive: true });
     return dir;
   }

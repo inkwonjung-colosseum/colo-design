@@ -8,8 +8,8 @@
  *   부른다 — 차선 문맥이 세션에 번지면 그 세션의 저장이 줄을 비켜간다 (L1).
  * - 도구가 시작한 git 조작의 충돌은 RepoCore.onToolConflict 로 들어와 원장의
  *   pendingOp 에 곧바로 적히고 틱("tool-conflict")이 뒤를 잇는다 (단계 3).
- * - 아직 실행하지 않는 조치(hygiene)는 로그 한 줄만 남기고 그 틱을 멈춘다 —
- *   다음 위임이 옮긴다.
+ * - 위생(16행)은 기한이 지난 항목만 한 번씩 돈다 — 판정과 도우미는
+ *   cycle-hygiene 에 있다 (단계 9).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -22,6 +22,16 @@ import {
   markTurn,
 } from "@colo-design/protocol";
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
+import {
+  DEFAULT_KEEP_REJECTED_DAYS,
+  dueHygiene,
+  endedBranchesDue,
+  fsckClone,
+  type HygieneItem,
+  type HygieneStamp,
+  measureAssets,
+  pruneTempFolders,
+} from "./cycle-hygiene.js";
 import {
   type CycleLedger,
   type CyclePendingOp,
@@ -144,6 +154,8 @@ export interface SupervisorDeps {
   onRetargetBase?: (to: string) => void;
   /** 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true). */
   deleteMergedBranches?: () => boolean;
+  /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14, O3). 위생이 읽는다. */
+  keepRejectedDays?: () => number;
   logger: DaemonLogger;
   now?: () => number;
 }
@@ -635,10 +647,11 @@ export class CycleSupervisor {
         core.lane.outside(() => void workspace.sync());
         return false;
       }
-      default: {
-        // submitStep · hygiene — 이번 위임이 실행하지 않는 조치는 로그만
-        // 남기고 멈춘다(다음 위임이 옮긴다).
-        this.log(`아직 실행하지 않는 조치: ${action.kind}`);
+      case "hygiene": {
+        return await this.hygiene();
+      }
+      case "none": {
+        // 틱의 몸통이 이미 거른다 — 조치 없음은 고리를 멈춘다.
         return false;
       }
     }
@@ -1276,6 +1289,102 @@ export class CycleSupervisor {
   private clearSubmitIntent(): void {
     if (this.ledger.submit === null) return;
     this.ledger = { ...this.ledger, submit: null };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  // ————— 16행 — 위생 (PLAN 단계 9) —————
+
+  /**
+   * 기한이 지난 항목만 차례(HYGIENE_ORDER)대로 한 번씩 돈다. 항목마다 시도한
+   * 뒤(성공 · 실패 무관) 원장의 시각을 갱신한다 — 계속 실패하는 항목이 2분마다
+   * 다시 도는 일을 막는다. 모든 git 은 이 틱의 차선 칸 안에서 돈다.
+   */
+  private async hygiene(): Promise<boolean> {
+    const core = this.deps.core;
+    const now = this.now();
+    const due = new Set(dueHygiene(this.ledger.hygiene, now));
+    if (due.has("prune")) {
+      await this.pruneEndedBranches(now);
+      const removed = pruneTempFolders(core.root, now);
+      if (removed > 0) this.log(`위생: 7일 넘은 임시 파일 ${removed}개를 치웠습니다`);
+      this.stampHygiene("prune", now);
+    }
+    if (due.has("gc")) {
+      // autoDetach 끔 — 뒤에서 도는 gc 는 차선을 비켜 다음 쓰기와 겹친다.
+      await core
+        .git(["-c", "gc.autoDetach=false", "gc", "--auto", "--quiet"])
+        .catch((error) => this.log(`위생: gc 실패(삼킴): ${detailOf(error, core.pat)}`));
+      this.stampHygiene("gc", now);
+    }
+    if (due.has("fsck")) {
+      const broken = await fsckClone(core);
+      if (broken !== null) {
+        this.log(`위생: fsck 가 손상을 봤습니다 — ${broken}`);
+        // 손상 신호는 원장에 — 조정 표의 손상 행이 읽는다(재클론).
+        if (this.ledger.corrupt === null) {
+          this.ledger = {
+            ...this.ledger,
+            corrupt: { since: new Date(now).toISOString(), detail: broken },
+          };
+        }
+      }
+      this.stampHygiene("fsck", now);
+    }
+    if (due.has("assets")) {
+      const measured = await measureAssets(core);
+      if (measured !== undefined) {
+        const { assets: _old, ...rest } = this.ledger.hygiene;
+        this.ledger = {
+          ...this.ledger,
+          hygiene: measured === null ? rest : { ...rest, assets: measured },
+        };
+      }
+      this.stampHygiene("assets", now);
+    }
+    return true;
+  }
+
+  /** 위생 항목의 시각을 찍고 원장을 쓴다 — 항목 사이에 끊겨도 한 일은 남는다. */
+  private stampHygiene(item: HygieneItem, now: number): void {
+    const key: HygieneStamp = `${item}At`;
+    this.ledger = {
+      ...this.ledger,
+      hygiene: { ...this.ledger.hygiene, [key]: new Date(now).toISOString() },
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  /**
+   * 끝난 브랜치 정리 (PLAN L4 · O3) — keepRejectedDays 가 지난 반려 브랜치를
+   * 로컬 · 원격에서 지우고 원장에서 뺀다. 원격 삭제의 실패는 삼키되, 네트워크
+   * 실패만은 원장에 남겨 다음 날 다시 한다(원격에 닿지 못한 것은 지운 것이
+   * 아니다). 병합의 지연 삭제 표식은 12행의 것이라 건드리지 않고, 표식 없는
+   * 병합 기록은 원장에서만 걷는다.
+   */
+  private async pruneEndedBranches(now: number): Promise<void> {
+    const core = this.deps.core;
+    const keepDays = this.deps.keepRejectedDays?.() ?? DEFAULT_KEEP_REJECTED_DAYS;
+    const { rejected, staleMerged } = endedBranchesDue(this.ledger.branches, keepDays, now);
+    if (rejected.length === 0 && staleMerged.length === 0) return;
+    const drop = new Set(staleMerged);
+    for (const entry of rejected) {
+      // 랜딩이 로컬을 이미 지웠으면 조용히 지나간다.
+      await core.git(["branch", "-D", entry.name]).catch(() => "");
+      const outcome = await core.git(["push", "origin", "--delete", entry.name]).then(
+        () => "ok" as const,
+        (error: unknown) => classifyPushError(error),
+      );
+      if (outcome === "network") {
+        this.log(`위생: 반려 브랜치 ${entry.name} 의 원격 삭제를 다음으로 미룹니다(네트워크)`);
+        continue;
+      }
+      drop.add(entry);
+      this.log(`위생: ${keepDays}일 지난 반려 브랜치 ${entry.name} 를 정리했습니다`);
+    }
+    this.ledger = {
+      ...this.ledger,
+      branches: this.ledger.branches.filter((entry) => !drop.has(entry)),
+    };
     writeLedger(this.ledgerPath, this.ledger);
   }
 
