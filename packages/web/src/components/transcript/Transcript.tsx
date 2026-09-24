@@ -298,13 +298,18 @@ export function Transcript({
                           className="bubble__act"
                         />
                         {onResendEdit && (
-                          <Tip label="이 문장을 고쳐서 다시 보냅니다">
+                          // 채팅 앱의 편집은 그 자리에서 대화를 갈라 옛 답을
+                          // 바꾼다. 여기서는 말이 입력창으로 돌아오고, 보내면
+                          // 대화 끝에 새 요청으로 이어진다 — 화면 파일은
+                          // 되돌아가지 않으므로 그것이 맞다. 이름과 안내가 그
+                          // 차이를 누르기 전에 말한다(갈라지기는 정산 줄의 몫).
+                          <Tip label="입력창으로 돌아와요 — 보내면 이 대화에 새 요청으로 이어져요">
                             <button
                               type="button"
                               className="bubble__act"
                               onClick={() => onResendEdit(block.text)}
                             >
-                              고쳐서 다시 보내기
+                              고쳐서 다시 요청
                             </button>
                           </Tip>
                         )}

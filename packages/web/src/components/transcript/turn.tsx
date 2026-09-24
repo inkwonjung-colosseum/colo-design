@@ -317,7 +317,7 @@ function FailedTurn({
         {interrupted && retryText && onResendEdit && (
           <Tip label="보낸 말이 입력창으로 돌아갑니다 — 고친 뒤 다시 보내세요">
             <button type="button" className="ghost" onClick={() => onResendEdit(retryText)}>
-              고쳐서 다시 보내기
+              고쳐서 다시 요청
             </button>
           </Tip>
         )}
@@ -342,9 +342,9 @@ function FailedTurn({
           </Tip>
         )}
         {!interrupted && retryText && onResendEdit && (
-          <Tip label="같은 말 그대로가 아니라, 입력창에서 고친 말을 보냅니다">
+          <Tip label="입력창으로 돌아와요 — 고쳐서 새 요청으로 보내요">
             <button type="button" className="ghost" onClick={() => onResendEdit(retryText)}>
-              고쳐서 다시 보내기
+              고쳐서 다시 요청
             </button>
           </Tip>
         )}
