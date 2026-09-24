@@ -23,6 +23,8 @@ import {
   movedRepoUrl,
 } from "../dist/cycle-hygiene.js";
 import { type CycleLedger, emptyLedger, readLedger, writeLedger } from "../dist/cycle-ledger.js";
+import { dependencyHash } from "../dist/repo-bringup.js";
+import { INSTALL_MARKER } from "../dist/repo-core.js";
 import { summaryDirOf } from "../dist/repo-summary.js";
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
@@ -368,6 +370,41 @@ test("디스크 여유 부족 — 기한과 무관하게 한 번 치우고, 그�
       scene.machineNotices.map((notice) => `${notice.op}:${notice.key}`),
       ["raise:disk:low", "resolve:disk:low"],
     );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("15행 — node_modules 가 없으면 해시가 같아도 재설치 조치를 부른다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 설치가 선언된 레포(락파일 + dev 스크립트) — 커밋해 트리를 깨끗하게 둔다.
+    writeFileSync(
+      join(scene.clone.path, "package.json"),
+      JSON.stringify({ name: "x", scripts: { dev: "vite" } }),
+    );
+    writeFileSync(join(scene.clone.path, "pnpm-lock.yaml"), "lockfileVersion: 9\n");
+    await scene.git(["add", "-A"]);
+    await scene.git(["commit", "-m", "설치 선언"]);
+    await scene.git(["push", "origin", "main"]);
+    // 표식은 지금의 해시 그대로 — 지워진 것은 node_modules 뿐이다.
+    writeFileSync(join(scene.clone.path, ".git", INSTALL_MARKER), dependencyHash(scene.clone.path));
+    // fleet 과 같은 판정을 겨누고, 준비(sync)는 실제 설치 대신 부름만 센다.
+    scene.installJudge = () => !scene.workspace.installUpToDate();
+    let syncs = 0;
+    (scene.workspace as unknown as { sync: () => Promise<unknown> }).sync = async () => {
+      syncs += 1;
+      return undefined;
+    };
+    const supervisor = seedLedger(scene, { hygiene: stampedAt(T0) });
+    scene.setNow(T0 + 60_000);
+    await supervisor.tick("turn-idle");
+    assert.equal(syncs, 1, "재설치(준비)를 한 번 불러야 한다");
+
+    // 설치된 트리가 돌아오면 더 부르지 않는다.
+    mkdirSync(join(scene.clone.path, "node_modules"));
+    await supervisor.tick("turn-idle");
+    assert.equal(syncs, 1);
   } finally {
     await scene.dispose();
   }

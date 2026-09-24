@@ -710,6 +710,8 @@ export interface SupervisedScene extends Scene {
   freeBytes: number;
   /** raiseMachineNotice · resolveMachineNotice 가 모은 기계 전체 알림. */
   machineNotices: Array<{ op: "raise" | "resolve"; key: string; detail?: string }>;
+  /** 설치 판정(15행) — 없으면 늘 최신. fleet 처럼 워크스페이스의 판정을 겨눌 수 있다. */
+  installJudge: (() => boolean) | null;
 }
 
 /**
@@ -746,6 +748,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     shots: [] as HandoffShot[],
     keepRejectedDays: 14,
     freeBytes: 100 * 1024 ** 3,
+    installJudge: null as (() => boolean) | null,
   };
   const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
@@ -761,7 +764,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       workspace,
       ledgerPath,
       busy: () => false,
-      installStale: () => false,
+      installStale: () => scene.installJudge?.() ?? false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
       keepRejectedDays: () => scene.keepRejectedDays,
       // 디스크 (O8) — 시험 기계의 실제 여유를 읽지 않는다.
@@ -850,6 +853,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     set freeBytes(v: number) {
       scene.freeBytes = v;
+    },
+    get installJudge() {
+      return scene.installJudge;
+    },
+    set installJudge(v: (() => boolean) | null) {
+      scene.installJudge = v;
     },
     machineNotices,
     setNow: (ms) => {
