@@ -20,6 +20,7 @@ import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon 
 import { TurnClock } from "../preview/TurnClock";
 import { StateBanner } from "../StateBanner";
 import { Tip } from "../shell/Tip";
+import { AttentionLine } from "./AttentionLine";
 import { type Attachment, Composer } from "./Composer";
 import { HandoffCard } from "./HandoffCard";
 import { WorkStrip } from "./WorkStrip";
@@ -379,6 +380,8 @@ export function ChatColumn({
         }
       }}
     >
+      {/* 화면의 문제 문장 (PLAN L8) — 채팅 칼럼 맨 위 한 자리. */}
+      <AttentionLine daemon={daemon} />
       {activeSummary && (
         <header className="thread">
           {/* A turn in flight announces itself as light, not words: the lamp

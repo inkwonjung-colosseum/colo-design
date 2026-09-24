@@ -105,6 +105,14 @@ export interface CycleDecision {
   action: CycleAction;
   notices: NoticeIntent[];
   attention: CycleAttention;
+  /**
+   * 판정이 세운 주의의 날 목록 (PLAN L8) — `attention` 은 그중 고른 하나이고,
+   * 이 목록은 "developer-notified 가 실제 배달을 못 했을 때 reconnect 로
+   * 내려앉는" 같은 후속 판정의 재료다.
+   */
+  attentions: CycleAttention[];
+  /** AI 가 고치는 중인가 — 주의 목록에 없는 셋째 문장의 재료. */
+  aiFixing: boolean;
   ledger: CycleLedger;
   /**
    * 대화록에 적을 사건 (PLAN L2 흡수표 — 옛 폴러의 cycle.merged ·
@@ -195,6 +203,8 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     action,
     notices,
     attention: pickAttention(attentions, aiFixing),
+    attentions: [...attentions],
+    aiFixing,
     ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr },
     tapeEvents,
     handoffEvents,
@@ -273,6 +283,13 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   }
 
   const pending = ledger.pendingOp;
+
+  // conflict:stuck 알림은 pendingOp 가 비는 순간 풀린다 — finishToolOp ·
+  // clearPendingOp · abortForeignOp 어느 길로든 흔적이 지워지면 다음 판정이
+  // 여기서 거둔다. 서 있는 동안은 그대로 둔다(판정이 모르는 키는 건드리지 않는다).
+  if (pending === null && ledger.notices["conflict:stuck"] !== undefined) {
+    notices.push({ op: "resolve", key: "conflict:stuck" });
+  }
 
   // ————— 0행 — 도구의 조작 흔적(pendingOp)이 남았는데 git 은 이미 끝났다 —————
   // 마무리한 실행부가 흔적을 지우는 것이 원칙이지만, 그 사이에 끊긴 실행은
@@ -372,6 +389,27 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     }
     // defaultBranch === baseBranch — GitHub 은 그 가지가 있다고 말한다. 로컬
     // remote-tracking 이 늦은 것이다: 다음 관찰의 fetch 가 채운다.
+  }
+  // 베이스가 원격에 돌아왔다 — base-missing 알림을 거둔다.
+  if (snapshot.originBaseExists && ledger.notices["base-missing"] !== undefined) {
+    notices.push({ op: "resolve", key: "base-missing" });
+  }
+
+  // review:<pr>:rounds 알림은 그 PR 이 더 이상 열려 있지 않을 때 풀린다 —
+  // 병합 · 반려 · (인증이 살아 있는 한) 사라짐. changes_requested 도 열린
+  // 상태다. 인증 만료로 pr 을 못 읽는 세계에서는 거두지 않는다 — 문제가
+  // 풀린 게 아니라 못 보는 것이다.
+  if (!snapshot.githubAuthExpired) {
+    for (const key of Object.keys(ledger.notices)) {
+      const match = /^review:(\d+):rounds$/.exec(key);
+      if (match === null) continue;
+      const gone =
+        pr === null ||
+        pr.number !== Number(match[1]) ||
+        pr.state === "merged" ||
+        pr.state === "closed";
+      if (gone) notices.push({ op: "resolve", key });
+    }
   }
 
   // ————— 8 · 9행 — PR 이 병합되거나 닫혔다(L4 랜딩) —————

@@ -82,7 +82,7 @@ const USER_ROOT_PATTERNS: Array<[RegExp, string]> = [
   [/C:\\Users\\[^/\\\s"':]+/g, "~"],
 ];
 
-function sanitizeText(text: string): string {
+export function sanitizeText(text: string): string {
   // Bearer 쪽은 어휘(Bearer )를 남긴다 — 어떤 종류의 비밀인지의 단서다.
   let out = text.replace(SECRET_PATTERN, (matched) =>
     matched.startsWith("Bearer ") ? "Bearer {secret}" : "{secret}",
