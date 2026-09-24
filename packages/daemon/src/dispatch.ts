@@ -91,6 +91,9 @@ export interface RouterDeps {
  * 클라이언트 메시지의 라우팅 테이블 — 한 케이스가 곧 선로 위 계약 하나. 서버는
  * transport 와 수명주기를, 이 라우터는 "무엇을 어디로 보내는가"를 담당한다.
  */
+/** `repo.submit` 이 감독자의 틱을 기다리는 창 — 넘으면 진행 중을 돌려준다. */
+const SUBMIT_WAIT_MS = 60_000;
+
 export class RequestRouter {
   /** The last thread a failing gate briefed, when it had to open one itself. */
   private gateThreadId: string | null = null;
@@ -771,6 +774,23 @@ export class RequestRouter {
           ...(message.sessionId ? { sessionId: message.sessionId } : {}),
           ...this.briefTo(message.sessionId, "handoff"),
         });
+      }
+
+      case "repo.submit": {
+        // 제출은 의도를 적는 것으로 끝난다 (PLAN L6) — 나머지는 감독자의 네
+        // 단계가 멱등하게 끝낸다. 여기서는 그 틱의 끝을 최대 60초 기다렸다 지금
+        // DiffStatus 를 돌려준다: 넘으면 "진행 중"(handing-off) — 의도는 원장에
+        // 남아 다음 틱이 이어받는다.
+        const active = this.requireActive();
+        active.supervisor.submit("button", message.sessionId);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, SUBMIT_WAIT_MS);
+          void active.supervisor.settled().then(() => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        return active.lastDiff ?? { stage: "computing" as const };
       }
 
       case "repo.handoffStatus": {

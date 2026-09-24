@@ -261,3 +261,24 @@ test("채팅 제출 — submit(via chat) 이 원장에 chat 의도를 적는다"
     await scene.dispose();
   }
 });
+
+test("빈 본문의 열린 PR 입양 — GitHub 의 null 본문에도 도구 구간이 선다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    // 본문 없이 연 요청 — GitHub 은 빈 본문을 null 로 돌려준다.
+    const number = await scene.github.openPull({ head: BRANCH, title: "빈 요청" });
+
+    scene.supervisor.submit("button");
+    await scene.supervisor.settled();
+
+    const body = scene.github.pull(number)?.body ?? "";
+    assert.ok(body.includes("colo-design:start"), "도구 구간이 써져야 한다");
+    assert.ok(body.includes("바뀐 파일"), "바뀐 파일 절이 써져야 한다");
+    assert.equal(scene.core.openHandoff?.number, number, "입양한 요청 그대로");
+    assert.equal(ledgerOf(scene).submit, null);
+  } finally {
+    await scene.dispose();
+  }
+});

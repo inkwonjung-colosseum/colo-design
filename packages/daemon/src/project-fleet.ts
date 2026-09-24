@@ -268,7 +268,8 @@ export class ProjectFleet {
         workspaces.repo.repoCore().baseBranch = to;
       },
       // 대화록 사건 — 옛 폴러의 emitCycleEvent 와 같은 길(세션 채널 + 테이프).
-      cycleEvent: (event) => this.emitCycleEvent(workspaces, event, undefined),
+      // 제출 완료 사건은 누른 대화에 귀속된다(PLAN L6).
+      cycleEvent: (event, sessionId) => this.emitCycleEvent(workspaces, event, sessionId),
       // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true).
       deleteMergedBranches: () =>
         this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,

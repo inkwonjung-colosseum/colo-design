@@ -359,7 +359,9 @@ export class MemoryGitHub implements RestTransport {
       number: pull.number,
       html_url: `https://github.test/colo-design/harness/pull/${pull.number}`,
       title: pull.title,
-      body: pull.body,
+      // GitHub 은 빈 본문을 null 로 돌려준다 — 클라이언트의 null 판정을
+      // 시험이 같은 눈으로 보게 한다.
+      body: pull.body === "" ? null : pull.body,
       state: pull.state,
       merged: pull.merged,
       merged_at: pull.merged ? "2026-09-24T00:00:00Z" : null,

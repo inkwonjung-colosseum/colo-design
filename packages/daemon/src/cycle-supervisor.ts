@@ -132,7 +132,7 @@ export interface SupervisorDeps {
    * 판정의 tapeEvents 와 랜딩의 cycle.carried 를 싣는다. lane.outside 안에서
    * 부른다.
    */
-  cycleEvent?: (event: ChatEvent) => void;
+  cycleEvent?: (event: ChatEvent, sessionId?: string) => void;
   /**
    * 14행의 실행 — 옛 폴러의 리뷰 브리프(reviewToTurn + 자동 저장 정산)를
    * fleet 이 그대로 한다. false 를 돌리면(대화를 못 열었거나 보내기가
@@ -162,6 +162,8 @@ export class CycleSupervisor {
   private reconnectSince: string | null = null;
   private aiFixingSince: string | null = null;
   private reviewLedgerFolded = false;
+  /** 제출 완료 사건의 귀속 대화 — submit() 이 던져두는 줄. */
+  private submitSessionId: string | null = null;
 
   constructor(deps: SupervisorDeps) {
     this.deps = deps;
@@ -250,8 +252,11 @@ export class CycleSupervisor {
    * 있으면 다시 적지 않는다: 두 번 눌러도 제출은 하나고, 진행 중인 단계를
    * 처음부터 다시 시작하지도 않는다. 실행은 조정 표 13행의 submitStep 이
    * 멱등하게 이어받는다 — 어디서 멈춰도 다음 틱이 끝까지 간다(I5).
+   * `sessionId` 는 완료 사건(cycle.handed)의 귀속줄 — 원장이 아니라 메모리에
+   * 둔다(재시작 뒤엔 fleet 의 기본 귀속 규칙이 이어받는다).
    */
-  submit(via: "button" | "chat"): void {
+  submit(via: "button" | "chat", sessionId?: string): void {
+    this.submitSessionId = sessionId ?? null;
     if (this.ledger.submit === null) {
       this.ledger = {
         ...this.ledger,
@@ -1149,17 +1154,19 @@ export class CycleSupervisor {
           body: `${opening}${block}`,
         });
       } else {
-        // 본문은 도구 구간만 갱신한다. 현재 본문을 못 읽으면 덮어쓰지 않는다 —
-        // 개발자가 구간 밖에 쓴 글을 지키는 길이 이것뿐이다.
+        // 본문은 도구 구간만 갱신한다. 호출 자체가 실패하면(current === null)
+        // 덮어쓰지 않는다 — 개발자가 구간 밖에 쓴 글을 지키는 길이 이것뿐이다.
+        // 빈 본문은 GitHub 이 null 로 돌려주는 정상 값이다: "" 로 보고 구간을
+        // 쓴다(검토 결함 — null 을 실패로 읽어 입양한 PR 이 구간 없이 남았다).
         const current = await client
           .getPullRequest({ ...slug, number: pull.number })
           .catch(() => null);
-        if (current === null || current.body === null) {
+        if (current === null) {
           handoff = pull;
         } else {
-          const body = mergeToolBlock(current.body, block);
+          const body = mergeToolBlock(current.body ?? "", block);
           handoff =
-            current.body === body
+            (current.body ?? "") === body
               ? current
               : await client.updatePullRequest({ ...slug, number: pull.number, body });
         }
@@ -1186,13 +1193,14 @@ export class CycleSupervisor {
       core.setDiff({ stage: "handed-off", handoff });
       this.deps.resolveNotice?.("submit:pr");
       this.deps.resolveNotice?.("submit:commit");
+      const handedEvent: ChatEvent = {
+        kind: "cycle.handed",
+        at: new Date(this.now()).toISOString(),
+        pr: handoff.number,
+        ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
+      };
       core.lane.outside(() =>
-        this.deps.cycleEvent?.({
-          kind: "cycle.handed",
-          at: new Date(this.now()).toISOString(),
-          pr: handoff.number,
-          ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
-        }),
+        this.deps.cycleEvent?.(handedEvent, this.submitSessionId ?? undefined),
       );
       this.log(`제출 완료: PR #${handoff.number}`);
       return true;

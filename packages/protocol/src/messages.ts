@@ -491,6 +491,7 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   /**
    * 개발자에게 넘기기: run `build`, then open (or update) the pull request for
    * the current branch. Subsequent saves accumulate on the same PR.
+   * 개발자용 선로다 — 제출 버튼은 `repo.submit`(PLAN L6) 로 간다.
    */
   z.object({
     ...withId,
@@ -499,6 +500,18 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     title: z.string().min(1).max(200).optional(),
     /** PR body; the daemon proposes one naming the screens behind the work. */
     body: z.string().max(20_000).optional(),
+    sessionId: z.string().min(1).optional(),
+  }),
+  /**
+   * 제출 (PLAN L6 · 단계 6): 한 번의 누름이 곧 의도다 — 데몬은 원장에 적고
+   * 감독자의 네 단계(보관 → 푸시 → PR → 리뷰어)가 끝까지 간다. 실패해도
+   * 다시 누를 일이 생기지 않는다(의도가 남아 다음 틱이 이어받는다).
+   * 응답은 기다림의 창(60초) 안의 DiffStatus — 넘으면 진행 중.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.submit"),
+    /** 이 대화에 제출 카드가 귀속된다 (cycle.handed 사건의 줄). */
     sessionId: z.string().min(1).optional(),
   }),
   /**
