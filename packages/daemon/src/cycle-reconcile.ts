@@ -67,6 +67,7 @@ export type CycleAction =
   | { kind: "abortForeignOp"; op: "merge" | "cherry-pick" | "rebase" | "revert" }
   | { kind: "finishToolOp"; op: "merge" | "cherry-pick" | "stash-pop" }
   | { kind: "briefConflict"; op: "merge" | "cherry-pick" | "stash-pop"; files: string[] }
+  | { kind: "clearPendingOp" }
   | { kind: "popParkedStash"; ref: string }
   | { kind: "alignBranch"; name: string }
   | { kind: "branchFromHead" }
@@ -120,8 +121,17 @@ function conflictKey(files: string[]): string {
 /** 도구가 시작한 조작이 git 의 진행 표식과 같은 종류인가 — 같으면 2행, 아니면 1행. */
 function isToolOpInprogress(snapshot: CycleSnapshot, pending: CyclePendingOp): boolean {
   if (pending.kind === "stash-pop") {
-    // stash 복원은 git 의 진행 표식이 없다 — unmerged 파일로 판다.
-    return snapshot.gitOp === null && snapshot.conflictFiles.length > 0;
+    // stash 복원은 git 의 진행 표식이 없다 — 세 신호로 판다: 미해결 파일,
+    // 표식이 남은 파일(add 로 unmerged 가 풀려도 표식은 남는다), 그리고
+    // 아직 drop 되지 않은 그 stash 자체. 셋 다 없으면 조작은 끝났다(0행).
+    const stashStillThere =
+      pending.stashRef === undefined
+        ? snapshot.taggedStash !== null
+        : snapshot.taggedStash === pending.stashRef;
+    return (
+      snapshot.gitOp === null &&
+      (snapshot.conflictFiles.length > 0 || snapshot.markersLeft.length > 0 || stashStillThere)
+    );
   }
   return snapshot.gitOp === pending.kind;
 }
@@ -161,14 +171,24 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   const pr = snapshot.githubAuthExpired ? null : snapshot.pr;
   if (snapshot.githubAuthExpired) attentions.push("reconnect");
 
+  const pending = ledger.pendingOp;
+
+  // ————— 0행 — 도구의 조작 흔적(pendingOp)이 남았는데 git 은 이미 끝났다 —————
+  // 마무리한 실행부가 흔적을 지우는 것이 원칙이지만, 그 사이에 끊긴 실행은
+  // 흔적만 남긴다(L3 "표를 구현하며 정한 것"). stash-pop 은 그 stash 까지
+  // 없어야 끝난 것이다 — stash 가 남았는데 지우면 3행이 다시 pop 해 같은
+  // 충돌을 다시 만든다.
+  if (pending !== null && !isToolOpInprogress(snapshot, pending)) {
+    pendingOp = null;
+    return decide({ kind: "clearPendingOp" });
+  }
+
   // ————— 1행 — 도구가 시작하지 않은 git 조작이 진행 중이다(L3 1행) —————
   if (gitOp !== null && ledger.pendingOp?.kind !== gitOp) {
     if (turnRunning) return integrityWait();
     return decide({ kind: "abortForeignOp", op: gitOp });
   }
-
   // ————— 2행 — 도구가 시작한 병합 · cherry-pick · stash 복원이 멈춰 있다 —————
-  const pending = ledger.pendingOp;
   if (pending !== null && isToolOpInprogress(snapshot, pending)) {
     if (snapshot.markersLeft.length === 0) {
       // 표식이 없다 — AI 가 정리를 마쳤거나 애초에 충돌이 아니었다. 도구가 마무리한다.

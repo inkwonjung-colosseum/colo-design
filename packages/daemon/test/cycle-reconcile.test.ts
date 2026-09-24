@@ -94,6 +94,50 @@ test("2행 — stash 복원은 git 진행 표식 없이 unmerged 파일로 판�
   );
   assert.deepEqual(out.action, { kind: "briefConflict", op: "stash-pop", files: ["src/b.ts"] });
 });
+test("2행 — stash-pop 은 표식만 남아도(add 로 unmerged 가 풀려도) 진행 중이다", () => {
+  // AI 가 표식을 지우지 않은 채 git add 한 자리 — conflictFiles 는 비었지만
+  // 표식이 남았으면 커밋에 구워지기 전에 다시 브리프해야 한다.
+  const ledger = led({
+    pendingOp: {
+      kind: "stash-pop",
+      files: ["src/b.ts"],
+      startedAt: iso(NOW),
+      briefs: 0,
+      stashRef: "stash@{0}",
+    },
+  });
+  const out = nextCycleAction(
+    snap({ conflictFiles: [], markersLeft: ["src/b.ts"], taggedStash: "stash@{0}" }),
+    ledger,
+  );
+  assert.equal(kindOf(out), "briefConflict");
+});
+
+test("0행 — 병합 흔적만 남고 git 은 끝난 상태면 원장을 치운다", () => {
+  const ledger = led({
+    pendingOp: { kind: "merge", files: ["src/a.ts"], startedAt: iso(NOW), briefs: 1 },
+  });
+  const out = nextCycleAction(snap({ gitOp: null }), ledger);
+  assert.deepEqual(out.action, { kind: "clearPendingOp" });
+  assert.equal(out.ledger.pendingOp, null);
+});
+
+test("0행 — stash-pop 은 그 stash 가 없어야 끝난 것이다", () => {
+  // stash 가 남았는데 흔적을 지우면 3행이 다시 pop 해 같은 충돌을 다시 만든다.
+  const ledger = led({
+    pendingOp: {
+      kind: "stash-pop",
+      files: ["src/b.ts"],
+      startedAt: iso(NOW),
+      briefs: 0,
+      stashRef: "stash@{0}",
+    },
+  });
+  const stillThere = nextCycleAction(snap({ taggedStash: "stash@{0}" }), ledger);
+  assert.equal(kindOf(stillThere), "finishToolOp"); // 표식 없음 + stash 남음 → 마무리(drop)
+  const gone = nextCycleAction(snap({ taggedStash: null }), ledger);
+  assert.equal(kindOf(gone), "clearPendingOp");
+});
 
 test("2행 — 충돌 브리프 두 번 뒤 세 번째는 알림 한 번, 네 번째 틱에는 알림 없음", () => {
   const ledger = led({

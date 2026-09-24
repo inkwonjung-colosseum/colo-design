@@ -31,6 +31,11 @@ export interface CyclePendingOp {
   startedAt: string;
   /** 충돌 정리 브리프를 이미 보낸 수 — 예산(L7 충돌)의 소비 기록. */
   briefs: number;
+  /**
+   * stash 복원이 멈춘 자리의 stash ref (PLAN L3 2행) — 마무리의
+   * `stash drop` 이 겨눌 것. 병합 · cherry-pick 에는 없다.
+   */
+  stashRef?: string;
 }
 
 export interface CyclePushState {
@@ -157,7 +162,10 @@ function parsePendingOp(raw: unknown): CyclePendingOp | null {
     return null;
   }
   if (files === null || startedAt === null || briefs === null || briefs < 0) return null;
-  return { kind, files, startedAt, briefs };
+  const stashRef = asString(record.stashRef);
+  return stashRef === null
+    ? { kind, files, startedAt, briefs }
+    : { kind, files, startedAt, briefs, stashRef };
 }
 
 function parseReviews(raw: unknown): CycleLedger["reviews"] {

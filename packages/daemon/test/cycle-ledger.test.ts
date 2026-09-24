@@ -31,7 +31,13 @@ function fullLedger(): CycleLedger {
       nextAttemptAt: iso(T0 + 60_000),
       lastError: "network",
     },
-    pendingOp: { kind: "merge", files: ["src/a.ts"], startedAt: iso(T0), briefs: 1 },
+    pendingOp: {
+      kind: "stash-pop",
+      files: ["src/a.ts"],
+      startedAt: iso(T0),
+      briefs: 1,
+      stashRef: "stash@{0}",
+    },
     reviews: { "12": { known: [1, 2], briefed: [1], rounds: 1 } },
     budgets: {
       "conflict:deadbeef": { spent: 1, firstAt: iso(T0), lastAt: iso(T0), escalated: false },
