@@ -161,6 +161,8 @@ interface MemComment {
   body: string;
   /** GitHub 의 계정 종류 — "Bot" 행은 봇 거르기(isBotRow)의 재료다. */
   type: string;
+  /** 만든 시각(ISO) — 반려 이유의 7일 창이 읽는다 (PLAN L9). */
+  at: string;
 }
 
 /**
@@ -274,6 +276,7 @@ export class MemoryGitHub implements RestTransport {
               user: { login: row.login, type: row.type },
               body: row.body,
               state: row.state,
+              submitted_at: row.at,
             })),
           );
         }
@@ -292,6 +295,7 @@ export class MemoryGitHub implements RestTransport {
             login: "colo-planner",
             body: String(payload.body ?? ""),
             type: "User",
+            at: new Date().toISOString(),
           };
           this.pullComments.set(number, [...(this.pullComments.get(number) ?? []), row]);
           return json(201, this.commentJson([row])[0]);
@@ -350,6 +354,7 @@ export class MemoryGitHub implements RestTransport {
               login: "colo-planner",
               body: String(payload.body ?? ""),
               type: "User",
+              at: new Date().toISOString(),
             };
             this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
             return json(201, this.commentJson([row])[0]);
@@ -434,6 +439,7 @@ export class MemoryGitHub implements RestTransport {
       id: row.id,
       user: { login: row.login, type: row.type },
       body: row.body,
+      created_at: row.at,
     }));
   }
 
@@ -569,6 +575,7 @@ export class MemoryGitHub implements RestTransport {
       login,
       body: opts.body ?? "이 부분 고쳐 주세요",
       type: opts.bot === true || login.endsWith("[bot]") ? "Bot" : "User",
+      at: new Date().toISOString(),
     };
     const kind = opts.kind ?? "issue";
     if (kind === "pull") {

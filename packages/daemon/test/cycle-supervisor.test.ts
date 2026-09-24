@@ -902,6 +902,64 @@ test("L9 자동 답장 — 턴의 답변 문장에서 코멘트마다 스레드�
   }
 });
 
+test("L9 반려 — 닫힘 이유가 있으면 반영 턴 하나가 열리고 예산을 쓴다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.github.addComment(pr, {
+      kind: "issue",
+      body: "이 흐름은 지금 서비스에 안 맞아요 — 목록으로 되돌려 주세요.",
+    });
+    scene.github.close(pr);
+
+    await scene.supervisor.tick("manual");
+
+    assert.equal(scene.briefs.length, 1, "반려 이유 반영 턴이 하나 나가야 한다");
+    assert.ok(
+      scene.briefs[0]?.includes("개발자가 이번 요청을 닫았습니다"),
+      "반려의 첫 문장이 앞에 선다",
+    );
+    assert.ok(scene.briefs[0]?.includes("목록으로 되돌려"), "이유 본문이 실린다");
+    assert.ok(ledgerOf(scene).budgets[`review:${pr}`]?.spent === 1, "예산 review:<pr> 를 쓴다");
+    assert.equal(
+      scene.github.commentsFor(pr).filter((row) => row.login === "colo-planner").length,
+      0,
+      "이유가 있으면 청구 코멘트를 남기지 않는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 반려 — 이유가 없으면 턴 없이 닫힌 PR 에 이유를 청구한다, 한 번만", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.github.close(pr);
+
+    await scene.supervisor.tick("manual");
+
+    assert.equal(scene.briefs.length, 0, "이유가 없으면 반영 턴을 열지 않는다");
+    const asked = scene.github.commentsFor(pr);
+    assert.equal(asked.length, 1, "닫힌 PR 에 청구 코멘트 하나가 선다");
+    assert.ok(asked[0]?.body.includes("반려 이유를 남겨 주시면"));
+    assert.ok(ledgerOf(scene).notices[`reject:${pr}`], "원장에 한 번만의 표식이 적힌다");
+
+    // 두 번째 틱 — 랜딩도 청구도 다시 일어나지 않는다.
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.commentsFor(pr).length, 1, "청구 코멘트는 하나뿐이다");
+    assert.equal(scene.briefs.length, 0);
+  } finally {
+    await scene.dispose();
+  }
+});
+
 test("L9 자동 답장 — 보관이 없으면 '확인했고' 문장, autoReply 가 꺼져 있면 답장이 없다", async () => {
   const scene = await makeSupervisedScene();
   try {

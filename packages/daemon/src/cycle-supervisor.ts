@@ -20,6 +20,7 @@ import {
   type HandoffShot,
   type HandoffStatus,
   markTurn,
+  reviewToTurn,
 } from "@colo-design/protocol";
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
 import {
@@ -71,6 +72,8 @@ const MAX_TICK_ROUNDS = 5;
 const INACTIVE_FETCH_MS = 10 * 60 * 1000;
 /** 같은 알림을 다시 보내는 간격 — escalation 의 문장 기준 10분과 맞춘다. */
 const NOTICE_REPEAT_MS = 10 * 60 * 1000;
+/** 반려 이유로 읽는 창 — 닫힘 시각 이전 7일 (PLAN L9). */
+const REJECTION_REASON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** 알림 키 → 사용자가 읽는 한국어 한 문장. */
 const NOTICE_TEXT: Record<string, string> = {
@@ -929,6 +932,9 @@ export class CycleSupervisor {
       };
       core.lane.outside(() => this.deps.cycleEvent?.(event));
     }
+    // 반려의 착지 — 닫힘 이유를 반영 턴으로 넘긴다(PLAN L4 · L9). 병합에는
+    // 이유가 없다.
+    if (land.outcome === "closed") await this.briefRejection(land.pr);
   }
 
   /** 새 브랜치에 실제로 있는 커밋 수 — 빈 커밋 버림(--empty=drop)을 셈에
@@ -1011,6 +1017,135 @@ export class CycleSupervisor {
         );
       }
     }
+  }
+
+  /**
+   * L9 반려 — 닫힌 PR 의 이유를 모아 새 사이클 브랜치의 반영 턴으로 보낸다.
+   * 이유는 닫힘 전후의 마지막 요청 코멘트와 마지막 리뷰 본문(봇 · 내 로그인
+   * 제외, 닫힘 시각 이전 7일 안)이다. 이유가 없으면 턴을 열지 않고 닫힌 PR 에
+   * 이유를 청구하는 코멘트 하나를 남긴다 — AI 가 짐작으로 고치지 않게. 둘 다
+   * 원장(notices 의 reject:<pr> · 예산 review:<pr>)에 적혀 한 번뿐이다.
+   */
+  private async briefRejection(pr: number): Promise<void> {
+    const client = this.deps.github();
+    const slug = this.deps.slug();
+    if (client === null || slug === null) return;
+
+    // 닫힘 시각 — 착지 뒤 레지스트리는 이미 손을 놓았으므로 PR 을 직접 읽는다.
+    // 못 읽으면 지금이 닫힘 직후라고 본다(창이 넉넉해지는 쪽으로만 어긋난다).
+    let closedAt = this.now();
+    try {
+      const detail = await client.getPullRequest({ ...slug, number: pr });
+      const parsed = Date.parse(detail.closedAt ?? "");
+      if (Number.isFinite(parsed)) closedAt = parsed;
+    } catch {
+      // 닫힘 시각을 모른 채로 계속한다.
+    }
+    const since = closedAt - REJECTION_REASON_WINDOW_MS;
+    const mine = await client
+      .whoAmI()
+      .then((who) => (who.ok ? who.login : ""))
+      .catch(() => "");
+    // 목록 읽기가 이미 봇을 거른다(github.ts) — 여기서는 내 로그인과 창만 본다.
+    const reasons: DeveloperReview[] = [];
+    const pick = (row: Record<string, any>, at: string) => {
+      const body = String(row.body ?? "").trim();
+      const when = Date.parse(at);
+      if (body === "" || !Number.isFinite(when) || when < since) return;
+      if (mine !== "" && String(row.user?.login ?? "") === mine) return;
+      reasons.push({
+        id: Number(row.id),
+        kind: "review",
+        author: String(row.user?.login ?? ""),
+        body,
+        pr,
+        at,
+      });
+    };
+    // 마지막 것만이 이유다 — 닫힘 전후의 말 중 가장 최근이 개발자의 결론이다.
+    const lastOf = async (
+      rows: Array<Record<string, any>>,
+      at: (row: Record<string, any>) => string,
+    ): Promise<void> => {
+      let last: Record<string, any> | null = null;
+      let lastAt = "";
+      for (const row of rows) {
+        const when = Date.parse(at(row));
+        if (!Number.isFinite(when)) continue;
+        if (last === null || when >= Date.parse(lastAt)) {
+          last = row;
+          lastAt = at(row);
+        }
+      }
+      if (last !== null) pick(last, lastAt);
+    };
+    try {
+      await lastOf(await client.listIssueComments({ ...slug, number: pr }), (row) =>
+        String(row.created_at ?? ""),
+      );
+      await lastOf(await client.listReviews({ ...slug, number: pr }), (row) =>
+        String(row.submitted_at ?? ""),
+      );
+    } catch {
+      // 이유 읽기에 실패하면 없는 것으로 본다 — 청구 코멘트가 대신 선다.
+      reasons.length = 0;
+    }
+    if (reasons.length === 0) {
+      await this.askRejectionReason(pr, client, slug);
+      return;
+    }
+    const key = `review:${pr}`;
+    const brief = reviewToTurn(reasons, {
+      intro:
+        "개발자가 이번 요청을 닫았습니다. 아래 이유를 반영해 고쳐 주세요. 다음 제출은 사용자가 합니다.",
+    });
+    const sent = await this.deps.core.lane.outside(async () => {
+      const thread = this.deps.openThread("반려 반영");
+      if (thread === null) return false;
+      try {
+        thread.send(brief);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!sent) {
+      this.log(`반려 이유 반영 턴을 열지 못했습니다 — PR #${pr}`);
+      return;
+    }
+    // 예산 review:<pr>(L3 14행과 같은 키) — 보낸 뒤에 쓴다: 못 연 턴은 다음
+    // 기회를 남겨야 하지만, 랜딩은 다시 오지 않으므로 로그만 남긴다.
+    const round = spend(this.ledger.budgets, key, BUDGETS.reviewRounds, this.now());
+    this.ledger = { ...this.ledger, budgets: round.ledger };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.log(`반려 이유 반영 턴을 열었습니다 — PR #${pr}, 이유 ${reasons.length}건`);
+  }
+
+  /** 반려 이유가 없을 때의 청구 — 닫힌 PR 에 코멘트 하나, 원장에 한 번만. */
+  private async askRejectionReason(
+    pr: number,
+    client: GitHubClient,
+    slug: { owner: string; repo: string },
+  ): Promise<void> {
+    const key = `reject:${pr}`;
+    if (this.ledger.notices[key]) return;
+    try {
+      await client.commentOnIssue({
+        ...slug,
+        number: pr,
+        body: "반려 이유를 남겨 주시면 AI 가 반영해 새 요청으로 다시 보냅니다. — Colo Design",
+      });
+    } catch (error) {
+      this.log(`반려 이유 청구 실패(다시 시도하지 않음): ${detailOf(error, this.deps.core.pat)}`);
+    }
+    this.ledger = {
+      ...this.ledger,
+      notices: {
+        ...this.ledger.notices,
+        [key]: { via: "pr", ref: pr, raisedAt: new Date(this.now()).toISOString(), count: 1 },
+      },
+    };
+    writeLedger(this.ledgerPath, this.ledger);
   }
 
   /**
