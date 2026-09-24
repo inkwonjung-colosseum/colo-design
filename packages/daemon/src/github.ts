@@ -46,6 +46,11 @@ export interface PullRequestDetail extends PullRequestRef {
   headSha: string | null;
   /** GitHub 의 mergeable_state ("dirty" · "clean" …) — 아직 계산 중이면 null. */
   mergeableState: string | null;
+  /**
+   * 요청 본문 — 제출의 도구 구간 갱신(mergeToolBlock, PLAN L6)이 읽는다.
+   * 개발자가 구간 밖에 쓴 글을 지키려면 먼저 읽어야 한다.
+   */
+  body: string | null;
 }
 
 const JSON_HEADERS = {
@@ -283,6 +288,27 @@ export class GitHubClient {
       "개발자에게 넘기기",
     );
     return { ...refOf(data), state: stateOf(data) };
+  }
+
+  /**
+   * PLAN L6 — head 로 열린 PR 을 찾는다. 레지스트리가 PR 을 잃었을 때(손으로
+   * 지운 projects.json · 이전 판의 착지 누락) 같은 브랜치의 열린 요청을
+   * 입양한다. `state=open` 이므로 끝난 요청(merged · closed)은 돌아오지
+   * 않는다 — 끝난 요청은 새 요청으로만 이어진다(PLAN L4).
+   */
+  async findPullRequestByHead(input: {
+    owner: string;
+    repo: string;
+    /** GitHub 의 head 매개변수 형태 — `owner:branch`. */
+    head: string;
+  }): Promise<PullRequestRef | null> {
+    const rows = await this.getJson(
+      `/repos/${input.owner}/${input.repo}/pulls?head=${encodeURIComponent(input.head)}&state=open`,
+      "열린 요청 찾기",
+    );
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (row === undefined || row === null) return null;
+    return { ...refOf(row), state: stateOf(row) };
   }
 
   /**
@@ -534,6 +560,8 @@ export class GitHubClient {
       // head.sha 는 랜딩의 잣대다(L4) — 지워진 브랜치에서는 null 로 둔다.
       headSha: typeof data.head?.sha === "string" ? data.head.sha : null,
       mergeableState: typeof data.mergeable_state === "string" ? data.mergeable_state : null,
+      // 본문은 도구 구간 갱신(mergeToolBlock, PLAN L6)이 읽는다.
+      body: typeof data.body === "string" ? data.body : null,
     };
   }
 

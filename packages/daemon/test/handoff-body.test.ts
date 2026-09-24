@@ -1,5 +1,6 @@
 // PLAN 단계 6 의 순수 시험 — mergeToolBlock (도구 구간 갱신) · pickHandoffTitle
-// (제목은 생성할 때만). src 직접 임포트 — 이 모듈은 형제를 부르지 않는다.
+// (제목은 생성할 때만). `../dist` 임포트인 이유: node --test 는 src 의 `.js`
+// 지정자를 못 읽는다(cycle-ledger.test.ts 와 같은 길).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -7,7 +8,7 @@ import {
   pickHandoffTitle,
   TOOL_BLOCK_END,
   TOOL_BLOCK_START,
-} from "../src/handoff-body.js";
+} from "../dist/handoff-body.js";
 
 const BLOCK = "> 작성: 기획자\n\n### 바뀐 파일\n\n- a.ts (+1 −0)";
 const wrap = (body: string) => `${TOOL_BLOCK_START}\n${body}\n${TOOL_BLOCK_END}`;

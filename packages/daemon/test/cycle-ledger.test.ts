@@ -25,7 +25,14 @@ function fullLedger(): CycleLedger {
     v: 1,
     ended: { pr: 12, state: "merged", headSha: "abc1234", seenAt: iso(T0) },
     lastPr: { number: 12, reviewCount: 3 },
-    submit: { requestedAt: iso(T0), via: "button", step: "ensurePushed" },
+    submit: {
+      requestedAt: iso(T0),
+      via: "chat",
+      step: "pr",
+      attempts: 2,
+      nextAttemptAt: iso(T0 + 60_000),
+      reviewers: ["dev1", "dev2"],
+    },
     push: {
       behindSince: iso(T0),
       attempts: 2,
@@ -57,6 +64,28 @@ test("원장 왕복 — 쓴 그대로 읽는다", () => {
   assert.deepEqual(readLedger(file), ledger);
   // 원자 쓰기의 임시 파일이 남지 않는다.
   assert.equal(statSync(file).mode & 0o777, 0o600);
+});
+
+test("submit 의 재시도 상태와 리뷰어도 왕복한다 — 모르는 값은 버린다", () => {
+  const base = {
+    requestedAt: "2026-09-24T10:00:00.000Z",
+    via: "button",
+    step: "pr",
+    attempts: 3,
+    nextAttemptAt: "2026-09-24T10:01:00.000Z",
+    reviewers: ["dev1"],
+  };
+  assert.deepEqual(parseLedger({ submit: base }).submit, base);
+  // 깨진 재시도 상태는 의도만 살린다.
+  assert.deepEqual(
+    parseLedger({ submit: { requestedAt: base.requestedAt, via: "button" } }).submit,
+    { requestedAt: base.requestedAt, via: "button" },
+  );
+  // via 를 모르면 의도 자체가 없다.
+  assert.equal(
+    parseLedger({ submit: { requestedAt: base.requestedAt, via: "voice" } }).submit,
+    null,
+  );
 });
 
 test("없거나 깨진 파일은 빈 원장 — 시작이 실패할 이유가 아니다", () => {

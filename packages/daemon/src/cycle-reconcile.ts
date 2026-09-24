@@ -503,8 +503,18 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   }
 
   // ————— 13행(턴 중 예) — 제출 의도가 남아 있다(L6) —————
+  // 백오프 창을 안다: 단계 자신의 창(submit.nextAttemptAt)과, 올라갈
+  // 커밋이 남아 있는 동안의 12행 푸시 창이다. 창 안이면 이 행을 건너뛴다 —
+  // submitStep 이 매 틱 발동했다가 곧 멈추는 것만으로 아래 행(코멘트 반영 ·
+  // 위생)이 밀리지 않게. 의도는 그대로 남아 다음 틱이 이어받는다(I5).
   if (ledger.submit !== null) {
-    return decide({ kind: "submitStep" });
+    const stepWait =
+      ledger.submit.nextAttemptAt !== undefined && Date.parse(ledger.submit.nextAttemptAt) > now;
+    const pushDue =
+      snapshot.localAheadOfRemote > 0 ||
+      (snapshot.registryBranch !== null && !snapshot.remoteBranchExists);
+    const pushWait = pushDue && ledger.push !== null && Date.parse(ledger.push.nextAttemptAt) > now;
+    if (!stepWait && !pushWait) return decide({ kind: "submitStep" });
   }
 
   // ————— 14행(턴 중 예) — 새 개발자 코멘트(L9) —————

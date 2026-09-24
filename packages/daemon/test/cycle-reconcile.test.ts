@@ -326,6 +326,38 @@ test("13행 — 제출 의도가 남아 있으면 다음 단계를 밟는다(턴
   });
 });
 
+test("13행 — 단계 백오프 창 안에서는 발동하지 않고 아래 행이 돈다", () => {
+  const ledger = led({
+    submit: {
+      requestedAt: iso(NOW),
+      via: "button",
+      step: "pr",
+      attempts: 1,
+      nextAttemptAt: iso(NOW + 30_000),
+    },
+  });
+  // 창 안 — submitStep 이 아니라 다음 행(코멘트 반영)이 보인다.
+  assert.equal(kindOf(nextCycleAction(snap(), ledger)), "none");
+  // 창 밖(시간이 지났다) — 다시 다음 단계를 밟는다.
+  assert.deepEqual(nextCycleAction(snap({ now: NOW + 60_000 }), ledger).action, {
+    kind: "submitStep",
+  });
+});
+
+test("13행 — 올라갈 커밋이 남아 있는 동안의 12행 푸시 백오프도 기다린다", () => {
+  const ledger = led({
+    submit: { requestedAt: iso(NOW), via: "chat" },
+    push: { behindSince: iso(NOW - 1000), attempts: 1, nextAttemptAt: iso(NOW + 30_000) },
+  });
+  const pending = snap({ localAheadOfRemote: 2 });
+  // 창 안 — 13행도 넘어가고 아래 행만 보인다.
+  assert.equal(kindOf(nextCycleAction(pending, ledger)), "none");
+  // 창이 지났다 — 12행 푸시가 먼저(우선순위). 제출 단계는 푸시 뒤에 이어진다.
+  assert.equal(kindOf(nextCycleAction(snap({ ...pending, now: NOW + 60_000 }), ledger)), "push");
+  // 밀림 커밋이 없으면 푸시 백오프와 무관하게 단계는 간다(PR 만 남은 세계).
+  assert.deepEqual(nextCycleAction(snap(), ledger).action, { kind: "submitStep" });
+});
+
 test("14행 — 새 코멘트를 반영 브리프로 보내고 장부에 적는다", () => {
   const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
   const pending = [rev(5), rev(6)];

@@ -72,7 +72,23 @@ export interface CycleLedger {
    * 기준선은 그쪽이 이미 들고 있다.
    */
   lastPr: { number: number; reviewCount: number | null } | null;
-  submit: { requestedAt: string; via: "button" | "chat"; step?: string } | null;
+  /**
+   * 제출 의도 (PLAN L6) — 네 단계가 모두 서면 지워진다. 단계의 재시도 상태
+   * (attempts · nextAttemptAt)와 요청한 리뷰어도 여기에 산다: 바뀐 경우에만
+   * 다시 요청한다.
+   */
+  submit: {
+    requestedAt: string;
+    via: "button" | "chat";
+    /** 마지막으로 실패한 단계 — pr · commit. */
+    step?: string;
+    /** 그 단계의 연속 실패 수 — 백오프의 축(12행과 같은 backoffDelay). */
+    attempts?: number;
+    /** 그 단계의 다음 시도 시각 — 창 안에서는 13행이 발동하지 않는다. */
+    nextAttemptAt?: string;
+    /** 요청한 리뷰어 — 이 목록이 바뀐 경우에만 다시 요청한다. */
+    reviewers?: string[];
+  } | null;
   push: CyclePushState | null;
   pendingOp: CyclePendingOp | null;
   /** 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. */
@@ -162,6 +178,7 @@ function parseLastPr(raw: unknown): CycleLedger["lastPr"] {
   if (reviewCount !== null && reviewCount < 0) return null;
   return { number, reviewCount };
 }
+
 function parseSubmit(raw: unknown): CycleLedger["submit"] {
   const record = asRecord(raw);
   if (record === null) return null;
@@ -169,7 +186,17 @@ function parseSubmit(raw: unknown): CycleLedger["submit"] {
   const via = asString(record.via);
   if (requestedAt === null || (via !== "button" && via !== "chat")) return null;
   const step = asString(record.step);
-  return step === null ? { requestedAt, via } : { requestedAt, via, step };
+  const attempts = asInt(record.attempts);
+  const nextAttemptAt = asString(record.nextAttemptAt);
+  const reviewers = Array.isArray(record.reviewers)
+    ? record.reviewers.filter((login): login is string => typeof login === "string")
+    : null;
+  const submit: CycleLedger["submit"] = { requestedAt, via };
+  if (step !== null) submit.step = step;
+  if (attempts !== null && attempts >= 0) submit.attempts = attempts;
+  if (nextAttemptAt !== null) submit.nextAttemptAt = nextAttemptAt;
+  if (reviewers !== null) submit.reviewers = reviewers;
+  return submit;
 }
 
 function parsePush(raw: unknown): CyclePushState | null {

@@ -166,6 +166,7 @@ interface MemComment {
  */
 export class MemoryGitHub implements RestTransport {
   private expired = false;
+  private pullCreatesFail = false;
   private nextNumber = 1;
   private nextCommentId = 1;
   private readonly pulls = new Map<number, MemPull>();
@@ -208,7 +209,25 @@ export class MemoryGitHub implements RestTransport {
         return json(404, { message: "Not Found" });
       }
       if (rest[0] === "pulls") {
+        // GET /pulls?head=owner:branch&state=open — 제출의 입양 찾기(PLAN L6).
+        // 쿼리를 여기서 푼다: request() 는 path 만 보고 들어온다.
+        if (input.method === "GET" && rest.length === 1) {
+          const query = new URL(input.url, "https://github.test").searchParams;
+          const head = query.get("head") ?? "";
+          const state = query.get("state") ?? "open";
+          const branch = head.includes(":") ? head.slice(head.indexOf(":") + 1) : head;
+          const rows = [...this.pulls.values()].filter((pull) => {
+            if (branch !== "" && pull.head !== branch) return false;
+            if (state === "open") return pull.state === "open";
+            return true;
+          });
+          return json(
+            200,
+            rows.map((pull) => this.pullJson(pull)),
+          );
+        }
         if (input.method === "POST" && rest.length === 1) {
+          if (this.pullCreatesFail) return json(500, { message: "Internal Error" });
           const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
           const number = await this.openPull({
             head: String(payload.head),
@@ -349,6 +368,10 @@ export class MemoryGitHub implements RestTransport {
     };
   }
 
+  private commentJson(rows: MemComment[]) {
+    return rows.map((row) => ({ id: row.id, user: { login: row.login }, body: row.body }));
+  }
+
   private issueJson(issue: MemIssue) {
     return {
       number: issue.number,
@@ -361,9 +384,24 @@ export class MemoryGitHub implements RestTransport {
       user: { login: "colo-planner" },
     };
   }
+  /** 이후의 PR 생성(POST /pulls)은 전부 500 — 단계 예산 시험이 쓴다. */
+  failPullCreates(): void {
+    this.pullCreatesFail = true;
+  }
 
-  private commentJson(rows: MemComment[]) {
-    return rows.map((row) => ({ id: row.id, user: { login: row.login }, body: row.body }));
+  /** PR 을 읽는다 — 제목 · 본문 · 상태의 시험 잣대. */
+  pull(number: number): { title: string; body: string; state: string; head: string } | undefined {
+    const found = this.pulls.get(number);
+    if (found === undefined) return undefined;
+    return { title: found.title, body: found.body, state: found.state, head: found.head };
+  }
+
+  /** 열린 PR 의 본문을 개발자가 고친다 — 도구 구간 백업 시험의 손. */
+  editPull(number: number, changes: { title?: string; body?: string }): void {
+    const found = this.pulls.get(number);
+    if (found === undefined) throw new Error(`MemoryGitHub: PR #${number} 이 없습니다`);
+    if (changes.title !== undefined) found.title = changes.title;
+    if (changes.body !== undefined) found.body = changes.body;
   }
 
   // ————— 조종판 — 개발자의 손 —————
