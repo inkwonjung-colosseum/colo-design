@@ -142,6 +142,26 @@ export interface CycleLedger {
    * — fsck 가 본 깊은 손상은 다음 관찰의 탐침에 다시 보이지 않는다.
    */
   corrupt: { since: string; detail: string } | null;
+  /**
+   * 재클론의 이어받기 (PLAN 단계 9) — 손상 행이 절차를 시작하며 적고, 되살리기가
+   * 끝나면 지운다. 구해 두기 · 옮기기 · 새로 받기 · 되살리기 사이 어디서 끊겨도
+   * 다음 틱이 남은 걸음부터 잇는다(I5) — 예산을 두 번 쓰지 않는다.
+   */
+  reclone: CycleReclone | null;
+}
+
+export interface CycleReclone {
+  /** 절차가 시작된 시각 — 구해 둘 폴더와 옮길 폴더 이름의 도장. */
+  at: string;
+  /** 구해 둔 것 — 구해 두기 전이면 null. */
+  salvage: {
+    dir: string;
+    branch: string | null;
+    bundleRef: string | null;
+    patch: boolean;
+  } | null;
+  /** 옛 클론이 옮겨 간 자리 — 옮기기 전이면 null. */
+  movedTo: string | null;
 }
 
 export function emptyLedger(): CycleLedger {
@@ -158,6 +178,7 @@ export function emptyLedger(): CycleLedger {
     branches: [],
     hygiene: {},
     corrupt: null,
+    reclone: null,
   };
 }
 
@@ -367,6 +388,27 @@ function parseHygiene(raw: unknown): CycleLedger["hygiene"] {
   return hygiene;
 }
 
+function parseReclone(raw: unknown): CycleReclone | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const at = asString(record.at);
+  if (at === null) return null;
+  const movedTo = asString(record.movedTo);
+  const salvageRaw = asRecord(record.salvage);
+  let salvage: CycleReclone["salvage"] = null;
+  if (salvageRaw !== null) {
+    const dir = asString(salvageRaw.dir);
+    if (dir === null || typeof salvageRaw.patch !== "boolean") return null;
+    salvage = {
+      dir,
+      branch: asString(salvageRaw.branch),
+      bundleRef: asString(salvageRaw.bundleRef),
+      patch: salvageRaw.patch,
+    };
+  }
+  return { at, salvage, movedTo };
+}
+
 function parseCorrupt(raw: unknown): CycleLedger["corrupt"] {
   const record = asRecord(raw);
   if (record === null) return null;
@@ -392,6 +434,7 @@ export function parseLedger(raw: unknown): CycleLedger {
     branches: parseBranches(record.branches),
     hygiene: parseHygiene(record.hygiene),
     corrupt: parseCorrupt(record.corrupt),
+    reclone: parseReclone(record.reclone),
   };
 }
 

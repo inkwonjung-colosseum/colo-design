@@ -60,6 +60,16 @@ function fullLedger(): CycleLedger {
       assets: { files: 3, bytes: 4096 },
     },
     corrupt: { since: iso(T0), detail: "fatal: index file corrupt" },
+    reclone: {
+      at: iso(T0),
+      salvage: {
+        dir: "/p/salvage/20260924T090000Z",
+        branch: "colo-design/20260924-1",
+        bundleRef: "refs/heads/colo-design/20260924-1",
+        patch: true,
+      },
+      movedTo: null,
+    },
   };
 }
 

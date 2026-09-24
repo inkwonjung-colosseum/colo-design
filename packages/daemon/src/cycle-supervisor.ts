@@ -10,10 +10,12 @@
  *   pendingOp 에 곧바로 적히고 틱("tool-conflict")이 뒤를 잇는다 (단계 3).
  * - 위생(16행)은 기한이 지난 항목만 한 번씩 돈다 — 판정과 도우미는
  *   cycle-hygiene 에 있다 (단계 9).
+ * - 클론 손상(손상 행)은 구해 두기 → 옮기기 → 새로 받기 → 되살리기를 원장의
+ *   reclone 으로 잇는다 — 몸통은 clone-salvage 에 있다 (단계 9).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { statfs } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   type AttentionParts,
   type ChatEvent,
@@ -23,6 +25,12 @@ import {
   markTurn,
 } from "@colo-design/protocol";
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
+import {
+  commitCorruptionSignal,
+  restoreSalvage,
+  salvageClone,
+  salvageStamp,
+} from "./clone-salvage.js";
 import {
   DEFAULT_KEEP_REJECTED_DAYS,
   DISK_LOW_BYTES,
@@ -79,6 +87,7 @@ export type TickReason =
   | "activate"
   | "session-start"
   | "tool-conflict"
+  | "reclone"
   | "manual";
 
 /** 한 틱이 판정-조치 고리를 도는 상한 — 조치가 계속 이어지는 세계에서도 멈춘다. */
@@ -97,6 +106,8 @@ const NOTICE_TEXT: Record<string, string> = {
   "submit:pr": "제출이 요청 열기 단계에서 멈춰 있습니다",
   "base-missing":
     "베이스 브랜치가 원격에 없고 GitHub 의 기본 가지도 알 수 없습니다 — 개발자 확인이 필요합니다",
+  "clone:corrupt": "작업 폴더(클론)가 손상돼 다시 받아야 하는데 도구가 스스로 끝내지 못했습니다",
+  "clone:restore": "작업 폴더를 다시 받았지만 구해 둔 작업을 다시 얹지 못했습니다",
 };
 /** 알림 키의 문장 — 표에 없는 review:<pr>:rounds 는 이 한 줄로 읽힌다. */
 function noticeText(key: string): string {
@@ -328,6 +339,10 @@ export class CycleSupervisor {
           this.reviewLedgerFolded = false;
         }
       }
+      // 클론이 없다 — 준비(bootstrap)가 받는 중이거나(재클론의 틈) 아직 받은 적이
+      // 없다. 읽을 git 이 없으니 판정할 것도 없다: 없는 폴더를 관찰한 중립값으로
+      // 조치(브랜치 만들기 따위)를 고르지 않게 한다.
+      if (!this.deps.core.isCloned()) return;
 
       const fetch = this.shouldFetch(reason);
       const snapshot = await observeCycle(this.deps.core, this.ledger, this.observeDeps(), {
@@ -544,11 +559,26 @@ export class CycleSupervisor {
         // 저장 사이에 변경이 사라졌으면 saveBlocked 카드를 띄우지 않게 한 번
         // 더 읽는다.
         if ((await core.diff()).length === 0) return true;
-        await this.deps.workspace.save({
+        const saved = await this.deps.workspace.save({
           message: "작업 이어 보관",
           backgroundPush: true,
         });
-        return true;
+        if (saved.stage === "published") return true;
+        // 보관이 막혔다 — 없는 객체로 트리를 짓지 못했다면 클론의 손상이다: 원장에
+        // 적고 같은 틱의 다음 판정(손상 행)이 재클론한다(PLAN 단계 9). 그 밖의
+        // 실패는 틱을 멈춘다 — 이 행이 판정의 앞자리라 다시 판정하면 같은 보관만
+        // 다섯 번 되풀이한다.
+        if (saved.detail && commitCorruptionSignal(saved.detail)) {
+          if (this.ledger.corrupt === null) {
+            this.ledger = {
+              ...this.ledger,
+              corrupt: { since: new Date(this.now()).toISOString(), detail: saved.detail },
+            };
+            writeLedger(this.ledgerPath, this.ledger);
+          }
+          return true;
+        }
+        return false;
       }
       case "adoptStrayCommits": {
         await this.deps.workspace.ensureCycleBranch();
@@ -666,6 +696,12 @@ export class CycleSupervisor {
       }
       case "hygiene": {
         return await this.hygiene();
+      }
+      case "reclone": {
+        return await this.reclone();
+      }
+      case "restoreSalvage": {
+        return await this.restoreFromSalvage();
       }
       case "none": {
         // 틱의 몸통이 이미 거른다 — 조치 없음은 고리를 멈춘다.
@@ -1306,6 +1342,124 @@ export class CycleSupervisor {
   private clearSubmitIntent(): void {
     if (this.ledger.submit === null) return;
     this.ledger = { ...this.ledger, submit: null };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  // ————— 손상 행 — 재클론 (PLAN 단계 9) —————
+
+  /**
+   * 재클론의 앞 걸음 — 구해 두기 → 미리보기 멈춤 → 옛 클론 옮기기 → 새로 받기.
+   * 걸음마다 원장 reclone 에 적어, 어디서 끊겨도 다음 틱이 남은 걸음부터 잇는다.
+   * 구해 두기나 옮기기가 실패하면 옛 클론을 그대로 두고 개발자에게 알린 뒤
+   * 멈춘다(절차를 지우고 예산을 다 쓴 것으로 적어 틱마다 되풀이하지 않는다).
+   * 새로 받기는 설치 · 미리보기가 따라오므로 차선 밖에서 띄우고 그 틱을 멈춘다
+   * — 받기가 끝나면 다음 틱(reclone)이 되살린다.
+   */
+  private async reclone(): Promise<boolean> {
+    const core = this.deps.core;
+    const record = this.ledger.reclone;
+    if (record === null) return true;
+    // 준비가 도는 중(설치 · 미리보기 기동)에는 폴더를 옮기지 않는다 — 다음 틱.
+    if (core.inFlight !== null) return false;
+    const stamp = salvageStamp(Date.parse(record.at) || this.now());
+    const parent = dirname(core.root);
+    let salvage = record.salvage;
+    if (salvage === null) {
+      try {
+        salvage = await salvageClone(core, join(parent, "salvage", stamp), core.branch);
+      } catch (error) {
+        this.stopReclone(`구해 두기에 실패해 다시 받지 않았습니다 — ${detailOf(error, core.pat)}`);
+        return false;
+      }
+      this.setReclone({ ...record, salvage });
+      this.log(`재클론: 작업을 ${salvage.dir} 에 구해 뒀습니다`);
+    }
+    if (record.movedTo === null) {
+      const target = join(parent, `${basename(core.root)}.corrupt-${stamp}`);
+      // 옮긴 뒤 원장에 적기 전에 끊긴 실행 — 옮긴 자리가 있고 클론이 없으면 옮긴 것이다.
+      if (!(existsSync(target) && !existsSync(core.root))) {
+        await this.deps.workspace.stop();
+        try {
+          renameSync(core.root, target);
+        } catch (error) {
+          this.stopReclone(
+            `손상된 클론을 옮기지 못했습니다 — ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return false;
+        }
+      }
+      this.setReclone({ ...record, salvage, movedTo: target });
+      this.log(`재클론: 손상된 클론을 ${target} 로 옮겼습니다 (지우지 않는다)`);
+    }
+    const workspace = this.deps.workspace;
+    core.lane.outside(() => {
+      void workspace.sync().finally(() => void this.tick("reclone"));
+    });
+    return false;
+  }
+
+  /**
+   * 재클론의 뒷걸음 — 새 클론에 구해 둔 것을 되살린다. 성공이든 아니든 새 클론은
+   * 멀쩡하므로 절차와 손상 기록을 지우고 clone:corrupt 를 거둔다. 다시 얹지
+   * 못한 것은 clone:restore 로 개발자에게 — 구해 둔 폴더의 자리를 자세히에 싣는다.
+   */
+  private async restoreFromSalvage(): Promise<boolean> {
+    const core = this.deps.core;
+    const record = this.ledger.reclone;
+    if (record === null) return true;
+    // 준비가 아직 설치 · 기동 중이다 — 끝나면 reclone 틱이 다시 부른다. 설치 중의
+    // checkout 은 설치 표식을 어긋나게 쓴다(끝난 뒤의 해시를 적는다).
+    if (core.inFlight !== null) return false;
+    const failure = record.salvage === null ? null : await restoreSalvage(core, record.salvage);
+    this.ledger = { ...this.ledger, reclone: null, corrupt: null };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.resolveNoticeKey("clone:corrupt");
+    if (failure !== null) {
+      this.deps.raiseNotice(
+        "clone:restore",
+        noticeText("clone:restore"),
+        `${failure}\n구해 둔 폴더: ${record.salvage?.dir ?? "(없음)"}`,
+      );
+      this.log(`재클론: ${failure}`);
+    } else {
+      this.log("재클론: 새 클론에 구해 둔 작업을 되살렸습니다");
+    }
+    await core.refreshPendingChanges().catch(() => undefined);
+    return true;
+  }
+
+  /** 원장의 재클론 절차를 갈아 적는다. */
+  private setReclone(record: NonNullable<CycleLedger["reclone"]>): void {
+    this.ledger = { ...this.ledger, reclone: record };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  /**
+   * 재클론을 멈춘다 — 옛 클론은 그대로 두고(손상 기록도 남긴다) 절차를 지운 뒤,
+   * 예산을 다 쓴 것으로 적어 손상 행이 같은 알림을 다시 올리지 않게 한다.
+   * 예산의 창(하루)이 지나면 손상 행이 다시 시도한다.
+   */
+  private stopReclone(reason: string): void {
+    this.ledger = {
+      ...this.ledger,
+      reclone: null,
+      budgets: markEscalated(this.ledger.budgets, "reclone"),
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.deps.raiseNotice("clone:corrupt", noticeText("clone:corrupt"), reason);
+    this.log(`재클론: ${reason}`);
+  }
+
+  /** 서 있는 알림 하나를 거둔다 — DeveloperNotice 가 없는 실행(시험)은 원장에서만. */
+  private resolveNoticeKey(key: string): void {
+    if (!this.ledger.notices[key]) return;
+    if (this.deps.resolveNotice) {
+      this.deps.resolveNotice(key);
+      return;
+    }
+    const notices = { ...this.ledger.notices };
+    delete notices[key];
+    this.ledger = { ...this.ledger, notices };
     writeLedger(this.ledgerPath, this.ledger);
   }
 
