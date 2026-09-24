@@ -55,6 +55,42 @@ export function cycleBranchName(date: Date, n: number): string {
 }
 
 /**
+ * 레지스트리가 기억하는 사이클 브랜치로 HEAD 를 맞춘다(PLAN L4 · 단계 0).
+ * 이름이 있어도 돌려주기만 하면 재시작 등으로 HEAD 가 딴 곳에 있을 때 저장이
+ * 딴 브랜치에 커밋되고 그 이름으로 푸시됐다. 로컬에 있으면 checkout, 원격
+ * 추적 ref 만 있으면 checkout -b <name> origin/<name>, 둘 다 없으면 지금
+ * HEAD 에서 checkout -b. GitRun 계약((args) => stdout)으로 시험이 실제
+ * 임시 저장소를 돌린다.
+ */
+export async function alignCycleBranch(
+  git: (args: string[]) => Promise<string>,
+  name: string,
+): Promise<string> {
+  // -q: detached HEAD 는 조용히 빈손 — 그대로 아래 맞춤으로 간다.
+  const head = await git(["symbolic-ref", "--short", "-q", "HEAD"]).catch(() => "");
+  if (head.trim() === name) return name;
+  const local = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]).catch(
+    () => "",
+  );
+  const remote = await git([
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `refs/remotes/origin/${name}`,
+  ]).catch(() => "");
+  try {
+    if (local.trim() !== "") await git(["checkout", name]);
+    else if (remote.trim() !== "") await git(["checkout", "-b", name, `origin/${name}`]);
+    else await git(["checkout", "-b", name]);
+  } catch (error) {
+    // 한국어 한 문장이 먼저 나가고 git 의 말이 뒤따른다 — 호출자(runSave)는
+    // failGate("commit") 으로 이 문장을 사람과 AI 에게 넘긴다.
+    throw new Error(`작업 브랜치(${name})로 돌아가지 못했습니다 — ${detailOf(error, null)}`);
+  }
+  return name;
+}
+
+/**
  * A route becomes part of a committed filename: separators and `..` would
  * let it walk out of `.colo-design/shots/` (or simply fail to match on
  * read-back). Korean stays — the route keeps its own words.
@@ -289,7 +325,10 @@ export class PublishCycle {
    */
   async ensureCycleBranch(): Promise<string> {
     if (this.core.branch) {
-      return this.core.branch;
+      // 이름이 있다는 것과 HEAD 가 거기 있다는 것은 다르다(PLAN L4 · 단계 0):
+      // 재시작이 HEAD 를 어디에든 남겨 둔다. 돌려주기 전에 맞춘다 — repo.ts 의
+      // 되돌리기 주석이 기대하는 바로 그 동작이다.
+      return alignCycleBranch((args) => this.core.git(args), this.core.branch);
     }
 
     const today = new Date();
