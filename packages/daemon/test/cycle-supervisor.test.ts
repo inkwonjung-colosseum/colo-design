@@ -255,7 +255,7 @@ test("S7 병합 충돌 중 재시작 — 원장에서 읽어 이어서 마무리
       githubAuthExpired: () => false,
       slug: () => scene.core.repoSlug(),
       isActive: () => true,
-      openThread: () => ({ send: (text) => briefs2.push(text) }),
+      openThread: async () => ({ send: (text) => briefs2.push(text) }),
       raiseNotice: (key, text) => notices2.push({ key, text }),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });

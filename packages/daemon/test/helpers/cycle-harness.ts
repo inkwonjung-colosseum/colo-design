@@ -851,10 +851,10 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       githubAuthExpired: () => false,
       slug: () => core.repoSlug(),
       isActive: () => scene.active,
-      openThread: () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
+      openThread: async () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
       raiseNotice: (key, text) => notices.push({ key, text }),
       onPrTransition: (kind, at, count) => transitions.push({ kind, at, count }),
-      onNewReviews: (pr, reviews) => {
+      onNewReviews: async (pr, reviews) => {
         if (scene.refuseReviewSend) return false;
         reviewBriefs.push({ pr, ids: reviews.map((r) => r.id) });
         return true;

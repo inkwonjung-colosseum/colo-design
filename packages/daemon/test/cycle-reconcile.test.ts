@@ -369,6 +369,19 @@ test("14행 — 새 코멘트를 반영 브리프로 보내고 장부에 적는�
   assert.deepEqual(out.tapeEvents, [{ kind: "review.arrived", reviews: pending }]);
 });
 
+test("14행 — 브리프가 장부 항목의 다른 필드(replied)를 지우지 않는다", () => {
+  const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
+  const ledger = led({ reviews: { "12": { known: [5], briefed: [5], rounds: 1, replied: [5] } } });
+  const out = nextCycleAction(snap({ pr, pendingReviews: [rev(6)], newReviews: [rev(6)] }), ledger);
+  assert.equal(kindOf(out), "briefReviews");
+  assert.deepEqual(out.ledger.reviews["12"], {
+    known: [5, 6],
+    briefed: [5, 6],
+    rounds: 1,
+    replied: [5],
+  });
+});
+
 test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
   const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
   const shot = snap({ pr });

@@ -111,10 +111,11 @@ export interface SupervisorDeps {
   /** 활성 프로젝트인가 — timer 틱의 fetch 빈도를 가른다. */
   isActive: () => boolean;
   /**
-   * 자동 대화 열기 — fleet 의 autoFixThreadFor 를 넘긴다. 반환된 손잡이의
-   * send 는 lane.outside 안에서만 부른다.
+   * 자동 대화 열기 — fleet 의 autoFixThreadFor 를 넘긴다. 공급자를 고르느라
+   * 비동기다(auto-thread.ts). 부르기와 반환된 손잡이의 send 는 lane.outside
+   * 안에서만 하고, 기다린다. null 은 대화를 열 수 없었다는 뜻이다.
    */
-  openThread: (title: string) => { send(text: string): void } | null;
+  openThread: (title: string) => Promise<{ send(text: string): void } | null>;
   /** 개발자 알림 — fleet 의 DeveloperNotice 로 간다. `reason` 은 조정 표가
    *  붙인 사유로, 알림 본문의 `자세히` 가 된다. */
   raiseNotice: (key: string, text: string, reason?: string) => void;
@@ -143,9 +144,9 @@ export interface SupervisorDeps {
    * 14행의 실행 — 옛 폴러의 리뷰 브리프(reviewToTurn + 자동 저장 정산)를
    * fleet 이 그대로 한다. false 를 돌리면(대화를 못 열었거나 보내기가
    * 거절됨) 감독자가 장부의 briefed 를 되감아 다음 틱이 다시 시도한다.
-   * lane.outside 안에서 부른다.
+   * lane.outside 안에서 부르고 기다린다 — 대화 열기가 비동기다.
    */
-  onNewReviews?: (pr: number, reviews: DeveloperReview[]) => boolean;
+  onNewReviews?: (pr: number, reviews: DeveloperReview[]) => Promise<boolean>;
   /** 7행 — 레지스트리의 baseBranch 를 옮긴다(fleet 이 registry.update 를 부른다). */
   onRetargetBase?: (to: string) => void;
   /** 수명 설정 — 개발자 코멘트에 AI 가 스스로 답할까 (PLAN L9 · O5, 기본 true). */
@@ -502,7 +503,7 @@ export class CycleSupervisor {
           conflictBrief(pending.files, pending.kind, await core.conflictSides(pending.kind)),
         );
         await core.lane.outside(async () => {
-          this.deps.openThread("최신 변경 합치기")?.send(brief);
+          (await this.deps.openThread("최신 변경 합치기"))?.send(brief);
         });
         return false;
       }
@@ -1136,7 +1137,7 @@ export class CycleSupervisor {
     });
     return await this.deps.core.lane.outside(async () => {
       try {
-        const thread = this.deps.openThread("반려 반영");
+        const thread = await this.deps.openThread("반려 반영");
         if (thread === null) return false;
         thread.send(brief);
         return true;
@@ -1306,8 +1307,16 @@ export class CycleSupervisor {
       const saved = await this.deps.workspace.save({
         message: "작업 이어 보관",
         backgroundPush: true,
+        // 보관의 게이트 브리프 — save 의 이 문은 동기라 기다리지 못한다. 열기 ·
+        // 보내기의 실패는 여기서 삼킨다(처리되지 않은 거절이 데몬을 넘어뜨리지 않게).
         onSessionTurn: (brief) => {
-          core.lane.outside(() => this.deps.openThread("제출 마저하기")?.send(brief));
+          void core.lane.outside(async () => {
+            try {
+              (await this.deps.openThread("제출 마저하기"))?.send(brief);
+            } catch {
+              // 못 연 대화는 옛 길(null)과 같다 — 실패 단계는 save 가 이미 적었다.
+            }
+          });
         },
       });
       if (saved.stage !== "published") {

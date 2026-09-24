@@ -544,9 +544,12 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       const entryKey = String(pr.number);
       const prev = reviews[entryKey] ?? { known: [], briefed: [], rounds: 0 };
       const ids = snapshot.pendingReviews.map((review) => review.id);
+      // 항목의 다른 필드(replied — 이미 답한 코멘트, 반려 표식)는 그대로 둔다 —
+      // 지우면 다음 라운드의 정산이 앞 라운드의 답장 기록을 잃는다.
       reviews = {
         ...reviews,
         [entryKey]: {
+          ...prev,
           known: [...new Set([...prev.known, ...ids])],
           briefed: [...new Set([...prev.briefed, ...ids])],
           rounds: budgets[key]?.spent ?? prev.rounds + 1,

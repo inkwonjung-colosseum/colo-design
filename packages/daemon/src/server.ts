@@ -839,6 +839,7 @@ export class DaemonServer {
       notice: (n) => this.config.onNotice?.(n),
       logger: this.logger,
       claudeExecutable: () => this.claudeExecutable,
+      agentDrivers: this.agentDrivers,
       machineTurn: (prompt, opts) => this.machineTurns.turn(prompt, opts),
       // 넘긴 요청의 작성자 이름 — 온보딩이 machine.json 에 저장한 값(P1-3).
       authorName: () => this.machineSetting.get("authorName"),

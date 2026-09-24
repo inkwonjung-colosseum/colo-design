@@ -20,6 +20,8 @@ import {
   reviewToTurn,
 } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
+import type { DriverRegistry } from "./agent/registry.js";
+import { AutoThreads } from "./auto-thread.js";
 import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { captureTargets, readComments } from "./comments.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
@@ -40,7 +42,6 @@ import { scopeOf } from "./repo-config.js";
 import { appendScreenMap } from "./screen-map.js";
 import type { SessionManager } from "./session-manager.js";
 import { appendTape } from "./session-tape.js";
-import { repoWritePolicy } from "./workspaces.js";
 
 /**
  * Inactive projects whose preview server stays up beside the active one, so
@@ -82,6 +83,8 @@ export interface FleetDeps {
   notice(notice: DaemonNotice): void;
   logger: DaemonLogger;
   claudeExecutable(): string | null;
+  /** 공급자 레지스트리 — 자동 대화가 쓸 수 있는 공급자를 여기서 고른다(auto-thread.ts). */
+  agentDrivers: DriverRegistry;
   /** 기계 잔일(저장 메모 · 넘기기 초안)의 턴 — machine-provider 가 담당을 골라 서버가 넣는다. */
   machineTurn: MachineTurn;
   /** 넘긴 요청에 적을 작성자 이름 — machine.json 이 기억한다(P1-3). */
@@ -135,6 +138,8 @@ export class ProjectFleet {
     string,
     { slug: string; count: number; pr: number; reviews: DeveloperReview[] }
   >();
+  /** 도구가 여는 대화 — 클론마다 한 줄로 연다(auto-thread.ts). */
+  private readonly autoThreads: AutoThreads;
   /**
    * The `/` palette with no thread open: one CLI boot per repo, cached, so an
    * empty workspace still lists every command the terminal would. A live
@@ -151,7 +156,14 @@ export class ProjectFleet {
    */
   private cycleTail: Promise<void> = Promise.resolve();
 
-  constructor(private readonly deps: FleetDeps) {}
+  constructor(private readonly deps: FleetDeps) {
+    // 필드 초기화가 아니라 여기서 — 클래스 필드는 매개변수 속성(deps)보다 먼저 선다.
+    this.autoThreads = new AutoThreads({
+      manager: deps.manager,
+      drivers: deps.agentDrivers,
+      queueDiskFor: deps.queueDiskFor,
+    });
+  }
 
   /**
    * A project's live workspace, built the first time it is touched.
@@ -486,29 +498,35 @@ export class ProjectFleet {
    * 가장 최근에 움직인 살아 있는 대화. 없으면 도구가 "리뷰 반영" 대화를
    * 연다(게이트 실패 스레드와 같은 길): 사람의 손이 없어도 반영이
    * 시작되는 것이 이 흐름의 계약이다.
+   *
+   * 새 대화의 공급자는 쓸 수 있는 것 중에서 고른다(auto-thread.ts — 최근
+   * 대화의 공급자 → defaults.provider → claude → codex). Claude 만 띄우던
+   * 때는 Codex 만 있는 기계에서 네 자동 흐름이 조용히 멈췄다(PLAN I1 · I4).
+   * 판정이 CLI 를 띄우므로 비동기다. 열기가 던지면 못 연 것(null)으로 친다 —
+   * 호출자가 기록을 되감거나 남겨 다음 틱이 다시 연다.
    */
-  private autoFixThreadFor(workspaces: ProjectWorkspaces, title = "리뷰 반영") {
+  private async autoFixThreadFor(workspaces: ProjectWorkspaces, title = "리뷰 반영") {
     const cwd = realpathBestEffort(workspaces.paths.repoRoot);
-    const live = [...this.deps.manager.all()]
-      .filter((session) => session.cwd === cwd && session.sendable)
-      .sort((a, b) => b.lastActivity - a.lastActivity)[0];
-    if (live) return live;
-    const executable = this.deps.claudeExecutable();
-    if (!executable) return null;
-    const instructions = this.projectInstructions(cwd);
-    const session = this.deps.manager.create({
-      cwd,
-      queueDiskFor: this.deps.queueDiskFor,
-      writePolicy: repoWritePolicy(cwd),
-      title,
-      launch: {
-        executable,
-        ...(instructions ? { appendSystemPrompt: instructions } : {}),
-      },
-    });
-    this.deps.manager.invalidateThreads(cwd);
-    this.refreshThreads();
-    return session;
+    const opened = await this.autoThreads
+      .open({
+        cwd,
+        title,
+        defaults: this.deps.registry.get(workspaces.slug)?.defaults,
+        instructions: this.projectInstructions(cwd),
+      })
+      .catch((error: unknown) => {
+        this.deps.logger.warn("[cycle] 자동 대화를 열지 못했습니다", {
+          slug: workspaces.slug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+    if (opened === null) return null;
+    if (opened.created) {
+      this.deps.manager.invalidateThreads(cwd);
+      this.refreshThreads();
+    }
+    return opened.session;
   }
   /**
    * 조정 표 14행의 실행 (PLAN L2 흡수표): 새 리뷰는 알림으로 끝나지 않는다 —
@@ -517,12 +535,12 @@ export class ProjectFleet {
    * reviews[pr].briefed — 감독자가 판정 때 적고, 보내기가 거절되면
    * 되감아(반환 false) 다음 틱이 다시 시도한다.
    */
-  private briefReviewsFor(
+  private async briefReviewsFor(
     workspaces: ProjectWorkspaces,
     pr: number,
     reviews: DeveloperReview[],
-  ): boolean {
-    const target = this.autoFixThreadFor(workspaces);
+  ): Promise<boolean> {
+    const target = await this.autoFixThreadFor(workspaces);
     if (!target) return false;
     try {
       target.send(reviewToTurn(reviews));
@@ -598,24 +616,28 @@ export class ProjectFleet {
     }
     const agent = guidance.agent;
     if (!agent) return;
-    try {
-      const thread = this.autoFixThreadFor(workspaces, agent.thread);
-      if (!thread) return;
-      // 같은 대화가 앞의 시도를 기억한다 — 되풀이라는 사실만 앞에 얹는다.
-      const brief = decision.repeat
-        ? `고친 뒤 준비를 다시 돌렸지만 같은 단계에서 또 멈췄습니다 — 앞의 방법과 다른 원인을 찾아 주세요.\n\n${agent.brief}`
-        : agent.brief;
-      thread.send(markTurn({ kind: "gate", step: agent.step }, brief));
-      this.recoveryResync.add(slug);
-      // 주의의 재료 (PLAN L8): 준비 복구가 AI 에게 넘어가 있는 동안이다.
-      if (workspaces.bringUpFixing === null) {
-        workspaces.bringUpFixing = new Date().toISOString();
-        workspaces.repo.repoCore().emit();
+    // 같은 대화가 앞의 시도를 기억한다 — 되풀이라는 사실만 앞에 얹는다.
+    const brief = decision.repeat
+      ? `고친 뒤 준비를 다시 돌렸지만 같은 단계에서 또 멈췄습니다 — 앞의 방법과 다른 원인을 찾아 주세요.\n\n${agent.brief}`
+      : agent.brief;
+    // 대화 열기는 공급자를 고르느라 기다린다 — 장부(에피소드)는 위에서 이미
+    // 적혔으므로, 그 사이에 같은 실패가 다시 방송돼도 두 번째 브리프는 없다.
+    void (async () => {
+      try {
+        const thread = await this.autoFixThreadFor(workspaces, agent.thread);
+        if (!thread) return;
+        thread.send(markTurn({ kind: "gate", step: agent.step }, brief));
+        this.recoveryResync.add(slug);
+        // 주의의 재료 (PLAN L8): 준비 복구가 AI 에게 넘어가 있는 동안이다.
+        if (workspaces.bringUpFixing === null) {
+          workspaces.bringUpFixing = new Date().toISOString();
+          workspaces.repo.repoCore().emit();
+        }
+      } catch {
+        // 대화를 못 열었거나 죽은 질의 — 실패 상태는 이미 방송됐다. 다음
+        // 시도(다시 시도 · 재동기화)의 실패가 다시 연다.
       }
-    } catch {
-      // 대화를 못 열었거나 죽은 질의 — 실패 상태는 이미 방송됐다. 다음
-      // 시도(다시 시도 · 재동기화)의 실패가 다시 연다.
-    }
+    })();
   }
 
   /**
