@@ -57,6 +57,37 @@ function UserBubbleText({ text }: { text: string }) {
   );
 }
 
+/**
+ * 데몬이 테이프에 내려놓는 알림 한 줄. 데몬은 한국어 한 줄을 앞에 세우고,
+ * 빈 줄 뒤에 원문(영어 오류 · 전송 상세)을 붙여 보낸다 — 실패 카드와 같은
+ * 판정으로, 원문은 한 번 접힌 `자세히` 뒤에 산다. 사람이 읽을 것은 앞의
+ * 한 줄이고, 원문은 막힌 턴을 들여다볼 때의 재료다.
+ */
+function NoticeLine({ block }: { block: Extract<Block, { type: "notice" }> }) {
+  const [open, setOpen] = useState(false);
+  const cut = block.text.search(/\n[ \t]*\n/);
+  const lead = cut === -1 ? block.text : block.text.slice(0, cut).trim();
+  const detail = cut === -1 ? "" : block.text.slice(cut).trim();
+  return (
+    <div
+      className={`notice notice--${block.level}${block.subtype === "compact" ? " notice--compact" : ""}`}
+    >
+      <span className="notice__text">{lead}</span>
+      {detail !== "" && (
+        <button
+          type="button"
+          className="machine__more notice__more"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "접기" : "자세히"}
+        </button>
+      )}
+      {open && detail !== "" && <pre className="machine__body notice__detail">{detail}</pre>}
+    </div>
+  );
+}
+
 export function Transcript({
   blocks,
   live = true,
@@ -351,14 +382,7 @@ export function Transcript({
                 );
               }
               case "notice":
-                return (
-                  <div
-                    key={block.id}
-                    className={`notice notice--${block.level}${block.subtype === "compact" ? " notice--compact" : ""}`}
-                  >
-                    <span className="notice__text">{block.text}</span>
-                  </div>
-                );
+                return <NoticeLine key={block.id} block={block} />;
               case "save":
                 // P2-1: 저장은 사람이 누른 순간이 아니라 턴의 끝마다 도구가
                 // 하는 일이 됐다 — 매 턴 카드가 뜨면 테이프가 도구의 잔일로

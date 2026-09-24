@@ -2434,6 +2434,20 @@ select {
   flex: 1;
   word-break: break-word;
 }
+/* 알림의 원문 — 한국어 한 줄 옆의 자세히가 열면 알림 아래 한 줄을 통째로
+   차지한다. 실패 카드의 원문과 같은 옷(machine__body)을 입는다. */
+.notice:has(> .notice__more) {
+  flex-wrap: wrap;
+}
+.notice__more {
+  flex: none;
+  color: inherit;
+  opacity: 0.75;
+}
+.notice__detail {
+  flex: 1 1 100%;
+  white-space: pre-wrap;
+}
 .notice__close {
   flex: none;
   background: transparent;
