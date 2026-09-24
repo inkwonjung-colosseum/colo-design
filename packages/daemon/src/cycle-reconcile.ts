@@ -14,7 +14,8 @@
  * base-missing)은 예산 항목의 escalated 표식으로, 밀림 · 인증 알림(push:behind ·
  * push:auth)은 원장의 서 있는 알림(notices) 기록으로 여기서 억제한다. 조정자가
  * 실제로 올린 뒤 notices 에 적고, 풀리면 지운다 — 이 함수는 그 기록을 읽기만
- * 한다.
+ * 한다. 반려 반영 턴의 예산 소진 알림(review:*:rejection)은 올리는 판정이 보낼
+ * 기록(pendingRejection)을 함께 지우는 것으로 한 번이다(14b행).
  */
 
 import type { DeveloperReview } from "@colo-design/protocol";
@@ -89,6 +90,7 @@ export type CycleAction =
   | { kind: "push" }
   | { kind: "submitStep" }
   | { kind: "briefReviews"; pr: number; reviews: DeveloperReview[] }
+  | { kind: "briefRejection"; pr: number; reasons: DeveloperReview[] }
   | { kind: "reinstall" }
   | { kind: "hygiene" };
 
@@ -411,6 +413,15 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       if (gone) notices.push({ op: "resolve", key });
     }
   }
+  // review:<pr>:rejection 알림(14b행)은 다음 요청이 서면 풀린다 — 반려된 작업이
+  // 새 요청으로 개발자에게 다시 갔다. 그 PR 은 올릴 때 이미 닫혀 있으므로 위의
+  // "열려 있지 않음" 잣대로는 올리자마자 풀린다. 인증 만료로 pr 을 못 읽는
+  // 세계(pr === null)에서는 거두지 않는다.
+  for (const key of Object.keys(ledger.notices)) {
+    const match = /^review:(\d+):rejection$/.exec(key);
+    if (match === null) continue;
+    if (pr !== null && pr.number !== Number(match[1])) notices.push({ op: "resolve", key });
+  }
 
   // ————— 8 · 9행 — PR 이 병합되거나 닫혔다(L4 랜딩) —————
   // 레지스트리가 이미 그 끝을 들고 있으면(handoffState === pr.state) 착지는
@@ -554,6 +565,41 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       budgets = markEscalated(budgets, key);
     }
     // 조치는 없다 — 아래 위생 행은 계속 본다.
+  }
+
+  // ————— 14b 행 — 보내지 못한 반려 이유 반영 턴(L9 · 단계 7) —————
+  // 랜딩(9행)은 이유를 reviews[pr].pendingRejection 에 적고 떠난다 — 턴은
+  // 여기서 나가고, 대화를 못 열었으면 기록이 남아 다음 틱이 다시 보낸다.
+  // 턴 중 아니요: 도는 대화 사이에 반려 턴을 끼우지 않는다. 예산은 14행과 같은
+  // review:<pr> — 반려 반영도 그 PR 의 반영 한 라운드다. 시도하는 순간 쓴다:
+  // 못 연 대화도 한 번이다(14행의 보내기 거절과 같다). 다하면 알림 한 번을
+  // 올리고 기록을 지운다 — 도구가 손을 놓았으니 남겨 봐야 틱마다 같은 판정이
+  // 되풀이될 뿐이고, 지우는 것이 곧 알림의 "한 번"이다. 14행의 escalated
+  // 표식을 쓰지 않는 이유: 라운드 초과 알림이 이미 그 표식을 세웠을 수 있다.
+  if (!turnRunning) {
+    for (const [entryKey, entry] of Object.entries(reviews)) {
+      const pendingRejection = entry.pendingRejection;
+      if (pendingRejection === undefined) continue;
+      const key = `review:${entryKey}`;
+      const round = spend(budgets, key, BUDGETS.reviewRounds, now);
+      budgets = round.ledger;
+      if (round.allowed) {
+        aiFixing = true;
+        return decide({
+          kind: "briefRejection",
+          pr: Number(entryKey),
+          reasons: pendingRejection.reasons,
+        });
+      }
+      attentions.push("developer-notified");
+      notices.push({
+        op: "raise",
+        key: `${key}:rejection`,
+        reason: "반려 이유 반영 턴을 PR 당 라운드 상한 안에 보내지 못했습니다",
+      });
+      const { pendingRejection: _dropped, ...rest } = entry;
+      reviews = { ...reviews, [entryKey]: rest };
+    }
   }
 
   // ————— 15행 — 설치가 낡았다(L3 15행) —————

@@ -85,8 +85,10 @@ const NOTICE_TEXT: Record<string, string> = {
   "base-missing":
     "베이스 브랜치가 원격에 없고 GitHub 의 기본 가지도 알 수 없습니다 — 개발자 확인이 필요합니다",
 };
-/** 알림 키의 문장 — 표에 없는 review:<pr>:rounds 는 이 한 줄로 읽힌다. */
+/** 알림 키의 문장 — 표에 없는 review:<pr>:rounds · review:<pr>:rejection 은 이 두 줄로 읽힌다. */
 function noticeText(key: string): string {
+  if (/^review:\d+:rejection$/.test(key))
+    return "반려 이유를 AI 에게 넘기지 못했습니다 — 개발자가 확인할 차례입니다";
   if (key.startsWith("review:"))
     return "코멘트 반영이 라운드 상한에 닿았습니다 — 개발자가 확인할 차례입니다";
   return NOTICE_TEXT[key] ?? key;
@@ -635,6 +637,23 @@ export class CycleSupervisor {
         }
         return false;
       }
+      case "briefRejection": {
+        // 14b행 — 반려 이유 반영 턴 (PLAN L9). 판정이 예산 review:<pr> 를 이미
+        // 썼다. 기록은 실제로 보낸 뒤에만 지운다: 대화를 못 열었거나 보내기가
+        // 던졌으면 남아서 다음 틱이 같은 이유로 다시 보낸다. 나간 뒤 틱은
+        // 멈춘다 — 14행과 같은 이유다.
+        if (await this.sendRejectionTurn(action.reasons)) {
+          this.clearPendingRejection(action.pr);
+          this.log(
+            `반려 이유 반영 턴을 열었습니다 — PR #${action.pr}, 이유 ${action.reasons.length}건`,
+          );
+        } else {
+          this.log(
+            `반려 이유 반영 턴을 열지 못했습니다 — PR #${action.pr}, 다음 틱이 다시 보냅니다`,
+          );
+        }
+        return false;
+      }
       case "reinstall": {
         // 설치는 몇 분이 걸린다 — 차선 안에서 돌리지 않고 밖에서 띄운다
         // (PLAN L1). 그 틱은 멈추고, 설치가 끝난 뒤의 다음 틱이 이어간다.
@@ -933,7 +952,7 @@ export class CycleSupervisor {
       core.lane.outside(() => this.deps.cycleEvent?.(event));
     }
     // 반려의 착지 — 닫힘 이유를 반영 턴으로 넘긴다(PLAN L4 · L9). 병합에는
-    // 이유가 없다.
+    // 이유가 없다. 턴은 원장에 적힌 뒤 14b행이 보낸다 — 착지는 다시 오지 않는다.
     if (land.outcome === "closed") await this.briefRejection(land.pr);
   }
 
@@ -1020,11 +1039,13 @@ export class CycleSupervisor {
   }
 
   /**
-   * L9 반려 — 닫힌 PR 의 이유를 모아 새 사이클 브랜치의 반영 턴으로 보낸다.
+   * L9 반려 — 닫힌 PR 의 이유를 모아 새 사이클 브랜치의 반영 턴으로 넘긴다.
    * 이유는 닫힘 전후의 마지막 요청 코멘트와 마지막 리뷰 본문(봇 · 내 로그인
    * 제외, 닫힘 시각 이전 7일 안)이다. 이유가 없으면 턴을 열지 않고 닫힌 PR 에
    * 이유를 청구하는 코멘트 하나를 남긴다 — AI 가 짐작으로 고치지 않게. 둘 다
-   * 원장(notices 의 reject:<pr> · 예산 review:<pr>)에 적혀 한 번뿐이다.
+   * 원장 reviews[pr] 에 적힌다: 이유는 pendingRejection 으로(턴은 14b행이
+   * 예산 review:<pr> 안에서 보내고, 보낸 뒤에 지운다), 청구는 rejectionAsked 로
+   * 한 번뿐이다.
    */
   private async briefRejection(pr: number): Promise<void> {
     const client = this.deps.github();
@@ -1094,31 +1115,41 @@ export class CycleSupervisor {
       await this.askRejectionReason(pr, client, slug);
       return;
     }
-    const key = `review:${pr}`;
+    // 보내기 전에 적는다 — 착지는 다시 오지 않으므로, 대화를 못 열거나 그
+    // 사이에 끊겨도 이 기록이 반영 턴을 살린다(14b행이 보낸다).
+    this.updateReviewEntry(pr, (prev) => ({
+      ...prev,
+      pendingRejection: { reasons, since: new Date(this.now()).toISOString() },
+    }));
+    this.log(`반려 이유 ${reasons.length}건을 반영 대기로 적었습니다 — PR #${pr}`);
+  }
+
+  /**
+   * 14b행의 보내기 — 반려 이유 반영 턴. 세션을 여는 일이라 차선 밖에서 (PLAN
+   * L1). 대화를 못 열었거나(null) 열기 · 보내기가 던지면 false — 기록이 남아
+   * 다음 틱이 다시 보낸다.
+   */
+  private async sendRejectionTurn(reasons: DeveloperReview[]): Promise<boolean> {
     const brief = reviewToTurn(reasons, {
       intro:
         "개발자가 이번 요청을 닫았습니다. 아래 이유를 반영해 고쳐 주세요. 다음 제출은 사용자가 합니다.",
     });
-    const sent = await this.deps.core.lane.outside(async () => {
-      const thread = this.deps.openThread("반려 반영");
-      if (thread === null) return false;
+    return await this.deps.core.lane.outside(async () => {
       try {
+        const thread = this.deps.openThread("반려 반영");
+        if (thread === null) return false;
         thread.send(brief);
         return true;
       } catch {
         return false;
       }
     });
-    if (!sent) {
-      this.log(`반려 이유 반영 턴을 열지 못했습니다 — PR #${pr}`);
-      return;
-    }
-    // 예산 review:<pr>(L3 14행과 같은 키) — 보낸 뒤에 쓴다: 못 연 턴은 다음
-    // 기회를 남겨야 하지만, 랜딩은 다시 오지 않으므로 로그만 남긴다.
-    const round = spend(this.ledger.budgets, key, BUDGETS.reviewRounds, this.now());
-    this.ledger = { ...this.ledger, budgets: round.ledger };
-    writeLedger(this.ledgerPath, this.ledger);
-    this.log(`반려 이유 반영 턴을 열었습니다 — PR #${pr}, 이유 ${reasons.length}건`);
+  }
+
+  /** 반려 반영 턴이 실제로 나갔다 — 원장의 대기 기록을 지운다. */
+  private clearPendingRejection(pr: number): void {
+    if (this.ledger.reviews[String(pr)]?.pendingRejection === undefined) return;
+    this.updateReviewEntry(pr, ({ pendingRejection: _sent, ...rest }) => rest);
   }
 
   /** 반려 이유가 없을 때의 청구 — 닫힌 PR 에 코멘트 하나, 원장에 한 번만. */
@@ -1127,8 +1158,10 @@ export class CycleSupervisor {
     client: GitHubClient,
     slug: { owner: string; repo: string },
   ): Promise<void> {
-    const key = `reject:${pr}`;
-    if (this.ledger.notices[key]) return;
+    // 표식은 notices 가 아니라 reviews[pr] 에 둔다 — notices 는 서 있는 개발자
+    // 알림이라 주의의 재료다(PLAN L8). 거기 두면 반려 한 번 뒤로 화면이 영원히
+    // "개발자에게 알렸어요" 를 말한다.
+    if (this.ledger.reviews[String(pr)]?.rejectionAsked === true) return;
     try {
       await client.commentOnIssue({
         ...slug,
@@ -1138,13 +1171,17 @@ export class CycleSupervisor {
     } catch (error) {
       this.log(`반려 이유 청구 실패(다시 시도하지 않음): ${detailOf(error, this.deps.core.pat)}`);
     }
-    this.ledger = {
-      ...this.ledger,
-      notices: {
-        ...this.ledger.notices,
-        [key]: { via: "pr", ref: pr, raisedAt: new Date(this.now()).toISOString(), count: 1 },
-      },
-    };
+    this.updateReviewEntry(pr, (prev) => ({ ...prev, rejectionAsked: true }));
+  }
+
+  /** reviews[pr] 한 항목을 고쳐 쓴다 — 없으면 빈 장부에서 시작한다. */
+  private updateReviewEntry(
+    pr: number,
+    change: (prev: CycleLedger["reviews"][string]) => CycleLedger["reviews"][string],
+  ): void {
+    const key = String(pr);
+    const prev = this.ledger.reviews[key] ?? { known: [], briefed: [], rounds: 0 };
+    this.ledger = { ...this.ledger, reviews: { ...this.ledger.reviews, [key]: change(prev) } };
     writeLedger(this.ledgerPath, this.ledger);
   }
 

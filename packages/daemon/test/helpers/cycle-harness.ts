@@ -787,6 +787,8 @@ export interface SupervisedScene extends Scene {
   shots: HandoffShot[];
   /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
   ledgerPath: string;
+  /** 켜면 openThread 가 null 을 돌린다 — 대화를 열 수 없는 세계(반려 반영 재시도의 시험축). */
+  refuseThread: boolean;
 }
 
 /**
@@ -815,6 +817,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const scene = {
     retargetedTo: null as string | null,
     refuseReviewSend: false,
+    refuseThread: false,
     deleteMergedBranches: true,
     active: true,
     projectName: "하네스 프로젝트",
@@ -848,7 +851,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       githubAuthExpired: () => false,
       slug: () => core.repoSlug(),
       isActive: () => scene.active,
-      openThread: () => ({ send: (text) => briefs.push(text) }),
+      openThread: () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
       raiseNotice: (key, text) => notices.push({ key, text }),
       onPrTransition: (kind, at, count) => transitions.push({ kind, at, count }),
       onNewReviews: (pr, reviews) => {
@@ -886,6 +889,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     set refuseReviewSend(v: boolean) {
       scene.refuseReviewSend = v;
+    },
+    get refuseThread() {
+      return scene.refuseThread;
+    },
+    set refuseThread(v: boolean) {
+      scene.refuseThread = v;
     },
     get deleteMergedBranches() {
       return scene.deleteMergedBranches;

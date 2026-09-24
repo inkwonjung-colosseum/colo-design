@@ -17,6 +17,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { DeveloperReview } from "@colo-design/protocol";
 import { BUDGETS, type BudgetEntry, backoffDelay } from "./budgets.js";
 
 /** 원장 파일의 자리 — 프로젝트 폴더(<slug>) 아래의 cycle.json. */
@@ -49,6 +50,17 @@ export interface CyclePendingOp {
     newBranch: string;
     carried: number;
   };
+}
+
+/**
+ * 아직 보내지 못한 반려 이유 반영 턴 (PLAN L9 · 단계 7) — 랜딩이 모은 이유를
+ * 적어 두고, 턴을 실제로 보낸 뒤에야 지운다. 대화를 못 열어도 조정 표
+ * 14b행이 같은 이유로 다시 보낸다 — 랜딩은 다시 오지 않으므로 이 기록이
+ * 없으면 반영 턴이 로그 한 줄로 사라진다. since 는 처음 적힌 시각.
+ */
+export interface CyclePendingRejection {
+  reasons: DeveloperReview[];
+  since: string;
 }
 
 export interface CyclePushState {
@@ -94,13 +106,27 @@ export interface CycleLedger {
   /**
    * 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. replied 는 자동
    * 답장을 이미 올린 코멘트 — 같은 코멘트에 두 번 답하지 않는 잣체다(단계 7).
+   * 반려된 PR 의 두 표식도 여기 산다: rejectionAsked 는 이유를 청구하는
+   * 코멘트를 이미 남겼다는 한 번만의 표식이고(notices 에 두면 주의가 영원히
+   * developer-notified 를 말한다 — L8), pendingRejection 은 아직 보내지 못한
+   * 반영 턴이다.
    */
   reviews: Record<
     string,
-    { known: number[]; briefed: number[]; rounds: number; replied?: number[] }
+    {
+      known: number[];
+      briefed: number[];
+      rounds: number;
+      replied?: number[];
+      rejectionAsked?: boolean;
+      pendingRejection?: CyclePendingRejection;
+    }
   >;
   budgets: Record<string, BudgetEntry>;
-  /** 서 있는 개발자 알림(L11) — raise 의 중복 억제 잣체. 조정자가 올리고 지운다. */
+  /**
+   * 서 있는 개발자 알림(L11) — raise 의 중복 억제 잣체. 조정자가 올리고 지운다.
+   * 주의(developer-notified)의 재료이므로 실제 알림이 아닌 표식은 두지 않는다.
+   */
   notices: Record<
     string,
     {
@@ -274,11 +300,82 @@ function parseReviews(raw: unknown): CycleLedger["reviews"] {
     const briefed = record === null ? null : asIdList(record.briefed);
     const rounds = record === null ? null : asInt(record.rounds);
     if (known === null || briefed === null || rounds === null || rounds < 0) continue;
-    // replied 는 이후 판(단계 7)이 쓴 선택 필드 — 없어도 항목은 산다.
+    // replied · rejectionAsked · pendingRejection 은 이후 판(단계 7)이 쓴 선택
+    // 필드 — 없거나 깨져도 항목은 산다.
     const replied = asIdList(record?.replied);
-    reviews[key] = { known, briefed, rounds, ...(replied !== null ? { replied } : {}) };
+    const pendingRejection = parsePendingRejection(record?.pendingRejection);
+    reviews[key] = {
+      known,
+      briefed,
+      rounds,
+      ...(replied !== null ? { replied } : {}),
+      ...(record?.rejectionAsked === true ? { rejectionAsked: true } : {}),
+      ...(pendingRejection !== null ? { pendingRejection } : {}),
+    };
   }
   return reviews;
+}
+
+/** 보내지 못한 반려 반영 턴 — 이유가 하나도 살아남지 못하면 없는 것으로 친다. */
+function parsePendingRejection(raw: unknown): CyclePendingRejection | null {
+  const record = asRecord(raw);
+  if (record === null || !Array.isArray(record.reasons)) return null;
+  const since = asString(record.since);
+  if (since === null) return null;
+  const reasons = record.reasons
+    .map(parseReason)
+    .filter((reason): reason is DeveloperReview => reason !== null);
+  return reasons.length > 0 ? { reasons, since } : null;
+}
+
+/** 반려 이유 한 건 — DeveloperReview 의 모양 그대로(reviewToTurn 이 다시 읽는다). */
+function parseReason(raw: unknown): DeveloperReview | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const id = asInt(record.id);
+  const kind = asString(record.kind);
+  const author = asString(record.author);
+  const body = asString(record.body);
+  const pr = asInt(record.pr);
+  const at = asString(record.at);
+  if (id === null || pr === null || author === null || body === null || at === null) return null;
+  if (kind !== "inline" && kind !== "review") return null;
+  const path = asString(record.path);
+  const line = asInt(record.line);
+  return {
+    id,
+    kind,
+    author,
+    body,
+    pr,
+    ...(path !== null ? { path } : {}),
+    ...(line !== null ? { line } : {}),
+    at,
+  };
+}
+
+/**
+ * 옛 판(3263c45a)의 반려 이유 청구 표식 — notices 의 `reject:<pr>` 를 걷어
+ * reviews[pr].rejectionAsked 로 옮긴다. notices 는 서 있는 개발자 알림이라
+ * 주의의 재료다: 한 번만의 표식이 거기 남으면 반려 한 번 뒤로 화면이 영원히
+ * "개발자에게 알렸어요" 를 말한다(PLAN L8). 읽을 때마다 돌아도 같다(I5).
+ */
+function liftRejectMarkers(
+  notices: CycleLedger["notices"],
+  reviews: CycleLedger["reviews"],
+): Pick<CycleLedger, "notices" | "reviews"> {
+  const keys = Object.keys(notices).filter((key) => key.startsWith("reject:"));
+  if (keys.length === 0) return { notices, reviews };
+  const nextNotices = { ...notices };
+  const nextReviews = { ...reviews };
+  for (const key of keys) {
+    delete nextNotices[key];
+    const pr = Number(key.slice("reject:".length));
+    if (!Number.isInteger(pr) || pr <= 0) continue;
+    const prev = nextReviews[String(pr)] ?? { known: [], briefed: [], rounds: 0 };
+    nextReviews[String(pr)] = { ...prev, rejectionAsked: true };
+  }
+  return { notices: nextNotices, reviews: nextReviews };
 }
 
 function parseBudgets(raw: unknown): Record<string, BudgetEntry> {
@@ -351,6 +448,10 @@ function parseHygiene(raw: unknown): CycleLedger["hygiene"] {
 export function parseLedger(raw: unknown): CycleLedger {
   const record = asRecord(raw);
   if (record === null) return emptyLedger();
+  const { notices, reviews } = liftRejectMarkers(
+    parseNotices(record.notices),
+    parseReviews(record.reviews),
+  );
   return {
     v: 1,
     ended: parseEnded(record.ended),
@@ -358,9 +459,9 @@ export function parseLedger(raw: unknown): CycleLedger {
     submit: parseSubmit(record.submit),
     push: parsePush(record.push),
     pendingOp: parsePendingOp(record.pendingOp),
-    reviews: parseReviews(record.reviews),
+    reviews,
     budgets: parseBudgets(record.budgets),
-    notices: parseNotices(record.notices),
+    notices,
     branches: parseBranches(record.branches),
     hygiene: parseHygiene(record.hygiene),
   };
@@ -458,7 +559,10 @@ export function foldReviewLedger(ledger: CycleLedger, raw: unknown): CycleLedger
     if (!Number.isInteger(pr) || pr <= 0 || briefed === null) continue;
     const prev = reviews[key];
     const mergedBriefed = [...new Set([...(prev?.briefed ?? []), ...briefed])];
+    // 옛 파일은 지워지지 않아 시작마다 다시 접힌다 — 항목의 다른 필드(replied ·
+    // 반려 표식)를 지우면 재시작이 보내지 못한 반려 반영 턴을 잃는다.
     reviews[key] = {
+      ...prev,
       known: [...new Set([...(prev?.known ?? []), ...mergedBriefed])],
       briefed: mergedBriefed,
       rounds: prev?.rounds ?? 0,

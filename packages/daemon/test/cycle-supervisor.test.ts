@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { composeAttention } from "@colo-design/protocol";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
 import { readLedger } from "../dist/cycle-ledger.js";
@@ -949,12 +950,125 @@ test("L9 반려 — 이유가 없으면 턴 없이 닫힌 PR 에 이유를 청�
     const asked = scene.github.commentsFor(pr);
     assert.equal(asked.length, 1, "닫힌 PR 에 청구 코멘트 하나가 선다");
     assert.ok(asked[0]?.body.includes("반려 이유를 남겨 주시면"));
-    assert.ok(ledgerOf(scene).notices[`reject:${pr}`], "원장에 한 번만의 표식이 적힌다");
+    const ledger = ledgerOf(scene);
+    assert.equal(
+      ledger.reviews[String(pr)]?.rejectionAsked,
+      true,
+      "원장 reviews[pr] 에 한 번만의 표식이 적힌다",
+    );
+    // 청구 표식은 개발자 알림이 아니다 — notices 에 없고, 화면은 "개발자에게
+    // 알렸어요" 를 말하지 않는다 (PLAN L8).
+    assert.ok(!Object.keys(ledger.notices).some((key) => key.startsWith("reject:")));
+    const parts = scene.supervisor.attentionParts();
+    assert.ok(!Object.keys(parts.notices ?? {}).some((key) => key.startsWith("reject:")));
+    assert.notEqual(composeAttention(parts)?.kind, "developer-notified");
 
     // 두 번째 틱 — 랜딩도 청구도 다시 일어나지 않는다.
     await scene.supervisor.tick("manual");
     assert.equal(scene.github.commentsFor(pr).length, 1, "청구 코멘트는 하나뿐이다");
     assert.equal(scene.briefs.length, 0);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+/** 반려 장면 — 사이클 브랜치의 커밋 하나를 넘기고, 개발자가 이유를 남기고 닫는다. */
+async function rejectWithReason(scene: SupervisedScene, reason: string): Promise<number> {
+  await scene.git(["checkout", "-b", BRANCH]);
+  await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+  await scene.git(["push", "-u", "origin", BRANCH]);
+  const pr = await openCycle(scene, BRANCH);
+  scene.github.addComment(pr, { kind: "issue", body: reason });
+  scene.github.close(pr);
+  return pr;
+}
+
+test("L9 반려 — 대화를 못 열면 이유가 원장에 남고, 다음 틱이 반영 턴을 보낸다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = await rejectWithReason(scene, "이 흐름은 목록으로 되돌려 주세요.");
+
+    scene.refuseThread = true;
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.briefs.length, 0, "대화를 못 열면 턴이 나가지 않는다");
+    const waiting = ledgerOf(scene).reviews[String(pr)]?.pendingRejection;
+    assert.ok(waiting, "보내지 못한 반영 턴이 원장에 남는다");
+    assert.ok(waiting.reasons.some((reason) => reason.body.includes("목록으로 되돌려")));
+
+    // 기록은 디스크에 있다 — 재시작한 감독자의 다음 틱이 이어받는다(I5).
+    const next = scene.respawn();
+    scene.refuseThread = false;
+    await next.tick("timer");
+    assert.equal(scene.briefs.length, 1, "다음 틱이 반영 턴을 보낸다");
+    assert.ok(scene.briefs[0]?.includes("개발자가 이번 요청을 닫았습니다"));
+    assert.ok(scene.briefs[0]?.includes("목록으로 되돌려"), "원장에 적힌 이유가 실린다");
+    const ledger = ledgerOf(scene);
+    assert.equal(
+      ledger.reviews[String(pr)]?.pendingRejection,
+      undefined,
+      "보낸 뒤에 기록을 지운다",
+    );
+    assert.equal(ledger.budgets[`review:${pr}`]?.spent, 2, "못 연 대화도 한 라운드다");
+
+    await next.tick("timer");
+    assert.equal(scene.briefs.length, 1, "보낸 반영 턴은 다시 나가지 않는다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 반려 — 대화를 끝내 못 열면 예산 review:<pr> 가 다한 뒤 개발자 알림 한 번", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = await rejectWithReason(scene, "이 흐름은 목록으로 되돌려 주세요.");
+
+    scene.refuseThread = true;
+    for (let i = 0; i < 8; i += 1) await scene.supervisor.tick("timer");
+
+    assert.equal(scene.briefs.length, 0);
+    const raised = scene.notices.filter((notice) => notice.key === `review:${pr}:rejection`);
+    assert.equal(raised.length, 1, "예산이 다하면 알림은 한 번");
+    assert.ok(raised[0]?.text.includes("반려 이유"));
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.budgets[`review:${pr}`]?.spent, 5, "시도는 PR 당 라운드 상한까지");
+    assert.equal(
+      ledger.reviews[String(pr)]?.pendingRejection,
+      undefined,
+      "손을 놓은 뒤에는 기록을 지운다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("옛 원장의 reject:<pr> 표식 — 읽을 때 reviews 로 옮겨지고 주의를 세우지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 3263c45a 판이 적던 모양 — 청구 표식이 notices 에 서 있다.
+    writeFileSync(
+      scene.ledgerPath,
+      JSON.stringify({
+        v: 1,
+        notices: {
+          "reject:4": { via: "pr", ref: 4, raisedAt: "2026-09-24T10:00:00.000Z", count: 1 },
+        },
+        reviews: { "4": { known: [11], briefed: [11], rounds: 1 } },
+      }),
+    );
+    const next = scene.respawn();
+    const parts = next.attentionParts();
+    assert.deepEqual(parts.notices, {});
+    assert.equal(composeAttention(parts), null, "옛 표식이 개발자에게 알렸어요 를 세우지 않는다");
+
+    await next.tick("manual");
+    const ledger = ledgerOf(scene);
+    assert.deepEqual(ledger.notices, {});
+    assert.deepEqual(ledger.reviews["4"], {
+      known: [11],
+      briefed: [11],
+      rounds: 1,
+      rejectionAsked: true,
+    });
   } finally {
     await scene.dispose();
   }

@@ -394,6 +394,90 @@ test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
   );
 });
 
+/** 14b행의 재료 — 랜딩이 적어 둔, 아직 보내지 못한 반려 이유 반영 턴. */
+const pendingRejection = { reasons: [{ ...rev(31), pr: 7 }], since: iso(NOW) };
+
+test("14b행 — 보내지 못한 반려 반영 턴을 보내고 예산 review:<pr> 를 쓴다, 턴 중에는 기다린다", () => {
+  const ledger = led({ reviews: { "7": { known: [], briefed: [], rounds: 0, pendingRejection } } });
+  const out = nextCycleAction(snap(), ledger);
+  assert.deepEqual(out.action, {
+    kind: "briefRejection",
+    pr: 7,
+    reasons: pendingRejection.reasons,
+  });
+  assert.equal(out.attention, "ai-fixing");
+  assert.equal(out.ledger.budgets["review:7"]?.spent, 1);
+  // 기록은 판정이 지우지 않는다 — 실제로 보낸 뒤 감독자가 지운다.
+  assert.deepEqual(out.ledger.reviews["7"]?.pendingRejection, pendingRejection);
+  // 도는 대화 사이에 반려 턴을 끼우지 않는다 — 기다리는 판정은 예산도 쓰지 않는다.
+  const busy = nextCycleAction(snap({ turnRunning: true }), ledger);
+  assert.equal(kindOf(busy), "none");
+  assert.equal(busy.ledger.budgets["review:7"], undefined);
+});
+
+test("14b행 — 예산 review:<pr> 가 다하면 알림 한 번을 올리고 기록을 지운다", () => {
+  let ledger = led({ reviews: { "7": { known: [], briefed: [], rounds: 0, pendingRejection } } });
+  for (let i = 0; i < 5; i += 1) {
+    const out = nextCycleAction(snap(), ledger);
+    assert.equal(kindOf(out), "briefRejection");
+    ledger = out.ledger; // 대화를 못 열어 기록이 남은 세계
+  }
+  const sixth = nextCycleAction(snap(), ledger);
+  assert.equal(kindOf(sixth), "none");
+  assert.deepEqual(sixth.notices, [
+    {
+      op: "raise",
+      key: "review:7:rejection",
+      reason: "반려 이유 반영 턴을 PR 당 라운드 상한 안에 보내지 못했습니다",
+    },
+  ]);
+  assert.equal(sixth.attention, "developer-notified");
+  assert.deepEqual(sixth.ledger.reviews["7"], { known: [], briefed: [], rounds: 0 });
+  assert.deepEqual(
+    nextCycleAction(snap(), sixth.ledger).notices,
+    [],
+    "기록이 없으니 다시 올리지 않는다",
+  );
+
+  // 14행이 라운드 초과 알림으로 escalated 를 이미 세운 PR 이어도 반려 알림은 따로 선다.
+  const rounded = nextCycleAction(
+    snap(),
+    led({
+      reviews: { "7": { known: [5], briefed: [5], rounds: 5, pendingRejection } },
+      budgets: { "review:7": { spent: 5, firstAt: iso(NOW), lastAt: iso(NOW), escalated: true } },
+    }),
+  );
+  assert.deepEqual(
+    rounded.notices.map((notice) => notice.key),
+    ["review:7:rejection"],
+  );
+});
+
+test("review:<pr>:rejection — 다음 요청이 서면 알림을 거둔다", () => {
+  const notice = { via: "issue" as const, ref: 30, raisedAt: iso(NOW), count: 1 };
+  const notices = { "review:7:rejection": notice };
+  const resolves = (out: ReturnType<typeof nextCycleAction>) =>
+    out.notices.filter((n) => n.op === "resolve").map((n) => n.key);
+  // 반려 직후 — 요청이 없다. 닫힌 PR 이 곧바로 알림을 거두지 않는다.
+  assert.deepEqual(resolves(nextCycleAction(snap(), led({ notices }))), []);
+  // 다음 요청이 열렸다 — 반려된 작업이 개발자에게 다시 갔다.
+  const next = { number: 9, state: "open" as const, headSha: "abc", mergeableState: null };
+  assert.deepEqual(
+    resolves(nextCycleAction(snap({ pr: next, handoffState: "open" }), led({ notices }))),
+    ["review:7:rejection"],
+  );
+  // 인증이 만료돼 요청을 못 읽는 세계에서는 거두지 않는다.
+  assert.deepEqual(
+    resolves(
+      nextCycleAction(
+        snap({ pr: next, handoffState: "open", githubAuthExpired: true }),
+        led({ notices }),
+      ),
+    ),
+    [],
+  );
+});
+
 test("15행 · 16행 — 재설치와 위생", () => {
   assert.deepEqual(nextCycleAction(snap({ installStale: true }), led()).action, {
     kind: "reinstall",

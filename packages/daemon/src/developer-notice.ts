@@ -78,7 +78,11 @@ const DETAIL_MAX_CHARS = 4000;
 
 /** 문제 키의 문장 — 표에 없는 키는 접두어로 읽고, 그래도 모르면 키가 곧 제목이다. */
 export function describeProblem(key: string, detail?: string): Omit<Problem, "key" | "slug"> {
-  const known = PROBLEM_TEXT[key];
+  // 반려 반영 턴의 예산 소진(review:<pr>:rejection)은 review:* 의 라운드 상한
+  // 문장이 아니다 — AI 가 반영을 시작도 못 했을 수 있다.
+  const known =
+    PROBLEM_TEXT[key] ??
+    (/^review:\d+:rejection$/.test(key) ? PROBLEM_TEXT["review:*:rejection"] : undefined);
   const base: Omit<Problem, "key" | "slug" | "detail"> =
     known ??
     (key.startsWith("review:")
@@ -149,6 +153,12 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     what: "개발자 코멘트를 AI 가 여러 번 반영했지만 끝나지 않았습니다",
     tried: "PR 당 정해진 라운드까지 반영했습니다",
     ask: "PR 의 코멘트를 직접 확인해 주세요",
+  },
+  "review:*:rejection": {
+    title: "반려 이유를 AI 에게 넘기지 못했습니다",
+    what: "닫힌 요청의 이유를 AI 의 반영 턴으로 보내지 못했습니다",
+    tried: "이 요청의 반영 라운드 상한까지 대화를 열어 보았습니다",
+    ask: "닫은 이유를 사용자에게 직접 전해 주세요 — 다음 제출은 새 요청으로 옵니다",
   },
   "turn:failed": {
     title: "대화가 같은 오류로 다섯 번 넘어졌습니다",

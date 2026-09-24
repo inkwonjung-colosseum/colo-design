@@ -74,6 +74,12 @@ test("describeProblem — 표의 키는 한국어 네 줄, 모르는 키는 키�
   assert.ok(bringUp.what.includes("install"));
 });
 
+test("describeProblem — 반려 반영 턴의 예산 소진은 라운드 상한 문장이 아니다", () => {
+  const rejection = describeProblem("review:7:rejection");
+  assert.equal(rejection.title, "반려 이유를 AI 에게 넘기지 못했습니다");
+  assert.equal(describeProblem("review:7:rounds").title, "코멘트 반영이 라운드 상한에 닿았습니다");
+});
+
 test("noticeBody — 네 줄 구조와 details, 생니타이저와 자르기", () => {
   const body = noticeBody(
     { ...PROBLEM, detail: "토큰 ghp_secret1234567890 이 거절됐습니다" },
