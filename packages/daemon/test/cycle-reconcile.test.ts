@@ -40,6 +40,7 @@ function snap(over: Partial<CycleSnapshot> = {}): CycleSnapshot {
     hygieneDue: false,
     githubReachable: true,
     githubAuthExpired: false,
+    corruption: null,
     ...over,
   };
 }
@@ -724,4 +725,85 @@ test("review:<pr>:rounds — 그 PR 이 더 이상 열려 있지 않으면 알�
     blind.notices.some((n) => n.op === "resolve"),
     false,
   );
+});
+
+// ————— 손상 행 (PLAN 단계 9) —————
+
+test("손상 행 — 무결성 행보다 앞서 재클론을 고르고, 절차와 손상을 원장에 적는다", () => {
+  // 남의 rebase(1행) · 더러운 트리(5행) · 밀린 푸시(12행)가 함께 있어도 손상이 먼저다.
+  const out = nextCycleAction(
+    snap({
+      corruption: "fatal: index file corrupt",
+      gitOp: "rebase",
+      dirtyFiles: 3,
+      localAheadOfRemote: 2,
+    }),
+    led(),
+  );
+  assert.equal(kindOf(out), "reclone");
+  assert.deepEqual(out.ledger.corrupt, { since: iso(NOW), detail: "fatal: index file corrupt" });
+  assert.deepEqual(out.ledger.reclone, { at: iso(NOW), salvage: null, movedTo: null });
+  assert.equal(out.ledger.budgets.reclone?.spent, 1);
+});
+
+test("손상 행 — 원장의 corrupt(fsck 가 본 것)만으로도 재클론한다", () => {
+  const corrupt = { since: iso(NOW - 60_000), detail: "missing blob 7898" };
+  const out = nextCycleAction(snap(), led({ corrupt }));
+  assert.equal(kindOf(out), "reclone");
+  assert.deepEqual(out.ledger.corrupt, corrupt, "처음 선 시각과 말을 지킨다");
+});
+
+test("손상 행 — 턴이 돌면 예 행(푸시)도 보지 않고 기다린다", () => {
+  const out = nextCycleAction(
+    snap({ corruption: "fatal: bad object HEAD", turnRunning: true, localAheadOfRemote: 2 }),
+    led(),
+  );
+  assert.equal(kindOf(out), "none");
+  assert.equal(out.ledger.reclone, null, "턴이 끝나기 전에는 절차를 시작하지 않는다");
+});
+
+test("손상 행 — 진행 중인 절차는 예산 없이 이어 간다(옮기기 전 → reclone, 옮긴 뒤 → restoreSalvage)", () => {
+  const salvage = {
+    dir: "/p/salvage/x",
+    branch: BRANCH,
+    bundleRef: `refs/heads/${BRANCH}`,
+    patch: true,
+  };
+  const budgets = {
+    reclone: { spent: 1, firstAt: iso(NOW), lastAt: iso(NOW), escalated: false },
+  };
+  const before = nextCycleAction(
+    snap({ corruption: "fatal: index file corrupt" }),
+    led({ budgets, reclone: { at: iso(NOW), salvage, movedTo: null } }),
+  );
+  assert.equal(kindOf(before), "reclone");
+  assert.equal(before.ledger.budgets.reclone?.spent, 1, "예산을 두 번 쓰지 않는다");
+  const after = nextCycleAction(
+    snap(),
+    led({ budgets, reclone: { at: iso(NOW), salvage, movedTo: "/p/repo.corrupt-x" } }),
+  );
+  assert.equal(kindOf(after), "restoreSalvage");
+});
+
+test("손상 행 — 하루 한 번을 다 쓰면 clone:corrupt 알림 한 번, 그 뒤로는 조용히", () => {
+  const corrupt = { since: iso(NOW), detail: "fatal: index file corrupt" };
+  const spent = {
+    reclone: {
+      spent: 1,
+      firstAt: iso(NOW - 3_600_000),
+      lastAt: iso(NOW - 3_600_000),
+      escalated: false,
+    },
+  };
+  const first = nextCycleAction(snap(), led({ corrupt, budgets: spent }));
+  assert.equal(kindOf(first), "none");
+  assert.deepEqual(first.notices, [
+    { op: "raise", key: "clone:corrupt", reason: "fatal: index file corrupt" },
+  ]);
+  assert.equal(first.attention, "developer-notified");
+  const second = nextCycleAction(snap(), first.ledger);
+  assert.deepEqual(second.notices, []);
+  // 하루가 지나면 새 사건 — 다시 재클론한다.
+  const nextDay = nextCycleAction(snap({ now: NOW + 25 * 3_600_000 }), first.ledger);
+  assert.equal(kindOf(nextDay), "reclone");
 });

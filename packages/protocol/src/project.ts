@@ -406,4 +406,7 @@ export interface GitHubRepoInspection {
   hasDevScript: boolean;
   canPush: boolean;
   defaultBranch: string;
+  /** `owner/repo` — 저장소가 옮겨졌는지 감독자가 알아보는 표식 (PLAN 단계 9).
+   * null 이면 GitHub 이 말하지 않은 것이다. */
+  fullName?: string | null;
 }

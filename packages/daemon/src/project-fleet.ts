@@ -26,6 +26,7 @@ import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { captureTargets, readComments } from "./comments.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
+import { DEFAULT_KEEP_REJECTED_DAYS } from "./cycle-hygiene.js";
 import { cycleLedgerFile } from "./cycle-ledger.js";
 import { CycleSupervisor } from "./cycle-supervisor.js";
 import { type DeveloperNotice, describeProblem } from "./developer-notice.js";
@@ -264,6 +265,10 @@ export class ProjectFleet {
           ...describeProblem(key, reason ?? text),
         }),
       resolveNotice: (key) => void this.deps.developerNotice.resolve(key, slug),
+      // 기계 전체의 문제(disk:low, O8) — slug null 이라 Slack · 로그로만 간다.
+      raiseMachineNotice: (key, detail) =>
+        void this.deps.developerNotice.raise({ key, slug: null, ...describeProblem(key, detail) }),
+      resolveMachineNotice: (key) => void this.deps.developerNotice.resolve(key, null),
       onChange: () => workspaces.repo.repoCore().emit(),
       // PLAN L2 흡수표 — 폴러가 하던 사람에게 보이는 일은 감독자가 이
       // 콜백으로 옮겨 부른다. PR 상태 변화는 사이드바의 마지막 사건과
@@ -293,6 +298,9 @@ export class ProjectFleet {
         this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,
       autoReply: () => this.deps.registry.get(slug)?.lifecycle?.autoReply ?? true,
       authorName: () => this.deps.authorName(),
+      // 수명 설정 — 반려 브랜치를 남기는 날(O3). 위생의 정리가 읽는다.
+      keepRejectedDays: () =>
+        this.deps.registry.get(slug)?.lifecycle?.keepRejectedDays ?? DEFAULT_KEEP_REJECTED_DAYS,
       // L6 제출 — PR 본문의 재료와 이름.
       projectName: () => this.deps.registry.get(slug)?.name ?? slug,
       commentsFile: () => join(paths.root, "comments.json"),

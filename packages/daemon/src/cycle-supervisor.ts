@@ -8,11 +8,14 @@
  *   부른다 — 차선 문맥이 세션에 번지면 그 세션의 저장이 줄을 비켜간다 (L1).
  * - 도구가 시작한 git 조작의 충돌은 RepoCore.onToolConflict 로 들어와 원장의
  *   pendingOp 에 곧바로 적히고 틱("tool-conflict")이 뒤를 잇는다 (단계 3).
- * - 아직 실행하지 않는 조치(hygiene)는 로그 한 줄만 남기고 그 틱을 멈춘다 —
- *   다음 위임이 옮긴다.
+ * - 위생(16행)은 기한이 지난 항목만 한 번씩 돈다 — 판정과 도우미는
+ *   cycle-hygiene 에 있다 (단계 9).
+ * - 클론 손상(손상 행)은 구해 두기 → 옮기기 → 새로 받기 → 되살리기를 원장의
+ *   reclone 으로 잇는다 — 몸통은 clone-salvage 에 있다 (단계 9).
  */
-import { existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync, renameSync } from "node:fs";
+import { statfs } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   type AttentionParts,
   type ChatEvent,
@@ -23,6 +26,27 @@ import {
   reviewToTurn,
 } from "@colo-design/protocol";
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
+import {
+  commitCorruptionSignal,
+  restoreSalvage,
+  salvageClone,
+  salvageStamp,
+} from "./clone-salvage.js";
+import {
+  DEFAULT_KEEP_REJECTED_DAYS,
+  DISK_LOW_BYTES,
+  type DiskStats,
+  dueHygiene,
+  endedBranchesDue,
+  freeBytesOf,
+  fsckClone,
+  gigabytes,
+  type HygieneItem,
+  type HygieneStamp,
+  measureAssets,
+  movedRepoUrl,
+  pruneTempFolders,
+} from "./cycle-hygiene.js";
 import {
   type CycleLedger,
   type CyclePendingOp,
@@ -42,6 +66,7 @@ import {
   nextCycleAction,
 } from "./cycle-reconcile.js";
 import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
+import { COLO_DESIGN_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
 import { mergeToolBlock, pickHandoffTitle } from "./handoff-body.js";
 import { type DaemonLogger, sanitizeText } from "./log.js";
@@ -64,6 +89,7 @@ export type TickReason =
   | "activate"
   | "session-start"
   | "tool-conflict"
+  | "reclone"
   | "manual";
 
 /** 한 틱이 판정-조치 고리를 도는 상한 — 조치가 계속 이어지는 세계에서도 멈춘다. */
@@ -84,6 +110,8 @@ const NOTICE_TEXT: Record<string, string> = {
   "submit:pr": "제출이 요청 열기 단계에서 멈춰 있습니다",
   "base-missing":
     "베이스 브랜치가 원격에 없고 GitHub 의 기본 가지도 알 수 없습니다 — 개발자 확인이 필요합니다",
+  "clone:corrupt": "작업 폴더(클론)가 손상돼 다시 받아야 하는데 도구가 스스로 끝내지 못했습니다",
+  "clone:restore": "작업 폴더를 다시 받았지만 구해 둔 작업을 다시 얹지 못했습니다",
 };
 /** 알림 키의 문장 — 표에 없는 review:<pr>:rounds · review:<pr>:rejection 은 이 두 줄로 읽힌다. */
 function noticeText(key: string): string {
@@ -102,7 +130,7 @@ export interface SupervisorDeps {
   ledgerPath: string;
   /** SessionManager.busyIn(root) — 턴이 도는 동안은 기다리는 판정이 앞선다. */
   busy: () => boolean;
-  /** RepoWorkspace 의 bringup.dependenciesMoved — 설치가 낡았는지. */
+  /** 설치가 낡았는지 — fleet 은 `!RepoWorkspace.installUpToDate()`(installStale)를 넣는다. */
   installStale: () => boolean;
   /** RepoCore 의 GitHub 손잡이들 — observeCycle 에 그대로 건넨다. */
   github: () => GitHubClient | null;
@@ -154,6 +182,18 @@ export interface SupervisorDeps {
   /** 넘긴 요청에 적을 작성자 이름 — 자동 답장의 대리 표기가 읽는다(P1-3). */
   authorName?: () => string | null;
   deleteMergedBranches?: () => boolean;
+  /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14, O3). 위생이 읽는다. */
+  keepRejectedDays?: () => number;
+  /**
+   * 기계 전체의 개발자 알림 — 한 프로젝트의 것이 아닌 문제(disk:low). fleet 이
+   * DeveloperNotice 에 slug null 로 올린다(Slack · 로그). 화면 주의는 서지 않는다.
+   */
+  raiseMachineNotice?: (key: string, detail: string) => void;
+  resolveMachineNotice?: (key: string) => void;
+  /** 디스크 여유를 읽는 손 — 기본은 fs.statfs. 시험이 주입한다. */
+  statfs?: (path: string) => Promise<DiskStats>;
+  /** 여유를 볼 자리 — 기본은 `~/.colo-design`(그 폴더가 든 볼륨). */
+  dataDir?: string;
   logger: DaemonLogger;
   now?: () => number;
 }
@@ -309,6 +349,10 @@ export class CycleSupervisor {
           this.reviewLedgerFolded = false;
         }
       }
+      // 클론이 없다 — 준비(bootstrap)가 받는 중이거나(재클론의 틈) 아직 받은 적이
+      // 없다. 읽을 git 이 없으니 판정할 것도 없다: 없는 폴더를 관찰한 중립값으로
+      // 조치(브랜치 만들기 따위)를 고르지 않게 한다.
+      if (!this.deps.core.isCloned()) return;
 
       const fetch = this.shouldFetch(reason);
       const snapshot = await observeCycle(this.deps.core, this.ledger, this.observeDeps(), {
@@ -525,11 +569,26 @@ export class CycleSupervisor {
         // 저장 사이에 변경이 사라졌으면 saveBlocked 카드를 띄우지 않게 한 번
         // 더 읽는다.
         if ((await core.diff()).length === 0) return true;
-        await this.deps.workspace.save({
+        const saved = await this.deps.workspace.save({
           message: "작업 이어 보관",
           backgroundPush: true,
         });
-        return true;
+        if (saved.stage === "published") return true;
+        // 보관이 막혔다 — 없는 객체로 트리를 짓지 못했다면 클론의 손상이다: 원장에
+        // 적고 같은 틱의 다음 판정(손상 행)이 재클론한다(PLAN 단계 9). 그 밖의
+        // 실패는 틱을 멈춘다 — 이 행이 판정의 앞자리라 다시 판정하면 같은 보관만
+        // 다섯 번 되풀이한다.
+        if (saved.detail && commitCorruptionSignal(saved.detail)) {
+          if (this.ledger.corrupt === null) {
+            this.ledger = {
+              ...this.ledger,
+              corrupt: { since: new Date(this.now()).toISOString(), detail: saved.detail },
+            };
+            writeLedger(this.ledgerPath, this.ledger);
+          }
+          return true;
+        }
+        return false;
       }
       case "adoptStrayCommits": {
         await this.deps.workspace.ensureCycleBranch();
@@ -662,10 +721,17 @@ export class CycleSupervisor {
         core.lane.outside(() => void workspace.sync());
         return false;
       }
-      default: {
-        // submitStep · hygiene — 이번 위임이 실행하지 않는 조치는 로그만
-        // 남기고 멈춘다(다음 위임이 옮긴다).
-        this.log(`아직 실행하지 않는 조치: ${action.kind}`);
+      case "hygiene": {
+        return await this.hygiene();
+      }
+      case "reclone": {
+        return await this.reclone();
+      }
+      case "restoreSalvage": {
+        return await this.restoreFromSalvage();
+      }
+      case "none": {
+        // 틱의 몸통이 이미 거른다 — 조치 없음은 고리를 멈춘다.
         return false;
       }
     }
@@ -1536,6 +1602,307 @@ export class CycleSupervisor {
   private clearSubmitIntent(): void {
     if (this.ledger.submit === null) return;
     this.ledger = { ...this.ledger, submit: null };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  // ————— 손상 행 — 재클론 (PLAN 단계 9) —————
+
+  /**
+   * 재클론의 앞 걸음 — 구해 두기 → 미리보기 멈춤 → 옛 클론 옮기기 → 새로 받기.
+   * 걸음마다 원장 reclone 에 적어, 어디서 끊겨도 다음 틱이 남은 걸음부터 잇는다.
+   * 구해 두기나 옮기기가 실패하면 옛 클론을 그대로 두고 개발자에게 알린 뒤
+   * 멈춘다(절차를 지우고 예산을 다 쓴 것으로 적어 틱마다 되풀이하지 않는다).
+   * 새로 받기는 설치 · 미리보기가 따라오므로 차선 밖에서 띄우고 그 틱을 멈춘다
+   * — 받기가 끝나면 다음 틱(reclone)이 되살린다.
+   */
+  private async reclone(): Promise<boolean> {
+    const core = this.deps.core;
+    const record = this.ledger.reclone;
+    if (record === null) return true;
+    // 준비가 도는 중(설치 · 미리보기 기동)에는 폴더를 옮기지 않는다 — 다음 틱.
+    if (core.inFlight !== null) return false;
+    const stamp = salvageStamp(Date.parse(record.at) || this.now());
+    const parent = dirname(core.root);
+    let salvage = record.salvage;
+    if (salvage === null) {
+      try {
+        salvage = await salvageClone(core, join(parent, "salvage", stamp), core.branch);
+      } catch (error) {
+        this.stopReclone(`구해 두기에 실패해 다시 받지 않았습니다 — ${detailOf(error, core.pat)}`);
+        return false;
+      }
+      this.setReclone({ ...record, salvage });
+      this.log(`재클론: 작업을 ${salvage.dir} 에 구해 뒀습니다`);
+    }
+    if (record.movedTo === null) {
+      const target = join(parent, `${basename(core.root)}.corrupt-${stamp}`);
+      // 옮긴 뒤 원장에 적기 전에 끊긴 실행 — 옮긴 자리가 있고 클론이 없으면 옮긴 것이다.
+      if (!(existsSync(target) && !existsSync(core.root))) {
+        await this.deps.workspace.stop();
+        try {
+          renameSync(core.root, target);
+        } catch (error) {
+          this.stopReclone(
+            `손상된 클론을 옮기지 못했습니다 — ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return false;
+        }
+      }
+      this.setReclone({ ...record, salvage, movedTo: target });
+      this.log(`재클론: 손상된 클론을 ${target} 로 옮겼습니다 (지우지 않는다)`);
+    }
+    const workspace = this.deps.workspace;
+    core.lane.outside(() => {
+      void workspace.sync().finally(() => void this.tick("reclone"));
+    });
+    return false;
+  }
+
+  /**
+   * 재클론의 뒷걸음 — 새 클론에 구해 둔 것을 되살린다. 성공이든 아니든 새 클론은
+   * 멀쩡하므로 절차와 손상 기록을 지우고 clone:corrupt 를 거둔다. 다시 얹지
+   * 못한 것은 clone:restore 로 개발자에게 — 구해 둔 폴더의 자리를 자세히에 싣는다.
+   */
+  private async restoreFromSalvage(): Promise<boolean> {
+    const core = this.deps.core;
+    const record = this.ledger.reclone;
+    if (record === null) return true;
+    // 준비가 아직 설치 · 기동 중이다 — 끝나면 reclone 틱이 다시 부른다. 설치 중의
+    // checkout 은 설치 표식을 어긋나게 쓴다(끝난 뒤의 해시를 적는다).
+    if (core.inFlight !== null) return false;
+    const failure = record.salvage === null ? null : await restoreSalvage(core, record.salvage);
+    this.ledger = { ...this.ledger, reclone: null, corrupt: null };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.resolveNoticeKey("clone:corrupt");
+    if (failure !== null) {
+      this.deps.raiseNotice(
+        "clone:restore",
+        noticeText("clone:restore"),
+        `${failure}\n구해 둔 폴더: ${record.salvage?.dir ?? "(없음)"}`,
+      );
+      this.log(`재클론: ${failure}`);
+    } else {
+      this.log("재클론: 새 클론에 구해 둔 작업을 되살렸습니다");
+    }
+    await core.refreshPendingChanges().catch(() => undefined);
+    return true;
+  }
+
+  /** 원장의 재클론 절차를 갈아 적는다. */
+  private setReclone(record: NonNullable<CycleLedger["reclone"]>): void {
+    this.ledger = { ...this.ledger, reclone: record };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  /**
+   * 재클론을 멈춘다 — 옛 클론은 그대로 두고(손상 기록도 남긴다) 절차를 지운 뒤,
+   * 예산을 다 쓴 것으로 적어 손상 행이 같은 알림을 다시 올리지 않게 한다.
+   * 예산의 창(하루)이 지나면 손상 행이 다시 시도한다.
+   */
+  private stopReclone(reason: string): void {
+    this.ledger = {
+      ...this.ledger,
+      reclone: null,
+      budgets: markEscalated(this.ledger.budgets, "reclone"),
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.deps.raiseNotice("clone:corrupt", noticeText("clone:corrupt"), reason);
+    this.log(`재클론: ${reason}`);
+  }
+
+  /** 서 있는 알림 하나를 거둔다 — DeveloperNotice 가 없는 실행(시험)은 원장에서만. */
+  private resolveNoticeKey(key: string): void {
+    if (!this.ledger.notices[key]) return;
+    if (this.deps.resolveNotice) {
+      this.deps.resolveNotice(key);
+      return;
+    }
+    const notices = { ...this.ledger.notices };
+    delete notices[key];
+    this.ledger = { ...this.ledger, notices };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  // ————— 16행 — 위생 (PLAN 단계 9) —————
+
+  /**
+   * 기한이 지난 항목만 차례(HYGIENE_ORDER)대로 한 번씩 돈다. 항목마다 시도한
+   * 뒤(성공 · 실패 무관) 원장의 시각을 갱신한다 — 계속 실패하는 항목이 2분마다
+   * 다시 도는 일을 막는다. 모든 git 은 이 틱의 차선 칸 안에서 돈다.
+   */
+  private async hygiene(): Promise<boolean> {
+    const core = this.deps.core;
+    const now = this.now();
+    const due = new Set(dueHygiene(this.ledger.hygiene, now));
+    // 디스크 (O8) — 여유가 문턱 아래면 도구의 것(끝난 브랜치 · 임시 파일 · git
+    // 정리)을 기한과 무관하게 한 번 치운다. 다시 본 여유는 맨 끝에서 판정한다.
+    let diskBefore: number | null = null;
+    if (due.has("disk")) {
+      diskBefore = await this.freeDiskBytes();
+      if (diskBefore !== null && diskBefore < DISK_LOW_BYTES) {
+        this.log(`위생: 디스크 여유가 ${gigabytes(diskBefore)} — 도구의 것부터 치웁니다`);
+        due.add("prune");
+        due.add("gc");
+      }
+      this.stampHygiene("disk", now);
+    }
+    if (due.has("prune")) {
+      await this.pruneEndedBranches(now);
+      const removed = pruneTempFolders(core.root, now);
+      if (removed > 0) this.log(`위생: 7일 넘은 임시 파일 ${removed}개를 치웠습니다`);
+      this.stampHygiene("prune", now);
+    }
+    if (due.has("gc")) {
+      // autoDetach 끔 — 뒤에서 도는 gc 는 차선을 비켜 다음 쓰기와 겹친다.
+      await core
+        .git(["-c", "gc.autoDetach=false", "gc", "--auto", "--quiet"])
+        .catch((error) => this.log(`위생: gc 실패(삼킴): ${detailOf(error, core.pat)}`));
+      this.stampHygiene("gc", now);
+    }
+    if (due.has("fsck")) {
+      const broken = await fsckClone(core);
+      if (broken !== null) {
+        this.log(`위생: fsck 가 손상을 봤습니다 — ${broken}`);
+        // 손상 신호는 원장에 — 조정 표의 손상 행이 읽는다(재클론).
+        if (this.ledger.corrupt === null) {
+          this.ledger = {
+            ...this.ledger,
+            corrupt: { since: new Date(now).toISOString(), detail: broken },
+          };
+        }
+      }
+      this.stampHygiene("fsck", now);
+    }
+    if (due.has("assets")) {
+      const measured = await measureAssets(core);
+      if (measured !== undefined) {
+        const { assets: _old, ...rest } = this.ledger.hygiene;
+        this.ledger = {
+          ...this.ledger,
+          hygiene: measured === null ? rest : { ...rest, assets: measured },
+        };
+      }
+      this.stampHygiene("assets", now);
+    }
+    // 저장소 이동은 origin 을 바꾼다 — origin 을 쓰는 위의 항목들이 모두 끝난 뒤.
+    if (due.has("move")) {
+      await this.followRepoMove();
+      this.stampHygiene("move", now);
+    }
+    if (diskBefore !== null) await this.judgeDisk(diskBefore);
+    return true;
+  }
+
+  /**
+   * 치운 뒤의 디스크 판정 (O8) — 그래도 문턱 아래면 기계 전체 알림 disk:low 를
+   * 올린다(개발자 쪽 Slack · 로그만, 화면 주의는 서지 않는다 — 사용자 기계의
+   * 일이라 개발자도 고칠 수 없다). 여유가 돌아왔으면 서 있던 알림을 거둔다.
+   */
+  private async judgeDisk(before: number): Promise<void> {
+    const after = before < DISK_LOW_BYTES ? await this.freeDiskBytes() : before;
+    if (after === null) return;
+    if (after < DISK_LOW_BYTES) {
+      const detail = `디스크 여유 ${gigabytes(after)} (치우기 전 ${gigabytes(before)}) — 문턱 ${gigabytes(DISK_LOW_BYTES)}`;
+      this.log(`위생: 치운 뒤에도 ${detail}`);
+      this.deps.raiseMachineNotice?.("disk:low", detail);
+      return;
+    }
+    this.deps.resolveMachineNotice?.("disk:low");
+  }
+
+  /** 여유 바이트 — 읽지 못하면 null(판정하지 않는다). */
+  private async freeDiskBytes(): Promise<number | null> {
+    const read = this.deps.statfs ?? ((path: string) => statfs(path));
+    try {
+      return freeBytesOf(await read(this.deps.dataDir ?? COLO_DESIGN_DIR));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 저장소 이동 (PLAN 단계 9) — GitHub 이 말하는 full_name 이 레지스트리의
+   * owner/repo 와 다르면(이름을 바꿨거나 다른 조직으로 옮겼다) origin 과
+   * 레지스트리의 주소만 새 이름으로 옮긴다. 다시 클론하지 않는다: 주소를
+   * 바꾸는 project.update 의 길(repo.ts 의 RepoWorkspace.update)은 새 주소를 다른
+   * 저장소로 읽어 클론을 지우고 — 커밋 안 된 변경과 올라가지 않은 커밋까지 —
+   * 사이클(열린 PR)을 잊은 채 새로 받는다. 옮겨진 저장소는 같은 저장소라 역사와
+   * PR 번호가 그대로이고 바뀐 것은 주소뿐이다. GitHub 은 옛 주소를 한동안 새
+   * 주소로 되돌려 주지만, 옛 이름으로 새 저장소가 생기는 순간 그 되돌림은 끊긴다.
+   */
+  private async followRepoMove(): Promise<void> {
+    const core = this.deps.core;
+    const slug = this.deps.slug();
+    const client = this.deps.github();
+    const url = core.url;
+    if (slug === null || client === null || url === null) return;
+    const fullName = await client.inspectRepo(slug).then(
+      (inspection) => inspection.fullName ?? null,
+      () => null,
+    );
+    // 이름의 대소문자만 다른 것은 같은 저장소다 — GitHub 주소는 대소문자를 가리지 않는다.
+    if (
+      fullName === null ||
+      fullName.toLowerCase() === `${slug.owner}/${slug.repo}`.toLowerCase()
+    ) {
+      return;
+    }
+    const next = movedRepoUrl(url, fullName);
+    if (next === null || next === url) return;
+    try {
+      await core.git(["remote", "set-url", "origin", next]);
+    } catch (error) {
+      this.log(`위생: origin 주소를 옮기지 못했습니다 — ${detailOf(error, core.pat)}`);
+      return;
+    }
+    // 레지스트리는 fleet 의 onUrlChange 가 적는다 — 주소를 적는 유일한 자리다.
+    core.url = next;
+    core.onUrlChange?.(next);
+    core.emit();
+    this.log(`위생: 저장소가 ${fullName} 로 옮겨져 origin 과 레지스트리의 주소를 옮겼습니다`);
+  }
+
+  /** 위생 항목의 시각을 찍고 원장을 쓴다 — 항목 사이에 끊겨도 한 일은 남는다. */
+  private stampHygiene(item: HygieneItem, now: number): void {
+    const key: HygieneStamp = `${item}At`;
+    this.ledger = {
+      ...this.ledger,
+      hygiene: { ...this.ledger.hygiene, [key]: new Date(now).toISOString() },
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
+
+  /**
+   * 끝난 브랜치 정리 (PLAN L4 · O3) — keepRejectedDays 가 지난 반려 브랜치를
+   * 로컬 · 원격에서 지우고 원장에서 뺀다. 원격 삭제의 실패는 삼키되, 네트워크
+   * 실패만은 원장에 남겨 다음 날 다시 한다(원격에 닿지 못한 것은 지운 것이
+   * 아니다). 병합의 지연 삭제 표식은 12행의 것이라 건드리지 않고, 표식 없는
+   * 병합 기록은 원장에서만 걷는다.
+   */
+  private async pruneEndedBranches(now: number): Promise<void> {
+    const core = this.deps.core;
+    const keepDays = this.deps.keepRejectedDays?.() ?? DEFAULT_KEEP_REJECTED_DAYS;
+    const { rejected, staleMerged } = endedBranchesDue(this.ledger.branches, keepDays, now);
+    if (rejected.length === 0 && staleMerged.length === 0) return;
+    const drop = new Set(staleMerged);
+    for (const entry of rejected) {
+      // 랜딩이 로컬을 이미 지웠으면 조용히 지나간다.
+      await core.git(["branch", "-D", entry.name]).catch(() => "");
+      const outcome = await core.git(["push", "origin", "--delete", entry.name]).then(
+        () => "ok" as const,
+        (error: unknown) => classifyPushError(error),
+      );
+      if (outcome === "network") {
+        this.log(`위생: 반려 브랜치 ${entry.name} 의 원격 삭제를 다음으로 미룹니다(네트워크)`);
+        continue;
+      }
+      drop.add(entry);
+      this.log(`위생: ${keepDays}일 지난 반려 브랜치 ${entry.name} 를 정리했습니다`);
+    }
+    this.ledger = {
+      ...this.ledger,
+      branches: this.ledger.branches.filter((entry) => !drop.has(entry)),
+    };
     writeLedger(this.ledgerPath, this.ledger);
   }
 

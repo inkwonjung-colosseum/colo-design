@@ -166,6 +166,25 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     tried: "4초에서 15분까지 스스로 다시 시도했습니다",
     ask: "아래 자세히의 오류 원문을 봐 주세요 — 로그에도 같은 문장이 있습니다",
   },
+  "clone:corrupt": {
+    title: "사용자의 작업 폴더(클론)가 손상됐습니다",
+    what: "사용자 컴퓨터의 연결 레포 사본이 git 으로 읽히지 않습니다",
+    tried:
+      "하루 한 번의 다시 받기를 이미 썼거나, 사용자의 작업을 구해 두지 못해 다시 받지 않았습니다",
+    ask: "아래 자세히의 오류를 보고 사용자의 작업 폴더를 확인해 주세요",
+  },
+  "clone:restore": {
+    title: "다시 받은 작업 폴더에 사용자의 작업을 되살리지 못했습니다",
+    what: "손상된 사본을 새로 받았지만 구해 둔 변경 · 커밋을 다시 얹지 못했습니다",
+    tried: "변경을 그대로, 그리고 3-way 로 얹어 봤습니다 — 구해 둔 폴더는 그대로 남아 있습니다",
+    ask: "자세히의 구해 둔 폴더에서 사용자의 작업을 옮겨 주세요",
+  },
+  "disk:low": {
+    title: "사용자 컴퓨터의 저장 공간이 모자랍니다",
+    what: "Colo Design 의 폴더가 든 디스크의 여유가 2GB 아래입니다",
+    tried: "도구가 치울 수 있는 것(끝난 브랜치 · 7일 넘은 임시 파일 · git 정리)을 먼저 치웠습니다",
+    ask: "사용자와 함께 디스크를 비워 주세요 — 도구가 더 치울 수 있는 것은 없습니다",
+  },
   "revive:exhausted": {
     title: "AI 프로그램을 되살리지 못했습니다",
     what: "대화가 도는 중에 AI 프로그램이 죽고, 되살리기 상한(10분 안에 3회)을 넘겼습니다",
@@ -173,6 +192,14 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     ask: "AI 프로그램(CLI) 의 상태를 확인해 주세요",
   },
 };
+
+/**
+ * 화면의 주의로 서지 않는 기계 전체 알림 (PLAN O8 — 이번 결정) — 사용자
+ * 기계의 일이라 개발자도 도구도 고칠 수 없는 문제(디스크 여유)는 개발자
+ * 쪽(Slack · 로그)에만 가고 화면은 세 문장 중 아무것도 말하지 않는다. 네 번째
+ * 문장(`저장 공간이 부족해요`)을 둘지는 열린 항목으로 남는다.
+ */
+const SCREEN_QUIET_KEYS = new Set(["disk:low"]);
 
 /** 이슈 목록의 한 줄에서 이 문제의 표식을 찾는다 — 없으면 null. */
 export function findIssueMarker(body: unknown): string | null {
@@ -448,12 +475,13 @@ export class DeveloperNotice {
     }
   }
 
-  /** 기계 전체로 서 있는 알림 — status 의 주의 재료가 읽는다. */
+  /** 기계 전체로 서 있는 알림 — status 의 주의 재료가 읽는다(화면에 서지 않는 키는 뺀다). */
   machineNotices(): Record<string, AttentionNotice> {
     const out: Record<string, AttentionNotice> = {};
     for (const [memKey, entry] of this.memory) {
       // 기계 전체 알림의 키는 ":<key>" — 슬러그가 앞에 서는 프로젝트 것은 뺀다.
       if (!memKey.startsWith(":")) continue;
+      if (SCREEN_QUIET_KEYS.has(memKey.slice(1))) continue;
       out[memKey.slice(1)] = { via: entry.via, raisedAt: entry.raisedAt };
     }
     return out;

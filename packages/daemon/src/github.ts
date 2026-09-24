@@ -191,6 +191,9 @@ export class GitHubClient {
       hasDevScript: await this.hasDevScript(input),
       canPush: data.permissions?.push === true,
       defaultBranch: String(data.default_branch ?? "main"),
+      // 옮겨진 저장소는 옛 주소로 물어도 새 이름을 답한다(fetch 가 GitHub 의
+      // 되돌림을 따라간다) — 감독자의 위생이 이 값으로 이동을 알아본다.
+      fullName: typeof data.full_name === "string" ? data.full_name : null,
     };
   }
 

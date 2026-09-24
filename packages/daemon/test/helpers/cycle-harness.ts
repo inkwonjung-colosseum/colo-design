@@ -174,6 +174,8 @@ interface MemComment {
 export class MemoryGitHub implements RestTransport {
   private expired = false;
   private pullCreatesFail = false;
+  /** 저장소가 옮겨진 뒤의 이름 — 없으면 물은 이름 그대로 답한다. */
+  private movedTo: string | null = null;
   private nextNumber = 1;
   private nextCommentId = 1;
   /** /user 호출 수 — whoAmI 캐시(PLAN L9) 시험의 잣자리. */
@@ -210,7 +212,7 @@ export class MemoryGitHub implements RestTransport {
       const rest = seg.slice(3);
       if (input.method === "GET" && rest.length === 0) {
         return json(200, {
-          full_name: `${seg[1]}/${seg[2]}`,
+          full_name: this.movedTo ?? `${seg[1]}/${seg[2]}`,
           default_branch: "main",
           permissions: { push: true },
         });
@@ -601,6 +603,11 @@ export class MemoryGitHub implements RestTransport {
     this.expired = true;
   }
 
+  /** 저장소를 옮긴다 — 옛 이름으로 물어도 새 full_name 을 답한다(GitHub 의 되돌림). */
+  moveRepo(fullName: string): void {
+    this.movedTo = fullName;
+  }
+
   /** 개발자 알림이 연 이슈 — 시험이 상태 · 본문 · 코멘트를 읽는다. */
   issue(number: number): (MemIssue & { comments: MemComment[] }) | undefined {
     const found = this.issues.get(number);
@@ -789,6 +796,16 @@ export interface SupervisedScene extends Scene {
   ledgerPath: string;
   /** 켜면 openThread 가 null 을 돌린다 — 대화를 열 수 없는 세계(반려 반영 재시도의 시험축). */
   refuseThread: boolean;
+  /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14). 위생 시험이 바꾼다. */
+  keepRejectedDays: number;
+  /** onUrlChange 가 모은 주소 — 레지스트리에 적혔을 것들. */
+  urlChanges: Array<string | null>;
+  /** 가짜 statfs 가 답하는 디스크 여유(바이트, 기본 100GB) — 디스크 시험이 바꾼다. */
+  freeBytes: number;
+  /** raiseMachineNotice · resolveMachineNotice 가 모은 기계 전체 알림. */
+  machineNotices: Array<{ op: "raise" | "resolve"; key: string; detail?: string }>;
+  /** 설치 판정(15행) — 없으면 늘 최신. fleet 처럼 워크스페이스의 판정을 겨눌 수 있다. */
+  installJudge: (() => boolean) | null;
 }
 
 /**
@@ -801,10 +818,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const clone = await makeClone(remote);
   const github = new MemoryGitHub(remote);
   process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  const urlChanges: Array<string | null> = [];
   const workspace = new RepoWorkspace({
     root: clone.path,
     url: remote.path,
     onStatus: () => {},
+    onUrlChange: (url) => urlChanges.push(url),
     baseBranch: opts.baseBranch ?? "main",
     cycle: { branch: opts.branch ?? null, handoff: opts.handoff ?? null },
     gitHubClient: () => new GitHubClient("harness-token", github),
@@ -825,7 +844,11 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     // PLAN L9 자동 답장의 재료 — 초대 v4 의 lifecycle.autoReply · machine 의 이름.
     autoReply: true,
     authorName: null as string | null,
+    keepRejectedDays: 14,
+    freeBytes: 100 * 1024 ** 3,
+    installJudge: null as (() => boolean) | null,
   };
+  const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
   const transitions: Array<{ kind: string; at: string; count?: number }> = [];
@@ -841,8 +864,13 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       autoReply: () => scene.autoReply,
       authorName: () => scene.authorName,
       busy: () => false,
-      installStale: () => false,
+      installStale: () => scene.installJudge?.() ?? false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
+      keepRejectedDays: () => scene.keepRejectedDays,
+      // 디스크 (O8) — 시험 기계의 실제 여유를 읽지 않는다.
+      statfs: async () => ({ bavail: Math.floor(scene.freeBytes / 4096), bsize: 4096 }),
+      raiseMachineNotice: (key, detail) => machineNotices.push({ op: "raise", key, detail }),
+      resolveMachineNotice: (key) => machineNotices.push({ op: "resolve", key }),
       // L6 제출 — 장면이 갈아끼우는 재료들.
       projectName: () => scene.projectName,
       commentsFile: () => join(dirname(ledgerPath), "comments.json"),
@@ -932,11 +960,31 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     set shots(v: HandoffShot[]) {
       scene.shots = v;
     },
+    get keepRejectedDays() {
+      return scene.keepRejectedDays;
+    },
+    set keepRejectedDays(v: number) {
+      scene.keepRejectedDays = v;
+    },
+    get freeBytes() {
+      return scene.freeBytes;
+    },
+    set freeBytes(v: number) {
+      scene.freeBytes = v;
+    },
+    get installJudge() {
+      return scene.installJudge;
+    },
+    set installJudge(v: (() => boolean) | null) {
+      scene.installJudge = v;
+    },
+    machineNotices,
     setNow: (ms) => {
       nowMs = ms;
     },
     respawn: spawn,
     ledgerPath,
+    urlChanges,
     observe: (o = {}) => {
       const deps: ObserveDeps = {
         turnRunning: () => false,

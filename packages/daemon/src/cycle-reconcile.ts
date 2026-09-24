@@ -5,13 +5,13 @@
  * 돌려준다 — 올리는 일은 감독자(cycle-supervisor)가 developer-notice 로 한다.
  *
  * 턴 중 규칙(L3): "턴 중 아니요" 행이 맞았는데 그 클론에서 턴이 돌면 그 행을
- * 건너뛰고 "예" 행(7 · 12 · 13 · 14)만 계속 본다. 단 1~4행(클론의 무결성)은
- * 예 행도 보지 않고 none — 깨진 클론에서 푸시 · 제출을 하지 않는다. 예외는
+ * 건너뛰고 "예" 행(7 · 12 · 13 · 14)만 계속 본다. 단 손상 행과 1~4행(클론의
+ * 무결성)은 예 행도 보지 않고 none — 깨진 클론에서 푸시 · 제출을 하지 않는다. 예외는
  * 하나: 12행 푸시는 이미 커밋된 것을 올리는 일이라 작업 트리를 건드리지
  * 않으므로 2행(도구의 병합 충돌) 동안에도 된다.
  *
  * 알림의 "한 번"(L7): 예산 소진으로 올리는 알림(conflict:stuck · review:*:rounds ·
- * base-missing)은 예산 항목의 escalated 표식으로, 밀림 · 인증 알림(push:behind ·
+ * base-missing · clone:corrupt)은 예산 항목의 escalated 표식으로, 밀림 · 인증 알림(push:behind ·
  * push:auth)은 원장의 서 있는 알림(notices) 기록으로 여기서 억제한다. 조정자가
  * 실제로 올린 뒤 notices 에 적고, 풀리면 지운다 — 이 함수는 그 기록을 읽기만
  * 한다. 반려 반영 턴의 예산 소진 알림(review:*:rejection)은 올리는 판정이 보낼
@@ -69,6 +69,11 @@ export interface CycleSnapshot {
   hygieneDue: boolean;
   githubReachable: boolean;
   githubAuthExpired: boolean;
+  /**
+   * 손상 탐침의 말 (PLAN 단계 9) — HEAD 나 인덱스를 읽는 명령이 손상을 말했다.
+   * null 이면 탐침은 멀쩡했다(fsck 가 본 깊은 손상은 원장의 corrupt 에 산다).
+   */
+  corruption: string | null;
 }
 
 export type CycleAction =
@@ -92,7 +97,9 @@ export type CycleAction =
   | { kind: "briefReviews"; pr: number; reviews: DeveloperReview[] }
   | { kind: "briefRejection"; pr: number; reasons: DeveloperReview[] }
   | { kind: "reinstall" }
-  | { kind: "hygiene" };
+  | { kind: "hygiene" }
+  | { kind: "reclone" }
+  | { kind: "restoreSalvage" };
 
 export interface NoticeIntent {
   op: "raise" | "resolve";
@@ -199,6 +206,8 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   let reviews = ledger.reviews;
   let ended = ledger.ended;
   let lastPr = ledger.lastPr;
+  let corrupt = ledger.corrupt;
+  let reclone = ledger.reclone;
   let aiFixing = false;
 
   const decide = (action: CycleAction): CycleDecision => ({
@@ -207,7 +216,7 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     attention: pickAttention(attentions, aiFixing),
     attentions: [...attentions],
     aiFixing,
-    ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr },
+    ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr, corrupt, reclone },
     tapeEvents,
     handoffEvents,
   });
@@ -291,6 +300,40 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   // 여기서 거둔다. 서 있는 동안은 그대로 둔다(판정이 모르는 키는 건드리지 않는다).
   if (pending === null && ledger.notices["conflict:stuck"] !== undefined) {
     notices.push({ op: "resolve", key: "conflict:stuck" });
+  }
+
+  // ————— 손상 행 — 클론이 손상됐다 (PLAN 단계 9) —————
+  // 무결성 행(0~4)보다 앞선다: 손상된 클론의 git 읽기는 믿을 수 없고, 그 위의
+  // 어떤 조치(abort · checkout · 보관)도 손상을 넓힐 뿐이다. 재클론은 작업
+  // 트리를 통째로 옮기므로 턴이 돌면 기다린다 — 예 행(푸시 · 제출)도 보지
+  // 않는다(깨진 클론에서 올리지 않는다).
+  if (reclone !== null) {
+    // 절차가 진행 중 — 옮기기 전이면 이어서 옮기고, 옮긴 뒤면(새 클론이 섰다)
+    // 되살린다. 예산은 절차를 시작할 때 한 번만 쓴다.
+    if (turnRunning) return integrityWait();
+    return decide({ kind: reclone.movedTo === null ? "reclone" : "restoreSalvage" });
+  }
+  const signal = snapshot.corruption ?? null;
+  if (corrupt === null && signal !== null) {
+    corrupt = { since: new Date(now).toISOString(), detail: signal };
+  }
+  if (corrupt !== null) {
+    if (turnRunning) return integrityWait();
+    const once = spend(budgets, "reclone", BUDGETS.reclone, now);
+    budgets = once.ledger;
+    if (once.allowed) {
+      // 절차의 시작을 판정 순간에 적는다 — 판정과 실행 사이에 끊겨도 다음 틱이
+      // 같은 절차를 이어받고 예산을 두 번 쓰지 않는다(I5).
+      reclone = { at: new Date(now).toISOString(), salvage: null, movedTo: null };
+      return decide({ kind: "reclone" });
+    }
+    // 하루 한 번을 다 썼다 — 알림은 한 번, 주의는 "개발자에게 알렸어요"(L7).
+    attentions.push("developer-notified");
+    if (!budgets.reclone?.escalated) {
+      notices.push({ op: "raise", key: "clone:corrupt", reason: corrupt.detail });
+      budgets = markEscalated(budgets, "reclone");
+    }
+    return decide({ kind: "none" });
   }
 
   // ————— 0행 — 도구의 조작 흔적(pendingOp)이 남았는데 git 은 이미 끝났다 —————

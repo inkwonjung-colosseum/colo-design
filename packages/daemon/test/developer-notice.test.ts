@@ -292,6 +292,24 @@ test("기계 전체 알림(slug null)은 machineNotices 에 서고 주의가 dev
   assert.deepEqual(notice.machineNotices(), {});
 });
 
+test("disk:low 는 Slack 으로 가지만 화면 주의의 재료(machineNotices)에는 서지 않는다 (O8)", async () => {
+  const slack = fakeSlack();
+  await slack.configure();
+  const notice = new DeveloperNotice(deps({ slack: slack.escalation }));
+  assert.equal(
+    await notice.raise({
+      key: "disk:low",
+      slug: null,
+      ...describeProblem("disk:low", "여유 1.0GB"),
+    }),
+    "slack",
+  );
+  // 사용자 기계의 일이라 네 번째 문장을 두지 않는다 — 기계 주의는 비어 있다.
+  assert.deepEqual(notice.machineNotices(), {});
+  assert.equal(composeAttention({ notices: notice.machineNotices() }), null);
+  await notice.resolve("disk:low", null);
+});
+
 test("넘기기가 성공하면 서 있던 submit:pr 알림을 거둔다", async () => {
   const remote = await makeRemote();
   const clone = await makeClone(remote);
