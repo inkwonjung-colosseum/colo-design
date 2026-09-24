@@ -1,0 +1,131 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+// `../dist` 임포트인 이유: cycle-ledger 는 형제(budgets)를 `.js` 지정자로
+// 부른다 — src 직접 로드는 그 지정을 못 고친다(revive-budget 와 같은 길).
+import {
+  type CycleLedger,
+  cycleLedgerFile,
+  emptyLedger,
+  foldReviewLedger,
+  notePushBehind,
+  parseLedger,
+  readLedger,
+  recordPushResult,
+  writeLedger,
+} from "../dist/cycle-ledger.js";
+
+const T0 = Date.parse("2026-09-24T10:00:00.000Z");
+const iso = (ms: number) => new Date(ms).toISOString();
+
+function fullLedger(): CycleLedger {
+  return {
+    v: 1,
+    ended: { pr: 12, state: "merged", headSha: "abc1234", seenAt: iso(T0) },
+    submit: { requestedAt: iso(T0), via: "button", step: "ensurePushed" },
+    push: {
+      behindSince: iso(T0),
+      attempts: 2,
+      nextAttemptAt: iso(T0 + 60_000),
+      lastError: "network",
+    },
+    pendingOp: { kind: "merge", files: ["src/a.ts"], startedAt: iso(T0), briefs: 1 },
+    reviews: { "12": { known: [1, 2], briefed: [1], rounds: 1 } },
+    budgets: {
+      "conflict:deadbeef": { spent: 1, firstAt: iso(T0), lastAt: iso(T0), escalated: false },
+    },
+    notices: { "push:behind": { via: "pr", ref: 12, raisedAt: iso(T0), count: 1 } },
+    branches: [{ name: "colo-design/20260924-1", endedAt: iso(T0), state: "merged" }],
+    hygiene: { gcAt: iso(T0) },
+  };
+}
+
+test("원장 왕복 — 쓴 그대로 읽는다", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cycle-ledger-"));
+  const file = cycleLedgerFile(dir);
+  const ledger = fullLedger();
+  writeLedger(file, ledger);
+  assert.deepEqual(readLedger(file), ledger);
+  // 원자 쓰기의 임시 파일이 남지 않는다.
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+});
+
+test("없거나 깨진 파일은 빈 원장 — 시작이 실패할 이유가 아니다", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cycle-ledger-"));
+  assert.deepEqual(readLedger(join(dir, "cycle.json")), emptyLedger());
+  const broken = join(dir, "broken.json");
+  writeFileSync(broken, "{ 깨진 json");
+  assert.deepEqual(readLedger(broken), emptyLedger());
+});
+
+test("모르는 필드는 무시하고 깨진 필드만 버린다 — 나머지는 산다", () => {
+  const parsed = parseLedger({
+    v: 99,
+    mystery: true,
+    ended: { pr: 12, state: "merged", headSha: "abc", seenAt: iso(T0) },
+    push: { behindSince: iso(T0) }, // attempts · nextAttemptAt 없음 — push 전체가 깨진 것
+    pendingOp: { kind: "rebase", files: [], startedAt: iso(T0), briefs: 0 },
+    reviews: { ok: { known: [1], briefed: [], rounds: 0 }, bad: { known: "x" } },
+    branches: [{ name: "b", endedAt: iso(T0), state: "merged" }, { name: 3 }],
+    future: { anything: 1 },
+  });
+  assert.equal(parsed.v, 1);
+  assert.deepEqual(parsed.ended, { pr: 12, state: "merged", headSha: "abc", seenAt: iso(T0) });
+  assert.equal(parsed.push, null);
+  assert.equal(parsed.pendingOp, null); // 도구가 시작할 수 없는 종류는 버린다
+  assert.deepEqual(parsed.reviews, { ok: { known: [1], briefed: [], rounds: 0 } });
+  assert.deepEqual(parsed.branches, [{ name: "b", endedAt: iso(T0), state: "merged" }]);
+});
+
+test("review-ledger.json 을 reviews[pr].briefed 로 합친다 — 두 번 돌아도 같다", () => {
+  const raw = JSON.stringify({ entries: { "12": [1, 2, 3], bad: [1], "13": [7] } });
+  const once = foldReviewLedger(emptyLedger(), raw);
+  assert.deepEqual(once.reviews["12"], { known: [1, 2, 3], briefed: [1, 2, 3], rounds: 0 });
+  assert.ok(!("bad" in once.reviews));
+  const twice = foldReviewLedger(once, { entries: { "12": [2, 9] } });
+  assert.deepEqual(twice.reviews["12"]?.briefed, [1, 2, 3, 9]); // 합집합 — 이관 멱등(I5)
+  assert.deepEqual(twice.reviews["13"], { known: [7], briefed: [7], rounds: 0 });
+  // 모르는 모양은 그대로 돌려온다.
+  assert.deepEqual(foldReviewLedger(once, "not json"), once);
+});
+
+test("푸시 실패는 백오프(30초에서 두 배, 최대 10분)로 다음 시도를 미룬다", () => {
+  let ledger = notePushBehind(emptyLedger(), T0);
+  assert.deepEqual(ledger.push, { behindSince: iso(T0), attempts: 0, nextAttemptAt: iso(T0) });
+  // 이미 밀림이 기록돼 있으면 기준점을 다시 찍지 않는다.
+  assert.equal(notePushBehind(ledger, T0 + 5_000), ledger);
+
+  ledger = recordPushResult(ledger, { ok: false, error: "auth" }, T0 + 10_000);
+  assert.equal(ledger.push?.attempts, 1);
+  assert.equal(ledger.push?.nextAttemptAt, iso(T0 + 10_000 + 30_000));
+  assert.equal(ledger.push?.lastError, "auth");
+
+  ledger = recordPushResult(ledger, { ok: false, error: "network" }, T0 + 60_000);
+  assert.equal(ledger.push?.attempts, 2);
+  assert.equal(ledger.push?.nextAttemptAt, iso(T0 + 60_000 + 60_000));
+  assert.equal(ledger.push?.behindSince, iso(T0)); // 밀림 기준점은 그대로
+
+  const ok = recordPushResult(ledger, { ok: true }, T0 + 120_000);
+  assert.equal(ok.push, null); // 올라가면 밀림 · 백오프 · 오류 흔적을 함께 지운다
+});
+
+test("push 가 없던 원장의 실패는 지금을 밀림 기준점으로 찍는다", () => {
+  const ledger = recordPushResult(emptyLedger(), { ok: false, error: "rejected" }, T0);
+  assert.deepEqual(ledger.push, {
+    behindSince: iso(T0),
+    attempts: 1,
+    nextAttemptAt: iso(T0 + 30_000),
+    lastError: "rejected",
+  });
+});
+
+test("쓴 파일의 본문은 JSON 이다 — 사람이 열어 읽을 수 있게", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cycle-ledger-"));
+  const file = join(dir, "cycle.json");
+  writeLedger(file, emptyLedger());
+  const text = readFileSync(file, "utf8");
+  assert.equal(JSON.parse(text).v, 1);
+  assert.ok(text.endsWith("\n"));
+});
