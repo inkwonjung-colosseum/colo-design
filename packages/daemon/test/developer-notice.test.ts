@@ -262,3 +262,24 @@ test("프로젝트 알림의 상태는 원장에 남는다 — 새 DeveloperNoti
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("기계 전체 알림(slug null)은 machineNotices 에 서고 주의가 developer-notified 다", async () => {
+  const slack = fakeSlack();
+  await slack.configure();
+  const notice = new DeveloperNotice(deps({ slack: slack.escalation }));
+  // GitHub 에 닿지 않는 기계 전체 문제 — Slack 으로 간다.
+  assert.equal(
+    await notice.raise({ key: "github:auth", slug: null, ...describeProblem("github:auth") }),
+    "slack",
+  );
+  const machines = notice.machineNotices();
+  assert.equal(machines["github:auth"]?.via, "slack");
+  // status 의 machineAttention 이 읽는 것과 같은 합성 — 화면에 올라온다.
+  assert.deepEqual(composeAttention({ notices: machines }), {
+    kind: "developer-notified",
+    since: machines["github:auth"]?.raisedAt,
+    via: "slack",
+  });
+  await notice.resolve("github:auth", null);
+  assert.deepEqual(notice.machineNotices(), {});
+});
