@@ -17,8 +17,11 @@ import {
   type AttentionParts,
   type ChatEvent,
   type DeveloperReview,
+  type HandoffShot,
+  type HandoffStatus,
   markTurn,
 } from "@colo-design/protocol";
+import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
 import {
   type CycleLedger,
   type CyclePendingOp,
@@ -37,11 +40,18 @@ import {
   type CycleSnapshot,
   nextCycleAction,
 } from "./cycle-reconcile.js";
-import type { GitHubClient } from "./github.js";
+import type { GitHubClient, PullRequestRef } from "./github.js";
+import { mergeToolBlock, pickHandoffTitle } from "./handoff-body.js";
 import type { DaemonLogger } from "./log.js";
 import type { RepoWorkspace } from "./repo.js";
 import type { RepoCore } from "./repo-core.js";
-import { conflictBrief, detailOf, STASH_MESSAGE } from "./repo-core.js";
+import {
+  conflictBrief,
+  DEFAULT_HANDOFF_TITLE,
+  detailOf,
+  SAVE_CONFLICT_OPEN_DETAIL,
+  STASH_MESSAGE,
+} from "./repo-core.js";
 import { alignCycleBranch, pickCycleBranchName } from "./repo-publish.js";
 
 export type TickReason =
@@ -66,10 +76,11 @@ const NOTICE_TEXT: Record<string, string> = {
   "push:behind": "저장한 작업을 1시간 넘게 올리지 못하고 있습니다",
   "push:auth": "연결 코드(GitHub 로그인)가 만료돼 저장한 작업을 올리지 못하고 있습니다",
   "conflict:stuck": "충돌 정리가 두 번 안내해도 끝나지 않았습니다",
+  "submit:commit": "제출이 보관 단계에서 멈춰 있습니다",
+  "submit:pr": "제출이 요청 열기 단계에서 멈춰 있습니다",
   "base-missing":
     "베이스 브랜치가 원격에 없고 GitHub 의 기본 가지도 알 수 없습니다 — 개발자 확인이 필요합니다",
 };
-
 /** 알림 키의 문장 — 표에 없는 review:<pr>:rounds 는 이 한 줄로 읽힌다. */
 function noticeText(key: string): string {
   if (key.startsWith("review:"))
@@ -110,6 +121,12 @@ export interface SupervisorDeps {
   resolveNotice?: (key: string) => void;
   /** 주의 재료가 바뀌었을 때 — fleet 이 상태를 다시 방송하는 신호. */
   onChange?: () => void;
+  /** L6 제출 — PR 제목의 프로젝트 이름 (레지스트리의 이름). */
+  projectName: () => string;
+  /** L6 제출 — 코멘트 저장소(comments.json)의 경로. PR 본문의 수정 요청 절. */
+  commentsFile: () => string;
+  /** L6 제출 — 이번 사이클의 화면 캡처. 실패는 빈 목록으로 조용히. */
+  captureShots: () => Promise<HandoffShot[]>;
   /**
    * 대화록 사건 (PLAN L2 흡수표 — 옛 폴러의 emitCycleEvent). 감독자가
    * 판정의 tapeEvents 와 랜딩의 cycle.carried 를 싣는다. lane.outside 안에서
@@ -226,6 +243,24 @@ export class CycleSupervisor {
   /** 도는 틱이 있으면 그 약속 — 시험과 종료가 새 틱을 일으키지 않고 기다린다. */
   async settled(): Promise<void> {
     await this.running;
+  }
+
+  /**
+   * 제출의 진입 (PLAN L6) — 원장에 의도를 적고 곧바로 틱을 돈다. 이미 의도가
+   * 있으면 다시 적지 않는다: 두 번 눌러도 제출은 하나고, 진행 중인 단계를
+   * 처음부터 다시 시작하지도 않는다. 실행은 조정 표 13행의 submitStep 이
+   * 멱등하게 이어받는다 — 어디서 멈춰도 다음 틱이 끝까지 간다(I5).
+   */
+  submit(via: "button" | "chat"): void {
+    if (this.ledger.submit === null) {
+      this.ledger = {
+        ...this.ledger,
+        submit: { requestedAt: new Date(this.now()).toISOString(), via },
+      };
+      writeLedger(this.ledgerPath, this.ledger);
+      this.log(`제출 의도 (${via})`);
+    }
+    void this.tick("manual");
   }
 
   private async runLoop(reason: TickReason): Promise<void> {
@@ -493,6 +528,9 @@ export class CycleSupervisor {
       }
       case "push": {
         return await this.pushOnce();
+      }
+      case "submitStep": {
+        return await this.submitStep();
       }
       case "land": {
         return await this.land(action);
@@ -988,6 +1026,249 @@ export class CycleSupervisor {
       this.log(`push 실패 (${outcome}): ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
+  }
+
+  // ————— 13행 — 제출의 네 단계 (PLAN L6 · 단계 6) —————
+
+  /**
+   * 제출 의도를 네 단계(보관 → 푸시 → PR → 리뷰어)로 끝까지 간다. 각 단계는
+   * 멱등이고 한 틱에 가능한 데까지 진행하며, 막힌 단계는 의도를 남긴 채
+   * false 로 틱을 멈춘다 — 다음 틱이 같은 단계부터 이어받는다. 네 단계가 모두
+   * 서면 의도를 지운다.
+   */
+  private async submitStep(): Promise<boolean> {
+    const core = this.deps.core;
+    const intent = this.ledger.submit;
+    if (intent === null) return true;
+
+    // 턴이 도는 동안은 반쪽 작업을 보관하지 않는다(5행과 같은 규칙) — 의도는
+    // 남고 turn-idle 틱이 이어받는다. 채팅 도구가 턴 안에서 제출을 부른 세계다.
+    // 1) ensureCommitted — 남은 변경 보관. 충돌 정리 중이면 L5 가 끝날 때까지 기다린다.
+    if (this.ledger.pendingOp !== null) return false;
+    const dirty = (await core.git(["status", "--porcelain"]).catch(() => "?")).trim() !== "";
+    if (dirty) {
+      const saved = await this.deps.workspace.save({
+        message: "작업 이어 보관",
+        backgroundPush: true,
+        onSessionTurn: (brief) => {
+          core.lane.outside(() => this.deps.openThread("제출 마저하기")?.send(brief));
+        },
+      });
+      if (saved.stage !== "published") {
+        if (saved.detail === SAVE_CONFLICT_OPEN_DETAIL) return false; // 2행이 브리프한다.
+        return this.failSubmitStep("commit", saved.detail ?? "보관에 실패했습니다");
+      }
+    }
+    const branch = core.branch;
+    if (!branch) {
+      // 사이클도 보관할 것도 없다 — 사용자 문장은 save 의 saveBlocked 카드가
+      // 이미 냈다. 의도만 지운다(다시 누르면 같은 문장이 다시 선다).
+      this.clearSubmitIntent();
+      core.setDiff({
+        stage: "failed",
+        gate: "pr",
+        detail: "제출할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.",
+      });
+      return false;
+    }
+
+    // 2) ensurePushed — 로컬 = 원격까지. 실패의 기록 · 백오프 · 알림(push:auth ·
+    // push:behind)은 12행의 원장 push 가 소유한다 — 이 단계는 그 창을 존중한다.
+    core.setDiff({ stage: "handing-off" });
+    const onRemote = (
+      await core.git(["rev-parse", "--verify", `refs/remotes/origin/${branch}`]).catch(() => "")
+    ).trim();
+    const waiting =
+      onRemote === ""
+        ? -1
+        : Number(
+            (
+              await core
+                .git(["rev-list", "--count", `origin/${branch}..${branch}`])
+                .catch(() => "-1")
+            ).trim(),
+          );
+    if (onRemote === "" || waiting !== 0) {
+      const push = this.ledger.push;
+      if (push !== null && Date.parse(push.nextAttemptAt) > this.now()) return false;
+      try {
+        await core.git(["push", "--set-upstream", "origin", branch]);
+        this.ledger = recordPushResult(this.ledger, { ok: true }, this.now());
+        writeLedger(this.ledgerPath, this.ledger);
+        await this.cleanupDeferredRemoteBranches(branch);
+      } catch (error) {
+        this.ledger = recordPushResult(
+          this.ledger,
+          { ok: false, error: classifyPushError(error) },
+          this.now(),
+        );
+        writeLedger(this.ledgerPath, this.ledger);
+        this.log(`제출의 푸시 실패: ${detailOf(error, core.pat)}`);
+        return false;
+      }
+    }
+
+    // 3) ensurePullRequest — 열린 PR 보장. 4) ensureReviewers — 초대 파일의
+    // 리뷰어(최선). 끝나면 의도를 지우고 사이클을 넘긴 상태로 적는다.
+    const slug = core.repoSlug();
+    const client = this.deps.github();
+    if (!slug || !client) {
+      return this.failSubmitStep("pr", "GitHub 에 닿을 수 없습니다 — 연결 코드를 확인해 주세요.");
+    }
+    try {
+      const open = core.openHandoff;
+      let pull: HandoffStatus | PullRequestRef | null =
+        open &&
+        open.branch === branch &&
+        (open.state === "open" || open.state === "changes_requested")
+          ? open
+          : null;
+      if (pull === null) {
+        // 입양 — 레지스트리가 잃은 열린 요청을 head 로 찾는다. state=open 이므로
+        // 끝난 요청(merged · closed)은 돌아오지 않는다: 끝난 요청은 PATCH 되지
+        // 않고 새 요청으로만 이어진다(PLAN L4).
+        const found = await client.findPullRequestByHead({
+          ...slug,
+          head: `${slug.owner}:${branch}`,
+        });
+        if (found && (found.state === "open" || found.state === "changes_requested")) pull = found;
+      }
+      const block = await this.submitToolBlock();
+      let handoff: HandoffStatus;
+      if (pull === null) {
+        // 제목은 생성할 때만 정한다 — 입양 · 다시 제출에서는 개발자의 것이다.
+        const draft = await this.deps.workspace
+          .handoffDraft({ commentsFile: this.deps.commentsFile() })
+          .catch(() => null);
+        const opening = draft?.body?.trim() ? `${draft.body.trim()}\n\n` : "";
+        handoff = await client.createPullRequest({
+          ...slug,
+          head: branch,
+          base: core.baseBranch,
+          title: await this.submitTitle(branch),
+          body: `${opening}${block}`,
+        });
+      } else {
+        // 본문은 도구 구간만 갱신한다. 현재 본문을 못 읽으면 덮어쓰지 않는다 —
+        // 개발자가 구간 밖에 쓴 글을 지키는 길이 이것뿐이다.
+        const current = await client
+          .getPullRequest({ ...slug, number: pull.number })
+          .catch(() => null);
+        if (current === null || current.body === null) {
+          handoff = pull;
+        } else {
+          const body = mergeToolBlock(current.body, block);
+          handoff =
+            current.body === body
+              ? current
+              : await client.updatePullRequest({ ...slug, number: pull.number, body });
+        }
+      }
+      // 4) 리뷰어 — 요청한 목록이 바뀐 경우에만 다시 요청한다(최선 · 조용히).
+      const reviewers = core.reviewers?.() ?? [];
+      const asked = intent.reviewers ?? [];
+      if (reviewers.length > 0 && asked.join("\u0000") !== reviewers.join("\u0000")) {
+        await client.requestReviewers({ ...slug, number: handoff.number, reviewers });
+        const fresh = this.ledger.submit;
+        if (fresh !== null) {
+          this.ledger = { ...this.ledger, submit: { ...fresh, reviewers } };
+        }
+      }
+      // 네 단계가 모두 섰다 — 의도를 지우고, 성공은 예산도 되감는다(다음 제출은
+      // 새 사건이다). 서 있던 submit:* 알림을 거둔다(PLAN L11).
+      this.ledger = {
+        ...this.ledger,
+        submit: null,
+        budgets: resetBudget(resetBudget(this.ledger.budgets, "submit:pr"), "submit:commit"),
+      };
+      writeLedger(this.ledgerPath, this.ledger);
+      core.setCycle(branch, handoff);
+      core.setDiff({ stage: "handed-off", handoff });
+      this.deps.resolveNotice?.("submit:pr");
+      this.deps.resolveNotice?.("submit:commit");
+      core.lane.outside(() =>
+        this.deps.cycleEvent?.({
+          kind: "cycle.handed",
+          at: new Date(this.now()).toISOString(),
+          pr: handoff.number,
+          ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
+        }),
+      );
+      this.log(`제출 완료: PR #${handoff.number}`);
+      return true;
+    } catch (error) {
+      return this.failSubmitStep("pr", detailOf(error, core.pat));
+    }
+  }
+
+  /** PR 본문의 도구 구간 — 캡처는 이때 잡는(미리보기가 살아 있는 동안). */
+  private async submitToolBlock(): Promise<string> {
+    const shots = await this.deps.captureShots().catch(() => []);
+    return await this.deps.workspace.handoffToolBlock({
+      commentsFile: this.deps.commentsFile(),
+      ...(shots.length > 0 ? { shots } : {}),
+    });
+  }
+
+  /** 생성할 때만 정하는 제목 — 초안 → 프로젝트 이름 · 첫 커밋 제목 → 기본. */
+  private async submitTitle(branch: string): Promise<string> {
+    const draft = await this.deps.workspace
+      .handoffDraft({ commentsFile: this.deps.commentsFile() })
+      .catch(() => null);
+    const first = (
+      await this.deps.core
+        .git(["log", "--format=%s", "--reverse", `origin/${this.deps.core.baseBranch}..${branch}`])
+        .catch(() => "")
+    )
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line !== "");
+    return pickHandoffTitle({
+      draftTitle: draft?.title ?? null,
+      projectName: this.deps.projectName(),
+      firstCommitSubject: first ?? null,
+      fallback: DEFAULT_HANDOFF_TITLE,
+    });
+  }
+
+  /**
+   * 단계 실패 — 예산을 쓰고 백오프를 적는다(간격은 푸시와 같은 backoffDelay).
+   * 예산이 다하면 개발자 알림 한 번(L7): 시도는 백오프 간격으로 계속된다 —
+   * "한 번 누르면 끝까지 간다"(L6)가 예산보다 앞선다.
+   */
+  private failSubmitStep(step: "commit" | "pr", reason: string): boolean {
+    const key = `submit:${step}`;
+    const spent = spend(this.ledger.budgets, key, BUDGETS.submitStep, this.now());
+    this.ledger = { ...this.ledger, budgets: spent.ledger };
+    const spentCount = this.ledger.budgets[key]?.spent ?? 1;
+    const intent = this.ledger.submit;
+    if (intent !== null) {
+      this.ledger = {
+        ...this.ledger,
+        submit: {
+          ...intent,
+          step,
+          attempts: spentCount,
+          nextAttemptAt: new Date(
+            this.now() + backoffDelay(spentCount, BUDGETS.push.baseMs, BUDGETS.push.capMs),
+          ).toISOString(),
+        },
+      };
+    }
+    if (spent.exhausted && this.ledger.budgets[key]?.escalated !== true) {
+      this.ledger = { ...this.ledger, budgets: markEscalated(this.ledger.budgets, key) };
+      this.deps.raiseNotice(key, noticeText(key), reason);
+    }
+    writeLedger(this.ledgerPath, this.ledger);
+    this.log(`제출 ${step} 단계 실패 (${spentCount}회 째): ${reason}`);
+    return false;
+  }
+
+  /** 의도만 지운다 — 다른 원장 조각은 그대로. */
+  private clearSubmitIntent(): void {
+    if (this.ledger.submit === null) return;
+    this.ledger = { ...this.ledger, submit: null };
+    writeLedger(this.ledgerPath, this.ledger);
   }
 
   private loadLedger(): CycleLedger {

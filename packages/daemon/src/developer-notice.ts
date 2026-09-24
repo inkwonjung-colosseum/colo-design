@@ -114,6 +114,12 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     tried: "같은 푸시를 다시 시도했지만 같은 거절이 돌아왔습니다",
     ask: "연결 코드의 쓰기 권한을 확인해 주세요",
   },
+  "submit:commit": {
+    title: "제출을 마저 저장하지 못했습니다",
+    what: "제출이 보관 단계에서 멈춰 있습니다",
+    tried: "자동 보관을 다시 시도했지만 같은 실패가 돌아왔습니다",
+    ask: "레포의 상태와 아래 자세히를 확인해 주세요",
+  },
   "submit:pr": {
     title: "풀 리퀘스트를 열지 못했습니다",
     what: "제출이 PR 만들기 단계에서 멈췄습니다",

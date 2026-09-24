@@ -373,6 +373,16 @@ export class RepoWorkspace {
     return this.publish.handoffShot(route);
   }
 
+  /**
+   * PR 본문의 도구 구간 (PLAN L6) — 감독자의 제출 단계가 조립하는 한 덩어리.
+   * 구간 밖의 개발자 글은 병합(mergeToolBlock) 쪽이 지킨다.
+   */
+  handoffToolBlock(
+    options: { shots?: HandoffShot[]; commentsFile?: string } = {},
+  ): Promise<string> {
+    return this.publish.handoffToolBlock(options);
+  }
+
   replyToReview(id: number, body: string): Promise<void> {
     return this.publish.replyToReview(id, body);
   }

@@ -17,11 +17,13 @@
  *   (merge · close · addComment · expireAuth)이 개발자의 손을 흉내 낸다.
  * makeScene() 은 다섯 도구를 얹어 observe 까지 한 번에 쓰는 몸통이다.
  */
+
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import type { HandoffShot } from "@colo-design/protocol";
 import { type CycleLedger, emptyLedger } from "../../dist/cycle-ledger.js";
 import { type ObserveDeps, observeCycle } from "../../dist/cycle-observe.js";
 import type { CycleSnapshot } from "../../dist/cycle-reconcile.js";
@@ -372,6 +374,10 @@ export class MemoryGitHub implements RestTransport {
     return rows.map((row) => ({ id: row.id, user: { login: row.login }, body: row.body }));
   }
 
+  /** PR 생성 실패를 푼다 — 예산 시험의 복구 축. */
+  healPullCreates(): void {
+    this.pullCreatesFail = false;
+  }
   private issueJson(issue: MemIssue) {
     return {
       number: issue.number,
@@ -681,6 +687,10 @@ export interface SupervisedScene extends Scene {
   deleteMergedBranches: boolean;
   /** 활성 프로젝트인가 — timer 틱의 fetch 판정이 읽는다(기본 true). */
   active: boolean;
+  /** L6 제출 — PR 제목의 프로젝트 이름 (기본 "하네스 프로젝트"). */
+  projectName: string;
+  /** L6 제출 — 감독자가 PR 본문에 얹을 캡처 (기본 없음). */
+  shots: HandoffShot[];
   /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
   ledgerPath: string;
 }
@@ -708,17 +718,19 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const dev = developer(remote);
   const git = (args: string[]) =>
     exec("git", args, { cwd: clone.path }).then((done) => done.stdout as string);
-  const briefs: string[] = [];
-  const notices: Array<{ key: string; text: string }> = [];
-  const transitions: Array<{ kind: string; at: string; count?: number }> = [];
-  const reviewBriefs: Array<{ pr: number; ids: number[] }> = [];
-  const chatEvents: Array<{ kind: string; [key: string]: unknown }> = [];
   const scene = {
     retargetedTo: null as string | null,
     refuseReviewSend: false,
     deleteMergedBranches: true,
     active: true,
+    projectName: "하네스 프로젝트",
+    shots: [] as HandoffShot[],
   };
+  const briefs: string[] = [];
+  const notices: Array<{ key: string; text: string }> = [];
+  const transitions: Array<{ kind: string; at: string; count?: number }> = [];
+  const reviewBriefs: Array<{ pr: number; ids: number[] }> = [];
+  const chatEvents: Array<{ kind: string; [key: string]: unknown }> = [];
   const ledgerPath = join(clone.path, "..", "cycle.json");
   let nowMs = Date.now();
   const spawn = () =>
@@ -728,6 +740,11 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       ledgerPath,
       busy: () => false,
       installStale: () => false,
+      deleteMergedBranches: () => scene.deleteMergedBranches,
+      // L6 제출 — 장면이 갈아끼우는 재료들.
+      projectName: () => scene.projectName,
+      commentsFile: () => join(dirname(ledgerPath), "comments.json"),
+      captureShots: () => Promise.resolve(scene.shots.slice()),
       github: () => new GitHubClient("harness-token", github),
       githubAuthExpired: () => false,
       slug: () => core.repoSlug(),
@@ -744,7 +761,6 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
         scene.retargetedTo = to;
       },
       cycleEvent: (event) => chatEvents.push(event as { kind: string }),
-      deleteMergedBranches: () => scene.deleteMergedBranches,
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       now: () => nowMs,
     });
@@ -783,6 +799,18 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     set active(v: boolean) {
       scene.active = v;
+    },
+    get projectName() {
+      return scene.projectName;
+    },
+    set projectName(v: string) {
+      scene.projectName = v;
+    },
+    get shots() {
+      return scene.shots;
+    },
+    set shots(v: HandoffShot[]) {
+      scene.shots = v;
     },
     setNow: (ms) => {
       nowMs = ms;

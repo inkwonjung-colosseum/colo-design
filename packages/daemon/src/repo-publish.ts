@@ -14,7 +14,12 @@ import {
   markTurn,
 } from "@colo-design/protocol";
 import { readComments } from "./comments.js";
-import { buildCommentsSection, buildFilesSection } from "./handoff-body.js";
+import {
+  buildCommentsSection,
+  buildFilesSection,
+  TOOL_BLOCK_END,
+  TOOL_BLOCK_START,
+} from "./handoff-body.js";
 import type { RepoCore } from "./repo-core.js";
 import {
   BRANCH_PREFIX,
@@ -526,6 +531,54 @@ export class PublishCycle {
     } catch (error) {
       return this.failGate("pr", error, options.onSessionTurn);
     }
+  }
+
+  /**
+   * PR 본문의 도구 구간 (PLAN L6) — 작성자 줄 · 바뀐 파일 · 수정 요청 · 화면
+   * 미리보기를 `<!-- colo-design:start/end -->` 로 감싼 한 덩어리로 조립한다.
+   * 감독자의 제출 단계(ensurePullRequest)가 mergeToolBlock 으로 구간만 갱신할
+   * 때 쓰고, 구간 밖의 개발자 글은 호출자가 지킨다. 빈 문자열은 "조립 불가" —
+   * 브랜치가 없을 때뿐이다.
+   */
+  async handoffToolBlock(
+    options: {
+      shots?: HandoffShot[];
+      /** D93: 코멘트 저장소 — `### 수정 요청` 절의 재료. */
+      commentsFile?: string;
+    } = {},
+  ): Promise<string> {
+    const branch = this.core.branch;
+    if (!branch) return "";
+    const sections: string[] = [];
+    // P1-3: 작성자 줄 — 요청은 봇 계정으로 열리므로 이름이 없으면 개발자가 누구
+    // 작업인지 모른다.
+    const author = this.core.authorName?.();
+    if (author) sections.push(`> 작성: ${author}`);
+    try {
+      const filesSection = buildFilesSection(
+        await this.core.git([
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--numstat",
+          `origin/${this.core.baseBranch}..${branch}`,
+        ]),
+      );
+      if (filesSection) sections.push(filesSection);
+    } catch {
+      // 제출 자체가 일을 싣는다 — 절 하나가 못 나오는 것은 조용하다.
+    }
+    try {
+      const since = await this.core.cycleAnchor();
+      if (options.commentsFile && since) {
+        const section = buildCommentsSection(readComments(options.commentsFile), since);
+        if (section) sections.push(section);
+      }
+    } catch {
+      // 같은 이유.
+    }
+    const withShots = await this.attachShots(sections.join("\n\n"), options.shots, branch);
+    return `${TOOL_BLOCK_START}\n${withShots.replace(/\n+$/, "")}\n${TOOL_BLOCK_END}`;
   }
 
   /**

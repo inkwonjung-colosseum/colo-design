@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-
+import { join } from "node:path";
 import type {
   Attention,
   ChatEvent,
@@ -21,6 +21,7 @@ import {
 } from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
+import { captureTargets, readComments } from "./comments.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import { cycleLedgerFile } from "./cycle-ledger.js";
@@ -271,6 +272,16 @@ export class ProjectFleet {
       // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true).
       deleteMergedBranches: () =>
         this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,
+      // L6 제출 — PR 본문의 재료와 이름.
+      projectName: () => this.deps.registry.get(slug)?.name ?? slug,
+      commentsFile: () => join(paths.root, "comments.json"),
+      captureShots: async () => {
+        const commentsFile = join(paths.root, "comments.json");
+        const anchor = await workspaces.repo.cycleAnchor().catch(() => null);
+        return await this.deps.previewDrivers.captureHandoffShots(
+          captureTargets(readComments(commentsFile), anchor),
+        );
+      },
       logger: this.deps.logger,
     });
     this.workspaces.set(slug, workspaces);
