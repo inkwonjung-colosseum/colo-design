@@ -937,13 +937,11 @@ export class PublishCycle {
         ),
       );
     } else {
-      // 슬라이스 5: AI 도 기획자도 고칠 수 없는 실패다 — 개발자 채널로.
-      // 브랜치는 이 사이클의 이름이고 detail 은 PAT 가 이미 걷힌 한국어 문장.
-      this.core.lane.outside(() =>
-        this.deps.escalate?.(
-          `[Colo Design] ${GATE_BRIEF[gate]} (${this.core.branch ?? "?"})\n${detail}\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.`,
-        ),
-      );
+      // 개발자 알림 (PLAN L11): AI 도 기획자도 고칠 수 없는 실패다 — 문제
+      // 키와 함께 DeveloperNotice 로 간다. detail 은 PAT 가 이미 걷힌 한국어
+      // 문장이고, 본문의 `자세히` 가 된다.
+      const key = pushAuth ? "push:auth" : "submit:pr";
+      this.core.lane.outside(() => this.deps.notice?.(key, detail));
     }
     // reason 이 없으면 저장 검토는 "멈췄습니다" 로만 끝났다.
     return this.core.setDiff({
@@ -972,8 +970,8 @@ export interface PublishDeps {
    */
   onCycleEvent?(event: ChatEvent, sessionId?: string): void;
   /**
-   * 슬라이스 5: 인증·권한 게이트 실패를 개발자 채널(Slack 웹훅)로 흘리는 문.
-   * 없으면 조용히 지나간다 — 에스컬레이션은 언제나 부가물이다.
+   * 개발자 알림 (PLAN L11) — 인증·권한 게이트 실패를 문제 키와 함께
+   * DeveloperNotice 로 흘린다. 없으면 조용히 지나간다 — 알림은 언제나 부가물.
    */
-  escalate?(text: string): void;
+  notice?(key: "push:auth" | "submit:pr", detail: string): void;
 }

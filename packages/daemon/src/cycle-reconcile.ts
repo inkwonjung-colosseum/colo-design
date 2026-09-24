@@ -97,6 +97,14 @@ export interface CycleDecision {
   action: CycleAction;
   notices: NoticeIntent[];
   attention: CycleAttention;
+  /**
+   * 판정이 세운 주의의 날 목록 (PLAN L8) — `attention` 은 그중 고른 하나이고,
+   * 이 목록은 "developer-notified 가 실제 배달을 못 했을 때 reconnect 로
+   * 내려앉는" 같은 후속 판정의 재료다.
+   */
+  attentions: CycleAttention[];
+  /** AI 가 고치는 중인가 — 주의 목록에 없는 셋째 문장의 재료. */
+  aiFixing: boolean;
   ledger: CycleLedger;
 }
 
@@ -162,6 +170,8 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     action,
     notices,
     attention: pickAttention(attentions, aiFixing),
+    attentions: [...attentions],
+    aiFixing,
     ledger: { ...ledger, budgets, pendingOp, push, reviews },
   });
   /** 무결성 문제(1~4행)를 턴 중에 만났다 — 예 행도 보지 않고 기다린다(L3). */

@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { homedir } from "node:os";
 import {
   type ClientMessage,
+  composeAttention,
   PROTOCOL_VERSION,
   type ProjectSummary,
   parseClientMessage,
@@ -25,10 +26,12 @@ import {
   migratePlaintextSecrets,
   migrateProjectPats,
 } from "./credentials.js";
+import { DeveloperNotice, describeProblem } from "./developer-notice.js";
 import { RequestRouter } from "./dispatch.js";
 import { buildStatus, resolveClaudeExecutable } from "./environment.js";
 import { Escalation } from "./escalation.js";
 import { ensureGitGuardHooks } from "./git-guard.js";
+import { parseRepoSlug } from "./github.js";
 import { GitHubBridge } from "./github-bridge.js";
 import { HandoffPreviews } from "./handoff-preview.js";
 import { createFileLogger, type DaemonLogger } from "./log.js";
@@ -46,7 +49,7 @@ import type {
 } from "./preview-driver.js";
 import { gateOutcomeStats, PreviewDrivers } from "./preview-drivers.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
-import { ProjectRegistry } from "./projects.js";
+import type { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { MAX_LINES_PER_SCREEN, TROUBLE_LEVELS } from "./screen-gate.js";
@@ -434,6 +437,11 @@ export class DaemonServer {
   private readonly queueDiskFor = (sessionId: string) => this.queueStore.for(sessionId);
   /** 슬라이스 5: 개발자 에스컬레이션 — 환경 실패를 웹훅으로 흘리는 문. */
   private readonly escalation: Escalation;
+  /** 개발자 알림 (PLAN L11) — GitHub 우선, Slack 보조의 배달기. */
+  private readonly developerNotice: DeveloperNotice;
+  /** 기계 주의의 since — GitHub 만료 · 에이전트 로그아웃이 처음 선 시각. */
+  private githubExpiredAt: string | null = null;
+  private agentLoggedOutAt: string | null = null;
   /** 턴 통계 (AI 작업 시간 측정) — 종류와 숫자만 남기는 하루 JSONL. */
   private readonly stats: TurnStats;
 
@@ -452,14 +460,45 @@ export class DaemonServer {
       // 데몬이 본 GitHub 401(또는 그 뒤의 회복) — 판정이 바뀔 때만 status 를
       // 다시 방송한다. 웹의 만료 카드는 이 방송 하나로 열리고 닫힌다.
       onAuthChange: () => {
-        // 슬라이스 5: 토큰 만료는 AI 가 못 고친다 — 개발자에게 곧장 알린다.
+        // 개발자 알림 (PLAN L11): 토큰 만료는 AI 가 못 고친다 — 기계 전체의
+        // 문제로 개발자에게 간다. 회복은 같은 키의 resolve 가 거둔다.
         if (this.github.authExpired) {
-          void this.escalation.notify(
-            "[Colo Design] GitHub 토큰이 만료된 것 같습니다 — 기획자 컴퓨터에서 토큰을 다시 넣어야 합니다.",
-          );
+          this.githubExpiredAt ??= new Date().toISOString();
+          void this.developerNotice.raise({
+            key: "github:auth",
+            slug: null,
+            ...describeProblem("github:auth"),
+          });
+        } else {
+          this.githubExpiredAt = null;
+          void this.developerNotice.resolve("github:auth", null);
         }
         void this.status().then((status) => this.broadcast({ type: "status", status }));
       },
+    });
+    // 개발자 알림 (PLAN L11) — GitHub 우선, Slack 보조. 프로젝트 알림의 상태는
+    // 그 프로젝트의 감독자 원장(cycle.json notices)에 적힌다.
+    this.developerNotice = new DeveloperNotice({
+      github: () => this.github.client(),
+      githubAuthExpired: () => this.github.authExpired,
+      repoSlug: (slug) => {
+        const url = this.registry.get(slug)?.repo.url;
+        return url ? parseRepoSlug(url) : null;
+      },
+      project: (slug) => {
+        const project = this.registry.get(slug);
+        if (!project) return null;
+        const workspaces = this.fleet?.workspaces.get(slug);
+        return {
+          name: project.name,
+          reviewers: project.reviewers ?? [],
+          openPr: workspaces?.repo.currentHandoff?.number ?? null,
+        };
+      },
+      authorName: () => this.machineSetting.get("authorName"),
+      slack: this.escalation,
+      store: (slug) => this.fleet?.workspaces.get(slug)?.supervisor ?? null,
+      logger: this.logger,
     });
     registerAgentDrivers(this.agentDrivers, {
       claudeExecutable: () => this.claudeExecutable,
@@ -760,8 +799,6 @@ export class DaemonServer {
     // A pre-projects installation becomes one project here, folder and all,
     // and its per-project PAT — if the old layout left one — becomes the
     // machine-wide token nobody has to re-enter.
-    this.registry = ProjectRegistry.load(process.env);
-    this.machineSetting.load();
     this.fleet = new ProjectFleet({
       registry: this.registry,
       manager: this.manager,
@@ -775,7 +812,7 @@ export class DaemonServer {
       authorName: () => this.machineSetting.get("authorName"),
       closingSignal: this.closing.signal,
       pat: () => this.github.token,
-      escalate: (text) => void this.escalation.notify(text),
+      developerNotice: this.developerNotice,
       gitHubClient: () => this.github.client(),
       githubAuthExpired: () => this.github.authExpired,
       queueDiskFor: this.queueDiskFor,
@@ -1499,6 +1536,10 @@ export class DaemonServer {
     // a session are read once per run, off this await — the next broadcast
     // carries whatever landed.
     this.plans.refreshModels();
+    // 기계 주의 (PLAN L8): GitHub 만료 · 에이전트 로그아웃의 since 를 세고,
+    // 환경 경고를 개발자 알림과 맞춘다. 주의는 우선순위 하나만 화면에 선다.
+    const attention = this.machineAttention(base);
+    this.syncMachineNotices(base.warnings ?? []);
     return {
       ...base,
       repoSettingsWarning: repoSettings,
@@ -1516,7 +1557,62 @@ export class DaemonServer {
       // 슬라이스 5: 설정 폼과 `개발자 부르기` 가 잠긴 채 보이던 이유 — 상태가
       // 이 한 단어를 채우지 않았다 (PLAN 단계 0). 비밀 자체는 못 나간다.
       escalationConfigured: this.escalation.configured,
+      // 개발자 알림이 실제로 갈 수 있는 경로 (PLAN L8) — 화면의 "알렸어요" 가
+      // 이 값을 읽는다. GitHub 우선, Slack 보조, 둘 다 없으면 none.
+      noticeRoute: this.noticeRoute(),
+      ...(attention ? { attention } : {}),
     };
+  }
+
+  /** 개발자 알림이 실제로 갈 수 있는 경로 — GitHub 우선, Slack 보조. */
+  private noticeRoute(): "github" | "slack" | "none" {
+    if (this.github.client() !== null && !this.github.authExpired) return "github";
+    return this.escalation.configured ? "slack" : "none";
+  }
+
+  /**
+   * 기계 전체의 주의 (PLAN L8) — GitHub 만료와 에이전트 로그아웃은 사용자의
+   * 손이 필요한 유일한 문제다. since 는 처음 선 시각을 기억한다.
+   */
+  private machineAttention(base: { claudeExecutable: string | null; loggedIn: boolean }) {
+    const loggedOut = base.claudeExecutable !== null && !base.loggedIn;
+    if (loggedOut) this.agentLoggedOutAt ??= new Date().toISOString();
+    else this.agentLoggedOutAt = null;
+    return composeAttention({
+      reconnect: this.githubExpiredAt
+        ? { what: "github" as const, since: this.githubExpiredAt }
+        : this.agentLoggedOutAt
+          ? { what: "agent-login" as const, since: this.agentLoggedOutAt }
+          : null,
+      aiFixingSince: null,
+      notices: this.developerNotice.machineNotices(),
+    });
+  }
+
+  /**
+   * 환경 경고 → 개발자 알림 (PLAN L11) — status 가 만드는 warnings 에
+   * ANTHROPIC_API_KEY · CLI 없음 · git 없음 · 패키지 토큰 거절이 있으면
+   * `env:<종류>` 로 한 번 올리고(기계 전체라 Slack), 사라지면 거둔다.
+   */
+  private syncMachineNotices(warnings: string[]): void {
+    const keys = new Set<string>();
+    for (const warning of warnings) {
+      const key = warning.startsWith("데몬 환경에 ANTHROPIC_API_KEY")
+        ? "env:anthropic-key"
+        : warning.startsWith("Claude Code CLI 를 찾지 못했습니다")
+          ? "env:claude-cli"
+          : warning.startsWith("git 이 없어")
+            ? "env:git"
+            : warning.startsWith("GitHub 패키지 저장소가")
+              ? "env:packages-token"
+              : null;
+      if (key === null) continue;
+      keys.add(key);
+      void this.developerNotice.raise({ key, slug: null, ...describeProblem(key, warning) });
+    }
+    for (const key of Object.keys(this.developerNotice.machineNotices())) {
+      if (key.startsWith("env:") && !keys.has(key)) void this.developerNotice.resolve(key, null);
+    }
   }
 
   private async onMessage(ws: WebSocket, raw: string): Promise<void> {

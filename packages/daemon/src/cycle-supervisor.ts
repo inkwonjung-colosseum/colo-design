@@ -14,7 +14,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { markTurn } from "@colo-design/protocol";
+import { type AttentionParts, markTurn } from "@colo-design/protocol";
 import {
   type CycleLedger,
   type CyclePendingOp,
@@ -91,10 +91,13 @@ export interface SupervisorDeps {
    * send 는 lane.outside 안에서만 부른다.
    */
   openThread: (title: string) => { send(text: string): void } | null;
-  /** 개발자 알림 — 지금은 escalation 한 줄; 단계 4 가 GitHub 경로로 바꾼다. */
-  raiseNotice: (key: string, text: string) => void;
-  /** 알림 해소 — 지금은 원장에서 지우는 것뿐, 해결 알림은 보내지 않는다. */
+  /** 개발자 알림 — fleet 의 DeveloperNotice 로 간다. `reason` 은 조정 표가
+   *  붙인 사유로, 알림 본문의 `자세히` 가 된다. */
+  raiseNotice: (key: string, text: string, reason?: string) => void;
+  /** 알림 해소 — DeveloperNotice.resolve 로 간다(원격 갱신 + 원장 정리). */
   resolveNotice?: (key: string) => void;
+  /** 주의 재료가 바뀌었을 때 — fleet 이 상태를 다시 방송하는 신호. */
+  onChange?: () => void;
   logger: DaemonLogger;
   now?: () => number;
 }
@@ -108,7 +111,10 @@ export class CycleSupervisor {
   private running: Promise<void> | null = null;
   private againReason: TickReason | null = null;
   private lastFetchAt = 0;
-  private lastAttention: CycleAttention | null = null;
+  private lastAttentions: CycleAttention[] = [];
+  /** reconnect · ai-fixing 이 처음 선 시각 — 주의의 since. */
+  private reconnectSince: string | null = null;
+  private aiFixingSince: string | null = null;
   private reviewLedgerFolded = false;
 
   constructor(deps: SupervisorDeps) {
@@ -122,9 +128,34 @@ export class CycleSupervisor {
     deps.core.onToolConflict = (op) => this.recordToolOp(op);
   }
 
-  /** 마지막 판정의 주의 — 화면에 싣는 일은 단계 4. */
-  get attention(): CycleAttention | null {
-    return this.lastAttention;
+  /**
+   * 주의의 재료 (PLAN L8) — 마지막 판정의 날 주의 목록과 서 있는 알림을
+   * composeAttention 에 건네는 모양으로 돌려준다. developer-notified 는
+   * 실제로 나간 알림(원장 notices)에서만 선다 — 조정 표의 의도가 아니라
+   * 배달된 사실이 재료다(O9).
+   */
+  attentionParts(): AttentionParts {
+    return {
+      reconnect:
+        this.reconnectSince === null ? null : { what: "github", since: this.reconnectSince },
+      aiFixingSince: this.aiFixingSince,
+      notices: this.ledger.notices,
+    };
+  }
+
+  /** 원장의 notices — DeveloperNotice 가 읽고 쓰는 접근자. */
+  notices(): CycleLedger["notices"] {
+    return this.ledger.notices;
+  }
+
+  /** 원장의 notices 한 항목을 쓰거나(null) 지운다 — DeveloperNotice 의 쓰기 문. */
+  setNotice(key: string, entry: CycleLedger["notices"][string] | null): void {
+    const notices = { ...this.ledger.notices };
+    if (entry === null) delete notices[key];
+    else notices[key] = entry;
+    this.ledger = { ...this.ledger, notices };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.deps.onChange?.();
   }
 
   /** 원장의 pendingOp — 충돌 중 자동 보관 건너뛰기가 읽는다. */
@@ -210,9 +241,20 @@ export class CycleSupervisor {
       for (let round = 0; round < MAX_TICK_ROUNDS; round++) {
         const decision = nextCycleAction(snapshot, this.ledger);
         this.ledger = decision.ledger;
-        this.lastAttention = decision.attention;
+        // 주의의 since — 처음 선 시각이 서고, 목록에서 빠지면 지운다.
+        const nowIso = new Date(this.now()).toISOString();
+        const wasAiFixing = this.aiFixingSince !== null;
+        this.reconnectSince = decision.attentions.includes("reconnect")
+          ? (this.reconnectSince ?? nowIso)
+          : null;
+        this.aiFixingSince = decision.aiFixing ? (this.aiFixingSince ?? nowIso) : null;
+        const changed =
+          JSON.stringify(decision.attentions) !== JSON.stringify(this.lastAttentions) ||
+          decision.aiFixing !== wasAiFixing;
+        this.lastAttentions = decision.attentions;
         writeLedger(this.ledgerPath, this.ledger);
         this.applyNotices(decision);
+        if (changed) this.deps.onChange?.();
         if (decision.action.kind === "none") return;
         const acted = await this.runAction(decision.action, snapshot);
         if (!acted) return;
@@ -249,35 +291,29 @@ export class CycleSupervisor {
     };
   }
 
-  /** 알림 의도 처리 — raise 는 문장 표로 보내고 원장에 적고, resolve 는
-   * 원장에서 지운다(해결 알림은 아직 없다). */
+  /**
+   * 알림 의도 처리 (PLAN L11) — 올리고 거두는 실제 일은 DeveloperNotice 가
+   * 한다: raise 는 그쪽으로 넘기고(원장 기록은 배달이 성공한 뒤 그쪽이 쓴다),
+   * resolve 는 원격 갱신과 원장 정리를 함께 맡긴다. resolveNotice 가 없는
+   * 실행(시험)은 원장에서 지우는 것으로 끝낸다.
+   */
   private applyNotices(decision: CycleDecision): void {
     const now = this.now();
     for (const notice of decision.notices) {
       if (notice.op === "raise") {
         const existing = this.ledger.notices[notice.key];
         if (existing && now - Date.parse(existing.raisedAt) < NOTICE_REPEAT_MS) continue;
-        this.deps.raiseNotice(notice.key, noticeText(notice.key));
-        this.ledger = {
-          ...this.ledger,
-          notices: {
-            ...this.ledger.notices,
-            [notice.key]: {
-              via: "slack",
-              ref: noticePrNumber(notice.key) ?? undefined,
-              raisedAt: new Date(now).toISOString(),
-              count: (existing?.count ?? 0) + 1,
-            },
-          },
-        };
-        writeLedger(this.ledgerPath, this.ledger);
+        this.deps.raiseNotice(notice.key, noticeText(notice.key), notice.reason);
       } else {
         if (!this.ledger.notices[notice.key]) continue;
-        const notices = { ...this.ledger.notices };
-        delete notices[notice.key];
-        this.ledger = { ...this.ledger, notices };
-        writeLedger(this.ledgerPath, this.ledger);
-        this.deps.resolveNotice?.(notice.key);
+        if (this.deps.resolveNotice) {
+          this.deps.resolveNotice(notice.key);
+        } else {
+          const notices = { ...this.ledger.notices };
+          delete notices[notice.key];
+          this.ledger = { ...this.ledger, notices };
+          writeLedger(this.ledgerPath, this.ledger);
+        }
       }
     }
   }
@@ -413,13 +449,19 @@ export class CycleSupervisor {
       this.ledger = recordPushResult(this.ledger, { ok: true }, this.now());
       writeLedger(this.ledgerPath, this.ledger);
       // 성공은 판정을 다시 돌지 않고도 밀림 알림을 거둔다 — push 가 null 이
-      // 되면 조정이 resolve 를 내지 않으므로 여기서 지운다.
+      // 되면 조정이 resolve 를 내지 않으므로 여기서 푼다. DeveloperNotice 가
+      // 있으면 원격 갱신(코멘트 해결 표식 · 이슈 닫기)까지 간다.
       if (this.ledger.notices["push:behind"] || this.ledger.notices["push:auth"]) {
-        const notices = { ...this.ledger.notices };
-        delete notices["push:behind"];
-        delete notices["push:auth"];
-        this.ledger = { ...this.ledger, notices };
-        writeLedger(this.ledgerPath, this.ledger);
+        if (this.deps.resolveNotice) {
+          if (this.ledger.notices["push:behind"]) this.deps.resolveNotice("push:behind");
+          if (this.ledger.notices["push:auth"]) this.deps.resolveNotice("push:auth");
+        } else {
+          const notices = { ...this.ledger.notices };
+          delete notices["push:behind"];
+          delete notices["push:auth"];
+          this.ledger = { ...this.ledger, notices };
+          writeLedger(this.ledgerPath, this.ledger);
+        }
       }
       return true;
     } catch (error) {
@@ -467,10 +509,4 @@ function classifyPushError(error: unknown): "auth" | "network" | "rejected" | "o
     return "rejected";
   }
   return "other";
-}
-
-/** review:<pr>:rounds 같은 알림 키에서 PR 번호를 꺼낸다 — 없으면 null. */
-function noticePrNumber(key: string): number | null {
-  const m = key.match(/^review:(\d+)/);
-  return m ? Number(m[1]) : null;
 }

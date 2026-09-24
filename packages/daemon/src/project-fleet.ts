@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 
 import type {
+  Attention,
   ChatEvent,
   DiffStatus,
   HandoffStatusReport,
@@ -11,13 +12,20 @@ import type {
   ServerMessage,
   SessionCommand,
 } from "@colo-design/protocol";
-import { errorKindOf, guidanceFor, markTurn, reviewToTurn } from "@colo-design/protocol";
+import {
+  composeAttention,
+  errorKindOf,
+  guidanceFor,
+  markTurn,
+  reviewToTurn,
+} from "@colo-design/protocol";
 import { probeCommands } from "./agent/drivers/claude/session.js";
 import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import { cycleLedgerFile } from "./cycle-ledger.js";
 import { CycleSupervisor } from "./cycle-supervisor.js";
+import { type DeveloperNotice, describeProblem } from "./developer-notice.js";
 import type { GitHubClient } from "./github.js";
 import type { DaemonLogger } from "./log.js";
 import type { MachineTurn } from "./machine-provider.js";
@@ -61,6 +69,12 @@ export interface ProjectWorkspaces {
    * repo whose 저장·넘기기 is still moving ("not a passive status read").
    */
   diffStage: DiffStatus["stage"] | null;
+  /** 마지막 diff 상태 — 주의의 재료(failGate 의 reconnect · developer-notified). */
+  lastDiff: DiffStatus | null;
+  /** 마지막 diff 상태가 선 시각(ISO) — 주의의 since. */
+  diffAt: string | null;
+  /** 준비 복구가 AI 에게 넘어가 있는 동안의 시각(ISO) — 주의의 ai-fixing. */
+  bringUpFixing: string | null;
   /** 사이클 감독자 (PLAN L2) — 이 프로젝트의 사이클을 스스로 제자리로. */
   supervisor: CycleSupervisor;
 }
@@ -83,8 +97,8 @@ export interface FleetDeps {
   authorName(): string | null;
   closingSignal: AbortSignal;
   pat(): string | null;
-  /** 슬라이스 5: 환경 실패를 개발자 채널(Slack 웹훅)로 흘리는 문. */
-  escalate(text: string): void;
+  /** 개발자 알림 (PLAN L11) — GitHub 우선, Slack 보조의 배달기. */
+  developerNotice: DeveloperNotice;
   gitHubClient(): GitHubClient | null;
   /** GitHubBridge.authExpired — 토큰 만료는 관찰의 reconnect 판정이 읽는다. */
   githubAuthExpired(): boolean;
@@ -176,6 +190,9 @@ export class ProjectFleet {
       shownAt: 0,
       lastQuietPull: 0,
       diffStage: null,
+      lastDiff: null,
+      diffAt: null,
+      bringUpFixing: null,
       repo: new RepoWorkspace({
         root: paths.repoRoot,
         url: repo.url,
@@ -206,19 +223,30 @@ export class ProjectFleet {
         },
         onDiffStatus: (status) => {
           workspaces.diffStage = status.stage;
+          // 주의의 재료 (PLAN L8): failGate 의 실패 단계·이유와 선 시각.
+          workspaces.lastDiff = status;
+          workspaces.diffAt = new Date().toISOString();
           this.broadcastFor(slug, { type: "diff.status", status });
+          // diff 가 바뀌면 주의도 바뀐다 — 스냅샷을 다시 방송한다.
+          workspaces.repo.repoCore().emit();
         },
         // hero-synthesis D1: 저장 · 넘김 · 반영 · 코멘트 도착 — 세션 채널 +
         // 테이프. The cycle names its session when the call carried one.
         onCycleEvent: (event, sessionId) => this.emitCycleEvent(workspaces, event, sessionId),
-        // 슬라이스 5: 환경 실패(토큰 · 권한 · 첫 넘기기)는 개발자 채널로.
-        escalate: (text) => this.deps.escalate(text),
+        // 개발자 알림 (PLAN L11): failGate 의 인증·권한 실패가 여기로 온다.
+        notice: (key, detail) =>
+          void this.deps.developerNotice.raise({
+            key,
+            slug,
+            ...describeProblem(key, detail),
+          }),
+        // 주의 (PLAN L8): 감독자 · 게이트 · 준비 복구의 재료를 한 곳에서 모은다.
+        attention: () => this.attentionFor(workspaces),
       }),
       supervisor: null as unknown as CycleSupervisor,
     };
     // 감독자 (PLAN L2 · 단계 2c) — 워크스페이스와 같은 뿌리(core)를 공유하고,
     // 도구가 시작한 조작의 충돌은 core.onToolConflict 로 여기 도착한다.
-    const projectName = this.deps.registry.get(slug)?.name ?? slug;
     workspaces.supervisor = new CycleSupervisor({
       core: workspaces.repo.repoCore(),
       workspace: workspaces.repo,
@@ -230,7 +258,14 @@ export class ProjectFleet {
       slug: () => workspaces.repo.repoCore().repoSlug(),
       isActive: () => slug === this.deps.registry.activeSlug(),
       openThread: (title) => this.autoFixThreadFor(workspaces, title),
-      raiseNotice: (_key, text) => this.deps.escalate(`[Colo Design] ${projectName}: ${text}`),
+      raiseNotice: (key, text, reason) =>
+        void this.deps.developerNotice.raise({
+          key,
+          slug,
+          ...describeProblem(key, reason ?? text),
+        }),
+      resolveNotice: (key) => void this.deps.developerNotice.resolve(key, slug),
+      onChange: () => workspaces.repo.repoCore().emit(),
       logger: this.deps.logger,
     });
     this.workspaces.set(slug, workspaces);
@@ -368,6 +403,7 @@ export class ProjectFleet {
         : null;
       const threads = cwd ? this.deps.manager.cachedThreads(cwd) : null;
       const lastEvent = this.lastHandoffEvent.get(project.slug);
+      const attention = workspaces ? this.attentionFor(workspaces) : null;
       return {
         slug: project.slug,
         name: project.name,
@@ -398,6 +434,7 @@ export class ProjectFleet {
         // 답을 기다리는 일의 수를 안다 — 세션이 살아 있는 한 값이 있다.
         pendingCount: (threads ?? []).filter((thread) => thread.state === "awaiting").length,
         ...(lastEvent ? { lastEventKind: lastEvent.kind, lastEventAt: lastEvent.at } : {}),
+        ...(attention ? { attention } : {}),
       };
     });
   }
@@ -636,17 +673,33 @@ export class ProjectFleet {
     const { episode, decision } = nextBringUpBrief(this.bringUpEpisodes.get(slug), status);
     if (episode) this.bringUpEpisodes.set(slug, episode);
     else this.bringUpEpisodes.delete(slug);
+    // 주의의 재료 (PLAN L8): 준비가 ready 에 닿으면 ai-fixing 을 거두고
+    // 서 있던 bring-up 알림을 푼다 — 실패 상태가 사라진 순간이다.
+    if (status.phase === "ready") {
+      if (workspaces.bringUpFixing !== null) {
+        workspaces.bringUpFixing = null;
+        workspaces.repo.repoCore().emit();
+      }
+      for (const key of Object.keys(workspaces.supervisor.notices())) {
+        if (key.startsWith("bring-up:")) this.deps.developerNotice.resolve(key, slug);
+      }
+    }
     if (decision.action === "none") return;
     const guidance = guidanceFor(errorKindOf(status), status.detail ?? null);
     if (decision.action === "escalate") {
+      const kind = errorKindOf(status) ?? "unknown";
       // 사람의 화면에는 여전히 오류를 올리지 않는다(대화에 AI 의 설명이
-      // 있다) — 개발자 채널에만 한 번 알린다.
-      const projectName = this.deps.registry.get(slug)?.name ?? slug;
-      this.deps.escalate(
-        `[Colo Design] ${projectName} — 화면 준비가 멈췄고 AI가 고치지 못했습니다 (${guidance.title})` +
-          (status.detail ? `\n${status.detail}` : "") +
-          "\n기획자 화면에는 안내만 남습니다 — 개발자 확인이 필요합니다.",
-      );
+      // 있다) — 개발자 알림(PLAN L11)으로 한 번 간다. 키는 실패 종류를
+      // 담아 같은 문제의 반복이 같은 알림을 갱신하게 한다.
+      void this.deps.developerNotice.raise({
+        key: `bring-up:${kind}`,
+        slug,
+        ...describeProblem(`bring-up:${kind}`, status.detail ?? undefined),
+      });
+      if (workspaces.bringUpFixing !== null) {
+        workspaces.bringUpFixing = null;
+        workspaces.repo.repoCore().emit();
+      }
       return;
     }
     const agent = guidance.agent;
@@ -660,10 +713,34 @@ export class ProjectFleet {
         : agent.brief;
       thread.send(markTurn({ kind: "gate", step: agent.step }, brief));
       this.recoveryResync.add(slug);
+      // 주의의 재료 (PLAN L8): 준비 복구가 AI 에게 넘어가 있는 동안이다.
+      if (workspaces.bringUpFixing === null) {
+        workspaces.bringUpFixing = new Date().toISOString();
+        workspaces.repo.repoCore().emit();
+      }
     } catch {
       // 대화를 못 열었거나 죽은 질의 — 실패 상태는 이미 방송됐다. 다음
       // 시도(다시 시도 · 재동기화)의 실패가 다시 연다.
     }
+  }
+
+  /**
+   * 이 프로젝트의 주의 (PLAN L8) — 감독자의 판정(충돌 · 밀린 푸시 · 리뷰
+   * 라운드 초과), failGate 의 실패(diff), 준비 복구의 진행을 한 재료로
+   * 모아 composeAttention 에 건넨다. 재료가 없으면 null 이다.
+   */
+  private attentionFor(workspaces: ProjectWorkspaces): Attention | null {
+    const parts = workspaces.supervisor.attentionParts();
+    const failed = workspaces.lastDiff?.stage === "failed" ? workspaces.lastDiff : null;
+    return composeAttention({
+      reconnect:
+        parts.reconnect ??
+        (failed?.reason === "push-auth"
+          ? { what: "github" as const, since: workspaces.diffAt ?? new Date().toISOString() }
+          : null),
+      aiFixingSince: parts.aiFixingSince ?? workspaces.bringUpFixing,
+      notices: parts.notices,
+    });
   }
 
   /**

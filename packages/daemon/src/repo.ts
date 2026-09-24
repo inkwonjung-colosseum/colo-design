@@ -67,16 +67,15 @@ export class RepoWorkspace {
   private publish: PublishCycle;
   /** 사이클 사건의 손잡이 — 레포가 바뀌면 사이클의 기억도 새 것으로 세운다. */
   private readonly onCycleEvent: RepoWorkspaceOptions["onCycleEvent"];
-  private readonly escalate: RepoWorkspaceOptions["escalate"];
+  private readonly notice: RepoWorkspaceOptions["notice"];
 
   constructor(options: RepoWorkspaceOptions) {
     this.onCycleEvent = options.onCycleEvent;
-    this.escalate = options.escalate;
+    this.notice = options.notice;
     this.core = new RepoCore(options);
     this.shelfStore = new ShelfStore(this.core);
     this.summarizer = new RepoSummarizer(this.core, options.machineTurn ?? NO_MACHINE_TURN);
     this.bringup = new BringUp(this.core);
-    this.onCycleEvent = options.onCycleEvent;
     this.publish = this.makePublish();
     this.root = options.root;
     this.baseBranch = options.baseBranch ?? "main";
@@ -87,7 +86,7 @@ export class RepoWorkspace {
     return new PublishCycle(this.core, {
       machineMemo: (files) => this.summarizer.machineMemo(files),
       onCycleEvent: this.onCycleEvent,
-      escalate: this.escalate,
+      notice: this.notice,
     });
   }
 

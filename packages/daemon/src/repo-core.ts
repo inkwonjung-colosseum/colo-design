@@ -6,6 +6,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  type Attention,
   type ChangedFileLite,
   type ChatEvent,
   type DiffFile,
@@ -301,10 +302,15 @@ export interface RepoWorkspaceOptions {
    */
   onCycleEvent?: (event: ChatEvent, sessionId?: string) => void;
   /**
-   * 슬라이스 5: AI 가 고칠 수 없는 환경 실패를 개발자 채널로 흘리는 문 —
-   * 저장·넘기기의 인증·권한 게이트가 여기를 부른다.
+   * 개발자 알림 (PLAN L11) — 저장·넘기기의 인증·권한 게이트가 문제 키와
+   * 함께 여기를 부른다. fleet 의 DeveloperNotice 로 이어진다.
    */
-  escalate?: (text: string) => void;
+  notice?: (key: "push:auth" | "submit:pr", detail: string) => void;
+  /**
+   * 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. fleet 이
+   * 감독자 · 게이트 · 준비 복구의 상태를 모아 넣는다. 없으면 주의는 없다.
+   */
+  attention?: () => Attention | null;
 }
 
 export class RepoCore {
@@ -431,6 +437,8 @@ export class RepoCore {
    */
   onToolConflict: ((op: CyclePendingOp) => void) | null = null;
 
+  /** 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. */
+  readonly attention: (() => Attention | null) | null;
   /** 넘긴 요청에 적을 작성자 이름 — 커밋 fallback 이름과 PR 본문이 읽는다(P1-3). */
   readonly authorName: (() => string | null) | null;
 
@@ -477,6 +485,8 @@ export class RepoCore {
      * NEXT project just started (or outlive the daemon on another port).
      */
     active?: boolean;
+    /** 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. */
+    attention?: () => Attention | null;
   }) {
     this.root = options.root;
     this.url = options.url;
@@ -493,6 +503,7 @@ export class RepoCore {
     this.gitHubClient = options.gitHubClient ?? null;
     this.authorName = options.authorName ?? null;
     this.reviewers = options.reviewers ?? null;
+    this.attention = options.attention ?? null;
     this.active = options.active ?? true;
   }
 
@@ -1419,6 +1430,7 @@ export class RepoCore {
       branch: this.branch,
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
+      attention: this.attention?.() ?? null,
       pendingChanges: this.pendingChanges,
       errorKind: this.errorKind,
       commands: this.config
