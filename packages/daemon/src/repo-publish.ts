@@ -41,6 +41,20 @@ const SHOT_MEDIA_TYPES: Record<string, string> = {
 };
 
 /**
+ * 사이클 브랜치 이름 — 로컬 날짜로 짓는다(PLAN L4 · 단계 0). UTC 였을 때 아침
+ * 9시 전의 이름이 어제 날짜로 남았다: 하루의 경계는 기계의 시간대가 아니라
+ * 사용자의 것이다. 순수 함수 — 시험이 자정 경계를 직접 만든다.
+ */
+export function cycleBranchName(date: Date, n: number): string {
+  const yyyymmdd = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("");
+  return `${BRANCH_PREFIX}/${yyyymmdd}-${n}`;
+}
+
+/**
  * A route becomes part of a committed filename: separators and `..` would
  * let it walk out of `.colo-design/shots/` (or simply fail to match on
  * read-back). Korean stays — the route keeps its own words.
@@ -268,29 +282,39 @@ export class PublishCycle {
    *
    * `<YYYYMMDD>-<n>` rather than a name derived from the work: the planner
    * never reads it, and a title mined from the diff would be one more place a
-   * rename could break. `n` walks up until the remote has no such branch, so
-   * two machines on one project cannot collide.
+   * rename could break. `n` walks up until neither the remote NOR the local
+   * clone has such a branch, so two machines on one project cannot collide —
+   * and a name the local clone still holds (원격은 지웠는데 로컬에 남은) is
+   * not handed to `checkout -b`, which would refuse it (PLAN L4).
    */
   async ensureCycleBranch(): Promise<string> {
     if (this.core.branch) {
       return this.core.branch;
     }
 
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const prefix = `${BRANCH_PREFIX}/${today}`;
-    let name = `${prefix}-1`;
+    const today = new Date();
+    let name = cycleBranchName(today, 1);
     for (let n = 1; n <= 99; n += 1) {
-      name = `${prefix}-${n}`;
+      name = cycleBranchName(today, n);
       // An empty ls-remote line means nobody has taken it. A remote that
       // cannot be reached is not a reason to refuse the save: the push right
       // after this will report the real problem, with git's own words.
-      const taken = await this.core
+      const takenRemote = await this.core
         .git(["ls-remote", "--heads", this.core.url ?? "origin", name])
         .catch(() => "");
-      if (taken.trim() === "") break;
+      if (takenRemote.trim() !== "") continue;
+      // 로컬 브랜치에도 없어야 한다(PLAN L4 · 단계 0): 로컬만 남은 이름을
+      // 고르면 아래 `checkout -b` 가 그 이름을 거절한다.
+      const takenLocal = await this.core
+        .git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])
+        .catch(() => "");
+      if (takenLocal.trim() === "") break;
     }
 
-    await this.core.git(["checkout", "-B", name]);
+    // `-b` 이지 `-B` 가 아니다(PLAN L4 · 단계 0): 위 고르기가 로컬 · 원격
+    // 어느 쪽에도 없음을 확인한 이름만 여기 온다 — 실수로 같은 이름의 로컬
+    // 브랜치를 덮어쓰는 문은 아예 닫는다.
+    await this.core.git(["checkout", "-b", name]);
     // D84 + 커미티 2026-09-15 판정 2: 끝난 사이클의 넘김(반영됨·반려)은 그
     // 사이클의 것이다. 들고 오면 다음 넘기기가 이미 끝난 요청을
     // `updatePullRequest` 로 덮어쓰고(닫힌 요청이면 닫힌 채 제목·본문만 바뀐다),
