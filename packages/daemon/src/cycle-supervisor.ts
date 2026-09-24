@@ -59,7 +59,8 @@ const NOTICE_TEXT: Record<string, string> = {
   "push:behind": "저장한 작업을 1시간 넘게 올리지 못하고 있습니다",
   "push:auth": "연결 코드(GitHub 로그인)가 만료돼 저장한 작업을 올리지 못하고 있습니다",
   "conflict:stuck": "충돌 정리가 두 번 안내해도 끝나지 않았습니다",
-  "base-missing": "베이스 브랜치가 원격에 없습니다 — 반영된 것으로 보고 새 사이클을 엽니다",
+  "base-missing":
+    "베이스 브랜치가 원격에 없고 GitHub 의 기본 가지도 알 수 없습니다 — 개발자 확인이 필요합니다",
 };
 
 /** 알림 키의 문장 — 표에 없는 review:<pr>:rounds 는 이 한 줄로 읽힌다. */
