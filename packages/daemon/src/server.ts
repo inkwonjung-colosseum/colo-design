@@ -403,6 +403,9 @@ export class DaemonServer {
         projectRoot: active.paths.root,
         previewCommand: active.repo.repoConfig()?.preview.command ?? null,
         handoff: active.repo.currentHandoff,
+        // 워크트리를 움직이는 git 이 활성 프로젝트의 차선에 서는 길 (PLAN L1)
+        // — 같은 .git 을 쓰는 다른 손과 한 줄로.
+        inLane: (job) => active.repo.laneRun("preview", job),
       };
     },
     (message) => this.logger.info(message),

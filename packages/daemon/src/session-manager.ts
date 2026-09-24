@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import type { ChatEvent, SessionSummary, ThreadSummary } from "@colo-design/protocol";
 import type { AgentDriver, ImportableSession } from "./agent/driver.js";
 import type { DriverRegistry } from "./agent/registry.js";
@@ -10,6 +11,15 @@ function pause(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
   return promise;
+}
+
+/** cwd 의 실제 경로 — 심볼릭 링크를 펴고, 없는 경로는 그대로 둔다. */
+function realPathOf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 export class SessionManager {
@@ -294,24 +304,42 @@ export class SessionManager {
    */
   anyBusy(): boolean {
     for (const session of this.live.values()) {
-      // 유령 대기는 바쁨이 아니다 (E2E 2026-09-20) — 카드 없는 waiting_* 는
-      // 정산 어긋남의 흔적일 뿐, 종료 가드를 영원히 막아서는 안 된다.
-      if (
-        (session.state === "waiting_permission" || session.state === "waiting_question") &&
-        session.pendingCount === 0
-      ) {
-        continue;
-      }
-      if (
-        session.state === "running" ||
-        session.state === "starting" ||
-        session.state === "waiting_permission" ||
-        session.state === "waiting_question"
-      ) {
-        return true;
-      }
+      if (this.busyState(session)) return true;
     }
     return false;
+  }
+
+  /**
+   * anyBusy 의 한 클론 판 (PLAN L1): 같은 판정을 cwd(realpath 비교)가 같은
+   * 세션에만 적용한다. 폴러의 조기 반환 하나가 모든 프로젝트의 병합 감지를
+   * 멈추던 것을 프로젝트별로 좁히는 잣대다. 심볼릭 링크(/var 따위) 로 같은
+   * 폴더가 다르게 적히는 것까지 같게 본다.
+   */
+  busyIn(cwd: string): boolean {
+    const real = realPathOf(cwd);
+    for (const session of this.live.values()) {
+      if (realPathOf(session.cwd) !== real) continue;
+      if (this.busyState(session)) return true;
+    }
+    return false;
+  }
+
+  /** anyBusy · busyIn 이 공유하는 한 세션의 바쁨 판정. */
+  private busyState(session: Session): boolean {
+    // 유령 대기는 바쁨이 아니다 (E2E 2026-09-20) — 카드 없는 waiting_* 는
+    // 정산 어긋남의 흔적일 뿐, 가드를 영원히 막아서는 안 된다.
+    if (
+      (session.state === "waiting_permission" || session.state === "waiting_question") &&
+      session.pendingCount === 0
+    ) {
+      return false;
+    }
+    return (
+      session.state === "running" ||
+      session.state === "starting" ||
+      session.state === "waiting_permission" ||
+      session.state === "waiting_question"
+    );
   }
 
   /** A turn is running in this clone right now — the sidebar's 작업 중 (PLAN D15). */

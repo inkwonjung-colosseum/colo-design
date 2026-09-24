@@ -395,18 +395,20 @@ export class ProjectFleet {
    *
    * 슬라이스 4 (2026-09-19) 가 판정 1·2 의 반쪽을 고쳤다: 끝난 사이클의
    * 착지(fetch·checkout·reset·체크포인트 삭제)는 조건이 안전하면 타이머가
-   * 스스로 내려앉힌다 — 변경 없음·최신화 유휴일 때뿐이고(anyBusy 는 폴링의
-   * 머리가 지킨다), 하나라도 걸리면 여전히 사람이 있는 자리(상태 확인 ·
-   * 활성화 · 다음 저장의 머리)로 미룬다. 알림은 여전히 사람을 부르지만,
+   * 스스로 내려앉힌다 — 변경 없음·그 프로젝트가 바쁘지 않을 때뿐이고(busyIn
+   * 이 루프의 머리가 지킨다), 하나라도 걸리면 여전히 사람이 있는 자리(상태
+   * 확인 · 활성화 · 다음 저장의 머리)로 미룬다. 알림은 여전히 사람을 부르지만,
    * 돌아왔을 때 정리가 이미 끝나 있어야 비개발자의 한 바퀴가 짧다.
    *
    * 그래도 도는 턴·저장·넘기기·최신화 중에는 읽지 않는다: GitHub 한 번 더
-   * 부르는 값보다 그 손길들이 조용한 편이 낫다. 실패는 조용히 넘어간다 —
-   * 다음 틱이 다시 본다.
+   * 부르는 값보다 그 손길들이 조용한 편이 낫다. 바쁨은 프로젝트별로 잰다
+   * (PLAN L1) — 한 프로젝트의 턴이 다른 프로젝트의 병합 감지를 멈추지
+   * 않는다. 실패는 조용히 넘어간다 — 다음 틱이 다시 본다.
    */
   async pollOpenHandoffs(): Promise<void> {
-    if (this.deps.manager.anyBusy()) return;
     for (const workspaces of this.workspaces.values()) {
+      // 그 클론에서 턴이 돌거나 기다림이 있으면 그 프로젝트만 건너뛴다.
+      if (this.deps.manager.busyIn(workspaces.paths.repoRoot)) continue;
       const current = workspaces.repo.currentHandoff;
       if (!current || current.state === "merged" || current.state === "closed") continue;
       // 이미 본 끝은 다시 부르지 않는다 — 착지 전까지 열 번 울리지 않게.
@@ -488,7 +490,8 @@ export class ProjectFleet {
       }
       // 슬라이스 4: 끝난 사이클의 자동 착지 — 워크트리가 깨끗할 때만. 변경이
       // 남았으면 사람이 있는 자리의 착지가 그 일감과 함께 간다(치워두기가
-      // 붙는 것도 그 자리다). anyBusy 는 폴링의 머리에서 이미 지켰다.
+      // 붙는 것도 그 자리다). 그 프로젝트의 바쁨(busyIn)은 루프의 머리에서
+      // 이미 지켰다.
       if (
         (report.state === "merged" || report.state === "closed") &&
         workspaces.repo.handoffLandingDue
@@ -503,12 +506,16 @@ export class ProjectFleet {
     // 당기기를 기다리지 않게.
     this.announceProjectsThrottled();
     const active = this.activeOrNull();
-    // E1: 폴 틱의 무인 최신화 — 활성 프로젝트만, 10분 스로틀. 폴의 머리가
-    // anyBusy 를 지켰으므로 도는 턴과 겹치지 않고, 사이클 브랜치 위 병합의
-    // 충돌 브리프는 사람의 대화(없으면 도구가 여는 대화)의 첫 과제가 된다.
-    // 버튼이 하던 일을 타이머가 대신한다 — 받아오기를 눌러야 할 이유가
-    // 사라졌으므로 버튼도 웹에서 걷혔다.
-    if (active && Date.now() - active.lastQuietPull >= QUIET_PULL_MS) {
+    // E1: 폴 틱의 무인 최신화 — 활성 프로젝트만, 10분 스로틀. 활성 클론에
+    // 턴이 돌지 않는다(busyIn)는 것이 도는 턴과 겹치지 않는 근거고, 사이클
+    // 브랜치 위 병합의 충돌 브리프는 사람의 대화(없으면 도구가 여는 대화)의
+    // 첫 과제가 된다. 버튼이 하던 일을 타이머가 대신한다 — 받아오기를 눌러야
+    // 할 이유가 사라졌으므로 버튼도 웹에서 걷혔다.
+    if (
+      active &&
+      !this.deps.manager.busyIn(active.paths.repoRoot) &&
+      Date.now() - active.lastQuietPull >= QUIET_PULL_MS
+    ) {
       active.lastQuietPull = Date.now();
       void active.repo
         .pull((brief) => {

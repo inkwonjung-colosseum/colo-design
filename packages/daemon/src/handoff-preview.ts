@@ -24,6 +24,14 @@ import { extraPathPrefix } from "./claude-trust.js";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { descendantPids, killTree, pidListeningPorts, probePreviewUrl } from "./preview-claim.js";
 
+/**
+ * 차선에 세우는 길 (PLAN L1) — server 가 활성 프로젝트의 차선에 "preview"
+ * 칸으로 묶어 준다. 이 모듈의 `worktree add/remove/prune` 은 다른 cwd 에서
+ * 도 돌 같은 .git(refs · worktrees 메타데이터) 을 쓰므로 저장·최신화와 한
+ * 줄에 서야 한다.
+ */
+export type LaneRun = <T>(job: () => Promise<T>) => Promise<T>;
+
 /** The open handoff this build serves — 넘긴 요청이 열려 있을 때만 존재한다. */
 export type HandoffPreviewSource = () => {
   slug: string;
@@ -35,6 +43,8 @@ export type HandoffPreviewSource = () => {
   previewCommand: string | null;
   /** The open handoff, if any; null은 넘김이 없거나 이미 착지했다는 뜻이다. */
   handoff: HandoffStatus | null;
+  /** 활성 프로젝트의 차선 — 워크트리를 움직이는 git 이 서는 줄. */
+  inLane: LaneRun;
 } | null;
 
 /** 브랜치 꼭지 판정의 준비 대기 — 본 미리보기와 같은 벽시계 상한. */
@@ -50,6 +60,8 @@ interface LivePreview {
   /** The clone — worktree remove·prune은 본 레포 자리에서 부른다. */
   repoRoot: string;
   worktree: string;
+  /** 그 클론의 차선 — 꼭지 이동과 거둠이 서는 줄 (PLAN L1). */
+  inLane: LaneRun;
   child: ChildProcess | null;
   /** The port the server actually answers on — the hint port or a detected one. */
   port: number | null;
@@ -133,7 +145,7 @@ export class HandoffPreviews {
     this.live = null;
     if (!live) return;
     await stopServer(live);
-    await removeWorktree(live.repoRoot, live.worktree);
+    await live.inLane(() => removeWorktree(live.repoRoot, live.worktree));
     if (reason) this.log(`handoff-preview 해체: ${reason}`);
   }
 
@@ -143,7 +155,7 @@ export class HandoffPreviews {
       await this.teardown();
       return notReady(null, "연결 레포가 아직 준비되지 않았습니다.");
     }
-    const { slug, repoRoot, projectRoot, previewCommand, handoff } = context;
+    const { slug, repoRoot, projectRoot, previewCommand, handoff, inLane } = context;
     // 수명 규칙 2번: 넘김이 착지해 사라졌다면 빌드도 함께 거둔다 — '넘긴
     // 시점'은 넘긴 요청이 열려 있는 동안만 존재하는 약속이다. (dispose 가
     // 아니라 teardown — opening 자신을 기다리면 영원히 막힌다.)
@@ -182,6 +194,7 @@ export class HandoffPreviews {
         previewCommand,
         branch,
         commit,
+        inLane,
       });
       if (typeof built === "string") return notReady(commit, built);
       this.live = built;
@@ -201,9 +214,12 @@ export class HandoffPreviews {
     this.armIdleTimer();
 
     // 같은 브랜치의 꼭지만 옮겨갔다(이어 저장) — 서버는 살려 두고 워크트리만
-    // 새 꼭지로. 핫 리로드가 그려 주고, 포트도 그대로다.
+    // 새 꼭지로. 핫 리로드가 그려 주고, 포트도 그대로다. 워크트리의 HEAD 도
+    // 같은 .git 이므로 차선에 서서 옮긴다(PLAN L1).
     if (live.commit !== commit) {
-      const moved = await git(repoRoot, ["-C", live.worktree, "checkout", "--detach", commit]);
+      const moved = await live.inLane(() =>
+        git(repoRoot, ["-C", live.worktree, "checkout", "--detach", commit]),
+      );
       if (moved === null)
         return notReady(live.commit, "넘긴 브랜치의 새 커밋으로 옮기지 못했습니다.");
       live.commit = commit;
@@ -231,21 +247,19 @@ export class HandoffPreviews {
     previewCommand: string;
     branch: string;
     commit: string;
+    /** 그 클론의 차선 — 워크트리를 짓고 지우는 git 이 서는 줄 (PLAN L1). */
+    inLane: LaneRun;
   }): Promise<LivePreview | string> {
     const worktree = join(input.projectRoot, "handoff");
     mkdirSync(input.projectRoot, { recursive: true });
     // 남은 자리의 청소: 이전 수명이 강제 종료로 마치지 못한 워크트리가
     // 남아 있으면 add가 거절한다. rm 뒤의 prune이 메타데이터까지 지운다.
     rmSync(worktree, { recursive: true, force: true });
-    const pruned = await git(input.repoRoot, ["worktree", "prune"]);
+    const pruned = await input.inLane(() => git(input.repoRoot, ["worktree", "prune"]));
     if (pruned === null) return "git 워크트리 목록을 정리하지 못했습니다.";
-    const added = await git(input.repoRoot, [
-      "worktree",
-      "add",
-      "--detach",
-      worktree,
-      input.commit,
-    ]);
+    const added = await input.inLane(() =>
+      git(input.repoRoot, ["worktree", "add", "--detach", worktree, input.commit]),
+    );
     if (added === null) return "넘긴 시점의 워크트리를 만들지 못했습니다.";
 
     // 설치는 복사하지 않는다 — 클론의 node_modules를 그대로 빌려 쓴다.
@@ -267,6 +281,7 @@ export class HandoffPreviews {
       commit: input.commit,
       repoRoot: input.repoRoot,
       worktree,
+      inLane: input.inLane,
       child: null,
       port: null,
       url: null,
@@ -280,7 +295,7 @@ export class HandoffPreviews {
     const failure = await this.startServer(live, input.previewCommand, hint);
     if (typeof failure === "string") {
       await stopServer(live);
-      await removeWorktree(input.repoRoot, worktree);
+      await input.inLane(() => removeWorktree(input.repoRoot, worktree));
       return failure;
     }
     return live;
