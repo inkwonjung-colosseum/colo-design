@@ -157,7 +157,7 @@ export function Transcript({
   if (blocks.length === 0) {
     return (
       <div className="empty">
-        <p className="empty__lead">메시지를 내면 대화가 여기에 이어집니다.</p>
+        <p className="empty__lead">메시지를 보내면 대화가 여기에 이어집니다.</p>
         <p className="empty__sub">
           만들고 싶은 화면을 말해 보세요. 미리보기에 핀을 찍어 고쳐 달라고 해도 이 대화로
           들어옵니다.

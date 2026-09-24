@@ -687,7 +687,7 @@ export function PageWorkspace({
                 placeholder={
                   sessions.activeId
                     ? pins.list.length > 0
-                      ? "고칠 곳을 말해 주세요 — 핀이 문장과 한 턴으로 나가요"
+                      ? "고칠 곳을 말해 주세요 — 찍은 핀과 함께 보내져요"
                       : "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
                     : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
                 }

@@ -12,7 +12,18 @@ import { TodoList } from "../transcript/todo";
  * 에이전트는 무엇을 하러 갔는지·최근 근황 한 줄까지, 할 일은 ✓ ● ○ 목록
  * 그대로. 보일 것이 하나도 없으면 아예 서지 않는다 — 빈 막대는 소음이다.
  */
-export function WorkStrip({ blocks }: { blocks: Block[] }) {
+export function WorkStrip({
+  blocks,
+  showTools = true,
+}: {
+  blocks: Block[];
+  /**
+   * 작업 과정 보기 (설정). 꺼져 있으면 보조 작업의 종류 태그와 도구 횟수 —
+   * 개발자의 진단 재료 — 가 빠지고, 무엇을 하러 갔는지와 근황만 남는다.
+   * 할 일 진행은 켜짐과 무관하게 선다: 비개발자에게 가장 좋은 신호다.
+   */
+  showTools?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const agents = agentBriefs(blocks);
   const todos = latestTodoItems(blocks);
@@ -71,12 +82,12 @@ export function WorkStrip({ blocks }: { blocks: Block[] }) {
                   <span className="workstrip__agentmain">
                     <span className="workstrip__agentlabel">
                       {agent.label || "보조 작업"}
-                      {agent.type && <span className="tag">{agent.type}</span>}
+                      {showTools && agent.type && <span className="tag">{agent.type}</span>}
                       {agent.backgrounded && <span className="tag">뒤에서 도는 중</span>}
                     </span>
                     {agent.summary && <span className="workstrip__agentsay">{agent.summary}</span>}
                   </span>
-                  {agent.toolUses > 0 && (
+                  {showTools && agent.toolUses > 0 && (
                     <span className="workstrip__meta">도구 {agent.toolUses}회</span>
                   )}
                 </li>

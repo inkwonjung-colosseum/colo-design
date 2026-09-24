@@ -1729,24 +1729,12 @@ select {
   line-height: 1.62;
   /* The planner typed the line breaks; the tape keeps them. */
   white-space: pre-wrap;
-  padding: 11px 14px 11px 37px;
+  /* 셸 프롬프트 글리프(❯)는 물러났다 — 채팅 앱의 말풍선에는 터미널의
+     표식이 없다. 불 켜진 카드 자체가 "내 말" 이라는 표식이다. */
+  padding: 11px 14px;
   border-radius: var(--r-float);
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
-}
-.bubble--user::before {
-  content: "❯";
-  position: absolute;
-  left: 13px;
-  top: 12px;
-  width: 17px;
-  height: 17px;
-  display: grid;
-  place-items: center;
-  font: 600 var(--font-ui-95) var(--mono);
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 6px;
 }
 .bubble--user .tag {
   background: transparent;

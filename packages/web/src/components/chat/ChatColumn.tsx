@@ -702,7 +702,7 @@ export function ChatColumn({
 
       {/* 하위 작업 · 할 일의 목차 — 컴포저 위에 고정으로 선다. 테이프가
           아무리 길어져도 "몇 개가 도는지"는 여기서 한 번에 읽힌다. */}
-      <WorkStrip blocks={active?.blocks ?? []} />
+      <WorkStrip blocks={active?.blocks ?? []} showTools={showTools} />
 
       {replyTo && (
         <div className="replybanner" role="status">

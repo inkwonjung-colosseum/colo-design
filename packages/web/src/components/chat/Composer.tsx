@@ -912,13 +912,16 @@ export function Composer({
         return;
       }
     }
-    // Shell-style history on the bare arrows: from the very top of the field
+    // Shell-style history on ⌥+arrows: from the very top of the field
     // — an empty one, or the caret parked at its first character — ↑ recalls
     // the last turn, and further ↑/↓ walk the rows while the message being
     // written steps aside until the walk passes it again. Anywhere else the
     // arrows belong to the caret, not the history. Editing exits the walk
     // with the recalled text in place — a starting point, not a fixture.
-    if (event.key === "ArrowUp") {
+    // 걸음은 ⌥(Alt) 와 함께일 때만이다: 채팅 앱을 쓰던 사람에게 맨 화살표는
+    // 커서의 것이고, 빈 입력창에서 ↑ 한 번에 지난 말이 들어오는 것은 셸의
+    // 버릇이라 놀라움이었다. 맨 화살표는 언제나 커서에 돌려준다.
+    if (event.key === "ArrowUp" && event.altKey) {
       const rows = history.current;
       const at = historyAt.current;
       const atTop = area.current === null || area.current.selectionStart === 0;
@@ -934,7 +937,7 @@ export function Composer({
       if (row !== undefined) recall(row);
       return;
     }
-    if (event.key === "ArrowDown" && historyAt.current !== null) {
+    if (event.key === "ArrowDown" && event.altKey && historyAt.current !== null) {
       const rows = history.current;
       const next = historyAt.current + 1;
       event.preventDefault();

@@ -10,8 +10,14 @@ import type { TaskControls, TodoToolBlock } from "./shared";
  * A planner never asked for a tool log. One assistant turn's tool calls fold
  * into a single Korean line; the developer-grade blocks are one click away so
  * a stuck turn can still be diagnosed.
+ *
+ * 세 프로바이더가 같은 일을 다른 이름으로 부른다 — Claude 의 `Edit`, Codex 의
+ * `fileChange`, omp 의 `edit`. 이름의 원본은 데몬의 tool-names.ts 다(통계의
+ * 읽기 · 편집 · 실행 묶음). 이 표는 그 묶음을 머리말 한 줄로 옮기는 사본이라,
+ * 그쪽에 이름이 늘면 여기에도 는다.
  */
 const ACTIVITY_BUCKET: Record<string, "file" | "command" | "read"> = {
+  // Claude Code
   Write: "file",
   Edit: "file",
   MultiEdit: "file",
@@ -20,7 +26,42 @@ const ACTIVITY_BUCKET: Record<string, "file" | "command" | "read"> = {
   Read: "read",
   Glob: "read",
   Grep: "read",
+  LS: "read",
+  // Codex — app-server 의 item 종류와 승인 요청의 이름
+  fileChange: "file",
+  applyPatch: "file",
+  apply_patch: "file",
+  edit_file: "file",
+  write_file: "file",
+  commandExecution: "command",
+  execCommand: "command",
+  exec_command: "command",
+  run_command: "command",
+  shell: "command",
+  Shell: "command",
+  view: "read",
+  view_file: "read",
+  read_file: "read",
+  // omp
+  edit: "file",
+  write: "file",
+  ast_edit: "file",
+  notebook_edit: "file",
+  bash: "command",
+  eval: "command",
+  read: "read",
+  glob: "read",
+  grep: "read",
+  ast_grep: "read",
 };
+
+type ActivityCounts = { file: number; command: number; read: number; other: number };
+
+function activityCounts(tools: Array<Extract<Block, { type: "tool" }>>): ActivityCounts {
+  const counts: ActivityCounts = { file: 0, command: 0, read: 0, other: 0 };
+  for (const tool of tools) counts[ACTIVITY_BUCKET[tool.name] ?? "other"] += 1;
+  return counts;
+}
 
 /**
  * 접힌 머리의 한 마디(P3-4). 예전에는 여기에 숫자 줄이 섰다
@@ -28,31 +69,26 @@ const ACTIVITY_BUCKET: Record<string, "file" | "command" | "read"> = {
  * 질문에 대한 답은 아니다. 비개발자가 그 줄에서 알고 싶은 것은 하나다:
  * 지금 도는가, 끝났는가. 숫자는 펼침 안으로 내려간다(거기서는 진단의
  * 재료로 쓸모가 있다).
+ *
+ * 끝난 머리는 한 일의 가장 무거운 쪽을 말한다 — 파일을 읽기만 한 런이
+ * "화면을 고쳤어요" 라고 하면 그 말은 거짓이다.
  */
-function activityStatus(running: boolean): string {
-  return running ? "만드는 중…" : "화면을 고쳤어요";
+function activityStatus(running: boolean, counts: ActivityCounts): string {
+  if (running) return "만드는 중…";
+  if (counts.file > 0) return "화면을 고쳤어요";
+  if (counts.command > 0) return "검사를 돌렸어요";
+  return "확인했어요";
 }
 
-function activityLine(tools: Array<Extract<Block, { type: "tool" }>>): string {
-  let file = 0;
-  let command = 0;
-  let read = 0;
-  let other = 0;
-  for (const tool of tools) {
-    const bucket = ACTIVITY_BUCKET[tool.name];
-    if (bucket === "file") file += 1;
-    else if (bucket === "command") command += 1;
-    else if (bucket === "read") read += 1;
-    else other += 1;
-  }
+function activityLine(counts: ActivityCounts): string {
   // A planner is watching someone work on their screen, not a process table.
   // "파일 3개 생성" is true of a Write call and says nothing about what was
   // gained; the words below describe the work.
   const parts: string[] = [];
-  if (file) parts.push(`화면 파일 ${file}개 작업`);
-  if (command) parts.push(`검사 ${command}회 실행`);
-  if (read) parts.push(`${read}곳 확인`);
-  if (other) parts.push(`그 밖에 ${other}가지`);
+  if (counts.file) parts.push(`화면 파일 ${counts.file}개 작업`);
+  if (counts.command) parts.push(`검사 ${counts.command}회 실행`);
+  if (counts.read) parts.push(`${counts.read}곳 확인`);
+  if (counts.other) parts.push(`그 밖에 ${counts.other}가지`);
   return parts.join(" · ");
 }
 
@@ -121,6 +157,7 @@ function ActivitySummary({ steps, controls }: { steps: ActivityStep[]; controls:
   );
   const running = tools.some((tool) => isToolRunning(tool));
   const failed = tools.some((tool) => tool.isError);
+  const counts = activityCounts(tools);
   const live = tools.find((tool) => isToolRunning(tool) && tool.progress?.task?.summary);
   const headline = running && live?.progress?.task?.summary ? live.progress.task.summary : null;
   // 하위 작업의 말·생각·도구는 그것을 띄운 도구 행 아래로 들어간다. 부모를
@@ -149,14 +186,14 @@ function ActivitySummary({ steps, controls }: { steps: ActivityStep[]; controls:
         {/* 도구 없는 런(하위 작업의 말만 남은 구간)도 빈 막대로 두지 않는다.
             에이전트가 스스로 내놓은 근황(live summary)이 있으면 그것이 이긴다
             — 기계가 제 말로 하는 것이 도구 셈보다 언제나 낫다. */}
-        <span className="activity__text">{headline ?? activityStatus(running)}</span>
+        <span className="activity__text">{headline ?? activityStatus(running, counts)}</span>
         {failed && <span className="activity__flag">실패 있음</span>}
       </button>
       {open && (
         <div className="activity__body">
           {/* 숫자 줄은 펼침의 첫 줄로 내려왔다(P3-4) — 무엇을 몇 번 했는지는
               막힌 턴을 들여다볼 때의 재료이지, 기다리는 동안 읽을 말이 아니다. */}
-          {activityLine(tools) && <div className="activity__counts">{activityLine(tools)}</div>}
+          {activityLine(counts) && <div className="activity__counts">{activityLine(counts)}</div>}
           {own.map((step) => {
             const children =
               step.type === "tool"

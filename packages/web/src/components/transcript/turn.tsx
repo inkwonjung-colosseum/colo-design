@@ -256,7 +256,7 @@ function ReviewReply({
 }
 
 const TURN_SUBTYPE_WORDS: Record<string, string> = {
-  error_max_turns: "정한 답변 걸음을 채웠습니다 — 다시 보내면 이어서 계속합니다",
+  error_max_turns: "답이 너무 길어져 멈췄어요 — 다시 보내면 이어서 합니다",
   error_during_execution: "잠시 문제가 있었습니다 — 다시 보내 주세요",
   interrupted: "멈추었습니다 — 고치던 화면이 반쯤 남았을 수 있습니다. 이어서 말하거나 되돌리세요",
 };
