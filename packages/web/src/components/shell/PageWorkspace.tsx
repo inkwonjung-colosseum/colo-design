@@ -697,6 +697,7 @@ export function PageWorkspace({
                 onDeleteSession={(session) => void sessions.remove(session)}
                 showThinking={settings.chat.showThinking}
                 showTools={settings.chat.showTools}
+                midturn={settings.chat.midturn}
                 // 설정에서 끈 프로바이더 — 새 대화의 칩에서도 빠진다.
                 disabledProviders={settings.chat.disabledProviders ?? []}
                 pins={pins}

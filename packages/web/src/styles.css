@@ -2751,8 +2751,10 @@ select {
     border-color 0.2s var(--drift),
     box-shadow 0.25s var(--drift);
 }
-/* 트레이가 카드 안에 서면 한 줄을 통째로 — 옆에 붙는 것은 없다. */
-.composer__field > div:has(> .pintray) {
+/* 트레이가 카드 안에 서면 한 줄을 통째로 — 옆에 붙는 것은 없다. 첨부
+   칩도 같은 규칙으로 말 위의 한 줄을 차지한다. */
+.composer__field > div:has(> .pintray),
+.composer__field > .chips {
   flex: 1 1 100%;
 }
 .composer__sendrow {
@@ -2906,6 +2908,13 @@ select {
 .queued__action {
   flex: none;
   padding: 3px 5px;
+}
+/* 글자 손 — 아이콘이 말하지 못하던 뜻을 이름으로 입는다. */
+.queued__action--text {
+  padding: 2px 8px;
+  font: 500 var(--font-ui-110) var(--sans);
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
 .chips {

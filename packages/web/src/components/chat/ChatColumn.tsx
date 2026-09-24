@@ -43,6 +43,7 @@ export function ChatColumn({
   onDeleteSession,
   showThinking,
   showTools,
+  midturn = "queue",
   disabledProviders,
   pins,
   focusPinId,
@@ -69,6 +70,8 @@ export function ChatColumn({
   showThinking: boolean;
   /** 작업 과정 보기 (설정) — 꺼져 있으면 도구 호출 묶음도 테이프에서 빠진다. */
   showTools: boolean;
+  /** 턴 도중 보내기 (설정) — 도는 동안 보내기 버튼의 안내가 읽는다. */
+  midturn?: "queue" | "steer";
   /** 설정에서 끈 프로바이더 — 새 대화의 칩 옵션에서도 빠진다. */
   disabledProviders: string[];
   /** The workspace's pins — sent with the turn, cleared by markSent. */
@@ -741,11 +744,20 @@ export function ChatColumn({
         onDismissDropped={sessions.dismissDropped}
         suggestion={suggestion}
         onDismissSuggestion={() => setHiddenSuggestion(active?.suggestion ?? null)}
-        tasks={active?.tasks ?? []}
+        // 뒤에서 도는 작업의 줄은 작업 과정 보기와 한 짝이다 — 꺼져 있으면
+        // 테이프가 도구 행을 숨기듯 입력창 위의 작업 목록도 서지 않는다.
+        tasks={showTools ? (active?.tasks ?? []) : []}
         onStopTask={stopTask}
         registerAttach={registerAttach}
         registerResend={registerResend}
         dev={daemon.status?.dev === true}
+        // 바로 실어 보내기는 설정이 그렇고 에이전트가 그 길을 낼 때만이다 —
+        // 그 밖은 데몬이 대기 줄로 물리므로 안내도 대기 줄의 말을 한다.
+        midturnSteers={
+          midturn === "steer" &&
+          daemon.status?.providers?.find((p) => p.id === sessions.selector?.provider)?.capabilities
+            ?.steer === true
+        }
         sendKey={sendKey}
         onOpenProviderSettings={onOpenProviderSettings}
         onSend={async (text, attachments, sentPins, restoredScreens) => {

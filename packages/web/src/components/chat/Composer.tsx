@@ -264,6 +264,7 @@ export function Composer({
   registerAttach,
   registerResend,
   dev = false,
+  midturnSteers = false,
   sendKey,
   selector,
   onSetModel,
@@ -363,6 +364,12 @@ export function Composer({
    * production 빌드라 그 값이 언제나 false 다(P0-2 의 논거).
    */
   dev?: boolean;
+  /**
+   * 도는 턴에 보낸 말이 그 턴에 바로 실리는가 — 설정의 '턴 도중 보내기' 가
+   * 바로 실어 보내기이고, 지금 에이전트가 그 길을 낼 때만 참이다(그 밖은
+   * 데몬이 대기 줄로 물린다). 도는 동안 보내기 버튼의 안내가 이 값을 읽는다.
+   */
+  midturnSteers?: boolean;
   /**
    * 모델·노력·권한 chips. Before a session exists these carry what the next
    * one will start with, so the planner can set the run up while the
@@ -475,6 +482,9 @@ export function Composer({
    */
   const [pinsFold, setPinsFold] = useState<boolean | null>(null);
   const pinsFolded = pinsFold ?? pins.length > 4;
+  /** 대기 줄의 접개 — 둘 이상이면 접힌 채로 시작하고, 한 번 누른 손이 이긴다. */
+  const [queueFold, setQueueFold] = useState<boolean | null>(null);
+  const queueFolded = queue.length > 1 && (queueFold ?? true);
 
   // 결함 5(실사 2026-09-20): 이 대화의 컨텍스트 읽기가 문턱을 넘으면 입력창
   // 위에 새 대화의 길을 한 줄로 알려 준다. 보내기는 막지 않는다 — 막힌
@@ -1080,42 +1090,6 @@ export function Composer({
             />
           </Fold>
         )}
-        {editor.attachments.length > 0 && (
-          <div className="chips">
-            {editor.attachments.map((attachment, index) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
-              <span key={`${attachment.name}-${index}`} className="chip">
-                {attachment.kind === "image" ? (
-                  <img
-                    className="chip__thumb"
-                    src={`data:${attachment.mediaType};base64,${attachment.data}`}
-                    alt=""
-                  />
-                ) : (
-                  <span className="chip__thumb chip__thumb--file">
-                    <FileIcon />
-                  </span>
-                )}
-                {attachment.name}
-                <Tip label={`${attachment.name} 첨부 취소`}>
-                  <button
-                    type="button"
-                    className="ghost"
-                    aria-label={`${attachment.name} 첨부 취소`}
-                    onClick={() =>
-                      setEditor((prev) => ({
-                        text: prev.text,
-                        attachments: prev.attachments.filter((_, i) => i !== index),
-                      }))
-                    }
-                  >
-                    ×
-                  </button>
-                </Tip>
-              </span>
-            ))}
-          </div>
-        )}
         {/* 뒤에서 도는 작업: 턴이 끝나도 남아 있을 수 있으니 대기
           줄과 따로 산다. 각 줄의 버튼은 그 작업 하나만 세운다 — 중지 버튼은
           턴의 것이고 이것은 작업의 것이다. */}
@@ -1153,43 +1127,61 @@ export function Composer({
           도는 턴을 끊고 먼저 보내기. */}
         {queue.length > 0 && (
           <div className="composer__queued" role="status" data-testid="queued-panel">
-            <div className="queued__head">다음 턴에 보낼 말 {queue.length}건</div>
-            <ul className="queued__list">
-              {queue.map((item) => (
-                <li key={item.id} className="queued__row">
-                  <span className="queued__text" title={item.text}>
-                    {item.text || "(첨부만)"}
-                  </span>
-                  {attachmentWords(item) && (
-                    <span className="queued__meta">{attachmentWords(item)}</span>
-                  )}
-                  {onSendQueuedNow && (
-                    <Tip label="도는 턴을 중지하고 이 말을 먼저 보냅니다">
-                      <button
-                        type="button"
-                        className="ghost queued__action"
-                        aria-label="지금 보내기"
-                        onClick={() => sendQueuedNow(item)}
-                      >
-                        <ArrowUpIcon size={12} />
-                      </button>
-                    </Tip>
-                  )}
-                  {onRemoveQueued && (
-                    <Tip label="이 말을 꺼내 입력창으로 되돌립니다">
-                      <button
-                        type="button"
-                        className="ghost queued__action"
-                        aria-label="고쳐서 보내기"
-                        onClick={() => removeQueued(item)}
-                      >
-                        <PencilIcon />
-                      </button>
-                    </Tip>
-                  )}
-                </li>
-              ))}
-            </ul>
+            {/* 머리 한 줄이 건수를 말하고, 둘 이상이면 접힌 채로 선다 — 바쁜
+                턴의 대기 줄이 입력창을 밑으로 누르지 않게. 보낸 말의 행방은
+                접혀 있어도 건수로 읽힌다(감사 C3). */}
+            <div className="queued__head">
+              <span>다음에 보낼 말 {queue.length}건</span>
+              {queue.length > 1 && (
+                <button
+                  type="button"
+                  className="ghost pintray__fold"
+                  aria-expanded={!queueFolded}
+                  aria-label={queueFolded ? "다음에 보낼 말 펼치기" : "다음에 보낼 말 접기"}
+                  onClick={() => setQueueFold(!queueFolded)}
+                >
+                  <ChevronDownIcon />
+                </button>
+              )}
+            </div>
+            {!queueFolded && (
+              <ul className="queued__list">
+                {queue.map((item) => (
+                  <li key={item.id} className="queued__row">
+                    <span className="queued__text" title={item.text}>
+                      {item.text || "(첨부만)"}
+                    </span>
+                    {attachmentWords(item) && (
+                      <span className="queued__meta">{attachmentWords(item)}</span>
+                    )}
+                    {/* 손은 글자로 선다 — 아이콘만으로는 "지금 보내기" 가 도는
+                        작업을 끊는다는 것을 마우스를 올려야 알았다. */}
+                    {onRemoveQueued && (
+                      <Tip label="입력창으로 꺼내 고친 뒤 다시 보내요">
+                        <button
+                          type="button"
+                          className="ghost queued__action queued__action--text"
+                          onClick={() => removeQueued(item)}
+                        >
+                          고치기
+                        </button>
+                      </Tip>
+                    )}
+                    {onSendQueuedNow && (
+                      <Tip label="진행 중인 작업을 멈추고 이 말을 먼저 보내요">
+                        <button
+                          type="button"
+                          className="ghost queued__action queued__action--text"
+                          onClick={() => sendQueuedNow(item)}
+                        >
+                          지금 보내기
+                        </button>
+                      </Tip>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -1329,6 +1321,44 @@ export function Composer({
             />
           </div>
         )}
+        {/* 첨부는 말과 같은 카드에 선다 — 붙인 것은 "지금 보낼 것" 이고,
+            카드 밖 상태 띠는 기다림·실패의 자리다(핀 트레이와 같은 판정). */}
+        {editor.attachments.length > 0 && (
+          <div className="chips">
+            {editor.attachments.map((attachment, index) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: 같은 이름의 첨부가 둘일 수 있어 index 로만 식별한다 — 목록은 뒤에만 붙는다.
+              <span key={`${attachment.name}-${index}`} className="chip">
+                {attachment.kind === "image" ? (
+                  <img
+                    className="chip__thumb"
+                    src={`data:${attachment.mediaType};base64,${attachment.data}`}
+                    alt=""
+                  />
+                ) : (
+                  <span className="chip__thumb chip__thumb--file">
+                    <FileIcon />
+                  </span>
+                )}
+                {attachment.name}
+                <Tip label={`${attachment.name} 첨부 취소`}>
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-label={`${attachment.name} 첨부 취소`}
+                    onClick={() =>
+                      setEditor((prev) => ({
+                        text: prev.text,
+                        attachments: prev.attachments.filter((_, i) => i !== index),
+                      }))
+                    }
+                  >
+                    ×
+                  </button>
+                </Tip>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           ref={area}
           value={editor.text}
@@ -1383,21 +1413,33 @@ export function Composer({
             </Tip>
           )}
           {/* 도는 동안에도 보내는 손은 옆에 선다 — 도는 턴에 온 말은 설정의
-            '턴 도중 보내기' 길(대기 줄 · 바로 실어 보내기)로 간다. */}
-          <button
-            type="button"
-            disabled={
-              disabled ||
-              sending ||
-              (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+            '턴 도중 보내기' 길(대기 줄 · 바로 실어 보내기)로 간다. 채팅 앱에서
+            답하는 동안의 버튼은 중지 하나뿐이라, 옆의 보내기가 무엇을 하는지는
+            마우스를 올린 순간 한 문장으로 말한다. */}
+          <Tip
+            label={
+              running && !sending
+                ? midturnSteers
+                  ? "진행 중인 작업에 바로 전해요"
+                  : "지금 작업이 끝나면 이어서 보내요"
+                : undefined
             }
-            className="composer__send"
-            aria-label={sending ? "보내는 중…" : "보내기"}
-            aria-busy={sending || undefined}
-            onClick={submit}
           >
-            {sending ? <span className="spinner" /> : <ArrowUpIcon size={15} />}
-          </button>
+            <button
+              type="button"
+              disabled={
+                disabled ||
+                sending ||
+                (!editor.text.trim() && editor.attachments.length === 0 && pins.length === 0)
+              }
+              className="composer__send"
+              aria-label={sending ? "보내는 중…" : running ? "다음에 보내기" : "보내기"}
+              aria-busy={sending || undefined}
+              onClick={submit}
+            >
+              {sending ? <span className="spinner" /> : <ArrowUpIcon size={15} />}
+            </button>
+          </Tip>
         </div>
       </div>
 
