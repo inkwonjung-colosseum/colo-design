@@ -245,7 +245,9 @@ export class DeveloperNotice {
   constructor(private readonly deps: DeveloperNoticeDeps) {}
 
   private memoryKey(slug: string | null, key: string): string {
-    return `${slug ?? ""}${key}`;
+    // 구분자가 없으면 기계 전체 알림이 "github:auth" 로 서서 machineNotices 의
+    // ":" 접두사 판정을 빗나가고, 슬러그·키가 붙어 다른 조합이 충돌한다.
+    return `${slug ?? ""}:${key}`;
   }
 
   private entryOf(slug: string | null, key: string): NoticeEntry | undefined {
