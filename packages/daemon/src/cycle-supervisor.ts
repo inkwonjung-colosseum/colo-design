@@ -14,6 +14,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { markTurn } from "@colo-design/protocol";
 import {
   type CycleLedger,
   type CyclePendingOp,
@@ -35,6 +36,7 @@ import type { GitHubClient } from "./github.js";
 import type { DaemonLogger } from "./log.js";
 import type { RepoWorkspace } from "./repo.js";
 import type { RepoCore } from "./repo-core.js";
+import { conflictBrief, STASH_MESSAGE } from "./repo-core.js";
 import { alignCycleBranch } from "./repo-publish.js";
 
 export type TickReason =
@@ -114,6 +116,9 @@ export class CycleSupervisor {
     this.now = deps.now ?? (() => Date.now());
     this.log = (line) => deps.logger.info(`[cycle] ${line}`);
     this.ledger = this.loadLedger();
+    // 도구가 시작한 조작의 충돌은 브리프가 아니라 원장 행으로 들어온다
+    // (PLAN L5) — 감독자가 없는 실행(시험)은 core 가 옛 길을 그대로 간다.
+    deps.core.onToolConflict = (op) => this.recordToolOp(op);
   }
 
   /** 마지막 판정의 주의 — 화면에 싣는 일은 단계 4. */
@@ -129,6 +134,18 @@ export class CycleSupervisor {
   /** 패키지 내부 공유 — 시험 하네스가 같은 core 를 겨눌 때 쓴다. */
   get repoCore(): RepoCore {
     return this.deps.core;
+  }
+
+  /**
+   * 도구가 시작한 병합 · cherry-pick · stash 복원이 충돌로 멈췄다 — 원장에
+   * 곧바로 적고(관찰을 기다리지 않는다) 틱을 돌린다. RepoCore 가 lane.outside
+   * 로 부르므로 여기서는 차선 문맥이 없다.
+   */
+  recordToolOp(op: CyclePendingOp): void {
+    this.ledger = { ...this.ledger, pendingOp: op };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.log(`pendingOp 기록: ${op.kind} (${op.files.join(", ")})`);
+    void this.tick("tool-conflict");
   }
 
   /**
@@ -271,6 +288,46 @@ export class CycleSupervisor {
   private async runAction(action: CycleAction, _snapshot: CycleSnapshot): Promise<boolean> {
     const core = this.deps.core;
     switch (action.kind) {
+      case "clearPendingOp": {
+        this.ledger = { ...this.ledger, pendingOp: null };
+        writeLedger(this.ledgerPath, this.ledger);
+        return true;
+      }
+      case "abortForeignOp": {
+        // 남의 조작(사람이 손으로 시작한 merge · rebase 등)은 도구가 끝내지
+        // 않는다 — 되돌려 놓고 원장을 비운다.
+        await core.git([action.op, "--abort"]).catch(() => "");
+        this.log(`남의 ${action.op} 를 중단했습니다`);
+        this.ledger = { ...this.ledger, pendingOp: null };
+        writeLedger(this.ledgerPath, this.ledger);
+        return true;
+      }
+      case "finishToolOp": {
+        const pending = this.ledger.pendingOp;
+        if (pending === null) return true;
+        await this.finishToolOp(pending);
+        this.ledger = { ...this.ledger, pendingOp: null };
+        writeLedger(this.ledgerPath, this.ledger);
+        // 마무리가 워크트리를 바꿨다 — 변경 수를 다시 센다.
+        await core.refreshPendingChanges().catch(() => undefined);
+        return true;
+      }
+      case "briefConflict": {
+        // 브리프는 세션을 연다 — 반드시 차선 밖에서 (PLAN L1). 판정이 원장의
+        // briefs 를 이미 올렸다. 브리프가 나간 뒤 틱은 멈춘다 — 같은 틱에서
+        // 다시 판정하면 표식이 아직 있는 같은 충돌에 브리프가 두 번 나간다.
+        const pending = this.ledger.pendingOp;
+        if (pending === null) return false;
+        const step = pending.kind === "merge" ? "최신 변경 합치기" : "임시 보관 되돌리기";
+        const brief = markTurn(
+          { kind: "gate", step },
+          conflictBrief(pending.files, pending.kind, await core.conflictSides(pending.kind)),
+        );
+        await core.lane.outside(async () => {
+          this.deps.openThread("최신 변경 합치기")?.send(brief);
+        });
+        return false;
+      }
       case "popParkedStash": {
         await core.recoverParkedWork();
         return true;
@@ -316,6 +373,33 @@ export class CycleSupervisor {
         return false;
       }
     }
+  }
+
+  /** finishToolOp — AI 가 파일만 정리한 뒤의 git 마무리 (PLAN L5). */
+  private async finishToolOp(pending: CyclePendingOp): Promise<void> {
+    const core = this.deps.core;
+    if (pending.kind === "merge") {
+      await core.git(["add", "--", ...pending.files]);
+      await core.git(["commit", "--no-edit"]);
+    } else if (pending.kind === "cherry-pick") {
+      await core.git(["add", "--", ...pending.files]);
+      await core.git(["-c", "core.editor=true", "cherry-pick", "--continue"]);
+    } else {
+      // stash-pop — add 로 해결을 표시하고 reset 으로 index 를 풀어 변경을
+      // unstaged 로 남긴 뒤, 도구 태그의 stash 만 drop 한다(남의 stash 는
+      // 건드리지 않는다).
+      await core.git(["add", "--", ...pending.files]);
+      await core.git(["reset", "-q"]);
+      const ref = (await core.taggedStashRef()) ?? pending.stashRef ?? null;
+      if (ref !== null) {
+        const list = await core.git(["stash", "list"]).catch(() => "");
+        const stillOurs = list
+          .split("\n")
+          .some((line) => line.startsWith(`${ref}:`) && line.includes(STASH_MESSAGE));
+        if (stillOurs) await core.git(["stash", "drop", ref]).catch(() => "");
+      }
+    }
+    this.log(`도구 조작 마무리: ${pending.kind}`);
   }
 
   /** 12행 — 밀린 커밋을 한 번 민다. 결과는 원장의 push 로 돌아간다. */

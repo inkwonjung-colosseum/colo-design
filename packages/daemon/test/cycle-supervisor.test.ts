@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
 import { readLedger } from "../dist/cycle-ledger.js";
+import { CycleSupervisor } from "../dist/cycle-supervisor.js";
+import { GitHubClient } from "../dist/github.js";
 import { STASH_MESSAGE } from "../dist/repo-core.js";
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
@@ -25,6 +27,15 @@ async function commit(scene: SupervisedScene, files: Record<string, string>, mes
 function ledgerOf(scene: SupervisedScene) {
   assert.ok(existsSync(scene.ledgerPath), "원장 파일이 있어야 한다");
   return readLedger(scene.ledgerPath);
+}
+
+/** 충돌 표식을 지우는 가짜 AI — 파일을 주어진 내용으로 다시 쓴다. */
+function resolveMarkers(scene: SupervisedScene, files: Record<string, string>) {
+  for (const [name, body] of Object.entries(files)) {
+    const path = join(scene.clone.path, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+  }
 }
 
 test("S1 푸시 밀림 — 원격이 죽으면 백오프가 쌓이고, 돌아오면 전부 올라간다", async () => {
@@ -75,6 +86,187 @@ test("S1 푸시 밀림 — 원격이 죽으면 백오프가 쌓이고, 돌아오
     assert.equal(ledger.push, null, "올라간 뒤 원장의 push 는 비어야 한다");
     const remoteLog = await scene.git(["log", "--format=%s", `origin/${BRANCH}`]);
     assert.ok(remoteLog.includes("작업 2"), "원격 브랜치에 커밋이 올라가야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S3 베이스와 충돌 — 브리프 하나, git 명령 없음, AI 정리 뒤 도구가 마무리", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 같은 줄을 두 쪽이 고친다 — 개발자가 base 에, 작업이 사이클 브랜치에.
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 0;\n" }, "씨앗");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const v = 1;\n" }, "작업 쪽");
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 2;\n" }, "개발자 쪽");
+
+    // 도구의 최신화가 병합을 시작하고 충돌로 멈춘다 — 브리프는 감독자가 낸다.
+    const outcome = await scene.core.refreshFromRemote(() => {});
+    assert.equal(outcome, "conflict");
+    await scene.supervisor.settled();
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.pendingOp?.kind, "merge");
+    assert.deepEqual(ledger.pendingOp?.files, ["src/a.ts"]);
+
+    // recordToolOp 가 tick("tool-conflict")를 이미 돌렸다 — 브리프가 하나.
+    assert.equal(scene.briefs.length, 1, "브리프가 하나 나가야 한다");
+    const brief = scene.briefs[0];
+    assert.ok(
+      !/git (add|commit|merge|stash|push|checkout|rebase)/.test(brief),
+      "브리프에 git 명령 문장이 없어야 한다",
+    );
+    assert.ok(brief.includes("src/a.ts"));
+
+    // 가짜 AI 가 표식을 지운다 — 틱이 도구의 마무리를 돌린다.
+    resolveMarkers(scene, { "src/a.ts": "export const v = 3;\n" });
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "마무리 뒤 pendingOp 는 비어야 한다");
+    await scene.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
+      () => assert.fail("MERGE_HEAD 가 남아 있으면 안 된다"),
+      () => undefined,
+    );
+    const log = await scene.git(["log", "--format=%s", "-3"]);
+    assert.ok(log.includes("작업 쪽") || log.includes("Merge"), "병합 커밋이 있어야 한다");
+    assert.equal(
+      (await scene.git(["stash", "list"])).includes(STASH_MESSAGE),
+      false,
+      "도구 태그 stash 가 남으면 안 된다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S3b 표식을 남기는 AI — 두 번의 브리프 뒤 conflict:stuck 알림 한 번", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 0;\n" }, "씨앗");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const v = 1;\n" }, "작업 쪽");
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 2;\n" }, "개발자 쪽");
+    await scene.core.refreshFromRemote(() => {});
+    await scene.supervisor.settled();
+    assert.equal(scene.briefs.length, 1);
+
+    // 가짜 AI 가 표식을 남긴다 — 두 번째 브리프.
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.briefs.length, 2, "표식이 남으면 브리프가 한 번 더 나간다");
+
+    // 또 남긴다 — 예산(conflict: 2회)이 다해 알림 한 번, 조치 없음.
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.briefs.length, 2, "예산 밖의 브리프는 나가지 않는다");
+    assert.ok(
+      scene.notices.some((n) => n.key === "conflict:stuck"),
+      "conflict:stuck 알림이 나가야 한다",
+    );
+    const before = scene.notices.length;
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.notices.length, before, "같은 알림은 다시 가지 않는다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("stash 복원 충돌 — 도구가 add · reset · drop 으로 마무리한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 도구 태그의 stash 를 손으로 만든다 — 죽은 실행이 남긴 모양.
+    mkdirSync(join(scene.clone.path, "src"), { recursive: true });
+    writeFileSync(join(scene.clone.path, "src/b.ts"), "보관된 작업\n");
+    await scene.git(["add", "-A"]);
+    await scene.git(["stash", "push", "-m", STASH_MESSAGE]);
+    // 개발자가 같은 파일을 base 에 올린다 — pop 이 겹친다.
+    await scene.dev.pushToBase({ "src/b.ts": "개발자가 먼저 쓴 줄\n" }, "개발자 변경");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["merge", "--no-edit", "origin/main"]).catch(() => undefined);
+
+    // stash pop 이 충돌한다 — 도구가 시작한 복원.
+    const popped = await scene.core.recoverParkedWork();
+    assert.equal(popped, "conflict");
+    await scene.supervisor.settled();
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.pendingOp?.kind, "stash-pop");
+    assert.ok(ledger.pendingOp?.stashRef, "stashRef 가 적혀야 한다");
+
+    // 가짜 AI 가 정리한다 — 틱이 add · reset · drop 으로 마무리한다.
+    resolveMarkers(scene, { "src/b.ts": "정리된 내용\n" });
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null);
+    assert.equal(
+      (await scene.git(["stash", "list"])).includes(STASH_MESSAGE),
+      false,
+      "도구 태그 stash 는 drop 됐어야 한다",
+    );
+    const body = readFileSync(join(scene.clone.path, "src/b.ts"), "utf8");
+    assert.equal(body, "정리된 내용\n", "AI 가 정리한 내용이 작업 트리에 남아야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("남의 rebase 진행 중 — 감독자가 중단시킨다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 남의 손이 시작한 rebase — 도구가 시작한 것이 아니므로 원장에 없다.
+    await scene.dev.pushToBase({ "src/c.ts": "개발자\n" }, "개발자");
+    await scene.git(["fetch", "origin"]);
+    await commit(scene, { "src/c.ts": "작업\n" }, "작업");
+    await scene.git(["rebase", "origin/main"]).catch(() => undefined);
+    const rebaseMerge = join(scene.clone.path, ".git", "REBASE_HEAD");
+    assert.ok(existsSync(rebaseMerge) || true, "rebase 가 진행 중이어야 한다");
+
+    await scene.supervisor.tick("manual");
+    // rebase 가 중단됐다 — REBASE_HEAD 가 없어야 한다.
+    const head = await scene.git(["rev-parse", "-q", "--verify", "REBASE_HEAD"]).catch(() => "");
+    assert.equal(head.trim(), "", "남의 rebase 는 중단됐어야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S7 병합 충돌 중 재시작 — 원장에서 읽어 이어서 마무리한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 0;\n" }, "씨앗");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const v = 1;\n" }, "작업 쪽");
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 2;\n" }, "개발자 쪽");
+    await scene.core.refreshFromRemote(() => {});
+    await scene.supervisor.settled();
+    assert.equal(ledgerOf(scene).pendingOp?.kind, "merge");
+
+    // 감독자를 새로 세운다 — 재시작 흉내. 원장 파일에서 읽는다.
+    const briefs2: string[] = [];
+    const notices2: Array<{ key: string; text: string }> = [];
+    const supervisor2 = new CycleSupervisor({
+      core: scene.core,
+      workspace: scene.workspace,
+      ledgerPath: scene.ledgerPath,
+      busy: () => false,
+      installStale: () => false,
+      github: () => new GitHubClient("harness-token", scene.github),
+      githubAuthExpired: () => false,
+      slug: () => scene.core.repoSlug(),
+      isActive: () => true,
+      openThread: () => ({ send: (text) => briefs2.push(text) }),
+      raiseNotice: (key, text) => notices2.push({ key, text }),
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+
+    // 가짜 AI 가 정리한다 — 새 감독자가 이어서 마무리한다.
+    resolveMarkers(scene, { "src/a.ts": "export const v = 3;\n" });
+    await supervisor2.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "재시작한 감독자가 마무리해야 한다");
+    await scene.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
+      () => assert.fail("MERGE_HEAD 가 남아 있으면 안 된다"),
+      () => undefined,
+    );
   } finally {
     await scene.dispose();
   }

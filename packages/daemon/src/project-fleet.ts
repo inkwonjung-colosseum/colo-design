@@ -720,6 +720,9 @@ export class ProjectFleet {
     const workspaces = this.workspaceOfSession(sessionId);
     const session = this.deps.manager.get(sessionId);
     if (!workspaces || !session) return;
+    // 충돌 정리 중(pendingOp)에는 자동 보관이 조용히 건너뛴다 — saveBlocked
+    // 사건 · 실패 배너를 만들지 않는다. 감독자가 마무리한 뒤 5행이 보관한다.
+    if (workspaces.supervisor.pendingOp !== null) return;
     // D4: 이 턴이 준비 실패를 고치던 턴이면 고침이 끝난 지금 준비를 다시
     // 돌린다 — 저장 판정보다 앞선다(고침이 없었어도 재시도는 약속이다).
     if (this.recoveryResync.delete(workspaces.slug)) {
