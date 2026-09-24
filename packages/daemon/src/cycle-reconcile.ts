@@ -17,6 +17,7 @@
  * 한다.
  */
 
+import type { DeveloperReview } from "@colo-design/protocol";
 import { BUDGETS, markEscalated, spend } from "./budgets.js";
 import { type CycleLedger, type CyclePendingOp, notePushBehind } from "./cycle-ledger.js";
 
@@ -55,7 +56,14 @@ export interface CycleSnapshot {
   };
   /** 병합은 rev-list <prHead>..HEAD 수, 반려는 브랜치 전체 커밋 수. */
   commitsAfterPrHead: number | null;
-  newReviewIds: number[];
+  /** 레지스트리가 기억하는 넘긴 요청의 상태 — ended 판정의 한 축(옛 폴러의 handoff.state). */
+  handoffState: "open" | "changes_requested" | "merged" | "closed" | null;
+  /** 이번 관찰이 새로 본 개발자 코멘트(전체 객체 — review.arrived 사건이 실어 나른다). */
+  newReviews: DeveloperReview[];
+  /** 아직 브리프하지 않은 개발자 코멘트 — 14행의 대상(옛 폴러의 unseen 판정). */
+  pendingReviews: DeveloperReview[];
+  /** 열린 PR 의 코멘트 총수 — 읽기 실패는 null(모름)이며 원장의 지난 수를 지킨다. */
+  reviewCount: number | null;
   installStale: boolean;
   hygieneDue: boolean;
   githubReachable: boolean;
@@ -80,7 +88,7 @@ export type CycleAction =
   | { kind: "mergeBase"; reason: "behind" | "dirty-pr" }
   | { kind: "push" }
   | { kind: "submitStep" }
-  | { kind: "briefReviews"; pr: number; ids: number[] }
+  | { kind: "briefReviews"; pr: number; reviews: DeveloperReview[] }
   | { kind: "reinstall" }
   | { kind: "hygiene" };
 
@@ -98,6 +106,27 @@ export interface CycleDecision {
   notices: NoticeIntent[];
   attention: CycleAttention;
   ledger: CycleLedger;
+  /**
+   * 대화록에 적을 사건 (PLAN L2 흡수표 — 옛 폴러의 cycle.merged ·
+   * review.arrived 와 L4 의 cycle.closed · cycle.carried). 감독자가
+   * 조치를 마친 뒤 한 번에 싣는다.
+   */
+  tapeEvents: Array<
+    | { kind: "cycle.merged"; pr: number }
+    | { kind: "cycle.closed"; pr: number }
+    | { kind: "cycle.carried"; from: string; to: string; commits: number }
+    | { kind: "review.arrived"; reviews: DeveloperReview[] }
+  >;
+  /**
+   * 사이드바의 lastEventKind/lastEventAt 과 OS 알림의 재료 (옛 폴러의
+   * notices.ts `handoff`). state 는 DaemonNotice 의 event 값 그대로다 —
+   * 감독자가 fleet 콜백으로 올린다.
+   */
+  handoffEvents: Array<{
+    state: "merged" | "closed" | "changes_requested" | "comments";
+    pr: number;
+    count?: number;
+  }>;
 }
 
 /** base-missing 알림의 억제 — 한 번만 올린다(L3 7행의 예산 키). */
@@ -151,18 +180,24 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   const { now, turnRunning, gitOp } = snapshot;
   const notices: NoticeIntent[] = [];
   const attentions: CycleAttention[] = [];
+  const tapeEvents: CycleDecision["tapeEvents"] = [];
+  const handoffEvents: CycleDecision["handoffEvents"] = [];
   // 판정 안에서만 갱신하는 원장 조각 — 입력 원장은 그대로 둔다.
   let budgets = ledger.budgets;
   let pendingOp = ledger.pendingOp;
   let push = ledger.push;
   let reviews = ledger.reviews;
+  let ended = ledger.ended;
+  let lastPr = ledger.lastPr;
   let aiFixing = false;
 
   const decide = (action: CycleAction): CycleDecision => ({
     action,
     notices,
     attention: pickAttention(attentions, aiFixing),
-    ledger: { ...ledger, budgets, pendingOp, push, reviews },
+    ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr },
+    tapeEvents,
+    handoffEvents,
   });
   /** 무결성 문제(1~4행)를 턴 중에 만났다 — 예 행도 보지 않고 기다린다(L3). */
   const integrityWait = (): CycleDecision => decide({ kind: "none" });
@@ -170,6 +205,72 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   // GitHub 인증이 만료되면 API 의 말을 믿지 않는다 — pr 이 없는 세계로 판다.
   const pr = snapshot.githubAuthExpired ? null : snapshot.pr;
   if (snapshot.githubAuthExpired) attentions.push("reconnect");
+
+  // ————— PR 상태 변화의 알림 (PLAN L2 흡수표 — 옛 폴러의 몫) —————
+  // 상태의 기준선은 레지스트리의 handoff 상태(사람이 마지막으로 본 것)이고,
+  // 코멘트 수의 기준선은 원장의 lastPr 이다. 알림은 판정 순간에 적는다 —
+  // 랜딩이 실패해도 소식은 이미 나갔고, ended 가 같은 PR 의 재알림을 막는다
+  // (옛 endedHandoff 와 같은 자리).
+  if (pr !== null) {
+    const seen = snapshot.handoffState;
+    const alreadyEnded = ended?.pr === pr.number;
+    if (pr.state === "merged" && seen !== "merged" && !alreadyEnded) {
+      handoffEvents.push({ state: "merged", pr: pr.number });
+      tapeEvents.push({ kind: "cycle.merged", pr: pr.number });
+      ended = {
+        pr: pr.number,
+        state: "merged",
+        headSha: pr.headSha,
+        seenAt: new Date(now).toISOString(),
+      };
+    } else if (pr.state === "closed" && seen !== "closed" && !alreadyEnded) {
+      handoffEvents.push({ state: "closed", pr: pr.number });
+      tapeEvents.push({ kind: "cycle.closed", pr: pr.number });
+      ended = {
+        pr: pr.number,
+        state: "closed",
+        headSha: pr.headSha,
+        seenAt: new Date(now).toISOString(),
+      };
+    } else if (pr.state === "changes_requested" && seen === "open") {
+      handoffEvents.push({ state: "changes_requested", pr: pr.number });
+    } else if (
+      pr.state === "open" &&
+      lastPr?.number === pr.number &&
+      lastPr.reviewCount !== null &&
+      snapshot.reviewCount !== null &&
+      snapshot.reviewCount > lastPr.reviewCount
+    ) {
+      handoffEvents.push({
+        state: "comments",
+        pr: pr.number,
+        count: snapshot.reviewCount - lastPr.reviewCount,
+      });
+    }
+    // 새 코멘트의 도착은 대화록의 몫이다 — 브리프(14행)의 예산과 무관하게
+    // 관찰된 순간 한 번 적고, known 에 올려 같은 코멘트가 다시 세지 않게 한다.
+    if (snapshot.newReviews.length > 0) {
+      tapeEvents.push({ kind: "review.arrived", reviews: snapshot.newReviews });
+      const entryKey = String(pr.number);
+      const prev = reviews[entryKey] ?? { known: [], briefed: [], rounds: 0 };
+      reviews = {
+        ...reviews,
+        [entryKey]: {
+          ...prev,
+          known: [...new Set([...prev.known, ...snapshot.newReviews.map((r) => r.id)])],
+        },
+      };
+    }
+    // 다른 PR 번호가 오면 기준선은 새로 세운다 — 첫 관찰은 알리지 않는다.
+    lastPr = {
+      number: pr.number,
+      reviewCount: snapshot.reviewCount ?? lastPr?.reviewCount ?? null,
+    };
+  } else if (snapshot.handoffState === null) {
+    // 열린 넘김이 없다 — 기준선을 비운다(다음 사이클의 첫 관찰이 옛 수와
+    // 비교해 울리는 일을 막는다).
+    lastPr = null;
+  }
 
   const pending = ledger.pendingOp;
 
@@ -274,7 +375,14 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   }
 
   // ————— 8 · 9행 — PR 이 병합되거나 닫혔다(L4 랜딩) —————
-  if (pr !== null && (pr.state === "merged" || pr.state === "closed")) {
+  // 레지스트리가 이미 그 끝을 들고 있으면(handoffState === pr.state) 착지는
+  // 끝난 것이다 — 원장의 ended 와 함께 재착지를 막는 두 번째 잣대(옛
+  // landCycleJob 의 seated 판정과 같은 규칙).
+  if (
+    pr !== null &&
+    (pr.state === "merged" || pr.state === "closed") &&
+    snapshot.handoffState !== pr.state
+  ) {
     if (!turnRunning) {
       const carry = (snapshot.commitsAfterPrHead ?? 0) > 0;
       return decide({
@@ -363,7 +471,7 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
 
   // ————— 14행(턴 중 예) — 새 개발자 코멘트(L9) —————
   if (
-    snapshot.newReviewIds.length > 0 &&
+    snapshot.pendingReviews.length > 0 &&
     pr !== null &&
     (pr.state === "open" || pr.state === "changes_requested")
   ) {
@@ -375,17 +483,18 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       // 코멘트가 두 번 턴으로 나가지 않게(I5). 장부의 키는 PR 번호(L9),
       // 예산의 키는 review:<pr>(L3 14행) — 서로 다른 표의 키다.
       const entryKey = String(pr.number);
-      const prev = ledger.reviews[entryKey] ?? { known: [], briefed: [], rounds: 0 };
+      const prev = reviews[entryKey] ?? { known: [], briefed: [], rounds: 0 };
+      const ids = snapshot.pendingReviews.map((review) => review.id);
       reviews = {
-        ...ledger.reviews,
+        ...reviews,
         [entryKey]: {
-          known: [...new Set([...prev.known, ...snapshot.newReviewIds])],
-          briefed: [...new Set([...prev.briefed, ...snapshot.newReviewIds])],
+          known: [...new Set([...prev.known, ...ids])],
+          briefed: [...new Set([...prev.briefed, ...ids])],
           rounds: budgets[key]?.spent ?? prev.rounds + 1,
         },
       };
       aiFixing = true;
-      return decide({ kind: "briefReviews", pr: pr.number, ids: snapshot.newReviewIds });
+      return decide({ kind: "briefReviews", pr: pr.number, reviews: snapshot.pendingReviews });
     }
     attentions.push("developer-notified");
     if (!budgets[key]?.escalated) {

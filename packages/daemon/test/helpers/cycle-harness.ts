@@ -346,10 +346,17 @@ export class MemoryGitHub implements RestTransport {
     pull.mergeableState = state;
   }
 
-  /** 코멘트를 단다 — kind: 인라인(pull) · 리뷰 본문(review) · 요청 코멘트(issue). */
+  /** 코멘트를 단다 — kind: 인라인(pull) · 리뷰 본문(review) · 요청 코멘트(issue).
+   *  review 의 state 는 GitHub 의 판정 단어다 — CHANGES_REQUESTED 가
+   *  getPullRequest 의 changes_requested 를 만든다. */
   addComment(
     number: number,
-    opts: { kind?: "pull" | "review" | "issue"; login?: string; body?: string } = {},
+    opts: {
+      kind?: "pull" | "review" | "issue";
+      login?: string;
+      body?: string;
+      state?: string;
+    } = {},
   ): number {
     const id = this.nextCommentId++;
     const row = { id, login: opts.login ?? "dev1", body: opts.body ?? "이 부분 고쳐 주세요" };
@@ -359,7 +366,7 @@ export class MemoryGitHub implements RestTransport {
     } else if (kind === "review") {
       this.reviews.set(number, [
         ...(this.reviews.get(number) ?? []),
-        { ...row, state: "COMMENTED" },
+        { ...row, state: opts.state ?? "COMMENTED" },
       ]);
     } else {
       this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
@@ -515,10 +522,25 @@ export interface SupervisedScene extends Scene {
   briefs: string[];
   /** raiseNotice 가 모은 알림 — [key, text] 쌍. */
   notices: Array<{ key: string; text: string }>;
-  /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
-  ledgerPath: string;
+  /** onPrTransition 이 모은 개발자 쪽 사건 — 옛 폴러의 알림 몫. */
+  transitions: Array<{ kind: string; at: string; count?: number }>;
+  /** onNewReviews 가 모은 브리프 요청 — [pr, ids]. */
+  reviewBriefs: Array<{ pr: number; ids: number[] }>;
+  /** cycleEvent 가 모은 대화록 사건. */
+  chatEvents: Array<{ kind: string; [key: string]: unknown }>;
+  /** onRetargetBase 가 옮긴 베이스 — 없으면 null. */
+  retargetedTo: string | null;
   /** 감독자의 벽시계를 움직인다 — 백오프 · 1시간 알림의 시험축. */
   setNow: (ms: number) => void;
+  /** 같은 뿌리에 감독자를 새로 세운다 — 재시작 흉내(S7 · S11). 수집기는
+   *  장면의 것을 그대로 쓴다. */
+  respawn(): CycleSupervisor;
+  /** 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true). */
+  deleteMergedBranches: boolean;
+  /** 활성 프로젝트인가 — timer 틱의 fetch 판정이 읽는다(기본 true). */
+  active: boolean;
+  /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
+  ledgerPath: string;
 }
 
 /**
@@ -546,23 +568,45 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     exec("git", args, { cwd: clone.path }).then((done) => done.stdout as string);
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
+  const transitions: Array<{ kind: string; at: string; count?: number }> = [];
+  const reviewBriefs: Array<{ pr: number; ids: number[] }> = [];
+  const chatEvents: Array<{ kind: string; [key: string]: unknown }> = [];
+  const scene = {
+    retargetedTo: null as string | null,
+    refuseReviewSend: false,
+    deleteMergedBranches: true,
+    active: true,
+  };
   const ledgerPath = join(clone.path, "..", "cycle.json");
   let nowMs = Date.now();
-  const supervisor = new CycleSupervisor({
-    core,
-    workspace,
-    ledgerPath,
-    busy: () => false,
-    installStale: () => false,
-    github: () => new GitHubClient("harness-token", github),
-    githubAuthExpired: () => false,
-    slug: () => core.repoSlug(),
-    isActive: () => true,
-    openThread: () => ({ send: (text) => briefs.push(text) }),
-    raiseNotice: (key, text) => notices.push({ key, text }),
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
-    now: () => nowMs,
-  });
+  const spawn = () =>
+    new CycleSupervisor({
+      core,
+      workspace,
+      ledgerPath,
+      busy: () => false,
+      installStale: () => false,
+      github: () => new GitHubClient("harness-token", github),
+      githubAuthExpired: () => false,
+      slug: () => core.repoSlug(),
+      isActive: () => scene.active,
+      openThread: () => ({ send: (text) => briefs.push(text) }),
+      raiseNotice: (key, text) => notices.push({ key, text }),
+      onPrTransition: (kind, at, count) => transitions.push({ kind, at, count }),
+      onNewReviews: (pr, reviews) => {
+        if (scene.refuseReviewSend) return false;
+        reviewBriefs.push({ pr, ids: reviews.map((r) => r.id) });
+        return true;
+      },
+      onRetargetBase: (to) => {
+        scene.retargetedTo = to;
+      },
+      cycleEvent: (event) => chatEvents.push(event as { kind: string }),
+      deleteMergedBranches: () => scene.deleteMergedBranches,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      now: () => nowMs,
+    });
+  const supervisor = spawn();
   return {
     remote,
     clone,
@@ -574,10 +618,35 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     supervisor,
     briefs,
     notices,
-    ledgerPath,
+    transitions,
+    reviewBriefs,
+    chatEvents,
+    get retargetedTo() {
+      return scene.retargetedTo;
+    },
+    get refuseReviewSend() {
+      return scene.refuseReviewSend;
+    },
+    set refuseReviewSend(v: boolean) {
+      scene.refuseReviewSend = v;
+    },
+    get deleteMergedBranches() {
+      return scene.deleteMergedBranches;
+    },
+    set deleteMergedBranches(v: boolean) {
+      scene.deleteMergedBranches = v;
+    },
+    get active() {
+      return scene.active;
+    },
+    set active(v: boolean) {
+      scene.active = v;
+    },
     setNow: (ms) => {
       nowMs = ms;
     },
+    respawn: spawn,
+    ledgerPath,
     observe: (o = {}) => {
       const deps: ObserveDeps = {
         turnRunning: () => false,

@@ -90,10 +90,32 @@ export async function alignCycleBranch(
 }
 
 /**
- * A route becomes part of a committed filename: separators and `..` would
- * let it walk out of `.colo-design/shots/` (or simply fail to match on
- * read-back). Korean stays — the route keeps its own words.
+ * 새 사이클 브랜치의 이름 고르기 (PLAN L4) — `<YYYYMMDD>-<n>` 을 올려 가며
+ * 로컬 · 원격 어느 쪽에도 없는 첫 번호를 고른다. ensureCycleBranch 와
+ * 감독자의 랜딩 이월이 함께 쓴다 — 두 곳이 같은 규칙으로 골라야 두 기계가
+ * 같은 이름을 두고 다투지 않는다. 원격이 닿지 않으면 로컬만으로 고른다 —
+ * 이름을 못 고르는 것이 저장을 막을 이유는 아니다(뒤의 push 가 진짜 문제를
+ * 말한다).
  */
+export async function pickCycleBranchName(
+  git: (args: string[]) => Promise<string>,
+  remote: string,
+): Promise<string> {
+  const today = new Date();
+  let name = cycleBranchName(today, 1);
+  for (let n = 1; n <= 99; n += 1) {
+    name = cycleBranchName(today, n);
+    const takenRemote = await git(["ls-remote", "--heads", remote, name]).catch(() => "");
+    if (takenRemote.trim() !== "") continue;
+    const takenLocal = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]).catch(
+      () => "",
+    );
+    if (takenLocal.trim() === "") break;
+  }
+  return name;
+}
+
+/** The committed file's name part — the route, made safe for a path segment. */
 function shotNamePart(value: string): string {
   return value
     .replace(/[/\\]+/g, "-")
@@ -107,29 +129,8 @@ export class PublishCycle {
     private readonly deps: PublishDeps,
   ) {}
 
-  /** 내려앉을 사이클의 끝이 밀려 있는가 — 폴링이 같은 알림을 반복하지 않게. */
-  get landingDue(): boolean {
-    return this.endedHandoff !== null;
-  }
-
   /** D88: the developer comments the last 상태 확인 read — 답하기 resolves ids against this. */
   private lastReviews: DeveloperReview[] = [];
-  /**
-   * hero-synthesis D1: ids the daemon has already SEEN, for `review.arrived`.
-   * `null` until the first successful read — a daemon that just booted must
-   * not announce every old comment as new (the poll's own count guard makes
-   * the same call for notices).
-   */
-  private knownReviewIds: Set<number> | null = null;
-
-  /**
-   * 커미티 2026-09-15 판정 1·2: 폴링이 **읽어서 본** 사이클의 끝(반영됨·반려).
-   * 칩에는 아직 반영하지 않는다 — 끝을 칩에만 적고 착지를 미루면 `this.core.branch`
-   * 가 살아 있어 다음 저장이 이미 닫힌 브랜치로 푸시된다(ensureCycleBranch 가
-   * 이름이 있으면 그대로 쓴다). 그래서 끝은 여기 따로 세워 두고, 사람이 있는
-   * 자리(상태 확인 · 프로젝트 활성화 · 다음 저장의 머리)에서만 내려앉힌다.
-   */
-  private endedHandoff: HandoffStatus | null = null;
 
   async runSave(options: {
     message?: string;
@@ -155,13 +156,9 @@ export class PublishCycle {
     // 차선이 지키므로 손으로 슬롯을 기다리던 자리는 없다. 몸통의 diff 는
     // 재진입으로 곧바로 읽힌다.
 
-    // 저장 직전 가드 (커미티 2026-09-15 판정 1): 기획자가 `상태 확인`을 한 번도
-    // 누르지 않아도, 이미 반영되거나 반려된 요청의 브랜치에 커밋이 쌓이는 일은
-    // 없어야 한다. 읽기와 착지를 여기서 한 번에 치른다 — 사람이 저장을 눌렀으니
-    // 사람 있는 자리이고(되돌리기 기록이 조용히 지워지지 않는다), 끝난 사이클은
-    // 여기서 닫혀 아래 ensureCycleBranch 가 새 브랜치를 연다. 실패는 저장을
-    // 막지 않는다 — 네트워크가 없다고 저장을 막을 이유는 없다.
-    if (this.core.openHandoff || this.endedHandoff) await this.refreshHandoff().catch(() => null);
+    // 끝난 요청의 착지는 감독자(cycle-supervisor)의 몫이다 — 저장은 여기서
+    // 읽지 않는다. 끝난 PR 에 자동 보관이 먼저 커밋해도 괜찮다: 랜딩의 이월이
+    // PR head 뒤의 커밋으로 옮긴다(PLAN L4).
 
     // A conflict left for the agent is not a save's ingredient: the unmerged
     // files count as changes awaiting 저장, and staging exactly the approved
@@ -337,24 +334,10 @@ export class PublishCycle {
       return alignCycleBranch((args) => this.core.git(args), this.core.branch);
     }
 
-    const today = new Date();
-    let name = cycleBranchName(today, 1);
-    for (let n = 1; n <= 99; n += 1) {
-      name = cycleBranchName(today, n);
-      // An empty ls-remote line means nobody has taken it. A remote that
-      // cannot be reached is not a reason to refuse the save: the push right
-      // after this will report the real problem, with git's own words.
-      const takenRemote = await this.core
-        .git(["ls-remote", "--heads", this.core.url ?? "origin", name])
-        .catch(() => "");
-      if (takenRemote.trim() !== "") continue;
-      // 로컬 브랜치에도 없어야 한다(PLAN L4 · 단계 0): 로컬만 남은 이름을
-      // 고르면 아래 `checkout -b` 가 그 이름을 거절한다.
-      const takenLocal = await this.core
-        .git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`])
-        .catch(() => "");
-      if (takenLocal.trim() === "") break;
-    }
+    const name = await pickCycleBranchName(
+      (args) => this.core.git(args),
+      this.core.url ?? "origin",
+    );
 
     // `-b` 이지 `-B` 가 아니다(PLAN L4 · 단계 0): 위 고르기가 로컬 · 원격
     // 어느 쪽에도 없음을 확인한 이름만 여기 온다 — 실수로 같은 이름의 로컬
@@ -488,9 +471,14 @@ export class PublishCycle {
       }
       // 열린 요청의 head 가 지금 브랜치일 때만 덮어쓴다 — 새 사이클 브랜치에서
       // reopened 요청의 옛 head 를 고쳐 쓰면 보이지 않는 곳의 커밋을 고른다.
+      // 끝난 요청(merged·closed)은 절대 PATCH 하지 않는다 — 감독자의 랜딩이
+      // 늦어진 사이에 눌린 제출이 닫힌 요청의 제목·본문을 덮어쓰는 일을 막는다
+      // (PLAN L4 — 끝난 요청은 새 요청으로만 이어진다).
       const open = this.core.openHandoff;
       const pull =
-        open && open.branch === branch
+        open &&
+        open.branch === branch &&
+        (open.state === "open" || open.state === "changes_requested")
           ? await client.updatePullRequest({
               ...slug,
               number: open.number,
@@ -597,7 +585,7 @@ export class PublishCycle {
    */
   async handoffShot(route: string): Promise<{ mediaType: string; data: string } | null> {
     if (!this.core.isCloned()) return null;
-    const branch = this.core.openHandoff?.branch ?? this.endedHandoff?.branch ?? null;
+    const branch = this.core.openHandoff?.branch ?? null;
     if (!branch) return null;
     // The same name attachShots wrote — the route passes the same
     // normalization so the lookup matches what was committed
@@ -623,71 +611,10 @@ export class PublishCycle {
   }
 
   /**
-   * Re-reads the pull request. 반영됨(merged)과 반려(closed) 둘 다 사이클을
-   * 끝낸다: 클론은 베이스 브랜치로 돌아가고 다음 저장이 새 브랜치를 연다 —
-   * 그래서 이것은 수동적인 상태 읽기가 아니다 (커미티 2026-09-15 판정 1·2).
-   */
-  async refreshHandoff(): Promise<HandoffStatusReport | null> {
-    const current = this.core.openHandoff;
-    // 폴링이 이미 본 끝 — 읽기에 실패해도 이것만으로 내려앉을 수 있다.
-    const ended = this.endedHandoff;
-    const target = current ?? ended;
-    const slug = this.core.repoSlug();
-    const client = this.core.gitHubClient?.() ?? null;
-    if (!target) return null;
-    if (!slug || !client) {
-      if (ended) await this.landCycle(ended);
-      return ended ?? current;
-    }
-
-    const pull = await client.getPullRequest({ ...slug, number: target.number }).catch(() => null);
-    if (!pull) {
-      // 못 읽었다고 끝나지 않은 것이 되지는 않는다: 폴링이 본 끝은 그대로 내려앉는다.
-      if (ended) await this.landCycle(ended);
-      return ended ?? current;
-    }
-
-    const handoff: HandoffStatus = pull;
-    // hero-synthesis D1: 반영됨 is news the moment the daemon learns it —
-    // here (상태 확인 · 저장의 머리) or in the poll below. The target's own
-    // state is the guard: a handoff already staged or landed as merged does
-    // not announce twice. 반려 has no tape event — the contract names only
-    // `cycle.merged`; the notice and the review rows carry that story.
-    // 폴러가 먼저 본 끝(`endedHandoff` 같은 요청·같은 끝)은 이미 테이프에
-    // 내려앉은 소식이다 — `current` 가 아직 open 모양을 들고 있어도 다시
-    // 울리면 같은 줄이 두 번 쌓인다 (베타 테스트 #5).
-    const seenEnded = ended !== null && ended.number === pull.number && ended.state === pull.state;
-    if (pull.state === "merged" && target.state !== "merged" && !seenEnded) {
-      this.core.lane.outside(() =>
-        this.deps.onCycleEvent?.(
-          { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
-          undefined,
-        ),
-      );
-    }
-    // 사이클을 끝내는 판정은 둘이다: 반영됨과 반려. 반려를 사이클로 계속 들고
-    // 있으면 칩이 `저장됨` 으로 떨어져(넘기기까지 열린다) 저장은 아무도 읽지
-    // 않는 브랜치에 쌓이고, 넘기기는 닫힌 요청의 제목·본문만 덮어쓴다 —
-    // 개발자의 판정이 조용히 무효가 된다 (커미티 2026-09-15 C-3).
-    if (pull.state !== "merged" && pull.state !== "closed") {
-      // 닫혔다 다시 열린 요청 — 세워 둔 끝은 더 이상 끝이 아니다.
-      this.endedHandoff = null;
-      this.core.setCycle(this.core.branch, handoff);
-      return await this.withReviews(handoff);
-    }
-
-    await this.landCycle(handoff);
-    return await this.withReviews(handoff);
-  }
-
-  /**
-   * 폴링의 읽기 (커미티 2026-09-15 판정 1): **읽기만 한다.**
-   *
-   * open ↔ changes_requested 사이의 움직임만 칩·배지에 반영한다. 사이클을
-   * 끝내는 판정(반영됨·반려)은 워크트리를 베이스로 되돌리고 체크포인트까지
-   * 건드리는 착지를 동반하므로, 타이머가 조용히 해서는 안 되는 일이다 —
-   * 본 끝은 `endedHandoff` 에 세워만 두고, 사람이 있는 자리(상태 확인 ·
-   * 프로젝트 활성화 · 다음 저장의 머리)가 내려앉힌다.
+   * 상태 확인의 읽기 (PLAN L2 흡수표): **읽기만 한다.** 사이클을 끝내는
+   * 판정(반영됨·반려의 착지)은 감독자의 틱이 한다 — 여기서는 레지스트리에
+   * 쓰지 않는다. 쓰면 감독자가 끝을 영영 모른다(관찰의 handoffState 가
+   * 이미 끝이므로 사건이 나가지 않는다).
    */
   async peekHandoff(): Promise<HandoffStatusReport | null> {
     const current = this.core.openHandoff;
@@ -697,81 +624,7 @@ export class PublishCycle {
 
     const pull = await client.getPullRequest({ ...slug, number: current.number }).catch(() => null);
     if (!pull) return current;
-
-    if (pull.state === "merged" || pull.state === "closed") {
-      // hero-synthesis D1: the poll's fresh read of 반영됨 is the same news —
-      // `endedHandoff` already holding a merged pull means it was announced.
-      if (pull.state === "merged" && this.endedHandoff?.state !== "merged") {
-        this.core.lane.outside(() =>
-          this.deps.onCycleEvent?.(
-            { kind: "cycle.merged", at: new Date().toISOString(), pr: pull.number },
-            undefined,
-          ),
-        );
-      }
-      this.endedHandoff = pull;
-    } else this.core.setCycle(this.core.branch, pull);
     return await this.withReviews(pull);
-  }
-
-  /** 사람이 온 자리 — 폴링이 세워 둔 사이클의 끝이 있으면 지금 내려앉힌다. */
-  async landHandoffIfDue(): Promise<void> {
-    if (!this.endedHandoff) return;
-    await this.refreshHandoff().catch(() => undefined);
-  }
-
-  /**
-   * 사이클의 끝 — 반영됨과 반려가 같은 모양으로 내려앉는다: 베이스 브랜치로
-   * 돌아가고 브랜치를 잊는다. 반려에서 워크트리를 반려된 팁에 남겨 두면 다음
-   * 저장의 `checkout -B` 가 그 위에서 새 사이클을 만들어 **반려된 커밋을 새
-   * 요청으로 다시 제안한다** (커미티 2026-09-15 판정 2).
-   */
-  private landCycle(handoff: HandoffStatus): Promise<void> {
-    // 착지는 차선의 land 칸에 선다(PLAN L1) — fetch · checkout · reset 이
-    // 클론을 통째로 움직인다. 저장의 머리(runSave 안의 refreshHandoff)에서
-    // 불리면 재진입으로 곧바로 돈다.
-    return this.core.lane.run("land", () => this.landCycleJob(handoff));
-  }
-
-  /** landCycle 의 몸통 — 차선 작업 안에서만 돈다. */
-  private async landCycleJob(handoff: HandoffStatus): Promise<void> {
-    // 재착지 금지: branch 가 비었고 같은 요청이 이미 같은 끝 상태로 열려 있으면
-    // 착지는 지난번에 끝났다 — refreshHandoff 가 매번 다시 부를 때마다
-    // rotateCommentsCycle 이 핀 앵커를 옮기는 일을 한 번만 치른다.
-    const seated = this.core.openHandoff;
-    if (
-      this.core.branch === null &&
-      seated !== null &&
-      (seated.state === "merged" || seated.state === "closed") &&
-      seated.state === handoff.state &&
-      seated.number === handoff.number
-    ) {
-      return;
-    }
-    try {
-      await this.core.git(["fetch", "origin", this.core.baseBranch]);
-      // 저장 안 한 변경은 실어 나르지 않는다: 병합 직후엔 양쪽 블롭이 같아
-      // checkout 이 수정을 거부하지 않고, 이어지는 reset 이 그대로 지워버린다.
-      // dirty 면 checkout 만 하고 reset 은 건너뛴다 — 다음 세션 시작의 최신화가
-      // stash 로 그 변경을 지키며 따라간다.
-      const dirty = (await this.core.git(["status", "--porcelain"])).trim().length > 0;
-      await this.core.git(["checkout", this.core.baseBranch]);
-      if (!dirty) await this.core.git(["reset", "--hard", `origin/${this.core.baseBranch}`]);
-    } catch (error) {
-      // A dirty worktree can refuse the checkout. Forgetting the cycle here
-      // would strand HEAD on the ended branch — the next save's `checkout -B`
-      // would carry its rejected commits into a new PR. The cycle stays, so
-      // the next landing attempt retries the move to the base first.
-      this.core.setDetail(detailOf(error, this.core.pat));
-      return;
-    }
-    this.endedHandoff = null;
-    this.core.setCycle(null, handoff);
-    // D93 후속: the ended cycle's pins belonged to its request — 다음 넘기기의
-    // `### 수정 요청` 절은 이 순간 이후의 핀만 읽는다. GitHub 가 merged_at 을
-    // 주지 않으니 착지의 순간이 앵커다 — 반영 전의 늦은 핀 한두 개가 다음
-    // 요청으로 넘어가는 것이 저장 때마다 묻는 것보다 싸다.
-    this.core.rotateCommentsCycle();
   }
 
   /**
@@ -844,25 +697,9 @@ export class PublishCycle {
           });
         }
       };
-      const collected = await collect()
-        .then(() => true)
-        .catch(() => false);
-      // hero-synthesis D1: ids this read adds are the 사람 메시지's arrival —
-      // the poll and 상태 확인 share this path, so both record the same rows.
-      // A refused read seeds nothing: announcing every old comment as new on
-      // the next successful read is worse than staying quiet once.
-      if (collected) {
-        const known = this.knownReviewIds;
-        if (known !== null) {
-          const arrived = reviews.filter((review) => !known.has(review.id));
-          if (arrived.length > 0) {
-            this.core.lane.outside(() =>
-              this.deps.onCycleEvent?.({ kind: "review.arrived", reviews: arrived }, undefined),
-            );
-          }
-        }
-        this.knownReviewIds = new Set(reviews.map((review) => review.id));
-      }
+      // 코멘트 도착 사건(review.arrived)은 감독자의 관찰이 낸다 — 여기서는
+      // 읽기만 한다(상태 확인의 읽기는 사건을 만들지 않는다).
+      await collect().catch(() => undefined);
     }
     this.lastReviews = reviews;
     return { ...handoff, reviews };

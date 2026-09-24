@@ -24,6 +24,7 @@ function fullLedger(): CycleLedger {
   return {
     v: 1,
     ended: { pr: 12, state: "merged", headSha: "abc1234", seenAt: iso(T0) },
+    lastPr: { number: 12, reviewCount: 3 },
     submit: { requestedAt: iso(T0), via: "button", step: "ensurePushed" },
     push: {
       behindSince: iso(T0),

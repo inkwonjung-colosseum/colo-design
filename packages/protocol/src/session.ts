@@ -250,6 +250,17 @@ export type ChatEvent =
   | { kind: "cycle.saveBlocked"; at: string; detail: string }
   | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string }
   | { kind: "cycle.merged"; at: string; pr: number }
+  /**
+   * 넘긴 요청이 병합 없이 닫혔다(반려, PLAN L4) — 작업은 새 사이클 브랜치로
+   * 이월됐으므로 대화록은 한 줄로 그 사실만 말한다.
+   */
+  | { kind: "cycle.closed"; at: string; pr: number }
+  /**
+   * 끝난 요청의 남은 커밋이 새 사이클 브랜치로 옮겨졌다(PLAN L4 이월) —
+   * from 은 끝난 브랜치, to 는 새 브랜치, commits 는 옮긴 커밋 수. 대화록은
+   * 그리지 않는다(기록 전용).
+   */
+  | { kind: "cycle.carried"; at: string; from: string; to: string; commits: number }
   | { kind: "review.arrived"; reviews: DeveloperReview[] };
 
 // ---------------------------------------------------------------------------

@@ -177,14 +177,6 @@ export const SAVE_CONFLICT_OPEN_DETAIL =
 export const COMMANDS_UNAPPROVED_DETAIL =
   "이 서비스를 이 컴퓨터에서 처음 켭니다 — 준비에 몇 분 걸립니다. 시작하려면 아래 버튼을 눌러 주세요.";
 
-/**
- * The one refresh this tool refuses to do alone: the base branch carries
- * commits the clone does not know. Rewriting history a planner cannot read
- * is not 자동 병합, so it stays a named failure.
- */
-const REFRESH_DIVERGED_DETAIL =
-  "기본 브랜치에 원격과 갈라진 커밋이 있어 자동 최신화를 멈췄습니다 — 대화를 열면 AI가 확인합니다.";
-
 export const PNPM_MISSING_DETAIL =
   "pnpm이 없습니다 — corepack enable 또는 npm i -g pnpm 으로 설치해 주세요.";
 export const REGISTRY_AUTH_DETAIL =
@@ -311,10 +303,11 @@ export class RepoCore {
   readonly root: string;
 
   /**
-   * The branch a handoff PR will target (PLAN D5[넘기기]). Nothing reads it in M1; it
-   * lives beside the url because the same project decision fixes both.
+   * The branch a handoff PR will target (PLAN D5[넘기기]). 감독자의 7행
+   * (retargetBase)이 원격의 기본 가지를 따라 이 값을 옮긴다 — 레지스트리는
+   * fleet 콜백이 함께 갱신한다.
    */
-  readonly baseBranch: string;
+  baseBranch: string;
 
   url: string | null;
 
@@ -343,16 +336,6 @@ export class RepoCore {
    * `inFlight` 는 남는다 — 저것은 git 잠금이 아니라 bootstrap 중복 방지다.
    */
   readonly lane = new GitLane();
-
-  /**
-   * 최신화 · 되돌리기 · 복구처럼 작업 트리를 통째로 움직이는 차선 작업이 도는
-   * 중 (PLAN L1) — 옛 `refreshing` 슬롯을 읽던 바깥 호출자(handoffStatus 의
-   * 수동 읽기 판정)가 같은 뜻으로 읽는다. 저장·넘기기는 diffStage 가 말한다.
-   */
-  get busyRefreshing(): boolean {
-    const kind = this.lane.current;
-    return kind === "refresh" || kind === "restore" || kind === "recover";
-  }
 
   /** Whether this project is the one on screen — see `setActive`. */
   active = true;
@@ -609,27 +592,6 @@ export class RepoCore {
     });
   }
 
-  /**
-   * 최신화 버튼이 열린 대화 없이 눌렸을 때의 사전 확인 (실사 P0 — 조용한
-   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 AI 의 첫 과제가
-   * 되야 하므로 혼자 하지 않는다 — 대신 fetch 로 원격을 확인해 무엇이 기다리는
-   * 지 알려준다. null 이면 막을 이유가 없다: 베이스 브랜치 위의 fast-forward 는
-   * 혼자서도 안전하고, 새 커밋이 없으면 할 일 자체가 없다.
-   */
-  async refreshNeedsThread(): Promise<number | null> {
-    if (!this.isCloned()) return null;
-    if (this.phase !== "ready" && this.phase !== "error") return null;
-    if (!this.branch) return null;
-    // fetch 도 쓰기다(refs · FETCH_HEAD) — 차선에 선다(PLAN L1). 종류는
-    // supervise: 감독자의 관찰 계통(L2 흡수표가 이 확인을 mergeBase 조치로
-    // 데려간다)의 씨앗이고, refresh 의 합류와 결과 모양이 섞이지 않게 한다.
-    return await this.lane.run("supervise", async () => {
-      await this.git(["fetch", "origin", this.baseBranch]);
-      const [, behind] = await this.aheadBehindBase();
-      return behind > 0 ? behind : null;
-    });
-  }
-
   // -------------------------------------------------------------------------
   // The handoff cycle (PLAN D5[넘기기]): 저장 → 개발자에게 넘기기 → 반영됨
   // -------------------------------------------------------------------------
@@ -810,8 +772,13 @@ export class RepoCore {
       } else {
         const [ahead, behind] = await this.aheadBehindBase();
         if (behind > 0) {
-          if (ahead > 0) throw new Error(REFRESH_DIVERGED_DETAIL);
-          await this.git(["merge", "--ff-only", `origin/${this.baseBranch}`]);
+          // 사이클 밖 갈라짐(베이스 위에 로컬 커밋)은 더 이상 준비 실패가
+          // 아니다 (PLAN L3 6행) — 감독자의 adoptStrayCommits 가 그 커밋을
+          // 사이클 브랜치로 옮긴다. 여기서는 최신화를 건너뛰고(치워둔 변경은
+          // 아래에서 그대로 되돌린다) 준비를 계속한다.
+          if (ahead === 0) {
+            await this.git(["merge", "--ff-only", `origin/${this.baseBranch}`]);
+          }
         }
       }
     } catch (error) {
@@ -931,6 +898,16 @@ export class RepoCore {
   async mergeInProgress(): Promise<boolean> {
     try {
       await this.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** True while a cherry-pick waits for its conflict resolution (CHERRY_PICK_HEAD). */
+  async cherryPickInProgress(): Promise<boolean> {
+    try {
+      await this.git(["rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD"]);
       return true;
     } catch {
       return false;

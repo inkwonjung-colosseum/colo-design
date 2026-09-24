@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DeveloperReview } from "@colo-design/protocol";
 // `../dist` 임포트인 이유: cycle-reconcile 는 형제(budgets)를 `.js` 지정자로
 // 부른다 — src 직접 로드는 그 지정을 못 고친다(revive-budget 와 같은 길).
 import { type CycleLedger, emptyLedger } from "../dist/cycle-ledger.js";
@@ -31,7 +32,10 @@ function snap(over: Partial<CycleSnapshot> = {}): CycleSnapshot {
     remoteAheadOfLocal: 0,
     pr: null,
     commitsAfterPrHead: null,
-    newReviewIds: [],
+    handoffState: null,
+    newReviews: [],
+    pendingReviews: [],
+    reviewCount: null,
     installStale: false,
     hygieneDue: false,
     githubReachable: true,
@@ -43,6 +47,16 @@ function snap(over: Partial<CycleSnapshot> = {}): CycleSnapshot {
 function led(over: Partial<CycleLedger> = {}): CycleLedger {
   return { ...emptyLedger(), ...over };
 }
+
+/** 시험용 개발자 코멘트 — 14행의 pendingReviews 가 싣는 모양. */
+const rev = (id: number): DeveloperReview => ({
+  id,
+  kind: "review",
+  author: "dev1",
+  body: `코멘트 ${id}`,
+  pr: 12,
+  at: iso(NOW),
+});
 
 const kindOf = (out: { action: { kind: string } }) => out.action.kind;
 
@@ -314,10 +328,13 @@ test("13행 — 제출 의도가 남아 있으면 다음 단계를 밟는다(턴
 
 test("14행 — 새 코멘트를 반영 브리프로 보내고 장부에 적는다", () => {
   const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
-  const out = nextCycleAction(snap({ pr, newReviewIds: [5, 6] }), led());
-  assert.deepEqual(out.action, { kind: "briefReviews", pr: 12, ids: [5, 6] });
+  const pending = [rev(5), rev(6)];
+  const out = nextCycleAction(snap({ pr, pendingReviews: pending, newReviews: pending }), led());
+  assert.deepEqual(out.action, { kind: "briefReviews", pr: 12, reviews: pending });
   assert.equal(out.attention, "ai-fixing");
   assert.deepEqual(out.ledger.reviews["12"], { known: [5, 6], briefed: [5, 6], rounds: 1 });
+  // 도착 사건은 새 코멘트의 전체 객체를 싣는다.
+  assert.deepEqual(out.tapeEvents, [{ kind: "review.arrived", reviews: pending }]);
 });
 
 test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
@@ -325,11 +342,11 @@ test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
   const shot = snap({ pr });
   let ledger = led();
   for (let i = 0; i < 5; i += 1) {
-    const out = nextCycleAction({ ...shot, newReviewIds: [100 + i] }, ledger);
+    const out = nextCycleAction({ ...shot, pendingReviews: [rev(100 + i)] }, ledger);
     assert.equal(kindOf(out), "briefReviews");
     ledger = out.ledger;
   }
-  const sixth = nextCycleAction({ ...shot, newReviewIds: [200] }, ledger);
+  const sixth = nextCycleAction({ ...shot, pendingReviews: [rev(200)] }, ledger);
   assert.equal(kindOf(sixth), "none");
   assert.deepEqual(sixth.notices, [
     {
@@ -339,7 +356,10 @@ test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
     },
   ]);
   assert.equal(sixth.attention, "developer-notified");
-  assert.deepEqual(nextCycleAction({ ...shot, newReviewIds: [201] }, sixth.ledger).notices, []);
+  assert.deepEqual(
+    nextCycleAction({ ...shot, pendingReviews: [rev(201)] }, sixth.ledger).notices,
+    [],
+  );
 });
 
 test("15행 · 16행 — 재설치와 위생", () => {

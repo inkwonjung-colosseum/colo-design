@@ -362,3 +362,397 @@ test("tick 한 번에 하나 — 동시에 두 번 부르면 몸통은 한 번 +
     await scene.dispose();
   }
 });
+
+/** 열린 PR 을 레지스트리에 싣는다 — 넘긴 사이클의 모양. */
+async function openCycle(scene: SupervisedScene, branch: string): Promise<number> {
+  const pr = await scene.github.openPull({ head: branch });
+  scene.core.setCycle(branch, {
+    number: pr,
+    url: `https://github.test/pull/${pr}`,
+    title: "하네스 요청",
+    state: "open",
+    branch,
+  });
+  return pr;
+}
+
+test("S4 스쿼시 병합 뒤 남은 커밋 — 새 사이클 브랜치에 그 커밋만 이어진다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // 넘긴 뒤의 두 커밋 — PR head 뒤에 쌓인 것만 이월된다.
+    await commit(scene, { "src/b.ts": "export const b = 1;\n" }, "작업 2");
+    await commit(scene, { "src/c.ts": "export const c = 1;\n" }, "작업 3");
+
+    await scene.github.merge(pr, "squash");
+    await scene.supervisor.tick("manual");
+
+    const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
+    assert.notEqual(head, BRANCH, "새 사이클 브랜치 위에 있어야 한다");
+    assert.ok(head.startsWith("colo-design/"));
+    const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
+    assert.deepEqual(
+      log.trim().split("\n"),
+      ["작업 3", "작업 2"],
+      "PR head 뒤의 두 커밋만 이월돼야 한다",
+    );
+    assert.equal(
+      (await scene.git(["show", "HEAD:src/b.ts"])).trim(),
+      "export const b = 1;",
+      "이월된 커밋의 내용이 살아 있어야 한다",
+    );
+    // 옛 브랜치는 로컬 · 원격 모두에서 사라진다.
+    assert.equal(
+      (await scene.git(["branch", "--list", BRANCH])).trim(),
+      "",
+      "옛 로컬 브랜치가 지워져야 한다",
+    );
+    assert.equal(
+      (await scene.git(["ls-remote", "--heads", "origin", BRANCH])).trim(),
+      "",
+      "옛 원격 브랜치가 지워져야 한다",
+    );
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.ended?.pr, pr, "원장에 끝난 PR 이 적혀야 한다");
+    assert.equal(ledger.ended?.state, "merged");
+    assert.equal(scene.core.branch, head, "레지스트리가 새 브랜치를 가리켜야 한다");
+    assert.equal(scene.core.openHandoff, null, "이월이 있으면 handoff 는 비어야 한다");
+    assert.ok(
+      scene.chatEvents.some((e) => e.kind === "cycle.merged"),
+      "cycle.merged 사건이 나가야 한다",
+    );
+    assert.ok(
+      scene.chatEvents.some((e) => e.kind === "cycle.carried"),
+      "cycle.carried 사건이 나가야 한다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("병합 · 남은 것 없음 — 베이스로 돌아오고 handoff 는 merged 로 남는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+
+    await scene.github.merge(pr, "merge");
+    await scene.supervisor.tick("manual");
+
+    assert.equal(
+      (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim(),
+      "main",
+      "베이스 브랜치로 돌아와야 한다",
+    );
+    assert.equal(
+      (await scene.git(["rev-parse", "HEAD"])).trim(),
+      (await scene.git(["rev-parse", "origin/main"])).trim(),
+      "HEAD 는 origin/main 을 가리켜야 한다",
+    );
+    assert.equal((await scene.git(["branch", "--list", BRANCH])).trim(), "");
+    assert.equal((await scene.git(["ls-remote", "--heads", "origin", BRANCH])).trim(), "");
+    assert.equal(scene.core.branch, null, "사이클이 끝나 브랜치는 비어야 한다");
+    assert.equal(
+      scene.core.openHandoff?.state,
+      "merged",
+      "남은 것 없는 병합은 handoff 가 merged 로 남아 칩이 반영됨을 말한다",
+    );
+    assert.equal(ledgerOf(scene).ended?.pr, pr);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("deleteMergedBranches false — 병합 뒤에도 원격 옛 브랜치가 남는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    scene.deleteMergedBranches = false;
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+
+    await scene.github.merge(pr, "merge");
+    await scene.supervisor.tick("manual");
+
+    assert.equal((await scene.git(["branch", "--list", BRANCH])).trim(), "");
+    assert.notEqual(
+      (await scene.git(["ls-remote", "--heads", "origin", BRANCH])).trim(),
+      "",
+      "수명 설정이 거절하면 원격 브랜치는 남는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S5 반려 — 브랜치 전체가 새 브랜치로 이어지고 옛 원격 브랜치는 남는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await commit(scene, { "src/b.ts": "export const b = 1;\n" }, "작업 2");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // 반려 뒤 베이스가 움직였다 — 새 브랜치는 그 위에 합쳐진다.
+    await scene.dev.pushToBase({ "src/base.ts": "개발자\n" }, "베이스 이동");
+
+    scene.github.close(pr);
+    await scene.supervisor.tick("manual");
+
+    const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
+    assert.notEqual(head, BRANCH);
+    assert.ok(head.startsWith("colo-design/"));
+    const log = await scene.git(["log", "--format=%s", "origin/main..HEAD"]);
+    assert.ok(log.includes("작업 1") && log.includes("작업 2"), "옛 커밋 전부가 이어져야 한다");
+    assert.ok(
+      (await scene.git(["log", "--format=%s", "-3"])).includes("베이스 이동") ||
+        (await scene.git(["merge-base", "--is-ancestor", "origin/main", "HEAD"]).then(
+          () => true,
+          () => false,
+        )),
+      "베이스가 새 브랜치에 합쳐져야 한다",
+    );
+    // 반려의 원격 브랜치는 지우지 않는다 — 원장이 기억한다(단계 9 의 정리가 읽는다).
+    assert.notEqual(
+      (await scene.git(["ls-remote", "--heads", "origin", BRANCH])).trim(),
+      "",
+      "반려된 원격 브랜치는 남아야 한다",
+    );
+    assert.equal((await scene.git(["branch", "--list", BRANCH])).trim(), "");
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.ended?.state, "closed");
+    assert.ok(
+      ledger.branches.some((b) => b.name === BRANCH && b.state === "closed"),
+      "원장 branches 에 반려된 브랜치가 기록돼야 한다",
+    );
+    assert.ok(
+      scene.chatEvents.some((e) => e.kind === "cycle.closed"),
+      "cycle.closed 사건이 나가야 한다",
+    );
+    assert.ok(
+      scene.transitions.some((t) => t.kind === "closed"),
+      "반려 알림이 나가야 한다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S2 비활성 프로젝트의 베이스 이동 — timer 틱이 합치고 푸시한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    scene.active = false;
+
+    await scene.dev.pushToBase({ "src/base.ts": "개발자\n" }, "베이스 이동");
+    await scene.supervisor.tick("timer");
+
+    assert.ok(
+      await scene.git(["merge-base", "--is-ancestor", "origin/main", "HEAD"]).then(
+        () => true,
+        () => false,
+      ),
+      "비활성 프로젝트의 사이클 브랜치에도 베이스가 합쳐져야 한다",
+    );
+    const remoteLog = await scene.git(["log", "--format=%s", `origin/${BRANCH}`]);
+    assert.ok(
+      remoteLog.includes("베이스 이동") || remoteLog.includes("Merge"),
+      "합쳐진 브랜치가 푸시돼야 한다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S6 개발자가 PR 브랜치에 커밋 — fast-forward 와 병합", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+
+    // fast-forward — 로컬에 새 커밋이 없다.
+    await scene.dev.pushToBranch(BRANCH, { "src/dev.ts": "개발자 1\n" }, "개발자 커밋 1");
+    await scene.supervisor.tick("manual");
+    assert.ok(
+      (await scene.git(["log", "--format=%s", "-2"])).includes("개발자 커밋 1"),
+      "개발자 커밋이 fast-forward 로 들어와야 한다",
+    );
+
+    // 병합 — 로컬에도 새 커밋이 있다.
+    await commit(scene, { "src/local.ts": "로컬\n" }, "로컬 커밋");
+    await scene.dev.pushToBranch(BRANCH, { "src/dev2.ts": "개발자 2\n" }, "개발자 커밋 2");
+    await scene.supervisor.tick("manual");
+    const log = await scene.git(["log", "--format=%s", "-4"]);
+    assert.ok(log.includes("개발자 커밋 2"), "개발자 커밋이 병합돼야 한다");
+    assert.ok(log.includes("로컬 커밋"), "로컬 커밋이 살아 있어야 한다");
+    assert.equal(ledgerOf(scene).pendingOp, null, "충돌 없이 끝나야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("베이스 병합 충돌 — 브리프 뒤 가짜 AI 정리, 도구가 마무리하고 푸시한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 0;\n" }, "씨앗");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["checkout", "-b", BRANCH]);
+    scene.core.setCycle(BRANCH, null);
+    await commit(scene, { "src/a.ts": "export const v = 1;\n" }, "작업 쪽");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    await scene.dev.pushToBase({ "src/a.ts": "export const v = 2;\n" }, "개발자 쪽");
+
+    // 감독자의 mergeBase 가 충돌로 멈춘다 — 브리프는 감독자가 낸다.
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp?.kind, "merge");
+    assert.equal(scene.briefs.length, 1, "충돌 브리프가 하나 나가야 한다");
+
+    resolveMarkers(scene, { "src/a.ts": "export const v = 3;\n" });
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "마무리 뒤 pendingOp 는 비어야 한다");
+    await scene.git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).then(
+      () => assert.fail("MERGE_HEAD 가 남아 있으면 안 된다"),
+      () => undefined,
+    );
+    const remoteLog = await scene.git(["log", "--format=%s", `origin/${BRANCH}`]);
+    assert.ok(remoteLog.includes("Merge"), "합쳐진 브랜치가 푸시돼야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("랜딩 이월의 cherry-pick 충돌 — 브리프 뒤 마무리가 착지를 끝낸다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.dev.pushToBase({ "src/b.ts": "export const b = 0;\n" }, "씨앗");
+    await scene.git(["fetch", "origin"]);
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    // PR head 뒤의 커밋이 곧 충돌할 내용이다.
+    await commit(scene, { "src/b.ts": "export const b = 2;\n" }, "작업 2");
+
+    await scene.github.merge(pr, "squash");
+    // 병합 뒤 베이스가 같은 파일을 다르게 고쳤다 — 이월의 cherry-pick 이 충돌한다.
+    await scene.dev.pushToBase({ "src/b.ts": "export const b = 9;\n" }, "개발자 쪽");
+
+    await scene.supervisor.tick("manual");
+    const pending = ledgerOf(scene).pendingOp;
+    assert.equal(pending?.kind, "cherry-pick", "이월의 충돌은 cherry-pick 으로 적혀야 한다");
+    assert.equal(pending?.land?.pr, pr, "착지 문맥이 원장에 있어야 한다");
+    assert.equal(scene.briefs.length, 1, "충돌 브리프가 나가야 한다");
+
+    // 가짜 AI 가 정리한다 — 마무리가 착지의 나머지(브랜치 정리 · setCycle)를 끝낸다.
+    resolveMarkers(scene, { "src/b.ts": "export const b = 3;\n" });
+    await scene.supervisor.tick("manual");
+    assert.equal(ledgerOf(scene).pendingOp, null, "마무리 뒤 pendingOp 는 비어야 한다");
+    const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
+    assert.notEqual(head, BRANCH, "새 사이클 브랜치 위에 있어야 한다");
+    assert.equal(scene.core.branch, head, "레지스트리가 새 브랜치를 가리켜야 한다");
+    assert.equal((await scene.git(["branch", "--list", BRANCH])).trim(), "");
+    assert.equal(
+      (await scene.git(["show", "HEAD:src/b.ts"])).trim(),
+      "export const b = 3;",
+      "정리된 내용이 이월돼야 한다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("S11 재시작 — 랜딩 뒤 새 감독자는 cycle.merged 를 다시 내지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+
+    await scene.github.merge(pr, "merge");
+    await scene.supervisor.tick("manual");
+    const transitions = scene.transitions.length;
+    const events = scene.chatEvents.length;
+    assert.ok(scene.chatEvents.some((e) => e.kind === "cycle.merged"));
+
+    // 감독자를 새로 세운다 — 원장의 ended 가 같은 PR 의 재알림을 막는다.
+    const supervisor2 = scene.respawn();
+    await supervisor2.tick("manual");
+    assert.equal(scene.transitions.length, transitions, "알림이 다시 나가면 안 된다");
+    assert.equal(scene.chatEvents.length, events, "대화록 사건이 다시 나가면 안 된다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("폴러를 지운 뒤에도 — PR 상태 변화 알림과 리뷰 브리프가 나간다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+
+    // 첫 틱이 기준선(lastPr)을 세운다 — 첫 관찰은 알리지 않는다.
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.transitions.length, 0, "첫 관찰은 알리지 않는다");
+
+    // 새 코멘트 — 사이드바 사건 · 대화록 사건 · 반영 브리프가 모두 나간다.
+    scene.github.addComment(pr, { kind: "issue", body: "여기 고쳐 주세요" });
+    await scene.supervisor.tick("manual");
+    assert.ok(
+      scene.transitions.some((t) => t.kind === "comments" && t.count === 1),
+      "코멘트 도착 알림이 나가야 한다",
+    );
+    assert.ok(
+      scene.chatEvents.some((e) => e.kind === "review.arrived"),
+      "review.arrived 사건이 나가야 한다",
+    );
+    assert.ok(
+      scene.reviewBriefs.some((r) => r.pr === pr),
+      "리뷰 반영 브리프가 나가야 한다",
+    );
+
+    // 반려 — 상태 변화 알림과 cycle.closed 사건.
+    scene.github.close(pr);
+    await scene.supervisor.tick("manual");
+    assert.ok(scene.transitions.some((t) => t.kind === "closed"));
+    assert.ok(scene.chatEvents.some((e) => e.kind === "cycle.closed"));
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("사이클 밖 갈라짐 — 최신화가 던지지 않고 틱이 사이클 브랜치로 옮긴다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 사이클 없이 base 위에 로컬 커밋 + 원격 진행 — 예전에는 준비 실패였다.
+    await commit(scene, { "src/stray.ts": "export const s = 1;\n" }, "길 잃은 커밋");
+    await scene.dev.pushToBase({ "src/base.ts": "개발자\n" }, "베이스 이동");
+
+    const outcome = await scene.core.refreshFromRemote(() => {});
+    assert.equal(outcome, "clean", "갈라짐은 더 이상 실패가 아니다");
+
+    await scene.supervisor.tick("manual");
+    const head = (await scene.git(["symbolic-ref", "--short", "HEAD"])).trim();
+    assert.ok(head.startsWith("colo-design/"), "사이클 브랜치가 생겨야 한다");
+    const onCycle = await scene.git(["log", "--format=%s", head]);
+    assert.ok(onCycle.includes("길 잃은 커밋"), "커밋이 사이클 브랜치로 옮겨져야 한다");
+    const baseTip = (await scene.git(["rev-parse", "main"])).trim();
+    const originTip = (await scene.git(["rev-parse", "origin/main"])).trim();
+    assert.equal(baseTip, originTip, "로컬 base 는 origin/base 를 가리켜야 한다");
+  } finally {
+    await scene.dispose();
+  }
+});

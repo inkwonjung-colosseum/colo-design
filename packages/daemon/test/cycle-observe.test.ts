@@ -64,7 +64,10 @@ test("깨끗한 클론, 사이클 없음 — 모든 수가 0이고 gitOp 가 없
     assert.equal(snap.commitsAfterPrHead, null);
     assert.deepEqual(snap.conflictFiles, []);
     assert.deepEqual(snap.markersLeft, []);
-    assert.deepEqual(snap.newReviewIds, []);
+    assert.deepEqual(snap.newReviews, []);
+    assert.deepEqual(snap.pendingReviews, []);
+    assert.equal(snap.reviewCount, null);
+    assert.equal(snap.handoffState, null);
     assert.equal(snap.githubReachable, true);
     assert.equal(snap.githubAuthExpired, false);
     assert.equal(snap.hygieneDue, false);
@@ -311,7 +314,7 @@ test("인증 만료 — pr null, githubAuthExpired; 만료된 토큰의 읽기�
   }
 });
 
-test("새 코멘트 — newReviewIds, 원장의 known 에 있는 id 는 빠진다", async () => {
+test("새 코멘트 — newReviews · pendingReviews, 원장의 known 에 있는 id 는 빠진다", async () => {
   const scene = await makeScene();
   try {
     const number = await openCycle(scene, [[{ "screen.txt": "사이클\n" }, "사이클 첫 커밋"]]);
@@ -321,14 +324,29 @@ test("새 코멘트 — newReviewIds, 원장의 known 에 있는 id 는 빠진�
     scene.github.addComment(number, { kind: "issue", login: "colo-planner", body: "제 코멘트" });
     scene.github.addComment(number, { kind: "review", login: "dev1", body: "" });
     const snap = await scene.observe({});
-    assert.deepEqual(snap.newReviewIds, [a, b]);
+    assert.deepEqual(
+      snap.newReviews.map((r) => r.id),
+      [a, b],
+    );
+    assert.deepEqual(
+      snap.pendingReviews.map((r) => r.id),
+      [a, b],
+    );
     const decision = nextCycleAction(snap, emptyLedger());
     assert.equal(decision.action.kind, "briefReviews");
-    // 원장이 아는 id 는 새 것이 아니다.
+    // 원장이 아는 id 는 새 것이 아니다 — known 은 arrived 에서도 빠지고,
+    // briefed 는 pending 에서 빠진다.
     const ledger = emptyLedger();
     ledger.reviews[String(number)] = { known: [a], briefed: [a], rounds: 1 };
     const again = await scene.observe({ ledger });
-    assert.deepEqual(again.newReviewIds, [b]);
+    assert.deepEqual(
+      again.newReviews.map((r) => r.id),
+      [b],
+    );
+    assert.deepEqual(
+      again.pendingReviews.map((r) => r.id),
+      [b],
+    );
   } finally {
     scene.dispose();
   }

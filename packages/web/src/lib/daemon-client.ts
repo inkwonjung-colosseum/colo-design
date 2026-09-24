@@ -139,12 +139,12 @@ export type Block =
       detail: string;
     }
   | {
-      /** 넘김·반영의 진행 한 줄 (cycle.handed·cycle.merged): subtype 이 어느
-       * 쪽인지 고른다. 같은 PR 의 재검토 라운드마다 줄이 쌓이는 것이
-       * 목업의 의도다 — 대화의 연대기. */
+      /** 넘김·반영·반려의 진행 한 줄 (cycle.handed·cycle.merged·cycle.closed):
+       * subtype 이 어느 쪽인지 고른다. 같은 PR 의 재검토 라운드마다 줄이
+       * 쌓이는 것이 목업의 의도다 — 대화의 연대기. */
       type: "milestone";
       id: string;
-      subtype: "handed" | "merged";
+      subtype: "handed" | "merged" | "closed";
       at: string;
       pr: number;
       reviewer?: string;
@@ -400,6 +400,18 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           type: "milestone",
           id: `m${++noticeSeq}`,
           subtype: "merged",
+          at: event.at,
+          pr: event.pr,
+        },
+      ];
+
+    case "cycle.closed":
+      return [
+        ...settleThinking(blocks),
+        {
+          type: "milestone",
+          id: `m${++noticeSeq}`,
+          subtype: "closed",
           at: event.at,
           pr: event.pr,
         },

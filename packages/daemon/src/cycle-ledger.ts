@@ -36,6 +36,19 @@ export interface CyclePendingOp {
    * `stash drop` 이 겨눌 것. 병합 · cherry-pick 에는 없다.
    */
   stashRef?: string;
+  /**
+   * 랜딩 도중 멈춘 조작의 착지 문맥 (PLAN L4) — 충돌이 나도 착지의 나머지
+   * (옛 브랜치 정리 · setCycle · 원장 branches · 이월 사건)는 마무리가
+   * 이어받는다. 없으면 finishToolOp 는 git 만 끝내고 랜딩은 다시 시작돼
+   * 같은 충돌을 반복한다.
+   */
+  land?: {
+    outcome: "merged" | "closed";
+    pr: number;
+    oldBranch: string | null;
+    newBranch: string;
+    carried: number;
+  };
 }
 
 export interface CyclePushState {
@@ -50,6 +63,15 @@ export interface CycleLedger {
   v: 1;
   /** 끝난 PR — 재시작 뒤 같은 반영을 두 번 알리지 않는다. */
   ended: { pr: number; state: "merged" | "closed"; headSha: string; seenAt: string } | null;
+  /**
+   * 관찰이 마지막으로 본 열린 PR 의 번호와 코멘트 수 (PLAN L2 흡수표 — 옛
+   * 폴러의 lastReviewCount 의 원장 판). reviewCount null 은 "아직 한 번도
+   * 성공적으로 읽지 못함" — 0 으로 세우면 다음 성공 읽기가 옛 코멘트 전부를
+   * 새 코멘트로 울린다(옛 `beforeReviews === null` 규칙). 상태 변화의
+   * 잣대는 원장이 아니라 레지스트리의 handoff 상태다 — 재시작을 넘는
+   * 기준선은 그쪽이 이미 들고 있다.
+   */
+  lastPr: { number: number; reviewCount: number | null } | null;
   submit: { requestedAt: string; via: "button" | "chat"; step?: string } | null;
   push: CyclePushState | null;
   pendingOp: CyclePendingOp | null;
@@ -74,6 +96,7 @@ export function emptyLedger(): CycleLedger {
   return {
     v: 1,
     ended: null,
+    lastPr: null,
     submit: null,
     push: null,
     pendingOp: null,
@@ -114,7 +137,16 @@ function parseEnded(raw: unknown): CycleLedger["ended"] {
   if (headSha === null || seenAt === null) return null;
   return { pr, state, headSha, seenAt };
 }
-
+function parseLastPr(raw: unknown): CycleLedger["lastPr"] {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const number = asInt(record.number);
+  const reviewCount = asInt(record.reviewCount);
+  if (number === null || number <= 0) return null;
+  // reviewCount 는 null 을 허용한다 — "읽은 적 없음" 이 0 과 다른 값이다.
+  if (reviewCount !== null && reviewCount < 0) return null;
+  return { number, reviewCount };
+}
 function parseSubmit(raw: unknown): CycleLedger["submit"] {
   const record = asRecord(raw);
   if (record === null) return null;
@@ -163,9 +195,25 @@ function parsePendingOp(raw: unknown): CyclePendingOp | null {
   }
   if (files === null || startedAt === null || briefs === null || briefs < 0) return null;
   const stashRef = asString(record.stashRef);
-  return stashRef === null
-    ? { kind, files, startedAt, briefs }
-    : { kind, files, startedAt, briefs, stashRef };
+  const land = parsePendingLand(record.land);
+  const op: CyclePendingOp = { kind, files, startedAt, briefs };
+  if (stashRef !== null) op.stashRef = stashRef;
+  if (land !== null) op.land = land;
+  return op;
+}
+
+/** 랜딩 도중 멈춘 조작의 착지 문맥 — 모르는 모양은 버린다(없는 랜딩으로). */
+function parsePendingLand(raw: unknown): NonNullable<CyclePendingOp["land"]> | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const outcome = asString(record.outcome);
+  const pr = asInt(record.pr);
+  const newBranch = asString(record.newBranch);
+  const carried = asInt(record.carried);
+  if ((outcome !== "merged" && outcome !== "closed") || pr === null || pr <= 0) return null;
+  if (newBranch === null || carried === null || carried < 0) return null;
+  const oldBranch = asString(record.oldBranch);
+  return { outcome, pr, oldBranch, newBranch, carried };
 }
 
 function parseReviews(raw: unknown): CycleLedger["reviews"] {
@@ -251,6 +299,7 @@ export function parseLedger(raw: unknown): CycleLedger {
   return {
     v: 1,
     ended: parseEnded(record.ended),
+    lastPr: parseLastPr(record.lastPr),
     submit: parseSubmit(record.submit),
     push: parsePush(record.push),
     pendingOp: parsePendingOp(record.pendingOp),
@@ -361,4 +410,23 @@ export function foldReviewLedger(ledger: CycleLedger, raw: unknown): CycleLedger
     };
   }
   return { ...ledger, reviews };
+}
+
+/**
+ * 보내기가 거절된 브리프의 되감기 — 판정이 미리 적은 briefed 에서 그 id 들을
+ * 뺀다. 옛 폴러의 `seen.delete` 와 같은 규칙이다: 되감긴 코멘트는 다음
+ * 관찰의 pending 에 다시 올라 다음 틱이 재시도한다.
+ */
+export function unmarkBriefed(ledger: CycleLedger, pr: number, ids: number[]): CycleLedger {
+  const key = String(pr);
+  const prev = ledger.reviews[key];
+  if (!prev) return ledger;
+  const drop = new Set(ids);
+  return {
+    ...ledger,
+    reviews: {
+      ...ledger.reviews,
+      [key]: { ...prev, briefed: prev.briefed.filter((id) => !drop.has(id)) },
+    },
+  };
 }

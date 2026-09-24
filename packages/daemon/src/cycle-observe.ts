@@ -13,6 +13,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { DeveloperReview } from "@colo-design/protocol";
 import { conflictMarkers } from "./conflict-markers.js";
 import type { CycleLedger } from "./cycle-ledger.js";
 import type { CycleSnapshot } from "./cycle-reconcile.js";
@@ -131,28 +132,68 @@ async function collectNewReviews(
   slug: { owner: string; repo: string },
   number: number,
   ledger: CycleLedger,
-): Promise<number[]> {
-  const known = new Set(ledger.reviews[String(number)]?.known ?? []);
+): Promise<{ arrived: DeveloperReview[]; pending: DeveloperReview[]; total: number }> {
+  const entry = ledger.reviews[String(number)];
+  const known = new Set(entry?.known ?? []);
+  const briefed = new Set(entry?.briefed ?? []);
   let mine: string | null = null;
   const who = await client.whoAmI().catch(() => null);
   if (who?.ok) mine = who.login;
-  const rows: Array<Record<string, any>> = [
-    ...(await client.listPullComments({ owner: slug.owner, repo: slug.repo, number })),
-    // 리뷰는 본문이 있는 것만 — verdict 만 있는 리뷰는 개발자의 말이 아니다.
-    ...(await client.listReviews({ owner: slug.owner, repo: slug.repo, number })).filter(
-      (row) => String(row.body ?? "").trim() !== "",
-    ),
-    ...(await client.listIssueComments({ owner: slug.owner, repo: slug.repo, number })),
-  ];
-  const ids = new Set<number>();
-  for (const row of rows) {
-    const id = Number(row.id);
-    if (!Number.isInteger(id) || known.has(id)) continue;
-    const login = String(row.user?.login ?? "");
-    if (mine !== null && login === mine) continue;
-    ids.add(id);
+  const own = (row: Record<string, any>): boolean =>
+    mine !== null && String(row.user?.login ?? "") === mine;
+  // 세 목록을 repo-publish 의 withReviews 와 같은 모양(DeveloperReview)으로
+  // 읽는다 — 14행의 브리프(reviewToTurn)와 review.arrived 사건이 이 객체를
+  // 그대로 실어 나른다. 필터 규칙도 같다: 본문 없는 리뷰 · 빈 요청 코멘트는
+  // 개발자의 말이 아니다.
+  const reviews: DeveloperReview[] = [];
+  for (const row of await client.listPullComments({ owner: slug.owner, repo: slug.repo, number })) {
+    if (own(row)) continue;
+    reviews.push({
+      id: Number(row.id),
+      kind: "inline",
+      author: String(row.user?.login ?? ""),
+      body: String(row.body ?? ""),
+      pr: number,
+      ...(row.path ? { path: String(row.path) } : {}),
+      ...(Number.isFinite(Number(row.line)) ? { line: Number(row.line) } : {}),
+      at: String(row.created_at ?? ""),
+    });
   }
-  return [...ids].sort((a, b) => a - b);
+  for (const row of await client.listReviews({ owner: slug.owner, repo: slug.repo, number })) {
+    const text = String(row.body ?? "").trim();
+    if (text === "" || own(row)) continue;
+    reviews.push({
+      id: Number(row.id),
+      kind: "review",
+      author: String(row.user?.login ?? ""),
+      body: text,
+      pr: number,
+      at: String(row.submitted_at ?? ""),
+    });
+  }
+  for (const row of await client.listIssueComments({
+    owner: slug.owner,
+    repo: slug.repo,
+    number,
+  })) {
+    const text = String(row.body ?? "").trim();
+    if (text === "" || own(row)) continue;
+    reviews.push({
+      id: Number(row.id),
+      kind: "review",
+      author: String(row.user?.login ?? ""),
+      body: text,
+      pr: number,
+      at: String(row.created_at ?? ""),
+    });
+  }
+  const fresh = (review: DeveloperReview): boolean => Number.isInteger(review.id);
+  // arrived(known 에 없음)는 review.arrived 사건의 몫이고, pending(briefed 에
+  // 없음)는 14행 브리프의 몫이다 — 판정이 arrived 를 known 에 올려도 같은
+  // 틱의 재관찰이 브리프 대상을 잃지 않는다(옛 폴러의 briefedReviewIds 판정).
+  const arrived = reviews.filter((r) => fresh(r) && !known.has(r.id)).sort((a, b) => a.id - b.id);
+  const pending = reviews.filter((r) => fresh(r) && !briefed.has(r.id)).sort((a, b) => a.id - b.id);
+  return { arrived, pending, total: reviews.length };
 }
 
 /**
@@ -272,15 +313,27 @@ export async function observeCycle(
     // 커밋 안 된 변경도 남은 것이다(L4) — 수가 아니라 "있음"만 필요하므로 1로 둔다.
     if (dirtyFiles > 0) commitsAfterPrHead = Math.max(commitsAfterPrHead, 1);
   }
-
-  let newReviewIds: number[] = [];
+  let newReviews: DeveloperReview[] = [];
+  let pendingReviews: DeveloperReview[] = [];
+  let reviewCount: number | null = null;
   if (
     pr !== null &&
     (pr.state === "open" || pr.state === "changes_requested") &&
     client !== null &&
     slug !== null
   ) {
-    newReviewIds = await collectNewReviews(client, slug, pr.number, ledger);
+    // 읽기 실패는 빈 목록이 아니라 "모름"이다 — reviewCount null 이 원장의
+    // lastPr.reviewCount 를 지키고(0 으로 세우면 다음 성공 읽기가 옛 코멘트
+    // 전부를 새 코멘트로 울린다 — 옛 폴러의 `report.reviews !== undefined`
+    // 판정과 같은 규칙).
+    const collected = await collectNewReviews(client, slug, pr.number, ledger)
+      .then((result) => result)
+      .catch(() => null);
+    if (collected !== null) {
+      newReviews = collected.arrived;
+      pendingReviews = collected.pending;
+      reviewCount = collected.total;
+    }
   }
 
   return {
@@ -302,8 +355,11 @@ export async function observeCycle(
     localAheadOfRemote,
     remoteAheadOfLocal,
     pr,
+    handoffState: core.openHandoff?.state ?? null,
     commitsAfterPrHead,
-    newReviewIds,
+    newReviews,
+    pendingReviews,
+    reviewCount,
     installStale: deps.installStale(),
     hygieneDue: false, // 단계 9 — 위생 기한을 세는 자리가 아직 없다
     githubReachable,

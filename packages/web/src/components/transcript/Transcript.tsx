@@ -386,6 +386,13 @@ export function Transcript({
                     text="이번 작업이 제품에 합쳐졌어요"
                     time={clockTime(block.at)}
                   />
+                ) : block.subtype === "closed" ? (
+                  <MilestoneRow
+                    key={block.id}
+                    tone="danger"
+                    text="개발자가 이번 요청을 닫았어요 — 작업은 새 요청으로 옮겨 두었어요"
+                    time={clockTime(block.at)}
+                  />
                 ) : (
                   <MilestoneRow
                     key={block.id}
