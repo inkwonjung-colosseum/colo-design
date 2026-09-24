@@ -482,12 +482,14 @@ export class DaemonServer {
             for (const url of linksOf(event.text)) this.drivers.notePinned(sessionId, url);
           }
           // 감독(2026-09-19): 턴이 답을 냈다 — 자동 재개의 상한은 돌려놓는다.
+          // PLAN L12(단계 0): 되살리기 예산은 성공한 턴의 끝에서만 지운다 —
+          // 닫힘(forget)과 갈라 놓아 교체 close 가 셈을 못 지운다.
           // 슬라이스 2: 답을 낸 턴이 자동 브리프가 연 턴이면 저장까지 정산한다.
           // 중지는 사람의 뜻 — 반쯤 고쳐진 화면을 저장하지 않는다.
           // P2-1: 답을 낸 턴은 자동 저장의 후보다 — 표만 올리고, 커밋은 아래
           // onState 의 idle 에서 치른다(게이트가 있었다면 그 뒤에).
           if (event.kind === "turn.end" && !event.isError && event.subtype !== "interrupted") {
-            this.router?.forgetReviveBudget(sessionId);
+            this.router?.settleReviveBudget(sessionId);
             this.autoSaveDue.add(sessionId);
             void this.fleet.settleAutoSave(sessionId);
             return;

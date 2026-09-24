@@ -29,10 +29,11 @@ import type { ProjectFleet, ProjectWorkspaces } from "./project-fleet.js";
 import type { ProjectRegistry } from "./projects.js";
 import type { QueueDisk, QueueStore } from "./queue-store.js";
 import { assertClonableRepoUrl, type RepoWorkspace } from "./repo.js";
+import { ReviveBudget } from "./revive-budget.js";
 import type { Session } from "./session.js";
 import type { SessionManager } from "./session-manager.js";
 import { dropTape, readTape, spliceTape } from "./session-tape.js";
-import { MAX_AUTO_REVIVES, REVIVE_GRACE_MS } from "./turn-retry.js";
+import { REVIVE_GRACE_MS } from "./turn-retry.js";
 import type { TurnStats } from "./turn-stats.js";
 import { undoLog } from "./undo-log.js";
 import { repoWritePolicy } from "./workspaces.js";
@@ -95,10 +96,13 @@ export class RequestRouter {
   private gateThreadId: string | null = null;
   /**
    * 감독(2026-09-19): 대화별 자동 재개 상한 — 고장난 CLI 가 뜰 때마다 죽는
-   * 세계에서 무한 재기를 막는다. 턴이 성공적으로 끝나거나 대화가 닫히면
-   * 지운다: 다음 고장은 새로운 사건이다.
+   * 세계에서 무한 재기를 막는다(PLAN L12). 셈은 ReviveBudget 이 들고,
+   * 지우는 길은 둘뿐이다: 성공한 턴의 끝(settled)과 대화의 진짜 닫힘.
    */
-  private readonly reviveBudget = new Map<string, number>();
+  private readonly reviveBudget = new ReviveBudget();
+  /** 지금 되살리는 중인 대화 — 되살리기 자신의 교체 close 가 셈을 지우는
+   *  일(옛 결함: 매번 0 에서 다시 시작)을 가르는 표식이다. */
+  private readonly reviving = new Set<string>();
   constructor(private readonly deps: RouterDeps) {}
 
   /** The active project's repo — every repo.* case's "the repo". */
@@ -950,11 +954,11 @@ export class RequestRouter {
    *
    * 유예를 먼저 센다: 세션은 아직 제 스레드를 정리하는 중이고, 죽는 CLI 의
    * 마지막 방송과 경합하면 안 된다. 그 사이 사람이 먼저 다시 보냈거나 대화를
-   * 다시 열었다면 물러난다(상태가 error 가 아니다). 상한을 넘었거나 살릴 말이
-   * 없어도 물러난다 — 그 자리엔 크래시 카드가 이미 사람의 손을 적어 두었다.
+   * 다시 열었다면 물러난다(상태가 error 가 아니다). 살릴 말이 없어도 물러난다
+   * — 그 자리엔 크래시 카드가 이미 사람의 손을 적어 두었다. 상한을 넘으면
+   * 마찬가지로 물러난다(PLAN L12): 예산을 쓰는 것은 실제로 일으키는 순간뿐이다.
    */
   async revive(sessionId: string): Promise<void> {
-    if ((this.reviveBudget.get(sessionId) ?? 0) >= MAX_AUTO_REVIVES) return;
     const grace = Promise.withResolvers<void>();
     setTimeout(grace.resolve, REVIVE_GRACE_MS);
     await grace.promise;
@@ -962,7 +966,11 @@ export class RequestRouter {
     if (dead?.state !== "error") return;
     const item = dead.revivePayload;
     if (!item) return;
-    this.reviveBudget.set(sessionId, (this.reviveBudget.get(sessionId) ?? 0) + 1);
+    if (!this.reviveBudget.allow(sessionId, Date.now())) return;
+    // 되살리기 자신이 교체를 위해 닫는 close 는 예산을 지우지 못하게 한다
+    // (PLAN L12): 그 사이에 manager.close 의 onState("closed") 가 서버의
+    // forgetReviveBudget 을 되부르는데, 표식이 없으면 셈이 매번 0 이 된다.
+    this.reviving.add(sessionId);
     try {
       const session = await this.resurrectSession(dead);
       this.deps.logger.warn("크래시 자동 재개", { sessionId });
@@ -978,12 +986,24 @@ export class RequestRouter {
       session.send(item.text, item.attachments, item.pins);
     } catch {
       // CLI 가 없다든가 — 사람의 손(크래시 카드)이 여전히 정답이다.
+    } finally {
+      this.reviving.delete(sessionId);
     }
   }
 
-  /** 감독: 턴이 답을 내거나 대화가 닫혔다 — 재개 상한은 돌려놓는다. */
+  /** 감독: 턴이 답을 냈다 — 되살리기 예산은 성공한 턴의 끝에서만 지운다. */
+  settleReviveBudget(sessionId: string): void {
+    this.reviveBudget.settled(sessionId);
+  }
+
+  /**
+   * 감독: 대화가 닫혔다 — 재개 상한을 돌려놓는다. 되살리기 자신이 세션을
+   * 교체하며 닫는 close 는 제외다(PLAN L12): 그 close 까지 지우면 망가진 CLI
+   * 가 상한 없이 되살아난다 — 표식(reviving)이 그 가른다.
+   */
   forgetReviveBudget(sessionId: string): void {
-    this.reviveBudget.delete(sessionId);
+    if (this.reviving.has(sessionId)) return;
+    this.reviveBudget.forget(sessionId);
   }
 
   /**
