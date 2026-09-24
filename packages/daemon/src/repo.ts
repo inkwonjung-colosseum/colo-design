@@ -559,6 +559,24 @@ export class RepoWorkspace {
     return this.core.recoverParkedWork(onSessionTurn);
   }
 
+  /**
+   * 사이클 브랜치를 보장한다 — 감독자(cycle-supervisor)의 4행·6행이 부른다.
+   * 이름이 있으면 그 브랜치로 HEAD 를 맞추고, 없으면 HEAD 에서 새 사이클
+   * 브랜치를 연다(PLAN L4). 차선 안에서 불리면 재진입으로 곧바로 돈다.
+   */
+  ensureCycleBranch(): Promise<string> {
+    return this.publish.ensureCycleBranch();
+  }
+
+  /**
+   * 감독자(cycle-supervisor)가 차선 · git · 원장 읽기를 겨누는 내부 손잡이.
+   * 패키지 밖으로는 열지 않는다 — fleet 과 시험 하네스만이 같은 뿌리를
+   * 공유할 때 쓴다.
+   */
+  repoCore(): RepoCore {
+    return this.core;
+  }
+
   isCloned(): boolean {
     return this.core.isCloned();
   }

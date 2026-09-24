@@ -773,6 +773,7 @@ export class DaemonServer {
       pat: () => this.github.token,
       escalate: (text) => void this.escalation.notify(text),
       gitHubClient: () => this.github.client(),
+      githubAuthExpired: () => this.github.authExpired,
       queueDiskFor: this.queueDiskFor,
     });
     await migrateProjectPats(
@@ -813,7 +814,13 @@ export class DaemonServer {
     // 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 주기적으로
     // 다시 읽는다 — 반영됨·변경 요청이 기획자를 찾아온다. unref: 테스트 러너와
     // 데스크톱 in-process 호스트를 타이머가 붙잡지 않게.
-    this.handoffTimer = setInterval(() => void this.pollOpenHandoffs(), HANDOFF_POLL_MS);
+    this.handoffTimer = setInterval(() => {
+      void this.pollOpenHandoffs();
+      // 감독자의 timer 틱 — 모든 프로젝트가 한 번씩 돈다 (PLAN L2).
+      for (const workspaces of this.fleet.workspaces.values()) {
+        void workspaces.supervisor.tick("timer");
+      }
+    }, HANDOFF_POLL_MS);
     this.handoffTimer.unref?.();
 
     // Warm restart: bring the active project up the same way a switch does —
@@ -846,9 +853,11 @@ export class DaemonServer {
         // restart blanks the counts for exactly the moment the tree also
         // starts scanning (PLAN D18/D59).
         sweeps.push(
-          workspaces.repo
-            .recoverParkedWork()
-            .catch(() => undefined)
+          // 시작 훑기 — recoverParkedWork 를 부르던 자리가 감독자의 start 틱
+          // 으로 바뀌었다(PLAN L2). 활성 프로젝트의 sync 와 겹치지 않는 것은
+          // 차선이 보장한다. recoverShelf 는 그대로다.
+          workspaces.supervisor
+            .tick("start")
             // 치워둔 작업 자동 꺼내기 — 단추가 사라진 뒤에도 슬롯은 남아
             // 있다(v0.3.8~v0.3.10). 이 쓸기는 매 시작마다 돌므로 오늘
             // 놓아둔("kept") 슬롯은 작업 폴더가 깨끗해진 다음 시작에 다시
@@ -1125,7 +1134,11 @@ export class DaemonServer {
     const routes = this.screenMapDue.get(sessionId);
     this.screenMapDue.delete(sessionId);
     if (!this.autoSaveDue.delete(sessionId)) return;
-    void this.fleet.autoSaveTurn(sessionId, routes);
+    const workspaces = this.workspaceOfSession(sessionId);
+    void this.fleet.autoSaveTurn(sessionId, routes).finally(() => {
+      // 턴이 idle 이 되어 자동 보관이 끝난 뒤 — 감독자가 사이클을 한 번 본다.
+      void workspaces?.supervisor.tick("turn-idle");
+    });
   }
 
   // -------------------------------------------------------------------------

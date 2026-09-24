@@ -14,6 +14,8 @@ import { probeCommands } from "./agent/drivers/claude/session.js";
 import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
+import { cycleLedgerFile } from "./cycle-ledger.js";
+import { CycleSupervisor } from "./cycle-supervisor.js";
 import type { GitHubClient } from "./github.js";
 import type { DaemonLogger } from "./log.js";
 import type { MachineTurn } from "./machine-provider.js";
@@ -57,6 +59,8 @@ export interface ProjectWorkspaces {
    * repo whose 저장·넘기기 is still moving ("not a passive status read").
    */
   diffStage: DiffStatus["stage"] | null;
+  /** 사이클 감독자 (PLAN L2) — 이 프로젝트의 사이클을 스스로 제자리로. */
+  supervisor: CycleSupervisor;
 }
 
 /**
@@ -80,6 +84,8 @@ export interface FleetDeps {
   /** 슬라이스 5: 환경 실패를 개발자 채널(Slack 웹훅)로 흘리는 문. */
   escalate(text: string): void;
   gitHubClient(): GitHubClient | null;
+  /** GitHubBridge.authExpired — 토큰 만료는 관찰의 reconnect 판정이 읽는다. */
+  githubAuthExpired(): boolean;
   queueDiskFor(sessionId: string): QueueDisk;
 }
 
@@ -206,7 +212,25 @@ export class ProjectFleet {
         // 슬라이스 5: 환경 실패(토큰 · 권한 · 첫 넘기기)는 개발자 채널로.
         escalate: (text) => this.deps.escalate(text),
       }),
+      supervisor: null as unknown as CycleSupervisor,
     };
+    // 감독자 (PLAN L2 · 단계 2c) — 워크스페이스와 같은 뿌리(core)를 공유하고,
+    // 도구가 시작한 조작의 충돌은 core.onToolConflict 로 여기 도착한다.
+    const projectName = this.deps.registry.get(slug)?.name ?? slug;
+    workspaces.supervisor = new CycleSupervisor({
+      core: workspaces.repo.repoCore(),
+      workspace: workspaces.repo,
+      ledgerPath: cycleLedgerFile(paths.root),
+      busy: () => this.deps.manager.busyIn(paths.repoRoot),
+      installStale: () => !workspaces.repo.installUpToDate(),
+      github: () => this.deps.gitHubClient(),
+      githubAuthExpired: () => this.deps.githubAuthExpired(),
+      slug: () => workspaces.repo.repoCore().repoSlug(),
+      isActive: () => slug === this.deps.registry.activeSlug(),
+      openThread: (title) => this.autoFixThreadFor(workspaces, title),
+      raiseNotice: (_key, text) => this.deps.escalate(`[Colo Design] ${projectName}: ${text}`),
+      logger: this.deps.logger,
+    });
     this.workspaces.set(slug, workspaces);
     return workspaces;
   }

@@ -2,7 +2,6 @@
 // Owns the in-flight cycle's handoff bookkeeping and the review replies.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import {
   type ChatEvent,
   type DeveloperReview,
@@ -897,21 +896,17 @@ export class PublishCycle {
   }
 
   /**
-   * D6: 조용한 푸시 재시도 — 세 번, 30 초 간격. 마지막 실패는 말이 없다.
-   * 시도 하나가 차선의 push 작업 하나고 기다림은 줄 밖에서(PLAN L1) — 재시도
-   * 도중 다른 git 손이 줄을 쓸 수 있으므로 시도마다 다시 선다.
+   * D6 → PLAN L7: 조용한 푸시는 한 번만 시도한다. 실패하면 조용히 두고
+   * 감독자(cycle-supervisor)의 12행이 원장의 백오프로 계속 민다 — 무한,
+   * 최대 10분 간격. 전경 푸시(제출)는 그대로다.
    */
   private async retryBackgroundPush(branch: string): Promise<void> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) await sleep(30_000);
-      try {
-        await this.core.lane.run("push", () =>
-          this.core.git(["push", "--set-upstream", "origin", branch]),
-        );
-        return;
-      } catch {
-        // 남은 시도가 있다; 없다면 밀린 커밋은 제출의 게이트가 잡는다.
-      }
+    try {
+      await this.core.lane.run("push", () =>
+        this.core.git(["push", "--set-upstream", "origin", branch]),
+      );
+    } catch {
+      // 밀린 커밋은 감독자의 push 행과 제출의 게이트가 잡는다.
     }
   }
   private failGate(

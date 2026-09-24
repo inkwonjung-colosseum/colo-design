@@ -1065,6 +1065,8 @@ export class RequestRouter {
     const { promise: cap, resolve: capped } = Promise.withResolvers<void>();
     setTimeout(capped, 20_000);
     await Promise.race([work, cap]);
+    // 보내기 직전의 감독자 틱 — pull 이 놓친 사이클의 어긋남을 여기서 잡는다.
+    void this.workspaceOfSession(sessionId)?.supervisor.tick("before-send");
   }
   /**
    * The thread a failing gate briefs when none is (or none living one is)

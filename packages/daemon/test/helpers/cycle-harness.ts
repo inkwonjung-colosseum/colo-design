@@ -18,16 +18,17 @@
  * makeScene() 은 다섯 도구를 얹어 observe 까지 한 번에 쓰는 몸통이다.
  */
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { type CycleLedger, emptyLedger } from "../../dist/cycle-ledger.js";
 import { type ObserveDeps, observeCycle } from "../../dist/cycle-observe.js";
 import type { CycleSnapshot } from "../../dist/cycle-reconcile.js";
+import { CycleSupervisor } from "../../dist/cycle-supervisor.js";
 import { GitHubClient } from "../../dist/github.js";
+import { RepoWorkspace } from "../../dist/repo.js";
 import { RepoCore } from "../../dist/repo-core.js";
-import type { RestTransport } from "../../dist/rest-transport.js";
 
 const exec = promisify(execFile);
 const execAt = (cwd: string) => (args: string[]) =>
@@ -413,7 +414,9 @@ export function developer(remote: RemoteRepo): DeveloperHands {
     await git(["fetch", "origin"]);
     await git(["checkout", "-B", branch, base]);
     for (const [name, body] of Object.entries(files)) {
-      writeFileSync(join(path, name), body);
+      const target = join(path, name);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, body);
     }
     await git(["add", "-A"]);
     await git(["commit", "-m", message]);
@@ -493,6 +496,108 @@ export async function makeScene(opts: HarnessCoreOptions = {}): Promise<Scene> {
       );
     },
     dispose: () => {
+      dev.dispose();
+      clone.dispose();
+      remote.dispose();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// makeSupervisedScene — RepoWorkspace + CycleSupervisor 를 같은 뿌리에 세운다
+// ---------------------------------------------------------------------------
+
+export interface SupervisedScene extends Scene {
+  /** 감독자가 겨누는 워크스페이스 — save · ensureCycleBranch 가 여기로 간다. */
+  workspace: RepoWorkspace;
+  supervisor: CycleSupervisor;
+  /** openThread 가 모은 브리프 — 가짜 대화의 받은 편지함. */
+  briefs: string[];
+  /** raiseNotice 가 모은 알림 — [key, text] 쌍. */
+  notices: Array<{ key: string; text: string }>;
+  /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
+  ledgerPath: string;
+  /** 감독자의 벽시계를 움직인다 — 백오프 · 1시간 알림의 시험축. */
+  setNow: (ms: number) => void;
+}
+
+/**
+ * 서버 없이 세운 감독자 장면 — RepoWorkspace 가 만드는 core 를 repoCore() 로
+ * 꺼내 감독자와 시험이 같은 뿌리를 공유한다. openThread · raiseNotice 는
+ * 모으는 가짜다.
+ */
+export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promise<SupervisedScene> {
+  const remote = await makeRemote();
+  const clone = await makeClone(remote);
+  const github = new MemoryGitHub(remote);
+  process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  const workspace = new RepoWorkspace({
+    root: clone.path,
+    url: remote.path,
+    onStatus: () => {},
+    baseBranch: opts.baseBranch ?? "main",
+    cycle: { branch: opts.branch ?? null, handoff: opts.handoff ?? null },
+    gitHubClient: () => new GitHubClient("harness-token", github),
+    commandsApproved: true,
+  });
+  const core = workspace.repoCore();
+  const dev = developer(remote);
+  const git = (args: string[]) =>
+    exec("git", args, { cwd: clone.path }).then((done) => done.stdout as string);
+  const briefs: string[] = [];
+  const notices: Array<{ key: string; text: string }> = [];
+  const ledgerPath = join(clone.path, "..", "cycle.json");
+  let nowMs = Date.now();
+  const supervisor = new CycleSupervisor({
+    core,
+    workspace,
+    ledgerPath,
+    busy: () => false,
+    installStale: () => false,
+    github: () => new GitHubClient("harness-token", github),
+    githubAuthExpired: () => false,
+    slug: () => core.repoSlug(),
+    isActive: () => true,
+    openThread: () => ({ send: (text) => briefs.push(text) }),
+    raiseNotice: (key, text) => notices.push({ key, text }),
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    now: () => nowMs,
+  });
+  return {
+    remote,
+    clone,
+    core,
+    github,
+    dev,
+    git,
+    workspace,
+    supervisor,
+    briefs,
+    notices,
+    ledgerPath,
+    setNow: (ms) => {
+      nowMs = ms;
+    },
+    observe: (o = {}) => {
+      const deps: ObserveDeps = {
+        turnRunning: () => false,
+        installStale: () => false,
+        github: () => new GitHubClient("harness-token", github),
+        githubAuthExpired: () => false,
+        slug: () => core.repoSlug(),
+        ...o.deps,
+      };
+      return core.lane.run("supervise", () =>
+        observeCycle(core, o.ledger ?? emptyLedger(), deps, {
+          fetch: o.fetch ?? false,
+          now: o.now ?? Date.now(),
+        }),
+      );
+    },
+    dispose: async () => {
+      // 차선에 선 백그라운드 푸시가 클론을 만지는 동안 지우면 rm 이 진다 —
+      // 줄이 빌 때까지 기다린 뒤 지운다.
+      await core.lane.idle();
       dev.dispose();
       clone.dispose();
       remote.dispose();
