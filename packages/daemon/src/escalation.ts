@@ -68,6 +68,8 @@ export class Escalation {
   constructor(
     private readonly store: CredentialStore,
     private readonly logger: DaemonLogger,
+    /** 주입하는 전송 계약 — 시험이 가짜로 갈아끼운다(PLAN 단계 0). */
+    private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
   /** 시작 시 저장소에서 읽는다 — 설정은 부팅보다 먼저 살 수 없다. */
@@ -98,10 +100,9 @@ export class Escalation {
     if (config === null) return false;
     const last = this.lastRung.get(text) ?? 0;
     if (now - last < RERING_WINDOW_MS) return true;
-    this.lastRung.set(text, now);
     try {
       if (config.kind === "webhook") {
-        const response = await fetch(config.url, {
+        const response = await this.fetchImpl(config.url, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text }),
@@ -111,9 +112,12 @@ export class Escalation {
           this.logger.warn("에스컬레이션 전송 실패", { mode: "webhook", status: response.status });
           return false;
         }
+        // 중복 표시는 성공한 뒤에만 (PLAN 단계 0): 보내기 전에 찍으면 실패한
+        // 전송이 10분 창을 혼자 채워 같은 고장이 조용히 삼켜진다.
+        this.lastRung.set(text, now);
         return true;
       }
-      const response = await fetch(SLACK_POST_MESSAGE, {
+      const response = await this.fetchImpl(SLACK_POST_MESSAGE, {
         method: "POST",
         headers: {
           authorization: `Bearer ${config.token}`,
@@ -130,6 +134,7 @@ export class Escalation {
         this.logger.warn("에스컬레이션 전송 실패", { mode: "bot", status: response.status });
         return false;
       }
+      this.lastRung.set(text, now);
       return true;
     } catch {
       // 조용히 — 채널이 죽은 것은 본 시스템의 고장이 아니다.
