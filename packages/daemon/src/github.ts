@@ -34,6 +34,19 @@ export interface PullRequestRef {
   /** Who the repo's own rules asked to review, as reported on the PR itself. */
   reviewers: string[];
 }
+/**
+ * getPullRequest 의 관찰 확장 (PLAN L2 · 단계 2b) — 감독자(cycle-observe)가
+ * 읽는 두 필드. 랜딩의 잣대는 병합 순간의 PR head(L4)다: 스쿼시 · 리베이스
+ * 병합에서는 로컬 커밋이 베이스의 조상이 되지 않으므로 커밋 같음으로는 잴 수
+ * 없다. mergeable_state 는 조정 표 11행(dirty)이 본다. 기존 PullRequestRef
+ * 필드와 그 호출자는 그대로다.
+ */
+export interface PullRequestDetail extends PullRequestRef {
+  /** 병합 순간의 PR head 커밋 sha — 지워진 브랜치 등으로 모르면 null. */
+  headSha: string | null;
+  /** GitHub 의 mergeable_state ("dirty" · "clean" …) — 아직 계산 중이면 null. */
+  mergeableState: string | null;
+}
 
 const JSON_HEADERS = {
   accept: "application/vnd.github+json",
@@ -412,12 +425,18 @@ export class GitHubClient {
     owner: string;
     repo: string;
     number: number;
-  }): Promise<PullRequestRef> {
+  }): Promise<PullRequestDetail> {
     const data = await this.getJson(
       `/repos/${input.owner}/${input.repo}/pulls/${input.number}`,
       "넘긴 작업 상태 확인",
     );
-    return await this.withVerdict(input.owner, input.repo, data);
+    const ref = await this.withVerdict(input.owner, input.repo, data);
+    return {
+      ...ref,
+      // head.sha 는 랜딩의 잣대다(L4) — 지워진 브랜치에서는 null 로 둔다.
+      headSha: typeof data.head?.sha === "string" ? data.head.sha : null,
+      mergeableState: typeof data.mergeable_state === "string" ? data.mergeable_state : null,
+    };
   }
 
   /**
