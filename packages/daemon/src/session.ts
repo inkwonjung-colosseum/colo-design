@@ -341,6 +341,12 @@ export class Session {
    * 지나므로 여기 한 곳만 기억하면 된다.
    */
   lastSentText: string | null = null;
+  /**
+   * 이번 턴의 답변 문장 (PLAN L9) — 그 턴의 text.done 블록을 이어 붙인다.
+   * 턴이 시작될 때 비우고, 리뷰 반영 턴이 끝나면 데몬이 읽어 코멘트별
+   * 답장 줄(extractDeveloperReplies)을 뽑는다. 마지막 답변의 원문 그대로다.
+   */
+  lastAssistantText: string | null = null;
   /** 사람의 말이 나간 적이 있는가 — backdate 무효화 판정 재료. */
   private userSent = false;
   /** Replaced by the first turn's own words; also the "untouched" sentinel. */
@@ -545,6 +551,11 @@ export class Session {
       if (this.compactPending && !this.compacting && this.turnStartedAt === null) {
         this.resendAfterCompact();
       }
+    }
+    if (event.kind === "text.done") {
+      // 이번 턴의 답변 문장을 모은다 (PLAN L9) — 턴 시작에서 비워지므로 여기
+      // 붙는 것은 항상 지금 도는 턴의 것이다.
+      this.lastAssistantText = `${this.lastAssistantText ?? ""}${event.text}`;
     }
     if (event.kind === "turn.end" && event.costUsd != null) {
       this.costUsd = Math.max(this.costUsd ?? 0, event.costUsd);
@@ -819,6 +830,8 @@ export class Session {
     const item = this.lastDelivered;
     if (!item) return;
     this.turnStartedAt = Date.now();
+    // 새 턴의 답변 문장은 여기서 시작한다 (PLAN L9).
+    this.lastAssistantText = null;
     this.events.onTurnStart?.(this.id);
     this.setState("running");
     this.deliver(item, true);
@@ -866,6 +879,8 @@ export class Session {
       text: "대화가 길어져 정리한 뒤 이어서 합니다 — 잠시만 기다려 주세요.",
     });
     this.turnStartedAt = Date.now();
+    // 새 턴의 답변 문장은 여기서 시작한다 (PLAN L9).
+    this.lastAssistantText = null;
     this.events.onTurnStart?.(this.id);
     this.setState("running");
     this.deliver({ id: randomUUID(), text: "/compact", attachments: [], pins: [] }, true);
@@ -890,6 +905,8 @@ export class Session {
     if (!item) return;
     if (this.closed || !this.sendable || this.turnStartedAt !== null) return;
     this.turnStartedAt = Date.now();
+    // 새 턴의 답변 문장은 여기서 시작한다 (PLAN L9).
+    this.lastAssistantText = null;
     this.events.onTurnStart?.(this.id);
     this.setState("running");
     this.deliver(item, true);
@@ -923,6 +940,8 @@ export class Session {
     this.disk?.saveHeld(this.held);
     // 대기 줄이 여는 턴은 새 요청이다 — 새 시계를 받는다.
     this.turnStartedAt = Date.now();
+    // 새 턴의 답변 문장은 여기서 시작한다 (PLAN L9).
+    this.lastAssistantText = null;
     // 지난 턴의 화면 목록은 여기서 비워진다 — 한 턴에 한 번이면 충분하다.
     this.events.onTurnStart?.(this.id);
     // send 와 같은 이유 — 핀이 onPinned 로 적힌 뒤 지워지지 않게 상태를 먼저 본다.
@@ -1380,6 +1399,8 @@ export class Session {
       return;
     }
     this.turnStartedAt = Date.now();
+    // 새 턴의 답변 문장은 여기서 시작한다 (PLAN L9).
+    this.lastAssistantText = null;
     // 턴의 시작 — 지난 턴이 가리킨 화면 목록은 여기서 비워진다(onPinned 보다 먼저).
     this.events.onTurnStart?.(this.id);
     // 상태가 먼저: deliver 가 부르는 onPinned 이 서버의 pinnedThisTurn 에 적힐

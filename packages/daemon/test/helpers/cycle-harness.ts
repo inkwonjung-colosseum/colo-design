@@ -742,7 +742,6 @@ export async function makeScene(opts: HarnessCoreOptions = {}): Promise<Scene> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // makeSupervisedScene — RepoWorkspace + CycleSupervisor 를 같은 뿌리에 세운다
 // ---------------------------------------------------------------------------
 
@@ -770,6 +769,10 @@ export interface SupervisedScene extends Scene {
   /** 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true). */
   deleteMergedBranches: boolean;
   /** 활성 프로젝트인가 — timer 틱의 fetch 판정이 읽는다(기본 true). */
+  /** 수명 설정 — 개발자 코멘트 자동 답장을 할지 (PLAN L9, 기본 true). */
+  autoReply: boolean;
+  /** 자동 답장의 대리 표기에 적을 작성자 이름 (기본 null → "사용자"). */
+  authorName: string | null;
   active: boolean;
   /** L6 제출 — PR 제목의 프로젝트 이름 (기본 "하네스 프로젝트"). */
   projectName: string;
@@ -809,6 +812,9 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     active: true,
     projectName: "하네스 프로젝트",
     shots: [] as HandoffShot[],
+    // PLAN L9 자동 답장의 재료 — 초대 v4 의 lifecycle.autoReply · machine 의 이름.
+    autoReply: true,
+    authorName: null as string | null,
   };
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
@@ -822,6 +828,8 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       core,
       workspace,
       ledgerPath,
+      autoReply: () => scene.autoReply,
+      authorName: () => scene.authorName,
       busy: () => false,
       installStale: () => false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
@@ -877,6 +885,18 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     set deleteMergedBranches(v: boolean) {
       scene.deleteMergedBranches = v;
+    },
+    get autoReply() {
+      return scene.autoReply;
+    },
+    set autoReply(v: boolean) {
+      scene.autoReply = v;
+    },
+    get authorName() {
+      return scene.authorName;
+    },
+    set authorName(v: string | null) {
+      scene.authorName = v;
     },
     get active() {
       return scene.active;

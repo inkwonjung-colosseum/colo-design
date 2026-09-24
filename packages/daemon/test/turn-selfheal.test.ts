@@ -77,14 +77,21 @@ function harness(opts: { canCompact?: boolean; retryDelays?: number[] } = {}) {
       durationMs: 1,
       resultText: null,
     } satisfies ChatEvent & { kind: "turn.end" });
+  let blockSeq = 0;
+  const answer = (text: string) =>
+    session.driverHooks.onEvent({
+      kind: "text.done",
+      blockId: `b${blockSeq++}`,
+      text,
+      agentId: null,
+    } satisfies ChatEvent & { kind: "text.done" });
   // 재시도 타이머(1ms)는 세션이 만든 진짜 시계다 — 스케줄러가 한 바퀴 도는
   // 것만 기다린다(가짜 시계로 돌릴 수 없는 생 타이머 통합 시험).
   const tick = () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     setTimeout(resolve, 5);
-    return promise;
   };
-  return { session, seen, sends, fail, succeed, tick };
+  return { session, seen, sends, fail, succeed, answer, tick };
 }
 
 test("로그인 만료로 멈춘 말은 로그인이 돌아오면 한 번 다시 나간다 (PLAN L12)", () => {
@@ -192,4 +199,21 @@ test("정상 종료 중 죽은 전송의 대기 줄도 디스크에 산다 (PLAN
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("마지막 답변 문장은 세션이 모아 둔다 — 턴이 바뀌면 비워진다 (PLAN L9)", () => {
+  const { session, answer, succeed } = harness();
+  session.send("첫 요청");
+  answer("버튼 문구를 바꿨습니다. ");
+  answer("스레드에 답장할 문장은 이 아래에 남습니다.");
+  assert.equal(
+    session.lastAssistantText,
+    "버튼 문구를 바꿨습니다. 스레드에 답장할 문장은 이 아래에 남습니다.",
+  );
+  succeed();
+
+  session.send("둘째 요청");
+  assert.equal(session.lastAssistantText, null, "새 턴이 시작되면 비워진다");
+  answer("둘째 답변입니다.");
+  assert.equal(session.lastAssistantText, "둘째 답변입니다.");
 });

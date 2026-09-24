@@ -843,6 +843,91 @@ test("L9 재시작 뒤 첫 코멘트를 삼키지 않는다 — 원장 known 이
     await scene.dispose();
   }
 });
+test("L9 자동 답장 — 턴의 답변 문장에서 코멘트마다 스레드에 답한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.authorName = "김기획";
+    const inline = scene.github.addComment(pr, { kind: "pull", body: "문구를 바꿔 주세요" });
+    const issue = scene.github.addComment(pr, { kind: "issue", body: "여백도 봐 주세요" });
+
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [
+        { id: inline, kind: "inline", author: "dev1", body: "문구를 바꿔 주세요", pr },
+        { id: issue, kind: "review", author: "dev1", body: "여백도 봐 주세요", pr },
+      ],
+      `고쳤습니다.\n\n개발자에게 (#${inline}): 문구를 '보관'으로 바꿨습니다.`,
+      "0123456789abcdef",
+    );
+
+    // 줄이 있는 인라인 코멘트 — 스레드 답글로, 문장 그대로.
+    const threadReply = scene.github.pullCommentsFor(pr).at(-1);
+    assert.ok(threadReply, "인라인 답장이 스레드에 올라야 한다");
+    assert.ok(threadReply.body.includes("문구를 '보관'으로 바꿨습니다."));
+    assert.ok(
+      threadReply.body.includes("— Colo Design 이 김기획 님 대신 남김"),
+      "대리 표기가 답장 끝에 붙는다",
+    );
+    // 줄이 없는 코멘트 + 보관 커밋 — sha 7자 폴백.
+    const issueReply = scene.github.commentsFor(pr).at(-1);
+    assert.ok(issueReply, "본문형 코멘트에도 답장이 올라야 한다");
+    assert.ok(issueReply.body.includes("반영했습니다 · 0123456"));
+    assert.ok(issueReply.body.includes("— Colo Design 이 김기획 님 대신 남김"));
+
+    // 같은 코멘트에 두 번 답하지 않는다 — 원장 replied 가 잡는다.
+    const mine = (rows: Array<{ login: string }>) =>
+      rows.filter((row) => row.login === "colo-planner").length;
+    const repliesBefore =
+      mine(scene.github.pullCommentsFor(pr)) + mine(scene.github.commentsFor(pr));
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [
+        { id: inline, kind: "inline", author: "dev1", body: "문구를 바꿔 주세요", pr },
+        { id: issue, kind: "review", author: "dev1", body: "여백도 봐 주세요", pr },
+      ],
+      `개발자에게 (#${inline}): 다시 답합니다.`,
+      null,
+    );
+    assert.equal(
+      mine(scene.github.pullCommentsFor(pr)) + mine(scene.github.commentsFor(pr)),
+      repliesBefore,
+      "두 번째 정산은 답장을 하나도 더 올리지 않는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 자동 답장 — 보관이 없으면 '확인했고' 문장, autoReply 가 꺼져 있면 답장이 없다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = 1;
+    const id = 21;
+    const review = { id, kind: "review" as const, author: "dev1", body: "봐 주세요", pr };
+    await scene.supervisor.settleReviewReplies(pr, [review], "답변에 줄이 없습니다.", null);
+    assert.equal(
+      scene.github.commentsFor(pr).at(-1)?.body.split("\n")[0],
+      "확인했고 바꾼 것은 없습니다",
+      "줄도 보관도 없으면 확인 문장이 간다",
+    );
+
+    scene.autoReply = false;
+    const id2 = 22;
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [{ id: id2, kind: "review", author: "dev1", body: "봐 주세요", pr }],
+      `개발자에게 (#${id2}): 가지 않는 답장.`,
+      null,
+    );
+    assert.equal(scene.github.commentsFor(pr).length, 1, "autoReply false 면 답장이 올라지 않는다");
+  } finally {
+    await scene.dispose();
+  }
+});
 
 test("사이클 밖 갈라짐 — 최신화가 던지지 않고 틱이 사이클 브랜치로 옮긴다", async () => {
   const scene = await makeSupervisedScene();

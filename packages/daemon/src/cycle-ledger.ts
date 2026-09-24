@@ -91,8 +91,14 @@ export interface CycleLedger {
   } | null;
   push: CyclePushState | null;
   pendingOp: CyclePendingOp | null;
-  /** 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. */
-  reviews: Record<string, { known: number[]; briefed: number[]; rounds: number }>;
+  /**
+   * 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. replied 는 자동
+   * 답장을 이미 올린 코멘트 — 같은 코멘트에 두 번 답하지 않는 잣체다(단계 7).
+   */
+  reviews: Record<
+    string,
+    { known: number[]; briefed: number[]; rounds: number; replied?: number[] }
+  >;
   budgets: Record<string, BudgetEntry>;
   /** 서 있는 개발자 알림(L11) — raise 의 중복 억제 잣체. 조정자가 올리고 지운다. */
   notices: Record<
@@ -268,7 +274,9 @@ function parseReviews(raw: unknown): CycleLedger["reviews"] {
     const briefed = record === null ? null : asIdList(record.briefed);
     const rounds = record === null ? null : asInt(record.rounds);
     if (known === null || briefed === null || rounds === null || rounds < 0) continue;
-    reviews[key] = { known, briefed, rounds };
+    // replied 는 이후 판(단계 7)이 쓴 선택 필드 — 없어도 항목은 산다.
+    const replied = asIdList(record?.replied);
+    reviews[key] = { known, briefed, rounds, ...(replied !== null ? { replied } : {}) };
   }
   return reviews;
 }

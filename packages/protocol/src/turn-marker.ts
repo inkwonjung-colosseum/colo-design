@@ -292,8 +292,12 @@ export function readTurn(text: string): MarkedTurn {
  * carries every comment's words. 프로토콜에 사는 이유 (슬라이스 2, 2026-09-19):
  * 데몬이 폴링에서 스스로 이 턴을 내려놓는다 — 웹이 아닌 쪽에서도 같은 문장이
  * 나와야 화면의 카드와 데몬의 턴이 어긋나지 않는다.
+ *
+ * PLAN L9: 목록마다 코멘트 id (#<n>) 를 붙이고, 답변 끝의 `개발자에게 (#<id>):`
+ * 줄을 부탁한다 — 데몬이 그 줄을 뽑아 스레드에 올린다(developer-replies.ts).
+ * opts.intro 는 반려(briefRejection)가 같은 표식의 앞 문장을 바꾸는 길이다.
  */
-export function reviewToTurn(reviews: DeveloperReview[]): string {
+export function reviewToTurn(reviews: DeveloperReview[], opts: { intro?: string } = {}): string {
   const first = reviews[0];
   const marker: TurnMarker = {
     kind: "review",
@@ -303,11 +307,15 @@ export function reviewToTurn(reviews: DeveloperReview[]): string {
     ...(first ? { id: first.id } : {}),
   };
   const lines = [
-    `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
+    opts.intro ??
+      `개발자 코멘트 ${reviews.length}건에 답합니다 — 아래 코멘트를 반영해 화면을 고쳐 주세요.`,
+    "",
+    "답변 끝에 코멘트마다 `개발자에게 (#<id>):` 로 시작하는 한두 문장을 남겨 주세요 — 무엇을 바꿨는지, 바꾸지 않았다면 왜인지. 도구가 그 줄을 해당 스레드에 올립니다 (PLAN L9).",
     "",
     ...reviews.map((review, index) => {
       const at = review.path ? `${review.path}${review.line ? `:${review.line}` : ""}` : "";
-      return `${index + 1}. ${review.author}${at ? ` (${at})` : ""}: ${review.body}`;
+      const where = `(#${review.id})${at ? ` (${at})` : ""}`;
+      return `${index + 1}. ${review.author} ${where}: ${review.body}`;
     }),
   ];
   return markTurn(marker, lines.join("\n"));

@@ -128,9 +128,13 @@ export class ProjectFleet {
   /**
    * 슬라이스 2: sessionId → 자동 브리프가 연 턴이 끝나면 치러야 할 자동 저장.
    * 사람의 턴에는 붙지 않는다 — 오직 폴링이 내려놓은 리뷰 반영 턴만이
-   * 저장까지 스스로 마무리한다.
+   * 저장까지 스스로 마무리한다. pr · reviews 는 저장이 선 뒤의 자동 답장
+   * (PLAN L9)이 그 턴의 브리프 대상을 아는 재료다.
    */
-  private readonly autoSaveAfter = new Map<string, { slug: string; count: number }>();
+  private readonly autoSaveAfter = new Map<
+    string,
+    { slug: string; count: number; pr: number; reviews: DeveloperReview[] }
+  >();
   /**
    * The `/` palette with no thread open: one CLI boot per repo, cached, so an
    * empty workspace still lists every command the terminal would. A live
@@ -270,9 +274,13 @@ export class ProjectFleet {
       // 대화록 사건 — 옛 폴러의 emitCycleEvent 와 같은 길(세션 채널 + 테이프).
       // 제출 완료 사건은 누른 대화에 귀속된다(PLAN L6).
       cycleEvent: (event, sessionId) => this.emitCycleEvent(workspaces, event, sessionId),
-      // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true).
+      // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true) · 코멘트 자동
+      // 답장을 할지(기본 true, PLAN L9 · O5). 답장의 대리 표기가 읽을 작성자
+      // 이름은 machine.json 이 기억한다(P1-3).
       deleteMergedBranches: () =>
         this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,
+      autoReply: () => this.deps.registry.get(slug)?.lifecycle?.autoReply ?? true,
+      authorName: () => this.deps.authorName(),
       // L6 제출 — PR 본문의 재료와 이름.
       projectName: () => this.deps.registry.get(slug)?.name ?? slug,
       commentsFile: () => join(paths.root, "comments.json"),
@@ -511,17 +519,22 @@ export class ProjectFleet {
    */
   private briefReviewsFor(
     workspaces: ProjectWorkspaces,
-    _pr: number,
+    pr: number,
     reviews: DeveloperReview[],
   ): boolean {
     const target = this.autoFixThreadFor(workspaces);
     if (!target) return false;
     try {
       target.send(reviewToTurn(reviews));
-      this.autoSaveAfter.set(target.id, { slug: workspaces.slug, count: reviews.length });
+      this.autoSaveAfter.set(target.id, {
+        slug: workspaces.slug,
+        count: reviews.length,
+        pr,
+        reviews,
+      });
       this.deps.logger.warn("[cycle] 리뷰 브리프 발송", {
         slug: workspaces.slug,
-        pr: _pr,
+        pr,
         reviews: reviews.length,
       });
       return true;
@@ -629,6 +642,11 @@ export class ProjectFleet {
    * 실패한 턴은 정산하지 않는다: 감독(슬라이스 1)이 다시 시도하고, 그 재시도가
    * 성공한 턴 끝이 여기에 다시 온다. 중지된 턴은 사람의 뜻이므로 저장하지
    * 않고 기다린다 — 칩과 저장 버튼이 여전히 그 자리에 있다.
+   *
+   * PLAN L9: 저장이 서면(성패와 무관하게 시도가 끝나면) 그 턴의 답변 문장에서
+   * 코멘트별 답장을 뽑아 스레드에 올린다(settleReviewReplies). "그 턴이 파일을
+   * 바꿨는가"는 저장이 새로 선 커밋으로 잰다 — 깨끗한 트리의 멱등 no-op 저장은
+   * 같은 sha 를 돌려주므로.
    */
   async settleAutoSave(sessionId: string): Promise<void> {
     const pending = this.autoSaveAfter.get(sessionId);
@@ -638,6 +656,11 @@ export class ProjectFleet {
     const session = this.deps.manager.get(sessionId);
     if (!workspaces || !session) return;
     const projectName = this.deps.registry.get(pending.slug)?.name ?? pending.slug;
+    const headBefore = await workspaces.repo
+      .repoCore()
+      .git(["rev-parse", "HEAD"])
+      .catch(() => "");
+    let commit: string | null = null;
     try {
       const status = await workspaces.repo.save({
         message: `개발자 요청 자동 반영 — 리뷰 코멘트 ${pending.count}건`,
@@ -663,10 +686,18 @@ export class ProjectFleet {
         });
         this.deps.notice({ kind: "handoff", slug: pending.slug, projectName, event: "replied" });
         this.announceProjectsThrottled();
+        if (typeof status.commit === "string" && status.commit.trim() !== headBefore.trim()) {
+          commit = status.commit.trim();
+        }
       }
     } catch {
       // 저장의 실패는 DiffStatus 와 게이트 브리프가 이미 말한다.
     }
+    await workspaces.supervisor
+      .settleReviewReplies(pending.pr, pending.reviews, session.lastAssistantText ?? "", commit)
+      .catch(() => {
+        // 답장의 실패는 감독자가 이미 조용히 기록했다.
+      });
   }
 
   /**

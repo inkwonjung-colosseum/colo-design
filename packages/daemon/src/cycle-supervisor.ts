@@ -40,9 +40,10 @@ import {
   type CycleSnapshot,
   nextCycleAction,
 } from "./cycle-reconcile.js";
+import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
 import { mergeToolBlock, pickHandoffTitle } from "./handoff-body.js";
-import type { DaemonLogger } from "./log.js";
+import { type DaemonLogger, sanitizeText } from "./log.js";
 import type { RepoWorkspace } from "./repo.js";
 import type { RepoCore } from "./repo-core.js";
 import {
@@ -142,7 +143,10 @@ export interface SupervisorDeps {
   onNewReviews?: (pr: number, reviews: DeveloperReview[]) => boolean;
   /** 7행 — 레지스트리의 baseBranch 를 옮긴다(fleet 이 registry.update 를 부른다). */
   onRetargetBase?: (to: string) => void;
-  /** 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true). */
+  /** 수명 설정 — 개발자 코멘트에 AI 가 스스로 답할까 (PLAN L9 · O5, 기본 true). */
+  autoReply?: () => boolean;
+  /** 넘긴 요청에 적을 작성자 이름 — 자동 답장의 대리 표기가 읽는다(P1-3). */
+  authorName?: () => string | null;
   deleteMergedBranches?: () => boolean;
   logger: DaemonLogger;
   now?: () => number;
@@ -932,6 +936,81 @@ export class CycleSupervisor {
   private async countOnBranch(core: RepoCore, base: string, branch: string): Promise<number> {
     const out = await core.git(["rev-list", "--count", `origin/${base}..${branch}`]);
     return Number(out.trim()) || 0;
+  }
+
+  /**
+   * 답장할 코멘트를 찜는다 (PLAN L9) — 돌려준 id 는 아직 답장하지 않은
+   * 것들이고, 찜하는 순간 원장 reviews[pr].replied 에 적힌다. 게시의 성패와
+   * 무관하게 찜은 한 번뿐: 실패해도 다시 시도하지 않는다(같은 코멘트에 두
+   * 번 답하지 않는다).
+   */
+  claimReviewReplies(pr: number, ids: number[]): number[] {
+    if (ids.length === 0) return [];
+    const key = String(pr);
+    const prev = this.ledger.reviews[key] ?? { known: [], briefed: [], rounds: 0 };
+    const replied = new Set(prev.replied ?? []);
+    const fresh = ids.filter((id) => !replied.has(id));
+    if (fresh.length === 0) return [];
+    this.ledger = {
+      ...this.ledger,
+      reviews: {
+        ...this.ledger.reviews,
+        [key]: { ...prev, replied: [...replied, ...fresh] },
+      },
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+    return fresh;
+  }
+
+  /**
+   * L9 자동 답장 — 리뷰 반영 턴이 끝나 보관이 서면(fleet 의 settleAutoSave 가
+   * 부른다) 답변의 마지막 문장에서 코멘트별 답장 줄을 뽑아 해당 스레드에
+   * 올린다. 줄이 없는 코멘트는 보관 커밋의 유무로 두 문장 중 하나를 쓴다.
+   * 모든 답장 끝에는 대리 표기가 붙고(O5), 본문은 생니타이저를 거친다.
+   * lifecycle.autoReply 가 꺼져 있으면 답장만 건너뛴다 — 반영 턴 자체는 간다.
+   */
+  async settleReviewReplies(
+    pr: number,
+    reviews: DeveloperReview[],
+    text: string,
+    commit: string | null,
+  ): Promise<void> {
+    if (reviews.length === 0) return;
+    if (this.deps.autoReply?.() === false) return;
+    const client = this.deps.github();
+    const slug = this.deps.slug();
+    if (client === null || slug === null) return;
+    const ids = this.claimReviewReplies(
+      pr,
+      reviews.map((review) => review.id),
+    );
+    if (ids.length === 0) return;
+    const lines = extractDeveloperReplies(text, ids);
+    const footer = replyFooter(this.deps.authorName?.() ?? null);
+    for (const id of ids) {
+      const review = reviews.find((entry) => entry.id === id);
+      if (review === undefined) continue;
+      const line = lines.get(id);
+      const body =
+        line !== undefined
+          ? line
+          : commit !== null
+            ? `반영했습니다 · ${commit.slice(0, 7)}`
+            : "확인했고 바꾼 것은 없습니다";
+      const withFooter = sanitizeText(`${body}\n\n${footer}`);
+      try {
+        if (review.kind === "inline") {
+          await client.replyToPullComment({ ...slug, number: pr, commentId: id, body: withFooter });
+        } else {
+          await client.commentOnIssue({ ...slug, number: pr, body: withFooter });
+        }
+      } catch (error) {
+        // 답장 실패는 조용히 — 다시 시도하지 않는다(찜이 이미 원장에 있다).
+        this.log(
+          `코멘트 답장 실패(#${id}, 다시 시도하지 않음): ${detailOf(error, this.deps.core.pat)}`,
+        );
+      }
+    }
   }
 
   /**
