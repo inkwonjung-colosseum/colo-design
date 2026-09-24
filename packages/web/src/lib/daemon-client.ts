@@ -109,6 +109,9 @@ export type Block =
           itself here, and the failed card answers in kind. Raw text: it goes
           to the 자세히 fold only. */
       resultText: string | null;
+      /** 사다리를 다 쓴 실패 (PLAN L12) — 개발자에게 알렸다는 표식. 카드가
+       *  이유 옆에 한 줄로 싣는다. */
+      escalated?: boolean;
     }
   | {
       type: "notice";
@@ -313,6 +316,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           costUsd: event.costUsd,
           durationMs: event.durationMs,
           resultText: event.resultText,
+          ...(event.escalated ? { escalated: true } : {}),
         },
       ];
     }

@@ -161,6 +161,9 @@ export class SessionManager {
         ...options,
         provider: driver.id,
         providerLabel: descriptor.label,
+        // 요약(/compact) 재시도의 조건 (PLAN L12) — 드라이버가 선언한 능력이
+        // 곧 세션의 길이다.
+        canCompact: descriptor.capabilities.compact === true,
       },
       this.events,
     );

@@ -2765,17 +2765,8 @@ select {
   align-items: center;
   gap: 6px;
 }
-/* 잃은 말 스트립: the sends the dead query never delivered — a row is a
-   chip, not a bubble: nothing here has entered the transcript yet. */
-.composer__lost {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 5px 6px 5px 8px;
-  border: 1px solid var(--warn-line);
-  border-radius: var(--r-md);
-  background: var(--warn-soft);
-}
+/* 잃은 말 스트립은 걷혔다 (PLAN L12) — 잃은 말은 입력창으로 저절로 돌아온다.
+   .queued__head 는 대기 줄 스트립이 계속 쓴다. */
 .queued__head {
   display: flex;
   align-items: center;
@@ -2801,10 +2792,6 @@ select {
 .pintray__fold[aria-expanded="false"] svg {
   transform: rotate(-90deg);
 }
-.composer__lost .queued__head {
-  color: var(--warn);
-}
-
 /* 다음 턴에 보낼 말: 잃은 말과 같은 모양이되 경고가 아니다 — 약속대로
    기다리는 중이므로 평범한 선을 쓴다(도는 작업 스트립과 같은 자세). */
 .composer__queued {

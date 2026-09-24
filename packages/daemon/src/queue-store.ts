@@ -47,6 +47,15 @@ export interface StoredSend {
   pins?: Array<{ screen: string }>;
   /** 쓰는 시점에 첨부가 상한을 넘어 바이트가 버려졌다는 표식. */
   truncated?: boolean;
+  /** 대기 줄에 들어선 시각 (epoch ms) — 시작 복구의 30분 잣대가 읽는다.
+   *  옛 파일엔 없다: 없는 것은 오래된 것으로 읽는다(회복 패널의 몫). */
+  queuedAt?: number;
+}
+
+/** 진행 중인 턴이 CLI 에 건넨 말 — 언제 나갔는지도 함께 (PLAN L12). */
+export interface StoredInflight extends StoredSend {
+  /** deliver 가 적은 시각 — 시작 복구의 2시간 잣대가 읽는다. 옛 파일엔 없다. */
+  since?: number;
 }
 
 interface StoredLost extends StoredSend {
@@ -57,13 +66,21 @@ interface StoredLost extends StoredSend {
  * 진행 중인 턴이 CLI 에 건넨 말 — 턴이 끝나면 지워진다. 데몬이 턴 도중에
  * 죽으면 벤더 기록이 그 말을 아직 갖고 있지 않을 수 있다(질문 카드에서
  * 멈춘 턴이 그랬다 — 카드도 말도 통째로 사라졌다, 베타 테스트 B15).
- * 기동 청소(sweepOrphans)가 이 면을 lost 로 옮겨 회복 패널이 되살리게
- * 하는 것이 이 면의 전부다.
+ * 기동 복구(takeStartupRecoveries)가 2시간 안의 것을 브리프 턴으로 이어받고,
+ * 나머지는 기동 청소(sweepOrphans)가 lost 로 옮겨 회복 패널에 준다.
  */
 interface QueueFile {
   held: StoredSend[];
   lost: StoredLost[];
-  inflight?: StoredSend | null;
+  inflight?: StoredInflight | null;
+}
+
+/** 시작 복구 한 건 — 되살릴 대화와 그 방의 살아 남은 대기 말 (PLAN L12). */
+export interface StartupRecovery {
+  sessionId: string;
+  inflight: StoredSend;
+  /** 30분 안의 대기 말 — 브리프 턴 뒤 대기 줄로 돌아간다. */
+  held: StoredSend[];
 }
 
 /** 항목당 첨부 예산 — 디코딩 추정(base64 × 3/4). 상회분은 버려진다. */
@@ -197,18 +214,29 @@ export class QueueStore {
     this.write(sessionId, file);
   }
 
-  /** The live room's mirror. Emptying the room empties the held side, not the lost one. */
+  /**
+   * The live room's mirror. Emptying the room empties the held side, not the
+   * lost one. 새로 들어선 말에만 줄 선 시각(queuedAt)을 찍는다 — 시작 복구의
+   * 30분 잣대가 읽는다 (PLAN L12).
+   */
   saveHeld(sessionId: string, held: StoredSend[]): void {
     const file = this.load(sessionId);
-    const bounded = held.map(budget);
+    const stamped = held.map((item) =>
+      item.queuedAt === undefined ? { ...item, queuedAt: Date.now() } : item,
+    );
+    const bounded = stamped.map(budget);
     this.persist(sessionId, { held: bounded, lost: file.lost, inflight: file.inflight });
     this.enforceFileCap();
   }
 
-  /** 진행 중인 턴의 말 — deliver 가 쓰고 endTurn 이 지운다. */
+  /** 진행 중인 턴의 말 — deliver 가 쓰고 endTurn 이 지운다. 나간 시각도 함께. */
   saveInflight(sessionId: string, item: StoredSend): void {
     const file = this.load(sessionId);
-    this.persist(sessionId, { held: file.held, lost: file.lost, inflight: budget(item) });
+    this.persist(sessionId, {
+      held: file.held,
+      lost: file.lost,
+      inflight: { ...budget(item), since: Date.now() },
+    });
   }
 
   /** 턴이 끝났다 — 회복 후보는 더 이상 아니다. */
@@ -300,6 +328,66 @@ export class QueueStore {
     }
     this.enforceFileCap();
     return swept;
+  }
+
+  /**
+   * 시작 복구 (PLAN L12) — 정상 종료가 살려 둔 진행 중 턴을 찾는다. 2시간
+   * 안의 inflight 는 그 대화를 되살려 브리프 턴으로 이어받는다: 같은 말을 그대로
+   * 다시 보내지 않는다(반쯤 적용된 작업이 겹친다). 그 대화의 대기 줄 중 30분
+   * 안의 것도 함께 돌려준다 — 브리프 뒤 대기 줄로. 2시간이 지난 inflight 와
+   * 30분이 지난 대기 말은 그대로 남아 기동 청소(sweepOrphans)가 lost 로
+   * 옮긴다. 옛 판의 방 파일(since 없음)은 오래된 것으로 읽는다.
+   */
+  takeStartupRecoveries(
+    now: number = Date.now(),
+    inflightMaxMs: number = 2 * 60 * 60_000,
+    heldMaxMs: number = 30 * 60_000,
+  ): StartupRecovery[] {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(this.dir).filter((name) => /^queue-.+\.json$/.test(name));
+    } catch {
+      return [];
+    }
+    const recoveries: StartupRecovery[] = [];
+    for (const name of entries) {
+      const sessionId = name.slice("queue-".length, -".json".length);
+      const file = this.load(sessionId);
+      const inflight = file.inflight;
+      if (!inflight) continue;
+      if (inflight.since === undefined || now - inflight.since > inflightMaxMs) continue;
+      const held = file.held.filter(
+        (item) => item.queuedAt !== undefined && now - item.queuedAt <= heldMaxMs,
+      );
+      const stale = file.held.filter((item) => !held.includes(item));
+      // 회복으로 꺼낸 것들은 방에서 지운다 — 기동 청소가 같은 말을 lost 로
+      // 두 번 올리지 않게. 오래된 대기 말은 남겨 청소가 lost 로 거둔다.
+      this.persist(sessionId, { held: stale, lost: file.lost, inflight: null });
+      recoveries.push({ sessionId, inflight, held });
+    }
+    return recoveries;
+  }
+
+  /**
+   * 잃은 말의 자동 복귀 (PLAN L12) — 되살리기가 성공한 대화의 lost 중 30분
+   * 안의 것을 꺼내 대기 줄로 돌려준다(되살린 턴 뒤에 나간다). 오래된 것은
+   * 회복 패널 없는 세계에서 입력창 초안의 몫으로 남는다.
+   */
+  takeFreshLost(
+    sessionId: string,
+    maxAgeMs: number = 30 * 60_000,
+    now: number = Date.now(),
+  ): StoredSend[] {
+    const file = this.load(sessionId);
+    const fresh = file.lost.filter((item) => now - item.lostAt <= maxAgeMs);
+    if (fresh.length === 0) return [];
+    const taken = new Set(fresh.map((item) => item.id));
+    this.persist(sessionId, {
+      held: file.held,
+      lost: file.lost.filter((item) => !taken.has(item.id)),
+      inflight: file.inflight,
+    });
+    return fresh;
   }
 
   /**

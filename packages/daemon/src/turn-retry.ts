@@ -5,25 +5,28 @@
  * 받아 판정만 내린다. 세션(session.ts)은 이 판정을 믿고 스스로 재전송하며,
  * 그 규칙이 한 곳에 사는 것이 무한 재시도를 막는 상한의 전부다.
  *
- * 세 갈래 (커미티 2026-09-19 "무조건 처리" 설계):
+ * 네 갈래 (PLAN L12):
  * - `retry` — 일시적 실패(전송 거절 · 스트림 오류). 같은 말을 백오프로 다시.
  * - `wait`  — 사용량 한도. resetsAt 을 아는 한 그 시각에 맞춰 다시.
- * - `stop`  — 같은 말로는 영영 안 될 이유(프롬프트 Too Long, 한도인데
- *   돌아올 시각을 모름). 여기만 사람의 손 — 실패 카드가 남는다.
+ * - `stop`  — 같은 말로는 영영 안 될 이유(로그인 만료 · 프롬프트 Too Long,
+ *   한도인데 돌아올 시각을 모름). 로그인 만료는 상태가 돌아오면 세션이 한 번
+ *   다시 보내고(auth), 나머지만 사람의 손 — 실패 카드가 남는다.
  */
 
-/** 백오프 간격 — 재시도마다 하나씩 소비한다. 길이가 곧 상한이다. */
-export const RETRY_DELAYS_MS: readonly number[] = [4_000, 16_000];
+import { BUDGETS } from "./budgets.js";
+
+/** 백오프 간격 — 재시도마다 하나씩 소비한다. 길이가 곧 상한이다 (PLAN L7). */
+export const RETRY_DELAYS_MS: readonly number[] = BUDGETS.turnRetry.delaysMs;
 
 /** 한도 기다림의 상한 — 이보다 먼 재충전은 기다리는 것이 아니라 잊는 것이다. */
-const LIMIT_WAIT_MAX_MS = 15 * 60_000;
+const LIMIT_WAIT_MAX_MS = BUDGETS.turnRetry.limitWaitMaxMs;
 /** 재충전 직후엔 서버의 시계와 우리의 시계가 어긋난다 — 그만큼 여유. */
 const LIMIT_RETRY_GRACE_MS = 3_000;
 
-/** 크래시 자동 재개의 상한 — 같은 대화에서 스스로 일으키는 최대 횟수. */
-export const MAX_AUTO_REVIVES = 2;
+/** 크래시 자동 재개의 상한 — 같은 대화가 10분 창 안에 스스로 일으키는 횟수. */
+export const MAX_AUTO_REVIVES = BUDGETS.revive.max;
 /** 죽은 CLI 가 완전히 내려앉을 유예 — 재개가 그 시체와 경합하지 않게. */
-export const REVIVE_GRACE_MS = 1_500;
+export const REVIVE_GRACE_MS = BUDGETS.revive.graceMs;
 
 export interface RetryInput {
   /** 이미 쓴 재시도 수 — 0 이면 첫 재시도를 묻는 중. */
@@ -41,7 +44,18 @@ export interface RetryInput {
 export type RetryDecision =
   | { action: "retry"; delayMs: number }
   | { action: "wait"; delayMs: number }
-  | { action: "stop"; reason: "exhausted" | "permanent" | "limit-no-reset" };
+  | {
+      action: "stop";
+      reason: "auth" | "exhausted" | "permanent" | "limit-no-reset";
+    };
+
+/**
+ * 로그인 만료의 문장들 — 같은 말로 다시 시도해도 소용없는 실패다(PLAN L12).
+ * 시간이 풀지 않고 사용자의 로그인이 푼다: 세션은 멈춘 말을 기억하고 상태가
+ * 돌아오면 한 번 스스로 다시 보낸다.
+ */
+const AUTH_RESULT =
+  /authentication_error|invalid api key|oauth token|please run \/login|not logged in|\b401\b/i;
 
 /**
  * 같은 말로는 다시 시도해도 소용없는 실패 — 길이의 문제는 말을 줄여야
@@ -86,6 +100,8 @@ export function classifyRetry(input: RetryInput): RetryDecision {
   const delay = delays.at(input.attempt);
   if (delay === undefined) return { action: "stop", reason: "exhausted" };
   const text = input.resultText ?? "";
+  // 로그인 만료는 사다리를 타지 않는다 — 기다림이 문제를 풀지 않는다.
+  if (AUTH_RESULT.test(text)) return { action: "stop", reason: "auth" };
   if (PERMANENT_RESULT.test(text)) return { action: "stop", reason: "permanent" };
   const limited = LIMIT_RESULT.test(text) || rateLimitBlocked(input.rateLimit);
   if (limited) {
@@ -100,7 +116,7 @@ export function classifyRetry(input: RetryInput): RetryDecision {
 }
 
 /** 실패의 단계 — 턴 통계(turn-stats)가 실패 행에 새기는 한 마디. */
-export type FailureStage = "length" | "limit" | "stream" | "other";
+export type FailureStage = "length" | "auth" | "limit" | "stream" | "other";
 
 /**
  * 실패 문장의 최선 분류 — 재시도 판정(classifyRetry)이 쓰는 같은 사전으로
@@ -110,6 +126,7 @@ export type FailureStage = "length" | "limit" | "stream" | "other";
 export function classifyFailure(resultText: string | null): FailureStage {
   const text = resultText ?? "";
   if (PERMANENT_RESULT.test(text)) return "length";
+  if (AUTH_RESULT.test(text)) return "auth";
   if (looksLikeStreamError(resultText)) return "stream";
   if (LIMIT_RESULT.test(text)) return "limit";
   return "other";

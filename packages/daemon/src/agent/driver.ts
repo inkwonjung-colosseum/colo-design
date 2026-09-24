@@ -57,6 +57,12 @@ export interface Capabilities {
   /** Mid-turn input — the driver can fold a send into the running turn. */
   steer: boolean;
   /**
+   * 대화를 스스로 요약할 수 있는가 (PLAN L12) — 길이 초과 실패에 도구가
+   * /compact 를 보내고 한 번 다시 시도하는 길의 조건. Claude 만 참: CLI 가
+   * 슬래시 명령을 직접 실행하고 요약 경계(compact) 를 알려 온다.
+   */
+  compact: boolean;
+  /**
    * 브라우저 도구(`browser_*`)를 와이어에 주입할 수 있는 공급자인가 — 네
    * 공급자 모두 true다(claude·codex는 각자의 mcpServers 필드, ACP 에이전트는
    * session/new의 mcpServers). 공급자 선언일 뿐 실제 제공 여부는 host의
