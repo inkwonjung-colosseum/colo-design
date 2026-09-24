@@ -287,17 +287,6 @@ export class RepoWorkspace {
     return await run;
   }
 
-  /**
-   * 최신화 버튼이 열린 대화 없이 눌렸을 때의 사전 확인 (실사 P0 — 조용한
-   * no-op). 사이클 브랜치에 올라탄 클론의 병합은 충돌 시 AI 의 첫 과제가
-   * 되야 하므로 혼자 하지 않는다 — 대신 fetch 로 원격을 확인해 무엇이 기다리는
-   * 지 알려준다. null 이면 막을 이유가 없다: 베이스 브랜치 위의 fast-forward 는
-   * 혼자서도 안전하고, 새 커밋이 없으면 할 일 자체가 없다.
-   */
-  refreshNeedsThread(): Promise<number | null> {
-    return this.core.refreshNeedsThread();
-  }
-
   // -------------------------------------------------------------------------
   // The handoff cycle (PLAN D5[넘기기]): 저장 → 개발자에게 넘기기 → 반영됨
   // -------------------------------------------------------------------------
@@ -313,27 +302,6 @@ export class RepoWorkspace {
 
   get currentHandoff(): HandoffStatus | null {
     return this.core.currentHandoff;
-  }
-
-  /**
-   * 커미티 2026-09-15 판정 1·2: 폴링이 **읽어서 본** 사이클의 끝(반영됨·반려).
-   * 칩에는 아직 반영하지 않는다 — 끝을 칩에만 적고 착지를 미루면 `this.branch`
-   * 가 살아 있어 다음 저장이 이미 닫힌 브랜치로 푸시된다(ensureCycleBranch 가
-   * 이름이 있으면 그대로 쓴다). 그래서 끝은 여기 따로 세워 두고, 사람이 있는
-   * 자리(상태 확인 · 프로젝트 활성화 · 다음 저장의 머리)에서만 내려앉힌다.
-   */
-  get handoffLandingDue(): boolean {
-    return this.publish.landingDue;
-  }
-
-  /**
-   * 커미티 B1 (2026-09-15): 최신화(pull)가 돌고 있는가 — handoff 폴링이 이
-   * 사이에 refreshHandoff 를 겹치지 않게 하는 수단. 저장·넘기기의 판정은
-   * 서버가 diffStage 로 이미 알고, 이쪽은 레포 자체의 손길만 센다. 옛
-   * `refreshing` 슬롯 대신 차선에서 파생한다(PLAN L1).
-   */
-  get busyRefreshing(): boolean {
-    return this.core.busyRefreshing;
   }
 
   /** Last counted unsaved-change files — the sidebar badge's number (PLAN D16). */
@@ -392,24 +360,16 @@ export class RepoWorkspace {
     return this.core.lane.run("submit", () => this.publish.runHandoff(options));
   }
 
-  refreshHandoff(): Promise<HandoffStatusReport | null> {
-    return this.publish.refreshHandoff();
-  }
-
   /**
-   * 보낸 화면 동결: the committed capture for one
-   * screen, read off the handoff branch — the frozen stage's picture.
+   * 상태 확인의 읽기 — 감독자가 착지를 소유하므로 여기서는 읽기만 한다
+   * (PLAN L2 흡수표). 읽은 뒤의 감독자 틱은 호출자(dispatch)가 부른다.
    */
-  handoffShot(route: string): Promise<{ mediaType: string; data: string } | null> {
-    return this.publish.handoffShot(route);
-  }
-
   peekHandoff(): Promise<HandoffStatusReport | null> {
     return this.publish.peekHandoff();
   }
 
-  landHandoffIfDue(): Promise<void> {
-    return this.publish.landHandoffIfDue();
+  handoffShot(route: string): Promise<{ mediaType: string; data: string } | null> {
+    return this.publish.handoffShot(route);
   }
 
   replyToReview(id: number, body: string): Promise<void> {

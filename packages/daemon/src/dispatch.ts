@@ -273,17 +273,10 @@ export class RequestRouter {
         // render is exactly when its account's numbers matter.
         this.deps.plans.refresh(provider);
         // A session start is the moment the 화면 half goes back to the remote.
-        // Mid-cycle that is a merge of the developer's base branch, and a
-        // conflict lands as this session's first task — which is why it runs
-        // after the session exists, and without blocking on it.
-        void this.repo.pull((brief) => {
-          try {
-            this.deps.manager.get(session.id)?.send(brief);
-          } catch {
-            // The fresh thread's query died mid-pull; the conflict state
-            // itself still surfaces through repo.status.
-          }
-        });
+        // 감독자의 틱이 최신화·착지를 치르고(PLAN L2 흡수표), 충돌은 원장에
+        // 적혀 브리프 턴이 된다 — 새 세션이 열린 뒤에 부르는 이유는 그 브리프가
+        // 이 대화를 찾을 수 있게 하기 위해서다.
+        void this.workspaceOfSession(session.id)?.supervisor.tick("session-start");
         // The tree gains a child row (PLAN D59).
         this.deps.manager.invalidateThreads(session.cwd);
         this.refreshThreads();
@@ -310,13 +303,11 @@ export class RequestRouter {
         // Refusals answer through the dispatch-wide Korean boundary above.
         const carrier = target.sendable ? target : await this.resurrectSession(target);
         // 최신화는 사람의 몫이 아니게 됐다(E1): 말이 나가기 전에 도구가
-        // 스스로 받아 온다. 무인화가 가능한 이유는 두 부품이 이미 있기
-        // 때문이다 — refreshNeedsThread 가 안전 판정을 하고(사이클 브랜치
-        // 위 병합만 대화를 필요로 한다), 충돌 브리프는 이 대화의 첫 과제로
-        // 떨어진다(briefTo). 그 브리프 턴이 먼저 열리면 지금의 말은 대기
-        // 줄로 물러나고, 정리가 끝난 뒤 실행된다 — 세션이 도는 턴에 온 말을
-        // held 로 미뤄두는 기존 질서가 순서를 잡는다. 실패·20초 경과는 말을
-        // 막지 않는다: pull 은 조용히 이어된다(차선의 refresh 칸).
+        // 스스로 받아 온다 — 감독자의 틱이 fetch·병합·착지를 치르고, 충돌은
+        // 원장에 적혀 브리프 턴이 된다. 그 브리프 턴이 먼저 열리면 지금의
+        // 말은 대기 줄로 물러나고, 정리가 끝난 뒤 실행된다 — 세션이 도는
+        // 턴에 온 말을 held 로 미뤄두는 기존 질서가 순서를 잡는다. 실패·
+        // 20초 경과는 말을 막지 않는다: 틱은 조용히 이어된다.
         await this.pullBeforeSend(message.sessionId);
         // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
         // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
@@ -783,20 +774,12 @@ export class RequestRouter {
       }
 
       case "repo.handoffStatus": {
-        // refreshHandoff can land a finished cycle — fetch, checkout, reset —
-        // so while a writer owns the worktree the answer is the poller's
-        // passive read instead (pollOpenHandoffs' fence, 판정 1·2). A publish
-        // in flight shows in diffStage; a pull in busyRefreshing.
+        // 상태 확인은 읽기만 한다 — 끝난 사이클의 착지(fetch·checkout·reset)는
+        // 감독자의 몫이다(PLAN L2 흡수표). 읽은 뒤의 틱이 그 일을 한다.
         const workspaces = this.requireActive();
-        if (
-          workspaces.diffStage === "computing" ||
-          workspaces.diffStage === "pushing" ||
-          workspaces.diffStage === "handing-off" ||
-          workspaces.repo.busyRefreshing
-        ) {
-          return await workspaces.repo.peekHandoff();
-        }
-        return await workspaces.repo.refreshHandoff();
+        const report = await workspaces.repo.peekHandoff();
+        void workspaces.supervisor.tick("manual");
+        return report;
       }
 
       // 보낸 화면 동결: the frozen stage asks for one
@@ -1060,24 +1043,18 @@ export class RequestRouter {
   }
 
   /**
-   * E1: 말이 나가기 전의 조용한 최신화. 받아올 것이 없으면 fetch 한 번으로
-   * 돌아가고, 있으면 pull — 사이클 브랜치 위 병합의 충돌 브리프는 이 대화의
-   * 첫 과제로 떨어진다(briefTo). 20초를 넘기면 기다림을 포기하고 말을 먼저
-   * 보낸다: pull 은 차선(refresh 칸)에서 뒤로 이어되고, 최신화가 사용자의
-   * 말을 지연시켜서는 안 되기 때문이다.
+   * E1: 말이 나가기 전의 조용한 최신화 — 감독자의 틱이 fetch·병합·착지를
+   * 한 번에 치른다(PLAN L2 흡수표). 20초를 넘기면 기다림을 포기하고 말을
+   * 먼저 보낸다: 틱은 차선(supervise 칸)에서 뒤로 이어되고, 최신화가
+   * 사용자의 말을 지연시켜서는 안 되기 때문이다.
    */
   private async pullBeforeSend(sessionId: string): Promise<void> {
-    const brief = this.briefTo(sessionId, "refresh");
-    const work = (async () => {
-      const behind = await this.repo.refreshNeedsThread();
-      if (behind === null || behind === 0) return;
-      await this.repo.pull(brief.onSessionTurn);
-    })().catch(() => undefined);
+    const supervisor = this.workspaceOfSession(sessionId)?.supervisor;
+    if (!supervisor) return;
+    const work = supervisor.tick("before-send").catch(() => undefined);
     const { promise: cap, resolve: capped } = Promise.withResolvers<void>();
     setTimeout(capped, 20_000);
     await Promise.race([work, cap]);
-    // 보내기 직전의 감독자 틱 — pull 이 놓친 사이클의 어긋남을 여기서 잡는다.
-    void this.workspaceOfSession(sessionId)?.supervisor.tick("before-send");
   }
   /**
    * The thread a failing gate briefs when none is (or none living one is)

@@ -815,12 +815,10 @@ export class DaemonServer {
       status: () => this.status(),
     });
 
-    // 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 주기적으로
-    // 다시 읽는다 — 반영됨·변경 요청이 기획자를 찾아온다. unref: 테스트 러너와
-    // 데스크톱 in-process 호스트를 타이머가 붙잡지 않게.
+    // 감독자의 timer 틱 — 모든 프로젝트가 한 번씩 돈다 (PLAN L2). 열린
+    // 넘김의 재읽기 · 착지 · 베이스 따라가기는 모두 이 틱의 판정이 한다.
+    // unref: 테스트 러너와 데스크톱 in-process 호스트를 타이머가 붙잡지 않게.
     this.handoffTimer = setInterval(() => {
-      void this.pollOpenHandoffs();
-      // 감독자의 timer 틱 — 모든 프로젝트가 한 번씩 돈다 (PLAN L2).
       for (const workspaces of this.fleet.workspaces.values()) {
         void workspaces.supervisor.tick("timer");
       }
@@ -1110,10 +1108,6 @@ export class DaemonServer {
 
   private announceProjects(): void {
     this.fleet.announceProjects();
-  }
-
-  private async pollOpenHandoffs(): Promise<void> {
-    return this.fleet.pollOpenHandoffs();
   }
 
   private refreshThreads(): void {

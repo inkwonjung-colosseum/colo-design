@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 
 import type {
   ChatEvent,
+  DeveloperReview,
   DiffStatus,
-  HandoffStatusReport,
   ProjectDefaults,
   ProjectLifecycle,
   ProjectSummary,
@@ -28,7 +28,6 @@ import type { ProjectPaths, ProjectRegistry } from "./projects.js";
 import type { QueueDisk } from "./queue-store.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
-import { readReviewLedger, reviewLedgerFile, writeReviewLedger } from "./review-ledger.js";
 import { appendScreenMap } from "./screen-map.js";
 import type { SessionManager } from "./session-manager.js";
 import { appendTape } from "./session-tape.js";
@@ -41,9 +40,6 @@ import { repoWritePolicy } from "./workspaces.js";
  */
 const WARM_PREVIEWS = 2;
 
-/** E1: 폴 틱의 무인 최신화 스로틀 — 사람의 자리와 무관하게 도구가 받아 온다. */
-const QUIET_PULL_MS = 10 * 60_000;
-
 export interface ProjectWorkspaces {
   slug: string;
   paths: ProjectPaths;
@@ -51,14 +47,8 @@ export interface ProjectWorkspaces {
   /** When this project was last put on screen — the warm cap keeps the newest. */
   shownAt: number;
   /**
-   * E1: 폴 틱의 무인 최신화(pull)를 마지막으로 돌린 시각. 받아올 것이
-   * 없어도 fetch 자체가 네트워크를 타므로 10분 스로틀에 묶는다.
-   */
-  lastQuietPull: number;
-  /**
    * 커미티 B1 (2026-09-15): the workspace's last diff stage, recorded off the
-   * same callback the bar listens to. The handoff poll refuses to touch a
-   * repo whose 저장·넘기기 is still moving ("not a passive status read").
+   * same callback the bar listens to.
    */
   diffStage: DiffStatus["stage"] | null;
   /** 사이클 감독자 (PLAN L2) — 이 프로젝트의 사이클을 스스로 제자리로. */
@@ -111,25 +101,15 @@ export class ProjectFleet {
   /** The last threads each project announced with, as JSON — the guard that
    * keeps refreshThreads from announcing unchanged pictures forever. */
   private readonly announcedThreads = new Map<string, string>();
-  /** 커미티 B1: slug → 마지막 폴링이 본 개발자 코멘트 수. */
-  private readonly lastReviewCount = new Map<string, number>();
   /**
-   * 커미티 P3-2: slug → 폴러가 마지막으로 감지한 개발자 쪽 사건과 그 발견
-   * 시각. `projectSummaries()`가 그대로 내보낸다 — 비활성 프로젝트도 이
+   * 커미티 P3-2: slug → 감독자가 마지막으로 감지한 개발자 쪽 사건과 그 발견
+   * 시각. `projectSummaries()`가 그대로보낸다 — 비활성 프로젝트도 이
    * 값으로 홈의 요약 행을 그린다(크로스 프로젝트 인박스).
    */
   private readonly lastHandoffEvent = new Map<
     string,
     { kind: "merged" | "closed" | "changes_requested" | "comments" | "replied"; at: string }
   >();
-  /**
-   * 슬라이스 2 (2026-09-19 "무조건 처리"): slug → 데몬이 이미 AI 에 내려준
-   * 리뷰 id 들. 자동 브리프의 단일 장부다 — 웹의 고치기 문은 걷혔고, 같은
-   * 코멘트가 두 번 턴으로 나가는 일은 이 곳에서만 막는다. 디스크 장부
-   * (review-ledger.ts, P0) 의 메모리 캐시이기도 하다: 재시동 후 첫 읽기가
-   * 디스크에서 씨를 뿌린다.
-   */
-  private readonly briefedReviewIds = new Map<string, Set<number>>();
   /**
    * 슬라이스 2: sessionId → 자동 브리프가 연 턴이 끝나면 치러야 할 자동 저장.
    * 사람의 턴에는 붙지 않는다 — 오직 폴링이 내려놓은 리뷰 반영 턴만이
@@ -174,7 +154,6 @@ export class ProjectFleet {
       slug,
       paths,
       shownAt: 0,
-      lastQuietPull: 0,
       diffStage: null,
       repo: new RepoWorkspace({
         root: paths.repoRoot,
@@ -231,6 +210,29 @@ export class ProjectFleet {
       isActive: () => slug === this.deps.registry.activeSlug(),
       openThread: (title) => this.autoFixThreadFor(workspaces, title),
       raiseNotice: (_key, text) => this.deps.escalate(`[Colo Design] ${projectName}: ${text}`),
+      // PLAN L2 흡수표 — 폴러가 하던 사람에게 보이는 일은 감독자가 이
+      // 콜백으로 옮겨 부른다. PR 상태 변화는 사이드바의 마지막 사건과
+      // 알림으로, 새 리뷰는 자동 반영 턴으로.
+      onPrTransition: (kind, at, count) => {
+        this.lastHandoffEvent.set(slug, { kind, at });
+        this.deps.notice({
+          kind: "handoff",
+          slug,
+          projectName,
+          event: kind,
+          ...(count === undefined ? {} : { count }),
+        });
+      },
+      onNewReviews: (pr, reviews) => this.briefReviewsFor(workspaces, pr, reviews),
+      onRetargetBase: (to) => {
+        this.deps.registry.update(slug, { baseBranch: to });
+        workspaces.repo.repoCore().baseBranch = to;
+      },
+      // 대화록 사건 — 옛 폴러의 emitCycleEvent 와 같은 길(세션 채널 + 테이프).
+      cycleEvent: (event) => this.emitCycleEvent(workspaces, event, undefined),
+      // 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true).
+      deleteMergedBranches: () =>
+        this.deps.registry.get(slug)?.lifecycle?.deleteMergedBranches ?? true,
       logger: this.deps.logger,
     });
     this.workspaces.set(slug, workspaces);
@@ -420,172 +422,6 @@ export class ProjectFleet {
   }
 
   /**
-   * 커미티 B1 감동판 (2026-09-15): 열린 넘김이 있는 프로젝트를 다시 읽어,
-   * 개발자 쪽 사건(반영됨·반려·변경 요청·새 코멘트)을 알림으로 보낸다.
-   *
-   * 슬라이스 4 (2026-09-19) 가 판정 1·2 의 반쪽을 고쳤다: 끝난 사이클의
-   * 착지(fetch·checkout·reset·체크포인트 삭제)는 조건이 안전하면 타이머가
-   * 스스로 내려앉힌다 — 변경 없음·그 프로젝트가 바쁘지 않을 때뿐이고(busyIn
-   * 이 루프의 머리가 지킨다), 하나라도 걸리면 여전히 사람이 있는 자리(상태
-   * 확인 · 활성화 · 다음 저장의 머리)로 미룬다. 알림은 여전히 사람을 부르지만,
-   * 돌아왔을 때 정리가 이미 끝나 있어야 비개발자의 한 바퀴가 짧다.
-   *
-   * 그래도 도는 턴·저장·넘기기·최신화 중에는 읽지 않는다: GitHub 한 번 더
-   * 부르는 값보다 그 손길들이 조용한 편이 낫다. 바쁨은 프로젝트별로 잰다
-   * (PLAN L1) — 한 프로젝트의 턴이 다른 프로젝트의 병합 감지를 멈추지
-   * 않는다. 실패는 조용히 넘어간다 — 다음 틱이 다시 본다.
-   */
-  async pollOpenHandoffs(): Promise<void> {
-    for (const workspaces of this.workspaces.values()) {
-      // 그 클론에서 턴이 돌거나 기다림이 있으면 그 프로젝트만 건너뛴다.
-      if (this.deps.manager.busyIn(workspaces.paths.repoRoot)) continue;
-      const current = workspaces.repo.currentHandoff;
-      if (!current || current.state === "merged" || current.state === "closed") continue;
-      // 이미 본 끝은 다시 부르지 않는다 — 착지 전까지 열 번 울리지 않게.
-      if (workspaces.repo.handoffLandingDue) continue;
-      if (
-        workspaces.diffStage === "computing" ||
-        workspaces.diffStage === "pushing" ||
-        workspaces.diffStage === "handing-off" ||
-        workspaces.repo.busyRefreshing
-      ) {
-        continue;
-      }
-      const before = current.state;
-      const beforeReviews = this.lastReviewCount.get(workspaces.slug) ?? null;
-      let report: HandoffStatusReport | null = null;
-      try {
-        report = await workspaces.repo.peekHandoff();
-      } catch {
-        continue;
-      }
-      if (!report) continue;
-      const reviews = report.reviews?.length ?? 0;
-      // 읽기 실패의 빈 목록은 기준이 아니다 — 0 으로 세워 두면 다음 성공 읽기가
-      // 옛 코멘트 전부를 '새 코멘트' 로 울린다. 실제 목록이 왔을 때만 옮긴다.
-      if (report.reviews !== undefined) this.lastReviewCount.set(workspaces.slug, reviews);
-      const projectName = this.deps.registry.get(workspaces.slug)?.name ?? workspaces.slug;
-      const handoffNotice = (
-        event: "merged" | "closed" | "changes_requested" | "comments",
-        count?: number,
-      ) => {
-        this.lastHandoffEvent.set(workspaces.slug, { kind: event, at: new Date().toISOString() });
-        this.deps.notice({
-          kind: "handoff",
-          slug: workspaces.slug,
-          projectName,
-          event,
-          ...(count === undefined ? {} : { count }),
-        });
-      };
-      if (report.state === "merged") {
-        handoffNotice("merged");
-      } else if (report.state === "closed") {
-        handoffNotice("closed");
-      } else if (before === "open" && report.state === "changes_requested") {
-        handoffNotice("changes_requested");
-      } else if (report.state === "open" && beforeReviews !== null && reviews > beforeReviews) {
-        handoffNotice("comments", reviews - beforeReviews);
-      }
-      // 슬라이스 2 (무조건 처리): 새 리뷰는 알림으로 끝나지 않는다 — 데몬이
-      // 스스로 고치기 턴을 내려놓고, 그 턴이 답을 내면 저장까지 마무리한다.
-      // 장부(브리프된 id)를 먼저 보고 성공을 확인하며 되돌린다: 보내기가
-      // 거절된 리뷰를 먹으면 다음 틱이 다시는 손대지 못한다. 장부는 디스크에
-      // 있다(P0) — 메모리뿐이던 시절에는 재시동마다 옛 코멘트가 다시 브리프됐다.
-      if (report.reviews !== undefined && report.state !== "merged" && report.state !== "closed") {
-        const seen = this.briefedReviewsFor(workspaces, current.number);
-        const unseen = report.reviews.filter((review) => !seen.has(review.id));
-        if (unseen.length > 0) {
-          const target = this.autoFixThreadFor(workspaces);
-          if (target) {
-            for (const review of unseen) seen.add(review.id);
-            try {
-              target.send(reviewToTurn(unseen));
-              this.autoSaveAfter.set(target.id, { slug: workspaces.slug, count: unseen.length });
-              writeReviewLedger(
-                reviewLedgerFile(workspaces.paths.root),
-                new Map([[current.number, [...seen]]]),
-              );
-              this.deps.logger.warn("[review-ledger] 브리프 기록", {
-                slug: workspaces.slug,
-                pr: current.number,
-                reviews: unseen.length,
-              });
-            } catch {
-              for (const review of unseen) seen.delete(review.id);
-              this.autoSaveAfter.delete(target.id);
-            }
-          }
-        }
-      }
-      // 슬라이스 4: 끝난 사이클의 자동 착지 — 워크트리가 깨끗할 때만. 변경이
-      // 남았으면 사람이 있는 자리의 착지가 그 일감과 함께 간다(치워두기가
-      // 붙는 것도 그 자리다). 그 프로젝트의 바쁨(busyIn)은 루프의 머리에서
-      // 이미 지켰다.
-      if (
-        (report.state === "merged" || report.state === "closed") &&
-        workspaces.repo.handoffLandingDue
-      ) {
-        const status = await workspaces.repo.status().catch(() => null);
-        if (status !== null && status.pendingChanges === 0) {
-          await workspaces.repo.refreshHandoff().catch(() => undefined);
-        }
-      }
-    }
-    // 사이드바 배지와 활성 프로젝트의 칩이 폴링의 결과를 본다 — UI 가 다시
-    // 당기기를 기다리지 않게.
-    this.announceProjectsThrottled();
-    const active = this.activeOrNull();
-    // E1: 폴 틱의 무인 최신화 — 활성 프로젝트만, 10분 스로틀. 활성 클론에
-    // 턴이 돌지 않는다(busyIn)는 것이 도는 턴과 겹치지 않는 근거고, 사이클
-    // 브랜치 위 병합의 충돌 브리프는 사람의 대화(없으면 도구가 여는 대화)의
-    // 첫 과제가 된다. 버튼이 하던 일을 타이머가 대신한다 — 받아오기를 눌러야
-    // 할 이유가 사라졌으므로 버튼도 웹에서 걷혔다.
-    if (
-      active &&
-      !this.deps.manager.busyIn(active.paths.repoRoot) &&
-      Date.now() - active.lastQuietPull >= QUIET_PULL_MS
-    ) {
-      active.lastQuietPull = Date.now();
-      void active.repo
-        .pull((brief) => {
-          const target = this.autoFixThreadFor(active, "최신화 문제 해결");
-          if (!target) return;
-          try {
-            target.send(brief);
-          } catch {
-            // 죽은 질의 — 충돌 상태 자체는 repo.status 가 이미 말한다.
-          }
-        })
-        .catch(() => undefined);
-    }
-    if (active) {
-      void active.repo
-        .status()
-        .then((status) => this.deps.broadcast({ type: "repo.status", status }))
-        .catch(() => undefined);
-    }
-  }
-
-  /**
-   * 이 프로젝트가 이미 브리프한 리뷰 id 들 — 메모리 캐시 앞에 디스크 장부가
-   * 있다. 첫 읽기에서 열린 넘김의 번호가 아닌 항목은 그 사이클이 끝난
-   * 것이므로 덜어내고, 덜어낸 것이 있으면 되돌려 쓴다.
-   */
-  private briefedReviewsFor(workspaces: ProjectWorkspaces, pr: number): Set<number> {
-    const cached = this.briefedReviewIds.get(workspaces.slug);
-    if (cached) return cached;
-    const file = reviewLedgerFile(workspaces.paths.root);
-    const ledger = readReviewLedger(file);
-    const ids = new Set<number>(ledger.get(pr) ?? []);
-    if ([...ledger.keys()].some((key) => key !== pr)) {
-      writeReviewLedger(file, new Map([[pr, [...ids]]]));
-      this.deps.logger.warn("[review-ledger] 끝난 사이클 정리", { slug: workspaces.slug, pr });
-    }
-    this.briefedReviewIds.set(workspaces.slug, ids);
-    return ids;
-  }
-  /**
    * 슬라이스 2: 리뷰 반영 턴이 갈 살아 있는 대화 — 그 프로젝트 클론에서
    * 가장 최근에 움직인 살아 있는 대화. 없으면 도구가 "리뷰 반영" 대화를
    * 연다(게이트 실패 스레드와 같은 길): 사람의 손이 없어도 반영이
@@ -614,7 +450,37 @@ export class ProjectFleet {
     this.refreshThreads();
     return session;
   }
+  /**
+   * 조정 표 14행의 실행 (PLAN L2 흡수표): 새 리뷰는 알림으로 끝나지 않는다 —
+   * 데몬이 스스로 고치기 턴을 내려놓고, 그 턴이 답을 내면 저장까지
+   * 마무리한다(settleAutoSave). 브리프된 id 의 장부는 cycle.json 의
+   * reviews[pr].briefed — 감독자가 판정 때 적고, 보내기가 거절되면
+   * 되감아(반환 false) 다음 틱이 다시 시도한다.
+   */
+  private briefReviewsFor(
+    workspaces: ProjectWorkspaces,
+    _pr: number,
+    reviews: DeveloperReview[],
+  ): boolean {
+    const target = this.autoFixThreadFor(workspaces);
+    if (!target) return false;
+    try {
+      target.send(reviewToTurn(reviews));
+      this.autoSaveAfter.set(target.id, { slug: workspaces.slug, count: reviews.length });
+      this.deps.logger.warn("[cycle] 리뷰 브리프 발송", {
+        slug: workspaces.slug,
+        pr: _pr,
+        reviews: reviews.length,
+      });
+      return true;
+    } catch {
+      this.autoSaveAfter.delete(target.id);
+      return false;
+    }
+  }
+
   /** D4: 프로젝트별 준비 실패의 한 바퀴 — 장부의 규칙은 bring-up-briefs.ts 에 있다. */
+
   private readonly bringUpEpisodes = new Map<string, BringUpEpisode>();
 
   /**
@@ -875,11 +741,11 @@ export class ProjectFleet {
     // and a half-overlapping restart would leave the planner looking at the
     // wrong app on the right port.
     if (switching) await this.fenceWarmPreviews(next);
-    // 커미티 2026-09-15 판정 2: 사람이 이 프로젝트 앞에 섰다 — 폴링이 세워 둔
-    // 사이클의 끝(반영됨·반려)을 여기서 내려앉힌다. 밀린 것이 없으면 네트워크도
-    // 타지 않고 즉시 돌아온다. 아래의 pull·sync 보다 **먼저**여야 한다: 착지의
-    // checkout 과 최신화의 stash 가 같은 워크트리를 동시에 만지면 안 된다.
-    await next.repo.landHandoffIfDue().catch(() => undefined);
+    // 커미티 2026-09-15 판정 2: 사람이 이 프로젝트 앞에 섰다 — 사이클의 끝
+    // (반영됨·반려)의 착지는 감독자의 틱이 한다(PLAN L2 흡수표). 아래의
+    // pull·sync 보다 **먼저**여야 한다: 착지의 checkout 과 최신화의 stash 가
+    // 같은 워크트리를 동시에 만지면 안 된다.
+    await next.supervisor.tick("activate").catch(() => undefined);
     // Bringing the repo up is NOT conditional on a switch. `create` registers
     // the first project as active before calling here, so a shortcut that
     // skipped this left a brand-new project with no clone at all — the
