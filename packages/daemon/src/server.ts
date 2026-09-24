@@ -1491,6 +1491,9 @@ export class DaemonServer {
       dev: this.config.devAgents === true,
       authorName: this.machineSetting.get("authorName"),
       githubAuthExpired: this.github.authExpired,
+      // 슬라이스 5: 설정 폼과 `개발자 부르기` 가 잠긴 채 보이던 이유 — 상태가
+      // 이 한 단어를 채우지 않았다 (PLAN 단계 0). 비밀 자체는 못 나간다.
+      escalationConfigured: this.escalation.configured,
     };
   }
 
