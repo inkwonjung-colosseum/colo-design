@@ -143,6 +143,15 @@ interface MemPull {
   mergeableState: string | null;
 }
 
+interface MemIssue {
+  number: number;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+  labels: string[];
+  assignees: string[];
+}
+
 interface MemComment {
   id: number;
   login: string;
@@ -163,6 +172,8 @@ export class MemoryGitHub implements RestTransport {
   private readonly pullComments = new Map<number, MemComment[]>();
   private readonly reviews = new Map<number, Array<MemComment & { state: string }>>();
   private readonly issueComments = new Map<number, MemComment[]>();
+  /** 개발자 알림의 이슈 (PLAN L11) — 번호는 PR 과 같은 열을 쓴다(GitHub 과 같다). */
+  private readonly issues = new Map<number, MemIssue>();
 
   private readonly remote: RemoteRepo;
 
@@ -239,13 +250,76 @@ export class MemoryGitHub implements RestTransport {
           );
         }
       }
-      if (
-        rest[0] === "issues" &&
-        rest.length === 3 &&
-        rest[2] === "comments" &&
-        input.method === "GET"
-      ) {
-        return json(200, this.commentJson(this.issueComments.get(Number(rest[1])) ?? []));
+      if (rest[0] === "issues") {
+        // 목록 — 개발자 알림이 같은 문제의 이슈를 다시 찾는 길. PR 도 같은
+        // 열에 서므로 pull_request 표식을 달아 내어 준다(GitHub 과 같다).
+        if (input.method === "GET" && rest.length === 1) {
+          const rows = [...this.issues.values()]
+            .filter((issue) => issue.state === "open")
+            .map((issue) => this.issueJson(issue));
+          const pulls = [...this.pulls.values()]
+            .filter((pull) => pull.state === "open")
+            .map((pull) => ({ ...this.pullJson(pull), pull_request: {} }));
+          return json(200, [...rows, ...pulls]);
+        }
+        if (input.method === "POST" && rest.length === 1) {
+          const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+          const number = this.nextNumber++;
+          const issue: MemIssue = {
+            number,
+            title: String(payload.title ?? ""),
+            body: String(payload.body ?? ""),
+            state: "open",
+            labels: [],
+            assignees: [],
+          };
+          this.issues.set(number, issue);
+          return json(201, this.issueJson(issue));
+        }
+        const number = Number(rest[1]);
+        const issue = this.issues.get(number);
+        if (rest.length === 2 && input.method === "PATCH") {
+          if (issue === undefined) return json(404, { message: "Not Found" });
+          const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+          if (typeof payload.state === "string") issue.state = payload.state;
+          if (Array.isArray(payload.labels)) issue.labels = payload.labels.map(String);
+          if (Array.isArray(payload.assignees)) issue.assignees = payload.assignees.map(String);
+          return json(200, this.issueJson(issue));
+        }
+
+        if (rest.length === 3 && rest[2] === "comments") {
+          if (input.method === "GET") {
+            return json(200, this.commentJson(this.issueComments.get(number) ?? []));
+          }
+          if (input.method === "POST") {
+            const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+            const id = this.nextCommentId++;
+            const row = { id, login: "colo-planner", body: String(payload.body ?? "") };
+            this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
+            return json(201, { id: row.id, user: { login: row.login }, body: row.body });
+          }
+        }
+        // PATCH /issues/comments/{id} — rest 는 ["issues","comments","<id>"].
+        if (rest.length === 3 && rest[1] === "comments" && input.method === "PATCH") {
+          const commentId = Number(rest[2]);
+          const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+          for (const rows of this.issueComments.values()) {
+            const row = rows.find((entry) => entry.id === commentId);
+            if (row) {
+              row.body = String(payload.body ?? row.body);
+              return json(200, { id: row.id, user: { login: row.login }, body: row.body });
+            }
+          }
+          return json(404, { message: "Not Found" });
+        }
+        if (rest.length === 3 && rest[1] === "comments" && input.method === "GET") {
+          const commentId = Number(rest[2]);
+          for (const rows of this.issueComments.values()) {
+            const row = rows.find((entry) => entry.id === commentId);
+            if (row) return json(200, { id: row.id, user: { login: row.login }, body: row.body });
+          }
+          return json(404, { message: "Not Found" });
+        }
       }
     }
     return json(404, { message: `Not Found: ${input.method} ${path}` });
@@ -272,6 +346,19 @@ export class MemoryGitHub implements RestTransport {
       requested_reviewers: [],
       head: { ref: pull.head, sha: pull.headSha },
       base: { ref: pull.base },
+    };
+  }
+
+  private issueJson(issue: MemIssue) {
+    return {
+      number: issue.number,
+      html_url: `https://github.test/colo-design/harness/issues/${issue.number}`,
+      title: issue.title,
+      body: issue.body,
+      state: issue.state,
+      labels: issue.labels.map((name) => ({ name })),
+      assignees: issue.assignees.map((login) => ({ login })),
+      user: { login: "colo-planner" },
     };
   }
 
@@ -370,6 +457,23 @@ export class MemoryGitHub implements RestTransport {
   /** 이후의 요청은 전부 401 — 연결 코드가 만료된 세계. */
   expireAuth(): void {
     this.expired = true;
+  }
+
+  /** 개발자 알림이 연 이슈 — 시험이 상태 · 본문 · 코멘트를 읽는다. */
+  issue(number: number): (MemIssue & { comments: MemComment[] }) | undefined {
+    const found = this.issues.get(number);
+    if (found === undefined) return undefined;
+    return { ...found, comments: this.issueComments.get(number) ?? [] };
+  }
+
+  /** 열린 이슈 수 — "다시 raise 는 새 이슈를 만들지 않는다" 의 잣대. */
+  get openIssueCount(): number {
+    return [...this.issues.values()].filter((issue) => issue.state === "open").length;
+  }
+
+  /** 이슈 · PR 에 달린 코멘트 — 개발자 알림의 갱신 · 해결 표식을 읽는다. */
+  commentsFor(number: number): MemComment[] {
+    return this.issueComments.get(number) ?? [];
   }
 }
 
