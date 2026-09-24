@@ -442,6 +442,8 @@ export class DaemonServer {
   /** 기계 주의의 since — GitHub 만료 · 에이전트 로그아웃이 처음 선 시각. */
   private githubExpiredAt: string | null = null;
   private agentLoggedOutAt: string | null = null;
+  /** 로그인 만료로 멈춰 기다리는 대화 — 로그인이 돌아오면 한 번 다시 보낸다 (L12). */
+  private readonly loginWatchers = new Map<string, NodeJS.Timeout>();
   /** 턴 통계 (AI 작업 시간 측정) — 종류와 숫자만 남기는 하루 JSONL. */
   private readonly stats: TurnStats;
 
@@ -533,6 +535,10 @@ export class DaemonServer {
           // onState 의 idle 에서 치른다(게이트가 있었다면 그 뒤에).
           if (event.kind === "turn.end" && !event.isError && event.subtype !== "interrupted") {
             this.router?.settleReviveBudget(sessionId);
+            // 그 프로젝트에서 턴이 답을 냈다 — 턴 자기치유의 개발자 알림
+            // (turn:failed · revive:exhausted)을 거둔다 (PLAN L12). 같은
+            // 프로젝트의 다른 대화가 낸 답도 푼다: 알림은 프로젝트의 것이다.
+            void this.router?.settleProjectTurns(sessionId);
             this.autoSaveDue.add(sessionId);
             void this.fleet.settleAutoSave(sessionId);
             return;
@@ -697,6 +703,17 @@ export class DaemonServer {
         onRevive: (sessionId) => {
           void this.router?.revive(sessionId);
         },
+        // 로그인 만료로 턴이 멈췄다 (PLAN L12) — 기계 상태를 다시 읽어 주의를
+        // `reconnect/agent-login` 로 세우고, 로그인이 돌아오면 그 말을 한 번
+        // 다시 보내도록 지켜본다.
+        onAuthStall: (sessionId) => {
+          void this.status().then((status) => this.broadcast({ type: "status", status }));
+          this.armLoginWatcher(sessionId);
+        },
+        // 사다리를 다 쓴 실패 — 그 프로젝트의 개발자 알림(turn:failed)이 선다.
+        onTurnFailed: (sessionId, resultText) => {
+          void this.router?.noteTurnFailed(sessionId, resultText);
+        },
       },
       this.agentDrivers,
       // 세션별 브라우저 MCP 명세(3단계): 팩토리가 없으면(브라우저 개발 경로)
@@ -786,9 +803,11 @@ export class DaemonServer {
     // git 가드 훅 폴더를 기동 때 한 번 쓴다 — 세션을 띄우는 드라이버들이
     // gitGuardEnv 로 core.hooksPath 를 겨눌 때 훅이 이미 있어야 한다.
     ensureGitGuardHooks();
-    // 기동 청소 (PLAN D86 의 확장): rooms the dead process was holding come
-    // back as the lost room — the turns they waited for are gone, so the
-    // words surface for the planner's hand, never for an automatic send.
+    // 시작 복구 · 기동 청소 (PLAN L12): 정상 종료가 살려 둔 진행 중 턴을 먼저
+    // 꺼낸다 — 2시간 안의 것은 그 대화를 되살려 브리프 턴으로 이어받는다(그
+    // 일은 라우터가 선 뒤, 아래에서). 나머지 방은 lost room 으로 — 그 말들은
+    // 이제 입력창 초안의 몫이다.
+    const recoveries = this.queueStore.takeStartupRecoveries();
     const orphaned = this.queueStore.sweepOrphans();
     if (orphaned > 0) this.logger?.info(`queue: recovered ${orphaned} lost room(s) from disk`);
 
@@ -849,8 +868,16 @@ export class DaemonServer {
       agentLogin: this.agentLogin,
       agentInstall: this.agentInstall,
       queueDiskFor: this.queueDiskFor,
+      developerNotice: this.developerNotice,
+      // 로그인이 돌아오면 기다리던 말을 다시 세운다 (PLAN L12) — 앱 안의
+      // 로그인이 끝나는 순간을 놓치지 않게 하는 길이다.
+      afterAgentLogin: () => void this.flushLoginWatchers(),
       status: () => this.status(),
     });
+
+    // 시작 복구 (PLAN L12): 라우터가 섰으니 아껴 둔 진행 중 턴을 되살려
+    // 브리프로 연다. 기다리지 않는다 — 시작의 나머지 일을 늦추지 않게.
+    if (recoveries.length > 0) void this.router?.recoverStartupTurns(recoveries);
 
     // 감독자의 timer 틱 — 모든 프로젝트가 한 번씩 돈다 (PLAN L2). 열린
     // 넘김의 재읽기 · 착지 · 베이스 따라가기는 모두 이 틱의 판정이 한다.
@@ -1562,6 +1589,44 @@ export class DaemonServer {
   private noticeRoute(): "github" | "slack" | "none" {
     if (this.github.client() !== null && !this.github.authExpired) return "github";
     return this.escalation.configured ? "slack" : "none";
+  }
+  /**
+   * 로그인 감시 (PLAN L12) — 로그인 만료로 멈춘 대화를 30초에 한 번 본다.
+   * `claude auth status` 가 CLI 를 띄우는 검사라 자주 볼 수 없다: 앱 안의
+   * 로그인이 끝나는 순간(afterAgentLogin)과 상태 방송에 얹힐시 확인이 그
+   * 사이를 메운다. 로그인이 돌아오면 상태를 다시 방송하고 그 말을 한 번 다시
+   * 보낸다(resumeAfterLogin).
+   */
+  armLoginWatcher(sessionId: string): void {
+    if (this.loginWatchers.has(sessionId)) return;
+    const timer = setInterval(() => void this.checkLoginWatcher(sessionId), 30_000);
+    timer.unref?.();
+    this.loginWatchers.set(sessionId, timer);
+  }
+
+  /** 감시 전부를 지금 확인한다 — 앱 안 로그인이 끝났을 때의 길. */
+  async flushLoginWatchers(): Promise<void> {
+    await Promise.all([...this.loginWatchers.keys()].map((id) => this.checkLoginWatcher(id)));
+  }
+
+  private async checkLoginWatcher(sessionId: string): Promise<void> {
+    const session = this.manager.get(sessionId);
+    const timer = this.loginWatchers.get(sessionId);
+    if (!session || session.state === "closed" || timer === undefined) {
+      if (timer !== undefined) {
+        clearInterval(timer);
+        this.loginWatchers.delete(sessionId);
+      }
+      return;
+    }
+    const driver = this.agentDrivers.get(session.provider);
+    const diagnostic = await driver?.isAvailable().catch(() => null);
+    if (diagnostic?.loggedIn !== true) return;
+    clearInterval(timer);
+    this.loginWatchers.delete(sessionId);
+    // 로그인이 돌아왔다는 소식도 함께 — 상태 방송이 주의를 거둔다.
+    await this.status().then((status) => this.broadcast({ type: "status", status }));
+    session.resumeAfterLogin();
   }
 
   /**

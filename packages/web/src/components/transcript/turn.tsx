@@ -1,7 +1,6 @@
 import { alignThumbs, readTurn, type TurnMarker } from "@colo-design/protocol";
 import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
-import { LIMIT_WORDS } from "../../lib/error-words";
 import { waitedFor } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { CopyButton } from "../CopyButton";
@@ -276,6 +275,7 @@ function FailedTurn({
   subtype,
   resultText,
   retryText,
+  escalated,
   onRetry,
   onResendEdit,
   live,
@@ -283,12 +283,13 @@ function FailedTurn({
   subtype: string;
   resultText: string | null;
   retryText: string | null;
+  /** 사다리를 다 쓴 실패 (PLAN L12) — 개발자가 이미 알고 있다는 한 줄. */
+  escalated?: boolean;
   onRetry?: (text: string) => void;
   /** 중지 카드의 회수 — 같은 말의 수정 재전송. */
   onResendEdit?: (text: string) => void;
   live?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const limit = resultText !== null && LIMIT_RESULT.test(resultText);
   const interrupted = subtype === "interrupted";
   // 행동이 있을 때만 행동을 묻는 문장이 선다 — 버튼이 잘린 옛 실패 카드가
@@ -299,14 +300,15 @@ function FailedTurn({
     : actionable || interrupted || subtype === "error_max_turns"
       ? (TURN_SUBTYPE_WORDS[subtype] ?? "잠시 문제가 있었습니다 — 다시 보내 주세요")
       : "잠시 문제가 있었습니다";
-  // 자세히가 여는 영어 원문 앞에 서는 한국어 한 줄 — 한도는 전용 문장,
-  // 나머지 실패는 카드가 이미 말한 이유가 그대로 요약이다.
-  const detail = limit ? LIMIT_WORDS : reason;
   return (
     <div className="machine turnfail">
       <div className="machine__head">
         <span className="machine__title">답을 마치지 못했습니다</span>
         <span className="machine__lead">{reason}</span>
+        {/* 사다리를 다 쓴 실패 (PLAN L12) — 도구가 스스로 다섯 번 시도했고,
+            개발자에게 알렸다. 원문(영어 오류 문장)은 화면에 올리지 않는다:
+            데몬 로그에 같은 문장이 있다 (PLAN L8). */}
+        {escalated && <span className="machine__lead">개발자에게 알렸어요</span>}
       </div>
       <div className="turnfail__actions">
         {/* 스스로 멈춘 사람에게 "같은 말 재발사"는 이상한 첫 제안 —
@@ -348,21 +350,7 @@ function FailedTurn({
             </button>
           </Tip>
         )}
-        <button
-          type="button"
-          className="machine__more"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? "접기" : "자세히"}
-        </button>
       </div>
-      {open && (
-        <>
-          <p className="hint">{detail}</p>
-          <pre className="machine__body">{resultText ?? (subtype || "turn")}</pre>
-        </>
-      )}
     </div>
   );
 }

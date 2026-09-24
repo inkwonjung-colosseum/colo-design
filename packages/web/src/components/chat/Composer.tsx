@@ -840,16 +840,38 @@ export function Composer({
     return () => registerResend?.(null);
   }, [registerResend, resend]);
 
+  /**
+   * 잃은 말의 자동 복귀 (PLAN L12) — 버튼 없이, 입력창이 비어 있을 때 가장
+   * 최근 것을 골라 돌려놓는다. 이미 시도한 것은 다시 건드리지 않는다(빈 손의
+   * takeDropped 가 같은 말을 반복하지 않게). 칸이 비어 있지 않으면 기다린다 —
+   * effect 가 입력 바뀔 때마다 다시 본다.
+   */
+  const droppedTried = useRef(new Set<string>());
   const takeDropped = (item: LostSend) => {
     if (!onTakeDropped) return;
+    droppedTried.current.add(item.id);
     void onTakeDropped(item.id)
       .then((payload) => {
         if (!payload) return;
         restore(payload.text, payload.attachments, payload.pins);
+        rejected.show("보내지 못한 말을 입력창에 돌려 두었어요");
         onDismissDropped?.(item.id);
       })
-      .catch((e) => sendError.show(failureWords(e, "잃은 말을 되돌리지 못했습니다")));
+      .catch(() => undefined);
   };
+  const droppedWaiting =
+    dropped.length > 0 &&
+    editor.text.trim() === "" &&
+    editor.attachments.length === 0 &&
+    dropped.some((item) => !droppedTried.current.has(item.id));
+  useEffect(() => {
+    if (!droppedWaiting) return;
+    const item = [...dropped]
+      .reverse()
+      .find((candidate) => !droppedTried.current.has(candidate.id));
+    if (item) takeDropped(item);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [droppedWaiting]);
 
   /**
    * 고쳐서 보내기 — 기다리는 말 하나를 방에서 통째로 꺼내 입력창에 되돌린다.
@@ -871,9 +893,6 @@ export function Composer({
       sendError.show(failureWords(e, "이 말을 먼저 보내지 못했습니다")),
     );
   };
-
-  const lostWords = (item: LostSend): string | null =>
-    item.truncated ? "첨부는 다시 붙여야 합니다" : attachmentWords(item);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Composition keys pass straight through: Enter would send half a word
@@ -1193,51 +1212,9 @@ export function Composer({
           </div>
         )}
 
-        {/* The room's losses: sends the dead query never delivered. Never in the
-          transcript, so they wait here — the words come back for a resend,
-          the attachments must be picked again. */}
-        {dropped.length > 0 && (
-          <div className="composer__lost" role="alert">
-            <div className="queued__head">
-              전달되지 못한 말 {dropped.length}건 — 되살려 다시 보내 주세요
-            </div>
-            <ul className="queued__list">
-              {dropped.map((item) => (
-                <li key={item.id} className="queued__row">
-                  <span className="queued__text" title={item.text}>
-                    {item.text || "(첨부만)"}
-                  </span>
-                  {lostWords(item) && (
-                    <span className="queued__meta">
-                      <FileIcon size={11} /> {lostWords(item)}
-                    </span>
-                  )}
-                  <Tip label="첨부까지 되돌려 집어넣습니다">
-                    <button
-                      type="button"
-                      className="ghost queued__action"
-                      aria-label="되살리기"
-                      disabled={disabled}
-                      onClick={() => takeDropped(item)}
-                    >
-                      <PencilIcon />
-                    </button>
-                  </Tip>
-                  <Tip label="이 말을 지웁니다">
-                    <button
-                      type="button"
-                      className="ghost queued__action"
-                      aria-label="지우기"
-                      onClick={() => onDismissDropped?.(item.id)}
-                    >
-                      <CloseIcon />
-                    </button>
-                  </Tip>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* 잃은 말은 패널이 아니라 입력창으로 돌아온다 (PLAN L12): 가장 최근
+          것의 글과 첨부가 비어 있는 칸에 저절로 놓이고, 한 줄 안내가 잠깐
+          스친다. 칸이 비어 있지 않으면 기다린다 — 버튼은 없다. */}
 
         {/* 다음 칩: 답이 끝난 자리에서 CLI 가 예측한 한 문장. 누르면
           입력창으로 들어갈 뿐 — 보내는 것은 언제나 사람이다. 쓰던 말이 있으면

@@ -4,11 +4,16 @@ import { join } from "node:path";
 import {
   type ClientMessage,
   DEFAULT_HANDOFF_BODY,
+  type EffortLevel,
+  markTurn,
+  readTurn,
   type ServerMessage,
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { AgentInstall } from "./agent-install.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
+import type { DeveloperNotice } from "./developer-notice.js";
+import { describeProblem } from "./developer-notice.js";
 import { browseFiles, currentPlatform, listFiles } from "./environment.js";
 import type { Escalation } from "./escalation.js";
 import type { GitHubBridge } from "./github-bridge.js";
@@ -27,7 +32,7 @@ import type { PlanTracker } from "./plan-tracker.js";
 import type { PreviewDrivers } from "./preview-drivers.js";
 import type { ProjectFleet, ProjectWorkspaces } from "./project-fleet.js";
 import type { ProjectRegistry } from "./projects.js";
-import type { QueueDisk, QueueStore } from "./queue-store.js";
+import type { QueueDisk, QueueStore, StartupRecovery } from "./queue-store.js";
 import { assertClonableRepoUrl, type RepoWorkspace } from "./repo.js";
 import { ReviveBudget } from "./revive-budget.js";
 import type { Session } from "./session.js";
@@ -82,6 +87,10 @@ export interface RouterDeps {
   /** 설정의 CLI 경로 오버라이드 — 온보딩 체크가 읽는다. */
   claudeExecutableOverride(): string | undefined;
   queueDiskFor(sessionId: string): QueueDisk;
+  /** 개발자 알림 (PLAN L11) — 턴 자기치유의 예산 초과가 올라가는 문 (L12). */
+  developerNotice: DeveloperNotice;
+  /** 앱이 에이전트 로그인을 마쳤다 — 로그인 대기 중인 말을 다시 세운다 (L12). */
+  afterAgentLogin?: () => void;
   status(): Promise<unknown>;
   /** 턴 통계 — 보내기 문에서 잰 핀 강화 시간만 흘려 준다. */
   stats: TurnStats;
@@ -668,7 +677,12 @@ export class RequestRouter {
             return this.deps.agentLogin.start(command.command, command.args, {
               onUrl: (url, wantsCode) =>
                 this.deps.broadcast({ type: "agent.login.url", url, wantsCode }),
-              onDone: (ok, detail) => this.deps.broadcast({ type: "agent.login.done", ok, detail }),
+              onDone: (ok, detail) => {
+                this.deps.broadcast({ type: "agent.login.done", ok, detail });
+                // 로그인이 돌아왔다 — 로그인 만료로 멈춰 둔 말을 다시 세운다
+                // (PLAN L12). 감시의 다음 틱을 기다리지 않게 하는 길이다.
+                if (ok) this.deps.afterAgentLogin?.();
+              },
             });
           }
           case "install-git":
@@ -906,33 +920,52 @@ export class RequestRouter {
    */
   private async resurrectSession(dead: Session): Promise<Session> {
     // 되감기·재개를 위 교체 close 는 "shutdown" 으로 — "user" 는 disk.clear() 를
-    // 달고 있어 크래시 복구 패널이 기다리는 lost 방까지 통째로 지웠다(실측).
+    // 달고 있어 크래시 복구의 lost 방까지 통째로 지웠다(실측).
     await this.deps.manager.close(dead.id, "shutdown");
-    const provider = dead.provider;
-    const driver = this.deps.agentDrivers.get(provider);
+    return this.resurrectThreadId({
+      id: dead.id,
+      cwd: dead.cwd,
+      provider: dead.provider,
+      chosen: dead.chosen,
+      title: dead.title,
+    });
+  }
+
+  /**
+   * 같은 id 의 재개 — 죽은 세션의 교체(crash) 와 시작 복구(브리프) 가 같이 타는
+   * 길. 살아 있는 세션이 이미 그 id 를 쥐고 있으면 manager.create 가 그것을
+   * 돌려주므로 안전하다.
+   */
+  private async resurrectThreadId(spec: {
+    id: string;
+    cwd: string;
+    provider: string;
+    chosen: { model: string | null; effort: EffortLevel | null };
+    title: string;
+  }): Promise<Session> {
+    const driver = this.deps.agentDrivers.get(spec.provider);
     const availability = driver ? await driver.isAvailable().catch(() => null) : null;
     const executable = availability?.executable;
     if (!executable) {
       // 죽은 세션을 돌려주면 호출자의 send 가 "크래시" 에러로 오진된다 —
       // 진짜 이유는 CLI 가 없는 것. isAvailable 의 한국어 사유를 그대로 넘긴다.
       throw new Error(
-        availability?.reason ?? `${provider} 를 찾지 못했습니다 — 설치한 뒤 다시 보내 주세요.`,
+        availability?.reason ?? `${spec.provider} 를 찾지 못했습니다 — 설치한 뒤 다시 보내 주세요.`,
       );
     }
-    const chosen = dead.chosen;
-    const instructions = this.projectInstructions(dead.cwd);
+    const instructions = this.projectInstructions(spec.cwd);
     const session = this.deps.manager.create({
-      cwd: dead.cwd,
-      provider,
+      cwd: spec.cwd,
+      provider: spec.provider,
       queueDiskFor: this.deps.queueDiskFor,
-      writePolicy: repoWritePolicy(dead.cwd),
-      title: dead.title,
+      writePolicy: repoWritePolicy(spec.cwd),
+      title: spec.title,
       launch: {
         ...(instructions ? { appendSystemPrompt: instructions } : {}),
         executable,
-        resume: dead.id,
-        ...(chosen.model ? { model: chosen.model } : {}),
-        ...(chosen.effort ? { effort: chosen.effort } : {}),
+        resume: spec.id,
+        ...(spec.chosen.model ? { model: spec.chosen.model } : {}),
+        ...(spec.chosen.effort ? { effort: spec.chosen.effort } : {}),
       },
     });
     // The tree's child row points at the same id; a rescan picks the new life up.
@@ -949,8 +982,11 @@ export class RequestRouter {
    * 유예를 먼저 센다: 세션은 아직 제 스레드를 정리하는 중이고, 죽는 CLI 의
    * 마지막 방송과 경합하면 안 된다. 그 사이 사람이 먼저 다시 보냈거나 대화를
    * 다시 열었다면 물러난다(상태가 error 가 아니다). 살릴 말이 없어도 물러난다
-   * — 그 자리엔 크래시 카드가 이미 사람의 손을 적어 두었다. 상한을 넘으면
-   * 마찬가지로 물러난다(PLAN L12): 예산을 쓰는 것은 실제로 일으키는 순간뿐이다.
+   * — 턴이 돌지 않던 죽음(idle crash)의 다음 보내기가 이 길로 되살아난다.
+   *
+   * 세션은 이제 크래시 알림을 내지 않는다 (PLAN L12): 되살리기의 결과만 한 줄로
+   * 말한다. 살리지 못하면(예산 초과 · CLI 없음) 개발자 알림(revive:exhausted)과
+   * 함께 그 사실을 알린다 — 사용자가 오류 문장을 읽는 세계가 아니다 (I2).
    */
   async revive(sessionId: string): Promise<void> {
     const grace = Promise.withResolvers<void>();
@@ -960,7 +996,10 @@ export class RequestRouter {
     if (dead?.state !== "error") return;
     const item = dead.revivePayload;
     if (!item) return;
-    if (!this.reviveBudget.allow(sessionId, Date.now())) return;
+    if (!this.reviveBudget.allow(sessionId, Date.now())) {
+      await this.announceReviveExhausted(sessionId, "되살리기 상한(10분 안에 3회)에 닿았습니다");
+      return;
+    }
     // 되살리기 자신이 교체를 위해 닫는 close 는 예산을 지우지 못하게 한다
     // (PLAN L12): 그 사이에 manager.close 의 onState("closed") 가 서버의
     // forgetReviveBudget 을 되부르는데, 표식이 없으면 셈이 매번 0 이 된다.
@@ -974,15 +1013,80 @@ export class RequestRouter {
         event: {
           kind: "notice",
           level: "info",
-          text: `새 ${session.providerLabel} 프로그램이 대화를 이어받아 방금 하던 일을 계속합니다.`,
+          text: "AI 프로그램을 다시 켰어요 — 하던 일을 이어서 합니다",
         },
       });
       session.send(item.text, item.attachments, item.pins);
+      this.requeueFreshLost(session);
     } catch {
-      // CLI 가 없다든가 — 사람의 손(크래시 카드)이 여전히 정답이다.
+      // CLI 가 없다든가 — 알림 한 줄과 개발자 알림이 전부다 (PLAN L12).
+      await this.announceReviveExhausted(sessionId, "새 AI 프로그램을 띄우지 못했습니다");
     } finally {
       this.reviving.delete(sessionId);
     }
+  }
+
+  /**
+   * 되살리지 못했다 — 한 줄로 말하고 개발자에게 알린다 (예산 초과 · CLI 없음).
+   * 이 문 자체가 또 던지면 방사된 약속이 남으므로, 무엇이든 삼킨다.
+   */
+  private async announceReviveExhausted(sessionId: string, what: string): Promise<void> {
+    try {
+      this.deps.logger.warn("크래시 되살리기 실패", { sessionId, what });
+      this.deps.broadcast({
+        type: "session.event",
+        sessionId,
+        event: {
+          kind: "notice",
+          level: "warn",
+          text: "AI 프로그램이 멈췄어요 — 개발자에게 알렸어요",
+        },
+      });
+      await this.raiseProjectNotice(sessionId, "revive:exhausted", what);
+    } catch (error) {
+      this.deps.logger.warn("되살리기 실패 알림을 마치지 못했다", { sessionId, err: error });
+    }
+  }
+
+  private requeueFreshLost(session: Session): void {
+    const items = this.deps.queueStore.takeFreshLost(session.id);
+    if (items.length === 0) return;
+    session.restoreHeld(items);
+    this.deps.broadcast({
+      type: "session.event",
+      sessionId: session.id,
+      event: { kind: "queue.lost", items: this.deps.queueStore.lostItems(session.id) },
+    });
+  }
+
+  /**
+   * 사다리를 다 쓴 실패 (PLAN L12) — 그 프로젝트의 개발자 알림(turn:failed).
+   * 세션 → 프로젝트는 세션의 cwd 가 사는 작업공간(fleet)으로 찾는다.
+   */
+  async noteTurnFailed(sessionId: string, resultText: string | null): Promise<void> {
+    await this.raiseProjectNotice(sessionId, "turn:failed", resultText ?? undefined);
+  }
+
+  /**
+   * 그 프로젝트에서 턴이 답을 냈다 — 서 있는 턴 자기치유 알림(turn:failed ·
+   * revive:exhausted)을 거둔다. 같은 프로젝트의 다른 대화가 낸 답도 푼다:
+   * 알림은 프로젝트의 것이지 대화의 것이 아니다.
+   */
+  async settleProjectTurns(sessionId: string): Promise<void> {
+    const slug = this.deps.fleet.workspaceOfSession(sessionId)?.slug ?? null;
+    if (slug === null) return;
+    await this.deps.developerNotice.resolve("turn:failed", slug);
+    await this.deps.developerNotice.resolve("revive:exhausted", slug);
+  }
+
+  /** 프로젝트 알림 공통 문 — 세션의 프로젝트를 찾아 올린다. */
+  private async raiseProjectNotice(sessionId: string, key: string, detail?: string): Promise<void> {
+    const slug = this.deps.fleet.workspaceOfSession(sessionId)?.slug ?? null;
+    await this.deps.developerNotice.raise({
+      key,
+      slug,
+      ...describeProblem(key, detail),
+    });
   }
 
   /** 감독: 턴이 답을 냈다 — 되살리기 예산은 성공한 턴의 끝에서만 지운다. */
@@ -998,6 +1102,71 @@ export class RequestRouter {
   forgetReviveBudget(sessionId: string): void {
     if (this.reviving.has(sessionId)) return;
     this.reviveBudget.forget(sessionId);
+  }
+
+  /**
+   * 시작 브리프 (PLAN L12) — 앱이 꺼질 때 돌던 턴을 이어받는다. 2시간 안의
+   * inflight 는 그 대화를 같은 id 로 되살려(resume) 브리프 턴 한 번을 연다:
+   * "직전 요청이 중단됐습니다 … 지금 파일 상태를 보고 마무리해 주세요."
+   * 같은 말을 그대로 다시 보내지 않는다 — 반쯤 적용된 작업이 겹친다. 살려 둔
+   * 대기 말(30분 안)은 브리프 뒤 대기 줄로 돌려놓는다. 되살리지 못하면 그 말을
+   * lost 로 되돌려 회복의 길을 지킨다. 이미 살아 있는 대화(사람이 먼저 열었다)는
+   * 건드리지 않는다.
+   */
+  async recoverStartupTurns(recoveries: StartupRecovery[]): Promise<void> {
+    for (const recovery of recoveries) {
+      if (this.deps.manager.get(recovery.sessionId)) continue;
+      try {
+        const located = await this.locateStoredThread(recovery.sessionId);
+        if (!located) {
+          this.deps.queueStore.moveHeldToLost(recovery.sessionId, [recovery.inflight]);
+          continue;
+        }
+        const session = await this.resurrectThreadId({
+          id: recovery.sessionId,
+          cwd: located.cwd,
+          provider: located.provider,
+          chosen: { model: null, effort: null },
+          title: "중단된 요청 마무리",
+        });
+        this.deps.logger.warn("시작 브리프 — 중단된 턴을 이어받는다", {
+          sessionId: recovery.sessionId,
+        });
+        session.restoreHeld(recovery.held);
+        const firstLine = readTurn(recovery.inflight.text).body.split("\n")[0]?.trim() ?? "";
+        session.send(
+          markTurn(
+            { kind: "brief", title: "중단된 요청 마무리" },
+            `직전 요청이 중단됐습니다: ${firstLine.slice(0, 80)}. 지금 파일 상태를 보고 마무리해 주세요.`,
+          ),
+        );
+      } catch (error) {
+        // 되살리지 못한 말은 lost 로 — 다음 시작도, 화면도 잃지 않게.
+        this.deps.logger.warn("시작 브리프 실패", { sessionId: recovery.sessionId, err: error });
+        this.deps.queueStore.moveHeldToLost(recovery.sessionId, [recovery.inflight]);
+      }
+    }
+  }
+
+  /**
+   * 저장된 대화가 어느 클론 · 어느 공급자의 것인지 — 활성 프로젝트가 먼저, 그
+   * 다음 레지스트리의 모든 클론을 찾는다. 시작 복구는 살아 있는 세션이 없으므로
+   * 저장소(transcript store)에게 물어야 한다.
+   */
+  private async locateStoredThread(
+    sessionId: string,
+  ): Promise<{ cwd: string; provider: string } | null> {
+    const roots = new Set<string>();
+    const active = this.deps.fleet.workspaces.get(this.deps.registry.activeSlug() ?? "");
+    if (active) roots.add(realpathBestEffort(active.paths.repoRoot));
+    for (const project of this.deps.registry.list()) {
+      roots.add(realpathBestEffort(this.deps.registry.paths(project.slug).repoRoot));
+    }
+    for (const cwd of roots) {
+      const provider = await this.deps.manager.findStoredProvider(sessionId, cwd);
+      if (provider !== undefined) return { cwd, provider };
+    }
+    return null;
   }
 
   /**

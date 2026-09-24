@@ -311,6 +311,7 @@ export function Transcript({
                       subtype={block.subtype}
                       resultText={block.resultText}
                       retryText={isLastFailedTurn(blocks, block) ? lastUserText(blocks) : null}
+                      escalated={block.escalated}
                       onRetry={onRetry}
                       onResendEdit={onResendEdit}
                       live={live}
