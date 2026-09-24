@@ -112,8 +112,9 @@ export const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
 /**
  * The stash this tool parks unsaved work in while 최신화 moves the branch.
  * Named for the button, so `git stash list` reads like the product, not git.
+ * 관찰(cycle-observe)이 도구 태그의 stash 를 찾는 잣대로도 쓰인다(PLAN L3 3행).
  */
-const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
+export const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
 
 /** What the planner reads when a conflict needs the agent and no thread is open. */
 export const REFRESH_CONFLICT_DETAIL =
