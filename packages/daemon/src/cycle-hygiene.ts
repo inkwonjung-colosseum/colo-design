@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pruneStagedAttachments } from "./agent/attachments.js";
 import type { CycleLedger } from "./cycle-ledger.js";
+import { parseRepoSlug } from "./github.js";
 import type { RepoCore } from "./repo-core.js";
 import { detailOf } from "./repo-core.js";
 import { ASSETS_BRANCH } from "./repo-publish.js";
@@ -96,6 +97,21 @@ export function endedBranchesDue(
         entry.state === "merged" && entry.deleteRemoteAfterPush === undefined && old(entry),
     ),
   };
+}
+
+/**
+ * 옮겨진 저장소의 새 주소 — 레지스트리 주소의 `owner/repo` 자리만 GitHub 이
+ * 말하는 full_name 으로 바꾼다. 스킴 · 호스트 · `.git` 꼬리 같은 나머지 철자는
+ * 그대로 둔다(https · scp · ssh 어느 모양이든). GitHub 주소가 아니거나 이름이
+ * 올바르지 않으면 null — 모르는 모양을 추측으로 고치지 않는다.
+ */
+export function movedRepoUrl(url: string, fullName: string): string | null {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) return null;
+  const slug = parseRepoSlug(url);
+  if (slug === null) return null;
+  const at = url.lastIndexOf(`${slug.owner}/${slug.repo}`);
+  if (at < 0) return null;
+  return `${url.slice(0, at)}${fullName}${url.slice(at + slug.owner.length + slug.repo.length + 1)}`;
 }
 
 // ————— 임시 폴더 —————

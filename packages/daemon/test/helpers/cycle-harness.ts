@@ -169,6 +169,8 @@ interface MemComment {
 export class MemoryGitHub implements RestTransport {
   private expired = false;
   private pullCreatesFail = false;
+  /** 저장소가 옮겨진 뒤의 이름 — 없으면 물은 이름 그대로 답한다. */
+  private movedTo: string | null = null;
   private nextNumber = 1;
   private nextCommentId = 1;
   private readonly pulls = new Map<number, MemPull>();
@@ -202,7 +204,7 @@ export class MemoryGitHub implements RestTransport {
       const rest = seg.slice(3);
       if (input.method === "GET" && rest.length === 0) {
         return json(200, {
-          full_name: `${seg[1]}/${seg[2]}`,
+          full_name: this.movedTo ?? `${seg[1]}/${seg[2]}`,
           default_branch: "main",
           permissions: { push: true },
         });
@@ -512,6 +514,11 @@ export class MemoryGitHub implements RestTransport {
     this.expired = true;
   }
 
+  /** 저장소를 옮긴다 — 옛 이름으로 물어도 새 full_name 을 답한다(GitHub 의 되돌림). */
+  moveRepo(fullName: string): void {
+    this.movedTo = fullName;
+  }
+
   /** 개발자 알림이 연 이슈 — 시험이 상태 · 본문 · 코멘트를 읽는다. */
   issue(number: number): (MemIssue & { comments: MemComment[] }) | undefined {
     const found = this.issues.get(number);
@@ -697,6 +704,8 @@ export interface SupervisedScene extends Scene {
   ledgerPath: string;
   /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14). 위생 시험이 바꾼다. */
   keepRejectedDays: number;
+  /** onUrlChange 가 모은 주소 — 레지스트리에 적혔을 것들. */
+  urlChanges: Array<string | null>;
 }
 
 /**
@@ -709,10 +718,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const clone = await makeClone(remote);
   const github = new MemoryGitHub(remote);
   process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  const urlChanges: Array<string | null> = [];
   const workspace = new RepoWorkspace({
     root: clone.path,
     url: remote.path,
     onStatus: () => {},
+    onUrlChange: (url) => urlChanges.push(url),
     baseBranch: opts.baseBranch ?? "main",
     cycle: { branch: opts.branch ?? null, handoff: opts.handoff ?? null },
     gitHubClient: () => new GitHubClient("harness-token", github),
@@ -829,6 +840,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     respawn: spawn,
     ledgerPath,
+    urlChanges,
     observe: (o = {}) => {
       const deps: ObserveDeps = {
         turnRunning: () => false,

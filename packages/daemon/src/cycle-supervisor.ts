@@ -30,6 +30,7 @@ import {
   type HygieneItem,
   type HygieneStamp,
   measureAssets,
+  movedRepoUrl,
   pruneTempFolders,
 } from "./cycle-hygiene.js";
 import {
@@ -1341,7 +1342,54 @@ export class CycleSupervisor {
       }
       this.stampHygiene("assets", now);
     }
+    // 저장소 이동은 origin 을 바꾼다 — origin 을 쓰는 위의 항목들이 모두 끝난 뒤.
+    if (due.has("move")) {
+      await this.followRepoMove();
+      this.stampHygiene("move", now);
+    }
     return true;
+  }
+
+  /**
+   * 저장소 이동 (PLAN 단계 9) — GitHub 이 말하는 full_name 이 레지스트리의
+   * owner/repo 와 다르면(이름을 바꿨거나 다른 조직으로 옮겼다) origin 과
+   * 레지스트리의 주소만 새 이름으로 옮긴다. 다시 클론하지 않는다: 주소를
+   * 바꾸는 project.update 의 길(repo.ts 의 RepoWorkspace.update)은 새 주소를 다른
+   * 저장소로 읽어 클론을 지우고 — 커밋 안 된 변경과 올라가지 않은 커밋까지 —
+   * 사이클(열린 PR)을 잊은 채 새로 받는다. 옮겨진 저장소는 같은 저장소라 역사와
+   * PR 번호가 그대로이고 바뀐 것은 주소뿐이다. GitHub 은 옛 주소를 한동안 새
+   * 주소로 되돌려 주지만, 옛 이름으로 새 저장소가 생기는 순간 그 되돌림은 끊긴다.
+   */
+  private async followRepoMove(): Promise<void> {
+    const core = this.deps.core;
+    const slug = this.deps.slug();
+    const client = this.deps.github();
+    const url = core.url;
+    if (slug === null || client === null || url === null) return;
+    const fullName = await client.inspectRepo(slug).then(
+      (inspection) => inspection.fullName ?? null,
+      () => null,
+    );
+    // 이름의 대소문자만 다른 것은 같은 저장소다 — GitHub 주소는 대소문자를 가리지 않는다.
+    if (
+      fullName === null ||
+      fullName.toLowerCase() === `${slug.owner}/${slug.repo}`.toLowerCase()
+    ) {
+      return;
+    }
+    const next = movedRepoUrl(url, fullName);
+    if (next === null || next === url) return;
+    try {
+      await core.git(["remote", "set-url", "origin", next]);
+    } catch (error) {
+      this.log(`위생: origin 주소를 옮기지 못했습니다 — ${detailOf(error, core.pat)}`);
+      return;
+    }
+    // 레지스트리는 fleet 의 onUrlChange 가 적는다 — 주소를 적는 유일한 자리다.
+    core.url = next;
+    core.onUrlChange?.(next);
+    core.emit();
+    this.log(`위생: 저장소가 ${fullName} 로 옮겨져 origin 과 레지스트리의 주소를 옮겼습니다`);
   }
 
   /** 위생 항목의 시각을 찍고 원장을 쓴다 — 항목 사이에 끊겨도 한 일은 남는다. */

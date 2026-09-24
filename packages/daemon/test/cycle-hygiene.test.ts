@@ -19,6 +19,7 @@ import {
   endedBranchesDue,
   HYGIENE_ORDER,
   hygieneDue,
+  movedRepoUrl,
 } from "../dist/cycle-hygiene.js";
 import { type CycleLedger, emptyLedger, readLedger, writeLedger } from "../dist/cycle-ledger.js";
 import { summaryDirOf } from "../dist/repo-summary.js";
@@ -98,6 +99,33 @@ test("endedBranchesDue — 반려는 keepDays 뒤, 표식 없는 병합 기록�
     endedBranchesDue(branches, 3, T0 + 13 * DAY).rejected.map((entry) => entry.name),
     ["rejected-old", "rejected-new"],
   );
+});
+
+test("movedRepoUrl — owner/repo 자리만 바꾸고 나머지 철자는 그대로", () => {
+  assert.equal(
+    movedRepoUrl("https://github.com/old/app.git", "new-org/app2"),
+    "https://github.com/new-org/app2.git",
+  );
+  assert.equal(
+    movedRepoUrl("https://github.com/old/app", "new-org/app2"),
+    "https://github.com/new-org/app2",
+  );
+  assert.equal(
+    movedRepoUrl("https://github.com/old/app/", "new-org/app2"),
+    "https://github.com/new-org/app2/",
+  );
+  assert.equal(
+    movedRepoUrl("git@github.com:old/app.git", "new-org/app2"),
+    "git@github.com:new-org/app2.git",
+  );
+  assert.equal(
+    movedRepoUrl("ssh://git@github.com/old/app.git", "new-org/app2"),
+    "ssh://git@github.com/new-org/app2.git",
+  );
+  // GitHub 주소가 아니거나 이름이 올바르지 않으면 고치지 않는다.
+  assert.equal(movedRepoUrl("/tmp/remote.git", "new-org/app2"), null);
+  assert.equal(movedRepoUrl("https://gitlab.com/old/app.git", "new-org/app2"), null);
+  assert.equal(movedRepoUrl("https://github.com/old/app.git", "new-org/app2/extra"), null);
 });
 
 // ————— 하네스 —————
@@ -257,6 +285,40 @@ test("캡처 브랜치 — 원격에 있으면 파일 수 · 크기를 적고, �
     await scene.supervisor.tick("manual");
     assert.equal(readLedger(scene.ledgerPath).hygiene.assets, undefined);
     assert.equal(readLedger(scene.ledgerPath).hygiene.assetsAt, iso(T0 + 7 * DAY));
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("저장소 이동 — full_name 이 바뀌면 origin 과 레지스트리 주소만 옮기고 다시 클론하지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 레지스트리의 주소는 GitHub 모양이고, 클론의 origin 은 하네스의 로컬 원격이다.
+    // 이동을 알아본 뒤에는 origin 이 github.com 을 가리키므로, 이 시험은 그 뒤
+    // fetch 하는 틱을 부르지 않는다 — 시험이 실제 네트워크에 닿지 않게.
+    scene.core.url = "https://github.com/colo-design/harness.git";
+    // 다시 클론하면 사라지는 표식 — .git 안의 파일.
+    const canary = join(scene.clone.path, ".git", "reclone-canary");
+    writeFileSync(canary, "살아 있다");
+    const head = (await scene.git(["rev-parse", "HEAD"])).trim();
+    scene.github.moveRepo("colo-moved/harness-renamed");
+
+    scene.setNow(T0);
+    await scene.supervisor.tick("manual");
+    const moved = "https://github.com/colo-moved/harness-renamed.git";
+    assert.equal((await scene.git(["remote", "get-url", "origin"])).trim(), moved);
+    assert.equal(scene.core.url, moved);
+    assert.deepEqual(scene.urlChanges, [moved], "레지스트리의 주소가 한 번 옮겨져야 한다");
+    assert.equal(existsSync(canary), true, "다시 클론하지 않는다");
+    assert.equal((await scene.git(["rev-parse", "HEAD"])).trim(), head);
+    assert.equal(readLedger(scene.ledgerPath).hygiene.moveAt, iso(T0));
+
+    // 다음 날 — 이미 옮긴 주소는 다시 적지 않는다(fetch 없는 틱).
+    scene.setNow(T0 + DAY);
+    await scene.supervisor.tick("turn-idle");
+    assert.deepEqual(scene.urlChanges, [moved]);
+    assert.equal(readLedger(scene.ledgerPath).hygiene.moveAt, iso(T0 + DAY));
+    await scene.git(["remote", "set-url", "origin", scene.remote.path]);
   } finally {
     await scene.dispose();
   }
