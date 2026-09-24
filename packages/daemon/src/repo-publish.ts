@@ -514,6 +514,8 @@ export class PublishCycle {
       }
       this.core.setCycle(branch, handoff);
       const status = this.core.setDiff({ stage: "handed-off", handoff });
+      // 넘기기가 성공했다 — 서 있던 submit:pr 알림을 거둔다(PLAN L11).
+      this.deps.resolveNotice?.("submit:pr");
       // hero-synthesis D1: the milestone line — 넘겼어요 — joins the tape.
       this.core.lane.outside(() =>
         this.deps.onCycleEvent?.(
@@ -974,4 +976,9 @@ export interface PublishDeps {
    * DeveloperNotice 로 흘린다. 없으면 조용히 지나간다 — 알림은 언제나 부가물.
    */
   notice?(key: "push:auth" | "submit:pr", detail: string): void;
+  /**
+   * 넘기기가 성공하면 서 있던 `submit:pr` 알림을 거둔다 — 알림이 영원히
+   * 남지 않게 하는 풀림의 한 길(PLAN L11).
+   */
+  resolveNotice?(key: "submit:pr"): void;
 }

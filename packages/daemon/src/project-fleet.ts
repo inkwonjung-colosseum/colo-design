@@ -240,6 +240,8 @@ export class ProjectFleet {
             slug,
             ...describeProblem(key, detail),
           }),
+        // 넘기기 성공이 서 있던 submit:pr 알림을 거둔다 (PLAN L11).
+        resolveNotice: (key) => void this.deps.developerNotice.resolve(key, slug),
         // 주의 (PLAN L8): 감독자 · 게이트 · 준비 복구의 재료를 한 곳에서 모은다.
         attention: () => this.attentionFor(workspaces),
       }),

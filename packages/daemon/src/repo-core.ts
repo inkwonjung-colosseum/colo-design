@@ -307,6 +307,11 @@ export interface RepoWorkspaceOptions {
    */
   notice?: (key: "push:auth" | "submit:pr", detail: string) => void;
   /**
+   * 서 있던 개발자 알림을 거둔다 (PLAN L11) — 넘기기 성공이 `submit:pr` 을
+   * 푸는 한 길이다. fleet 의 DeveloperNotice.resolve 로 이어진다.
+   */
+  resolveNotice?: (key: "submit:pr") => void;
+  /**
    * 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. fleet 이
    * 감독자 · 게이트 · 준비 복구의 상태를 모아 넣는다. 없으면 주의는 없다.
    */

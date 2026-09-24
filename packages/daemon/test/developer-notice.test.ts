@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,7 +20,8 @@ import {
 import { Escalation } from "../dist/escalation.js";
 import { GitHubClient } from "../dist/github.js";
 import type { DaemonLogger } from "../dist/log.js";
-import { MemoryGitHub, makeRemote } from "./helpers/cycle-harness.ts";
+import { PublishCycle } from "../dist/repo-publish.js";
+import { MemoryGitHub, makeClone, makeCore, makeRemote } from "./helpers/cycle-harness.ts";
 
 const quiet: DaemonLogger = { info() {}, warn() {}, error() {} };
 
@@ -282,4 +284,32 @@ test("기계 전체 알림(slug null)은 machineNotices 에 서고 주의가 dev
   });
   await notice.resolve("github:auth", null);
   assert.deepEqual(notice.machineNotices(), {});
+});
+
+test("넘기기가 성공하면 서 있던 submit:pr 알림을 거둔다", async () => {
+  const remote = await makeRemote();
+  const clone = await makeClone(remote);
+  try {
+    const github = new MemoryGitHub(remote);
+    const core = makeCore(clone, remote, { github });
+    // 사이클 브랜치에 커밋 하나 — 넘길 것이 있어야 runHandoff 가 돈다.
+    const branch = "colo-design/20260924-1";
+    execFileSync("git", ["checkout", "-b", branch], { cwd: clone.path });
+    writeFileSync(join(clone.path, "screen.tsx"), "export default () => null;\n");
+    execFileSync("git", ["add", "-A"], { cwd: clone.path });
+    execFileSync("git", ["commit", "-m", "화면"], { cwd: clone.path });
+    core.setCycle(branch, null);
+    const resolved: string[] = [];
+    const publish = new PublishCycle(core, {
+      machineMemo: async () => null,
+      resolveNotice: (key) => resolved.push(key),
+    });
+    const status = await publish.runHandoff({});
+    assert.equal(status.stage, "handed-off");
+    assert.deepEqual(resolved, ["submit:pr"]);
+    assert.equal(status.handoff?.number, 1);
+  } finally {
+    clone.dispose();
+    remote.dispose();
+  }
 });

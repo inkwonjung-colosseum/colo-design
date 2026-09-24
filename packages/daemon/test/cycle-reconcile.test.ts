@@ -511,3 +511,68 @@ test("순수함 — 같은 입력에 같은 출력, 입력 원장은 바뀌지 �
   first.ledger.budgets["x"] = { spent: 9, firstAt: iso(NOW), lastAt: iso(NOW), escalated: true };
   assert.deepEqual(ledger, keep);
 });
+
+// ————— 알림의 풀림 (PLAN L11) —————
+
+test("conflict:stuck — pendingOp 가 비면 알림을 거둔다", () => {
+  const notice = { via: "issue" as const, raisedAt: iso(NOW), count: 1 };
+  // pendingOp 가 없는 평온한 판정 — 서 있던 알림을 거둔다.
+  const out = nextCycleAction(snap(), led({ notices: { "conflict:stuck": notice } }));
+  assert.deepEqual(out.notices, [{ op: "resolve", key: "conflict:stuck" }]);
+  // pendingOp 가 서 있는 동안은 거두지 않는다 — 충돌이 아직 진행 중이다.
+  const busy = nextCycleAction(
+    snap({ gitOp: "merge", markersLeft: ["src/a.ts"] }),
+    led({
+      pendingOp: { kind: "merge", files: ["src/a.ts"], startedAt: iso(NOW), briefs: 0 },
+      notices: { "conflict:stuck": notice },
+    }),
+  );
+  assert.equal(
+    busy.notices.some((n) => n.op === "resolve" && n.key === "conflict:stuck"),
+    false,
+  );
+});
+
+test("base-missing — 베이스가 원격에 돌아오면 알림을 거둔다", () => {
+  const notice = { via: "issue" as const, raisedAt: iso(NOW), count: 1 };
+  const out = nextCycleAction(snap(), led({ notices: { "base-missing": notice } }));
+  assert.deepEqual(out.notices, [{ op: "resolve", key: "base-missing" }]);
+  // 아직 없는 동안은 그대로다 — raise 는 7행의 몫.
+  const missing = nextCycleAction(
+    snap({ originBaseExists: false, defaultBranch: null }),
+    led({ notices: { "base-missing": notice } }),
+  );
+  assert.equal(
+    missing.notices.some((n) => n.op === "resolve" && n.key === "base-missing"),
+    false,
+  );
+});
+
+test("review:<pr>:rounds — 그 PR 이 더 이상 열려 있지 않으면 알림을 거둔다", () => {
+  const notice = { via: "pr" as const, ref: 7, raisedAt: iso(NOW), count: 2 };
+  const notices = { "review:7:rounds": notice };
+  // 병합된 PR — land 와 함께 알림도 거둔다.
+  const merged = nextCycleAction(
+    snap({ pr: { number: 7, state: "merged", headSha: "abc", mergeableState: null } }),
+    led({ notices }),
+  );
+  assert.equal(kindOf(merged), "land");
+  assert.deepEqual(merged.notices, [{ op: "resolve", key: "review:7:rounds" }]);
+  // 열려 있는 동안은 그대로다 — changes_requested 도 열린 상태다.
+  const open = nextCycleAction(
+    snap({
+      pr: { number: 7, state: "changes_requested", headSha: "abc", mergeableState: "clean" },
+    }),
+    led({ notices }),
+  );
+  assert.equal(
+    open.notices.some((n) => n.op === "resolve"),
+    false,
+  );
+  // 인증이 만료돼 pr 을 못 읽는 세계에서는 거두지 않는다.
+  const blind = nextCycleAction(snap({ githubAuthExpired: true }), led({ notices }));
+  assert.equal(
+    blind.notices.some((n) => n.op === "resolve"),
+    false,
+  );
+});
