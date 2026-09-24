@@ -3,7 +3,7 @@
 // and the bring-up error taxonomy.
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { RepoErrorKind, RepoStatus } from "@colo-design/protocol";
@@ -147,12 +147,20 @@ export class BringUp {
     rmSync(this.core.root, { recursive: true, force: true });
   }
 
-  /** True when the declared install already ran for the current lockfiles. */
+  /**
+   * 설치가 최신인가 (PLAN L3 15행 · 단계 9) — 감독자의 installStale 이 읽는다.
+   *
+   * 이 판 전에는 호출자가 없었다: 유일한 독자였던 온보딩의 project 게이트가
+   * 기계 전체의 게이트 넷으로 줄며(d4a7b493) 사라졌고, 준비(installIfNeeded)와
+   * 최신화(pull)는 해시만 보는 dependenciesMoved 를 읽었다. 단계 2 가 감독자의
+   * 15행에 이 함수를 이었지만 재설치 조치가 부르는 준비는 여전히 해시만 봐서,
+   * node_modules 가 지워진 클론은 틱마다 재설치를 부르고도 설치하지 않았다.
+   * 이제 두 자리가 같은 판정(installStale)을 읽는다.
+   */
   installUpToDate(): boolean {
     const config = this.core.repoConfig();
     if (!config?.install) return true;
-    if (!existsSync(join(this.core.root, "node_modules"))) return false;
-    return !this.dependenciesMoved();
+    return !installStale(this.core.root);
   }
 
   // -------------------------------------------------------------------------
@@ -160,13 +168,14 @@ export class BringUp {
   // -------------------------------------------------------------------------
 
   /**
-   * Runs `install` only when the dependency set moved or the clone is fresh.
-   * The identity is a content hash of the manifest and lockfiles, recorded
-   * inside `.git/` so it belongs to this clone alone.
+   * Runs `install` only when the dependency set moved, the clone is fresh,
+   * or the installed tree is gone (installStale). The identity is a content
+   * hash of the manifest and lockfiles, recorded inside `.git/` so it belongs
+   * to this clone alone.
    */
   private async installIfNeeded(config: RepoConfig): Promise<boolean> {
     if (!config.install) return false;
-    if (!this.dependenciesMoved()) return false;
+    if (!installStale(this.core.root)) return false;
 
     this.core.setPhase("installing", null);
     // The repo declares its private registry; the daemon holds the PAT. The
@@ -182,7 +191,14 @@ export class BringUp {
       ]);
     }
     await this.runCommand(config.install, "install");
-    writeFileSync(join(this.core.root, ".git", INSTALL_MARKER), this.dependencyHash());
+    // 설치가 트리를 남기지 않았으면(의존성 없는 레포의 npm · yarn 처럼) 그렇게
+    // 적어 둔다 — 없으면 installStale 이 "트리 없음" 을 영영 낡음으로 읽어
+    // 감독자의 15행이 틱마다 같은 설치를 다시 돌린다.
+    const noTree = !installedTreeExists(this.core.root);
+    writeFileSync(
+      join(this.core.root, ".git", INSTALL_MARKER),
+      noTree ? `${this.dependencyHash()}\n${NO_TREE_FLAG}\n` : this.dependencyHash(),
+    );
     return true;
   }
 
@@ -191,13 +207,7 @@ export class BringUp {
   }
 
   dependenciesMoved(): boolean {
-    const marker = join(this.core.root, ".git", INSTALL_MARKER);
-    if (!existsSync(marker)) return true;
-    try {
-      return readFileSync(marker, "utf8") !== this.dependencyHash();
-    } catch {
-      return true;
-    }
+    return readInstallMarker(this.core.root)?.hash !== this.dependencyHash();
   }
 
   private async runCommand(command: string, label: string): Promise<void> {
@@ -616,12 +626,198 @@ function loopbackUrlVariants(url: string): string[] {
   return variants;
 }
 
-function dependencyHash(root: string): string {
+/**
+ * 설치의 정체 (PLAN L3 15행 · 단계 9) — 매니페스트와 락파일, 그리고
+ * 워크스페이스 패키지들의 package.json 내용 해시.
+ *
+ * 옛 넷(package.json · pnpm · npm · yarn 락파일)은 없어도 늘 해시에 들어가고,
+ * 새로 더한 재료(bun 락파일 · 워크스페이스 패키지)는 있을 때만 들어간다 — 그
+ * 재료가 없는 레포의 해시가 옛 표식과 같아야, 이 판으로 올라가는 순간 모든
+ * 프로젝트가 한꺼번에 다시 설치하지 않는다. 경로는 `/` 로 적어 기계마다 같다.
+ */
+export function dependencyHash(root: string): string {
   const hash = createHash("sha256");
   for (const file of ["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock"]) {
     const path = join(root, file);
     hash.update(file);
     hash.update(existsSync(path) ? readFileSync(path) : Buffer.alloc(0));
   }
+  for (const file of ["bun.lock", "bun.lockb", ...workspacePackageJsons(root)]) {
+    const path = join(root, file);
+    if (!existsSync(path)) continue;
+    hash.update(file);
+    hash.update(readFileSync(path));
+  }
   return hash.digest("hex").slice(0, 16);
+}
+
+/** 표식의 둘째 줄 — 설치는 끝났지만 트리(node_modules · .pnp)를 남기지 않았다. */
+const NO_TREE_FLAG = "no-tree";
+
+/** 설치된 의존성 트리가 디스크에 있는가 — node_modules, 또는 Yarn PnP 의 로더. */
+function installedTreeExists(root: string): boolean {
+  return ["node_modules", ".pnp.cjs", ".pnp.js"].some((name) => existsSync(join(root, name)));
+}
+
+/** `.git/` 안의 설치 표식 — 첫 줄이 해시, 둘째 줄이 트리 없음 표시(선택). */
+function readInstallMarker(root: string): { hash: string; noTree: boolean } | null {
+  try {
+    const [hash = "", flag = ""] = readFileSync(join(root, ".git", INSTALL_MARKER), "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim());
+    return { hash, noTree: flag === NO_TREE_FLAG };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 설치가 낡았는가 (PLAN L3 15행 · 단계 9) — 해시가 움직였거나, 해시가 같아도
+ * 설치된 트리가 지워졌다. 지워진 설치는 해시가 기억하지 못한다(사람이
+ * node_modules 를 지웠거나, 청소 도구가 걷었거나). 설치가 애초에 트리를
+ * 남기지 않은 레포는 표식이 그렇게 말하므로 낡음이 아니다.
+ */
+export function installStale(root: string): boolean {
+  const marker = readInstallMarker(root);
+  if (marker === null || marker.hash !== dependencyHash(root)) return true;
+  return !marker.noTree && !installedTreeExists(root);
+}
+
+/**
+ * 워크스페이스 선언의 글롭 — pnpm-workspace.yaml 의 packages 목록과
+ * package.json 의 workspaces(배열 또는 `{ packages }`). 읽지 못하는 선언은
+ * 빈 목록이다 — 깨진 package.json 은 루트 해시가 이미 본다. `!` 로 시작하는
+ * 글롭은 빼는 규칙으로 그대로 남긴다.
+ */
+export function workspaceGlobs(pnpmWorkspace: string | null, packageJson: string | null): string[] {
+  const globs: string[] = [];
+  const push = (value: string) => {
+    const glob = value.trim().replace(/^(['"])(.*)\1$/, "$2");
+    if (glob !== "") globs.push(glob);
+  };
+  if (pnpmWorkspace !== null) {
+    // YAML 파서를 싣지 않는다 — 최상위 `packages:` 아래의 목록만 읽으면 된다.
+    let inside = false;
+    for (const raw of pnpmWorkspace.split(/\r?\n/)) {
+      const line = raw.replace(/\s+#.*$/, "");
+      if (line.trim() === "" || line.trim().startsWith("#")) continue;
+      if (/^\S/.test(line)) {
+        const flow = /^packages\s*:\s*\[(.*)\]\s*$/.exec(line);
+        if (flow) for (const item of (flow[1] ?? "").split(",")) push(item);
+        inside = flow === null && /^packages\s*:\s*$/.test(line);
+        continue;
+      }
+      const item = inside ? /^\s+-\s*(.+)$/.exec(line) : null;
+      if (item) push(item[1] ?? "");
+    }
+  }
+  if (packageJson !== null) {
+    try {
+      const declared = JSON.parse(packageJson)?.workspaces;
+      const list: unknown = Array.isArray(declared) ? declared : declared?.packages;
+      if (Array.isArray(list)) {
+        for (const item of list) if (typeof item === "string") push(item);
+      }
+    } catch {
+      // 깨진 package.json — 워크스페이스는 없는 것으로.
+    }
+  }
+  return [...new Set(globs)];
+}
+
+/** 글롭 한 마디 — `*` 는 `/` 없는 아무 글자, 나머지는 글자 그대로. */
+function segmentMatches(pattern: string, name: string): boolean {
+  const source = pattern
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${source}$`).test(name);
+}
+
+/** 글롭이 루트 상대 폴더를 담는가 — `*` 는 한 마디, `**` 는 여러 마디(없음 포함). */
+export function globMatchesDir(glob: string, dir: string): boolean {
+  const pattern = glob.replace(/^\.\//, "").split("/").filter(Boolean);
+  const path = dir.split("/").filter(Boolean);
+  const match = (i: number, j: number): boolean => {
+    if (i === pattern.length) return j === path.length;
+    const part = pattern[i] ?? "";
+    if (part === "**") return match(i + 1, j) || (j < path.length && match(i, j + 1));
+    return j < path.length && segmentMatches(part, path[j] ?? "") && match(i + 1, j + 1);
+  };
+  return match(0, 0);
+}
+
+/** 글롭을 펼칠 때 들어가지 않는 폴더 — 설치물과 저장소 속. */
+const WORKSPACE_SKIP = new Set(["node_modules", ".git"]);
+/** `**` 가 내려가는 깊이의 상한 — 틱마다 읽는 판정이 큰 레포를 다 걷지 않게. */
+const WORKSPACE_MAX_DEPTH = 6;
+
+/**
+ * 워크스페이스 선언이 담는 패키지의 package.json — 루트 상대, 정렬. 글롭은
+ * 글자 그대로의 앞마디에서부터만 펼친다: 감독자가 틱마다 이 판정을 읽으므로
+ * 레포 전체를 걷지 않는다. node_modules · .git 안과 심볼릭 링크는 보지 않는다.
+ */
+export function workspacePackageJsons(root: string): string[] {
+  const read = (file: string): string | null => {
+    try {
+      return readFileSync(join(root, file), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const globs = workspaceGlobs(read("pnpm-workspace.yaml"), read("package.json"));
+  const excludes = globs.filter((glob) => glob.startsWith("!")).map((glob) => glob.slice(1));
+  const found = new Set<string>();
+  const childDirs = (rel: string): string[] => {
+    try {
+      return readdirSync(join(root, rel), { withFileTypes: true })
+        .filter(
+          (entry) =>
+            entry.isDirectory() && !WORKSPACE_SKIP.has(entry.name) && !entry.name.startsWith("."),
+        )
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
+  };
+  const under = (rel: string, name: string) => (rel === "" ? name : `${rel}/${name}`);
+  const walk = (parts: string[], rel: string, i: number, depth: number): void => {
+    if (i === parts.length) {
+      if (rel === "" || excludes.some((glob) => globMatchesDir(glob, rel))) return;
+      if (existsSync(join(root, rel, "package.json"))) found.add(`${rel}/package.json`);
+      return;
+    }
+    const part = parts[i] ?? "";
+    if (part === "**") {
+      walk(parts, rel, i + 1, depth);
+      if (depth < WORKSPACE_MAX_DEPTH) {
+        for (const name of childDirs(rel)) walk(parts, under(rel, name), i, depth + 1);
+      }
+    } else if (part.includes("*")) {
+      for (const name of childDirs(rel)) {
+        if (segmentMatches(part, name)) walk(parts, under(rel, name), i + 1, depth + 1);
+      }
+    } else if (part !== ".." && !WORKSPACE_SKIP.has(part)) {
+      try {
+        if (lstatSync(join(root, rel, part)).isDirectory()) {
+          walk(parts, under(rel, part), i + 1, depth + 1);
+        }
+      } catch {
+        // 선언된 폴더가 없다 — 담을 것이 없다.
+      }
+    }
+  };
+  for (const glob of globs) {
+    if (glob.startsWith("!")) continue;
+    walk(
+      glob
+        .replace(/^\.\//, "")
+        .split("/")
+        .filter((part) => part !== "" && part !== "."),
+      "",
+      0,
+      0,
+    );
+  }
+  return [...found].sort();
 }
