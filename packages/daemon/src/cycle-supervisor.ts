@@ -8,8 +8,8 @@
  *   부른다 — 차선 문맥이 세션에 번지면 그 세션의 저장이 줄을 비켜간다 (L1).
  * - 도구가 시작한 git 조작의 충돌은 RepoCore.onToolConflict 로 들어와 원장의
  *   pendingOp 에 곧바로 적히고 틱("tool-conflict")이 뒤를 잇는다 (단계 3).
- * - 아직 실행하지 않는 조치(submitStep · hygiene)는 로그 한 줄만 남기고 그
- *   틱을 멈춘다 — 다음 위임이 옮긴다.
+ * - 아직 실행하지 않는 조치(hygiene)는 로그 한 줄만 남기고 그 틱을 멈춘다 —
+ *   다음 위임이 옮긴다.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
