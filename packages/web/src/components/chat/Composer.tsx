@@ -1418,7 +1418,7 @@ export function Composer({
           }
           aria-label="메시지"
           /* @/… 자동완성의 콤보박스 선언 — 목록은 위의 listbox, 하이라이트는
-           activedescendant 가 가리킨다(팔레트·RepoPicker 와 같은 패턴). */
+           activedescendant 가 가리킨다(팔레트와 같은 패턴). */
           role="combobox"
           aria-haspopup="listbox"
           aria-expanded={suggestions.length > 0}

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import {
   type ClientMessage,
   DEFAULT_HANDOFF_BODY,
-  markTurn,
   type ServerMessage,
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
@@ -599,58 +598,6 @@ export class RequestRouter {
       case "repo.sync":
         return await this.repo.sync(message.force === true);
 
-      case "repo.refresh": {
-        // 레포 최신화: the planner's pull of the developer's side, pressed
-        // from the screen bar. Progress is `repo.status` as always; a
-        // conflict briefs the named thread like a failing gate does. The
-        // button's failures report — the planner pressed it, so the reason
-        // lands as words on the screen instead of a silent no-op.
-        let threadId = message.sessionId;
-        // 사이클 브랜치에서 대화 없이 눌린 최신화는 병합을 하지 않는다(충돌의
-        // 첫 과제는 AI 의 몫) — 대신 fetch 로 원격을 확인해 무엇이 기다리는지
-        // 본다. 받아올 것이 있으면 대화가 필요하다: 슬라이스 6 (2026-09-19) 부터
-        // 도구가 "최신화 문제 해결" 대화를 스스로 열어 막다른 문장 대신 그
-        // 대화로 진행한다. 열 수 없는 세계(CLI 없음)만 예전 문장으로 말한다.
-        const behind = await this.repo.refreshNeedsThread();
-        if (behind !== null && !threadId) {
-          const thread = this.gateThreadFor("refresh");
-          if (thread) {
-            threadId = thread.id;
-          } else {
-            throw new Error(
-              `개발자의 최신 변경 ${behind}건이 원격에 있습니다 — 대화를 하나 연 뒤 최신화를 누르면 지금 화면 위로 받아 옵니다.`,
-            );
-          }
-        }
-        const { onSessionTurn } = this.briefTo(threadId, "refresh");
-        // 받아올 게 없으면 pull 도 부르지 않는다 — 새 커밋 0건의 병합은
-        // 아무도 모른 채 끝나는 일이고, 그것이 정직한 결과다.
-        if (behind === 0) return await this.repo.status();
-        const outcome = await this.repo.pull(onSessionTurn, { report: true });
-        // 실사 결함: 최신화가 사이클 브랜치에 merge 커밋을 묵시적으로 쌓는
-        // 사실을 아무도 말하지 않았다. 병합이 실제로 일어났으면 그 기록이
-        // 대화에 남는다 — 충돌 브리프와 같은 자리, 같은 어휘로.
-        if (behind !== null && behind > 0 && outcome === "clean" && threadId) {
-          // The record is news, not cargo: a thread that died mid-refresh
-          // must not turn the report into an error reply.
-          try {
-            this.deps.manager.get(threadId)?.send(
-              markTurn(
-                {
-                  kind: "brief",
-                  title: `원격의 최신 변경 ${behind}건을 받아 왔습니다`,
-                  purpose: "refresh",
-                },
-                "개발자의 최신 변경을 이번 작업 브랜치에 병합했습니다 — 미리보기를 새로 고침하면 반영됩니다. 저장하면 이 병합이 함께 담깁니다.",
-              ),
-            );
-          } catch {
-            // The thread's query died; the merge itself is already done.
-          }
-        }
-        return await this.repo.status();
-      }
-
       case "onboarding.check":
         return await runOnboardingChecks({
           claudeExecutableOverride: this.deps.claudeExecutableOverride(),
@@ -753,8 +700,6 @@ export class RequestRouter {
 
       case "github.token.set":
         return await this.deps.github.setToken(message.token);
-      case "github.repos.list":
-        return await this.deps.github.listRepos(message.refresh === true);
 
       case "github.repo.inspect":
         return await this.deps.github.inspectRepo(message.owner, message.repo);
@@ -821,13 +766,6 @@ export class RequestRouter {
       // what ties the build's life to the conversation that asked for it.
       case "repo.handoffPreview":
         return await this.deps.handoffPreviews.open(message.sessionId ?? null);
-
-      // 화면 캡처 (게이트 재배선): the planner's "이 화면" button — the
-      // daemon borrows a preview driver, shoots, and the web attaches the
-      // picture to the next turn. Desktop only; the browser dev path has
-      // no window to shoot.
-      case "preview.capture":
-        return await this.deps.previewDrivers.capture(message.route);
 
       // 패인 오류의 판정: the error banner's held report, re-opened in the
       // isolated verification window. The pane decides what the verdict
@@ -900,19 +838,6 @@ export class RequestRouter {
         undoLog().record({ kind: "save", slug: this.requireActive().slug });
         return restored;
       }
-
-      case "repo.discard":
-        this.refuseWhileTurnRuns();
-        return await this.repo.discard();
-
-      // 잠깐 치워두기 · 꺼내기 (보관함 토론 2026-09-15): one slot per repo.
-      // Refusals are one Korean sentence in the reply; a 꺼내기 conflict
-      // rides the session wire like every gate failure does.
-      case "repo.shelve":
-        return await this.repo.shelve();
-
-      case "repo.unshelve":
-        return await this.repo.unshelve(this.briefTo(message.sessionId, "save").onSessionTurn);
 
       // --- 코멘트 저장소 (PLAN D57) ----------------------------------------
       // The pins belong to the ACTIVE project: the messages carry no slug,

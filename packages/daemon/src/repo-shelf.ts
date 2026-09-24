@@ -1,193 +1,110 @@
-// 잠깐 치워두기: one parked-work ref per clone, written and popped through
-// the same conflict vocabulary the refresh path uses.
+// 치워둔 작업의 자동 꺼내기: 치워두기·꺼내기 단추는 v0.3.11 에서 사라졌지만
+// v0.3.8~v0.3.10 에 그 단추로 치워 둔 작업이 슬롯(refs/colo-design/shelf)에
+// 남아 있을 수 있다 — 꺼낼 길이 없는 채로. 시작 쓸기(recoverParkedWork 옆)가
+// 그것을 조용히 되살린다.
 import { randomUUID } from "node:crypto";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { markTurn, type RepoShelf, type RepoShelfRestore } from "@colo-design/protocol";
-import {
-  type RepoCore,
-  SHELF_ALREADY_DETAIL,
-  SHELF_COMMIT_MESSAGE,
-  SHELF_CONFLICT_DETAIL,
-  SHELF_CONFLICT_OPEN_DETAIL,
-  SHELF_DIRTY_DETAIL,
-  SHELF_EMPTY_DETAIL,
-  SHELF_NONE_DETAIL,
-  SHELF_REF,
-} from "./repo-core.js";
+import { type RepoCore, SHELF_REF } from "./repo-core.js";
+
+/** git 실행의 최소 계약 — RepoCore.git 과 테스트의 execFile 이 같은 몫을 한다. */
+export type GitRun = (args: string[]) => Promise<string>;
+
+/**
+ * 자동 꺼내기의 본문 — git 실행 함수와 루트만 받는 순수한 모양(테스트가 진짜
+ * git 레포로 돌린다). 절대 예외를 던지지 않는다: 시작 시점에는 이것을 들려줄
+ * 대화가 없다.
+ *
+ *  - 슬롯이 없으면 `"none"`.
+ *  - 병합 중이거나 · 충돌 파일이 있거나 · 작업 폴더가 깨끗하지 않으면 아무것도
+ *    건드리지 않고 `"kept"`.
+ *  - 슬롯의 패치(`SHELF_REF^..SHELF_REF`, 옛 unshelve 와 같은
+ *    `--no-renames --full-index --binary`)가 `git apply --check` 를 통과하지
+ *    못하면 역시 아무것도 바꾸지 않고 `"kept"` — 부분 적용도 표식도 없다.
+ *  - 깨끗하면 얹고(--index 없이 작업 폴더에만 — 다음 턴의 자동 보관이
+ *    커밋한다) ref 를 지우고 `"restored"`.
+ */
+export async function recoverShelfPatch(
+  run: GitRun,
+  root: string,
+): Promise<"none" | "restored" | "kept"> {
+  try {
+    await run(["rev-parse", "-q", "--verify", SHELF_REF]);
+  } catch {
+    return "none";
+  }
+  // 내려앉을 자리의 확인 — 클론이 없는 경우는 호출자(ShelfStore)가 이미
+  // 걸렀고, 여기는 병합 · 충돌 · 더러운 작업 폴더를 본다.
+  try {
+    await run(["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+    return "kept"; // 병합이 정리를 기다리는 중
+  } catch {
+    /* 병합 아님 — 계속한다. */
+  }
+  const landable = await (async () => {
+    if ((await run(["diff", "--name-only", "--diff-filter=U"])).trim() !== "") return false;
+    return (await run(["status", "--porcelain"])).trim() === "";
+  })().catch(() => false);
+  if (!landable) return "kept";
+  // 패치는 `.git/` 아래 파일로 — 슬롯 스스로가 untracked 화면이 되지 않게(옛
+  // unshelve 와 같은 자리). `--full-index` 는 정확한 적용의 재료를,
+  // `--binary` 는 화면 변경이 실고 온 그림을 싣는다.
+  const patchFile = join(root, ".git", `colo-design-shelf-recover-${randomUUID()}.patch`);
+  try {
+    const patch = await run([
+      "diff",
+      "--no-renames",
+      "--full-index",
+      "--binary",
+      `${SHELF_REF}^`,
+      SHELF_REF,
+    ]);
+    writeFileSync(patchFile, patch);
+    // --check 는 3way 없이: `--3way` 는 충돌을 병합 표식으로 "성공"시키는
+    // 시도지 판정이 아니다. 깨끗하게 얹히는 문맥인지 이 한 번이 말한다.
+    await run(["apply", "--check", patchFile]);
+    await run(["apply", patchFile]);
+    await run(["update-ref", "-d", SHELF_REF]);
+    return "restored";
+  } catch {
+    // --check 를 통과한 뒤의 실패는 디스크 수준의 세계 — 슬롯은 그대로 두고
+    // 다음 시작이 다시 시도한다.
+    return "kept";
+  } finally {
+    rmSync(patchFile, { force: true });
+  }
+}
 
 export class ShelfStore {
   constructor(private readonly core: RepoCore) {}
 
-  // -----------------------------------------------------------------------
-  // 잠깐 치워두기 (보관함 토론 2026-09-15) — the third door between 저장 and
-  // 버리기: one slot, the checkpoint's own snapshot mechanism, and a 3-way
-  // 꺼내기 that re-applies instead of rewinding. Never `git stash`.
-  // -----------------------------------------------------------------------
-
   /**
-   * 잠깐 치워두기: snapshot the unsaved worktree into SHELF_REF — the
-   * checkpoint's own mechanism (a throwaway index, a tree, a parented
-   * commit; untracked screens included), so the slot survives the daemon's
-   * death like any ref — then clear the worktree through 버리기's one path
-   * rule. One slot: filling it twice must name the door out first.
+   * 치워둔 작업 자동 꺼내기 — 시작 쓸기(recoverParkedWork 다음)가 부른다.
+   * 쓸기는 매 시작마다 돌므로 오늘 `"kept"` 인 슬롯은 작업 폴더가 깨끗해진
+   * 다음 시작에 다시 시도된다. 대화가 없는 시점이므로 브리프도 예외도 없다 —
+   * 결과는 서버의 로그 한 줄로만 남는다.
    */
-  async shelve(): Promise<RepoShelf> {
-    if (!this.core.isCloned()) {
-      throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
-    }
-    // 같은 틱의 두 호출(더블 클릭 · 두 창)이 둘 다 빈 슬롯을 보고 지나가면
-    // 늦은 스냅샷이 먼저 치워둔 작업을 덮어쓴다 — shelving 은 첫 await 전에
-    // 세워 두고, 기다림은 run 안에서 이전 것을 읽는다(저장·넘기기의
-    // publishing 과 같은 규칙).
+  async recoverShelf(): Promise<"none" | "restored" | "kept"> {
+    if (!this.core.isCloned()) return "none";
+    // 옛 shelve·unshelve 와 같은 규칙: 같은 틱의 다른 쓰기가 이 사이를 끊어
+    // 들지 못하게 shelving 은 첫 await 전에 세우고, 기다림은 run 안에서 읽는다.
     const previous = this.core.shelving;
     const run = (async () => {
       await this.core.publishing?.catch(() => undefined);
       await this.core.refreshing?.catch(() => undefined);
       await previous?.catch(() => undefined);
-      if (await this.core.shelfExists()) throw new Error(SHELF_ALREADY_DETAIL);
-      if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
-        throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
+      const outcome = await recoverShelfPatch((args) => this.core.git(args), this.core.root);
+      if (outcome === "restored") {
+        await this.core.refreshPendingChanges();
+        this.core.emit();
       }
-      if ((await this.core.git(["status", "--porcelain"])).trim() === "") {
-        throw new Error(SHELF_EMPTY_DETAIL);
-      }
-      // The snapshot: never HEAD, never the real index — the checkpoint's
-      // throwaway-index trick, one ref of its own at the end.
-      const temporaryIndex = join(this.core.root, ".git", `colo-design-shelf-${randomUUID()}`);
-      const indexEnv = { GIT_INDEX_FILE: temporaryIndex };
-      try {
-        await this.core.git(["add", "-A"], this.core.root, indexEnv);
-        const tree = (await this.core.git(["write-tree"], this.core.root, indexEnv)).trim();
-        const head = (await this.core.git(["rev-parse", "HEAD"])).trim();
-        const commit = (
-          await this.core.git(
-            [
-              ...(await this.core.identityArgs()),
-              "commit-tree",
-              tree,
-              "-p",
-              head,
-              "-m",
-              `${SHELF_COMMIT_MESSAGE} · 브랜치 ${this.core.branch ?? this.core.baseBranch}`,
-            ],
-            this.core.root,
-            indexEnv,
-          )
-        ).trim();
-        await this.core.git(["update-ref", SHELF_REF, commit]);
-      } finally {
-        rmSync(temporaryIndex, { force: true });
-      }
-      // The desk is cleared through 버리기's own rule — the snapshot went
-      // first, so what the rule refuses to touch stays honestly in view.
-      await this.core.clearUnsavedWork();
-      this.core.shelfAt = new Date().toISOString();
-      await this.core.refreshPendingChanges();
-      this.core.emit();
-      return { at: this.core.shelfAt };
-    })();
-    this.core.shelving = run;
-    try {
-      return await run;
-    } finally {
-      // 뒤에 온 호출이 이미 shelving 을 이어받았을 수 있다 — 자기 것만 내린다.
-      if (this.core.shelving === run) this.core.shelving = null;
-    }
-  }
-
-  /**
-   * 치워둔 작업 꺼내기: re-APPLY the shelved work on top of whatever HEAD is
-   * now — the shelf's own diff, three ways, exactly what a `git stash pop`
-   * computes without entering that namespace. A checkpoint restore would
-   * REPLACE the worktree with the shelf-era tree and quietly rewind every
-   * 저장 · 최신화 since (되감기가 아니라 다시 얹기 — 보관함 토론의 핵심
-   * 판정). Refuses onto a dirty desk; a conflict is the agent.s first task like
-   * every conflict here, and the slot SURVIVES it — the cleanup's last step
-   * drops the ref, not the failure's.
-   */
-  async unshelve(onSessionTurn?: (brief: string) => void): Promise<RepoShelfRestore> {
-    if (!this.core.isCloned()) {
-      throw new Error("연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.");
-    }
-    // shelve 와 같은 규칙: 같은 틱의 두 꺼내기가 둘 다 같은 패치를 얹지
-    // 못하게 shelving 은 첫 await 전에 세우고, 기다림은 run 안에서 읽는다.
-    const previous = this.core.shelving;
-    const run = (async () => {
-      await this.core.publishing?.catch(() => undefined);
-      await this.core.refreshing?.catch(() => undefined);
-      await previous?.catch(() => undefined);
-      if (!(await this.core.shelfExists())) throw new Error(SHELF_NONE_DETAIL);
-      if ((await this.core.mergeInProgress()) || (await this.core.conflictedFiles()).length > 0) {
-        throw new Error(SHELF_CONFLICT_OPEN_DETAIL);
-      }
-      if ((await this.core.git(["status", "--porcelain"])).trim() !== "") {
-        throw new Error(SHELF_DIRTY_DETAIL);
-      }
-      const names = (
-        await this.core.git(["diff", "--no-renames", "--name-only", `${SHELF_REF}^`, SHELF_REF])
-      )
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      // The patch rides a file under `.git/` — never an untracked screen of
-      // its own. `--full-index` records the blob identities the 3-way needs;
-      // `--binary` carries images a screen change may have brought in.
-      const patchFile = join(this.core.root, ".git", `colo-design-shelf-${randomUUID()}.patch`);
-      try {
-        const patch = await this.core.git([
-          "diff",
-          "--no-renames",
-          "--full-index",
-          "--binary",
-          `${SHELF_REF}^`,
-          SHELF_REF,
-        ]);
-        writeFileSync(patchFile, patch);
-        await this.core.git(["apply", "--3way", "--index", patchFile]);
-      } catch (error) {
-        // `apply --3way` leaves a conflict as unmerged index entries — the
-        // same shape a conflicted 최신화 leaves, so the same net catches it.
-        const conflicted = await this.core.conflictedFiles();
-        if (conflicted.length > 0) {
-          await this.core.refreshPendingChanges();
-          this.core.emit();
-          if (onSessionTurn) onSessionTurn(this.shelfConflictBrief(conflicted));
-          throw new Error(SHELF_CONFLICT_DETAIL);
-        }
-        throw error;
-      } finally {
-        rmSync(patchFile, { force: true });
-      }
-      // A clean landing spends the slot. A conflicted one does not — the
-      // brief's cleanup drops the ref once the agent finishes.
-      await this.core.git(["update-ref", "-d", SHELF_REF]);
-      this.core.shelfAt = null;
-      await this.core.refreshPendingChanges();
-      this.core.emit();
-      return { applied: names };
-    })();
+      return outcome;
+    })().catch((): "kept" => "kept");
     this.core.shelving = run;
     try {
       return await run;
     } finally {
       if (this.core.shelving === run) this.core.shelving = null;
     }
-  }
-
-  /**
-   * 치워둔 작업 꺼내기가 겹쳤을 때 AI 의 첫 과제 — the pop-conflict
-   * brief's shape, the shelf ref's own words. The ref is NOT a stash: the
-   * cleanup empties the slot with update-ref, never `git stash drop`.
-   */
-  private shelfConflictBrief(files: string[]): string {
-    return markTurn(
-      { kind: "gate", step: "치워둔 작업 꺼내기" },
-      "치워둔 작업을 화면에 다시 얹다 겹치는 부분이 생겼습니다.\n" +
-        `충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}\n` +
-        "충돌 표식을 정리한 뒤 git add 로 해결을 표시해 주세요. " +
-        "정리가 끝나면 git update-ref -d refs/colo-design/shelf 로 치워둔 자리를 비워 주세요 — " +
-        "그 전까지 꺼내기는 같은 작업을 다시 얹으려 합니다.",
-    );
   }
 }

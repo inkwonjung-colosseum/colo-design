@@ -1,9 +1,9 @@
-// 미리보기 드라이버 (PLAN D61): 게이트·넘기기·화면 캡처가 화면을 다시 보는
-// 브라우저다. 게이트·넘기기는 언제나 숨은 오프스크린 BrowserWindow 를 세운다
-// (ElectronPreviewDriver) — 세션이 쓰던 화면을 다시 열면 재검증이 아니라
-// 재방문이 된다. pane 이 화면에 있으면 화면 캡처는 그 탭을 그대로 찍는데
-// (PaneCaptureDriver), 이제 그 경로는 에이전트의 PaneBrowserDriver 를 그대로
-// 경유한다 — 탭마다 디버거를 붙이는 손은 하나뿐이어야 한다.
+// 미리보기 드라이버 (PLAN D61): 게이트·넘기기가 화면을 다시 보는 브라우저다.
+// 언제나 숨은 오프스크린 BrowserWindow 를 세운다(ElectronPreviewDriver) —
+// 세션이 쓰던 화면을 다시 열면 재검증이 아니라 재방문이 된다. pane 의 페이지를
+// 만지는 것은 에이전트의 PaneBrowserDriver 다 — 탭마다 디버거를 붙이는 손은
+// 하나뿐이어야 한다. 옛 화면 캡처(preview.capture)의 pane 경로는 그 단추와
+// 함께 사라졌다.
 //
 // 같은 페이지를 쓰는 브라우저다. 07bd3bf 의 PanePreviewDriver 에서 접근성 트리
 // (ref 세대)·ref 액션·actionability·settle 을 이식했다 — pane 은 프로젝트당
@@ -626,9 +626,8 @@ class PaneBrowserDriver implements BrowserDriver {
 
   /**
    * 디버거를 붙인다 — 이미 붙어 있으면 아무것도 하지 않는다. 붙임의 소유자는
-   * 이 드라이버 하나뿐이다: preview.capture 도 이 인스턴스를
-   * 경유하므로, 여기서 실패한다는 것은 사용자의 DevTools 가 열려 있다는
-   * 뜻이다 — 도구가 그 말을 그대로 모델에게 전한다. (07bd3bf 이식)
+   * 이 드라이버 하나뿐이므로, 여기서 실패한다는 것은 사용자의 DevTools 가
+   * 열려 있다는 뜻이다 — 도구가 그 말을 그대로 모델에게 전한다. (07bd3bf 이식)
    */
   private async attach(contents: WebContents): Promise<void> {
     // 붙임마다 유예 타이머를 다시 건다 — op 가 잠깐 쉬어도 디버거가 사용자의
@@ -1471,139 +1470,16 @@ class PaneBrowserDriver implements BrowserDriver {
     await moved;
     return this.settleOn(contents);
   }
-
-  // ── 캡처 어댑터의 손잡이 (같은 모듈의 PaneCaptureDriver 만 부른다) ────────
-
-  /** pane 이 살아 있으면 돌려준다 — 팩토리의 forPane 과 같은 판정이다. */
-  paneNow(): PlannerPreviewView | null {
-    const pane = this.pane();
-    return pane !== null && pane.webContents() !== null ? pane : null;
-  }
-
-  /**
-   * 화면의 페이지에 붙는다 — 붙어 있으면 아무것도 하지 않는다. 페이지가
-   * 없으면 null. `fresh` 는 이 호출이 디버거를 새로 붙였을 때만 참이다 —
-   * 캡처가 "자기가 붙인 것"과 "이미 붙어 있던 것"을 가르는 자리다.
-   */
-  async attachActive(): Promise<{ fresh: boolean } | null> {
-    const pane = this.view();
-    const contents = pane.webContents();
-    if (contents === null) return null;
-    const fresh = !contents.debugger.isAttached();
-    await this.target();
-    return { fresh };
-  }
-
-  /** 페이지의 디버거를 뗀다 — 캡처가 자기가 붙인 것만 돌려놓는 길이다. */
-  releasePage(): void {
-    this.release();
-  }
-
-  /** 콘솔 링을 비운다 — 캡처의 open 이 "지난 open 이후" 계약을 지키는 자리. */
-  resetConsole(): void {
-    this.state.console.length = 0;
-  }
-
-  /** 화면의 페이지에서 문서 완료를 기다린다 — 붙어 있지 않으면 false 다. */
-  async settleActive(): Promise<boolean> {
-    const contents = this.state.contents;
-    if (!contents || contents.isDestroyed()) return false;
-    return this.settleOn(contents);
-  }
 }
 
-/**
- * preview.capture 의 pane 경로(게이트 재배선의 `for`)가 쓰는 어댑터 — 같은
- * PaneBrowserDriver 를 경유해 디버거 붙임을 한 곳에 묶는다.
- * PanePreviewDriver 는 이 어댑터에 흡수됐다: 캡처는 이제 탐색·settle 을
- * 드라이버의 장치로 하고, 창은 세우지 않는다.
- */
-class PaneCaptureDriver implements PreviewDriver {
-  /** 이 캡처가 새로 붙였는가 — destroy 는 그때만 뗀다(이미 붙어 있던 붙임은 건드리지 않는다). */
-  private attachedByMe = false;
-
-  constructor(
-    private readonly browser: PaneBrowserDriver,
-    private readonly baseUrl: string,
-  ) {}
-
-  async open(route: string): Promise<PreviewOpenResult> {
-    let url: URL;
-    try {
-      url = new URL(route, this.baseUrl);
-    } catch {
-      return { ok: false, reason: `route 를 주소로 읽을 수 없습니다: ${route}` };
-    }
-    // (07bd3bf 이식) A declared screen must stay inside the preview server —
-    // an absolute route would otherwise carry the pane (and its debugger) to
-    // an origin the repo never picked.
-    const baseOrigin = new URL(this.baseUrl).origin;
-    if (url.origin !== baseOrigin) {
-      return {
-        ok: false,
-        reason: `허용되지 않은 서버의 주소는 열지 않습니다: ${route} (${baseOrigin} 안의 경로를 쓰십시오)`,
-      };
-    }
-    const pane = this.browser.paneNow();
-    if (!pane) {
-      return {
-        ok: false,
-        reason: "미리보기 화면이 없습니다 — 화면이 보이는 상태에서 다시 시도하십시오.",
-      };
-    }
-    // 이동 전에 붙는다 — 콘솔 수집이 여기서 시작된다. "지난 open 이후" 계약을
-    // 위해 이전 기록은 비운다(07bd3bf 의 open 선례).
-    const first = await this.browser.attachActive();
-    if (first === null) {
-      return { ok: false, reason: "화면에 페이지가 없습니다 — 화면을 연 뒤 다시 시도하십시오." };
-    }
-    this.attachedByMe ||= first.fresh;
-    this.browser.resetConsole();
-    if (!(await pane.driveTo(url.toString()))) {
-      return { ok: false, reason: `화면을 불러오지 못했습니다: ${url}` };
-    }
-    // driveTo 가 다른 origin 의 페이지를 올렸을 수 있다 — 새 페이지에 다시 붙는다.
-    const second = await this.browser.attachActive();
-    this.attachedByMe ||= second?.fresh === true;
-    return { ok: true, settled: await this.browser.settleActive() };
-  }
-
-  async screenshot(options?: { longEdge?: number }): Promise<PreviewCapture> {
-    return this.browser.screenshot({ longEdge: options?.longEdge });
-  }
-
-  async consoleLines(): Promise<PreviewConsoleLine[]> {
-    return this.browser.consoleLines();
-  }
-
-  /** 캡처 뒤엔 자기가 붙인 디버거만 뗀다 — 에이전트가 쓰는 페이지의 붙임은 남는다. */
-  async destroy(): Promise<void> {
-    if (this.attachedByMe) this.browser.releasePage();
-    this.attachedByMe = false;
-  }
-}
 /**
  * 데몬에 주입되는 드라이버 공장. 데몬은 Electron 을 모른다 — 이 모듈만이
  * 창을 만든다. 게이트·넘기기의 재검증은 세션이 쓰던 화면과 무관한 숨은 창에서
- * 돈다(`forIsolated`) — 같은 인스턴스를 다시 열면 세션의 콘솔 기록과 ref
- * 세대가 오염된다. `for`(preview.capture)는 pane 이 있으면 에이전트의
- * PaneBrowserDriver 를 그대로 경유한다 — 페이지에 디버거를 붙이는
- * 손은 하나뿐이다. pane 이 접혀 있으면 예전처럼 숨은 창이 대신 찍는다.
- * `browserDrivers` 를 안 넘기는 옛 호출자는 그 자리에서 공장 하나를 세운다 —
- * 그 공장의 드라이버가 그 pane 의 유일한 붙임 소유자다.
+ * 세대가 오염된다. 옛 `for`(preview.capture)의 pane 경로는 그 단추와 함께
+ * 사라졌다 — 이 공장은 창을 세우는 일만 남는다.
  */
-export function createPreviewDriverFactory(
-  pane: () => PlannerPreviewView | null = () => null,
-  browserDrivers: BrowserDriverFactory = createBrowserDriverFactory(pane),
-): PreviewDriverFactory {
+export function createPreviewDriverFactory(): PreviewDriverFactory {
   return {
-    for: (baseUrl) => {
-      const browser = browserDrivers.forPane();
-      if (browser instanceof PaneBrowserDriver) {
-        return new PaneCaptureDriver(browser, baseUrl);
-      }
-      return new ElectronPreviewDriver(baseUrl);
-    },
     forIsolated: (baseUrl) => new ElectronPreviewDriver(baseUrl),
   };
 }

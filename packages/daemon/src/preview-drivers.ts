@@ -1,6 +1,6 @@
 import type { HandoffShot, ScreenCheckReport } from "@colo-design/protocol";
 import { type DaemonNotice, noticeForState } from "./notices.js";
-import type { PreviewCapture, PreviewDriverFactory } from "./preview-driver.js";
+import type { PreviewDriverFactory } from "./preview-driver.js";
 import type { RepoWorkspace } from "./repo.js";
 import {
   type GateScreen,
@@ -218,35 +218,6 @@ export class PreviewDrivers {
         .slice(0, MAX_LINES_PER_SCREEN)
         .map((line) => `${line.level}: ${line.text}`);
       return { settled: opened.settled, errors };
-    } finally {
-      await driver.destroy().catch(() => undefined);
-    }
-  }
-
-  /**
-   * 화면 캡처 (preview.capture): the planner's "이 화면" 버튼. `route` 가
-   * 오면 그 화면을 먼저 연다 — pane 이 떠 있으면 그 창이, 아니면 숨은 창이
-   * 그린다. 창은 쓰고 나면 닫는다(pane 은 디버거만 뗀다 — 페이지는 사용자의
-   * 것). 브라우저 개발 경로에는 창 자체가 없으므로 거절한다.
-   */
-  async capture(route?: string): Promise<PreviewCapture & { route: string | null }> {
-    const factory = this.deps.factory();
-    const repo = this.deps.activeRepo();
-    if (!factory || !repo?.isCloned()) {
-      throw new Error("화면 캡처는 데스크톱 앱에서만 동작합니다.");
-    }
-    const status = await repo.status().catch(() => null);
-    if (!status?.previewUrl) {
-      throw new Error("미리보기 서버가 아직 뜨지 않았습니다 — 잠시 후 다시 시도해 주세요.");
-    }
-    const driver = factory.for(status.previewUrl);
-    try {
-      if (route) {
-        const opened = await driver.open(route);
-        if (!opened.ok) throw new Error(`화면을 열지 못했습니다: ${opened.reason}`);
-      }
-      const shot = await driver.screenshot({ longEdge: 900 });
-      return { ...shot, route: route ?? null };
     } finally {
       await driver.destroy().catch(() => undefined);
     }

@@ -1,17 +1,15 @@
 import { useState } from "react";
 import type { InviteImportController } from "../../hooks/use-invite-import";
 import type { Daemon } from "../../lib/daemon-client";
-import { GitHubTokenForm } from "./GitHubTokenForm";
 import { InviteCard } from "./InviteCard";
-import { RepoPicker } from "./RepoPicker";
 
 /**
  * 프로젝트가 없을 때의 화면 전부 — 창을 통째로 쓰는 시작 화면. 주인공은 초대
  * 파일 하나다(P1-5): 개발자가 보낸 `*.colo-invite` 를 열거나 창에 끌어다 놓으면
  * 연결 코드 저장과 프로젝트 만들기가 한 장으로 끝난다. 파일의 읽기 · 적용 ·
  * 진행은 Shell 이 둔 컨트롤러(use-invite-import)가 맡고, 이 화면은 드롭 영역과
- * 카드(InviteCard)를 그릴 뿐이다. 초대장 없이 시작하는 길(토큰 붙여넣기 · 레포
- * 목록)은 개발 실행에만 접힌 예비 길로 남는다.
+ * 카드(InviteCard)를 그릴 뿐이다. 개발 실행도 같은 길로 시작한다 — 개발자는
+ * node scripts/make-invite.mjs 로 초대 파일을 만들어 놓는다.
  */
 export function StartFlow({
   daemon,
@@ -21,8 +19,6 @@ export function StartFlow({
   /** Shell 의 가져오기 컨트롤러 — 상태와 행동의 주인. */
   invite: InviteImportController;
 }) {
-  const githubStep = daemon.onboarding?.find((step) => step.id === "github");
-  const hasToken = githubStep?.status === "pass";
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -86,19 +82,6 @@ export function StartFlow({
         <div className="onboarding__dropveil" aria-hidden="true">
           초대 파일을 여기에 놓으세요
         </div>
-      )}
-
-      {/* 개발 예비 길 — 실사용 첫 화면에는 없다. 개발 실행(daemon.status.dev)의
-          선로 값으로만 펼치는 토큰 붙여넣기 · 레포 목록이다. 성공하면 나머지는
-          초대 파일과 같은 길로 간다(Shell 이 작업대로 바꿔 낀다). */}
-      {daemon.status?.dev === true && (
-        <details className="onboarding__devfallback" data-testid="invite-dev-fallback">
-          <summary>개발용 — 초대 파일 없이 시작</summary>
-          <div className="onboarding__devfallback-body">
-            {!hasToken && <GitHubTokenForm daemon={daemon} />}
-            <RepoPicker daemon={daemon} />
-          </div>
-        </details>
       )}
     </div>
   );

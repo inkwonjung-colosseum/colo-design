@@ -5,11 +5,8 @@ import type {
   HandoffShot,
   HandoffStatus,
   HandoffStatusReport,
-  RepoDiscard,
   RepoHandoffDraft,
   RepoHistory,
-  RepoShelf,
-  RepoShelfRestore,
   RepoStatus,
 } from "@colo-design/protocol";
 
@@ -249,10 +246,7 @@ export class RepoWorkspace {
    * is worse than being a commit behind until the next sync() reports the
    * failure properly.
    */
-  async pull(
-    onSessionTurn?: (brief: string) => void,
-    opts?: { report?: boolean },
-  ): Promise<"clean" | "conflict" | undefined> {
+  async pull(onSessionTurn?: (brief: string) => void): Promise<"clean" | "conflict" | undefined> {
     if (!this.core.isCloned()) return;
     // 준비가 충돌로 멈춘 상태(phase error)에서도 문은 열려 있어야 한다(D96):
     // 오류 카드의 AI 요청이 읽을 것은 바로 그 상태고, 새 대화가 태어날 때의
@@ -286,10 +280,9 @@ export class RepoWorkspace {
       })
       .catch((error) => {
         this.core.setDetail(detailOf(error, this.core.pat));
-        // The 최신화 button's caller reports: a failure the planner asked for
-        // by pressing a button must land as words on the screen, not only in
-        // the status detail no card renders while phase stays ready.
-        if (opts?.report) throw error;
+        // A failure stays a `detail`: no card renders it while phase is
+        // ready, and the next sync() reports it properly — the callers left
+        // (the automatic pre-send pull, the fleet) all run quietly.
         return undefined;
       })
       .finally(() => {
@@ -549,19 +542,6 @@ export class RepoWorkspace {
   }
 
   /**
-   * 변경 버리기 (PLAN D53): every unsaved worktree change, gone — the same
-   * path set a save would have carried, restored or deleted per file, and
-   * only through the one path rule (inside the clone). The confirmation
-   * dialog is the UI's half; this half cannot reach outside the repo.
-   */
-  async discard(): Promise<RepoDiscard> {
-    if (!this.core.isCloned()) return { removed: [] };
-    // restore 와 같은 이유로 슬롯을 잡는다 — 기다리기만 하고 등록하지
-    // 않으면 다음 작성자가 빈 워크트리로 알고 끊어든다.
-    return this.asWorktreeWriter(() => this.core.clearUnsavedWork());
-  }
-
-  /**
    * 워크트리를 손대는 한 사람만 — 앞선 작성자를 기다리고, 자기도 그 줄을
    * 선다. 슬롯은 `refreshing` 을 쓴다: 부딪히는 진짜 상대가 `pull()` 의
    * stash-move-replay 이고, 새 슬롯을 하나 더 두면 세 자리를 읽는 모든
@@ -592,15 +572,11 @@ export class RepoWorkspace {
   }
 
   // -------------------------------------------------------------------------
-  // 잠깐 치워두기 — the parked-work shelf
+  // 치워둔 작업 — the parked-work slot's automatic recovery
   // -------------------------------------------------------------------------
 
-  shelve(): Promise<RepoShelf> {
-    return this.shelfStore.shelve();
-  }
-
-  unshelve(onSessionTurn?: (brief: string) => void): Promise<RepoShelfRestore> {
-    return this.shelfStore.unshelve(onSessionTurn);
+  recoverShelf(): Promise<"none" | "restored" | "kept"> {
+    return this.shelfStore.recoverShelf();
   }
 
   // -------------------------------------------------------------------------

@@ -1517,7 +1517,6 @@ select {
    align digit under digit while the eye scans the rail. */
 .leaf__meta,
 .node__badge,
-.repopicker__time,
 .screenpanel__status,
 .frame__width {
   font-variant-numeric: tabular-nums;
@@ -6135,32 +6134,12 @@ button.pcard__row {
   background: color-mix(in srgb, var(--accent) 42%, transparent);
   pointer-events: none;
 }
-.sidebar__new {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 12px;
-  justify-content: center;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--r-lg);
-  color: var(--text-2);
-  font-weight: 500;
-  transition:
-    border-color 0.15s,
-    background 0.15s,
-    color 0.15s;
-}
-.sidebar__new:hover:not(:disabled) {
-  border-style: solid;
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
-}
 .sidebar__gear {
   flex: none;
   padding: 7px 8px;
 }
-/* The folded rail (44px) stacks the ＋ tile over the gear; the foot's side
-   margins would strangle a 30px row, so the rail centers the column. */
+/* The folded rail (44px) centers the lone foot control (설정); the foot's
+   side margins would strangle a 30px row. */
 .sidebar--collapsed .sidebar__foot {
   flex-direction: column;
   gap: 2px;
@@ -6169,26 +6148,6 @@ button.pcard__row {
 }
 .sidebar--collapsed .sidebar__gear {
   padding: 8px;
-}
-.sidebar__plus {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px dashed var(--line-strong);
-  border-radius: 9px;
-  color: var(--text-2);
-  font-size: var(--font-ui-140);
-  transition:
-    border-color 0.15s,
-    background 0.15s,
-    color 0.15s;
-}
-.sidebar__plus:hover:not(:disabled) {
-  border-style: solid;
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--text);
 }
 .sidebar__error {
   padding: 0 12px 10px;
@@ -6570,12 +6529,6 @@ button.pcard__row {
 }
 .screenpanel__status--pending {
   color: var(--warn);
-}
-/* 치워둔 작업 — parked, not lost: never the warning hue (the work is safe,
-   the door back is one click); a quiet accent, distinct from 개발자 검토 중
-   by carrying no PR expectation. */
-.screenpanel__status--shelf {
-  color: color-mix(in srgb, var(--accent) 55%, var(--text-2));
 }
 /* 저장됨 sits mid-cycle (local only) and 반영됨 is the terminus: the same
    green would erase the one moment worth celebrating, so 저장됨 dims toward
@@ -7553,32 +7506,33 @@ button.pcard__row {
 .onboarding__step--line .onboarding__fixrow {
   flex: none;
 }
+/* 통과한 게이트들의 요약 한 줄 — 지나가는 소음은 줄 수를 줄인다. */
+.onboarding__summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+}
+.onboarding__summarytext {
+  color: var(--muted);
+  font: 500 var(--font-ui-120) var(--sans);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-/* The machine-wide GitHub token form, shared by the wizard and 설정. */
+/* 입력 한 줄 폼의 몸통 — 마법사의 로그인 코드 칸과 설정의 슬랙 폼(EscalationForm)이
+   함께 쓴다. */
 .ghtoken {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.ghtoken__lead {
-  margin: 0;
-}
-/* 개발자용 접힘(P1-4) — 직접 발급 길은 기본 눈길 밖에 둔다. */
-.ghtoken__dev,
-.repopicker__devnote {
-  color: var(--muted);
-  font-size: 12px;
-}
-.ghtoken__dev summary,
-.repopicker__devnote summary {
-  cursor: pointer;
-  user-select: none;
-  list-style-position: inside;
-}
-.ghtoken__dev[open] summary,
-.repopicker__devnote[open] summary {
-  margin-bottom: 4px;
-}
+
+/* 로그인 코드 붙여넣기 칸(마법사)이 쓰는 행 — 옛 GitHub 토큰 폼의 자리다. */
 .ghtoken__row {
   display: flex;
   gap: 8px;
@@ -7596,138 +7550,6 @@ button.pcard__row {
   white-space: nowrap;
 }
 
-/* The project picker: search, listbox, and the confirm row under the choice. */
-.repopicker {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-}
-.repopicker__search {
-  width: 100%;
-}
-.repopicker__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 320px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--panel);
-}
-.repopicker__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  font-size: var(--font-ui-125);
-  cursor: pointer;
-}
-.repopicker__row--on {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.repopicker__row--off {
-  opacity: 0.55;
-  cursor: default;
-}
-.repopicker__row--ghost {
-  height: 36px;
-  background: var(--panel-2);
-  margin: 4px 6px;
-  border-radius: var(--r-sm);
-  opacity: 0.6;
-}
-.repopicker__owner {
-  color: var(--muted);
-  font: 500 var(--font-ui-120) var(--mono);
-  flex: none;
-}
-.repopicker__name {
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.repopicker__time {
-  margin-left: auto;
-  flex: none;
-  color: var(--muted);
-  font: 400 var(--font-ui-110) var(--mono);
-}
-.repopicker__badge {
-  flex: none;
-  font: 500 var(--font-ui-105) var(--sans);
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 0 6px;
-}
-.repopicker__badge--muted {
-  color: var(--muted);
-}
-.repopicker__empty {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 12px;
-  font-size: var(--font-ui-125);
-  color: var(--text-2);
-}
-.repopicker__listerror {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-}
-/* The commit zone: picking a repo hands the dialog from scan to decide, so
-   the confirm block gets its own recessed well instead of riding the list's
-   hairline — 두 단계가 한 판에서 순서대로 읽힌다. */
-.repopicker__confirm {
-  margin-top: 10px;
-  padding: 12px 13px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-lg);
-}
-.repopicker__confirm .ghost {
-  align-self: flex-start;
-}
-.repopicker__confirmrow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.repopicker__confirmrow input {
-  flex: 1;
-  min-width: 180px;
-}
-.repopicker__warnline {
-  display: block;
-  margin-top: 4px;
-  color: var(--warn);
-}
-.repopicker__approve {
-  display: flex;
-  gap: 7px;
-  align-items: flex-start;
-  font: 500 var(--font-ui-120) var(--sans);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.repopicker__approve input {
-  margin-top: 1px;
-  accent-color: var(--accent);
-}
-.repopicker__manualtoggle {
-  align-self: flex-start;
-}
 .settings__account {
   font: 500 var(--font-ui-125) var(--sans);
   color: var(--text-2);
@@ -7736,13 +7558,6 @@ button.pcard__row {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.repopicker__settingslink {
-  display: inline;
-  padding: 0;
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 /* 빈 작업 화면은 한 줄로 읽힌다: 제목 · 부제 · 폼이 하나의 좁은 컬럼.
@@ -7758,7 +7573,6 @@ button.pcard__row {
   }
   .autocomplete {
     left: 16px;
-    right: 16px;
   }
   .modal {
     padding: 4vh 12px 16px;
@@ -8804,12 +8618,6 @@ button.pcard__row {
   filter: brightness(1.06);
 }
 
-/* 시작 마법사(StartFlow) — 창을 통째로 쓰는 3단. 레포 목록은 카드 안에서
-   읽히는 것이 몫이라 머신 마법사의 320px 보다 낮게 깎는다(02-wizard). */
-.onboarding--start .repopicker__list {
-  max-height: 220px;
-}
-
 /* 이 작업에 적을 이름(P1-3) — 마법사의 마지막 줄. 조용한 한 줄: 게이트가
    아니므로 시선을 요구하지 않는다. */
 .onboarding__author {
@@ -8942,28 +8750,6 @@ button.pcard__row {
   margin: 0;
   font: 600 var(--font-ui-135) var(--sans);
   color: var(--text);
-}
-
-/* 개발 예비 길 — 개발 실행에서만 펼쳐지는 접힘. 실사용 첫 화면에는 없다. */
-.onboarding__devfallback {
-  margin-top: 14px;
-}
-.onboarding__devfallback summary {
-  cursor: pointer;
-  user-select: none;
-  list-style-position: inside;
-  color: var(--muted);
-}
-.onboarding__devfallback[open] summary {
-  margin-bottom: 8px;
-}
-.onboarding__devfallback-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  padding: 12px 14px;
 }
 
 /* 토큰 만료 카드 — 한 질문의 작은 방. */

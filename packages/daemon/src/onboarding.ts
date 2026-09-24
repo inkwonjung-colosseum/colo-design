@@ -10,8 +10,8 @@
  *
  * Gate semantics: `fail` blocks the workspace; `warn` (an API key shadowing
  * the subscription, a missing GitHub token) states its reason and lets the
- * planner past — a public repo needs no token, and the picker degrades to a
- * pasted url.
+ * planner past — 연결은 초대 파일이 실어 오고, 넘기기 is the only thing a
+ * missing token eventually refuses.
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -242,32 +242,29 @@ async function pnpmVersionOr(pnpm: string): Promise<string> {
 async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
   const client = deps.gitHubClient?.() ?? null;
   if (!client) {
-    // Warn, not fail: a planner working on a public repo — or pointing at a
-    // local remote through the manual url — never needs a token, and blocking
-    // the workspace on it would lock them out of the product. The card stays
-    // open with the form, the picker degrades to the manual url, and 넘기기
-    // is the only thing a missing token eventually refuses.
+    // Warn, not fail: 연결 코드는 초대 파일이 실어 온다 — 코드가 없어도 화면을
+    // 만드는 것은 그대로 되고, 넘기기만 결국 거절당한다. 마법사를 세우지
+    // 않는다: 시작 화면의 초대 파일 놓기 · 토큰 만료 카드 · 설정의 초대 파일
+    // 열기가 그 길을 이미 안고 있다.
     return {
       id: "github",
       status: "warn",
       detail:
-        "GitHub 토큰이 없습니다 — 레포(GitHub의 프로젝트 저장소) 목록을 가져오고 개발자에게 넘길 때 쓰입니다. 연결하지 않으면 레포를 주소로 직접 추가해야 합니다.",
+        "연결 코드가 없습니다 — 개발자에게 받은 초대 파일을 놓으면 연결됩니다. 연결 전에는 만든 화면을 개발자에게 넘길 수 없습니다.",
     };
   }
   const me = await client.whoAmI();
   if (!me.ok) {
-    // A refused or unreachable check leaves the planner exactly where a
-    // missing token does: the manual url and public repos stay open, so the
-    // workspace must stay reachable too. A fail here used to vanish the
-    // 시작하기 button the moment one bad token was pasted (실사 결함) — the
-    // wizard had no way back, because nothing can un-store a token from the
-    // cards it offers. The reason rides a warn, the form stays open for the
-    // next paste, and 넘기기 remains the one thing a tokenless machine
-    // eventually refuses.
+    // A refused or unreachable check leaves the planner where a missing
+    // token does: the workspace stays reachable and the fix is a fresh
+    // invite file. A fail here used to vanish the 시작하기 button the
+    // moment one bad token was pasted (실사 결함) — the wizard had no way
+    // back, because nothing can un-store a token from the cards it offers.
+    // The reason rides a warn, and the sentence points at the developer.
     return {
       id: "github",
       status: "warn",
-      detail: `${me.detail} 연결하지 않은 것과 같으니, 새 코드를 다시 넣거나 그대로 시작해도 됩니다 — 주소로 직접 추가한 레포에서는 코드가 필요 없습니다.`,
+      detail: `${me.detail} 개발자에게 새 초대 파일을 받아 놓아 주세요.`,
     };
   }
   // warn, not fail: 0개의 쓰기 레포도 "토큰 없음"과 같은 대우다. 개발자에게
@@ -281,8 +278,7 @@ async function checkGitHub(deps: OnboardingDeps): Promise<OnboardingStep> {
       id: "github",
       status: "warn",
       detail:
-        "개발자에게 받은 코드가 이 레포에 닿지 않습니다 — 개발자에게 다시 요청하세요. " +
-        "그 전까지 주소를 직접 넣는 공개 레포로는 작업할 수 있습니다.",
+        "개발자에게 받은 코드가 이 레포에 닿지 않습니다 — 개발자에게 새 초대 파일을 요청하세요.",
     };
   }
   return pass(

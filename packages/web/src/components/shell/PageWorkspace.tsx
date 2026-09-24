@@ -98,7 +98,6 @@ export function PageWorkspace({
   onChatChange,
   onLayoutChange,
   onOpenSettings,
-  onAddProject,
   onRenameSession,
   onActiveThreadChange,
 }: {
@@ -110,8 +109,6 @@ export function PageWorkspace({
   /** Same store, same shape: the dragged column width. */
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
   onOpenSettings: (category?: SettingsCategory) => void;
-  /** Shell owns the 추가 dialog; the palette's 명령 just opens it. 개발 실행에서만 온다. */
-  onAddProject?: () => void;
   /** The planner renames threads; 설정's store keeps them by session id. */
   onRenameSession: (sessionId: string, title: string) => void;
   /** The tree's active mark — the hook's state, reported up. */
@@ -747,7 +744,6 @@ export function PageWorkspace({
             }
           }}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
-          onAddProject={onAddProject}
           onOpenSettings={onOpenSettings}
           onCheckState={() => askCycle("check")}
           onClose={() => setPalette(false)}

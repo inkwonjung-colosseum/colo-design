@@ -794,6 +794,19 @@ export class DaemonServer {
           workspaces.repo
             .recoverParkedWork()
             .catch(() => undefined)
+            // 치워둔 작업 자동 꺼내기 — 단추가 사라진 뒤에도 슬롯은 남아
+            // 있다(v0.3.8~v0.3.10). 이 쓸기는 매 시작마다 돌므로 오늘
+            // 놓아둔("kept") 슬롯은 작업 폴더가 깨끗해진 다음 시작에 다시
+            // 시도된다.
+            .then(() => workspaces.repo.recoverShelf())
+            .then((shelf) => {
+              if (shelf === "restored") {
+                this.logger?.info(`repo: 치워둔 작업을 꺼내 놓았습니다 (${project.slug})`);
+              } else if (shelf === "kept") {
+                this.logger?.info(`repo: 치워둔 작업이 있지만 지금은 놓아둡니다 (${project.slug})`);
+              }
+            })
+            .catch(() => undefined)
             .then(() => workspaces.repo.refreshPendingChanges()),
         );
       }

@@ -108,12 +108,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...withId,
-    type: z.literal("preview.capture"),
-    /** The screen to shoot; omitted shoots the view the preview shows now. */
-    route: z.string().min(1).optional(),
-  }),
-  z.object({
-    ...withId,
     type: z.literal("preview.screenCheck"),
     /**
      * The screen the pane's error banner is holding — re-opened in the
@@ -420,19 +414,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
      */
     force: z.boolean().optional(),
   }),
-  /**
-   * 레포 최신화: bring the clone current with the remote without the planner
-   * reading git. Unsaved work rides along (stashed, moved onto, replayed);
-   * what git cannot combine by itself briefs the named session as its next
-   * turn, exactly like a failing gate. Resolves with the resulting
-   * `RepoStatus`.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("repo.refresh"),
-    /** Live thread that receives a conflict brief; absent = report only. */
-    sessionId: z.string().min(1).optional(),
-  }),
   /** Uncommitted worktree changes vs HEAD, for the publish review panel. */
   z.object({ ...withId, type: z.literal("diff.get") }),
   /** Runs the machine-wide onboarding checks; read-only. `provider` picks the agent gate. */
@@ -551,32 +532,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     sha: z.string().min(1),
   }),
   /**
-   * 변경 버리기 (PLAN D53): throw away every unsaved worktree change — the
-   * paths a 저장 would have carried, and only paths inside the clone. The
-   * confirmation dialog is the UI's job; this side just refuses to reach
-   * outside the repo.
-   */
-  z.object({ ...withId, type: z.literal("repo.discard") }),
-  /**
-   * 잠깐 치워두기: snapshot every unsaved worktree change into the ONE shelf
-   * ref and clear the worktree through 버리기's path rule. One slot — a
-   * second call is refused until the first is 꺼내기'd. The clear, not the
-   * snapshot, is the promise: a parked work must never read as lost.
-   */
-  z.object({ ...withId, type: z.literal("repo.shelve") }),
-  /**
-   * 치워둔 작업 꺼내기: re-apply the shelved work on top of whatever HEAD is
-   * now — a 3-way apply, never a rewind. Refuses while the worktree is
-   * dirty; a conflict lands as Claude's brief in the named thread and the
-   * slot survives until the cleanup drops it.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("repo.unshelve"),
-    /** Where a conflict brief goes; absent, the refusal line is the reply. */
-    sessionId: z.string().min(1).optional(),
-  }),
-  /**
    * Store (or clear) the machine-wide GitHub token — the one gate of the
    * onboarding list the planner answers with a value rather than an install.
    * The daemon saves it to the OS credential store and never echoes it back;
@@ -636,17 +591,6 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     ...withId,
     type: z.literal("machine.author.set"),
     name: z.string().min(1).max(80).nullable(),
-  }),
-  /**
-   * Repos the stored token can reach, most recently pushed first. Answered
-   * from a short-lived cache; `refresh` re-asks GitHub. This is the project
-   * picker's list, with a manual url as the fallback for what a token
-   * cannot see.
-   */
-  z.object({
-    ...withId,
-    type: z.literal("github.repos.list"),
-    refresh: z.boolean().optional(),
   }),
   /**
    * One repo, judged before any clone: does package.json carry a dev-family

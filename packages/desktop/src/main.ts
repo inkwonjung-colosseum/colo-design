@@ -176,7 +176,7 @@ async function bootApp(): Promise<void> {
   // 창은 모두 이 파일이 만든다 — pane 을 찾는 getter 를 넘기면
   // 드라이버는 Electron 을 몰라도 된다 (PLAN D61).
   const browserDrivers = createBrowserDriverFactory(() => plannerPreview);
-  const previewDriverFactory = createPreviewDriverFactory(() => plannerPreview, browserDrivers);
+  const previewDriverFactory = createPreviewDriverFactory();
   const onNotice = (notice: DaemonNotice) => {
     notices.notifyPlanner(notice);
     // 연기된 업데이트가 있으면 이 전이가 "모두 내려앉음"이었는지 본다.

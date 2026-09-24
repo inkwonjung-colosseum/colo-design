@@ -37,7 +37,6 @@ import {
   ThemeIcon,
 } from "../icons";
 import { EscalationForm } from "../onboarding/EscalationForm";
-import { GitHubTokenForm } from "../onboarding/GitHubTokenForm";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 /** Slowest last, so the picker reads as a dial rather than a set. */
@@ -892,9 +891,6 @@ export function SettingsDialog({
 
   /** 접속 주소 지우기의 확인 — this app's dialog, not window.confirm. */
   const [forgetConfirm, setForgetConfirm] = useState(false);
-  const [editingToken, setEditingToken] = useState(false);
-  // 붙여넣기 · 토큰 바꾸기는 개발 실행의 예비 길 — 실사용의 연결 관리는 초대 파일이다.
-  const devMachine = daemon.status?.dev === true;
   const connected = daemon.connection === "open";
 
   // 확인 대화가 위에 떠 있으면 Escape 는 그 대화의 몫이다 — useModalEscape 의
@@ -1504,47 +1500,16 @@ export function SettingsDialog({
 
             {category.id === "connection" && (
               <>
-                {devMachine ? (
-                  daemon.onboarding?.find((step) => step.id === "github")?.status === "pass" &&
-                  !editingToken ? (
-                    <Field
-                      wide
-                      label="GitHub 계정"
-                      hint="토큰은 이 컴퓨터에만 저장되고 다시 보여지지 않습니다"
-                    >
-                      <span className="settings__url">
-                        <span className="settings__account">
-                          {daemon.onboarding?.find((step) => step.id === "github")?.detail}
-                        </span>
-                        <button
-                          type="button"
-                          className="primary"
-                          disabled={!connected}
-                          onClick={() => setEditingToken(true)}
-                        >
-                          토큰 바꾸기
-                        </button>
-                      </span>
-                    </Field>
-                  ) : (
-                    <GitHubTokenForm
-                      daemon={daemon}
-                      onDone={() => setEditingToken(false)}
-                      disabled={!connected}
-                    />
-                  )
-                ) : (
-                  // 실사용의 연결 관리는 초대 파일 한 장이다 — 상태만 보여 주고
-                  // 새 코드는 개발자의 초대장으로 온다.
-                  <Field wide label="GitHub 연결" hint="연결 코드는 이 컴퓨터에만 저장됩니다">
-                    <span className="settings__url">
-                      <span className="settings__account">
-                        {daemon.onboarding?.find((step) => step.id === "github")?.detail ??
-                          "GitHub 토큰 없음"}
-                      </span>
+                {/* 연결 관리는 초대 파일 한 장이다 — 상태만 보여 주고 새 코드는
+                    개발자의 초대장으로 온다. 개발 실행도 같은 길이다. */}
+                <Field wide label="GitHub 연결" hint="연결 코드는 이 컴퓨터에만 저장됩니다">
+                  <span className="settings__url">
+                    <span className="settings__account">
+                      {daemon.onboarding?.find((step) => step.id === "github")?.detail ??
+                        "GitHub 토큰 없음"}
                     </span>
-                  </Field>
-                )}
+                  </span>
+                </Field>
                 <Field
                   wide
                   label="초대 파일"

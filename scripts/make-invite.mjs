@@ -20,11 +20,12 @@
  * 레포가 하나일 때만 쓰고, 이름 기본값은 레포 이름(owner/repo 의 repo)이다.
  * --base 가 없으면 토큰으로 GitHub 의 기본 가지를 묻는다. --author · --reviewer 는
  * 모든 프로젝트 공통이다(v2 필드 — 작성 줄과 리뷰어).
+ * 개발 실행도 이 파일로 시작한다 — GitHub 주소나 로컬 경로 둘 다 --repo 로 받는다.
  */
 
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildInvite, inviteSlug, sealInvite } from "./invite-format.mjs";
+import { buildInvite, inviteSlug, sealInvite } from "../docs/invite-format.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -72,11 +73,19 @@ function repoSlug(url) {
   const repo = segments.at(-1) ?? path;
   return { owner: segments.at(-2) ?? "", repo };
 }
+/** GitHub 주소인가 — 기본 가지 조회는 이 주소일 때만 한다(file:// · 로컬 경로는
+ *  조회 없이 main). 스킴 없는 owner/repo 표기도 GitHub 로 본다. */
+function isGitHubUrl(url) {
+  return (
+    /^(?:https?:\/\/|git@|ssh:\/\/git@)github\.com[/:]/i.test(url.trim()) ||
+    /^[^/:@]+\/[^/:@]+$/.test(url.trim())
+  );
+}
 
 /** GitHub 가 말하는 이 레포의 기본 가지 — 물을 수 없으면 "main". */
 async function defaultBranch(url) {
   const slug = repoSlug(url);
-  if (!slug.owner) return "main";
+  if (!isGitHubUrl(url) || !slug.owner) return "main";
   try {
     const reply = await fetch(`https://api.github.com/repos/${slug.owner}/${slug.repo}`, {
       headers: {

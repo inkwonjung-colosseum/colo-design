@@ -8,11 +8,12 @@ import { BrainIcon, BranchIcon, CheckIcon, CloseIcon, KeyIcon, PlugIcon, WarnIco
  * The first-run wizard: machine gates answered once — the agent
  * Code, git, Node·pnpm — and then it is done. Which repo a planner works on
  * is NOT here: the first project comes from an invite file on the start
- * screen (StartFlow), and later ones from `프로젝트 추가` in the workspace.
+ * screen (StartFlow), and later ones from a fresh invite file the developer
+ * sends again.
  *
- * One card is open at a time: the first step that is not a pass is the thing
- * a planner can act on right now, and everything before it collapses to a
- * single line.
+ * Passed gates are not rows: they collapse into one summary line, so the
+ * wizard shows only what a planner can still act on — one open card at a
+ * time, and everything passed is scanned past in a breath.
  */
 const STEP_ORDER: OnboardingStepId[] = ["claude", "git", "runtime"];
 
@@ -33,6 +34,13 @@ const STEP_TOOL: Record<OnboardingStepId, string> = {
   claude: "claude",
   git: "git",
   runtime: "앱에 포함",
+  github: "GitHub",
+};
+/** 요약 줄의 짧은 이름 — claude 행은 고른 에이전트의 라벨(providerLabel)로 읽는다. */
+const SHORT_TITLE: Record<OnboardingStepId, string> = {
+  claude: "",
+  git: "git",
+  runtime: "런타임",
   github: "GitHub",
 };
 
@@ -121,6 +129,7 @@ export function Onboarding({
   checking = false,
   onProviderChange,
   onDone,
+  inviteNotice = null,
   onClose,
 }: {
   daemon: Daemon;
@@ -139,6 +148,8 @@ export function Onboarding({
    * 경고만 남은 첫 실행이, 고르지 않으면 못 나가는 함정이 되지 않게 한다.
    */
   onClose?: () => void;
+  /** 마법사가 떠 있는 동안 놓인 초대 파일 — 받았다는 한 줄(또는 오류 문장). */
+  inviteNotice?: { tone: "info" | "error"; text: string } | null;
 }) {
   // 데몬은 여전히 github 게이트도 보내지만 화면은 쓰지 않는다 — 첫 화면이 초대
   // 파일로 서 있으므로 그 행이 설 자리가 없다(연결 코드 관리는 설정과 토큰
@@ -202,6 +213,16 @@ export function Onboarding({
   // 이름으로, 없으면 id 그대로(onboarding-gates.html og-step__nm/__sub).
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? provider;
 
+  // 통과한 게이트는 행이 아니라 요약 한 줄이다 — 남는 행은 사용자가 지금 할
+  // 수 있는 일뿐이고, 번호도 남은 행 안에서 매긴다(1, 3처럼 비지 않게).
+  const passedSteps: OnboardingStep[] = [];
+  const openSteps: OnboardingStep[] = [];
+  for (const id of STEP_ORDER) {
+    const step = byId.get(id);
+    if (!step) continue;
+    (step.status === "pass" ? passedSteps : openSteps).push(step);
+  }
+
   // 실패한 에이전트 행에 고칠 fix 가 없을 때(설치된 다른 에이전트가 있다는
   // 뜻) — 고르게 바꿔 다시 검사게 한다. 목록은 이 데몬이 아는 에이전트들.
   const providerStep = byId.get("claude");
@@ -255,6 +276,18 @@ export function Onboarding({
         </div>
       )}
 
+      {/* 마법사가 떠 있는 동안 놓인 초대 파일 — 드롭 리스너는 Shell 이 이미
+          받았고, 마법사가 닫히면 시작 화면이 확인 카드를 그대로 이어 보여
+          준다(StartFlow). 여기는 그 사실의 한 줄이다. */}
+      {inviteNotice && (
+        <div
+          className={`notice ${inviteNotice.tone === "error" ? "notice--error" : "notice--info"}`}
+          role="status"
+        >
+          <span className="notice__text">{inviteNotice.text}</span>
+        </div>
+      )}
+
       {steps.length === 0 && !error && <p className="hint">단계를 확인하는 중…</p>}
       {error && (
         <div className="notice notice--error">
@@ -263,9 +296,22 @@ export function Onboarding({
       )}
 
       <ol className="onboarding__steps">
-        {STEP_ORDER.map((id) => {
-          const step = byId.get(id);
-          if (!step) return null;
+        {/* 통과한 것들의 요약 한 줄 — 통과한 단계가 없으면 이 줄도 없다. */}
+        {passedSteps.length > 0 && (
+          <li className="onboarding__summary">
+            <span className="onboarding__glyph onboarding__glyph--pass">
+              <CheckIcon />
+            </span>
+            <span className="onboarding__summarytext">
+              {passedSteps
+                .map((step) => (step.id === "claude" ? providerLabel : SHORT_TITLE[step.id]))
+                .join(" · ")}{" "}
+              준비됨
+            </span>
+          </li>
+        )}
+        {openSteps.map((step, rowIndex) => {
+          const id = step.id;
           const open = isOpen(id);
           // claude 행만 에이전트를 따라간다 — 나머지 셋은 기계의 정적 문장.
           const title = id === "claude" ? `화면을 만드는 ${providerLabel}` : STEP_TITLE[id];
@@ -275,14 +321,14 @@ export function Onboarding({
             <li
               key={id}
               className={`onboarding__step onboarding__step--${step.status}${open ? "" : " onboarding__step--line"}`}
-              style={{ "--i": STEP_ORDER.indexOf(id) } as CSSProperties}
+              style={{ "--i": rowIndex } as CSSProperties}
             >
               <div className="onboarding__stephead">
                 <span className="ic ic--sm ic--quiet">{STEP_ICON[id]}</span>
                 <span className={`onboarding__glyph onboarding__glyph--${step.status}`}>
                   {STATUS_ICON[step.status]}
                 </span>
-                <span className="onboarding__stepnum">{STEP_ORDER.indexOf(id) + 1}</span>
+                <span className="onboarding__stepnum">{rowIndex + 1}</span>
                 <h2>{title}</h2>
                 {/* 도구 이름은 부제다 — 알아야 하는 것은 무엇에 쓰는지다. */}
                 <span className="onboarding__tool">{tool}</span>

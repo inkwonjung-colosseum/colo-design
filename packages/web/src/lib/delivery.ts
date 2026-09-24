@@ -34,7 +34,7 @@ const MAKING_LABEL = "만드는 중";
 type DeliveryState = "unsubmitted" | "handed" | "changes_requested" | "merged" | "closed";
 
 /** 칩의 색 — the tones styles.css knows. */
-type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged" | "shelf";
+type DeliveryTone = "none" | "pending" | "saved" | "handed" | "changes" | "merged";
 
 /** One button of the action set: 열림, or 잠깐 with its reason in a title. */
 interface DeliveryAction {

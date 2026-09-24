@@ -1,12 +1,11 @@
 /**
- * 초대 파일(`*.colo-invite`)의 형식 — 쓰는 쪽 두 곳이 함께 쓰는 한 벌이다:
- *   - scripts/make-invite.mjs (개발자의 터미널)
- *   - docs/invite-format.mjs (소개 페이지의 초대장 만들기 — 이 파일의 그대로 복사본)
+ * 초대 파일(`*.colo-invite`)의 형식 — 형식의 한 곳이다: 소개 페이지의 초대장
+ * 만들기(docs/invite.js)와 터미널 생성기(scripts/make-invite.mjs)가 함께 읽는다.
  *
  * 바깥 봉투는 v3 — 안쪽 JSON 을 AES-256-GCM 으로 가린다(sealInvite). 읽는 쪽은
  * packages/protocol/src/invite.ts(readInviteJson · normalizeInvite)와 그것을 쓰는
  * packages/web/src/components/onboarding/StartFlow.tsx 의 parseInvite.
- * 형식을 고칠 때는 이 셋(와 복사본)을 함께 고친다.
+ * 형식을 고칠 때는 이 셋을 함께 고친다.
  */
 
 /**

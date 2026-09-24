@@ -21,7 +21,6 @@ import { advanceTour, useTourStep } from "../../lib/tour";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
-  ArchiveIcon,
   BranchIcon,
   ChevronDownIcon,
   CircleCheckIcon,
@@ -87,12 +86,6 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
       return (
         <span className="ic ic--quiet">
           <EyeIcon />
-        </span>
-      );
-    case "shelf":
-      return (
-        <span className="ic ic--quiet">
-          <ArchiveIcon />
         </span>
       );
   }

@@ -1,15 +1,15 @@
 /**
  * 소개 페이지의 초대장 만들기 — 연결 코드로 레포 목록을 불러와 고른 레포 전부를
- * 초대 파일 하나(v3 봉투)에 실는다. 형식은 ./invite-format.mjs(scripts/
- * invite-format.mjs 의 그대로 복사본)이 정하고, 이 파일은 입력 → 목록 → 미리
- * 보기 → 내려받기·보내기만 담당한다.
+ * 초대 파일 하나(v3 봉투)에 실는다. 형식은 ./invite-format.mjs(형식의 한 곳 —
+ * 터미널 생성기 scripts/make-invite.mjs 도 같이 읽는다)이 정하고, 이 파일은
+ * 입력 → 목록 → 미리 보기 → 내려받기·보내기만 담당한다.
  *
  * 연결 코드는 이 페이지를 떠나지 않는다 — 요청은 GitHub 에만 가고(localStorage ·
  * 주소창에 절대 쓰지 않는다), 미리 보기에는 가린 값만 그린다. 보내기 길(메일
  * 초안 · OS 공유 시트)도 파일을 브라우저 밖 서버가 아니라 로컬 앱에 건넨다.
  */
-// ?v=3 — Pages 캐시가 옛 invite-format.mjs(단일 프로젝트 빌더)를 주지 않게 한다.
-import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=3";
+// ?v=4 — Pages 캐시가 옛 invite-format.mjs를 주지 않게 한다.
+import { buildInvite, inviteFileName, sealInvite } from "./invite-format.mjs?v=4";
 
 const form = document.getElementById("invite-form");
 const download = document.getElementById("invite-download");
@@ -28,6 +28,7 @@ const chosenRows = document.getElementById("chosen-rows");
 const chosenCount = document.getElementById("chosen-count");
 const manualUrl = document.getElementById("manual-url");
 const manualAdd = document.getElementById("manual-add");
+const authorStatus = document.getElementById("author-status");
 
 /**
  * GitHub API 의 주소 — 기본은 진짜. 127.0.0.1 · localhost 에서 열린 페이지만
@@ -470,7 +471,9 @@ let sealTicket = 0;
 
 async function render() {
   const values = buildValues();
-  const ready = Boolean(state.token.trim() && values.projects.length > 0);
+  // 작업 이름은 필수다 — 비면 봉인·내려받기·보내기 어느 것도 켜지지 않고,
+  // 이유가 actions 바로 위 한 줄로 선다.
+  const ready = Boolean(state.token.trim() && state.author.trim() && values.projects.length > 0);
   const ticket = ++sealTicket;
   // 입력이 움직였다 옛 봉인은 현재 입력의 것이 아니다 — 새 것이 올 때까지
   // 내려받기·공유는 꺼진다.
@@ -484,6 +487,15 @@ async function render() {
   for (const repo of state.repos) {
     const box = repo.row?.querySelector("input");
     if (box) box.checked = state.projects.some((project) => project.repoUrl === repo.cloneUrl);
+  }
+  // 작업 이름 안내는 마지막 남은 빈칸일 때만 — 연결 코드와 프로젝트가 이미
+  // 갖춰져 이름만 비었을 때 보인다. 처음부터 보이면 아무것도 넣지 않은
+  // 사람에게 오류로 읽힌다.
+  const authorMissing =
+    !state.author.trim() && Boolean(state.token.trim()) && values.projects.length > 0;
+  authorStatus.hidden = !authorMissing;
+  if (authorMissing) {
+    authorStatus.textContent = "작업 이름을 적어 주세요 — 넘긴 요청에 작성자로 적힙니다.";
   }
   filename.textContent = ready
     ? inviteFileName({ author: state.author, name: values.projects[0].name })

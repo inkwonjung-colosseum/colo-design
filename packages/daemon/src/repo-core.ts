@@ -3,7 +3,7 @@
 // domain module speaks. Package-internal: only repo.ts and the repo-*.ts
 // modules import this.
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ChangedFileLite,
@@ -12,7 +12,6 @@ import {
   type DiffStatus,
   type HandoffStatus,
   markTurn,
-  type RepoDiscard,
   type RepoErrorKind,
   type RepoHistory,
   type RepoPhase,
@@ -28,10 +27,8 @@ import {
   parseStatusRows,
   parseUnifiedDiff,
   sameChangedFiles,
-  unquoteGitPath,
   untrackedAsAdded,
 } from "./repo-diff.js";
-import { safeRepoPath } from "./repo-paths.js";
 export const INSTALL_MARKER = "colo-design-install-hash";
 /**
  * 실사 결함: fresh clone 의 첫 미리보기 부팅(next dev cold compile)이 30 초를
@@ -65,13 +62,13 @@ export const GATE_OUTPUT_TAIL_LINES = 30;
  */
 export const COMMAND_STALL_MS = 300_000;
 /**
- * The one shelf slot's ref. A ref of its own (never a `git stash`, whose
- * namespace the refresh's transit stash and its recovery machinery own) also
- * means the agent Bash gate's open `git stash` verbs cannot reach it.
+ * The one shelf slot's ref — v0.3.8~v0.3.10 의 치워두기 단추가 채웠고, 지금은
+ * 시작 쓸기의 자동 꺼내기(repo-shelf 의 recoverShelf)가 읽는다. A ref of its
+ * own (never a `git stash`, whose namespace the refresh's transit stash and
+ * its recovery machinery own) also means the agent Bash gate's open `git
+ * stash` verbs cannot reach it.
  */
 export const SHELF_REF = "refs/colo-design/shelf";
-/** Forensics only — the planner's words for the slot live in the UI. */
-export const SHELF_COMMIT_MESSAGE = "Colo Design 잠깐 치워두기";
 
 /** How long the save-time memo turn may take before the default message. */
 export const MEMO_TIMEOUT_MS = 8_000;
@@ -125,34 +122,6 @@ export const REFRESH_CONFLICT_DETAIL =
  */
 export const RECOVER_CONFLICT_DETAIL =
   "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
-/** What the planner reads when the slot they are filling is already full. */
-export const SHELF_ALREADY_DETAIL =
-  "이미 치워둔 작업이 있습니다 — 더 보기 메뉴에서 먼저 꺼내 주세요.";
-
-/** 치워두기 pressed with nothing unsaved — the door is for work in hand. */
-export const SHELF_EMPTY_DETAIL = "치워둘 변경이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
-
-/**
- * 꺼내기 pressed onto work in progress — the one-slot contract's other half:
- * the slot is not a second worktree, so what is out must come back onto an
- * empty desk. Named for the two doors that clear it, never for git.
- */
-export const SHELF_DIRTY_DETAIL =
-  "지금 작업 중인 변경이 있습니다 — 저장하거나 버린 뒤 꺼내 주세요.";
-
-export const SHELF_NONE_DETAIL = "치워둔 작업이 없습니다.";
-
-/** 치워두기·꺼내기 pressed while the agent still owes a conflict's cleanup. */
-export const SHELF_CONFLICT_OPEN_DETAIL =
-  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 시도해 주세요.";
-
-/**
- * What the planner reads when the 꺼내기 overlapped: same state and remedy as
- * RECOVER_CONFLICT_DETAIL, named for the shelf. The slot SURVIVES the
- * conflict — dropping it is the cleanup's last step, not the failure's.
- */
-export const SHELF_CONFLICT_DETAIL =
-  "치워둔 작업을 다시 얹다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 치워둔 작업은 그대로 남아 있습니다.";
 
 /**
  * What a 저장 pressed before the agent finished a conflict's cleanup reads —
@@ -184,7 +153,7 @@ export const PNPM_MISSING_DETAIL =
 export const REGISTRY_AUTH_DETAIL =
   "GitHub 패키지 인증이 필요합니다 — pnpm config set //npm.pkg.github.com/:_authToken <read:packages 권한 PAT>";
 export const REPO_URL_MISSING_DETAIL =
-  "연결 레포 주소가 없습니다 — 새 프로젝트로 레포를 연결해 주세요.";
+  "연결 레포 주소가 없습니다 — 개발자에게 받은 초대 파일을 다시 놓아 주세요.";
 
 // ---------------------------------------------------------------------------
 // Credential helpers (pure, unit tested)
@@ -335,18 +304,8 @@ export class RepoCore {
   /** The session-start/button refresh while it runs — saves wait it out. */
   refreshing: Promise<unknown> | null = null;
 
-  /** 잠깐 치워두기 연산이 도는 동안 — 저장 · 최신화 · 버리기가 이를 기다린다. */
+  /** 치워둔 슬롯의 자동 꺼내기(recoverShelf)가 도는 동안 — 저장 · 최신화가 이를 기다린다. */
   shelving: Promise<unknown> | null = null;
-
-  /** 치워둔 작업의 시각(ISO) — 상태의 한 조각으로 pendingChanges 와 함께 나간다. */
-  shelfAt: string | null = null;
-
-  /**
-   * Whether the ref behind `shelfAt` was read at least once in this daemon.
-   * The field above is memory; the ref is the truth (`shelve` checks it), so
-   * the first status on a clone reconciles them — see `status`.
-   */
-  shelfRead = false;
 
   /** Whether this project is the one on screen — see `setActive`. */
   active = true;
@@ -546,10 +505,6 @@ export class RepoCore {
       } catch {
         // Keep the last known config; the working phases surface parse errors.
       }
-      if (!this.shelfRead) {
-        this.shelfRead = true;
-        this.shelfAt = await this.readShelfAt();
-      }
     }
     return this.snapshot();
   }
@@ -676,82 +631,6 @@ export class RepoCore {
       })
       .filter((entry) => entry.sha !== "");
     return { base, entries };
-  }
-
-  /**
-   * 버리기의 본문 — 잠깐 치워두기가 스냅샷을 남긴 뒤 워크트리를 비우는 같은
-   * 경로. 대기 없음: 호출자(버리기·치워두기)가 이미 worktree 소유권을
-   * 정리했고, 여기서 다시 기다리면 치워두기가 자기 자신을 기다린다.
-   */
-  async clearUnsavedWork(): Promise<RepoDiscard> {
-    const changed = await this.changedPaths();
-    const allowed = changed
-      .map((path) => safeRepoPath(path))
-      .filter((path): path is string => path !== null);
-    if (allowed.length === 0) return { removed: [] };
-
-    // Tracked paths go back to HEAD (bringing a deleted file back included);
-    // paths HEAD never knew are un-staged and deleted from the worktree.
-    const inHead = new Set(
-      (await this.git(["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "HEAD"]))
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
-    const tracked = allowed.filter((path) => inHead.has(path));
-    if (tracked.length > 0) await this.git(["checkout", "HEAD", "--", ...tracked]);
-    for (const path of allowed) {
-      if (inHead.has(path)) continue;
-      await this.git(["rm", "--force", "--cached", "--", path]).catch(() => undefined);
-      // porcelain folds a wholly-untracked folder into one `dir/` row, so the
-      // path here can BE a directory — force alone only suppresses ENOENT and
-      // throws EISDIR on one. Recursive handles the file case identically.
-      rmSync(join(this.root, path), { recursive: true, force: true });
-    }
-    await this.refreshPendingChanges();
-    return { removed: allowed };
-  }
-
-  /** Every path with an unsaved change, renames split into both sides. */
-  async changedPaths(): Promise<string[]> {
-    const out = await this.git(["-c", "core.quotepath=false", "status", "--porcelain"]);
-    const paths: string[] = [];
-    for (const line of out.split(/\r?\n/)) {
-      if (line.length < 4) continue;
-      const body = line.slice(3);
-      const rename = body.match(/^(.*) -> (.*)$/);
-      if (rename)
-        paths.push(
-          unquoteGitPath((rename[1] ?? "").trim()),
-          unquoteGitPath((rename[2] ?? "").trim()),
-        );
-      else paths.push(unquoteGitPath(body.trim()));
-    }
-    return paths.filter(Boolean);
-  }
-
-  /** 치워둔 작업이 자리를 잡고 있는가 — the ref, nothing else, says so. */
-  async shelfExists(): Promise<boolean> {
-    try {
-      await this.git(["rev-parse", "-q", "--verify", SHELF_REF]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** The slot's `at`, read where `refreshPendingChanges` recounts the chip. */
-  async readShelfAt(): Promise<string | null> {
-    try {
-      const out = await this.git([
-        "for-each-ref",
-        "--format=%(committerdate:iso8601-strict)",
-        SHELF_REF,
-      ]);
-      return out.trim() === "" ? null : out.trim();
-    } catch {
-      return this.shelfAt;
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -1275,7 +1154,6 @@ export class RepoCore {
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       pendingChanges: this.pendingChanges,
-      shelf: this.shelfAt === null ? null : { at: this.shelfAt },
       errorKind: this.errorKind,
       commands: this.config
         ? {
@@ -1325,17 +1203,11 @@ export class RepoCore {
       added: counts[row.path]?.added ?? null,
       removed: counts[row.path]?.removed ?? null,
     }));
-    const shelf = await this.readShelfAt();
-    this.shelfRead = true;
-    if (
-      files.length === this.pendingChanges &&
-      shelf === this.shelfAt &&
-      sameChangedFiles(files, this.changedFiles)
-    )
+    if (files.length === this.pendingChanges && sameChangedFiles(files, this.changedFiles)) {
       return;
+    }
     this.pendingChanges = files.length;
     this.changedFiles = files;
-    this.shelfAt = shelf;
     this.emit();
   }
 

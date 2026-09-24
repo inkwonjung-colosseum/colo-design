@@ -12,7 +12,6 @@ import {
   SIDEBAR_WIDTH_BOUNDS,
   switchProviderPatch,
 } from "../../lib/settings";
-import { AddProjectDialog } from "../dialogs/AddProjectDialog";
 import { InviteDialog } from "../dialogs/InviteDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import { TokenExpiryDialog } from "../dialogs/TokenExpiryDialog";
@@ -85,10 +84,8 @@ export function Shell({
       inviteImport.close();
     }
   }, [inviteImport.state, inviteImport.close]);
-  // 개발 실행(dev)에서만 프로젝트 추가 길이 산다 — 실사용의 추가는 초대장이 한다.
+  // 개발 실행(dev) 판정 — 프로젝트 지우기(1단계 canRemoveProject)가 쓴다.
   const devMachine = status?.dev === true;
-  /** 프로젝트 추가 — the sidebar's `+ 새 프로젝트` opens it. */
-  const [addOpen, setAddOpen] = useState(false);
   /** 시작하기 was pressed this session — warns stop re-opening the wizard. */
   const [wizardDismissed, setWizardDismissed] = useState(false);
   useEffect(() => {
@@ -149,11 +146,14 @@ export function Shell({
   const onboardingBlocked = recheckingProvider
     ? false
     : daemon.onboarding === null || daemon.onboarding.some((step) => step.status === "fail");
-  // A warn does not block. On a FIRST run it still holds the stage — a
-  // machine with no GitHub token should land on the token form, not on an
-  // empty picker that can only offer a pasted url — and once the wizard is
-  // up it stays until 시작하기. A planner who already has a project has been
-  // through this; their warn lives in 설정, not across their workspace.
+  // A warn does not block. On a FIRST run it still holds the stage — the
+  // machine gates are the rows a planner can still act on — and the hold is
+  // live, not a latch: the moment every machine gate reads pass the wizard
+  // has nothing left to ask, so it steps aside by itself (no 시작하기
+  // press) into the start screen that waits for an invite file. A planner
+  // who already has a project has been through this; their warn lives in
+  // 설정, not across their workspace. The settings-opened wizard
+  // (onboardingOpen) is exempt — a 다시 보기 stays until it is closed.
   const [wizardNeeded, setWizardNeeded] = useState(false);
   useEffect(() => {
     // The hold must RELEASE: onboarding.check and the registry can arrive in
@@ -163,12 +163,19 @@ export function Shell({
       setWizardNeeded(false);
       return;
     }
-    // github 의 warn(토큰 없음)은 마법사를 세우지 않는다 — 그 수정은 초대 파일이
-    // 맡는다(시작 화면 · 토큰 만료 카드 · 설정의 초대 파일 열기). 기계 게이트의
-    // warn은 오늘 처럼 마법사를 세운다: 고칠 행이 여기밖에 없다.
-    if (daemon.onboarding?.some((step) => step.status !== "pass" && step.id !== "github"))
-      setWizardNeeded(true);
-  }, [daemon.onboarding, daemon.projects.length]);
+    // github 의 warn(연결 코드 없음)은 마법사 판정에서 빠진다 — 그 수정은 초대
+    // 파일이 맡는다(시작 화면 · 토큰 만료 카드 · 설정의 초대 파일 열기). 기계
+    // 게이트 셋의 판정이 마법사의 운명이다: 남은 것이 없으면 스스로 물러나고,
+    // 하나라도 남으면 마법사가 그 행을 안고 있는다. 재검사 중의 steps 는 지난
+    // 프로바이더의 판정이라 그 답으로 닫지 않는다.
+    const machineGates = (daemon.onboarding ?? []).filter((step) => step.id !== "github");
+    if (machineGates.length === 0) return;
+    if (!recheckingProvider && machineGates.every((step) => step.status === "pass")) {
+      setWizardNeeded(false);
+      return;
+    }
+    if (machineGates.some((step) => step.status !== "pass")) setWizardNeeded(true);
+  }, [daemon.onboarding, daemon.projects.length, recheckingProvider]);
   // The daemon knows why it cannot work — no CLI, not signed in, no pnpm — and
   // the planner cannot read a terminal to find out. The repo's settings.json
   // warning rides beside them but is news, not a live problem: its
@@ -192,7 +199,7 @@ export function Shell({
   }, [githubExpired]);
   const expiryCard =
     githubExpired && !expiryDismissed && connection === "open" ? (
-      <TokenExpiryDialog daemon={daemon} onDismiss={() => setExpiryDismissed(true)} />
+      <TokenExpiryDialog onDismiss={() => setExpiryDismissed(true)} />
     ) : null;
   /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
       새 문장은 새 소식이니 다시 보인다. 레포 경고(뉴스)만 예외로 기기에
@@ -315,11 +322,23 @@ export function Shell({
     );
   }
 
+  // 마법사가 떠 있어도 초대 파일 드롭 리스너는 살아 있다(useInviteImport 가
+  // 창 전체에서 받는다) — 받은 사실을 마법사 안에 한 줄로 알려 둔다. 이어짐은
+  // 시작 화면이 맡는다: 마법사가 닫히면 StartFlow 가 받아 둔 상태(confirm 카드)
+  // 를 그대로 그린다.
+  const inviteNotice =
+    inviteImport.state.phase === "reading" || inviteImport.state.phase === "confirm"
+      ? { tone: "info" as const, text: "초대 파일을 받았어요 — 준비가 끝나면 바로 이어집니다." }
+      : inviteImport.state.phase === "error"
+        ? { tone: "error" as const, text: inviteImport.state.error }
+        : null;
+
   if (onboardingBlocked || onboardingOpen || (wizardNeeded && !wizardDismissed)) {
     return (
       <div className="planner planner--onboarding">
         <Onboarding
           daemon={daemon}
+          inviteNotice={inviteNotice}
           provider={settings.chat.provider}
           providers={daemon.status?.providers ?? []}
           checking={recheckingProvider}
@@ -377,7 +396,7 @@ export function Shell({
           setCollapsed(next);
           onLayoutChange({ sidebarCollapsed: next });
         }}
-        onAddProject={devMachine ? () => setAddOpen(true) : undefined}
+        canRemoveProject={devMachine}
         onOpenSettings={onOpenSettings}
         sessionTitles={settings.sessionTitles}
         activeThreadId={activeThreadId}
@@ -556,10 +575,8 @@ export function Shell({
           onOpenSettings={onOpenSettings}
           onRenameSession={onRenameSession}
           onActiveThreadChange={setActiveThreadId}
-          onAddProject={devMachine ? () => setAddOpen(true) : undefined}
         />
       </div>
-      {addOpen && <AddProjectDialog daemon={daemon} onClose={() => setAddOpen(false)} />}
       {/* 초대 가져오기 — 작업 화면 위의 대화상자. 첫 실행이 모두 성공하고 경고도
           없으면 아래 effect 가 조용히 닫는다(삭제 안내는 확인 카드가 이미 말했다). */}
       <InviteDialog daemon={daemon} controller={inviteImport} />

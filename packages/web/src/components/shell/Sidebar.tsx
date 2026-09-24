@@ -12,7 +12,6 @@ import {
   CloseIcon,
   DesktopIcon,
   ExportIcon,
-  FolderPlusIcon,
   GearIcon,
   HistoryIcon,
   HomeIcon,
@@ -72,7 +71,7 @@ export function Sidebar({
   collapsed,
   collapsedByViewport,
   onToggleCollapsed,
-  onAddProject,
+  canRemoveProject,
   onOpenSettings,
   boundary,
   sessionTitles,
@@ -93,8 +92,10 @@ export function Sidebar({
   /** A narrow window folds the rail no matter what the setting says. */
   collapsedByViewport: boolean;
   onToggleCollapsed: () => void;
-  /** 프로젝트 추가 길 — 개발 실행에서만 Shell 이 준다(실사용은 초대장이 한다). 없으면 ＋ 길이 사라진다. */
-  onAddProject?: () => void;
+  /** 프로젝트 지우기 — 개발 실행에서만 Shell 이 켠다. 프로젝트는 초대 파일이
+   *  정하는 것이고 사용자가 지우면 제출 전 작업까지 사라질 수 있으며, 다음
+   *  초대 파일이 다시 되살리므로 실사용 지우기는 길 자체가 없다. */
+  canRemoveProject?: boolean;
   onOpenSettings: () => void;
   /** Rendered between the rail and the drag boundary (Shell composes it —
       the width state and its persistence live there, beside the preview's). */
@@ -820,7 +821,9 @@ export function Sidebar({
                           {/* The row menu's tail: a rail has no ··· button, so the
                               project's own moves ride here. 이름 바꾸기 stays out —
                               its inline input cannot live in a 44px column. */}
-                          <span className="node__pop__sep" aria-hidden="true" />
+                          {(canRemoveProject || threads.length > 0) && (
+                            <span className="node__pop__sep" aria-hidden="true" />
+                          )}
                           {threads.length > 0 && (
                             <button
                               type="button"
@@ -837,20 +840,22 @@ export function Sidebar({
                               <span className="selector__label">대화 모두 지우기</span>
                             </button>
                           )}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="selector__row"
-                            onClick={() => {
-                              setPopoverFor(null);
-                              setRemoving(project);
-                            }}
-                          >
-                            <span className="ic ic--danger ic--sm">
-                              <TrashIcon />
-                            </span>
-                            <span className="selector__label">프로젝트 지우기</span>
-                          </button>
+                          {canRemoveProject && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="selector__row"
+                              onClick={() => {
+                                setPopoverFor(null);
+                                setRemoving(project);
+                              }}
+                            >
+                              <span className="ic ic--danger ic--sm">
+                                <TrashIcon />
+                              </span>
+                              <span className="selector__label">프로젝트 지우기</span>
+                            </button>
+                          )}
                         </span>
                       </>
                     )}
@@ -1061,20 +1066,22 @@ export function Sidebar({
                                   <span className="selector__label">대화 모두 지우기</span>
                                 </button>
                               )}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="selector__row"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  setRemoving(project);
-                                }}
-                              >
-                                <span className="ic ic--danger ic--sm">
-                                  <TrashIcon />
-                                </span>
-                                <span className="selector__label">프로젝트 지우기</span>
-                              </button>
+                              {canRemoveProject && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="selector__row"
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    setRemoving(project);
+                                  }}
+                                >
+                                  <span className="ic ic--danger ic--sm">
+                                    <TrashIcon />
+                                  </span>
+                                  <span className="selector__label">프로젝트 지우기</span>
+                                </button>
+                              )}
                             </span>
                           </>
                         )}
@@ -1155,30 +1162,10 @@ export function Sidebar({
             </>
           )}
         </div>
-
-        {/* The rail's foot: 새 프로젝트 on the left, 설정 on the right — the
-            gear moved here from the header so every frame control lives in
-            one room. The fold keeps both: a 44px rail stacks the ＋ tile
-            over the gear, so narrow windows lose neither move. */}
+        {/* The rail's foot: 설정 — the gear moved here from the header so
+            every frame control lives in one room. The fold keeps it: a 44px
+            rail centers the column. */}
         <div className="sidebar__foot">
-          {rail
-            ? onAddProject && (
-                <Tip label="새 프로젝트" side="right">
-                  <button
-                    type="button"
-                    className="ghost sidebar__plus"
-                    aria-label="새 프로젝트"
-                    onClick={onAddProject}
-                  >
-                    ＋
-                  </button>
-                </Tip>
-              )
-            : onAddProject && (
-                <button type="button" className="ghost sidebar__new" onClick={onAddProject}>
-                  <FolderPlusIcon />+ 새 프로젝트
-                </button>
-              )}
           <button
             type="button"
             className="ghost sidebar__gear"

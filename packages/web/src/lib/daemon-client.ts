@@ -8,7 +8,6 @@ import type {
   DiffStatus,
   EffortLevel,
   GitHubRepoInspection,
-  GitHubRepoList,
   HandoffPreviewInfo,
   HandoffStatusReport,
   LostSend,
@@ -688,12 +687,6 @@ interface DaemonApi {
    * port before starting.
    */
   repoSync: (force?: boolean) => Promise<RepoStatus>;
-  /**
-   * 레포 최신화: pull the developer's merged work into the clone, with
-   * unsaved changes riding along. A conflict goes to the named thread as
-   * the agent.s next turn.
-   */
-  repoRefresh: (sessionId?: string | null) => Promise<RepoStatus>;
   /** Worktree changes not saved yet, for the 저장 review panel. */
   diff: () => Promise<DiffFile[]>;
   /**
@@ -750,23 +743,6 @@ interface DaemonApi {
    * `diff.status`, like a save.
    */
   restore: (sha: string) => Promise<DiffStatus>;
-  /** 변경 버리기: drop unsaved changes on the allowed paths. */
-  discard: () => Promise<{ removed: string[] }>;
-  /**
-   * 잠깐 치워두기: park every unsaved change in the
-   * ONE shelf slot and clear the worktree — the non-destructive third door
-   * next to 저장 and 버리기. Refusals (slot full · nothing unsaved) arrive
-   * as one Korean sentence in the error's message.
-   */
-  shelve: () => Promise<{ at: string }>;
-  /**
-   * 치워둔 작업 꺼내기: re-apply the shelved work onto the current HEAD —
-   * never a rewind. Refused while the worktree is dirty; a conflict is
-   * the agent.s brief in the named thread and the slot survives it. The
-   * `sessionId` is where that brief lands — without it a conflict has
-   * nowhere to go and the planner gets only the refusal sentence.
-   */
-  unshelve: (sessionId?: string | null) => Promise<{ applied: string[] }>;
   /**
    * 패인 오류의 판정: re-open one screen in the daemon's isolated
    * verification window (게이트와 같은 드라이버·같은 판정) — did the page
@@ -826,8 +802,6 @@ interface DaemonApi {
   machineSet: (provider: string | null) => Promise<{ ok: true }>;
   /** 넘긴 요청에 적을 작성자 이름 — null 이면 지운다(P1-3). */
   machineAuthorSet: (name: string | null) => Promise<{ ok: true }>;
-  /** Repos the token can reach — the project picker's list. */
-  githubReposList: (refresh?: boolean) => Promise<GitHubRepoList>;
   /** Judge one repo before any clone. */
   githubRepoInspect: (owner: string, repo: string) => Promise<GitHubRepoInspection>;
   /** Run a fix; resolves with whatever the fix returns (status/guidance). */
@@ -1669,13 +1643,7 @@ export function useDaemon(url: string | null): Daemon {
         call<RepoStatus>({ type: "repo.sync", ...(force ? { force: true } : {}) }, 600_000).then(
           keepRepo,
         ),
-      // A refresh is one fetch-and-merge on the clone: the window a network
-      // read gets, not the minutes a first clone or install takes.
-      repoRefresh: (sessionId?: string | null) =>
-        call<RepoStatus>(
-          { type: "repo.refresh", ...(sessionId ? { sessionId } : {}) },
-          120_000,
-        ).then(keepRepo),
+
       diff: () => call<DiffFile[]>({ type: "diff.get" }, 120_000),
       // A save runs the repo's own check and build before pushing: the
       // same minutes a first sync is given.
@@ -1724,13 +1692,6 @@ export function useDaemon(url: string | null): Daemon {
         call<{ ok: true }>({ type: "machine.set", provider }, 15_000),
       machineAuthorSet: (name: string | null) =>
         call<{ ok: true }>({ type: "machine.author.set", name }, 15_000),
-      // Listing walks up to five pages of GitHub: the window a few network
-      // reads get, not the one a local request does.
-      githubReposList: (refresh?: boolean) =>
-        call<GitHubRepoList>(
-          { type: "github.repos.list", ...(refresh ? { refresh } : {}) },
-          120_000,
-        ),
       githubRepoInspect: (owner: string, repo: string) =>
         call<GitHubRepoInspection>({ type: "github.repo.inspect", owner, repo }, 60_000),
       // One read of one pull request — no gate, no push. The window a remote
@@ -1756,13 +1717,6 @@ export function useDaemon(url: string | null): Daemon {
       // A restore commits and pushes, and the repo's checks may run on the
       // way: the same window a save is given.
       restore: (sha: string) => call<DiffStatus>({ type: "repo.restore", sha }, 600_000),
-      discard: () => call<{ removed: string[] }>({ type: "repo.discard" }, 120_000),
-      shelve: () => call<{ at: string }>({ type: "repo.shelve" }, 120_000),
-      unshelve: (sessionId?: string | null) =>
-        call<{ applied: string[] }>(
-          { type: "repo.unshelve", ...(sessionId ? { sessionId } : {}) },
-          120_000,
-        ),
       // 검증 창이 화면을 열고 문서가 완전히 로드되기를 기다리는 시간 —
       // 게이트의 한 화면과 같은 길이다. null 은 판정이 아니라 확인 불능이다.
       screenCheck: (route: string) =>

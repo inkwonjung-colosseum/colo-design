@@ -180,12 +180,6 @@ export interface RepoStatus {
    * 같음 비교에 쓰인다.
    */
   pendingChanges: number;
-  /**
-   * 치워둔 작업 — null when the slot is empty. While it is filled the
-   * `변경 없음` chip must not exist: parked is a state, not an absence
-   * (보관함 토론 — 분실은 가시성 부재로 시작된다).
-   */
-  shelf: RepoShelf | null;
 }
 
 /**
@@ -360,26 +354,4 @@ export interface RepoHistory {
   /** What the entries are counted against, e.g. `origin/main`. */
   base: string;
   entries: RepoHistoryEntry[];
-}
-
-export interface RepoDiscard {
-  /** Unsaved changes that were thrown away, relative to the repo root. */
-  removed: string[];
-}
-
-/**
- * 치워둔 작업 (보관함 토론 2026-09-15): ONE slot, no names to manage — the
- * third door between 저장 (public, permanent) and 버리기 (gone). The work
- * lives in a ref of the tool's own (`refs/colo-design/shelf`), never a git
- * stash, so the refresh's transit stash machinery cannot touch it.
- */
-export interface RepoShelf {
-  /** When the work was parked, ISO 8601. */
-  at: string;
-}
-
-/** `repo.unshelve` — what the 꺼내기 landed, named for the planner to read. */
-export interface RepoShelfRestore {
-  /** Paths the re-apply touched, relative to the repo root. */
-  applied: string[];
 }

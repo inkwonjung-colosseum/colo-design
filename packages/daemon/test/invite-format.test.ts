@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   normalizeInvite,
@@ -9,10 +8,10 @@ import {
   sameRepo,
 } from "@colo-design/protocol";
 
-// 쓰는 쪽은 스크립트 모듈(.mjs)이다 — 패키지 바깥의 파일 경로라 정적 import 로는
-// 쓸 수 없고, 데몬 테스트는 typecheck 대상이 아니므로 경로로 직접 들어온다.
+// 쓰는 쪽은 docs 의 형식 모듈(.mjs)이다 — 패키지 바깥의 파일 경로라 정적 import
+// 로는 쓸 수 없고, 데몬 테스트는 typecheck 대상이 아니므로 경로로 직접 들어온다.
 const { buildInvite, sealInvite } = await import(
-  new URL("../../../scripts/invite-format.mjs", import.meta.url).href
+  new URL("../../../docs/invite-format.mjs", import.meta.url).href
 );
 
 function sampleInvite() {
@@ -69,15 +68,6 @@ test("평문 v2 JSON 은 그대로 통과한다 — 이미 보낸 초대장이 �
 test("문법이 깨진 텍스트는 json 실패로 말한다", async () => {
   const read = await readInviteJson("{oops");
   assert.deepEqual(read, { ok: false, reason: "json" });
-});
-
-test("docs 의 복사본은 scripts 원본과 바이트 단위로 같다", () => {
-  const original = readFileSync(
-    new URL("../../../scripts/invite-format.mjs", import.meta.url),
-    "utf8",
-  );
-  const copy = readFileSync(new URL("../../../docs/invite-format.mjs", import.meta.url), "utf8");
-  assert.equal(copy, original);
 });
 
 // ---------------------------------------------------------------------------

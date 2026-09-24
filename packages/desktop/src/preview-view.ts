@@ -543,7 +543,7 @@ export class PlannerPreviewView {
   }
 
   /**
-   * The agent's navigation (PaneCaptureDriver): a real load, awaited — never
+   * The agent's navigation (PaneBrowserDriver): a real load, awaited — never
    * the bridge's client routing, because the driver needs a document it can
    * wait on. A repo-allowed foreign origin mounts as its own page, same as
    * `open`. Returns false when the load failed or the url is not allowed.

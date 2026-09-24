@@ -5,7 +5,7 @@ import { timeAgo } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { type HiddenThreads, visibleThreads } from "../../lib/thread-visibility";
 import { CATEGORIES, type SettingsCategory } from "../dialogs/SettingsDialog";
-import { FolderIcon, GearIcon, PlusIcon, SearchIcon } from "../icons";
+import { GearIcon, PlusIcon, SearchIcon } from "../icons";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
 type Group = "대화" | "화면" | "프로젝트" | "명령";
@@ -78,7 +78,6 @@ export function Palette({
   onOpenThread,
   onCreateSession,
   onActivateProject,
-  onAddProject,
   onOpenSettings,
   onCheckState,
   onClose,
@@ -101,8 +100,6 @@ export function Palette({
   onCreateSession: () => void;
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
-  /** 프로젝트 추가 — 개발 실행에서만 Shell 이 준다. 없으면 칩이 사라진다. */
-  onAddProject?: () => void;
   onOpenSettings: (category?: SettingsCategory) => void;
   /** 개발자의 판정을 GitHub 에서 다시 읽는다 — 상단 바의 상태 확인과 같은 통로. */
   onCheckState: () => void;
@@ -273,16 +270,6 @@ export function Palette({
     const commands: Array<{ label: string; hint: string; icon: typeof PlusIcon; run: () => void }> =
       [
         { label: "새 대화", hint: "화면 대화를 시작합니다", icon: PlusIcon, run: onCreateSession },
-        ...(onAddProject
-          ? [
-              {
-                label: "새 프로젝트",
-                hint: "레포를 하나 더 연결합니다",
-                icon: FolderIcon,
-                run: onAddProject,
-              },
-            ]
-          : []),
         {
           label: "상태 확인",
           hint: "개발자의 판정과 코멘트를 다시 읽어 옵니다",
@@ -297,7 +284,7 @@ export function Palette({
         },
       ];
     return commands.filter((command) => rank(query, command.label) >= 0);
-  }, [query, onCreateSession, onAddProject, onCheckState, onOpenSettings]);
+  }, [query, onCreateSession, onCheckState, onOpenSettings]);
 
   // A shrinking list must not keep a highlight past its end.
   const index = Math.min(highlight, Math.max(0, rows.length - 1));
@@ -372,7 +359,7 @@ export function Palette({
                   ? `'${query.trim()}'와 맞는 것이 없습니다.`
                   : projectSlug
                     ? "이 프로젝트에 아직 대화가 없습니다."
-                    : "아직 아무것도 없습니다 — 첫 프로젝트를 만들어 보세요."}
+                    : "아직 대화가 없습니다."}
               </span>
             </li>
           )}

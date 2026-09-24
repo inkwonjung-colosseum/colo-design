@@ -1,9 +1,9 @@
 /**
  * The preview driver contract (게이트 재배선 2026-09-17): the one window the
  * daemon borrows to LOOK at the connected repo's running app. Its consumers
- * are the screen gate (턴 끝 재검증), the handoff captures and the 화면
- * 캡처 — the desktop injects a factory, the browser dev path injects nothing
- * and a gate simply never fires. 인앱 브라우저부터 이 모듈은 두 번째 계약 —
+ * are the screen gate (턴 끝 재검증) and the handoff captures — the desktop
+ * injects a factory, the browser dev path injects nothing and a gate simply
+ * never fires. 인앱 브라우저부터 이 모듈은 두 번째 계약 —
  * 에이전트가 pane 의 페이지를 만지는 `BrowserDriver` — 도 선언한다.
  */
 
@@ -66,11 +66,6 @@ export interface PreviewDriver {
 }
 
 export interface PreviewDriverFactory {
-  /**
-   * `baseUrl` is the preview server. The pane's driver when one is on
-   * screen.
-   */
-  for(baseUrl: string): PreviewDriver;
   /**
    * A driver for verification work (the screen gate, handoff captures) —
    * always an isolated window, never the pane the user is driving:
