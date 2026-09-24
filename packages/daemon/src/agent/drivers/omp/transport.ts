@@ -53,12 +53,14 @@ export class OmpRpcTransport {
       /** The agent's own stderr, for the daemon log. */
       onStderr?: (text: string) => void;
     },
+    /** 자식의 환경 — 기본은 데몬의 것. git 가드(gitGuardEnv)가 여기로 든다. */
+    env: NodeJS.ProcessEnv = process.env,
   ) {
     this.readyGate = new Promise<void>((resolve, reject) => {
       this.openReadyGate = resolve;
       this.failReadyGate = reject;
     });
-    this.proc = spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    this.proc = spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env });
     this.proc.stderr?.on("data", (data: Buffer) => this.handlers.onStderr?.(data.toString()));
     // An EPIPE racing the agent's exit must not become an uncaughtException.
     this.proc.stdin?.on("error", () => undefined);

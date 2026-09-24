@@ -28,6 +28,7 @@ import {
 import { RequestRouter } from "./dispatch.js";
 import { buildStatus, resolveClaudeExecutable } from "./environment.js";
 import { Escalation } from "./escalation.js";
+import { ensureGitGuardHooks } from "./git-guard.js";
 import { GitHubBridge } from "./github-bridge.js";
 import { HandoffPreviews } from "./handoff-preview.js";
 import { createFileLogger, type DaemonLogger } from "./log.js";
@@ -743,6 +744,9 @@ export class DaemonServer {
 
   async start(): Promise<void> {
     this.claudeExecutable = await resolveClaudeExecutable(this.config.claudeExecutable);
+    // git 가드 훅 폴더를 기동 때 한 번 쓴다 — 세션을 띄우는 드라이버들이
+    // gitGuardEnv 로 core.hooksPath 를 겨눌 때 훅이 이미 있어야 한다.
+    ensureGitGuardHooks();
     // 기동 청소 (PLAN D86 의 확장): rooms the dead process was holding come
     // back as the lost room — the turns they waited for are gone, so the
     // words surface for the planner's hand, never for an automatic send.

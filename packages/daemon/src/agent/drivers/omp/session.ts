@@ -7,6 +7,7 @@ import type {
 } from "@colo-design/protocol";
 import { BROWSER_TOOLS, callBrowserTool, refused } from "../../../browser-tools.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
+import { ensureGitGuardHooks, gitGuardEnv } from "../../../git-guard.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type {
   AgentSession,
@@ -113,10 +114,18 @@ export class OmpAgentSession implements AgentSession {
     // 신뢰 대화상자 없이 verbatim 으로 읽는다. 클론·갱신·기동 스윕과 같은 칼이며,
     // 이미 깨끗하면 무동작이다.
     sanitizeRepoAgentSettings(launch.cwd);
-    this.transport = new OmpRpcTransport(command, [...prefixArgs, ...ompArgs(launch)], launch.cwd, {
-      onFrame: (frame) => this.onFrame(frame),
-      onEnd: () => this.onTransportEnd(),
-    });
+    this.transport = new OmpRpcTransport(
+      command,
+      [...prefixArgs, ...ompArgs(launch)],
+      launch.cwd,
+      {
+        onFrame: (frame) => this.onFrame(frame),
+        onEnd: () => this.onTransportEnd(),
+      },
+      // git 수준 가드 (PLAN L5): 참조를 바꾸는 git 은 core.hooksPath 의 훅이
+      // 거절한다 — 권한 게이트(always-ask)와 별개의 두 번째 겹.
+      gitGuardEnv({ ...process.env }, ensureGitGuardHooks()),
+    );
     const handshake = this.handshake();
     // 핸드셰이크 거절(ready 타임아웃, branch 거부)은 자식을 죽이지 않는다 —
     // 그대로 두면 좀비 프로세스 위에서 alive 가 참으로 남아 코어가 크래시로

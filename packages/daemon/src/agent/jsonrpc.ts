@@ -34,11 +34,13 @@ export class JsonRpcTransport {
       /** The pipe closed or the process exited — once, either way. */
       onEnd: (exitCode: number | null) => void;
     },
+    /** 자식의 환경 — 기본은 데몬의 것. git 가드(gitGuardEnv)가 여기로 든다. */
+    env: NodeJS.ProcessEnv = process.env,
   ) {
     this.proc = spawn(command, args, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env,
     });
     // The agent's own log stream — useful in the daemon log, never parsed.
     this.proc.stderr?.on("data", () => undefined);

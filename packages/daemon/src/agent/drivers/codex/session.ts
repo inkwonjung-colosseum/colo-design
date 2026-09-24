@@ -6,6 +6,7 @@ import type {
   SessionModelInfo,
 } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, codexBrowserMcpServer } from "../../../browser-launch.js";
+import { ensureGitGuardHooks, gitGuardEnv } from "../../../git-guard.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type {
   AgentSession,
@@ -170,11 +171,19 @@ export class CodexAgentSession implements AgentSession {
     this.launch = launch;
     this.currentModel = launch.model;
     this.currentEffort = launch.effort;
-    this.transport = new JsonRpcTransport(command, ["app-server"], launch.cwd, {
-      onRequest: (method, params) => this.onAgentRequest(method, params),
-      onNotify: (method, params) => this.onAgentNotify(method, params),
-      onEnd: (code) => this.onTransportEnd(code),
-    });
+    this.transport = new JsonRpcTransport(
+      command,
+      ["app-server"],
+      launch.cwd,
+      {
+        onRequest: (method, params) => this.onAgentRequest(method, params),
+        onNotify: (method, params) => this.onAgentNotify(method, params),
+        onEnd: (code) => this.onTransportEnd(code),
+      },
+      // git 수준 가드 (PLAN L5): BYPASS_APPROVAL_POLICY 라 권한을 묻는 길이
+      // 없으므로, 참조를 바꾸는 git 은 core.hooksPath 의 훅이 거절한다.
+      gitGuardEnv({ ...process.env }, ensureGitGuardHooks()),
+    );
     const handshake = this.handshake();
     // 핸드셰이크 거절(initialize·thread/* 타임아웃)은 자식을 죽이지 않는다 —
     // 그대로 두면 좀비 프로세스 위에서 alive 가 참으로 남아 코어가 크래시로
