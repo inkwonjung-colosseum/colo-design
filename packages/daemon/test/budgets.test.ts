@@ -62,6 +62,8 @@ test("BUDGETS 표의 값이 PLAN L7 과 같다", () => {
   assert.deepEqual(BUDGETS.turnRetry, {
     attempts: 5,
     delaysMs: [4_000, 16_000, 60_000, 300_000, 900_000],
+    // 한도 기다림의 상한 — 24시간 (PLAN L7 · 단계 8).
+    limitWaitMaxMs: 24 * 60 * 60_000,
   });
   assert.deepEqual(BUDGETS.revive, { max: 3, windowMs: 10 * 60_000, graceMs: 1_500 });
   assert.deepEqual(BUDGETS.push, {

@@ -20,9 +20,10 @@ test("성공한 턴이 셈을 지운다 — 다음 고장은 새로운 사건이
   const budget = new ReviveBudget();
   budget.allow("s", 0);
   budget.allow("s", 1_000);
-  assert.equal(budget.allow("s", 2_000), false);
+  budget.allow("s", 2_000);
+  assert.equal(budget.allow("s", 3_000), false, "10분 안의 3회가 상한이다");
   budget.settled("s");
-  assert.equal(budget.allow("s", 3_000), true);
+  assert.equal(budget.allow("s", 4_000), true);
 });
 
 test("10분 창 밖의 되살리기는 세지 않는다", () => {
@@ -30,8 +31,9 @@ test("10분 창 밖의 되살리기는 세지 않는다", () => {
   const t0 = 1_000_000;
   assert.equal(budget.allow("s", t0), true);
   assert.equal(budget.allow("s", t0 + 60_000), true);
-  assert.equal(budget.allow("s", t0 + 120_000), false);
-  // 첫 셈은 창 밖으로 밀려났다 — 남은 셈만 센다.
+  assert.equal(budget.allow("s", t0 + 120_000), true);
+  assert.equal(budget.allow("s", t0 + 180_000), false, "창 안의 3회가 상한이다");
+  // 앞두 셈은 창 밖으로 밀려났다 — 남은 셈만 센다.
   assert.equal(budget.allow("s", t0 + 11 * 60_000), true);
 });
 

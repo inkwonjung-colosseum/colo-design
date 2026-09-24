@@ -101,7 +101,7 @@ interface TurnStatsRow {
   /** 핀 턴이 에이전트에게 실어 보낸 말의 바이트 — 핀 페이로드의 크기. 핀 턴만. */
   pinBytes: number | null;
   /** 실패한 턴의 단계 — 실패 문장의 최선 분류. 성공 턴은 null. */
-  failure: "length" | "limit" | "stream" | "other" | null;
+  failure: "length" | "auth" | "limit" | "stream" | "other" | null;
   /** 카드 대기(waiting_*)의 누적 — durationMs 에 섞인 사람 시간. */
   waitMs: number;
   /** 보내기 문에서 핀 강화(파일 후보)가 걸린 시간 — 핀 턴만 값이 있다. */
