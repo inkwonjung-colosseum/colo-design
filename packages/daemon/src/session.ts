@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type {
   AskQuestion,
@@ -254,15 +253,16 @@ export interface SessionOptions {
 }
 
 /**
- * git 의 명사는 도구가 합니다 (README · PLAN D5): 커밋과 푸시는 저장·넘기기
- * 버튼의 몫이라, 세션이 직접 만들면 개발자에게 가는 풀 리퀘스트가 도구가
- * 검토하지 못한 역사를 실어 나른다(실측: 핸드오프 브랜치에 무의미한 커밋).
- * 같은 이유로 워크트리·인덱스·레퍼런스를 바꾸는 동사들도 막는다 — reset·
- * checkout·stash 는 커밋 없이도 저장 검토가 읽는 상태를 흔든다. 상태 읽기
- * (status·log·diff·fetch)와 충돌 정리의 add 는 그대로다.
+ * git 의 명사는 도구가 합니다 (README · PLAN D5 · L5): 커밋과 푸시는 저장·
+ * 넘기기 버튼의 몫이라, 세션이 직접 만들면 개발자에게 가는 풀 리퀘스트가
+ * 도구가 검토하지 못한 역사를 실어 나른다(실측: 핸드오프 브랜치에 무의미한
+ * 커밋). 같은 이유로 워크트리·인덱스·레퍼런스를 바꾸는 동사들도 막는다 —
+ * reset·checkout·stash 는 커밋 없이도 저장 검토가 읽는 상태를 흔든다.
+ * 충돌 정리의 add · commit 도 도구의 몫이다(감독자의 finishToolOp) — 세션은
+ * 파일만 고친다. 상태 읽기(status·log·diff·fetch)는 그대로다.
  */
-const GIT_WRITE_REFUSAL =
-  "커밋과 푸시는 이 도구가 합니다 — 완성된 화면은 저장 버튼으로, 개발자에게는 넘기기 버튼으로 전달해 주세요.";
+export const GIT_WRITE_REFUSAL =
+  "보관과 제출은 이 도구가 합니다 — git 명령 없이 파일만 고쳐 주세요. 정리가 끝나면 도구가 마무리합니다.";
 
 /** 저장·워크트리·레퍼런스를 바꾸는 git 동사들 — status·log·diff·fetch 같은
  * 상태 읽기는 명단에 없다(README · PLAN D5). */
@@ -285,6 +285,10 @@ const GIT_WRITE_VERBS: Record<string, true> = {
   rm: true,
   mv: true,
   init: true,
+  // PLAN L5 · 단계 3: add · stage 도 도구의 몫이다 — 충돌 정리의 해결 표시는
+  // 감독자의 finishToolOp 가 한다. 옛 MERGE_HEAD 예외가 열어 두던 문을 닫는다.
+  add: true,
+  stage: true,
 };
 
 /**
@@ -316,7 +320,7 @@ function tokenizeShellWords(command: string): string[] {
   return tokens;
 }
 
-function writesGitHistory(command: string): boolean {
+export function gitWriteDenied(command: string): boolean {
   // 동사의 "자리"를 본다 — `git log --grep=stash`, `git log -S "git checkout"`
   // 은 stash·checkout 이 명사 위치에 있을 뿐인 읽기다.
   const tokens = tokenizeShellWords(command);
@@ -958,21 +962,14 @@ export class Session {
     input: Record<string, unknown>,
     opts: { signal: AbortSignal; suggestions?: unknown[] },
   ): Promise<PermissionVerdict> {
-    // The git nouns belong to the tool (README): a session committing or
+    // The git nouns belong to the tool (PLAN L5): a session committing or
     // pushing its own history puts words on the handoff branch the tool never
     // reviewed. Refused before alwaysAllowed — 항상 허용 cannot buy it back.
-    // One door opens: the commit that CONCLUDES a merge this tool itself
-    // started(최신화 충돌). The conflict card asks the agent for exactly that
-    // commit, and this gate must not refuse the tool's own recovery
-    // instruction(브리프 ↔ 게이트 모순). A push stays the tool's verb even
-    // mid-merge, and a commit outside an open merge is still refused.
+    // 충돌 정리 중에도 예외는 없다 — 옛 MERGE_HEAD 문은 닫혔다: 표식 정리는
+    // 파일 편집이고, 마무리(add · commit · stash drop)는 감독자가 한다.
     const command = tool.command ?? String(input.command ?? "");
-    if (tool.kind === "exec" && writesGitHistory(command)) {
-      const mergeOpen = existsSync(join(this.cwd, ".git", "MERGE_HEAD"));
-      const pushes = /\bpush\b/.test(command);
-      if (!mergeOpen || pushes) {
-        return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
-      }
+    if (tool.kind === "exec" && gitWriteDenied(command)) {
+      return Promise.resolve({ behavior: "deny", message: GIT_WRITE_REFUSAL });
     }
     if (tool.kind === "edit") {
       const paths = tool.paths ?? [];
