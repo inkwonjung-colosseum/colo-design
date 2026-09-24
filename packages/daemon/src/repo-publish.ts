@@ -1,6 +1,7 @@
 // 저장 → 개발자에게 넘기기 → 반영됨: the publish cycle (PLAN D5[넘기기]).
 // Owns the in-flight cycle's handoff bookkeeping and the review replies.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ChatEvent,
@@ -39,6 +40,11 @@ const SHOT_MEDIA_TYPES: Record<string, string> = {
   ".avif": "image/avif",
 };
 
+/** 캡처가 올라가는 병합되지 않는 브랜치 (PLAN L6 · O4) — 사이클 브랜치가
+ *  아니므로 반영돼도 main 에 캡처가 쌓이지 않고, 지워져도 링크(sha)는 산다. */
+const ASSETS_BRANCH = "colo-design-assets";
+/** 그 브랜치 안에서 캡처가 사는 폴더 — `<폴더>/<사이클 브랜치>/<이름>`. */
+const ASSETS_SHOTS_DIR = "shots";
 /**
  * 사이클 브랜치 이름 — 로컬 날짜로 짓는다(PLAN L4 · 단계 0). UTC 였을 때 아침
  * 9시 전의 이름이 어제 날짜로 남았다: 하루의 경계는 기계의 시간대가 아니라
@@ -523,11 +529,13 @@ export class PublishCycle {
   }
 
   /**
-   * D56: writes the server's captures under `.colo-design/shots/`, commits and
-   * pushes them on this cycle's branch, and returns the body with a
-   * `### 화면 미리보기` section linking each one. Nothing here can fail the
-   * handoff: the work is already saved — an empty set or a commit that would
-   * not land quietly leaves the body without the section.
+   * D56 → PLAN L6 캡처(O4): 서버의 캡처를 병합되지 않는 브랜치
+   * `colo-design-assets` 에 plumbing 으로 올리고, 본문에 `### 화면 미리보기`
+   * 절(커밋 sha 로 링크)을 얹어 돌려준다. 사이클 브랜치에는 올리지 않는다 —
+   * 반영될 때마다 이미지가 main 에 영구히 쌓이던 길이었다. 체크아웃도 없다:
+   * 임시 인덱스(GIT_INDEX_FILE)와 hash-object · commit-tree 로 작업 트리를
+   * 건드리지 않는다(repo-shelf 이후의 두 번째 plumbing 자리). 링크가 sha 를
+   * 가리키므로 브랜치가 지워져도 산다. 못 올리면 캡처 절 없이 제출은 계속된다.
    */
   private async attachShots(
     body: string,
@@ -537,43 +545,68 @@ export class PublishCycle {
     if (!shots || shots.length === 0) return body;
     const slug = this.core.repoSlug();
     if (!slug) return body;
-    const links: string[] = [];
+    // 부모 — 원격 자산 브랜치의 끝. fetch 가 실패하면(브랜치가 없으면) 없이 시작한다.
+    await this.core
+      .git(["fetch", "origin", `refs/heads/${ASSETS_BRANCH}:refs/remotes/origin/${ASSETS_BRANCH}`])
+      .catch(() => "");
+    const parent = (
+      await this.core
+        .git(["rev-parse", "--verify", `refs/remotes/origin/${ASSETS_BRANCH}`])
+        .catch(() => "")
+    ).trim();
+    const scratch = mkdtempSync(join(tmpdir(), "colo-design-assets-"));
     try {
-      // The captures must join the branch the pull request is from — a
-      // worktree sitting anywhere else would bury them in the wrong history
-      // and every link in the body would dangle.
-      await this.core.git(["checkout", branch]);
-      mkdirSync(join(this.core.root, SHOTS_DIR), { recursive: true });
-      for (const shot of shots) {
-        // A route keeps its Korean; only its path separators become dashes.
-        // The route passes the same gate as ever — `..` or a separator would
-        // walk the name out of SHOTS_DIR. The extension is the capture's
-        // own — see HandoffShot. (2026-09-21 상태 축 철거: `--state` 접미가
-        // 사라지고 화면 하나에 이름 하나다.)
+      // 임시 인덱스 — 이 클론의 index 는 한 번도 건드리지 않는다.
+      const env = { GIT_INDEX_FILE: join(scratch, "index") };
+      await this.core.git(
+        parent === "" ? ["read-tree", "--empty"] : ["read-tree", parent],
+        this.core.root,
+        env,
+      );
+      const names: string[] = [];
+      for (const [i, shot] of shots.entries()) {
+        // 이름 규칙은 옛 캡처와 같다(2026-09-21 상태 축 철거 — 화면 하나에 이름 하나).
         const name = `${shotNamePart(shot.route)}${shot.extension}`;
-        writeFileSync(join(this.core.root, SHOTS_DIR, name), shot.image);
-        await this.core.git(["add", "--", `${SHOTS_DIR}/${name}`]);
-        // Only the url's spaces are escaped — a Korean route reads as itself.
-        const url =
-          `https://github.com/${slug.owner}/${slug.repo}/blob/${branch}/` +
-          `${SHOTS_DIR}/${name.replaceAll(" ", "%20")}`;
-        links.push(`- [\`${shot.route}\`](${url})`);
+        const file = join(scratch, `shot-${i}-${name}`);
+        writeFileSync(file, shot.image);
+        const sha = (await this.core.git(["hash-object", "-w", "--", file])).trim();
+        await this.core.git(
+          [
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "100644",
+            sha,
+            `${ASSETS_SHOTS_DIR}/${branch}/${name}`,
+          ],
+          this.core.root,
+          env,
+        );
+        names.push(name);
       }
-      // An identical set is a no-op: a re-handoff after a mere retitle must
-      // not invent an empty commit.
-      if ((await this.core.git(["diff", "--cached", "--name-only"])).trim() !== "") {
+      const tree = (await this.core.git(["write-tree"], this.core.root, env)).trim();
+      const commit = (
         await this.core.git([
           ...(await this.core.identityArgs()),
-          "commit",
+          "commit-tree",
+          tree,
+          ...(parent === "" ? [] : ["-p", parent]),
           "-m",
           SHOTS_COMMIT_MESSAGE,
-        ]);
-        await this.core.git(["push", "origin", branch]);
-      }
+        ])
+      ).trim();
+      await this.core.git(["push", "origin", `${commit}:refs/heads/${ASSETS_BRANCH}`]);
+      const links = names.map(
+        (name) =>
+          `- [\`${name}\`](https://github.com/${slug.owner}/${slug.repo}/blob/${commit}/` +
+          `${ASSETS_SHOTS_DIR}/${branch}/${name.replaceAll(" ", "%20")})`,
+      );
+      return `${body.replace(/\n+$/, "")}\n\n### 화면 미리보기\n\n${links.join("\n")}\n`;
     } catch {
       return body;
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
-    return `${body.replace(/\n*$/, "")}\n\n### 화면 미리보기\n\n${links.join("\n")}\n`;
   }
 
   /**
@@ -593,6 +626,7 @@ export class PublishCycle {
     // normalization so the lookup matches what was committed
     // (2026-09-21 상태 축 철거 — 주소만이 이름이다).
     const name = shotNamePart(route);
+    // 옛 캡처 — 사이클 브랜치의 `.colo-design/shots/` (2026-09-24 이전 제출).
     for (const ref of [`origin/${branch}`, branch]) {
       const listing = await this.core
         .git(["-c", "core.quotepath=false", "ls-tree", "--name-only", ref, `${SHOTS_DIR}/`])
@@ -608,6 +642,46 @@ export class PublishCycle {
       if (data === "") continue;
       const ext = file.slice(file.lastIndexOf("."));
       return { mediaType: SHOT_MEDIA_TYPES[ext] ?? "application/octet-stream", data };
+    }
+    // 새 캡처 (PLAN L6) — 자산 브랜치의 `shots/<사이클 브랜치>/<이름>`. ref 는
+    // 캡처를 올릴 때 생기지만 재시작 뒤엔 없을 수 있다 — 이때만 한 번 받는다.
+    const assetsRef = `refs/remotes/origin/${ASSETS_BRANCH}`;
+    const haveAssets = (
+      await this.core.git(["rev-parse", "--verify", assetsRef]).catch(() => "")
+    ).trim();
+    if (haveAssets === "") {
+      await this.core.lane
+        .run("submit", () =>
+          this.core.git([
+            "fetch",
+            "origin",
+            `refs/heads/${ASSETS_BRANCH}:refs/remotes/origin/${ASSETS_BRANCH}`,
+          ]),
+        )
+        .catch(() => "");
+    }
+    const assetsListing = await this.core
+      .git([
+        "-c",
+        "core.quotepath=false",
+        "ls-tree",
+        "--name-only",
+        assetsRef,
+        `${ASSETS_SHOTS_DIR}/${branch}/`,
+      ])
+      .catch(() => "");
+    const assetsFile = assetsListing
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith(`${ASSETS_SHOTS_DIR}/${branch}/${name}.`));
+    if (assetsFile) {
+      const data = await this.core
+        .git(["show", `${assetsRef}:${assetsFile}`], this.core.root, {}, true)
+        .catch(() => "");
+      if (data !== "") {
+        const ext = assetsFile.slice(assetsFile.lastIndexOf("."));
+        return { mediaType: SHOT_MEDIA_TYPES[ext] ?? "application/octet-stream", data };
+      }
     }
     return null;
   }
