@@ -17,6 +17,7 @@ import {
   type RepoPhase,
   type RepoStatus,
 } from "@colo-design/protocol";
+import type { CyclePendingOp } from "./cycle-ledger.js";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
 import { GitLane, gitWriteVerb } from "./git-lane.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
@@ -127,6 +128,37 @@ export const REFRESH_CONFLICT_DETAIL =
  */
 export const RECOVER_CONFLICT_DETAIL =
   "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
+
+/** 충돌 브리프의 양쪽 — 개발자 쪽과 이번 작업의 커밋 제목들 (PLAN L5). */
+export interface ConflictSides {
+  theirs: string[];
+  ours: string[];
+}
+
+/**
+ * 충돌 브리프 하나 (PLAN L5) — 옛 mergeConflictBrief · popConflictBrief 를
+ * 대체한다. 시키는 일은 표식 정리뿐: git 명령을 시키는 문장은 한 줄도 없다
+ * (마무리는 도구가 한다). `op` 은 첫 문장만 갈라 상황을 말한다 — stash
+ * 복원의 충돌은 개발자 변경과의 합치기가 아니라 되돌리기의 겹침이므로.
+ */
+export function conflictBrief(
+  files: string[],
+  op: CyclePendingOp["kind"],
+  sides: ConflictSides,
+): string {
+  const opening =
+    op === "stash-pop"
+      ? "저장하지 않은 변경을 돌려놓다 이미 반영된 내용과 겹쳐 자동으로 합치지 못했습니다."
+      : "개발자가 반영한 변경과 이번 작업이 같은 곳을 고쳐 자동으로 합치지 못했습니다.";
+  const lines = [opening, `충돌 표식(<<<<<<< ======= >>>>>>>)이 남은 파일: ${files.join(", ")}`];
+  if (sides.theirs.length > 0) lines.push(`개발자 쪽 변경: ${sides.theirs.join(", ")}`);
+  if (sides.ours.length > 0) lines.push(`이번 작업: ${sides.ours.join(", ")}`);
+  lines.push(
+    "두 변경의 뜻을 모두 살려 표식을 지우고 파일을 정리해 주세요.",
+    "git 명령은 쓰지 마세요 — 정리가 끝나면 도구가 마무리합니다.",
+  );
+  return lines.join("\n");
+}
 
 /**
  * What a 저장 pressed before the agent finished a conflict's cleanup reads —
@@ -389,6 +421,15 @@ export class RepoCore {
     | null;
 
   readonly gitHubClient: (() => GitHubClient | null) | null;
+
+  /**
+   * 도구가 시작한 git 조작(최신화 병합 · stash 복원)이 충돌로 멈췄을 때 부르는
+   * 손잡이 (PLAN L5 · 단계 3) — 감독자(cycle-supervisor)가 여기에 걸려 원장의
+   * pendingOp 에 적고 틱을 돌린다. 없으면(시험 · 감독자 없는 실행) 브리프를
+   * 세션으로 보내거나 던지는 옛 길 그대로다. 콜백은 차선 문맥을 벗겨 부른다
+   * (나가는 문 — 이 콜백이 세션을 만들어도 이 작업의 줄을 물려받지 않게).
+   */
+  onToolConflict: ((op: CyclePendingOp) => void) | null = null;
 
   /** 넘긴 요청에 적을 작성자 이름 — 커밋 fallback 이름과 PR 본문이 읽는다(P1-3). */
   readonly authorName: (() => string | null) | null;
@@ -709,19 +750,32 @@ export class RepoCore {
     // again instead of piling on: until the agent resolves it, that state IS
     // the current one.
     if (await this.mergeInProgress()) {
-      return await this.briefOrThrow(
-        this.mergeConflictBrief(
-          await this.conflictedFiles(),
-          // The stash from the run that left this merge open — the agent must
-          // know it is still parked once the merge commit lands.
-          (await this.git(["stash", "list"])).trim() !== "",
-        ),
+      return await this.conflictOrBrief(
+        {
+          kind: "merge",
+          files: await this.conflictedFiles(),
+          startedAt: new Date().toISOString(),
+          briefs: 0,
+        },
         onSessionTurn,
       );
     }
     const leftover = await this.conflictedFiles();
     if (leftover.length > 0) {
-      return await this.briefOrThrow(this.popConflictBrief(leftover), onSessionTurn);
+      // 진행 표식 없이 unmerged 만 남은 상태 — 죽은 실행의 stash 복원 충돌로
+      // 읽는다. 그 stash 가 아직 있으면 ref 를 함께 적어 마무리의 drop 이
+      // 겨눌 것을 남긴다.
+      const stashRef = await this.taggedStashRef();
+      return await this.conflictOrBrief(
+        {
+          kind: "stash-pop",
+          files: leftover,
+          startedAt: new Date().toISOString(),
+          briefs: 0,
+          ...(stashRef !== null ? { stashRef } : {}),
+        },
+        onSessionTurn,
+      );
     }
 
     // A run that died between the stash and its pop parked the planner's
@@ -761,13 +815,14 @@ export class RepoCore {
         }
       }
     } catch (error) {
-      // A conflicted merge stays open on purpose (the brief is the agent.s
-      // recovery path); popping the stash onto a conflicted tree would pile
-      // one conflict on another, so it waits. Any other failure never moved
-      // the branch: the work goes straight back where it was.
       if (await this.mergeInProgress()) {
-        return await this.briefOrThrow(
-          this.mergeConflictBrief(await this.conflictedFiles(), stashed),
+        return await this.conflictOrBrief(
+          {
+            kind: "merge",
+            files: await this.conflictedFiles(),
+            startedAt: new Date().toISOString(),
+            briefs: 0,
+          },
           onSessionTurn,
         );
       }
@@ -776,56 +831,100 @@ export class RepoCore {
     }
 
     if (stashed) {
-      const conflicted = await this.popStash();
+      // pop 이 겨눌 ref 는 도구 태그의 것이다 — stash@{0} 기본값 대신 태그로
+      // 찾아, 그 사이 다른 stash 가 얹혀도 남의 것을 pop 하지 않는다.
+      const ref = (await this.taggedStashRef()) ?? "stash@{0}";
+      const conflicted = await this.popStash(ref);
       if (conflicted) {
-        return await this.briefOrThrow(this.popConflictBrief(conflicted), onSessionTurn);
+        return await this.conflictOrBrief(
+          {
+            kind: "stash-pop",
+            files: conflicted,
+            startedAt: new Date().toISOString(),
+            briefs: 0,
+            stashRef: ref,
+          },
+          onSessionTurn,
+        );
       }
     }
     return "clean";
   }
 
   /**
-   * A conflict is news for the agent when a thread is open and for the planner
-   * when one is not: the brief rides the session wire, the throw surfaces a
-   * Korean one-liner where the retry panel reads it.
+   * 도구가 시작한 조작이 충돌로 멈췄을 때의 한 갈래 (PLAN L5 · 단계 3):
+   * 감독자가 붙어 있으면(onToolConflict) 원장에 적고 틱을 부르는 것으로
+   * 끝낸다 — 브리프는 감독자의 2행이 낸다. 감독자가 없는 곳(시험 · 직접
+   * 생성)은 옛 길 그대로: 열린 대화가 있으면 브리프를, 없으면 던진다.
    */
-  async briefOrThrow(
-    brief: string,
+  private async conflictOrBrief(
+    op: CyclePendingOp,
     onSessionTurn: ((brief: string) => void) | undefined,
+    detail = REFRESH_CONFLICT_DETAIL,
   ): Promise<"conflict"> {
+    if (this.onToolConflict !== null) {
+      // 나가는 문 (PLAN L1): 콜백이 원장 쓰기와 틱을 하므로 이 작업의 차선
+      // 문맥을 물려주지 않는다 — 틱은 이 작업이 끝난 뒤 제 줄에서 돈다.
+      this.lane.outside(() => this.onToolConflict?.(op));
+      return "conflict";
+    }
     // 나가는 문 (PLAN L1): 브리프는 dispatch(fleet) 로 가서 세션을 만들 수
     // 있다 — 그 세션의 사슬이 이 작업의 문맥을 물려받으면 이후 저장이 줄을
     // 비켜간다. 문맥을 벗겨 보낸다.
-    if (onSessionTurn) this.lane.outside(() => onSessionTurn(brief));
-    else throw new Error(REFRESH_CONFLICT_DETAIL);
-    return "conflict";
+    if (onSessionTurn) {
+      this.lane.outside(() =>
+        onSessionTurn(
+          markTurn(
+            { kind: "gate", step: "최신 변경 합치기" },
+            conflictBrief(op.files, op.kind, { theirs: [], ours: [] }),
+          ),
+        ),
+      );
+      return "conflict";
+    }
+    throw new Error(detail);
   }
 
   /**
-   * the agent.s instructions, as a gate card: what collided and the exact
-   * recovery, named for the planner's words (최신 변경 받아오기), never git's.
+   * 도구 태그(STASH_MESSAGE)를 단 stash 의 ref — 관찰(cycle-observe)과
+   * 복구가 같은 잣대로 찾는다. 없으면 null.
    */
-  mergeConflictBrief(files: string[], stashed: boolean): string {
-    return markTurn(
-      { kind: "gate", step: "최신 변경 받아오기" },
-      "개발자가 반영한 최신 변경과 이번 작업이 겹쳐 자동으로 합치지 못했습니다." +
-        (files.length > 0 ? `\n충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}` : "") +
-        "\n충돌을 정리하고 커밋 메시지 앞에 [conflict] 를 붙여 병합을 마무리해 주세요." +
-        (stashed
-          ? "\n병합을 마친 뒤 임시 보관해 둔 저장하지 않은 변경을 git stash pop 으로 돌려놓고, " +
-            "여기서 충돌하면 정리한 뒤 git add 하고 git stash drop 으로 임시 보관을 치워 주세요."
-          : ""),
-    );
+  async taggedStashRef(): Promise<string | null> {
+    const list = await this.git(["stash", "list", "--format=%gd%x00%s"]).catch(() => "");
+    for (const row of list.split(/\r?\n/)) {
+      if (row.trim() === "") continue;
+      const [ref = "", ...subject] = row.split("\x00");
+      if (subject.join("\x00").includes(STASH_MESSAGE)) return ref.trim();
+    }
+    return null;
   }
 
-  popConflictBrief(files: string[]): string {
-    return markTurn(
-      { kind: "gate", step: "최신 변경 받아오기" },
-      "최신 변경을 받아 온 뒤 저장하지 않은 변경을 돌려놓는 중에 겹치는 부분이 생겼습니다.\n" +
-        `충돌한 파일:\n${files.map((file) => `- ${file}`).join("\n")}\n` +
-        "충돌 표식을 정리한 뒤 git add 로 해결을 표시하고, git stash drop 으로 임시 보관을 치워 주세요. " +
-        "그러면 변경은 저장 전 상태로 돌아옵니다.",
-    );
+  /**
+   * 충돌 브리프의 양쪽 커밋 제목 (PLAN L5) — 개발자 쪽(theirs)과 이번
+   * 작업(ours)을 `git log --format=%s` 로 읽는다. stash 복원의 ours 는
+   * 커밋이 아니므로 빈 목록이다.
+   */
+  async conflictSides(op: CyclePendingOp["kind"]): Promise<ConflictSides> {
+    const titles = async (args: string[]): Promise<string[]> =>
+      (await this.git(["log", "--format=%s", ...args]).catch(() => ""))
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (op === "merge") {
+      // 들어오는 쪽은 MERGE_HEAD 에만 있는 커밋들 — 없으면(이미 조상) 그
+      // 커밋 자체를 보여 준다. ours 는 이 사이클이 베이스 위에 쌓은 커밋들.
+      let theirs = await titles(["-5", "HEAD..MERGE_HEAD"]);
+      if (theirs.length === 0) theirs = await titles(["-5", "MERGE_HEAD"]);
+      const ours = await titles(["-5", `origin/${this.baseBranch}..HEAD`]);
+      return { theirs, ours };
+    }
+    if (op === "cherry-pick") {
+      return {
+        theirs: await titles(["-1", "CHERRY_PICK_HEAD"]),
+        ours: await titles(["-5", `origin/${this.baseBranch}..HEAD`]),
+      };
+    }
+    return { theirs: await titles(["-5", "HEAD"]), ours: [] };
   }
 
   /** True while a merge waits for its conflict resolution (MERGE_HEAD). */
@@ -995,9 +1094,30 @@ export class RepoCore {
     if (!ref) return "none";
     const conflicted = await this.popStash(ref);
     if (!conflicted) return "restored";
+    // 감독자가 붙어 있으면 원장에 적고 틱을 부르는 것으로 끝난다 — 브리프는
+    // 감독자의 2행이 낸다(PLAN L5). 없으면 옛 길: 대화 브리프 또는 던지기.
+    if (this.onToolConflict !== null) {
+      this.lane.outside(() =>
+        this.onToolConflict?.({
+          kind: "stash-pop",
+          files: conflicted,
+          startedAt: new Date().toISOString(),
+          briefs: 0,
+          stashRef: ref,
+        }),
+      );
+      return "conflict";
+    }
     if (onSessionTurn) {
-      // briefOrThrow 와 같은 나가는 문 — 세션을 만드는 콜백에 문맥을 물려주지 않는다.
-      this.lane.outside(() => onSessionTurn(this.popConflictBrief(conflicted)));
+      // 나가는 문 — 세션을 만드는 콜백에 이 작업의 차선 문맥을 물려주지 않는다.
+      this.lane.outside(() =>
+        onSessionTurn(
+          markTurn(
+            { kind: "gate", step: "최신 변경 합치기" },
+            conflictBrief(conflicted, "stash-pop", { theirs: [], ours: [] }),
+          ),
+        ),
+      );
       return "conflict";
     }
     this.setPhase("error", RECOVER_CONFLICT_DETAIL, "conflict");

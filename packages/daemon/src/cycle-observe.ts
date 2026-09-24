@@ -17,7 +17,7 @@ import { conflictMarkers } from "./conflict-markers.js";
 import type { CycleLedger } from "./cycle-ledger.js";
 import type { CycleSnapshot } from "./cycle-reconcile.js";
 import type { GitHubClient } from "./github.js";
-import { type RepoCore, STASH_MESSAGE } from "./repo-core.js";
+import type { RepoCore } from "./repo-core.js";
 
 /**
  * 관찰이 스스로 읽을 수 없는 것들 — 감독자가 프로젝트의 살아 있는 부분에서
@@ -185,16 +185,8 @@ export async function observeCycle(
     ...new Set([...conflictFiles, ...(ledger.pendingOp?.files ?? [])]),
   ]);
 
-  // 도구 태그의 stash — %gd(ref)와 %s(제목)를 NUL 로 갈라 읽는다.
-  let taggedStash: string | null = null;
-  for (const row of (await gitText(core, ["stash", "list", "--format=%gd%x00%s"])).split(/\r?\n/)) {
-    if (row.trim() === "") continue;
-    const [ref = "", ...subject] = row.split("\x00");
-    if (subject.join("\x00").includes(STASH_MESSAGE)) {
-      taggedStash = ref.trim();
-      break;
-    }
-  }
+  // 도구 태그의 stash — RepoCore 가 같은 잣대(STASH_MESSAGE)로 찾는다.
+  const taggedStash = await core.taggedStashRef();
 
   const headBranch =
     (await gitText(core, ["symbolic-ref", "--short", "-q", "HEAD"])).trim() || null;
