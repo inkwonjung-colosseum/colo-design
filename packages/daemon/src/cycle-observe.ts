@@ -124,8 +124,8 @@ async function countAfterPrHead(
 
 /**
  * 새 개발자 코멘트(L9) — 세 목록(인라인 · 리뷰 본문 · 요청 코멘트)에서 내
- * 로그인과 원장이 아는 id 를 뺀다. 봇 거르기 · 페이지네이션 · whoAmI 캐시는
- * 단계 7 의 일이다.
+ * 로그인과 원장이 아는 id 를 뺀다. 페이지네이션 · 봇 거르기 · whoAmI 캐시는
+ * 읽는 쪽(github.ts)이 이미 하고 있다(PLAN 단계 7).
  */
 async function collectNewReviews(
   client: GitHubClient,

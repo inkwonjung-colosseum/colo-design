@@ -734,6 +734,116 @@ test("폴러를 지운 뒤에도 — PR 상태 변화 알림과 리뷰 브리프
   }
 });
 
+test("L9 세 목록을 페이지 끝까지 읽는다 — 3페이지의 코멘트를 모두 본다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    // per_page 50 기준 3페이지 — 한 페이지만 읽으면 마지막 코멘트가 보이지 않는다.
+    for (let i = 0; i < 101; i += 1) {
+      scene.github.addComment(pr, { kind: "issue", body: `코멘트 ${i}` });
+    }
+    await scene.supervisor.tick("manual");
+    const brief = scene.reviewBriefs.at(-1);
+    assert.ok(brief, "리뷰 브리프가 나가야 한다");
+    assert.equal(brief.ids.length, 101, "101개를 모두 읽어야 한다");
+    assert.equal(
+      scene.transitions.find((t) => t.kind === "comments")?.count,
+      101,
+      "도착 알림도 전체 수를 센다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 봇 코멘트는 AI 에게 가지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    const bot1 = scene.github.addComment(pr, {
+      kind: "issue",
+      body: "CI 빌드가 깨졌습니다",
+      bot: true,
+    });
+    const bot2 = scene.github.addComment(pr, {
+      kind: "issue",
+      body: "배포 완료",
+      login: "deploy[bot]",
+    });
+    const human = scene.github.addComment(pr, { kind: "issue", body: "여백을 좀 줄여 주세요" });
+    await scene.supervisor.tick("manual");
+
+    const brief = scene.reviewBriefs.at(-1);
+    assert.ok(brief, "리뷰 브리프가 나가야 한다");
+    assert.deepEqual(brief.ids, [human], "봇(user.type · [bot] 로그인)은 빠지고 사람만 가야 한다");
+    assert.ok(!brief.ids.includes(bot1) && !brief.ids.includes(bot2));
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 whoAmI 는 여러 관찰에서 한 번만 불린다 — 토큰마다 캐시", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "첫 관찰에서 한 번 부른다");
+
+    scene.github.addComment(pr, { kind: "issue", body: "다음 코멘트" });
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "다음 관찰은 캐시를 읽는다");
+
+    // 재시작도 같은 전송 · 같은 토큰 — 여전히 캐시다.
+    const supervisor2 = scene.respawn();
+    scene.github.addComment(pr, { kind: "issue", body: "재시작 뒤 코멘트" });
+    await supervisor2.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "새 감독자도 캐시를 함께 쓴다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 재시작 뒤 첫 코멘트를 삼키지 않는다 — 원장 known 이 기준선", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    const first = scene.github.addComment(pr, { kind: "issue", body: "첫 코멘트" });
+    await scene.supervisor.tick("manual");
+    assert.deepEqual(scene.reviewBriefs.at(-1)?.ids, [first], "끊기기 전 코멘트는 브리프된다");
+
+    // 재시작 — 메모리가 아니라 원장(cycle.json)의 known 이 이어받는다.
+    const supervisor2 = scene.respawn();
+    const second = scene.github.addComment(pr, { kind: "issue", body: "재시작 뒤 첫 코멘트" });
+    await supervisor2.tick("manual");
+    assert.deepEqual(
+      scene.reviewBriefs.at(-1)?.ids,
+      [second],
+      "재시작 뒤 첫 코멘트가 기준선에 삼켜지지 않는다",
+    );
+    assert.notEqual(second, first);
+  } finally {
+    await scene.dispose();
+  }
+});
+
 test("사이클 밖 갈라짐 — 최신화가 던지지 않고 틱이 사이클 브랜치로 옮긴다", async () => {
   const scene = await makeSupervisedScene();
   try {

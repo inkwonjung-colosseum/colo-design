@@ -143,6 +143,8 @@ interface MemPull {
   state: "open" | "closed";
   merged: boolean;
   mergeableState: string | null;
+  /** 닫힘(병합 · 반려) 시각 — 반려 이유의 7일 창 재료 (PLAN L9). */
+  closedAt: string | null;
 }
 
 interface MemIssue {
@@ -153,11 +155,12 @@ interface MemIssue {
   labels: string[];
   assignees: string[];
 }
-
 interface MemComment {
   id: number;
   login: string;
   body: string;
+  /** GitHub 의 계정 종류 — "Bot" 행은 봇 거르기(isBotRow)의 재료다. */
+  type: string;
 }
 
 /**
@@ -171,6 +174,8 @@ export class MemoryGitHub implements RestTransport {
   private pullCreatesFail = false;
   private nextNumber = 1;
   private nextCommentId = 1;
+  /** /user 호출 수 — whoAmI 캐시(PLAN L9) 시험의 잣자리. */
+  private userCallCount = 0;
   private readonly pulls = new Map<number, MemPull>();
   private readonly pullComments = new Map<number, MemComment[]>();
   private readonly reviews = new Map<number, Array<MemComment & { state: string }>>();
@@ -196,6 +201,7 @@ export class MemoryGitHub implements RestTransport {
     const json = (status: number, payload: unknown) => this.json(status, payload);
 
     if (input.method === "GET" && path === "/user") {
+      this.userCallCount += 1;
       return json(200, { login: "colo-planner" });
     }
     if (seg[0] === "repos" && seg.length >= 3) {
@@ -257,18 +263,38 @@ export class MemoryGitHub implements RestTransport {
           return json(201, {});
         }
         if (rest.length === 3 && rest[2] === "comments" && input.method === "GET") {
-          return json(200, this.commentJson(this.pullComments.get(number) ?? []));
+          return this.paged(input.url, path, this.commentJson(this.pullComments.get(number) ?? []));
         }
         if (rest.length === 3 && rest[2] === "reviews" && input.method === "GET") {
-          return json(
-            200,
+          return this.paged(
+            input.url,
+            path,
             (this.reviews.get(number) ?? []).map((row) => ({
               id: row.id,
-              user: { login: row.login },
+              user: { login: row.login, type: row.type },
               body: row.body,
               state: row.state,
             })),
           );
+        }
+        // POST …/comments/{id}/replies — 자동 답장(PLAN L9)이 스레드 답글을
+        // 올리는 말단. 답장은 인라인 목록 끝에 붙는다(GitHub 과 같은 모양).
+        if (
+          rest.length === 5 &&
+          rest[2] === "comments" &&
+          rest[4] === "replies" &&
+          input.method === "POST"
+        ) {
+          const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+          const id = this.nextCommentId++;
+          const row: MemComment = {
+            id,
+            login: "colo-planner",
+            body: String(payload.body ?? ""),
+            type: "User",
+          };
+          this.pullComments.set(number, [...(this.pullComments.get(number) ?? []), row]);
+          return json(201, this.commentJson([row])[0]);
         }
       }
       if (rest[0] === "issues") {
@@ -310,14 +336,23 @@ export class MemoryGitHub implements RestTransport {
 
         if (rest.length === 3 && rest[2] === "comments") {
           if (input.method === "GET") {
-            return json(200, this.commentJson(this.issueComments.get(number) ?? []));
+            return this.paged(
+              input.url,
+              path,
+              this.commentJson(this.issueComments.get(number) ?? []),
+            );
           }
           if (input.method === "POST") {
             const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
             const id = this.nextCommentId++;
-            const row = { id, login: "colo-planner", body: String(payload.body ?? "") };
+            const row: MemComment = {
+              id,
+              login: "colo-planner",
+              body: String(payload.body ?? ""),
+              type: "User",
+            };
             this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
-            return json(201, { id: row.id, user: { login: row.login }, body: row.body });
+            return json(201, this.commentJson([row])[0]);
           }
         }
         // PATCH /issues/comments/{id} — rest 는 ["issues","comments","<id>"].
@@ -354,6 +389,27 @@ export class MemoryGitHub implements RestTransport {
     };
   }
 
+  /**
+   * 목록의 한 페이지 (PLAN L9) — per_page · page 를 읽고 남은 페이지가 있으면
+   * `Link` 의 next 로 알린다. 클라이언트의 페이지네이션(listPages)이 이
+   * 헤더를 따라간다.
+   */
+  private paged(url: string, path: string, rows: unknown[]) {
+    const query = new URL(url, "https://github.test").searchParams;
+    const perPage = Math.max(1, Number(query.get("per_page")) || 30);
+    const page = Math.max(1, Number(query.get("page")) || 1);
+    const slice = rows.slice((page - 1) * perPage, page * perPage);
+    const headers: Record<string, string> = {};
+    if (page * perPage < rows.length) {
+      headers.link = `<${path}?per_page=${perPage}&page=${page + 1}>; rel="next"`;
+    }
+    return {
+      status: 200,
+      body: new TextEncoder().encode(JSON.stringify(slice)),
+      headers,
+    };
+  }
+
   private pullJson(pull: MemPull) {
     return {
       number: pull.number,
@@ -369,11 +425,21 @@ export class MemoryGitHub implements RestTransport {
       requested_reviewers: [],
       head: { ref: pull.head, sha: pull.headSha },
       base: { ref: pull.base },
+      closed_at: pull.closedAt,
     };
   }
 
   private commentJson(rows: MemComment[]) {
-    return rows.map((row) => ({ id: row.id, user: { login: row.login }, body: row.body }));
+    return rows.map((row) => ({
+      id: row.id,
+      user: { login: row.login, type: row.type },
+      body: row.body,
+    }));
+  }
+
+  /** /user 를 몇 번 불렀나 — whoAmI 캐시(PLAN L9)의 잣대. */
+  get userCalls(): number {
+    return this.userCallCount;
   }
 
   /** PR 생성 실패를 푼다 — 예산 시험의 복구 축. */
@@ -430,6 +496,7 @@ export class MemoryGitHub implements RestTransport {
       state: "open",
       merged: false,
       mergeableState: null,
+      closedAt: null,
     });
     return number;
   }
@@ -464,6 +531,7 @@ export class MemoryGitHub implements RestTransport {
     }
     pull.state = "closed";
     pull.merged = true;
+    pull.closedAt = new Date().toISOString();
   }
 
   /** 병합 없이 닫는다 — 반려. */
@@ -471,6 +539,7 @@ export class MemoryGitHub implements RestTransport {
     const pull = this.pulls.get(number);
     if (pull === undefined) throw new Error(`MemoryGitHub: PR #${number} 이 없습니다`);
     pull.state = "closed";
+    pull.closedAt = new Date().toISOString();
   }
 
   setMergeableState(number: number, state: string | null): void {
@@ -481,7 +550,8 @@ export class MemoryGitHub implements RestTransport {
 
   /** 코멘트를 단다 — kind: 인라인(pull) · 리뷰 본문(review) · 요청 코멘트(issue).
    *  review 의 state 는 GitHub 의 판정 단어다 — CHANGES_REQUESTED 가
-   *  getPullRequest 의 changes_requested 를 만든다. */
+   *  getPullRequest 의 changes_requested 를 만든다. bot 을 켜면 CI 봇의
+   *  말이 되어 봇 거르기(PLAN L9)의 시험 재료가 된다. */
   addComment(
     number: number,
     opts: {
@@ -489,10 +559,17 @@ export class MemoryGitHub implements RestTransport {
       login?: string;
       body?: string;
       state?: string;
+      bot?: boolean;
     } = {},
   ): number {
     const id = this.nextCommentId++;
-    const row = { id, login: opts.login ?? "dev1", body: opts.body ?? "이 부분 고쳐 주세요" };
+    const login = opts.login ?? "dev1";
+    const row: MemComment = {
+      id,
+      login,
+      body: opts.body ?? "이 부분 고쳐 주세요",
+      type: opts.bot === true || login.endsWith("[bot]") ? "Bot" : "User",
+    };
     const kind = opts.kind ?? "issue";
     if (kind === "pull") {
       this.pullComments.set(number, [...(this.pullComments.get(number) ?? []), row]);
@@ -505,6 +582,11 @@ export class MemoryGitHub implements RestTransport {
       this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
     }
     return id;
+  }
+
+  /** 인라인 코멘트(스레드 답장 포함) — 자동 답장 시험의 잣대. */
+  pullCommentsFor(number: number): MemComment[] {
+    return this.pullComments.get(number) ?? [];
   }
 
   /** 이후의 요청은 전부 401 — 연결 코드가 만료된 세계. */
