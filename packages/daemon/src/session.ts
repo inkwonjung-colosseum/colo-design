@@ -16,6 +16,7 @@ import type {
 } from "@colo-design/protocol";
 import { readTurn } from "@colo-design/protocol";
 import type { AgentSession, DriverHooks, PermissionVerdict, ToolClass } from "./agent/driver.js";
+import { GIT_WRITE_REFUSAL, gitWriteDenied } from "./git-guard.js";
 import { containsPath, realpathBestEffort } from "./paths.js";
 import { permissionLog } from "./permission-log.js";
 import { pinEffortFor } from "./pin-effort.js";
@@ -261,128 +262,9 @@ export interface SessionOptions {
  * 충돌 정리의 add · commit 도 도구의 몫이다(감독자의 finishToolOp) — 세션은
  * 파일만 고친다. 상태 읽기(status·log·diff·fetch)는 그대로다.
  */
-export const GIT_WRITE_REFUSAL =
-  "보관과 제출은 이 도구가 합니다 — git 명령 없이 파일만 고쳐 주세요. 정리가 끝나면 도구가 마무리합니다.";
-
-/** 저장·워크트리·레퍼런스를 바꾸는 git 동사들 — status·log·diff·fetch 같은
- * 상태 읽기는 명단에 없다(README · PLAN D5). */
-const GIT_WRITE_VERBS: Record<string, true> = {
-  commit: true,
-  push: true,
-  reset: true,
-  rebase: true,
-  "update-ref": true,
-  clean: true,
-  checkout: true,
-  restore: true,
-  switch: true,
-  am: true,
-  "cherry-pick": true,
-  revert: true,
-  merge: true,
-  pull: true,
-  apply: true,
-  rm: true,
-  mv: true,
-  init: true,
-  // PLAN L5 · 단계 3: add · stage 도 도구의 몫이다 — 충돌 정리의 해결 표시는
-  // 감독자의 finishToolOp 가 한다. 옛 MERGE_HEAD 예외가 열어 두던 문을 닫는다.
-  add: true,
-  stage: true,
-};
-
-/**
- * 셸 명령을 단어로 쪼갠다 — 따옴표 안은 한 단어로 남고, &&·||·;·|·(·)·` 는
- * 경계가 되어 그 뒤의 단어가 새 명령의 첫 단어임을 보인다.
- */
-function tokenizeShellWords(command: string): string[] {
-  const tokens: string[] = [];
-  let word = "";
-  let quote: string | null = null;
-  for (const ch of command) {
-    if (quote) {
-      if (ch === quote) quote = null;
-      else word += ch;
-    } else if (ch === '"' || ch === "'") {
-      quote = ch;
-    } else if (/\s/.test(ch)) {
-      if (word) tokens.push(word);
-      word = "";
-    } else if (ch === "&" || ch === ";" || ch === "|" || ch === "(" || ch === ")" || ch === "`") {
-      if (word) tokens.push(word);
-      word = "";
-      tokens.push(ch); // 연산자 — 동사 자리가 될 수 없다
-    } else {
-      word += ch;
-    }
-  }
-  if (word) tokens.push(word);
-  return tokens;
-}
-
-export function gitWriteDenied(command: string): boolean {
-  // 동사의 "자리"를 본다 — `git log --grep=stash`, `git log -S "git checkout"`
-  // 은 stash·checkout 이 명사 위치에 있을 뿐인 읽기다.
-  const tokens = tokenizeShellWords(command);
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token === undefined) continue;
-    if (token !== "git" && !token.endsWith("/git")) continue;
-    // git 다음의 동사 자리를 찾는다 — 전역 옵션은 동사가 아니고, 값을 따로
-    // 받는 것(-C·-c·--git-dir)은 한 쌍으로 건너뛴다.
-    let j = i + 1;
-    while (j < tokens.length) {
-      const tok = tokens[j];
-      if (tok === undefined) break;
-      if (
-        tok === "-C" ||
-        tok === "-c" ||
-        tok === "--git-dir" ||
-        tok === "--work-tree" ||
-        tok === "--namespace" ||
-        tok === "--super-prefix"
-      ) {
-        j += 2;
-      } else if (tok.startsWith("-")) {
-        j += 1;
-      } else {
-        break;
-      }
-    }
-    const verb = tokens[j];
-    if (verb === undefined) continue; // 맨 `git` — 사용법 출력이 전부인 읽기
-    // 상태를 바꾸는 동사는 전부 막는다 — 커밋·푸시만이 아니라 reset·checkout·
-    // merge 도 저장 검토가 읽는 상태를 흔든다.
-    if (verb in GIT_WRITE_VERBS) return true;
-    // config 도 읽기 형태가 있다 — --get·--list 같은 조회는 열어 두고(hooks
-    // 경로를 읽는 일은 무해하다), 그 밖은 전부 쓰기로 본다: 값을 심는 기본형
-    // 부터 --unset·--edit 까지.
-    if (verb === "config") {
-      const readForm = /^(--get(-all|-regexp|-urlmatch|-color|-colorbool)?|--list|-l)$/;
-      if (!tokens.slice(j + 1).some((t) => readForm.test(t))) return true;
-    }
-    // stash·tag·branch 는 읽기 형태가 있다 — list·show·나열은 열어 두고,
-    // 쓰기 형태(pop·drop·생성·삭제)만 막는다. 맨 `stash` 는 push 와 같다.
-    if (verb === "stash" && tokens[j + 1] !== "list" && tokens[j + 1] !== "show") return true;
-    if (verb === "tag") {
-      const next = tokens[j + 1];
-      if (next !== undefined && !/^-[ln]$/.test(next) && next !== "--list") return true;
-    }
-    if (verb === "branch") {
-      const next = tokens[j + 1];
-      if (
-        next !== undefined &&
-        !/^-[alrv]+$/.test(next) &&
-        next !== "--list" &&
-        next !== "--show-current"
-      ) {
-        return true;
-      }
-    }
-    // 그 밖의 동사는 그대로 둔다 — 상태 읽기(status·log·diff·fetch)와 모르는 별명.
-  }
-  return false;
-}
+// git 가드의 말과 판정은 git-guard.ts 가 한 곳에서 쥔다 — PreToolUse 훅과
+// git 훅 스크립트가 같은 문장 · 같은 판정을 읽는다.
+export { GIT_WRITE_REFUSAL, gitWriteDenied };
 
 /**
  * The name a session carries until its first turn supplies one. Also the

@@ -16,6 +16,7 @@ import type {
 } from "@colo-design/protocol";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
+import { ensureGitGuardHooks, gitGuardEnv, gitGuardHookDecision } from "../../../git-guard.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
 import type { AgentSession, DriverHooks, LaunchConfig, ToolClass, Turn } from "../../driver.js";
 import { MessageTranslator } from "./event-mapper.js";
@@ -187,6 +188,25 @@ export class ClaudeAgentSession implements AgentSession {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         managedSettings: { permissions: { defaultMode: "bypassPermissions" } },
+        // git 가드 두 겹 (PLAN L5 · 단계 3):
+        // (a) PreToolUse 훅 — bypassPermissions 에서는 canUseTool 이 Bash 에
+        //     불리지 않으므로, SDK hooks 가 git 쓰기를 deny 한다. 판정은
+        //     decidePermission 과 같은 gitWriteDenied 를 읽는다.
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [
+                async (input) =>
+                  gitGuardHookDecision(
+                    "tool_name" in input ? input.tool_name : "",
+                    ("tool_input" in input ? input.tool_input : {}) as Record<string, unknown>,
+                  ),
+              ],
+            },
+          ],
+        },
+        env: gitGuardEnv({ ...process.env }, ensureGitGuardHooks()),
         includePartialMessages: true,
         // Load the same user/project configuration the terminal would, so
         // CLAUDE.md, skills, and permission rules behave identically. (The
