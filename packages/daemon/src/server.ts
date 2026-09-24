@@ -85,10 +85,12 @@ export type {
  */
 const HANDOFF_POLL_MS = 2 * 60_000;
 /**
- * /internal/browser가 받는 op의 화이트리스트(3단계 계약의 16개). 와이어에
- * 노출하지 않는 것: destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자
- * 페이지가 망가진다). `screenCheck` 는 pane 이 아니라 검증 창(forIsolated)
- * 에서 돈다 — 게이트의 판정을 턴 안에서 앞당겨 보는 길이다.
+ * /internal/browser가 받는 op의 화이트리스트. 와이어에 노출하지 않는 것:
+ * destroy(세션 수명에 귀속 — 와이어에서 찌르면 사용자 페이지가 망가진다).
+ * `screenCheck` 는 pane 이 아니라 검증 창(forIsolated)에서 돈다 — 게이트의
+ * 판정을 턴 안에서 앞당겨 보는 길이다. `submitForReview` (PLAN L6) 는 pane
+ * 없이 감독자에 의도만 적는다 — 브라우저가 없는 세계에서도 대화로 제출은
+ * 된다(도구 실림은 lifecycle.submitFromChat 이 정한다).
  */
 const BROWSER_OPS: Record<string, true> = {
   navigate: true,
@@ -107,6 +109,7 @@ const BROWSER_OPS: Record<string, true> = {
   evaluate: true,
   waitFor: true,
   screenCheck: true,
+  submitForReview: true,
 };
 
 /** 요청 본문 한도 — evaluate 식·콘솔 요청 등을 다 담는 충분한 크기. */
@@ -701,11 +704,21 @@ export class DaemonServer {
       this.agentDrivers,
       // 세션별 브라우저 MCP 명세(3단계): 팩토리가 없으면(브라우저 개발 경로)
       // 시크릿도 발급하지 않는다. URL은 루프백 고정 — 자식은 같은 호스트의
-      // 프로세스라 바인딩 호스트가 무엇이든 127.0.0.1로 닿는다.
-      (sessionId) => {
+      // 프로세스라 바인딩 호스트가 무엇이든 127.0.0.1로 닿는다. submit_for_review
+      // 는 그 세션이 사는 프로젝트의 lifecycle.submitFromChat(PLAN L6)이
+      // 켜져 있을 때만 env 플래그로 실린다 — 워크스페이스를 모르면 기본(켬).
+      (sessionId, cwd) => {
         if (this.config.browserDriverFactory === undefined || !this.http) return null;
+        const slug = this.fleet.workspacesForCwd(cwd)?.slug ?? null;
+        const submitFromChat =
+          slug !== null && (this.registry.get(slug)?.lifecycle?.submitFromChat ?? true);
         const secret = this.issueBrowserSecret(sessionId);
-        return browserMcpEntry(true, `http://127.0.0.1:${this.address().port}`, secret);
+        return browserMcpEntry(
+          true,
+          `http://127.0.0.1:${this.address().port}`,
+          secret,
+          submitFromChat,
+        );
       },
       // createSession 이 던지면 발급된 시크릿을 회수한다 — 못 열린 세션의
       // 자격이 맵에 남는 일을 막는다.
@@ -1271,6 +1284,27 @@ export class DaemonServer {
     if (op === "screenCheck") {
       const checked = await this.runScreenCheck(sessionId, params as Record<string, unknown>);
       reply(checked.status, checked.body);
+      return;
+    }
+    // submit_for_review (PLAN L6 · O6) — pane 이 아니라 감독자에 향한다.
+    // 도구는 의도를 적을 뿐이고 네 단계는 감독자의 틱이 끝낸다. 실림과 실행
+    // 모두 프로젝트의 lifecycle.submitFromChat(기본 true)을 따른다.
+    if (op === "submitForReview") {
+      const workspaces = this.workspaceOfSession(sessionId);
+      const slug = workspaces?.slug ?? null;
+      const allowed = slug !== null && (this.registry.get(slug)?.lifecycle?.submitFromChat ?? true);
+      if (!allowed) {
+        reply(200, {
+          ok: false,
+          error: "이 프로젝트는 대화로의 제출이 꺼져 있습니다 — 화면의 제출 버튼을 눌러 주세요.",
+        });
+        return;
+      }
+      workspaces?.supervisor.submit("chat");
+      reply(200, {
+        ok: true,
+        result: "개발자에게 보냈어요 — 진행은 상단의 상태 칩이 알려 줍니다.",
+      });
       return;
     }
     const factory = this.config.browserDriverFactory;

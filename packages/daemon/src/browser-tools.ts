@@ -204,7 +204,28 @@ export const BROWSER_TOOLS: ToolDef[] = [
     },
     required: ["route"],
   },
+  {
+    name: "submit_for_review",
+    op: "submitForReview",
+    description:
+      "이번 작업을 개발자에게 보낸다(제출). 사용자가 개발자에게 보내 달라고 " +
+      "분명히 말했을 때만 부른다 — 짐작으로 부르지 않는다. 결과는 곧바로 오고 " +
+      "진행은 화면의 상태 칩이 알려 준다.",
+    properties: {},
+  },
 ];
+
+/**
+ * 세션에 실을 도구 목록 (PLAN L6 · O6) — `submit_for_review` 는 프로젝트의
+ * `lifecycle.submitFromChat`(초대 v4, 기본 true)이 켜진 세션에만 실린다.
+ * MCP 자식은 같은 판정을 env 플래그(COLO_BROWSER_SUBMIT)로 받고, omp 는
+ * launch.browserMcp.env 에서 읽는다 — 셋 모두 같은 근거를 쓴다.
+ */
+export function browserTools(submitFromChat: boolean): ToolDef[] {
+  return submitFromChat
+    ? BROWSER_TOOLS
+    : BROWSER_TOOLS.filter((tool) => tool.op !== "submitForReview");
+}
 
 /** 데몬의 `/internal/browser`가 답을 먹고 버티는 유예 — waitFor의 5초 폴링과 스크린샷 인코딩까지 담는다. */
 const CALL_TIMEOUT_MS = 60_000;

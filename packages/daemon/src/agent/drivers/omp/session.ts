@@ -5,7 +5,7 @@ import type {
   SessionCommand,
   SessionModelInfo,
 } from "@colo-design/protocol";
-import { BROWSER_TOOLS, callBrowserTool, refused } from "../../../browser-tools.js";
+import { browserTools, callBrowserTool, refused } from "../../../browser-tools.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
 import { ensureGitGuardHooks, gitGuardEnv } from "../../../git-guard.js";
 import { composeTurnText, prepareAttachments } from "../../attachments.js";
@@ -202,7 +202,9 @@ export class OmpAgentSession implements AgentSession {
     await this.transport.command(
       "set_host_tools",
       {
-        tools: BROWSER_TOOLS.map((tool) => ({
+        // submit_for_review 는 세션을 열 때 내린 판정(프로젝트의
+        // lifecycle.submitFromChat, PLAN L6)을 따른다 — MCP 자식과 같은 env.
+        tools: this.hostTools().map((tool) => ({
           name: tool.name,
           description: tool.description,
           loadMode: "essential",
@@ -215,6 +217,11 @@ export class OmpAgentSession implements AgentSession {
       },
       15_000,
     );
+  }
+
+  /** 이 세션에 실은 도구 — 부르는 쪽(onHostToolCall)도 같은 목록에서 찾는다. */
+  private hostTools() {
+    return browserTools(this.launch.browserMcp?.env.COLO_BROWSER_SUBMIT === "1");
   }
 
   // -------------------------------------------------------------------------
@@ -655,7 +662,7 @@ export class OmpAgentSession implements AgentSession {
     const id = typeof frame.id === "string" ? frame.id : null;
     if (!id) return;
     const name = String(frame.toolName ?? "");
-    const tool = BROWSER_TOOLS.find((candidate) => candidate.name === name);
+    const tool = this.hostTools().find((candidate) => candidate.name === name);
     const relay = this.launch.browserMcp;
     if (!tool || !relay) {
       this.transport.write({

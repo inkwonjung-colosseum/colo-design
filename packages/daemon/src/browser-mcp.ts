@@ -24,8 +24,8 @@ import "./stderr-console.js";
 
 import { createInterface } from "node:readline";
 import {
-  BROWSER_TOOLS,
   type BrowserRelay,
+  browserTools,
   callBrowserTool,
   text,
   type Wire,
@@ -33,6 +33,12 @@ import {
 
 const daemonUrl = process.env.COLO_DAEMON_URL;
 const secret = process.env.COLO_BROWSER_SECRET;
+/**
+ * 이 세션에 실리는 도구 — `submit_for_review` 는 COLO_BROWSER_SUBMIT 이
+ * 켜진 세션(프로젝트의 lifecycle.submitFromChat, PLAN L6 · O6)에만 한다.
+ * 서버가 세션을 열 때 같은 판정을 내려 env 로 실었다.
+ */
+const TOOLS = browserTools(process.env.COLO_BROWSER_SUBMIT === "1");
 if (!daemonUrl || !secret) {
   console.error(
     "COLO_DAEMON_URL·COLO_BROWSER_SECRET 환경 변수가 필요하다 — 이 프로세스는 데몬이 띄우는 MCP 자식이다.",
@@ -41,7 +47,6 @@ if (!daemonUrl || !secret) {
 }
 /** 좁혀진 좌표 — 게이트 뒤라 둘 다 있다. `handle` 은 이 값만 본다. */
 const relay: BrowserRelay = { daemonUrl, secret };
-
 function send(message: Wire): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
@@ -79,7 +84,7 @@ async function handle(message: Wire): Promise<void> {
       return;
     case "tools/list":
       answer(message.id as string | number | null, {
-        tools: BROWSER_TOOLS.map((tool) => ({
+        tools: TOOLS.map((tool) => ({
           name: tool.name,
           description: tool.description,
           inputSchema: {
@@ -92,7 +97,7 @@ async function handle(message: Wire): Promise<void> {
       return;
     case "tools/call": {
       const name = typeof params.name === "string" ? params.name : "";
-      const tool = BROWSER_TOOLS.find((candidate) => candidate.name === name);
+      const tool = TOOLS.find((candidate) => candidate.name === name);
       if (!tool) {
         // 모르는 도구도 프로토콜 오류가 아니라 도구 결과로 — 모델이 목록을
         // 다시 읽고 고칠 수 있어야 한다.

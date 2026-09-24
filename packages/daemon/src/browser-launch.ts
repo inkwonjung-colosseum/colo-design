@@ -57,6 +57,9 @@ export function browserMcpEntry(
   browserAvailable: boolean,
   daemonUrl: string,
   secret: string,
+  /** 이 세션에 submit_for_review 를 실을지 (PLAN L6 · O6 — 프로젝트의
+   *  lifecycle.submitFromChat). MCP 자식과 omp 가 같은 env 를 읽는다. */
+  submitFromChat: boolean,
 ): BrowserMcpEntry | null {
   if (!browserAvailable) return null;
   return {
@@ -68,6 +71,7 @@ export function browserMcpEntry(
       // execPath 폴백이 Electron 바이너리일 때 node 로 돌게 하는 스위치 —
       // 진짜 node 에게는 무해하다.
       ELECTRON_RUN_AS_NODE: "1",
+      ...(submitFromChat ? { COLO_BROWSER_SUBMIT: "1" } : {}),
     },
   };
 }

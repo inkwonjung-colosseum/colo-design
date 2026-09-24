@@ -92,9 +92,10 @@ export class SessionManager {
     /**
      * 세션별 브라우저 MCP 기동 명세를 만드는 훅(3단계). DaemonServer가
      * browserDriverFactory 주입 여부·시크릿 발급·바인딩 포트를 알고 있으므로
-     * 클로저로 받는다 — 미주입 host(브라우저 개발 경로)에서는 undefined.
+     * 여기서 만든다. `cwd` 는 세션이 사는 클론 — 제출 도구의 실림
+     * 판정(PLAN L6)이 프로젝트를 보는 데 쓴다.
      */
-    private readonly browserMcpFor?: (sessionId: string) => BrowserMcpEntry | null,
+    private readonly browserMcpFor?: (sessionId: string, cwd: string) => BrowserMcpEntry | null,
     /**
      * createSession 이 던졌을 때 발급된 시크릿을 회수하는 훅 — 세션이
      * 못 열렸는데 시크릿이 맵에 남으면 닫힌 세션의 자격이 살아남는다.
@@ -172,7 +173,7 @@ export class SessionManager {
       ...options.launch,
       // 브라우저 도구 명세는 데몬이 세션별 시크릿과 함께 발급한다 — 호출자가
       // options.launch로 넣은 값이 있어도 덮는다(시크릿은 세션 소유).
-      browserMcp: this.browserMcpFor?.(session.id) ?? undefined,
+      browserMcp: this.browserMcpFor?.(session.id, session.cwd) ?? undefined,
     };
     try {
       session.attach(driver.createSession(launch, session.driverHooks));
@@ -705,7 +706,7 @@ export class SessionManager {
             ...(cutoff.cut
               ? { resumeSessionAt: cutoff.cut, resumeDropsTurn: cutoff.drops ?? cutoff.cut }
               : {}),
-            browserMcp: this.browserMcpFor?.(fork.id) ?? undefined,
+            browserMcp: this.browserMcpFor?.(fork.id, fork.cwd) ?? undefined,
           },
           fork.driverHooks,
         ),
