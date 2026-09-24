@@ -154,6 +154,15 @@ const HANDOFF_STATES: Record<string, true> = {
   merged: true,
   closed: true,
 };
+/**
+ * reviewers 의 판독 — 문자열 배열만 통과시킨다(PLAN L10 · 단계 0). 빈 배열은
+ * "이 레포는 아무도 자동 지정하지 않는다"는 뜻이므로 그대로 살리고, 문자열
+ * 배열이 아니면 필드를 버린다(옛 필드의 다른 모양이 손을 대는 일 없이).
+ */
+function parseHandoffReviewers(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw) || !raw.every((login) => typeof login === "string")) return undefined;
+  return raw.map((login) => login.trim()).filter((login) => login !== "");
+}
 
 function parseHandoff(raw: unknown): HandoffStatus | null {
   if (!raw || typeof raw !== "object") return null;
@@ -164,12 +173,16 @@ function parseHandoff(raw: unknown): HandoffStatus | null {
   if (typeof value.number !== "number" || !url || !branch || !state || !HANDOFF_STATES[state]) {
     return null;
   }
+  const reviewers = parseHandoffReviewers(value.reviewers);
   return {
     number: value.number,
     url,
     branch,
     state: state as HandoffStatus["state"],
     title: cleanString(value.title) ?? "",
+    // 데몬이 쓴 reviewers 도 왕복한다 — 읽는 쪽이 버리면 재시작 뒤 리뷰어
+    // 줄이 사라진다(PLAN L10 · 단계 0).
+    ...(reviewers === undefined ? {} : { reviewers }),
   };
 }
 
