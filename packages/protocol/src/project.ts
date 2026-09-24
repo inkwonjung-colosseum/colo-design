@@ -1,3 +1,4 @@
+import type { Attention } from "./attention.js";
 import type { HandoffStatus, RepoPhase } from "./repo.js";
 import type { PlanUsage, SessionModelInfo } from "./session.js";
 import type { EffortLevel } from "./shared.js";
@@ -89,6 +90,11 @@ export interface ProjectSummary {
   defaults?: ProjectDefaults;
   /** 초대 v4: 사이클의 수명 규칙 — 없으면 각 소비자의 기본값을 따른다. */
   lifecycle?: ProjectLifecycle;
+  /**
+   * 이 프로젝트의 주의 (PLAN L8) — 비활성 프로젝트의 사이드바 행도 같은
+   * 문장을 읽는다. 없으면 키가 없다.
+   */
+  attention?: Attention | null;
 }
 
 export interface ProjectList {
@@ -312,6 +318,17 @@ export interface DaemonStatus {
   dev?: boolean;
   /** 넘긴 요청에 적을 작성자 이름 — 온보딩이 묻고 machine.json 이 기억한다. */
   authorName?: string | null;
+  /**
+   * 기계 전체의 주의 (PLAN L8) — 연결 코드 만료 · AI 로그아웃처럼 어느
+   * 프로젝트의 것도 아닌 문제. 없으면 키가 없다.
+   */
+  attention?: Attention | null;
+  /**
+   * 개발자 알림이 실제로 나가는 경로 (PLAN L11) — GitHub(PR 코멘트 · 이슈)가
+   * 열려 있으면 "github", 아니면 Slack, 둘 다 없으면 "none". 화면은 이 값으로
+   * `개발자에게 알렸어요` 가 어느 채널로 갔는지 안다.
+   */
+  noticeRoute?: "github" | "slack" | "none";
 }
 
 // ---------------------------------------------------------------------------
