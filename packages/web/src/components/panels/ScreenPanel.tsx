@@ -9,6 +9,7 @@ import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf, timeAgo } from "../../lib/format";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
+import { registerScreenOpener } from "../../lib/screen-link";
 import {
   isReplyConfirmed,
   loadHandledReviews,
@@ -244,6 +245,21 @@ export function ScreenPanel({
     setTarget(null);
     setLocation(null);
   }
+
+  /**
+   * 답변의 화면 링크 · 핀 카드의 행이 이 칸을 옮기는 손 — 주소창에 경로를
+   * 친 것과 같은 target 이다. 서버 주소가 아직 없으면 등록하지 않는다:
+   * 판정할 origin 이 없고, 그 링크는 원래대로 브라우저가 연다. 새 객체를
+   * 세우므로 같은 경로를 다시 눌러도 칸이 다시 그 화면으로 간다.
+   */
+  const previewUrl = repo?.previewUrl ?? null;
+  useEffect(() => {
+    if (!previewUrl) return;
+    return registerScreenOpener({
+      previewUrl,
+      open: (path) => setTarget({ kind: "path", path }),
+    });
+  }, [previewUrl]);
 
   /** 작업 기록 도킹 패널 — 더 보기 ▾ 메뉴에서 열고 닫는다(토글). */
   const [historyOpen, setHistoryOpen] = useState(false);

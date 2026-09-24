@@ -1955,6 +1955,13 @@ select {
   color: var(--accent);
   text-underline-offset: 2px;
 }
+/* 답변 끝의 화면 링크 — 누르면 옆의 미리보기가 그 화면으로 간다. 모니터
+   글리프 하나가 "브라우저가 아니라 저 칸" 이라는 뜻을 말한다. */
+.md a.md__screenlink svg {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
 .md hr {
   border: 0;
   border-top: 1px solid var(--line);

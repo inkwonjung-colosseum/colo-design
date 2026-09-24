@@ -5,8 +5,10 @@ import ReactMarkdown, { defaultUrlTransform, type Options } from "react-markdown
 import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import remarkGfm from "remark-gfm";
 import { linkClick } from "../lib/open-link";
+import { looksLikeScreenLink, openScreenLink } from "../lib/screen-link";
 import { windowsFileLinkEscapeRemarkPlugin } from "../lib/windowsFileLinkEscapeRemarkPlugin";
 import { CopyButton } from "./CopyButton";
+import { DesktopIcon } from "./icons";
 
 // ---------------------------------------------------------------------------
 // remark 파이프라인 — CJK 줄바꿈과 Windows 경로 복구
@@ -57,10 +59,39 @@ function ChatLink({
   node: _node,
   href,
   children,
+  className,
   ...rest
 }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+  // 답변 끝의 화면 링크(공통 규칙)는 미리보기 서버의 주소다 — 누르면 옆의
+  // 미리보기 칸이 그 화면으로 간다(screen-link). 표식은 주소의 모양만 본다:
+  // 마크다운은 memo 라 칸의 등록보다 먼저 그려질 수 있고, 판정의 진짜 답은
+  // 클릭 순간의 openScreenLink 가 한다(칸이 없으면 원래 길로 연다).
+  const screen = href ? looksLikeScreenLink(href) : false;
   return (
-    <a href={href} target="_blank" rel="noreferrer" {...rest} onClick={linkClick}>
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      {...rest}
+      className={
+        [className, screen ? "md__screenlink" : null].filter(Boolean).join(" ") || undefined
+      }
+      title={screen ? "미리보기에서 열어요" : undefined}
+      onClick={(event) => {
+        const plain =
+          event.button === 0 &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          !event.altKey;
+        if (plain && href && openScreenLink(href)) {
+          event.preventDefault();
+          return;
+        }
+        linkClick(event);
+      }}
+    >
+      {screen && <DesktopIcon size={12} />}
       {children}
     </a>
   );

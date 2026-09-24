@@ -70,8 +70,14 @@ export function Transcript({
   onOpenHistory,
   onReplyReview,
   onDevReply,
+  onOpenScreen,
 }: {
   blocks: Block[];
+  /**
+   * 핀 카드의 행 → 그 핀이 찍혔던 화면으로 미리보기를 옮긴다(화면 id).
+   * 없으면 행은 읽는 자리로 그친다 — 미리보기가 없는 자리(홈 인박스).
+   */
+  onOpenScreen?: (screen: string) => void;
   live?: boolean;
   /** Offered on a failed turn's card: send the same words again. */
   onRetry?: (text: string) => void;
@@ -229,6 +235,7 @@ export function Transcript({
                       marker={marker}
                       body={body}
                       thumbs={block.thumbs}
+                      onOpenItem={onOpenScreen}
                       onDevReply={onDevReply}
                     />
                   );

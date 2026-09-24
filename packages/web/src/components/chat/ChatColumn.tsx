@@ -14,6 +14,7 @@ import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
+import { openScreenPath, screenPath } from "../../lib/screen-link";
 import { type SendKey, saveHandledReview } from "../../lib/settings";
 import { tailMoving } from "../../lib/tape-visibility";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
@@ -585,6 +586,13 @@ export function ChatColumn({
               await api.replyToReview(reviewId, text);
             }}
             onOpenHistory={onOpenHistory}
+            // 핀 카드의 행이 그 화면으로 미리보기를 옮긴다 — 주소창 이동과
+            // 같은 길(screen-link). 서버 주소가 없으면 옮길 곳도 없다.
+            onOpenScreen={
+              daemon.repo?.previewUrl
+                ? (screen) => void openScreenPath(screenPath(screen))
+                : undefined
+            }
           />
           {/* 제출 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
               말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
