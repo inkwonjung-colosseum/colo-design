@@ -69,7 +69,12 @@ export class BringUp {
         this.clearBringUpDebris();
         // The clean url: the PAT travels in the environment (gitAuthEnv),
         // so neither `.git/config` nor `ps` ever sees it.
-        await this.core.git(["clone", this.core.url, this.core.root], dirname(this.core.root));
+        // clone 만 차선에 태운다(PLAN L1) — bootstrap 전체가 줄을 잡으면
+        // 설치와 미리보기 기동이 몇 분씩 다른 git 손을 막는다.
+        const cloneArgs = ["clone", this.core.url, this.core.root];
+        await this.core.lane.run("hygiene", () =>
+          this.core.git(cloneArgs, dirname(this.core.root)),
+        );
         trustWorkspace(this.core.root);
         sanitizeRepoAgentSettings(this.core.root);
       } else {

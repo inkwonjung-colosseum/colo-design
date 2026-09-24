@@ -152,10 +152,9 @@ export class PublishCycle {
         detail: "연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.",
       });
     }
-    // The worktree is the review's subject: a session-start refresh still
-    // stashing and replaying must settle before the diff is computed.
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
+    // 저장은 차선의 save 칸 안에서 돈다(PLAN L1) — 최신화·치워두기와의 순서는
+    // 차선이 지키므로 손으로 슬롯을 기다리던 자리는 없다. 몸통의 diff 는
+    // 재진입으로 곧바로 읽힌다.
 
     // 저장 직전 가드 (커미티 2026-09-15 판정 1): 기획자가 `상태 확인`을 한 번도
     // 누르지 않아도, 이미 반영되거나 반려된 요청의 브랜치에 커밋이 쌓이는 일은
@@ -282,7 +281,10 @@ export class PublishCycle {
       // 끝이 오프라인 때문에 밀리지 않게 실패를 삼키던 자리(P2-1)에 조용한
       // 재시도가 대신 선다. 세 번 다 지나면 제출이 기다려서 민다 — 제출만이
       // 푸시 실패를 게이트로 올리는 유일한 길이다.
-      void this.retryBackgroundPush(branch);
+      // 차선 밖으로 내보내 띄운다(PLAN L1): 저장 작업의 문맥 안에 남으면 각
+      // 시도가 재진입 즉시실행이 되어 줄을 비켜간다 — 시도 하나는 push 작업
+      // 하나로 다시 줄에 서야 한다.
+      void this.core.lane.outside(() => this.retryBackgroundPush(branch));
     } else {
       try {
         await this.core.git(["push", "--set-upstream", "origin", branch]);
@@ -383,11 +385,7 @@ export class PublishCycle {
         detail: "넘길 변경사항이 없습니다 — 먼저 저장해 주세요.",
       });
     }
-    // The same worktree contract as a save: wait out a refresh before
-    // reading and writing the cycle.
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
-
+    // 넘기기도 차선의 submit 칸 안에서 돈다(PLAN L1) — 순서는 차선이 지킨다.
     // Two different problems with two different fixes: a repo that is not on
     // GitHub needs a different url, a repo with no token needs a token. One
     // sentence covering both leaves the planner guessing which.
@@ -718,7 +716,15 @@ export class PublishCycle {
    * 저장의 `checkout -B` 가 그 위에서 새 사이클을 만들어 **반려된 커밋을 새
    * 요청으로 다시 제안한다** (커미티 2026-09-15 판정 2).
    */
-  private async landCycle(handoff: HandoffStatus): Promise<void> {
+  private landCycle(handoff: HandoffStatus): Promise<void> {
+    // 착지는 차선의 land 칸에 선다(PLAN L1) — fetch · checkout · reset 이
+    // 클론을 통째로 움직인다. 저장의 머리(runSave 안의 refreshHandoff)에서
+    // 불리면 재진입으로 곧바로 돈다.
+    return this.core.lane.run("land", () => this.landCycleJob(handoff));
+  }
+
+  /** landCycle 의 몸통 — 차선 작업 안에서만 돈다. */
+  private async landCycleJob(handoff: HandoffStatus): Promise<void> {
     // 재착지 금지: branch 가 비었고 같은 요청이 이미 같은 끝 상태로 열려 있으면
     // 착지는 지난번에 끝났다 — refreshHandoff 가 매번 다시 부를 때마다
     // rotateCommentsCycle 이 핀 앵커를 옮기는 일을 한 번만 치른다.
@@ -877,12 +883,18 @@ export class PublishCycle {
     }
   }
 
-  /** D6: 조용한 푸시 재시도 — 세 번, 30 초 간격. 마지막 실패는 말이 없다. */
+  /**
+   * D6: 조용한 푸시 재시도 — 세 번, 30 초 간격. 마지막 실패는 말이 없다.
+   * 시도 하나가 차선의 push 작업 하나고 기다림은 줄 밖에서(PLAN L1) — 재시도
+   * 도중 다른 git 손이 줄을 쓸 수 있으므로 시도마다 다시 선다.
+   */
   private async retryBackgroundPush(branch: string): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (attempt > 0) await sleep(30_000);
       try {
-        await this.core.git(["push", "--set-upstream", "origin", branch]);
+        await this.core.lane.run("push", () =>
+          this.core.git(["push", "--set-upstream", "origin", branch]),
+        );
         return;
       } catch {
         // 남은 시도가 있다; 없다면 밀린 커밋은 제출의 게이트가 잡는다.

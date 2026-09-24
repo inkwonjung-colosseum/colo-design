@@ -86,25 +86,19 @@ export class ShelfStore {
    */
   async recoverShelf(): Promise<"none" | "restored" | "kept"> {
     if (!this.core.isCloned()) return "none";
-    // 옛 shelve·unshelve 와 같은 규칙: 같은 틱의 다른 쓰기가 이 사이를 끊어
-    // 들지 못하게 shelving 은 첫 await 전에 세우고, 기다림은 run 안에서 읽는다.
-    const previous = this.core.shelving;
-    const run = (async () => {
-      await this.core.publishing?.catch(() => undefined);
-      await this.core.refreshing?.catch(() => undefined);
-      await previous?.catch(() => undefined);
-      const outcome = await recoverShelfPatch((args) => this.core.git(args), this.core.root);
-      if (outcome === "restored") {
-        await this.core.refreshPendingChanges();
-        this.core.emit();
-      }
-      return outcome;
-    })().catch((): "kept" => "kept");
-    this.core.shelving = run;
-    try {
-      return await run;
-    } finally {
-      if (this.core.shelving === run) this.core.shelving = null;
-    }
+    // 꺼내기는 차선의 recover 칸에 선다(PLAN L1) — 패치 적용이 작업 트리와
+    // refs 를 움직이므로 저장·최신화와 한 줄에 서고, 시작 쓸기의 이웃한
+    // 복구(recoverParkedWork)와도 순서가 저절로 잡힌다. 옛 shelving 슬롯의
+    // 손 기다림은 지운다.
+    return await this.core.lane
+      .run("recover", async () => {
+        const outcome = await recoverShelfPatch((args) => this.core.git(args), this.core.root);
+        if (outcome === "restored") {
+          await this.core.refreshPendingChanges();
+          this.core.emit();
+        }
+        return outcome;
+      })
+      .catch((): "kept" => "kept");
   }
 }

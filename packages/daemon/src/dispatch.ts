@@ -308,7 +308,7 @@ export class RequestRouter {
         // 떨어진다(briefTo). 그 브리프 턴이 먼저 열리면 지금의 말은 대기
         // 줄로 물러나고, 정리가 끝난 뒤 실행된다 — 세션이 도는 턴에 온 말을
         // held 로 미뤄두는 기존 질서가 순서를 잡는다. 실패·20초 경과는 말을
-        // 막지 않는다: pull 은 조용히 이어진다(repo.refreshing).
+        // 막지 않는다: pull 은 조용히 이어된다(차선의 refresh 칸).
         await this.pullBeforeSend(message.sessionId);
         // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
         // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
@@ -1052,8 +1052,8 @@ export class RequestRouter {
    * E1: 말이 나가기 전의 조용한 최신화. 받아올 것이 없으면 fetch 한 번으로
    * 돌아가고, 있으면 pull — 사이클 브랜치 위 병합의 충돌 브리프는 이 대화의
    * 첫 과제로 떨어진다(briefTo). 20초를 넘기면 기다림을 포기하고 말을 먼저
-   * 보낸다: pull 은 뒤에서 이어되고(repo.refreshing), 최신화가 사용자의 말을
-   * 지연시켜서는 안 되기 때문이다.
+   * 보낸다: pull 은 차선(refresh 칸)에서 뒤로 이어되고, 최신화가 사용자의
+   * 말을 지연시켜서는 안 되기 때문이다.
    */
   private async pullBeforeSend(sessionId: string): Promise<void> {
     const brief = this.briefTo(sessionId, "refresh");

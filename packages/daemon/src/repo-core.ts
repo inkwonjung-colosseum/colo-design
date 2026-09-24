@@ -18,7 +18,9 @@ import {
   type RepoStatus,
 } from "@colo-design/protocol";
 import { currentPlatform, resolveGitExecutable } from "./environment.js";
+import { GitLane, gitWriteVerb } from "./git-lane.js";
 import { type GitHubClient, parseRepoSlug } from "./github.js";
+import { createFileLogger, type DaemonLogger } from "./log.js";
 import type { MachineTurn } from "./machine-provider.js";
 import { killTree } from "./preview-claim.js";
 import { type RepoConfig, type RepoRegistry, resolveRepoConfig } from "./repo-config.js";
@@ -301,13 +303,23 @@ export class RepoCore {
 
   inFlight: Promise<RepoStatus> | null = null;
 
-  publishing: Promise<DiffStatus> | null = null;
+  /**
+   * git 쓰기의 줄 (PLAN L1) — 이 클론을 바꾸는 모든 git 명령이 여기 하나씩
+   * 서서 돈다. 옛 약속 슬롯(publishing · refreshing · shelving)의 몫과,
+   * 슬롯 없이 돌던 랜딩 · 복구 · 배경 푸시까지 같은 줄에 태운다.
+   * `inFlight` 는 남는다 — 저것은 git 잠금이 아니라 bootstrap 중복 방지다.
+   */
+  readonly lane = new GitLane();
 
-  /** The session-start/button refresh while it runs — saves wait it out. */
-  refreshing: Promise<unknown> | null = null;
-
-  /** 치워둔 슬롯의 자동 꺼내기(recoverShelf)가 도는 동안 — 저장 · 최신화가 이를 기다린다. */
-  shelving: Promise<unknown> | null = null;
+  /**
+   * 최신화 · 되돌리기 · 복구처럼 작업 트리를 통째로 움직이는 차선 작업이 도는
+   * 중 (PLAN L1) — 옛 `refreshing` 슬롯을 읽던 바깥 호출자(handoffStatus 의
+   * 수동 읽기 판정)가 같은 뜻으로 읽는다. 저장·넘기기는 diffStage 가 말한다.
+   */
+  get busyRefreshing(): boolean {
+    const kind = this.lane.current;
+    return kind === "refresh" || kind === "restore" || kind === "recover";
+  }
 
   /** Whether this project is the one on screen — see `setActive`. */
   active = true;
@@ -537,12 +549,22 @@ export class RepoCore {
     };
   }
 
-  /** Rewrites a PAT-bearing origin to its clean form — see update(). */
+  /**
+   * Rewrites a PAT-bearing origin to its clean form — see update(). bootstrap 과
+   * update 양쪽에서 부르므로 `remote set-url`(쓰기)의 차선 감싸기도 안에 둔다.
+   */
   async scrubOriginCredential(): Promise<void> {
     if (!this.isCloned()) return;
-    const origin = (await this.git(["remote", "get-url", "origin"]).catch(() => "")).trim();
-    if (!/^https:\/\/[^@/\s]+@/.test(origin)) return;
-    await this.git(["remote", "set-url", "origin", origin.replace(/^(https:\/\/)[^@/\s]+@/, "$1")]);
+    await this.lane.run("hygiene", async () => {
+      const origin = (await this.git(["remote", "get-url", "origin"]).catch(() => "")).trim();
+      if (!/^https:\/\/[^@/\s]+@/.test(origin)) return;
+      await this.git([
+        "remote",
+        "set-url",
+        "origin",
+        origin.replace(/^(https:\/\/)[^@/\s]+@/, "$1"),
+      ]);
+    });
   }
 
   /**
@@ -556,10 +578,14 @@ export class RepoCore {
     if (!this.isCloned()) return null;
     if (this.phase !== "ready" && this.phase !== "error") return null;
     if (!this.branch) return null;
-    if (this.publishing) await this.publishing.catch(() => undefined);
-    await this.git(["fetch", "origin", this.baseBranch]);
-    const [, behind] = await this.aheadBehindBase();
-    return behind > 0 ? behind : null;
+    // fetch 도 쓰기다(refs · FETCH_HEAD) — 차선에 선다(PLAN L1). 종류는
+    // supervise: 감독자의 관찰 계통(L2 흡수표가 이 확인을 mergeBase 조치로
+    // 데려간다)의 씨앗이고, refresh 의 합류와 결과 모양이 섞이지 않게 한다.
+    return await this.lane.run("supervise", async () => {
+      await this.git(["fetch", "origin", this.baseBranch]);
+      const [, behind] = await this.aheadBehindBase();
+      return behind > 0 ? behind : null;
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -573,22 +599,35 @@ export class RepoCore {
   async diff(): Promise<DiffFile[]> {
     // A refresh mid-flight has parked the planner's work in a stash — a diff
     // answered inside that window reads a clean (or half-popped) tree and
-    // the review would say 저장할 변경사항이 없습니다 over real work. Same
-    // contract as runSave: wait the pull out, then read.
-    while (this.refreshing) await this.refreshing.catch(() => undefined);
-    if (!this.isCloned()) return [];
-    const tracked = parseUnifiedDiff(
-      await this.git(["-c", "core.quotepath=false", "diff", "HEAD", "--no-color"]),
+    // the review would say 저장할 변경사항이 없습니다 over real work.
+    // 차선(diff 칸, join)이 옛 `while (refreshing)` 손 기다림을 대신한다
+    // (PLAN L1): 최신화가 줄을 잡으면 그 뒤에 서서 읽고, 저장 안에서 불리면
+    // 재진입으로 곧바로 읽는다.
+    return await this.lane.run(
+      "diff",
+      async (): Promise<DiffFile[]> => {
+        if (!this.isCloned()) return [];
+        const tracked = parseUnifiedDiff(
+          await this.git(["-c", "core.quotepath=false", "diff", "HEAD", "--no-color"]),
+        );
+        const files = [...tracked];
+        for (const rel of (
+          await this.git([
+            "-c",
+            "core.quotepath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+          ])
+        )
+          .split(/\r?\n/)
+          .filter(Boolean)) {
+          files.push(untrackedAsAdded(this.root, rel));
+        }
+        return files.sort((a, b) => a.path.localeCompare(b.path));
+      },
+      { join: true },
     );
-    const files = [...tracked];
-    for (const rel of (
-      await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard"])
-    )
-      .split(/\r?\n/)
-      .filter(Boolean)) {
-      files.push(untrackedAsAdded(this.root, rel));
-    }
-    return files.sort((a, b) => a.path.localeCompare(b.path));
   }
 
   /** The branch this cycle's saves land on, or null before the first 저장. */
@@ -653,6 +692,18 @@ export class RepoCore {
    * must not pile an install or preview restart onto a mid-resolution tree.
    */
   async refreshFromRemote(onSessionTurn?: (brief: string) => void): Promise<"clean" | "conflict"> {
+    // PLAN L1: 최신화 전체가 차선의 refresh 칸이다(join) — 겹친 최신화는 한 번만
+    // 돌고, bootstrap 이 불러도 같은 줄에 선다. 몸통 안의 recoverParkedWork 는
+    // 재진입으로 곧바로 돈다.
+    return await this.lane.run("refresh", () => this.refreshFromRemoteJob(onSessionTurn), {
+      join: true,
+    });
+  }
+
+  /** refreshFromRemote 의 몸통 — 차선 작업 안에서만 돈다. */
+  private async refreshFromRemoteJob(
+    onSessionTurn?: (brief: string) => void,
+  ): Promise<"clean" | "conflict"> {
     // A refresh that finds a conflict left over from an earlier run briefs
     // again instead of piling on: until the agent resolves it, that state IS
     // the current one.
@@ -919,6 +970,16 @@ export class RepoCore {
     onSessionTurn?: (brief: string) => void,
   ): Promise<"none" | "restored" | "conflict"> {
     if (!this.isCloned()) return "none";
+    // PLAN L1: stash pop 은 작업 트리를 움직인다 — 복구(recover) 칸에 선다.
+    // 시작 쓸기(server.ts)와 최신화 몸통이 같은 줄에 태워져 시작의 두 복구
+    // 경합이 저절로 직렬화된다. 최신화 안에서 불리면 재진입으로 곧바로 돈다.
+    return await this.lane.run("recover", () => this.recoverParkedWorkJob(onSessionTurn));
+  }
+
+  /** recoverParkedWork 의 몸통 — 차선 작업 안에서만 돈다. */
+  private async recoverParkedWorkJob(
+    onSessionTurn?: (brief: string) => void,
+  ): Promise<"none" | "restored" | "conflict"> {
     let list: string;
     try {
       list = await this.git(["stash", "list"]);
@@ -1052,6 +1113,10 @@ export class RepoCore {
      *  committed capture would otherwise come back utf8-mangled. */
     binary = false,
   ): Promise<string> {
+    // PLAN L1: 클론을 바꾸는 git 은 차선 작업 안에서만 돈다. 판정은 동사로
+    // 한다 — 다른 작업 트리 cwd(handoff-preview 의 워크트리)로 도는 명령도
+    // 같은 .git 을 쓰면 위반이다.
+    this.guardLane(args);
     const windows = currentPlatform() === "win32";
     // The same binary the onboarding gate judged: on a Finder-launched app
     // whose PATH stops at /usr/bin, a Homebrew-only git is exactly the one
@@ -1086,6 +1151,22 @@ export class RepoCore {
         this.pat,
       ),
     );
+  }
+
+  /**
+   * 차선 위반 판정 (PLAN L1): 클론을 바꾸는 git 이 차선 작업 밖에서 불리면
+   * 잡는다. 배포 판에서 빠뜨린 자리 하나가 사용자의 작업을 죽이지 않게
+   * 기본은 동사당 한 번의 경고고, 시험·개발(COLO_DESIGN_LANE_STRICT=1)은
+   * 던진다.
+   */
+  private guardLane(args: string[]): void {
+    const verb = gitWriteVerb(args);
+    if (verb === null || this.lane.holding) return;
+    const detail =
+      `git ${verb} 명령이 차선 밖에서 실행됐습니다 — ` +
+      "클론을 바꾸는 git 은 차선 작업 안에서만 돕니다 (PLAN L1).";
+    if (process.env.COLO_DESIGN_LANE_STRICT === "1") throw new Error(detail);
+    warnLaneViolation(verb, detail);
   }
 
   /**
@@ -1330,6 +1411,24 @@ const GIT_MISSING_DETAIL = "git을 찾을 수 없습니다 — git을 설치한 
 
 export function detailOf(error: unknown, pat: string | null): string {
   return redact(error instanceof Error ? error.message : String(error), pat);
+}
+
+// ---------------------------------------------------------------------------
+// 차선 위반 경고 (PLAN L1) — 동사당 한 번, 파일 로그로만
+// ---------------------------------------------------------------------------
+
+const laneWarnedVerbs = new Set<string>();
+let laneWarnSink: DaemonLogger | null = null;
+
+function warnLaneViolation(verb: string, detail: string): void {
+  if (laneWarnedVerbs.has(verb)) return;
+  laneWarnedVerbs.add(verb);
+  try {
+    laneWarnSink ??= createFileLogger();
+    laneWarnSink.warn("[git-lane] 차선 밖 git 쓰기", { verb, detail });
+  } catch {
+    // 로깅이 도구를 죽일 수는 없다 — log.ts 의 계약.
+  }
 }
 
 /** Port a preview URL answers on — explicit, or the scheme's default. */

@@ -24,6 +24,7 @@ export { assertClonableRepoUrl, PUSH_AUTH_FAILURE, REPO_URL_MISSING_DETAIL } fro
 export { parseUnifiedDiff } from "./repo-diff.js";
 export { safeRepoPath } from "./repo-paths.js";
 
+import type { LaneKind } from "./git-lane.js";
 import { NO_MACHINE_TURN } from "./machine-provider.js";
 import { BringUp } from "./repo-bringup.js";
 import type { RepoRegistry } from "./repo-config.js";
@@ -228,11 +229,10 @@ export class RepoWorkspace {
    * pop — the planner's unsaved work parks in `git stash` with nothing left
    * running to bring it back. Shutdown waits the writers out first;
    * `recoverParkedWork` is the net for the kills no wait survives.
+   * 차선이 옛 슬롯 셋의 몫을 받았다(PLAN L1) — 줄이 빌 때까지 기다린다.
    */
   async settle(): Promise<void> {
-    await this.core.publishing?.catch(() => undefined);
-    await this.core.refreshing?.catch(() => undefined);
-    await this.core.shelving?.catch(() => undefined);
+    await this.core.lane.idle();
     await this.core.inFlight?.catch(() => undefined);
   }
 
@@ -253,20 +253,13 @@ export class RepoWorkspace {
     // 이 pull 이 충돌을 첫 과제로 넣는다. error 이후의 상태는 어차피 없고,
     // clone 이 없는 실패(내려받기 실패)는 위에서 걸린다.
     if (this.core.phase !== "ready" && this.core.phase !== "error") return;
-    // One worktree, two writers: a save or handoff in flight owns it, so
-    // the refresh waits — and a save below waits for a refresh the same
-    // way. Without this, the stash-move-replay window races `git diff` and
-    // the planner's save can read a worktree that is momentarily parked.
-    if (this.core.publishing) await this.core.publishing.catch(() => undefined);
-    if (this.core.shelving) await this.core.shelving.catch(() => undefined);
-    // A refresh already in flight owns the worktree the same way — a second
-    // pull queues behind it instead of racing its stash-move-replay window.
-    if (this.core.refreshing) await this.core.refreshing.catch(() => undefined);
-    console.error("[pull] start");
+    // One worktree, one lane (PLAN L1): refreshFromRemote 이 차선(refresh,
+    // join)에 스스로 서므로 저장·치워두기·앞선 최신화와의 손 기다림은 차선이
+    // 대신한다 — stash-move-replay 창이 `git diff` 와 겹치지 않는다는 보장은
+    // 같고, 읽는 자리는 없다.
     const run = this.core
       .refreshFromRemote(onSessionTurn)
       .then(async (outcome) => {
-        console.error("[pull] refreshFromRemote done:", outcome);
         // A conflict brief leaves the worktree mid-resolution: the delivery chip's
         // count must show it (the unmerged files are changes awaiting 저장),
         // and an install or preview restart would only bury the brief in
@@ -274,6 +267,9 @@ export class RepoWorkspace {
         // the worktree exactly the planner's edits on the new HEAD:
         // recount, or let the dependency-driven sync recount at its end.
         if (outcome === "conflict") await this.core.refreshPendingChanges();
+        // 의존성이 움직였으면 전체 동기화 — 차선 작업이 끝난 뒤 줄 밖에서
+        // 부른다(PLAN L1): bootstrap 안의 git 단계들이 제 몫의 작업으로 다시
+        // 줄에 선다.
         else if (this.bringup.dependenciesMoved()) await this.sync();
         else await this.core.refreshPendingChanges();
         return outcome;
@@ -284,11 +280,7 @@ export class RepoWorkspace {
         // ready, and the next sync() reports it properly — the callers left
         // (the automatic pre-send pull, the fleet) all run quietly.
         return undefined;
-      })
-      .finally(() => {
-        this.core.refreshing = null;
       });
-    this.core.refreshing = run;
     // The outcome is the caller's answer: the 최신화 button's "N건을 받아
     // 왔습니다" record and the tests both read it. A bare `await run` dropped
     // it on the floor, leaving that record dead code.
@@ -337,10 +329,11 @@ export class RepoWorkspace {
   /**
    * 커미티 B1 (2026-09-15): 최신화(pull)가 돌고 있는가 — handoff 폴링이 이
    * 사이에 refreshHandoff 를 겹치지 않게 하는 수단. 저장·넘기기의 판정은
-   * 서버가 diffStage 로 이미 알고, 이쪽은 레포 자체의 손길만 센다.
+   * 서버가 diffStage 로 이미 알고, 이쪽은 레포 자체의 손길만 센다. 옛
+   * `refreshing` 슬롯 대신 차선에서 파생한다(PLAN L1).
    */
   get busyRefreshing(): boolean {
-    return this.core.refreshing !== null;
+    return this.core.busyRefreshing;
   }
 
   /** Last counted unsaved-change files — the sidebar badge's number (PLAN D16). */
@@ -371,14 +364,9 @@ export class RepoWorkspace {
       backgroundPush?: boolean;
     } = {},
   ): Promise<DiffStatus> {
-    // 날아가는 저장을 돌려주면 새로 온 메시지는 조용히 증발한다 — 거절이 답이다.
-    if (this.core.publishing) {
-      throw new Error("저장이 진행 중입니다 — 끝나면 다시 눌러 주세요.");
-    }
-    this.core.publishing = this.publish.runSave(options).finally(() => {
-      this.core.publishing = null;
-    });
-    return this.core.publishing;
+    // PLAN L1: 던지던 "저장이 진행 중입니다" 는 사라진다 — 줄에 있는 저장에
+    // 합류하고(join), 도는 저장 뒤에 생긴 변경은 다음 저장이 담는다.
+    return this.core.lane.run("save", () => this.publish.runSave(options), { join: true });
   }
 
   /** 마지막 재검사가 센, 커밋되지 않은 변경 파일 수 — 자동 저장의 출발 판정. */
@@ -399,13 +387,9 @@ export class RepoWorkspace {
       commentsFile?: string;
     } = {},
   ): Promise<DiffStatus> {
-    if (this.core.publishing) {
-      throw new Error("넘기기가 진행 중입니다 — 끝나면 다시 눌러 주세요.");
-    }
-    this.core.publishing = this.publish.runHandoff(options).finally(() => {
-      this.core.publishing = null;
-    });
-    return this.core.publishing;
+    // PLAN L1: 넘기기도 던지지 않고 줄에 선다(submit) — 이미 열린 요청의
+    // 갱신은 멱등하므로 두 번 눌러도 안전하다.
+    return this.core.lane.run("submit", () => this.publish.runHandoff(options));
   }
 
   refreshHandoff(): Promise<HandoffStatusReport | null> {
@@ -460,12 +444,10 @@ export class RepoWorkspace {
         detail: "연결 레포가 준비되지 않았습니다 — 잠시 후 다시 시도해 주세요.",
       });
     }
-    // The same worktree contract as a save — both halves of it. Waiting for
-    // the other writers was only half: a restore that never takes a slot is
-    // invisible to the NEXT writer, and `pull()` (which a session.create
-    // fires on its own) then lays its stash-move-replay over a half-rewound
-    // tree. The shelf's `previous` capture is the pattern.
-    return this.asWorktreeWriter(() => this.runRestore(sha));
+    // The same worktree contract as a save: 되돌리기도 차선의 restore 칸에 서서
+    // 앞선 작성자 뒤에 선다(PLAN L1) — `pull()` 이 세션 시작에 스스로 깔던
+    // stash-move-replay 가 반쯤 되감힌 트리 위에 겹치지 않는다.
+    return this.core.lane.run("restore", () => this.runRestore(sha));
   }
 
   private async runRestore(sha: string): Promise<DiffStatus> {
@@ -541,36 +523,6 @@ export class RepoWorkspace {
     return this.core.setDiff({ stage: "published", commit });
   }
 
-  /**
-   * 워크트리를 손대는 한 사람만 — 앞선 작성자를 기다리고, 자기도 그 줄을
-   * 선다. 슬롯은 `refreshing` 을 쓴다: 부딪히는 진짜 상대가 `pull()` 의
-   * stash-move-replay 이고, 새 슬롯을 하나 더 두면 세 자리를 읽는 모든
-   * 호출부가 네 자리를 읽어야 하고, 빼먹은 한 곳이 같은 결함을 다시 낳는다.
-   * 설정과 해제는 repo-shelf 의 `previous` 패턴 그대로: 뒤에 온 호출이
-   * 이미 슬롯을 이어받았을 수 있으므로 자기 것만 내린다.
-   */
-  private async asWorktreeWriter<T>(work: () => Promise<T>): Promise<T> {
-    const previous = this.core.refreshing;
-    const run = (async () => {
-      while (this.core.publishing) await this.core.publishing.catch(() => undefined);
-      await previous?.catch(() => undefined);
-      await this.core.shelving?.catch(() => undefined);
-      return await work();
-    })();
-    // 슬롯에는 실패를 삼킨 그림자를 둔다 — 기다리는 쪽은 결과가 아니라
-    // "끝났는가"만 알면 되고, 미처리 거부를 만들지도 않는다.
-    const slot = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.core.refreshing = slot;
-    try {
-      return await run;
-    } finally {
-      if (this.core.refreshing === slot) this.core.refreshing = null;
-    }
-  }
-
   // -------------------------------------------------------------------------
   // 치워둔 작업 — the parked-work slot's automatic recovery
   // -------------------------------------------------------------------------
@@ -582,6 +534,15 @@ export class RepoWorkspace {
   /** 방금 선 커밋의 sha 와 파일 — 라우트↔파일 지도의 재료(2026-09-22). */
   headCommitFiles(): Promise<{ sha: string; files: string[] } | null> {
     return this.core.headCommitFiles();
+  }
+
+  /**
+   * 같은 .git 을 쓰는 다른 손(보낸 시점 빌드의 워크트리, handoff-preview)을
+   * 차선에 세우는 공개된 길 (PLAN L1) — `worktree add/remove/prune` 이 클론의
+   * refs 와 메타데이터를 쓰므로 저장·최신화와 한 줄에 서야 한다.
+   */
+  laneRun<T>(kind: LaneKind, job: () => Promise<T>): Promise<T> {
+    return this.core.lane.run(kind, job);
   }
 
   // -------------------------------------------------------------------------
