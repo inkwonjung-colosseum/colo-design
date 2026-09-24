@@ -406,18 +406,116 @@ export class GitHubClient {
     );
   }
 
-  /** D88: 리뷰 본문에 대한 답 — an issue comment on the pull request. */
+  /** D88: 리뷰 본문에 대한 답 — an issue comment on the pull request.
+   *  단계 4(PLAN L11)부터는 개발자 알림의 PR 코멘트도 이 길로 나가므로,
+   *  나중에 고쳐 쓸 수 있게 만들어진 코멘트의 id 를 돌려준다. */
   async commentOnIssue(input: {
     owner: string;
     repo: string;
     number: number;
     body: string;
-  }): Promise<void> {
-    await this.sendJson(
+  }): Promise<number> {
+    const data = await this.sendJson(
       "POST",
       `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments`,
       { body: input.body },
-      "코멘트 답하기",
+      "코멘트 달기",
+    );
+    return Number(data.id);
+  }
+
+  /**
+   * 개발자 알림의 이슈 (PLAN L11) — 열린 PR 이 없을 때 문제가 서는 자리.
+   * 라벨 · 담당자는 최선의 노력이다: 권한이 모자라 422 로 거절돼도 이슈
+   * 자체는 열려야 하므로 본문만으로 먼저 만들고 꾸미기는 따로 간다.
+   */
+  async createIssue(input: {
+    owner: string;
+    repo: string;
+    title: string;
+    body: string;
+    labels?: string[];
+    assignees?: string[];
+  }): Promise<number> {
+    const data = await this.sendJson(
+      "POST",
+      `/repos/${input.owner}/${input.repo}/issues`,
+      { title: input.title, body: input.body },
+      "개발자 알림 이슈 열기",
+    );
+    const number = Number(data.number);
+    const decorate: Record<string, unknown> = {};
+    if (input.labels && input.labels.length > 0) decorate.labels = input.labels;
+    if (input.assignees && input.assignees.length > 0) decorate.assignees = input.assignees;
+    if (Object.keys(decorate).length > 0) {
+      await this.sendJson(
+        "PATCH",
+        `/repos/${input.owner}/${input.repo}/issues/${number}`,
+        decorate,
+        "이슈 꾸미기",
+      ).catch(() => undefined);
+    }
+    return number;
+  }
+
+  /**
+   * 내가 연 열린 이슈 — 개발자 알림이 같은 문제의 이슈를 다시 찾는 목록.
+   * GitHub 의 /issues 는 PR 도 섞어 주므로 pull_request 가 달린 것은 뺀다.
+   */
+  async listOpenIssues(input: {
+    owner: string;
+    repo: string;
+    creator: string;
+  }): Promise<Array<Record<string, any>>> {
+    const data = await this.getJson(
+      `/repos/${input.owner}/${input.repo}/issues?state=open&creator=${encodeURIComponent(input.creator)}&per_page=100`,
+      "열린 이슈 목록",
+    );
+    if (!Array.isArray(data)) return [];
+    return data.filter((row: Record<string, any>) => row?.pull_request === undefined);
+  }
+
+  /** 이슈 고치기 — 개발자 알림의 닫기(`state: "closed"`)가 쓴다. */
+  async updateIssue(input: {
+    owner: string;
+    repo: string;
+    number: number;
+    state?: "open" | "closed";
+  }): Promise<void> {
+    const payload: Record<string, string> = {};
+    if (input.state !== undefined) payload.state = input.state;
+    await this.sendJson(
+      "PATCH",
+      `/repos/${input.owner}/${input.repo}/issues/${input.number}`,
+      payload,
+      "이슈 고치기",
+    );
+  }
+
+  /** 이슈 코멘트 고치기 — PR 코멘트의 횟수 갱신과 "[OK] 해결됨" 표식이 쓴다. */
+  async updateIssueComment(input: {
+    owner: string;
+    repo: string;
+    commentId: number;
+    body: string;
+  }): Promise<void> {
+    await this.sendJson(
+      "PATCH",
+      `/repos/${input.owner}/${input.repo}/issues/comments/${input.commentId}`,
+      { body: input.body },
+      "코멘트 고치기",
+    );
+  }
+
+  /** 이슈 코멘트 하나 읽기 — 해결 표식을 앞에 얹을 때 옛 본문이 필요하다. */
+  async getIssueComment(input: {
+    owner: string;
+    repo: string;
+    commentId: number;
+  }): Promise<Record<string, any>> {
+    return await this.getJson(
+      `/repos/${input.owner}/${input.repo}/issues/comments/${input.commentId}`,
+      "코멘트 읽기",
     );
   }
 
