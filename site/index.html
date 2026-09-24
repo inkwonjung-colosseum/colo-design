@@ -235,6 +235,34 @@
               <span class="ifield__hint">넘긴 요청의 리뷰를 부탁할 개발자의 GitHub 로그인 — 모든 프로젝트 공통</span>
             </label>
           </div>
+          <!-- ⑤-2 개발자 알림 — 문제가 생겼을 때 도구가 개발자를 부르는 길.
+               초대 v4(PLAN 단계 5): 저장소에 알림을 남길 수 있는지 확인하지
+               못하는 연결 코드(세밀 토큰)에서는 필수가 된다. -->
+          <fieldset class="inotify" id="notify-fields">
+            <legend class="ifield__label">개발자 알림 (Slack, 선택)</legend>
+            <p class="ifield__hint">
+              문제가 생겼을 때 도구가 개발자를 부르는 길입니다 — 저장소에
+              알림을 남길 수 있는 연결 코드면 비워도 됩니다.
+            </p>
+            <label class="ifield">
+              <span class="ifield__label">웹훅 주소</span>
+              <input name="slackWebhook" type="url" spellcheck="false"
+                placeholder="https://hooks.slack.com/services/…" />
+            </label>
+            <div class="iform__row">
+              <label class="ifield">
+                <span class="ifield__label">봇 토큰</span>
+                <input name="slackBotToken" type="password" spellcheck="false"
+                  autocomplete="off" placeholder="xoxb-…" />
+              </label>
+              <label class="ifield">
+                <span class="ifield__label">채널</span>
+                <input name="slackChannel" spellcheck="false" placeholder="#alerts" />
+              </label>
+            </div>
+            <p class="irepos__status irepos__status--error" id="notify-status" hidden></p>
+          </fieldset>
+
           <p class="irepos__status irepos__status--error" id="author-status" hidden></p>
 
           <div class="iform__actions">

@@ -29,6 +29,7 @@ const chosenCount = document.getElementById("chosen-count");
 const manualUrl = document.getElementById("manual-url");
 const manualAdd = document.getElementById("manual-add");
 const authorStatus = document.getElementById("author-status");
+const notifyStatus = document.getElementById("notify-status");
 const guideLines = document.getElementById("guide-lines");
 const guideCopy = document.getElementById("guide-copy");
 const guideOsButtons = [...document.querySelectorAll(".iguide__osbtn")];
@@ -61,6 +62,16 @@ const state = {
   author: "",
   reviewers: "",
   manualUrl: "",
+  /**
+   * /user/repos 응답의 x-oauth-scopes — 고전 토큰의 범위 목록. undefined 는
+   * "아직 불러오지 않았다", null 은 "헤더가 없었다"(세밀 토큰)다(PLAN L11
+   * 권한 확인).
+   */
+  scopes: undefined,
+  /** 개발자 알림(Slack) — 웹훅 주소 또는 봇 토큰+채널. */
+  slackWebhook: "",
+  slackBotToken: "",
+  slackChannel: "",
 };
 
 const params = new URLSearchParams(location.search);
@@ -84,22 +95,62 @@ function parseLogins(text) {
 /** 지금 입력으로 만들 안쪽 JSON — 미리 보기(토큰 가림)와 봉인이 같은 값을 본다. */
 function buildValues() {
   const commonReviewers = parseLogins(state.reviewers);
+  const slack = slackValue();
   return buildInvite({
     token: state.token,
     author: state.author,
+    // 초대 v4(PLAN 단계 5): 개발자 알림이 갈 Slack 길은 기계 몫이다.
+    ...(slack ? { notify: { slack } } : {}),
     projects: state.projects.map((project) => {
       // 행의 리뷰어가 있으면 그 행은 행의 것, 없으면 공통 — 둘 다 없으면 싣지
       // 않는다. 공통 리뷰어를 최상위로 넘겨 봐야 projects 가 있으면 버려진다.
       const reviewers = project.reviewers.trim() ? parseLogins(project.reviewers) : commonReviewers;
+      const defaults = {
+        ...(project.provider ? { provider: project.provider } : {}),
+        ...(project.model?.trim() ? { model: project.model.trim() } : {}),
+        ...(project.effort ? { effort: project.effort } : {}),
+      };
+      // 수명 칸은 기본값이 채워져 있다 — 개발자가 건드리지 않아도 그 값이
+      // 실려, 나중에 도구의 기본이 바뀌어도 이 초대장의 뜻은 변하지 않는다.
+      const lifecycle = {
+        deleteMergedBranches: project.deleteMergedBranches,
+        keepRejectedDays: project.keepRejectedDays,
+        autoReply: project.autoReply,
+        submitFromChat: project.submitFromChat,
+      };
       return {
         repoUrl: project.repoUrl,
         name: project.name,
         baseBranch: project.baseBranch,
         instructions: project.instructions,
         ...(reviewers.length > 0 ? { reviewers } : {}),
+        ...(Object.keys(defaults).length > 0 ? { defaults } : {}),
+        lifecycle,
       };
     }),
   });
+}
+
+/**
+ * Slack 칸의 값을 notify.slack 모양으로 — 웹훅이 있으면 웹훅, 없으면 봇
+ * 토큰과 채널이 함께 있을 때만 봇이다. 반쪽짜리 봇 입력은 없는 것으로 친다.
+ */
+function slackValue() {
+  const webhook = state.slackWebhook.trim();
+  if (webhook) return { kind: "webhook", url: webhook };
+  const token = state.slackBotToken.trim();
+  const channel = state.slackChannel.trim();
+  if (token && channel) return { kind: "bot", token, channel };
+  return null;
+}
+
+/**
+ * 이 연결 코드가 저장소에 알림(이슈·코멘트)을 남길 수 있는가 — 고전 토큰의
+ * `repo` 범위가 보이면 된다(PLAN L11 권한). 세밀 토큰은 헤더가 없어 확인할
+ * 수 없다.
+ */
+function canNotifyRepo() {
+  return typeof state.scopes === "string" && state.scopes.split(",").map((s) => s.trim()).includes("repo");
 }
 
 /** 봉투(v3) → 내려받기·보내기가 건네는 File 한 장 — 이름은 render 가 정한다. */
@@ -254,6 +305,12 @@ async function loadRepos() {
   try {
     for (let page = 0; page < 10; page += 1) {
       const reply = await fetch(url, { headers: apiHeaders() });
+      // 권한 확인(PLAN L11): 고전 토큰은 x-oauth-scopes 에 범위를 실어
+      // 보낸다 — `repo` 가 있으면 저장소에 알림을 남길 수 있다고 본다.
+      // 세밀 토큰은 헤더가 없어 확인할 수 없다(null).
+      if (state.scopes === undefined) {
+        state.scopes = reply.headers.get("x-oauth-scopes");
+      }
       if (reply.status === 401) {
         state.listStatus = "연결 코드가 거절됐어요 — 코드를 다시 확인해 주세요.";
         break;
@@ -322,6 +379,89 @@ function githubSlugOf(url) {
   return match ? { owner: match[1], name: match[2] } : null;
 }
 
+function checkRepo(repo) {
+  const project = {
+    repoUrl: repo.cloneUrl,
+    name: repo.fullName.split("/")[1] ?? repo.fullName,
+    baseBranch: repo.defaultBranch,
+    instructions: "",
+    reviewers: "",
+    // 초대 v4(PLAN 단계 5): 새 대화의 처음 값과 수명 — 기본값이 채워져 있다.
+    provider: "",
+    model: "",
+    effort: "",
+    deleteMergedBranches: true,
+    keepRejectedDays: 14,
+    autoReply: true,
+    submitFromChat: true,
+    key: repo.cloneUrl,
+    devChecked: false,
+    devWarning: null,
+  };
+  state.projects.push(project);
+  void checkDevServer(project);
+  render();
+}
+
+function uncheckRepo(cloneUrl) {
+  state.projects = state.projects.filter((project) => project.repoUrl !== cloneUrl);
+  render();
+}
+
+/** 주소의 마지막 조각 — 이름의 기본값. */
+function repoNameOf(url) {
+  const last = url
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1);
+  return last ?? url.trim();
+}
+
+function addManual(url, baseBranch = "main") {
+  const trimmed = url.trim();
+  if (!trimmed) return;
+  if (state.projects.some((project) => project.repoUrl === trimmed)) return;
+  const project = {
+    repoUrl: trimmed,
+    name: repoNameOf(trimmed),
+    baseBranch,
+    instructions: "",
+    reviewers: "",
+    // 초대 v4(PLAN 단계 5): 새 대화의 처음 값과 수명 — 기본값이 채워져 있다.
+    provider: "",
+    model: "",
+    effort: "",
+    deleteMergedBranches: true,
+    keepRejectedDays: 14,
+    autoReply: true,
+    submitFromChat: true,
+    key: trimmed,
+    devChecked: false,
+    devWarning: null,
+  };
+  state.projects.push(project);
+  // github.com 의 owner/repo 라면 직접 넣은 주소도 같은 확인을 돌린다.
+  void checkDevServer(project);
+  render();
+}
+
+/** ?repos= — 목록에 있으면 체크, 없으면 직접 추가. 목록을 부른 뒤에만 될 수 있다. */
+function prefillRepos() {
+  for (const wanted of params.getAll("repos").flatMap((value) => value.split(","))) {
+    const slug = wanted.trim().toLowerCase();
+    if (!slug) continue;
+    const repo = state.repos.find((entry) => entry.fullName.toLowerCase() === slug);
+    if (repo) {
+      if (!state.projects.some((project) => project.repoUrl === repo.cloneUrl)) checkRepo(repo);
+    } else {
+      addManual(`https://github.com/${slug}.git`);
+    }
+  }
+}
+
 /**
  * 개발 서버 확인(고를 때 한 번) — package.json 의 scripts 를 본다. 결과는 고른
  * 프로젝트 행에 달고, 불러온 목록의 같은 행에도 복제한다 — 개발자가 실제로 보는
@@ -369,72 +509,6 @@ function showDevWarning(project, text) {
 // 고른 프로젝트 — 행마다 이름 · 기본 가지 · 접힌 지침과 리뷰어.
 // ---------------------------------------------------------------------------
 
-function checkRepo(repo) {
-  const project = {
-    repoUrl: repo.cloneUrl,
-    name: repo.fullName.split("/")[1] ?? repo.fullName,
-    baseBranch: repo.defaultBranch,
-    instructions: "",
-    reviewers: "",
-    key: repo.cloneUrl,
-    devChecked: false,
-    devWarning: null,
-  };
-  state.projects.push(project);
-  void checkDevServer(project);
-  render();
-}
-
-function uncheckRepo(cloneUrl) {
-  state.projects = state.projects.filter((project) => project.repoUrl !== cloneUrl);
-  render();
-}
-
-/** 주소의 마지막 조각 — 이름의 기본값. */
-function repoNameOf(url) {
-  const last = url
-    .trim()
-    .replace(/\/+$/, "")
-    .replace(/\.git$/i, "")
-    .split("/")
-    .filter(Boolean)
-    .at(-1);
-  return last ?? url.trim();
-}
-
-function addManual(url, baseBranch = "main") {
-  const trimmed = url.trim();
-  if (!trimmed) return;
-  if (state.projects.some((project) => project.repoUrl === trimmed)) return;
-  const project = {
-    repoUrl: trimmed,
-    name: repoNameOf(trimmed),
-    baseBranch,
-    instructions: "",
-    reviewers: "",
-    key: trimmed,
-    devChecked: false,
-    devWarning: null,
-  };
-  state.projects.push(project);
-  // github.com 의 owner/repo 라면 직접 넣은 주소도 같은 확인을 돌린다.
-  void checkDevServer(project);
-  render();
-}
-
-/** ?repos= — 목록에 있으면 체크, 없으면 직접 추가. 목록을 부른 뒤에만 될 수 있다. */
-function prefillRepos() {
-  for (const wanted of params.getAll("repos").flatMap((value) => value.split(","))) {
-    const slug = wanted.trim().toLowerCase();
-    if (!slug) continue;
-    const repo = state.repos.find((entry) => entry.fullName.toLowerCase() === slug);
-    if (repo) {
-      if (!state.projects.some((project) => project.repoUrl === repo.cloneUrl)) checkRepo(repo);
-    } else {
-      addManual(`https://github.com/${slug}.git`);
-    }
-  }
-}
 
 /** 고른 프로젝트의 행 하나 — 삭제와 접힌 세부가 달려 있다. */
 function chosenRow(project, index) {
@@ -519,7 +593,114 @@ function chosenRow(project, index) {
   });
   reviewerLabel.append(reviewerText, reviewers);
 
-  fold.append(guideLabel, reviewerLabel);
+  // 초대 v4(PLAN 단계 5): 새 대화의 처음 값 — 비우면 도구의 기본이 선다.
+  const defaultsLabel = document.createElement("div");
+  defaultsLabel.className = "ifield";
+  const defaultsText = document.createElement("span");
+  defaultsText.className = "ifield__label";
+  defaultsText.textContent = "새 대화의 처음 값 (선택)";
+  const defaultsRow = document.createElement("div");
+  defaultsRow.className = "iform__row iform__row--three";
+  const providerSel = document.createElement("select");
+  providerSel.setAttribute("aria-label", `${index + 1}번 프로젝트 기본 프로바이더`);
+  for (const [value, label] of [
+    ["", "프로바이더 — 도구 기본"],
+    ["claude", "Claude"],
+    ["codex", "Codex"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    providerSel.append(option);
+  }
+  providerSel.value = project.provider;
+  providerSel.addEventListener("change", () => {
+    project.provider = providerSel.value;
+    render();
+  });
+  const modelInput = document.createElement("input");
+  modelInput.placeholder = "모델 — 예: sonnet";
+  modelInput.value = project.model;
+  modelInput.setAttribute("aria-label", `${index + 1}번 프로젝트 기본 모델`);
+  modelInput.addEventListener("input", () => {
+    project.model = modelInput.value;
+    render();
+  });
+  const effortSel = document.createElement("select");
+  effortSel.setAttribute("aria-label", `${index + 1}번 프로젝트 기본 생각 시간`);
+  for (const [value, label] of [
+    ["", "생각 시간 — 도구 기본"],
+    ["low", "낮음"],
+    ["medium", "보통"],
+    ["high", "높음"],
+    ["xhigh", "아주 높음"],
+    ["max", "최대"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    effortSel.append(option);
+  }
+  effortSel.value = project.effort;
+  effortSel.addEventListener("change", () => {
+    project.effort = effortSel.value;
+    render();
+  });
+  defaultsRow.append(providerSel, modelInput, effortSel);
+  defaultsLabel.append(defaultsText, defaultsRow);
+
+  // 초대 v4: 사이클의 수명 — 기본값이 채워져 있고, 건드리면 그 값이 실린다.
+  const lifeLabel = document.createElement("div");
+  lifeLabel.className = "ifield";
+  const lifeText = document.createElement("span");
+  lifeText.className = "ifield__label";
+  lifeText.textContent = "사이클 수명";
+  const lifeRow = document.createElement("div");
+  lifeRow.className = "ichosen__life";
+  const check = (label, key) => {
+    const wrap = document.createElement("label");
+    wrap.className = "icheck";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = project[key];
+    box.addEventListener("change", () => {
+      project[key] = box.checked;
+      render();
+    });
+    const text = document.createElement("span");
+    text.textContent = label;
+    wrap.append(box, text);
+    return wrap;
+  };
+  const daysWrap = document.createElement("label");
+  daysWrap.className = "icheck";
+  const daysText = document.createElement("span");
+  daysText.textContent = "반려 보관";
+  const days = document.createElement("input");
+  days.type = "number";
+  days.min = "1";
+  days.max = "365";
+  days.value = String(project.keepRejectedDays);
+  days.setAttribute("aria-label", `${index + 1}번 프로젝트 반려 보관 일수`);
+  days.addEventListener("input", () => {
+    const parsed = Number.parseInt(days.value, 10);
+    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 365) {
+      project.keepRejectedDays = parsed;
+      render();
+    }
+  });
+  const daysTail = document.createElement("span");
+  daysTail.textContent = "일";
+  daysWrap.append(daysText, days, daysTail);
+  lifeRow.append(
+    check("병합된 브랜치 정리", "deleteMergedBranches"),
+    daysWrap,
+    check("코멘트 자동 답장", "autoReply"),
+    check("채팅으로 제출", "submitFromChat"),
+  );
+  lifeLabel.append(lifeText, lifeRow);
+
+  fold.append(guideLabel, reviewerLabel, defaultsLabel, lifeLabel);
   // head → (경고가 있으면 보이는) 배지 → fold 순서로.
   row.append(head, warning, fold);
   return row;
@@ -535,9 +716,14 @@ let sealTicket = 0;
 
 async function render() {
   const values = buildValues();
+  // 권한 확인(PLAN L11): 저장소에 알림을 남길 수 있는지 확인하지 못하는
+  // 연결 코드(세밀 토큰)는 Slack 길이 필수다 — 둘 다 없으면 만들 수 없다.
+  const notifyOk = canNotifyRepo() || slackValue() !== null;
   // 작업 이름은 필수다 — 비면 봉인·내려받기·보내기 어느 것도 켜지지 않고,
   // 이유가 actions 바로 위 한 줄로 선다.
-  const ready = Boolean(state.token.trim() && state.author.trim() && values.projects.length > 0);
+  const ready = Boolean(
+    state.token.trim() && state.author.trim() && values.projects.length > 0 && notifyOk,
+  );
   const ticket = ++sealTicket;
   // 입력이 움직였다 옛 봉인은 현재 입력의 것이 아니다 — 새 것이 올 때까지
   // 내려받기·공유는 꺼진다.
@@ -561,6 +747,14 @@ async function render() {
   if (authorMissing) {
     authorStatus.textContent = "작업 이름을 적어 주세요 — 넘긴 요청에 작성자로 적힙니다.";
   }
+  // Slack 칸이 필수가 된 이유 — 확인할 수 없는 연결 코드에는 이 한 줄이 선다.
+  const notifyMissing =
+    !notifyOk && Boolean(state.token.trim()) && values.projects.length > 0;
+  notifyStatus.hidden = !notifyMissing;
+  if (notifyMissing) {
+    notifyStatus.textContent =
+      "이 연결 코드로는 문제가 생겼을 때 저장소에 알림을 남길 수 있는지 확인하지 못했어요 — 슬랙 주소를 넣어 주세요.";
+  }
   filename.textContent = ready
     ? inviteFileName({ author: state.author, name: values.projects[0].name })
     : "";
@@ -581,14 +775,14 @@ async function render() {
 // ---------------------------------------------------------------------------
 // 사건 연결
 // ---------------------------------------------------------------------------
-
 form.addEventListener("input", (event) => {
   const field = event.target;
   if (field === tokenInput) {
-    // 코드가 바뀌면 목록의 열쇠가 달라졌다 — 불러온 목록을 비운다.
+    // 코드가 바뀌면 목록의 열쇠가 달라졌다 — 불러온 목록과 권한 확인을 비운다.
     state.token = tokenInput.value;
     state.repos = [];
     state.listStatus = "";
+    state.scopes = undefined;
     renderRepos();
     renderStatus();
   }
@@ -600,8 +794,20 @@ form.addEventListener("input", (event) => {
     state.reviewers = field.value;
     render();
   }
+  // 초대 v4(PLAN 단계 5): 개발자 알림이 갈 Slack 길 — 웹훅 또는 봇 토큰+채널.
+  if (field.name === "slackWebhook") {
+    state.slackWebhook = field.value;
+    render();
+  }
+  if (field.name === "slackBotToken") {
+    state.slackBotToken = field.value;
+    render();
+  }
+  if (field.name === "slackChannel") {
+    state.slackChannel = field.value;
+    render();
+  }
 });
-
 searchInput.addEventListener("input", () => {
   state.search = searchInput.value;
   renderRepos();

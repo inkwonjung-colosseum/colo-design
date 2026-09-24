@@ -45,6 +45,18 @@ const reviewers = flags("reviewer")
   .map((login) => login.trim())
   .filter(Boolean);
 const out = flag("out");
+// 초대 v4(PLAN 단계 5): 개발자 알림이 갈 Slack 길과 프로젝트의 처음 값·수명.
+const slackWebhook = flag("slack-webhook");
+const slackBotToken = flag("slack-bot-token");
+const slackChannel = flag("slack-channel");
+const provider = flag("provider");
+const model = flag("model");
+const effort = flag("effort");
+const keepRejectedDays = flag("keep-rejected-days");
+const noDeleteMerged = args.includes("--no-delete-merged");
+const noAutoReply = args.includes("--no-auto-reply");
+const noSubmitFromChat = args.includes("--no-submit-from-chat");
+const instructions = flag("instructions");
 
 if (repoUrls.length === 0 || !token) {
   console.error(
@@ -58,6 +70,18 @@ if (repoUrls.length === 0 || !token) {
       '  --author   넘긴 요청의 `> 작성:` 줄에 적힐 이름 (예: "김기획") — 사용자가 적을 이름을 미리 정한다',
       "  --reviewer 넘긴 요청의 리뷰를 부탁할 개발자의 GitHub 로그인 (반복 가능, 모든 프로젝트 공통)",
       "  --out      출력 파일 경로 (기본: ./<프로젝트 이름>.colo-invite — 레포가 여럿이면 ./invite.colo-invite)",
+      "",
+      "  초대 v4(PLAN 단계 5) — 개발자 알림과 프로젝트의 처음 값·수명:",
+      "  --slack-webhook <url>   개발자 알림이 갈 Slack 웹훅 주소(https 만)",
+      "  --slack-bot-token <t> --slack-channel <c>   웹훅 대신 봇 토큰+채널",
+      "  --provider <p>          새 대화의 처음 프로바이더 (예: claude · codex)",
+      "  --model <m>             새 대화의 처음 모델 (예: sonnet)",
+      "  --effort <e>            새 대화의 처음 생각 시간 (low · medium · high · xhigh · max)",
+      "  --keep-rejected-days <n>  반려된 작업의 보관 일수 (1~365, 기본 14)",
+      "  --no-delete-merged      병합된 사이클 브랜치를 정리하지 않는다 (기본은 정리)",
+      "  --no-auto-reply         개발자 코멘트에 AI 가 자동으로 답하지 않는다 (기본은 답한다)",
+      "  --no-submit-from-chat   채팅으로 제출하는 도구를 싣지 않는다 (기본은 싣는다)",
+      "  --instructions <text>   이 프로젝트에서 AI 가 늘 따를 규칙 — 레포가 하나일 때만",
     ].join("\n"),
   );
   process.exit(1);
@@ -107,20 +131,40 @@ async function defaultBranch(url) {
   }
 }
 
-if (repoUrls.length > 1 && name) {
-  console.error("경고: --name 은 레포가 하나일 때만 쓰는 옵션입니다 — 여러 레포에는 무시됩니다.");
-}
-
 const projects = [];
 for (const url of repoUrls) {
   const slug = repoSlug(url);
+  // 초대 v4(PLAN 단계 5): 처음 값과 수명은 프로젝트마다 같은 값을 실는다 —
+  // --name · --instructions 와 달리 레포가 여럿이어도 개발자의 한 뜻이다.
+  const defaults = {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  };
+  const lifecycle = {
+    ...(noDeleteMerged ? { deleteMergedBranches: false } : {}),
+    ...(keepRejectedDays ? { keepRejectedDays: Number.parseInt(keepRejectedDays, 10) } : {}),
+    ...(noAutoReply ? { autoReply: false } : {}),
+    ...(noSubmitFromChat ? { submitFromChat: false } : {}),
+  };
   projects.push({
     repoUrl: url,
     name: (repoUrls.length === 1 && name ? name : slug.repo) || url,
     ...(baseBranch ? { baseBranch } : { baseBranch: await defaultBranch(url) }),
     ...(reviewers.length > 0 ? { reviewers } : {}),
+    ...(repoUrls.length === 1 && instructions ? { instructions } : {}),
+    ...(Object.keys(defaults).length > 0 ? { defaults } : {}),
+    ...(Object.keys(lifecycle).length > 0 ? { lifecycle } : {}),
   });
 }
+
+// 개발자 알림이 갈 Slack 길 — 웹훅이 있으면 웹훅, 없으면 봇 토큰+채널이 함께
+// 있을 때만 봇이다. 반쪽짜리 봇 입력은 없는 것으로 친다.
+const notify = slackWebhook
+  ? { slack: { kind: "webhook", url: slackWebhook } }
+  : slackBotToken && slackChannel
+    ? { slack: { kind: "bot", token: slackBotToken, channel: slackChannel } }
+    : undefined;
 
 // 기본 파일 이름은 프로젝트 slug — 스크립트의 기본값이 늘 그랬다(페이지의
 // inviteFileName 은 작업 이름을 먼저 쓰는 같은 규칙의 다른 기본값). 레포가
@@ -129,7 +173,7 @@ const target = resolve(
   out ?? `./${repoUrls.length === 1 ? inviteSlug(projects[0].name) : "invite"}.colo-invite`,
 );
 
-const invite = buildInvite({ token, author, projects });
+const invite = buildInvite({ token, author, projects, ...(notify ? { notify } : {}) });
 const sealed = await sealInvite(invite);
 
 writeFileSync(target, `${JSON.stringify(sealed, null, 2)}\n`);
