@@ -722,7 +722,13 @@ export function useSessions(
     // 지워진 자리(W4 가 첫 보내기 실패의 세션을 거둔 뒤)는 이어받을 것이
     // 없다 — 새 대화로 태어난다.
     if (!picked) return await startSession(undefined, name);
-    if (!picked.live || picked.state === "error") return await startSession(id);
+    if (!picked.live || picked.state === "error") {
+      const revived = await startSession(id);
+      // 갓 태어난 대화가 죽은 몸으로 태어나 갈아끼워졌다면 갈아끼운 몸도 갓 태어난
+      // 대화다 — 첫 보내기의 감시(W4)가 이어진다.
+      if (newborn.current.has(id)) newborn.current.add(revived);
+      return revived;
+    }
     return id;
   };
 
@@ -773,6 +779,28 @@ export function useSessions(
   const dismissDropped = (itemId: string) => {
     if (activeId) forgetDropped(activeId, itemId);
   };
+
+  /**
+   * 거절된 첫 보내기의 갓 태어난 대화를 거둔다(W4 · 콜드 리뷰 N5) — 대화 칸의
+   * 보내기(`submit`)와 홈의 큰 입력창이 여는 보내기(`sendTurn`)가 같은 잣자리로
+   * 지난다. 입력창의 말은 컴포저가 지키고 있고, 연 자리는 지운 세션을 가리키다가
+   * 다음 보내기가 새 대화를 태운다(targetSession).
+   */
+  const discardRejectedNewborn = (target: string, sentCount: number) => {
+    if (!newborn.current.has(target)) return;
+    if (!shouldDiscardOnFirstFailure(sessions[target]?.blocks ?? [], sentCount)) return;
+    newborn.current.delete(target);
+    sendsBySession.current.delete(target);
+    forgetLastThread(activeSlug, target);
+    if (selectorFor.current === target) {
+      selectorFor.current = null;
+      setSelector(null);
+      setUsage(null);
+    }
+    void api.deleteSession(target).catch(() => undefined);
+    void refresh();
+  };
+
   const submit = async (
     text: string,
     attachments: Attachment[],
@@ -808,24 +836,8 @@ export function useSessions(
       // 유일한 이야기꾼이다(위의 계약). 낙관도 함께 거둔다.
       setAwaitingTurn(null);
       // 갓 태어난 세션의 첫 보내기가 거절됐다 — 아무것도 적히지 않은 빈 대화를
-      // 남기지 않게 거둔다(W4 · N5). 입력창의 말은 컴포저가 지키고 있고, 연 자리는
-      // 지운 세션을 가리키다가 다음 보내기가 새 대화를 태운다(targetSession).
-      if (
-        target !== null &&
-        newborn.current.has(target) &&
-        shouldDiscardOnFirstFailure(sessions[target]?.blocks ?? [], sentCount)
-      ) {
-        newborn.current.delete(target);
-        sendsBySession.current.delete(target);
-        forgetLastThread(activeSlug, target);
-        if (selectorFor.current === target) {
-          selectorFor.current = null;
-          setSelector(null);
-          setUsage(null);
-        }
-        void api.deleteSession(target).catch(() => undefined);
-        void refresh();
-      }
+      // 남기지 않게 거둔다(W4 · N5).
+      if (target !== null) discardRejectedNewborn(target, sentCount);
       // The composer keeps the words AND the attachments unless the
       // daemon accepted the turn. Its warning strip is also the ONE surface a
       // refused send speaks from — the banner would read the same news twice,
@@ -870,14 +882,16 @@ export function useSessions(
     pins?: Array<{ screen: string }>,
     pinHints?: SessionPinHint[],
   ) => {
+    let id: string | null = null;
+    let sentCount = 0;
     try {
-      const id = await targetSession(target);
+      id = await targetSession(target);
       // 컴포저의 보내기와 같은 낙관 — 사람의 말이 아니어도 턴은 턴이다.
       const view = sessions[id];
       const wake = !view || view.state === "idle";
       if (wake) setAwaitingTurn({ sessionId: id, since: Date.now() });
       // 보내기의 셈은 기계 턴도 같이 센다(W4) — 첫 보내기의 잣자리가 사람 말과 어긋나지 않게.
-      const sentCount = (sendsBySession.current.get(id) ?? 0) + 1;
+      sentCount = (sendsBySession.current.get(id) ?? 0) + 1;
       sendsBySession.current.set(id, sentCount);
       await api.send(id, text, attachments, pins, undefined, pinHints);
       newborn.current.delete(id);
@@ -885,6 +899,14 @@ export function useSessions(
     } catch (e) {
       setAwaitingTurn(null);
       setError(e instanceof Error ? e.message : String(e));
+      // 홈의 큰 입력창이 여는 첫 보내기도 이 길로 나간다 — 거절되면 갓 태어난
+      // 빈 대화를 거둔다(W4). 컴포저의 경고 줄은 거절 문장 그대로 말한다.
+      // 부르는 쪽이 미리 열어 둔 자리(target)가 실제 보내기의 자리(id)와 갈라섰다면
+      // 그 자리도 아무 말도 담기지 않은 채 버려진 「새 화면」이니 함께 거둔다.
+      if (id !== null) {
+        discardRejectedNewborn(id, sentCount);
+        if (target !== undefined && target !== id) discardRejectedNewborn(target, sentCount);
+      }
       // Rejected on purpose: a machine turn the daemon did not
       // accept must be retryable — the caller decides what survives on
       // screen, and swallowing here would tell it the send landed.
