@@ -100,6 +100,13 @@ const INACTIVE_FETCH_MS = 10 * 60 * 1000;
 const NOTICE_REPEAT_MS = 10 * 60 * 1000;
 /** 반려 이유로 읽는 창 — 닫힘 시각 이전 7일 (PLAN L9). */
 const REJECTION_REASON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * clone:restore 알림이 저절로 풀리는 기한 — 되살리기에 실패한 프로젝트도
+ * 7일이면 개발자가 충분히 볼 수 있다. 그 전이라도 제출이 한 번 성공하면
+ * 풀린다(작업이 정상으로 흐르고 있다). 이 계기가 없으면 그 프로젝트의
+ * 주의가 영원히 `개발자에게 알렸어요` 다.
+ */
+const CLONE_RESTORE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** 알림 키 → 사용자가 읽는 한국어 한 문장. */
 const NOTICE_TEXT: Record<string, string> = {
@@ -353,6 +360,7 @@ export class CycleSupervisor {
       // 없다. 읽을 git 이 없으니 판정할 것도 없다: 없는 폴더를 관찰한 중립값으로
       // 조치(브랜치 만들기 따위)를 고르지 않게 한다.
       if (!this.deps.core.isCloned()) return;
+      this.expireCloneRestoreNotice();
 
       const fetch = this.shouldFetch(reason);
       const snapshot = await observeCycle(this.deps.core, this.ledger, this.observeDeps(), {
@@ -1519,6 +1527,9 @@ export class CycleSupervisor {
       core.setDiff({ stage: "handed-off", handoff });
       this.deps.resolveNotice?.("submit:pr");
       this.deps.resolveNotice?.("submit:commit");
+      // 제출이 한 번 성공했다는 것은 작업이 정상으로 흐르고 있다는 뜻이다 —
+      // 되살리기 실패의 알림(clone:restore)도 여기서 푼다(7일 기한보다 앞선다).
+      this.resolveNoticeKey("clone:restore");
       const handedEvent: ChatEvent = {
         kind: "cycle.handed",
         at: new Date(this.now()).toISOString(),
@@ -1725,6 +1736,18 @@ export class CycleSupervisor {
 
   // ————— 16행 — 위생 (PLAN 단계 9) —————
 
+  /**
+   * clone:restore 알림의 기한 (7일) — 되살리기에 실패한 프로젝트의 주의가
+   * 영원히 `개발자에게 알렸어요` 로 남지 않게 틱마다 본다. 원장의 notices 는
+   * 실제로 나간 알림만 실으므로 raisedAt 이 곧 처음 알린 시각이다.
+   */
+  private expireCloneRestoreNotice(): void {
+    const raised = this.ledger.notices["clone:restore"];
+    if (!raised) return;
+    if (this.now() - Date.parse(raised.raisedAt) < CLONE_RESTORE_TTL_MS) return;
+    this.resolveNoticeKey("clone:restore");
+    this.log("재클론: 되살리기 실패 알림을 7일 기한으로 거둡니다");
+  }
   /**
    * 기한이 지난 항목만 차례(HYGIENE_ORDER)대로 한 번씩 돈다. 항목마다 시도한
    * 뒤(성공 · 실패 무관) 원장의 시각을 갱신한다 — 계속 실패하는 항목이 2분마다

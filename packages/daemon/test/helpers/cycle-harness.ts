@@ -765,8 +765,9 @@ export interface SupervisedScene extends Scene {
   supervisor: CycleSupervisor;
   /** openThread 가 모은 브리프 — 가짜 대화의 받은 편지함. */
   briefs: string[];
-  /** raiseNotice 가 모은 알림 — [key, text] 쌍. */
-  notices: Array<{ key: string; text: string }>;
+  /** raiseNotice 가 모은 알림 — [key, text, reason] 쌍. reason 은 개발자 알림의
+   *  `자세히` 로 가는 몫(fleet 의 describeProblem(key, reason ?? text) 과 같은 길). */
+  notices: Array<{ key: string; text: string; reason?: string }>;
   /** onPrTransition 이 모은 개발자 쪽 사건 — 옛 폴러의 알림 몫. */
   transitions: Array<{ kind: string; at: string; count?: number }>;
   /** onNewReviews 가 모은 브리프 요청 — [pr, ids]. */
@@ -850,7 +851,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   };
   const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
-  const notices: Array<{ key: string; text: string }> = [];
+  const notices: Array<{ key: string; text: string; reason?: string }> = [];
   const transitions: Array<{ kind: string; at: string; count?: number }> = [];
   const reviewBriefs: Array<{ pr: number; ids: number[] }> = [];
   const chatEvents: Array<{ kind: string; [key: string]: unknown }> = [];
@@ -880,7 +881,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       slug: () => core.repoSlug(),
       isActive: () => scene.active,
       openThread: async () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
-      raiseNotice: (key, text) => notices.push({ key, text }),
+      raiseNotice: (key, text, reason) => notices.push({ key, text, reason }),
       onPrTransition: (kind, at, count) => transitions.push({ kind, at, count }),
       onNewReviews: async (pr, reviews) => {
         if (scene.refuseReviewSend) return false;

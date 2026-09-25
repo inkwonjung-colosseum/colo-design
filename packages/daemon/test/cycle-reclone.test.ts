@@ -30,7 +30,7 @@ import {
   restoreSalvage,
   salvageStamp,
 } from "../dist/clone-salvage.js";
-import { readLedger } from "../dist/cycle-ledger.js";
+import { type CycleLedger, emptyLedger, readLedger, writeLedger } from "../dist/cycle-ledger.js";
 import { RepoCore } from "../dist/repo-core.js";
 import { makeScene, makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
@@ -310,5 +310,127 @@ test("되살리기 — 새 클론에 이미 고친 것이 있으면 아무것도
     rmSync(dir, { recursive: true, force: true });
   } finally {
     scene.dispose();
+  }
+});
+
+// ————— clone:restore 알림의 풀림 (남은 항목) —————
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const iso = (ms: number) => new Date(ms).toISOString();
+
+/** 원장을 디스크에 적고 감독자를 새로 세운다 — 원장은 세울 때 읽힌다.
+ *  아래 세 시험이 같은 세팅으로 서므로 도우미로 둔다(cycle-hygiene 와 같은 모양). */
+function seedLedger(scene: SupervisedScene, over: Partial<CycleLedger>) {
+  writeLedger(scene.ledgerPath, { ...emptyLedger(), ...over });
+  return scene.respawn();
+}
+
+/** 얹힐 자리가 없는 패치 — 가짜 블롭 id 라 3-way 로도 못 얹는다. */
+const BAD_PATCH = [
+  "diff --git a/README.md b/README.md",
+  "index 1234567..89abcde 100644",
+  "--- a/README.md",
+  "+++ b/README.md",
+  "@@ -1 +1 @@",
+  "-이런 줄은 없다",
+  "+바뀐 줄",
+  "",
+].join("\n");
+
+test("되살리기 실패 — clone:restore 알림의 자세히에 구해 둔 폴더 경로가 실린다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const now = Date.now();
+    const parent = dirname(scene.clone.path);
+    const dir = join(parent, "salvage", "20260925T000000Z");
+    mkdirSync(join(dir, "untracked"), { recursive: true });
+    writeFileSync(join(dir, "changes.patch"), BAD_PATCH);
+    const movedTo = join(parent, "repo.corrupt-20260925T000000Z");
+    mkdirSync(movedTo);
+
+    const supervisor = seedLedger(scene, {
+      reclone: {
+        at: iso(now),
+        salvage: { dir, branch: null, bundleRef: null, patch: true },
+        movedTo,
+      },
+    });
+    scene.setNow(now);
+    await supervisor.tick("manual");
+
+    assert.deepEqual(
+      scene.notices.map((notice) => notice.key),
+      ["clone:restore"],
+    );
+    // fleet 은 reason 을 describeProblem 의 detail 로 싣는다 — 경로가 없으면
+    // 개발자가 무엇을 꺼내야 할지 모른다.
+    assert.ok(
+      scene.notices[0]?.reason?.includes(dir),
+      `자세히에 구해 둔 폴더 경로가 실려야 한다: ${scene.notices[0]?.reason}`,
+    );
+    assert.equal(readLedger(scene.ledgerPath).reclone, null, "절차는 닫힌다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("clone:restore 알림은 7일이 지나면 틱에서 저절로 풀린다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const now = Date.now();
+
+    // 6일째 — 아직 풀리지 않는다.
+    let supervisor = seedLedger(scene, {
+      notices: {
+        "clone:restore": { via: "slack" as const, raisedAt: iso(now - 6 * DAY_MS), count: 1 },
+      },
+    });
+    scene.setNow(now);
+    await supervisor.tick("manual");
+    assert.ok(readLedger(scene.ledgerPath).notices["clone:restore"], "7일 전에는 그대로");
+
+    // 8일째 — 풀린다.
+    supervisor = seedLedger(scene, {
+      notices: {
+        "clone:restore": { via: "slack" as const, raisedAt: iso(now - 8 * DAY_MS), count: 1 },
+      },
+    });
+    await supervisor.tick("manual");
+    assert.equal(
+      readLedger(scene.ledgerPath).notices["clone:restore"],
+      undefined,
+      "7일이 지나면 원장에서 사라진다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("clone:restore 알림은 제출이 한 번 성공하면 풀린다 — 작업이 정상으로 흐른다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const now = Date.now();
+    const supervisor = seedLedger(scene, {
+      notices: {
+        "clone:restore": { via: "slack" as const, raisedAt: iso(now - DAY_MS), count: 1 },
+      },
+    });
+    scene.setNow(now);
+    // 표준 사이클 시작(제출 흐름 시험과 같은 모양) — 오늘 만든 작업.
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "screen.tsx": "export default () => null;\n" }, "회원 목록 화면");
+    scene.core.setCycle(BRANCH, null);
+
+    supervisor.submit("button");
+    await supervisor.settled();
+
+    assert.equal(
+      readLedger(scene.ledgerPath).notices["clone:restore"],
+      undefined,
+      "제출 성공이 알림을 푼다",
+    );
+    assert.ok(scene.core.openHandoff, "제출은 실제로 성공했다");
+  } finally {
+    await scene.dispose();
   }
 });
