@@ -3,14 +3,13 @@
  * 메시지로 도착한다. 본문 버블 아래 코멘트 인용 행(`.cmt`)이 번호로 늘어선다 —
  * 반려조차 새 화면이 아니라 이 메시지 하나(+ 진행 한 줄)로 표현된다. 고치기
  * 턴은 데몬이 스스로 내려놓는다(슬라이스 2): 이 카드는 읽는 자리다.
- *
- * 코멘트 ↔ 핀 매핑은 아직 없다: 인용 행은 핀 없이,
- * 라벨은 코드 위치(path:line, 없으면 "코드 위치")로 렌더한다 — 화면 이름을
- * 지어내지 않는다.
+ * 코멘트 ↔ 핀 매핑은 아직 없다: 인용 행은 핀 없이, 라벨은 화면 제목이
+ * 있을 때만(없으면 라벨 없이) 렌더한다 — 파일 경로(path:line)는 개발자의
+ * 어휘라 뺐다(PLAN 단계 10).
  */
 export interface HumanMessageQuote {
   id: number;
-  /** 코드 위치(`path:line`) — 핀 매핑이 없는 1차 렌더의 라벨. */
+  /** 화면 제목 — 매핑이 없는 코멘트는 빈 문자열(라벨 없이 렌더). */
   label: string;
   body: string;
 }
@@ -63,12 +62,19 @@ export function HumanMessage({
           {live && <span className="dot dot--live" />}
         </div>
         <div className={`devmsg__text${danger ? " devmsg__text--danger" : ""}`}>{body}</div>
-        {/* 행은 읽는 자리 — 고치기 턴은 데몬이 스스로 낸다(슬라이스 2). */}
+        {/* 행은 읽는 자리 — 고치기 턴은 데몬이 스스로 낸다(슬라이스 2).
+            라벨은 화면 제목이 있을 때만(단계 10): 없으면 말몸통이 곧 행이다. */}
         {quotes.map((quote, index) => (
           <div key={quote.id} className="cmt">
             <span className="cmt__n">{index + 1}</span>
             <span className="cmt__tx">
-              <b>{quote.label}</b> — {quote.body}
+              {quote.label ? (
+                <>
+                  <b>{quote.label}</b> — {quote.body}
+                </>
+              ) : (
+                quote.body
+              )}
             </span>
           </div>
         ))}

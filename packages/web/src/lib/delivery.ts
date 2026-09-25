@@ -58,11 +58,11 @@ export interface Delivery {
    * 강조 판정이 상단 바의 인라인 삼항에 흩어져 있으면 복도 버튼(DiffPanel)
    * 까지 네 군데에서 제각각 읽는다 — 칩·버튼·복도가 하나의 원천을 본다.
    * `변경 요청` 처럼 눌러야 할 것이 회색으로 남는 일이 없어진다.
+   * 상태 확인 버튼은 없다(단계 10): 검토 중 행의 다음 수는 제출뿐이다.
    */
-  primary: "submit" | "check" | null;
+  primary: "submit" | null;
   /**
-   * 지금 상태 한 줄 + 다음 한 동작: 칩 팝오버와
-   * 개발자 패널 머리가 **같은 문장**을 읽는다 — 두 표면이 각자 문자열을
+   * 지금 상태 한 줄: 칩 팝오버가 읽는 문장 — 두 표면이 각자 문자열을
    * 가지면 칩과 진실이 어긋나던 병이 문장 층에서 재발한다(사이드바 배지가
    * 이 파일의 단어를 빌려 쓰는 규율).
    */
@@ -70,11 +70,9 @@ export interface Delivery {
   actions: {
     /**
      * 제출 = 이번 작업을 개발자에게 넘긴다. P2-1 뒤로 계획자에게 남은 유일한
-     * 손이다 — 저장은 턴이 끝날 때마다 도구가 스스로 한다.
+     * 손이다 — 보관은 턴이 끝날 때마다 도구가 스스로 한다.
      */
     submit: DeliveryAction;
-    /** 상태 확인은 PR 이 있을 때만 그린다 — 없을 때 확인할 것이 없다. */
-    check: DeliveryAction | null;
   };
 }
 
@@ -199,7 +197,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
           : "이번 작업이 제품에 합쳐졌습니다 — 다음 제출은 새 작업을 시작합니다",
       },
       primary: work ? "submit" : null,
-      actions: { submit: submitWhenWork, check: null },
+      actions: { submit: submitWhenWork },
     };
   }
 
@@ -222,8 +220,8 @@ function cycleRow(input: DeliveryInput): CycleRow {
       next: {
         line: "개발자가 이번 요청을 닫았습니다 — 상태 확인에서 이유를 읽고, 고쳐 제출하면 새 요청이 열립니다",
       },
-      primary: "check",
-      actions: { submit: submitWhenWork, check: { enabled: true } },
+      primary: work ? "submit" : null,
+      actions: { submit: submitWhenWork },
     };
   }
 
@@ -243,11 +241,11 @@ function cycleRow(input: DeliveryInput): CycleRow {
       next: {
         line: "개발자가 보고 있어요 — 계속 고쳐도 같은 요청에 이어 담겨요",
       },
-      primary: "check",
+      primary: work ? "submit" : null,
       // 넘긴 뒤에도 제출은 열어 둔다: 자동 저장의 푸시는 백그라운드라 조용히
       // 실패할 수 있고, 그때 밀린 커밋을 원격까지 밀어 올릴 손은 이것뿐이다
       // (제출만이 푸시를 기다리고 실패를 게이트로 올린다).
-      actions: { submit: submitWhenWork, check: { enabled: true } },
+      actions: { submit: submitWhenWork },
     };
   }
 
@@ -266,8 +264,8 @@ function cycleRow(input: DeliveryInput): CycleRow {
       },
       // 개발자 쪽 판정은 도구가 스스로 반영한다(슬라이스 2) — 이때 상태 확인이
       // 회색이면 바의 버튼이 전부 잠긴 채 며칠이 흐른다.
-      primary: "check",
-      actions: { submit: submitWhenWork, check: { enabled: true } },
+      primary: work ? "submit" : null,
+      actions: { submit: submitWhenWork },
     };
   }
 
@@ -281,7 +279,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
       },
       next: { line: "완성했으면 제출을 눌러 개발자에게 보내세요" },
       primary: "submit",
-      actions: { submit: submitWhenWork, check: null },
+      actions: { submit: submitWhenWork },
     };
   }
 
@@ -292,6 +290,6 @@ function cycleRow(input: DeliveryInput): CycleRow {
     chip: { label: "제출 전", tone: "none", title: "새로 만든 것이 없습니다" },
     next: { line: "새로 만든 것이 없습니다 — 화면을 만들어 달라고 하면 시작됩니다" },
     primary: null,
-    actions: { submit: { enabled: false, reason: NOTHING_TO_SUBMIT }, check: null },
+    actions: { submit: { enabled: false, reason: NOTHING_TO_SUBMIT } },
   };
 }

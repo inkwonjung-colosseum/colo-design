@@ -13,7 +13,7 @@ import { composing } from "../../lib/ime";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
 import { openScreenPath, screenPath } from "../../lib/screen-link";
-import { type SendKey, saveHandledReview } from "../../lib/settings";
+import type { SendKey } from "../../lib/settings";
 import { tailMoving } from "../../lib/tape-visibility";
 import { CheckIcon, ChevronDownIcon, ExportIcon, EyeIcon, PencilIcon, TrashIcon } from "../icons";
 import { TurnClock } from "../preview/TurnClock";
@@ -46,7 +46,6 @@ export function ChatColumn({
   pins,
   focusPinId,
   cycleRequest,
-  onReviewsHandled,
   onExportThread,
   onChatChange,
   onOpenProviderSettings,
@@ -83,10 +82,7 @@ export function ChatColumn({
    * nonce 가 오르면 한 번 집는다. `check`·`history` 는 미리보기 쪽의 몫이라
    * 이 열은 지나친다.
    */
-  cycleRequest: { kind: "submit" | "handoff" | "check" | "history"; nonce: number } | null;
-  /** 고치기·답하기로 처리한 코멘트 — 상단 바의 `· 개발자 코멘트 N` 배지가
-      같은 수를 다시 읽게 PageWorkspace 에 알린다. */
-  onReviewsHandled: () => void;
+  cycleRequest: { kind: "submit" | "history"; nonce: number } | null;
   /**
    * ··· 메뉴의 대화보내기 — 활성 대화의 기록이 마크다운 파일로 나간다.
    * 없으면 행 자체가 없다(보낼 수 없는 자리).
@@ -221,7 +217,6 @@ export function ChatColumn({
     if (!cycleRequest || cycleRequest.nonce === cycleNonce.current) return;
     cycleNonce.current = cycleRequest.nonce;
     if (cycleRequest.kind === "submit") runSubmit();
-    else if (cycleRequest.kind === "handoff") setHandoffOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cycleRequest, runSubmit]);
   // 넘기기 카드가 열리면 그 자리로 — 카드는 렌더 뒤에 생기니 한 박자 늦춘다.
@@ -733,10 +728,8 @@ export function ChatColumn({
               // 않고, 답하기 배너도 그대로 남아 다시 시도할 수 있다.
               throw e;
             }
-            // 답이 나간 코멘트는 처리된 것 — 상단 바의 `· 개발자 코멘트 N`
-            // 배지가 같은 수를 다시 읽는다.
-            saveHandledReview(replyTo.pr, replyTo.id);
-            onReviewsHandled();
+            // 답이 나가면 대화록의 답장 카드가 그 자체로 영수증이다(단계 10 —
+            // 코멘트 배지가 읽던 처리 표식은 함께 걷혔다).
             setReplyTo(null);
             return;
           }

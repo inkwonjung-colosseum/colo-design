@@ -1310,7 +1310,12 @@ export function SettingsDialog({
                     {defaultsEditor}
                   </div>
                 )}
-                <MachineProviderField daemon={daemon} disabled={connection !== "open"} />
+                {/* 개발자용 칸(단계 10): 기계가 스스로 쓰는 메모의 담당은
+                    개발자가 정하는 값이다 — 접힘 뒤로 치운다. */}
+                <details className="settings__fold">
+                  <summary>개발자용</summary>
+                  <MachineProviderField daemon={daemon} disabled={connection !== "open"} />
+                </details>
               </>
             )}
 
@@ -1458,16 +1463,19 @@ export function SettingsDialog({
                     )}
                   </span>
                 </Field>
-                {/* 슬라이스 5: 개발자 에스컬레이션 — AI 도 고칠 수 없는
-                    실패가 나면 슬랙으로. 토큰 만료 알림이 온보딩의
-                    GitHub 게이트보다 먼저 도착하는 팀의 안내망이다. */}
-                <Field
-                  wide
-                  label="개발자 알림 (Slack)"
-                  hint="토큰 만료 · 넘기기 실패처럼 AI 도 고칠 수 없는 문제가 생기면 슬랙으로 알립니다."
-                >
-                  <EscalationForm daemon={daemon} disabled={!connected} />
-                </Field>
+                {/* 슬라이스 5: 개발자 에스컬레이션 — 개발자용 칸으로(단계 10).
+                    알림은 GitHub 이 먼저고(L11) 슬랙은 보조라, 채널을 직접
+                    붙이는 폼은 개발자의 손이 닿는 자리에 있다. */}
+                <details className="settings__fold">
+                  <summary>개발자용</summary>
+                  <Field
+                    wide
+                    label="개발자 알림 (Slack)"
+                    hint="토큰 만료 · 제출 실패처럼 AI 도 고칠 수 없는 문제가 생기면 슬랙으로 알립니다."
+                  >
+                    <EscalationForm daemon={daemon} disabled={!connected} />
+                  </Field>
+                </details>
               </>
             )}
 

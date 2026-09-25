@@ -130,6 +130,8 @@ export function Sidebar({
   onGoHome: () => void;
 }) {
   const { projects, activeSlug, api } = daemon;
+  // 개발 실행 판정 — 프로젝트 카드의 저장소 · 미리보기 줄이 쓴다(단계 10).
+  const devMachine = daemon.status?.dev === true;
   const [switching, setSwitching] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   /** The project row whose `···` menu is open. */
@@ -702,7 +704,7 @@ export function Sidebar({
                         switching === project.slug ? (
                           `${project.name} 대화 · 전환 중…`
                         ) : (
-                          <ProjectCard project={project} badge={badge} />
+                          <ProjectCard project={project} badge={badge} dev={devMachine} />
                         )
                       }
                     >
@@ -952,7 +954,7 @@ export function Sidebar({
                             switching === project.slug ? (
                               "전환 중…"
                             ) : (
-                              <ProjectCard project={project} badge={badge} />
+                              <ProjectCard project={project} badge={badge} dev={devMachine} />
                             )
                           }
                         >
@@ -1317,16 +1319,20 @@ function monogram(name: string): string {
 }
 
 /**
- * The project row's hover card (Tip interactive): what the row cannot show —
- * the repo it clones and the preview's port while its server is up. Every
- * row opens its target; a fact with nowhere to go stays a row, not a link.
+ * The project row's hover card (Tip interactive): what the row cannot show.
+ * 개발 실행에서는 저장소와 미리보기 주소를 보이고, 실사용에서는 이름과
+ * 상태뿐이다(PLAN 단계 10) — 저장소 주소는 개발자의 어휘다.
  */
 function ProjectCard({
   project,
   badge,
+  dev = false,
 }: {
   project: ProjectSummary;
   badge: { kind: string; label: string } | null;
+  /** 개발 실행에서만 저장소와 미리보기 주소를 보인다(PLAN 단계 10) — 실사용의
+      카드는 프로젝트 이름과 상태뿐이다. */
+  dev?: boolean;
 }) {
   const ownerRepo = ownerRepoOf(project.repoUrl);
   const repoHref = ownerRepo ? `https://github.com/${ownerRepo}` : null;
@@ -1336,7 +1342,7 @@ function ProjectCard({
         {project.name}
         {badge ? <span className="pcard__state"> · {badge.label}</span> : null}
       </span>
-      {ownerRepo && (
+      {dev && ownerRepo && (
         <a
           className="pcard__row"
           href={repoHref ?? undefined}
@@ -1350,7 +1356,7 @@ function ProjectCard({
           <span className="pcard__value">{ownerRepo}</span>
         </a>
       )}
-      {project.previewUrl && (
+      {dev && project.previewUrl && (
         <a
           className="pcard__row"
           href={project.previewUrl}

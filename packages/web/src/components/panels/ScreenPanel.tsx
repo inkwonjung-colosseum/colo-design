@@ -1,32 +1,23 @@
-import type { ColoDesignPinEnvelope, DeveloperReview, SessionState } from "@colo-design/protocol";
+import type { ColoDesignPinEnvelope, SessionState } from "@colo-design/protocol";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Fold, useFoldNotice } from "../../components";
-import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
-import { ownerRepoOf, timeAgo } from "../../lib/format";
-import { linkClick, openLink } from "../../lib/open-link";
+import { timeAgo } from "../../lib/format";
+import { openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
+import { focusReadDue } from "../../lib/quiet-read";
 import { previewPathOf, registerScreenOpener } from "../../lib/screen-link";
-import {
-  isReplyConfirmed,
-  loadHandledReviews,
-  markReplyConfirmed,
-  markRepoPrepSeen,
-  saveHandledReview,
-} from "../../lib/settings";
+import { markRepoPrepSeen } from "../../lib/settings";
 import { advanceTour, useTourStep } from "../../lib/tour";
 import { lastTurnScreens, screenKey, type TurnScreen, threadScreens } from "../../lib/turn-screens";
-import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
-  BranchIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleCheckIcon,
-  CloseIcon,
   ExternalLinkIcon,
   EyeIcon,
   HandoffIcon,
@@ -79,9 +70,11 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
         </span>
       );
     case "saved":
+      // git 브랜치 모양은 개발자의 어휘다(PLAN 단계 10) — 같은 연필을 조용한
+      // 색으로 쓴다: 이제 막 지어낸 화면이 있다는 뜻이다.
       return (
         <span className="ic ic--quiet">
-          <BranchIcon />
+          <PencilIcon />
         </span>
       );
     case "handed":
@@ -92,7 +85,6 @@ function chipGlyph(tone: Delivery["chip"]["tone"]): ReactNode {
       );
   }
 }
-
 /** 한 오류 키가 사람 손 없이 쓸 수 있는 기계 고침 발사 수. 카드는 그다음 문이다. */
 const MAX_AUTO_FIXES = 2;
 /** 보류 목록의 상한 — 판정 창 하나가 몇 초씩이므로 정산이 무한히 늘지 않게 묶는다. */
@@ -135,7 +127,6 @@ export function ScreenPanel({
   onCommentsMode,
   onCycleAction,
   cycleRequest,
-  reviewsTick,
   submitBusy = false,
 }: {
   /** 프레임 헤더가 내준 자리 — 사이클 바는 여기로 올라가 프로젝트 이름 옆에
@@ -184,15 +175,12 @@ export function ScreenPanel({
   commentsOn: boolean;
   onCommentsMode: (on: boolean) => void;
   /**
-   * 사이클 동작의 단일 통로 (PageWorkspace): 저장·넘기기·상태 확인 버튼은
-   * 모달을 열지 않고 이 콜백으로 올라간다 — 저장·넘기기는 대화 안 카드가
-   * 응답하고, 상태 확인은 아래 cycleRequest 로 되돌아온다.
+   * 사이클 동작의 단일 통로 (PageWorkspace): 상단 바의 제출이 이 콜백으로
+   * 올라가고 대화 안 카드가 응답한다(PLAN 단계 10 — 상태 확인 버튼은 없다).
    */
-  onCycleAction: (kind: "submit" | "handoff" | "check") => void;
-  /** PageWorkspace 가 내린 사이클 요청 — 이 패널은 `check` 만 집는다. */
-  cycleRequest: { kind: "submit" | "handoff" | "check" | "history"; nonce: number } | null;
-  /** 대화 열에서 처리된 개발자 코멘트 — 배지의 수를 다시 읽는 신호. */
-  reviewsTick: number;
+  onCycleAction: (kind: "submit") => void;
+  /** PageWorkspace 가 내린 사이클 요청 — 이 패널은 `history` 만 집는다. */
+  cycleRequest: { kind: "submit" | "history"; nonce: number } | null;
   /** 대화 열의 제출이 도는 중 — 제출 버튼이 `보내는 중…` 으로 답한다. */
   submitBusy?: boolean;
 }) {
@@ -311,34 +299,8 @@ export function ScreenPanel({
   }, [stageRow]);
   /** 더 보기 ▾ 메뉴 — 점검·기록·버리기의 자리. */
   const [menuOpen, setMenuOpen] = useState(false);
-  // --- 개발자 코멘트: 상태 확인 이 읽어 온 개발자의 말 ----------
-  const [devReviews, setDevReviews] = useState<DeveloperReview[] | null>(null);
-  const [devPanelOpen, setDevPanelOpen] = useState(false);
-  /** The row with an open 답하기 input. */
-  const [devReplyFor, setDevReplyFor] = useState<number | null>(null);
-  const [devReplyText, setDevReplyText] = useState("");
-  useEffect(() => {
-    // 초안은 행 하나의 것이지 패널의 것이 아니다 — 답하는 행을 옮기면 그 행의
-    // 초안이 다른 행의 입력칸에 앉아 있으면 안 된다.
-    setDevReplyText("");
-  }, [devReplyFor]);
-  /** The 답하기 that still owes the planner the GitHub-writes confirmation. */
-  const [replyConfirmFor, setReplyConfirmFor] = useState<number | null>(null);
-  const [devBusy, setDevBusy] = useState(false);
-  const devPanelRef = useRef<HTMLDivElement>(null);
-  useModalFocus(devPanelRef, devPanelOpen);
-  // Escape 는 최상단 오버레이의 몫이다 — 위에 대화상자나 팔레트가 떠 있으면
-  // 이 패널은 닫지 않는다. GitHub 쓰기 확인이 떠 있는 동안엔 아예 귀를 닫는다:
-  // 그 확인의 Escape 다.
-  useModalEscape(
-    devPanelRef,
-    () => setDevPanelOpen(false),
-    devPanelOpen && replyConfirmFor === null,
-  );
-  useEffect(() => {
-    if (!devPanelOpen) return;
-    devPanelRef.current?.focus();
-  }, [devPanelOpen]);
+  // --- 개발자 코멘트 창은 없다(PLAN 단계 10) — 코멘트는 대화록의 개발자
+  // 메시지로 이미 선다(review.arrived), 답하기도 대화록에서 한다(HumanMessage).
   // 기록이 거절당해도 침묵하지 않는다. 트레이는
   // 이미 비었고 턴은 나갔다(전달 우선) — 이 띠만이 왜 이번 사이클의 핀들이
   // 풀 리퀘스트 본문의 `### 수정 요청` 에서 빠지는지 말해 준다.
@@ -397,82 +359,28 @@ export function ScreenPanel({
     checkNoteTimer.current = window.setTimeout(() => setCheckNote(null), 6_000);
   }, []);
 
-  /** 넘기기 단계의 상태 다시 확인: GitHub 의 답을 다시 읽어 칩과 스테퍼에
-   * 반영한다. quiet 재사용: 데이터만 갱신하고
-   * 패널은 열지 않는다 — 프로젝트가 활성화될 때 조용히 한 번 읽어, 며칠
-   * 전 넘긴 요청의 칩이 마지막 클릭에 묶여 "개발자 검토 중"에 멈춰
-   * 있지 않게 한다. 열린 넘김이 없으면 데몬이 바로 돌려준다. */
-  const readHandoffState = useCallback(
-    (quiet: boolean) => {
-      const prevState = repo?.handoff?.state ?? null;
-      void api
-        .handoffStatus()
-        .then(async (report) => {
-          // 열린 넘김이 없으면 데몬의 답은 null 이다 — "확인할 것이 없다"까지가
-          // 대답이지 확인의 실패가 아니다. null 을 그대로 읽으면 이 읽기는 매번
-          // 예외로 끝나고, 조용한 재사용(마운트·포커스)은 예외를 삼키므로 마지막
-          // 확인 시각이 영영 비게 된다 — 넘기기 없는 프로젝트의 칩 메뉴가
-          // "이 창에서는 아직 확인하지 않았습니다"를 못 빠져 나온 이유다.
-          const reviews = report?.reviews ?? [];
-          const state = report?.state ?? null;
-          setDevReviews(reviews);
-          setLastCheckAt(new Date());
-          setHandledTick((tick) => tick + 1);
-          if (!quiet) {
-            // 빈 확인: 읽을 코멘트가 없고 상태도
-            // 그대로면 모달을 열지 않는다 — 빈 모달은 "내가 뭘 잘못 눌렀나"로
-            // 읽힌다. 병합 착지는 여전히 이 버튼(과 데몬의 handoffStatus)이
-            // 수행한다; 여기서 줄어드는 것은 패널을 여는 일뿐이다.
-            const prKey = reviews[0]?.pr;
-            const handled =
-              prKey !== undefined
-                ? new Set(loadHandledReviews(prKey).map((id) => Number(id)))
-                : new Set<number>();
-            const unhandled = reviews.filter((review) => !handled.has(review.id)).length;
-            if (unhandled > 0) {
-              // 읽을 말이 있을 때만 방이 열린다 — 상태 확인의 답이 코멘트라면
-              // 모달이 곧 답이다.
-              setDevPanelOpen(true);
-            } else if (state !== prevState) {
-              // 상태만의 이동 — 방은 열지 않는다. 새 말은 칩이 입고
-              // (role=status 라이브 리전), 이 노트는 어디를 보라는지만 말한다.
-              showCheckNote("상태가 바뀌었습니다 — 왼쪽 상태 칩을 확인해 주세요");
-            } else {
-              // 넘긴 요청이 열려 있는 동안엔 이 계정 자신(앱의 답하기 포함)이
-              // 단 코멘트를 필터한다 — 되먹임 방지의 설계다. 소식이 없는 이유를
-              // 모르면 1인 팀은 여기서 길을 잃는다(베타 테스트). 개수는 말하지
-              // 않는다: 앱의 답하기와 개발자 말이 같은 계정으로 섞여 숫자가
-              // 거짓말을 하기 때문이다.
-              showCheckNote(
-                repo?.handoff
-                  ? "방금 확인함 · 변화 없음 — 이 앱과 같은 계정이 남긴 코멘트는 읽지 않습니다"
-                  : "방금 확인함 · 변화 없음",
-              );
-            }
-          }
-          await api.repoStatus();
-        })
-        .catch((e: Error) => {
-          if (!quiet) syncError.show(e.message);
-        });
-    },
-    [api, repo?.handoff?.state, showCheckNote],
-  );
+  /** 조용한 상태 읽기(PLAN 단계 10): GitHub 의 답을 다시 읽어 칩에 반영하고
+   * 마지막 확인 시각을 갱신한다. `repo.handoffStatus` 는 감독자의 틱을 깨우는
+   * 길이기도 하다(dispatch 가 tick("manual") 을 돌린다) — 마운트 · 프로젝트
+   * 전환 · 창 포커스가 부른다. 사람이 누르는 `상태 확인` 버튼은 없다:
+   * 감독자가 확인한다. 열린 넘김이 없으면 데몬이 바로 돌려준다(null 도
+   * 대답이다). 코멘트 목록은 이제 읽지 않는다 — 대화록이 원천이다. */
+  const readHandoffState = useCallback(() => {
+    void api
+      .handoffStatus()
+      .then(async () => {
+        setLastCheckAt(new Date());
+        await api.repoStatus();
+      })
+      .catch((error) => {
+        // 원문은 기록으로 — 칩은 다음 읽기가 스스로 고친다.
+        console.error("[colo-design] 상태 읽기", error);
+      });
+  }, [api]);
   useEffect(() => {
-    readHandoffState(true);
+    readHandoffState();
   }, [readHandoffState, daemon.activeSlug]);
 
-  // PageWorkspace 의 사이클 요청 — 이 패널은 `check` 만 집는다
-  // (저장·넘기기는 대화 안 카드의 몫). 마지막 nonce 를 기억해 재생을
-  // 묵살한다 — 이 패널도 홈에서 내렸다 다시 타는데, 다시 탈 때마다
-  // 조용하지 않은 확인(false)이 코멘트 모달까지 열어버리던 결함.
-  const checkNonce = useRef(-1);
-  useEffect(() => {
-    if (cycleRequest?.kind !== "check" || cycleRequest.nonce === checkNonce.current) return;
-    checkNonce.current = cycleRequest.nonce;
-    readHandoffState(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycleRequest]);
   // P2-2: 정산 줄의 `작업 기록에서 되돌리기` — 드로어는 이 패널이 쥐고
   // 있으므로 대화 열의 요청이 같은 통로로 건너온다.
   const historyNonce = useRef(-1);
@@ -614,27 +522,26 @@ export function ScreenPanel({
           mode: frozenMode,
           // 눌러도 없는 것은 버튼이 아니다 — 샷이 있을 때만 왕복 손잡이를 단다.
           ...(frozenShot !== null ? { onMode: setFrozenMode } : {}),
+          // 실제로 열기(시점 빌드 재현)는 개발 실행의 손이다 — 단계 10.
+          dev: daemon.status?.dev === true,
         }
       : null;
-
-  // 되돌릴 수 없는 동작의 행선 — 회사가
-  // 부르는 이름(owner/repo)로, git 어휘는 아니다.
-  const activeProject = projects.find((project) => project.slug === activeSlug) ?? null;
-  const destination = ownerRepoOf(activeProject?.repoUrl ?? null);
 
   // --- 하루 한 프로젝트에 머무는 창도 본다 ---
   // 활성화 트리거는 프로젝트를 바꿀 때만 오므로, 같은 프로젝트에 하루 종일
   // 앉은 창은 며칠 전 병합을 알 방법이 없었다. 돌아온 창(focus·다시 보임)은
-  // 5분 스로틀로 조용히 다시 읽는다 — 도는 턴·받아오기 중에는 손대지 않는다
-  // (handoffStatus 는 병합이 보이면 체크아웃까지 하는 능동적 읽기다).
+  // 조용히 다시 읽어 감독자의 틱을 깨운다(PLAN 단계 10) — 시간당 몇 번을
+  // 넘지 않게 20분 스로틀로 억제한다. 도는 턴 중에는 손대지 않는다
+  // (handoffStatus 는 병합이 보이면 착지까지 하는 능동적 읽이다).
   const lastQuietRead = useRef(0);
   useEffect(() => {
     const reread = () => {
       if (document.visibilityState !== "visible") return;
       if (turnState === "running") return;
-      if (Date.now() - lastQuietRead.current < 5 * 60_000) return;
-      lastQuietRead.current = Date.now();
-      readHandoffState(true);
+      const now = Date.now();
+      if (!focusReadDue(lastQuietRead.current, now)) return;
+      lastQuietRead.current = now;
+      readHandoffState();
     };
     window.addEventListener("focus", reread);
     document.addEventListener("visibilitychange", reread);
@@ -703,41 +610,6 @@ export function ScreenPanel({
       document.removeEventListener("focusin", onFocusIn);
     };
   }, [statusOpen]);
-
-  // --- 개발자 코멘트의 동작 ---------------------------------------
-  // 고치기 는 마커 턴(리뷰 카드)으로, 답하기 는 GitHub 의 스레드/이슈로.
-  // 처리한 것은 표식이 남어 배지가 조용해진다.
-  const [handledTick, setHandledTick] = useState(0);
-  /** 펼쳐 읽은 개발자 코멘트: "모두 AI에게"는
-   * 전부 읽은 뒤에만 눌린다 — 개발자의 말에 "이 방향은 접자"가 섞여 있으므로. */
-  const [readReviews, setReadReviews] = useState<Set<number>>(new Set());
-  const handledIds = new Set(
-    devReviews && devReviews.length > 0 && devReviews[0]
-      ? loadHandledReviews(devReviews[0].pr).map((id) => Number(id))
-      : [],
-  );
-  void handledTick;
-  // 대화 열의 고치기·답하기가 처리한 코멘트도 같은 표식을 쓴다 —
-  // reviewsTick 이 오르면 배지의 수를 다시 읽는다.
-  void reviewsTick;
-  const unhandledDevReviews = (devReviews ?? []).filter((review) => !handledIds.has(review.id));
-
-  const sendDevReply = async (review: DeveloperReview) => {
-    const text = devReplyText.trim();
-    if (!text || devBusy) return;
-    setDevBusy(true);
-    try {
-      await api.replyToReview(review.id, text);
-      saveHandledReview(review.pr, review.id);
-      setHandledTick((tick) => tick + 1);
-      setDevReplyFor(null);
-      setDevReplyText("");
-    } catch (e) {
-      syncError.show(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDevBusy(false);
-    }
-  };
 
   /**
    * Mounting the panel is what readies the repo. `repoSync` is idempotent
@@ -1216,44 +1088,18 @@ export function ScreenPanel({
                           칩은 단어를 낭독하는 라이브 리전으로 남고, 문장은 칩을
                           열었을 때 온전히 읽힌다. */}
                       <span className="screenpanel__statusline">{delivery.next.line}</span>
-                      {destination && (
+                      {/* 개발자 이름(리뷰를 부탁한 사람들) — 저장소 이름과 요청
+                          번호는 개발자의 어휘라 뺀다(PLAN 단계 10). */}
+                      {handoff?.reviewers !== undefined && handoff.reviewers.length > 0 && (
                         <span className="screenpanel__destination">
-                          이 프로젝트 →{" "}
-                          {handoff?.url ? (
-                            <a
-                              className="screenpanel__destinationlink"
-                              href={handoff.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title="넘긴 요청 열기"
-                              onClick={linkClick}
-                            >
-                              <span className="screenpanel__destinationname">{destination}</span>
-                              <ExternalLinkIcon />
-                            </a>
-                          ) : (
-                            destination
-                          )}
+                          개발자 {handoff.reviewers.length}명이 보고 있어요 ·{" "}
+                          {handoff.reviewers.join(" · ")}
                         </span>
                       )}
                       <span className="screenpanel__statusrow">
                         <span className="hint">
-                          {lastCheckAt
-                            ? `마지막 확인 ${lastCheckAt.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`
-                            : "이 창에서는 아직 확인하지 않았습니다"}
+                          {lastCheckAt ? `마지막 확인 ${timeAgo(lastCheckAt.getTime())}` : null}
                         </span>
-                        {delivery.actions.check?.enabled && (
-                          <button
-                            type="button"
-                            className="primary"
-                            onClick={() => {
-                              setStatusOpen(false);
-                              readHandoffState(false);
-                            }}
-                          >
-                            지금 확인
-                          </button>
-                        )}
                       </span>
                     </span>
                   )}
@@ -1352,38 +1198,8 @@ export function ScreenPanel({
                         </span>
                       </button>
                     </Tip>
-                    {delivery.actions.check && (
-                      <Tip
-                        /* 빈 답( screenpanel__checknote )이 버튼 아래 서 있는
-                          6 초 동안은 설명 tip 이 답을 덮는다 — 같은 자리다.
-                          답이 말을 대신하므로 설명은 그 동안 눕혀 둔다. */
-                        label={
-                          checkNote
-                            ? undefined
-                            : "개발자의 판정과 코멘트를 GitHub에서 다시 읽어 옵니다"
-                        }
-                        side="bottom"
-                      >
-                        <button
-                          type="button"
-                          className={`${
-                            delivery.primary === "check"
-                              ? "primary screenpanel__action"
-                              : "ghost screenpanel__action"
-                          }${beatPrimary === "check" ? " screenpanel__action--beat" : ""}`}
-                          data-testid="check-state"
-                          onClick={() => onCycleAction("check")}
-                        >
-                          <EyeIcon />
-                          <span className="screenpanel__actionlabel">
-                            상태 확인
-                            {unhandledDevReviews.length > 0
-                              ? ` · 개발자 코멘트 ${unhandledDevReviews.length}`
-                              : ""}
-                          </span>
-                        </button>
-                      </Tip>
-                    )}
+                    {/* 상태 확인 버튼은 없다(PLAN 단계 10) — 감독자가 확인하고,
+                        창이 앞으로 오면 조용히 틱을 깨운다(위의 reread). */}
                   </>
                 ) : (
                   <>
@@ -1566,141 +1382,8 @@ export function ScreenPanel({
             <HistoryDrawer open onClose={closeHistory} daemon={daemon} cover={historyCover} />
           )}
         </div>
-        {devPanelOpen && (
-          <div
-            className="modal"
-            onMouseDown={(e) => e.target === e.currentTarget && setDevPanelOpen(false)}
-          >
-            <div
-              className="modal__panel"
-              role="dialog"
-              aria-modal="true"
-              aria-label="개발자 코멘트"
-              tabIndex={-1}
-              ref={devPanelRef}
-            >
-              <header className="modal__head">
-                <h2 className="modal__title">개발자 코멘트</h2>
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label="개발자 코멘트 닫기"
-                  onClick={() => setDevPanelOpen(false)}
-                >
-                  <CloseIcon />
-                </button>
-              </header>
-              <div className="modal__body">
-                <p className="hint">
-                  {devReviews === null
-                    ? "개발자의 말을 읽어 오는 중…"
-                    : unhandledDevReviews.length > 0
-                      ? "도구가 코멘트를 읽고 AI에게 반영을 맡깁니다 — 끝나면 알려 드립니다. 답하기로 개발자에게 직접 답할 수 있습니다."
-                      : "모두 처리한 목록입니다."}
-                </p>
-                <ul className="diff__files">
-                  {(devReviews ?? []).map((review) => {
-                    const handled = handledIds.has(review.id);
-                    return (
-                      <li
-                        key={review.id}
-                        className={`diff__file${handled ? " diff__file--resolved" : ""}`}
-                      >
-                        <div className="diff__filerow">
-                          <span className="diff__path">
-                            {review.author}
-                            {review.path
-                              ? ` · ${review.path}${review.line ? `:${review.line}` : ""}`
-                              : ""}
-                          </span>
-                          {!handled && (
-                            <>
-                              <button
-                                type="button"
-                                className="ghost"
-                                onClick={() => {
-                                  if (!isReplyConfirmed()) {
-                                    setReplyConfirmFor(review.id);
-                                    return;
-                                  }
-                                  setDevReplyFor(devReplyFor === review.id ? null : review.id);
-                                }}
-                              >
-                                답하기
-                              </button>
-                            </>
-                          )}
-                          {handled && <span className="hint">AI에게 보냄</span>}
-                        </div>
-                        {(handled || readReviews.has(review.id)) && (
-                          <p className="hint">{review.body}</p>
-                        )}
-                        {!handled && !readReviews.has(review.id) && (
-                          <Tip label="개발자가 남긴 말을 펼쳐 읽습니다">
-                            <button
-                              type="button"
-                              className="ghost dev__read"
-                              onClick={() => setReadReviews((prev) => new Set(prev).add(review.id))}
-                            >
-                              펼쳐 읽기
-                            </button>
-                          </Tip>
-                        )}
-                        {devReplyFor === review.id && (
-                          <form
-                            className="dev__reply"
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              void sendDevReply(review);
-                            }}
-                          >
-                            <input
-                              type="text"
-                              aria-label="답변"
-                              placeholder="개발자에게 남길 말을 한 줄 적어 주세요"
-                              value={devReplyText}
-                              autoFocus
-                              onChange={(event) => setDevReplyText(event.target.value)}
-                            />
-                            <button
-                              type="submit"
-                              className="primary"
-                              disabled={devBusy || devReplyText.trim() === ""}
-                            >
-                              보내기
-                            </button>
-                          </form>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-                {devReviews !== null && devReviews.length === 0 && (
-                  <p className="hint">아직 개발자 코멘트가 없습니다.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-        {replyConfirmFor !== null && (
-          <ConfirmDialog
-            title="GitHub에 답하기"
-            body={
-              <>
-                이 도구가 <strong>사용자의 이름</strong>으로 GitHub에 답을 남깁니다.
-              </>
-            }
-            hint="한 번 확인하면 다음부터 묻지 않습니다. 취소하려면 취소를 누르세요."
-            confirmLabel="확인했어요"
-            onConfirm={() => {
-              markReplyConfirmed();
-              const review = (devReviews ?? []).find((entry) => entry.id === replyConfirmFor);
-              setReplyConfirmFor(null);
-              if (review) setDevReplyFor(review.id);
-            }}
-            onClose={() => setReplyConfirmFor(null)}
-          />
-        )}
+        {/* 개발자 코멘트 창(모달)은 없다(PLAN 단계 10) — 코멘트는 대화록의
+            개발자 메시지로 이미 선고 답하기도 거기서 한다. */}
       </div>
     </div>
   );

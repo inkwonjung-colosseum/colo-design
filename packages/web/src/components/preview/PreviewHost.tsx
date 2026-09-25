@@ -158,6 +158,8 @@ export function PreviewHost({
     tone: "info" | "ok" | "warn";
     mode: "sent" | "live";
     onMode?: (mode: "sent" | "live") => void;
+    /** 실제로 열기(시점 빌드 재현)는 개발 실행의 손이다 — 단계 10. */
+    dev?: boolean;
   } | null;
   /**
    * The wire 실제로 열기 speaks through — the api and the conversation that
@@ -1053,6 +1055,7 @@ export function PreviewHost({
                 tone={frozen.tone}
                 mode={frozen.mode}
                 onMode={frozen.onMode}
+                dev={frozen.dev === true}
                 api={frozenApi?.api ?? null}
                 sessionId={frozenApi?.sessionId ?? null}
               >

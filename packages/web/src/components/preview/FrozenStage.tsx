@@ -47,6 +47,7 @@ export function FrozenStage({
   tone,
   mode,
   onMode,
+  dev = false,
   api = null,
   sessionId = null,
   children,
@@ -63,6 +64,8 @@ export function FrozenStage({
   mode: "sent" | "live";
   /** The segment's ask — absent when there is no shot to walk back to. */
   onMode?: (mode: "sent" | "live") => void;
+  /** 실제로 열기는 개발 실행의 손이다(PLAN 단계 10) — 꺼두면 단추가 없다. */
+  dev?: boolean;
   /**
    * The daemon api, for 시점 빌드 재현. Null (or a daemon without the
    * member yet) simply means the button is not there — the capture alone
@@ -162,7 +165,7 @@ export function FrozenStage({
             </button>
           </div>
         )}
-        {api !== null && mode === "sent" && shot !== null && (
+        {dev && api !== null && mode === "sent" && shot !== null && (
           <button
             type="button"
             className={

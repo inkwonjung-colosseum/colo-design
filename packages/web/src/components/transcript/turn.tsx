@@ -104,10 +104,10 @@ function MachineTurn({
       break;
     case "review":
       // The planner pressed 고치기 on a developer comment — the card
-      // names the conversation, the author sits beside it, the developer's
-      // own file path waits behind 자세히.
+      // names the author. 파일 경로는 개발자의 어휘라 뺐다(단계 10):
+      // 필요한 위치말은 AI 가 받는 본문에 있다.
       title = "개발자 코멘트에 답하기";
-      lead = [marker.author, marker.path].filter(Boolean).join(" · ");
+      lead = marker.author;
       // 답하기가 겨눌 코멘트의 id — 프로토콜 타입은 부모 소관이라 아직 몰라도
       // optional 로 먼저 읽는다. 필드가 없는 마커에서는 칸이 뜨지 않는다.
       devReplyId = readReviewId(marker);

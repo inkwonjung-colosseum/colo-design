@@ -689,62 +689,6 @@ export function saveModelCatalog(provider: string, models: SessionModelInfo[]): 
 }
 
 // ---------------------------------------------------------------------------
-// 개발자 코멘트의 처리 표식
-// ---------------------------------------------------------------------------
-
-const HANDLED_KEY = "colo-design.handled-reviews";
-const REPLY_CONFIRMED_KEY = "colo-design.reply-confirmed";
-
-/**
- * 처리한 개발자 코멘트 id, PR 번호별로. 사이클이 짧으니 기계를 바꾸면 다시
- * 보여도 받아들인다 — 이 표식은 배지를 조용히 하기 위한 것이라 반응형 저장소
- * 대신 자기 열쇠 하나로 산다.
- */
-export function loadHandledReviews(pr: number): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(HANDLED_KEY) ?? "{}") as Record<string, string[]>;
-    return Array.isArray(raw[String(pr)]) ? (raw[String(pr)] as string[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveHandledReview(pr: number, id: number): void {
-  try {
-    const raw = JSON.parse(localStorage.getItem(HANDLED_KEY) ?? "{}") as Record<string, string[]>;
-    const stored: string[] = Array.isArray(raw[String(pr)]) ? (raw[String(pr)] as string[]) : [];
-    const list = new Set([...stored, String(id)]);
-    // The map only ever grows — a planner who hands off for years would
-    // carry every dead PR's keys. Keep the most recent few.
-    const merged = { ...raw, [String(pr)]: [...list] };
-    const keys = Object.keys(merged);
-    const trimmed =
-      keys.length > 20
-        ? Object.fromEntries(keys.slice(-20).map((key) => [key, merged[key]!]))
-        : merged;
-    localStorage.setItem(HANDLED_KEY, JSON.stringify(trimmed));
-  } catch {
-    // 사적 모드 등에서 저장이 막혀도 표식은 메모리의 몫으로 끝난다.
-  }
-}
-
-/** 첫 답하기의 확인 — 도구가 사용자 이름으로 GitHub 에 쓰는 첫 자리라 한 번. */
-export function isReplyConfirmed(): boolean {
-  try {
-    return localStorage.getItem(REPLY_CONFIRMED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function markReplyConfirmed(): void {
-  try {
-    localStorage.setItem(REPLY_CONFIRMED_KEY, "1");
-  } catch {
-    // 다음 답하기가 다시 물어볼 뿐이다.
-  }
-}
-// ---------------------------------------------------------------------------
 // 레포 경고의 읽음 지문 — 닫은 소식은 기기에 눌러 담긴다
 // ---------------------------------------------------------------------------
 

@@ -446,14 +446,16 @@ export function Transcript({
                 const [header] = block.reviews;
                 if (!header) return null;
                 // 리뷰 본문(kind: "review")이 devmsg__text, 인라인 코멘트가 인용
-                // 행 — 핀 매핑이 없으니 라벨은 코드 위치뿐이다.
+                // 행. 라벨은 화면 제목이 있을 때만(단계 10) — 파일 경로:줄은
+                // 개발자의 어휘라 뺀다. 코멘트 ↔ 화면 매핑이 없는 코멘트는
+                // 말몸통만으로 읽는다.
                 const reviewBody = block.reviews.find((r) => r.kind === "review");
                 const inline = block.reviews.filter((r) => r.kind === "inline");
                 const quotes: HumanMessageQuote[] = inline.map((review) => ({
                   id: review.id,
-                  label: review.path
-                    ? `${review.path}${review.line ? `:${review.line}` : ""}`
-                    : "코드 위치",
+                  // 코멘트 ↔ 화면 매핑이 아직 없다(DeveloperReview 에 화면이
+                  // 없다) — 제목이 없으면 라벨도 없다.
+                  label: "",
                   body: review.body,
                 }));
                 return (

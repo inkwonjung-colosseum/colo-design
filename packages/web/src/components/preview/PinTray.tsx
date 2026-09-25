@@ -110,12 +110,6 @@ export function PinTray({
         <ul className="pintray__list">
           {pins.map((pin, index) => {
             const n = numberStart + index;
-            // 정체 한 조각(2026-09-22): 컴포넌트 이름이 없으면 testid — 찍는
-            // 순간 무엇을 집었는지 행이 스스로 말한다. 영역 핀은 정체가 없다.
-            const identity =
-              pin.element.kind === "region"
-                ? null
-                : (pin.element.owners?.[0] ?? pin.element.attrs?.testId ?? null);
             return (
               <li key={pin.id} className="pintray__row">
                 {/* 행의 몸통은 버튼이다 — 배지 가리키기가 포인터의 전유물이지
@@ -145,12 +139,14 @@ export function PinTray({
                     </span>
                   )}
                   <span className="pintray__what">
+                    {/* 정체는 요소의 글자만 말한다(단계 10) — React 컴포넌트
+                        이름 · testid 는 개발자의 어휘다. 글자가 없으면
+                        `요소`, 영역 핀은 `영역`이다. */}
                     <span className="pintray__label">
                       {pin.element.kind === "region"
                         ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
-                        : pin.element.text || pin.element.component}
+                        : pin.element.text || "요소"}
                     </span>
-                    {identity !== null && <span className="pintray__identity">{identity}</span>}
                     <span className="pintray__where">{titleFor(pin.screen) ?? pin.screen}</span>
                   </span>
                 </button>

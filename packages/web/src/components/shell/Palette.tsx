@@ -77,9 +77,7 @@ export function Palette({
   projectSlug = null,
   onOpenThread,
   onActivateProject,
-
   onOpenSettings,
-  onCheckState,
   onClose,
 }: {
   /** The name a thread wears: the planner's rename, else the daemon's title. */
@@ -101,8 +99,6 @@ export function Palette({
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
   onOpenSettings: (category?: SettingsCategory) => void;
-  /** 개발자의 판정을 GitHub 에서 다시 읽는다 — 상단 바의 상태 확인과 같은 통로. */
-  onCheckState: () => void;
   onClose: () => void;
 }) {
   // The scoped walk names its project once — in the group header — instead
@@ -263,18 +259,13 @@ export function Palette({
     onClose,
   ]);
 
-  // The four chips — every command the frame answers, off the list proper so
-  // the ↑↓ walk stays inside the conversations (오버레이 목업 05). A query
-  // narrows them like any row; an empty one keeps all four in reach.
+  // The chips — every command the frame answers, off the list proper so
+  // the ↑↓ walk stays inside the conversations (오버레이 목업 05). 상태 확인은
+  // 없다(단계 10): 감독자가 확인한다. A query narrows them like any row; an
+  // empty one keeps the rest in reach.
   const chips = useMemo(() => {
     const commands: Array<{ label: string; hint: string; icon: typeof PlusIcon; run: () => void }> =
       [
-        {
-          label: "상태 확인",
-          hint: "개발자의 판정과 코멘트를 다시 읽어 옵니다",
-          icon: SearchIcon,
-          run: onCheckState,
-        },
         {
           label: "설정",
           hint: "연결 · 대화 · 문제 해결",
@@ -283,7 +274,7 @@ export function Palette({
         },
       ];
     return commands.filter((command) => rank(query, command.label) >= 0);
-  }, [query, onCheckState, onOpenSettings]);
+  }, [query, onOpenSettings]);
 
   // A shrinking list must not keep a highlight past its end.
   const index = Math.min(highlight, Math.max(0, rows.length - 1));
@@ -331,10 +322,8 @@ export function Palette({
             ref={searchRef}
             className="palette__search"
             value={query}
-            placeholder={
-              projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"
-            }
-            aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 화면, 프로젝트, 명령 찾기"}
+            placeholder={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트 찾기"}
+            aria-label={projectSlug ? "이 프로젝트의 대화 찾기" : "대화, 프로젝트 찾기"}
             role="combobox"
             aria-expanded="true"
             aria-controls="palette-list"

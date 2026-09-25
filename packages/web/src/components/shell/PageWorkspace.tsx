@@ -173,22 +173,19 @@ export function PageWorkspace({
       the palette answers to the whole frame. ⌘K always opens it unscoped. */
   const [paletteSlug, setPaletteSlug] = useState<string | null>(null);
   /**
-   * 사이클 동작의 단일 통로 — 상단 바의 제출 버튼, 팔레트의 상태 확인이
-   * 전부 이 요청으로 간다. 모달이던 시절의 setSaveOpen 대신 대화 열의 카드가
-   * 응답한다: nonce 가 오르면 ChatColumn·ScreenPanel 이 각자의 몫을 집는다.
-   * `save` 는 P2-1 에서 빠졌다 — 저장은 턴이 끝날 때마다 데몬이 스스로 한다.
+   * 사이클 동작의 단일 통로 — 상단 바의 제출 버튼이 이 요청으로 간다.
+   * 모달이던 시절의 setSaveOpen 대신 대화 열의 카드가 응답한다: nonce 가
+   * 오르면 ChatColumn·ScreenPanel 이 각자의 몫을 집는다(단계 10 — 상태 확인
+   * · 넘기기 요청은 없다. 감독자가 확인하고, 넘기기 카드는 영수증뿐).
    */
   const [cycleRequest, setCycleRequest] = useState<{
-    kind: "submit" | "handoff" | "check" | "history";
+    kind: "submit" | "history";
     nonce: number;
   } | null>(null);
-  const askCycle = (kind: "submit" | "handoff" | "check" | "history") => {
+  const askCycle = (kind: "submit" | "history") => {
     setView("thread");
     setCycleRequest((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
   };
-  /** 개발자 코멘트의 처리 표식 — 대화(고치기·답하기)가 쓰고 상단 바의
-      `· 개발자 코멘트 N` 배지가 읽는다. 한 창의 두 열이 같은 수를 본다. */
-  const [reviewsTick, setReviewsTick] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   /**
    * 핀 모드: the preview toolbar's toggle, lifted HERE so
@@ -689,10 +686,10 @@ export function PageWorkspace({
                 daemon={daemon}
                 sessions={sessions}
                 sendKey={settings.sendKey}
-                // 빈 대화의 placeholder 가
-                // 가르친다 — 화면 만들기는 단계가 아니라 아무 대화에서나 하는 한
-                // 턴이다. 문법 안내(@ 로 파일, / 로 명령)는 살리되 개발자 어휘
-                // (@files 태그 · /commands)는 사용자의 말로 벗겼다.
+                // 빈 대화의 placeholder 가 화면 만들기를 가르친다 — 문법
+                // 안내의 `@로 파일`은 살리고(사용자가 안다 — PLAN 0.2)
+                // `/로 명령`은 개발 실행에서만(단계 10): 실사용의 `/` 목록은
+                // 비어 있어 안내만 남는다.
                 // E′ — 트레이에 핀이 서 있으면 입력창이 "고칠 곳"을 먼저 묻는다:
                 // 핀은 문장과 한 턴으로 나가므로, 물음도 고침의 말이 먼저다.
                 // 문자열 제약: 첫 턴은 `만들고 싶은 화면을` 접두, 이후는
@@ -701,8 +698,12 @@ export function PageWorkspace({
                   sessions.activeId
                     ? pins.list.length > 0
                       ? "고칠 곳을 말해 주세요 — 찍은 핀과 함께 보내져요"
-                      : "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
-                    : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
+                      : daemon.status?.dev === true
+                        ? "메시지를 보내 보세요 — @로 파일을, /로 명령을 불러올 수 있어요"
+                        : "메시지를 보내 보세요 — @로 파일을 불러올 수 있어요"
+                    : daemon.status?.dev === true
+                      ? "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일, /로 명령)"
+                      : "만들고 싶은 화면을 말해 보세요 — 그림을 붙여도 돼요 (@로 파일)"
                 }
                 disabled={false}
                 titleFor={titleFor}
@@ -726,7 +727,6 @@ export function PageWorkspace({
                 onOpenHistory={() => askCycle("history")}
                 onSubmitBusy={setSubmitBusy}
                 cycleRequest={cycleRequest}
-                onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
               />
             </div>
             <Splitter
@@ -760,7 +760,6 @@ export function PageWorkspace({
           onPinFocus={focusPin}
           onCycleAction={askCycle}
           cycleRequest={cycleRequest}
-          reviewsTick={reviewsTick}
           submitBusy={submitBusy}
         />
       </div>
@@ -788,7 +787,6 @@ export function PageWorkspace({
           }}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
           onOpenSettings={onOpenSettings}
-          onCheckState={() => askCycle("check")}
           onClose={() => setPalette(false)}
         />
       )}
