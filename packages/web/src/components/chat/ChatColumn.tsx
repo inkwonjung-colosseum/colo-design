@@ -9,6 +9,7 @@ import { Fold, PermissionCard, QuestionCard, Transcript } from "../../components
 import type { Pins } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
+import { plainErrorTitle } from "../../lib/error-words";
 import { composing } from "../../lib/ime";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
@@ -134,13 +135,20 @@ export function ChatColumn({
       });
   };
   const { active, activeId, error, setError } = sessions;
+  /** 개발 실행 판정 — 세션 오류 배너가 원문을 그대로 보일지를 가른다(PLAN L8). */
+  const devMachine = daemon.status?.dev === true;
   /** 닫힘은 접힘이다(Fold) — 오류 줄 자체는 useSessions 의 데이터라 여기서
       접는 중만 간직한다. 새 오류는 접는 중이라도 다시 편다. */
   const [errorClosing, setErrorClosing] = useState(false);
+  // 원문(영어일 수 있다)은 기록으로 — 화면은 한국어 한 줄만 그린다(L8).
+  useEffect(() => {
+    if (error && !devMachine) console.warn("[colo-design] 세션 오류:", error);
+  }, [error, devMachine]);
   const showError = (message: string) => {
     setError(message);
     setErrorClosing(false);
   };
+
   /**
    * 실사 결함: 중지를 눌러도 응답이 돌아올 때까지 아무 일도 일어나지 않는 것처럼
    * 보였다. 클릭은 즉시 "정리 중…" 이 되고, 턴이 멈추면(데몬의 이행 보장이
@@ -532,7 +540,7 @@ export function ChatColumn({
               <StateBanner
                 tone="danger"
                 role="alert"
-                title={error}
+                title={plainErrorTitle(error, devMachine)}
                 closeLabel="오류 닫기"
                 onClose={() => setErrorClosing(true)}
               />

@@ -5,6 +5,7 @@ import { Fold, useFoldNotice } from "../../components";
 import { type Pins, pinsSync } from "../../hooks/usePins";
 import type { Daemon } from "../../lib/daemon-client";
 import { type Delivery, deriveDelivery } from "../../lib/delivery";
+import { plainErrorTitle } from "../../lib/error-words";
 import { timeAgo } from "../../lib/format";
 import { openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
@@ -193,6 +194,14 @@ export function ScreenPanel({
    * it could not bring up — the rail and the chat stay usable while it runs.
    */
   const syncError = useFoldNotice();
+  // 개발 실행 판정 — 원문 오류 문장의 노출을 가른다(PLAN L8).
+  const devMachine = daemon.status?.dev === true;
+  // 원문(영어일 수 있다)은 기록으로 — 화면은 한국어 한 줄만 그린다(L8).
+  useEffect(() => {
+    if (syncError.text && !devMachine) {
+      console.warn("[colo-design] 동기화 오류:", syncError.text);
+    }
+  }, [syncError.text, devMachine]);
   /**
    * The turn's echo on the preview: while the agent works the column
    * wears a live hairline and the bar says 다시 그리는 중; the moment the turn
@@ -1309,7 +1318,7 @@ export function ScreenPanel({
           <StateBanner
             tone="danger"
             role="alert"
-            title={syncError.text}
+            title={plainErrorTitle(syncError.text, devMachine)}
             closeLabel="오류 닫기"
             onClose={syncError.close}
           />
