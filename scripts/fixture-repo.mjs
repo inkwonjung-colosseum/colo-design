@@ -51,8 +51,8 @@ const appJs = (dies) => `const http = require("node:http");
 const pages = {
   "/": "<h1>홈</h1><p>fixture 앱</p>",
   "/list": "<h1>회원 목록</h1><ul><li>김기획</li><li>이디자인</li></ul>",
-  "/boom": "<h1>깨진 화면</h1><script>throw new Error("fixture 오류")</script>",
-  "/blank": "<h1>빈 화면</h1><script>document.body.innerHTML=""</script>",
+  "/boom": "<h1>깨진 화면</h1><script>throw new Error('fixture 오류')</script>",
+  "/blank": "<h1>빈 화면</h1><script>document.body.innerHTML=''</script>",
 };
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/missing")) { res.statusCode = 404; res.end("nope"); return; }
