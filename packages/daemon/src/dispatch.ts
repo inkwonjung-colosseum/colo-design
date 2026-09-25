@@ -757,9 +757,13 @@ export class RequestRouter {
       }
       case "machine.author.set": {
         // 이름은 문서로 흘러가는 문자열이라 잘라내는 것으로 충분하다 — 빈 칸은
-        // 지우기(null 과 같은 길)로 읽는다. 상태의 authorName 이 다음 방송에 실린다.
+        // 지우기(null 과 같은 길)로 읽는다. 상태를 곧바로 다시 보낸다 — 다음 방송을
+        // 기다리면 초대 파일을 가져온 직후의 홈 인사가 이름 없이 남는다(단계 8 에서 봄).
         const name = message.name === null ? null : message.name.trim();
         this.deps.machineSetting.set("authorName", name === "" ? null : name);
+        void this.deps
+          .status()
+          .then((status) => this.deps.broadcast({ type: "status", status } as ServerMessage));
         return { ok: true as const };
       }
       case "escalation.notify": {

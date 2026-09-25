@@ -25,3 +25,16 @@
 `drive.cjs <url> <steps.js>` · `shot.cjs <url> <out.png>`)에 준다. `SMOKE_EMPTY=1` 은
 프로젝트 없는 첫 실행, `SMOKE_REAL_CLAUDE=1` 은 사용자의 실제 Claude 로그인(구독을
 태운다). 먼저 `pnpm build`, 그리고 `packages/web` 에서 `node_modules/.bin/vite --port 29174`.
+
+## 실제 셸의 콜드 리뷰 — `next-cold.cjs` (PLAN-UI 단계 8)
+
+`next-cold.cjs` 하나가 과제 1–10 을 격리 데몬 위의 실제 셸에서 돈다 — 문장은 `next/labels.ts`
+의 것을 글자 · 역할로 찾고, 걸음마다 스크린샷 한 장, 끝에 PASS / BLOCKED(이유) / SKIPPED(이유)
+표와 금칙어 · 페이지 오류를 찍는다(`<shots>/result.json` 에도). 실행법과 첫 결과는
+`RESULT-2026-09-25.md`. 목업을 겨눈 옛 `t*.js` · `run.js` 는 기록으로 남겨 둔다.
+
+- 데스크톱만 가진 면(오버레이의 핀 · 초대 파일 지우기)은 가짜 `window.coloDesignDesktop` 을
+  심어 웹 쪽 절반만 본다(과제 1 · 3).
+- 설정의 `업데이트` 버튼은 `--latest-port 7895` 의 가짜 최신 버전 서버와
+  `fake-claude-update.sh`(데몬의 `COLO_DESIGN_CLAUDE_INSTALL_CMD`)로 끝까지 돈다.
+- `--real` 은 `SMOKE_REAL_CLAUDE=1` 데몬에서 실제 답을 기다린다 — 구독을 태운다.
