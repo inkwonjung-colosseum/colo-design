@@ -49,7 +49,7 @@ import type {
 } from "./preview-driver.js";
 import { gateOutcomeStats, PreviewDrivers } from "./preview-drivers.js";
 import { ProjectFleet, type ProjectWorkspaces } from "./project-fleet.js";
-import type { ProjectRegistry } from "./projects.js";
+import { ProjectRegistry } from "./projects.js";
 import { QueueStore } from "./queue-store.js";
 import { repoSettingsWarning, sanitizeRepoAgentSettings, trustWorkspace } from "./repo.js";
 import { MAX_LINES_PER_SCREEN, TROUBLE_LEVELS } from "./screen-gate.js";
@@ -831,6 +831,9 @@ export class DaemonServer {
     // A pre-projects installation becomes one project here, folder and all,
     // and its per-project PAT — if the old layout left one — becomes the
     // machine-wide token nobody has to re-enter.
+    // (5ca5253b 가 이 두 줄을 잃어 registry 가 비어 start() 가 넘어졌다 — 2026-09-25 복구.)
+    this.registry = ProjectRegistry.load(process.env);
+    this.machineSetting.load();
     this.fleet = new ProjectFleet({
       registry: this.registry,
       manager: this.manager,
