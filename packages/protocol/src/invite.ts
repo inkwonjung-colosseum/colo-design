@@ -412,27 +412,69 @@ export function normalizeInvite(value: unknown): NormalizeResult {
 
 /**
  * 초대장의 프로젝트마다 벌일 일을 정한다 — sameRepo 로 기존 프로젝트와 짝지어
- * 갱신(update)할지 새로 추가(add)할지를 가린다. 짝이 없으면 add, repoUrl 이
- * 없는 기존 프로젝트는 짝이 될 수 없다. 초대장의 순서를 지킨다.
+ * 갱신(update) · 그대로(keep) · 새로 추가(add)를 가린다. 짝이 없으면 add,
+ * repoUrl 이 없는 기존 프로젝트는 짝이 될 수 없다. 초대장의 순서를 지킨다.
  */
 export type InviteRow =
   | { project: InviteProject; action: "add" }
   | { project: InviteProject; action: "update"; slug: string; currentName: string }
-  /** 다시 받은 초대장이 바꾸는 것이 없는 기존 프로젝트(PLAN-UI U11) — 판정은 단계 5. */
+  /** 다시 받은 초대장이 바꾸는 것이 없는 기존 프로젝트(PLAN-UI U11) — 적용이 건너뛴다. */
   | { project: InviteProject; action: "keep"; slug: string; currentName: string };
 
-export function planInviteRows(
-  invite: NormalizedInvite,
-  projects: Array<{ slug: string; name: string; repoUrl?: string | null }>,
-): InviteRow[] {
+/**
+ * 짝지을 기존 프로젝트 — ProjectSummary 의 부분이다. 초대장이 정하는 값
+ * (inviteUpdatePatch 가 싣는 것)을 함께 주면 바뀐 것이 없는 짝은 keep 이 된다.
+ * baseBranch 가 없으면 비교할 수 없으므로 언제나 update 다.
+ */
+export interface InviteRowTarget {
+  slug: string;
+  name: string;
+  repoUrl?: string | null;
+  baseBranch?: string;
+  /** 없으면 리뷰어가 없는 것이다. */
+  reviewers?: string[];
+  defaults?: ProjectDefaults;
+  lifecycle?: ProjectLifecycle;
+  /** 없으면 허용된 것이다 — 레지스트리의 게이트 이전 프로젝트와 같은 뜻. */
+  commandsApproved?: boolean;
+}
+
+/** 값이 있는 키만 세는 얕은 비교 — undefined 인 키와 없는 키를 같게 본다. */
+function sameRecord(a: object | undefined, b: object | undefined): boolean {
+  const left = Object.entries(a ?? {}).filter(([, value]) => value !== undefined);
+  const right = new Map(Object.entries(b ?? {}).filter(([, value]) => value !== undefined));
+  return left.length === right.size && left.every(([key, value]) => right.get(key) === value);
+}
+
+/**
+ * 초대장의 한 프로젝트가 짝의 개발자 몫 값을 바꾸는가 — inviteUpdatePatch 가
+ * 보낼 패치를 지금 값에 대 본다. 이름과 지침은 사용자의 몫이라 보지 않는다.
+ * 명령 허용은 패치가 켜기만 하므로 초대장이 켜고 짝이 꺼져 있을 때만 바뀜이다.
+ */
+function inviteChanges(project: InviteProject, existing: InviteRowTarget): boolean {
+  if (existing.baseBranch === undefined) return true;
+  if (existing.baseBranch !== project.baseBranch) return true;
+  const want = project.reviewers ?? [];
+  const have = existing.reviewers ?? [];
+  if (want.length !== have.length || want.some((login, i) => login !== have[i])) return true;
+  if (!sameRecord(project.defaults, existing.defaults)) return true;
+  if (!sameRecord(project.lifecycle, existing.lifecycle)) return true;
+  return project.approveCommands === true && existing.commandsApproved === false;
+}
+
+export function planInviteRows(invite: NormalizedInvite, projects: InviteRowTarget[]): InviteRow[] {
   return invite.projects.map((project) => {
     const match = projects.find(
       (existing) =>
         typeof existing.repoUrl === "string" && sameRepo(existing.repoUrl, project.repoUrl),
     );
-    return match
-      ? { project, action: "update", slug: match.slug, currentName: match.name }
-      : { project, action: "add" };
+    if (!match) return { project, action: "add" };
+    return {
+      project,
+      action: inviteChanges(project, match) ? "update" : "keep",
+      slug: match.slug,
+      currentName: match.name,
+    };
   });
 }
 

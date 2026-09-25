@@ -386,6 +386,58 @@ test("planInviteRows 는 로컬 경로의 기존 프로젝트도 update 로 짝�
   ]);
 });
 
+test("planInviteRows — 개발자 몫 값이 그대로면 keep, 하나라도 바뀌면 update (PLAN-UI U11)", () => {
+  const project = {
+    repoUrl: "https://github.com/org/repo.git",
+    name: "회원 관리",
+    baseBranch: "main",
+    reviewers: ["dev1", "dev2"],
+    approveCommands: true,
+    defaults: { model: "opus", effort: "high" as const },
+    lifecycle: { keepRejectedDays: 30 },
+  };
+  const invite = { token: "t", projects: [project] };
+  const same = {
+    slug: "s1",
+    name: "내 이름",
+    // 표기가 달라도 같은 레포다.
+    repoUrl: "git@github.com:org/repo",
+    baseBranch: "main",
+    reviewers: ["dev1", "dev2"],
+    // 키 순서와 undefined 키는 바뀜이 아니다.
+    defaults: { effort: "high" as const, model: "opus", provider: undefined },
+    lifecycle: { keepRejectedDays: 30 },
+    commandsApproved: true,
+  };
+  assert.deepEqual(planInviteRows(invite, [same]), [
+    { project, action: "keep", slug: "s1", currentName: "내 이름" },
+  ]);
+  // 명령 허용이 없는 키 = 허용된 것(게이트 이전 프로젝트).
+  const { commandsApproved: _drop, ...legacy } = same;
+  assert.equal(planInviteRows(invite, [legacy])[0]?.action, "keep");
+
+  const changed: Array<[string, object]> = [
+    ["기본 가지", { baseBranch: "develop" }],
+    ["리뷰어 추가", { reviewers: ["dev1"] }],
+    ["리뷰어 순서", { reviewers: ["dev2", "dev1"] }],
+    ["리뷰어 없음", { reviewers: undefined }],
+    ["처음 값", { defaults: { model: "opus" } }],
+    ["수명", { lifecycle: undefined }],
+    ["명령 허용 꺼짐", { commandsApproved: false }],
+    ["기본 가지를 모름", { baseBranch: undefined }],
+  ];
+  for (const [label, patch] of changed) {
+    assert.equal(planInviteRows(invite, [{ ...same, ...patch }])[0]?.action, "update", label);
+  }
+
+  // 초대장이 허용하지 않은 명령은 켜지지도 꺼지지도 않는다 — 짝이 꺼져 있어도 keep.
+  const quiet = { token: "t", projects: [{ ...project, approveCommands: false }] };
+  assert.equal(planInviteRows(quiet, [{ ...same, commandsApproved: false }])[0]?.action, "keep");
+  // 리뷰어 없는 초대장 ↔ 리뷰어 없는 짝.
+  const bare = { token: "t", projects: [{ ...project, reviewers: undefined }] };
+  assert.equal(planInviteRows(bare, [{ ...same, reviewers: undefined }])[0]?.action, "keep");
+});
+
 // ---------------------------------------------------------------------------
 // 안쪽 v4 — 기계 몫(notify)과 프로젝트별 defaults·lifecycle (PLAN 단계 5)
 // ---------------------------------------------------------------------------

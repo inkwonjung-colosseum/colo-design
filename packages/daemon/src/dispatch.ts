@@ -320,7 +320,10 @@ export class RequestRouter {
         // 말은 대기 줄로 물러나고, 정리가 끝난 뒤 실행된다 — 세션이 도는
         // 턴에 온 말을 held 로 미뤄두는 기존 질서가 순서를 잡는다. 실패·
         // 20초 경과는 말을 막지 않는다: 틱은 조용히 이어된다.
-        await this.pullBeforeSend(message.sessionId);
+        // PLAN-UI U8: 처음 여는 프로젝트의 준비가 끝나지 않았으면 말은 대기 줄에서
+        // 기다린다 — 받아올 것도 없으니 최신화도 건너뛴다.
+        this.deps.fleet.holdIfPreparing(carrier.id);
+        if (!carrier.preparing) await this.pullBeforeSend(message.sessionId);
         // 빠른 수정: 핀 턴의 정체(pinHints)로 클론을 훑어 `파일 후보:` 줄을
         // 얹는다 — 에이전트가 첫 tool call로 반복할 검색을 데몬이 대신한다.
         // 여기서(intake) 얹으므로 대기 줄·복원 모두 강화된 텍스트를 물고

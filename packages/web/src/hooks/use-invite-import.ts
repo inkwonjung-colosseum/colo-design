@@ -23,6 +23,8 @@ export type InviteImportState =
       rows: InviteRow[];
       /** confirm 을 만든 순간의 첫 실행 여부 — 프로젝트가 하나도 없었는가. */
       firstRun: boolean;
+      /** 초대 파일의 디스크 위치(데스크톱만, PLAN-UI U11) — `파일 지우기` 가 쓴다. */
+      path?: string;
     }
   | {
       phase: "applying";
@@ -31,8 +33,16 @@ export type InviteImportState =
       firstRun: boolean;
       /** 끝난 행 수 — 진행 문구 "N개 중 M개 연결됨" 의 M. */
       done: number;
+      path?: string;
     }
-  | { phase: "done"; invite: NormalizedInvite; firstRun: boolean; result: ApplyResult }
+  | {
+      phase: "done";
+      invite: NormalizedInvite;
+      firstRun: boolean;
+      result: ApplyResult;
+      /** 가져온 초대 파일의 디스크 위치 — 있으면 `invite.discard(path)` 로 지울 수 있다. */
+      path?: string;
+    }
   | { phase: "error"; error: string };
 
 export interface InviteImportController {
@@ -63,6 +73,8 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
       // 덮고, 끝난 적용의 done 이 그 위를 다시 덮는 일이 없게.
       if (stateRef.current.phase === "applying") return;
       setState({ phase: "reading" });
+      // 데스크톱이 아는 파일의 디스크 위치(PLAN-UI U11) — 브라우저 File 에는 없다.
+      const path = window.coloDesignDesktop?.invite?.pathOf?.(file) ?? null;
       void readInviteFile(file).then((read) => {
         if (!read.ok) {
           setState({ phase: "error", error: read.error });
@@ -76,6 +88,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
           invite: read.invite,
           rows: planInviteRowsNamed(read.invite, daemon.projects),
           firstRun,
+          ...(path ? { path } : {}),
         });
       });
     },
@@ -96,13 +109,20 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
   }, [takeFile]);
 
   const runApply = useCallback(
-    (rows: InviteRow[], invite: NormalizedInvite, firstRun: boolean, authorDraft: string) => {
-      setState({ phase: "applying", invite, rows, firstRun, done: 0 });
+    (
+      rows: InviteRow[],
+      invite: NormalizedInvite,
+      firstRun: boolean,
+      authorDraft: string,
+      path?: string,
+    ) => {
+      const where = path ? { path } : {};
+      setState({ phase: "applying", invite, rows, firstRun, done: 0, ...where });
       void applyInvite(daemon, invite, rows, {
         firstRun,
         authorDraft,
         onRow: (done) => setState((prev) => (prev.phase === "applying" ? { ...prev, done } : prev)),
-      }).then((result) => setState({ phase: "done", invite, firstRun, result }));
+      }).then((result) => setState({ phase: "done", invite, firstRun, result, ...where }));
     },
     [daemon],
   );
@@ -110,7 +130,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
   // 매 렌더의 최신 상태를 보는 평범한 함수들 — 컨트롤러가 매 렌더 다시 만들어져도
   const apply = (authorDraft: string) => {
     if (state.phase !== "confirm") return;
-    runApply(state.rows, state.invite, state.firstRun, authorDraft);
+    runApply(state.rows, state.invite, state.firstRun, authorDraft, state.path);
   };
 
   const retry = () => {
@@ -127,7 +147,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
       daemon.projects,
     );
     if (rows.length === 0) return;
-    runApply(rows, state.invite, false, "");
+    runApply(rows, state.invite, false, "", state.path);
   };
 
   const close = useCallback(() => setState({ phase: "idle" }), []);

@@ -63,7 +63,10 @@ export class BringUp {
         return this.core.snapshot();
       }
 
-      if (!this.core.isCloned()) {
+      // PLAN-UI U8: 처음 여는 프로젝트의 준비 — 아래의 전환 울타리가 설치까지는
+      // 배경에서 잇게 한다.
+      const firstPrep = !this.core.isCloned();
+      if (firstPrep) {
         await this.killPreview();
         this.core.setPhase("cloning", null);
         this.clearBringUpDebris();
@@ -108,8 +111,11 @@ export class BringUp {
       // The switch race's fence: a bring-up this project no longer owns
       // stops here — install and preview are the unattended side effects,
       // and a late finisher would otherwise kill the port the project the
-      // planner switched TO just started serving on.
-      if (!this.core.active) return this.core.snapshot();
+      // planner switched TO just started serving on. 처음 여는 프로젝트의
+      // 설치는 예외다(PLAN-UI U8): 포트를 만지지 않는 설치를 배경에서 끝내
+      // 두면 돌아왔을 때 미리보기 켜기만 남는다 — 미리보기는 startPreview 의
+      // 울타리가 여전히 막고, 준비는 디스크의 ready 로 앉는다.
+      if (!this.core.active && !firstPrep) return this.core.snapshot();
       const installed = await this.installIfNeeded(config);
 
       /**

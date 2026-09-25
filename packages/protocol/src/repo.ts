@@ -129,6 +129,12 @@ export interface RepoStatus {
   /** Absolute path of the clone on this machine. */
   root: string;
   phase: RepoPhase;
+  /**
+   * 지금의 `phase` 에 들어선 시각(ISO) — 준비 화면(PLAN-UI U8)의 `내려받기 ·
+   * 설치하기 · 미리보기 켜기` 가 단계마다 흐른 시간을 센다. 같은 단계로 다시
+   * 적혀도(진행 줄) 움직이지 않는다. 채우지 않는 데몬은 키를 싣지 않는다.
+   */
+  phaseSince?: string;
   /** Last progress line while working, or the reason for `error`. */
   detail: string | null;
   /**
