@@ -1205,30 +1205,42 @@ export class RequestRouter {
     if (!sessionId && stage === "refresh") return { onSessionTurn: undefined };
     return {
       onSessionTurn: (brief: string) => {
-        // A named thread whose query already died cannot take the brief — and
-        // since the crash guard it would refuse the send. The gate thread is
-        // the fallback either way: no open thread, or a dead one.
-        const named = sessionId ? this.deps.manager.get(sessionId) : undefined;
-        const session =
-          named && named.state !== "error" && named.state !== "closed"
-            ? named
-            : this.gateThreadFor(stage);
-        if (!session) return;
-        this.deps.logger.warn("게이트 실패", { sessionId: session.id, stage });
-        this.deps.notice({
-          kind: "gate",
-          sessionId: session.id,
-          title: session.title,
-          stage,
-        });
-        try {
-          session.send(brief);
-        } catch {
-          // Lost the race with the query's death — the failed DiffStatus
-          // still tells the planner why the step stopped.
-        }
+        // 문 여는 일은 기다리지 않고 뒤에서 이어된다 — 공급자 고르기가 CLI 를
+        // 띄우느라 비동기라서(auto-thread.ts) 게이트의 실패 상태가 그림을 늦추면
+        // 안 된다.
+        void this.briefGateThread(sessionId, stage, brief);
       },
     };
+  }
+
+  /** 게이트 실패의 브리프를 내려놓는 몸통 — briefTo 의 콜백이 뒤에서 부른다. */
+  private async briefGateThread(
+    sessionId: string | undefined,
+    stage: "save" | "handoff" | "refresh",
+    brief: string,
+  ): Promise<void> {
+    // A named thread whose query already died cannot take the brief — and
+    // since the crash guard it would refuse the send. The gate thread is
+    // the fallback either way: no open thread, or a dead one.
+    const named = sessionId ? this.deps.manager.get(sessionId) : undefined;
+    const session =
+      named && named.state !== "error" && named.state !== "closed"
+        ? named
+        : await this.gateThreadFor(stage);
+    if (!session) return;
+    this.deps.logger.warn("게이트 실패", { sessionId: session.id, stage });
+    this.deps.notice({
+      kind: "gate",
+      sessionId: session.id,
+      title: session.title,
+      stage,
+    });
+    try {
+      session.send(brief);
+    } catch {
+      // Lost the race with the query's death — the failed DiffStatus
+      // still tells the planner why the step stopped.
+    }
   }
 
   /**
@@ -1251,7 +1263,7 @@ export class RequestRouter {
    * must not grow a garden of failure threads. Reused while it lives in this
    * clone and its query is healthy; a dead one is replaced on the next brief.
    */
-  private gateThreadFor(stage: "save" | "handoff" | "refresh") {
+  private async gateThreadFor(stage: "save" | "handoff" | "refresh") {
     const cwd = this.workspaceCwd();
     const remembered = this.gateThreadId ? this.deps.manager.get(this.gateThreadId) : undefined;
     if (
@@ -1262,28 +1274,19 @@ export class RequestRouter {
     ) {
       return remembered;
     }
-    const executable = this.deps.claudeExecutable();
-    if (!executable) return null;
-    const instructions = this.projectInstructions(cwd);
-    const session = this.deps.manager.create({
-      cwd,
-      queueDiskFor: this.deps.queueDiskFor,
-      writePolicy: repoWritePolicy(cwd),
-      title:
-        stage === "save"
-          ? "보관 문제 해결"
-          : stage === "handoff"
-            ? "제출 문제 해결"
-            : "최신화 문제 해결",
-      launch: {
-        executable,
-        ...(instructions ? { appendSystemPrompt: instructions } : {}),
-      },
-    });
+    // 새 대화는 쓸 수 있는 공급자로 연다 — fleet 의 자동 대화 길(auto-thread.ts,
+    // autoFixThreadFor 와 같은 모양). claude 실행 파일만 보던 옛 길은 Codex 만
+    // 있는 기계에서 문제 해결 대화가 아예 태어나지 않았다(PLAN I1 · I4).
+    const session = await this.deps.fleet.autoFixThreadFor(
+      this.requireActive(),
+      stage === "save"
+        ? "보관 문제 해결"
+        : stage === "handoff"
+          ? "제출 문제 해결"
+          : "최신화 문제 해결",
+    );
+    if (!session) return null;
     this.gateThreadId = session.id;
-    // The tree gains a child row (PLAN D59), same as any daemon-opened thread.
-    this.deps.manager.invalidateThreads(cwd);
-    this.refreshThreads();
     return session;
   }
 }

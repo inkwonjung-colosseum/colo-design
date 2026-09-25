@@ -505,7 +505,8 @@ export class ProjectFleet {
    * 슬라이스 2: 리뷰 반영 턴이 갈 살아 있는 대화 — 그 프로젝트 클론에서
    * 가장 최근에 움직인 살아 있는 대화. 없으면 도구가 "리뷰 반영" 대화를
    * 연다(게이트 실패 스레드와 같은 길): 사람의 손이 없어도 반영이
-   * 시작되는 것이 이 흐름의 계약이다.
+   * 시작되는 것이 이 흐름의 계약이다. 보관 · 제출 · 최신화 문제 해결
+   * 대화(dispatch 의 gateThreadFor)도 같은 길로 연다.
    *
    * 새 대화의 공급자는 쓸 수 있는 것 중에서 고른다(auto-thread.ts — 최근
    * 대화의 공급자 → defaults.provider → claude → codex). Claude 만 띄우던
@@ -513,7 +514,7 @@ export class ProjectFleet {
    * 판정이 CLI 를 띄우므로 비동기다. 열기가 던지면 못 연 것(null)으로 친다 —
    * 호출자가 기록을 되감거나 남겨 다음 틱이 다시 연다.
    */
-  private async autoFixThreadFor(workspaces: ProjectWorkspaces, title = "리뷰 반영") {
+  async autoFixThreadFor(workspaces: ProjectWorkspaces, title = "리뷰 반영") {
     const cwd = realpathBestEffort(workspaces.paths.repoRoot);
     const opened = await this.autoThreads
       .open({
