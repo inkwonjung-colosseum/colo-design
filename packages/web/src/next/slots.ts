@@ -28,6 +28,11 @@ export interface ShellNav {
   openSettings: (category?: SettingsCategory) => void;
   /** 셸 위에 잠깐 뜨는 한 줄. */
   toast: (text: string) => void;
+  /**
+   * 방금 가져온 초대 파일의 자리를 세운다(단계 5 의 가져오기) · 거둔다(null) —
+   * 대화 칸의 `초대 파일을 가져왔어요` 줄이 그 값을 읽는다(U11).
+   */
+  setDiscardableInvitePath: (path: string | null) => void;
 }
 
 /**
@@ -52,8 +57,11 @@ export interface SlotProps {
   onRenameSession: (sessionId: string, title: string) => void;
 }
 
-/** 대화 칸(단계 2 가 채운다) — 입력창 · 대화록 · 카드. */
-export type ChatColumnProps = SlotProps;
+/** 대화 칸(단계 2) — 입력창 · 대화록 · 카드 · 문제 문장. */
+export interface ChatColumnProps extends SlotProps {
+  /** 지울 수 있는 초대 파일의 자리(셸의 이동 상태) — 없으면 null. */
+  discardableInvitePath: string | null;
+}
 
 /**
  * 미리보기 칸(단계 3 이 채운다). `onScreenName` 은 지금 화면의 제목을 셸에
