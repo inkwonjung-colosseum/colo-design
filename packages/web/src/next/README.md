@@ -75,9 +75,14 @@ NextShell ─ 프로젝트 0개 · 마법사 · 첫 상태 전 → 옛 Shell(단
 
 ## 순수 판정 (`lib/`)
 
-- `journey.ts` — `deriveJourney({ repo, diffStatus, handoff?, running, reconnect?, comments? }, L)`:
+- `journey.ts` — `deriveJourney({ repo, diffStatus, handoff?, running, reconnect?, comments?, submitCopy }, L)`:
   세 점의 글자 · 지금 점 · `blocked` · `making` · 제출의 `enabled` · `reason` · `busy` · `more`.
-  `repo.cycleScreens` · `repo.submit` 을 읽고, 없으면 옛 `deriveDelivery` 의 판정으로 물러선다.
+  `repo.cycleScreens` 를 읽고, 없으면 옛 `deriveDelivery` 의 판정으로 물러선다.
+- `submit-copy.ts` — `submitCopy(repo?.submit, L)`(U13): 버튼의 말 · 첫 점(막힘) · 잠긴 이유
+  (auth 는 새 초대 파일, 그 밖은 개발자에게 알림) · 마지막 제출 시각. 셸이 지어 여정에 건넨다.
+- `work-ledger.ts` — 제출 확인 · `이번 작업` 의 목록 판정: 보낼 화면(화면마다 한 줄) · 화면 밖
+  변경 · 코멘트 장부(`코멘트 반영 — ` 기록이 뒤에 있으면 반영됨) · 시작일. 장부의 값은
+  `status/use-work-ledger.ts` 가 읽는다(`repo.handoffStatus` 의 `reviews` · `repo.history`).
 - `project-note.ts` — `projectNote(summary, L, { aiFailed?, comments? })`(다른 프로젝트 줄의
   가장 급한 것) · `projectStatus`(전환기의 둘째 줄) · `isPreparing` · `neverPrepared`.
 - 문장을 인자(`L`)로 받는 이유 — 시험이 src 에서 곧장 읽는 순수 모듈은 형제를 부르지

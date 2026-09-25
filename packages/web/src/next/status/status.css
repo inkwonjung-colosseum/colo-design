@@ -246,6 +246,11 @@
 
 .nx-wp-sec {
   padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.nx-wp-sec--last {
+  border-bottom: 0;
 }
 
 .nx-wp-sec h5 {
@@ -253,6 +258,9 @@
   font-size: 12px;
   color: var(--ink3);
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .nx-wp-empty {
@@ -260,4 +268,229 @@
   color: var(--ink3);
   line-height: 1.55;
   white-space: normal;
+}
+
+/* ── 단계 4 — 버튼의 짧은 답 · 제출 확인(U3) · `이번 작업`(U2). 목업의 같은 이름 칸. */
+.nx .nx-submit--sent,
+.nx .nx-submit--sent:hover {
+  background: var(--green);
+  cursor: default;
+}
+
+.nx .nx-submit--failed,
+.nx .nx-submit--failed:hover {
+  background: var(--red);
+  cursor: default;
+}
+
+.nx-submit-pop {
+  max-width: calc(100vw - 24px);
+}
+
+.nx-wp-hr {
+  margin-left: auto;
+  font-weight: 400;
+}
+
+.nx-wp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  margin: 0 -6px;
+  border-radius: var(--r);
+  font-size: 13px;
+  width: calc(100% + 12px);
+}
+
+.nx-wp-row .nx-thumb {
+  width: 40px;
+  height: 28px;
+  border-radius: 4px;
+  background: #f5f6fa;
+  border: 1px solid #e3e6ee;
+  position: relative;
+  overflow: hidden;
+  flex: none;
+}
+
+.nx-wp-row .nx-thumb::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5px;
+  background: #fff;
+  border-bottom: 1px solid #e7e9f0;
+}
+
+.nx-wp-row .nx-thumb i {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: #dfe3ee;
+}
+
+.nx-wp-row .nx-thumb i:nth-child(1) {
+  top: 8px;
+  right: 18px;
+  background: #3552d8;
+  opacity: 0.55;
+}
+
+.nx-wp-row .nx-thumb i:nth-child(2) {
+  top: 14px;
+}
+
+.nx-wp-row .nx-thumb i:nth-child(3) {
+  top: 20px;
+  right: 12px;
+}
+
+.nx-wp-t {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.nx-wp-t span {
+  color: var(--ink3);
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.nx-wp-c b {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.nx-wp-r {
+  color: var(--ink3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nx-wp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nx-wp-state--done {
+  color: var(--green);
+}
+
+.nx-wp-state--fixing .nx-i {
+  animation: nx-spin 1.4s linear infinite;
+}
+
+.nx-wp-outside {
+  font-size: 12.5px;
+  color: var(--ink2);
+  padding: 6px 0 2px;
+}
+
+.nx-wp-gap {
+  margin-top: 6px;
+}
+
+.nx-wp-icon {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.nx-wp-icon .nx-i {
+  margin-top: 3px;
+  flex: none;
+}
+
+.nx-wp-receipt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.nx-wp-receipt > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-wp-receipt > span .nx-i {
+  color: var(--green);
+}
+
+.nx-slog {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink3);
+}
+
+.nx-slog div {
+  display: flex;
+  gap: 8px;
+}
+
+.nx-slog small {
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.nx-avt {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #46607e;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex: none;
+}
+
+.nx-wp-foot {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.nx-snote {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--ink3);
+  line-height: 1.5;
+}
+
+.nx .nx-work-pop .nx-btn--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.nx .nx-note-input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line2);
+  border-radius: 9px;
+  padding: 0 10px;
+  outline: 0;
+  background: var(--card);
+}
+
+.nx .nx-note-input:focus {
+  border-color: var(--ink3);
 }

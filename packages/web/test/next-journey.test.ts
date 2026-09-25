@@ -4,6 +4,7 @@ import type { HandoffStatus, RepoStatus } from "@colo-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import { deriveJourney, type JourneyInput } from "../src/next/lib/journey.ts";
+import { submitCopy } from "../src/next/lib/submit-copy.ts";
 
 const REPO: RepoStatus = {
   root: "/tmp/r",
@@ -30,8 +31,20 @@ const handoff = (state: HandoffStatus["state"]): HandoffStatus => ({
 
 const screen = (title: string, at: string) => ({ route: `/${title}`, title, note: "n", at });
 
-const run = (repo: Partial<RepoStatus>, rest: Partial<JourneyInput> = {}) =>
-  deriveJourney({ repo: { ...REPO, ...repo }, diffStatus: null, running: false, ...rest }, L);
+// 셸과 같은 모양 — 제출 상태의 문장은 부르는 쪽이 지어 건넨다.
+const run = (repo: Partial<RepoStatus>, rest: Partial<JourneyInput> = {}) => {
+  const full = { ...REPO, ...repo };
+  return deriveJourney(
+    {
+      repo: full,
+      diffStatus: null,
+      running: false,
+      submitCopy: submitCopy(full.submit, L),
+      ...rest,
+    },
+    L,
+  );
+};
 
 test("제출 전 — 첫 점이 지금 점이고 화면 수를 말한다", () => {
   const j = run({
@@ -131,7 +144,26 @@ test("막힘 — 첫 점이 제출하지 못했어요, 제출은 잠기고 이�
   assert.equal(j.blocked, true);
   assert.equal(j.points[0].label, L.journey.beforeBlocked);
   assert.equal(j.submit.enabled, false);
-  assert.equal(j.submit.reason, L.submit.whyBlocked);
+  // 연결 코드 만료(auth)는 새 초대 파일이 풀고, 그 밖은 개발자에게 알린 막힘이다.
+  assert.equal(j.submit.reason, L.submit.whyAuth);
+  const notified = run({
+    branch: "b",
+    submit: { phase: "blocked", attempts: 5, lastError: "network", log: [] },
+  });
+  assert.equal(notified.submit.reason, L.submit.whyBlocked);
+  assert.equal(notified.points[0].label, "제출 전 · 제출하지 못했어요");
+});
+
+test("보낸 뒤의 화면은 시각을 수로 견준다 — git 의 +09:00 과 기록의 Z", () => {
+  const j = run({
+    branch: "b",
+    handoff: handoff("open"),
+    // 11:30+09:00 = 02:30Z — 02:00Z 제출 뒤다. 글자로 견주면 앞으로 읽힌다.
+    cycleScreens: [screen("가", "2026-09-25T11:30:00+09:00")],
+    submit: { phase: "idle", attempts: 1, log: [{ at: "2026-09-25T02:00:00Z", text: "x" }] },
+  });
+  assert.equal(j.submit.enabled, true);
+  assert.equal(j.submit.reason, L.submit.whyMoreReady(1));
 });
 
 test("판정의 순서 — 다시 연결 > AI 도는 중 > 준비 중 > 제출 도는 중", () => {
@@ -142,7 +174,10 @@ test("판정의 순서 — 다시 연결 > AI 도는 중 > 준비 중 > 제출 �
   assert.equal(making.making, true);
   assert.equal(run({ ...busy, phase: "installing" }).submit.reason, L.submit.whyPreparing);
   assert.equal(
-    deriveJourney({ repo: null, diffStatus: null, running: false }, L).submit.reason,
+    deriveJourney(
+      { repo: null, diffStatus: null, running: false, submitCopy: submitCopy(null, L) },
+      L,
+    ).submit.reason,
     L.submit.whyPreparing,
   );
   const running = run(busy);
