@@ -30,6 +30,12 @@ export const SYSTEM_THREAD_TITLES: Record<string, true> = {
   "최신화 문제 해결": true,
   "보관 문제 해결": true,
   "제출 문제 해결": true,
+  // 2026-09-25 보강 — 감독자와 미리보기가 여는 나머지 자동 대화(cycle-supervisor ·
+  // 미리보기 오류 고침). 빠져 있어 기획자의 대화 목록에 섞여 섰다.
+  "미리보기 복구": true,
+  "최신 변경 합치기": true,
+  "반려 반영": true,
+  "제출 마저하기": true,
 };
 
 export function hideThread(hidden: HiddenThreads, slug: string, sessionId: string): HiddenThreads {
