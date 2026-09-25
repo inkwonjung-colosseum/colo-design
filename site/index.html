@@ -264,6 +264,10 @@
           </fieldset>
 
           <p class="irepos__status irepos__status--error" id="author-status" hidden></p>
+          <!-- 같은 이름의 프로젝트 — 실사용 화면은 이름만으로 프로젝트를 구별한다
+               (저장소 칩은 개발 실행 전용, 단계 10). 초대장이 겹침을 만들지 않게
+               붙잡는 자리다. -->
+          <p class="irepos__status irepos__status--error" id="name-status" hidden></p>
 
           <div class="iform__actions">
             <button type="submit" class="btn btn--primary" id="invite-download" disabled>

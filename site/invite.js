@@ -30,6 +30,7 @@ const manualUrl = document.getElementById("manual-url");
 const manualAdd = document.getElementById("manual-add");
 const authorStatus = document.getElementById("author-status");
 const notifyStatus = document.getElementById("notify-status");
+const nameStatus = document.getElementById("name-status");
 const guideLines = document.getElementById("guide-lines");
 const guideCopy = document.getElementById("guide-copy");
 const guideOsButtons = [...document.querySelectorAll(".iguide__osbtn")];
@@ -92,7 +93,33 @@ function parseLogins(text) {
     .filter(Boolean);
 }
 
-/** 지금 입력으로 만들 안쪽 JSON — 미리 보기(토큰 가림)와 봉인이 같은 값을 본다. */
+/** 고른 프로젝트 중 겹치는 이름 — 앞의 것은 그대로, 뒤의 것이 고칠 대상이다. */
+function duplicateNames() {
+  const seen = new Set();
+  const duplicated = new Set();
+  for (const project of state.projects) {
+    const name = project.name.trim();
+    if (!name) continue;
+    if (seen.has(name)) duplicated.add(name);
+    seen.add(name);
+  }
+  return duplicated;
+}
+
+/**
+ * 겹치는 이름 고치기 — 뒤의 것에 저장소 이름을 붙인다(읽는 쪽 normalizeInvite
+ * 와 같은 `<이름> · <repo>` 규칙). 미리 고쳐 두면 초대장 자체가 겹침을
+ * 싣지 않는다.
+ */
+function fixDuplicateNames() {
+  const used = new Set();
+  for (const project of state.projects) {
+    const name = project.name.trim() || project.name;
+    if (used.has(name)) project.name = `${name} · ${repoNameOf(project.repoUrl)}`;
+    used.add(project.name.trim() || project.name);
+  }
+}
+
 function buildValues() {
   const commonReviewers = parseLogins(state.reviewers);
   const slack = slackValue();
@@ -722,7 +749,11 @@ async function render() {
   // 작업 이름은 필수다 — 비면 봉인·내려받기·보내기 어느 것도 켜지지 않고,
   // 이유가 actions 바로 위 한 줄로 선다.
   const ready = Boolean(
-    state.token.trim() && state.author.trim() && values.projects.length > 0 && notifyOk,
+    state.token.trim() &&
+      state.author.trim() &&
+      values.projects.length > 0 &&
+      notifyOk &&
+      duplicateNames().size === 0,
   );
   const ticket = ++sealTicket;
   // 입력이 움직였다 옛 봉인은 현재 입력의 것이 아니다 — 새 것이 올 때까지
@@ -754,6 +785,28 @@ async function render() {
   if (notifyMissing) {
     notifyStatus.textContent =
       "이 연결 코드로는 문제가 생겼을 때 저장소에 알림을 남길 수 있는지 확인하지 못했어요 — 슬랙 주소를 넣어 주세요.";
+  }
+  // 같은 이름의 프로젝트 — 실사용 화면은 이름만으로 구별한다(저장소 칩은 개발
+  // 실행 전용, 단계 10). 봉인을 막고 고칠 길을 함께 낸다.
+  const nameDuplicated = duplicateNames();
+  nameStatus.replaceChildren();
+  nameStatus.hidden = nameDuplicated.size === 0;
+  if (nameDuplicated.size > 0) {
+    const names = [...nameDuplicated].map((name) => `‘${name}’`).join(", ");
+    nameStatus.append(
+      document.createTextNode(
+        `같은 이름(${names})의 프로젝트가 있으면 사용자 화면에서 구별되지 않아요 — 이름을 다르게 바꿔 주세요.`,
+      ),
+    );
+    const fix = document.createElement("button");
+    fix.type = "button";
+    fix.className = "btn irepos__fix";
+    fix.textContent = "뒤의 이름에 저장소 붙이기";
+    fix.addEventListener("click", () => {
+      fixDuplicateNames();
+      render();
+    });
+    nameStatus.append(fix);
   }
   filename.textContent = ready
     ? inviteFileName({ author: state.author, name: values.projects[0].name })

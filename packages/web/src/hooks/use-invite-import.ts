@@ -1,8 +1,13 @@
-import { type InviteRow, type NormalizedInvite, planInviteRows } from "@colo-design/protocol";
+import type { InviteRow, NormalizedInvite } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../lib/daemon-client";
 import { isInviteFile, onInvite } from "../lib/invite-bus";
-import { type ApplyResult, applyInvite, readInviteFile } from "../lib/invite-import";
+import {
+  type ApplyResult,
+  applyInvite,
+  planInviteRowsNamed,
+  readInviteFile,
+} from "../lib/invite-import";
 
 /**
  * 초대 파일 가져오기의 컨트롤러 — Shell 이 앱에 하나만 둔다(use-invite-import).
@@ -69,7 +74,7 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
         setState({
           phase: "confirm",
           invite: read.invite,
-          rows: planInviteRows(read.invite, daemon.projects),
+          rows: planInviteRowsNamed(read.invite, daemon.projects),
           firstRun,
         });
       });
@@ -117,7 +122,10 @@ export function useInviteImport(daemon: Daemon): InviteImportController {
     // 확인 때 세운 행을 그대로 다시 쓰지 않는다 — 생성이 레지스트리까지 등록하고
     // 활성화에서 던진 행이라면 같은 레포가 한 번 더 생긴다. 실패한 프로젝트로
     // 지금의 프로젝트 목록에서 행을 다시 세운다(firstRun 은 아니다).
-    const rows = planInviteRows({ ...state.invite, projects: failedProjects }, daemon.projects);
+    const rows = planInviteRowsNamed(
+      { ...state.invite, projects: failedProjects },
+      daemon.projects,
+    );
     if (rows.length === 0) return;
     runApply(rows, state.invite, false, "");
   };

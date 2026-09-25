@@ -158,6 +158,24 @@ for (const url of repoUrls) {
   });
 }
 
+// 같은 이름의 프로젝트 — 실사용 화면은 이름만으로 프로젝트를 구별한다(저장소
+// 칩은 개발 실행 전용, PLAN 단계 10). 읽는 쪽(normalizeInvite)이 뒤의 것에
+// 저장소 이름을 붙이긴 하지만, 생성 단계에서 알리고 멈추는 것이 개발자가
+// 이름을 짓는 자리다.
+const seenNames = new Set();
+const duplicated = projects.filter((project) => {
+  if (seenNames.has(project.name)) return true;
+  seenNames.add(project.name);
+  return false;
+});
+if (duplicated.length > 0) {
+  console.error(
+    `같은 이름의 프로젝트가 있어 초대 파일을 만들지 않습니다: ${duplicated
+      .map((project) => `'${project.name}' (${project.repoUrl})`)
+      .join(", ")} — --name 을 프로젝트마다 다르게 정해 주세요.`,
+  );
+  process.exit(1);
+}
 // 개발자 알림이 갈 Slack 길 — 웹훅이 있으면 웹훅, 없으면 봇 토큰+채널이 함께
 // 있을 때만 봇이다. 반쪽짜리 봇 입력은 없는 것으로 친다.
 const notify = slackWebhook

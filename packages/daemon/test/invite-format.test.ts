@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  disambiguateProjectNames,
   inviteUpdatePatch,
   normalizeInvite,
   planInviteRows,
@@ -508,4 +509,56 @@ test("inviteUpdatePatch — 이름·지침은 사용자의 것이라 보내지 �
   // 이름·지침은 패치에 아예 없다 — 사용자가 고른 값을 덮는 일이 없다.
   assert.equal("name" in patch, false);
   assert.equal("instructions" in patch, false);
+});
+
+// ————— 같은 이름의 프로젝트 (남은 항목) —————
+
+test("같은 이름의 프로젝트 — 뒤의 것에 저장소 이름을 붙여 구별한다", async () => {
+  const invite = await sealInvite(
+    buildInvite({
+      token: "github_pat_TEST123",
+      author: "김기획",
+      projects: [
+        { repoUrl: "https://github.com/org/Alpha.git", name: "회원 관리", baseBranch: "main" },
+        { repoUrl: "https://github.com/org/beta.git", name: "회원 관리", baseBranch: "main" },
+      ],
+    }),
+  );
+  const read = await readInviteJson(JSON.stringify(invite));
+  assert.ok(read.ok);
+  const normalized = normalizeInvite(read.value);
+  assert.ok(normalized.ok);
+  assert.deepEqual(normalized.ok ? normalized.invite.projects.map((project) => project.name) : [], [
+    "회원 관리",
+    "회원 관리 · beta",
+  ]);
+});
+
+test("이미 등록된 프로젝트와 겹치면 — 가져오기도 같은 규칙으로 가른다", () => {
+  // 웹의 planInviteRowsNamed 가 쓰는 도우미 — 기존 이름을 taken 으로 넣고.
+  const names = disambiguateProjectNames(
+    [
+      { name: "회원 관리", repoUrl: "https://github.com/org/beta.git" },
+      { name: "주문 관리", repoUrl: "https://github.com/org/gamma.git" },
+    ],
+    ["회원 관리"],
+  );
+  assert.deepEqual(names, ["회원 관리 · beta", "주문 관리"]);
+  // `<이름> · <repo>` 까지 겹치면 owner/repo 로 가린다.
+  const deeper = disambiguateProjectNames(
+    [{ name: "회원 관리", repoUrl: "https://github.com/other/beta.git" }],
+    ["회원 관리", "회원 관리 · beta"],
+  );
+  assert.deepEqual(deeper, ["회원 관리 · other/beta"]);
+});
+
+test("덧붙은 이름도 64자 한도를 넘지 않는다 — 앞의 이름을 잘라 넣는다", () => {
+  const long = "가".repeat(62); // 62자 — 뒤에 " · b" 를 붙이면 한도를 넘는다.
+  const names = disambiguateProjectNames([
+    { name: long, repoUrl: "https://github.com/org/a.git" },
+    { name: long, repoUrl: "https://github.com/org/b.git" },
+  ]);
+  assert.equal(names[0], long, "앞의 이름은 그대로");
+  assert.equal(names[1]?.length, 64, "덧붙은 이름은 한도에서 끊난다");
+  assert.ok(names[1]?.endsWith(" · b"));
 });

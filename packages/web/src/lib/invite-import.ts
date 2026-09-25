@@ -1,8 +1,10 @@
 import {
+  disambiguateProjectNames,
   type InviteRow,
   inviteUpdatePatch,
   type NormalizedInvite,
   normalizeInvite,
+  planInviteRows,
   readInviteJson,
   repoKey,
   sameRepo,
@@ -60,6 +62,34 @@ export interface ApplyOptions {
   authorDraft?: string;
   /** 한 행이 끝날 때마다 끝난 수를 알린다(진행 문구 "N개 중 M개"). */
   onRow?: (finished: number) => void;
+}
+
+/**
+ * 행 계획에 이름 겹침 규칙을 얹는다 — 새로 추가(add)되는 프로젝트의 이름이
+ * 이미 등록된 프로젝트와 겹치면 저장소 이름을 덧붙인다(normalizeInvite 가
+ * 초대장 안에서 쓰는 것과 같은 `<이름> · <repo>`). 저장소 칩이 개발 실행
+ * 전용이 된 지금(단계 10) 실사용 화면은 이름만으로 프로젝트를 구별한다.
+ * 갱신(update) 행의 이름은 사용자의 몫이라 건드리지 않는다 — 다만 겹침의
+ * 잣에는 들어간다.
+ */
+export function planInviteRowsNamed(
+  invite: NormalizedInvite,
+  projects: Array<{ slug: string; name: string; repoUrl?: string | null }>,
+): InviteRow[] {
+  const rows = planInviteRows(invite, projects);
+  const adds = rows.filter(
+    (row): row is Extract<InviteRow, { action: "add" }> => row.action === "add",
+  );
+  const renamed = disambiguateProjectNames(
+    adds.map((row) => row.project),
+    projects.map((project) => project.name),
+  );
+  let addIndex = 0;
+  return rows.map((row) =>
+    row.action === "add"
+      ? { ...row, project: { ...row.project, name: renamed[addIndex++] ?? row.project.name } }
+      : row,
+  );
 }
 
 export interface ApplyResult {

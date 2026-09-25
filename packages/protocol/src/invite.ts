@@ -201,6 +201,71 @@ function fallbackName(repoUrl: string): string {
   return (last && last !== "" ? last : repoUrl).slice(0, LIMITS.name);
 }
 
+/** 주소의 마지막 조각 — 저장소 이름. 대소문자를 지킨다(보이는 이름에 쓴다). */
+function repoNameOf(repoUrl: string): string {
+  const last = repoUrl
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .split("/")
+    .filter(Boolean)
+    .at(-1);
+  return last && last !== "" ? last : repoUrl.trim();
+}
+
+/** 주소의 끝 두 조각(owner/repo) — 이름 · 저장소 이름까지 겹칠 때의 식별자. */
+function ownerRepoOf(repoUrl: string): string {
+  const parts = repoUrl
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .split("/")
+    .filter(Boolean);
+  return parts.length >= 2 ? parts.slice(-2).join("/") : (parts.at(-1) ?? repoUrl.trim());
+}
+
+/** 덧붙인 이름 — 64자 한도 안에 들어가게 앞의 이름을 잘라 넣는다. */
+function nameWithTail(base: string, tail: string): string {
+  const sep = " · ";
+  const room = LIMITS.name - tail.length - sep.length;
+  return room > 0 ? `${base.slice(0, room)}${sep}${tail}` : tail.slice(0, LIMITS.name);
+}
+
+/**
+ * 이름 겹침을 가른다 — 앞의 것은 그대로, 뒤의 것에 저장소 이름을 덧붙인다
+ * (`<이름> · <repo>`). 저장소 칩이 개발 실행 전용이 된 지금(단계 10) 실사용
+ * 화면은 이름만으로 프로젝트를 구별하므로, 초대장이 이름이 겹치지 않게
+ * 만드는 것이 약속이다. `<이름> · <repo>` 까지 겹치면 owner/repo 로 가린다.
+ * `takenNames` 는 이미 등록된 프로젝트의 이름 — 가져오기가 같은 규칙으로
+ * 새 초대와 기존 프로젝트의 겹침을 가를 때 쓴다.
+ */
+export function disambiguateProjectNames(
+  projects: Array<{ name: string; repoUrl: string }>,
+  takenNames: Iterable<string> = [],
+): string[] {
+  const used = new Set(takenNames);
+  return projects.map((project) => {
+    if (!used.has(project.name)) {
+      used.add(project.name);
+      return project.name;
+    }
+    for (const tail of [repoNameOf(project.repoUrl), ownerRepoOf(project.repoUrl)]) {
+      const candidate = nameWithTail(project.name, tail);
+      if (!used.has(candidate)) {
+        used.add(candidate);
+        return candidate;
+      }
+    }
+    // 여기까지 왔다는 것은 같은 저장소가 두 번(정규화가 이미 걸렀을 세계) —
+    // 번호로라도 가른다.
+    let n = 2;
+    while (used.has(`${project.name} (${n})`)) n += 1;
+    const numbered = `${project.name} (${n})`;
+    used.add(numbered);
+    return numbered;
+  });
+}
+
 /**
  * 봉투 안쪽 JSON(readInviteJson 의 value) → 정규화된 초대장.
  * - v1/v2(단일 프로젝트가 최상위에 펴진 옛 모양) → 프로젝트 하나짜리 목록으로.
@@ -275,15 +340,23 @@ export function normalizeInvite(value: unknown): NormalizeResult {
     return true;
   });
 
+  // 이름 겹침 — 뒤의 것에 저장소 이름을 덧붙인다. 한도 검사보다 먼저: 덧붙은
+  // 이름은 한도 안으로 잘리므로, 겹침을 가린 뒤의 이름이 한도를 어길 일 없다.
+  const names = disambiguateProjectNames(unique);
+  const named = unique.map((project, index) => ({
+    ...project,
+    name: names[index] ?? project.name,
+  }));
+
   // 선로 한도 — 적용(project.create) 중간에 거절당하지 않게 여기서 가린다.
-  if (unique.length > LIMITS.projects) {
+  if (named.length > LIMITS.projects) {
     return {
       ok: false,
       reason: "limit",
       detail: `프로젝트는 최대 ${LIMITS.projects}개까지입니다`,
     };
   }
-  for (const project of unique) {
+  for (const project of named) {
     if (project.name.length > LIMITS.name) {
       return {
         ok: false,
@@ -332,7 +405,7 @@ export function normalizeInvite(value: unknown): NormalizeResult {
       ...(trimmed(file.readme) ? { readme: trimmed(file.readme) } : {}),
       // 초대 v4 의 기계 몫 — 개발자 알림의 Slack 길(PLAN L11). 옛 판에는 없다.
       ...(file.v === 4 && parseNotify(file.notify) ? { notify: parseNotify(file.notify) } : {}),
-      projects: unique,
+      projects: named,
     },
   };
 }
