@@ -68,15 +68,26 @@ const SHOT_STORE_MAX = 6;
  * `usePins` and PreviewFrame's after-navigation resend both send THIS shape.
  */
 export function pinsSync(ghosts: PinAttachment[], list: PinAttachment[]): ColoDesignPinsSync {
-  const row = (pin: PinAttachment, sent: boolean): ColoDesignPinsSync["pins"][number] => ({
+  // PLAN-UI U4: tone · n 을 채운다 — 보낸 핀은 턴 동안 회색(sent), 번호는 말풍선 ·
+  // 입력창 칩과 같은 자리 번호(고스트 먼저, 그다음 살아 있는 목록).
+  const row = (
+    pin: PinAttachment,
+    sent: boolean,
+    n: number,
+  ): ColoDesignPinsSync["pins"][number] => ({
     id: pin.id,
     screen: pin.screen,
     path: pin.element.path,
     sent,
+    tone: sent ? "sent" : "live",
+    n,
     ...(pin.element.kind === "region" ? { rect: pin.element.rect } : {}),
   });
   return {
-    pins: [...ghosts.map((ghost) => row(ghost, true)), ...list.map((pin) => row(pin, false))],
+    pins: [
+      ...ghosts.map((ghost, index) => row(ghost, true, index + 1)),
+      ...list.map((pin, index) => row(pin, false, ghosts.length + index + 1)),
+    ],
   };
 }
 
