@@ -57,3 +57,21 @@ export function submitCopy(
       return { ...base, label: S.idle, busy: null, firstPoint: null, reason: null };
   }
 }
+
+/** `이번 작업` 제출 칸의 문장을 짓는 데 필요한 칸 — `submitCopy` 에 막힘 문장을 곁들인다. */
+export type LedgerWords = SubmitWords & Pick<typeof L, "work">;
+
+/**
+ * `이번 작업` 의 제출 칸 한 줄(W1 · N4) — 도는 제출은 상태 문장(`제출하는 중…` ·
+ * `다시 제출하는 중…`)을, 막힘은 그 이유를 칸에 세운다. 쉬는 제출은 null — 칸은
+ * 여정이 아는 문장(영수증 · 아직 제출하지 않았어요)으로 말한다.
+ */
+export function ledgerLine(
+  submit: RepoStatus["submit"] | null | undefined,
+  words: LedgerWords,
+): string | null {
+  const copy = submitCopy(submit, words);
+  if (copy.busy) return copy.label;
+  if (copy.phase === "blocked") return words.work.blocked;
+  return null;
+}

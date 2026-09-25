@@ -4,11 +4,14 @@ import type { PlanUsage } from "@colo-design/protocol";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
 import {
+  chipLabel,
   dedupeScreens,
   EFFORT_OF,
   effortWord,
+  failureCards,
   noticeKind,
   promptNumbers,
+  rawErrorLine,
   retryCount,
   sizeText,
   splitDuration,
@@ -110,4 +113,51 @@ test("splitDuration · sizeText", () => {
   assert.equal(sizeText(300), "1KB");
   assert.equal(sizeText(320 * 1024), "320KB");
   assert.equal(sizeText(2.4 * 1024 * 1024), "2.4MB");
+});
+
+test("chipLabel: 칩은 프로바이더와 생각 시간만(W6) — 모델 이름은 팝오버 안", () => {
+  assert.equal(chipLabel("Claude", "보통"), "Claude · 보통");
+  assert.equal(chipLabel("Codex", "짧게"), "Codex · 짧게");
+  // 생각 시간을 고르지 않았으면 프로바이더만.
+  assert.equal(chipLabel("Claude", null), "Claude");
+});
+
+test("rawErrorLine: 원문 → 문장 매핑(W3) — 한국어 고지 · 영문 원문 · 한도", () => {
+  // 한국어 고지(고칠 것을 말하는 안내)는 가리지 않고 지나간다.
+  const notice = "8MB 를 넘는 파일은 붙일 수 없습니다";
+  assert.deepEqual(rawErrorLine(notice, L), { title: notice, raw: null });
+  // 영문 날 원문은 받은 문장으로 덮고, 원문은 접힌 자리로.
+  assert.deepEqual(rawErrorLine("Claude Code process exited with code 1", L), {
+    title: L.vocab.aiFailed,
+    raw: "Claude Code process exited with code 1",
+  });
+  // 한도 문장은 그 문장으로 바꾼다.
+  assert.deepEqual(rawErrorLine("usage limit reached until 3pm", L), {
+    title: "구독 사용량을 채워 작업이 멈췄습니다",
+    raw: "usage limit reached until 3pm",
+  });
+});
+
+test("failureCards: 잃은 말마다 카드 한 장(W8) — 대화록이 말하는 실패와 겹치면 하나", () => {
+  const lost = (id: string, text: string, images = 0, files = 0) => ({
+    id,
+    text,
+    images,
+    files,
+    lostAt: 0,
+  });
+  // 대화록이 비었으면 잃은 말 전부가 카드가 된다.
+  assert.deepEqual(failureCards([lost("a", "검색창 넣어 줘", 2, 1)], []), [
+    { id: "a", text: "검색창 넣어 줘", images: 2, files: 1 },
+  ]);
+  // 같은 말이 대화록에 실패한 답으로 남아 있으면(살아 있는 error 블록) 카드는 하나다.
+  const tape = [
+    { type: "user", id: "u1", text: "검색창 넣어 줘" },
+    { type: "turn", id: "t1", subtype: "error_max_turns" as const, isError: true },
+  ];
+  assert.deepEqual(failureCards([lost("a", "검색창 넣어 줘")], tape), []);
+  // 다른 말의 실패는 그 말의 카드로 남는다.
+  assert.deepEqual(failureCards([lost("b", "버튼 옮겨 줘")], tape), [
+    { id: "b", text: "버튼 옮겨 줘", images: 0, files: 0 },
+  ]);
 });

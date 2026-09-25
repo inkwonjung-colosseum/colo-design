@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(next-journey.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
-import { agentUpdateEvents, updateRowCopy } from "../src/next/lib/update-row.ts";
+import {
+  agentUpdateEvents,
+  shouldClearCheckNote,
+  updateRowCopy,
+} from "../src/next/lib/update-row.ts";
 import { hasNewerVersion, plainDotted } from "../src/next/lib/version.ts";
 
 const t = L.update;
@@ -143,4 +147,20 @@ test("agentUpdateEvents: 끝난 업데이트만 한 줄씩, 이름은 프로바�
     two.map((row) => row.id),
     ["codex", "claude"],
   );
+});
+
+test("shouldClearCheckNote: 끝난 업데이트 뒤에는 「새 버전 N개」 문장을 지운다", () => {
+  const found = { text: t.foundCount(1), found: 1 };
+  const latest = { text: t.allLatest, found: 0 };
+  const tools = [{ version: "2.1.4", latestVersion: "2.2.0" }];
+  // 아직 새 버전이 서 있고 끝난 업데이트가 없다 — 문장은 사실이다.
+  assert.equal(shouldClearCheckNote(found, undefined, tools), false);
+  assert.equal(shouldClearCheckNote(found, { claude: { phase: "running" } }, tools), false);
+  // 업데이트가 끝났다 — 찾았다는 문장을 제 자리에서 지운다.
+  assert.equal(shouldClearCheckNote(found, { claude: { phase: "done" } }, tools), true);
+  // 새 버전이 더 없다(깐 뒤의 상태) — 지운다.
+  assert.equal(shouldClearCheckNote(found, undefined, [{ version: "2.2.0" }]), true);
+  // 「모두 최신이에요」와 없는 문장은 여전히 사실이거나 없다 — 그대로 둔다.
+  assert.equal(shouldClearCheckNote(latest, { claude: { phase: "done" } }, []), false);
+  assert.equal(shouldClearCheckNote(null, undefined, tools), false);
 });

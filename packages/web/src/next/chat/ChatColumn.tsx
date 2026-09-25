@@ -141,6 +141,19 @@ export function ChatColumn({
       });
   };
 
+  // 잃은 말의 다시 시도(W8) — 데몬의 방에서 통째로 되살려(입력창이 쓰던 길) 그
+  // 말을 그대로 다시 보낸다. 방에서 꺼낸 말은 카드로 남지 않게 치운다.
+  const retryDropped = (itemId: string) => {
+    void sessions
+      .takeDropped(itemId)
+      .then((payload) => {
+        if (!payload) return undefined;
+        sessions.dismissDropped(itemId);
+        return send(payload.text, payload.attachments, [], payload.pins ?? []);
+      })
+      .catch(() => undefined);
+  };
+
   // --- 고쳐서 다시 보내기(U15) · 여기서 새 대화 ----------------------------
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const nonce = useRef(0);
@@ -274,9 +287,11 @@ export function ChatColumn({
             canBranch={canBranch}
             queue={sessions.queue}
             preparing={preparing}
+            dropped={sessions.dropped}
             onFork={fork}
             onEditResend={editResend}
             onRetry={retry}
+            onRetryDropped={retryDropped}
             onOpenScreen={openScreen}
             onOpenHistory={() => window.dispatchEvent(new CustomEvent("nx:history:open"))}
             onReply={async (id, text) => {

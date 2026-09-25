@@ -12,6 +12,7 @@ import type {
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Attachment } from "../lib/attachment";
+import { shouldDiscardOnFirstFailure } from "../next/lib/session-discard";
 
 /**
  * 방에서 돌아온 보내기 하나 — 입력창을 그때 그대로 되살리는 데 필요한 전부.
@@ -324,6 +325,10 @@ export function useSessions(
    */
   const startRef = useRef({ chat });
   startRef.current = { chat };
+  /** startSession 이 새로 만든(이어받지 않은) 세션 — 첫 보내기가 곧바로 거절되면 거둘 후보(W4). */
+  const newborn = useRef(new Set<string>());
+  /** 세션마다 시도한 보내기의 수 — 첫 보내기인지의 잣자리(W4). */
+  const sendsBySession = useRef(new Map<string, number>());
   /**
    * 프로바이더가 바뀌면 칩의 어휘도 바뀐다: 그 프로바이더의 카탈로그로
    * 갈아끼운다.
@@ -367,6 +372,9 @@ export function useSessions(
       ensureSession(sessionId);
       markLive(sessionId);
       setActiveId(sessionId);
+      // 이어받음(resume)이 아니면 방금 태어난 세션이다 — 첫 보내기가 곧바로
+      // 거절되면 거둔다(W4 · 콜드 리뷰 N5).
+      if (!resume) newborn.current.add(sessionId);
       // The selector probe fired by setActiveId may race the create — ask
       // again once the thread is in, so the chip shows what applies.
       selectorFor.current = sessionId;
@@ -711,7 +719,10 @@ export function useSessions(
     // answer. Reopening resumes the stored transcript in a fresh CLI, which
     // is the promise the crash card already made ("다시 보내면 이어집니다").
     const picked = daemon.sessions[id];
-    if (picked && (!picked.live || picked.state === "error")) return await startSession(id);
+    // 지워진 자리(W4 가 첫 보내기 실패의 세션을 거둔 뒤)는 이어받을 것이
+    // 없다 — 새 대화로 태어난다.
+    if (!picked) return await startSession(undefined, name);
+    if (!picked.live || picked.state === "error") return await startSession(id);
     return id;
   };
 
@@ -769,8 +780,12 @@ export function useSessions(
     pins?: Array<{ screen: string }>,
     pinHints?: SessionPinHint[],
   ) => {
+    let target: string | null = null;
+    let sentCount = 0;
     try {
-      const target = await targetSession(undefined, thread?.name);
+      target = await targetSession(undefined, thread?.name);
+      sentCount = (sendsBySession.current.get(target) ?? 0) + 1;
+      sendsBySession.current.set(target, sentCount);
       // 조용한 세션만 낙관을 얻는다 — 도는 중·대기 중인 세션엔 표시의 주인이
       // 이미 있다(진행 시계·확인 카드·대기 줄), 거기 겹치면 거짓말이 둘이 된다.
       const view = sessions[target];
@@ -784,11 +799,33 @@ export function useSessions(
         chat.midturn === "steer" ? "steer" : undefined,
         pinHints,
       );
+      // 답이 나올 자리가 생겼다 — 갓 태어난 세션의 감시를 푼다.
+      newborn.current.delete(target);
+      sendsBySession.current.delete(target);
       void refresh();
     } catch (e) {
       // 수락이 거절된 보내기엔 대기 표시의 근거가 없다 — 컴포저의 경고 줄이
       // 유일한 이야기꾼이다(위의 계약). 낙관도 함께 거둔다.
       setAwaitingTurn(null);
+      // 갓 태어난 세션의 첫 보내기가 거절됐다 — 아무것도 적히지 않은 빈 대화를
+      // 남기지 않게 거둔다(W4 · N5). 입력창의 말은 컴포저가 지키고 있고, 연 자리는
+      // 지운 세션을 가리키다가 다음 보내기가 새 대화를 태운다(targetSession).
+      if (
+        target !== null &&
+        newborn.current.has(target) &&
+        shouldDiscardOnFirstFailure(sessions[target]?.blocks ?? [], sentCount)
+      ) {
+        newborn.current.delete(target);
+        sendsBySession.current.delete(target);
+        forgetLastThread(activeSlug, target);
+        if (selectorFor.current === target) {
+          selectorFor.current = null;
+          setSelector(null);
+          setUsage(null);
+        }
+        void api.deleteSession(target).catch(() => undefined);
+        void refresh();
+      }
       // The composer keeps the words AND the attachments unless the
       // daemon accepted the turn. Its warning strip is also the ONE surface a
       // refused send speaks from — the banner would read the same news twice,
@@ -839,7 +876,12 @@ export function useSessions(
       const view = sessions[id];
       const wake = !view || view.state === "idle";
       if (wake) setAwaitingTurn({ sessionId: id, since: Date.now() });
+      // 보내기의 셈은 기계 턴도 같이 센다(W4) — 첫 보내기의 잣자리가 사람 말과 어긋나지 않게.
+      const sentCount = (sendsBySession.current.get(id) ?? 0) + 1;
+      sendsBySession.current.set(id, sentCount);
       await api.send(id, text, attachments, pins, undefined, pinHints);
+      newborn.current.delete(id);
+      sendsBySession.current.delete(id);
     } catch (e) {
       setAwaitingTurn(null);
       setError(e instanceof Error ? e.message : String(e));

@@ -4,6 +4,7 @@ import { modelOptions, modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import {
+  chipLabel,
   EFFORT_OF,
   type EffortWord,
   effortWord,
@@ -35,7 +36,7 @@ function clock(at: string): string {
 }
 
 /**
- * 입력창의 설정 칩 `Claude · Sonnet 5 · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
+ * 입력창의 설정 칩 `Claude · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
  * 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량. 부르는
  * 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
  * 한도가 가까우면(P6, 70% 넘음) 칩 옆에 사용량 한 단어가 선다.
@@ -60,16 +61,13 @@ export function ModelChip({
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? L.model.ai;
   const modelRow = modelRowOf(selector.models, selector.model);
   const models = modelOptions(selector.models, modelRow);
-  const modelLabel = models.find((row) => row.picked)?.label ?? null;
   const levels = modelRow?.supportedEffortLevels ?? null;
   const efforts = (Object.keys(EFFORT_OF) as EffortWord[]).filter(
     (word) => levels === null || levels.includes(EFFORT_OF[word]),
   );
   const showEffort = modelRow?.supportsEffort !== false && efforts.length > 0;
   const think = effortWord(selector.effort);
-  const label = [providerLabel, modelLabel, showEffort ? EFFORT_WORDS[think] : null]
-    .filter(Boolean)
-    .join(" · ");
+  const label = chipLabel(providerLabel, showEffort ? EFFORT_WORDS[think] : null);
   const reading = usageReading(daemon.status?.planUsageByProvider?.[provider]);
 
   return (

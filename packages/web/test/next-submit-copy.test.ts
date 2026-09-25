@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
 import { L } from "../src/next/labels.ts";
-import { submitCopy } from "../src/next/lib/submit-copy.ts";
+import { ledgerLine, submitCopy } from "../src/next/lib/submit-copy.ts";
 
 const log = [
   { at: "2026-09-25T01:00:00Z", text: "a" },
@@ -58,4 +58,16 @@ test("submitCopy: 마지막 제출 시각은 기록 중 가장 늦은 것 — �
     submitCopy({ phase: "idle", attempts: 1, log: mixed }, L).lastAt,
     "2026-09-25T11:30:00+09:00",
   );
+});
+
+test("ledgerLine: 이번 작업의 제출 칸 — 도는 중 · 다시 도는 중 · 막힘의 이유", () => {
+  assert.equal(ledgerLine({ phase: "running", attempts: 1, log: [] }, L), "제출하는 중…");
+  assert.equal(ledgerLine({ phase: "retrying", attempts: 2, log: [] }, L), "다시 제출하는 중…");
+  assert.equal(
+    ledgerLine({ phase: "blocked", attempts: 3, log: [] }, L),
+    "제출하지 못해 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요.",
+  );
+  // 쉬는 제출은 칸이 여정의 문장으로 말한다 — null.
+  assert.equal(ledgerLine({ phase: "idle", attempts: 0, log: [] }, L), null);
+  assert.equal(ledgerLine(undefined, L), null);
 });

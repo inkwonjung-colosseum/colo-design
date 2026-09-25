@@ -421,8 +421,10 @@ function Guest({
       src={src}
       /** 팝업은 main의 setWindowOpenHandler가 심판한다(OS 브라우저로 넘기고
           게스트는 막는다) — 이 속성이 없으면 window.open이 조용히 무시되어
-          오늘의 동작(팝업 → OS 브라우저)이 사라진다. */
-      allowpopups={true}
+          오늘의 동작(팝업 → OS 브라우저)이 사라진다. webview 는 존재 여부만
+          보지만 @types/react 가 boolean 으로 적어 두어(W7), 빈 문자열을 그
+          자리에 얹는다 — React 는 boolean 속성에 경고를 낸다. */
+      allowpopups={"" as unknown as boolean}
       className={
         live ? "preview__frame preview__frame--live" : "preview__frame preview__frame--parked"
       }

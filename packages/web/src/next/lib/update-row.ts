@@ -122,3 +122,24 @@ export function agentUpdateEvents(
     })
     .sort((a, b) => b.at - a.at);
 }
+
+/** `지금 확인` 이 남긴 문장의 상태(W5) — 찾은 새 버전의 수(0이면 「모두 최신이에요」). */
+export interface CheckNote {
+  text: string;
+  found: number;
+}
+
+/**
+ * 확인 문장이 제 자리를 비워야 하나(W5 · 콜드 리뷰 N7) — 「새 버전 N개 · 방금 확인」은
+ * 끝난 일을 아직 있다고 말하는 문장이라, 업데이트가 끝났거나 새 버전이 더 없으면
+ * 지운다. 「모두 최신이에요」(found 0)는 여전히 사실이므로 그대로 둔다.
+ */
+export function shouldClearCheckNote(
+  note: CheckNote | null,
+  agentUpdates: Partial<Record<string, { phase: string }>> | undefined,
+  providers: ReadonlyArray<{ version?: string | null; latestVersion?: string | null }>,
+): boolean {
+  if (note === null || note.found === 0) return false;
+  if (Object.values(agentUpdates ?? {}).some((state) => state?.phase === "done")) return true;
+  return !providers.some((tool) => hasNewerVersion(tool.version, tool.latestVersion));
+}

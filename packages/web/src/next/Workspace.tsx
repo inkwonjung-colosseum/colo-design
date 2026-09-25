@@ -208,6 +208,15 @@ export function Workspace({
                   </button>
                 </div>
               )}
+              {/* 홈에서도 같은 한 줄(W2) — 가져온 직후 첫 화면이 홈이므로 초대 파일
+                  지우기 · 문제 문장이 여기 서지 않으면 안내가 사라진다. 대화 화면의
+                  자리(상태 줄 아래)는 아래 nx-work 안에 그대로 있다. */}
+              <ProblemLine
+                daemon={daemon}
+                invitePath={state.discardableInvitePath}
+                onClearInvite={() => nav.setDiscardableInvitePath(null)}
+                onToast={nav.toast}
+              />
               <HomeView daemon={daemon} sessions={sessions} nav={nav} />
             </div>
           )}
