@@ -175,57 +175,41 @@ export function ChatColumn({
   };
 
   // --- 제출: 한 번의 클릭 ------------------------------------------------
-  const diffStage = daemon.diffStatus?.stage;
   const [savingNow, setSavingNow] = useState(false);
   /** 답장 모드 — 사람 메시지의 `답하기`가 여는 컴포저 상태. 내면 api.replyToReview. */
   const [replyTo, setReplyTo] = useState<DeveloperReview | null>(null);
   /** 넘기기 카드 — 대화 안의 검토 자리. 상단 바·복도·⌘K 가 연다. */
   const [handoffOpen, setHandoffOpen] = useState(false);
   /**
-   * 제출 — 이번 작업을 묶어 개발자에게 넘긴다. P2-1 뒤로 계획자에게 남은
-   * 유일한 손이다: 커밋은 턴이 끝날 때마다 데몬이 스스로 하므로 여기서 부르는
-   * save 는 "남은 것까지 담고 푸시를 **기다린다**" 는 뜻이다 — 푸시 실패를
-   * 게이트로 올리는 길은 이것뿐이다(자동 저장의 푸시는 백그라운드라 조용하다).
-   * 넘기기의 제목·본문은 데몬이 정한 기본값으로 나가고, 직접 고치려는 길
-   * (카드)은 파레트의 넘기기가 남긴다.
+   * 제출 — 이번 작업을 개발자에게 보낸다(PLAN L6 · 단계 10). 호출은
+   * `repo.submit` 하나다: 데몬이 원장에 의도를 적고 감독자의 네 단계가
+   * 멱등하게 끝까지 간다. 실패해도 사용자가 다시 누를 일이 생기지
+   * 않는다 — 의도는 데몬에 남아 다음 틱이 이어받고, 화면의 문제 문장은
+   * 주의 한 줄(AttentionLine)이 말한다.
    */
   const runSubmit = useCallback(() => {
     if (savingNow || sessions.running) return;
-    const handoffOnly = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
     setSavingNow(true);
     // 끝은 finally 가 알린다 — 이 열이 홈으로 내려가도 약속은 끝까지 가고,
     // 알림을 받는 쪽(PageWorkspace)은 그대로 살아 있다.
     onSubmitBusy?.(true);
-    void (
-      handoffOnly
-        ? api.handoff({ sessionId: activeId })
-        : api
-            .save(undefined, activeId)
-            .then((status) =>
-              status.stage === "published" ? api.handoff({ sessionId: activeId }) : status,
-            )
-    )
+    void api
+      .submit(activeId)
       .then((status) => {
-        // E5: 영수증 — 제출이 무사히 끝나면 같은 자리에 카드가 '넘긴 내용'으로
-        // 선다. 누른 손이 어디로 갔는지 한눈에: 링크·리뷰어·다음 소식.
+        // E5: 영수증 — 제출이 무사히 끝나면 같은 자리에 카드가 선다.
+        // 누른 손이 어디로 갔는지 한눈에: 링크·리뷰어·다음 소식.
         if (status.stage === "handed-off") setHandoffOpen(true);
         return status;
       })
-      .catch((e: Error) => showError(e.message))
+      .catch((e: Error) => {
+        // 원문은 기록으로 — 화면은 주의 한 줄이 말한다(PLAN L8 대체 표).
+        console.error("[colo-design] 제출", e);
+      })
       .finally(() => {
         setSavingNow(false);
         onSubmitBusy?.(false);
       });
-  }, [
-    activeId,
-    savingNow,
-    sessions.running,
-    api,
-    showError,
-    diffStage,
-    daemon.diffStatus,
-    onSubmitBusy,
-  ]);
+  }, [activeId, savingNow, sessions.running, api, onSubmitBusy]);
   /**
    * 사이클 요청의 응답 — 제출은 곧 제출(칩·상단 바가 같은 핸들러를 누른다),
    * 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라 여기선
@@ -256,20 +240,9 @@ export function ChatColumn({
   const { title: proposedTitle, body: proposedBody } = handoffDraft(
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? "",
   );
-  // 저장은 됐고 넘기기만 멈춘 실패(gate:"pr")는 저장을 다시 돌리지 않는다.
-  const handoffFailed = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
-  // 실패 배너의 한 줄 — 카드가 없는 지금, 데몬이 diff.status 로 말하는
-  // 실패가 사람에게 보이는 유일한 자리다.
-  const saveFailDetail = handoffFailed
-    ? (daemon.diffStatus?.detail ?? "넘기지 못했습니다.")
-    : daemon.diffStatus?.reason === "push-auth"
-      ? "연결 코드가 만료됐어요 — 개발자에게 새 코드를 요청하세요"
-      : (daemon.diffStatus?.detail ?? "제출하지 못했습니다.");
-  // 배너의 다시 제출하기가 runSubmit 을 직결로 부른다 — 상단 바 버튼과 달리
-  // 이 길에는 사전 차단이 없어서, 턴 도중·저장 중 클릭이 조용히 묻혔다(베타
-  // 테스트 B6의 잔여). 못 쓰는 순간 버튼이 스스로 이유를 말하게 한다.
-  const retryBlockedByTurn = sessions.running;
-  const retryBusy = savingNow || sessions.running;
+  // 제출·넘기기 실패는 이 열이 말하지 않는다(PLAN L8 대체 표) — 의도가
+  // 데몬에 남아 다음 틱이 이어받고, 화면의 문제 문장은 맨 위의 주의 한
+  // 줄(AttentionLine)이 전부다.
 
   /**
    * 닫은 제안: 데몬은 한 문장을 한 번 보내고 잊지만, 계획자가 닫은
@@ -620,30 +593,11 @@ export function ChatColumn({
                 : undefined
             }
           />
-          {/* 제출 · 넘기기 실패 — 카드가 물러난 지금, 데몬이 diff.status 로
-              말하는 실패가 사람에게 보이는 자리다. 닫기는 없다: 실패는 다음
-              시도가 시작되는 순간에만 사라진다(실패가 조용히 지워졌던 실사
-              결함의 반대 판정). 재시도는 상단 바의 제출과 같은 핸들러다 —
-              P2-1 뒤로 사람이 다시 누를 수 있는 손은 그것 하나다. */}
-          {diffStage === "failed" && (
-            <StateBanner
-              tone="danger"
-              role="alert"
-              title={handoffFailed ? "넘기기에 실패했습니다" : "제출에 실패했습니다"}
-              sub={saveFailDetail}
-              action={{
-                label: retryBlockedByTurn
-                  ? "AI가 고치는 중"
-                  : handoffFailed
-                    ? "다시 넘기기"
-                    : "다시 제출하기",
-                disabled: retryBusy,
-                onClick: runSubmit,
-              }}
-            />
-          )}
-          {/* 넘기기 카드 — 모달이 아니라 대화 안의 검토 자리.
-              상단 바·복도·⌘K 가 연다; Escape 는 접기일 뿐이다. */}
+          {/* 제출 · 넘기기의 실패 배너는 없다(PLAN L8 · 단계 10): 의도는
+              데몬의 원장에 남아 다음 틱이 끝까지 이어받고, 사람이 읽을
+              문장은 맨 위의 주의 한 줄(AttentionLine)이 전부다. */}
+          {/* 넘기기 카드 — 모달이 아니라 대화 안의 검토 자리. 제출이 무사히
+              끝나면 영수증으로 여기 선다(E5). */}
           {handoffOpen && (
             <div id="live-handoffcard">
               <HandoffCard
@@ -656,13 +610,6 @@ export function ChatColumn({
               />
             </div>
           )}
-          {/* A turn's silence line — from the send click to the first
-            visible block, and again in every quiet stretch after: 도구와
-            도구 사이 모델이 생각만 하는 구간(생각 과정은 기본 숨김)에는
-            테이프가 새로 그리는 것이 없다. The tape speaks for itself the
-            moment a visible block lands or streams — 도는 도구의 막대,
-            흐르는 말 — and this line stands only when nothing on it moves.
-            그렇지 않으면 도는 턴이 스피너도 시계도 없는 화면으로 보인다. */}
           {(sessions.running || awaitingHere) && !tailLive && (
             <div className="turnlive" role="status" aria-label="작업 중">
               <span className="turnlive__dots" aria-hidden="true">
