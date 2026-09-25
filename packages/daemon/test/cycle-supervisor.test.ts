@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { composeAttention } from "@colo-design/protocol";
 // `../dist` 임포트인 이유: 형제를 `.js` 지정자로 부르는 모듈은 src 직접 로드가
 // 그 지정을 못 고친다(cycle-observe.test.ts 와 같은 길).
 import { readLedger } from "../dist/cycle-ledger.js";
@@ -254,7 +255,7 @@ test("S7 병합 충돌 중 재시작 — 원장에서 읽어 이어서 마무리
       githubAuthExpired: () => false,
       slug: () => scene.core.repoSlug(),
       isActive: () => true,
-      openThread: () => ({ send: (text) => briefs2.push(text) }),
+      openThread: async () => ({ send: (text) => briefs2.push(text) }),
       raiseNotice: (key, text) => notices2.push({ key, text }),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
@@ -729,6 +730,372 @@ test("폴러를 지운 뒤에도 — PR 상태 변화 알림과 리뷰 브리프
     await scene.supervisor.tick("manual");
     assert.ok(scene.transitions.some((t) => t.kind === "closed"));
     assert.ok(scene.chatEvents.some((e) => e.kind === "cycle.closed"));
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 세 목록을 페이지 끝까지 읽는다 — 3페이지의 코멘트를 모두 본다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    // per_page 50 기준 3페이지 — 한 페이지만 읽으면 마지막 코멘트가 보이지 않는다.
+    for (let i = 0; i < 101; i += 1) {
+      scene.github.addComment(pr, { kind: "issue", body: `코멘트 ${i}` });
+    }
+    await scene.supervisor.tick("manual");
+    const brief = scene.reviewBriefs.at(-1);
+    assert.ok(brief, "리뷰 브리프가 나가야 한다");
+    assert.equal(brief.ids.length, 101, "101개를 모두 읽어야 한다");
+    assert.equal(
+      scene.transitions.find((t) => t.kind === "comments")?.count,
+      101,
+      "도착 알림도 전체 수를 센다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 봇 코멘트는 AI 에게 가지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    const bot1 = scene.github.addComment(pr, {
+      kind: "issue",
+      body: "CI 빌드가 깨졌습니다",
+      bot: true,
+    });
+    const bot2 = scene.github.addComment(pr, {
+      kind: "issue",
+      body: "배포 완료",
+      login: "deploy[bot]",
+    });
+    const human = scene.github.addComment(pr, { kind: "issue", body: "여백을 좀 줄여 주세요" });
+    await scene.supervisor.tick("manual");
+
+    const brief = scene.reviewBriefs.at(-1);
+    assert.ok(brief, "리뷰 브리프가 나가야 한다");
+    assert.deepEqual(brief.ids, [human], "봇(user.type · [bot] 로그인)은 빠지고 사람만 가야 한다");
+    assert.ok(!brief.ids.includes(bot1) && !brief.ids.includes(bot2));
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 whoAmI 는 여러 관찰에서 한 번만 불린다 — 토큰마다 캐시", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "첫 관찰에서 한 번 부른다");
+
+    scene.github.addComment(pr, { kind: "issue", body: "다음 코멘트" });
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "다음 관찰은 캐시를 읽는다");
+
+    // 재시작도 같은 전송 · 같은 토큰 — 여전히 캐시다.
+    const supervisor2 = scene.respawn();
+    scene.github.addComment(pr, { kind: "issue", body: "재시작 뒤 코멘트" });
+    await supervisor2.tick("manual");
+    assert.equal(scene.github.userCalls, 1, "새 감독자도 캐시를 함께 쓴다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 재시작 뒤 첫 코멘트를 삼키지 않는다 — 원장 known 이 기준선", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    await scene.supervisor.tick("manual");
+
+    const first = scene.github.addComment(pr, { kind: "issue", body: "첫 코멘트" });
+    await scene.supervisor.tick("manual");
+    assert.deepEqual(scene.reviewBriefs.at(-1)?.ids, [first], "끊기기 전 코멘트는 브리프된다");
+
+    // 재시작 — 메모리가 아니라 원장(cycle.json)의 known 이 이어받는다.
+    const supervisor2 = scene.respawn();
+    const second = scene.github.addComment(pr, { kind: "issue", body: "재시작 뒤 첫 코멘트" });
+    await supervisor2.tick("manual");
+    assert.deepEqual(
+      scene.reviewBriefs.at(-1)?.ids,
+      [second],
+      "재시작 뒤 첫 코멘트가 기준선에 삼켜지지 않는다",
+    );
+    assert.notEqual(second, first);
+  } finally {
+    await scene.dispose();
+  }
+});
+test("L9 자동 답장 — 턴의 답변 문장에서 코멘트마다 스레드에 답한다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.authorName = "김기획";
+    const inline = scene.github.addComment(pr, { kind: "pull", body: "문구를 바꿔 주세요" });
+    const issue = scene.github.addComment(pr, { kind: "issue", body: "여백도 봐 주세요" });
+
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [
+        { id: inline, kind: "inline", author: "dev1", body: "문구를 바꿔 주세요", pr },
+        { id: issue, kind: "review", author: "dev1", body: "여백도 봐 주세요", pr },
+      ],
+      `고쳤습니다.\n\n개발자에게 (#${inline}): 문구를 '보관'으로 바꿨습니다.`,
+      "0123456789abcdef",
+    );
+
+    // 줄이 있는 인라인 코멘트 — 스레드 답글로, 문장 그대로.
+    const threadReply = scene.github.pullCommentsFor(pr).at(-1);
+    assert.ok(threadReply, "인라인 답장이 스레드에 올라야 한다");
+    assert.ok(threadReply.body.includes("문구를 '보관'으로 바꿨습니다."));
+    assert.ok(
+      threadReply.body.includes("— Colo Design 이 김기획 님 대신 남김"),
+      "대리 표기가 답장 끝에 붙는다",
+    );
+    // 줄이 없는 코멘트 + 보관 커밋 — sha 7자 폴백.
+    const issueReply = scene.github.commentsFor(pr).at(-1);
+    assert.ok(issueReply, "본문형 코멘트에도 답장이 올라야 한다");
+    assert.ok(issueReply.body.includes("반영했습니다 · 0123456"));
+    assert.ok(issueReply.body.includes("— Colo Design 이 김기획 님 대신 남김"));
+
+    // 같은 코멘트에 두 번 답하지 않는다 — 원장 replied 가 잡는다.
+    const mine = (rows: Array<{ login: string }>) =>
+      rows.filter((row) => row.login === "colo-planner").length;
+    const repliesBefore =
+      mine(scene.github.pullCommentsFor(pr)) + mine(scene.github.commentsFor(pr));
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [
+        { id: inline, kind: "inline", author: "dev1", body: "문구를 바꿔 주세요", pr },
+        { id: issue, kind: "review", author: "dev1", body: "여백도 봐 주세요", pr },
+      ],
+      `개발자에게 (#${inline}): 다시 답합니다.`,
+      null,
+    );
+    assert.equal(
+      mine(scene.github.pullCommentsFor(pr)) + mine(scene.github.commentsFor(pr)),
+      repliesBefore,
+      "두 번째 정산은 답장을 하나도 더 올리지 않는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 반려 — 닫힘 이유가 있으면 반영 턴 하나가 열리고 예산을 쓴다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.github.addComment(pr, {
+      kind: "issue",
+      body: "이 흐름은 지금 서비스에 안 맞아요 — 목록으로 되돌려 주세요.",
+    });
+    scene.github.close(pr);
+
+    await scene.supervisor.tick("manual");
+
+    assert.equal(scene.briefs.length, 1, "반려 이유 반영 턴이 하나 나가야 한다");
+    assert.ok(
+      scene.briefs[0]?.includes("개발자가 이번 요청을 닫았습니다"),
+      "반려의 첫 문장이 앞에 선다",
+    );
+    assert.ok(scene.briefs[0]?.includes("목록으로 되돌려"), "이유 본문이 실린다");
+    assert.ok(ledgerOf(scene).budgets[`review:${pr}`]?.spent === 1, "예산 review:<pr> 를 쓴다");
+    assert.equal(
+      scene.github.commentsFor(pr).filter((row) => row.login === "colo-planner").length,
+      0,
+      "이유가 있으면 청구 코멘트를 남기지 않는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 반려 — 이유가 없으면 턴 없이 닫힌 PR 에 이유를 청구한다, 한 번만", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await scene.git(["checkout", "-b", BRANCH]);
+    await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    const pr = await openCycle(scene, BRANCH);
+    scene.github.close(pr);
+
+    await scene.supervisor.tick("manual");
+
+    assert.equal(scene.briefs.length, 0, "이유가 없으면 반영 턴을 열지 않는다");
+    const asked = scene.github.commentsFor(pr);
+    assert.equal(asked.length, 1, "닫힌 PR 에 청구 코멘트 하나가 선다");
+    assert.ok(asked[0]?.body.includes("반려 이유를 남겨 주시면"));
+    const ledger = ledgerOf(scene);
+    assert.equal(
+      ledger.reviews[String(pr)]?.rejectionAsked,
+      true,
+      "원장 reviews[pr] 에 한 번만의 표식이 적힌다",
+    );
+    // 청구 표식은 개발자 알림이 아니다 — notices 에 없고, 화면은 "개발자에게
+    // 알렸어요" 를 말하지 않는다 (PLAN L8).
+    assert.ok(!Object.keys(ledger.notices).some((key) => key.startsWith("reject:")));
+    const parts = scene.supervisor.attentionParts();
+    assert.ok(!Object.keys(parts.notices ?? {}).some((key) => key.startsWith("reject:")));
+    assert.notEqual(composeAttention(parts)?.kind, "developer-notified");
+
+    // 두 번째 틱 — 랜딩도 청구도 다시 일어나지 않는다.
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.github.commentsFor(pr).length, 1, "청구 코멘트는 하나뿐이다");
+    assert.equal(scene.briefs.length, 0);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+/** 반려 장면 — 사이클 브랜치의 커밋 하나를 넘기고, 개발자가 이유를 남기고 닫는다. */
+async function rejectWithReason(scene: SupervisedScene, reason: string): Promise<number> {
+  await scene.git(["checkout", "-b", BRANCH]);
+  await commit(scene, { "src/a.ts": "export const a = 1;\n" }, "작업 1");
+  await scene.git(["push", "-u", "origin", BRANCH]);
+  const pr = await openCycle(scene, BRANCH);
+  scene.github.addComment(pr, { kind: "issue", body: reason });
+  scene.github.close(pr);
+  return pr;
+}
+
+test("L9 반려 — 대화를 못 열면 이유가 원장에 남고, 다음 틱이 반영 턴을 보낸다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = await rejectWithReason(scene, "이 흐름은 목록으로 되돌려 주세요.");
+
+    scene.refuseThread = true;
+    await scene.supervisor.tick("manual");
+    assert.equal(scene.briefs.length, 0, "대화를 못 열면 턴이 나가지 않는다");
+    const waiting = ledgerOf(scene).reviews[String(pr)]?.pendingRejection;
+    assert.ok(waiting, "보내지 못한 반영 턴이 원장에 남는다");
+    assert.ok(waiting.reasons.some((reason) => reason.body.includes("목록으로 되돌려")));
+
+    // 기록은 디스크에 있다 — 재시작한 감독자의 다음 틱이 이어받는다(I5).
+    const next = scene.respawn();
+    scene.refuseThread = false;
+    await next.tick("timer");
+    assert.equal(scene.briefs.length, 1, "다음 틱이 반영 턴을 보낸다");
+    assert.ok(scene.briefs[0]?.includes("개발자가 이번 요청을 닫았습니다"));
+    assert.ok(scene.briefs[0]?.includes("목록으로 되돌려"), "원장에 적힌 이유가 실린다");
+    const ledger = ledgerOf(scene);
+    assert.equal(
+      ledger.reviews[String(pr)]?.pendingRejection,
+      undefined,
+      "보낸 뒤에 기록을 지운다",
+    );
+    assert.equal(ledger.budgets[`review:${pr}`]?.spent, 2, "못 연 대화도 한 라운드다");
+
+    await next.tick("timer");
+    assert.equal(scene.briefs.length, 1, "보낸 반영 턴은 다시 나가지 않는다");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 반려 — 대화를 끝내 못 열면 예산 review:<pr> 가 다한 뒤 개발자 알림 한 번", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = await rejectWithReason(scene, "이 흐름은 목록으로 되돌려 주세요.");
+
+    scene.refuseThread = true;
+    for (let i = 0; i < 8; i += 1) await scene.supervisor.tick("timer");
+
+    assert.equal(scene.briefs.length, 0);
+    const raised = scene.notices.filter((notice) => notice.key === `review:${pr}:rejection`);
+    assert.equal(raised.length, 1, "예산이 다하면 알림은 한 번");
+    assert.ok(raised[0]?.text.includes("반려 이유"));
+    const ledger = ledgerOf(scene);
+    assert.equal(ledger.budgets[`review:${pr}`]?.spent, 5, "시도는 PR 당 라운드 상한까지");
+    assert.equal(
+      ledger.reviews[String(pr)]?.pendingRejection,
+      undefined,
+      "손을 놓은 뒤에는 기록을 지운다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("옛 원장의 reject:<pr> 표식 — 읽을 때 reviews 로 옮겨지고 주의를 세우지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 3263c45a 판이 적던 모양 — 청구 표식이 notices 에 서 있다.
+    writeFileSync(
+      scene.ledgerPath,
+      JSON.stringify({
+        v: 1,
+        notices: {
+          "reject:4": { via: "pr", ref: 4, raisedAt: "2026-09-24T10:00:00.000Z", count: 1 },
+        },
+        reviews: { "4": { known: [11], briefed: [11], rounds: 1 } },
+      }),
+    );
+    const next = scene.respawn();
+    const parts = next.attentionParts();
+    assert.deepEqual(parts.notices, {});
+    assert.equal(composeAttention(parts), null, "옛 표식이 개발자에게 알렸어요 를 세우지 않는다");
+
+    await next.tick("manual");
+    const ledger = ledgerOf(scene);
+    assert.deepEqual(ledger.notices, {});
+    assert.deepEqual(ledger.reviews["4"], {
+      known: [11],
+      briefed: [11],
+      rounds: 1,
+      rejectionAsked: true,
+    });
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("L9 자동 답장 — 보관이 없으면 '확인했고' 문장, autoReply 가 꺼져 있면 답장이 없다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const pr = 1;
+    const id = 21;
+    const review = { id, kind: "review" as const, author: "dev1", body: "봐 주세요", pr };
+    await scene.supervisor.settleReviewReplies(pr, [review], "답변에 줄이 없습니다.", null);
+    assert.equal(
+      scene.github.commentsFor(pr).at(-1)?.body.split("\n")[0],
+      "확인했고 바꾼 것은 없습니다",
+      "줄도 보관도 없으면 확인 문장이 간다",
+    );
+
+    scene.autoReply = false;
+    const id2 = 22;
+    await scene.supervisor.settleReviewReplies(
+      pr,
+      [{ id: id2, kind: "review", author: "dev1", body: "봐 주세요", pr }],
+      `개발자에게 (#${id2}): 가지 않는 답장.`,
+      null,
+    );
+    assert.equal(scene.github.commentsFor(pr).length, 1, "autoReply false 면 답장이 올라지 않는다");
   } finally {
     await scene.dispose();
   }

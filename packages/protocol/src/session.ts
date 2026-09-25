@@ -110,6 +110,12 @@ export type ChatEvent =
       durationMs: number | null;
       /** Present when the turn ended because the model declined. */
       resultText: string | null;
+      /**
+       * 사다리를 다 쓴 실패(PLAN L12) — 개발자 알림(turn:failed)이 나갔다는
+       * 표식. 실패 카드가 `개발자에게 알렸어요` 한 줄을 이유 옆에 싣는다.
+       * 원문(resultText)은 기록으로만 간다.
+       */
+      escalated?: true;
     }
   | {
       kind: "retry";

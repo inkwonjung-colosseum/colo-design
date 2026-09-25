@@ -51,6 +51,8 @@ export interface PullRequestDetail extends PullRequestRef {
    * 개발자가 구간 밖에 쓴 글을 지키려면 먼저 읽어야 한다.
    */
   body: string | null;
+  /** 닫힘(병합 · 반려 포함) 시각 — 반려 이유 수집의 7일 창 재료 (PLAN L9). */
+  closedAt: string | null;
 }
 
 const JSON_HEADERS = {
@@ -64,6 +66,12 @@ const JSON_HEADERS = {
  * would cost a request per status poll to learn nothing.
  */
 const REVIEW_PAGE_SIZE = 100;
+/**
+ * 코멘트 셋(인라인 · 리뷰 · 요청 코멘트)이 페이지를 따라가는 상한 (PLAN L9) —
+ * per_page 50 기준 500행. 그 너머의 대화는 감독자의 몫이 아니라 사람에게
+ * 맡기는 쪽이 맞다.
+ */
+const COMMENT_PAGE_CAP = 10;
 /** Review states that decide the verdict; COMMENTED and PENDING carry none. */
 const VERDICTS = ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"];
 
@@ -73,18 +81,38 @@ const VERDICTS = ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"];
  * manual url are the honest answer, not an unbounded crawl.
  */
 const REPO_PAGE_CAP = 5;
+/**
+ * 봇 행 판정 (PLAN L9) — user.type 이 "Bot" 이거나 로그인이 "[bot]" 으로
+ * 끝나면 기계의 말이다. CI 봇의 코멘트에 AI 가 반응하지 않게 목록 읽기가
+ * 거른다.
+ */
+export function isBotRow(row: Record<string, any>): boolean {
+  return String(row.user?.type ?? "") === "Bot" || String(row.user?.login ?? "").endsWith("[bot]");
+}
+/**
+ * whoAmI 캐시 (PLAN L9) — 전송(transport)마다 마지막 토큰의 성공 판정만
+ * 남긴다. 클라이언트는 부를 때마다 새로 만들어지지만 데몬의 전송은 하나라
+ * 캐시는 전송에 산다. 토큰이 바뀌면 항목을 덮어 캐시를 버리고, 실패는
+ * 담지 않아 다음 부름이 다시 본다.
+ */
+const whoAmICache = new WeakMap<RestTransport, { token: string; login: Promise<string> }>();
 
 export class GitHubClient {
   constructor(
     private readonly token: string,
     private readonly transport: RestTransport,
   ) {}
-
   /** The login this token acts as, or why it cannot act at all. */
   async whoAmI(): Promise<
     | { ok: true; login: string }
     | { ok: false; reason: "unauthorized" | "unreachable"; detail: string }
   > {
+    // 캐시 (PLAN L9) — 관찰이 부를 때마다 /user 를 다시 치지 않는다. 성공만
+    // 담는다: 실패(만료 · 도달 불가)는 다음 부름이 다시 판정해야 한다.
+    const cached = whoAmICache.get(this.transport);
+    if (cached !== undefined && cached.token === this.token) {
+      return cached.login.then((login) => ({ ok: true as const, login }));
+    }
     let status: number;
     let body: Uint8Array;
     try {
@@ -129,6 +157,7 @@ export class GitHubClient {
         detail: "GitHub 응답을 읽지 못했습니다.",
       };
     }
+    whoAmICache.set(this.transport, { token: this.token, login: Promise.resolve(data.login) });
     return { ok: true, login: data.login };
   }
 
@@ -162,6 +191,9 @@ export class GitHubClient {
       hasDevScript: await this.hasDevScript(input),
       canPush: data.permissions?.push === true,
       defaultBranch: String(data.default_branch ?? "main"),
+      // 옮겨진 저장소는 옛 주소로 물어도 새 이름을 답한다(fetch 가 GitHub 의
+      // 되돌림을 따라간다) — 감독자의 위생이 이 값으로 이동을 알아본다.
+      fullName: typeof data.full_name === "string" ? data.full_name : null,
     };
   }
 
@@ -356,10 +388,10 @@ export class GitHubClient {
   }
 
   /**
-   * D88: 개발자의 인라인 코멘트 — the 상태 확인 panel's rows beside the
-   * review verdicts. A refused call degrades to an empty list: the panel is
-   * a reading surface, and an unreachable comments API must not fail the
-   * whole status read.
+   * D88 · PLAN L9: 개발자의 인라인 코멘트 — 목록을 페이지 끝까지 읽고
+   * (nextLink, 상한 COMMENT_PAGE_CAP) 봇 행은 거른다. 거절된 부름은 빈
+   * 목록으로 흘린다: 상태 확인은 읽기 표면이고, 닿지 않는 코멘트 API 가
+   * 전체 상태 읽기를 실패하게 해서는 안 된다.
    */
   async listPullComments(input: {
     owner: string;
@@ -367,28 +399,29 @@ export class GitHubClient {
     number: number;
   }): Promise<Array<Record<string, any>>> {
     try {
-      const data = await this.getJson(
+      const rows = await this.listPages(
         `/repos/${input.owner}/${input.repo}/pulls/${input.number}/comments?per_page=50`,
         "개발자 코멘트 읽기",
       );
-      return Array.isArray(data) ? data : [];
+      return rows.filter((row) => !isBotRow(row));
     } catch {
       return [];
     }
   }
 
-  /** D88: 리뷰 본문 행 — verdict 이 아니라 말이 있는 리뷰가 패널의 행이 된다. */
+  /** D88 · PLAN L9: 리뷰 본문 행 — 말이 있는 리뷰가 패널의 행이 된다. 읽기는
+   *  인라인 코멘트와 같은 규칙(끝까지 · 봇 거르기 · 실패는 빈 목록). */
   async listReviews(input: {
     owner: string;
     repo: string;
     number: number;
   }): Promise<Array<Record<string, any>>> {
     try {
-      const data = await this.getJson(
+      const rows = await this.listPages(
         `/repos/${input.owner}/${input.repo}/pulls/${input.number}/reviews?per_page=50`,
         "리뷰 읽기",
       );
-      return Array.isArray(data) ? data : [];
+      return rows.filter((row) => !isBotRow(row));
     } catch {
       return [];
     }
@@ -406,11 +439,11 @@ export class GitHubClient {
     number: number;
   }): Promise<Array<Record<string, any>>> {
     try {
-      const data = await this.getJson(
+      const rows = await this.listPages(
         `/repos/${input.owner}/${input.repo}/issues/${input.number}/comments?per_page=50`,
         "요청 코멘트 읽기",
       );
-      return Array.isArray(data) ? data : [];
+      return rows.filter((row) => !isBotRow(row));
     } catch {
       return [];
     }
@@ -562,6 +595,8 @@ export class GitHubClient {
       mergeableState: typeof data.mergeable_state === "string" ? data.mergeable_state : null,
       // 본문은 도구 구간 갱신(mergeToolBlock, PLAN L6)이 읽는다.
       body: typeof data.body === "string" ? data.body : null,
+      // 닫힘 시각 — 병합이어도 GitHub 은 닫힘으로 함께 표기한다 (PLAN L9).
+      closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
     };
   }
 
@@ -705,6 +740,33 @@ export class GitHubClient {
 
   private headers(): Record<string, string> {
     return { authorization: `Bearer ${this.token}`, ...JSON_HEADERS };
+  }
+
+  /**
+   * 목록 한 끝까지 (PLAN L9) — 첫 주소에서 시작해 `Link` 헤더의 next 를
+   * 상한(COMMENT_PAGE_CAP)까지 따라간다. 페이지 실패는 목록 전체의 실패로
+   * 던지고, 호출자(코멘트 셋)의 관례대로 빈 목록으로 흘린다.
+   */
+  private async listPages(url: string, label: string): Promise<Array<Record<string, any>>> {
+    const rows: Array<Record<string, any>> = [];
+    let next: string | null = url;
+    for (let page = 0; page < COMMENT_PAGE_CAP && next !== null; page += 1) {
+      const { status, body, headers } = await this.transport.request({
+        method: "GET",
+        url: next,
+        headers: this.headers(),
+      });
+      if (status < 200 || status >= 300) throw new Error(httpError(label, status, body));
+      let data: unknown;
+      try {
+        data = JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        data = []; // falls through: pagination decides the rest
+      }
+      if (Array.isArray(data)) rows.push(...data);
+      next = nextLink(headers?.link);
+    }
+    return rows;
   }
 
   private async getJson(url: string, label: string): Promise<any> {

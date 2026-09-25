@@ -17,6 +17,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { DeveloperReview } from "@colo-design/protocol";
 import { BUDGETS, type BudgetEntry, backoffDelay } from "./budgets.js";
 
 /** 원장 파일의 자리 — 프로젝트 폴더(<slug>) 아래의 cycle.json. */
@@ -49,6 +50,17 @@ export interface CyclePendingOp {
     newBranch: string;
     carried: number;
   };
+}
+
+/**
+ * 아직 보내지 못한 반려 이유 반영 턴 (PLAN L9 · 단계 7) — 랜딩이 모은 이유를
+ * 적어 두고, 턴을 실제로 보낸 뒤에야 지운다. 대화를 못 열어도 조정 표
+ * 14b행이 같은 이유로 다시 보낸다 — 랜딩은 다시 오지 않으므로 이 기록이
+ * 없으면 반영 턴이 로그 한 줄로 사라진다. since 는 처음 적힌 시각.
+ */
+export interface CyclePendingRejection {
+  reasons: DeveloperReview[];
+  since: string;
 }
 
 export interface CyclePushState {
@@ -91,10 +103,30 @@ export interface CycleLedger {
   } | null;
   push: CyclePushState | null;
   pendingOp: CyclePendingOp | null;
-  /** 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. */
-  reviews: Record<string, { known: number[]; briefed: number[]; rounds: number }>;
+  /**
+   * 리뷰 장부(L9) — known 은 센 것, briefed 는 턴으로 낸 것. replied 는 자동
+   * 답장을 이미 올린 코멘트 — 같은 코멘트에 두 번 답하지 않는 잣체다(단계 7).
+   * 반려된 PR 의 두 표식도 여기 산다: rejectionAsked 는 이유를 청구하는
+   * 코멘트를 이미 남겼다는 한 번만의 표식이고(notices 에 두면 주의가 영원히
+   * developer-notified 를 말한다 — L8), pendingRejection 은 아직 보내지 못한
+   * 반영 턴이다.
+   */
+  reviews: Record<
+    string,
+    {
+      known: number[];
+      briefed: number[];
+      rounds: number;
+      replied?: number[];
+      rejectionAsked?: boolean;
+      pendingRejection?: CyclePendingRejection;
+    }
+  >;
   budgets: Record<string, BudgetEntry>;
-  /** 서 있는 개발자 알림(L11) — raise 의 중복 억제 잣체. 조정자가 올리고 지운다. */
+  /**
+   * 서 있는 개발자 알림(L11) — raise 의 중복 억제 잣체. 조정자가 올리고 지운다.
+   * 주의(developer-notified)의 재료이므로 실제 알림이 아닌 표식은 두지 않는다.
+   */
   notices: Record<
     string,
     {
@@ -106,7 +138,9 @@ export interface CycleLedger {
   >;
   /**
    * 끝난 사이클 브랜치의 기록 — 반려는 keepRejectedDays 정리(단계 9)가,
-   * 병합의 지연 삭제 표식은 12행 푸시가 읽는다.
+   * 병합의 지연 삭제 표식은 12행 푸시가 읽는다. 표식 없는 병합 기록은 읽는
+   * 곳이 없으므로 같은 날수 뒤 위생이 원장에서만 걷는다(원장이 사이클마다
+   * 한 줄씩 영원히 자라지 않게).
    */
   branches: Array<{
     name: string;
@@ -120,7 +154,46 @@ export interface CycleLedger {
      */
     deleteRemoteAfterPush?: string;
   }>;
-  hygiene: { gcAt?: string; fsckAt?: string; pruneAt?: string };
+  /**
+   * 위생의 시각 (PLAN 단계 9) — 항목마다 마지막으로 시도한 때. 기한은
+   * cycle-hygiene 의 표가 정한다. assets 는 캡처 브랜치(colo-design-assets)
+   * 끝 트리의 파일 수 · 대략 크기다 — 정리는 하지 않고 기록만 한다(O4).
+   */
+  hygiene: {
+    gcAt?: string;
+    fsckAt?: string;
+    pruneAt?: string;
+    assetsAt?: string;
+    moveAt?: string;
+    diskAt?: string;
+    assets?: { files: number; bytes: number };
+  };
+  /**
+   * 클론 손상 (PLAN 단계 9) — 관찰의 탐침이나 fsck 가 본 신호. 조정 표의
+   * 손상 행이 재클론으로 푼다. 신호가 한 번 서면 재클론이 끝날 때까지 남는다
+   * — fsck 가 본 깊은 손상은 다음 관찰의 탐침에 다시 보이지 않는다.
+   */
+  corrupt: { since: string; detail: string } | null;
+  /**
+   * 재클론의 이어받기 (PLAN 단계 9) — 손상 행이 절차를 시작하며 적고, 되살리기가
+   * 끝나면 지운다. 구해 두기 · 옮기기 · 새로 받기 · 되살리기 사이 어디서 끊겨도
+   * 다음 틱이 남은 걸음부터 잇는다(I5) — 예산을 두 번 쓰지 않는다.
+   */
+  reclone: CycleReclone | null;
+}
+
+export interface CycleReclone {
+  /** 절차가 시작된 시각 — 구해 둘 폴더와 옮길 폴더 이름의 도장. */
+  at: string;
+  /** 구해 둔 것 — 구해 두기 전이면 null. */
+  salvage: {
+    dir: string;
+    branch: string | null;
+    bundleRef: string | null;
+    patch: boolean;
+  } | null;
+  /** 옛 클론이 옮겨 간 자리 — 옮기기 전이면 null. */
+  movedTo: string | null;
 }
 
 export function emptyLedger(): CycleLedger {
@@ -136,6 +209,8 @@ export function emptyLedger(): CycleLedger {
     notices: {},
     branches: [],
     hygiene: {},
+    corrupt: null,
+    reclone: null,
   };
 }
 
@@ -268,9 +343,82 @@ function parseReviews(raw: unknown): CycleLedger["reviews"] {
     const briefed = record === null ? null : asIdList(record.briefed);
     const rounds = record === null ? null : asInt(record.rounds);
     if (known === null || briefed === null || rounds === null || rounds < 0) continue;
-    reviews[key] = { known, briefed, rounds };
+    // replied · rejectionAsked · pendingRejection 은 이후 판(단계 7)이 쓴 선택
+    // 필드 — 없거나 깨져도 항목은 산다.
+    const replied = asIdList(record?.replied);
+    const pendingRejection = parsePendingRejection(record?.pendingRejection);
+    reviews[key] = {
+      known,
+      briefed,
+      rounds,
+      ...(replied !== null ? { replied } : {}),
+      ...(record?.rejectionAsked === true ? { rejectionAsked: true } : {}),
+      ...(pendingRejection !== null ? { pendingRejection } : {}),
+    };
   }
   return reviews;
+}
+
+/** 보내지 못한 반려 반영 턴 — 이유가 하나도 살아남지 못하면 없는 것으로 친다. */
+function parsePendingRejection(raw: unknown): CyclePendingRejection | null {
+  const record = asRecord(raw);
+  if (record === null || !Array.isArray(record.reasons)) return null;
+  const since = asString(record.since);
+  if (since === null) return null;
+  const reasons = record.reasons
+    .map(parseReason)
+    .filter((reason): reason is DeveloperReview => reason !== null);
+  return reasons.length > 0 ? { reasons, since } : null;
+}
+
+/** 반려 이유 한 건 — DeveloperReview 의 모양 그대로(reviewToTurn 이 다시 읽는다). */
+function parseReason(raw: unknown): DeveloperReview | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const id = asInt(record.id);
+  const kind = asString(record.kind);
+  const author = asString(record.author);
+  const body = asString(record.body);
+  const pr = asInt(record.pr);
+  const at = asString(record.at);
+  if (id === null || pr === null || author === null || body === null || at === null) return null;
+  if (kind !== "inline" && kind !== "review") return null;
+  const path = asString(record.path);
+  const line = asInt(record.line);
+  return {
+    id,
+    kind,
+    author,
+    body,
+    pr,
+    ...(path !== null ? { path } : {}),
+    ...(line !== null ? { line } : {}),
+    at,
+  };
+}
+
+/**
+ * 옛 판(3263c45a)의 반려 이유 청구 표식 — notices 의 `reject:<pr>` 를 걷어
+ * reviews[pr].rejectionAsked 로 옮긴다. notices 는 서 있는 개발자 알림이라
+ * 주의의 재료다: 한 번만의 표식이 거기 남으면 반려 한 번 뒤로 화면이 영원히
+ * "개발자에게 알렸어요" 를 말한다(PLAN L8). 읽을 때마다 돌아도 같다(I5).
+ */
+function liftRejectMarkers(
+  notices: CycleLedger["notices"],
+  reviews: CycleLedger["reviews"],
+): Pick<CycleLedger, "notices" | "reviews"> {
+  const keys = Object.keys(notices).filter((key) => key.startsWith("reject:"));
+  if (keys.length === 0) return { notices, reviews };
+  const nextNotices = { ...notices };
+  const nextReviews = { ...reviews };
+  for (const key of keys) {
+    delete nextNotices[key];
+    const pr = Number(key.slice("reject:".length));
+    if (!Number.isInteger(pr) || pr <= 0) continue;
+    const prev = nextReviews[String(pr)] ?? { known: [], briefed: [], rounds: 0 };
+    nextReviews[String(pr)] = { ...prev, rejectionAsked: true };
+  }
+  return { notices: nextNotices, reviews: nextReviews };
 }
 
 function parseBudgets(raw: unknown): Record<string, BudgetEntry> {
@@ -332,17 +480,56 @@ function parseHygiene(raw: unknown): CycleLedger["hygiene"] {
   const record = asRecord(raw);
   if (record === null) return {};
   const hygiene: CycleLedger["hygiene"] = {};
-  for (const field of ["gcAt", "fsckAt", "pruneAt"] as const) {
+  for (const field of ["gcAt", "fsckAt", "pruneAt", "assetsAt", "moveAt", "diskAt"] as const) {
     const value = asString(record[field]);
     if (value !== null) hygiene[field] = value;
   }
+  const assets = asRecord(record.assets);
+  const files = assets === null ? null : asInt(assets.files);
+  const bytes = assets === null ? null : asInt(assets.bytes);
+  if (files !== null && files >= 0 && bytes !== null && bytes >= 0) {
+    hygiene.assets = { files, bytes };
+  }
   return hygiene;
+}
+
+function parseReclone(raw: unknown): CycleReclone | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const at = asString(record.at);
+  if (at === null) return null;
+  const movedTo = asString(record.movedTo);
+  const salvageRaw = asRecord(record.salvage);
+  let salvage: CycleReclone["salvage"] = null;
+  if (salvageRaw !== null) {
+    const dir = asString(salvageRaw.dir);
+    if (dir === null || typeof salvageRaw.patch !== "boolean") return null;
+    salvage = {
+      dir,
+      branch: asString(salvageRaw.branch),
+      bundleRef: asString(salvageRaw.bundleRef),
+      patch: salvageRaw.patch,
+    };
+  }
+  return { at, salvage, movedTo };
+}
+
+function parseCorrupt(raw: unknown): CycleLedger["corrupt"] {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const since = asString(record.since);
+  const detail = asString(record.detail);
+  return since === null || detail === null ? null : { since, detail };
 }
 
 /** 모르는 모양 · 깨진 필드는 버리고 나머지를 살린다 — 절대 던지지 않는다. */
 export function parseLedger(raw: unknown): CycleLedger {
   const record = asRecord(raw);
   if (record === null) return emptyLedger();
+  const { notices, reviews } = liftRejectMarkers(
+    parseNotices(record.notices),
+    parseReviews(record.reviews),
+  );
   return {
     v: 1,
     ended: parseEnded(record.ended),
@@ -350,11 +537,13 @@ export function parseLedger(raw: unknown): CycleLedger {
     submit: parseSubmit(record.submit),
     push: parsePush(record.push),
     pendingOp: parsePendingOp(record.pendingOp),
-    reviews: parseReviews(record.reviews),
+    reviews,
     budgets: parseBudgets(record.budgets),
-    notices: parseNotices(record.notices),
+    notices,
     branches: parseBranches(record.branches),
     hygiene: parseHygiene(record.hygiene),
+    corrupt: parseCorrupt(record.corrupt),
+    reclone: parseReclone(record.reclone),
   };
 }
 
@@ -450,7 +639,10 @@ export function foldReviewLedger(ledger: CycleLedger, raw: unknown): CycleLedger
     if (!Number.isInteger(pr) || pr <= 0 || briefed === null) continue;
     const prev = reviews[key];
     const mergedBriefed = [...new Set([...(prev?.briefed ?? []), ...briefed])];
+    // 옛 파일은 지워지지 않아 시작마다 다시 접힌다 — 항목의 다른 필드(replied ·
+    // 반려 표식)를 지우면 재시작이 보내지 못한 반려 반영 턴을 잃는다.
     reviews[key] = {
+      ...prev,
       known: [...new Set([...(prev?.known ?? []), ...mergedBriefed])],
       briefed: mergedBriefed,
       rounds: prev?.rounds ?? 0,

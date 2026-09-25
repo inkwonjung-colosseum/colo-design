@@ -74,6 +74,12 @@ test("describeProblem — 표의 키는 한국어 네 줄, 모르는 키는 키�
   assert.ok(bringUp.what.includes("install"));
 });
 
+test("describeProblem — 반려 반영 턴의 예산 소진은 라운드 상한 문장이 아니다", () => {
+  const rejection = describeProblem("review:7:rejection");
+  assert.equal(rejection.title, "반려 이유를 AI 에게 넘기지 못했습니다");
+  assert.equal(describeProblem("review:7:rounds").title, "코멘트 반영이 라운드 상한에 닿았습니다");
+});
+
 test("noticeBody — 네 줄 구조와 details, 생니타이저와 자르기", () => {
   const body = noticeBody(
     { ...PROBLEM, detail: "토큰 ghp_secret1234567890 이 거절됐습니다" },
@@ -284,6 +290,24 @@ test("기계 전체 알림(slug null)은 machineNotices 에 서고 주의가 dev
   });
   await notice.resolve("github:auth", null);
   assert.deepEqual(notice.machineNotices(), {});
+});
+
+test("disk:low 는 Slack 으로 가지만 화면 주의의 재료(machineNotices)에는 서지 않는다 (O8)", async () => {
+  const slack = fakeSlack();
+  await slack.configure();
+  const notice = new DeveloperNotice(deps({ slack: slack.escalation }));
+  assert.equal(
+    await notice.raise({
+      key: "disk:low",
+      slug: null,
+      ...describeProblem("disk:low", "여유 1.0GB"),
+    }),
+    "slack",
+  );
+  // 사용자 기계의 일이라 네 번째 문장을 두지 않는다 — 기계 주의는 비어 있다.
+  assert.deepEqual(notice.machineNotices(), {});
+  assert.equal(composeAttention({ notices: notice.machineNotices() }), null);
+  await notice.resolve("disk:low", null);
 });
 
 test("넘기기가 성공하면 서 있던 submit:pr 알림을 거둔다", async () => {

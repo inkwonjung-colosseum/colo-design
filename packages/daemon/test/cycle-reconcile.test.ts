@@ -40,6 +40,7 @@ function snap(over: Partial<CycleSnapshot> = {}): CycleSnapshot {
     hygieneDue: false,
     githubReachable: true,
     githubAuthExpired: false,
+    corruption: null,
     ...over,
   };
 }
@@ -369,6 +370,19 @@ test("14행 — 새 코멘트를 반영 브리프로 보내고 장부에 적는�
   assert.deepEqual(out.tapeEvents, [{ kind: "review.arrived", reviews: pending }]);
 });
 
+test("14행 — 브리프가 장부 항목의 다른 필드(replied)를 지우지 않는다", () => {
+  const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
+  const ledger = led({ reviews: { "12": { known: [5], briefed: [5], rounds: 1, replied: [5] } } });
+  const out = nextCycleAction(snap({ pr, pendingReviews: [rev(6)], newReviews: [rev(6)] }), ledger);
+  assert.equal(kindOf(out), "briefReviews");
+  assert.deepEqual(out.ledger.reviews["12"], {
+    known: [5, 6],
+    briefed: [5, 6],
+    rounds: 1,
+    replied: [5],
+  });
+});
+
 test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
   const pr = { number: 12, state: "open" as const, headSha: "abc", mergeableState: null };
   const shot = snap({ pr });
@@ -390,6 +404,90 @@ test("14행 — PR 당 5 라운드를 다 쓰면 알림 한 번", () => {
   assert.equal(sixth.attention, "developer-notified");
   assert.deepEqual(
     nextCycleAction({ ...shot, pendingReviews: [rev(201)] }, sixth.ledger).notices,
+    [],
+  );
+});
+
+/** 14b행의 재료 — 랜딩이 적어 둔, 아직 보내지 못한 반려 이유 반영 턴. */
+const pendingRejection = { reasons: [{ ...rev(31), pr: 7 }], since: iso(NOW) };
+
+test("14b행 — 보내지 못한 반려 반영 턴을 보내고 예산 review:<pr> 를 쓴다, 턴 중에는 기다린다", () => {
+  const ledger = led({ reviews: { "7": { known: [], briefed: [], rounds: 0, pendingRejection } } });
+  const out = nextCycleAction(snap(), ledger);
+  assert.deepEqual(out.action, {
+    kind: "briefRejection",
+    pr: 7,
+    reasons: pendingRejection.reasons,
+  });
+  assert.equal(out.attention, "ai-fixing");
+  assert.equal(out.ledger.budgets["review:7"]?.spent, 1);
+  // 기록은 판정이 지우지 않는다 — 실제로 보낸 뒤 감독자가 지운다.
+  assert.deepEqual(out.ledger.reviews["7"]?.pendingRejection, pendingRejection);
+  // 도는 대화 사이에 반려 턴을 끼우지 않는다 — 기다리는 판정은 예산도 쓰지 않는다.
+  const busy = nextCycleAction(snap({ turnRunning: true }), ledger);
+  assert.equal(kindOf(busy), "none");
+  assert.equal(busy.ledger.budgets["review:7"], undefined);
+});
+
+test("14b행 — 예산 review:<pr> 가 다하면 알림 한 번을 올리고 기록을 지운다", () => {
+  let ledger = led({ reviews: { "7": { known: [], briefed: [], rounds: 0, pendingRejection } } });
+  for (let i = 0; i < 5; i += 1) {
+    const out = nextCycleAction(snap(), ledger);
+    assert.equal(kindOf(out), "briefRejection");
+    ledger = out.ledger; // 대화를 못 열어 기록이 남은 세계
+  }
+  const sixth = nextCycleAction(snap(), ledger);
+  assert.equal(kindOf(sixth), "none");
+  assert.deepEqual(sixth.notices, [
+    {
+      op: "raise",
+      key: "review:7:rejection",
+      reason: "반려 이유 반영 턴을 PR 당 라운드 상한 안에 보내지 못했습니다",
+    },
+  ]);
+  assert.equal(sixth.attention, "developer-notified");
+  assert.deepEqual(sixth.ledger.reviews["7"], { known: [], briefed: [], rounds: 0 });
+  assert.deepEqual(
+    nextCycleAction(snap(), sixth.ledger).notices,
+    [],
+    "기록이 없으니 다시 올리지 않는다",
+  );
+
+  // 14행이 라운드 초과 알림으로 escalated 를 이미 세운 PR 이어도 반려 알림은 따로 선다.
+  const rounded = nextCycleAction(
+    snap(),
+    led({
+      reviews: { "7": { known: [5], briefed: [5], rounds: 5, pendingRejection } },
+      budgets: { "review:7": { spent: 5, firstAt: iso(NOW), lastAt: iso(NOW), escalated: true } },
+    }),
+  );
+  assert.deepEqual(
+    rounded.notices.map((notice) => notice.key),
+    ["review:7:rejection"],
+  );
+});
+
+test("review:<pr>:rejection — 다음 요청이 서면 알림을 거둔다", () => {
+  const notice = { via: "issue" as const, ref: 30, raisedAt: iso(NOW), count: 1 };
+  const notices = { "review:7:rejection": notice };
+  const resolves = (out: ReturnType<typeof nextCycleAction>) =>
+    out.notices.filter((n) => n.op === "resolve").map((n) => n.key);
+  // 반려 직후 — 요청이 없다. 닫힌 PR 이 곧바로 알림을 거두지 않는다.
+  assert.deepEqual(resolves(nextCycleAction(snap(), led({ notices }))), []);
+  // 다음 요청이 열렸다 — 반려된 작업이 개발자에게 다시 갔다.
+  const next = { number: 9, state: "open" as const, headSha: "abc", mergeableState: null };
+  assert.deepEqual(
+    resolves(nextCycleAction(snap({ pr: next, handoffState: "open" }), led({ notices }))),
+    ["review:7:rejection"],
+  );
+  // 인증이 만료돼 요청을 못 읽는 세계에서는 거두지 않는다.
+  assert.deepEqual(
+    resolves(
+      nextCycleAction(
+        snap({ pr: next, handoffState: "open", githubAuthExpired: true }),
+        led({ notices }),
+      ),
+    ),
     [],
   );
 });
@@ -627,4 +725,85 @@ test("review:<pr>:rounds — 그 PR 이 더 이상 열려 있지 않으면 알�
     blind.notices.some((n) => n.op === "resolve"),
     false,
   );
+});
+
+// ————— 손상 행 (PLAN 단계 9) —————
+
+test("손상 행 — 무결성 행보다 앞서 재클론을 고르고, 절차와 손상을 원장에 적는다", () => {
+  // 남의 rebase(1행) · 더러운 트리(5행) · 밀린 푸시(12행)가 함께 있어도 손상이 먼저다.
+  const out = nextCycleAction(
+    snap({
+      corruption: "fatal: index file corrupt",
+      gitOp: "rebase",
+      dirtyFiles: 3,
+      localAheadOfRemote: 2,
+    }),
+    led(),
+  );
+  assert.equal(kindOf(out), "reclone");
+  assert.deepEqual(out.ledger.corrupt, { since: iso(NOW), detail: "fatal: index file corrupt" });
+  assert.deepEqual(out.ledger.reclone, { at: iso(NOW), salvage: null, movedTo: null });
+  assert.equal(out.ledger.budgets.reclone?.spent, 1);
+});
+
+test("손상 행 — 원장의 corrupt(fsck 가 본 것)만으로도 재클론한다", () => {
+  const corrupt = { since: iso(NOW - 60_000), detail: "missing blob 7898" };
+  const out = nextCycleAction(snap(), led({ corrupt }));
+  assert.equal(kindOf(out), "reclone");
+  assert.deepEqual(out.ledger.corrupt, corrupt, "처음 선 시각과 말을 지킨다");
+});
+
+test("손상 행 — 턴이 돌면 예 행(푸시)도 보지 않고 기다린다", () => {
+  const out = nextCycleAction(
+    snap({ corruption: "fatal: bad object HEAD", turnRunning: true, localAheadOfRemote: 2 }),
+    led(),
+  );
+  assert.equal(kindOf(out), "none");
+  assert.equal(out.ledger.reclone, null, "턴이 끝나기 전에는 절차를 시작하지 않는다");
+});
+
+test("손상 행 — 진행 중인 절차는 예산 없이 이어 간다(옮기기 전 → reclone, 옮긴 뒤 → restoreSalvage)", () => {
+  const salvage = {
+    dir: "/p/salvage/x",
+    branch: BRANCH,
+    bundleRef: `refs/heads/${BRANCH}`,
+    patch: true,
+  };
+  const budgets = {
+    reclone: { spent: 1, firstAt: iso(NOW), lastAt: iso(NOW), escalated: false },
+  };
+  const before = nextCycleAction(
+    snap({ corruption: "fatal: index file corrupt" }),
+    led({ budgets, reclone: { at: iso(NOW), salvage, movedTo: null } }),
+  );
+  assert.equal(kindOf(before), "reclone");
+  assert.equal(before.ledger.budgets.reclone?.spent, 1, "예산을 두 번 쓰지 않는다");
+  const after = nextCycleAction(
+    snap(),
+    led({ budgets, reclone: { at: iso(NOW), salvage, movedTo: "/p/repo.corrupt-x" } }),
+  );
+  assert.equal(kindOf(after), "restoreSalvage");
+});
+
+test("손상 행 — 하루 한 번을 다 쓰면 clone:corrupt 알림 한 번, 그 뒤로는 조용히", () => {
+  const corrupt = { since: iso(NOW), detail: "fatal: index file corrupt" };
+  const spent = {
+    reclone: {
+      spent: 1,
+      firstAt: iso(NOW - 3_600_000),
+      lastAt: iso(NOW - 3_600_000),
+      escalated: false,
+    },
+  };
+  const first = nextCycleAction(snap(), led({ corrupt, budgets: spent }));
+  assert.equal(kindOf(first), "none");
+  assert.deepEqual(first.notices, [
+    { op: "raise", key: "clone:corrupt", reason: "fatal: index file corrupt" },
+  ]);
+  assert.equal(first.attention, "developer-notified");
+  const second = nextCycleAction(snap(), first.ledger);
+  assert.deepEqual(second.notices, []);
+  // 하루가 지나면 새 사건 — 다시 재클론한다.
+  const nextDay = nextCycleAction(snap({ now: NOW + 25 * 3_600_000 }), first.ledger);
+  assert.equal(kindOf(nextDay), "reclone");
 });

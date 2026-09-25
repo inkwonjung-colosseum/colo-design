@@ -14,7 +14,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { DeveloperReview } from "@colo-design/protocol";
+import { probeCorruption } from "./clone-salvage.js";
 import { conflictMarkers } from "./conflict-markers.js";
+import { hygieneDue } from "./cycle-hygiene.js";
 import type { CycleLedger } from "./cycle-ledger.js";
 import type { CycleSnapshot } from "./cycle-reconcile.js";
 import type { GitHubClient } from "./github.js";
@@ -27,7 +29,7 @@ import type { RepoCore } from "./repo-core.js";
 export interface ObserveDeps {
   /** 이 클론에서 턴이 도는 중 — SessionManager.busyIn(root) 를 넣는다. */
   turnRunning: () => boolean;
-  /** 설치 해시가 바뀌었거나 node_modules 가 없음 — RepoWorkspace 의 bringup.dependenciesMoved() 같은 것. */
+  /** 설치 해시가 바뀌었거나 node_modules 가 없음 — fleet 은 `!RepoWorkspace.installUpToDate()` 를 넣는다. */
   installStale: () => boolean;
   /** RepoCore 의 gitHubClient 팩토리 — 토큰이 없으면 null. */
   github: () => GitHubClient | null;
@@ -124,8 +126,8 @@ async function countAfterPrHead(
 
 /**
  * 새 개발자 코멘트(L9) — 세 목록(인라인 · 리뷰 본문 · 요청 코멘트)에서 내
- * 로그인과 원장이 아는 id 를 뺀다. 봇 거르기 · 페이지네이션 · whoAmI 캐시는
- * 단계 7 의 일이다.
+ * 로그인과 원장이 아는 id 를 뺀다. 페이지네이션 · 봇 거르기 · whoAmI 캐시는
+ * 읽는 쪽(github.ts)이 이미 하고 있다(PLAN 단계 7).
  */
 async function collectNewReviews(
   client: GitHubClient,
@@ -197,9 +199,55 @@ async function collectNewReviews(
 }
 
 /**
+ * 손상된 클론의 스냅샷 — 손상 행(PLAN 단계 9)이 먼저 읽으므로 나머지는 중립값이다.
+ * 레지스트리가 아는 것(브랜치 · 베이스 · 넘긴 요청의 상태)만 그대로 싣는다.
+ */
+function corruptSnapshot(
+  core: RepoCore,
+  deps: ObserveDeps,
+  now: number,
+  corruption: string,
+): CycleSnapshot {
+  return {
+    now,
+    turnRunning: deps.turnRunning(),
+    gitOp: null,
+    conflictFiles: [],
+    markersLeft: [],
+    taggedStash: null,
+    headBranch: core.branch,
+    registryBranch: core.branch,
+    baseBranch: core.baseBranch,
+    originBaseExists: true,
+    defaultBranch: null,
+    dirtyFiles: 0,
+    aheadOfBase: 0,
+    behindBase: 0,
+    remoteBranchExists: true,
+    localAheadOfRemote: 0,
+    remoteAheadOfLocal: 0,
+    pr: null,
+    handoffState: core.openHandoff?.state ?? null,
+    commitsAfterPrHead: null,
+    newReviews: [],
+    pendingReviews: [],
+    reviewCount: null,
+    installStale: false,
+    hygieneDue: false,
+    githubReachable: true,
+    githubAuthExpired: deps.githubAuthExpired(),
+    corruption,
+  };
+}
+
+/**
  * 클론과 GitHub 을 읽어 스냅샷 하나를 만든다. `opts.fetch` 가 참이면 먼저
  * `git fetch origin <base>` 와(사이클 브랜치가 있으면) `origin <branch>` 를
  * 한다 — fetch 는 쓰기이므로 호출자가 차선 안에서 부른다고 가정한다.
+ *
+ * 손상 탐침이 가장 먼저다 (PLAN 단계 9) — 손상된 클론에서는 fetch 도 다른
+ * 읽기도 하지 않는다: 깨진 .git 을 건너뛴 git 은 부모 폴더의 저장소를 읽고 쓸
+ * 수 있고, 손상 행은 어차피 나머지 재료를 보지 않는다.
  */
 export async function observeCycle(
   core: RepoCore,
@@ -207,6 +255,9 @@ export async function observeCycle(
   deps: ObserveDeps,
   opts: { fetch: boolean; now: number },
 ): Promise<CycleSnapshot> {
+  const corruption = await probeCorruption(core);
+  if (corruption !== null) return corruptSnapshot(core, deps, opts.now, corruption);
+
   if (opts.fetch) {
     // 네트워크 실패는 삼킨다 — 지난 origin 으로 관찰이 계속된다.
     await core.git(["fetch", "origin", core.baseBranch]).catch(() => undefined);
@@ -361,8 +412,9 @@ export async function observeCycle(
     pendingReviews,
     reviewCount,
     installStale: deps.installStale(),
-    hygieneDue: false, // 단계 9 — 위생 기한을 세는 자리가 아직 없다
+    hygieneDue: hygieneDue(ledger, opts.now),
     githubReachable,
     githubAuthExpired: deps.githubAuthExpired(),
+    corruption: null,
   };
 }

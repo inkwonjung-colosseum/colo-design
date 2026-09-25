@@ -38,6 +38,8 @@ const CODEX_CAPABILITIES = {
   modelSelect: true,
   slashCommands: true,
   subtasks: false,
+  // 요약(/compact)이 없다 — 길이 초과 실패는 실패 카드가 사람의 손으로 남는다.
+  compact: false,
   // turn/steer — 도는 턴에 말을 실을 수 있는 유일한 와이어(experimentalApi).
   steer: true,
   // 브라우저 도구 주입 가능. 공급자 선언일 뿐 실제 제공은 host의

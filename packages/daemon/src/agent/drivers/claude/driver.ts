@@ -45,6 +45,9 @@ const CLAUDE_CAPABILITIES = {
   modelSelect: true,
   slashCommands: true,
   subtasks: true,
+  // 대화 요약(/compact) — CLI 가 슬래시 명령을 실행하고 요약 경계를 알려
+  // 온다(compact_boundary). 길이 초과 실패의 자기치유가 이것을 쓴다 (PLAN L12).
+  compact: true,
   // SDK 의 interrupt 는 턴을 자를 뿐 도는 턴에 실어 넣는 길이 없다.
   steer: false,
   // 브라우저 도구 주입 가능. 공급자 선언일 뿐 실제 제공은 host의

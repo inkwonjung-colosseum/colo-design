@@ -1,6 +1,86 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyFailure, classifyRetry, RETRY_DELAYS_MS } from "../src/turn-retry.ts";
+// `../dist` 임포트인 이유: turn-retry 는 이제 형제(budgets)를 `.js` 지정자로
+// 부른다 — src 직접 로드는 그 지정을 못 고친다(cycle-reconcile 와 같은 길).
+import { BUDGETS } from "../dist/budgets.js";
+import {
+  classifyFailure,
+  classifyRetry,
+  MAX_AUTO_REVIVES,
+  RETRY_DELAYS_MS,
+} from "../dist/turn-retry.js";
+
+test("사다리는 PLAN L7 의 다섯 계단이다", () => {
+  assert.deepEqual(RETRY_DELAYS_MS, [4_000, 16_000, 60_000, 300_000, 900_000]);
+  assert.equal(RETRY_DELAYS_MS.length, BUDGETS.turnRetry.attempts);
+});
+
+test("classifyRetry 는 계단을 차례로 오른다", () => {
+  for (const [attempt, delay] of RETRY_DELAYS_MS.entries()) {
+    const decision = classifyRetry({
+      attempt,
+      resultText: "temporary failure",
+      rateLimit: null,
+      now: 0,
+      delays: RETRY_DELAYS_MS,
+    });
+    assert.deepEqual(decision, { action: "retry", delayMs: delay });
+  }
+});
+
+test("로그인 만료 문장은 사다리를 타지 않고 auth 로 멈춘다", () => {
+  const sentences = [
+    "authentication_error: Invalid API key",
+    "invalid api key provided",
+    "OAuth token has expired",
+    "Please run /login to authenticate",
+    "You are not logged in",
+    "Request failed with status code 401",
+    "HTTP 401 Unauthorized",
+  ];
+  for (const resultText of sentences) {
+    assert.deepEqual(
+      classifyRetry({
+        attempt: 0,
+        resultText,
+        rateLimit: null,
+        now: 0,
+        delays: RETRY_DELAYS_MS,
+      }),
+      { action: "stop", reason: "auth" },
+      resultText,
+    );
+    assert.equal(classifyFailure(resultText), "auth", resultText);
+  }
+});
+
+test("한도 기다림은 24시간 상한 안에서만 기다린다", () => {
+  const now = 1_000_000_000_000;
+  // 상한 안(23시간 뒤 재충전) — 기다린다.
+  const within = classifyRetry({
+    attempt: 0,
+    resultText: "usage limit reached",
+    rateLimit: { status: "blocked", resetsAt: now + 23 * 60 * 60_000 },
+    now,
+    delays: RETRY_DELAYS_MS,
+  });
+  assert.equal(within.action, "wait");
+  // 상한 밖(25시간 뒤) — 기다리는 것이 아니라 잊는다.
+  const beyond = classifyRetry({
+    attempt: 0,
+    resultText: "usage limit reached",
+    rateLimit: { status: "blocked", resetsAt: now + 25 * 60 * 60_000 },
+    now,
+    delays: RETRY_DELAYS_MS,
+  });
+  assert.deepEqual(beyond, { action: "stop", reason: "limit-no-reset" });
+});
+
+test("되살리기 상한은 예산 표(10분 안에 3회)를 따른다", () => {
+  assert.equal(MAX_AUTO_REVIVES, 3);
+  assert.equal(BUDGETS.revive.max, 3);
+  assert.equal(BUDGETS.revive.windowMs, 10 * 60_000);
+});
 
 test("classifyFailure — 길이 문제는 length 다", () => {
   assert.equal(classifyFailure("prompt is too long: 250000 tokens > 200000 maximum"), "length");

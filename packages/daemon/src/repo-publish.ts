@@ -47,7 +47,7 @@ const SHOT_MEDIA_TYPES: Record<string, string> = {
 
 /** 캡처가 올라가는 병합되지 않는 브랜치 (PLAN L6 · O4) — 사이클 브랜치가
  *  아니므로 반영돼도 main 에 캡처가 쌓이지 않고, 지워져도 링크(sha)는 산다. */
-const ASSETS_BRANCH = "colo-design-assets";
+export const ASSETS_BRANCH = "colo-design-assets";
 /** 그 브랜치 안에서 캡처가 사는 폴더 — `<폴더>/<사이클 브랜치>/<이름>`. */
 const ASSETS_SHOTS_DIR = "shots";
 /**

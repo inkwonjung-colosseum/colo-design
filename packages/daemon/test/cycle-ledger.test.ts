@@ -52,7 +52,24 @@ function fullLedger(): CycleLedger {
     },
     notices: { "push:behind": { via: "pr", ref: 12, raisedAt: iso(T0), count: 1 } },
     branches: [{ name: "colo-design/20260924-1", endedAt: iso(T0), state: "merged" }],
-    hygiene: { gcAt: iso(T0) },
+    hygiene: {
+      gcAt: iso(T0),
+      assetsAt: iso(T0),
+      moveAt: iso(T0),
+      diskAt: iso(T0),
+      assets: { files: 3, bytes: 4096 },
+    },
+    corrupt: { since: iso(T0), detail: "fatal: index file corrupt" },
+    reclone: {
+      at: iso(T0),
+      salvage: {
+        dir: "/p/salvage/20260924T090000Z",
+        branch: "colo-design/20260924-1",
+        bundleRef: "refs/heads/colo-design/20260924-1",
+        patch: true,
+      },
+      movedTo: null,
+    },
   };
 }
 
@@ -125,6 +142,102 @@ test("review-ledger.json 을 reviews[pr].briefed 로 합친다 — 두 번 돌�
   assert.deepEqual(twice.reviews["13"], { known: [7], briefed: [7], rounds: 0 });
   // 모르는 모양은 그대로 돌려온다.
   assert.deepEqual(foldReviewLedger(once, "not json"), once);
+});
+
+/** 반려 이유 한 건 — DeveloperReview 의 모양. */
+const reason = {
+  id: 31,
+  kind: "review" as const,
+  author: "dev1",
+  body: "목록으로",
+  pr: 7,
+  at: iso(T0),
+};
+
+test("review-ledger 접기는 항목의 다른 필드를 지우지 않는다 — 재시작이 반려 대기를 잃지 않게", () => {
+  const pendingRejection = { reasons: [reason], since: iso(T0) };
+  const ledger: CycleLedger = {
+    ...emptyLedger(),
+    reviews: {
+      "7": {
+        known: [1],
+        briefed: [1],
+        rounds: 1,
+        replied: [1],
+        rejectionAsked: true,
+        pendingRejection,
+      },
+    },
+  };
+  assert.deepEqual(foldReviewLedger(ledger, { entries: { "7": [2] } }).reviews["7"], {
+    known: [1, 2],
+    briefed: [1, 2],
+    rounds: 1,
+    replied: [1],
+    rejectionAsked: true,
+    pendingRejection,
+  });
+});
+
+test("rejectionAsked · pendingRejection 이 왕복한다 — 깨진 이유는 버리고 항목은 산다", () => {
+  const inline = { ...reason, id: 32, kind: "inline" as const, path: "src/a.ts", line: 3 };
+  const pendingRejection = { reasons: [reason, inline], since: iso(T0) };
+  const parsed = parseLedger({
+    reviews: {
+      "7": {
+        known: [],
+        briefed: [],
+        rounds: 0,
+        rejectionAsked: true,
+        pendingRejection: {
+          since: iso(T0),
+          reasons: [reason, inline, { id: "x" }, { ...reason, id: 33, kind: "bot" }],
+        },
+      },
+      // 참이 아닌 표식 · 살아남은 이유가 없는 대기는 없는 것으로 친다.
+      "8": {
+        known: [],
+        briefed: [],
+        rounds: 0,
+        rejectionAsked: "yes",
+        pendingRejection: { since: iso(T0), reasons: [{ id: 1 }] },
+      },
+    },
+  });
+  assert.deepEqual(parsed.reviews["7"], {
+    known: [],
+    briefed: [],
+    rounds: 0,
+    rejectionAsked: true,
+    pendingRejection,
+  });
+  assert.deepEqual(parsed.reviews["8"], { known: [], briefed: [], rounds: 0 });
+  assert.deepEqual(parseLedger(JSON.parse(JSON.stringify(parsed))), parsed);
+});
+
+test("옛 reject:<pr> 표식 — 읽을 때 notices 에서 걷어 reviews[pr].rejectionAsked 로 옮긴다", () => {
+  const notice = { via: "pr", ref: 7, raisedAt: iso(T0), count: 1 };
+  const parsed = parseLedger({
+    notices: { "reject:7": notice, "reject:9": notice, "push:behind": notice },
+    reviews: { "7": { known: [1], briefed: [1], rounds: 1 } },
+  });
+  // 서 있는 알림만 남는다 — 청구 표식은 주의(developer-notified)의 재료가 아니다.
+  assert.deepEqual(Object.keys(parsed.notices), ["push:behind"]);
+  assert.deepEqual(parsed.reviews["7"], {
+    known: [1],
+    briefed: [1],
+    rounds: 1,
+    rejectionAsked: true,
+  });
+  // 장부가 없던 PR 은 빈 장부에서 시작한다.
+  assert.deepEqual(parsed.reviews["9"], {
+    known: [],
+    briefed: [],
+    rounds: 0,
+    rejectionAsked: true,
+  });
+  // 옮긴 원장을 다시 읽어도 같다(I5).
+  assert.deepEqual(parseLedger(JSON.parse(JSON.stringify(parsed))), parsed);
 });
 
 test("푸시 실패는 백오프(30초에서 두 배, 최대 10분)로 다음 시도를 미룬다", () => {

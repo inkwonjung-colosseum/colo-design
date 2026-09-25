@@ -5,16 +5,17 @@
  * 돌려준다 — 올리는 일은 감독자(cycle-supervisor)가 developer-notice 로 한다.
  *
  * 턴 중 규칙(L3): "턴 중 아니요" 행이 맞았는데 그 클론에서 턴이 돌면 그 행을
- * 건너뛰고 "예" 행(7 · 12 · 13 · 14)만 계속 본다. 단 1~4행(클론의 무결성)은
- * 예 행도 보지 않고 none — 깨진 클론에서 푸시 · 제출을 하지 않는다. 예외는
+ * 건너뛰고 "예" 행(7 · 12 · 13 · 14)만 계속 본다. 단 손상 행과 1~4행(클론의
+ * 무결성)은 예 행도 보지 않고 none — 깨진 클론에서 푸시 · 제출을 하지 않는다. 예외는
  * 하나: 12행 푸시는 이미 커밋된 것을 올리는 일이라 작업 트리를 건드리지
  * 않으므로 2행(도구의 병합 충돌) 동안에도 된다.
  *
  * 알림의 "한 번"(L7): 예산 소진으로 올리는 알림(conflict:stuck · review:*:rounds ·
- * base-missing)은 예산 항목의 escalated 표식으로, 밀림 · 인증 알림(push:behind ·
+ * base-missing · clone:corrupt)은 예산 항목의 escalated 표식으로, 밀림 · 인증 알림(push:behind ·
  * push:auth)은 원장의 서 있는 알림(notices) 기록으로 여기서 억제한다. 조정자가
  * 실제로 올린 뒤 notices 에 적고, 풀리면 지운다 — 이 함수는 그 기록을 읽기만
- * 한다.
+ * 한다. 반려 반영 턴의 예산 소진 알림(review:*:rejection)은 올리는 판정이 보낼
+ * 기록(pendingRejection)을 함께 지우는 것으로 한 번이다(14b행).
  */
 
 import type { DeveloperReview } from "@colo-design/protocol";
@@ -68,6 +69,11 @@ export interface CycleSnapshot {
   hygieneDue: boolean;
   githubReachable: boolean;
   githubAuthExpired: boolean;
+  /**
+   * 손상 탐침의 말 (PLAN 단계 9) — HEAD 나 인덱스를 읽는 명령이 손상을 말했다.
+   * null 이면 탐침은 멀쩡했다(fsck 가 본 깊은 손상은 원장의 corrupt 에 산다).
+   */
+  corruption: string | null;
 }
 
 export type CycleAction =
@@ -89,8 +95,11 @@ export type CycleAction =
   | { kind: "push" }
   | { kind: "submitStep" }
   | { kind: "briefReviews"; pr: number; reviews: DeveloperReview[] }
+  | { kind: "briefRejection"; pr: number; reasons: DeveloperReview[] }
   | { kind: "reinstall" }
-  | { kind: "hygiene" };
+  | { kind: "hygiene" }
+  | { kind: "reclone" }
+  | { kind: "restoreSalvage" };
 
 export interface NoticeIntent {
   op: "raise" | "resolve";
@@ -197,6 +206,8 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   let reviews = ledger.reviews;
   let ended = ledger.ended;
   let lastPr = ledger.lastPr;
+  let corrupt = ledger.corrupt;
+  let reclone = ledger.reclone;
   let aiFixing = false;
 
   const decide = (action: CycleAction): CycleDecision => ({
@@ -205,7 +216,7 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
     attention: pickAttention(attentions, aiFixing),
     attentions: [...attentions],
     aiFixing,
-    ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr },
+    ledger: { ...ledger, budgets, pendingOp, push, reviews, ended, lastPr, corrupt, reclone },
     tapeEvents,
     handoffEvents,
   });
@@ -289,6 +300,40 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
   // 여기서 거둔다. 서 있는 동안은 그대로 둔다(판정이 모르는 키는 건드리지 않는다).
   if (pending === null && ledger.notices["conflict:stuck"] !== undefined) {
     notices.push({ op: "resolve", key: "conflict:stuck" });
+  }
+
+  // ————— 손상 행 — 클론이 손상됐다 (PLAN 단계 9) —————
+  // 무결성 행(0~4)보다 앞선다: 손상된 클론의 git 읽기는 믿을 수 없고, 그 위의
+  // 어떤 조치(abort · checkout · 보관)도 손상을 넓힐 뿐이다. 재클론은 작업
+  // 트리를 통째로 옮기므로 턴이 돌면 기다린다 — 예 행(푸시 · 제출)도 보지
+  // 않는다(깨진 클론에서 올리지 않는다).
+  if (reclone !== null) {
+    // 절차가 진행 중 — 옮기기 전이면 이어서 옮기고, 옮긴 뒤면(새 클론이 섰다)
+    // 되살린다. 예산은 절차를 시작할 때 한 번만 쓴다.
+    if (turnRunning) return integrityWait();
+    return decide({ kind: reclone.movedTo === null ? "reclone" : "restoreSalvage" });
+  }
+  const signal = snapshot.corruption ?? null;
+  if (corrupt === null && signal !== null) {
+    corrupt = { since: new Date(now).toISOString(), detail: signal };
+  }
+  if (corrupt !== null) {
+    if (turnRunning) return integrityWait();
+    const once = spend(budgets, "reclone", BUDGETS.reclone, now);
+    budgets = once.ledger;
+    if (once.allowed) {
+      // 절차의 시작을 판정 순간에 적는다 — 판정과 실행 사이에 끊겨도 다음 틱이
+      // 같은 절차를 이어받고 예산을 두 번 쓰지 않는다(I5).
+      reclone = { at: new Date(now).toISOString(), salvage: null, movedTo: null };
+      return decide({ kind: "reclone" });
+    }
+    // 하루 한 번을 다 썼다 — 알림은 한 번, 주의는 "개발자에게 알렸어요"(L7).
+    attentions.push("developer-notified");
+    if (!budgets.reclone?.escalated) {
+      notices.push({ op: "raise", key: "clone:corrupt", reason: corrupt.detail });
+      budgets = markEscalated(budgets, "reclone");
+    }
+    return decide({ kind: "none" });
   }
 
   // ————— 0행 — 도구의 조작 흔적(pendingOp)이 남았는데 git 은 이미 끝났다 —————
@@ -410,6 +455,15 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
         pr.state === "closed";
       if (gone) notices.push({ op: "resolve", key });
     }
+  }
+  // review:<pr>:rejection 알림(14b행)은 다음 요청이 서면 풀린다 — 반려된 작업이
+  // 새 요청으로 개발자에게 다시 갔다. 그 PR 은 올릴 때 이미 닫혀 있으므로 위의
+  // "열려 있지 않음" 잣대로는 올리자마자 풀린다. 인증 만료로 pr 을 못 읽는
+  // 세계(pr === null)에서는 거두지 않는다.
+  for (const key of Object.keys(ledger.notices)) {
+    const match = /^review:(\d+):rejection$/.exec(key);
+    if (match === null) continue;
+    if (pr !== null && pr.number !== Number(match[1])) notices.push({ op: "resolve", key });
   }
 
   // ————— 8 · 9행 — PR 이 병합되거나 닫혔다(L4 랜딩) —————
@@ -533,9 +587,12 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       const entryKey = String(pr.number);
       const prev = reviews[entryKey] ?? { known: [], briefed: [], rounds: 0 };
       const ids = snapshot.pendingReviews.map((review) => review.id);
+      // 항목의 다른 필드(replied — 이미 답한 코멘트, 반려 표식)는 그대로 둔다 —
+      // 지우면 다음 라운드의 정산이 앞 라운드의 답장 기록을 잃는다.
       reviews = {
         ...reviews,
         [entryKey]: {
+          ...prev,
           known: [...new Set([...prev.known, ...ids])],
           briefed: [...new Set([...prev.briefed, ...ids])],
           rounds: budgets[key]?.spent ?? prev.rounds + 1,
@@ -554,6 +611,41 @@ export function nextCycleAction(snapshot: CycleSnapshot, ledger: CycleLedger): C
       budgets = markEscalated(budgets, key);
     }
     // 조치는 없다 — 아래 위생 행은 계속 본다.
+  }
+
+  // ————— 14b 행 — 보내지 못한 반려 이유 반영 턴(L9 · 단계 7) —————
+  // 랜딩(9행)은 이유를 reviews[pr].pendingRejection 에 적고 떠난다 — 턴은
+  // 여기서 나가고, 대화를 못 열었으면 기록이 남아 다음 틱이 다시 보낸다.
+  // 턴 중 아니요: 도는 대화 사이에 반려 턴을 끼우지 않는다. 예산은 14행과 같은
+  // review:<pr> — 반려 반영도 그 PR 의 반영 한 라운드다. 시도하는 순간 쓴다:
+  // 못 연 대화도 한 번이다(14행의 보내기 거절과 같다). 다하면 알림 한 번을
+  // 올리고 기록을 지운다 — 도구가 손을 놓았으니 남겨 봐야 틱마다 같은 판정이
+  // 되풀이될 뿐이고, 지우는 것이 곧 알림의 "한 번"이다. 14행의 escalated
+  // 표식을 쓰지 않는 이유: 라운드 초과 알림이 이미 그 표식을 세웠을 수 있다.
+  if (!turnRunning) {
+    for (const [entryKey, entry] of Object.entries(reviews)) {
+      const pendingRejection = entry.pendingRejection;
+      if (pendingRejection === undefined) continue;
+      const key = `review:${entryKey}`;
+      const round = spend(budgets, key, BUDGETS.reviewRounds, now);
+      budgets = round.ledger;
+      if (round.allowed) {
+        aiFixing = true;
+        return decide({
+          kind: "briefRejection",
+          pr: Number(entryKey),
+          reasons: pendingRejection.reasons,
+        });
+      }
+      attentions.push("developer-notified");
+      notices.push({
+        op: "raise",
+        key: `${key}:rejection`,
+        reason: "반려 이유 반영 턴을 PR 당 라운드 상한 안에 보내지 못했습니다",
+      });
+      const { pendingRejection: _dropped, ...rest } = entry;
+      reviews = { ...reviews, [entryKey]: rest };
+    }
   }
 
   // ————— 15행 — 설치가 낡았다(L3 15행) —————

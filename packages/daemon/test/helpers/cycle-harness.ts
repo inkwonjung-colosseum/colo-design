@@ -143,6 +143,8 @@ interface MemPull {
   state: "open" | "closed";
   merged: boolean;
   mergeableState: string | null;
+  /** 닫힘(병합 · 반려) 시각 — 반려 이유의 7일 창 재료 (PLAN L9). */
+  closedAt: string | null;
 }
 
 interface MemIssue {
@@ -153,11 +155,14 @@ interface MemIssue {
   labels: string[];
   assignees: string[];
 }
-
 interface MemComment {
   id: number;
   login: string;
   body: string;
+  /** GitHub 의 계정 종류 — "Bot" 행은 봇 거르기(isBotRow)의 재료다. */
+  type: string;
+  /** 만든 시각(ISO) — 반려 이유의 7일 창이 읽는다 (PLAN L9). */
+  at: string;
 }
 
 /**
@@ -169,8 +174,12 @@ interface MemComment {
 export class MemoryGitHub implements RestTransport {
   private expired = false;
   private pullCreatesFail = false;
+  /** 저장소가 옮겨진 뒤의 이름 — 없으면 물은 이름 그대로 답한다. */
+  private movedTo: string | null = null;
   private nextNumber = 1;
   private nextCommentId = 1;
+  /** /user 호출 수 — whoAmI 캐시(PLAN L9) 시험의 잣자리. */
+  private userCallCount = 0;
   private readonly pulls = new Map<number, MemPull>();
   private readonly pullComments = new Map<number, MemComment[]>();
   private readonly reviews = new Map<number, Array<MemComment & { state: string }>>();
@@ -196,13 +205,14 @@ export class MemoryGitHub implements RestTransport {
     const json = (status: number, payload: unknown) => this.json(status, payload);
 
     if (input.method === "GET" && path === "/user") {
+      this.userCallCount += 1;
       return json(200, { login: "colo-planner" });
     }
     if (seg[0] === "repos" && seg.length >= 3) {
       const rest = seg.slice(3);
       if (input.method === "GET" && rest.length === 0) {
         return json(200, {
-          full_name: `${seg[1]}/${seg[2]}`,
+          full_name: this.movedTo ?? `${seg[1]}/${seg[2]}`,
           default_branch: "main",
           permissions: { push: true },
         });
@@ -257,18 +267,40 @@ export class MemoryGitHub implements RestTransport {
           return json(201, {});
         }
         if (rest.length === 3 && rest[2] === "comments" && input.method === "GET") {
-          return json(200, this.commentJson(this.pullComments.get(number) ?? []));
+          return this.paged(input.url, path, this.commentJson(this.pullComments.get(number) ?? []));
         }
         if (rest.length === 3 && rest[2] === "reviews" && input.method === "GET") {
-          return json(
-            200,
+          return this.paged(
+            input.url,
+            path,
             (this.reviews.get(number) ?? []).map((row) => ({
               id: row.id,
-              user: { login: row.login },
+              user: { login: row.login, type: row.type },
               body: row.body,
               state: row.state,
+              submitted_at: row.at,
             })),
           );
+        }
+        // POST …/comments/{id}/replies — 자동 답장(PLAN L9)이 스레드 답글을
+        // 올리는 말단. 답장은 인라인 목록 끝에 붙는다(GitHub 과 같은 모양).
+        if (
+          rest.length === 5 &&
+          rest[2] === "comments" &&
+          rest[4] === "replies" &&
+          input.method === "POST"
+        ) {
+          const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
+          const id = this.nextCommentId++;
+          const row: MemComment = {
+            id,
+            login: "colo-planner",
+            body: String(payload.body ?? ""),
+            type: "User",
+            at: new Date().toISOString(),
+          };
+          this.pullComments.set(number, [...(this.pullComments.get(number) ?? []), row]);
+          return json(201, this.commentJson([row])[0]);
         }
       }
       if (rest[0] === "issues") {
@@ -310,14 +342,24 @@ export class MemoryGitHub implements RestTransport {
 
         if (rest.length === 3 && rest[2] === "comments") {
           if (input.method === "GET") {
-            return json(200, this.commentJson(this.issueComments.get(number) ?? []));
+            return this.paged(
+              input.url,
+              path,
+              this.commentJson(this.issueComments.get(number) ?? []),
+            );
           }
           if (input.method === "POST") {
             const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
             const id = this.nextCommentId++;
-            const row = { id, login: "colo-planner", body: String(payload.body ?? "") };
+            const row: MemComment = {
+              id,
+              login: "colo-planner",
+              body: String(payload.body ?? ""),
+              type: "User",
+              at: new Date().toISOString(),
+            };
             this.issueComments.set(number, [...(this.issueComments.get(number) ?? []), row]);
-            return json(201, { id: row.id, user: { login: row.login }, body: row.body });
+            return json(201, this.commentJson([row])[0]);
           }
         }
         // PATCH /issues/comments/{id} — rest 는 ["issues","comments","<id>"].
@@ -354,6 +396,27 @@ export class MemoryGitHub implements RestTransport {
     };
   }
 
+  /**
+   * 목록의 한 페이지 (PLAN L9) — per_page · page 를 읽고 남은 페이지가 있으면
+   * `Link` 의 next 로 알린다. 클라이언트의 페이지네이션(listPages)이 이
+   * 헤더를 따라간다.
+   */
+  private paged(url: string, path: string, rows: unknown[]) {
+    const query = new URL(url, "https://github.test").searchParams;
+    const perPage = Math.max(1, Number(query.get("per_page")) || 30);
+    const page = Math.max(1, Number(query.get("page")) || 1);
+    const slice = rows.slice((page - 1) * perPage, page * perPage);
+    const headers: Record<string, string> = {};
+    if (page * perPage < rows.length) {
+      headers.link = `<${path}?per_page=${perPage}&page=${page + 1}>; rel="next"`;
+    }
+    return {
+      status: 200,
+      body: new TextEncoder().encode(JSON.stringify(slice)),
+      headers,
+    };
+  }
+
   private pullJson(pull: MemPull) {
     return {
       number: pull.number,
@@ -369,11 +432,22 @@ export class MemoryGitHub implements RestTransport {
       requested_reviewers: [],
       head: { ref: pull.head, sha: pull.headSha },
       base: { ref: pull.base },
+      closed_at: pull.closedAt,
     };
   }
 
   private commentJson(rows: MemComment[]) {
-    return rows.map((row) => ({ id: row.id, user: { login: row.login }, body: row.body }));
+    return rows.map((row) => ({
+      id: row.id,
+      user: { login: row.login, type: row.type },
+      body: row.body,
+      created_at: row.at,
+    }));
+  }
+
+  /** /user 를 몇 번 불렀나 — whoAmI 캐시(PLAN L9)의 잣대. */
+  get userCalls(): number {
+    return this.userCallCount;
   }
 
   /** PR 생성 실패를 푼다 — 예산 시험의 복구 축. */
@@ -430,6 +504,7 @@ export class MemoryGitHub implements RestTransport {
       state: "open",
       merged: false,
       mergeableState: null,
+      closedAt: null,
     });
     return number;
   }
@@ -464,6 +539,7 @@ export class MemoryGitHub implements RestTransport {
     }
     pull.state = "closed";
     pull.merged = true;
+    pull.closedAt = new Date().toISOString();
   }
 
   /** 병합 없이 닫는다 — 반려. */
@@ -471,6 +547,7 @@ export class MemoryGitHub implements RestTransport {
     const pull = this.pulls.get(number);
     if (pull === undefined) throw new Error(`MemoryGitHub: PR #${number} 이 없습니다`);
     pull.state = "closed";
+    pull.closedAt = new Date().toISOString();
   }
 
   setMergeableState(number: number, state: string | null): void {
@@ -481,7 +558,8 @@ export class MemoryGitHub implements RestTransport {
 
   /** 코멘트를 단다 — kind: 인라인(pull) · 리뷰 본문(review) · 요청 코멘트(issue).
    *  review 의 state 는 GitHub 의 판정 단어다 — CHANGES_REQUESTED 가
-   *  getPullRequest 의 changes_requested 를 만든다. */
+   *  getPullRequest 의 changes_requested 를 만든다. bot 을 켜면 CI 봇의
+   *  말이 되어 봇 거르기(PLAN L9)의 시험 재료가 된다. */
   addComment(
     number: number,
     opts: {
@@ -489,10 +567,18 @@ export class MemoryGitHub implements RestTransport {
       login?: string;
       body?: string;
       state?: string;
+      bot?: boolean;
     } = {},
   ): number {
     const id = this.nextCommentId++;
-    const row = { id, login: opts.login ?? "dev1", body: opts.body ?? "이 부분 고쳐 주세요" };
+    const login = opts.login ?? "dev1";
+    const row: MemComment = {
+      id,
+      login,
+      body: opts.body ?? "이 부분 고쳐 주세요",
+      type: opts.bot === true || login.endsWith("[bot]") ? "Bot" : "User",
+      at: new Date().toISOString(),
+    };
     const kind = opts.kind ?? "issue";
     if (kind === "pull") {
       this.pullComments.set(number, [...(this.pullComments.get(number) ?? []), row]);
@@ -507,9 +593,19 @@ export class MemoryGitHub implements RestTransport {
     return id;
   }
 
+  /** 인라인 코멘트(스레드 답장 포함) — 자동 답장 시험의 잣대. */
+  pullCommentsFor(number: number): MemComment[] {
+    return this.pullComments.get(number) ?? [];
+  }
+
   /** 이후의 요청은 전부 401 — 연결 코드가 만료된 세계. */
   expireAuth(): void {
     this.expired = true;
+  }
+
+  /** 저장소를 옮긴다 — 옛 이름으로 물어도 새 full_name 을 답한다(GitHub 의 되돌림). */
+  moveRepo(fullName: string): void {
+    this.movedTo = fullName;
   }
 
   /** 개발자 알림이 연 이슈 — 시험이 상태 · 본문 · 코멘트를 읽는다. */
@@ -660,7 +756,6 @@ export async function makeScene(opts: HarnessCoreOptions = {}): Promise<Scene> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // makeSupervisedScene — RepoWorkspace + CycleSupervisor 를 같은 뿌리에 세운다
 // ---------------------------------------------------------------------------
 
@@ -688,6 +783,10 @@ export interface SupervisedScene extends Scene {
   /** 수명 설정 — 병합된 원격 브랜치를 지울지(기본 true). */
   deleteMergedBranches: boolean;
   /** 활성 프로젝트인가 — timer 틱의 fetch 판정이 읽는다(기본 true). */
+  /** 수명 설정 — 개발자 코멘트 자동 답장을 할지 (PLAN L9, 기본 true). */
+  autoReply: boolean;
+  /** 자동 답장의 대리 표기에 적을 작성자 이름 (기본 null → "사용자"). */
+  authorName: string | null;
   active: boolean;
   /** L6 제출 — PR 제목의 프로젝트 이름 (기본 "하네스 프로젝트"). */
   projectName: string;
@@ -695,6 +794,18 @@ export interface SupervisedScene extends Scene {
   shots: HandoffShot[];
   /** 원장 파일의 자리 — 재시작 흉내(S7)가 같은 경로로 다시 세운다. */
   ledgerPath: string;
+  /** 켜면 openThread 가 null 을 돌린다 — 대화를 열 수 없는 세계(반려 반영 재시도의 시험축). */
+  refuseThread: boolean;
+  /** 수명 설정 — 반려 브랜치를 남기는 날(기본 14). 위생 시험이 바꾼다. */
+  keepRejectedDays: number;
+  /** onUrlChange 가 모은 주소 — 레지스트리에 적혔을 것들. */
+  urlChanges: Array<string | null>;
+  /** 가짜 statfs 가 답하는 디스크 여유(바이트, 기본 100GB) — 디스크 시험이 바꾼다. */
+  freeBytes: number;
+  /** raiseMachineNotice · resolveMachineNotice 가 모은 기계 전체 알림. */
+  machineNotices: Array<{ op: "raise" | "resolve"; key: string; detail?: string }>;
+  /** 설치 판정(15행) — 없으면 늘 최신. fleet 처럼 워크스페이스의 판정을 겨눌 수 있다. */
+  installJudge: (() => boolean) | null;
 }
 
 /**
@@ -707,10 +818,12 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const clone = await makeClone(remote);
   const github = new MemoryGitHub(remote);
   process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
+  const urlChanges: Array<string | null> = [];
   const workspace = new RepoWorkspace({
     root: clone.path,
     url: remote.path,
     onStatus: () => {},
+    onUrlChange: (url) => urlChanges.push(url),
     baseBranch: opts.baseBranch ?? "main",
     cycle: { branch: opts.branch ?? null, handoff: opts.handoff ?? null },
     gitHubClient: () => new GitHubClient("harness-token", github),
@@ -723,11 +836,19 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const scene = {
     retargetedTo: null as string | null,
     refuseReviewSend: false,
+    refuseThread: false,
     deleteMergedBranches: true,
     active: true,
     projectName: "하네스 프로젝트",
     shots: [] as HandoffShot[],
+    // PLAN L9 자동 답장의 재료 — 초대 v4 의 lifecycle.autoReply · machine 의 이름.
+    autoReply: true,
+    authorName: null as string | null,
+    keepRejectedDays: 14,
+    freeBytes: 100 * 1024 ** 3,
+    installJudge: null as (() => boolean) | null,
   };
+  const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string }> = [];
   const transitions: Array<{ kind: string; at: string; count?: number }> = [];
@@ -740,9 +861,16 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       core,
       workspace,
       ledgerPath,
+      autoReply: () => scene.autoReply,
+      authorName: () => scene.authorName,
       busy: () => false,
-      installStale: () => false,
+      installStale: () => scene.installJudge?.() ?? false,
       deleteMergedBranches: () => scene.deleteMergedBranches,
+      keepRejectedDays: () => scene.keepRejectedDays,
+      // 디스크 (O8) — 시험 기계의 실제 여유를 읽지 않는다.
+      statfs: async () => ({ bavail: Math.floor(scene.freeBytes / 4096), bsize: 4096 }),
+      raiseMachineNotice: (key, detail) => machineNotices.push({ op: "raise", key, detail }),
+      resolveMachineNotice: (key) => machineNotices.push({ op: "resolve", key }),
       // L6 제출 — 장면이 갈아끼우는 재료들.
       projectName: () => scene.projectName,
       commentsFile: () => join(dirname(ledgerPath), "comments.json"),
@@ -751,10 +879,10 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       githubAuthExpired: () => false,
       slug: () => core.repoSlug(),
       isActive: () => scene.active,
-      openThread: () => ({ send: (text) => briefs.push(text) }),
+      openThread: async () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
       raiseNotice: (key, text) => notices.push({ key, text }),
       onPrTransition: (kind, at, count) => transitions.push({ kind, at, count }),
-      onNewReviews: (pr, reviews) => {
+      onNewReviews: async (pr, reviews) => {
         if (scene.refuseReviewSend) return false;
         reviewBriefs.push({ pr, ids: reviews.map((r) => r.id) });
         return true;
@@ -790,11 +918,29 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     set refuseReviewSend(v: boolean) {
       scene.refuseReviewSend = v;
     },
+    get refuseThread() {
+      return scene.refuseThread;
+    },
+    set refuseThread(v: boolean) {
+      scene.refuseThread = v;
+    },
     get deleteMergedBranches() {
       return scene.deleteMergedBranches;
     },
     set deleteMergedBranches(v: boolean) {
       scene.deleteMergedBranches = v;
+    },
+    get autoReply() {
+      return scene.autoReply;
+    },
+    set autoReply(v: boolean) {
+      scene.autoReply = v;
+    },
+    get authorName() {
+      return scene.authorName;
+    },
+    set authorName(v: string | null) {
+      scene.authorName = v;
     },
     get active() {
       return scene.active;
@@ -814,11 +960,31 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     set shots(v: HandoffShot[]) {
       scene.shots = v;
     },
+    get keepRejectedDays() {
+      return scene.keepRejectedDays;
+    },
+    set keepRejectedDays(v: number) {
+      scene.keepRejectedDays = v;
+    },
+    get freeBytes() {
+      return scene.freeBytes;
+    },
+    set freeBytes(v: number) {
+      scene.freeBytes = v;
+    },
+    get installJudge() {
+      return scene.installJudge;
+    },
+    set installJudge(v: (() => boolean) | null) {
+      scene.installJudge = v;
+    },
+    machineNotices,
     setNow: (ms) => {
       nowMs = ms;
     },
     respawn: spawn,
     ledgerPath,
+    urlChanges,
     observe: (o = {}) => {
       const deps: ObserveDeps = {
         turnRunning: () => false,
