@@ -69,6 +69,12 @@ const state = {
    * 권한 확인).
    */
   scopes: undefined,
+  /**
+   * /user/repos 첫 응답의 github-authentication-token-expiration — 만료일이
+   * 있는 코드만 실어 온다(undefined 아직, null 없음). 브라우저는 CORS 로
+   * 노출된 머리글만 읽으므로 못 읽으면 조용히 지나간다(U17).
+   */
+  tokenExpires: undefined,
   /** 개발자 알림(Slack) — 웹훅 주소 또는 봇 토큰+채널. */
   slackWebhook: "",
   slackBotToken: "",
@@ -325,6 +331,7 @@ async function loadRepos() {
   if (!token || state.listBusy) return;
   state.listBusy = true;
   state.repos = [];
+  state.tokenExpires = undefined;
   state.listStatus = "레포 목록을 불러오는 중…";
   renderStatus();
   let url = `${API_BASE}/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&per_page=100`;
@@ -332,6 +339,11 @@ async function loadRepos() {
   try {
     for (let page = 0; page < 10; page += 1) {
       const reply = await fetch(url, { headers: apiHeaders() });
+      // 만료일(U17) — 첫 응답의 머리글에서 한 번만 읽는다. 만료일이 없는
+      // 코드는 머리글이 오지 않고, CORS 로 노출되지 않으면 null — 조용히 지나간다.
+      if (state.tokenExpires === undefined) {
+        state.tokenExpires = reply.headers.get("github-authentication-token-expiration");
+      }
       // 권한 확인(PLAN L11): 고전 토큰은 x-oauth-scopes 에 범위를 실어
       // 보낸다 — `repo` 가 있으면 저장소에 알림을 남길 수 있다고 본다.
       // 세밀 토큰은 헤더가 없어 확인할 수 없다(null).
@@ -393,9 +405,24 @@ async function loadRepos() {
   }
 }
 
+/** 만료일 머리글의 한 줄 — 못 읽었거나 없으면 null(조용히 지나간다, U17). */
+function tokenExpiryNote() {
+  if (!state.tokenExpires) return null;
+  const end = new Date(state.tokenExpires).getTime();
+  if (Number.isNaN(end)) return null;
+  const days = Math.ceil((end - Date.now()) / 86_400_000);
+  if (days <= 0) return null;
+  const date = new Date(end);
+  return days <= 30
+    ? `이 코드는 ${days}일 뒤 만료돼요 — 더 긴 만료일의 코드를 권해요`
+    : `이 코드는 ${date.getMonth() + 1}월 ${date.getDate()}일까지예요`;
+}
+
 function renderStatus() {
-  reposStatus.hidden = state.listStatus === "";
-  reposStatus.textContent = state.listStatus;
+  const note = tokenExpiryNote();
+  reposStatus.hidden = state.listStatus === "" && note === null;
+  reposStatus.textContent =
+    note === null || state.listStatus === "" ? state.listStatus : `${state.listStatus} · ${note}`;
 }
 
 /** github.com 의 owner/repo 두 조각 — 아니면 null(확인하지 않는다). */

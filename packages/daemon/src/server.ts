@@ -34,6 +34,7 @@ import { Escalation } from "./escalation.js";
 import { ensureGitGuardHooks } from "./git-guard.js";
 import { parseRepoSlug } from "./github.js";
 import { GitHubBridge } from "./github-bridge.js";
+import { expiryJudgement, expiryNoticeStep } from "./github-expiry.js";
 import { HandoffPreviews } from "./handoff-preview.js";
 import { createFileLogger, type DaemonLogger } from "./log.js";
 import { MachineTurns } from "./machine-provider.js";
@@ -502,6 +503,12 @@ export class DaemonServer {
           void this.developerNotice.resolve("github:auth", null);
         }
         void this.status().then((status) => this.broadcast({ type: "status", status }));
+      },
+      // 연결 코드의 만료 예정(U17) — 머리글에서 읽은 값이 바뀔 때만 온다.
+      // machine.json 에 견줘 두므로 다시 켠 직후 첫 관찰 전에도 설정 줄이 답한다.
+      onExpiryChange: (iso) => {
+        this.machineSetting.set("githubTokenExpiresAt", iso);
+        this.noteTokenExpiry(iso);
       },
     });
     // 개발자 알림 (PLAN L11) — GitHub 우선, Slack 보조. 프로젝트 알림의 상태는
@@ -1652,6 +1659,9 @@ export class DaemonServer {
       agentAutoUpdate: this.machineSetting.get("agentAutoUpdate") !== "off",
       ...(this.agentUpdates.snapshot() ? { agentUpdates: this.agentUpdates.snapshot() } : {}),
       githubAuthExpired: this.github.authExpired,
+      // 만료 예정(U17) — 브리지가 아직 모르면(첫 관찰 전) machine.json 의 값.
+      githubTokenExpiresAt:
+        this.github.tokenExpiresAt ?? this.machineSetting.get("githubTokenExpiresAt"),
       // 슬라이스 5: 설정 폼과 `개발자 부르기` 가 잠긴 채 보이던 이유 — 상태가
       // 이 한 단어를 채우지 않았다 (PLAN 단계 0). 비밀 자체는 못 나간다.
       escalationConfigured: this.escalation.configured,
@@ -1666,6 +1676,35 @@ export class DaemonServer {
   private noticeRoute(): "github" | "slack" | "none" {
     if (this.github.client() !== null && !this.github.authExpired) return "github";
     return this.escalation.configured ? "slack" : "none";
+  }
+
+  /**
+   * 만료 예고(U17) — 판정이 경고 창(14일) 안으로 들어서면 개발자에게 한 번
+   * 알리고(새 초대 파일 요청), 새 코드가 오거나 창 밖으로 나가면 거둔다. 슬러그를
+   * 꼭 준다 — 기계 알림(slug 없음)은 Slack · 로그로만 가서 GitHub 만 쓰는
+   * 개발자에게 닿지 않는다. 보낸 슬러그는 machine.json 이 기억하므로 거둠이
+   * 재시작을 넘는다. 조용한 키라 화면의 문제 문장은 늘어나지 않는다.
+   */
+  private noteTokenExpiry(iso: string | null): void {
+    const judged = iso === null ? null : expiryJudgement(iso);
+    const step = expiryNoticeStep({
+      judged,
+      storedSlug: this.machineSetting.get("githubExpiryNoticeSlug"),
+      activeSlug: this.registry?.activeSlug() ?? this.registry?.list()[0]?.slug ?? null,
+    });
+    if (step.raise !== undefined) {
+      this.machineSetting.set("githubExpiryNoticeSlug", step.raise);
+      void this.developerNotice.raise({
+        key: "github:expiring",
+        slug: step.raise,
+        ...describeProblem("github:expiring", `만료: ${iso} · ${judged?.daysLeft}일 남음`),
+      });
+    }
+    if (step.resolve !== undefined) {
+      this.machineSetting.set("githubExpiryNoticeSlug", null);
+      void this.developerNotice.resolve("github:expiring", step.resolve);
+    }
+    void this.status().then((status) => this.broadcast({ type: "status", status }));
   }
   /**
    * 로그인 감시 (PLAN L12) — 로그인 만료로 멈춘 대화를 30초에 한 번 본다.

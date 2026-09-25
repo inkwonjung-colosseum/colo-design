@@ -656,6 +656,11 @@ export const L = {
       reason ? `컴퓨터가 알림을 막았어요 — ${reason}` : "컴퓨터가 알림을 막았어요",
     testNotifyBody: "실제 알림은 이렇게 도착해요",
     close: "닫기",
+    /** 연결의 남은 날(U17) — 설정 → 연결 한 줄의 만료 문장. */
+    connectionUntil: (month: number, day: number) => `${month}월 ${day}일까지`,
+    connectionEnding: (days: number) => `연결이 ${days}일 뒤 끝나요`,
+    connectionAsked: "개발자에게 새 초대 파일을 부탁했어요",
+    connectionAsk: "개발자에게 새 초대 파일을 부탁하세요",
   },
   /** 업데이트 줄(U12) — 앱 · Claude Code · Codex 가 한 목록. */
   update: {

@@ -123,6 +123,12 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     tried: "토큰은 사용자의 열쇠라 도구가 대신 만들 수 없습니다",
     ask: "새 초대 파일을 사용자에게 보내 주세요",
   },
+  "github:expiring": {
+    title: "연결 코드(GitHub)가 곧 만료됩니다",
+    what: "연결 코드의 만료일이 2주 안입니다",
+    tried: "토큰은 사용자의 열쇠라 도구가 대신 만들 수 없습니다",
+    ask: "만료 전에 새 초대 파일을 사용자에게 보내 주세요",
+  },
   "push:auth": {
     title: "푸시가 인증 · 권한으로 거절됐습니다",
     what: "보관한 작업을 원격에 올리지 못하고 있습니다",
@@ -205,12 +211,15 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
 };
 
 /**
- * 화면의 주의로 서지 않는 기계 전체 알림 (PLAN O8 — 이번 결정) — 사용자
- * 기계의 일이라 개발자도 도구도 고칠 수 없는 문제(디스크 여유)는 개발자
- * 쪽(Slack · 로그)에만 가고 화면은 세 문장 중 아무것도 말하지 않는다. 네 번째
- * 문장(`저장 공간이 부족해요`)을 둘지는 열린 항목으로 남는다.
+ * 화면의 주의로 서지 않는 알림 키 (PLAN O8 · U17) — 사용자가 할 일이 없는
+ * 알림은 개발자 쪽에만 가고 화면은 세 문장 중 아무것도 말하지 않는다.
+ * disk:low 는 기계 전체 알림이라 machineNotices 가 걸러 주고, github:expiring
+ * 는 프로젝트 알림이라 감독자의 attentionParts 가 같은 이 표를 본다.
  */
-const SCREEN_QUIET_KEYS = new Set(["disk:low"]);
+export const SCREEN_QUIET_KEYS: Record<string, true> = {
+  "disk:low": true,
+  "github:expiring": true,
+};
 
 /** 이슈 목록의 한 줄에서 이 문제의 표식을 찾는다 — 없으면 null. */
 export function findIssueMarker(body: unknown): string | null {
@@ -492,7 +501,7 @@ export class DeveloperNotice {
     for (const [memKey, entry] of this.memory) {
       // 기계 전체 알림의 키는 ":<key>" — 슬러그가 앞에 서는 프로젝트 것은 뺀다.
       if (!memKey.startsWith(":")) continue;
-      if (SCREEN_QUIET_KEYS.has(memKey.slice(1))) continue;
+      if (SCREEN_QUIET_KEYS[memKey.slice(1)]) continue;
       out[memKey.slice(1)] = { via: entry.via, raisedAt: entry.raisedAt };
     }
     return out;
