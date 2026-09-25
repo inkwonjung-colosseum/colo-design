@@ -135,6 +135,31 @@ export const L = {
   slot: {
     previewWaiting: "미리보기가 여기에 떠요",
   },
+  /** 전환기 머리의 이름을 누르면 뜨는 프로젝트 카드(U7) — 저장소 · 미리보기 · 지켜 줄 것. */
+  projInfo: {
+    openRepo: "저장소 열기",
+    openPreview: "미리보기 열기",
+    openInvite: "초대 파일 열기…",
+    guide: "지켜 줄 것",
+    guideHelp: "이 프로젝트에서 AI가 늘 따랐으면 하는 규칙이에요. Claude 프로젝트의 ‘지침’과 같아요.",
+    guidePlaceholder: "예) 버튼은 항상 화면 오른쪽 위에 둬 주세요",
+    guideNote: "새로 시작하는 대화부터 적용돼요. 비우면 규칙도 사라져요.",
+    guideSavedToast: "저장했어요 — 새로 시작하는 대화부터 적용돼요",
+    guideSaveFailed: "지켜 줄 것을 저장하지 못했어요",
+  },
+  /** 대화 줄의 `···` 메뉴 — 이름 바꾸기 · 내보내기 · 지우기(확인은 메뉴 안의 한 줄). */
+  convMenu: {
+    label: "대화 메뉴",
+    rename: "이름 바꾸기",
+    renameLabel: "대화 이름",
+    export: "내보내기",
+    exportDone: (file: string) => `${file} 파일로 내보냈어요`,
+    exportFailed: "내보내지 못했어요",
+    remove: "지우기",
+    removeConfirm: "이 대화를 목록에서 지울까요? 화면은 그대로예요",
+    removeCancel: "그만두기",
+    removeFailed: "지우지 못했어요",
+  },
 
 
 

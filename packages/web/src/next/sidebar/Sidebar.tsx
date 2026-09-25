@@ -1,4 +1,5 @@
 import type { ThreadSummary } from "@colo-design/protocol";
+import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { hasNewerVersion } from "../lib/version";
@@ -16,14 +17,18 @@ import { ProjectSwitcher } from "./ProjectSwitcher";
  */
 export function Sidebar({
   daemon,
+  sessions,
   activeSessionId,
   view,
   titleFor,
   nav,
   onPalette,
   onCollapse,
+  onRenameSession,
 }: {
   daemon: Daemon;
+  /** `useSessions` 의 결과 — 대화 목록의 지우기 · 이름 바꾸기가 쓴다. */
+  sessions: Sessions;
   activeSessionId: string | null;
   view: "home" | "thread";
   titleFor: (thread: ThreadSummary) => string;
@@ -32,6 +37,8 @@ export function Sidebar({
   onPalette: () => void;
   /** 넓은 창의 접기 — 좁은 창에서는 서랍 닫기. */
   onCollapse: () => void;
+  /** 이름 바꾸기 — 설정의 대화 제목에 남는다(셸의 `onRenameSession`). */
+  onRenameSession: (sessionId: string, title: string) => void;
 }) {
   const projects = daemon.projects;
   const active = projects.find((project) => project.slug === daemon.activeSlug) ?? null;
@@ -78,7 +85,13 @@ export function Sidebar({
           <kbd>⌘K</kbd>
         </button>
       </nav>
-      <ProjectSwitcher projects={projects} active={active} onSwitch={nav.switchProject} />
+      <ProjectSwitcher
+        daemon={daemon}
+        projects={projects}
+        active={active}
+        onSwitch={nav.switchProject}
+        onToast={nav.toast}
+      />
       <OtherProjects
         projects={projects}
         activeSlug={daemon.activeSlug}
@@ -88,10 +101,13 @@ export function Sidebar({
       <ConversationList
         daemon={daemon}
         project={active}
+        sessions={sessions}
         activeSessionId={activeSessionId}
         threadView={view === "thread"}
         titleFor={titleFor}
         onOpen={(thread) => active && nav.openThread(active.slug, thread.id)}
+        onRenameSession={onRenameSession}
+        onToast={nav.toast}
       />
       <div className="nx-side-bottom">
         <button

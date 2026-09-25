@@ -174,12 +174,14 @@ export function Workspace({
       <div className={classes} data-testid="next-shell">
         <Sidebar
           daemon={daemon}
+          sessions={sessions}
           activeSessionId={activeId}
           view={state.view}
           titleFor={titleForThread}
           nav={nav}
           onPalette={() => setPalette(true)}
           onCollapse={() => (narrow ? setDrawer(false) : setCollapsed(true))}
+          onRenameSession={onRenameSession}
         />
         {narrow && state.drawer && (
           <button
