@@ -1,7 +1,7 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { PreviewFrame } from "../../components/preview/PreviewFrame";
-import type { PreviewLocation, PreviewTarget } from "../../components/preview/PreviewHost";
+import type { PreviewLocation, PreviewTarget } from "../../components/preview/types";
 import { L } from "../labels";
 
 /** 기기 — PC 는 칸 전체, 태블릿 · 휴대폰은 게스트에 실제 에뮬레이션이 걸린다. */
@@ -95,6 +95,7 @@ export function PreviewHost({
     if (!native && frameSrc) setLoading(true);
   }, [native, frameSrc, reloadKey]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 새로 고침(reloadKey)마다 느린 로딩의 시계를 처음부터 다시 잰다.
   useEffect(() => {
     setLoadPhase("ok");
     if (!loading) return;
@@ -156,6 +157,7 @@ export function PreviewHost({
             onZoom={onZoom}
           />
         ) : frameSrc ? (
+          // biome-ignore lint/a11y/noNoninteractiveElementInteractions: onLoad 는 사람의 조작이 아니라 문서가 다 읽혔다는 신호다.
           <iframe
             key={`${reloadKey}|${frameNonce}`}
             className="nx-pvframe"

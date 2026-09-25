@@ -1,13 +1,13 @@
 import { useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
 import { requestInvitePicker } from "../../lib/invite-bus";
+import { AlertIcon, MailIcon, PlugIcon } from "../chat/icons";
 import { L } from "../labels";
 import { problemFor } from "../lib/problem";
-import { AlertIcon, MailIcon, PlugIcon } from "./icons";
 
 /**
- * 문제 문장 한 줄(README「화면의 문제 문장은 셋이다」) — 상태 줄 아래, 대화 칸의
- * 맨 위. 셋째(`다시 연결이 필요해요`)만 사람의 손이 필요하고 버튼이 선다.
+ * 문제 문장 한 줄(README「화면의 문제 문장은 셋이다」) — 상태 줄 바로 아래, 대화와
+ * 미리보기에 걸친 한 줄(목업의 `.problem`). 셋째(`다시 연결이 필요해요`)만 사람의 손이 필요하고 버튼이 선다.
  * 문제 문장이 없으면 방금 가져온 초대 파일의 `파일 지우기 · 나중에` 줄(U11)이
  * 그 자리를 쓴다.
  */
@@ -55,7 +55,7 @@ export function ProblemLine({
             className="nx-btn nx-btn--sm nx-btn--pri"
             disabled={login === "busy"}
             onClick={() => {
-              // 옛 주의 줄과 같은 손 — 처음은 브라우저 로그인을 몰고, 그 뒤는 다시 확인이다.
+              // 처음은 브라우저 로그인을 몰고, 그 뒤는 다시 확인이다.
               const first = login === "idle";
               setLogin("busy");
               void (first ? daemon.api.onboardingFix("login-claude") : daemon.api.refreshStatus())

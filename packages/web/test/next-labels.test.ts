@@ -123,3 +123,81 @@ test("splitSource: 주석은 걷고 문자열과 JSX 텍스트는 잡는다", ()
   assert.ok(code.includes("본문"));
   assert.ok(!code.includes("주석"));
 });
+
+/** 주석만 걷은 소스 — 템플릿의 `${…}` 안에서 부르는 문장도 세야 한다. */
+function withoutComments(source: string): string {
+  const { literals, code } = splitSource(source);
+  return `${code}\n${literals.join("\n")}`;
+}
+
+/**
+ * 칸을 통째로 건네는 자리(`updateRowCopy(…, L.update)`) — 받는 쪽이 그 칸의 이름을 어떻게
+ * 읽는지. 파일이면 그 파일의 `.이름` 을 센다; `"*"` 는 칸 전체를 열쇠로 훑는다는 뜻이다
+ * (`noticeKind` 가 `prefixes[kind]` 로 모든 머리를 읽는다). 새로 통째로 건네면 여기에 적는다.
+ */
+const WHOLE_GROUP: Record<string, string> = {
+  update: "lib/update-row.ts",
+  daemonNotice: "*",
+};
+
+/**
+ * 죽은 문장이 쌓이지 않게 — `L` 의 칸마다(`L.<칸>.<이름>`) `next/` 어딘가가 `<칸>.<이름>`
+ * 으로 부른다. 순수 판정은 `L` 을 인자로 받으므로(`words.invite.rowNew`) 앞의 이름은 보지
+ * 않고, 칸을 풀어 받은 이름(`const { journey: J } = words` → `J.before`)도 센다. 함수 ·
+ * 배열 칸은 칸 자체가 한 문장이다 — 그 안을 따로 세지 않는다.
+ */
+test("labels: L 의 칸은 모두 next/ 어딘가에서 불린다", () => {
+  const root = join(import.meta.dirname, "../src/next");
+  const files = sourceFiles(root)
+    .filter((file) => relative(root, file) !== "labels.ts")
+    .map((file) => ({
+      name: relative(root, file),
+      text: withoutComments(readFileSync(file, "utf8")),
+    }));
+  /** 한 파일에서 칸을 부르는 이름들 — 칸 이름 자신과, 풀어 받은 별명. */
+  const namesFor = (text: string, group: string): string[] => {
+    const names = [group];
+    for (const match of text.matchAll(/\{([^{}]*)\}\s*=/g)) {
+      for (const part of (match[1] ?? "").split(",")) {
+        const [from, to] = part.split(":").map((word) => word.trim());
+        if (from === group && to) names.push(to);
+      }
+    }
+    // `const S = words.sidebar;` 의 S.
+    for (const match of text.matchAll(
+      new RegExp(`\\b(\\w+)\\s*=\\s*[\\w.]*\\.${group}\\s*;`, "g"),
+    )) {
+      if (match[1]) names.push(match[1]);
+    }
+    return names;
+  };
+  const access = (owner: string, name: string) =>
+    new RegExp(`\\b${owner}\\s*\\??\\.\\s*${name}\\b`);
+  const used = (group: string, name: string) => {
+    const receiver = WHOLE_GROUP[group];
+    if (receiver === "*") return true;
+    // 열쇠로 고르는 칸(`words.cycle[cycle]`) — 칸 전체가 쓰인다.
+    if (files.some(({ text }) => new RegExp(`\\.${group}\\s*\\[`).test(text))) return true;
+    if (receiver) {
+      const file = files.find((entry) => entry.name === receiver);
+      if (file && new RegExp(`\\.\\s*${name}\\b`).test(file.text)) return true;
+    }
+    return files.some(({ text }) =>
+      namesFor(text, group).some((alias) => access(alias, name).test(text)),
+    );
+  };
+  const keys = Object.keys(L).flatMap((group) =>
+    Object.keys(L[group as keyof typeof L]).map((name) => [group, name] as const),
+  );
+  assert.ok(keys.length > 100, `칸이 너무 적다: ${keys.length}`);
+  const dead = keys.filter(([group, name]) => !used(group, name)).map((key) => key.join("."));
+  assert.deepEqual(dead, []);
+
+  // 통째로 건네는 자리가 표에 없으면 그 칸의 셈이 틀린다 — 표가 코드를 따라가게.
+  const passed = new Set(
+    files.flatMap(({ text }) =>
+      [...text.matchAll(/\bL\.(\w+)\b(?!\s*\??\.)/g)].map((match) => match[1] ?? ""),
+    ),
+  );
+  assert.deepEqual([...passed].filter((group) => !(group in WHOLE_GROUP)).sort(), []);
+});

@@ -30,65 +30,6 @@
   z-index: 20;
 }
 
-/* ---------- 문제 문장 ---------- */
-.nx-problem {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 16px;
-  font-size: 13px;
-  border-bottom: 1px solid var(--line);
-  animation: nx-fade 0.2s;
-  flex: none;
-}
-
-.nx-problem b {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.nx-problem span {
-  color: var(--ink2);
-  min-width: 0;
-  flex: 1;
-  word-break: keep-all;
-}
-
-.nx-problem--fixing {
-  background: var(--amber-soft);
-}
-
-.nx-problem--fixing b,
-.nx-problem--fixing .nx-spin {
-  color: var(--amber);
-}
-
-.nx-problem--notified {
-  background: var(--blue-soft);
-}
-
-.nx-problem--notified b,
-.nx-problem--notified > .nx-i {
-  color: var(--blue);
-}
-
-.nx-problem--reconnect {
-  background: var(--red-soft);
-}
-
-.nx-problem--reconnect b,
-.nx-problem--reconnect > .nx-i {
-  color: var(--red);
-}
-
-.nx--narrow .nx-problem span {
-  display: none;
-}
-
-.nx--narrow .nx-problem b {
-  flex: 1;
-}
-
 /* ---------- 대화록 ---------- */
 .nx-transcript {
   flex: 1;

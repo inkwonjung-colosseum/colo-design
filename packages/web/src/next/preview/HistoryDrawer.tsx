@@ -191,6 +191,7 @@ export function HistoryDrawer({
                 <span className="nx-hd" />
                 {/* biome-ignore lint/a11y/useKeyWithClickEvents: 줄의 누름은 오른쪽 단추의 넓은 과녁이다 — 키보드는 그 단추로 닿는다. */}
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: 위와 같다. */}
+                {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: 위와 같다. */}
                 <div className="nx-hbody" onClick={pick}>
                   <div className="nx-ht">
                     <small>{clockOf(entry.at)}</small>

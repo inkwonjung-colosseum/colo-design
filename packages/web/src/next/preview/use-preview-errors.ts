@@ -1,6 +1,6 @@
 import type { RepoStatus, SessionState } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { PreviewError, PreviewLocation } from "../../components/preview/PreviewHost";
+import type { PreviewError, PreviewLocation } from "../../components/preview/types";
 import type { Daemon } from "../../lib/daemon-client";
 import { errorToTurn } from "../../lib/preview-turns";
 import type { StageError } from "./PreviewHost";
@@ -154,7 +154,13 @@ export function usePreviewErrors({
     if (turnState === "idle") arm();
   }, [turnState]);
 
-  useEffect(() => disarm, []);
+  // 떠날 때 수렴 시계를 거둔다 — 시계는 ref 에 있으므로 마지막 렌더의 손이 필요 없다.
+  useEffect(
+    () => () => {
+      if (converge.current !== null) window.clearTimeout(converge.current);
+    },
+    [],
+  );
 
   // 새 서버 — 지난 시절의 보고는 전부 낡은 말이고, 예산도 새로 산다.
   // biome-ignore lint/correctness/useExhaustiveDependencies: 서버의 신원만 본다.

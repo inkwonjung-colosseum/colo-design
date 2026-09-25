@@ -2,9 +2,12 @@
    nx- 옮김. 토큰은 .nx 뿌리의 것을 쓴다. */
 
 /* ── 체크리스트 한 장 ── */
+/* 창 전체를 쓰는 뿌리 — `.nx` 의 작업 틀 격자(264px 사이드바 칸)를 풀지 않으면
+   몸통이 첫 칸에 끼인다. */
 .nx-ob {
   position: absolute;
   inset: 0;
+  display: block;
   background: var(--bg);
   overflow: auto;
 }
@@ -35,12 +38,6 @@
   margin: 0 0 30px;
   line-height: 1.6;
   white-space: pre-line;
-}
-
-.nx-ob-close {
-  position: absolute;
-  right: 14px;
-  top: 12px;
 }
 
 .nx-ob-steps {

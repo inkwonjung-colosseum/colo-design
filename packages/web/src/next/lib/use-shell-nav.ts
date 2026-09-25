@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { SettingsCategory } from "../../components/dialogs/SettingsDialog";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import type { LayoutSettings } from "../../lib/settings";
@@ -25,9 +24,8 @@ export function useNarrow(): boolean {
 }
 
 /**
- * 셸의 이동 — 상태(`nav.ts` 의 줄임 함수)와 칸들에 건넬 손(`ShellNav`). 옛
- * PageWorkspace 의 흐름을 그대로 옮겼다: 활성 프로젝트가 바뀌면 홈부터, 다른
- * 프로젝트의 대화를 여는 클릭은 전환을 먼저 하고 등록부가 옮겨 앉으면 그
+ * 셸의 이동 — 상태(`nav.ts` 의 줄임 함수)와 칸들에 건넬 손(`ShellNav`).
+ * 활성 프로젝트가 바뀌면 홈부터, 다른 프로젝트의 대화를 여는 클릭은 전환을 먼저 하고 등록부가 옮겨 앉으면 그
  * 대화를 연다(jump), 대화를 여는 길은 목록 → 살아 있는 세션 → 되살리기 순.
  */
 export function useShellNav({
@@ -45,7 +43,7 @@ export function useShellNav({
   /** 가져온 초대 파일의 위치(U11) — 셸 위쪽(NextShell)이 정하고 대화 칸이 읽는다. */
   discardableInvitePath?: string | null;
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
-  onOpenSettings: (category?: SettingsCategory) => void;
+  onOpenSettings: () => void;
 }): {
   state: NavState;
   nav: ShellNav;
@@ -73,12 +71,10 @@ export function useShellNav({
 
   // 이 두 효과의 순서가 뜻이다: 프로젝트가 바뀌면 먼저 홈으로 돌리고, 같은
   // 커밋에서 뒤따르는 점프가 대화를 열면 그 "thread" 가 이긴다.
-  const firstSlug = useRef(true);
+  const seenSlug = useRef(daemon.activeSlug);
   useEffect(() => {
-    if (firstSlug.current) {
-      firstSlug.current = false;
-      return;
-    }
+    if (seenSlug.current === daemon.activeSlug) return;
+    seenSlug.current = daemon.activeSlug;
     dispatch({ type: "project-changed" });
   }, [daemon.activeSlug]);
 
@@ -167,28 +163,28 @@ export function useShellNav({
       if (slug !== daemon.activeSlug) activate(slug);
     },
     showTab: (tab) => dispatch({ type: "tab", tab }),
-    openSettings: (category) => onOpenSettings(category),
+    openSettings: () => onOpenSettings(),
     toast: setToastText,
     setDiscardableInvitePath: (path) => dispatch({ type: "invite-path", path }),
   };
 
   // OS 알림을 누르면 데스크톱이 세션 id 를 건넨다 — 주인 프로젝트를 먼저 찾고
   // (다른 프로젝트에서 되살리면 그곳에 갈래가 생긴다) 같은 길로 연다.
-  const navRef = useRef(nav);
-  navRef.current = nav;
+  // 구독은 한 번 — 손(nav)과 연결(daemon)은 ref 가 늘 새것으로 쥔다.
+  const latest = useRef({ nav, daemon });
+  latest.current = { nav, daemon };
   useEffect(() => {
     const bridge = window.coloDesignDesktop;
     if (!bridge?.onOpenSession) return;
     return bridge.onOpenSession((sessionId) => {
-      void daemon.api
+      const { daemon: now } = latest.current;
+      void now.api
         .locateSession(sessionId)
         .then((located) =>
-          navRef.current.openThread(located.slug ?? daemon.activeSlug ?? "", sessionId),
+          latest.current.nav.openThread(located.slug ?? now.activeSlug ?? "", sessionId),
         )
         .catch(() => undefined);
     });
-    // daemon.api 는 연결마다 같은 값이다 — 한 번만 구독한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setCollapsed = useCallback(

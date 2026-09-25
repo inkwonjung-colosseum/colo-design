@@ -2,7 +2,7 @@ import type { ColoDesignPinEnvelope, SessionState } from "@colo-design/protocol"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShortcutsSheet } from "../../components/dialogs/ShortcutsSheet";
-import type { PreviewLocation, PreviewTarget } from "../../components/preview/PreviewHost";
+import type { PreviewLocation, PreviewTarget } from "../../components/preview/types";
 import { pinsSync } from "../../hooks/usePins";
 import { parseAddress } from "../../lib/preview-address";
 import { lookToTurn } from "../../lib/preview-turns";
@@ -78,8 +78,6 @@ export function PreviewColumn({
 
   const sectionRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  /** 홈이 떠 있는 동안(셸이 이 칸을 숨긴다)은 단축키가 이 칸의 것이 아니다. */
-  const offstage = () => sectionRef.current?.closest(".nx-offstage") != null;
 
   // --- 레포를 깨운다 ---------------------------------------------------
   // 이 칸의 마운트가 레포를 준비시킨다(옛 ScreenPanel 의 몫) — `repoSync` 는
@@ -542,9 +540,11 @@ export function PreviewColumn({
       return false;
     },
   };
+  // 구독은 한 번 — 손은 keys ref 가 늘 새것으로 쥔다. 홈이 떠 있는 동안(셸이 이 칸을
+  // 숨긴다)은 단축키가 이 칸의 것이 아니다 — 숨었는지는 요소가 안다.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (offstage()) return;
+      if (sectionRef.current?.closest(".nx-offstage") != null) return;
       if (document.querySelector(".modal, .palette")) return;
       const mod = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
@@ -562,7 +562,6 @@ export function PreviewColumn({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: 손은 ref 가 늘 새것으로 쥔다.
   }, []);
 
   const overlay = preparing ? (

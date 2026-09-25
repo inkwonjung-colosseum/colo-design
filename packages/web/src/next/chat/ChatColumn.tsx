@@ -1,7 +1,7 @@
 import type { SessionPinHint } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Attachment } from "../../components/chat/Composer";
 import type { PinAttachment } from "../../hooks/usePins";
+import type { Attachment } from "../../lib/attachment";
 import { koreanNoticeWords } from "../../lib/error-words";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
@@ -16,7 +16,6 @@ import { Elapsed } from "../status/Elapsed";
 import { Composer, type ComposerHandle } from "./Composer";
 import { AskCard } from "./cards";
 import { ChevIcon, SparkIcon } from "./icons";
-import { ProblemLine } from "./ProblemLine";
 import { Thread } from "./Thread";
 
 /**
@@ -37,7 +36,6 @@ export function ChatColumn({
   project,
   nav,
   narrow,
-  discardableInvitePath,
 }: ChatColumnProps) {
   const { api, pending, resolvePending } = daemon;
   const { active, activeId } = sessions;
@@ -213,6 +211,8 @@ export function ChatColumn({
   const empty = blocks.length === 0 && sessions.queue.length === 0 && !showClock;
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 칸 전체가 파일을 놓는 자리다 — 드롭은 포인터의 일이고, 키보드는 입력창의 첨부 단추로 닿는다.
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: 위와 같다.
     <section
       className={`nx-chat${dragDepth > 0 ? " nx-chat--drop" : ""}`}
       onDragOver={(event) => event.preventDefault()}
@@ -227,12 +227,6 @@ export function ChatColumn({
         if (event.dataTransfer.files.length > 0) composer.current?.attach(event.dataTransfer.files);
       }}
     >
-      <ProblemLine
-        daemon={daemon}
-        invitePath={discardableInvitePath}
-        onClearInvite={() => nav.setDiscardableInvitePath(null)}
-        onToast={nav.toast}
-      />
       <div className="nx-transcript" ref={scroll} onScroll={remember}>
         {sessions.historyFailed && (
           <div className="nx-m-note nx-tone--red">

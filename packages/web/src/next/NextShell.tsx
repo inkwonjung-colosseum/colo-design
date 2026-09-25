@@ -1,6 +1,5 @@
 import { sameRepo } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { SettingsCategory } from "../components/dialogs/SettingsDialog";
 import { useInviteImport } from "../hooks/use-invite-import";
 import type { Daemon } from "../lib/daemon-client";
 import {
@@ -14,24 +13,20 @@ import { InviteConfirm } from "./onboarding/InviteConfirm";
 import "./next.css";
 import { Workspace } from "./Workspace";
 
-/** App 이 두 셸에 같은 값으로 건네는 계약(PLAN-UI 4 · 병행 셸) — 옛 Shell 과 같다. */
+/** App 이 셸에 건네는 계약 — 연결 하나와 설정 상태의 저장 손들. */
 export interface NextShellProps {
   daemon: Daemon;
   settings: Settings;
   onChatChange: (patch: Partial<ChatSettings>) => void;
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
-  onOpenSettings: (category?: SettingsCategory) => void;
   onRenameSession: (sessionId: string, title: string) => void;
-  /** 설정의 `다시 보기` 가 처음 화면을 다시 연다. */
-  onboardingOpen: boolean;
-  onOnboardingClose: () => void;
   /** 설정 대화상자(단계 6)가 저장하는 손 — App 의 설정 상태로 간다. */
   onSettingsChange: (patch: Partial<Settings>) => void;
 }
 
 /**
- * 새 셸(PLAN-UI 단계 1 · 5) — 갈림길이 하나다. 첫 실행(프로젝트 0개) · 게이트가
- * 막혔을 때 · 설정이 다시 열었을 때는 체크리스트 한 장(FirstRun, U11)이 창을
+ * 셸(PLAN-UI 단계 1 · 5) — 갈림길이 하나다. 첫 실행(프로젝트 0개) · 게이트가
+ * 막혔을 때는 체크리스트 한 장(FirstRun, U11)이 창을
  * 쓰고, 그 밖에는 작업 틀(Workspace)이 쓴다. `시작하기` 는 없다 — 게이트가 모두
  * 지나가고 프로젝트가 생기면 저절로 넘어간다.
  *
@@ -42,14 +37,17 @@ export interface NextShellProps {
  * 실는다 — 대화 칸(단계 2)의 `파일 지우기` 줄이 그것을 읽는다.
  */
 export function NextShell(props: NextShellProps) {
-  const { daemon, settings, onChatChange, onboardingOpen, onOnboardingClose } = props;
+  const { daemon, settings, onChatChange } = props;
   const { connection, api } = daemon;
   const invite = useInviteImport(daemon);
 
-  // 연결 직후의 검사는 설정이 고른 프로바이더의 몫이다(옛 Shell 과 같은 배선).
+  // 연결 직후의 검사는 설정이 고른 프로바이더의 몫이다. 문은 연결이다 — 고른 것이
+  // 바뀌는 순간의 다시 묻기는 아래 효과가 맡으므로, 여기서는 그 순간의 값만 읽는다.
+  const providerNow = useRef(settings.chat.provider);
+  providerNow.current = settings.chat.provider;
   useEffect(() => {
     if (connection !== "open") return;
-    void api.onboardingCheck(settings.chat.provider).catch(() => undefined);
+    void api.onboardingCheck(providerNow.current).catch(() => undefined);
   }, [connection, api]);
 
   // 설정에 남은 프로바이더가 이 데몬에 없으면 첫 쓸 수 있는 것으로 옮긴다 — 두지
@@ -62,7 +60,7 @@ export function NextShell(props: NextShellProps) {
   }, [daemon.status?.providers, settings.chat, onChatChange]);
 
   // 설정에서 고른 프로바이더가 마지막 검사와 다르면 한 번 다시 묻는다 — 지난
-  // 프로바이더의 fail 로 작업 틀을 막지 않기 위해서다(옛 Shell 의 재검사).
+  // 프로바이더의 fail 로 작업 틀을 막지 않기 위해서다.
   const [recheckingProvider, setRecheckingProvider] = useState(false);
   const checkedProvider = useRef<string | null>(null);
   useEffect(() => {
@@ -101,15 +99,34 @@ export function NextShell(props: NextShellProps) {
           step.status === "fail" && !(projects.length > 0 && step.fix?.kind === "login-claude"),
       );
   // 첫 실행의 적용이 도는 동안에도 첫 화면을 지킨다 — 첫 프로젝트가 생기는 순간
-  // 넘어가면 나머지 진행과 실패가 안 보인다(옛 Shell 과 같은 이유).
+  // 넘어가면 나머지 진행과 실패가 안 보인다.
   const applyingFirst = invite.state.phase === "applying" && invite.state.firstRun;
-  const firstRun =
-    daemon.status === null || onboardingOpen || projects.length === 0 || applyingFirst || gatesHold;
-  // 설정의 `다시 보기` 로 다시 연 판은 나가는 길이 있다 — 막는 단계가 없을 때만.
-  const reopenClosable = onboardingOpen && !gatesHold && projects.length > 0;
+  const firstRun = daemon.status === null || projects.length === 0 || applyingFirst || gatesHold;
+
+  // 첫 가져오기(프로젝트 0개)의 행이 모두 `새로` 면 확인판은 되묻는 한 걸음일 뿐이다 —
+  // 곧바로 적용하고, 끝나면 첫 프로젝트의 `초대 파일을 가져왔어요` 줄이 파일 지우기를
+  // 맡는다(U11). 옛 초대장이라 적을 이름을 물어야 할 때만 확인판이 선다.
+  const autoApplied = useRef<object | null>(null);
+  const autoFirst =
+    invite.state.phase === "confirm" &&
+    invite.state.firstRun &&
+    invite.state.rows.length > 0 &&
+    invite.state.rows.every((row) => row.action === "add") &&
+    Boolean(invite.state.invite.authorName || daemon.status?.authorName);
+  useEffect(() => {
+    if (!autoFirst || autoApplied.current === invite.state) return;
+    autoApplied.current = invite.state;
+    invite.apply("");
+  }, [autoFirst, invite]);
+  // 첫 화면이 가져오기를 그리는 동안(여는 중 · 곧바로 적용 · 적용 중)은 확인판을 띄우지
+  // 않는다 — 체크리스트의 셋째 항목이 그 진행을 말한다. 실패 · 경고는 판이 말한다.
+  const quietFirst =
+    firstRun &&
+    projects.length === 0 &&
+    (invite.state.phase === "reading" || invite.state.phase === "applying" || autoFirst);
 
   // 첫 실행이 모두 성공하고 경고도 없으면 확인판은 소음이다 — 조용히 닫는다
-  // (삭제 안내는 확인판이 이미 말했다). 옛 Shell 의 효과를 그대로.
+  // (삭제 안내는 확인판이 이미 말했다).
   useEffect(() => {
     const state = invite.state;
     if (
@@ -158,26 +175,27 @@ export function NextShell(props: NextShellProps) {
           provider={settings.chat.provider}
           invite={invite}
           checking={recheckingProvider}
-          onClose={reopenClosable ? onOnboardingClose : undefined}
         />
       ) : (
         <Workspace {...props} discardableInvitePath={discardableInvitePath} />
       )}
-      <InviteConfirm
-        daemon={daemon}
-        state={invite.state}
-        onApply={(authorDraft, openRepoUrl) => {
-          pendingOpen.current = openRepoUrl ?? null;
-          invite.apply(authorDraft);
-        }}
-        onRetry={invite.retry}
-        onClose={invite.close}
-        onOpenPicker={invite.openPicker}
-        onDiscarded={() => {
-          inviteDiscarded.current = true;
-          setDiscardableInvitePath(null);
-        }}
-      />
+      {!quietFirst && (
+        <InviteConfirm
+          daemon={daemon}
+          state={invite.state}
+          onApply={(authorDraft, openRepoUrl) => {
+            pendingOpen.current = openRepoUrl ?? null;
+            invite.apply(authorDraft);
+          }}
+          onRetry={invite.retry}
+          onClose={invite.close}
+          onOpenPicker={invite.openPicker}
+          onDiscarded={() => {
+            inviteDiscarded.current = true;
+            setDiscardableInvitePath(null);
+          }}
+        />
+      )}
     </>
   );
 }

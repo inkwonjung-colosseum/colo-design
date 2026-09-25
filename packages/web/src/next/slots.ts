@@ -1,5 +1,4 @@
 import type { ProjectSummary } from "@colo-design/protocol";
-import type { SettingsCategory } from "../components/dialogs/SettingsDialog";
 import type { Pins } from "../hooks/usePins";
 import type { Sessions } from "../hooks/useSessions";
 import type { Daemon } from "../lib/daemon-client";
@@ -9,7 +8,7 @@ import type { Journey } from "./lib/journey";
 /**
  * 셸이 칸들에 건네는 이동의 손 — 모든 칸이 같은 길로 움직인다. 다른 프로젝트의
  * 대화를 여는 손은 전환을 먼저 하고, 등록부가 옮겨 앉으면 그 대화를 연다(한
- * 번의 클릭, 두 걸음 — 옛 PageWorkspace 의 jump 와 같다).
+ * 번의 클릭, 두 걸음).
  */
 export interface ShellNav {
   /** 대화 하나를 연다. `slug` 가 활성 프로젝트가 아니면 옮긴 뒤에 연다. */
@@ -24,8 +23,8 @@ export interface ShellNav {
   switchProject: (slug: string) => void;
   /** 좁은 창의 두 탭 중 하나를 앞에 세운다. 넓은 창에서는 아무 일도 없다. */
   showTab: (tab: "chat" | "preview") => void;
-  /** 설정 대화상자(단계 6 이 새 것으로 바꾼다). */
-  openSettings: (category?: SettingsCategory) => void;
+  /** 설정 대화상자. */
+  openSettings: () => void;
   /** 셸 위에 잠깐 뜨는 한 줄. */
   toast: (text: string) => void;
   /**
@@ -57,11 +56,8 @@ export interface SlotProps {
   onRenameSession: (sessionId: string, title: string) => void;
 }
 
-/** 대화 칸(단계 2) — 입력창 · 대화록 · 카드 · 문제 문장. */
-export interface ChatColumnProps extends SlotProps {
-  /** 지울 수 있는 초대 파일의 자리(셸의 이동 상태) — 없으면 null. */
-  discardableInvitePath: string | null;
-}
+/** 대화 칸(단계 2) — 입력창 · 대화록 · 카드. 문제 문장은 셸이 상태 줄 아래에 그린다. */
+export type ChatColumnProps = SlotProps;
 
 /**
  * 미리보기 칸(단계 3 이 채운다). `onScreenName` 은 지금 화면의 제목을 셸에

@@ -16,6 +16,7 @@ import { PreviewColumn } from "./preview/PreviewColumn";
 import { SettingsDialog } from "./settings/SettingsDialog";
 import { Sidebar } from "./sidebar/Sidebar";
 import type { SlotProps } from "./slots";
+import { ProblemLine } from "./status/ProblemLine";
 import { StatusLine } from "./status/StatusLine";
 import { useWorkLedger } from "./status/use-work-ledger";
 import { MenuIcon, PanelIcon } from "./ui/icons";
@@ -224,6 +225,12 @@ export function Workspace({
               sidebarHidden={sidebarHidden}
               onOpenSidebar={openSidebar}
             />
+            <ProblemLine
+              daemon={daemon}
+              invitePath={state.discardableInvitePath}
+              onClearInvite={() => nav.setDiscardableInvitePath(null)}
+              onToast={nav.toast}
+            />
             {narrow && (
               <div className="nx-tabs" role="tablist">
                 <button
@@ -252,7 +259,7 @@ export function Workspace({
               data-tab={narrow ? state.tab : undefined}
               style={narrow ? undefined : { gridTemplateColumns: `${chatWidth}px minmax(0, 1fr)` }}
             >
-              <ChatColumn {...slot} discardableInvitePath={state.discardableInvitePath} />
+              <ChatColumn {...slot} />
               {!narrow && (
                 <Splitter
                   side="left"

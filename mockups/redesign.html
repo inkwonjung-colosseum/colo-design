@@ -1096,9 +1096,9 @@ function submitState(){
   if(pr.prep) return {ok:false,why:'준비가 끝나면 제출할 수 있어요'};
   if(pr.cycle==='merged') return {ok:false,why:'반영됐어요 — 다음 작업을 만들면 제출할 수 있어요'};
   if(pr.submitBlocked) return {ok:false,why:'제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요. 지금은 계속 만들어도 돼요'};
-  if(pr.cycle==='review') return pr.newChanges>0?{ok:true,why:`보낸 뒤로 바뀐 ${pr.newChanges}곳을 같은 요청에 더해 보내요`}:{ok:false,why:'보낸 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 보낼 수 있어요'};
+  if(pr.cycle==='review') return pr.newChanges>0?{ok:true,why:`제출한 뒤로 바뀐 ${pr.newChanges}곳을 같은 요청에 더해 제출해요`}:{ok:false,why:'제출한 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 제출할 수 있어요'};
   if(!pr.changes.length) return {ok:false,why:'아직 바뀐 화면이 없어요'};
-  return {ok:true,why:`바뀐 화면 ${pr.changes.length}개를 개발자에게 보내요`};
+  return {ok:true,why:`바뀐 화면 ${pr.changes.length}개를 개발자에게 제출해요`};
 }
 function renderStatus(){
   const pr=curProj(), conv=curConv(), run=anyRunning(pr), c=pr.cycle;
@@ -1487,7 +1487,7 @@ function startDemoTurn(){
 function submitPop(anchor){
   const pr=curProj(), more=pr.cycle==='review';
   const el=openPop(`<div class="wp-h"><b>${more?'같은 요청에 더해 제출할까요?':'개발자에게 제출할까요?'}</b><div>${more?'이미 열린 요청에 이어서 쌓여요':'제목과 설명은 도구가 써요 · 원본은 건드리지 않아요'}</div></div>
-    <div class="wp-sec"><h5>${more&&pr.newChanges?`보낸 뒤 바뀐 ${pr.newChanges}곳`:`보낼 화면 ${pr.changes.length}개`}</h5>${pr.changes.map(ch=>`<div class="wp-row" style="cursor:default"><span class="thumb"><i></i><i></i><i></i></span><span class="t"><b>${esc(screenName(ch.route))}</b><span>${esc(ch.note)}</span></span><span class="r">${esc(ch.time)}</span></div>`).join('')}</div>
+    <div class="wp-sec"><h5>${more&&pr.newChanges?`제출한 뒤 바뀐 ${pr.newChanges}곳`:`제출할 화면 ${pr.changes.length}개`}</h5>${pr.changes.map(ch=>`<div class="wp-row" style="cursor:default"><span class="thumb"><i></i><i></i><i></i></span><span class="t"><b>${esc(screenName(ch.route))}</b><span>${esc(ch.note)}</span></span><span class="r">${esc(ch.time)}</span></div>`).join('')}</div>
     <div class="wp-sec" style="border-bottom:0"><h5>개발자에게 한마디 <span class="r">선택</span></h5><input id="submitNote" style="width:100%;height:34px;border:1px solid var(--line2);border-radius:9px;padding:0 10px;outline:0" placeholder="예) 검색창 위치는 기획 의도예요"></div>
     <div class="wp-foot" style="gap:6px"><span class="snote" style="margin-right:auto">받을 개발자 · ${pr.reviewers.map(esc).join(' · ')}</span><button class="btn sm ghost" data-act="pop-close">그만두기</button><button class="btn sm pri" data-act="submit-confirm">제출</button></div>`,anchor,{align:'right',cls:'work-pop'});
   const inp=$('#submitNote',el); inp.focus();
@@ -1741,9 +1741,9 @@ function workPop(anchor){
   const comments=pr.convs.flatMap(cv=>cv.msgs.filter(m=>m.t==='review'));
   const html=`<div class="wp-h"><b>이번 작업</b><div>${esc(pr.name)} · ${c==='merged'?'반영까지 끝났어요':c==='review'?'개발자에게 가 있어요':'이 컴퓨터에 보관돼 있어요'}</div></div>
    <div class="wp-journey">${jr.map(([l,s])=>`<div class="${s}">${l}</div>`).join('')}</div>
-   <div class="wp-sec"><h5>바뀐 화면 ${pr.changes.length?pr.changes.length+'개':''}<span class="r">${pr.cycle==='review'&&pr.newChanges?`보낸 뒤 ${pr.newChanges}곳 더`:''}</span></h5>
+   <div class="wp-sec"><h5>바뀐 화면 ${pr.changes.length?pr.changes.length+'개':''}<span class="r">${pr.cycle==='review'&&pr.newChanges?`제출한 뒤 ${pr.newChanges}곳 더`:''}</span></h5>
     ${pr.changes.length?pr.changes.map(ch=>`<button class="wp-row" data-act="screen-card" data-to="${ch.route}"><span class="thumb"><i></i><i></i><i></i></span><span class="t"><b>${esc(screenName(ch.route))}</b><span>${esc(ch.note)}</span></span><span class="r">${esc(ch.time)}</span></button>`).join(''):`<div class="wp-empty">${c==='merged'?'이번 작업은 제품에 합쳐졌어요. 다음에 고치는 것부터 새 작업이에요.':'아직 바뀐 화면이 없어요.'}</div>`}</div>
-   <div class="wp-sec"><h5>제출</h5>${pr.receipt?`<div class="sline" style="justify-content:space-between"><span>${ic('check14')} ${esc(pr.receipt.time)} · ${esc(S.author)}</span><button class="btn sm" data-act="ext" data-what="제출한 내용">제출한 내용 열기 ${ic('ext12')}</button></div><div class="wp-empty" style="margin-top:6px">받은 개발자 · ${pr.reviewers.map(esc).join(' · ')}</div>`:pr.submitBlocked?`<div class="wp-empty">${ic('mail13')} 제출하지 못해 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요.</div>`:`<div class="wp-empty">아직 보내지 않았어요. 다 만들었으면 위의 <b>제출</b>을 눌러요.</div>`}
+   <div class="wp-sec"><h5>제출</h5>${pr.receipt?`<div class="sline" style="justify-content:space-between"><span>${ic('check14')} ${esc(pr.receipt.time)} · ${esc(S.author)}</span><button class="btn sm" data-act="ext" data-what="제출한 내용">제출한 내용 열기 ${ic('ext12')}</button></div><div class="wp-empty" style="margin-top:6px">받은 개발자 · ${pr.reviewers.map(esc).join(' · ')}</div>`:pr.submitBlocked?`<div class="wp-empty">${ic('mail13')} 제출하지 못해 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요.</div>`:`<div class="wp-empty">아직 제출하지 않았어요. 다 만들었으면 위의 <b>제출</b>을 눌러요.</div>`}
     ${pr.submitLog?.length?`<div class="slog">${pr.submitLog.slice(0,3).map(l=>`<div><small>${esc(l.time)}</small><span>${esc(l.text)}</span></div>`).join('')}</div>`:''}</div>
    <div class="wp-sec"><h5>개발자 코멘트 ${comments.length||''}<span class="r">${comments.length?'AI가 스스로 반영해요':''}</span></h5>${comments.length?comments.map(m=>`<div class="wp-row" style="cursor:default"><span class="avt">${esc(m.author[0])}</span><span class="t">${esc(m.text)}</span><span class="r">${m.status==='done'?'반영됨':'고치는 중'}</span></div>`).join(''):`<div class="wp-empty">${c==='draft'?'제출하면 개발자의 코멘트가 여기에 모여요.':'아직 없어요.'}</div>`}</div>
    <div class="wp-foot"><button class="btn sm" data-act="pv-history">${ic('clock13')}작업 기록 열기</button></div>`;

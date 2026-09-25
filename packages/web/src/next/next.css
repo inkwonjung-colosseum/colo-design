@@ -9,6 +9,7 @@
 @import "./shell.css";
 @import "./sidebar/sidebar.css";
 @import "./status/status.css";
+@import "./status/problem.css";
 @import "./home/home.css";
 @import "./chat/chat.css";
 @import "./onboarding/onboarding.css";

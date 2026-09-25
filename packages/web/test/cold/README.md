@@ -2,7 +2,7 @@
 
 맥락 없는 검토자가 기획자 역할로 아홉 과제를 수행한 기록(PLAN-UI 0.3)을 되돌릴 수
 있게 옮겨 둔 것이다. **지금은 목업 `mockups/redesign.html` 을 겨눈다** — PLAN-UI
-단계 8 이 개발 실행의 실제 셸(`?shell=next`)로 다시 겨눈다.
+단계 8 이 개발 실행의 실제 셸로 다시 겨눈다.
 
 - `run.js` — 이미 떠 있는 Chrome(`--remote-debugging-port=9333`)에 붙어 과제 파일
   하나를 `page` · `shot` · `wait` · `ctx` 를 받는 함수 몸으로 돌린다.

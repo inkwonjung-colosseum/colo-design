@@ -4,7 +4,6 @@ import { useModalEscape, useModalFocus } from "../../hooks/use-modal-focus";
 import { timeAgo } from "../../lib/format";
 import { composing } from "../../lib/ime";
 import { type HiddenThreads, visibleThreads } from "../../lib/thread-visibility";
-import { CATEGORIES, type SettingsCategory } from "../dialogs/SettingsDialog";
 import { GearIcon, type PlusIcon, SearchIcon } from "../icons";
 
 /** The walk is grouped 대화 → 화면 → 프로젝트 → 명령; a header prints on each turn. */
@@ -98,7 +97,7 @@ export function Palette({
   onCreateSession: () => void;
   /** Resolves when the registry moved; a refusal keeps the palette up. */
   onActivateProject: (slug: string) => Promise<void>;
-  onOpenSettings: (category?: SettingsCategory) => void;
+  onOpenSettings: () => void;
   onClose: () => void;
 }) {
   // The scoped walk names its project once — in the group header — instead
@@ -209,32 +208,6 @@ export function Palette({
         },
       });
     }
-    // 설정의 방 행 — 검색이 방의 이름을 가리킬 때만 줄에 선다. 명령은
-    // 칩으로 목록 밑에 버텨 있으니(오버레이 목업 05), 목록 안의 명령은
-    // 검색이 이름을 가리킨 방뿐이다.
-    if (query.trim()) {
-      for (const category of CATEGORIES) {
-        const at = rank(query, `설정 ${category.label}`);
-        if (at < 0) continue;
-        const Icon = category.icon;
-        out.push({
-          rank: at + 1,
-          recency: 0,
-          row: {
-            kind: "action",
-            group: "명령",
-            key: `settings:${category.id}`,
-            label: `설정 · ${category.label}`,
-            hint: `설정을 ${category.label} 칸으로 엽니다`,
-            icon: Icon,
-            run: async () => {
-              onOpenSettings(category.id);
-              onClose();
-            },
-          },
-        });
-      }
-    }
     // Groups keep their walk order; inside one, the better match leads, and
     // equal ranks keep the timeline — the sort is stable, so the recency key
     // only decides where ranks tie (a query-less walk, mostly).
@@ -255,7 +228,6 @@ export function Palette({
     titleForThread,
     onOpenThread,
     onActivateProject,
-    onOpenSettings,
     onClose,
   ]);
 
@@ -268,7 +240,7 @@ export function Palette({
       [
         {
           label: "설정",
-          hint: "연결 · 대화 · 문제 해결",
+          hint: "AI · 알림 · 연결 · 업데이트",
           icon: GearIcon,
           run: () => onOpenSettings(),
         },

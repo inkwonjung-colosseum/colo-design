@@ -3,8 +3,8 @@ import type { L } from "../labels";
 import type { SubmitCopy } from "./submit-copy";
 
 /**
- * 여정 세 점(PLAN-UI U2) — `제출 전 ─ 개발자 확인 ─ 반영됨`. 옛 셸의
- * `deriveDelivery`(lib/delivery.ts) 가 칩 하나를 판정하던 것을 넓혀, 세 점의
+ * 여정 세 점(PLAN-UI U2) — `제출 전 ─ 개발자 확인 ─ 반영됨`. 옛 셸의 상태 칩
+ * 하나(`deriveDelivery`, 단계 7 에서 걷음)의 판정을 넓혀, 세 점의
  * 글자 · 지금 점 · 색 · 제출 버튼의 열림과 이유 한 문장을 한 번에 낸다. 상태
  * 줄 · 좁은 창의 한 점 · `이번 작업` 팝오버가 이 한 원천을 읽는다.
  *
@@ -67,7 +67,7 @@ function workable(repo: RepoStatus | null): boolean {
   return repo?.phase === "ready" || repo?.phase === "error";
 }
 
-/** 이번 사이클에 아직 개발자에게 가지 않은 것이 있는가 — deriveDelivery 와 같은 잣대. */
+/** 이번 사이클에 아직 개발자에게 가지 않은 것이 있는가 — 옛 상태 칩과 같은 잣대. */
 function hasWork(repo: RepoStatus | null): boolean {
   if (!repo) return false;
   return repo.branch !== null || repo.pendingChanges > 0;
@@ -174,7 +174,7 @@ function submitState(
   if (open) {
     // 보낸 뒤 바뀐 화면은 마지막 제출 기록 뒤의 화면이다. 둘 중 하나라도
     // 모르면 옛 판정(작업이 있으면 열림)을 따른다 — 밀린 보관을 원격까지
-    // 올릴 손이 제출뿐이라 잠가 두면 안 된다(delivery.ts 의 같은 이유).
+    // 올릴 손이 제출뿐이라 잠가 두면 안 된다.
     const since = copy.lastAt;
     if (facts.screens && since !== null) {
       // 시각은 수로 견준다 — 화면 목록은 git 의 시각(+09:00), 제출 기록은 UTC(Z)라
