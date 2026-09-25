@@ -131,6 +131,43 @@ async function defaultBranch(url) {
   }
 }
 
+/**
+ * 연결 코드의 만료일(U17) — /user 를 한 번 쳐서 토큰 확인을 겸하고, 응답의
+ * github-authentication-token-expiration 머리글을 읽어 stderr 로 한 줄 낸다.
+ * 30일 안이면 더 긴 만료일의 코드를 권한다 — 진행은 막지 않는다. 네트워크
+ * 실패는 조용히 넘어간다(확인에 실패했다고 초대장 만들기를 멈추지 않는다).
+ */
+async function warnTokenExpiry() {
+  try {
+    const reply = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "colo-design-invite",
+      },
+    });
+    const raw = reply.headers.get("github-authentication-token-expiration");
+    if (!raw) return;
+    const end = new Date(raw).getTime();
+    if (Number.isNaN(end)) return;
+    const days = Math.ceil((end - Date.now()) / 86_400_000);
+    if (days <= 0) return;
+    const date = new Date(end);
+    const when = `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
+    if (days <= 30) {
+      console.error(
+        `경고: 이 연결 코드는 ${when}에 만료됩니다(${days}일 남음) — 더 긴 만료일의 코드를 권합니다.`,
+      );
+    } else {
+      console.error(`경고: 이 연결 코드는 ${when}에 만료됩니다(${days}일 남음)`);
+    }
+  } catch {
+    // 조용히 — 확인은 최선의 노력이다.
+  }
+}
+
+await warnTokenExpiry();
 const projects = [];
 for (const url of repoUrls) {
   const slug = repoSlug(url);

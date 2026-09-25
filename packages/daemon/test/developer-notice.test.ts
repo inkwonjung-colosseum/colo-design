@@ -16,6 +16,7 @@ import {
   findNoticeIssue,
   type NoticeStore,
   noticeBody,
+  SCREEN_QUIET_KEYS,
 } from "../dist/developer-notice.js";
 import { Escalation } from "../dist/escalation.js";
 import { GitHubClient } from "../dist/github.js";
@@ -308,6 +309,45 @@ test("disk:low 는 Slack 으로 가지만 화면 주의의 재료(machineNotices
   assert.deepEqual(notice.machineNotices(), {});
   assert.equal(composeAttention({ notices: notice.machineNotices() }), null);
   await notice.resolve("disk:low", null);
+});
+
+test("github:expiring — 예고 네 줄에 이슈 하나, 둘째 알림은 중복 없음, 새 토큰에 해결 (U17)", async () => {
+  const remote = await makeRemote();
+  try {
+    // 본문 — 만료 예고의 네 줄(표의 문장 그대로).
+    const words = describeProblem("github:expiring");
+    assert.equal(words.title, "연결 코드(GitHub)가 곧 만료됩니다");
+    assert.equal(words.what, "연결 코드의 만료일이 2주 안입니다");
+    assert.equal(words.tried, "토큰은 사용자의 열쇠라 도구가 대신 만들 수 없습니다");
+    assert.equal(words.ask, "만료 전에 새 초대 파일을 사용자에게 보내 주세요");
+    // 조용한 키 — 사용자가 할 일이 없으니 문제 문장(개발자에게 알렸어요)에 서지 않는다.
+    assert.equal(SCREEN_QUIET_KEYS["github:expiring"], true);
+
+    const github = new MemoryGitHub(remote);
+    const client = new GitHubClient("t", github);
+    const notice = new DeveloperNotice(deps({ github: () => client }));
+    const problem = {
+      key: "github:expiring",
+      slug: "app",
+      ...describeProblem("github:expiring", "만료: 2026-10-07T12:00:00.000Z · 12일 남음"),
+    };
+    assert.equal(await notice.raise(problem), "issue");
+    assert.equal(github.openIssueCount, 1);
+    const issue = github.issue(1);
+    assert.ok(issue !== undefined);
+    assert.ok(issue.title.includes("곧 만료됩니다"));
+    assert.ok(issue.body.includes("만료일이 2주 안입니다"));
+    assert.ok(issue.body.includes("만료: 2026-10-07T12:00:00.000Z · 12일 남음"));
+    // 둘째 알림(창 안의 다시 나기) — 같은 이슈에 새 글 없음.
+    assert.equal(await notice.raise(problem), "issue");
+    assert.equal(github.openIssueCount, 1);
+    assert.equal(github.issue(1)?.comments.length, 0);
+    // 새 토큰 — 서 있던 예고를 거둔다(해결 코멘트 + 닫기).
+    await notice.resolve("github:expiring", "app");
+    assert.equal(github.issue(1)?.state, "closed");
+  } finally {
+    remote.dispose();
+  }
 });
 
 test("disk:low 는 프로젝트가 셋이라도 하루에 한 번만 나간다 — 기계 전체 알림의 창", async () => {

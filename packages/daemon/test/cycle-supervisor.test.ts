@@ -1295,3 +1295,20 @@ test("이월 병합의 옛 원격 브랜치 — 새 브랜치가 올라갈 때�
     await scene.dispose();
   }
 });
+
+test("U17 조용한 알림 — github:expiring 은 원장에 남아도 주의 재료에 서지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const at = new Date().toISOString();
+    scene.supervisor.setNotice("github:expiring", { via: "issue", raisedAt: at, count: 1 });
+    scene.supervisor.setNotice("push:auth", { via: "issue", raisedAt: at, count: 1 });
+    const parts = scene.supervisor.attentionParts();
+    // 조용한 키는 원장(cycle.json notices)에 남아 개발자 알림의 장부로 살되,
+    // 화면의 문제 문장(개발자에게 알렸어요)의 재료에서는 빠진다.
+    assert.deepEqual(Object.keys(parts.notices ?? {}), ["push:auth"]);
+    scene.supervisor.setNotice("push:auth", null);
+    assert.equal(composeAttention(scene.supervisor.attentionParts()), null);
+  } finally {
+    await scene.dispose();
+  }
+});

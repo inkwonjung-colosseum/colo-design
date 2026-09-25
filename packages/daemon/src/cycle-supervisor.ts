@@ -74,6 +74,7 @@ import {
   type CycleSnapshot,
   nextCycleAction,
 } from "./cycle-reconcile.js";
+import { SCREEN_QUIET_KEYS } from "./developer-notice.js";
 import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
 import { COLO_DESIGN_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
@@ -283,7 +284,11 @@ export class CycleSupervisor {
       reconnect:
         this.reconnectSince === null ? null : { what: "github", since: this.reconnectSince },
       aiFixingSince: this.aiFixingSince,
-      notices: this.ledger.notices,
+      // 화면에 서지 않는 조용한 알림(U17)은 재료에서 뺀다 — 원장에는 남아
+      // 개발자 알림의 장부로 살되, 문제 문장은 늘어나지 않는다.
+      notices: Object.fromEntries(
+        Object.entries(this.ledger.notices).filter(([key]) => !SCREEN_QUIET_KEYS[key]),
+      ),
     };
   }
 

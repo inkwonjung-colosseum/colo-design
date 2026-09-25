@@ -1,6 +1,7 @@
 import type { GitHubRepoList } from "@colo-design/protocol";
 import { type CredentialStore, loadRepoPat, REPO_PAT_ITEM } from "./credentials.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
+import { parseTokenExpiration } from "./github-expiry.js";
 import { runOnboardingChecks } from "./onboarding.js";
 import type { RestTransport } from "./rest-transport.js";
 
@@ -21,6 +22,12 @@ export interface GitHubBridgeDeps {
    * 만료 카드를 연다. 판정의 근거는 `authState` 주석.
    */
   onAuthChange?(expired: boolean): void;
+  /**
+   * 연결 코드의 만료 예정(U17) — GitHub 이 모든 응답에 실어 주는 머리글에서
+   * 읽은 ISO 시각. 값이 바뀔 때만 오고, 새 토큰이 오면 null 로 되돌아온다.
+   * 서버는 이 값을 machine.json 에 견줘 두고 만료 예고를 건넨다.
+   */
+  onExpiryChange?(iso: string | null): void;
 }
 
 /**
@@ -50,6 +57,11 @@ export class GitHubBridge {
    * 아니고, 그쪽은 이미 `DiffStatus.reason: "push-auth"` 로 말한다.
    */
   private authState: "ok" | "expired" = "ok";
+  /**
+   * 만료일이 있는 코드의 만료 예정(ISO) — 머리글이 오지 않으면 null(만료일 없는
+   * 코드). setToken 이 새 자격의 생애를 시작하며 null 로 되돌린다.
+   */
+  private tokenExpiry: string | null = null;
 
   constructor(private readonly deps: GitHubBridgeDeps) {
     const inner = createGitHubTransport().transport;
@@ -58,6 +70,11 @@ export class GitHubBridge {
       request: async (input) => {
         const response = await inner.request(input);
         this.noteAuth(response.status === 401);
+        // 머리글을 아예 실을 수 없는 전송의 응답은 지나간다 — 「만료일이 없다」와
+        // 「못 보았다」가 다른 답이므로 알고 있던 값을 지우지 않는다.
+        if (response.headers !== undefined) {
+          this.noteExpiry(parseTokenExpiration(response.headers));
+        }
         return response;
       },
     };
@@ -73,12 +90,24 @@ export class GitHubBridge {
     return this.authState === "expired";
   }
 
+  /** status.githubTokenExpiresAt 의 원천 — 위 tokenExpiry 주석이 판정의 전부다. */
+  get tokenExpiresAt(): string | null {
+    return this.tokenExpiry;
+  }
+
   /** 인증 판정의 전파는 바뀔 때만 — 성공 읽기마다 방송하면 소음이다. */
   private noteAuth(expired: boolean): void {
     const next = expired ? "expired" : "ok";
     if (this.authState === next) return;
     this.authState = next;
     this.deps.onAuthChange?.(expired);
+  }
+
+  /** 만료 예정의 전파도 값이 바뀔 때만 — GitHub 은 모든 응답에 같은 값을 실어 보낸다. */
+  private noteExpiry(iso: string | null): void {
+    if (this.tokenExpiry === iso) return;
+    this.tokenExpiry = iso;
+    this.deps.onExpiryChange?.(iso);
   }
 
   /**
@@ -108,9 +137,10 @@ export class GitHubBridge {
     if (this.pat) await this.deps.credentials.save(REPO_PAT_ITEM, this.pat);
     else await this.deps.credentials.delete(REPO_PAT_ITEM).catch(() => undefined);
     this.repoListCache = null;
-    // 새 자격의 생애가 시작됐다 — 이전 토큰이 본 401 은 증거가 아니다. 아래의
-    // 게이트 재판정(whoAmI)이 새 토큰의 판정을 곧 다시 세운다.
     this.noteAuth(false);
+    // 새 자격의 생애가 시작됐다 — 이전 토큰의 만료 예고도 지운다. 다음 응답이
+    // 새 토큰의 만료일을 다시 쓴다.
+    this.noteExpiry(null);
     // Every live workspace re-arms at once; a project the planner has not
     // touched this run gets the token when it is next activated.
     this.deps.onToken(this.pat);

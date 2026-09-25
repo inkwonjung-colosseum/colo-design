@@ -63,6 +63,8 @@ export const BUDGETS = {
   reviewRounds: { max: 5, windowMs: null },
   /** 재클론 — 하루 1회. 창을 넘은 재클론은 새 사건이다. */
   reclone: { max: 1, windowMs: 24 * 60 * 60_000 },
+  /** 연결 코드 만료의 미리 알림 창(U17) — 이 안에 들면 개발자에게 한 번만 알린다. */
+  tokenExpiry: { warnBeforeMs: 14 * 24 * 60 * 60_000 },
   /** 같은 문제의 개발자 알림 — 10분에 한 번 갱신. */
   noticeRefreshMs: 10 * 60_000,
 } as const;

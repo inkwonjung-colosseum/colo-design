@@ -252,6 +252,14 @@ export interface DaemonStatus {
    * 브로드캐스트는 판정이 바뀔 때만이다.
    */
   githubAuthExpired?: boolean;
+  /**
+   * 연결 코드(GitHub PAT)의 만료 예정 (U17) — GitHub 이 만료일이 있는 코드의
+   * 모든 응답에 실어 주는 `github-authentication-token-expiration` 머리글에서
+   * 읽은 ISO 시각. null 은 만료일이 없는 코드, 키가 없으면 아직 모름(첫
+   * GitHub 응답 전 — machine.json 이 견줘 둔 값을 대신 답한다). 방송은 값이
+   * 바뀔 때만이다.
+   */
+  githubTokenExpiresAt?: string | null;
   /** 슬라이스 5: 개발자 에스컬레이션 웹훅이 저장되어 있는가 — URL 자체는 못 나간다. */
   escalationConfigured?: boolean;
   liveSessions: number;

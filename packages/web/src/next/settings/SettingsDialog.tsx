@@ -14,6 +14,7 @@ import {
   switchProviderPatch,
 } from "../../lib/settings";
 import { DEV, L } from "../labels";
+import { connectionCopy } from "../lib/connection-copy";
 import { type CheckNote, shouldClearCheckNote, updateRowCopy } from "../lib/update-row";
 import { hasNewerVersion } from "../lib/version";
 import { CheckIcon, Spin } from "../ui/icons";
@@ -108,6 +109,17 @@ export function SettingsDialog({
     void daemon.api.machineAuthorSet(next === "" ? null : next).catch(() => undefined);
   };
   const expired = status?.githubAuthExpired === true || status?.attention?.kind === "reconnect";
+  // 연결 한 줄(U17) — 만료 예정을 데몬이 머리글에서 읽어 왔다면 남은 날을 말한다.
+  const connection = connectionCopy(
+    {
+      expired,
+      expiresAt: status?.githubTokenExpiresAt ?? null,
+      projects: daemon.projects.length,
+      noticeRoute: status?.noticeRoute ?? "none",
+    },
+    Date.now(),
+    L,
+  );
   const bridgeOpenHome =
     window.coloDesignDesktop && "openHome" in window.coloDesignDesktop
       ? window.coloDesignDesktop.openHome
@@ -450,10 +462,7 @@ export function SettingsDialog({
               <div className="nx-sline">
                 <span className="nx-slabel">{L.settings.connectionCode}</span>
                 <span>
-                  <span className={`nx-dot${expired ? " nx-dot--red" : " nx-dot--green"}`} />{" "}
-                  {expired
-                    ? L.problem.reconnectInvite
-                    : `${L.vocab.connectionOk} · ${L.vocab.projectCount(daemon.projects.length)}`}
+                  <span className={`nx-dot nx-dot--${connection.dot}`} /> {connection.text}
                 </span>
               </div>
               <div className="nx-sline">
