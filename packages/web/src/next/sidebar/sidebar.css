@@ -55,9 +55,8 @@
 .nx .nx-proj-btn {
   display: flex;
   align-items: center;
-  gap: 9px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 4px 4px 4px 0;
   border-radius: var(--r-md);
   background: var(--card);
   border: 1px solid var(--line);
@@ -66,6 +65,37 @@
 
 .nx .nx-proj-btn:hover {
   border-color: var(--line2);
+}
+
+/* 머리의 두 누름 — 이름은 프로젝트 카드, 셰브론은 프로젝트 목록. */
+.nx .nx-proj-open {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 2px 4px 10px;
+  border-radius: calc(var(--r-md) - 1px) 0 0 calc(var(--r-md) - 1px);
+}
+
+.nx .nx-proj-open:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.nx .nx-proj-chev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: 0 5px;
+  border-radius: var(--r);
+  color: var(--ink3);
+}
+
+.nx .nx-proj-chev:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--ink);
 }
 
 .nx-proj-nm {
@@ -93,6 +123,83 @@
 
 .nx-proj-pop {
   width: 250px;
+}
+
+/* 프로젝트 카드 — 전환기 머리의 이름을 누르면 뜬다(U7). */
+.nx-proj-info {
+  width: 268px;
+}
+
+.nx-pi-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 8px 4px;
+}
+
+.nx-pi-head b {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-pi-links {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 4px;
+}
+
+.nx-ext {
+  margin-left: auto;
+  color: var(--ink3);
+  font-size: 12px;
+}
+
+.nx-pi-guide {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding: 8px 8px 6px;
+}
+
+.nx-pi-guide > b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nx-pi-help {
+  margin: 3px 0 8px;
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.5;
+}
+
+.nx .nx-pi-box {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 1px solid var(--line2);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  background: var(--card);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.nx .nx-pi-box:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.nx-pi-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--ink3);
+  line-height: 1.5;
 }
 
 .nx-side-label {
@@ -187,6 +294,91 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 대화 줄 — `···` 메뉴와 이름 바꾸기 입력을 줄에 얹는다. */
+.nx-conv-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.nx-conv-row .nx-conv {
+  flex: 1;
+  min-width: 0;
+}
+
+.nx .nx-conv-menu {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink3);
+  background: var(--side);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nx .nx-conv-menu:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--ink);
+}
+.nx .nx-conv-row--on .nx-conv-menu,
+.nx .nx-conv-row--menu .nx-conv-menu,
+.nx .nx-conv-row:hover .nx-conv-menu,
+.nx .nx-conv-row:focus-within .nx-conv-menu {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nx .nx-conv-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+  background: var(--card);
+  font-size: 13.5px;
+}
+
+.nx-conv-pop {
+  width: 220px;
+}
+
+.nx-conv-confirm {
+  padding: 6px 8px 8px;
+}
+
+.nx-conv-confirm p {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink2);
+  margin-bottom: 10px;
+}
+
+.nx-conv-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.nx .nx-btn--sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.nx .nx-mi--dng {
+  color: var(--red);
+}
+
+.nx .nx-mi--dng:hover {
+  background: var(--red-soft);
 }
 
 .nx-toolg {
