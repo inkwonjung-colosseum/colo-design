@@ -12,6 +12,12 @@ export interface NavState {
   drawer: boolean;
   /** 넓은 창의 사이드바가 접혀 있는가 — 설정에 남는 값이 씨앗이다. */
   collapsed: boolean;
+  /**
+   * 가져온 초대 파일의 디스크 위치(PLAN-UI U11) — 데스크톱이 알려 준 것이 있고
+   * 아직 지우지 않았을 때만 값이 있다. 대화 칸의 `파일 지우기` 줄이 읽고,
+   * 지우면 그 칸이 비운다.
+   */
+  discardableInvitePath: string | null;
 }
 
 export type NavAction =
@@ -21,10 +27,15 @@ export type NavAction =
   | { type: "drawer"; open: boolean }
   | { type: "collapse"; collapsed: boolean }
   /** 활성 프로젝트가 바뀌었다 — 옛 셸처럼 홈부터. 이어진 점프가 대화를 열면 그것이 이긴다. */
-  | { type: "project-changed" };
+  | { type: "project-changed" }
+  /** 가져온 초대 파일의 위치가 정해졌다(또는 지워져 값이 사라졌다) — 셸 위쪽이 부른다. */
+  | { type: "invite-path"; path: string | null };
 
-export function initialNav(collapsed: boolean): NavState {
-  return { view: "home", tab: "chat", drawer: false, collapsed };
+export function initialNav(
+  collapsed: boolean,
+  discardableInvitePath: string | null = null,
+): NavState {
+  return { view: "home", tab: "chat", drawer: false, collapsed, discardableInvitePath };
 }
 
 export function navReducer(state: NavState, action: NavAction): NavState {
@@ -44,5 +55,9 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         : { ...state, collapsed: action.collapsed };
     case "project-changed":
       return { ...state, view: "home", tab: "chat", drawer: false };
+    case "invite-path":
+      return state.discardableInvitePath === action.path
+        ? state
+        : { ...state, discardableInvitePath: action.path };
   }
 }

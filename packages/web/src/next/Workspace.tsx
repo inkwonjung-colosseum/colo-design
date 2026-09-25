@@ -39,7 +39,8 @@ export function Workspace({
   onLayoutChange,
   onOpenSettings,
   onRenameSession,
-}: NextShellProps) {
+  discardableInvitePath = null,
+}: NextShellProps & { discardableInvitePath?: string | null }) {
   const sessions = useSessions(daemon, {
     ready: daemon.repo?.phase === "ready",
     chat: settings.chat,
@@ -51,6 +52,7 @@ export function Workspace({
     daemon,
     sessions,
     collapsed: settings.layout.sidebarCollapsed,
+    discardableInvitePath,
     onLayoutChange,
     onOpenSettings,
   });

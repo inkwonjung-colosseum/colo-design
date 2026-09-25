@@ -34,6 +34,7 @@ export function useShellNav({
   daemon,
   sessions,
   collapsed,
+  discardableInvitePath = null,
   onLayoutChange,
   onOpenSettings,
 }: {
@@ -41,6 +42,8 @@ export function useShellNav({
   sessions: Sessions;
   /** 설정에 남은 사이드바 접힘 — 처음 값의 씨앗. */
   collapsed: boolean;
+  /** 가져온 초대 파일의 위치(U11) — 셸 위쪽(NextShell)이 정하고 대화 칸이 읽는다. */
+  discardableInvitePath?: string | null;
   onLayoutChange: (patch: Partial<LayoutSettings>) => void;
   onOpenSettings: (category?: SettingsCategory) => void;
 }): {
@@ -50,7 +53,16 @@ export function useShellNav({
   setCollapsed: (v: boolean) => void;
   setDrawer: (v: boolean) => void;
 } {
-  const [state, dispatch] = useReducer(navReducer, collapsed, initialNav);
+  const [state, dispatch] = useReducer(
+    navReducer,
+    { collapsed, path: discardableInvitePath },
+    ({ collapsed: seedCollapsed, path }) => initialNav(seedCollapsed, path),
+  );
+  // 셸 위쪽(NextShell)이 정한 초대 파일 위치 — 첫 실행의 가져오기가 끝나면
+  // Workspace 가 막 등장하기 때문에 씨앗만으로는 부족하다(이후의 다시 받기).
+  useEffect(() => {
+    dispatch({ type: "invite-path", path: discardableInvitePath });
+  }, [discardableInvitePath]);
 
   const [toastText, setToastText] = useState<string | null>(null);
   useEffect(() => {

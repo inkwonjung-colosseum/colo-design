@@ -98,7 +98,13 @@ test("셸 이동 — 대화를 열면 서랍이 닫히고, 프로젝트가 바�
   s = navReducer(s, { type: "tab", tab: "preview" });
   assert.equal(s.tab, "preview");
   s = navReducer(s, { type: "project-changed" });
-  assert.deepEqual(s, { view: "home", tab: "chat", drawer: false, collapsed: false });
+  assert.deepEqual(s, {
+    view: "home",
+    tab: "chat",
+    drawer: false,
+    collapsed: false,
+    discardableInvitePath: null,
+  });
   // 같은 값은 같은 객체 — 렌더를 더 부르지 않는다.
   assert.equal(navReducer(s, { type: "tab", tab: "chat" }), s);
 });

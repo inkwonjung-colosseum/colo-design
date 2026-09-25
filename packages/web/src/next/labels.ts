@@ -445,6 +445,10 @@ export const L = {
     codexInstalling: "Codex 설치 중…",
     codexOk: "Codex 도 준비됐어요",
     codexSkipped: "Codex 는 건너뛰었어요 · 설정에서 언제든 설치해요",
+    /** 설정의 `다시 보기` 로 다시 연 확인판을 닫는 길 — 첫 실행에는 없다. */
+    close: "닫기",
+    /** policy 가 아닌 설치 실패의 오른쪽 문구 — 본문 문장은 데몬의 detail 이 말한다. */
+    agentFailed: "설치가 안 됐어요",
   },
   /** 첫 안내 — 한 번에 하나씩, 순서대로. */
   tips: {
@@ -489,6 +493,31 @@ export const L = {
     mine: "프로젝트 이름과 지켜 줄 것은 내가 정한 것이라 그대로 둬요.",
     warn: "초대 파일에는 연결 코드가 들어 있어요. 가져왔으니 파일은 지워 주세요.",
     ok: "알겠어요",
+    /** 확인판의 적용 버튼 — 첫 실행과 다시 받기가 같은 말을 쓴다. */
+    apply: "가져오기",
+    cancel: "그만두기",
+    /** 적용이 도는 동안의 한 줄 — "N개 중 M개 연결됨". */
+    progressing: (done: number, total: number) => `${total}개 중 ${done}개 연결됨…`,
+    /** 읽기 실패 뒤 다른 파일을 고르는 버튼. */
+    otherFile: "다른 파일 열기",
+    /** 가져온 파일을 앱이 대신 지운다(데스크톱) — 확인판의 경고 옆 버튼. */
+    deleteFile: "파일 지우기",
+    deleted: "초대 파일을 지웠어요",
+    deleteFailed: "파일을 지우지 못했어요 — 직접 지워 주세요",
+    /** 행의 꼬리표(U11) — 새로 · 바뀜 · 그대로. */
+    rowNew: "새로",
+    rowUpdate: "바뀜",
+    rowKeep: "그대로",
+    /** 옛 초대장이 이름을 싣지 않았을 때만 묻는 선택 칸. */
+    authorLabel: "이 작업에 적을 이름 (선택)",
+  },
+  /** 바뀜 행의 무엇이 바뀌었는가(U11) — 짝의 지금 값과 비교해 만든 한 줄. */
+  inviteChange: {
+    baseBranch: (from: string, to: string) => `기본 가지 ${from} → ${to}`,
+    reviewers: "받을 개발자 명단이 바뀌어요",
+    approve: "명령 실행이 미리 허용됐어요",
+    defaults: "기본 모델 · 생각 시간이 바뀌어요",
+    lifecycle: "작업 규칙이 바뀌어요",
   },
 
 
@@ -497,7 +526,6 @@ export const L = {
   settings: {
     title: "설정",
     ai: "AI",
-    aiSub: "다음 새 대화가 쓰는 AI",
     unavailable: (n: number) => `쓸 수 없는 AI ${n}`,
     notInstalled: "설치되지 않았어요 · 없어도 모든 일이 돼요",
     install: "설치",
