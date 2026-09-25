@@ -1,6 +1,7 @@
 import {
   disambiguateProjectNames,
   type InviteRow,
+  type InviteRowTarget,
   inviteUpdatePatch,
   type NormalizedInvite,
   normalizeInvite,
@@ -74,7 +75,7 @@ export interface ApplyOptions {
  */
 export function planInviteRowsNamed(
   invite: NormalizedInvite,
-  projects: Array<{ slug: string; name: string; repoUrl?: string | null }>,
+  projects: InviteRowTarget[],
 ): InviteRow[] {
   const rows = planInviteRows(invite, projects);
   const adds = rows.filter(

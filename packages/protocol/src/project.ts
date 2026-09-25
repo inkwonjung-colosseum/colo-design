@@ -90,6 +90,11 @@ export interface ProjectSummary {
   defaults?: ProjectDefaults;
   /** 초대 v4: 사이클의 수명 규칙 — 없으면 각 소비자의 기본값을 따른다. */
   lifecycle?: ProjectLifecycle;
+  /** 넘긴 요청의 리뷰를 부탁할 개발자들(E4) — 다시 받은 초대장의 keep 판정이
+      읽는다(PLAN-UI U11). 없으면 아무에게도 부탁하지 않는다. */
+  reviewers?: string[];
+  /** 설치 · 미리보기 명령 실행이 허용됐는가 — keep 판정이 읽는다(U11). */
+  commandsApproved?: boolean;
   /**
    * 이 프로젝트의 주의 (PLAN L8) — 비활성 프로젝트의 사이드바 행도 같은
    * 문장을 읽는다. 없으면 키가 없다.

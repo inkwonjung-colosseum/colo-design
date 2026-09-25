@@ -38,6 +38,7 @@ import { realpathBestEffort } from "./paths.js";
 import type { PreviewDrivers } from "./preview-drivers.js";
 import type { ProjectPaths, ProjectRegistry } from "./projects.js";
 import type { QueueDisk } from "./queue-store.js";
+import { nextReadyWatch } from "./ready-notice.js";
 import { assertClonableRepoUrl, RepoWorkspace } from "./repo.js";
 import { scopeOf } from "./repo-config.js";
 import { appendScreenMap } from "./screen-map.js";
@@ -50,6 +51,14 @@ import { appendTape } from "./session-tape.js";
  * (hundreds of MB): the cap bounds what clicking through the sidebar costs.
  */
 const WARM_PREVIEWS = 2;
+
+/** PLAN-UI U8: 첫 준비에서 말이 기다리는 단계 — 내려받기 · 설치하기 · 미리보기 켜기. */
+const PREPARING_PHASES = new Set<RepoStatus["phase"]>([
+  "cloning",
+  "pulling",
+  "installing",
+  "starting",
+]);
 
 export interface ProjectWorkspaces {
   slug: string;
@@ -125,6 +134,11 @@ export class ProjectFleet {
    * 시각. `projectSummaries()`가 그대로보낸다 — 비활성 프로젝트도 이
    * 값으로 홈의 요약 행을 그린다(크로스 프로젝트 인박스).
    */
+  /** PLAN-UI U8: 첫 준비(내려받기부터)가 도는 중인 프로젝트 — ready-notice.ts. */
+  private readonly firstPrep = new Set<string>();
+  /** PLAN-UI U8: 그중 지금 일하는 단계(오류가 아닌)에 있는 프로젝트 — 말이 기다린다. */
+  private readonly preparing = new Set<string>();
+
   private readonly lastHandoffEvent = new Map<
     string,
     { kind: "merged" | "closed" | "changes_requested" | "comments" | "replied"; at: string }
@@ -217,6 +231,8 @@ export class ProjectFleet {
           }
           // D4: 준비가 끝내 멈춘 실패는 사람의 버튼을 기다리지 않는다.
           this.autoBriefBringUpFailure(workspaces, status);
+          // PLAN-UI U8: 첫 준비가 배경에서 끝나면 OS 알림 한 번.
+          this.watchFirstPrep(slug, status);
         },
         onDiffStatus: (status) => {
           workspaces.diffStage = status.stage;
@@ -478,6 +494,9 @@ export class ProjectFleet {
         // 감독자의 브랜치 정리가 읽는다.
         ...(project.defaults ? { defaults: project.defaults } : {}),
         ...(project.lifecycle ? { lifecycle: project.lifecycle } : {}),
+        // 다시 받은 초대장의 keep 판정(PLAN-UI U11)이 대 보는 개발자 몫 값.
+        ...(project.reviewers?.length ? { reviewers: project.reviewers } : {}),
+        commandsApproved: project.commandsApproved !== false,
         // 홈 크로스 프로젝트 인박스(PLAN P3-2): 질문+권한 모두 스레드를
         // "awaiting" 으로 세우므로, 비활성 프로젝트라도 이 카운트만으로
         // 답을 기다리는 일의 수를 안다 — 세션이 살아 있는 한 값이 있다.
@@ -572,6 +591,54 @@ export class ProjectFleet {
     } catch {
       this.autoSaveAfter.delete(target.id);
       return false;
+    }
+  }
+
+  /**
+   * PLAN-UI U8 · P5: 처음 여는 프로젝트의 준비가 사용자가 다른 곳에 있는 동안
+   * 끝났으면 `ready` 알림을 한 번 낸다 — 판정은 nextReadyWatch 에 있다.
+   */
+  private watchFirstPrep(slug: string, status: RepoStatus): void {
+    const { watching, notify } = nextReadyWatch(
+      this.firstPrep.has(slug),
+      status.phase,
+      slug === this.deps.registry.activeSlug(),
+    );
+    if (watching) this.firstPrep.add(slug);
+    else this.firstPrep.delete(slug);
+    // 준비가 끝났거나 멈췄으면 기다리던 말을 놓아 준다 — 멈춘 준비는 AI 가
+    // 고치므로(D4) 그 대화의 말까지 붙잡으면 고침 턴도 함께 갇힌다.
+    if (watching && PREPARING_PHASES.has(status.phase)) this.preparing.add(slug);
+    else if (this.preparing.delete(slug)) this.releasePreparing(slug);
+    if (notify) {
+      this.deps.notice({
+        kind: "ready",
+        slug,
+        title: this.deps.registry.get(slug)?.name ?? slug,
+      });
+    }
+  }
+
+  /**
+   * PLAN-UI U8: 첫 준비 중인 프로젝트의 대화로 온 사람의 말을 대기 줄에
+   * 세운다 — 준비가 끝나면(releasePreparing) 차례로 나간다. 화면은 대기 줄
+   * (`queued`)과 준비 단계(RepoStatus.phase)로 `준비가 끝나면 바로 보낼게요` 를 그린다.
+   */
+  holdIfPreparing(sessionId: string): void {
+    const workspaces = this.workspaceOfSession(sessionId);
+    if (!workspaces || !this.preparing.has(workspaces.slug)) return;
+    this.deps.manager.get(sessionId)?.setPreparing(true);
+  }
+
+  private releasePreparing(slug: string): void {
+    const workspaces = this.workspaces.get(slug);
+    if (!workspaces) return;
+    const roots = new Set([
+      workspaces.paths.repoRoot,
+      realpathBestEffort(workspaces.paths.repoRoot),
+    ]);
+    for (const session of this.deps.manager.all()) {
+      if (session.preparing && roots.has(session.cwd)) session.setPreparing(false);
     }
   }
 

@@ -1,5 +1,5 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 /**
  * 렌더러에 노출되는 데스크톱 다리: 수동 업데이트 확인과 `폴더
@@ -42,6 +42,22 @@ contextBridge.exposeInMainWorld("coloDesignDesktop", {
   onOpenSession: subscribe<string>("colodesign:open-session"),
   /** 커미티 B1 (2026-09-15): 알림 클릭 → 그 프로젝트로 — slug 가 건너온다. */
   onOpenProject: subscribe<string>("colodesign:open-project"),
+  /**
+   * 초대 파일(PLAN-UI U11): 끌어다 놓거나 고른 File 의 디스크 위치를 알려 주고
+   * (디스크에 없는 File 은 null), 가져온 뒤 그 파일을 OS 휴지통으로 옮긴다.
+   * 메인이 `.colo-invite` 가 아닌 것은 거절한다.
+   */
+  invite: {
+    pathOf: (file: File): string | null => {
+      try {
+        return webUtils.getPathForFile(file) || null;
+      } catch {
+        return null;
+      }
+    },
+    discard: (path: string): Promise<void> =>
+      ipcRenderer.invoke("desktop:invite-discard", { path }),
+  },
   preview: {
     native: true as const,
     mount: (url: string, epoch: number | null, origins?: string[]) =>

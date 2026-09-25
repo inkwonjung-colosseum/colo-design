@@ -409,6 +409,13 @@ export class Session {
    */
   private hurrying = false;
   /**
+   * 처음 여는 프로젝트의 준비가 끝나지 않았다(PLAN-UI U8) — 그동안 온 말은
+   * 도는 턴이 없어도 대기 줄에 선다. 아직 내려받는 중인 폴더에서 AI 가
+   * 일을 시작하지 않게 하는 문이다. 준비가 끝나면(setPreparing(false)) 맨 앞
+   * 말부터 차례로 나간다.
+   */
+  preparing = false;
+  /**
    * 이 턴이 시작한 시각 (epoch ms), 도는 턴이 없으면 null — 두 가지를 한
    * 필드로 말한다: 턴이 돌고 있는가(`!== null`), 그리고 언제부터인가.
    *
@@ -934,6 +941,8 @@ export class Session {
     // 사라진다. 닫힘이 이긴 방은 디스크에 그대로 남아 재시작 뒤 회복된다.
     if (this.closed) return;
     this.hurrying = false;
+    // 준비가 끝나지 않은 폴더로는 보내지 않는다(PLAN-UI U8) — setPreparing(false) 가 다시 부른다.
+    if (this.preparing) return;
     if (this.held.length === 0) return;
     const [item] = this.held.splice(0, 1);
     if (!item) return;
@@ -948,6 +957,16 @@ export class Session {
     this.setState("running");
     this.deliver(item);
     this.announceHeld();
+  }
+
+  /**
+   * PLAN-UI U8: 준비의 문을 열고 닫는다. 열리는 순간 도는 턴이 없으면 대기
+   * 줄의 맨 앞 말이 나간다 — 나머지는 평소처럼 턴 끝마다 하나씩(release).
+   */
+  setPreparing(preparing: boolean): void {
+    if (this.preparing === preparing) return;
+    this.preparing = preparing;
+    if (!preparing && this.turnStartedAt === null) this.release();
   }
 
   /**
@@ -1380,6 +1399,13 @@ export class Session {
     // 에이전트는 '지금 보내기'와 같은 기계로 '바로'를 이행한다: 도는 턴을
     // 끊고 이 말을 첫 번째 새 턴으로 세운다(omp 는 스스로도 도는 중 프롬프트를
     // cancel + 새 턴으로 다루므로, 그 에이전트의 말투와 같은 길이다).
+    // 준비 중(PLAN-UI U8)에는 도는 턴이 없어도 기다린다 — 바로 실어 보낼 턴도 없다.
+    if (this.preparing && this.turnStartedAt === null) {
+      this.held.push(item);
+      this.disk?.saveHeld(this.held);
+      this.announceHeld();
+      return;
+    }
     if (this.turnStartedAt !== null) {
       if (mode === "steer" && this.agent?.steer) {
         this.steer(item);

@@ -1,12 +1,13 @@
 // The renderer bridge: update check/install, 폴더 열기, and the
 // notification prefs the settings dialog edits. 자격 증명·토큰은 결코
 // 건너가지 않는다 — 이 파일이 노출하는 전부가 preload 의 표면이다.
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync } from "node:fs";
 import { COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import { ipcMain, shell } from "electron";
 import type { PlannerNotices } from "./app-notify.js";
 import type { SelfUpdates } from "./app-updates.js";
 import { saveDesktopSettings } from "./desktop-settings.js";
+import { inviteDiscardRefusal } from "./invite-discard.js";
 import { normalizeNotificationPrefs } from "./notify-policy.js";
 
 export interface BridgeDeps {
@@ -39,6 +40,23 @@ export function registerDesktopBridge(deps: BridgeDeps): void {
     }
     await shell.openPath(COLO_DESIGN_DIR);
     return { opened: COLO_DESIGN_DIR };
+  });
+
+  // 초대 파일 지우기(PLAN-UI U11) — 연결 코드가 든 파일을 가져온 뒤 앱이 대신
+  // 치운다. unlink 가 아니라 OS 휴지통이다: 잘못 지운 파일도 사람이 되살린다.
+  // 거절은 던져서 알린다(invoke 가 거부로 받는다).
+  ipcMain.handle("desktop:invite-discard", async (_event, payload: unknown) => {
+    const path = (payload as { path?: unknown } | null)?.path;
+    const refusal = inviteDiscardRefusal(path);
+    if (refusal) throw new Error(refusal);
+    let isFile = false;
+    try {
+      isFile = lstatSync(path as string).isFile();
+    } catch {
+      // 없는 파일 — 아래의 거절로.
+    }
+    if (!isFile) throw new Error("지울 초대 파일을 찾지 못했어요.");
+    await shell.trashItem(path as string);
   });
 
   // 알림 설정(시점·소리) — 렌더러의 설정이 메인의 알림을 움직인다. 창이

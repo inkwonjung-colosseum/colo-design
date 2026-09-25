@@ -325,6 +325,8 @@ export class RepoCore {
   pat: string | null;
 
   phase: RepoPhase = "missing";
+  /** PLAN-UI U8: `phase` 에 들어선 시각 — 단계가 바뀔 때만 움직인다. */
+  phaseSince = new Date().toISOString();
 
   detail: string | null = null;
 
@@ -1404,6 +1406,7 @@ export class RepoCore {
     return {
       root: this.root,
       phase: this.phase,
+      phaseSince: this.phaseSince,
       detail: this.detail,
       previewUrl: url,
       previewPort: port,
@@ -1496,6 +1499,7 @@ export class RepoCore {
   }
 
   setPhase(phase: RepoPhase, detail: string | null, kind: RepoErrorKind | null = null): void {
+    if (phase !== this.phase) this.phaseSince = new Date().toISOString();
     this.phase = phase;
     this.detail = detail;
     this.errorKind = phase === "error" ? kind : null;
