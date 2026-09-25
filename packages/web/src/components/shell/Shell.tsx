@@ -1,6 +1,6 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useRef, useState } from "react";
-import { CallDeveloper, Fold } from "../../components";
+import { Fold } from "../../components";
 import { useInviteImport } from "../../hooks/use-invite-import";
 import type { Daemon } from "../../lib/daemon-client";
 import {
@@ -14,7 +14,6 @@ import {
 } from "../../lib/settings";
 import { InviteDialog } from "../dialogs/InviteDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
-import { TokenExpiryDialog } from "../dialogs/TokenExpiryDialog";
 import { Onboarding } from "../onboarding/Onboarding";
 import { StartFlow } from "../onboarding/StartFlow";
 import { StateBanner } from "../StateBanner";
@@ -185,30 +184,17 @@ export function Shell({
     if (machineGates.some((step) => step.status !== "pass")) setWizardNeeded(true);
   }, [daemon.onboarding, daemon.projects.length, recheckingProvider]);
   // The daemon knows why it cannot work — no CLI, not signed in, no pnpm — and
-  // the planner cannot read a terminal to find out. The repo's settings.json
-  // warning rides beside them but is news, not a live problem: its
-  // fingerprint, once closed, stays closed on this device until the file or
-  // the repo changes.
-  const warnings = status?.warnings ?? [];
-  const repoWarning = status?.repoSettingsWarning ?? null;
+  // the planner cannot read a terminal to find out. 단계 10부터 이 경고 띠는
+  // 개발 실행에서만 선다(PLAN L8): 실사용에서는 데몬이 `env:<종류>` 로 스스로
+  // 개발자에게 알리고(단계 4), 화면은 주의 한 줄(AttentionLine)이 전부다.
+  // 레포 경고(repoSettingsWarning)도 같은 방 — 개발자의 말을 하는 소식이다.
+  const warnings = devMachine ? (status?.warnings ?? []) : [];
+  const repoWarning = devMachine ? (status?.repoSettingsWarning ?? null) : null;
   // 로그인 만료는 헤더의 경고 중 유일하게 앱 안에서 풀리는 것이다(리뷰 문서의
-  // "시한폭탄"): 구독 로그인이 끊기면 대화가 크래시 카드로 죽고, 여기가 그 소식이
-  // 처음 보이는 자리다. 같은 자리에서 다시 로그인을 열고, 마친 뒤에는 다시 확인
-  // 으로 지운다 — 터미널은 끝까지 사용자의 몫으로 남지 않는다.
+  // "시한폭탄"): 구독 로그인이 끊기면 대화가 크래시 카드로 죽는다. 이제 그
+  // 소식은 주의 한 줄(AttentionLine 의 reconnect/agent-login)이 말한다 —
+  // 같은 자리에서 다시 로그인을 열고, 로그인이 끝나면 상태 방송이 거둔다.
   const loggedOut = status != null && status.claudeExecutable != null && !status.loggedIn;
-  // GitHub 토큰 만료 카드 — 데몬이 자신의 GitHub 읽기에서 401 을 볼 때만
-  // 열린다. 닫기는 이 만료 국면에만
-  // 먹는다: 회복 뒤 새 401 은 새 소식이라 카드는 다시 선다. 데몬이 판정을
-  // 되돌리면(토큰 재연결·성공 읽기) 국면 자체가 끝난다.
-  const [expiryDismissed, setExpiryDismissed] = useState(false);
-  const githubExpired = daemon.status?.githubAuthExpired === true;
-  useEffect(() => {
-    if (!githubExpired) setExpiryDismissed(false);
-  }, [githubExpired]);
-  const expiryCard =
-    githubExpired && !expiryDismissed && connection === "open" ? (
-      <TokenExpiryDialog onDismiss={() => setExpiryDismissed(true)} />
-    ) : null;
   /** 닫은 경고는 이 세션 동안만 숨긴다 — 같은 문장의 재방송은 읽은 소식이고,
       새 문장은 새 소식이니 다시 보인다. 레포 경고(뉴스)만 예외로 기기에
       눌러 담는다 — 아래 readRepoWarnings. */
@@ -226,8 +212,8 @@ export function Shell({
   const [closingWarnings, setClosingWarnings] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
-  // The logged-out warning is replaced by its own actionable row below — the
-  // sentence is the daemon's, the button is here. The rest the planner may
+  // The logged-out warning never reaches the strip — its actionable row is the
+  // attention line's `다시 로그인` button now. The rest the planner may
   // close: 닫기는 "문제가 없다"가 아니라 "읽었다"다. Env warnings close for
   // the session; the repo warning's close carries its fingerprint and
   // outlives the tab.
@@ -242,37 +228,7 @@ export function Shell({
   /** 보이는 경고가 전부 접히는 중이면 스트립도 같이 접는다 — 슬롯만 접고
       여백·경계선이 남으면 빈 테두리가 한 번에 사라지는 점프가 된다. */
   const stripClosing =
-    !loggedOut &&
-    visibleWarnings.length > 0 &&
-    visibleWarnings.every((w) => closingWarnings.has(w.text));
-  const [loginStarted, setLoginStarted] = useState(false);
-  const [loginBusy, setLoginBusy] = useState(false);
-  const [loginGuidance, setLoginGuidance] = useState<string | null>(null);
-  const loginPress = async () => {
-    if (loginStarted) {
-      setLoginBusy(true);
-      try {
-        await api.refreshStatus();
-      } finally {
-        setLoginBusy(false);
-      }
-      return;
-    }
-    setLoginBusy(true);
-    try {
-      const outcome = (await api.onboardingFix("login-claude")) as {
-        guidance: string;
-      };
-      setLoginStarted(true);
-      setLoginGuidance(outcome.guidance);
-    } catch {
-      setLoginGuidance(
-        "로그인 창을 열지 못했습니다 — 설정 → 처음 설정 다시 보기에서 다시 시도해 주세요.",
-      );
-    } finally {
-      setLoginBusy(false);
-    }
-  };
+    visibleWarnings.length > 0 && visibleWarnings.every((w) => closingWarnings.has(w.text));
 
   // The rail's width and fold, seeded from the stored layout (already
   // clamped). Narrow windows fold it no matter what the setting says.
@@ -366,7 +322,6 @@ export function Shell({
                 }
           }
         />
-        {expiryCard}
       </div>
     );
   }
@@ -380,7 +335,6 @@ export function Shell({
     return (
       <div className="planner planner--onboarding">
         <StartFlow daemon={daemon} invite={inviteImport} />
-        {expiryCard}
       </div>
     );
   }
@@ -496,7 +450,7 @@ export function Shell({
           </header>
         )}
 
-        {(visibleWarnings.length > 0 || loggedOut || connection === "closed") && (
+        {(visibleWarnings.length > 0 || connection === "closed") && (
           <div
             className={
               stripClosing ? "planner__warnings planner__warnings--closing" : "planner__warnings"
@@ -538,35 +492,12 @@ export function Shell({
                   title={warning.text}
                   closeLabel="경고 닫기"
                   onClose={() => setClosingWarnings((prev) => new Set(prev).add(warning.text))}
-                  /* P3-3: 닫기만 있는 경고는 막다른 길이다 — 데몬 환경의 API
-                     키를 지우는 일은 이 화면의 사용자가 할 수 있는 일이 아니고,
-                     그 사실을 읽은 사람에게 남는 동작이 `닫기` 뿐이면 경고는
-                     없는 것과 같다. 그 한 줄에만 부르는 손을 단다. */
-                  actionSlot={
-                    warning.text.includes("ANTHROPIC_API_KEY") ? (
-                      <CallDeveloper
-                        daemon={daemon}
-                        what="데몬 환경에 ANTHROPIC_API_KEY 가 설정되어 있어 구독 대신 그 키로 결제됩니다 — 키를 지우고 앱을 다시 시작해 주세요."
-                      />
-                    ) : undefined
-                  }
+                  /* 경고의 조치는 데몬이 맡는다(단계 4 · L11): `env:<종류>` 로
+                     스스로 개발자에게 올리고, 화면의 문제 문장은 주의 한
+                     줄(AttentionLine)이 말한다 — 이 띠는 개발 실행의 읽을거리다. */
                 />
               </Fold>
             ))}
-            {loggedOut && (
-              <StateBanner
-                tone="warn"
-                role="alert"
-                title={
-                  loginGuidance ?? "Claude Code 로그인이 필요합니다 — 다시 로그인하면 이어집니다."
-                }
-                action={{
-                  label: loginBusy ? "확인 중…" : loginStarted ? "다시 확인" : "다시 로그인",
-                  onClick: () => void loginPress(),
-                  disabled: loginBusy,
-                }}
-              />
-            )}
           </div>
         )}
 
@@ -588,7 +519,6 @@ export function Shell({
       {/* 초대 가져오기 — 작업 화면 위의 대화상자. 첫 실행이 모두 성공하고 경고도
           없으면 아래 effect 가 조용히 닫는다(삭제 안내는 확인 카드가 이미 말했다). */}
       <InviteDialog daemon={daemon} controller={inviteImport} />
-      {expiryCard}
     </div>
   );
 }

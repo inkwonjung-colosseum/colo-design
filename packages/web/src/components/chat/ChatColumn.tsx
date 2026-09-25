@@ -9,8 +9,6 @@ import { Fold, PermissionCard, QuestionCard, Transcript } from "../../components
 import type { Pins } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
-import { ownerRepoOf } from "../../lib/format";
-import { handoffDraft } from "../../lib/handoff-draft";
 import { composing } from "../../lib/ime";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
@@ -232,14 +230,8 @@ export function ChatColumn({
     const el = document.getElementById("live-handoffcard");
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [handoffOpen]);
-  /** 넘기기 카드의 목적지·초안 — 구 HandoffPanel 이 ScreenPanel 에서 읽던
-      같은 계산을 대화 열이 이어받는다. */
-  const destination = ownerRepoOf(
-    daemon.projects.find((project) => project.slug === daemon.activeSlug)?.repoUrl ?? null,
-  );
-  const { title: proposedTitle, body: proposedBody } = handoffDraft(
-    daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? "",
-  );
+  // 넘기기 카드는 영수증뿐이다(단계 10) — 보내기 전의 제목·본문 검토 자리는
+  // 제출이 repo.submit 한 번으로 바뀌며 걷혔다. 제목과 본문은 데몬이 정한다.
   // 제출·넘기기 실패는 이 열이 말하지 않는다(PLAN L8 대체 표) — 의도가
   // 데몬에 남아 다음 틱이 이어받고, 화면의 문제 문장은 맨 위의 주의 한
   // 줄(AttentionLine)이 전부다.
@@ -596,18 +588,10 @@ export function ChatColumn({
           {/* 제출 · 넘기기의 실패 배너는 없다(PLAN L8 · 단계 10): 의도는
               데몬의 원장에 남아 다음 틱이 끝까지 이어받고, 사람이 읽을
               문장은 맨 위의 주의 한 줄(AttentionLine)이 전부다. */}
-          {/* 넘기기 카드 — 모달이 아니라 대화 안의 검토 자리. 제출이 무사히
-              끝나면 영수증으로 여기 선다(E5). */}
+          {/* 제출의 영수증 (E5) — 제출이 무사히 끝나면 같은 자리에 선다. */}
           {handoffOpen && (
             <div id="live-handoffcard">
-              <HandoffCard
-                daemon={daemon}
-                destination={destination}
-                proposedTitle={proposedTitle}
-                proposedBody={proposedBody}
-                sessionId={activeId}
-                onClose={() => setHandoffOpen(false)}
-              />
+              <HandoffCard daemon={daemon} onClose={() => setHandoffOpen(false)} />
             </div>
           )}
           {(sessions.running || awaitingHere) && !tailLive && (

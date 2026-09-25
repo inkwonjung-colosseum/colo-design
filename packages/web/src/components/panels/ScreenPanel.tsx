@@ -1105,22 +1105,6 @@ export function ScreenPanel({
     }
   };
 
-  // --- 선예열 ----------------------------------------
-  // 초안을 묻는 시점을 버튼 클릭에서 저장의 끝으로 옮긴다. 데몬 캐시(초안은
-  // 브랜치 tip)가 나머지를 하므로 넘기기 카드를 여는 속도가 곧 체감 속도다.
-  const daemonRef = useRef(daemon);
-  daemonRef.current = daemon;
-  // 초안 예열: 저장이 끝날 때마다(published) 한 번 — 이어지는 넘기기 복도의
-  // 캐시 미스(tip이 방금 움직였다)를 미리 채운다.
-  const prewarmStage = useRef<string | null>(null);
-  useEffect(() => {
-    const stage = daemonRef.current.diffStatus?.stage ?? null;
-    if (prewarmStage.current === stage) return;
-    prewarmStage.current = stage;
-    if (stage !== "published") return;
-    void daemonRef.current.api.handoffDraft().catch(() => undefined);
-  });
-
   const errorKind = errorKindOf(repo);
   // Only a named preview death takes over the preview frame; anything else
   // (a failed clone or pull, say) is answered by the retry panel, because the

@@ -74,7 +74,12 @@ export function HistoryDrawer({
     api
       .saveHistory()
       .then((next) => !cancelled && setEntries(next.entries))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
+      .catch((error) => {
+        if (cancelled) return;
+        // 원문은 기록으로 — 한 줄은 한국어로만 말한다(PLAN 단계 10).
+        console.error("[colo-design] 작업 기록 읽기", error);
+        setError("기록을 읽지 못했어요 — 잠시 후 다시 시도해 주세요.");
+      });
     return () => {
       cancelled = true;
     };
@@ -102,7 +107,7 @@ export function HistoryDrawer({
       try {
         const result = await daemon.api.restore(entry.sha);
         if (result.stage === "failed") {
-          setError(result.detail ?? "되돌리지 못했습니다 — 잠시 후 다시 시도해 주세요.");
+          setError(result.detail ?? "되돌리지 못했어요 — 잠시 후 다시 시도해 주세요.");
           return;
         }
         await daemon.api.repoStatus().catch(() => undefined);
@@ -110,8 +115,10 @@ export function HistoryDrawer({
         // answer beside it. The chip and the save review read the new
         // state; the list re-reads and the accent dot names the row.
         setReadTick((tick) => tick + 1);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+      } catch (error) {
+        // 원문은 기록으로 — 한 줄은 한국어로만 말한다(PLAN 단계 10).
+        console.error("[colo-design] 되돌리기", error);
+        setError("되돌리지 못했어요 — 잠시 후 다시 시도해 주세요.");
       } finally {
         setRestoring(null);
       }

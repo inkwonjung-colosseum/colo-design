@@ -142,8 +142,8 @@ export function Sidebar({
       clipping eats an absolutely positioned menu, so the popover pins itself
       beside its tile with position:fixed instead. */
   const [popAt, setPopAt] = useState<{ top: number; left: number } | null>(null);
-  /** A removal (or rename) that the daemon refused, in its own words. */
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  /** A removal (or rename) the daemon refused — the line is short and Korean;
+      the daemon's own words go to the console (PLAN 단계 10). */
   /** The project row being renamed, and the draft while it is. */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState("");
@@ -295,9 +295,9 @@ export function Sidebar({
       await api.projectUpdate(guarding.slug, { instructions: guardDraft.trim() || null });
       setGuarding(null);
     } catch (error) {
-      // 대화상자가 아직 열려 있으니 사이드바의 경고 띠는 그 아래에 깔린다 —
-      // 실패의 말은 상자 안에서 한다.
-      setGuardError(error instanceof Error ? error.message : String(error));
+      // 원문은 기록으로 — 상자 안의 한 줄은 한국어로만 말한다(단계 10).
+      console.error("[colo-design] 지켜 줄 것 저장", error);
+      setGuardError("저장하지 못했어요 — 잠시 후 다시 시도해 주세요.");
     } finally {
       setSavingGuard(false);
     }
@@ -350,7 +350,8 @@ export function Sidebar({
     try {
       await api.projectRemove(project.slug, deleteFiles);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      // 원문(데몬의 영어 오류)은 기록으로 — 사람이 읽는 한 줄만 선다(단계 10).
+      console.error("[colo-design] 프로젝트 지우기", error);
       setFailed(true);
     }
   };
@@ -1189,7 +1190,7 @@ export function Sidebar({
             tone="danger"
             role="alert"
             className="sidebar__error"
-            title={errorMessage ? `${errorMessage} — 다시 시도해 주세요` : "다시 시도해 주세요"}
+            title="잘 되지 않았어요 — 잠시 후 다시 시도해 주세요"
           />
         )}
       </nav>
