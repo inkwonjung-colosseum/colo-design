@@ -1,65 +1,17 @@
 import { useState } from "react";
 import type { Block } from "../../lib/daemon-client";
 import { isToolRunning } from "../../lib/progress";
+import { bucketOf } from "../../lib/tool-buckets";
 import { CheckIcon, ChevronRightIcon } from "../icons";
 import { Markdown } from "../Markdown";
 import { ThinkingBlock, ToolBlock } from "./blocks";
 import type { TaskControls, TodoToolBlock } from "./shared";
 
-/**
- * A planner never asked for a tool log. One assistant turn's tool calls fold
- * into a single Korean line; the developer-grade blocks are one click away so
- * a stuck turn can still be diagnosed.
- *
- * 세 프로바이더가 같은 일을 다른 이름으로 부른다 — Claude 의 `Edit`, Codex 의
- * `fileChange`, omp 의 `edit`. 이름의 원본은 데몬의 tool-names.ts 다(통계의
- * 읽기 · 편집 · 실행 묶음). 이 표는 그 묶음을 머리말 한 줄로 옮기는 사본이라,
- * 그쪽에 이름이 늘면 여기에도 는다.
- */
-const ACTIVITY_BUCKET: Record<string, "file" | "command" | "read"> = {
-  // Claude Code
-  Write: "file",
-  Edit: "file",
-  MultiEdit: "file",
-  NotebookEdit: "file",
-  Bash: "command",
-  Read: "read",
-  Glob: "read",
-  Grep: "read",
-  LS: "read",
-  // Codex — app-server 의 item 종류와 승인 요청의 이름
-  fileChange: "file",
-  applyPatch: "file",
-  apply_patch: "file",
-  edit_file: "file",
-  write_file: "file",
-  commandExecution: "command",
-  execCommand: "command",
-  exec_command: "command",
-  run_command: "command",
-  shell: "command",
-  Shell: "command",
-  view: "read",
-  view_file: "read",
-  read_file: "read",
-  // omp
-  edit: "file",
-  write: "file",
-  ast_edit: "file",
-  notebook_edit: "file",
-  bash: "command",
-  eval: "command",
-  read: "read",
-  glob: "read",
-  grep: "read",
-  ast_grep: "read",
-};
-
 type ActivityCounts = { file: number; command: number; read: number; other: number };
 
 function activityCounts(tools: Array<Extract<Block, { type: "tool" }>>): ActivityCounts {
   const counts: ActivityCounts = { file: 0, command: 0, read: 0, other: 0 };
-  for (const tool of tools) counts[ACTIVITY_BUCKET[tool.name] ?? "other"] += 1;
+  for (const tool of tools) counts[bucketOf(tool.name) ?? "other"] += 1;
   return counts;
 }
 
