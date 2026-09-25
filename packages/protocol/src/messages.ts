@@ -513,6 +513,8 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("repo.submit"),
     /** 이 대화에 제출 카드가 귀속된다 (cycle.handed 사건의 줄). */
     sessionId: z.string().min(1).optional(),
+    /** 제출 확인의 `개발자에게 한마디`(PLAN-UI U3) — 요청 본문의 `> 한마디:` 줄. */
+    note: z.string().trim().max(500).optional(),
   }),
   /**
    * Re-read the open pull request from GitHub: merged, closed, or still open.
@@ -624,7 +626,19 @@ const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     ...withId,
     type: z.literal("machine.set"),
-    provider: z.string().min(1).max(64).nullable(),
+    /** 없으면 담당을 그대로 둔다 — 다른 설정만 바꾸는 누름(PLAN-UI U12). */
+    provider: z.string().min(1).max(64).nullable().optional(),
+    /** 새 AI 버전이 나오면 스스로 설치할지(PLAN-UI U12) — 없으면 그대로 둔다. */
+    agentAutoUpdate: z.boolean().optional(),
+  }),
+  /**
+   * 설정의 `업데이트` 줄(PLAN-UI U12): 에이전트 CLI 를 새 버전으로 바꾼다.
+   * 진행 · 완료는 설치 진행기의 `onboarding.install.progress` · `.done` 그대로다.
+   */
+  z.object({
+    ...withId,
+    type: z.literal("agent.update"),
+    kind: z.enum(["claude", "codex"]),
   }),
   /**
    * 넘긴 요청에 적을 작성자 이름(P1-3): 모든 요청이 봇 계정으로 열리므로

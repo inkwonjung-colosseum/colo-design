@@ -39,9 +39,11 @@ export class PlannerNotices {
       title,
       body,
       // 커미티 B1: 넘김 사건의 행선은 프로젝트다 — 대화가 아니라 slug 로 간다.
-      notice.kind === "handoff"
+      notice.kind === "handoff" || notice.kind === "ready" || notice.kind === "submit-blocked"
         ? () => this.host.focusProject(notice.slug)
-        : () => this.host.focusMain(notice.sessionId),
+        : notice.kind === "update-done"
+          ? () => this.host.focusMain()
+          : () => this.host.focusMain(notice.sessionId),
       {
         silent: !this.prefs.sound,
       },

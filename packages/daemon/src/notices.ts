@@ -44,7 +44,16 @@ export type DaemonNotice =
       event: "merged" | "closed" | "changes_requested" | "comments" | "replied";
       /** `comments` 만: 새로 읽힌 개수. */
       count?: number;
-    };
+    }
+  /** 처음 여는 프로젝트의 준비가 배경에서 끝났다(PLAN-UI U8) — 행선은 프로젝트. */
+  | { kind: "ready"; slug: string; title: string }
+  /**
+   * 제출이 개발자 몫으로 막혔다(PLAN-UI U13) — `auth` 는 연결 코드 만료,
+   * `developer-notified` 는 재시도 예산을 다 써 개발자에게 알린 경우.
+   */
+  | { kind: "submit-blocked"; slug: string; title: string; reason: "auth" | "developer-notified" }
+  /** 에이전트 CLI 를 새 버전으로 바꿨다(PLAN-UI U12). */
+  | { kind: "update-done"; agent: "claude" | "codex"; version: string };
 
 /**
  * 상태 전환 중 부르는 값이 되는 것: AI 가 멈췄거나(idle), 중단됐거나

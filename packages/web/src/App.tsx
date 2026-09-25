@@ -5,6 +5,7 @@ import { GearIcon, PlugIcon, WarnIcon } from "./components/icons";
 import { Shell } from "./components/shell/Shell";
 import { useDaemon } from "./lib/daemon-client";
 import { normalizeNotificationSettings, useSettings } from "./lib/settings";
+import { NextShell } from "./next/NextShell";
 
 const URL_KEY = "colo-design.daemon-url";
 
@@ -217,9 +218,15 @@ export default function App() {
     );
   }
 
+  // 병행 셸(PLAN-UI 4 · P4): 개발 실행에서만 `?shell=next` 가 새 셸을 연다.
+  const ActiveShell =
+    daemon.status?.dev && new URLSearchParams(window.location.search).get("shell") === "next"
+      ? NextShell
+      : Shell;
+
   return (
     <>
-      <Shell
+      <ActiveShell
         daemon={daemon}
         settings={settings}
         onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}

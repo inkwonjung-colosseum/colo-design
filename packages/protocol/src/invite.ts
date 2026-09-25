@@ -417,7 +417,9 @@ export function normalizeInvite(value: unknown): NormalizeResult {
  */
 export type InviteRow =
   | { project: InviteProject; action: "add" }
-  | { project: InviteProject; action: "update"; slug: string; currentName: string };
+  | { project: InviteProject; action: "update"; slug: string; currentName: string }
+  /** 다시 받은 초대장이 바꾸는 것이 없는 기존 프로젝트(PLAN-UI U11) — 판정은 단계 5. */
+  | { project: InviteProject; action: "keep"; slug: string; currentName: string };
 
 export function planInviteRows(
   invite: NormalizedInvite,

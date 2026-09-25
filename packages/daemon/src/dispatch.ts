@@ -705,6 +705,14 @@ export class RequestRouter {
         return { ok: true as const };
       case "machine.set": {
         const provider = message.provider;
+        if (message.agentAutoUpdate !== undefined) {
+          // 켬이 기본이라 파일에는 끔만 적힌다 — 잊기(null)가 곧 켬이다.
+          this.deps.machineSetting.set("agentAutoUpdate", message.agentAutoUpdate ? null : "off");
+          void this.deps
+            .status()
+            .then((status) => this.deps.broadcast({ type: "status", status } as ServerMessage));
+        }
+        if (provider === undefined) return { ok: true as const };
         if (provider !== null) {
           const driver = this.deps.agentDrivers.get(provider);
           if (!driver) throw new Error(`알 수 없는 에이전트입니다: ${provider}`);
@@ -724,6 +732,9 @@ export class RequestRouter {
         this.deps.machineTurns.invalidate();
         return { ok: true as const };
       }
+      case "agent.update":
+        // 단계 6 (PLAN-UI U12) 이 설치 진행기로 잇는다 — 그때까지는 거절한다.
+        throw new Error("아직 준비 중이에요");
       case "machine.author.set": {
         // 이름은 문서로 흘러가는 문자열이라 잘라내는 것으로 충분하다 — 빈 칸은
         // 지우기(null 과 같은 길)로 읽는다. 상태의 authorName 이 다음 방송에 실린다.

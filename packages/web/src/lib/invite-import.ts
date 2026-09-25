@@ -174,7 +174,7 @@ export async function applyInvite(
           ...(row.project.lifecycle ? { lifecycle: row.project.lifecycle } : {}),
           activate,
         });
-      } else {
+      } else if (row.action === "update") {
         await daemon.api.projectUpdate(row.slug, {
           // 초대 v4(PLAN 단계 5): 개발자의 값(기본 가지 · 리뷰어 · 명령 허용 ·
           // 처음 값 · 수명)은 덮고, 초대장에 없으면 지우는 값(null)을 보낸다.

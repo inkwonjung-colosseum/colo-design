@@ -294,6 +294,8 @@ export interface DaemonStatus {
     available: boolean;
     /** The CLI's own version string when the driver could read it. */
     version?: string;
+    /** 확인해 둔 새 버전(PLAN-UI U12) — 모르면 키가 없고, 설정은 현재 버전만 보인다. */
+    latestVersion?: string;
     /** The vendor's credential check; absent when the driver doesn't track one. */
     loggedIn?: boolean;
     /** Why the provider cannot run — shown in place of a bare "설치 필요". */
@@ -318,6 +320,11 @@ export interface DaemonStatus {
   dev?: boolean;
   /** 넘긴 요청에 적을 작성자 이름 — 온보딩이 묻고 machine.json 이 기억한다. */
   authorName?: string | null;
+  /**
+   * 새 AI 버전이 나오면 스스로 설치할지(PLAN-UI U12) — 기본 켬, `machine.set`
+   * 으로 바꾸고 machine.json 이 기억한다.
+   */
+  agentAutoUpdate: boolean;
   /**
    * 기계 전체의 주의 (PLAN L8) — 연결 코드 만료 · AI 로그아웃처럼 어느
    * 프로젝트의 것도 아닌 문제. 없으면 키가 없다.
@@ -352,8 +359,15 @@ export type OnboardingFixKind =
   | "install-node"
   | "install-pnpm";
 
-/** 데몬이 끝까지 지켜보는 두 설치 — 진행기와 그 방송이 함께 쓰는 종류. */
-export type AgentInstallKind = "install-claude" | "install-codex";
+/**
+ * 데몬이 끝까지 지켜보는 설치 — 진행기와 그 방송이 함께 쓰는 종류. 업데이트
+ * (PLAN-UI U12)도 같은 진행기를 탄다.
+ */
+export type AgentInstallKind =
+  | "install-claude"
+  | "install-codex"
+  | "update-claude"
+  | "update-codex";
 
 export interface OnboardingFix {
   kind: OnboardingFixKind;

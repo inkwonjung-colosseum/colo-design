@@ -254,7 +254,8 @@ export type ChatEvent =
    * 테스트 B6). 테이프의 한 줄로 남아 연대기의 일부가 된다.
    */
   | { kind: "cycle.saveBlocked"; at: string; detail: string }
-  | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string }
+  /** `note` 는 제출 확인에서 사용자가 남긴 한마디(PLAN-UI U3) — 영수증 카드가 되돌려 보인다. */
+  | { kind: "cycle.handed"; at: string; pr: number; reviewer?: string; note?: string }
   | { kind: "cycle.merged"; at: string; pr: number }
   /**
    * 넘긴 요청이 병합 없이 닫혔다(반려, PLAN L4) — 작업은 새 사이클 브랜치로

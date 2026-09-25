@@ -77,5 +77,23 @@ export function noticeCopy(notice: DaemonNotice): {
                   title: `${notice.projectName} · 개발자 코멘트`,
                   body: `개발자 코멘트 ${notice.count ?? 1}건 — AI에게 반영을 맡겼습니다.`,
                 };
+    case "ready":
+      return {
+        title: `${notice.title} · 준비됐어요`,
+        body: "처음 여는 준비가 끝났어요. 바로 말을 걸 수 있어요.",
+      };
+    case "submit-blocked":
+      return {
+        title: `${notice.title} · 제출하지 못했어요 — 개발자에게 알렸어요`,
+        body:
+          notice.reason === "auth"
+            ? "다시 연결이 필요해요. 계속 만들 수 있고, 풀리면 도구가 다시 제출해요."
+            : "계속 만들 수 있어요. 풀리면 도구가 다시 제출해요.",
+      };
+    case "update-done":
+      return {
+        title: "AI를 업데이트했어요",
+        body: `${notice.agent === "claude" ? "Claude Code" : "Codex"} ${notice.version} — 다음 새 대화부터 써요.`,
+      };
   }
 }

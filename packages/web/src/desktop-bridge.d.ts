@@ -55,6 +55,11 @@ declare global {
       onOpenSession?: (callback: (sessionId: string) => void) => Unsubscribe;
       /** 알림 클릭 → 그 프로젝트로 — slug 를 건넨다. */
       onOpenProject?: (callback: (slug: string) => void) => Unsubscribe;
+      /**
+       * 가져온 초대 파일을 앱이 대신 지운다(PLAN-UI U11) — `초대 파일을 가져왔어요 ·
+       * 파일 지우기`. 단계 5 가 메인에 잇는다; 그 전에는 없다.
+       */
+      invite?: { discard(path: string): Promise<void> };
       preview?: {
         /** The desktop hosts the preview — PreviewFrame's <webview>, not the iframe. */
         native?: boolean;

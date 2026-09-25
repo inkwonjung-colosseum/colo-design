@@ -189,6 +189,24 @@ export interface RepoStatus {
    * 서 있는 개발자 알림이 재료다.
    */
   attention?: Attention | null;
+
+  /**
+   * 이번 사이클(베이스 이후 커밋)이 만진 화면 (PLAN-UI U2) — 데몬의 화면 관찰
+   * 지도에서 온다. `note` 는 그 커밋의 제목(=사용자의 말 첫 줄). 웹은 파생하지
+   * 않는다. 아직 채우지 않는 데몬은 키를 싣지 않는다.
+   */
+  cycleScreens?: Array<{ route: string; title: string; note: string; at: string }>;
+
+  /**
+   * 제출의 진행과 막힘 (PLAN-UI U13) — 원장의 `submit` 과 개발자 알림에서
+   * 데몬이 만든다. `log` 는 제출 기록의 최근 몇 줄, 문장은 웹이 짓는다.
+   */
+  submit?: {
+    phase: "idle" | "running" | "retrying" | "blocked";
+    attempts: number;
+    lastError?: "auth" | "network" | "rejected" | "other";
+    log: Array<{ at: string; text: string }>;
+  };
 }
 
 /**

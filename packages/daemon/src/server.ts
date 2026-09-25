@@ -1609,6 +1609,7 @@ export class DaemonServer {
       // 개발 전용 면의 판정은 데몬이 내린다 — 웹 번들의 DEV 플래그는 패키징 빌드라 항상 거짓.
       dev: this.config.devAgents === true,
       authorName: this.machineSetting.get("authorName"),
+      agentAutoUpdate: this.machineSetting.get("agentAutoUpdate") !== "off",
       githubAuthExpired: this.github.authExpired,
       // 슬라이스 5: 설정 폼과 `개발자 부르기` 가 잠긴 채 보이던 이유 — 상태가
       // 이 한 단어를 채우지 않았다 (PLAN 단계 0). 비밀 자체는 못 나간다.

@@ -493,6 +493,7 @@ export async function buildStatus(input: {
     | "projects"
     | "activeProject"
     | "repoSettingsWarning"
+    | "agentAutoUpdate"
   >
 > {
   const warnings: string[] = [];
