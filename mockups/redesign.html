@@ -151,6 +151,10 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .submit.locked{background:#e3dfd6;color:#9a958b;cursor:not-allowed}
 .submit.busy{background:#5d5a55}
 .submit.sent{background:var(--green)}
+.submit.failed{background:var(--red)}
+.slog{display:grid;gap:4px;margin-top:8px;font-size:12px;color:var(--ink3)}
+.slog div{display:flex;gap:8px}
+.slog small{font-variant-numeric:tabular-nums;flex:none}
 
 .problem{display:none;align-items:center;gap:10px;padding:9px 16px;font-size:13px;border-bottom:1px solid var(--line);animation:fade .2s}
 .problem.on{display:flex}
@@ -171,7 +175,11 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .transcript{flex:1;overflow:auto;padding:22px 20px 10px}
 .m-user{display:flex;justify-content:flex-end;margin:0 0 18px}
 .fresh{animation:rise .22s}
+.m-user{flex-direction:column;align-items:flex-end}
 .m-user .bub{max-width:88%;background:#ece9e2;border-radius:16px 16px 4px 16px;padding:10px 13px;line-height:1.55}
+.m-user .ue{opacity:0;margin-top:4px;font-size:11.5px;color:var(--ink3);display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:6px}
+.m-user:hover .ue{opacity:1}
+.m-user .ue:hover{background:rgba(0,0,0,.05);color:var(--ink2)}
 .btxt{white-space:pre-wrap;word-break:keep-all}
 .batts{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .bpins{display:grid;gap:5px;margin-bottom:8px}
@@ -282,12 +290,13 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .addr{flex:1;min-width:110px;max-width:460px;margin:0 6px;height:32px;display:flex;align-items:center;gap:8px;padding:0 8px 0 11px;border-radius:9px;background:var(--card);border:1px solid var(--line)}
 .addr:hover{border-color:var(--line2)}
 .addr b{font-weight:600;font-size:13px;white-space:nowrap}
-.addr span{color:var(--ink3);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:left}
+.addr span{display:none}
+.addr b{flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis}
 .addr .i{color:var(--ink3)}
 .seg{display:flex;background:rgba(0,0,0,.05);border-radius:9px;padding:2px;margin:0 4px;flex:none}
 .seg button{width:30px;height:26px;border-radius:7px;display:grid;place-items:center;color:var(--ink3)}
 .seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.1)}
-.pinstrip{display:none;align-items:center;gap:8px;padding:7px 12px;background:var(--accent-soft);border-bottom:1px solid var(--accent-line);font-size:12.5px;color:#8a3f24;flex:none;animation:fade .15s}
+.pinstrip{display:none;position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:10;align-items:center;gap:8px;padding:6px 8px 6px 12px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.08);font-size:12.5px;color:#8a3f24;white-space:nowrap;max-width:calc(100% - 24px);animation:pop .15s}
 .pinstrip b{font-weight:600}
 .pinstrip .btn{margin-left:auto;height:26px}
 .pin-on .pinstrip{display:flex}
@@ -340,8 +349,11 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .hitem .ht{font-size:13px;line-height:1.45}
 .hitem .ht small{color:var(--ink3);margin-right:6px;font-variant-numeric:tabular-nums}
 .hitem .hs{font-size:12px;color:var(--ink3);margin-top:2px}
-.hitem .hb{position:absolute;right:8px;top:7px;opacity:0}
+.hitem{cursor:pointer}
+.hitem .ht{padding-right:100px}
+.hitem .hb{position:absolute;right:8px;top:7px;opacity:.85}
 .hitem:hover .hb{opacity:1}
+.hitem.cur .ht{padding-right:0}
 .hconfirm{grid-column:2;margin-top:8px;background:#faf8f4;border:1px solid var(--line);border-radius:9px;padding:10px;font-size:12.5px;color:var(--ink2);line-height:1.5}
 .hconfirm .row{display:flex;gap:6px;margin-top:8px}
 .hsubmit{display:flex;align-items:center;gap:8px;margin:6px 8px;font-size:12px;color:var(--green);font-weight:500}
@@ -427,6 +439,19 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .pina{position:absolute;z-index:5;border:2px dashed var(--accent);background:rgba(198,97,63,.07);border-radius:6px;pointer-events:none}
 .pina .pinb{left:0;top:0;pointer-events:auto}
 .pina.sent{border-color:#9d978c;background:rgba(0,0,0,.03)}
+.pinbub{position:absolute;z-index:75;width:300px;background:var(--card);border:1px solid var(--line2);border-radius:13px;box-shadow:var(--pop);padding:10px 10px 8px;animation:pop .12s}
+.pinbub .bh{display:flex;align-items:center;gap:7px;font-size:12.5px;margin-bottom:6px}
+.pinbub .bh b{font-weight:600}
+.pinbub .bh span{color:var(--ink3)}
+.pinbub .bh .ibtn{margin-left:auto}
+.pinbub input{width:100%;height:34px;border:1px solid var(--line2);border-radius:9px;padding:0 10px;outline:0;font-size:13.5px}
+.pinbub input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.pinbub .bf{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11.5px;color:var(--ink3)}
+.pinbub .bf .grow{flex:1}
+.pinbub::before{content:"";position:absolute;width:11px;height:11px;background:var(--card);border-left:1px solid var(--line2);border-top:1px solid var(--line2);transform:rotate(45deg);top:-6px;left:18px}
+.pinbub.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
+.pin-t:disabled{opacity:.4;cursor:default}
+.composer .pin-t{display:none}
 .area-sel{position:absolute;z-index:7;border:1.5px solid var(--accent);background:rgba(198,97,63,.1);border-radius:4px;pointer-events:none}
 .pin-on .svc,.alt-on .svc{cursor:crosshair}
 .pin-on .svc *,.alt-on .svc *{cursor:crosshair!important}
@@ -612,7 +637,7 @@ kbd{font:11px var(--font);color:var(--ink3)}
 .keys kbd{background:#f3f1ec;border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-size:12px;color:var(--ink2);white-space:nowrap}
 .confirm p{margin:0 0 16px;color:var(--ink2);line-height:1.6}
 .confirm .row{display:flex;gap:8px;justify-content:flex-end}
-.toast{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);background:#1d1c1a;color:#fff;padding:9px 15px;border-radius:10px;font-size:13px;box-shadow:var(--pop);animation:rise .18s;z-index:95;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis}
+.toast{position:absolute;top:64px;left:50%;transform:translateX(-50%);background:#1d1c1a;color:#fff;padding:9px 15px;border-radius:10px;font-size:13px;box-shadow:var(--pop);animation:rise .18s;z-index:95;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis}
 .mention{width:240px}
 #osnotes{position:fixed;bottom:18px;right:18px;flex-direction:column-reverse;z-index:400;display:flex;flex-direction:column;gap:8px;width:344px}
 .osn{background:rgba(246,245,243,.94);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:15px;box-shadow:0 10px 30px rgba(0,0,0,.2),0 0 0 .5px rgba(0,0,0,.12);padding:11px 12px;display:flex;gap:10px;cursor:pointer;animation:osin .3s ease-out}
@@ -643,6 +668,8 @@ kbd{font:11px var(--font);color:var(--ink3)}
   .chat{border-right:0}
   .hist{width:100%}
   .pv-fab.on{display:flex}
+  .composer .pin-t{display:inline-flex}
+  .pinstrip{bottom:auto;top:58px}
   .greet{font-size:27px}
   .home-inner{padding-top:7vh}
   .problem span{display:none}
@@ -671,6 +698,7 @@ kbd{font:11px var(--font);color:var(--ink3)}
   </div>
   <div class="grp" data-mgrp="problem"><span>문제 문장</span>
     <button data-mock="problem" data-v="none">없음</button>
+    <button data-mock="problem" data-v="restarting">화면 다시 켜는 중</button>
     <button data-mock="problem" data-v="fixing">AI가 고치는 중</button>
     <button data-mock="problem" data-v="notified">개발자에게 알림</button>
     <button data-mock="problem" data-v="invite">다시 연결 · 초대</button>
@@ -680,7 +708,9 @@ kbd{font:11px var(--font);color:var(--ink3)}
     <button data-mock="width" data-v="wide">넓게</button>
     <button data-mock="width" data-v="narrow">좁게</button>
   </div>
-  <div class="grp"><span>흐름</span><button data-mock="invite">초대 파일 다시 받기</button><button data-mock="aiupd">AI 새 버전 나옴</button><button data-mock="tips">첫 안내 다시</button></div>
+  <div class="grp"><span>흐름</span><button data-mock="invite">초대 파일 다시 받기</button><button data-mock="aiupd">AI 새 버전 나옴</button><button data-mock="blocked">설치 막힘</button></div>
+  <div class="grp"><button data-mock="tips">첫 안내 다시</button></div>
+  <div class="grp" data-mgrp="submit"><span>다음 제출</span><button data-mock="submitfail" data-v="none">정상</button><button data-mock="submitfail" data-v="transient">잠깐 막힘</button><button data-mock="submitfail" data-v="blocked">개발자 몫</button><button data-mock="resolve">개발자가 풀었어요</button></div>
   <span class="hint">이 검은 막대는 목업 조작용이에요 · ⌘K 찾기 · ⌥+클릭 찍기</span>
 </div>
 
@@ -768,7 +798,7 @@ kbd{font:11px var(--font);color:var(--ink3)}
                     <button class="tbtn pin-t" data-act="pin-toggle" data-tip="화면에서 고칠 곳 찍기 · ⌘⇧P"><span data-ic="pin"></span><span>찍기</span></button>
                     <div class="grow"></div>
                     <button class="tbtn model" data-act="model" data-model-label></button>
-                    <button class="tbtn fast" id="btnFast" data-act="fast" data-tip="같은 모델을 더 빠른 응답으로 돌려요"><span data-ic="bolt"></span><span>빠르게</span></button>
+                    <button class="tbtn fast" id="btnFast" data-act="fast" data-tip="같은 모델을 더 빨리 답하게 해요 — 모델은 그대로예요"><span data-ic="bolt"></span><span>빠르게</span></button>
                     <button class="send" id="btnSend" data-act="send"><span data-ic="up"></span></button>
                   </div>
                 </div>
@@ -785,7 +815,7 @@ kbd{font:11px var(--font);color:var(--ink3)}
                   <button data-act="pv-device" data-dev="tablet" data-tip="태블릿"><span data-ic="tablet"></span></button>
                   <button data-act="pv-device" data-dev="phone" data-tip="휴대폰"><span data-ic="phone"></span></button>
                 </div>
-                <button class="tbtn pin-t" id="pvPin" data-act="pin-toggle" data-tip="수정할 곳 찍기 · ⌘⇧P · ⌥+클릭은 언제든"><span data-ic="pin"></span><span>찍기</span></button>
+                <button class="tbtn pin-t" id="pvPin" data-act="pin-toggle" data-tip="수정할 곳 찍기 · ⌘⇧P · option(⌥)+클릭은 언제든"><span data-ic="pin"></span><span>찍기</span></button>
                 <button class="ibtn" id="pvHistory" data-act="pv-history" data-tip="작업 기록"><span data-ic="clock"></span></button>
                 <button class="ibtn" id="pvMore" data-act="pv-more" data-tip="더 보기"><span data-ic="more"></span></button>
               </div>
@@ -876,6 +906,7 @@ function hydrateIcons(root=document){ $$('[data-ic]',root).forEach(el=>{el.outer
 const SCREENS={'/':'대시보드','/member/list':'회원 목록','/member/1':'회원 상세','/order/list':'주문 목록'};
 const screenName=r=>SCREENS[r]||'찾을 수 없는 화면';
 const NOW=Date.now();
+const T=m=>{const d=new Date(NOW-m*60000);const today=d.toDateString()===new Date(NOW).toDateString();return {day:today?'오늘':'어제',time:hhmm(d),full:`${today?'오늘':'어제'} ${hhmm(d)}`};};
 const MEMBERS=[
  {id:1,name:'김철수',email:'chulsoo.kim@example.com',grade:'VIP',joined:'2026-09-01',orders:12},
  {id:2,name:'이영희',email:'younghee.lee@example.com',grade:'일반',joined:'2026-09-03',orders:3},
@@ -897,12 +928,12 @@ const P={
  member:{id:'member',name:'회원 관리 서비스',short:'회',color:'#3552d8',repo:'colosseum/member-admin',cycle:'draft',
   reviewers:['정인권','이수진'],newChanges:0,receipt:null,comments:0,route:'/member/list',
   prepared:true,guide:'버튼은 항상 화면 오른쪽 위에 둬 주세요.\n표는 한 번에 10줄씩 보여 주세요.',
-  changes:[{route:'/member/list',note:'검색창 · 빈 화면 고침',time:'오늘 14:51'},{route:'/member/1',note:'새 화면',time:'오늘 14:10'},{route:'/',note:'가입자 카드',time:'어제 17:05'}],
+  changes:[{route:'/member/list',note:'검색창 · 빈 화면 고침',time:T(28).full},{route:'/member/1',note:'새 화면',time:T(70).full},{route:'/',note:'가입자 카드',time:T(1440+300).full}],
   history:[
-   {day:'오늘',time:'14:51',title:'화면 확인 — 빈 화면을 고쳤어요',screens:['회원 목록'],kind:'turn'},
-   {day:'오늘',time:'14:32',title:'회원 목록에 검색창을 넣어 줘',screens:['회원 목록'],kind:'turn'},
-   {day:'오늘',time:'14:10',title:'회원을 누르면 상세 화면이 열리게 해 줘',screens:['회원 상세','회원 목록'],kind:'turn'},
-   {day:'어제',time:'17:05',title:'대시보드에 이번 달 가입자 카드',screens:['대시보드'],kind:'turn'},
+   {...T(28),title:'화면 확인 — 빈 화면을 고쳤어요',screens:['회원 목록'],kind:'turn',snap:{rev:{'/member/list':1},labelNew:false}},
+   {...T(47),title:'회원 목록에 검색창을 넣어 줘',screens:['회원 목록'],kind:'turn',snap:{rev:{'/member/list':1},labelNew:false}},
+   {...T(70),title:'회원을 누르면 상세 화면이 열리게 해 줘',screens:['회원 상세','회원 목록'],kind:'turn',snap:{rev:{},labelNew:false}},
+   {...T(1440+300),title:'대시보드에 이번 달 가입자 카드',screens:['대시보드'],kind:'turn',snap:{rev:{},labelNew:false}},
   ],
   convs:[
    {id:'c1',title:'회원 목록 검색창',screens:['/member/list'],msgs:[
@@ -913,28 +944,29 @@ const P={
    ]},
    {id:'c2',title:'회원 상세 화면',screens:['/member/1','/member/list'],msgs:[
      {t:'user',text:'회원을 누르면 상세 화면이 열리게 해 줘. 연락처, 가입일, 최근 주문 3건이 보이면 좋겠어.'},
+     {t:'note',text:'AI 프로그램이 멈춰 다시 일으켰어요 · 하던 일을 그대로 이어서 해요'},
      {t:'ai',text:'회원 목록에서 회원을 누르면 상세 화면이 열려요. 위에는 연락처와 가입 정보, 아래에는 최근 주문 3건이 표로 보여요.',screens:['/member/1','/member/list'],secs:34},
    ]},
    {id:'c3',title:'대시보드 가입자 카드',screens:['/'],msgs:[
      {t:'user',text:'대시보드에 이번 달 가입자 수 카드를 추가해 줘'},
      {t:'ai',text:'대시보드 맨 앞에 “이번 달 가입자” 카드를 넣었어요. 지난달과 비교한 증감도 함께 보여요.',screens:['/'],secs:18},
      {t:'user',text:'카드 네 개가 한 줄에 다 보이게 해 줘'},
-     {t:'note',text:'일시적인 문제로 답을 받지 못해 다시 보냈어요 · 4초 · 16초 · 1분 · 5분 · 15분'},
-     {t:'fail',text:'카드 네 개가 한 줄에 다 보이게 해 줘',why:'다섯 번 다시 보냈지만 답을 받지 못했어요. 보낸 말은 그대로 남아 있어요.'},
+     {t:'note',text:'잠깐의 문제로 답을 받지 못해 조금씩 기다리며 다섯 번 다시 물었어요'},
+     {t:'fail',text:'카드 네 개가 한 줄에 다 보이게 해 줘',why:'다섯 번 다시 물었지만 답을 받지 못했어요. 말씀은 그대로 남아 있어요 — 다시 시도하면 같은 말로 다시 물어요.'},
    ]},
    {id:'t1',tool:true,title:'연결 준비',screens:['/'],msgs:[
      {t:'gate',title:'연결 준비',summary:'처음 켤 때 설치가 한 번 멈췄어요.',done:true,body:'설치 명령이 5분 동안 아무 말도 하지 않아 멈춘 것으로 봤어요.\n받아 둔 파일을 정리하고 한 번 더 돌렸어요.'},
      {t:'ai',text:'설치가 한 번 멈춰서 다시 돌렸어요. 이제 미리보기가 떠요.',screens:['/'],secs:48},
    ]},
-   {id:'t2',tool:true,title:'최신 변경 받아오기',screens:['/member/list'],msgs:[
-     {t:'gate',title:'최신 변경 받아오기',summary:'개발자가 반영한 내용과 지금 작업이 같은 곳을 고쳤어요.',done:true,body:'겹치지 않는 곳은 저절로 합쳐졌고, 회원 목록 표의 머리줄 한 곳만 겹쳤어요.'},
+   {id:'t2',tool:true,title:'개발자가 반영한 내용 받아오기',screens:['/member/list'],msgs:[
+     {t:'gate',title:'개발자가 반영한 내용 받아오기',summary:'개발자가 반영한 내용과 지금 작업이 같은 곳을 고쳤어요.',done:true,body:'겹치지 않는 곳은 저절로 합쳐졌고, 회원 목록 표의 머리줄 한 곳만 겹쳤어요.'},
      {t:'ai',text:'겹친 곳을 정리했어요. 개발자가 바꾼 머리줄 이름을 살리고, 검색창은 그대로 뒀어요.',screens:['/member/list'],secs:26},
    ]},
   ]},
  order:{id:'order',name:'주문 관리',short:'주',color:'#c6613f',repo:'colosseum/order-admin',cycle:'draft',prepared:true,
   reviewers:['정인권'],newChanges:0,receipt:null,comments:0,route:'/order/list',guide:'',
-  changes:[{route:'/order/list',note:'상세 열기',time:'오늘 13:20'}],
-  history:[{day:'오늘',time:'13:20',title:'주문 목록에서 주문을 누르면 상세가 열리게',screens:['주문 목록'],kind:'turn'}],
+  changes:[{route:'/order/list',note:'상세 열기',time:T(110).full}],
+  history:[{...T(110),title:'주문 목록에서 주문을 누르면 상세가 열리게',screens:['주문 목록'],kind:'turn'}],
   convs:[
    {id:'o1',title:'주문 상세 화면',screens:['/order/list'],msgs:[
      {t:'user',text:'주문 목록에서 주문을 누르면 상세가 옆에 열리게 해 줘'},
@@ -946,12 +978,12 @@ const P={
    ]},
   ]},
  settle:{id:'settle',name:'정산',short:'정',color:'#23865a',repo:'colosseum/settlement',cycle:'merged',prepared:true,
-  reviewers:['이수진'],newChanges:0,receipt:{time:'어제 16:20'},comments:0,route:'/',guide:'',changes:[],history:[],
+  reviewers:['이수진'],newChanges:0,receipt:{time:T(1440+200).full},comments:0,route:'/',guide:'',changes:[],history:[],
   convs:[
    {id:'s1',title:'정산 내역 합계 줄',screens:['/'],msgs:[
      {t:'user',text:'정산 내역 표 맨 아래에 합계 줄을 넣어 줘'},
      {t:'ai',text:'표 맨 아래에 합계 줄을 넣었어요. 금액 열만 더하고, 나머지 칸은 비워 뒀어요.',screens:['/'],secs:26},
-     {t:'receipt',time:'어제 16:20',reviewers:['이수진']},
+     {t:'receipt',time:T(1440+200).full,reviewers:['이수진']},
      {t:'milestone',text:'반영됐어요 · 다음에 만드는 것은 새 작업이에요'},
    ]},
   ]},
@@ -964,17 +996,17 @@ const INVITE_NEW={id:'coupon',name:'쿠폰 관리',short:'쿠',color:'#0f7f8c',r
 const S={
   screen:'work',projectId:'member',convId:'c1',homePid:'member',
   problem:'none',narrow:false,tab:'chat',collapsed:false,sideOpen:false,
-  pinMode:false,altDown:false,pins:[],pinSeq:0,atts:[],homeAtts:[],
+  pinMode:false,altDown:false,pins:[],pinSeq:0,atts:[],homeAtts:[],pinNote:'bubble',
   route:'/member/list',back:[],fwd:[],device:'pc',zoom:100,frozen:false,histOpen:false,histConfirm:null,
   rev:{'/member/list':1},labelNew:false,svcQ:'',svcGrade:'전체',svcStatus:'전체',
   provider:'claude',model:'Sonnet 5',think:'보통',fast:false,codex:'none',
   notif:'long',sound:true,author:'김기획',submitting:null,renaming:null,
   tools:{app:{name:'Colo Design',v:'0.3.12',latest:'0.3.12'},claude:{name:'Claude Code',v:'2.1.4',latest:'2.1.4'},codex:{name:'Codex',v:'0.42.0',latest:'0.45.1'}},
-  autoUpd:true,updating:null,updPending:[],
+  autoUpd:true,updating:null,updPending:[],submitFail:'none',
   events:[
-   {pid:'member',cid:'c2',text:'회원 상세 화면을 다 만들었어요',time:'오늘 14:10',kind:'done'},
-   {pid:'settle',cid:'s1',text:'반영됐어요 — 개발자가 제품에 합쳤어요',time:'어제 18:40',kind:'merged'},
-   {pid:'member',cid:'t2',text:'최신 변경을 받아오며 겹친 곳을 AI가 정리했어요',time:'어제 11:02',kind:'tool'},
+   {pid:'member',cid:'c2',text:'회원 상세 화면을 다 만들었어요',time:T(70).full,kind:'done'},
+   {pid:'settle',cid:'s1',text:'반영됐어요 — 개발자가 제품에 합쳤어요',time:T(1440+60).full,kind:'merged'},
+   {pid:'member',cid:'t2',text:'개발자가 반영한 내용을 받아오며 겹친 곳을 AI가 정리했어요',time:T(1440+500).full,kind:'tool'},
   ],
   ob:null,tipsDone:false,pop:null,
 };
@@ -997,7 +1029,7 @@ function projNote(pr){
   if(pr.prep) return {cls:'acc',html:'<i class="spin sm"></i>준비 중'};
   if(anyRunning(pr)) return {cls:'acc',html:'<i class="spin sm"></i>만드는 중'};
   if(asks) return {cls:'amber',html:`<i class="dot amber"></i>답을 기다려요 ${asks}`};
-  if(pr.convs.some(c=>c.msgs.some(m=>m.t==='fail'))) return {cls:'red',html:'<i class="dot red"></i>보내지 못했어요'};
+  if(pr.convs.some(c=>c.msgs.some(m=>m.t==='fail'))) return {cls:'red',html:'<i class="dot red"></i>AI가 답을 못 했어요'};
   if(pr.cycle==='review'&&pr.comments) return {cls:'amber',html:`<i class="dot amber"></i>코멘트 ${pr.comments}`};
   if(pr.cycle==='merged'&&S.events.some(e=>e.pid===pr.id&&e.kind==='merged')) return {cls:'green',html:`${ic('check12')}반영됐어요`};
   return null;
@@ -1026,15 +1058,17 @@ function renderMockNav(){
   $$('[data-mock=screen]').forEach(b=>b.classList.toggle('on',b.dataset.v===scr));
   const running=!!anyRunning(pr);
   $$('[data-mock=cycle]').forEach(b=>b.classList.toggle('on',running?b.dataset.v==='making':b.dataset.v===pr.cycle));
-  $$('[data-mock=problem]').forEach(b=>b.classList.toggle('on',b.dataset.v===S.problem));
+  $$('[data-mock=problem]').forEach(b=>b.classList.toggle('on',S.restarting?b.dataset.v==='restarting':b.dataset.v===S.problem));
   $$('[data-mock=width]').forEach(b=>b.classList.toggle('on',(b.dataset.v==='narrow')===S.narrow));
+  $$('[data-mock=submitfail]').forEach(b=>b.classList.toggle('on',b.dataset.v===S.submitFail));
+  $('[data-mock=resolve]').style.display=curProj().submitBlocked?'':'none';
 }
 
 function renderSidebar(){
   const pr=curProj();
   $('#projBtn').innerHTML=`<span class="pm" style="background:${pr.color}">${pr.short}</span><span class="nm"><b>${esc(pr.name)}</b><span>${cycleDot(pr)}${cycleLabel(pr)}</span></span>${ic('chev14')}`;
-  const others=Object.values(P).filter(pr=>pr.id!==S.projectId).map(pr=>({pr,note:projNote(pr)})).filter(x=>x.note);
-  $('#others').innerHTML=others.length?`<div class="side-label" style="padding-top:8px">다른 프로젝트</div>`+others.map(({pr,note})=>`<button class="orow" data-act="proj-switch" data-pid="${pr.id}" data-tip="${esc(pr.name)}(으)로 옮기기"><span class="pm" style="background:${pr.color}">${pr.short}</span><span class="on">${esc(pr.name)}</span><span class="onote ${note.cls}">${note.html}</span></button>`).join(''):'';
+  const others=Object.values(P).filter(pr=>pr.id!==S.projectId).map(pr=>({pr,note:projNote(pr)||{cls:'',html:cycleLabel(pr)}}));
+  $('#others').innerHTML=others.length?`<div class="side-label" style="padding-top:8px">다른 프로젝트</div>`+others.map(({pr,note})=>`<button class="orow" data-act="proj-switch" data-pid="${pr.id}" data-tip="옮기기 · ${esc(pr.name)}"><span class="pm" style="background:${pr.color}">${pr.short}</span><span class="on">${esc(pr.name)}</span><span class="onote ${note.cls}">${note.html}</span></button>`).join(''):'';
   const n=allAsks().length;
   $('#homeBadge').innerHTML=n?`<span class="cnt">${n}</span>`:'';
   $('#rowHome').classList.toggle('on',S.screen==='home');
@@ -1050,7 +1084,7 @@ function convRow(c){
   const ask=c.msgs.some(m=>m.t==='ask'&&m.answered==null);
   const fail=c.msgs.some(m=>m.t==='fail');
   const ind=c.running?'<i class="spin sm" style="color:var(--accent)"></i>':ask?'<i class="dot amber"></i>':fail?'<i class="dot red"></i>':'';
-  const sub=c.running?c.running.activity:ask?'답을 기다려요':fail?'보내지 못했어요 — 다시 보낼 수 있어요':(c.screens.map(screenName).join(' · ')||'아직 만든 화면이 없어요');
+  const sub=c.running?c.running.activity:ask?'답을 기다려요':fail?'AI가 답을 못 했어요 — 다시 시도할 수 있어요':(c.screens.map(screenName).join(' · ')||'아직 만든 화면이 없어요');
   const title=S.renaming===c.id?`<input class="rn" data-rename="${c.id}" value="${esc(c.title)}">`:`<span>${esc(c.title)}</span>`;
   return `<div class="conv ${on?'on':''}" data-act="open-conv" data-cid="${c.id}"><div class="t">${title}${ind}</div><div class="s">${esc(sub)}</div>${c.tool?'':`<button class="ibtn sm more" data-act="conv-menu" data-cid="${c.id}">${ic('more14')}</button>`}</div>`;
 }
@@ -1061,6 +1095,7 @@ function submitState(){
   if(anyRunning(pr)) return {ok:false,why:'AI가 고치는 중 — 끝나면 제출할 수 있어요'};
   if(pr.prep) return {ok:false,why:'준비가 끝나면 제출할 수 있어요'};
   if(pr.cycle==='merged') return {ok:false,why:'반영됐어요 — 다음 작업을 만들면 제출할 수 있어요'};
+  if(pr.submitBlocked) return {ok:false,why:'제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요. 지금은 계속 만들어도 돼요'};
   if(pr.cycle==='review') return pr.newChanges>0?{ok:true,why:`보낸 뒤로 바뀐 ${pr.newChanges}곳을 같은 요청에 더해 보내요`}:{ok:false,why:'보낸 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 보낼 수 있어요'};
   if(!pr.changes.length) return {ok:false,why:'아직 바뀐 화면이 없어요'};
   return {ok:true,why:`바뀐 화면 ${pr.changes.length}개를 개발자에게 보내요`};
@@ -1068,14 +1103,16 @@ function submitState(){
 function renderStatus(){
   const pr=curProj(), conv=curConv(), run=anyRunning(pr), c=pr.cycle;
   $('#convTitle').textContent=conv.title;
-  const s1=c==='draft'?{c:'cur',l:`제출 전${pr.changes.length?` · 화면 ${pr.changes.length}개`:''}`}:{c:'done',l:'제출됨'};
+  const s1=c==='draft'?{c:'cur',l:`제출 전${pr.submitBlocked?' · 제출하지 못했어요':pr.changes.length?` · 화면 ${pr.changes.length}개`:''}`}:{c:'done',l:'제출됨'};
   const s2=c==='review'?{c:'cur',l:`개발자가 보고 있어요${pr.comments?` · 코멘트 ${pr.comments}`:''}`}:c==='merged'?{c:'done',l:'확인됨'}:{c:'',l:'개발자 확인'};
   const s3=c==='merged'?{c:'cur',l:'반영됐어요'}:{c:'',l:'반영됨'};
   const st=(s)=>`<span class="jstep ${s.c}"><i></i><span class="jl">${s.l}</span></span>`;
   $('#journey').innerHTML=`<span class="making"><i class="spin sm"></i>만드는 중 ${run?`<span data-since="${run.start}">${since(run.start)}</span>`:''}</span>${st(s1)}<span class="jbar"></span>${st(s2)}<span class="jbar"></span>${st(s3)}`;
   const b=$('#btnSubmit'), ss=submitState();
   b.className='submit';
-  if(S.submitting==='busy'){b.classList.add('busy');b.innerHTML='<i class="spin sm"></i>보내는 중…';}
+  if(S.submitting==='busy'){b.classList.add('busy');b.innerHTML='<i class="spin sm"></i>제출하는 중…';}
+  else if(S.submitting==='retry'){b.classList.add('busy');b.innerHTML='<i class="spin sm"></i>다시 제출하는 중…';}
+  else if(S.submitting==='failed'){b.classList.add('failed');b.innerHTML=`${ic('alert14')}제출하지 못했어요`;}
   else if(S.submitting==='done'){b.classList.add('sent');b.innerHTML=`${ic('check14')}제출됐어요`;}
   else{b.innerHTML='제출'; if(!ss.ok) b.classList.add('locked');}
   b.dataset.tip=ss.why;
@@ -1084,11 +1121,13 @@ function renderProblem(){
   const el=$('#problem'), p=S.problem;
   const M={
     fixing:['fixing','<i class="spin sm"></i>','AI가 고치는 중이에요','미리보기가 뜨지 않아 AI가 막힌 곳을 고치고 있어요. 하실 일은 없어요.',''],
-    notified:['notified',ic('mail14'),'개발자에게 알렸어요','AI도 고칠 수 없는 문제라 개발자에게 알렸어요. 풀리면 저절로 이어져요.',''],
+    notified:['notified',ic('mail14'),'개발자에게 알렸어요',curProj().submitBlocked?'제출이 막혀 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요 — 지금은 계속 만들어도 돼요.':'AI도 고칠 수 없는 문제라 개발자에게 알렸어요. 풀리면 저절로 이어져요.',''],
     invite:['reconnect',ic('plug14'),'다시 연결이 필요해요','연결 코드가 만료됐어요. 개발자에게 받은 새 초대 파일을 이 창에 놓아 주세요. 대화와 작업은 그대로예요.','<button class="btn sm pri" data-act="fix-invite">초대 파일 열기</button>'],
     login:['reconnect',ic('plug14'),'다시 연결이 필요해요','AI 로그인이 끝났어요. 브라우저에서 한 번만 다시 로그인해 주세요.','<button class="btn sm pri" data-act="fix-login">브라우저에서 로그인</button>'],
   }[p];
-  if(!M){el.className='problem';el.innerHTML='';return;}
+  if(!M){
+    if(S.inviteCleanup){el.className='problem on notified';el.innerHTML=`${ic('alert14')}<b>초대 파일을 가져왔어요</b><span>파일에 연결 코드가 들어 있어요. 이 앱이 대신 지워 드릴게요.</span><button class="btn sm pri" data-act="invite-delete">파일 지우기</button><button class="btn sm ghost" data-act="invite-later">나중에</button>`;return;}
+    el.className='problem';el.innerHTML='';return;}
   el.className=`problem on ${M[0]}`;
   el.innerHTML=`${M[1]}<b>${M[2]}</b><span>${M[3]}</span>${M[4]}`;
 }
@@ -1100,26 +1139,26 @@ function renderTabs(){
 
 /* ----- 대화록 ----- */
 const MSG={
- user:(m)=>`<div class="m-user"><div class="bub">
+ user:(m,i)=>`<div class="m-user"><div class="bub">
    ${m.atts?.length?`<div class="batts">${m.atts.map(a=>attChip(a,false)).join('')}</div>`:''}
    ${m.pins?.length?`<div class="bpins">${m.pins.map(p=>`<div class="bpin"><span class="pnum ${m.sentPins?'sent':''}">${p.n}</span><b>${esc(p.label)}</b>${p.note?`<span>${esc(p.note)}</span>`:''}<em>${esc(screenName(p.route))}</em></div>`).join('')}</div>`:''}
    ${m.text?`<div class="btxt">${esc(m.text)}</div>`:''}
    ${m.queued?`<div class="bq">${ic('clock12')}준비가 끝나면 바로 보낼게요</div>`:''}
- </div></div>`,
+ </div>${m.queued?'':`<button class="ue" data-act="edit-resend" data-i="${i}" data-tip="이 말부터 새 대화로 갈라서 고쳐 보내요 · 화면은 그대로예요">${ic('edit12')}고쳐서 다시 보내기</button>`}</div>`,
  ai:(m,i)=>`<div class="m-ai" data-mi="${i}"><div class="av">${ic('spark13')}</div><div class="body"><div class="txt">${fmt(m._shown!=null?m.text.slice(0,m._shown):m.text)}</div>
    ${m._shown==null&&m.screens?.length?m.screens.map(shotCard).join(''):''}</div></div>
    ${m._shown!=null||m.noSettle?'<div style="height:16px"></div>':`<div class="settle">${ic('check13')}<span>${fmtSecs(m.secs)} 걸렸어요</span><span class="sep">·</span><button data-act="copy-all" data-i="${i}">${ic('copy13')}전체 복사</button><button data-act="settle-menu" data-i="${i}" data-tip="여기서 새 대화 · 되돌리기">${ic('more14')}</button></div>`}`,
- gate:(m)=>`<div class="card gate"><div class="ch">${ic('eye15')}<b>${esc(m.title)}</b><span class="stat ${m.done?'ok':'run'}">${m.done?ic('check12')+'AI가 고쳤어요':'<i class="spin sm"></i>AI가 고치는 중'}</span></div><div class="cs">${esc(m.summary)}</div><details><summary>AI가 받은 내용</summary><pre>${esc(m.body)}</pre></details></div>`,
+ gate:(m)=>`<div class="card gate"><div class="ch">${ic('eye15')}<b>${esc(m.title)}</b><span class="stat ${m.done?'ok':'run'}">${m.done?ic('check12')+'AI가 고쳤어요':'<i class="spin sm"></i>AI가 고치는 중'}</span></div><div class="cs">${esc(m.summary)}${m.done?' 하실 일은 없어요.':' 하실 일은 없어요 — 끝나면 알려 드려요.'}</div><details><summary>AI가 받은 내용 · 개발자 말이라 몰라도 돼요</summary><pre>${esc(m.body)}</pre></details></div>`,
  review:(m,i)=>`<div class="card review"><div class="ch"><span class="avt">${esc(m.author[0])}</span><b>${esc(m.author)}</b><span class="muted">개발자 · ${esc(m.screen)}</span><span class="time">${esc(m.time)}</span></div><div class="ctext">${esc(m.text)}</div>
-   <div class="cfoot">${m.status==='done'?`<span class="stat ok">${ic('check12')}반영해 같은 요청에 다시 보냈어요</span>`:`<span class="stat run"><i class="spin sm"></i>AI가 반영하는 중</span>`}<span class="grow"></span><button class="btn sm" data-act="reply" data-i="${i}">답하기</button></div>
+   <div class="cfoot">${m.status==='done'?`<span class="stat ok">${ic('check12')}반영해 같은 요청에 다시 제출했어요</span>`:`<span class="stat run"><i class="spin sm"></i>AI가 반영하는 중</span>`}<span class="grow"></span><button class="btn sm" data-act="reply" data-i="${i}">답하기</button></div>
    ${(m.replies||[]).map(r=>`<div class="reply-sent">${ic('check12')}<span>내 답: ${esc(r)}</span></div>`).join('')}
    ${m.replyOpen?`<div class="reply"><input data-reply="${i}" placeholder="${esc(m.author)}님에게 답하기"><button class="btn sm pri" data-act="reply-send" data-i="${i}">보내기</button></div>`:''}</div>`,
- receipt:(m)=>`<div class="card receipt"><div class="ch"><span class="okc">${ic('check13')}</span><b>${m.more?'같은 요청에 더해 보냈어요':'개발자에게 보냈어요'}</b><span class="time">${esc(m.time)}</span></div><div class="cs">받을 개발자 ${m.reviewers.length}명 · ${m.reviewers.map(esc).join(' · ')}</div><div class="cfoot"><button class="btn sm" data-act="ext" data-what="보낸 내용">보낸 내용 열기 ${ic('ext12')}</button></div></div>`,
+ receipt:(m)=>`<div class="card receipt"><div class="ch"><span class="okc">${ic('check13')}</span><b>${m.more?'같은 요청에 더해 제출했어요':'개발자에게 제출했어요'}</b><span class="time">${esc(m.time)}</span></div><div class="cs">받을 개발자 ${m.reviewers.length}명 · ${m.reviewers.map(esc).join(' · ')}${m.note?`<br>내 한마디 · “${esc(m.note)}”`:''}</div><div class="cfoot"><button class="btn sm" data-act="ext" data-what="제출한 내용">제출한 내용 열기 ${ic('ext12')}</button></div></div>`,
  milestone:(m)=>`<div class="mile"><span></span><b>${ic('check13')}${esc(m.text)}</b><span></span></div>`,
  ask:(m,i,conv,pid)=>`<div class="card ask ${m.answered!=null?'done':''}"><div class="ch">${ic('spark14')}<b>AI가 물어봐요</b>${m.at?`<span class="time">${esc(m.at)}</span>`:''}</div><div class="ctext">${esc(m.q)}</div>
    ${m.answered!=null?`<div class="ans">→ ${esc(m.opts[m.answered])}</div>`:`<div class="opts">${m.opts.map((o,k)=>`<button class="btn" data-act="ask" data-pid="${pid}" data-cid="${conv.id}" data-i="${i}" data-opt="${k}">${esc(o)}</button>`).join('')}<button class="btn ghost" data-act="ask-free">직접 답하기</button></div>`}</div>`,
  note:(m)=>`<div class="m-note">${ic('clock13')}${esc(m.text)}</div>`,
- fail:(m,i)=>`<div class="card fail"><div class="ch">${ic('alert14')}<b>보내지 못했어요</b></div><div class="cs">${esc(m.why)}</div><div class="cfoot"><button class="btn sm pri" data-act="retry-fix" data-i="${i}">고쳐서 다시 보내기</button></div></div>`,
+ fail:(m,i)=>`<div class="card fail"><div class="ch">${ic('alert14')}<b>AI가 답을 못 했어요</b></div><div class="cs">${esc(m.why)}</div><div class="cfoot"><button class="btn sm pri" data-act="retry-fix" data-i="${i}">다시 시도</button></div></div>`,
 };
 function shotCard(r){return `<button class="shot" data-act="screen-card" data-to="${r}"><span class="thumb"><i></i><i></i><i></i></span><span class="st"><small>고친 화면</small><b>${esc(screenName(r))}</b><span>미리보기에서 보기</span></span><span class="go">${ic('fwd14')}</span></button>`;}
 function attChip(a,removable,where){
@@ -1129,7 +1168,7 @@ function attChip(a,removable,where){
 function emptyChat(){
   const pr=curProj();
   const ex=['회원 목록에 검색창을 넣어 줘','이 그림처럼 대시보드를 만들어 줘','주문 목록에 상태 필터를 붙여 줘'];
-  return `<div class="empty-chat"><span class="sp">${ic('spark30')}</span><h2>무엇을 만들까요?</h2><p>${pr.prep?`${esc(pr.name)}을(를) 처음 켜는 중이에요.<br>먼저 말해 두면 준비가 끝나는 대로 시작해요.`:`오른쪽은 ${esc(pr.name)}의 실제 화면이에요.<br>말로 시키거나, 화면을 찍어서 짚어 주세요.`}</p><div class="ex">${ex.map(x=>`<button data-act="example" data-text="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
+  return `<div class="empty-chat"><span class="sp">${ic('spark30')}</span><h2>무엇을 만들까요?</h2><p>${pr.prep?`${esc(pr.name)} · 처음 켜는 중이에요.<br>먼저 말해 두면 준비가 끝나는 대로 시작해요.`:`오른쪽은 ${esc(pr.name)}의 실제 화면이에요.<br>말로 시키거나, 화면을 찍어서 짚어 주세요.`}</p><div class="ex">${ex.map(x=>`<button data-act="example" data-text="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`;
 }
 let lastSig='', lastConv='', lastCount=0;
 function renderTranscript(){
@@ -1152,7 +1191,7 @@ function renderComposer(){
   if(pSig!==S._pSig){S._pSig=pSig;$('#cmpPins').innerHTML=ds.map(p=>`<div class="pinrow"><span class="pnum">${p.n}</span><span class="lab">${esc(p.label)}</span>${p.route!==S.route?`<span class="pscr">${esc(screenName(p.route))}</span>`:''}<input data-pin-note="${p.id}" placeholder="어떻게 바꿀까요? (선택)" value="${esc(p.note)}"><button class="ibtn sm" data-act="pin-remove" data-id="${p.id}" data-tip="빼기">${ic('x12')}</button></div>`).join('');}
   const aSig=S.atts.map(a=>a.name).join('|');
   if(aSig!==S._aSig){S._aSig=aSig;$('#cmpAtts').innerHTML=S.atts.map(a=>attChip(a,true,'work')).join('');}
-  $$('.pin-t').forEach(b=>b.classList.toggle('on',S.pinMode));
+  $$('.pin-t').forEach(b=>{b.classList.toggle('on',S.pinMode);b.disabled=!!curPrep();});
   $$('[data-model-label]').forEach(b=>b.innerHTML=`${esc(modelLabel())}${ic('chev12')}`);
   const fast=$('#btnFast'); fast.style.display=(S.provider==='claude'&&S.model==='Haiku 4.5')?'none':''; fast.classList.toggle('on',S.fast);
   const ta=$('#cmpText');
@@ -1179,6 +1218,7 @@ function renderPreview(){
   renderSvc();
   const op=$('#overPanel');
   if(curPrep()){op.className='over-panel on';op.innerHTML=prepHTML();}
+  else if(S.restarting){op.className='over-panel on';op.innerHTML=`<div class="prep-card"><i class="spin lg"></i><h3>화면을 다시 켜는 중이에요</h3><p>미리보기가 저절로 꺼져서 도구가 다시 켜고 있어요 · ${S.restarting}/2<br>두 번 켜도 안 되면 그때부터 AI가 고쳐요.</p></div>`;}
   else if(S.problem==='fixing'){op.className='over-panel on';op.innerHTML=`<div class="prep-card"><i class="spin lg"></i><h3>AI가 막힌 곳을 고치고 있어요</h3><p>미리보기가 뜨지 않았어요. 오류 문장 대신 AI가 원인을 찾아 고치고, 끝나면 화면이 저절로 다시 떠요.</p></div>`;}
   else{op.className='over-panel';op.innerHTML='';}
   const pr=curProj();
@@ -1260,9 +1300,9 @@ function renderHist(){
       let out='';
       if(h.day!==day){day=h.day;out+=`<div class="hday">${esc(day)}</div>`;}
       if(h.kind==='submit') return out+`<div class="hsubmit">${ic('check12')}${esc(h.time)} 제출했어요<span></span></div>`;
-      out+=`<div class="hitem ${i===firstTurn(pr)?'cur':''}"><span class="hd"></span><div><div class="ht"><small>${esc(h.time)}</small>${esc(h.title)}</div><div class="hs">${h.kind==='revert'?'되돌리기도 새 기록으로 남아요':esc(h.screens.join(' · '))}</div></div>
+      out+=`<div class="hitem ${i===firstTurn(pr)?'cur':''}" ${i===firstTurn(pr)?'':`data-act="hist-pick" data-i="${i}"`}><span class="hd"></span><div><div class="ht"><small>${esc(h.time)}</small>${esc(h.title)}</div><div class="hs">${h.kind==='revert'?'되돌리기도 새 기록으로 남아요':esc(h.screens.join(' · '))}</div></div>
         ${i===firstTurn(pr)?'':`<button class="btn sm hb" data-act="hist-pick" data-i="${i}">${ic('undo13')}이 시점으로</button>`}
-        ${S.histConfirm===i?`<div class="hconfirm">화면을 ${esc(h.time)} 시점으로 되돌릴까요?<br>되돌려도 지금까지의 기록은 지워지지 않아요.<div class="row"><button class="btn sm pri" data-act="hist-revert" data-i="${i}">되돌리기</button><button class="btn sm ghost" data-act="hist-cancel">그만두기</button></div></div>`:''}</div>`;
+        ${S.histConfirm===i?(()=>{const newer=pr.history.slice(0,i).filter(x=>x.kind!=='submit');const hasC=newer.some(x=>/코멘트 반영/.test(x.title));return `<div class="hconfirm">「${esc(h.title)}」 직후의 화면으로 되돌릴까요?<br>그 뒤에 한 변경 ${newer.length}가지${hasC?' (개발자 코멘트 반영 포함)':''}가 화면에서 사라져요.<br>기록은 지워지지 않고, 개발자에게는 다음 제출 때 전해져요.<div class="row">`;})()+`<button class="btn sm pri" data-act="hist-revert" data-i="${i}">되돌리기</button><button class="btn sm ghost" data-act="hist-cancel">그만두기</button></div></div>`:''}</div>`;
       return out;
     }).join('');
   }
@@ -1290,13 +1330,15 @@ function renderHome(){
 function renderOb(){
   const o=S.ob; if(!o) return;
   const sic=st=>st==='ok'?`<span class="sic ok">${ic('check12')}</span>`:st==='run'?'<span class="sic run"><i class="spin sm"></i></span>':st==='act'?'<span class="sic act"></span>':'<span class="sic wait"></span>';
-  const agentSt=o.agent==='ok'?'ok':o.agent==='idle'?'wait':'run';
-  const agentR={idle:'기다리는 중',install:'Claude Code 설치 중',login:'브라우저에서 로그인',ok:'Claude Code · 로그인됨'}[o.agent];
+  const agentSt=o.agent==='ok'?'ok':o.agent==='idle'?'wait':o.agent==='blocked'?'act':'run';
+  const agentR={idle:'기다리는 중',install:'Claude Code 설치 중',login:'브라우저에서 로그인',ok:'Claude Code · 로그인됨',blocked:'설치가 막혔어요'}[o.agent];
   const inv=o.invite;
   $('#obSteps').innerHTML=`
-   <li class="ob-step ${o.tools==='ok'?'':'act'}">${sic(o.tools==='ok'?'ok':'run')}<div><div class="ob-t">도구 준비<span class="ob-r">${o.tools==='ok'?'git · 실행 환경 확인됨':'확인하는 중…'}</span></div></div></li>
+   <li class="ob-step ${o.tools==='ok'?'':'act'}">${sic(o.tools==='ok'?'ok':'run')}<div><div class="ob-t">도구 준비<span class="ob-r">${o.tools==='ok'?'필요한 도구 확인됨':'확인하는 중…'}</span></div></div></li>
    <li class="ob-step ${o.agent==='idle'?'wait':o.agent==='ok'?'':'act'}">${sic(agentSt)}<div><div class="ob-t">AI 연결<span class="ob-r">${agentR}</span></div>
+     ${o.agent==='install'||o.agent==='idle'?`<p class="ob-d">Claude Code 는 이 앱이 AI 를 부르는 데 쓰는 프로그램이에요. 설치가 끝나면 내 Claude 계정으로 로그인해요.</p>`:''}
      ${o.agent==='install'?`<div class="bar"><i style="width:${o.pct}%"></i></div><div class="ob-log">${o.log.slice(-3).map(l=>`<div>${esc(l)}</div>`).join('')}</div>`:''}
+     ${o.agent==='blocked'?`<p class="ob-d" style="color:var(--red)">회사 정책이 설치를 막았어요. 이 컴퓨터를 관리하는 IT 담당자에게 아래 문장을 그대로 보내 주세요.</p><div class="codebox" style="white-space:normal;font:12.5px/1.5 var(--font)">Colo Design 이 사용자 폴더(~/.colo-design/tools)에 Claude Code 를 설치하려는데 정책이 막고 있어요. 이 경로의 실행 허용을 부탁드려요.</div><div class="ob-acts"><button class="btn pri" data-act="ob-copy-it">문장 복사</button><button class="btn" data-act="ob-retry">다시 시도</button></div>`:''}
      ${o.agent==='login'?`<p class="ob-d">브라우저가 열렸어요. Claude 에 로그인하면 여기로 저절로 돌아와요.</p><div class="ob-acts"><button class="btn pri" data-act="ob-login">브라우저 다시 열기</button></div><details class="ob-fold"><summary>브라우저가 열리지 않았나요?</summary><p>아래 주소를 브라우저에 붙여넣고, 받은 코드를 여기에 넣어 주세요.</p><div class="codebox">https://claude.ai/oauth/authorize?code=true&amp;client_id=…</div><div class="row"><input placeholder="받은 코드 붙여넣기"><button class="btn" data-act="ob-login">확인</button></div></details>`:''}
    </div></li>
    <li class="ob-step ${inv==='wait'?'wait':inv==='done'?'':'act'}">${sic(inv==='done'?'ok':inv==='importing'?'run':inv==='active'?'act':'wait')}<div><div class="ob-t">초대 파일<span class="ob-r">${inv==='done'?`프로젝트 ${Object.keys(P).length}개`:'개발자에게 받은 파일'}</span></div>
@@ -1310,14 +1352,16 @@ function renderOb(){
     :cx==='skip'?`<span class="grow muted">Codex 는 건너뛰었어요 · 설정에서 언제든 설치해요</span>`
     :`<span class="grow">Codex 도 쓰시나요?<small>건너뛰어도 모든 일이 돼요</small></span><button class="btn sm" data-act="ob-codex">설치</button><button class="btn sm ghost" data-act="ob-skip">건너뛰기</button>`;
 }
-function runOnboarding(){
+function runOnboarding({blocked=false}={}){
   clearObTimers();
   S.ob={tools:'run',agent:'idle',invite:'wait',pct:0,log:[]};
   S.screen='onboarding'; renderAll();
   const o=S.ob, t=(ms,f)=>obT.push(setTimeout(f,ms));
   t(900,()=>{o.tools='ok';o.agent='install';renderOb();});
   const lines=['설치 파일을 내려받는 중 · 1/3','받은 파일을 확인하는 중 · 2/3','사용자 폴더에 설치하는 중 · 3/3','설치를 마쳤어요'];
-  for(let k=1;k<=16;k++) t(900+k*200,()=>{o.pct=Math.round(k/16*100);const li=lines[Math.min(3,Math.floor((k-1)/4))];if(o.log[o.log.length-1]!==li)o.log.push(li);renderOb();});
+  const last=blocked?9:16;
+  for(let k=1;k<=last;k++) t(900+k*200,()=>{o.pct=Math.round(k/16*100);const li=lines[Math.min(3,Math.floor((k-1)/4))];if(o.log[o.log.length-1]!==li)o.log.push(li);renderOb();});
+  if(blocked){t(900+last*200+300,()=>{o.agent='blocked';renderOb();});return;}
   t(4500,()=>{o.agent='login';renderOb();});
   t(7600,()=>{if(o.agent==='login'){o.agent='ok';o.invite='active';renderOb();}});
 }
@@ -1327,8 +1371,10 @@ function obAcceptInvite(){
   o.invite='importing'; renderOb();
   obT.push(setTimeout(()=>{o.invite='done';renderOb();},900));
   obT.push(setTimeout(()=>{
+    Object.values(P).forEach(pr=>{clearTimeout(pr._cT);pr.convs=[];pr.changes=[];pr.history=[];pr.cycle='draft';pr.receipt=null;pr.comments=0;pr.newChanges=0;pr.prepared=false;pr.submitBlocked=false;pr.submitLog=[];});
+    S.events=[]; S.pins=[]; S.inviteCleanup=true;
     S.projectId='member'; const c=newConvObj(); P.member.convs.unshift(c); S.convId=c.id;
-    S.screen='work'; S.route='/'; S.back=[]; S.fwd=[]; P.member.prepared=false; renderAll(); runPreparing('member');
+    S.screen='work'; S.route='/'; S.back=[]; S.fwd=[]; renderAll(); runPreparing('member');
   },3000));
 }
 
@@ -1345,7 +1391,7 @@ function switchProject(pid,noRender){
   let c=pr.convs.find(c=>!c.tool); if(!c){c=newConvObj();pr.convs.unshift(c);}
   S.convId=c.id; S.route=pr.route; S.back=[]; S.fwd=[]; S.frozen=false; S.histOpen=false; S.pinMode=false;
   const first=!pr.prepared&&!pr.prep;
-  if(!noRender){goWork();renderAll();if(!first)toast(pr.prep?`${pr.name}(으)로 옮겼어요 · 준비가 계속 돌고 있어요`:`${pr.name}(으)로 옮겼어요 · 미리보기는 보던 자리 그대로예요`);}
+  if(!noRender){goWork();renderAll();if(!first)toast(pr.prep?`옮겼어요 · ${pr.name} · 준비가 계속 돌고 있어요`:`옮겼어요 · ${pr.name} · 미리보기는 보던 자리 그대로예요`);}
   if(first) runPreparing(pid);
 }
 function newConvObj(){return {id:'n'+Date.now()+Math.floor(Math.random()*99),title:'새 대화',screens:[],msgs:[]};}
@@ -1356,7 +1402,7 @@ function newConv(pid=S.projectId){
 function navigate(route,{push=true,silent=false}={}){
   if(route===S.route&&!silent){renderPreview();return;}
   if(push&&route!==S.route){S.back.push(S.route);S.fwd=[];}
-  S.route=route; S.svcQ=''; S.frozen=false;
+  S.route=route; S.svcQ=''; S.frozen=false; closePinBubble();
   const svc=$('#svc'); if(svc) svc.scrollTop=0;
   if(S.screen==='work'){renderPreview();renderTabs();renderComposer();}
 }
@@ -1394,9 +1440,9 @@ function startTurn(pid,cid,msg,plan={}){
     const ch=pr.changes.find(c=>c.route===target);
     if(ch){ch.time='오늘 '+hhmm();} else pr.changes.unshift({route:target,note:plan.note||'고침',time:'오늘 '+hhmm()});
     if(pr.cycle==='review'&&!plan.auto) pr.newChanges++;
-    pr.history.unshift({day:'오늘',time:hhmm(),title:(plan.histTitle||msg?.text||'AI가 고쳤어요').split('\n')[0].slice(0,40),screens:[screenName(target)],kind:'turn'});
     S.rev[target]=(S.rev[target]||0)+1;
     plan.onDone&&plan.onDone();
+    pr.history.unshift({day:'오늘',time:hhmm(),title:(plan.histTitle||msg?.text||'AI가 고쳤어요').split('\n')[0].slice(0,40),screens:[screenName(target)],kind:'turn',snap:{rev:{...S.rev},labelNew:S.labelNew}});
     S.events.unshift({pid,cid,text:`${conv.title} — 다 만들었어요`,time:'오늘 '+hhmm(),kind:'done'});
     const active=pid===S.projectId&&cid===S.convId&&S.screen==='work';
     if(active&&!S.frozen){ if(S.route!==target) navigate(target); }
@@ -1424,7 +1470,7 @@ function doSend(){
   if(conv.running||(!text&&!ds.length&&!S.atts.length)) return;
   const msg={t:'user',text,atts:[...S.atts],pins:ds.map(p=>({n:p.n,label:p.label,note:p.note,route:p.route}))};
   ds.forEach(p=>p.state='sent');
-  S.atts=[]; ta.value=''; autosize(ta); S.pinMode=false;
+  S.atts=[]; ta.value=''; autosize(ta); S.pinMode=false; closePinBubble();
   startTurn(S.projectId,conv.id,msg,{target:ds[0]?.route||S.route});
   if(S.narrow) S.tab='chat';
 }
@@ -1438,25 +1484,61 @@ function startDemoTurn(){
 }
 
 /* ----- 제출 · 개발자 확인 · 반영됨 ----- */
-function doSubmit(){
+function submitPop(anchor){
+  const pr=curProj(), more=pr.cycle==='review';
+  const el=openPop(`<div class="wp-h"><b>${more?'같은 요청에 더해 제출할까요?':'개발자에게 제출할까요?'}</b><div>${more?'이미 열린 요청에 이어서 쌓여요':'제목과 설명은 도구가 써요 · 원본은 건드리지 않아요'}</div></div>
+    <div class="wp-sec"><h5>${more&&pr.newChanges?`보낸 뒤 바뀐 ${pr.newChanges}곳`:`보낼 화면 ${pr.changes.length}개`}</h5>${pr.changes.map(ch=>`<div class="wp-row" style="cursor:default"><span class="thumb"><i></i><i></i><i></i></span><span class="t"><b>${esc(screenName(ch.route))}</b><span>${esc(ch.note)}</span></span><span class="r">${esc(ch.time)}</span></div>`).join('')}</div>
+    <div class="wp-sec" style="border-bottom:0"><h5>개발자에게 한마디 <span class="r">선택</span></h5><input id="submitNote" style="width:100%;height:34px;border:1px solid var(--line2);border-radius:9px;padding:0 10px;outline:0" placeholder="예) 검색창 위치는 기획 의도예요"></div>
+    <div class="wp-foot" style="gap:6px"><span class="snote" style="margin-right:auto">받을 개발자 · ${pr.reviewers.map(esc).join(' · ')}</span><button class="btn sm ghost" data-act="pop-close">그만두기</button><button class="btn sm pri" data-act="submit-confirm">제출</button></div>`,anchor,{align:'right',cls:'work-pop'});
+  const inp=$('#submitNote',el); inp.focus();
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing&&e.keyCode!==229){e.preventDefault();ACT['submit-confirm']();}});
+}
+function slog(pr,text){(pr.submitLog=pr.submitLog||[]).unshift({time:hhmm(),text});}
+function completeSubmit(pid,cid){
+  const pr=P[pid], conv=getConv(pid,cid);
+  S.submitting='done';
+  if(pr.cycle==='review'){pr.newChanges=0;conv.msgs.push({t:'receipt',time:'오늘 '+hhmm(),reviewers:pr.reviewers,more:true,note:pr.pendingNote});pr.history.unshift({kind:'submit',day:'오늘',time:hhmm()});renderAll();}
+  else enterReview(pid,cid);
+  slog(pr,'제출했어요'); pr.pendingNote='';
+  setTimeout(()=>{S.submitting=null;if(S.screen==='work')renderStatus();},2200);
+}
+function doSubmit(note=''){
   const ss=submitState(); if(!ss.ok){showWhy(ss.why);return;}
   if(S.submitting) return;
-  const pr=curProj(), conv=curConv();
+  const pr=curProj(), conv=curConv(), mode=S.submitFail; S.submitFail='none'; renderMockNav();
+  pr.pendingNote=note;
   S.submitting='busy'; renderStatus();
   setTimeout(()=>{
-    S.submitting='done';
-    if(pr.cycle==='review'){pr.newChanges=0;conv.msgs.push({t:'receipt',time:'오늘 '+hhmm(),reviewers:pr.reviewers,more:true});pr.history.unshift({kind:'submit',day:'오늘',time:hhmm()});renderAll();}
-    else enterReview(pr.id,conv.id);
-    setTimeout(()=>{S.submitting=null;if(S.screen==='work')renderStatus();},2200);
+    if(mode==='transient'){
+      S.submitting='retry'; slog(pr,'제출하지 못했어요 — 잠깐의 문제라 도구가 다시 제출해요'); renderStatus();
+      setTimeout(()=>completeSubmit(pr.id,conv.id),4000); return;
+    }
+    if(mode==='blocked'){
+      S.submitting='failed'; pr.submitBlocked=true; S.problem='notified';
+      slog(pr,'제출하지 못했어요 — 개발자가 풀어야 하는 문제라 개발자에게 알렸어요');
+      S.events.unshift({pid:pr.id,cid:conv.id,text:'제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요',time:'오늘 '+hhmm(),kind:'notice'});
+      renderAll(); notify(`${pr.name} · 제출이 막혔어요`,'개발자에게 알렸어요. 풀리면 도구가 알아서 다시 제출해요.',pr.id,conv.id);
+      setTimeout(()=>{S.submitting=null;if(S.screen==='work')renderStatus();},3000); return;
+    }
+    completeSubmit(pr.id,conv.id);
   },1500);
+}
+function resolveSubmitBlock(pid){
+  const pr=P[pid]; if(!pr.submitBlocked) return;
+  pr.submitBlocked=false; if(S.problem==='notified') S.problem='none';
+  slog(pr,'개발자가 풀었어요 — 도구가 다시 제출해요');
+  S.events.unshift({pid,cid:pr.convs[0]?.id,text:'막혔던 제출을 개발자가 풀어 도구가 다시 제출했어요',time:'오늘 '+hhmm(),kind:'notice'});
+  const cid=pid===S.projectId?S.convId:pr.convs.find(c=>!c.tool)?.id;
+  if(pid===S.projectId){S.submitting='retry';renderAll();}
+  setTimeout(()=>completeSubmit(pid,cid),2500);
 }
 function enterReview(pid,cid,{instant=false}={}){
   const pr=P[pid], conv=getConv(pid,cid);
   pr.cycle='review'; pr.newChanges=0; pr.comments=0;
   pr.receipt={time:'오늘 '+hhmm(),snap:{rev:{...S.rev},labelNew:S.labelNew}};
-  conv.msgs.push({t:'receipt',time:'오늘 '+hhmm(),reviewers:pr.reviewers});
+  conv.msgs.push({t:'receipt',time:'오늘 '+hhmm(),reviewers:pr.reviewers,note:pr.pendingNote});
   pr.history.unshift({kind:'submit',day:'오늘',time:hhmm()});
-  S.events.unshift({pid,cid,text:'개발자에게 보냈어요',time:'오늘 '+hhmm(),kind:'submit'});
+  S.events.unshift({pid,cid,text:'개발자에게 제출했어요',time:'오늘 '+hhmm(),kind:'submit'});
   renderAll();
   clearTimeout(pr._cT); pr._cT=setTimeout(()=>arriveComment(pid,cid),instant?1200:6500);
 }
@@ -1469,8 +1551,8 @@ function arriveComment(pid,cid){
   S.events.unshift({pid,cid,text:`${c.author}님이 코멘트를 남겼어요`,time:'방금',kind:'comment'});
   notify(`${pr.name} · 개발자 코멘트`,`${c.author}: ${c.text}`,pid,cid);
   startTurn(pid,cid,null,{target:isM?'/member/list':pr.route,auto:true,note:'코멘트 반영',histTitle:`코멘트 반영 — ${c.text}`,
-    acts:['코멘트를 읽는 중',isM?'버튼 이름을 바꾸는 중':'표를 고치는 중','같은 요청에 다시 싣는 중'],
-    reply:isM?'‘회원 추가’ 버튼 이름을 ‘새 회원’으로 바꿨어요. 같은 요청에 다시 실어 보냈어요.':'금액 열을 오른쪽 정렬로 맞췄어요. 같은 요청에 다시 실어 보냈어요.',
+    acts:['코멘트를 읽는 중',isM?'버튼 이름을 바꾸는 중':'표를 고치는 중','같은 요청에 다시 제출하는 중'],
+    reply:isM?'‘회원 추가’ 버튼 이름을 ‘새 회원’으로 바꿨어요. 같은 요청에 다시 제출했어요.':'금액 열을 오른쪽 정렬로 맞췄어요. 같은 요청에 다시 제출했어요.',
     onDone:()=>{c.status='done';if(isM)S.labelNew=true;}});
 }
 function enterMerged(pid,cid){
@@ -1512,7 +1594,8 @@ function runPreparing(pid=S.projectId){
 
 /* ----- 핀 ----- */
 function togglePin(on){
-  S.pinMode=on??!S.pinMode;
+  if(curPrep()){toast('준비가 끝나면 화면을 찍을 수 있어요');return;}
+  S.pinMode=on??!S.pinMode; closePinBubble();
   if(S.pinMode&&S.narrow) S.tab='preview';
   if(S.pinMode) S.frozen=false;
   renderAll();
@@ -1521,9 +1604,30 @@ function renumber(){const sent=myPins().filter(p=>p.state==='sent'&&p.route).len
 function addPin(x,y,label,area){
   const p={id:++S.pinSeq,pid:S.projectId,route:S.route,x,y,label,note:'',state:'draft',area};
   S.pins.push(p); renumber(); renderAll();
+  if(S.pinNote==='bubble'){setTimeout(()=>openPinBubble(p),20);return;}
   if(S.narrow) toast(`${p.n}번을 담았어요 — 대화 탭에서 메모를 남기고 보내요`);
   else setTimeout(()=>{const el=$(`[data-pin-note="${p.id}"]`);el&&el.focus();},20);
 }
+function openPinBubble(p){
+  closePinBubble();
+  const badge=$(`#svc .pinb[data-id="${p.id}"]`); if(!badge) return;
+  const el=document.createElement('div'); el.className='pinbub'; el.dataset.pin=p.id;
+  el.innerHTML=`<div class="bh"><span class="pnum">${p.n}</span><b>${esc(p.label)}</b><span>· ${esc(screenName(p.route))}</span><button class="ibtn sm" data-act="bubble-close" data-tip="이 핀 빼기">${ic('trash13')}</button></div>
+    <input placeholder="어떻게 바꿀까요? (안 적어도 돼요)" value="${esc(p.note)}">
+    <div class="bf"><span>↵ 담기</span><span class="grow"></span><button class="btn sm" data-act="bubble-keep">담기</button><button class="btn sm pri" data-act="bubble-send">지금 보내기</button></div>`;
+  layer.appendChild(el);
+  const wr=win.getBoundingClientRect(), r=badge.getBoundingClientRect();
+  let top=r.bottom-wr.top+10, up=false; if(top+el.offsetHeight>wr.height-10){top=r.top-wr.top-el.offsetHeight-10;up=true;}
+  el.style.top=top+'px'; el.style.left=clamp(r.left-wr.left-14,8,wr.width-el.offsetWidth-8)+'px'; el.classList.toggle('up',up);
+  const inp=$('input',el); inp.focus();
+  inp.addEventListener('input',()=>{p.note=inp.value;const c=$(`[data-pin-note="${p.id}"]`);if(c)c.value=inp.value;});
+  inp.addEventListener('keydown',e=>{if(e.isComposing||e.keyCode===229)return;
+    if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();closePinBubble();doSend();}
+    else if(e.key==='Enter'){e.preventDefault();closePinBubble();toast(`${p.n}번을 담았어요 — 더 찍거나 입력창에서 보내요`);}
+    else if(e.key==='Escape'){e.preventDefault();closePinBubble();}});
+}
+function closePinBubble(){$$('.pinbub').forEach(x=>x.remove());}
+document.addEventListener('mousedown',e=>{const b=$('.pinbub');if(b&&!b.contains(e.target)&&!e.target.closest('.pinb'))closePinBubble();},true);
 function toSvc(e){const svc=$('#svc'),r=svc.getBoundingClientRect(),z=S.zoom/100;return {x:(e.clientX-r.left)/z+svc.scrollLeft,y:(e.clientY-r.top)/z+svc.scrollTop};}
 const pinTarget=el=>el.closest('[data-pin]')||el;
 const labelOf=t=>t.dataset?.pin||(t.textContent||'').trim().slice(0,14)||t.tagName.toLowerCase();
@@ -1543,6 +1647,7 @@ function bindSvc(){
   });
   svc.addEventListener('click',e=>{if((S.pinMode||e.altKey||S._swallow)&&!e.target.closest('.pinb')){e.preventDefault();e.stopPropagation();}},true);
   svc.addEventListener('mouseover',e=>{if(!(S.pinMode||S.altDown))return;$$('#svc [data-hl]').forEach(x=>x.removeAttribute('data-hl'));const t=pinTarget(e.target);if(t!==svc&&!t.classList.contains('svc-body'))t.setAttribute('data-hl','');});
+  svc.addEventListener('scroll',()=>closePinBubble(),{passive:true});
   svc.addEventListener('mouseleave',()=>$$('#svc [data-hl]').forEach(x=>x.removeAttribute('data-hl')));
   svc.addEventListener('input',e=>{if(e.target.id==='svcQ'){S.svcQ=e.target.value;const {rows,html}=memberRows();$('#svcRows').innerHTML=html;$('#svcEmpty').style.display=rows.length?'none':'';}});
 }
@@ -1568,7 +1673,7 @@ function importInvite(){
   renderAll();
   const row=(pr,sub,cls='',btn='')=>`<div class="inv-row ${cls}"><span class="pm" style="background:${pr.color}">${pr.short}</span><span class="t"><b>${esc(pr.name)}</b><span>${sub}</span></span>${btn}</div>`;
   openModal(`<div class="mhd"><h2>초대 파일을 가져왔어요</h2><button class="ibtn" data-act="modal-close">${ic('x')}</button></div><div class="mbody">
-    <div class="sline" style="margin-bottom:4px"><i class="dot green"></i>${wasExpired?'만료됐던 연결이 새 코드로 다시 이어졌어요.':'연결 코드를 새 것으로 바꿨어요.'} 서비스 ${Object.keys(P).length}개에 닿아요.</div>
+    <div class="sline" style="margin-bottom:4px"><i class="dot green"></i>${wasExpired?'만료됐던 연결이 새 코드로 다시 이어졌어요.':'연결 코드를 새 것으로 바꿨어요.'} 프로젝트 ${Object.keys(P).length}개에 이어져요.</div>
     ${added.length?`<div class="inv-h">새로 온 프로젝트 ${added.length}</div><div class="inv-list">${added.map(pr=>row(pr,'처음 열 때 준비에 몇 분 걸려요','new',`<button class="btn sm pri" data-act="open-new-proj" data-pid="${pr.id}">지금 열기</button>`)).join('')}</div>`:''}
     ${updated.length?`<div class="inv-h">설정이 바뀐 프로젝트 ${updated.length}</div><div class="inv-list">${updated.map(u=>row(u.pr,u.what)).join('')}</div>`:''}
     ${!added.length&&!updated.length?`<div class="snote" style="margin:10px 0">프로젝트에 바뀐 것은 없어요. 연결 코드만 새로 받았어요.</div>`:''}
@@ -1596,7 +1701,7 @@ document.addEventListener('mousedown',e=>{if(S.pop&&!S.pop.el.contains(e.target)
 
 let tipEl=null;
 function showTip(el){
-  hideTip(); const t=el.dataset.tip; if(!t) return;
+  hideTip(); const t=el.dataset.tip; if(!t||(S.tipMute&&Date.now()<S.tipMute)) return;
   tipEl=document.createElement('div'); tipEl.className='tip'; tipEl.textContent=t; layer.appendChild(tipEl);
   const wr=win.getBoundingClientRect(), r=el.getBoundingClientRect();
   let top=r.bottom-wr.top+6; if(top+tipEl.offsetHeight>wr.height-6) top=r.top-wr.top-tipEl.offsetHeight-6;
@@ -1607,7 +1712,7 @@ document.addEventListener('mouseover',e=>{const el=e.target.closest('[data-tip]'
 
 let whyT;
 function showWhy(text){
-  $$('.why').forEach(x=>x.remove());
+  $$('.why').forEach(x=>x.remove()); hideTip(); S.tipMute=Date.now()+3200;
   const b=$('#btnSubmit'), wr=win.getBoundingClientRect(), r=b.getBoundingClientRect();
   const el=document.createElement('div'); el.className='why'; el.innerHTML=`${ic('alert14')}<span>${esc(text)}</span>`; layer.appendChild(el);
   el.style.top=(r.bottom-wr.top+8)+'px'; el.style.left=clamp(r.right-wr.left-el.offsetWidth,8,wr.width-el.offsetWidth-8)+'px';
@@ -1616,6 +1721,7 @@ function showWhy(text){
 let toastT;
 function toast(text){$$('.toast').forEach(x=>x.remove());const el=document.createElement('div');el.className='toast';el.textContent=text;layer.appendChild(el);clearTimeout(toastT);toastT=setTimeout(()=>el.remove(),2800);}
 function notify(title,body,pid,cid){
+  if(S.screen==='work'&&pid===S.projectId&&cid===S.convId&&!document.hidden) return;
   const box=$('#osnotes'), el=document.createElement('div'); el.className='osn';
   el.innerHTML=`<div class="ic">${ic('spark18')}</div><div class="tx"><small>COLO DESIGN · 지금</small><b>${esc(title)}</b><span>${esc(body)}</span></div>`;
   el.onclick=()=>{el.remove();openConv(pid,cid);};
@@ -1637,14 +1743,15 @@ function workPop(anchor){
    <div class="wp-journey">${jr.map(([l,s])=>`<div class="${s}">${l}</div>`).join('')}</div>
    <div class="wp-sec"><h5>바뀐 화면 ${pr.changes.length?pr.changes.length+'개':''}<span class="r">${pr.cycle==='review'&&pr.newChanges?`보낸 뒤 ${pr.newChanges}곳 더`:''}</span></h5>
     ${pr.changes.length?pr.changes.map(ch=>`<button class="wp-row" data-act="screen-card" data-to="${ch.route}"><span class="thumb"><i></i><i></i><i></i></span><span class="t"><b>${esc(screenName(ch.route))}</b><span>${esc(ch.note)}</span></span><span class="r">${esc(ch.time)}</span></button>`).join(''):`<div class="wp-empty">${c==='merged'?'이번 작업은 제품에 합쳐졌어요. 다음에 고치는 것부터 새 작업이에요.':'아직 바뀐 화면이 없어요.'}</div>`}</div>
-   <div class="wp-sec"><h5>제출</h5>${pr.receipt?`<div class="sline" style="justify-content:space-between"><span>${ic('check14')} ${esc(pr.receipt.time)} · ${esc(S.author)}</span><button class="btn sm" data-act="ext" data-what="보낸 내용">보낸 내용 열기 ${ic('ext12')}</button></div><div class="wp-empty" style="margin-top:6px">받은 개발자 · ${pr.reviewers.map(esc).join(' · ')}</div>`:`<div class="wp-empty">아직 보내지 않았어요. 다 만들었으면 위의 <b>제출</b>을 눌러요.</div>`}</div>
+   <div class="wp-sec"><h5>제출</h5>${pr.receipt?`<div class="sline" style="justify-content:space-between"><span>${ic('check14')} ${esc(pr.receipt.time)} · ${esc(S.author)}</span><button class="btn sm" data-act="ext" data-what="제출한 내용">제출한 내용 열기 ${ic('ext12')}</button></div><div class="wp-empty" style="margin-top:6px">받은 개발자 · ${pr.reviewers.map(esc).join(' · ')}</div>`:pr.submitBlocked?`<div class="wp-empty">${ic('mail13')} 제출하지 못해 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요.</div>`:`<div class="wp-empty">아직 보내지 않았어요. 다 만들었으면 위의 <b>제출</b>을 눌러요.</div>`}
+    ${pr.submitLog?.length?`<div class="slog">${pr.submitLog.slice(0,3).map(l=>`<div><small>${esc(l.time)}</small><span>${esc(l.text)}</span></div>`).join('')}</div>`:''}</div>
    <div class="wp-sec"><h5>개발자 코멘트 ${comments.length||''}<span class="r">${comments.length?'AI가 스스로 반영해요':''}</span></h5>${comments.length?comments.map(m=>`<div class="wp-row" style="cursor:default"><span class="avt">${esc(m.author[0])}</span><span class="t">${esc(m.text)}</span><span class="r">${m.status==='done'?'반영됨':'고치는 중'}</span></div>`).join(''):`<div class="wp-empty">${c==='draft'?'제출하면 개발자의 코멘트가 여기에 모여요.':'아직 없어요.'}</div>`}</div>
    <div class="wp-foot"><button class="btn sm" data-act="pv-history">${ic('clock13')}작업 기록 열기</button></div>`;
   openPop(html,anchor,{align:'right',cls:'work-pop'});
 }
 function projMenu(anchor){
   const html=`<div class="mh6">프로젝트</div>${Object.values(P).map(pr=>{const w=allAsks().filter(x=>x.pr===pr).length;return `<button class="mi" data-act="proj-switch" data-pid="${pr.id}"><span class="pm" style="background:${pr.color}">${pr.short}</span><span class="mt"><b>${esc(pr.name)}</b><small style="display:flex;align-items:center;gap:5px">${cycleDot(pr)}${cycleLabel(pr)}${!pr.prepared&&!pr.prep?' · 처음 열 때 준비해요':''}</small></span>${w?`<span class="cnt" style="margin-left:auto">${w}</span>`:pr.id===S.projectId?`<span class="ck">${ic('check14')}</span>`:''}</button>`;}).join('')}
-   <div class="msep"></div><button class="mi" data-act="proj-info">${ic('edit14')}이 프로젝트 · 지켜 줄 것</button><button class="mi" data-act="fix-invite">${ic('upload14')}초대 파일 열기…</button>`;
+   <div class="msep"></div><button class="mi" data-act="proj-info">${ic('edit14')}이 프로젝트의 규칙 (지켜 줄 것)</button><button class="mi" data-act="fix-invite">${ic('upload14')}초대 파일 열기…</button>`;
   openPop(html,anchor,{width:250});
 }
 function projInfo(){
@@ -1688,7 +1795,7 @@ function morePop(anchor){
   openPop(`<div class="mh6">배율</div><div class="mseg">${[75,100,125].map(z=>`<button class="${S.zoom===z?'on':''}" data-act="pv-zoom" data-v="${z}">${z}%</button>`).join('')}</div>
    <div class="msep"></div>
    <button class="mi" data-act="pv-shot">${ic('cam14')}<span class="mt"><b>AI에게 이 화면 보여 주기</b><small>짚을 곳이 없는데 이상할 때</small></span></button>
-   <button class="mi ${pr.receipt&&pr.cycle==='review'?'':'dis'}" data-act="${pr.receipt&&pr.cycle==='review'?'pv-frozen':'noop'}">${ic('eye14')}<span class="mt"><b>보낸 화면 보기</b><small>${pr.receipt&&pr.cycle==='review'?'제출한 때의 화면':'제출한 뒤에 볼 수 있어요'}</small></span></button>
+   <button class="mi ${pr.receipt&&pr.cycle==='review'?'':'dis'}" data-act="${pr.receipt&&pr.cycle==='review'?'pv-frozen':'noop'}">${ic('eye14')}<span class="mt"><b>제출한 때의 화면 보기</b><small>${pr.receipt&&pr.cycle==='review'?'개발자가 받은 모습 그대로':'제출한 뒤에 볼 수 있어요'}</small></span></button>
    <div class="msep"></div><button class="mi" data-act="shortcuts">${ic('keyb14')}단축키</button>`,anchor,{align:'right',width:250});
 }
 function homeProjPop(anchor){
@@ -1713,28 +1820,27 @@ function settingsHTML(){
       :`<details class="sfold"><summary>쓸 수 없는 AI 1</summary><div class="rcard"><span class="t"><b>Codex</b><span>설치되지 않았어요 · 없어도 모든 일이 돼요</span></span><button class="btn sm" data-act="install-codex">설치</button></div></details>`}
   </div></section>
   <section class="srow"><div class="sl"><b>알림</b><span>확인 요청과 멈춤은 언제나 알려요</span></div><div class="sr">
-    <div class="sline"><label>다 만들었을 때</label><select data-set="notif">${[['off','끔'],['long','오래 걸린 턴만'],['all','모든 턴']].map(([v,l])=>`<option value="${v}" ${S.notif===v?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="sline"><label>다 만들었을 때</label><select data-set="notif">${[['off','끔'],['long','오래 걸린 답만'],['all','모든 답']].map(([v,l])=>`<option value="${v}" ${S.notif===v?'selected':''}>${l}</option>`).join('')}</select></div>
     <div class="sline"><label>소리</label><button class="sw ${S.sound?'on':''}" data-act="set-sound"></button></div>
     <div class="sline"><button class="btn sm" data-act="test-notif">${ic('bell13')}시험 알림</button><button class="btn sm ghost" data-act="ext" data-what="시스템 알림 설정">시스템 알림 설정 열기</button></div>
     <div class="snote">시험 알림이 오지 않으면 이 컴퓨터가 알림을 막아 둔 거예요. 시스템 알림 설정에서 켜 주세요.</div>
   </div></section>
   <section class="srow"><div class="sl"><b>연결</b><span>개발자에게 받은 초대 파일로 이어져요</span></div><div class="sr">
     <div class="sline"><label>작업에 적을 이름</label><input type="text" data-set="author" value="${esc(S.author)}"></div>
-    <div class="sline"><label>연결 코드</label><span><i class="dot green"></i> 정상 · 서비스 ${Object.keys(P).length}개에 닿아요</span></div>
+    <div class="sline"><label>연결 코드</label><span><i class="dot green"></i> 정상 · 프로젝트 ${Object.keys(P).length}개</span></div>
     <div class="sline"><button class="btn sm" data-act="fix-invite">${ic('upload13')}초대 파일 열기</button></div>
   </div></section>
   <section class="srow"><div class="sl"><b>업데이트</b><span>켤 때 · 돌아올 때 · 하루 한 번 저절로 확인해요</span></div><div class="sr">
     <div class="upd">${['app','claude'].concat(S.codex==='ok'?['codex']:[]).map(k=>updRow(k)).join('')}</div>
     <div class="sline" style="margin-top:4px"><label>새 AI 버전이 나오면</label><button class="sw ${S.autoUpd?'on':''}" data-act="set-autoupd"></button><span class="snote">스스로 설치해요 · 도는 작업이 있으면 끝난 뒤에</span></div>
     <div class="sline"><button class="btn sm" data-act="check-update" id="btnCheckUpd">지금 확인</button><span id="updSt" class="snote">${esc(S.updNote||'')}</span></div>
-    <div class="snote">AI 프로그램의 자기 업데이트는 꺼 두고 이 앱이 대신 맡아요 — 둘이 서로 바꾸는 일이 없게요.</div>
   </div></section>
   <section class="srow"><div class="sl"><b>개발자용</b><span>보통은 열 일이 없어요</span></div><div class="sr">
     <details class="sfold"><summary>문제 해결 도구 펼치기</summary><div class="devbox">
       <div class="sline"><span>도구 폴더</span><button class="btn sm" data-act="ext" data-what="폴더">${ic('folder13')}폴더 열기</button></div>
       <div class="sline"><span>하루 로그</span><button class="btn sm" data-act="ext" data-what="로그 폴더">${ic('folder13')}로그 폴더 열기</button></div>
       <div class="sline"><span>개발자 알림 · 슬랙</span><button class="btn sm" data-act="ext" data-what="슬랙 연결">연결하기</button></div>
-      <div class="stbl">데몬 · 정상 · 프로토콜 v17<br>활성 프로젝트 · member-admin · 미리보기 준비됨</div>
+      <div class="stbl">데몬 · 정상 · 프로토콜 v17<br>활성 프로젝트 · ${esc(curProj().repo)} · 미리보기 준비됨<br>AI 프로그램의 자기 업데이트는 꺼 두고 이 앱이 대신 맡아요</div>
     </div></details>
   </div></section></div>`;
 }
@@ -1803,12 +1909,12 @@ function confirmDelete(cid){
 
 /* ----- 첫 안내 ----- */
 const TIPS=[
-  {sel:['#pvPin','.composer .pin-t'],t:'고칠 곳은 찍어서',x:'여기를 켜고 화면을 누르면 그 자리가 입력창에 담겨요. ⌥+클릭은 언제든 돼요.'},
+  {sel:['#pvPin','.composer .pin-t'],t:'고칠 곳은 찍어서',x:'여기를 켜고 화면을 누르면 그 자리에 말풍선이 떠요. 켜지 않아도 option(⌥) 키를 누른 채 클릭하면 돼요.'},
   {sel:['#btnSubmit'],t:'다 됐으면 제출 하나',x:'누를 것은 이것뿐이에요. 저장은 AI가 답할 때마다 저절로 돼요.'},
   {sel:['#pvHistory','#journey'],t:'마음이 바뀌면',x:'작업 기록에서 예전 시점으로 화면을 되돌려요. 되돌려도 기록은 지워지지 않아요.'},
 ];
 function showCoach(i){
-  $$('.coach').forEach(x=>x.remove()); if(i>=TIPS.length||S.screen!=='work'){S.tipsDone=true;return;}
+  $$('.coach').forEach(x=>x.remove()); if(i>=TIPS.length||S.screen!=='work'){S.tipsDone=true;try{localStorage.setItem('colo-tips','1');}catch(_){}return;}
   const tp=TIPS[i], target=tp.sel.map(s=>$(s)).find(el=>el&&el.offsetParent); if(!target){showCoach(i+1);return;}
   const el=document.createElement('div'); el.className='coach';
   el.innerHTML=`<b>${tp.t}</b>${tp.x}<div class="row">${i+1} / ${TIPS.length}${i<TIPS.length-1?'<button class="skip" data-coach="end">그만 보기</button>':''}<button data-coach="${i+1}">${i<TIPS.length-1?'다음':'알겠어요'}</button></div>`;
@@ -1818,12 +1924,15 @@ function showCoach(i){
   const left=clamp(r.left-wr.left+r.width/2-el.offsetWidth/2,10,wr.width-el.offsetWidth-10);
   el.style.top=top+'px'; el.style.left=left+'px'; el.classList.toggle('up',up);
   el.style.setProperty('--ax',clamp(r.left-wr.left+r.width/2-left-6,14,el.offsetWidth-26)+'px');
-  el.addEventListener('click',e=>{const b=e.target.closest('[data-coach]');if(!b)return;b.dataset.coach==='end'?(el.remove(),S.tipsDone=true):showCoach(+b.dataset.coach);});
+  el.addEventListener('click',e=>{const b=e.target.closest('[data-coach]');if(!b)return;b.dataset.coach==='end'?(el.remove(),S.tipsDone=true,localStorage.setItem('colo-tips','1')):showCoach(+b.dataset.coach);});
 }
 
 /* ================= 동작 연결 ================= */
 const ACT={
   'noop':()=>{},
+  'pop-close':()=>closePop(),
+  'invite-delete':()=>{S.inviteCleanup=false;renderAll();toast('초대 파일을 지웠어요');},
+  'invite-later':()=>{S.inviteCleanup=false;renderAll();},
   'go-home':()=>{S.screen='home';S.homePid=S.projectId;S.sideOpen=false;renderAll();},
   'new-conv':()=>{S.sideOpen=false;newConv();},
   'palette':()=>openPalette(),
@@ -1842,7 +1951,8 @@ const ACT={
   'conv-delete':(el,d)=>{closePop();confirmDelete(d.cid);},
   'conv-delete-yes':(el,d)=>{const pr=curProj();pr.convs=pr.convs.filter(c=>c.id!==d.cid);if(!pr.convs.some(c=>!c.tool))pr.convs.unshift(newConvObj());if(S.convId===d.cid)S.convId=pr.convs.find(c=>!c.tool).id;closeModal();renderAll();toast('대화를 지웠어요');},
   'journey':(el)=>togglePop(el,()=>workPop(el)),
-  'submit':()=>{closePop();doSubmit();},
+  'submit':(el)=>{const ss=submitState();if(!ss.ok){closePop();showWhy(ss.why);return;}if(S.submitting)return;togglePop(el,()=>submitPop(el));},
+  'submit-confirm':()=>{const v=$('#submitNote')?.value.trim()||'';closePop();doSubmit(v);},
   'tab':(el,d)=>{S.tab=d.tab;renderAll();},
   'pv-back':()=>{if(!S.back.length)return;S.fwd.push(S.route);navigate(S.back.pop(),{push:false});},
   'pv-fwd':()=>{if(!S.fwd.length)return;S.back.push(S.route);navigate(S.fwd.pop(),{push:false});},
@@ -1858,6 +1968,9 @@ const ACT={
   'unfreeze':()=>{S.frozen=false;renderAll();},
   'shortcuts':()=>{closePop();openShortcuts();},
   'pin-toggle':()=>togglePin(),
+  'bubble-close':(el)=>{const id=+el.closest('.pinbub').dataset.pin;closePinBubble();S.pins=S.pins.filter(p=>p.id!==id);renumber();renderAll();toast('핀을 뺐어요');},
+  'bubble-keep':()=>{closePinBubble();toast('담았어요 — 더 찍거나 입력창에서 보내요');},
+  'bubble-send':()=>{closePinBubble();doSend();},
   'pin-remove':(el,d)=>{S.pins=S.pins.filter(p=>p.id!==+d.id);renumber();renderAll();},
   'pin-focus':(el,d)=>{if(S.narrow){S.tab='chat';renderAll();}setTimeout(()=>$(`[data-pin-note="${d.id}"]`)?.focus(),20);},
   'attach':(el,d)=>{S._attachWhere=d.where;$('#filePick').click();},
@@ -1881,10 +1994,16 @@ const ACT={
     if(S.screen!=='work'||d.pid!==S.projectId||d.cid!==S.convId){renderAll();toast(`“${opt}”로 답했어요 — AI가 이어서 해요`);}
     startTurn(d.pid,d.cid,{t:'user',text:opt},{target:P[d.pid].route,reply:`결제 수단을 ${m.answered===0?'주문 목록 표에도':'상세에서만'} 보이게 했어요. 주문을 누르면 오른쪽에 상세가 열려요.`,note:'상세 · 결제 수단'});},
   'ask-free':()=>$('#cmpText').focus(),
+  'edit-resend':(el,d)=>{const pr=curProj(),src=curConv(),i=+d.i,m=src.msgs[i];const c=newConvObj();c.title=src.title+' · 고침';c.screens=[...src.screens];c.msgs=src.msgs.slice(0,i).map(x=>({...x,_shown:null}));pr.convs.unshift(c);S.convId=c.id;renderAll();const ta=$('#cmpText');ta.value=m.text||'';autosize(ta);ta.focus();renderComposer();toast('이 말 앞까지 이어받은 새 대화예요 · 고쳐서 보내면 돼요 · 화면은 지금 그대로');},
   'retry-fix':(el,d)=>{const conv=curConv(),m=conv.msgs[+d.i];conv.msgs.splice(+d.i,1);const ta=$('#cmpText');ta.value=m.text;autosize(ta);ta.focus();renderAll();},
   'hist-pick':(el,d)=>{S.histConfirm=+d.i;renderHist();},
   'hist-cancel':()=>{S.histConfirm=null;renderHist();},
-  'hist-revert':(el,d)=>{const pr=curProj(),h=pr.history[+d.i];pr.history.unshift({day:'오늘',time:hhmm(),title:`${h.time} 시점으로 되돌렸어요`,screens:h.screens,kind:'revert'});if(pr.cycle==='review')pr.newChanges++;S.histConfirm=null;renderAll();flashDevice();toast(`${h.time} 시점으로 되돌렸어요`);},
+  'hist-revert':(el,d)=>{const pr=curProj(),h=pr.history[+d.i];
+    if(h.snap){S.rev={...h.snap.rev};S.labelNew=h.snap.labelNew;}
+    pr.history.unshift({day:'오늘',time:hhmm(),title:`${h.time} 시점으로 되돌렸어요`,screens:h.screens,kind:'revert',snap:{rev:{...S.rev},labelNew:S.labelNew}});
+    if(pr.cycle==='review')pr.newChanges++;S.histConfirm=null;S.svcGrade='전체';S.svcStatus='전체';S.svcQ='';
+    const first=Object.entries(SCREENS).find(([r,n])=>n===h.screens[0]);if(first&&first[0]!==S.route)navigate(first[0],{silent:true});
+    renderAll();flashDevice();toast(`${h.time} 시점으로 되돌렸어요 — 되돌리기도 기록에 남아요`);},
   'home-send':()=>{const ta=$('#homeText'),text=ta.value.trim();if(!text&&!S.homeAtts.length)return;const pid=S.homePid;const c=newConv(pid);const atts=[...S.homeAtts];S.homeAtts=[];ta.value='';S.route=P[pid].route;startTurn(pid,c.id,{t:'user',text,atts},{target:P[pid].route});},
   'home-proj':(el)=>togglePop(el,()=>homeProjPop(el)),
   'home-pid':(el,d)=>{S.homePid=d.pid;closePop();renderHome();},
@@ -1892,7 +2011,7 @@ const ACT={
   'fix-invite':()=>{closePop();closeModal();importInvite();},
   'open-new-proj':(el,d)=>{closeModal();switchProject(d.pid);},
   'fix-login':(el)=>{el.innerHTML='<i class="spin sm"></i>로그인 기다리는 중';setTimeout(()=>{S.problem='none';renderAll();toast('다시 연결됐어요 — 하던 대화를 그대로 이어가요');},1600);},
-  'ext':(el,d)=>{closePop();toast(`${d.what||'페이지'}이(가) 브라우저에서 열려요 (목업)`);},
+  'ext':(el,d)=>{closePop();toast(`브라우저에서 열어요 · ${d.what||'페이지'} (목업)`);},
   'set-sound':(el)=>{S.sound=!S.sound;el.classList.toggle('on',S.sound);},
   'test-notif':()=>notify('시험 알림','알림이 이렇게 와요. 누르면 그 대화가 열려요.',S.projectId,S.convId),
   'check-update':()=>checkUpdates(),
@@ -1902,6 +2021,8 @@ const ACT={
   'modal-close':()=>closeModal(),
   'ob-login':()=>{if(S.ob&&S.ob.agent==='login'){S.ob.agent='ok';S.ob.invite='active';renderOb();}},
   'ob-pick':()=>obAcceptInvite(),
+  'ob-copy-it':()=>toast('IT 담당자에게 보낼 문장을 복사했어요'),
+  'ob-retry':()=>runOnboarding(),
   'ob-codex':()=>{S.codex='install';renderOb();setTimeout(()=>{S.codex='ok';renderOb();},1800);},
   'ob-skip':()=>{S.codex='skip';renderOb();},
   'svc-go':(el,d)=>navigate(d.to),
@@ -1932,7 +2053,7 @@ document.addEventListener('keydown',e=>{
   else if(mod&&e.shiftKey&&k==='p'){e.preventDefault();if(S.screen==='work')togglePin();}
   else if(mod&&k==='t'){e.preventDefault();newConv();}
   else if(mod&&e.key===','){e.preventDefault();openSettings();}
-  else if(e.key==='Escape'){if($('.modal-back'))closeModal();else if(S.pop)closePop();else if(S.pinMode)togglePin(false);else if(S.histOpen){S.histOpen=false;renderAll();}}
+  else if(e.key==='Escape'){if($('.pinbub'))closePinBubble();else if($('.modal-back'))closeModal();else if(S.pop)closePop();else if(S.pinMode)togglePin(false);else if(S.histOpen){S.histOpen=false;renderAll();}}
   if(e.key==='Alt'&&!S.altDown){S.altDown=true;$('#preview').classList.toggle('alt-on',!S.pinMode);}
 });
 document.addEventListener('keyup',e=>{if(e.key==='Alt'){S.altDown=false;$('#preview').classList.remove('alt-on');$$('#svc [data-hl]').forEach(x=>x.removeAttribute('data-hl'));}});
@@ -1967,11 +2088,16 @@ $('#mocknav').addEventListener('click',e=>{
       else if(v==='review'){if(pr.cycle!=='review')enterReview(pr.id,curConv().id,{instant:true});else renderAll();}
       else if(v==='merged'){if(pr.cycle!=='merged')enterMerged(pr.id,curConv().id);else renderAll();}
       break;
-    case 'problem': S.problem=v; if(S.screen!=='work')S.screen='work'; renderAll(); break;
+    case 'problem':
+      if(v==='restarting'){S.problem='none';S.restarting=1;if(S.screen!=='work')S.screen='work';renderAll();setTimeout(()=>{S.restarting=2;renderPreview();},1800);setTimeout(()=>{S.restarting=0;renderAll();flashDevice();toast('화면이 다시 켜졌어요');},3600);break;}
+      S.problem=v; if(S.screen!=='work')S.screen='work'; renderAll(); break;
     case 'width': S.narrow=v==='narrow'; S.sideOpen=false; closePop(); renderAll(); setTimeout(renderAll,380); break;
+    case 'blocked': runOnboarding({blocked:true}); break;
+    case 'submitfail': S.submitFail=v; renderMockNav(); toast(v==='none'?'다음 제출은 정상으로 가요':v==='transient'?'다음 제출은 잠깐 막혔다가 도구가 다시 보내요':'다음 제출은 개발자가 풀어야 하는 문제로 막혀요'); break;
+    case 'resolve': resolveSubmitBlock(pr.id); break;
     case 'aiupd': S.tools.claude.latest='2.2.0'; S.tools.claude._checked=true; if(S.codex==='ok')S.tools.codex.latest='0.45.1'; renderSidebar(); refreshSettings(); if(!$('.modal.set'))openSettings(); toast('새 버전을 찾았어요 — 설정의 업데이트 줄에 버튼이 섰어요'); break;
     case 'invite': if(S.screen==='onboarding'){S.screen='work';renderAll();} importInvite(); break;
-    case 'tips': if(S.screen!=='work'){S.screen='work';renderAll();} setTimeout(()=>showCoach(0),50); break;
+    case 'tips': localStorage.removeItem('colo-tips'); if(S.screen!=='work'){S.screen='work';renderAll();} setTimeout(()=>showCoach(0),50); break;
   }
 });
 
@@ -1981,7 +2107,7 @@ setInterval(()=>{$$('[data-since]').forEach(el=>el.textContent=since(+el.dataset
 
 /* 다른 프로젝트에서 돌던 턴이 끝난다 — 사이드바 표식과 OS 알림 */
 function finishBackgroundTurn(){
-  const pr=P.order, conv=pr.convs.find(c=>c.id==='o2'); if(!conv.running) return;
+  const pr=P.order, conv=pr.convs.find(c=>c.id==='o2'); if(!conv||!conv.running) return;
   conv.running={...conv.running,start:conv.running.start};
   const secs=Math.round((Date.now()-conv.running.start)/1000);
   conv.running=null;
@@ -2024,7 +2150,7 @@ bindSvc();
   if(h.get('open')==='addr') setTimeout(()=>addrPop($('#addr')),300);
   if(h.get('open')==='invite') setTimeout(importInvite,300);
   if(h.get('open')==='projmenu') setTimeout(()=>projMenu($('#projBtn')),300);
-  if(!h.get('notips')&&scr==='work'&&!S.narrow) setTimeout(()=>{if(!S.tipsDone&&S.screen==='work')showCoach(0);},900);
+  if(!h.get('notips')&&scr==='work'&&!S.narrow&&!localStorage.getItem('colo-tips')) setTimeout(()=>{if(!S.tipsDone&&S.screen==='work')showCoach(0);},900);
 })();
 </script>
 </body>
