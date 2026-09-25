@@ -53,6 +53,38 @@ export const DEFAULT_KEEP_REJECTED_DAYS = 14;
 /** 임시 파일의 수명 — 요약 폴더와 그 대화 기록(첨부의 7일과 같다). */
 export const TEMP_TTL_MS = 7 * DAY_MS;
 
+/**
+ * 재클론 흔적의 수명 — 되살리기가 *성공한* 흔적만 기한 뒤 지운다. 옛 클론
+ * (`repo.corrupt-<시각>`, node_modules 까지 남아 디스크를 두 배로 쓴다)은
+ * 7일, 구해 둔 폴더(`salvage/<시각>`)는 30일. 디스크 부족 정리는 같은 규칙을
+ * 1일로 줄인다. 실패한 흔적은 지우지 않는다 — 개발자가 손으로 꺼내야 한다.
+ */
+export const SALVAGE_MOVED_TTL_MS = 7 * DAY_MS;
+export const SALVAGE_DIR_TTL_MS = 30 * DAY_MS;
+export const SALVAGE_TTL_DISK_LOW_MS = DAY_MS;
+
+/**
+ * 지울 재클론 흔적의 자리들 — 원장의 salvages 기록에서 기한이 지난 것만.
+ * 되살리기가 실패한 기록은 어떤 경우에도 내놓지 않는다(모듈 머리 참고).
+ */
+export function salvageCleanupPlan(
+  traces: CycleLedger["salvages"],
+  now: number,
+  diskLow: boolean,
+): string[] {
+  const remove: string[] = [];
+  for (const trace of traces) {
+    if (!trace.restored) continue;
+    const age = now - Date.parse(trace.at);
+    if (!Number.isFinite(age) || age < 0) continue; // 깨진 시각은 다음으로 미룬다
+    const movedDue = diskLow ? SALVAGE_TTL_DISK_LOW_MS : SALVAGE_MOVED_TTL_MS;
+    const salvageDue = diskLow ? SALVAGE_TTL_DISK_LOW_MS : SALVAGE_DIR_TTL_MS;
+    if (trace.movedTo !== null && age >= movedDue) remove.push(trace.movedTo);
+    if (trace.salvageDir !== null && age >= salvageDue) remove.push(trace.salvageDir);
+  }
+  return remove;
+}
+
 /** 디스크 여유의 문턱 (O8) — 이 아래면 도구의 것부터 치운다. */
 export const DISK_LOW_BYTES = 2 * 1024 ** 3;
 

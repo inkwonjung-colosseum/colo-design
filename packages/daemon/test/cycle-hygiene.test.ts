@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { composeAttention } from "@colo-design/protocol";
@@ -21,8 +21,10 @@ import {
   HYGIENE_ORDER,
   hygieneDue,
   movedRepoUrl,
+  salvageCleanupPlan,
 } from "../dist/cycle-hygiene.js";
 import { type CycleLedger, emptyLedger, readLedger, writeLedger } from "../dist/cycle-ledger.js";
+import type { CycleSupervisor } from "../dist/cycle-supervisor.js";
 import { dependencyHash } from "../dist/repo-bringup.js";
 import { INSTALL_MARKER } from "../dist/repo-core.js";
 import { summaryDirOf } from "../dist/repo-summary.js";
@@ -405,6 +407,107 @@ test("15행 — node_modules 가 없으면 해시가 같아도 재설치 조치�
     mkdirSync(join(scene.clone.path, "node_modules"));
     await supervisor.tick("turn-idle");
     assert.equal(syncs, 1);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+// ————— 재클론 흔적 정리 (남은 항목) —————
+
+test("salvageCleanupPlan — 성공 흔적만 기한 뒤에 내놓는다, 실패 흔적은 어떤 경우도 아니", () => {
+  const traces: CycleLedger["salvages"] = [
+    { at: iso(T0), movedTo: "/p/repo.corrupt-a", salvageDir: "/p/salvage/a", restored: true },
+    { at: iso(T0), movedTo: "/p/repo.corrupt-b", salvageDir: "/p/salvage/b", restored: false },
+  ];
+  // 평소 — 옛 클론은 7일, 구해 둔 폴더는 30일.
+  assert.deepEqual(salvageCleanupPlan(traces, T0 + 7 * DAY, false), ["/p/repo.corrupt-a"]);
+  assert.deepEqual(salvageCleanupPlan(traces, T0 + 30 * DAY, false), [
+    "/p/repo.corrupt-a",
+    "/p/salvage/a",
+  ]);
+  assert.deepEqual(salvageCleanupPlan(traces, T0 + DAY - 1, true), []);
+  assert.deepEqual(salvageCleanupPlan(traces, T0 + DAY, true), [
+    "/p/repo.corrupt-a",
+    "/p/salvage/a",
+  ]);
+});
+
+/** 옛 클론과 구해 둔 폴더를 디스크에 만들고 흔적 기록과 함께 뿌린다. */
+function seedSalvage(
+  scene: SupervisedScene,
+  over: { at: number; restored: boolean },
+): CycleSupervisor {
+  const parent = dirname(scene.clone.path);
+  const movedTo = join(parent, "repo.corrupt-20260925T000000Z");
+  const salvageDir = join(parent, "salvage", "20260925T000000Z");
+  mkdirSync(movedTo, { recursive: true });
+  mkdirSync(salvageDir, { recursive: true });
+  writeFileSync(join(movedTo, "old-canary"), "옛 클론");
+  writeFileSync(join(salvageDir, "changes.patch"), "패치\n");
+  return seedLedger(scene, {
+    salvages: [{ at: iso(over.at), movedTo, salvageDir, restored: over.restored }],
+  });
+}
+
+test("재클론 흔적 — 성공하면 옛 클론은 7일 뒤 · 구해 둔 폴더는 30일 뒤 지운다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const t0 = Date.now();
+    const parent = dirname(scene.clone.path);
+    const supervisor = seedSalvage(scene, { at: t0, restored: true });
+
+    // 8일째 — 옛 클론만 지운다(node_modules 까지 남아 디스크를 두 배로 쓰던 것).
+    scene.setNow(t0 + 8 * DAY);
+    await supervisor.tick("manual");
+    assert.equal(existsSync(join(parent, "repo.corrupt-20260925T000000Z")), false);
+    assert.equal(existsSync(join(parent, "salvage", "20260925T000000Z")), true);
+    assert.equal(
+      readLedger(scene.ledgerPath).salvages.length,
+      1,
+      "구해 둔 폴더가 살아 있으므로 기록도 남는다",
+    );
+
+    // 31일째 — 구해 둔 폴더까지 지우고 기록을 거둔다.
+    scene.setNow(t0 + 31 * DAY);
+    await supervisor.tick("manual");
+    assert.equal(existsSync(join(parent, "salvage", "20260925T000000Z")), false);
+    assert.deepEqual(readLedger(scene.ledgerPath).salvages, []);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("재클론 흔적 — 되살리기가 실패한 것은 40일이 지나도 지우지 않는다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const t0 = Date.now();
+    const parent = dirname(scene.clone.path);
+    const supervisor = seedSalvage(scene, { at: t0, restored: false });
+
+    scene.setNow(t0 + 40 * DAY);
+    await supervisor.tick("manual");
+    assert.equal(existsSync(join(parent, "repo.corrupt-20260925T000000Z")), true);
+    assert.equal(existsSync(join(parent, "salvage", "20260925T000000Z")), true);
+    assert.equal(readLedger(scene.ledgerPath).salvages.length, 1, "기록도 그대로");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("디스크 부족 정리 — 성공 흔적의 기한이 1일로 줄어든다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    const t0 = Date.now();
+    const parent = dirname(scene.clone.path);
+    const supervisor = seedSalvage(scene, { at: t0, restored: true });
+    scene.freeBytes = 1024 ** 3;
+
+    // 1.2일 — 평소 기한(7일)에는 못 미치지만 디스크가 모자라면 지운다.
+    scene.setNow(t0 + 1.2 * DAY);
+    await supervisor.tick("manual");
+    assert.equal(existsSync(join(parent, "repo.corrupt-20260925T000000Z")), false);
+    assert.equal(existsSync(join(parent, "salvage", "20260925T000000Z")), false);
+    assert.deepEqual(readLedger(scene.ledgerPath).salvages, []);
   } finally {
     await scene.dispose();
   }

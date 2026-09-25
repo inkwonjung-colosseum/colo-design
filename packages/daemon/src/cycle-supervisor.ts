@@ -13,7 +13,7 @@
  * - 클론 손상(손상 행)은 구해 두기 → 옮기기 → 새로 받기 → 되살리기를 원장의
  *   reclone 으로 잇는다 — 몸통은 clone-salvage 에 있다 (단계 9).
  */
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
@@ -46,6 +46,7 @@ import {
   measureAssets,
   movedRepoUrl,
   pruneTempFolders,
+  salvageCleanupPlan,
 } from "./cycle-hygiene.js";
 import {
   type CycleLedger,
@@ -1682,7 +1683,22 @@ export class CycleSupervisor {
     // checkout 은 설치 표식을 어긋나게 쓴다(끝난 뒤의 해시를 적는다).
     if (core.inFlight !== null) return false;
     const failure = record.salvage === null ? null : await restoreSalvage(core, record.salvage);
-    this.ledger = { ...this.ledger, reclone: null, corrupt: null };
+    // 흔적을 남긴다 — 위생의 prune 이 되살리기 성공 여부를 보고 기한 뒤 지운다.
+    // 실패한 흔적은 지우지 않는다: 개발자가 구해 둔 폴더에서 손으로 꺼낸다.
+    this.ledger = {
+      ...this.ledger,
+      reclone: null,
+      corrupt: null,
+      salvages: [
+        ...this.ledger.salvages,
+        {
+          at: record.at,
+          movedTo: record.movedTo,
+          salvageDir: record.salvage?.dir ?? null,
+          restored: failure === null,
+        },
+      ],
+    };
     writeLedger(this.ledgerPath, this.ledger);
     this.resolveNoticeKey("clone:corrupt");
     if (failure !== null) {
@@ -1711,10 +1727,26 @@ export class CycleSupervisor {
    * 예산의 창(하루)이 지나면 손상 행이 다시 시도한다.
    */
   private stopReclone(reason: string): void {
+    // 구해 두기까진 됐지만 옮기기에서 멈춘 절차도 흔적으로 남긴다 — 되살리기를
+    // 거치지 않았으므로 restored=false (위생이 지우지 않는다)다.
+    const stopped = this.ledger.reclone;
     this.ledger = {
       ...this.ledger,
       reclone: null,
       budgets: markEscalated(this.ledger.budgets, "reclone"),
+      ...(stopped !== null && (stopped.salvage !== null || stopped.movedTo !== null)
+        ? {
+            salvages: [
+              ...this.ledger.salvages,
+              {
+                at: stopped.at,
+                movedTo: stopped.movedTo,
+                salvageDir: stopped.salvage?.dir ?? null,
+                restored: false,
+              },
+            ],
+          }
+        : {}),
     };
     writeLedger(this.ledgerPath, this.ledger);
     this.deps.raiseNotice("clone:corrupt", noticeText("clone:corrupt"), reason);
@@ -1773,6 +1805,8 @@ export class CycleSupervisor {
       await this.pruneEndedBranches(now);
       const removed = pruneTempFolders(core.root, now);
       if (removed > 0) this.log(`위생: 7일 넘은 임시 파일 ${removed}개를 치웠습니다`);
+      // 재클론의 흔적 — 디스크 부족 정리는 같은 규칙을 1일 기한으로 줄인다.
+      this.pruneSalvageTraces(now, diskBefore !== null && diskBefore < DISK_LOW_BYTES);
       this.stampHygiene("prune", now);
     }
     if (due.has("gc")) {
@@ -1929,6 +1963,32 @@ export class CycleSupervisor {
     writeLedger(this.ledgerPath, this.ledger);
   }
 
+  /**
+   * 재클론 흔적의 정리 (PLAN 단계 9) — 되살리기가 성공한 것만 기한(옛 클론
+   *  7일 · 구해 둔 폴더 30일, 디스크 부족이면 1일) 뒤 지운다. 실패한 기록은
+   * 살리고, 지웠거나 애초에 없던 자리만 원장에서 거둔다 — 지우다 실패한
+   * 자리가 남으면 다음 정리가 다시 본다.
+   */
+  private pruneSalvageTraces(now: number, diskLow: boolean): void {
+    const remove = salvageCleanupPlan(this.ledger.salvages, now, diskLow);
+    for (const dir of remove) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // 한 자리의 실패가 나머지를 막지 않는다 — 다음 날 다시 본다.
+      }
+    }
+    if (remove.length > 0) this.log(`위생: 재클론 흔적 ${remove.length}곳을 지웠습니다`);
+    const kept = this.ledger.salvages.filter(
+      (trace) =>
+        !trace.restored ||
+        (trace.movedTo !== null && existsSync(trace.movedTo)) ||
+        (trace.salvageDir !== null && existsSync(trace.salvageDir)),
+    );
+    if (kept.length === this.ledger.salvages.length) return;
+    this.ledger = { ...this.ledger, salvages: kept };
+    writeLedger(this.ledgerPath, this.ledger);
+  }
   private loadLedger(): CycleLedger {
     // 깨진 원장은 빈 원장으로 — 복구는 멱등이다 (I5). readLedger 는 경로를
     // 받아 스스로 읽는다(내용을 넘기면 경로로 읽으려 해 항상 빈 원장이 된다).

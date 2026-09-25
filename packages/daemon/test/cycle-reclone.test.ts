@@ -157,6 +157,12 @@ test("손상된 인덱스 — 구해 두기 → 재클론 → 커밋 안 된 변
     assert.ok(log.includes("안 올라간 커밋"), "올라가지 않은 커밋이 살아 있어야 한다");
     assert.ok(log.includes("올라간 커밋"));
     assert.equal(readFileSync(join(scene.clone.path, "README.md"), "utf8"), "# 하네스\n고친 줄\n");
+    // 흔적 기록 — 위생의 정리가 되살리기 성공을 읽는다(다음 시험의 재료).
+    const traces = readLedger(scene.ledgerPath).salvages;
+    assert.equal(traces.length, 1);
+    assert.equal(traces[0]?.restored, true);
+    assert.ok(traces[0]?.movedTo?.startsWith(join(parent, "repo.corrupt-")));
+    assert.ok(traces[0]?.salvageDir?.startsWith(join(parent, "salvage")));
     assert.equal(existsSync(join(scene.clone.path, "src/pushed.ts")), false);
     assert.equal(readFileSync(join(scene.clone.path, "src/new.ts"), "utf8"), "새 파일\n");
     // 새 클론의 인덱스는 멀쩡하다.
@@ -369,6 +375,10 @@ test("되살리기 실패 — clone:restore 알림의 자세히에 구해 둔 �
       `자세히에 구해 둔 폴더 경로가 실려야 한다: ${scene.notices[0]?.reason}`,
     );
     assert.equal(readLedger(scene.ledgerPath).reclone, null, "절차는 닫힌다");
+    // 실패 흔적 — 위생이 지우지 않는다(개발자가 손으로 꺼낸다).
+    assert.deepEqual(readLedger(scene.ledgerPath).salvages, [
+      { at: iso(now), movedTo, salvageDir: dir, restored: false },
+    ]);
   } finally {
     await scene.dispose();
   }

@@ -155,6 +155,20 @@ export interface CycleLedger {
     deleteRemoteAfterPush?: string;
   }>;
   /**
+   * 끝난 재클론의 흔적 (PLAN 단계 9) — 위생의 prune 이 기한 뒤 지운다.
+   * 되살리기가 실패한 것(restored=false)은 지우지 않는다: 개발자가 구해 둔
+   * 폴더에서 손으로 꺼내야 하므로 원장이 결과를 적어 가른다.
+   */
+  salvages: Array<{
+    at: string;
+    /** 옮겨진 옛 클론(`repo.corrupt-<시각>`)의 자리 — 옮기지 못했으면 null. */
+    movedTo: string | null;
+    /** 구해 둔 폴더(`salvage/<시각>`)의 자리 — 구해 두지 못했으면 null. */
+    salvageDir: string | null;
+    /** 되살리기가 성공했는가 — 실패한 흔적은 영원히 남는다. */
+    restored: boolean;
+  }>;
+  /**
    * 위생의 시각 (PLAN 단계 9) — 항목마다 마지막으로 시도한 때. 기한은
    * cycle-hygiene 의 표가 정한다. assets 는 캡처 브랜치(colo-design-assets)
    * 끝 트리의 파일 수 · 대략 크기다 — 정리는 하지 않고 기록만 한다(O4).
@@ -208,6 +222,7 @@ export function emptyLedger(): CycleLedger {
     budgets: {},
     notices: {},
     branches: [],
+    salvages: [],
     hygiene: {},
     corrupt: null,
     reclone: null,
@@ -541,10 +556,29 @@ export function parseLedger(raw: unknown): CycleLedger {
     budgets: parseBudgets(record.budgets),
     notices,
     branches: parseBranches(record.branches),
+    salvages: parseSalvages(record.salvages),
     hygiene: parseHygiene(record.hygiene),
     corrupt: parseCorrupt(record.corrupt),
     reclone: parseReclone(record.reclone),
   };
+}
+
+function parseSalvages(raw: unknown): CycleLedger["salvages"] {
+  if (!Array.isArray(raw)) return [];
+  const traces: CycleLedger["salvages"] = [];
+  for (const item of raw) {
+    const record = asRecord(item);
+    if (record === null) continue;
+    const at = asString(record.at);
+    if (at === null || typeof record.restored !== "boolean") continue;
+    traces.push({
+      at,
+      movedTo: asString(record.movedTo),
+      salvageDir: asString(record.salvageDir),
+      restored: record.restored,
+    });
+  }
+  return traces;
 }
 
 /** 없거나 깨진 파일은 빈 원장 — 시작이 실패할 이유가 아니다. */

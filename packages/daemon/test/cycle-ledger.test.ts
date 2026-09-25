@@ -52,6 +52,15 @@ function fullLedger(): CycleLedger {
     },
     notices: { "push:behind": { via: "pr", ref: 12, raisedAt: iso(T0), count: 1 } },
     branches: [{ name: "colo-design/20260924-1", endedAt: iso(T0), state: "merged" }],
+    salvages: [
+      {
+        at: iso(T0),
+        movedTo: "/p/repo.corrupt-20260924T090000Z",
+        salvageDir: "/p/salvage/20260924T090000Z",
+        restored: true,
+      },
+      { at: iso(T0), movedTo: null, salvageDir: null, restored: false },
+    ],
     hygiene: {
       gcAt: iso(T0),
       assetsAt: iso(T0),
