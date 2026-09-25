@@ -141,8 +141,13 @@ export function ChatColumn({
       접는 중만 간직한다. 새 오류는 접는 중이라도 다시 편다. */
   const [errorClosing, setErrorClosing] = useState(false);
   // 원문(영어일 수 있다)은 기록으로 — 화면은 한국어 한 줄만 그린다(L8).
+  // 사용자가 고칠 수 있는 한국어 안내는 그대로 보이므로(koreanNoticeWords)
+  // 기록도 두 번 남기지 않는다.
   useEffect(() => {
-    if (error && !devMachine) console.warn("[colo-design] 세션 오류:", error);
+    if (!error || devMachine) return;
+    if (plainErrorTitle(error, devMachine) !== error) {
+      console.warn("[colo-design] 세션 오류:", error);
+    }
   }, [error, devMachine]);
   const showError = (message: string) => {
     setError(message);

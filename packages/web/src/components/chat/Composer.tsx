@@ -12,6 +12,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { Fold, useFoldNotice } from "../../components";
 import type { PinAttachment } from "../../hooks/usePins";
 import { EFFORT_HINT, EFFORT_LABEL, modelOptions, modelRowOf } from "../../lib/chat-options";
+import { plainErrorTitle } from "../../lib/error-words";
 import { composing } from "../../lib/ime";
 import { isInviteFile, offerInviteFile } from "../../lib/invite-bus";
 import type { SendKey } from "../../lib/settings";
@@ -138,11 +139,19 @@ function attachmentWords({ images, files }: { images: number; files: number }): 
  * The daemon's refusal sentence is Korean and carries the recovery — show it
  * rather than a second generic line; the fallback is
  * for a dead socket, which has no sentence.
+ *
+ * 원문이 영어 · 경로일 수 있는 Error 라면 개발 실행이 아니면 한국어 한 줄로
+ * 가리고 원문은 console 로 남긴다 (PLAN L8 — ScreenPanel · ChatColumn 의
+ * 배너와 같은 판정, plainErrorTitle).
  */
-function failureWords(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : `${fallback} — 잠시 뒤 다시 시도해 주세요`;
+function failureWords(error: unknown, fallback: string, dev: boolean): string {
+  const raw =
+    error instanceof Error && error.message
+      ? error.message
+      : `${fallback} — 잠시 뒤 다시 시도해 주세요`;
+  const title = plainErrorTitle(raw, dev);
+  if (title !== raw) console.warn("[colo-design] 보내기 실패:", raw);
+  return title;
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +802,7 @@ export function Composer({
         rejected.clear();
         sendError.clear();
       })
-      .catch((e) => sendError.show(failureWords(e, "보내지 못했습니다")))
+      .catch((e) => sendError.show(failureWords(e, "보내지 못했습니다", dev)))
       .finally(() => {
         sendingRef.current = false;
         setSending(false);
@@ -893,13 +902,13 @@ export function Composer({
         if (!payload) return;
         restore(payload.text, payload.attachments, payload.pins);
       })
-      .catch((e) => sendError.show(failureWords(e, "기다리는 말을 꺼내지 못했습니다")));
+      .catch((e) => sendError.show(failureWords(e, "기다리는 말을 꺼내지 못했습니다", dev)));
   };
 
   const sendQueuedNow = (item: QueuedSend) => {
     if (!onSendQueuedNow) return;
     void onSendQueuedNow(item.id).catch((e) =>
-      sendError.show(failureWords(e, "이 말을 먼저 보내지 못했습니다")),
+      sendError.show(failureWords(e, "이 말을 먼저 보내지 못했습니다", dev)),
     );
   };
 

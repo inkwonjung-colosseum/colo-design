@@ -197,8 +197,11 @@ export function ScreenPanel({
   // 개발 실행 판정 — 원문 오류 문장의 노출을 가른다(PLAN L8).
   const devMachine = daemon.status?.dev === true;
   // 원문(영어일 수 있다)은 기록으로 — 화면은 한국어 한 줄만 그린다(L8).
+  // 사용자가 고칠 수 있는 한국어 안내는 그대로 보이므로(koreanNoticeWords)
+  // 기록도 두 번 남기지 않는다.
   useEffect(() => {
-    if (syncError.text && !devMachine) {
+    if (!syncError.text || devMachine) return;
+    if (plainErrorTitle(syncError.text, devMachine) !== syncError.text) {
       console.warn("[colo-design] 동기화 오류:", syncError.text);
     }
   }, [syncError.text, devMachine]);
