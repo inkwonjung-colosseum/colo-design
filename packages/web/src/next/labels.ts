@@ -50,6 +50,10 @@ export const L = {
     merged: "반영됨",
     mergedNow: "반영됐어요",
     openWork: "이번 작업 보기",
+    makingRead: "화면을 살펴보는 중",
+    makingFile: "화면 파일을 고치는 중",
+    makingCheck: "검사를 돌리는 중",
+    firstTurnHint: "처음은 몇 분 걸려요",
   },
 
 

@@ -59,6 +59,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.nx-since-hint {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--ink3);
+}
+
 .nx-jwrap {
   display: flex;
   align-items: center;

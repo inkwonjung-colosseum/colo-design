@@ -82,6 +82,11 @@ export interface StatusLineProps {
   journey: Journey;
   /** AI 가 도는 턴의 시작 시각(데몬 시계, ms) — `만드는 중 · 12초`. 모르면 null. */
   turnStartedAt: number | null;
+  /** 지금 도는 도구의 묶음(`makingPhase`) — 단계 말 `화면을 살펴보는 중` … 을
+   * 고른다. 도구가 없거나 모르면 null(`만드는 중`). */
+  makingPhase: "read" | "file" | "command" | null;
+  /** 이 대화의 첫 턴인가 — 60초를 넘으면 시계 뒤에 `처음은 몇 분 걸려요`. */
+  firstTurn: boolean;
   narrow: boolean;
   nav: ShellNav;
   /** 열린 제출 버튼을 눌렀다 — 단계 4 가 확인 팝오버로 바꾼다. 지금은 자리만. */

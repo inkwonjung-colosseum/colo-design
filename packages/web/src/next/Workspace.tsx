@@ -8,6 +8,7 @@ import { ChatColumn } from "./chat/ChatColumn";
 import { HomeView } from "./home/HomeView";
 import { L } from "./labels";
 import { deriveJourney } from "./lib/journey";
+import { firstTurn, makingPhase } from "./lib/making";
 import { submitCopy } from "./lib/submit-copy";
 import { useNarrow, useShellNav } from "./lib/use-shell-nav";
 import { commentCount } from "./lib/work-ledger";
@@ -87,6 +88,9 @@ export function Workspace({
   const turnStartedAt = activeLive
     ? (sessions.active?.turnStartedAt ?? null)
     : (awaiting?.since ?? null);
+  // 단계 10 — 단계 말은 지금 도는 도구의 묶음이 고르고, 첫 보내기에는 60초 뒤 안내가 붙는다.
+  const phase = makingPhase(sessions.active?.blocks ?? []);
+  const firstSend = firstTurn(sessions.active?.blocks ?? []);
   const attention = daemon.repo?.attention ?? daemon.status?.attention ?? null;
   // 단계 4 — 제출 상태의 문장과 이번 작업의 장부(코멘트 수가 여정의 둘째 점에 붙는다).
   const ledger = useWorkLedger(daemon);
@@ -228,6 +232,8 @@ export function Workspace({
               title={title}
               journey={journey}
               turnStartedAt={turnStartedAt}
+              makingPhase={phase}
+              firstTurn={firstSend}
               narrow={narrow}
               nav={nav}
               onSubmit={() => undefined}

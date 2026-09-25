@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { L } from "../labels";
+import { FIRST_TURN_HINT_MS } from "../lib/making";
 import type { SubmitCopy } from "../lib/submit-copy";
 import type { StatusLineProps } from "../slots";
 import { MenuIcon, PanelIcon, Spin } from "../ui/icons";
@@ -17,7 +18,10 @@ const FRESH_RECEIPT_MS = 30_000;
 
 /**
  * 상태 줄(U2) — 대화와 미리보기 위에 걸친 한 줄. 왼쪽은 대화 제목, 오른쪽은
- * 여정 세 점과 `제출`. AI 가 도는 동안 여정 앞에 `만드는 중 · 12초` 가 붙는다.
+ * 여정 세 점과 `제출`. AI 가 도는 동안 여정 앞에 단계 말이 붙는다(단계 10) —
+ * 지금 도는 도구의 묶음이 `화면을 살펴보는 중` · `화면 파일을 고치는 중` ·
+ * `검사를 돌리는 중` 을 고르고, 첫 보내기가 60초를 넘으면 시계 뒤에
+ * `처음은 몇 분 걸려요` 가 붙는다. 좁은 창은 단계 말만.
  * 좁은 창(U16)에서는 제목이 빠지고 지금 점만 글자를 갖는다.
  *
  * 제출 버튼은 언제나 그려진다. 잠겼으면 누를 때 이유 한 줄이 버튼 아래 선다
@@ -33,6 +37,8 @@ export function StatusLine({
   title,
   journey,
   turnStartedAt,
+  makingPhase,
+  firstTurn,
   narrow,
   onSubmit,
   ledger,
@@ -59,6 +65,15 @@ export function StatusLine({
     return () => clearTimeout(timer);
   }, [why]);
   const { submit } = journey;
+  // 단계 말 — 묶음을 모르거나(생각 중) 도구가 없으면 지금의 `만드는 중`.
+  const makingWord =
+    makingPhase === "read"
+      ? L.journey.makingRead
+      : makingPhase === "file"
+        ? L.journey.makingFile
+        : makingPhase === "command"
+          ? L.journey.makingCheck
+          : L.journey.making;
 
   // 보낸 순간부터 데몬이 `running` 을 싣기까지의 틈 — 버튼이 먼저 답한다.
   const [sending, setSending] = useState(false);
@@ -156,8 +171,14 @@ export function StatusLine({
           {journey.making && (
             <span className="nx-making">
               <Spin />
-              {L.journey.making}
-              {turnStartedAt !== null && <Elapsed startedAt={turnStartedAt} />}
+              {makingWord}
+              {turnStartedAt !== null && !narrow && (
+                <Elapsed
+                  startedAt={turnStartedAt}
+                  hintAfterMs={firstTurn ? FIRST_TURN_HINT_MS : undefined}
+                  hint={firstTurn ? L.journey.firstTurnHint : undefined}
+                />
+              )}
             </span>
           )}
           {journey.points.map((point, index) => (
