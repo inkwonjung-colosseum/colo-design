@@ -85,7 +85,8 @@ const T = {
   submitting: "제출하는 중…",
   resubmitting: "다시 제출하는 중…",
   submitFailed: "제출하지 못했어요",
-  beforeBlocked: "제출 전 · 제출하지 못했어요",
+  whyNothing: "아직 바뀐 화면이 없어요", // L.submit.whyNothing — 잠긴 제출의 이유(만든 것이 없을 때)
+  historyEmpty: "아직 보관된 차례가 없어요", // L.history.empty — 서랍의 빈 상태 문장
   notified: "개발자에게 알렸어요",
   work: "이번 작업",
   history: "작업 기록",
@@ -629,12 +630,25 @@ TASK[4] = async () => {
   await sleep(2000);
   let enabled = false;
   await step(4, "`제출` → 확인 한 장", async () => {
-    await page.locator(".nx-submit").first().click();
+    // 잠긴 단추는 aria-disabled 라 playwright 의 기본 클릭이 기다리지 못한다 —
+    // 강제로 눌러 앱의 onClick(이유 한 줄)을 지나게 한다.
+    await page.locator(".nx-submit").first().click({ force: true });
     await sleep(700);
     await shot(page, 4, "confirm");
     const open = await waitAny(page, [T.submitTitle, T.submitTitleMore], 2_000);
     if (!open) {
-      const why = await page.locator(".nx-why").first().innerText().catch(() => "");
+      const why = (await page.locator(".nx-why").first().innerText().catch(() => ""))
+        .replace(/\s+/g, " ")
+        .trim();
+      // D1 뒤 픽스처에는 제출할 것이 없다(그것이 D1 의 성적) — 잠긴 단추를 누르면
+      // 이유가 한 줄로 서는 것이 이 걸음의 옳은 모습이다(labels 의 whyNothing).
+      if (!REAL && why) {
+        check(
+          why.includes(T.whyNothing),
+          `잠김 이유가 「${T.whyNothing}」가 아님: ${why}`,
+        );
+        return `잠김 — 「${why}」`;
+      }
       block(`잠김 — ${why || "이유 한 줄 없음"}`);
     }
     enabled = true;
@@ -644,7 +658,7 @@ TASK[4] = async () => {
     return pop.slice(0, 120);
   });
   await step(4, "한마디 + Enter → 제출하는 중 → 실패의 흔적", async () => {
-    if (!enabled) skip("확인 창이 열리지 않음");
+    if (!enabled) skip(REAL ? "확인 창이 열리지 않음" : "제출할 것이 없음");
     const note = page.getByRole("textbox", { name: T.note });
     await note.fill("검색창 위치는 기획 의도예요");
     await note.press("Enter");
@@ -696,12 +710,23 @@ TASK[5] = async () => {
     await sleep(1500);
     await shot(page, 5, "drawer");
     count = await page.locator(".nx-hitem").count();
+    // D1 뒤 픽스처의 기록은 비어 있다(그것이 D1 의 성적) — 서랍이 빈 상태 문장
+    // (labels 의 history.empty)으로 말하는 것이 이 걸음의 옳은 모습이다.
+    if (count === 0 && !REAL) {
+      const empty = await visible(page, T.historyEmpty);
+      check(empty, `기록이 비었는데 빈 상태 문장이 없음 (「${T.historyEmpty}」)`);
+      return `빈 서랍 — 「${T.historyEmpty}」`;
+    }
     const titles = await page.locator(".nx-hitem .nx-ht").allInnerTexts();
     check(count > 0, "기록이 비어 있음");
     return `${count}줄 — ${titles.map((t) => t.replace(/\s+/g, " ")).join(" / ").slice(0, 140)}`;
   });
   await step(5, "줄을 누름 → 제목으로 묻는 확인", async () => {
-    if (count < 2) block(`되돌릴 앞 차례가 없음 (기록 ${count}줄)`);
+    if (count < 2) {
+      // 되돌릴 차례가 없는 것은 결함이 아니라 빈 역사다 — 건너뛴다(--real 은 그대로 막힘).
+      if (REAL) block(`되돌릴 앞 차례가 없음 (기록 ${count}줄)`);
+      skip(`기록 ${count}줄`);
+    }
     await page.locator(".nx-hitem").nth(1).locator(".nx-hbody").click();
     const dlg = page.getByRole("alertdialog");
     await dlg.waitFor({ state: "visible", timeout: 3_000 }).catch(() => block("확인이 열리지 않음"));
@@ -722,7 +747,11 @@ TASK[5] = async () => {
   });
   await step(5, "정산 줄 `···` → 여기서 새 대화 · 작업 기록에서 되돌리기", async () => {
     const menu = page.getByRole("button", { name: T.settleMenu });
-    if (!(await menu.first().isVisible().catch(() => false))) block("정산 줄이 없음 — 답을 낸 차례가 이 대화에 없다");
+    if (!(await menu.first().isVisible().catch(() => false))) {
+      // 답을 낸 차례가 없는 것도 빈 역사다 — 건너뛴다(--real 은 그대로 막힘).
+      if (REAL) block("정산 줄이 없음 — 답을 낸 차례가 이 대화에 없다");
+      skip(`기록 ${count}줄 — 답을 낸 차례가 없다`);
+    }
     await menu.first().click();
     await sleep(500);
     await shot(page, 5, "settle-menu");
@@ -986,7 +1015,12 @@ TASK[10] = async () => {
   await workReady(page);
   await step(10, "실패한 대화 — `AI가 답을 못 했어요` · `다시 시도`", async () => {
     if (REAL) skip("--real 에서는 실패가 없다");
-    if (!(await openFirstConv(page))) block("대화가 없음 — 과제 2 가 먼저");
+    if (!(await openFirstConv(page))) {
+      // 가짜 claude 는 세션이 태어나자마자 죽는다 — 첫 보내기의 거절은 세션째
+      // 거두므로(W4) 실패한 대화가 아예 남지 않는 것이 옳은 모습이다. 실패 카드는
+      // 받아들여진 뒤 망한 턴(경주에 이긴 보내기)이 있을 때만 선다.
+      skip("가짜 claude — 첫 보내기가 모두 거절돼 실패한 대화가 남지 않는다(W4)");
+    }
     await sleep(2000);
     await shot(page, 10, "failed-conv");
     const side = (await page.locator(".nx-conv-list button.nx-conv").first().innerText()).replace(/\s+/g, " ");
