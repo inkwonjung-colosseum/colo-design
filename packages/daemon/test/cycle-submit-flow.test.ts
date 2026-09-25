@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { readLedger } from "../dist/cycle-ledger.js";
+import { SUBMIT_RETRY_MS } from "../src/budgets.ts";
 import { makeSupervisedScene, type SupervisedScene } from "./helpers/cycle-harness.ts";
 
 const BRANCH = "colo-design/20260924-1";
@@ -430,6 +431,106 @@ test("제출 상태 — 연결 코드 만료는 auth 막힘, 새 코드가 오�
       ],
     );
     assert.deepEqual(scene.submitBlocked, ["auth"]);
+  } finally {
+    await scene.dispose();
+  }
+});
+
+// ————— N6 (RESULT-2026-09-25 · 2026-09-25 결정) — 제출 재시도의 사다리 —————
+
+test("N6 사다리 — 잠깐 실패는 20·40·60·60초 간격으로 재시도, 네 번 뒤 성공", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    scene.github.failPullCreates("fetch failed: ECONNREFUSED 127.0.0.1:1");
+    scene.supervisor.submit("button");
+    await scene.supervisor.settled();
+    let view = scene.supervisor.submitView();
+    assert.equal(view.phase, "retrying");
+    assert.equal(view.lastError, "network", "던진 문장은 네트워크로 분류된다");
+    assert.ok(view.nextAttemptAt, "다음 시도 순간이 선로에 실린다");
+
+    // 시도의 시각은 예산 항목의 lastAt 이 말한다 — 사다리 간격을 잰다.
+    const attemptAt = () => Date.parse(ledgerOf(scene).budgets["submit:pr"]?.lastAt ?? "");
+    let prev = attemptAt();
+    const gaps: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const intent = ledgerOf(scene).submit;
+      assert.ok(intent?.nextAttemptAt);
+      assert.equal(
+        Date.parse(intent.nextAttemptAt) - prev,
+        SUBMIT_RETRY_MS[i],
+        `${i + 1}번 째 실패 뒤 간격은 사다리`,
+      );
+      scene.setNow(Date.parse(intent.nextAttemptAt) + 1_000);
+      await scene.supervisor.tick("submit-retry");
+      const at = attemptAt();
+      gaps.push(at - prev);
+      prev = at;
+    }
+    // 보정 1초를 더한 실제 시도 간격 — 사다리 그대로.
+    assert.deepEqual(gaps, [21_000, 41_000, 61_000]);
+
+    // 네 번 실패한 뒤 풀린 세계 — 다섯 번 째 시도에 제출이 끝난다.
+    scene.github.healPullCreates();
+    const intent = ledgerOf(scene).submit;
+    assert.ok(intent?.nextAttemptAt);
+    scene.setNow(Date.parse(intent.nextAttemptAt) + 1_000);
+    await scene.supervisor.tick("submit-retry");
+    assert.equal(ledgerOf(scene).submit, null, "다섯 번 째 시도에 제출이 끝난다");
+    view = scene.supervisor.submitView();
+    assert.equal(view.phase, "idle");
+    assert.equal(view.nextAttemptAt, undefined, "끝난 제출에는 다음 시도가 없다");
+    // 타이머 — 네 번 실패하는 동안 사다리 간격으로 하나씩 걸리고, 성공 뒤 정리된다.
+    assert.deepEqual(
+      scene.retryTimers.map((timer) => timer.delayMs),
+      [20_000, 40_000, 60_000, 60_000],
+      "타이머는 사다리 간격으로건다",
+    );
+    assert.ok(
+      scene.retryTimers.every((timer) => timer.cancelled),
+      "성공 뒤에는 남은 타이머가 없다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("N6 — 다섯 번 실패의 막힘 판정은 3분 안팎에 선다 (12분이 아니다)", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    scene.github.failPullCreates("fetch failed: ECONNREFUSED 127.0.0.1:1");
+    scene.supervisor.submit("button");
+    await scene.supervisor.settled();
+    const first = Date.parse(ledgerOf(scene).budgets["submit:pr"]?.lastAt ?? "");
+
+    for (let i = 0; i < 4; i += 1) {
+      const intent = ledgerOf(scene).submit;
+      assert.ok(intent?.nextAttemptAt);
+      scene.setNow(Date.parse(intent.nextAttemptAt) + 1_000);
+      await scene.supervisor.tick("submit-retry");
+    }
+
+    const ledger = ledgerOf(scene);
+    const view = scene.supervisor.submitView();
+    assert.equal(view.phase, "blocked", "예산 다섯 번을 다 쓰면 막힌다");
+    assert.equal(view.attempts, 5);
+    assert.equal(view.lastError, "network");
+    assert.deepEqual(scene.submitBlocked, ["developer-notified"], "막힘 알림은 한 번");
+    assert.equal(
+      scene.notices.filter((notice) => notice.key === "submit:pr").length,
+      1,
+      "개발자 알림도 한 번",
+    );
+    const elapsed = Date.parse(ledger.budgets["submit:pr"]?.lastAt ?? "") - first;
+    assert.equal(elapsed, 180_000 + 4 * 1_000, "사다리 3분 + 이동 보정 1초씩");
+    assert.ok(elapsed < 240_000, "12분은커녕 4분도 걸리지 않는다");
+    // 막힌 뒤에는 타이머가 서지 않는다 — 이후 시도는 관찰 틱에 맡긴다.
+    assert.equal(scene.retryTimers.length, 4, "타이머는 사다리의 네 간격만큼만 건다");
+    assert.ok(scene.retryTimers.every((timer) => timer.cancelled));
   } finally {
     await scene.dispose();
   }

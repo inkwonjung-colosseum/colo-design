@@ -1145,6 +1145,9 @@ export class DaemonServer {
     // a start() that failed before building it still owes stop() a clean
     // shutdown, not a TypeError that caches the rejection in `stopping`.
     for (const workspaces of this.fleet?.workspaces.values() ?? []) {
+      // 감독자의 제출 재시도 타이머(N6)도 함께 거둔다 — 데몬이 내려간 뒤
+      // 혼자 남아 틱을 돌리지 않게.
+      workspaces.supervisor.stop();
       // Writers settle BEFORE the preview dies: a 최신화 killed between its
       // stash and its pop parks the planner's unsaved work in `git stash`.
       await workspaces.repo.settle();

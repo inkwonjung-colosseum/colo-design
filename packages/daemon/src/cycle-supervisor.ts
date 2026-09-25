@@ -26,7 +26,14 @@ import {
   type RepoStatus,
   reviewToTurn,
 } from "@colo-design/protocol";
-import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
+import {
+  BUDGETS,
+  backoffDelay,
+  markEscalated,
+  resetBudget,
+  SUBMIT_RETRY_MS,
+  spend,
+} from "./budgets.js";
 import {
   commitCorruptionSignal,
   restoreSalvage,
@@ -99,6 +106,7 @@ export type TickReason =
   | "session-start"
   | "tool-conflict"
   | "reclone"
+  | "submit-retry"
   | "manual";
 
 /** 한 틱이 판정-조치 고리를 도는 상한 — 조치가 계속 이어지는 세계에서도 멈춘다. */
@@ -136,6 +144,13 @@ function noticeText(key: string): string {
   if (key.startsWith("review:"))
     return "코멘트 반영이 라운드 상한에 닿았습니다 — 개발자가 확인할 차례입니다";
   return NOTICE_TEXT[key] ?? key;
+}
+
+/** 제출 재시도 타이머의 기본 (N6) — 붙잡지 않는(unref) setTimeout. */
+function scheduleSubmitRetryDefault(fire: () => void, delayMs: number): () => void {
+  const timer = setTimeout(fire, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 export interface SupervisorDeps {
@@ -217,6 +232,11 @@ export interface SupervisorDeps {
   /** 여유를 볼 자리 — 기본은 `~/.colo-design`(그 폴더가 든 볼륨). */
   dataDir?: string;
   logger: DaemonLogger;
+  /**
+   * 제출 재시도의 타이머 (N6) — 기본은 unref 된 setTimeout. 시험이 가짜 시계와
+   * 맞추기 위해 갈아끼운다. 돌려값은 정리 함수(이미 건 타이머를 거두는 길).
+   */
+  scheduleSubmitRetry?: (fire: () => void, delayMs: number) => () => void;
   now?: () => number;
 }
 
@@ -236,6 +256,10 @@ export class CycleSupervisor {
   private reviewLedgerFolded = false;
   /** 제출 완료 사건의 귀속 대화 — submit() 이 던져두는 줄. */
   private submitSessionId: string | null = null;
+  /** 제출 재시도 타이머의 정리 함수 (N6) — 한 번에 하나만 건다. */
+  private submitRetryTimer: (() => void) | null = null;
+  /** 건 타이머가 기다리는 순간(epoch ms) — 같은 순간을 두 번 걸지 않는 잣체. */
+  private submitRetryArmedAt: number | null = null;
 
   constructor(deps: SupervisorDeps) {
     this.deps = deps;
@@ -361,6 +385,10 @@ export class CycleSupervisor {
       phase: view.phase,
       attempts: view.attempts,
       ...(view.lastError ? { lastError: view.lastError } : {}),
+      // N6 — 잠깐 실패의 다음 시도 순간. 원장의 값 그대로(국면 판정과 별개).
+      ...(view.phase === "retrying" && this.ledger.submit?.nextAttemptAt
+        ? { nextAttemptAt: this.ledger.submit.nextAttemptAt }
+        : {}),
       log: (this.ledger.submitTrail?.log ?? []).slice(-SUBMIT_LOG_MAX),
     };
   }
@@ -371,6 +399,8 @@ export class CycleSupervisor {
    * 증거가 아니므로 그 분류와 창을 지운다 — 다시 실패하면 그때 다시 적힌다.
    */
   retrySubmitNow(): void {
+    // 새 코드로 곧바로 도는 길이 열렸다 — 기다리던 재시도 타이머는 거둔다(N6).
+    this.clearSubmitRetryTimer();
     const intent = this.ledger.submit;
     if (intent === null) return;
     const nowIso = new Date(this.now()).toISOString();
@@ -418,6 +448,58 @@ export class CycleSupervisor {
     this.deps.onChange?.();
   }
 
+  /**
+   * 제출 재시도 타이머를 원장과 맞춘다 (N6) — 틱의 끝마다 부르는 한 곳에서
+   * 모든 경우를 판정한다. 국면이 retrying 이고 다음 시도 순간이 미래면 그
+   * 순간을 겨눈 타이머를 하나 건다(이미 같은 순간을 기다리면 그대로). 그 밖
+   * (성공으로 의도가 지워짐 · 막힘 · 순간이 이미 지남)은 거둔다 — 순간이 지난
+   * 채 시도로 이어지지 않은 세계(턴이 도는 중 등)는 관찰 틱에 맡긴다: 타이머가
+   * 즉시 재점화하며 도는 일이 없게 한다. 재시작 뒤에도 시작 틱이 이곳에서
+   * 원장의 시각표(nextAttemptAt)를 다시 건다.
+   */
+  private syncSubmitRetryTimer(): void {
+    const intent = this.ledger.submit;
+    const retrying =
+      intent !== null &&
+      intent.nextAttemptAt !== undefined &&
+      this.deps.core.isCloned() &&
+      this.submitPhase().phase === "retrying";
+    if (!retrying || intent?.nextAttemptAt === undefined) {
+      this.clearSubmitRetryTimer();
+      return;
+    }
+    const due = Date.parse(intent.nextAttemptAt);
+    if (due <= this.now()) {
+      this.clearSubmitRetryTimer();
+      return;
+    }
+    if (this.submitRetryArmedAt === due) return;
+    this.clearSubmitRetryTimer();
+    const schedule = this.deps.scheduleSubmitRetry ?? scheduleSubmitRetryDefault;
+    this.submitRetryArmedAt = due;
+    this.submitRetryTimer = schedule(() => {
+      this.submitRetryTimer = null;
+      this.submitRetryArmedAt = null;
+      void this.tick("submit-retry");
+    }, due - this.now());
+  }
+
+  /** 건 재시도 타이머를 거둔다 — 한 번에 하나이므로 지우는 길도 하나다. */
+  private clearSubmitRetryTimer(): void {
+    if (this.submitRetryTimer === null) {
+      this.submitRetryArmedAt = null;
+      return;
+    }
+    this.submitRetryTimer();
+    this.submitRetryTimer = null;
+    this.submitRetryArmedAt = null;
+  }
+
+  /** 감독자가 스스로 건 타이머를 거둔다 — 서버 종료 · 시험 정리가 부른다. */
+  stop(): void {
+    this.clearSubmitRetryTimer();
+  }
+
   private async runLoop(reason: TickReason): Promise<void> {
     let current: TickReason | null = reason;
     try {
@@ -441,6 +523,8 @@ export class CycleSupervisor {
     } finally {
       // 제출 국면의 전이 — 조치(12행 푸시 · 13행 제출)와 알림이 모두 지나간 뒤.
       this.syncSubmitTrail();
+      // N6 — 잠깐 실패의 재시도 타이머를 원장과 맞춘다(한 번에 하나).
+      this.syncSubmitRetryTimer();
     }
   }
 
@@ -1687,9 +1771,11 @@ export class CycleSupervisor {
   }
 
   /**
-   * 단계 실패 — 예산을 쓰고 백오프를 적는다(간격은 푸시와 같은 backoffDelay).
-   * 예산이 다하면 개발자 알림 한 번(L7): 시도는 백오프 간격으로 계속된다 —
-   * "한 번 누르면 끝까지 간다"(L6)가 예산보다 앞선다.
+   * 단계 실패 — 예산을 쓰고 다음 시도를 적는다. 잠깐의 실패는 제출의 사다리
+   * (SUBMIT_RETRY_MS, N6)로 다시 센다 — 합 3분 안에 예산 다섯 번이 다해 막힘
+   * 판정이 선다. 예산이 다하면 개발자 알림 한 번(L7): 시도는 계속된다 —
+   * "한 번 누르면 끝까지 간다"(L6)가 예산보다 앞선다. 사다리가 끝난 뒤(막힌
+   * 뒤)의 시도는 푸시와 같은 backoffDelay 로 돌아가 관찰 틱에 얹힌다.
    */
   private failSubmitStep(step: "commit" | "pr", reason: string): boolean {
     const key = `submit:${step}`;
@@ -1706,7 +1792,10 @@ export class CycleSupervisor {
           attempts: spentCount,
           lastError: classifySubmitError(reason),
           nextAttemptAt: new Date(
-            this.now() + backoffDelay(spentCount, BUDGETS.push.baseMs, BUDGETS.push.capMs),
+            this.now() +
+              // N6 사다리 — 다섯 시도 사이의 간격. 사다리 밖(막힌 뒤)은 백오프.
+              (SUBMIT_RETRY_MS[spentCount - 1] ??
+                backoffDelay(spentCount, BUDGETS.push.baseMs, BUDGETS.push.capMs)),
           ).toISOString(),
         },
       };

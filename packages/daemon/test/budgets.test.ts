@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 // budgets.ts 는 형제를 import 하지 않는 순수 모듈 — src 에서 곧장 읽는다.
-import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "../src/budgets.ts";
+import {
+  BUDGETS,
+  backoffDelay,
+  markEscalated,
+  resetBudget,
+  SUBMIT_RETRY_MS,
+  spend,
+} from "../src/budgets.ts";
 
 const T0 = Date.parse("2026-09-24T10:00:00.000Z");
 const NO_WINDOW = { max: 2, windowMs: null };
@@ -78,4 +85,14 @@ test("BUDGETS 표의 값이 PLAN L7 과 같다", () => {
   assert.deepEqual(BUDGETS.reviewRounds, { max: 5, windowMs: null });
   assert.deepEqual(BUDGETS.reclone, { max: 1, windowMs: 24 * 60 * 60_000 });
   assert.equal(BUDGETS.noticeRefreshMs, 10 * 60_000);
+});
+
+test("SUBMIT_RETRY_MS — N6 사다리: 다섯 시도 사이 네 간격의 합은 3분", () => {
+  assert.deepEqual(SUBMIT_RETRY_MS, [20_000, 40_000, 60_000, 60_000]);
+  // 간격의 수는 시도 수보다 하나 적다 — 예산(submitStep.max)과 짝을 이룬다.
+  assert.equal(SUBMIT_RETRY_MS.length, BUDGETS.submitStep.max - 1);
+  assert.equal(
+    SUBMIT_RETRY_MS.reduce((sum, ms) => sum + ms, 0),
+    180_000,
+  );
 });
