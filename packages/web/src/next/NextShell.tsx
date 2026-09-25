@@ -1,9 +1,14 @@
 import { Shell } from "../components/shell/Shell";
+import type { Settings } from "../lib/settings";
 import "./next.css";
 import { Workspace } from "./Workspace";
 
-/** 옛 셸과 같은 계약 — App 은 두 셸에 같은 값을 건넨다(PLAN-UI 4 · 병행 셸). */
-export type NextShellProps = Parameters<typeof Shell>[0];
+/** 옛 셸과 같은 계약 — App 은 두 셸에 같은 값을 건넨다(PLAN-UI 4 · 병행 셸).
+ *  설정의 저장(단계 6)만 곁가지다: 옛 셸은 설정 대화상자를 App 이 직접 그리므로
+ *  이 손을 건너도 쓰지 않는다. */
+export type NextShellProps = Parameters<typeof Shell>[0] & {
+  onSettingsChange: (patch: Partial<Settings>) => void;
+};
 
 /**
  * 새 셸(PLAN-UI 단계 1) — 프로젝트가 있는 기계의 작업 틀은 `Workspace` 가

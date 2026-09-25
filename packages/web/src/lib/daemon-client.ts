@@ -835,8 +835,19 @@ interface DaemonApi {
       | null,
   ) => Promise<{ ok: true }>;
   escalationTest: () => Promise<{ ok: true }>;
-  /** 설정창의 저장 메모 담당 — null 은 자동(기본). 거절은 한국어 한 줄이다. */
-  machineSet: (provider: string | null) => Promise<{ ok: true }>;
+  /**
+   * 기계 설정(machine.set) — 저장 메모 담당(null 은 자동)과 AI 자동 설치
+   * (PLAN-UI U12). 둘 다 생략 가능하고 `undefined` 는 "그대로"다.
+   */
+  machineSet: (
+    provider: string | null | undefined,
+    agentAutoUpdate?: boolean,
+  ) => Promise<{ ok: true }>;
+  /** 설정의 업데이트 줄(PLAN-UI U12) — `check` 면 새 버전만 확인해 돌려준다. */
+  agentUpdate: (
+    kind: "claude" | "codex",
+    check?: boolean,
+  ) => Promise<{ ok: true; latestVersion?: string | null; phase?: string }>;
   /** 넘긴 요청에 적을 작성자 이름 — null 이면 지운다(P1-3). */
   machineAuthorSet: (name: string | null) => Promise<{ ok: true }>;
   /** Judge one repo before any clone. */
@@ -1762,6 +1773,21 @@ export function useDaemon(url: string | null): Daemon {
           );
           return step;
         }),
+      machineSet: (provider, agentAutoUpdate) =>
+        call<{ ok: true }>(
+          {
+            type: "machine.set",
+            ...(provider !== undefined ? { provider } : {}),
+            ...(agentAutoUpdate !== undefined ? { agentAutoUpdate } : {}),
+          },
+          15_000,
+        ),
+      agentUpdate: (kind, check) =>
+        call<{ ok: true; latestVersion?: string | null; phase?: string }>(
+          { type: "agent.update", kind, ...(check !== undefined ? { check } : {}) },
+          // 확인은 피드 읽기 두 번의 창, 설치는 진행기의 시간 상한까지.
+          check ? 60_000 : 600_000,
+        ),
       // 슬라이스 5: 개발자 에스컬레이션(Slack) 설정 — 웹훅 또는 봇 토큰+채널.
       // 값은 저장소에만 살고 돌아오지 않는다(토큰과 같은 길).
       escalationSet: (
@@ -1771,8 +1797,6 @@ export function useDaemon(url: string | null): Daemon {
           | null,
       ) => call<{ ok: true }>({ type: "escalation.set", config }, 60_000),
       escalationTest: () => call<{ ok: true }>({ type: "escalation.test" }, 30_000),
-      machineSet: (provider: string | null) =>
-        call<{ ok: true }>({ type: "machine.set", provider }, 15_000),
       machineAuthorSet: (name: string | null) =>
         call<{ ok: true }>({ type: "machine.author.set", name }, 15_000),
       githubRepoInspect: (owner: string, repo: string) =>

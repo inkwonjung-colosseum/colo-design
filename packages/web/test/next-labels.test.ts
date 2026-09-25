@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
 // 순수 모듈 — src 에서 곧장 읽는다(turn-screens.test.ts 와 같은 모양).
-import { L } from "../src/next/labels.ts";
+import { DEV, L } from "../src/next/labels.ts";
 
 /** U10 의 끝 조건 — 사용자 면에 나오지 않는 개발자의 말. */
 const FORBIDDEN = ["턴", "경로", "git", "데몬", "커밋", "브랜치", "PR"];
@@ -27,12 +27,28 @@ function collect(value: unknown, path: string, out: Array<{ path: string; text: 
 
 test("labels: 어느 문장에도 금칙어가 없다", () => {
   const strings: Array<{ path: string; text: string }> = [];
+  // DEV 는 여기 없다 — 개발자용 폴드의 진단 문장은 금칙어를 정당히 쓴다(아래 검사).
   collect(L, "L", strings);
   assert.ok(strings.length > 100, `문장이 너무 적다: ${strings.length}`);
   const hits = strings.flatMap(({ path, text }) =>
     FORBIDDEN.filter((word) => text.includes(word)).map((word) => `${path} — "${word}": ${text}`),
   );
   assert.deepEqual(hits, []);
+});
+
+/**
+ * `DEV` 는 개발자용 폴드의 진단 문장(PLAN-UI U12 · J5) — 데몬 같은 개발자의
+ * 어휘가 정당히 필요한 자리다. 위의 금칙어 검사는 `L` 만 본다(DEV 를 넣지
+ * 않는다); `next/` 안의 한글 리터럴 검사는 그대로 labels.ts 안이므로 닿는다.
+ */
+test("DEV: 개발자용 폴드의 문장이 살아 있다 — 금칙어 검사에서 뺀다", () => {
+  const strings: Array<{ path: string; text: string }> = [];
+  collect(DEV, "DEV", strings);
+  assert.ok(strings.length >= 3, `DEV 문장이 너무 적다: ${strings.length}`);
+  assert.ok(
+    strings.some(({ text }) => text.includes("데몬")),
+    "진단 줄의 `데몬` 이 사라지면 이 검사의 이유도 사라진다",
+  );
 });
 
 /**

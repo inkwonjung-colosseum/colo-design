@@ -1,6 +1,7 @@
 import type { ThreadSummary } from "@colo-design/protocol";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
+import { hasNewerVersion } from "../lib/version";
 import type { ShellNav } from "../slots";
 import { GearIcon, HomeIcon, PanelIcon, PlusIcon, SearchIcon } from "../ui/icons";
 import { ConversationList } from "./ConversationList";
@@ -37,6 +38,10 @@ export function Sidebar({
   // 홈 배지는 확인 요청만 센다 — 「내 손이 필요한 일」의 수, 모든 프로젝트에 걸쳐(U6).
   const waiting = projects.reduce((sum, project) => sum + project.pendingCount, 0);
   const author = daemon.status?.authorName?.trim() || null;
+  // 설정 바퀴의 점 — 깔려 있는 AI 중 새 버전을 아는 것이 있으면 한 알(PLAN-UI U12).
+  const updateReady = (daemon.status?.providers ?? []).some(
+    (provider) => provider.available && hasNewerVersion(provider.version, provider.latestVersion),
+  );
 
   return (
     <aside className="nx-sidebar">
@@ -100,7 +105,9 @@ export function Sidebar({
           <b>{author ?? L.sidebar.settings}</b>
           <span className="nx-grow" />
           <span className="nx-muted">
-            <GearIcon />
+            <span className={updateReady ? "nx-gear-dot" : ""}>
+              <GearIcon />
+            </span>
           </span>
         </button>
       </div>

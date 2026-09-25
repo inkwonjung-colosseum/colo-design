@@ -219,27 +219,32 @@ export default function App() {
   }
 
   // 병행 셸(PLAN-UI 4 · P4): 개발 실행에서만 `?shell=next` 가 새 셸을 연다.
-  const ActiveShell =
-    daemon.status?.dev && new URLSearchParams(window.location.search).get("shell") === "next"
-      ? NextShell
-      : Shell;
+  // 새 셸만 설정의 저장 손(단계 6)을 받는다 — 옛 셸의 설정은 App 이 직접 그린다.
+  const nextShell =
+    daemon.status?.dev && new URLSearchParams(window.location.search).get("shell") === "next";
+  const shellProps = {
+    daemon,
+    settings,
+    onChatChange: (patch: Partial<typeof settings.chat>) =>
+      updateSettings({ chat: { ...settings.chat, ...patch } }),
+    onLayoutChange: (patch: Partial<typeof settings.layout>) =>
+      updateSettings({ layout: { ...settings.layout, ...patch } }),
+    onRenameSession: (sessionId: string, title: string) =>
+      updateSettings({
+        sessionTitles: { ...settings.sessionTitles, [sessionId]: title },
+      }),
+    onOpenSettings: openSettings,
+    onboardingOpen,
+    onOnboardingClose: () => setOnboardingOpen(false),
+  } satisfies Parameters<typeof Shell>[0];
 
   return (
     <>
-      <ActiveShell
-        daemon={daemon}
-        settings={settings}
-        onChatChange={(patch) => updateSettings({ chat: { ...settings.chat, ...patch } })}
-        onLayoutChange={(patch) => updateSettings({ layout: { ...settings.layout, ...patch } })}
-        onRenameSession={(sessionId, title) =>
-          updateSettings({
-            sessionTitles: { ...settings.sessionTitles, [sessionId]: title },
-          })
-        }
-        onOpenSettings={openSettings}
-        onboardingOpen={onboardingOpen}
-        onOnboardingClose={() => setOnboardingOpen(false)}
-      />
+      {nextShell ? (
+        <NextShell {...shellProps} onSettingsChange={updateSettings} />
+      ) : (
+        <Shell {...shellProps} />
+      )}
       {settingsDialog}
     </>
   );

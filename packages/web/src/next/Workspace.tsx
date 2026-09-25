@@ -11,6 +11,7 @@ import { deriveJourney } from "./lib/journey";
 import { useNarrow, useShellNav } from "./lib/use-shell-nav";
 import type { NextShellProps } from "./NextShell";
 import { PreviewColumn } from "./preview/PreviewColumn";
+import { SettingsDialog } from "./settings/SettingsDialog";
 import { Sidebar } from "./sidebar/Sidebar";
 import type { SlotProps } from "./slots";
 import { StatusLine } from "./status/StatusLine";
@@ -37,7 +38,7 @@ export function Workspace({
   settings,
   onChatChange,
   onLayoutChange,
-  onOpenSettings,
+  onSettingsChange,
   onRenameSession,
 }: NextShellProps) {
   const sessions = useSessions(daemon, {
@@ -47,12 +48,15 @@ export function Workspace({
   });
   const pins = usePins(daemon.activeSlug, daemon.api);
   const narrow = useNarrow();
+  // 설정 대화상자(단계 6) — 사이드바 바퀴 · ⌘, · 팔레트가 같은 문으로 연다.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = () => setSettingsOpen(true);
   const { state, nav, toast, setCollapsed, setDrawer } = useShellNav({
     daemon,
     sessions,
     collapsed: settings.layout.sidebarCollapsed,
     onLayoutChange,
-    onOpenSettings,
+    onOpenSettings: openSettings,
   });
   const project = daemon.projects.find((entry) => entry.slug === daemon.activeSlug) ?? null;
 
@@ -94,13 +98,13 @@ export function Workspace({
   keys.current = {
     palette: () => setPalette((open) => !open),
     fresh: () => nav.newThread(),
-    settings: () => onOpenSettings(),
+    settings: openSettings,
   };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
       // 대화상자가 떠 있으면 물러선다 — 팔레트 자기 토글(⌘K)만 예외.
-      const modal = document.querySelector(".modal, .palette") !== null;
+      const modal = document.querySelector(".modal, .palette, .nx-set") !== null;
       const key = event.key.toLowerCase();
       if (modal && key !== "k") return;
       if (key === "k") {
@@ -281,6 +285,15 @@ export function Workspace({
             {toast}
           </div>
         )}
+        {settingsOpen && (
+          <SettingsDialog
+            daemon={daemon}
+            settings={settings}
+            onChatChange={onChatChange}
+            onSettingsChange={onSettingsChange}
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
       </div>
 
       {/* 팔레트는 옛 셸의 것을 그대로 쓴다 — `.nx` 의 버튼 초기화가 그 모양을
@@ -295,7 +308,7 @@ export function Workspace({
           onOpenThread={(slug, thread) => nav.openThread(slug, thread.id)}
           onCreateSession={() => nav.newThread()}
           onActivateProject={(slug) => daemon.api.projectActivate(slug).then(() => undefined)}
-          onOpenSettings={onOpenSettings}
+          onOpenSettings={openSettings}
           onClose={() => setPalette(false)}
         />
       )}
