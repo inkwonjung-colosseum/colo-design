@@ -157,6 +157,7 @@ export function useShellNav({
     showTab: (tab) => dispatch({ type: "tab", tab }),
     openSettings: (category) => onOpenSettings(category),
     toast: setToastText,
+    setDiscardableInvitePath: (path) => dispatch({ type: "invite-path", path }),
   };
 
   // OS 알림을 누르면 데스크톱이 세션 id 를 건넨다 — 주인 프로젝트를 먼저 찾고

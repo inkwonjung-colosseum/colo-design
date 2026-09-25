@@ -12,6 +12,11 @@ export interface NavState {
   drawer: boolean;
   /** 넓은 창의 사이드바가 접혀 있는가 — 설정에 남는 값이 씨앗이다. */
   collapsed: boolean;
+  /**
+   * 방금 가져온 초대 파일의 자리(U11) — 대화 칸의 `초대 파일을 가져왔어요 — 파일
+   * 지우기 · 나중에` 줄이 읽는다. 가져오기(단계 5)가 채우고, 지우거나 미루면 비운다.
+   */
+  discardableInvitePath: string | null;
 }
 
 export type NavAction =
@@ -20,11 +25,13 @@ export type NavAction =
   | { type: "tab"; tab: NavState["tab"] }
   | { type: "drawer"; open: boolean }
   | { type: "collapse"; collapsed: boolean }
+  /** 지울 수 있는 초대 파일의 자리를 세우거나(경로) 거둔다(null). */
+  | { type: "invite-path"; path: string | null }
   /** 활성 프로젝트가 바뀌었다 — 옛 셸처럼 홈부터. 이어진 점프가 대화를 열면 그것이 이긴다. */
   | { type: "project-changed" };
 
 export function initialNav(collapsed: boolean): NavState {
-  return { view: "home", tab: "chat", drawer: false, collapsed };
+  return { view: "home", tab: "chat", drawer: false, collapsed, discardableInvitePath: null };
 }
 
 export function navReducer(state: NavState, action: NavAction): NavState {
@@ -42,6 +49,10 @@ export function navReducer(state: NavState, action: NavAction): NavState {
       return state.collapsed === action.collapsed
         ? state
         : { ...state, collapsed: action.collapsed };
+    case "invite-path":
+      return state.discardableInvitePath === action.path
+        ? state
+        : { ...state, discardableInvitePath: action.path };
     case "project-changed":
       return { ...state, view: "home", tab: "chat", drawer: false };
   }

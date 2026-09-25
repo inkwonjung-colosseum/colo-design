@@ -236,7 +236,7 @@ export function Workspace({
               data-tab={narrow ? state.tab : undefined}
               style={narrow ? undefined : { gridTemplateColumns: `${chatWidth}px minmax(0, 1fr)` }}
             >
-              <ChatColumn {...slot} />
+              <ChatColumn {...slot} discardableInvitePath={state.discardableInvitePath} />
               {!narrow && (
                 <Splitter
                   side="left"

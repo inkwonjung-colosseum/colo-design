@@ -151,6 +151,8 @@ export type Block =
       at: string;
       pr: number;
       reviewer?: string;
+      /** 제출 확인의 `개발자에게 한마디`(PLAN-UI U3) — 영수증 카드가 되읽는다. */
+      note?: string;
     }
   | {
       /** 개발자 코멘트 도착 (review.arrived): 하나의 이벤트에 달려온 리뷰들을
@@ -394,6 +396,7 @@ function foldEvent(blocks: Block[], event: ChatEvent): Block[] {
           at: event.at,
           pr: event.pr,
           ...(event.reviewer !== undefined ? { reviewer: event.reviewer } : {}),
+          ...(event.note ? { note: event.note } : {}),
         },
       ];
 

@@ -26,6 +26,7 @@ export function HomeView({
           <span>{author ? L.home.greet(author) : L.transcript.emptyTitle}</span>
         </h1>
         <HomeComposer
+          daemon={daemon}
           sessions={sessions}
           projects={daemon.projects}
           active={active}
