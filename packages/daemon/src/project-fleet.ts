@@ -340,10 +340,14 @@ export class ProjectFleet {
       .sort((a, b) => b.lastActivity - a.lastActivity)[0];
     this.cycleTail = this.cycleTail
       .then(async () => {
+        // 대체 경로의 목록 조회 — 한도를 사이드바의 새로 고침과 같은 기본값
+        // (50)으로 둔다. 1 을 주면 한 줄짜리 스캔이 클론의 디스크 캐시를 덮어
+        // 써, 다음 무효화 전까지 사이드바 대화 목록이 잘려 보였다(원래 있던
+        // 결함). 첫 줄만 쓰고 나머지는 버리지 않는다.
         const target =
           (named && named.cwd === cwd ? named.id : undefined) ??
           live?.id ??
-          (await this.deps.manager.list(cwd, 1).catch(() => []))[0]?.sessionId;
+          (await this.deps.manager.list(cwd).catch(() => []))[0]?.sessionId;
         if (!target) return;
         const afterTurn = await this.deps.manager.promptCount(target, cwd).catch(() => 0);
         try {
