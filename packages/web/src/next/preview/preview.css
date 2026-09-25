@@ -1,0 +1,29 @@
+/* 미리보기 칸(단계 1 의 자리) — 단계 3 이 이 파일을 바꾼다. */
+
+.nx-preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #e9e7e1;
+}
+
+.nx-pvbar {
+  height: 48px;
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.nx-pvstage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.nx-pv-placeholder {
+  color: var(--ink3);
+  font-size: 13.5px;
+}

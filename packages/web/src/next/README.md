@@ -28,3 +28,59 @@
 `단계 5 처음 한 번·준비·초대`, `단계 6 설정·업데이트`. 각 단계는 **자기 칸의
 끝에만** 더한다; 칸 사이의 빈 줄 셋은 병합의 완충이라 `biome-ignore format` 으로
 포매터가 접지 않게 해 두었다(더한 줄의 모양은 손으로 맞춘다).
+
+## 틀 (단계 1)
+
+```
+NextShell ─ 프로젝트 0개 · 마법사 · 첫 상태 전 → 옛 Shell(단계 5 가 바꾼다)
+└ Workspace ─ useSessions · usePins · useShellNav 를 한 번만 부른다
+  ├ sidebar/Sidebar     새 대화 · 홈 · 찾기 / 전환기 / 다른 프로젝트 줄 / 대화 목록 · 도구가 한 일 / 설정
+  ├ home/HomeView       인사 · 큰 입력창(HomeComposer) · 받은 편지함(HomeInbox)
+  └ 작업 보기(홈에서도 마운트된 채 `nx-offstage` 로 숨는다 — 미리보기 게스트가 살게)
+    ├ status/StatusLine  제목 · 만드는 중 · 여정 세 점 · 제출 · 이번 작업(WorkPopover)
+    ├ (좁은 창) 대화 | 화면 · <이름> 탭
+    ├ chat/ChatColumn     ← 단계 2 가 바꾼다
+    └ preview/PreviewColumn ← 단계 3 이 바꾼다
+```
+
+이동 상태(홈 ↔ 대화 · 좁은 창의 탭 · 서랍 · 접힘)는 `lib/nav.ts` 의 줄임 함수,
+그 손은 `lib/use-shell-nav.ts` 가 만든다. 주소에 싣지 않는다. 열린 대화의 주인은
+`sessions.activeId` 하나다.
+
+## 칸의 계약 (`slots.ts`)
+
+**`ShellNav`** — 모든 칸이 같은 길로 움직인다.
+
+| 손 | 하는 일 |
+| --- | --- |
+| `openThread(slug, threadId)` | 대화를 연다. 다른 프로젝트면 `project.activate` 뒤, 등록부가 옮겨 앉으면 연다 |
+| `newThread(slug?)` | 새 대화의 빈 자리(`sessions.fresh()`) — 세션은 첫 말이 나갈 때 태어난다 |
+| `goHome()` · `showThread()` | 홈 · 대화 보기 |
+| `switchProject(slug)` | 옮기기 + 토스트. 옮겨 앉으면 셸은 홈부터 |
+| `showTab("chat" \| "preview")` | 좁은 창의 탭 |
+| `openSettings(category?)` · `toast(text)` | 설정(단계 6 이 바꾼다) · 잠깐 뜨는 한 줄 |
+
+**`SlotProps`** — `ChatColumn`(단계 2)과 `PreviewColumn`(단계 3)이 함께 받는다:
+`daemon` · `settings` · `sessions`(`useSessions` 결과) · `pins`(`usePins` 결과 —
+두 칸이 같은 목록) · `project`(활성, 없으면 null) · `activeSessionId` · `nav` ·
+`narrow` · `onChatChange` · `onRenameSession`. `PreviewColumnProps` 는 여기에
+`onScreenName(name | null)` — 지금 화면의 제목을 셸에 알려 좁은 창의 `화면 · <이름>`
+탭이 읽는다. 찍은 핀 수(탭 배지)는 셸이 `pins.list` 에서 센다.
+
+**`StatusLineProps`**(단계 4) — `title` · `journey`(셸이 `deriveJourney(…, L)` 로 한 번
+판정) · `turnStartedAt`(데몬 시계, `만드는 중 · 12초`) · `narrow` · `nav` ·
+`onSubmit`(열린 제출 버튼을 눌렀다 — 지금은 빈 손, 단계 4 가 확인 팝오버로).
+잠긴 버튼은 누르면 `journey.submit.reason` 이 버튼 아래 한 줄로 선다.
+`이번 작업` 의 몸통은 `status/WorkPopover.tsx` 를 바꿔 채운다.
+
+## 순수 판정 (`lib/`)
+
+- `journey.ts` — `deriveJourney({ repo, diffStatus, handoff?, running, reconnect?, comments? }, L)`:
+  세 점의 글자 · 지금 점 · `blocked` · `making` · 제출의 `enabled` · `reason` · `busy` · `more`.
+  `repo.cycleScreens` · `repo.submit` 을 읽고, 없으면 옛 `deriveDelivery` 의 판정으로 물러선다.
+- `project-note.ts` — `projectNote(summary, L, { aiFailed?, comments? })`(다른 프로젝트 줄의
+  가장 급한 것) · `projectStatus`(전환기의 둘째 줄) · `isPreparing` · `neverPrepared`.
+- 문장을 인자(`L`)로 받는 이유 — 시험이 src 에서 곧장 읽는 순수 모듈은 형제를 부르지
+  않는다(확장자 없는 import 를 node 가 풀지 못한다).
+
+시험: `node --test packages/web/test/next-*.test.ts`.

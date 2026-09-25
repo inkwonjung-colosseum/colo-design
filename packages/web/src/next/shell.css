@@ -1,0 +1,148 @@
+/* 셸의 틀(U1 · U16) — 사이드바 · 본문(상태 줄 + 대화 · 미리보기) · 좁은 창. */
+
+.nx {
+  position: relative;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  transition: grid-template-columns 0.22s ease;
+  overflow: hidden;
+}
+
+.nx--collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.nx--resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.nx-main {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.nx-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 홈이 앞에 서 있는 동안의 대화 · 미리보기 — 마운트한 채 자리만 비운다(미리보기
+   게스트가 살아 있게). display:none 이 아니라 크기 0 이다. */
+.nx-offstage {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nx-homebar {
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.nx-body {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.nx-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+
+.nx .nx-tabs button {
+  flex: 1;
+  height: 32px;
+  border-radius: var(--r);
+  font-weight: 500;
+  color: var(--ink2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.nx .nx-tabs button.nx-tab--on {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.nx-scrim {
+  display: none;
+}
+
+/* ---------- 좁은 창(U16) ---------- */
+.nx--narrow {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.nx--narrow .nx-sidebar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 284px;
+  z-index: 40;
+  transform: translateX(-104%);
+  transition: transform 0.22s ease;
+}
+
+.nx--drawer .nx-sidebar {
+  transform: none;
+  box-shadow: 14px 0 40px rgba(0, 0, 0, 0.18);
+}
+
+.nx--drawer .nx-scrim {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(24, 22, 19, 0.34);
+  z-index: 39;
+  animation: nx-fade 0.2s;
+  cursor: default;
+}
+
+.nx--narrow .nx-collapse-btn {
+  display: none;
+}
+
+.nx--narrow .nx-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.nx--narrow .nx-body[data-tab="chat"] .nx-preview,
+.nx--narrow .nx-body[data-tab="preview"] .nx-chat {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.nx--narrow .nx-chat {
+  border-right: 0;
+}

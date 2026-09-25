@@ -1,0 +1,263 @@
+/* 상태 줄(U2) — 대화 제목 · 여정 세 점 · 제출. 목업 「상태 줄」 칸. */
+
+.nx-statusbar {
+  position: relative;
+  z-index: 20;
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.nx--narrow .nx-statusbar {
+  padding-left: 10px;
+}
+
+.nx-conv-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 34%;
+}
+
+.nx .nx-journey {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 12.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.nx .nx-journey:hover {
+  border-color: var(--line2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.nx-making {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 10px;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+}
+
+.nx-since {
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-jwrap {
+  display: flex;
+  align-items: center;
+}
+
+.nx-jstep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-jstep i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line2);
+  background: var(--card);
+  flex: none;
+}
+
+.nx-jstep--done {
+  color: var(--ink2);
+}
+
+.nx-jstep--done i {
+  background: var(--ink3);
+  border-color: var(--ink3);
+}
+
+.nx-jstep--cur {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nx-jbar {
+  width: 16px;
+  height: 1.5px;
+  background: var(--line2);
+  margin: 0 7px;
+  flex: none;
+}
+
+.nx--narrow .nx-jbar {
+  width: 10px;
+  margin: 0 5px;
+}
+
+.nx-cycle--draft .nx-jstep--cur i {
+  background: var(--blue);
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+}
+
+.nx-cycle--review .nx-jstep--cur i {
+  background: var(--amber);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.nx-cycle--merged .nx-jstep--cur i {
+  background: var(--green);
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+.nx-blocked .nx-jstep--cur i {
+  background: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-soft);
+}
+
+.nx .nx-submit {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.nx .nx-submit:hover {
+  background: #3a3834;
+}
+
+.nx .nx-submit--locked,
+.nx .nx-submit--locked:hover {
+  background: #e3dfd6;
+  color: #9a958b;
+  cursor: not-allowed;
+}
+
+.nx .nx-submit--busy,
+.nx .nx-submit--busy:hover {
+  background: #5d5a55;
+  cursor: default;
+}
+
+.nx-submit--busy .nx-spin {
+  color: #fff;
+}
+
+.nx-why {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 60;
+  width: max-content;
+  max-width: 300px;
+  background: var(--card);
+  border: 1px solid var(--line2);
+  color: var(--ink);
+  font-size: 12.5px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  box-shadow: var(--pop);
+  line-height: 1.45;
+  animation: nx-pop 0.12s;
+  word-break: keep-all;
+}
+
+/* `이번 작업` 팝오버(U2) — 단계 4 가 몸통을 채운다. */
+.nx-work-pop {
+  width: 380px;
+  padding: 0;
+}
+
+.nx-wp-h {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.nx-wp-h b {
+  font-size: 14px;
+}
+
+.nx-wp-h div {
+  font-size: 12px;
+  color: var(--ink3);
+  margin-top: 3px;
+}
+
+.nx-wp-journey {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.nx-wp-step {
+  font-size: 11.5px;
+  color: var(--ink3);
+  border-top: 3px solid var(--line);
+  padding-top: 6px;
+  line-height: 1.4;
+}
+
+.nx-wp-step--done {
+  border-color: var(--ink3);
+  color: var(--ink2);
+}
+
+.nx-wp-step--cur {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.nx-cycle--draft .nx-wp-step--cur {
+  border-color: var(--blue);
+}
+
+.nx-cycle--review .nx-wp-step--cur {
+  border-color: var(--amber);
+}
+
+.nx-cycle--merged .nx-wp-step--cur {
+  border-color: var(--green);
+}
+
+.nx-wp-sec {
+  padding: 12px 16px;
+}
+
+.nx-wp-sec h5 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink3);
+  font-weight: 500;
+}
+
+.nx-wp-empty {
+  font-size: 12.5px;
+  color: var(--ink3);
+  line-height: 1.55;
+  white-space: normal;
+}
