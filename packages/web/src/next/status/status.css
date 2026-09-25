@@ -436,6 +436,11 @@
   color: var(--ink3);
 }
 
+/** 한마디 더의 자리(U20) — 제출 칸 바닥의 단추와 상자. */
+.nx-wp-note {
+  margin-top: 8px;
+}
+
 .nx-slog div {
   display: flex;
   gap: 8px;

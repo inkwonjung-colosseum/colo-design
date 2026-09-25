@@ -841,6 +841,9 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     cycle: { branch: opts.branch ?? null, handoff: opts.handoff ?? null },
     gitHubClient: () => new GitHubClient("harness-token", github),
     commandsApproved: true,
+    // U20(PLAN-UI §10) — 한마디 더의 흔적이 제출 기록에 남는 길. fleet 과 같은
+    // 모양: 감독자가 늦게 태어나므로 부르는 순간에 묻는다.
+    appendSubmitLog: (text) => alive?.appendSubmitLog(text),
   });
   const core = workspace.repoCore();
   const dev = developer(remote);

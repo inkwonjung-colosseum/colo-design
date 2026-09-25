@@ -9,6 +9,8 @@ import {
   EFFORT_OF,
   effortWord,
   failureCards,
+  handoffOpen,
+  noteAllowed,
   noticeKind,
   promptNumbers,
   rawErrorLine,
@@ -160,4 +162,19 @@ test("failureCards: 잃은 말마다 카드 한 장(W8) — 대화록이 말하�
   assert.deepEqual(failureCards([lost("b", "버튼 옮겨 줘")], tape), [
     { id: "b", text: "버튼 옮겨 줘", images: 0, files: 0 },
   ]);
+});
+
+test("noteAllowed: 영수증의 `한마디 더` — 그 요청이 열려 있을 때만(U20)", () => {
+  const block = { pr: 7 };
+  // 열림.
+  assert.equal(noteAllowed(block, { number: 7, state: "open" }), true);
+  // 닫힘 · 반영 — 갈 곳이 없다.
+  assert.equal(noteAllowed(block, { number: 7, state: "closed" }), false);
+  assert.equal(noteAllowed(block, { number: 7, state: "merged" }), false);
+  // 다른 요청 번호 — 옛 영수증의 요청은 이미 끝났다.
+  assert.equal(noteAllowed(block, { number: 9, state: "open" }), false);
+  assert.equal(noteAllowed(block, null), false);
+  // changes_requested 는 리뷰의 판정이지 닫힘이 아니다(감독자와 같은 잣대).
+  assert.equal(handoffOpen({ state: "changes_requested" }), true);
+  assert.equal(noteAllowed(block, { number: 7, state: "changes_requested" }), true);
 });

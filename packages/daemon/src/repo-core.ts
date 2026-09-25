@@ -304,6 +304,12 @@ export interface RepoWorkspaceOptions {
    */
   resolveNotice?: (key: "submit:pr") => void;
   /**
+   * 한마디 더(U20 · PLAN-UI §10) — 영수증의 상자가 보낸 말의 흔적을 제출
+   * 기록에 남기는 손잡이. fleet 이 감독자의 원장(cycle.json 의 submitTrail)으로
+   * 잇는다; 없으면(단독 구성 · 시험) 기록 없이 보내기만 한다.
+   */
+  appendSubmitLog?: (text: string) => void;
+  /**
    * 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. fleet 이
    * 감독자 · 게이트 · 준비 복구의 상태를 모아 넣는다. 없으면 주의는 없다.
    */

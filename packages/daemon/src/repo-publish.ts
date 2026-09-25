@@ -14,6 +14,7 @@ import {
   markTurn,
 } from "@colo-design/protocol";
 import { readComments } from "./comments.js";
+import { replyFooter } from "./developer-replies.js";
 import {
   buildCommentsSection,
   buildFilesSection,
@@ -35,6 +36,7 @@ import {
   SHOTS_DIR,
 } from "./repo-core.js";
 import { saveablePaths } from "./saveable-paths.js";
+import { SUBMIT_LOG_TEXT } from "./submit-state.js";
 
 /** The `<img>` needs a media type; the committed file's extension is the
  *  capture's own (see HandoffShot.extension). */
@@ -879,6 +881,32 @@ export class PublishCycle {
   }
 
   /**
+   * U20(PLAN-UI §10): 한마디 더 — 영수증의 상자가 달리는 말. 답하기와 같은
+   * 길(commentOnIssue)을 코멘트 id 없이 걷는다: 본문은 제출 확인의 한마디와
+   * 같은 꼴(`> 한마디:` 인용 줄 + 대리 표기)로, 열린 요청에만 달린다.
+   */
+  async noteToDeveloper(text: string): Promise<void> {
+    const handoff = this.core.openHandoff;
+    if (handoff === null || handoff.state === "merged" || handoff.state === "closed") {
+      throw new Error("열린 요청이 없어요 — 제출한 뒤에 보낼 수 있어요");
+    }
+    const line = noteLine(text.trim());
+    if (line === null) {
+      throw new Error("보낼 말이 없어요 — 한마디를 적어 주세요.");
+    }
+    const slug = this.core.repoSlug();
+    const client = this.core.gitHubClient?.() ?? null;
+    if (!slug || !client) {
+      throw new Error("GitHub 에 답할 수 없습니다 — 설정에서 토큰을 확인해 주세요.");
+    }
+    const body = `${line}\n\n${replyFooter(this.core.authorName?.() ?? null)}`;
+    await client.commentOnIssue({ ...slug, number: handoff.number, body });
+    // 성공의 흔적 — 제출 기록(원장의 submitTrail)에 한 줄. 실패하면 남지
+    // 않는다: 기록은 사용자가 한 말이 아니라 간 말의 영수증이다.
+    this.deps.appendSubmitLog?.(SUBMIT_LOG_TEXT.noteSent);
+  }
+
+  /**
    * D6 → PLAN L7: 조용한 푸시는 한 번만 시도한다. 실패하면 조용히 두고
    * 감독자(cycle-supervisor)의 12행이 원장의 백오프로 계속 민다 — 무한,
    * 최대 10분 간격. 전경 푸시(제출)는 그대로다.
@@ -962,4 +990,10 @@ export interface PublishDeps {
    * 남지 않게 하는 풀림의 한 길(PLAN L11).
    */
   resolveNotice?(key: "submit:pr"): void;
+  /**
+   * 한마디 더(U20 · PLAN-UI §10) — 성공이 제출 기록(원장의 submitTrail)에
+   * 남기는 줄. fleet 이 감독자의 원장으로 잇는다; 없으면(단독 구성 · 시험)
+   * 기록 없이 보내기만 한다.
+   */
+  appendSubmitLog?(text: string): void;
 }

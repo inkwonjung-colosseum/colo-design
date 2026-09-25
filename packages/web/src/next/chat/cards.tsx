@@ -5,6 +5,7 @@ import { composing } from "../../lib/ime";
 import { bashHeadline, toolLabel } from "../../lib/labels";
 import { linkClick } from "../../lib/open-link";
 import { L } from "../labels";
+import { noteAllowed } from "../lib/thread";
 import { AlertIcon, CheckIcon, ExtIcon, EyeIcon, SparkIcon } from "./icons";
 
 /** `오후 3:12` 가 아니라 `15:12` — 목업의 시각 표기. */
@@ -104,13 +105,14 @@ export function BriefCard({
   );
 }
 
-/** 답하기 한 줄 — 카드를 떠나지 않고 개발자에게 간다(`comments.reply`). */
-function ReplyBox({
-  author,
+/** 답하기 한 줄 — 카드를 떠나지 않고 개발자에게 간다(`comments.reply` · `repo.note`). */
+export function ReplyBox({
+  placeholder,
   onSend,
   onSent,
 }: {
-  author: string;
+  /** 입력칸의 지시문 — 답하기는 `…님에게 답하기`, 한마디 더는 그 자리의 말. */
+  placeholder: string;
   onSend: (text: string) => Promise<void>;
   onSent: (text: string) => void;
 }) {
@@ -139,8 +141,8 @@ function ReplyBox({
           // biome-ignore lint/a11y/noAutofocus: 답하기를 누른 손이 곧 쓸 자리다.
           autoFocus
           value={draft}
-          placeholder={L.cards.replyTo(author)}
-          aria-label={L.cards.replyTo(author)}
+          placeholder={placeholder}
+          aria-label={placeholder}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (composing(event)) return;
@@ -224,7 +226,7 @@ export function ReviewCard({
       <Received body={body} />
       {open && replyId !== null && (
         <ReplyBox
-          author={name}
+          placeholder={L.cards.replyTo(name)}
           onSend={(text) => onReply(replyId, text)}
           onSent={(text) => {
             setReplies((prev) => [...prev, { key: prev.length, text }]);
@@ -263,16 +265,22 @@ export function reviewParts(reviews: DeveloperReview[]): {
 
 /**
  * 제출 영수증(U3 · E5) — `개발자에게 제출했어요`(같은 요청에 더했으면 그 말) ·
- * 받을 개발자 · 내 한마디 · `제출한 내용 열기`.
+ * 받을 개발자 · 내 한마디 · `제출한 내용 열기`. 요청이 아직 열려 있으면
+ * `한마디 더` 상자가 같은 발 밑에 선다(U20): 잘못 보냈거나 덧붙일 말을
+ * 대화를 떠나지 않고 개발자에게 남긴다.
  */
 export function ReceiptCard({
   block,
   more,
   handoff,
+  onNote,
+  onToast,
 }: {
   block: Extract<Block, { type: "milestone" }>;
   more: boolean;
   handoff: RepoStatus["handoff"];
+  onNote: (text: string) => Promise<void>;
+  onToast: (text: string) => void;
 }) {
   const same = handoff && handoff.number === block.pr ? handoff : null;
   const reviewers = same?.reviewers?.length
@@ -280,6 +288,9 @@ export function ReceiptCard({
     : block.reviewer
       ? [block.reviewer]
       : [];
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteSentAt, setNoteSentAt] = useState<string | null>(null);
+  const noteOk = noteAllowed(block, handoff);
   return (
     <div className="nx-card nx-card--receipt">
       <div className="nx-ch">
@@ -299,18 +310,47 @@ export function ReceiptCard({
           {block.note && <div>{L.cards.receiptNote(block.note)}</div>}
         </div>
       )}
-      {same?.url && (
+      {(same?.url || noteOk) && (
         <div className="nx-cfoot">
-          <a
-            className="nx-btn nx-btn--sm"
-            href={same.url}
-            target="_blank"
-            rel="noreferrer"
-            onClick={linkClick}
-          >
-            {L.vocab.openSubmitted}
-            <ExtIcon />
-          </a>
+          {same?.url && (
+            <a
+              className="nx-btn nx-btn--sm"
+              href={same.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={linkClick}
+            >
+              {L.vocab.openSubmitted}
+              <ExtIcon />
+            </a>
+          )}
+          {noteOk && (
+            <button
+              type="button"
+              className="nx-btn nx-btn--sm"
+              onClick={() => setNoteOpen((open) => !open)}
+            >
+              {L.cards.noteMore}
+            </button>
+          )}
+        </div>
+      )}
+      {noteOpen && noteOk && (
+        <ReplyBox
+          placeholder={L.cards.notePlaceholder}
+          onSend={onNote}
+          onSent={() => {
+            const time = clockOf(Date.now());
+            setNoteSentAt(time);
+            setNoteOpen(false);
+            onToast(L.cards.noteSent(time));
+          }}
+        />
+      )}
+      {noteSentAt && (
+        <div className="nx-reply-sent">
+          <CheckIcon />
+          <span>{L.cards.noteSent(noteSentAt)}</span>
         </div>
       )}
     </div>

@@ -1,9 +1,12 @@
 import type { ProjectSummary, RepoStatus } from "@colo-design/protocol";
 import type { RefObject } from "react";
+import { useState } from "react";
 import { openLink } from "../../lib/open-link";
+import { clockOf, ReplyBox } from "../chat/cards";
 import { L } from "../labels";
 import type { Journey } from "../lib/journey";
 import { ledgerLine } from "../lib/submit-copy";
+import { handoffOpen } from "../lib/thread";
 import { commentRows, cycleStart, outgoingScreens } from "../lib/work-ledger";
 import { Popover } from "../ui/Popover";
 import {
@@ -35,6 +38,8 @@ export function WorkPopover({
   ledger,
   author,
   since,
+  onNote,
+  onToast,
   onClose,
 }: {
   anchor: RefObject<HTMLElement | null>;
@@ -46,6 +51,9 @@ export function WorkPopover({
   author: string | null;
   /** 마지막 제출의 시각(`submitCopy.lastAt`). */
   since: string | null;
+  /** 영수증의 `한마디 더` 와 같은 상자(U20) — 영수증이 멀리 올라간 뒤의 자리. */
+  onNote: (text: string) => Promise<void>;
+  onToast: (text: string) => void;
   onClose: () => void;
 }) {
   const { cycle } = journey;
@@ -60,6 +68,11 @@ export function WorkPopover({
 
   // 이번 사이클의 요청 — 반영 뒤 새로 쌓인 작업(draft)은 아직 보내지 않은 것이다.
   const handoff = cycle !== "draft" ? (repo?.handoff ?? null) : null;
+  // 한마디 더(U20) — 열린 요청이 있을 때만. 상태 줄이 daemon.api 에 닿는 길을
+  // 준다(props 로 받는다).
+  const noteOk = handoffOpen(handoff);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteSentAt, setNoteSentAt] = useState<string | null>(null);
   const reviewers =
     handoff?.reviewers && handoff.reviewers.length > 0
       ? handoff.reviewers
@@ -146,6 +159,32 @@ export function WorkPopover({
                 <span>{line.text}</span>
               </div>
             ))}
+          </div>
+        )}
+        {noteOk && (
+          <div className="nx-wp-note">
+            {noteOpen ? (
+              <ReplyBox
+                placeholder={L.work.notePlaceholder}
+                onSend={onNote}
+                onSent={() => {
+                  const time = clockOf(Date.now());
+                  setNoteSentAt(time);
+                  setNoteOpen(false);
+                  onToast(L.work.noteSent(time));
+                }}
+              />
+            ) : (
+              <button type="button" className="nx-btn nx-btn--sm" onClick={() => setNoteOpen(true)}>
+                {L.work.noteMore}
+              </button>
+            )}
+            {noteSentAt && (
+              <div className="nx-reply-sent">
+                <SentIcon />
+                <span>{L.work.noteSent(noteSentAt)}</span>
+              </div>
+            )}
           </div>
         )}
       </div>

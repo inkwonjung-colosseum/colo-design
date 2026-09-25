@@ -449,6 +449,27 @@ export class CycleSupervisor {
   }
 
   /**
+   * 한마디 더(U20 · PLAN-UI §10) — 제출 기록에 사건 한 줄을 덧붙인다.
+   * 국면은 그대로: 이 줄은 전이가 아니라 사용자가 간 말의 흔적이라
+   * `advanceSubmitTrail` 의 길과 달리 판정을 거치지 않는다. `이번 작업` 의
+   * 제출 기록(RepoStatus.submit.log)이 곧 읽는다.
+   */
+  appendSubmitLog(text: string): void {
+    const trail = this.ledger.submitTrail ?? { phase: "idle" as const, log: [] };
+    this.ledger = {
+      ...this.ledger,
+      submitTrail: {
+        ...trail,
+        log: [...trail.log, { at: new Date(this.now()).toISOString(), text }].slice(
+          -SUBMIT_LOG_MAX,
+        ),
+      },
+    };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.deps.onChange?.();
+  }
+
+  /**
    * 제출 재시도 타이머를 원장과 맞춘다 (N6) — 틱의 끝마다 부르는 한 곳에서
    * 모든 경우를 판정한다. 국면이 retrying 이고 다음 시도 순간이 미래면 그
    * 순간을 겨눈 타이머를 하나 건다(이미 같은 순간을 기다리면 그대로). 그 밖
