@@ -111,17 +111,31 @@ export async function alignCycleBranch(
  * 같은 이름을 두고 다투지 않는다. 원격이 닿지 않으면 로컬만으로 고른다 —
  * 이름을 못 고르는 것이 저장을 막을 이유는 아니다(뒤의 push 가 진짜 문제를
  * 말한다).
+ *
+ * ls-remote 의 실패는 "원격에 없다"가 아니라 "지금 모른다"다 — 실패를 빈손으로
+ * 읽으면 병합된 지 얼마 안 된 이름을 다시 골라 그 끝난 요청 위에 새 커밋이
+ * 쌓인다. 그래서 실패한 이름은 건너뛰고, 이 고르기 안에서는 원격을 더 묻지
+ * 않고 나머지를 로컬만으로 고른다.
  */
 export async function pickCycleBranchName(
   git: (args: string[]) => Promise<string>,
   remote: string,
 ): Promise<string> {
   const today = new Date();
+  let remoteConsultable = true;
   let name = cycleBranchName(today, 1);
   for (let n = 1; n <= 99; n += 1) {
     name = cycleBranchName(today, n);
-    const takenRemote = await git(["ls-remote", "--heads", remote, name]).catch(() => "");
-    if (takenRemote.trim() !== "") continue;
+    if (remoteConsultable) {
+      const remoteAnswer = await git(["ls-remote", "--heads", remote, name])
+        .then((out) => (out.trim() !== "" ? "taken" : "free"))
+        .catch(() => "unknown");
+      if (remoteAnswer === "unknown") {
+        remoteConsultable = false;
+        continue;
+      }
+      if (remoteAnswer === "taken") continue;
+    }
     const takenLocal = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]).catch(
       () => "",
     );
