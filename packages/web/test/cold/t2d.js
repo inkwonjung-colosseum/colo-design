@@ -1,4 +1,4 @@
-// 콜드 리뷰 스크립트 — 지금은 목업 mockups/redesign.html 을 겨눈다. PLAN-UI 단계 8 에서 실제 셸(개발 실행 + ?shell=next)로 다시 겨눈다.
+// 콜드 리뷰 스크립트 — 지금은 목업 mockups/redesign.html 을 겨눈다. PLAN-UI 단계 8 에서 실제 셸(개발 실행)로 다시 겨눈다.
 console.log(page.frames().map(f=>f.url().slice(0,80)).join('\n'));
 // try click "2" in pagination by coordinates as a user would
 await page.mouse.click(1102, 717);

@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { Attachment } from "../../components/chat/Composer";
 import type { PinAttachment } from "../../hooks/usePins";
 import type { Sessions } from "../../hooks/useSessions";
+import type { Attachment } from "../../lib/attachment";
 import { modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { koreanNoticeWords } from "../../lib/error-words";
@@ -431,6 +431,8 @@ export function Composer({
   const showStop = running && !hasContent && onStop !== undefined;
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: 홈의 입력창이 파일을 놓는 자리다 — 드롭은 포인터의 일이고, 키보드는 첨부 단추로 닿는다.
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: 위와 같다.
     <div
       className={`nx-composer${variant === "home" ? " nx-composer--home" : ""}`}
       // 대화 칸은 칸 전체가 놓는 자리다(ChatColumn) — 홈만 입력창 자신이 받는다.

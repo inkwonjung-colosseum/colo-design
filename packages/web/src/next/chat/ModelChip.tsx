@@ -159,6 +159,7 @@ export function ModelChip({
             <>
               {models.length > 0 && <div className="nx-msep" />}
               <div className="nx-mh">{L.model.think}</div>
+              {/* biome-ignore lint/a11y/useSemanticElements: 세 단추의 한 줄(세그먼트) — fieldset 의 테두리 · legend 틀이 필요 없는 자리라 group 으로 읽힌다. */}
               <div className="nx-mseg" role="group" aria-label={L.model.think}>
                 {efforts.map((word) => (
                   <button

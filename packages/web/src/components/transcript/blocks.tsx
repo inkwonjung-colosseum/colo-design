@@ -4,7 +4,7 @@ import { waitedFor } from "../../lib/format";
 import { toolLabel } from "../../lib/labels";
 import { isToolRunning } from "../../lib/progress";
 import { CheckIcon, ChevronRightIcon, CloseIcon } from "../icons";
-import { Tip } from "../shell/Tip";
+import { Tip } from "../Tip";
 import { preview, type TaskControls, type ToolStatus, toolHeadline } from "./shared";
 
 /**

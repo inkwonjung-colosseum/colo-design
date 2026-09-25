@@ -1,6 +1,6 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PreviewLocation, PreviewTarget } from "./PreviewHost";
+import type { PreviewLocation, PreviewTarget } from "./types";
 
 /**
  * 미리보기 무대 (webview 전환): the repo's app lives in a `<webview>` element

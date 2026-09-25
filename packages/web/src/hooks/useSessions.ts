@@ -11,7 +11,7 @@ import type {
   SessionSummary,
 } from "@colo-design/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Attachment } from "../components/chat/Composer";
+import type { Attachment } from "../lib/attachment";
 
 /**
  * 방에서 돌아온 보내기 하나 — 입력창을 그때 그대로 되살리는 데 필요한 전부.

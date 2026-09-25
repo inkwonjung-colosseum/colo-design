@@ -297,6 +297,7 @@ export function SettingsDialog({
             </div>
             <div className="nx-sr" role="radiogroup" aria-label={L.settings.ai}>
               {usable.map((provider) => (
+                // biome-ignore lint/a11y/useSemanticElements: 카드 전체가 누르는 과녁이다 — 동그라미 입력칸 없이 radio 로 읽힌다(radiogroup 안).
                 <button
                   key={provider.id}
                   type="button"

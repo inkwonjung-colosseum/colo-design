@@ -6,7 +6,7 @@
  */
 import type { TurnMarker } from "@colo-design/protocol";
 import { markTurn } from "@colo-design/protocol";
-import type { PreviewError } from "../components/preview/PreviewHost";
+import type { PreviewError } from "../components/preview/types";
 import type { PinAttachment } from "../hooks/usePins";
 
 /**

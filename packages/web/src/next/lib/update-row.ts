@@ -89,3 +89,36 @@ export function updateRowCopy(tool: UpdateToolInput, t: UpdateRowLabels): Update
     action: "none",
   };
 }
+
+/** 홈의 `방금 있던 일` 한 줄 — 도구가 AI 프로그램을 새 버전으로 바꿨다(U12 · J6). */
+export interface AgentUpdateEvent {
+  id: string;
+  text: string;
+  /** 끝난 시각(ms) — 줄의 순서와 `n분 전` 이 읽는다. */
+  at: number;
+}
+
+/**
+ * `DaemonStatus.agentUpdates` 에서 끝난(done) 업데이트만 한 줄씩 — 이름은 프로바이더
+ * 목록의 `label`(없으면 id), 버전을 모르는 끝은 줄이 서지 않는다. 최신이 맨 위.
+ */
+export function agentUpdateEvents(
+  updates: Partial<Record<string, { phase: string; at: string; version?: string }>> | undefined,
+  providers: ReadonlyArray<{ id: string; label: string }> | undefined,
+  doneEvent: (name: string, version: string) => string,
+): AgentUpdateEvent[] {
+  if (!updates) return [];
+  return Object.entries(updates)
+    .flatMap(([id, state]) => {
+      if (state?.phase !== "done" || !state.version) return [];
+      const name = providers?.find((provider) => provider.id === id)?.label ?? id;
+      return [
+        {
+          id,
+          text: doneEvent(name, plainDotted(state.version) ?? state.version),
+          at: Date.parse(state.at) || 0,
+        },
+      ];
+    })
+    .sort((a, b) => b.at - a.at);
+}

@@ -418,3 +418,66 @@ Shell · Sidebar(전환기 · 다른 프로젝트 줄 · 대화 목록 · 도구
 | P4 | 병행 셸 스위치 | `?shell=next`(개발 실행에서만) | 0 · 6 |
 | P5 | 준비가 끝난 프로젝트의 OS 알림 | 켬 — 배경에서 끝났을 때만 | 5 |
 | P6 | 사용량 표시 | 한도의 70% 를 넘을 때만 모델 칩 옆 한 단어 | 2 |
+
+## 8. 진행 (2026-09-25)
+
+**단계 0–7 이 들어갔다.** 새 셸(`packages/web/src/next/`)이 유일한 셸이다 — `App.tsx` 는
+연결이 서면 언제나 `NextShell` 을 그리고, `?shell=next` 스위치와 `DaemonStatus.dev` 문은
+없다. 단계 8(검증)이 남았다.
+
+### 3 절 밖에서 더한 v19
+
+- 명령 `agent.update.check` — 설정의 `지금 확인` 이 에이전트 최신 버전을 곧바로 묻는다.
+- `DaemonStatus.agentUpdates` — 에이전트마다 `pending · running · done · failed` · 시각 · 깐 버전 ·
+  실패 문장. 업데이트 줄과 홈의 `방금 있던 일` 이 읽는다.
+- `RepoStatus.phaseSince` — 준비 단계에 들어선 시각(준비 막대의 어림).
+- `ProjectSummary.reviewers` · `commandsApproved` — 다시 받기의 `바뀜` 판정.
+- `machine.set.provider` 는 선택 — 자동 설치 토글만 바꾸는 호출이 있다.
+- 환경 변수 `COLO_DESIGN_CLAUDE_LATEST_API` — Claude Code 최신 버전의 출처(검증용).
+
+### 데몬 쪽 메모
+
+- `cycle.json` 에 `submitTrail`(제출 기록 — `RepoStatus.submit.log` 의 원천).
+- `screen-map.jsonl` 의 행이 `screens` 를 싣는다 — `cycleScreens` 가 커밋마다의 화면을 읽는다.
+- 코멘트 반영 턴의 제목은 `코멘트 반영 — …`, 80자에서 자른다(U9 · U14 가 센다).
+- 첫 준비의 설치는 뒤에서 돈다 — 준비 중에도 대화가 열린다.
+- `Session.preparing` 이 준비 중에 보낸 말을 줄 세운다 — 전에는 준비 중의 보내기가
+  사라졌다(실제 결함, 고침).
+- `invite.pathOf(file)` — 데스크톱이 떨어뜨린 파일의 디스크 위치를 알려 준다(`파일 지우기`).
+- Claude Code 최신 버전은 downloads.claude.ai 의 `latest` 에서 읽는다(P1).
+
+### 목업과 다른 것
+
+- `@` 언급이 없다.
+- `고친 화면` 카드의 썸네일은 자리 표시다.
+- 코멘트의 반영 여부는 `코멘트 반영 — ` 기록 제목이 코멘트 뒤에 있는지로 짐작한다.
+- 말풍선은 찍은 직후에만 뜨고 스크롤 · 이동 · 배율에 닫힌다(6 절의 첫 구현).
+- 배율은 `− · 100% · +` 세 단추다.
+- 준비 막대는 단계와 경과 시간으로 어림한다(숫자 진행이 선로에 없다).
+- `지켜 줄 것` · 대화 이름 바꾸기 · 내보내기 메뉴가 아직 없다(데몬과 `transcript-export.ts`
+  는 남아 있다).
+
+### 단계 7 에서 한 것
+
+- 옛 셸을 걷었다 — `Shell` · `PageWorkspace` · `Sidebar` · `HistoryDrawer`, `panels/*`, 옛
+  대화 칸 · 입력창 · 카드(`HandoffCard` · `AttentionLine` · `WorkStrip` · `UsageChip`), 옛
+  `PreviewHost` · `PinTray` · `FrozenStage` · `TurnClock`, `home/*`, `onboarding/*`, 옛 설정 ·
+  초대 · 확인 대화상자, 쓰이지 않던 대화록 조각(`Transcript` · `cards` · `turn` 등),
+  `delivery.ts` · `tour.ts` · `last-seen.ts`, `chat-preview`. `styles.css` 는 남은 클래스만
+  (10,401 → 3,292줄).
+- 옮긴 것 — `Attachment` 타입(`lib/attachment.ts`), 미리보기 선로 타입
+  (`components/preview/types.ts`), `Tip`(`components/Tip.tsx`), 연결 화면(`ConnectScreen.tsx`).
+- 어휘(U10) — `제출` · `보내기` 를 가른다(`제출할 화면` · `제출한 뒤 바뀐 곳` …).
+  `test/vocab-sweep.test.ts` 가 `src/**` 의 한글 문장을 훑고, `next-labels.test.ts` 가
+  불리지 않는 `L` 의 칸을 잡는다(죽은 칸 67개를 걷었다).
+- 고친 것 — 처음 한 번이 사이드바 칸(264px)에 끼던 것, 문제 문장을 상태 줄 바로 아래
+  전폭으로, 첫 가져오기의 행이 모두 `새로` 면 확인판 없이 곧바로 적용, `next/` 의 biome
+  경고(훅 의존성 · 드롭 자리의 a11y), 에이전트 업데이트가 끝나면 홈에 한 줄.
+- 걷은 길 — 설정의 `다시 보기`(처음 화면 다시 열기) · 설정의 방 이름으로 여는 팔레트 행 ·
+  첫 안내(한 번에 하나씩 뜨던 팁) · 연결 화면의 설정 단추. 새 셸에 짝이 없었다.
+
+### 오는 길에 고친 회귀 둘
+
+- 데몬 `start()` 가 5ca5253b 이후 `ProjectRegistry.load` · `machineSetting.load` 를 부르지
+  않았다 — 다시 켜면 등록부와 기계 설정이 비어 보였다.
+- 픽스처 레포 `server.js` 의 따옴표가 깨져 미리보기가 뜨지 않았다.

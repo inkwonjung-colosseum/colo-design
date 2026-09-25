@@ -7,8 +7,9 @@ import { type AskingItem, buildHomeFeed } from "../../lib/home-feed";
 import { bashHeadline, toolLabel } from "../../lib/labels";
 import { L } from "../labels";
 import { isPreparing } from "../lib/project-note";
+import { agentUpdateEvents } from "../lib/update-row";
 import { Elapsed } from "../status/Elapsed";
-import { CalmIcon, ChevronRightIcon, SparkIcon, Spin } from "../ui/icons";
+import { CalmIcon, CheckIcon, ChevronRightIcon, SparkIcon, Spin } from "../ui/icons";
 import { ProjectMark } from "../ui/ProjectMark";
 
 type Commands = NonNullable<NonNullable<Daemon["repo"]>["commands"]>;
@@ -81,7 +82,13 @@ export function HomeInbox({
     );
   const waitCount = feed.asking.length + otherWaiting.length;
   const runCount = feed.running.length + preparing.length + otherWorking.length;
-  const recentCount = feed.done.length + otherEvents.length;
+  // 도구가 스스로 한 일(J6) — AI 프로그램 업데이트는 할 일이 아니라 한 줄 소식이다.
+  const updateEvents = agentUpdateEvents(
+    daemon.status?.agentUpdates,
+    daemon.status?.providers,
+    L.update.doneEvent,
+  );
+  const recentCount = feed.done.length + otherEvents.length + updateEvents.length;
 
   // 답이 도착할 때까지 카드는 남는다 — 응답이 길에서 죽었는데 카드부터 거두면
   // 답하지 않은 확인이 사라진다(옛 홈과 같은 규칙). 누른 뒤에는 같은 카드를 두
@@ -312,6 +319,13 @@ export function HomeInbox({
               {project.lastEventAt ? timeAgo(Date.parse(project.lastEventAt)) : ""}
             </span>
           </button>
+        ))}
+        {updateEvents.map((event) => (
+          <div key={`update-${event.id}`} className="nx-irow">
+            <CheckIcon />
+            <span className="nx-it">{event.text}</span>
+            <span className="nx-ir">{event.at ? timeAgo(event.at) : ""}</span>
+          </div>
         ))}
         {recentCount === 0 && <div className="nx-calm nx-calm--inner">{L.inbox.nothingRecent}</div>}
       </details>

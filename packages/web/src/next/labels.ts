@@ -13,18 +13,11 @@
 export const L = {
   // ── 공통 — U10 어휘 · 문제 문장 · 여정(U2)
   vocab: {
-    submitFailed: "제출하지 못했어요",
-    submitted: "제출했어요",
     openSubmitted: "제출한 내용 열기",
-    resubmitting: "다시 제출하는 중",
     aiFailed: "AI가 답을 못 했어요",
     retry: "다시 시도",
     retriedFive: "조금씩 기다리며 다섯 번 다시 물었어요",
-    longAnswersOnly: "오래 걸린 답만",
-    allAnswers: "모든 답",
     toolsReady: "필요한 도구 확인됨",
-    pullMerged: "개발자가 반영한 내용 받아오기",
-    optionClick: "option(⌥)+클릭",
     connectionOk: "연결 정상",
     projectCount: (n: number) => `프로젝트 ${n}개`,
   },
@@ -42,7 +35,6 @@ export const L = {
     reconnectLogin: "AI 로그인이 끝났어요. 브라우저에서 한 번만 다시 로그인해 주세요.",
     openInvite: "초대 파일 열기",
     loginInBrowser: "브라우저에서 로그인",
-    waitingLogin: "로그인 기다리는 중",
   },
   /** 여정 세 점(U2) — `제출 전 ─ 개발자 확인 ─ 반영됨`. */
   journey: {
@@ -69,7 +61,6 @@ export const L = {
     find: "찾기",
     others: "다른 프로젝트",
     convs: "대화",
-    toolWork: "도구가 한 일",
     toolWorkCount: (n: number) => `도구가 한 일 ${n}`,
     settings: "설정",
     collapse: "사이드바 접기",
@@ -77,8 +68,6 @@ export const L = {
     switchTo: (name: string) => `옮기기 · ${name}`,
     projects: "프로젝트",
     prepareOnFirstOpen: "처음 열 때 준비해요",
-    projectRules: "이 프로젝트의 규칙 (지켜 줄 것)",
-    openInviteMenu: "초대 파일 열기…",
     preparing: "준비 중",
     notOpened: "아직 열지 않음",
     waitingAnswer: "답을 기다려요",
@@ -86,9 +75,6 @@ export const L = {
     comments: (n: number) => `코멘트 ${n}`,
     aiFailedRetry: "AI가 답을 못 했어요 — 다시 시도할 수 있어요",
     noScreensYet: "아직 만든 화면이 없어요",
-    rename: "이름 바꾸기",
-    exportConv: "대화를 파일로 내보내기",
-    remove: "지우기",
   },
   /** 사이클 상태의 한 단어 — 사이드바 · 전환기 · 팔레트가 함께 쓴다. */
   cycle: {
@@ -105,15 +91,6 @@ export const L = {
     calm: "기다리는 일이 없어요",
     running: "지금 진행 중",
     recent: "방금 있던 일",
-    justNow: "방금",
-  },
-  palette: {
-    placeholder: "대화 · 프로젝트 · 화면 찾기",
-    empty: "찾는 것이 없어요",
-    kindConv: "대화",
-    kindProject: "프로젝트",
-    kindScreen: "화면",
-    kindAction: "동작",
   },
   narrow: {
     chatTab: "대화",
@@ -129,11 +106,10 @@ export const L = {
     menu: "메뉴 열기",
     chatWidth: "대화 너비",
     closeMenu: "메뉴 닫기",
-    connecting: "연결하는 중…",
     projectMenu: "프로젝트 고르기",
     /** 화면 수를 모를 때(데몬이 아직 화면 목록을 싣지 않음)의 제출 이유. */
-    submitReadyAny: "만든 것을 개발자에게 보내요",
-    submitMoreAny: "보낸 뒤로 바뀐 것을 같은 요청에 더해 보내요",
+    submitReadyAny: "만든 것을 개발자에게 제출해요",
+    submitMoreAny: "제출한 뒤로 바뀐 것을 같은 요청에 더해 제출해요",
     commentsArrived: "코멘트가 왔어요",
   },
   /** 홈의 받은 편지함(U6). */
@@ -157,7 +133,6 @@ export const L = {
   },
   /** 뼈대의 자리 표시 — 단계 2·3 이 채우기 전의 대화 · 미리보기 칸. */
   slot: {
-    previewPreparing: (name: string) => `${name} · 준비 중이에요`,
     previewWaiting: "미리보기가 여기에 떠요",
   },
 
@@ -181,8 +156,6 @@ export const L = {
     pinNote: "어떻게 바꿀까요? (선택)",
     pinRemove: "빼기",
     tooBig: (name: string) => `${name} — 8MB 보다 큰 파일은 보낼 수 없어요`,
-    drop: "여기에 놓으면 첨부돼요 · 초대 파일은 가져오기로 넘어가요",
-    currentScreen: "지금 화면",
   },
   model: {
     ai: "AI",
@@ -244,7 +217,6 @@ export const L = {
     receiptNote: (note: string) => `내 한마디 · “${note}”`,
     askTitle: "AI가 물어봐요",
     askFree: "직접 답하기",
-    askAnswered: (opt: string) => `“${opt}”로 답했어요 — AI가 이어서 해요`,
     failTitle: "AI가 답을 못 했어요",
     failWhy:
       "다섯 번 다시 물었지만 답을 받지 못했어요. 말씀은 그대로 남아 있어요 — 다시 시도하면 같은 말로 다시 물어요.",
@@ -261,7 +233,6 @@ export const L = {
   /** 대화 칸의 나머지 문장 — 입력창 · 대화록 · 카드가 함께 쓴다. */
   chat: {
     images: (n: number) => `그림 ${n}장`,
-    attachLost: (n: number) => `첨부 ${n}개는 다시 붙여 주세요`,
     attachRemove: "첨부 빼기",
     sendFailed: "AI에게 말을 전하지 못했어요 — 잠시 뒤 다시 보내 주세요",
     somethingWrong: "잠시 문제가 있었어요 — 다시 해 주세요",
@@ -284,10 +255,8 @@ export const L = {
     reopen: "다시 열기",
     newContent: "새 내용",
     toBottom: "맨 아래로",
-    moreMenu: "더 보기",
     contextFull: "대화가 길어졌어요 — 새 대화에서 이어가면 더 빨라요",
     fixingOther: "AI가 막힌 곳을 고치고 있어요. 하실 일은 없어요.",
-    relogin: "다시 로그인",
     recheck: "다시 확인",
     checking: "확인하는 중…",
     closed: "개발자가 이번 요청을 닫았어요 — 작업은 새 요청으로 옮겨 두었어요",
@@ -306,9 +275,7 @@ export const L = {
     usageRefill: (time: string) => `${time}에 다시 차요`,
     usageFiveHour: "이번 5시간",
     usageWeek: "이번 주",
-    pinsCount: (n: number) => `찍은 곳 ${n}`,
     pinFlash: "화면에서 이 자리 보기",
-    you: "나",
   },
   /**
    * 데몬이 대화에 내려놓는 알림 문장의 첫머리 — 대화록이 이 머리로 알아보고
@@ -349,7 +316,6 @@ export const L = {
     addrMine: "이 대화에서 만든 화면",
     addrOthers: "다른 화면",
     addrFoot: "글자를 치면 거르고, / 로 시작하면 그 주소로 가요",
-    unknownScreen: "찾을 수 없는 화면",
     restartingTitle: "화면을 다시 켜는 중이에요",
     restartingBody: (n: number) =>
       `미리보기가 저절로 꺼져서 도구가 다시 켜고 있어요 · ${n}/2\n두 번 켜도 안 되면 그때부터 AI가 고쳐요.`,
@@ -385,7 +351,6 @@ export const L = {
     /** 아래는 AI 가 읽는 기계의 말 — 화면에는 서지 않는다. */
     stalledReport: "미리보기 화면이 새로 고친 뒤에도 30초 넘게 뜨지 않았어요.",
     lookAsk: "이 화면이 이렇게 보여요. 무엇이 잘못됐는지 보고 고쳐 주세요.",
-    lookNote: (note: string) => `사용자의 말: ${note}`,
     lookConsole: (lines: string) => `콘솔 마지막 기록:\n${lines}`,
   },
   pin: {
@@ -398,13 +363,11 @@ export const L = {
     sendNow: "지금 보내기",
     removePin: "이 핀 빼기",
     removed: "핀을 뺐어요",
-    kept: "담았어요 — 더 찍거나 입력창에서 보내요",
     keptN: (n: number) => `${n}번을 담았어요 — 더 찍거나 입력창에서 보내요`,
     keptNarrow: (n: number) => `${n}번을 담았어요 — 대화 탭에서 메모를 남기고 보내요`,
     lockedPreparing: "준비가 끝나면 화면을 찍을 수 있어요",
     area: "영역",
     bubble: "핀 메모",
-    lockedFrozen: "제출한 때의 화면에서는 찍을 수 없어요 — 지금 화면으로 돌아와 주세요",
   },
   history: {
     title: "작업 기록",
@@ -414,14 +377,12 @@ export const L = {
       "반영된 작업의 기록은 여기서 사라져요.\n합쳐진 것은 거슬러 갈 수 없어서예요.\n다음에 만드는 것부터 다시 쌓여요.",
     empty: "아직 보관된 차례가 없어요.\nAI가 한 차례 답할 때마다 여기에 쌓여요.",
     submittedAt: (time: string) => `${time} 제출했어요`,
-    revertNote: "되돌리기도 새 기록으로 남아요",
     toHere: "이 시점으로",
     revert: "되돌리기",
     cancel: "그만두기",
     /** U9 — 시각이 아니라 제목으로 묻는다. `n` 과 코멘트 여부는 목록에서 센다. */
     confirm: (title: string, n: number, withComments: boolean) =>
       `「${title}」 직후의 화면으로 되돌릴까요?\n그 뒤에 한 변경 ${n}가지${withComments ? " (개발자 코멘트 반영 포함)" : ""}가 화면에서 사라져요.\n기록은 지워지지 않고, 개발자에게는 다음 제출 때 전해져요.`,
-    revertedTitle: (time: string) => `${time} 시점으로 되돌렸어요`,
     revertedToast: (time: string) => `${time} 시점으로 되돌렸어요 — 되돌리기도 기록에 남아요`,
     /** 코멘트 반영 차례의 제목 머리(U9 · U14) — `revertSummary` 가 이것으로 센다. */
     commentPrefix: "코멘트 반영 — ",
@@ -450,18 +411,14 @@ export const L = {
     whyMerged: "반영됐어요 — 다음 작업을 만들면 제출할 수 있어요",
     whyBlocked:
       "제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요, 지금은 계속 만들어도 돼요",
-    whyMoreReady: (n: number) => `보낸 뒤로 바뀐 ${n}곳을 같은 요청에 더해 보내요`,
-    whyNoMore: "보낸 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 보낼 수 있어요",
+    whyMoreReady: (n: number) => `제출한 뒤로 바뀐 ${n}곳을 같은 요청에 더해 제출해요`,
+    whyNoMore: "제출한 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 제출할 수 있어요",
     whyNothing: "아직 바뀐 화면이 없어요",
-    whyReady: (n: number) => `바뀐 화면 ${n}개를 개발자에게 보내요`,
-    logDone: "제출했어요",
-    logRetrying: "제출하지 못했어요 — 잠깐의 문제라 도구가 다시 제출해요",
-    logBlocked: "제출하지 못했어요 — 개발자가 풀어야 하는 문제라 개발자에게 알렸어요",
-    logResolved: "개발자가 풀었어요 — 도구가 다시 제출해요",
+    whyReady: (n: number) => `바뀐 화면 ${n}개를 개발자에게 제출해요`,
     /** 막힘 중 연결 코드 만료(U13 의 auth) — 사람의 손이 필요한 유일한 막힘. */
     whyAuth: "연결 코드가 만료돼 제출이 막혔어요 — 새 초대 파일이 필요해요",
     /** 확인 창을 보낸 순간 데몬에 닿지 못했다 — 누른 손에게 한 줄로. */
-    sendFailed: "제출을 보내지 못했어요 — 잠시 뒤 다시 눌러 주세요",
+    sendFailed: "제출하지 못했어요 — 잠시 뒤 다시 눌러 주세요",
   },
   /** 제출 확인 팝오버(U3). */
   submitConfirm: {
@@ -469,8 +426,8 @@ export const L = {
     titleMore: "같은 요청에 더해 제출할까요?",
     sub: "제목과 설명은 도구가 써요 · 원본은 건드리지 않아요",
     subMore: "이미 열린 요청에 이어서 쌓여요 · 원본은 건드리지 않아요",
-    screens: (n: number) => `보낼 화면 ${n}개`,
-    screensMore: (n: number) => `보낸 뒤 바뀐 ${n}곳`,
+    screens: (n: number) => `제출할 화면 ${n}개`,
+    screensMore: (n: number) => `제출한 뒤 바뀐 ${n}곳`,
     outsideScreens: (n: number) => `화면 밖 변경 ${n}건`,
     note: "개발자에게 한마디",
     optional: "선택",
@@ -487,12 +444,12 @@ export const L = {
     subMerged: "반영까지 끝났어요",
     changed: "바뀐 화면",
     changedCount: (n: number) => `바뀐 화면 ${n}개`,
-    changedSince: (n: number) => `보낸 뒤 ${n}곳 더`,
+    changedSince: (n: number) => `제출한 뒤 ${n}곳 더`,
     changedEmpty: "아직 바뀐 화면이 없어요.",
     changedEmptyMerged: "이번 작업은 제품에 합쳐졌어요. 다음에 고치는 것부터 새 작업이에요.",
     submitHeading: "제출",
     receivedBy: (names: string) => `받은 개발자 · ${names}`,
-    notSubmitted: "아직 보내지 않았어요. 다 만들었으면 위의 제출을 눌러요.",
+    notSubmitted: "아직 제출하지 않았어요. 다 만들었으면 위의 제출을 눌러요.",
     blocked: "제출하지 못해 개발자에게 알렸어요. 풀리면 도구가 다시 제출해요.",
     comments: "개발자 코멘트",
     commentsCount: (n: number) => `개발자 코멘트 ${n}`,
@@ -534,10 +491,6 @@ export const L = {
     agentBlocked: "설치가 막혔어요",
     agentWhat:
       "Claude Code 는 이 앱이 AI 를 부르는 데 쓰는 프로그램이에요. 설치가 끝나면 내 Claude 계정으로 로그인해요.",
-    blockedBody:
-      "회사 정책이 설치를 막았어요. 이 컴퓨터를 관리하는 IT 담당자에게 아래 문장을 그대로 보내 주세요.",
-    blockedItText:
-      "Colo Design 이 사용자 폴더(~/.colo-design/tools)에 Claude Code 를 설치하려는데 정책이 막고 있어요. 이 폴더의 실행 허용을 부탁드려요.",
     copyText: "문장 복사",
     copied: "IT 담당자에게 보낼 문장을 복사했어요",
     retry: "다시 시도",
@@ -555,12 +508,6 @@ export const L = {
     inviteDone: (names: string) => `${names}를 가져왔어요.`,
     inviteFirst: (name: string) => `${name}를 먼저 열어요. 나머지는 처음 고를 때 준비해요.`,
     inviteWarn: "초대 파일에는 연결 코드가 들어 있어요. 가져왔으니 지워 주세요.",
-    installLines: [
-      "설치 파일을 내려받는 중 · 1/3",
-      "받은 파일을 확인하는 중 · 2/3",
-      "사용자 폴더에 설치하는 중 · 3/3",
-      "설치를 마쳤어요",
-    ],
     codexAsk: "Codex 도 쓰시나요?",
     codexAskSub: "건너뛰어도 모든 일이 돼요",
     codexInstall: "설치",
@@ -568,23 +515,10 @@ export const L = {
     codexInstalling: "Codex 설치 중…",
     codexOk: "Codex 도 준비됐어요",
     codexSkipped: "Codex 는 건너뛰었어요 · 설정에서 언제든 설치해요",
-    /** 설정의 `다시 보기` 로 다시 연 확인판을 닫는 길 — 첫 실행에는 없다. */
+    /** 초대 확인판을 닫는 길. */
     close: "닫기",
     /** policy 가 아닌 설치 실패의 오른쪽 문구 — 본문 문장은 데몬의 detail 이 말한다. */
     agentFailed: "설치가 안 됐어요",
-  },
-  /** 첫 안내 — 한 번에 하나씩, 순서대로. */
-  tips: {
-    pinTitle: "고칠 곳은 찍어서",
-    pinBody:
-      "여기를 켜고 화면을 누르면 그 자리에 말풍선이 떠요. 켜지 않아도 option(⌥) 키를 누른 채 클릭하면 돼요.",
-    submitTitle: "다 됐으면 제출 하나",
-    submitBody: "누를 것은 이것뿐이에요. 저장은 AI가 답할 때마다 저절로 돼요.",
-    historyTitle: "마음이 바뀌면",
-    historyBody: "작업 기록에서 예전 시점으로 화면을 되돌려요. 되돌려도 기록은 지워지지 않아요.",
-    stop: "그만 보기",
-    next: "다음",
-    done: "알겠어요",
   },
   /** 처음 여는 프로젝트의 준비 화면(U8). */
   prepare: {
@@ -595,10 +529,6 @@ export const L = {
     stepPreview: "미리보기 켜기",
     aboutTwoMinutes: "2분쯤",
     hint: "준비되는 동안 먼저 말해 두셔도 돼요 — 끝나면 바로 시작해요.",
-    readyToast: (name: string) => `준비됐어요 — ${name}의 화면이에요`,
-    readyEvent: "준비가 끝났어요 — 이제 화면을 만들 수 있어요",
-    readyNotifyTitle: (name: string) => `${name} · 준비됐어요`,
-    readyNotifyBody: "처음 켜는 준비가 끝났어요. 이제 화면을 만들 수 있어요.",
   },
   /** 다시 받은 초대장의 확인 창(U11). */
   invite: {
@@ -668,7 +598,6 @@ export const L = {
     connectionSub: "개발자에게 받은 초대 파일로 이어져요",
     authorName: "작업에 적을 이름",
     connectionCode: "연결 코드",
-    connectionOk: (n: number) => `정상 · 프로젝트 ${n}개`,
     openInvite: "초대 파일 열기",
     update: "업데이트",
     updateSub: "켤 때 · 돌아올 때 · 하루 한 번 저절로 확인해요",
@@ -686,7 +615,6 @@ export const L = {
       reason ? `컴퓨터가 알림을 막았어요 — ${reason}` : "컴퓨터가 알림을 막았어요",
     testNotifyBody: "실제 알림은 이렇게 도착해요",
     close: "닫기",
-    save: "저장",
   },
   /** 업데이트 줄(U12) — 앱 · Claude Code · Codex 가 한 목록. */
   update: {
@@ -702,13 +630,8 @@ export const L = {
     checking: "확인하는 중",
     foundCount: (n: number) => `새 버전 ${n}개 · 방금 확인`,
     allLatest: "모두 최신이에요 · 방금 확인",
-    stepDownload: "새 버전을 내려받는 중 · 1/3",
-    stepVerify: "받은 파일을 확인하는 중 · 2/3",
-    stepVerifySigned: "받은 파일의 서명을 확인하는 중 · 2/3",
-    stepInstall: "사용자 폴더에 설치하는 중 · 3/3",
-    stepDone: "설치를 마쳤어요",
-    doneToast: (name: string, version: string) =>
-      `${name} ${version} · 다음 새 대화부터 새 버전으로 돌아요`,
+    /** 홈의 `방금 있던 일` 한 줄 — 데몬이 AI 프로그램을 새 버전으로 바꿨다. */
+    doneEvent: (name: string, version: string) => `${name} 를 ${version} 으로 업데이트했어요`,
     appRestart: "재시작합니다 — 새 버전으로 다시 열려요",
     releasesLink: "릴리스 페이지에서 설치 파일 내려받기",
     retry: "다시 시도",

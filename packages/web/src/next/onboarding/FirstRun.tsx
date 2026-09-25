@@ -4,7 +4,7 @@ import type { InviteImportController } from "../../hooks/use-invite-import";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
 import { CheckIcon, Spin } from "../ui/icons";
-import { AlertIcon, CloseIcon, UploadIcon } from "./icons";
+import { AlertIcon, UploadIcon } from "./icons";
 import "./onboarding.css";
 
 /**
@@ -20,7 +20,6 @@ export function FirstRun({
   provider,
   invite,
   checking,
-  onClose,
 }: {
   daemon: Daemon;
   /** 설정이 고른 에이전트 — 로그인 명령이 에이전트마다 다르다. */
@@ -29,8 +28,6 @@ export function FirstRun({
   invite: InviteImportController;
   /** 게이트 검사가 도는 중(첫 상태 · 프로바이더 불일치 재검사). */
   checking: boolean;
-  /** 설정의 `다시 보기` 로 다시 열렸을 때만 있는 나가는 길. */
-  onClose?: () => void;
 }) {
   const steps = daemon.onboarding ?? [];
   const byId = new Map(steps.map((step) => [step.id, step]));
@@ -143,16 +140,6 @@ export function FirstRun({
 
   return (
     <div className="nx nx-ob" data-testid="next-first-run">
-      {onClose && (
-        <button
-          type="button"
-          className="nx-ibtn nx-ob-close"
-          aria-label={L.onboarding.close}
-          onClick={onClose}
-        >
-          <CloseIcon />
-        </button>
-      )}
       <div className="nx-ob-inner">
         <div className="nx-ob-logo" aria-hidden="true">
           <img src="/colonova-icon.svg" alt="" width={36} height={36} />
@@ -335,6 +322,8 @@ export function FirstRun({
               </div>
 
               {projects.length === 0 && !inviteImporting && (
+                // biome-ignore lint/a11y/noStaticElementInteractions: 드롭은 포인터의 일이다 — 키보드는 안의 `파일 고르기` 단추로 같은 곳에 닿는다.
+                // biome-ignore lint/a11y/noNoninteractiveElementInteractions: 위와 같다.
                 <div
                   className={`nx-drop${dropOver ? " nx-drop--over" : ""}`}
                   onDragOver={(event) => {

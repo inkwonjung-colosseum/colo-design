@@ -1,7 +1,7 @@
 import type { ProjectSummary } from "@colo-design/protocol";
 import { useRef, useState } from "react";
-import type { Attachment } from "../../components/chat/Composer";
 import type { Sessions } from "../../hooks/useSessions";
+import type { Attachment } from "../../lib/attachment";
 import type { Daemon } from "../../lib/daemon-client";
 import { Composer } from "../chat/Composer";
 import { L } from "../labels";

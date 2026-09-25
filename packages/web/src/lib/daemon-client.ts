@@ -1227,7 +1227,7 @@ export function useDaemon(url: string | null): Daemon {
           // is genuinely down. Show the connect screen; the retry below still
           // brings the app back if the daemon appears afterwards.
           setConnection("error");
-          setConnectionError("데몬에 연결하지 못했습니다 — 자동으로 다시 연결합니다.");
+          setConnectionError("연결하지 못했습니다 — 자동으로 다시 연결합니다.");
         } else {
           // 한 번은 붙었던 선이 끊긴 것 — 화면은 살아 있으니 ConnectScreen이
           // 아니라 "closed" 배너가 알린다. 백오프 재시도는 아래에서 계속 돈다.
