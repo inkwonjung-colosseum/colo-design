@@ -492,3 +492,46 @@ Shell · Sidebar(전환기 · 다른 프로젝트 줄 · 대화 목록 · 도구
 - 데몬 `start()` 가 5ca5253b 이후 `ProjectRegistry.load` · `machineSetting.load` 를 부르지
   않았다 — 다시 켜면 등록부와 기계 설정이 비어 보였다.
 - 픽스처 레포 `server.js` 의 따옴표가 깨져 미리보기가 뜨지 않았다.
+
+## 9. 남은 결함 — 고치기 계획 (2026-09-25)
+
+단계 8 의 `RESULT-2026-09-25.md` 가 남긴 것 가운데 **코드로 고칠 것**만 적는다. 결정이
+필요한 N6(막힘 판정까지 12분)과 실제 실행이 필요한 검증(GitHub 왕복 · OS 알림 · 웹뷰 ·
+실제 답)은 여기 없다. 줄 번호는 `lifecycle` 08a3a665 기준.
+
+### 9.1 원칙
+
+- 고치는 자리는 하나씩이고, 판정은 순수 함수로 떼어 시험을 붙인다(§5 와 같은 규칙).
+- 사용자 문자열은 `next/labels.ts` 만(금칙어 · 미참조 라벨 시험이 지킨다).
+- 웹 묶음과 데몬 묶음을 워크트리 둘로 나눠 병행한다 — 서로 닿는 파일이 없다.
+
+### 9.2 웹 묶음 (`ui-10w`) — 작음 일곱 + N3
+
+| # | 결함 | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- | --- |
+| W1 | N4 — 다시 제출하는 동안 `이번 작업` 이 「아직 제출하지 않았어요 … 제출을 눌러요」 | `next/status/WorkPopover.tsx` 제출 칸, `labels.ts:477 notSubmitted` | `RepoStatus.submit.phase` 가 `running` · `retrying` 이면 `submitCopy` 의 상태 문장(`제출하는 중…` · `다시 제출하는 중…`)을, `blocked` 면 막힌 이유를 쓴다. 문장은 `next/lib/submit-copy.ts` 에 `ledgerLine(submit)` 로 더한다 | `next-submit-copy.test.ts` 에 세 phase 케이스 |
+| W2 | 초대 파일 지우기 줄이 홈에 없음 — 가져온 직후의 첫 화면이 홈 | `next/Workspace.tsx:230` — `ProblemLine` 이 `nx-work`(대화 화면) 안에만 있다 | `ProblemLine` 을 두 화면 위로 올린다(홈 · 대화 공통, 상태 줄 아래 자리는 대화 화면에서 그대로). 홈에서는 헤더 자리에 같은 한 줄 | 렌더 판정 순수 함수 없음 — `next-cold.cjs` 과제 1 의 BLOCKED 걸음이 PASS 로 |
+| W3 | CLI 오류 원문(`Claude Code process exited with code 1`)이 답으로 보임 | `next/chat/Thread.tsx:358` `<Note tone="red">{block.detail}</Note>` | `lib/error-words.ts` 의 `errorWords(id)` · `koreanNoticeWords(raw)` 로 거른다 — 한국어 고지가 아니면 `L.vocab.aiFailed`(`AI가 답을 못 했어요`)로 바꾸고 원문은 접힌 `자세히` 로 | `next-thread.test.ts` 에 원문 → 문장 매핑 케이스 셋(한국어 고지 · 영문 원문 · 한도) |
+| W4 | 곧바로 실패한 보내기가 빈 「새 화면」 대화를 남김 | `hooks/useSessions.ts:355 startSession` → 첫 `send` 실패 | `startSession` 이 만든 세션의 **첫** 보내기가 실패하면(블록 0) `api.deleteSession` 으로 거두고 입력창 글은 남긴다(이미 남는다). 두 번째부터는 대화가 있으므로 그대로 | `useSessions` 는 훅이라 순수 판정 `shouldDiscardOnFirstFailure(blocks, sentCount)` 를 떼어 시험 |
+| W5 | 업데이트 뒤에도 「새 버전 N개 · 방금 확인」 이 남음 | `next/settings/SettingsDialog.tsx:127-199` `checkNote` 는 `지금 확인` 때만 계산 | `checkNote` 를 상태에서 파생한다 — `agentUpdates[*].phase === "done"` 또는 `hasNewerVersion` 이 거짓이 되면 지운다(`useEffect` 하나) | `next-update-row.test.ts` 에 done 뒤 문장 케이스 |
+| W6 | 모델 칩에 영어 모델 이름 | `next/chat/ModelChip.tsx:60-72` — `modelLabel` 이 카탈로그 라벨(영문)을 그대로 | 칩은 목업대로 `프로바이더 · 생각 시간` 만 보이고 모델 이름은 팝오버 안에서만 — 프로바이더가 하나면 `Claude · 보통` | 라벨 조립을 `chipLabel(provider, effort)` 로 떼어 시험 |
+| W7 | React 경고 `allowpopups={true}` | `components/preview/PreviewFrame.tsx:425` | `allowpopups=""` (webview 는 존재 여부만 본다) | 없음 — 콘솔 오류 0 이 `next-cold.cjs` 의 판정 |
+| W8 | **N3** — 실패 카드와 `다시 시도` 가 새로고침 뒤 사라짐 | 카드가 살아 있는 세션의 error 블록에서만 그려진다. 잃은 말은 데몬이 보관하고 `sessions.dropped`(`LostSend[]`, `queue.lost`)로 내려오지만 `next/chat/Composer.tsx:360` 만 읽는다 | `Thread.tsx` 가 이 대화의 `dropped` 항목마다 실패 카드를 그린다 — 사람 말 · `AI가 답을 못 했어요` · `다시 시도`(`queueTakeDropped` → 입력창에 되살려 보냄) · 첨부 수. 살아 있는 error 블록과 겹치면 하나만(같은 `id`) | `next-thread.test.ts` 에 `dropped` → 카드 목록 순수 함수 `failureCards(dropped, blocks)` |
+
+**끝.** `pnpm typecheck` · `pnpm test` · `next-cold.cjs` 과제 1 · 2 · 4 · 8 · 10 이 통과하고, 과제 1 의 BLOCKED 한 걸음이 PASS 가 된다.
+
+### 9.3 데몬 묶음 (`ui-10d`) — N1
+
+| # | 결함 | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- | --- |
+| D1 | 락파일 없는 레포에서 미리보기 명령(`pnpm dev`)이 스스로 설치해 `pnpm-lock.yaml`(무시 규칙이 없으면 `node_modules/` 까지)을 만들고, 감독자의 `commitPending` 이 그것을 「작업 이어 보관」 으로 커밋한다 | `cycle-supervisor.ts:677-686` — `core.diff()` 가 보는 전부를 `workspace.save` 가 `git add -- <paths>` 로 담는다(`repo-publish.ts:929`); 미리보기 환경은 `repo-bringup.ts:282, 504` | 둘 다 한다. ① 미리보기 · 설치 명령의 환경에 pnpm 의 실행 전 자동 설치를 끄는 설정을 넣는다(pnpm 11 의 `verify-deps-before-run` — `npm_config_verify_deps_before_run=false`; 실제 이름은 구현자가 pnpm 11 문서로 확인). ② 보관이 담을 경로를 거르는 순수 함수 `saveablePaths(diff, tracked)` — `node_modules/` 는 언제나 빼고, 레포가 **추적하지 않는** 락파일(`pnpm-lock.yaml` · `package-lock.json` · `yarn.lock` · `bun.lock(b)`)은 뺀다(추적 중인 락파일의 변경은 AI 가 의존성을 더한 정당한 변경이므로 담는다). 턴의 자동 보관과 `commitPending` 이 같은 함수를 읽는다 | `saveablePaths` 단위 시험(무시 규칙 없는 레포 · 추적 락파일 · 미추적 락파일 · node_modules) + `cycle-submit-flow.test.ts` 의 하네스에 「락파일 없는 픽스처」 케이스 |
+
+**끝.** 픽스처(락파일 없음)에서 준비 뒤 `git status` 가 깨끗하고 `제출` 확인이 「제출할 화면 0개」 를 말할 때 「화면 밖 변경 1건」 이 없다.
+
+### 9.4 순서와 크기
+
+1. `ui-10w` 웹 묶음(M — W8 이 절반)과 `ui-10d` 데몬 묶음(S)을 동시에.
+2. 둘을 `lifecycle` 에 합친 뒤 `next-cold.cjs` 전체를 한 번 더 돈다(재발 확인).
+3. 그다음이 실제 로그인의 `pnpm dev:desktop` 점검(README 깨끗한 기계 점검 1~9)이고, 그 뒤에 main.
+
+N6 은 예산 값 하나라 결정만 있으면 `budgets.ts` 의 제출 행을 줄이는 한 줄이다 — 권장은 3분 안팎.
