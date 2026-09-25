@@ -501,15 +501,7 @@ export class BringUp {
       shell: true,
       detached: !windows,
       stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        // The preview must never inherit a key that would bill API credit.
-        ANTHROPIC_API_KEY: undefined,
-        // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
-        // in its resources; those binaries win over whatever the planner's
-        // machine happens to have — or not have — on PATH.
-        PATH: extraPathPrefix(process.env.COLO_DESIGN_EXTRA_PATH),
-      },
+      env: repoCommandEnv(process.env),
     };
   }
 
@@ -570,6 +562,30 @@ export class BringUp {
       // bootstrap 은 스스로 phase 를 적는다 — 여기서 할 말이 없다.
     }
   }
+}
+
+/**
+ * 레포의 명령(설치 · 미리보기)이 물려받는 환경 — spawnOptions 가 쓰는 조립을
+ * 순수 함수로 떼어 시험이 읽는다.
+ */
+export function repoCommandEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    ...base,
+    // The preview must never inherit a key that would bill API credit.
+    ANTHROPIC_API_KEY: undefined,
+    // The desktop app bundles portable Node/pnpm (and MinGit on Windows)
+    // in its resources; those binaries win over whatever the planner's
+    // machine happens to have — or not have — on PATH.
+    PATH: extraPathPrefix(base.COLO_DESIGN_EXTRA_PATH, base),
+    // 콜드 리뷰 N1 (2026-09-25, PLAN-UI 9.3 D1): pnpm 11 은 run 앞에서
+    // 스스로 설치를 돌린다(기본값 verify-deps-before-run: "install") —
+    // 락파일 없는 레포에서 `pnpm dev` 하나로 pnpm-lock.yaml · node_modules/
+    // 가 생겨, 아무 것도 만들지 않은 사용자의 변경으로 보관되어 올라간다.
+    // 설치는 도구의 installIfNeeded 가 알아서 돌리므로 run 앞의 자동 설치는
+    // 끈다. pnpm 11.20 실험 및 dist 소스의 설정 읽기로 확인한 끄는 값 —
+    // pnpm 은 이 키를 pnpm_config_ 접두사로만 읽는다(npm_config_ 는 무시된다).
+    pnpm_config_verify_deps_before_run: "false",
+  };
 }
 
 /**
