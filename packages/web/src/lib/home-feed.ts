@@ -183,11 +183,15 @@ export function buildHomeFeed(
       });
     } else if (thread.state === "finished") {
       // ThreadSummary.updatedAt 은 실제 타임스탬프다(pending 과 달리) — 근사가
-      // 아니라 정확한 "얼마 전"을 보일 수 있다.
+      // 아니라 정확한 "얼마 전"을 보일 수 있다. 선로의 요약은 실패도 finished 로
+      // 부르므로, 살아 있는 세션 뷰가 error 를 말하면 사이드바와 같은 말을 쓴다(U10).
       done.push({
         sessionId: thread.id,
         title: thread.title,
-        line: "답이 왔어요 — 확인해 보세요",
+        line:
+          view?.state === "error"
+            ? "AI가 답을 못 했어요 — 다시 시도할 수 있어요"
+            : "답이 왔어요 — 확인해 보세요",
         at: Date.parse(thread.updatedAt) || 0,
       });
     }
