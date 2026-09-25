@@ -66,6 +66,8 @@ export class BringUp {
       // PLAN-UI U8: 처음 여는 프로젝트의 준비 — 아래의 전환 울타리가 설치까지는
       // 배경에서 잇게 한다.
       const firstPrep = !this.core.isCloned();
+      // 최신화 전의 단계 — 활성이 아닌 프로젝트는 아래 울타리에서 나가므로 그때 되돌린다.
+      const before = this.core.phase;
       if (firstPrep) {
         await this.killPreview();
         this.core.setPhase("cloning", null);
@@ -115,7 +117,14 @@ export class BringUp {
       // 설치는 예외다(PLAN-UI U8): 포트를 만지지 않는 설치를 배경에서 끝내
       // 두면 돌아왔을 때 미리보기 켜기만 남는다 — 미리보기는 startPreview 의
       // 울타리가 여전히 막고, 준비는 디스크의 ready 로 앉는다.
-      if (!this.core.active && !firstPrep) return this.core.snapshot();
+      if (!this.core.active && !firstPrep) {
+        // 떠난 프로젝트의 최신화는 여기서 끝난다. pulling 을 그대로 두면 사이드바가
+        // 그 프로젝트를 「준비 중」으로 계속 부른다(2026-09-25 콜드 리뷰 N2) —
+        // 최신화 전 단계로 돌아가고, 그것도 진행 단계였다면 ready 로 앉는다.
+        const settled = before === "pulling" || before === "cloning" ? "ready" : before;
+        this.core.setPhase(settled, null);
+        return this.core.snapshot();
+      }
       const installed = await this.installIfNeeded(config);
 
       /**
