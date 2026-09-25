@@ -378,7 +378,7 @@ export class RepoWorkspace {
    * 구간 밖의 개발자 글은 병합(mergeToolBlock) 쪽이 지킨다.
    */
   handoffToolBlock(
-    options: { shots?: HandoffShot[]; commentsFile?: string } = {},
+    options: { shots?: HandoffShot[]; commentsFile?: string; note?: string } = {},
   ): Promise<string> {
     return this.publish.handoffToolBlock(options);
   }

@@ -827,7 +827,8 @@ export class RequestRouter {
         // DiffStatus 를 돌려준다: 넘으면 "진행 중"(handing-off) — 의도는 원장에
         // 남아 다음 틱이 이어받는다.
         const active = this.requireActive();
-        active.supervisor.submit("button", message.sessionId);
+        // 확인 창의 한마디(PLAN-UI U3)는 의도와 함께 원장에 적힌다 — 본문의 `> 한마디:`.
+        active.supervisor.submit("button", message.sessionId, message.note || undefined);
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, SUBMIT_WAIT_MS);
           void active.supervisor.settled().then(() => {

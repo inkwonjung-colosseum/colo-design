@@ -23,6 +23,7 @@ import {
   type HandoffShot,
   type HandoffStatus,
   markTurn,
+  type RepoStatus,
   reviewToTurn,
 } from "@colo-design/protocol";
 import { BUDGETS, backoffDelay, markEscalated, resetBudget, spend } from "./budgets.js";
@@ -69,7 +70,7 @@ import {
 import { extractDeveloperReplies, replyFooter } from "./developer-replies.js";
 import { COLO_DESIGN_DIR } from "./environment.js";
 import type { GitHubClient, PullRequestRef } from "./github.js";
-import { mergeToolBlock, pickHandoffTitle } from "./handoff-body.js";
+import { mergeToolBlock, pickHandoffTitle, readToolNote } from "./handoff-body.js";
 import { type DaemonLogger, sanitizeText } from "./log.js";
 import type { RepoWorkspace } from "./repo.js";
 import type { RepoCore } from "./repo-core.js";
@@ -81,6 +82,13 @@ import {
   STASH_MESSAGE,
 } from "./repo-core.js";
 import { alignCycleBranch, pickCycleBranchName } from "./repo-publish.js";
+import {
+  advanceSubmitTrail,
+  classifySubmitError,
+  deriveSubmitPhase,
+  SUBMIT_LOG_MAX,
+  type SubmitBlockReason,
+} from "./submit-state.js";
 
 export type TickReason =
   | "timer"
@@ -164,6 +172,12 @@ export interface SupervisorDeps {
   resolveNotice?: (key: string) => void;
   /** 주의 재료가 바뀌었을 때 — fleet 이 상태를 다시 방송하는 신호. */
   onChange?: () => void;
+  /**
+   * 제출이 개발자 몫으로 막혔다(PLAN-UI U13) — 막힘에 새로 들어설 때 한 번만
+   * 부른다(국면은 원장의 submitTrail 에 남아 재시작을 넘는다). fleet 이
+   * `submit-blocked` 알림으로 잇는다.
+   */
+  onSubmitBlocked?: (reason: SubmitBlockReason) => void;
   /** L6 제출 — PR 제목의 프로젝트 이름 (레지스트리의 이름). */
   projectName: () => string;
   /** L6 제출 — 코멘트 저장소(comments.json)의 경로. PR 본문의 수정 요청 절. */
@@ -313,17 +327,95 @@ export class CycleSupervisor {
    * `sessionId` 는 완료 사건(cycle.handed)의 귀속줄 — 원장이 아니라 메모리에
    * 둔다(재시작 뒤엔 fleet 의 기본 귀속 규칙이 이어받는다).
    */
-  submit(via: "button" | "chat", sessionId?: string): void {
+  submit(via: "button" | "chat", sessionId?: string, note?: string): void {
     this.submitSessionId = sessionId ?? null;
+    const words = note?.trim() ? note.trim() : undefined;
     if (this.ledger.submit === null) {
       this.ledger = {
         ...this.ledger,
-        submit: { requestedAt: new Date(this.now()).toISOString(), via },
+        submit: {
+          requestedAt: new Date(this.now()).toISOString(),
+          via,
+          ...(words ? { note: words } : {}),
+        },
       };
       writeLedger(this.ledgerPath, this.ledger);
       this.log(`제출 의도 (${via})`);
+    } else if (words && this.ledger.submit.note !== words) {
+      // 도는 제출에 한마디를 더한 누름 — 의도는 하나 그대로, 말만 새것으로
+      // (PLAN-UI U3). 단계는 처음부터 다시 시작하지 않는다.
+      this.ledger = { ...this.ledger, submit: { ...this.ledger.submit, note: words } };
+      writeLedger(this.ledgerPath, this.ledger);
     }
+    this.syncSubmitTrail();
     void this.tick("manual");
+  }
+
+  /**
+   * 제출 상태 (PLAN-UI U13) — RepoStatus.submit 의 값. 국면은 원장에서 그 순간
+   * 판정하고(인증 만료는 살아 있는 값을 읽는다), 기록은 원장의 submitTrail 이다.
+   */
+  submitView(): NonNullable<RepoStatus["submit"]> {
+    const view = this.submitPhase();
+    return {
+      phase: view.phase,
+      attempts: view.attempts,
+      ...(view.lastError ? { lastError: view.lastError } : {}),
+      log: (this.ledger.submitTrail?.log ?? []).slice(-SUBMIT_LOG_MAX),
+    };
+  }
+
+  /**
+   * 새 연결 코드가 들어왔다(PLAN-UI U13) — 인증으로 막혀 있던 제출을 백오프를
+   * 기다리지 않고 곧바로 다시 시도한다. 옛 코드가 받은 인증 실패는 새 코드의
+   * 증거가 아니므로 그 분류와 창을 지운다 — 다시 실패하면 그때 다시 적힌다.
+   */
+  retrySubmitNow(): void {
+    const intent = this.ledger.submit;
+    if (intent === null) return;
+    const nowIso = new Date(this.now()).toISOString();
+    const nextIntent = { ...intent };
+    delete nextIntent.nextAttemptAt;
+    if (nextIntent.lastError === "auth") delete nextIntent.lastError;
+    const push = this.ledger.push;
+    const nextPush = push === null ? null : { ...push, nextAttemptAt: nowIso };
+    if (nextPush?.lastError === "auth") delete nextPush.lastError;
+    this.ledger = { ...this.ledger, submit: nextIntent, push: nextPush };
+    writeLedger(this.ledgerPath, this.ledger);
+    this.syncSubmitTrail();
+    void this.tick("manual");
+  }
+
+  private submitPhase() {
+    return deriveSubmitPhase({
+      intent: this.ledger.submit,
+      push: this.ledger.push,
+      budgets: this.ledger.budgets,
+      notices: this.ledger.notices,
+      authExpired: this.deps.githubAuthExpired(),
+    });
+  }
+
+  /**
+   * 제출 국면의 전이를 기록에 적는다 — 틱의 끝 · 제출의 진입 · 성공이 부른다.
+   * 막힘에 새로 들어선 전이만 알림(onSubmitBlocked)을 부른다: 국면이 원장에
+   * 남으므로 틱마다도, 재시작마다도 다시 울리지 않는다.
+   */
+  private syncSubmitTrail(succeeded = false): void {
+    const step = advanceSubmitTrail(
+      this.ledger.submitTrail,
+      this.submitPhase(),
+      new Date(this.now()).toISOString(),
+      succeeded,
+    );
+    if (!step.changed) return;
+    this.ledger = { ...this.ledger, submitTrail: step.trail };
+    writeLedger(this.ledgerPath, this.ledger);
+    if (step.blocked !== null) {
+      this.log(`제출 막힘 (${step.blocked})`);
+      this.deps.onSubmitBlocked?.(step.blocked);
+    }
+    this.deps.onChange?.();
   }
 
   private async runLoop(reason: TickReason): Promise<void> {
@@ -344,6 +436,15 @@ export class CycleSupervisor {
 
   /** 틱의 몸통 — 차선의 supervise 칸 안에서 돈다. */
   private async tickBody(reason: TickReason): Promise<void> {
+    try {
+      await this.tickLane(reason);
+    } finally {
+      // 제출 국면의 전이 — 조치(12행 푸시 · 13행 제출)와 알림이 모두 지나간 뒤.
+      this.syncSubmitTrail();
+    }
+  }
+
+  private async tickLane(reason: TickReason): Promise<void> {
     await this.deps.core.lane.run("supervise", async () => {
       // 옛 review-ledger.json 이 남아 있으면 첫 틱에서 원장으로 접는다 —
       // 마이그레이션 실패가 틱을 막지 않는다.
@@ -1473,9 +1574,9 @@ export class CycleSupervisor {
         });
         if (found && (found.state === "open" || found.state === "changes_requested")) pull = found;
       }
-      const block = await this.submitToolBlock();
       let handoff: HandoffStatus;
       if (pull === null) {
+        const block = await this.submitToolBlock(intent.note);
         // 제목은 생성할 때만 정한다 — 입양 · 다시 제출에서는 개발자의 것이다.
         const draft = await this.deps.workspace
           .handoffDraft({ commentsFile: this.deps.commentsFile() })
@@ -1499,6 +1600,11 @@ export class CycleSupervisor {
         if (current === null) {
           handoff = pull;
         } else {
+          // 한마디가 없는 다시 제출(채팅 · 두 번째 누름)은 지난 한마디를 지운다고
+          // 읽지 않는다 — 구간에 있던 말을 그대로 옮겨 싣는다(PLAN-UI U3).
+          const block = await this.submitToolBlock(
+            intent.note ?? readToolNote(current.body ?? "") ?? undefined,
+          );
           const body = mergeToolBlock(current.body ?? "", block);
           handoff =
             (current.body ?? "") === body
@@ -1524,6 +1630,7 @@ export class CycleSupervisor {
         budgets: resetBudget(resetBudget(this.ledger.budgets, "submit:pr"), "submit:commit"),
       };
       writeLedger(this.ledgerPath, this.ledger);
+      this.syncSubmitTrail(true);
       core.setCycle(branch, handoff);
       core.setDiff({ stage: "handed-off", handoff });
       this.deps.resolveNotice?.("submit:pr");
@@ -1536,6 +1643,7 @@ export class CycleSupervisor {
         at: new Date(this.now()).toISOString(),
         pr: handoff.number,
         ...(handoff.reviewers?.[0] ? { reviewer: handoff.reviewers[0] } : {}),
+        ...(intent.note ? { note: intent.note } : {}),
       };
       core.lane.outside(() =>
         this.deps.cycleEvent?.(handedEvent, this.submitSessionId ?? undefined),
@@ -1548,11 +1656,12 @@ export class CycleSupervisor {
   }
 
   /** PR 본문의 도구 구간 — 캡처는 이때 잡는(미리보기가 살아 있는 동안). */
-  private async submitToolBlock(): Promise<string> {
+  private async submitToolBlock(note?: string): Promise<string> {
     const shots = await this.deps.captureShots().catch(() => []);
     return await this.deps.workspace.handoffToolBlock({
       commentsFile: this.deps.commentsFile(),
       ...(shots.length > 0 ? { shots } : {}),
+      ...(note ? { note } : {}),
     });
   }
 
@@ -1595,6 +1704,7 @@ export class CycleSupervisor {
           ...intent,
           step,
           attempts: spentCount,
+          lastError: classifySubmitError(reason),
           nextAttemptAt: new Date(
             this.now() + backoffDelay(spentCount, BUDGETS.push.baseMs, BUDGETS.push.capMs),
           ).toISOString(),

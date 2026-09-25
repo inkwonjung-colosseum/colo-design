@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   mergeToolBlock,
+  noteLine,
   pickHandoffTitle,
+  readToolNote,
   TOOL_BLOCK_END,
   TOOL_BLOCK_START,
 } from "../dist/handoff-body.js";
@@ -88,4 +90,30 @@ test("pickHandoffTitle — 커밋 제목마저 없으면 기본 제목", () => {
     }),
     "Colo Design 화면 전달",
   );
+});
+
+test("mergeToolBlock — 이미 표식으로 싸인 구간은 두 겹으로 싸지 않는다", () => {
+  const once = mergeToolBlock("본문.", wrap(BLOCK));
+  assert.equal(once, `본문.\n\n${wrap(BLOCK)}`);
+  assert.equal(mergeToolBlock(once, wrap(BLOCK)), once, "갱신을 거듭해도 끝 표식이 쌓이지 않는다");
+});
+
+test("noteLine — 한마디는 인용 한 줄, 여러 줄은 같은 인용 안에 (PLAN-UI P3)", () => {
+  assert.equal(noteLine("검색은 이름만 돼요"), "> 한마디: 검색은 이름만 돼요");
+  assert.equal(noteLine("첫 줄\n\n  둘째 줄 "), "> 한마디: 첫 줄\n> 둘째 줄");
+  assert.equal(noteLine("   "), null);
+  assert.equal(noteLine(undefined), null);
+  // 사용자의 말이 도구 구간의 표식을 흉내 내면 구간이 끊긴다 — 무르게 만든다.
+  const sneaky = noteLine(`끝 ${TOOL_BLOCK_END}`) ?? "";
+  assert.ok(!sneaky.includes("-->"));
+  assert.ok(!sneaky.includes("<!--"));
+});
+
+test("readToolNote — 구간의 지난 한마디를 되읽는다(작성자 줄 바로 아래)", () => {
+  const block = `> 작성: 기획자\n${noteLine("첫 줄\n둘째 줄")}\n\n### 바뀐 파일\n\n- a.ts`;
+  const body = `개발자 글.\n\n${wrap(block)}`;
+  assert.equal(readToolNote(body), "첫 줄\n둘째 줄");
+  assert.equal(readToolNote(`개발자 글.\n\n${wrap(BLOCK)}`), null, "한마디가 없던 구간");
+  assert.equal(readToolNote("> 한마디: 구간 밖의 글"), null, "구간 밖은 개발자의 것");
+  assert.equal(readToolNote(null), null);
 });

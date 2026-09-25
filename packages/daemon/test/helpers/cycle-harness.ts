@@ -807,6 +807,10 @@ export interface SupervisedScene extends Scene {
   machineNotices: Array<{ op: "raise" | "resolve"; key: string; detail?: string }>;
   /** 설치 판정(15행) — 없으면 늘 최신. fleet 처럼 워크스페이스의 판정을 겨눌 수 있다. */
   installJudge: (() => boolean) | null;
+  /** onSubmitBlocked 가 모은 막힘 알림의 이유 (PLAN-UI U13) — 막힘마다 한 번. */
+  submitBlocked: string[];
+  /** 연결 코드 만료의 기록 — githubAuthExpired 가 읽는다(기본 false). */
+  authExpired: boolean;
 }
 
 /**
@@ -820,7 +824,10 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const github = new MemoryGitHub(remote);
   process.env.COLO_DESIGN_GITHUB_SLUG ??= "colo-design/harness";
   const urlChanges: Array<string | null> = [];
+  // PR 본문의 `> 작성:` 줄 — 장면의 authorName 을 워크스페이스도 읽는다.
+  let authorOf: () => string | null = () => null;
   const workspace = new RepoWorkspace({
+    authorName: () => authorOf(),
     root: clone.path,
     url: remote.path,
     onStatus: () => {},
@@ -848,7 +855,10 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     keepRejectedDays: 14,
     freeBytes: 100 * 1024 ** 3,
     installJudge: null as (() => boolean) | null,
+    authExpired: false,
   };
+  authorOf = () => scene.authorName;
+  const submitBlocked: string[] = [];
   const machineNotices: SupervisedScene["machineNotices"] = [];
   const briefs: string[] = [];
   const notices: Array<{ key: string; text: string; reason?: string }> = [];
@@ -877,7 +887,8 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       commentsFile: () => join(dirname(ledgerPath), "comments.json"),
       captureShots: () => Promise.resolve(scene.shots.slice()),
       github: () => new GitHubClient("harness-token", github),
-      githubAuthExpired: () => false,
+      githubAuthExpired: () => scene.authExpired,
+      onSubmitBlocked: (reason) => submitBlocked.push(reason),
       slug: () => core.repoSlug(),
       isActive: () => scene.active,
       openThread: async () => (scene.refuseThread ? null : { send: (text) => briefs.push(text) }),
@@ -980,6 +991,13 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       scene.installJudge = v;
     },
     machineNotices,
+    submitBlocked,
+    get authExpired() {
+      return scene.authExpired;
+    },
+    set authExpired(v: boolean) {
+      scene.authExpired = v;
+    },
     setNow: (ms) => {
       nowMs = ms;
     },

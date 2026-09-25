@@ -22,6 +22,17 @@ export interface ScreenMapRow {
   sha: string;
   routes: string[];
   files: string[];
+  /**
+   * 그 턴의 화면을 미리보기 안의 경로로 고른 것과 AI 가 링크에 붙인 제목
+   * (PLAN-UI U2 — `이번 작업` 의 바뀐 화면). 제목을 모르면 빈 문자열이다.
+   * routes 는 날것 그대로 둔다 — 핀의 관찰 후보가 그 값으로 찾는다. 옛 행에는 없다.
+   */
+  screens?: Array<{ route: string; title: string }>;
+}
+
+/** 지도 전부 — 오래된 행부터. 없거나 깨진 파일은 빈 목록이다. */
+export function readScreenMap(projectRoot: string): Promise<ScreenMapRow[]> {
+  return readRows(join(projectRoot, "screen-map.jsonl"));
 }
 
 function readRows(file: string): Promise<ScreenMapRow[]> {

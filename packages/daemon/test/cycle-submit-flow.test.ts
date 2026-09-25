@@ -282,3 +282,155 @@ test("빈 본문의 열린 PR 입양 — GitHub 의 null 본문에도 도구 구
     await scene.dispose();
   }
 });
+
+// ————— PLAN-UI 단계 4 — 한마디(U3) · 제출 상태와 기록(U13) —————
+
+test("한마디 — 작성자 줄 바로 아래 `> 한마디:`, 영수증 사건에도 실린다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    scene.authorName = "기획자";
+    await cycleWith(scene);
+    scene.supervisor.submit("button", undefined, "검색은 이름만 돼요");
+    await scene.supervisor.settled();
+    const number = scene.core.openHandoff?.number;
+    assert.ok(number);
+    const body = scene.github.pull(number)?.body ?? "";
+    assert.ok(
+      body.includes("> 작성: 기획자\n> 한마디: 검색은 이름만 돼요"),
+      `한마디는 작성자 줄 바로 아래 — ${body}`,
+    );
+    const handed = scene.chatEvents.find((event) => event.kind === "cycle.handed");
+    assert.equal(handed?.note, "검색은 이름만 돼요");
+
+    // 한마디 없는 다시 제출(채팅) — 지난 한마디가 구간에 그대로 남는다.
+    await commit(scene, { "screen2.tsx": "export default () => null;\n" }, "두 번째 화면");
+    scene.supervisor.submit("chat");
+    await scene.supervisor.settled();
+    assert.ok((scene.github.pull(number)?.body ?? "").includes("> 한마디: 검색은 이름만 돼요"));
+
+    // 새 한마디로 다시 제출 — 같은 요청의 구간이 새 말로 바뀐다.
+    await commit(scene, { "screen3.tsx": "export default () => null;\n" }, "세 번째 화면");
+    scene.supervisor.submit("button", undefined, "색도 바꿨어요");
+    await scene.supervisor.settled();
+    const after = scene.github.pull(number)?.body ?? "";
+    assert.ok(after.includes("> 한마디: 색도 바꿨어요"));
+    assert.ok(!after.includes("검색은 이름만"), "옛 한마디는 새 말로 바뀐다");
+    assert.equal(after.split("colo-design:end").length - 1, 1, "구간의 끝 표식은 하나");
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("채팅 제출은 한마디 없이 그대로 간다 — 줄도 사건의 note 도 없다", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    scene.supervisor.submit("chat");
+    await scene.supervisor.settled();
+    const body = scene.github.pull(scene.core.openHandoff?.number ?? 0)?.body ?? "";
+    assert.ok(!body.includes("한마디"));
+    const handed = scene.chatEvents.find((event) => event.kind === "cycle.handed");
+    assert.ok(handed);
+    assert.equal(handed.note, undefined);
+    assert.equal(scene.supervisor.submitView().phase, "idle");
+    assert.deepEqual(
+      scene.supervisor.submitView().log.map((line) => line.text),
+      ["제출했어요"],
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("제출 상태 — 잠깐 실패는 retrying, 예산이 다하면 blocked 와 알림 한 번, 풀리면 제출했어요", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    scene.github.failPullCreates();
+    scene.supervisor.submit("button");
+    await scene.supervisor.settled();
+    let view = scene.supervisor.submitView();
+    assert.equal(view.phase, "retrying");
+    assert.equal(view.attempts, 1);
+    assert.deepEqual(
+      view.log.map((line) => line.text),
+      ["다시 제출하는 중"],
+    );
+
+    const advance = async () => {
+      const intent = ledgerOf(scene).submit;
+      assert.ok(intent?.nextAttemptAt);
+      scene.setNow(Date.parse(intent.nextAttemptAt) + 1000);
+      await scene.supervisor.tick("manual");
+    };
+    for (let i = 0; i < 4; i += 1) await advance();
+    view = scene.supervisor.submitView();
+    assert.equal(view.phase, "blocked");
+    assert.equal(view.attempts, 5);
+    assert.ok(view.lastError);
+    assert.deepEqual(scene.submitBlocked, ["developer-notified"]);
+
+    // 막힌 채 더 도는 틱 · 재시작은 다시 울리지 않는다 — 국면이 원장에 산다.
+    await advance();
+    const reborn = scene.respawn();
+    await reborn.tick("start");
+    assert.deepEqual(scene.submitBlocked, ["developer-notified"], "막힘마다 한 번");
+    assert.equal(ledgerOf(scene).submitTrail?.phase, "blocked");
+
+    // 개발자가 풀었다 — 도구의 다음 시도가 선다.
+    scene.github.healPullCreates();
+    const intent = ledgerOf(scene).submit;
+    assert.ok(intent?.nextAttemptAt);
+    scene.setNow(Date.parse(intent.nextAttemptAt) + 1000);
+    await reborn.tick("manual");
+    view = reborn.submitView();
+    assert.equal(view.phase, "idle");
+    assert.deepEqual(
+      view.log.map((line) => line.text),
+      ["다시 제출하는 중", "제출하지 못했어요 — 개발자에게 알렸어요", "제출했어요"],
+    );
+    assert.deepEqual(
+      ledgerOf(scene).submitTrail?.log.map((line) => line.text),
+      view.log.map((line) => line.text),
+      "기록은 cycle.json 에 남는다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
+test("제출 상태 — 연결 코드 만료는 auth 막힘, 새 코드가 오면 기다리지 않고 다시 제출", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    await cycleWith(scene);
+    await scene.git(["push", "-u", "origin", BRANCH]);
+    scene.authExpired = true;
+    scene.github.failPullCreates();
+    scene.supervisor.submit("button");
+    await scene.supervisor.settled();
+    const view = scene.supervisor.submitView();
+    assert.equal(view.phase, "blocked");
+    assert.equal(view.lastError, "auth");
+    assert.deepEqual(scene.submitBlocked, ["auth"]);
+
+    // 새 초대 파일(새 연결 코드) — 백오프 창 안이어도 곧바로 다시 제출한다.
+    scene.authExpired = false;
+    scene.github.healPullCreates();
+    scene.supervisor.retrySubmitNow();
+    await scene.supervisor.settled();
+    assert.equal(ledgerOf(scene).submit, null, "제출이 끝났다");
+    assert.ok(scene.core.openHandoff);
+    assert.deepEqual(
+      scene.supervisor.submitView().log.map((line) => line.text),
+      [
+        "제출하지 못했어요 — 개발자에게 알렸어요",
+        "개발자가 풀었어요 — 도구가 다시 제출해요",
+        "제출했어요",
+      ],
+    );
+    assert.deepEqual(scene.submitBlocked, ["auth"]);
+  } finally {
+    await scene.dispose();
+  }
+});

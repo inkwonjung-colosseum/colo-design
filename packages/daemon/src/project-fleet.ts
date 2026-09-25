@@ -24,10 +24,15 @@ import type { DriverRegistry } from "./agent/registry.js";
 import { AutoThreads } from "./auto-thread.js";
 import { type BringUpEpisode, nextBringUpBrief } from "./bring-up-briefs.js";
 import { captureTargets, readComments } from "./comments.js";
-import { COMMON_INSTRUCTIONS, turnSubjectOf } from "./common-instructions.js";
+import {
+  COMMON_INSTRUCTIONS,
+  commentReflectionSubject,
+  turnSubjectOf,
+} from "./common-instructions.js";
 import { mergeNpmrc, npmrcPath } from "./credentials.js";
 import { DEFAULT_KEEP_REJECTED_DAYS } from "./cycle-hygiene.js";
 import { cycleLedgerFile } from "./cycle-ledger.js";
+import { CycleScreens, screensOfTurn } from "./cycle-screens.js";
 import { CycleSupervisor } from "./cycle-supervisor.js";
 import { type DeveloperNotice, describeProblem } from "./developer-notice.js";
 import type { GitHubClient } from "./github.js";
@@ -153,6 +158,8 @@ export class ProjectFleet {
     string,
     { slug: string; count: number; pr: number; reviews: DeveloperReview[] }
   >();
+  /** 프로젝트별 바뀐 화면 캐시 (PLAN-UI U2) — 스냅샷의 cycleScreens 가 읽는다. */
+  private readonly cycleScreens = new Map<string, CycleScreens>();
   /** 도구가 여는 대화 — 클론마다 한 줄로 연다(auto-thread.ts). */
   private readonly autoThreads: AutoThreads;
   /**
@@ -257,9 +264,22 @@ export class ProjectFleet {
         resolveNotice: (key) => void this.deps.developerNotice.resolve(key, slug),
         // 주의 (PLAN L8): 감독자 · 게이트 · 준비 복구의 재료를 한 곳에서 모은다.
         attention: () => this.attentionFor(workspaces),
+        // 이번 작업 (PLAN-UI U2 · U13): 바뀐 화면은 캐시에서, 제출 상태는 감독자에서.
+        cycleView: () => ({
+          cycleScreens: this.cycleScreens.get(slug)?.current() ?? [],
+          ...(workspaces.supervisor ? { submit: workspaces.supervisor.submitView() } : {}),
+        }),
       }),
       supervisor: null as unknown as CycleSupervisor,
     };
+    this.cycleScreens.set(
+      slug,
+      new CycleScreens({
+        core: workspaces.repo.repoCore(),
+        projectRoot: paths.root,
+        onChange: () => workspaces.repo.repoCore().emit(),
+      }),
+    );
     // 감독자 (PLAN L2 · 단계 2c) — 워크스페이스와 같은 뿌리(core)를 공유하고,
     // 도구가 시작한 조작의 충돌은 core.onToolConflict 로 여기 도착한다.
     const projectName = this.deps.registry.get(slug)?.name ?? slug;
@@ -286,6 +306,14 @@ export class ProjectFleet {
         void this.deps.developerNotice.raise({ key, slug: null, ...describeProblem(key, detail) }),
       resolveMachineNotice: (key) => void this.deps.developerNotice.resolve(key, null),
       onChange: () => workspaces.repo.repoCore().emit(),
+      // PLAN-UI U13: 제출이 개발자 몫으로 막혔다 — 막힘마다 한 번(감독자가 원장으로 센다).
+      onSubmitBlocked: (reason) =>
+        this.deps.notice({
+          kind: "submit-blocked",
+          slug,
+          title: this.deps.registry.get(slug)?.name ?? slug,
+          reason,
+        }),
       // PLAN L2 흡수표 — 폴러가 하던 사람에게 보이는 일은 감독자가 이
       // 콜백으로 옮겨 부른다. PR 상태 변화는 사이드바의 마지막 사건과
       // 알림으로, 새 리뷰는 자동 반영 턴으로.
@@ -765,7 +793,8 @@ export class ProjectFleet {
     let commit: string | null = null;
     try {
       const status = await workspaces.repo.save({
-        message: `개발자 요청 자동 반영 — 리뷰 코멘트 ${pending.count}건`,
+        // PLAN-UI U9 · U14: 작업 기록이 세는 제목 — `코멘트 반영 — <첫 코멘트>`.
+        message: commentReflectionSubject(pending.reviews[0]?.body ?? ""),
         sessionId,
         onSessionTurn: (brief: string) => {
           this.deps.notice({
@@ -855,11 +884,20 @@ export class ProjectFleet {
       if (screenRoutes !== undefined && screenRoutes.length > 0) {
         const head = await workspaces.repo.headCommitFiles().catch(() => null);
         if (head !== null && head.files.length > 0) {
+          // 바뀐 화면(PLAN-UI U2)의 재료 — 경로와, 답변 링크가 붙인 제목.
+          const previewUrl = workspaces.repo.repoCore().previewUrl;
+          let origin: string | null = null;
+          try {
+            origin = previewUrl ? new URL(previewUrl).origin : null;
+          } catch {
+            origin = null;
+          }
           await appendScreenMap(workspaces.paths.root, {
             at: new Date().toISOString(),
             sha: head.sha,
             routes: screenRoutes,
             files: head.files,
+            screens: screensOfTurn(screenRoutes, session.lastAssistantText, origin),
           }).catch(() => undefined);
         }
       }

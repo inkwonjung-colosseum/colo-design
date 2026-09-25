@@ -17,6 +17,7 @@ import { readComments } from "./comments.js";
 import {
   buildCommentsSection,
   buildFilesSection,
+  noteLine,
   TOOL_BLOCK_END,
   TOOL_BLOCK_START,
 } from "./handoff-body.js";
@@ -545,15 +546,20 @@ export class PublishCycle {
       shots?: HandoffShot[];
       /** D93: 코멘트 저장소 — `### 수정 요청` 절의 재료. */
       commentsFile?: string;
+      /** 제출 확인의 `개발자에게 한마디`(PLAN-UI U3) — 작성자 줄 바로 아래. */
+      note?: string;
     } = {},
   ): Promise<string> {
     const branch = this.core.branch;
     if (!branch) return "";
     const sections: string[] = [];
     // P1-3: 작성자 줄 — 요청은 봇 계정으로 열리므로 이름이 없으면 개발자가 누구
-    // 작업인지 모른다.
+    // 작업인지 모른다. 한마디(P3)는 같은 인용 안의 다음 줄이다.
     const author = this.core.authorName?.();
-    if (author) sections.push(`> 작성: ${author}`);
+    const byline = [author ? `> 작성: ${author}` : null, noteLine(options.note)]
+      .filter((line): line is string => line !== null)
+      .join("\n");
+    if (byline) sections.push(byline);
     try {
       const filesSection = buildFilesSection(
         await this.core.git([

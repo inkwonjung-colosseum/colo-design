@@ -63,6 +63,19 @@ export interface CyclePendingRejection {
   since: string;
 }
 
+/** 제출 실패의 분류 — 푸시의 분류와 같은 네 말. */
+export type SubmitErrorKind = "auth" | "network" | "rejected" | "other";
+
+/** 제출 상태의 네 국면(PLAN-UI U13) — RepoStatus.submit.phase 와 같은 말. */
+export type SubmitPhase = "idle" | "running" | "retrying" | "blocked";
+
+export interface CycleSubmitTrail {
+  /** 마지막으로 기록한 국면 — 막힘의 "한 번" 이 이 값의 전이로 판정된다. */
+  phase: SubmitPhase;
+  /** 제출 기록 — 오래된 것부터, 최근 몇 줄만. */
+  log: Array<{ at: string; text: string }>;
+}
+
 export interface CyclePushState {
   /** 밀림이 처음 관찰된 순간 — 1시간 알림의 기준점. */
   behindSince: string;
@@ -100,7 +113,20 @@ export interface CycleLedger {
     nextAttemptAt?: string;
     /** 요청한 리뷰어 — 이 목록이 바뀐 경우에만 다시 요청한다. */
     reviewers?: string[];
+    /**
+     * 제출 확인의 `개발자에게 한마디`(PLAN-UI U3) — 요청 본문의 `> 한마디:` 줄과
+     * 영수증 사건이 읽는다. 재시작 뒤의 이어받기도 같은 말을 싣도록 원장에 둔다.
+     */
+    note?: string;
+    /** 마지막으로 실패한 단계의 분류(PLAN-UI U13) — 제출 상태의 lastError 재료. */
+    lastError?: SubmitErrorKind;
   } | null;
+  /**
+   * 제출 기록(PLAN-UI U13) — 마지막으로 적은 제출 상태와 최근 줄들. 의도(submit)는
+   * 성공과 함께 지워지므로 기록은 따로 산다: 재시작해도 `이번 작업` 의 제출
+   * 기록과 "막힘 알림은 한 번" 이 이어진다. 옛 원장에는 없다.
+   */
+  submitTrail?: CycleSubmitTrail;
   push: CyclePushState | null;
   pendingOp: CyclePendingOp | null;
   /**
@@ -286,7 +312,35 @@ function parseSubmit(raw: unknown): CycleLedger["submit"] {
   if (attempts !== null && attempts >= 0) submit.attempts = attempts;
   if (nextAttemptAt !== null) submit.nextAttemptAt = nextAttemptAt;
   if (reviewers !== null) submit.reviewers = reviewers;
+  const note = asString(record.note);
+  if (note !== null && note.trim() !== "") submit.note = note;
+  const lastError = asString(record.lastError);
+  if (
+    lastError === "auth" ||
+    lastError === "network" ||
+    lastError === "rejected" ||
+    lastError === "other"
+  ) {
+    submit.lastError = lastError;
+  }
   return submit;
+}
+
+function parseSubmitTrail(raw: unknown): CycleSubmitTrail | null {
+  const record = asRecord(raw);
+  if (record === null) return null;
+  const phase = asString(record.phase);
+  if (phase !== "idle" && phase !== "running" && phase !== "retrying" && phase !== "blocked") {
+    return null;
+  }
+  const log: CycleSubmitTrail["log"] = [];
+  for (const item of Array.isArray(record.log) ? record.log : []) {
+    const entry = asRecord(item);
+    const at = asString(entry?.at);
+    const text = asString(entry?.text);
+    if (at !== null && text !== null) log.push({ at, text });
+  }
+  return { phase, log };
 }
 
 function parsePush(raw: unknown): CyclePushState | null {
@@ -545,11 +599,13 @@ export function parseLedger(raw: unknown): CycleLedger {
     parseNotices(record.notices),
     parseReviews(record.reviews),
   );
+  const submitTrail = parseSubmitTrail(record.submitTrail);
   return {
     v: 1,
     ended: parseEnded(record.ended),
     lastPr: parseLastPr(record.lastPr),
     submit: parseSubmit(record.submit),
+    ...(submitTrail === null ? {} : { submitTrail }),
     push: parsePush(record.push),
     pendingOp: parsePendingOp(record.pendingOp),
     reviews,
