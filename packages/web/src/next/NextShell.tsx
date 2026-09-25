@@ -25,6 +25,8 @@ export interface NextShellProps {
   /** 설정의 `다시 보기` 가 처음 화면을 다시 연다. */
   onboardingOpen: boolean;
   onOnboardingClose: () => void;
+  /** 설정 대화상자(단계 6)가 저장하는 손 — App 의 설정 상태로 간다. */
+  onSettingsChange: (patch: Partial<Settings>) => void;
 }
 
 /**

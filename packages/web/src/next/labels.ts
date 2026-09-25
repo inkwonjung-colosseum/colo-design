@@ -649,6 +649,7 @@ export const L = {
   settings: {
     title: "설정",
     ai: "AI",
+    aiSub: "다음 새 대화가 쓰는 AI",
     unavailable: (n: number) => `쓸 수 없는 AI ${n}`,
     notInstalled: "설치되지 않았어요 · 없어도 모든 일이 돼요",
     install: "설치",
@@ -678,6 +679,12 @@ export const L = {
     openFolder: "폴더 열기",
     dailyLog: "하루 로그",
     openLogFolder: "로그 폴더 열기",
+    loggedIn: "로그인됨",
+    installing: (line: string) => `설치하는 중 · ${line}`,
+    testSent: "보냈어요",
+    testBlocked: (reason?: string) =>
+      reason ? `컴퓨터가 알림을 막았어요 — ${reason}` : "컴퓨터가 알림을 막았어요",
+    testNotifyBody: "실제 알림은 이렇게 도착해요",
     close: "닫기",
     save: "저장",
   },
@@ -702,8 +709,25 @@ export const L = {
     stepDone: "설치를 마쳤어요",
     doneToast: (name: string, version: string) =>
       `${name} ${version} · 다음 새 대화부터 새 버전으로 돌아요`,
-    doneEvent: (name: string, version: string) =>
-      `${name}를 ${version}로 업데이트했어요 — 다음 새 대화부터 새 버전이에요`,
+    appRestart: "재시작합니다 — 새 버전으로 다시 열려요",
+    releasesLink: "릴리스 페이지에서 설치 파일 내려받기",
+    retry: "다시 시도",
+    useNextTime: "새 버전은 다음 새 대화부터 써요",
     current: (version: string) => `현재 ${version}`,
+    appAvailable: (to: string) => `새 버전 ${to} 있어요`,
+    app: "앱",
   },
+} as const;
+
+/**
+ * 개발자용 폴드의 문장(U12 · J5) — `L` 의 금칙어 검사에서 빠진다. 진단 줄은
+ * 개발자의 어휘(데몬 · 프로토콜)로 쓰는 것이 읽는 사람을 위한 것이므로.
+ * `test/next-labels.test.ts` 가 이 export 를 금칙어 검사에서 건너뛴다.
+ */
+export const DEV = {
+  daemonLine: (protocol: number, connected: boolean) =>
+    `데몬 · ${connected ? "정상" : "연결 안 됨"} · 프로토콜 v${protocol}`,
+  activeProject: (repo: string | null, ready: boolean) =>
+    `활성 프로젝트 · ${repo ?? "-"} · 미리보기 ${ready ? "준비됨" : "대기"}`,
+  selfUpdateNote: "AI 프로그램의 자기 업데이트는 꺼 두고 이 앱이 대신 맡아요",
 } as const;
