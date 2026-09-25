@@ -308,6 +308,11 @@ export interface RepoWorkspaceOptions {
    * 감독자 · 게이트 · 준비 복구의 상태를 모아 넣는다. 없으면 주의는 없다.
    */
   attention?: () => Attention | null;
+  /**
+   * 이번 작업의 두 조각 (PLAN-UI U2 · U13) — 바뀐 화면과 제출 상태. fleet 이
+   * 화면 캐시와 감독자에서 모아 넣는다. 동기로 읽히므로 캐시된 값만 돌려준다.
+   */
+  cycleView?: () => Pick<RepoStatus, "cycleScreens" | "submit">;
 }
 
 export class RepoCore {
@@ -427,6 +432,8 @@ export class RepoCore {
 
   /** 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. */
   readonly attention: (() => Attention | null) | null;
+  /** 이번 작업의 두 조각 (PLAN-UI U2 · U13) — 스냅샷이 싣는다. */
+  readonly cycleView: (() => Pick<RepoStatus, "cycleScreens" | "submit">) | null;
   /** 넘긴 요청에 적을 작성자 이름 — 커밋 fallback 이름과 PR 본문이 읽는다(P1-3). */
   readonly authorName: (() => string | null) | null;
 
@@ -475,6 +482,8 @@ export class RepoCore {
     active?: boolean;
     /** 이 프로젝트의 주의 (PLAN L8) — 스냅샷이 읽는 재료의 묶음. */
     attention?: () => Attention | null;
+    /** 이번 작업의 두 조각 (PLAN-UI U2 · U13) — 스냅샷이 싣는다. */
+    cycleView?: () => Pick<RepoStatus, "cycleScreens" | "submit">;
   }) {
     this.root = options.root;
     this.url = options.url;
@@ -492,6 +501,7 @@ export class RepoCore {
     this.authorName = options.authorName ?? null;
     this.reviewers = options.reviewers ?? null;
     this.attention = options.attention ?? null;
+    this.cycleView = options.cycleView ?? null;
     this.active = options.active ?? true;
   }
 
@@ -1413,6 +1423,7 @@ export class RepoCore {
       baseBranch: this.baseBranch,
       handoff: this.openHandoff,
       attention: this.attention?.() ?? null,
+      ...(this.cycleView?.() ?? {}),
       pendingChanges: this.pendingChanges,
       errorKind: this.errorKind,
       commands: this.config

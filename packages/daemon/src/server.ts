@@ -460,7 +460,11 @@ export class DaemonServer {
       // Every live workspace re-arms at once; a project the planner has not
       // touched this run gets the token when it is next activated.
       onToken: (pat) => {
-        for (const workspaces of this.fleet.workspaces.values()) workspaces.repo.setPat(pat);
+        for (const workspaces of this.fleet.workspaces.values()) {
+          workspaces.repo.setPat(pat);
+          // PLAN-UI U13: 인증으로 막혔던 제출은 새 코드로 곧바로 다시 간다.
+          if (pat) workspaces.supervisor.retrySubmitNow();
+        }
       },
       // 데몬이 본 GitHub 401(또는 그 뒤의 회복) — 판정이 바뀔 때만 status 를
       // 다시 방송한다. 웹의 만료 카드는 이 방송 하나로 열리고 닫힌다.

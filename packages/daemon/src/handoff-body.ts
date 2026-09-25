@@ -125,7 +125,13 @@ export const TOOL_BLOCK_END = "<!-- colo-design:end -->";
  */
 export function mergeToolBlock(existing: string | null, block: string): string {
   const base = existing ?? "";
-  const wrapped = `${TOOL_BLOCK_START}\n${block.replace(/\n+$/, "")}\n${TOOL_BLOCK_END}`;
+  // 이미 표식으로 싸인 구간(handoffToolBlock 의 결과)은 다시 싸지 않는다 —
+  // 두 겹이 되면 갱신마다 짝 잃은 끝 표식이 본문에 하나씩 쌓인다.
+  const inner = block.replace(/\n+$/, "");
+  const wrapped =
+    inner.startsWith(TOOL_BLOCK_START) && inner.endsWith(TOOL_BLOCK_END)
+      ? inner
+      : `${TOOL_BLOCK_START}\n${inner}\n${TOOL_BLOCK_END}`;
   const pattern = new RegExp(
     `${escapeRegExp(TOOL_BLOCK_START)}[\\s\\S]*?${escapeRegExp(TOOL_BLOCK_END)}\\s*`,
     "g",
@@ -149,6 +155,49 @@ export function mergeToolBlock(existing: string | null, block: string): string {
     })
     .replace(/\s+$/, "");
 }
+/** 한마디 줄의 머리 — 요청 본문에서 작성자 줄 바로 아래에 선다(PLAN-UI P3). */
+const NOTE_PREFIX = "> 한마디: ";
+
+/**
+ * 제출 확인의 `개발자에게 한마디`(PLAN-UI U3)를 본문의 인용 줄로 — 순수 함수.
+ * 여러 줄이면 줄마다 `> ` 를 이어 한 인용 안에 둔다. 도구 구간의 표식처럼 읽힐
+ * 수 있는 HTML 주석은 무르게 만든다 — 사용자의 말이 구간을 끊으면 다음 갱신이
+ * 개발자의 글을 지운다. 빈 말은 null(줄이 서지 않는다).
+ */
+export function noteLine(note: string | null | undefined): string | null {
+  const lines = (note ?? "")
+    .replace(/<!--/g, "<!—")
+    .replace(/-->/g, "—>")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  if (lines.length === 0) return null;
+  return lines
+    .map((line, index) => (index === 0 ? `${NOTE_PREFIX}${line}` : `> ${line}`))
+    .join("\n");
+}
+
+/**
+ * 열린 요청 본문의 도구 구간에서 지난 한마디를 되읽는다 — 한마디 없이 다시
+ * 제출할 때 그 말을 잃지 않게. 없으면 null.
+ */
+export function readToolNote(body: string | null): string | null {
+  const text = body ?? "";
+  const start = text.indexOf(TOOL_BLOCK_START);
+  if (start === -1) return null;
+  const end = text.indexOf(TOOL_BLOCK_END, start);
+  const lines = text.slice(start, end === -1 ? undefined : end).split(/\r?\n/);
+  const first = lines.findIndex((line) => line.startsWith(NOTE_PREFIX));
+  if (first === -1) return null;
+  const out = [lines[first]?.slice(NOTE_PREFIX.length) ?? ""];
+  for (const line of lines.slice(first + 1)) {
+    if (!line.startsWith("> ")) break;
+    out.push(line.slice(2));
+  }
+  const note = out.join("\n").trim();
+  return note === "" ? null : note;
+}
+
 /** 정규식 특수문자를 피한다 — 표식은 고정 문장이지만 이스케이프가 재사용을
  *  안전하게 만든다. */
 function escapeRegExp(text: string): string {

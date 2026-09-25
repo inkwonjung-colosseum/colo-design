@@ -105,6 +105,34 @@ export function meaningfulFirstLine(text: string): string {
 export function turnSubjectOf(text: string | null): { message: string } | Record<string, never> {
   const { marker } = readTurn(text ?? "");
   if (marker?.kind === "gate" || marker?.kind === "error" || marker?.kind === "brief") return {};
+  // 코멘트 반영 턴은 제목이 고정된 모양이다(PLAN-UI U9) — 작업 기록이 이 머리로 센다.
+  if (marker?.kind === "review")
+    return { message: commentReflectionSubject(firstReviewBody(text ?? "")) };
   const line = meaningfulFirstLine(text ?? "");
   return line ? { message: line.slice(0, 80) } : {};
+}
+
+/** 코멘트 반영 커밋 제목의 머리 (PLAN-UI U9 · U14) — 웹의 작업 기록이 이것으로 센다. */
+export const COMMENT_REFLECTION_PREFIX = "코멘트 반영 — ";
+
+/**
+ * 개발자 코멘트를 반영한 턴의 커밋 제목 — `코멘트 반영 — <첫 코멘트의 글>`.
+ * 줄바꿈 · 겹친 공백은 한 칸으로, 80자에서 자른다(사람의 턴 제목과 같은 상한).
+ * 글이 비면 `개발자 코멘트` 로 채운다 — 머리만 남은 제목은 읽을 것이 없다.
+ */
+export function commentReflectionSubject(comment: string): string {
+  const words = comment.replace(/\s+/g, " ").trim();
+  return `${COMMENT_REFLECTION_PREFIX}${words || "개발자 코멘트"}`.slice(0, 80);
+}
+
+/**
+ * 반영 턴 본문의 첫 코멘트 글 — reviewToTurn 이 쓰는 `1. <작성자> (#<id>)[ (<자리>)]: <글>`
+ * 줄에서. 모양이 다르면 빈 문자열(제목은 폴백 말로 선다).
+ */
+function firstReviewBody(text: string): string {
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^1\. \S+ \(#\d+\)(?: \([^)]*\))?: (.*)$/.exec(line.trim());
+    if (match) return match[1] ?? "";
+  }
+  return "";
 }
