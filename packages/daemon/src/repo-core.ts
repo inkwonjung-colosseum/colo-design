@@ -87,9 +87,9 @@ export const HANDOFF_DRAFT_TIMEOUT_MS = 8_000;
  * problem when the planner pressed 저장.
  */
 export const GATE_BRIEF: Record<"commit" | "push" | "pr", string> = {
-  commit: "저장할 변경을 커밋하지 못했습니다.",
-  push: "저장한 변경을 올리지 못했습니다.",
-  pr: "개발자에게 넘기지 못했습니다.",
+  commit: "보관할 변경을 커밋하지 못했습니다.",
+  push: "보관한 변경을 올리지 못했습니다.",
+  pr: "개발자에게 제출하지 못했습니다.",
 };
 
 /**
@@ -107,9 +107,9 @@ export const PUSH_AUTH_FAILURE =
   /401|403|Permission denied|authentication|denied to|not authorized|bad credentials|credentials? (?:expired|invalid)|token expired|authenticity/i;
 
 export const GATE_STEP: Record<"commit" | "push" | "pr", string> = {
-  commit: "저장",
-  push: "저장한 내용 올리기",
-  pr: "개발자에게 넘기기",
+  commit: "보관",
+  push: "보관한 내용 올리기",
+  pr: "제출",
 };
 /**
  * The stash this tool parks unsaved work in while 최신화 moves the branch.
@@ -120,7 +120,7 @@ export const STASH_MESSAGE = "Colo Design: 최신화 임시 보관";
 
 /** What the planner reads when a conflict needs the agent and no thread is open. */
 export const REFRESH_CONFLICT_DETAIL =
-  "최신 변경을 받아 오다 저장하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
+  "최신 변경을 받아 오다 보관하지 않은 변경과 충돌이 남았습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
 /**
  * What the planner reads when replaying a dead run's parked work conflicts
@@ -128,7 +128,7 @@ export const REFRESH_CONFLICT_DETAIL =
  * named for how the work got parked.
  */
 export const RECOVER_CONFLICT_DETAIL =
-  "임시 보관해 둔 저장하지 않은 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
+  "치워 둔 보관 전 변경을 돌려놓다 겹치는 부분이 생겼습니다 — 대화를 열면 AI가 정리합니다. 정리 전까지는 같은 상태입니다.";
 
 /** 충돌 브리프의 양쪽 — 개발자 쪽과 이번 작업의 커밋 제목들 (PLAN L5). */
 export interface ConflictSides {
@@ -149,7 +149,7 @@ export function conflictBrief(
 ): string {
   const opening =
     op === "stash-pop"
-      ? "저장하지 않은 변경을 돌려놓다 이미 반영된 내용과 겹쳐 자동으로 합치지 못했습니다."
+      ? "보관하지 않은 변경을 돌려놓다 이미 반영된 내용과 겹쳐 자동으로 합치지 못했습니다."
       : "개발자가 반영한 변경과 이번 작업이 같은 곳을 고쳐 자동으로 합치지 못했습니다.";
   const lines = [opening, `충돌 표식(<<<<<<< ======= >>>>>>>)이 남은 파일: ${files.join(", ")}`];
   if (sides.theirs.length > 0) lines.push(`개발자 쪽 변경: ${sides.theirs.join(", ")}`);
@@ -167,7 +167,7 @@ export function conflictBrief(
  * name the one thing standing in the way, not leave a silent door.
  */
 export const SAVE_CONFLICT_OPEN_DETAIL =
-  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 저장해 주세요.";
+  "정리가 끝나지 않은 충돌이 있습니다 — 대화에서 AI가 정리를 마친 뒤 제출해 주세요.";
 
 /**
  * What the planner reads when a repo's commands have not been approved here.

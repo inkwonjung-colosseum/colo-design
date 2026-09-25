@@ -114,12 +114,12 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
   },
   "push:auth": {
     title: "푸시가 인증 · 권한으로 거절됐습니다",
-    what: "저장한 작업을 원격에 올리지 못하고 있습니다",
+    what: "보관한 작업을 원격에 올리지 못하고 있습니다",
     tried: "같은 푸시를 다시 시도했지만 같은 거절이 돌아왔습니다",
     ask: "연결 코드의 쓰기 권한을 확인해 주세요",
   },
   "submit:commit": {
-    title: "제출을 마저 저장하지 못했습니다",
+    title: "제출을 마저 보관하지 못했습니다",
     what: "제출이 보관 단계에서 멈춰 있습니다",
     tried: "자동 보관을 다시 시도했지만 같은 실패가 돌아왔습니다",
     ask: "레포의 상태와 아래 자세히를 확인해 주세요",
@@ -131,7 +131,7 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     ask: "저장소의 권한 · 브랜치 보호 규칙을 확인해 주세요",
   },
   "push:behind": {
-    title: "저장한 작업을 1시간 넘게 올리지 못하고 있습니다",
+    title: "보관한 작업을 1시간 넘게 올리지 못하고 있습니다",
     what: "커밋은 쌓였는데 원격에 올라가지 않고 있습니다",
     tried: "백오프를 두며 계속 다시 밀고 있습니다",
     ask: "원격 저장소의 상태를 확인해 주세요",
@@ -155,7 +155,7 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
     ask: "PR 의 코멘트를 직접 확인해 주세요",
   },
   "review:*:rejection": {
-    title: "반려 이유를 AI 에게 넘기지 못했습니다",
+    title: "반려 이유를 AI 에게 맡기지 못했습니다",
     what: "닫힌 요청의 이유를 AI 의 반영 턴으로 보내지 못했습니다",
     tried: "이 요청의 반영 라운드 상한까지 대화를 열어 보았습니다",
     ask: "닫은 이유를 사용자에게 직접 전해 주세요 — 다음 제출은 새 요청으로 옵니다",
@@ -187,7 +187,7 @@ const PROBLEM_TEXT: Record<string, Omit<Problem, "key" | "slug" | "detail">> = {
   },
   "revive:exhausted": {
     title: "AI 프로그램을 되살리지 못했습니다",
-    what: "대화가 도는 중에 AI 프로그램이 죽고, 되살리기 상한(10분 안에 3회)을 넘겼습니다",
+    what: "대화가 도는 중에 AI 프로그램이 죽고, 되살리기 상한(10분 안에 3회)을 넘었습니다",
     tried: "같은 대화를 세 번 되살려 보았습니다",
     ask: "AI 프로그램(CLI) 의 상태를 확인해 주세요",
   },

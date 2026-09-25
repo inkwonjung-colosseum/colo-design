@@ -76,7 +76,7 @@ test("describeProblem — 표의 키는 한국어 네 줄, 모르는 키는 키�
 
 test("describeProblem — 반려 반영 턴의 예산 소진은 라운드 상한 문장이 아니다", () => {
   const rejection = describeProblem("review:7:rejection");
-  assert.equal(rejection.title, "반려 이유를 AI 에게 넘기지 못했습니다");
+  assert.equal(rejection.title, "반려 이유를 AI 에게 맡기지 못했습니다");
   assert.equal(describeProblem("review:7:rounds").title, "코멘트 반영이 라운드 상한에 닿았습니다");
 });
 

@@ -103,8 +103,8 @@ const REJECTION_REASON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** 알림 키 → 사용자가 읽는 한국어 한 문장. */
 const NOTICE_TEXT: Record<string, string> = {
-  "push:behind": "저장한 작업을 1시간 넘게 올리지 못하고 있습니다",
-  "push:auth": "연결 코드(GitHub 로그인)가 만료돼 저장한 작업을 올리지 못하고 있습니다",
+  "push:behind": "보관한 작업을 1시간 넘게 올리지 못하고 있습니다",
+  "push:auth": "연결 코드(GitHub 로그인)가 만료돼 보관한 작업을 올리지 못하고 있습니다",
   "conflict:stuck": "충돌 정리가 두 번 안내해도 끝나지 않았습니다",
   "submit:commit": "제출이 보관 단계에서 멈춰 있습니다",
   "submit:pr": "제출이 요청 열기 단계에서 멈춰 있습니다",
@@ -116,7 +116,7 @@ const NOTICE_TEXT: Record<string, string> = {
 /** 알림 키의 문장 — 표에 없는 review:<pr>:rounds · review:<pr>:rejection 은 이 두 줄로 읽힌다. */
 function noticeText(key: string): string {
   if (/^review:\d+:rejection$/.test(key))
-    return "반려 이유를 AI 에게 넘기지 못했습니다 — 개발자가 확인할 차례입니다";
+    return "반려 이유를 AI 에게 맡기지 못했습니다 — 개발자가 확인할 차례입니다";
   if (key.startsWith("review:"))
     return "코멘트 반영이 라운드 상한에 닿았습니다 — 개발자가 확인할 차례입니다";
   return NOTICE_TEXT[key] ?? key;

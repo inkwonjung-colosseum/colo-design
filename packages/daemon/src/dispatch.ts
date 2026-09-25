@@ -710,7 +710,7 @@ export class RequestRouter {
           if (!driver) throw new Error(`알 수 없는 에이전트입니다: ${provider}`);
           if (!driver.oneShot) {
             throw new Error(
-              `${driver.describe().label} 는 저장 메모를 맡을 수 없습니다 — 자동으로 두거나 다른 에이전트를 골라 주세요.`,
+              `${driver.describe().label} 는 보관 메모를 맡을 수 없습니다 — 자동으로 두거나 다른 에이전트를 골라 주세요.`,
             );
           }
           const diagnostic = await driver.isAvailable().catch(() => null);
@@ -1271,9 +1271,9 @@ export class RequestRouter {
       writePolicy: repoWritePolicy(cwd),
       title:
         stage === "save"
-          ? "저장 문제 해결"
+          ? "보관 문제 해결"
           : stage === "handoff"
-            ? "넘기기 문제 해결"
+            ? "제출 문제 해결"
             : "최신화 문제 해결",
       launch: {
         executable,

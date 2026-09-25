@@ -173,7 +173,7 @@ export function EscalationForm({
           </button>
         </div>
         <p className="hint">
-          저장한 순간부터 토큰 만료 · 넘기기 실패 같은 AI 도 고칠 수 없는 문제가 이 채널로 갑니다.
+          연결한 순간부터 토큰 만료 · 제출 실패 같은 AI 도 고칠 수 없는 문제가 이 채널로 갑니다.
           웹훅은 Slack 앱의 Incoming Webhooks 에서, 봇 토큰은 chat:write 권한으로 만듭니다. 값은 이
           컴퓨터의 자격 증명 저장소에만 있고 다시 보이지 않습니다.
         </p>

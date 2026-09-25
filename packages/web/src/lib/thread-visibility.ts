@@ -28,8 +28,8 @@ export const SYSTEM_THREAD_TITLES: Record<string, true> = {
   [BOOTSTRAP_THREAD_TITLE]: true,
   "리뷰 반영": true,
   "최신화 문제 해결": true,
-  "저장 문제 해결": true,
-  "넘기기 문제 해결": true,
+  "보관 문제 해결": true,
+  "제출 문제 해결": true,
 };
 
 export function hideThread(hidden: HiddenThreads, slug: string, sessionId: string): HiddenThreads {

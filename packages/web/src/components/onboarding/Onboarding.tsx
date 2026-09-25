@@ -52,7 +52,7 @@ const SHORT_TITLE: Record<OnboardingStepId, string> = {
 /** claude 행의 설명 한 줄 패턴(:203-209)을 나머지 셋에도. */
 const STEP_HINT: Record<OnboardingStepId, string> = {
   claude: "",
-  git: "화면 작업을 저장하고 개발자에게 넘기는 데 쓰는 도구입니다 — 이 앱이 대신 다룹니다.",
+  git: "화면 작업을 보관하고 개발자에게 제출하는 데 쓰는 도구입니다 — 이 앱이 대신 다룹니다.",
   runtime: "앱 안에 들어 있습니다 — 없다고 나오면 앱 설치가 깨진 것입니다.",
   github: "",
 };

@@ -87,7 +87,7 @@ function MachineTurn({
       break;
     case "gate":
       title = `${marker.step}에서 멈췄습니다`;
-      lead = "무엇이 잘못됐는지 AI에게 넘겼습니다. 고치는 동안 기다려 주세요.";
+      lead = "무엇이 잘못됐는지 AI에게 맡겼습니다. 고치는 동안 기다려 주세요.";
       break;
     case "error":
       // `look` is the 화면 보여 주기 ask (no error the console can

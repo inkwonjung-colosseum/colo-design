@@ -50,7 +50,7 @@ function renderSummaryFile(file: DiffFile): string {
  */
 export function memoPrompt(files: DiffFile[]): string {
   return [
-    "아래 변경 내용이 저장(커밋)됩니다. 저장 메모로 쓸 한국어 한 문장을 적어 주세요.",
+    "아래 변경 내용이 보관(커밋)됩니다. 보관 메모로 쓸 한국어 한 문장을 적어 주세요.",
     "규칙: 한 줄만 답하고, 따옴표·목록 기호·접두어를 붙이지 않으며, 파일 이름을 나열하지 않습니다. 예: 회원 관리 화면 추가",
     "",
     `바뀐 화면·파일: ${files.map((file) => file.path).join(", ")}`,
@@ -67,11 +67,11 @@ export function memoPrompt(files: DiffFile[]): string {
  */
 export function handoffPrompt(memos: string[], files: string[]): string {
   return [
-    "아래는 사용자가 이번에 저장한 작업입니다. 개발자에게 넘길 제목과 내용을 한국어로 적어 주세요.",
+    "아래는 사용자가 이번에 보관한 작업입니다. 개발자가 읽을 제목과 내용을 한국어로 적어 주세요.",
     "첫 줄: 제목 한 줄 (40자 안쪽, 따옴표·접두어 없이).",
-    "둘째 줄부터: 무엇을 만들었고 개발자가 무엇을 봐 주면 되는지 3줄 이내. 파일 이름은 나열하지 않고, 저장 메모에 없는 내용은 지어내지 않습니다.",
+    "둘째 줄부터: 무엇을 만들었고 개발자가 무엇을 봐 주면 되는지 3줄 이내. 파일 이름은 나열하지 않고, 보관 메모에 없는 내용은 지어내지 않습니다.",
     "",
-    "저장 메모:",
+    "보관 메모:",
     ...memos.map((memo) => `- ${memo}`),
     "",
     "바뀐 파일:",

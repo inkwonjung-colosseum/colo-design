@@ -1105,11 +1105,7 @@ export function ScreenPanel({
                   )}
                 </span>
               ) : (
-                <Tip
-                  label="프로젝트 준비가 끝나면 저장 · 넘기기가 열립니다"
-                  side="bottom"
-                  align="start"
-                >
+                <Tip label="프로젝트 준비가 끝나면 제출이 열립니다" side="bottom" align="start">
                   <span className="screenpanel__status screenpanel__status--none">
                     화면 대기 중
                   </span>
@@ -1278,7 +1274,7 @@ export function ScreenPanel({
                         </button>
                       </Tip>
                       {repo?.handoff?.url && (
-                        <Tip label="개발자가 검토하는 넘긴 요청을 엽니다" side="left">
+                        <Tip label="개발자가 검토하는 제출한 요청을 엽니다" side="left">
                           <button
                             type="button"
                             role="menuitem"
@@ -1292,9 +1288,9 @@ export function ScreenPanel({
                               <ExternalLinkIcon />
                             </span>
                             <span className="selector__text">
-                              <span className="selector__label">넘긴 내용 열기</span>
+                              <span className="selector__label">보낸 내용 열기</span>
                               <span className="selector__desc">
-                                개발자가 검토하는 넘긴 요청을 엽니다
+                                개발자가 검토하는 제출한 요청을 엽니다
                               </span>
                             </span>
                           </button>

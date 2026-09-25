@@ -138,7 +138,7 @@ export function ProgressPanel({
             </span>
             <div className="progress__stepmain">
               <div className="progress__stepname">다시 연결하는 중…</div>
-              <div className="progress__stepline">연결이 끊기면 대화와 저장이 잠시 멈춥니다</div>
+              <div className="progress__stepline">연결이 끊기면 대화와 보관이 잠시 멈춥니다</div>
             </div>
           </div>
         )}

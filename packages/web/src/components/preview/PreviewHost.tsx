@@ -472,7 +472,7 @@ export function PreviewHost({
             <span className="spinner" />
             <h2>{restarting ? "화면을 다시 켜는 중이에요" : "AI가 화면을 다시 띄우고 있어요"}</h2>
           </div>
-          <p className="progress__body">잠시만 기다려 주세요 — 저장과 넘기기는 그대로예요.</p>
+          <p className="progress__body">잠시만 기다려 주세요 — 보관과 제출은 그대로예요.</p>
           {!restarting && (
             <div className="preview__stopactions">
               <button

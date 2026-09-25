@@ -103,7 +103,7 @@ export function FrozenStage({
             ready: false,
             commit: null,
             url: null,
-            detail: "이 데몬은 넘긴 시점의 실제 빌드를 아직 지원하지 않습니다.",
+            detail: "이 데몬은 보낸 시점의 실제 빌드를 아직 지원하지 않습니다.",
           });
     void ask
       .then((info) => {
@@ -113,7 +113,7 @@ export function FrozenStage({
           setReal({
             phase: "failed",
             detail:
-              info.detail ?? "실제 빌드를 띄우지 못했습니다 — 넘긴 시점의 캡처로 보여 드립니다.",
+              info.detail ?? "실제 빌드를 띄우지 못했습니다 — 보낸 시점의 캡처로 보여 드립니다.",
           });
         }
       })
@@ -122,8 +122,8 @@ export function FrozenStage({
           phase: "failed",
           detail:
             error instanceof Error && error.message !== ""
-              ? `${error.message} — 넘긴 시점의 캡처로 보여 드립니다.`
-              : "실제 빌드를 띄우지 못했습니다 — 넘긴 시점의 캡처로 보여 드립니다.",
+              ? `${error.message} — 보낸 시점의 캡처로 보여 드립니다.`
+              : "실제 빌드를 띄우지 못했습니다 — 보낸 시점의 캡처로 보여 드립니다.",
         });
       });
   };
@@ -179,8 +179,8 @@ export function FrozenStage({
               real.phase === "failed"
                 ? real.detail
                 : real.phase === "on"
-                  ? "실제 빌드를 닫고 넘긴 시점의 캡처로 돌아갑니다"
-                  : "넘긴 시점의 실제 빌드를 이 자리에 띄웁니다 — 준비는 몇십 초가 걸릴 수 있어요. 그동안은 캡처가 보입니다."
+                  ? "실제 빌드를 닫고 보낸 시점의 캡처로 돌아갑니다"
+                  : "보낸 시점의 실제 빌드를 이 자리에 띄웁니다 — 준비는 몇십 초가 걸릴 수 있어요. 그동안은 캡처가 보입니다."
             }
             disabled={real.phase === "starting"}
             onClick={openReal}
@@ -203,18 +203,18 @@ export function FrozenStage({
             <img
               className="frozenshot__img"
               src={`data:${shot.mediaType};base64,${shot.data}`}
-              alt="넘긴 시점의 화면"
+              alt="보낸 시점의 화면"
             />
             {real.phase === "on" && (
               <iframe
                 className="frozenshot__real"
                 src={real.url}
-                title={`넘긴 시점의 실제 빌드 (포트 ${real.port})`}
+                title={`보낸 시점의 실제 빌드 (포트 ${real.port})`}
               />
             )}
             {real.phase === "starting" && (
               <div className="frozenshot__realwait" role="status">
-                넘긴 시점의 실제 빌드를 띄우는 중… 캡처를 보여 드리고 있어요.
+                보낸 시점의 실제 빌드를 띄우는 중… 캡처를 보여 드리고 있어요.
               </div>
             )}
           </div>

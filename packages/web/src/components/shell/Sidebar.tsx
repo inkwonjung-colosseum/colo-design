@@ -1226,7 +1226,7 @@ export function Sidebar({
             </p>
             {removing.pendingChanges > 0 && (
               <p className="sidebar__removewarn">
-                <WarnIcon /> 저장하지 않은 변경 {removing.pendingChanges}개가 사라집니다.
+                <WarnIcon /> 보관하지 않은 변경 {removing.pendingChanges}개가 사라집니다.
               </p>
             )}
             <p className="sidebar__removehint">

@@ -317,7 +317,7 @@ export class GitHubClient {
         head: input.head,
         base: input.base,
       },
-      "개발자에게 넘기기",
+      "제출",
     );
     return { ...refOf(data), state: stateOf(data) };
   }
@@ -382,7 +382,7 @@ export class GitHubClient {
       "PATCH",
       `/repos/${input.owner}/${input.repo}/pulls/${input.number}`,
       payload,
-      "넘긴 작업 갱신",
+      "제출한 작업 갱신",
     );
     return await this.withVerdict(input.owner, input.repo, data);
   }
@@ -585,7 +585,7 @@ export class GitHubClient {
   }): Promise<PullRequestDetail> {
     const data = await this.getJson(
       `/repos/${input.owner}/${input.repo}/pulls/${input.number}`,
-      "넘긴 작업 상태 확인",
+      "제출한 작업 상태 확인",
     );
     const ref = await this.withVerdict(input.owner, input.repo, data);
     return {

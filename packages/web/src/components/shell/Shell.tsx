@@ -441,7 +441,7 @@ export function Shell({
                 what they should do: whether the tool can work right now. Both the
                 address and the repo live in 설정 → 문제 해결. */}
             {connection !== "open" && (
-              <Tip label="연결이 끊기면 대화와 저장이 잠시 멈춥니다" side="bottom">
+              <Tip label="연결이 끊기면 대화와 보관이 잠시 멈춥니다" side="bottom">
                 <span className="hint">연결하는 중…</span>
               </Tip>
             )}

@@ -160,10 +160,10 @@ export class HandoffPreviews {
     // 시점'은 넘긴 요청이 열려 있는 동안만 존재하는 약속이다. (dispose 가
     // 아니라 teardown — opening 자신을 기다리면 영원히 막힌다.)
     if (!handoff) {
-      await this.teardown("열린 넘김이 없습니다");
+      await this.teardown("열린 제출이 없습니다");
       return notReady(
         null,
-        "열려 있는 넘김이 없습니다 — 넘긴 요청이 열려 있을 때만 실제 빌드를 띄울 수 있습니다.",
+        "열려 있는 제출이 없습니다 — 제출한 요청이 열려 있을 때만 실제 빌드를 띄울 수 있습니다.",
       );
     }
     if (!previewCommand) {
@@ -177,14 +177,14 @@ export class HandoffPreviews {
     if (!commit) {
       return notReady(
         null,
-        "넘긴 브랜치의 커밋을 찾지 못했습니다 — 저장과 넘기기가 온전히 끝난 뒤 다시 시도해 주세요.",
+        "보낸 시점의 커밋을 찾지 못했습니다 — 보관과 제출이 온전히 끝난 뒤 다시 시도해 주세요.",
       );
     }
 
     // 다른 프로젝트·다른 브랜치의 남은 빌드는 처음부터 — 같은 자리를 쓰므로
     // 먼저 거두고 새로 짓는다.
     if (this.live && (this.live.slug !== slug || this.live.branch !== branch)) {
-      await this.teardown("넘김이 바뀌었습니다");
+      await this.teardown("제출이 바뀌었습니다");
     }
     if (!this.live) {
       const built = await this.build({
@@ -221,7 +221,7 @@ export class HandoffPreviews {
         git(repoRoot, ["-C", live.worktree, "checkout", "--detach", commit]),
       );
       if (moved === null)
-        return notReady(live.commit, "넘긴 브랜치의 새 커밋으로 옮기지 못했습니다.");
+        return notReady(live.commit, "보낸 시점의 새 커밋으로 옮기지 못했습니다.");
       live.commit = commit;
     }
 
@@ -260,7 +260,7 @@ export class HandoffPreviews {
     const added = await input.inLane(() =>
       git(input.repoRoot, ["worktree", "add", "--detach", worktree, input.commit]),
     );
-    if (added === null) return "넘긴 시점의 워크트리를 만들지 못했습니다.";
+    if (added === null) return "보낸 시점의 워크트리를 만들지 못했습니다.";
 
     // 설치는 복사하지 않는다 — 클론의 node_modules를 그대로 빌려 쓴다.
     // 두 번 설치는 수백 MB와 몇 분의 값어치가 없고, 같은 브랜치의 워크트리는
@@ -359,10 +359,10 @@ export class HandoffPreviews {
     try {
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          return `넘긴 시점의 미리보기 서버가 종료되었습니다${lastLine ? ` — ${lastLine}` : ""}`;
+          return `보낸 시점의 미리보기 서버가 종료되었습니다${lastLine ? ` — ${lastLine}` : ""}`;
         }
         if (failure.error) {
-          return `넘긴 시점의 미리보기 명령을 띄우지 못했습니다${
+          return `보낸 시점의 미리보기 명령을 띄우지 못했습니다${
             failure.error.message ? ` — ${failure.error.message}` : ""
           }`;
         }
@@ -397,7 +397,7 @@ export class HandoffPreviews {
       // 서면 서버도 내린다. 살아 낸 뒤의 finally는 아무것도 죽이지 않는다.
       if (live.port === null) await stopServer(live);
     }
-    return `넘긴 시점의 미리보기 서버가 ${Math.round(READY_TIMEOUT_MS / 1000)}초 안에 응답하지 않았습니다${
+    return `보낸 시점의 미리보기 서버가 ${Math.round(READY_TIMEOUT_MS / 1000)}초 안에 응답하지 않았습니다${
       lastLine ? ` — ${lastLine}` : ""
     }`;
   }

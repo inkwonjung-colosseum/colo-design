@@ -18,10 +18,10 @@ export const FILE_STATUS_LABEL: Record<DiffFile["status"], string> = {
 
 const STAGE_LABEL: Record<DiffStatus["stage"], string> = {
   computing: "변경사항을 모으는 중",
-  pushing: "변경사항을 저장하는 중",
-  published: "저장했습니다",
-  "handing-off": "개발자에게 넘기는 중",
-  "handed-off": "개발자에게 넘겼습니다",
+  pushing: "변경사항을 보관하는 중",
+  published: "보관했습니다",
+  "handing-off": "개발자에게 보내는 중",
+  "handed-off": "개발자에게 보냈어요",
   failed: "끝내지 못했습니다",
 };
 
@@ -36,7 +36,7 @@ const GATE_LABEL: Record<NonNullable<DiffStatus["gate"]>, string> = {
   commit: "변경사항 정리",
   push: "변경사항 올리기",
   diff: "변경사항 확인",
-  pr: "개발자에게 넘기기",
+  pr: "제출",
 };
 
 /** In flight: neither a 저장 nor a 넘기기 can be started on top of this. */

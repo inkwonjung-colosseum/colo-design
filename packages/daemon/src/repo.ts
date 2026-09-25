@@ -427,8 +427,7 @@ export class RepoWorkspace {
       return this.core.setDiff({
         stage: "failed",
         gate: "diff",
-        detail:
-          "저장하지 않은 변경이 있습니다 — 먼저 저장하거나 되돌려 주세요. 저장은 저장 검토의 저장으로, 버리는 것은 더 보기 메뉴의 변경 버리기로 할 수 있습니다.",
+        detail: "보관하지 않은 변경이 있습니다 — 먼저 제출하거나 되돌려 주세요.",
       });
     }
     if (!this.core.branch) {

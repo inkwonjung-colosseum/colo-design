@@ -106,7 +106,7 @@ export function DigestBanner({
           icon={<span className="spinner" />}
           className="home-back__banner"
           title="다시 연결하는 중…"
-          sub="연결이 끊기면 대화와 저장이 잠시 멈춥니다"
+          sub="연결이 끊기면 대화와 보관이 잠시 멈춥니다"
         />
       )}
       {phrase && (

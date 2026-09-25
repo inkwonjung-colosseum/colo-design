@@ -334,7 +334,7 @@ function Choice<T extends string>({
   );
 }
 
-/** 저장 메모 담당 — 빈 메모의 커밋 문장과 넘기기 초안을 쓰는 에이전트.
+/** 보관 메모 담당 — 빈 메모의 커밋 문장과 제출 초안을 쓰는 에이전트.
     대화의 프로바이더(새 대화 프로바이더 행)와 무관한 기계의 잔일이라
     설정도 데몬에 산다(machine.json · machine.set). 후보는 oneShot 계약을
     구현한 드라이버뿐이고, 지금 담당은 상태의 machineProviderActive 가
@@ -375,12 +375,12 @@ function MachineProviderField({ daemon, disabled }: { daemon: Daemon; disabled: 
   return (
     <Field
       wide
-      label="저장 메모 담당"
-      hint="빈 메모의 저장과 넘기기 초안을 어느 에이전트가 쓰지 정합니다. 자동이면 설치된 것 중 첫 번째를 씁니다 — 대화의 프로바이더와는 무관합니다."
+      label="보관 메모 담당"
+      hint="빈 메모의 보관과 제출 초안을 어느 에이전트가 쓰지 정합니다. 자동이면 설치된 것 중 첫 번째를 씁니다 — 대화의 프로바이더와는 무관합니다."
     >
       <span className="settings__stack">
         <select
-          aria-label="저장 메모 담당"
+          aria-label="보관 메모 담당"
           value={configured ?? "auto"}
           disabled={disabled || pending}
           onChange={(event) => choose(event.target.value)}
@@ -1531,7 +1531,7 @@ export function SettingsDialog({
                   label="저장 위치"
                   hint={
                     bridgeOpenHome
-                      ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 저장은 버튼으로."
+                      ? "클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요 — 화면은 대화로, 제출은 버튼으로."
                       : "~/.colo-design — 클론과 설정이 있는 곳입니다. 여기 파일을 직접 고치지 마세요."
                   }
                 >

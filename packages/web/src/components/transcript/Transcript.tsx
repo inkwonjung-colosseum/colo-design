@@ -434,11 +434,7 @@ export function Transcript({
                   <MilestoneRow
                     key={block.id}
                     tone="send"
-                    text={
-                      block.reviewer
-                        ? `${block.reviewer}님께 넘겼어요 — 확인 요청`
-                        : "넘겼어요 — 확인 요청"
-                    }
+                    text={block.reviewer ? `${block.reviewer}님께 제출했어요` : "제출했어요"}
                     time={clockTime(block.at)}
                   />
                 );

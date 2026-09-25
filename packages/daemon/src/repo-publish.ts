@@ -247,7 +247,7 @@ export class PublishCycle {
       // 이 실패만은 AI 에게 갈 브리프가 없다(failGate 의 게이트와 달리 사람
       // 안내의 문제) — 배너는 리로드와 함께 사라지므로, 누른 손이 무엇에
       // 막혔는지를 테이프의 한 줄로 남긴다(cycle.saveBlocked, 베타 테스트 B6).
-      const detail = "저장할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
+      const detail = "보관할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.";
       // 나가는 문 (PLAN L1): 사이클 사건은 세션 테이프 · 방송으로 이어진다.
       this.core.lane.outside(() =>
         this.deps.onCycleEvent?.(
@@ -380,7 +380,7 @@ export class PublishCycle {
       return this.core.setDiff({
         stage: "failed",
         gate: "pr",
-        detail: "넘길 변경사항이 없습니다 — 먼저 저장해 주세요.",
+        detail: "제출할 변경사항이 없습니다 — 먼저 화면을 만들거나 고쳐 주세요.",
       });
     }
     // 넘기기도 차선의 submit 칸 안에서 돈다(PLAN L1) — 순서는 차선이 지킨다.

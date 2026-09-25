@@ -104,7 +104,7 @@ const blocks: Block[] = [
     id: "a3",
     agentId: null,
     streaming: false,
-    text: '전체 흐름을 그림으로 정리하면 이렇습니다.\n\n```mermaid\nflowchart LR\n    ask["화면 요청"] --> chat["화면 대화"]\n    chat --> preview["미리보기"]\n    preview -->|"코멘트 핀"| chat\n    preview --> save["저장 · 넘기기"]\n```\n\n아래는 파싱에 실패한 다이어그램 — 원본 코드 블록으로 폴백한다.\n\n```mermaid\nflowchart LR\n    A[화면 요청 -->\n```',
+    text: '전체 흐름을 그림으로 정리하면 이렇습니다.\n\n```mermaid\nflowchart LR\n    ask["화면 요청"] --> chat["화면 대화"]\n    chat --> preview["미리보기"]\n    preview -->|"코멘트 핀"| chat\n    preview --> save["보관 · 제출"]\n```\n\n아래는 파싱에 실패한 다이어그램 — 원본 코드 블록으로 폴백한다.\n\n```mermaid\nflowchart LR\n    A[화면 요청 -->\n```',
   },
   {
     type: "thinking",

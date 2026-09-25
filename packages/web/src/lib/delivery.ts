@@ -18,7 +18,7 @@ import type { HandoffStatus, RepoPhase } from "@colo-design/protocol";
  * 없다.
  */
 export const WORKING_LABEL = "작업 중";
-export const HANDOFF_BADGE = "넘김";
+export const HANDOFF_BADGE = "제출함";
 export const MERGED_BADGE = "반영됨";
 export const changesBadge = (count: number): string => `변경 ${count}`;
 
@@ -215,10 +215,10 @@ function cycleRow(input: DeliveryInput): CycleRow {
       chip: {
         label: "개발자가 보고 있어요",
         tone: "changes",
-        title: `개발자가 넘긴 요청 ${handoff.number}번을 닫았습니다 — 상태 확인에서 이유를 읽고 이어 가세요`,
+        title: "개발자가 제출한 요청을 닫았습니다 — 도구가 이유를 대화로 가져와요",
       },
       next: {
-        line: "개발자가 이번 요청을 닫았습니다 — 상태 확인에서 이유를 읽고, 고쳐 제출하면 새 요청이 열립니다",
+        line: "개발자가 이번 요청을 닫았습니다 — 도구가 이유를 대화로 가져오고, 고쳐 제출하면 새 요청이 열립니다",
       },
       primary: work ? "submit" : null,
       actions: { submit: submitWhenWork },
@@ -231,7 +231,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
       chip: {
         label: "개발자가 보고 있어요",
         tone: "handed",
-        title: `넘긴 요청 ${handoff.number}번을 개발자가 검토하는 중입니다${
+        title: `제출한 요청을 개발자가 검토하는 중입니다${
           reviewerNote(handoff) ? ` · ${reviewerNote(handoff)}` : ""
         }`,
       },
@@ -257,7 +257,7 @@ function cycleRow(input: DeliveryInput): CycleRow {
       chip: {
         label: "개발자가 보고 있어요",
         tone: "changes",
-        title: `개발자가 넘긴 요청 ${handoff.number}번에 코멘트를 남겼습니다 — 도구가 반영을 맡깁니다`,
+        title: "개발자가 제출한 요청에 코멘트를 남겼습니다 — 도구가 반영을 맡깁니다",
       },
       next: {
         line: "개발자가 코멘트를 남겼습니다 — 도구가 반영을 맡았고 끝나면 알려 드립니다",
