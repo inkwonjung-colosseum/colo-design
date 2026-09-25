@@ -344,7 +344,7 @@ export const L = {
     whyPreparing: "준비가 끝나면 제출할 수 있어요",
     whyMerged: "반영됐어요 — 다음 작업을 만들면 제출할 수 있어요",
     whyBlocked:
-      "제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요. 지금은 계속 만들어도 돼요",
+      "제출이 막혀 개발자에게 알렸어요 — 풀리면 도구가 다시 제출해요, 지금은 계속 만들어도 돼요",
     whyMoreReady: (n: number) => `보낸 뒤로 바뀐 ${n}곳을 같은 요청에 더해 보내요`,
     whyNoMore: "보낸 뒤로 바뀐 것이 없어요 — 더 고치면 같은 요청에 더해 보낼 수 있어요",
     whyNothing: "아직 바뀐 화면이 없어요",
@@ -353,13 +353,17 @@ export const L = {
     logRetrying: "제출하지 못했어요 — 잠깐의 문제라 도구가 다시 제출해요",
     logBlocked: "제출하지 못했어요 — 개발자가 풀어야 하는 문제라 개발자에게 알렸어요",
     logResolved: "개발자가 풀었어요 — 도구가 다시 제출해요",
+    /** 막힘 중 연결 코드 만료(U13 의 auth) — 사람의 손이 필요한 유일한 막힘. */
+    whyAuth: "연결 코드가 만료돼 제출이 막혔어요 — 새 초대 파일이 필요해요",
+    /** 확인 창을 보낸 순간 데몬에 닿지 못했다 — 누른 손에게 한 줄로. */
+    sendFailed: "제출을 보내지 못했어요 — 잠시 뒤 다시 눌러 주세요",
   },
   /** 제출 확인 팝오버(U3). */
   submitConfirm: {
     title: "개발자에게 제출할까요?",
     titleMore: "같은 요청에 더해 제출할까요?",
     sub: "제목과 설명은 도구가 써요 · 원본은 건드리지 않아요",
-    subMore: "이미 열린 요청에 이어서 쌓여요",
+    subMore: "이미 열린 요청에 이어서 쌓여요 · 원본은 건드리지 않아요",
     screens: (n: number) => `보낼 화면 ${n}개`,
     screensMore: (n: number) => `보낸 뒤 바뀐 ${n}곳`,
     outsideScreens: (n: number) => `화면 밖 변경 ${n}건`,
@@ -393,6 +397,20 @@ export const L = {
     commentDone: "반영됨",
     commentFixing: "고치는 중",
     openHistory: "작업 기록 열기",
+    /** 머리의 둘째 줄 — `<프로젝트> · <시작일>부터 · <지금 자리>`. 시작일을 모르면 빠진다. */
+    headerSub: (name: string, since: string | null, where: string) =>
+      since ? `${name} · ${since}부터 · ${where}` : `${name} · ${where}`,
+    day: (month: number, day: number) => `${month}월 ${day}일`,
+    /** 시각 한 칸 — 오늘이면 시:분만, 아니면 날짜를 앞에. */
+    time: (today: boolean, hhmm: string, month: number, day: number) =>
+      today ? hhmm : `${month}월 ${day}일 ${hhmm}`,
+    submittedBy: (time: string, author: string | null) => (author ? `${time} · ${author}` : time),
+    commentAuthor: "개발자",
+    /**
+     * 코멘트 반영 차례의 기록 제목 머리 — 도구가 붙이는 이름(데몬의
+     * COMMENT_REFLECTION_PREFIX 와 같은 글자). 이 머리의 기록이 코멘트 뒤에 있으면 `반영됨`.
+     */
+    reflectionPrefix: "코멘트 반영 — ",
   },
 
 

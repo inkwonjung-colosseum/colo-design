@@ -8,12 +8,15 @@ import { ChatColumn } from "./chat/ChatColumn";
 import { HomeView } from "./home/HomeView";
 import { L } from "./labels";
 import { deriveJourney } from "./lib/journey";
+import { submitCopy } from "./lib/submit-copy";
 import { useNarrow, useShellNav } from "./lib/use-shell-nav";
+import { commentCount } from "./lib/work-ledger";
 import type { NextShellProps } from "./NextShell";
 import { PreviewColumn } from "./preview/PreviewColumn";
 import { Sidebar } from "./sidebar/Sidebar";
 import type { SlotProps } from "./slots";
 import { StatusLine } from "./status/StatusLine";
+import { useWorkLedger } from "./status/use-work-ledger";
 import { MenuIcon, PanelIcon } from "./ui/icons";
 
 /** 대화 칸의 폭(U1) — 360~420px, 처음은 목업의 400. */
@@ -78,12 +81,17 @@ export function Workspace({
     ? (sessions.active?.turnStartedAt ?? null)
     : (awaiting?.since ?? null);
   const attention = daemon.repo?.attention ?? daemon.status?.attention ?? null;
+  // 단계 4 — 제출 상태의 문장과 이번 작업의 장부(코멘트 수가 여정의 둘째 점에 붙는다).
+  const ledger = useWorkLedger(daemon);
+  const copy = submitCopy(daemon.repo?.submit, L);
   const journey = deriveJourney(
     {
       repo: daemon.repo,
       diffStatus: daemon.diffStatus,
       running,
       reconnect: attention?.kind === "reconnect",
+      comments: commentCount(ledger.reviews),
+      submitCopy: copy,
     },
     L,
   );
@@ -205,6 +213,8 @@ export function Workspace({
               narrow={narrow}
               nav={nav}
               onSubmit={() => undefined}
+              ledger={ledger}
+              submitCopy={copy}
               sidebarHidden={sidebarHidden}
               onOpenSidebar={openSidebar}
             />

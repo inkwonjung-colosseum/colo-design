@@ -1,5 +1,6 @@
 import type { DiffStatus, HandoffStatus, RepoStatus } from "@colo-design/protocol";
 import type { L } from "../labels";
+import type { SubmitCopy } from "./submit-copy";
 
 /**
  * 여정 세 점(PLAN-UI U2) — `제출 전 ─ 개발자 확인 ─ 반영됨`. 옛 셸의
@@ -9,7 +10,8 @@ import type { L } from "../labels";
  *
  * 문장은 `labels.ts` 에서 오지만 이 파일은 그것을 부르지 않고 인자로 받는다 —
  * 단위 시험이 src 에서 곧장 읽는 순수 모듈은 형제를 부르지 않는다
- * (turn-screens.ts 와 같은 규칙). 부르는 쪽은 `deriveJourney(input, L)`.
+ * (turn-screens.ts 와 같은 규칙). 부르는 쪽은 `deriveJourney(input, L)`. 같은
+ * 까닭으로 제출 상태의 문장(`submitCopy`)도 부르는 쪽이 지어 `input.submitCopy` 로 건넨다.
  */
 export type JourneyWords = Pick<typeof L, "journey" | "submit" | "shell">;
 
@@ -56,6 +58,8 @@ export interface JourneyInput {
   reconnect?: boolean;
   /** 개발자 코멘트 수 — 아는 쪽(단계 4 의 장부)이 넘긴다. 모르면 0. */
   comments?: number;
+  /** 제출 상태의 문장 — `submitCopy(repo?.submit, L)`(U13). 막힘 · 도는 중을 이것이 말한다. */
+  submitCopy: SubmitCopy;
 }
 
 /** 준비가 끝나 제출이 뜻을 갖는 자리 — `error` 는 미리보기만 죽었을 뿐 작업은 산다. */
@@ -74,20 +78,13 @@ function screensOf(repo: RepoStatus | null): RepoStatus["cycleScreens"] {
   return repo?.cycleScreens?.filter((screen) => screen.title.trim().length > 0);
 }
 
-/** 마지막 제출 기록의 시각 — 보낸 뒤 바뀐 화면을 세는 기준. */
-function lastSubmitAt(repo: RepoStatus | null): string | null {
-  const log = repo?.submit?.log ?? [];
-  let last: string | null = null;
-  for (const entry of log) if (last === null || entry.at > last) last = entry.at;
-  return last;
-}
-
 export function deriveJourney(input: JourneyInput, words: JourneyWords): Journey {
   const { repo, running } = input;
   const handoff = input.handoff !== undefined ? input.handoff : (repo?.handoff ?? null);
   const work = hasWork(repo);
   const screens = screensOf(repo);
-  const blocked = repo?.submit?.phase === "blocked";
+  const copy = input.submitCopy;
+  const blocked = copy.phase === "blocked";
   const comments = input.comments ?? 0;
 
   // 병합 뒤에 쌓인 작업은 새 사이클이다 — `반영됐어요` 가 넘길 일감을 가리지 않는다.
@@ -99,8 +96,8 @@ export function deriveJourney(input: JourneyInput, words: JourneyWords): Journey
     cycle === "draft"
       ? [
           {
-            label: blocked
-              ? J.beforeBlocked
+            label: copy.firstPoint
+              ? copy.firstPoint
               : screens && screens.length > 0
                 ? J.screensBefore(screens.length)
                 : J.before,
@@ -150,7 +147,7 @@ function submitState(
   },
   words: JourneyWords,
 ): Journey["submit"] {
-  const { repo, diffStatus, running } = input;
+  const { repo, diffStatus, running, submitCopy: copy } = input;
   const { submit: S, shell } = words;
   const open = facts.handoff !== null && facts.handoff.state !== "merged";
   const lock = (reason: string, busy: Journey["submit"]["busy"] = null) => ({
@@ -165,24 +162,25 @@ function submitState(
   if (running) return lock(S.whyRunning);
   if (!workable(repo)) return lock(S.whyPreparing);
 
-  // 도는 제출 — 선로의 `submit.phase` 가 먼저, 옛 방송(diff.status)이 그 다음.
-  // `computing` · `pushing` 은 차례마다의 자동 보관도 지나는 단계라 제출로
-  // 읽지 않는다 — 넘기기만의 단계는 `handing-off` 하나다.
-  const phase = repo?.submit?.phase;
-  if (phase === "retrying") return lock(S.retrying, "retrying");
-  if (phase === "running" || diffStatus?.stage === "handing-off") {
-    return lock(S.running, "running");
-  }
-  if (facts.blocked) return lock(S.whyBlocked);
+  // 도는 제출 — 선로의 `submit.phase`(submitCopy)가 먼저, 옛 방송(diff.status)이
+  // 그 다음. `computing` · `pushing` 은 차례마다의 자동 보관도 지나는 단계라
+  // 제출로 읽지 않는다 — 넘기기만의 단계는 `handing-off` 하나다.
+  if (copy.busy) return lock(copy.reason ?? copy.label, copy.busy);
+  if (diffStatus?.stage === "handing-off") return lock(S.running, "running");
+  // 막힘의 이유는 둘이다 — 연결 코드 만료(auth)와 개발자에게 알린 막힘.
+  if (facts.blocked) return lock(copy.reason ?? S.whyBlocked);
   if (facts.cycle === "merged") return lock(S.whyMerged);
 
   if (open) {
     // 보낸 뒤 바뀐 화면은 마지막 제출 기록 뒤의 화면이다. 둘 중 하나라도
     // 모르면 옛 판정(작업이 있으면 열림)을 따른다 — 밀린 보관을 원격까지
     // 올릴 손이 제출뿐이라 잠가 두면 안 된다(delivery.ts 의 같은 이유).
-    const since = lastSubmitAt(repo);
+    const since = copy.lastAt;
     if (facts.screens && since !== null) {
-      const more = facts.screens.filter((screen) => screen.at > since).length;
+      // 시각은 수로 견준다 — 화면 목록은 git 의 시각(+09:00), 제출 기록은 UTC(Z)라
+      // 글자로 견주면 어긋난다.
+      const cut = Date.parse(since);
+      const more = facts.screens.filter((screen) => Date.parse(screen.at) > cut).length;
       return more > 0 ? ready(S.whyMoreReady(more)) : lock(S.whyNoMore);
     }
     return facts.work ? ready(shell.submitMoreAny) : lock(S.whyNoMore);

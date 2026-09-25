@@ -740,8 +740,9 @@ interface DaemonApi {
    * 네 단계(보관 → 푸시 → PR → 리뷰어)가 끝까지 간다 — 이 호출은 그 틱의
    * 끝을 기다렸다 지금 DiffStatus 를 돌려줄 뿐, 실패해도 의도는 데몬에
    * 남아 다음 틱이 이어받는다(다시 누를 일이 생기지 않는다).
+   * `note` 는 제출 확인의 `개발자에게 한마디`(PLAN-UI U3) — 비면 싣지 않는다.
    */
-  submit: (sessionId?: string | null) => Promise<DiffStatus>;
+  submit: (sessionId?: string | null, note?: string) => Promise<DiffStatus>;
   /**
    * 상태 확인 — the pull request plus the developer's comments. Asked for by
    * the planner, never polled — the state only moves when a developer acts on
@@ -1752,8 +1753,15 @@ export function useDaemon(url: string | null): Daemon {
         ),
       // 제출 (PLAN L6): 의도를 적는 것으로 끝나고, 데몬은 그 틱을 최대 60초
       // 기다렸다 지금 상태를 돌려준다 — 창은 그 대기에 여유를 곁들인 값.
-      submit: (sessionId?: string | null) =>
-        call<DiffStatus>({ type: "repo.submit", ...(sessionId ? { sessionId } : {}) }, 90_000),
+      submit: (sessionId?: string | null, note?: string) =>
+        call<DiffStatus>(
+          {
+            type: "repo.submit",
+            ...(sessionId ? { sessionId } : {}),
+            ...(note?.trim() ? { note: note.trim() } : {}),
+          },
+          90_000,
+        ),
       githubTokenSet: (token: string | null) =>
         call<OnboardingStep>({ type: "github.token.set", token }, 60_000).then((step) => {
           // The reply is one gate; fold it into the wizard's list in place.
