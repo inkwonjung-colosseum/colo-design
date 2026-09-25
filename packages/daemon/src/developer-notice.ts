@@ -76,6 +76,17 @@ export const ISSUE_LABEL = "colo-design";
 const DETAIL_MAX_LINES = 30;
 const DETAIL_MAX_CHARS = 4000;
 
+/**
+ * 기계 전체 알림의 다시 쓰기 창 — 프로젝트 알림의 10분과 다르다. disk:low 는
+ * 프로젝트마다의 감독자가 각자 올리지만 문제는 기계 하나의 것이므로, 세
+ * 프로젝트가 같은 날 디스크 부족을 보면 알림은 하나여야 한다. 위생의 disk
+ * 항목이 하루에 한 번 도니만큼 창도 하루다.
+ */
+const MACHINE_NOTICE_REFRESH_MS = 24 * 60 * 60_000;
+
+/** 다시 쓰기 창 — 기계 전체 알림은 하루, 프로젝트 알림은 10분 (L7 표). */
+const refreshWindowOf = (slug: string | null): number =>
+  slug === null ? MACHINE_NOTICE_REFRESH_MS : BUDGETS.noticeRefreshMs;
 /** 문제 키의 문장 — 표에 없는 키는 접두어로 읽고, 그래도 모르면 키가 곧 제목이다. */
 export function describeProblem(key: string, detail?: string): Omit<Problem, "key" | "slug"> {
   // 반려 반영 턴의 예산 소진(review:<pr>:rejection)은 review:* 의 라운드 상한
@@ -343,9 +354,9 @@ export class DeveloperNotice {
     if (
       existing !== undefined &&
       lastWrite !== undefined &&
-      now - lastWrite < BUDGETS.noticeRefreshMs
+      now - lastWrite < refreshWindowOf(problem.slug)
     ) {
-      // 10분 창 안의 다시 나기 — 쓰지 않고 서 있는 경로를 그대로 답한다.
+      // 창 안의 다시 나기 — 쓰지 않고 서 있는 경로를 그대로 답한다.
       return existing.via;
     }
     const count = (existing?.count ?? 0) + 1;

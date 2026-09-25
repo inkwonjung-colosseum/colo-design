@@ -310,6 +310,33 @@ test("disk:low 는 Slack 으로 가지만 화면 주의의 재료(machineNotices
   await notice.resolve("disk:low", null);
 });
 
+test("disk:low 는 프로젝트가 셋이라도 하루에 한 번만 나간다 — 기계 전체 알림의 창", async () => {
+  // fakeSlack 의 문장 기록은 비어 있다 — 보낸 횟수를 세는 fetch 몸을 직접 둔다.
+  let sends = 0;
+  const slack = new Escalation(new MemoryCredentialStore(), quiet, async () => {
+    sends += 1;
+    return new Response("ok");
+  });
+  await slack.set({ kind: "webhook", url: "https://hooks.example/test" });
+  let now = 1_000_000;
+  const notice = new DeveloperNotice(deps({ slack, now: () => now }));
+  const raise = (detail: string) =>
+    notice.raise({ key: "disk:low", slug: null, ...describeProblem("disk:low", detail) });
+
+  assert.equal(await raise("여유 1.0GB"), "slack");
+  assert.equal(sends, 1);
+  // 10분 창을 훌쩍 넘어도(다른 프로젝트의 감독자가 올린다) 하루 안에는 쓰지
+  // 않는다 — 문제는 기계 하나의 것이므로 알림도 하나다.
+  now += 3 * 60 * 60_000;
+  assert.equal(await raise("여유 1.0GB"), "slack");
+  assert.equal(sends, 1, "하루 안의 다시 나기는 쓰지 않는다");
+  // 다음 날 — 여전히 모자라다고 갱신한다(Escalation 의 같은 문장 10분 창을
+  // 피해 문장을 바꾼다 — 실사에서는 detail 이 오늘의 여유를 실어 매번 다르다).
+  now += 22 * 60 * 60_000;
+  assert.equal(await raise("여유 0.9GB"), "slack");
+  assert.equal(sends, 2);
+});
+
 test("넘기기가 성공하면 서 있던 submit:pr 알림을 거둔다", async () => {
   const remote = await makeRemote();
   const clone = await makeClone(remote);
