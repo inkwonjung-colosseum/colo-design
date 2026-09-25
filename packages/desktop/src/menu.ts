@@ -2,11 +2,12 @@ import { APP_SHORTCUTS } from "@colo-design/protocol";
 import type { MenuItemConstructorOptions } from "electron";
 
 /**
- * 애플리케이션 메뉴 (PLAN D85 ⓒ). Electron 기본 메뉴의 reload · zoom ·
+ * 애플리케이션 메뉴 (PLAN D85 ⓒ · U19). Electron 기본 메뉴의 reload · zoom ·
  * toggleDevTools 역할은 포커스된 창의 webContents 를 겨눈다 — 미리보기 뷰가
- * 창의 자식이라 ⌘R 이 도구 UI 를 통째로 새로 고침하고 ⌘+ 는 도구를 키웠다.
- * 우리가 만든 메뉴는 보기 항목을 미리보기 뷰로 겨눈다: 가속키는 포커스가
- * 채팅에 있어도 뷰에 있어도 같은 곳에 닿는다.
+ * 창의 자식이라 ⌘R 이 도구 UI 를 통째로 새로 고침하고 ⌘+ 는 도구만 키웠다.
+ * 우리가 만든 메뉴는 새로 고침 · 되감기를 미리보기 뷰로, 배율 셋을 앱 전체로
+ * 겨눈다(U19 — Claude Desktop 과 같은 손): 가속키는 포커스가 채팅에 있어도
+ * 뷰에 있어도 같은 곳에 닿는다.
  *
  * `buildMenuTemplate` 는 순수 함수다 — desktop 단위 테스트가 가속키와 역할
  * 배제(기본 reload · zoomIn · packaged 의 toggleDevTools)를 이 파일만 읽고
@@ -17,13 +18,19 @@ import type { MenuItemConstructorOptions } from "electron";
 interface MenuPreviewTarget {
   reload(): void;
   history(delta: -1 | 1): void;
-  zoomIn(): void;
-  zoomOut(): void;
-  zoomReset(): void;
 }
 
 export interface MenuTargets {
   preview: MenuPreviewTarget | null;
+  /**
+   * 앱 배율(U19) — ⌘= · ⌘- · ⌘0 은 미리보기가 아니라 앱 전체를 키운다.
+   * main 이 창 · 미리보기 게스트 · 저장을 한 자리에서 움직인다.
+   */
+  app: {
+    zoomIn(): void;
+    zoomOut(): void;
+    zoomReset(): void;
+  };
   /**
    * 주소로 이동 ⌘L (D85 ⓒ): the view's key-forward channel replays ⌘L into
    * the web, which focuses the address input.
@@ -53,9 +60,9 @@ export function buildMenuTemplate(targets: MenuTargets): MenuItemConstructorOpti
     back: () => preview?.history(-1),
     forward: () => preview?.history(1),
     address: () => targets.gotoAddress(),
-    "zoom-in": () => preview?.zoomIn(),
-    "zoom-out": () => preview?.zoomOut(),
-    "zoom-reset": () => preview?.zoomReset(),
+    "zoom-in": () => targets.app.zoomIn(),
+    "zoom-out": () => targets.app.zoomOut(),
+    "zoom-reset": () => targets.app.zoomReset(),
     settings: () => targets.openSettings(),
     "new-session": () => targets.newSession(),
   };

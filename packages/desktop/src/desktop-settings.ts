@@ -14,6 +14,8 @@ export interface DesktopSettings {
   notifications?: unknown;
   /** 데몬이 지난 실행에 바인드한 포트 — 다음 실행이 같은 자리를 다시 잡는다. */
   port?: unknown;
+  /** 앱 배율(⌘= · ⌘- · ⌘0) — 다음 실행이 창과 미리보기 게스트에 다시 건다. */
+  zoom?: unknown;
 }
 
 export function loadDesktopSettings(path: string): DesktopSettings {
