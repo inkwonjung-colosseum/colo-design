@@ -29,7 +29,7 @@ function emitSteps(): string {
 /** 설치 한 바퀴를 기다린다 — 진행 줄은 순서 그대로 모은다. */
 function runInstall(
   deps: ConstructorParameters<typeof AgentInstall>[0],
-  kind: "install-claude" | "install-codex" = "install-claude",
+  kind: "install-claude" | "install-codex" | "update-claude" | "update-codex" = "install-claude",
 ): Promise<{
   started: boolean;
   guidance: string;
@@ -328,6 +328,113 @@ test("설치 성공 뒤 loginCommand 가 살아난다 — 처음엔 없음, 성�
     assert.equal(command.command, fake);
     assert.deepEqual(command.args, ["auth", "login"]);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 업데이트(PLAN-UI U12) — 같은 진행기, 같은 구멍으로
+// ---------------------------------------------------------------------------
+
+test("update-claude: 스크립트에 latest 를 건네고, 자식은 자기 업데이트가 꺼진 채로 돈다", async () => {
+  const installer = new AgentInstall({
+    env: {
+      ...process.env,
+      DISABLE_AUTOUPDATER: "",
+      COLO_DESIGN_CLAUDE_INSTALL_CMD:
+        'test "$1" = latest || exit 3; test "$DISABLE_AUTOUPDATER" = 1 || exit 4; echo "target $1"',
+    },
+    resolveClaude: async () => "/home/u/.local/share/claude/versions/2.2.0",
+    progressIntervalMs: 0,
+  });
+  const { promise, resolve } = Promise.withResolvers<{
+    ok: boolean;
+    detail: string;
+    executable: string | null | undefined;
+  }>();
+  const lines: string[] = [];
+  const started = installer.start("update-claude", {
+    onProgress: (line) => lines.push(line),
+    onDone: (ok, detail, executable) => resolve({ ok, detail, executable }),
+  });
+  assert.equal(started.started, true);
+  assert.equal(started.guidance, "Claude Code 업데이트를 시작했어요 — 진행 상황을 보여 드릴게요.");
+  const result = await promise;
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(result.detail, "Claude Code 를 새 버전으로 바꿨어요.");
+  assert.equal(result.executable, "/home/u/.local/share/claude/versions/2.2.0");
+  assert.deepEqual(lines, ["target latest"]);
+});
+
+test("install-claude: 설치는 대상을 건네지 않는다 — 스크립트의 기본 그대로", async () => {
+  const result = await runInstall({
+    env: {
+      ...process.env,
+      COLO_DESIGN_CLAUDE_INSTALL_CMD: 'test -z "$1" || exit 3; test "$DISABLE_AUTOUPDATER" = 1',
+    },
+    resolveClaude: async () => "/usr/local/bin/claude",
+  });
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(result.detail, "Claude Code 설치가 완료되었습니다.");
+});
+
+test("update-codex: 로컬 릴리스 서버의 자산을 받아 확인하고 tools/bin 에 바꿔 둔다", async () => {
+  const { createServer } = await import("node:http");
+  const { execFileSync } = await import("node:child_process");
+  const { readFileSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "colo-codex-update-test-"));
+  const assetName = "codex-aarch64-apple-darwin.tar.gz";
+  writeFileSync(join(dir, "codex-aarch64-apple-darwin"), "#!/bin/sh\necho codex-cli 0.46.0\n");
+  execFileSync("tar", ["-czf", join(dir, assetName), "-C", dir, "codex-aarch64-apple-darwin"]);
+  const archive = readFileSync(join(dir, assetName));
+  const digest = `sha256:${createHash("sha256").update(archive).digest("hex")}`;
+  const server = createServer((request, response) => {
+    if (request.url === "/release") {
+      const { port } = server.address() as { port: number };
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          tag_name: "rust-v0.46.0",
+          assets: [
+            {
+              name: assetName,
+              browser_download_url: `http://127.0.0.1:${port}/asset`,
+              digest,
+              size: archive.length,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    response.end(archive);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address() as { port: number };
+    const toolsBinDir = join(dir, "tools", "bin");
+    const result = await runInstall(
+      {
+        env: { ...process.env, COLO_DESIGN_CODEX_RELEASE_API: `http://127.0.0.1:${port}/release` },
+        platform: "darwin",
+        arch: "arm64",
+        toolsBinDir,
+        resolveCodex: async () => join(toolsBinDir, "codex"),
+        progressIntervalMs: 0,
+      },
+      "update-codex",
+    );
+    assert.equal(result.ok, true, result.detail);
+    assert.equal(result.guidance, "Codex 업데이트를 시작했어요 — 진행 상황을 보여 드릴게요.");
+    assert.equal(result.detail, "Codex 를 새 버전으로 바꿨어요.");
+    assert.ok(result.lines.includes("Codex 확인하는 중…"));
+    assert.ok(result.lines.includes("Codex 설치하는 중…"));
+    assert.equal(
+      readFileSync(join(toolsBinDir, "codex"), "utf8"),
+      "#!/bin/sh\necho codex-cli 0.46.0\n",
+    );
+  } finally {
+    server.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

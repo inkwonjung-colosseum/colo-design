@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { OnboardingFix, OnboardingStep, OnboardingStepId } from "@colo-design/protocol";
 import type { AgentDriver } from "./agent/driver.js";
+import { withoutSelfUpdate } from "./agent-env.js";
 import { extraPathPrefix } from "./claude-trust.js";
 import {
   currentPlatform,
@@ -428,6 +429,8 @@ export class AgentLogin {
       const child = this.spawnLike(command, args, {
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
+        // 로그인도 Claude 자식이다 — 자기 업데이트를 끈다(PLAN-UI U12, Codex 에는 무해).
+        env: withoutSelfUpdate(process.env),
       });
       this.child = child;
       let output = "";

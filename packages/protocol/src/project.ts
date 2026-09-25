@@ -326,6 +326,24 @@ export interface DaemonStatus {
    */
   agentAutoUpdate: boolean;
   /**
+   * 에이전트 업데이트의 지금(PLAN-UI U12, v19 보충) — 새로 고친 창도 `도는
+   * 작업이 끝나면 설치해요`(pending) · 진행 중(running) · 끝(done · failed)을
+   * 다시 그릴 수 있게. `at` 은 그 단계에 들어선 시각(ISO), `version` 은 끝난
+   * 업데이트가 깐 버전, `detail` 은 실패의 한국어 한 줄. 이 실행에서 업데이트가
+   * 없었던 에이전트는 키가 없다.
+   */
+  agentUpdates?: Partial<
+    Record<
+      "claude" | "codex",
+      {
+        phase: "pending" | "running" | "done" | "failed";
+        at: string;
+        version?: string;
+        detail?: string;
+      }
+    >
+  >;
+  /**
    * 기계 전체의 주의 (PLAN L8) — 연결 코드 만료 · AI 로그아웃처럼 어느
    * 프로젝트의 것도 아닌 문제. 없으면 키가 없다.
    */

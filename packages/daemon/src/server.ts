@@ -18,6 +18,7 @@ import { CodexDriver } from "./agent/drivers/codex/driver.js";
 import { OmpDriver } from "./agent/drivers/omp/driver.js";
 import { DriverRegistry } from "./agent/registry.js";
 import { AgentInstall } from "./agent-install.js";
+import { AgentUpdates } from "./agent-update.js";
 import { browserMcpEntry } from "./browser-launch.js";
 import { CommandDedupe } from "./command-dedupe.js";
 import {
@@ -351,6 +352,24 @@ export class DaemonServer {
   /** 에이전트 설치 진행기(1단계) — Claude Code · Codex 를 끝까지 지켜본다. */
   private readonly agentInstall = new AgentInstall();
   /**
+   * 에이전트 업데이트(PLAN-UI U12) — 새 버전 확인과, 도는 작업이 없을 때의
+   * 설치. 설치는 위의 진행기를 그대로 탄다.
+   */
+  private readonly agentUpdates = new AgentUpdates({
+    installer: this.agentInstall,
+    busy: () => this.manager.anyBusy(),
+    setting: this.machineSetting,
+    currentVersion: async (agent) => {
+      const diagnostic = await this.agentDrivers.get(agent)?.isAvailable();
+      return diagnostic?.ok ? (diagnostic.version ?? null) : null;
+    },
+    adoptClaudeExecutable: (path) => this.adoptClaudeExecutable(path),
+    broadcast: (message) => this.broadcast(message),
+    announce: () => void this.status().then((status) => this.broadcast({ type: "status", status })),
+    notice: (notice) => this.config.onNotice?.(notice),
+    log: (message, fields) => this.logger.info(message, fields),
+  });
+  /**
    * P2-1 자동 저장의 대기표. 답을 낸 턴(turn.end)이 표를 올리고, 그 턴이
    * 내려앉은 idle 에서 — 화면 확인 게이트가 걸렸다면 그 판정이 끝난 뒤에 —
    * 한 번만 내려온다. 표를 따로 두는 이유는 하나다: 커밋을 turn.end 에 바로
@@ -588,6 +607,8 @@ export class DaemonServer {
             ...(detail ? { detail } : {}),
             ...(startedAt === null ? {} : { startedAt }),
           });
+          // 미뤄 둔 에이전트 업데이트(PLAN-UI U12) — 마지막 턴이 내려앉는 순간 깐다.
+          this.agentUpdates.settle();
           // A turn that just finished is the one moment the clone can have
           // gained files nobody has saved (PLAN D8). Counting here — rather
           // than on a timer — is what lets the top bar say 저장 the instant
@@ -884,6 +905,7 @@ export class DaemonServer {
       machineTurns: this.machineTurns,
       agentLogin: this.agentLogin,
       agentInstall: this.agentInstall,
+      agentUpdates: this.agentUpdates,
       queueDiskFor: this.queueDiskFor,
       developerNotice: this.developerNotice,
       // 로그인이 돌아오면 기다리던 말을 다시 세운다 (PLAN L12) — 앱 안의
@@ -895,6 +917,8 @@ export class DaemonServer {
     // 시작 복구 (PLAN L12): 라우터가 섰으니 아껴 둔 진행 중 턴을 되살려
     // 브리프로 연다. 기다리지 않는다 — 시작의 나머지 일을 늦추지 않게.
     if (recoveries.length > 0) void this.router?.recoverStartupTurns(recoveries);
+    // 에이전트 새 버전 확인(PLAN-UI U12) — 기다리지 않는다, 그 뒤로 하루에 한 번.
+    this.agentUpdates.start();
 
     // 감독자의 timer 틱 — 모든 프로젝트가 한 번씩 돈다 (PLAN L2). 열린
     // 넘김의 재읽기 · 착지 · 베이스 따라가기는 모두 이 틱의 판정이 한다.
@@ -1106,6 +1130,7 @@ export class DaemonServer {
     // 진행 중인 에이전트 로그인·설치도 이 데몬의 자식이다 — 데몬이 내려가면 함께 끊는다.
     this.agentLogin.stop();
     this.agentInstall.stop();
+    this.agentUpdates.stop();
     clearInterval(this.handoffTimer ?? undefined);
     this.handoffTimer = null;
     this.logger.info("데몬 종료");
@@ -1576,6 +1601,9 @@ export class DaemonServer {
           label: descriptor.label,
           available: diagnostic.ok,
           ...(diagnostic.version ? { version: diagnostic.version } : {}),
+          ...(this.agentUpdates.latest(descriptor.id)
+            ? { latestVersion: this.agentUpdates.latest(descriptor.id) }
+            : {}),
           ...(diagnostic.loggedIn !== undefined ? { loggedIn: diagnostic.loggedIn } : {}),
           ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
           oneShot: driver.oneShot !== undefined,
@@ -1595,6 +1623,8 @@ export class DaemonServer {
     // a session are read once per run, off this await — the next broadcast
     // carries whatever landed.
     this.plans.refreshModels();
+    // 마지막 확인에서 한 시간이 지났으면 새 버전을 뒤에서 다시 본다(PLAN-UI U12).
+    this.agentUpdates.maybeCheck();
     // 기계 주의 (PLAN L8): GitHub 만료 · 에이전트 로그아웃의 since 를 세고,
     // 환경 경고를 개발자 알림과 맞춘다. 주의는 우선순위 하나만 화면에 선다.
     const attention = this.machineAttention(base);
@@ -1613,6 +1643,7 @@ export class DaemonServer {
       dev: this.config.devAgents === true,
       authorName: this.machineSetting.get("authorName"),
       agentAutoUpdate: this.machineSetting.get("agentAutoUpdate") !== "off",
+      ...(this.agentUpdates.snapshot() ? { agentUpdates: this.agentUpdates.snapshot() } : {}),
       githubAuthExpired: this.github.authExpired,
       // 슬라이스 5: 설정 폼과 `개발자 부르기` 가 잠긴 채 보이던 이유 — 상태가
       // 이 한 단어를 채우지 않았다 (PLAN 단계 0). 비밀 자체는 못 나간다.

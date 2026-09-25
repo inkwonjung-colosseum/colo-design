@@ -14,6 +14,7 @@ import type {
   SessionCommand,
   SessionModelInfo,
 } from "@colo-design/protocol";
+import { withoutSelfUpdate } from "../../../agent-env.js";
 import { BROWSER_MCP_SERVER_NAME, claudeBrowserMcpServer } from "../../../browser-launch.js";
 import { sanitizeRepoAgentSettings } from "../../../claude-trust.js";
 import { ensureGitGuardHooks, gitGuardEnv, gitGuardHookDecision } from "../../../git-guard.js";
@@ -206,7 +207,8 @@ export class ClaudeAgentSession implements AgentSession {
             },
           ],
         },
-        env: gitGuardEnv({ ...process.env }, ensureGitGuardHooks()),
+        // 자기 업데이트를 끈다(PLAN-UI U12) — 업데이트는 앱의 `업데이트` 줄 하나다.
+        env: withoutSelfUpdate(gitGuardEnv({ ...process.env }, ensureGitGuardHooks())),
         includePartialMessages: true,
         // Load the same user/project configuration the terminal would, so
         // CLAUDE.md, skills, and permission rules behave identically. (The
