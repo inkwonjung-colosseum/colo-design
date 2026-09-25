@@ -541,3 +541,125 @@ Shell · Sidebar(전환기 · 다른 프로젝트 줄 · 대화 목록 · 도구
 3. 그다음이 실제 로그인의 `pnpm dev:desktop` 점검(README 깨끗한 기계 점검 1~9)이고, 그 뒤에 main.
 
 N6 은 예산 값 하나라 결정만 있으면 `budgets.ts` 의 제출 행을 줄이는 한 줄이다 — 권장은 3분 안팎.
+
+## 10. 롱텀 사용의 네 결정 — 구현 계획 (2026-09-25)
+
+베타 롱텀 검토(`BETA-LONGTERM.md` 의 관점)에서 고른 넷이다. 셋은 "몇 달을 쓰는 동안" 드러나는
+것(연결 코드 만료 · 잘못 제출한 뒤의 길), 둘은 "처음 한 시간" 의 것(첫 턴의 시간 · 앱 배율).
+§9 의 W1~W8 · D1 과 겹치지 않는다. 결정에는 U 번호를 이어 단다(U17~U20). 줄 번호는
+`lifecycle` 04b72706 + 작업 트리(테마 작업이 얹힌 상태) 기준이다.
+
+### 10.1 원칙 (§9.1 그대로 + 둘)
+
+- 판정은 순수 함수로 떼어 시험을 붙이고, 사용자 문자열은 `next/labels.ts` 만.
+- **문제 문장은 셋 그대로다.** 새 상태(만료 예고)는 설정 → 연결 한 줄과 개발자 알림이 말하고,
+  상태 줄 아래에는 아무것도 세우지 않는다 — 사용자가 할 일이 없기 때문이다.
+- **선로는 v19 에 더한다**(버전을 올리지 않는다 — 앱과 데몬이 함께 배포된다, §8 과 같은 판).
+
+### U17. 연결 코드의 만료를 미리 안다
+
+**결정.** GitHub 은 만료일이 있는 코드의 모든 응답에 `github-authentication-token-expiration`
+헤더(`2026-10-15 12:00:00 UTC` 꼴)를 싣는다. 데몬은 이미 모든 GitHub 응답이 지나는 감시점을
+하나 갖고 있다(`github-bridge.ts` 생성자의 `this.transport` 래퍼 — 401 을 보는 `noteAuth`).
+같은 자리에서 이 헤더를 읽어 두면 **추가 요청 없이** 2 분 관찰의 첫 응답에서 만료 시각을
+안다. 14 일 안이면 개발자에게 한 번 알리고(새 초대 파일 요청), 설정 → 연결이 남은 날을 말한다.
+새 초대 파일이 오면(`setToken`) 예고를 거둔다. 실제 만료(401)는 지금의 `github:auth` 길 그대로다.
+
+| # | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- |
+| E1 | `packages/daemon/src/github-bridge.ts` 생성자(transport 래퍼) · `authExpired` getter 옆 | 응답 헤더에서 `parseTokenExpiration(headers)` → ISO 또는 null. `tokenExpiresAt: string \| null` 을 들고, 바뀔 때만 `deps.onExpiryChange?.(iso)`. `setToken` 은 null 로 되돌린다(새 자격의 생애). 순수 `parseTokenExpiration` · `expiryJudgement(expiresAt, now) → { daysLeft, warn }` 은 새 `github-expiry.ts` | `github-expiry.test.ts` — UTC 꼴 · ISO 꼴 · 헤더 없음 · 14일 경계 · 지난 날짜 |
+| E2 | `packages/daemon/src/budgets.ts` | `tokenExpiry: { warnBeforeMs: 14 * DAY }` — 예고의 문턱을 한 표에 | (E1 의 경계 시험이 이 값을 읽는다) |
+| E3 | `packages/daemon/src/machine-setting.ts` 를 쓰는 `server.ts` | `onExpiryChange` 에서 `machineSetting.set("githubTokenExpiresAt", iso)` — 다시 켠 직후 첫 관찰 전에도 설정 줄이 답하게. `setToken` 은 지운다 | 기존 `machine-setting` 시험의 키 하나 |
+| E4 | `packages/protocol/src/project.ts:254` (`githubAuthExpired` 옆) · `server.ts:1651` | `DaemonStatus.githubTokenExpiresAt?: string \| null` — 브리지의 값, 없으면 machine.json 의 값. 방송은 판정이 바뀔 때만(`noteAuth` 와 같은 절제) | 프로토콜 타입만 |
+| E5 | `packages/daemon/src/developer-notice.ts` `PROBLEM_TEXT` · `SCREEN_QUIET_KEYS` | 키 `github:expiring` — 제목 `연결 코드(GitHub)가 곧 만료됩니다`, what `만료: <시각> · <N>일 남음`(detail), tried `도구가 대신 만들 수 없습니다`, ask `만료 전에 새 초대 파일을 사용자에게 보내 주세요`. `SCREEN_QUIET_KEYS` 에 넣어 문제 문장(`개발자에게 알렸어요`)이 서지 않게 | `developer-notice.test.ts` — 본문 문장 · 조용한 키 |
+| E6 | `packages/daemon/src/server.ts` (`onExpiryChange` 수신) | `warn` 으로 들어서면 `developerNotice.raise({ key: "github:expiring", slug: <활성 프로젝트, 없으면 첫 프로젝트>, … })` — **slug 를 준다**: `project-fleet.ts:305` 의 기계 알림(slug null)은 Slack · 로그로만 가서 GitHub 만 있는 개발자에게 닿지 않는다. 열린 요청이 있으면 그 PR, 없으면 이슈(기존 배달 규칙). 쓴 slug 는 `machineSetting.set("githubExpiryNoticeSlug")` 에 적어 두고, `setToken` · 판정이 `warn` 밖으로 나가면 그 slug 로 `resolve` | `cycle-submit-flow.test.ts` 하네스에 「만료 12일 전 헤더」 케이스 — 이슈 하나, 두 번째 응답에 중복 없음, 새 토큰에 해결 코멘트 |
+| E7 | `packages/web/src/next/lib/connection-copy.ts`(새) · `settings/SettingsDialog.tsx:465-475` · `labels.ts` `settings` 칸 끝 | 순수 `connectionCopy({ expired, expiresAt, projects, noticeRoute }, now, L)` → `{ dot: "green" \| "amber" \| "red", text }`. 문장: 만료 모름 `연결 정상 · 프로젝트 N개`; 15일 이상 `연결 정상 · 프로젝트 N개 · 10월 15일까지`; 14일 안 `연결이 12일 뒤 끝나요 · 개발자에게 새 초대 파일을 부탁했어요`(noticeRoute 가 none 이면 `… 부탁하세요`); 지남 → 지금의 `reconnectInvite`. 날짜는 `L.settings.connectionUntil(월, 일)` 로 짓는다 | `next-connection-copy.test.ts` — 네 문장 · 경계(14일 · 15일) · noticeRoute none |
+| E8 | `site/invite.js:334`(loadRepos 첫 응답) · `renderStatus` | `state.tokenExpires = reply.headers.get("github-authentication-token-expiration")`. 상태 줄에 ` · 이 코드는 10월 15일까지예요`, 30일 안이면 `이 코드는 12일 뒤 만료돼요 — 더 긴 만료일의 코드를 권해요`. **리스크**: 브라우저는 GitHub 이 `Access-Control-Expose-Headers` 에 올린 헤더만 읽는다 — 구현자가 첫 응답에서 확인하고, 안 읽히면 페이지는 건너뛰고 E9 만 한다 | 페이지는 시험이 없다 — 손으로 한 번 |
+| E9 | `scripts/make-invite.mjs:114`(defaultBranch 의 fetch 옆) | 토큰 확인 겸 `/user` 한 번 — 같은 헤더를 읽어 `경고: 이 연결 코드는 <날짜>에 만료됩니다(N일 남음)` 를 stderr 에. 30일 안이면 그 줄을 빨갛게 말하고 계속 진행한다(막지 않는다) | `invite-format.test.ts` 는 형식만 — 스크립트는 손으로 |
+
+**끝.** 만료 12일 전의 픽스처에서 이슈(또는 PR 코멘트)가 하나 서고, 설정 → 연결이 `연결이 12일
+뒤 끝나요 …` 를 말하고, 상태 줄 아래는 조용하며, 새 초대 파일을 놓으면 설정 줄이 `연결 정상` 으로
+돌아오고 이슈에 해결 코멘트가 붙는다.
+
+### U18. 만드는 중의 단계 말과 첫 턴의 안내
+
+**결정.** 상태 줄의 `만드는 중 · 240초` 는 무엇을 하는지 말하지 않는다. 대화록의 활동 묶음이
+이미 도구를 셋으로 가른다(`components/transcript/activity.tsx:19` 의 `ACTIVITY_BUCKET` —
+file · command · read). 그 표를 공유 모듈로 올리고, 상태 줄이 **지금 도는 도구의 묶음**으로 단계
+말을 고른다: `화면을 살펴보는 중`(read) · `화면 파일을 고치는 중`(file) · `검사를 돌리는 중`(command) ·
+그 밖(도구 없음 · 생각 중 · 모르는 도구)은 지금의 `만드는 중`. 대화의 **첫 턴**이 60초를 넘으면
+시계 뒤에 `처음은 몇 분 걸려요` 가 붙는다 — 레포와 AI 의 첫 왕복은 늘 느리고, 그 사실을 사람이
+먼저 알아야 창을 두고 나갈 수 있다. 사이드바 · 다른 프로젝트 줄 · 홈의 `만드는 중` 은 그대로다.
+
+| # | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- |
+| M1 | `packages/web/src/lib/tool-buckets.ts`(새) ← `components/transcript/activity.tsx:19-58` | `ACTIVITY_BUCKET` 과 `bucketOf(name)` 을 옮기고 activity.tsx 는 가져다 쓴다(동작 불변). 데몬의 `tool-names.ts` 와 같은 사본 관계는 주석으로 남긴다 | 옮김만 — 기존 시험 그대로 |
+| M2 | `packages/web/src/next/lib/making.ts`(새) | 순수 `makingPhase(blocks) → "read" \| "file" \| "command" \| null`: 마지막 `user` 블록 뒤의 도구 블록 중 **아직 도는 것**(`lib/progress.ts` 의 `isToolRunning`)의 마지막 하나의 묶음; 도는 것이 없으면 그 턴의 마지막 도구의 묶음; 도구가 없으면 null. `firstTurn(blocks) → boolean`: `user` 블록이 정확히 하나. 상수 `FIRST_TURN_HINT_MS = 60_000` | `next-making.test.ts` — 도구 없음 · read 만 · file 이 도는 중 · 끝난 file 뒤 command · 하위 에이전트(agentId) 도구 · 두 번째 턴 |
+| M3 | `next/status/StatusLine.tsx:156-162`(`nx-making`) · `next/slots.ts`(`StatusLineProps`) · `Workspace.tsx:84-88` | `Workspace` 가 `sessions.active?.blocks` 로 `phase` · `firstTurn` 을 계산해 내려 준다. 스팬은 `<Spin/> {단계 말} <Elapsed/> {60초 넘은 첫 턴이면 힌트}`. 좁은 창(U16)은 단계 말만. `Elapsed` 는 그대로(1초 시계는 그 글자뿐) | 렌더는 시험 없음 — `next-cold.cjs` 과제 2 에 걸음 하나(가짜 claude 는 도구를 안 쓰니 `만드는 중` 유지 확인) |
+| M4 | `labels.ts` `journey` 칸 끝 | `makingRead` · `makingFile` · `makingCheck` · `firstTurnHint: "처음은 몇 분 걸려요"` — 금칙어 없음(파일 · 검사 는 허용 어휘, `경로` 아님) | `next-labels.test.ts` 가 미참조 · 금칙어를 센다 |
+
+**끝.** 실제 답이 도는 동안 상태 줄이 `화면 파일을 고치는 중 · 1분 12초 · 처음은 몇 분 걸려요`
+를 말하고, 두 번째 턴에는 힌트가 없다.
+
+### U19. 앱 화면의 배율
+
+**결정.** ⌘= · ⌘- · ⌘0 은 **앱 전체**(사이드바 · 대화 · 상태 줄 · 미리보기)를 키운다 — Claude
+Desktop 과 같은 손. 지금은 `menu.ts:56-58` 이 이 셋을 미리보기 뷰에만 겨눈다(D85 ⓒ). 미리보기의
+자기 배율(`···` → 배율, IPC `preview:zoom`)은 그대로 두고 **곱한다**: 게스트의 실제
+`zoomFactor = 미리보기 배율 × 앱 배율`. 게스트가 앱과 같이 커져야 하는 이유는 둘 — 말풍선 좌표
+(`preview-geometry.ts` 의 `bubblePlacement` 는 게스트 CSS px 와 칸 좌표가 1:1 이라고 본다)와 기기
+에뮬레이션의 뷰포트가 그대로 유지된다. 값은 `desktop-settings.json` 에 산다 — 포트가 바뀌는
+origin 에 Electron 의 자동 저장을 맡길 수 없다(desktop-settings.ts 의 주석과 같은 이유).
+
+| # | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- |
+| Z1 | `packages/desktop/src/app-zoom.ts`(새) | 순수 `stepZoom(current, "in" \| "out" \| "reset")` — 0.8 ~ 1.5, 0.1 씩, 반올림. `loadAppZoom(path)` · `saveAppZoom(path, factor)` 는 `desktop-settings.ts` 의 읽기-수정-쓰기를 쓴다(`DesktopSettings.zoom?: unknown`) | 데스크톱에는 시험 러너가 없다(package.json 에 test 없음) — `pnpm typecheck` 와 눈 |
+| Z2 | `packages/desktop/src/main.ts:252-259` · `menu.ts:17-23`(`MenuPreviewTarget`) | `zoom-in/out/reset` 의 겨냥을 `targets.app.{zoomIn,zoomOut,zoomReset}` 로 바꾼다(`preview` 에서 셋을 뺀다). 메인이 `host.window.webContents.setZoomFactor(next)` + `plannerPreview.setAppZoom(next)` + 저장. 창을 새로 만들 때(`host.create` · `host.onCreated`) 저장값을 다시 건다 | 위와 같음 |
+| Z3 | `packages/desktop/src/preview-view.ts:655-680`(`setZoom`) | `appZoom` 필드. `setZoom` 은 `contents.setZoomFactor(clamped * this.appZoom)`, `setAppZoom(f)` 는 따뜻한 페이지 전부에 다시 건다. `colo-preview:zoom` 이 되알리는 값은 **미리보기 배율만**(사용자에게 보이는 `100%`) | 위와 같음 |
+| Z4 | `packages/protocol/src/shortcuts.ts:42-49` · `components/dialogs/ShortcutsSheet.tsx` | 라벨을 `화면 크게 · 화면 작게 · 화면 실제 크기` 로 — 시트와 메뉴가 한 상수를 읽으니 둘이 같이 바뀐다. 미리보기 배율은 `···` 메뉴의 것으로 시트에 한 줄(`미리보기 배율 · ··· 메뉴`, 가속키 없음) | `next-labels.test.ts` 는 `next/` 만 본다 — vocab-sweep 이 문장을 훑는다 |
+| Z5 | `README.md` 「2. 틀」 · 「6. 미리보기에서 확인」 · 「데스크톱」 | ⌘= 가 앱 전체를 키운다는 한 줄, `···` 배율은 미리보기만이라는 한 줄 | 문서 |
+
+**리스크.** 앱 배율이 1 이 아닐 때 게스트 안 오버레이의 핀 배지는 게스트 배율을 따라 함께 커진다(의도).
+검증 창(`screen_check`)은 별 창이라 영향이 없다. 에뮬레이션(`emulation.ts`)이 `deviceScaleFactor` 를
+고정하면 곱한 배율과 겹칠 수 있다 — 구현자가 휴대폰 · 태블릿에서 한 번씩 본다.
+
+**끝.** ⌘= 두 번에 사이드바 · 대화 · 미리보기가 같이 커지고, 핀 말풍선이 요소 바로 아래 그대로
+서며, 앱을 다시 켜도 배율이 남고, `···` 의 `100%` 는 앱 배율과 무관하게 미리보기만 말한다.
+
+### U20. 영수증의 `개발자에게 한마디 더`
+
+**결정.** 제출 취소는 두지 않는다(요청을 닫는 것은 개발자의 판단 — L4). 대신 잘못 보냈거나
+덧붙일 말이 있을 때 **대화를 떠나지 않고** 개발자에게 닿는 길을 영수증 카드에 둔다. 코멘트 카드의
+`답하기` 가 이미 그 길이다(`comments.reply` → PR 코멘트, `ReplyBox`) — 같은 상자를 영수증에 달고,
+받는 명령만 코멘트 id 가 없는 `repo.note` 로 새로 둔다. 본문은 `> 한마디: …` 와 대리 표기
+(`developer-replies.ts` 의 `replyFooter`)로 나가 제출 확인의 한마디와 같은 꼴이다. 열린 요청이 있을
+때만 보인다 — 닫히거나 반영된 요청에는 갈 곳이 없다.
+
+| # | 자리 | 고침 | 시험 |
+| --- | --- | --- | --- |
+| N1 | `packages/protocol/src/messages.ts:739` (`comments.reply` 옆) | `repo.note { text: string (1~2000) }` — 활성 프로젝트의 열린 요청에 한마디. 답은 `{ ok: true }`. 명령 `id` 가 멱등 키라 재전송이 두 번 달지 않는다 | zod 스키마 시험(있는 패턴) |
+| N2 | `packages/daemon/src/repo-publish.ts:862`(`replyToReview` 옆) · `repo.ts:386` · `dispatch.ts:911` | `noteToDeveloper(text)`: `this.core.openHandoff` 가 없으면 한국어로 거절(`열린 요청이 없어요 — 제출한 뒤에 보낼 수 있어요`); 있으면 `client.commentOnIssue({ …slug, number, body })`, body = `> 한마디: ${text}\n\n${replyFooter(authorName)}`. 성공하면 `submitTrail.log` 에 `{ at, text: "개발자에게 한마디를 더 보냈어요" }` 를 덧붙여 `이번 작업` 의 제출 기록(`WorkPopover.tsx:66`)에 한 줄이 선다 | `repo-note.test.ts` — 픽스처 transport: `/issues/<pr>/comments` 에 `> 한마디:` 와 푸터 · 열린 요청 없음의 거절 · 401 의 거절 문장 |
+| N3 | `packages/web/src/lib/daemon-client.ts:820, 1856` | `api.noteToDeveloper(text)` — `replyToReview` 와 같은 60초 상한 | — |
+| N4 | `next/lib/thread.ts` · `next/chat/cards.tsx:268-315`(`ReceiptCard`) · `Thread.tsx:360-363` · `ChatColumn.tsx:282` | 순수 `noteAllowed(block, handoff)`: `handoff?.number === block.pr && handoff.state === "open"`. 카드의 `nx-cfoot` 에 `한마디 더` 단추 → 눌리면 `ReplyBox`(placeholder `L.cards.notePlaceholder`) → `onNote(text)` → 보내면 카드 아래 `보냈어요 · HH:MM` 한 줄과 토스트. 실패는 `ReplyBox` 의 기존 `sendFailed` | `next-thread.test.ts` 에 `noteAllowed` 케이스 셋(열림 · 닫힘 · 다른 요청 번호) |
+| N5 | `next/status/WorkPopover.tsx:107-136`(제출 칸) | 같은 단추를 제출 칸 바닥에도 — 영수증이 멀리 올라간 뒤의 자리. 열린 요청이 있을 때만 | — |
+| N6 | `labels.ts` `cards` · `work` 칸 끝 | `noteMore: "개발자에게 한마디 더"`, `notePlaceholder: "잘못 보냈거나 덧붙일 말을 적어요"`, `noteSent: (time) => \`${time} 개발자에게 보냈어요\``, `work.noteLine` | `next-labels.test.ts` |
+
+**끝.** 제출 영수증의 `한마디 더` 로 보낸 문장이 그 요청의 코멘트로 `> 한마디:` 와 대리 표기를 달고
+서고, `이번 작업` 의 제출 기록에 한 줄이 늘며, 요청이 닫히거나 반영되면 단추가 사라진다.
+
+### 10.2 순서와 크기
+
+| 묶음 | 워크트리 | 담는 것 | 크기 |
+| --- | --- | --- | --- |
+| A | `ui-11a` | U17 (E1~E9) — 데몬 · 프로토콜 · 웹 설정 줄 · 페이지 · 스크립트 | M |
+| B | `ui-11b` | U20 (N1~N6) — 프로토콜 · 데몬 · 웹 카드 | S~M |
+| C | `ui-11c` | U18 (M1~M4) — 웹만 | S |
+| D | `ui-11d` | U19 (Z1~Z5) — 데스크톱 · 단축키 상수 · README | S, 눈으로 보는 검증이 절반 |
+
+1. 넷은 서로 닿는 파일이 없다(`labels.ts` · `messages.ts` 는 각자 자기 칸 끝에만 더한다 — 병합의
+   완충은 §「labels.ts 의 칸」 의 빈 줄 규칙) — 동시에 시작한다. C 가 가장 짧으니 먼저 합쳐 A · B 의
+   상태 줄 검증에 쓴다.
+2. 넷을 `lifecycle` 에 합친 뒤 `pnpm typecheck` · `pnpm test` · `next-cold.cjs` 전체를 한 번 돈다.
+3. D 와 A 의 E8 은 `pnpm dev:desktop` 과 실제 GitHub 코드로 눈으로 본다 — README 「깨끗한 기계
+   점검」 에 두 걸음을 더한다(⌘= 로 앱이 커진다 · 설정 → 연결에 만료일이 선다).
+4. §9 의 `ui-10w` · `ui-10d` 가 먼저다 — 이 넷은 그 뒤에 선다.
