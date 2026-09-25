@@ -5,7 +5,7 @@ import type { Attachment } from "../../lib/attachment";
 import { koreanNoticeWords } from "../../lib/error-words";
 import { pinsToTurn } from "../../lib/preview-turns";
 import { isToolRunning } from "../../lib/progress";
-import { openScreenPath } from "../../lib/screen-link";
+import { openScreenPath, screenPath } from "../../lib/screen-link";
 import { tailMoving } from "../../lib/tape-visibility";
 import type { TurnScreen } from "../../lib/turn-screens";
 import { L } from "../labels";
@@ -105,8 +105,19 @@ export function ChatColumn({
             ...(pin.element.attrs?.testId ? { testId: pin.element.attrs.testId } : {}),
           }),
     }));
-    // 핀으로 처음 여는 대화는 첫 핀의 화면 이름을 얻는다(옛 칸과 같다).
-    const name = !activeId && sent.length > 0 ? sent[0]?.screen : undefined;
+    // 핀으로 처음 여는 대화는 첫 핀의 화면 이름을 얻는다 — 화면 id(`index` ·
+    // `member/list`)가 아니라 사람의 이름으로: 첫 화면, 아니면 이번 작업의 화면
+    // 제목. 둘 다 모르면 데몬의 자리 표시(새 화면)에 맡긴다(단계 8 에서 봄).
+    const first = !activeId ? sent[0] : undefined;
+    const firstPath = first ? screenPath(first.screen) : null;
+    const name =
+      firstPath === null
+        ? undefined
+        : firstPath === "/"
+          ? L.preview.homeScreen
+          : (daemon.repo?.cycleScreens?.find(
+              (s) => s.title.trim() && screenPath(s.route) === firstPath,
+            )?.title ?? undefined);
     await sessions.submit(
       sent.length > 0 ? pinsToTurn(sent, text, () => null) : text,
       [...pinImages, ...attachments],
