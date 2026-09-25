@@ -124,6 +124,42 @@ export const L = {
     switched: (name: string) => `옮겼어요 · ${name} · 미리보기는 보던 자리 그대로예요`,
     switchedPreparing: (name: string) => `옮겼어요 · ${name} · 준비가 계속 돌고 있어요`,
   },
+  /** 셸의 틀 — 상태 줄 · 좁은 창 · 열 경계. */
+  shell: {
+    menu: "메뉴 열기",
+    chatWidth: "대화 너비",
+    closeMenu: "메뉴 닫기",
+    connecting: "연결하는 중…",
+    projectMenu: "프로젝트 고르기",
+    /** 화면 수를 모를 때(데몬이 아직 화면 목록을 싣지 않음)의 제출 이유. */
+    submitReadyAny: "만든 것을 개발자에게 보내요",
+    submitMoreAny: "보낸 뒤로 바뀐 것을 같은 요청에 더해 보내요",
+    commentsArrived: "코멘트가 왔어요",
+  },
+  /** 홈의 받은 편지함(U6). */
+  inbox: {
+    send: "보내기",
+    openConv: "대화에서 보기",
+    allow: "허용",
+    deny: "거절",
+    askMany: "물어볼 것이 여러 개예요 — 대화에서 답해 주세요",
+    askPermission: (what: string) => `AI가 이것을 하려고 해요 · ${what}`,
+    reviewArrived: "개발자가 코멘트를 남겼어요 — 대화에서 볼 수 있어요",
+    nothingRunning: "도는 작업이 없어요",
+    firstPrepare: "처음 켜는 준비",
+    answered: "답이 왔어요 — 확인해 보세요",
+    eventMerged: "반영됐어요",
+    eventComments: "코멘트가 왔어요",
+    eventClosed: "개발자가 요청을 닫았어요",
+    eventReplied: "개발자가 답을 달았어요",
+    nothingRecent: "아직 있던 일이 없어요",
+    stepNames: ["내려받기", "설치하기", "미리보기 켜기"],
+  },
+  /** 뼈대의 자리 표시 — 단계 2·3 이 채우기 전의 대화 · 미리보기 칸. */
+  slot: {
+    previewPreparing: (name: string) => `${name} · 준비 중이에요`,
+    previewWaiting: "미리보기가 여기에 떠요",
+  },
 
 
 
