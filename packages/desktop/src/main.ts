@@ -8,6 +8,7 @@ import { DaemonServer, daemonOwnedPorts } from "@colo-design/daemon/server";
 import { app, BrowserWindow, dialog, Menu, safeStorage, shell } from "electron";
 import { PlannerNotices } from "./app-notify.js";
 import { SelfUpdates } from "./app-updates.js";
+import { loadAppZoom, saveAppZoom, stepZoom } from "./app-zoom.js";
 import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
 import { buildMenuTemplate } from "./menu.js";
@@ -239,24 +240,50 @@ async function bootApp(): Promise<void> {
   // 사용자의 미리보기 (PLAN D64 → webview): 렌더러의 <webview> 게스트를
   // 클레임하는 주인이다 — 펜스와 클레임을 창의 webContents에 건다.
   const plannerPreview = new PlannerPreviewView(() => host.window);
+  // 앱 배율(U19) — ⌘= · ⌘- · ⌘0 이 앱 전체를 키운다. 창의 webContents 와
+  // 미리보기 게스트(미리보기 배율과 곱해)가 함께 움직이고 값은
+  // desktop-settings.json 에 남는다 — 포트가 실행마다 바뀌는 origin 에
+  // Electron 의 배율 저장을 맡길 수 없다(desktop-settings 과 같은 이유).
+  let appZoomFactor = loadAppZoom(desktopSettingsPath());
+  const applyAppZoom = (target: BrowserWindow | null): void => {
+    if (target && !target.isDestroyed()) target.webContents.setZoomFactor(appZoomFactor);
+  };
+  // 창이 다시 열려도 배율이 남게 — 새 창에 즉시 건다. navigation 이 배율을
+  // 지우는 순간이 있으면 did-finish-load 마다 되살린다.
+  const keepAppZoom = (target: BrowserWindow): void => {
+    applyAppZoom(target);
+    target.webContents.on("did-finish-load", () => applyAppZoom(target));
+  };
+  const stepAppZoom = (direction: "in" | "out" | "reset"): void => {
+    appZoomFactor = stepZoom(appZoomFactor, direction);
+    applyAppZoom(host.window);
+    plannerPreview.setAppZoom(appZoomFactor);
+    saveAppZoom(desktopSettingsPath(), appZoomFactor);
+  };
+  plannerPreview.setAppZoom(appZoomFactor);
+  keepAppZoom(window);
   registerPreviewIpc(plannerPreview);
   plannerPreview.attachWindow(window);
   // reopen 이 만드는 창도 같은 닫기 가드·같은 펜스를 단다.
   host.onCreated = (created) => {
     registerCloseGuard(created);
     plannerPreview.attachWindow(created);
+    keepAppZoom(created);
   };
-  // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ): 보기 항목은 미리보기 뷰를 겨눈다 —
-  // 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 를 건드리던 시절은 끝난다.
+  // 단축키는 메뉴가 소유한다 (PLAN D85 ⓒ · U19): 새로 고침 · 되감기는 미리보기
+  // 뷰를, 배율은 앱 전체를 겨눈다 — 기본 메뉴의 ⌘R · ⌘+ 가 도구 UI 만 건드리던
+  // 시절은 끝난다.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(
       buildMenuTemplate({
         preview: {
           reload: () => plannerPreview.reload(),
           history: (delta) => plannerPreview.history(delta),
-          zoomIn: () => plannerPreview.zoomIn(),
-          zoomOut: () => plannerPreview.zoomOut(),
-          zoomReset: () => plannerPreview.zoomReset(),
+        },
+        app: {
+          zoomIn: () => stepAppZoom("in"),
+          zoomOut: () => stepAppZoom("out"),
+          zoomReset: () => stepAppZoom("reset"),
         },
         gotoAddress: () =>
           host.window?.webContents.send("colo-preview:key", {

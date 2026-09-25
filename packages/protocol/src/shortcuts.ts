@@ -39,14 +39,18 @@ export const APP_SHORTCUTS: AppShortcut[] = [
   },
   { id: "back", label: "뒤로", keys: "⌘[", accelerator: "CmdOrCtrl+[" },
   { id: "forward", label: "앞으로", keys: "⌘]", accelerator: "CmdOrCtrl+]" },
-  { id: "zoom-in", label: "확대", keys: "⌘=", accelerator: "CmdOrCtrl+=" },
-  { id: "zoom-out", label: "축소", keys: "⌘-", accelerator: "CmdOrCtrl+-" },
+  { id: "zoom-in", label: "화면 크게", keys: "⌘=", accelerator: "CmdOrCtrl+=" },
+  { id: "zoom-out", label: "화면 작게", keys: "⌘-", accelerator: "CmdOrCtrl+-" },
   {
     id: "zoom-reset",
-    label: "실제 크기",
+    label: "화면 실제 크기",
     keys: "⌘0",
     accelerator: "CmdOrCtrl+0",
   },
+  // ⌘= · ⌘- · ⌘0 이 키우는 것은 앱 전체(U19) — 미리보기 칸만 키우는 자기
+  // 배율은 `···` 메뉴 안의 조작이라 가속키가 없다(menu.ts 의 item() 이 이
+  // id 를 부르지 않으므로 메뉴는 읽지 않는다).
+  { id: "preview-zoom", label: "미리보기 배율", keys: "··· 메뉴" },
   { id: "pin", label: "핀 찍기", keys: "⌥+클릭 · 끌면 영역" },
   // 웹 워크스페이스가 혼자 처리하는 코드(PageWorkspace keydown의 ⌘⇧P)라
   // 가속키가 없다 — 데스크톱 메뉴가 읽어도 click 없는 항목이 되니 일부러

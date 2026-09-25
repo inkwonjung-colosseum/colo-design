@@ -267,6 +267,8 @@ export class PlannerPreviewView {
   private commentsOn = false;
   /** 무대의 폭 에뮬레이션 — 활성 페이지가 바뀌어도 무대의 선택이므로 activate 가 다시 입힌다. */
   private emulateWidth: "mobile" | "tablet" | null = null;
+  /** 앱 배율(U19) — 게스트의 실제 배율은 미리보기 배율 × 앱 배율. */
+  private appZoom = 1;
   /** The web's last pin sync (재설계 C1) — a page that loads or returns is re-told it. */
   private lastPins: ColoDesignPinsSync | null = null;
   /** Resolved when the overlay acknowledges a capture hide/show (D87). */
@@ -346,6 +348,12 @@ export class PlannerPreviewView {
     }
     if (this.loose?.origin === origin) return this.loose;
     return null;
+  }
+
+  /** 살아 있는 페이지 전부 — 따뜻한 프로젝트 페이지와 loose 까지. */
+  private *livingPages(): Iterable<PreviewPage> {
+    yield* this.pages.values();
+    if (this.loose) yield this.loose;
   }
 
   /**
@@ -655,7 +663,7 @@ export class PlannerPreviewView {
 
   /**
    * D85 ⓔ: 배율은 눈, 에뮬레이션은 장치 — 독립이다. 되알림(`colo-preview:zoom`)
-   * 이 필요한 건 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
+   * 이 필요한 건 `···` 메뉴가 먼저 바꾸면 렌더러가 모르기 때문이다.
    */
   zoomIn(): void {
     this.setZoom((this.activePage?.zoomFactor ?? 1) + 0.2);
@@ -669,11 +677,24 @@ export class PlannerPreviewView {
     this.setZoom(1);
   }
 
+  /**
+   * 앱 배율(U19) — 게스트의 실제 배율은 미리보기 배율 × 앱 배율이다. 살아
+   * 있는 페이지 전부(따뜻한 페이지와 loose)에 다시 건다. 되알림
+   * (`colo-preview:zoom`)이 말하는 값은 미리보기 배율(page.zoomFactor)만 —
+   * 사용자에게 보이는 `100%` 는 앱 배율과 무관하다.
+   */
+  setAppZoom(factor: number): void {
+    this.appZoom = factor;
+    for (const page of this.livingPages()) {
+      if (!page.contents.isDestroyed()) page.contents.setZoomFactor(page.zoomFactor * factor);
+    }
+  }
+
   private setZoom(factor: number): void {
     const page = this.activePage;
     if (!page || page.contents.isDestroyed()) return;
     const clamped = Math.min(2, Math.max(0.5, factor));
-    page.contents.setZoomFactor(clamped);
+    page.contents.setZoomFactor(clamped * this.appZoom);
     page.zoomFactor = clamped;
     this.send("colo-preview:zoom", { factor: clamped });
   }
@@ -1139,6 +1160,8 @@ export class PlannerPreviewView {
       else this.loose = page;
       this.attach(page);
     }
+    // 새 게스트는 앱 배율을 모른다 — 미리보기 배율 × 앱 배율을 이 자리에서 건다.
+    guest.setZoomFactor(page.zoomFactor * this.appZoom);
     guest.once("destroyed", () => {
       // 요소 재생성으로 갈아탄 게스트 — 이 페이지의 몸이 아니면 잊지 않는다.
       if (page.contents !== guest) return;
