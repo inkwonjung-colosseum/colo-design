@@ -639,6 +639,8 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     ...withId,
     type: z.literal("agent.update"),
     kind: z.enum(["claude", "codex"]),
+    /** 참이면 설치하지 않고 새 버전만 지금 확인해 상태를 다시 보낸다(`지금 확인`). */
+    check: z.boolean().optional(),
   }),
   /**
    * 넘긴 요청에 적을 작성자 이름(P1-3): 모든 요청이 봇 계정으로 열리므로

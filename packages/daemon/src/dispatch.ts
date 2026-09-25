@@ -11,6 +11,7 @@ import {
 } from "@colo-design/protocol";
 import type { DriverRegistry } from "./agent/registry.js";
 import type { AgentInstall } from "./agent-install.js";
+import type { AgentUpdates } from "./agent-update.js";
 import { captureTargets, readComments, recordComments } from "./comments.js";
 import type { DeveloperNotice } from "./developer-notice.js";
 import { describeProblem } from "./developer-notice.js";
@@ -74,6 +75,8 @@ export interface RouterDeps {
   agentLogin: AgentLogin;
   /** 에이전트 설치 진행기(1단계) — 데몬이 끝까지 지켜보고 방송한다. */
   agentInstall: AgentInstall;
+  /** 에이전트 업데이트(PLAN-UI U12) — 확인 · 미루기 · 자동 설치의 담당. */
+  agentUpdates: AgentUpdates;
   broadcast(message: ServerMessage): void;
   /** 해석된 CLI 경로 — start() 가 채운다. */
   claudeExecutable(): string | null;
@@ -711,6 +714,8 @@ export class RequestRouter {
           void this.deps
             .status()
             .then((status) => this.deps.broadcast({ type: "status", status } as ServerMessage));
+          // 켰다면 이미 아는 새 버전을 곧바로 건다(도는 작업이 있으면 미룬다).
+          if (message.agentAutoUpdate) void this.deps.agentUpdates.applyAuto();
         }
         if (provider === undefined) return { ok: true as const };
         if (provider !== null) {
@@ -732,9 +737,21 @@ export class RequestRouter {
         this.deps.machineTurns.invalidate();
         return { ok: true as const };
       }
-      case "agent.update":
-        // 단계 6 (PLAN-UI U12) 이 설치 진행기로 잇는다 — 그때까지는 거절한다.
-        throw new Error("아직 준비 중이에요");
+      case "agent.update": {
+        // PLAN-UI U12: `check` 는 `지금 확인` — 새 버전만 읽고 상태를 다시 보낸다.
+        // 아니면 설치 진행기로 바꿔 깐다(도는 작업이 있으면 끝나는 즉시).
+        if (message.check === true) {
+          await this.deps.agentUpdates.check();
+          void this.deps
+            .status()
+            .then((status) => this.deps.broadcast({ type: "status", status } as ServerMessage));
+          return {
+            ok: true as const,
+            latestVersion: this.deps.agentUpdates.latest(message.kind) ?? null,
+          };
+        }
+        return { ok: true as const, phase: this.deps.agentUpdates.request(message.kind) };
+      }
       case "machine.author.set": {
         // 이름은 문서로 흘러가는 문자열이라 잘라내는 것으로 충분하다 — 빈 칸은
         // 지우기(null 과 같은 길)로 읽는다. 상태의 authorName 이 다음 방송에 실린다.

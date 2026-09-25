@@ -19,6 +19,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import type { AgentInstallKind } from "@colo-design/protocol";
 import { resolveCodexExecutable } from "./agent/drivers/codex/driver.js";
+import { withoutSelfUpdate } from "./agent-env.js";
 import { COLO_DESIGN_DIR, resolveClaudeExecutable } from "./environment.js";
 import type { SpawnLike } from "./onboarding.js";
 
@@ -33,11 +34,14 @@ const PROGRESS_MIN_INTERVAL_MS = 1_000;
 
 const CLAUDE_INSTALL_SH = "https://claude.ai/install.sh";
 const CLAUDE_INSTALL_PS1 = "https://claude.ai/install.ps1";
-const CODEX_RELEASE_API = "https://api.github.com/repos/openai/codex/releases/latest";
+/** Codex 의 최신 릴리스 — 설치와 업데이트 확인(agent-update.ts)이 같은 주소를 읽는다. */
+export const CODEX_RELEASE_API = "https://api.github.com/repos/openai/codex/releases/latest";
 
 const ALREADY_RUNNING = "설치가 이미 진행 중입니다 — 잠시만 기다려 주세요.";
 const CLAUDE_STARTED = "Claude Code 설치를 시작했습니다 — 진행 상황을 보여 드릴게요.";
 const CODEX_STARTED = "Codex 설치를 시작했습니다 — 진행 상황을 보여 드릴게요.";
+const CLAUDE_UPDATE_STARTED = "Claude Code 업데이트를 시작했어요 — 진행 상황을 보여 드릴게요.";
+const CODEX_UPDATE_STARTED = "Codex 업데이트를 시작했어요 — 진행 상황을 보여 드릴게요.";
 const INSTALL_TIMEOUT_DETAIL =
   "설치가 너무 오래 걸려 멈췄습니다 — 네트워크를 확인하고 다시 시도해 주세요.";
 const MISSING_EXECUTABLE = "설치가 끝났지만 실행 파일을 찾지 못했습니다 — 다시 시도해 주세요.";
@@ -386,14 +390,24 @@ export class AgentInstall {
       this.running.delete(kind);
       events.onDone(ok, detail, executable);
     };
-    const flow = kind === "install-claude" ? this.installClaude(ctx) : this.installCodex(ctx);
+    // 업데이트(PLAN-UI U12)는 설치와 같은 받기 · 확인 · 설치 길을 탄다 — 다른
+    // 것은 끝의 문장과, Claude 는 설치 스크립트에 `latest` 를 건넨다는 것뿐.
+    const update = kind === "update-claude" || kind === "update-codex";
+    const claude = kind === "install-claude" || kind === "update-claude";
+    const flow = claude ? this.installClaude(ctx, update) : this.installCodex(ctx, update);
     void flow.then(
       (result) => finish(result.ok, result.detail, result.executable),
       (error) => finish(false, classifyInstallFailure(String(error), null, ctx.platform).detail),
     );
     return {
       started: true,
-      guidance: kind === "install-claude" ? CLAUDE_STARTED : CODEX_STARTED,
+      guidance: update
+        ? claude
+          ? CLAUDE_UPDATE_STARTED
+          : CODEX_UPDATE_STARTED
+        : claude
+          ? CLAUDE_STARTED
+          : CODEX_STARTED,
     };
   }
 
@@ -409,9 +423,13 @@ export class AgentInstall {
 
   private async installClaude(
     ctx: InstallFlowContext,
+    update = false,
   ): Promise<{ ok: boolean; detail: string; executable?: string | null }> {
+    // 업데이트는 스크립트에 `latest` 를 건넨다 — 확인(agent-update.ts)이 읽는
+    // 것과 같은 `latest` 파일의 버전이 깔리게. 설치는 스크립트의 기본 그대로.
+    const target = update ? ["latest"] : [];
     // 시험용 대체: 스크립트 대신 이 명령을 셸로 실행한다(검수자가 성공·실패·
-    // 느린 진행을 흉내 낸다). 실기 실행에서는 비어 있다.
+    // 느린 진행을 흉내 낸다). 실기 실행에서는 비어 있다. 대상은 $1 로 받는다.
     const override = ctx.env.COLO_DESIGN_CLAUDE_INSTALL_CMD;
     let scriptPath: string | null = null;
     let command: string;
@@ -419,8 +437,8 @@ export class AgentInstall {
     if (override) {
       [command, args] =
         ctx.platform === "win32"
-          ? ["powershell", ["-NoProfile", "-Command", override]]
-          : ["sh", ["-c", override]];
+          ? ["powershell", ["-NoProfile", "-Command", override, ...target]]
+          : ["sh", ["-c", override, "sh", ...target]];
     } else {
       const url = ctx.platform === "win32" ? CLAUDE_INSTALL_PS1 : CLAUDE_INSTALL_SH;
       let script: string;
@@ -444,12 +462,21 @@ export class AgentInstall {
       command = ctx.platform === "win32" ? "powershell" : "bash";
       args =
         ctx.platform === "win32"
-          ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath]
-          : [scriptPath];
+          ? [
+              "-NoProfile",
+              "-NonInteractive",
+              "-ExecutionPolicy",
+              "Bypass",
+              "-File",
+              scriptPath,
+              ...(update ? ["-Target", "latest"] : []),
+            ]
+          : [scriptPath, ...target];
     }
     try {
       const outcome = await runInstallChild(ctx.spawnLike, command, args, {
-        env: ctx.env,
+        // 설치가 부르는 `claude install` 도 Claude 자식이다 — 자기 업데이트를 끈다.
+        env: withoutSelfUpdate(ctx.env),
         signal: ctx.signal,
         onLine: ctx.progress,
       });
@@ -463,7 +490,13 @@ export class AgentInstall {
       // 이 값으로 갱신해야 로그인 버튼이 방금 설치한 CLI 를 안다.
       const executable = await (this.deps.resolveClaude ?? resolveClaudeExecutable)();
       return executable
-        ? { ok: true, detail: "Claude Code 설치가 완료되었습니다.", executable }
+        ? {
+            ok: true,
+            detail: update
+              ? "Claude Code 를 새 버전으로 바꿨어요."
+              : "Claude Code 설치가 완료되었습니다.",
+            executable,
+          }
         : { ok: false, detail: MISSING_EXECUTABLE };
     } finally {
       if (scriptPath) await rm(scriptPath, { force: true }).catch(() => undefined);
@@ -475,6 +508,7 @@ export class AgentInstall {
 
   private async installCodex(
     ctx: InstallFlowContext,
+    update = false,
   ): Promise<{ ok: boolean; detail: string; executable?: string | null }> {
     // 시험용 대체: 이 주소를 릴리스 API 로 쓴다(로컬 서버가 JSON 을 내어 준다).
     const api = ctx.env.COLO_DESIGN_CODEX_RELEASE_API ?? CODEX_RELEASE_API;
@@ -531,7 +565,10 @@ export class AgentInstall {
 
       const executable = await (this.deps.resolveCodex ?? (async () => resolveCodexExecutable()))();
       return executable
-        ? { ok: true, detail: "Codex 설치가 완료되었습니다." }
+        ? {
+            ok: true,
+            detail: update ? "Codex 를 새 버전으로 바꿨어요." : "Codex 설치가 완료되었습니다.",
+          }
         : { ok: false, detail: MISSING_EXECUTABLE };
     } finally {
       await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
