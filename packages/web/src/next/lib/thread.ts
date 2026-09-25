@@ -186,6 +186,26 @@ export function dedupeScreens(screens: Array<{ screen: string }>): Array<{ scree
   });
 }
 
+/**
+ * 열린 요청인가(U20) — 반영(merged) · 닫힘(closed) 이 아니면 열린 것이다.
+ * `changes_requested` 는 리뷰의 판정이지 요청의 닫힘이 아니므로 열린 셈에
+ * 넣는다(감독자의 관찰 · `제출한 때의 화면 보기` 와 같은 잣대).
+ */
+export function handoffOpen(handoff: { state: string } | null | undefined): boolean {
+  return handoff?.state === "open" || handoff?.state === "changes_requested";
+}
+
+/**
+ * 영수증의 `한마디 더` 단추가 살 조건(U20 · PLAN-UI §10) — 그 영수증의
+ * 요청이 아직 열려 있을 때뿐. 닫히거나 반영된 요청에는 갈 곳이 없다.
+ */
+export function noteAllowed(
+  block: { pr: number },
+  handoff: { number: number; state: string } | null | undefined,
+): boolean {
+  return handoff != null && handoff.number === block.pr && handoffOpen(handoff);
+}
+
 /** `12초` · `1분 5초` 의 재료 — 초와 분. */
 export function splitDuration(ms: number): { minutes: number; seconds: number } {
   const total = Math.max(0, Math.round(ms / 1000));

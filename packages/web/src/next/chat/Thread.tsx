@@ -83,6 +83,8 @@ export interface ThreadProps {
   onOpenScreen: (screen: TurnScreen) => void;
   onOpenHistory: () => void;
   onReply: (id: number, text: string) => Promise<void>;
+  /** 영수증의 `한마디 더`(U20) — 열린 요청에 코멘트로 남긴다. */
+  onNote: (text: string) => Promise<void>;
   onToast: (text: string) => void;
   onQueueEdit: (itemId: string) => void;
   onQueueNow: (itemId: string) => void;
@@ -391,7 +393,15 @@ export function Thread(props: ThreadProps) {
         if (block.subtype === "handed") {
           const more = handedPrs.has(block.pr);
           handedPrs.add(block.pr);
-          return <ReceiptCard block={block} more={more} handoff={props.handoff} />;
+          return (
+            <ReceiptCard
+              block={block}
+              more={more}
+              handoff={props.handoff}
+              onNote={props.onNote}
+              onToast={props.onToast}
+            />
+          );
         }
         return (
           <div className={`nx-mile${block.subtype === "closed" ? " nx-mile--red" : ""}`}>

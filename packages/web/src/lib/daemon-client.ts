@@ -818,6 +818,8 @@ interface DaemonApi {
   }) => Promise<{ recorded: number }>;
   /** 답하기: the planner's answer to one developer comment. */
   replyToReview: (id: number, body: string) => Promise<{ ok: true }>;
+  /** 한마디 더(U20): a note added to the OPEN request, no comment id. */
+  noteToDeveloper: (text: string) => Promise<{ ok: true }>;
   /**
    * 여기서 새 대화(분기): keep this answer's memory in a NEW conversation —
    * the old one stays. The reply is the NEW session id; `memoryKept: false`
@@ -1855,6 +1857,7 @@ export function useDaemon(url: string | null): Daemon {
       }) => call<{ recorded: number }>({ type: "comments.record", items: input.items }),
       replyToReview: (id: number, body: string) =>
         call<{ ok: true }>({ type: "comments.reply", reviewId: id, body }, 60_000),
+      noteToDeveloper: (text: string) => call<{ ok: true }>({ type: "repo.note", text }, 60_000),
       // 대화 분기: 답을 하나도 보내지 않는다 — 포크의 악수(절단 재개)만
       // 기다린다.
       branch: (sessionId, turn) =>

@@ -40,6 +40,7 @@ export function StatusLine({
   makingPhase,
   firstTurn,
   narrow,
+  nav,
   onSubmit,
   ledger,
   submitCopy,
@@ -202,6 +203,10 @@ export function StatusLine({
             ledger={ledger}
             author={daemon.status?.authorName ?? null}
             since={submitCopy.lastAt}
+            onNote={async (text) => {
+              await daemon.api.noteToDeveloper(text);
+            }}
+            onToast={nav.toast}
             onClose={() => setWorkOpen(false)}
           />
         )}

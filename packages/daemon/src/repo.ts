@@ -69,11 +69,13 @@ export class RepoWorkspace {
   private readonly onCycleEvent: RepoWorkspaceOptions["onCycleEvent"];
   private readonly notice: RepoWorkspaceOptions["notice"];
   private readonly resolveNotice: RepoWorkspaceOptions["resolveNotice"];
+  private readonly appendSubmitLog: RepoWorkspaceOptions["appendSubmitLog"];
 
   constructor(options: RepoWorkspaceOptions) {
     this.onCycleEvent = options.onCycleEvent;
     this.notice = options.notice;
     this.resolveNotice = options.resolveNotice;
+    this.appendSubmitLog = options.appendSubmitLog;
     this.core = new RepoCore(options);
     this.shelfStore = new ShelfStore(this.core);
     this.summarizer = new RepoSummarizer(this.core, options.machineTurn ?? NO_MACHINE_TURN);
@@ -89,6 +91,7 @@ export class RepoWorkspace {
       onCycleEvent: this.onCycleEvent,
       notice: this.notice,
       resolveNotice: this.resolveNotice,
+      appendSubmitLog: this.appendSubmitLog,
     });
   }
 
@@ -385,6 +388,15 @@ export class RepoWorkspace {
 
   replyToReview(id: number, body: string): Promise<void> {
     return this.publish.replyToReview(id, body);
+  }
+
+  /**
+   * U20(PLAN-UI §10): 한마디 더 — 열린 요청에 코멘트로 나가는 영수증의
+   * 상자. 답하기(replyToReview)의 형제라 같은 차선을 쓰지 않는다: 코멘트
+   * 하나는 쓰기 짝 하나라 굳이 줄 세울 일이 없다.
+   */
+  noteToDeveloper(text: string): Promise<void> {
+    return this.publish.noteToDeveloper(text);
   }
 
   cycleAnchor(): Promise<string | null> {

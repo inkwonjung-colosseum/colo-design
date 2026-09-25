@@ -914,6 +914,14 @@ export class RequestRouter {
         return { ok: true as const };
       }
 
+      // U20(PLAN-UI §10): 영수증의 `개발자에게 한마디 더` — 활성 프로젝트의
+      // 열린 요청에 달린다. 명령 id 가 멱등 키라 재전송이 두 번 달지 않는다.
+      case "repo.note": {
+        const activeWs = this.requireActive();
+        await activeWs.repo.noteToDeveloper(message.text);
+        return { ok: true as const };
+      }
+
       // --- 되돌리기와 넘기기 (PLAN D52 · D53) ------------------------------
       case "repo.handoffDraft": {
         const active = this.requireActive();

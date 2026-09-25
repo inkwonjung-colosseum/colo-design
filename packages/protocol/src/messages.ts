@@ -743,6 +743,18 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     reviewId: z.number(),
     body: z.string().min(1),
   }),
+  /**
+   * 한마디 더 (PLAN-UI §10 U20): 잘못 보냈거나 덧붙일 말을 열린 요청에
+   * 코멘트로 남긴다. 영수증 카드의 상자가 부르는데, `comments.reply` 와
+   * 다른 것은 코멘트 id 가 없다는 것뿐이다. 본문은 제출 확인의 한마디와
+   * 같은 꼴(`> 한마디:` 줄 + 대리 표기)로 나간다. `id` 는 멱등 키라
+   * 재전송이 같은 말을 두 번 달지 않는다(command-dedupe).
+   */
+  z.object({
+    ...withId,
+    type: z.literal("repo.note"),
+    text: z.string().min(1).max(2000),
+  }),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

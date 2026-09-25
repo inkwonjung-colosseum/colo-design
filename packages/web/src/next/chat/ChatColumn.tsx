@@ -297,6 +297,9 @@ export function ChatColumn({
             onReply={async (id, text) => {
               await api.replyToReview(id, text);
             }}
+            onNote={async (text) => {
+              await api.noteToDeveloper(text);
+            }}
             onToast={nav.toast}
             onQueueEdit={(itemId) => {
               void sessions

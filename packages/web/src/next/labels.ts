@@ -252,6 +252,10 @@ export const L = {
     milestoneMerged: "반영됐어요 · 다음에 만드는 것은 새 작업이에요",
     /** 날 오류 원문의 접힌 자리(W3) — cards.tsx 의 접힌 글과 같은 모양으로 편다. */
     detailFold: "자세히",
+    /** 한마디 더(U20 · PLAN-UI §10) — 영수증의 상자가 열린 요청에 남기는 말. */
+    noteMore: "개발자에게 한마디 더",
+    notePlaceholder: "잘못 보냈거나 덧붙일 말을 적어요",
+    noteSent: (time: string) => `${time} 개발자에게 보냈어요`,
   },
   inviteCleanup: {
     title: "초대 파일을 가져왔어요",
@@ -506,6 +510,10 @@ export const L = {
      * COMMENT_REFLECTION_PREFIX 와 같은 글자). 이 머리의 기록이 코멘트 뒤에 있으면 `반영됨`.
      */
     reflectionPrefix: "코멘트 반영 — ",
+    /** 한마디 더(U20 · PLAN-UI §10) — 제출 칸 바닥의 같은 단추와 상자. */
+    noteMore: "개발자에게 한마디 더",
+    notePlaceholder: "잘못 보냈거나 덧붙일 말을 적어요",
+    noteSent: (time: string) => `${time} 개발자에게 보냈어요`,
   },
 
 

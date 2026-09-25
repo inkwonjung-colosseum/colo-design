@@ -30,6 +30,8 @@ export const SUBMIT_LOG_TEXT = {
   unblocked: "개발자가 풀었어요 — 도구가 다시 제출해요",
   succeeded: "제출했어요",
   retrying: "다시 제출하는 중",
+  /** 한마디 더(U20 · PLAN-UI §10) — 영수증의 상자가 보낸 말의 흔적. */
+  noteSent: "개발자에게 한마디를 더 보냈어요",
 } as const;
 
 /** 선로에 싣는 기록 줄의 수 — `이번 작업` 은 최근 셋을 보인다. */

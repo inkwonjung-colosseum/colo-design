@@ -269,6 +269,9 @@ export class ProjectFleet {
           cycleScreens: this.cycleScreens.get(slug)?.current() ?? [],
           ...(workspaces.supervisor ? { submit: workspaces.supervisor.submitView() } : {}),
         }),
+        // 한마디 더(U20 · PLAN-UI §10) — 흔적이 제출 기록에 남는 길. 감독자가
+        // 워크스페이스보다 늦게 태어나므로 부르는 순간에 묻는다(cycleView 와 같은 모양).
+        appendSubmitLog: (text) => workspaces.supervisor?.appendSubmitLog(text),
       }),
       supervisor: null as unknown as CycleSupervisor,
     };
