@@ -324,6 +324,39 @@ test("5행 커밋 안 된 변경 — 턴이 없으면 보관하고, 도는 중�
   }
 });
 
+test("5행 N1 — 미추적 락파일뿐이면 보관하지 않는다 (2026-09-25 콜드 리뷰)", async () => {
+  const scene = await makeSupervisedScene();
+  try {
+    // 락파일 없는 레포에서 미리보기 명령이 스스로 설치해 남긴 모양 —
+    // 무시 규칙도 없고, 레포가 추적하는 것도 아니다.
+    writeFileSync(join(scene.clone.path, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    mkdirSync(join(scene.clone.path, "node_modules/.pnpm"), { recursive: true });
+    writeFileSync(join(scene.clone.path, "node_modules/.modules.yaml"), "");
+    const before = (await scene.git(["rev-parse", "HEAD"])).trim();
+    await scene.supervisor.tick("manual");
+    assert.equal(
+      (await scene.git(["rev-parse", "HEAD"])).trim(),
+      before,
+      "부산물만 있는 트리에서 커밋이 생기면 안 된다",
+    );
+    assert.equal(
+      (await scene.git(["branch", "--list", "colo-design/*"])).trim(),
+      "",
+      "사이클 브랜치도 생기면 안 된다",
+    );
+    assert.ok(
+      !scene.chatEvents.some((event) => event.kind === "cycle.saveBlocked"),
+      "saveBlocked 카드가 나가면 안 된다",
+    );
+    assert.ok(
+      existsSync(join(scene.clone.path, "pnpm-lock.yaml")),
+      "부산물은 디스크에 그대로 둔다",
+    );
+  } finally {
+    await scene.dispose();
+  }
+});
+
 test("한 틱 5회 상한 — 도구 태그 stash 여섯 개는 한 틱에 다섯까지만 팝한다", async () => {
   const scene = await makeSupervisedScene();
   try {

@@ -395,6 +395,12 @@ export class RepoCore {
    * 같음 비교가 이 목록을 본다.
    */
   changedFiles: ChangedFileLite[] = [];
+  /**
+   * 레포가 추적하는 경로의 HEAD 캐시 — saveablePaths (콜드 리뷰 N1) 가 읽는
+   * `git ls-files` 의 목록. 커밋 · 전환만 HEAD 를 움직이므로 그 사이에는
+   * 값이 변하지 않는다.
+   */
+  trackedPathsCache: { head: string; paths: Set<string> } | null = null;
 
   openHandoff: HandoffStatus | null;
 
@@ -660,6 +666,22 @@ export class RepoCore {
       },
       { join: true },
     );
+  }
+
+  /**
+   * 레포가 추적하는 경로 전부 — `git ls-files` (콜드 리뷰 N1). 보관의 거름
+   * (saveablePaths) 이 추적 중인 락파일과 도구의 부산물을 가르는 잣대로
+   * 읽는다. 밀리초짜리 물음이지만 보관마다 새로 묻지 않게 HEAD 별로 캐시한다.
+   */
+  async trackedPaths(): Promise<Set<string>> {
+    if (!this.isCloned()) return new Set();
+    const head = (await this.git(["rev-parse", "HEAD"]).catch(() => "")).trim();
+    if (head === "") return new Set();
+    if (this.trackedPathsCache?.head === head) return this.trackedPathsCache.paths;
+    const out = await this.git(["-c", "core.quotepath=false", "ls-files"]).catch(() => "");
+    const paths = new Set(out.split(/\r?\n/).filter(Boolean));
+    this.trackedPathsCache = { head, paths };
+    return paths;
   }
 
   /** The branch this cycle's saves land on, or null before the first 저장. */

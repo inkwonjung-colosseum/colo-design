@@ -34,6 +34,7 @@ import {
   SHOTS_COMMIT_MESSAGE,
   SHOTS_DIR,
 } from "./repo-core.js";
+import { saveablePaths } from "./saveable-paths.js";
 
 /** The `<img>` needs a media type; the committed file's extension is the
  *  capture's own (see HandoffShot.extension). */
@@ -187,7 +188,13 @@ export class PublishCycle {
 
     this.core.setDiff({ stage: "computing" });
     const files = await this.core.diff();
-    const approved = files.map((file) => file.path);
+    // 콜드 리뷰 N1 (2026-09-25, PLAN-UI 9.3 D1): 도구의 부산물 — 미리보기
+    // 명령이 스스로 설치해 만든 락파일 · node_modules — 은 보관이 담지
+    // 않는다. 담으면 아무 것도 만들지 않은 사용자에게 기계의 커밋이 남는다.
+    // 턴의 자동 보관과 감독자의 commitPending 이 모두 이 자리를 지나므로,
+    // 거름은 saveablePaths 하나로 여기서만 한다.
+    const saveable = saveablePaths(files, await this.core.trackedPaths());
+    const approved = saveable.map((file) => file.path);
     /**
      * 올리기에서 멈춘 저장의 재시도 (비개발자 저장 검토): a save whose commit
      * landed and whose push did not leaves a CLEAN worktree with cycle
@@ -226,6 +233,10 @@ export class PublishCycle {
       }
     }
     if (approved.length === 0 && !retryPush) {
+      // N1: 나무에는 변경이 있으나 담을 것 전부가 도구의 부산물이다 — 조용한
+      // 무동작으로 끝낸다(빈 커밋도, saveBlocked 카드도 없다). 이미 흘린
+      // computing 상태를 그대로 돌려줄 뿐 다시 방송하지 않는다.
+      if (files.length > 0) return { stage: "computing" as const };
       // 이미 저장된 것의 다시 저장 (2026-09-21 실사): 성공한 저장 직후에 도는
       // 두 번째 저장 — 다시 누르기, 칩 카운트가 늦게 닫힌 창, 리뷰 정산 저장과
       // 손 저장의 경주 — 는 깨끗한 트리를 읽는다. 그것을 실패로 보내면 방금
@@ -269,7 +280,7 @@ export class PublishCycle {
     const memo = retryPush
       ? null
       : options.message?.trim() ||
-        (await this.deps.machineMemo(files).catch(() => null)) ||
+        (await this.deps.machineMemo(saveable).catch(() => null)) ||
         DEFAULT_COMMIT_MESSAGE;
 
     // Commit exactly the paths the planner approved — never `git add -A`, so
