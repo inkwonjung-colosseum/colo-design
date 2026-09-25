@@ -53,6 +53,7 @@ export function ChatColumn({
   onChatChange,
   onOpenProviderSettings,
   onOpenHistory,
+  onSubmitBusy,
 }: {
   daemon: Daemon;
   sessions: Sessions;
@@ -99,6 +100,13 @@ export function ChatColumn({
   onOpenProviderSettings?: () => void;
   /** 정산 줄의 `작업 기록에서 되돌리기`(P2-2) — 미리보기 쪽 드로어를 연다. */
   onOpenHistory?: () => void;
+  /**
+   * 제출이 도는 동안 true — 상단 바의 제출 버튼이 `보내는 중…` 으로 스스로
+   * 답하게 한다. 진행 채널(diff.status)은 턴마다의 자동 보관도 함께 쓰므로
+   * 단계만으로는 "누가 누른 제출인가" 를 가를 수 없다. 누른 손의 시작과 끝을
+   * 아는 것은 이 열뿐이다.
+   */
+  onSubmitBusy?: (busy: boolean) => void;
 }) {
   const { api, pending, resolvePending } = daemon;
   const draftKey = sessions.activeId ?? `new:${daemon.activeSlug ?? "none"}`;
@@ -185,6 +193,9 @@ export function ChatColumn({
     if (savingNow || sessions.running) return;
     const handoffOnly = diffStage === "failed" && daemon.diffStatus?.gate === "pr";
     setSavingNow(true);
+    // 끝은 finally 가 알린다 — 이 열이 홈으로 내려가도 약속은 끝까지 가고,
+    // 알림을 받는 쪽(PageWorkspace)은 그대로 살아 있다.
+    onSubmitBusy?.(true);
     void (
       handoffOnly
         ? api.handoff({ sessionId: activeId })
@@ -201,8 +212,20 @@ export function ChatColumn({
         return status;
       })
       .catch((e: Error) => showError(e.message))
-      .finally(() => setSavingNow(false));
-  }, [activeId, savingNow, sessions.running, api, showError, diffStage, daemon.diffStatus]);
+      .finally(() => {
+        setSavingNow(false);
+        onSubmitBusy?.(false);
+      });
+  }, [
+    activeId,
+    savingNow,
+    sessions.running,
+    api,
+    showError,
+    diffStage,
+    daemon.diffStatus,
+    onSubmitBusy,
+  ]);
   /**
    * 사이클 요청의 응답 — 제출은 곧 제출(칩·상단 바가 같은 핸들러를 누른다),
    * 넘기기는 대화 안 카드를 연다. check 는 ScreenPanel 의 몫이라 여기선

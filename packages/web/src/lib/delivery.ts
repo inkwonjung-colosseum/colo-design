@@ -237,8 +237,11 @@ function cycleRow(input: DeliveryInput): CycleRow {
           reviewerNote(handoff) ? ` · ${reviewerNote(handoff)}` : ""
         }`,
       },
+      // 기다리는 동안의 할 일을 말한다 — "확인하라" 가 아니라 "계속해도
+      // 된다". 자동 보관은 같은 가지로 올라가 열린 요청에 이어 담긴다.
+      // 요청 번호는 칩의 title(마우스를 올릴 때)에만 남는다.
       next: {
-        line: `넘긴 요청 ${handoff.number}번을 개발자가 보고 있습니다 — 상태 확인으로 최근 소식을 보세요`,
+        line: "개발자가 보고 있어요 — 계속 고쳐도 같은 요청에 이어 담겨요",
       },
       primary: "check",
       // 넘긴 뒤에도 제출은 열어 둔다: 자동 저장의 푸시는 백그라운드라 조용히

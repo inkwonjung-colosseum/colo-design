@@ -9,7 +9,7 @@ import { type Delivery, deriveDelivery } from "../../lib/delivery";
 import { ownerRepoOf, timeAgo } from "../../lib/format";
 import { linkClick, openLink } from "../../lib/open-link";
 import { errorToTurn, lookToTurn } from "../../lib/preview-turns";
-import { registerScreenOpener } from "../../lib/screen-link";
+import { previewPathOf, registerScreenOpener } from "../../lib/screen-link";
 import {
   isReplyConfirmed,
   loadHandledReviews,
@@ -18,10 +18,12 @@ import {
   saveHandledReview,
 } from "../../lib/settings";
 import { advanceTour, useTourStep } from "../../lib/tour";
+import { lastTurnScreens, screenKey, type TurnScreen, threadScreens } from "../../lib/turn-screens";
 import { ConfirmDialog } from "../dialogs/ConfirmDialog";
 import type { SettingsCategory } from "../dialogs/SettingsDialog";
 import {
   BranchIcon,
+  CheckIcon,
   ChevronDownIcon,
   CircleCheckIcon,
   CloseIcon,
@@ -134,6 +136,7 @@ export function ScreenPanel({
   onCycleAction,
   cycleRequest,
   reviewsTick,
+  submitBusy = false,
 }: {
   /** 프레임 헤더가 내준 자리 — 사이클 바는 여기로 올라가 프로젝트 이름 옆에
       선다. null 이면 바는 그려지지 않는다(헤더가 없는 호출은 없다). */
@@ -190,6 +193,8 @@ export function ScreenPanel({
   cycleRequest: { kind: "submit" | "handoff" | "check" | "history"; nonce: number } | null;
   /** 대화 열에서 처리된 개발자 코멘트 — 배지의 수를 다시 읽는 신호. */
   reviewsTick: number;
+  /** 대화 열의 제출이 도는 중 — 제출 버튼이 `보내는 중…` 으로 답한다. */
+  submitBusy?: boolean;
 }) {
   const { connection, repo, api, projects, activeSlug } = daemon;
   const phase = repo?.phase ?? null;
@@ -543,21 +548,18 @@ export function ScreenPanel({
     // 둔다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, frozenCycle, frozenShotKey]);
-  // 얼굴의 기본값: 넘기고 손 안 댄 사이클은 보낸 화면이 먼저다. 새 작업이
-  // 시작되면(pendingChanges > 0) 얼린 화면을 보여 주는 것은 거짓말이라
-  // 지금 화면으로 돌아온다 — 되돌아가는 것은 세그먼트의 몫이다.
+  // 얼굴의 기본값은 언제나 지금 화면이다. 제출 직후 무대를 캡처로 덮으면
+  // 비개발자에게는 "화면이 멈췄다" 로 읽히고, 화면의 버튼도 눌리지 않는다.
+  // 보낸 화면은 도장 옆 세그먼트로 한 번 누르면 닿는다. 새 작업이
+  // 시작되면(pendingChanges > 0) 얼린 화면은 거짓말이라 지금 화면으로
+  // 돌아온다.
   const [frozenMode, setFrozenMode] = useState<"sent" | "live">("live");
   const [frozenStampGone, setFrozenStampGone] = useState(false);
   const frozenCycleKeyRef = useRef<string | null>(null);
   const frozenCycleKey = `${handoff?.number ?? ""}|${handoffState ?? ""}`;
   if (frozenCycleKeyRef.current !== frozenCycleKey) {
     frozenCycleKeyRef.current = frozenCycleKey;
-    setFrozenMode(
-      (handoffState === "open" || handoffState === "changes_requested") &&
-        (repo?.pendingChanges ?? 0) === 0
-        ? "sent"
-        : "live",
-    );
+    setFrozenMode("live");
     setFrozenStampGone(false);
   }
   useEffect(() => {
@@ -962,6 +964,77 @@ export function ScreenPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location]);
 
+  // --- 대화가 말한 화면들 ---------------------------------------------
+  // 답변 끝의 `[제목](주소)` 가 원천이다(turn-screens.ts — 공통 규칙이 AI 에게
+  // 그 링크를 남기게 한다). 두 곳이 읽는다: 턴이 끝나면 미리보기가 그 턴이
+  // 고친 화면으로 옮겨 가고, 주소창은 이 대화의 화면을 제목으로 나열한다.
+  // 도는 턴의 글은 흐르는 중이라 목록은 턴이 쉬는 순간에만 다시 읽는다 —
+  // 흐름의 조각마다 대화 전체를 훑지 않게.
+  const toPath = useCallback((href: string) => previewPathOf(href, previewUrl), [previewUrl]);
+  const activeBlocks = sessionId ? (daemon.sessions[sessionId]?.blocks ?? null) : null;
+  const [conversationScreens, setConversationScreens] = useState<TurnScreen[]>([]);
+  const screensOf = useRef<string | null>(null);
+  useEffect(() => {
+    // 대화를 옮겨 탔으면 도는 중이라도 새 대화의 목록을 읽는다 — 옛 대화의
+    // 화면이 주소창에 남으면 안 된다.
+    if (turnLive && screensOf.current === sessionId) return;
+    screensOf.current = sessionId;
+    setConversationScreens(activeBlocks ? threadScreens(activeBlocks, toPath) : []);
+  }, [turnLive, sessionId, activeBlocks, toPath]);
+
+  // 턴이 끝나면 그 턴이 고친 화면으로 — "AI 가 끝났다는데 화면이 그대로다"
+  // 의 대부분은 다른 화면을 보고 있어서다. 지금 화면이 그 턴의 화면 중
+  // 하나면 옮기지 않는다(이미 보고 있다). 옮긴 뒤 돌아가는 길은 미리보기의
+  // 뒤로 버튼이다 — 이동은 보통의 이동이라 기록에 남는다.
+  const liveBefore = useRef<{ live: boolean; sessionId: string | null }>({
+    live: turnLive,
+    sessionId,
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 턴의 끝(상태 전이)만 본다 — 위치·블록이 움직일 때마다 다시 끌면 사람이 옮겨 간 화면을 도로 빼앗는다.
+  useEffect(() => {
+    const before = liveBefore.current;
+    liveBefore.current = { live: turnLive, sessionId };
+    // 같은 대화의 턴이 방금 끝났을 때만 — 도는 대화에서 쉬는 대화로 옮겨 탄
+    // 것은 턴의 끝이 아니다.
+    if (!before.live || turnLive || !sessionId || before.sessionId !== sessionId) return;
+    // 외부 페이지를 보는 중이면 사람이 일부러 나간 것이다 — 끌어오지 않는다.
+    if (location?.kind === "web") return;
+    const blocks = daemon.sessions[sessionId]?.blocks;
+    if (!blocks) return;
+    const screens = lastTurnScreens(blocks, toPath);
+    const first = screens[0];
+    if (!first) return;
+    const here = location?.path ?? (target?.kind === "path" ? target.path : null);
+    if (here !== null && screens.some((screen) => screenKey(screen.path) === screenKey(here))) {
+      return;
+    }
+    setTarget({ kind: "path", path: first.path });
+  }, [turnLive, sessionId]);
+
+  // --- 제출 버튼의 얼굴 -----------------------------------------------
+  // 누른 제출은 누른 자리에서 답한다: 도는 동안 `보내는 중…`, 끝나면 몇 초
+  // `제출됐어요`. 영수증은 여전히 대화의 카드가 들고 있지만, 누른 손이 눈을
+  // 옮기지 않아도 결과를 안다. 진행 채널(diff.status)은 턴마다의 자동 보관도
+  // 쓰므로 "누른 제출" 은 대화 열이 알린 submitBusy 가 정한다. `handing-off`
+  // 는 자동 보관에 없는 단계라, 다른 창이 누른 제출이라도 넘기는 중이 맞다.
+  const submitting = submitBusy || daemon.diffStatus?.stage === "handing-off";
+  const [submitDone, setSubmitDone] = useState(false);
+  const wasSubmitting = useRef(submitting);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 누름의 시작과 끝만 본다 — 진행 단계는 그 순간의 사실로 한 번 읽는다.
+  useEffect(() => {
+    const ended = wasSubmitting.current && !submitting;
+    wasSubmitting.current = submitting;
+    if (submitting) {
+      setSubmitDone(false);
+      return;
+    }
+    // 실패는 대화의 실패 배너가 말한다 — 버튼은 원래 얼굴로 돌아올 뿐이다.
+    if (!ended || daemon.diffStatus?.stage !== "handed-off") return;
+    setSubmitDone(true);
+    const timer = window.setTimeout(() => setSubmitDone(false), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [submitting]);
+
   // --- 화면 보여 주기 -------------------------------------------------
   // 오류도 핀도 아닌 화면 — 흰 화면, 무한 로딩 — 를 AI 에게 통째로 보여
   // 준다: 프레임 캡처 한 장 + 콘솔 마지막 20줄 + 사용자의 한 줄(선택).
@@ -1149,15 +1222,16 @@ export function ScreenPanel({
                       </span>
                     </button>
                   </Tip>
-                  {/* 다음 할 일 문장 — 칩 팝오버에서 올라온 것(E′). 칩은 단어를
-                      낭독하는 라이브 리전으로 남고, 문장은 시각 보강이다. */}
-                  <span className="screenpanel__nextline">{delivery.next.line}</span>
                   {statusOpen && (
                     <span
                       className="selector__menu screenpanel__statusmenu"
                       role="dialog"
                       aria-label="사이클 상태"
                     >
+                      {/* 다음 할 일 문장 — 바에 서 있던 때는 42자에서 잘렸다.
+                          칩은 단어를 낭독하는 라이브 리전으로 남고, 문장은 칩을
+                          열었을 때 온전히 읽힌다. */}
+                      <span className="screenpanel__statusline">{delivery.next.line}</span>
                       {destination && (
                         <span className="screenpanel__destination">
                           이 프로젝트 →{" "}
@@ -1240,7 +1314,13 @@ export function ScreenPanel({
                               ×
                             </button>
                           </>
-                        ) : (
+                        ) : submitting ? (
+                          "개발자에게 보내는 중이에요 — 끝나면 대화에 영수증이 떠요"
+                        ) : submitDone ? (
+                          "개발자에게 보냈어요 — 대화의 영수증에서 누구에게 갔는지 볼 수 있어요"
+                        ) : checkNote ? undefined : (
+                          // 잠긴 이유가 버튼 아래 한 줄로 서 있는 동안은 같은 말을
+                          // 두 번 띄우지 않는다.
                           delivery.actions.submit.reason
                         )
                       }
@@ -1250,18 +1330,42 @@ export function ScreenPanel({
                       <button
                         type="button"
                         className={`${
-                          delivery.primary === "submit" && delivery.actions.submit.enabled
+                          delivery.primary === "submit" &&
+                          delivery.actions.submit.enabled &&
+                          !submitting &&
+                          !submitDone
                             ? "primary screenpanel__action"
                             : "ghost screenpanel__action"
-                        }${beatPrimary === "submit" ? " screenpanel__action--beat" : ""}`}
-                        aria-disabled={!delivery.actions.submit.enabled}
+                        }${submitDone ? " screenpanel__action--done" : ""}${
+                          beatPrimary === "submit" ? " screenpanel__action--beat" : ""
+                        }`}
+                        aria-disabled={!delivery.actions.submit.enabled || submitting}
+                        aria-busy={submitting || undefined}
                         onClick={() => {
                           dismissSubmitCoach();
-                          if (delivery.actions.submit.enabled) onCycleAction("submit");
+                          if (submitting) return;
+                          // 잠긴 버튼도 누르면 답한다 — 마우스를 올려야만 읽히는
+                          // 이유는 누른 손에게 닿지 않는다(상태 확인의 빈 답과
+                          // 같은 자리, 같은 수명).
+                          if (!delivery.actions.submit.enabled) {
+                            if (delivery.actions.submit.reason) {
+                              showCheckNote(delivery.actions.submit.reason);
+                            }
+                            return;
+                          }
+                          onCycleAction("submit");
                         }}
                       >
-                        <HandoffIcon />
-                        <span className="screenpanel__actionlabel">제출</span>
+                        {submitting ? (
+                          <span className="spinner" aria-hidden="true" />
+                        ) : submitDone ? (
+                          <CheckIcon />
+                        ) : (
+                          <HandoffIcon />
+                        )}
+                        <span className="screenpanel__actionlabel">
+                          {submitting ? "보내는 중…" : submitDone ? "제출됐어요" : "제출"}
+                        </span>
                       </button>
                     </Tip>
                     {delivery.actions.check && (
@@ -1467,6 +1571,7 @@ export function ScreenPanel({
               onCommentsMode={onCommentsMode}
               onLook={(note) => void sendLook(note)}
               lookBusy={lookBusy}
+              screens={conversationScreens}
               driving={daemon.browserDriving}
               turnRunning={turnState === "running"}
               frozen={frozen}

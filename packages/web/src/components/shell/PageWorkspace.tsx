@@ -197,6 +197,11 @@ export function PageWorkspace({
    * only draws the toggle and passes the truth down.
    */
   const [commentsOn, setCommentsOn] = useState(false);
+  /**
+   * 제출이 도는 중 — 대화 열의 제출 핸들러가 시작과 끝을 알리고, 상단 바의
+   * 제출 버튼(ScreenPanel)이 읽는다. 두 열이 같은 누름을 본다.
+   */
+  const [submitBusy, setSubmitBusy] = useState(false);
   const shortcuts = useRef({
     palette: () => {},
     newSession: () => {},
@@ -519,6 +524,14 @@ export function PageWorkspace({
     daemon.projects.find((project) => project.slug === daemon.activeSlug)?.name ?? null;
 
   const ghostCount = pins.ghosts.length;
+  // 핀을 보냈으면 찍기는 끝났다 — 모드를 스스로 끈다. 켜진 채로 남으면 다음
+  // 클릭이 화면을 누르는 대신 핀을 또 찍어, 방금 고친 화면을 써 보려던 손이
+  // 막힌다. 고스트가 늘어나는 순간이 보냄의 신호다(markSent).
+  const sentGhosts = useRef(ghostCount);
+  useEffect(() => {
+    if (ghostCount > sentGhosts.current) setCommentsOn(false);
+    sentGhosts.current = ghostCount;
+  }, [ghostCount]);
   const ghostArmedAt = useRef<number | null>(null);
   if (ghostCount > 0 && ghostArmedAt.current === null) ghostArmedAt.current = Date.now();
   if (ghostCount === 0) ghostArmedAt.current = null;
@@ -711,6 +724,7 @@ export function PageWorkspace({
                 onChatChange={onChatChange}
                 onOpenProviderSettings={() => onOpenSettings("providers")}
                 onOpenHistory={() => askCycle("history")}
+                onSubmitBusy={setSubmitBusy}
                 cycleRequest={cycleRequest}
                 onReviewsHandled={() => setReviewsTick((tick) => tick + 1)}
               />
@@ -747,6 +761,7 @@ export function PageWorkspace({
           onCycleAction={askCycle}
           cycleRequest={cycleRequest}
           reviewsTick={reviewsTick}
+          submitBusy={submitBusy}
         />
       </div>
 

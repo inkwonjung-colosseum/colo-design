@@ -1,8 +1,10 @@
 import type { ColoDesignPinEnvelope, ColoDesignPinsSync } from "@colo-design/protocol";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Daemon } from "../../lib/daemon-client";
+import { composing } from "../../lib/ime";
 import { parseAddress } from "../../lib/preview-address";
 import { advanceTour, useTourStep } from "../../lib/tour";
+import { screenKey, type TurnScreen, titleOfPath } from "../../lib/turn-screens";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -10,10 +12,10 @@ import {
   ChevronRightIcon,
   DesktopIcon,
   ExternalLinkIcon,
-  LockIcon,
   MapPinIcon,
   MobileIcon,
   RefreshIcon,
+  SparkIcon,
   TabletIcon,
 } from "../icons";
 import { Tip } from "../shell/Tip";
@@ -93,6 +95,7 @@ export function PreviewHost({
   frozenApi = null,
   driving,
   turnRunning = false,
+  screens = [],
 }: {
   url: string | null;
   /** The server process behind `url` (RepoStatus.previewEpoch); the native page reloads under a new one. */
@@ -168,6 +171,12 @@ export function PreviewHost({
   driving?: ReadonlySet<string>;
   /** 이 스레드의 턴이 도는 중 — 빈 무대의 문장이 "만드는 중"으로 바뀐다. */
   turnRunning?: boolean;
+  /**
+   * 이 대화가 말한 화면들, 최근 것이 앞(turn-screens.ts). 주소창이 누르면
+   * 제목으로 나열하고, 평소에는 지금 화면의 제목을 경로 앞에 세운다 —
+   * 비개발자는 `/member/list` 가 아니라 `회원 목록` 을 안다.
+   */
+  screens?: TurnScreen[];
 }) {
   const drivingNow = (driving?.size ?? 0) > 0;
   const native = Boolean(window.coloDesignDesktop?.preview?.native);
@@ -240,6 +249,11 @@ export function PreviewHost({
   const [address, setAddress] = useState("");
   const [addressFocused, setAddressFocused] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
+  /** 주소창에 무언가를 쳤는가 — 치기 전에는 화면 목록 전부를, 친 뒤에는
+      그 글자로 거른 것만 보인다. 포커스마다 새로 시작한다. */
+  const [addressTyped, setAddressTyped] = useState(false);
+  /** 화살표로 고른 화면 목록의 행 — -1 은 아무것도 고르지 않음(Enter 는 주소 이동). */
+  const [pickIndex, setPickIndex] = useState(-1);
   const addressTimer = useRef<number | null>(null);
 
   // 서버가 돌아오면 지난 화면을 버린다 (실사 결함): bring-up 이 `stopped` 를
@@ -370,11 +384,12 @@ export function PreviewHost({
     void zoomBridge?.zoom?.("reset");
   }, [width]);
 
-  const submitAddress = (raw: string) => {
+  /** 이동했으면 true — 거절이면 친 글자를 그대로 두고 이유를 한 줄로 말한다. */
+  const submitAddress = (raw: string): boolean => {
     // 주소창의 이동은 이 미리보기 안의 화면 몫이다 — 경로·쿼리·같은 origin
     // 의 주소는 parseAddress 가 길을 낸다. 그 밖의 전부는 한 문장으로 거절:
     // 다른 서버의 주소를 열어 주는 창은 브라우저지 미리보기가 아니므로.
-    if (!url) return;
+    if (!url) return false;
     const verdict = parseAddress(raw, {
       origin: new URL(url).origin,
       currentPath: location?.path ?? "/",
@@ -383,11 +398,36 @@ export function PreviewHost({
       setAddressError(verdict.message);
       if (addressTimer.current !== null) window.clearTimeout(addressTimer.current);
       addressTimer.current = window.setTimeout(() => setAddressError(null), 2500);
-      return;
+      return false;
     }
     setAddressError(null);
     onNavigate({ kind: "path", path: verdict.path });
+    return true;
   };
+
+  // 화면 고르기: 주소창을 누르면 이 대화의 화면이 제목으로 선다. 친 글자는
+  // 제목과 경로 둘 다에서 찾는다 — "회원" 도 "/member" 도 같은 행에 닿는다.
+  // 목록은 미리보기 안의 화면 몫이라 외부 페이지·iframe 경로에는 없다.
+  const pickQuery = addressTyped ? address.trim().toLowerCase() : "";
+  const picks =
+    native && !webMode && addressFocused
+      ? screens
+          .filter(
+            (screen) =>
+              pickQuery === "" ||
+              screen.path.toLowerCase().includes(pickQuery) ||
+              (screen.title ?? "").toLowerCase().includes(pickQuery),
+          )
+          .slice(0, 8)
+      : [];
+  const pickScreen = (screen: TurnScreen) => {
+    setAddressError(null);
+    onNavigate({ kind: "path", path: screen.path });
+    addressInput.current?.blur();
+  };
+  /** 지금 화면의 이름 — 포커스가 없을 때 경로 앞에 선다. 모르면 경로만. */
+  const hereTitle =
+    native && !webMode && !addressFocused && url ? titleOfPath(screens, address) : null;
 
   // 코치 마크의 졸업: 첫 핀이 찍히거나 닫기를 누르면 임무 끝 — 이 기기에서
   // 다시 뜨지 않는다. 저장이 막혀 있으면 이번 세션에서만 물러난다.
@@ -411,7 +451,7 @@ export function PreviewHost({
    * 포인터를 먹어(Tip 의 open 계약) 그 아래 무대의 클릭을 가로챈다 — 화면을
    * 짚어 보라고 권하면서 짚는 손을 막는 꼴이다.
    */
-  const coachOn = pinCoach && tour === "pin" && url !== null && !stopped;
+  const coachOn = pinCoach && tour === "pin" && url !== null && !stopped && !commentsOn;
 
   // 서버 중단 카드와 빈 무대는 덮개로 그린다 — PreviewFrame(게스트 요소의
   // 소유자)을 언마운트하면 warm 페이지가 모두 죽는다(webview 전환 실측).
@@ -600,22 +640,63 @@ export function PreviewHost({
                 className="frame__addresswrap"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  submitAddress(address);
+                  // 이동한 뒤에는 목록을 걷는다 — 포커스가 남으면 화면 목록이
+                  // 방금 옮겨 간 화면 위에 떠 있다.
+                  if (submitAddress(address)) addressInput.current?.blur();
                 }}
               >
-                <span className="frame__addressbox">
-                  <LockIcon />
+                {/* label: 제목 조각을 눌러도 입력이 포커스를 받는다. 자물쇠는
+                    뺐다 — 이 칸의 주소는 늘 이 컴퓨터의 미리보기라 보안 표시가
+                    말할 것이 없다. */}
+                <label className="frame__addressbox">
+                  {hereTitle && <span className="frame__addresstitle">{hereTitle}</span>}
                   <input
-                    className="frame__address"
+                    className={
+                      hereTitle ? "frame__address frame__address--quiet" : "frame__address"
+                    }
                     type="text"
+                    role="combobox"
                     aria-label="주소"
+                    aria-expanded={picks.length > 0}
+                    aria-controls="preview-screen-picks"
+                    aria-autocomplete="list"
                     data-testid="preview-address"
                     spellCheck={false}
                     value={address}
                     ref={addressInput}
-                    onFocus={() => setAddressFocused(true)}
+                    onFocus={() => {
+                      setAddressFocused(true);
+                      setAddressTyped(false);
+                      setPickIndex(-1);
+                    }}
                     onBlur={() => setAddressFocused(false)}
-                    onChange={(event) => setAddress(event.target.value)}
+                    onChange={(event) => {
+                      setAddress(event.target.value);
+                      setAddressTyped(true);
+                      setPickIndex(-1);
+                    }}
+                    onKeyDown={(event) => {
+                      // 한글 조합 중의 Enter · 화살표는 조합의 것이다.
+                      if (composing(event)) return;
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        addressInput.current?.blur();
+                        return;
+                      }
+                      if (picks.length === 0) return;
+                      if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        setPickIndex((index) => (index + 1) % picks.length);
+                      } else if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        setPickIndex((index) => (index <= 0 ? picks.length - 1 : index - 1));
+                      } else if (event.key === "Enter" && pickIndex >= 0) {
+                        const picked = picks[pickIndex];
+                        if (!picked) return;
+                        event.preventDefault();
+                        pickScreen(picked);
+                      }
+                    }}
                   />
                   {native && drivingNow && (
                     <span
@@ -625,16 +706,56 @@ export function PreviewHost({
                       title="에이전트 조작 중"
                     />
                   )}
-                </span>
+                </label>
                 {addressError && (
                   <span className="frame__addrerror" role="status">
                     {addressError}
                   </span>
                 )}
+                {picks.length > 0 && (
+                  <div
+                    id="preview-screen-picks"
+                    className="selector__menu frame__picks"
+                    role="listbox"
+                    aria-label="이 대화의 화면"
+                  >
+                    <div className="frame__pickshead">이 대화의 화면</div>
+                    {picks.map((screen, index) => {
+                      const here =
+                        location !== null && screenKey(location.path) === screenKey(screen.path);
+                      return (
+                        <button
+                          key={screen.path}
+                          type="button"
+                          role="option"
+                          aria-selected={index === pickIndex}
+                          className={
+                            screen.title
+                              ? "selector__row frame__pick"
+                              : "selector__row frame__pick frame__pick--path"
+                          }
+                          // 누르는 순간 입력이 포커스를 잃으면 목록이 먼저 걷혀
+                          // 클릭이 닿지 않는다 — 포커스는 입력에 둔다.
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => pickScreen(screen)}
+                        >
+                          <span className="selector__check">
+                            {here ? <CheckIcon size={11} /> : null}
+                          </span>
+                          <span className="selector__text">
+                            <span className="selector__label">{screen.title ?? screen.path}</span>
+                            {screen.title && (
+                              <span className="selector__desc frame__pickpath">{screen.path}</span>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </form>
             ) : (
               <span className="frame__pill">
-                <LockIcon />
                 <span className="frame__pill__text">{address !== "" ? address : "미리보기"}</span>
               </span>
             )}
@@ -714,26 +835,9 @@ export function PreviewHost({
                       </button>
                     </span>
                   )}
-                  {native && onLook && (
-                    <Tip
-                      label={
-                        lookOpen
-                          ? undefined
-                          : "화면 전체와 콘솔 기록을 AI에게 보여 줍니다 — 오류 배너도 핀도 없을 때"
-                      }
-                      side="bottom"
-                      align="end"
-                    >
-                      <button
-                        type="button"
-                        className="frame__look"
-                        aria-expanded={lookOpen}
-                        onClick={() => setLookOpen((open) => !open)}
-                      >
-                        이 화면 AI에게 보여 주기
-                      </button>
-                    </Tip>
-                  )}
+                  {/* 이 화면 AI에게 보여 주기는 보기 메뉴로 옮겼다 — 막대에서 강조된
+                      손은 찍기 하나다. 핀이 닿지 않는 문제(흰 화면 · 무한 로딩)는
+                      드물고, 그때는 메뉴 한 번이면 닿는다. */}
                   <span className="selector preview__viewwrap">
                     {viewOpen && (
                       <button
@@ -744,7 +848,13 @@ export function PreviewHost({
                       />
                     )}
                     <Tip
-                      label={viewOpen ? undefined : "폭 · 새 창 — 보기 설정"}
+                      label={
+                        viewOpen
+                          ? undefined
+                          : native && onLook
+                            ? "폭 · 새 창 · AI에게 화면 보여 주기"
+                            : "폭 · 새 창 — 보기 설정"
+                      }
                       side="bottom"
                       align="end"
                     >
@@ -820,6 +930,35 @@ export function PreviewHost({
                           <span className="selector__label">새 창</span>
                           <span className="selector__hint">브라우저</span>
                         </button>
+                        {native && onLook && (
+                          <>
+                            <div className="selector__head">
+                              <div className="selector__headrow">
+                                <span className="selector__headtitle">AI</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="selector__row selector__row--desc"
+                              onClick={() => {
+                                setViewOpen(false);
+                                setLookOpen(true);
+                              }}
+                            >
+                              <span className="selector__check" />
+                              <span className="selector__rowicon">
+                                <SparkIcon />
+                              </span>
+                              <span className="selector__text">
+                                <span className="selector__label">AI에게 이 화면 보여 주기</span>
+                                <span className="selector__desc">
+                                  짚을 곳이 없는데 이상할 때 — 화면 전체와 기록을 보냅니다
+                                </span>
+                              </span>
+                            </button>
+                          </>
+                        )}
                       </span>
                     )}
                   </span>
@@ -852,6 +991,24 @@ export function PreviewHost({
                 취소
               </button>
             </form>
+          )}
+          {/* 찍기 모드가 켜진 동안의 한 줄 — 모드는 보여야 한다. 켜진 줄
+              모르는 손은 화면의 버튼이 왜 안 눌리는지 모른다. 끄는 손도 여기
+              있다(⌘⇧P 와 막대의 버튼과 같은 값). 핀을 보내면 스스로 꺼진다. */}
+          {native && commentsOn && !webMode && url && (
+            <div className="frame__pinstrip" role="status">
+              <MapPinIcon />
+              <span className="frame__pinstrip__text">
+                찍기 켜짐 — 고칠 곳을 누르면 핀이 찍혀요. 끌면 영역이에요
+              </span>
+              <button
+                type="button"
+                className="frame__pinstrip__off"
+                onClick={() => onCommentsMode(false)}
+              >
+                끄기
+              </button>
+            </div>
           )}
           {(() => {
             const host = native ? (

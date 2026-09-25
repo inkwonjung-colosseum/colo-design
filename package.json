@@ -8,7 +8,7 @@
     "prepare": "lefthook install",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts",
+    "test": "pnpm -r build && node --test packages/daemon/test/*.test.ts packages/web/test/*.test.ts",
     "dev:daemon": "COLO_DESIGN_DEV_AGENTS=1 pnpm --filter @colo-design/daemon dev",
     "dev:web": "pnpm --filter @colo-design/web dev",
     "dev:desktop": "pnpm --filter @colo-design/desktop dev:hmr",

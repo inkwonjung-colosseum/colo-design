@@ -313,10 +313,12 @@ export function HandoffCard({
               ) : (
                 <Markdown text={previewBody} />
               )}
-              {(extras?.filesSection || extras?.commentsSection || (shotCount ?? 0) > 0) && (
+              {/* `### 바뀐 파일` 은 개발자가 받는 본문에만 실린다 — 파일
+                  경로는 사용자의 어휘가 아니다. 사용자가 확인할 것은 자기가
+                  남긴 수정 요청과 화면 캡처다. */}
+              {(extras?.commentsSection || (shotCount ?? 0) > 0) && (
                 <div className="handoff__auto">
                   <span className="handoff__autolabel">함께 담기는 것</span>
-                  {extras?.filesSection && <Markdown text={extras.filesSection} />}
                   {extras?.commentsSection && <Markdown text={extras.commentsSection} />}
                   {(shotCount ?? 0) > 0 && (
                     <p className="hint">화면 미리보기 — 캡처 {shotCount}장</p>
