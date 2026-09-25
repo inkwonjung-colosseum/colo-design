@@ -355,34 +355,6 @@ export function Composer({
     return () => window.removeEventListener("nx:pins:send", onSendNow);
   }, [listenPinsSend]);
 
-  // 잃은 말(질의가 죽어 전하지 못한 말)은 입력창이 비어 있을 때 스스로 돌아온다.
-  const droppedTried = useRef(new Set<string>());
-  const dropped = variant === "thread" ? sessions.dropped : [];
-  const droppedWaiting =
-    dropped.length > 0 &&
-    editor.text.trim() === "" &&
-    editor.attachments.length === 0 &&
-    dropped.some((item) => !droppedTried.current.has(item.id));
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 기다리는 말이 생길 때 한 번만 — 시도한 것은 다시 건드리지 않는다.
-  useEffect(() => {
-    if (!droppedWaiting) return;
-    const item = [...dropped].reverse().find((row) => !droppedTried.current.has(row.id));
-    if (!item) return;
-    droppedTried.current.add(item.id);
-    void sessions
-      .takeDropped(item.id)
-      .then((payload) => {
-        if (!payload) return;
-        setEditor((prev) => ({
-          text: prev.text.trim() ? `${payload.text}\n\n${prev.text}` : payload.text,
-          attachments: [...payload.attachments, ...prev.attachments],
-        }));
-        setNotice({ tone: "warn", text: L.chat.restored });
-        sessions.dismissDropped(item.id);
-      })
-      .catch(() => undefined);
-  }, [droppedWaiting]);
-
   // 빠르게 — 데몬이 받아들인 자세를 따른다. 누르면 부탁하고, 선택자를 다시 읽어
   // 그 답으로 선다(요금제가 막으면 제자리). 다음 정산의 선택자가 오면 그것이 이긴다.
   const activeId = sessions.activeId;

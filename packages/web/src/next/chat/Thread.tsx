@@ -1,4 +1,10 @@
-import { alignThumbs, type QueuedSend, type RepoStatus, readTurn } from "@colo-design/protocol";
+import {
+  alignThumbs,
+  type LostSend,
+  type QueuedSend,
+  type RepoStatus,
+  readTurn,
+} from "@colo-design/protocol";
 import { Fragment, type ReactNode } from "react";
 import { Markdown } from "../../components/Markdown";
 import { ActivitySummary, groupActivity } from "../../components/transcript/activity";
@@ -10,7 +16,14 @@ import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
 import { turnAnswerText, turnBlockNumbers } from "../../lib/turn-numbering";
 import { lastTurnScreens, type TurnScreen } from "../../lib/turn-screens";
 import { L } from "../labels";
-import { noticeKind, promptNumbers, retryCount } from "../lib/thread";
+import {
+  failureCards,
+  LIMIT_RESULT,
+  noticeKind,
+  promptNumbers,
+  rawErrorLine,
+  retryCount,
+} from "../lib/thread";
 import { BriefCard, FailCard, GateCard, ReceiptCard, ReviewCard, reviewParts } from "./cards";
 import { CheckIcon, ClockIcon, EditIcon, SparkIcon } from "./icons";
 import { SettleLine, ShotCard } from "./SettleLine";
@@ -18,8 +31,6 @@ import { SettleLine, ShotCard } from "./SettleLine";
 /** CLI 가 사람의 말이나 답인 척 내려놓는 살림 줄 — 사람의 말이 아니다. */
 const INTERRUPTED = "[Request interrupted by user]";
 const NO_RESPONSE = "No response requested.";
-/** 사용량 한도로 거절된 답 — SDK 의 마지막 줄이 스스로 그렇게 말한다(옛 실패 카드와 같은 판정). */
-const LIMIT_RESULT = /usage limit|rate limit|limit reached|weekly limit|capacity/i;
 
 type TurnBlock = Extract<Block, { type: "turn" }>;
 type Row = ReturnType<typeof groupActivity>[number];
@@ -62,9 +73,13 @@ export interface ThreadProps {
   queue: QueuedSend[];
   /** 준비 중에 보낸 말인가 — 대기 줄의 한 줄이 달라진다(U8). */
   preparing: boolean;
+  /** 이 대화가 잃은 말(데몬의 회복 방) — 실패 카드가 된다(W8). */
+  dropped: LostSend[];
   onFork: (turn: number) => void;
   onEditResend: (prompt: number, text: string) => void;
   onRetry: (text: string) => void;
+  /** 잃은 말의 `다시 시도` — 되살려 다시 보낸다(입력창이 쓰던 길). */
+  onRetryDropped: (itemId: string) => void;
   onOpenScreen: (screen: TurnScreen) => void;
   onOpenHistory: () => void;
   onReply: (id: number, text: string) => Promise<void>;
@@ -136,6 +151,8 @@ export function Thread(props: ThreadProps) {
     if (block.type === "human") lastHumanId = block.id;
   }
   const ownWords = lastOwnWords(blocks);
+  // 잃은 말의 실패 카드(W8) — 대화록이 이미 말하는 실패와 겹치면 하나만 선다.
+  const lost = failureCards(props.dropped, blocks);
   const handedPrs = new Set<number>();
 
   const isRetryRow = (row: Row | undefined): boolean =>
@@ -354,8 +371,22 @@ export function Thread(props: ThreadProps) {
       case "save":
         // 보관은 답마다 도구가 스스로 한다 — 대화록에 남길 일이 아니다(작업 기록이 그 자리).
         return null;
-      case "saveBlocked":
-        return <Note tone="red">{block.detail}</Note>;
+      case "saveBlocked": {
+        // 원문은 그대로 보이지 않는다(W3) — 한국어 고지만 지나가고, 나머지는
+        // 받은 문장 아래 접힌다(cards.tsx 의 접힌 글과 같은 모양).
+        const line = rawErrorLine(block.detail, L);
+        return (
+          <div>
+            <Note tone="red">{line.title}</Note>
+            {line.raw !== null && (
+              <details className="nx-card-fold">
+                <summary>{L.cards.detailFold}</summary>
+                <pre>{line.raw}</pre>
+              </details>
+            )}
+          </div>
+        );
+      }
       case "milestone": {
         if (block.subtype === "handed") {
           const more = handedPrs.has(block.pr);
@@ -396,6 +427,27 @@ export function Thread(props: ThreadProps) {
         if (content === null) return null;
         return <Fragment key={row.kind === "block" ? row.block.id : row.id}>{content}</Fragment>;
       })}
+      {lost.map((card) => (
+        <Fragment key={card.id}>
+          <div className="nx-m-user">
+            <div className="nx-bub">
+              <div className="nx-btxt">{card.text}</div>
+              {(card.images > 0 || card.files > 0) && (
+                <div className="nx-batts">
+                  {card.images > 0 && <span className="nx-tag">{L.chat.images(card.images)}</span>}
+                  {card.files > 0 && <span className="nx-tag">{L.chat.files(card.files)}</span>}
+                </div>
+              )}
+            </div>
+          </div>
+          <FailCard
+            why={L.chat.lostWhy}
+            notified={false}
+            retry={() => props.onRetryDropped(card.id)}
+            live={live}
+          />
+        </Fragment>
+      ))}
       {props.queue.map((item) => (
         <div key={item.id} className="nx-m-user">
           <div className="nx-bub">

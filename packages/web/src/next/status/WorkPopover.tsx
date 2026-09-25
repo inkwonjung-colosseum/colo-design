@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 import { openLink } from "../../lib/open-link";
 import { L } from "../labels";
 import type { Journey } from "../lib/journey";
+import { ledgerLine } from "../lib/submit-copy";
 import { commentRows, cycleStart, outgoingScreens } from "../lib/work-ledger";
 import { Popover } from "../ui/Popover";
 import {
@@ -66,7 +67,9 @@ export function WorkPopover({
   const log = [...(repo?.submit?.log ?? [])]
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
     .slice(0, 3);
-
+  // 제출 칸의 지금 한 줄(W1) — 도는 제출의 상태 문장 · 막힘의 이유. 쉬면 null.
+  const submitLine = ledgerLine(repo?.submit, L);
+  const submitBlocked = repo?.submit?.phase === "blocked";
   const comments =
     cycle === "draft"
       ? []
@@ -127,10 +130,10 @@ export function WorkPopover({
               </div>
             )}
           </>
-        ) : journey.blocked ? (
-          <div className="nx-wp-empty nx-wp-icon">
-            <MailIcon />
-            {L.work.blocked}
+        ) : submitLine ? (
+          <div className={`nx-wp-empty${submitBlocked ? " nx-wp-icon" : ""}`}>
+            {submitBlocked && <MailIcon />}
+            {submitLine}
           </div>
         ) : (
           <div className="nx-wp-empty">{L.work.notSubmitted}</div>

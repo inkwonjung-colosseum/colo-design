@@ -14,7 +14,7 @@ import {
   switchProviderPatch,
 } from "../../lib/settings";
 import { DEV, L } from "../labels";
-import { updateRowCopy } from "../lib/update-row";
+import { type CheckNote, shouldClearCheckNote, updateRowCopy } from "../lib/update-row";
 import { hasNewerVersion } from "../lib/version";
 import { CheckIcon, Spin } from "../ui/icons";
 
@@ -124,7 +124,7 @@ export function SettingsDialog({
   const [appNote, setAppNote] = useState<string | null>(null);
   const [agentError, setAgentError] = useState<{ id: string; text: string } | null>(null);
   const [checking, setChecking] = useState(false);
-  const [checkNote, setCheckNote] = useState<string | null>(null);
+  const [checkNote, setCheckNote] = useState<CheckNote | null>(null);
 
   /** 버전을 아는(=깔려 있는) 에이전트 — 업데이트 줄과 `지금 확인`의 대상. */
   const installedAgents = (["claude", "codex"] as const).filter((id) =>
@@ -196,9 +196,19 @@ export function SettingsDialog({
     }
     const results = await Promise.all(jobs);
     const found = results.filter(Boolean).length;
-    setCheckNote(found > 0 ? L.update.foundCount(found) : L.update.allLatest);
+    setCheckNote(
+      found > 0
+        ? { text: L.update.foundCount(found), found }
+        : { text: L.update.allLatest, found: 0 },
+    );
     setChecking(false);
   };
+
+  // 확인 문장은 상태에서 저절로 늙는다(W5 · N7) — 「새 버전 N개」가 끝난 일을
+  // 말하는 순간(업데이트 완료 · 새 버전이 더 없음) 제 자리를 비운다.
+  useEffect(() => {
+    if (shouldClearCheckNote(checkNote, status?.agentUpdates, providers)) setCheckNote(null);
+  }, [checkNote, status?.agentUpdates, providers]);
 
   const autoUpdate = status?.agentAutoUpdate ?? true;
   const active = daemon.projects.find((project) => project.slug === daemon.activeSlug) ?? null;
@@ -530,11 +540,12 @@ export function SettingsDialog({
                   aria-labelledby="nx-autoupd"
                   className={`nx-sw${autoUpdate ? " nx-sw--on" : ""}`}
                   onClick={() =>
-                    void daemon.api
-                      .machineSet(undefined, !autoUpdate)
-                      .catch((error) =>
-                        setCheckNote(error instanceof Error ? error.message : String(error)),
-                      )
+                    void daemon.api.machineSet(undefined, !autoUpdate).catch((error) =>
+                      setCheckNote({
+                        text: error instanceof Error ? error.message : String(error),
+                        found: 0,
+                      }),
+                    )
                   }
                 />
                 <span className="nx-snote">{L.update.autoNote}</span>
@@ -555,7 +566,7 @@ export function SettingsDialog({
                     L.update.checkNow
                   )}
                 </button>
-                {checkNote && <span className="nx-snote">{checkNote}</span>}
+                {checkNote && <span className="nx-snote">{checkNote.text}</span>}
               </div>
             </div>
           </section>

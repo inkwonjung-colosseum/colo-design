@@ -246,6 +246,8 @@ export const L = {
     failWhy:
       "다섯 번 다시 물었지만 답을 받지 못했어요. 말씀은 그대로 남아 있어요 — 다시 시도하면 같은 말로 다시 물어요.",
     milestoneMerged: "반영됐어요 · 다음에 만드는 것은 새 작업이에요",
+    /** 날 오류 원문의 접힌 자리(W3) — cards.tsx 의 접힌 글과 같은 모양으로 편다. */
+    detailFold: "자세히",
   },
   inviteCleanup: {
     title: "초대 파일을 가져왔어요",
@@ -262,7 +264,6 @@ export const L = {
     sendFailed: "AI에게 말을 전하지 못했어요 — 잠시 뒤 다시 보내 주세요",
     somethingWrong: "잠시 문제가 있었어요 — 다시 해 주세요",
     dismiss: "닫기",
-    restored: "전하지 못한 말을 입력창에 돌려 두었어요",
     offline: "연결이 끊겼어요",
     connecting: "연결하는 중이에요",
     stopping: "멈추는 중…",
@@ -301,6 +302,9 @@ export const L = {
     usageFiveHour: "이번 5시간",
     usageWeek: "이번 주",
     pinFlash: "화면에서 이 자리 보기",
+    files: (n: number) => `파일 ${n}개`,
+    /** 잃은 말의 실패 카드 이유(W8) — 다시 시도는 같은 말을 다시 보낸다. */
+    lostWhy: "말이 닿기 전에 AI가 멈췄어요. 다시 시도하면 같은 말을 다시 보내요.",
   },
   /**
    * 데몬이 대화에 내려놓는 알림 문장의 첫머리 — 대화록이 이 머리로 알아보고

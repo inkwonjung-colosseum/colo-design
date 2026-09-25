@@ -1,4 +1,6 @@
-import type { EffortLevel, PlanUsage } from "@colo-design/protocol";
+import type { EffortLevel, LostSend, PlanUsage } from "@colo-design/protocol";
+import { koreanNoticeWords, LIMIT_WORDS } from "../../lib/error-words.ts";
+import type { L } from "../labels";
 
 /**
  * 대화 칸의 작은 판정들 — 순수 함수만 산다. 시험이 src 에서 곧장 읽으므로
@@ -23,6 +25,76 @@ export function effortWord(effort: EffortLevel | null): EffortWord {
   if (effort === "low") return "short";
   if (effort === "high" || effort === "xhigh" || effort === "max") return "long";
   return "normal";
+}
+
+/** 모델 칩의 문양(W6) — `프로바이더 · 생각 시간`. 모델 이름은 팝오버 안에만 산다. */
+export function chipLabel(providerLabel: string, effort: string | null): string {
+  return effort === null ? providerLabel : `${providerLabel} · ${effort}`;
+}
+
+/** 한도 문장을 알아보는 단서 — SDK 가 답의 마지막 줄에 스스로 남기는 영어 문장. */
+export const LIMIT_RESULT = /usage limit|rate limit|limit reached|weekly limit|capacity/i;
+
+/** 원문 한 줄을 화면의 문장으로 갈라 놓은 것(W3) — 접힌 `자세히` 아래 실릴 원문까지. */
+export interface RawErrorLine {
+  title: string;
+  /** title 이 원문이면 접히지 않는다 — raw 는 null. */
+  raw: string | null;
+}
+
+/**
+ * 밖에서 온 오류 원문 한 줄의 한국어(W3) — 한국어 고지(고칠 것을 말하는 안내)는
+ * 그대로 지나가고, 한도 문장은 그 문장으로, 그 밖의 날 원문(영어 · 스택)은 받은
+ * 문장으로 덮은 뒤 원문을 접힌 자리에 내려 준다.
+ */
+export function rawErrorLine(raw: string, words: Pick<typeof L, "vocab">): RawErrorLine {
+  if (koreanNoticeWords(raw)) return { title: raw, raw: null };
+  if (LIMIT_RESULT.test(raw)) return { title: LIMIT_WORDS, raw };
+  return { title: words.vocab.aiFailed, raw };
+}
+
+/** 잃은 말의 실패 카드 한 장(W8) — 사람의 말과 첨부의 수. */
+export interface FailureCardRow {
+  id: string;
+  text: string;
+  images: number;
+  files: number;
+}
+
+/** 실패 판정이 읽는 블록의 모양 — 대화록(Block)에서 필요한 칸만. */
+export interface FailureTapeBlock {
+  type: string;
+  id: string;
+  text?: string;
+  isError?: boolean;
+  subtype?: string;
+}
+
+/**
+ * 이 대화가 잃은 말(`sessions.dropped`)마다 실패 카드 한 장씩(W8 · N3) — 데몬의
+ * 방이 기억하므로 새로 고침 뒤에도 선다. 같은 보내기가 대화록에 이미 살아 있는
+ * 실패(사람의 말 뒤에 실패한 답)로 남아 있으면 하나다 — 대화록의 카드가 그 실패를
+ * 이미 말한다.
+ */
+export function failureCards(
+  dropped: LostSend[],
+  blocks: ReadonlyArray<FailureTapeBlock>,
+): FailureCardRow[] {
+  const told = new Set<string>();
+  let pending: string | null = null;
+  for (const block of blocks) {
+    if (block.type === "user") pending = block.text ?? null;
+    else if (
+      block.type === "turn" &&
+      (block.isError || (block.subtype !== "" && block.subtype !== "success"))
+    ) {
+      if (pending !== null) told.add(pending);
+      pending = null;
+    }
+  }
+  return dropped
+    .filter((item) => !told.has(item.text))
+    .map((item) => ({ id: item.id, text: item.text, images: item.images, files: item.files }));
 }
 
 /** 모델 칩 옆에 사용량 한 단어가 서는 문턱(P6) — 한도의 70%. */
