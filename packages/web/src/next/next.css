@@ -11,7 +11,7 @@
 @import "./status/status.css";
 @import "./home/home.css";
 @import "./chat/chat.css";
-@import "./preview/preview.css";
+@import "./onboarding/onboarding.css";
 
 .nx {
   --bg: #f8f7f3;
