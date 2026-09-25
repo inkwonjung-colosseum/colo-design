@@ -211,6 +211,11 @@ export interface RepoStatus {
     phase: "idle" | "running" | "retrying" | "blocked";
     attempts: number;
     lastError?: "auth" | "network" | "rejected" | "other";
+    /**
+     * 잠깐의 실패로 도구가 다시 시도할 순간 (N6) — 국면이 retrying 일 때만
+     * 싣는다. 웹은 아직 읽지 않는다.
+     */
+    nextAttemptAt?: string;
     log: Array<{ at: string; text: string }>;
   };
 }

@@ -436,12 +436,18 @@ Shell · Sidebar(전환기 · 다른 프로젝트 줄 · 대화 목록 · 도구
 핀 대화 제목의 화면 id). 실제 Claude 로그인은 격리 HOME 에서 닿지 않아 실제 답의 걸음은
 돌지 않았다. 깨끗한 기계 점검(README)에 말풍선으로 적기 · 제출 확인 · 업데이트 버튼 셋을 더했다.
 
+**N6 결정 (2026-09-25).** 제출의 잠깐 실패는 관찰 틱(2분)에 얹히지 않고 제출 자신의
+사다리로 다시 센다 — `SUBMIT_RETRY_MS = [20초, 40초, 60초, 60초]`(다섯 시도, 합 3분)로
+타이머를 건다. 막힘 판정(`제출하지 못했어요`)과 개발자 알림이 예산 소진 순간(≈3분)에
+선다. 막힌 뒤의 시도는 관찰 틱에 맡기고, 새 연결 코드는 곧바로 재시도 — 그대로다.
+
 ### 3 절 밖에서 더한 v19
 
 - 명령 `agent.update.check` — 설정의 `지금 확인` 이 에이전트 최신 버전을 곧바로 묻는다.
 - `DaemonStatus.agentUpdates` — 에이전트마다 `pending · running · done · failed` · 시각 · 깐 버전 ·
   실패 문장. 업데이트 줄과 홈의 `방금 있던 일` 이 읽는다.
 - `RepoStatus.phaseSince` — 준비 단계에 들어선 시각(준비 막대의 어림).
+- `RepoStatus.submit.nextAttemptAt?` — 잠깐 실패의 다음 재시도 순간 (N6).
 - `ProjectSummary.reviewers` · `commandsApproved` — 다시 받기의 `바뀜` 판정.
 - `machine.set.provider` 는 선택 — 자동 설치 토글만 바꾸는 호출이 있다.
 - 환경 변수 `COLO_DESIGN_CLAUDE_LATEST_API` — Claude Code 최신 버전의 출처(검증용).

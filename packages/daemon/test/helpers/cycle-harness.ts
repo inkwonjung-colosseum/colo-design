@@ -173,7 +173,8 @@ interface MemComment {
  */
 export class MemoryGitHub implements RestTransport {
   private expired = false;
-  private pullCreatesFail = false;
+  /** PR 생성 실패의 모양 — true 면 500, 문자열이면 그 문장으로 던진다(네트워크 끊김 흉내). */
+  private pullCreatesFail: boolean | string = false;
   /** 저장소가 옮겨진 뒤의 이름 — 없으면 물은 이름 그대로 답한다. */
   private movedTo: string | null = null;
   private nextNumber = 1;
@@ -239,6 +240,7 @@ export class MemoryGitHub implements RestTransport {
           );
         }
         if (input.method === "POST" && rest.length === 1) {
+          if (typeof this.pullCreatesFail === "string") throw new Error(this.pullCreatesFail);
           if (this.pullCreatesFail) return json(500, { message: "Internal Error" });
           const payload = JSON.parse(new TextDecoder().decode(input.body ?? new Uint8Array()));
           const number = await this.openPull({
@@ -463,12 +465,12 @@ export class MemoryGitHub implements RestTransport {
       state: issue.state,
       labels: issue.labels.map((name) => ({ name })),
       assignees: issue.assignees.map((login) => ({ login })),
-      user: { login: "colo-planner" },
     };
   }
-  /** 이후의 PR 생성(POST /pulls)은 전부 500 — 단계 예산 시험이 쓴다. */
-  failPullCreates(): void {
-    this.pullCreatesFail = true;
+  /** 이후의 PR 생성(POST /pulls)은 전부 실패 — 단계 예산 시험이 쓴다. 인자를
+   * 주면 500 대신 그 문장으로 던진다(네트워크 끊김의 분류를 얻는 길, N6). */
+  failPullCreates(message?: string): void {
+    this.pullCreatesFail = message ?? true;
   }
 
   /** PR 을 읽는다 — 제목 · 본문 · 상태의 시험 잣대. */
@@ -811,6 +813,9 @@ export interface SupervisedScene extends Scene {
   submitBlocked: string[];
   /** 연결 코드 만료의 기록 — githubAuthExpired 가 읽는다(기본 false). */
   authExpired: boolean;
+  /** 감독자가 건 제출 재시도 타이머 (N6) — 건 순간의 가짜 시계와 간격, 정리
+   * 되었는지. 실제로 도는 타이머는 없다: 시험은 가짜 시계로 틱을 직접 돈다. */
+  retryTimers: Array<{ at: number; delayMs: number; cancelled: boolean }>;
 }
 
 /**
@@ -866,9 +871,14 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
   const reviewBriefs: Array<{ pr: number; ids: number[] }> = [];
   const chatEvents: Array<{ kind: string; [key: string]: unknown }> = [];
   const ledgerPath = join(clone.path, "..", "cycle.json");
+  // N6 — 제출 재시도 타이머의 가짜: 실제로 도는 타이머 없이 건 순간과 간격만
+  // 적는다. 시험은 가짜 시계를 움직이며 틱을 직접 돈다.
+  const retryTimers: SupervisedScene["retryTimers"] = [];
   let nowMs = Date.now();
-  const spawn = () =>
-    new CycleSupervisor({
+  let alive: CycleSupervisor | null = null;
+  const spawn = () => {
+    alive?.stop();
+    alive = new CycleSupervisor({
       core,
       workspace,
       ledgerPath,
@@ -905,7 +915,16 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       cycleEvent: (event) => chatEvents.push(event as { kind: string }),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       now: () => nowMs,
+      scheduleSubmitRetry: (_fire, delayMs) => {
+        const record = { at: nowMs, delayMs, cancelled: false };
+        retryTimers.push(record);
+        return () => {
+          record.cancelled = true;
+        };
+      },
     });
+    return alive;
+  };
   const supervisor = spawn();
   return {
     remote,
@@ -992,6 +1011,7 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
     },
     machineNotices,
     submitBlocked,
+    retryTimers,
     get authExpired() {
       return scene.authExpired;
     },
@@ -1021,6 +1041,8 @@ export async function makeSupervisedScene(opts: HarnessCoreOptions = {}): Promis
       );
     },
     dispose: async () => {
+      // 감독자의 타이머부터 거둔다(N6) — 정리 뒤 틱이 장면을 다시 만지지 않게.
+      alive?.stop();
       // 차선에 선 백그라운드 푸시가 클론을 만지는 동안 지우면 rm 이 진다 —
       // 줄이 빌 때까지 기다린 뒤 지운다.
       await core.lane.idle();
