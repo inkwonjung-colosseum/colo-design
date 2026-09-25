@@ -977,9 +977,11 @@ export function Sidebar({
                           >
                             <span className="node__dot" aria-hidden="true" />
                             <span className="node__name">{project.name}</span>
-                            {duplicatedNames.has(project.name) && ownerRepoOf(project.repoUrl) && (
-                              <span className="node__owner">{ownerRepoOf(project.repoUrl)}</span>
-                            )}
+                            {devMachine &&
+                              duplicatedNames.has(project.name) &&
+                              ownerRepoOf(project.repoUrl) && (
+                                <span className="node__owner">{ownerRepoOf(project.repoUrl)}</span>
+                              )}
                             {badge && (
                               <span
                                 className={`node__badge node__badge--${badge.kind}${
