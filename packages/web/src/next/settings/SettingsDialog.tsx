@@ -10,8 +10,10 @@ import { requestInvitePicker } from "../../lib/invite-bus";
 import {
   type ChatSettings,
   type NoticeTiming,
+  PICKER_THEMES,
   type Settings,
   switchProviderPatch,
+  type ThemeChoice,
 } from "../../lib/settings";
 import { DEV, L } from "../labels";
 import { connectionCopy } from "../lib/connection-copy";
@@ -19,8 +21,8 @@ import { type CheckNote, shouldClearCheckNote, updateRowCopy } from "../lib/upda
 import { hasNewerVersion } from "../lib/version";
 import { CheckIcon, Spin } from "../ui/icons";
 
-/** 설정의 네 줄과 폴드(PLAN-UI U12) — `nav.openSettings` 가 연다. 문장은 전부
- *  labels(L · DEV)에서 오고, 저장은 옛 대화상자와 같은 길(알림은 settings,
+/** 설정의 다섯 줄과 폴드(PLAN-UI U12) — `nav.openSettings` 가 연다. 문장은 전부
+ *  labels(L · DEV)에서 오고, 저장은 옛 대화상자와 같은 길(테마 · 알림은 settings,
  *  프로바이더는 chat 의 patch, 자동 설치 · 작성 이름은 데몬의 machine 설정)을 쓴다. */
 export function SettingsDialog({
   daemon,
@@ -369,6 +371,30 @@ export function SettingsDialog({
                 </details>
               )}
               {fixNotice && <p className="nx-snote">{fixNotice.text}</p>}
+            </div>
+          </section>
+
+          <section className="nx-srow">
+            <div className="nx-sl">
+              <b>{L.settings.theme}</b>
+              <span>{L.settings.themeSub}</span>
+            </div>
+            <div className="nx-sr">
+              <div className="nx-sline">
+                <select
+                  aria-label={L.settings.theme}
+                  value={settings.theme}
+                  onChange={(event) =>
+                    onSettingsChange({ theme: event.target.value as ThemeChoice })
+                  }
+                >
+                  {PICKER_THEMES.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {L.settings.themeNames[choice]}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </section>
 

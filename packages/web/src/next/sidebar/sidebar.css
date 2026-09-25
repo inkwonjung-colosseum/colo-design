@@ -441,8 +441,8 @@
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #3d3a35;
-  color: #fff;
+  background: var(--ink);
+  color: var(--bg);
   display: grid;
   place-items: center;
   font-size: 12px;

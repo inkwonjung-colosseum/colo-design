@@ -1,7 +1,10 @@
 /*
- * 새 셸(PLAN-UI)의 토큰과 뼈대. 토큰은 목업 `mockups/redesign.html` 의 :root
- * 그대로다. 모든 클래스는 `nx-` 로 시작해 styles.css 와 부딪히지 않고, 토큰은
- * 전역 :root 가 아니라 `.nx` 뿌리에 걸어 옛 셸의 변수를 덮지 않는다.
+ * 새 셸(PLAN-UI)의 토큰과 뼈대. 색은 활성 팔레트(styles.css 의 html[data-theme])
+ * 에서 온다 — 기본은 Claude(종이색 바탕 · 테라코타 포인트)이고 설정의 테마 줄이
+ * 바꾼다. 같은 이름의 팔레트 변수(--bg · --line · --accent · --accent-soft)는
+ * 여기 다시 정의하지 않아 뿌리가 물려받고, 셸만의 이름(--side · --card · --ink…)
+ * 은 아래에서 팔레트의 짝으로 옮겨 적는다. 모든 클래스는 `nx-` 로 시작해
+ * styles.css 와 부딪히지 않는다.
  *
  * 영역마다 자기 파일이 있다 — 단계마다 자기 파일을 고쳐 병합이 겹치지 않게.
  */
@@ -17,30 +20,28 @@
 @import "./settings/settings.css";
 
 .nx {
-  --bg: #f8f7f3;
-  --side: #f1efe9;
-  --card: #fff;
-  --ink: #1d1c1a;
-  --ink2: #55524c;
-  --ink3: #8d887f;
-  --line: #e6e2d9;
-  --line2: #d8d3c8;
-  --accent: #c6613f;
-  --accent-soft: #f8e9e2;
-  --accent-line: #efcdbf;
+  --side: var(--bg-2);
+  --card: var(--panel);
+  --ink: var(--text);
+  --ink2: var(--text-2);
+  --ink3: var(--muted);
+  --line2: var(--line-strong);
+  --accent-line: color-mix(in srgb, var(--accent) 32%, transparent);
+  /* 정보 파랑 — 밝은 팔레트의 기본값. 어두운 팔레트에서는 밑의 덮어쓰기가
+     각 팔레트의 서명 색으로 밝힌다. */
   --blue: #2c6bd6;
-  --blue-soft: #e4edfc;
-  --amber: #b86e12;
-  --amber-soft: #fbf0dd;
-  --green: #23865a;
-  --green-soft: #e0f2e8;
-  --red: #c43d3d;
-  --red-soft: #fbe7e7;
+  --blue-soft: color-mix(in srgb, var(--blue) 12%, transparent);
+  --amber: var(--warn);
+  --amber-soft: var(--warn-soft);
+  --green: var(--ok);
+  --green-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --red: var(--danger);
+  --red-soft: var(--danger-soft);
   --font:
     -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR",
     "Segoe UI", sans-serif;
   --serif: "AppleMyungjo", "Nanum Myeongjo", "Iowan Old Style", Georgia, serif;
-  --pop: 0 14px 40px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --pop: var(--shadow-pop);
   --r-sm: 6px;
   --r: 8px;
   --r-md: 10px;
@@ -77,4 +78,19 @@
   cursor: pointer;
   padding: 0;
   text-align: inherit;
+}
+
+/*
+ * 어두운 팔레트의 정보 파랑 — 기본값(#2c6bd6)이 어두운 바탕에 잠기므로 각
+ * 팔레트의 서명 색으로 밝힌다. 밝은 팔레트는 기본값을 쓰되 github-light 만
+ * 제 파랑이 뚜렷하니 따로 둔다.
+ */
+html[data-theme="dark"] .nx {
+  --blue: #8ab8ff;
+}
+html[data-theme="github"] .nx {
+  --blue: #58a6ff;
+}
+html[data-theme="github-light"] .nx {
+  --blue: #0969da;
 }

@@ -141,7 +141,7 @@
   padding: 0 16px;
   border-radius: 9px;
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
   font-weight: 600;
   font-size: 13px;
   display: inline-flex;
@@ -152,24 +152,24 @@
 }
 
 .nx .nx-submit:hover {
-  background: #3a3834;
+  background: color-mix(in srgb, var(--ink) 88%, var(--bg));
 }
 
 .nx .nx-submit--locked,
 .nx .nx-submit--locked:hover {
-  background: #e3dfd6;
-  color: #9a958b;
+  background: var(--panel-3);
+  color: var(--muted);
   cursor: not-allowed;
 }
 
 .nx .nx-submit--busy,
 .nx .nx-submit--busy:hover {
-  background: #5d5a55;
+  background: color-mix(in srgb, var(--ink) 75%, var(--bg));
   cursor: default;
 }
 
 .nx-submit--busy .nx-spin {
-  color: #fff;
+  color: var(--bg);
 }
 
 .nx-why {
@@ -313,8 +313,8 @@
   width: 40px;
   height: 28px;
   border-radius: 4px;
-  background: #f5f6fa;
-  border: 1px solid #e3e6ee;
+  background: var(--panel);
+  border: 1px solid var(--line);
   position: relative;
   overflow: hidden;
   flex: none;
@@ -327,8 +327,8 @@
   right: 0;
   top: 0;
   height: 5px;
-  background: #fff;
-  border-bottom: 1px solid #e7e9f0;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
 }
 
 .nx-wp-row .nx-thumb i {
@@ -337,13 +337,13 @@
   right: 6px;
   height: 3px;
   border-radius: 2px;
-  background: #dfe3ee;
+  background: var(--line2);
 }
 
 .nx-wp-row .nx-thumb i:nth-child(1) {
   top: 8px;
   right: 18px;
-  background: #3552d8;
+  background: var(--blue);
   opacity: 0.55;
 }
 
@@ -462,8 +462,8 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #46607e;
-  color: #fff;
+  background: var(--blue);
+  color: var(--bg);
   display: grid;
   place-items: center;
   font-size: 11px;

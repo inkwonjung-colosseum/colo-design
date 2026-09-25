@@ -21,6 +21,9 @@ const EFFORT_WORDS: Record<EffortWord, string> = {
   long: L.model.thinkLong,
 };
 
+/** 이 개수부터는 모델 줄을 눈으로 걷지 않고 거르는 편이 빠르다. */
+const MODEL_FILTER_MIN = 8;
+
 function windowName(reading: UsageReading): string {
   if (reading.window.kind === "fiveHour") return L.chat.usageFiveHour;
   if (reading.window.kind === "sevenDay") return L.chat.usageWeek;
@@ -51,7 +54,12 @@ export function ModelChip({
   disabledProviders?: string[];
 }) {
   const [open, setOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   const anchor = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    setModelQuery("");
+  };
   const { selector } = sessions;
   const providers = (daemon.status?.providers ?? []).filter(
     (p) => !disabledProviders.includes(p.id),
@@ -61,6 +69,11 @@ export function ModelChip({
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? L.model.ai;
   const modelRow = modelRowOf(selector.models, selector.model);
   const models = modelOptions(selector.models, modelRow);
+  const needle = modelQuery.trim().toLowerCase();
+  const visibleModels =
+    needle === ""
+      ? models
+      : models.filter((row) => `${row.label} ${row.hint ?? ""}`.toLowerCase().includes(needle));
   const levels = modelRow?.supportedEffortLevels ?? null;
   const efforts = (Object.keys(EFFORT_OF) as EffortWord[]).filter(
     (word) => levels === null || levels.includes(EFFORT_OF[word]),
@@ -84,7 +97,8 @@ export function ModelChip({
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
-          setOpen((v) => !v);
+          if (open) close();
+          else setOpen(true);
           if (!open) sessions.refreshUsage();
         }}
       >
@@ -92,13 +106,7 @@ export function ModelChip({
         <ChevIcon />
       </button>
       {open && (
-        <Popover
-          anchor={anchor}
-          onClose={() => setOpen(false)}
-          align="end"
-          up
-          className="nx-model-pop"
-        >
+        <Popover anchor={anchor} onClose={close} align="end" up className="nx-model-pop">
           {usable.length >= 2 && (
             <>
               <div className="nx-mh">{L.model.ai}</div>
@@ -109,7 +117,7 @@ export function ModelChip({
                   className="nx-mi"
                   onClick={() => {
                     sessions.pickProvider(p.id);
-                    if (sessions.activeId === null) setOpen(false);
+                    if (sessions.activeId === null) close();
                   }}
                 >
                   <span className="nx-mt">
@@ -130,14 +138,26 @@ export function ModelChip({
           {models.length > 0 && (
             <>
               <div className="nx-mh">{L.model.model}</div>
-              {models.map((row) => (
+              {models.length > MODEL_FILTER_MIN && (
+                <input
+                  className="nx-mfilter"
+                  type="text"
+                  value={modelQuery}
+                  // biome-ignore lint/a11y/noAutofocus: 팝이 열리면 거르는 칸부터 — 많은 모델을 걷지 않으려는 길이다.
+                  autoFocus
+                  placeholder={L.model.filterPlaceholder}
+                  aria-label={L.model.filter}
+                  onChange={(event) => setModelQuery(event.target.value)}
+                />
+              )}
+              {visibleModels.map((row) => (
                 <button
                   key={row.value ?? row.label}
                   type="button"
                   className="nx-mi"
                   onClick={() => {
                     void sessions.setModel(row.value);
-                    setOpen(false);
+                    close();
                   }}
                 >
                   <span className="nx-mt">
@@ -151,6 +171,7 @@ export function ModelChip({
                   )}
                 </button>
               ))}
+              {visibleModels.length === 0 && <div className="nx-mempty">{L.model.noMatch}</div>}
             </>
           )}
           {showEffort && (

@@ -8,36 +8,9 @@ import { useCallback, useEffect, useState } from "react";
  * the daemon owns it.
  */
 
-/** A paintable palette. dark/light/contrast are the native set "system"
-    chooses between — contrast when the OS asks for more contrast; the rest
-    are full palettes in their own right. */
-export type ThemeId =
-  | "dark"
-  | "light"
-  | "contrast"
-  | "contrast-light"
-  | "dracula"
-  | "solarized"
-  | "solarized-light"
-  | "catppuccin"
-  | "nord"
-  | "gruvbox"
-  | "tokyonight"
-  | "rosepine"
-  | "rosepine-dawn"
-  | "everforest"
-  | "onedark"
-  | "github"
-  | "github-light"
-  | "monokai"
-  | "latte"
-  | "claude"
-  | "codex"
-  | "cursor"
-  | "vscode"
-  | "linear"
-  | "jetbrains"
-  | "slack";
+/** A paintable palette. dark/light are the native pair "system" chooses
+    between; the rest are whole looks of their own. */
+export type ThemeId = "dark" | "light" | "github" | "github-light" | "claude" | "codex";
 /** What the picker stores: a palette, or "follow the OS". */
 export type ThemeChoice = "system" | ThemeId;
 /** Which keypress sends a message. The other one inserts a newline. */
@@ -257,13 +230,11 @@ const DEFAULT_CHAT_SETTINGS: ChatSettings = {
 
 const DEFAULT_SETTINGS: Settings = {
   /**
-   * Light, not dark. This tool used to look like a session log and
-   * defaulted to the palette that suited one. What a planner does here is read
-   * and write a document beside a rendered screen — both of which they will
-   * see on paper and in a browser, on white. A planner who prefers dark still
-   * has it one choice away; the default is now the one that matches the work.
+   * Claude — the palette the shell was redesigned around: warm paper, tonal
+   * elevation, terracotta accent. The picker (설정 → 테마) offers Codex and
+   * the other palettes beside it; this is just the one that greets first.
    */
-  theme: "light",
+  theme: "claude",
   sendKey: "enter",
   openLinksInApp: false,
   uiSize: SIZE_PX.ui.base,
@@ -280,33 +251,30 @@ export const THEMES: ThemeChoice[] = [
   "system",
   "dark",
   "light",
-  "contrast",
-  "contrast-light",
-  "dracula",
-  "solarized",
-  "solarized-light",
-  "catppuccin",
-  "nord",
-  "gruvbox",
-  "tokyonight",
-  "rosepine",
-  "rosepine-dawn",
-  "everforest",
-  "onedark",
   "github",
   "github-light",
-  "monokai",
-  "latte",
   "claude",
   "codex",
-  "cursor",
-  "vscode",
-  "linear",
-  "jetbrains",
-  "slack",
 ];
 
 const KEY = "colo-design.settings";
+
+/**
+ * 설정의 테마 줄이 보여주는 목록 — 팔레트 자체는 styles.css 에 있고(THEMES와 같은
+ * 6개), 고르는 칸은 이 것만 선다. 검증도 같은 목록이므로 여기서 뺀 값은 저장에
+ * 남아 있어도 기본(Claude)으로 돌아온다.
+ */
+export const PICKER_THEMES = [
+  "system",
+  "claude",
+  "codex",
+  "light",
+  "dark",
+  "github-light",
+  "github",
+] as const satisfies readonly ThemeChoice[];
+
+export type PickerTheme = (typeof PICKER_THEMES)[number];
 
 const EFFORT_LEVELS: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -332,8 +300,13 @@ function loadSettings(): Settings {
   // the same as every-field-unrecognised, which loadSettings already handles.
   const stored = (raw ?? {}) as Record<string, unknown>;
 
+  // `light` 는 테마 줄이 없던 시절의 흔적이다 — 고르는 칸이 없어도 모든 저장이
+  // 그 값을 함께 남겼으므로 사람의 고름이 아니다. 새 기본(Claude)으로 옮겨
+  // 적는다; 밝음을 원하면 테마 줄에서 다시 고르면 그때부터는 남는다.
+  const storedTheme = stored.theme === "light" ? "claude" : stored.theme;
+
   return {
-    theme: oneOf(THEMES, stored.theme, DEFAULT_SETTINGS.theme),
+    theme: oneOf(THEMES, storedTheme, DEFAULT_SETTINGS.theme),
     sendKey: oneOf(["enter", "modEnter"] as const, stored.sendKey, DEFAULT_SETTINGS.sendKey),
     openLinksInApp: stored.openLinksInApp === true,
     uiSize: loadSizePx("ui", stored.uiSize ?? stored.uiScale),
@@ -492,18 +465,11 @@ function legacyComposerDefaults(): Partial<ChatSettings> {
 }
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
-const CONTRAST_QUERY = "(prefers-contrast: more)";
 
 function systemTheme(): ThemeId {
   const media = window.matchMedia?.(DARK_QUERY);
   // No matchMedia at all (an old embedded webview): keep the native palette.
   if (!media) return "light";
-  // A request for more contrast outranks the light/dark preference — each
-  // direction has its own contrast palette, so the request never flips a
-  // light-mode user onto a dark screen.
-  if (window.matchMedia(CONTRAST_QUERY).matches) {
-    return media.matches ? "contrast" : "contrast-light";
-  }
   return media.matches ? "dark" : "light";
 }
 
@@ -577,12 +543,11 @@ export function useSettings(): {
   }, []);
 
   // Follow the OS while the choice is "system": appearance switches move the
-  // app without a reload, and a request for more contrast pulls in the
-  // contrast palette ahead of the light/dark preference.
+  // app without a reload.
   useEffect(() => {
     setTheme(resolveTheme(settings.theme));
     if (settings.theme !== "system") return;
-    const queries = [DARK_QUERY, CONTRAST_QUERY]
+    const queries = [DARK_QUERY]
       .map((query) => window.matchMedia?.(query))
       .filter((media): media is MediaQueryList => Boolean(media));
     const onChange = () => setTheme(systemTheme());

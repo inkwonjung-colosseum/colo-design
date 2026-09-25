@@ -5,7 +5,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #e9e7e1;
+  background: var(--bg-2);
   position: relative;
   overflow: hidden;
   container-type: inline-size;
@@ -254,7 +254,7 @@
 }
 
 .nx .nx-mseg button.nx-mseg--on {
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
@@ -344,7 +344,7 @@
   z-index: 8;
   display: grid;
   place-items: center;
-  background: #f3f1ec;
+  background: var(--panel);
   animation: nx-fade 0.2s;
 }
 
@@ -439,7 +439,7 @@
 .nx-prep-bar {
   height: 6px;
   border-radius: 3px;
-  background: #e9e5dc;
+  background: var(--panel-3);
   overflow: hidden;
 }
 
@@ -473,7 +473,7 @@
   border-radius: var(--r-pill);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   font-size: 12.5px;
-  color: #8a3f24;
+  color: var(--accent);
   white-space: nowrap;
   max-width: calc(100% - 24px);
   animation: nx-pop 0.15s;
@@ -514,7 +514,7 @@
   align-items: center;
   gap: 8px;
   background: var(--ink);
-  color: #fff;
+  color: var(--bg);
   border-radius: var(--r-pill);
   padding: 9px 16px;
   font-size: 13px;
@@ -528,7 +528,7 @@
   height: 20px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   font-size: 11px;
   font-weight: 700;
   display: grid;
@@ -623,7 +623,7 @@
   z-index: 6;
   display: flex;
   justify-content: center;
-  background: #e9e7e1;
+  background: var(--bg-2);
 }
 
 .nx-frozen-shot {
@@ -644,8 +644,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #1d1c1a;
-  color: #fff;
+  background: var(--ink);
+  color: var(--bg);
   border-radius: var(--r-md);
   padding: 7px 8px 7px 12px;
   font-size: 12.5px;
@@ -655,7 +655,7 @@
 
 .nx .nx-frozen-bar .nx-btn {
   height: 26px;
-  background: #fff;
+  background: var(--bg);
   color: var(--ink);
   border: 0;
 }
@@ -730,7 +730,7 @@
 }
 
 .nx-hitem:hover {
-  background: #f7f5f0;
+  background: var(--bg-2);
 }
 
 .nx-hitem:not(.nx-hitem--cur) .nx-hbody {
@@ -742,7 +742,7 @@
   height: 9px;
   border-radius: 50%;
   border: 1.5px solid var(--ink3);
-  background: #fff;
+  background: var(--card);
   margin: 5px 0 0 4px;
 }
 
@@ -789,7 +789,7 @@
 .nx-hconfirm {
   grid-column: 2;
   margin-top: 8px;
-  background: #faf8f4;
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 10px;

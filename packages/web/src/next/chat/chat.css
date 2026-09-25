@@ -86,7 +86,7 @@
 
 .nx-bub {
   max-width: 88%;
-  background: #ece9e2;
+  background: var(--panel-2);
   border-radius: 16px 16px 4px 16px;
   padding: 10px 13px;
   line-height: 1.55;
@@ -130,7 +130,7 @@
 .nx-tag {
   font-size: 11.5px;
   color: var(--ink2);
-  background: rgba(255, 255, 255, 0.6);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
   border-radius: 6px;
   padding: 2px 7px;
 }
@@ -146,7 +146,7 @@
   align-items: center;
   gap: 7px;
   font-size: 12.5px;
-  background: rgba(255, 255, 255, 0.6);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
   padding: 4px 8px 4px 4px;
   border-radius: 8px;
 }
@@ -193,7 +193,7 @@
   height: 22px;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   display: grid;
   place-items: center;
   flex: none;
@@ -292,8 +292,8 @@
   width: 62px;
   height: 42px;
   border-radius: 6px;
-  background: #f5f6fa;
-  border: 1px solid #e3e6ee;
+  background: var(--panel);
+  border: 1px solid var(--line);
   position: relative;
   overflow: hidden;
   flex: none;
@@ -306,8 +306,8 @@
   right: 0;
   top: 0;
   height: 8px;
-  background: #fff;
-  border-bottom: 1px solid #e7e9f0;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
 }
 
 .nx-thumb i {
@@ -316,13 +316,13 @@
   right: 6px;
   height: 4px;
   border-radius: 2px;
-  background: #dfe3ee;
+  background: var(--line2);
 }
 
 .nx-thumb i:nth-child(1) {
   top: 13px;
   right: 32px;
-  background: #3552d8;
+  background: var(--blue);
   opacity: 0.55;
 }
 
@@ -518,7 +518,7 @@
   white-space: pre-wrap;
   font: 12px / 1.55 var(--font);
   color: var(--ink2);
-  background: #faf8f4;
+  background: var(--panel);
   border-radius: var(--r);
   padding: 8px 10px;
   margin: 6px 0 0;
@@ -559,16 +559,16 @@
 }
 
 .nx-card--review {
-  border-color: #ecd9b8;
-  background: #fffdf8;
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+  background: var(--amber-soft);
 }
 
 .nx-avt {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #46607e;
-  color: #fff;
+  background: var(--blue);
+  color: var(--bg);
   display: grid;
   place-items: center;
   font-size: 11px;
@@ -588,7 +588,7 @@
 
 .nx-card--ask {
   border-color: var(--accent-line);
-  background: #fffaf7;
+  background: var(--accent-soft);
 }
 
 .nx-card--ask .nx-ch > .nx-i {
@@ -612,8 +612,8 @@
 }
 
 .nx-card--fail {
-  border-color: #f0caca;
-  background: #fffafa;
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+  background: var(--red-soft);
 }
 
 .nx-card--fail .nx-ch > .nx-i {
@@ -683,7 +683,7 @@
 }
 
 .nx-composer:focus-within {
-  border-color: #c8c1b3;
+  border-color: var(--line-strong);
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
 }
 
@@ -788,6 +788,28 @@
   width: 300px;
 }
 
+.nx .nx-mfilter {
+  width: calc(100% - 20px);
+  height: 30px;
+  margin: 2px 10px 4px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 0 9px;
+  outline: 0;
+  background: var(--card);
+  font-size: 12.5px;
+}
+
+.nx .nx-mfilter:focus {
+  border-color: var(--ink3);
+}
+
+.nx-mempty {
+  padding: 6px 10px 10px;
+  font-size: 12px;
+  color: var(--ink3);
+}
+
 .nx-msep {
   height: 1px;
   background: var(--line);
@@ -826,7 +848,7 @@
 }
 
 .nx .nx-mseg button.nx-on {
-  background: #fff;
+  background: var(--card);
   color: var(--ink);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
@@ -865,7 +887,7 @@
   height: 32px;
   border-radius: var(--r-md);
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   display: grid;
   place-items: center;
   margin-left: 4px;
@@ -891,7 +913,7 @@
   gap: 8px;
   padding: 4px;
   border-radius: var(--r-md);
-  background: #faf8f4;
+  background: var(--panel);
   border: 1px solid var(--line);
   margin-bottom: 6px;
 }
@@ -901,7 +923,7 @@
   height: 20px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   font-size: 11px;
   font-weight: 700;
   display: grid;
@@ -910,7 +932,7 @@
 }
 
 .nx-pnum--sent {
-  background: #9d978c;
+  background: var(--ink3);
 }
 
 .nx .nx-pin-lab {
@@ -952,7 +974,7 @@
   padding: 4px 6px 4px 4px;
   border-radius: 9px;
   border: 1px solid var(--line);
-  background: #faf8f4;
+  background: var(--panel);
   font-size: 12px;
   max-width: 220px;
 }
@@ -961,7 +983,7 @@
   width: 30px;
   height: 30px;
   border-radius: 6px;
-  background: #eceae4;
+  background: var(--panel-2);
   display: grid;
   place-items: center;
   color: var(--ink3);
