@@ -784,24 +784,64 @@
   color: var(--red);
 }
 
-.nx-model-pop {
+.nx .nx-model-pop {
   width: 300px;
+  display: flex;
+  flex-direction: column;
+  /* 팝 전체를 굴리는 길은 맨 끝에 둔다 — 모델 줄이 먼저 눌리고, 그래도 넘치는
+     작은 창만 팝 전체가 굴러 아래 칸(생각 시간 · 사용량)에 닿게 한다. 팝이
+     굴릴 때는 목록과 같은 페이드가 잘린 끝을 표시한다 — 표시가 없으면 아래
+     칸이 있는 줄 모른다. */
+  overflow-y: auto;
+  background:
+    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 34px no-repeat,
+    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 34px no-repeat,
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.14), transparent) scroll 0 0 / 100% 14px
+    no-repeat,
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.14), transparent) scroll 0 100% /
+    100% 14px no-repeat,
+    var(--card);
+}
+
+.nx .nx-mlist {
+  flex: 0 1 auto;
+  /* 두 칸이 보이는 아래로는 안 눌린다 — 굴리는 표면이 남고, 그 밑의 칸(생각
+     시간 · 사용량)이 팝 안에 들어올 자리를 먼저 내준다. */
+  min-height: 96px;
+  overflow-y: auto;
+  /* 접힌 줄이 있다는 신호 — 스크롤 그림자(아래·위) + 아래쪽 바탕 페이드.
+     배경 없이 굴리면 잘린 마지막 줄이 전부인 줄 안다. */
+  background:
+    linear-gradient(var(--card) 30%, transparent) local 0 0 / 100% 34px no-repeat,
+    linear-gradient(transparent, var(--card) 70%) local 0 100% / 100% 34px no-repeat,
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.14), transparent) scroll 0 0 / 100% 14px
+    no-repeat,
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.14), transparent) scroll 0 100% /
+    100% 14px no-repeat;
+}
+
+.nx .nx-model-pop > :not(.nx-mlist) {
+  /* 팝의 다른 칸(제목 줄 · 거르는 칸 · 생각 시간 · 사용량)은 높이를 지킨다 —
+     눌리는 것은 모델 줄 하나뿐이다. 없으면 flex 자식의 기본 shrink 1 이
+     목록이 긴 팝에서 거르는 칸까지 함께 눌러 높이가 들쭉날쭉해진다. */
+  flex: none;
 }
 
 .nx .nx-mfilter {
   width: calc(100% - 20px);
-  height: 30px;
-  margin: 2px 10px 4px;
+  height: 42px;
+  margin: 4px 10px 8px;
   border: 1px solid var(--line2);
-  border-radius: 8px;
-  padding: 0 9px;
+  border-radius: 10px;
+  padding: 0 12px;
   outline: 0;
   background: var(--card);
-  font-size: 12.5px;
+  font-size: 14px;
 }
 
 .nx .nx-mfilter:focus {
-  border-color: var(--ink3);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .nx-mempty {

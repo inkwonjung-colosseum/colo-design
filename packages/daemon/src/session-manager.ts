@@ -58,7 +58,7 @@ export class SessionManager {
    */
   private readonly scanning = new Map<
     string,
-    { epoch: number; scan: Promise<ImportableSession[]> }
+    { epoch: number; scan: Promise<ImportableSession[]>; settled: boolean }
   >();
   /**
    * 스캔 세대 (SCAN EPOCH): `removeWhere` 가 저장을 쓸어 버린 뒤에도 그 클론의
@@ -474,7 +474,11 @@ export class SessionManager {
         // in-flight scan (this.scanning) instead of each stacking a sweep.
         let entry = this.scanning.get(cwd);
         const epoch = this.scanEpoch.get(cwd) ?? 0;
-        if (!entry || entry.epoch !== epoch) {
+        // 끝난 스캔의 엔트리는 다시 쓰지 않는다 — 해제된 Promise 를 기다리면
+        // 옛 결과만 돌아오고 무효화마다 같은 낡은 목록이 영원히 재사용된다
+        // (턴만 파일을 추가한 새 대화가 목록에 절대 뜨지 않았다). 동시
+        // 독자가 나누는 것은 살아 있는 스캔 하나뿐이다.
+        if (!entry || entry.epoch !== epoch || entry.settled) {
           // The epoch snapshot must precede the sweep: a removeWhere that lands
           // mid-scan bumps the generation and this result then writes nothing.
           const scanEpoch = epoch;
@@ -490,8 +494,17 @@ export class SessionManager {
             }
             return rows;
           });
+          const newEntry = { epoch: scanEpoch, scan, settled: false };
+          scan.then(
+            () => {
+              newEntry.settled = true;
+            },
+            () => {
+              newEntry.settled = true;
+            },
+          );
           scan.catch(() => undefined); // a rejected scan must not stay attached
-          entry = { epoch: scanEpoch, scan };
+          entry = newEntry;
           this.scanning.set(cwd, entry);
         }
         const scanned = await entry.scan;

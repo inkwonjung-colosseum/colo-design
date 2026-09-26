@@ -1,5 +1,6 @@
 import type { ProjectSummary, ThreadSummary } from "@colo-design/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Tip } from "../../components/Tip";
 import type { Sessions } from "../../hooks/useSessions";
 import type { Daemon } from "../../lib/daemon-client";
 import { composing } from "../../lib/ime";
@@ -194,24 +195,30 @@ export function ConversationList({
           </span>
           {sub && <span className="nx-conv-s">{sub}</span>}
         </button>
-        <button
-          ref={(element) => {
-            if (element) menuButtons.current.set(thread.id, element);
-            else menuButtons.current.delete(thread.id);
-          }}
-          type="button"
-          className="nx-conv-menu"
-          title={L.convMenu.label}
-          aria-label={L.convMenu.label}
-          aria-haspopup="dialog"
-          aria-expanded={menuOpen}
-          onClick={() => {
-            setConfirmFor(null);
-            setMenuFor(menuOpen ? null : thread.id);
-          }}
+        <Tip
+          label={menuOpen ? undefined : L.convMenu.label}
+          side="bottom"
+          align="end"
+          className="nx-conv-tip"
         >
-          <MoreIcon />
-        </button>
+          <button
+            ref={(element) => {
+              if (element) menuButtons.current.set(thread.id, element);
+              else menuButtons.current.delete(thread.id);
+            }}
+            type="button"
+            className="nx-conv-menu"
+            aria-label={L.convMenu.label}
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
+            onClick={() => {
+              setConfirmFor(null);
+              setMenuFor(menuOpen ? null : thread.id);
+            }}
+          >
+            <MoreIcon />
+          </button>
+        </Tip>
         {menuOpen && (
           <Popover
             anchor={{ current: menuButtons.current.get(thread.id) ?? null }}

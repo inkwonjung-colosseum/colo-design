@@ -8,12 +8,25 @@
       name="description"
       content="개발 지식이 전혀 없는 사람이, 개발자의 레포에 연결해 채팅으로 화면을 만들고 고치는 도구. git, 터미널 같은 건 몰라도 쓴다."
     />
+    <meta property="og:title" content="Colo Design — 말과 문서가 화면이 되는 도구" />
+    <meta
+      property="og:description"
+      content="git이나 터미널을 몰라도 쓰는 화면 만들기 도구. 말을 보내면 미리보기에서 바로 확인하고, 제출 한 번으로 개발자에게 넘깁니다."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta name="theme-color" content="#0d0d0f" />
+    <link
+      rel="icon"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230d0d0f"/><circle cx="16" cy="16" r="8" fill="%239db1c7"/></svg>'
+    />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
     />
-    <link rel="stylesheet" href="style.css?v=7" />
-    <script type="module" src="invite.js?v=7"></script>
+    <link rel="stylesheet" href="style.css?v=8" />
+    <script type="module" src="invite.js?v=8"></script>
+    <script type="module" src="demo.js?v=8"></script>
     <script type="module" src="hero3d.js"></script>
   </head>
   <body>
@@ -23,6 +36,7 @@
       </a>
       <nav class="top__nav">
         <a href="#how">흐름</a>
+        <a href="#features">기능</a>
         <a href="#install">설치</a>
         <a href="#invite">초대장</a>
         <a class="top__gh" href="https://github.com/inkwonjung-colosseum/colo-design">GitHub</a>
@@ -45,87 +59,233 @@
           <a class="btn btn--primary" href="https://github.com/inkwonjung-colosseum/colo-design/releases">앱 내려받기</a>
           <a class="btn" href="#invite">초대장 만들기</a>
         </div>
+        <p class="hero__trust" aria-hidden="true">
+          <span>macOS · Windows</span>
+          <span>관리자 권한 없이</span>
+          <span>연결 코드는 이 기계에만</span>
+        </p>
 
-        <!-- 제품 UI 재현 — 실제 앱의 세 칸 구조. 마우스를 따라 기울어지는 3D 무대 -->
+        <!-- 제품 UI 재현 — 실제 앱의 셸(사이드바 · 상태 줄 · 대화 · 미리보기).
+             데모가 이 창 안에서 제품의 한 바퀴를 직접 돌린다(demo.js). -->
         <div class="appwin-stage" aria-hidden="true">
-          <div class="appwin" id="appwin">
-          <div class="appwin__bar">
-            <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
-            <span class="appwin__title">회원 관리 — Colo Design</span>
-            <span class="chip chip--ready">제출 전</span>
-            <span class="appwin__submit">제출</span>
-          </div>
-          <div class="appwin__body">
-            <aside class="appwin__side">
-              <div class="side__home">홈</div>
-              <div class="side__proj side__proj--on">회원 관리</div>
-              <div class="side__proj">주문 대시보드</div>
-              <div class="side__sess side__sess--on">로그인 화면</div>
-              <div class="side__sess">회원 목록 표</div>
-              <div class="side__sess">＋ 새 대화 시작</div>
-            </aside>
-            <div class="appwin__chat">
-              <div class="msg msg--user">로그인 화면 만들어 줘. 이메일·비밀번호 입력이랑 로그인 버튼만 있으면 돼</div>
-              <div class="msg msg--ai">
-                <div class="msg__who">Colo</div>
-                로그인 화면을 만들었습니다. 미리보기에서 확인해 보세요 — 고칠 곳이 있으면
-                화면을 ⌥+클릭해서 핀으로 찍어 주세요.
-              </div>
-              <div class="msg__meta">2분 14초 걸렸습니다 · 전체 복사 ···</div>
+          <div class="appwin" id="appwin" data-phase="idle">
+            <div class="appwin__bar">
+              <span class="appwin__light"></span><span class="appwin__light"></span><span class="appwin__light"></span>
+              <span class="appwin__title">Colo Design</span>
             </div>
-            <div class="appwin__preview">
-              <div class="pv__bar">
-                <span class="pv__nav">‹</span><span class="pv__nav">›</span>
-                <span class="pv__url">login</span>
-                <span class="pv__pin">수정할 곳 찍기</span>
-              </div>
-              <div class="pv__screen">
-                <div class="mini">
-                  <div class="mini__logo"></div>
-                  <div class="mini__field"></div>
-                  <div class="mini__field"></div>
-                  <div class="mini__btn"></div>
-                  <span class="pin" style="top: 34%; left: 62%">1</span>
+            <div class="appwin__body">
+              <aside class="mock-side">
+                <div class="ms-row">
+                  <svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8" /></svg>새 대화
+                </div>
+                <div class="ms-row">
+                  <svg viewBox="0 0 12 12"><path d="M2 5.5 6 2l4 3.5M3.2 4.8V10h5.6V4.8" /></svg>홈
+                  <span class="ms-cnt">1</span>
+                </div>
+                <div class="ms-row">
+                  <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="2.8" /><path d="M7.3 7.3 10 10" /></svg>찾기
+                </div>
+                <div class="ms-switch">
+                  <i></i>회원 관리
+                  <svg class="ms-chev" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5" /></svg>
+                </div>
+                <div class="ms-sect">대화</div>
+                <div class="ms-sess ms-sess--on">로그인 화면</div>
+                <div class="ms-sess">회원 목록 검색</div>
+                <div class="ms-tool">
+                  <svg class="ms-chev" viewBox="0 0 12 12"><path d="M4.5 3 7.5 6 4.5 9" /></svg>도구가 한 일
+                </div>
+                <div class="ms-foot">
+                  <svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="1.8" /><path d="M6 1.2v1.6M6 9.2v1.6M1.2 6h1.6M9.2 6h1.6M2.7 2.7l1.1 1.1M8.2 8.2l1.1 1.1M9.3 2.7 8.2 3.8M3.8 8.2 2.7 9.3" /></svg>설정
+                </div>
+              </aside>
+              <div class="mock-main">
+                <div class="mock-status">
+                  <span class="mst-title" id="demo-title">로그인 화면</span>
+                  <span class="mst-journey">
+                    <span class="jy-dot" id="demo-dot0"><b>제출 전</b></span>
+                    <span class="jy-link"></span>
+                    <span class="jy-dot" id="demo-dot1"><b>개발자 확인</b></span>
+                    <span class="jy-link"></span>
+                    <span class="jy-dot" id="demo-dot2"><b>반영됨</b></span>
+                  </span>
+                  <span class="mst-submit" id="demo-submit">제출</span>
+                </div>
+                <div class="mock-cols">
+                  <div class="mock-chat">
+                    <div class="msg msg--user" id="demo-usermsg">회원 목록에 검색창을 넣어 줘</div>
+                    <div class="msg msg--ai" id="demo-aimsg">
+                      <span class="msg-who">Colo</span>
+                      <span id="demo-aitext">검색창을 넣었습니다 — 미리보기에서 확인해 보세요.</span>
+                      <span class="msg-screen" id="demo-screencard">
+                        <span class="msg-screen-name">회원 목록</span>
+                        <span class="msg-screen-link">미리보기에서 보기</span>
+                      </span>
+                    </div>
+                    <div class="msg-meta" id="demo-meta">12초 걸렸어요 · 전체 복사 ···</div>
+                    <div class="msg msg--receipt" id="demo-receipt">개발자에게 제출했어요 · 받을 개발자 1명</div>
+                    <div class="mock-composer">
+                      <span class="mc-chip" id="demo-chip"><b>1</b>검색창은 좁게</span>
+                      <span class="mc-line"><i class="mc-caret" id="demo-caret"></i></span>
+                      <span class="mc-send">↑</span>
+                    </div>
+                  </div>
+                  <div class="mock-preview">
+                    <div class="mp-bar">
+                      <span class="mp-nav">‹</span><span class="mp-nav">›</span>
+                      <span class="mp-url">member/MemberList</span>
+                      <span class="mp-btn">찍기</span>
+                      <span class="mp-merged" id="demo-merged">반영됐어요</span>
+                    </div>
+                    <div class="mp-screen">
+                      <div class="mini">
+                        <div class="mini-head"></div>
+                        <div class="mini-search" id="demo-search"><i></i>이름으로 찾기</div>
+                        <div class="mini-row"><i style="width: 34%"></i><i style="width: 18%"></i></div>
+                        <div class="mini-row"><i style="width: 46%"></i><i style="width: 14%"></i></div>
+                        <div class="mini-row"><i style="width: 28%"></i><i style="width: 20%"></i></div>
+                        <span class="pin" id="demo-pin">1</span>
+                        <span class="bubble" id="demo-bubble"><b>1 · 검색창</b>여기 폭은 좁게 — 옆 칸과 나란히</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
           <div class="float float--pin">1</div>
-          <div class="float float--chip">⌥+클릭으로 핀 찍기</div>
+          <div class="float float--chip">⌥+클릭으로 찍기</div>
         </div>
       </section>
+
+      <!-- ============ 도구가 대신하는 일 ============ -->
+      <div class="ticker" aria-hidden="true">
+        <div class="ticker__track">
+          <span>브랜치 만들기</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 겹치기</span><i>·</i><span>되돌리기</span><i>·</i>
+          <span>브랜치 만들기</span><i>·</i><span>커밋</span><i>·</i><span>푸시</span><i>·</i><span>풀 리퀘스트</span><i>·</i><span>머지</span><i>·</i><span>충돌 겹치기</span><i>·</i><span>되돌리기</span><i>·</i>
+        </div>
+        <p class="ticker__caption">사용자가 말하지 않아도 되는 것들 — 전부 도구가 대신합니다</p>
+      </div>
 
       <!-- ============ 흐름 ============ -->
       <section id="how" class="section">
         <p class="section__eyebrow">한 바퀴</p>
         <h2>작업은 한 바퀴로 흘러갑니다</h2>
-        <ol class="flow">
-          <li>
+        <p class="section__lead">
+          상태 줄의 여정 세 점이 지금 어디쯤인지 말해 줍니다 — 판정은 전부 기계적
+          신호라 사람이 임의로 바꿀 수 없습니다.
+        </p>
+        <div class="jline" id="jline" aria-hidden="true">
+          <span class="jline__dot" id="jline-0"><i></i><b>제출 전</b></span>
+          <span class="jline__rail"><i id="jline-rail0"></i></span>
+          <span class="jline__dot" id="jline-1"><i></i><b>개발자 확인</b></span>
+          <span class="jline__rail"><i id="jline-rail1"></i></span>
+          <span class="jline__dot" id="jline-2"><i></i><b>반영됨</b></span>
+        </div>
+        <ol class="flow" id="flow">
+          <li class="flow__step" data-dot="0">
             <span class="flow__no">01</span>
             <strong>말하기</strong>
             <span>만들고 싶은 화면을 말로 보냅니다. 참고 그림이나 문서 파일을 함께 붙여도 됩니다.</span>
           </li>
-          <li>
+          <li class="flow__step" data-dot="0">
             <span class="flow__no">02</span>
-            <strong>미리보기</strong>
-            <span>그 서비스의 앱을 그대로 띄운 화면에서 결과를 확인합니다. 고칠 곳은 핀으로 찍어 보냅니다.</span>
+            <strong>미리보기 · 찍기</strong>
+            <span>서비스의 앱이 그대로 뜬 화면에서 결과를 확인합니다. 고칠 곳은 ⌥+클릭으로 찍어 말풍선을 남깁니다.</span>
           </li>
-          <li>
+          <li class="flow__step" data-dot="1">
             <span class="flow__no">03</span>
             <strong>제출</strong>
-            <span>완성되면 제출 한 번 — 도구가 안전하게 묶어 개발자에게 요청으로 보냅니다.</span>
+            <span>완성되면 제출 한 번 — 확인 한 장이 뜨고, 도구가 묶어서 개발자에게 요청으로 보냅니다. 개발자의 코멘트는 AI가 바로 반영해 다시 제출합니다.</span>
           </li>
-          <li>
+          <li class="flow__step" data-dot="2">
             <span class="flow__no">04</span>
             <strong>반영됨</strong>
-            <span>개발자가 합치면 상태 칩이 반영됐어요가 되고, 다음 작업은 새 사이클입니다.</span>
+            <span>개발자가 합치면 셋째 점이 반영됐어요가 되고, 반영된 내용은 도구가 스스로 받아 옵니다. 다음에 만드는 것은 새 작업입니다.</span>
           </li>
         </ol>
         <p class="note">
-          브랜치 · 커밋 · 푸시 · 풀 리퀘스트 같은 말은 도구가 대신 다룹니다. 저장이라는
-          말도 없습니다 — AI가 한 차례 답할 때마다 도구가 스스로 그 시점을 보관합니다.
+          저장이라는 말도 없습니다 — AI가 한 차례 답할 때마다 도구가 스스로 그 시점을
+          보관하고, 작업 기록 서랍에서 언제든 그 시점으로 되돌아갈 수 있습니다.
         </p>
+      </section>
+
+      <!-- ============ 기능 ============ -->
+      <section id="features" class="section">
+        <p class="section__eyebrow">도구의 면</p>
+        <h2>말하는 것 말고는, 전부 도구가 합니다</h2>
+        <div class="bento">
+          <!-- 찍기 — 커서를 올리면 핀이 따라오고, 누르면 말풍선이 뜬다 -->
+          <div class="bento__cell bento__cell--wide" id="bento-pin">
+            <p class="bento__name">찍기</p>
+            <p class="bento__desc">고칠 곳을 말로 설명하지 않아도 됩니다 — 화면을 직접 짚어 메모를 붙이면 그 핀이 첨부로 갑니다.</p>
+            <div class="bp-stage" id="bp-stage">
+              <div class="bp-screen">
+                <div class="bp-head"></div>
+                <div class="bp-hero"></div>
+                <div class="bp-cols"><i></i><i></i><i></i></div>
+              </div>
+              <span class="bp-ghost" id="bp-ghost">＋</span>
+              <span class="bp-pin" id="bp-pin" hidden>1</span>
+              <span class="bp-bubble" id="bp-bubble" hidden><b>1 · 큰 그림</b>이 카드 살짝 좁게</span>
+              <span class="bp-hint" id="bp-hint">여기를 눌러 보세요</span>
+            </div>
+          </div>
+
+          <!-- 테마 — 누르면 이 페이지 전체가 갈아입는다 -->
+          <div class="bento__cell" id="bento-theme">
+            <p class="bento__name">테마</p>
+            <p class="bento__desc">앱의 설정 그대로 — 누르면 이 페이지 전체가 갈아입습니다.</p>
+            <div class="bt-row" role="group" aria-label="페이지 테마 고르기">
+              <button type="button" class="bt-chip" data-site-theme="dark">어두움</button>
+              <button type="button" class="bt-chip" data-site-theme="light">밝음</button>
+              <button type="button" class="bt-chip" data-site-theme="claude">Claude</button>
+              <button type="button" class="bt-chip" data-site-theme="github">GitHub</button>
+            </div>
+          </div>
+
+          <!-- 작업 기록 -->
+          <div class="bento__cell" id="bento-history">
+            <p class="bento__name">작업 기록</p>
+            <p class="bento__desc">AI가 답할 때마다 스스로 보관합니다 — 줄을 누르면 그 시점의 화면으로 되돌아갑니다.</p>
+            <ul class="bh-list" id="bh-list">
+              <li class="bh-row"><span>「로그인 화면 만들어 줘」</span><em>로그인 화면</em></li>
+              <li class="bh-row"><span>「목록에 검색창 넣어 줘」</span><em>회원 목록</em></li>
+              <li class="bh-row"><span>「폭은 좁게 — 핀 참조」</span><em>회원 목록</em></li>
+            </ul>
+            <p class="bento__foot">기록은 지워지지 않습니다</p>
+          </div>
+
+          <!-- 여러 프로젝트 -->
+          <div class="bento__cell" id="bento-projects">
+            <p class="bento__name">여러 프로젝트</p>
+            <p class="bento__desc">한 대의 기계가 사용자가 작업하는 만큼 갖습니다 — 떠난 프로젝트의 미리보기는 따뜻하게 남습니다.</p>
+            <ul class="bj-rows" id="bj-rows">
+              <li class="bj-row bj-row--on" data-note="지금 만드는 중 — 로그인 화면"><i class="bj-dot bj-dot--go"></i>회원 관리<b>만드는 중</b></li>
+              <li class="bj-row" data-note="준비가 끝나면 바로 만들 수 있어요"><i class="bj-dot bj-dot--prep"></i>주문 대시보드<b>준비 중</b></li>
+              <li class="bj-row" data-note="개발자 코멘트 2개 — AI가 반영하는 중"><i class="bj-dot bj-dot--comment"></i>이벤트 페이지<b>코멘트 2</b></li>
+            </ul>
+            <p class="bento__foot" id="bj-note">지금 만드는 중 — 로그인 화면</p>
+          </div>
+
+          <!-- 알림 -->
+          <div class="bento__cell" id="bento-notify">
+            <p class="bento__name">알림</p>
+            <p class="bento__desc">작업이 끝나면 OS 알림으로 부릅니다 — 창이 앞에 있을 때는 조용히 합니다.</p>
+            <button type="button" class="btn" id="bn-try">알림 시험해 보기</button>
+          </div>
+
+          <!-- 홈 -->
+          <div class="bento__cell" id="bento-home">
+            <p class="bento__name">홈</p>
+            <p class="bento__desc">큰 입력창 하나와 받은 편지함 — 내 손이 필요한 일만 숫자로 셉니다.</p>
+            <div class="bm-home">
+              <p class="bm-greet">김기획님, 무엇을 만들까요?</p>
+              <div class="bm-input">회원 목록에 검색창을…<i></i></div>
+              <div class="bm-inbox"><b>답을 기다려요</b><span class="bm-badge">1</span></div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ============ 설치 ============ -->
@@ -144,25 +304,26 @@
               mac은 시스템 설정 → 개인정보 보호 및 보안 → 확인 없이 열기.
             </li>
             <li>
-              앱이 쓰는 것을 함께 싣고 옵니다 — Node · pnpm 런타임에 git 까지.
-              <strong>Claude Code 는 준비 화면의 설치 버튼 하나로</strong> 사용자
-              폴더에 설치됩니다(관리자 권한은 쓰지 않습니다). 사용자는 브라우저에서
-              로그인만 하면 됩니다. Codex 는 선택입니다.
+              첫 화면은 마법사가 아니라 <strong>체크리스트 한 장</strong>입니다 —
+              도구 준비 · AI 연결 · 초대 파일. Claude Code 는 설치 버튼 하나로
+              사용자 폴더에 깔리고, 로그인은 브라우저에서 본인 계정으로 마치면
+              저절로 넘어갑니다. 터미널은 끝까지 열지 않습니다. Codex 는 선택입니다.
             </li>
             <li>
-              <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 시작 화면에서 열어야
-              시작됩니다 — 개발자가 보내 준 파일을 열거나 창에 끌어다 놓으면 연결 코드
-              저장과 개발자가 고른 프로젝트 전부의 설정이 한 번에 끝납니다.
+              <strong>초대 파일</strong>(<code>*.colo-invite</code>)을 창에 놓으면 끝입니다 —
+              연결 코드 저장과 개발자가 고른 프로젝트 전부의 설정이 한 번에
+              끝나고 첫 프로젝트가 열립니다. 앱과 AI의 업데이트는 설정의 업데이트
+              줄이 저절로 확인합니다.
             </li>
           </ol>
-          <aside class="install__card">
-            <p class="install__card-title">터미널은 열지 않습니다</p>
-            <p>
-              에이전트 로그인도 앱 안에서 끝납니다 — 브라우저에서 로그인을 마치면
-              앱이 저절로 넘어갑니다(브라우저가 열리지 않을 때만 주소와 코드
-              붙여넣기 칸이 예비로 열립니다).
-            </p>
-            <p class="install__card-foot">macOS · Windows</p>
+          <aside class="install__card" aria-label="첫 화면 체크리스트 미리보기">
+            <p class="install__card-title">첫 화면은 체크리스트 한 장</p>
+            <ul class="checklist" id="install-checklist">
+              <li><i></i><div><strong>도구 준비</strong><span>앱이 싣고 온 도구를 확인합니다</span></div></li>
+              <li><i></i><div><strong>AI 연결</strong><span>설치 버튼 → 브라우저에서 로그인</span></div></li>
+              <li><i></i><div><strong>초대 파일</strong><span>받은 파일을 창에 놓습니다</span></div></li>
+            </ul>
+            <p class="install__card-foot">셋이 다 채워지면 작업 화면으로 넘어갑니다 — 시작하기 버튼은 없습니다</p>
           </aside>
         </div>
       </section>
@@ -309,6 +470,12 @@
         </details>
       </section>
     </main>
+
+    <!-- 알림 벤토가 부르는 OS 알림 재현 — 화면 구석에 한 번 하나 -->
+    <div class="toast" id="site-toast" hidden>
+      <b>Colo Design</b>
+      <span id="site-toast-text">다 만들었어요 — 대화를 확인해 보세요</span>
+    </div>
 
     <footer class="foot">
       <span>Colo Design — 말과 문서가 화면이 되는 파이프라인</span>

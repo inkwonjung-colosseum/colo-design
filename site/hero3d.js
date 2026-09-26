@@ -37,6 +37,14 @@ if (!reduced && hero && appwin) {
 
   /* ---- 파티클 ---- */
   const ctx = canvas.getContext("2d");
+  // 파티클 색은 팔레트의 accent 를 따른다 — demo.js 의 테마 교체(colo-theme)가 여기 닿는다.
+  let accentColor = "#9db1c7";
+  const readAccent = () => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+    if (value) accentColor = value;
+  };
+  readAccent();
+  addEventListener("colo-theme", readAccent);
   const DPR = Math.min(devicePixelRatio || 1, 2);
   const DEPTH = 900; // z: 0(가까움)..DEPTH(멂)
   let W = 0;

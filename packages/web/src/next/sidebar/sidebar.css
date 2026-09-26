@@ -47,6 +47,14 @@
 .nx-side-row kbd {
   margin-left: auto;
 }
+/* 간격 없이 붙은 행 — 전역 포커스 링(바깥 2px+2px)이 위·아래 행 위에 그려져
+   카드가 겹쳐 보이므로, 이들은 링을 상자 안에 그린다. */
+.nx .nx-side-row:focus-visible,
+.nx .nx-orow:focus-visible,
+.nx .nx-me:focus-visible,
+.nx .nx-conv:focus-visible {
+  outline-offset: -2px;
+}
 
 .nx-proj {
   margin: 12px 8px 2px;
@@ -121,14 +129,14 @@
   margin-top: 1px;
 }
 
-.nx-proj-pop {
-  width: 250px;
+/* 전환기에서 뜨는 두 팝 — 앵커(.nx-proj) 폭에 맞춘다. 고정 폭은 사이드바
+   안쪽(264 - 좌우 여백 16 = 248px)보다 넓어 오른쪽이 overflow:hidden 에 잘린다. */
+.nx-proj-pop,
+.nx-proj-info {
+  width: 100%;
 }
 
 /* 프로젝트 카드 — 전환기 머리의 이름을 누르면 뜬다(U7). */
-.nx-proj-info {
-  width: 268px;
-}
 
 .nx-pi-head {
   display: flex;
@@ -259,7 +267,7 @@
   position: relative;
   display: block;
   width: 100%;
-  padding: 7px 10px;
+  padding: 7px 8px 7px 10px;
   border-radius: var(--r);
 }
 
@@ -296,7 +304,9 @@
   white-space: nowrap;
 }
 
-/* 대화 줄 — `···` 메뉴와 이름 바꾸기 입력을 줄에 얹는다. */
+/* 대화 줄 — `···` 메뉴와 이름 바꾸기 입력을 줄에 얹는다. 메뉴는 줄 안의
+   자기 칸에 서서(.nx-conv 가 남는 너비를 가진다) 제목 · 둘째 줄이 그 밑으로
+   흐르지 않는다. */
 .nx-conv-row {
   position: relative;
   display: flex;
@@ -308,24 +318,29 @@
   min-width: 0;
 }
 
+.nx-conv-tip {
+  flex: none;
+  margin: 0 4px 0 0;
+}
+
 .nx .nx-conv-menu {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  flex: none;
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
   border-radius: 7px;
   color: var(--ink3);
-  background: var(--side);
+  /* 카드색 알약 — 사이드바 바탕 위에서도 단추 영역이 읽히게. */
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   opacity: 0;
   pointer-events: none;
 }
 
 .nx .nx-conv-menu:hover {
-  background: rgba(0, 0, 0, 0.07);
+  border-color: var(--line2);
   color: var(--ink);
 }
 .nx .nx-conv-row--on .nx-conv-menu,

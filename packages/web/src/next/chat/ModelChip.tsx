@@ -150,28 +150,30 @@ export function ModelChip({
                   onChange={(event) => setModelQuery(event.target.value)}
                 />
               )}
-              {visibleModels.map((row) => (
-                <button
-                  key={row.value ?? row.label}
-                  type="button"
-                  className="nx-mi"
-                  onClick={() => {
-                    void sessions.setModel(row.value);
-                    close();
-                  }}
-                >
-                  <span className="nx-mt">
-                    <b>{row.label}</b>
-                    {row.hint && <small>{row.hint}</small>}
-                  </span>
-                  {row.picked && (
-                    <span className="nx-ck nx-r">
-                      <CheckIcon />
+              <div className="nx-mlist">
+                {visibleModels.map((row) => (
+                  <button
+                    key={row.value ?? row.label}
+                    type="button"
+                    className="nx-mi"
+                    onClick={() => {
+                      void sessions.setModel(row.value);
+                      close();
+                    }}
+                  >
+                    <span className="nx-mt">
+                      <b>{row.label}</b>
+                      {row.hint && <small>{row.hint}</small>}
                     </span>
-                  )}
-                </button>
-              ))}
-              {visibleModels.length === 0 && <div className="nx-mempty">{L.model.noMatch}</div>}
+                    {row.picked && (
+                      <span className="nx-ck nx-r">
+                        <CheckIcon />
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {visibleModels.length === 0 && <div className="nx-mempty">{L.model.noMatch}</div>}
+              </div>
             </>
           )}
           {showEffort && (

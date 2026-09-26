@@ -59,8 +59,10 @@ export function Tip({
   interactive = false,
   children,
 }: {
-  /** What the element does. Falsy renders the bare child — callers can gate
-      a tip on state (an open menu, a running flag) without unwrapping. */
+  /** What the element does. Falsy renders no bubble but keeps the anchor
+     span mounted (inert) — callers can gate a tip on state (an open menu,
+     a running flag) without unwrapping, and unmounting the wrapper would
+     move the child and drop its focus. */
   label: ReactNode;
   side?: TipSide;
   /** Which end of the trigger the bubble hugs; center is the default. */
@@ -88,7 +90,7 @@ export function Tip({
   // leave only schedules a hide, and entering the bubble cancels it. Plain
   // tips keep the instant hide — nothing inside them can be reached anyway.
   // The ref and its cleanup live with the other hooks: the falsy-label
-  // early return below means a Tip may render as the bare child, and a hook
+  // early return below means a Tip may render as an inert span, and a hook
   // past that return would break the render's hook count (React #300).
   const hideTimer = useRef<number | null>(null);
   const showTimer = useRef<number | null>(null);
@@ -262,9 +264,14 @@ export function Tip({
     };
   });
 
-  // Falsy label renders the bare child — every hook above already ran, so
-  // this early return keeps the hook order intact.
-  if (!label) return children;
+  // Falsy label gates the tip off — but the wrapper must stay mounted:
+  // it carries the caller's spacing (nx-conv-tip's margin/flex), so unmounting
+  // it shifts the child sideways every open/close and drops the child's focus.
+  // The inert span has no handlers and mounts no bubble; every hook above
+  // already ran, so this early return keeps the hook order intact.
+  if (!label) {
+    return <span className={className ? `tip ${className}` : "tip"}>{children}</span>;
+  }
 
   const child = cloneElement(children, {
     "aria-describedby": [(children.props as Record<string, unknown>)["aria-describedby"], id]
