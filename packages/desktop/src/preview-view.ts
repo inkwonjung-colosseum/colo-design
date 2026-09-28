@@ -6,6 +6,7 @@ import type {
   ColoDesignPinsSync,
 } from "@colo-design/protocol";
 import { type BrowserWindow, ipcMain, nativeImage, shell, type WebContents } from "electron";
+import { ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
 
 /**
@@ -56,34 +57,23 @@ const CAPTURE_ACK_MS = 400;
 
 /**
  * The pinned element's React owner chain, read in the page's
- * main world — the isolated preload cannot see fiber expandos. A constant
- * function; the call site interpolates the pin id as a JSON string literal —
- * and only after the UUID gate, so nothing else ever reaches the code string.
- * The `data-colo-pick` stamp comes off in the script's finally; a non-React
- * or production page answers null and the pin travels without owners.
+ * main world — the isolated preload cannot see fiber expandos. The verdict
+ * itself lives in element-identity.ts (`ownersOfElement`) so the pin relay
+ * (this script, which finds the element by the `data-colo-pick` stamp) and
+ * the driver's inspect (Runtime.callFunctionOn on the resolved object) share
+ * one judgment (PLAN-MCP §3.E-1). This constant is only the scaffold: it
+ * interpolates the shared function's source and the pin id as a JSON string
+ * literal — and only after the UUID gate, so nothing else ever reaches the
+ * code string. The `data-colo-pick` stamp comes off in the script's finally;
+ * a non-React or production page answers null and the pin travels without
+ * owners.
  */
 const OWNER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OWNER_SCRIPT = `(id) => {
   const el = document.querySelector('[data-colo-pick="' + id + '"]');
   if (!el) return null;
   try {
-    let fiber = null;
-    for (const key of Object.keys(el)) {
-      if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) {
-        fiber = el[key];
-        break;
-      }
-    }
-    const names = [];
-    for (
-      let owner = fiber && fiber._debugOwner;
-      owner && names.length < 3;
-      owner = owner._debugOwner
-    ) {
-      const name = owner.type && (owner.type.displayName || owner.type.name);
-      if (typeof name === "string" && name !== "") names.push(name);
-    }
-    return names.length > 0 ? names : null;
+    return (${ownersOfElement.toString()}).call(el);
   } finally {
     el.removeAttribute("data-colo-pick");
   }

@@ -67,6 +67,8 @@ export const BUDGETS = {
   tokenExpiry: { warnBeforeMs: 14 * 24 * 60 * 60_000 },
   /** 같은 문제의 개발자 알림 — 10분에 한 번 갱신. */
   noticeRefreshMs: 10 * 60_000,
+  /** 대화의 개발자 쪽지(notify_developer, PLAN-MCP §3.E) — 하루 3통. */
+  agentNotice: { max: 3, windowMs: 24 * 60 * 60_000 },
 } as const;
 
 /**

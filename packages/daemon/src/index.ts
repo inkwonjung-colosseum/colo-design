@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCredentialStore, loadRepoPat, migratePlaintextSecrets } from "./credentials.js";
 import { buildStatus, CONFIG_DIR, childPath, resolveClaudeExecutable } from "./environment.js";
 import { createGitHubTransport, GitHubClient } from "./github.js";
@@ -11,6 +12,23 @@ import { RepoWorkspace } from "./repo.js";
 import { DaemonServer } from "./server.js";
 
 const CONFIG_FILE = join(CONFIG_DIR, "daemon.json");
+
+/**
+ * 데몬 자신의 버전 — package.json 을 모듈 자리(dist/)의 부모에서 읽는다
+ * (repo-config.ts 의 readFileSync + JSON.parse 선례). 단독 실행이 이 값으로
+ * DaemonConfig.appVersion 을 채워 브라우저 MCP 자식의 serverInfo.version 이
+ * 앱 버전을 말하게 한다. 데스크톱은 app.getVersion() 을 대신 넣는다. 파일이
+ * 없거나 깨졌으면 버전 없음 — 자식은 "0" 으로 산다.
+ */
+function daemonVersion(): string | undefined {
+  try {
+    const raw = readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version !== "" ? parsed.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface StoredConfig {
   host: string;
@@ -139,6 +157,9 @@ async function main(): Promise<void> {
   const server = new DaemonServer({
     ...config,
     logger,
+    // 단독 실행의 버전 출처 — 데몬 package.json. 브라우저 MCP 자식의
+    // serverInfo.version 이 그 값을 말한다(DaemonConfig.appVersion).
+    appVersion: daemonVersion(),
     // 개발용 에이전트(omp)는 이 변수로만 열린다 — 브라우저 개발
     // 경로(`pnpm dev:daemon`)가 켠다. 데스크톱은 자기 `app.isPackaged` 로 정한다.
     devAgents: process.env.COLO_DESIGN_DEV_AGENTS === "1",

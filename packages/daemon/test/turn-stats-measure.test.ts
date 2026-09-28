@@ -248,3 +248,199 @@ test("Codex 의 item 이름도 같은 묶음이다 — fileChange 의 changes[] 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("브라우저 도구는 세 이름 형태 모두 browser 묶음으로 센다 (PLAN-MCP M-7)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
+    for (const [id, name] of [
+      ["t1", "screen_check"],
+      ["t2", "mcp__colo-browser__screen_check"],
+      ["t3", "colo-browser/browser_snapshot"],
+    ] as const) {
+      stats_.observe("s1", {
+        kind: "tool.start",
+        toolUseId: id,
+        name,
+        input: {},
+        agentId: null,
+      } as ChatEvent);
+    }
+    // 접두만 같은 우연한 이름은 브라우저가 아니다 — 도구 이름 집합의 잣대.
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t4",
+      name: "browser_teleport",
+      input: {},
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "t5",
+      name: "Edit",
+      input: {},
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 500,
+      resultText: "됐습니다",
+    } as ChatEvent);
+    const rows = await untilRows(dir, 1);
+    assert.deepEqual(rows[0]?.tools, { read: 0, edit: 1, exec: 0, browser: 3, other: 1 });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("browserMs — 사건만 흘린 턴은 null 이고 중계(noteBrowserOp)만 더한다 (PLAN-MCP M-8)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "b1",
+      name: "browser_click",
+      input: {},
+      agentId: null,
+      startedAt: Date.now() - 7,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.end",
+      toolUseId: "b1",
+      isError: false,
+      content: null,
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 500,
+      resultText: "됐습니다",
+    } as ChatEvent);
+    // 사건(tool.start·tool.end)만 흘린 턴 — 중계가 잰 것이 없으니 null.
+    stats_.observe("s1", { kind: "user.echo", text: "다음 턴", images: 0 } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.start",
+      toolUseId: "b2",
+      name: "browser_snapshot",
+      input: {},
+      agentId: null,
+    } as ChatEvent);
+    stats_.observe("s1", {
+      kind: "tool.end",
+      toolUseId: "b2",
+      isError: false,
+      content: null,
+      agentId: null,
+    } as ChatEvent);
+    // 중계가 잴 때만 더한다 — 두 번이면 합이다.
+    stats_.noteBrowserOp("s1", { op: "snapshot", ms: 40 });
+    stats_.noteBrowserOp("s1", { op: "navigate", ms: 15 });
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 300,
+      resultText: "읽었습니다",
+    } as ChatEvent);
+    const rows = await untilRows(dir, 2);
+    assert.equal(rows[0]?.browserMs, null, "사건만 흘린 턴은 잰 것이 없다");
+    assert.equal(rows[1]?.browserMs, 55, "중계 두 번은 합산이다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("noteBrowserOp — op 시간을 더하고 실패 종류는 0이 아닌 것만 칸에 남는다 (PLAN-MCP M-8)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.observe("s1", { kind: "user.echo", text: "고쳐 줘", images: 0 } as ChatEvent);
+    stats_.noteBrowserOp("s1", { op: "click", ms: 120, fail: "stale-ref" });
+    stats_.noteBrowserOp("s1", { op: "click", ms: 30 });
+    stats_.noteBrowserOp("s1", { op: "click", ms: 5, fail: "stale-ref" });
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 400,
+      resultText: "됐습니다",
+    } as ChatEvent);
+    // 실패 없는 턴 — browserFail 칸은 아예 생략된다.
+    stats_.observe("s1", { kind: "user.echo", text: "다음 턴", images: 0 } as ChatEvent);
+    stats_.noteBrowserOp("s1", { op: "navigate", ms: 10 });
+    stats_.observe("s1", {
+      kind: "turn.end",
+      subtype: "success",
+      isError: false,
+      costUsd: null,
+      numTurns: 1,
+      durationMs: 200,
+      resultText: "이동했습니다",
+    } as ChatEvent);
+    const rows = await untilRows(dir, 2);
+    assert.equal(rows[0]?.browserMs, 155);
+    assert.deepEqual(rows[0]?.browserFail, { "stale-ref": 2 });
+    assert.equal(rows[1]?.browserMs, 10);
+    assert.equal("browserFail" in (rows[1] ?? {}), false, "실패가 없으면 칸이 없다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("noteGateCheck — fallback 칸은 되짚은 수를 싣고 0이면 싣지 않는다 (PLAN-HARNESS §3.B B-4)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, fallback: 3 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, fallback: 0 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 0, reopened: false, skipped: "no-screens" });
+    const rows = readRows(dir).filter((r) => r.kind === "gateset");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.fallback, 3);
+    assert.equal("fallback" in (rows[1] ?? {}), false);
+    assert.equal(rows[2]?.skipped, "no-screens");
+    assert.equal("fallback" in (rows[2] ?? {}), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("noteGateCheck — 타입 검사를 돌렸으면 오류 0 도 싣는다 (PLAN-HARNESS §3.D D-5)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "colo-stats-"));
+  try {
+    const stats_ = stats(dir);
+    stats_.noteGateCheck("s1", {
+      ms: 5,
+      screens: 0,
+      reopened: false,
+      skipped: "no-screens",
+      typeErrors: 0,
+      typeMs: 812,
+    });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false, typeErrors: 3, typeMs: 90 });
+    stats_.noteGateCheck("s1", { ms: 5, screens: 2, reopened: false });
+    const rows = readRows(dir).filter((r) => r.kind === "gateset");
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0]?.typeErrors, 0);
+    assert.equal(rows[0]?.typeMs, 812);
+    assert.equal(rows[1]?.typeErrors, 3);
+    assert.equal("typeErrors" in (rows[2] ?? {}), false, "돌리지 않았으면 칸이 없다");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

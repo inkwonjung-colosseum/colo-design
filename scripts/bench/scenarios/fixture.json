@@ -1,0 +1,46 @@
+[
+  {
+    "id": "search",
+    "kind": "user",
+    "text": "공지 화면에 제목으로 거르는 검색창을 넣어 줘.",
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "detail",
+    "kind": "user",
+    "text": "공지를 누르면 그 공지의 상세 화면이 나오게 해 줘.",
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "form",
+    "kind": "user",
+    "text": "모임 일정 화면에 새 일정을 적는 폼을 넣어 줘. 날짜와 장소를 적게 해 줘.",
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "sort",
+    "kind": "user",
+    "text": "회원 목록을 이름순으로 정렬해 줘.",
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "empty",
+    "kind": "user",
+    "text": "모임 일정이 하나도 없을 때 보이는 빈 상태 문구를 넣어 줘.",
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "pin-title",
+    "kind": "pin",
+    "note": "제목을 더 크게 해 줘",
+    "pins": [{ "screen": "list", "text": "회원 목록" }],
+    "expect": { "files": ["server.js"] }
+  },
+  {
+    "id": "pin-button",
+    "kind": "pin",
+    "note": "버튼을 파란색으로 바꿔 줘",
+    "pins": [{ "screen": "join", "text": "등록하기" }],
+    "expect": { "files": ["server.js"] }
+  }
+]

@@ -16,6 +16,7 @@
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ChatEvent } from "@colo-design/protocol";
+import { type BrowserFailKind, isBrowserToolName } from "./browser-tools.js";
 import { daemonLogDir } from "./log.js";
 import { STATS_EDIT_TOOLS, STATS_EXEC_TOOLS, STATS_READ_TOOLS } from "./tool-names.js";
 import { editPathsOf } from "./tool-paths.js";
@@ -73,6 +74,12 @@ interface InFlight {
   candidates: Set<string> | null;
   /** 에이전트가 후보 파일을 실제로 편집했는가 — 후보가 있던 턴만 true/false. */
   pinHit: boolean | null;
+  /** 브라우저 도구에 쓴 시간의 합(ms) — 중계(noteBrowserOp)만 잰다:
+   *  세 프로바이더가 같은 자리를 지나고, 사건 기반 측정과 겹쳐 두 번
+   *  세지 않는다. 측정이 하나도 없으면 null. */
+  browserMs: number | null;
+  /** 브라우저 op 실패 종류의 수 — 실패가 없던 턴은 null. */
+  browserFail: Partial<Record<BrowserFailKind, number>> | null;
 }
 
 /** The turn row as it lands in the file — numbers and kinds only. */
@@ -111,6 +118,10 @@ interface TurnStatsRow {
   /** 핀의 후보 파일을 에이전트가 편집했는가(2026-09-22) — 후보가 없던 턴은 null.
    *  경로는 남기지 않는다: 사용자의 말이 사는 곳에 파일 경로가 끼어들지 않는다. */
   pinHit: boolean | null;
+  /** 브라우저 도구에 쓴 시간의 합 — 측정이 없던 턴은 null. */
+  browserMs: number | null;
+  /** 브라우저 op 실패 종류의 수 — 0인 종류는 칸에서 뺀다(비면 생략). */
+  browserFail?: Partial<Record<BrowserFailKind, number>>;
 }
 
 /** 턴이 끝난 뒤 게이트의 한 바퀴 — 판정이 turn.end 뒤에야 나오므로 제 행이다. */
@@ -133,6 +144,13 @@ interface TurnGateRow {
   netLines?: number;
   /** D3 재시도로 구제된 화면 수. */
   rescued?: number;
+  /** 바뀐 파일에서 되짚은 화면 수(PLAN-HARNESS §3.B B-4) — 0 이면 싣지 않는다. */
+  fallback?: number;
+  /** 게이트의 타입 검사(PLAN-HARNESS §3.D D-5) — 이번에 바뀐 TypeScript 파일의
+   *  오류 수와 검사 시간(ms). 검사를 돌렸으면 0 도 싣는다(돌리지 않은 게이트와
+   *  오류 0 인 게이트를 가른다). */
+  typeErrors?: number;
+  typeMs?: number;
 }
 
 /** 하루 파일의 한 줄 — 턴 행이거나 게이트 행. */
@@ -182,6 +200,8 @@ function freshTurn(text: string): InFlight {
     cwd: null,
     candidates: null,
     pinHit: null,
+    browserMs: null,
+    browserFail: null,
   };
 }
 
@@ -272,8 +292,7 @@ export class TurnStats {
     if (event.kind === "tool.start") {
       const turn = this.flying.get(sessionId);
       if (turn === undefined) return;
-      if (event.name.startsWith("browser_") || event.name.includes("colo-browser"))
-        turn.browser += 1;
+      if (isBrowserToolName(event.name)) turn.browser += 1;
       else if (READ_TOOLS[event.name] === true) turn.read += 1;
       else if (EDIT_TOOLS[event.name] === true) turn.edit += 1;
       else if (EXEC_TOOLS[event.name] === true) turn.exec += 1;
@@ -341,6 +360,20 @@ export class TurnStats {
     if (turn !== undefined) turn.waitMs += ms;
   }
 
+  /** 브라우저 중계 op 한 번 (PLAN-MCP M-8) — 도는 턴에 시간과 실패 종류를
+   *  더한다. 중계가 잰 시간이라 세 프로바이더가 같은 자리를 지난다 — 턴
+   *  간 비교의 잣자리다. 세션에 도는 턴이 없으면 조용히 흘린다. */
+  noteBrowserOp(sessionId: string, op: { op: string; ms: number; fail?: BrowserFailKind }): void {
+    const turn = this.flying.get(sessionId);
+    if (turn === undefined) return;
+    turn.browserMs = (turn.browserMs ?? 0) + Math.max(0, op.ms);
+    if (op.fail !== undefined) {
+      const counts = turn.browserFail ?? {};
+      counts[op.fail] = (counts[op.fail] ?? 0) + 1;
+      turn.browserFail = counts;
+    }
+  }
+
   /** 게이트의 한 바퀴 — 턴 행과는 따로 한 줄로 내려앉는다. 판정 상세와
    *  못 돈 이유(skipped)까지: 못 센 침묵과 통과가 같은 소리를 내지 않게. */
   noteGateCheck(
@@ -355,6 +388,9 @@ export class TurnStats {
       consoleLines?: number;
       netLines?: number;
       rescued?: number;
+      fallback?: number;
+      typeErrors?: number;
+      typeMs?: number;
     },
   ): void {
     const row: TurnGateRow = {
@@ -371,6 +407,11 @@ export class TurnStats {
       ...(outcome.consoleLines !== undefined ? { consoleLines: outcome.consoleLines } : {}),
       ...(outcome.netLines !== undefined ? { netLines: outcome.netLines } : {}),
       ...(outcome.rescued !== undefined ? { rescued: outcome.rescued } : {}),
+      ...(outcome.fallback !== undefined && outcome.fallback > 0
+        ? { fallback: outcome.fallback }
+        : {}),
+      ...(outcome.typeErrors !== undefined ? { typeErrors: outcome.typeErrors } : {}),
+      ...(outcome.typeMs !== undefined ? { typeMs: outcome.typeMs } : {}),
     };
     this.write(row);
   }
@@ -422,6 +463,8 @@ export class TurnStats {
       scanMs: turn.scanMs,
       sincePrevTurnMs: turn.sincePrevTurnMs,
       pinHit: turn.pinHit,
+      browserMs: turn.browserMs,
+      ...(turn.browserFail !== null ? { browserFail: turn.browserFail } : {}),
     };
     this.lastEndAt.set(sessionId, Date.now());
     this.write(row);

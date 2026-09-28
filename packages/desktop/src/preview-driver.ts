@@ -10,6 +10,7 @@
 // 페이지 하나라 탭 주소는 없고, 모든 명령은 화면의 페이지를 겨눈다.
 
 import type {
+  BrowserActionReport,
   BrowserDriver,
   BrowserDriverFactory,
   PreviewAxNode,
@@ -21,7 +22,9 @@ import type {
   PreviewOpenResult,
   PreviewViewport,
 } from "@colo-design/daemon/server";
+import type { ColoDesignCommentTarget } from "@colo-design/protocol";
 import { BrowserWindow, type WebContents } from "electron";
+import { describeElementInPage, ownersOfElement } from "./element-identity.js";
 import { VIEWPORT_METRICS } from "./emulation.js";
 import type { PlannerPreviewView } from "./preview-view.js";
 
@@ -614,6 +617,12 @@ interface CdpAxNode {
  */
 interface PageState {
   readonly refs: Map<string, number>;
+  /**
+   * backend 노드 번호 → ref (PLAN-MCP M-4) — 세대가 바뀌어도 같은 DOM 노드는
+   * 같은 ref 를 이어 쓴다. 문서가 갈릴 때만 비운다: 모달이 닫혔다 다시 열거나
+   * 가상 목록이 다시 그리는 노드가 옛 ref 를 되찾는 것이 이 맵의 값이다.
+   */
+  readonly refOfNode: Map<number, string>;
   /** ref 번호 — 세대를 넘어 단조 증가한다. 매 세대 e1 부터 다시 세면 옛 ref 가 새 노드를 가리키는 충돌이 난다. */
   refSeq: number;
   readonly console: PreviewConsoleLine[];
@@ -650,9 +659,10 @@ interface PageState {
  * 붙임이 떨어지고, 다음 명령이 다시 붙는다. (07bd3bf PanePreviewDriver 계승)
  *
  * 주소는 ref 다 (PLAN D61): `snapshot` 이 걸어간 노드마다 `e12` 를 붙이고
- * backend 노드 번호를 기억한다. 다음 스냅샷과 이동이 세대를 갈아치우므로,
- * 낡은 ref 는 "다시 읽으십시오" 라는 오류가 된다 — 엉뚱한 곳을 누르는 일은
- * 없다. 액션 메서드는 성공의 답으로 새 스냅샷을 돌려준다 — 세대 갱신 겸용.
+ * backend 노드 번호를 기억한다. 같은 DOM 노드면 세대가 바뀌어도 같은 ref 를
+ * 이어 쓴다 (PLAN-MCP M-4) — 문서가 갈릴 때만 전부 죽어 엉뚱한 곳을 누르는
+ * 일을 막는다. 액션 메서드의 답은 주소 · 제목 · 새 스냅샷이다 (M-3) — 그것을
+ * 요약으로 줄이는 일은 데몬이 한다.
  */
 class PaneBrowserDriver implements BrowserDriver {
   /** 화면의 페이지 하나의 상태 — 페이지가 파기되면(또는 WebContents 가 죽으면) 비운다. */
@@ -660,6 +670,7 @@ class PaneBrowserDriver implements BrowserDriver {
     idleDetach: new Map(),
     keepAlive: new Map(),
     refs: new Map(),
+    refOfNode: new Map(),
     refSeq: 0,
     console: [],
     netWatch: { urls: new Map(), origin: null },
@@ -712,7 +723,9 @@ class PaneBrowserDriver implements BrowserDriver {
     const state = this.state;
     if (state.contents === contents) return state;
     this.unbind(state);
+    // 문서가 갈아엎혔다 — ref 의 두 맵(세대 · 노드 기억)을 함께 비운다.
     state.refs.clear();
+    state.refOfNode.clear();
     // 문서가 갈아엎혔다 — 요청의 길과 same-origin 기준도 새 문서의 것이다.
     state.netWatch.urls.clear();
     state.netWatch.origin = urlOrigin(contents.getURL());
@@ -722,10 +735,12 @@ class PaneBrowserDriver implements BrowserDriver {
         this.handleDebuggerMessage(state, contents, method, params as Record<string, unknown>),
       onConsoleMessage: (details) =>
         this.noteConsole(state, { level: details.level, text: details.message }),
-      // 이동은 ref 세대의 죽음이다 — 옛 문서의 backend 노드 번호가 새 문서를
-      // 가리킬 수는 없다. 드라이버가 navigate 하든 사용자가 누르든 같은 길이다.
       onDidNavigate: () => {
+        // 이동은 문서의 경계다 — 옛 문서의 backend 노드 번호가 새 문서를
+        // 가리킬 수는 없으므로 ref 의 두 맵을 함께 비운다. 드라이버가
+        // navigate 하든 사용자가 누르든 같은 길이다.
         state.refs.clear();
+        state.refOfNode.clear();
         state.netWatch.urls.clear();
         state.netWatch.origin = urlOrigin(contents.getURL());
       },
@@ -928,7 +943,7 @@ class PaneBrowserDriver implements BrowserDriver {
    * 페이지로, 그 밖은 제자리 이동, 슬롯이 없으면 OS 폴백). 이동 이벤트를
    * 먼저 듣기 시작해야 openTab 직후의 did-navigate 를 놓치지 않는다.
    */
-  async navigate(url: string): Promise<{ settled: boolean; snapshot: PreviewAxNode[] }> {
+  async navigate(url: string): Promise<{ settled: boolean } & BrowserActionReport> {
     if (!browserHttpUrl(url)) throw new Error(`http(s) 주소만 탐색할 수 있습니다: ${url}`);
     const pane = this.view();
     // pane 이 그릴 면이 없으면(카드가 서 있거나 슬롯이 아직 없으면) openTab 의
@@ -945,10 +960,13 @@ class PaneBrowserDriver implements BrowserDriver {
     const dest = await this.target();
     if (dest.contents === before) await moved;
     const settled = await this.settleOn(dest.contents);
-    return { settled, snapshot: await this.axTree(dest.contents, dest.state) };
+    return {
+      settled,
+      ...(await this.actionResult(dest, await this.axTree(dest.contents, dest.state))),
+    };
   }
 
-  async back(): Promise<PreviewAxNode[]> {
+  async back(): Promise<BrowserActionReport> {
     const dest = await this.target();
     if (!dest.contents.navigationHistory.canGoBack()) {
       throw new Error("뒤로 갈 화면이 없습니다.");
@@ -956,10 +974,10 @@ class PaneBrowserDriver implements BrowserDriver {
     const moved = this.settleAfterNav(dest.contents);
     dest.contents.navigationHistory.goBack();
     await moved;
-    return this.axTree(dest.contents, dest.state);
+    return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
   }
 
-  async forward(): Promise<PreviewAxNode[]> {
+  async forward(): Promise<BrowserActionReport> {
     const dest = await this.target();
     if (!dest.contents.navigationHistory.canGoForward()) {
       throw new Error("앞으로 갈 화면이 없습니다.");
@@ -967,7 +985,7 @@ class PaneBrowserDriver implements BrowserDriver {
     const moved = this.settleAfterNav(dest.contents);
     dest.contents.navigationHistory.goForward();
     await moved;
-    return this.axTree(dest.contents, dest.state);
+    return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
   }
 
   // ── 읽기 ─────────────────────────────────────────────────────
@@ -978,9 +996,75 @@ class PaneBrowserDriver implements BrowserDriver {
   }
 
   /**
-   * (07bd3bf 이식) 접근성 트리를 계층 그대로 돌려주고, 그 자리에서 ref 를 새로
-   * 발급한다 — 이 호출이 곧 ref 의 세대다. 이름 없는 구조 노드까지 그대로
-   * 담고, 무엇을 접을지는 도구가 정한다.
+   * ref 하나의 정체 조사 (PLAN-MCP §3.E-1) — 핀 봉투의 element 와 같은 모양을
+   * element-identity.ts 의 describeElementInPage 로 페이지에서 뽑는다. 함수
+   * 소스를 건네는 이유는 핀과 같은 판정을 한 벌로 쓰기 위해서다(rectOfRef 가
+   * RECT_OF_SELF 를 건네는 것과 같은 길). DOM.resolveNode 의 objectId 는
+   * 문서의 기본 컨텍스트(메인 월드) 소속이라 React fiber expando 가 보인다 —
+   * callFunctionOn 읔 objectId 의 소유 컨텍스트에서 돌므로 owners 도 같은
+   * 세계에서 읽힌다(격리 preload 와 다른 점이 바로 이것이다).
+   */
+  async inspect(target: {
+    ref: string;
+  }): Promise<{ url: string; element: ColoDesignCommentTarget }> {
+    const dest = await this.target();
+    const backendNodeId = dest.state.refs.get(target.ref);
+    if (backendNodeId === undefined) {
+      throw new Error(
+        `${target.ref} 는 지금 화면의 것이 아닙니다 — snapshot 으로 다시 읽으십시오.`,
+      );
+    }
+    const objectId = await this.resolveNode(dest.contents, target.ref, backendNodeId);
+    const runInPage = (declaration: string): Promise<unknown> =>
+      dest.contents.debugger
+        .sendCommand("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: declaration,
+          returnByValue: true,
+        })
+        .then((raw) => {
+          const result = raw as {
+            result?: { value?: unknown };
+            exceptionDetails?: { exception?: { description?: string; value?: unknown } };
+          };
+          if (result.exceptionDetails) {
+            const detail = result.exceptionDetails.exception;
+            throw new Error(
+              `페이지의 함수가 던졌습니다: ${
+                typeof detail?.value === "string"
+                  ? detail.value
+                  : (detail?.description ?? "알 수 없는 오류")
+              }`,
+            );
+          }
+          return result.result?.value;
+        });
+    const element = (await runInPage(
+      describeElementInPage.toString(),
+    )) as ColoDesignCommentTarget | null;
+    if (element === null || typeof element !== "object" || typeof element.path !== "string") {
+      throw new Error(`${target.ref} 를 화면에서 찾지 못했습니다 — snapshot 으로 다시 읽으십시오.`);
+    }
+    // owners 는 실패가 칸 하나의 값일 뿐이다 — 핀 relay 와 같은 판정으로 읽는다.
+    const owners = (await runInPage(ownersOfElement.toString()).catch(() => null)) as
+      | string[]
+      | null;
+    if (
+      Array.isArray(owners) &&
+      owners.length > 0 &&
+      owners.every((name) => typeof name === "string")
+    ) {
+      element.owners = owners;
+    }
+    return { url: dest.contents.getURL(), element };
+  }
+
+  /**
+   * (07bd3bf 이식) 접근성 트리를 계층 그대로 돌려준다. 이름 없는 구조 노드까지
+   * 그대로 담고, 무엇을 접을지는 도구가 정한다. ref 는 같은 backend 노드면
+   * 세대를 넘어 같은 것을 이어 쓴다 (PLAN-MCP M-4) — 클릭을 두 번 하면 두
+   * 번째 스냅샷이 첫 번째와 같은 ref 를 말해야 "낡은 ref" 오류가 사라진다.
+   * 이번 트리에 없는 노드의 ref 만 이 자리에서 죽는다.
    */
   private async axTree(contents: WebContents, state: PageState): Promise<PreviewAxNode[]> {
     const result = (await contents.debugger.sendCommand("Accessibility.getFullAXTree", {})) as {
@@ -992,7 +1076,9 @@ class PaneBrowserDriver implements BrowserDriver {
     for (const node of nodes) byId.set(node.nodeId, node);
     for (const node of nodes) for (const child of node.childIds ?? []) childOf.add(child);
 
-    state.refs.clear();
+    // 세대를 통째로 갈아치우지 않는다 — 이번 트리에 있는 노드를 먼저 세고,
+    // 지금 보이지 않는 노드의 ref 만 뒤에서 지운다.
+    const seen = new Set<number>();
     const build = (ids: string[]): PreviewAxNode[] => {
       const out: PreviewAxNode[] = [];
       for (const id of ids) {
@@ -1016,9 +1102,14 @@ class PaneBrowserDriver implements BrowserDriver {
         const backendId = node.backendDOMNodeId;
         let ref = "";
         if (backendId !== undefined) {
-          state.refSeq += 1;
-          ref = `e${state.refSeq}`;
+          ref = state.refOfNode.get(backendId) ?? "";
+          if (ref === "") {
+            state.refSeq += 1;
+            ref = `e${state.refSeq}`;
+            state.refOfNode.set(backendId, ref);
+          }
           state.refs.set(ref, backendId);
+          seen.add(backendId);
         }
         out.push({
           ref,
@@ -1032,7 +1123,15 @@ class PaneBrowserDriver implements BrowserDriver {
       return out;
     };
     const roots = nodes.filter((node) => !childOf.has(node.nodeId)).map((node) => node.nodeId);
-    return build(roots);
+    const tree = build(roots);
+    // refs 는 액션이 찾는 "지금 세대의 지도"여야 한다 — 이번 트리에 없는
+    // 노드의 ref 를 남겨 두면 옛 ref 가 해석돼 엉뚱한 곳을 겨눈다. refOfNode
+    // 는 문서가 갈리기 전까지 기억한다: 다시 나타나는 노드가 옛 ref 를
+    // 되찾는 것이 M-4 의 값이기 때문이다.
+    for (const [ref, backendId] of state.refs) {
+      if (!seen.has(backendId)) state.refs.delete(ref);
+    }
+    return tree;
   }
 
   /**
@@ -1212,7 +1311,18 @@ class PaneBrowserDriver implements BrowserDriver {
     }
   }
 
-  // ── 액션 — 성공의 답은 언제나 새 스냅샷이다(계약: ref 세대 갱신 겸용) ────
+  // ── 액션 — 답은 주소 · 제목 · 새 스냅샷이다(요약으로 줄이는 것은 데몬) ────
+
+  /**
+   * 액션의 답 (PLAN-MCP M-3) — 요약의 재료가 되는 주소 · 제목 · 새 스냅샷.
+   * 전체 트리를 그대로 내리지 않고 요약으로 줄이는 것은 데몬의 몫이다.
+   */
+  private actionResult(
+    dest: { contents: WebContents },
+    snapshot: PreviewAxNode[],
+  ): BrowserActionReport {
+    return { url: dest.contents.getURL(), title: dest.contents.getTitle(), snapshot };
+  }
 
   /**
    * 입력을 화면에 흘리는 op 의 공통 문 — 그 동안만 오버레이의 핀 캡처를
@@ -1234,18 +1344,18 @@ class PaneBrowserDriver implements BrowserDriver {
     }
   }
 
-  async click(target: { ref: string }): Promise<PreviewAxNode[]> {
+  async click(target: { ref: string }): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       this.wake(dest.contents);
       await this.clickRect(
         dest.contents,
         await this.rectOfRef(dest.contents, dest.state, target.ref, true),
       );
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
-  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<PreviewAxNode[]> {
+  async type(input: { ref?: string; text: string; clear?: boolean }): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       this.wake(dest.contents);
       const dbg = dest.contents.debugger;
@@ -1272,11 +1382,11 @@ class PaneBrowserDriver implements BrowserDriver {
         }
       }
       await dbg.sendCommand("Input.insertText", { text: input.text });
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
-  async press(key: string): Promise<PreviewAxNode[]> {
+  async press(key: string): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       const mapped = PRESS_KEY_CODES[key];
       if (!mapped) throw new Error(`보낼 수 없는 키입니다: ${key}`);
@@ -1294,11 +1404,11 @@ class PaneBrowserDriver implements BrowserDriver {
         code: mapped.code,
         windowsVirtualKeyCode: mapped.vk,
       });
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
-  async scroll(target: { ref?: string; dy: number }): Promise<PreviewAxNode[]> {
+  async scroll(target: { ref?: string; dy: number }): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       // (07bd3bf 이식) ref 만 주면 "보이게 해 달라"는 뜻이다 — rect 를 받는 것
       // 자체가 그 일이다.
@@ -1316,11 +1426,11 @@ class PaneBrowserDriver implements BrowserDriver {
           deltaY: target.dy,
         });
       }
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
-  async hover(target: { ref: string }): Promise<PreviewAxNode[]> {
+  async hover(target: { ref: string }): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       const rect = await this.rectOfRef(dest.contents, dest.state, target.ref, true);
       await dest.contents.debugger.sendCommand("Input.dispatchMouseEvent", {
@@ -1329,7 +1439,7 @@ class PaneBrowserDriver implements BrowserDriver {
         y: rect.y + rect.height / 2,
         button: "none",
       });
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
@@ -1339,7 +1449,7 @@ class PaneBrowserDriver implements BrowserDriver {
    * 대입이 아니라 setter 를 거치는 이유는 type 의 clear 와 같다: React 의
    * onChange 는 setter 를 통해서만 흐른다.
    */
-  async select(target: { ref: string; value: string }): Promise<PreviewAxNode[]> {
+  async select(target: { ref: string; value: string }): Promise<BrowserActionReport> {
     const dest = await this.target();
     this.wake(dest.contents);
     const backendNodeId = dest.state.refs.get(target.ref);
@@ -1381,7 +1491,7 @@ class PaneBrowserDriver implements BrowserDriver {
       // 무시한다. 조용한 성공은 모델이 값을 바꿨다고 믿게 만드므로 오류로 막는다.
       throw new Error(`${target.ref} 에 그런 option 이 없습니다: ${target.value}`);
     }
-    return this.axTree(dest.contents, dest.state);
+    return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
   }
 
   /**
@@ -1389,7 +1499,7 @@ class PaneBrowserDriver implements BrowserDriver {
    * 드래그 세션을 요구해 CDP 마우스 이벤트로는 흐르지 않는다(그 경로는 후속
    * 과제). 중간 점을 밟는 이유: 이동 이벤트가 흘러야 페이지가 드래그로 본다.
    */
-  async drag(target: { fromRef: string; toRef: string }): Promise<PreviewAxNode[]> {
+  async drag(target: { fromRef: string; toRef: string }): Promise<BrowserActionReport> {
     return this.withAgentInput(async (dest) => {
       this.wake(dest.contents);
       // 두 rect 를 먼저 받는다 — from 을 누른 뒤의 scrollIntoView 는 잡은 것을
@@ -1430,7 +1540,7 @@ class PaneBrowserDriver implements BrowserDriver {
         button: "left",
         clickCount: 1,
       });
-      return this.axTree(dest.contents, dest.state);
+      return this.actionResult(dest, await this.axTree(dest.contents, dest.state));
     });
   }
 
@@ -1446,7 +1556,9 @@ class PaneBrowserDriver implements BrowserDriver {
    */
   recover(): void {
     this.release();
+    // 강제 복구도 문서가 갈리는 자리와 같은 취급 — ref 의 두 맵을 함께 비운다.
     this.state.refs.clear();
+    this.state.refOfNode.clear();
   }
 
   // ── 내부 장치 ─────────────────────────────────────────────────

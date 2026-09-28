@@ -95,6 +95,8 @@ export interface RouterDeps {
   developerNotice: DeveloperNotice;
   /** 앱이 에이전트 로그인을 마쳤다 — 로그인 대기 중인 말을 다시 세운다 (L12). */
   afterAgentLogin?: () => void;
+  /** 프로젝트 전환 직후 — pane 이 다른 페이지를 겨누기 시작했음을 알린다. */
+  afterProjectSwitch?: () => void;
   status(): Promise<unknown>;
   /** 턴 통계 — 보내기 문에서 잰 핀 강화 시간만 흘려 준다. */
   stats: TurnStats;
@@ -568,6 +570,9 @@ export class RequestRouter {
 
       case "project.activate": {
         await this.activateProject(message.slug);
+        // 프로젝트가 바뀌면 pane 은 남의 페이지로 옮겨간다 — 세션의 브라우저
+        // 요약이 옛 페이지의 줄과 차이를 재지 않게 서버의 기억을 비운다.
+        this.deps.afterProjectSwitch?.();
         return {
           projects: this.projectSummaries(),
           activeSlug: this.deps.registry.activeSlug(),

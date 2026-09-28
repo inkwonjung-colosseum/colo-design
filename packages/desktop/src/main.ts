@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import { bundledToolEnv, COLO_DESIGN_DIR } from "@colo-design/daemon/environment";
 import type { DaemonNotice } from "@colo-design/daemon/server";
 // 서브패스로 가져온다 — 루트 진입점은 CLI 라 가져오는 순간 실행된다.
@@ -9,6 +9,7 @@ import { app, BrowserWindow, dialog, Menu, safeStorage, shell } from "electron";
 import { PlannerNotices } from "./app-notify.js";
 import { SelfUpdates } from "./app-updates.js";
 import { loadAppZoom, saveAppZoom, stepZoom } from "./app-zoom.js";
+import { benchEndpointBody, benchEndpointPath, benchEndpointPid } from "./bench-endpoint.js";
 import { registerDesktopBridge } from "./bridge.js";
 import { loadNotificationPrefs, loadStoredPort, saveDesktopSettings } from "./desktop-settings.js";
 import { buildMenuTemplate } from "./menu.js";
@@ -142,6 +143,48 @@ async function startDaemonServer(
   return server;
 }
 
+/**
+ * 재생 벤치의 접속 파일(PLAN-HARNESS §3.A, H-2): 개발 실행이 env 가 가리키는
+ * 파일에 데몬의 ws 주소를 한 줄로 적어 두면, `scripts/bench` 의 클라이언트가
+ * 그 파일을 읽고 접속한다. 토큰은 실행마다 새로 만들어지므로 파일도 실행마다
+ * 덮어 쓰고, 지우는 일은 `will-quit` 의 몫이다. 벤치는 개발 도구일 뿐이라,
+ * 못 적어도 앱에는 아무 일도 일어나지 않는다.
+ */
+let benchEndpointFile: string | null = null;
+
+function writeBenchEndpoint(daemon: string): void {
+  const file = benchEndpointPath(process.env, app.isPackaged);
+  if (!file) return;
+  try {
+    const ws = new URL(daemon);
+    ws.protocol = "ws:";
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      benchEndpointBody({ url: ws.toString(), pid: process.pid, now: new Date() }),
+      { mode: 0o600 },
+    );
+    // mode 는 새로 만들 때만 걸린다 — 앞선 실행이 남긴 파일의 권한을 여기서 고친다.
+    chmodSync(file, 0o600);
+    benchEndpointFile = file;
+  } catch {
+    benchEndpointFile = null;
+  }
+}
+
+/** 파일이 이 프로세스가 적은 것일 때만 지운다 — 실패는 삼킨다. */
+function removeBenchEndpoint(): void {
+  const file = benchEndpointFile;
+  benchEndpointFile = null;
+  if (!file) return;
+  try {
+    if (benchEndpointPid(readFileSync(file, "utf8")) !== process.pid) return;
+    rmSync(file, { force: true });
+  } catch {
+    // 이미 없거나 못 읽는 파일은 지울 것도 없다.
+  }
+}
+
 async function bootApp(): Promise<void> {
   // Windows 토스트 알림은 시작 메뉴 바로 가기의 AUMID 로 귀속된다. NSIS 템플릿은
   // 바로 가기에 appId 를 새기므로 같은 문자열을 여기서 직접 건다 — Squirrel 이
@@ -201,6 +244,9 @@ async function bootApp(): Promise<void> {
       previewDriverFactory,
       browserDriverFactory: browserDrivers,
       onNotice,
+      // 브라우저 MCP 자식의 serverInfo.version 이 앱 버전을 말하게 한다
+      // (DaemonConfig.appVersion — COLO_APP_VERSION 으로 자식까지 간다).
+      appVersion: app.getVersion(),
       // 개발용 에이전트(omp)는 패키징되지 않은 실행(`pnpm dev:desktop` ·
       // `pnpm --filter @colo-design/desktop dev`)에만 — 실사용자의 앱은 Claude
       // Code · Codex 두 native 선로만 받는다(DaemonConfig.devAgents).
@@ -233,7 +279,9 @@ async function bootApp(): Promise<void> {
   const boundPort = server.address().port;
   if (boundPort !== storedPort) saveDesktopSettings(desktopSettingsPath(), { port: boundPort });
   daemonServer = server;
-  const url = windowUrl(daemonUrl(server, token));
+  const daemon = daemonUrl(server, token);
+  const url = windowUrl(daemon);
+  writeBenchEndpoint(daemon);
 
   const window = host.create();
   host.adopt(window, url);
@@ -405,6 +453,7 @@ app.on("before-quit", (event) => {
  */
 let daemonStopped = false;
 app.on("will-quit", (event) => {
+  removeBenchEndpoint();
   if (daemonStopped || !daemonServer) return;
   event.preventDefault();
   void daemonServer.stop().finally(() => {

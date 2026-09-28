@@ -4,8 +4,8 @@ import { contextBridge, ipcRenderer } from "electron";
 /**
  * 미리보기 뷰의 preload (PLAN D67 · D68 → D78 · D79; 재설계 C1·C3). Sandbox +
  * contextIsolation 아래 단일 파일로 살아야 한다 — 샌드박스 preload 의 require
- * 는 electron 과 몇 개 내장 모듈만 주므로, 신원 조사 같은 순수 조각도 여기
- * 안에 인라인이다.
+ * 는 electron 과 몇 개 내장 모듈만 주므로, 요소 정체 조사(element-identity.ts)
+ * 같은 순수 조각도 빌드가 이 파일에 끼워 넣는다(아래 declare 참조).
  *
  * 네 몫:
  * 1. 레포 브리지의 문 (D68): `window.coloDesign.post` — 핀 봉투가 나가는
@@ -26,7 +26,8 @@ import { contextBridge, ipcRenderer } from "electron";
 // React fiber expandos, so the component name is the tag,
 // and the owner chain is the view's job (the `data-colo-pick` stamp + the
 // main-world script). Everything else (own text, CSS path from the body,
-// rect, html, styles, a11y, attrs) is plain DOM.
+// rect, html, styles, a11y, attrs) is plain DOM — and it all lives in
+// element-identity.ts now, spliced into this file at build time (§3.E-1).
 // ---------------------------------------------------------------------------
 
 function ownText(element: Element): string {
@@ -37,151 +38,16 @@ function ownText(element: Element): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-function cssPath(element: Element): string {
-  const parts: string[] = [];
-  for (
-    let node: Element | null = element;
-    node && node !== document.body;
-    node = node.parentElement
-  ) {
-    const tag = node.tagName.toLowerCase();
-    const siblings = Array.from(node.parentElement?.children ?? []).filter(
-      (candidate) => candidate.tagName === node!.tagName,
-    );
-    const index = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(node) + 1})` : "";
-    const id = node.id ? `#${node.id}` : "";
-    parts.unshift(`${tag}${id}${index}`);
-  }
-  // 레포 마커 철거(2026-09-21): 닻은 언제나 body 다 — `body > …` 는
-  // 에이전트가 고치는 바로 그 DOM 을 읽는다.
-  return ["body", ...parts].join(" > ");
-}
-
-function roundRect(rect: DOMRect): {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} {
-  return {
-    x: Math.round(rect.x),
-    y: Math.round(rect.y),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-  };
-}
-
-/** 재설계 C9: the element's own HTML — the picker's own nodes stripped,
-    1,500 characters and then an ellipsis. The element alone, no neighbors. */
-function describeHtml(element: Element): string | undefined {
-  try {
-    const clone = element.cloneNode(true);
-    if (!(clone instanceof Element)) return undefined;
-    for (const node of clone.querySelectorAll("[data-colo-pick],[data-colo-design-overlay]")) {
-      node.remove();
-    }
-    const html = clone.outerHTML;
-    return html === "" ? undefined : html.length > 1500 ? `${html.slice(0, 1500)}…` : html;
-  } catch {
-    return undefined;
-  }
-}
-
-/** 재설계 C9: a computed-style subset worth quoting — defaults and lone
-    zeros dropped, a dozen keys at most. */
-const STYLE_KEYS = [
-  "color",
-  "background-color",
-  "font-family",
-  "font-size",
-  "font-weight",
-  "line-height",
-  "padding",
-  "margin",
-  "border-radius",
-  "display",
-  "width",
-  "height",
-  "gap",
-];
-
-function describeStyles(element: Element): Record<string, string> | undefined {
-  let styles: Record<string, string> | undefined;
-  try {
-    const computed = window.getComputedStyle(element);
-    for (const key of STYLE_KEYS) {
-      if (styles && Object.keys(styles).length >= 12) break;
-      const value = computed.getPropertyValue(key).trim();
-      if (value === "" || value === "none" || value === "normal" || value === "0px") continue;
-      styles ??= {};
-      styles[key] = value;
-    }
-  } catch {
-    return undefined;
-  }
-  return styles;
-}
-
-/** 재설계 C9: the accessible identity the page declares — the role attribute
-    only (implicit tag roles are the tag's own business) and the first name it
-    spells out; a label wired up by association is out of reach here. */
-function describeA11y(element: Element): ColoDesignCommentTarget["a11y"] | undefined {
-  try {
-    const role = element.getAttribute("role") ?? undefined;
-    const name =
-      element.getAttribute("aria-label") ??
-      element.getAttribute("alt") ??
-      element.getAttribute("title") ??
-      undefined;
-    if (!role && !name) return undefined;
-    const a11y: { role?: string; name?: string } = {};
-    if (role) a11y.role = role;
-    if (name) a11y.name = name;
-    return a11y;
-  } catch {
-    return undefined;
-  }
-}
-
-/** 재설계 C9: the hooks a repo leaves for tests — the id, one test id, up to
-    five class names. */
-function describeAttrs(element: Element): ColoDesignCommentTarget["attrs"] | undefined {
-  try {
-    const id = element.id || undefined;
-    const testId =
-      element.getAttribute("data-testid") ?? element.getAttribute("data-test") ?? undefined;
-    const classes = Array.from(element.classList).slice(0, 5);
-    if (!id && !testId && classes.length === 0) return undefined;
-    const attrs: { id?: string; testId?: string; classes?: string[] } = {};
-    if (id) attrs.id = id;
-    if (testId) attrs.testId = testId;
-    if (classes.length > 0) attrs.classes = classes;
-    return attrs;
-  } catch {
-    return undefined;
-  }
-}
-
-function describeElement(element: Element | null): ColoDesignCommentTarget | null {
-  if (!element) return null;
-  const target: ColoDesignCommentTarget = {
-    component: element.tagName.toLowerCase(),
-    text: ownText(element),
-    path: cssPath(element),
-    rect: roundRect(element.getBoundingClientRect()),
-  };
-  // The enrichment — every field optional, a failure costs its field,
-  // never the pin.
-  const html = describeHtml(element);
-  if (html) target.html = html;
-  const styles = describeStyles(element);
-  if (styles) target.styles = styles;
-  const a11y = describeA11y(element);
-  if (a11y) target.a11y = a11y;
-  const attrs = describeAttrs(element);
-  if (attrs) target.attrs = attrs;
-  return target;
-}
+/**
+ * 요소 정체 추출의 한 벌화 (PLAN-MCP §3.E-1) — 본체는 element-identity.ts 의
+ * describeElementInPage 다. 샌드박스 preload 는 로컬 require 가 안 되므로
+ * 빌드(scripts/build-preloads.mjs)가 그 함수를 이 파일의 꼬리에 이어 붙인다;
+ * 여기는 선언만 둔다. 드라이버의 browser_inspect 도 같은 소스를
+ * Runtime.callFunctionOn 으로 페이지(메인 월드)에서 돌린다. 아래 ownText 는
+ * 호버 라벨이 쓰는 작은 복사다 — 봉투의 text 칸은 저 함수 몸의 같은 판정이
+ * 낸다.
+ */
+declare function describeElementInPage(this: unknown, el?: unknown): ColoDesignCommentTarget | null;
 
 /**
  * The screen the page is showing right now — the context every envelope
@@ -592,7 +458,7 @@ document.addEventListener(
     if (!pickingNow(event) || isOverlayUi(event.target)) return;
     const element = event.target instanceof Element ? event.target : null;
     if (!element) return;
-    const target = describeElement(element);
+    const target = describeElementInPage(element);
     if (!target) return;
     event.preventDefault();
     event.stopPropagation();
