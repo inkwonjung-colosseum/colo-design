@@ -372,13 +372,28 @@ export function AskCard({
 }: {
   request: PendingQuestion | PendingPermission;
   commands?: RepoCommands;
-  onQuestion: (answers: Record<string, string | string[]>) => void;
-  onPermission: (decision: "allow" | "deny") => void;
+  /** 답을 보내는 길 — 전하지 못하면 거절로 돌아와 옵션이 다시 눌리는 자리가 된다. */
+  onQuestion: (answers: Record<string, string | string[]>) => void | Promise<void>;
+  onPermission: (decision: "allow" | "deny") => void | Promise<void>;
 }) {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [free, setFree] = useState<Record<string, string>>({});
   const [freeOpen, setFreeOpen] = useState<Record<string, boolean>>({});
   const [sent, setSent] = useState(false);
+  /** 보내는 중인 버튼 — 누른 버튼만 고른 모양과 작은 도는 표시를 입는다. */
+  const [pressed, setPressed] = useState<string | null>(null);
+  const dispatch = (mark: string, call: () => unknown) => {
+    if (sent) return;
+    setSent(true);
+    setPressed(mark);
+    void Promise.resolve()
+      .then(call)
+      .catch(() => {
+        // 전하지 못했으면 조용히 되돌린다 — 오류 문장 대신 다시 눌리는 자리가 된다.
+        setSent(false);
+        setPressed(null);
+      });
+  };
 
   if (request.kind === "permission") {
     // 레포가 정한 명령은 이름으로(`레포 검사`) — 날 명령줄은 보이지 않는다(홈 인박스와 같은 판정).
@@ -401,25 +416,21 @@ export function AskCard({
         <div className="nx-opts">
           <button
             type="button"
-            className="nx-btn nx-btn--pri"
+            className={`nx-btn nx-btn--pri${pressed === "allow" ? " nx-btn--picked" : ""}`}
             disabled={sent}
-            onClick={() => {
-              setSent(true);
-              onPermission("allow");
-            }}
+            onClick={() => dispatch("allow", () => onPermission("allow"))}
           >
             {L.inbox.allow}
+            {pressed === "allow" && <i className="nx-spin" aria-hidden="true" />}
           </button>
           <button
             type="button"
-            className="nx-btn"
+            className={`nx-btn${pressed === "deny" ? " nx-btn--picked" : ""}`}
             disabled={sent}
-            onClick={() => {
-              setSent(true);
-              onPermission("deny");
-            }}
+            onClick={() => dispatch("deny", () => onPermission("deny"))}
           >
             {L.inbox.deny}
+            {pressed === "deny" && <i className="nx-spin" aria-hidden="true" />}
           </button>
         </div>
       </div>
@@ -442,14 +453,14 @@ export function AskCard({
     const value = merged()[q.question];
     return Array.isArray(value) ? value.length > 0 : Boolean(value);
   });
-  const send = (out: Record<string, string | string[]>) => {
-    if (sent) return;
-    setSent(true);
-    onQuestion(out);
+  const send = (out: Record<string, string | string[]>, mark: string) => {
+    dispatch(mark, () => onQuestion(out));
   };
   const pick = (q: AskQuestion, label: string) => {
     if (single) {
-      send({ [q.question]: label });
+      // 눌림은 먼저 선다 — 고른 것이 곧 보이고, 전하지 못했으면 조용히 풀린다.
+      setAnswers((prev) => ({ ...prev, [q.question]: label }));
+      send({ [q.question]: label }, label);
       return;
     }
     setAnswers((prev) => {
@@ -483,6 +494,7 @@ export function AskCard({
                 onClick={() => pick(q, option.label)}
               >
                 {option.label}
+                {pressed === option.label && <i className="nx-spin" aria-hidden="true" />}
               </button>
             ))}
             <button
@@ -510,18 +522,23 @@ export function AskCard({
                   if (event.key === "Enter" && single) {
                     event.preventDefault();
                     const text = (free[q.question] ?? "").trim();
-                    if (text) send({ [q.question]: text });
+                    if (text) send({ [q.question]: text }, `free:${q.question}`);
                   }
                 }}
               />
               {single && (
                 <button
                   type="button"
-                  className="nx-btn nx-btn--sm nx-btn--pri"
+                  className={`nx-btn nx-btn--sm nx-btn--pri${
+                    pressed === `free:${q.question}` ? " nx-btn--picked" : ""
+                  }`}
                   disabled={sent || !(free[q.question] ?? "").trim()}
-                  onClick={() => send({ [q.question]: (free[q.question] ?? "").trim() })}
+                  onClick={() =>
+                    send({ [q.question]: (free[q.question] ?? "").trim() }, `free:${q.question}`)
+                  }
                 >
                   {L.inbox.send}
+                  {pressed === `free:${q.question}` && <i className="nx-spin" aria-hidden="true" />}
                 </button>
               )}
             </div>
@@ -534,9 +551,10 @@ export function AskCard({
             type="button"
             className="nx-btn nx-btn--sm nx-btn--pri"
             disabled={!complete || sent}
-            onClick={() => send(merged())}
+            onClick={() => send(merged(), "send")}
           >
             {L.inbox.send}
+            {pressed === "send" && <i className="nx-spin" aria-hidden="true" />}
           </button>
         </div>
       )}

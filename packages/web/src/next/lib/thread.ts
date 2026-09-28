@@ -1,5 +1,7 @@
 import type { EffortLevel, LostSend } from "@colo-design/protocol";
 import { koreanNoticeWords, LIMIT_WORDS } from "../../lib/error-words.ts";
+import { screenPath } from "../../lib/screen-link.ts";
+import { screenKey } from "../../lib/turn-screens.ts";
 import type { L } from "../labels";
 
 /**
@@ -294,4 +296,30 @@ export function fastTipWords(
     title: words.offTitle,
     notes: state.provider === "claude" ? [cost, words.costMidway] : [cost],
   };
+}
+
+/** 고친 화면 카드의 제목 문장 — 부르는 쪽이 L 에서 채운다. */
+export interface ScreenTitleWords {
+  homeScreen: string;
+  unknownScreen: string;
+}
+
+/**
+ * 고친 화면 카드의 제목 — 답이 링크에 붙인 제목이 먼저고, 없으면 이번 작업의
+ * 화면 이름에서 찾는다. 루트는 첫 화면이고, 그래도 모르면 일반 이름으로 선다 —
+ * 화면 주소가 그대로 제목에 서는 일이 없게. 이번 작업의 화면과 같은 잣대로
+ * 겨눈다(끝 슬래시 · `index` 표기 차이는 같은 화면이다).
+ */
+export function screenTitle(
+  screen: { path: string; title: string | null },
+  cycleScreens: ReadonlyArray<{ route: string; title: string }> | null | undefined,
+  words: ScreenTitleWords,
+): string {
+  if (screen.title !== null && screen.title.trim() !== "") return screen.title;
+  const path = screenKey(screenPath(screen.path));
+  if (path === "/") return words.homeScreen;
+  const found = cycleScreens?.find(
+    (candidate) => candidate.title.trim() !== "" && screenKey(screenPath(candidate.route)) === path,
+  );
+  return found?.title ?? words.unknownScreen;
 }

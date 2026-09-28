@@ -89,23 +89,46 @@ export function HomeInbox({
     L.update.doneEvent,
   );
   const recentCount = feed.done.length + otherEvents.length + updateEvents.length;
+  // 세 칸이 모두 비면 차분한 한 줄만 남는다 — 비었다는 말이 두 겹으로 서지 않게.
+  const allCalm = waitCount === 0 && runCount === 0 && recentCount === 0;
 
   // 답이 도착할 때까지 카드는 남는다 — 응답이 길에서 죽었는데 카드부터 거두면
   // 답하지 않은 확인이 사라진다(옛 홈과 같은 규칙). 누른 뒤에는 같은 카드를 두
   // 번 누르지 않게 잠근다.
   const [answering, setAnswering] = useState<ReadonlySet<string>>(() => new Set());
-  const respond = (requestId: string, call: () => Promise<unknown>) => {
+  /** 누른 버튼 — 카드마다 어느 답을 보내는 중인가(고른 모양과 도는 표시의 주인). */
+  const [pressed, setPressed] = useState<ReadonlyMap<string, string>>(() => new Map());
+  /** 보내기에 성공한 카드 — 접히는 동안을 두고 거둔다. */
+  const [folding, setFolding] = useState<ReadonlySet<string>>(() => new Set());
+  /** 전하지 못한 카드 — 접지 않고 한 줄을 세워 다시 눌리게 한다. */
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
+  const respond = (requestId: string, mark: string, call: () => Promise<unknown>) => {
     setAnswering((prev) => new Set(prev).add(requestId));
+    setPressed((prev) => new Map(prev).set(requestId, mark));
+    setFailed((prev) => {
+      const next = new Set(prev);
+      next.delete(requestId);
+      return next;
+    });
     void call()
-      .then(() => daemon.resolvePending(requestId))
-      .catch(() => undefined)
-      .finally(() =>
+      .then(() => {
+        setFolding((prev) => new Set(prev).add(requestId));
+        // 접히는 동안만 카드를 남겨 둔다 — 갑자기 사라져 나머지가 튀지 않게.
+        window.setTimeout(() => daemon.resolvePending(requestId), 220);
+      })
+      .catch(() => setFailed((prev) => new Set(prev).add(requestId)))
+      .finally(() => {
         setAnswering((prev) => {
           const next = new Set(prev);
           next.delete(requestId);
           return next;
-        }),
-      );
+        });
+        setPressed((prev) => {
+          const next = new Map(prev);
+          next.delete(requestId);
+          return next;
+        });
+      });
   };
 
   const openHere = (sessionId: string) => active && onOpenThread(active.slug, sessionId);
@@ -125,81 +148,91 @@ export function HomeInbox({
       {active &&
         feed.asking.map((item) => {
           const key = item.kind === "review" ? `review-${item.sessionId}` : item.requestId;
-          const busy = item.kind !== "review" && answering.has(item.requestId);
+          const busy =
+            (item.kind !== "review" && answering.has(item.requestId)) || folding.has(key);
+          const mark = pressed.get(key);
           return (
-            <div key={key} className="nx-dcard">
-              <div className="nx-dmeta">
-                <ProjectMark slug={active.slug} name={active.name} size="sm" />
-                {active.name} · {item.title}
-                {item.kind !== "review" && item.requestedAt !== undefined && (
-                  <span className="nx-time">{timeAgo(item.requestedAt)}</span>
+            <div key={key} className={`nx-dfold${folding.has(key) ? " nx-dfold--gone" : ""}`}>
+              <div className="nx-dcard">
+                <div className="nx-dmeta">
+                  <ProjectMark slug={active.slug} name={active.name} size="sm" />
+                  {active.name} · {item.title}
+                  {item.kind !== "review" && item.requestedAt !== undefined && (
+                    <span className="nx-time">{timeAgo(item.requestedAt)}</span>
+                  )}
+                </div>
+                <div className="nx-dq">
+                  <SparkIcon />
+                  <span>
+                    {item.kind === "question"
+                      ? (item.quote ?? L.inbox.askMany)
+                      : item.kind === "permission"
+                        ? L.inbox.askPermission(permissionWhat(item, daemon.repo?.commands))
+                        : L.inbox.reviewArrived}
+                  </span>
+                </div>
+                <div className="nx-dopts">
+                  {item.kind === "question" &&
+                    item.quote !== null &&
+                    item.options.map((label) => (
+                      <button
+                        key={label}
+                        type="button"
+                        className={`nx-btn${mark === label ? " nx-btn--picked" : ""}`}
+                        disabled={busy}
+                        onClick={() => {
+                          const quote = item.quote;
+                          if (quote === null) return;
+                          respond(item.requestId, label, () =>
+                            daemon.api.respondQuestion(item.requestId, { [quote]: label }, {}),
+                          );
+                        }}
+                      >
+                        {label}
+                        {mark === label && <Spin />}
+                      </button>
+                    ))}
+                  {item.kind === "permission" && (
+                    <>
+                      <button
+                        type="button"
+                        className={`nx-btn nx-btn--pri${mark === "allow" ? " nx-btn--picked" : ""}`}
+                        disabled={busy}
+                        onClick={() =>
+                          respond(item.requestId, "allow", () =>
+                            daemon.api.respondPermission(item.requestId, "allow"),
+                          )
+                        }
+                      >
+                        {L.inbox.allow}
+                        {mark === "allow" && <Spin />}
+                      </button>
+                      <button
+                        type="button"
+                        className={`nx-btn${mark === "deny" ? " nx-btn--picked" : ""}`}
+                        disabled={busy}
+                        onClick={() =>
+                          respond(item.requestId, "deny", () =>
+                            daemon.api.respondPermission(item.requestId, "deny"),
+                          )
+                        }
+                      >
+                        {L.inbox.deny}
+                        {mark === "deny" && <Spin />}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="nx-btn nx-btn--ghost"
+                    onClick={() => openHere(item.sessionId)}
+                  >
+                    {L.inbox.openConv}
+                  </button>
+                </div>
+                {failed.has(key) && (
+                  <div className="nx-dfail nx-tone--red">{L.chat.somethingWrong}</div>
                 )}
-              </div>
-              <div className="nx-dq">
-                <SparkIcon />
-                <span>
-                  {item.kind === "question"
-                    ? (item.quote ?? L.inbox.askMany)
-                    : item.kind === "permission"
-                      ? L.inbox.askPermission(permissionWhat(item, daemon.repo?.commands))
-                      : L.inbox.reviewArrived}
-                </span>
-              </div>
-              <div className="nx-dopts">
-                {item.kind === "question" &&
-                  item.quote !== null &&
-                  item.options.map((label) => (
-                    <button
-                      key={label}
-                      type="button"
-                      className="nx-btn"
-                      disabled={busy}
-                      onClick={() => {
-                        const quote = item.quote;
-                        if (quote === null) return;
-                        respond(item.requestId, () =>
-                          daemon.api.respondQuestion(item.requestId, { [quote]: label }, {}),
-                        );
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                {item.kind === "permission" && (
-                  <>
-                    <button
-                      type="button"
-                      className="nx-btn nx-btn--pri"
-                      disabled={busy}
-                      onClick={() =>
-                        respond(item.requestId, () =>
-                          daemon.api.respondPermission(item.requestId, "allow"),
-                        )
-                      }
-                    >
-                      {L.inbox.allow}
-                    </button>
-                    <button
-                      type="button"
-                      className="nx-btn"
-                      disabled={busy}
-                      onClick={() =>
-                        respond(item.requestId, () =>
-                          daemon.api.respondPermission(item.requestId, "deny"),
-                        )
-                      }
-                    >
-                      {L.inbox.deny}
-                    </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  className="nx-btn nx-btn--ghost"
-                  onClick={() => openHere(item.sessionId)}
-                >
-                  {L.inbox.openConv}
-                </button>
               </div>
             </div>
           );
@@ -280,7 +313,9 @@ export function HomeInbox({
             </span>
           </button>
         ))}
-        {runCount === 0 && <div className="nx-calm nx-calm--inner">{L.inbox.nothingRunning}</div>}
+        {runCount === 0 && !allCalm && (
+          <div className="nx-calm nx-calm--inner">{L.inbox.nothingRunning}</div>
+        )}
       </details>
 
       <details className="nx-fold" open>
@@ -327,7 +362,9 @@ export function HomeInbox({
             <span className="nx-ir">{event.at ? timeAgo(event.at) : ""}</span>
           </div>
         ))}
-        {recentCount === 0 && <div className="nx-calm nx-calm--inner">{L.inbox.nothingRecent}</div>}
+        {recentCount === 0 && !allCalm && (
+          <div className="nx-calm nx-calm--inner">{L.inbox.nothingRecent}</div>
+        )}
       </details>
     </div>
   );

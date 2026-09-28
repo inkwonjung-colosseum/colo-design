@@ -595,13 +595,14 @@ export function Composer({
             align="end"
             bubbleClass="nx-fast-tip"
           >
-            {/* 아이콘만 서는 칩 — 이름은 aria-label이, 비용 안내는 툴팁 카드가 맡는다. */}
+            {/* 아이콘만 서는 칩 — 이름은 aria-label이, 비용 안내는 툴팁 카드가 맡는다.
+                기다리는 동안에도 켠 모양이 유지된다 — 누름은 toggleFast 의 가드가 막는다. */}
             <button
               type="button"
               className={`nx-tbtn nx-fast${fastOn ? " nx-tbtn--on" : ""}`}
               aria-label={L.fast.name}
               aria-pressed={fastOn}
-              disabled={fastBusy}
+              aria-busy={fastBusy}
               onClick={toggleFast}
             >
               <BoltIcon />

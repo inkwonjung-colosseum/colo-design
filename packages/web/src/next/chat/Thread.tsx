@@ -23,6 +23,7 @@ import {
   promptNumbers,
   rawErrorLine,
   retryCount,
+  screenTitle,
 } from "../lib/thread";
 import { BriefCard, FailCard, GateCard, ReceiptCard, ReviewCard, reviewParts } from "./cards";
 import { CheckIcon, ClockIcon, EditIcon, FwdIcon, SparkIcon } from "./icons";
@@ -65,6 +66,8 @@ export interface ThreadProps {
   showTools: boolean;
   /** 미리보기 서버의 주소 — 답의 링크가 이 미리보기의 화면인지 가른다. */
   previewUrl: string | null;
+  /** 이번 작업의 화면 이름 — 제목 없는 `고친 화면` 카드가 여기서 제목을 찾는다. */
+  cycleScreens: RepoStatus["cycleScreens"];
   handoff: RepoStatus["handoff"];
   /** 이 프로젝트에서 AI 가 도는가 — 코멘트 카드의 `AI가 반영하는 중`. */
   projectWorking: boolean;
@@ -351,9 +354,12 @@ export function Thread(props: ThreadProps) {
                 </button>
               )}
               {open && (
-                <div className={`nx-m-step${step.now ? " nx-m-step--now" : ""}`}>
+                <div
+                  className={`nx-m-step${step.now ? " nx-m-step--now" : ""}${
+                    block.streaming ? " nx-m-live" : ""
+                  }`}
+                >
                   <Markdown text={block.text} />
-                  {block.streaming && <span className="nx-caret" />}
                 </div>
               )}
             </>
@@ -366,9 +372,8 @@ export function Thread(props: ThreadProps) {
             <div className="nx-av" aria-hidden="true">
               {first && <SparkIcon />}
             </div>
-            <div className="nx-m-body">
+            <div className={`nx-m-body${block.streaming ? " nx-m-live" : ""}`}>
               <Markdown text={block.text} />
-              {block.streaming && <span className="nx-caret" />}
             </div>
           </div>
         );
@@ -418,7 +423,10 @@ export function Thread(props: ThreadProps) {
                 {screens.map((screen) => (
                   <ShotCard
                     key={screen.path}
-                    title={screen.title ?? screen.path}
+                    title={screenTitle(screen, props.cycleScreens, {
+                      homeScreen: L.preview.homeScreen,
+                      unknownScreen: L.transcript.unknownScreen,
+                    })}
                     onOpen={() => props.onOpenScreen(screen)}
                   />
                 ))}
