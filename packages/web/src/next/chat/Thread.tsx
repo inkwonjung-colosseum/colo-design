@@ -16,6 +16,7 @@ import { blockOnTape, mergeThinking } from "../../lib/tape-visibility";
 import { turnAnswerText, turnBlockNumbers } from "../../lib/turn-numbering";
 import { lastTurnScreens, type TurnScreen } from "../../lib/turn-screens";
 import { L } from "../labels";
+import { shownPinLabel } from "../lib/pin-name";
 import {
   failureCards,
   LIMIT_RESULT,
@@ -131,8 +132,6 @@ export function Thread(props: ThreadProps) {
     head: boolean;
     /** 묶음의 첫 과정 문장 id — 펼침 상태의 열쇠. */
     key: string;
-    /** 과정의 수 — 접는 줄의 숫자. */
-    count: number;
     /** 답이 끝났는가 — 끝나면 과정은 접힌다. */
     settled: boolean;
     /** 도는 동안의 마지막 줄 — 강조하는 한 줄. */
@@ -148,7 +147,6 @@ export function Thread(props: ThreadProps) {
         stepRoles.set(id, {
           head: at === 0,
           key: steps[0]!,
-          count: steps.length,
           settled,
           now: !settled && at === steps.length - 1,
         });
@@ -304,7 +302,7 @@ export function Thread(props: ThreadProps) {
                       ) : (
                         <span className="nx-pnum nx-pnum--sent">{at + 1}</span>
                       )}
-                      <b>{item.label || at + 1}</b>
+                      <b>{item.label ? shownPinLabel(item.label, L.pin.point) : at + 1}</b>
                       {item.comment && <span>{item.comment}</span>}
                     </div>
                   ))}
@@ -315,18 +313,19 @@ export function Thread(props: ThreadProps) {
               ) : (
                 <div className="nx-btxt">{block.text}</div>
               )}
+              {/* 고쳐서 다시 보내기 — 말풍선의 왼쪽 아래 옆자리에 매달려 세로 자리를 먹지 않는다. */}
+              {canResend && (
+                <button
+                  type="button"
+                  className="nx-ue"
+                  title={L.transcript.editResendTip}
+                  onClick={() => props.onEditResend(prompt, block.text)}
+                >
+                  <EditIcon />
+                  {L.transcript.editResend}
+                </button>
+              )}
             </div>
-            {canResend && (
-              <button
-                type="button"
-                className="nx-ue"
-                title={L.transcript.editResendTip}
-                onClick={() => props.onEditResend(prompt, block.text)}
-              >
-                <EditIcon />
-                {L.transcript.editResend}
-              </button>
-            )}
           </div>
         );
       }
@@ -350,7 +349,7 @@ export function Thread(props: ThreadProps) {
                   onClick={() => toggleSteps(step.key)}
                 >
                   <FwdIcon />
-                  {L.transcript.steps(step.count)}
+                  {L.transcript.stepsFold}
                 </button>
               )}
               {open && (

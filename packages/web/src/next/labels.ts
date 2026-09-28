@@ -265,7 +265,7 @@ export const L = {
     seconds: (s: number) => `${s}초`,
     minutesSeconds: (m: number, s: number) => `${m}분 ${s}초`,
     /** 접힌 진행 문장의 머리 — 답이 끝난 뒤 과정은 이 한 줄로 접힌다. */
-    steps: (n: number) => `작업 과정 ${n}단계`,
+    stepsFold: "작업 과정",
     /** 고친 화면 카드의 마지막 이름 — 제목을 모를 때 주소가 서지 않게. */
     unknownScreen: "이름 없는 화면",
   },
@@ -458,6 +458,8 @@ export const L = {
     keptNarrow: (n: number) => `${n}번을 담았어요 — 대화 탭에서 메모를 남기고 보내요`,
     lockedPreparing: "준비가 끝나면 화면을 찍을 수 있어요",
     area: "영역",
+    /** 핀 이름표의 마지막 폴백 — 정체(글자 · 컴포넌트 · 화면)를 다 못 짚을 때. */
+    point: "찍은 곳",
     bubble: "핀 메모",
     /** 아래는 게스트 안 오버레이가 입는 말 — 선로(colo-overlay:mode)로 건너간다. */
     unnamed: "이름 없음",

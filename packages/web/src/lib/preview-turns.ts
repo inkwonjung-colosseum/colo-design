@@ -33,12 +33,13 @@ export function pinsToTurn(
   const screens = new Set(pins.map((pin) => pin.screen));
   const spread = screens.size > 1;
   const first = pins[0]!;
-  // 영역 핀의 이름표: a region has no words of its own — its
-  // size is what the planner recognises.
+  // 이름표(사용자가 보는 마커 label)는 `찍은 곳`으로 떨어지고, 본문 줄(AI 가
+  // 읽는 것)은 태그 이름을 그대로 쓴다 — 단서로 쓸모 있으니까.
   const pinLabel = (pin: PinAttachment) =>
     pin.element.kind === "region"
       ? `영역 ${pin.element.rect.width}×${pin.element.rect.height}`
-      : pin.element.text || pin.element.component;
+      : pin.element.text || "찍은 곳";
+
   const marker: TurnMarker = {
     kind: "comments",
     screen: spread ? `화면 ${screens.size}곳` : (titleFor(first.screen) ?? first.screen),
@@ -59,8 +60,11 @@ export function pinsToTurn(
     })),
   };
   const blocks = pins.map((pin, index) => {
+    // AI 본문 줄의 이름 — 이름표와 달리 태그 이름을 단서로 쓴다.
+    const head =
+      pin.element.kind === "region" ? pinLabel(pin) : pin.element.text || pin.element.component;
     const rows = [
-      `${index + 1}. ${pinLabel(pin)}${pin.element.text ? ` — "${pin.element.text}"` : ""}${
+      `${index + 1}. ${head}${pin.element.text ? ` — "${pin.element.text}"` : ""}${
         spread ? ` · ${titleFor(pin.screen) ?? pin.screen}` : ""
       }`,
     ];
