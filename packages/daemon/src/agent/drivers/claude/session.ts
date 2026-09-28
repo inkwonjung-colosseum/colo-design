@@ -452,17 +452,7 @@ export class ClaudeAgentSession implements AgentSession {
     } catch {
       models = [];
     }
-    return models
-      .map((model) => ({
-        value: model.value,
-        displayName: model.displayName,
-        resolvedModel: model.resolvedModel ?? null,
-        description: model.description,
-        supportsEffort: model.supportsEffort ?? false,
-        supportedEffortLevels: model.supportedEffortLevels ?? null,
-        supportsFastMode: model.supportsFastMode ?? false,
-      }))
-      .filter((row) => !isAmbientModelEcho(row, this.pinnedModel));
+    return toModelRows(models, this.pinnedModel);
   }
 
   /** The composer's /command palette: names, descriptions, argument hints. */
@@ -506,6 +496,31 @@ function isAmbientModelEcho(row: SessionModelInfo, pinned: string | null | undef
   if (ambient === undefined || row.description !== "Custom model") return false;
   if (row.value !== ambient && row.resolvedModel !== ambient) return false;
   return pinned == null || (row.value !== pinned && row.resolvedModel !== pinned);
+}
+
+/**
+ * The SDK's model rows as the picker's rows. One conversion for two readers —
+ * the live session (`Session.models`) and the session-less probe
+ * (`probeModels`) — so the picker cannot show two vocabularies for the same
+ * CLI: the optional SDK flags become the protocol's booleans, and the ambient
+ * `ANTHROPIC_MODEL` echo loses its row unless that spelling was pinned for
+ * this very session.
+ */
+export function toModelRows(
+  models: ModelInfo[],
+  pinned: string | null | undefined,
+): SessionModelInfo[] {
+  return models
+    .map((model) => ({
+      value: model.value,
+      displayName: model.displayName,
+      resolvedModel: model.resolvedModel ?? null,
+      description: model.description,
+      supportsEffort: model.supportsEffort ?? false,
+      supportedEffortLevels: model.supportedEffortLevels ?? null,
+      supportsFastMode: model.supportsFastMode ?? false,
+    }))
+    .filter((row) => !isAmbientModelEcho(row, pinned));
 }
 
 /**
@@ -649,4 +664,25 @@ export async function probePlanUsage(options: {
     run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
   ).catch(() => null);
   return usage ? toPlanUsage(usage) : null;
+}
+
+/**
+ * The model rows with no thread in the way. Claude's CLI has no list-them
+ * verb of its own (`omp models --json` has no counterpart), so the probe is
+ * the only source before a session exists — the same question a live session
+ * answers, asked of a CLI booted for a second with no turn and no tokens.
+ *
+ * A probe that never answered is an empty list, not a throw: unlike the
+ * command palette (where an empty palette misleads the very next `/`), an
+ * empty catalog is invisible and the catalog gate in plan-tracker waits five
+ * minutes before asking again — a not-yet-logged-in machine must not boot a
+ * CLI on every status broadcast.
+ */
+export async function probeModels(options: {
+  cwd: string;
+  executable: string | null;
+  signal?: AbortSignal;
+}): Promise<SessionModelInfo[]> {
+  const models = await askProbe(options, (run) => run.supportedModels()).catch(() => null);
+  return models ? toModelRows(models, null) : [];
 }

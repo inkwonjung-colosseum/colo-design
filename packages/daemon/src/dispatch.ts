@@ -39,6 +39,7 @@ import { ReviveBudget } from "./revive-budget.js";
 import type { Session } from "./session.js";
 import type { SessionManager } from "./session-manager.js";
 import { dropTape, readTape, spliceTape } from "./session-tape.js";
+import { threadProvider } from "./thread-provider.js";
 import { REVIVE_GRACE_MS } from "./turn-retry.js";
 import type { TurnStats } from "./turn-stats.js";
 import { undoLog } from "./undo-log.js";
@@ -220,18 +221,27 @@ export class RequestRouter {
       }
 
       case "session.create": {
-        // A resume names the thread, not the provider — the store that owns
-        // the id decides which driver continues it.
-        const storedProvider = message.resume
-          ? await this.deps.manager.findStoredProvider(message.resume, this.workspaceCwd())
-          : undefined;
-        if (message.resume && !message.provider && storedProvider === undefined) {
-          // Guessing a driver for a foreign id corrupts the resume — say so.
-          throw new Error(
-            "이 대화를 저장한 에이전트를 찾지 못했습니다 — 목록에서 다시 열어 주세요.",
-          );
+        // 재개는 대화를 가리킬 뿐 공급자를 고르지 않는다 — 대화의 AI 는 태어날 때
+        // 정해진다. 주인(살아 있는 세션 → 대화록 저장소)이 드라이버를 정하고, 요청이
+        // 다른 공급자를 실어 와도 조용히 무시한다(thread-provider.ts).
+        const live = message.resume ? this.deps.manager.get(message.resume)?.provider : undefined;
+        const storedProvider =
+          message.resume && live === undefined
+            ? await this.deps.manager.findStoredProvider(message.resume, this.workspaceCwd())
+            : undefined;
+        const { provider, ignored } = threadProvider({
+          resume: message.resume,
+          requested: message.provider,
+          live,
+          stored: storedProvider,
+        });
+        if (ignored !== undefined) {
+          this.deps.logger.warn("재개 요청의 공급자를 무시한다 — 대화는 태어난 AI 로 이어진다", {
+            sessionId: message.resume,
+            requested: ignored,
+            provider,
+          });
         }
-        const provider = message.provider ?? storedProvider ?? "claude";
         const driver = this.deps.agentDrivers.get(provider);
         if (!driver) {
           throw new Error(`알 수 없는 에이전트입니다: ${provider}`);

@@ -613,6 +613,8 @@ interface DaemonApi {
     resume?: string;
     model?: string;
     effort?: EffortLevel;
+    // 새 대화 자리에서 미리 켠 ⚡ — 데몬이 태어난 직후 켠다.
+    fastMode?: boolean;
     title?: string;
   }) => Promise<{ sessionId: string }>;
   send: (
@@ -1549,6 +1551,8 @@ export function useDaemon(url: string | null): Daemon {
         resume?: string;
         model?: string;
         effort?: EffortLevel;
+        // 새 대화 자리에서 미리 켠 ⚡ — 데몬이 태어난 직후 켠다.
+        fastMode?: boolean;
         title?: string;
       }) =>
         call<{ sessionId: string }>({
@@ -1557,6 +1561,7 @@ export function useDaemon(url: string | null): Daemon {
           ...(opts?.resume ? { resume: opts.resume } : {}),
           ...(opts?.model ? { model: opts.model } : {}),
           ...(opts?.effort ? { effort: opts.effort } : {}),
+          ...(opts?.fastMode ? { fastMode: true } : {}),
           ...(opts?.title ? { title: opts.title } : {}),
         }),
       send: (

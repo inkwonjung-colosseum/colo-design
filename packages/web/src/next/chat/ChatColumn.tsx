@@ -173,7 +173,7 @@ export function ChatColumn({
   const fork = (turn: number) => {
     void sessions.branchFrom(turn).then(() => nav.toast(L.transcript.forkToast));
   };
-  const provider = sessions.selector.provider ?? sessions.chatProvider;
+  const provider = sessions.chipTarget(sessions.activeId ? "session" : "next").provider;
   const canBranch =
     daemon.status?.providers?.find((p) => p.id === provider)?.capabilities?.branch === true;
 
@@ -373,6 +373,7 @@ export function ChatColumn({
           daemon={daemon}
           sessions={sessions}
           variant="thread"
+          subject={sessions.activeId ? "session" : "next"}
           draftKey={activeId ?? `new:${daemon.activeSlug ?? "none"}`}
           placeholder={placeholder}
           pins={pins.list}

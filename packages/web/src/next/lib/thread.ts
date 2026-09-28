@@ -40,16 +40,20 @@ export function chipLabel(leadLabel: string, effort: string | null): string {
  * ⚡ 토글을 누른 뒤의 말 — 부탁이 받아들여지면 켬·끔의 인사를, 받아들여지지
  * 못했으면 데몬이 대신 말하는 이유(요금제 · 쿨다운)를 그대로 옮긴다. 이유마저
  * 없으면 못 했다는 말로 대신한다 — 칩이 조용히 제자리에 머무는 것은 고장과
- * 같은 얼굴이므로, 어느 길로 끝나든 말이 남아야 한다.
+ * 같은 얼굴이므로, 어느 길로 끝나든 말이 남아야 한다. 이유의 번역 묶음(`blocked`)을
+ * 넘기면 그 이유가 한국어로 갈아입는다(§5.3) — 선택 칸이라 넘기지 않는
+ * 부르는 쪽은 지금 그대로다.
  */
 export function fastToast(
   want: boolean,
   on: boolean,
   blocked: string | null,
-  say: { on: string; off: string; fail: string },
+  say: { on: string; off: string; fail: string; blocked?: FastBlockedWords },
 ): string {
   if (on === want) return want ? say.on : say.off;
-  return blocked ?? say.fail;
+  // 빈 이유는 이유가 아니다 — 빈 토스트는 뜨지 않아 칩이 말없이 제자리에 선다.
+  if (!blocked) return say.fail;
+  return say.blocked ? fastBlockedWords(blocked, say.blocked) : blocked;
 }
 
 /** 한도 문장을 알아보는 단서 — SDK 가 답의 마지막 줄에 스스로 남기는 영어 문장. */
@@ -193,4 +197,101 @@ export function splitDuration(ms: number): { minutes: number; seconds: number } 
 export function sizeText(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+/**
+ * 빠르게가 막힌 이유의 문장 묶음 — 데몬은 CLI 의 영어 원문(`fast_mode_disabled_reason`)
+ * 을 그대로 나르므로, 이 묶음이 각 단서의 한국어를 채운다.
+ */
+export interface FastBlockedWords {
+  creditsGone: string;
+  credits: string;
+  org: string;
+  orgModels: string;
+  network: string;
+  evaluation: string;
+  cooldown: string;
+}
+
+/**
+ * 빠르게 툴팁 카드의 문장 묶음 — 이 파일은 labels 를 부르지 않으므로(시험이 src 를
+ * 곧장 읽는다) 부르는 쪽이 `L.fast` 로 이 모양을 채워 넘긴다.
+ */
+export interface FastWords {
+  offTitle: string;
+  nextTitle: string;
+  onTitle: string;
+  costClaude: string;
+  costMidway: string;
+  costOmp: string;
+  costOther: string;
+  blocked: FastBlockedWords;
+}
+
+/**
+ * ⚡ 토글을 보이는 규칙(§5.1) — 켜져 있으면 능력을 몰라도 보인다: 끌 길은
+ * 남겨야 하므로(omp 의 `-fast` 변종으로 도는 대화가 이 경우). 꺼져 있을 때는
+ * 프로바이더 능력을 요구하고, 모델 행을 모르면(선택자가 오기 전 잠깐) 능력만으로
+ * 낙관한다 — 행이 오면 정정된다.
+ */
+export function fastChip(input: {
+  capability: boolean;
+  row: { supportsFastMode: boolean } | undefined;
+  on: boolean;
+}): boolean {
+  return input.on || (input.capability && (input.row ? input.row.supportsFastMode : true));
+}
+
+/**
+ * 빠르게가 막힌 이유의 한국어(§5.3) — 원문을 소문자로 눌러 단서를 본다. 단서의
+ * 순서가 곧 우선순위다: "allowed models" 원문은 organization 을 품는 문장이라
+ * orgModels 가 org 보다 먼저 오고, exhausted 는 credits 의 더 뚜렷한 꼬리라 먼저
+ * 본다. 모르는 원문은 번역을 지어내지 않고 그대로 돌려준다 — 빈 문자열도 그대로
+ * 돌아가 호출자가 판단한다.
+ */
+export function fastBlockedWords(reason: string, words: FastBlockedWords): string {
+  const clue = reason.toLowerCase();
+  if (clue.includes("usage credit") && clue.includes("exhaust")) return words.creditsGone;
+  if (clue.includes("usage credit")) return words.credits;
+  if (clue.includes("allowed models")) return words.orgModels;
+  if (clue.includes("organization")) return words.org;
+  if (clue.includes("network") || clue.includes("connectivity")) return words.network;
+  if (clue.includes("evaluation")) return words.evaluation;
+  if (clue.includes("cooldown") || clue.includes("rate limit")) return words.cooldown;
+  return reason;
+}
+
+/**
+ * 프로바이더별 빠르게의 비용 문장(§5.2) — 툴팁 카드와 켜는 순간의 토스트가
+ * 같은 문장을 쓴다. 문장의 주인은 이 파일이 아니라 `L.fast` 다.
+ */
+export function fastCost(
+  provider: string,
+  words: Pick<FastWords, "costClaude" | "costOmp" | "costOther">,
+): string {
+  if (provider === "claude") return words.costClaude;
+  if (provider === "omp") return words.costOmp;
+  return words.costOther;
+}
+
+/**
+ * 빠르게 툴팁 카드의 문장(§5.2) — 제목 하나와 비고 줄들(한 줄에 하나, 없으면 빈
+ * 배열). 막힌 이유는 몸이 있는 session 만 보인다 — next 는 아직 켜 주지 않으므로
+ * blocked 가 와도 무시한다. 대화 중간에 켜면 그때까지의 대화가 한 번 더 계산되는
+ * 것(Claude 만)은 꺼져 있고 열린 대화의 카드에만 덧선다.
+ */
+export function fastTipWords(
+  state: { subject: "next" | "session"; on: boolean; blocked: string | null; provider: string },
+  words: FastWords,
+): { title: string; notes: string[] } {
+  const cost = fastCost(state.provider, words);
+  if (state.blocked != null && state.subject === "session") {
+    return { title: fastBlockedWords(state.blocked, words.blocked), notes: [] };
+  }
+  if (state.on) return { title: words.onTitle, notes: [cost] };
+  if (state.subject === "next") return { title: words.nextTitle, notes: [cost] };
+  return {
+    title: words.offTitle,
+    notes: state.provider === "claude" ? [cost, words.costMidway] : [cost],
+  };
 }

@@ -947,6 +947,14 @@
   line-height: 1.4;
 }
 
+/* 누르지 않는 AI 한 줄(열린 대화) — 고르는 줄과 같은 문양이지만 누를 수
+   없다: 손가락 포인터도, 마우스를 얹은 밝음도 없다. */
+.nx .nx-model-pop .nx-mi--static,
+.nx .nx-model-pop .nx-mi--static:hover {
+  cursor: default;
+  background: none;
+}
+
 .nx .nx-model-pop .nx-mt small {
   font-size: 12.5px;
 }
@@ -1226,4 +1234,22 @@
 .nx-att-n span {
   color: var(--ink3);
   font-size: 11px;
+}
+
+/* 빠르게 툴팁 카드(D4) — 말풍선은 document.body 의 포털이라 .nx 밖에 산다. 그래서
+   선택자도 맨 클래스고, 색은 .nx 가 정의하는 변수가 닿지 않으므로 :root 의 것만 쓴다. */
+.tip__bubble.nx-fast-tip {
+  max-width: 280px;
+}
+
+.nx-fast-tip b {
+  display: block;
+  font-weight: 600;
+}
+
+.nx-fast-tip small {
+  display: block;
+  margin-top: 3px;
+  font-size: inherit;
+  color: var(--warn);
 }

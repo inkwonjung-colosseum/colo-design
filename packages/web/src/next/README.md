@@ -48,7 +48,7 @@ NextShell ─ 첫 상태 전 · 프로젝트 0개 · 게이트가 막힘 → onb
     ├ status/StatusLine  제목 · 만드는 중 · 여정 세 점 · 제출(SubmitPopover) · 이번 작업(WorkPopover)
     ├ status/ProblemLine 문제 문장 셋 · 초대 파일 지우기 줄 — 대화와 미리보기에 걸친 한 줄
     ├ (좁은 창) 대화 | 화면 · <이름> 탭
-    ├ chat/ChatColumn     대화록(Thread) · 카드 · 입력창(Composer · ModelChip)
+    ├ chat/ChatColumn     대화록(Thread) · 카드 · 입력창(Composer · ModelChip — 칩의 주인 subject: next · session)
     └ preview/PreviewColumn 막대 · 무대(PreviewHost) · 말풍선 · 준비 화면 · 작업 기록 서랍
 ```
 

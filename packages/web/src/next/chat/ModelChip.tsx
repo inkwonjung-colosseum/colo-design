@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Sessions } from "../../hooks/useSessions";
+import type { ChipTarget, Sessions } from "../../hooks/useSessions";
 import { modelOptions, modelRowOf } from "../../lib/chat-options";
 import type { Daemon } from "../../lib/daemon-client";
 import { L } from "../labels";
@@ -30,19 +30,24 @@ const MODEL_FILTER_MIN = 8;
 /**
  * 입력창의 설정 칩 `Opus 5.5 · 보통 ▾` 과 그 팝오버(목업 `modelPop`) —
  * 칩은 모델과 생각 시간을 말한다(모델 목록이 오지 않았을 때만 프로바이더가 앞말).
- * 팝오버는 프로바이더(쓸 수 있는 것이 둘 이상일 때만) · 모델 · 생각 시간 · 사용량.
- * 부르는 길은 옛 입력창과 같다: `sessions.pickProvider` · `setModel` · `setEffort`.
+ * 팝오버는 AI · 모델 · 생각 시간 · 사용량. 읽고 쓰는 주인은 `target` 이
+ * 정한다(PLAN-MODEL-CHIP D1·D2): `next` 는 AI 고르는 줄이 서고(팝은 닫지 않고
+ * 모델 목록이 바뀌는 것을 보여 준다), `session` 은 누르지 않는 AI 한 줄만 선다.
+ * 부르는 길은 `target.pickProvider` · `setModel` · `setEffort`.
  * 한도가 가까우면(P6, 70% 넘음) 칩 옆에 사용량 한 단어가 선다 — 가장 찬 창의
  * 것. 팝의 사용량 칸은 창을 모두 한 줄씩 세운다(5시간 · 이번 주 · 모델별 창).
  */
 export function ModelChip({
   daemon,
   sessions,
+  target,
   disabledProviders = [],
   up = true,
 }: {
   daemon: Daemon;
-  sessions: Sessions;
+  /** 사용량 다시 읽기(`refreshUsage`)만 쓴다 — 칩의 값은 target 이 쥔다. */
+  sessions: Pick<Sessions, "refreshUsage">;
+  target: ChipTarget;
   disabledProviders?: string[];
   /**
    * 여는 방향 — 입력창이 화면 바닥에 붙는 대화 칸은 위로, 홈처럼 화면 가운데
@@ -57,15 +62,14 @@ export function ModelChip({
     setOpen(false);
     setModelQuery("");
   };
-  const { selector } = sessions;
   const providers = (daemon.status?.providers ?? []).filter(
     (p) => !disabledProviders.includes(p.id),
   );
   const usable = providers.filter((p) => p.available && p.loggedIn !== false);
-  const provider = selector.provider ?? sessions.chatProvider;
+  const provider = target.provider;
   const providerLabel = providers.find((p) => p.id === provider)?.label ?? L.model.ai;
-  const modelRow = modelRowOf(selector.models, selector.model);
-  const models = modelOptions(selector.models, modelRow);
+  const modelRow = modelRowOf(target.models, target.model);
+  const models = modelOptions(target.models, modelRow);
   const needle = modelQuery.trim().toLowerCase();
   const visibleModels =
     needle === ""
@@ -76,7 +80,7 @@ export function ModelChip({
   // 있다 — 생각 시간 자체가 없는 모델(supportsEffort === false)만 칸을 통째로 숨긴다.
   const efforts = Object.keys(EFFORT_OF) as EffortWord[];
   const showEffort = modelRow?.supportsEffort !== false;
-  const think = effortWord(selector.effort);
+  const think = effortWord(target.effort);
   const label = chipLabel(
     modelRow?.displayName ?? providerLabel,
     showEffort ? EFFORT_WORDS[think] : null,
@@ -119,34 +123,51 @@ export function ModelChip({
       </button>
       {open && (
         <Popover anchor={anchor} onClose={close} align="end" up={up} className="nx-model-pop">
-          {usable.length >= 2 && (
-            <>
-              <div className="nx-mh">{L.model.ai}</div>
-              {usable.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="nx-mi"
-                  onClick={() => {
-                    sessions.pickProvider(p.id);
-                    if (sessions.activeId === null) close();
-                  }}
-                >
-                  <span className="nx-mt">
-                    <b>{p.label}</b>
-                    <small>{L.model.loggedIn}</small>
-                  </span>
-                  {sessions.chatProvider === p.id && (
-                    <span className="nx-ck nx-r">
-                      <CheckIcon />
+          {usable.length >= 2 &&
+            (target.pickProvider ? (
+              <>
+                <div className="nx-mh">{L.model.ai}</div>
+                {usable.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="nx-mi"
+                    onClick={() => {
+                      // 팝은 닫지 않는다 — 거르는 칸만 비우고 바로 아래 모델 칸이
+                      // 새 AI 의 목록으로 바뀌는 것을 보인 채 이어서 고르게 한다.
+                      // 「AI 를 바꿨는데 모델이 안 바뀐다」가 이 결함의 증상이었다.
+                      target.pickProvider?.(p.id);
+                      setModelQuery("");
+                    }}
+                  >
+                    <span className="nx-mt">
+                      <b>{p.label}</b>
+                      <small>{L.model.loggedIn}</small>
                     </span>
-                  )}
-                </button>
-              ))}
-              {sessions.activeId !== null && <div className="nx-mnote">{L.model.openConvNote}</div>}
-              <div className="nx-msep" />
-            </>
-          )}
+                    {provider === p.id && (
+                      <span className="nx-ck nx-r">
+                        <CheckIcon />
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <div className="nx-mnote">{L.model.aiNext}</div>
+                <div className="nx-msep" />
+              </>
+            ) : (
+              <>
+                <div className="nx-mh">{L.model.ai}</div>
+                {/* 열린 대화의 AI 는 태어날 때 정해진다 — 고르는 줄이 아니라
+                    이름과 안내만 한 줄 선다(D1). */}
+                <div className="nx-mi nx-mi--static">
+                  <span className="nx-mt">
+                    <b>{providerLabel}</b>
+                    <small>{L.model.aiFixed}</small>
+                  </span>
+                </div>
+                <div className="nx-msep" />
+              </>
+            ))}
           {models.length > 0 && (
             <>
               <div className="nx-mh">{L.model.model}</div>
@@ -169,7 +190,7 @@ export function ModelChip({
                     type="button"
                     className="nx-mi"
                     onClick={() => {
-                      void sessions.setModel(row.value);
+                      void target.setModel(row.value);
                       close();
                     }}
                   >
@@ -205,7 +226,7 @@ export function ModelChip({
                     type="button"
                     aria-pressed={think === word}
                     className={think === word ? "nx-on" : ""}
-                    onClick={() => void sessions.setEffort(EFFORT_OF[word])}
+                    onClick={() => void target.setEffort(EFFORT_OF[word])}
                   >
                     {EFFORT_WORDS[word]}
                   </button>
